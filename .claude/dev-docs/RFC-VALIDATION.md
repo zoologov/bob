@@ -553,7 +553,7 @@ What Bob can and cannot do at each development phase:
 
 | # | Action | Priority | Effort |
 |---|--------|----------|--------|
-| **R1** | Update PRD to match RFC (12 sync issues from section 2) | **P0** | 2-3 hours |
+| ~~**R1**~~ | ~~Update PRD to match RFC (12 sync issues from section 2)~~ | ~~**P0**~~ | **RESOLVED**: PRD updated — all S1-S12 sync issues addressed. Version→v0.1.0, Skills→SkillDomains, Genesis→9 stages, assets→AI-generated SD, Godot→Shell-Renderer, Bootstrap added, ClaudeCodeLock added, RelationshipTracker+Exodus Mode added, repo structure updated, dev phases added, open questions synced. |
 | ~~**R2**~~ | ~~Rename Genesis Stage 0 from "BOOTSTRAP" to avoid confusion with section 3.6~~ | ~~**P0**~~ | **RESOLVED** |
 | ~~**R3**~~ | ~~Add Telegram token setup to bootstrap flow~~ | ~~**P0**~~ | **RESOLVED** |
 | ~~**R4**~~ | ~~Define bob-soul submodule creation/initialization flow~~ | ~~**P0**~~ | **RESOLVED** |
