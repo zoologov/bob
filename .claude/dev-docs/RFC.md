@@ -172,6 +172,12 @@ packages that can be added, removed, or replaced without modifying the core.
 │  │  │  (event     │  │   → route)  │  │   modules)               │  │  │
 │  │  │   loop)     │  └──────┬──────┘  └──────────┬───────────────┘  │  │
 │  │  └──────┬──────┘         │                    │                   │  │
+│  │         │         ┌──────┴──────┐             │                   │  │
+│  │         │         │   Model     │             │                   │  │
+│  │         │         │  Manager    │             │                   │  │
+│  │         │         │ (ML memory  │             │                   │  │
+│  │         │         │  budget)    │             │                   │  │
+│  │         │         └──────┬──────┘             │                   │  │
 │  │         │                │                    │                   │  │
 │  │  ┌──────▼──────────────────────────────────────────────────────┐  │  │
 │  │  │                     EVENT BUS                               │  │  │
@@ -224,9 +230,12 @@ packages that can be added, removed, or replaced without modifying the core.
 │  │  └──────────┘ └──────────┘                                       │  │
 │  └───────────────────────────────────────────────────────────────────┘  │
 │                                                                         │
-│  ┌────────────────┐                                                    │
-│  │  Ollama        │  ← local LLMs (Qwen2.5-7B, Qwen2.5-0.5B)        │
-│  └────────────────┘                                                    │
+│  ┌────────────────┐  ┌──────────────────┐                              │
+│  │  Ollama        │  │ Stable Diffusion │                              │
+│  │  (Qwen2.5-7B, │  │ (SD 1.5 / SDXL   │                              │
+│  │   Qwen2.5-0.5B)│  │  via MLX)        │                              │
+│  └───────┬────────┘  └────────┬─────────┘                              │
+│          └─────── ModelManager ──────┘  ← manages memory budget        │
 │                                                                         │
 └──────────────────────────────────┬──────────────────────────────────────┘
                                    │
@@ -244,7 +253,7 @@ packages that can be added, removed, or replaced without modifying the core.
 ### 3.2. Bob Core — Single Python Process
 
 Bob Core is the main system process, built on `asyncio` + `FastAPI`.
-It combines three key subsystems:
+It combines four key subsystems:
 
 #### 3.2.1. Agent Runtime (event loop)
 
@@ -260,6 +269,7 @@ class AgentRuntime:
         self,
         event_bus: EventBus,
         llm_router: LLMRouter,
+        model_manager: ModelManager,
         skill_registry: SkillRegistry,
         higher_mind: HigherMind,
         memory: MemorySystem,
@@ -357,7 +367,12 @@ class LLMRouter:
         temperature: float = 0.7,
         max_tokens: int = 2048,
     ) -> str:
-        """Call a model of the selected tier."""
+        """Call a model of the selected tier.
+
+        If LOCAL_MAIN (7B) is requested but currently unloaded by ModelManager
+        (e.g., during heavy asset generation), falls back to LOCAL_FAST (0.5B)
+        with a simplified prompt. Logs the fallback for monitoring.
+        """
         ...
 ```
 
@@ -626,6 +641,155 @@ class AvatarDomain:
 
     # Skills: update_room, change_appearance, play_animation
 ```
+
+#### 3.2.4. ModelManager — ML Memory Budget
+
+Mac mini M4 has 16 GB of unified memory shared between CPU and GPU. Multiple
+ML models (Ollama LLMs, Stable Diffusion, YOLOv8) compete for this memory.
+ModelManager orchestrates model lifecycle to stay within the memory budget.
+
+**The problem:** SDXL (~6 GB model + ~3 GB inference buffers) and Qwen2.5-7B
+(~4.4 GB) cannot coexist in 16 GB alongside macOS (~3.5 GB) and Bob's process.
+Total would be ~17 GB — exceeding physical memory and causing swap thrashing.
+
+**The solution: hybrid strategy with two tiers of image generation.**
+
+```python
+from enum import Enum
+from dataclasses import dataclass
+
+class ModelProfile(Enum):
+    """Pre-defined model configurations for different scenarios."""
+    NORMAL = "normal"                 # Ollama 7B + 0.5B, no SD
+    LIGHTWEIGHT_GEN = "lightweight"   # Ollama 7B + 0.5B + SD 1.5
+    HEAVY_GEN = "heavy"               # Ollama 0.5B only + SDXL
+
+@dataclass
+class MemoryBudget:
+    total_mb: int                     # Total available (≈12500 on M4 16GB)
+    ollama_mb: int                    # Currently used by Ollama models
+    sd_mb: int                        # Currently used by SD model
+    other_mb: int                     # Vision, Python process, etc.
+    free_mb: int                      # Available headroom
+
+class ModelManager:
+    """Orchestrates ML model lifecycle within memory constraints.
+
+    Ensures that the total memory footprint of all loaded ML models
+    stays within the available unified memory budget. Handles model
+    loading, unloading, and transitions between profiles.
+    """
+
+    def __init__(
+        self,
+        memory_limit_mb: int = 12500,  # ~16GB minus macOS overhead
+        ollama_host: str = "http://localhost:11434",
+    ) -> None: ...
+
+    async def get_budget(self) -> MemoryBudget:
+        """Query current memory usage across all ML runtimes.
+
+        Sources:
+        - Ollama: GET /api/tags (loaded models + sizes)
+        - SD: track loaded model internally
+        - System: psutil.virtual_memory()
+        """
+        ...
+
+    async def ensure_profile(self, profile: ModelProfile) -> None:
+        """Transition to the requested model profile.
+
+        NORMAL → LIGHTWEIGHT_GEN:
+          1. Load SD 1.5 via MLX (~2 GB)
+          2. Ollama models stay loaded
+          3. Total: ~7 GB — within budget
+
+        NORMAL → HEAVY_GEN:
+          1. Notify LLMRouter: 7B going offline
+          2. Unload Qwen2.5-7B from Ollama (POST /api/generate with keep_alive=0)
+          3. Load SDXL via MLX (~6 GB)
+          4. Total: ~7-10 GB — within budget
+          5. 0.5B remains for basic classification
+
+        HEAVY_GEN → NORMAL:
+          1. Unload SDXL from MLX
+          2. Reload Qwen2.5-7B in Ollama
+          3. Notify LLMRouter: 7B back online
+
+        LIGHTWEIGHT_GEN → NORMAL:
+          1. Unload SD 1.5 from MLX
+        """
+        ...
+
+    async def is_model_loaded(self, model_name: str) -> bool:
+        """Check if a specific model is currently loaded."""
+        ...
+
+    def current_profile(self) -> ModelProfile:
+        """Return the current active profile."""
+        ...
+```
+
+**Transition timing:**
+
+| Transition | Duration | What Bob does during |
+|-----------|---------|---------------------|
+| NORMAL → LIGHTWEIGHT_GEN | ~5-10 sec | Continues normally (0.5B handles incoming) |
+| NORMAL → HEAVY_GEN | ~20-40 sec | Announces: "Going into creative mode" |
+| HEAVY_GEN → NORMAL | ~15-30 sec | Announces: "I'm back!" |
+
+**Integration points:**
+
+- **LLMRouter** checks `ModelManager.current_profile()` before routing. If
+  `HEAVY_GEN` is active and `LOCAL_MAIN` (7B) is requested, falls back to
+  `LOCAL_FAST` (0.5B) with a simplified prompt.
+- **AssetGenerator** calls `ModelManager.ensure_profile(LIGHTWEIGHT_GEN)` for
+  single-sprite tasks or `ensure_profile(HEAVY_GEN)` for Genesis/bulk.
+  After generation, calls `ensure_profile(NORMAL)`.
+- **AgentRuntime** subscribes to `model_manager.profile_changed` events to
+  adjust heartbeat behavior (e.g., skip reflection during HEAVY_GEN).
+
+**Decision logic for SD model selection:**
+
+```
+AssetGenerator receives generation request
+  │
+  ├─ Single sprite (1-3 items)?
+  │   └─ Use SD 1.5 (LIGHTWEIGHT_GEN)
+  │      Ollama 7B stays loaded, Bob keeps talking
+  │
+  ├─ Bulk generation (Genesis, 10+ items)?
+  │   └─ Use SDXL (HEAVY_GEN)
+  │      Better quality, Ollama 7B unloaded temporarily
+  │
+  └─ LoRA training?
+      └─ Use SDXL (HEAVY_GEN)
+         Training needs full model, Ollama 7B unloaded
+```
+
+**Configuration:**
+
+```yaml
+# config/bob.yaml (addition)
+model_manager:
+  memory_limit_mb: 12500              # Available for ML models
+  profiles:
+    normal:
+      ollama_models: ["qwen2.5:7b-instruct-q4_K_M", "qwen2.5:0.5b-instruct-q8_0"]
+      sd_model: null
+    lightweight_gen:
+      ollama_models: ["qwen2.5:7b-instruct-q4_K_M", "qwen2.5:0.5b-instruct-q8_0"]
+      sd_model: "sd-1.5"
+    heavy_gen:
+      ollama_models: ["qwen2.5:0.5b-instruct-q8_0"]  # 7B unloaded
+      sd_model: "sdxl"
+  transition_timeout_sec: 60          # Max time to complete a profile switch
+  announce_heavy_gen: true            # Bob announces when entering heavy_gen mode
+```
+
+**Scalability:** If the user upgrades to Mac mini M4 Pro (24/36 GB), the
+`memory_limit_mb` is adjusted and `heavy_gen` profile can keep both Ollama 7B
+and SDXL loaded simultaneously — no code changes needed, only config.
 
 ### 3.3. Higher Mind — Cognitive Layer
 
@@ -3592,19 +3756,39 @@ its own unique visuals during Genesis Mode.
 | Component | Technology | Size | Notes |
 |-----------|-----------|------|-------|
 | Inference engine | MLX (Apple Silicon) | pip install | Native Metal acceleration |
-| Base model | SDXL / Flux | ~6 GB | Best quality/speed on M4 |
+| Lightweight model | SD 1.5 | ~2 GB | Fast generation, coexists with Ollama 7B in memory |
+| Heavy model | SDXL / Flux | ~6 GB | Best quality; requires unloading Ollama 7B (see 3.2.4) |
 | Style adapter | LoRA (trained locally) | ~50-200 MB | Ensures visual consistency |
-| Total | | ~7 GB disk | Runs alongside Ollama |
+| Total (lightweight) | | ~3 GB disk | Runs alongside Ollama |
+| Total (heavy) | | ~7 GB disk | Requires model swap via ModelManager |
+
+**Memory management (Mac mini M4, 16 GB unified):**
+
+SD and Ollama 7B cannot coexist in memory simultaneously when using SDXL
+(~6 GB model + ~3 GB buffers). Bob uses a hybrid strategy managed by
+`ModelManager` (see section 3.2.4):
+
+| Scenario | SD model | Ollama state | Total ML memory |
+|----------|---------|-------------|----------------|
+| Normal operation | Not loaded | 7B + 0.5B loaded | ~5 GB |
+| Lightweight gen (1-3 sprites) | SD 1.5 (~2 GB) | 7B + 0.5B loaded | ~7 GB |
+| Heavy gen (Genesis, bulk) | SDXL (~6-9 GB) | 7B unloaded, 0.5B loaded | ~7-10 GB |
+
+During heavy generation, Bob operates in reduced mode: Qwen2.5-0.5B handles
+basic classification and short responses ("I'm creating art right now, give me
+a moment"), while Qwen2.5-7B is unloaded. After generation completes,
+ModelManager restores normal model configuration.
 
 **Generation performance on Mac mini M4 (16 GB):**
 
-| Asset | Resolution | Time | Count in Genesis |
-|-------|-----------|------|-----------------|
-| Avatar part (head, arm, etc.) | 512x512 | ~20 sec | 6-8 parts |
-| Furniture sprite | 512x512 | ~20 sec | 10-15 items |
-| Room background | 1024x768 | ~40 sec | 3-5 variants |
-| Clothing variant | 512x512 | ~20 sec | 3-5 sets |
-| **Total Genesis** | | | **~30-40 min** |
+| Asset | Resolution | Time (SDXL) | Time (SD 1.5) | Count in Genesis |
+|-------|-----------|------------|--------------|-----------------|
+| Avatar part (head, arm, etc.) | 512x512 | ~20 sec | ~5 sec | 6-8 parts |
+| Furniture sprite | 512x512 | ~20 sec | ~5 sec | 10-15 items |
+| Room background | 1024x768 | ~40 sec | ~15 sec | 3-5 variants |
+| Clothing variant | 512x512 | ~20 sec | ~5 sec | 3-5 sets |
+| **Total Genesis (SDXL)** | | | | **~30-40 min** |
+| **Total Genesis (SD 1.5)** | | | | **~8-12 min** |
 
 **AssetGenerator interface:**
 
@@ -3625,11 +3809,16 @@ class GeneratedAsset:
     quality_score: float             # Auto-assessed quality (0-1)
 
 class AssetGenerator:
-    """AI-powered visual asset generator using Stable Diffusion."""
+    """AI-powered visual asset generator using Stable Diffusion.
+
+    Uses ModelManager to handle memory budget. For single-sprite generation
+    (e.g., new clothing item), requests SD 1.5 (coexists with Ollama 7B).
+    For bulk generation (Genesis), requests SDXL (Ollama 7B is unloaded).
+    """
 
     def __init__(
         self,
-        model_path: Path,
+        model_manager: "ModelManager",
         lora_path: Path | None = None,
         output_dir: Path = Path("data/assets"),
     ) -> None: ...
@@ -4481,7 +4670,8 @@ state_versioning:
 | **Vector search** | FAISS / ChromaDB | Local, fast, serverless |
 | **Telegram** | python-telegram-bot | Mature library, asyncio support |
 | **ADB** | adb (cli) + python wrapper | Standard tool for Android |
-| **Asset generation** | Stable Diffusion (SDXL/Flux) via MLX | Local, free, no API costs; generates all visual assets during Genesis |
+| **ML memory manager** | ModelManager (custom) | Orchestrates Ollama + SD model lifecycle on 16GB unified memory; see 3.2.4 |
+| **Asset generation** | Stable Diffusion (SD 1.5 + SDXL) via MLX | Local, free, no API costs; SD 1.5 for lightweight gen alongside Ollama, SDXL for heavy gen (Genesis) |
 | **Style consistency** | LoRA (trained locally) | Ensures all generated sprites share a unified cartoon style (Cuphead reference) |
 | **Avatar animation** | Skeleton2D (Godot built-in) | Skeletal 2D animation: one rigged model, infinite animations via keyframes |
 | **Avatar (client)** | Godot 4 (GDScript) | Open source, 2D shell-renderer, native Android, WebSocket, parallax depth |
@@ -4516,8 +4706,9 @@ state_versioning:
 | bootstrap.py | First-launch setup wizard (prerequisites check, Ollama auto-setup) |
 | Prerequisites check | Verify Python, Ollama, Claude Code CLI, hardware capabilities |
 | bootstrap.yaml | Configuration for setup wizard (required/optional components) |
+| ModelManager | ML memory budget manager (Ollama + SD model lifecycle) |
 
-**Readiness criterion:** `uv run bob` starts the process, responds to health check. `python scripts/bootstrap.py` detects environment and installs missing prerequisites with user consent.
+**Readiness criterion:** `uv run bob` starts the process, responds to health check. `python scripts/bootstrap.py` detects environment and installs missing prerequisites with user consent. ModelManager detects available memory and reports model capacity.
 
 ### Phase 1: Agent Runtime + LLM + Skill Domains (1.5-2 weeks)
 
@@ -4672,6 +4863,7 @@ bob/
 │   │   ├── runtime.py              # Agent Runtime (event loop)
 │   │   ├── event_bus.py            # Event Bus (pub/sub)
 │   │   ├── llm_router.py          # LLM Router
+│   │   ├── model_manager.py      # ModelManager (ML memory budget)
 │   │   ├── skills.py              # Skill Registry + base classes
 │   │   └── config.py              # Pydantic configuration models
 │   │
@@ -4824,6 +5016,7 @@ bob/
 │   │   ├── test_runtime.py
 │   │   ├── test_event_bus.py
 │   │   ├── test_llm_router.py
+│   │   ├── test_model_manager.py
 │   │   └── test_skills.py
 │   ├── test_mind/
 │   │   ├── test_goal_engine.py
@@ -5008,3 +5201,4 @@ successful concepts:
 | 29 | How to ensure visual consistency across AI-generated sprites (furniture, avatar parts, room elements)? | High | Open |
 | 30 | How to auto-segment AI-generated character image into Skeleton2D parts (head, torso, arms, legs)? | Medium | Open |
 | 31 | What is the optimal sprite resolution for tablet display? 512x512 per asset or higher? | Medium | Open |
+| 32 | ~~How to handle SD + Ollama memory coexistence on Mac mini M4 16GB?~~ | High | **Resolved**: Hybrid ModelManager — lightweight SD 1.5 alongside Ollama for small tasks, swap to SDXL (unloading 7B) for heavy generation (see 3.2.4) |
