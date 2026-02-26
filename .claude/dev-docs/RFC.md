@@ -128,6 +128,30 @@ LLM works **with them**, but not **instead of them**.
 - Full audit log of all actions.
 - Git versioning of state for rollback capability.
 
+### 2.6. Plugin Architecture — Extensibility by Design
+
+Bob's capabilities are organized as **Skill Domains** — self-contained plugin
+packages that can be added, removed, or replaced without modifying the core.
+
+- **SkillDomains as plugins**: Each domain is a standalone Python package in
+  `bob/skills/<domain>/` with its own config, skills, and lifecycle. Adding
+  a new capability means adding a new directory — no core changes required.
+- **Auto-discovery via convention**: Place a package in `bob/skills/` with a
+  `domain.py` file, and it is automatically registered at startup. No manual
+  registration, no config file edits.
+- **Event-driven communication**: Domains don't know each other directly.
+  They communicate exclusively via EventBus — publish events and subscribe
+  to events. This prevents coupling between domains.
+- **Stable core / extensible periphery**: The core provides `SkillContext`
+  (EventBus, Memory, LLMRouter). Domains consume this context but don't
+  modify the core. Core changes are rare; domain changes are frequent.
+- **Capabilities over names**: Goal Engine requests capabilities
+  (e.g., "send_message"), not specific domains. This allows domain
+  implementations to be swapped transparently.
+- **Self-extensibility**: Bob can create new Skill Domains for himself via
+  Claude Code CLI, using the `_template/` scaffold. This enables organic
+  growth of capabilities based on experience and goals.
+
 ---
 
 ## 3. System Architecture
@@ -337,23 +361,107 @@ class LLMRouter:
         ...
 ```
 
-#### 3.2.3. Skill Registry
+#### 3.2.3. Skill Domain System
 
-Skill registry with hot-reload support.
+Bob's capabilities are organized as **Skill Domains** — self-contained plugin
+packages that group related skills under a single domain. This replaces the
+flat skill registry with a two-level architecture (see principle 2.6).
+
+##### SkillDomain (upper level)
+
+Each domain is a self-contained Python package in `bob/skills/<domain>/`
+with its own configuration, lifecycle, and set of skills.
 
 ```python
 from typing import Protocol
 from dataclasses import dataclass, field
 
+class SkillDomain(Protocol):
+    """Protocol for a skill domain — a self-contained plugin package."""
+
+    @property
+    def name(self) -> str:
+        """Unique domain name (e.g., 'messaging', 'avatar', 'development')."""
+        ...
+
+    @property
+    def description(self) -> str:
+        """Human-readable description of this domain's capabilities."""
+        ...
+
+    @property
+    def version(self) -> str:
+        """Domain version (semver)."""
+        ...
+
+    @property
+    def skills(self) -> dict[str, "Skill"]:
+        """Map of skill_name -> Skill instances provided by this domain."""
+        ...
+
+    @property
+    def capabilities(self) -> list[str]:
+        """Capability tags for discovery (e.g., ['send_message', 'listen'])."""
+        ...
+
+    @property
+    def event_subscriptions(self) -> list[str]:
+        """EventBus event types this domain wants to handle."""
+        ...
+
+    async def initialize(self, context: "SkillContext") -> None:
+        """Called once at startup. Load config, connect to services."""
+        ...
+
+    async def configure(self, config: dict) -> None:
+        """Apply configuration from domain's config.yaml."""
+        ...
+
+    async def enable(self) -> None:
+        """Activate the domain (start handling events)."""
+        ...
+
+    async def disable(self) -> None:
+        """Deactivate without unloading (pause)."""
+        ...
+```
+
+**Domain configuration** (`config.yaml` in domain directory):
+
+```yaml
+# bob/skills/messaging/config.yaml
+domain:
+  name: messaging
+  version: "0.1.0"
+  description: "Communication via messengers (Telegram, etc.)"
+  capabilities:
+    - send_message
+    - receive_message
+    - listen_channel
+  event_subscriptions:
+    - user.message_received
+    - system.notification_requested
+  permissions:
+    - telegram.send
+    - telegram.read
+  dangerous: false
+```
+
+##### Skill (lower level)
+
+Individual skills live inside their domain's `skills/` subdirectory.
+The `Skill` Protocol is preserved from the original design.
+
+```python
 @dataclass
 class SkillMetadata:
     name: str
     description: str
     version: str
     author: str
-    category: str                           # "home", "communication", "dev", ...
-    required_permissions: list[str]         # ["filesystem.read", "adb.execute", ...]
-    dangerous: bool = False                 # requires approval
+    domain: str                             # Parent domain name
+    required_permissions: list[str]
+    dangerous: bool = False
     timeout_sec: int = 30
 
 class Skill(Protocol):
@@ -361,7 +469,7 @@ class Skill(Protocol):
 
     metadata: SkillMetadata
 
-    async def execute(self, params: dict, context: SkillContext) -> SkillResult:
+    async def execute(self, params: dict, context: "SkillContext") -> "SkillResult":
         """Execute the skill with parameters."""
         ...
 
@@ -381,80 +489,142 @@ class SkillContext:
     event_bus: "EventBus"
     memory: "MemorySystem"
     llm_router: "LLMRouter"
+    domain: "SkillDomain | None" = None     # Reference to parent domain
     requesting_goal_id: str | None = None
+```
 
-class SkillRegistry:
-    """Skill registry with hot-reload."""
+##### SkillDomainRegistry
 
-    def __init__(self, skills_dir: str = "bob/skills") -> None:
-        self._skills: dict[str, Skill] = {}
-        self._skills_dir = skills_dir
+Replaces the flat `SkillRegistry`. Manages domain lifecycle, auto-discovery,
+and capabilities-based lookup.
 
-    async def load_all(self) -> None:
-        """Load all skills from the directory."""
+```python
+class SkillDomainRegistry:
+    """Registry for skill domains with auto-discovery and hot-reload."""
+
+    def __init__(self, domains_dir: str = "bob/skills") -> None:
+        self._domains: dict[str, SkillDomain] = {}
+        self._domains_dir = domains_dir
+
+    async def discover_domains(self) -> list[str]:
+        """Scan bob/skills/*/domain.py for domain packages.
+
+        Convention: any subdirectory of bob/skills/ containing domain.py
+        is treated as a skill domain. Directories starting with '_' are
+        skipped (e.g., _template/).
+        """
         ...
 
-    async def reload(self, skill_name: str) -> None:
-        """Reload a specific skill without stopping the system."""
+    async def load_domain(self, domain_name: str) -> SkillDomain:
+        """Load and initialize a single domain."""
         ...
 
-    def get(self, skill_name: str) -> Skill | None:
-        """Get a skill by name."""
-        return self._skills.get(skill_name)
+    async def reload_domain(self, domain_name: str) -> SkillDomain:
+        """Hot-reload a domain without stopping other domains."""
+        ...
 
-    def list_skills(self) -> list[SkillMetadata]:
-        """List all registered skills."""
-        return [s.metadata for s in self._skills.values()]
+    def get_domain(self, domain_name: str) -> SkillDomain | None:
+        """Get a loaded domain by name."""
+        return self._domains.get(domain_name)
 
-    async def execute(
+    def list_domains(self) -> list[str]:
+        """List all loaded domain names."""
+        return list(self._domains.keys())
+
+    async def execute_skill(
         self,
+        domain_name: str,
         skill_name: str,
         params: dict,
         context: SkillContext,
     ) -> SkillResult:
-        """Execute a skill with checks and sandbox."""
+        """Execute a skill within a specific domain."""
+        ...
+
+    def find_by_capability(self, capability: str) -> list[SkillDomain]:
+        """Find domains that provide a specific capability.
+
+        Example: find_by_capability("send_message") -> [MessagingDomain]
+        Goal Engine uses this to find HOW to do something without
+        knowing WHICH domain provides it.
+        """
         ...
 ```
 
-**Skill example:**
+##### Auto-Discovery Flow
+
+```
+Bob starts up
+  │
+  ├─ SkillDomainRegistry.discover_domains()
+  │   └─ Scan bob/skills/*/domain.py
+  │       ├─ avatar/domain.py     → AvatarDomain
+  │       ├─ development/domain.py → DevelopmentDomain
+  │       └─ messaging/domain.py  → MessagingDomain
+  │
+  ├─ For each domain:
+  │   ├─ load_domain() → import module, instantiate class
+  │   ├─ configure() → read domain's config.yaml
+  │   ├─ initialize() → connect to services, validate dependencies
+  │   └─ enable() → subscribe to EventBus events
+  │
+  └─ Registry ready. Goal Engine can query capabilities.
+```
+
+##### Self-Creation Flow
+
+Bob can create **new** skill domains for himself:
+
+1. **Goal Engine** creates a goal: "Learn to interact with weather API"
+2. **Planner** plans domain structure using `_template/` as starting point
+3. Bob requests **Claude Code CLI** permission (see 4.2.1, 8.4)
+4. Claude Code **scaffolds** the domain directory, writes code, writes tests
+5. Bob **registers** the new domain via `SkillDomainRegistry.reload_domain()`
+6. New capabilities are immediately available to Goal Engine
+
+##### Worked Example: Three Built-in Domains
+
+**1. Messaging Domain** (`bob/skills/messaging/`):
 
 ```python
-# bob/skills/telegram_send.py
+# bob/skills/messaging/domain.py
+class MessagingDomain:
+    name = "messaging"
+    description = "Communication via messengers"
+    version = "0.1.0"
+    capabilities = ["send_message", "receive_message"]
+    event_subscriptions = ["user.message_received"]
 
-from bob.core.skills import Skill, SkillMetadata, SkillResult, SkillContext
+    # Skills: telegram_send, telegram_listen
+```
 
-class TelegramSendSkill:
-    metadata = SkillMetadata(
-        name="telegram_send",
-        description="Send a message via Telegram",
-        version="0.1.0",
-        author="bob",
-        category="communication",
-        required_permissions=["telegram.send"],
-        dangerous=False,
-        timeout_sec=10,
-    )
+**2. Development Domain** (`bob/skills/development/`):
 
-    async def validate(self, params: dict) -> list[str]:
-        errors = []
-        if "chat_id" not in params:
-            errors.append("chat_id is required")
-        if "text" not in params:
-            errors.append("text is required")
-        return errors
+```python
+# bob/skills/development/domain.py
+class DevelopmentDomain:
+    name = "development"
+    description = "Self-development via Claude Code CLI"
+    version = "0.1.0"
+    capabilities = ["write_code", "refactor_code", "run_tests"]
+    event_subscriptions = ["goal.code_task_created"]
 
-    async def execute(self, params: dict, context: SkillContext) -> SkillResult:
-        chat_id = params["chat_id"]
-        text = params["text"]
+    # Skills: write_code, refactor, run_tests
+    # Depends on: ClaudeCodeLock (see 8.4)
+```
 
-        # Send via python-telegram-bot
-        await context.telegram_bot.send_message(chat_id=chat_id, text=text)
+**3. Avatar Domain** (`bob/skills/avatar/`):
 
-        return SkillResult(
-            success=True,
-            output=f"Message sent to {chat_id}",
-            side_effects=["telegram_message_sent"],
-        )
+```python
+# bob/skills/avatar/domain.py
+class AvatarDomain:
+    name = "avatar"
+    description = "Avatar and room management"
+    version = "0.1.0"
+    capabilities = ["update_room", "change_appearance", "play_animation"]
+    event_subscriptions = ["room.state_changed", "mood.changed"]
+
+    # Skills: update_room, change_appearance, play_animation
 ```
 
 ### 3.3. Higher Mind — Cognitive Layer
@@ -2119,6 +2289,149 @@ class MessagingBot:
         ...
 ```
 
+### 3.6. Bootstrap and First Launch Setup
+
+Bob requires several external dependencies (Ollama, models, optionally Claude
+Code CLI). The bootstrap system handles first-launch detection and guided setup.
+
+**Entry point:** `bob setup` command (or `python scripts/bootstrap.py`).
+
+#### Prerequisites Check
+
+The bootstrap wizard checks for required and optional components:
+
+```python
+@dataclass
+class Prerequisite:
+    name: str
+    check_command: str               # Shell command to verify presence
+    required: bool                   # False = optional, Bob works without it
+    auto_install: str | None         # Install command (None = manual only)
+    min_version: str | None          # Minimum version (semver)
+
+PREREQUISITES: list[Prerequisite] = [
+    Prerequisite(
+        name="Python",
+        check_command="python3 --version",
+        required=True,
+        auto_install=None,           # Must be pre-installed
+        min_version="3.12.0",
+    ),
+    Prerequisite(
+        name="Ollama",
+        check_command="ollama --version",
+        required=True,
+        auto_install="brew install ollama",
+        min_version="0.3.0",
+    ),
+    Prerequisite(
+        name="Claude Code CLI",
+        check_command="claude --version",
+        required=False,              # Bob works without it (degraded)
+        auto_install=None,           # Manual installation only
+        min_version=None,
+    ),
+    Prerequisite(
+        name="ADB",
+        check_command="adb --version",
+        required=False,              # Only for tablet deployment
+        auto_install="brew install android-platform-tools",
+        min_version=None,
+    ),
+]
+```
+
+#### Auto-Install Flow
+
+For prerequisites with `auto_install` set, Bob asks permission before installing:
+
+```
+$ bob setup
+
+Checking prerequisites...
+  ✓ Python 3.12.4
+  ✗ Ollama — not found
+  ✗ Claude Code CLI — not found (optional)
+  ✓ ADB 35.0.1
+
+Ollama is required. Install via `brew install ollama`? [Y/n] y
+  Installing Ollama...
+  ✓ Ollama 0.5.1 installed
+
+Pulling required models...
+  Pulling qwen2.5:7b-instruct-q4_K_M (4.4 GB)... [████████░░] 80%
+  Pulling qwen2.5:0.5b-instruct-q8_0 (0.5 GB)... done
+
+Claude Code CLI is optional (enables self-development, deep reflection).
+Install manually: https://docs.anthropic.com/claude-code
+Bob will work without it — complex tasks will use local LLM instead.
+
+Setup complete! Run `bob start` to launch.
+```
+
+#### Graceful Degradation
+
+| Component | Without it | Impact |
+|-----------|-----------|--------|
+| **Ollama** | Cannot start | Required — no LLM = no reasoning |
+| **Claude Code CLI** | Fully functional, reduced capabilities | No self-development, lighter reflections, no code writing |
+| **ADB** | No tablet deployment | Avatar not displayed; Bob works headlessly |
+| **Camera (OBSBOT)** | No vision | Bob cannot see the user; audio-only interaction |
+| **Microphone (ReSpeaker)** | No voice | Text-only via Telegram |
+
+#### Configuration
+
+```yaml
+# config/bootstrap.yaml
+bootstrap:
+  completed: false                    # Set to true after first successful setup
+  completed_at: null                  # ISO timestamp
+  components:
+    ollama:
+      installed: false
+      models_pulled: []
+    claude_code:
+      installed: false
+      version: null
+    adb:
+      installed: false
+  hardware:
+    camera_detected: false
+    microphone_detected: false
+    tablet_connected: false
+```
+
+#### BootstrapWizard Interface
+
+```python
+class BootstrapWizard:
+    """First-launch setup wizard."""
+
+    async def run(self) -> BootstrapResult:
+        """Run the full bootstrap flow.
+
+        1. Check all prerequisites
+        2. Offer to install missing required components
+        3. Pull Ollama models
+        4. Detect hardware (camera, mic, tablet)
+        5. Write bootstrap.yaml with results
+        6. Return summary
+        """
+        ...
+
+    async def check_prerequisites(self) -> list[PrerequisiteStatus]: ...
+    async def install_ollama(self) -> bool: ...
+    async def pull_models(self, models: list[str]) -> dict[str, bool]: ...
+    async def detect_hardware(self) -> HardwareStatus: ...
+    async def is_setup_complete(self) -> bool:
+        """Check if bootstrap has already been completed."""
+        ...
+```
+
+**Setup state persistence:** The `bootstrap.yaml` file persists setup state
+so that the wizard doesn't repeat on every launch. The wizard runs only when
+`bootstrap.completed` is `false` or the file doesn't exist.
+
 ---
 
 ## 4. LLM Layer
@@ -2230,6 +2543,85 @@ class ClaudeCodeBridge:
     async def self_improve(self, analysis: str) -> str:
         """Self-development: modification of Bob's code (with approval)."""
         ...
+```
+
+#### 4.2.1. Claude Code Permission Model
+
+Claude Code CLI is a **shared resource** between Bob and the user. Bob must
+never hijack the CLI while the user is actively working. The permission model
+ensures respectful coexistence.
+
+**Core concept:** `ClaudeCodeLock` (see section 8.4 for full implementation)
+provides mutual exclusion. Before every CLI invocation, Bob must acquire
+the lock.
+
+**Permission flow:**
+
+```
+Bob needs Claude Code for a task
+  │
+  ├─ 1. Detect: is_user_active()?
+  │     (check running processes, lock files, recent session activity)
+  │
+  ├─ 2. If user active: DEFER
+  │     • Queue the task with priority and description
+  │     • Switch to alternative activity:
+  │       - Reflect using local LLM (Qwen2.5-7B)
+  │       - Organize goals, review memory
+  │       - Read/explore codebase with local tools
+  │       - Idle behaviors (avatar animations on tablet)
+  │     • Retry when lock becomes available
+  │
+  └─ 3. If user NOT active: ASK
+        • Request approval via ApprovalService (CONFIRM level)
+        • If approved → acquire lock → execute → release lock
+        • If denied → queue task, set retry_after timer
+```
+
+**Graceful degradation:** When Claude Code CLI is unavailable (denied,
+offline, or user is busy), Bob falls back gracefully:
+
+| Task type | Fallback behavior |
+|-----------|-------------------|
+| Code writing | Queue for later, note intent in goals |
+| Deep reflection | Use Qwen2.5-7B for lighter reflection |
+| Architecture analysis | Read code locally, defer complex analysis |
+| Self-improvement | Log improvement ideas, defer implementation |
+| Godot rebuild | Queue, continue with current avatar state |
+
+**Configuration:**
+
+```yaml
+# config/llm.yaml (addition to claude_code section)
+claude_code:
+  # ... existing fields ...
+  permission:
+    require_approval: true           # Always ask before using CLI
+    detect_user_activity: true       # Check if user is using CLI
+    fallback_to_local: true          # Use Qwen2.5-7B when CLI unavailable
+    queue_max_size: 10               # Max queued CLI tasks
+    retry_interval_sec: 300          # Check availability every 5 min
+```
+
+**Queue mechanism:**
+
+```python
+@dataclass
+class QueuedClaudeTask:
+    description: str
+    priority: int                     # 0 = critical, 4 = backlog
+    task_type: str                    # "code", "reflection", "deploy", ...
+    created_at: datetime
+    retry_count: int = 0
+    max_retries: int = 12             # Give up after 1 hour (12 * 5 min)
+
+class ClaudeCodeTaskQueue:
+    """Queue for deferred Claude Code tasks."""
+
+    async def enqueue(self, task: QueuedClaudeTask) -> None: ...
+    async def peek(self) -> QueuedClaudeTask | None: ...
+    async def dequeue(self) -> QueuedClaudeTask | None: ...
+    async def process_next(self, lock: "ClaudeCodeLock") -> bool: ...
 ```
 
 ### 4.3. Fine-tuning Local LLMs
@@ -2909,17 +3301,134 @@ via WebSocket. The initial state is generated in Genesis Mode, then evolves.
 }
 ```
 
-### 5.4. Godot 4 on Android
+### 5.4. Godot 4 on Android — Two-Layer Architecture
 
-The client is implemented in **Godot 4** (GDScript / C#). Rationale:
+The tablet client uses a **two-layer architecture** that separates the generic
+renderer from the scene logic, keeping most intelligence server-side in Python.
 
-- Native export for Android
-- 2D rendering with animations and effects
-- Built-in WebSocket client
-- Bob can modify the scene via JSON descriptions (without rebuilding the APK)
-- Open source, lightweight engine
+```
+┌──────────────────────────────────────────────────────┐
+│                   Android Tablet                      │
+│                                                       │
+│  ┌─────────────────────────────────────────────────┐  │
+│  │         Godot Shell-Renderer (Layer 1)           │  │
+│  │                                                   │  │
+│  │  • Loads scenes from JSON via WebSocket           │  │
+│  │  • Renders sprites by position/z-index            │  │
+│  │  • Plays animations by ID                         │  │
+│  │  • Plays audio (TTS, effects)                     │  │
+│  │  • Reports touch events back to server            │  │
+│  │  • NO hardcoded scenes — generic renderer         │  │
+│  └──────────────────────┬──────────────────────────┘  │
+│                         │ WebSocket                    │
+└─────────────────────────┼────────────────────────────┘
+                          │
+              ┌───────────▼───────────┐
+              │     Mac mini M4       │
+              │                       │
+              │  Scene Descriptions   │
+              │  (Layer 2, Python)    │
+              │                       │
+              │  • room_state.json    │
+              │  • Bob generates/     │
+              │    modifies scenes    │
+              │  • All room logic     │
+              │    is server-side     │
+              └───────────────────────┘
+```
 
-**Base modes (available from Genesis):**
+#### Layer 1: Godot Shell-Renderer (thin client)
+
+The Godot project in `avatar/` is a **universal renderer** — a thin client that:
+
+- Receives JSON scene descriptions via WebSocket
+- Renders sprites at specified positions with z-ordering
+- Plays animations by ID from the local animation library
+- Plays audio files (TTS output, sound effects)
+- Reports touch/tap events back to the server
+- Does **NOT** contain hardcoded scenes or room logic
+
+The shell-renderer is **generic by design** and rarely needs modification.
+It is a rendering engine, not an application. The same renderer can display
+any room, any avatar, any furniture arrangement — as long as the sprite assets
+exist in the local asset pack.
+
+**What lives in `avatar/` directory:**
+
+```
+avatar/
+├── project.godot
+├── scenes/
+│   └── shell_renderer.tscn     # Single main scene — the universal renderer
+├── scripts/
+│   ├── main.gd                 # Entry point, WebSocket connection
+│   ├── scene_loader.gd         # Parses JSON scene descriptions
+│   ├── sprite_renderer.gd      # Positions and renders sprites
+│   ├── animation_player.gd     # Plays animations by ID
+│   ├── audio_player.gd         # TTS and sound effect playback
+│   └── touch_reporter.gd       # Touch event detection and reporting
+└── assets/
+    ├── sprites/                # Sprite packs (furniture, avatar, decor)
+    ├── animations/             # Animation resources (idle, walk, sit, ...)
+    └── audio/                  # Sound effects
+```
+
+#### Layer 2: Scene Descriptions (server-side, Python)
+
+All room logic lives in Python on the server. Bob generates and modifies
+JSON scene descriptions, which the shell-renderer loads and displays.
+
+- **Genesis Mode** produces `room_state.json` — not GDScript
+- Bob modifies the room by updating the scene description JSON
+- All behavior selection, positioning logic, and state management is server-side
+
+**Scene description format:**
+
+```json
+{
+  "version": 1,
+  "room": {
+    "background": "room_cozy_01",
+    "lighting": {"ambient": 0.8, "color": "#FFF5E1"}
+  },
+  "objects": [
+    {
+      "id": "desk_01",
+      "sprite": "furniture/desk_wooden",
+      "position": {"x": 320, "y": 400},
+      "z_index": 10,
+      "interactive": true
+    },
+    {
+      "id": "bob_avatar",
+      "sprite": "avatar/bob_default",
+      "position": {"x": 300, "y": 380},
+      "z_index": 20,
+      "animation": "idle_sitting"
+    }
+  ],
+  "audio": {
+    "ambient": "rain_light",
+    "volume": 0.3
+  }
+}
+```
+
+#### When Deeper Godot Changes Are Needed
+
+In rare cases, the shell-renderer itself needs modification:
+
+- New shaders or visual effects not in the current engine
+- Animation formats not supported by the existing player
+- New input methods (e.g., gyroscope, gestures)
+
+For these cases:
+1. Bob creates a goal and requests Claude Code CLI permission (see 8.4)
+2. Claude Code modifies the Godot project files in `avatar/`
+3. Rebuild APK + ADB deploy to tablet (requires CONFIRM approval)
+4. This is **rare** — the normal flow is JSON scene updates, not Godot changes
+
+#### Base Modes (available from Genesis)
 
 | Mode | Description | Bob's position | Camera |
 |------|-------------|----------------|--------|
@@ -3449,6 +3958,7 @@ APPROVAL_MAP: dict[str, ApprovalLevel] = {
     "tablet.deploy_apk":    ApprovalLevel.CONFIRM,
     "system.restart":       ApprovalLevel.CONFIRM,
     "config.modify":        ApprovalLevel.CONFIRM,
+    "claude_code.invoke":     ApprovalLevel.CONFIRM,
     "code.execute_arbitrary": ApprovalLevel.DENY,
 }
 
@@ -3473,7 +3983,94 @@ class ApprovalService:
         ...
 ```
 
-### 8.4. Rate Limits
+### 8.4. Shared Resource Management (Claude Code Lock)
+
+Bob and the user may both need Claude Code CLI. Bob must never hijack the CLI
+while the user is actively working with it.
+
+```python
+@dataclass
+class ClaudeCodeLock:
+    """Mutual exclusion for Claude Code CLI access.
+
+    Ensures Bob and the user don't conflict over the CLI.
+    """
+
+    _lock_file: Path = Path("/tmp/bob_claude_code.lock")
+    _owner: str | None = None
+
+    async def is_user_active(self) -> bool:
+        """Detect if the user is actively using Claude Code.
+
+        Detection strategy (in order):
+        1. Check for running `claude` processes not owned by Bob
+        2. Check for Claude Code lock files in common locations
+        3. Check for recent Claude Code activity (mtime of session files)
+        """
+        ...
+
+    async def acquire(self, task_description: str) -> bool:
+        """Request exclusive access to Claude Code CLI.
+
+        Flow:
+        1. Check is_user_active() — if True, return False immediately
+        2. Request user approval via ApprovalService (CONFIRM level)
+        3. If approved, create lock file with task_description
+        4. Return True
+        """
+        ...
+
+    async def release(self) -> None:
+        """Release Claude Code CLI lock."""
+        ...
+
+    async def force_release(self) -> None:
+        """User reclaims CLI mid-session. Bob gracefully interrupts."""
+        ...
+```
+
+**Permission protocol:**
+
+```
+Bob wants to use Claude Code CLI
+  │
+  ├─ is_user_active()? ──Yes──> Queue task, switch to alternative activity
+  │                                │
+  │                                ├─ Reflect with local LLM
+  │                                ├─ Organize goals / review memory
+  │                                ├─ Read (explore codebase locally)
+  │                                └─ Idle behaviors (avatar animations)
+  │
+  └─ No ──> request_approval("claude_code.invoke", description)
+              │
+              ├─ Approved ──> acquire lock, execute task, release lock
+              └─ Denied ──> Queue task, set retry_after timer
+```
+
+**Graceful interrupt:** If the user starts Claude Code while Bob holds the lock,
+Bob receives a `SIGUSR1` signal (or EventBus event), saves progress, releases
+the lock, and resumes from checkpoint when the lock becomes available again.
+
+**Integration with Negotiation Engine:** Claude Code CLI access is modeled as
+a `shared_resource` zone in the Negotiation Engine. Bob can express
+preference ("I really need to refactor this — it's blocking 3 goals") but
+always yields to user denial.
+
+**Configuration:**
+
+```yaml
+# config/security.yaml (addition)
+claude_code_lock:
+  lock_file: "/tmp/bob_claude_code.lock"
+  detection_methods:
+    - process_check          # Check for running `claude` processes
+    - lock_file              # Check for Claude Code's own lock files
+  retry_interval_sec: 300    # Retry queued tasks every 5 minutes
+  max_queue_size: 10         # Maximum queued Claude Code tasks
+  graceful_interrupt_timeout_sec: 30  # Time to save progress on interrupt
+```
+
+### 8.5. Rate Limits
 
 ```yaml
 # config/security.yaml
@@ -3487,7 +4084,7 @@ rate_limits:
   dangerous_skills_per_hour: 5
 ```
 
-### 8.5. Audit log
+### 8.6. Audit log
 
 All of Bob's actions are logged in structured JSON.
 
@@ -3524,7 +4121,7 @@ class AuditEntry:
 }
 ```
 
-### 8.6. Git versioning of state
+### 8.7. Git versioning of state
 
 ```bash
 # Automatic state commit every N hours
@@ -3592,9 +4189,9 @@ state_versioning:
 
 ## 10. Development Phases
 
-### Phase 0: Project Skeleton (2-3 days)
+### Phase 0: Project Skeleton + Bootstrap (2-3 days)
 
-**Goal:** Working project structure, runnable process, basic configs.
+**Goal:** Working project structure, runnable process, basic configs, first-launch setup.
 
 | Task | Description |
 |------|-------------|
@@ -3605,24 +4202,29 @@ state_versioning:
 | Event Bus | Basic pub/sub implementation |
 | Health check | `/api/v1/health` endpoint |
 | CI | GitHub Actions: lint + type check + tests |
+| bootstrap.py | First-launch setup wizard (prerequisites check, Ollama auto-setup) |
+| Prerequisites check | Verify Python, Ollama, Claude Code CLI, hardware capabilities |
+| bootstrap.yaml | Configuration for setup wizard (required/optional components) |
 
-**Readiness criterion:** `uv run bob` starts the process, responds to health check.
+**Readiness criterion:** `uv run bob` starts the process, responds to health check. `python scripts/bootstrap.py` detects environment and installs missing prerequisites with user consent.
 
-### Phase 1: Agent Runtime + LLM + Communication (1.5-2 weeks)
+### Phase 1: Agent Runtime + LLM + Skill Domains (1.5-2 weeks)
 
-**Goal:** Bob communicates via Telegram and voice, responds meaningfully.
+**Goal:** Bob communicates via Telegram and voice, responds meaningfully. SkillDomain architecture in place.
 
 | Task | Description |
 |------|-------------|
 | Agent Runtime | Event loop with heartbeat |
 | LLM Router | Integration with Ollama (Qwen2.5-7B + 0.5B) |
-| Skill Registry | Loading and executing Python modules |
-| Telegram Bot | Receiving/sending messages |
+| SkillDomain base | `SkillDomain` Protocol, `SkillDomainRegistry`, auto-discovery, `_template/` |
+| Messaging domain | First domain: `messaging/` (Telegram send/listen) |
+| Development domain | Second domain: `development/` (Claude Code bridge, code tasks) |
+| Avatar domain (stub) | Third domain: `avatar/` (stub — room state read, no Godot yet) |
 | Voice Bridge | Whisper.cpp STT + Kokoro/Piper TTS |
 | SOUL submodule | Connect bob-soul, basic personality template |
-| Claude Code Bridge | Integration with Claude Code CLI as subprocess |
+| Claude Code Bridge | Integration with Claude Code CLI as subprocess + ClaudeCodeLock |
 
-**Readiness criterion:** Bob responds to messages in Telegram and by voice. Claude Code is available for complex tasks.
+**Readiness criterion:** Bob responds to messages in Telegram and by voice. Three SkillDomains registered and operational. Claude Code is available for complex tasks (with permission protocol).
 
 ### Phase 2: Memory System + SOUL (1 week)
 
@@ -3743,7 +4345,8 @@ bob/
 │   ├── voice.yaml                  # STT/TTS settings
 │   ├── vision.yaml                 # Vision settings
 │   ├── security.yaml               # Security, rate limits
-│   └── versioning.yaml             # State versioning
+│   ├── versioning.yaml             # State versioning
+│   └── bootstrap.yaml              # First-launch setup configuration
 │
 ├── bob/                            # Main Python package
 │   ├── __init__.py
@@ -3806,13 +4409,38 @@ bob/
 │   │   ├── appearance_evolution.py # Appearance evolution
 │   │   └── defaults.py            # Default behaviors
 │   │
-│   ├── skills/                     # Skills (hot-reloadable)
+│   ├── skills/                     # Skill Domains (plugin architecture)
 │   │   ├── __init__.py
-│   │   ├── telegram_send.py       # Send to Telegram
-│   │   ├── room_modify.py         # Room modification
-│   │   ├── camera_control.py      # Camera control
-│   │   ├── tablet_deploy.py       # Deploy to tablet
-│   │   └── ...
+│   │   ├── base.py                # SkillDomain Protocol, Skill Protocol, auto-discovery
+│   │   ├── avatar/                # Domain: avatar and room management
+│   │   │   ├── __init__.py
+│   │   │   ├── domain.py          # AvatarDomain(SkillDomain)
+│   │   │   ├── config.yaml
+│   │   │   └── skills/
+│   │   │       ├── update_room.py
+│   │   │       ├── change_appearance.py
+│   │   │       └── play_animation.py
+│   │   ├── development/           # Domain: self-development via Claude Code CLI
+│   │   │   ├── __init__.py
+│   │   │   ├── domain.py          # DevelopmentDomain(SkillDomain)
+│   │   │   ├── config.yaml
+│   │   │   └── skills/
+│   │   │       ├── write_code.py
+│   │   │       ├── refactor.py
+│   │   │       └── run_tests.py
+│   │   ├── messaging/             # Domain: messengers (Telegram, etc.)
+│   │   │   ├── __init__.py
+│   │   │   ├── domain.py
+│   │   │   ├── config.yaml
+│   │   │   └── skills/
+│   │   │       ├── telegram_send.py
+│   │   │       └── telegram_listen.py
+│   │   └── _template/             # Template for creating new domains
+│   │       ├── __init__.py
+│   │       ├── domain.py
+│   │       ├── config.yaml
+│   │       └── skills/
+│   │           └── .gitkeep
 │   │
 │   └── security/                   # Security
 │       ├── __init__.py
@@ -3886,6 +4514,7 @@ bob/
 │
 ├── scripts/                        # Utilities
 │   ├── setup.sh                   # Initial setup
+│   ├── bootstrap.py               # First-launch setup wizard
 │   ├── run.sh                     # Start Bob
 │   └── backup.sh                  # Data backup
 │
@@ -4020,7 +4649,7 @@ successful concepts:
 | # | Question | Priority | Status |
 |---|----------|----------|--------|
 | 1 | Which TTS engine is better for Russian: Kokoro or Piper? Need to compare quality and latency | High | Open |
-| 2 | Godot 4 vs Flutter for the tablet client: need to prototype both to compare FPS and scene modification convenience | Medium | Open |
+| 2 | ~~Godot 4 vs Flutter for the tablet client~~ | Medium | **Resolved**: Godot 4 shell-renderer (see 5.4) |
 | 3 | Does Vision need a separate process, or can cv2.VideoCapture be run in an asyncio thread? | Medium | Open |
 | 4 | How exactly does ReSpeaker XVF3800 provide DoA via USB: through ALSA controls, via I2C, or through a custom protocol? Needs testing on a real device | High | Open |
 | 5 | Is a monitoring dashboard (Grafana / custom) needed from the early phases, or are logs sufficient? | Low | Open |
@@ -4041,3 +4670,8 @@ successful concepts:
 | 20 | Should phantom preferences affect TasteEngine (e.g., "coffee" -> warm_tones +0.1) or remain a separate system? | Medium | Open |
 | 21 | Does Bob need to "re-read the book" (loading book text as context) for more accurate references, or is book_quotes.yaml sufficient? | Low | Open |
 | 22 | How to visualize the awakening phase on the tablet: speech bubbles with inner monologue, confusion animations, or both? | High | Open |
+| 23 | How to detect if user is actively using Claude Code CLI? Process check vs lock file vs both? | High | Open |
+| 24 | What is the minimum viable sprite/animation set for the Godot shell-renderer? | Medium | Open |
+| 25 | How should SkillDomain versioning work when Bob upgrades a domain? | Medium | Open |
+| 26 | Should Bob's self-created SkillDomains go through a "probation" period before full trust? | High | Open |
+| 27 | How to handle SkillDomain dependency conflicts (two domains need same resource)? | Medium | Open |
