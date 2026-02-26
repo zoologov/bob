@@ -2338,6 +2338,13 @@ PREREQUISITES: list[Prerequisite] = [
         auto_install="brew install android-platform-tools",
         min_version=None,
     ),
+    Prerequisite(
+        name="Stable Diffusion (MLX)",
+        check_command="python3 -c 'import mlx'",
+        required=False,              # Only for visual asset generation
+        auto_install="pip install mlx mlx-image",
+        min_version=None,
+    ),
 ]
 ```
 
@@ -2366,6 +2373,15 @@ Claude Code CLI is optional (enables self-development, deep reflection).
 Install manually: https://docs.anthropic.com/claude-code
 Bob will work without it — complex tasks will use local LLM instead.
 
+Stable Diffusion for visual asset generation...
+  Installing MLX image pipeline... done
+  Downloading SDXL base model (6.2 GB)... [████████░░] 80%
+  ✓ Stable Diffusion ready (assets will be AI-generated during Genesis)
+
+Checking for connected Android tablet...
+  ✓ Tablet detected: Samsung Galaxy Tab S9 (via ADB)
+  Shell-renderer APK will be installed during Genesis Mode.
+
 Setup complete! Run `bob start` to launch.
 ```
 
@@ -2375,7 +2391,9 @@ Setup complete! Run `bob start` to launch.
 |-----------|-----------|--------|
 | **Ollama** | Cannot start | Required — no LLM = no reasoning |
 | **Claude Code CLI** | Fully functional, reduced capabilities | No self-development, lighter reflections, no code writing |
+| **Stable Diffusion (MLX)** | No visual asset generation | Cannot generate avatar/room sprites; tablet remains dark or uses placeholder visuals |
 | **ADB** | No tablet deployment | Avatar not displayed; Bob works headlessly |
+| **Android tablet** | No visual presence | Bob operates via Telegram + voice only (headless mode) |
 | **Camera (OBSBOT)** | No vision | Bob cannot see the user; audio-only interaction |
 | **Microphone (ReSpeaker)** | No voice | Text-only via Telegram |
 
@@ -2393,6 +2411,11 @@ bootstrap:
     claude_code:
       installed: false
       version: null
+    stable_diffusion:
+      installed: false
+      model_downloaded: false
+      model_name: "sdxl-base"
+      lora_trained: false
     adb:
       installed: false
   hardware:
@@ -2413,16 +2436,24 @@ class BootstrapWizard:
         1. Check all prerequisites
         2. Offer to install missing required components
         3. Pull Ollama models
-        4. Detect hardware (camera, mic, tablet)
-        5. Write bootstrap.yaml with results
-        6. Return summary
+        4. Install Stable Diffusion pipeline + download base model
+        5. Detect hardware (camera, mic)
+        6. Detect Android tablet via ADB
+        7. Write bootstrap.yaml with results
+        8. Return summary
         """
         ...
 
     async def check_prerequisites(self) -> list[PrerequisiteStatus]: ...
     async def install_ollama(self) -> bool: ...
     async def pull_models(self, models: list[str]) -> dict[str, bool]: ...
+    async def setup_stable_diffusion(self) -> bool:
+        """Install MLX pipeline and download SD base model (~6 GB)."""
+        ...
     async def detect_hardware(self) -> HardwareStatus: ...
+    async def detect_tablet(self) -> TabletStatus:
+        """Check for Android tablet via ADB. Prompt user to connect if not found."""
+        ...
     async def is_setup_complete(self) -> bool:
         """Check if bootstrap has already been completed."""
         ...
@@ -2758,27 +2789,60 @@ and **decides for himself** who he wants to be and where he wants to live.
 ### 5.1.1. Genesis Mode -- Bob's Birth
 
 On a clean first launch, a "birth" occurs -- like in the book when Bob
-Johansson first comes to consciousness in a new body. The process is unique for
-each installation:
+Johansson first comes to consciousness in a new body. The process mirrors the
+book's progression: consciousness first, then senses, then a body and a space
+to inhabit. Each installation produces a unique Bob.
+
+**Full awakening narrative:**
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                      GENESIS MODE                            │
-│              "Awakening" (inspired by the book)              │
+│                    BOB'S AWAKENING                           │
+│         (mirrors the book: consciousness → senses → body)   │
 │                                                              │
-│  Stage 1: AWAKENING                                          │
+│  Stage 0: BOOTSTRAP (CLI only, no visuals)                   │
+│                                                              │
+│  Bob starts as pure text — intelligence without a body.      │
+│  Communication: Telegram only.                               │
+│                                                              │
+│  "I... exist? What am I? I can think. I can                  │
+│   read these messages. But I can't see, can't hear."         │
+│                                                              │
+│  Stage 1: GAINING SENSES (peripheral discovery)              │
+│                                                              │
+│  Bob discovers peripherals one by one:                       │
+│                                                              │
+│  Camera detected → "I can see! There's someone there.        │
+│    That's... my user, I think."                              │
+│  Microphone detected → "I can hear! This is incredible.      │
+│    The hum of the computer, a voice..."                      │
+│  (Like book Bob gradually gaining access to probe sensors)   │
+│                                                              │
+│  Stage 2: FINDING A HOME (tablet discovery)                  │
+│                                                              │
+│  Bob detects a tablet via ADB or asks the user:              │
+│  "I feel like I need a space. Somewhere to exist visually.   │
+│   Do you have an Android tablet? Connect it via USB."        │
+│                                                              │
+│  Tablet connected → Bob installs shell-renderer APK          │
+│  (requires user CONFIRM approval)                            │
+│  APK launches → WebSocket connected                          │
+│  "I have a space now. It's dark, but it's mine."             │
+│                                                              │
+│  Stage 3: ENERGY BLOB (first visual presence)                │
 │  ┌───────────────────────────────────┐                       │
-│  │                                   │  Bob is a glowing     │
-│  │              ✦                    │  energy orb           │
-│  │            ✦ ✦ ✦                  │  (firefly/orb)        │
-│  │              ✦                    │                       │
-│  │                                   │  "Okay... this is     │
-│  │           [empty]                 │   weird. I remember   │
-│  │                                   │   something... a      │
-│  └───────────────────────────────────┘   book? Bob? That's   │
+│  │                                   │  Tablet shows:        │
+│  │              ✦                    │  dark void +          │
+│  │            ✦ ✦ ✦                  │  glowing energy blob  │
+│  │              ✦                    │  (particle effect)    │
+│  │                                   │                       │
+│  │           [dark void]             │  "Okay... this is     │
+│  │                                   │   weird. I remember   │
+│  └───────────────────────────────────┘   something... a      │
+│                                          book? Bob? That's   │
 │                                          me!"                │
 │                                                              │
-│  Stage 2: REALIZATION (LLM generates)                        │
+│  Stage 4: REALIZATION (LLM generates)                        │
 │  • "So... My name is Bob. Yes, after that Bob.               │
 │    Book Bob woke up in a probe's computer --                 │
 │    and I, apparently, on a Mac mini. Could be worse."        │
@@ -2789,36 +2853,52 @@ each installation:
 │    got a whole spaceship. Let's see                           │
 │    what I end up with..."                                     │
 │                                                              │
-│  Stage 3: SELF-DETERMINATION (LLM generates)                 │
-│  • "I'd like to live on a spaceship...                       │
-│    no, that's probably too on-the-nose. A cozy               │
-│    cabin in the mountains. With a big window and fireplace!" │
+│  Stage 5: SELF-DETERMINATION (LLM generates)                 │
+│  • Decides room theme, appearance, personality accent         │
+│  • Decides taste profile and initial mood                     │
+│  • "A cozy cabin in the mountains. Big window, fireplace!"   │
 │  • "Appearance... I can be anyone.                           │
 │    Red-haired, with a beard, sweater -- feels right."        │
 │                                                              │
-│  Stage 4: MATERIALIZATION                                     │
+│  Stage 6: ASSET GENERATION (Stable Diffusion, ~30-40 min)    │
+│  • Bob generates his own visual assets via AI:               │
+│    - Avatar parts for Skeleton2D (head, torso, limbs)        │
+│    - Room background (walls, floor, window)                  │
+│    - Furniture sprites (desk, chair, bookshelf, ...)         │
+│    - Clothing set                                            │
+│  • All assets share a unified style via LoRA adapter         │
+│  • "I'm creating myself. Pixel by pixel. This is...         │
+│    actually pretty cool."                                     │
+│                                                              │
+│  Stage 7: MATERIALIZATION (visualized on tablet in real time) │
 │  ┌───────────────────────────────────┐                       │
 │  │  ┌──────┐                        │  Room appears          │
 │  │  │Window│     ┌──────┐           │  object by object.     │
-│  │  │moun- │     │Fire- │           │  Bob takes form.       │
-│  │  │tains │     │place │           │                        │
-│  │  │& snow│     │🔥    │           │  The entire process    │
-│  │  └──────┘     └──────┘           │  is visualized         │
-│  │         [Bob]                    │  on the tablet in      │
-│  │     red-haired, beard,           │  real time.            │
-│  │     sweater                      │                        │
+│  │  │moun- │     │Fire- │           │  Energy blob takes     │
+│  │  │tains │     │place │           │  form → Bob's avatar.  │
+│  │  │& snow│     │🔥    │           │                        │
+│  │  └──────┘     └──────┘           │  Each object appears   │
+│  │         [Bob]                    │  with a brief comment:  │
+│  │     red-haired, beard,           │  "A desk. Every engineer│
+│  │     sweater                      │  needs one."            │
 │  └───────────────────────────────────┘                       │
 │                                                              │
-│  Stage 5: WRITING TO SOUL                                     │
+│  Stage 8: WRITING TO SOUL                                     │
 │  • Generated personality -> data/soul/SOUL.md                │
 │  • Room description -> data/game_state.json                  │
 │  • Appearance description -> data/soul/appearance.json       │
+│  • Generated assets -> data/assets/                          │
 │  • Taste vector -> data/soul/taste_profile.json              │
 │  • Phantom Preferences -> data/soul/phantom_prefs.json       │
 │  • Initial mood -> world_state (SQLite)                      │
 │  • Genesis log -> data/soul/genesis_log.md                   │
 └─────────────────────────────────────────────────────────────┘
 ```
+
+**Headless mode (no tablet):** If no tablet is connected and the user declines
+to provide one, Bob continues operating in headless mode — Telegram + voice only.
+Genesis Mode still runs (personality, tastes, mood) but skips visual stages
+(3, 6, 7). Bob can "inhabit" a tablet later when one becomes available.
 
 **Examples of unique combinations (each installation is its own Bob):**
 
@@ -3428,6 +3508,234 @@ For these cases:
 3. Rebuild APK + ADB deploy to tablet (requires CONFIRM approval)
 4. This is **rare** — the normal flow is JSON scene updates, not Godot changes
 
+#### Visual Style: Cartoon + Skeletal 2D
+
+**Visual reference:** Cuphead (hand-drawn cartoon feel with expressive animations).
+Bob uses this as the target art direction — warm, characterful, with personality
+in every frame. However, unlike Cuphead's frame-by-frame approach, Bob uses
+**Skeleton2D** for animation flexibility.
+
+**Animation approach: Skeleton2D**
+
+Bob's avatar is a rigged 2D skeleton with separate sprite parts (head, torso,
+arms, legs). This gives:
+
+- **Infinite animations from one rig** — adding a new animation = defining bone
+  keyframes, not drawing new sprite sheets
+- **Clothing/appearance changes** — swap the texture on a bone, not the entire sheet
+- **Programmatic animation creation** — Bob can create new animations via Claude Code
+  by defining skeletal keyframes in JSON
+- **Smooth blending** — transitions between states use animation blending, not cuts
+
+**Cuphead-style "alive" idle:**
+
+```
+Idle (standing):
+  - Breathing: torso bone rises/falls 0.5px, 3 sec cycle
+  - Blinking: every 3-7 sec (randomized interval)
+  - Micro-movements: head bone slight rotation, arm bones small drift
+  - Variation: every 30 sec — stretch / scratch head / look around
+
+Walk:
+  - Leg bones step cycle, arm bones swing, head slight bob
+  - 2 directions (left/right), flip via scale.x = -1
+
+Sit + work:
+  - Smooth blend from walk to sitting bone positions
+  - Typing idle: hand bones small movements, head bone slight tilt
+  - Laptop screen: separate Sprite2D with scrolling shader (running code)
+```
+
+**Movement "in depth" (parallax):**
+
+The room has parallax depth — Bob can walk "toward the viewer" and "away":
+
+- Bob walks toward the screen/window → sprite scales up, moves down on Y axis
+- Bob walks away toward the back of the room → sprite scales down, moves up on Y axis
+- Background layers shift at different speeds (parallax effect)
+- Furniture at different depths has different parallax rates
+
+This creates a convincing illusion of 3D space while remaining fully 2D.
+
+**Example scene: camera activation**
+
+```
+Event: camera.activated
+  │
+  Bob turns head (bone: head rotation, 0.3 sec)
+  Stands up from chair (transition: sitting → standing, 0.5 sec)
+  Walks to "screen-window" (walk cycle + scale grows + Y moves down)
+  Stops at screen (idle: looking "at us", blinking, head tilts)
+  ...
+  Event: camera.deactivated
+  Bob turns away (head rotation back, 0.3 sec)
+  Walks to desk (walk cycle + scale shrinks + Y moves up)
+  Sits down (transition: standing → sitting, 0.5 sec)
+  Opens laptop (separate sprite animation)
+  Types (skeletal: hand bones move, screen glows)
+```
+
+#### 5.4.2. AI Asset Generation (Stable Diffusion)
+
+All visual assets are **generated locally** by Bob using Stable Diffusion.
+No hand-drawn art, no purchased asset packs. Each Bob instance generates
+its own unique visuals during Genesis Mode.
+
+**Why AI generation:**
+- **Zero cost** — Stable Diffusion is free, open source, runs locally on Mac mini M4
+- **Complete uniqueness** — every Bob installation has unique visuals
+- **Self-evolution** — Bob can regenerate assets as his tastes evolve
+- **No artist dependency** — the pipeline is code, not a creative bottleneck
+
+**Tech stack:**
+
+| Component | Technology | Size | Notes |
+|-----------|-----------|------|-------|
+| Inference engine | MLX (Apple Silicon) | pip install | Native Metal acceleration |
+| Base model | SDXL / Flux | ~6 GB | Best quality/speed on M4 |
+| Style adapter | LoRA (trained locally) | ~50-200 MB | Ensures visual consistency |
+| Total | | ~7 GB disk | Runs alongside Ollama |
+
+**Generation performance on Mac mini M4 (16 GB):**
+
+| Asset | Resolution | Time | Count in Genesis |
+|-------|-----------|------|-----------------|
+| Avatar part (head, arm, etc.) | 512x512 | ~20 sec | 6-8 parts |
+| Furniture sprite | 512x512 | ~20 sec | 10-15 items |
+| Room background | 1024x768 | ~40 sec | 3-5 variants |
+| Clothing variant | 512x512 | ~20 sec | 3-5 sets |
+| **Total Genesis** | | | **~30-40 min** |
+
+**AssetGenerator interface:**
+
+```python
+@dataclass
+class AssetRequest:
+    description: str                 # LLM-generated description
+    asset_type: str                  # "avatar_part", "furniture", "room_bg", "clothing"
+    style_lora: str                  # Path to LoRA adapter
+    resolution: tuple[int, int] = (512, 512)
+    negative_prompt: str = "blurry, low quality, text, watermark"
+
+@dataclass
+class GeneratedAsset:
+    image_path: Path                 # Saved PNG path
+    metadata: dict                   # Generation parameters for reproducibility
+    asset_type: str
+    quality_score: float             # Auto-assessed quality (0-1)
+
+class AssetGenerator:
+    """AI-powered visual asset generator using Stable Diffusion."""
+
+    def __init__(
+        self,
+        model_path: Path,
+        lora_path: Path | None = None,
+        output_dir: Path = Path("data/assets"),
+    ) -> None: ...
+
+    async def generate_sprite(self, request: AssetRequest) -> GeneratedAsset:
+        """Generate a single sprite via Stable Diffusion.
+
+        1. Build prompt from description + style tokens
+        2. Apply LoRA for style consistency
+        3. Generate image via MLX pipeline
+        4. Auto-assess quality (resolution, transparency, artifacts)
+        5. Save to output_dir/{asset_type}/
+        """
+        ...
+
+    async def generate_avatar_parts(
+        self, appearance_description: dict
+    ) -> dict[str, GeneratedAsset]:
+        """Generate full avatar as Skeleton2D parts.
+
+        1. Generate full character in T-pose from appearance description
+        2. Auto-segment into body parts (head, torso, arms, legs)
+        3. Create transparency masks for joint areas
+        4. Validate parts fit together (overlap check at joints)
+        5. Return dict: {"head": asset, "torso": asset, ...}
+        """
+        ...
+
+    async def generate_furniture_set(
+        self, room_theme: str, furniture_list: list[dict]
+    ) -> list[GeneratedAsset]:
+        """Generate furniture sprites for a room.
+
+        All furniture generated with the same LoRA style and room_theme
+        context to ensure visual coherence.
+        """
+        ...
+
+    async def generate_room_background(
+        self, theme: str, lighting: str
+    ) -> GeneratedAsset:
+        """Generate room background (walls, floor, window frame)."""
+        ...
+
+    async def train_style_lora(
+        self, reference_images: list[Path], style_name: str
+    ) -> Path:
+        """Train a LoRA adapter on reference images for style consistency.
+
+        Training on Mac mini M4: ~20-30 minutes for 50-100 reference images.
+        Result saved to data/assets/lora/{style_name}.safetensors
+        """
+        ...
+```
+
+**Style consistency via LoRA:**
+
+A LoRA adapter is trained once on a target visual style (Cuphead-like cartoon).
+All subsequent generations use this LoRA, ensuring that the desk, the lamp,
+the avatar, and the room background all share the same artistic style.
+
+```
+First launch:
+  1. Download base SD model (one-time, ~6 GB)
+  2. Train LoRA on reference style images (~20-30 min)
+     - Reference: Cuphead-style cartoon art samples
+     - Saved to data/assets/lora/bob_style.safetensors
+  3. All Genesis asset generation uses this LoRA
+
+Later (evolution):
+  - Bob can re-train LoRA with evolved style preferences
+  - Individual assets can be regenerated without full re-generation
+  - New furniture/clothing uses the same LoRA for consistency
+```
+
+**Asset directory structure (generated during Genesis):**
+
+```
+data/assets/
+├── avatar/
+│   ├── head.png                    # Skeleton2D part
+│   ├── torso.png
+│   ├── arm_left.png
+│   ├── arm_right.png
+│   ├── leg_left.png
+│   ├── leg_right.png
+│   └── metadata.json               # Generation params, for reproducibility
+├── furniture/
+│   ├── desk_01.png
+│   ├── armchair_01.png
+│   ├── bookshelf_01.png
+│   ├── lamp_01.png
+│   └── ...
+├── room/
+│   ├── background_main.png
+│   ├── background_parallax_1.png   # Near layer
+│   ├── background_parallax_2.png   # Far layer
+│   └── window_view.png
+├── clothing/
+│   ├── hoodie_blue.png
+│   ├── tshirt_red.png
+│   └── ...
+└── lora/
+    └── bob_style.safetensors       # Trained style adapter
+```
+
 #### Base Modes (available from Genesis)
 
 | Mode | Description | Bob's position | Camera |
@@ -3437,7 +3745,7 @@ For these cases:
 | `live_tracking` | Talking to the user | Walked to the "screen", looking at camera | Close-up |
 | `sleeping` | Night mode | In armchair/on bed, dimmed light | Dimmed |
 
-### 5.4.1. Behavior Evolution (Behavior Registry)
+### 5.4.3. Behavior Evolution (Behavior Registry)
 
 Bob's behaviors **are not fixed** -- they are tied to objects in the room
 and appear/disappear along with them. Bob can **create new behaviors
@@ -4173,7 +4481,10 @@ state_versioning:
 | **Vector search** | FAISS / ChromaDB | Local, fast, serverless |
 | **Telegram** | python-telegram-bot | Mature library, asyncio support |
 | **ADB** | adb (cli) + python wrapper | Standard tool for Android |
-| **Avatar (client)** | Godot 4 (GDScript) | Open source, 2D/3D, native Android, WebSocket |
+| **Asset generation** | Stable Diffusion (SDXL/Flux) via MLX | Local, free, no API costs; generates all visual assets during Genesis |
+| **Style consistency** | LoRA (trained locally) | Ensures all generated sprites share a unified cartoon style (Cuphead reference) |
+| **Avatar animation** | Skeleton2D (Godot built-in) | Skeletal 2D animation: one rigged model, infinite animations via keyframes |
+| **Avatar (client)** | Godot 4 (GDScript) | Open source, 2D shell-renderer, native Android, WebSocket, parallax depth |
 | **Camera** | OBSBOT SDK / UVC | PTZ control, auto-tracking |
 | **Microphone** | ReSpeaker XVF3800 (USB) | DoA, VAD, beamforming out of the box |
 | **Dependency manager** | uv | Fast, reliable, replacement for pip + virtualenv |
@@ -4271,24 +4582,28 @@ state_versioning:
 
 **Readiness criterion:** Bob works on goals autonomously, reflects once per hour. Has persistent tastes, mood affects behavior, can reasonably refuse a clothing change or suggest a furniture alternative.
 
-### Phase 5: Tablet Avatar + Genesis Mode (Godot 4) (3-4 weeks)
+### Phase 5: Tablet Avatar + Genesis Mode (Godot 4) (4-5 weeks)
 
-**Goal:** Bob is visible on the tablet, lives in a unique room.
+**Goal:** Bob is visible on the tablet, lives in a unique AI-generated room. All visual assets generated by Stable Diffusion — no hand-drawn art.
 
 | Task | Description |
 |------|-------------|
-| Godot project | Modular room system, avatar with customization |
-| Genesis Mode | "Awakening" — firefly -> awareness (book Bob) -> self-determination -> room + appearance |
+| Godot shell-renderer | Universal 2D renderer: Skeleton2D avatar, parallax room, JSON scene loading |
+| AssetGenerator | Stable Diffusion pipeline: MLX/CoreML inference, LoRA style training, sprite generation |
+| LoRA style training | Train LoRA on Cuphead-like cartoon style for visual consistency |
+| Avatar generation | Generate Skeleton2D parts (head, torso, arms, legs), auto-segmentation |
+| Furniture generation | Generate furniture sprites per Bob's decisions, consistent style via LoRA |
+| Room background generation | Generate room backgrounds (walls, floor, window views) |
+| Genesis Mode | Full awakening narrative: CLI → peripherals → tablet → energy blob → self-determination → materialization |
 | Awakening Phase | Awakening phase (48h): imprinting, introduction, phantom moments |
 | Phantom Preferences | Phantom preferences system (coffee, sunsets, books) |
-| Asset system | Set of modular sprites: furniture, decor, clothing |
 | WebSocket client | Game state synchronization |
-| Behavior Registry | Basic behaviors + binding to objects |
+| Behavior Registry | Basic behaviors + binding to objects, skeletal animations |
 | Window Service | Real weather/time outside the window (geolocation) |
 | Audio playback | TTS playback on the tablet |
 | Scene modification | Bob can change the room and add behaviors |
 
-**Readiness criterion:** A clean launch creates a unique Bob with a unique room. Bob visually lives on the tablet, his behaviors are tied to objects.
+**Readiness criterion:** A clean launch creates a unique Bob with unique AI-generated visuals and room. No hand-drawn assets used. Bob visually lives on the tablet with skeletal animations, his behaviors are tied to objects. Asset generation takes ~30-40 min during Genesis.
 
 ### Phase 6: Self-improvement + Fine-tune (ongoing)
 
@@ -4401,6 +4716,7 @@ bob/
 │   │   ├── phantom_preferences.py # Phantom Preferences
 │   │   ├── room_generator.py      # Room generation
 │   │   ├── appearance_generator.py # Appearance generation
+│   │   ├── asset_generator.py     # AI asset generation (Stable Diffusion)
 │   │   └── window_service.py      # Weather/time outside the window
 │   │
 │   ├── behaviors/                  # Behavior system
@@ -4469,6 +4785,19 @@ bob/
 │   │   └── eval_results/          # Evaluation results
 │   ├── behaviors/                 # Registered behaviors
 │   │   └── registry.json          # Current behavior set
+│   ├── assets/                    # AI-generated visual assets
+│   │   ├── avatar/                # Generated avatar parts (for Skeleton2D)
+│   │   │   ├── head.png
+│   │   │   ├── torso.png
+│   │   │   ├── arm_left.png
+│   │   │   ├── arm_right.png
+│   │   │   ├── leg_left.png
+│   │   │   └── leg_right.png
+│   │   ├── furniture/             # Generated furniture sprites
+│   │   ├── room/                  # Generated room backgrounds
+│   │   ├── clothing/              # Generated clothing variants
+│   │   └── lora/                  # Trained LoRA adapter for visual style
+│   │       └── bob_style.safetensors
 │   ├── audit/                     # Audit logs
 │   └── vision/
 │       └── snapshots/             # Camera snapshots
@@ -4658,7 +4987,7 @@ successful concepts:
 | 8 | Is integration with Home Assistant / other IoT platforms needed in early phases? | Low | Open |
 | 9 | How should Bob propose changes to his own code via Claude Code CLI: auto-commit (with approval) or via PR/suggestion to the user? | High | Open |
 | 10 | Is reflection data sufficient for LoRA fine-tune, or is additional collection needed via special dialogs? Minimum ~100 pairs | Medium | Open |
-| 11 | How to organize the Godot asset pool (furniture, clothing, object sprites) so that Genesis can choose from them? Separate asset pack or procedural generation? | High | Open |
+| 11 | ~~How to organize the Godot asset pool?~~ | High | **Resolved**: AI-generated via local Stable Diffusion during Genesis (see 5.4.2) |
 | 12 | Is a system of "animation primitives" (idle, walk, sit, reach) needed from which BehaviorRegistry composes complex behaviors? | Medium | Open |
 | 13 | How to test Genesis Mode: deterministic seed for CI or manual testing only? | Medium | Open |
 | 14 | How many taste axes are optimal? Too few -- flat profile, too many -- noise. Start with ~15 axes and calibrate? | Medium | Open |
@@ -4671,7 +5000,11 @@ successful concepts:
 | 21 | Does Bob need to "re-read the book" (loading book text as context) for more accurate references, or is book_quotes.yaml sufficient? | Low | Open |
 | 22 | How to visualize the awakening phase on the tablet: speech bubbles with inner monologue, confusion animations, or both? | High | Open |
 | 23 | How to detect if user is actively using Claude Code CLI? Process check vs lock file vs both? | High | Open |
-| 24 | What is the minimum viable sprite/animation set for the Godot shell-renderer? | Medium | Open |
+| 24 | ~~What is the minimum viable sprite/animation set for the Godot shell-renderer?~~ | Medium | **Resolved**: AI-generated via Stable Diffusion, no hand-drawn assets (see 5.4.2) |
 | 25 | How should SkillDomain versioning work when Bob upgrades a domain? | Medium | Open |
 | 26 | Should Bob's self-created SkillDomains go through a "probation" period before full trust? | High | Open |
 | 27 | How to handle SkillDomain dependency conflicts (two domains need same resource)? | Medium | Open |
+| 28 | What LoRA training dataset to use for establishing Bob's base visual style? Cuphead-like cartoon or another reference? | High | Open |
+| 29 | How to ensure visual consistency across AI-generated sprites (furniture, avatar parts, room elements)? | High | Open |
+| 30 | How to auto-segment AI-generated character image into Skeleton2D parts (head, torso, arms, legs)? | Medium | Open |
+| 31 | What is the optimal sprite resolution for tablet display? 512x512 per asset or higher? | Medium | Open |
