@@ -1,0 +1,20 @@
+version: 3
+
+tags:
+  layer-api: [api]
+  layer-domain: [core, mind, memory, genesis, behaviors, services, skills, security, llm]
+
+rules:
+  - name: no-domain-imports-api
+    description: "Domain packages must not depend on API layer"
+    severity: error
+    deny:
+      from: { tag: layer-domain }
+      to: { tag: layer-api }
+
+  - name: no-domain-cycles
+    description: "No circular dependencies between domains"
+    severity: error
+    forbid_cycles:
+      refs: [core, mind, memory, genesis, behaviors, services, skills, security, llm, api]
+      edge_kind: depends_on

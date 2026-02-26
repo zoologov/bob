@@ -1,0 +1,120 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "bob"
+version = "0.1.0"
+description = "Bob — autonomous home agent inspired by 'We Are Legion (We Are Bob)'"
+readme = "README.md"
+requires-python = ">=3.12"
+license = "MIT"
+authors = [{ name = "v.zoologov" }]
+
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.34",
+    "pydantic>=2.10",
+    "pyyaml>=6.0",
+    "aiohttp>=3.11",
+    "aiosqlite>=0.21",
+    "websockets>=14.0",
+    "python-telegram-bot>=21.0",
+]
+
+[project.optional-dependencies]
+ml = [
+    "torch>=2.5",
+    "transformers>=4.47",
+    "sentence-transformers>=3.3",
+]
+voice = [
+    "faster-whisper>=1.1",
+    "kokoro>=0.9",
+]
+vision = [
+    "ultralytics>=8.3",          # YOLOv8
+    "opencv-python-headless>=4.10",
+    "open-clip-torch>=2.29",
+]
+dev = [
+    "pytest>=8.3",
+    "pytest-cov>=6.0",
+    "pytest-asyncio>=0.25",
+    "ruff>=0.9",
+    "mypy>=1.14",
+    "pre-commit>=4.0",
+]
+all = ["bob[ml,voice,vision,dev]"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/bob"]
+
+# --- Ruff ---
+
+[tool.ruff]
+target-version = "py312"
+line-length = 99
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = [
+    "F",      # pyflakes
+    "E", "W", # pycodestyle
+    "I",      # isort
+    "N",      # pep8-naming
+    "UP",     # pyupgrade
+    "B",      # flake8-bugbear
+    "A",      # flake8-builtins
+    "C4",     # flake8-comprehensions
+    "DTZ",    # flake8-datetimez
+    "T20",    # flake8-print
+    "SIM",    # flake8-simplify
+    "TCH",    # flake8-type-checking
+    "RUF",    # ruff-specific
+    "PT",     # flake8-pytest-style
+    "S",      # flake8-bandit (security)
+    "ARG",    # flake8-unused-arguments
+    "PL",     # pylint
+]
+ignore = [
+    "PLR0913",  # too many arguments — domain models may need them
+    "S101",     # assert in tests is fine
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = ["S101", "ARG001", "PLR2004"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["bob"]
+
+# --- MyPy ---
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+disallow_any_generics = true
+check_untyped_defs = true
+no_implicit_reexport = true
+
+[[tool.mypy.overrides]]
+module = ["ultralytics.*", "open_clip.*", "faster_whisper.*", "kokoro.*"]
+ignore_missing_imports = true
+
+# --- Pytest ---
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+addopts = [
+    "--strict-markers",
+    "--strict-config",
+    "-ra",
+]
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "integration: marks integration tests",
+]

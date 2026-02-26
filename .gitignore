@@ -1,0 +1,65 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+*.egg
+dist/
+build/
+.eggs/
+
+# Virtual environment
+.venv/
+venv/
+env/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Testing / Coverage
+.coverage
+.coverage.*
+htmlcov/
+.pytest_cache/
+
+# MyPy
+.mypy_cache/
+
+# Ruff
+.ruff_cache/
+
+# Beadloom (DB is generated, not tracked)
+.beadloom/beadloom.db
+
+# MCP config (contains absolute local paths)
+.mcp.json
+
+# Data directory (separate git repo for state)
+data/
+
+# Secrets / env
+.env
+.env.*
+*.pem
+*.key
+
+# Ollama models (large binaries)
+models/
+
+# Godot build artifacts
+avatar/.godot/
+avatar/export/
+*.import
+
+# Logs
+*.log
+logs/

@@ -1,0 +1,100 @@
+nodes:
+- ref_id: core
+  kind: domain
+  summary: 'Agent runtime: event loop, heartbeat, config, event bus'
+  source: src/bob/core
+  docs:
+  - docs/domains/core/README.md
+- ref_id: mind
+  kind: domain
+  summary: 'Cognitive layer: Goal Engine, Planner, Reflection, Self-Improvement, Taste,
+    Mood, Negotiation'
+  source: src/bob/mind
+  docs:
+  - docs/domains/mind/README.md
+- ref_id: memory
+  kind: domain
+  summary: 'Memory system: episodic, semantic, structured state, SOUL'
+  source: src/bob/memory
+  docs:
+  - docs/domains/memory/README.md
+- ref_id: genesis
+  kind: domain
+  summary: 'Genesis mode: awakening, appearance/room generation, phantom preferences'
+  source: src/bob/genesis
+  docs:
+  - docs/domains/genesis/README.md
+- ref_id: behaviors
+  kind: domain
+  summary: 'Behavior registry: object-linked behaviors, appearance evolution'
+  source: src/bob/behaviors
+  docs:
+  - docs/domains/behaviors/README.md
+- ref_id: services
+  kind: domain
+  summary: 'Peripheral services: vision, audio, camera, voice, tablet, telegram'
+  source: src/bob/services
+  docs:
+  - docs/domains/services/README.md
+- ref_id: skills
+  kind: domain
+  summary: Hot-reloadable skill modules executed in sandbox
+  source: src/bob/skills
+  docs:
+  - docs/domains/skills/README.md
+- ref_id: security
+  kind: domain
+  summary: Sandbox, approval workflow, rate limiter, audit log
+  source: src/bob/security
+  docs:
+  - docs/domains/security/README.md
+- ref_id: api
+  kind: service
+  summary: FastAPI endpoints + WebSocket for tablet and external clients
+  source: src/bob/api
+- ref_id: llm
+  kind: domain
+  summary: LLM router, Ollama integration, Claude Code bridge
+  source: src/bob/llm
+  docs:
+  - docs/domains/llm/README.md
+edges:
+- src: api
+  dst: core
+  kind: depends_on
+- src: api
+  dst: mind
+  kind: depends_on
+- src: mind
+  dst: core
+  kind: depends_on
+- src: mind
+  dst: memory
+  kind: depends_on
+- src: mind
+  dst: llm
+  kind: depends_on
+- src: genesis
+  dst: mind
+  kind: depends_on
+- src: genesis
+  dst: memory
+  kind: depends_on
+- src: genesis
+  dst: llm
+  kind: depends_on
+- src: behaviors
+  dst: mind
+  kind: depends_on
+- src: services
+  dst: core
+  kind: depends_on
+- src: skills
+  dst: core
+  kind: depends_on
+- src: skills
+  dst: security
+  kind: depends_on
+- src: core
+  dst: llm
+  kind: depends_on

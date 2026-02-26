@@ -1,0 +1,8 @@
+docs_dir: docs
+languages:
+- python
+preset: monolith
+scan_paths:
+- src
+sync:
+  hook_mode: warn
