@@ -435,9 +435,9 @@ What Bob can and cannot do at each development phase:
 | ~~**G5**~~ | ~~Audio output routing~~ | ~~6~~ | ~~**Medium**~~ | **RESOLVED**: `AudioRouter` class added. Three modes: `tablet` (WebSocket → Godot AudioStreamPlayer, fallback to local), `local` (Mac mini pyaudio, fallback to Telegram voice), `both` (simultaneous). PCM 22050 Hz mono chunks streamed over WebSocket. |
 | ~~**G6**~~ | ~~Stable Diffusion model specifics~~ | ~~5.4.2~~ | ~~**Medium**~~ | **RESOLVED**: Pinned models: SD 1.5 (`stable-diffusion-v1-5`), SDXL 1.0 (`stabilityai/stable-diffusion-xl-base-1.0`). Inference via `mflux`. DPM++ 2M Karras scheduler. Steps: 25-30 (quality) / 15-20 (speed). Flux removed (too large for 16GB). |
 | ~~**G7**~~ | ~~LoRA training dataset source~~ | ~~5.4.2~~ | ~~**Medium**~~ | **RESOLVED**: Ship pre-trained base LoRA on public domain 1930s cartoon art (Fleischer Studios). No copyright issues. Bob can retrain LoRA later with evolved preferences (generate candidates → user approves → retrain). |
-| **G8** | EventBus event schema | 7.1 | **Low** | Section 7.1 defines `Event` dataclass and lists example event types, but there's no formal event schema or registry. Which events exist? Who publishes? Who subscribes? A comprehensive event catalog would prevent integration issues. |
-| **G9** | Configuration loading order | 3.6, 4 | **Low** | Multiple YAML configs exist (`bob.yaml`, `llm.yaml`, `voice.yaml`, `vision.yaml`, `security.yaml`, `bootstrap.yaml`, per-domain `config.yaml`). Loading order, override precedence, and validation are not defined. |
-| **G10** | Error handling strategy | Multiple | **Low** | No global error handling strategy defined. What happens when a skill fails? When Ollama is unresponsive? When the tablet disconnects mid-operation? Individual components handle errors, but there's no system-wide resilience pattern. |
+| ~~**G8**~~ | ~~EventBus event schema~~ | ~~7.1~~ | ~~**Low**~~ | **RESOLVED**: Event catalog table added to 7.1 — 23 event types with publisher, subscribers, payload keys. Dot-separated namespaces, wildcard subscriptions. |
+| ~~**G9**~~ | ~~Configuration loading order~~ | ~~3.6, 4~~ | ~~**Low**~~ | **RESOLVED**: Section 3.8.1 added — 10-level loading order (defaults → YAML → env vars → CLI), `ConfigLoader` class, `${...}` variable substitution. |
+| ~~**G10**~~ | ~~Error handling strategy~~ | ~~Multiple~~ | ~~**Low**~~ | **RESOLVED**: Section 3.8.2 added — 3 patterns (retry, circuit breaker, graceful degradation), per-component strategy table, `CircuitBreaker` class. |
 
 ### 6.2. User Experience Gaps
 
@@ -581,9 +581,9 @@ What Bob can and cannot do at each development phase:
 | # | Improvement | Section | Details |
 |---|-------------|---------|---------|
 | ~~**I1**~~ | ~~Add startup flow diagram~~ | ~~After 3.6~~ | **RESOLVED**: New section 3.7 with full ASCII flow diagram + `main()` entry point code |
-| **I2** | Add comprehensive event catalog | 7.1 | Table: event_type, publisher, subscribers, payload schema |
-| **I3** | Add config loading specification | 3 or 4 | Loading order, override precedence, environment variables |
-| **I4** | Add error handling patterns | 7 or 8 | Circuit breaker for Ollama, reconnect for WebSocket, retry for SD |
+| ~~**I2**~~ | ~~Add comprehensive event catalog~~ | ~~7.1~~ | **RESOLVED**: 23-event catalog table in section 7.1 |
+| ~~**I3**~~ | ~~Add config loading specification~~ | ~~3 or 4~~ | **RESOLVED**: Section 3.8.1 — ConfigLoader with 10-level precedence |
+| ~~**I4**~~ | ~~Add error handling patterns~~ | ~~7 or 8~~ | **RESOLVED**: Section 3.8.2 — retry/circuit breaker/graceful degradation + per-component table |
 | ~~**I5**~~ | ~~Add imprint_weight integration spec~~ | ~~5.1.2~~ | **RESOLVED**: 4 integration points added (TasteEvolution, MoodEngine, ExperienceLog, ReflectionLoop) with integration summary table |
 | ~~**I6**~~ | ~~Add Godot APK build spec~~ | ~~5.4 or 11~~ | **RESOLVED**: Section 5.4.2a added — build process, APK characteristics, rebuild triggers |
 | ~~**I7**~~ | ~~Add tablet lifecycle spec~~ | ~~5.4~~ | **RESOLVED**: Section 5.4.2b added — TabletState enum, heartbeat, state transitions, reconnection protocol |

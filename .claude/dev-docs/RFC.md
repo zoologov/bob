@@ -2841,6 +2841,91 @@ mode immediately. If Genesis was interrupted, Bob offers to resume from the
 last completed stage (see section 5.1.1 for details). No data is lost (state
 is persisted in SQLite + YAML + JSON files).
 
+### 3.8. Configuration Loading and Error Handling
+
+#### 3.8.1. Configuration Loading Order
+
+Bob uses multiple YAML configuration files. They are loaded in a defined
+order with clear override precedence.
+
+**Loading order (later overrides earlier):**
+
+```
+1. Defaults (hardcoded in Python dataclasses)
+2. config/bob.yaml          ← core settings
+3. config/llm.yaml          ← LLM/Ollama/Claude Code
+4. config/voice.yaml        ← STT/TTS/audio
+5. config/vision.yaml       ← camera/YOLO
+6. config/security.yaml     ← permissions/rate limits
+7. config/bootstrap.yaml    ← first-launch state (read-only after setup)
+8. bob/skills/*/config.yaml ← per-domain settings
+9. Environment variables    ← BOB_LANGUAGE=ru, BOB_LLM_MODEL=...
+10. CLI arguments           ← bob start --language=ru
+```
+
+**Variable substitution:** YAML files support `${bob.language}` syntax to
+reference values from `bob.yaml`. Resolution happens at load time.
+
+```python
+class ConfigLoader:
+    """Loads and merges configuration from multiple YAML files."""
+
+    def __init__(self, config_dir: Path = Path("config")) -> None: ...
+
+    def load(self) -> dict:
+        """Load all configs in defined order, merge, and resolve variables.
+
+        1. Load each YAML file in order
+        2. Deep-merge (later values override earlier)
+        3. Resolve ${...} variable references
+        4. Apply environment variable overrides (BOB_ prefix)
+        5. Apply CLI argument overrides
+        6. Validate required fields
+        """
+        ...
+```
+
+#### 3.8.2. Error Handling Strategy
+
+Bob uses three resilience patterns based on error type:
+
+| Pattern | When | Behavior |
+|---------|------|----------|
+| **Retry** | Transient failures (network, SD generation) | Retry N times with backoff, then fail gracefully |
+| **Circuit Breaker** | Degraded service (Ollama unresponsive) | After N failures, stop trying for cooldown period |
+| **Graceful Degradation** | Component offline (no tablet, no camera) | Continue with reduced functionality |
+
+**Per-component error strategy:**
+
+| Component | Error type | Strategy | Fallback |
+|-----------|-----------|----------|----------|
+| Ollama 7B | Unresponsive | Circuit breaker (3 fails, 60s cooldown) | Use Qwen2.5-0.5B |
+| Ollama 0.5B | Unresponsive | Retry 3x, 2s backoff | Log error, queue task |
+| Claude Code CLI | Unavailable | Queue task (see 4.2.1) | Reflect with local LLM |
+| Stable Diffusion | Generation fail | Retry 3x (see 5.4.2) | Use placeholder assets |
+| WebSocket (tablet) | Disconnect | Reconnect with backoff (see 5.4.2b) | Headless mode |
+| Telegram API | Network error | Retry 3x, 5s backoff | Queue messages |
+| Camera/VisionBridge | Device lost | Retry on next scan cycle | Operate without vision |
+| STT (Whisper) | Transcription fail | Retry 1x | Ask user to repeat |
+
+**Circuit breaker implementation:**
+
+```python
+@dataclass
+class CircuitBreaker:
+    """Prevents cascading failures by temporarily disabling a service."""
+
+    failure_threshold: int = 3        # failures before opening circuit
+    cooldown_sec: float = 60.0        # time before retrying
+    _failure_count: int = 0
+    _state: str = "closed"            # closed | open | half_open
+    _last_failure: datetime | None = None
+
+    def record_failure(self) -> None: ...
+    def record_success(self) -> None: ...
+    def can_execute(self) -> bool: ...
+```
+
 ---
 
 ## 4. LLM Layer
@@ -4914,6 +4999,37 @@ Event(
     source="agent_runtime",
 )
 ```
+
+**Event catalog:**
+
+| Event type | Publisher | Subscribers | Payload keys |
+|------------|-----------|-------------|-------------|
+| `vision.person_detected` | VisionBridge | MoodEngine, AgentRuntime | confidence, bbox |
+| `vision.person_left` | VisionBridge | MoodEngine | — |
+| `vision.object_recognized` | VisionBridge | TasteEngine, GoalEngine | object_class, confidence |
+| `audio.speech_start` | VoiceBridge | AgentRuntime | vad_confidence |
+| `audio.speech_end` | VoiceBridge | AgentRuntime | — |
+| `voice.transcript` | VoiceBridge | AgentRuntime, ExperienceLog | text, language |
+| `voice.positive_interaction` | AgentRuntime | MoodEngine | — |
+| `voice.negative_interaction` | AgentRuntime | MoodEngine | — |
+| `telegram.message` | TelegramDomain | AgentRuntime | chat_id, text, from |
+| `goal.created` | GoalEngine | AgentRuntime | goal_id, title, priority |
+| `goal.completed` | GoalEngine | MoodEngine, ReflectionLoop | goal_id, title |
+| `goal.failed` | GoalEngine | MoodEngine, ReflectionLoop | goal_id, reason |
+| `mood.changed` | MoodEngine | AgentRuntime, TabletBridge | mood_state |
+| `reflection.completed` | ReflectionLoop | TasteEngine, GoalEngine | entry_id, insights |
+| `tablet.discovered` | PeripheralScanner | AgentRuntime | ip, port |
+| `tablet.connected` | TabletBridge | AudioRouter, AgentRuntime | — |
+| `tablet.disconnected` | TabletBridge | AudioRouter, AgentRuntime | reason |
+| `tablet.touch` | TabletBridge | AgentRuntime | target, action, position |
+| `peripheral.discovered` | PeripheralScanner | AgentRuntime | type, device_id |
+| `system.heartbeat` | AgentRuntime | — (monitoring) | uptime_sec, memory_mb |
+| `system.error` | Any | MoodEngine, AgentRuntime | component, error, severity |
+| `claude_code.lock_acquired` | ClaudeCodeLock | AgentRuntime | task_description |
+| `claude_code.lock_released` | ClaudeCodeLock | AgentRuntime | — |
+
+Event types use dot-separated namespaces. Wildcard subscriptions supported
+(e.g., `vision.*` catches all vision events).
 
 ### 7.2. Between processes: FastAPI WebSocket
 
