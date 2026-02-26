@@ -111,54 +111,17 @@ The PRD (v0.0.1, 322 lines) is the business vision document. The RFC (5011 lines
 
 **RESOLVED**: GenesisMode.run() docstring rewritten to explicitly list all 9 stages (0-8): CONSCIOUSNESS, GAINING SENSES, FINDING A HOME, ENERGY BLOB, REALIZATION, SELF-DETERMINATION, ASSET GENERATION, MATERIALIZATION, WRITING TO SOUL.
 
-### C4: `_generate_appearance()` Return Format vs Skeleton2D
+### ~~C4: `_generate_appearance()` Return Format vs Skeleton2D~~ **RESOLVED**
 
-**Problem:** `_generate_appearance()` (line 2975) returns JSON describing appearance attributes (body_type, hair style/color, facial_hair, clothing). This format was designed for a pre-built character system (selectable sprites).
+**RESOLVED:** Updated `_generate_appearance()` to return a description dict for AssetGenerator. Each key maps to a Skeleton2D body part and serves as prompt context for per-part SD generation. Includes `overall`, per-part descriptions (`head`, `torso`, `arms`, `legs`), `accessories`, `color_palette`, and `style_notes`. Flow: LLM → description dict → `AssetGenerator.generate_avatar_parts()` → per-part SD with LoRA → Godot Skeleton2D.
 
-But with the new Skeleton2D + AI generation approach (section 5.4.2), appearance should be a text description that feeds into `AssetGenerator.generate_avatar_parts()`, not a JSON for Godot rendering.
+### ~~C5: Section 4.2.1 and 8.4 Overlap~~ **RESOLVED**
 
-**Current flow (implied):**
-```
-_generate_appearance() → JSON → ??? → Skeleton2D avatar
-```
+**RESOLVED:** De-duplicated. 4.2.1 = usage workflow (permission flow diagram, degradation table, queue). 8.4 = security mechanism (ClaudeCodeLock class, detection, graceful interrupt, Negotiation Engine). Duplicated diagram removed from 8.4, cross-refs added in both directions, duplicated config values removed from security.yaml with pointer to llm.yaml.
 
-**Expected flow:**
-```
-_generate_appearance() → appearance_description dict
-    → AssetGenerator.generate_avatar_parts(appearance_description)
-    → Skeleton2D parts (head, torso, arms, legs images)
-    → Godot shell-renderer loads parts
-```
+### ~~C6: AwakeningPhase.imprint_weight — Unconnected~~ **RESOLVED**
 
-**Proposed resolution:** Update `_generate_appearance()` to return a description dict that AssetGenerator can consume. The JSON format should describe *what Bob looks like* (for LLM/human understanding), not *how to render him* (that's AssetGenerator's job).
-
-### C5: Section 4.2.1 and 8.4 Overlap
-
-**Problem:** Claude Code permission model is described in two places:
-- Section 4.2.1: Permission flow, graceful degradation table, queue mechanism (`QueuedClaudeTask`, `ClaudeCodeTaskQueue`), config yaml
-- Section 8.4: `ClaudeCodeLock` class, permission protocol diagram, graceful interrupt, Negotiation Engine integration, config yaml
-
-Both sections contain unique information AND overlapping diagrams. The permission protocol flow is essentially duplicated.
-
-**Proposed resolution:** Section 4.2.1 should focus on *how Bob uses Claude Code* (integration, fallbacks, queue). Section 8.4 should focus on *how access is secured* (lock mechanism, detection, interrupt). Remove the duplicated flow diagram from one section and add cross-references. Specifically:
-- Move `QueuedClaudeTask` and `ClaudeCodeTaskQueue` to 4.2.1 (usage)
-- Keep `ClaudeCodeLock` in 8.4 (security)
-- Permission flow diagram: keep in 4.2.1, reference from 8.4
-
-### C6: AwakeningPhase.imprint_weight — Unconnected
-
-**Problem:** `AwakeningPhase` dataclass (line 2999) defines `imprint_weight: float` (default 2.0) — meaning first impressions carry double weight. But no system references this field:
-- TasteEvolution doesn't check if awakening is active
-- MoodEngine doesn't multiply event impact by imprint_weight
-- ExperienceLog doesn't use it in `log_interaction()`
-
-**Question:** Which systems should use `imprint_weight` and how?
-
-**Proposed resolution:** Add explicit integration points:
-- `TasteEvolution.reinforce()` should accept an optional `weight` parameter, defaulting to 1.0
-- `MoodEngine.process_event()` should multiply mood deltas by imprint_weight during awakening
-- `ExperienceLog.log_interaction()` should record `imprint_active: bool` for later analysis
-- `ReflectionLoop.reflect()` should weight awakening-period experiences higher in insights
+**RESOLVED:** Added 4 integration points: `TasteEvolution.reinforce(weight=)` for stronger taste anchors, `MoodEngine.process_event(imprint_weight=)` for amplified emotional impact, `ObjectExperience.imprint_active` field for marking formative experiences, `ReflectionLoop.reflect()` adds awakening context to LLM prompt. Integration summary table added to section 5.1.2.
 
 ### ~~C7: Rate Limit Naming~~
 
@@ -360,12 +323,12 @@ Both sections contain unique information AND overlapping diagrams. The permissio
 | ~~**F3**~~ | ~~bob-soul submodule initialization missing from setup~~ | ~~B (Setup)~~ | ~~Genesis can't load templates~~ | **RESOLVED**: Step [4/7] in bootstrap — git submodule update --init + template verification |
 | ~~**F4**~~ | ~~Python package installation not described~~ | ~~B (Setup)~~ | ~~User doesn't know how to install dependencies~~ | **RESOLVED**: Added `pip install -e .` before `bob setup` in section 3.6 |
 | ~~**F5**~~ | ~~Genesis trigger mechanism undefined~~ | ~~C (Genesis)~~ | ~~Unclear when/how Genesis starts~~ | **RESOLVED**: New section 3.7 Startup Flow — `bob start` checks bootstrap.yaml → SOUL.md → GenesisMode or AgentRuntime. ASCII diagram + `main()` code. |
-| **F6** | APK source/build process undefined | C (Genesis) | Stage 2 needs shell-renderer APK | Define: APK is pre-built in CI or built from `avatar/` directory |
+| ~~**F6**~~ | ~~APK source/build process undefined~~ | ~~C (Genesis)~~ | ~~Stage 2 needs shell-renderer APK~~ | **RESOLVED**: APK built via `godot --headless --export-release`, deployed via `adb install`. ~30-50 MB. Rebuild rare (shaders/Godot upgrades only). |
 | ~~**F7**~~ | ~~30-40 min asset generation — user experience undefined~~ | ~~C (Genesis)~~ | ~~User sees nothing during long wait~~ | **RESOLVED**: Bob narrates via Telegram + progress bar + asset previews on tablet (section 5.1.1) |
 | ~~**F8**~~ | ~~SD failure during Genesis — no recovery strategy~~ | ~~C (Genesis)~~ | ~~Genesis stuck at Stage 6~~ | **RESOLVED**: Retry (3x) → placeholder fallback → deferred regeneration via `bob regenerate-assets` (section 5.1.1) |
-| **F9** | Peripheral addition after Genesis | D/E | User adds camera/mic later | Define: Bob should re-scan for peripherals periodically or on command |
+| ~~**F9**~~ | ~~Peripheral addition after Genesis~~ | ~~D/E~~ | ~~User adds camera/mic later~~ | **RESOLVED**: PeripheralScanner re-scans every 30 min (camera, mic) and 5 min (tablet via mDNS). New devices emit `peripheral.discovered` event, no restart needed. |
 | ~~**F10**~~ | ~~Touch interaction on tablet undefined~~ | ~~E (Operation)~~ | ~~User touches tablet — nothing happens?~~ | **RESOLVED**: Touch Interaction spec added to section 5.4 — tap bob (wave), tap object (comment), long press (mood), double tap (walk to) |
-| **F11** | Tablet sleep/wake/battery undefined | E (Operation) | Tablet goes to sleep — what does Bob do? | Define: Bob detects tablet disconnect, operates in headless mode |
+| ~~**F11**~~ | ~~Tablet sleep/wake/battery undefined~~ | ~~E (Operation)~~ | ~~Tablet goes to sleep — what does Bob do?~~ | **RESOLVED**: TabletState enum (CONNECTED/SLEEPING/DISCONNECTED). Heartbeat ping/10s, pong timeout/5s. Bob switches to headless on disconnect, resyncs room_state on reconnect. |
 | **F12** | Bob update/upgrade mechanism undefined | F (Growth) | How does Bob get code updates? | Define: `git pull` + `bob upgrade` command, or self-update via Claude Code |
 
 ---
@@ -467,11 +430,11 @@ What Bob can and cannot do at each development phase:
 |---|-----|-------------------|----------|---------|
 | ~~**G1**~~ | ~~Telegram setup not in bootstrap~~ | ~~3.6, 5.1.1~~ | ~~**High**~~ | **RESOLVED**: Telegram token configuration added as step [5/7] in BootstrapWizard. Token stored in config/bob.yaml, bot_username in bootstrap.yaml. Required component in graceful degradation table. |
 | ~~**G2**~~ | ~~bob-soul submodule lifecycle~~ | ~~3.4.5, 3.6~~ | ~~**High**~~ | **RESOLVED**: bob-soul is a template git submodule included in main repo. BootstrapWizard step [4/7] runs `git submodule update --init` and verifies required template files. |
-| **G3** | Genesis → Headless recovery | 5.1.1 | **Medium** | If Genesis runs in headless mode (no tablet), Stages 3, 6, 7 are skipped. But later when the user connects a tablet, how does Bob "retroactively" generate assets and populate his room? Is there a `bob genesis --visual` command? |
+| ~~**G3**~~ | ~~Genesis → Headless recovery~~ | ~~5.1.1~~ | ~~**Medium**~~ | **RESOLVED**: Auto-detect tablet via mDNS → offer VisualGenesis (Stages 3,6,7 only). Manual command: `bob visual-genesis`. Ask user via Telegram, run only visual stages (personality already exists). |
 | ~~**G4**~~ | ~~Language of Bob's speech~~ | ~~6~~ | ~~**Medium**~~ | **RESOLVED**: Configurable via `config/bob.yaml` `language: "en"` (default). Propagated to STT, TTS, LLM prompts, SOUL.md, Genesis. Russian (`ru`) fully supported. Language architecture table added to section 3.2.1. |
-| **G5** | Audio output routing | 6 | **Medium** | TTS generates audio, but where does it play? Options: tablet speaker, external speaker, Mac mini audio. The routing is not defined. If Bob "is on the tablet," his voice should come from the tablet. But what if no tablet? Mac mini speakers? |
-| **G6** | Stable Diffusion model specifics | 5.4.2 | **Medium** | RFC mentions "SDXL/Flux via MLX" but doesn't specify which exact model, what resolution is optimal, how to handle Mac mini M4's 16GB memory constraint while SD + Ollama are both loaded. Can they coexist in memory? |
-| **G7** | LoRA training dataset source | 5.4.2 | **Medium** | Section says "train LoRA on Cuphead-like cartoon style" but where do the training images come from? The user provides them? Auto-downloaded? Are there copyright concerns with Cuphead? LoRA needs 20-50 reference images. |
+| ~~**G5**~~ | ~~Audio output routing~~ | ~~6~~ | ~~**Medium**~~ | **RESOLVED**: `AudioRouter` class added. Three modes: `tablet` (WebSocket → Godot AudioStreamPlayer, fallback to local), `local` (Mac mini pyaudio, fallback to Telegram voice), `both` (simultaneous). PCM 22050 Hz mono chunks streamed over WebSocket. |
+| ~~**G6**~~ | ~~Stable Diffusion model specifics~~ | ~~5.4.2~~ | ~~**Medium**~~ | **RESOLVED**: Pinned models: SD 1.5 (`stable-diffusion-v1-5`), SDXL 1.0 (`stabilityai/stable-diffusion-xl-base-1.0`). Inference via `mflux`. DPM++ 2M Karras scheduler. Steps: 25-30 (quality) / 15-20 (speed). Flux removed (too large for 16GB). |
+| ~~**G7**~~ | ~~LoRA training dataset source~~ | ~~5.4.2~~ | ~~**Medium**~~ | **RESOLVED**: Ship pre-trained base LoRA on public domain 1930s cartoon art (Fleischer Studios). No copyright issues. Bob can retrain LoRA later with evolved preferences (generate candidates → user approves → retrain). |
 | **G8** | EventBus event schema | 7.1 | **Low** | Section 7.1 defines `Event` dataclass and lists example event types, but there's no formal event schema or registry. Which events exist? Who publishes? Who subscribes? A comprehensive event catalog would prevent integration issues. |
 | **G9** | Configuration loading order | 3.6, 4 | **Low** | Multiple YAML configs exist (`bob.yaml`, `llm.yaml`, `voice.yaml`, `vision.yaml`, `security.yaml`, `bootstrap.yaml`, per-domain `config.yaml`). Loading order, override precedence, and validation are not defined. |
 | **G10** | Error handling strategy | Multiple | **Low** | No global error handling strategy defined. What happens when a skill fails? When Ollama is unresponsive? When the tablet disconnects mid-operation? Individual components handle errors, but there's no system-wide resilience pattern. |
@@ -492,10 +455,10 @@ What Bob can and cannot do at each development phase:
 | # | Gap | Risk |
 |---|-----|------|
 | ~~**T1**~~ | ~~Memory budget: SD + Ollama on 16GB M4~~ | **RESOLVED**: Hybrid ModelManager (RFC 3.2.4) — SD 1.5 coexists with Ollama 7B for lightweight tasks; SDXL swaps out Ollama 7B for heavy generation. |
-| **T2** | Skeleton2D auto-segmentation from SD output | No proven pipeline for splitting AI-generated character into bone-compatible parts |
-| **T3** | LoRA style consistency across different asset types | LoRA trained on characters may not generalize to furniture and rooms |
-| **T4** | Godot shell-renderer APK size and build pipeline | Not defined. Godot export for Android, CI build, APK signing |
-| **T5** | WebSocket reliability between Mac mini and tablet | Wi-Fi drops, tablet sleeps, reconnection strategy |
+| ~~**T2**~~ | ~~Skeleton2D auto-segmentation from SD output~~ | **RESOLVED**: Generate each body part separately (not segment from whole). Per-part prompts with shared LoRA + transparent background + joint overlap margins. Avoids unreliable segmentation entirely. |
+| ~~**T3**~~ | ~~LoRA style consistency across different asset types~~ | **RESOLVED**: Single base style LoRA + per-type prompt engineering. LoRA handles style (lines, palette); prompts handle subject matter (furniture vs character vs room). |
+| ~~**T4**~~ | ~~Godot shell-renderer APK size and build pipeline~~ | **RESOLVED**: ~30-50 MB, `godot --headless --export-release`, debug/release keystore, `adb install` deployment |
+| ~~**T5**~~ | ~~WebSocket reliability between Mac mini and tablet~~ | **RESOLVED**: Heartbeat (ping/10s, pong timeout/5s, 3 misses → DISCONNECTED), exponential backoff reconnect, full room_state resync on reconnect |
 
 ---
 
@@ -595,8 +558,8 @@ What Bob can and cannot do at each development phase:
 | ~~**R3**~~ | ~~Add Telegram token setup to bootstrap flow~~ | ~~**P0**~~ | **RESOLVED** |
 | ~~**R4**~~ | ~~Define bob-soul submodule creation/initialization flow~~ | ~~**P0**~~ | **RESOLVED** |
 | ~~**R5**~~ | ~~Fix GenesisMode.run() docstring to match 9-stage narrative~~ | ~~**P1**~~ | **RESOLVED** |
-| **R6** | Update `_generate_appearance()` return type for AssetGenerator compatibility | **P1** | 30 min |
-| **R7** | De-duplicate sections 4.2.1 and 8.4 (keep unique info, add cross-refs) | **P1** | 1 hour |
+| ~~**R6**~~ | ~~Update `_generate_appearance()` return type for AssetGenerator compatibility~~ | ~~**P1**~~ | **RESOLVED** |
+| ~~**R7**~~ | ~~De-duplicate sections 4.2.1 and 8.4 (keep unique info, add cross-refs)~~ | ~~**P1**~~ | **RESOLVED** |
 | ~~**R8**~~ | ~~Move AssetGenerator from `genesis/` to `services/` in repo structure~~ | ~~**P1**~~ | **RESOLVED** |
 | ~~**R9**~~ | ~~Add Telegram API and Open-Meteo to security network whitelist~~ | ~~**P1**~~ | **RESOLVED** |
 | ~~**R10**~~ | ~~Rename rate limit keys from `claude_api_calls` to `claude_code_invocations`~~ | ~~**P2**~~ | **RESOLVED** |
@@ -609,9 +572,9 @@ What Bob can and cannot do at each development phase:
 | ~~**D2**~~ | ~~Touch interaction on tablet~~ | ~~Ignore / Simple reactions / Full interaction~~ | **RESOLVED**: Simple reactions — tap (wave), tap object (comment), long press (mood), double tap (walk). Expandable later. |
 | ~~**D3**~~ | ~~Genesis interruption recovery~~ | ~~Restart from scratch / Resume from last stage~~ | **RESOLVED**: Resume from last stage via genesis_progress.json. User chooses Resume/Restart/Quit. |
 | ~~**D4**~~ | ~~Asset generation user experience~~ | ~~Silent wait / Progress bar / Bob narrates process~~ | **RESOLVED**: Bob narrates via Telegram + progress bar + asset previews on tablet. SD failure: retry 3x → placeholder → deferred regeneration. |
-| **D5** | Headless → visual transition | Manual command / Auto-detect tablet | Auto-detect tablet connection → offer visual Genesis |
+| ~~**D5**~~ | ~~Headless → visual transition~~ | ~~Manual command / Auto-detect tablet~~ | **RESOLVED**: Auto-detect via mDNS + `bob visual-genesis` manual command |
 | ~~**D6**~~ | ~~SD + Ollama memory management~~ | ~~Swap models / Reduce model sizes / Sequential loading~~ | **RESOLVED**: Hybrid ModelManager (RFC 3.2.4) — three profiles: NORMAL, LIGHTWEIGHT_GEN (SD 1.5 + Ollama), HEAVY_GEN (SDXL, Ollama 7B unloaded) |
-| **D7** | LoRA style reference | Cuphead assets / Custom art / Public domain cartoons | Public domain cartoon assets to avoid copyright issues |
+| ~~**D7**~~ | ~~LoRA style reference~~ | ~~Cuphead assets / Custom art / Public domain cartoons~~ | **RESOLVED**: Pre-trained base LoRA on public domain 1930s cartoon art (Fleischer Studios). Evolvable via retraining. |
 
 ### 8.3. RFC Improvements for Implementation Clarity
 
@@ -621,9 +584,9 @@ What Bob can and cannot do at each development phase:
 | **I2** | Add comprehensive event catalog | 7.1 | Table: event_type, publisher, subscribers, payload schema |
 | **I3** | Add config loading specification | 3 or 4 | Loading order, override precedence, environment variables |
 | **I4** | Add error handling patterns | 7 or 8 | Circuit breaker for Ollama, reconnect for WebSocket, retry for SD |
-| **I5** | Add imprint_weight integration spec | 5.1.2 | Exactly which systems use it and how (TasteEvolution, MoodEngine, ExperienceLog) |
-| **I6** | Add Godot APK build spec | 5.4 or 11 | How to build shell-renderer APK: Godot export, CI, signing |
-| **I7** | Add tablet lifecycle spec | 5.4 | Sleep/wake, battery, disconnect/reconnect, Bob's awareness |
+| ~~**I5**~~ | ~~Add imprint_weight integration spec~~ | ~~5.1.2~~ | **RESOLVED**: 4 integration points added (TasteEvolution, MoodEngine, ExperienceLog, ReflectionLoop) with integration summary table |
+| ~~**I6**~~ | ~~Add Godot APK build spec~~ | ~~5.4 or 11~~ | **RESOLVED**: Section 5.4.2a added — build process, APK characteristics, rebuild triggers |
+| ~~**I7**~~ | ~~Add tablet lifecycle spec~~ | ~~5.4~~ | **RESOLVED**: Section 5.4.2b added — TabletState enum, heartbeat, state transitions, reconnection protocol |
 
 ---
 

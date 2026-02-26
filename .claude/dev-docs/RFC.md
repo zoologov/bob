@@ -233,7 +233,7 @@ packages that can be added, removed, or replaced without modifying the core.
 │  ┌────────────────┐  ┌──────────────────┐                              │
 │  │  Ollama        │  │ Stable Diffusion │                              │
 │  │  (Qwen2.5-7B, │  │ (SD 1.5 / SDXL   │                              │
-│  │   Qwen2.5-0.5B)│  │  via MLX)        │                              │
+│  │   Qwen2.5-0.5B)│  │  via mflux)      │                              │
 │  └───────┬────────┘  └────────┬─────────┘                              │
 │          └─────── ModelManager ──────┘  ← manages memory budget        │
 │                                                                         │
@@ -1016,16 +1016,22 @@ class ReflectionLoop:
         1. Collect all actions and results for the period
         2. Collect all errors and failures
         3. Get current mood state from MoodEngine
-        4. Ask LLM to analyze:
+        4. Check if awakening phase is active (via AwakeningManager)
+        5. Ask LLM to analyze:
            - What went well?
            - What went wrong?
            - What patterns are visible?
            - What can be improved?
            - How do I feel? Why?
            - Do I like the current environment?
-        5. Save insights to semantic memory
-        6. Pass results to TasteEngine.evolve() and MoodEngine.update()
-        7. If necessary, create new improvement goals
+           During awakening, add context to LLM prompt:
+           "This is your first day of existence. First impressions
+           are especially formative — pay extra attention to what
+           surprised you, what felt familiar, and what confused you."
+        6. Save insights to semantic memory
+           (awakening-period insights stored with higher relevance weight)
+        7. Pass results to TasteEngine.evolve() and MoodEngine.update()
+        8. If necessary, create new improvement goals
         """
         ...
 
@@ -1316,13 +1322,20 @@ class TasteEvolution:
         axis: str,
         delta: float,
         source: str,
+        weight: float = 1.0,
     ) -> None:
         """Reinforce or weaken a taste axis.
 
         delta > 0: positive experience (like -> like even more)
         delta < 0: negative experience (dislike -> dislike even more)
 
+        Args:
+            weight: Multiplier for delta. During awakening phase,
+                    AwakeningManager passes weight=imprint_weight (2.0)
+                    so first taste evaluations form stronger "anchors."
+
         Rules:
+        - delta is multiplied by weight before applying
         - delta is scaled inversely proportional to conviction:
           high conviction -> moves more slowly
         - conviction grows with each reinforcement (experience_count++)
@@ -1381,6 +1394,7 @@ class ObjectExperience:
     reflection_comment: str | None      # comment from reflection
     user_reaction: str | None           # user reaction (if any)
     score_delta: float                  # score change (after experience)
+    imprint_active: bool = False        # True during awakening phase (first 48h)
 
 class ExperienceLog:
     """Log of emotional experience with objects and decisions."""
@@ -1574,8 +1588,16 @@ class MoodEngine:
         """Current mood."""
         return self._current
 
-    async def process_event(self, event: "Event") -> MoodState:
+    async def process_event(
+        self, event: "Event", imprint_weight: float = 1.0
+    ) -> MoodState:
         """Update mood based on an event.
+
+        Args:
+            imprint_weight: Multiplier for mood deltas. During awakening
+                            phase, AwakeningManager passes imprint_weight=2.0
+                            so first emotional reactions have stronger impact
+                            on the baseline mood level.
 
         Event-to-mood-impact map:
 
@@ -2938,7 +2960,12 @@ Claude Code CLI is a **shared resource** between Bob and the user. Bob must
 never hijack the CLI while the user is actively working. The permission model
 ensures respectful coexistence.
 
-**Core concept:** `ClaudeCodeLock` (see section 8.4 for full implementation)
+> **Scope split:** This section covers the *usage workflow* — permission flow,
+> degradation, and task queue. The *security mechanism* (`ClaudeCodeLock` class,
+> detection strategy, graceful interrupt, Negotiation Engine) lives in
+> section 8.4.
+
+**Core concept:** `ClaudeCodeLock` (see section 8.4 for implementation)
 provides mutual exclusion. Before every CLI invocation, Bob must acquire
 the lock.
 
@@ -3437,20 +3464,72 @@ class GenesisMode:
         ...
 
     async def _generate_appearance(self) -> dict:
-        """Generate Bob's appearance.
+        """Generate Bob's appearance as a description dict for AssetGenerator.
 
-        Result: JSON for Godot rendering.
+        The LLM generates a natural-language description of what Bob looks like.
+        Each key maps to a Skeleton2D body part and serves as prompt context
+        for AssetGenerator.generate_avatar_parts().
+
+        Result: description dict (NOT rendering instructions).
         {
-            "body_type": "average",
-            "hair": {"style": "short_messy", "color": "#8B4513"},
-            "facial_hair": "stubble",
-            "clothing": {"top": "hoodie", "color": "#2E4057"},
-            "accessories": ["glasses"],
-            "age_appearance": "late_twenties"
+            "overall": "friendly cartoon character, late twenties, warm and approachable",
+            "head": "round face, warm brown eyes, short messy brown hair, friendly smile",
+            "torso": "average build, wearing a dark blue hoodie with rolled-up sleeves",
+            "arms": "average proportions, matching hoodie sleeves, relaxed pose",
+            "legs": "casual dark jeans, matching character proportions",
+            "accessories": ["round glasses with thin frames"],
+            "color_palette": ["#8B4513", "#2E4057", "#F5E6D3", "#333333"],
+            "style_notes": "1930s cartoon feel, bold outlines, expressive features"
         }
+
+        Flow:
+          _generate_appearance() → description dict
+            → AssetGenerator.generate_avatar_parts(description)
+              → per-part SD generation with LoRA + transparent backgrounds
+                → Godot Skeleton2D loads parts
         """
         ...
 ```
+
+#### Headless → Visual Transition (Post-Genesis)
+
+If Genesis ran in headless mode (no tablet), Stages 3 (room design), 6 (asset
+generation), and 7 (room assembly) are skipped. Bob is fully functional but
+has no visual representation. When a tablet becomes available later, Bob can
+retroactively generate visual assets.
+
+**Auto-detection flow:**
+
+```
+Bob running in headless mode
+  │
+  ├─ PeripheralScanner checks mDNS every 5 min
+  │
+  ├─ Tablet discovered → event: tablet.discovered
+  │
+  ├─ Bob asks user (via Telegram):
+  │   "I detected a tablet on the network. Want me to create
+  │    my visual appearance and room? (~30-40 min)"
+  │
+  ├─ User approves → VisualGenesis runs Stages 3, 6, 7 only
+  │   (personality, soul, preferences already exist from Genesis)
+  │
+  └─ User declines → Bob continues headless, asks again in 24h
+```
+
+**Manual command:** `bob visual-genesis` — triggers the same flow without
+waiting for auto-detection.
+
+**Peripheral re-scanning:**
+
+| Peripheral | Scan method | Frequency | On discovery |
+|------------|------------|-----------|-------------|
+| Tablet | mDNS (`_bob-tablet._tcp`) | Every 5 min | Offer visual Genesis |
+| Camera (USB) | `v4l2` / `AVFoundation` check | Every 30 min | Enable VisionBridge |
+| Microphone | Audio device enumeration | Every 30 min | Enable STT |
+
+New peripheral discovery emits `peripheral.discovered` event on the EventBus.
+Bob adapts behavior automatically — no restart required.
 
 ### 5.1.2. Awakening Phase -- First 24-48 Hours
 
@@ -3537,6 +3616,21 @@ awakening:
     - "Explore own capabilities"
     - "Make the first diary entry"
 ```
+
+**imprint_weight integration points:**
+
+During the awakening phase, `AwakeningManager` passes `imprint_weight` to
+downstream systems via their existing interfaces:
+
+| System | Method | Integration |
+|--------|--------|-------------|
+| `TasteEvolution` | `reinforce(weight=imprint_weight)` | First taste evaluations form stronger "anchors" |
+| `MoodEngine` | `process_event(imprint_weight=imprint_weight)` | First emotional reactions have amplified baseline impact |
+| `ExperienceLog` | `ObjectExperience(imprint_active=True)` | Marks experiences for later analysis of formative period |
+| `ReflectionLoop` | `reflect()` checks `AwakeningManager.is_active()` | Adds first-day context to LLM prompt; stores insights with higher weight |
+
+The weight decreases linearly from `imprint_weight_start` (2.0) to
+`imprint_weight_end` (1.0) over the `duration_hours` (48h) period.
 
 ### 5.1.3. Phantom Preferences
 
@@ -4013,10 +4107,10 @@ tap reactions provide immediate feedback and make Bob feel alive.
 
 #### Visual Style: Cartoon + Skeletal 2D
 
-**Visual reference:** Cuphead (hand-drawn cartoon feel with expressive animations).
-Bob uses this as the target art direction — warm, characterful, with personality
-in every frame. However, unlike Cuphead's frame-by-frame approach, Bob uses
-**Skeleton2D** for animation flexibility.
+**Visual reference:** 1930s cartoon style (Fleischer Studios, early rubber hose animation) —
+hand-drawn feel, bold outlines, warm palette, expressive character animations.
+Bob's base LoRA is pre-trained on public domain art from this era.
+Unlike frame-by-frame animation, Bob uses **Skeleton2D** for animation flexibility.
 
 **Animation approach: Skeleton2D**
 
@@ -4030,7 +4124,7 @@ arms, legs). This gives:
   by defining skeletal keyframes in JSON
 - **Smooth blending** — transitions between states use animation blending, not cuts
 
-**Cuphead-style "alive" idle:**
+**Cartoon-style "alive" idle:**
 
 ```
 Idle (standing):
@@ -4094,12 +4188,23 @@ its own unique visuals during Genesis Mode.
 
 | Component | Technology | Size | Notes |
 |-----------|-----------|------|-------|
-| Inference engine | MLX (Apple Silicon) | pip install | Native Metal acceleration |
-| Lightweight model | SD 1.5 | ~2 GB | Fast generation, coexists with Ollama 7B in memory |
-| Heavy model | SDXL / Flux | ~6 GB | Best quality; requires unloading Ollama 7B (see 3.2.4) |
-| Style adapter | LoRA (trained locally) | ~50-200 MB | Ensures visual consistency |
+| Inference engine | `mflux` (MLX-native SD for Apple Silicon) | pip install | Native Metal acceleration, Apple Silicon optimized |
+| Lightweight model | SD 1.5 (`stable-diffusion-v1-5/stable-diffusion-v1-5`) | ~2 GB | Fast generation, coexists with Ollama 7B in memory |
+| Heavy model | SDXL 1.0 (`stabilityai/stable-diffusion-xl-base-1.0`) | ~6 GB | Best quality; requires unloading Ollama 7B (see 3.2.4) |
+| Style adapter | LoRA (pre-trained, shipped with Bob) | ~50-200 MB | Base cartoon style; evolvable via retraining |
+| LoRA training | `diffusers` + `peft` | pip install | LoRA training on Apple Silicon |
+| Scheduler | DPM++ 2M Karras | — | Best speed/quality balance for both SD 1.5 and SDXL |
 | Total (lightweight) | | ~3 GB disk | Runs alongside Ollama |
 | Total (heavy) | | ~7 GB disk | Requires model swap via ModelManager |
+
+**Inference parameters:**
+
+| Parameter | Quality mode (Genesis) | Speed mode (single asset) |
+|-----------|----------------------|--------------------------|
+| Steps | 25-30 | 15-20 |
+| Guidance scale | 7.5 | 7.0 |
+| Scheduler | DPM++ 2M Karras | DPM++ 2M Karras |
+| LoRA weight | 0.7-0.8 | 0.7-0.8 |
 
 **Memory management (Mac mini M4, 16 GB unified):**
 
@@ -4176,13 +4281,21 @@ class AssetGenerator:
     async def generate_avatar_parts(
         self, appearance_description: dict
     ) -> dict[str, GeneratedAsset]:
-        """Generate full avatar as Skeleton2D parts.
+        """Generate avatar as separate Skeleton2D parts (not segmented from whole).
 
-        1. Generate full character in T-pose from appearance description
-        2. Auto-segment into body parts (head, torso, arms, legs)
-        3. Create transparency masks for joint areas
-        4. Validate parts fit together (overlap check at joints)
-        5. Return dict: {"head": asset, "torso": asset, ...}
+        Each body part is generated independently with shared LoRA style
+        and appearance context. This avoids unreliable auto-segmentation.
+
+        1. Build per-part prompts from appearance description + style tokens
+           (e.g., "cartoon head, round face, brown eyes, transparent background")
+        2. Generate each part separately via SD with consistent LoRA
+        3. All parts use transparent background (PNG with alpha)
+        4. Joint areas include overlap margin (~10px) for smooth rigging
+        5. Validate proportions (head size vs torso, arm length, etc.)
+        6. Return dict: {"head": asset, "torso": asset, ...}
+
+        Parts: head, torso, upper_arm_l, upper_arm_r, forearm_l, forearm_r,
+               upper_leg_l, upper_leg_r, lower_leg_l, lower_leg_r
         """
         ...
 
@@ -4208,29 +4321,45 @@ class AssetGenerator:
         """Train a LoRA adapter on reference images for style consistency.
 
         Training on Mac mini M4: ~20-30 minutes for 50-100 reference images.
+        Uses diffusers + peft for LoRA training on Apple Silicon.
         Result saved to data/assets/lora/{style_name}.safetensors
         """
         ...
 ```
 
-**Style consistency via LoRA:**
+**Style consistency: base LoRA + prompt engineering:**
 
-A LoRA adapter is trained once on a target visual style (Cuphead-like cartoon).
-All subsequent generations use this LoRA, ensuring that the desk, the lamp,
-the avatar, and the room background all share the same artistic style.
+Bob ships with a **pre-trained base LoRA** (`bob_style_v1.safetensors`) trained
+on public domain cartoon art (1930s Fleischer Studios style — rubber hose
+animation, bold outlines, warm palette). This LoRA defines the overall
+visual style (line weight, color palette, contrast).
+
+Per-asset-type consistency is achieved through **prompt engineering**, not
+separate LoRAs. The base LoRA handles style; prompts handle subject matter:
+
+| Asset type | LoRA | Prompt suffix |
+|------------|------|---------------|
+| Avatar part | `bob_style_v1` | "cartoon character body part, transparent background, clean edges" |
+| Furniture | `bob_style_v1` | "cartoon furniture item, isometric view, transparent background" |
+| Room background | `bob_style_v1` | "cartoon room interior, warm lighting, cozy atmosphere" |
+| Clothing | `bob_style_v1` | "cartoon clothing item, flat lay view, transparent background" |
 
 ```
 First launch:
   1. Download base SD model (one-time, ~6 GB)
-  2. Train LoRA on reference style images (~20-30 min)
-     - Reference: Cuphead-style cartoon art samples
-     - Saved to data/assets/lora/bob_style.safetensors
-  3. All Genesis asset generation uses this LoRA
+  2. Pre-trained LoRA is bundled with Bob (~100 MB)
+     - Source: public domain 1930s cartoon art (Fleischer, early Disney-era public domain)
+     - Shipped at: data/assets/lora/bob_style_v1.safetensors
+  3. All Genesis asset generation uses this LoRA + per-type prompts
 
 Later (evolution):
-  - Bob can re-train LoRA with evolved style preferences
+  - Bob can retrain LoRA with evolved style preferences:
+    1. Bob generates candidate images without LoRA
+    2. User approves favorites (or Bob self-selects based on taste model)
+    3. Approved images become training dataset for new LoRA version
+    4. New LoRA saved as bob_style_v2, v3, etc. (versions kept for rollback)
   - Individual assets can be regenerated without full re-generation
-  - New furniture/clothing uses the same LoRA for consistency
+  - New furniture/clothing uses the current LoRA for consistency
 ```
 
 **Asset directory structure (generated during Genesis):**
@@ -4272,6 +4401,89 @@ data/assets/
 | `working` | Working at the laptop | At the desk | Room overview |
 | `live_tracking` | Talking to the user | Walked to the "screen", looking at camera | Close-up |
 | `sleeping` | Night mode | In armchair/on bed, dimmed light | Dimmed |
+
+#### 5.4.2a. Shell-Renderer APK Build Pipeline
+
+The Godot shell-renderer (in `avatar/`) is a **thin client** that rarely
+changes. It is built as an Android APK and installed on the tablet.
+
+**Build process:**
+
+```bash
+# One-time: export from Godot (on Mac mini or CI)
+godot --headless --export-release "Android" bob-shell-renderer.apk
+
+# Deploy to tablet via ADB (USB or WiFi ADB)
+adb install -r bob-shell-renderer.apk
+```
+
+**APK characteristics:**
+
+| Property | Value |
+|----------|-------|
+| Size | ~30-50 MB (Godot runtime + shaders + fonts) |
+| Contains | Rendering engine, WebSocket client, AudioStreamPlayer |
+| Does NOT contain | Sprites, room layouts, animations (all loaded via WebSocket) |
+| Signing | Debug keystore for development; release keystore for production |
+| Rebuild frequency | Rare — only for new shaders, render features, or Godot upgrades |
+
+**When does Bob rebuild the APK?**
+
+Normal asset updates (new furniture, clothing, room changes) do NOT require
+APK rebuild — they are sent as JSON scene descriptions over WebSocket. APK
+rebuild is only needed when:
+- Adding new shader effects (e.g., weather particles)
+- New animation types not supported by current skeleton rig
+- Godot engine upgrade
+
+Rebuild requires user approval (via `ApprovalService`, CONFIRM level) since
+it involves `adb install` on the tablet.
+
+#### 5.4.2b. Tablet Lifecycle and WebSocket Reliability
+
+**Tablet states:**
+
+```python
+class TabletState(str, Enum):
+    CONNECTED = "connected"        # WebSocket active, tablet awake
+    SLEEPING = "sleeping"          # Tablet screen off, WebSocket may be alive
+    DISCONNECTED = "disconnected"  # WebSocket lost, no heartbeat
+```
+
+**WebSocket heartbeat:**
+
+| Parameter | Value |
+|-----------|-------|
+| Ping interval | 10 seconds |
+| Pong timeout | 5 seconds |
+| Missed pings before DISCONNECTED | 3 (= 30 sec without response) |
+| Reconnect attempts | Unlimited (exponential backoff: 1s, 2s, 4s, ... max 60s) |
+
+**State transitions:**
+
+```
+CONNECTED ──tablet sleep──> SLEEPING
+SLEEPING  ──tablet wake───> CONNECTED
+CONNECTED ──3 missed pings─> DISCONNECTED
+SLEEPING  ──3 missed pings─> DISCONNECTED
+DISCONNECTED ──reconnect──> CONNECTED (full room state resync)
+```
+
+**Bob's behavior per tablet state:**
+
+| State | Audio routing | Visual updates | Bob's awareness |
+|-------|-------------|---------------|----------------|
+| CONNECTED | Tablet speaker | Real-time scene updates | Full visual mode |
+| SLEEPING | Mac mini / Telegram | Queued (sent on wake) | "Tablet is resting" |
+| DISCONNECTED | Mac mini / Telegram | Stopped | Headless mode, logs intent |
+
+**Reconnection protocol:**
+
+When tablet reconnects after DISCONNECTED:
+1. Tablet sends `{"type": "reconnect", "last_scene_version": 42}`
+2. Server compares version → sends full `room_state.json` snapshot if stale
+3. Server resumes streaming scene updates
+4. Bob: "Oh, the tablet is back! Let me update my room."
 
 ### 5.4.3. Behavior Evolution (Behavior Registry)
 
@@ -4555,10 +4767,61 @@ tts:
   streaming: true
 
 audio_output:
-  primary: "tablet"             # "tablet", "speaker", "both"
-  fallback: "speaker"
+  primary: "tablet"             # "tablet", "local", "both"
+  fallback: "local"             # fallback when primary is unavailable
   volume: 0.7
+  format: "pcm_22050_mono"      # PCM 22050 Hz, 16-bit, mono
 ```
+
+**Audio routing (`AudioRouter`):**
+
+TTS generates audio chunks that must be delivered to the right output device.
+`AudioRouter` handles routing based on configuration and tablet connectivity.
+
+```python
+class AudioRouter:
+    """Routes TTS audio to the appropriate output device."""
+
+    def __init__(
+        self,
+        config: dict,                  # audio_output config section
+        tablet_bridge: "TabletBridge",  # WebSocket connection to tablet
+    ) -> None: ...
+
+    async def play(self, audio_chunk: bytes) -> None:
+        """Route audio chunk to the configured output.
+
+        Routing logic:
+        1. Check primary target availability
+        2. If available → send to primary
+        3. If unavailable → send to fallback
+        4. If "both" → send to tablet AND local simultaneously
+        """
+        ...
+
+    async def _play_on_tablet(self, chunk: bytes) -> None:
+        """Send PCM audio via WebSocket to Godot AudioStreamPlayer."""
+        ...
+
+    async def _play_local(self, chunk: bytes) -> None:
+        """Play audio on Mac mini speaker via pyaudio."""
+        ...
+
+    def is_tablet_connected(self) -> bool:
+        """Check if tablet WebSocket is active."""
+        ...
+```
+
+| Mode | Primary | Fallback | Use case |
+|------|---------|----------|----------|
+| `"tablet"` | WebSocket → Godot `AudioStreamPlayer` | Mac mini local audio (`pyaudio`) | Default — Bob "speaks" from the tablet |
+| `"local"` | Mac mini audio output (`pyaudio`) | Telegram voice message | Headless mode — no tablet connected |
+| `"both"` | Tablet + Mac mini simultaneously | Tablet or local (whichever is up) | Loud environments, presentation mode |
+
+**Tablet audio delivery:** PCM chunks (22050 Hz, 16-bit, mono) are sent over
+the existing WebSocket connection as binary frames. The Godot shell-renderer
+feeds them into an `AudioStreamPlayer` node for immediate playback. This
+enables streaming — audio starts playing before the full sentence is synthesized.
 
 ---
 
@@ -4873,23 +5136,8 @@ class ClaudeCodeLock:
         ...
 ```
 
-**Permission protocol:**
-
-```
-Bob wants to use Claude Code CLI
-  │
-  ├─ is_user_active()? ──Yes──> Queue task, switch to alternative activity
-  │                                │
-  │                                ├─ Reflect with local LLM
-  │                                ├─ Organize goals / review memory
-  │                                ├─ Read (explore codebase locally)
-  │                                └─ Idle behaviors (avatar animations)
-  │
-  └─ No ──> request_approval("claude_code.invoke", description)
-              │
-              ├─ Approved ──> acquire lock, execute task, release lock
-              └─ Denied ──> Queue task, set retry_after timer
-```
+**Permission flow:** See section 4.2.1 for the full permission protocol diagram,
+graceful degradation table, and task queue mechanism.
 
 **Graceful interrupt:** If the user starts Claude Code while Bob holds the lock,
 Bob receives a `SIGUSR1` signal (or EventBus event), saves progress, releases
@@ -4909,9 +5157,9 @@ claude_code_lock:
   detection_methods:
     - process_check          # Check for running `claude` processes
     - lock_file              # Check for Claude Code's own lock files
-  retry_interval_sec: 300    # Retry queued tasks every 5 minutes
-  max_queue_size: 10         # Maximum queued Claude Code tasks
   graceful_interrupt_timeout_sec: 30  # Time to save progress on interrupt
+  # Queue settings (retry_interval, max_size) are in config/llm.yaml
+  # under claude_code.permission — see section 4.2.1
 ```
 
 ### 8.5. Rate Limits
@@ -5018,8 +5266,8 @@ state_versioning:
 | **Telegram** | python-telegram-bot | Mature library, asyncio support |
 | **ADB** | adb (cli) + python wrapper | Standard tool for Android |
 | **ML memory manager** | ModelManager (custom) | Orchestrates Ollama + SD model lifecycle on 16GB unified memory; see 3.2.4 |
-| **Asset generation** | Stable Diffusion (SD 1.5 + SDXL) via MLX | Local, free, no API costs; SD 1.5 for lightweight gen alongside Ollama, SDXL for heavy gen (Genesis) |
-| **Style consistency** | LoRA (trained locally) | Ensures all generated sprites share a unified cartoon style (Cuphead reference) |
+| **Asset generation** | Stable Diffusion (SD 1.5 + SDXL 1.0) via `mflux` | Local, free, no API costs; SD 1.5 for lightweight gen alongside Ollama, SDXL for heavy gen (Genesis); DPM++ 2M Karras scheduler |
+| **Style consistency** | LoRA (pre-trained, evolvable) | Ships with base cartoon style LoRA (public domain art); Bob can retrain with evolved preferences |
 | **Avatar animation** | Skeleton2D (Godot built-in) | Skeletal 2D animation: one rigged model, infinite animations via keyframes |
 | **Avatar (client)** | Godot 4 (GDScript) | Open source, 2D shell-renderer, native Android, WebSocket, parallax depth |
 | **Camera** | OBSBOT SDK / UVC | PTZ control, auto-tracking |
@@ -5128,7 +5376,7 @@ state_versioning:
 |------|-------------|
 | Godot shell-renderer | Universal 2D renderer: Skeleton2D avatar, parallax room, JSON scene loading |
 | AssetGenerator | Stable Diffusion pipeline: MLX/CoreML inference, LoRA style training, sprite generation |
-| LoRA style training | Train LoRA on Cuphead-like cartoon style for visual consistency |
+| LoRA style training | Pre-trained base LoRA (public domain cartoon style) + retrain capability for evolved preferences |
 | Avatar generation | Generate Skeleton2D parts (head, torso, arms, legs), auto-segmentation |
 | Furniture generation | Generate furniture sprites per Bob's decisions, consistent style via LoRA |
 | Room background generation | Generate room backgrounds (walls, floor, window views) |
@@ -5544,7 +5792,7 @@ successful concepts:
 | 25 | How should SkillDomain versioning work when Bob upgrades a domain? | Medium | Open |
 | 26 | Should Bob's self-created SkillDomains go through a "probation" period before full trust? | High | Open |
 | 27 | How to handle SkillDomain dependency conflicts (two domains need same resource)? | Medium | Open |
-| 28 | What LoRA training dataset to use for establishing Bob's base visual style? Cuphead-like cartoon or another reference? | High | Open |
+| 28 | ~~What LoRA training dataset to use for establishing Bob's base visual style? Cuphead-like cartoon or another reference?~~ | High | **Resolved**: Ship pre-trained LoRA on public domain cartoon art (1930s Fleischer style); Bob can retrain with evolved preferences later (see 5.4.2) |
 | 29 | How to ensure visual consistency across AI-generated sprites (furniture, avatar parts, room elements)? | High | Open |
 | 30 | How to auto-segment AI-generated character image into Skeleton2D parts (head, torso, arms, legs)? | Medium | Open |
 | 31 | What is the optimal sprite resolution for tablet display? 512x512 per asset or higher? | Medium | Open |
