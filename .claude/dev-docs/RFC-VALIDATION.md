@@ -99,34 +99,17 @@ The PRD (v0.0.1, 322 lines) is the business vision document. The RFC (5011 lines
 
 ## 3. Logical Collisions Within RFC
 
-### C1: Bootstrap (3.6) vs Genesis Stage 0 (5.1.1) — Naming Collision
+### ~~C1: Bootstrap (3.6) vs Genesis Stage 0 (5.1.1) — Naming Collision~~
 
-**Problem:** Section 3.6 is called "Bootstrap and First Launch Setup" — a technical setup wizard (`bob setup`). Genesis Stage 0 is called "BOOTSTRAP" — a narrative stage where Bob starts as text-only intelligence. These are different things with the same name.
+**RESOLVED**: Genesis Stage 0 renamed from "BOOTSTRAP" to "CONSCIOUSNESS" in both the narrative diagram and GenesisMode.run() docstring. Technical bootstrap (section 3.6) keeps its name.
 
-**Confusion risk:** A developer might conflate them. When does `bob setup` end and Genesis begin? Is Stage 0 the same event as bootstrap completion?
+### ~~C2: Double Tablet Detection~~
 
-**Proposed resolution:** Rename Genesis Stage 0 from "BOOTSTRAP" to "AWAKENING_CLI" or "CONSCIOUSNESS" to distinguish from the technical bootstrap. The narrative name should reflect what Bob experiences (gaining consciousness), not the technical infrastructure.
+**RESOLVED**: Genesis Stage 2 now reads `bootstrap.yaml` for tablet state. Two dialogue variants: if detected during bootstrap → "I know there's a screen nearby. Let me make it my home." If not → prompts user to connect. Preserves narrative, eliminates redundancy.
 
-### C2: Double Tablet Detection
+### ~~C3: GenesisMode.run() Docstring vs 9-Stage Narrative~~
 
-**Problem:** BootstrapWizard step 6 (section 3.6) detects Android tablet via ADB. Genesis Stage 2 (section 5.1.1) also "discovers" the tablet ("Do you have an Android tablet? Connect it via USB.").
-
-**Question:** If bootstrap already detected the tablet, why does Genesis ask again? If the tablet was detected during setup, Genesis Stage 2's dialogue ("I feel like I need a space") is narratively wrong — Bob should already know the tablet exists.
-
-**Proposed resolution:** Bootstrap records tablet presence in `bootstrap.yaml`. Genesis reads this state. If tablet was detected during bootstrap, Stage 2 becomes: "I know there's a tablet here. Let me make it my home." If NOT detected, Stage 2 prompts the user. This preserves narrative while avoiding redundancy.
-
-### C3: GenesisMode.run() Docstring vs 9-Stage Narrative
-
-**Problem:** `GenesisMode.run()` docstring (line 2942) lists 8 steps that don't align with the 9 stages in the narrative diagram:
-
-- Docstring step 4: "Show empty space + firefly" → Stage 3 (Energy Blob)
-- Docstring step 5: "Awakening phase" → Stages 0-4 (collapsed)
-- Docstring step 6: "Self-determination phase" → Stage 5
-- Docstring step 7: "Materialize room" → Stage 7
-- Docstring step 8: "Save result" → Stage 8
-- **Missing from docstring:** Stage 1 (Gaining Senses), Stage 2 (Finding Home), Stage 6 (Asset Generation)
-
-**Proposed resolution:** Rewrite `GenesisMode.run()` docstring to match all 9 stages explicitly.
+**RESOLVED**: GenesisMode.run() docstring rewritten to explicitly list all 9 stages (0-8): CONSCIOUSNESS, GAINING SENSES, FINDING A HOME, ENERGY BLOB, REALIZATION, SELF-DETERMINATION, ASSET GENERATION, MATERIALIZATION, WRITING TO SOUL.
 
 ### C4: `_generate_appearance()` Return Format vs Skeleton2D
 
@@ -177,49 +160,17 @@ Both sections contain unique information AND overlapping diagrams. The permissio
 - `ExperienceLog.log_interaction()` should record `imprint_active: bool` for later analysis
 - `ReflectionLoop.reflect()` should weight awakening-period experiences higher in insights
 
-### C7: Rate Limit Naming
+### ~~C7: Rate Limit Naming~~
 
-**Problem:** Section 8.5 (line 4381) defines:
-```
-claude_api_calls_per_minute: 10
-claude_api_calls_per_day: 200
-```
+**RESOLVED**: Renamed `claude_api_calls_per_minute/day` → `claude_code_invocations_per_minute/day` in section 8.5.
 
-But Bob uses Claude Code **CLI** (subprocess), not the Claude API directly. The rate limit names suggest API calls, which is misleading.
+### ~~C8: WindowService Network Access vs Security Model~~
 
-**Proposed resolution:** Rename to `claude_code_invocations_per_minute` and `claude_code_invocations_per_day`.
+**RESOLVED**: Added `NETWORK_WHITELIST` to section 8.2 (Sandbox) with `api.open-meteo.com`, `api.telegram.org`, and `localhost`. Skills with `network_access=True` are restricted to whitelisted hosts only.
 
-### C8: WindowService Network Access vs Security Model
+### ~~C9: AssetGenerator Location in Repo Structure~~
 
-**Problem:** WindowService (section 5.1.4) uses Open-Meteo API for weather data — an outbound HTTP request. But Security section 8.1 says Bob runs under a dedicated macOS user with restricted access, and section 8.2 mentions `network_access` as a configurable sandbox parameter.
-
-**Question:** Is Open-Meteo whitelisted? How does Bob's sandboxed process make HTTP requests to an external API?
-
-**Proposed resolution:** Add Open-Meteo API to a network whitelist in security config:
-```yaml
-# config/security.yaml
-network:
-  allowed_outbound:
-    - "api.open-meteo.com"
-    - "api.telegram.org"
-```
-
-### C9: AssetGenerator Location in Repo Structure
-
-**Problem:** RFC section 11 (repo structure) places `asset_generator.py` inside `bob/genesis/`:
-```
-bob/genesis/
-├── asset_generator.py    # Stable Diffusion sprite generation
-```
-
-But AssetGenerator is used beyond Genesis:
-- Phase 6: Behavior evolution (new furniture sprites)
-- Phase 6: Appearance evolution (new clothing)
-- Room self-improvement (replacement furniture generation)
-
-Placing it in `genesis/` implies it's only for first-launch.
-
-**Proposed resolution:** Move to a more general location: `bob/services/asset_generator.py` or create `bob/generation/asset_generator.py`. Genesis imports from there.
+**RESOLVED**: Moved `asset_generator.py` from `bob/genesis/` to `bob/services/` in section 11. Services directory renamed to "Peripheral services + shared generators".
 
 ---
 
@@ -404,16 +355,16 @@ Placing it in `genesis/` implies it's only for first-launch.
 
 | # | Gap | Phase | Impact | Proposed Resolution |
 |---|-----|-------|--------|-------------------|
-| **F1** | Telegram bot token configuration missing from setup | B (Setup) | Genesis Stage 0 can't communicate | Add Telegram token to bootstrap wizard or `config/bob.yaml` setup step |
-| **F2** | Geolocation configuration missing from setup | B (Setup) | WindowService can't show real weather | Add geolocation config to bootstrap or auto-detect from system locale |
-| **F3** | bob-soul submodule initialization missing from setup | B (Setup) | Genesis can't load templates | Add `git submodule update --init` to bootstrap |
-| **F4** | Python package installation not described | B (Setup) | User doesn't know how to install dependencies | Add `pip install -e .` or `uv pip install -e .` to setup flow |
-| **F5** | Genesis trigger mechanism undefined | C (Genesis) | Unclear when/how Genesis starts | Define: `bob start` checks for `data/soul/SOUL.md`; if absent → Genesis |
+| ~~**F1**~~ | ~~Telegram bot token configuration missing from setup~~ | ~~B (Setup)~~ | ~~Genesis Stage 0 can't communicate~~ | **RESOLVED**: Step [5/7] in bootstrap — token prompt, @BotFather instructions, getMe validation |
+| ~~**F2**~~ | ~~Geolocation configuration missing from setup~~ | ~~B (Setup)~~ | ~~WindowService can't show real weather~~ | **RESOLVED**: Step [6/7] in bootstrap — auto-detect from system timezone, manual override |
+| ~~**F3**~~ | ~~bob-soul submodule initialization missing from setup~~ | ~~B (Setup)~~ | ~~Genesis can't load templates~~ | **RESOLVED**: Step [4/7] in bootstrap — git submodule update --init + template verification |
+| ~~**F4**~~ | ~~Python package installation not described~~ | ~~B (Setup)~~ | ~~User doesn't know how to install dependencies~~ | **RESOLVED**: Added `pip install -e .` before `bob setup` in section 3.6 |
+| ~~**F5**~~ | ~~Genesis trigger mechanism undefined~~ | ~~C (Genesis)~~ | ~~Unclear when/how Genesis starts~~ | **RESOLVED**: New section 3.7 Startup Flow — `bob start` checks bootstrap.yaml → SOUL.md → GenesisMode or AgentRuntime. ASCII diagram + `main()` code. |
 | **F6** | APK source/build process undefined | C (Genesis) | Stage 2 needs shell-renderer APK | Define: APK is pre-built in CI or built from `avatar/` directory |
-| **F7** | 30-40 min asset generation — user experience undefined | C (Genesis) | User sees nothing during long wait | Define: show progress on tablet/Telegram, Bob narrates the process |
-| **F8** | SD failure during Genesis — no recovery strategy | C (Genesis) | Genesis stuck at Stage 6 | Define: retry logic, headless fallback, placeholder assets |
+| ~~**F7**~~ | ~~30-40 min asset generation — user experience undefined~~ | ~~C (Genesis)~~ | ~~User sees nothing during long wait~~ | **RESOLVED**: Bob narrates via Telegram + progress bar + asset previews on tablet (section 5.1.1) |
+| ~~**F8**~~ | ~~SD failure during Genesis — no recovery strategy~~ | ~~C (Genesis)~~ | ~~Genesis stuck at Stage 6~~ | **RESOLVED**: Retry (3x) → placeholder fallback → deferred regeneration via `bob regenerate-assets` (section 5.1.1) |
 | **F9** | Peripheral addition after Genesis | D/E | User adds camera/mic later | Define: Bob should re-scan for peripherals periodically or on command |
-| **F10** | Touch interaction on tablet undefined | E (Operation) | User touches tablet — nothing happens? | Define: touch events → Event Bus → Bob reacts (waves, turns, etc.) |
+| ~~**F10**~~ | ~~Touch interaction on tablet undefined~~ | ~~E (Operation)~~ | ~~User touches tablet — nothing happens?~~ | **RESOLVED**: Touch Interaction spec added to section 5.4 — tap bob (wave), tap object (comment), long press (mood), double tap (walk to) |
 | **F11** | Tablet sleep/wake/battery undefined | E (Operation) | Tablet goes to sleep — what does Bob do? | Define: Bob detects tablet disconnect, operates in headless mode |
 | **F12** | Bob update/upgrade mechanism undefined | F (Growth) | How does Bob get code updates? | Define: `git pull` + `bob upgrade` command, or self-update via Claude Code |
 
@@ -514,10 +465,10 @@ What Bob can and cannot do at each development phase:
 
 | # | Gap | Sections Affected | Severity | Details |
 |---|-----|-------------------|----------|---------|
-| **G1** | Telegram setup not in bootstrap | 3.6, 5.1.1 | **High** | Genesis Stage 0 requires Telegram, but token config is nowhere in setup flow. User needs to: create bot via BotFather, get token, configure `config/bob.yaml`. This step must be in bootstrap. |
-| **G2** | bob-soul submodule lifecycle | 3.4.5, 3.6 | **High** | Who creates the bob-soul repo? Is it a template included in the main repo? Does the user fork it? Does `bob setup` initialize it? The entire Genesis depends on templates from bob-soul, but its creation/initialization is undefined. |
+| ~~**G1**~~ | ~~Telegram setup not in bootstrap~~ | ~~3.6, 5.1.1~~ | ~~**High**~~ | **RESOLVED**: Telegram token configuration added as step [5/7] in BootstrapWizard. Token stored in config/bob.yaml, bot_username in bootstrap.yaml. Required component in graceful degradation table. |
+| ~~**G2**~~ | ~~bob-soul submodule lifecycle~~ | ~~3.4.5, 3.6~~ | ~~**High**~~ | **RESOLVED**: bob-soul is a template git submodule included in main repo. BootstrapWizard step [4/7] runs `git submodule update --init` and verifies required template files. |
 | **G3** | Genesis → Headless recovery | 5.1.1 | **Medium** | If Genesis runs in headless mode (no tablet), Stages 3, 6, 7 are skipped. But later when the user connects a tablet, how does Bob "retroactively" generate assets and populate his room? Is there a `bob genesis --visual` command? |
-| **G4** | Language of Bob's speech | 6 | **Medium** | TTS open question mentions Russian (Kokoro vs Piper for Russian). But all example dialogues in RFC are in English. What language does Bob speak? Is it configurable? Does Bob need to detect the user's language? |
+| ~~**G4**~~ | ~~Language of Bob's speech~~ | ~~6~~ | ~~**Medium**~~ | **RESOLVED**: Configurable via `config/bob.yaml` `language: "en"` (default). Propagated to STT, TTS, LLM prompts, SOUL.md, Genesis. Russian (`ru`) fully supported. Language architecture table added to section 3.2.1. |
 | **G5** | Audio output routing | 6 | **Medium** | TTS generates audio, but where does it play? Options: tablet speaker, external speaker, Mac mini audio. The routing is not defined. If Bob "is on the tablet," his voice should come from the tablet. But what if no tablet? Mac mini speakers? |
 | **G6** | Stable Diffusion model specifics | 5.4.2 | **Medium** | RFC mentions "SDXL/Flux via MLX" but doesn't specify which exact model, what resolution is optimal, how to handle Mac mini M4's 16GB memory constraint while SD + Ollama are both loaded. Can they coexist in memory? |
 | **G7** | LoRA training dataset source | 5.4.2 | **Medium** | Section says "train LoRA on Cuphead-like cartoon style" but where do the training images come from? The user provides them? Auto-downloaded? Are there copyright concerns with Cuphead? LoRA needs 20-50 reference images. |
@@ -529,10 +480,10 @@ What Bob can and cannot do at each development phase:
 
 | # | Gap | Impact |
 |---|-----|--------|
-| **UX1** | No progress indication during 30-40 min asset generation | User thinks Bob is frozen during Genesis |
-| **UX2** | No recovery from interrupted Genesis | What if user restarts during Genesis? Partial state? |
+| ~~**UX1**~~ | ~~No progress indication during 30-40 min asset generation~~ | **RESOLVED**: Bob narrates process via Telegram + progress bar + previews on tablet |
+| ~~**UX2**~~ | ~~No recovery from interrupted Genesis~~ | **RESOLVED**: genesis_progress.json saves state after each stage. Resume or restart on next `bob start`. |
 | **UX3** | No explanation of "what can I do with Bob" post-Genesis | User doesn't know how to interact |
-| **UX4** | Tablet touch interactions undefined | User intuitively touches tablet, nothing happens |
+| ~~**UX4**~~ | ~~Tablet touch interactions undefined~~ | **RESOLVED**: Touch Interaction spec in 5.4 — tap, long press, double tap with Bob reactions |
 | **UX5** | No "settings" or "preferences" UI for user | User can't configure Bob's behavior easily |
 | **UX6** | Negotiation UX unclear | How does "Bob disagrees" actually look on tablet/Telegram? |
 
@@ -640,24 +591,24 @@ What Bob can and cannot do at each development phase:
 | # | Action | Priority | Effort |
 |---|--------|----------|--------|
 | **R1** | Update PRD to match RFC (12 sync issues from section 2) | **P0** | 2-3 hours |
-| **R2** | Rename Genesis Stage 0 from "BOOTSTRAP" to avoid confusion with section 3.6 | **P0** | 5 min |
-| **R3** | Add Telegram token setup to bootstrap flow | **P0** | 30 min |
-| **R4** | Define bob-soul submodule creation/initialization flow | **P0** | 1 hour |
-| **R5** | Fix GenesisMode.run() docstring to match 9-stage narrative | **P1** | 15 min |
+| ~~**R2**~~ | ~~Rename Genesis Stage 0 from "BOOTSTRAP" to avoid confusion with section 3.6~~ | ~~**P0**~~ | **RESOLVED** |
+| ~~**R3**~~ | ~~Add Telegram token setup to bootstrap flow~~ | ~~**P0**~~ | **RESOLVED** |
+| ~~**R4**~~ | ~~Define bob-soul submodule creation/initialization flow~~ | ~~**P0**~~ | **RESOLVED** |
+| ~~**R5**~~ | ~~Fix GenesisMode.run() docstring to match 9-stage narrative~~ | ~~**P1**~~ | **RESOLVED** |
 | **R6** | Update `_generate_appearance()` return type for AssetGenerator compatibility | **P1** | 30 min |
 | **R7** | De-duplicate sections 4.2.1 and 8.4 (keep unique info, add cross-refs) | **P1** | 1 hour |
-| **R8** | Move AssetGenerator from `genesis/` to `services/` or `generation/` in repo structure | **P1** | 5 min |
-| **R9** | Add Telegram API and Open-Meteo to security network whitelist | **P1** | 15 min |
-| **R10** | Rename rate limit keys from `claude_api_calls` to `claude_code_invocations` | **P2** | 5 min |
+| ~~**R8**~~ | ~~Move AssetGenerator from `genesis/` to `services/` in repo structure~~ | ~~**P1**~~ | **RESOLVED** |
+| ~~**R9**~~ | ~~Add Telegram API and Open-Meteo to security network whitelist~~ | ~~**P1**~~ | **RESOLVED** |
+| ~~**R10**~~ | ~~Rename rate limit keys from `claude_api_calls` to `claude_code_invocations`~~ | ~~**P2**~~ | **RESOLVED** |
 
 ### 8.2. Design Decisions Needed
 
 | # | Decision | Options | Recommendation |
 |---|----------|---------|----------------|
-| **D1** | Bob's language | English only / Russian only / Configurable / Auto-detect | Configurable via `config/bob.yaml` with auto-detect fallback |
-| **D2** | Touch interaction on tablet | Ignore / Simple reactions / Full interaction | Simple reactions first (wave, turn), expand later |
-| **D3** | Genesis interruption recovery | Restart from scratch / Resume from last stage | Resume from last completed stage (save stage progress) |
-| **D4** | Asset generation user experience | Silent wait / Progress bar / Bob narrates process | Bob narrates via Telegram + progress on tablet |
+| ~~**D1**~~ | ~~Bob's language~~ | ~~English only / Russian only / Configurable / Auto-detect~~ | **RESOLVED**: Configurable, default `en`, `ru` fully supported. Single `language` field in `bob.yaml` propagated everywhere. |
+| ~~**D2**~~ | ~~Touch interaction on tablet~~ | ~~Ignore / Simple reactions / Full interaction~~ | **RESOLVED**: Simple reactions — tap (wave), tap object (comment), long press (mood), double tap (walk). Expandable later. |
+| ~~**D3**~~ | ~~Genesis interruption recovery~~ | ~~Restart from scratch / Resume from last stage~~ | **RESOLVED**: Resume from last stage via genesis_progress.json. User chooses Resume/Restart/Quit. |
+| ~~**D4**~~ | ~~Asset generation user experience~~ | ~~Silent wait / Progress bar / Bob narrates process~~ | **RESOLVED**: Bob narrates via Telegram + progress bar + asset previews on tablet. SD failure: retry 3x → placeholder → deferred regeneration. |
 | **D5** | Headless → visual transition | Manual command / Auto-detect tablet | Auto-detect tablet connection → offer visual Genesis |
 | ~~**D6**~~ | ~~SD + Ollama memory management~~ | ~~Swap models / Reduce model sizes / Sequential loading~~ | **RESOLVED**: Hybrid ModelManager (RFC 3.2.4) — three profiles: NORMAL, LIGHTWEIGHT_GEN (SD 1.5 + Ollama), HEAVY_GEN (SDXL, Ollama 7B unloaded) |
 | **D7** | LoRA style reference | Cuphead assets / Custom art / Public domain cartoons | Public domain cartoon assets to avoid copyright issues |
@@ -666,7 +617,7 @@ What Bob can and cannot do at each development phase:
 
 | # | Improvement | Section | Details |
 |---|-------------|---------|---------|
-| **I1** | Add startup flow diagram | After 3.6 | Show: `bob start` → check SOUL.md → Genesis or Normal → event loop |
+| ~~**I1**~~ | ~~Add startup flow diagram~~ | ~~After 3.6~~ | **RESOLVED**: New section 3.7 with full ASCII flow diagram + `main()` entry point code |
 | **I2** | Add comprehensive event catalog | 7.1 | Table: event_type, publisher, subscribers, payload schema |
 | **I3** | Add config loading specification | 3 or 4 | Loading order, override precedence, environment variables |
 | **I4** | Add error handling patterns | 7 or 8 | Circuit breaker for Ollama, reconnect for WebSocket, retry for SD |

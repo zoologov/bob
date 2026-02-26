@@ -303,6 +303,11 @@ class AgentRuntime:
 
 ```yaml
 # config/bob.yaml
+language: "en"                    # Bob's primary language (en, ru, zh, ja, ...)
+                                  # Propagated to: STT, TTS, LLM system prompts,
+                                  # SOUL.md generation, Genesis dialogues.
+                                  # Change to "ru" for Russian-speaking Bob.
+
 runtime:
   heartbeat_interval_sec: 30
   reflection_interval_min: 60
@@ -310,6 +315,27 @@ runtime:
   event_queue_max_size: 1000
   shutdown_timeout_sec: 10
 ```
+
+**Language architecture:**
+
+The `language` setting in `config/bob.yaml` is the single source of truth for Bob's
+operating language. It propagates to all language-dependent components:
+
+| Component | How language is used |
+|-----------|---------------------|
+| **VoiceBridge (STT)** | Passed to Whisper as recognition language hint |
+| **VoiceBridge (TTS)** | Selects voice pack (e.g., `en-male-1` vs `ru-male-1`) |
+| **LLM system prompts** | Injected into all prompts: "Respond in {language}" |
+| **Genesis dialogues** | Awakening monologues generated in configured language |
+| **SOUL.md** | Written in configured language during Genesis |
+| **Reflection** | Internal monologue and insights in configured language |
+
+Changing the language after Genesis is possible but will result in a bilingual SOUL
+(existing memories in the old language, new ones in the new language). A full
+language migration would require re-running Genesis.
+
+All code examples and RFC documentation remain in English regardless of the
+configured runtime language.
 
 #### 3.2.2. LLM Router
 
@@ -2364,17 +2390,23 @@ STT + TTS bridge.
 
 ```python
 class VoiceBridge:
-    """Voice bridge: STT (Whisper.cpp) + TTS (Piper/Kokoro)."""
+    """Voice bridge: STT (Whisper.cpp) + TTS (Piper/Kokoro).
+
+    Language is configured globally via config/bob.yaml and propagated
+    to STT/TTS engines. Supported languages depend on the chosen
+    TTS engine and voice pack (Kokoro: en/ru/zh/ja/..., Piper: 30+ languages).
+    """
 
     def __init__(
         self,
         stt_model: str = "whisper-small",
         tts_model: str = "kokoro-v1",
-        tts_voice: str = "ru-male-1",
+        tts_voice: str = "en-male-1",
         tts_speed: float = 1.0,
+        language: str = "en",
     ) -> None: ...
 
-    async def transcribe(self, audio: bytes, language: str = "ru") -> str:
+    async def transcribe(self, audio: bytes, language: str | None = None) -> str:
         """Recognize speech -> text."""
         ...
 
@@ -2458,6 +2490,9 @@ class MessagingBot:
 Bob requires several external dependencies (Ollama, models, optionally Claude
 Code CLI). The bootstrap system handles first-launch detection and guided setup.
 
+**Installation:** `pip install -e .` (or `uv pip install -e .`) — installs the
+`bob` package and CLI entry points.
+
 **Entry point:** `bob setup` command (or `python scripts/bootstrap.py`).
 
 #### Prerequisites Check
@@ -2517,9 +2552,10 @@ PREREQUISITES: list[Prerequisite] = [
 For prerequisites with `auto_install` set, Bob asks permission before installing:
 
 ```
+$ pip install -e .           # or: uv pip install -e .
 $ bob setup
 
-Checking prerequisites...
+[1/7] Checking prerequisites...
   ✓ Python 3.12.4
   ✗ Ollama — not found
   ✗ Claude Code CLI — not found (optional)
@@ -2529,7 +2565,7 @@ Ollama is required. Install via `brew install ollama`? [Y/n] y
   Installing Ollama...
   ✓ Ollama 0.5.1 installed
 
-Pulling required models...
+[2/7] Pulling required models...
   Pulling qwen2.5:7b-instruct-q4_K_M (4.4 GB)... [████████░░] 80%
   Pulling qwen2.5:0.5b-instruct-q8_0 (0.5 GB)... done
 
@@ -2537,14 +2573,31 @@ Claude Code CLI is optional (enables self-development, deep reflection).
 Install manually: https://docs.anthropic.com/claude-code
 Bob will work without it — complex tasks will use local LLM instead.
 
-Stable Diffusion for visual asset generation...
+[3/7] Stable Diffusion for visual asset generation...
   Installing MLX image pipeline... done
   Downloading SDXL base model (6.2 GB)... [████████░░] 80%
   ✓ Stable Diffusion ready (assets will be AI-generated during Genesis)
 
-Checking for connected Android tablet...
+[4/7] Initializing bob-soul templates...
+  Running git submodule update --init...
+  ✓ bob-soul initialized
+  ✓ Templates verified: archetype.md, awakening_script.md, taste_axes_pool.yaml
+
+[5/7] Telegram bot configuration...
+  Bob communicates via Telegram. You need a bot token.
+  Create one: open Telegram → @BotFather → /newbot → copy token.
+  Paste bot token: <token>
+  ✓ Bot verified: @my_bob_bot
+
+[6/7] Geolocation (for weather in Bob's window)...
+  Auto-detected timezone: Europe/Berlin → lat=52.52, lon=13.41
+  Use this location? [Y/n] y
+  ✓ Geolocation configured
+
+[7/7] Detecting hardware...
   ✓ Tablet detected: Samsung Galaxy Tab S9 (via ADB)
-  Shell-renderer APK will be installed during Genesis Mode.
+  ✓ Camera detected: OBSBOT Tiny 2
+  ✗ Microphone: not found (voice input disabled, Telegram still works)
 
 Setup complete! Run `bob start` to launch.
 ```
@@ -2554,12 +2607,15 @@ Setup complete! Run `bob start` to launch.
 | Component | Without it | Impact |
 |-----------|-----------|--------|
 | **Ollama** | Cannot start | Required — no LLM = no reasoning |
+| **Telegram bot token** | Cannot start | Required — primary communication channel for Genesis and daily use |
+| **bob-soul submodule** | Cannot run Genesis | Required — templates for awakening, archetype, taste axes |
 | **Claude Code CLI** | Fully functional, reduced capabilities | No self-development, lighter reflections, no code writing |
 | **Stable Diffusion (MLX)** | No visual asset generation | Cannot generate avatar/room sprites; tablet remains dark or uses placeholder visuals |
 | **ADB** | No tablet deployment | Avatar not displayed; Bob works headlessly |
 | **Android tablet** | No visual presence | Bob operates via Telegram + voice only (headless mode) |
 | **Camera (OBSBOT)** | No vision | Bob cannot see the user; audio-only interaction |
 | **Microphone (ReSpeaker)** | No voice | Text-only via Telegram |
+| **Geolocation** | No weather in window | WindowService shows time of day only, no weather data |
 
 #### Configuration
 
@@ -2582,6 +2638,18 @@ bootstrap:
       lora_trained: false
     adb:
       installed: false
+    bob_soul:
+      initialized: false             # git submodule update --init completed
+      templates_verified: false       # Required template files present
+    telegram:
+      configured: false
+      bot_username: null              # e.g., "my_bob_bot"
+      # Token stored in config/bob.yaml (not here — security)
+  geolocation:
+    timezone: null                    # Auto-detected from system (e.g., "Europe/Moscow")
+    lat: null                         # Latitude for weather
+    lon: null                         # Longitude for weather
+    source: null                      # "auto" | "manual"
   hardware:
     camera_detected: false
     microphone_detected: false
@@ -2597,14 +2665,17 @@ class BootstrapWizard:
     async def run(self) -> BootstrapResult:
         """Run the full bootstrap flow.
 
-        1. Check all prerequisites
+        1. Check all prerequisites (Python, Ollama, ADB, etc.)
         2. Offer to install missing required components
-        3. Pull Ollama models
+        3. Pull Ollama models (Qwen2.5-7B, Qwen2.5-0.5B)
         4. Install Stable Diffusion pipeline + download base model
-        5. Detect hardware (camera, mic)
-        6. Detect Android tablet via ADB
-        7. Write bootstrap.yaml with results
-        8. Return summary
+        5. Initialize bob-soul submodule (git submodule update --init)
+        6. Configure Telegram bot token (create via @BotFather)
+        7. Detect geolocation (auto from system timezone, or manual)
+        8. Detect hardware (camera, mic)
+        9. Detect Android tablet via ADB
+        10. Write bootstrap.yaml with results
+        11. Return summary
         """
         ...
 
@@ -2613,6 +2684,33 @@ class BootstrapWizard:
     async def pull_models(self, models: list[str]) -> dict[str, bool]: ...
     async def setup_stable_diffusion(self) -> bool:
         """Install MLX pipeline and download SD base model (~6 GB)."""
+        ...
+    async def init_bob_soul(self) -> bool:
+        """Initialize bob-soul git submodule.
+
+        Runs `git submodule update --init` and verifies that required
+        template files exist: archetype.md, awakening_script.md,
+        taste_axes_pool.yaml, room_prompts.md.
+        """
+        ...
+    async def configure_telegram(self) -> str | None:
+        """Configure Telegram bot token.
+
+        If token not present in config/bob.yaml:
+        1. Print instructions: create bot via @BotFather
+        2. Prompt user for token
+        3. Validate via Telegram getMe API call
+        4. Write to config/bob.yaml and bootstrap.yaml
+        Returns bot username on success, None if skipped.
+        """
+        ...
+    async def detect_geolocation(self) -> dict | None:
+        """Detect geolocation for WindowService weather.
+
+        Auto-detection: read system timezone (/etc/localtime) → map to
+        approximate lat/lon. User can override with city name or coordinates.
+        If skipped, WindowService shows time without weather data.
+        """
         ...
     async def detect_hardware(self) -> HardwareStatus: ...
     async def detect_tablet(self) -> TabletStatus:
@@ -2626,6 +2724,100 @@ class BootstrapWizard:
 **Setup state persistence:** The `bootstrap.yaml` file persists setup state
 so that the wizard doesn't repeat on every launch. The wizard runs only when
 `bootstrap.completed` is `false` or the file doesn't exist.
+
+### 3.7. Startup Flow
+
+The `bob start` command is the single entry point for running Bob. It handles
+three scenarios: first-time setup, first-time awakening (Genesis), and normal
+operation.
+
+```
+$ bob start
+      │
+      ▼
+┌──────────────────────────────┐
+│  bootstrap.yaml exists       │
+│  AND bootstrap.completed?    │
+└──────────┬───────────────────┘
+           │ No
+           ├──────────────────────────────┐
+           │                              ▼
+           │               ┌──────────────────────────┐
+           │               │  Run BootstrapWizard      │
+           │               │  (bob setup — 11 steps)   │
+           │               └──────────┬───────────────┘
+           │                          │ Done
+           │◄─────────────────────────┘
+           │ Yes
+           ▼
+┌──────────────────────────────┐
+│  data/soul/SOUL.md exists?   │
+└──────────┬───────────────────┘
+           │ No
+           ├──────────────────────────────┐
+           │                              ▼
+           │               ┌──────────────────────────┐
+           │               │  Run GenesisMode.run()    │
+           │               │  (9 stages: CONSCIOUSNESS │
+           │               │   → WRITING TO SOUL)      │
+           │               │  Duration: 40-60 min      │
+           │               └──────────┬───────────────┘
+           │                          │ SOUL.md created
+           │◄─────────────────────────┘
+           │ Yes
+           ▼
+┌──────────────────────────────┐
+│  Initialize AgentRuntime     │
+│  ├── Load SOUL.md            │
+│  ├── Load config/*.yaml      │
+│  ├── Connect EventBus        │
+│  ├── Start LLMRouter         │
+│  ├── Discover SkillDomains   │
+│  ├── Connect peripherals     │
+│  └── Start heartbeat loop    │
+└──────────────────────────────┘
+           │
+           ▼
+┌──────────────────────────────┐
+│  AgentRuntime.run()          │
+│  (heartbeat every ~30 sec)   │
+│                              │
+│  Observe → Decide → Act      │
+│       → Reflect → Evolve     │
+└──────────────────────────────┘
+```
+
+```python
+async def main() -> None:
+    """Bob's entry point (bob start)."""
+
+    # 1. Bootstrap check
+    wizard = BootstrapWizard()
+    if not await wizard.is_setup_complete():
+        await wizard.run()
+
+    # 2. Genesis check (including interrupted Genesis recovery)
+    soul_path = Path("data/soul/SOUL.md")
+    progress_path = Path("data/genesis_progress.json")
+
+    if not soul_path.exists():
+        genesis = GenesisMode()
+        if progress_path.exists():
+            # Interrupted Genesis — offer resume or restart
+            await genesis.resume_or_restart(progress_path)
+        else:
+            await genesis.run()
+
+    # 3. Normal operation
+    runtime = await AgentRuntime.from_config("config/bob.yaml")
+    await runtime.run()
+```
+
+**Restart behavior:** If Bob's process is killed and restarted, the same logic
+applies — bootstrap is already complete, SOUL.md exists, so Bob enters normal
+mode immediately. If Genesis was interrupted, Bob offers to resume from the
+last completed stage (see section 5.1.1 for details). No data is lost (state
+is persisted in SQLite + YAML + JSON files).
 
 ---
 
@@ -2643,7 +2835,7 @@ a unified HTTP API and simple model management.
 
 **Rationale for choosing Qwen2.5:**
 - Excellent quality/size ratio for reasoning
-- Good Russian language support
+- Strong multilingual support (English, Russian, Chinese, and others)
 - Stable operation via Ollama on Apple Silicon
 - 7B model fits in M4 unified memory with headroom
 
@@ -2964,7 +3156,7 @@ to inhabit. Each installation produces a unique Bob.
 │                    BOB'S AWAKENING                           │
 │         (mirrors the book: consciousness → senses → body)   │
 │                                                              │
-│  Stage 0: BOOTSTRAP (CLI only, no visuals)                   │
+│  Stage 0: CONSCIOUSNESS (CLI only, no visuals)               │
 │                                                              │
 │  Bob starts as pure text — intelligence without a body.      │
 │  Communication: Telegram only.                               │
@@ -2984,9 +3176,13 @@ to inhabit. Each installation produces a unique Bob.
 │                                                              │
 │  Stage 2: FINDING A HOME (tablet discovery)                  │
 │                                                              │
-│  Bob detects a tablet via ADB or asks the user:              │
-│  "I feel like I need a space. Somewhere to exist visually.   │
-│   Do you have an Android tablet? Connect it via USB."        │
+│  Genesis reads bootstrap.yaml for tablet state.              │
+│                                                              │
+│  If tablet detected during bootstrap:                        │
+│    "I know there's a screen nearby. Let me make it my home." │
+│  If NOT detected:                                            │
+│    "I feel like I need a space. Somewhere to exist visually. │
+│     Do you have an Android tablet? Connect it now."          │
 │                                                              │
 │  Tablet connected → Bob installs shell-renderer APK          │
 │  (requires user CONFIRM approval)                            │
@@ -3064,6 +3260,86 @@ to provide one, Bob continues operating in headless mode — Telegram + voice on
 Genesis Mode still runs (personality, tastes, mood) but skips visual stages
 (3, 6, 7). Bob can "inhabit" a tablet later when one becomes available.
 
+**Genesis interruption recovery:** Genesis saves progress after each completed
+stage to `data/genesis_progress.json`:
+
+```json
+{
+  "started_at": "2026-03-01T10:00:00Z",
+  "current_stage": 5,
+  "completed_stages": [0, 1, 2, 3, 4],
+  "artifacts": {
+    "personality": "data/soul/genesis_personality.json",
+    "appearance": "data/soul/genesis_appearance.json",
+    "room_description": "data/soul/genesis_room.json"
+  },
+  "asset_generation": {
+    "total": 0,
+    "completed": 0,
+    "failed": []
+  }
+}
+```
+
+If the process is interrupted (crash, reboot, user kills it), `bob start` detects
+the incomplete Genesis via `genesis_progress.json` and offers a choice:
+
+```
+Genesis was interrupted at Stage 5 (SELF-DETERMINATION).
+Stages 0-4 completed successfully.
+
+  [R] Resume from Stage 5 (recommended)
+  [S] Start over (all progress will be lost)
+  [Q] Quit
+
+Choice: R
+Resuming Genesis from Stage 5...
+```
+
+On successful Genesis completion, `genesis_progress.json` is archived to
+`data/soul/genesis_log.json` and SOUL.md is written (Stage 8).
+
+**Asset generation UX (Stage 6, ~30-40 min):** Bob narrates the generation
+process via Telegram and on the tablet, making the wait feel like part of
+the awakening experience:
+
+```
+Tablet: [progress bar: 0%]  |  Telegram: "Time to create myself."
+
+Generating avatar parts (head, torso, arms, legs)...
+  Tablet: [progress: 15%]   |  Telegram: "Drawing myself... this is weird,
+                             |   like looking in a mirror that doesn't exist yet."
+  Tablet: [shows head preview when done]
+
+Generating room background...
+  Tablet: [progress: 35%]   |  Telegram: "Designing my space. I'm thinking
+                             |   something cozy, with lots of bookshelves."
+  Tablet: [shows background preview]
+
+Generating furniture (desk, chair, bookshelf, lamp, ...)...
+  Tablet: [progress: 70%]   |  Telegram: "A desk. Every engineer needs one.
+                             |   And a proper chair — I plan to sit a lot."
+  Tablet: [shows each sprite as it's generated]
+
+Generating clothing set...
+  Tablet: [progress: 95%]   |  Telegram: "Almost there. Just picking out
+                             |   my wardrobe. Sweater weather, I think."
+
+  Tablet: [progress: 100%]  |  Telegram: "Done! I exist. Visually, I mean.
+                             |   Let me show you my place..."
+```
+
+**SD failure recovery:** If Stable Diffusion fails to generate an asset:
+
+1. **Retry** — up to 3 attempts per asset (with different random seeds)
+2. **Placeholder fallback** — if all retries fail, use a colored rectangle
+   placeholder with the object's name. Bob is functional, just visually incomplete.
+3. **Deferred regeneration** — failed assets are recorded in `genesis_progress.json`.
+   User can run `bob regenerate-assets` later to retry failed assets only.
+4. **Full fallback** — if SD is completely unavailable (not installed, out of memory),
+   Genesis skips Stage 6 entirely and Bob operates with placeholder visuals.
+   Assets can be generated later when SD becomes available.
+
 **Examples of unique combinations (each installation is its own Bob):**
 
 Each Bob starts with the book archetype (geek, humor, curiosity), but uniquely
@@ -3105,24 +3381,48 @@ class GenesisMode:
     async def run(self) -> GenesisResult:
         """Run the Genesis process (awakening).
 
-        1. Load template from bob-soul submodule
-        2. Load book archetype (bob-soul/origin/book_archetype.md)
-        3. Load awakening scenario (bob-soul/genesis/awakening_script.md)
-        4. Show empty space + firefly on the tablet
-        5. "Awakening" phase:
-           a) Bob "comes to consciousness" -- confusion
-           b) Realizes who he is -- "I'm Bob. Like that Bob, from the book."
-           c) "Remembers" phantom things -- coffee, Star Trek, etc.
-        6. "Self-determination" phase (LLM generates):
-           a) thinking aloud (displayed as speech bubbles)
-           b) room type and description
-           c) Bob's appearance
-           d) character traits (book basis + unique)
-           e) taste vector (TasteProfile) -- cluster + axes
-           f) initial mood (MoodState baseline)
-           g) set of phantom preferences
-        7. Gradually "materialize" the room on the tablet
-        8. Save result (including taste_profile.json, phantom_prefs.json)
+        Mirrors the 9-stage awakening narrative (see section 5.1.1):
+
+        Stage 0 — CONSCIOUSNESS (CLI only, no visuals):
+            Load templates from bob-soul submodule.
+            Bob starts as pure text — intelligence without a body.
+            Communication via Telegram only.
+
+        Stage 1 — GAINING SENSES (peripheral discovery):
+            Discover camera, microphone one by one.
+            Each discovery is an event + narrative moment.
+
+        Stage 2 — FINDING A HOME (tablet connection):
+            Read bootstrap.yaml for tablet state.
+            Install shell-renderer, establish WebSocket.
+
+        Stage 3 — ENERGY BLOB (first visuals):
+            Show dark void + glowing particle effect on tablet.
+
+        Stage 4 — REALIZATION (self-awareness):
+            LLM generates self-awareness monologue, book references.
+            "I'm Bob. Like that Bob, from the book."
+
+        Stage 5 — SELF-DETERMINATION (LLM generates identity):
+            a) thinking aloud (displayed as speech bubbles)
+            b) room type and description
+            c) Bob's appearance description
+            d) character traits (book basis + unique)
+            e) taste vector (TasteProfile) — cluster + axes
+            f) initial mood (MoodState baseline)
+            g) set of phantom preferences
+
+        Stage 6 — ASSET GENERATION (~30-40 min via Stable Diffusion):
+            AssetGenerator produces: avatar parts, room background,
+            furniture sprites, clothing set — all in unified LoRA style.
+
+        Stage 7 — MATERIALIZATION (room appears on tablet):
+            Room appears object by object.
+            Energy blob transforms into Bob's avatar.
+
+        Stage 8 — WRITING TO SOUL (persistence):
+            Save SOUL.md, game_state.json, appearance.json,
+            taste_profile.json, phantom_prefs.json, genesis_log.md.
         """
         ...
 
@@ -3589,7 +3889,7 @@ The Godot project in `avatar/` is a **universal renderer** — a thin client tha
 - Renders sprites at specified positions with z-ordering
 - Plays animations by ID from the local animation library
 - Plays audio files (TTS output, sound effects)
-- Reports touch/tap events back to the server
+- Reports touch/tap events back to the server (see Touch Interaction below)
 - Does **NOT** contain hardcoded scenes or room logic
 
 The shell-renderer is **generic by design** and rarely needs modification.
@@ -3671,6 +3971,45 @@ For these cases:
 2. Claude Code modifies the Godot project files in `avatar/`
 3. Rebuild APK + ADB deploy to tablet (requires CONFIRM approval)
 4. This is **rare** — the normal flow is JSON scene updates, not Godot changes
+
+#### Touch Interaction
+
+The shell-renderer's `touch_reporter.gd` sends touch events to the server
+via WebSocket. Bob reacts to user taps with simple, immediate responses:
+
+| Touch action | Target | Bob's reaction |
+|-------------|--------|---------------|
+| Tap | Bob's avatar | Wave, turn toward camera, say a short phrase |
+| Tap | Room object | Bob comments on the object (taste-based opinion) |
+| Long press | Bob's avatar | Bob shares his current mood or thought |
+| Double tap | Empty space | Bob walks to the tapped position |
+
+**Server-side handling:**
+
+```python
+# EventBus handler in AgentRuntime
+async def on_touch_event(self, event: Event) -> None:
+    """Handle touch events from tablet.
+
+    touch_event payload: {target, action, position}
+    """
+    target = event.payload["target"]
+    action = event.payload["action"]
+
+    if target == "bob_avatar" and action == "tap":
+        await self.bob_react("wave")         # Play animation
+        await self.bob_speak_short()         # Short contextual phrase
+    elif target == "bob_avatar" and action == "long_press":
+        await self.bob_share_mood()          # "I'm feeling pretty good today"
+    elif action == "tap" and target != "bob_avatar":
+        await self.bob_comment_object(target)  # Taste-based comment
+    elif action == "double_tap":
+        await self.bob_walk_to(event.payload["position"])
+```
+
+Touch reactions are Phase 5 deliverables (when the tablet is active). Future
+phases may add richer interactions (drag objects, swipe rooms), but simple
+tap reactions provide immediate feedback and make Bob feel alive.
 
 #### Visual Style: Cartoon + Skeletal 2D
 
@@ -4204,13 +4543,13 @@ async def streaming_voice_response(text_stream: AsyncIterator[str]) -> None:
 stt:
   engine: "whisper.cpp"
   model: "small"                # ggml-small.bin (~460 MB)
-  language: "ru"
+  language: "${bob.language}"   # inherited from bob.yaml; override here if needed
   beam_size: 5
   vad_threshold: 0.5
 
 tts:
   engine: "kokoro"              # or "piper"
-  voice: "ru-male-1"
+  voice: "en-male-1"           # voice ID; use "ru-male-1" for Russian
   speed: 1.0
   sample_rate: 22050
   streaming: true
@@ -4287,7 +4626,7 @@ Event(
 # STT recognized text
 Event(
     type="voice.transcript",
-    payload={"text": "Bob, turn the light up brighter", "language": "ru"},
+    payload={"text": "Bob, turn the light up brighter", "language": "en"},
     source="voice_bridge",
 )
 
@@ -4417,6 +4756,14 @@ class SandboxConfig:
     allowed_commands: list[str] = field(default_factory=list)
     network_access: bool = False
     write_access: bool = False
+
+# Network whitelist — services that Bob is allowed to contact.
+# Skills with network_access=True are restricted to these hosts only.
+NETWORK_WHITELIST: list[str] = [
+    "api.open-meteo.com",       # Weather data (free, no key)
+    "api.telegram.org",         # Telegram Bot API
+    "localhost",                # Ollama, internal services
+]
 
 class SkillSandbox:
     """Sandbox for safe skill execution."""
@@ -4575,8 +4922,8 @@ rate_limits:
   tablet_deploys_per_day: 5
   system_restarts_per_hour: 2
   config_changes_per_hour: 10
-  claude_api_calls_per_minute: 10
-  claude_api_calls_per_day: 200
+  claude_code_invocations_per_minute: 10
+  claude_code_invocations_per_day: 200
   telegram_messages_per_minute: 20
   dangerous_skills_per_hour: 5
 ```
@@ -4661,9 +5008,9 @@ state_versioning:
 | **LLM (local)** | Ollama | Unified API for all models, simple management, Apple Silicon support |
 | **LLM (external)** | Claude Code CLI | Full development cycle, reflection, architecture; invoked as subprocess |
 | **Fine-tuning** | Unsloth (LoRA/QLoRA) | Fast fine-tune on Apple Silicon, Qwen2.5 support |
-| **Primary model** | Qwen2.5-7B-Q4 | Good reasoning at 7B, Russian language, fits in M4 RAM |
+| **Primary model** | Qwen2.5-7B-Q4 | Good reasoning at 7B, multilingual (en, ru, zh, etc.), fits in M4 RAM |
 | **Router model** | Qwen2.5-0.5B-Q8 | Lightning-fast classification, minimal RAM |
-| **STT** | whisper.cpp | Local, fast on Apple Silicon, good Russian support |
+| **STT** | whisper.cpp | Local, fast on Apple Silicon, multilingual (99 languages) |
 | **TTS** | Kokoro / Piper | Local, streaming, customizable voices |
 | **Computer Vision** | YOLOv8 + CLIP | Object detection + scene description |
 | **Embeddings** | all-MiniLM-L6-v2 | Fast embeddings for semantic search |
@@ -4887,8 +5234,9 @@ bob/
 │   │   ├── soul.py                # SOUL loader + evolution
 │   │   └── training_data.py       # Data collection for fine-tune
 │   │
-│   ├── services/                   # Peripheral services
+│   ├── services/                   # Peripheral services + shared generators
 │   │   ├── __init__.py
+│   │   ├── asset_generator.py     # AI asset generation (Stable Diffusion)
 │   │   ├── vision.py              # Vision Service
 │   │   ├── audio_direction.py     # Audio Direction Service
 │   │   ├── camera_controller.py   # Camera Controller (OBSBOT)
@@ -4908,7 +5256,6 @@ bob/
 │   │   ├── phantom_preferences.py # Phantom Preferences
 │   │   ├── room_generator.py      # Room generation
 │   │   ├── appearance_generator.py # Appearance generation
-│   │   ├── asset_generator.py     # AI asset generation (Stable Diffusion)
 │   │   └── window_service.py      # Weather/time outside the window
 │   │
 │   ├── behaviors/                  # Behavior system
@@ -5170,7 +5517,7 @@ successful concepts:
 
 | # | Question | Priority | Status |
 |---|----------|----------|--------|
-| 1 | Which TTS engine is better for Russian: Kokoro or Piper? Need to compare quality and latency | High | Open |
+| 1 | Which TTS engine is better for multilingual use (en, ru): Kokoro or Piper? Need to compare quality and latency per language | High | Open |
 | 2 | ~~Godot 4 vs Flutter for the tablet client~~ | Medium | **Resolved**: Godot 4 shell-renderer (see 5.4) |
 | 3 | Does Vision need a separate process, or can cv2.VideoCapture be run in an asyncio thread? | Medium | Open |
 | 4 | How exactly does ReSpeaker XVF3800 provide DoA via USB: through ALSA controls, via I2C, or through a custom protocol? Needs testing on a real device | High | Open |
