@@ -329,7 +329,7 @@ The PRD (v0.0.1, 322 lines) is the business vision document. The RFC (5011 lines
 | ~~**F9**~~ | ~~Peripheral addition after Genesis~~ | ~~D/E~~ | ~~User adds camera/mic later~~ | **RESOLVED**: PeripheralScanner re-scans every 30 min (camera, mic) and 5 min (tablet via mDNS). New devices emit `peripheral.discovered` event, no restart needed. |
 | ~~**F10**~~ | ~~Touch interaction on tablet undefined~~ | ~~E (Operation)~~ | ~~User touches tablet — nothing happens?~~ | **RESOLVED**: Touch Interaction spec added to section 5.4 — tap bob (wave), tap object (comment), long press (mood), double tap (walk to) |
 | ~~**F11**~~ | ~~Tablet sleep/wake/battery undefined~~ | ~~E (Operation)~~ | ~~Tablet goes to sleep — what does Bob do?~~ | **RESOLVED**: TabletState enum (CONNECTED/SLEEPING/DISCONNECTED). Heartbeat ping/10s, pong timeout/5s. Bob switches to headless on disconnect, resyncs room_state on reconnect. |
-| **F12** | Bob update/upgrade mechanism undefined | F (Growth) | How does Bob get code updates? | Define: `git pull` + `bob upgrade` command, or self-update via Claude Code |
+| ~~**F12**~~ | ~~Bob update/upgrade mechanism undefined~~ | ~~F (Growth)~~ | ~~How does Bob get code updates?~~ | **RESOLVED**: `bob update` command — git pull + uv sync + DB migrations + restart. Daily auto-check + Telegram notification. Rollback via `bob update --rollback`. See section 3.8.3. |
 
 ---
 
@@ -445,10 +445,10 @@ What Bob can and cannot do at each development phase:
 |---|-----|--------|
 | ~~**UX1**~~ | ~~No progress indication during 30-40 min asset generation~~ | **RESOLVED**: Bob narrates process via Telegram + progress bar + previews on tablet |
 | ~~**UX2**~~ | ~~No recovery from interrupted Genesis~~ | **RESOLVED**: genesis_progress.json saves state after each stage. Resume or restart on next `bob start`. |
-| **UX3** | No explanation of "what can I do with Bob" post-Genesis | User doesn't know how to interact |
+| ~~**UX3**~~ | ~~No explanation of "what can I do with Bob" post-Genesis~~ | **RESOLVED**: Organic capability discovery — Bob explores new peripherals for himself (CapabilityDiscovery class in 5.1.1). User learns by observing Bob, not through tutorials. `/help` available as factual reference. |
 | ~~**UX4**~~ | ~~Tablet touch interactions undefined~~ | **RESOLVED**: Touch Interaction spec in 5.4 — tap, long press, double tap with Bob reactions |
-| **UX5** | No "settings" or "preferences" UI for user | User can't configure Bob's behavior easily |
-| **UX6** | Negotiation UX unclear | How does "Bob disagrees" actually look on tablet/Telegram? |
+| ~~**UX5**~~ | ~~No "settings" or "preferences" UI for user~~ | **RESOLVED**: Telegram `/settings` commands + natural language settings. Categories: notifications, autonomy, display, privacy, audio. Shared-space settings go through NegotiationEngine. See section 3.8.4. |
+| ~~**UX6**~~ | ~~Negotiation UX unclear~~ | **RESOLVED**: Negotiation UX Presentation (3.3.7.1) — Telegram: text + inline buttons per decision type. Tablet: avatar animations + colored speech bubbles. No visible insistence counter. RelationshipTracker (3.3.7.2) tracks long-term relationship quality, Exodus Mode on sustained breakdown. |
 
 ### 6.3. Technical Gaps
 

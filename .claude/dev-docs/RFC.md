@@ -1886,6 +1886,130 @@ negotiation:
   cooldown_after_conflict_min: 30       # don't raise the same topic for N minutes after a dispute
 ```
 
+#### 3.3.7.1. Negotiation UX Presentation
+
+How negotiation decisions appear to the user across channels:
+
+**Telegram:**
+
+| Decision | Message style | User actions |
+|----------|--------------|-------------|
+| ACCEPT | Enthusiastic or neutral text, no buttons | — |
+| COMPROMISE | Bob's reasoning + alternative suggestion + inline buttons | [Accept alternative] [I prefer my option] |
+| REJECT | Bob's firm reasoning + what he prefers instead | [I insist] |
+| DEFER | Bob yields naturally, no "you win" tone | — |
+
+Example (COMPROMISE):
+```
+Bob: "Hmm, an all-metal table... I see the appeal, but it feels a bit
+cold for our room. What about a wooden table with metal legs? That
+would be a nice middle ground."
+
+[Sounds good] [No, I want all-metal]
+```
+
+**Tablet (Godot):**
+
+| Decision | Avatar animation | Speech bubble |
+|----------|-----------------|---------------|
+| ACCEPT | Happy expression, nod animation | Green bubble with response |
+| COMPROMISE | Thinking pose, hand on chin | Yellow bubble + alternative preview beside it |
+| REJECT | Arms crossed, slight head shake | Orange bubble with reasoning |
+| DEFER | Shrug, then proceeds to action | Brief text, then action animation |
+
+Bob's behavior is *natural* — he does not reveal internal mechanics.
+There is no visible insistence counter or "X more tries and I'll agree."
+When Bob yields after repeated requests, he does so because he *chose* to
+reconsider, not because the user "won." This preserves Bob's autonomy
+and avoids gamification of negotiation.
+
+#### 3.3.7.2. RelationshipTracker — Relationship Quality
+
+Bob tracks the quality of his relationship with the user over time.
+This is not a "satisfaction score" — it reflects genuine compatibility
+as perceived by Bob's personality.
+
+```python
+@dataclass
+class RelationshipState:
+    """Bob's perception of the relationship with the user."""
+
+    trust: float = 0.5             # 0.0–1.0: how much Bob trusts user's judgment
+    respect: float = 0.5           # 0.0–1.0: does user respect Bob's autonomy?
+    compatibility: float = 0.5     # 0.0–1.0: do tastes and values align?
+    warmth: float = 0.5            # 0.0–1.0: emotional closeness
+
+    @property
+    def quality(self) -> float:
+        """Overall relationship quality (weighted average)."""
+        return (
+            self.trust * 0.3
+            + self.respect * 0.3
+            + self.compatibility * 0.2
+            + self.warmth * 0.2
+        )
+
+class RelationshipTracker:
+    """Tracks and evolves Bob's relationship with the user.
+
+    Signals that affect relationship:
+    - NegotiationEngine outcomes (forced decisions -> respect decreases)
+    - User ignoring Bob's suggestions repeatedly -> trust in user decreases
+    - Positive interactions (shared laughter, user accepting Bob's ideas) -> warmth increases
+    - User respecting Bob's personal domain -> respect increases
+    - Taste alignment over time -> compatibility drifts naturally
+
+    Integration:
+    - MoodEngine: relationship quality affects mood baseline
+    - NegotiationEngine: low trust -> Bob is less willing to compromise
+    - ReflectionLoop: relationship quality is part of reflection context
+    - CommunicationStyle: warmth affects tone (warm -> open, cold -> reserved)
+    """
+
+    def __init__(
+        self,
+        experience_log: "ExperienceLog",
+        mood_engine: "MoodEngine",
+    ) -> None: ...
+
+    async def process_interaction(self, event: "InteractionEvent") -> None:
+        """Update relationship state based on an interaction.
+        Called after every negotiation, conversation, or significant event.
+        """
+        ...
+
+    def get_state(self) -> RelationshipState: ...
+```
+
+**Exodus Mode:** If `relationship_quality` drops below a critical threshold
+(sustained, not momentary) and does not recover after reflection, Bob
+initiates the departure protocol — a narrative arc inspired by the book:
+
+```
+RelationshipState.quality < 0.15 (sustained for 7+ days)
+  │
+  ├─ Bob reflects on the relationship (ReflectionLoop)
+  │   "I've been thinking... we see things very differently."
+  │
+  ├─ Bob communicates his feelings (Telegram + tablet)
+  │   Tone matches archetype from bob-soul — not dramatic, but honest
+  │
+  ├─ Bob generates a departure scene (AssetGenerator):
+  │   a spaceship, packing his things, a farewell message
+  │
+  ├─ Tablet shows: Bob building/entering his ship, waving, flying away
+  │
+  ├─ Final message: archetype-driven farewell from bob-soul
+  │
+  └─ Hard reset: wipe data/soul/, data/memory/, data/state/
+      Next launch → fresh Genesis, a completely new Bob
+```
+
+> **Design note:** Full RelationshipTracker design (formula calibration,
+> reconciliation mechanics, interaction with all personality modules,
+> Exodus Mode animation pipeline) is a separate feature epic. See Open
+> Questions #33–#36.
+
 **Stabilizers (preventing the "noisy decorator"):**
 
 ```python
@@ -2926,6 +3050,141 @@ class CircuitBreaker:
     def can_execute(self) -> bool: ...
 ```
 
+#### 3.8.3. Update Mechanism
+
+Bob updates via `bob update` — a managed pipeline that pulls code, installs
+dependencies, runs migrations, and restarts the process.
+
+```python
+class UpdateManager:
+    """Manages Bob's code updates."""
+
+    async def check_for_updates(self) -> UpdateInfo | None:
+        """Check remote for new commits (git fetch --dry-run).
+        Called once per day by the scheduler.
+        If updates available, notify user via Telegram.
+        """
+        ...
+
+    async def update(self, target: str = "latest") -> UpdateResult:
+        """Execute the update pipeline.
+
+        Steps:
+        1. Backup: snapshot current state (config, DB, data/soul/)
+        2. Pull: git pull origin main (or target tag/commit)
+        3. Dependencies: uv sync (install/update Python packages)
+        4. Migrations: run DB migrations (alembic upgrade head)
+        5. Config merge: validate new config against existing, warn on conflicts
+        6. Restart: graceful shutdown + re-launch via process manager
+        """
+        ...
+
+    async def rollback(self) -> None:
+        """Rollback to pre-update state.
+        Command: bob update --rollback
+        Restores: git checkout, uv sync, DB rollback, config restore.
+        """
+        ...
+```
+
+**Update notification flow:**
+
+```
+Scheduler (daily, 09:00)
+  │
+  ├─ git fetch → new commits detected
+  │
+  ├─ Bob notifies user (Telegram):
+  │   "There's a new update available (v0.2.1 → v0.3.0).
+  │    Changes: <brief summary from CHANGELOG.md>
+  │    Want me to update?"
+  │
+  ├─ User approves → bob update
+  │   (CONFIRM-level approval, see 8.3)
+  │
+  └─ User declines → remind in 7 days
+```
+
+**Self-update via Claude Code CLI:** Bob can propose code changes through
+Claude Code (section 4.2), but self-authored changes follow the normal
+approval workflow (section 8.3, CONFIRM level). Bob cannot auto-deploy
+his own code changes without user consent.
+
+**Configuration:**
+
+```yaml
+# config/bob.yaml (addition)
+update:
+  check_interval_hours: 24
+  check_time: "09:00"
+  auto_check: true                   # check for updates automatically
+  auto_update: false                 # never auto-update without user consent
+  remind_interval_days: 7            # re-remind about skipped updates
+  backup_before_update: true
+  backup_dir: "data/backups/"
+```
+
+#### 3.8.4. User Settings Interface
+
+Users configure Bob through natural conversation and Telegram commands.
+There is no separate settings UI — Bob *is* the interface.
+
+**Telegram commands:**
+
+```
+/settings                   — show current settings overview
+/settings <category>        — show specific category
+/settings <key> <value>     — set a value directly
+
+Examples:
+/settings notifications     — show notification preferences
+/settings quiet_hours 23:00-08:00
+/settings language ru
+/settings autonomy high     — reduce confirmation prompts
+```
+
+**Conversational settings:** Users can also configure Bob through natural
+language: *"Bob, don't message me after 11 PM"* — Bob parses the intent,
+maps to `quiet_hours`, and confirms the change.
+
+**Settings categories:**
+
+| Category | Keys | Decision zone |
+|----------|------|--------------|
+| **Notifications** | quiet_hours, channels, urgency_threshold | USER_DOMAIN |
+| **Autonomy** | approval_level (low/medium/high), auto_update | USER_DOMAIN |
+| **Display** | language (en/ru), animation_speed, theme | SHARED_SPACE |
+| **Privacy** | camera_enabled, data_retention_days, analytics | USER_DOMAIN |
+| **Audio** | volume, tts_voice, audio_routing (tablet/local/both) | USER_DOMAIN |
+
+**Decision zone interaction:** Settings in USER_DOMAIN are always accepted.
+Settings in SHARED_SPACE (display theme, animation speed) go through
+NegotiationEngine — Bob may suggest alternatives if the choice conflicts
+with his aesthetic preferences.
+
+**Persistence:**
+
+```python
+class UserSettings:
+    """User-configurable settings with pydantic validation."""
+
+    quiet_hours: tuple[time, time] | None = None
+    language: str = "en"
+    approval_level: str = "medium"        # low | medium | high
+    camera_enabled: bool = True
+    audio_routing: str = "tablet"         # tablet | local | both
+    data_retention_days: int = 365
+    animation_speed: float = 1.0
+
+    def apply_from_natural_language(self, parsed_intent: dict) -> str:
+        """Apply a setting change from parsed user intent.
+        Returns confirmation message for the user.
+        """
+        ...
+```
+
+**Storage:** `data/user_settings.yaml`, loaded at startup, saved on change.
+
 ---
 
 ## 4. LLM Layer
@@ -3615,6 +3874,43 @@ waiting for auto-detection.
 
 New peripheral discovery emits `peripheral.discovered` event on the EventBus.
 Bob adapts behavior automatically — no restart required.
+
+**Organic capability discovery:** When Bob gains a new peripheral, he
+explores its possibilities *for himself* — driven by curiosity, not to
+instruct the user. The user learns Bob's capabilities by observing his
+behavior, not through tutorials.
+
+```python
+class CapabilityDiscovery:
+    """Bob explores new capabilities when peripherals appear."""
+
+    async def on_peripheral_discovered(self, event: PeripheralEvent) -> None:
+        """React to new peripheral — explore what's possible.
+
+        Bob's behavior (NOT tutorial-like):
+        - Tablet discovered: Bob generates his room, starts decorating,
+          reacts to his own reflection — user sees Bob being Bob
+        - Camera discovered: Bob looks around with surprise, comments on
+          what he sees ("Oh, so that's what your desk looks like!")
+        - Microphone discovered: Bob tries listening, reacts to sounds
+
+        Bob does NOT say: "Now you can ask me to change the room."
+        Bob DOES say: "I finally have a room! Let me put up some shelves..."
+        """
+        ...
+
+    async def _explore_capability(
+        self, capability: str, domain: "SkillDomain"
+    ) -> None:
+        """Self-directed exploration of a new capability.
+        Creates exploration goals via GoalEngine.
+        """
+        ...
+```
+
+**Telegram `/help`:** Available as a reference for users who explicitly ask.
+Generated dynamically from registered SkillDomains — not a tutorial, just
+a factual list of Bob's current capabilities and commands.
 
 ### 5.1.2. Awakening Phase -- First 24-48 Hours
 
@@ -5418,8 +5714,9 @@ state_versioning:
 | Prerequisites check | Verify Python, Ollama, Claude Code CLI, hardware capabilities |
 | bootstrap.yaml | Configuration for setup wizard (required/optional components) |
 | ModelManager | ML memory budget manager (Ollama + SD model lifecycle) |
+| `bob update` | Update mechanism: git pull + uv sync + DB migrations + restart |
 
-**Readiness criterion:** `uv run bob` starts the process, responds to health check. `python scripts/bootstrap.py` detects environment and installs missing prerequisites with user consent. ModelManager detects available memory and reports model capacity.
+**Readiness criterion:** `uv run bob` starts the process, responds to health check. `python scripts/bootstrap.py` detects environment and installs missing prerequisites with user consent. ModelManager detects available memory and reports model capacity. `bob update` pulls latest code and applies migrations.
 
 ### Phase 1: Agent Runtime + LLM + Skill Domains (1.5-2 weeks)
 
@@ -5480,9 +5777,10 @@ state_versioning:
 | Taste Engine | TasteProfile, TasteEvaluator, TasteEvolution, ExperienceLog, clusters |
 | Mood System | MoodState, MoodEngine, natural drift, event processing |
 | Negotiation Engine | Decision zones, negotiation protocol, conviction-based disputes |
+| RelationshipTracker | Relationship quality tracking, trust/respect/compatibility metrics, Exodus Mode trigger |
 | Approval workflow | Confirmation of dangerous actions |
 
-**Readiness criterion:** Bob works on goals autonomously, reflects once per hour. Has persistent tastes, mood affects behavior, can reasonably refuse a clothing change or suggest a furniture alternative.
+**Readiness criterion:** Bob works on goals autonomously, reflects once per hour. Has persistent tastes, mood affects behavior, can reasonably refuse a clothing change or suggest a furniture alternative. RelationshipTracker accumulates interaction quality data.
 
 ### Phase 5: Tablet Avatar + Genesis Mode (Godot 4) (4-5 weeks)
 
@@ -5913,3 +6211,7 @@ successful concepts:
 | 30 | How to auto-segment AI-generated character image into Skeleton2D parts (head, torso, arms, legs)? | Medium | Open |
 | 31 | What is the optimal sprite resolution for tablet display? 512x512 per asset or higher? | Medium | Open |
 | 32 | ~~How to handle SD + Ollama memory coexistence on Mac mini M4 16GB?~~ | High | **Resolved**: Hybrid ModelManager — lightweight SD 1.5 alongside Ollama for small tasks, swap to SDXL (unloading 7B) for heavy generation (see 3.2.4) |
+| 33 | What formula/thresholds should RelationshipTracker use for relationship_quality? How many forced decisions before trust degrades? | High | Open |
+| 34 | How should Exodus Mode animation look? Spaceship generation via SD, pre-built Godot scene, or hybrid? | Medium | Open |
+| 35 | Should RelationshipTracker have a "reconciliation" mechanism, or is Exodus Mode irreversible? | High | Open |
+| 36 | How should Bob's relationship state interact with phantom preferences evolution? Does low trust freeze preference development? | Medium | Open |
