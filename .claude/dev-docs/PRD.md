@@ -57,7 +57,7 @@ All devices are on the same local network; the tablet and speaker receive comman
 3. **LLM Layer (three tiers)**
    - **Qwen2.5-0.5B** (via Ollama) — fast router/task classifier.
    - **Qwen2.5-7B-Q4** (via Ollama) — main reasoning, dialogue, planning.
-   - **Claude Code CLI** (subprocess) — "senior architect": code writing, architecture, deployment, self-reflection, defining self-improvement strategy. Protected by **ClaudeCodeLock** — Bob detects whether the user is actively using Claude Code CLI and asks permission before invoking it. If denied, Bob queues the task and falls back to local LLM reflection or idle activities.
+   - **Claude Code CLI** (subprocess) — "senior architect": code writing, architecture, deployment, self-reflection, defining self-improvement strategy. Protected by **ClaudeCodeCoordinator** — Bob asks permission via voice (if user nearby) or Telegram before invoking it, tracks shared subscription quota. If denied or quota exhausted, Bob queues the task and falls back to local LLM reflection or idle activities.
    - Fine-tuning local LLMs: Bob collects data from reflection and experience -> LoRA/QLoRA fine-tuning via Unsloth -> models literally become smarter over time.
 
 4. **Memory System — four-level memory**
@@ -125,7 +125,7 @@ Bob operates continuously in a loop (heartbeat pattern, interval ~30 sec):
      - update room/avatar state,
      - for user requests — run through Negotiation Engine (may refuse, propose a compromise, or accept depending on the zone and conviction). Negotiation is visible to the user: on Telegram as text with inline buttons, on tablet as avatar animations with colored speech bubbles. Bob behaves naturally — no visible "insistence counter" or gamification.
      - say a phrase (style depends on mood), rotate the camera,
-     - if needed, invoke Claude Code CLI (via ClaudeCodeLock permission protocol) for code writing, architecture tasks, deployment.
+     - if needed, invoke Claude Code CLI (via ClaudeCodeCoordinator: voice→Telegram permission + quota tracking) for code writing, architecture tasks, deployment. Code changes follow impact-based workflow: low-impact → direct commit + notify, medium → branch + approval, high → pre-approval + branch + review.
 
   4. **Reflect** (via Reflection Loop, approximately every ~60 min):
      - evaluate action results,
@@ -259,7 +259,7 @@ Structure:
     - `bob/skills/development/` — Domain: self-development via Claude Code CLI.
     - `bob/skills/messaging/` — Domain: messengers (Telegram, etc.).
     - `bob/skills/_template/` — Template for creating new domains.
-  - `bob/security/` — sandbox, approval, rate_limiter, audit, claude_code_lock.
+  - `bob/security/` — sandbox, approval, rate_limiter, audit, claude_code_coordinator.
 - `data/` — data (git-versioned separately):
   - `data/soul/` — evolving personality (SOUL.md, appearance.json, taste_profile.json, phantom_prefs.json, genesis_log).
   - `data/memory/` — MEMORY.md, vectors, episodic logs.

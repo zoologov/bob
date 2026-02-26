@@ -651,7 +651,7 @@ class DevelopmentDomain:
     event_subscriptions = ["goal.code_task_created"]
 
     # Skills: write_code, refactor, run_tests
-    # Depends on: ClaudeCodeLock (see 8.4)
+    # Depends on: ClaudeCodeCoordinator (see 8.4)
 ```
 
 **3. Avatar Domain** (`bob/skills/avatar/`):
@@ -3300,44 +3300,57 @@ class ClaudeCodeBridge:
 
 #### 4.2.1. Claude Code Permission Model
 
-Claude Code CLI is a **shared resource** between Bob and the user. Bob must
-never hijack the CLI while the user is actively working. The permission model
-ensures respectful coexistence.
+Bob and the user share a **Claude subscription** but work on **separate machines**
+(Bob on his Mac Mini, user on their own device). There is no process-level
+conflict — the coordination is social: Bob asks permission before using
+the shared quota.
 
 > **Scope split:** This section covers the *usage workflow* — permission flow,
-> degradation, and task queue. The *security mechanism* (`ClaudeCodeLock` class,
-> detection strategy, graceful interrupt, Negotiation Engine) lives in
-> section 8.4.
+> voice→Telegram escalation, degradation, and task queue. The *security mechanism*
+> (`ClaudeCodeCoordinator` class, `QuotaTracker`, Negotiation Engine integration)
+> lives in section 8.4.
 
-**Core concept:** `ClaudeCodeLock` (see section 8.4 for implementation)
-provides mutual exclusion. Before every CLI invocation, Bob must acquire
-the lock.
+**Core concept:** `ClaudeCodeCoordinator` (see section 8.4 for implementation)
+manages permission requests and quota tracking. Before every CLI invocation,
+Bob must obtain user permission via voice or Telegram.
 
 **Permission flow:**
 
 ```
 Bob needs Claude Code for a task
   │
-  ├─ 1. Detect: is_user_active()?
-  │     (check running processes, lock files, recent session activity)
+  ├─ 1. Check QuotaTracker: is quota likely available?
+  │     • If recently hit 429 → DEFER (no point asking)
+  │     • If local call count near limit → warn user in request
   │
-  ├─ 2. If user active: DEFER
-  │     • Queue the task with priority and description
-  │     • Switch to alternative activity:
-  │       - Reflect using local LLM (Qwen2.5-7B)
-  │       - Organize goals, review memory
-  │       - Read/explore codebase with local tools
-  │       - Idle behaviors (avatar animations on tablet)
-  │     • Retry when lock becomes available
+  ├─ 2. Check camera: is user nearby?
+  │     ├─ User visible → ask via VOICE:
+  │     │   "I need to refactor module X, can I use Claude Code?
+  │     │    Should take about 15 minutes."
+  │     │   ├─ Voice response within 10-20 sec → proceed/defer
+  │     │   └─ No response → escalate to Telegram (step 3)
+  │     │
+  │     └─ User not visible → still ask via VOICE (might be nearby)
+  │         ├─ Voice response → proceed/defer
+  │         └─ No response within 10-20 sec → escalate to Telegram (step 3)
   │
-  └─ 3. If user NOT active: ASK
-        • Request approval via ApprovalService (CONFIRM level)
-        • If approved → acquire lock → execute → release lock
-        • If denied → queue task, set retry_after timer
+  ├─ 3. TELEGRAM: send permission request with task description
+  │     "I need to work on X (~15 min). Can I use Claude Code?"
+  │     ├─ "Yes" / "Go ahead" → acquire → work → notify completion
+  │     ├─ "No, I'm using it" → DEFER + "Let me know when you're done"
+  │     ├─ "Not now" → DEFER + schedule retry
+  │     └─ No response → DEFER to idle activities
+  │
+  └─ 4. IDLE while waiting:
+        • Read/study (book references, code exploration)
+        • Reflect using local LLM (Qwen2.5-7B)
+        • Organize goals, review memory
+        • Idle animations on tablet (reading, thinking)
+        • Periodically re-ask via Telegram (every 30 min, max 3 times)
 ```
 
 **Graceful degradation:** When Claude Code CLI is unavailable (denied,
-offline, or user is busy), Bob falls back gracefully:
+quota exhausted, or user busy), Bob falls back gracefully:
 
 | Task type | Fallback behavior |
 |-----------|-------------------|
@@ -3347,6 +3360,18 @@ offline, or user is busy), Bob falls back gracefully:
 | Self-improvement | Log improvement ideas, defer implementation |
 | Godot rebuild | Queue, continue with current avatar state |
 
+**Quota exhaustion flow:**
+
+```
+Bob invokes Claude Code → receives 429 Rate Limit
+  │
+  ├─ 1. Record in QuotaTracker (timestamp of rate limit)
+  ├─ 2. Estimate reset time (5-hour rolling window from earliest call)
+  ├─ 3. Notify user: "Claude Code quota used up, need ~N hours to reset"
+  ├─ 4. Switch to idle activities
+  └─ 5. Auto-retry after estimated reset time
+```
+
 **Configuration:**
 
 ```yaml
@@ -3355,10 +3380,11 @@ claude_code:
   # ... existing fields ...
   permission:
     require_approval: true           # Always ask before using CLI
-    detect_user_activity: true       # Check if user is using CLI
+    voice_wait_sec: 15               # Wait for voice response
     fallback_to_local: true          # Use Qwen2.5-7B when CLI unavailable
     queue_max_size: 10               # Max queued CLI tasks
-    retry_interval_sec: 300          # Check availability every 5 min
+    telegram_retry_interval_sec: 1800  # Re-ask every 30 min
+    max_telegram_retries: 3          # Don't nag excessively
 ```
 
 **Queue mechanism:**
@@ -3369,9 +3395,10 @@ class QueuedClaudeTask:
     description: str
     priority: int                     # 0 = critical, 4 = backlog
     task_type: str                    # "code", "reflection", "deploy", ...
+    impact_level: str                 # "low", "medium", "high" (see 4.2.2)
     created_at: datetime
     retry_count: int = 0
-    max_retries: int = 12             # Give up after 1 hour (12 * 5 min)
+    max_retries: int = 6              # Give up after 3 hours (6 * 30 min)
 
 class ClaudeCodeTaskQueue:
     """Queue for deferred Claude Code tasks."""
@@ -3379,7 +3406,77 @@ class ClaudeCodeTaskQueue:
     async def enqueue(self, task: QueuedClaudeTask) -> None: ...
     async def peek(self) -> QueuedClaudeTask | None: ...
     async def dequeue(self) -> QueuedClaudeTask | None: ...
-    async def process_next(self, lock: "ClaudeCodeLock") -> bool: ...
+    async def process_next(self, coordinator: "ClaudeCodeCoordinator") -> bool: ...
+```
+
+#### 4.2.2. Code Change Workflow
+
+When Bob modifies his own code via Claude Code CLI, the workflow depends on
+the **impact level** of the change. This prevents trivial fixes from requiring
+heavy review while keeping architectural changes under user control.
+
+| Impact level | Criteria | Workflow | Approval |
+|--------------|----------|----------|----------|
+| **Low** | Tests, docs, bugfixes, refactoring <20 lines | Direct commit on `main` + Telegram notification | NOTIFY |
+| **Medium** | New skills, changes to existing logic, new dependencies | Branch `bob/<name>` + Telegram with diff summary, wait for "merge" or "reject" | CONFIRM |
+| **High** | Architecture, security, config, core modules, database schema | Pre-approval before starting + branch + review | CRITICAL |
+
+**Impact classification** uses the existing `ApprovalMap` levels (NOTIFY,
+CONFIRM, CRITICAL) from section 8.3. The `DevelopmentDomain` maps each code
+task to an impact level based on:
+
+```python
+class CodeChangeClassifier:
+    """Classify code changes by impact level."""
+
+    # Files/patterns that trigger HIGH impact
+    HIGH_IMPACT_PATTERNS: ClassVar[list[str]] = [
+        "bob/core/*",               # Core modules
+        "bob/security/*",           # Security
+        "config/*.yaml",            # Configuration
+        "pyproject.toml",           # Dependencies
+        "alembic/*",                # DB migrations
+    ]
+
+    # Files/patterns that are LOW impact
+    LOW_IMPACT_PATTERNS: ClassVar[list[str]] = [
+        "tests/*",                  # Tests
+        "docs/*",                   # Documentation
+        "*.md",                     # Markdown
+    ]
+
+    def classify(self, changed_files: list[str], diff_stats: "DiffStats") -> str:
+        """Return 'low', 'medium', or 'high'."""
+        ...
+```
+
+**Branch workflow (medium/high impact):**
+
+```
+Bob creates branch bob/<task-name>
+  │
+  ├─ Commits changes to branch
+  ├─ Runs tests on branch
+  ├─ Sends Telegram notification:
+  │   "I made changes in bob/add-weather-skill:
+  │    +45 lines, 2 files changed. Tests pass.
+  │    [Merge] [Show diff] [Reject]"
+  │
+  ├─ User responds:
+  │   ├─ "Merge" → Bob merges to main, deletes branch
+  │   ├─ "Show diff" → Bob sends git diff summary
+  │   └─ "Reject" → Bob deletes branch, logs reason
+  │
+  └─ No response within 24h → reminder, then auto-archive branch
+```
+
+**Commit message format:**
+
+```
+[bob] <type>: <description>
+
+Types: feat, fix, refactor, docs, test, chore
+Example: [bob] feat: add weather query skill
 ```
 
 ### 4.3. Fine-tuning Local LLMs
@@ -5321,8 +5418,10 @@ Event(
 | `peripheral.discovered` | PeripheralScanner | AgentRuntime | type, device_id |
 | `system.heartbeat` | AgentRuntime | — (monitoring) | uptime_sec, memory_mb |
 | `system.error` | Any | MoodEngine, AgentRuntime | component, error, severity |
-| `claude_code.lock_acquired` | ClaudeCodeLock | AgentRuntime | task_description |
-| `claude_code.lock_released` | ClaudeCodeLock | AgentRuntime | — |
+| `claude_code.permission_granted` | ClaudeCodeCoordinator | AgentRuntime | task_description |
+| `claude_code.session_completed` | ClaudeCodeCoordinator | AgentRuntime | task_description |
+| `claude_code.permission_denied` | ClaudeCodeCoordinator | AgentRuntime | reason |
+| `claude_code.quota_exhausted` | ClaudeCodeCoordinator | AgentRuntime | estimated_reset |
 
 Event types use dot-separated namespaces. Wildcard subscriptions supported
 (e.g., `vision.*` catches all vision events).
@@ -5502,60 +5601,108 @@ class ApprovalService:
         ...
 ```
 
-### 8.4. Shared Resource Management (Claude Code Lock)
+### 8.4. Shared Subscription Coordination (Claude Code Coordinator)
 
-Bob and the user may both need Claude Code CLI. Bob must never hijack the CLI
-while the user is actively working with it.
+Bob and the user share a **Claude subscription** but work on **separate machines**
+(Bob on Mac Mini, user on their own device). There is no process-level conflict —
+the shared constraint is the **subscription quota** (~45 prompts / 5-hour rolling
+window on Pro, more on Max).
 
 ```python
 @dataclass
-class ClaudeCodeLock:
-    """Mutual exclusion for Claude Code CLI access.
+class QuotaTracker:
+    """Best-effort tracking of Claude Code usage quota.
 
-    Ensures Bob and the user don't conflict over the CLI.
+    Claude Code CLI does not expose remaining quota via API.
+    We track locally and handle 429 errors reactively.
     """
 
-    _lock_file: Path = Path("/tmp/bob_claude_code.lock")
-    _owner: str | None = None
+    calls_log: list[datetime] = field(default_factory=list)
+    last_rate_limit: datetime | None = None
+    plan_limit: int = 45                   # Pro plan default
+    window_hours: int = 5                  # rolling window
 
-    async def is_user_active(self) -> bool:
-        """Detect if the user is actively using Claude Code.
+    def record_call(self) -> None:
+        """Record a successful CLI invocation."""
+        self.calls_log.append(datetime.now())
 
-        Detection strategy (in order):
-        1. Check for running `claude` processes not owned by Bob
-        2. Check for Claude Code lock files in common locations
-        3. Check for recent Claude Code activity (mtime of session files)
+    def record_rate_limit(self) -> None:
+        """Record a 429 rate limit response."""
+        self.last_rate_limit = datetime.now()
+
+    def estimated_available(self) -> bool:
+        """Estimate if quota is likely available.
+
+        Returns False if:
+        - Recent 429 error within the rolling window
+        - Local call count exceeds plan_limit in the window
+        Note: user's calls on their device are not tracked,
+        so this is best-effort.
         """
         ...
 
-    async def acquire(self, task_description: str) -> bool:
-        """Request exclusive access to Claude Code CLI.
+    def estimated_reset_time(self) -> datetime | None:
+        """Estimate when quota will be available again."""
+        ...
 
-        Flow:
-        1. Check is_user_active() — if True, return False immediately
-        2. Request user approval via ApprovalService (CONFIRM level)
-        3. If approved, create lock file with task_description
-        4. Return True
+
+class ClaudeCodeCoordinator:
+    """Coordinates Claude Code CLI usage between Bob and the user.
+
+    Unlike a mutex/lock, this is a social coordination protocol:
+    Bob asks the user for permission via voice or Telegram before
+    using the shared subscription.
+    """
+
+    async def request_permission(
+        self, task_description: str, estimated_minutes: int,
+    ) -> bool:
+        """Request permission to use Claude Code CLI.
+
+        Protocol:
+        1. Check QuotaTracker — if quota likely exhausted, defer
+        2. Check camera — is user nearby?
+        3. Ask via voice: "I need to work on X, can I use Claude Code?"
+        4. Wait 10-20 sec for voice response
+        5. If no voice response → send Telegram message
+        6. Wait for Telegram response (async, non-blocking)
+        7. If no response anywhere → defer to idle activities
+
+        Returns True if permission granted.
         """
         ...
 
-    async def release(self) -> None:
-        """Release Claude Code CLI lock."""
+    async def on_permission_granted(self) -> None:
+        """User approved — Bob starts working (sits at his laptop)."""
         ...
 
-    async def force_release(self) -> None:
-        """User reclaims CLI mid-session. Bob gracefully interrupts."""
+    async def on_permission_denied(self, reason: str) -> None:
+        """User denied — queue task, ask to notify when free.
+
+        If reason is 'user_busy': Bob asks user to notify when done.
+        If reason is 'not_now': Bob retries after retry_interval.
+        """
+        ...
+
+    async def on_session_completed(self, task: str) -> None:
+        """Notify user that Bob finished using Claude Code."""
+        ...
+
+    async def handle_rate_limit(self, error: Exception) -> None:
+        """Handle 429 rate limit error.
+
+        1. Record in QuotaTracker
+        2. Notify user: 'Claude Code quota exhausted, need ~N hours'
+        3. Switch to idle activities
+        4. Schedule retry after estimated reset
+        """
         ...
 ```
 
 **Permission flow:** See section 4.2.1 for the full permission protocol diagram,
-graceful degradation table, and task queue mechanism.
+voice→Telegram escalation, graceful degradation table, and task queue mechanism.
 
-**Graceful interrupt:** If the user starts Claude Code while Bob holds the lock,
-Bob receives a `SIGUSR1` signal (or EventBus event), saves progress, releases
-the lock, and resumes from checkpoint when the lock becomes available again.
-
-**Integration with Negotiation Engine:** Claude Code CLI access is modeled as
+**Integration with Negotiation Engine:** Claude Code CLI usage is modeled as
 a `shared_resource` zone in the Negotiation Engine. Bob can express
 preference ("I really need to refactor this — it's blocking 3 goals") but
 always yields to user denial.
@@ -5564,12 +5711,14 @@ always yields to user denial.
 
 ```yaml
 # config/security.yaml (addition)
-claude_code_lock:
-  lock_file: "/tmp/bob_claude_code.lock"
-  detection_methods:
-    - process_check          # Check for running `claude` processes
-    - lock_file              # Check for Claude Code's own lock files
-  graceful_interrupt_timeout_sec: 30  # Time to save progress on interrupt
+claude_code_coordinator:
+  voice_wait_sec: 15                     # Wait for voice response
+  telegram_retry_interval_sec: 1800      # Re-ask in Telegram every 30 min
+  max_telegram_retries: 3                # Don't nag more than 3 times
+  quota_tracker:
+    plan_limit: 45                       # Prompts per window (Pro plan)
+    window_hours: 5                      # Rolling window
+    cooldown_after_429_min: 60           # Min wait after rate limit
   # Queue settings (retry_interval, max_size) are in config/llm.yaml
   # under claude_code.permission — see section 4.2.1
 ```
@@ -5732,7 +5881,7 @@ state_versioning:
 | Avatar domain (stub) | Third domain: `avatar/` (stub — room state read, no Godot yet) |
 | Voice Bridge | Whisper.cpp STT + Kokoro/Piper TTS |
 | SOUL submodule | Connect bob-soul, basic personality template |
-| Claude Code Bridge | Integration with Claude Code CLI as subprocess + ClaudeCodeLock |
+| Claude Code Bridge | Integration with Claude Code CLI as subprocess + ClaudeCodeCoordinator |
 
 **Readiness criterion:** Bob responds to messages in Telegram and by voice. Three SkillDomains registered and operational. Claude Code is available for complex tasks (with permission protocol).
 
@@ -6187,7 +6336,7 @@ successful concepts:
 | 6 | How to store and version Godot assets that Bob generates/modifies? Separate git repo or LFS? | Medium | Open |
 | 7 | Should we use ChromaDB (persistent, server mode) or FAISS (in-process, faster) for vector search? | Medium | Open |
 | 8 | Is integration with Home Assistant / other IoT platforms needed in early phases? | Low | Open |
-| 9 | How should Bob propose changes to his own code via Claude Code CLI: auto-commit (with approval) or via PR/suggestion to the user? | High | Open |
+| 9 | ~~How should Bob propose changes to his own code via Claude Code CLI: auto-commit (with approval) or via PR/suggestion to the user?~~ | High | **Resolved**: Hybrid by impact level — low: direct commit + notify, medium: branch + approval, high: pre-approval + branch + review (see 4.2.2) |
 | 10 | Is reflection data sufficient for LoRA fine-tune, or is additional collection needed via special dialogs? Minimum ~100 pairs | Medium | Open |
 | 11 | ~~How to organize the Godot asset pool?~~ | High | **Resolved**: AI-generated via local Stable Diffusion during Genesis (see 5.4.2) |
 | 12 | Is a system of "animation primitives" (idle, walk, sit, reach) needed from which BehaviorRegistry composes complex behaviors? | Medium | Open |
@@ -6201,7 +6350,7 @@ successful concepts:
 | 20 | Should phantom preferences affect TasteEngine (e.g., "coffee" -> warm_tones +0.1) or remain a separate system? | Medium | Open |
 | 21 | Does Bob need to "re-read the book" (loading book text as context) for more accurate references, or is book_quotes.yaml sufficient? | Low | Open |
 | 22 | How to visualize the awakening phase on the tablet: speech bubbles with inner monologue, confusion animations, or both? | High | Open |
-| 23 | How to detect if user is actively using Claude Code CLI? Process check vs lock file vs both? | High | Open |
+| 23 | ~~How to detect if user is actively using Claude Code CLI? Process check vs lock file vs both?~~ | High | **Resolved**: No process/lock detection needed — Bob and user on separate machines, shared subscription. Voice→Telegram permission protocol + reactive 429 handling (see 4.2.1, 8.4) |
 | 24 | ~~What is the minimum viable sprite/animation set for the Godot shell-renderer?~~ | Medium | **Resolved**: AI-generated via Stable Diffusion, no hand-drawn assets (see 5.4.2) |
 | 25 | How should SkillDomain versioning work when Bob upgrades a domain? | Medium | Open |
 | 26 | Should Bob's self-created SkillDomains go through a "probation" period before full trust? | High | Open |
