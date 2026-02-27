@@ -2880,7 +2880,7 @@ class CrossDomainCorrelator:
            (within 1 hour of each other)
         2. For each (mood_dimension, taste_axis) pair:
            a. Compute Pearson correlation
-           b. If |correlation| > 0.3 and sample_count > 10:
+           b. If |correlation| > 0.3 and sample_count > 30:
               -> Create CrossDomainAssociation
         3. Store in cross_domain_associations table
         4. Emit emergence.correlation_discovered if new association found
@@ -2942,7 +2942,7 @@ class CrossDomainConfig:
     enabled: bool = True
     schedule: str = "daily"
     correlation_threshold: float = 0.3
-    min_sample_count: int = 10
+    min_sample_count: int = 30
     stale_threshold: float = 0.2
     stale_window_days: int = 14
 
@@ -2988,7 +2988,7 @@ emergent_behavior:
     enabled: true
     schedule: "daily"                     # during daily_summary reflection
     correlation_threshold: 0.3           # minimum |correlation| to create association
-    min_sample_count: 10                 # minimum co-occurring data points
+    min_sample_count: 30                 # minimum co-occurring data points (30+ for statistical significance)
     stale_threshold: 0.2                 # correlation below this -> prune
     stale_window_days: 14                # lookback for pruning
 ```
