@@ -101,7 +101,7 @@ Bob also creates his own animations — interaction with objects in the room,
 reactions to what you say, idle behaviors when he's thinking or bored. He can
 wave, shrug, lean on the desk, tap his fingers impatiently, rummage through a
 bookshelf, or dramatically stare out the window while processing a particularly
-hard question. And since he controls the camera via a servo mount and knows
+hard question. And since he controls the camera via a PTZ gimbal and knows
 where you are from the microphone array — his avatar on the tablet actually
 looks at you. You walk across the room, his eyes follow. You come back, he
 turns. It's endearing for about five minutes, and then mildly unsettling
