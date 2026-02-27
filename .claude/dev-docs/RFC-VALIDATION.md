@@ -742,3 +742,43 @@ What Bob can and cannot do at each development phase:
 | **High** | 7 | 7 | 0 | Type fixes, event catalog, naming, contention, sc_ isolation, configs, stats |
 | **Medium** | 7 | 7 | 0 | DI, unused params, API boundaries, docs, types, consistency |
 | **Total** | **17** | **17** | **0** | **All resolved** |
+
+---
+
+## 11. Validation Round 5 — Full Coherence Review (§3.3.8–3.3.11 + Cross-Cutting)
+
+> **Date:** 2026-02-28
+> **Scope:** Full re-review of RFC.md (~9349 lines) after Round 4 fixes. Focus: architectural correctness, ghost references, dead code, coding standards, cross-reference completeness, schema consistency.
+
+### 11.1. Critical Issues
+
+| # | Sections | Issue | Status |
+|---|----------|-------|--------|
+| **V5-C1** | 3.3.3 (~1131-1132) | **Ghost tables in `ScopedDBReader.TABLE_ALLOWLIST`.** `"episodic_log"` and `"semantic_memory"` are listed in the frozenset but do NOT exist as SQLite tables anywhere in the RFC. Episodic Memory is Markdown files (§3.4.2). Semantic Memory is FAISS + MEMORY.md (§3.4.3). ReflectionLoop querying these via SQL will fail at runtime. | **OPEN** |
+| **V5-C2** | 11 (~9107-9108) | **Duplicate `models/` directory in Repository Structure.** Two identical `models/` entries under `data/finetune/`: one for "sklearn models" and one for "Saved LoRA adapters". | **OPEN** |
+| **V5-C3** | 3.3.9 (~2934, ~2988), 11 (~9107) | **`model_path` inconsistency.** `MoodPredictorConfig.model_path` = `"data/models/mood_predictor.joblib"` but section 11 repo structure places it at `data/finetune/models/`. Different paths. | **OPEN** |
+
+### 11.2. High Severity Issues
+
+| # | Sections | Issue | Status |
+|---|----------|-------|--------|
+| **V5-H1** | 9 (~8753) | **`librosa` and `scikit-learn` missing from Technology Stack.** Both used extensively: scikit-learn for MoodPredictor (MLPRegressor), TasteAxisDiscovery (HDBSCAN), CrossDomainCorrelator; librosa for AudioGrounding (pYIN, RMS, VAD). Neither listed in §9. | **OPEN** |
+| **V5-H2** | 3.3.10 | **Missing `SensoryGroundingConfig` dataclass.** Round 4 (V4-H6) added config dataclasses for §3.3.8 (InnerMonologueConfig), §3.3.9 (EmergentBehaviorConfig), §3.3.11 (SubconsciousConfig). But §3.3.10 has YAML config without a corresponding Python config dataclass. Inconsistency across the four new sections. | **OPEN** |
+| **V5-H3** | 3.3.9 (~2698) | **`import numpy as np` missing in §3.3.9 code block.** `DiscoveredAxis.centroid: np.ndarray` uses numpy but imports only show `dataclasses`, `datetime`, `enum`. §3.3.10 and §3.3.11 correctly include numpy import. | **OPEN** |
+
+### 11.3. Medium Severity Issues
+
+| # | Sections | Issue | Status |
+|---|----------|-------|--------|
+| **V5-M1** | 3.4.4, 3.3.1, 3.3.5, 3.3.6 | **Section 3.4.4 has inconsistent scope.** New cognitive tables (thought_summaries, discovered_axes, sc_* etc.) are in BOTH their component sections AND §3.4.4. But older tables (mood_history, goals, taste_history, object_experience) are only in their component sections, not consolidated in §3.4.4. Dual maintenance burden. | **OPEN** |
+| **V5-M2** | 3.4.4 (~4534-4549) | **Missing consolidated indices in §3.4.4.** The index block doesn't include indices from older sections: `idx_mood_timestamp`, `idx_mood_primary` (§3.3.6), `idx_goals_status`, `idx_goals_priority` (§3.3.1). | **OPEN** |
+| **V5-M3** | 3.3.6 (~1742-1746) | **`MoodEngine.__init__` constructor parameter order is a Python SyntaxError.** `initial_mood: MoodState \| None = None` (keyword arg with default) precedes `db_path: str` (positional arg). Python requires positional args before keyword args with defaults. | **OPEN** |
+
+### 11.4. Summary Matrix — Round 5
+
+| Severity | Found | Resolved | Remaining | Key Themes |
+|----------|-------|----------|-----------|------------|
+| **Critical** | 3 | 0 | 3 | Ghost table refs, duplicate dirs, path mismatch |
+| **High** | 3 | 0 | 3 | Missing deps in tech stack, missing config dataclass, missing import |
+| **Medium** | 3 | 0 | 3 | Schema consolidation, index consolidation, syntax error |
+| **Total** | **9** | **0** | **9** | |

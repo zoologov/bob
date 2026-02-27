@@ -1122,15 +1122,15 @@ class ScopedDBReader:
     """
 
     TABLE_ALLOWLIST: ClassVar[frozenset[str]] = frozenset({
-        "mood_history",
-        "experience",
-        "improvement_rules",
-        "goals",
-        "taste_history",
-        "object_experience",
-        "episodic_log",
-        "semantic_memory",
-        "thought_summaries",
+        "mood_history",          # MoodEngine (section 3.3.6)
+        "experience",            # Structured State (section 3.4.4)
+        "improvement_rules",     # SelfImprovement (section 3.3.4)
+        "goals",                 # GoalEngine (section 3.3.1)
+        "taste_history",         # TasteEngine (section 3.3.5)
+        "object_experience",     # ExperienceLog (section 3.3.5)
+        "episodic_log",          # EpisodicMemory (section 3.4.2)
+        "semantic_memory",       # SemanticMemory (section 3.4.3)
+        "thought_summaries",     # InnerMonologue (section 3.3.8)
     })
 
     def __init__(self, db_path: str) -> None: ...
@@ -1262,7 +1262,7 @@ class SelfImprovement:
         - Successful interaction pairs (request -> response, rated positively)
         - Reflections with insights
         - Corrected errors (before -> after)
-        - User preferences from MEMORY.md
+        - User preferences from semantic_memory (category="user")
         - SOUL evolution (which decisions proved correct)
         - Characteristic phrases in the style of the book's Bob (humor, references)
         - Phantom reactions (trigger -> phrase, rated by user)
@@ -2510,7 +2510,7 @@ class InnerMonologue:
         3. Extract top-3 recurring tags across all thoughts
         4. Select 3-5 representative thoughts (highest |valence|)
         5. Format as ThoughtSummary
-        6. Append summary to episodic daily log as a new subsection
+        6. Insert summary into episodic_log table (event_type="thought_summary")
         7. Return summary (used as context for ReflectionLoop.reflect())
         """
         ...
@@ -2599,7 +2599,7 @@ inner_monologue:
 | `monologue.compressed` | InnerMonologue | EpisodicMemory | summary_id, period_start, period_end, thought_count, dominant_topic, avg_valence |
 | `monologue.activity_changed` | InnerMonologue | AgentRuntime | old_level, new_level, reason |
 
-**SQLite tables.** Ring buffer is in-memory; compressed summaries go into episodic memory (Markdown daily logs). For analytics, one table is added:
+**SQLite tables.** Ring buffer is in-memory; compressed summaries go into episodic memory (`episodic_log` table as event_type "thought_summary"). For analytics, one table is added:
 
 ```sql
 CREATE TABLE thought_summaries (
@@ -2631,15 +2631,21 @@ CREATE INDEX idx_thought_sum_period ON thought_summaries(period_start);
 | `monologue.thought` (negative) | -0.02 | +0.01 | 0 | 0 |
 
 3. **ReflectionLoop.reflect()**: At step 1, call `inner_monologue.compress_to_episodic()` to get ThoughtSummary. Include `key_themes` and `sample_thoughts` in the LLM reflection prompt as "What I was thinking about."
-4. **EpisodicMemory**: The compressed thought summary is appended to the daily log under a new subsection format:
+4. **EpisodicMemory**: The compressed thought summary is inserted into `episodic_log` as:
 
-```markdown
-### 10:00 — Inner Monologue Summary (09:00–10:00)
-- Thoughts: 42, dominant topic: goal
-- Average mood: valence 0.45, arousal 0.35
-- Themes: voice pipeline, latency, user feedback
-- Sample: "The voice latency is still bugging me. Maybe streaming would help."
-- Sample: "User seemed happy this morning. That felt good."
+```python
+await episodic_memory.log_event(
+    event_type="thought_summary",
+    title=f"Inner Monologue Summary ({summary.period_start}–{summary.period_end})",
+    content=(
+        f"Thoughts: {summary.thought_count}, dominant topic: {summary.dominant_topic.value}\n"
+        f"Average mood: valence {summary.avg_valence:.2f}, arousal {summary.avg_arousal:.2f}\n"
+        f"Themes: {', '.join(summary.key_themes)}\n"
+        + "\n".join(f"Sample: \"{t}\"" for t in summary.sample_thoughts)
+    ),
+    mood_snapshot=mood_engine.current,
+    tags=summary.key_themes,
+)
 ```
 
 5. **ModelManager**: InnerMonologue subscribes to `model_manager.profile_changed` event. On HEAVY_GEN, set activity level to SUSPENDED. On return to NORMAL, resume.
@@ -3866,7 +3872,7 @@ class NightProcessor:
         Steps:
         0. Suspend InnerMonologue (set activity to SUSPENDED via event bus).
            This ensures exclusive 0.5B access during night processing.
-        1. Load today's episodic log
+        1. Query today's episodic_log entries (SELECT ... WHERE date = today)
         2. Load thought summaries from InnerMonologue (snapshot before suspend)
         3. For each significant episode (mood_delta > 0.1 or goal event):
            a. Replay through 0.5B at temperature=config.night_processing.temperature (default 1.3)
@@ -4184,6 +4190,10 @@ A four-level memory system.
 
 #### 3.4.1. Overview
 
+All memory subsystems use SQLite (`data/bob.db`) as the single storage backend.
+FAISS provides in-process vector search for semantic memory embeddings;
+metadata and facts are stored in SQLite alongside everything else.
+
 ```
 ┌─────────────────────────────────────────────────────────┐
 │                    MEMORY SYSTEM                         │
@@ -4192,12 +4202,13 @@ A four-level memory system.
 │  │  Episodic   │  │   Semantic   │  │   Structured   │  │
 │  │  Memory     │  │   Memory     │  │   State        │  │
 │  │             │  │              │  │                │  │
-│  │  daily/     │  │  MEMORY.md   │  │  SQLite:       │  │
-│  │  2026-02-   │  │  + vectors   │  │  - goals       │  │
-│  │  26.md      │  │  (FAISS     │  │  - experience  │  │
-│  │             │  │   in-proc)  │  │  - world state │  │
-│  │  Markdown   │  │              │  │  - rules       │  │
-│  │  logs       │  │  Embeddings: │  │                │  │
+│  │  SQLite:    │  │  SQLite:     │  │  SQLite:       │  │
+│  │  episodic_  │  │  semantic_   │  │  - goals       │  │
+│  │  log table  │  │  memory tbl  │  │  - experience  │  │
+│  │             │  │  + FAISS     │  │  - world state │  │
+│  │  Structured │  │  (in-proc    │  │  - rules       │  │
+│  │  daily      │  │   vectors)   │  │                │  │
+│  │  entries    │  │  Embeddings: │  │                │  │
 │  │             │  │  all-Mini    │  │                │  │
 │  │             │  │  LM-L6-v2   │  │                │  │
 │  └─────────────┘  └──────────────┘  └────────────────┘  │
@@ -4212,109 +4223,223 @@ A four-level memory system.
 
 #### 3.4.2. Episodic Memory
 
-Daily logs in Markdown format.
+Structured daily log stored in SQLite (`episodic_log` table). Each entry represents
+a notable event, interaction, or state change. Entries are structured for efficient
+querying (by date, type, tags) while preserving rich text content for LLM context.
 
+```python
+class EpisodicMemory:
+    """Episodic memory backed by SQLite.
+
+    Stores daily events as structured rows. Supports:
+    - Date-range queries (last N days)
+    - Event-type filtering (interactions, reflections, goals)
+    - Tag-based search
+    - LLM-friendly formatting via format_as_markdown()
+    """
+
+    def __init__(self, db_path: str) -> None: ...
+
+    async def log_event(
+        self,
+        event_type: str,
+        title: str,
+        content: str,
+        mood_snapshot: "MoodState | None" = None,
+        related_goal_id: str | None = None,
+        tags: list[str] | None = None,
+    ) -> int:
+        """Log an episodic event. Returns row ID."""
+        ...
+
+    async def get_day_log(self, date: str) -> list[dict]:
+        """Return all entries for a given date (YYYY-MM-DD)."""
+        ...
+
+    async def get_recent(self, days: int = 7) -> list[dict]:
+        """Return entries from the last N days, ordered by timestamp."""
+        ...
+
+    async def search_by_type(
+        self, event_type: str, limit: int = 50
+    ) -> list[dict]:
+        """Find entries by event type."""
+        ...
+
+    async def search_by_tags(
+        self, tags: list[str], limit: int = 50
+    ) -> list[dict]:
+        """Find entries matching any of the given tags."""
+        ...
+
+    def format_as_markdown(self, entries: list[dict]) -> str:
+        """Format entries as Markdown text for LLM context injection.
+
+        Output format (same human-readable style as before):
+
+        # Bob's Diary — 2026-02-26
+
+        ## Morning (06:00–12:00)
+
+        ### 08:15 — User arrived
+        - Presence detected (Vision -> person_detected)
+        - Mood: upbeat (valence 0.55, social 0.50)
+
+        Groups entries by time_of_day and formats as Markdown sections.
+        """
+        ...
 ```
-data/memory/episodic/
-├── 2026-02-26.md
-├── 2026-02-25.md
-└── ...
+
+**SQLite schema (see also section 3.4.4):**
+
+```sql
+CREATE TABLE episodic_log (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    timestamp       TEXT NOT NULL,          -- ISO 8601
+    date            TEXT NOT NULL,          -- YYYY-MM-DD (for grouping/indexing)
+    time_of_day     TEXT NOT NULL,          -- "morning", "afternoon", "evening", "night"
+    event_type      TEXT NOT NULL,          -- "wakeup", "user_arrived", "goal_work",
+                                            -- "reflection", "interaction", "observation",
+                                            -- "mood_change", "thought_summary"
+    title           TEXT NOT NULL,          -- brief heading: "User arrived"
+    content         TEXT NOT NULL,          -- full entry text
+    mood_json       TEXT,                   -- JSON snapshot of MoodState at entry time
+    related_goal_id TEXT,                   -- FK to goals(id) if applicable
+    tags_json       TEXT DEFAULT '[]'       -- JSON array of string tags
+);
+
+CREATE INDEX idx_episodic_date ON episodic_log(date);
+CREATE INDEX idx_episodic_type ON episodic_log(event_type);
+CREATE INDEX idx_episodic_ts ON episodic_log(timestamp);
 ```
 
-**File format:**
+**Example entries (equivalent to the former Markdown diary):**
 
-```markdown
-# Bob's Diary — 2026-02-26
-
-## Morning (06:00–12:00)
-
-### 06:05 — Waking up
-- Started heartbeat, all services OK
-- Room temperature: 22°C
-- User not detected (camera)
-
-### 08:15 — User arrived
-- Presence detected (Vision -> person_detected)
-- Greeted: "Good morning! Is the coffee ready? ...no, I'm not jealous. Not at all."
-- User replied: "Hi, Bob"
-- Mood: upbeat (valence +0.15 -> 0.55, social +0.10 -> 0.50)
-
-### 09:00 — Working on goal G-042
-- Goal: "Optimize voice pipeline"
-- Performed latency analysis -> average 2.3 sec
-- Created sub-goal: "Try streaming TTS"
-- Result: in progress
-
-## Evening (18:00–00:00)
-
-### 22:00 — Reflection
-- Productive day: 3 goals processed, 1 completed
-- Error: timeout when calling Claude Code CLI (1 time)
-- Insight: should cache frequent LLM requests
-- Mood throughout the day: focused -> happy -> calm (result: valence 0.5, arousal 0.3)
-- Room review: fireplace (score 0.95, love), armchair (score 0.75, like) — all good
-- Tastes: conviction for "warm_light" grew to 0.65 (confirmed by experience)
-```
+| timestamp | date | time_of_day | event_type | title | content |
+|-----------|------|-------------|------------|-------|---------|
+| 2026-02-26T06:05:00 | 2026-02-26 | morning | wakeup | Waking up | Started heartbeat, all services OK. Room temperature: 22°C. User not detected. |
+| 2026-02-26T08:15:00 | 2026-02-26 | morning | user_arrived | User arrived | Presence detected (Vision → person_detected). Greeted: "Good morning!" User replied: "Hi, Bob". |
+| 2026-02-26T09:00:00 | 2026-02-26 | morning | goal_work | Working on G-042 | Goal: "Optimize voice pipeline". Latency analysis → avg 2.3 sec. Created sub-goal: "Try streaming TTS". |
+| 2026-02-26T22:00:00 | 2026-02-26 | evening | reflection | Evening reflection | Productive day: 3 goals processed, 1 completed. Insight: cache frequent LLM requests. |
 
 #### 3.4.3. Semantic Memory
 
-Long-term semantic memory with vector search.
+Long-term semantic memory backed by SQLite (`semantic_memory` table) + FAISS
+(in-process vector index). Facts and knowledge are stored as structured rows
+with category, importance, and access tracking. FAISS provides cosine-similarity
+search over embeddings; SQLite provides filtering by category and metadata.
 
 ```python
 class SemanticMemory:
-    """Semantic memory with FAISS (in-process) + SQLite metadata."""
+    """Semantic memory with FAISS (in-process) + SQLite metadata.
+
+    Each memory entry is stored as a row in semantic_memory table with
+    its embedding position in FAISS. Recall combines vector similarity
+    (FAISS top-K) with optional category filtering (SQL WHERE).
+    """
 
     def __init__(
         self,
-        memory_file: str = "data/memory/MEMORY.md",
+        db_path: str,
         vector_db_path: str = "data/memory/vectors",
         embedding_model: str = "all-MiniLM-L6-v2",
     ) -> None: ...
 
     async def remember(self, text: str, category: str, metadata: dict) -> str:
-        """Remember a new fact. Returns ID."""
+        """Remember a new fact.
+
+        Steps:
+        1. Compute embedding via all-MiniLM-L6-v2
+        2. Add to FAISS index → get faiss_index_id
+        3. INSERT into semantic_memory table
+        4. Return entry ID (UUID)
+        """
         ...
 
     async def recall(
         self, query: str, top_k: int = 5, category: str | None = None
-    ) -> list[MemoryEntry]:
-        """Find relevant memories."""
+    ) -> list["MemoryEntry"]:
+        """Find relevant memories.
+
+        Steps:
+        1. Compute query embedding
+        2. FAISS search → top_k * 2 candidates (over-fetch for filtering)
+        3. If category specified: filter by category in SQL
+        4. Exclude outdated entries (outdated = 1)
+        5. Update accessed_at and access_count for returned entries
+        6. Return top_k MemoryEntry objects
+        """
         ...
 
     async def forget(self, memory_id: str) -> None:
-        """Forget (mark as outdated)."""
+        """Soft-delete a memory (set outdated = 1).
+
+        Embedding remains in FAISS (cleaned up during consolidate).
+        """
         ...
 
     async def consolidate(self) -> None:
-        """Consolidation: remove duplicates, update outdated entries.
+        """Consolidation: remove outdated entries from FAISS, deduplicate.
 
-        Runs daily.
+        Runs daily during reflection. Steps:
+        1. Find all entries with outdated = 1
+        2. Remove their embeddings from FAISS (rebuild index if > 10% stale)
+        3. Delete outdated rows from SQLite
+        4. Find near-duplicate entries (cosine > 0.95) → merge
+        """
+        ...
+
+    def format_as_markdown(self, entries: list["MemoryEntry"]) -> str:
+        """Format memory entries as Markdown for LLM context injection.
+
+        Output format (grouped by category):
+
+        ## User
+        - Name: [name]
+        - Prefers informal address
+
+        ## Important facts
+        - Mac mini sits on the desk
+
+        ## Skills and rules
+        - On API error — wait 30 sec and retry
         """
         ...
 ```
 
-**MEMORY.md format:**
+**SQLite schema (see also section 3.4.4):**
 
-```markdown
-# Bob's Memory
+```sql
+CREATE TABLE semantic_memory (
+    id              TEXT PRIMARY KEY,       -- UUID
+    text            TEXT NOT NULL,          -- the fact / knowledge
+    category        TEXT NOT NULL,          -- "user", "environment", "rules",
+                                            -- "skills", "facts", "insights"
+    faiss_index_id  INTEGER NOT NULL,       -- position in FAISS index
+    importance      REAL NOT NULL DEFAULT 0.5,  -- 0.0 .. 1.0
+    created_at      TEXT NOT NULL,
+    updated_at      TEXT NOT NULL,
+    accessed_at     TEXT NOT NULL,          -- last recall timestamp
+    access_count    INTEGER DEFAULT 0,
+    source          TEXT,                   -- "reflection", "user_statement",
+                                            -- "observation", "genesis"
+    outdated        INTEGER DEFAULT 0,     -- 1 = soft-deleted
+    metadata_json   TEXT DEFAULT '{}'
+);
 
-## User
-- Name: [name]
-- Prefers Bob to use informal address
-- Usually wakes up at 7:30–8:00
-- Doesn't like it when Bob speaks too loudly
-- Works from home on Mondays and Wednesdays
-
-## Important facts
-- Mac mini sits on the desk to the left of the monitor
-- Tablet is mounted on a stand to the right
-- OBSBOT camera is on the monitor
-
-## Skills and rules
-- On API error — wait 30 sec and retry (maximum 3 times)
-- Do not disturb the user from 23:00 to 07:00
-- Before deploying to the tablet — always check battery level
+CREATE INDEX idx_semantic_category ON semantic_memory(category);
+CREATE INDEX idx_semantic_outdated ON semantic_memory(outdated);
+CREATE INDEX idx_semantic_importance ON semantic_memory(importance);
 ```
+
+**Example entries (equivalent to the former MEMORY.md):**
+
+| id | text | category | importance | source |
+|----|------|----------|------------|--------|
+| mem-001 | User prefers Bob to use informal address | user | 0.8 | user_statement |
+| mem-002 | Mac mini sits on the desk to the left of the monitor | environment | 0.6 | observation |
+| mem-003 | On API error — wait 30 sec and retry (max 3 times) | rules | 0.9 | reflection |
+| mem-004 | Do not disturb the user from 23:00 to 07:00 | rules | 0.9 | user_statement |
 
 #### 3.4.4. Structured State (SQLite)
 
@@ -4375,6 +4500,40 @@ CREATE TABLE content_violations (
     tier            INTEGER NOT NULL,    -- escalation tier at time of violation
     input_hash      TEXT NOT NULL,       -- SHA-256 hash (not raw text — privacy)
     guard_layer     TEXT NOT NULL        -- "input" | "output"
+);
+
+-- Episodic Memory: daily event log (section 3.4.2)
+CREATE TABLE episodic_log (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    timestamp       TEXT NOT NULL,          -- ISO 8601
+    date            TEXT NOT NULL,          -- YYYY-MM-DD (for grouping/indexing)
+    time_of_day     TEXT NOT NULL,          -- "morning", "afternoon", "evening", "night"
+    event_type      TEXT NOT NULL,          -- "wakeup", "user_arrived", "goal_work",
+                                            -- "reflection", "interaction", "observation",
+                                            -- "mood_change", "thought_summary"
+    title           TEXT NOT NULL,          -- brief heading
+    content         TEXT NOT NULL,          -- full entry text
+    mood_json       TEXT,                   -- JSON snapshot of MoodState at entry time
+    related_goal_id TEXT,                   -- FK to goals(id) if applicable
+    tags_json       TEXT DEFAULT '[]'       -- JSON array of string tags
+);
+
+-- Semantic Memory: long-term facts with FAISS vectors (section 3.4.3)
+CREATE TABLE semantic_memory (
+    id              TEXT PRIMARY KEY,       -- UUID
+    text            TEXT NOT NULL,          -- the fact / knowledge
+    category        TEXT NOT NULL,          -- "user", "environment", "rules",
+                                            -- "skills", "facts", "insights"
+    faiss_index_id  INTEGER NOT NULL,       -- position in FAISS index
+    importance      REAL NOT NULL DEFAULT 0.5,  -- 0.0 .. 1.0
+    created_at      TEXT NOT NULL,
+    updated_at      TEXT NOT NULL,
+    accessed_at     TEXT NOT NULL,          -- last recall timestamp
+    access_count    INTEGER DEFAULT 0,
+    source          TEXT,                   -- "reflection", "user_statement",
+                                            -- "observation", "genesis"
+    outdated        INTEGER DEFAULT 0,     -- 1 = soft-deleted
+    metadata_json   TEXT DEFAULT '{}'
 );
 
 -- Inner Monologue: thought summaries (section 3.3.8)
@@ -4535,6 +4694,12 @@ CREATE INDEX idx_experience_action ON experience(action_type, action_name);
 CREATE INDEX idx_experience_success ON experience(success);
 CREATE INDEX idx_world_state_updated ON world_state(updated_at);
 CREATE INDEX idx_violations_user_time ON content_violations(user_id, timestamp);
+CREATE INDEX idx_episodic_date ON episodic_log(date);
+CREATE INDEX idx_episodic_type ON episodic_log(event_type);
+CREATE INDEX idx_episodic_ts ON episodic_log(timestamp);
+CREATE INDEX idx_semantic_category ON semantic_memory(category);
+CREATE INDEX idx_semantic_outdated ON semantic_memory(outdated);
+CREATE INDEX idx_semantic_importance ON semantic_memory(importance);
 CREATE INDEX idx_thought_sum_period ON thought_summaries(period_start);
 CREATE INDEX idx_discovered_axes_active ON discovered_axes(active);
 CREATE INDEX idx_cross_domain_active ON cross_domain_associations(active);
@@ -8223,12 +8388,15 @@ class AuditEntry:
 
 data/
 ├── .git/
-├── bob.db                      # SQLite (goals, experience, world_state)
+├── bob.db                      # SQLite (all tables: goals, experience, world_state,
+│                               #   episodic_log, semantic_memory, mood_history, ...)
 ├── memory/
-│   ├── MEMORY.md
+│   ├── vectors/                # FAISS index for semantic memory embeddings
+│   ├── visual_vectors/         # FAISS index for visual embeddings
+│   └── latent_vectors/         # FAISS index for latent associations
+├── soul/
 │   ├── SOUL.md
-│   └── episodic/
-│       └── 2026-02-26.md
+│   └── ...
 ├── game_state.json
 ├── audit/
 │   └── 2026-02-26.jsonl
@@ -8785,6 +8953,7 @@ ContentGuard is designed with defense-in-depth against common jailbreak patterns
 | **Formatter** | ruff format | Replacement for black, single tool |
 | **Typing** | mypy | Strict type checking |
 | **Taste/Mood storage** | SQLite + JSON | Tastes in JSON (taste_profile.json), history in SQLite, minimal overhead |
+| **Episodic/Semantic memory** | SQLite + FAISS | All memory in SQLite (episodic_log, semantic_memory tables); FAISS for vector search on semantic embeddings |
 | **Personality origin** | YAML + Markdown | Book archetype in bob-soul/origin/, phantom preferences in phantom_prefs.json |
 
 ---
@@ -8838,8 +9007,8 @@ ContentGuard is designed with defense-in-depth against common jailbreak patterns
 
 | Task | Description |
 |------|-------------|
-| Episodic Memory | Daily logs in Markdown |
-| Semantic Memory | MEMORY.md + FAISS (in-process) + SQLite metadata |
+| Episodic Memory | SQLite `episodic_log` table, structured daily entries |
+| Semantic Memory | SQLite `semantic_memory` table + FAISS (in-process) vector search |
 | Structured State | SQLite: world_state, experience |
 | SOUL Evolution | Personality evolution mechanism based on reflection |
 | Memory API | Endpoints for search and addition |
@@ -9087,7 +9256,7 @@ bob/
 │       └── refusal_generator.py   # RefusalGenerator (Bob-style refusals)
 │
 ├── data/                           # Data (git-versioned separately)
-│   ├── bob.db                     # SQLite (goals, experience, world_state)
+│   ├── bob.db                     # SQLite (goals, experience, world_state, episodic_log, semantic_memory, ...)
 │   ├── game_state.json            # Room state (generated in Genesis)
 │   ├── soul/                      # Evolving personality (local copy)
 │   │   ├── SOUL.md                # Bob's current personality
@@ -9097,11 +9266,9 @@ bob/
 │   │   ├── genesis_log.md         # First launch (awakening) log
 │   │   └── evolution_history.jsonl # SOUL evolution history
 │   ├── memory/
-│   │   ├── MEMORY.md              # Semantic memory (text)
-│   │   ├── vectors/               # FAISS indices (faiss.write_index)
+│   │   ├── vectors/               # FAISS index for semantic memory embeddings
 │   │   ├── visual_vectors/        # FAISS index for visual embeddings (3.3.10)
-│   │   ├── latent_vectors/        # FAISS index for latent associations (3.3.11)
-│   │   └── episodic/              # Daily logs
+│   │   └── latent_vectors/        # FAISS index for latent associations (3.3.11)
 │   ├── finetune/                  # Fine-tune data
 │   │   ├── training_data.jsonl    # Collected training pairs
 │   │   ├── models/                # sklearn models: mood_predictor.joblib (3.3.9)
@@ -9208,7 +9375,7 @@ always-on AI agents (180k+ stars on GitHub). It offers:
 - Always-on agent runtime with heartbeat pattern
 - Skills system with marketplace (ClawHub)
 - Built-in integrations (Telegram, Home Assistant, calendar)
-- File-based memory and SOUL.md concept
+- Structured memory and SOUL.md concept
 - Sub-agent architecture
 
 ### Options Considered
@@ -9271,7 +9438,7 @@ successful concepts:
 |------|-------------------|
 | **SOUL.md** | `bob-soul/` (template directory) -> `data/soul/SOUL.md` -- modular "soul" with evolution |
 | **Heartbeat pattern** | `AgentRuntime.heartbeat()` -- periodic state check |
-| **File-based memory** | `data/memory/MEMORY.md` -- flat file + FAISS vector search |
+| **Structured memory** | SQLite `episodic_log` + `semantic_memory` tables + FAISS vector search |
 | **Skill architecture** | `bob/skills/` -- hot-reloadable Python modules |
 
 ### What We Gain Instead
