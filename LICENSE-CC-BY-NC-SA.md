@@ -1,19 +1,3 @@
-# Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International
-
-The contents of the `bob-soul/` directory and the `assets/` directory
-(including SOUL.md, prompts, personality templates, taste profiles,
-genesis configurations, and visual assets) are licensed under the
-Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International
-License (CC BY-NC-SA 4.0).
-
-You are free to share and adapt these materials for non-commercial
-purposes, as long as you give appropriate credit, indicate changes,
-and distribute your contributions under the same license.
-
-Copyright (c) 2026 Vladimir Zoologov. All Rights Reserved.
-
----
-
 Attribution-NonCommercial-ShareAlike 4.0 International
 
 =======================================================================
@@ -451,4 +435,14 @@ the avoidance of doubt, this paragraph does not form part of the
 public licenses.
 
 Creative Commons may be contacted at creativecommons.org.
+
+---
+
+The contents of the bob-soul/ directory and the assets/ directory
+(including SOUL.md, prompts, personality templates, taste profiles,
+genesis configurations, and visual assets) are licensed under this
+Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International
+License (CC BY-NC-SA 4.0).
+
+Copyright (c) 2026 Vladimir Zoologov. All Rights Reserved.
 

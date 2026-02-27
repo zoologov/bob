@@ -1,13 +1,3 @@
-# Apache License 2.0
-
-This license applies to the contents of the `bob/skills/` directory
-(Skill Domains and plugins for Bob Home Autonomous Agent).
-
-Copyright (c) 2026 Vladimir Zoologov. All Rights Reserved.
-
----
-
-
                                  Apache License
                            Version 2.0, January 2004
                         http://www.apache.org/licenses/
@@ -209,3 +199,10 @@ Copyright (c) 2026 Vladimir Zoologov. All Rights Reserved.
    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
    See the License for the specific language governing permissions and
    limitations under the License.
+
+---
+
+This license applies to the contents of the src/bob/skills/ directory
+(Skill Domains and plugins for Bob Home Autonomous Agent).
+
+Copyright (c) 2026 Vladimir Zoologov. All Rights Reserved.
