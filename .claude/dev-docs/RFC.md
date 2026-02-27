@@ -2050,8 +2050,8 @@ A four-level memory system.
 │  │             │  │              │  │                │  │
 │  │  daily/     │  │  MEMORY.md   │  │  SQLite:       │  │
 │  │  2026-02-   │  │  + vectors   │  │  - goals       │  │
-│  │  26.md      │  │  (FAISS/     │  │  - experience  │  │
-│  │             │  │   ChromaDB)  │  │  - world state │  │
+│  │  26.md      │  │  (FAISS     │  │  - experience  │  │
+│  │             │  │   in-proc)  │  │  - world state │  │
 │  │  Markdown   │  │              │  │  - rules       │  │
 │  │  logs       │  │  Embeddings: │  │                │  │
 │  │             │  │  all-Mini    │  │                │  │
@@ -2118,7 +2118,7 @@ Long-term semantic memory with vector search.
 
 ```python
 class SemanticMemory:
-    """Semantic memory with FAISS/ChromaDB."""
+    """Semantic memory with FAISS (in-process) + SQLite metadata."""
 
     def __init__(
         self,
@@ -5841,7 +5841,7 @@ state_versioning:
 | **TTS** | Qwen3-TTS (0.6B, via mlx-audio) | Multilingual (en+ru+8 more), streaming (97ms), voice cloning (3s ref), Apache 2.0 |
 | **Computer Vision** | YOLOv8 + CLIP | Object detection + scene description |
 | **Embeddings** | all-MiniLM-L6-v2 | Fast embeddings for semantic search |
-| **Vector search** | FAISS / ChromaDB | Local, fast, serverless |
+| **Vector search** | FAISS (`faiss-cpu`) | In-process, zero server overhead, ~20MB for 10K vectors; metadata in SQLite |
 | **Telegram** | python-telegram-bot | Mature library, asyncio support |
 | **ADB** | adb (cli) + python wrapper | Standard tool for Android |
 | **ML memory manager** | ModelManager (custom) | Orchestrates Ollama + SD model lifecycle on 16GB unified memory; see 3.2.4 |
@@ -5911,7 +5911,7 @@ state_versioning:
 | Task | Description |
 |------|-------------|
 | Episodic Memory | Daily logs in Markdown |
-| Semantic Memory | MEMORY.md + FAISS/ChromaDB |
+| Semantic Memory | MEMORY.md + FAISS (in-process) + SQLite metadata |
 | Structured State | SQLite: world_state, experience |
 | SOUL Evolution | Personality evolution mechanism based on reflection |
 | Memory API | Endpoints for search and addition |
@@ -6146,7 +6146,7 @@ bob/
 │   │   └── evolution_history.jsonl # SOUL evolution history
 │   ├── memory/
 │   │   ├── MEMORY.md              # Semantic memory (text)
-│   │   ├── vectors/               # FAISS/ChromaDB indices
+│   │   ├── vectors/               # FAISS indices (faiss.write_index)
 │   │   └── episodic/              # Daily logs
 │   ├── finetune/                  # Fine-tune data
 │   │   ├── training_data.jsonl    # Collected training pairs
@@ -6154,7 +6154,7 @@ bob/
 │   │   └── eval_results/          # Evaluation results
 │   ├── behaviors/                 # Registered behaviors
 │   │   └── registry.json          # Current behavior set
-│   ├── assets/                    # AI-generated visual assets
+│   ├── assets/                    # AI-generated visual assets (.gitignore — per-instance data)
 │   │   ├── avatar/                # Generated avatar parts (for Skeleton2D)
 │   │   │   ├── head.png
 │   │   │   ├── torso.png
@@ -6165,8 +6165,9 @@ bob/
 │   │   ├── furniture/             # Generated furniture sprites
 │   │   ├── room/                  # Generated room backgrounds
 │   │   ├── clothing/              # Generated clothing variants
-│   │   └── lora/                  # Trained LoRA adapter for visual style
-│   │       └── bob_style.safetensors
+│   │   ├── lora/                  # Trained LoRA adapter for visual style
+│   │   │   └── bob_style.safetensors
+│   │   └── history/               # Previous asset versions (renamed with timestamp on change)
 │   ├── audit/                     # Audit logs
 │   └── vision/
 │       └── snapshots/             # Camera snapshots
@@ -6307,7 +6308,7 @@ successful concepts:
 |------|-------------------|
 | **SOUL.md** | `bob-soul/` (submodule) -> `data/soul/SOUL.md` -- modular "soul" with evolution |
 | **Heartbeat pattern** | `AgentRuntime.heartbeat()` -- periodic state check |
-| **File-based memory** | `data/memory/MEMORY.md` -- flat file + vector search |
+| **File-based memory** | `data/memory/MEMORY.md` -- flat file + FAISS vector search |
 | **Skill architecture** | `bob/skills/` -- hot-reloadable Python modules |
 
 ### What We Gain Instead
@@ -6352,8 +6353,8 @@ successful concepts:
 | 3 | ~~Does Vision need a separate process, or can cv2.VideoCapture be run in an asyncio thread?~~ | Medium | **Resolved**: Single process — `asyncio.to_thread` for camera capture (I/O-bound) + `ThreadPoolExecutor` for YOLOv8n inference. At 5-sec intervals GIL is not a bottleneck. Can migrate to separate process later via EventBus abstraction if needed (see 3.5.1) |
 | 4 | How exactly does ReSpeaker XVF3800 provide DoA via USB: through ALSA controls, via I2C, or through a custom protocol? Needs testing on a real device | High | Open |
 | 5 | ~~Is a monitoring dashboard (Grafana / custom) needed from the early phases, or are logs sufficient?~~ | Low | **Resolved**: Structured logs (`structlog` JSON) + `/metrics` JSON endpoint in FastAPI from Phase 1. No Grafana/Prometheus in early phases — overkill for a single host. Bob can read own metrics during reflection. Grafana optional in Phase 6 (see 3.5.1, 10) |
-| 6 | How to store and version Godot assets that Bob generates/modifies? Separate git repo or LFS? | Medium | Open |
-| 7 | Should we use ChromaDB (persistent, server mode) or FAISS (in-process, faster) for vector search? | Medium | Open |
+| 6 | ~~How to store and version Godot assets that Bob generates/modifies? Separate git repo or LFS?~~ | Medium | **Resolved**: `data/assets/` in .gitignore — runtime data unique to each Bob instance, not code. Version history via `data/assets/history/` (rename with timestamp on change). Backup via system tools (Time Machine, rsync). No Git LFS — no value in git-tracking AI-generated per-instance PNGs (see 11) |
+| 7 | ~~Should we use ChromaDB (persistent, server mode) or FAISS (in-process, faster) for vector search?~~ | Medium | **Resolved**: FAISS in-process (`faiss-cpu`). Zero server overhead, ~20MB RAM for 10K vectors @ 384 dim. Metadata stored in SQLite (`bob.db`) with FK to FAISS index ID. `faiss.write_index()`/`read_index()` for persistence. Sufficient for single-user single-process (<10K vectors) (see 3.4.3) |
 | 8 | ~~Is integration with Home Assistant / other IoT platforms needed in early phases?~~ | Low | **Resolved**: No IoT in early phases. Implement as a separate SkillDomain (`bob/skills/smart_home/`) in Phase 5+ when Bob can see, hear, and think. Ideal candidate for Bob to self-create via Claude Code CLI using `_template/` scaffold (see 3.2.3) |
 | 9 | ~~How should Bob propose changes to his own code via Claude Code CLI: auto-commit (with approval) or via PR/suggestion to the user?~~ | High | **Resolved**: Hybrid by impact level — low: direct commit + notify, medium: branch + approval, high: pre-approval + branch + review (see 4.2.2) |
 | 10 | Is reflection data sufficient for LoRA fine-tune, or is additional collection needed via special dialogs? Minimum ~100 pairs | Medium | Open |
