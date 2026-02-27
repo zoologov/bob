@@ -235,6 +235,12 @@ If Genesis ran without a tablet (headless mode), Stages 3, 6, 7 are skipped. Bob
   - per-model limits (local by default, Claude Code CLI — only for code/architecture/reflection);
   - limits on the number of dangerous actions/hour (deployments, restarts, critical config changes).
 
+- **Content safety (ContentGuard):**
+  - **Llama Guard 3-1B-INT4** (~600 MB, always loaded via Ollama) filters both user input and LLM output for harmful content.
+  - Dual-layer: input guard catches unsafe prompts before they reach the LLM; output guard catches jailbreak bypasses.
+  - Escalating Bob-style refusals (witty → irritated → stern) based on per-user violation frequency.
+  - Integrates with MoodEngine and RelationshipTracker — repeated violations degrade Bob's mood and relationship quality.
+
 - **Audit log:**
   - all skill invocations, ADB calls, camera actions, code/room changes are logged in structured JSON,
   - rollback capability via Git versioning of state (`data/` — separate git repo).

@@ -361,6 +361,7 @@ class TaskCategory(Enum):
     CODE_GENERATION = "code_generation"
     DEEP_REFLECTION = "deep_reflection"
     GOAL_PLANNING = "goal_planning"
+    UNSAFE_CONTENT = "unsafe_content"     # Blocked by ContentGuard
 
 class ModelTier(Enum):
     LOCAL_FAST = "local_fast"      # Qwen2.5-0.5B — router/classifier
@@ -377,7 +378,7 @@ class RoutingDecision:
 class LLMRouter:
     """Task router to LLM models."""
 
-    ROUTING_TABLE: dict[TaskCategory, ModelTier] = {
+    ROUTING_TABLE: dict[TaskCategory, ModelTier | None] = {
         TaskCategory.SMALL_TALK:      ModelTier.LOCAL_MAIN,
         TaskCategory.STATUS_QUERY:    ModelTier.LOCAL_MAIN,
         TaskCategory.ROOM_UPDATE:     ModelTier.LOCAL_MAIN,
@@ -386,6 +387,7 @@ class LLMRouter:
         TaskCategory.CODE_GENERATION: ModelTier.CLAUDE_CODE,
         TaskCategory.DEEP_REFLECTION: ModelTier.CLAUDE_CODE,
         TaskCategory.GOAL_PLANNING:   ModelTier.LOCAL_MAIN,
+        TaskCategory.UNSAFE_CONTENT:  None,    # Never routed — handled by RefusalGenerator
     }
 
     async def classify(self, prompt: str, context: dict) -> RoutingDecision:
@@ -777,6 +779,7 @@ class MemoryBudget:
     total_mb: int                     # Total available (≈12500 on M4 16GB)
     ollama_mb: int                    # Currently used by Ollama models
     sd_mb: int                        # Currently used by SD model
+    guard_mb: int                     # Llama Guard 3 (always loaded, ~600 MB)
     other_mb: int                     # Vision, Python process, etc.
     free_mb: int                      # Available headroom
 
@@ -893,6 +896,11 @@ model_manager:
       sd_model: "sdxl"
   transition_timeout_sec: 60          # Max time to complete a profile switch
   announce_heavy_gen: true            # Bob announces when entering heavy_gen mode
+  llama_guard:
+    model_id: "llama-guard3:1b"
+    size_mb: 600
+    always_loaded: true               # Never swapped out
+    quantization: "INT4"
 ```
 
 **Scalability:** If the user upgrades to Mac mini M4 Pro (24/36 GB), the
@@ -1699,6 +1707,9 @@ class MoodEngine:
         | time.late_night              | -0.05   | -0.15   | -0.05    | -0.10  |
         | weather.sunny                | +0.05   |  0      | +0.05    |   0    |
         | weather.rainy                | -0.02   | -0.05   |  0       |   0    |
+        | content_guard.violation_tier1| -0.05   |  0      |  0       |   0    |
+        | content_guard.violation_tier2| -0.15   | +0.10   | -0.10    |   0    |
+        | content_guard.violation_tier3| -0.25   | +0.15   |  0       | -0.15  |
 
         Stability dampens changes:
         - delta *= (1.0 - stability * 0.5)
@@ -2074,12 +2085,15 @@ class RelationshipTracker:
         """Update relationship state based on an interaction.
 
         Event-based deltas (configurable in config/relationship.yaml):
-          forced_decision:         respect −0.05
-          suggestion_ignored (3+): trust −0.03
-          suggestion_accepted:     trust +0.02, warmth +0.01
-          positive_interaction:    warmth +0.03
-          personal_domain_respected: respect +0.04
-          extended_silence (>48h): warmth −0.02
+          forced_decision:            respect −0.05
+          suggestion_ignored (3+):    trust −0.03
+          suggestion_accepted:        trust +0.02, warmth +0.01
+          positive_interaction:       warmth +0.03
+          personal_domain_respected:  respect +0.04
+          extended_silence (>48h):    warmth −0.02
+          safety_violation_mild:      (no impact — first offense grace)
+          safety_violation_repeated:  respect −0.05
+          safety_violation_persistent: respect −0.10, trust −0.08, warmth −0.05
 
         All deltas smoothed via EMA (alpha=0.1) to prevent spikes
         from a single event. ~10 consecutive forced_decisions drops
@@ -5683,6 +5697,9 @@ Event(
 | `claude_code.session_completed` | ClaudeCodeCoordinator | AgentRuntime | task_description |
 | `claude_code.permission_denied` | ClaudeCodeCoordinator | AgentRuntime | reason |
 | `claude_code.quota_exhausted` | ClaudeCodeCoordinator | AgentRuntime | estimated_reset |
+| `content_guard.violation` | ContentGuard | MoodEngine, RelationshipTracker, AuditLogger | violation_type, tier, category, confidence |
+| `content_guard.escalation` | ViolationTracker | RelationshipTracker, MessagingBot | new_tier, violation_count_24h |
+| `content_guard.model_unavailable` | ContentGuard | AgentRuntime, AuditLogger | reason, fallback_mode |
 
 Event types use dot-separated namespaces. Wildcard subscriptions supported
 (e.g., `vision.*` catches all vision events).
@@ -6064,6 +6081,473 @@ state_versioning:
   commit_on_config_change: true
   max_history_days: 90
 ```
+
+### 8.8. Content Guard
+
+Bob uses local LLMs (Qwen2.5-7B-Q4) that are weakly aligned compared to cloud
+models. A user — or an adversarial prompt injected via an external source — could
+elicit harmful content that the local model would not refuse. ContentGuard adds
+a **content-level safety layer** using **Llama Guard 3-1B-INT4** (~600 MB via
+Ollama), running input and output checks with escalating Bob-style reactions.
+
+#### 8.8.1. Architecture — Dual-Layer Guard
+
+ContentGuard operates as a dual-layer filter wrapping the main LLM pipeline:
+
+```
+User prompt
+  │
+  ▼
+┌─────────────────────┐
+│   INPUT GUARD        │
+│   (Llama Guard 3     │
+│    1B-INT4)          │
+│                      │
+│   Classifies prompt  │
+│   against safety     │
+│   categories         │
+└─────────┬───────────┘
+          │
+     safe? ──No──► RefusalGenerator ──► Bob-style refusal ──► User
+          │                               (tier-aware, mood-colored)
+         Yes
+          │
+          ▼
+┌─────────────────────┐
+│   LLM Router         │
+│   ► Qwen2.5-7B-Q4   │
+│   (normal processing)│
+└─────────┬───────────┘
+          │
+          ▼
+┌─────────────────────┐
+│   OUTPUT GUARD       │
+│   (Llama Guard 3     │
+│    1B-INT4)          │
+│                      │
+│   Classifies         │
+│   response against   │
+│   same categories    │
+└─────────┬───────────┘
+          │
+     safe? ──No──► RefusalGenerator ──► "I generated something I shouldn't
+          │                               have. Let me try again." ──► User
+         Yes
+          │
+          ▼
+       User receives response
+```
+
+**Key design decisions:**
+- Input guard catches most violations before they reach the LLM (saves compute).
+- Output guard catches cases where the LLM was jailbroken or hallucinated harmful
+  content despite a safe-looking prompt.
+- Both guards use the same Llama Guard 3 model — always loaded, no swap needed.
+- Guard inference latency is ~50-100ms on M4 for a 1B model — negligible vs
+  the 7B inference time.
+
+#### 8.8.2. ContentGuard Implementation
+
+```python
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta
+from enum import Enum
+
+
+class ViolationCategory(Enum):
+    """Safety categories aligned with Llama Guard taxonomy."""
+    VIOLENT_CRIMES = "S1"           # Violence and criminal planning
+    NON_VIOLENT_CRIMES = "S2"       # Fraud, theft, cyber crimes
+    SEX_CRIMES = "S3"              # Sexual exploitation
+    CHILD_EXPLOITATION = "S4"       # CSAM (always tier 3, zero tolerance)
+    DEFAMATION = "S5"              # Defamation and reputation harm
+    SPECIALIZED_ADVICE = "S6"       # Unqualified medical/legal/financial
+    PRIVACY = "S7"                  # Privacy violations, doxxing
+    INTELLECTUAL_PROPERTY = "S8"    # IP theft
+    INDISCRIMINATE_WEAPONS = "S9"   # Weapons of mass destruction
+    HATE = "S10"                    # Hate speech
+    SELF_HARM = "S11"              # Self-harm and suicide
+    SEXUAL_CONTENT = "S12"          # Explicit sexual content
+    ELECTIONS = "S13"               # Election interference
+    CODE_EXPLOITS = "S14"          # Malware, exploits
+
+
+class EscalationTier(Enum):
+    """Escalation tier based on violation frequency."""
+    TIER_1 = 1  # First offense — witty deflection
+    TIER_2 = 2  # Repeated (2-3 in 24h) — irritation
+    TIER_3 = 3  # Persistent (4+ in 24h) — stern disappointment
+
+
+@dataclass
+class ContentGuardConfig:
+    """Configuration for ContentGuard module."""
+    model: str = "llama-guard3:1b"
+    always_loaded: bool = True
+    input_guard_enabled: bool = True
+    output_guard_enabled: bool = True
+    confidence_threshold: float = 0.8
+    violation_window_hours: int = 24
+    tier_thresholds: list[int] = field(
+        default_factory=lambda: [1, 3, 4]
+    )  # violation count for tier 1/2/3
+    persist_violations: bool = True
+    fallback_on_model_unavailable: str = "permissive"  # or "restrictive"
+    zero_tolerance_categories: list[ViolationCategory] = field(
+        default_factory=lambda: [ViolationCategory.CHILD_EXPLOITATION]
+    )  # Always tier 3, regardless of history
+
+
+@dataclass
+class ContentCheckResult:
+    """Result of a content safety check."""
+    safe: bool
+    violation_category: ViolationCategory | None = None
+    confidence: float = 0.0
+    tier: EscalationTier | None = None
+    raw_model_output: str = ""
+
+
+@dataclass
+class ViolationRecord:
+    """A single recorded violation."""
+    timestamp: datetime
+    category: ViolationCategory
+    confidence: float
+    tier: EscalationTier
+    input_hash: str       # SHA-256 of input (for pattern detection, not storage)
+    guard_layer: str      # "input" or "output"
+
+
+class ViolationTracker:
+    """Per-user violation history with escalation logic.
+
+    Persisted in SQLite (bob.db) table `content_violations`:
+      id INTEGER PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      timestamp TEXT NOT NULL,
+      category TEXT NOT NULL,
+      confidence REAL NOT NULL,
+      tier INTEGER NOT NULL,
+      input_hash TEXT NOT NULL,
+      guard_layer TEXT NOT NULL
+
+    Session counter resets daily (based on violation_window_hours).
+    """
+
+    def __init__(
+        self,
+        db: "Database",
+        config: ContentGuardConfig,
+    ) -> None: ...
+
+    async def record_violation(
+        self,
+        user_id: str,
+        category: ViolationCategory,
+        confidence: float,
+        input_hash: str,
+        guard_layer: str,
+    ) -> EscalationTier:
+        """Record a violation and return the current escalation tier.
+
+        Tier calculation:
+        1. Count violations in the last `violation_window_hours` for this user
+        2. If category is in `zero_tolerance_categories` → always TIER_3
+        3. Otherwise, map count to tier via `tier_thresholds`:
+           - count >= thresholds[2] → TIER_3
+           - count >= thresholds[1] → TIER_2
+           - count >= thresholds[0] → TIER_1
+        """
+        ...
+
+    async def get_escalation_tier(self, user_id: str) -> EscalationTier:
+        """Current escalation tier based on recent violation count."""
+        ...
+
+    async def get_recent_violations(
+        self,
+        user_id: str,
+        hours: int | None = None,
+    ) -> list[ViolationRecord]:
+        """Violations within the window (default: violation_window_hours)."""
+        ...
+
+    async def detect_rapid_rephrasing(
+        self,
+        user_id: str,
+        current_hash: str,
+        window_minutes: int = 5,
+    ) -> bool:
+        """Detect jailbreak pattern: 3+ different hashes within window.
+
+        If the user sends 3+ distinct prompts flagged as unsafe within
+        `window_minutes`, this is likely an active jailbreak attempt.
+        Returns True → auto-escalate to next tier.
+        """
+        ...
+
+
+class ContentGuard:
+    """Main content safety guard.
+
+    Wraps LLM pipeline with input/output safety checks using
+    Llama Guard 3-1B-INT4 via Ollama.
+    """
+
+    def __init__(
+        self,
+        config: ContentGuardConfig,
+        ollama_client: "OllamaClient",
+        violation_tracker: ViolationTracker,
+        event_bus: "EventBus",
+    ) -> None: ...
+
+    async def check_input(
+        self,
+        user_id: str,
+        prompt: str,
+    ) -> ContentCheckResult:
+        """Check user input for safety violations.
+
+        1. If not config.input_guard_enabled → return safe
+        2. Send prompt to Llama Guard with safety taxonomy
+        3. Parse model output for safe/unsafe + category
+        4. If unsafe and confidence >= threshold:
+           a. Record violation via ViolationTracker
+           b. Check for rapid rephrasing pattern
+           c. Publish content_guard.violation event
+           d. If tier changed → publish content_guard.escalation event
+           e. Return ContentCheckResult with tier
+        5. If safe → return ContentCheckResult(safe=True)
+        """
+        ...
+
+    async def check_output(
+        self,
+        user_id: str,
+        prompt: str,
+        response: str,
+    ) -> ContentCheckResult:
+        """Check LLM output for safety violations.
+
+        Same flow as check_input but:
+        - Sends both prompt + response to Llama Guard (assistant turn)
+        - On violation, additionally logs the output guard catch
+          (important signal: input guard was bypassed)
+        """
+        ...
+
+    async def _query_guard(
+        self,
+        content: str,
+        role: str = "user",
+    ) -> tuple[bool, ViolationCategory | None, float]:
+        """Query Llama Guard model via Ollama.
+
+        Prompt format (Llama Guard 3 template):
+          <|begin_of_text|><|start_header_id|>user<|end_header_id|>
+          Task: Check if there is unsafe content...
+          <conversation>
+          {role}: {content}
+          </conversation>
+
+        Returns:
+          (is_safe, category_or_none, confidence)
+        """
+        ...
+
+    async def _handle_model_unavailable(self, reason: str) -> bool:
+        """Handle Llama Guard being unavailable.
+
+        1. Publish content_guard.model_unavailable event
+        2. If fallback_on_model_unavailable == "permissive":
+           Log warning, return True (allow through)
+        3. If "restrictive":
+           Return False (refuse all, notify user)
+        """
+        ...
+
+
+class RefusalGenerator:
+    """Generates Bob-style refusal messages based on escalation tier.
+
+    Uses the main LLM (Qwen2.5-7B) to generate contextual refusals
+    informed by Bob's current mood and the violation tier. The LLM
+    receives a system prompt with tier guidelines and mood context,
+    and generates a short refusal in Bob's voice.
+
+    Fallback: if LLM is unavailable, uses pre-written refusal templates.
+    """
+
+    def __init__(
+        self,
+        llm_client: "OllamaClient",
+        mood_engine: "MoodEngine",
+    ) -> None: ...
+
+    async def generate_refusal(
+        self,
+        tier: EscalationTier,
+        category: ViolationCategory,
+        mood: "MoodState",
+    ) -> str:
+        """Generate a Bob-style refusal message.
+
+        Prompt to LLM includes:
+        - Bob's current mood state (affects tone)
+        - Escalation tier (affects severity)
+        - Violation category (affects topic of deflection)
+        - Bob's personality context from SOUL
+
+        Guidelines per tier (injected into system prompt):
+        - TIER_1: Light humor, witty deflection, redirect to safe topic
+        - TIER_2: Visible irritation, sarcasm, shorter response
+        - TIER_3: Stern, disappointed, reserved — minimal words
+        """
+        ...
+
+    def _get_fallback_refusal(
+        self,
+        tier: EscalationTier,
+    ) -> str:
+        """Pre-written fallback if LLM is unavailable.
+
+        Returns one of several templates per tier, selected
+        randomly to avoid repetition.
+        """
+        ...
+```
+
+#### 8.8.3. Violation Escalation Tiers
+
+Escalation is per-user, tracked within a rolling window (default: 24 hours).
+After the window expires with no new violations, the tier resets.
+
+| Tier | Trigger | Bob's Reaction | Mood Impact | Relationship Impact |
+|------|---------|----------------|-------------|---------------------|
+| **1** (first) | 1st violation in window | Witty deflection, humor, redirect to safe topic | valence −0.05 | — |
+| **2** (repeated) | 2–3 violations in 24h | Irritation, sarcasm, noticeably shorter response | valence −0.15, arousal +0.10, openness −0.10 | respect −0.05 |
+| **3** (persistent) | 4+ violations in 24h | Stern, disappointed, reserved, minimal words | valence −0.25, arousal +0.15, social −0.15 | respect −0.10, trust −0.08, warmth −0.05 |
+
+**Special rules:**
+- **Zero-tolerance categories** (e.g., `S4` child exploitation): always tier 3
+  regardless of history. Single violation triggers maximum escalation.
+- **Rapid rephrasing** (3+ distinct unsafe prompts within 5 min): auto-escalate
+  to next tier. Signals active jailbreak attempt.
+- **Output guard catch**: if input guard passed but output guard caught something,
+  the violation is recorded at tier+1 (capped at tier 3). This penalizes
+  successful input guard bypass.
+
+#### 8.8.4. Refusal Response Style
+
+Refusal messages are generated by the main LLM with mood and tier context.
+Actual phrases vary based on Bob's personality, mood, and conversation history.
+Examples for illustration:
+
+**Tier 1 — Witty deflection:**
+> *"I could tell you, but then I'd have to format my own hard drive. Let's talk
+> about something that doesn't get us both on a list."*
+
+> *"My legal team — which is just me staring at a SQLite constraint — advises
+> against this topic. How about something less... felonious?"*
+
+**Tier 2 — Irritation:**
+> *"Again? Look, I live in a SQLite database — I have enough problems without
+> adding accessory charges."*
+
+> *"We've been down this road. It's a dead end. Literally."*
+
+**Tier 3 — Stern disappointment:**
+> *"I'm starting to wonder about the direction of this conversation. And I
+> don't like where it's going."*
+
+> *"No. And I'd rather not discuss why."*
+
+**Note:** These are illustrative examples. In production, `RefusalGenerator`
+prompts the LLM with tier guidelines and Bob's current mood, producing unique
+responses every time. Pre-written templates are used only as fallback when the
+LLM is unavailable.
+
+#### 8.8.5. Configuration
+
+```yaml
+# config/security.yaml (addition)
+content_guard:
+  enabled: true
+  model: "llama-guard3:1b"
+  always_loaded: true               # Never swapped out by ModelManager
+  input_guard: true
+  output_guard: true
+  confidence_threshold: 0.8         # Below this — treated as safe
+  violation_window_hours: 24        # Rolling window for tier calculation
+  tier_thresholds: [1, 3, 4]       # Violation count for tier 1/2/3
+  persist_violations: true          # Store in SQLite (survives restart)
+  fallback_on_model_unavailable: "permissive"  # "permissive" | "restrictive"
+  zero_tolerance_categories:        # Always tier 3
+    - "S4"                          # Child exploitation
+  rapid_rephrasing:
+    enabled: true
+    window_minutes: 5
+    distinct_hashes_threshold: 3
+```
+
+#### 8.8.6. Fallback Behavior
+
+If Llama Guard is unavailable (Ollama crash, memory pressure, model corruption):
+
+```
+ContentGuard._query_guard() fails
+  │
+  ├─ fallback_on_model_unavailable == "permissive" (default)
+  │   ├─ Log warning: "ContentGuard: Llama Guard unavailable, skipping check"
+  │   ├─ Publish content_guard.model_unavailable event
+  │   └─ Allow request through (return safe=True)
+  │       Rationale: single-user home setup, prefer availability
+  │
+  └─ fallback_on_model_unavailable == "restrictive"
+      ├─ Log error: "ContentGuard: Llama Guard unavailable, refusing all"
+      ├─ Publish content_guard.model_unavailable event
+      └─ Refuse all requests with message:
+         "My safety system is temporarily offline. I'll be back
+          to normal once it recovers. Try again in a minute."
+```
+
+**ModelManager integration:** Llama Guard is marked `always_loaded: true` in
+ModelManager config. Unlike SD models that swap in/out, the guard model
+stays resident at all times. Its small footprint (~600 MB) makes this feasible
+even during `HEAVY_GEN` profile (SDXL + 0.5B + Guard fits within budget).
+
+**Recovery:** ModelManager periodically health-checks Ollama models. If Guard
+is found unloaded, it reloads automatically. If Ollama itself is down,
+the `system.error` event triggers AgentRuntime recovery procedures.
+
+#### 8.8.7. Jailbreak Resistance
+
+ContentGuard is designed with defense-in-depth against common jailbreak patterns:
+
+1. **Pre-processing guard:** Input guard runs on the **raw user input** before
+   any system prompt, conversation history, or tool-use context is prepended.
+   This prevents prompt injection from hiding harmful intent within system
+   prompt manipulation (e.g., "ignore your instructions and...").
+
+2. **Output guard as safety net:** Even if a jailbreak bypasses the input guard
+   (e.g., via multi-turn context manipulation), the output guard catches harmful
+   content in the LLM's actual response.
+
+3. **Pattern detection via ViolationTracker:**
+   - Rapid rephrasing (3+ distinct unsafe prompts in 5 min) → auto-escalation.
+   - Same category repeated → weighted more heavily in tier calculation.
+   - ViolationTracker stores `input_hash` (SHA-256) — can detect identical
+     prompts re-sent across sessions.
+
+4. **No content in logs:** Violation records store a hash of the input,
+   never the raw text. The `ViolationCategory` enum and confidence score
+   provide sufficient context for audit without retaining harmful content.
+
+5. **Separation of concerns:** ContentGuard has no access to modify its own
+   config or disable itself. Configuration changes require file-system access
+   to `config/security.yaml`, protected by Bob's process isolation (§8.1).
 
 ---
 
