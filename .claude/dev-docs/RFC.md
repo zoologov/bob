@@ -1108,8 +1108,50 @@ class ReflectionEntry:
     taste_updates: list[dict]               # taste changes over the period
     object_experiences: list[dict]          # experience interacting with objects
 
+class ScopedDBReader:
+    """Read-only database access with table-level allowlist.
+
+    Used by ReflectionLoop to enforce subconscious isolation.
+    Any query referencing a table not in the allowlist raises
+    AccessViolationError. Tables with 'sc_' prefix are always
+    denied regardless of allowlist contents.
+
+    Implementation: parse table names from SQL via sqlite3's
+    EXPLAIN or simple regex, check against allowlist before
+    executing.
+    """
+
+    TABLE_ALLOWLIST: ClassVar[frozenset[str]] = frozenset({
+        "mood_history",
+        "experience",
+        "improvement_rules",
+        "goals",
+        "taste_history",
+        "object_experience",
+        "episodic_log",
+        "semantic_memory",
+        "thought_summaries",
+    })
+
+    def __init__(self, db_path: str) -> None: ...
+
+    def query(self, sql: str, params: tuple = ()) -> list[Row]:
+        """Execute read-only query after allowlist check.
+
+        Raises AccessViolationError if query references any
+        table not in TABLE_ALLOWLIST or any table with 'sc_' prefix.
+        """
+        ...
+
+
 class ReflectionLoop:
-    """Reflection: evaluating actions, drawing conclusions, making improvements."""
+    """Reflection: evaluating actions, drawing conclusions, making improvements.
+
+    Database access is restricted to TABLE_ALLOWLIST via ScopedDBReader.
+    This enforces subconscious isolation at runtime: all sc_* tables
+    (sc_implicit_primes, sc_latent_associations, sc_night_processing_log,
+    sc_subconscious_log) are inaccessible to reflection.
+    """
 
     def __init__(
         self,
@@ -1118,6 +1160,7 @@ class ReflectionLoop:
         goal_engine: GoalEngine,
         mood_engine: "MoodEngine",
         taste_engine: "TasteEngine",
+        db_reader: ScopedDBReader,
     ) -> None: ...
 
     async def reflect(self) -> ReflectionEntry:
@@ -3749,7 +3792,7 @@ class NightProcessor:
               → create LatentAssociation (embedding + mood_delta)
            e. If insight suggests a behavioral prime:
               → create ImplicitPrime (trigger + context_fragment)
-        4. Store results in night_processing_log table
+        4. Store results in sc_night_processing_log table
         5. Resume InnerMonologue (restore activity to LOW)
         6. Emit subconscious.night_completed event
 
@@ -3806,7 +3849,7 @@ class SubconsciousLayer:
         4. Return modified (prompt, context)
 
         The modifications are NOT logged in a way accessible to reflection.
-        Internal logging goes to subconscious_log table (not in reflection queries).
+        Internal logging goes to sc_subconscious_log table (not in reflection queries).
         """
         ...
 
@@ -3886,7 +3929,7 @@ Note: `prime_activated` and `association_triggered` events are emitted but NOT s
 
 ```sql
 -- Implicit primes (hidden context fragments)
-CREATE TABLE implicit_primes (
+CREATE TABLE sc_implicit_primes (
     id                  TEXT PRIMARY KEY,
     trigger_pattern     TEXT NOT NULL,
     context_fragment    TEXT NOT NULL,
@@ -3899,7 +3942,7 @@ CREATE TABLE implicit_primes (
 );
 
 -- Latent associations (embedding-to-mood mappings)
-CREATE TABLE latent_associations (
+CREATE TABLE sc_latent_associations (
     id                      TEXT PRIMARY KEY,
     embedding_type          TEXT NOT NULL,       -- "visual", "semantic"
     mood_delta_json         TEXT NOT NULL,       -- JSON dict: {"valence": 0.05, ...}
@@ -3912,7 +3955,7 @@ CREATE TABLE latent_associations (
 );
 
 -- Night processing log
-CREATE TABLE night_processing_log (
+CREATE TABLE sc_night_processing_log (
     id                  INTEGER PRIMARY KEY AUTOINCREMENT,
     episode_date        TEXT NOT NULL,
     insight             TEXT NOT NULL,
@@ -3924,7 +3967,7 @@ CREATE TABLE night_processing_log (
 );
 
 -- Subconscious activity log (NOT queryable by ReflectionLoop)
-CREATE TABLE subconscious_log (
+CREATE TABLE sc_subconscious_log (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     timestamp       TEXT NOT NULL,
     event_type      TEXT NOT NULL,       -- "prime_activated", "association_triggered",
@@ -3936,11 +3979,11 @@ CREATE TABLE subconscious_log (
 -- Add 'automatic' column to existing improvement_rules table
 -- ALTER TABLE improvement_rules ADD COLUMN automatic INTEGER DEFAULT 0;
 
-CREATE INDEX idx_primes_active ON implicit_primes(active);
-CREATE INDEX idx_primes_trigger ON implicit_primes(trigger_pattern);
-CREATE INDEX idx_latent_assoc_active ON latent_associations(active);
-CREATE INDEX idx_night_log_date ON night_processing_log(episode_date);
-CREATE INDEX idx_subconscious_log_ts ON subconscious_log(timestamp);
+CREATE INDEX idx_primes_active ON sc_implicit_primes(active);
+CREATE INDEX idx_primes_trigger ON sc_implicit_primes(trigger_pattern);
+CREATE INDEX idx_latent_assoc_active ON sc_latent_associations(active);
+CREATE INDEX idx_night_log_date ON sc_night_processing_log(episode_date);
+CREATE INDEX idx_subconscious_log_ts ON sc_subconscious_log(timestamp);
 ```
 
 **Memory budget impact.** Zero additional model memory — uses existing 0.5B model. Latent FAISS index: ~10 MB for 500 associations at 512 dimensions. Implicit primes: ~20 x 1 KB = ~20 KB. Night processing: no concurrent model load (runs during quiet hours when 0.5B is underutilized). Total additional RAM: ~10 MB. Negligible.
@@ -3963,7 +4006,7 @@ await subconscious.post_process(response, current_embeddings)
 
 3. **MoodEngine**: Latent association triggers call `MoodEngine.process_event()` with `cause="natural_drift"` — this is a deliberately vague cause that does not reveal the subconscious trigger. The mood_history table records it as a natural drift.
 
-4. **ReflectionLoop**: Explicitly does NOT query `implicit_primes`, `latent_associations`, or `subconscious_log` tables. The reflection SQL queries are scoped to `mood_history`, `experience`, `improvement_rules WHERE automatic = 0`, etc. This is enforced by design — ReflectionLoop does not receive a reference to SubconsciousLayer.
+4. **ReflectionLoop**: All subconscious tables use `sc_` prefix (`sc_implicit_primes`, `sc_latent_associations`, `sc_night_processing_log`, `sc_subconscious_log`). ReflectionLoop accesses the database through `ScopedDBReader` (see below) with a TABLE_ALLOWLIST that **excludes all `sc_*` tables**. Any query referencing a `sc_*` table raises `AccessViolationError`. This is enforced at runtime — not just by convention. Additionally, ReflectionLoop does not receive a reference to SubconsciousLayer (architectural invariant verified by unit test and beadloom lint rule).
 
 5. **SelfImprovement (section 3.3.4)**: Modify `improvement_rules` table to add `automatic INTEGER DEFAULT 0` column. `SelfImprovement.evaluate_rules()` now excludes `WHERE automatic = 1`. `HabituationEngine.check_habituation()` sets `automatic = 1` when `times_applied >= threshold`.
 
@@ -4293,7 +4336,7 @@ CREATE TABLE spatial_locations (
 );
 
 -- Subconscious: implicit primes (section 3.3.11)
-CREATE TABLE implicit_primes (
+CREATE TABLE sc_implicit_primes (
     id                  TEXT PRIMARY KEY,
     trigger_pattern     TEXT NOT NULL,
     context_fragment    TEXT NOT NULL,
@@ -4306,7 +4349,7 @@ CREATE TABLE implicit_primes (
 );
 
 -- Subconscious: latent associations (section 3.3.11)
-CREATE TABLE latent_associations (
+CREATE TABLE sc_latent_associations (
     id                      TEXT PRIMARY KEY,
     embedding_type          TEXT NOT NULL,       -- "visual", "semantic"
     mood_delta_json         TEXT NOT NULL,       -- JSON dict: {"valence": 0.05, ...}
@@ -4319,7 +4362,7 @@ CREATE TABLE latent_associations (
 );
 
 -- Subconscious: night processing log (section 3.3.11)
-CREATE TABLE night_processing_log (
+CREATE TABLE sc_night_processing_log (
     id                  INTEGER PRIMARY KEY AUTOINCREMENT,
     episode_date        TEXT NOT NULL,
     insight             TEXT NOT NULL,
@@ -4331,7 +4374,7 @@ CREATE TABLE night_processing_log (
 );
 
 -- Subconscious: activity log — NOT queryable by ReflectionLoop (section 3.3.11)
-CREATE TABLE subconscious_log (
+CREATE TABLE sc_subconscious_log (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     timestamp       TEXT NOT NULL,
     event_type      TEXT NOT NULL,       -- "prime_activated", "association_triggered",
@@ -4351,11 +4394,11 @@ CREATE INDEX idx_visual_embed_ts ON visual_embeddings(timestamp);
 CREATE INDEX idx_visual_links_memory ON visual_memory_links(memory_entry_id);
 CREATE INDEX idx_prosodic_ts ON prosodic_features(timestamp);
 CREATE INDEX idx_spatial_dir ON spatial_locations(direction_deg);
-CREATE INDEX idx_primes_active ON implicit_primes(active);
-CREATE INDEX idx_primes_trigger ON implicit_primes(trigger_pattern);
-CREATE INDEX idx_latent_assoc_active ON latent_associations(active);
-CREATE INDEX idx_night_log_date ON night_processing_log(episode_date);
-CREATE INDEX idx_subconscious_log_ts ON subconscious_log(timestamp);
+CREATE INDEX idx_primes_active ON sc_implicit_primes(active);
+CREATE INDEX idx_primes_trigger ON sc_implicit_primes(trigger_pattern);
+CREATE INDEX idx_latent_assoc_active ON sc_latent_associations(active);
+CREATE INDEX idx_night_log_date ON sc_night_processing_log(episode_date);
+CREATE INDEX idx_subconscious_log_ts ON sc_subconscious_log(timestamp);
 ```
 
 #### 3.4.5. SOUL — Bob's modular "soul"
