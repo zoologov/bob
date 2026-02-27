@@ -1368,8 +1368,7 @@ class TasteEvolution:
 
         Signal types:
         - "explicit_feedback": user said "cool" / "remove this"
-        - "implicit_usage": user sits in the room more/less often (via CV)
-        - "emotion_detected": CV emotion detection (smile, displeasure)
+        - "implicit_usage": user sits in the room more/less often (via presence detection)
         - "override": user manually disabled/enabled something
         """
         ...
@@ -1448,8 +1447,10 @@ async def _generate_taste_profile(self) -> TasteProfile:
     2. Load clusters from bob-soul/genesis/taste_clusters.yaml
     3. LLM selects the primary cluster (from 5-7 options)
     4. Generate axis values within the cluster + random deviations
-    5. Initial conviction: 0.3-0.5 (low — Bob is not yet confident)
-    6. Write to data/soul/taste_profile.json
+    5. Apply phantom preference bias: LLM maps phantom prefs to taste axes
+       (e.g., "coffee" -> warm +0.05, cozy +0.05). One-time initial bias.
+    6. Initial conviction: 0.3-0.5 (low — Bob is not yet confident)
+    7. Write to data/soul/taste_profile.json
     """
     ...
 ```
@@ -6365,13 +6366,13 @@ successful concepts:
 | 11 | ~~How to organize the Godot asset pool?~~ | High | **Resolved**: AI-generated via local Stable Diffusion during Genesis (see 5.4.2) |
 | 12 | ~~Is a system of "animation primitives" (idle, walk, sit, reach) needed from which BehaviorRegistry composes complex behaviors?~~ | Medium | **Resolved**: No primitives system — ready-made animations played by name via AnimationPlayer/AnimationTree. Bob requests `{"play_animation": "working_laptop"}`. New behaviors = new animations added via Claude Code CLI. Programmatic composition of primitives is overengineering for 2D Skeleton2D with AI-generated sprites (see 5.4) |
 | 13 | ~~How to test Genesis Mode: deterministic seed for CI or manual testing only?~~ | Medium | **Resolved**: Unit tests per stage with mock LLM/SD (fast, deterministic) + integration smoke test (`pytest -m genesis_smoke`) with mock LLM + fixed SD seed. Full Genesis = manual smoke before release only (40 min + GPU, not suitable for CI). Genesis is inherently unique — deterministic e2e contradicts its purpose |
-| 14 | How many taste axes are optimal? Too few -- flat profile, too many -- noise. Start with ~15 axes and calibrate? | Medium | Open |
-| 15 | Should CV-based user emotion detection (smile/frown) be used as a signal for TasteEvolution, or is that too invasive? | High | Open |
+| 14 | ~~How many taste axes are optimal? Too few -- flat profile, too many -- noise. Start with ~15 axes and calibrate?~~ | Medium | **Resolved**: Keep current ~30 axes across 6 categories (colors/styles/materials/decor/atmosphere/clothing) — each axis maps to a concrete visual decision domain. Conviction + cluster coherence check protect against noise. Not random — intentionally covers Bob's visual world (see 3.3.5) |
+| 15 | ~~Should CV-based user emotion detection (smile/frown) be used as a signal for TasteEvolution, or is that too invasive?~~ | High | **Resolved**: No CV emotion detection for TasteEvolution — too invasive (Big Brother effect) and noisy (smile != approval of object). Camera for presence detection only. Use explicit feedback ("cool"/"remove this"), implicit usage (time spent), and manual overrides instead (see 3.3.5) |
 | 16 | How often to update the mood baseline? Once a week through reflection or continuously via a rolling average? | Medium | Open |
 | 17 | Should Bob be able to "get offended" (long-term negative mood after a conflict) or would this create a toxic UX? | High | Open |
 | 18 | How to visualize mood on the tablet: through the avatar's facial expression, room lighting color, or both? | Medium | Open |
 | 19 | How often should Bob make references to the book? Too often -- gets annoying, too rarely -- character gets lost. Perhaps the frequency should decrease over time? | Medium | Open |
-| 20 | Should phantom preferences affect TasteEngine (e.g., "coffee" -> warm_tones +0.1) or remain a separate system? | Medium | Open |
+| 20 | ~~Should phantom preferences affect TasteEngine (e.g., "coffee" -> warm_tones +0.1) or remain a separate system?~~ | Medium | **Resolved**: One-directional mapping at Genesis — LLM generates phantom-to-taste-axis bias (e.g., "coffee" -> warm +0.05, cozy +0.05). Applied once as initial TasteProfile bias. After Genesis, phantoms and tastes evolve independently (see 3.3.5) |
 | 21 | Does Bob need to "re-read the book" (loading book text as context) for more accurate references, or is book_quotes.yaml sufficient? | Low | Open |
 | 22 | How to visualize the awakening phase on the tablet: speech bubbles with inner monologue, confusion animations, or both? | High | Open |
 | 23 | ~~How to detect if user is actively using Claude Code CLI? Process check vs lock file vs both?~~ | High | **Resolved**: No process/lock detection needed — Bob and user on separate machines, shared subscription. Voice→Telegram permission protocol + reactive 429 handling (see 4.2.1, 8.4) |
