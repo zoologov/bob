@@ -5175,7 +5175,7 @@ Bob uses three resilience patterns based on error type:
 | Stable Diffusion | Generation fail | Retry 3x (see 5.4.2) | Use placeholder assets |
 | WebSocket (tablet) | Disconnect | Reconnect with backoff (see 5.4.2b) | Headless mode |
 | Telegram API | Network error | Retry 3x, 5s backoff | Queue messages |
-| Camera/VisionBridge | Device lost | Retry on next scan cycle | Operate without vision |
+| Camera/VisionService | Device lost | Retry on next scan cycle | Operate without vision |
 | STT (Whisper) | Transcription fail | Retry 1x | Ask user to repeat |
 
 **Circuit breaker implementation:**
@@ -6120,7 +6120,7 @@ waiting for auto-detection.
 | Peripheral | Scan method | Frequency | On discovery |
 |------------|------------|-----------|-------------|
 | Tablet | mDNS (`_bob-tablet._tcp`) | Every 5 min | Offer visual Genesis |
-| Camera (USB) | `v4l2` / `AVFoundation` check | Every 30 min | Enable VisionBridge |
+| Camera (USB) | `v4l2` / `AVFoundation` check | Every 30 min | Enable VisionService |
 | Microphone | Audio device enumeration | Every 30 min | Enable STT |
 
 New peripheral discovery emits `peripheral.discovered` event on the EventBus.
@@ -7614,9 +7614,9 @@ Event(
 
 | Event type | Publisher | Subscribers | Payload keys |
 |------------|-----------|-------------|-------------|
-| `vision.person_detected` | VisionBridge | MoodEngine, AgentRuntime | confidence, bbox |
-| `vision.person_left` | VisionBridge | MoodEngine | — |
-| `vision.object_recognized` | VisionBridge | TasteEngine, GoalEngine | object_class, confidence |
+| `vision.person_detected` | VisionService | MoodEngine, AgentRuntime | confidence, bbox |
+| `vision.person_left` | VisionService | MoodEngine | — |
+| `vision.object_recognized` | VisionService | TasteEngine, GoalEngine | object_class, confidence |
 | `audio.speech_start` | VoiceBridge | AgentRuntime | vad_confidence |
 | `audio.speech_end` | VoiceBridge | AgentRuntime | — |
 | `voice.transcript` | VoiceBridge | AgentRuntime, ExperienceLog | text, language |
@@ -7635,6 +7635,7 @@ Event(
 | `peripheral.discovered` | PeripheralScanner | AgentRuntime | type, device_id |
 | `system.heartbeat` | AgentRuntime | — (monitoring) | uptime_sec, memory_mb |
 | `system.error` | Any | MoodEngine, AgentRuntime | component, error, severity |
+| `model_manager.profile_changed` | ModelManager | AgentRuntime, InnerMonologue, VisualGrounding | old_profile, new_profile, available_memory_mb |
 | `claude_code.permission_granted` | ClaudeCodeCoordinator | AgentRuntime | task_description |
 | `claude_code.session_completed` | ClaudeCodeCoordinator | AgentRuntime | task_description |
 | `claude_code.permission_denied` | ClaudeCodeCoordinator | AgentRuntime | reason |
