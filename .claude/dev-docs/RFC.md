@@ -6586,7 +6586,7 @@ successful concepts:
 
 | # | Question | Priority | Status |
 |---|----------|----------|--------|
-| 1 | ~~Which TTS engine is better for multilingual use (en, ru): Kokoro or Piper?~~ | High | **Resolved**: Qwen3-TTS (0.6B via mlx-audio) — single engine for all languages, best RU quality metrics, Apache 2.0, streaming 97ms, voice cloning. Replaces Kokoro+Piper hybrid (see 6.4) |
+| 1 | ~~Which TTS engine is better for multilingual use (en, ru, other): Kokoro or Piper?~~ | High | **Resolved**: Qwen3-TTS (0.6B via mlx-audio) — single engine for all languages, best quality metrics, Apache 2.0, streaming 97ms, voice cloning. Replaces Kokoro+Piper hybrid (see 6.4) |
 | 2 | ~~Godot 4 vs Flutter for the tablet client~~ | Medium | **Resolved**: Godot 4 shell-renderer (see 5.4) |
 | 3 | ~~Does Vision need a separate process, or can cv2.VideoCapture be run in an asyncio thread?~~ | Medium | **Resolved**: Single process — `asyncio.to_thread` for camera capture (I/O-bound) + `ThreadPoolExecutor` for YOLOv8n inference. At 5-sec intervals GIL is not a bottleneck. Can migrate to separate process later via EventBus abstraction if needed (see 3.5.1) |
 | 4 | How exactly does ReSpeaker XVF3800 provide DoA via USB: through ALSA controls, via I2C, or through a custom protocol? Needs testing on a real device | High | Open |

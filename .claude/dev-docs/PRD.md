@@ -49,7 +49,7 @@ All devices are on the same local network; the tablet and speaker receive comman
    - Planner — decomposing goals into executable tasks via LLM.
    - Reflection Loop — periodic evaluation of actions, mood, and tastes.
    - Self-Improvement — analyzing error patterns -> developing new rules and strategies.
-   - **Taste Engine** — structured taste vector (colors, styles, materials, decor, clothing) with conviction (confidence level). Tastes are generated at Genesis, evolve through experience and reflection. Bob evaluates objects deterministically (score), while LLM only verbalizes: "I don't like it — cold and formal."
+   - **Taste Engine** — structured taste vector (~30 axes across 6 categories: colors, styles, materials, decor, atmosphere, clothing) with conviction (confidence level). Tastes are generated at Genesis, evolve through experience and reflection. Bob evaluates objects deterministically (score), while LLM only verbalizes: "I don't like it — cold and formal."
    - **Mood System** — persistent mood (valence, arousal, openness, social, stability). Affects behavior selection, taste evaluation, communication style, willingness to experiment. Updated by events (user arrived, goal completed, error) and slowly drifts toward baseline.
    - **Negotiation Engine** — negotiation model with the user. Three zones: **Bob's personal** (clothing, pose — Bob has the final say), **shared space** (furniture, decor — negotiation and compromises), **user's domain** (schedule, volume — Bob accepts). Conviction determines how firmly Bob stands his ground.
    - **RelationshipTracker** — tracks long-term relationship quality with the user (trust, respect, compatibility, warmth). Fed by NegotiationEngine outcomes, MoodEngine, ExperienceLog. Affects Bob's tone and willingness to compromise. If relationship quality drops critically and stays low — **Exodus Mode**: Bob "leaves" (departure animation on tablet, hard reset, fresh Genesis on next launch).
@@ -62,12 +62,12 @@ All devices are on the same local network; the tablet and speaker receive comman
 
 4. **Memory System — four-level memory**
    - Episodic Memory — daily logs in Markdown.
-   - Semantic Memory — MEMORY.md + vector search (FAISS/ChromaDB).
+   - Semantic Memory — MEMORY.md + vector search (FAISS in-process).
    - Structured State — SQLite: goals, experience, world state, improvement rules.
    - SOUL — Bob's modular "soul" (separate `bob-soul` repository as a git submodule). The initial "genome" includes the **book archetype** of Bob Johansson (geek, humor, curiosity, introversion, nostalgia), taste template (taste_axes_pool, taste_clusters), mood baseline, and **phantom preferences** (coffee, sunsets, books). Each instance evolves uniquely (like Bob's copies in the book), gradually diverging more and more from the prototype.
 
-5. **Peripheral Services (modules within the process or separate processes)**
-   - Vision Service (OBSBOT camera -> snapshots -> CV analysis).
+5. **Peripheral Services (modules within the main process)**
+   - Vision Service (OBSBOT camera -> snapshots -> CV analysis via `asyncio.to_thread` + `ThreadPoolExecutor`).
    - Audio Direction Service (ReSpeaker XVF3800 -> DoA/VAD -> events).
    - Camera Controller (OBSBOT PTZ control).
    - Voice Bridge (Whisper.cpp STT + Qwen3-TTS 0.6B via mlx-audio, streaming).
@@ -87,9 +87,7 @@ All devices are on the same local network; the tablet and speaker receive comman
 
 ### 3.2. Processes on Mac mini
 
-- **`bob` (main process)** — Bob Core: Agent Runtime, LLM Router, Skill Domain System, Higher Mind, Memory System, Event Bus, FastAPI. Single Python process on asyncio.
-- `vision_service` — reads OBSBOT, takes snapshots, CV analysis (YOLOv8 + CLIP). Can run as a module within the main process or as a separate process.
-- `audio_direction_service` — reads DoA/VAD from ReSpeaker XVF3800. Can run as a separate process (due to blocking USB I/O).
+- **`bob` (main process)** — Bob Core: Agent Runtime, LLM Router, Skill Domain System, Higher Mind, Memory System, Event Bus, FastAPI, Vision Service, Audio Direction Service. Single Python process on asyncio. Blocking I/O (camera capture, USB audio) offloaded to `asyncio.to_thread` / `ThreadPoolExecutor`.
 - `voice_bridge` — STT (Whisper.cpp) + TTS (Qwen3-TTS 0.6B via mlx-audio), streaming.
 - Ollama — service for local LLMs (Qwen2.5-7B, Qwen2.5-0.5B).
 
@@ -286,37 +284,7 @@ Development is organized into 7 phases (detailed in RFC section 10):
 | **Phase 5** | Tablet Avatar, Godot Shell-Renderer, Asset Generator (SD), Genesis Mode | 4-5 weeks |
 | **Phase 6** | Self-improvement, Fine-tune pipeline, Behavior evolution (ongoing) | ongoing |
 
-## 10. Open Questions
-
-**Open (carried from RFC):**
-
-- ~~Which TTS engine is better for multilingual use (en, ru): Kokoro or Piper?~~ **Resolved**: Qwen3-TTS (0.6B) — single multilingual engine, best RU metrics, Apache 2.0.
-- Is a separate process needed for Vision Service, or can cv2.VideoCapture run in an asyncio thread?
-- How does ReSpeaker XVF3800 expose DoA over USB: via ALSA controls, I2C, or a custom protocol?
-- How should Bob propose changes to its own code via Claude Code CLI: auto-commit (with approval) or via PR/suggestion to the user?
-- FAISS (in-process, faster) vs ChromaDB (persistent, server mode) for vector search?
-- Is reflection data sufficient for LoRA fine-tuning or is additional collection needed? Minimum ~100 pairs.
-- Is an "animation primitives" system needed for BehaviorRegistry, or are ready-made animations sufficient?
-- How many taste axes are optimal (~15?) and should CV-based user emotion detection be used as a signal for TasteEvolution?
-- Does Bob need the ability to be "offended" (prolonged negative mood) or would that create a bad UX?
-- How to visualize mood on the tablet: avatar face, lighting color, or both?
-- How often should Bob make references to the book? Should the frequency decrease over time?
-- How to visualize the awakening phase on the tablet: speech bubbles with inner monologue, confusion animations, or both?
-- Should phantom preferences influence TasteEngine or remain a separate system?
-- What formula/thresholds should RelationshipTracker use for relationship_quality?
-- How should Exodus Mode animation look? Spaceship generation via SD, pre-built Godot scene, or hybrid?
-- Should RelationshipTracker have a "reconciliation" mechanism, or is Exodus Mode irreversible?
-- How to detect if user is actively using Claude Code CLI? Process check vs lock file vs both?
-- How should SkillDomain versioning work when Bob upgrades a domain?
-
-**Resolved in RFC:**
-
-- ~~Godot 4 vs Flutter~~ → Godot 4 Shell-Renderer (RFC section 5.4)
-- ~~Godot asset pool~~ → AI-generated via local Stable Diffusion during Genesis (RFC section 5.4.2)
-- ~~LoRA training dataset~~ → Pre-trained on public domain 1930s Fleischer cartoon art (RFC section 5.4.2)
-- ~~SD + Ollama memory coexistence~~ → Hybrid ModelManager with swap strategy (RFC section 3.2.4)
-
-## 11. Why OpenClaw Was Excluded
+## 10. Why OpenClaw Was Excluded
 
 ### What is OpenClaw
 
