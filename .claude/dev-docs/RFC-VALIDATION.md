@@ -770,7 +770,7 @@ What Bob can and cannot do at each development phase:
 
 | # | Sections | Issue | Status |
 |---|----------|-------|--------|
-| ~~**V5-M1**~~ | ~~3.4.4, 3.3.1, 3.3.5, 3.3.6~~ | ~~**Section 3.4.4 has inconsistent scope.**~~ Added 6 missing tables (`goals`, `goal_dependencies`, `goal_criteria`, `object_experience`, `taste_history`, `mood_history`) to §3.4.4. All 23 SQLite tables now consolidated in one place. | **RESOLVED** (commit `40c466b`) |
+| ~~**V5-M1**~~ | ~~3.4.4, 3.3.1, 3.3.5, 3.3.6~~ | ~~**Section 3.4.4 has inconsistent scope.**~~ Added 6 missing tables (`goals`, `goal_dependencies`, `goal_criteria`, `object_experience`, `taste_history`, `mood_history`) to §3.4.4. All 25 SQLite tables now consolidated in one place. | **RESOLVED** (commit `40c466b`) |
 | ~~**V5-M2**~~ | ~~3.4.4 (~4534-4549)~~ | ~~**Missing consolidated indices in §3.4.4.**~~ Added 9 missing indices for old tables (`idx_goals_status`, `idx_goals_parent`, `idx_goals_priority`, `idx_obj_exp_object`, `idx_obj_exp_action`, `idx_taste_history_axis`, `idx_taste_history_ts`, `idx_mood_timestamp`, `idx_mood_primary`). | **RESOLVED** (commit `40c466b`) |
 | ~~**V5-M3**~~ | ~~3.3.6 (~1742-1746)~~ | ~~**`MoodEngine.__init__` constructor parameter order is a Python SyntaxError.**~~ Fixed: `db_path: str` now precedes `initial_mood: MoodState \| None = None`. | **RESOLVED** (commit `40c466b`) |
 

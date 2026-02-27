@@ -4340,28 +4340,7 @@ class EpisodicMemory:
         ...
 ```
 
-**SQLite schema (see also section 3.4.4):**
-
-```sql
-CREATE TABLE episodic_log (
-    id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    timestamp       TEXT NOT NULL,          -- ISO 8601
-    date            TEXT NOT NULL,          -- YYYY-MM-DD (for grouping/indexing)
-    time_of_day     TEXT NOT NULL,          -- "morning", "afternoon", "evening", "night"
-    event_type      TEXT NOT NULL,          -- "wakeup", "user_arrived", "goal_work",
-                                            -- "reflection", "interaction", "observation",
-                                            -- "mood_change", "thought_summary"
-    title           TEXT NOT NULL,          -- brief heading: "User arrived"
-    content         TEXT NOT NULL,          -- full entry text
-    mood_json       TEXT,                   -- JSON snapshot of MoodState at entry time
-    related_goal_id TEXT,                   -- FK to goals(id) if applicable
-    tags_json       TEXT DEFAULT '[]'       -- JSON array of string tags
-);
-
-CREATE INDEX idx_episodic_date ON episodic_log(date);
-CREATE INDEX idx_episodic_type ON episodic_log(event_type);
-CREATE INDEX idx_episodic_ts ON episodic_log(timestamp);
-```
+**SQLite schema:** See section 3.4.4 for the canonical `episodic_log` table definition and indices.
 
 **Example entries (equivalent to the former Markdown diary):**
 
@@ -4457,30 +4436,7 @@ class SemanticMemory:
         ...
 ```
 
-**SQLite schema (see also section 3.4.4):**
-
-```sql
-CREATE TABLE semantic_memory (
-    id              TEXT PRIMARY KEY,       -- UUID
-    text            TEXT NOT NULL,          -- the fact / knowledge
-    category        TEXT NOT NULL,          -- "user", "environment", "rules",
-                                            -- "skills", "facts", "insights"
-    faiss_index_id  INTEGER NOT NULL,       -- position in FAISS index
-    importance      REAL NOT NULL DEFAULT 0.5,  -- 0.0 .. 1.0
-    created_at      TEXT NOT NULL,
-    updated_at      TEXT NOT NULL,
-    accessed_at     TEXT NOT NULL,          -- last recall timestamp
-    access_count    INTEGER DEFAULT 0,
-    source          TEXT,                   -- "reflection", "user_statement",
-                                            -- "observation", "genesis"
-    outdated        INTEGER DEFAULT 0,     -- 1 = soft-deleted
-    metadata_json   TEXT DEFAULT '{}'
-);
-
-CREATE INDEX idx_semantic_category ON semantic_memory(category);
-CREATE INDEX idx_semantic_outdated ON semantic_memory(outdated);
-CREATE INDEX idx_semantic_importance ON semantic_memory(importance);
-```
+**SQLite schema:** See section 3.4.4 for the canonical `semantic_memory` table definition and indices.
 
 **Example entries (equivalent to the former MEMORY.md):**
 
@@ -4492,6 +4448,10 @@ CREATE INDEX idx_semantic_importance ON semantic_memory(importance);
 | mem-004 | Do not disturb the user from 23:00 to 07:00 | rules | 0.9 | user_statement |
 
 #### 3.4.4. Structured State (SQLite)
+
+**Canonical source of truth for all 25 SQLite tables** used by Bob. Component
+sections (§3.3.x) may reference these tables but do NOT duplicate the schema —
+all CREATE TABLE and CREATE INDEX statements are defined here only.
 
 ```sql
 -- GoalEngine: goals and dependencies (section 3.3.1)
@@ -4563,7 +4523,10 @@ CREATE TABLE mood_history (
     event_type      TEXT               -- event that caused the change
 );
 
--- Experience table
+-- Experience table (utility)
+-- Owner: AgentRuntime — logs every action outcome for ReflectionLoop analysis
+-- Writers: AgentRuntime (after each skill execution, LLM call, or goal step)
+-- Readers: ReflectionLoop (via ScopedDBReader), SelfImprovement (lesson patterns)
 CREATE TABLE experience (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     action_type     TEXT NOT NULL,       -- "skill_execution", "llm_call", ...
@@ -4577,7 +4540,12 @@ CREATE TABLE experience (
     created_at      TEXT NOT NULL
 );
 
--- World state table
+-- World state table (utility, key-value store)
+-- Owner: AgentRuntime — central key-value store for cross-component state
+-- Writers: VisionService (user.present), TabletController (tablet.battery),
+--          MoodEngine (bob.mood.*), WindowService (room.temperature)
+-- Readers: NightProcessor (user.present), InnerMonologue (bob.energy),
+--          any component via AgentRuntime.get_world_state(key)
 CREATE TABLE world_state (
     key             TEXT PRIMARY KEY,
     value_json      TEXT NOT NULL,
@@ -4609,7 +4577,10 @@ CREATE TABLE improvement_rules (
     automatic           INTEGER DEFAULT 0   -- 1 = habituated (see 3.3.11 HabituationEngine)
 );
 
--- Content safety violations (ContentGuard, see section 8.8)
+-- Content safety violations (section 8.8)
+-- Owner: ContentGuard.ViolationTracker — tracks content policy violations
+-- Writers: ContentGuard (on each input/output violation detected)
+-- Readers: ContentGuard (escalation tier calculation), RelationshipTracker (impact)
 CREATE TABLE content_violations (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id         TEXT NOT NULL,
