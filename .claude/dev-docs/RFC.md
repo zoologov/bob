@@ -3545,10 +3545,14 @@ finetune:
   base_model: "qwen2.5:7b-instruct"
   lora_rank: 16
   lora_alpha: 32
-  min_dataset_size: 100                # minimum records to start
+  min_dataset_size: 200                # minimum records to start (organic only)
   max_dataset_size: 5000
   eval_split: 0.1                      # 10% for evaluation
   quality_threshold: 0.95              # new model must be >= 95% of baseline
+  quality_scoring:
+    min_user_rating: 0.7               # filter pairs by user rating
+    correction_weight: 2.0             # correction pairs weighted 2x
+    reflection_min_depth: 2            # reflections with >= 2 insights
   schedule: "weekly"                   # once a week
   backup_previous: true                # backup previous model
   require_approval: true               # requires user confirmation
@@ -6357,7 +6361,7 @@ successful concepts:
 | 7 | ~~Should we use ChromaDB (persistent, server mode) or FAISS (in-process, faster) for vector search?~~ | Medium | **Resolved**: FAISS in-process (`faiss-cpu`). Zero server overhead, ~20MB RAM for 10K vectors @ 384 dim. Metadata stored in SQLite (`bob.db`) with FK to FAISS index ID. `faiss.write_index()`/`read_index()` for persistence. Sufficient for single-user single-process (<10K vectors) (see 3.4.3) |
 | 8 | ~~Is integration with Home Assistant / other IoT platforms needed in early phases?~~ | Low | **Resolved**: No IoT in early phases. Implement as a separate SkillDomain (`bob/skills/smart_home/`) in Phase 5+ when Bob can see, hear, and think. Ideal candidate for Bob to self-create via Claude Code CLI using `_template/` scaffold (see 3.2.3) |
 | 9 | ~~How should Bob propose changes to his own code via Claude Code CLI: auto-commit (with approval) or via PR/suggestion to the user?~~ | High | **Resolved**: Hybrid by impact level — low: direct commit + notify, medium: branch + approval, high: pre-approval + branch + review (see 4.2.2) |
-| 10 | Is reflection data sufficient for LoRA fine-tune, or is additional collection needed via special dialogs? Minimum ~100 pairs | Medium | Open |
+| 10 | ~~Is reflection data sufficient for LoRA fine-tune, or is additional collection needed via special dialogs? Minimum ~100 pairs~~ | Medium | **Resolved**: Organic data only — 7 sources (dialogues, reflections, corrections, SOUL, preferences, tastes, mood) yield ~100-300 pairs/week. Raise `min_dataset_size` to 200 with quality scoring (user_rating >= 0.7, corrections weighted 2x). No synthetic augmentation or calibration dialogs. If insufficient data — Bob works on base model longer (see 9.3) |
 | 11 | ~~How to organize the Godot asset pool?~~ | High | **Resolved**: AI-generated via local Stable Diffusion during Genesis (see 5.4.2) |
 | 12 | Is a system of "animation primitives" (idle, walk, sit, reach) needed from which BehaviorRegistry composes complex behaviors? | Medium | Open |
 | 13 | How to test Genesis Mode: deterministic seed for CI or manual testing only? | Medium | Open |
