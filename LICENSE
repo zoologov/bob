@@ -23,6 +23,8 @@ Change License:       Apache License, Version 2.0
 Note: The src/bob/skills/ directory is licensed under Apache License 2.0.
       The bob-soul/ and assets/ directories are licensed under
       CC BY-NC-SA 4.0. See LICENSE-APACHE.md and LICENSE-CC-BY-NC-SA.md.
+      The .claude/dev-docs/ directory (architecture and design documentation)
+      is part of the Licensed Work and subject to this License.
 
 For information about alternative licensing arrangements,
 contact: zoologov@gmail.com

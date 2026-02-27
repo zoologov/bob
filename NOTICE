@@ -26,3 +26,4 @@ Licensing:
 - Core software (src/bob/, except src/bob/skills/): BUSL-1.1 (see LICENSE)
 - Skills and plugins (src/bob/skills/): Apache-2.0 (see LICENSE-APACHE.md)
 - Soul and assets (bob-soul/, assets/): CC-BY-NC-SA-4.0 (see LICENSE-CC-BY-NC-SA.md)
+- Design documentation (.claude/dev-docs/): BUSL-1.1 (see LICENSE)
