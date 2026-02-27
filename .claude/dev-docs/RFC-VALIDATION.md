@@ -4,8 +4,8 @@
 
 # RFC-VALIDATION: Bob — Cross-Document Analysis and Validation
 
-> **Date:** 2026-02-26
-> **Documents analyzed:** PRD.md (322 lines), RFC.md (5011 lines)
+> **Date:** 2026-02-26 (Round 1-2), 2026-02-27 (Round 3)
+> **Documents analyzed:** PRD.md (347 lines), RFC.md (~7100 lines)
 > **Author:** Claude (validation), v.zoologov (review)
 
 ---
@@ -20,6 +20,7 @@
 6. [Missing Details and Gaps](#6-missing-details-and-gaps)
 7. [Open Questions Audit](#7-open-questions-audit)
 8. [Recommendations](#8-recommendations)
+9. [Round 3 — ContentGuard Integration and Full Technical Review](#9-validation-round-3--contentguard-integration-and-full-technical-review)
 
 ---
 
@@ -607,3 +608,84 @@ What Bob can and cannot do at each development phase:
 | **Total findings** | **54** | **14** | **23** | **17** | **0** |
 
 > **Bottom line:** The architecture is solid. The RFC is one of the most detailed agent architecture documents I've analyzed. The main risks are (1) PRD/RFC desynchronization — easily fixable, (2) Genesis flow gaps — need design decisions, (3) memory budget for SD + Ollama coexistence — needs hardware validation. None of the findings are architectural showstoppers.
+
+---
+
+## 9. Validation Round 3 — ContentGuard Integration and Full Technical Review
+
+> **Date:** 2026-02-27
+> **Scope:** Full technical validation of RFC.md (~7100 lines) after adding ContentGuard section (8.8). Python code blocks, architectural coherence, cross-references, memory budget, event flow, development phases.
+
+### 9.1. Critical Issues
+
+| # | Sections | Issue | Status |
+|---|----------|-------|--------|
+| ~~**V3-C1**~~ | ~~3.2.2, 8.8.1, 4.4~~ | ~~`UNSAFE_CONTENT` category is dead code~~ | **RESOLVED**: Removed `UNSAFE_CONTENT` from `TaskCategory` enum and routing table. ContentGuard is the sole content safety layer. |
+
+### 9.2. High Severity Issues
+
+| # | Sections | Issue | Status |
+|---|----------|-------|--------|
+| ~~**V3-H1**~~ | ~~3.3.6, 7.1~~ | ~~Event name mismatch: MoodEngine vs Event Catalog~~ | **RESOLVED**: MoodEngine table now uses single `content_guard.violation` event with footnote: "Single event, impact selected by `payload.tier`". |
+| ~~**V3-H2**~~ | ~~3.3.7.2, 8.8~~ | ~~Interaction type mismatch: RelationshipTracker vs ContentGuard~~ | **RESOLVED**: Explicit tier→interaction mapping added to RelationshipTracker: tier 1 → `safety_violation_mild`, tier 2 → `safety_violation_repeated`, escalation → `safety_violation_persistent`. |
+| ~~**V3-H3**~~ | ~~3.2.1, 8.8~~ | ~~ContentGuard integration point in AgentRuntime undefined~~ | **RESOLVED**: ContentGuard redesigned as decorator/wrapper around LLMRouter with `process()` method. AgentRuntime takes `content_guard` instead of raw `llm_router`. Architecture diagram updated. |
+| ~~**V3-H4**~~ | ~~8.3, 8.8~~ | ~~Two parallel deny paths not documented~~ | **RESOLVED**: "Relationship with ApprovalService" paragraph added to 8.8.1 explaining complementary roles: ApprovalService gates actions, ContentGuard gates content. |
+| ~~**V3-H5**~~ | ~~6, 8.8~~ | ~~Input channels not mapped to ContentGuard~~ | **RESOLVED**: "Guarded input channels" list added to 8.8.1: voice STT → guarded, Telegram → guarded, touch → NOT guarded, internal LLM calls → NOT guarded. |
+| ~~**V3-H6**~~ | ~~8.8.2, 3.2.4~~ | ~~RefusalGenerator fails during HEAVY_GEN~~ | **RESOLVED**: RefusalGenerator now takes `LLMRouter` (not `OllamaClient`). Documented fallback chain: 7B → 0.5B → pre-written templates. |
+| ~~**V3-H7**~~ | ~~10~~ | ~~ContentGuard not in any development phase~~ | **RESOLVED**: Phase 1: "ContentGuard (basic) — input/output guard, ViolationTracker, template refusals". Phase 4: "ContentGuard (full) — mood-aware refusals, relationship impact, rapid rephrasing". |
+
+### 9.3. Medium Severity Issues
+
+| # | Sections | Issue | Status |
+|---|----------|-------|--------|
+| **V3-M1** | 3.3.2 (~line 1050) | `Planner.__init__` references `SkillRegistry` (undefined) instead of `SkillDomainRegistry` | Open (pre-existing, not ContentGuard-related) |
+| **V3-M2** | 3.8.4 (~line 3380) | `UserSettings` docstring says "pydantic validation" but class has no base class | Open (pre-existing, not ContentGuard-related) |
+| **V3-M3** | 7.1 (~line 5607) | `asyncio.PriorityQueue` unparameterized; runtime error on priority ties | Open (pre-existing, not ContentGuard-related) |
+| **V3-M4** | 4.1 vs 3.2.4 vs 5.4.2 | Inconsistent RAM for Qwen2.5-7B: "~5 GB" vs "~4.4 GB" | Open (pre-existing, not ContentGuard-related) |
+| ~~**V3-M5**~~ | ~~5.4.2~~ | ~~HEAVY_GEN memory table doesn't include Llama Guard column~~ | **RESOLVED**: Guard column added to memory table; totals updated. |
+| ~~**V3-M6**~~ | ~~11~~ | ~~ContentGuard not in repository structure~~ | **RESOLVED**: `content_guard.py`, `violation_tracker.py`, `refusal_generator.py` added to `bob/security/`. |
+| ~~**V3-M7**~~ | ~~8.8~~ | ~~ContentGuard scope unclear~~ | **RESOLVED**: Scope defined in 8.8.1: user-facing only (voice/Telegram). Internal calls NOT guarded. |
+| ~~**V3-M8**~~ | ~~5.1.1, 8.8~~ | ~~Genesis/Awakening false positives~~ | **RESOLVED**: Note added to 8.8.1: ContentGuard disabled during Genesis and Awakening. Activates after awakening. |
+| **V3-M9** | 3.4.4, 8.8.2 | `content_violations` SQLite table not referenced in database overview | Open (documentation gap, low-risk) |
+| ~~**V3-M10**~~ | ~~3.2.4~~ | ~~`ensure_profile()` docstring doesn't mention Guard~~ | **RESOLVED**: Docstring updated with note about Guard staying loaded across all transitions. |
+| ~~**V3-M11**~~ | ~~7.1, 8.8.2~~ | ~~Event payload naming mismatch~~ | **RESOLVED**: Event catalog payload harmonized to `violation_category, tier, confidence`. |
+| ~~**V3-M12**~~ | ~~9~~ | ~~Technology Stack table missing Llama Guard 3~~ | **RESOLVED**: Row added: "Content guard \| Llama Guard 3-1B-INT4 (via Ollama)". |
+
+### 9.4. Low Severity Issues
+
+| # | Sections | Issue | Status |
+|---|----------|-------|--------|
+| **V3-L1** | 3.8.2 | `CircuitBreaker` dataclass exposes private `_fields` | Open (pre-existing) |
+| **V3-L2** | 3.2.2 | `LLMRouter.ROUTING_TABLE` missing `ClassVar` | Open (pre-existing) |
+| **V3-L3** | 3.5.4, 6.3 | `AsyncIterator` missing import | Open (pre-existing) |
+| **V3-L4** | 3.5.6 | `Callable` missing import | Open (pre-existing) |
+| **V3-L5** | 3.5.1 | `np.ndarray` missing import | Open (pre-existing) |
+| **V3-L6** | 5.4 | `on_touch_event` standalone with `self` | Open (pre-existing) |
+| **V3-L7** | config blocks | Llama Guard config key naming inconsistency | Open (cosmetic) |
+| ~~**V3-L8**~~ | ~~8.8.7~~ | ~~Uses "(§8.1)" instead of "(section 8.1)"~~ | **RESOLVED**: Changed to "(section 8.1)". |
+| **V3-L9** | 3.2.4 (YAML) | ModelManager profile config lacks Guard comment | Open (covered by ensure_profile docstring fix) |
+
+### 9.5. Positive Findings (No Action Needed)
+
+- **No circular dependencies** in ContentGuard component graph. EventBus pattern correctly decouples publisher (ContentGuard) from consumers (MoodEngine, RelationshipTracker).
+- **Input Guard before Router** is the correct order — avoids wasted compute on unsafe requests.
+- **ViolationRecord stores hash, not raw text** — consistent with privacy-conscious audit design.
+- **Process isolation respected** — 8.8.7 explicitly references 8.1 for config protection.
+- **Configuration YAML** — no duplicate keys across config files; namespaces are clean.
+- **All existing cross-references** point to valid sections.
+- **`memory_limit_mb: 12500`** is correct (16384 - 3500 macOS - 384 buffer).
+- **Memory math is feasible** for all profiles even with Guard always loaded (tightest: HEAVY_GEN at ~14.6-15.6 GB / 16 GB).
+
+### 9.6. Summary Matrix — Round 3
+
+| Severity | Found | Resolved | Remaining | Key Themes |
+|----------|-------|----------|-----------|------------|
+| **Critical** | 1 | 1 | 0 | ~~Dead code~~ |
+| **High** | 7 | 7 | 0 | ~~Event mismatches, integration gaps, phases, fallback~~ |
+| **Medium** | 12 | 7 | 5 | Pre-existing code issues (M1-M4), DB cross-ref (M9) |
+| **Low** | 9 | 1 | 8 | Pre-existing imports/style (L1-L7, L9) |
+| **Total** | **29** | **16** | **13** | |
+
+> **Round 3 resolution:** All ContentGuard-related issues (1 critical, 7 high, 7 medium, 1 low = **16 resolved**) have been fixed. ContentGuard is now fully integrated into the RFC: wraps LLMRouter as a decorator, has explicit integration points in AgentRuntime, consistent event naming, defined scope/channels, fallback chain, development phase assignments, and complete documentation in repo structure/tech stack/memory budget.
+>
+> **Remaining 13 issues** are pre-existing code block imperfections (M1-M4, L1-L7, L9) and one DB cross-reference gap (M9) — none are ContentGuard-related or architecturally significant. They should be addressed during implementation, not in the RFC.

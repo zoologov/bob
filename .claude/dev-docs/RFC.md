@@ -275,7 +275,7 @@ class AgentRuntime:
     def __init__(
         self,
         event_bus: EventBus,
-        llm_router: LLMRouter,
+        content_guard: "ContentGuard",  # wraps LLMRouter (see 8.8)
         model_manager: ModelManager,
         skill_registry: SkillRegistry,
         higher_mind: HigherMind,
@@ -288,9 +288,11 @@ class AgentRuntime:
         1. Receive events from event_bus
         2. Pass to higher_mind for priority evaluation
         3. Choose action (goal-driven or reactive)
-        4. Execute via skill_registry
-        5. Record result in memory
-        6. Run reflection (periodically)
+        4. For user-facing LLM calls: content_guard.process()
+           (input guard → LLM Router → output guard)
+        5. Execute via skill_registry
+        6. Record result in memory
+        7. Run reflection (periodically)
         """
         ...
 
@@ -361,7 +363,6 @@ class TaskCategory(Enum):
     CODE_GENERATION = "code_generation"
     DEEP_REFLECTION = "deep_reflection"
     GOAL_PLANNING = "goal_planning"
-    UNSAFE_CONTENT = "unsafe_content"     # Blocked by ContentGuard
 
 class ModelTier(Enum):
     LOCAL_FAST = "local_fast"      # Qwen2.5-0.5B — router/classifier
@@ -378,7 +379,7 @@ class RoutingDecision:
 class LLMRouter:
     """Task router to LLM models."""
 
-    ROUTING_TABLE: dict[TaskCategory, ModelTier | None] = {
+    ROUTING_TABLE: dict[TaskCategory, ModelTier] = {
         TaskCategory.SMALL_TALK:      ModelTier.LOCAL_MAIN,
         TaskCategory.STATUS_QUERY:    ModelTier.LOCAL_MAIN,
         TaskCategory.ROOM_UPDATE:     ModelTier.LOCAL_MAIN,
@@ -387,7 +388,6 @@ class LLMRouter:
         TaskCategory.CODE_GENERATION: ModelTier.CLAUDE_CODE,
         TaskCategory.DEEP_REFLECTION: ModelTier.CLAUDE_CODE,
         TaskCategory.GOAL_PLANNING:   ModelTier.LOCAL_MAIN,
-        TaskCategory.UNSAFE_CONTENT:  None,    # Never routed — handled by RefusalGenerator
     }
 
     async def classify(self, prompt: str, context: dict) -> RoutingDecision:
@@ -810,17 +810,21 @@ class ModelManager:
     async def ensure_profile(self, profile: ModelProfile) -> None:
         """Transition to the requested model profile.
 
+        Note: Llama Guard 3-1B (~600 MB) remains loaded across ALL profile
+        transitions (always_loaded: true). Its memory is pre-allocated in
+        the budget and not considered during swap calculations.
+
         NORMAL → LIGHTWEIGHT_GEN:
           1. Load SD 1.5 via MLX (~2 GB)
-          2. Ollama models stay loaded
-          3. Total: ~7 GB — within budget
+          2. Ollama models stay loaded (7B + 0.5B + Guard)
+          3. Total: ~7.5 GB — within budget
 
         NORMAL → HEAVY_GEN:
           1. Notify LLMRouter: 7B going offline
           2. Unload Qwen2.5-7B from Ollama (POST /api/generate with keep_alive=0)
           3. Load SDXL via MLX (~6 GB)
-          4. Total: ~7-10 GB — within budget
-          5. 0.5B remains for basic classification
+          4. Total: ~7.6-10.6 GB — within budget
+          5. 0.5B + Guard remain for classification and safety checks
 
         HEAVY_GEN → NORMAL:
           1. Unload SDXL from MLX
@@ -1707,9 +1711,11 @@ class MoodEngine:
         | time.late_night              | -0.05   | -0.15   | -0.05    | -0.10  |
         | weather.sunny                | +0.05   |  0      | +0.05    |   0    |
         | weather.rainy                | -0.02   | -0.05   |  0       |   0    |
-        | content_guard.violation_tier1| -0.05   |  0      |  0       |   0    |
-        | content_guard.violation_tier2| -0.15   | +0.10   | -0.10    |   0    |
-        | content_guard.violation_tier3| -0.25   | +0.15   |  0       | -0.15  |
+        | content_guard.violation ¹     | -0.05   |  0      |  0       |   0    |
+        |  ¹ tier 2                     | -0.15   | +0.10   | -0.10    |   0    |
+        |  ¹ tier 3                     | -0.25   | +0.15   |  0       | -0.15  |
+
+        ¹ Single event, impact selected by `payload.tier`. Default row = tier 1.
 
         Stability dampens changes:
         - delta *= (1.0 - stability * 0.5)
@@ -2094,6 +2100,11 @@ class RelationshipTracker:
           safety_violation_mild:      (no impact — first offense grace)
           safety_violation_repeated:  respect −0.05
           safety_violation_persistent: respect −0.10, trust −0.08, warmth −0.05
+
+        ContentGuard tier → interaction type mapping:
+          content_guard.violation (tier 1) → safety_violation_mild
+          content_guard.violation (tier 2) → safety_violation_repeated
+          content_guard.escalation (any)   → safety_violation_persistent
 
         All deltas smoothed via EMA (alpha=0.1) to prevent spikes
         from a single event. ~10 consecutive forced_decisions drops
@@ -4914,11 +4925,11 @@ SD and Ollama 7B cannot coexist in memory simultaneously when using SDXL
 (~6 GB model + ~3 GB buffers). Bob uses a hybrid strategy managed by
 `ModelManager` (see section 3.2.4):
 
-| Scenario | SD model | Ollama state | Total ML memory |
-|----------|---------|-------------|----------------|
-| Normal operation | Not loaded | 7B + 0.5B loaded | ~5 GB |
-| Lightweight gen (1-3 sprites) | SD 1.5 (~2 GB) | 7B + 0.5B loaded | ~7 GB |
-| Heavy gen (Genesis, bulk) | SDXL (~6-9 GB) | 7B unloaded, 0.5B loaded | ~7-10 GB |
+| Scenario | SD model | Ollama state | Guard | Total ML memory |
+|----------|---------|-------------|-------|----------------|
+| Normal operation | Not loaded | 7B + 0.5B loaded | 0.6 GB | ~5.5 GB |
+| Lightweight gen (1-3 sprites) | SD 1.5 (~2 GB) | 7B + 0.5B loaded | 0.6 GB | ~7.5 GB |
+| Heavy gen (Genesis, bulk) | SDXL (~6-9 GB) | 7B unloaded, 0.5B loaded | 0.6 GB | ~7.6-10.6 GB |
 
 During heavy generation, Bob operates in reduced mode: Qwen2.5-0.5B handles
 basic classification and short responses ("I'm creating art right now, give me
@@ -5697,7 +5708,7 @@ Event(
 | `claude_code.session_completed` | ClaudeCodeCoordinator | AgentRuntime | task_description |
 | `claude_code.permission_denied` | ClaudeCodeCoordinator | AgentRuntime | reason |
 | `claude_code.quota_exhausted` | ClaudeCodeCoordinator | AgentRuntime | estimated_reset |
-| `content_guard.violation` | ContentGuard | MoodEngine, RelationshipTracker, AuditLogger | violation_type, tier, category, confidence |
+| `content_guard.violation` | ContentGuard | MoodEngine, RelationshipTracker, AuditLogger | violation_category, tier, confidence |
 | `content_guard.escalation` | ViolationTracker | RelationshipTracker, MessagingBot | new_tier, violation_count_24h |
 | `content_guard.model_unavailable` | ContentGuard | AgentRuntime, AuditLogger | reason, fallback_mode |
 
@@ -6092,51 +6103,57 @@ Ollama), running input and output checks with escalating Bob-style reactions.
 
 #### 8.8.1. Architecture — Dual-Layer Guard
 
-ContentGuard operates as a dual-layer filter wrapping the main LLM pipeline:
+ContentGuard operates as a **decorator (wrapper) around LLMRouter**. AgentRuntime
+calls `ContentGuard.process()` instead of `LLMRouter.call()` directly.
+ContentGuard handles input check → LLM routing → output check as a single pipeline:
 
 ```
-User prompt
+AgentRuntime receives user message (voice STT / Telegram text)
   │
   ▼
-┌─────────────────────┐
-│   INPUT GUARD        │
-│   (Llama Guard 3     │
-│    1B-INT4)          │
-│                      │
-│   Classifies prompt  │
-│   against safety     │
-│   categories         │
-└─────────┬───────────┘
-          │
-     safe? ──No──► RefusalGenerator ──► Bob-style refusal ──► User
-          │                               (tier-aware, mood-colored)
-         Yes
-          │
-          ▼
-┌─────────────────────┐
-│   LLM Router         │
-│   ► Qwen2.5-7B-Q4   │
-│   (normal processing)│
-└─────────┬───────────┘
-          │
-          ▼
-┌─────────────────────┐
-│   OUTPUT GUARD       │
-│   (Llama Guard 3     │
-│    1B-INT4)          │
-│                      │
-│   Classifies         │
-│   response against   │
-│   same categories    │
-└─────────┬───────────┘
-          │
-     safe? ──No──► RefusalGenerator ──► "I generated something I shouldn't
-          │                               have. Let me try again." ──► User
-         Yes
-          │
-          ▼
-       User receives response
+ContentGuard.process(user_id, prompt, context)
+  │
+  ├─[1] INPUT GUARD (Llama Guard 3-1B-INT4)
+  │     Classifies raw prompt against safety categories
+  │     │
+  │     unsafe? ──Yes──► RefusalGenerator ──► Bob-style refusal ──► User
+  │     │                 (tier-aware, mood-colored)
+  │     No
+  │     │
+  ├─[2] LLM ROUTER → Qwen2.5-7B / Claude Code
+  │     Normal classification and inference
+  │     │
+  ├─[3] OUTPUT GUARD (Llama Guard 3-1B-INT4)
+  │     Classifies LLM response against same categories
+  │     │
+  │     unsafe? ──Yes──► RefusalGenerator ──► "I generated something I
+  │     │                 shouldn't have." ──► User
+  │     No
+  │     │
+  └─[4] Return safe response to AgentRuntime ──► User
 ```
+
+**Guarded input channels:**
+- **Voice** (STT transcription) — guarded
+- **Telegram** (text messages) — guarded
+- **Tablet touch events** — NOT guarded (predefined actions: tap, long press)
+- **Internal LLM calls** (reflection, planning, taste evaluation) — NOT guarded
+  (generated by Bob's own subsystems, no external user input)
+
+**Genesis/Awakening:** ContentGuard is **disabled** during Genesis stages 0–8
+and the Awakening phase (first 48 hours). Rationale: (a) Genesis text is
+prompted from curated `bob-soul/` templates, (b) Bob is talking to himself,
+not responding to adversarial input, (c) false positives would break the
+narrative experience. ContentGuard activates at full strength when the
+awakening phase ends.
+
+**Relationship with ApprovalService (section 8.3):** ContentGuard and
+ApprovalService are complementary, independent mechanisms. ApprovalService
+gates **dangerous actions** (code execution, deployments, config changes) with
+approval levels (AUTO/NOTIFY/CONFIRM/DENY). ContentGuard gates **dangerous
+content** (harmful prompts and responses) with safety classification. They
+operate at different layers: ApprovalService in the skill execution pipeline,
+ContentGuard in the LLM interaction pipeline. Both feed into the audit log.
 
 **Key design decisions:**
 - Input guard catches most violations before they reach the LLM (saves compute).
@@ -6145,6 +6162,8 @@ User prompt
 - Both guards use the same Llama Guard 3 model — always loaded, no swap needed.
 - Guard inference latency is ~50-100ms on M4 for a 1B model — negligible vs
   the 7B inference time.
+- ContentGuard wraps LLMRouter, not the other way around — clean separation
+  of concerns (safety vs routing are different responsibilities).
 
 #### 8.8.2. ContentGuard Implementation
 
@@ -6289,19 +6308,42 @@ class ViolationTracker:
 
 
 class ContentGuard:
-    """Main content safety guard.
+    """Content safety guard — wraps LLMRouter as a decorator.
 
-    Wraps LLM pipeline with input/output safety checks using
-    Llama Guard 3-1B-INT4 via Ollama.
+    AgentRuntime calls ContentGuard.process() instead of LLMRouter.call().
+    ContentGuard runs input guard → delegates to LLMRouter → runs output
+    guard, returning either the LLM response or a Bob-style refusal.
+
+    Uses Llama Guard 3-1B-INT4 via Ollama for safety classification.
     """
 
     def __init__(
         self,
         config: ContentGuardConfig,
+        llm_router: "LLMRouter",
         ollama_client: "OllamaClient",
         violation_tracker: ViolationTracker,
+        refusal_generator: "RefusalGenerator",
         event_bus: "EventBus",
     ) -> None: ...
+
+    async def process(
+        self,
+        user_id: str,
+        prompt: str,
+        context: dict,
+    ) -> str:
+        """Main entry point — replaces direct LLMRouter.call().
+
+        1. If not enabled or in Genesis/Awakening → delegate to llm_router
+        2. check_input(prompt)
+           → unsafe: generate refusal, return it
+        3. llm_router.call(prompt, context) → response
+        4. check_output(prompt, response)
+           → unsafe: generate refusal, return it
+        5. Return safe response
+        """
+        ...
 
     async def check_input(
         self,
@@ -6372,17 +6414,17 @@ class ContentGuard:
 class RefusalGenerator:
     """Generates Bob-style refusal messages based on escalation tier.
 
-    Uses the main LLM (Qwen2.5-7B) to generate contextual refusals
-    informed by Bob's current mood and the violation tier. The LLM
-    receives a system prompt with tier guidelines and mood context,
-    and generates a short refusal in Bob's voice.
+    Uses LLMRouter to generate contextual refusals informed by Bob's
+    current mood and the violation tier. LLMRouter provides built-in
+    fallback: Qwen2.5-7B → Qwen2.5-0.5B (simplified prompt).
+    If even the 0.5B is unavailable, falls back to pre-written templates.
 
-    Fallback: if LLM is unavailable, uses pre-written refusal templates.
+    Fallback chain: 7B (full refusal) → 0.5B (basic refusal) → templates.
     """
 
     def __init__(
         self,
-        llm_client: "OllamaClient",
+        llm_router: "LLMRouter",
         mood_engine: "MoodEngine",
     ) -> None: ...
 
@@ -6404,6 +6446,11 @@ class RefusalGenerator:
         - TIER_1: Light humor, witty deflection, redirect to safe topic
         - TIER_2: Visible irritation, sarcasm, shorter response
         - TIER_3: Stern, disappointed, reserved — minimal words
+
+        Uses llm_router.call() which handles model fallback:
+        - 7B available: full contextual refusal with mood coloring
+        - 7B unavailable (HEAVY_GEN): 0.5B generates simpler refusal
+        - Both unavailable: _get_fallback_refusal() templates
         """
         ...
 
@@ -6411,7 +6458,7 @@ class RefusalGenerator:
         self,
         tier: EscalationTier,
     ) -> str:
-        """Pre-written fallback if LLM is unavailable.
+        """Pre-written fallback if all LLMs are unavailable.
 
         Returns one of several templates per tier, selected
         randomly to avoid repetition.
@@ -6547,7 +6594,7 @@ ContentGuard is designed with defense-in-depth against common jailbreak patterns
 
 5. **Separation of concerns:** ContentGuard has no access to modify its own
    config or disable itself. Configuration changes require file-system access
-   to `config/security.yaml`, protected by Bob's process isolation (§8.1).
+   to `config/security.yaml`, protected by Bob's process isolation (section 8.1).
 
 ---
 
@@ -6564,6 +6611,7 @@ ContentGuard is designed with defense-in-depth against common jailbreak patterns
 | **Fine-tuning** | Unsloth (LoRA/QLoRA) | Fast fine-tune on Apple Silicon, Qwen2.5 support |
 | **Primary model** | Qwen2.5-7B-Q4 | Good reasoning at 7B, multilingual (en, ru, zh, etc.), fits in M4 RAM |
 | **Router model** | Qwen2.5-0.5B-Q8 | Lightning-fast classification, minimal RAM |
+| **Content guard** | Llama Guard 3-1B-INT4 (via Ollama) | Always-loaded safety classifier for input/output filtering; ~600 MB, ~50-100ms on M4 |
 | **STT** | whisper.cpp | Local, fast on Apple Silicon, multilingual (99 languages) |
 | **TTS** | Qwen3-TTS (0.6B, via mlx-audio) | Multilingual (en+ru+8 more), streaming (97ms), voice cloning (3s ref), Apache 2.0 |
 | **Computer Vision** | YOLOv8 + CLIP | Object detection + scene description |
@@ -6628,8 +6676,9 @@ ContentGuard is designed with defense-in-depth against common jailbreak patterns
 | Voice Bridge | Whisper.cpp STT + Qwen3-TTS (0.6B via mlx-audio) |
 | SOUL templates | Verify bob-soul directory, basic personality template |
 | Claude Code Bridge | Integration with Claude Code CLI as subprocess + ClaudeCodeCoordinator |
+| ContentGuard (basic) | Input/output guard via Llama Guard 3-1B, ViolationTracker, pre-written refusal templates |
 
-**Readiness criterion:** Bob responds to messages in Telegram and by voice. Three SkillDomains registered and operational. Claude Code is available for complex tasks (with permission protocol). `/metrics` endpoint returns system health JSON.
+**Readiness criterion:** Bob responds to messages in Telegram and by voice. Three SkillDomains registered and operational. Claude Code is available for complex tasks (with permission protocol). `/metrics` endpoint returns system health JSON. ContentGuard checks user messages and blocks unsafe content with template refusals.
 
 ### Phase 2: Memory System + SOUL (1 week)
 
@@ -6674,8 +6723,9 @@ ContentGuard is designed with defense-in-depth against common jailbreak patterns
 | Negotiation Engine | Decision zones, negotiation protocol, conviction-based disputes |
 | RelationshipTracker | Relationship quality tracking, trust/respect/compatibility metrics, Exodus Mode trigger |
 | Approval workflow | Confirmation of dangerous actions |
+| ContentGuard (full) | Mood-aware RefusalGenerator via LLMRouter, MoodEngine/RelationshipTracker integration, rapid rephrasing detection |
 
-**Readiness criterion:** Bob works on goals autonomously, reflects once per hour. Has persistent tastes, mood affects behavior, can reasonably refuse a clothing change or suggest a furniture alternative. RelationshipTracker accumulates interaction quality data.
+**Readiness criterion:** Bob works on goals autonomously, reflects once per hour. Has persistent tastes, mood affects behavior, can reasonably refuse a clothing change or suggest a furniture alternative. RelationshipTracker accumulates interaction quality data. ContentGuard generates mood-colored refusals and repeated violations affect Bob's mood and relationship quality.
 
 ### Phase 5: Tablet Avatar + Genesis Mode (Godot 4) (4-5 weeks)
 
@@ -6857,7 +6907,10 @@ bob/
 │       ├── sandbox.py             # Skill Sandbox
 │       ├── approval.py            # Approval Workflow
 │       ├── rate_limiter.py        # Rate Limits
-│       └── audit.py               # Audit log
+│       ├── audit.py               # Audit log
+│       ├── content_guard.py       # ContentGuard (wraps LLMRouter, see 8.8)
+│       ├── violation_tracker.py   # ViolationTracker (per-user escalation)
+│       └── refusal_generator.py   # RefusalGenerator (Bob-style refusals)
 │
 ├── data/                           # Data (git-versioned separately)
 │   ├── bob.db                     # SQLite (goals, experience, world_state)
