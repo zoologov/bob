@@ -1752,8 +1752,8 @@ class MoodEngine:
 
     def __init__(
         self,
-        initial_mood: MoodState | None = None,
         db_path: str,
+        initial_mood: MoodState | None = None,
     ) -> None:
         self._current: MoodState = initial_mood or self._default_mood()
         ...
@@ -2713,6 +2713,7 @@ tests/test_mind/test_inner_monologue.py
 **Python dataclasses and classes.**
 
 ```python
+import numpy as np
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
@@ -3492,6 +3493,59 @@ sensory_grounding:
     min_events_for_location: 5           # minimum events to establish a location
     cluster_schedule: "weekly"           # re-cluster during room_review
     max_locations: 20                    # maximum spatial locations
+```
+
+**Python dataclass (mirrors YAML above).**
+
+```python
+@dataclass
+class VisualGroundingConfig:
+    """VisualGrounding sub-config."""
+    enabled: bool = True
+    model: str = "clip-vit-base-patch32"
+    embedding_dim: int = 512
+    faiss_path: str = "data/memory/visual_vectors"
+    embed_every_nth_frame: int = 6
+    max_index_size: int = 50_000
+    memory_mb: int = 400
+    suspend_during_heavy_gen: bool = True
+
+
+@dataclass
+class AudioGroundingConfig:
+    """AudioGrounding sub-config."""
+    enabled: bool = True
+    method: str = "librosa_dsp"
+    sample_rate: int = 16_000
+
+
+@dataclass
+class TemporalGroundingConfig:
+    """TemporalGrounding sub-config."""
+    enabled: bool = True
+    lookback_days: int = 14
+    update_schedule: str = "daily"
+    decay_weight: float = 0.9
+
+
+@dataclass
+class SpatialGroundingConfig:
+    """SpatialGrounding sub-config."""
+    enabled: bool = True
+    direction_spread_deg: int = 30
+    min_events_for_location: int = 5
+    cluster_schedule: str = "weekly"
+    max_locations: int = 20
+
+
+@dataclass
+class SensoryGroundingConfig:
+    """Top-level configuration for sensory grounding subsystem."""
+    enabled: bool = True
+    visual: VisualGroundingConfig = field(default_factory=VisualGroundingConfig)
+    audio: AudioGroundingConfig = field(default_factory=AudioGroundingConfig)
+    temporal: TemporalGroundingConfig = field(default_factory=TemporalGroundingConfig)
+    spatial: SpatialGroundingConfig = field(default_factory=SpatialGroundingConfig)
 ```
 
 **Events (additions to Event Catalog).**
@@ -4455,6 +4509,75 @@ CREATE INDEX idx_semantic_importance ON semantic_memory(importance);
 #### 3.4.4. Structured State (SQLite)
 
 ```sql
+-- GoalEngine: goals and dependencies (section 3.3.1)
+CREATE TABLE goals (
+    id              TEXT PRIMARY KEY,
+    title           TEXT NOT NULL,
+    description     TEXT NOT NULL,
+    status          TEXT NOT NULL DEFAULT 'active',
+    priority        INTEGER NOT NULL DEFAULT 3,
+    parent_id       TEXT REFERENCES goals(id),
+    progress        REAL NOT NULL DEFAULT 0.0,
+    created_at      TEXT NOT NULL,
+    updated_at      TEXT NOT NULL,
+    deadline        TEXT,
+    metadata_json   TEXT DEFAULT '{}'
+);
+
+CREATE TABLE goal_dependencies (
+    goal_id         TEXT NOT NULL REFERENCES goals(id),
+    depends_on_id   TEXT NOT NULL REFERENCES goals(id),
+    PRIMARY KEY (goal_id, depends_on_id)
+);
+
+CREATE TABLE goal_criteria (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    goal_id         TEXT NOT NULL REFERENCES goals(id),
+    description     TEXT NOT NULL,
+    is_met          INTEGER NOT NULL DEFAULT 0,
+    checked_at      TEXT
+);
+
+-- TasteEngine: object experience and taste history (section 3.3.5)
+CREATE TABLE object_experience (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    object_id       TEXT NOT NULL,
+    timestamp       TEXT NOT NULL,
+    action          TEXT NOT NULL,       -- "added", "used", "replaced", "removed"
+    mood_before     TEXT,
+    mood_after      TEXT,
+    taste_score     REAL,
+    reflection_comment TEXT,
+    user_reaction   TEXT,
+    score_delta     REAL DEFAULT 0.0
+);
+
+CREATE TABLE taste_history (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    timestamp       TEXT NOT NULL,
+    axis            TEXT NOT NULL,       -- "warm", "wood", "cozy", ...
+    old_value       REAL NOT NULL,
+    new_value       REAL NOT NULL,
+    old_conviction  REAL NOT NULL,
+    new_conviction  REAL NOT NULL,
+    source          TEXT NOT NULL,       -- "reflection", "user_signal", "experience"
+    reason          TEXT
+);
+
+-- MoodEngine: mood history (section 3.3.6)
+CREATE TABLE mood_history (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    timestamp       TEXT NOT NULL,
+    primary_mood    TEXT NOT NULL,
+    valence         REAL NOT NULL,
+    arousal         REAL NOT NULL,
+    openness        REAL NOT NULL,
+    social          REAL NOT NULL,
+    stability       REAL NOT NULL,
+    cause           TEXT,
+    event_type      TEXT               -- event that caused the change
+);
+
 -- Experience table
 CREATE TABLE experience (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -4701,6 +4824,15 @@ CREATE TABLE sc_subconscious_log (
     mood_effect_json TEXT                 -- optional mood delta applied
 );
 
+CREATE INDEX idx_goals_status ON goals(status);
+CREATE INDEX idx_goals_parent ON goals(parent_id);
+CREATE INDEX idx_goals_priority ON goals(priority);
+CREATE INDEX idx_obj_exp_object ON object_experience(object_id);
+CREATE INDEX idx_obj_exp_action ON object_experience(action);
+CREATE INDEX idx_taste_history_axis ON taste_history(axis);
+CREATE INDEX idx_taste_history_ts ON taste_history(timestamp);
+CREATE INDEX idx_mood_timestamp ON mood_history(timestamp);
+CREATE INDEX idx_mood_primary ON mood_history(primary_mood);
 CREATE INDEX idx_experience_action ON experience(action_type, action_name);
 CREATE INDEX idx_experience_success ON experience(success);
 CREATE INDEX idx_world_state_updated ON world_state(updated_at);
@@ -8969,6 +9101,8 @@ ContentGuard is designed with defense-in-depth against common jailbreak patterns
 | **Computer Vision** | YOLOv8 + CLIP | Object detection + scene description |
 | **Embeddings** | all-MiniLM-L6-v2 | Fast embeddings for semantic search |
 | **Vector search** | FAISS (`faiss-cpu`) | In-process, zero server overhead, ~20MB for 10K vectors; metadata in SQLite |
+| **Classical ML** | scikit-learn | MoodPredictor MLP ensemble (3.3.9), HDBSCAN clustering for TasteAxisDiscovery (3.3.9) |
+| **Audio DSP** | librosa | Prosodic feature extraction: pitch (pyin), energy (RMS), speech rate (3.3.10) |
 | **Telegram** | python-telegram-bot | Mature library, asyncio support |
 | **ADB** | adb (cli) + python wrapper | Standard tool for Android |
 | **ML memory manager** | ModelManager (custom) | Orchestrates Ollama + SD model lifecycle on 16GB unified memory; see 3.2.4 |
