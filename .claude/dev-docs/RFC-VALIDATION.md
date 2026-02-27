@@ -692,4 +692,53 @@ What Bob can and cannot do at each development phase:
 >
 > **Pass 2**: 13 pre-existing code block issues — `SkillRegistry` → `SkillDomainRegistry` (M1), `UserSettings` missing `@dataclass` (M2), `PriorityQueue` unparameterized (M3), RAM inconsistency standardized to ~4.4 GB (M4), `content_violations` table added to DB schema (M9), `CircuitBreaker` private fields fixed (L1), `ClassVar` added to `ROUTING_TABLE` (L2), missing imports added (L3-L5), `on_touch_event` wrapped in class (L6), config key naming unified (L7, L9).
 >
-> **The RFC is now a clean blueprint with zero known issues.**
+> **The RFC was a clean blueprint — until sections 3.3.8–3.3.11 were added (commit `a2f041e`).**
+
+---
+
+## 10. Validation Round 4 — Cognitive Architecture Extensions (§3.3.8–3.3.11)
+
+> **Date:** 2026-02-27
+> **Scope:** Full review of commit `a2f041e` — sections 3.3.8 (Inner Monologue), 3.3.9 (Emergent Behavior), 3.3.10 (Sensory Grounding), 3.3.11 (Subconscious Processing) + 7 cross-cutting updates to existing sections.
+> **Lines added:** +2102, **Lines removed:** -163, **RFC size:** 7192 → 9131 lines
+
+### 10.1. Critical Issues
+
+| # | Sections | Issue | Status |
+|---|----------|-------|--------|
+| **V4-C1** | 3.3.9 (~2658-2711) | **LoRA fine-tuning via Ollama is impossible.** MoodPredictor specifies training a LoRA adapter (rank=4, alpha=8) on Qwen2.5-0.5B using PEFT, then loading it at runtime. But 0.5B is served through Ollama (GGUF format), which has no training API and cannot hot-swap LoRA adapters. Requires a separate PyTorch copy of 0.5B, contradicting "Zero additional model memory" claim. | **OPEN** |
+| **V4-C2** | 3.3.10 (~3117-3143) | **Whisper.cpp does not expose hidden states.** AudioGrounding.extract_prosody() requires `whisper_hidden_states: np.ndarray` from encoder layers 4-6. But whisper.cpp (the project's STT engine) only returns transcribed text — no intermediate representations. Would require custom C++ patches or switching to HuggingFace Transformers Whisper (~1-2 GB extra RAM). | **OPEN** |
+| **V4-C3** | 3.3.10, 3.2.4 (~893-916) | **NORMAL profile memory budget oversubscribed.** Existing: ~9.0 GB (7B + 0.5B + Guard + macOS). Adding CLIP (0.4 GB) + FAISS indices (0.03 GB) + Python overhead → ~9.4+ GB of 12.5 GB. CLIP not in ModelManager `profiles` config — no lifecycle management mechanism defined. | **OPEN** |
+
+### 10.2. High Severity Issues
+
+| # | Sections | Issue | Status |
+|---|----------|-------|--------|
+| **V4-H1** | 3.3.10 (~3065-3069) | **`embed_frame()` return type wrong.** Returns `VisualEmbedding` but doc says returns `None` when CLIP unloaded (HEAVY_GEN). Should be `VisualEmbedding \| None`. Will fail `mypy --strict`. | **OPEN** |
+| **V4-H2** | 3.2.1 (~872), 3.3.8 (~2556), 7.1 | **`model_manager.profile_changed` event missing from Event Catalog.** Used by AgentRuntime and InnerMonologue but has no entry in §7.1 — no defined publisher, payload keys, or subscriber list. | **OPEN** |
+| **V4-H3** | 3.3.10, 7.1 (~7602-7604) | **VisionBridge vs VisionService naming collision.** Event Catalog uses `VisionBridge` as publisher; §3.3.10 and class definition use `VisionService`. Same component, two names. | **OPEN** |
+| **V4-H4** | 3.3.8, 3.3.11 (~3686-3737) | **NightProcessor + InnerMonologue 0.5B contention.** Both run during 23:00-07:00. InnerMonologue at LOW=15 sec → ~1920 calls/night. NightProcessor: up to 50 calls. Ollama serializes requests — no contention handling described. | **OPEN** |
+| **V4-H5** | 3.3.11 (~3476, ~3940) | **Subconscious "opacity" is convention, not architecture.** ReflectionLoop "has NO reference" to SubconsciousLayer, but all tables are in same `bob.db`. ReflectionLoop has `db_path` and can query subconscious tables directly. No actual enforcement. | **OPEN** |
+| **V4-H6** | 3.3.8 (~2411), 3.3.9 (~2677), 3.3.11 (~3706) | **Three Config classes undefined.** `InnerMonologueConfig`, `EmergentBehaviorConfig`, `NightProcessingConfig` used as constructor params but never defined. YAML provided, but no Python dataclass. `mypy --strict` will fail. | **OPEN** |
+| **V4-H7** | 3.3.9 (~2791-2857) | **CrossDomainCorrelator: Pearson on n=10 is unreliable.** `min_sample_count: 10` with `\|r\| > 0.3` threshold will produce many spurious correlations. Statistical validity requires n ≥ 30 minimum. | **OPEN** |
+
+### 10.3. Medium Severity Issues
+
+| # | Sections | Issue | Status |
+|---|----------|-------|--------|
+| **V4-M1** | multiple | **`db_path: str = "data/bob.db"` hardcoded in constructors.** Relative path default is fragile (depends on CWD). Inconsistent with DI principle — should be injected, not defaulted. | **OPEN** |
+| **V4-M2** | 3.3.8 (~2366-2384) | **`ThoughtRingBuffer.max_age_sec` parameter accepted but never used.** Buffer backed by `deque(maxlen)` — evicts by count only. No time-based eviction logic in `append()` or anywhere else. Dead parameter. | **OPEN** |
+| **V4-M3** | 3.3.11 (~3656) | **`HabituationEngine` queries `improvement_rules` table directly.** Cross-module SQL access from `bob/mind/habituation.py` to a table owned by `bob/mind/self_improve.py`. Breaks Clean Architecture boundaries. | **OPEN** |
+| **V4-M4** | 3.3.11 (~3788) | **`SubconsciousLayer.post_process()` embeddings dict type ambiguous.** `dict[str, np.ndarray]` — key semantics undefined. What are the keys? "visual"? "semantic"? Embedding IDs? LatentAssociationEngine needs `embedding_type` to choose index. | **OPEN** |
+| **V4-M5** | 3.3.9 (~2631) | **`DiscoveredAxis.centroid: list[float]` inconsistent.** All other embedding fields use `np.ndarray`. Using `list[float]` for centroid is inconsistent and inefficient for numerical operations. | **OPEN** |
+| **V4-M6** | 3.3.11 (~3722, ~3839) | **Night processing temperature: range vs fixed value.** Docstring says "1.2-1.5", config sets fixed `1.3`. Should there be per-call randomization? | **OPEN** |
+| **V4-M7** | 3.3.10 (~3340), 7.1 (~7640) | **Event payload key `pattern summary` has a space.** All other payload keys use underscores. Should be `pattern_summary`. | **OPEN** |
+
+### 10.4. Summary Matrix — Round 4
+
+| Severity | Found | Resolved | Remaining | Key Themes |
+|----------|-------|----------|-----------|------------|
+| **Critical** | 3 | 0 | 3 | Unimplementable specs (LoRA/Ollama, Whisper hidden states, memory budget) |
+| **High** | 7 | 0 | 7 | Type errors, missing events/configs, resource contention, weak isolation |
+| **Medium** | 7 | 0 | 7 | Style inconsistencies, dead params, architecture boundary violations |
+| **Total** | **17** | **0** | **17** | |

@@ -2581,15 +2581,15 @@ tests/test_mind/test_inner_monologue.py
 │  │                 │  │  Discovery      │  │  Correlator            │ │
 │  │  Replaces fixed │  │                 │  │                        │ │
 │  │  event_impacts  │  │  Finds new      │  │  mood ↔ taste          │ │
-│  │  table with a   │  │  preference     │  │  co-occurrence         │ │
-│  │  learned model  │  │  dimensions     │  │  analysis              │ │
+│  │  table with     │  │  preference     │  │  co-occurrence         │ │
+│  │  sklearn MLP    │  │  dimensions     │  │  analysis              │ │
 │  │                 │  │  from data      │  │                        │ │
 │  └────────┬────────┘  └────────┬────────┘  └───────────┬────────────┘ │
 │           │                    │                        │              │
 │  Training: during reflection   Training: weekly          Training: daily│
 │  Data: mood_history table      Data: taste_history       Data: mood +  │
-│  CPU only, no GPU              + object_experience       taste history │
-│                                CPU only (sklearn)        CPU only      │
+│  CPU only (sklearn MLP)        + object_experience       taste history │
+│  ~seconds per retrain          CPU only (sklearn)        CPU only      │
 │                                                                        │
 │  ┌──────────────────────────────────────────────────────────────────┐  │
 │  │                      TRANSITION PROTOCOL                         │  │
@@ -2658,12 +2658,16 @@ class TransitionState:
 class MoodPredictor:
     """Replaces fixed event_impacts table with a learned predictor.
 
-    Uses a small LoRA adapter on Qwen2.5-0.5B, trained from mood_history
-    data. Training happens ONLY during reflection (CPU-bound, no extra GPU).
+    Uses a small sklearn MLPRegressor trained on tabular features from
+    mood_history. Training happens ONLY during reflection (CPU-bound,
+    completes in seconds). No LLM calls, no GPU, ~1 MB model on disk.
 
-    The predictor takes: event_type, event_payload summary, current mood state,
-    time of day, recent event history (last 5 events) and predicts the mood
-    delta vector (valence, arousal, openness, social).
+    Input features (vectorized):
+    - event_type: one-hot encoded (N event types)
+    - time_of_day: sin/cos encoded hour (2 features)
+    - current_mood: [valence, arousal, openness, social] (4 features)
+    - recent_events: count of events by type in last 5 minutes (N features)
+    Total: ~2N + 6 features → 4 output deltas.
 
     Fallback: if confidence < threshold or days_since_genesis < 30,
     returns the fixed table values from MoodEngine.FIXED_EVENT_IMPACTS.
@@ -2671,13 +2675,12 @@ class MoodPredictor:
 
     def __init__(
         self,
-        llm_router: "LLMRouter",
         mood_engine: "MoodEngine",
-        db_path: str = "data/bob.db",
+        db_path: str,
         config: "EmergentBehaviorConfig",
     ) -> None: ...
 
-    async def predict(
+    def predict(
         self, event: "Event", current_mood: "MoodState"
     ) -> MoodPrediction:
         """Predict mood shift for an event.
@@ -2686,26 +2689,27 @@ class MoodPredictor:
         1. Check transition_state.current_alpha
         2. If alpha == 0 (first 30 days): return fixed table values
         3. Otherwise:
-           a. Build input: event_type + payload_summary + mood_vector + time + recent_events
-           b. Call 0.5B with LoRA adapter for prediction (max_tokens=32, structured output)
-           c. Parse output into MoodPrediction
+           a. Build feature vector: event_type_onehot + time_sincos +
+              mood_vector + recent_event_counts
+           b. Run MLPRegressor.predict() → [valence, arousal, openness, social]
+           c. Estimate confidence from prediction variance (ensemble of 3 MLPs)
            d. If confidence < confidence_threshold: fallback to fixed
            e. Blend: final = alpha * learned + (1 - alpha) * fixed
         4. Return MoodPrediction with blended values
         """
         ...
 
-    async def retrain(self, reflections: list["ReflectionEntry"]) -> None:
+    def retrain(self) -> None:
         """Retrain the predictor from mood_history data.
 
-        Called during daily reflection. CPU-bound (LoRA on 0.5B is tiny).
+        Called during daily reflection. CPU-bound, completes in seconds.
 
         Steps:
         1. Query mood_history: last 7 days of (event_type, mood_before, mood_after)
-        2. Format as training pairs: input -> expected delta
-        3. Fine-tune LoRA adapter (rank=4, alpha=8) using PEFT
-        4. Validate on held-out 20% of data
-        5. If validation loss < previous: replace adapter
+        2. Vectorize into feature matrix X and target deltas Y
+        3. Train ensemble of 3 MLPRegressor(hidden_layer_sizes=(32, 16))
+        4. Validate on held-out 20% of data (MAE metric)
+        5. If validation MAE < previous best: save model via joblib
         6. Update transition_state.last_retrained_at
         """
         ...
@@ -2835,14 +2839,13 @@ emergent_behavior:
       max_alpha: 0.8                      # maximum weight for learned predictions
     confidence_threshold: 0.6             # below this, fallback to fixed
     retrain_schedule: "daily"             # during daily_summary reflection
-    lora:
-      rank: 4
-      alpha: 8
-      target_modules: ["q_proj", "v_proj"]
-      learning_rate: 1.0e-4
-      epochs: 3
+    mlp:
+      hidden_layers: [32, 16]            # MLPRegressor hidden layer sizes
+      ensemble_size: 3                   # number of models for confidence estimation
+      learning_rate: 1.0e-3
+      max_iter: 500
       validation_split: 0.2
-    adapter_path: "data/finetune/mood_predictor_lora"
+    model_path: "data/models/mood_predictor.joblib"
   taste_discovery:
     enabled: true
     schedule: "weekly"                    # during room_review reflection
@@ -2867,7 +2870,7 @@ emergent_behavior:
 | `emergence.axis_discovered` | TasteAxisDiscovery | TasteEngine, AgentRuntime | axis_name, description, confidence, source_axes |
 | `emergence.axis_integrated` | TasteAxisDiscovery | TasteEngine | axis_name, initial_value |
 | `emergence.correlation_discovered` | CrossDomainCorrelator | MoodEngine, TasteEngine | mood_dimension, taste_axis, correlation |
-| `emergence.retrained` | MoodPredictor | AgentRuntime | event_count, validation_loss, improved (bool) |
+| `emergence.retrained` | MoodPredictor | AgentRuntime | event_count, validation_mae, improved (bool) |
 
 **SQLite tables.**
 
@@ -2903,31 +2906,31 @@ CREATE TABLE mood_predictor_state (
     current_alpha   REAL NOT NULL DEFAULT 0.0,
     learned_event_count INTEGER NOT NULL DEFAULT 0,
     last_retrained_at TEXT,
-    last_validation_loss REAL,
-    adapter_version INTEGER NOT NULL DEFAULT 0
+    last_validation_mae REAL,
+    model_version INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE INDEX idx_discovered_axes_active ON discovered_axes(active);
 CREATE INDEX idx_cross_domain_active ON cross_domain_associations(active);
 ```
 
-**Memory budget impact.** Zero additional model memory — LoRA adapter for MoodPredictor is tiny (~1-2 MB on disk, loaded into existing 0.5B model memory slot). scikit-learn clustering uses CPU RAM only, peak ~10-50 MB during weekly discovery runs (transient). No impact on NORMAL profile budget.
+**Memory budget impact.** Zero additional model memory — MoodPredictor uses sklearn MLPRegressor (~1 MB on disk, ~5 MB in memory). No LLM calls for prediction. scikit-learn clustering uses CPU RAM only, peak ~10-50 MB during weekly discovery runs (transient). No impact on NORMAL profile budget.
 
 **Integration points.**
 
-1. **MoodEngine.process_event()**: Instead of directly looking up the fixed `event_impacts` table, delegate to `MoodPredictor.predict()`. The predictor handles the fixed/learned blending internally. The existing `process_event()` signature remains the same — it just uses the predicted deltas.
+1. **MoodEngine.process_event()**: Instead of directly looking up the fixed `event_impacts` table, delegate to `MoodPredictor.predict()`. The predictor handles the fixed/learned blending internally. The existing `process_event()` signature remains the same — it just uses the predicted deltas. Note: `predict()` is synchronous (sklearn inference, not async).
 2. **TasteEngine**: Add a `discovered: dict[str, TasteAxis]` field to `TasteProfile`. `TasteEvaluator.score_object()` includes discovered axes in scoring if they have conviction > 0.3. `TasteEvolution.reinforce()` handles discovered axes identically to predefined ones.
 3. **TasteEvaluator**: Use `CrossDomainCorrelator.get_active_associations()` to apply learned mood-based modifiers alongside the existing `MoodEngine.get_taste_modifier()` hardcoded modifiers. Learned modifiers are weighted by their correlation strength.
-4. **ReflectionLoop.reflect()**: Call `MoodPredictor.retrain()` during daily reflection. Call `TasteAxisDiscovery.discover()` during weekly room_review. Call `CrossDomainCorrelator.analyze()` during daily_summary.
+4. **ReflectionLoop.reflect()**: Call `MoodPredictor.retrain()` during daily reflection (synchronous, CPU-bound, seconds). Call `TasteAxisDiscovery.discover()` during weekly room_review. Call `CrossDomainCorrelator.analyze()` during daily_summary.
 5. **AgentRuntime.__init__**: No changes needed — emergent behavior components are owned by ReflectionLoop and MoodEngine.
 
-**Development phase assignment.** Phase 6 (Self-improvement + Fine-tune) — this is explicitly a learning/self-improvement mechanism. The LoRA training pipeline is a Phase 6 dependency.
+**Development phase assignment.** Phase 6 (Self-improvement + Fine-tune) — this is explicitly a learning/self-improvement mechanism. Requires scikit-learn (already a project dependency for HDBSCAN clustering).
 
 **New files for repository structure (section 11).**
 
 ```
 bob/mind/emergent.py                  # MoodPredictor, TasteAxisDiscovery, CrossDomainCorrelator
-data/finetune/mood_predictor_lora/    # LoRA adapter storage (created at runtime)
+data/models/mood_predictor.joblib     # sklearn MLP ensemble (created at runtime, ~1 MB)
 tests/test_mind/test_emergent.py
 ```
 
@@ -4208,8 +4211,8 @@ CREATE TABLE mood_predictor_state (
     current_alpha   REAL NOT NULL DEFAULT 0.0,
     learned_event_count INTEGER NOT NULL DEFAULT 0,
     last_retrained_at TEXT,
-    last_validation_loss REAL,
-    adapter_version INTEGER NOT NULL DEFAULT 0
+    last_validation_mae REAL,
+    model_version INTEGER NOT NULL DEFAULT 0
 );
 
 -- Sensory Grounding: visual embeddings metadata (section 3.3.10)
@@ -7634,7 +7637,7 @@ Event(
 | `emergence.axis_discovered` | TasteAxisDiscovery | TasteEngine, AgentRuntime | axis_name, description, confidence, source_axes |
 | `emergence.axis_integrated` | TasteAxisDiscovery | TasteEngine | axis_name, initial_value |
 | `emergence.correlation_discovered` | CrossDomainCorrelator | MoodEngine, TasteEngine | mood_dimension, taste_axis, correlation |
-| `emergence.retrained` | MoodPredictor | AgentRuntime | event_count, validation_loss, improved |
+| `emergence.retrained` | MoodPredictor | AgentRuntime | event_count, validation_mae, improved |
 | `grounding.visual_embedded` | VisualGrounding | SemanticMemory | embedding_id, timestamp, metadata |
 | `grounding.prosody_extracted` | AudioGrounding | MoodEngine, RelationshipTracker | prosody, quality |
 | `grounding.circadian_updated` | TemporalGrounding | MoodEngine, AgentRuntime | pattern summary, current_phase |
@@ -8704,7 +8707,7 @@ ContentGuard is designed with defense-in-depth against common jailbreak patterns
 | SOUL evolution | Personality development based on reflection |
 | A/B testing | Strategy comparison (baseline vs fine-tuned) |
 | Monitoring | Optional Grafana/Prometheus dashboard (builds on `/metrics` endpoint from Phase 1) |
-| MoodPredictor | Learned event-to-mood mapping via 0.5B LoRA, transition protocol (section 3.3.9) |
+| MoodPredictor | Learned event-to-mood mapping via sklearn MLP ensemble, transition protocol (section 3.3.9) |
 | TasteAxisDiscovery | Clustering-based discovery of new preference dimensions (section 3.3.9) |
 | CrossDomainCorrelator | Mood-taste correlation analysis (section 3.3.9) |
 | SubconsciousLayer | Wrapper around conscious processing, pre/post hooks (section 3.3.11) |
@@ -8886,7 +8889,7 @@ bob/
 │   │   └── episodic/              # Daily logs
 │   ├── finetune/                  # Fine-tune data
 │   │   ├── training_data.jsonl    # Collected training pairs
-│   │   ├── mood_predictor_lora/   # MoodPredictor LoRA adapter (3.3.9)
+│   │   ├── models/                # sklearn models: mood_predictor.joblib (3.3.9)
 │   │   ├── models/                # Saved LoRA adapters
 │   │   └── eval_results/          # Evaluation results
 │   ├── behaviors/                 # Registered behaviors
