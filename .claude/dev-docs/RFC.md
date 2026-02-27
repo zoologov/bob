@@ -62,7 +62,7 @@ Bob is an attempt to create an **autonomous agent** that:
 | **Long-lived goals** | Structured Goal Engine, not LLM-mediated re-derivation |
 | **Self-improvement** | Reflection Loop + fine-tune of local LLMs — Bob literally becomes smarter |
 | **Locality** | All compute on Mac mini M4; Claude Code CLI is the only external tool |
-| **Personality** | SOUL — a modular "soul" (separate repo/submodule), unique per instance |
+| **Personality** | SOUL — a modular "soul" (`bob-soul/` template directory), unique per instance |
 | **Self-awareness** | Bob knows about the book "We Are Legion (We Are Bob)" and that he was inspired by its character. Jokes about it, doesn't hide it |
 | **Uniqueness** | Genesis Mode: on first launch Bob "wakes up" (like in the book), chooses his own appearance, room, and character |
 | **Physical presence** | Camera, microphone, voice, avatar on a tablet |
@@ -2235,7 +2235,7 @@ A four-level memory system.
 │  └─────────────┘  └──────────────┘  └────────────────┘  │
 │                                                          │
 │  ┌──────────────────────────────────────────────────┐    │
-│  │              SOUL (submodule -> local)              │    │
+│  │              SOUL (template -> local)                │    │
 │  │  bob-soul/ (template)  ->  data/soul/SOUL.md        │    │
 │  │         (personality, values, evolution)             │    │
 │  └──────────────────────────────────────────────────┘    │
@@ -2401,17 +2401,18 @@ CREATE INDEX idx_experience_success ON experience(success);
 CREATE INDEX idx_world_state_updated ON world_state(updated_at);
 ```
 
-#### 3.4.5. SOUL — Bob's modular "soul" (git submodule)
+#### 3.4.5. SOUL — Bob's modular "soul"
 
-SOUL is a **separate repository** (`bob-soul`), connected as a git submodule.
-It defines Bob's initial personality: character, style, values, and serves as
+SOUL templates live in the `bob-soul/` directory within the main repository
+(licensed under CC BY-NC-SA 4.0, see LICENSE-CC-BY-NC-SA.md).
+They define Bob's initial personality: character, style, values, and serve as
 a **single starting point** for all instances.
 
 **Philosophy (inspired by the book):** in "We Are Legion (We Are Bob)" each copy of Bob
 starts with the same "genome," but over time becomes a unique
 personality. Our approach is analogous:
 
-1. `bob-soul` (submodule) — the **initial genome**, identical for all.
+1. `bob-soul/` (template directory) — the **initial genome**, identical for all.
    The genome includes a **book archetype**: the fundamental character traits of Bob Johansson
    (geek, humor, curiosity, introversion, nostalgia) as a starting point.
 2. On first launch (Genesis Mode) Bob "awakens" — like the book's Bob
@@ -2424,7 +2425,7 @@ personality. Our approach is analogous:
    each Bob increasingly diverges from the literary prototype.
 
 ```
-bob-soul/                           # Separate repository (submodule)
+bob-soul/                           # Initial personality "genome" (CC BY-NC-SA 4.0)
 ├── README.md
 ├── SOUL_TEMPLATE.md                # Initial personality template
 ├── origin/
@@ -2532,7 +2533,7 @@ class SoulEvolution:
     async def genesis(self) -> dict:
         """First launch: generate a unique personality.
 
-        1. Load the template from bob-soul submodule
+        1. Load the template from bob-soul/ directory
         2. Load the book archetype from bob-soul/origin/book_archetype.md
         3. Load phantom preferences from bob-soul/origin/phantom_preferences.yaml
         4. Load the trait pool from traits_pool.yaml
@@ -2917,9 +2918,9 @@ Bob will work without it — complex tasks will use local LLM instead.
   Downloading SDXL base model (6.2 GB)... [████████░░] 80%
   ✓ Stable Diffusion ready (assets will be AI-generated during Genesis)
 
-[4/7] Initializing bob-soul templates...
-  Running git submodule update --init...
-  ✓ bob-soul initialized
+[4/7] Verifying bob-soul templates...
+  Checking bob-soul/ directory...
+  ✓ bob-soul templates found
   ✓ Templates verified: archetype.md, awakening_script.md, taste_axes_pool.yaml
 
 [5/7] Telegram bot configuration...
@@ -2947,7 +2948,7 @@ Setup complete! Run `bob start` to launch.
 |-----------|-----------|--------|
 | **Ollama** | Cannot start | Required — no LLM = no reasoning |
 | **Telegram bot token** | Cannot start | Required — primary communication channel for Genesis and daily use |
-| **bob-soul submodule** | Cannot run Genesis | Required — templates for awakening, archetype, taste axes |
+| **bob-soul templates** | Cannot run Genesis | Required — templates for awakening, archetype, taste axes |
 | **Claude Code CLI** | Fully functional, reduced capabilities | No self-development, lighter reflections, no code writing |
 | **Stable Diffusion (MLX)** | No visual asset generation | Cannot generate avatar/room sprites; tablet remains dark or uses placeholder visuals |
 | **ADB** | No tablet deployment | Avatar not displayed; Bob works headlessly |
@@ -2978,7 +2979,7 @@ bootstrap:
     adb:
       installed: false
     bob_soul:
-      initialized: false             # git submodule update --init completed
+      initialized: false             # bob-soul/ directory verified
       templates_verified: false       # Required template files present
     telegram:
       configured: false
@@ -3008,7 +3009,7 @@ class BootstrapWizard:
         2. Offer to install missing required components
         3. Pull Ollama models (Qwen2.5-7B, Qwen2.5-0.5B)
         4. Install Stable Diffusion pipeline + download base model
-        5. Initialize bob-soul submodule (git submodule update --init)
+        5. Verify bob-soul templates (check directory and required files)
         6. Configure Telegram bot token (create via @BotFather)
         7. Detect geolocation (auto from system timezone, or manual)
         8. Detect hardware (camera, mic)
@@ -3024,11 +3025,11 @@ class BootstrapWizard:
     async def setup_stable_diffusion(self) -> bool:
         """Install MLX pipeline and download SD base model (~6 GB)."""
         ...
-    async def init_bob_soul(self) -> bool:
-        """Initialize bob-soul git submodule.
+    async def verify_bob_soul(self) -> bool:
+        """Verify bob-soul template directory.
 
-        Runs `git submodule update --init` and verifies that required
-        template files exist: archetype.md, awakening_script.md,
+        Checks that bob-soul/ directory exists and contains required
+        template files: archetype.md, awakening_script.md,
         taste_axes_pool.yaml, room_prompts.md.
         """
         ...
@@ -4049,7 +4050,7 @@ class GenesisMode:
         Mirrors the 9-stage awakening narrative (see section 5.1.1):
 
         Stage 0 — CONSCIOUSNESS (CLI only, no visuals):
-            Load templates from bob-soul submodule.
+            Load templates from bob-soul/ directory.
             Bob starts as pure text — intelligence without a body.
             Communication via Telegram only.
 
@@ -6137,7 +6138,7 @@ state_versioning:
 | Development domain | Second domain: `development/` (Claude Code bridge, code tasks) |
 | Avatar domain (stub) | Third domain: `avatar/` (stub — room state read, no Godot yet) |
 | Voice Bridge | Whisper.cpp STT + Qwen3-TTS (0.6B via mlx-audio) |
-| SOUL submodule | Connect bob-soul, basic personality template |
+| SOUL templates | Verify bob-soul directory, basic personality template |
 | Claude Code Bridge | Integration with Claude Code CLI as subprocess + ClaudeCodeCoordinator |
 
 **Readiness criterion:** Bob responds to messages in Telegram and by voice. Three SkillDomains registered and operational. Claude Code is available for complex tasks (with permission protocol). `/metrics` endpoint returns system health JSON.
@@ -6237,9 +6238,7 @@ bob/
 ├── RFC.md                          # This document
 ├── pyproject.toml                  # Dependencies, project configuration
 ├── uv.lock                         # Dependency lock file
-├── .gitmodules                     # Submodule: bob-soul
-│
-├── bob-soul/                       # Git submodule — initial personality "genome"
+├── bob-soul/                       # Initial personality "genome" (CC BY-NC-SA 4.0)
 │   ├── SOUL_TEMPLATE.md            # Personality template (with book archetype)
 │   ├── origin/                     # Book Bob — literary origin
 │   │   ├── book_archetype.md       # Key traits of Bob Johansson
@@ -6544,7 +6543,7 @@ successful concepts:
 
 | Idea | Our Implementation |
 |------|-------------------|
-| **SOUL.md** | `bob-soul/` (submodule) -> `data/soul/SOUL.md` -- modular "soul" with evolution |
+| **SOUL.md** | `bob-soul/` (template directory) -> `data/soul/SOUL.md` -- modular "soul" with evolution |
 | **Heartbeat pattern** | `AgentRuntime.heartbeat()` -- periodic state check |
 | **File-based memory** | `data/memory/MEMORY.md` -- flat file + FAISS vector search |
 | **Skill architecture** | `bob/skills/` -- hot-reloadable Python modules |

@@ -179,7 +179,7 @@ The PRD (v0.0.1, 322 lines) is the business vision document. The RFC (5011 lines
 │  │                                                              │  │
 │  │  ⚠ GAP: Telegram bot token not configured here              │  │
 │  │  ⚠ GAP: Geolocation not configured here                     │  │
-│  │  ⚠ GAP: bob-soul submodule not initialized here             │  │
+│  │  ⚠ GAP: bob-soul templates not verified here                │  │
 │  │                                                              │  │
 │  │  Result: bootstrap.yaml written                              │  │
 │  └──────────────────────────────────────────────────────────────┘  │
@@ -320,7 +320,7 @@ The PRD (v0.0.1, 322 lines) is the business vision document. The RFC (5011 lines
 |---|-----|-------|--------|-------------------|
 | ~~**F1**~~ | ~~Telegram bot token configuration missing from setup~~ | ~~B (Setup)~~ | ~~Genesis Stage 0 can't communicate~~ | **RESOLVED**: Step [5/7] in bootstrap — token prompt, @BotFather instructions, getMe validation |
 | ~~**F2**~~ | ~~Geolocation configuration missing from setup~~ | ~~B (Setup)~~ | ~~WindowService can't show real weather~~ | **RESOLVED**: Step [6/7] in bootstrap — auto-detect from system timezone, manual override |
-| ~~**F3**~~ | ~~bob-soul submodule initialization missing from setup~~ | ~~B (Setup)~~ | ~~Genesis can't load templates~~ | **RESOLVED**: Step [4/7] in bootstrap — git submodule update --init + template verification |
+| ~~**F3**~~ | ~~bob-soul template verification missing from setup~~ | ~~B (Setup)~~ | ~~Genesis can't load templates~~ | **RESOLVED**: Step [4/7] in bootstrap — verify bob-soul/ directory + required template files |
 | ~~**F4**~~ | ~~Python package installation not described~~ | ~~B (Setup)~~ | ~~User doesn't know how to install dependencies~~ | **RESOLVED**: Added `pip install -e .` before `bob setup` in section 3.6 |
 | ~~**F5**~~ | ~~Genesis trigger mechanism undefined~~ | ~~C (Genesis)~~ | ~~Unclear when/how Genesis starts~~ | **RESOLVED**: New section 3.7 Startup Flow — `bob start` checks bootstrap.yaml → SOUL.md → GenesisMode or AgentRuntime. ASCII diagram + `main()` code. |
 | ~~**F6**~~ | ~~APK source/build process undefined~~ | ~~C (Genesis)~~ | ~~Stage 2 needs shell-renderer APK~~ | **RESOLVED**: APK built via `godot --headless --export-release`, deployed via `adb install`. ~30-50 MB. Rebuild rare (shaders/Godot upgrades only). |
@@ -429,7 +429,7 @@ What Bob can and cannot do at each development phase:
 | # | Gap | Sections Affected | Severity | Details |
 |---|-----|-------------------|----------|---------|
 | ~~**G1**~~ | ~~Telegram setup not in bootstrap~~ | ~~3.6, 5.1.1~~ | ~~**High**~~ | **RESOLVED**: Telegram token configuration added as step [5/7] in BootstrapWizard. Token stored in config/bob.yaml, bot_username in bootstrap.yaml. Required component in graceful degradation table. |
-| ~~**G2**~~ | ~~bob-soul submodule lifecycle~~ | ~~3.4.5, 3.6~~ | ~~**High**~~ | **RESOLVED**: bob-soul is a template git submodule included in main repo. BootstrapWizard step [4/7] runs `git submodule update --init` and verifies required template files. |
+| ~~**G2**~~ | ~~bob-soul submodule lifecycle~~ | ~~3.4.5, 3.6~~ | ~~**High**~~ | **RESOLVED**: bob-soul/ is a regular directory in the main repo (CC BY-NC-SA 4.0). BootstrapWizard step [4/7] verifies directory exists and required template files are present. No submodule needed. |
 | ~~**G3**~~ | ~~Genesis → Headless recovery~~ | ~~5.1.1~~ | ~~**Medium**~~ | **RESOLVED**: Auto-detect tablet via mDNS → offer VisualGenesis (Stages 3,6,7 only). Manual command: `bob visual-genesis`. Ask user via Telegram, run only visual stages (personality already exists). |
 | ~~**G4**~~ | ~~Language of Bob's speech~~ | ~~6~~ | ~~**Medium**~~ | **RESOLVED**: Configurable via `config/bob.yaml` `language: "en"` (default). Propagated to STT, TTS, LLM prompts, SOUL.md, Genesis. Russian (`ru`) fully supported. Language architecture table added to section 3.2.1. |
 | ~~**G5**~~ | ~~Audio output routing~~ | ~~6~~ | ~~**Medium**~~ | **RESOLVED**: `AudioRouter` class added. Three modes: `tablet` (WebSocket → Godot AudioStreamPlayer, fallback to local), `local` (Mac mini pyaudio, fallback to Telegram voice), `both` (simultaneous). PCM 22050 Hz mono chunks streamed over WebSocket. |
@@ -556,7 +556,7 @@ What Bob can and cannot do at each development phase:
 | ~~**R1**~~ | ~~Update PRD to match RFC (12 sync issues from section 2)~~ | ~~**P0**~~ | **RESOLVED**: PRD updated — all S1-S12 sync issues addressed. Version→v0.1.0, Skills→SkillDomains, Genesis→9 stages, assets→AI-generated SD, Godot→Shell-Renderer, Bootstrap added, ClaudeCodeLock added, RelationshipTracker+Exodus Mode added, repo structure updated, dev phases added, open questions synced. |
 | ~~**R2**~~ | ~~Rename Genesis Stage 0 from "BOOTSTRAP" to avoid confusion with section 3.6~~ | ~~**P0**~~ | **RESOLVED** |
 | ~~**R3**~~ | ~~Add Telegram token setup to bootstrap flow~~ | ~~**P0**~~ | **RESOLVED** |
-| ~~**R4**~~ | ~~Define bob-soul submodule creation/initialization flow~~ | ~~**P0**~~ | **RESOLVED** |
+| ~~**R4**~~ | ~~Define bob-soul initialization flow~~ | ~~**P0**~~ | **RESOLVED** (regular directory, no submodule) |
 | ~~**R5**~~ | ~~Fix GenesisMode.run() docstring to match 9-stage narrative~~ | ~~**P1**~~ | **RESOLVED** |
 | ~~**R6**~~ | ~~Update `_generate_appearance()` return type for AssetGenerator compatibility~~ | ~~**P1**~~ | **RESOLVED** |
 | ~~**R7**~~ | ~~De-duplicate sections 4.2.1 and 8.4 (keep unique info, add cross-refs)~~ | ~~**P1**~~ | **RESOLVED** |

@@ -64,7 +64,7 @@ All devices are on the same local network; the tablet and speaker receive comman
    - Episodic Memory — daily logs in Markdown.
    - Semantic Memory — MEMORY.md + vector search (FAISS in-process).
    - Structured State — SQLite: goals, experience, world state, improvement rules.
-   - SOUL — Bob's modular "soul" (separate `bob-soul` repository as a git submodule). The initial "genome" includes the **book archetype** of Bob Johansson (geek, humor, curiosity, introversion, nostalgia), taste template (taste_axes_pool, taste_clusters), mood baseline, and **phantom preferences** (coffee, sunsets, books). Each instance evolves uniquely (like Bob's copies in the book), gradually diverging more and more from the prototype.
+   - SOUL — Bob's modular "soul" (`bob-soul/` template directory). The initial "genome" includes the **book archetype** of Bob Johansson (geek, humor, curiosity, introversion, nostalgia), taste template (taste_axes_pool, taste_clusters), mood baseline, and **phantom preferences** (coffee, sunsets, books). Each instance evolves uniquely (like Bob's copies in the book), gradually diverging more and more from the prototype.
 
 5. **Peripheral Services (modules within the main process)**
    - Vision Service (OBSBOT camera -> snapshots -> CV analysis via `asyncio.to_thread` + `ThreadPoolExecutor`).
@@ -241,7 +241,7 @@ Repository: **Bob**
 
 Structure:
 
-- `bob-soul/` — git submodule: initial personality "genome" (book archetype, SOUL template, Genesis prompts, phantom preferences, trait pool).
+- `bob-soul/` — initial personality "genome" (book archetype, SOUL template, Genesis prompts, phantom preferences, trait pool). Licensed under CC BY-NC-SA 4.0.
 - `config/` — YAML configurations (bob.yaml, llm.yaml, voice.yaml, vision.yaml, security.yaml, bootstrap.yaml).
 - `bob/` — main Python package:
   - `bob/core/` — Bob Core (runtime, event_bus, llm_router, config_loader).
@@ -317,7 +317,7 @@ OpenClaw initially seemed like the ideal core for Bob: an always-on agent with h
 
 ### What We Borrow as Ideas
 
-- **SOUL.md** — agent personality as a system prompt -> our `bob-soul/` (submodule) + `data/soul/SOUL.md` (evolves).
+- **SOUL.md** — agent personality as a system prompt -> our `bob-soul/` (template directory) + `data/soul/SOUL.md` (evolves).
 - **Heartbeat pattern** — periodic state check -> our `AgentRuntime.heartbeat()`.
 - **File-based memory** — MEMORY.md for long-term facts -> our `data/memory/MEMORY.md` + vector search.
 - **Skill architecture** — modular skills -> our `bob/skills/` (Skill Domain System: self-contained domain packages with auto-discovery).
