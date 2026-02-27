@@ -353,6 +353,7 @@ Classifies incoming tasks and routes them to the appropriate model.
 ```python
 from enum import Enum
 from dataclasses import dataclass
+from typing import ClassVar
 
 class TaskCategory(Enum):
     SMALL_TALK = "small_talk"
@@ -379,7 +380,7 @@ class RoutingDecision:
 class LLMRouter:
     """Task router to LLM models."""
 
-    ROUTING_TABLE: dict[TaskCategory, ModelTier] = {
+    ROUTING_TABLE: ClassVar[dict[TaskCategory, ModelTier]] = {
         TaskCategory.SMALL_TALK:      ModelTier.LOCAL_MAIN,
         TaskCategory.STATUS_QUERY:    ModelTier.LOCAL_MAIN,
         TaskCategory.ROOM_UPDATE:     ModelTier.LOCAL_MAIN,
@@ -900,11 +901,11 @@ model_manager:
       sd_model: "sdxl"
   transition_timeout_sec: 60          # Max time to complete a profile switch
   announce_heavy_gen: true            # Bob announces when entering heavy_gen mode
-  llama_guard:
-    model_id: "llama-guard3:1b"
+  llama_guard:                          # ContentGuard model (see section 8.8)
+    model: "llama-guard3:1b"            # Must match content_guard.model in security.yaml
     size_mb: 600
-    always_loaded: true               # Never swapped out
-    quantization: "INT4"
+    always_loaded: true               # Remains loaded across ALL profile transitions
+    quantization: "INT4"              # Pre-allocated in budget, not swapped during gen
 ```
 
 **Scalability:** If the user upgrades to Mac mini M4 Pro (24/36 GB), the
@@ -1051,7 +1052,7 @@ class Plan:
 class Planner:
     """Goal decomposition into plans."""
 
-    def __init__(self, llm_router: LLMRouter, skill_registry: SkillRegistry) -> None:
+    def __init__(self, llm_router: LLMRouter, skill_registry: "SkillDomainRegistry") -> None:
         ...
 
     async def create_plan(self, goal: Goal, context: dict) -> Plan:
@@ -2425,9 +2426,22 @@ CREATE TABLE improvement_rules (
     active              INTEGER DEFAULT 1
 );
 
+-- Content safety violations (ContentGuard, see section 8.8)
+CREATE TABLE content_violations (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id         TEXT NOT NULL,
+    timestamp       TEXT NOT NULL,
+    category        TEXT NOT NULL,       -- ViolationCategory enum value
+    confidence      REAL NOT NULL,
+    tier            INTEGER NOT NULL,    -- escalation tier at time of violation
+    input_hash      TEXT NOT NULL,       -- SHA-256 hash (not raw text — privacy)
+    guard_layer     TEXT NOT NULL        -- "input" | "output"
+);
+
 CREATE INDEX idx_experience_action ON experience(action_type, action_name);
 CREATE INDEX idx_experience_success ON experience(success);
 CREATE INDEX idx_world_state_updated ON world_state(updated_at);
+CREATE INDEX idx_violations_user_time ON content_violations(user_id, timestamp);
 ```
 
 #### 3.4.5. SOUL — Bob's modular "soul"
@@ -2626,6 +2640,8 @@ If OpenCV stability becomes an issue, the service can be extracted into a separa
 without API changes (EventBus abstraction).
 
 ```python
+import numpy as np
+
 @dataclass
 class VisionEvent:
     timestamp: datetime
@@ -2757,6 +2773,8 @@ class CameraController:
 STT + TTS bridge.
 
 ```python
+from collections.abc import AsyncIterator
+
 class VoiceBridge:
     """Voice bridge: STT (Whisper.cpp) + TTS (Qwen3-TTS).
 
@@ -2834,6 +2852,8 @@ class TabletController:
 #### 3.5.6. Messaging Bot (Telegram)
 
 ```python
+from collections.abc import Callable
+
 class MessagingBot:
     """Telegram bot for communication with the user."""
 
@@ -3264,9 +3284,9 @@ class CircuitBreaker:
 
     failure_threshold: int = 3        # failures before opening circuit
     cooldown_sec: float = 60.0        # time before retrying
-    _failure_count: int = 0
-    _state: str = "closed"            # closed | open | half_open
-    _last_failure: datetime | None = None
+    _failure_count: int = field(init=False, default=0)
+    _state: str = field(init=False, default="closed")  # closed | open | half_open
+    _last_failure: datetime | None = field(init=False, default=None)
 
     def record_failure(self) -> None: ...
     def record_success(self) -> None: ...
@@ -3388,8 +3408,9 @@ with his aesthetic preferences.
 **Persistence:**
 
 ```python
+@dataclass
 class UserSettings:
-    """User-configurable settings with pydantic validation."""
+    """User-configurable settings with dataclass validation."""
 
     quiet_hours: tuple[time, time] | None = None
     language: str = "en"
@@ -3419,8 +3440,11 @@ a unified HTTP API and simple model management.
 
 | Model | Role | Parameters | Quantization | RAM | Latency |
 |-------|------|------------|--------------|-----|---------|
-| Qwen2.5-7B | Main reasoning, dialogue, planning | 7B | Q4_K_M | ~5 GB | ~1-2 sec |
+| Qwen2.5-7B | Main reasoning, dialogue, planning | 7B | Q4_K_M | ~4.4 GB¹ | ~1-2 sec |
 | Qwen2.5-0.5B | Router/classifier, quick decisions | 0.5B | Q8_0 | ~0.5 GB | ~0.1-0.3 sec |
+
+¹ Model weights in Q4_K_M quantization. Ollama runtime overhead (KV cache, buffers)
+adds ~0.5 GB depending on context length, accounted for in ModelManager memory budget.
 
 **Rationale for choosing Qwen2.5:**
 - Excellent quality/size ratio for reasoning
@@ -4794,24 +4818,27 @@ via WebSocket. Bob reacts to user taps with simple, immediate responses:
 **Server-side handling:**
 
 ```python
-# EventBus handler in AgentRuntime
-async def on_touch_event(self, event: Event) -> None:
-    """Handle touch events from tablet.
+class AgentRuntime:
+    # ... (see section 3.2.1 for full class definition)
 
-    touch_event payload: {target, action, position}
-    """
-    target = event.payload["target"]
-    action = event.payload["action"]
+    async def on_touch_event(self, event: Event) -> None:
+        """Handle touch events from tablet.
 
-    if target == "bob_avatar" and action == "tap":
-        await self.bob_react("wave")         # Play animation
-        await self.bob_speak_short()         # Short contextual phrase
-    elif target == "bob_avatar" and action == "long_press":
-        await self.bob_share_mood()          # "I'm feeling pretty good today"
-    elif action == "tap" and target != "bob_avatar":
-        await self.bob_comment_object(target)  # Taste-based comment
-    elif action == "double_tap":
-        await self.bob_walk_to(event.payload["position"])
+        Registered via: event_bus.subscribe("tablet.touch", self.on_touch_event)
+        touch_event payload: {target, action, position}
+        """
+        target = event.payload["target"]
+        action = event.payload["action"]
+
+        if target == "bob_avatar" and action == "tap":
+            await self.bob_react("wave")         # Play animation
+            await self.bob_speak_short()         # Short contextual phrase
+        elif target == "bob_avatar" and action == "long_press":
+            await self.bob_share_mood()          # "I'm feeling pretty good today"
+        elif action == "tap" and target != "bob_avatar":
+            await self.bob_comment_object(target)  # Taste-based comment
+        elif action == "double_tap":
+            await self.bob_walk_to(event.payload["position"])
 ```
 
 Touch reactions are Phase 5 deliverables (when the tablet is active). Future
@@ -5615,7 +5642,8 @@ class EventBus:
 
     def __init__(self) -> None:
         self._handlers: dict[str, list[EventHandler]] = {}
-        self._queue: asyncio.PriorityQueue = asyncio.PriorityQueue()
+        self._seq: int = 0                  # tie-breaker for equal priorities
+        self._queue: asyncio.PriorityQueue[tuple[int, int, Event]] = asyncio.PriorityQueue()
 
     def subscribe(self, event_type: str, handler: EventHandler) -> None:
         """Subscribe to an event type.

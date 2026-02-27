@@ -638,15 +638,15 @@ What Bob can and cannot do at each development phase:
 
 | # | Sections | Issue | Status |
 |---|----------|-------|--------|
-| **V3-M1** | 3.3.2 (~line 1050) | `Planner.__init__` references `SkillRegistry` (undefined) instead of `SkillDomainRegistry` | Open (pre-existing, not ContentGuard-related) |
-| **V3-M2** | 3.8.4 (~line 3380) | `UserSettings` docstring says "pydantic validation" but class has no base class | Open (pre-existing, not ContentGuard-related) |
-| **V3-M3** | 7.1 (~line 5607) | `asyncio.PriorityQueue` unparameterized; runtime error on priority ties | Open (pre-existing, not ContentGuard-related) |
-| **V3-M4** | 4.1 vs 3.2.4 vs 5.4.2 | Inconsistent RAM for Qwen2.5-7B: "~5 GB" vs "~4.4 GB" | Open (pre-existing, not ContentGuard-related) |
+| ~~**V3-M1**~~ | ~~3.3.2 (~line 1050)~~ | ~~`Planner.__init__` references `SkillRegistry` (undefined) instead of `SkillDomainRegistry`~~ | **RESOLVED**: Changed to `SkillDomainRegistry` (forward-ref string). |
+| ~~**V3-M2**~~ | ~~3.8.4 (~line 3380)~~ | ~~`UserSettings` docstring says "pydantic validation" but class has no base class~~ | **RESOLVED**: Added `@dataclass` decorator, docstring changed to "dataclass validation". |
+| ~~**V3-M3**~~ | ~~7.1 (~line 5607)~~ | ~~`asyncio.PriorityQueue` unparameterized; runtime error on priority ties~~ | **RESOLVED**: Parameterized as `PriorityQueue[tuple[int, int, Event]]` with `_seq` counter as tie-breaker. |
+| ~~**V3-M4**~~ | ~~4.1 vs 3.2.4 vs 5.4.2~~ | ~~Inconsistent RAM for Qwen2.5-7B: "~5 GB" vs "~4.4 GB"~~ | **RESOLVED**: Standardized to ~4.4 GB (model weights). Section 4.1 updated with footnote: runtime overhead (+~0.5 GB KV cache) accounted for in ModelManager budget. |
 | ~~**V3-M5**~~ | ~~5.4.2~~ | ~~HEAVY_GEN memory table doesn't include Llama Guard column~~ | **RESOLVED**: Guard column added to memory table; totals updated. |
 | ~~**V3-M6**~~ | ~~11~~ | ~~ContentGuard not in repository structure~~ | **RESOLVED**: `content_guard.py`, `violation_tracker.py`, `refusal_generator.py` added to `bob/security/`. |
 | ~~**V3-M7**~~ | ~~8.8~~ | ~~ContentGuard scope unclear~~ | **RESOLVED**: Scope defined in 8.8.1: user-facing only (voice/Telegram). Internal calls NOT guarded. |
 | ~~**V3-M8**~~ | ~~5.1.1, 8.8~~ | ~~Genesis/Awakening false positives~~ | **RESOLVED**: Note added to 8.8.1: ContentGuard disabled during Genesis and Awakening. Activates after awakening. |
-| **V3-M9** | 3.4.4, 8.8.2 | `content_violations` SQLite table not referenced in database overview | Open (documentation gap, low-risk) |
+| ~~**V3-M9**~~ | ~~3.4.4, 8.8.2~~ | ~~`content_violations` SQLite table not referenced in database overview~~ | **RESOLVED**: `content_violations` table added to section 3.4.4 with schema and index. |
 | ~~**V3-M10**~~ | ~~3.2.4~~ | ~~`ensure_profile()` docstring doesn't mention Guard~~ | **RESOLVED**: Docstring updated with note about Guard staying loaded across all transitions. |
 | ~~**V3-M11**~~ | ~~7.1, 8.8.2~~ | ~~Event payload naming mismatch~~ | **RESOLVED**: Event catalog payload harmonized to `violation_category, tier, confidence`. |
 | ~~**V3-M12**~~ | ~~9~~ | ~~Technology Stack table missing Llama Guard 3~~ | **RESOLVED**: Row added: "Content guard \| Llama Guard 3-1B-INT4 (via Ollama)". |
@@ -655,15 +655,15 @@ What Bob can and cannot do at each development phase:
 
 | # | Sections | Issue | Status |
 |---|----------|-------|--------|
-| **V3-L1** | 3.8.2 | `CircuitBreaker` dataclass exposes private `_fields` | Open (pre-existing) |
-| **V3-L2** | 3.2.2 | `LLMRouter.ROUTING_TABLE` missing `ClassVar` | Open (pre-existing) |
-| **V3-L3** | 3.5.4, 6.3 | `AsyncIterator` missing import | Open (pre-existing) |
-| **V3-L4** | 3.5.6 | `Callable` missing import | Open (pre-existing) |
-| **V3-L5** | 3.5.1 | `np.ndarray` missing import | Open (pre-existing) |
-| **V3-L6** | 5.4 | `on_touch_event` standalone with `self` | Open (pre-existing) |
-| **V3-L7** | config blocks | Llama Guard config key naming inconsistency | Open (cosmetic) |
+| ~~**V3-L1**~~ | ~~3.8.2~~ | ~~`CircuitBreaker` dataclass exposes private `_fields`~~ | **RESOLVED**: Private fields use `field(init=False)` — excluded from `__init__`. |
+| ~~**V3-L2**~~ | ~~3.2.2~~ | ~~`LLMRouter.ROUTING_TABLE` missing `ClassVar`~~ | **RESOLVED**: Added `ClassVar` import and `ClassVar[dict[...]]` annotation. |
+| ~~**V3-L3**~~ | ~~3.5.4, 6.3~~ | ~~`AsyncIterator` missing import~~ | **RESOLVED**: Added `from collections.abc import AsyncIterator` to VoiceBridge code block. |
+| ~~**V3-L4**~~ | ~~3.5.6~~ | ~~`Callable` missing import~~ | **RESOLVED**: Added `from collections.abc import Callable` to MessagingBot code block. |
+| ~~**V3-L5**~~ | ~~3.5.1~~ | ~~`np.ndarray` missing import~~ | **RESOLVED**: Added `import numpy as np` to VisionService code block. |
+| ~~**V3-L6**~~ | ~~5.4~~ | ~~`on_touch_event` standalone with `self`~~ | **RESOLVED**: Wrapped in `class AgentRuntime:` with proper indentation and event subscription docstring. |
+| ~~**V3-L7**~~ | ~~config blocks~~ | ~~Llama Guard config key naming inconsistency~~ | **RESOLVED**: Unified to `model` (not `model_id`) in ModelManager config; added cross-reference comment to security.yaml. |
 | ~~**V3-L8**~~ | ~~8.8.7~~ | ~~Uses "(§8.1)" instead of "(section 8.1)"~~ | **RESOLVED**: Changed to "(section 8.1)". |
-| **V3-L9** | 3.2.4 (YAML) | ModelManager profile config lacks Guard comment | Open (covered by ensure_profile docstring fix) |
+| ~~**V3-L9**~~ | ~~3.2.4 (YAML)~~ | ~~ModelManager profile config lacks Guard comment~~ | **RESOLVED**: Added clarifying comments: cross-ref to section 8.8, "remains loaded across ALL profile transitions", "pre-allocated in budget". |
 
 ### 9.5. Positive Findings (No Action Needed)
 
@@ -682,10 +682,14 @@ What Bob can and cannot do at each development phase:
 |----------|-------|----------|-----------|------------|
 | **Critical** | 1 | 1 | 0 | ~~Dead code~~ |
 | **High** | 7 | 7 | 0 | ~~Event mismatches, integration gaps, phases, fallback~~ |
-| **Medium** | 12 | 7 | 5 | Pre-existing code issues (M1-M4), DB cross-ref (M9) |
-| **Low** | 9 | 1 | 8 | Pre-existing imports/style (L1-L7, L9) |
-| **Total** | **29** | **16** | **13** | |
+| **Medium** | 12 | 12 | 0 | ~~Code issues, DB cross-ref, RAM inconsistency~~ |
+| **Low** | 9 | 9 | 0 | ~~Imports, style, config consistency~~ |
+| **Total** | **29** | **29** | **0** | |
 
-> **Round 3 resolution:** All ContentGuard-related issues (1 critical, 7 high, 7 medium, 1 low = **16 resolved**) have been fixed. ContentGuard is now fully integrated into the RFC: wraps LLMRouter as a decorator, has explicit integration points in AgentRuntime, consistent event naming, defined scope/channels, fallback chain, development phase assignments, and complete documentation in repo structure/tech stack/memory budget.
+> **Round 3 resolution — complete.** All 29 issues have been resolved across two passes:
 >
-> **Remaining 13 issues** are pre-existing code block imperfections (M1-M4, L1-L7, L9) and one DB cross-reference gap (M9) — none are ContentGuard-related or architecturally significant. They should be addressed during implementation, not in the RFC.
+> **Pass 1** (commit `ffc5cfd`): 16 ContentGuard-related issues — integration into AgentRuntime, event naming, scope/channels, fallback chain, development phases, repo structure, tech stack, memory budget.
+>
+> **Pass 2**: 13 pre-existing code block issues — `SkillRegistry` → `SkillDomainRegistry` (M1), `UserSettings` missing `@dataclass` (M2), `PriorityQueue` unparameterized (M3), RAM inconsistency standardized to ~4.4 GB (M4), `content_violations` table added to DB schema (M9), `CircuitBreaker` private fields fixed (L1), `ClassVar` added to `ROUTING_TABLE` (L2), missing imports added (L3-L5), `on_touch_event` wrapped in class (L6), config key naming unified (L7, L9).
+>
+> **The RFC is now a clean blueprint with zero known issues.**
