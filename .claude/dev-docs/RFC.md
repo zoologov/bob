@@ -64,7 +64,7 @@ Bob is an attempt to create an **autonomous agent** that:
 |----------|-------------|
 | **Autonomy** | Bob runs 24/7, selects tasks from the goal graph on his own |
 | **Long-lived goals** | Structured Goal Engine, not LLM-mediated re-derivation |
-| **Self-improvement** | Reflection Loop + fine-tune of local LLMs — Bob literally becomes smarter |
+| **Self-improvement** | 5-level learning: behavioral rules, taste evolution, sklearn ML, Inner Monologue LoRA fine-tune, RAG — Bob literally becomes smarter |
 | **Locality** | All compute on Mac mini M4; Claude Code CLI is the only external tool |
 | **Personality** | SOUL — a modular "soul" (`bob-soul/` template directory), unique per instance |
 | **Self-awareness** | Bob knows about the book "We Are Legion (We Are Bob)" and that he was inspired by its character. Jokes about it, doesn't hide it |
@@ -1256,32 +1256,43 @@ class SelfImprovement:
         ...
 
     async def collect_training_data(self) -> list[dict]:
-        """Collect data for fine-tuning local LLMs.
+        """Collect data for fine-tuning Inner Monologue (Qwen 0.5B).
 
         Sources:
-        - Successful interaction pairs (request -> response, rated positively)
-        - Reflections with insights
-        - Corrected errors (before -> after)
-        - User preferences from semantic_memory (category="user")
-        - SOUL evolution (which decisions proved correct)
+        - Reflections with insights (context → inner thought)
+        - Mood transitions (event → thought → mood shift)
         - Characteristic phrases in the style of the book's Bob (humor, references)
-        - Phantom reactions (trigger -> phrase, rated by user)
+        - Phantom reactions (trigger → phrase, rated by user)
+        - SOUL evolution (which decisions proved correct)
 
         Format: JSONL for LoRA fine-tune via Unsloth/PEFT.
+        Target: Qwen2.5-0.5B (Inner Monologue model only).
+
+        Note: main LLM (7B) is NOT fine-tuned — it adapts via RAG
+        (semantic_memory retrieval + improvement_rules injection).
         """
         ...
 
     async def trigger_finetune(self, dataset_path: str) -> bool:
-        """Launch fine-tune (LoRA) of the local model.
+        """Launch LoRA fine-tune of Inner Monologue model (Qwen 0.5B).
 
         DANGEROUS: requires approval.
 
+        Target: Qwen2.5-0.5B — the model used for Inner Monologue
+        (section 3.3.8). Fine-tuning adapts Bob's "inner voice" to
+        reflect his accumulated experience and personality evolution.
+
+        NOT used for: main 7B model (adapts via RAG + rules instead).
+
         Steps:
-        1. Dataset validation (size, format, absence of toxic content)
-        2. Backup of current model
-        3. Launch fine-tune via Unsloth (LoRA, QLoRA)
-        4. Evaluate new model on test set
-        5. If quality >= baseline -> replace; otherwise -> rollback
+        1. Dataset validation (size ≥ 50, format, absence of toxic content)
+        2. Backup current 0.5B adapter (if exists)
+        3. LoRA fine-tune via Unsloth (rank=8, alpha=16, ~10 min on M4)
+        4. Evaluate on held-out set (perplexity + style consistency)
+        5. If quality >= baseline → deploy adapter; otherwise → rollback
+
+        Memory: ~2 GB during training (0.5B model + gradients + optimizer).
+        Schedule: weekly, during quiet_hours (NightProcessor window).
         """
         ...
 ```
@@ -2937,7 +2948,7 @@ class MoodPredictorConfig:
     learning_rate: float = 1e-3
     max_iter: int = 500
     validation_split: float = 0.2
-    model_path: str = "data/models/mood_predictor.joblib"
+    model_path: str = "data/finetune/models/mood_predictor.joblib"
 
 
 @dataclass
@@ -2991,7 +3002,7 @@ emergent_behavior:
       learning_rate: 1.0e-3
       max_iter: 500
       validation_split: 0.2
-    model_path: "data/models/mood_predictor.joblib"
+    model_path: "data/finetune/models/mood_predictor.joblib"
   taste_discovery:
     enabled: true
     schedule: "weekly"                    # during room_review reflection
@@ -3076,7 +3087,7 @@ CREATE INDEX idx_cross_domain_active ON cross_domain_associations(active);
 
 ```
 bob/mind/emergent.py                  # MoodPredictor, TasteAxisDiscovery, CrossDomainCorrelator
-data/models/mood_predictor.joblib     # sklearn MLP ensemble (created at runtime, ~1 MB)
+data/finetune/models/mood_predictor.joblib     # sklearn MLP ensemble (created at runtime, ~1 MB)
 tests/test_mind/test_emergent.py
 ```
 
@@ -5996,44 +6007,66 @@ Types: feat, fix, refactor, docs, test, chore
 Example: [bob] feat: add weather query skill
 ```
 
-### 4.3. Fine-tuning Local LLMs
+### 4.3. Self-improvement: How Bob Becomes Smarter
 
-Bob collects data from his experience and periodically fine-tunes local models,
-literally becoming smarter over time.
+Bob's self-improvement is a **5-level system**, where each level uses the
+right tool for the job. No single mechanism — the levels complement each other.
 
 ```
-┌────────────────┐     ┌──────────────┐     ┌───────────────┐
-│  Experience    │────>│  Training    │────>│   LoRA        │
-│  Collection    │     │  Dataset     │     │   Fine-tune   │
-│                │     │  Builder     │     │   (Unsloth)   │
-│ • reflections  │     │              │     │               │
-│ • good dialogs │     │  JSONL:      │     │ QLoRA 4-bit   │
-│ • fixed errors │     │  [{prompt,   │     │ ~30 min on M4 │
-│ • user prefs   │     │    response}]│     │               │
-│ • SOUL updates │     │              │     │ eval -> deploy │
-└────────────────┘     └──────────────┘     └───────┬───────┘
-                                                     │
-                                           ┌─────────▼─────────┐
-                                           │  Ollama            │
-                                           │  (model swap)      │
-                                           │                    │
-                                           │  backup old model  │
-                                           │  load new model    │
-                                           │  verify quality    │
-                                           └────────────────────┘
+┌─────────────────────────────────────────────────────────────────────┐
+│                    Bob's Self-improvement Stack                     │
+├─────────────────────────────────────────────────────────────────────┤
+│                                                                     │
+│  Level 5: LoRA Fine-tune (Inner Monologue, 0.5B)     Phase 6       │
+│  ├─ Adapts Bob's "inner voice" style and personality                │
+│  ├─ Weekly retrain on collected experience data                     │
+│  ├─ ~10 min on M4, ~2 GB RAM during training                       │
+│  └─ Result: Inner Monologue thinks in Bob's unique way              │
+│                                                                     │
+│  Level 4: Classical ML (sklearn)                      Phase 6       │
+│  ├─ MoodPredictor: learned event → mood mapping (MLP ensemble)      │
+│  ├─ TasteAxisDiscovery: HDBSCAN clustering for new taste axes       │
+│  ├─ CrossDomainCorrelator: mood↔taste correlations (Pearson)        │
+│  └─ Trains in milliseconds, <1 MB models, zero GPU                  │
+│                                                                     │
+│  Level 3: RAG + Rules (main 7B model adaptation)     Phase 3+      │
+│  ├─ semantic_memory retrieval → LLM prompt context                  │
+│  ├─ improvement_rules injection → behavior modification             │
+│  ├─ SOUL evolution → personality drift in prompts                   │
+│  └─ No fine-tune needed: 7B adapts through context                  │
+│                                                                     │
+│  Level 2: Taste & Belief Evolution                    Phase 3       │
+│  ├─ TasteEngine: conviction grows/decays with experience            │
+│  ├─ NegotiationEngine: debates update belief strength               │
+│  └─ Persistent: taste_profile.json + taste_history table            │
+│                                                                     │
+│  Level 1: Behavioral Rules (SelfImprovement)          Phase 2       │
+│  ├─ ReflectionLoop creates improvement_rules from experience        │
+│  ├─ Rules auto-apply: "when X happens, do Y"                        │
+│  ├─ Habituation: rules applied 50+ times → automatic (3.3.11)      │
+│  └─ Subconscious: habituated rules become invisible to reflection   │
+│                                                                     │
+└─────────────────────────────────────────────────────────────────────┘
 ```
 
-**Data sources for fine-tuning:**
+**Why NOT fine-tune the main 7B model on M4 16GB?**
+
+Fine-tuning Qwen 7B with LoRA requires ~8-10 GB RAM for training
+(model + gradients + optimizer states). On 16 GB unified memory with
+Bob's other services running (~5.9 GB in NORMAL mode), this leaves
+insufficient headroom. The 7B model adapts through RAG + rules instead,
+which is equally effective for behavioral adaptation and requires zero
+training compute.
+
+**Level 5 details: Inner Monologue LoRA fine-tune (Qwen 0.5B)**
 
 | Source | Format | Description |
 |--------|--------|-------------|
-| Successful dialogues | `{prompt, response}` | Conversations rated positively by the user |
-| Reflections | `{context, insight}` | Insights from Reflection Loop |
-| Corrections | `{wrong, correct}` | Pairs of "wrong answer -> correct answer" |
-| SOUL evolution | `{situation, decision}` | Decisions that proved correct |
-| Preferences | `{query, preferred_style}` | Adaptation to the user's style |
-| Tastes/debates | `{object, taste_score, verdict, negotiation_result}` | Training consistent taste verbalization |
-| Mood | `{events, mood_before, mood_after}` | Training adequate reaction to events |
+| Reflections | `{context, thought}` | Inner thoughts during reflection |
+| Mood transitions | `{event, thought, mood_delta}` | Thoughts that accompanied mood shifts |
+| Bob-style phrases | `{trigger, phrase}` | Characteristic humor, references |
+| Phantom reactions | `{trigger, phrase, rating}` | Rated phantom responses |
+| SOUL evolution | `{situation, inner_reaction}` | Internal reactions to key decisions |
 
 **Configuration:**
 
@@ -6042,22 +6075,21 @@ literally becoming smarter over time.
 finetune:
   enabled: true
   engine: "unsloth"                    # Unsloth for LoRA on Apple Silicon
-  method: "qlora"                      # QLoRA 4-bit
-  base_model: "qwen2.5:7b-instruct"
-  lora_rank: 16
-  lora_alpha: 32
-  min_dataset_size: 200                # minimum records to start (organic only)
-  max_dataset_size: 5000
+  target_model: "qwen2.5:0.5b"        # Inner Monologue model ONLY
+  method: "lora"                       # Full-precision LoRA (0.5B fits easily)
+  lora_rank: 8
+  lora_alpha: 16
+  min_dataset_size: 50                 # minimum records to start
+  max_dataset_size: 2000
   eval_split: 0.1                      # 10% for evaluation
-  quality_threshold: 0.95              # new model must be >= 95% of baseline
-  quality_scoring:
-    min_user_rating: 0.7               # filter pairs by user rating
-    correction_weight: 2.0             # correction pairs weighted 2x
-    reflection_min_depth: 2            # reflections with >= 2 insights
-  schedule: "weekly"                   # once a week
-  backup_previous: true                # backup previous model
-  require_approval: true               # requires user confirmation
+  quality_metric: "perplexity"         # primary eval metric
+  style_consistency_check: true        # verify Bob's voice is preserved
+  schedule: "weekly"                   # during quiet_hours (NightProcessor window)
+  backup_previous: true                # keep previous adapter for rollback
+  require_approval: true               # first fine-tune requires user confirmation
   data_dir: "data/finetune"
+  adapter_dir: "data/finetune/inner_monologue_lora"
+  training_memory_gb: 2.0              # estimated peak RAM during training
 ```
 
 ### 4.4. Routing Rules
@@ -8928,7 +8960,7 @@ ContentGuard is designed with defense-in-depth against common jailbreak patterns
 | **Database** | SQLite (aiosqlite) | Built into Python, zero configuration, sufficient for a single host |
 | **LLM (local)** | Ollama | Unified API for all models, simple management, Apple Silicon support |
 | **LLM (external)** | Claude Code CLI | Full development cycle, reflection, architecture; invoked as subprocess |
-| **Fine-tuning** | Unsloth (LoRA/QLoRA) | Fast fine-tune on Apple Silicon, Qwen2.5 support |
+| **Fine-tuning** | Unsloth (LoRA) | LoRA fine-tune of Inner Monologue model (Qwen 0.5B) on Apple Silicon; main 7B adapts via RAG + rules |
 | **Primary model** | Qwen2.5-7B-Q4 | Good reasoning at 7B, multilingual (en, ru, zh, etc.), fits in M4 RAM |
 | **Router model** | Qwen2.5-0.5B-Q8 | Lightning-fast classification, minimal RAM |
 | **Content guard** | Llama Guard 3-1B-INT4 (via Ollama) | Always-loaded safety classifier for input/output filtering; ~600 MB, ~50-100ms on M4 |
@@ -9012,7 +9044,7 @@ ContentGuard is designed with defense-in-depth against common jailbreak patterns
 | Structured State | SQLite: world_state, experience |
 | SOUL Evolution | Personality evolution mechanism based on reflection |
 | Memory API | Endpoints for search and addition |
-| Training Data Collector | Data collection for future fine-tune |
+| Training Data Collector | Data collection for Inner Monologue LoRA fine-tune (see 4.3) |
 
 **Readiness criterion:** Bob remembers what was discussed yesterday and knows preferences.
 
@@ -9077,15 +9109,15 @@ ContentGuard is designed with defense-in-depth against common jailbreak patterns
 
 **Readiness criterion:** A clean launch creates a unique Bob with unique AI-generated visuals and room. No hand-drawn assets used. Bob visually lives on the tablet with skeletal animations, his behaviors are tied to objects. Asset generation takes ~30-40 min during Genesis.
 
-### Phase 6: Self-improvement + Fine-tune (ongoing)
+### Phase 6: Self-improvement + Emergent Cognition (ongoing)
 
-**Goal:** Bob continuously improves, including his LLMs.
+**Goal:** Bob continuously improves through multi-level learning (see 4.3).
 
 | Task | Description |
 |------|-------------|
 | Deep reflection | Weekly and monthly reports (via Claude Code CLI) |
 | Self-improvement rules | Automatic creation and application of rules |
-| Fine-tune pipeline | Data collection -> LoRA -> evaluation -> deploy updated model |
+| Inner Monologue fine-tune | Data collection → LoRA on 0.5B → evaluation → deploy adapter (see 4.3) |
 | Behavior evolution | Bob creates new animations/behaviors based on experience |
 | Appearance evolution | Clothing/accessory changes based on mood/season |
 | SOUL evolution | Personality development based on reflection |
@@ -9179,7 +9211,7 @@ bob/
 │   │   ├── semantic.py            # Semantic Memory (vectors)
 │   │   ├── state.py               # Structured State (SQLite)
 │   │   ├── soul.py                # SOUL loader + evolution
-│   │   └── training_data.py       # Data collection for fine-tune
+│   │   └── training_data.py       # Data collection for Inner Monologue LoRA fine-tune
 │   │
 │   ├── services/                   # Peripheral services + shared generators
 │   │   ├── __init__.py
@@ -9269,10 +9301,10 @@ bob/
 │   │   ├── vectors/               # FAISS index for semantic memory embeddings
 │   │   ├── visual_vectors/        # FAISS index for visual embeddings (3.3.10)
 │   │   └── latent_vectors/        # FAISS index for latent associations (3.3.11)
-│   ├── finetune/                  # Fine-tune data
-│   │   ├── training_data.jsonl    # Collected training pairs
+│   ├── finetune/                  # Fine-tune and ML model data
+│   │   ├── training_data.jsonl    # Collected training pairs for Inner Monologue LoRA
 │   │   ├── models/                # sklearn models: mood_predictor.joblib (3.3.9)
-│   │   ├── models/                # Saved LoRA adapters
+│   │   ├── inner_monologue_lora/  # LoRA adapter for Inner Monologue (0.5B)
 │   │   └── eval_results/          # Evaluation results
 │   ├── behaviors/                 # Registered behaviors
 │   │   └── registry.json          # Current behavior set
