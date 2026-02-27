@@ -1,0 +1,28 @@
+Bob Home Autonomous Agent
+Copyright (c) 2026 Vladimir Zoologov (GitHub: @zoologov)
+
+This project implements an always-on home AI agent named "Bob",
+running on a local machine with a virtual body on a tablet, with
+its own SOUL, tastes, mood, Genesis/Exodus lifecycle, and
+self-improvement mechanisms.
+
+"Bob" is inspired by the character Bob Johansson from
+"We Are Legion (We Are Bob)" by Dennis E. Taylor.
+This project is not affiliated with or endorsed by
+Dennis E. Taylor, Audible Originals, or any rights holder
+of the Bobiverse series.
+
+Key original concepts include:
+- SOUL-based personality architecture (bob-soul)
+- Genesis Mode and Exodus Mode lifecycle
+- Taste Engine and Mood System
+- RelationshipTracker and Negotiation Engine
+- Phantom Preferences system
+- Self-improvement and local fine-tuning pipeline
+- Godot 4 Shell-Renderer with AI-generated assets
+- SkillDomain plugin architecture
+
+Licensing:
+- Core software (src/bob/, except src/bob/skills/): BUSL-1.1 (see LICENSE)
+- Skills and plugins (src/bob/skills/): Apache-2.0 (see LICENSE-APACHE.md)
+- Soul and assets (bob-soul/, assets/): CC-BY-NC-SA-4.0 (see LICENSE-CC-BY-NC-SA.md)
