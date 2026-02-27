@@ -262,7 +262,7 @@ class AgentRuntime:
         event_bus: EventBus,
         content_guard: "ContentGuard",  # wraps LLMRouter (see 8.8)
         model_manager: ModelManager,
-        skill_registry: SkillRegistry,
+        skill_registry: SkillDomainRegistry,
         higher_mind: HigherMind,
         memory: MemorySystem,
         inner_monologue: "InnerMonologue",          # (3.3.8) stream of consciousness
@@ -952,8 +952,8 @@ class Goal:
     parent_id: str | None = None
     depends_on: list[str] = field(default_factory=list)
     completion_criteria: list[str] = field(default_factory=list)
-    created_at: datetime = field(default_factory=datetime.now)
-    updated_at: datetime = field(default_factory=datetime.now)
+    created_at: datetime = field(default_factory=lambda: datetime.now(tz=UTC))
+    updated_at: datetime = field(default_factory=lambda: datetime.now(tz=UTC))
     deadline: datetime | None = None
     progress: float = 0.0       # 0.0 .. 1.0
     metadata: dict[str, Any] =field(default_factory=dict)
@@ -1047,7 +1047,7 @@ class PlanStep:
 class Plan:
     goal_id: str
     steps: list[PlanStep]
-    created_at: datetime = field(default_factory=datetime.now)
+    created_at: datetime = field(default_factory=lambda: datetime.now(tz=UTC))
     estimated_total_sec: int = 0
 
 class Planner:
@@ -1338,6 +1338,8 @@ class TasteProfile:
     atmosphere: dict[str, TasteAxis]    # "warm_light", "cold_light", "cluttered", "sparse"
     # Clothing
     clothing: dict[str, TasteAxis]      # "casual", "formal", "sporty", "vintage", "techwear"
+    # Discovered axes (added by TasteAxisDiscovery, see 3.3.9)
+    discovered: dict[str, TasteAxis] = field(default_factory=dict)
     # Active cluster
     active_cluster: str                 # "cozy_natural", "cyberpunk", "eclectic", ...
     # Meta
@@ -2712,12 +2714,16 @@ class MoodPrediction:
     openness_delta: float
     social_delta: float
     confidence: float                    # 0.0 .. 1.0 — prediction confidence
-    source: str                          # "learned" or "fixed"
+    source: Literal["learned", "fixed"]
 
 
-@dataclass
+@dataclass(eq=False)
 class DiscoveredAxis:
-    """A taste axis discovered through clustering."""
+    """A taste axis discovered through clustering.
+
+    Note: eq=False because np.ndarray __eq__ returns element-wise array.
+    Identity comparison (is) or id-based lookup used instead.
+    """
     name: str                            # auto-generated name (e.g., "contrast_preference")
     description: str                     # LLM-generated description of what this axis captures
     centroid: np.ndarray                 # cluster centroid in embedding space (float32)
@@ -3123,9 +3129,13 @@ from dataclasses import dataclass, field
 from datetime import datetime, time
 
 
-@dataclass
+@dataclass(eq=False)
 class VisualEmbedding:
-    """CLIP embedding of a camera frame or region."""
+    """CLIP embedding of a camera frame or region.
+
+    Note: eq=False because np.ndarray __eq__ returns element-wise array.
+    Compared by id field.
+    """
     id: str                              # UUID
     embedding: np.ndarray                # 512-dim float32 (CLIP-ViT-B/32)
     timestamp: datetime
@@ -3164,6 +3174,11 @@ class CircadianPattern:
     hour_social: list[float]             # 24 floats, average social dimension per hour
     learned_from_days: int               # how many days contributed to the pattern
     last_updated: datetime
+
+    def __post_init__(self) -> None:
+        for name in ("hour_activity", "hour_valence", "hour_social"):
+            if len(getattr(self, name)) != 24:
+                raise ValueError(f"{name} must have exactly 24 elements")
 
 
 @dataclass
@@ -3695,16 +3710,20 @@ class ImplicitPrime:
     id: str
     trigger_pattern: str                 # situation pattern that activates this prime
     context_fragment: str                # text injected into prompt (invisible to reflection)
-    source: str                          # "latent_association", "night_processing", "habituation"
+    source: Literal["latent_association", "night_processing", "habituation"]
     strength: float                      # 0.0 .. 1.0 — how strongly this prime is applied
     created_at: datetime
     last_activated: datetime | None = None
     activation_count: int = 0
 
 
-@dataclass
+@dataclass(eq=False)
 class LatentAssociation:
-    """An embedding-space association that triggers mood without logged cause."""
+    """An embedding-space association that triggers mood without logged cause.
+
+    Note: eq=False because np.ndarray __eq__ returns element-wise array.
+    Compared by id field.
+    """
     id: str
     trigger_embedding: np.ndarray        # 512-dim CLIP or 384-dim MiniLM embedding
     embedding_type: str                  # "visual" (CLIP) or "semantic" (MiniLM)
@@ -4069,7 +4088,9 @@ class NightProcessingConfig:
     max_new_primes: int = 5
     max_new_associations: int = 10
     episode_significance_threshold: float = 0.1
-    inter_call_delay_sec: float = 2.0
+    max_tokens_per_call: int = 256      # longer than InnerMonologue (64)
+    inter_call_delay_sec: float = 10.0   # sleep between calls to not starve other tasks
+    # Budget: 50 × (~1.5s generation + 10s sleep) ≈ 10 min (within 5-15 min range)
 
 
 @dataclass
@@ -5647,6 +5668,11 @@ Bob uses three resilience patterns based on error type:
 **Circuit breaker implementation:**
 
 ```python
+class CircuitState(Enum):
+    CLOSED = "closed"
+    OPEN = "open"
+    HALF_OPEN = "half_open"
+
 @dataclass
 class CircuitBreaker:
     """Prevents cascading failures by temporarily disabling a service."""
@@ -5654,7 +5680,7 @@ class CircuitBreaker:
     failure_threshold: int = 3        # failures before opening circuit
     cooldown_sec: float = 60.0        # time before retrying
     _failure_count: int = field(init=False, default=0)
-    _state: str = field(init=False, default="closed")  # closed | open | half_open
+    _state: CircuitState = field(init=False, default=CircuitState.CLOSED)
     _last_failure: datetime | None = field(init=False, default=None)
 
     def record_failure(self) -> None: ...
@@ -8022,7 +8048,7 @@ class Event:
     type: str                               # "vision.person_detected"
     payload: dict[str, Any]                 # event data
     source: str                             # "vision_service"
-    timestamp: datetime = field(default_factory=datetime.now)
+    timestamp: datetime = field(default_factory=lambda: datetime.now(tz=UTC))
     priority: int = 5                       # 1 (highest) — 10 (lowest)
 
 EventHandler = Callable[[Event], Awaitable[None]]
@@ -8355,11 +8381,11 @@ class QuotaTracker:
 
     def record_call(self) -> None:
         """Record a successful CLI invocation."""
-        self.calls_log.append(datetime.now())
+        self.calls_log.append(datetime.now(tz=UTC))
 
     def record_rate_limit(self) -> None:
         """Record a 429 rate limit response."""
-        self.last_rate_limit = datetime.now()
+        self.last_rate_limit = datetime.now(tz=UTC)
 
     def estimated_available(self) -> bool:
         """Estimate if quota is likely available.
