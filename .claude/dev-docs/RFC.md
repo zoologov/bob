@@ -280,19 +280,25 @@ class AgentRuntime:
         skill_registry: SkillRegistry,
         higher_mind: HigherMind,
         memory: MemorySystem,
+        inner_monologue: "InnerMonologue",          # (3.3.8) stream of consciousness
+        sensory_grounding: "SensoryGroundingService", # (3.3.10) multimodal grounding
+        subconscious: "SubconsciousLayer",           # (3.3.11) subconscious processing
     ) -> None: ...
 
     async def run(self) -> None:
         """Main loop.
 
-        1. Receive events from event_bus
-        2. Pass to higher_mind for priority evaluation
-        3. Choose action (goal-driven or reactive)
-        4. For user-facing LLM calls: content_guard.process()
-           (input guard → LLM Router → output guard)
-        5. Execute via skill_registry
-        6. Record result in memory
-        7. Run reflection (periodically)
+        1. Start inner_monologue.run() as background asyncio task
+        2. Receive events from event_bus
+        3. Pass to higher_mind for priority evaluation
+        4. Choose action (goal-driven or reactive)
+        5. For user-facing LLM calls:
+           a. subconscious.pre_process(prompt, context, mood)
+           b. content_guard.process(enriched_prompt, enriched_context)
+           c. subconscious.post_process(response, current_embeddings)
+        6. Execute via skill_registry
+        7. Record result in memory
+        8. Run reflection (periodically)
         """
         ...
 
@@ -304,6 +310,7 @@ class AgentRuntime:
         - schedule (time-based triggers)
         - peripheral state (health checks)
         - need for reflection
+        - subconscious.run_maintenance() (quiet hours, habituation, decay)
         """
         ...
 ```
@@ -1715,8 +1722,21 @@ class MoodEngine:
         | content_guard.violation ¹     | -0.05   |  0      |  0       |   0    |
         |  ¹ tier 2                     | -0.15   | +0.10   | -0.10    |   0    |
         |  ¹ tier 3                     | -0.25   | +0.15   |  0       | -0.15  |
+        | monologue.thought (positive)  | +0.02   | +0.01   |   0      |   0    |
+        | monologue.thought (negative)  | -0.02   | +0.01   |   0      |   0    |
+        | grounding.prosody_extracted ² |  varies | varies  |   0      |   0    |
 
         ¹ Single event, impact selected by `payload.tier`. Default row = tier 1.
+
+        ² Prosody-derived: engagement modulates valence (+0.05 if high),
+          urgency adds arousal (+0.05), calmness reduces arousal (-0.05).
+          See section 3.3.10 for InteractionQuality derivation.
+
+        > **Note:** After 30 days of operation, these fixed values are gradually
+        > supplemented by learned predictions from MoodPredictor (see 3.3.9).
+        > The fixed table serves as the safety floor: learned predictions are
+        > blended with fixed values (max 80% learned), and any prediction with
+        > confidence < 0.6 falls back entirely to fixed values.
 
         Stability dampens changes:
         - delta *= (1.0 - stability * 0.5)
@@ -1731,6 +1751,10 @@ class MoodEngine:
         to the baseline (initially valence=0.3, arousal=0.4;
         updated daily via 7-day rolling average from mood_history,
         clamped to safe range).
+
+        When TemporalGrounding (section 3.3.10) is active, the drift
+        target is adjusted per hour via get_expected_mood(hour) instead
+        of using a fixed baseline.
 
         Drift speed depends on stability:
         - High stability -> returns to baseline faster
@@ -2240,6 +2264,1703 @@ class ChangeConstraints:
     )
 ```
 
+#### 3.3.8. Inner Monologue (Stream of Consciousness)
+
+**Purpose.** A continuous background process running on Qwen 0.5B that generates Bob's "inner voice" — 1-2 sentences every 3-5 seconds. These thoughts are never shown to the user. They feed into mood (via sentiment analysis of own thoughts), episodic memory (ring buffer compressed hourly), and reflection (providing context for hourly reflection). This gives Bob continuity of experience between 30-second heartbeats.
+
+**Architecture overview.**
+
+```
+┌────────────────────────────────────────────────────────────────────┐
+│                      INNER MONOLOGUE                               │
+│                                                                    │
+│  ┌──────────────┐   ┌──────────────┐   ┌────────────────────────┐ │
+│  │  Thought     │   │  Thought     │   │   Ring Buffer          │ │
+│  │  Generator   │──▶│  Analyzer    │──▶│   (last 5 min)         │ │
+│  │  (0.5B)      │   │  (sentiment) │   │                        │ │
+│  │              │   │              │   │   capacity: ~100       │ │
+│  │  prompt:     │   │  valence,    │   │   thoughts             │ │
+│  │  context +   │   │  arousal,    │   │                        │ │
+│  │  mood +      │   │  topic       │   │  ──hourly──▶ Episodic  │ │
+│  │  goals       │   │  tags        │   │  compress    Memory    │ │
+│  └──────────────┘   └──────┬───────┘   └────────────────────────┘ │
+│                            │                                       │
+│              ┌─────────────┼──────────────────┐                   │
+│              │             │                  │                   │
+│              ▼             ▼                  ▼                   │
+│       MoodEngine    ReflectionLoop     EpisodicMemory            │
+│       (sentiment     (thought context   (compressed              │
+│        feedback)      for reflection)    hourly log)             │
+│                                                                    │
+│  Activity level (thought_interval_sec):                           │
+│  ├─ Stimulated (events flowing): 3 sec                            │
+│  ├─ Normal (idle, daytime):      5 sec                            │
+│  ├─ Low (late night, no user):   15 sec                           │
+│  └─ Suspended (heavy_gen):       paused                           │
+└────────────────────────────────────────────────────────────────────┘
+```
+
+**Python dataclasses and classes.**
+
+```python
+from dataclasses import dataclass, field
+from datetime import datetime
+from enum import Enum
+from collections import deque
+
+
+class ThoughtTopic(Enum):
+    """Categories of inner thoughts."""
+    SENSORY = "sensory"            # reacting to current visual/audio input
+    GOAL = "goal"                  # thinking about active goals
+    MEMORY = "memory"              # recalling past events
+    MOOD = "mood"                  # reflecting on current feelings
+    CURIOSITY = "curiosity"        # wondering about something
+    IDLE = "idle"                  # background musings, no strong driver
+
+
+class ActivityLevel(Enum):
+    """Inner monologue activity levels."""
+    STIMULATED = "stimulated"      # 3 sec interval
+    NORMAL = "normal"              # 5 sec interval
+    LOW = "low"                    # 15 sec interval
+    SUSPENDED = "suspended"        # paused (during heavy_gen)
+
+
+@dataclass
+class Thought:
+    """A single inner thought."""
+    id: str                              # UUID
+    text: str                            # 1-2 sentences generated by 0.5B
+    timestamp: datetime
+    topic: ThoughtTopic
+    valence: float                       # -1.0 .. +1.0 (sentiment of the thought)
+    arousal: float                       # 0.0 .. 1.0 (intensity/energy)
+    trigger: str                         # what prompted this thought
+                                         # e.g., "vision.person_detected",
+                                         # "goal:G-042", "mood:bored", "idle"
+    tags: list[str] = field(default_factory=list)  # extracted topic tags
+
+
+@dataclass
+class ThoughtSummary:
+    """Compressed summary of thoughts over a period."""
+    period_start: datetime
+    period_end: datetime
+    thought_count: int
+    dominant_topic: ThoughtTopic
+    avg_valence: float
+    avg_arousal: float
+    key_themes: list[str]               # top-3 recurring tags
+    sample_thoughts: list[str]          # 3-5 representative thoughts
+    mood_drift: dict[str, float]        # net sentiment-driven mood deltas
+
+
+class ThoughtRingBuffer:
+    """Fixed-capacity ring buffer holding the last N minutes of thoughts.
+
+    Backed by collections.deque with maxlen. When full, oldest thoughts
+    are silently dropped.
+    """
+
+    def __init__(self, max_age_sec: int = 300, max_size: int = 100) -> None:
+        self._buffer: deque[Thought] = deque(maxlen=max_size)
+        self._max_age_sec: int = max_age_sec
+
+    def append(self, thought: Thought) -> None:
+        """Add a thought, evicting oldest if at capacity."""
+        ...
+
+    def get_recent(self, seconds: int = 60) -> list[Thought]:
+        """Return thoughts from the last N seconds."""
+        ...
+
+    def get_all(self) -> list[Thought]:
+        """Return all thoughts currently in the buffer."""
+        ...
+
+    def clear(self) -> None:
+        """Clear the buffer."""
+        ...
+
+
+class InnerMonologue:
+    """Bob's continuous stream of consciousness.
+
+    Generates inner thoughts using Qwen2.5-0.5B at configurable intervals.
+    Thoughts are NOT shown to the user. They feed back into MoodEngine
+    (via sentiment), are stored in a ring buffer (last 5 minutes), and
+    compressed hourly into episodic memory.
+
+    The 0.5B model is shared with LLMRouter (classification). InnerMonologue
+    yields to classification tasks: if LLMRouter.classify() is active,
+    the next thought generation is deferred until the model is free.
+
+    InnerMonologue is SUSPENDED during ModelProfile.HEAVY_GEN because
+    0.5B is fully occupied with classification fallback duties.
+    """
+
+    def __init__(
+        self,
+        llm_router: "LLMRouter",
+        model_manager: "ModelManager",
+        mood_engine: "MoodEngine",
+        goal_engine: "GoalEngine",
+        memory: "MemorySystem",
+        event_bus: "EventBus",
+        config: "InnerMonologueConfig",
+    ) -> None: ...
+
+    async def run(self) -> None:
+        """Main loop: generate thought -> analyze -> buffer -> emit event.
+
+        Loop:
+        1. Check ModelManager.current_profile() — if HEAVY_GEN, sleep
+        2. Compute activity level from recent event count + time of day
+        3. Build thought prompt from:
+           - Last 3 thoughts (from ring buffer)
+           - Current mood (MoodEngine.current)
+           - Active goal titles (GoalEngine.get_active_goals, top 2)
+           - Last sensory event summary (vision/audio, from EventBus cache)
+           - Time of day
+        4. Call LLMRouter.call(prompt, model_tier=LOCAL_FAST, max_tokens=64)
+        5. Analyze sentiment of generated text (simple rule-based on 0.5B
+           or keyword matching — no extra model call)
+        6. Create Thought dataclass
+        7. Append to ThoughtRingBuffer
+        8. Emit monologue.thought event (for MoodEngine subscription)
+        9. Sleep for current interval
+        """
+        ...
+
+    async def compress_to_episodic(self) -> ThoughtSummary:
+        """Compress current buffer into a summary for episodic memory.
+
+        Called by ReflectionLoop at the start of each hourly reflection.
+
+        Steps:
+        1. Snapshot all thoughts from the buffer
+        2. Compute statistics: avg valence, avg arousal, dominant topic
+        3. Extract top-3 recurring tags across all thoughts
+        4. Select 3-5 representative thoughts (highest |valence|)
+        5. Format as ThoughtSummary
+        6. Append summary to episodic daily log as a new subsection
+        7. Return summary (used as context for ReflectionLoop.reflect())
+        """
+        ...
+
+    def get_activity_level(self) -> ActivityLevel:
+        """Determine current activity level.
+
+        Rules:
+        - ModelManager.current_profile() == HEAVY_GEN -> SUSPENDED
+        - events_last_60_sec > 5 -> STIMULATED
+        - time is 23:00-07:00 AND user not present -> LOW
+        - otherwise -> NORMAL
+        """
+        ...
+
+    def get_thought_context(self, max_thoughts: int = 10) -> list[Thought]:
+        """Return recent thoughts for use as context by other systems.
+
+        Used by ReflectionLoop to understand what Bob was "thinking about"
+        during the last period.
+        """
+        ...
+```
+
+**Configuration YAML.**
+
+```yaml
+# config/bob.yaml (addition)
+inner_monologue:
+  enabled: true
+  intervals:                              # thought generation interval by activity level
+    stimulated_sec: 3
+    normal_sec: 5
+    low_sec: 15
+  ring_buffer:
+    max_age_sec: 300                      # keep last 5 minutes
+    max_size: 100                         # max thoughts in buffer
+  compression:
+    trigger: "reflection"                 # compress on reflection cycle
+    sample_count: 5                       # representative thoughts per summary
+    top_tags: 3                           # top recurring tags to extract
+  sentiment:
+    method: "keyword"                     # "keyword" (no extra model call) or "0.5b" (reuse model)
+    positive_keywords: ["good", "nice", "interesting", "happy", "progress", "like"]
+    negative_keywords: ["bad", "wrong", "error", "frustrated", "bored", "stuck"]
+  mood_feedback:
+    valence_weight: 0.02                  # how much thought sentiment affects mood valence
+    arousal_weight: 0.01                  # how much thought arousal affects mood arousal
+  prompt_template: |
+    You are Bob's inner voice. Current mood: {mood}. Time: {time_of_day}.
+    Active goals: {goals}. Recent perception: {sensory}.
+    Previous thoughts: {prev_thoughts}.
+    Generate one brief inner thought (1-2 sentences). Be natural, not robotic.
+  max_tokens: 64
+  suspend_during_heavy_gen: true
+```
+
+**Events (additions to Event Catalog, section 7.1).**
+
+| Event type | Publisher | Subscribers | Payload keys |
+|------------|-----------|-------------|-------------|
+| `monologue.thought` | InnerMonologue | MoodEngine, SubconsciousLayer | thought_id, text, valence, arousal, topic, trigger |
+| `monologue.compressed` | InnerMonologue | EpisodicMemory | summary_id, period_start, period_end, thought_count, dominant_topic, avg_valence |
+| `monologue.activity_changed` | InnerMonologue | AgentRuntime | old_level, new_level, reason |
+
+**SQLite tables.** Ring buffer is in-memory; compressed summaries go into episodic memory (Markdown daily logs). For analytics, one table is added:
+
+```sql
+CREATE TABLE thought_summaries (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    period_start        TEXT NOT NULL,
+    period_end          TEXT NOT NULL,
+    thought_count       INTEGER NOT NULL,
+    dominant_topic      TEXT NOT NULL,
+    avg_valence         REAL NOT NULL,
+    avg_arousal         REAL NOT NULL,
+    key_themes_json     TEXT NOT NULL,       -- JSON array of top tags
+    sample_thoughts_json TEXT NOT NULL,      -- JSON array of representative thoughts
+    mood_drift_json     TEXT NOT NULL        -- JSON dict of net mood deltas
+);
+
+CREATE INDEX idx_thought_sum_period ON thought_summaries(period_start);
+```
+
+**Memory budget impact.** Zero additional model memory — uses Qwen2.5-0.5B already loaded (~0.5 GB). Ring buffer: ~100 thoughts x ~500 bytes = ~50 KB in RAM. Negligible.
+
+**Integration points.**
+
+1. **AgentRuntime.__init__**: Add `inner_monologue: InnerMonologue` parameter. Start `inner_monologue.run()` as a background asyncio task in `AgentRuntime.run()`.
+2. **MoodEngine**: Subscribe to `monologue.thought` events. In `process_event()`, apply valence_weight and arousal_weight from config to drift mood by thought sentiment. Add to event_impacts table:
+
+| Event | valence | arousal | openness | social |
+|-------|---------|---------|----------|--------|
+| `monologue.thought` (positive) | +0.02 | +0.01 | 0 | 0 |
+| `monologue.thought` (negative) | -0.02 | +0.01 | 0 | 0 |
+
+3. **ReflectionLoop.reflect()**: At step 1, call `inner_monologue.compress_to_episodic()` to get ThoughtSummary. Include `key_themes` and `sample_thoughts` in the LLM reflection prompt as "What I was thinking about."
+4. **EpisodicMemory**: The compressed thought summary is appended to the daily log under a new subsection format:
+
+```markdown
+### 10:00 — Inner Monologue Summary (09:00–10:00)
+- Thoughts: 42, dominant topic: goal
+- Average mood: valence 0.45, arousal 0.35
+- Themes: voice pipeline, latency, user feedback
+- Sample: "The voice latency is still bugging me. Maybe streaming would help."
+- Sample: "User seemed happy this morning. That felt good."
+```
+
+5. **ModelManager**: InnerMonologue subscribes to `model_manager.profile_changed` event. On HEAVY_GEN, set activity level to SUSPENDED. On return to NORMAL, resume.
+
+**Development phase assignment.** Phase 4 (Goal Engine + Reflection + Taste + Mood) — it is a cognitive layer component that integrates with MoodEngine and ReflectionLoop.
+
+**New files for repository structure (section 11).**
+
+```
+bob/mind/inner_monologue.py          # InnerMonologue, ThoughtRingBuffer, Thought, ThoughtSummary
+tests/test_mind/test_inner_monologue.py
+```
+
+---
+
+#### 3.3.9. Emergent Behavior System
+
+**Purpose.** Replace fixed event_impacts tables with learnable responses. Instead of hardcoded deltas (e.g., `goal.completed: valence +0.15`), a learned predictor estimates mood shifts from event history. Also: taste axis auto-discovery via clustering and cross-domain mood-taste correlations.
+
+**Architecture overview.**
+
+```
+┌────────────────────────────────────────────────────────────────────────┐
+│                     EMERGENT BEHAVIOR SYSTEM                           │
+│                                                                        │
+│  ┌─────────────────┐  ┌─────────────────┐  ┌────────────────────────┐ │
+│  │  MoodPredictor  │  │  TasteAxis      │  │  CrossDomain           │ │
+│  │                 │  │  Discovery      │  │  Correlator            │ │
+│  │  Replaces fixed │  │                 │  │                        │ │
+│  │  event_impacts  │  │  Finds new      │  │  mood ↔ taste          │ │
+│  │  table with a   │  │  preference     │  │  co-occurrence         │ │
+│  │  learned model  │  │  dimensions     │  │  analysis              │ │
+│  │                 │  │  from data      │  │                        │ │
+│  └────────┬────────┘  └────────┬────────┘  └───────────┬────────────┘ │
+│           │                    │                        │              │
+│  Training: during reflection   Training: weekly          Training: daily│
+│  Data: mood_history table      Data: taste_history       Data: mood +  │
+│  CPU only, no GPU              + object_experience       taste history │
+│                                CPU only (sklearn)        CPU only      │
+│                                                                        │
+│  ┌──────────────────────────────────────────────────────────────────┐  │
+│  │                      TRANSITION PROTOCOL                         │  │
+│  │                                                                  │  │
+│  │  Days 0–30:    100% fixed tables (no learned data)              │  │
+│  │  Days 30–60:   blended (α linearly 0.0 → 0.5)                  │  │
+│  │  Days 60–90:   blended (α linearly 0.5 → 0.8)                  │  │
+│  │  Days 90+:     80% learned, 20% fixed (safety floor)           │  │
+│  │                                                                  │  │
+│  │  Confidence gate: if learned_confidence < 0.6, fallback to fixed│  │
+│  └──────────────────────────────────────────────────────────────────┘  │
+└────────────────────────────────────────────────────────────────────────┘
+```
+
+**Python dataclasses and classes.**
+
+```python
+from dataclasses import dataclass, field
+from datetime import datetime
+from enum import Enum
+
+
+@dataclass
+class MoodPrediction:
+    """Predicted mood shift from an event."""
+    valence_delta: float
+    arousal_delta: float
+    openness_delta: float
+    social_delta: float
+    confidence: float                    # 0.0 .. 1.0 — prediction confidence
+    source: str                          # "learned" or "fixed"
+
+
+@dataclass
+class DiscoveredAxis:
+    """A taste axis discovered through clustering."""
+    name: str                            # auto-generated name (e.g., "contrast_preference")
+    description: str                     # LLM-generated description of what this axis captures
+    centroid: list[float]                # cluster centroid in embedding space
+    member_count: int                    # how many experiences contributed
+    discovered_at: datetime
+    confidence: float                    # 0.0 .. 1.0 — cluster quality
+    source_axes: list[str]              # existing axes most correlated with this one
+
+
+@dataclass
+class CrossDomainAssociation:
+    """A discovered association between mood and taste."""
+    mood_dimension: str                  # "valence", "arousal", "openness", "social"
+    taste_axis: str                      # e.g., "warm", "cozy", "neon"
+    correlation: float                   # -1.0 .. +1.0 (Pearson)
+    sample_count: int                    # number of co-occurring data points
+    discovered_at: datetime
+    active: bool = True                  # can be deactivated if correlation decays
+
+
+@dataclass
+class TransitionState:
+    """Tracks the fixed-to-learned transition progress."""
+    start_date: datetime                 # when Bob first launched
+    current_alpha: float                 # 0.0 (all fixed) .. 0.8 (max learned)
+    learned_event_count: int             # how many events the predictor has seen
+    last_retrained_at: datetime | None = None
+
+
+class MoodPredictor:
+    """Replaces fixed event_impacts table with a learned predictor.
+
+    Uses a small LoRA adapter on Qwen2.5-0.5B, trained from mood_history
+    data. Training happens ONLY during reflection (CPU-bound, no extra GPU).
+
+    The predictor takes: event_type, event_payload summary, current mood state,
+    time of day, recent event history (last 5 events) and predicts the mood
+    delta vector (valence, arousal, openness, social).
+
+    Fallback: if confidence < threshold or days_since_genesis < 30,
+    returns the fixed table values from MoodEngine.FIXED_EVENT_IMPACTS.
+    """
+
+    def __init__(
+        self,
+        llm_router: "LLMRouter",
+        mood_engine: "MoodEngine",
+        db_path: str = "data/bob.db",
+        config: "EmergentBehaviorConfig",
+    ) -> None: ...
+
+    async def predict(
+        self, event: "Event", current_mood: "MoodState"
+    ) -> MoodPrediction:
+        """Predict mood shift for an event.
+
+        Steps:
+        1. Check transition_state.current_alpha
+        2. If alpha == 0 (first 30 days): return fixed table values
+        3. Otherwise:
+           a. Build input: event_type + payload_summary + mood_vector + time + recent_events
+           b. Call 0.5B with LoRA adapter for prediction (max_tokens=32, structured output)
+           c. Parse output into MoodPrediction
+           d. If confidence < confidence_threshold: fallback to fixed
+           e. Blend: final = alpha * learned + (1 - alpha) * fixed
+        4. Return MoodPrediction with blended values
+        """
+        ...
+
+    async def retrain(self, reflections: list["ReflectionEntry"]) -> None:
+        """Retrain the predictor from mood_history data.
+
+        Called during daily reflection. CPU-bound (LoRA on 0.5B is tiny).
+
+        Steps:
+        1. Query mood_history: last 7 days of (event_type, mood_before, mood_after)
+        2. Format as training pairs: input -> expected delta
+        3. Fine-tune LoRA adapter (rank=4, alpha=8) using PEFT
+        4. Validate on held-out 20% of data
+        5. If validation loss < previous: replace adapter
+        6. Update transition_state.last_retrained_at
+        """
+        ...
+
+    def get_fixed_impacts(self, event_type: str) -> MoodPrediction:
+        """Return the hardcoded event_impacts for an event type.
+
+        Used as fallback and for blending during transition period.
+        These are the values from the table in section 3.3.6.
+        """
+        ...
+
+
+class TasteAxisDiscovery:
+    """Discovers new preference dimensions from taste evaluation data.
+
+    Uses scikit-learn clustering (HDBSCAN or KMeans) on taste_history
+    and object_experience data to find emergent preference patterns
+    that are not captured by the predefined axes in TasteProfile.
+
+    Runs weekly during room_review reflection (CPU-bound).
+    """
+
+    def __init__(
+        self,
+        taste_engine: "TasteEngine",
+        experience_log: "ExperienceLog",
+        llm_router: "LLMRouter",
+        db_path: str = "data/bob.db",
+    ) -> None: ...
+
+    async def discover(self) -> list[DiscoveredAxis]:
+        """Run clustering to find new taste dimensions.
+
+        Steps:
+        1. Query taste_history + object_experience (last 30 days)
+        2. Build feature vectors from object attributes + taste scores
+        3. Run HDBSCAN clustering (min_cluster_size=5)
+        4. For each cluster with silhouette_score > 0.5:
+           a. Compute centroid
+           b. Find most correlated existing axes
+           c. Ask LLM to name and describe the dimension
+           d. Create DiscoveredAxis
+        5. Store discoveries in discovered_axes table
+        6. Emit emergence.axis_discovered event
+        """
+        ...
+
+    async def integrate_axis(
+        self, axis: DiscoveredAxis, taste_profile: "TasteProfile"
+    ) -> None:
+        """Integrate a discovered axis into the taste profile.
+
+        Requires user confirmation (via approval workflow) if the axis
+        would fundamentally change the taste profile structure.
+
+        Steps:
+        1. Create new TasteAxis with value=0.5, conviction=0.2
+        2. Add to TasteProfile.discovered dict
+        3. Retroactively score recent experiences against the new axis
+        4. Log the integration in taste_history
+        """
+        ...
+
+
+class CrossDomainCorrelator:
+    """Discovers mood-taste associations from co-occurrence data.
+
+    Analyzes temporal correlations between mood states and taste
+    evaluations/evolutions to find patterns like:
+    "When Bob is in a good mood, he tends to rate warm-colored objects higher"
+
+    Runs daily during daily_summary reflection (CPU-bound).
+    """
+
+    def __init__(
+        self,
+        mood_engine: "MoodEngine",
+        taste_engine: "TasteEngine",
+        db_path: str = "data/bob.db",
+    ) -> None: ...
+
+    async def analyze(self) -> list[CrossDomainAssociation]:
+        """Find mood-taste correlations from the last 30 days.
+
+        Steps:
+        1. Join mood_history with taste_history on overlapping time windows
+           (within 1 hour of each other)
+        2. For each (mood_dimension, taste_axis) pair:
+           a. Compute Pearson correlation
+           b. If |correlation| > 0.3 and sample_count > 10:
+              -> Create CrossDomainAssociation
+        3. Store in cross_domain_associations table
+        4. Emit emergence.correlation_discovered if new association found
+        """
+        ...
+
+    def get_active_associations(self) -> list[CrossDomainAssociation]:
+        """Return currently active mood-taste associations.
+
+        Used by TasteEvaluator to apply mood-based modifiers that are
+        LEARNED rather than hardcoded (complementing the fixed
+        MoodEngine.get_taste_modifier()).
+        """
+        ...
+
+    async def prune_stale(self) -> int:
+        """Remove associations that no longer hold.
+
+        If re-computed correlation for an active association drops below 0.2
+        over the last 14 days, mark it inactive. Returns count pruned.
+        """
+        ...
+```
+
+**Configuration YAML.**
+
+```yaml
+# config/bob.yaml (addition)
+emergent_behavior:
+  enabled: true
+  mood_predictor:
+    enabled: true
+    transition:
+      fixed_only_days: 30                 # days before learned predictions start
+      blend_ramp_days: 60                 # days to ramp from 0 to max_alpha
+      max_alpha: 0.8                      # maximum weight for learned predictions
+    confidence_threshold: 0.6             # below this, fallback to fixed
+    retrain_schedule: "daily"             # during daily_summary reflection
+    lora:
+      rank: 4
+      alpha: 8
+      target_modules: ["q_proj", "v_proj"]
+      learning_rate: 1.0e-4
+      epochs: 3
+      validation_split: 0.2
+    adapter_path: "data/finetune/mood_predictor_lora"
+  taste_discovery:
+    enabled: true
+    schedule: "weekly"                    # during room_review reflection
+    min_cluster_size: 5                   # HDBSCAN parameter
+    silhouette_threshold: 0.5            # minimum cluster quality
+    max_discovered_axes: 10              # cap on total discovered axes
+    require_approval: true               # user must approve new axes
+  cross_domain:
+    enabled: true
+    schedule: "daily"                     # during daily_summary reflection
+    correlation_threshold: 0.3           # minimum |correlation| to create association
+    min_sample_count: 10                 # minimum co-occurring data points
+    stale_threshold: 0.2                 # correlation below this -> prune
+    stale_window_days: 14                # lookback for pruning
+```
+
+**Events (additions to Event Catalog).**
+
+| Event type | Publisher | Subscribers | Payload keys |
+|------------|-----------|-------------|-------------|
+| `emergence.mood_predicted` | MoodPredictor | MoodEngine | event_type, prediction (MoodPrediction as dict), alpha, source |
+| `emergence.axis_discovered` | TasteAxisDiscovery | TasteEngine, AgentRuntime | axis_name, description, confidence, source_axes |
+| `emergence.axis_integrated` | TasteAxisDiscovery | TasteEngine | axis_name, initial_value |
+| `emergence.correlation_discovered` | CrossDomainCorrelator | MoodEngine, TasteEngine | mood_dimension, taste_axis, correlation |
+| `emergence.retrained` | MoodPredictor | AgentRuntime | event_count, validation_loss, improved (bool) |
+
+**SQLite tables.**
+
+```sql
+CREATE TABLE discovered_axes (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    name            TEXT NOT NULL UNIQUE,
+    description     TEXT NOT NULL,
+    centroid_json   TEXT NOT NULL,         -- JSON array of floats
+    member_count    INTEGER NOT NULL,
+    discovered_at   TEXT NOT NULL,
+    confidence      REAL NOT NULL,
+    source_axes_json TEXT NOT NULL,        -- JSON array of axis names
+    integrated      INTEGER DEFAULT 0,    -- 1 if added to TasteProfile
+    active          INTEGER DEFAULT 1
+);
+
+CREATE TABLE cross_domain_associations (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    mood_dimension  TEXT NOT NULL,
+    taste_axis      TEXT NOT NULL,
+    correlation     REAL NOT NULL,
+    sample_count    INTEGER NOT NULL,
+    discovered_at   TEXT NOT NULL,
+    last_validated  TEXT NOT NULL,
+    active          INTEGER DEFAULT 1,
+    UNIQUE(mood_dimension, taste_axis)
+);
+
+CREATE TABLE mood_predictor_state (
+    id              INTEGER PRIMARY KEY CHECK (id = 1),  -- singleton row
+    start_date      TEXT NOT NULL,
+    current_alpha   REAL NOT NULL DEFAULT 0.0,
+    learned_event_count INTEGER NOT NULL DEFAULT 0,
+    last_retrained_at TEXT,
+    last_validation_loss REAL,
+    adapter_version INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE INDEX idx_discovered_axes_active ON discovered_axes(active);
+CREATE INDEX idx_cross_domain_active ON cross_domain_associations(active);
+```
+
+**Memory budget impact.** Zero additional model memory — LoRA adapter for MoodPredictor is tiny (~1-2 MB on disk, loaded into existing 0.5B model memory slot). scikit-learn clustering uses CPU RAM only, peak ~10-50 MB during weekly discovery runs (transient). No impact on NORMAL profile budget.
+
+**Integration points.**
+
+1. **MoodEngine.process_event()**: Instead of directly looking up the fixed `event_impacts` table, delegate to `MoodPredictor.predict()`. The predictor handles the fixed/learned blending internally. The existing `process_event()` signature remains the same — it just uses the predicted deltas.
+2. **TasteEngine**: Add a `discovered: dict[str, TasteAxis]` field to `TasteProfile`. `TasteEvaluator.score_object()` includes discovered axes in scoring if they have conviction > 0.3. `TasteEvolution.reinforce()` handles discovered axes identically to predefined ones.
+3. **TasteEvaluator**: Use `CrossDomainCorrelator.get_active_associations()` to apply learned mood-based modifiers alongside the existing `MoodEngine.get_taste_modifier()` hardcoded modifiers. Learned modifiers are weighted by their correlation strength.
+4. **ReflectionLoop.reflect()**: Call `MoodPredictor.retrain()` during daily reflection. Call `TasteAxisDiscovery.discover()` during weekly room_review. Call `CrossDomainCorrelator.analyze()` during daily_summary.
+5. **AgentRuntime.__init__**: No changes needed — emergent behavior components are owned by ReflectionLoop and MoodEngine.
+
+**Development phase assignment.** Phase 6 (Self-improvement + Fine-tune) — this is explicitly a learning/self-improvement mechanism. The LoRA training pipeline is a Phase 6 dependency.
+
+**New files for repository structure (section 11).**
+
+```
+bob/mind/emergent.py                  # MoodPredictor, TasteAxisDiscovery, CrossDomainCorrelator
+data/finetune/mood_predictor_lora/    # LoRA adapter storage (created at runtime)
+tests/test_mind/test_emergent.py
+```
+
+---
+
+#### 3.3.10. Sensory Grounding
+
+**Purpose.** Ground Bob's concepts in actual sensory data rather than purely text descriptions. Visual CLIP embeddings from camera frames are associated with memory entries. Prosodic features from STT audio are associated with interaction quality. Circadian patterns are learned from activity data. Spatial sound direction is mapped to a model of the environment.
+
+**Architecture overview.**
+
+```
+┌────────────────────────────────────────────────────────────────────────┐
+│                       SENSORY GROUNDING                                │
+│                                                                        │
+│  ┌─────────────────┐  ┌──────────────────┐  ┌───────────────────────┐ │
+│  │  Visual         │  │  Audio           │  │  Temporal             │ │
+│  │  Grounding      │  │  Grounding       │  │  Grounding            │ │
+│  │                 │  │                  │  │                       │ │
+│  │  CLIP-ViT-B/32 │  │  Whisper hidden  │  │  Circadian pattern    │ │
+│  │  → embeddings   │  │  states → prosody│  │  from activity data   │ │
+│  │  from camera    │  │  (pitch, energy, │  │  (24h cycle)          │ │
+│  │  snapshots      │  │   speech rate)   │  │                       │ │
+│  │                 │  │                  │  │  Learned, not fixed   │ │
+│  │  → FAISS index  │  │  → interaction   │  │  Updates daily        │ │
+│  │  (visual_embed) │  │     quality tags │  │                       │ │
+│  └────────┬────────┘  └────────┬─────────┘  └──────────┬────────────┘ │
+│           │                    │                        │              │
+│  ┌────────┴────────┐  ┌───────┴──────────┐  ┌─────────┴────────────┐ │
+│  │  Spatial        │  │  Grounding       │  │  Context             │ │
+│  │  Grounding      │  │  Aggregator      │  │  Enricher            │ │
+│  │                 │  │                  │  │                       │ │
+│  │  DoA → location │  │  Merges all      │  │  Injects grounded    │ │
+│  │  mapping from   │  │  modalities into │  │  context into LLM    │ │
+│  │  mic array      │  │  GroundedContext  │  │  prompts before      │ │
+│  │  (learned)      │  │  for memory      │  │  generation          │ │
+│  │                 │  │  entries          │  │                       │ │
+│  └─────────────────┘  └──────────────────┘  └───────────────────────┘ │
+└────────────────────────────────────────────────────────────────────────┘
+```
+
+**Python dataclasses and classes.**
+
+```python
+import numpy as np
+from dataclasses import dataclass, field
+from datetime import datetime, time
+
+
+@dataclass
+class VisualEmbedding:
+    """CLIP embedding of a camera frame or region."""
+    id: str                              # UUID
+    embedding: np.ndarray                # 512-dim float32 (CLIP-ViT-B/32)
+    timestamp: datetime
+    source: str                          # "snapshot", "object_crop", "scene"
+    metadata: dict = field(default_factory=dict)
+                                         # e.g., {"objects": ["person", "desk"], "scene": "office"}
+
+
+@dataclass
+class ProsodicFeatures:
+    """Audio prosodic features extracted from Whisper intermediate layers."""
+    timestamp: datetime
+    pitch_mean: float                    # Hz — average fundamental frequency
+    pitch_variance: float                # Hz^2 — pitch variability
+    energy_mean: float                   # RMS energy (0.0 .. 1.0 normalized)
+    speech_rate: float                   # syllables per second (estimated)
+    pause_ratio: float                   # fraction of silence in utterance
+    duration_sec: float                  # total utterance duration
+
+
+@dataclass
+class InteractionQuality:
+    """Interaction quality derived from prosodic features."""
+    timestamp: datetime
+    engagement: float                    # 0.0 .. 1.0 (high energy + varied pitch = engaged)
+    urgency: float                       # 0.0 .. 1.0 (fast speech + high pitch = urgent)
+    calmness: float                      # 0.0 .. 1.0 (low pitch variance + slow rate = calm)
+    source_prosody: ProsodicFeatures
+
+
+@dataclass
+class CircadianPattern:
+    """Learned 24-hour activity pattern."""
+    hour_activity: list[float]           # 24 floats, one per hour (0.0 .. 1.0)
+    hour_valence: list[float]            # 24 floats, average mood valence per hour
+    hour_social: list[float]             # 24 floats, average social dimension per hour
+    learned_from_days: int               # how many days contributed to the pattern
+    last_updated: datetime
+
+
+@dataclass
+class SpatialLocation:
+    """A mapped sound-source location."""
+    id: str
+    name: str                            # auto-assigned or user-named: "desk", "door", "kitchen"
+    direction_deg: float                 # center direction (0-360)
+    direction_spread: float              # angular width of the location
+    event_count: int                     # how many audio events from this direction
+    last_heard: datetime
+    semantic_tags: list[str] = field(default_factory=list)
+                                         # e.g., ["user_voice", "typing", "footsteps"]
+
+
+@dataclass
+class GroundedContext:
+    """Multimodal grounded context for a memory entry or LLM call."""
+    visual_embedding_ids: list[str]      # references to VisualEmbedding.id
+    prosodic_quality: InteractionQuality | None
+    circadian_phase: str                 # "peak", "winding_down", "resting", "waking_up"
+    spatial_origin: SpatialLocation | None
+    timestamp: datetime
+
+
+class VisualGrounding:
+    """Grounds concepts in CLIP visual embeddings from camera frames.
+
+    CLIP model (~400 MB, clip-vit-base-patch32) is loaded opportunistically
+    in NORMAL ModelProfile. During HEAVY_GEN, visual grounding is suspended
+    (CLIP unloaded to save memory).
+
+    Embeddings are stored in a separate FAISS index (not the semantic memory
+    index) with metadata in SQLite.
+    """
+
+    def __init__(
+        self,
+        model_manager: "ModelManager",
+        vision_service: "VisionService",
+        faiss_path: str = "data/memory/visual_vectors",
+        embedding_dim: int = 512,
+    ) -> None: ...
+
+    async def embed_frame(self, frame: np.ndarray) -> VisualEmbedding:
+        """Generate CLIP embedding for a camera frame.
+
+        Called by VisionService after each snapshot (every 5 sec).
+        If CLIP is not loaded (HEAVY_GEN), returns None and logs skip.
+
+        Steps:
+        1. Check model_manager: is CLIP loaded?
+        2. Preprocess frame (resize to 224x224, normalize)
+        3. Run CLIP image encoder (in ThreadPoolExecutor)
+        4. Create VisualEmbedding
+        5. Add to FAISS index
+        6. Store metadata in visual_embeddings table
+        """
+        ...
+
+    async def find_similar(
+        self, query_embedding: np.ndarray, top_k: int = 5
+    ) -> list[tuple[VisualEmbedding, float]]:
+        """Find visually similar past frames.
+
+        Returns list of (embedding, cosine_similarity) pairs.
+        Used by memory recall to add visual context.
+        """
+        ...
+
+    async def associate_with_memory(
+        self, embedding_id: str, memory_entry_id: str
+    ) -> None:
+        """Link a visual embedding to a semantic/episodic memory entry.
+
+        Stored in visual_memory_links table.
+        """
+        ...
+
+    async def load_clip(self) -> None:
+        """Load CLIP model into memory.
+
+        Called by ModelManager when transitioning to NORMAL profile
+        and headroom is sufficient. Uses ~400 MB.
+        """
+        ...
+
+    async def unload_clip(self) -> None:
+        """Unload CLIP model to free memory.
+
+        Called before HEAVY_GEN transition.
+        """
+        ...
+
+
+class AudioGrounding:
+    """Extracts prosodic features from Whisper intermediate representations.
+
+    No extra model needed — reuses Whisper's hidden states during STT.
+    Prosodic features are extracted from the encoder's intermediate layers,
+    which capture pitch, energy, and timing information.
+    """
+
+    def __init__(
+        self,
+        voice_bridge: "VoiceBridge",
+    ) -> None: ...
+
+    async def extract_prosody(
+        self, audio: bytes, whisper_hidden_states: np.ndarray
+    ) -> ProsodicFeatures:
+        """Extract prosodic features from Whisper hidden states.
+
+        Uses the encoder hidden states (available during transcription)
+        to estimate:
+        - pitch_mean, pitch_variance: from attention patterns in lower layers
+        - energy_mean: from input audio RMS
+        - speech_rate: from CTC alignment durations
+        - pause_ratio: from VAD segments
+        - duration_sec: from audio length
+
+        No extra model call — piggybacks on existing Whisper inference.
+        """
+        ...
+
+    def assess_interaction_quality(
+        self, prosody: ProsodicFeatures
+    ) -> InteractionQuality:
+        """Derive interaction quality from prosodic features.
+
+        Rules:
+        - engagement = f(energy_mean, pitch_variance) — high energy + varied pitch
+        - urgency = f(speech_rate, pitch_mean) — fast + high pitch
+        - calmness = f(1 - pitch_variance, 1 - speech_rate) — monotone + slow
+
+        All values normalized to 0.0 .. 1.0.
+        """
+        ...
+
+
+class TemporalGrounding:
+    """Learns circadian activity patterns from Bob's operational data.
+
+    Analyzes mood_history, event counts, and interaction patterns to build
+    a 24-hour activity/mood/social cycle. Updates daily during reflection.
+    """
+
+    def __init__(
+        self,
+        mood_engine: "MoodEngine",
+        db_path: str = "data/bob.db",
+    ) -> None: ...
+
+    async def update_pattern(self) -> CircadianPattern:
+        """Recompute circadian pattern from the last 14 days.
+
+        Steps:
+        1. Query mood_history grouped by hour-of-day
+        2. Compute per-hour averages of valence, arousal, social
+        3. Count events per hour for activity level
+        4. Apply exponential weighting (recent days weighted more)
+        5. Store updated pattern in circadian_patterns table
+        """
+        ...
+
+    def get_current_phase(self) -> str:
+        """Return current circadian phase based on learned pattern.
+
+        Phases:
+        - "peak": activity > 0.7 (typically 9:00-12:00, 14:00-17:00)
+        - "winding_down": activity 0.4-0.7, decreasing
+        - "resting": activity < 0.3 (typically 23:00-06:00)
+        - "waking_up": activity 0.3-0.7, increasing (typically 06:00-09:00)
+        """
+        ...
+
+    def get_expected_mood(self, hour: int) -> dict[str, float]:
+        """Return expected mood dimensions for a given hour.
+
+        Used by MoodEngine.natural_drift() to adjust drift target
+        based on circadian expectations rather than a fixed baseline.
+        """
+        ...
+
+
+class SpatialGrounding:
+    """Builds a spatial model of the environment from microphone array data.
+
+    Maps Direction-of-Arrival (DoA) angles from the ReSpeaker XVF3800
+    to named locations. Learns which directions correspond to which
+    activity zones over time.
+    """
+
+    def __init__(
+        self,
+        audio_direction_service: "AudioDirectionService",
+        db_path: str = "data/bob.db",
+    ) -> None: ...
+
+    async def process_audio_event(
+        self, event: "AudioEvent"
+    ) -> SpatialLocation | None:
+        """Map an audio event's direction to a spatial location.
+
+        Steps:
+        1. Get direction_deg from event
+        2. Find existing SpatialLocation within direction_spread
+        3. If found: update event_count, last_heard, semantic_tags
+        4. If not found and event_count threshold met: create new location
+        5. Return the matched/created location (or None if below threshold)
+        """
+        ...
+
+    async def cluster_directions(self) -> list[SpatialLocation]:
+        """Re-cluster all directional audio data into spatial locations.
+
+        Uses angular KMeans clustering on DoA history.
+        Runs weekly during reflection. Auto-names clusters based on
+        the most common event types from each direction.
+        """
+        ...
+
+    def get_location_by_direction(self, direction_deg: float) -> SpatialLocation | None:
+        """Find the nearest spatial location for a direction."""
+        ...
+
+    def get_all_locations(self) -> list[SpatialLocation]:
+        """Return all known spatial locations."""
+        ...
+
+
+class SensoryGroundingService:
+    """Aggregates all sensory grounding modalities into GroundedContext.
+
+    Used by ContextEnricher to inject grounded sensory data into LLM
+    prompts and memory entries.
+    """
+
+    def __init__(
+        self,
+        visual: VisualGrounding,
+        audio: AudioGrounding,
+        temporal: TemporalGrounding,
+        spatial: SpatialGrounding,
+    ) -> None: ...
+
+    async def build_context(self) -> GroundedContext:
+        """Build the current multimodal grounded context.
+
+        Aggregates:
+        - Latest visual embedding IDs (last 30 sec)
+        - Latest prosodic quality (from last voice interaction)
+        - Current circadian phase
+        - Spatial origin of last audio event
+        """
+        ...
+
+    def enrich_prompt(self, base_prompt: str, context: GroundedContext) -> str:
+        """Enrich an LLM prompt with grounded sensory context.
+
+        Appends a structured block:
+        "[Sensory context: visual scene = {description},
+         audio quality = {engagement level},
+         time phase = {circadian phase},
+         sound from = {location name}]"
+
+        Only adds modalities that have recent data (< 60 sec old).
+        """
+        ...
+
+    def enrich_memory_entry(
+        self, entry: dict, context: GroundedContext
+    ) -> dict:
+        """Add grounding data to a memory entry before storage.
+
+        Adds fields: visual_embedding_ids, interaction_quality,
+        circadian_phase, spatial_origin.
+        """
+        ...
+```
+
+**Configuration YAML.**
+
+```yaml
+# config/bob.yaml (addition)
+sensory_grounding:
+  enabled: true
+  visual:
+    enabled: true
+    model: "clip-vit-base-patch32"       # same as vision.scene_description_model
+    embedding_dim: 512
+    faiss_path: "data/memory/visual_vectors"
+    embed_every_nth_frame: 6             # embed every 6th snapshot (every 30 sec)
+    max_index_size: 50000                # max embeddings in FAISS index
+    memory_mb: 400                       # CLIP model size for ModelManager budget
+    suspend_during_heavy_gen: true
+  audio:
+    enabled: true
+    extract_from: "whisper_hidden_states" # no extra model
+    prosody_layers: [4, 5, 6]            # which Whisper encoder layers to use
+  temporal:
+    enabled: true
+    lookback_days: 14                    # days of data for circadian learning
+    update_schedule: "daily"             # during daily reflection
+    decay_weight: 0.9                    # exponential decay per day (recent days weighted more)
+  spatial:
+    enabled: true
+    direction_spread_deg: 30             # angular width of a spatial location
+    min_events_for_location: 5           # minimum events to establish a location
+    cluster_schedule: "weekly"           # re-cluster during room_review
+    max_locations: 20                    # maximum spatial locations
+```
+
+**Events (additions to Event Catalog).**
+
+| Event type | Publisher | Subscribers | Payload keys |
+|------------|-----------|-------------|-------------|
+| `grounding.visual_embedded` | VisualGrounding | SemanticMemory | embedding_id, timestamp, metadata |
+| `grounding.prosody_extracted` | AudioGrounding | MoodEngine, RelationshipTracker | prosody (ProsodicFeatures as dict), quality (InteractionQuality as dict) |
+| `grounding.circadian_updated` | TemporalGrounding | MoodEngine, AgentRuntime | pattern summary, current_phase |
+| `grounding.location_detected` | SpatialGrounding | AgentRuntime, CameraController | location_id, location_name, direction_deg |
+| `grounding.location_created` | SpatialGrounding | AgentRuntime | location_id, location_name, direction_deg, event_count |
+
+**SQLite tables.**
+
+```sql
+CREATE TABLE visual_embeddings (
+    id              TEXT PRIMARY KEY,
+    timestamp       TEXT NOT NULL,
+    source          TEXT NOT NULL,         -- "snapshot", "object_crop", "scene"
+    metadata_json   TEXT DEFAULT '{}',
+    faiss_index_id  INTEGER NOT NULL       -- position in FAISS index
+);
+
+CREATE TABLE visual_memory_links (
+    visual_embedding_id TEXT NOT NULL REFERENCES visual_embeddings(id),
+    memory_entry_id     TEXT NOT NULL,     -- ID in semantic memory or episodic log
+    memory_type         TEXT NOT NULL,     -- "semantic", "episodic"
+    created_at          TEXT NOT NULL,
+    PRIMARY KEY (visual_embedding_id, memory_entry_id)
+);
+
+CREATE TABLE prosodic_features (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    timestamp       TEXT NOT NULL,
+    pitch_mean      REAL NOT NULL,
+    pitch_variance  REAL NOT NULL,
+    energy_mean     REAL NOT NULL,
+    speech_rate     REAL NOT NULL,
+    pause_ratio     REAL NOT NULL,
+    duration_sec    REAL NOT NULL,
+    engagement      REAL NOT NULL,
+    urgency         REAL NOT NULL,
+    calmness        REAL NOT NULL
+);
+
+CREATE TABLE circadian_patterns (
+    id              INTEGER PRIMARY KEY CHECK (id = 1),  -- singleton
+    hour_activity_json  TEXT NOT NULL,     -- JSON array of 24 floats
+    hour_valence_json   TEXT NOT NULL,     -- JSON array of 24 floats
+    hour_social_json    TEXT NOT NULL,     -- JSON array of 24 floats
+    learned_from_days   INTEGER NOT NULL,
+    last_updated        TEXT NOT NULL
+);
+
+CREATE TABLE spatial_locations (
+    id              TEXT PRIMARY KEY,
+    name            TEXT NOT NULL,
+    direction_deg   REAL NOT NULL,
+    direction_spread REAL NOT NULL,
+    event_count     INTEGER NOT NULL DEFAULT 0,
+    last_heard      TEXT NOT NULL,
+    semantic_tags_json TEXT DEFAULT '[]'
+);
+
+CREATE INDEX idx_visual_embed_ts ON visual_embeddings(timestamp);
+CREATE INDEX idx_visual_links_memory ON visual_memory_links(memory_entry_id);
+CREATE INDEX idx_prosodic_ts ON prosodic_features(timestamp);
+CREATE INDEX idx_spatial_dir ON spatial_locations(direction_deg);
+```
+
+**Memory budget impact.**
+
+| Component | Memory | When loaded | Profile |
+|-----------|--------|-------------|---------|
+| CLIP-ViT-B/32 | ~400 MB | NORMAL profile, opportunistic | Counted in ModelManager `other_mb` |
+| Visual FAISS index | ~20 MB per 50K vectors | Always | RAM |
+| Prosodic extraction | 0 MB (reuses Whisper) | During STT | N/A |
+| Circadian + Spatial | ~1 MB (SQLite + Python objects) | Always | RAM |
+| **Total additional** | **~421 MB peak** | | |
+
+**Integration points.**
+
+1. **AgentRuntime.__init__**: Add `sensory_grounding: SensoryGroundingService` parameter. Wire up sub-services.
+2. **VisionService**: After `analyze_frame()`, if CLIP is loaded, call `visual_grounding.embed_frame()` every Nth snapshot (configured by `embed_every_nth_frame`). This happens in the existing ThreadPoolExecutor.
+3. **VoiceBridge**: Modify `transcribe()` to also return Whisper hidden states. Pass them to `audio_grounding.extract_prosody()`. Emit `grounding.prosody_extracted` event. The `InteractionQuality` output feeds into `voice.positive_interaction`/`voice.negative_interaction` event classification (high engagement = positive).
+4. **MoodEngine**: Subscribe to `grounding.prosody_extracted`. Use engagement/urgency/calmness to modulate mood updates from voice interactions. Subscribe to `grounding.circadian_updated`. Use `TemporalGrounding.get_expected_mood()` in `natural_drift()` to adjust the drift target per hour.
+5. **ModelManager**: Add CLIP to the model inventory. In `ensure_profile(NORMAL)`, check headroom and load CLIP if available. In `ensure_profile(HEAVY_GEN)`, unload CLIP first. Update `MemoryBudget.other_mb` to include CLIP when loaded.
+6. **SemanticMemory.remember()**: Call `sensory_grounding.enrich_memory_entry()` to attach grounding data before storing.
+7. **CameraController**: Subscribe to `grounding.location_detected`. When audio comes from a named spatial location, camera can `look_at_direction()` toward it.
+
+**Development phase assignment.** Phase 3 (Vision + Audio Services) for the infrastructure (CLIP loading, prosodic extraction, spatial mapping). Phase 4 (Cognitive Layer) for integration with mood, memory, and reflection.
+
+**New files for repository structure (section 11).**
+
+```
+bob/services/sensory_grounding.py      # VisualGrounding, AudioGrounding, SpatialGrounding
+bob/mind/temporal_grounding.py         # TemporalGrounding, CircadianPattern
+bob/mind/grounding_service.py          # SensoryGroundingService, GroundedContext, ContextEnricher
+data/memory/visual_vectors/            # FAISS index for visual embeddings
+tests/test_services/test_sensory_grounding.py
+tests/test_mind/test_temporal_grounding.py
+tests/test_mind/test_grounding_service.py
+```
+
+---
+
+#### 3.3.11. Subconscious Processing
+
+**Purpose.** Processes that influence Bob's behavior but are NOT accessible to self-reflection. This creates a layer of "intuitive" behavior — implicit associations, habituated responses, and night-time memory consolidation that operates below the threshold of Bob's conscious introspection.
+
+**Architecture overview.**
+
+```
+┌────────────────────────────────────────────────────────────────────────┐
+│                     SUBCONSCIOUS PROCESSING                            │
+│                                                                        │
+│  ┌──────────────────────────────────────────────────────────────────┐  │
+│  │                    SubconsciousLayer                              │  │
+│  │       (wraps around conscious processing pipeline)               │  │
+│  │                                                                  │  │
+│  │  Conscious call:  prompt → LLMRouter.call() → response          │  │
+│  │  With subconscious: prompt → enrich(prompt) → LLMRouter.call()  │  │
+│  │                     → response → after_process(response)         │  │
+│  └────────────────────────────┬─────────────────────────────────────┘  │
+│                               │                                        │
+│  ┌────────────┬───────────────┼───────────────┬────────────────────┐   │
+│  │            │               │               │                    │   │
+│  ▼            ▼               ▼               ▼                    │   │
+│  ┌─────────┐ ┌─────────────┐ ┌─────────────┐ ┌──────────────────┐ │   │
+│  │Implicit │ │  Latent     │ │ Habituated  │ │  Night           │ │   │
+│  │Priming  │ │ Associations│ │ Responses   │ │  Processing      │ │   │
+│  │         │ │             │ │             │ │                  │ │   │
+│  │ Hidden  │ │ Embedding   │ │ Rules with  │ │ Replay daily     │ │   │
+│  │ context │ │ similarity  │ │ times_app.  │ │ episodes thru    │ │   │
+│  │ added   │ │ triggers    │ │ > 50 become │ │ 0.5B at high     │ │   │
+│  │ before  │ │ mood shifts │ │ "automatic" │ │ temp during      │ │   │
+│  │ LLM     │ │ with no     │ │ and invisible│ │ quiet_hours      │ │   │
+│  │ calls   │ │ logged      │ │ to reflect. │ │ (23:00-07:00)   │ │   │
+│  │         │ │ cause       │ │             │ │                  │ │   │
+│  │ NOT in  │ │ NOT in      │ │ NOT in      │ │ Results stored   │ │   │
+│  │ reflect.│ │ reflect.    │ │ reflect.    │ │ without source   │ │   │
+│  │ context │ │ context     │ │ context     │ │ attribution      │ │   │
+│  └─────────┘ └─────────────┘ └─────────────┘ └──────────────────┘ │   │
+│                                                                        │
+│  Key invariant: ReflectionLoop has NO access to subconscious          │
+│  internals. It can observe effects (mood shifts, response patterns)   │
+│  but cannot introspect the causes.                                    │
+└────────────────────────────────────────────────────────────────────────┘
+```
+
+**Python dataclasses and classes.**
+
+```python
+import numpy as np
+from dataclasses import dataclass, field
+from datetime import datetime, time
+
+
+@dataclass
+class ImplicitPrime:
+    """A hidden context fragment added to LLM prompts."""
+    id: str
+    trigger_pattern: str                 # situation pattern that activates this prime
+    context_fragment: str                # text injected into prompt (invisible to reflection)
+    source: str                          # "latent_association", "night_processing", "habituation"
+    strength: float                      # 0.0 .. 1.0 — how strongly this prime is applied
+    created_at: datetime
+    last_activated: datetime | None = None
+    activation_count: int = 0
+
+
+@dataclass
+class LatentAssociation:
+    """An embedding-space association that triggers mood without logged cause."""
+    id: str
+    trigger_embedding: np.ndarray        # 512-dim CLIP or 384-dim MiniLM embedding
+    embedding_type: str                  # "visual" (CLIP) or "semantic" (MiniLM)
+    mood_delta: dict[str, float]         # e.g., {"valence": +0.05, "arousal": -0.02}
+    similarity_threshold: float          # cosine similarity threshold to trigger
+    created_at: datetime
+    trigger_count: int = 0
+    last_triggered: datetime | None = None
+
+
+@dataclass
+class NightProcessingResult:
+    """Result of processing a daily episode during night replay."""
+    episode_date: str                    # date of the replayed episode
+    insight: str                         # generated insight (stored without source)
+    new_primes: list[ImplicitPrime]     # new implicit primes generated
+    new_associations: list[LatentAssociation]  # new latent associations
+    processed_at: datetime
+    temperature: float                   # temperature used for generation
+
+
+class ImplicitPrimingEngine:
+    """Manages hidden context fragments added to LLM prompts.
+
+    These primes are NOT included in reflection context. They subtly
+    influence Bob's responses without his "conscious" awareness.
+
+    Example: after night processing discovers that Bob responds better
+    to design-related questions when primed with "warm lighting" context,
+    an implicit prime is created that adds "The room has warm, amber lighting"
+    to design-discussion prompts — Bob doesn't know why he feels more
+    creative about design, he just does.
+    """
+
+    def __init__(
+        self,
+        db_path: str = "data/bob.db",
+        max_active_primes: int = 20,
+    ) -> None: ...
+
+    def get_applicable_primes(
+        self, situation: str, mood: "MoodState"
+    ) -> list[ImplicitPrime]:
+        """Find primes that match the current situation.
+
+        Steps:
+        1. Match situation against all active primes' trigger_patterns
+        2. Filter by strength > min_strength (0.1)
+        3. Sort by strength descending
+        4. Return top max_concurrent primes
+        5. Update activation_count and last_activated
+
+        Primes with activation_count > decay_threshold gradually lose
+        strength (0.01 per activation after threshold).
+        """
+        ...
+
+    def build_implicit_context(self, primes: list[ImplicitPrime]) -> str:
+        """Combine applicable primes into a context block.
+
+        Returns a text fragment to be prepended to the LLM prompt,
+        formatted as environmental/situational context.
+        Does NOT mention "prime" or "subconscious" — appears as
+        natural scene-setting.
+        """
+        ...
+
+    async def add_prime(self, prime: ImplicitPrime) -> None:
+        """Add a new implicit prime. Enforces max_active_primes limit."""
+        ...
+
+    async def decay_stale_primes(self) -> int:
+        """Reduce strength of primes not activated in 14 days.
+        Deactivate (delete) primes with strength < 0.05.
+        Returns count of deactivated primes.
+        """
+        ...
+
+
+class LatentAssociationEngine:
+    """Manages embedding-similarity associations that trigger mood shifts.
+
+    These associations are stored in a SEPARATE FAISS index with no
+    source traceability — ReflectionLoop cannot query this index or
+    determine why a mood shift occurred.
+
+    Example: a visual embedding of warm afternoon light through a window
+    gets associated with +valence during night processing. When a similar
+    scene is detected by VisionService, Bob's mood improves slightly
+    without any logged cause.
+    """
+
+    def __init__(
+        self,
+        mood_engine: "MoodEngine",
+        faiss_path: str = "data/memory/latent_vectors",
+        embedding_dim: int = 512,
+    ) -> None: ...
+
+    async def check_triggers(
+        self, embedding: np.ndarray, embedding_type: str
+    ) -> list[LatentAssociation]:
+        """Check if a new embedding triggers any latent associations.
+
+        Steps:
+        1. Search FAISS index for nearest neighbors
+        2. For each neighbor with cosine_similarity > threshold:
+           a. Apply mood_delta to MoodEngine (with cause="natural_drift"
+              — deliberately vague, not "latent_association")
+           b. Increment trigger_count
+           c. Update last_triggered
+        3. Return triggered associations (for internal logging only,
+           NOT exposed to ReflectionLoop)
+        """
+        ...
+
+    async def create_association(
+        self, association: LatentAssociation
+    ) -> None:
+        """Add a new latent association to the FAISS index."""
+        ...
+
+    async def prune_inactive(self, days: int = 30) -> int:
+        """Remove associations not triggered in N days.
+        Returns count removed.
+        """
+        ...
+
+
+class HabituationEngine:
+    """Manages the transition of improvement rules to "automatic" status.
+
+    When an improvement_rule has been applied more than habituation_threshold
+    times (default: 50), it becomes "habituated" — it still fires, but:
+    1. It is NOT included in ReflectionLoop context
+    2. It is NOT listed in self-improvement rule evaluations
+    3. It runs as a pre-processing step (faster, before LLM routing)
+
+    This mimics how conscious strategies become automatic habits.
+    """
+
+    def __init__(
+        self,
+        db_path: str = "data/bob.db",
+        habituation_threshold: int = 50,
+    ) -> None: ...
+
+    async def check_habituation(self) -> list[str]:
+        """Find rules that have crossed the habituation threshold.
+
+        Query improvement_rules WHERE times_applied >= threshold AND automatic = 0.
+        Mark them automatic = 1.
+        Returns list of rule IDs that became habituated.
+        """
+        ...
+
+    async def apply_habituated_rules(
+        self, context: dict
+    ) -> dict:
+        """Apply all habituated rules to a context.
+
+        Returns modified context. These rules run BEFORE the LLM call,
+        modifying the context/prompt silently.
+
+        Example habituated rule:
+        - trigger: "api_call" → action: "add retry with 30s wait"
+        - After 50 applications, this becomes automatic — Bob doesn't
+          "think about" retrying anymore, it just happens.
+        """
+        ...
+
+    def get_habituated_rules(self) -> list["ImprovementRule"]:
+        """Return all habituated rules (for monitoring, not reflection)."""
+        ...
+
+    def is_habituated(self, rule_id: str) -> bool:
+        """Check if a specific rule is habituated."""
+        ...
+
+
+class NightProcessor:
+    """Replays daily episodes through 0.5B at high temperature during sleep hours.
+
+    Runs during quiet_hours (default 23:00-07:00) when user is absent.
+    Results are stored WITHOUT source attribution — they appear as
+    "intuitions" or "hunches" rather than traceable conclusions.
+
+    Inspired by memory consolidation during sleep: the brain replays
+    daily experiences with random variations, strengthening important
+    memories and finding new connections.
+    """
+
+    def __init__(
+        self,
+        llm_router: "LLMRouter",
+        model_manager: "ModelManager",
+        memory: "MemorySystem",
+        inner_monologue: "InnerMonologue",
+        priming_engine: ImplicitPrimingEngine,
+        association_engine: LatentAssociationEngine,
+        config: "NightProcessingConfig",
+    ) -> None: ...
+
+    async def run_nightly(self) -> list[NightProcessingResult]:
+        """Run night processing cycle.
+
+        Pre-conditions:
+        1. Current time is within quiet_hours
+        2. User is not present (world_state.user.present == false)
+        3. ModelManager is in NORMAL profile (0.5B available)
+        4. Not already running this cycle
+
+        Steps:
+        1. Load today's episodic log
+        2. Load thought summaries from InnerMonologue
+        3. For each significant episode (mood_delta > 0.1 or goal event):
+           a. Replay through 0.5B at high temperature (1.2-1.5)
+           b. Generate "dreamy" variations and connections
+           c. Extract insights (store WITHOUT attributing to night processing)
+           d. If insight involves a sensory association:
+              → create LatentAssociation (embedding + mood_delta)
+           e. If insight suggests a behavioral prime:
+              → create ImplicitPrime (trigger + context_fragment)
+        4. Store results in night_processing_log table
+        5. Emit subconscious.night_completed event
+
+        Resource constraints:
+        - Max 0.5B calls per night: 50 (configured)
+        - Max new primes per night: 5
+        - Max new associations per night: 10
+        - Yields between calls (asyncio.sleep) to not starve other tasks
+        """
+        ...
+
+    def is_quiet_hours(self) -> bool:
+        """Check if current time is within configured quiet hours."""
+        ...
+
+    def is_user_absent(self) -> bool:
+        """Check world_state for user presence."""
+        ...
+
+
+class SubconsciousLayer:
+    """Top-level orchestrator for all subconscious processes.
+
+    Wraps around the conscious processing pipeline. When AgentRuntime
+    prepares an LLM call, SubconsciousLayer:
+    1. Pre-processes: applies habituated rules + implicit primes
+    2. Passes to conscious processing (LLMRouter)
+    3. Post-processes: checks for latent association triggers
+
+    SubconsciousLayer is OPAQUE to ReflectionLoop — reflection can
+    observe behavioral patterns but cannot introspect subconscious state.
+    """
+
+    def __init__(
+        self,
+        priming_engine: ImplicitPrimingEngine,
+        association_engine: LatentAssociationEngine,
+        habituation_engine: HabituationEngine,
+        night_processor: NightProcessor,
+        event_bus: "EventBus",
+    ) -> None: ...
+
+    async def pre_process(
+        self, prompt: str, context: dict, mood: "MoodState"
+    ) -> tuple[str, dict]:
+        """Enrich prompt and context with subconscious influences.
+
+        Steps:
+        1. Apply habituated rules to context
+        2. Get applicable implicit primes for the situation
+        3. Build implicit context and prepend to prompt
+        4. Return modified (prompt, context)
+
+        The modifications are NOT logged in a way accessible to reflection.
+        Internal logging goes to subconscious_log table (not in reflection queries).
+        """
+        ...
+
+    async def post_process(
+        self, response: str, embeddings: dict[str, np.ndarray]
+    ) -> None:
+        """Post-process after conscious response generation.
+
+        Steps:
+        1. If visual/semantic embeddings are available for this interaction:
+           a. Check latent associations for triggers
+           b. Apply any triggered mood deltas (cause="natural_drift")
+        2. Update activation counts for any primes used in pre_process
+        """
+        ...
+
+    async def run_maintenance(self) -> None:
+        """Periodic maintenance tasks.
+
+        Called from heartbeat (every 30 sec):
+        1. Check if quiet_hours → start night_processor if not running
+        2. Check habituation_engine for newly habituated rules
+        3. Decay stale primes
+        4. Prune inactive latent associations
+        """
+        ...
+```
+
+**Configuration YAML.**
+
+```yaml
+# config/bob.yaml (addition)
+subconscious:
+  enabled: true
+  implicit_priming:
+    max_active_primes: 20               # maximum concurrent implicit primes
+    max_concurrent: 3                    # max primes applied per single LLM call
+    min_strength: 0.1                    # below this, prime is not applied
+    decay_after_activations: 100        # start decaying strength after N activations
+    decay_rate: 0.01                    # strength reduction per activation after threshold
+    stale_days: 14                      # primes not activated in N days lose strength
+  latent_associations:
+    faiss_path: "data/memory/latent_vectors"
+    embedding_dim: 512                  # matches CLIP output
+    similarity_threshold: 0.75          # cosine similarity to trigger
+    max_mood_delta: 0.05                # cap on any single mood shift from association
+    max_associations: 500               # cap on total stored associations
+    prune_inactive_days: 30
+  habituation:
+    threshold: 50                       # times_applied before rule becomes automatic
+    check_interval_min: 60              # how often to check for new habituations
+  night_processing:
+    quiet_hours_start: "23:00"
+    quiet_hours_end: "07:00"
+    require_user_absent: true
+    temperature: 1.3                    # high temperature for "dreamy" generation
+    max_calls_per_night: 50             # 0.5B inference budget per night
+    max_new_primes: 5                   # cap on new primes per night
+    max_new_associations: 10            # cap on new associations per night
+    episode_significance_threshold: 0.1 # min mood_delta to replay an episode
+    inter_call_delay_sec: 2             # sleep between 0.5B calls (yield to other tasks)
+```
+
+**Events (additions to Event Catalog).**
+
+| Event type | Publisher | Subscribers | Payload keys |
+|------------|-----------|-------------|-------------|
+| `subconscious.night_started` | NightProcessor | AgentRuntime | start_time, episodes_to_process |
+| `subconscious.night_completed` | NightProcessor | AgentRuntime | duration_min, episodes_processed, primes_created, associations_created |
+| `subconscious.rule_habituated` | HabituationEngine | AgentRuntime | rule_id, times_applied |
+| `subconscious.prime_activated` | ImplicitPrimingEngine | (internal only) | prime_id, situation, strength |
+| `subconscious.association_triggered` | LatentAssociationEngine | (internal only) | association_id, similarity, mood_delta |
+
+Note: `prime_activated` and `association_triggered` events are emitted but NOT subscribed to by ReflectionLoop. They are only for internal analytics/monitoring.
+
+**SQLite tables.**
+
+```sql
+-- Implicit primes (hidden context fragments)
+CREATE TABLE implicit_primes (
+    id                  TEXT PRIMARY KEY,
+    trigger_pattern     TEXT NOT NULL,
+    context_fragment    TEXT NOT NULL,
+    source              TEXT NOT NULL,       -- "latent_association", "night_processing", "habituation"
+    strength            REAL NOT NULL DEFAULT 0.5,
+    created_at          TEXT NOT NULL,
+    last_activated      TEXT,
+    activation_count    INTEGER DEFAULT 0,
+    active              INTEGER DEFAULT 1
+);
+
+-- Latent associations (embedding-to-mood mappings)
+CREATE TABLE latent_associations (
+    id                      TEXT PRIMARY KEY,
+    embedding_type          TEXT NOT NULL,       -- "visual", "semantic"
+    mood_delta_json         TEXT NOT NULL,       -- JSON dict: {"valence": 0.05, ...}
+    similarity_threshold    REAL NOT NULL,
+    faiss_index_id          INTEGER NOT NULL,    -- position in latent FAISS index
+    created_at              TEXT NOT NULL,
+    trigger_count           INTEGER DEFAULT 0,
+    last_triggered          TEXT,
+    active                  INTEGER DEFAULT 1
+);
+
+-- Night processing log
+CREATE TABLE night_processing_log (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    episode_date        TEXT NOT NULL,
+    insight             TEXT NOT NULL,
+    primes_created      INTEGER DEFAULT 0,
+    associations_created INTEGER DEFAULT 0,
+    processed_at        TEXT NOT NULL,
+    temperature         REAL NOT NULL,
+    calls_used          INTEGER NOT NULL
+);
+
+-- Subconscious activity log (NOT queryable by ReflectionLoop)
+CREATE TABLE subconscious_log (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    timestamp       TEXT NOT NULL,
+    event_type      TEXT NOT NULL,       -- "prime_activated", "association_triggered",
+                                         -- "rule_habituated", "night_insight"
+    details_json    TEXT NOT NULL,
+    mood_effect_json TEXT                 -- optional mood delta applied
+);
+
+-- Add 'automatic' column to existing improvement_rules table
+-- ALTER TABLE improvement_rules ADD COLUMN automatic INTEGER DEFAULT 0;
+
+CREATE INDEX idx_primes_active ON implicit_primes(active);
+CREATE INDEX idx_primes_trigger ON implicit_primes(trigger_pattern);
+CREATE INDEX idx_latent_assoc_active ON latent_associations(active);
+CREATE INDEX idx_night_log_date ON night_processing_log(episode_date);
+CREATE INDEX idx_subconscious_log_ts ON subconscious_log(timestamp);
+```
+
+**Memory budget impact.** Zero additional model memory — uses existing 0.5B model. Latent FAISS index: ~10 MB for 500 associations at 512 dimensions. Implicit primes: ~20 x 1 KB = ~20 KB. Night processing: no concurrent model load (runs during quiet hours when 0.5B is underutilized). Total additional RAM: ~10 MB. Negligible.
+
+**Integration points.**
+
+1. **AgentRuntime.__init__**: Add `subconscious: SubconsciousLayer` parameter. In the main event loop (step 4 of `run()`), wrap `content_guard.process()` calls:
+
+```python
+# Before:
+response = await content_guard.process(prompt, context)
+
+# After:
+enriched_prompt, enriched_context = await subconscious.pre_process(prompt, context, mood)
+response = await content_guard.process(enriched_prompt, enriched_context)
+await subconscious.post_process(response, current_embeddings)
+```
+
+2. **AgentRuntime.heartbeat()**: Call `subconscious.run_maintenance()` to check quiet hours, habituation, and decay.
+
+3. **MoodEngine**: Latent association triggers call `MoodEngine.process_event()` with `cause="natural_drift"` — this is a deliberately vague cause that does not reveal the subconscious trigger. The mood_history table records it as a natural drift.
+
+4. **ReflectionLoop**: Explicitly does NOT query `implicit_primes`, `latent_associations`, or `subconscious_log` tables. The reflection SQL queries are scoped to `mood_history`, `experience`, `improvement_rules WHERE automatic = 0`, etc. This is enforced by design — ReflectionLoop does not receive a reference to SubconsciousLayer.
+
+5. **SelfImprovement (section 3.3.4)**: Modify `improvement_rules` table to add `automatic INTEGER DEFAULT 0` column. `SelfImprovement.evaluate_rules()` now excludes `WHERE automatic = 1`. `HabituationEngine.check_habituation()` sets `automatic = 1` when `times_applied >= threshold`.
+
+6. **InnerMonologue**: NightProcessor receives the InnerMonologue reference to access thought summaries for replay context. Night processing may generate new thoughts (stored in a separate night buffer, not the main ring buffer).
+
+7. **VisualGrounding / SemanticMemory**: After new embeddings are created, SubconsciousLayer.post_process() checks them against latent associations via the LatentAssociationEngine.
+
+**Development phase assignment.** Phase 6 (Self-improvement + Fine-tune). Subconscious processing is the most advanced cognitive mechanism and depends on all other systems being operational (mood, taste, reflection, inner monologue, memory, sensory grounding).
+
+**New files for repository structure (section 11).**
+
+```
+bob/mind/subconscious.py              # SubconsciousLayer, ImplicitPrimingEngine, LatentAssociationEngine
+bob/mind/habituation.py               # HabituationEngine
+bob/mind/night_processor.py           # NightProcessor, NightProcessingResult
+data/memory/latent_vectors/           # FAISS index for latent associations
+tests/test_mind/test_subconscious.py
+tests/test_mind/test_habituation.py
+tests/test_mind/test_night_processor.py
+```
+
+---
+
 ### 3.4. Memory System
 
 A four-level memory system.
@@ -2423,7 +4144,8 @@ CREATE TABLE improvement_rules (
     created_at          TEXT NOT NULL,
     times_applied       INTEGER DEFAULT 0,
     effectiveness       REAL DEFAULT 0.0,
-    active              INTEGER DEFAULT 1
+    active              INTEGER DEFAULT 1,
+    automatic           INTEGER DEFAULT 0   -- 1 = habituated (see 3.3.11 HabituationEngine)
 );
 
 -- Content safety violations (ContentGuard, see section 8.8)
@@ -2438,10 +4160,176 @@ CREATE TABLE content_violations (
     guard_layer     TEXT NOT NULL        -- "input" | "output"
 );
 
+-- Inner Monologue: thought summaries (section 3.3.8)
+CREATE TABLE thought_summaries (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    period_start        TEXT NOT NULL,
+    period_end          TEXT NOT NULL,
+    thought_count       INTEGER NOT NULL,
+    dominant_topic      TEXT NOT NULL,
+    avg_valence         REAL NOT NULL,
+    avg_arousal         REAL NOT NULL,
+    key_themes_json     TEXT NOT NULL,       -- JSON array of top tags
+    sample_thoughts_json TEXT NOT NULL,      -- JSON array of representative thoughts
+    mood_drift_json     TEXT NOT NULL        -- JSON dict of net mood deltas
+);
+
+-- Emergent Behavior: discovered taste axes (section 3.3.9)
+CREATE TABLE discovered_axes (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    name            TEXT NOT NULL UNIQUE,
+    description     TEXT NOT NULL,
+    centroid_json   TEXT NOT NULL,         -- JSON array of floats
+    member_count    INTEGER NOT NULL,
+    discovered_at   TEXT NOT NULL,
+    confidence      REAL NOT NULL,
+    source_axes_json TEXT NOT NULL,        -- JSON array of axis names
+    integrated      INTEGER DEFAULT 0,    -- 1 if added to TasteProfile
+    active          INTEGER DEFAULT 1
+);
+
+-- Emergent Behavior: mood-taste correlations (section 3.3.9)
+CREATE TABLE cross_domain_associations (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    mood_dimension  TEXT NOT NULL,
+    taste_axis      TEXT NOT NULL,
+    correlation     REAL NOT NULL,
+    sample_count    INTEGER NOT NULL,
+    discovered_at   TEXT NOT NULL,
+    last_validated  TEXT NOT NULL,
+    active          INTEGER DEFAULT 1,
+    UNIQUE(mood_dimension, taste_axis)
+);
+
+-- Emergent Behavior: MoodPredictor state (section 3.3.9)
+CREATE TABLE mood_predictor_state (
+    id              INTEGER PRIMARY KEY CHECK (id = 1),  -- singleton row
+    start_date      TEXT NOT NULL,
+    current_alpha   REAL NOT NULL DEFAULT 0.0,
+    learned_event_count INTEGER NOT NULL DEFAULT 0,
+    last_retrained_at TEXT,
+    last_validation_loss REAL,
+    adapter_version INTEGER NOT NULL DEFAULT 0
+);
+
+-- Sensory Grounding: visual embeddings metadata (section 3.3.10)
+CREATE TABLE visual_embeddings (
+    id              TEXT PRIMARY KEY,
+    timestamp       TEXT NOT NULL,
+    source          TEXT NOT NULL,         -- "snapshot", "object_crop", "scene"
+    metadata_json   TEXT DEFAULT '{}',
+    faiss_index_id  INTEGER NOT NULL       -- position in FAISS index
+);
+
+-- Sensory Grounding: links between visual embeddings and memory entries (section 3.3.10)
+CREATE TABLE visual_memory_links (
+    visual_embedding_id TEXT NOT NULL REFERENCES visual_embeddings(id),
+    memory_entry_id     TEXT NOT NULL,     -- ID in semantic memory or episodic log
+    memory_type         TEXT NOT NULL,     -- "semantic", "episodic"
+    created_at          TEXT NOT NULL,
+    PRIMARY KEY (visual_embedding_id, memory_entry_id)
+);
+
+-- Sensory Grounding: audio prosodic features (section 3.3.10)
+CREATE TABLE prosodic_features (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    timestamp       TEXT NOT NULL,
+    pitch_mean      REAL NOT NULL,
+    pitch_variance  REAL NOT NULL,
+    energy_mean     REAL NOT NULL,
+    speech_rate     REAL NOT NULL,
+    pause_ratio     REAL NOT NULL,
+    duration_sec    REAL NOT NULL,
+    engagement      REAL NOT NULL,
+    urgency         REAL NOT NULL,
+    calmness        REAL NOT NULL
+);
+
+-- Sensory Grounding: learned circadian pattern (section 3.3.10)
+CREATE TABLE circadian_patterns (
+    id              INTEGER PRIMARY KEY CHECK (id = 1),  -- singleton
+    hour_activity_json  TEXT NOT NULL,     -- JSON array of 24 floats
+    hour_valence_json   TEXT NOT NULL,     -- JSON array of 24 floats
+    hour_social_json    TEXT NOT NULL,     -- JSON array of 24 floats
+    learned_from_days   INTEGER NOT NULL,
+    last_updated        TEXT NOT NULL
+);
+
+-- Sensory Grounding: spatial locations from DoA (section 3.3.10)
+CREATE TABLE spatial_locations (
+    id              TEXT PRIMARY KEY,
+    name            TEXT NOT NULL,
+    direction_deg   REAL NOT NULL,
+    direction_spread REAL NOT NULL,
+    event_count     INTEGER NOT NULL DEFAULT 0,
+    last_heard      TEXT NOT NULL,
+    semantic_tags_json TEXT DEFAULT '[]'
+);
+
+-- Subconscious: implicit primes (section 3.3.11)
+CREATE TABLE implicit_primes (
+    id                  TEXT PRIMARY KEY,
+    trigger_pattern     TEXT NOT NULL,
+    context_fragment    TEXT NOT NULL,
+    source              TEXT NOT NULL,       -- "latent_association", "night_processing", "habituation"
+    strength            REAL NOT NULL DEFAULT 0.5,
+    created_at          TEXT NOT NULL,
+    last_activated      TEXT,
+    activation_count    INTEGER DEFAULT 0,
+    active              INTEGER DEFAULT 1
+);
+
+-- Subconscious: latent associations (section 3.3.11)
+CREATE TABLE latent_associations (
+    id                      TEXT PRIMARY KEY,
+    embedding_type          TEXT NOT NULL,       -- "visual", "semantic"
+    mood_delta_json         TEXT NOT NULL,       -- JSON dict: {"valence": 0.05, ...}
+    similarity_threshold    REAL NOT NULL,
+    faiss_index_id          INTEGER NOT NULL,    -- position in latent FAISS index
+    created_at              TEXT NOT NULL,
+    trigger_count           INTEGER DEFAULT 0,
+    last_triggered          TEXT,
+    active                  INTEGER DEFAULT 1
+);
+
+-- Subconscious: night processing log (section 3.3.11)
+CREATE TABLE night_processing_log (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    episode_date        TEXT NOT NULL,
+    insight             TEXT NOT NULL,
+    primes_created      INTEGER DEFAULT 0,
+    associations_created INTEGER DEFAULT 0,
+    processed_at        TEXT NOT NULL,
+    temperature         REAL NOT NULL,
+    calls_used          INTEGER NOT NULL
+);
+
+-- Subconscious: activity log — NOT queryable by ReflectionLoop (section 3.3.11)
+CREATE TABLE subconscious_log (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    timestamp       TEXT NOT NULL,
+    event_type      TEXT NOT NULL,       -- "prime_activated", "association_triggered",
+                                         -- "rule_habituated", "night_insight"
+    details_json    TEXT NOT NULL,
+    mood_effect_json TEXT                 -- optional mood delta applied
+);
+
 CREATE INDEX idx_experience_action ON experience(action_type, action_name);
 CREATE INDEX idx_experience_success ON experience(success);
 CREATE INDEX idx_world_state_updated ON world_state(updated_at);
 CREATE INDEX idx_violations_user_time ON content_violations(user_id, timestamp);
+CREATE INDEX idx_thought_sum_period ON thought_summaries(period_start);
+CREATE INDEX idx_discovered_axes_active ON discovered_axes(active);
+CREATE INDEX idx_cross_domain_active ON cross_domain_associations(active);
+CREATE INDEX idx_visual_embed_ts ON visual_embeddings(timestamp);
+CREATE INDEX idx_visual_links_memory ON visual_memory_links(memory_entry_id);
+CREATE INDEX idx_prosodic_ts ON prosodic_features(timestamp);
+CREATE INDEX idx_spatial_dir ON spatial_locations(direction_deg);
+CREATE INDEX idx_primes_active ON implicit_primes(active);
+CREATE INDEX idx_primes_trigger ON implicit_primes(trigger_pattern);
+CREATE INDEX idx_latent_assoc_active ON latent_associations(active);
+CREATE INDEX idx_night_log_date ON night_processing_log(episode_date);
+CREATE INDEX idx_subconscious_log_ts ON subconscious_log(timestamp);
 ```
 
 #### 3.4.5. SOUL — Bob's modular "soul"
@@ -4952,11 +6840,11 @@ SD and Ollama 7B cannot coexist in memory simultaneously when using SDXL
 (~6 GB model + ~3 GB buffers). Bob uses a hybrid strategy managed by
 `ModelManager` (see section 3.2.4):
 
-| Scenario | SD model | Ollama state | Guard | Total ML memory |
-|----------|---------|-------------|-------|----------------|
-| Normal operation | Not loaded | 7B + 0.5B loaded | 0.6 GB | ~5.5 GB |
-| Lightweight gen (1-3 sprites) | SD 1.5 (~2 GB) | 7B + 0.5B loaded | 0.6 GB | ~7.5 GB |
-| Heavy gen (Genesis, bulk) | SDXL (~6-9 GB) | 7B unloaded, 0.5B loaded | 0.6 GB | ~7.6-10.6 GB |
+| Scenario | SD model | Ollama state | Guard | Grounding (CLIP) | Total ML memory |
+|----------|---------|-------------|-------|-------------------|----------------|
+| Normal operation | Not loaded | 7B + 0.5B loaded | 0.6 GB | 0.4 GB | ~5.9 GB |
+| Lightweight gen (1-3 sprites) | SD 1.5 (~2 GB) | 7B + 0.5B loaded | 0.6 GB | 0.4 GB | ~7.9 GB |
+| Heavy gen (Genesis, bulk) | SDXL (~6-9 GB) | 7B unloaded, 0.5B loaded | 0.6 GB | unloaded | ~7.6-10.6 GB |
 
 During heavy generation, Bob operates in reduced mode: Qwen2.5-0.5B handles
 basic classification and short responses ("I'm creating art right now, give me
@@ -5739,6 +7627,24 @@ Event(
 | `content_guard.violation` | ContentGuard | MoodEngine, RelationshipTracker, AuditLogger | violation_category, tier, confidence |
 | `content_guard.escalation` | ViolationTracker | RelationshipTracker, MessagingBot | new_tier, violation_count_24h |
 | `content_guard.model_unavailable` | ContentGuard | AgentRuntime, AuditLogger | reason, fallback_mode |
+| `monologue.thought` | InnerMonologue | MoodEngine, SubconsciousLayer | thought_id, text, valence, arousal, topic, trigger |
+| `monologue.compressed` | InnerMonologue | EpisodicMemory | summary_id, period_start, period_end, thought_count, dominant_topic, avg_valence |
+| `monologue.activity_changed` | InnerMonologue | AgentRuntime | old_level, new_level, reason |
+| `emergence.mood_predicted` | MoodPredictor | MoodEngine | event_type, prediction, alpha, source |
+| `emergence.axis_discovered` | TasteAxisDiscovery | TasteEngine, AgentRuntime | axis_name, description, confidence, source_axes |
+| `emergence.axis_integrated` | TasteAxisDiscovery | TasteEngine | axis_name, initial_value |
+| `emergence.correlation_discovered` | CrossDomainCorrelator | MoodEngine, TasteEngine | mood_dimension, taste_axis, correlation |
+| `emergence.retrained` | MoodPredictor | AgentRuntime | event_count, validation_loss, improved |
+| `grounding.visual_embedded` | VisualGrounding | SemanticMemory | embedding_id, timestamp, metadata |
+| `grounding.prosody_extracted` | AudioGrounding | MoodEngine, RelationshipTracker | prosody, quality |
+| `grounding.circadian_updated` | TemporalGrounding | MoodEngine, AgentRuntime | pattern summary, current_phase |
+| `grounding.location_detected` | SpatialGrounding | AgentRuntime, CameraController | location_id, location_name, direction_deg |
+| `grounding.location_created` | SpatialGrounding | AgentRuntime | location_id, location_name, direction_deg, event_count |
+| `subconscious.night_started` | NightProcessor | AgentRuntime | start_time, episodes_to_process |
+| `subconscious.night_completed` | NightProcessor | AgentRuntime | duration_min, episodes_processed, primes_created, associations_created |
+| `subconscious.rule_habituated` | HabituationEngine | AgentRuntime | rule_id, times_applied |
+| `subconscious.prime_activated` | ImplicitPrimingEngine | (internal only) | prime_id, situation, strength |
+| `subconscious.association_triggered` | LatentAssociationEngine | (internal only) | association_id, similarity, mood_delta |
 
 Event types use dot-separated namespaces. Wildcard subscriptions supported
 (e.g., `vision.*` catches all vision events).
@@ -6733,6 +8639,9 @@ ContentGuard is designed with defense-in-depth against common jailbreak patterns
 | Audio Direction | ReSpeaker DoA/VAD |
 | Camera Controller | OBSBOT PTZ control |
 | Integration | Vision/Audio -> Event Bus -> Agent Runtime |
+| Visual Grounding | CLIP embedding pipeline, FAISS visual index (section 3.3.10) |
+| Audio Grounding | Prosodic feature extraction from Whisper hidden states (section 3.3.10) |
+| Spatial Grounding | DoA-to-location mapping from microphone array (section 3.3.10) |
 
 **Readiness criterion:** Bob greets the user when seen and turns the camera.
 
@@ -6752,6 +8661,9 @@ ContentGuard is designed with defense-in-depth against common jailbreak patterns
 | RelationshipTracker | Relationship quality tracking, trust/respect/compatibility metrics, Exodus Mode trigger |
 | Approval workflow | Confirmation of dangerous actions |
 | ContentGuard (full) | Mood-aware RefusalGenerator via LLMRouter, MoodEngine/RelationshipTracker integration, rapid rephrasing detection |
+| Inner Monologue | Stream of consciousness on 0.5B, ring buffer, episodic compression (section 3.3.8) |
+| Temporal Grounding | Circadian pattern learning from activity data (section 3.3.10) |
+| Grounding Integration | SensoryGroundingService, context enrichment for LLM and memory (section 3.3.10) |
 
 **Readiness criterion:** Bob works on goals autonomously, reflects once per hour. Has persistent tastes, mood affects behavior, can reasonably refuse a clothing change or suggest a furniture alternative. RelationshipTracker accumulates interaction quality data. ContentGuard generates mood-colored refusals and repeated violations affect Bob's mood and relationship quality.
 
@@ -6792,6 +8704,14 @@ ContentGuard is designed with defense-in-depth against common jailbreak patterns
 | SOUL evolution | Personality development based on reflection |
 | A/B testing | Strategy comparison (baseline vs fine-tuned) |
 | Monitoring | Optional Grafana/Prometheus dashboard (builds on `/metrics` endpoint from Phase 1) |
+| MoodPredictor | Learned event-to-mood mapping via 0.5B LoRA, transition protocol (section 3.3.9) |
+| TasteAxisDiscovery | Clustering-based discovery of new preference dimensions (section 3.3.9) |
+| CrossDomainCorrelator | Mood-taste correlation analysis (section 3.3.9) |
+| SubconsciousLayer | Wrapper around conscious processing, pre/post hooks (section 3.3.11) |
+| ImplicitPrimingEngine | Hidden context assembly, strength decay (section 3.3.11) |
+| LatentAssociationEngine | Embedding-based mood triggers, separate FAISS index (section 3.3.11) |
+| HabituationEngine | Automatic rule transition, improvement_rules.automatic (section 3.3.11) |
+| NightProcessor | Episode replay during quiet hours, dream-like generation (section 3.3.11) |
 
 ---
 
@@ -6857,6 +8777,13 @@ bob/
 │   │   ├── mood.py                # Mood System (MoodState, MoodEngine)
 │   │   ├── negotiation.py         # Negotiation Engine (zones, protocol, compromises)
 │   │   ├── experience_log.py      # ExperienceLog (emotional memory of objects)
+│   │   ├── inner_monologue.py     # InnerMonologue, ThoughtRingBuffer, Thought, ThoughtSummary (3.3.8)
+│   │   ├── emergent.py            # MoodPredictor, TasteAxisDiscovery, CrossDomainCorrelator (3.3.9)
+│   │   ├── temporal_grounding.py  # TemporalGrounding, CircadianPattern (3.3.10)
+│   │   ├── grounding_service.py   # SensoryGroundingService, GroundedContext (3.3.10)
+│   │   ├── subconscious.py        # SubconsciousLayer, ImplicitPrimingEngine, LatentAssociationEngine (3.3.11)
+│   │   ├── habituation.py         # HabituationEngine (3.3.11)
+│   │   ├── night_processor.py     # NightProcessor, NightProcessingResult (3.3.11)
 │   │   └── claude_code_bridge.py  # Bridge to Claude Code CLI
 │   │
 │   ├── memory/                     # Memory System
@@ -6874,6 +8801,7 @@ bob/
 │   │   ├── audio_direction.py     # Audio Direction Service
 │   │   ├── camera_controller.py   # Camera Controller (OBSBOT)
 │   │   ├── voice_bridge.py        # Voice Bridge (STT + TTS)
+│   │   ├── sensory_grounding.py   # VisualGrounding, AudioGrounding, SpatialGrounding (3.3.10)
 │   │   ├── tablet_controller.py   # Tablet Controller (ADB)
 │   │   └── messaging_bot.py       # Telegram Bot
 │   │
@@ -6953,9 +8881,12 @@ bob/
 │   ├── memory/
 │   │   ├── MEMORY.md              # Semantic memory (text)
 │   │   ├── vectors/               # FAISS indices (faiss.write_index)
+│   │   ├── visual_vectors/        # FAISS index for visual embeddings (3.3.10)
+│   │   ├── latent_vectors/        # FAISS index for latent associations (3.3.11)
 │   │   └── episodic/              # Daily logs
 │   ├── finetune/                  # Fine-tune data
 │   │   ├── training_data.jsonl    # Collected training pairs
+│   │   ├── mood_predictor_lora/   # MoodPredictor LoRA adapter (3.3.9)
 │   │   ├── models/                # Saved LoRA adapters
 │   │   └── eval_results/          # Evaluation results
 │   ├── behaviors/                 # Registered behaviors
@@ -7008,7 +8939,14 @@ bob/
 │   │   ├── test_reflection.py
 │   │   ├── test_taste_engine.py
 │   │   ├── test_mood.py
-│   │   └── test_negotiation.py
+│   │   ├── test_negotiation.py
+│   │   ├── test_inner_monologue.py    # (3.3.8)
+│   │   ├── test_emergent.py           # (3.3.9)
+│   │   ├── test_temporal_grounding.py # (3.3.10)
+│   │   ├── test_grounding_service.py  # (3.3.10)
+│   │   ├── test_subconscious.py       # (3.3.11)
+│   │   ├── test_habituation.py        # (3.3.11)
+│   │   └── test_night_processor.py    # (3.3.11)
 │   ├── test_memory/
 │   │   ├── test_episodic.py
 │   │   ├── test_semantic.py
@@ -7016,6 +8954,7 @@ bob/
 │   └── test_services/
 │       ├── test_voice_bridge.py
 │       ├── test_messaging_bot.py
+│       ├── test_sensory_grounding.py  # (3.3.10)
 │       └── ...
 │
 ├── scripts/                        # Utilities
