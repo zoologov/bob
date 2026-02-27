@@ -468,6 +468,15 @@ class SkillDomain(Protocol):
     async def disable(self) -> None:
         """Deactivate without unloading (pause)."""
         ...
+
+    async def migrate(self, from_version: str) -> None:
+        """Optional: migrate config/state from a previous version.
+
+        Called during reload_domain() when version changes.
+        If not implemented, only backwards-compatible (patch/minor) upgrades
+        are allowed. Major version bump requires user approval.
+        """
+        ...
 ```
 
 **Domain configuration** (`config.yaml` in domain directory):
@@ -489,6 +498,12 @@ domain:
     - telegram.send
     - telegram.read
   dangerous: false
+  trust_level: trusted          # trusted | sandbox | disabled
+  # sandbox: dangerous skills require confirmation, 10s timeout, errors → auto-disable
+  # trusted: full access (built-in domains start here)
+  # disabled: domain loaded but inactive
+  sandbox_promotion:
+    required_successes: 10      # auto-promote to trusted after N error-free executions
 ```
 
 ##### Skill (lower level)
@@ -533,8 +548,54 @@ class SkillContext:
     event_bus: "EventBus"
     memory: "MemorySystem"
     llm_router: "LLMRouter"
+    resource_registry: "ResourceRegistry"    # Shared resource locks (see ResourceRegistry)
     domain: "SkillDomain | None" = None     # Reference to parent domain
     requesting_goal_id: str | None = None
+
+    async def acquire_resource(self, name: str) -> "ResourceHandle | None":
+        """Convenience: acquire a shared resource for the current domain."""
+        domain_name = self.domain.name if self.domain else "unknown"
+        return await self.resource_registry.acquire(name, domain_name)
+```
+
+##### ResourceRegistry
+
+Manages shared resources (Claude Code CLI, camera, speaker) to prevent
+conflicts when multiple domains need the same resource.
+
+```python
+@dataclass
+class ResourceHandle:
+    resource_name: str
+    holder_domain: str
+    acquired_at: float              # time.monotonic()
+    timeout_sec: float = 300.0      # default 5 min
+
+class ResourceRegistry:
+    """Shared resource locking with priority-based preemption."""
+
+    def __init__(self) -> None:
+        self._locks: dict[str, asyncio.Lock] = {}
+        self._holders: dict[str, ResourceHandle] = {}
+
+    def register(self, resource_name: str) -> None:
+        """Register a shared resource (e.g., 'claude_code', 'camera')."""
+        self._locks[resource_name] = asyncio.Lock()
+
+    async def acquire(
+        self, resource_name: str, domain: str, priority: int = 2,
+    ) -> ResourceHandle | None:
+        """Acquire a resource. Returns None (ResourceBusy) if unavailable.
+
+        Higher-priority goals can preempt lower-priority holders
+        (with graceful shutdown signal to the current holder).
+        Expired holds (past timeout) are auto-released.
+        """
+        ...
+
+    async def release(self, resource_name: str, domain: str) -> None:
+        """Release a held resource."""
+        ...
 ```
 
 ##### SkillDomainRegistry
@@ -564,7 +625,15 @@ class SkillDomainRegistry:
         ...
 
     async def reload_domain(self, domain_name: str) -> SkillDomain:
-        """Hot-reload a domain without stopping other domains."""
+        """Hot-reload a domain without stopping other domains.
+
+        Version handling:
+        - Compare old_version vs new config.yaml version
+        - Patch/minor: reload directly
+        - Major: require user approval, call domain.migrate(old_version)
+        - Save old config.yaml as config.yaml.bak until confirmed working
+        - On failure: rollback to previous version, disable if rollback fails
+        """
         ...
 
     def get_domain(self, domain_name: str) -> SkillDomain | None:
@@ -600,6 +669,9 @@ class SkillDomainRegistry:
 ```
 Bob starts up
   │
+  ├─ ResourceRegistry.register() shared resources
+  │   └─ claude_code, camera, speaker
+  │
   ├─ SkillDomainRegistry.discover_domains()
   │   └─ Scan bob/skills/*/domain.py
   │       ├─ avatar/domain.py     → AvatarDomain
@@ -608,9 +680,9 @@ Bob starts up
   │
   ├─ For each domain:
   │   ├─ load_domain() → import module, instantiate class
-  │   ├─ configure() → read domain's config.yaml
+  │   ├─ configure() → read domain's config.yaml (incl. trust_level)
   │   ├─ initialize() → connect to services, validate dependencies
-  │   └─ enable() → subscribe to EventBus events
+  │   └─ enable() → subscribe to EventBus events (sandbox domains: with guards)
   │
   └─ Registry ready. Goal Engine can query capabilities.
 ```
@@ -623,8 +695,11 @@ Bob can create **new** skill domains for himself:
 2. **Planner** plans domain structure using `_template/` as starting point
 3. Bob requests **Claude Code CLI** permission (see 4.2.1, 8.4)
 4. Claude Code **scaffolds** the domain directory, writes code, writes tests
-5. Bob **registers** the new domain via `SkillDomainRegistry.reload_domain()`
-6. New capabilities are immediately available to Goal Engine
+5. Domain config created with `trust_level: sandbox` and `version: "0.1.0"`
+6. Bob **registers** the new domain via `SkillDomainRegistry.reload_domain()`
+7. Domain runs in **sandbox** mode (dangerous skills need confirmation, 10s timeout)
+8. After 10 error-free executions → auto-promoted to `trusted`
+9. If errors occur → domain auto-disabled, Bob logs issue for later fix
 
 ##### Worked Example: Three Built-in Domains
 
@@ -6401,9 +6476,9 @@ successful concepts:
 | 22 | ~~How to visualize the awakening phase on the tablet: speech bubbles with inner monologue, confusion animations, or both?~~ | High | **Resolved**: Both — thought bubbles (semi-transparent, inner monologue, frequent in first 12h, fade by 48h) + awakening-specific animations (confused_look_around, surprised_discovery, thinking_hard — generated by SD at Genesis). Shell-renderer: `{"thought_bubble": "...", "play_animation": "confused_look_around"}` (see 5.1.2) |
 | 23 | ~~How to detect if user is actively using Claude Code CLI? Process check vs lock file vs both?~~ | High | **Resolved**: No process/lock detection needed — Bob and user on separate machines, shared subscription. Voice→Telegram permission protocol + reactive 429 handling (see 4.2.1, 8.4) |
 | 24 | ~~What is the minimum viable sprite/animation set for the Godot shell-renderer?~~ | Medium | **Resolved**: AI-generated via Stable Diffusion, no hand-drawn assets (see 5.4.2) |
-| 25 | How should SkillDomain versioning work when Bob upgrades a domain? | Medium | Open |
-| 26 | Should Bob's self-created SkillDomains go through a "probation" period before full trust? | High | Open |
-| 27 | How to handle SkillDomain dependency conflicts (two domains need same resource)? | Medium | Open |
+| 25 | ~~How should SkillDomain versioning work when Bob upgrades a domain?~~ | Medium | **Resolved**: Semver in `config.yaml` (source of truth). On `reload_domain()`, compare old vs new version. Domain implements optional `async migrate(from_version)` for breaking changes. Major version bump requires user approval. Old config saved as `.bak` until confirmed working. No Alembic-style migration system — overkill for plugin configs (see 3.2.3) |
+| 26 | ~~Should Bob's self-created SkillDomains go through a "probation" period before full trust?~~ | High | **Resolved**: Sandbox mode + auto-promotion. New self-created domains start as `sandbox` (dangerous skills require confirmation, 10s timeout, errors → disable). Auto-promote to `trusted` after 10 successful executions. Built-in domains (messaging, development, avatar) start as `trusted`. User can override via `trust_level` in config.yaml (see 3.2.3) |
+| 27 | ~~How to handle SkillDomain dependency conflicts (two domains need same resource)?~~ | Medium | **Resolved**: `ResourceRegistry` with `asyncio.Lock` per shared resource (claude_code, camera, speaker). Domain calls `await context.acquire_resource("name")` — returns `ResourceBusy` if taken. Timeout on hold (default 5 min). Priority-based preemption for higher-priority goals. Generalizes existing `ClaudeCodeCoordinator` pattern (see 3.2.3, 8.4) |
 | 28 | ~~What LoRA training dataset to use for establishing Bob's base visual style? Cuphead-like cartoon or another reference?~~ | High | **Resolved**: Ship pre-trained LoRA on public domain cartoon art (1930s Fleischer style); Bob can retrain with evolved preferences later (see 5.4.2) |
 | 29 | How to ensure visual consistency across AI-generated sprites (furniture, avatar parts, room elements)? | High | Open |
 | 30 | How to auto-segment AI-generated character image into Skeleton2D parts (head, torso, arms, legs)? | Medium | Open |
