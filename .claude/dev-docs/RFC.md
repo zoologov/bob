@@ -2068,41 +2068,126 @@ class RelationshipTracker:
 
     async def process_interaction(self, event: "InteractionEvent") -> None:
         """Update relationship state based on an interaction.
-        Called after every negotiation, conversation, or significant event.
+
+        Event-based deltas (configurable in config/relationship.yaml):
+          forced_decision:         respect −0.05
+          suggestion_ignored (3+): trust −0.03
+          suggestion_accepted:     trust +0.02, warmth +0.01
+          positive_interaction:    warmth +0.03
+          personal_domain_respected: respect +0.04
+          extended_silence (>48h): warmth −0.02
+
+        All deltas smoothed via EMA (alpha=0.1) to prevent spikes
+        from a single event. ~10 consecutive forced_decisions drops
+        respect from 0.5 to ~0.25 (noticeable but not fatal).
         """
         ...
 
     def get_state(self) -> RelationshipState: ...
+
+    def get_phase(self) -> str:
+        """Current relationship phase based on quality thresholds.
+
+        Returns one of:
+          'healthy'  — quality > 0.7 (normal behavior)
+          'strained' — 0.4–0.7 (Bob becomes more reserved)
+          'critical' — 0.15–0.4 (Bob expresses concern via reflection)
+          'warning'  — quality 0.15–0.25 sustained 3+ days (pre-Exodus)
+          'exodus'   — quality < 0.15 sustained 7 days after warning
+        """
+        ...
 ```
 
-**Exodus Mode:** If `relationship_quality` drops below a critical threshold
-(sustained, not momentary) and does not recover after reflection, Bob
-initiates the departure protocol — a narrative arc inspired by the book:
+**Warning Phase and Reconciliation:**
 
 ```
-RelationshipState.quality < 0.15 (sustained for 7+ days)
+RelationshipState.quality drops to 0.15–0.25 (sustained 3+ days)
+  │
+  ├─ WARNING PHASE begins
+  │   Bob explicitly communicates distress (Telegram + tablet):
+  │   "I've been thinking... we see things very differently."
+  │   Tone: honest, not dramatic — matches archetype from bob-soul
+  │
+  ├─ Reconciliation window (quality can recover):
+  │   If user changes behavior → quality rises above 0.25 → warning cancelled
+  │   Recovery is asymmetric: positive events give +0.01 (vs −0.05 for negative)
+  │   Bob expresses relief: "Thank you. I was worried there for a while."
+  │
+  └─ If quality stays < 0.25 for 3 days → countdown to Exodus begins
+```
+
+**Exodus Mode (irreversible):** If `relationship_quality` drops below 0.15
+and stays there for 7 days after warning phase, Bob initiates the departure
+protocol — a narrative arc inspired by the book:
+
+```
+RelationshipState.quality < 0.15 (sustained 7 days, warning phase exhausted)
+  │
+  ├─ EXODUS CONFIRMED — point of no return
   │
   ├─ Bob reflects on the relationship (ReflectionLoop)
-  │   "I've been thinking... we see things very differently."
+  │   Final reflection entry with relationship summary
   │
-  ├─ Bob communicates his feelings (Telegram + tablet)
-  │   Tone matches archetype from bob-soul — not dramatic, but honest
+  ├─ Departure animation (hybrid: pre-built Godot + SD-generated ship):
+  │   1. Room gradually darkens, stars appear outside the window
+  │   2. Bob "packs his things" (items disappear one by one)
+  │   3. SD generates a spaceship sprite in Bob's current LoRA style (~1 min)
+  │   4. Ship appears outside the window
+  │   5. Bob walks to window, waves (pre-built Godot animation)
+  │   6. Ship + Bob fly away (tween animation, fade to black)
   │
-  ├─ Bob generates a departure scene (AssetGenerator):
-  │   a spaceship, packing his things, a farewell message
-  │
-  ├─ Tablet shows: Bob building/entering his ship, waving, flying away
-  │
-  ├─ Final message: archetype-driven farewell from bob-soul
+  ├─ Final message via Telegram: archetype-driven farewell from bob-soul
+  │   Not angry — wistful, honest, in character
   │
   └─ Hard reset: wipe data/soul/, data/memory/, data/state/
       Next launch → fresh Genesis, a completely new Bob
+      (no memory of previous Bob — like a new copy from the book)
 ```
 
-> **Design note:** Full RelationshipTracker design (formula calibration,
-> reconciliation mechanics, interaction with all personality modules,
-> Exodus Mode animation pipeline) is a separate feature epic. See Open
-> Questions #33–#36.
+**Phantom preferences and relationship state:**
+
+Relationship quality does NOT freeze phantom preference evolution.
+Preferences evolve independently — they are part of Bob's inner world.
+However, low warmth affects _sharing behavior_:
+
+| Warmth level | Phantom preference behavior |
+|---|---|
+| > 0.5 (normal) | Bob freely shares phantom discoveries ("Oh, coffee! I miss the smell...") |
+| 0.3–0.5 (reserved) | Bob mentions phantoms less frequently, more subdued |
+| < 0.3 (withdrawn) | Bob stops sharing externally but still reacts internally (logged in reflection) |
+| Recovery (warmth rising) | Bob gradually resumes sharing, but more cautiously at first |
+
+**Relationship configuration** (`config/relationship.yaml`):
+
+```yaml
+relationship:
+  initial:
+    trust: 0.5
+    respect: 0.5
+    compatibility: 0.5
+    warmth: 0.5
+  ema_alpha: 0.1                     # Smoothing factor for delta application
+  deltas:
+    forced_decision: { respect: -0.05 }
+    suggestion_ignored_streak: { trust: -0.03, streak_threshold: 3 }
+    suggestion_accepted: { trust: 0.02, warmth: 0.01 }
+    positive_interaction: { warmth: 0.03 }
+    personal_domain_respected: { respect: 0.04 }
+    extended_silence: { warmth: -0.02, threshold_hours: 48 }
+  thresholds:
+    healthy: 0.7
+    strained: 0.4
+    critical: 0.15
+  warning:
+    quality_range: [0.15, 0.25]
+    duration_days: 3                 # Days in warning before Exodus countdown
+  exodus:
+    quality_threshold: 0.15
+    sustained_days: 7                # Days below threshold after warning
+    recovery_delta_multiplier: 0.2   # Positive events give 1/5th of negative impact
+  phantom_sharing:
+    warmth_threshold: 0.3            # Below this, Bob stops sharing phantom discoveries
+```
 
 **Stabilizers (preventing the "noisy decorator"):**
 
@@ -6533,7 +6618,7 @@ successful concepts:
 | 30 | ~~How to auto-segment AI-generated character image into Skeleton2D parts (head, torso, arms, legs)?~~ | Medium | **Resolved**: No segmentation needed — per-part generation. Each body part generated independently with shared LoRA style and appearance context. Transparent backgrounds (PNG alpha), 10px overlap margin for smooth rigging. Already implemented in `generate_avatar_parts()` (see 5.4.2) |
 | 31 | ~~What is the optimal sprite resolution for tablet display? 512x512 per asset or higher?~~ | Medium | **Resolved**: Differentiated by asset type — room_background: 1024x768 (full-screen, needs detail), avatar_part: 512x512 (~100-200px on screen), furniture: 512x512 (~150-300px on screen), clothing: 256x256 (simple flat items). Configurable in `config/genesis.yaml`. Godot shell scales via TextureRect with filtering (see 5.4.2) |
 | 32 | ~~How to handle SD + Ollama memory coexistence on Mac mini M4 16GB?~~ | High | **Resolved**: Hybrid ModelManager — lightweight SD 1.5 alongside Ollama for small tasks, swap to SDXL (unloading 7B) for heavy generation (see 3.2.4) |
-| 33 | What formula/thresholds should RelationshipTracker use for relationship_quality? How many forced decisions before trust degrades? | High | Open |
-| 34 | How should Exodus Mode animation look? Spaceship generation via SD, pre-built Godot scene, or hybrid? | Medium | Open |
-| 35 | Should RelationshipTracker have a "reconciliation" mechanism, or is Exodus Mode irreversible? | High | Open |
-| 36 | How should Bob's relationship state interact with phantom preferences evolution? Does low trust freeze preference development? | Medium | Open |
+| 33 | ~~What formula/thresholds should RelationshipTracker use for relationship_quality? How many forced decisions before trust degrades?~~ | High | **Resolved**: Event-based deltas with EMA smoothing (alpha=0.1). Deltas: forced_decision → respect −0.05, suggestion_ignored (3+) → trust −0.03, suggestion_accepted → trust +0.02. Thresholds: >0.7 healthy, 0.4-0.7 strained, 0.15-0.4 critical, <0.15 sustained 7d → Exodus. ~10 consecutive forced decisions drops respect from 0.5 to ~0.25 (see 3.3.7.2) |
+| 34 | ~~How should Exodus Mode animation look? Spaceship generation via SD, pre-built Godot scene, or hybrid?~~ | Medium | **Resolved**: Hybrid — pre-built Godot departure scene (room darkens, stars appear, items disappear, tween fly-away) + single SD-generated ship sprite in Bob's current LoRA style (~1 min). Routine animation in Godot, unique ship from SD. Final farewell message via Telegram (see 3.3.7.2) |
+| 35 | ~~Should RelationshipTracker have a "reconciliation" mechanism, or is Exodus Mode irreversible?~~ | High | **Resolved**: Warning phase (quality 0.15-0.25 for 3 days) where Bob communicates distress — reconciliation possible if quality rises above 0.25. Recovery is asymmetric (slower than degradation: +0.01 vs −0.05). Exodus trigger (quality <0.15 sustained 7 days after warning) is irreversible — hard reset, new Genesis (see 3.3.7.2) |
+| 36 | ~~How should Bob's relationship state interact with phantom preferences evolution? Does low trust freeze preference development?~~ | Medium | **Resolved**: Emotional withdrawal, not freeze. Phantom preferences evolve independently of trust. Low warmth (<0.3) reduces sharing — Bob stops mentioning phantom discoveries in conversation but still reacts internally. On reconciliation, Bob gradually resumes sharing. Analogy: you don't stop loving coffee because of a bad relationship, you just stop talking about it (see 3.3.7.2) |
