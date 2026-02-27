@@ -1015,7 +1015,7 @@ CREATE INDEX idx_goals_priority ON goals(priority);
 class GoalEngine:
     """Goal graph management."""
 
-    def __init__(self, db_path: str = "data/bob.db") -> None: ...
+    def __init__(self, db_path: str) -> None: ...
 
     async def create_goal(self, goal: Goal) -> str:
         """Create a new goal. Returns the ID."""
@@ -1243,7 +1243,16 @@ class SelfImprovement:
         ...
 
     async def evaluate_rules(self) -> list[tuple[ImprovementRule, float]]:
-        """Evaluate effectiveness of existing rules."""
+        """Evaluate effectiveness of existing rules (excludes automatic=1)."""
+        ...
+
+    async def mark_automatic(self, rule_id: str) -> None:
+        """Mark a rule as automatic (habituated). Sets automatic=1.
+
+        Called by HabituationEngine when times_applied >= threshold.
+        Automatic rules are excluded from evaluate_rules() and
+        ReflectionLoop context.
+        """
         ...
 
     async def collect_training_data(self) -> list[dict]:
@@ -1552,7 +1561,7 @@ class ObjectExperience:
 class ExperienceLog:
     """Log of emotional experience with objects and decisions."""
 
-    def __init__(self, db_path: str = "data/bob.db") -> None: ...
+    def __init__(self, db_path: str) -> None: ...
 
     async def log_interaction(self, exp: ObjectExperience) -> None:
         """Record an interaction experience."""
@@ -1733,7 +1742,7 @@ class MoodEngine:
     def __init__(
         self,
         initial_mood: MoodState | None = None,
-        db_path: str = "data/bob.db",
+        db_path: str,
     ) -> None:
         self._current: MoodState = initial_mood or self._default_mood()
         ...
@@ -2423,8 +2432,8 @@ class ThoughtRingBuffer:
         """Add a thought, evicting oldest if at capacity."""
         ...
 
-    def get_recent(self, seconds: int = 60) -> list[Thought]:
-        """Return thoughts from the last N seconds."""
+    def get_recent(self, seconds: int | None = None) -> list[Thought]:
+        """Return thoughts from the last N seconds (default: max_age_sec)."""
         ...
 
     def get_all(self) -> list[Thought]:
@@ -2708,7 +2717,7 @@ class DiscoveredAxis:
     """A taste axis discovered through clustering."""
     name: str                            # auto-generated name (e.g., "contrast_preference")
     description: str                     # LLM-generated description of what this axis captures
-    centroid: list[float]                # cluster centroid in embedding space
+    centroid: np.ndarray                 # cluster centroid in embedding space (float32)
     member_count: int                    # how many experiences contributed
     discovered_at: datetime
     confidence: float                    # 0.0 .. 1.0 — cluster quality
@@ -2818,7 +2827,7 @@ class TasteAxisDiscovery:
         taste_engine: "TasteEngine",
         experience_log: "ExperienceLog",
         llm_router: "LLMRouter",
-        db_path: str = "data/bob.db",
+        db_path: str,
     ) -> None: ...
 
     async def discover(self) -> list[DiscoveredAxis]:
@@ -2869,7 +2878,7 @@ class CrossDomainCorrelator:
         self,
         mood_engine: "MoodEngine",
         taste_engine: "TasteEngine",
-        db_path: str = "data/bob.db",
+        db_path: str,
     ) -> None: ...
 
     async def analyze(self) -> list[CrossDomainAssociation]:
@@ -3305,7 +3314,7 @@ class TemporalGrounding:
     def __init__(
         self,
         mood_engine: "MoodEngine",
-        db_path: str = "data/bob.db",
+        db_path: str,
     ) -> None: ...
 
     async def update_pattern(self) -> CircadianPattern:
@@ -3351,7 +3360,7 @@ class SpatialGrounding:
     def __init__(
         self,
         audio_direction_service: "AudioDirectionService",
-        db_path: str = "data/bob.db",
+        db_path: str,
     ) -> None: ...
 
     async def process_audio_event(
@@ -3474,7 +3483,7 @@ sensory_grounding:
 |------------|-----------|-------------|-------------|
 | `grounding.visual_embedded` | VisualGrounding | SemanticMemory | embedding_id, timestamp, metadata |
 | `grounding.prosody_extracted` | AudioGrounding | MoodEngine, RelationshipTracker | prosody (ProsodicFeatures as dict), quality (InteractionQuality as dict) |
-| `grounding.circadian_updated` | TemporalGrounding | MoodEngine, AgentRuntime | pattern summary, current_phase |
+| `grounding.circadian_updated` | TemporalGrounding | MoodEngine, AgentRuntime | pattern_summary, current_phase |
 | `grounding.location_detected` | SpatialGrounding | AgentRuntime, CameraController | location_id, location_name, direction_deg |
 | `grounding.location_created` | SpatialGrounding | AgentRuntime | location_id, location_name, direction_deg, event_count |
 
@@ -3676,7 +3685,7 @@ class ImplicitPrimingEngine:
 
     def __init__(
         self,
-        db_path: str = "data/bob.db",
+        db_path: str,
         max_active_primes: int = 20,
     ) -> None: ...
 
@@ -3783,15 +3792,17 @@ class HabituationEngine:
 
     def __init__(
         self,
-        db_path: str = "data/bob.db",
-        habituation_threshold: int = 50,
+        self_improvement: "SelfImprovement",
+        config: HabituationConfig,
     ) -> None: ...
 
     async def check_habituation(self) -> list[str]:
         """Find rules that have crossed the habituation threshold.
 
-        Query improvement_rules WHERE times_applied >= threshold AND automatic = 0.
-        Mark them automatic = 1.
+        Uses SelfImprovement.evaluate_rules() to get rules with their
+        application counts. Rules with times_applied >= threshold AND
+        automatic == 0 are marked automatic via
+        SelfImprovement.mark_automatic(rule_id).
         Returns list of rule IDs that became habituated.
         """
         ...
@@ -3858,7 +3869,7 @@ class NightProcessor:
         1. Load today's episodic log
         2. Load thought summaries from InnerMonologue (snapshot before suspend)
         3. For each significant episode (mood_delta > 0.1 or goal event):
-           a. Replay through 0.5B at high temperature (1.2-1.5)
+           a. Replay through 0.5B at temperature=config.night_processing.temperature (default 1.3)
            b. Generate "dreamy" variations and connections
            c. Extract insights (store WITHOUT attributing to night processing)
            d. If insight involves a sensory association:
@@ -3931,9 +3942,17 @@ class SubconsciousLayer:
     ) -> None:
         """Post-process after conscious response generation.
 
+        Args:
+            response: The generated response text.
+            embeddings: Available embeddings keyed by source:
+                - "visual": CLIP embedding from current camera frame (512-d float32)
+                - "semantic": Sentence embedding of the response (384-d float32)
+                - "audio": Prosodic feature vector from current utterance (6-d float32)
+                Dict may be empty if no embeddings are available for this interaction.
+
         Steps:
         1. If visual/semantic embeddings are available for this interaction:
-           a. Check latent associations for triggers
+           a. Check latent associations for triggers (cosine similarity > threshold)
            b. Apply any triggered mood deltas (cause="natural_drift")
         2. Update activation counts for any primes used in pre_process
         """
@@ -7836,7 +7855,7 @@ Event(
 | `emergence.retrained` | MoodPredictor | AgentRuntime | event_count, validation_mae, improved |
 | `grounding.visual_embedded` | VisualGrounding | SemanticMemory | embedding_id, timestamp, metadata |
 | `grounding.prosody_extracted` | AudioGrounding | MoodEngine, RelationshipTracker | prosody, quality |
-| `grounding.circadian_updated` | TemporalGrounding | MoodEngine, AgentRuntime | pattern summary, current_phase |
+| `grounding.circadian_updated` | TemporalGrounding | MoodEngine, AgentRuntime | pattern_summary, current_phase |
 | `grounding.location_detected` | SpatialGrounding | AgentRuntime, CameraController | location_id, location_name, direction_deg |
 | `grounding.location_created` | SpatialGrounding | AgentRuntime | location_id, location_name, direction_deg, event_count |
 | `subconscious.night_started` | NightProcessor | AgentRuntime | start_time, episodes_to_process |
