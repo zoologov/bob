@@ -3074,7 +3074,7 @@ class VisualGrounding:
         embedding_dim: int = 512,
     ) -> None: ...
 
-    async def embed_frame(self, frame: np.ndarray) -> VisualEmbedding:
+    async def embed_frame(self, frame: np.ndarray) -> VisualEmbedding | None:
         """Generate CLIP embedding for a camera frame.
 
         Called by VisionService after each snapshot (every 5 sec).
