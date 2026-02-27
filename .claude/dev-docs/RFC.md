@@ -2527,6 +2527,28 @@ class InnerMonologue:
         ...
 ```
 
+**Configuration dataclass.**
+
+```python
+@dataclass
+class InnerMonologueConfig:
+    """Configuration for inner monologue subsystem."""
+    enabled: bool = True
+    interval_stimulated_sec: float = 3.0
+    interval_normal_sec: float = 5.0
+    interval_low_sec: float = 15.0
+    ring_buffer_max_age_sec: int = 300
+    ring_buffer_max_size: int = 100
+    compression_sample_count: int = 5
+    compression_top_tags: int = 3
+    sentiment_method: str = "keyword"       # "keyword" or "0.5b"
+    mood_valence_weight: float = 0.02
+    mood_arousal_weight: float = 0.01
+    prompt_template: str = ""               # loaded from YAML
+    max_tokens: int = 64
+    suspend_during_heavy_gen: bool = True
+```
+
 **Configuration YAML.**
 
 ```yaml
@@ -2881,6 +2903,57 @@ class CrossDomainCorrelator:
         over the last 14 days, mark it inactive. Returns count pruned.
         """
         ...
+```
+
+**Configuration dataclass.**
+
+```python
+@dataclass
+class MoodPredictorConfig:
+    """MoodPredictor sub-config."""
+    enabled: bool = True
+    fixed_only_days: int = 30
+    blend_ramp_days: int = 60
+    max_alpha: float = 0.8
+    confidence_threshold: float = 0.6
+    retrain_schedule: str = "daily"
+    hidden_layers: list[int] = field(default_factory=lambda: [32, 16])
+    ensemble_size: int = 3
+    learning_rate: float = 1e-3
+    max_iter: int = 500
+    validation_split: float = 0.2
+    model_path: str = "data/models/mood_predictor.joblib"
+
+
+@dataclass
+class TasteDiscoveryConfig:
+    """TasteAxisDiscovery sub-config."""
+    enabled: bool = True
+    schedule: str = "weekly"
+    min_cluster_size: int = 5
+    silhouette_threshold: float = 0.5
+    max_discovered_axes: int = 10
+    require_approval: bool = True
+
+
+@dataclass
+class CrossDomainConfig:
+    """CrossDomainCorrelator sub-config."""
+    enabled: bool = True
+    schedule: str = "daily"
+    correlation_threshold: float = 0.3
+    min_sample_count: int = 10
+    stale_threshold: float = 0.2
+    stale_window_days: int = 14
+
+
+@dataclass
+class EmergentBehaviorConfig:
+    """Top-level configuration for emergent behavior subsystem."""
+    enabled: bool = True
+    mood_predictor: MoodPredictorConfig = field(default_factory=MoodPredictorConfig)
+    taste_discovery: TasteDiscoveryConfig = field(default_factory=TasteDiscoveryConfig)
+    cross_domain: CrossDomainConfig = field(default_factory=CrossDomainConfig)
 ```
 
 **Configuration YAML.**
@@ -3876,6 +3949,62 @@ class SubconsciousLayer:
         4. Prune inactive latent associations
         """
         ...
+```
+
+**Configuration dataclass.**
+
+```python
+@dataclass
+class ImplicitPrimingConfig:
+    """ImplicitPrimingEngine sub-config."""
+    max_active_primes: int = 20
+    max_concurrent: int = 3
+    min_strength: float = 0.1
+    decay_after_activations: int = 100
+    decay_rate: float = 0.01
+    stale_days: int = 14
+
+
+@dataclass
+class LatentAssociationConfig:
+    """LatentAssociationEngine sub-config."""
+    faiss_path: str = "data/memory/latent_vectors"
+    embedding_dim: int = 512
+    similarity_threshold: float = 0.75
+    max_mood_delta: float = 0.05
+    max_associations: int = 500
+    prune_inactive_days: int = 30
+
+
+@dataclass
+class HabituationConfig:
+    """HabituationEngine sub-config."""
+    threshold: int = 50
+    check_interval_min: int = 60
+
+
+@dataclass
+class NightProcessingConfig:
+    """NightProcessor sub-config."""
+    quiet_hours_start: str = "23:00"
+    quiet_hours_end: str = "07:00"
+    require_user_absent: bool = True
+    temperature: float = 1.3
+    max_calls_per_night: int = 50
+    max_new_primes: int = 5
+    max_new_associations: int = 10
+    episode_significance_threshold: float = 0.1
+    inter_call_delay_sec: float = 2.0
+
+
+@dataclass
+class SubconsciousConfig:
+    """Top-level configuration for subconscious processing subsystem."""
+    enabled: bool = True
+    implicit_priming: ImplicitPrimingConfig = field(default_factory=ImplicitPrimingConfig)
+    latent_associations: LatentAssociationConfig = field(default_factory=LatentAssociationConfig)
+    habituation: HabituationConfig = field(default_factory=HabituationConfig)
+    night_processing: NightProcessingConfig = field(default_factory=NightProcessingConfig)
 ```
 
 **Configuration YAML.**
