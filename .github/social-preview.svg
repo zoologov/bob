@@ -1,0 +1,137 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="640" viewBox="0 0 1280 640">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#0a0e17"/>
+      <stop offset="100%" style="stop-color:#1a1025"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#f59e0b"/>
+      <stop offset="100%" style="stop-color:#fbbf24"/>
+    </linearGradient>
+    <linearGradient id="soul-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#f59e0b;stop-opacity:0.35"/>
+      <stop offset="100%" style="stop-color:#fbbf24;stop-opacity:0.1"/>
+    </linearGradient>
+    <radialGradient id="soul-core" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" style="stop-color:#f59e0b;stop-opacity:0.08"/>
+      <stop offset="100%" style="stop-color:#f59e0b;stop-opacity:0"/>
+    </radialGradient>
+    <filter id="node-glow">
+      <feGaussianBlur stdDeviation="14" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <filter id="title-glow">
+      <feGaussianBlur stdDeviation="4" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <filter id="face-glow">
+      <feGaussianBlur stdDeviation="20" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <!-- Background -->
+  <rect width="1280" height="640" fill="url(#bg)"/>
+
+  <!-- Central soul radiance -->
+  <circle cx="640" cy="290" r="300" fill="url(#soul-core)"/>
+
+  <!-- Soul network — left cluster -->
+  <g opacity="0.18">
+    <!-- Connections -->
+    <line x1="150" y1="90" x2="250" y2="200" stroke="url(#soul-grad)" stroke-width="3"/>
+    <line x1="150" y1="90" x2="70" y2="230" stroke="url(#soul-grad)" stroke-width="3"/>
+    <line x1="250" y1="200" x2="200" y2="370" stroke="url(#soul-grad)" stroke-width="3"/>
+    <line x1="70" y1="230" x2="200" y2="370" stroke="url(#soul-grad)" stroke-width="3"/>
+    <line x1="70" y1="230" x2="40" y2="430" stroke="url(#soul-grad)" stroke-width="3"/>
+    <line x1="200" y1="370" x2="130" y2="530" stroke="url(#soul-grad)" stroke-width="3"/>
+    <line x1="250" y1="200" x2="340" y2="310" stroke="url(#soul-grad)" stroke-width="2"/>
+    <line x1="340" y1="310" x2="200" y2="370" stroke="url(#soul-grad)" stroke-width="2"/>
+
+    <!-- Nodes — soul dimensions -->
+    <circle cx="150" cy="90" r="12" fill="#f59e0b" filter="url(#node-glow)" opacity="0.8"/>
+    <circle cx="250" cy="200" r="10" fill="#fbbf24" filter="url(#node-glow)" opacity="0.7"/>
+    <circle cx="70" cy="230" r="11" fill="#f59e0b" filter="url(#node-glow)" opacity="0.7"/>
+    <circle cx="200" cy="370" r="10" fill="#fbbf24" filter="url(#node-glow)" opacity="0.6"/>
+    <circle cx="40" cy="430" r="8" fill="#fde68a" filter="url(#node-glow)" opacity="0.5"/>
+    <circle cx="130" cy="530" r="9" fill="#fde68a" filter="url(#node-glow)" opacity="0.5"/>
+    <circle cx="340" cy="310" r="7" fill="#f59e0b" filter="url(#node-glow)" opacity="0.4"/>
+
+    <!-- Right cluster -->
+    <line x1="1130" y1="100" x2="1220" y2="230" stroke="url(#soul-grad)" stroke-width="3"/>
+    <line x1="1130" y1="100" x2="1040" y2="220" stroke="url(#soul-grad)" stroke-width="3"/>
+    <line x1="1220" y1="230" x2="1170" y2="390" stroke="url(#soul-grad)" stroke-width="3"/>
+    <line x1="1040" y1="220" x2="1100" y2="380" stroke="url(#soul-grad)" stroke-width="3"/>
+    <line x1="1170" y1="390" x2="1100" y2="380" stroke="url(#soul-grad)" stroke-width="3"/>
+    <line x1="1100" y1="380" x2="1150" y2="530" stroke="url(#soul-grad)" stroke-width="3"/>
+    <line x1="1170" y1="390" x2="1250" y2="510" stroke="url(#soul-grad)" stroke-width="3"/>
+    <line x1="940" y1="310" x2="1040" y2="220" stroke="url(#soul-grad)" stroke-width="2"/>
+    <line x1="940" y1="310" x2="1100" y2="380" stroke="url(#soul-grad)" stroke-width="2"/>
+
+    <circle cx="1130" cy="100" r="12" fill="#f59e0b" filter="url(#node-glow)" opacity="0.8"/>
+    <circle cx="1220" cy="230" r="10" fill="#fbbf24" filter="url(#node-glow)" opacity="0.7"/>
+    <circle cx="1040" cy="220" r="11" fill="#f59e0b" filter="url(#node-glow)" opacity="0.7"/>
+    <circle cx="1170" cy="390" r="9" fill="#fde68a" filter="url(#node-glow)" opacity="0.6"/>
+    <circle cx="1100" cy="380" r="10" fill="#fbbf24" filter="url(#node-glow)" opacity="0.6"/>
+    <circle cx="1150" cy="530" r="8" fill="#fde68a" filter="url(#node-glow)" opacity="0.5"/>
+    <circle cx="1250" cy="510" r="9" fill="#f59e0b" filter="url(#node-glow)" opacity="0.5"/>
+    <circle cx="940" cy="310" r="7" fill="#f59e0b" filter="url(#node-glow)" opacity="0.4"/>
+  </g>
+
+  <!-- Fleischer-style cartoon face — minimal, ghostly outline behind title -->
+  <g opacity="0.06" filter="url(#face-glow)">
+    <!-- Head -->
+    <circle cx="640" cy="260" r="180" fill="none" stroke="#f59e0b" stroke-width="3"/>
+    <!-- Left eye -->
+    <ellipse cx="580" cy="230" rx="35" ry="40" fill="none" stroke="#f59e0b" stroke-width="2.5"/>
+    <!-- Left pie-cut pupil -->
+    <circle cx="580" cy="230" r="18" fill="#f59e0b"/>
+    <line x1="580" y1="212" x2="580" y2="248" stroke="#0a0e17" stroke-width="3"/>
+    <line x1="562" y1="230" x2="598" y2="230" stroke="#0a0e17" stroke-width="3"/>
+    <!-- Right eye -->
+    <ellipse cx="700" cy="230" rx="35" ry="40" fill="none" stroke="#f59e0b" stroke-width="2.5"/>
+    <!-- Right pie-cut pupil -->
+    <circle cx="700" cy="230" r="18" fill="#f59e0b"/>
+    <line x1="700" y1="212" x2="700" y2="248" stroke="#0a0e17" stroke-width="3"/>
+    <line x1="682" y1="230" x2="718" y2="230" stroke="#0a0e17" stroke-width="3"/>
+    <!-- Smile -->
+    <path d="M 590 300 Q 640 350 690 300" fill="none" stroke="#f59e0b" stroke-width="2.5" stroke-linecap="round"/>
+  </g>
+
+  <!-- === Central content === -->
+
+  <!-- Title -->
+  <text x="640" y="270" font-family="'SF Mono', 'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace" font-size="160" font-weight="800" fill="#ffffff" text-anchor="middle" filter="url(#title-glow)">
+    Bob
+  </text>
+
+  <!-- Accent underline -->
+  <rect x="440" y="295" width="400" height="4" rx="2" fill="url(#accent)" opacity="0.5"/>
+
+  <!-- Tagline line 1 -->
+  <text x="640" y="370" font-family="'SF Mono', 'JetBrains Mono', 'Fira Code', monospace" font-size="38" fill="#fbbf24" text-anchor="middle" letter-spacing="3" font-weight="600">
+    Autonomous Home AI Agent
+  </text>
+
+  <!-- Tagline line 2 -->
+  <text x="640" y="430" font-family="'SF Mono', 'JetBrains Mono', 'Fira Code', monospace" font-size="38" fill="#fbbf24" text-anchor="middle" letter-spacing="3" font-weight="600">
+    with a Soul
+  </text>
+
+  <!-- Key concepts -->
+  <text x="640" y="530" font-family="'SF Mono', monospace" font-size="22" fill="#f59e0b" text-anchor="middle" opacity="0.8">
+    SOUL  &#xB7;  Genesis  &#xB7;  Exodus  &#xB7;  Tastes  &#xB7;  Moods  &#xB7;  24/7 on local hardware
+  </text>
+
+  <!-- Bottom accent bar -->
+  <rect x="0" y="630" width="1280" height="10" fill="url(#accent)" opacity="0.4"/>
+</svg>
