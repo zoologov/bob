@@ -127,6 +127,16 @@ architectures, and the boundaries of digital personality. It is in early
 development — version 0.1.0, lots of moving parts, frequent redesigns, and the
 occasional existential crisis (Bob's, not mine).
 
+## Under the Hood
+
+Everything described above is backed by a detailed technical specification —
+[RFC-001](.claude/dev-docs/RFC.md): 6,600+ lines, 33,000+ words, roughly 120
+pages of A4 if you're the kind of person who prints architecture documents (Bob
+respects that, even if he doesn't understand it). The design phase was
+deliberately thorough: every subsystem — from the 3-tier LLM orchestration and
+SOUL persistence model to the Godot rendering pipeline and ethical constraint
+framework — was specced out before a single line of production code was written.
+
 ## Development Tools
 
 This project is built and managed with the help of:
