@@ -5,6 +5,8 @@
 ![Type check: mypy](https://img.shields.io/badge/type%20check-mypy-blue)
 ![Built with Claude Code](https://img.shields.io/badge/built%20with-Claude%20Code-blueviolet?logo=anthropic&logoColor=white)
 
+> Read this in other languages: [Русский](README-ru.md)
+
 # Bob
 
 *An autonomous home AI agent with a soul*
