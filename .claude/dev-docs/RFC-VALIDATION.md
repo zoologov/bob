@@ -4,7 +4,7 @@
 
 # RFC-VALIDATION: Bob — Cross-Document Analysis and Validation
 
-> **Date:** 2026-02-26 (Round 1-2), 2026-02-27 (Round 3-4), 2026-02-28 (Round 5)
+> **Date:** 2026-02-26 (Round 1-2), 2026-02-27 (Round 3-4), 2026-02-28 (Round 5-6)
 > **Documents analyzed:** PRD.md (347 lines), RFC.md (~9500 lines)
 > **Author:** Claude (validation), v.zoologov (review)
 
@@ -790,3 +790,67 @@ What Bob can and cannot do at each development phase:
 > **Commit `bd85094`** (V5-C2, V5-C3): Rewrote §4.3 as 5-level self-improvement stack. Scoped LoRA fine-tuning to Qwen 0.5B Inner Monologue only (main 7B adapts via RAG + rules). Fixed duplicate `models/` directory. Unified `model_path` to `data/finetune/models/`.
 >
 > **Commit `40c466b`** (V5-H1 through V5-M3): Added scikit-learn and librosa to Tech Stack. Added SensoryGroundingConfig + 4 sub-configs. Added missing numpy import. Consolidated all 23 SQLite tables + 30 indices in §3.4.4. Fixed MoodEngine parameter order.
+
+---
+
+## 12. Validation Round 6 — Full Architecture Review
+
+> **Date:** 2026-02-28
+> **Scope:** Complete review of RFC.md (~9700 lines). Focus: architectural correctness, dead code, implementability on Mac Mini M4 16GB, code standards (mypy --strict), diagrams/tables/cross-references, completeness.
+
+### 12.1. Critical Issues
+
+| # | Sections | Issue | Status |
+|---|----------|-------|--------|
+| **V6-C1** | 3.1 (~168-258) | **Overview Diagram §3.1 incomplete.** Higher Mind box missing 5 subsystems: Inner Monologue (3.3.8), Emergent Behavior (3.3.9), Sensory Grounding (3.3.10), Subconscious Processing (3.3.11), RelationshipTracker (3.3.7.2). Ollama box missing Llama Guard 3-1B-INT4. ContentGuard not shown wrapping LLMRouter. Diagram label "Skill Registry" should be "SkillDomainRegistry" per §3.2.3. | OPEN |
+
+### 12.2. High Severity Issues
+
+| # | Sections | Issue | Status |
+|---|----------|-------|--------|
+| **V6-H1** | Multiple (401, 474, 545, 549, 557, 665, 974, 1056, 1074, 1108, 1423, 3148, 5064, 8067, 8230) | **14+ untyped `dict` parameters violate mypy --strict.** Bare `dict` without type parameters used in code examples: `classify(context: dict)`, `execute(params: dict)`, `create_plan(context: dict)`, `metadata: dict`, `create_goal(goal_data: dict)` etc. Must be `dict[str, Any]`, TypedDict, or proper dataclass. | OPEN |
+| **V6-H2** | 5.4 (~7171), 11 (~9466-9473) | **Section 11 Godot scenes contradict §5.4 shell-renderer design.** §5.4: single `shell_renderer.tscn`. §11: `room.tscn`, `bob.tscn`, `ui.tscn`. Scripts also diverge: §5.4 lists `scene_loader.gd`, `sprite_renderer.gd`, `touch_reporter.gd`; §11 lists `websocket_client.gd`, `bob_controller.gd`. Repository structure must match the shell-renderer architecture. | OPEN |
+| **V6-H3** | 3.4.5, 11 (~9287-9308) | **bob-soul/ and config/ in §11 missing files documented elsewhere.** Missing from `genesis/`: `taste_axes_pool.yaml`, `taste_clusters.yaml`, `mood_baselines.yaml`. Missing from `defaults/`: `decision_zones.yaml`. Missing from `evolution/`: `taste_evolution_rules.yaml`. Missing from `config/`: `relationship.yaml`, `genesis.yaml`. Missing from `tests/`: `test_mind/test_relationship_tracker.py`. | OPEN |
+| **V6-H4** | 3.4.4 (~4582-4612) | **Tables `experience` and `world_state` have no owning class.** Defined in §3.4.4 schema, `experience` in ScopedDBReader allowlist, `world_state` used by NightProcessor — but no class/API documents read/write operations. Also `content_violations` is orphaned (only ContentGuard schema, no subsection). | OPEN |
+| **V6-H5** | 3.4.4 | **Table count discrepancy + duplicate CREATE TABLEs.** Actual count: 25 tables (not 23). `episodic_log` defined in §3.4.2 AND §3.4.4. `semantic_memory` defined in §3.4.3 AND §3.4.4. Indices for both also duplicated. Running SQL literally would produce "already exists" errors. | OPEN |
+| **V6-H6** | 13 (~9656), 4.2.2 (~6082), 8.3 (~8336) | **Dangling cross-references.** (a) "see 9.3" at line ~9656 — Section 9 has no subsections. (b) §4.2.2 code change table uses "CRITICAL" as approval level, but `ApprovalLevel` enum (§8.3) has only AUTO/NOTIFY/CONFIRM/DENY — no CRITICAL. | OPEN |
+| **V6-H7** | Summary line 67 vs §4.3 | **Self-improvement level order mismatch.** Line 67: "behavioral rules, taste evolution, sklearn ML, Inner Monologue LoRA fine-tune, RAG" — RAG listed last (implying Level 5). But §4.3 defines: Level 1=Rules, Level 2=Taste, Level 3=RAG, Level 4=sklearn, Level 5=LoRA. Order must match. | OPEN |
+| **V6-H8** | 7.1 (~8110-8194) | **Event catalog: publisher mismatch + missing events.** (a) `audio.speech_start` example shows publisher `audio_direction_service`, catalog says `VoiceBridge`. (b) Missing events: `genesis.stage_completed`, `awakening.phase_ended`, `behavior.created`, `appearance.changed`, `room.modified`. (c) `audio.speech_start` payload missing `direction_deg`. | OPEN |
+| **V6-H9** | 9 (~9085-9123) | **Tech Stack §9 incomplete.** (a) HDBSCAN: clarify scikit-learn >= 1.3 or separate `hdbscan` package. (b) Alembic mentioned at §3.8.3 but not in Tech Stack. (c) structlog in Phase 1 description but not in Tech Stack. | OPEN |
+
+### 12.3. Medium Severity Issues
+
+| # | Sections | Issue | Status |
+|---|----------|-------|--------|
+| **V6-M1** | Multiple | **Code standards — type safety batch.** (a) `ModelManager.current_profile()` referenced at ~2662 but undefined in §3.2.4. (b) `TasteProfile.discovered: dict[str, TasteAxis]` mentioned at ~3080 but not in §3.3.5 dataclass. (c) `skill_registry: SkillRegistry` at ~280 should be `SkillDomainRegistry`. (d) String literals instead of Enum/Literal for `MoodPrediction.source` (~2726) and `ImplicitPrime.source` (~3713). (e) `CircuitBreaker._state: str` (~5701) should be Enum. (f) `datetime.now()` at ~8069 without timezone. | OPEN |
+| **V6-M2** | 3.3.9 (~2738), 3.3.10 (~3145), 3.3.11 (~3724) | **`np.ndarray` in dataclasses breaks `__eq__`.** `DiscoveredAxis.centroid`, `VisualEmbedding.embedding`, `LatentAssociation.trigger_embedding` use `np.ndarray` — `==` returns element-wise array, not bool. Also `CircadianPattern.hour_*: list[float]` has no validation that len==24. | OPEN |
+| **V6-M3** | 3.3.11 (~3943-3960) | **NightProcessor timing inconsistency.** 50 calls × (0.3s generation + 2s delay) = ~2 minutes total. But text says "typically 5-15 minutes." Numbers don't add up. | OPEN |
+| **V6-M4** | 6 (~7991-7998) | **TTS sample rate mismatch.** `sample_rate: 24000` (Qwen3-TTS native) vs `format: "pcm_22050_mono"` in audio_output. Either Qwen3-TTS outputs 22050, or resampling is needed, or the format should be `pcm_24000_mono`. | OPEN |
+| **V6-M5** | 3.3.10, 5.4.2, 5.4.2 (memory) | **Memory budget documentation gaps.** (a) No pruning/eviction strategy for visual embeddings at `max_index_size: 50000`. (b) SD LoRA training memory budget undocumented (SDXL: 10-12 GB, SD 1.5: 6-8 GB). (c) HEAVY_GEN upper bound 10.6 GB on 16 GB — needs OOM mitigation note. | OPEN |
+| **V6-M6** | Multiple | **Architecture gaps batch.** (a) `SpatialGrounding.cluster_directions()` at ~3400 — no table for raw DoA observations (clustering needs a data source). (b) `Event(**data)` from WebSocket at ~8217 — no validation of untrusted JSON. (c) Phase 0 readiness criterion "applies migrations" but no migrations exist at Phase 0. | OPEN |
+
+### 12.4. Low Severity Issues
+
+| # | Sections | Issue | Status |
+|---|----------|-------|--------|
+| **V6-L1** | 3.3.11 (~4198), 10 (~9232), 3.3.11 (~4212) | **Dead code and outdated references.** (a) Dead `ALTER TABLE improvement_rules` in §3.3.11 — already in §3.4.4 consolidated schema. (b) Phase 5 says "auto-segmentation" but Q30 resolved as NO auto-segmentation. (c) SubconsciousLayer wraps ContentGuard meaning implicit primes bypass input filtering — needs architectural note. | OPEN |
+| **V6-L2** | 3.5.1 (~6654), 6 (~7992), 8.1 (~8276) | **Platform-specific references.** (a) Camera scan mentions `v4l2` — Linux only, target is macOS (AVFoundation). (b) TTS comment "~97ms first-chunk (CUDA)" — M4 uses Metal, not CUDA. (c) `/opt/bob` as home dir vs relative `data/` paths — connection not explicit. | OPEN |
+| **V6-L3** | 5.1.1 (~6838-6878) | **Phantom trigger_words duplicates.** "coffee" ×2, "sunset" ×2, "rain" ×2, "music" ×2 — artifacts from bilingual list cleanup. | OPEN |
+| **V6-L4** | 5.4.2 (~7517) | **`_extract_color_palette` is synchronous in async class.** CPU-bound k-means on pixel data would block the event loop. Needs `asyncio.to_thread()` wrapper or documentation note. | OPEN |
+
+### 12.5. RFC-VALIDATION.md Self-Consistency Issues
+
+| # | Sections | Issue | Status |
+|---|----------|-------|--------|
+| **V6-S1** | §1 (~37), §4 (~302-305) | **RFC-VALIDATION.md itself has stale references.** (a) §1 line 37: "Self-improves: room, code, behavior, local LLMs (LoRA fine-tune)" — should reflect 5-level model. (b) §4 Phase F line 305: "First LoRA fine-tune of local LLM" — should say "Inner Monologue 0.5B". (c) §4 Phase F line 315: "Multiple fine-tune iterations" — same. (d) §5 Phase 6 line 417-421: "Fine-tune local LLMs from experience" — should match §4.3 model. | OPEN |
+
+### 12.6. Summary Matrix — Round 6
+
+| Severity | Found | Resolved | Remaining | Key Themes |
+|----------|-------|----------|-----------|------------|
+| **Critical** | 1 | 0 | 1 | Overview diagram incomplete |
+| **High** | 9 | 0 | 9 | Untyped dicts, repo structure, database, cross-refs, events, tech stack |
+| **Medium** | 6 | 0 | 6 | Type safety, ndarray, timing, TTS, memory, architecture gaps |
+| **Low** | 4 | 0 | 4 | Dead code, platform refs, duplicates, sync method |
+| **Self-consistency** | 1 | 0 | 1 | Stale LoRA references in validation doc itself |
+| **Total** | **21** | **0** | **21** | |
