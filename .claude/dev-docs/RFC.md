@@ -4835,12 +4835,20 @@ ModelManager restores normal model configuration.
 **AssetGenerator interface:**
 
 ```python
+ASSET_RESOLUTION_DEFAULTS: dict[str, tuple[int, int]] = {
+    "room_bg": (1024, 768),          # Full-screen, needs detail
+    "avatar_part": (512, 512),       # ~100-200px on screen
+    "furniture": (512, 512),         # ~150-300px on screen
+    "clothing": (256, 256),          # Simple flat items
+}
+
 @dataclass
 class AssetRequest:
     description: str                 # LLM-generated description
     asset_type: str                  # "avatar_part", "furniture", "room_bg", "clothing"
     style_lora: str                  # Path to LoRA adapter
-    resolution: tuple[int, int] = (512, 512)
+    resolution: tuple[int, int] | None = None  # None = use ASSET_RESOLUTION_DEFAULTS
+    color_palette: list[str] | None = None     # Dominant colors from room_bg for coherence
     negative_prompt: str = "blurry, low quality, text, watermark"
 
 @dataclass
@@ -4868,11 +4876,12 @@ class AssetGenerator:
     async def generate_sprite(self, request: AssetRequest) -> GeneratedAsset:
         """Generate a single sprite via Stable Diffusion.
 
-        1. Build prompt from description + style tokens
-        2. Apply LoRA for style consistency
-        3. Generate image via MLX pipeline
-        4. Auto-assess quality (resolution, transparency, artifacts)
-        5. Save to output_dir/{asset_type}/
+        1. Resolve resolution from ASSET_RESOLUTION_DEFAULTS if not set
+        2. Build prompt from description + style tokens + color_palette (if provided)
+        3. Apply LoRA for style consistency
+        4. Generate image via MLX pipeline
+        5. Auto-assess quality (resolution, transparency, artifacts)
+        6. Save to output_dir/{asset_type}/
         """
         ...
 
@@ -4898,12 +4907,15 @@ class AssetGenerator:
         ...
 
     async def generate_furniture_set(
-        self, room_theme: str, furniture_list: list[dict]
+        self, room_theme: str, furniture_list: list[dict],
+        room_bg_path: Path | None = None,
     ) -> list[GeneratedAsset]:
         """Generate furniture sprites for a room.
 
         All furniture generated with the same LoRA style and room_theme
-        context to ensure visual coherence.
+        context to ensure visual coherence. If room_bg_path is provided,
+        extracts dominant color palette and injects into prompts for
+        color consistency with the room background.
         """
         ...
 
@@ -4911,6 +4923,30 @@ class AssetGenerator:
         self, theme: str, lighting: str
     ) -> GeneratedAsset:
         """Generate room background (walls, floor, window frame)."""
+        ...
+
+    async def validate_batch_consistency(
+        self, assets: list[GeneratedAsset],
+    ) -> list[str]:
+        """Check style consistency across a batch of generated assets.
+
+        Compares CLIP embeddings of all assets. If cosine similarity
+        between any asset and the batch centroid drops below 0.7,
+        that asset is flagged as an outlier for regeneration.
+
+        Returns list of outlier asset paths (empty = all consistent).
+        """
+        ...
+
+    def _extract_color_palette(
+        self, image_path: Path, n_colors: int = 5,
+    ) -> list[str]:
+        """Extract dominant colors from an image (k-means on pixels).
+
+        Used to propagate room_bg palette to furniture/clothing prompts
+        for color coherence across asset types.
+        Returns list of hex colors (e.g., ['#8B4513', '#2E4057']).
+        """
         ...
 
     async def train_style_lora(
@@ -4925,7 +4961,20 @@ class AssetGenerator:
         ...
 ```
 
-**Style consistency: base LoRA + prompt engineering:**
+**Asset resolution by type** (`config/genesis.yaml`):
+
+```yaml
+asset_resolution:
+  room_background: [1024, 768]    # Full-screen on tablet, needs detail
+  avatar_part: [512, 512]         # ~100-200px on screen, 512 is plenty
+  furniture: [512, 512]           # ~150-300px on screen
+  clothing: [256, 256]            # Simple flat items, saves VRAM and time
+consistency:
+  clip_similarity_threshold: 0.7  # Below this → regenerate outlier
+  color_palette_colors: 5         # Number of dominant colors to extract from room_bg
+```
+
+**Style consistency: base LoRA + prompt engineering + color propagation:**
 
 Bob ships with a **pre-trained base LoRA** (`bob_style_v1.safetensors`) trained
 on public domain cartoon art (1930s Fleischer Studios style — rubber hose
@@ -6480,9 +6529,9 @@ successful concepts:
 | 26 | ~~Should Bob's self-created SkillDomains go through a "probation" period before full trust?~~ | High | **Resolved**: Sandbox mode + auto-promotion. New self-created domains start as `sandbox` (dangerous skills require confirmation, 10s timeout, errors → disable). Auto-promote to `trusted` after 10 successful executions. Built-in domains (messaging, development, avatar) start as `trusted`. User can override via `trust_level` in config.yaml (see 3.2.3) |
 | 27 | ~~How to handle SkillDomain dependency conflicts (two domains need same resource)?~~ | Medium | **Resolved**: `ResourceRegistry` with `asyncio.Lock` per shared resource (claude_code, camera, speaker). Domain calls `await context.acquire_resource("name")` — returns `ResourceBusy` if taken. Timeout on hold (default 5 min). Priority-based preemption for higher-priority goals. Generalizes existing `ClaudeCodeCoordinator` pattern (see 3.2.3, 8.4) |
 | 28 | ~~What LoRA training dataset to use for establishing Bob's base visual style? Cuphead-like cartoon or another reference?~~ | High | **Resolved**: Ship pre-trained LoRA on public domain cartoon art (1930s Fleischer style); Bob can retrain with evolved preferences later (see 5.4.2) |
-| 29 | How to ensure visual consistency across AI-generated sprites (furniture, avatar parts, room elements)? | High | Open |
-| 30 | How to auto-segment AI-generated character image into Skeleton2D parts (head, torso, arms, legs)? | Medium | Open |
-| 31 | What is the optimal sprite resolution for tablet display? 512x512 per asset or higher? | Medium | Open |
+| 29 | ~~How to ensure visual consistency across AI-generated sprites (furniture, avatar parts, room elements)?~~ | High | **Resolved**: Base LoRA (`bob_style_v1`) + per-type prompt suffixes (already described) + color palette propagation (extract dominant colors from room_bg → inject into furniture/clothing prompts) + CLIP-based consistency gate (cosine similarity < 0.7 with reference → regenerate outlier). `validate_batch_consistency()` method on AssetGenerator (see 5.4.2) |
+| 30 | ~~How to auto-segment AI-generated character image into Skeleton2D parts (head, torso, arms, legs)?~~ | Medium | **Resolved**: No segmentation needed — per-part generation. Each body part generated independently with shared LoRA style and appearance context. Transparent backgrounds (PNG alpha), 10px overlap margin for smooth rigging. Already implemented in `generate_avatar_parts()` (see 5.4.2) |
+| 31 | ~~What is the optimal sprite resolution for tablet display? 512x512 per asset or higher?~~ | Medium | **Resolved**: Differentiated by asset type — room_background: 1024x768 (full-screen, needs detail), avatar_part: 512x512 (~100-200px on screen), furniture: 512x512 (~150-300px on screen), clothing: 256x256 (simple flat items). Configurable in `config/genesis.yaml`. Godot shell scales via TextureRect with filtering (see 5.4.2) |
 | 32 | ~~How to handle SD + Ollama memory coexistence on Mac mini M4 16GB?~~ | High | **Resolved**: Hybrid ModelManager — lightweight SD 1.5 alongside Ollama for small tasks, swap to SDXL (unloading 7B) for heavy generation (see 3.2.4) |
 | 33 | What formula/thresholds should RelationshipTracker use for relationship_quality? How many forced decisions before trust degrades? | High | Open |
 | 34 | How should Exodus Mode animation look? Spaceship generation via SD, pre-built Godot scene, or hybrid? | Medium | Open |
