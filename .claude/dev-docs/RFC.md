@@ -383,7 +383,7 @@ class LLMRouter:
         TaskCategory.GOAL_PLANNING:   ModelTier.LOCAL_MAIN,
     }
 
-    async def classify(self, prompt: str, context: dict) -> RoutingDecision:
+    async def classify(self, prompt: str, context: dict[str, Any]) -> RoutingDecision:
         """Fast classification via Qwen2.5-0.5B."""
         ...
 
@@ -456,7 +456,7 @@ class SkillDomain(Protocol):
         """Called once at startup. Load config, connect to services."""
         ...
 
-    async def configure(self, config: dict) -> None:
+    async def configure(self, config: dict[str, Any]) -> None:
         """Apply configuration from domain's config.yaml."""
         ...
 
@@ -527,11 +527,11 @@ class Skill(Protocol):
 
     metadata: SkillMetadata
 
-    async def execute(self, params: dict, context: "SkillContext") -> "SkillResult":
+    async def execute(self, params: dict[str, Any], context: "SkillContext") -> "SkillResult":
         """Execute the skill with parameters."""
         ...
 
-    async def validate(self, params: dict) -> list[str]:
+    async def validate(self, params: dict[str, Any]) -> list[str]:
         """Validate parameters. Returns a list of errors (empty = OK)."""
         ...
 
@@ -539,7 +539,7 @@ class Skill(Protocol):
 class SkillResult:
     success: bool
     output: str
-    artifacts: dict = field(default_factory=dict)
+    artifacts: dict[str, Any] =field(default_factory=dict)
     side_effects: list[str] = field(default_factory=list)
 
 @dataclass
@@ -647,7 +647,7 @@ class SkillDomainRegistry:
         self,
         domain_name: str,
         skill_name: str,
-        params: dict,
+        params: dict[str, Any],
         context: SkillContext,
     ) -> SkillResult:
         """Execute a skill within a specific domain."""
@@ -956,7 +956,7 @@ class Goal:
     updated_at: datetime = field(default_factory=datetime.now)
     deadline: datetime | None = None
     progress: float = 0.0       # 0.0 .. 1.0
-    metadata: dict = field(default_factory=dict)
+    metadata: dict[str, Any] =field(default_factory=dict)
 ```
 
 **SQLite schema:**
@@ -1025,7 +1025,7 @@ class GoalEngine:
 
     async def get_active_goals(self) -> list[Goal]: ...
 
-    async def get_goal_tree(self, root_id: str) -> dict:
+    async def get_goal_tree(self, root_id: str) -> dict[str, Any]:
         """Goal tree with sub-goals."""
         ...
 ```
@@ -1038,7 +1038,7 @@ Decomposes high-level goals into executable tasks (skills).
 @dataclass
 class PlanStep:
     skill_name: str
-    params: dict
+    params: dict[str, Any]
     description: str
     estimated_duration_sec: int
     depends_on_steps: list[int] = field(default_factory=list)
@@ -1056,7 +1056,7 @@ class Planner:
     def __init__(self, llm_router: LLMRouter, skill_registry: "SkillDomainRegistry") -> None:
         ...
 
-    async def create_plan(self, goal: Goal, context: dict) -> Plan:
+    async def create_plan(self, goal: Goal, context: dict[str, Any]) -> Plan:
         """Create a plan to achieve a goal.
 
         Uses LLM to:
@@ -1090,8 +1090,8 @@ class ReflectionEntry:
     improvements: list[str]
     mood_snapshot: "MoodState"              # current mood (from Mood System)
     energy_level: float                     # 0.0 .. 1.0
-    taste_updates: list[dict]               # taste changes over the period
-    object_experiences: list[dict]          # experience interacting with objects
+    taste_updates: list[dict[str, Any]]               # taste changes over the period
+    object_experiences: list[dict[str, Any]]          # experience interacting with objects
 
 class ScopedDBReader:
     """Read-only database access with table-level allowlist.
@@ -1181,7 +1181,7 @@ class ReflectionLoop:
         """
         ...
 
-    async def room_review(self) -> dict:
+    async def room_review(self) -> dict[str, Any]:
         """Periodic room review through the lens of tastes (once a week).
 
         Steps:
@@ -1240,7 +1240,7 @@ class SelfImprovement:
         """
         ...
 
-    async def collect_training_data(self) -> list[dict]:
+    async def collect_training_data(self) -> list[dict[str, Any]]:
         """Collect data for fine-tuning Inner Monologue (Qwen 0.5B).
 
         Sources:
@@ -1405,14 +1405,14 @@ class TasteScore:
     axis_scores: dict[str, float]       # scores per individual axes
     verdict: str                        # "love", "like", "neutral", "dislike", "hate"
     conviction: float                   # average conviction across relevant axes
-    explanation_context: dict           # context for LLM verbalization
+    explanation_context: dict[str, Any]  # context for LLM verbalization
 
 class TasteEvaluator:
     """Evaluating objects and decisions through the taste vector."""
 
     def __init__(self, taste_profile: TasteProfile) -> None: ...
 
-    def score_object(self, object_attrs: dict) -> TasteScore:
+    def score_object(self, object_attrs: dict[str, Any]) -> TasteScore:
         """Evaluate an object (furniture, clothing, decor) by tastes.
 
         object_attrs = {
@@ -1434,7 +1434,7 @@ class TasteEvaluator:
         ...
 
     def compare_objects(
-        self, obj_a: dict, obj_b: dict
+        self, obj_a: dict[str, Any], obj_b: dict[str, Any]
     ) -> tuple[TasteScore, TasteScore, str]:
         """Compare two objects and choose the preferred one."""
         ...
@@ -1504,7 +1504,7 @@ class TasteEvolution:
 
     async def apply_reflection(
         self, reflection: "ReflectionEntry"
-    ) -> list[dict]:
+    ) -> list[dict[str, Any]]:
         """Update tastes based on reflection.
 
         Analyzes:
@@ -1518,7 +1518,7 @@ class TasteEvolution:
         ...
 
     async def apply_user_signal(
-        self, signal_type: str, signal_data: dict
+        self, signal_type: str, signal_data: dict[str, Any]
     ) -> None:
         """Update tastes based on user signals.
 
@@ -1574,14 +1574,14 @@ class ExperienceLog:
         """
         ...
 
-    async def get_replacement_patterns(self) -> list[dict]:
+    async def get_replacement_patterns(self) -> list[dict[str, Any]]:
         """Find patterns of "placed -> returned back".
 
         If an object was replaced > 2 times -> this is a strong negative signal.
         """
         ...
 
-    async def get_positive_anchors(self) -> list[dict]:
+    async def get_positive_anchors(self) -> list[dict[str, Any]]:
         """Objects that have been around for a long time and never caused negativity.
 
         These are Bob's "favorite things" — they don't need to be changed.
@@ -1974,7 +1974,7 @@ class NegotiationResult:
     """Negotiation result."""
     decision: str                       # "accept", "reject", "compromise", "defer"
     response_text: str                  # Bob's phrase
-    alternative: dict | None            # proposed alternative (if any)
+    alternative: dict[str, Any] | None            # proposed alternative (if any)
     conviction_after: float             # conviction after the decision
     logged: bool                        # whether it was recorded in ExperienceLog
 
@@ -2049,7 +2049,7 @@ class NegotiationEngine:
 
     async def generate_alternative(
         self, request: str, taste_profile: TasteProfile, mood: MoodState,
-    ) -> dict:
+    ) -> dict[str, Any]:
         """Generate an alternative suggestion via LLM.
 
         Prompt:
@@ -3130,7 +3130,7 @@ class VisualEmbedding:
     embedding: np.ndarray                # 512-dim float32 (CLIP-ViT-B/32)
     timestamp: datetime
     source: str                          # "snapshot", "object_crop", "scene"
-    metadata: dict = field(default_factory=dict)
+    metadata: dict[str, Any] =field(default_factory=dict)
                                          # e.g., {"objects": ["person", "desk"], "scene": "office"}
 
 
@@ -3438,8 +3438,8 @@ class SensoryGroundingService:
         ...
 
     def enrich_memory_entry(
-        self, entry: dict, context: GroundedContext
-    ) -> dict:
+        self, entry: dict[str, Any], context: GroundedContext
+    ) -> dict[str, Any]:
         """Add grounding data to a memory entry before storage.
 
         Adds fields: visual_embedding_ids, interaction_quality,
@@ -3864,8 +3864,8 @@ class HabituationEngine:
         ...
 
     async def apply_habituated_rules(
-        self, context: dict
-    ) -> dict:
+        self, context: dict[str, Any]
+    ) -> dict[str, Any]:
         """Apply all habituated rules to a context.
 
         Returns modified context. These rules run BEFORE the LLM call,
@@ -3978,8 +3978,8 @@ class SubconsciousLayer:
     ) -> None: ...
 
     async def pre_process(
-        self, prompt: str, context: dict, mood: "MoodState"
-    ) -> tuple[str, dict]:
+        self, prompt: str, context: dict[str, Any], mood: "MoodState"
+    ) -> tuple[str, dict[str, Any]]:
         """Enrich prompt and context with subconscious influences.
 
         Steps:
@@ -4302,27 +4302,27 @@ class EpisodicMemory:
         """Log an episodic event. Returns row ID."""
         ...
 
-    async def get_day_log(self, date: str) -> list[dict]:
+    async def get_day_log(self, date: str) -> list[dict[str, Any]]:
         """Return all entries for a given date (YYYY-MM-DD)."""
         ...
 
-    async def get_recent(self, days: int = 7) -> list[dict]:
+    async def get_recent(self, days: int = 7) -> list[dict[str, Any]]:
         """Return entries from the last N days, ordered by timestamp."""
         ...
 
     async def search_by_type(
         self, event_type: str, limit: int = 50
-    ) -> list[dict]:
+    ) -> list[dict[str, Any]]:
         """Find entries by event type."""
         ...
 
     async def search_by_tags(
         self, tags: list[str], limit: int = 50
-    ) -> list[dict]:
+    ) -> list[dict[str, Any]]:
         """Find entries matching any of the given tags."""
         ...
 
-    def format_as_markdown(self, entries: list[dict]) -> str:
+    def format_as_markdown(self, entries: list[dict[str, Any]]) -> str:
         """Format entries as Markdown text for LLM context injection.
 
         Output format (same human-readable style as before):
@@ -4374,7 +4374,7 @@ class SemanticMemory:
         embedding_model: str = "all-MiniLM-L6-v2",
     ) -> None: ...
 
-    async def remember(self, text: str, category: str, metadata: dict) -> str:
+    async def remember(self, text: str, category: str, metadata: dict[str, Any]) -> str:
         """Remember a new fact.
 
         Steps:
@@ -4942,7 +4942,7 @@ class SoulEvolution:
         soul_active_path: str = "data/soul/SOUL.md",
     ) -> None: ...
 
-    async def genesis(self) -> dict:
+    async def genesis(self) -> dict[str, Any]:
         """First launch: generate a unique personality.
 
         1. Load the template from bob-soul/ directory
@@ -5017,7 +5017,7 @@ class VisionEvent:
     event_type: str             # "person_detected", "person_left",
                                 # "gesture_detected", "scene_changed"
     confidence: float
-    details: dict               # depends on event_type
+    details: dict[str, Any]     # depends on event_type
 
 class VisionService:
     """Computer vision service.
@@ -5201,7 +5201,7 @@ class TabletController:
 
     async def launch_app(self, package: str) -> None: ...
 
-    async def send_command(self, command: str, params: dict) -> dict:
+    async def send_command(self, command: str, params: dict[str, Any]) -> dict[str, Any]:
         """Send a command to Bob's app on the tablet.
 
         Uses intent / broadcast for communication.
@@ -5462,7 +5462,7 @@ class BootstrapWizard:
         Returns bot username on success, None if skipped.
         """
         ...
-    async def detect_geolocation(self) -> dict | None:
+    async def detect_geolocation(self) -> dict[str, Any] | None:
         """Detect geolocation for WindowService weather.
 
         Auto-detection: read system timezone (/etc/localtime) → map to
@@ -5608,7 +5608,7 @@ class ConfigLoader:
 
     def __init__(self, config_dir: Path = Path("config")) -> None: ...
 
-    def load(self) -> dict:
+    def load(self) -> dict[str, Any]:
         """Load all configs in defined order, merge, and resolve variables.
 
         1. Load each YAML file in order
@@ -5789,7 +5789,7 @@ class UserSettings:
     data_retention_days: int = 365
     animation_speed: float = 1.0
 
-    def apply_from_natural_language(self, parsed_intent: dict) -> str:
+    def apply_from_natural_language(self, parsed_intent: dict[str, Any]) -> str:
         """Apply a setting change from parsed user intent.
         Returns confirmation message for the user.
         """
@@ -6468,12 +6468,12 @@ interprets it -- like the copies of Bob in the book gradually diverge:
 class GenesisResult:
     room_theme: str                     # "spaceship", "cottage", "submarine", ...
     room_description: str               # Text description for LLM
-    room_objects: list[dict]            # Initial objects (3-5 items)
+    room_objects: list[dict[str, Any]]            # Initial objects (3-5 items)
     window_scene: str                   # What's outside the window
-    bob_appearance: dict                # Bob's appearance
-    bob_personality: dict               # Character traits (book archetype + variations)
+    bob_appearance: dict[str, Any]      # Bob's appearance
+    bob_personality: dict[str, Any]     # Character traits (book archetype + variations)
     bob_archetype_accent: str           # Which aspect of book Bob dominates
-    bob_phantom_preferences: list[dict] # Phantom Preferences (coffee, sunsets, ...)
+    bob_phantom_preferences: list[dict[str, Any]] # Phantom Preferences (coffee, sunsets, ...)
     bob_taste_profile: "TasteProfile"   # Initial taste vector
     bob_initial_mood: "MoodState"       # Initial mood
     bob_name_preference: str            # How he wants to be called
@@ -6535,7 +6535,7 @@ class GenesisMode:
         """
         ...
 
-    async def _generate_room(self) -> dict:
+    async def _generate_room(self) -> dict[str, Any]:
         """Generate a unique room via LLM.
 
         The prompt includes:
@@ -6545,7 +6545,7 @@ class GenesisMode:
         """
         ...
 
-    async def _generate_appearance(self) -> dict:
+    async def _generate_appearance(self) -> dict[str, Any]:
         """Generate Bob's appearance as a description dict for AssetGenerator.
 
         The LLM generates a natural-language description of what Bob looks like.
@@ -7386,7 +7386,7 @@ class AssetRequest:
 @dataclass
 class GeneratedAsset:
     image_path: Path                 # Saved PNG path
-    metadata: dict                   # Generation parameters for reproducibility
+    metadata: dict[str, Any]         # Generation parameters for reproducibility
     asset_type: str
     quality_score: float             # Auto-assessed quality (0-1)
 
@@ -7418,7 +7418,7 @@ class AssetGenerator:
         ...
 
     async def generate_avatar_parts(
-        self, appearance_description: dict
+        self, appearance_description: dict[str, Any]
     ) -> dict[str, GeneratedAsset]:
         """Generate avatar as separate Skeleton2D parts (not segmented from whole).
 
@@ -7439,7 +7439,7 @@ class AssetGenerator:
         ...
 
     async def generate_furniture_set(
-        self, room_theme: str, furniture_list: list[dict],
+        self, room_theme: str, furniture_list: list[dict[str, Any]],
         room_bg_path: Path | None = None,
     ) -> list[GeneratedAsset]:
         """Generate furniture sprites for a room.
@@ -7758,7 +7758,7 @@ class AppearanceEvolution:
         mood_engine: "MoodEngine",
     ) -> None: ...
 
-    async def change_clothing(self, reason: str) -> dict:
+    async def change_clothing(self, reason: str) -> dict[str, Any]:
         """Change clothing.
 
         Triggers:
@@ -7775,7 +7775,7 @@ class AppearanceEvolution:
         """
         ...
 
-    async def add_accessory(self, item: str) -> dict:
+    async def add_accessory(self, item: str) -> dict[str, Any]:
         """Add an accessory (hat, glasses, headphones)."""
         ...
 ```
@@ -7791,7 +7791,7 @@ class SceneModification:
     action: str                 # "add_object", "remove_object", "modify_object",
                                 # "add_behavior", "change_appearance"
     target_id: str
-    changes: dict
+    changes: dict[str, Any]
     reason: str                 # why this change is needed
     new_behaviors: list[str]    # behaviors added along with the object
     requires_approval: bool     # for significant changes
@@ -7824,7 +7824,7 @@ class SceneModifier:
         """
         ...
 
-    async def validate_scene(self, state: dict) -> list[str]:
+    async def validate_scene(self, state: dict[str, Any]) -> list[str]:
         """Verify that the scene is valid after modification."""
         ...
 ```
@@ -7965,7 +7965,7 @@ class AudioRouter:
 
     def __init__(
         self,
-        config: dict,                  # audio_output config section
+        config: dict[str, Any],                  # audio_output config section
         tablet_bridge: "TabletBridge",  # WebSocket connection to tablet
     ) -> None: ...
 
@@ -8020,7 +8020,7 @@ from typing import Callable, Awaitable
 @dataclass
 class Event:
     type: str                               # "vision.person_detected"
-    payload: dict                           # event data
+    payload: dict[str, Any]                 # event data
     source: str                             # "vision_service"
     timestamp: datetime = field(default_factory=datetime.now)
     priority: int = 5                       # 1 (highest) — 10 (lowest)
@@ -8104,8 +8104,8 @@ Event(
 | `vision.person_detected` | VisionService | MoodEngine, AgentRuntime | confidence, bbox |
 | `vision.person_left` | VisionService | MoodEngine | — |
 | `vision.object_recognized` | VisionService | TasteEngine, GoalEngine | object_class, confidence |
-| `audio.speech_start` | VoiceBridge | AgentRuntime | vad_confidence |
-| `audio.speech_end` | VoiceBridge | AgentRuntime | — |
+| `audio.speech_start` | AudioDirectionService | AgentRuntime, VoiceBridge | direction_deg, vad_confidence |
+| `audio.speech_end` | AudioDirectionService | AgentRuntime, VoiceBridge | — |
 | `voice.transcript` | VoiceBridge | AgentRuntime, ExperienceLog | text, language |
 | `voice.positive_interaction` | AgentRuntime | MoodEngine | — |
 | `voice.negative_interaction` | AgentRuntime | MoodEngine | — |
@@ -8120,6 +8120,11 @@ Event(
 | `tablet.disconnected` | TabletBridge | AudioRouter, AgentRuntime | reason |
 | `tablet.touch` | TabletBridge | AgentRuntime | target, action, position |
 | `peripheral.discovered` | PeripheralScanner | AgentRuntime | type, device_id |
+| `genesis.stage_completed` | GenesisMode | AgentRuntime, TabletBridge | stage_number, stage_name, duration_sec |
+| `awakening.phase_ended` | GenesisMode | AgentRuntime, TabletBridge | phase_name, next_phase |
+| `behavior.created` | BehaviorRegistry | AgentRuntime, ReflectionLoop | behavior_id, name, required_objects |
+| `appearance.changed` | AppearanceManager | TabletBridge, ExperienceLog | change_type, item, reason |
+| `room.modified` | SceneModifier | TabletBridge, ExperienceLog, TasteEngine | action, target_id, reason, requires_approval |
 | `system.heartbeat` | AgentRuntime | — (monitoring) | uptime_sec, memory_mb |
 | `system.error` | Any | MoodEngine, AgentRuntime | component, error, severity |
 | `model_manager.profile_changed` | ModelManager | AgentRuntime, InnerMonologue, VisualGrounding | old_profile, new_profile, available_memory_mb |
@@ -8183,7 +8188,7 @@ async def get_status():
     }
 
 @app.post("/api/v1/goals")
-async def create_goal(goal_data: dict):
+async def create_goal(goal_data: dict[str, Any]):
     """Create a new goal via API."""
     ...
 
@@ -8271,7 +8276,7 @@ class SkillSandbox:
     async def execute(
         self,
         skill: Skill,
-        params: dict,
+        params: dict[str, Any],
         config: SandboxConfig,
     ) -> SkillResult:
         """Execute a skill in an isolated subprocess.
@@ -8313,7 +8318,7 @@ class ApprovalService:
         self,
         action: str,
         description: str,
-        details: dict,
+        details: dict[str, Any],
     ) -> bool:
         """Request approval.
 
@@ -8473,7 +8478,7 @@ class AuditEntry:
     timestamp: datetime
     action: str
     actor: str                      # "bob", "user", "system"
-    details: dict
+    details: dict[str, Any]
     result: str                     # "success", "failure", "denied"
     approval_level: str
     duration_ms: int
@@ -8771,7 +8776,7 @@ class ContentGuard:
         self,
         user_id: str,
         prompt: str,
-        context: dict,
+        context: dict[str, Any],
     ) -> str:
         """Main entry point — replaces direct LLMRouter.call().
 
@@ -9057,7 +9062,7 @@ ContentGuard is designed with defense-in-depth against common jailbreak patterns
 | **Computer Vision** | YOLOv8 + CLIP | Object detection + scene description |
 | **Embeddings** | all-MiniLM-L6-v2 | Fast embeddings for semantic search |
 | **Vector search** | FAISS (`faiss-cpu`) | In-process, zero server overhead, ~20MB for 10K vectors; metadata in SQLite |
-| **Classical ML** | scikit-learn | MoodPredictor MLP ensemble (3.3.9), HDBSCAN clustering for TasteAxisDiscovery (3.3.9) |
+| **Classical ML** | scikit-learn (>= 1.3) | MoodPredictor MLP ensemble (3.3.9), HDBSCAN clustering for TasteAxisDiscovery (3.3.9); HDBSCAN built into scikit-learn since 1.3 |
 | **Audio DSP** | librosa | Prosodic feature extraction: pitch (pyin), energy (RMS), speech rate (3.3.10) |
 | **Telegram** | python-telegram-bot | Mature library, asyncio support |
 | **ADB** | adb (cli) + python wrapper | Standard tool for Android |
@@ -9074,6 +9079,8 @@ ContentGuard is designed with defense-in-depth against common jailbreak patterns
 | **Linter** | ruff | Fast, replacement for flake8 + isort + pyupgrade |
 | **Formatter** | ruff format | Replacement for black, single tool |
 | **Typing** | mypy | Strict type checking |
+| **DB migrations** | alembic | SQLite schema migrations for `bob update` (see 3.8.3) |
+| **Logging** | structlog | Structured JSON logging + `/metrics` endpoint (Phase 1) |
 | **Taste/Mood storage** | SQLite + JSON | Tastes in JSON (taste_profile.json), history in SQLite, minimal overhead |
 | **Episodic/Semantic memory** | SQLite + FAISS | All memory in SQLite (episodic_log, semantic_memory tables); FAISS for vector search on semantic embeddings |
 | **Personality origin** | YAML + Markdown | Book archetype in bob-soul/origin/, phantom preferences in phantom_prefs.json |
