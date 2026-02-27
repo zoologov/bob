@@ -64,7 +64,7 @@ Bob is an attempt to create an **autonomous agent** that:
 |----------|-------------|
 | **Autonomy** | Bob runs 24/7, selects tasks from the goal graph on his own |
 | **Long-lived goals** | Structured Goal Engine, not LLM-mediated re-derivation |
-| **Self-improvement** | 5-level learning: behavioral rules, taste evolution, sklearn ML, Inner Monologue LoRA fine-tune, RAG — Bob literally becomes smarter |
+| **Self-improvement** | 5-level learning: behavioral rules, taste evolution, RAG + rules, sklearn ML, Inner Monologue LoRA fine-tune — Bob literally becomes smarter |
 | **Locality** | All compute on Mac mini M4; Claude Code CLI is the only external tool |
 | **Personality** | SOUL — a modular "soul" (`bob-soul/` template directory), unique per instance |
 | **Self-awareness** | Bob knows about the book "We Are Legion (We Are Bob)" and that he was inspired by its character. Jokes about it, doesn't hide it |
@@ -6064,10 +6064,10 @@ heavy review while keeping architectural changes under user control.
 |--------------|----------|----------|----------|
 | **Low** | Tests, docs, bugfixes, refactoring <20 lines | Direct commit on `main` + Telegram notification | NOTIFY |
 | **Medium** | New skills, changes to existing logic, new dependencies | Branch `bob/<name>` + Telegram with diff summary, wait for "merge" or "reject" | CONFIRM |
-| **High** | Architecture, security, config, core modules, database schema | Pre-approval before starting + branch + review | CRITICAL |
+| **High** | Architecture, security, config, core modules, database schema | Pre-approval before starting + branch + review | CONFIRM (pre-approval) |
 
-**Impact classification** uses the existing `ApprovalMap` levels (NOTIFY,
-CONFIRM, CRITICAL) from section 8.3. The `DevelopmentDomain` maps each code
+**Impact classification** uses the existing `ApprovalLevel` levels (NOTIFY,
+CONFIRM, DENY) from section 8.3. The `DevelopmentDomain` maps each code
 task to an impact level based on:
 
 ```python
@@ -9274,14 +9274,19 @@ bob/
 │   │   ├── appearance_prompts.md
 │   │   ├── room_prompts.md
 │   │   ├── awakening_script.md     # Awakening script (first lines)
-│   │   └── traits_pool.yaml
+│   │   ├── traits_pool.yaml
+│   │   ├── taste_axes_pool.yaml    # Pool of taste axes for initial selection
+│   │   ├── taste_clusters.yaml     # Taste cluster definitions
+│   │   └── mood_baselines.yaml     # Mood baseline templates
 │   ├── defaults/                   # Base values and boundaries
 │   │   ├── values.yaml
 │   │   ├── boundaries.yaml
-│   │   └── communication_styles.yaml
+│   │   ├── communication_styles.yaml
+│   │   └── decision_zones.yaml     # Negotiation decision zones
 │   └── evolution/                  # Personality evolution rules
 │       ├── rules.yaml
-│       └── milestones.yaml
+│       ├── milestones.yaml
+│       └── taste_evolution_rules.yaml  # Taste axis evolution rules
 │
 ├── config/                         # Configuration files
 │   ├── bob.yaml                    # Main runtime settings
@@ -9290,7 +9295,9 @@ bob/
 │   ├── vision.yaml                 # Vision settings
 │   ├── security.yaml               # Security, rate limits
 │   ├── versioning.yaml             # State versioning
-│   └── bootstrap.yaml              # First-launch setup configuration
+│   ├── bootstrap.yaml              # First-launch setup configuration
+│   ├── relationship.yaml           # RelationshipTracker settings (3.3.7.2)
+│   └── genesis.yaml                # Genesis asset resolution config (5.4.2)
 │
 ├── bob/                            # Main Python package
 │   ├── __init__.py
@@ -9448,14 +9455,14 @@ bob/
 ├── avatar/                         # Godot project (Android client)
 │   ├── project.godot
 │   ├── scenes/
-│   │   ├── room.tscn              # Room scene
-│   │   ├── bob.tscn               # Bob avatar
-│   │   └── ui.tscn                # UI elements
+│   │   └── shell_renderer.tscn   # Single main scene — universal renderer
 │   ├── scripts/
 │   │   ├── main.gd                # Entry point
-│   │   ├── websocket_client.gd    # WebSocket synchronization
-│   │   ├── bob_controller.gd      # Avatar control
-│   │   └── audio_player.gd        # TTS playback
+│   │   ├── scene_loader.gd        # Parses JSON scene descriptions
+│   │   ├── sprite_renderer.gd     # Positions and renders sprites
+│   │   ├── animation_player.gd    # Skeletal animation control
+│   │   ├── audio_player.gd        # TTS playback
+│   │   └── touch_reporter.gd      # Touch event detection and reporting
 │   └── assets/
 │       ├── sprites/               # Bob, room, object sprites
 │       ├── animations/            # Animations
@@ -9476,6 +9483,7 @@ bob/
 │   │   ├── test_taste_engine.py
 │   │   ├── test_mood.py
 │   │   ├── test_negotiation.py
+│   │   ├── test_relationship_tracker.py  # (3.3.7.2)
 │   │   ├── test_inner_monologue.py    # (3.3.8)
 │   │   ├── test_emergent.py           # (3.3.9)
 │   │   ├── test_temporal_grounding.py # (3.3.10)
@@ -9638,7 +9646,7 @@ successful concepts:
 | 7 | ~~Should we use ChromaDB (persistent, server mode) or FAISS (in-process, faster) for vector search?~~ | Medium | **Resolved**: FAISS in-process (`faiss-cpu`). Zero server overhead, ~20MB RAM for 10K vectors @ 384 dim. Metadata stored in SQLite (`bob.db`) with FK to FAISS index ID. `faiss.write_index()`/`read_index()` for persistence. Sufficient for single-user single-process (<10K vectors) (see 3.4.3) |
 | 8 | ~~Is integration with Home Assistant / other IoT platforms needed in early phases?~~ | Low | **Resolved**: No IoT in early phases. Implement as a separate SkillDomain (`bob/skills/smart_home/`) in Phase 5+ when Bob can see, hear, and think. Ideal candidate for Bob to self-create via Claude Code CLI using `_template/` scaffold (see 3.2.3) |
 | 9 | ~~How should Bob propose changes to his own code via Claude Code CLI: auto-commit (with approval) or via PR/suggestion to the user?~~ | High | **Resolved**: Hybrid by impact level — low: direct commit + notify, medium: branch + approval, high: pre-approval + branch + review (see 4.2.2) |
-| 10 | ~~Is reflection data sufficient for LoRA fine-tune, or is additional collection needed via special dialogs? Minimum ~100 pairs~~ | Medium | **Resolved**: Organic data only — 7 sources (dialogues, reflections, corrections, SOUL, preferences, tastes, mood) yield ~100-300 pairs/week. Raise `min_dataset_size` to 200 with quality scoring (user_rating >= 0.7, corrections weighted 2x). No synthetic augmentation or calibration dialogs. If insufficient data — Bob works on base model longer (see 9.3) |
+| 10 | ~~Is reflection data sufficient for LoRA fine-tune, or is additional collection needed via special dialogs? Minimum ~100 pairs~~ | Medium | **Resolved**: Organic data only — 7 sources (dialogues, reflections, corrections, SOUL, preferences, tastes, mood) yield ~100-300 pairs/week. Raise `min_dataset_size` to 200 with quality scoring (user_rating >= 0.7, corrections weighted 2x). No synthetic augmentation or calibration dialogs. If insufficient data — Bob works on base model longer (see 4.3) |
 | 11 | ~~How to organize the Godot asset pool?~~ | High | **Resolved**: AI-generated via local Stable Diffusion during Genesis (see 5.4.2) |
 | 12 | ~~Is a system of "animation primitives" (idle, walk, sit, reach) needed from which BehaviorRegistry composes complex behaviors?~~ | Medium | **Resolved**: No primitives system — ready-made animations played by name via AnimationPlayer/AnimationTree. Bob requests `{"play_animation": "working_laptop"}`. New behaviors = new animations added via Claude Code CLI. Programmatic composition of primitives is overengineering for 2D Skeleton2D with AI-generated sprites (see 5.4) |
 | 13 | ~~How to test Genesis Mode: deterministic seed for CI or manual testing only?~~ | Medium | **Resolved**: Unit tests per stage with mock LLM/SD (fast, deterministic) + integration smoke test (`pytest -m genesis_smoke`) with mock LLM + fixed SD seed. Full Genesis = manual smoke before release only (40 min + GPU, not suitable for CI). Genesis is inherently unique — deterministic e2e contradicts its purpose |
