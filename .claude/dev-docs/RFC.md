@@ -2950,7 +2950,7 @@ tests/test_mind/test_emergent.py
 │  │  Visual         │  │  Audio           │  │  Temporal             │ │
 │  │  Grounding      │  │  Grounding       │  │  Grounding            │ │
 │  │                 │  │                  │  │                       │ │
-│  │  CLIP-ViT-B/32 │  │  Whisper hidden  │  │  Circadian pattern    │ │
+│  │  CLIP-ViT-B/32 │  │  librosa DSP     │  │  Circadian pattern    │ │
 │  │  → embeddings   │  │  states → prosody│  │  from activity data   │ │
 │  │  from camera    │  │  (pitch, energy, │  │  (24h cycle)          │ │
 │  │  snapshots      │  │   speech rate)   │  │                       │ │
@@ -3117,32 +3117,35 @@ class VisualGrounding:
 
 
 class AudioGrounding:
-    """Extracts prosodic features from Whisper intermediate representations.
+    """Extracts prosodic features from raw audio via librosa DSP.
 
-    No extra model needed — reuses Whisper's hidden states during STT.
-    Prosodic features are extracted from the encoder's intermediate layers,
-    which capture pitch, energy, and timing information.
+    No extra model needed — uses classical signal processing algorithms
+    (pYIN for pitch, RMS for energy, VAD for pauses). Works independently
+    of the STT engine (whisper.cpp or any other). CPU only, ~10-20 ms
+    per audio chunk.
     """
 
     def __init__(
         self,
-        voice_bridge: "VoiceBridge",
+        sample_rate: int = 16000,
     ) -> None: ...
 
-    async def extract_prosody(
-        self, audio: bytes, whisper_hidden_states: np.ndarray
+    def extract_prosody(
+        self, audio: bytes, transcript_words: list[str] | None = None
     ) -> ProsodicFeatures:
-        """Extract prosodic features from Whisper hidden states.
+        """Extract prosodic features from raw audio using librosa.
 
-        Uses the encoder hidden states (available during transcription)
-        to estimate:
-        - pitch_mean, pitch_variance: from attention patterns in lower layers
-        - energy_mean: from input audio RMS
-        - speech_rate: from CTC alignment durations
-        - pause_ratio: from VAD segments
-        - duration_sec: from audio length
+        DSP pipeline (no neural network):
+        - pitch_mean, pitch_variance: librosa.pyin() — Probabilistic YIN
+          algorithm, state-of-the-art F0 estimation for speech
+        - energy_mean: librosa.feature.rms() — direct physical measurement
+        - speech_rate: len(transcript_words) / duration_sec (if words provided),
+          otherwise estimated from energy-based syllable counting
+        - pause_ratio: energy-based VAD — ratio of silent frames (energy < threshold)
+          to total frames
+        - duration_sec: len(audio) / sample_rate
 
-        No extra model call — piggybacks on existing Whisper inference.
+        No model dependency — pure signal processing.
         """
         ...
 
@@ -3319,8 +3322,8 @@ sensory_grounding:
     suspend_during_heavy_gen: true
   audio:
     enabled: true
-    extract_from: "whisper_hidden_states" # no extra model
-    prosody_layers: [4, 5, 6]            # which Whisper encoder layers to use
+    method: "librosa_dsp"                # pure signal processing, no model
+    sample_rate: 16000                   # must match ReSpeaker input
   temporal:
     enabled: true
     lookback_days: 14                    # days of data for circadian learning
@@ -3408,7 +3411,7 @@ CREATE INDEX idx_spatial_dir ON spatial_locations(direction_deg);
 |-----------|--------|-------------|---------|
 | CLIP-ViT-B/32 | ~400 MB | NORMAL profile, opportunistic | Counted in ModelManager `other_mb` |
 | Visual FAISS index | ~20 MB per 50K vectors | Always | RAM |
-| Prosodic extraction | 0 MB (reuses Whisper) | During STT | N/A |
+| Prosodic extraction | 0 MB (librosa DSP, no model) | After STT | N/A |
 | Circadian + Spatial | ~1 MB (SQLite + Python objects) | Always | RAM |
 | **Total additional** | **~421 MB peak** | | |
 
@@ -3416,7 +3419,7 @@ CREATE INDEX idx_spatial_dir ON spatial_locations(direction_deg);
 
 1. **AgentRuntime.__init__**: Add `sensory_grounding: SensoryGroundingService` parameter. Wire up sub-services.
 2. **VisionService**: After `analyze_frame()`, if CLIP is loaded, call `visual_grounding.embed_frame()` every Nth snapshot (configured by `embed_every_nth_frame`). This happens in the existing ThreadPoolExecutor.
-3. **VoiceBridge**: Modify `transcribe()` to also return Whisper hidden states. Pass them to `audio_grounding.extract_prosody()`. Emit `grounding.prosody_extracted` event. The `InteractionQuality` output feeds into `voice.positive_interaction`/`voice.negative_interaction` event classification (high engagement = positive).
+3. **VoiceBridge**: After `transcribe()`, pass raw audio bytes and transcript words to `audio_grounding.extract_prosody(audio, words)`. No changes to whisper.cpp pipeline needed — librosa operates on raw audio independently. Emit `grounding.prosody_extracted` event. The `InteractionQuality` output feeds into `voice.positive_interaction`/`voice.negative_interaction` event classification (high engagement = positive).
 4. **MoodEngine**: Subscribe to `grounding.prosody_extracted`. Use engagement/urgency/calmness to modulate mood updates from voice interactions. Subscribe to `grounding.circadian_updated`. Use `TemporalGrounding.get_expected_mood()` in `natural_drift()` to adjust the drift target per hour.
 5. **ModelManager**: Add CLIP to the model inventory. In `ensure_profile(NORMAL)`, check headroom and load CLIP if available. In `ensure_profile(HEAVY_GEN)`, unload CLIP first. Update `MemoryBudget.other_mb` to include CLIP when loaded.
 6. **SemanticMemory.remember()**: Call `sensory_grounding.enrich_memory_entry()` to attach grounding data before storing.
@@ -8643,7 +8646,7 @@ ContentGuard is designed with defense-in-depth against common jailbreak patterns
 | Camera Controller | OBSBOT PTZ control |
 | Integration | Vision/Audio -> Event Bus -> Agent Runtime |
 | Visual Grounding | CLIP embedding pipeline, FAISS visual index (section 3.3.10) |
-| Audio Grounding | Prosodic feature extraction from Whisper hidden states (section 3.3.10) |
+| Audio Grounding | Prosodic feature extraction via librosa DSP (section 3.3.10) |
 | Spatial Grounding | DoA-to-location mapping from microphone array (section 3.3.10) |
 
 **Readiness criterion:** Bob greets the user when seen and turns the camera.
