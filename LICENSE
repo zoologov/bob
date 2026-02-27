@@ -20,7 +20,7 @@ Additional Use Grant: You may use the Licensed Work for personal,
 Change Date:          2030-03-01
 Change License:       Apache License, Version 2.0
 
-Note: The bob/skills/ directory is licensed under Apache License 2.0.
+Note: The src/bob/skills/ directory is licensed under Apache License 2.0.
       The bob-soul/ and assets/ directories are licensed under
       CC BY-NC-SA 4.0. See LICENSE-APACHE.md and LICENSE-CC-BY-NC-SA.md.
 

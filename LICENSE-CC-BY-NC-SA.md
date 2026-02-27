@@ -276,6 +276,7 @@ following conditions.
           reasonable to satisfy the conditions by providing a URI or
           hyperlink to a resource that includes the required
           information.
+
        3. If requested by the Licensor, You must remove any of the
           information required by Section 3(a)(1)(A) to the extent
           reasonably practicable.
