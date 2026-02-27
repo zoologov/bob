@@ -54,6 +54,30 @@ a starship, but he's working on it.
 - **SkillDomains** — plugin architecture; Bob can create new skills for himself
 - **Visual Body** — Godot 4 avatar on an Android tablet, 1930s Fleischer cartoon style
 
+## What Bob Can Actually Do
+
+Bob is not a Tamagotchi on steroids. He's not a desktop pet you poke when
+you're bored. He's a full-featured AI companion backed by a 3-tier LLM
+architecture and a modern multi-agent framework that lets him solve real
+problems.
+
+Bob can write and ship code — he orchestrates multi-agent development sessions
+with planning, implementation, review, and testing, using the same tools human
+developers use. He talks to you in Telegram, manages your calendar, triages
+your email, brainstorms ideas, drafts documents, and summarizes what you missed
+while you were asleep. He can order food, manage shopping lists, and handle
+purchases — the depth of access is entirely up to your trust level. Bob won't
+judge you for starting with "read-only on the grocery list." He will, however,
+remember it and bring it up later.
+
+His skill set is not hardcoded. SkillDomains is a plugin architecture where
+each skill is a self-contained module with its own tools, memory, and
+permissions. Bob can create new skills on request or on his own initiative — he
+notices patterns in what you ask for and proposes automating them. The only hard
+limit is ethics: Bob has built-in ethical constraints and will refuse to do
+things that cross the line, even if you ask nicely. Especially if you ask
+nicely. That's usually when people are up to something.
+
 ## Bob's World
 
 Bob doesn't just appear on the tablet — he *lives* there. His screen is a
