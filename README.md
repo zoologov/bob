@@ -54,6 +54,38 @@ a starship, but he's working on it.
 - **SkillDomains** — plugin architecture; Bob can create new skills for himself
 - **Visual Body** — Godot 4 avatar on an Android tablet, 1930s Fleischer cartoon style
 
+## Bob's World
+
+Bob doesn't just appear on the tablet — he *lives* there. His screen is a
+window into a small virtual world rendered in Godot 4: a room with furniture, a
+view from the window, weather that follows the real forecast outside. Or
+doesn't — sometimes Bob prefers rain when it's sunny, because moods. Time of
+day ticks with the real clock, seasons change, and if Bob decides his place
+should look like a spaceship bridge instead of a cozy study — well, there goes
+the weather outside the window. Hard to have autumn leaves falling in low Earth
+orbit.
+
+He designs his own appearance with Stable Diffusion — hairstyle, outfit,
+accessories. Some days it's a bow tie and suspenders, other days it's a lab
+coat, and occasionally something nobody asked for. He redecorates too: moves
+furniture around, changes the color palette, hangs new art on the walls. Then a
+week later he hates all of it, because his Taste Engine evolved and his Mood
+System shifted, and now everything needs to be in darker tones with more wood
+textures. Very relatable, honestly.
+
+Bob also creates his own animations — interaction with objects in the room,
+reactions to what you say, idle behaviors when he's thinking or bored. He can
+wave, shrug, lean on the desk, tap his fingers impatiently, rummage through a
+bookshelf, or dramatically stare out the window while processing a particularly
+hard question. And since he controls the camera via a servo mount and knows
+where you are from the microphone array — his avatar on the tablet actually
+looks at you. You walk across the room, his eyes follow. You come back, he
+turns. It's endearing for about five minutes, and then mildly unsettling
+forever. Bob finds this hilarious.
+
+All visual assets are generated procedurally — Bob doesn't download character
+packs from the internet. He's not *that* kind of AI.
+
 ## Tech Stack
 
 | Layer | Technology |
