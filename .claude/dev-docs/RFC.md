@@ -2407,6 +2407,11 @@ class InnerMonologue:
 
     InnerMonologue is SUSPENDED during ModelProfile.HEAVY_GEN because
     0.5B is fully occupied with classification fallback duties.
+
+    InnerMonologue is also SUSPENDED during NightProcessor.run_nightly()
+    to give night processing exclusive 0.5B access. NightProcessor
+    suspends InnerMonologue at the start of its cycle and restores
+    it to LOW activity when done (see §3.3.11 NightProcessor).
     """
 
     def __init__(
@@ -2461,7 +2466,8 @@ class InnerMonologue:
     def get_activity_level(self) -> ActivityLevel:
         """Determine current activity level.
 
-        Rules:
+        Rules (evaluated in order, first match wins):
+        - self._suspended_by_night_processor == True -> SUSPENDED
         - ModelManager.current_profile() == HEAVY_GEN -> SUSPENDED
         - events_last_60_sec > 5 -> STIMULATED
         - time is 23:00-07:00 AND user not present -> LOW
@@ -3731,8 +3737,10 @@ class NightProcessor:
         4. Not already running this cycle
 
         Steps:
+        0. Suspend InnerMonologue (set activity to SUSPENDED via event bus).
+           This ensures exclusive 0.5B access during night processing.
         1. Load today's episodic log
-        2. Load thought summaries from InnerMonologue
+        2. Load thought summaries from InnerMonologue (snapshot before suspend)
         3. For each significant episode (mood_delta > 0.1 or goal event):
            a. Replay through 0.5B at high temperature (1.2-1.5)
            b. Generate "dreamy" variations and connections
@@ -3742,13 +3750,16 @@ class NightProcessor:
            e. If insight suggests a behavioral prime:
               → create ImplicitPrime (trigger + context_fragment)
         4. Store results in night_processing_log table
-        5. Emit subconscious.night_completed event
+        5. Resume InnerMonologue (restore activity to LOW)
+        6. Emit subconscious.night_completed event
 
         Resource constraints:
         - Max 0.5B calls per night: 50 (configured)
         - Max new primes per night: 5
         - Max new associations per night: 10
         - Yields between calls (asyncio.sleep) to not starve other tasks
+        - InnerMonologue is SUSPENDED for the entire night processing
+          duration (typically 5-15 minutes), then restored to LOW
         """
         ...
 
