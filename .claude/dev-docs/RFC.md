@@ -1631,11 +1631,16 @@ class MoodEngine:
         """Natural mood drift toward baseline.
 
         Called every heartbeat. Mood slowly returns
-        to the "normal" state (valence=0.3, arousal=0.4).
+        to the baseline (initially valence=0.3, arousal=0.4;
+        updated daily via 7-day rolling average from mood_history,
+        clamped to safe range).
 
         Drift speed depends on stability:
         - High stability -> returns to baseline faster
         - Low stability -> "gets stuck" in extreme states longer
+
+        Upset state (valence < -0.3) is guaranteed to recover
+        within max_duration_hours (default 4h) via drift.
         """
         ...
 
@@ -1711,6 +1716,16 @@ mood:
   min_change_threshold: 0.01           # ignore changes smaller than this
   log_interval_min: 30                 # record mood to history every N minutes
   influence_on_taste_threshold: 0.3    # affect tastes only when |valence| > threshold
+  baseline_update:
+    method: "rolling_average"          # 7-day rolling average from mood_history
+    recalculate: "daily"               # during night reflection
+    clamp:                             # prevent permanent extreme states
+      valence: [-0.3, 0.7]
+      arousal: [0.2, 0.8]
+  upset:
+    max_duration_hours: 4              # natural drift guarantees recovery
+    reconciliation_boost: 0.15         # valence boost on user positive interaction
+    behavior: "reserved"               # shorter responses, less initiative, no refusal
 ```
 
 **Mood's influence on other systems:**
@@ -6368,9 +6383,9 @@ successful concepts:
 | 13 | ~~How to test Genesis Mode: deterministic seed for CI or manual testing only?~~ | Medium | **Resolved**: Unit tests per stage with mock LLM/SD (fast, deterministic) + integration smoke test (`pytest -m genesis_smoke`) with mock LLM + fixed SD seed. Full Genesis = manual smoke before release only (40 min + GPU, not suitable for CI). Genesis is inherently unique — deterministic e2e contradicts its purpose |
 | 14 | ~~How many taste axes are optimal? Too few -- flat profile, too many -- noise. Start with ~15 axes and calibrate?~~ | Medium | **Resolved**: Keep current ~30 axes across 6 categories (colors/styles/materials/decor/atmosphere/clothing) — each axis maps to a concrete visual decision domain. Conviction + cluster coherence check protect against noise. Not random — intentionally covers Bob's visual world (see 3.3.5) |
 | 15 | ~~Should CV-based user emotion detection (smile/frown) be used as a signal for TasteEvolution, or is that too invasive?~~ | High | **Resolved**: No CV emotion detection for TasteEvolution — too invasive (Big Brother effect) and noisy (smile != approval of object). Camera for presence detection only. Use explicit feedback ("cool"/"remove this"), implicit usage (time spent), and manual overrides instead (see 3.3.5) |
-| 16 | How often to update the mood baseline? Once a week through reflection or continuously via a rolling average? | Medium | Open |
-| 17 | Should Bob be able to "get offended" (long-term negative mood after a conflict) or would this create a toxic UX? | High | Open |
-| 18 | How to visualize mood on the tablet: through the avatar's facial expression, room lighting color, or both? | Medium | Open |
+| 16 | ~~How often to update the mood baseline? Once a week through reflection or continuously via a rolling average?~~ | Medium | **Resolved**: 7-day rolling average from mood_history, recalculated daily during night reflection. Clamped to safe range (valence [-0.3..0.7], arousal [0.2..0.8]) to prevent permanent depression/mania. Config baseline remains as initial + fallback (see 3.3.6) |
+| 17 | ~~Should Bob be able to "get offended" (long-term negative mood after a conflict) or would this create a toxic UX?~~ | High | **Resolved**: Yes, limited "upset" state (valence < -0.3) lasting max 2-4 hours. Shorter responses, less initiative, but NO refusal to work, no passive-aggression. Natural drift guarantees recovery. User can accelerate via positive interaction (+0.15 valence). Not toxic — gives consequences to decisions without punishing (see 3.3.6) |
+| 18 | ~~How to visualize mood on the tablet: through the avatar's facial expression, room lighting color, or both?~~ | Medium | **Resolved**: Both — face expression (4-5 head sprite variants: happy/neutral/focused/upset/tired, generated at Genesis) + ambient lighting (color temperature warm/cold = valence, brightness = arousal). Two channels: direct (face) + atmospheric (light). Shell-renderer receives `{"mood_visual": {"face": "...", "ambient_color": "...", "brightness": ...}}` (see 5.4) |
 | 19 | How often should Bob make references to the book? Too often -- gets annoying, too rarely -- character gets lost. Perhaps the frequency should decrease over time? | Medium | Open |
 | 20 | ~~Should phantom preferences affect TasteEngine (e.g., "coffee" -> warm_tones +0.1) or remain a separate system?~~ | Medium | **Resolved**: One-directional mapping at Genesis — LLM generates phantom-to-taste-axis bias (e.g., "coffee" -> warm +0.05, cozy +0.05). Applied once as initial TasteProfile bias. After Genesis, phantoms and tastes evolve independently (see 3.3.5) |
 | 21 | Does Bob need to "re-read the book" (loading book text as context) for more accurate references, or is book_quotes.yaml sufficient? | Low | Open |
