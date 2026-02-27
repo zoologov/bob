@@ -2536,18 +2536,19 @@ STT + TTS bridge.
 
 ```python
 class VoiceBridge:
-    """Voice bridge: STT (Whisper.cpp) + TTS (Piper/Kokoro).
+    """Voice bridge: STT (Whisper.cpp) + TTS (Qwen3-TTS).
 
     Language is configured globally via config/bob.yaml and propagated
-    to STT/TTS engines. Supported languages depend on the chosen
-    TTS engine and voice pack (Kokoro: en/ru/zh/ja/..., Piper: 30+ languages).
+    to STT/TTS engines. Qwen3-TTS supports 10 languages natively:
+    en, ru, zh, ja, ko, de, fr, pt, es, it.
     """
 
     def __init__(
         self,
         stt_model: str = "whisper-small",
-        tts_model: str = "kokoro-v1",
-        tts_voice: str = "en-male-1",
+        tts_model: str = "Qwen3-TTS-0.6B",
+        tts_voice_ref: str | None = None,   # path to reference audio for cloning
+        tts_voice_design: str | None = None, # text description: "male, calm, warm"
         tts_speed: float = 1.0,
         language: str = "en",
     ) -> None: ...
@@ -5162,8 +5163,8 @@ class SceneModifier:
                                         ▼
                                  ┌──────────────┐
                                  │     TTS      │
-                                 │  Piper /     │
-                                 │  Kokoro      │
+                                 │  Qwen3-TTS   │
+                                 │  (mlx-audio) │
                                  │ (streaming)  │
                                  └──────┬───────┘
                                         │ audio chunks
@@ -5238,11 +5239,13 @@ stt:
   vad_threshold: 0.5
 
 tts:
-  engine: "kokoro"              # or "piper"
-  voice: "en-male-1"           # voice ID; use "ru-male-1" for Russian
+  engine: "qwen3-tts"            # Qwen3-TTS via mlx-audio on Apple Silicon
+  model: "Qwen3-TTS-0.6B"        # 0.6B (~2.5 GB RAM); upgrade to 1.7B if RAM allows
+  voice_ref: null                 # path to reference audio for voice cloning (optional)
+  voice_design: "male, calm, warm, slightly deep"  # or null to use default
   speed: 1.0
-  sample_rate: 22050
-  streaming: true
+  sample_rate: 24000              # Qwen3-TTS native sample rate
+  streaming: true                 # dual-track streaming, ~97ms first-chunk (CUDA)
 
 audio_output:
   primary: "tablet"             # "tablet", "local", "both"
@@ -5820,7 +5823,7 @@ state_versioning:
 | **Primary model** | Qwen2.5-7B-Q4 | Good reasoning at 7B, multilingual (en, ru, zh, etc.), fits in M4 RAM |
 | **Router model** | Qwen2.5-0.5B-Q8 | Lightning-fast classification, minimal RAM |
 | **STT** | whisper.cpp | Local, fast on Apple Silicon, multilingual (99 languages) |
-| **TTS** | Kokoro / Piper | Local, streaming, customizable voices |
+| **TTS** | Qwen3-TTS (0.6B, via mlx-audio) | Multilingual (en+ru+8 more), streaming (97ms), voice cloning (3s ref), Apache 2.0 |
 | **Computer Vision** | YOLOv8 + CLIP | Object detection + scene description |
 | **Embeddings** | all-MiniLM-L6-v2 | Fast embeddings for semantic search |
 | **Vector search** | FAISS / ChromaDB | Local, fast, serverless |
@@ -5879,7 +5882,7 @@ state_versioning:
 | Messaging domain | First domain: `messaging/` (Telegram send/listen) |
 | Development domain | Second domain: `development/` (Claude Code bridge, code tasks) |
 | Avatar domain (stub) | Third domain: `avatar/` (stub — room state read, no Godot yet) |
-| Voice Bridge | Whisper.cpp STT + Kokoro/Piper TTS |
+| Voice Bridge | Whisper.cpp STT + Qwen3-TTS (0.6B via mlx-audio) |
 | SOUL submodule | Connect bob-soul, basic personality template |
 | Claude Code Bridge | Integration with Claude Code CLI as subprocess + ClaudeCodeCoordinator |
 
@@ -6328,7 +6331,7 @@ successful concepts:
 
 | # | Question | Priority | Status |
 |---|----------|----------|--------|
-| 1 | Which TTS engine is better for multilingual use (en, ru): Kokoro or Piper? Need to compare quality and latency per language | High | Open |
+| 1 | ~~Which TTS engine is better for multilingual use (en, ru): Kokoro or Piper?~~ | High | **Resolved**: Qwen3-TTS (0.6B via mlx-audio) — single engine for all languages, best RU quality metrics, Apache 2.0, streaming 97ms, voice cloning. Replaces Kokoro+Piper hybrid (see 6.4) |
 | 2 | ~~Godot 4 vs Flutter for the tablet client~~ | Medium | **Resolved**: Godot 4 shell-renderer (see 5.4) |
 | 3 | Does Vision need a separate process, or can cv2.VideoCapture be run in an asyncio thread? | Medium | Open |
 | 4 | How exactly does ReSpeaker XVF3800 provide DoA via USB: through ALSA controls, via I2C, or through a custom protocol? Needs testing on a real device | High | Open |

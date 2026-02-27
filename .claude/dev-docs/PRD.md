@@ -70,7 +70,7 @@ All devices are on the same local network; the tablet and speaker receive comman
    - Vision Service (OBSBOT camera -> snapshots -> CV analysis).
    - Audio Direction Service (ReSpeaker XVF3800 -> DoA/VAD -> events).
    - Camera Controller (OBSBOT PTZ control).
-   - Voice Bridge (Whisper.cpp STT + Kokoro/Piper TTS, streaming).
+   - Voice Bridge (Whisper.cpp STT + Qwen3-TTS 0.6B via mlx-audio, streaming).
    - Tablet Controller (ADB, Android app control).
    - Messaging Bot (python-telegram-bot).
 
@@ -90,7 +90,7 @@ All devices are on the same local network; the tablet and speaker receive comman
 - **`bob` (main process)** — Bob Core: Agent Runtime, LLM Router, Skill Domain System, Higher Mind, Memory System, Event Bus, FastAPI. Single Python process on asyncio.
 - `vision_service` — reads OBSBOT, takes snapshots, CV analysis (YOLOv8 + CLIP). Can run as a module within the main process or as a separate process.
 - `audio_direction_service` — reads DoA/VAD from ReSpeaker XVF3800. Can run as a separate process (due to blocking USB I/O).
-- `voice_bridge` — STT (Whisper.cpp) + TTS (Kokoro/Piper), streaming.
+- `voice_bridge` — STT (Whisper.cpp) + TTS (Qwen3-TTS 0.6B via mlx-audio), streaming.
 - Ollama — service for local LLMs (Qwen2.5-7B, Qwen2.5-0.5B).
 
 ## 4. Bob's Behavior
@@ -290,7 +290,7 @@ Development is organized into 7 phases (detailed in RFC section 10):
 
 **Open (carried from RFC):**
 
-- Which TTS engine is better for multilingual use (en, ru): Kokoro or Piper?
+- ~~Which TTS engine is better for multilingual use (en, ru): Kokoro or Piper?~~ **Resolved**: Qwen3-TTS (0.6B) — single multilingual engine, best RU metrics, Apache 2.0.
 - Is a separate process needed for Vision Service, or can cv2.VideoCapture run in an asyncio thread?
 - How does ReSpeaker XVF3800 expose DoA over USB: via ALSA controls, I2C, or a custom protocol?
 - How should Bob propose changes to its own code via Claude Code CLI: auto-commit (with approval) or via PR/suggestion to the user?
