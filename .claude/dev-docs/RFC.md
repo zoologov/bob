@@ -99,13 +99,16 @@ All backend code is written in Python 3.12+. This provides:
 ### 2.3. Modularity Without Microservice Overhead
 
 Components are implemented as **Python modules within a single process**, connected
-via asyncio events/queues. Separate processes are created **only** where technically
-necessary (Vision, Audio — due to blocking I/O or library limitations).
+via asyncio events/queues. Blocking I/O (camera capture, audio) is offloaded to
+`asyncio.to_thread` / `ThreadPoolExecutor` within the main process. Separate
+processes are created **only** if thread-based isolation proves insufficient
+(e.g., unstable native library crashes).
 
 **Rationale**: microservice architecture is excessive for a single host. A single
-process is easier to monitor, debug, and deploy. If needed, modules can
-be extracted into separate processes without changing interfaces (thanks to
-abstraction through the event bus).
+process is easier to monitor, debug, and deploy. Thread pools handle blocking I/O
+without the overhead of IPC serialization. If needed, modules can be extracted
+into separate processes without changing interfaces (thanks to abstraction through
+the event bus).
 
 ### 2.4. Structured Goals, Not LLM-mediated Re-derivation
 
@@ -2408,6 +2411,13 @@ class SoulEvolution:
 
 Capturing images from the OBSBOT camera and analyzing them.
 
+**Threading strategy:** Runs in the main process. Camera capture (`cv2.VideoCapture.read`)
+is offloaded via `asyncio.to_thread` (I/O-bound). YOLOv8n inference is offloaded to a
+dedicated `ThreadPoolExecutor(max_workers=1)` to avoid blocking the event loop. At the
+default 5-second snapshot interval, GIL contention is negligible (~50-100ms per cycle).
+If OpenCV stability becomes an issue, the service can be extracted into a separate process
+without API changes (EventBus abstraction).
+
 ```python
 @dataclass
 class VisionEvent:
@@ -2418,25 +2428,29 @@ class VisionEvent:
     details: dict               # depends on event_type
 
 class VisionService:
-    """Computer vision service."""
+    """Computer vision service.
+
+    Runs in main process using thread pool for blocking operations.
+    """
 
     def __init__(
         self,
         camera_index: int = 0,
         snapshot_interval_sec: float = 5.0,
         model: str = "yolov8n",         # or CLIP for scene description
+        inference_workers: int = 1,     # ThreadPoolExecutor size
     ) -> None: ...
 
     async def run(self) -> None:
-        """Main loop: capture -> analyze -> emit events."""
+        """Main loop: capture (to_thread) -> analyze (executor) -> emit events."""
         ...
 
     async def capture_snapshot(self) -> np.ndarray:
-        """Capture a frame from the camera."""
+        """Capture a frame from the camera via asyncio.to_thread."""
         ...
 
     async def analyze_frame(self, frame: np.ndarray) -> list[VisionEvent]:
-        """Analyze a frame.
+        """Analyze a frame in ThreadPoolExecutor.
 
         Detects:
         - Presence/absence of people
@@ -2456,6 +2470,7 @@ vision:
   detection_model: "yolov8n"
   scene_description_model: "clip-vit-base-patch32"
   confidence_threshold: 0.6
+  inference_workers: 1              # ThreadPoolExecutor size for YOLOv8n
   save_snapshots: true
   snapshots_dir: "data/vision/snapshots"
   max_snapshots_per_day: 1000
@@ -5878,6 +5893,7 @@ state_versioning:
 |------|-------------|
 | Agent Runtime | Event loop with heartbeat |
 | LLM Router | Integration with Ollama (Qwen2.5-7B + 0.5B) |
+| Structured logging | `structlog` JSON logging + `/metrics` JSON endpoint in FastAPI |
 | SkillDomain base | `SkillDomain` Protocol, `SkillDomainRegistry`, auto-discovery, `_template/` |
 | Messaging domain | First domain: `messaging/` (Telegram send/listen) |
 | Development domain | Second domain: `development/` (Claude Code bridge, code tasks) |
@@ -5886,7 +5902,7 @@ state_versioning:
 | SOUL submodule | Connect bob-soul, basic personality template |
 | Claude Code Bridge | Integration with Claude Code CLI as subprocess + ClaudeCodeCoordinator |
 
-**Readiness criterion:** Bob responds to messages in Telegram and by voice. Three SkillDomains registered and operational. Claude Code is available for complex tasks (with permission protocol).
+**Readiness criterion:** Bob responds to messages in Telegram and by voice. Three SkillDomains registered and operational. Claude Code is available for complex tasks (with permission protocol). `/metrics` endpoint returns system health JSON.
 
 ### Phase 2: Memory System + SOUL (1 week)
 
@@ -5909,7 +5925,7 @@ state_versioning:
 
 | Task | Description |
 |------|-------------|
-| Vision Service | Capture from OBSBOT + YOLOv8 person detection |
+| Vision Service | OBSBOT capture (`to_thread`) + YOLOv8n detection (`ThreadPoolExecutor`), single process |
 | Audio Direction | ReSpeaker DoA/VAD |
 | Camera Controller | OBSBOT PTZ control |
 | Integration | Vision/Audio -> Event Bus -> Agent Runtime |
@@ -5970,7 +5986,7 @@ state_versioning:
 | Appearance evolution | Clothing/accessory changes based on mood/season |
 | SOUL evolution | Personality development based on reflection |
 | A/B testing | Strategy comparison (baseline vs fine-tuned) |
-| Monitoring | Metrics dashboard |
+| Monitoring | Optional Grafana/Prometheus dashboard (builds on `/metrics` endpoint from Phase 1) |
 
 ---
 
@@ -6333,12 +6349,12 @@ successful concepts:
 |---|----------|----------|--------|
 | 1 | ~~Which TTS engine is better for multilingual use (en, ru): Kokoro or Piper?~~ | High | **Resolved**: Qwen3-TTS (0.6B via mlx-audio) — single engine for all languages, best RU quality metrics, Apache 2.0, streaming 97ms, voice cloning. Replaces Kokoro+Piper hybrid (see 6.4) |
 | 2 | ~~Godot 4 vs Flutter for the tablet client~~ | Medium | **Resolved**: Godot 4 shell-renderer (see 5.4) |
-| 3 | Does Vision need a separate process, or can cv2.VideoCapture be run in an asyncio thread? | Medium | Open |
+| 3 | ~~Does Vision need a separate process, or can cv2.VideoCapture be run in an asyncio thread?~~ | Medium | **Resolved**: Single process — `asyncio.to_thread` for camera capture (I/O-bound) + `ThreadPoolExecutor` for YOLOv8n inference. At 5-sec intervals GIL is not a bottleneck. Can migrate to separate process later via EventBus abstraction if needed (see 3.5.1) |
 | 4 | How exactly does ReSpeaker XVF3800 provide DoA via USB: through ALSA controls, via I2C, or through a custom protocol? Needs testing on a real device | High | Open |
-| 5 | Is a monitoring dashboard (Grafana / custom) needed from the early phases, or are logs sufficient? | Low | Open |
+| 5 | ~~Is a monitoring dashboard (Grafana / custom) needed from the early phases, or are logs sufficient?~~ | Low | **Resolved**: Structured logs (`structlog` JSON) + `/metrics` JSON endpoint in FastAPI from Phase 1. No Grafana/Prometheus in early phases — overkill for a single host. Bob can read own metrics during reflection. Grafana optional in Phase 6 (see 3.5.1, 10) |
 | 6 | How to store and version Godot assets that Bob generates/modifies? Separate git repo or LFS? | Medium | Open |
 | 7 | Should we use ChromaDB (persistent, server mode) or FAISS (in-process, faster) for vector search? | Medium | Open |
-| 8 | Is integration with Home Assistant / other IoT platforms needed in early phases? | Low | Open |
+| 8 | ~~Is integration with Home Assistant / other IoT platforms needed in early phases?~~ | Low | **Resolved**: No IoT in early phases. Implement as a separate SkillDomain (`bob/skills/smart_home/`) in Phase 5+ when Bob can see, hear, and think. Ideal candidate for Bob to self-create via Claude Code CLI using `_template/` scaffold (see 3.2.3) |
 | 9 | ~~How should Bob propose changes to his own code via Claude Code CLI: auto-commit (with approval) or via PR/suggestion to the user?~~ | High | **Resolved**: Hybrid by impact level — low: direct commit + notify, medium: branch + approval, high: pre-approval + branch + review (see 4.2.2) |
 | 10 | Is reflection data sufficient for LoRA fine-tune, or is additional collection needed via special dialogs? Minimum ~100 pairs | Medium | Open |
 | 11 | ~~How to organize the Godot asset pool?~~ | High | **Resolved**: AI-generated via local Stable Diffusion during Genesis (see 5.4.2) |
