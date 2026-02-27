@@ -900,12 +900,21 @@ model_manager:
     normal:
       ollama_models: ["qwen2.5:7b-instruct-q4_K_M", "qwen2.5:0.5b-instruct-q8_0"]
       sd_model: null
+      optional_models:                    # loaded if headroom > min_headroom_mb
+        - name: "clip-vit-b32"
+          size_mb: 400
+          min_headroom_mb: 500            # only load if 500+ MB free after required models
     lightweight_gen:
       ollama_models: ["qwen2.5:7b-instruct-q4_K_M", "qwen2.5:0.5b-instruct-q8_0"]
       sd_model: "sd-1.5"
+      optional_models:                    # CLIP stays if already loaded and headroom allows
+        - name: "clip-vit-b32"
+          size_mb: 400
+          min_headroom_mb: 500
     heavy_gen:
       ollama_models: ["qwen2.5:0.5b-instruct-q8_0"]  # 7B unloaded
       sd_model: "sdxl"
+      optional_models: []                 # all optional models unloaded
   transition_timeout_sec: 60          # Max time to complete a profile switch
   announce_heavy_gen: true            # Bob announces when entering heavy_gen mode
   llama_guard:                          # ContentGuard model (see section 8.8)
@@ -3421,7 +3430,7 @@ CREATE INDEX idx_spatial_dir ON spatial_locations(direction_deg);
 2. **VisionService**: After `analyze_frame()`, if CLIP is loaded, call `visual_grounding.embed_frame()` every Nth snapshot (configured by `embed_every_nth_frame`). This happens in the existing ThreadPoolExecutor.
 3. **VoiceBridge**: After `transcribe()`, pass raw audio bytes and transcript words to `audio_grounding.extract_prosody(audio, words)`. No changes to whisper.cpp pipeline needed — librosa operates on raw audio independently. Emit `grounding.prosody_extracted` event. The `InteractionQuality` output feeds into `voice.positive_interaction`/`voice.negative_interaction` event classification (high engagement = positive).
 4. **MoodEngine**: Subscribe to `grounding.prosody_extracted`. Use engagement/urgency/calmness to modulate mood updates from voice interactions. Subscribe to `grounding.circadian_updated`. Use `TemporalGrounding.get_expected_mood()` in `natural_drift()` to adjust the drift target per hour.
-5. **ModelManager**: Add CLIP to the model inventory. In `ensure_profile(NORMAL)`, check headroom and load CLIP if available. In `ensure_profile(HEAVY_GEN)`, unload CLIP first. Update `MemoryBudget.other_mb` to include CLIP when loaded.
+5. **ModelManager**: CLIP is managed via `optional_models` in profile config. During `ensure_profile()`: (a) load required models first (Ollama, SD, Guard), (b) calculate remaining headroom, (c) load optional models only if headroom exceeds their `min_headroom_mb`. In HEAVY_GEN, `optional_models: []` ensures CLIP is unloaded. If CLIP cannot be loaded due to memory pressure, `embed_frame()` returns `None` and visual grounding operates without embeddings (graceful degradation).
 6. **SemanticMemory.remember()**: Call `sensory_grounding.enrich_memory_entry()` to attach grounding data before storing.
 7. **CameraController**: Subscribe to `grounding.location_detected`. When audio comes from a named spatial location, camera can `look_at_direction()` toward it.
 
