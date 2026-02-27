@@ -4,8 +4,8 @@
 
 # RFC-VALIDATION: Bob — Cross-Document Analysis and Validation
 
-> **Date:** 2026-02-26 (Round 1-2), 2026-02-27 (Round 3)
-> **Documents analyzed:** PRD.md (347 lines), RFC.md (~7100 lines)
+> **Date:** 2026-02-26 (Round 1-2), 2026-02-27 (Round 3-4), 2026-02-28 (Round 5)
+> **Documents analyzed:** PRD.md (347 lines), RFC.md (~9500 lines)
 > **Author:** Claude (validation), v.zoologov (review)
 
 ---
@@ -754,31 +754,39 @@ What Bob can and cannot do at each development phase:
 
 | # | Sections | Issue | Status |
 |---|----------|-------|--------|
-| **V5-C1** | 3.3.3 (~1131-1132) | **Ghost tables in `ScopedDBReader.TABLE_ALLOWLIST`.** `"episodic_log"` and `"semantic_memory"` are listed in the frozenset but do NOT exist as SQLite tables anywhere in the RFC. Episodic Memory is Markdown files (§3.4.2). Semantic Memory is FAISS + MEMORY.md (§3.4.3). ReflectionLoop querying these via SQL will fail at runtime. | **OPEN** |
-| **V5-C2** | 11 (~9107-9108) | **Duplicate `models/` directory in Repository Structure.** Two identical `models/` entries under `data/finetune/`: one for "sklearn models" and one for "Saved LoRA adapters". | **OPEN** |
-| **V5-C3** | 3.3.9 (~2934, ~2988), 11 (~9107) | **`model_path` inconsistency.** `MoodPredictorConfig.model_path` = `"data/models/mood_predictor.joblib"` but section 11 repo structure places it at `data/finetune/models/`. Different paths. | **OPEN** |
+| ~~**V5-C1**~~ | ~~3.3.3 (~1131-1132)~~ | ~~**Ghost tables in `ScopedDBReader.TABLE_ALLOWLIST`.**~~ Migrated Episodic Memory (§3.4.2) and Semantic Memory (§3.4.3) from Markdown files to SQLite. Both tables now real with full schemas, classes, and `format_as_markdown()` methods. Updated 12+ cross-references. | **RESOLVED** (commit `6ba7115`) |
+| ~~**V5-C2**~~ | ~~11 (~9107-9108)~~ | ~~**Duplicate `models/` directory in Repository Structure.**~~ Fixed: `models/` for sklearn + `inner_monologue_lora/` for LoRA adapter. Also rewrote §4.3 as 5-level self-improvement stack, scoped LoRA to 0.5B Inner Monologue only. | **RESOLVED** (commit `bd85094`) |
+| ~~**V5-C3**~~ | ~~3.3.9 (~2934, ~2988), 11 (~9107)~~ | ~~**`model_path` inconsistency.**~~ Unified all occurrences to `data/finetune/models/mood_predictor.joblib`. | **RESOLVED** (commit `bd85094`) |
 
 ### 11.2. High Severity Issues
 
 | # | Sections | Issue | Status |
 |---|----------|-------|--------|
-| **V5-H1** | 9 (~8753) | **`librosa` and `scikit-learn` missing from Technology Stack.** Both used extensively: scikit-learn for MoodPredictor (MLPRegressor), TasteAxisDiscovery (HDBSCAN), CrossDomainCorrelator; librosa for AudioGrounding (pYIN, RMS, VAD). Neither listed in §9. | **OPEN** |
-| **V5-H2** | 3.3.10 | **Missing `SensoryGroundingConfig` dataclass.** Round 4 (V4-H6) added config dataclasses for §3.3.8 (InnerMonologueConfig), §3.3.9 (EmergentBehaviorConfig), §3.3.11 (SubconsciousConfig). But §3.3.10 has YAML config without a corresponding Python config dataclass. Inconsistency across the four new sections. | **OPEN** |
-| **V5-H3** | 3.3.9 (~2698) | **`import numpy as np` missing in §3.3.9 code block.** `DiscoveredAxis.centroid: np.ndarray` uses numpy but imports only show `dataclasses`, `datetime`, `enum`. §3.3.10 and §3.3.11 correctly include numpy import. | **OPEN** |
+| ~~**V5-H1**~~ | ~~9 (~8753)~~ | ~~**`librosa` and `scikit-learn` missing from Technology Stack.**~~ Added both: "Classical ML \| scikit-learn" and "Audio DSP \| librosa" with section cross-references. | **RESOLVED** (commit `40c466b`) |
+| ~~**V5-H2**~~ | ~~3.3.10~~ | ~~**Missing `SensoryGroundingConfig` dataclass.**~~ Added `SensoryGroundingConfig` + 4 sub-configs (`VisualGroundingConfig`, `AudioGroundingConfig`, `TemporalGroundingConfig`, `SpatialGroundingConfig`). All four cognitive sections now have consistent config dataclasses. | **RESOLVED** (commit `40c466b`) |
+| ~~**V5-H3**~~ | ~~3.3.9 (~2698)~~ | ~~**`import numpy as np` missing in §3.3.9 code block.**~~ Added `import numpy as np` to the imports block. | **RESOLVED** (commit `40c466b`) |
 
 ### 11.3. Medium Severity Issues
 
 | # | Sections | Issue | Status |
 |---|----------|-------|--------|
-| **V5-M1** | 3.4.4, 3.3.1, 3.3.5, 3.3.6 | **Section 3.4.4 has inconsistent scope.** New cognitive tables (thought_summaries, discovered_axes, sc_* etc.) are in BOTH their component sections AND §3.4.4. But older tables (mood_history, goals, taste_history, object_experience) are only in their component sections, not consolidated in §3.4.4. Dual maintenance burden. | **OPEN** |
-| **V5-M2** | 3.4.4 (~4534-4549) | **Missing consolidated indices in §3.4.4.** The index block doesn't include indices from older sections: `idx_mood_timestamp`, `idx_mood_primary` (§3.3.6), `idx_goals_status`, `idx_goals_priority` (§3.3.1). | **OPEN** |
-| **V5-M3** | 3.3.6 (~1742-1746) | **`MoodEngine.__init__` constructor parameter order is a Python SyntaxError.** `initial_mood: MoodState \| None = None` (keyword arg with default) precedes `db_path: str` (positional arg). Python requires positional args before keyword args with defaults. | **OPEN** |
+| ~~**V5-M1**~~ | ~~3.4.4, 3.3.1, 3.3.5, 3.3.6~~ | ~~**Section 3.4.4 has inconsistent scope.**~~ Added 6 missing tables (`goals`, `goal_dependencies`, `goal_criteria`, `object_experience`, `taste_history`, `mood_history`) to §3.4.4. All 23 SQLite tables now consolidated in one place. | **RESOLVED** (commit `40c466b`) |
+| ~~**V5-M2**~~ | ~~3.4.4 (~4534-4549)~~ | ~~**Missing consolidated indices in §3.4.4.**~~ Added 9 missing indices for old tables (`idx_goals_status`, `idx_goals_parent`, `idx_goals_priority`, `idx_obj_exp_object`, `idx_obj_exp_action`, `idx_taste_history_axis`, `idx_taste_history_ts`, `idx_mood_timestamp`, `idx_mood_primary`). | **RESOLVED** (commit `40c466b`) |
+| ~~**V5-M3**~~ | ~~3.3.6 (~1742-1746)~~ | ~~**`MoodEngine.__init__` constructor parameter order is a Python SyntaxError.**~~ Fixed: `db_path: str` now precedes `initial_mood: MoodState \| None = None`. | **RESOLVED** (commit `40c466b`) |
 
 ### 11.4. Summary Matrix — Round 5
 
 | Severity | Found | Resolved | Remaining | Key Themes |
 |----------|-------|----------|-----------|------------|
-| **Critical** | 3 | 0 | 3 | Ghost table refs, duplicate dirs, path mismatch |
-| **High** | 3 | 0 | 3 | Missing deps in tech stack, missing config dataclass, missing import |
-| **Medium** | 3 | 0 | 3 | Schema consolidation, index consolidation, syntax error |
-| **Total** | **9** | **0** | **9** | |
+| **Critical** | 3 | 3 | 0 | ~~Ghost table refs~~ → SQLite migration, ~~duplicate dirs~~ → LoRA cleanup, ~~path mismatch~~ → unified paths |
+| **High** | 3 | 3 | 0 | ~~Missing deps~~ → tech stack updated, ~~missing config~~ → SensoryGroundingConfig added, ~~missing import~~ → numpy added |
+| **Medium** | 3 | 3 | 0 | ~~Schema consolidation~~ → 6 tables added, ~~index consolidation~~ → 9 indices added, ~~syntax error~~ → param order fixed |
+| **Total** | **9** | **9** | **0** | **All resolved** |
+
+> **Round 5 resolution — complete.** All 9 issues resolved across 3 commits:
+>
+> **Commit `6ba7115`** (V5-C1): Full migration of Episodic + Semantic Memory from Markdown files to SQLite. Rewrote §3.4.2 and §3.4.3, updated ScopedDBReader, §3.3.8, §3.3.11, §8.7, §9, §10, §11, §12.
+>
+> **Commit `bd85094`** (V5-C2, V5-C3): Rewrote §4.3 as 5-level self-improvement stack. Scoped LoRA fine-tuning to Qwen 0.5B Inner Monologue only (main 7B adapts via RAG + rules). Fixed duplicate `models/` directory. Unified `model_path` to `data/finetune/models/`.
+>
+> **Commit `40c466b`** (V5-H1 through V5-M3): Added scikit-learn and librosa to Tech Stack. Added SensoryGroundingConfig + 4 sub-configs. Added missing numpy import. Consolidated all 23 SQLite tables + 30 indices in §3.4.4. Fixed MoodEngine parameter order.
