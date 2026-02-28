@@ -34,7 +34,7 @@ Bob is a local-first autonomous home agent inspired by Bob Johansson from "We Ar
 - Has a virtual body and room rendered on an Android tablet via Godot 4
 - Sees (OBSBOT camera), hears (ReSpeaker mic array), speaks (TTS)
 - Has persistent goals, tastes, mood, and personality — can disagree with the user
-- Self-improves: room, code, behavior, local LLMs (LoRA fine-tune)
+- Self-improves via 5-level model: behavioral rules → taste evolution → RAG + rules → sklearn ML → Inner Monologue LoRA fine-tune (0.5B)
 - Uses local LLMs (Qwen2.5) as a brain and Claude Code CLI as a "senior architect"
 - Generates all visual assets via local Stable Diffusion (no hand-drawn art)
 - Each installation produces a unique Bob (like copies in the book)
@@ -302,7 +302,7 @@ The PRD (v0.0.1, 322 lines) is the business vision document. The RFC (5011 lines
 │  │  └── Fine-tuning data collection in progress                 │  │
 │  │                                                              │  │
 │  │  Month 2-3:                                                  │  │
-│  │  ├── First LoRA fine-tune of local LLM                       │  │
+│  │  ├── First LoRA fine-tune of Inner Monologue (0.5B)           │  │
 │  │  │   ⚠ QUESTION: When is ~100 pairs reached?                │  │
 │  │  ├── New behaviors emerge (based on room objects)            │  │
 │  │  ├── Phantom preferences: some faded, some strengthened      │  │
@@ -312,7 +312,7 @@ The PRD (v0.0.1, 322 lines) is the business vision document. The RFC (5011 lines
 │  │  Month 6+:                                                   │  │
 │  │  ├── Bob's personality distinctly diverged from archetype    │  │
 │  │  ├── Room has been redesigned multiple times                 │  │
-│  │  ├── Multiple fine-tune iterations                            │  │
+│  │  ├── Multiple Inner Monologue LoRA iterations                  │  │
 │  │  ├── Self-created skills active                               │  │
 │  │  └── Bob has "settled in" — stable but still evolving        │  │
 │  └──────────────────────────────────────────────────────────────┘  │
@@ -418,7 +418,7 @@ What Bob can and cannot do at each development phase:
 
 | Can (added) |
 |-------------|
-| Fine-tune local LLMs from experience |
+| LoRA fine-tune Inner Monologue (0.5B) from experience (see §4.3) |
 | Deep weekly/monthly reflections via Claude Code |
 | Create new behaviors/animations |
 | Self-create new SkillDomains |
@@ -833,16 +833,16 @@ What Bob can and cannot do at each development phase:
 
 | # | Sections | Issue | Status |
 |---|----------|-------|--------|
-| **V6-L1** | 3.3.11 (~4198), 10 (~9232), 3.3.11 (~4212) | **Dead code and outdated references.** (a) Dead `ALTER TABLE improvement_rules` in §3.3.11 — already in §3.4.4 consolidated schema. (b) Phase 5 says "auto-segmentation" but Q30 resolved as NO auto-segmentation. (c) SubconsciousLayer wraps ContentGuard meaning implicit primes bypass input filtering — needs architectural note. | OPEN |
-| **V6-L2** | 3.5.1 (~6654), 6 (~7992), 8.1 (~8276) | **Platform-specific references.** (a) Camera scan mentions `v4l2` — Linux only, target is macOS (AVFoundation). (b) TTS comment "~97ms first-chunk (CUDA)" — M4 uses Metal, not CUDA. (c) `/opt/bob` as home dir vs relative `data/` paths — connection not explicit. | OPEN |
-| **V6-L3** | 5.1.1 (~6838-6878) | **Phantom trigger_words duplicates.** "coffee" ×2, "sunset" ×2, "rain" ×2, "music" ×2 — artifacts from bilingual list cleanup. | OPEN |
-| **V6-L4** | 5.4.2 (~7517) | **`_extract_color_palette` is synchronous in async class.** CPU-bound k-means on pixel data would block the event loop. Needs `asyncio.to_thread()` wrapper or documentation note. | OPEN |
+| **V6-L1** | 3.3.11, 10, 5.4.2 | **Fixed.** (a) Replaced dead ALTER TABLE with reference to §3.4.4. (b) Removed "auto-segmentation" from Phase 5 avatar task. (c) Added clarifying comment: implicit primes do NOT bypass ContentGuard — enriched prompt is filtered. | FIXED |
+| **V6-L2** | 3.5.1, 6, 8.1 | **Fixed.** (a) `v4l2 / AVFoundation` → `AVFoundation (macOS)`. (b) `CUDA` → `mlx-audio (Apple Silicon)`. (c) Added comment: all relative paths resolve from `/opt/bob`. | FIXED |
+| **V6-L3** | 5.1.1 (~6838-6878) | **Fixed.** Removed duplicates, replaced with unique synonyms: latte, dusk/golden hour, drizzle/storm, melody. | FIXED |
+| **V6-L4** | 5.4.2 (~7517) | **Fixed.** Made `@staticmethod`, added docstring note: callers must use `asyncio.to_thread()`. | FIXED |
 
 ### 12.5. RFC-VALIDATION.md Self-Consistency Issues
 
 | # | Sections | Issue | Status |
 |---|----------|-------|--------|
-| **V6-S1** | §1 (~37), §4 (~302-305) | **RFC-VALIDATION.md itself has stale references.** (a) §1 line 37: "Self-improves: room, code, behavior, local LLMs (LoRA fine-tune)" — should reflect 5-level model. (b) §4 Phase F line 305: "First LoRA fine-tune of local LLM" — should say "Inner Monologue 0.5B". (c) §4 Phase F line 315: "Multiple fine-tune iterations" — same. (d) §5 Phase 6 line 417-421: "Fine-tune local LLMs from experience" — should match §4.3 model. | OPEN |
+| **V6-S1** | §1, §4, §5 | **Fixed.** All stale LoRA references updated: (a) 5-level self-improvement model in §1. (b-c) "Inner Monologue (0.5B)" in Phase F timeline. (d) "LoRA fine-tune Inner Monologue" in Phase 6. | FIXED |
 
 ### 12.6. Summary Matrix — Round 6
 

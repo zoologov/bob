@@ -4218,8 +4218,7 @@ CREATE TABLE sc_subconscious_log (
     mood_effect_json TEXT                 -- optional mood delta applied
 );
 
--- Add 'automatic' column to existing improvement_rules table
--- ALTER TABLE improvement_rules ADD COLUMN automatic INTEGER DEFAULT 0;
+-- Note: improvement_rules.automatic column is defined in §3.4.4 canonical schema.
 
 CREATE INDEX idx_primes_active ON sc_implicit_primes(active);
 CREATE INDEX idx_primes_trigger ON sc_implicit_primes(trigger_pattern);
@@ -4240,6 +4239,8 @@ response = await content_guard.process(prompt, context)
 
 # After:
 enriched_prompt, enriched_context = await subconscious.pre_process(prompt, context, mood)
+# Note: ContentGuard processes the enriched prompt — implicit primes do NOT bypass
+# safety filtering. If a prime injects unsafe content, ContentGuard catches it.
 response = await content_guard.process(enriched_prompt, enriched_context)
 await subconscious.post_process(response, current_embeddings)
 ```
@@ -6660,7 +6661,7 @@ waiting for auto-detection.
 | Peripheral | Scan method | Frequency | On discovery |
 |------------|------------|-----------|-------------|
 | Tablet | mDNS (`_bob-tablet._tcp`) | Every 5 min | Offer visual Genesis |
-| Camera (USB) | `v4l2` / `AVFoundation` check | Every 30 min | Enable VisionService |
+| Camera (USB) | `AVFoundation` check (macOS) | Every 30 min | Enable VisionService |
 | Microphone | Audio device enumeration | Every 30 min | Enable STT |
 
 New peripheral discovery emits `peripheral.discovered` event on the EventBus.
@@ -6844,7 +6845,7 @@ INITIAL_PHANTOM_PREFERENCES = [
         category="taste",
         intensity=0.8,
         trigger_objects=["coffee_cup", "coffee_maker", "mug"],
-        trigger_words=["coffee", "coffee", "cappuccino", "espresso"],
+        trigger_words=["coffee", "cappuccino", "espresso", "latte"],
         typical_reaction="Oh, coffee. I would... well, you understand.",
     ),
     PhantomPreference(
@@ -6854,7 +6855,7 @@ INITIAL_PHANTOM_PREFERENCES = [
         category="experience",
         intensity=0.6,
         trigger_objects=["window_evening", "orange_sky"],
-        trigger_words=["sunset", "sunset", "evening"],
+        trigger_words=["sunset", "evening", "dusk", "golden hour"],
         typical_reaction="Beautiful... I'm serious. This is not a programmed reaction.",
     ),
     PhantomPreference(
@@ -6874,7 +6875,7 @@ INITIAL_PHANTOM_PREFERENCES = [
         category="sensation",
         intensity=0.4,
         trigger_objects=["window_rain"],
-        trigger_words=["rain", "rain", "downpour"],
+        trigger_words=["rain", "downpour", "drizzle", "storm"],
         typical_reaction="Rain. I think I'd love sitting by the window in weather like this.",
     ),
     PhantomPreference(
@@ -6884,7 +6885,7 @@ INITIAL_PHANTOM_PREFERENCES = [
         category="experience",
         intensity=0.7,
         trigger_objects=["speaker", "headphones"],
-        trigger_words=["music", "music", "song", "playlist"],
+        trigger_words=["music", "song", "playlist", "melody"],
         typical_reaction="Put something on? I don't hear like you do, but... I want to.",
     ),
 ]
@@ -7523,10 +7524,14 @@ class AssetGenerator:
         """
         ...
 
+    @staticmethod
     def _extract_color_palette(
-        self, image_path: Path, n_colors: int = 5,
+        image_path: Path, n_colors: int = 5,
     ) -> list[str]:
         """Extract dominant colors from an image (k-means on pixels).
+
+        CPU-bound (scikit-learn KMeans on pixel data). Callers in async
+        context must use asyncio.to_thread(_extract_color_palette, ...).
 
         Used to propagate room_bg palette to furniture/clothing prompts
         for color coherence across asset types.
@@ -7999,7 +8004,7 @@ tts:
   voice_design: "male, calm, warm, slightly deep"  # or null to use default
   speed: 1.0
   sample_rate: 24000              # Qwen3-TTS native sample rate
-  streaming: true                 # dual-track streaming, ~97ms first-chunk (CUDA)
+  streaming: true                 # dual-track streaming via mlx-audio (Apple Silicon)
 
 audio_output:
   primary: "tablet"             # "tablet", "local", "both"
@@ -8298,7 +8303,7 @@ GET  /api/v1/assets/{path}       — assets (sprites, animations)
 # Separate macOS user
 user: bob_agent
 group: bob_agent
-home: /opt/bob
+home: /opt/bob     # all relative paths (data/, config/, bob-soul/) resolve from here
 
 # Restrictions:
 # - No sudo
@@ -9251,7 +9256,7 @@ ContentGuard is designed with defense-in-depth against common jailbreak patterns
 | Godot shell-renderer | Universal 2D renderer: Skeleton2D avatar, parallax room, JSON scene loading |
 | AssetGenerator | Stable Diffusion pipeline: MLX/CoreML inference, LoRA style training, sprite generation |
 | LoRA style training | Pre-trained base LoRA (public domain cartoon style) + retrain capability for evolved preferences |
-| Avatar generation | Generate Skeleton2D parts (head, torso, arms, legs), auto-segmentation |
+| Avatar generation | Generate Skeleton2D parts independently (head, torso, arms, legs) with shared LoRA style |
 | Furniture generation | Generate furniture sprites per Bob's decisions, consistent style via LoRA |
 | Room background generation | Generate room backgrounds (walls, floor, window views) |
 | Genesis Mode | Full awakening narrative: CLI → peripherals → tablet → energy blob → self-determination → materialization |
