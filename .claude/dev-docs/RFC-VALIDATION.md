@@ -770,7 +770,7 @@ What Bob can and cannot do at each development phase:
 
 | # | Sections | Issue | Status |
 |---|----------|-------|--------|
-| ~~**V5-M1**~~ | ~~3.4.4, 3.3.1, 3.3.5, 3.3.6~~ | ~~**Section 3.4.4 has inconsistent scope.**~~ Added 6 missing tables (`goals`, `goal_dependencies`, `goal_criteria`, `object_experience`, `taste_history`, `mood_history`) to §3.4.4. All 25 SQLite tables now consolidated in one place. | **RESOLVED** (commit `40c466b`) |
+| ~~**V5-M1**~~ | ~~3.4.4, 3.3.1, 3.3.5, 3.3.6~~ | ~~**Section 3.4.4 has inconsistent scope.**~~ Added 6 missing tables (`goals`, `goal_dependencies`, `goal_criteria`, `object_experience`, `taste_history`, `mood_history`) to §3.4.4. All 26 SQLite tables now consolidated in one place. | **RESOLVED** (commit `40c466b`) |
 | ~~**V5-M2**~~ | ~~3.4.4 (~4534-4549)~~ | ~~**Missing consolidated indices in §3.4.4.**~~ Added 9 missing indices for old tables (`idx_goals_status`, `idx_goals_parent`, `idx_goals_priority`, `idx_obj_exp_object`, `idx_obj_exp_action`, `idx_taste_history_axis`, `idx_taste_history_ts`, `idx_mood_timestamp`, `idx_mood_primary`). | **RESOLVED** (commit `40c466b`) |
 | ~~**V5-M3**~~ | ~~3.3.6 (~1742-1746)~~ | ~~**`MoodEngine.__init__` constructor parameter order is a Python SyntaxError.**~~ Fixed: `db_path: str` now precedes `initial_mood: MoodState \| None = None`. | **RESOLVED** (commit `40c466b`) |
 
@@ -825,9 +825,9 @@ What Bob can and cannot do at each development phase:
 | **V6-M1** | Multiple | **Fixed.** (a) `current_profile()` already defined at line 836 — false positive. (b) Added `discovered: dict[str, TasteAxis]` to TasteProfile. (c) `SkillRegistry` → `SkillDomainRegistry`. (d) `MoodPrediction.source` → `Literal["learned", "fixed"]`, `ImplicitPrime.source` → `Literal[...]`. (e) Added `CircuitState` Enum, replaced `_state: str`. (f) All `datetime.now()` → `datetime.now(tz=UTC)`. | FIXED |
 | **V6-M2** | 3.3.9, 3.3.10, 3.3.11 | **Fixed.** Added `eq=False` to `DiscoveredAxis`, `VisualEmbedding`, `LatentAssociation` (prevents np.ndarray element-wise `__eq__`). Added `__post_init__` len==24 validation to `CircadianPattern`. | FIXED |
 | **V6-M3** | 3.3.11 (~3943-3960) | **Fixed.** `inter_call_delay_sec` 2.0 → 10.0, added `max_tokens_per_call: 256`. New math: 50 × (~1.5s gen + 10s sleep) ≈ 10 min, matches "5-15 minutes" text. | FIXED |
-| **V6-M4** | 6 (~7991-7998) | **TTS sample rate mismatch.** `sample_rate: 24000` (Qwen3-TTS native) vs `format: "pcm_22050_mono"` in audio_output. Either Qwen3-TTS outputs 22050, or resampling is needed, or the format should be `pcm_24000_mono`. | OPEN |
-| **V6-M5** | 3.3.10, 5.4.2, 5.4.2 (memory) | **Memory budget documentation gaps.** (a) No pruning/eviction strategy for visual embeddings at `max_index_size: 50000`. (b) SD LoRA training memory budget undocumented (SDXL: 10-12 GB, SD 1.5: 6-8 GB). (c) HEAVY_GEN upper bound 10.6 GB on 16 GB — needs OOM mitigation note. | OPEN |
-| **V6-M6** | Multiple | **Architecture gaps batch.** (a) `SpatialGrounding.cluster_directions()` at ~3400 — no table for raw DoA observations (clustering needs a data source). (b) `Event(**data)` from WebSocket at ~8217 — no validation of untrusted JSON. (c) Phase 0 readiness criterion "applies migrations" but no migrations exist at Phase 0. | OPEN |
+| **V6-M4** | 6 (~7991-7998) | **Fixed.** `pcm_22050_mono` → `pcm_24000_mono` to match Qwen3-TTS native 24000 Hz sample rate. | FIXED |
+| **V6-M5** | 3.2.4, 3.3.10, 5.4.2 | **Fixed.** (a) Added FIFO eviction to visual config (YAML + dataclass). (b) Added LoRA training memory note (step 4: HEAVY_GEN ~8-10 GB). (c) HEAVY_GEN: unload CLIP before SDXL, total ~7.2 GB; added OOM fallback to SD 1.5. | FIXED |
+| **V6-M6** | Multiple | **Fixed.** (a) Added `doa_events` table (§3.3.10 + §3.4.4) for raw DoA observations; table count 25 → 26. (b) Added try/except validation around `Event(**data)` in WebSocket handler. (c) Phase 0: added "Initial schema" task, clarified alembic initial migration. | FIXED |
 
 ### 12.4. Low Severity Issues
 

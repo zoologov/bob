@@ -815,9 +815,12 @@ class ModelManager:
         NORMAL → HEAVY_GEN:
           1. Notify LLMRouter: 7B going offline
           2. Unload Qwen2.5-7B from Ollama (POST /api/generate with keep_alive=0)
-          3. Load SDXL via MLX (~6 GB)
-          4. Total: ~7.6-10.6 GB — within budget
-          5. 0.5B + Guard remain for classification and safety checks
+          3. Unload CLIP (VisualGrounding) if loaded (~400 MB)
+          4. Load SDXL via MLX (~6 GB)
+          5. Total: ~7.2 GB (0.5B + Guard + SDXL) — within 12.5 GB budget
+          6. 0.5B + Guard remain for classification and safety checks
+          OOM mitigation: if MLX allocation fails, fall back to SD 1.5
+          (LIGHTWEIGHT_GEN). Log warning and notify user via Telegram.
 
         HEAVY_GEN → NORMAL:
           1. Unload SDXL from MLX
@@ -3476,6 +3479,7 @@ sensory_grounding:
     faiss_path: "data/memory/visual_vectors"
     embed_every_nth_frame: 6             # embed every 6th snapshot (every 30 sec)
     max_index_size: 50000                # max embeddings in FAISS index
+    eviction: "fifo"                     # oldest embeddings evicted when max reached
     memory_mb: 400                       # CLIP model size for ModelManager budget
     suspend_during_heavy_gen: true
   audio:
@@ -3507,6 +3511,7 @@ class VisualGroundingConfig:
     faiss_path: str = "data/memory/visual_vectors"
     embed_every_nth_frame: int = 6
     max_index_size: int = 50_000
+    eviction: str = "fifo"               # eviction policy when max_index_size reached
     memory_mb: int = 400
     suspend_during_heavy_gen: bool = True
 
@@ -3600,6 +3605,16 @@ CREATE TABLE circadian_patterns (
     last_updated        TEXT NOT NULL
 );
 
+CREATE TABLE doa_events (
+    -- Raw direction-of-arrival observations (source for spatial clustering)
+    -- Owner: SpatialGrounding
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    timestamp       TEXT NOT NULL,
+    direction_deg   REAL NOT NULL,          -- 0-360 from ReSpeaker
+    event_type      TEXT NOT NULL,          -- "speech", "noise", "music"
+    confidence      REAL NOT NULL DEFAULT 1.0
+);
+
 CREATE TABLE spatial_locations (
     id              TEXT PRIMARY KEY,
     name            TEXT NOT NULL,
@@ -3610,6 +3625,8 @@ CREATE TABLE spatial_locations (
     semantic_tags_json TEXT DEFAULT '[]'
 );
 
+CREATE INDEX idx_doa_ts ON doa_events(timestamp);
+CREATE INDEX idx_doa_dir ON doa_events(direction_deg);
 CREATE INDEX idx_visual_embed_ts ON visual_embeddings(timestamp);
 CREATE INDEX idx_visual_links_memory ON visual_memory_links(memory_entry_id);
 CREATE INDEX idx_prosodic_ts ON prosodic_features(timestamp);
@@ -4470,7 +4487,7 @@ class SemanticMemory:
 
 #### 3.4.4. Structured State (SQLite)
 
-**Canonical source of truth for all 25 SQLite tables** used by Bob. Component
+**Canonical source of truth for all 26 SQLite tables** used by Bob. Component
 sections (§3.3.x) may reference these tables but do NOT duplicate the schema —
 all CREATE TABLE and CREATE INDEX statements are defined here only.
 
@@ -4740,6 +4757,16 @@ CREATE TABLE circadian_patterns (
     hour_social_json    TEXT NOT NULL,     -- JSON array of 24 floats
     learned_from_days   INTEGER NOT NULL,
     last_updated        TEXT NOT NULL
+);
+
+-- Sensory Grounding: raw DoA observations (section 3.3.10)
+-- Owner: SpatialGrounding | Readers: SpatialGrounding.cluster_directions()
+CREATE TABLE doa_events (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    timestamp       TEXT NOT NULL,
+    direction_deg   REAL NOT NULL,
+    event_type      TEXT NOT NULL,
+    confidence      REAL NOT NULL DEFAULT 1.0
 );
 
 -- Sensory Grounding: spatial locations from DoA (section 3.3.10)
@@ -7562,7 +7589,8 @@ Later (evolution):
     1. Bob generates candidate images without LoRA
     2. User approves favorites (or Bob self-selects based on taste model)
     3. Approved images become training dataset for new LoRA version
-    4. New LoRA saved as bob_style_v2, v3, etc. (versions kept for rollback)
+    4. LoRA training runs in HEAVY_GEN profile (SD + training ~8-10 GB)
+    5. New LoRA saved as bob_style_v2, v3, etc. (versions kept for rollback)
   - Individual assets can be regenerated without full re-generation
   - New furniture/clothing uses the current LoRA for consistency
 ```
@@ -7977,7 +8005,7 @@ audio_output:
   primary: "tablet"             # "tablet", "local", "both"
   fallback: "local"             # fallback when primary is unavailable
   volume: 0.7
-  format: "pcm_22050_mono"      # PCM 22050 Hz, 16-bit, mono
+  format: "pcm_24000_mono"      # PCM 24000 Hz, 16-bit, mono (matches Qwen3-TTS native rate)
 ```
 
 **Audio routing (`AudioRouter`):**
@@ -8201,7 +8229,11 @@ async def event_stream(websocket: WebSocket):
     await websocket.accept()
     while True:
         data = await websocket.receive_json()
-        event = Event(**data)
+        try:
+            event = Event(**data)  # validated via dataclass fields
+        except (TypeError, ValueError):
+            await websocket.send_json({"error": "invalid event payload"})
+            continue
         await event_bus.publish(event)
 
 @app.get("/api/v1/status")
@@ -9132,9 +9164,10 @@ ContentGuard is designed with defense-in-depth against common jailbreak patterns
 | Prerequisites check | Verify Python, Ollama, Claude Code CLI, hardware capabilities |
 | bootstrap.yaml | Configuration for setup wizard (required/optional components) |
 | ModelManager | ML memory budget manager (Ollama + SD model lifecycle) |
-| `bob update` | Update mechanism: git pull + uv sync + DB migrations + restart |
+| `bob update` | Update mechanism: git pull + uv sync + DB migrations (alembic) + restart |
+| Initial schema | Create SQLite database with initial tables (alembic initial migration) |
 
-**Readiness criterion:** `uv run bob` starts the process, responds to health check. `python scripts/bootstrap.py` detects environment and installs missing prerequisites with user consent. ModelManager detects available memory and reports model capacity. `bob update` pulls latest code and applies migrations.
+**Readiness criterion:** `uv run bob` starts the process, responds to health check. `python scripts/bootstrap.py` detects environment and installs missing prerequisites with user consent. ModelManager detects available memory and reports model capacity. `bob update` pulls latest code, runs alembic migrations (initial schema at Phase 0, incremental in later phases), and restarts.
 
 ### Phase 1: Agent Runtime + LLM + Skill Domains (1.5-2 weeks)
 
