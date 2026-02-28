@@ -29,8 +29,7 @@ ml = [
     "sentence-transformers>=3.3",
 ]
 voice = [
-    "faster-whisper>=1.1",
-    "kokoro>=0.9",
+    "mlx-audio>=0.1",               # Unified STT (MLX Whisper) + TTS (Qwen3-TTS) on Apple Silicon
 ]
 vision = [
     "ultralytics>=8.3",          # YOLOv8

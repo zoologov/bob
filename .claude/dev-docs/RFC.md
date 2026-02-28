@@ -3282,7 +3282,7 @@ class AudioGrounding:
 
     No extra model needed — uses classical signal processing algorithms
     (pYIN for pitch, RMS for energy, VAD for pauses). Works independently
-    of the STT engine (whisper.cpp or any other). CPU only, ~10-20 ms
+    of the STT engine (MLX Whisper or any other). CPU only, ~10-20 ms
     per audio chunk.
     """
 
@@ -3647,7 +3647,7 @@ CREATE INDEX idx_spatial_dir ON spatial_locations(direction_deg);
 
 1. **AgentRuntime.__init__**: Add `sensory_grounding: SensoryGroundingService` parameter. Wire up sub-services.
 2. **VisionService**: After `analyze_frame()`, if CLIP is loaded, call `visual_grounding.embed_frame()` every Nth snapshot (configured by `embed_every_nth_frame`). This happens in the existing ThreadPoolExecutor.
-3. **VoiceBridge**: After `transcribe()`, pass raw audio bytes and transcript words to `audio_grounding.extract_prosody(audio, words)`. No changes to whisper.cpp pipeline needed — librosa operates on raw audio independently. Emit `grounding.prosody_extracted` event. The `InteractionQuality` output feeds into `voice.positive_interaction`/`voice.negative_interaction` event classification (high engagement = positive).
+3. **VoiceBridge**: After `transcribe()`, pass raw audio bytes and transcript words to `audio_grounding.extract_prosody(audio, words)`. No changes to MLX Whisper pipeline needed — librosa operates on raw audio independently. Emit `grounding.prosody_extracted` event. The `InteractionQuality` output feeds into `voice.positive_interaction`/`voice.negative_interaction` event classification (high engagement = positive).
 4. **MoodEngine**: Subscribe to `grounding.prosody_extracted`. Use engagement/urgency/calmness to modulate mood updates from voice interactions. Subscribe to `grounding.circadian_updated`. Use `TemporalGrounding.get_expected_mood()` in `natural_drift()` to adjust the drift target per hour.
 5. **ModelManager**: CLIP is managed via `optional_models` in profile config. During `ensure_profile()`: (a) load required models first (Ollama, SD, Guard), (b) calculate remaining headroom, (c) load optional models only if headroom exceeds their `min_headroom_mb`. In HEAVY_GEN, `optional_models: []` ensures CLIP is unloaded. If CLIP cannot be loaded due to memory pressure, `embed_frame()` returns `None` and visual grounding operates without embeddings (graceful degradation).
 6. **SemanticMemory.remember()**: Call `sensory_grounding.enrich_memory_entry()` to attach grounding data before storing.
@@ -5194,7 +5194,7 @@ STT + TTS bridge.
 from collections.abc import AsyncIterator
 
 class VoiceBridge:
-    """Voice bridge: STT (Whisper.cpp) + TTS (Qwen3-TTS).
+    """Voice bridge: STT (MLX Whisper) + TTS (Qwen3-TTS).
 
     Language is configured globally via config/bob.yaml and propagated
     to STT/TTS engines. Qwen3-TTS supports 10 languages natively:
@@ -5203,7 +5203,7 @@ class VoiceBridge:
 
     def __init__(
         self,
-        stt_model: str = "whisper-small",
+        stt_model: str = "mlx-community/whisper-small-mlx",
         tts_model: str = "Qwen3-TTS-0.6B",
         tts_voice_ref: str | None = None,   # path to reference audio for cloning
         tts_voice_design: str | None = None, # text description: "male, calm, warm"
@@ -7906,8 +7906,8 @@ class SceneModifier:
                                           ▼
                                    ┌──────────┐
                                    │   STT    │
-                                   │Whisper.  │
-                                   │cpp       │
+                                   │   MLX    │
+                                   │ Whisper  │
                                    │ (local)  │
                                    └────┬─────┘
                                         │ text
@@ -7942,7 +7942,7 @@ class SceneModifier:
 | Stage | Target time |
 |-------|-------------|
 | VAD detection | < 200 ms |
-| STT (Whisper.cpp, small) | < 500 ms |
+| STT (MLX Whisper, small) | < 200 ms |
 | LLM routing (Qwen2.5-0.5B) | < 300 ms |
 | LLM response (Qwen2.5-7B, first tokens) | < 500 ms |
 | TTS (first sentence) | < 300 ms |
@@ -7991,7 +7991,7 @@ async def streaming_voice_response(text_stream: AsyncIterator[str]) -> None:
 ```yaml
 # config/voice.yaml
 stt:
-  engine: "whisper.cpp"
+  engine: "mlx-whisper"              # MLX Whisper via mlx-audio (Apple Silicon Metal)
   model: "small"                # ggml-small.bin (~460 MB)
   language: "${bob.language}"   # inherited from bob.yaml; override here if needed
   beam_size: 5
@@ -9120,7 +9120,7 @@ ContentGuard is designed with defense-in-depth against common jailbreak patterns
 | **Primary model** | Qwen2.5-7B-Q4 | Good reasoning at 7B, multilingual (en, ru, zh, etc.), fits in M4 RAM |
 | **Router model** | Qwen2.5-0.5B-Q8 | Lightning-fast classification, minimal RAM |
 | **Content guard** | Llama Guard 3-1B-INT4 (via Ollama) | Always-loaded safety classifier for input/output filtering; ~600 MB, ~50-100ms on M4 |
-| **STT** | whisper.cpp | Local, fast on Apple Silicon, multilingual (99 languages) |
+| **STT** | MLX Whisper (via mlx-audio) | Local, Metal-accelerated on Apple Silicon, multilingual (99 languages), ~7x faster than CPU-only alternatives |
 | **TTS** | Qwen3-TTS (0.6B, via mlx-audio) | Multilingual (en+ru+8 more), streaming (97ms), voice cloning (3s ref), Apache 2.0 |
 | **Computer Vision** | YOLOv8 + CLIP | Object detection + scene description |
 | **Embeddings** | all-MiniLM-L6-v2 | Fast embeddings for semantic search |
@@ -9187,7 +9187,7 @@ ContentGuard is designed with defense-in-depth against common jailbreak patterns
 | Messaging domain | First domain: `messaging/` (Telegram send/listen) |
 | Development domain | Second domain: `development/` (Claude Code bridge, code tasks) |
 | Avatar domain (stub) | Third domain: `avatar/` (stub — room state read, no Godot yet) |
-| Voice Bridge | Whisper.cpp STT + Qwen3-TTS (0.6B via mlx-audio) |
+| Voice Bridge | MLX Whisper STT + Qwen3-TTS (0.6B), both via mlx-audio |
 | SOUL templates | Verify bob-soul directory, basic personality template |
 | Claude Code Bridge | Integration with Claude Code CLI as subprocess + ClaudeCodeCoordinator |
 | ContentGuard (basic) | Input/output guard via Llama Guard 3-1B, ViolationTracker, pre-written refusal templates |
@@ -9683,7 +9683,7 @@ successful concepts:
 
 | # | Question | Priority | Status |
 |---|----------|----------|--------|
-| 1 | ~~Which TTS engine is better for multilingual use (en, ru, other): Kokoro or Piper?~~ | High | **Resolved**: Qwen3-TTS (0.6B via mlx-audio) — single engine for all languages, best quality metrics, Apache 2.0, streaming 97ms, voice cloning. Replaces Kokoro+Piper hybrid (see 6.4) |
+| 1 | ~~Which TTS/STT engine is best for multilingual use on Apple Silicon?~~ | High | **Resolved**: Unified voice stack via **mlx-audio** — single package for both STT (MLX Whisper, Metal-accelerated, ~7x faster than CPU-only alternatives) and TTS (Qwen3-TTS 0.6B, streaming 97ms, voice cloning). Replaces faster-whisper + Kokoro. Apache 2.0 (see 6.4) |
 | 2 | ~~Godot 4 vs Flutter for the tablet client~~ | Medium | **Resolved**: Godot 4 shell-renderer (see 5.4) |
 | 3 | ~~Does Vision need a separate process, or can cv2.VideoCapture be run in an asyncio thread?~~ | Medium | **Resolved**: Single process — `asyncio.to_thread` for camera capture (I/O-bound) + `ThreadPoolExecutor` for YOLOv8n inference. At 5-sec intervals GIL is not a bottleneck. Can migrate to separate process later via EventBus abstraction if needed (see 3.5.1) |
 | 4 | How exactly does ReSpeaker XVF3800 provide DoA via USB: through ALSA controls, via I2C, or through a custom protocol? Needs testing on a real device | High | Open |
