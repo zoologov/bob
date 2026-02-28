@@ -141,9 +141,9 @@ Bob's capabilities are organized as **Skill Domains** — self-contained plugin
 packages that can be added, removed, or replaced without modifying the core.
 
 - **SkillDomains as plugins**: Each domain is a standalone Python package in
-  `bob/skills/<domain>/` with its own config, skills, and lifecycle. Adding
+  `src/bob/skills/<domain>/` with its own config, skills, and lifecycle. Adding
   a new capability means adding a new directory — no core changes required.
-- **Auto-discovery via convention**: Place a package in `bob/skills/` with a
+- **Auto-discovery via convention**: Place a package in `src/bob/skills/` with a
   `domain.py` file, and it is automatically registered at startup. No manual
   registration, no config file edits.
 - **Event-driven communication**: Domains don't know each other directly.
@@ -412,7 +412,7 @@ flat skill registry with a two-level architecture (see principle 2.6).
 
 ##### SkillDomain (upper level)
 
-Each domain is a self-contained Python package in `bob/skills/<domain>/`
+Each domain is a self-contained Python package in `src/bob/skills/<domain>/`
 with its own configuration, lifecycle, and set of skills.
 
 ```python
@@ -481,7 +481,7 @@ class SkillDomain(Protocol):
 **Domain configuration** (`config.yaml` in domain directory):
 
 ```yaml
-# bob/skills/messaging/config.yaml
+# src/bob/skills/messaging/config.yaml
 domain:
   name: messaging
   version: "0.1.0"
@@ -606,14 +606,14 @@ and capabilities-based lookup.
 class SkillDomainRegistry:
     """Registry for skill domains with auto-discovery and hot-reload."""
 
-    def __init__(self, domains_dir: str = "bob/skills") -> None:
+    def __init__(self, domains_dir: str = "src/bob/skills") -> None:
         self._domains: dict[str, SkillDomain] = {}
         self._domains_dir = domains_dir
 
     async def discover_domains(self) -> list[str]:
-        """Scan bob/skills/*/domain.py for domain packages.
+        """Scan src/bob/skills/*/domain.py for domain packages.
 
-        Convention: any subdirectory of bob/skills/ containing domain.py
+        Convention: any subdirectory of src/bob/skills/ containing domain.py
         is treated as a skill domain. Directories starting with '_' are
         skipped (e.g., _template/).
         """
@@ -672,7 +672,7 @@ Bob starts up
   │   └─ claude_code, camera, speaker
   │
   ├─ SkillDomainRegistry.discover_domains()
-  │   └─ Scan bob/skills/*/domain.py
+  │   └─ Scan src/bob/skills/*/domain.py
   │       ├─ avatar/domain.py     → AvatarDomain
   │       ├─ development/domain.py → DevelopmentDomain
   │       └─ messaging/domain.py  → MessagingDomain
@@ -702,10 +702,10 @@ Bob can create **new** skill domains for himself:
 
 ##### Worked Example: Three Built-in Domains
 
-**1. Messaging Domain** (`bob/skills/messaging/`):
+**1. Messaging Domain** (`src/bob/skills/messaging/`):
 
 ```python
-# bob/skills/messaging/domain.py
+# src/bob/skills/messaging/domain.py
 class MessagingDomain:
     name = "messaging"
     description = "Communication via messengers"
@@ -716,10 +716,10 @@ class MessagingDomain:
     # Skills: telegram_send, telegram_listen
 ```
 
-**2. Development Domain** (`bob/skills/development/`):
+**2. Development Domain** (`src/bob/skills/development/`):
 
 ```python
-# bob/skills/development/domain.py
+# src/bob/skills/development/domain.py
 class DevelopmentDomain:
     name = "development"
     description = "Self-development via Claude Code CLI"
@@ -731,10 +731,10 @@ class DevelopmentDomain:
     # Depends on: ClaudeCodeCoordinator (see 8.4)
 ```
 
-**3. Avatar Domain** (`bob/skills/avatar/`):
+**3. Avatar Domain** (`src/bob/skills/avatar/`):
 
 ```python
-# bob/skills/avatar/domain.py
+# src/bob/skills/avatar/domain.py
 class AvatarDomain:
     name = "avatar"
     description = "Avatar and room management"
@@ -2656,7 +2656,7 @@ await episodic_memory.log_event(
 **New files for repository structure (section 11).**
 
 ```
-bob/mind/inner_monologue.py          # InnerMonologue, ThoughtRingBuffer, Thought, ThoughtSummary
+src/bob/mind/inner_monologue.py          # InnerMonologue, ThoughtRingBuffer, Thought, ThoughtSummary
 tests/test_mind/test_inner_monologue.py
 ```
 
@@ -3081,7 +3081,7 @@ CREATE INDEX idx_cross_domain_active ON cross_domain_associations(active);
 **New files for repository structure (section 11).**
 
 ```
-bob/mind/emergent.py                  # MoodPredictor, TasteAxisDiscovery, CrossDomainCorrelator
+src/bob/mind/emergent.py                  # MoodPredictor, TasteAxisDiscovery, CrossDomainCorrelator
 data/finetune/models/mood_predictor.joblib     # sklearn MLP ensemble (created at runtime, ~1 MB)
 tests/test_mind/test_emergent.py
 ```
@@ -3658,9 +3658,9 @@ CREATE INDEX idx_spatial_dir ON spatial_locations(direction_deg);
 **New files for repository structure (section 11).**
 
 ```
-bob/services/sensory_grounding.py      # VisualGrounding, AudioGrounding, SpatialGrounding
-bob/mind/temporal_grounding.py         # TemporalGrounding, CircadianPattern
-bob/mind/grounding_service.py          # SensoryGroundingService, GroundedContext, ContextEnricher
+src/bob/services/sensory_grounding.py      # VisualGrounding, AudioGrounding, SpatialGrounding
+src/bob/mind/temporal_grounding.py         # TemporalGrounding, CircadianPattern
+src/bob/mind/grounding_service.py          # SensoryGroundingService, GroundedContext, ContextEnricher
 data/memory/visual_vectors/            # FAISS index for visual embeddings
 tests/test_services/test_sensory_grounding.py
 tests/test_mind/test_temporal_grounding.py
@@ -4262,9 +4262,9 @@ await subconscious.post_process(response, current_embeddings)
 **New files for repository structure (section 11).**
 
 ```
-bob/mind/subconscious.py              # SubconsciousLayer, ImplicitPrimingEngine, LatentAssociationEngine
-bob/mind/habituation.py               # HabituationEngine
-bob/mind/night_processor.py           # NightProcessor, NightProcessingResult
+src/bob/mind/subconscious.py              # SubconsciousLayer, ImplicitPrimingEngine, LatentAssociationEngine
+src/bob/mind/habituation.py               # HabituationEngine
+src/bob/mind/night_processor.py           # NightProcessor, NightProcessingResult
 data/memory/latent_vectors/           # FAISS index for latent associations
 tests/test_mind/test_subconscious.py
 tests/test_mind/test_habituation.py
@@ -5643,7 +5643,7 @@ order with clear override precedence.
 5. config/vision.yaml       ← camera/YOLO
 6. config/security.yaml     ← permissions/rate limits
 7. config/bootstrap.yaml    ← first-launch state (read-only after setup)
-8. bob/skills/*/config.yaml ← per-domain settings
+8. src/bob/skills/*/config.yaml ← per-domain settings
 9. Environment variables    ← BOB_LANGUAGE=ru, BOB_LLM_MODEL=...
 10. CLI arguments           ← bob start --language=ru
 ```
@@ -6101,8 +6101,8 @@ class CodeChangeClassifier:
 
     # Files/patterns that trigger HIGH impact
     HIGH_IMPACT_PATTERNS: ClassVar[list[str]] = [
-        "bob/core/*",               # Core modules
-        "bob/security/*",           # Security
+        "src/bob/core/*",            # Core modules
+        "src/bob/security/*",       # Security
         "config/*.yaml",            # Configuration
         "pyproject.toml",           # Dependencies
         "alembic/*",                # DB migrations
@@ -8222,7 +8222,7 @@ For services running in separate processes (Vision, Audio), communication is via
 FastAPI WebSocket.
 
 ```python
-# bob/api/main.py
+# src/bob/api/main.py
 
 from fastapi import FastAPI, WebSocket
 
@@ -9161,7 +9161,7 @@ ContentGuard is designed with defense-in-depth against common jailbreak patterns
 | Directory structure | Create project tree per specification |
 | pyproject.toml | Dependencies, scripts, ruff/mypy settings |
 | Configuration | YAML configs with pydantic validation models |
-| Entry point | `bob/main.py` — start asyncio event loop |
+| Entry point | `src/bob/main.py` — start asyncio event loop |
 | Event Bus | Basic pub/sub implementation |
 | Health check | `/api/v1/health` endpoint |
 | CI | GitHub Actions: lint + type check + tests |
@@ -9341,119 +9341,123 @@ bob/
 │   ├── relationship.yaml           # RelationshipTracker settings (3.3.7.2)
 │   └── genesis.yaml                # Genesis asset resolution config (5.4.2)
 │
-├── bob/                            # Main Python package
-│   ├── __init__.py
-│   ├── main.py                     # Entry point
-│   │
-│   ├── core/                       # Bob Core
-│   │   ├── __init__.py
-│   │   ├── runtime.py              # Agent Runtime (event loop)
-│   │   ├── event_bus.py            # Event Bus (pub/sub)
-│   │   ├── llm_router.py          # LLM Router
-│   │   ├── model_manager.py      # ModelManager (ML memory budget)
-│   │   ├── skills.py              # Skill Registry + base classes
-│   │   └── config.py              # Pydantic configuration models
-│   │
-│   ├── mind/                       # Higher Mind
-│   │   ├── __init__.py
-│   │   ├── goal_engine.py         # Goal Engine
-│   │   ├── planner.py             # Planner
-│   │   ├── reflection.py          # Reflection Loop
-│   │   ├── self_improve.py        # Self-Improvement
-│   │   ├── taste_engine.py        # Taste Engine (TasteProfile, Evaluator, Evolution)
-│   │   ├── mood.py                # Mood System (MoodState, MoodEngine)
-│   │   ├── negotiation.py         # Negotiation Engine (zones, protocol, compromises)
-│   │   ├── experience_log.py      # ExperienceLog (emotional memory of objects)
-│   │   ├── inner_monologue.py     # InnerMonologue, ThoughtRingBuffer, Thought, ThoughtSummary (3.3.8)
-│   │   ├── emergent.py            # MoodPredictor, TasteAxisDiscovery, CrossDomainCorrelator (3.3.9)
-│   │   ├── temporal_grounding.py  # TemporalGrounding, CircadianPattern (3.3.10)
-│   │   ├── grounding_service.py   # SensoryGroundingService, GroundedContext (3.3.10)
-│   │   ├── subconscious.py        # SubconsciousLayer, ImplicitPrimingEngine, LatentAssociationEngine (3.3.11)
-│   │   ├── habituation.py         # HabituationEngine (3.3.11)
-│   │   ├── night_processor.py     # NightProcessor, NightProcessingResult (3.3.11)
-│   │   └── claude_code_bridge.py  # Bridge to Claude Code CLI
-│   │
-│   ├── memory/                     # Memory System
-│   │   ├── __init__.py
-│   │   ├── episodic.py            # Episodic Memory (daily logs)
-│   │   ├── semantic.py            # Semantic Memory (vectors)
-│   │   ├── state.py               # Structured State (SQLite)
-│   │   ├── soul.py                # SOUL loader + evolution
-│   │   └── training_data.py       # Data collection for Inner Monologue LoRA fine-tune
-│   │
-│   ├── services/                   # Peripheral services + shared generators
-│   │   ├── __init__.py
-│   │   ├── asset_generator.py     # AI asset generation (Stable Diffusion)
-│   │   ├── vision.py              # Vision Service
-│   │   ├── audio_direction.py     # Audio Direction Service
-│   │   ├── camera_controller.py   # Camera Controller (OBSBOT)
-│   │   ├── voice_bridge.py        # Voice Bridge (STT + TTS)
-│   │   ├── sensory_grounding.py   # VisualGrounding, AudioGrounding, SpatialGrounding (3.3.10)
-│   │   ├── tablet_controller.py   # Tablet Controller (ADB)
-│   │   └── messaging_bot.py       # Telegram Bot
-│   │
-│   ├── api/                        # FastAPI endpoints
-│   │   ├── __init__.py
-│   │   ├── main.py                # FastAPI app, routes
-│   │   └── websocket.py           # WebSocket handlers
-│   │
-│   ├── genesis/                    # Genesis Mode (awakening)
-│   │   ├── __init__.py
-│   │   ├── genesis_mode.py        # Bob's "awakening" process
-│   │   ├── awakening.py           # Awakening phase (first 48 hours)
-│   │   ├── phantom_preferences.py # Phantom Preferences
-│   │   ├── room_generator.py      # Room generation
-│   │   ├── appearance_generator.py # Appearance generation
-│   │   └── window_service.py      # Weather/time outside the window
-│   │
-│   ├── behaviors/                  # Behavior system
-│   │   ├── __init__.py
-│   │   ├── registry.py            # BehaviorRegistry
-│   │   ├── appearance_evolution.py # Appearance evolution
-│   │   └── defaults.py            # Default behaviors
-│   │
-│   ├── skills/                     # Skill Domains (plugin architecture)
-│   │   ├── __init__.py
-│   │   ├── base.py                # SkillDomain Protocol, Skill Protocol, auto-discovery
-│   │   ├── avatar/                # Domain: avatar and room management
-│   │   │   ├── __init__.py
-│   │   │   ├── domain.py          # AvatarDomain(SkillDomain)
-│   │   │   ├── config.yaml
-│   │   │   └── skills/
-│   │   │       ├── update_room.py
-│   │   │       ├── change_appearance.py
-│   │   │       └── play_animation.py
-│   │   ├── development/           # Domain: self-development via Claude Code CLI
-│   │   │   ├── __init__.py
-│   │   │   ├── domain.py          # DevelopmentDomain(SkillDomain)
-│   │   │   ├── config.yaml
-│   │   │   └── skills/
-│   │   │       ├── write_code.py
-│   │   │       ├── refactor.py
-│   │   │       └── run_tests.py
-│   │   ├── messaging/             # Domain: messengers (Telegram, etc.)
-│   │   │   ├── __init__.py
-│   │   │   ├── domain.py
-│   │   │   ├── config.yaml
-│   │   │   └── skills/
-│   │   │       ├── telegram_send.py
-│   │   │       └── telegram_listen.py
-│   │   └── _template/             # Template for creating new domains
-│   │       ├── __init__.py
-│   │       ├── domain.py
-│   │       ├── config.yaml
-│   │       └── skills/
-│   │           └── .gitkeep
-│   │
-│   └── security/                   # Security
+├── src/                            # Source code root
+│   └── bob/                        # Main Python package
 │       ├── __init__.py
-│       ├── sandbox.py             # Skill Sandbox
-│       ├── approval.py            # Approval Workflow
-│       ├── rate_limiter.py        # Rate Limits
-│       ├── audit.py               # Audit log
-│       ├── content_guard.py       # ContentGuard (wraps LLMRouter, see 8.8)
-│       ├── violation_tracker.py   # ViolationTracker (per-user escalation)
-│       └── refusal_generator.py   # RefusalGenerator (Bob-style refusals)
+│       ├── main.py                 # Entry point
+│       │
+│       ├── core/                   # Bob Core
+│       │   ├── __init__.py
+│       │   ├── runtime.py          # Agent Runtime (event loop)
+│       │   ├── event_bus.py        # Event Bus (pub/sub)
+│       │   ├── config.py           # Pydantic configuration models
+│       │   └── model_manager.py    # ModelManager (ML memory budget)
+│       │
+│       ├── llm/                    # LLM Layer
+│       │   ├── __init__.py
+│       │   ├── llm_router.py       # LLM Router
+│       │   └── claude_code_bridge.py # Bridge to Claude Code CLI
+│       │
+│       ├── mind/                   # Higher Mind
+│       │   ├── __init__.py
+│       │   ├── goal_engine.py      # Goal Engine
+│       │   ├── planner.py          # Planner
+│       │   ├── reflection.py       # Reflection Loop
+│       │   ├── self_improve.py     # Self-Improvement
+│       │   ├── taste_engine.py     # Taste Engine (TasteProfile, Evaluator, Evolution)
+│       │   ├── mood.py             # Mood System (MoodState, MoodEngine)
+│       │   ├── negotiation.py      # Negotiation Engine (zones, protocol, compromises)
+│       │   ├── experience_log.py   # ExperienceLog (emotional memory of objects)
+│       │   ├── relationship_tracker.py # RelationshipTracker (3.3.7.2)
+│       │   ├── inner_monologue.py  # InnerMonologue, ThoughtRingBuffer, Thought, ThoughtSummary (3.3.8)
+│       │   ├── emergent.py         # MoodPredictor, TasteAxisDiscovery, CrossDomainCorrelator (3.3.9)
+│       │   ├── temporal_grounding.py # TemporalGrounding, CircadianPattern (3.3.10)
+│       │   ├── grounding_service.py # SensoryGroundingService, GroundedContext (3.3.10)
+│       │   ├── subconscious.py     # SubconsciousLayer, ImplicitPrimingEngine, LatentAssociationEngine (3.3.11)
+│       │   ├── habituation.py      # HabituationEngine (3.3.11)
+│       │   └── night_processor.py  # NightProcessor, NightProcessingResult (3.3.11)
+│       │
+│       ├── memory/                 # Memory System
+│       │   ├── __init__.py
+│       │   ├── episodic.py         # Episodic Memory (daily logs)
+│       │   ├── semantic.py         # Semantic Memory (vectors)
+│       │   ├── state.py            # Structured State (SQLite)
+│       │   ├── soul.py             # SOUL loader + evolution
+│       │   └── training_data.py    # Data collection for Inner Monologue LoRA fine-tune
+│       │
+│       ├── services/               # Peripheral services + shared generators
+│       │   ├── __init__.py
+│       │   ├── asset_generator.py  # AI asset generation (Stable Diffusion)
+│       │   ├── vision.py           # Vision Service
+│       │   ├── audio_direction.py  # Audio Direction Service
+│       │   ├── camera_controller.py # Camera Controller (OBSBOT)
+│       │   ├── voice_bridge.py     # Voice Bridge (STT + TTS)
+│       │   ├── sensory_grounding.py # VisualGrounding, AudioGrounding, SpatialGrounding (3.3.10)
+│       │   ├── tablet_controller.py # Tablet Controller (ADB)
+│       │   └── messaging_bot.py    # Telegram Bot
+│       │
+│       ├── api/                    # FastAPI endpoints
+│       │   ├── __init__.py
+│       │   ├── main.py             # FastAPI app, routes
+│       │   └── websocket.py        # WebSocket handlers
+│       │
+│       ├── genesis/                # Genesis Mode (awakening)
+│       │   ├── __init__.py
+│       │   ├── genesis_mode.py     # Bob's "awakening" process
+│       │   ├── awakening.py        # Awakening phase (first 48 hours)
+│       │   ├── phantom_preferences.py # Phantom Preferences
+│       │   ├── room_generator.py   # Room generation
+│       │   ├── appearance_generator.py # Appearance generation
+│       │   └── window_service.py   # Weather/time outside the window
+│       │
+│       ├── behaviors/              # Behavior system
+│       │   ├── __init__.py
+│       │   ├── registry.py         # BehaviorRegistry
+│       │   ├── appearance_evolution.py # Appearance evolution
+│       │   └── defaults.py         # Default behaviors
+│       │
+│       ├── skills/                 # Skill Domains (plugin architecture)
+│       │   ├── __init__.py
+│       │   ├── base.py             # SkillDomain Protocol, Skill Protocol, auto-discovery
+│       │   ├── avatar/             # Domain: avatar and room management
+│       │   │   ├── __init__.py
+│       │   │   ├── domain.py       # AvatarDomain(SkillDomain)
+│       │   │   ├── config.yaml
+│       │   │   └── skills/
+│       │   │       ├── update_room.py
+│       │   │       ├── change_appearance.py
+│       │   │       └── play_animation.py
+│       │   ├── development/        # Domain: self-development via Claude Code CLI
+│       │   │   ├── __init__.py
+│       │   │   ├── domain.py       # DevelopmentDomain(SkillDomain)
+│       │   │   ├── config.yaml
+│       │   │   └── skills/
+│       │   │       ├── write_code.py
+│       │   │       ├── refactor.py
+│       │   │       └── run_tests.py
+│       │   ├── messaging/          # Domain: messengers (Telegram, etc.)
+│       │   │   ├── __init__.py
+│       │   │   ├── domain.py
+│       │   │   ├── config.yaml
+│       │   │   └── skills/
+│       │   │       ├── telegram_send.py
+│       │   │       └── telegram_listen.py
+│       │   └── _template/          # Template for creating new domains
+│       │       ├── __init__.py
+│       │       ├── domain.py
+│       │       ├── config.yaml
+│       │       └── skills/
+│       │           └── .gitkeep
+│       │
+│       └── security/               # Security
+│           ├── __init__.py
+│           ├── sandbox.py          # Skill Sandbox
+│           ├── approval.py         # Approval Workflow
+│           ├── rate_limiter.py     # Rate Limits
+│           ├── audit.py            # Audit log
+│           ├── content_guard.py    # ContentGuard (wraps LLMRouter, see 8.8)
+│           ├── violation_tracker.py # ViolationTracker (per-user escalation)
+│           └── refusal_generator.py # RefusalGenerator (Bob-style refusals)
 │
 ├── data/                           # Data (git-versioned separately)
 │   ├── bob.db                     # SQLite (goals, experience, world_state, episodic_log, semantic_memory, ...)
@@ -9640,7 +9644,7 @@ successful concepts:
 | **SOUL.md** | `bob-soul/` (template directory) -> `data/soul/SOUL.md` -- modular "soul" with evolution |
 | **Heartbeat pattern** | `AgentRuntime.heartbeat()` -- periodic state check |
 | **Structured memory** | SQLite `episodic_log` + `semantic_memory` tables + FAISS vector search |
-| **Skill architecture** | `bob/skills/` -- hot-reloadable Python modules |
+| **Skill architecture** | `src/bob/skills/` -- hot-reloadable Python modules |
 
 ### What We Gain Instead
 
@@ -9686,7 +9690,7 @@ successful concepts:
 | 5 | ~~Is a monitoring dashboard (Grafana / custom) needed from the early phases, or are logs sufficient?~~ | Low | **Resolved**: Structured logs (`structlog` JSON) + `/metrics` JSON endpoint in FastAPI from Phase 1. No Grafana/Prometheus in early phases — overkill for a single host. Bob can read own metrics during reflection. Grafana optional in Phase 6 (see 3.5.1, 10) |
 | 6 | ~~How to store and version Godot assets that Bob generates/modifies? Separate git repo or LFS?~~ | Medium | **Resolved**: `data/assets/` in .gitignore — runtime data unique to each Bob instance, not code. Version history via `data/assets/history/` (rename with timestamp on change). Backup via system tools (Time Machine, rsync). No Git LFS — no value in git-tracking AI-generated per-instance PNGs (see 11) |
 | 7 | ~~Should we use ChromaDB (persistent, server mode) or FAISS (in-process, faster) for vector search?~~ | Medium | **Resolved**: FAISS in-process (`faiss-cpu`). Zero server overhead, ~20MB RAM for 10K vectors @ 384 dim. Metadata stored in SQLite (`bob.db`) with FK to FAISS index ID. `faiss.write_index()`/`read_index()` for persistence. Sufficient for single-user single-process (<10K vectors) (see 3.4.3) |
-| 8 | ~~Is integration with Home Assistant / other IoT platforms needed in early phases?~~ | Low | **Resolved**: No IoT in early phases. Implement as a separate SkillDomain (`bob/skills/smart_home/`) in Phase 5+ when Bob can see, hear, and think. Ideal candidate for Bob to self-create via Claude Code CLI using `_template/` scaffold (see 3.2.3) |
+| 8 | ~~Is integration with Home Assistant / other IoT platforms needed in early phases?~~ | Low | **Resolved**: No IoT in early phases. Implement as a separate SkillDomain (`src/bob/skills/smart_home/`) in Phase 5+ when Bob can see, hear, and think. Ideal candidate for Bob to self-create via Claude Code CLI using `_template/` scaffold (see 3.2.3) |
 | 9 | ~~How should Bob propose changes to his own code via Claude Code CLI: auto-commit (with approval) or via PR/suggestion to the user?~~ | High | **Resolved**: Hybrid by impact level — low: direct commit + notify, medium: branch + approval, high: pre-approval + branch + review (see 4.2.2) |
 | 10 | ~~Is reflection data sufficient for LoRA fine-tune, or is additional collection needed via special dialogs? Minimum ~100 pairs~~ | Medium | **Resolved**: Organic data only — 7 sources (dialogues, reflections, corrections, SOUL, preferences, tastes, mood) yield ~100-300 pairs/week. Raise `min_dataset_size` to 200 with quality scoring (user_rating >= 0.7, corrections weighted 2x). No synthetic augmentation or calibration dialogs. If insufficient data — Bob works on base model longer (see 4.3) |
 | 11 | ~~How to organize the Godot asset pool?~~ | High | **Resolved**: AI-generated via local Stable Diffusion during Genesis (see 5.4.2) |
