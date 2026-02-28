@@ -13,16 +13,25 @@
 
 ---
 
+> **Implementation Status:** This is a **design document**. The codebase is at Phase 0
+> (project skeleton) — all modules contain only `__init__.py` stubs with docstrings.
+> No classes, interfaces, or business logic are implemented yet. All code examples,
+> class definitions, and SQL schemas in this RFC represent **planned contracts** that
+> will be built according to the [Development Phases](#10-development-phases).
+> Section headings include `[Phase N]` markers indicating when each component is scheduled.
+
+---
+
 ## Table of Contents
 
 1. [Motivation](#1-motivation)
 2. [Design Principles](#2-design-principles)
-3. [System Architecture](#3-system-architecture)
-4. [LLM Layer](#4-llm-layer)
-5. [Bob's World (Avatar and Room)](#5-bobs-world-avatar-and-room)
-6. [Voice Pipeline](#6-voice-pipeline)
-7. [Communication Between Components](#7-communication-between-components)
-8. [Security](#8-security)
+3. [System Architecture [Phases 0-6]](#3-system-architecture-phases-0-6)
+4. [LLM Layer [Phase 1]](#4-llm-layer-phase-1)
+5. [Bob's World (Avatar and Room) [Phase 5]](#5-bobs-world-avatar-and-room-phase-5)
+6. [Voice Pipeline [Phase 1]](#6-voice-pipeline-phase-1)
+7. [Communication Between Components [Phase 0]](#7-communication-between-components-phase-0)
+8. [Security [Phases 1, 4]](#8-security-phases-1-4)
 9. [Technology Stack](#9-technology-stack)
 10. [Development Phases](#10-development-phases)
 11. [Repository Structure](#11-repository-structure)
@@ -161,7 +170,7 @@ packages that can be added, removed, or replaced without modifying the core.
 
 ---
 
-## 3. System Architecture
+## 3. System Architecture [Phases 0-6]
 
 ### 3.1. Overview Diagram
 
@@ -5854,7 +5863,7 @@ class UserSettings:
 
 ---
 
-## 4. LLM Layer
+## 4. LLM Layer [Phase 1]
 
 ### 4.1. Local Models via Ollama
 
@@ -6294,7 +6303,7 @@ Respond with JSON: {"category": "...", "confidence": 0.0-1.0}
 
 ---
 
-## 5. Bob's World (Avatar and Room)
+## 5. Bob's World (Avatar and Room) [Phase 5]
 
 ### 5.1. Concept
 
@@ -7890,7 +7899,7 @@ class SceneModifier:
 
 ---
 
-## 6. Voice Pipeline
+## 6. Voice Pipeline [Phase 1]
 
 ### 6.1. Full audio path
 
@@ -8065,7 +8074,7 @@ enables streaming — audio starts playing before the full sentence is synthesiz
 
 ---
 
-## 7. Communication Between Components
+## 7. Communication Between Components [Phase 0]
 
 ### 7.1. Within the process: asyncio Event Bus
 
@@ -8295,7 +8304,7 @@ GET  /api/v1/assets/{path}       — assets (sprites, animations)
 
 ---
 
-## 8. Security
+## 8. Security [Phases 1, 4]
 
 ### 8.1. Process isolation
 
