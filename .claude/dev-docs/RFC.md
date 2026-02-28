@@ -354,7 +354,7 @@ Classifies incoming tasks and routes them to the appropriate model.
 ```python
 from enum import Enum
 from dataclasses import dataclass
-from typing import ClassVar
+from typing import Any, ClassVar
 
 class TaskCategory(Enum):
     SMALL_TALK = "small_talk"
@@ -425,7 +425,7 @@ Each domain is a self-contained Python package in `src/bob/skills/<domain>/`
 with its own configuration, lifecycle, and set of skills.
 
 ```python
-from typing import Protocol
+from typing import Any, Protocol
 from dataclasses import dataclass, field
 
 class SkillDomain(Protocol):
@@ -520,6 +520,9 @@ Individual skills live inside their domain's `skills/` subdirectory.
 The `Skill` Protocol is preserved from the original design.
 
 ```python
+from typing import Any, Protocol
+from dataclasses import dataclass, field
+
 @dataclass
 class SkillMetadata:
     name: str
@@ -612,6 +615,8 @@ Replaces the flat `SkillRegistry`. Manages domain lifecycle, auto-discovery,
 and capabilities-based lookup.
 
 ```python
+from typing import Any
+
 class SkillDomainRegistry:
     """Registry for skill domains with auto-discovery and hot-reload."""
 
@@ -938,7 +943,8 @@ status, and completion criteria.
 ```python
 from enum import Enum
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
+from typing import Any
 
 class GoalStatus(Enum):
     ACTIVE = "active"
@@ -1009,6 +1015,8 @@ CREATE INDEX idx_goals_priority ON goals(priority);
 **Goal Engine interface:**
 
 ```python
+from typing import Any
+
 class GoalEngine:
     """Goal graph management."""
 
@@ -1047,6 +1055,10 @@ class GoalEngine:
 Decomposes high-level goals into executable tasks (skills).
 
 ```python
+from dataclasses import dataclass, field
+from datetime import UTC, datetime
+from typing import Any
+
 @dataclass
 class PlanStep:
     skill_name: str
@@ -1090,6 +1102,8 @@ Periodic evaluation of actions and results. Runs on a schedule
 (every 60 minutes by default) and upon significant events.
 
 ```python
+from typing import Any, ClassVar
+
 @dataclass
 class ReflectionEntry:
     id: str
@@ -1210,6 +1224,8 @@ class ReflectionLoop:
 Analysis of error patterns and development of new strategies.
 
 ```python
+from typing import Any
+
 @dataclass
 class ImprovementRule:
     id: str
@@ -1412,6 +1428,8 @@ TASTE_CLUSTERS = {
 **TasteEvaluator — evaluating objects through tastes:**
 
 ```python
+from typing import Any
+
 @dataclass
 class TasteScore:
     """Result of evaluating an object through tastes."""
@@ -1481,6 +1499,8 @@ class TasteEvaluator:
 **TasteEvolution — taste evolution through experience:**
 
 ```python
+from typing import Any
+
 class TasteEvolution:
     """Taste evolution based on reflection and experience."""
 
@@ -1554,6 +1574,8 @@ class TasteEvolution:
 **ExperienceLog — emotional memory of objects:**
 
 ```python
+from typing import Any
+
 @dataclass
 class ObjectExperience:
     """Record of interaction experience with an object."""
@@ -1967,6 +1989,8 @@ But he is reasonable: in areas where the decision belongs to the user, Bob accep
 **Interface:**
 
 ```python
+from typing import Any
+
 class DecisionZone(Enum):
     BOB_PERSONAL = "bob_personal"       # clothing, pose, hobbies
     SHARED_SPACE = "shared_space"       # furniture, decor, lighting
@@ -2716,6 +2740,7 @@ import numpy as np
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
+from typing import Literal
 
 
 @dataclass
@@ -3139,6 +3164,7 @@ tests/test_mind/test_emergent.py
 import numpy as np
 from dataclasses import dataclass, field
 from datetime import datetime, time
+from typing import Any
 
 
 @dataclass(eq=False)
@@ -3728,6 +3754,7 @@ tests/test_mind/test_grounding_service.py
 import numpy as np
 from dataclasses import dataclass, field
 from datetime import datetime, time
+from typing import Any, Literal
 
 
 @dataclass
@@ -4326,6 +4353,8 @@ a notable event, interaction, or state change. Entries are structured for effici
 querying (by date, type, tags) while preserving rich text content for LLM context.
 
 ```python
+from typing import Any
+
 class EpisodicMemory:
     """Episodic memory backed by SQLite.
 
@@ -4407,6 +4436,8 @@ with category, importance, and access tracking. FAISS provides cosine-similarity
 search over embeddings; SQLite provides filtering by category and metadata.
 
 ```python
+from typing import Any
+
 class SemanticMemory:
     """Semantic memory with FAISS (in-process) + SQLite metadata.
 
@@ -4991,6 +5022,8 @@ my own personality, increasingly less like the prototype.
 **SOUL evolution:**
 
 ```python
+from typing import Any
+
 class SoulEvolution:
     """Evolution of Bob's personality based on experience."""
 
@@ -5068,6 +5101,7 @@ without API changes (EventBus abstraction).
 
 ```python
 import numpy as np
+from typing import Any
 
 @dataclass
 class VisionEvent:
@@ -5248,6 +5282,8 @@ class VoiceBridge:
 Android tablet control via ADB.
 
 ```python
+from typing import Any
+
 class TabletController:
     """Android tablet control via ADB."""
 
@@ -5475,6 +5511,8 @@ bootstrap:
 #### BootstrapWizard Interface
 
 ```python
+from typing import Any
+
 class BootstrapWizard:
     """First-launch setup wizard."""
 
@@ -5661,6 +5699,8 @@ order with clear override precedence.
 reference values from `bob.yaml`. Resolution happens at load time.
 
 ```python
+from typing import Any
+
 class ConfigLoader:
     """Loads and merges configuration from multiple YAML files."""
 
@@ -5840,6 +5880,8 @@ with his aesthetic preferences.
 **Persistence:**
 
 ```python
+from typing import Any
+
 @dataclass
 class UserSettings:
     """User-configurable settings with dataclass validation."""
@@ -6527,6 +6569,8 @@ interprets it -- like the copies of Bob in the book gradually diverge:
 **Genesis interface:**
 
 ```python
+from typing import Any
+
 @dataclass
 class GenesisResult:
     room_theme: str                     # "spaceship", "cottage", "submarine", ...
@@ -7430,6 +7474,8 @@ ModelManager restores normal model configuration.
 **AssetGenerator interface:**
 
 ```python
+from typing import Any
+
 ASSET_RESOLUTION_DEFAULTS: dict[str, tuple[int, int]] = {
     "room_bg": (1024, 768),          # Full-screen, needs detail
     "avatar_part": (512, 512),       # ~100-200px on screen
@@ -7817,6 +7863,8 @@ Day 60 (Reflection -> new behavior):
 **Clothing and appearance also evolve:**
 
 ```python
+from typing import Any
+
 class AppearanceEvolution:
     """Evolution of Bob's appearance (via Taste Engine + Mood)."""
 
@@ -7854,6 +7902,8 @@ Bob can add, remove, or modify objects in the room, and also
 **automatically create new behaviors** tied to new objects:
 
 ```python
+from typing import Any
+
 @dataclass
 class SceneModification:
     action: str                 # "add_object", "remove_object", "modify_object",
@@ -8028,6 +8078,8 @@ TTS generates audio chunks that must be delivered to the right output device.
 `AudioRouter` handles routing based on configuration and tablet connectivity.
 
 ```python
+from typing import Any
+
 class AudioRouter:
     """Routes TTS audio to the appropriate output device."""
 
@@ -8082,8 +8134,8 @@ The primary communication mechanism between modules inside Bob Core.
 
 ```python
 from dataclasses import dataclass, field
-from datetime import datetime
-from typing import Callable, Awaitable
+from datetime import UTC, datetime
+from typing import Any, Callable, Awaitable
 
 @dataclass
 class Event:
@@ -8233,6 +8285,8 @@ FastAPI WebSocket.
 ```python
 # src/bob/api/main.py
 
+from typing import Any
+
 from fastapi import FastAPI, WebSocket
 
 app = FastAPI(title="Bob Core API")
@@ -8325,6 +8379,8 @@ home: /opt/bob     # all relative paths (data/, config/, bob-soul/) resolve from
 Each skill is executed in a subprocess with restrictions:
 
 ```python
+from typing import Any
+
 @dataclass
 class SandboxConfig:
     timeout_sec: int = 30
@@ -8365,6 +8421,8 @@ class SkillSandbox:
 ### 8.3. Approval Workflow
 
 ```python
+from typing import Any
+
 class ApprovalLevel(Enum):
     AUTO = "auto"                   # Executed without confirmation
     NOTIFY = "notify"              # Executed, but sends a notification
@@ -8412,6 +8470,9 @@ the shared constraint is the **subscription quota** (~45 prompts / 5-hour rollin
 window on Pro, more on Max).
 
 ```python
+from dataclasses import dataclass, field
+from datetime import UTC, datetime
+
 @dataclass
 class QuotaTracker:
     """Best-effort tracking of Claude Code usage quota.
@@ -8545,6 +8606,8 @@ rate_limits:
 All of Bob's actions are logged in structured JSON.
 
 ```python
+from typing import Any
+
 @dataclass
 class AuditEntry:
     timestamp: datetime
@@ -8688,6 +8751,7 @@ ContentGuard in the LLM interaction pipeline. Both feed into the audit log.
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from enum import Enum
+from typing import Any
 
 
 class ViolationCategory(Enum):
