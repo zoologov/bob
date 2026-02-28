@@ -8,7 +8,8 @@ version = "0.1.0"
 description = "Bob — autonomous home agent inspired by 'We Are Legion (We Are Bob)'"
 readme = "README.md"
 requires-python = ">=3.12"
-license = "MIT"
+license = "LicenseRef-BUSL-1.1 AND Apache-2.0 AND CC-BY-NC-SA-4.0"
+license-files = ["LICENSE", "LICENSE-APACHE.md", "LICENSE-CC-BY-NC-SA.md"]
 authors = [{ name = "v.zoologov" }]
 
 dependencies = [
