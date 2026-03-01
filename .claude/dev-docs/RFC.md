@@ -6,10 +6,10 @@
 
 | Field      | Value                                       |
 |------------|---------------------------------------------|
-| **Status** | Draft                                       |
+| **Status** | Review                                       |
 | **Date**   | 2026-02-26                                  |
-| **Author** | V. Zoologov                                 |
-| **Project**| Bob — personal autonomous home agent        |
+| **Author** | v.zoologov                                 |
+| **Project**| Bob – your always‑on sci‑fi AI companion inspired by Bob Johansson from “We Are Legion (We Are Bob)”        |
 
 ---
 
@@ -977,40 +977,7 @@ class Goal:
     metadata: dict[str, Any] =field(default_factory=dict)
 ```
 
-**SQLite schema:**
-
-```sql
-CREATE TABLE goals (
-    id              TEXT PRIMARY KEY,
-    title           TEXT NOT NULL,
-    description     TEXT NOT NULL,
-    status          TEXT NOT NULL DEFAULT 'active',
-    priority        INTEGER NOT NULL DEFAULT 3,
-    parent_id       TEXT REFERENCES goals(id),
-    progress        REAL NOT NULL DEFAULT 0.0,
-    created_at      TEXT NOT NULL,
-    updated_at      TEXT NOT NULL,
-    deadline        TEXT,
-    metadata_json   TEXT DEFAULT '{}'
-);
-
-CREATE TABLE goal_dependencies (
-    goal_id         TEXT NOT NULL REFERENCES goals(id),
-    depends_on_id   TEXT NOT NULL REFERENCES goals(id),
-    PRIMARY KEY (goal_id, depends_on_id)
-);
-
-CREATE TABLE goal_criteria (
-    id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    goal_id         TEXT NOT NULL REFERENCES goals(id),
-    description     TEXT NOT NULL,
-    is_met          INTEGER NOT NULL DEFAULT 0,
-    checked_at      TEXT
-);
-
-CREATE INDEX idx_goals_status ON goals(status);
-CREATE INDEX idx_goals_priority ON goals(priority);
-```
+**SQLite tables:** `goals`, `goal_dependencies`, `goal_criteria` (schemas: §3.4.4).
 
 **Goal Engine interface:**
 
@@ -1661,38 +1628,7 @@ taste_engine:
   user_signal_weight: 0.3           # weight of user signals vs own experience
 ```
 
-**SQL schema for Experience Log:**
-
-```sql
-CREATE TABLE object_experience (
-    id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    object_id       TEXT NOT NULL,
-    timestamp       TEXT NOT NULL,
-    action          TEXT NOT NULL,       -- "added", "used", "replaced", "removed"
-    mood_before     TEXT,
-    mood_after      TEXT,
-    taste_score     REAL,
-    reflection_comment TEXT,
-    user_reaction   TEXT,
-    score_delta     REAL DEFAULT 0.0
-);
-
-CREATE TABLE taste_history (
-    id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    timestamp       TEXT NOT NULL,
-    axis            TEXT NOT NULL,       -- "warm", "wood", "cozy", ...
-    old_value       REAL NOT NULL,
-    new_value       REAL NOT NULL,
-    old_conviction  REAL NOT NULL,
-    new_conviction  REAL NOT NULL,
-    source          TEXT NOT NULL,       -- "reflection", "user_signal", "experience"
-    reason          TEXT
-);
-
-CREATE INDEX idx_obj_exp_object ON object_experience(object_id);
-CREATE INDEX idx_obj_exp_action ON object_experience(action);
-CREATE INDEX idx_taste_hist_axis ON taste_history(axis);
-```
+**SQLite tables:** `object_experience`, `taste_history` (schemas: §3.4.4).
 
 ---
 
@@ -1895,25 +1831,7 @@ class MoodEngine:
         ...
 ```
 
-**SQL schema for Mood:**
-
-```sql
-CREATE TABLE mood_history (
-    id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    timestamp       TEXT NOT NULL,
-    primary_mood    TEXT NOT NULL,
-    valence         REAL NOT NULL,
-    arousal         REAL NOT NULL,
-    openness        REAL NOT NULL,
-    social          REAL NOT NULL,
-    stability       REAL NOT NULL,
-    cause           TEXT,
-    event_type      TEXT               -- event that caused the change
-);
-
-CREATE INDEX idx_mood_timestamp ON mood_history(timestamp);
-CREATE INDEX idx_mood_primary ON mood_history(primary_mood);
-```
+**SQLite table:** `mood_history` (schema: §3.4.4).
 
 **Configuration:**
 
@@ -2633,24 +2551,7 @@ inner_monologue:
 | `monologue.compressed` | InnerMonologue | EpisodicMemory | summary_id, period_start, period_end, thought_count, dominant_topic, avg_valence |
 | `monologue.activity_changed` | InnerMonologue | AgentRuntime | old_level, new_level, reason |
 
-**SQLite tables.** Ring buffer is in-memory; compressed summaries go into episodic memory (`episodic_log` table as event_type "thought_summary"). For analytics, one table is added:
-
-```sql
-CREATE TABLE thought_summaries (
-    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
-    period_start        TEXT NOT NULL,
-    period_end          TEXT NOT NULL,
-    thought_count       INTEGER NOT NULL,
-    dominant_topic      TEXT NOT NULL,
-    avg_valence         REAL NOT NULL,
-    avg_arousal         REAL NOT NULL,
-    key_themes_json     TEXT NOT NULL,       -- JSON array of top tags
-    sample_thoughts_json TEXT NOT NULL,      -- JSON array of representative thoughts
-    mood_drift_json     TEXT NOT NULL        -- JSON dict of net mood deltas
-);
-
-CREATE INDEX idx_thought_sum_period ON thought_summaries(period_start);
-```
+**SQLite tables.** Ring buffer is in-memory; compressed summaries go into episodic memory (`episodic_log` table as event_type "thought_summary"). For analytics, one table is added: `thought_summaries` (schema: §3.4.4).
 
 **Memory budget impact.** Zero additional model memory — uses Qwen2.5-0.5B already loaded (~0.5 GB). Ring buffer: ~100 thoughts x ~500 bytes = ~50 KB in RAM. Negligible.
 
@@ -3058,47 +2959,7 @@ emergent_behavior:
 | `emergence.correlation_discovered` | CrossDomainCorrelator | MoodEngine, TasteEngine | mood_dimension, taste_axis, correlation |
 | `emergence.retrained` | MoodPredictor | AgentRuntime | event_count, validation_mae, improved (bool) |
 
-**SQLite tables.**
-
-```sql
-CREATE TABLE discovered_axes (
-    id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    name            TEXT NOT NULL UNIQUE,
-    description     TEXT NOT NULL,
-    centroid_json   TEXT NOT NULL,         -- JSON array of floats
-    member_count    INTEGER NOT NULL,
-    discovered_at   TEXT NOT NULL,
-    confidence      REAL NOT NULL,
-    source_axes_json TEXT NOT NULL,        -- JSON array of axis names
-    integrated      INTEGER DEFAULT 0,    -- 1 if added to TasteProfile
-    active          INTEGER DEFAULT 1
-);
-
-CREATE TABLE cross_domain_associations (
-    id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    mood_dimension  TEXT NOT NULL,
-    taste_axis      TEXT NOT NULL,
-    correlation     REAL NOT NULL,
-    sample_count    INTEGER NOT NULL,
-    discovered_at   TEXT NOT NULL,
-    last_validated  TEXT NOT NULL,
-    active          INTEGER DEFAULT 1,
-    UNIQUE(mood_dimension, taste_axis)
-);
-
-CREATE TABLE mood_predictor_state (
-    id              INTEGER PRIMARY KEY CHECK (id = 1),  -- singleton row
-    start_date      TEXT NOT NULL,
-    current_alpha   REAL NOT NULL DEFAULT 0.0,
-    learned_event_count INTEGER NOT NULL DEFAULT 0,
-    last_retrained_at TEXT,
-    last_validation_mae REAL,
-    model_version INTEGER NOT NULL DEFAULT 0
-);
-
-CREATE INDEX idx_discovered_axes_active ON discovered_axes(active);
-CREATE INDEX idx_cross_domain_active ON cross_domain_associations(active);
-```
+**SQLite tables:** `discovered_axes`, `cross_domain_associations`, `mood_predictor_state` (schemas: §3.4.4).
 
 **Memory budget impact.** Zero additional model memory — MoodPredictor uses sklearn MLPRegressor (~1 MB on disk, ~5 MB in memory). No LLM calls for prediction. scikit-learn clustering uses CPU RAM only, peak ~10-50 MB during weekly discovery runs (transient). No impact on NORMAL profile budget.
 
@@ -3598,75 +3459,7 @@ class SensoryGroundingConfig:
 | `grounding.location_detected` | SpatialGrounding | AgentRuntime, CameraController | location_id, location_name, direction_deg |
 | `grounding.location_created` | SpatialGrounding | AgentRuntime | location_id, location_name, direction_deg, event_count |
 
-**SQLite tables.**
-
-```sql
-CREATE TABLE visual_embeddings (
-    id              TEXT PRIMARY KEY,
-    timestamp       TEXT NOT NULL,
-    source          TEXT NOT NULL,         -- "snapshot", "object_crop", "scene"
-    metadata_json   TEXT DEFAULT '{}',
-    faiss_index_id  INTEGER NOT NULL       -- position in FAISS index
-);
-
-CREATE TABLE visual_memory_links (
-    visual_embedding_id TEXT NOT NULL REFERENCES visual_embeddings(id),
-    memory_entry_id     TEXT NOT NULL,     -- ID in semantic memory or episodic log
-    memory_type         TEXT NOT NULL,     -- "semantic", "episodic"
-    created_at          TEXT NOT NULL,
-    PRIMARY KEY (visual_embedding_id, memory_entry_id)
-);
-
-CREATE TABLE prosodic_features (
-    id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    timestamp       TEXT NOT NULL,
-    pitch_mean      REAL NOT NULL,
-    pitch_variance  REAL NOT NULL,
-    energy_mean     REAL NOT NULL,
-    speech_rate     REAL NOT NULL,
-    pause_ratio     REAL NOT NULL,
-    duration_sec    REAL NOT NULL,
-    engagement      REAL NOT NULL,
-    urgency         REAL NOT NULL,
-    calmness        REAL NOT NULL
-);
-
-CREATE TABLE circadian_patterns (
-    id              INTEGER PRIMARY KEY CHECK (id = 1),  -- singleton
-    hour_activity_json  TEXT NOT NULL,     -- JSON array of 24 floats
-    hour_valence_json   TEXT NOT NULL,     -- JSON array of 24 floats
-    hour_social_json    TEXT NOT NULL,     -- JSON array of 24 floats
-    learned_from_days   INTEGER NOT NULL,
-    last_updated        TEXT NOT NULL
-);
-
-CREATE TABLE doa_events (
-    -- Raw direction-of-arrival observations (source for spatial clustering)
-    -- Owner: SpatialGrounding
-    id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    timestamp       TEXT NOT NULL,
-    direction_deg   REAL NOT NULL,          -- 0-360 from ReSpeaker
-    event_type      TEXT NOT NULL,          -- "speech", "noise", "music"
-    confidence      REAL NOT NULL DEFAULT 1.0
-);
-
-CREATE TABLE spatial_locations (
-    id              TEXT PRIMARY KEY,
-    name            TEXT NOT NULL,
-    direction_deg   REAL NOT NULL,
-    direction_spread REAL NOT NULL,
-    event_count     INTEGER NOT NULL DEFAULT 0,
-    last_heard      TEXT NOT NULL,
-    semantic_tags_json TEXT DEFAULT '[]'
-);
-
-CREATE INDEX idx_doa_ts ON doa_events(timestamp);
-CREATE INDEX idx_doa_dir ON doa_events(direction_deg);
-CREATE INDEX idx_visual_embed_ts ON visual_embeddings(timestamp);
-CREATE INDEX idx_visual_links_memory ON visual_memory_links(memory_entry_id);
-CREATE INDEX idx_prosodic_ts ON prosodic_features(timestamp);
-CREATE INDEX idx_spatial_dir ON spatial_locations(direction_deg);
-```
+**SQLite tables:** `visual_embeddings`, `visual_memory_links`, `prosodic_features`, `circadian_patterns`, `doa_events`, `spatial_locations` (schemas: §3.4.4).
 
 **Memory budget impact.**
 
@@ -4203,65 +3996,9 @@ subconscious:
 
 Note: `prime_activated` and `association_triggered` events are emitted but NOT subscribed to by ReflectionLoop. They are only for internal analytics/monitoring.
 
-**SQLite tables.**
+**SQLite tables:** `sc_implicit_primes`, `sc_latent_associations`, `sc_night_processing_log`, `sc_subconscious_log` (schemas: §3.4.4).
 
-```sql
--- Implicit primes (hidden context fragments)
-CREATE TABLE sc_implicit_primes (
-    id                  TEXT PRIMARY KEY,
-    trigger_pattern     TEXT NOT NULL,
-    context_fragment    TEXT NOT NULL,
-    source              TEXT NOT NULL,       -- "latent_association", "night_processing", "habituation"
-    strength            REAL NOT NULL DEFAULT 0.5,
-    created_at          TEXT NOT NULL,
-    last_activated      TEXT,
-    activation_count    INTEGER DEFAULT 0,
-    active              INTEGER DEFAULT 1
-);
-
--- Latent associations (embedding-to-mood mappings)
-CREATE TABLE sc_latent_associations (
-    id                      TEXT PRIMARY KEY,
-    embedding_type          TEXT NOT NULL,       -- "visual", "semantic"
-    mood_delta_json         TEXT NOT NULL,       -- JSON dict: {"valence": 0.05, ...}
-    similarity_threshold    REAL NOT NULL,
-    faiss_index_id          INTEGER NOT NULL,    -- position in latent FAISS index
-    created_at              TEXT NOT NULL,
-    trigger_count           INTEGER DEFAULT 0,
-    last_triggered          TEXT,
-    active                  INTEGER DEFAULT 1
-);
-
--- Night processing log
-CREATE TABLE sc_night_processing_log (
-    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
-    episode_date        TEXT NOT NULL,
-    insight             TEXT NOT NULL,
-    primes_created      INTEGER DEFAULT 0,
-    associations_created INTEGER DEFAULT 0,
-    processed_at        TEXT NOT NULL,
-    temperature         REAL NOT NULL,
-    calls_used          INTEGER NOT NULL
-);
-
--- Subconscious activity log (NOT queryable by ReflectionLoop)
-CREATE TABLE sc_subconscious_log (
-    id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    timestamp       TEXT NOT NULL,
-    event_type      TEXT NOT NULL,       -- "prime_activated", "association_triggered",
-                                         -- "rule_habituated", "night_insight"
-    details_json    TEXT NOT NULL,
-    mood_effect_json TEXT                 -- optional mood delta applied
-);
-
--- Note: improvement_rules.automatic column is defined in §3.4.4 canonical schema.
-
-CREATE INDEX idx_primes_active ON sc_implicit_primes(active);
-CREATE INDEX idx_primes_trigger ON sc_implicit_primes(trigger_pattern);
-CREATE INDEX idx_latent_assoc_active ON sc_latent_associations(active);
-CREATE INDEX idx_night_log_date ON sc_night_processing_log(episode_date);
-CREATE INDEX idx_subconscious_log_ts ON sc_subconscious_log(timestamp);
-```
+> Note: `improvement_rules.automatic` column is defined in §3.4.4 canonical schema.
 
 **Memory budget impact.** Zero additional model memory — uses existing 0.5B model. Latent FAISS index: ~10 MB for 500 associations at 512 dimensions. Implicit primes: ~20 x 1 KB = ~20 KB. Night processing: no concurrent model load (runs during quiet hours when 0.5B is underutilized). Total additional RAM: ~10 MB. Negligible.
 
@@ -4529,8 +4266,8 @@ class SemanticMemory:
 #### 3.4.4. Structured State (SQLite)
 
 **Canonical source of truth for all 26 SQLite tables** used by Bob. Component
-sections (§3.3.x) may reference these tables but do NOT duplicate the schema —
-all CREATE TABLE and CREATE INDEX statements are defined here only.
+sections (§3.3.x) reference table names but delegate to this section for
+complete CREATE TABLE and CREATE INDEX definitions.
 
 ```sql
 -- GoalEngine: goals and dependencies (section 3.3.1)
