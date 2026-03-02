@@ -176,6 +176,68 @@
 
 ---
 
+## D-011: Replace MakeHuman with MHR/Anny — Character Generation Pipeline
+
+**Date:** 2026-03-02
+**Context:** RFC specified MakeHuman for character generation. Deep research revealed it cannot run headless (GUI-only, PyOpenGL+PyQt5). The abandoned CLI fork requires Python 2.7. Apple Silicon compatibility issues on macOS 15.
+
+### What We Researched
+
+**MakeHuman (rejected):**
+- PyPI package (`pip install makehuman`) installs full GUI app, not a library
+- No headless/scriptable mode for batch character generation
+- Severin Lemaignan's CLI fork — Python 2.7 only, unmaintained
+- Apple Silicon: no native ARM64 build, known macOS 15 issues
+
+**Alternatives evaluated (19+ tools across 7 categories):**
+- Parametric body models: SMPL, SMPL-X, SMPL+H, STAR, SUPR, SKEL
+- AI-based: DreamAvatar, HumanGaussian, StdGEN, IDOL (all need NVIDIA)
+- Auto-riggers: UniRig, Puppeteer (need NVIDIA)
+- Datasets: Khronos samples, OpenGameArt CC0, En3D library
+
+### Decision: MHR (primary) + Anny (backup)
+
+**MHR (Meta Momentum Human Rig):**
+- Apache 2.0, no registration
+- 127 joints with finger bones
+- Native glTF + FBX export (huge advantage)
+- 7 LOD levels (73K → 595 vertices) — ideal for mobile
+- 45 shape + 204 pose + 72 expression parameters
+- conda-forge has osx-arm64 packages
+- SMPL/SMPL-X conversion built-in
+
+**Anny (NAVER Labs, backup):**
+- Apache 2.0 (code) + CC0 (assets), no registration
+- `pip install anny` — simplest install
+- 163 bones, 564 intuitive phenotype parameters
+- UV mapping inherited from MakeHuman
+- No native glTF export (needs pygltflib manual construction)
+
+**Critical finding: both output NAKED body only.** No clothing, hair, beard, eyebrows, skin textures.
+
+### Clothing + Hair Pipeline
+
+Since no single tool provides a dressed character with hair on Apple Silicon:
+
+| Component | Tool | Install |
+|-----------|------|---------|
+| Clothing patterns | GarmentCode / pygarment | `pip install pygarment` |
+| Cloth draping | NVIDIA Warp (CPU mode) | `pip install warp-lang` |
+| Clothing textures | FLUX.2 via mflux | `uv tool install mflux` |
+| Scalp hair | Procedural hair cards (Python + trimesh) | `pip install trimesh` |
+| Hair textures | FLUX.2 via mflux | already installed |
+| Hair physics | SpringBoneSimulator3D | Godot 4.4+ built-in |
+| Beard/stubble | ShellFurGodot addon | Godot addon |
+| Eyebrows | Alpha-textured decals or shell fur | Godot |
+
+All strand-based ML hair tools (DiffLocks, Perm, CT2Hair) are **blocked** — require NVIDIA CUDA.
+
+**Status:** All components need validation. See 3D-VR-Validation.md for step-by-step plan.
+**Supersedes:** MakeHuman in RFC section 14 tech stack.
+**RFC impact:** Update character generation section, add clothing/hair pipeline.
+
+---
+
 ## Artifacts from 2D Validation Phase
 
 The following files were generated during 2D validation (Phase 1) and are archived for reference:
