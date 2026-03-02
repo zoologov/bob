@@ -642,7 +642,7 @@ For each new object:
 - [ ] Idle animation (breathing + blinking + swaying)
 - [ ] Test on Android tablet
 
-**Current outfit**: male_casualsuit04 (blue t-shirt + jeans + brown shoes)
+**Current outfit**: male_casualsuit04 (blue t-shirt + jeans + brown shoes) with custom texture (`godot/assets/tshirt_texture_bob.png` — "I'M BOB!" front, "AI POWERED" back)
 **Screenshot**: `godot/screenshot/blender_Bob_PoC.png`
 
 **Known issues:**

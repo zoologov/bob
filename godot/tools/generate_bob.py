@@ -190,6 +190,35 @@ def add_clothes(basemesh) -> None:
         print(f"[OK] Shoes added: {os.path.basename(os.path.dirname(str(shoes_file)))}")
 
 
+def customize_tshirt_texture() -> None:
+    """Replace casualsuit04 diffuse texture with custom 'I'm Bob' version.
+
+    The custom texture (godot/assets/tshirt_texture_bob.png) is the original
+    MPFB2 casualsuit04 diffuse with 'I'M BOB!' on the front panel and
+    'AI POWERED' on the back, in orange matching the MakeHuman logo style.
+    """
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    custom_path = os.path.join(os.path.dirname(script_dir), "assets", "tshirt_texture_bob.png")
+
+    if not os.path.exists(custom_path):
+        print(f"[WARN] Custom t-shirt texture not found: {custom_path}")
+        return
+
+    for obj in bpy.data.objects:
+        if obj.type != "MESH" or "casualsuit" not in obj.name.lower():
+            continue
+        for slot in obj.material_slots:
+            mat = slot.material
+            if not mat or not mat.node_tree:
+                continue
+            for node in mat.node_tree.nodes:
+                if node.type == "TEX_IMAGE" and node.image:
+                    if "diffuse" in node.name.lower():
+                        node.image = bpy.data.images.load(custom_path)
+                        print(f"[OK] Custom t-shirt texture applied")
+                        return
+
+
 def add_skin(basemesh) -> None:
     """Apply young caucasian male skin."""
     from bl_ext.blender_org.mpfb.services.humanservice import HumanService
@@ -372,6 +401,7 @@ def main() -> None:
     add_teeth(basemesh)
     add_hair(basemesh)
     add_clothes(basemesh)
+    customize_tshirt_texture()
     add_skin(basemesh)
     add_rig(basemesh)
 
