@@ -273,6 +273,69 @@ All strand-based ML hair tools (DiffLocks, Perm, CT2Hair) are **blocked** — re
 
 ---
 
+## D-013: MHR Abandoned — Switching to MakeHuman/MPFB2 via Blender
+
+**Date:** 2026-03-02
+**Context:** After spending a full session implementing the MHR-based 3D avatar (body generation, toon shader, eye sockets, clothing, hair), the approach proved too low-level. MHR provides only a naked watertight mesh — every feature (eyes, hair, clothing, textures) must be built from scratch.
+
+### What MHR Could NOT Do
+
+| Feature | Problem |
+|---------|---------|
+| **Eyes** | Mesh is watertight — no eye sockets. Had to manually cut 274 faces from mesh via trimesh. Procedural eyes (sclera+iris+pupil spheres) still looked like "a monster" |
+| **Hair** | No hair system at all. Procedural hair cards (flat textured ribbons) are not real hairstyles |
+| **Clothing** | No clothing system. Vertex-normal-offset (pushing body surface outward by 5mm) is not real clothing |
+| **Teeth/tongue** | Not present in mesh |
+| **Skin textures** | GltfBuilder does NOT export UVs, despite mesh having them (11388 UVs, full [0,1] range) |
+| **GLB export** | GltfBuilder exports DEFAULT body shape, ignoring identity parameters. Trimesh export has correct vertices but no skeleton |
+| **Normals** | 37% of normals are inverted — requires special shader handling |
+| **pip install** | pymomentum-cpu has hardcoded CI rpaths — must use pixi/conda, not pip |
+
+### What MHR Could Do (preserved knowledge)
+
+- Body mesh generation with 127 joints (7 LODs, from 73K to 595 vertices)
+- Identity shape parameters (45 PCA components) — masculine body with BS[0]=-2.5, BS[1]=-1.5 gives shoulder/hip ratio 1.77
+- Expression blendshapes (72 params) — verified to change face visibly
+- Pose parameters (204 params) — verified to change pose
+
+### Decision: Switch to MakeHuman/MPFB2 via Blender Headless
+
+**MakeHuman + MPFB2** provides everything MHR lacks:
+
+| Feature | MHR | MakeHuman/MPFB2 |
+|---------|-----|----------------|
+| Eyes | No | Yes (separate meshes: sclera, iris, cornea) |
+| Hair | No | Yes (100+ mesh hairstyles) |
+| Clothing | No | Yes (100+ garments with proper fit) |
+| Teeth/tongue | No | Yes |
+| Skin textures | No UV export | Yes (diffuse, normal, specular maps) |
+| GLB export | Broken | Native Blender GLTF exporter |
+| Headless mode | pixi only | `blender --background --python` |
+| Apple Silicon | pixi/conda | Native Blender 4.2+ |
+
+**Pipeline:**
+```
+Python script → subprocess.run(["blender", "--background", "--python", "generate_bob.py"]) → GLB → Godot
+```
+
+**Preserved from MHR work:**
+- Toon shader (unshaded mode + FRONT_FACING normal handling) — general, reusable
+- Camera rig (isometric orbit + zoom) — general, reusable
+- Procedural room (floor, walls, window) — general, reusable
+- Lighting setup (single directional, ambient disabled) — general, reusable
+
+**Discarded:**
+- All MHR-specific code (diagnose_body.py, generate_male_body.py, test_*.py)
+- MHR assets (mhr_model.pt, body GLBs, hair cards GLB, clothing GLBs)
+- MHR repo (5.7 GB validation/mhr_repo/)
+- Eye socket cutting code
+- Vertex-normal-offset clothing code
+- Procedural hair cards code
+
+**RFC impact:** Updated RFC-Proof-of-VR-Concept.md section 4 (Character Generation) to use Blender + MPFB2.
+
+---
+
 ## Artifacts from 2D Validation Phase
 
 The following files were generated during 2D validation (Phase 1) and are archived for reference:

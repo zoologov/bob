@@ -1,23 +1,22 @@
 # RFC: Proof of VR Concept — Bob's Virtual Avatar
 
-> **Status:** Aproved
-> **Date:** 2026-03-01
+> **Status:** In Progress (Iteration 2)
+> **Date:** 2026-03-02 (updated)
 > **Author:** v.zoologov + Claude
-> **Context:** Evolution of bob-vr approach from 2D sprites to full 3D
-> **Predecessor:** BRIEF.md - deprecated and deleted (2D Vault Boy + mesh deformation), DecisionLog.md (D-001 — D-010)
+> **Context:** Full 3D avatar for Bob. Second iteration after MHR proved insufficient.
 > **Reference:** The Sims (isometric view, object interaction, character life simulation)
 
 ---
 
 ## 1. Problem
 
-### 1.1 Limitations of the 2D Approach (BRIEF.md)
+### 1.1 Limitations of the 2D Approach
 
-The bob-vr prototype (Phase 1) revealed fundamental limitations of the 2D approach:
+The bob-vr prototype (2D phase) revealed fundamental limitations of sprite-based avatars:
 
 | Problem | Details |
 |---------|---------|
-| **Hands** | img2img (strength 0.5) cannot change structural hand pose. flux2-edit works but takes ~10 min per gesture |
+| **Hands** | img2img cannot change structural hand pose. flux2-edit works but takes ~10 min per gesture |
 | **Fixed viewpoint** | 2D sprite = front view only. Bob cannot turn sideways or show his back |
 | **Every change = regeneration** | New outfit = 60 sec, new gesture = 10 min. Does not scale |
 | **No depth** | Parallax creates illusion but does not replace real perspective |
@@ -44,8 +43,8 @@ A full virtual space for Bob, inspired by The Sims:
 ### 2.1 Goals
 
 1. **Proof of Concept**: prove that a fully autonomous 3D avatar is feasible on Mac Mini M4 + Android tablet
-2. **Zero manual modeling**: no Blender, no manual 3D work
-3. **Local-first**: everything generated locally (FLUX.2, TripoSR, MakeHuman, procedural code)
+2. **Zero manual modeling**: no manual 3D work beyond initial setup
+3. **Local-first**: everything generated locally (FLUX.2, TripoSR, MakeHuman/MPFB2, procedural code)
 4. **Self-sufficient Bob**: Bob generates and manages his own space
 5. **Sims-like interaction**: navigation, picking up objects, sitting, standing, walking
 6. **Natural animation**: smooth, natural movement without artifacts
@@ -73,17 +72,17 @@ A full virtual space for Bob, inspired by The Sims:
 │  │ Bob Core    │  │ Scene State   │  │  JSON    │  │ Godot 4.6 (3D)     │  │
 │  │ (FastAPI)   │  │ Manager       │  │  cmds    │  │                    │  │
 │  │             │  │               │  │─────────►│  │ • Isometric camera │  │
-│  │ LLM decisions│ │ Object pos   │  │          │  │ • 3D character      │  │
+│  │ LLM decis.  │  │ Object pos   │  │          │  │ • 3D character      │  │
 │  │ Generation  │  │ Held items   │  │  events  │  │ • IK animations    │  │
 │  └──────┬──────┘  └───────┬───────┘  │◄─────────│  │ • NavMesh          │  │
 │         │                 │          │          │  │ • Stylized shader  │  │
 │  ┌──────▼──────┐  ┌───────▼───────┐  │          │  │ • Dynamic lighting │  │
 │  │ Ollama LLM  │  │ Asset Gen     │  │          │  │ • Scene rendering  │  │
 │  │ ~5 GB       │  │               │  │          │  └────────────────────┘  │
-│  └─────────────┘  │ FLUX.2 (tex)  │  │          │                          │
-│                   │ TripoSR (3D)  │  │          │  Input: touch, voice     │
-│                   │ MakeHuman     │  │          │  Output: display, audio  │
-│                   │ (on demand)   │  │          │                          │
+│  └─────────────┘  │ Blender       │  │          │                          │
+│                   │  + MPFB2      │  │          │  Input: touch, voice     │
+│                   │ FLUX.2 (tex)  │  │          │  Output: display, audio  │
+│                   │ TripoSR (3D)  │  │          │                          │
 │                   └───────────────┘  │          └──────────────────────────┘
 └──────────────────────────────────────┘
 ```
@@ -94,7 +93,7 @@ A full virtual space for Bob, inspired by The Sims:
 |------|---------|-----|
 | LLM inference (Bob's decisions) | Mac Mini M4 | Needs RAM for model weights |
 | 3D asset generation | Mac Mini M4 | FLUX.2 + TripoSR need GPU/RAM |
-| Character generation | Mac Mini M4 | MakeHuman headless |
+| Character generation | Mac Mini M4 | Blender + MPFB2 headless |
 | Scene State (what is where) | Mac Mini M4 | Source of truth |
 | 3D rendering | Tablet | Local display, GPU |
 | IK / procedural animations | Tablet | Per-frame, needs low latency |
@@ -115,46 +114,124 @@ A full virtual space for Bob, inspired by The Sims:
 | WebSocket server | ~0.05 GB | Always |
 | **Always occupied** | **~8.85 GB** | |
 | | | |
+| Blender + MPFB2 (genesis) | ~1.5 GB | On demand, unloaded after |
 | FLUX.2 q4 (textures) | ~2.0 GB | On demand, unloaded after |
 | TripoSR (3D gen) | ~2.0 GB | On demand, unloaded after |
-| MakeHuman (genesis) | ~0.5 GB | Genesis only |
-| **Peak consumption** | **~12.85 GB** | During generation |
-| **Headroom** | **~3.15 GB** | |
+| **Peak consumption** | **~12.35 GB** | During generation |
+| **Headroom** | **~3.65 GB** | |
 
-Key principle: FLUX.2 and TripoSR are loaded **only when generating new content** (new furniture, new texture), then unloaded. During normal Bob operation they are not needed.
+Key principle: Blender, FLUX.2 and TripoSR are loaded **only when generating new content**, then unloaded. During normal Bob operation they are not needed.
 
 ---
 
 ## 4. Character Generation (Bob Genesis)
 
-### 4.1 Pipeline
+### 4.1 Pipeline: Blender + MPFB2 (Headless)
 
 ```
 Installation for a new user:
 
-1. MakeHuman (headless, Python API):
+1. Blender (headless, --background --python script.py):
+   - MPFB2 plugin creates human character
    - Parameters: height, build, face, skin/hair color
    - LLM chooses parameters or random set
    - Generation: ~10-30 sec
-   - Result: 3D mesh (.glb) with full skeleton
 
-2. Skeleton:
-   ~52 bones:
-   ├── Body: hip → spine → chest → neck → head (5)
-   ├── Arms: shoulder → upper_arm → forearm → wrist × 2 (8)
-   ├── Legs: upper_leg → lower_leg → foot × 2 (6)
-   ├── Face: jaw, eye_L, eye_R, brow (4)
-   └── Fingers: 5 fingers × 3 joints × 2 hands (30)
+2. MPFB2 provides out of the box:
+   ├── Body mesh with full skeleton (~52 bones)
+   │   ├── Body: hip → spine → chest → neck → head (5)
+   │   ├── Arms: shoulder → upper_arm → forearm → wrist × 2 (8)
+   │   ├── Legs: upper_leg → lower_leg → foot × 2 (6)
+   │   ├── Face: jaw, eye_L, eye_R, brow (4)
+   │   └── Fingers: 5 fingers × 3 joints × 2 hands (30)
+   ├── Eyes (separate mesh: sclera, iris, cornea)
+   ├── Teeth and tongue
+   ├── Hair (100+ mesh hairstyles)
+   ├── Clothing (100+ garments: shirts, pants, shoes, etc.)
+   ├── Skin textures (diffuse, normal, specular)
+   └── Clothing textures
 
-3. Export → glTF → load into Godot
+3. Blender exports → GLB/GLTF (native Blender export)
 
-4. Apply stylized shader (cel-shading or Sims-like)
+4. Godot loads GLB → applies stylized shader (cel-shading or Sims-like)
 
 5. Cache: model saved locally,
    regeneration only on Bob's explicit request
 ```
 
-### 4.2 Appearance Customization (Runtime)
+### 4.2 Why Blender + MPFB2
+
+| Feature | MHR (abandoned) | Standalone MakeHuman | Blender + MPFB2 |
+|---------|-----------------|---------------------|----------------|
+| Eyes | No (watertight mesh) | Yes | Yes |
+| Hair | No | Yes (100+) | Yes (100+) |
+| Clothing | No | Yes (100+) | Yes (100+) |
+| Teeth/tongue | No | Yes | Yes |
+| Skeleton | Yes (127 joints) | Yes (game-ready rigs) | Yes (multiple rigs) |
+| Skin textures | No UVs in export | Yes | Yes |
+| GLB export | Broken (GltfBuilder) | No (MHX2/FBX only) | Native Blender |
+| Headless mode | Python API (pixi) | No (GUI-only) | `blender --background` |
+| Apple Silicon | Yes (pixi/conda) | Issues (PyOpenGL) | Native (Blender 4.2+) |
+| Install | pixi (complex) | pip (GUI app) | brew + extension |
+| License | Apache 2.0 | AGPL-3.0 | GPL (Blender) + AGPL (assets) |
+
+### 4.3 Headless Pipeline (Python → Blender → GLB)
+
+```python
+# generate_bob.py — runs inside Blender headless
+# Called via: blender --background --python generate_bob.py
+
+import bpy
+# MPFB2 provides Python API inside Blender
+from mpfb.services.humanservice import HumanService
+
+# 1. Create base human
+human = HumanService.create_human()
+
+# 2. Set body parameters
+HumanService.set_character_properties(human, {
+    "gender": 0.8,        # 0=female, 1=male
+    "age": 0.4,           # 0=child, 1=elderly
+    "muscle": 0.5,        # muscularity
+    "weight": 0.4,        # body weight
+    "height": 0.6,        # relative height
+})
+
+# 3. Add clothing
+HumanService.add_clothes(human, "t-shirt")
+HumanService.add_clothes(human, "jeans")
+HumanService.add_clothes(human, "sneakers")
+
+# 4. Add hair
+HumanService.add_hair(human, "short_male_01")
+
+# 5. Apply skin material
+HumanService.apply_skin_material(human)
+
+# 6. Select game-ready rig
+HumanService.set_rig(human, "game_engine")
+
+# 7. Export to GLB
+bpy.ops.export_scene.gltf(
+    filepath="/output/bob.glb",
+    export_format='GLB',
+    export_animations=False,
+    export_skins=True,
+)
+```
+
+**Execution from Python:**
+```python
+import subprocess
+
+subprocess.run([
+    "blender", "--background", "--python", "generate_bob.py"
+], check=True)
+
+# Result: /output/bob.glb — full character with skeleton, clothes, hair, eyes
+```
+
+### 4.4 Appearance Customization (Runtime)
 
 | What Changes | How | Speed |
 |-------------|-----|-------|
@@ -162,19 +239,9 @@ Installation for a new user:
 | Outfit color | Shader uniform | Instant |
 | Outfit texture (pattern) | FLUX.2 → UV map | ~60 sec |
 | Body shape (proportions) | Bone scale | Instant |
-| Hairstyle | MakeHuman re-generation (hair only) | ~10 sec |
-| Clothing style (silhouette) | MakeHuman re-generation (clothes) | ~10-30 sec |
-
-### 4.3 MakeHuman as a Dependency
-
-MakeHuman is an open source Python package (AGPL), installed via pip:
-- Not a downloaded asset library — it is a generator
-- Parametric human model (analogous to FLUX.2 for 3D bodies)
-- Full skeleton with fingers out of the box
-- Has a clothing system (generated, not downloaded)
-- Headless mode: works without GUI via Python API
-
-> **Note**: if MakeHuman proves too heavy or limited, fallback is character generation via FLUX.2 (2D concept) → TripoSR (3D mesh) → auto-skeleton in Godot. Both options are fully local.
+| Hairstyle | Blender re-generation (hair only) | ~10 sec |
+| Clothing style (silhouette) | Blender re-generation (clothes) | ~10-30 sec |
+| Full character rebuild | Blender headless re-generation | ~30-60 sec |
 
 ---
 
@@ -374,7 +441,7 @@ Total: ~30-90 sec from idea to object in scene
 ```
 ~/.bob/assets/
 ├── character/
-│   └── bob_v1.glb              # Current Bob model
+│   └── bob_v1.glb              # Current Bob model (from Blender/MPFB2)
 ├── furniture/
 │   ├── bookshelf_001.glb       # Generated bookshelf
 │   ├── bookshelf_001.meta.json # Generation parameters
@@ -391,45 +458,6 @@ Total: ~30-90 sec from idea to object in scene
 └── scenes/
     ├── cozy_room.json          # Layout: what is where
     └── spaceship_bridge.json
-```
-
-Generated assets are cached permanently. Regeneration only on Bob's explicit request.
-
-### 6.4 Scene Change (Scenario: "Spaceship Bridge")
-
-```
-Bob: "I want a spaceship bridge"
-
-LLM generates plan:
-{
-  "scene": "spaceship_bridge",
-  "room": {"width": 10, "depth": 8, "height": 4, "wall_color": "#1a1a2e"},
-  "objects_to_generate": [
-    {"name": "captain_console", "prompt": "sci-fi control console with screens, cartoon style"},
-    {"name": "captain_chair", "prompt": "sci-fi captain chair, futuristic, simple"},
-    {"name": "viewport_window", "prompt": "large round spaceship window, simple frame"},
-    {"name": "navigation_panel", "prompt": "spaceship navigation holographic panel"}
-  ],
-  "lighting": {
-    "ambient": {"color": "#0a0a3a", "intensity": 0.3},
-    "console_light": {"type": "omni", "color": "#00aaff", "position": [3, 1, 2]},
-    "window_light": {"type": "directional", "color": "#ffffff", "intensity": 0.5}
-  },
-  "bob_outfit": {
-    "texture_prompt": "silver futuristic spacesuit with blue accents, cartoon style"
-  },
-  "skybox": {
-    "prompt": "deep space with stars and nebula, dark blue"
-  }
-}
-
-Execution (parallel):
-1. FLUX.2: generates 4 object images + outfit texture + skybox (~2 min)
-2. TripoSR: converts 4 images to 3D (~1-2 min)
-3. Godot: removes old scene, builds new room, places objects
-4. FLUX.2: generates UV outfit texture → applies to Bob
-
-Total: ~3-5 min for complete scene change
 ```
 
 ---
@@ -450,29 +478,20 @@ Mac Mini M4 holds the complete scene state:
       "rotation": [0, 0, 0],
       "slots": {
         "slot_0": "book_001",
-        "slot_1": "book_002",
-        "slot_2": null,
-        "slot_3": "book_003"
+        "slot_1": "book_002"
       }
     },
     "desk_001": {
       "position": [2, 0, -2],
       "surface": ["laptop_001"],
       "type": "interactive"
-    },
-    "armchair_001": {
-      "position": [-2, 0, 0],
-      "type": "sittable"
     }
   },
   "bob": {
     "position": [-2, 0, 0],
     "state": "sitting",
     "sitting_on": "armchair_001",
-    "holding": {
-      "right_hand": "book_002",
-      "left_hand": null
-    },
+    "holding": {"right_hand": "book_002", "left_hand": null},
     "expression": "focused",
     "activity": "reading"
   }
@@ -491,9 +510,9 @@ Mac Mini M4 holds the complete scene state:
 
 ## 8. Visual Style
 
-### 8.1 Approach: Stylized Shader (Not Necessarily Cartoon)
+### 8.1 Approach: Stylized Shader (Configurable)
 
-Instead of strict "Vault Boy cel-shading" — a flexible stylized shader configurable via parameters:
+A flexible stylized shader configurable via parameters:
 
 ```
 Style spectrum (one shader, different parameters):
@@ -505,30 +524,40 @@ Style spectrum (one shader, different parameters):
 
 Bob can change rendering style at runtime — it's just shader uniforms.
 
-### 8.2 Lighting
+### 8.2 Toon Shader (Validated)
 
-```
-Light sources:
-├── DirectionalLight3D — sun through window
-│   ├── Color: warm during day, cool in evening
-│   ├── Shadows: soft shadows
-│   └── Intensity: depends on time of day
-├── OmniLight3D — room lamps
-│   ├── Desk lamp on table
-│   ├── Floor lamp by chair
-│   └── Monitor light (cool blue)
-└── Environment / Skybox
-    ├── Daytime sky → warm ambient
-    └── Space → cool ambient
+The toon shader has been validated and works with `render_mode unshaded, cull_disabled` to avoid Godot's Forward Mobile pipeline adding unwanted ambient/indirect light. Manual light calculation in `fragment()`:
+
+```glsl
+shader_type spatial;
+render_mode unshaded, cull_disabled;
+
+uniform vec3 base_color : source_color;
+uniform vec3 shadow_color : source_color;
+uniform vec3 light_dir = vec3(-0.5, -0.6, -0.5);
+uniform float shadow_threshold = 0.1;
+uniform float shadow_smoothness = 0.05;
+
+void fragment() {
+    vec3 light_vs = normalize((VIEW_MATRIX * vec4(normalize(light_dir), 0.0)).xyz);
+    vec3 n = NORMAL;
+    if (!FRONT_FACING) n = -n;  // handle inverted normals
+    float NdotL = dot(n, light_vs);
+    float intensity = smoothstep(
+        shadow_threshold - shadow_smoothness,
+        shadow_threshold + shadow_smoothness, NdotL
+    );
+    ALBEDO = mix(shadow_color, base_color, intensity);
+}
 ```
 
-### 8.3 Camera
+### 8.3 Camera (Validated)
 
 ```
 Isometric Camera:
 - Projection: Orthographic (removes perspective distortion)
 - Angle: 30-45° from above (like The Sims / Diablo)
-- Rotation: user can rotate camera around room (touch gesture)
+- Rotation: user can rotate camera around room (touch/mouse)
 - Zoom: pinch-to-zoom for close-up/wide view
 - Follow: camera smoothly follows Bob when moving
 ```
@@ -553,27 +582,15 @@ Built into Godot 4.6. Bidirectional. LAN latency: 10-50ms.
 // Action
 {"type": "action", "animation": "sit_down", "target": "armchair_001"}
 
-// Activity
-{"type": "activity", "name": "reading", "params": {"book": "book_002", "page_turn_interval": 30}}
-
 // Expression
 {"type": "expression", "face": "happy", "intensity": 0.8}
-
-// Speech (sync with TTS)
-{"type": "speak", "visemes": [...], "duration": 3.5}
 
 // New object
 {"type": "spawn_object", "id": "bookshelf_001", "mesh": "<base64 glb>",
  "position": [0, 0, -3.5], "properties": {"type": "interactive", "slots": 8}}
 
-// Scene change
-{"type": "scene_change", "config": { ... full scene JSON ... }}
-
 // Outfit change
 {"type": "outfit_change", "texture": "<base64 png>"}
-
-// Render style change
-{"type": "render_style", "params": {"shadow_bands": 3, "outline_width": 2.0, "saturation": 1.2}}
 ```
 
 ### 9.3 Message Types: Tablet → Mac
@@ -587,9 +604,6 @@ Built into Godot 4.6. Bidirectional. LAN latency: 10-50ms.
 
 // Voice input
 {"type": "voice_input", "audio": "<base64 wav>"}
-
-// Error
-{"type": "error", "message": "object_not_found", "object_id": "book_999"}
 ```
 
 ---
@@ -600,66 +614,42 @@ Built into Godot 4.6. Bidirectional. LAN latency: 10-50ms.
 
 - **Authors**: Stability AI + Tripo
 - **License**: MIT
-- **Installation**: `pip install triposr` (Python dependency, not an asset)
 - **Input**: single 2D image
 - **Output**: 3D mesh (.glb / .obj)
 - **Speed**: ~5-30 sec on M4 (estimate, needs testing)
 - **RAM**: ~2 GB when loaded (unloaded after use)
-- **Backend**: PyTorch with MPS (Apple Silicon)
 
 ### 10.2 Quality Pipeline
 
 ```
 For each new object:
-
-1. FLUX.2 generates image with optimal prompt:
-   - "single [object name], isometric view, clean white background,
-     simple low-poly style, no text, centered"
-   - Isometric view + white background = best input for TripoSR
-
-2. TripoSR converts to 3D:
-   - Mesh with texture
-   - Automatic UV mapping
-
-3. Post-processing (code):
-   - Size normalization (scale to target dimensions)
-   - Centering (pivot point at base center)
-   - Collision shape generation (convex hull for NavMesh)
-
-4. Apply stylized shader (same as on Bob)
-
+1. FLUX.2 generates image (isometric view, white background)
+2. TripoSR converts to 3D mesh with texture
+3. Post-processing: size normalization, centering, collision shape
+4. Apply stylized shader
 5. Cache in ~/.bob/assets/
 ```
-
-### 10.3 TripoSR Limitations
-
-| Aspect | Quality |
-|--------|---------|
-| Simple furniture (table, chair, shelf) | Good |
-| Tech (monitor, laptop) | Medium |
-| Complex objects (plants, food) | Below average |
-| Small details (book, pen) | Weak |
-
-For weak categories — fallback to Godot primitives (BoxMesh + texture = sufficient for a book).
 
 ---
 
 ## 11. Proof of Concept: Scope and Phases
 
-### Phase 1: Minimal Character in Room (1 week)
+### Phase 1: MakeHuman/MPFB2 Character in Room (current)
 
-**Goal**: Bob stands in an empty room, camera rotates.
+**Goal**: Bob (full character with eyes, hair, clothes) stands in a room.
 
-- [ ] Install Godot 4.6 + configure Android export
-- [ ] Procedural room (walls, floor, ceiling, window) from GDScript
-- [ ] Isometric camera with touch rotation
-- [ ] MakeHuman → generate Bob headless → import into Godot
-- [ ] Stylized shader (basic toon / Sims-like)
-- [ ] DirectionalLight3D (window) + OmniLight3D (lamp)
+- [ ] Install Blender 4.2+ (headless) + MPFB2 extension
+- [ ] Python script: generate Bob via MPFB2 API headless
+- [ ] Export to GLB (body + skeleton + hair + clothing + eyes)
+- [ ] Import GLB into Godot 4.6
+- [ ] Apply toon shader (validated)
+- [ ] Procedural room (validated: walls, floor, ceiling, window)
+- [ ] Isometric camera (validated: orbit + zoom)
+- [ ] DirectionalLight3D (validated)
 - [ ] Idle animation (breathing + blinking + swaying)
 - [ ] Test on Android tablet
 
-**Result**: 3D Bob stands in a lit room, breathes and blinks. Camera rotates around him.
+**Result**: Full 3D Bob stands in a lit room, breathes and blinks. Camera rotates around him.
 
 ### Phase 2: Walking and Navigation (1 week)
 
@@ -670,8 +660,7 @@ For weak categories — fallback to Godot primitives (BoxMesh + texture = suffic
 - [ ] Procedural walking (leg IK, arm swing, body lean)
 - [ ] Walk → Idle transition (AnimationTree state machine)
 - [ ] WebSocket: Mac sends "navigate to X" → Bob walks
-- [ ] Bob rotation (facing, sideways, back to camera)
-- [ ] 1-2 procedural objects (desk, chair) in room via Godot CSG/mesh
+- [ ] 1-2 procedural objects (desk, chair) in room
 
 **Result**: Bob walks around the room on command from Mac.
 
@@ -683,10 +672,7 @@ For weak categories — fallback to Godot primitives (BoxMesh + texture = suffic
 - [ ] Pick up / put down system (reparent + IK)
 - [ ] Sit down / stand up (IK hip target + leg bend)
 - [ ] Scene State Manager on Mac
-- [ ] Simple objects (book = BoxMesh + texture, armchair = CSG)
 - [ ] Scenario: walk to desk → pick up book → sit → "read"
-
-**Result**: Bob interacts with objects, scene remembers state.
 
 ### Phase 4: AI Content Generation (1-2 weeks)
 
@@ -695,11 +681,7 @@ For weak categories — fallback to Godot primitives (BoxMesh + texture = suffic
 - [ ] TripoSR integration (locally)
 - [ ] Pipeline: FLUX.2 → TripoSR → Godot import
 - [ ] FLUX.2 generates UV textures for outfits
-- [ ] LLM plans furniture arrangement
 - [ ] Scene change (cozy room → spaceship bridge)
-- [ ] Generated asset caching
-
-**Result**: Bob says "I want a bookshelf" → in 1-2 min the shelf appears in the room.
 
 ### Phase 5: Fingers and Complex Animations (1 week)
 
@@ -707,11 +689,7 @@ For weak categories — fallback to Godot primitives (BoxMesh + texture = suffic
 
 - [ ] FABRIK3D for fingers (5×3 joints per hand)
 - [ ] Procedural typing (fingers on keyboard)
-- [ ] Procedural page turning (blend shape on book)
 - [ ] Gestures on LLM command (thumbs up, pointing, wave)
-- [ ] Smooth transitions between hand states
-
-**Result**: Bob types on keyboard with fingers, turns book pages.
 
 ---
 
@@ -719,13 +697,12 @@ For weak categories — fallback to Godot primitives (BoxMesh + texture = suffic
 
 | Risk | Probability | Mitigation |
 |------|------------|------------|
-| TripoSR won't run on M4 16GB | Medium | Fallback: Godot primitives (BoxMesh + texture) for all objects. Less pretty but works |
-| MakeHuman doesn't work headless | Low | Fallback: FLUX.2 → TripoSR for character |
-| TripoSR quality too low | Medium | Stylized shader hides artifacts. Simple objects (furniture) look better than complex ones |
-| Procedural animations look unnatural | Medium | Iterative parameter tuning (easing, noise amplitude, blend times). Additive layers mask roboticness |
-| Realme C71 can't handle 3D | High | Compatibility renderer (OpenGL ES 3.0). If < 20 FPS → need a better tablet |
-| RAM shortage on M4 during generation | Medium | Strict on-demand: load FLUX.2 / TripoSR → generate → unload → Ollama back |
-| WebSocket latency > 100ms | Low | LAN-only. If Wi-Fi is bad: USB tethering |
+| MPFB2 Python API doesn't work headless | Medium | Blender Python API is well-documented; fallback to bpy operators |
+| MPFB2 GLB export loses skeleton/weights | Low | Blender's GLTF exporter is mature and widely used |
+| TripoSR won't run on M4 16GB | Medium | Fallback: Godot primitives (BoxMesh + texture) |
+| Procedural animations look unnatural | Medium | Iterative tuning (easing, noise, blend times) |
+| Realme C71 can't handle 3D | High | Compatibility renderer (OpenGL ES 3.0). If < 20 FPS → need better tablet |
+| RAM shortage on M4 during generation | Medium | Strict on-demand: load Blender → generate → kill process |
 
 ---
 
@@ -735,14 +712,13 @@ For weak categories — fallback to Godot primitives (BoxMesh + texture = suffic
 |---|----------|--------------|
 | 1 | Bob stands in a 3D room on tablet | Visual: character visible, room rendered |
 | 2 | Camera rotates around Bob | Touch gesture: camera rotation |
-| 3 | Bob walks to a target point | WebSocket command → Bob walks, avoiding furniture |
-| 4 | Bob picks up and carries an object | Pick up → object in hand → walk → put down |
-| 5 | Bob sits in a chair | IK adapts pose to specific chair |
-| 6 | Animations are smooth, no jitter | Visual: breathing, blinking, smooth transitions |
-| 7 | Bob rotates (front/side/back) | Visual: all angles look correct |
-| 8 | AI generates new object into scene | "Want a shelf" → FLUX.2 → TripoSR → object in room |
-| 9 | Scene persists | Restart → everything in place |
-| 10 | Everything works 100% locally | Disconnect internet → everything works (after genesis) |
+| 3 | Bob has eyes, hair, clothing | Visual: full character, not just body mesh |
+| 4 | Bob walks to a target point | WebSocket command → Bob walks |
+| 5 | Bob picks up and carries an object | Pick up → object in hand → walk → put down |
+| 6 | Bob sits in a chair | IK adapts pose to specific chair |
+| 7 | Animations are smooth, no jitter | Visual: breathing, blinking, transitions |
+| 8 | AI generates new object into scene | FLUX.2 → TripoSR → object in room |
+| 9 | Everything works 100% locally | Disconnect internet → everything works |
 
 ---
 
@@ -750,14 +726,13 @@ For weak categories — fallback to Godot primitives (BoxMesh + texture = suffic
 
 | Component | Technology | License | Installation |
 |-----------|-----------|---------|-------------|
-| 3D Engine | Godot 4.6 | MIT | Binary ~100 MB |
-| Character generation | MakeHuman | AGPL | pip install |
-| 2D generation (textures, concept art) | FLUX.2 Klein 4B via mflux | Apache 2.0 | pip install + HF model ~22 GB |
-| 3D generation (furniture, props) | TripoSR | MIT | pip install + model ~2 GB |
-| LLM (decisions, planning) | Ollama (Qwen 7B) | MIT/Apache | ollama pull |
-| Mac↔Tablet communication | WebSocket (built-in Godot) | — | Built-in |
-| Protocol | JSON | — | Built-in |
-| Server | FastAPI (Python) | MIT | pip install |
+| 3D Engine | Godot 4.6 | MIT | `brew install godot` |
+| Character generation | Blender + MPFB2 | GPL + AGPL | `brew install blender` + Blender extension |
+| 2D generation (textures) | FLUX.2 Klein 4B via mflux | Apache 2.0 | `uv tool install mflux` |
+| 3D generation (props) | TripoSR | MIT | `pip install triposr` |
+| LLM (decisions) | Ollama (Qwen 7B) | MIT/Apache | `ollama pull` |
+| Communication | WebSocket (built-in Godot) | — | Built-in |
+| Server | FastAPI (Python) | MIT | `pip install fastapi` |
 
 **Total cost: $0**
 **Cloud dependencies: 0** (only Claude Code CLI and Telegram per existing design)
@@ -766,21 +741,71 @@ For weak categories — fallback to Godot primitives (BoxMesh + texture = suffic
 
 ## 15. Relation to Main RFC
 
-This PoC replaces the approach from BRIEF.md (2D sprite + mesh deformation). On PoC success:
+This PoC replaces the 2D approach from the main RFC. On PoC success:
 
-1. Update RFC section 5.5 (Avatar/Asset Generation): 2D → 3D
-2. Update RFC section 4.3 (Godot scene): Polygon2D+Skeleton2D → Node3D+Skeleton3D
+1. Update RFC section 5 (Avatar): Skeleton2D → Skeleton3D + Blender/MPFB2
+2. Update RFC section 5.4.2 (Asset Generation): separate body parts → full character via MPFB2
 3. Add to RFC: Scene State Manager, WebSocket protocol, procedural animation
-4. DecisionLog: add D-010 (switch from 2D to 3D) with full rationale
-5. Close bob-vr beads related to 2D approach
-6. Create new beads for 3D PoC phases
+4. DecisionLog: see D-010 (2D→3D), D-011 (MHR attempt), D-013 (MHR→MakeHuman/MPFB2)
 
 ---
 
 ## 16. Open Questions
 
-1. **Tablet**: Can Realme C71 (Helio G36) handle 3D? Needs testing. If not — what's the minimum tablet?
-2. **MakeHuman headless**: Does it work on macOS ARM? Needs testing.
+1. **MPFB2 headless API**: Exact MPFB2 Python API for character creation needs testing. Blender's bpy is well-documented but MPFB2's internal API may differ.
+2. **Tablet**: Can Realme C71 (Helio G36) handle 3D? Needs testing.
 3. **TripoSR on M4**: Speed and RAM? Needs testing.
-4. **Character style**: Vault Boy cartoon or more Sims-like? Depends on MakeHuman + shader results.
-5. **Finger scope**: Full 52 bones or simplified hands for PoC?
+4. **Character style**: Vault Boy cartoon or more Sims-like? Depends on MPFB2 + shader results.
+5. **Rig compatibility**: Does MPFB2's game-ready rig work well with Godot's IK solvers?
+6. **GLB size**: How large is a full character (body + clothes + hair) exported as GLB?
+
+---
+
+## Appendix A: Previous Attempts Summary
+
+### A.1 2D Sprite Approach (2026-03-01, abandoned)
+
+**What was tried:**
+- FLUX.2 Klein 4B text-to-image for Vault Boy style character
+- img2img for head emotions (worked) and hand poses (failed)
+- flux2-edit for structural hand changes (worked but 10 min/pose)
+
+**Why abandoned:** Fixed viewpoint, no spatial interaction, every visual change requires AI regeneration. See DecisionLog D-010.
+
+### A.2 MHR (Meta Momentum Human Rig) Approach (2026-03-02, abandoned)
+
+**What was tried:**
+- MHR body generation via pixi (pip broken on macOS ARM64)
+- Masculine body with identity PCA: BS[0]=-2.5, BS[1]=-1.5 (shoulder/hip ratio 1.77)
+- Toon shader development (unshaded mode with FRONT_FACING normal flipping)
+- Eye socket cutting from watertight mesh (trimesh, 274 faces removed)
+- Procedural eyes (sclera + iris + pupil spheres with blink animation)
+- Vertex-normal-offset clothing (shirt 5605 verts, pants 1668 verts)
+- Procedural hair cards (200 cards, 1600 tris)
+
+**What worked:**
+- MHR body mesh generation (127 joints, 7 LODs)
+- Toon shader in Godot (unshaded + manual light calculation)
+- Isometric camera with orbit/zoom
+- Procedural room (floor, walls, window)
+- Vertex-normal-offset clothing
+- Hair cards generation
+
+**Why abandoned:**
+- **No eyes** — mesh is watertight, no eye socket holes. Had to cut holes manually, eyes still looked wrong ("like a monster")
+- **No hair** — only procedural hair cards (flat textured ribbons), no real hairstyles
+- **No clothing** — only vertex-normal-offset (body shape pushed outward), no real garments
+- **No teeth/tongue** — not present in mesh
+- **No skin textures** — GltfBuilder doesn't export UVs despite mesh having them
+- **GltfBuilder exports DEFAULT mesh** — ignores identity shape parameters, exports base body
+- **37% inverted normals** — requires special shader handling
+- **Complex pipeline** — every feature requires manual implementation from scratch
+- **pip broken** — pymomentum-cpu has hardcoded CI rpaths, must use pixi/conda
+
+**Key technical findings preserved:**
+- Toon shader must use `render_mode unshaded` to avoid Godot's Forward Mobile adding unwanted light
+- `FRONT_FACING` check for inverted normals is better than `abs(NdotL)` (avoids dark artifacts)
+- MHR units are centimeters (÷100 for Godot meters)
+- Ambient light must be disabled when using unshaded toon shader
+
+See DecisionLog D-011, D-012, D-013 for full details.

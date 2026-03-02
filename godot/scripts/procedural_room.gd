@@ -11,9 +11,9 @@ const WALL_THICKNESS: float = 0.1
 
 func _ready() -> void:
 	_build_floor()
-	_build_ceiling()
-	_build_walls()
-	_build_window()
+	#_build_ceiling()
+	#_build_walls()
+	#_build_window()
 
 
 func _build_floor() -> void:
