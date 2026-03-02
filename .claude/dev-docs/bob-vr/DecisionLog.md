@@ -238,6 +238,41 @@ All strand-based ML hair tools (DiffLocks, Perm, CT2Hair) are **blocked** — re
 
 ---
 
+## D-012: 3D Pipeline Validation Results — Confirmed Architecture
+
+**Date:** 2026-03-02
+**Context:** Ran V-01 through V-07 validation steps from 3D-VR-Validation.md.
+
+### Results Summary
+
+| Step | Component | Result | Key Finding |
+|------|-----------|--------|-------------|
+| V-01 | MHR body generation | **PASS** | 127 joints, 7 LODs, pixi install required (pip broken) |
+| V-01b | Anny (backup) | SKIPPED | MHR works, not needed |
+| V-02 | Clothing (GarmentCode) | **PARTIAL** | pygarment FAIL (CGAL), normal-offset fallback WORKS |
+| V-03 | Hair cards | **PASS** | 200 cards in 14ms, 1600 tris, GLB export |
+| V-04 | Shell fur (beard) | **PARTIAL** | ShellFurGodot is Godot 3 only, Squiggles Fur has headless issues |
+| V-05 | SpringBoneSimulator3D | **PASS** | 40 API methods, exists in Godot 4.6.1 |
+| V-06 | Skinned GLB import | **PASS** | Full skeleton imports, bones controllable |
+| V-07 | Full integration | **PASS** | All components load together, 19934 total verts |
+
+### Confirmed Architecture
+
+**Body:** MHR via pixi (NOT pip), LOD 2 for dev (10K verts), LOD 4-5 for mobile (1-2.5K verts)
+**Clothing:** Vertex-normal-offset (simple, instant, works). GarmentCode deferred to production.
+**Hair:** Procedural hair cards (Python + trimesh), FLUX.2 textures for alpha-cutout
+**Facial hair:** Alpha-textured decals for PoC, Squiggles Fur for production
+**Hair physics:** SpringBoneSimulator3D (Godot built-in)
+**Export format:** .glb via pymomentum GltfBuilder (body+skeleton) or trimesh (clothing/hair)
+
+### Critical Finding: pip vs pixi
+
+`pymomentum-cpu` pip wheel has hardcoded CI rpaths (`/Users/runner/work/momentum/...`) for native libs (libezc3d, libre2, liburdfdom, libdispenso). **Must use pixi** or conda-forge for native deps. TorchScript model (`mhr_model.pt`, 664 MB) works without pymomentum as lightweight alternative (LOD 1 only, no skeleton export).
+
+**RFC impact:** Update installation instructions, add pixi requirement, update clothing approach.
+
+---
+
 ## Artifacts from 2D Validation Phase
 
 The following files were generated during 2D validation (Phase 1) and are archived for reference:

@@ -477,41 +477,100 @@ Each V-step produces:
 ## 8. Validation Results Log
 
 ### V-01: MHR
-- **Date:** (pending)
-- **Result:** (pending)
-- **Notes:** (pending)
+- **Date:** 2026-03-02
+- **Result:** PASS (all 10 tests passed)
+- **Install:** `pixi install` in cloned MHR repo (pip `pymomentum-cpu` has broken rpaths, conda/pixi required)
+- **Notes:**
+  - 127 joints (44 finger/thumb, 11 face incl. jaw/eyes/tongue)
+  - 7 LOD levels: LOD 0 = 73K verts (6s), LOD 2 = 10K verts (0.8s), LOD 6 = 595 verts (0.1s)
+  - Default body height: 172.6 cm (realistic)
+  - 45 shape params, 204 pose params, 72 expression params — all verified to change mesh
+  - Mesh is watertight
+  - Export via trimesh: 375 KB GLB (bare mesh, no skeleton)
+  - Export via GltfBuilder: 15.8 MB GLB (with skeleton + skin weights)
+  - TorchScript model works without pymomentum (663 MB, LOD 1 only)
+  - Units: centimeters (need ÷100 for Godot meters)
+  - **Critical issue:** pip install broken on macOS ARM64 (hardcoded CI rpaths for libezc3d, libre2, etc). Must use pixi or conda-forge.
 
 ### V-01b: Anny
-- **Date:** (pending)
-- **Result:** (pending)
-- **Notes:** (pending)
+- **Date:** 2026-03-02
+- **Result:** SKIPPED (MHR validated successfully, Anny not needed)
+- **Notes:** MHR passed all tests. Anny remains as backup if MHR issues emerge later.
 
 ### V-02: GarmentCode + Warp
-- **Date:** (pending)
-- **Result:** (pending)
-- **Notes:** (pending)
+- **Date:** 2026-03-02
+- **Result:** PARTIAL PASS (pygarment FAIL, fallback PASS, warp PASS)
+- **Notes:**
+  - `pip install pygarment` FAILS — depends on CGAL which requires CMake and fails to build on macOS ARM64
+  - pygarment also pulls nicegui, pyrender, matplotlib, libigl — very heavy dependency tree
+  - **Fallback: vertex-normal-offset** — WORKS perfectly:
+    - Extract body region by Y range (torso Y=80-145cm, legs Y=5-92cm)
+    - Offset all vertices along surface normals by 0.4-0.5cm
+    - Shirt: 5605 verts, 11K faces, 197 KB GLB, generated in 10ms
+    - Pants: 1668 verts, 3K faces, 58 KB GLB, generated in 3ms
+    - Total clothing overhead: 68% of body vertex count
+  - `pip install warp-lang` WORKS — v1.11.1, CPU-only on ARM64, kernel compilation works
+  - Warp can be used for XPBD cloth sim in production (not needed for PoC)
 
 ### V-03: Hair Cards
-- **Date:** (pending)
-- **Result:** (pending)
-- **Notes:** (pending)
+- **Date:** 2026-03-02
+- **Result:** PASS
+- **Notes:**
+  - Pure Python (numpy + trimesh), no ML dependencies
+  - 200 hair cards generated in 14ms
+  - 2000 vertices, 1600 triangles (well under 5K budget)
+  - UV mapping present for texture application
+  - Exported to GLB (59 KB) and OBJ (169 KB)
+  - Hair positioned on scalp at ~165cm height (matching MHR body)
+  - Cards taper at tips, have randomized direction with gravity bias
+  - Next: generate FLUX.2 hair strand texture for alpha-cutout rendering
 
 ### V-04: ShellFurGodot
-- **Date:** (pending)
-- **Result:** (pending)
-- **Notes:** (pending)
+- **Date:** 2026-03-02
+- **Result:** PARTIAL PASS (original addon Godot 3 only; Squiggles Fur alt has class_name issues headless)
+- **Notes:**
+  - **ShellFurGodot (Arnklit)** — Godot 3.4 ONLY, not compatible with 4.6
+  - **Squiggles Fur (QueenOfSquiggles)** — Godot 4.x, MIT license
+    - Installed to addons/squiggles_fur/
+    - Has shader: furry_material.gdshader + material .tres
+    - class_name references (ShellFur, FurTools) fail in headless mode (same issue as our scripts)
+    - Should work in editor mode when .godot cache is built
+  - **Fallback for PoC:** Alpha-textured decals (flat quads with beard/eyebrow textures)
+  - **Decision:** Use alpha decals for PoC, Squiggles Fur for production when editor available
 
 ### V-05: SpringBoneSimulator3D
-- **Date:** (pending)
-- **Result:** (pending)
-- **Notes:** (pending)
+- **Date:** 2026-03-02
+- **Result:** PASS
+- **Notes:**
+  - Class exists in Godot 4.6.1
+  - 40 API methods: root/end bone, stiffness, drag, gravity, radius, rotation axis
+  - Created Skeleton3D with 6-bone chain + SpringBoneSimulator3D as child — works
+  - Key methods: set_joint_stiffness, set_joint_drag, set_joint_gravity, set_joint_radius
+  - Can define center bone for wind/movement reference
+  - Bone chain physics will work for hair secondary motion
 
 ### V-06: Skinned .glb Import
-- **Date:** (pending)
-- **Result:** (pending)
-- **Notes:** (pending)
+- **Date:** 2026-03-02
+- **Result:** PASS
+- **Notes:**
+  - GltfBuilder export (15.8 MB) imports with full Skeleton3D (127 bones) + MeshInstance3D (10,661 verts)
+  - Trimesh export (375 KB) imports as bare mesh without skeleton
+  - BoneAttachment3D nodes with collision shapes automatically created
+  - Bone hierarchy correct (finger chains, face bones, spine chain)
+  - Godot 4.6 GLTFDocument API works headless
+  - MHR units are centimeters — need scale ÷100 for Godot (or set node.scale to 0.01)
 
 ### V-07: Full Integration
-- **Date:** (pending)
-- **Result:** (pending)
-- **Notes:** (pending)
+- **Date:** 2026-03-02
+- **Result:** PASS (all 6 components loaded and functional)
+- **Notes:**
+  - Body (MHR, 127 bones, skinned .glb) — LOADED
+  - Shirt (vertex-normal-offset) — LOADED
+  - Pants (vertex-normal-offset) — LOADED
+  - Hair cards (procedural, 200 cards) — LOADED
+  - Head bone rotation — WORKS (c_head at index 113)
+  - Finger bone curl — WORKS (r_index1 at index 56)
+  - Total vertices: 19,934 across all meshes
+  - Scale: MHR cm ÷ 100 = Godot meters (scale = 0.01)
+  - All meshes load headless via GLTFDocument API
+  - Headless exit warnings (leaked RIDs) are normal for Godot headless mode
