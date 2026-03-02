@@ -378,6 +378,42 @@ bpy.ops.object.shape_key_remove(all=True, apply_mix=True)
 
 ---
 
+## D-015: Eye Material Fix — Preserve Alpha for Cornea Transparency
+
+**Date:** 2026-03-02
+**Context:** After GLB export, Bob's eyes appeared as "zombie eyes" — pale blue/white with barely visible iris/pupil.
+
+### Root Cause
+
+`fix_blend_modes()` treated eye mesh ("high-poly") as opaque, disconnecting its Alpha input from the Principled BSDF. MPFB2 high-poly eyes have layered geometry (sclera + iris + cornea) where the cornea is a transparent outer shell over the iris. Disconnecting alpha made the cornea opaque, blocking the iris beneath.
+
+Additionally, the MPFB2 eye material has a `diffuseIntensity` MIX_RGB node between the texture and BSDF. Analysis showed Factor=1.0, Color1=white — a pure pass-through. But the GLTF exporter can't represent intermediate mix nodes, so we simplify it before export.
+
+### Fix
+
+1. Added `simplify_eye_material()` — removes pass-through MIX_RGB, connects texture directly to BSDF
+2. Added `"high-poly"` to `alpha_meshes` set in `fix_blend_modes()` — preserves cornea alpha
+3. Eyes now export with alpha (MASK mode in GLTF), rendered correctly after round-trip
+
+**RFC impact:** Removed eye material from known issues.
+
+---
+
+## D-016: Clothing Switch — casualsuit04 over casualsuit01
+
+**Date:** 2026-03-02
+**Context:** `male_casualsuit01` (button-down shirt + jeans) had a visible gap in the pants mesh near the right ankle. The gap is a defect in the MakeHuman clothing asset itself (present before modifier application), not caused by our pipeline.
+
+### Decision
+
+Rather than implementing complex mesh deformation hacks (vertex shrinking, gap filling), switched to `male_casualsuit04` (t-shirt + jeans) which has no such artifacts. This aligns with the PoC principle of automated pipeline — no manual mesh fixes.
+
+All 8 male outfit options were rendered and compared. casualsuit04 chosen for clean mesh, good coverage, and appropriate casual style.
+
+**RFC impact:** Updated default outfit in generate_bob.py.
+
+---
+
 ## Artifacts from 2D Validation Phase
 
 The following files were generated during 2D validation (Phase 1) and are archived for reference:

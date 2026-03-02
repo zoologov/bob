@@ -167,8 +167,8 @@ def add_clothes(basemesh) -> None:
 
     clothes_list = AssetService.list_mhclo_assets(asset_subdir="clothes")
 
-    # Add suit: casualsuit01
-    outfit_file = find_asset(clothes_list, "/male_casualsuit01/")
+    # Add suit: casualsuit04 (t-shirt + jeans)
+    outfit_file = find_asset(clothes_list, "/male_casualsuit04/")
     if outfit_file:
         HumanService.add_mhclo_asset(
             str(outfit_file), basemesh,
@@ -217,15 +217,58 @@ def add_rig(basemesh) -> None:
     print("[OK] Game engine rig added")
 
 
+def simplify_eye_material() -> None:
+    """Remove pass-through MIX_RGB node from eye material for clean GLTF export.
+
+    MPFB2 eye material has: diffuseTexture → diffuseIntensity (MIX_RGB) → BSDF.
+    The MIX_RGB node (Factor=1.0, MIX, Color1=white) is a no-op pass-through,
+    but the GLTF exporter can't represent intermediate mix nodes cleanly.
+    Connect texture directly to Principled BSDF Base Color instead.
+    """
+    for obj in bpy.data.objects:
+        if obj.type != "MESH" or "high-poly" not in obj.name.lower():
+            continue
+        for slot in obj.material_slots:
+            mat = slot.material
+            if not mat or not mat.node_tree:
+                continue
+
+            tree = mat.node_tree
+            principled = None
+            mix_rgb = None
+            tex_image = None
+            for node in tree.nodes:
+                if node.type == "BSDF_PRINCIPLED":
+                    principled = node
+                elif node.type == "MIX_RGB":
+                    mix_rgb = node
+                elif node.type == "TEX_IMAGE":
+                    tex_image = node
+
+            if not all([principled, mix_rgb, tex_image]):
+                continue
+
+            # Remove link from MIX_RGB to Base Color
+            for link in list(tree.links):
+                if link.to_node == principled and link.to_socket.name == "Base Color":
+                    tree.links.remove(link)
+
+            # Connect texture directly to Base Color
+            tree.links.new(tex_image.outputs["Color"], principled.inputs["Base Color"])
+            tree.nodes.remove(mix_rgb)
+            print(f"  {obj.name}/{mat.name}: simplified eye node tree")
+
+
 def fix_blend_modes() -> None:
     """Fix material blend modes and node trees for correct GLTF export.
 
     MPFB2 materials have alpha connections that cause GLTF exporter to use
     BLEND mode for everything, resulting in ALPHA_HASH in Godot.
     For opaque materials: disconnect Alpha input, set to 1.0.
-    For alpha-textured materials (hair, eyebrows, eyelashes): set CLIP mode.
+    For alpha-textured materials (hair, eyebrows, eyelashes, eyes): set CLIP mode.
+    Eyes need alpha for cornea transparency over the iris.
     """
-    alpha_meshes = {"short01", "eyebrow001", "eyelashes01"}
+    alpha_meshes = {"short01", "eyebrow001", "eyelashes01", "high-poly"}
 
     for obj in bpy.data.objects:
         if obj.type != "MESH":
@@ -331,6 +374,11 @@ def main() -> None:
     add_clothes(basemesh)
     add_skin(basemesh)
     add_rig(basemesh)
+
+    # Simplify eye material (remove pass-through MIX_RGB node)
+    print()
+    print("Simplifying eye material:")
+    simplify_eye_material()
 
     # Fix material blend modes for proper GLTF alpha export
     print()

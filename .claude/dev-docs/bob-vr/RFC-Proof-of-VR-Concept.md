@@ -638,17 +638,16 @@ For each new object:
 - [x] Isometric camera with orbit/zoom (`godot/scripts/camera_rig.gd`)
 - [x] DirectionalLight3D
 - [x] Material fixes for GLTF round-trip (alpha modes, backface culling)
-- [ ] Fix eye material export (irises appear washed out after GLTF round-trip)
+- [x] Fix eye material export (simplified node tree + preserved cornea alpha)
 - [ ] Idle animation (breathing + blinking + swaying)
 - [ ] Test on Android tablet
 
-**Current outfit**: male_casualsuit01 (blue button-down shirt + jeans + belt + brown shoes)
+**Current outfit**: male_casualsuit04 (blue t-shirt + jeans + brown shoes)
 **Screenshot**: `godot/screenshot/blender_Bob_PoC.png`
 
 **Known issues:**
-- Eyes appear pale/washed out after GLTF export (iris texture not preserved correctly)
-- Small skin gaps at clothing boundaries (inherent to MASK modifier application)
 - Hair uses sparse alpha texture — requires ALPHA_HASH rendering in Godot
+- Minor alpha edge artifacts on eye cornea (barely noticeable)
 
 **Result**: Full 3D Bob stands in a lit room. Camera rotates around him.
 
@@ -759,7 +758,7 @@ This PoC replaces the 2D approach from the main RFC. On PoC success:
 4. ~~**Character style**~~ **RESOLVED**: Realistic MPFB2 character with skin textures. Toon shader available but currently using StandardMaterial3D (GLTF default).
 5. **Rig compatibility**: Does MPFB2's game-ready rig work well with Godot's IK solvers? (Currently exporting static geometry without skeleton)
 6. ~~**GLB size**~~ **RESOLVED**: ~18 MB for full character (body + clothes + hair + eyes + textures, static geometry).
-7. **Eye material export**: MPFB2 eye materials appear washed out after GLTF round-trip. Iris/pupil barely visible. Needs investigation.
+7. ~~**Eye material export**~~ **RESOLVED**: Root cause was `fix_blend_modes()` disconnecting alpha from eye material, making cornea opaque. Fix: added `simplify_eye_material()` to remove pass-through MIX_RGB node, added "high-poly" to alpha_meshes set. See D-015.
 
 ---
 
