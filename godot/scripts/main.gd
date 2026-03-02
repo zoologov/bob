@@ -1,10 +1,10 @@
 extends Node3D
 ## Main scene orchestrator.
-## Procedurally creates: room, camera, placeholder Bob, lighting, environment.
+## Procedurally creates: room, camera, Bob character, lighting, environment.
 
 const ProceduralRoomScript = preload("res://scripts/procedural_room.gd")
 const CameraRigScript = preload("res://scripts/camera_rig.gd")
-const BobPlaceholderScript = preload("res://scripts/bob_placeholder.gd")
+const BobCharacterScript = preload("res://scripts/bob_character.gd")
 
 
 func _ready() -> void:
@@ -46,7 +46,7 @@ func _create_camera() -> void:
 
 func _create_bob() -> void:
 	var bob := Node3D.new()
-	bob.set_script(BobPlaceholderScript)
+	bob.set_script(BobCharacterScript)
 	bob.name = "Bob"
 	add_child(bob)
 

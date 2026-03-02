@@ -1,0 +1,6 @@
+# Heavy directories — not tracked
+assets/
+assets.zip
+mhr_repo/
+output/
+__MACOSX/
