@@ -1,14 +1,17 @@
 extends Node3D
 ## Main scene orchestrator.
-## Procedurally creates: room, camera, Bob character (with idle animation), lighting, environment.
+## Procedurally creates: room, furniture, camera, Bob character (with idle animation), lighting, environment.
 
 const ProceduralRoomScript = preload("res://scripts/procedural_room.gd")
+const ProceduralFurnitureScript = preload("res://scripts/procedural_furniture.gd")
 const CameraRigScript = preload("res://scripts/camera_rig.gd")
 const IdleAnimationScript = preload("res://scripts/idle_animation.gd")
+# const WorkAnimationScript = preload("res://scripts/work_animation.gd")  # FAILED: manual quaternion approach, see Bob-work-PoC.md
 
 func _ready() -> void:
 	_setup_environment()
 	_create_room()
+	_create_furniture()
 	_create_camera()
 	_create_lighting()
 	_create_bob()
@@ -32,6 +35,13 @@ func _create_room() -> void:
 	room.set_script(ProceduralRoomScript)
 	room.name = "Room"
 	add_child(room)
+
+
+func _create_furniture() -> void:
+	var furniture := Node3D.new()
+	furniture.set_script(ProceduralFurnitureScript)
+	furniture.name = "Furniture"
+	add_child(furniture)
 
 
 func _create_camera() -> void:
@@ -70,23 +80,23 @@ func _create_bob() -> void:
 
 	bob.name = "Bob"
 	bob.position = Vector3(0.0, 0.0, 0.0)
+	bob.rotation_degrees.y = 180.0  # face the desk (desk is at -Z)
 	add_child(bob)
 
 	# Fix transparency and make eyes/hair visible
 	_fix_materials_recursive(bob)
 
-	# Attach idle animation to skeleton
+	# Attach idle animation to skeleton (work animation via IK is next step)
 	var skel := _find_skeleton(bob)
 	if skel:
 		var idle_anim := Node.new()
 		idle_anim.set_script(IdleAnimationScript)
 		idle_anim.name = "IdleAnimation"
 		idle_anim.skeleton = skel
-		# idle_anim.enabled = false  # uncomment to debug rest pose
 		skel.add_child(idle_anim)
 		print("Idle animation attached to: ", skel.name)
 	else:
-		push_warning("No Skeleton3D found in Bob — idle animation disabled")
+		push_warning("No Skeleton3D found in Bob — animation disabled")
 
 	print("Bob loaded: ", bob.name)
 
