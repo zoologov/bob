@@ -336,6 +336,48 @@ Python script → subprocess.run(["blender", "--background", "--python", "genera
 
 ---
 
+## D-014: Shape Key apply_mix — Root Cause of Mesh Offset in GLB Export
+
+**Date:** 2026-03-02
+**Context:** After switching to MPFB2, the exported GLB had all accessories (hair, eyes, clothes) visually offset from the body. The character appeared to have clothes floating off shoulders, no visible hair, and eyebrow smudges on forehead.
+
+### Investigation (2 sessions)
+
+Extensive debugging proved:
+- All mesh positions in GLB are (0,0,0) — no node-level offset
+- Vertex bounding boxes in GLB match exactly between Blender and Godot
+- Armature modifier is a true no-op in rest pose (diff=0.000000)
+- GLTF exporter preserves data correctly
+- Godot imports data correctly
+
+### Root Cause Found
+
+**`bpy.ops.object.shape_key_remove(all=True)` defaults to `apply_mix=False`.**
+
+MPFB2 creates the body mesh with 7 shape keys (macro details: gender, age, muscle, weight, etc.) with non-zero values. Accessories (hair, clothes, eyes) are **fitted to the deformed body** (shape keys applied). When `shape_key_remove(all=True, apply_mix=False)` is called, the body mesh **reverts to basis shape**, but accessories keep their positions fitted to the deformed shape. This creates a visible offset between body and everything else.
+
+### Fix
+
+One-line change: `apply_mix=True`
+
+```python
+# BEFORE (broken): body reverts to basis, accessories stay at deformed positions
+bpy.ops.object.shape_key_remove(all=True)
+
+# AFTER (fixed): body keeps current deformed shape, matches accessories
+bpy.ops.object.shape_key_remove(all=True, apply_mix=True)
+```
+
+### Additional Fixes in Same Session
+
+- **Material alpha export**: MPFB2 materials have alpha connections that cause GLTF exporter to use BLEND mode for everything. Fix: disconnect Alpha input for opaque materials, set CLIP mode with low threshold (0.05) for hair/eyebrows/eyelashes.
+- **Godot alpha rendering**: Use `TRANSPARENCY_ALPHA_HASH` (stochastic) instead of `ALPHA_SCISSOR` (binary cutoff) for sparse-alpha textures like hair strands.
+- **Backface culling**: Set `CULL_BACK` for opaque materials, `CULL_DISABLED` for alpha materials.
+
+**RFC impact:** Updated generate_bob.py pipeline. Phase 1 character rendering now works correctly.
+
+---
+
 ## Artifacts from 2D Validation Phase
 
 The following files were generated during 2D validation (Phase 1) and are archived for reference:

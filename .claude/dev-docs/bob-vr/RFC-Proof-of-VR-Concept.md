@@ -177,59 +177,50 @@ Installation for a new user:
 
 ### 4.3 Headless Pipeline (Python → Blender → GLB)
 
+Actual working pipeline (`godot/tools/generate_bob.py`):
+
 ```python
 # generate_bob.py — runs inside Blender headless
-# Called via: blender --background --python generate_bob.py
+# Called via: blender --background --python godot/tools/generate_bob.py
 
 import bpy
-# MPFB2 provides Python API inside Blender
-from mpfb.services.humanservice import HumanService
+from bl_ext.blender_org.mpfb.services.humanservice import HumanService
+from bl_ext.blender_org.mpfb.services.assetservice import AssetService
 
-# 1. Create base human
-human = HumanService.create_human()
-
-# 2. Set body parameters
-HumanService.set_character_properties(human, {
-    "gender": 0.8,        # 0=female, 1=male
-    "age": 0.4,           # 0=child, 1=elderly
-    "muscle": 0.5,        # muscularity
-    "weight": 0.4,        # body weight
-    "height": 0.6,        # relative height
-})
-
-# 3. Add clothing
-HumanService.add_clothes(human, "t-shirt")
-HumanService.add_clothes(human, "jeans")
-HumanService.add_clothes(human, "sneakers")
-
-# 4. Add hair
-HumanService.add_hair(human, "short_male_01")
-
-# 5. Apply skin material
-HumanService.apply_skin_material(human)
-
-# 6. Select game-ready rig
-HumanService.set_rig(human, "game_engine")
-
-# 7. Export to GLB
-bpy.ops.export_scene.gltf(
-    filepath="/output/bob.glb",
-    export_format='GLB',
-    export_animations=False,
-    export_skins=True,
+# 1. Create base human with macro details
+basemesh = HumanService.create_human(
+    scale=0.1,  # MPFB cm → Blender meters
+    macro_detail_dict={
+        "gender": 1.0, "age": 0.4, "muscle": 0.5, "weight": 0.4,
+        "proportions": 0.5, "height": 0.5, ...
+        "race": {"caucasian": 1.0, "african": 0.0, "asian": 0.0},
+    },
 )
+
+# 2. Add assets via AssetService + HumanService
+HumanService.add_mhclo_asset(eyes_path, basemesh, asset_type="Eyes", ...)
+HumanService.add_mhclo_asset(hair_path, basemesh, asset_type="Hair", ...)
+HumanService.add_mhclo_asset(clothes_path, basemesh, asset_type="Clothes", ...)
+HumanService.set_character_skin(skin_path, basemesh, skin_type="GAMEENGINE")
+HumanService.add_builtin_rig(basemesh, "game_engine")
+
+# 3. Fix materials for GLTF export (alpha modes, backface culling)
+# 4. Process modifiers:
+#    - Bake shape keys with apply_mix=True (CRITICAL — prevents body/accessory offset)
+#    - Remove Armature modifier (no-op in rest pose)
+#    - Apply MASK modifiers (Hide helpers, Delete.clothes, Delete.shoes)
+# 5. Remove armature object, un-parent children
+# 6. Export static GLB (no skeleton, no animations)
+bpy.ops.export_scene.gltf(filepath=output, export_format="GLB", export_skins=False, ...)
 ```
 
-**Execution from Python:**
-```python
-import subprocess
-
-subprocess.run([
-    "blender", "--background", "--python", "generate_bob.py"
-], check=True)
-
-# Result: /output/bob.glb — full character with skeleton, clothes, hair, eyes
+**Execution:**
+```bash
+blender --background --python godot/tools/generate_bob.py
+# Result: godot/assets/bob.glb (~18 MB, static geometry)
 ```
+
+**Critical lesson learned:** `bpy.ops.object.shape_key_remove(all=True)` must use `apply_mix=True` — otherwise body reverts to basis shape while fitted accessories (hair, clothes) stay at deformed positions, causing visible offset. See DecisionLog D-014.
 
 ### 4.4 Appearance Customization (Runtime)
 
@@ -634,22 +625,32 @@ For each new object:
 
 ## 11. Proof of Concept: Scope and Phases
 
-### Phase 1: MakeHuman/MPFB2 Character in Room (current)
+### Phase 1: MakeHuman/MPFB2 Character in Room (in progress)
 
 **Goal**: Bob (full character with eyes, hair, clothes) stands in a room.
 
-- [ ] Install Blender 4.2+ (headless) + MPFB2 extension
-- [ ] Python script: generate Bob via MPFB2 API headless
-- [ ] Export to GLB (body + skeleton + hair + clothing + eyes)
-- [ ] Import GLB into Godot 4.6
-- [ ] Apply toon shader (validated)
-- [ ] Procedural room (validated: walls, floor, ceiling, window)
-- [ ] Isometric camera (validated: orbit + zoom)
-- [ ] DirectionalLight3D (validated)
+- [x] Install Blender 5.0+ (headless) + MPFB2 extension (v2.0.14)
+- [x] Python script: generate Bob via MPFB2 API headless (`godot/tools/generate_bob.py`)
+- [x] Export to GLB (body + hair + clothing + eyes, static geometry)
+- [x] Import GLB into Godot 4.6 (runtime via GLTFDocument)
+- [x] Toon shader (`godot/shaders/toon.gdshader` — unshaded + manual light)
+- [x] Procedural room (`godot/scripts/procedural_room.gd`)
+- [x] Isometric camera with orbit/zoom (`godot/scripts/camera_rig.gd`)
+- [x] DirectionalLight3D
+- [x] Material fixes for GLTF round-trip (alpha modes, backface culling)
+- [ ] Fix eye material export (irises appear washed out after GLTF round-trip)
 - [ ] Idle animation (breathing + blinking + swaying)
 - [ ] Test on Android tablet
 
-**Result**: Full 3D Bob stands in a lit room, breathes and blinks. Camera rotates around him.
+**Current outfit**: male_casualsuit01 (blue button-down shirt + jeans + belt + brown shoes)
+**Screenshot**: `godot/screenshot/blender_Bob_PoC.png`
+
+**Known issues:**
+- Eyes appear pale/washed out after GLTF export (iris texture not preserved correctly)
+- Small skin gaps at clothing boundaries (inherent to MASK modifier application)
+- Hair uses sparse alpha texture — requires ALPHA_HASH rendering in Godot
+
+**Result**: Full 3D Bob stands in a lit room. Camera rotates around him.
 
 ### Phase 2: Walking and Navigation (1 week)
 
@@ -752,12 +753,13 @@ This PoC replaces the 2D approach from the main RFC. On PoC success:
 
 ## 16. Open Questions
 
-1. **MPFB2 headless API**: Exact MPFB2 Python API for character creation needs testing. Blender's bpy is well-documented but MPFB2's internal API may differ.
+1. ~~**MPFB2 headless API**~~ **RESOLVED**: Works via `bl_ext.blender_org.mpfb.services.humanservice.HumanService` and `AssetService`. See `godot/tools/generate_bob.py`.
 2. **Tablet**: Can Realme C71 (Helio G36) handle 3D? Needs testing.
 3. **TripoSR on M4**: Speed and RAM? Needs testing.
-4. **Character style**: Vault Boy cartoon or more Sims-like? Depends on MPFB2 + shader results.
-5. **Rig compatibility**: Does MPFB2's game-ready rig work well with Godot's IK solvers?
-6. **GLB size**: How large is a full character (body + clothes + hair) exported as GLB?
+4. ~~**Character style**~~ **RESOLVED**: Realistic MPFB2 character with skin textures. Toon shader available but currently using StandardMaterial3D (GLTF default).
+5. **Rig compatibility**: Does MPFB2's game-ready rig work well with Godot's IK solvers? (Currently exporting static geometry without skeleton)
+6. ~~**GLB size**~~ **RESOLVED**: ~18 MB for full character (body + clothes + hair + eyes + textures, static geometry).
+7. **Eye material export**: MPFB2 eye materials appear washed out after GLTF round-trip. Iris/pupil barely visible. Needs investigation.
 
 ---
 
