@@ -89,59 +89,160 @@ head micro-movements) where errors are small and not visually obvious.
 
 ---
 
-## Approach 2: Inverse Kinematics (IK) — NEXT TO TRY
+## Approach 2: SkeletonIK3D (Inverse Kinematics) — FAILED ❌
+
+### What was tried
+
+Extensive IK experimentation over 7+ iterations using Godot's SkeletonIK3D
+(deprecated but functional in 4.6). Test scripts: `/tmp/ik_sitting{1-7}.gd`.
+
+**Research findings:**
+- **TwoBoneIK3D** (new Godot 4.6 IKModifier3D system) does NOT work with
+  runtime-loaded GLTF skeletons — bones never move despite correct configuration
+- **SkeletonIK3D** (deprecated) DOES work — confirmed that `ik.target` uses
+  global coordinates (not skeleton-local)
+
+**Configuration that partially worked (v5):**
+```
+Bob position: Vector3(0.0, -0.38, -0.18), rotation_degrees.y = 180.0
+Hand targets (global): Vector3(±0.08, 0.79, -0.48)
+Foot targets (global): Vector3(±0.10, 0.03, -0.25)
+Arm IK: root=upperarm_l/r, tip=hand_l/r, magnet=(±0.12, -0.3, 0.15)
+Leg IK: root=thigh_l/r, tip=foot_l/r, magnet=(0.0, 0.3, -0.5)
+Spine lean: Quaternion(Vector3.RIGHT, +0.06) per vertebra (POSITIVE = forward)
+Neck tilt: +0.15, Head tilt: +0.12
+```
+
+### Why it failed
+
+1. **Persistent geometry collisions**: Torso clips through desk, pelvis through
+   chair seat, hands embedded in desk surface. Adjusting positions creates new
+   collisions elsewhere.
+
+2. **Limb crossing/mirroring**: Bob is rotated 180°, which flips the X axis.
+   `hand_l` bone ends up at world -X, but targets at +X cause arms to cross.
+   Same issue with legs — they cross or bend backward instead of forward.
+   7 iterations of adjustments couldn't fully resolve this.
+
+3. **Leg anatomy failure**: IK solver consistently finds wrong solutions for
+   legs — knees bending backward ("kneeling" instead of sitting), legs crossing
+   in X pattern from front view. Magnet hints don't reliably control bend direction
+   when skeleton is rotated 180°.
+
+4. **No visual realism**: Even the best iteration (v5) had:
+   - Legs at 180° from torso (body faces desk, legs face away)
+   - Arms partially embedded in desk surface
+   - Pelvis floating above chair seat
+   - Alpha artifacts around head (hair transparency)
+
+5. **Fundamentally same problem as Approach 1**: While IK simplifies WHAT to
+   specify (positions vs rotations), the blind trial-and-error tuning of
+   coordinates is equally painful. An AI agent cannot efficiently tune 20+
+   numeric parameters (4 targets × 3 coords + 4 magnets × 3 coords + spine angles)
+   through screenshot-based iteration.
+
+### Conclusion
+
+**SkeletonIK3D is NOT viable for full-body sitting pose** in this setup:
+- The 180° rotation creates mirroring issues that are hard to debug
+- IK solvers find anatomically wrong solutions (backward knees, crossed limbs)
+- No collision avoidance — mesh interpenetration everywhere
+- Each pose still requires extensive manual coordinate tuning
+
+SkeletonIK3D might work for **small adjustments on top of existing animations**
+(e.g., adjust hand position to reach a specific object), but it cannot create
+a full sitting pose from scratch.
+
+---
+
+## Approach 3: Hybrid — Mixamo Animations in Godot — NEXT TO TRY 🎯
 
 ### Concept
 
-Instead of manually computing rotations for each bone in the chain, define
-**target positions** for key effectors (hands, feet, pelvis) and let the IK solver
-compute all intermediate bone rotations automatically.
+Instead of manually posing bones (Approach 1) or manually specifying IK targets
+(Approach 2), use **pre-made motion capture animations from Mixamo** and load them
+in Godot. Mixamo has a library of professionally created animations including
+sitting, typing, idle, and transitions.
 
-### Godot 4 IK Options
+### Why this should work
 
-1. **SkeletonIK3D** — built-in Godot node
-   - Set target position/rotation for end effector (e.g., hand)
-   - Solver computes entire bone chain (shoulder → upper arm → forearm → hand)
-   - Supports magnet position (hint for elbow direction)
+1. **Animations are pre-made by artists**: sitting, typing, walking — all solved
+   problems in the animation industry. No need for AI to reinvent bone math.
 
-2. **FABRIK** — Forward And Backward Reaching IK
-   - Iterative solver, good for chains
-   - Available in Godot or implementable
+2. **Mixamo provides retargetable FBX**: download animations for any humanoid
+   skeleton, Godot can retarget to our MPFB2 rig via `SkeletonProfileHumanoid`.
 
-3. **Two-Bone IK** — simple analytical solution for 2-bone chains
-   - Perfect for arm (upper arm + forearm) and leg (thigh + calf)
-   - Deterministic, no iteration needed
+3. **Proven approach**: The [Realtime_Avatar_AI_Companion](https://github.com/igna-s/Realtime_Avatar_AI_Companion)
+   project successfully uses Mixamo FBX → VRM retargeting in Three.js. Their
+   bone mapping + quaternion correction code works.
 
-### Proposed Architecture for Sitting Pose
+4. **AI-friendly**: An AI agent can download/select animations from Mixamo library,
+   not tune numeric parameters. "Use sitting_idle.fbx" vs "set thigh_l to 0.08 rad".
+
+### Relevant Mixamo animations
+
+| Animation | Mixamo name | Use case |
+|-----------|-------------|----------|
+| Sitting idle | "Sitting Idle" | Bob at desk, breathing |
+| Typing | "Typing" | Bob typing on keyboard |
+| Sitting talking | "Sitting Talking" | Future: Bob in conversation |
+| Sit down | "Sitting Down" | Transition: standing → sitting |
+| Stand up | "Standing Up" | Transition: sitting → standing |
+
+### Technical approach
 
 ```
-Target positions (world space):
-├── Pelvis → chair seat center (0.0, 0.48, 0.05)
-├── Left hand → laptop keyboard left (−0.12, 0.78, −0.50)
-├── Right hand → laptop keyboard right (0.12, 0.78, −0.50)
-├── Left foot → floor in front of chair (−0.15, 0.0, −0.20)
-└── Right foot → floor in front of chair (0.15, 0.0, −0.20)
-
-IK solves:
-├── Arm IK (2-bone): clavicle → upperarm → lowerarm → hand
-├── Leg IK (2-bone): pelvis → thigh → calf → foot
-└── Spine: interpolate between pelvis and chest target
+Pipeline:
+1. Download FBX from Mixamo (with "Without Skin" option for animation-only)
+2. Import FBX into Godot project (godot/assets/animations/)
+3. Create bone name mapping: Mixamo names → MPFB2 names
+   - mixamorigHips → pelvis
+   - mixamorigSpine → spine_01
+   - mixamorigLeftArm → upperarm_l
+   - etc.
+4. Use Godot's AnimationPlayer + SkeletonProfileHumanoid for retargeting
+5. Layer procedural overlay on top (breathing, head look-at from idle_animation.gd)
 ```
 
-### Why IK should work better
+### Key bone mapping (Mixamo → MPFB2)
 
-- **Target-based**: specify WHERE hands/feet go, not HOW each bone rotates
-- **Bone-agnostic**: IK solver handles complex rest rotations internally
-- **Portable**: same approach works for any pose (sitting, standing, reaching)
-- **AI-compatible**: LLM can specify targets in world coordinates ("hands on keyboard")
-  without understanding quaternion math
+```
+mixamorigHips          → pelvis
+mixamorigSpine         → spine_01
+mixamorigSpine1        → spine_02
+mixamorigSpine2        → spine_03
+mixamorigNeck          → neck_01
+mixamorigHead          → head
+mixamorigLeftShoulder  → clavicle_l
+mixamorigLeftArm       → upperarm_l
+mixamorigLeftForeArm   → lowerarm_l
+mixamorigLeftHand      → hand_l
+mixamorigRightShoulder → clavicle_r
+mixamorigRightArm      → upperarm_r
+mixamorigRightForeArm  → lowerarm_r
+mixamorigRightHand     → hand_r
+mixamorigLeftUpLeg     → thigh_l
+mixamorigLeftLeg       → calf_l
+mixamorigLeftFoot      → foot_l
+mixamorigRightUpLeg    → thigh_r
+mixamorigRightLeg      → calf_r
+mixamorigRightFoot     → foot_r
+```
 
-### Key questions to resolve
+### Open questions
 
-- Does SkeletonIK3D work with runtime-loaded GLB skeletons? (no .tscn pre-configuration)
-- Can multiple IK chains coexist on one skeleton? (arms + legs simultaneously)
-- How to handle spine/torso (not a simple 2-bone chain)?
-- Performance with 4+ IK chains updating per frame?
+- Does Godot's FBX importer handle Mixamo animations correctly?
+- Does `SkeletonProfileHumanoid` retargeting work with runtime-loaded GLTF?
+- Can we apply Mixamo animation to MPFB2 skeleton with different rest poses?
+- Alternative: convert Mixamo FBX → glTF/GLB animation, embed in Bob's GLB?
+- Can we layer procedural overlay (breathing) on top of Mixamo clip?
+
+### Reference
+
+- [Realtime_Avatar_AI_Companion](https://github.com/igna-s/Realtime_Avatar_AI_Companion) —
+  working Mixamo→VRM retargeting in Three.js (bone mapping + quaternion correction)
+- Mixamo: https://www.mixamo.com (free Adobe account required)
+- Godot retargeting docs: AnimationTree + SkeletonProfileHumanoid
 
 ---
 
@@ -176,10 +277,11 @@ Layer 1 — Motion Execution:
 
 - ✅ Layer 3: LLM can decide actions from context
 - ✅ Layer 1 (clips): Mixamo/mocap libraries have sitting, walking, typing clips
-- ✅ Layer 1 (IK): Godot's SkeletonIK3D for environmental adaptation
+- ⚠️ Layer 1 (IK): SkeletonIK3D works but only for small adjustments, not full poses
 - ✅ Layer 1 (procedural): Idle overlay works well (breathing, head)
 - ⚠️ Layer 2: Needs implementation but is standard game dev
 - ❌ Real-time AI bone quaternion generation: not viable
+- ❌ Full-body IK from scratch: not viable (too many parameters to tune)
 
 ---
 
@@ -187,8 +289,9 @@ Layer 1 — Motion Execution:
 
 | File | Status | Notes |
 |------|--------|-------|
-| `godot/scripts/main.gd` | Modified | Loads furniture + work_animation (to be replaced with IK) |
-| `godot/scripts/procedural_furniture.gd` | New, works | Keep as-is |
-| `godot/scripts/work_animation.gd` | New, broken pose | Replace with IK approach |
-| `godot/scripts/idle_animation.gd` | Works | Keep for procedural overlay |
-| `/tmp/bone_discovery.gd` | Diagnostic | Run to list all 54 bone names/indices |
+| `godot/scripts/main.gd` | Working | Loads furniture + idle animation |
+| `godot/scripts/procedural_furniture.gd` | Working | Desk + chair + laptop |
+| `godot/scripts/idle_animation.gd` | Working | Breathing, sway, head micro-movements |
+| `godot/scripts/procedural_room.gd` | Working | Floor |
+| `godot/scripts/camera_rig.gd` | Working | Isometric camera with orbit |
+| `godot/scripts/work_animation.gd` | DELETED | Failed IK approach, removed |

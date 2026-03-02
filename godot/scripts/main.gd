@@ -6,7 +6,7 @@ const ProceduralRoomScript = preload("res://scripts/procedural_room.gd")
 const ProceduralFurnitureScript = preload("res://scripts/procedural_furniture.gd")
 const CameraRigScript = preload("res://scripts/camera_rig.gd")
 const IdleAnimationScript = preload("res://scripts/idle_animation.gd")
-# const WorkAnimationScript = preload("res://scripts/work_animation.gd")  # FAILED: manual quaternion approach, see Bob-work-PoC.md
+# Work animation: see Approach 3 (Mixamo + Godot) in .claude/dev-docs/bob-vr/Bob-work-PoC.md
 
 func _ready() -> void:
 	_setup_environment()
