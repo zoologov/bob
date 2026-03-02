@@ -1,9 +1,10 @@
 extends Node3D
 ## Main scene orchestrator.
-## Procedurally creates: room, camera, Bob character, lighting, environment.
+## Procedurally creates: room, camera, Bob character (with idle animation), lighting, environment.
 
 const ProceduralRoomScript = preload("res://scripts/procedural_room.gd")
 const CameraRigScript = preload("res://scripts/camera_rig.gd")
+const IdleAnimationScript = preload("res://scripts/idle_animation.gd")
 
 func _ready() -> void:
 	_setup_environment()
@@ -74,7 +75,30 @@ func _create_bob() -> void:
 	# Fix transparency and make eyes/hair visible
 	_fix_materials_recursive(bob)
 
+	# Attach idle animation to skeleton
+	var skel := _find_skeleton(bob)
+	if skel:
+		var idle_anim := Node.new()
+		idle_anim.set_script(IdleAnimationScript)
+		idle_anim.name = "IdleAnimation"
+		idle_anim.skeleton = skel
+		# idle_anim.enabled = false  # uncomment to debug rest pose
+		skel.add_child(idle_anim)
+		print("Idle animation attached to: ", skel.name)
+	else:
+		push_warning("No Skeleton3D found in Bob — idle animation disabled")
+
 	print("Bob loaded: ", bob.name)
+
+
+func _find_skeleton(node: Node) -> Skeleton3D:
+	if node is Skeleton3D:
+		return node as Skeleton3D
+	for child in node.get_children():
+		var found := _find_skeleton(child)
+		if found:
+			return found
+	return null
 
 
 func _fix_materials_recursive(node: Node) -> void:

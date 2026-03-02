@@ -204,23 +204,25 @@ HumanService.add_mhclo_asset(clothes_path, basemesh, asset_type="Clothes", ...)
 HumanService.set_character_skin(skin_path, basemesh, skin_type="GAMEENGINE")
 HumanService.add_builtin_rig(basemesh, "game_engine")
 
-# 3. Fix materials for GLTF export (alpha modes, backface culling)
-# 4. Process modifiers:
+# 3. Transfer bone weights to accessories (auto-weights via parent_set ARMATURE_AUTO)
+# 4. Fix materials for GLTF export (alpha modes, backface culling)
+# 5. Process modifiers:
 #    - Bake shape keys with apply_mix=True (CRITICAL — prevents body/accessory offset)
-#    - Remove Armature modifier (no-op in rest pose)
-#    - Apply MASK modifiers (Hide helpers, Delete.clothes, Delete.shoes)
-# 5. Remove armature object, un-parent children
-# 6. Export static GLB (no skeleton, no animations)
-bpy.ops.export_scene.gltf(filepath=output, export_format="GLB", export_skins=False, ...)
+#    - Temporarily remove Armature, apply MASK modifiers, re-add Armature
+# 6. Export skinned GLB (skeleton + all meshes with bone weights)
+bpy.ops.export_scene.gltf(filepath=output, export_format="GLB", export_skins=True, ...)
 ```
 
 **Execution:**
 ```bash
 blender --background --python godot/tools/generate_bob.py
-# Result: godot/assets/bob.glb (~18 MB, static geometry)
+# Result: godot/assets/bob.glb (~21 MB, skinned mesh with 53-bone skeleton)
 ```
 
-**Critical lesson learned:** `bpy.ops.object.shape_key_remove(all=True)` must use `apply_mix=True` — otherwise body reverts to basis shape while fitted accessories (hair, clothes) stay at deformed positions, causing visible offset. See DecisionLog D-014.
+**Critical lessons learned:**
+- `bpy.ops.object.shape_key_remove(all=True)` must use `apply_mix=True` — otherwise body reverts to basis shape while fitted accessories (hair, clothes) stay at deformed positions, causing visible offset. See DecisionLog D-014.
+- MPFB2 parents accessories to the body mesh (not the armature), so they have 0 vertex groups and no Armature modifier. Must re-parent to armature with `parent_set(type="ARMATURE_AUTO")` for auto-weights before export. See D-016.
+- GLTF-imported bones have non-identity default rotations (e.g., pelvis: ~70° X rotation). Procedural animation must save initial poses and apply offsets multiplicatively (`base_rot * offset`), not replace them.
 
 ### 4.4 Appearance Customization (Runtime)
 
@@ -631,7 +633,7 @@ For each new object:
 
 - [x] Install Blender 5.0+ (headless) + MPFB2 extension (v2.0.14)
 - [x] Python script: generate Bob via MPFB2 API headless (`godot/tools/generate_bob.py`)
-- [x] Export to GLB (body + hair + clothing + eyes, static geometry)
+- [x] Export to GLB (body + hair + clothing + eyes + skeleton with game_engine rig)
 - [x] Import GLB into Godot 4.6 (runtime via GLTFDocument)
 - [x] Toon shader (`godot/shaders/toon.gdshader` — unshaded + manual light)
 - [x] Procedural room (`godot/scripts/procedural_room.gd`)
@@ -639,17 +641,22 @@ For each new object:
 - [x] DirectionalLight3D
 - [x] Material fixes for GLTF round-trip (alpha modes, backface culling)
 - [x] Fix eye material export (simplified node tree + preserved cornea alpha)
-- [ ] Idle animation (breathing + blinking + swaying)
+- [x] Idle animation (`godot/scripts/idle_animation.gd` — breathing + swaying + head micro-movements + shoulder/arm drift)
 - [ ] Test on Android tablet
 
 **Current outfit**: male_casualsuit04 (blue t-shirt + jeans + brown shoes) with custom texture (`godot/assets/tshirt_texture_bob.png` — "I'M BOB!" front, "AI POWERED" back)
-**Screenshot**: `godot/screenshot/blender_Bob_PoC.png`
+**Screenshots**: `godot/screenshot/blender_Bob_PoC.png` (static), `godot/screenshot/bob_idle_animation.png` (with idle)
+
+**Skeleton**: 53-bone game_engine rig (MPFB2). All meshes (body, clothes, hair, eyes, teeth) skinned to armature via auto-weights. Bones: Root → pelvis → spine_01..03 → neck → head, clavicle_l/r → arms → 5 fingers × 3 joints, thigh_l/r → legs → feet.
+
+**Idle animation**: Procedural per-frame bone manipulation via `IdleAnimation` class. Saves initial bone poses at startup, applies additive offsets: breathing (sin wave on spine), weight-shift sway (simplex noise on pelvis), head micro-movements (noise on neck/head), shoulder drift (breath-synced + noise), arm swing (noise).
 
 **Known issues:**
 - Hair uses sparse alpha texture — requires ALPHA_HASH rendering in Godot
 - Minor alpha edge artifacts on eye cornea (barely noticeable)
+- No blinking (game_engine rig has no eyelid bones — needs morph targets or separate eye mesh animation)
 
-**Result**: Full 3D Bob stands in a lit room. Camera rotates around him.
+**Result**: Full 3D Bob stands in a lit room with subtle idle animation. Camera rotates around him.
 
 ### Phase 2: Walking and Navigation (1 week)
 

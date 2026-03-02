@@ -1,6 +1,9 @@
 # Godot cache and imported resources
 .godot/
 
+# Auto-extracted textures from GLB editor import (we load GLB programmatically)
+assets/bob_*.png
+
 # Android build artifacts
 android/build/
 

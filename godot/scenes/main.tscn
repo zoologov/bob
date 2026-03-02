@@ -1,10 +1,6 @@
 [gd_scene format=3 uid="uid://cj5irn6qt4t4w"]
 
 [ext_resource type="Script" uid="uid://koig3riqtxxq" path="res://scripts/main.gd" id="1_main"]
-[ext_resource type="PackedScene" uid="uid://cyk8rx107rs26" path="res://assets/bob.glb" id="2_0wfyh"]
 
-[node name="Main" type="Node3D" unique_id=1426724509]
+[node name="Main" type="Node3D"]
 script = ExtResource("1_main")
-
-[node name="bob" parent="." unique_id=1077219486 instance=ExtResource("2_0wfyh")]
-transform = Transform3D(0.98796254, 0, -0.15469314, 0, 1, 0, 0.15469314, 0, 0.98796254, 0.26329398, 0, 0.3699999)

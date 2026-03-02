@@ -4,7 +4,8 @@ Usage:
     blender --background --python godot/tools/generate_bob.py
 
 Output:
-    godot/assets/bob.glb — static character geometry (eyes, hair, clothing, no skeleton)
+    godot/assets/bob.glb — skinned character with game_engine rig
+    (body, eyes, hair, clothing + skeleton for procedural animation)
 
 Requires:
     - Blender 5.0+ with MPFB2 extension installed
@@ -343,33 +344,79 @@ def fix_blend_modes() -> None:
                 print(f"  {obj.name}/{mat.name}: OPAQUE (alpha disconnected, backface cull)")
 
 
-def remove_armature() -> None:
-    """Delete armature object after modifiers are baked.
+def skin_accessories_to_armature() -> None:
+    """Transfer bone weights to clothes/hair/eyes so they follow skeleton.
 
-    Un-parents all children (preserving world transforms) then deletes
-    the armature. Without skeleton, we don't need it in the GLTF export.
+    MPFB2 parents accessories to the body mesh (not the armature directly),
+    so they have no vertex groups and won't deform with the skeleton.
+    Fix: re-parent each accessory to the armature with automatic weights.
     """
-    for obj in list(bpy.data.objects):
+    armature_obj = None
+    body_mesh = None
+    for obj in bpy.data.objects:
+        if obj.type == "ARMATURE":
+            armature_obj = obj
+        elif obj.type == "MESH" and obj.parent and obj.parent.type == "ARMATURE":
+            body_mesh = obj
+
+    if not armature_obj or not body_mesh:
+        print("[WARN] Could not find armature or body mesh for weight transfer")
+        return
+
+    accessories = [obj for obj in bpy.data.objects
+                   if obj.type == "MESH" and obj != body_mesh and obj.parent == body_mesh]
+
+    for obj in accessories:
+        # Save world transform (re-parenting changes local transform)
+        world_mat = obj.matrix_world.copy()
+
+        # Clear current parent
+        obj.parent = None
+        obj.matrix_world = world_mat
+
+        # Re-parent to armature with automatic weights (heat diffusion)
+        bpy.ops.object.select_all(action="DESELECT")
+        obj.select_set(True)
+        armature_obj.select_set(True)
+        bpy.context.view_layer.objects.active = armature_obj
+
+        try:
+            bpy.ops.object.parent_set(type="ARMATURE_AUTO")
+            groups = len(obj.vertex_groups) if obj.vertex_groups else 0
+            print(f"  {obj.name}: auto-weights OK ({groups} groups)")
+        except RuntimeError as e:
+            # Fallback: parent without weights (static attachment to nearest bone)
+            obj.parent = armature_obj
+            obj.parent_type = "OBJECT"
+            obj.matrix_world = world_mat
+            print(f"  {obj.name}: auto-weights FAILED ({e}), static parent")
+
+
+def print_skeleton_info() -> None:
+    """Print skeleton bone hierarchy for debugging."""
+    for obj in bpy.data.objects:
         if obj.type != "ARMATURE":
             continue
-        # Un-parent children before deleting
-        for child in list(obj.children):
-            world_mat = child.matrix_world.copy()
-            child.parent = None
-            child.matrix_world = world_mat
-            print(f"  Un-parented {child.name} from armature")
-        bpy.data.objects.remove(obj, do_unlink=True)
-        print("[OK] Armature removed")
-        return
+        armature = obj.data
+        print(f"\nSkeleton: {obj.name} ({len(armature.bones)} bones)")
+        for bone in armature.bones:
+            parent_name = bone.parent.name if bone.parent else "ROOT"
+            depth = 0
+            b = bone
+            while b.parent:
+                depth += 1
+                b = b.parent
+            indent = "  " + "  " * depth
+            print(f"{indent}{bone.name} (parent: {parent_name})")
 
 
 def export_glb(output_path: str) -> None:
-    """Export scene to GLB (static geometry, no skeleton)."""
+    """Export scene to GLB with skeleton (skinned mesh)."""
     bpy.ops.export_scene.gltf(
         filepath=output_path,
         export_format="GLB",
         export_animations=False,
-        export_skins=False,
+        export_skins=True,
         export_normals=True,
         export_materials="EXPORT",
         export_texcoords=True,
@@ -405,6 +452,13 @@ def main() -> None:
     add_skin(basemesh)
     add_rig(basemesh)
 
+    # Transfer bone weights to accessories (clothes, hair, eyes, teeth).
+    # MPFB2 parents accessories to the body mesh, not the armature,
+    # so they have no vertex groups and won't follow skeletal animation.
+    print()
+    print("Skinning accessories to armature:")
+    skin_accessories_to_armature()
+
     # Simplify eye material (remove pass-through MIX_RGB node)
     print()
     print("Simplifying eye material:")
@@ -415,60 +469,68 @@ def main() -> None:
     print("Fixing blend modes:")
     fix_blend_modes()
 
-    # Apply all modifiers in correct order:
-    # - Remove Armature first (no-op in rest pose, avoids apply issues)
-    # - Apply all MASK modifiers (Hide helpers + Delete.clothes/shoes)
-    # - Apply any remaining modifiers
+    # Process modifiers for skinned export:
+    # Strategy: temporarily remove Armature, apply all others (MASK, etc.),
+    # then re-add Armature. Avoids "not first modifier" warnings.
     print()
     print("Processing modifiers:")
+    armature_obj = None
+    for obj in bpy.data.objects:
+        if obj.type == "ARMATURE":
+            armature_obj = obj
+            break
+
     for obj in bpy.data.objects:
         if obj.type != "MESH":
-            continue
-        if not obj.modifiers:
             continue
 
         bpy.context.view_layer.objects.active = obj
         obj.select_set(True)
 
         # Remove shape keys — MUST use apply_mix=True to keep current shape!
-        # Without apply_mix, body reverts to basis shape while accessories
-        # (hair, clothes) stay fitted to the deformed (shape-key-applied) body.
         if obj.data.shape_keys:
             count = len(obj.data.shape_keys.key_blocks)
             bpy.ops.object.shape_key_remove(all=True, apply_mix=True)
-            print(f"  Baked and removed {count} shape keys from {obj.name}")
+            print(f"  Baked {count} shape keys from {obj.name}")
 
-        # Process each modifier from top to bottom
+        # Temporarily remove Armature modifier (save reference to armature)
+        for mod in list(obj.modifiers):
+            if mod.type == "ARMATURE":
+                obj.modifiers.remove(mod)
+
+        # Apply all remaining modifiers (MASK, etc.) — clean stack
         while obj.modifiers:
             mod = obj.modifiers[0]
             mod_name = mod.name
             mod_type = mod.type
-
-            if mod_type == "ARMATURE":
-                # Armature is no-op in rest pose — just remove it
+            try:
+                bpy.ops.object.modifier_apply(modifier=mod_name)
+                print(f"  {obj.name}: applied {mod_name} ({mod_type})")
+            except RuntimeError as e:
+                print(f"  {obj.name}: WARN applying {mod_name}: {e}")
                 obj.modifiers.remove(mod)
-                print(f"  {obj.name}: removed {mod_name} (ARMATURE)")
-            else:
-                # Apply all other modifiers (MASK, etc.)
-                try:
-                    bpy.ops.object.modifier_apply(modifier=mod_name)
-                    print(f"  {obj.name}: applied {mod_name} ({mod_type})")
-                except RuntimeError as e:
-                    print(f"  {obj.name}: WARN applying {mod_name}: {e}")
-                    obj.modifiers.remove(mod)
+
+        # Re-add Armature modifier if mesh has vertex groups (is skinned)
+        if obj.vertex_groups and armature_obj:
+            arm_mod = obj.modifiers.new("Armature", "ARMATURE")
+            arm_mod.object = armature_obj
 
         obj.select_set(False)
 
-    # Report
+    # Report: all meshes with their skinning state
+    print()
+    print("Final mesh state:")
     for obj in bpy.data.objects:
         if obj.type == "MESH":
-            mods = [m.name for m in obj.modifiers]
-            print(f"  {obj.name}: {len(obj.data.vertices)} verts, mods={mods}")
+            mods = [f"{m.name}({m.type})" for m in obj.modifiers]
+            vgroups = len(obj.vertex_groups) if obj.vertex_groups else 0
+            parent = obj.parent.name if obj.parent else "None"
+            print(f"  {obj.name}: {len(obj.data.vertices)} verts, groups={vgroups}, parent={parent}, mods={mods}")
 
-    # Remove armature object
+    # Print skeleton info for reference
     print()
-    print("Removing armature:")
-    remove_armature()
+    print("Skeleton info:")
+    print_skeleton_info()
 
     export_glb(output_path)
 
