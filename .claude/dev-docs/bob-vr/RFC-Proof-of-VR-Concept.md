@@ -762,6 +762,132 @@ This PoC replaces the 2D approach from the main RFC. On PoC success:
 
 ---
 
+## 17. R&D: Self-Customization & AI Garment Generation
+
+> **Status:** Research (March 2026)
+> **Goal:** Assess Bob's ability to autonomously generate and modify his own clothing and appearance.
+
+### 17.1 Current Customization Capabilities (Working)
+
+| Capability | Method | Time | Complexity |
+|-----------|--------|------|------------|
+| Text/logo on clothing | Pillow (PIL) texture editing | <1 sec | Trivial |
+| Clothing color change | PIL hue/saturation shift | <1 sec | Trivial |
+| Procedural patterns | PIL generation (stripes, plaid) | <1 sec | Simple |
+| AI texture generation | FLUX.2 → UV map overlay | ~20 sec | Medium |
+| Outfit switching | MPFB2 asset swap (8 male outfits built-in) | ~30 sec | Simple |
+| Hairstyle switching | MPFB2 asset swap (100+ hairstyles) | ~30 sec | Simple |
+| Body parameters | MPFB2 macro details (age, weight, muscle, height) | ~30 sec | Simple |
+| Full character rebuild | Blender headless re-generation | ~60 sec | Simple |
+
+Already proven: `customize_tshirt_texture()` in `generate_bob.py`.
+
+### 17.2 MakeHuman Community Assets (Available Now)
+
+[MakeHuman Community](https://static.makehumancommunity.org/assets/assetpacks.html) provides **73 asset packs** with ~150-250 clothing items (CC0 license):
+
+- Dresses (3 packs), Pants (3), Shirts (3), Shoes (3), Skirts (2)
+- Suits (3), Underwear (4), Gloves (1), Hats (4), Glasses (2)
+- Equipment (3 packs — weapons, bags, tools)
+
+All downloadable as ZIP, loadable into MPFB2. Combined with texture customization via FLUX.2, this gives Bob a large design space without any 3D modeling.
+
+### 17.3 AI Garment Generation — State of the Art (March 2026)
+
+#### Garment-Specific AI Tools
+
+| Project | Venue | Stars | License | What It Does | Runs on M4? |
+|---------|-------|-------|---------|-------------|-------------|
+| [ChatGarment](https://github.com/biansy000/ChatGarment) | CVPR 2025 | 128 | Apache-2.0 | Text/image → VLM → sewing pattern → 3D garment | Patterns: yes; Sim: CUDA |
+| [DressCode](https://github.com/IHe-KaiI/DressCode) | SIGGRAPH 2024 | 274 | — | Text → GPT sewing tokens → SD textures → 3D | No (CUDA) |
+| [GarmentDiffusion](https://github.com/Shenfu-Research/GarmentDiffusion) | IJCAI 2025 | 49 | — | DiT for sewing patterns, 100x faster than DressCode | No (CUDA) |
+| [Garment3DGen](https://github.com/nsarafianos/Garment3DGen) | NVIDIA 2024 | 123 | — | Image → stylized 3D garment + textures, body fitting | No (CUDA) |
+| [ClotheDreamer](https://github.com/ggxxii/clothedreamer) | 2024 | 69 | MIT | Text → 3D Gaussian Splatting garments | No (CUDA) |
+| [GarmentDreamer](https://github.com/boqian-li/GarmentDreamer) | 3DV 2025 | 59 | — | Text → simulation-ready 3D garment meshes | No (CUDA) |
+
+**Key insight:** All AI garment tools are built on top of **GarmentCode** (parametric sewing patterns), which runs on CPU/M4.
+
+#### Parametric Sewing Pattern Tools (M4-Compatible)
+
+| Project | Stars | License | What It Does | M4 16GB? |
+|---------|-------|---------|-------------|----------|
+| [GarmentCode](https://github.com/maria-korosteleva/GarmentCode) | 310 | MIT | Python DSL for parametric sewing patterns + simulation | **YES** (pygarment + Warp CPU) |
+| [FreeSewing](https://github.com/freesewing) | — | MIT | Parametric patterns from body measurements (Node.js) | **YES** |
+| [Costumy](https://github.com/cdrinmatane/Costumy) | 16 | GPL-3.0 | Body measurements → FreeSewing → 3D draped garment | **YES** |
+
+#### General Text/Image → 3D Tools
+
+| Project | Stars | License | Output | M4 16GB? |
+|---------|-------|---------|--------|----------|
+| [TRELLIS.2](https://github.com/microsoft/TRELLIS.2) (Microsoft) | 4.2k | **MIT** | GLB with PBR materials | No (NVIDIA 16-24GB) |
+| [Hunyuan3D 2.1](https://github.com/Tencent-Hunyuan/Hunyuan3D-2.1) (Tencent) | 2.9k | Community | GLB with PBR | Shape only (~10GB) |
+| [Apple SHARP](https://github.com/apple/ml-sharp) | 7.8k | Apple License | Gaussian Splats | **YES** (native MPS!) |
+| [TripoSR](https://github.com/VAST-AI-Research/TripoSR) | 6.2k | **MIT** | Mesh + textures | No (CUDA) |
+| [TripoSG](https://github.com/VAST-AI-Research/TripoSG) | 1.5k | **MIT** | GLB | No (CUDA) |
+| [SF3D](https://github.com/Stability-AI/stable-fast-3d) (Stability) | 1.6k | Community | GLB with UV | No (CUDA) |
+| [PartCrafter](https://github.com/wgsxm/PartCrafter) | 2.4k | **MIT** | Separate 3D parts (!) | No (8GB NVIDIA) |
+
+[SuGaR](https://github.com/Anttwo/SuGaR) (3.2k stars) converts Gaussian Splats → meshes (for SHARP output).
+
+#### Blender Cloth / Garment Tools
+
+| Tool | License | Price | What It Does |
+|------|---------|-------|-------------|
+| Blender Cloth Sim | GPL | Free | Built-in cloth simulation, fully scriptable headless |
+| [Modeling-Cloth](https://github.com/the3dadvantage/Modeling-Cloth) | MIT | Free | Real-time cloth in Blender |
+| [Bystedt's Cloth Builder](https://3dbystedt.gumroad.com/l/bystedtsClothBuilder) | Free | Free | Templates + Geometry Nodes cloth |
+| Garment Tool | Commercial | $30 | 2D Bezier curves → 3D garments in Blender |
+
+#### MakeClothes (Already in Our Pipeline)
+
+**MakeClothes is already available in MPFB2.** It converts any Blender mesh into MakeHuman-compatible clothing (.mhclo format):
+- Vertex binding to body mesh (barycentric coordinates + offset)
+- Delete groups (hide body parts under clothing)
+- Can run headless via `blender --background --python`
+
+Standalone version: [community-plugins-makeclothes](https://github.com/makehumancommunity/community-plugins-makeclothes) (MIT, 135 commits, Blender 4.5+)
+
+### 17.4 Recommended Strategy (Phased)
+
+#### Phase A — Now (PoC): MPFB2 Assets + Texture Customization
+- 150-250 CC0 clothing items from MakeHuman Community
+- FLUX.2 texture generation for any pattern/color
+- Pillow for text/logo on clothing
+- Already working in current pipeline
+
+#### Phase B — Near-term: GarmentCode + Claude Code CLI + MakeClothes
+```
+Bob: "I want a bomber jacket"
+  → Claude Code CLI writes GarmentCode program:
+    - Defines panels (front, back, sleeves, collar)
+    - Parameters: length, width, sleeve style, closure
+  → pygarment generates 2D sewing patterns
+  → NVIDIA Warp (CPU mode) simulates draping on body
+  → Blender + MakeClothes converts to .mhclo
+  → FLUX.2 generates bomber jacket texture
+  → MPFB2 equips on Bob → GLB export
+```
+
+Feasibility: **Simple garments (t-shirts, pants, vests, beanies) — high confidence.** Medium garments (hoodie, jacket with collar) — possible with iteration. Complex garments (suit with lapels, dress with pleats) — unlikely without GPU simulation.
+
+#### Phase C — Future: Full AI Garment Pipeline (requires NVIDIA GPU or cloud)
+- **ChatGarment** (Apache-2.0): text → VLM → GarmentCode → 3D garment
+- **TRELLIS.2** (MIT): image → PBR-textured 3D mesh
+- **Hunyuan3D 2.1**: text/image → 3D with PBR materials
+- Could run on cloud GPU (RunPod, Colab) when needed, cache results locally
+
+### 17.5 Key Architectural Decision
+
+The **GarmentCode + MakeClothes** path is the most viable for local autonomous clothing generation because:
+1. GarmentCode is pure Python (MIT), runs on M4 CPU
+2. Claude Code CLI can generate GarmentCode programs from natural language
+3. MakeClothes (already in MPFB2) handles body fitting and .mhclo export
+4. FLUX.2 (already in stack) handles texture generation
+5. Entire pipeline is headless and automatable
+6. No NVIDIA GPU required for basic garments
+
+---
+
 ## Appendix A: Previous Attempts Summary
 
 ### A.1 2D Sprite Approach (2026-03-01, abandoned)
