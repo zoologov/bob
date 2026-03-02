@@ -1,0 +1,9 @@
+# Godot cache and imported resources
+.godot/
+
+# Android build artifacts
+android/build/
+
+# Export binaries
+*.apk
+*.aab
