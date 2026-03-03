@@ -1,6 +1,9 @@
 # Godot cache and imported resources
 .godot/
 
+# Godot auto-generated UID files
+*.uid
+
 # Auto-extracted textures from GLB editor import (we load GLB programmatically)
 assets/bob_*.png
 
