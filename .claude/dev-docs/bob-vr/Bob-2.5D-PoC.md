@@ -133,7 +133,7 @@ Bob переключается между профилями по необход
 | 7 | **YOLO26n** | Зрение Bob (камера с гимбалом) | ultralytics | ~0.3 GB | `pip install ultralytics` | Обновлено (замена YOLOv8) |
 | 8 | **FLUX.2 Klein 4B** (q4) | Генерация "мира" Боба, самого Боба | mflux | ~2.0 GB | `uv tool install mflux --with tiktoken --with protobuf --with sentencepiece` | Валидирован (D-004) |
 | 9 | **FLUX.1 Kontext dev** (q4) | Айдентика и стабильность "мира" и Боба, одежда, Боб в сцене, элементы окружения | mflux | ~6.0 GB | (то же — mflux, модель: `akx/FLUX.1-Kontext-dev-mflux-4bit`) | Валидирован (этот PoC) |
-| 10 | **Depth Anything V2** | Карта глубины → parallax слои | TBD | ~0.4 GB | TBD (mlx / coreml / transformers) | Не валидирован |
+| 10 | **Depth Anything V2** (Small) | Карта глубины → parallax слои | HF Transformers + MPS | ~0.4 GB | `pip install transformers torch` (модель: `depth-anything/Depth-Anything-V2-Small-hf`) | Валидирован (этот PoC) |
 | 11 | **Claude Code CLI** (Opus 4.6) | Буст IQ, рефлексия, самоулучшение, разработка, мультиагентный режим | Claude Code CLI (локально на Mac Mini M4) | ~1.0-3.0 GB | `npm install -g @anthropic-ai/claude-code` | Используется |
 
 ### История обновлений стека
@@ -155,7 +155,7 @@ Bob переключается между профилями по необход
 | mflux | `uv tool install mflux --with tiktoken --with protobuf --with sentencepiece` | FLUX.2 + Kontext |
 | mlx-audio | `pip install "mlx-audio>=0.1"` | TTS (Qwen3-TTS) + STT (Whisper) |
 | ultralytics | `pip install ultralytics` | YOLO26 (зрение Bob) |
-| depth-anything-v2 | TBD | Depth estimation |
+| transformers + torch | `pip install transformers torch` (модель: `depth-anything/Depth-Anything-V2-Small-hf`) | Depth estimation (MPS на Apple Silicon) |
 | Godot 4.6 | standalone binary | Рендер + UI |
 | Ollama | standalone binary | LLM runtime (Qwen3, Guard, embeddings) |
 | Claude Code CLI | `npm install -g @anthropic-ai/claude-code` | AI-ассистент для разработки |
@@ -296,13 +296,48 @@ ParallaxBackground
 **Вывод:** Kontext надёжно сохраняет идентичность Bob (лицо, бородка, волосы, комбинезон, стиль)
 через совершенно разные сцены и позы. Подход D (AI-генерация спрайтов) валидирован.
 
-### 5.3 Depth Anything V2 — НЕ валидирован
+### 5.3 Depth Anything V2 — ВАЛИДИРОВАН
 
-Требуется:
-- Установить на macOS Apple Silicon
-- Запустить на одном из сгенерированных изображений
-- Проверить качество карты глубины
-- Проверить возможность разделения на слои
+| Параметр | Результат |
+|----------|----------|
+| Модель | `depth-anything/Depth-Anything-V2-Small-hf` (24.8M params) |
+| Runtime | HuggingFace Transformers + PyTorch MPS |
+| Установка | `uv run --with torch --with transformers ...` |
+| Устройство | MPS (Metal Performance Shaders) на M1 Max |
+| Загрузка модели | 53.2s (первый запуск; далее из кэша ~2-5s) |
+| **Inference** | **2.525s** на 1024x768 |
+| RAM | ~300-500 MB |
+| Вход | `bob-preview/bob_bunker_reading.png` (1024x768) |
+| Выход | depth map + 4 parallax-слоя с прозрачностью |
+
+**Качество карты глубины:**
+- Чёткое разделение Bob (передний план) от фона (стена, постер)
+- Средний план (стеллаж, лампа, столик) корректно определён
+- Книга в руках Bob и подлокотник кресла — ближайший план
+- Depth range: нормализован 0.0–1.0, распределение: P10=0.049, P50=0.168, P90=0.341
+
+**Качество слоёв (4 слоя по квантилям глубины):**
+- Layer 0 (far): стена, постер — корректно
+- Layer 1 (mid): стеллаж, лампа, столик, радио — корректно
+- Layer 2 (near): Bob (верхняя часть), кресло — корректно
+- Layer 3 (fg): руки+книга, ноги, подлокотник, пол — корректно
+
+**Артефакты / замечания:**
+- Границы слоёв имеют небольшие зазубрины (edge feathering помогает, но не идеально)
+- Распределение по квантилям (25% пикселей на слой) — простое, но рабочее
+- Для production можно настроить пороги вручную под конкретную сцену
+
+**Скрипт валидации:** `validate_depth.py`
+**Выходные файлы:** `depth-validation/` (depth_map.png + 4 layer PNG)
+
+**Альтернативные варианты (исследованы, не тестировались):**
+- CoreML (Apple official): Small only, ~25ms — для production deployment
+- ONNX + CoreML EP: все размеры, Neural Engine
+- MLX: порт не существует
+
+**Вывод:** Depth Anything V2 Small через HF Transformers + MPS полностью работает
+на Apple Silicon. 2.5s inference + ~0.4 GB RAM — вписывается в профиль DEPTH.
+Для production рассмотреть CoreML (~25ms).
 
 ### 5.4 Godot 2.5D parallax — НЕ валидирован
 
