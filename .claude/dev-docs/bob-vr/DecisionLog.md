@@ -414,6 +414,48 @@ All 8 male outfit options were rendered and compared. casualsuit04 chosen for cl
 
 ---
 
+## D-017: Return to Full 2D + Parallax — The Second Pivot
+
+**Date:** 2026-03-03
+**Context:** After D-010 (switch to 3D), spent two sessions attempting to make Bob sit at a desk:
+- Approach 1 (manual quaternion bone rotation): 6+ iterations, legs bent backwards, "Bob-snake"
+- Approach 2 (SkeletonIK3D): 7+ iterations, legs crossing, kneeling instead of sitting, geometry collisions
+- Approach 3 (Mixamo + Godot retargeting): planned but never attempted
+
+Additionally, fundamental limitation discovered: **AI cannot generate arbitrary 3D environments.**
+No open-source text-to-3D-scene tool works on Apple Silicon (Holodeck needs GPT-4 API, Text2Room is NVIDIA-only, Infinigen only does realistic interiors). Bob cannot "dream up" a spaceship bridge or Mars surface in 3D.
+
+### Decision: Full 2D + Parallax
+
+**Architecture:**
+- **Backgrounds:** FLUX.2 Klein 4B (via mflux) generates any 2D scene Bob wants
+- **Depth:** Depth Anything V2 separates image into parallax layers
+- **Bob:** 2D animated character on top of parallax layers (animation method TBD)
+- **Camera:** Fixed — user observes "Bob's Aquarium" without interaction
+
+**Validation:**
+- Generated Mars scene in 25 seconds (1024x768, q4, 4 steps, M1 Max)
+- Quality: professional concept art level
+- Result: `.claude/dev-docs/bob-vr/mars_parallax_concept.png`
+
+**Why 2D wins this time (different from D-010):**
+- D-010 rejected 2D because hands/gestures needed per-image AI generation (~10 min each)
+- New insight: the ENVIRONMENT is the killer feature, not hand poses
+- Bob's ability to "imagine" any world (Mars, spaceship, cabin) is more valuable than precise finger animation
+- 2D background generation is instant and unlimited
+- 3D character animation is too hard for AI agent to implement autonomously
+
+**What's different from the original 2D approach (pre-D-010):**
+- Original: 2D sprites assembled from parts, parallax room backgrounds
+- New: AI-generated full scene backgrounds, Bob as animated character layer
+- Original failed on hand consistency; new approach sidesteps this with simpler animation
+- Parallax from depth estimation (Depth Anything V2) vs manual layer painting
+
+**Supersedes:** D-010 (switch to 3D), D-011 (MHR character), D-012 (3D validation), D-013 (MPFB2)
+**RFC impact:** Major rewrite needed — 2D architecture replaces 3D Godot pipeline.
+
+---
+
 ## Artifacts from 2D Validation Phase
 
 The following files were generated during 2D validation (Phase 1) and are archived for reference:

@@ -1,13 +1,16 @@
-# Bob VR — Working at Laptop PoC
+# Bob VR — "Bob's World" PoC
 
 ## Goal
 
-Bob's 3D avatar sits in an office chair at a desk and types on a laptop keyboard.
-Long-term vision: Bob autonomously decides poses and animations (e.g., lie in bed → get up → walk to desk → sit → type).
+Bob lives in his own world — an "aquarium" that the user observes but doesn't interact with.
+Bob autonomously generates his environments (Mars, spaceship bridge, cozy cabin) via AI,
+and animates within them. The user watches Bob's life like a digital pet / living screensaver.
+
+**Current direction: Full 2D + Parallax** (see D-017 in DecisionLog.md)
 
 ## Current State (as of 2026-03-03)
 
-### What exists (Phase 1 — bead bob-728, in_progress)
+### What exists (3D phase — to be replaced by 2D)
 
 - `godot/scripts/main.gd` — scene orchestrator, loads Bob GLB at runtime
 - `godot/scripts/idle_animation.gd` — procedural idle: breathing, sway, head micro-movements
@@ -155,7 +158,12 @@ a full sitting pose from scratch.
 
 ---
 
-## Approach 3: Hybrid — Mixamo Animations in Godot — NEXT TO TRY 🎯
+## Approach 3: Hybrid — Mixamo Animations in Godot — SUPERSEDED ⏭️
+
+**Status:** Never attempted. Superseded by D-017 (switch to full 2D).
+The 3D approach has fundamental issues beyond animation: AI cannot generate
+arbitrary 3D environments (spaceship bridge, Mars surface). 2D generation
+via FLUX.2 solves this instantly.
 
 ### Concept
 
@@ -243,6 +251,85 @@ mixamorigRightFoot     → foot_r
   working Mixamo→VRM retargeting in Three.js (bone mapping + quaternion correction)
 - Mixamo: https://www.mixamo.com (free Adobe account required)
 - Godot retargeting docs: AnimationTree + SkeletonProfileHumanoid
+
+---
+
+---
+
+## Approach 4: Full 2D + Parallax — CURRENT DIRECTION 🎯
+
+### Concept
+
+Bob's world is fully 2D. AI (FLUX.2 Klein 4B via mflux) generates any background
+Bob wants. The scene is split into depth layers for parallax effect. Bob is rendered
+as a 2D animated character on top.
+
+**Validated:** Mars scene generated in 25 seconds on M1 Max (q4, 4 steps).
+Result: `.claude/dev-docs/bob-vr/mars_parallax_concept.png`
+
+### Architecture
+
+```
+Fixed camera → User observes "Bob's Aquarium"
+
+Background layers (AI-generated):
+├── Far: sky/space/distant landscape (slowest parallax)
+├── Mid: terrain/walls/mid-ground objects
+├── Near: furniture/props near Bob
+└── Foreground: objects in front of Bob (partial occlusion)
+
+Bob layer:
+├── 2D animated character (method TBD — see Open Questions)
+├── Multiple poses: sitting, standing, walking, typing, lying
+├── Smooth transitions between poses
+└── Interaction with near-layer objects (sitting on chair, typing on laptop)
+
+Depth separation:
+├── Depth Anything V2 → depth map from AI image
+├── Split into 3-5 layers by depth
+└── Parallax shift on subtle camera movement (if any)
+```
+
+### Why this works
+
+1. **Unlimited environments**: FLUX.2 generates anything — Mars, spaceship, cabin, Tokyo café
+2. **25-second generation**: Fast enough for Bob to "redecorate" in real-time
+3. **No 3D mesh problems**: No IK, no bone rotations, no geometry collisions
+4. **Consistent quality**: FLUX.2 output is consistently high quality
+5. **M4 16GB compatible**: q4 model uses ~2GB RAM, leaves room for everything else
+
+### Open questions (for next session)
+
+1. **Bob animation method**: How to animate Bob in 2D?
+   - Spine 2D / DragonBones (skeletal 2D)
+   - AI-generated sprite sheets (consistency problem)
+   - Pre-rendered 3D→2D sprites (render MPFB2 Bob from fixed angle)
+   - Live2D / Inochi2D (VTuber-style)
+
+2. **Bob-environment interaction**: How does Bob "sit on" a 2D chair?
+   - Pre-composed: generate image WITH Bob already in it
+   - Layered: Bob sprite placed between background layers
+   - Hybrid: near objects (chair, desk) are separate sprites Bob interacts with
+
+3. **Animation transitions**: Walking, sitting down, standing up
+   - Sprite sheet approach (pre-rendered frames)
+   - Skeletal 2D deformation
+   - AI-generated transition frames (consistency?)
+
+4. **Parallax implementation**: Godot 2D or web-based?
+   - Godot has ParallaxBackground/ParallaxLayer nodes
+   - Could also be HTML5/Canvas based
+
+5. **Style consistency**: Bob must look the same across all environments
+   - Vault Boy style (D-001) or new style?
+   - How to maintain character identity across generated backgrounds?
+
+### Reference
+
+- Mars concept: `.claude/dev-docs/bob-vr/mars_parallax_concept.png`
+- FLUX.2 Klein 4B via `mflux-generate-flux2` (see D-004 in DecisionLog)
+- [Realtime_Avatar_AI_Companion](https://github.com/igna-s/Realtime_Avatar_AI_Companion) — reference for VRM/animation approach
+- Depth Anything V2 — depth estimation for parallax layer separation
 
 ---
 
