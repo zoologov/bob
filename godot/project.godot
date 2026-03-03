@@ -11,8 +11,12 @@ config_version=5
 [application]
 
 config/name="BobVR"
-run/main_scene="res://scenes/main.tscn"
+run/main_scene="res://scenes/parallax_2d.tscn"
 config/features=PackedStringArray("4.6", "Mobile")
+
+[autoload]
+
+Screenshoter="/tmp/screenshot_parallax.gd"
 
 [display]
 

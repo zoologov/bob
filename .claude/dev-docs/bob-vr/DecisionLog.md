@@ -456,6 +456,100 @@ No open-source text-to-3D-scene tool works on Apple Silicon (Holodeck needs GPT-
 
 ---
 
+## D-018: Parallax Pipeline — Depth Split + Scene Composition Validation
+
+**Date:** 2026-03-04
+**Context:** Validating the full 2.5D parallax pipeline from D-017. Tested depth estimation, layer splitting, Godot rendering, and multi-image generation for scene/character separation.
+
+### What Was Validated
+
+**Depth Anything V2 — PASS:**
+- Model: `depth-anything/Depth-Anything-V2-Small-hf` (24.8M params)
+- Runtime: HuggingFace Transformers + PyTorch MPS
+- Inference: **2.525s** on 1024x768 (M1 Max)
+- RAM: ~300-500 MB — fits M4 16GB DEPTH profile
+- Quality: excellent depth separation between foreground (Bob), mid-ground (furniture), background (wall)
+- Script: `validate_depth.py`, output: `depth-validation/`
+
+**Godot ParallaxBackground — PARTIAL PASS:**
+- 4 depth-split layers load and render correctly in Godot 4.6
+- Camera breathing (sinusoidal ±px) works
+- Problem: **depth-split tears Bob apart** — his upper body is "near" layer, lower body is "foreground" layer, different motion_scale values make them drift apart
+- With uniform motion_scale (0.97–1.01), no visible parallax effect — looks like a single 2D image moving
+- **Conclusion: real parallax requires SEPARATE background and Bob layers, not depth-split of a single image containing Bob**
+
+**Empty room generation — PASS:**
+- FLUX.2 Klein 4B generated `bunker_bg_empty.png` (empty bunker room, no character) in 25 sec
+- Quality: consistent cartoon style, warm lighting, green armchair, bookshelf, desk with lamp and radio
+
+### What FAILED
+
+**Qwen-Image-Edit (multi-image composition) — FAIL:**
+- Goal: take bob_base (identity) + bunker_bg (scene) → generate Bob sitting in that specific armchair
+- q4 quantization: **mosaic/pointillism artifacts**, unusable quality
+- q8 quantization: quality acceptable but **identity lost** — Bob barely resembles reference
+- Performance: q4 = 17 min, q8 = **66 min** (heavy swap on M1 Max 64GB)
+- Full precision: OOM killed (exit code 137) — 54 GB model doesn't fit 64 GB RAM
+- **Not viable for Mac Mini M4 16 GB** (model is 27-54 GB)
+
+### The Fundamental Problem Discovered
+
+**FLUX.1 Kontext dev** preserves Bob's identity perfectly (proven with 4 images). But it accepts **only 1 input image**. To place Bob into a specific scene, we need the model to see BOTH the character reference AND the scene simultaneously. No locally-runnable model does this.
+
+| Tool | Identity | Scene-aware | Local M4 16GB | Status |
+|------|----------|-------------|---------------|--------|
+| Kontext dev | Yes (excellent) | No (1 image input) | Yes (~6 GB q4) | Proven |
+| Qwen-Image-Edit | No (identity lost) | Yes (multi-image) | No (27-54 GB) | Failed |
+| Kontext Max API | Yes | Yes (up to 8 images) | Cloud only ($0.08/img) | Not tested |
+
+### Proposed Solutions (not yet validated)
+
+**Solution A: Kontext side-by-side hack**
+- Stitch `bob_base.png` + `scene.png` into one wide image
+- Prompt: "Place the character from the left into the armchair from the right"
+- Quick to test (~10 min). Documented in ComfyUI community as working with variable quality.
+- Risk: model not trained for this, results may be inconsistent.
+
+**Solution B: LoRA trained on Bob (`mflux-train`)**
+- Train LoRA on 5-10 Bob images → identity "baked" into model weights
+- Then `mflux-generate-fill` with LoRA inserts Bob into any scene with identity preserved
+- Both conditions satisfied simultaneously: identity (LoRA) + scene awareness (fill/inpainting)
+- Requires: dataset preparation, training time (one-time investment)
+- `mflux-train` is available in mflux 0.16.7
+
+### mflux Toolkit Discovery
+
+Full inventory of mflux 0.16.7 (28 commands). Key tools for Bob's World:
+
+| Command | Use Case |
+|---------|----------|
+| `mflux-generate-flux2` | Base background generation (~25 sec) |
+| `mflux-generate-fill` | **Inpainting** — insert objects into scene by mask (lighting/style consistent) |
+| `mflux-generate-kontext` | Bob identity preservation (single reference image) |
+| `mflux-generate-depth` | Depth-conditioned generation |
+| `mflux-generate-redux` | Multi-image style/content transfer |
+| `mflux-train` | **LoRA finetuning** — train custom LoRA on Bob images |
+
+Also discovered `rembg` (PyPI) with `isnet-anime` model — specifically trained for cartoon/anime character background removal. Not yet tested.
+
+### Revised Architecture: "Bob's World" as Compositional Pipeline
+
+```
+AI generates ASSETS (sprites) → Godot COMPOSES them into scene
+
+1. Background: FLUX.2 → empty room
+2. Objects: mflux-generate-fill → inpaint furniture into scene (consistent lighting)
+3. Bob poses: Kontext (identity) → rembg (extract sprite) → overlay in Godot
+4. Lighting: Godot CanvasModulate / shaders (instant, no generation)
+5. Parallax: Depth Anything V2 on background → depth layers in Godot
+```
+
+**Open problem:** Step 3 generates Bob "in a generic armchair", not in the specific armchair from Step 2. Solutions A and B above address this.
+
+**RFC impact:** Architecture section needs major update — compositional pipeline vs single-image generation.
+
+---
+
 ## Artifacts from 2D Validation Phase
 
 The following files were generated during 2D validation (Phase 1) and are archived for reference:
