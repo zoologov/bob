@@ -630,3 +630,78 @@ The following files were generated during 2D validation (Phase 1) and are archiv
 - `3D_AVATAR_RESEARCH.md` — Intermediate research document
 
 **Key learnings preserved in this Decision Log and RFC-Proof-of-VR-Concept.md.**
+
+---
+
+## D-020: Identity Persistence — LoRA + Automated Validation
+
+**Date:** 2026-03-04
+**Context:** During Point-and-Click sprite generation (bob-0zw), discovered that Kontext inset-method does NOT preserve Bob's facial identity. Each generation produces a character matching the description (blonde, jumpsuit) but with a **different face**. Also, Bob's scale relative to scene elements (furniture, bookshelf) is inconsistent — Kontext decides character size compositionally, ignoring proportion instructions.
+
+### Problem Analysis
+
+| Issue | Cause | Severity |
+|-------|-------|----------|
+| Face identity drift | Kontext uses holistic visual matching, not face embeddings | Critical |
+| Inconsistent proportions | No size control in Kontext — model "feels" what looks right | High |
+| No automated QA | Human must visually check every generation | Blocks autonomy |
+
+### Research Findings
+
+Comprehensive analysis of identity-preserving generation methods (2025-2026):
+
+| Method | FLUX Support | Identity Quality | Mac M4 Viable | In mflux |
+|--------|:---:|:---:|:---:|:---:|
+| **LoRA (DreamBooth)** | Yes | Very High | Yes (native) | **Yes (train + infer)** |
+| FLUX.2 multi-reference | Yes | Excellent | TBD | Not yet |
+| PuLID-FLUX | Yes | High (faces) | Partial (ComfyUI) | No |
+| IP-Adapter FLUX | Yes | Medium (style) | Partial | No |
+| InstantID | No (SDXL only) | High | N/A | N/A |
+| PhotoMaker V2 | No (SDXL only) | High | N/A | N/A |
+
+Validation tools tested on actual Bob cartoon images:
+
+| Tool | Works on Cartoons? | Speed | Memory |
+|------|:---:|---:|---:|
+| face_recognition (dlib) | **Yes** (cosine 0.92+) | 0.3s | 126 MB |
+| YOLOv8 nano | **Yes** (conf 0.90+) | 0.06s | 6 MB |
+| CLIP (open_clip) | **Yes** (style sim 0.94) | 0.3s | 340 MB |
+| MediaPipe Pose | **Yes** (33 landmarks) | 0.03s | 9 MB |
+| DeepFace ArcFace | Yes (needs TF) | 1.3s | 1.1 GB |
+
+### Decision: Two-Phase Strategy
+
+**Phase 1: Automated Validation Pipeline (immediate)**
+- Build `validate_bob.py` with 4-tier checks
+- Auto-retry failed generations with different seed
+- This enables autonomous generation with quality guarantees
+- Curate 5-10 best Bob images for Phase 2 training data
+
+**Phase 2: Bob LoRA Fine-Tuning (after Phase 1)**
+- Train DreamBooth LoRA via `mflux-train` on curated Bob images
+- Load LoRA during all future generation: `--lora-paths bob_identity.safetensors`
+- Bob's face becomes a learned feature, not a prompt instruction
+- Identity persistence guaranteed at model weight level
+
+**Phase 3 (future): FLUX.2 multi-reference**
+- Monitor mflux releases for FLUX.2-dev support
+- Up to 10 reference images simultaneously
+- Native identity without fine-tuning
+
+### Rationale
+
+- LoRA is the only method that works **natively in mflux on Apple Silicon** with proven quality
+- mflux supports both training (`mflux-train`) and inference (`--lora-paths`) since v0.5.0
+- Validation pipeline is needed regardless of generation method — it's the quality gate
+- Phase 1 produces training data for Phase 2 as a side effect — no wasted work
+
+### Technical Notes
+
+- LoRA does NOT work with pre-quantized 4-bit models. Must load full-precision and quantize on-the-fly (`-q 8`)
+- face_recognition library requires `setuptools<=75` for `pkg_resources` compatibility
+- CLIP similarity between poses in same style: 0.94; between ref and pose: 0.70-0.71; style drift threshold: < 0.65
+- YOLOv8 correctly returns 0 persons on empty bunker background — useful for scene-only validation
+
+**RFC impact:** New section needed — Identity Persistence Architecture. Updates to generation pipeline in D-019.
+**Related beads:** bob-0zw (sprite generation), bob-2a2 (epic)
+**Related doc:** `identity-persistence-plan.md` (detailed implementation plan)

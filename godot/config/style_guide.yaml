@@ -1,0 +1,142 @@
+# Bob's World — Style Guide Config
+# This file is the SINGLE SOURCE OF TRUTH for all visual generation.
+# ALWAYS read this before generating any image (background, sprite, pose).
+# Updated: 2026-03-04
+
+# --- Art Style ---
+art_style:
+  name: "Vault-Tec Cartoon"
+  description: "Stylized cartoon with realistic proportions. Inspired by Fallout Vault Boy promotional art but with anatomically correct 7-8 head proportions."
+  prompt_suffix: "stylized cartoon illustration, clean bold outlines, cel shading, flat colors with subtle gradients, Fallout Vault-Tec retro-futuristic 1950s aesthetic"
+  negative_prompt: "photorealistic, 3D render, anime, chibi, pixel art, watercolor, oil painting"
+
+# --- Bob Character ---
+bob:
+  age: 36
+  hair:
+    style: "short messy blonde"
+    color: "blonde"
+  facial_hair: "light stubble goatee"
+  eyes: "blue, sharp"
+  expression: "charming confident smirk, Ryan Reynolds vibe"
+  build: "average athletic, 180cm"
+  proportions: "stylized Vault Boy proportions ~5 heads tall, slightly large head — this is intentional and part of the charm"
+  reference_image: "bob-preview/bob_base_vaultboy.png"  # GOLDEN STANDARD — do not regenerate
+  outfit:
+    default: "blue vault jumpsuit with yellow trim, brown leather boots, no accessories"
+    no_accessories: "no pip-boy, no gadgets, no watches, no backpacks"
+  identity_anchor: "blonde messy hair, light stubble, blue eyes, charming smirk, blue vault jumpsuit"
+  # Reference image size (square, for character sheet)
+  reference_size: 768  # 768x768
+  reference_background: "solid bright green background for chroma key removal"
+  # Full prompt block for Bob character reference
+  prompt_block: "36 year old man, short blonde hair, light stubble goatee, blue eyes, charming confident smirk, wearing blue vault jumpsuit with yellow trim and brown leather boots, no accessories, Vault Boy stylized proportions"
+
+# --- Environment ---
+environment:
+  current_theme: "fallout_bunker"
+  themes:
+    fallout_bunker:
+      name: "Vault-Tec Bunker"
+      description: "Underground vault shelter, retro-futuristic 1950s"
+      prompt_block: "underground vault bunker room interior, retro-futuristic 1950s, concrete walls with exposed pipes and rivets, vault-tec propaganda posters, industrial ceiling lights mixed with warm floor lamps, metal door with round handle"
+      furniture:
+        - "comfortable reading armchair with ottoman"
+        - "tall wooden bookshelf packed with old books"
+        - "small wooden side table with coffee mug"
+        - "floor lamp with warm yellow lampshade"
+        - "old desk with scattered papers and desk lamp"
+        - "wall-mounted radio receiver"
+        - "framed world map on wall"
+        - "storage crates and toolbox in corner"
+        - "small area rug on concrete floor"
+        - "coat rack near door"
+      lighting: "warm amber ambient from multiple sources, soft shadows, cozy atmosphere"
+
+# --- Camera & Resolution ---
+camera:
+  # All images use this resolution
+  width: 1280
+  height: 768
+  # Wide angle — full room visible wall-to-wall
+  fov: "wide angle, full room visible from wall to wall"
+  # Bob should be 20-25% of frame height when standing
+  bob_scale: "character occupies 20-25% of frame height when standing"
+  perspective: "slight low angle, eye level approximately at character waist height"
+
+# --- Quality Constraints (CRITICAL) ---
+quality:
+  spatial_rules:
+    - "NO object collisions — every item must have clear separation and own floor space"
+    - "NO duplicate objects — exactly one of each furniture item, no ghost copies"
+    - "correct relative scale — chair seat height ~45cm, bookshelf ~200cm, lamp ~170cm, door ~210cm"
+    - "proper grounding — all objects touch the floor, no floating furniture"
+    - "consistent perspective — all objects follow same vanishing point"
+    - "clear walkable path — open floor space between furniture for character movement"
+  proportion_rules:
+    - "Bob standing height equals roughly door height minus 15%"
+    - "furniture sized relative to Bob — armchair seat at Bob knee height"
+    - "bookshelf taller than Bob by 10-20%"
+  negative_prompt_spatial: "overlapping objects, duplicate furniture, floating objects, inconsistent scale, distorted perspective, objects clipping through each other, misaligned shadows"
+
+# --- Generation Commands Reference ---
+commands:
+  flux2_background: |
+    mflux-generate-flux2 \
+      --base-model flux2-klein-4b \
+      --width {camera.width} --height {camera.height} \
+      --steps 4 --quantize 4 --seed {seed} \
+      --prompt "{environment.prompt_block}, {environment.furniture joined}, {environment.lighting}, {camera.fov}, {camera.bob_scale}, {camera.perspective}, {art_style.prompt_suffix}, {quality.negative_prompt_spatial}" \
+      --negative-prompt "{art_style.negative_prompt}, {quality.negative_prompt_spatial}" \
+      --output {output_path}
+
+  kontext_pose: |
+    mflux-generate-kontext \
+      --model akx/FLUX.1-Kontext-dev-mflux-4bit \
+      --width {camera.width} --height {camera.height} \
+      --steps 24 --seed {seed} \
+      --image-path {inset_input_path} \
+      --prompt "Place the character from the small reference photo in the top-left corner into this scene. {pose_description}. {bob.identity_anchor}. Remove the reference photo. {art_style.prompt_suffix}" \
+      --output {output_path}
+
+  rembg_extract: |
+    uv run --with "rembg[cpu,cli]" --with pillow rembg i -m isnet-anime {input} {output}
+
+# --- Automated Validation (D-020) ---
+validation:
+  script: "godot/tools/validate_bob.py"
+  reference: "bob-preview/bob_base_vaultboy.png"
+  tools:
+    person_detection:
+      model: "yolov8n"  # 6 MB
+      min_confidence: 0.7
+      height_range_standing: [40, 85]  # % of frame
+      height_range_sitting: [30, 65]   # % of frame
+    face_identity:
+      library: "face_recognition"  # dlib-based, 128-d embeddings
+      max_distance: 0.6            # euclidean, calibrated on Bob cartoon
+      min_cosine_sim: 0.90         # cosine similarity
+    style_consistency:
+      model: "ViT-B-32"           # open_clip
+      min_similarity: 0.65        # cosine similarity
+    inset_removal:
+      check_corner: true          # verify top-left corner has no white rectangle
+  retry:
+    max_attempts: 5
+    seed_increment: 100           # seed_start, +100, +200, ...
+  training_data:
+    output_dir: "godot/assets/training_data/bob_identity/"
+    curate_threshold:             # stricter thresholds for LoRA training data
+      max_face_distance: 0.5
+      min_style_sim: 0.70
+      min_person_height_pct: 50
+
+# --- Post-Generation Checklist ---
+# After EVERY generation, verify:
+# [ ] No object collisions or overlaps
+# [ ] No duplicate/ghost objects
+# [ ] Correct proportions (Bob ~20-25% frame height)
+# [ ] All furniture grounded on floor
+# [ ] Consistent perspective across scene
+# [ ] Art style matches (cartoon, not photorealistic)
+# [ ] Bob identity preserved (hair, goatee, eyes, jumpsuit)
