@@ -28,6 +28,8 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
+import numpy as np
+
 from PIL import Image
 
 # Import validation from sibling module
@@ -160,6 +162,24 @@ POSE_LIBRARY: dict[str, PoseSpec] = {
         seed_start=600,
     ),
 }
+
+
+# ---------------------------------------------------------------------------
+# Utilities
+# ---------------------------------------------------------------------------
+
+
+def _json_safe(val: object) -> object:
+    """Convert numpy types to native Python types for JSON serialization."""
+    if isinstance(val, (np.bool_, bool)):
+        return bool(val)
+    if isinstance(val, (np.integer, int)):
+        return int(val)
+    if isinstance(val, (np.floating, float)):
+        return float(val)
+    if isinstance(val, np.ndarray):
+        return val.tolist()
+    return val
 
 
 # ---------------------------------------------------------------------------
@@ -332,12 +352,13 @@ def generate_pose(
         attempt_info = {
             "seed": seed,
             "status": "PASS" if result.passed else "FAIL",
-            "person_conf": result.person_confidence,
-            "person_height": result.person_height_pct,
-            "face_dist": result.face_distance,
-            "face_cos": result.face_cosine_sim,
-            "style_sim": result.style_similarity,
-            "inset_ok": result.inset_removed,
+            "person_conf": _json_safe(result.person_confidence),
+            "person_height": _json_safe(result.person_height_pct),
+            "face_dist": _json_safe(result.face_distance),
+            "face_cos": _json_safe(result.face_cosine_sim),
+            "face_dino": _json_safe(result.face_dino_similarity),
+            "style_sim": _json_safe(result.style_similarity),
+            "inset_ok": _json_safe(result.inset_removed),
             "errors": result.errors,
         }
         attempts_log.append(attempt_info)

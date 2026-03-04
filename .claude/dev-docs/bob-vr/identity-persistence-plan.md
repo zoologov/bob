@@ -143,10 +143,24 @@ def generate_pose(
 
 **Retry strategy:**
 - Seed sequence: 42, 142, 242, 342, 442 (max 5 attempts)
-- Each attempt ~8 min → worst case ~40 min per pose
+- Each attempt ~11 min on M1 Max (1280x768, 24 steps) → worst case ~55 min per pose
 - Log all attempts with validation scores for analysis
 
-### 1.5 Pose Library (8 poses for PoC scenario)
+### 1.5 Phase 1 Generation Results (2026-03-04)
+
+**Test: sitting_reading pose, 5 attempts — ALL FAILED**
+
+| Seed | Person | ArcFace dist | ArcFace cos | DINOv2 face | Style | Result |
+|------|:---:|:---:|:---:|:---:|:---:|:---:|
+| 42 | 0.872 | 28.3 | 0.43 | 0.58 | 0.70 | FAIL |
+| 142 | 0.893 | 32.5 | 0.36 | 0.69 | 0.71 | FAIL |
+| 242 | 0.883 | 31.1 | 0.36 | 0.67 | 0.73 | FAIL |
+| 342 | 0.878 | — | — | — | 0.72 | FAIL (no face) |
+| 442 | 0.878 | 30.5 | 0.34 | 0.73 | 0.70 | FAIL |
+
+**Conclusion:** Kontext inset-method preserves style (0.70-0.73) and pose, but does NOT preserve face identity (dist 28-33 vs threshold <20). Validation pipeline works correctly. **Phase 2 (LoRA) is required** for face persistence.
+
+### 1.6 Pose Library (8 poses for PoC scenario)
 
 | # | Name | Prompt Description | Require Face |
 |---|------|-------------------|:---:|
@@ -159,17 +173,16 @@ def generate_pose(
 | 7 | sitting_down | Lowering into armchair, one hand on armrest, book in other hand | Yes |
 | 8 | reading_new_book | Sitting comfortably in armchair, reading a different book, content smile | Yes |
 
-### 1.6 Dataset Curation for Phase 2
+### 1.7 Dataset Curation for Phase 2
 
-During Phase 1 generation, save ALL validated images (not just final sprites) as LoRA training candidates.
+**Updated strategy (2026-03-04):** Phase 1 generation produced 0 validated images (all faces different). Original plan to curate from validated generations is not viable. New approach:
 
-**Criteria for good training image:**
-- Face clearly visible (face_distance < 0.5 — stricter than validation threshold)
-- Style similarity > 0.70
-- Bob fills significant portion of frame (height > 50%)
-- Variety: different poses, angles, expressions
+1. Use `bob_base_vaultboy.png` as the **anchor** (this IS Bob's face)
+2. Generate 5-8 portrait variations of Bob on green/solid background via Kontext
+3. Manually curate — select those with closest face to reference
+4. Crop existing assets where Bob is visible
 
-**Target:** 10-15 curated images for Phase 2 training.
+**Target:** 8-12 curated images for Phase 2 training.
 
 **Storage:** `godot/assets/training_data/bob_identity/`
 
@@ -179,25 +192,30 @@ During Phase 1 generation, save ALL validated images (not just final sprites) as
 
 ### 2.1 Goal
 
-Train a DreamBooth LoRA adapter that teaches FLUX to recognize Bob by a trigger token (e.g., `sks bob` or `vaultboy bob`). After training, any generation using the LoRA will produce OUR Bob — same face, same proportions, same style.
+Train a DreamBooth LoRA adapter that teaches FLUX to recognize Bob by a trigger token (`vaultboy_bob`). After training, any generation using the LoRA will produce OUR Bob — same face, same proportions, same style.
 
 ### 2.2 Prerequisites
 
-- Phase 1 complete: 10-15 curated high-quality Bob images
-- mflux v0.5.0+ (current: 0.16.7) — LoRA training supported
+- Phase 1 validation pipeline complete and tested
+- mflux v0.5.0+ (current: 0.16.7) — LoRA training supported via `mflux-train`
 
-### 2.3 Training Data Preparation
+### 2.3 Training Data Preparation (Updated 2026-03-04)
 
-**From Phase 1 (primary):**
-- 10-15 best validated Kontext generations
-- Variety of poses (front, 3/4, side)
-- Consistent Vault-Tec cartoon style
-- Cropped to focus on Bob (512x512 or 768x768)
+**Strategy:** Generate portrait variations from reference, NOT from scene compositions.
 
-**From existing assets (supplement):**
-- `bob_base_vaultboy.png` — golden standard (crop to 768x768)
-- `bob_inset_test.png` — Bob in bunker scene (crop Bob region)
-- `bob_bunker_reading.png` — Bob reading (crop Bob region)
+**Step 1 — Anchor image:**
+- `bob_base_vaultboy.png` — golden standard, crop to 512x512 or 768x768
+
+**Step 2 — Generate portrait variations via Kontext:**
+- Use bob_base_vaultboy.png as input image (NOT inset-method)
+- Generate 5-8 variations: different angles (front, 3/4, side), expressions, lighting
+- Solid green/neutral background for clean crops
+- Manually curate — keep only those where face matches reference
+
+**Step 3 — Crop from existing assets:**
+- `bob_bunker_reading.png` — crop Bob region
+- `bob_spaceship_bridge.png` — crop Bob region
+- `bob_mars_fallout.png` — crop Bob region (if face visible)
 
 **Image preparation:**
 ```bash
