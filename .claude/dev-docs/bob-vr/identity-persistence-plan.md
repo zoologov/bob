@@ -197,49 +197,68 @@ Train a DreamBooth LoRA adapter that teaches FLUX to recognize Bob by a trigger 
 ### 2.2 Prerequisites
 
 - Phase 1 validation pipeline complete and tested
-- mflux v0.5.0+ (current: 0.16.7) — LoRA training supported via `mflux-train`
+- mflux v0.16.7 — LoRA **inference** supported (`--lora-paths`), training NOT supported
+- LoRA training: ai-toolkit Mac fork or cloud (fal.ai, Replicate)
 
 ### 2.3 Training Data Preparation (Updated 2026-03-04)
 
-**Strategy:** Generate portrait variations from reference, NOT from scene compositions.
+**Research findings (2026-03-04):** Comprehensive research of 15+ tools for consistent character generation. Full report in conversation history.
 
-**Step 1 — Anchor image:**
-- `bob_base_vaultboy.png` — golden standard, crop to 512x512 or 768x768
+#### Tier 1: Flux Kontext Turnaround Sheet LoRA (TRY FIRST)
 
-**Step 2 — Generate portrait variations via Kontext:**
-- Use bob_base_vaultboy.png as input image (NOT inset-method)
-- Generate 5-8 variations: different angles (front, 3/4, side), expressions, lighting
-- Solid green/neutral background for clean crops
-- Manually curate — keep only those where face matches reference
+**What:** Specialized LoRA from Civitai that generates 5-view turnaround sheet (front, 3/4 left, left profile, back, right profile) from a single character image.
 
-**Step 3 — Crop from existing assets:**
+- **Source:** [civitai.com/models/1753109](https://civitai.com/models/1753109/flux-kontext-character-turnaround-sheet-lora)
+- **Runs on:** Mac M1 Max via mflux + `--lora-paths`
+- **Cartoon support:** Explicitly designed for "illustrated/stylized characters"
+- **Trigger prompt:** "create turnaround sheet of this exact character, 5 full-body poses on pure white background: front view, 3/4 left, left profile, back view, right profile -- evenly spaced in a clean horizontal row"
+- **Caveat:** LoRA requires full-precision model (`--model black-forest-labs/FLUX.1-Kontext-dev -q 8`), NOT pre-quantized 4-bit
+
+**Pipeline:**
+1. Download turnaround LoRA from Civitai
+2. Run: `mflux-generate-kontext --model black-forest-labs/FLUX.1-Kontext-dev -q 8 --lora-paths turnaround.safetensors --image-path bob_base_vaultboy.png --prompt "..." --output turnaround.png`
+3. Split panoramic output into 5 individual images
+4. Validate each with `validate_bob.py`
+5. Supplement with 3-5 crops from existing assets
+
+#### Tier 2: Blender MPFB2 + Cel Shading (IF TIER 1 INSUFFICIENT)
+
+**What:** Create 3D Bob in Blender, render from 8-12 angles with cel-shading.
+
+- **MPFB2 v2.0.14** (Feb 2026) — `cartoon01` asset pack for ~5-head proportions
+- **Shader:** Shader to RGB + ColorRamp (Constant) + Freestyle outlines = Vault-Tec look
+- **Batch render:** Python script for 8-12 camera positions
+- **Effort:** 4-6 hours modeling + shading
+- **Guarantee:** Perfect geometric consistency (same 3D model)
+
+#### Tier 3: Cloud Fallback
+
+- **StdGEN** (CVPR 2025): Best for anime/cartoon single-img→3D. CUDA only. RunPod ~$0.50-2/hr
+- **CharForge**: Full automated pipeline (sheet→caption→LoRA). 48GB VRAM required.
+- **fal.ai / Replicate**: Cloud LoRA training, ~$1-5 per training run
+
+#### Supplementary crops from existing assets:
+- `bob_base_vaultboy.png` — golden standard, crop to 1024x1024
 - `bob_bunker_reading.png` — crop Bob region
 - `bob_spaceship_bridge.png` — crop Bob region
 - `bob_mars_fallout.png` — crop Bob region (if face visible)
 
-**Image preparation:**
-```bash
-# Crop and resize to 512x512 for training
-uv run --with pillow python3 -c "
-from PIL import Image
-img = Image.open('source.png')
-# Crop to Bob region, resize to 512x512
-bob_region = img.crop((x1, y1, x2, y2))
-bob_region = bob_region.resize((512, 512), Image.LANCZOS)
-bob_region.save('training_data/bob_001.png')
-"
-```
+**Target:** 8-12 curated images at 1024x1024, solid background, consistent face.
 
 ### 2.4 Training Configuration
 
-**mflux-train config (JSON):**
+**Tool:** ai-toolkit Mac fork ([github.com/hughescr/ai-toolkit](https://github.com/hughescr/ai-toolkit)) for local training, or fal.ai for cloud.
+
+**Note:** mflux does NOT support LoRA training (inference only). ai-toolkit requires `num_workers=0` on Mac, no T5 quantizer.
+
+**Config:**
 ```json
 {
     "model": "black-forest-labs/FLUX.1-dev",
     "data_dir": "godot/assets/training_data/bob_identity/",
     "output_dir": "godot/assets/lora/",
     "trigger_word": "vaultboy_bob",
-    "resolution": 512,
+    "resolution": 1024,
     "train_steps": 1000,
     "learning_rate": 1e-4,
     "lora_rank": 16,
@@ -251,10 +270,10 @@ bob_region.save('training_data/bob_001.png')
 **Key parameters:**
 - `lora_rank: 16` — good balance of quality/size for character identity
 - `train_steps: 1000` — typical for 10-15 image dataset
-- `resolution: 512` — standard for LoRA training, saves memory
+- `resolution: 1024` — optimal for FLUX LoRA (updated from 512)
 - Checkpoints at 250, 500, 750, 1000 steps for quality comparison
 
-**Expected training time on Mac M1 Max 32GB:** 1-4 hours
+**Expected training time on Mac M1 Max 32GB:** 3-5x slower than NVIDIA → 3-12 hours
 **Expected LoRA size:** ~50-150 MB
 
 ### 2.5 Inference with LoRA
