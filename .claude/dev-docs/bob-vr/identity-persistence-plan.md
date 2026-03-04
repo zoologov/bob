@@ -212,12 +212,19 @@ Train a DreamBooth LoRA adapter that teaches FLUX to recognize Bob by a trigger 
 - **Runs on:** Mac M1 Max via mflux + `--lora-paths`
 - **Cartoon support:** Explicitly designed for "illustrated/stylized characters"
 - **Trigger prompt:** "create turnaround sheet of this exact character, 5 full-body poses on pure white background: front view, 3/4 left, left profile, back view, right profile -- evenly spaced in a clean horizontal row"
-- **Caveat:** LoRA requires full-precision model (`--model black-forest-labs/FLUX.1-Kontext-dev -q 8`), NOT pre-quantized 4-bit
+- **Download:** HuggingFace (no auth): [reverentelusarca/kontext-turnaround-sheet-lora-v1](https://huggingface.co/reverentelusarca/kontext-turnaround-sheet-lora-v1)
+- **File:** `kontext-turnaround-sheet-v1.safetensors` (344 MB)
+- **Verified (2026-03-04):** LoRA WORKS with pre-quantized 4-bit model (`akx/FLUX.1-Kontext-dev-mflux-4bit`). Applied 494 layers, 988/988 keys matched. Previous assumption about requiring full-precision was WRONG.
 
-**Pipeline:**
-1. Download turnaround LoRA from Civitai
-2. Run: `mflux-generate-kontext --model black-forest-labs/FLUX.1-Kontext-dev -q 8 --lora-paths turnaround.safetensors --image-path bob_base_vaultboy.png --prompt "..." --output turnaround.png`
-3. Split panoramic output into 5 individual images
+**Test results (2026-03-04):**
+- 512x512, 4 steps, seed 42 → 27 sec, generated 3-view turnaround (front, 3/4, back). Blonde hair, blue jumpsuit, brown boots preserved. Low quality due to minimal steps.
+- 1280x768 parallel generation → OOM on M1 Max 32GB (two simultaneous mflux processes)
+- **Decision:** Do NOT generate turnaround sheets. Instead, generate individual views at 1024x1024 for maximum face quality.
+
+**Updated pipeline:**
+1. Download turnaround LoRA from HuggingFace ✅
+2. Generate individual views (NOT sheets) at 1024x1024, 24 steps, one at a time
+3. Prompts per view: "front view of this exact character on pure white background, full body, consistent lighting"
 4. Validate each with `validate_bob.py`
 5. Supplement with 3-5 crops from existing assets
 
@@ -290,14 +297,12 @@ mflux-generate-kontext \
   --output output.png
 ```
 
-**Important:** LoRA does NOT work with pre-quantized models. Use full-precision base + quantize on-the-fly:
-```bash
-mflux-generate-kontext \
-  --model black-forest-labs/FLUX.1-Kontext-dev \
-  -q 8 \
-  --lora-paths godot/assets/lora/bob_identity.safetensors \
-  ...
-```
+**Update (2026-03-04):** LoRA DOES work with pre-quantized 4-bit models (tested with turnaround LoRA — 494 layers, 988/988 keys). No need for full-precision download (~24 GB). The `akx/FLUX.1-Kontext-dev-mflux-4bit` model works fine.
+
+**RAM constraints:**
+- M1 Max 32GB: one generation at a time (two parallel → OOM)
+- Mac Mini M4 16GB (target): 1024x1024 should work, 1280x768 may be tight. Test needed.
+- Never run parallel mflux processes
 
 ### 2.6 Validation (same pipeline as Phase 1)
 
