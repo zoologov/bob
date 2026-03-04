@@ -120,7 +120,7 @@ Bob переключается между профилями по необход
 
 ## 3. Стек LLM / AI-моделей
 
-### Полный стек Bob (актуален на 2026-03-03)
+### Полный стек Bob (актуален на 2026-03-04)
 
 | # | Модель | Назначение | Runtime | RAM | Установка | Статус |
 |---|--------|-----------|---------|-----|-----------|--------|
@@ -130,11 +130,24 @@ Bob переключается между профилями по необход
 | 4 | **Whisper Large-v3-Turbo** | STT (слух Bob) | mlx-audio | ~3.0 GB | (то же — mlx-audio) | RFC |
 | 5 | **Qwen3Guard-Gen-0.6B** (q4) | ContentGuard | Ollama | ~0.9 GB | `ollama pull sileader/qwen3guard:0.6b` | Обновлено (замена LlamaGuard) |
 | 6 | **nomic-embed-text** | SemanticMemory embeddings | Ollama | ~0.3 GB | `ollama pull nomic-embed-text` | Обновлено (замена MiniLM) |
-| 7 | **YOLO26n** | Зрение Bob (камера с гимбалом) | ultralytics | ~0.3 GB | `pip install ultralytics` | Обновлено (замена YOLOv8) |
+| 7 | **YOLO11n** | Зрение Bob (камера с гимбалом) + валидация спрайтов | ultralytics | ~0.3 GB | `pip install ultralytics` | Валидирован (D-020) |
 | 8 | **FLUX.2 Klein 4B** (q4) | Генерация "мира" Боба, самого Боба | mflux | ~2.0 GB | `uv tool install mflux --with tiktoken --with protobuf --with sentencepiece` | Валидирован (D-004) |
 | 9 | **FLUX.1 Kontext dev** (q4) | Айдентика и стабильность "мира" и Боба, одежда, Боб в сцене, элементы окружения | mflux | ~6.0 GB | (то же — mflux, модель: `akx/FLUX.1-Kontext-dev-mflux-4bit`) | Валидирован (этот PoC) |
-| 10 | **Depth Anything V2** (Small) | Карта глубины → parallax слои | HF Transformers + MPS | ~0.4 GB | `pip install transformers torch` (модель: `depth-anything/Depth-Anything-V2-Small-hf`) | Валидирован (этот PoC) |
-| 11 | **Claude Code CLI** (Opus 4.6) | Буст IQ, рефлексия, самоулучшение, разработка, мультиагентный режим | Claude Code CLI (локально на Mac Mini M4) | ~1.0-3.0 GB | `npm install -g @anthropic-ai/claude-code` | Используется |
+| 10 | ~~**Depth Anything V2** (Small)~~ | ~~Карта глубины → parallax слои~~ | ~~HF Transformers + MPS~~ | ~~~0.4 GB~~ | ~~`pip install transformers torch`~~ | Валидирован (D-017), исключён (D-019: 2.5D parallax отклонён) |
+| 11 | **InsightFace ArcFace** (buffalo_l) | Валидация идентичности Bob — 512-d face embeddings | onnxruntime | ~0.5 GB | `pip install insightface onnxruntime` | Валидирован (D-020) |
+| 12 | **DINOv2-base** (Meta) | Fine-grained face crop similarity (cartoon identity) | HF Transformers + MPS | ~0.33 GB | `pip install transformers torch` (модель: `facebook/dinov2-base`) | Валидирован (D-020) |
+| 13 | **CLIP ViT-L-14** (OpenAI) | Стилистическая консистентность (Vault-Tec aesthetic) | open-clip-torch | ~0.9 GB | `pip install open-clip-torch` | Валидирован (D-020) |
+| 14 | **Claude Code CLI** (Opus 4.6) | Буст IQ, рефлексия, самоулучшение, разработка, мультиагентный режим | Claude Code CLI (локально на Mac Mini M4) | ~1.0-3.0 GB | `npm install -g @anthropic-ai/claude-code` | Используется |
+
+#### Профиль: VALIDATION (валидация спрайтов Bob, D-020)
+
+| Модель | Назначение | RAM |
+|--------|-----------|-----|
+| YOLO11n | Person detection + bbox | ~0.3 GB |
+| InsightFace ArcFace (buffalo_l) | Face identity (512-d embeddings) | ~0.5 GB |
+| DINOv2-base | Face crop similarity (fine-grained) | ~0.33 GB |
+| CLIP ViT-L-14 | Style consistency | ~0.9 GB |
+| **Итого** | | **~2.0 GB** |
 
 ### История обновлений стека
 
@@ -144,9 +157,12 @@ Bob переключается между профилями по необход
 | Qwen2.5-7B-Q4 | **Qwen3-8B** | Апгрейд поколения, Qwen3-4B ≈ Qwen2.5-72B |
 | Llama Guard 3-1B-INT4 | **Qwen3Guard-Gen-0.6B** | Компактнее (484 vs 923 MB), 119 языков, Apache 2.0, tri-class |
 | all-MiniLM-L6-v2 | **nomic-embed-text** | Устарел (2021), 512→8K контекст, значительно лучше качество |
-| YOLOv8 | **YOLO26n** | Меньше (2.4M vs 3.2M), быстрее, точнее (40.9 vs 37.3 mAP) |
+| YOLOv8 | **YOLO11n** | Быстрее, точнее; YOLO26n пока не стабилен в ultralytics |
 | Stable Diffusion | **FLUX.2 + Kontext + Depth Anything V2** | mflux не поддерживает SD; FLUX.2 качественнее |
 | Kokoro TTS | **Qwen3-TTS-0.6B + Whisper** (через mlx-audio) | Единый пакет STT+TTS, нативный Apple Silicon |
+| face_recognition (dlib, 128-d) | **InsightFace ArcFace** (512-d) | 4x больше embedding, кардинально лучше на cartoon faces |
+| CLIP ViT-B-32 (face crop) | **DINOv2-base** | 70% vs 15% на fine-grained visual tasks |
+| CLIP ViT-B-32 (style) | **CLIP ViT-L-14** | 3x больше модель, +12% accuracy |
 
 ### Зависимости (pip / uv)
 
@@ -154,8 +170,10 @@ Bob переключается между профилями по необход
 |-------|-------------------|-----------|
 | mflux | `uv tool install mflux --with tiktoken --with protobuf --with sentencepiece` | FLUX.2 + Kontext |
 | mlx-audio | `pip install "mlx-audio>=0.1"` | TTS (Qwen3-TTS) + STT (Whisper) |
-| ultralytics | `pip install ultralytics` | YOLO26 (зрение Bob) |
-| transformers + torch | `pip install transformers torch` (модель: `depth-anything/Depth-Anything-V2-Small-hf`) | Depth estimation (MPS на Apple Silicon) |
+| ultralytics | `pip install ultralytics` | YOLO11n (зрение Bob + валидация) |
+| transformers + torch | `pip install transformers torch` | Depth Anything V2 + DINOv2 (MPS на Apple Silicon) |
+| insightface + onnxruntime | `pip install insightface onnxruntime` | ArcFace face identity (D-020) |
+| open-clip-torch | `pip install open-clip-torch` | CLIP ViT-L-14 style consistency (D-020) |
 | Godot 4.6 | standalone binary | Рендер + UI |
 | Ollama | standalone binary | LLM runtime (Qwen3, Guard, embeddings) |
 | Claude Code CLI | `npm install -g @anthropic-ai/claude-code` | AI-ассистент для разработки |

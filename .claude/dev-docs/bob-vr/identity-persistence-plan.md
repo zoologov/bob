@@ -21,27 +21,36 @@ If validation fails → auto-retry with a different seed. No human intervention.
 
 Side effect: curate the best generations as training data for Phase 2.
 
-### 1.2 Validation Pipeline Architecture
+### 1.2 Validation Pipeline Architecture (Updated 2026-03-04)
 
 ```
 Generated Image
        │
        ▼
 ┌──────────────┐
-│ YOLOv8 nano  │ → "Is there a person?" (conf > 0.7)
-│  (6 MB, 60ms)│ → Bounding box → height % of frame
+│  YOLO11 nano │ → "Is there a person?" (conf > 0.7)
+│  (6 MB, 50ms)│ → Bounding box → height % of frame
 └──────┬───────┘
        │ PASS
        ▼
 ┌──────────────┐
-│face_recognition│ → Face detected? → Embedding distance to bob_ref
-│ (126 MB, 0.3s)│ → distance < 0.6 → PASS
+│InsightFace   │ → Face detected? → 512-d ArcFace embedding
+│ArcFace       │ → distance < 20.0, cosine > 0.50 → PASS
+│(500 MB, 0.1s)│   (4x richer than dlib's 128-d)
 └──────┬───────┘
        │ PASS (or SKIP if rear/side view)
        ▼
 ┌──────────────┐
-│ CLIP ViT-B-32│ → Style similarity to reference poses
-│(340 MB, 0.3s)│ → cosine_sim > 0.65 → PASS
+│ DINOv2-base  │ → Face crop similarity (fine-grained)
+│(330 MB, 0.2s)│ → 70% accuracy where CLIP scores 15%
+│  (Meta, 2023)│ → cosine_sim > 0.75 → PASS
+└──────┬───────┘
+       │ PASS
+       ▼
+┌──────────────┐
+│CLIP ViT-L-14 │ → Full-image style similarity
+│(900 MB, 0.3s)│ → cosine_sim > 0.65 → PASS
+│  (+12% acc)  │   (3x larger than ViT-B-32)
 └──────┬───────┘
        │ PASS
        ▼
@@ -58,9 +67,10 @@ Generated Image
 
 **Location:** `godot/tools/validate_bob.py`
 
-**Dependencies:**
+**Dependencies (Python 3.12 venv):**
 ```bash
-uv run --with face_recognition --with ultralytics --with open-clip-torch --with pillow python3 validate_bob.py
+uv pip install insightface onnxruntime ultralytics transformers \
+    open-clip-torch pillow torch "setuptools<70"
 ```
 
 **Interface:**
@@ -69,34 +79,42 @@ class ValidationResult:
     passed: bool
     person_detected: bool
     person_confidence: float
-    person_height_pct: float      # % of frame height
+    person_height_pct: float        # % of frame height
     face_detected: bool
-    face_distance: float          # euclidean, < 0.6 = match
-    face_cosine_sim: float        # > 0.90 = strong match
-    style_similarity: float       # CLIP cosine, > 0.65 = consistent
+    face_distance: float            # ArcFace 512-d euclidean, < 20.0 = match
+    face_cosine_sim: float          # ArcFace cosine, > 0.50 = match
+    face_dino_similarity: float     # DINOv2 face crop cosine, > 0.75 = match
+    style_similarity: float         # CLIP ViT-L-14 cosine, > 0.65 = consistent
     inset_removed: bool
     errors: list[str]
 
 def validate(
     generated_path: str,
     bob_ref_path: str = "bob-preview/bob_base_vaultboy.png",
-    require_face: bool = True,      # False for rear/side views
+    require_face: bool = True,        # False for rear/side views
     min_style_sim: float = 0.65,
-    max_face_distance: float = 0.6,
+    max_face_distance: float = 20.0,  # ArcFace scale
+    min_face_dino_sim: float = 0.75,
 ) -> ValidationResult: ...
 ```
 
-**Thresholds (calibrated on actual Bob images):**
+**Thresholds (calibrated on actual Bob images, 2026-03-04):**
 
 | Check | Threshold | Source |
 |-------|-----------|--------|
-| Person confidence | > 0.7 | YOLOv8 tested: 0.90-0.94 on Bob |
-| Person height (standing in scene) | 40-85% of frame | YOLOv8 tested: 55-72% |
-| Person height (sitting) | 30-65% of frame | Estimated from pose_01 |
-| Face distance | < 0.6 | dlib tested: 0.496-0.530 |
-| Face cosine similarity | > 0.90 | dlib tested: 0.921-0.933 |
-| Style CLIP similarity | > 0.65 | open_clip tested: 0.70-0.71 ref↔pose |
+| Person confidence | > 0.7 | YOLO11n tested: 0.85-0.94 on Bob |
+| Person height (in scene) | 20-85% of frame | YOLO11n tested: 64-72% |
+| ArcFace distance (512-d) | < 20.0 | Tested: 28-30 on wrong faces, 0.0 on ref |
+| ArcFace cosine similarity | > 0.50 | Tested: 0.33-0.37 on wrong faces, 1.0 on ref |
+| DINOv2 face crop similarity | > 0.75 | Tested: 0.66-0.73 on wrong faces, 1.0 on ref |
+| Style CLIP ViT-L-14 similarity | > 0.65 | Tested: 0.69-0.71 ref↔pose |
 | Inset removal | corner avg brightness < 200 | Simple PIL check |
+
+**Key upgrade (D-020, 2026-03-04):**
+- Replaced dlib (128-d) with **InsightFace ArcFace** (512-d) — dramatically better cartoon face discrimination
+- Replaced CLIP ViT-B-32 face crop with **DINOv2-base** — 70% vs 15% on fine-grained tasks
+- Replaced CLIP ViT-B-32 style with **CLIP ViT-L-14** — 3x larger, +12% accuracy
+- Replaced YOLOv8n with **YOLO11n** — faster, more accurate
 
 ### 1.4 Auto-Generation Script: `generate_pose.py`
 

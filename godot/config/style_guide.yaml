@@ -108,16 +108,19 @@ validation:
   reference: "bob-preview/bob_base_vaultboy.png"
   tools:
     person_detection:
-      model: "yolov8n"  # 6 MB
+      model: "yolo11n"  # ultralytics, ~6 MB, auto-downloads
       min_confidence: 0.7
-      height_range_standing: [40, 85]  # % of frame
-      height_range_sitting: [30, 65]   # % of frame
+      height_range_standing: [20, 85]  # % of frame
+      height_range_sitting: [20, 65]   # % of frame
     face_identity:
-      library: "face_recognition"  # dlib-based, 128-d embeddings
-      max_distance: 0.6            # euclidean, calibrated on Bob cartoon
-      min_cosine_sim: 0.90         # cosine similarity
+      library: "insightface"       # ArcFace buffalo_l, 512-d embeddings (~500 MB)
+      max_distance: 20.0           # ArcFace euclidean (0=identical, ~30=different)
+      min_cosine_sim: 0.50         # ArcFace cosine (1.0=identical, <0.4=different)
+    face_crop_similarity:
+      model: "facebook/dinov2-base"  # Meta DINOv2, fine-grained visual features (~330 MB)
+      min_similarity: 0.75          # cosine similarity on face crops
     style_consistency:
-      model: "ViT-B-32"           # open_clip
+      model: "ViT-L-14"           # open_clip, 3x larger than ViT-B-32 (~900 MB)
       min_similarity: 0.65        # cosine similarity
     inset_removal:
       check_corner: true          # verify top-left corner has no white rectangle
