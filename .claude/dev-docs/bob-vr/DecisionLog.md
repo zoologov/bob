@@ -550,6 +550,70 @@ AI generates ASSETS (sprites) → Godot COMPOSES them into scene
 
 ---
 
+## D-019: Pivot from 2.5D Parallax to 2D Point-and-Click with AI Sprites
+
+**Date:** 2026-03-04
+**Context:** Session 2 of 2.5D PoC. Validated full pipeline but discovered fundamental limitations.
+
+### What was validated
+
+| Discovery | Result | Details |
+|-----------|--------|---------|
+| **Kontext inset-method** | WORKS | Bob-ref (192x256) в углу сцены 1024x768 → Kontext генерирует Bob в сцене с полной айдентикой. Лучше side-by-side (полное разрешение, лучше identity) |
+| **rembg isnet-anime** | WORKS | Чистая вырезка Bob-спрайта с прозрачным фоном за <5 сек |
+| **Полный пайплайн** | WORKS | FLUX.2(bg) → PIL(inset) → Kontext(Bob в сцене) → rembg(sprite) → Godot |
+| **Camera breathing** | WORKS | Двойная синусоида, живая атмосфера |
+
+### What failed
+
+| Approach | Problem |
+|----------|---------|
+| Depth-split parallax (4 layers + Bob) | Bob spans multiple depth bands → tears apart at different motion_scale |
+| Cutout Bob from background layers | Cutout hole moves differently than Bob sprite → black shadows |
+| Blur-inpaint Bob area | Ghost blob visible in foreground layer |
+| Two-layer (scene 0.97 + Bob 1.0) | rembg edges imperfect → background Bob ghost visible through sprite edges |
+| Single layer + camera breathing | Works but NO parallax depth — just a 2D screensaver |
+
+### Key insight: wrong architecture for "living" Bob
+
+2.5D parallax — wrong goal. Real problems:
+1. **0 animation** — no blinking, breathing, movement. Static images = screensavers.
+2. **8 min per pose** — too slow for real-time. Bob can't "live" fluidly.
+3. **No scene movement** — Bob frozen in one position per generation.
+
+### Decision: Pivot to 2D Point-and-Click with AI Sprites
+
+**New architecture (inspired by Monkey Island / Broken Sword):**
+
+- **Background**: AI generates wide-shot room (FLUX.2, once per location)
+- **Bob sprites**: AI generates pose library (standing, sitting, walking, reading, etc.) — batch overnight via Kontext inset-method
+- **Godot animates**: Places Bob sprite at coordinates in scene, tween movement, crossfade between poses
+- **Micro-animation**: Shader-based breathing (sine distortion), sprite-swap blinking, head micro-tween
+- **New poses/scenes**: Generated in background during idle / overnight (Bob's "reflection" process)
+
+**Target scenario for next PoC:**
+```
+Bob sits reading → stands up → walks to bookshelf → browses books →
+picks new book → walks back → sits down → reads again
+(breathing + blinking throughout)
+```
+
+**Required sprites (~6-8, pre-generated):**
+1. Sitting reading (current)
+2. Standing idle
+3. Walking left
+4. Walking right
+5. Standing at bookshelf (browsing)
+6. Reaching for book
+7. Sitting down (transition)
+8. Eyes-closed variants (for blink)
+
+**Generation budget:** ~8 min × 8 sprites = ~64 min (batch overnight).
+
+**RFC impact:** Major pivot. 2.5D parallax dropped. 2D point-and-click adventure style adopted. AI generates ASSETS, Godot ANIMATES.
+
+---
+
 ## Artifacts from 2D Validation Phase
 
 The following files were generated during 2D validation (Phase 1) and are archived for reference:
