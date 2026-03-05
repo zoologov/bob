@@ -53,7 +53,7 @@ Optional: `--quantize 4` if OOM on full precision (32GB M1 Max).
 5. Generate 8 pose sprites for PoC scene
 
 **Key files:**
-- Plan: `.claude/dev-docs/bob-vr/identity-persistence-plan.md`
+- Plan: `.claude/dev-docs/bob-vr/current.md`
 - Training config: `godot/assets/training_data/bob_identity/train.json`
 - Training data: `godot/assets/training_data/bob_identity/`
 - Training output: `godot/assets/lora/bob_identity_training/`

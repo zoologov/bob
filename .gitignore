@@ -60,6 +60,9 @@ avatar/.godot/
 avatar/export/
 *.import
 
+# YOLO model weights (large binaries)
+yolo*.pt
+
 # Logs
 *.log
 logs/
