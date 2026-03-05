@@ -43,12 +43,12 @@ Background (FLUX.2, wide shot, no Bob):
 |  --------------- floor ----------------   |
 +-------------------------------------------+
 
-Bob (separate sprites, Kontext + LoRA + rembg):
+Bob (separate sprites, FLUX.2 Klein Edit + LoRA + rembg):
 standing  walking  sitting  reading  at shelf
 ```
 
 - **Background:** FLUX.2 Klein 4B (~25 sec)
-- **Bob sprites:** FLUX.1 Kontext + LoRA for identity persistence
+- **Bob sprites:** FLUX.2 Klein Edit + LoRA for identity persistence (~1:50 per generation)
 - **Sprite extraction:** rembg with isnet-anime (<5 sec)
 - **Micro-animation (no new generations):**
   - Breathing: Godot shader -- sine deformation of chest area
@@ -56,7 +56,7 @@ standing  walking  sitting  reading  at shelf
   - Head micro-movements: tween on sprite region
 - **Macro-animation (pre-generated sprite library):**
   - Pose set: standing, sitting, walking, reading, reaching (~6-8 poses)
-  - Generation: batch overnight (~8 min x 8 = 64 min)
+  - Generation: batch (~1:50 x 8 = ~15 min)
   - Godot: crossfade between poses + tween movement across scene
 - **Target PoC scenario:**
   sitting reading -> stood up -> walked to bookshelf -> took a book -> walked back -> sat down -> reading
@@ -85,7 +85,7 @@ ML models load sequentially, not simultaneously. Bob switches between profiles a
 
 | Profile    | Models                                      | RAM      |
 |------------|---------------------------------------------|----------|
-| SCENE_GEN  | FLUX.2 Klein 4B (q4) + FLUX.1 Kontext (q4) | ~8.0 GB  |
+| SCENE_GEN  | FLUX.2 Klein 4B (q4) + FLUX.2 Klein Edit (q4) | ~4.0 GB  |
 | BRAIN      | Qwen3-8B + Qwen3-0.6B + Guard + embeddings | ~8.6 GB  |
 | VOICE      | Qwen3-TTS-0.6B + Whisper Large-v3-Turbo     | ~4.5 GB  |
 | VISION     | YOLO11n (camera)                            | ~0.3 GB  |
@@ -108,7 +108,7 @@ Peak usage: ~8.6 GB (BRAIN) out of 12.5 GB budget. ~4 GB headroom.
 | 6 | nomic-embed-text | SemanticMemory embeddings | Ollama | ~0.3 GB | Updated |
 | 7 | YOLO11n | Vision (camera) + sprite validation | ultralytics | ~0.3 GB | Validated (D-020) |
 | 8 | FLUX.2 Klein 4B (q4) | Background generation | mflux | ~2.0 GB | Validated |
-| 9 | FLUX.1 Kontext dev (q4) | Bob in scene (inset/LoRA) | mflux | ~6.0 GB | Validated |
+| 9 | FLUX.2 Klein Edit (q4) | Bob in scene (multi-image + LoRA) | mflux | ~2.0 GB | Validated (D-021) |
 | 10 | InsightFace ArcFace (buffalo_l) | Face identity (512-d embeddings) | onnxruntime | ~0.5 GB | Validated (D-020) |
 | 11 | DINOv2-base (Meta) | Face crop similarity (fine-grained) | HF Transformers + MPS | ~0.33 GB | Validated (D-020) |
 | 12 | CLIP ViT-L-14 (OpenAI) | Style consistency | open-clip-torch | ~0.9 GB | Validated (D-020) |
@@ -121,15 +121,16 @@ Peak usage: ~8.6 GB (BRAIN) out of 12.5 GB budget. ~4 GB headroom.
 ## 6. Visual Generation Pipeline
 
 ```
-FLUX.2 Klein 4B          FLUX.1 Kontext + LoRA        rembg isnet-anime
+FLUX.2 Klein 4B          FLUX.2 Klein Edit + LoRA      rembg isnet-anime
   (background)      -->    (Bob in scene)         -->   (sprite extraction)
-   ~25 sec                    ~8 min                       <5 sec
+   ~25 sec                    ~1:50                       <5 sec
    1280x768                  1280x768                    transparent PNG
+   mflux-generate-flux2      mflux-generate-flux2-edit
 ```
 
-- **Kontext inset-method:** Bob reference (192x256) placed in top-left corner of scene image (1280x768). Kontext understands the task and removes the inset.
-- **LoRA (Phase 2):** trained on 8 images with trigger word `vaultboy_bob`. Intended to replace or augment the inset-method for better face identity.
-- **Validation:** `godot/tools/validate_bob.py` -- automated identity check (YOLO11n -> ArcFace -> DINOv2 -> CLIP -> inset removal).
+- **FLUX.2 Klein Edit (D-021):** Multi-image conditioning via `--image-paths scene.png bob_ref.png` -- no inset hack needed. 4 steps (vs 24 on old Kontext). Proper proportions, unified scene composition.
+- **LoRA (Phase 2):** trained on 8 images with trigger word `vaultboy_bob` via `mflux-train` on `flux2-klein-4b` (natively supported). Intended to lock face identity across poses.
+- **Validation:** `godot/tools/validate_bob.py` -- automated identity check (YOLO11n -> ArcFace -> DINOv2 -> CLIP).
 - **Auto-generation:** `godot/tools/generate_pose.py` -- generate + validate + retry loop (up to 5 seeds).
 - **RAM constraint:** NEVER run parallel mflux processes (OOM on M1 Max 32GB with two 1280x768).
 

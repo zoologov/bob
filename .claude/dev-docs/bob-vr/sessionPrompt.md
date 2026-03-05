@@ -1,11 +1,12 @@
-We're working on Bob's World — 2D Point-and-Click PoC. Identity Persistence (D-020), Phase 2 — LoRA Training.
+We're working on Bob's World — 2D Point-and-Click PoC. Identity Persistence (D-020/D-021), Phase 2 — LoRA Training on FLUX.2 Klein.
 
 **What's done:**
 - Phase 1 (validation pipeline) COMPLETED
 - Phase 2 training data: 8 images generated, validated, captioned
-- Training tool: `mflux-train` (native MLX, already installed)
-- Training config: `godot/assets/training_data/bob_identity/train.json` — validated via --dry-run
-- Old YAML config (ai-toolkit) replaced with mflux-native JSON
+- D-021: Migrated from FLUX.1 Kontext to FLUX.2 Klein Edit
+- FLUX.2 Klein Edit test WITHOUT LoRA: best result ever (1:50, proper proportions, unified scene)
+- Training tool: `mflux-train` (native MLX, v0.16.7)
+- Training config needs update: change model from "dev" to "flux2-klein-4b"
 
 **Training dataset (8 images + captions):**
 
@@ -20,48 +21,34 @@ We're working on Bob's World — 2D Point-and-Click PoC. Identity Persistence (D
 | 7 | bob_action_s48.png | action pose | PASS: ArcFace 16.24, DINOv2 0.926, CLIP 0.927 |
 | 8 | bob_reference.png | front (golden ref) | Reference image (bob_base_vaultboy.png) |
 
-**CURRENT TASK — start LoRA training:**
+**CURRENT TASK — update config + start LoRA training:**
 
-```bash
-mflux-train --model dev --config godot/assets/training_data/bob_identity/train.json
-```
+1. Update train.json: change `"model": "dev"` to `"model": "flux2-klein-4b"`
+2. Run: `mflux-train --config godot/assets/training_data/bob_identity/train.json`
+3. Optional: `--quantize 4` if OOM
 
-Optional: `--quantize 4` if OOM on full precision (32GB M1 Max).
+**After training:**
+1. Find best checkpoint
+2. Test: `mflux-generate-flux2-edit --model flux2-klein-4b --quantize 4 --image-paths scene.png bob_ref.png --lora-paths <checkpoint> --prompt "Place vaultboy_bob..." --steps 4 --output test.png`
+3. Validate with validate_bob.py
+4. Generate 8 pose sprites
 
-**Training config summary:**
-- Model: FLUX.1-dev (via mflux native MLX)
-- Epochs: 125 (= ~1000 steps on 8 images)
-- LoRA rank: 16, lr: 1e-4, AdamW
-- Checkpoints: every 25 epochs (~200 steps) → `godot/assets/lora/bob_identity_training/`
-- Preview: 1024x1024 every 25 epochs
-- Trigger word in captions: `vaultboy_bob`
-
-**After training completes:**
-1. Find best checkpoint (lowest loss / best preview quality)
-2. Test inference:
-   ```bash
-   mflux-generate-kontext \
-     --model akx/FLUX.1-Kontext-dev-mflux-4bit \
-     --lora-paths godot/assets/lora/bob_identity_training/checkpoints/<best>.zip \
-     --width 1280 --height 768 --steps 24 --seed 42 \
-     --image-path godot/assets/scenes/bunker_wide.png \
-     --prompt "Place vaultboy_bob into this scene sitting in armchair reading a book" \
-     --output test_lora_output.png
-   ```
-3. Validate with: `source godot/tools/.venv/bin/activate && python godot/tools/validate_bob.py test_lora_output.png`
-4. If PASS → rename best checkpoint to `bob_identity.safetensors`
-5. Generate 8 pose sprites for PoC scene
+**New pipeline (D-021):**
+- Background: `mflux-generate-flux2` (FLUX.2 Klein 4B, ~25 sec)
+- Bob in scene: `mflux-generate-flux2-edit` + LoRA (~1:50, multi-image, no inset)
+- Sprite: rembg isnet-anime (<5 sec)
 
 **Key files:**
 - Plan: `.claude/dev-docs/bob-vr/current.md`
+- General: `.claude/dev-docs/bob-vr/general.md`
+- Decisions: `.claude/dev-docs/bob-vr/decisionLog.md`
 - Training config: `godot/assets/training_data/bob_identity/train.json`
 - Training data: `godot/assets/training_data/bob_identity/`
 - Training output: `godot/assets/lora/bob_identity_training/`
-- Turnaround LoRA (used for data generation): `godot/assets/lora/kontext-turnaround-sheet-v1.safetensors`
 - Validation: `godot/tools/validate_bob.py`
 - Style guide: `godot/config/style_guide.yaml`
 - Bob ref: `.claude/dev-docs/bob-vr/bob-preview/bob_base_vaultboy.png`
-- Venv: `godot/tools/.venv`
+- FLUX.2 test result: `/tmp/flux2_edit_test.png`
 - Bead: `bob-0zw` (in_progress)
 
 Language: Russian. Commits: yes, push: no.

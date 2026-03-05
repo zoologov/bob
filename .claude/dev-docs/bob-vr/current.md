@@ -132,18 +132,17 @@ def generate_pose(
     seed_start: int = 42,     # initial seed
 ) -> str:                     # path to validated sprite
     """
-    1. Create inset (bob_ref in corner of scene)
-    2. Run mflux-generate-kontext
-    3. Validate result
-    4. If FAIL: retry with seed += 100
-    5. If PASS: run rembg, save sprite
-    6. Return sprite path
+    1. Run mflux-generate-flux2-edit with scene + bob_ref as --image-paths
+    2. Validate result
+    3. If FAIL: retry with seed += 100
+    4. If PASS: run rembg, save sprite
+    5. Return sprite path
     """
 ```
 
 **Retry strategy:**
 - Seed sequence: 42, 142, 242, 342, 442 (max 5 attempts)
-- Each attempt ~11 min on M1 Max (1280x768, 24 steps) → worst case ~55 min per pose
+- Each attempt ~1:50 on M1 Max (1280x768, 4 steps, FLUX.2 Klein) → worst case ~10 min per pose
 - Log all attempts with validation scores for analysis
 
 ### 1.5 Phase 1 Generation Results (2026-03-04)
@@ -233,7 +232,7 @@ Turnaround LoRA used for data generation: `godot/assets/lora/kontext-turnaround-
 
 ```json
 {
-  "model": "dev",
+  "model": "flux2-klein-4b",
   "data": "./",
   "seed": 42,
   "steps": 24,
@@ -260,7 +259,7 @@ Turnaround LoRA used for data generation: `godot/assets/lora/kontext-turnaround-
 ```
 
 **Key parameters:**
-- `model: dev` — FLUX.1-dev base model
+- `model: flux2-klein-4b` — FLUX.2 Klein 4B base model (mflux v0.16.0+ dropped FLUX.1 training)
 - `lora_rank: 16` — good balance of quality/size for character identity
 - `num_epochs: 125` × 8 images = ~1000 total training steps
 - `resolution: 1024` — matches training image size
@@ -269,10 +268,12 @@ Turnaround LoRA used for data generation: `godot/assets/lora/kontext-turnaround-
 
 **Training command:**
 ```bash
-mflux-train --model dev --config godot/assets/training_data/bob_identity/train.json
+mflux-train --model flux2-klein-4b --config godot/assets/training_data/bob_identity/train.json
 # Optional: --quantize 4 if OOM on full precision
 # Optional: --low-ram for reduced memory usage
 ```
+
+**Note:** mflux v0.16.0 dropped FLUX.1 training support entirely, making FLUX.2 Klein the required training path.
 
 **Expected training time on Mac M1 Max 32GB:** several hours (native MLX, faster than PyTorch MPS)
 **Expected LoRA size:** ~50-150 MB
@@ -281,17 +282,22 @@ mflux-train --model dev --config godot/assets/training_data/bob_identity/train.j
 
 **Generation command:**
 ```bash
-mflux-generate-kontext \
-  --model akx/FLUX.1-Kontext-dev-mflux-4bit \
+mflux-generate-flux2-edit \
+  --model flux2-klein-4b --quantize 4 \
   --width 1280 --height 768 \
-  --steps 24 --seed 42 \
+  --steps 4 --seed 42 \
   --lora-paths godot/assets/lora/bob_identity.safetensors \
-  --image-path <scene_with_inset> \
+  --image-paths scene.png bob_ref.png \
   --prompt "Place vaultboy_bob into this scene. He is sitting in the armchair reading a book. stylized cartoon, Vault-Tec aesthetic" \
   --output output.png
 ```
 
-**Update (2026-03-04):** LoRA DOES work with pre-quantized 4-bit models (tested with turnaround LoRA — 494 layers, 988/988 keys). No need for full-precision download (~24 GB). The `akx/FLUX.1-Kontext-dev-mflux-4bit` model works fine.
+**Update (2026-03-05):** Migrated from `mflux-generate-kontext` (FLUX.1) to `mflux-generate-flux2-edit` (FLUX.2 Klein). Key changes:
+- Multi-image input via `--image-paths` (scene + Bob reference) — no inset method needed
+- 4 steps instead of 24, generation time ~1:50 (vs ~11 min with Kontext) — ~6x faster
+- LoRA works with `--quantize 4` on FLUX.2 Klein (no pre-quantized model download needed)
+
+**Previous (2026-03-04):** LoRA DOES work with pre-quantized 4-bit models (tested with turnaround LoRA — 494 layers, 988/988 keys).
 
 **RAM constraints:**
 - M1 Max 32GB: one generation at a time (two parallel → OOM)
@@ -313,6 +319,23 @@ After LoRA training, validate with the same `validate_bob.py`:
 | Face cosine sim | 0.92-0.93 | > 0.96 |
 | First-try validation pass rate | ~50% (estimated) | > 85% |
 | Visual identity ("is this Bob?") | Sometimes | Always |
+
+### 2.8 FLUX.2 Klein Edit Test (2026-03-05)
+
+**Command:** `mflux-generate-flux2-edit --model flux2-klein-4b --quantize 4 --image-paths scene.png bob_ref.png --steps 4 --seed 42`
+
+**Result: BEST quality ever achieved (without LoRA)**
+- Time: 1:50 (vs 11 min Kontext) — ~6x faster
+- Bob correctly placed in armchair, reading book, proper proportions
+- Hands correct (5 fingers visible), natural posing (feet on ottoman)
+- Scene feels unified (not composited), lighting matches
+- Cartoon style with bold outlines preserved
+
+**Remaining issues (expected to fix with LoRA):**
+- Beard/stubble rendered in general strokes (needs more detail)
+- Eyes/pupils slightly cross-eyed
+
+**Decision: D-021** — migrate entire pipeline to FLUX.2 Klein
 
 ---
 
@@ -383,7 +406,7 @@ bob-2a2 (epic)
   │   ├── Phase 1.2: generate_pose.py ✅
   │   ├── Phase 1.3: training data (8 images + captions) ✅
   │   ├── Phase 2.1: mflux-train config ✅
-  │   ├── Phase 2.2: train Bob LoRA ← CURRENT
+  │   ├── Phase 2.2: train Bob LoRA on FLUX.2 Klein ← CURRENT
   │   ├── Phase 2.3: validate LoRA quality
   │   └── Phase 2.4: generate 8 pose sprites with LoRA
   ├── bob-4gd [BLOCKED] — shader breathing

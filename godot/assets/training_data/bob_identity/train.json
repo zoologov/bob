@@ -19,7 +19,7 @@
   },
   "checkpoint": {
     "save_frequency": 25,
-    "output_path": "../../lora/bob_identity_training"
+    "output_path": "godot/assets/lora/bob_identity_training"
   },
   "monitoring": {
     "preview_width": 1024,

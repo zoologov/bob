@@ -705,3 +705,24 @@ Validation tools tested on actual Bob cartoon images:
 **RFC impact:** New section needed — Identity Persistence Architecture. Updates to generation pipeline in D-019.
 **Related beads:** bob-0zw (sprite generation), bob-2a2 (epic)
 **Related doc:** `identity-persistence-plan.md` (detailed implementation plan)
+
+---
+
+## D-021: Switch from FLUX.1 Kontext to FLUX.2 Klein Edit Pipeline (2026-03-05)
+
+**Context:** mflux v0.16.0 removed FLUX.1 LoRA training support, making our planned FLUX.1 LoRA training impossible on current tools. Investigation revealed FLUX.2 Klein Edit (`mflux-generate-flux2-edit`) supports multi-image conditioning natively.
+
+**Test result (without LoRA):**
+- Command: `mflux-generate-flux2-edit --model flux2-klein-4b --quantize 4 --image-paths scene.png bob_ref.png --prompt "Place the cartoon Vault Boy character..." --steps 4 --seed 42`
+- Time: 1:50 (vs 11 min on Kontext) — ~6x faster
+- Quality: BEST result ever achieved — Bob correctly placed in scene, proper proportions, lighting, cartoon style preserved, scene feels like a single unified image (not composited)
+- Positives: correct body proportions, proper hands (5 fingers), natural posing (sitting with feet on ottoman), scene not distorted, lighting on Bob matches scene
+- Negatives: beard/stubble rendered in "general" strokes, eyes (pupils) look slightly cross-eyed — expected to improve with LoRA
+
+**Decision:** Migrate entire pipeline from FLUX.1 Kontext to FLUX.2 Klein:
+- Background: `mflux-generate-flux2` (already in use)
+- Bob in scene: `mflux-generate-flux2-edit` (replaces Kontext inset-method)
+- LoRA training: `mflux-train` on flux2-klein-4b (natively supported in v0.16.7)
+- No more inset hack, no version downgrades needed
+
+**Impact:** Unified FLUX.2 stack — faster generation, native LoRA training, cleaner pipeline. Supersedes D-020 Phase 2 approach (FLUX.1 LoRA).
