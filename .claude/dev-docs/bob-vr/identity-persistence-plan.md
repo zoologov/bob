@@ -1,7 +1,7 @@
 # Identity Persistence Plan — Bob's World
 
-> **Status:** Active
-> **Date:** 2026-03-04
+> **Status:** Active — Phase 2 Training
+> **Date:** 2026-03-05 (updated)
 > **Decision:** D-020
 > **Goal:** Bob autonomously generates sprites with strictly persistent appearance
 
@@ -173,16 +173,26 @@ def generate_pose(
 | 7 | sitting_down | Lowering into armchair, one hand on armrest, book in other hand | Yes |
 | 8 | reading_new_book | Sitting comfortably in armchair, reading a different book, content smile | Yes |
 
-### 1.7 Dataset Curation for Phase 2
+### 1.7 Dataset Curation for Phase 2 — COMPLETED (2026-03-05)
 
-**Updated strategy (2026-03-04):** Phase 1 generation produced 0 validated images (all faces different). Original plan to curate from validated generations is not viable. New approach:
+**Strategy:** Used turnaround LoRA (`kontext-turnaround-sheet-v1.safetensors`) to generate 7 individual views at 1024x1024 + bob_base_vaultboy.png as 8th reference.
 
-1. Use `bob_base_vaultboy.png` as the **anchor** (this IS Bob's face)
-2. Generate 5-8 portrait variations of Bob on green/solid background via Kontext
-3. Manually curate — select those with closest face to reference
-4. Crop existing assets where Bob is visible
+**Final training dataset (8 images with captions):**
 
-**Target:** 8-12 curated images for Phase 2 training.
+| # | File | View | ArcFace | DINOv2 | CLIP Style |
+|---|------|------|:---:|:---:|:---:|
+| 1 | bob_front_s42.png | front | 14.09 | 0.941 | 0.880 |
+| 2 | bob_3q_left_s43.png | 3/4 left | no face | — | 0.900 |
+| 3 | bob_left_profile_s44.png | left profile | no face | — | 0.874 |
+| 4 | bob_back_s45.png | back | no face | — | 0.886 |
+| 5 | bob_3q_right_s46.png | 3/4 right | 15.23 | 0.886 | 0.862 |
+| 6 | bob_sitting_s47.png | sitting | 15.12 | 0.909 | 0.855 |
+| 7 | bob_action_s48.png | action pose | 16.24 | 0.926 | 0.927 |
+| 8 | bob_reference.png | front (golden ref) | ref | ref | ref |
+
+4/7 passed full identity check. 3 no face detected (back=expected, profile=too sharp angle, 3/4 left=unexpected). Style consistency excellent across all (0.85-0.93). All 8 images useful for LoRA training.
+
+Each image has a matching `.txt` caption file with trigger word `vaultboy_bob` + description.
 
 **Storage:** `godot/assets/training_data/bob_identity/`
 
@@ -194,93 +204,77 @@ def generate_pose(
 
 Train a DreamBooth LoRA adapter that teaches FLUX to recognize Bob by a trigger token (`vaultboy_bob`). After training, any generation using the LoRA will produce OUR Bob — same face, same proportions, same style.
 
-### 2.2 Prerequisites
+### 2.2 Prerequisites — ALL MET (2026-03-05)
 
-- Phase 1 validation pipeline complete and tested
-- mflux v0.16.7 — LoRA **inference** supported (`--lora-paths`), training NOT supported
-- LoRA training: ai-toolkit Mac fork or cloud (fal.ai, Replicate)
+- Phase 1 validation pipeline complete and tested ✅
+- Training data: 8 images with captions ready ✅ (see §1.7)
+- **mflux-train** (native MLX) — supports LoRA DreamBooth training since v0.5.0 ✅
+- Training config validated via `--dry-run` ✅
 
-### 2.3 Training Data Preparation (Updated 2026-03-04)
+### 2.3 Training Data — COMPLETED
 
-**Research findings (2026-03-04):** Comprehensive research of 15+ tools for consistent character generation. Full report in conversation history.
+See §1.7 for full dataset. 8 images with `.txt` caption files, trigger word `vaultboy_bob`.
 
-#### Tier 1: Flux Kontext Turnaround Sheet LoRA (TRY FIRST)
+Turnaround LoRA used for data generation: `godot/assets/lora/kontext-turnaround-sheet-v1.safetensors` (344 MB, from HuggingFace reverentelusarca/kontext-turnaround-sheet-lora-v1). Individual views at 1024x1024, 24 steps.
 
-**What:** Specialized LoRA from Civitai that generates 5-view turnaround sheet (front, 3/4 left, left profile, back, right profile) from a single character image.
+### 2.4 Training Configuration (Updated 2026-03-05)
 
-- **Source:** [civitai.com/models/1753109](https://civitai.com/models/1753109/flux-kontext-character-turnaround-sheet-lora)
-- **Runs on:** Mac M1 Max via mflux + `--lora-paths`
-- **Cartoon support:** Explicitly designed for "illustrated/stylized characters"
-- **Trigger prompt:** "create turnaround sheet of this exact character, 5 full-body poses on pure white background: front view, 3/4 left, left profile, back view, right profile -- evenly spaced in a clean horizontal row"
-- **Download:** HuggingFace (no auth): [reverentelusarca/kontext-turnaround-sheet-lora-v1](https://huggingface.co/reverentelusarca/kontext-turnaround-sheet-lora-v1)
-- **File:** `kontext-turnaround-sheet-v1.safetensors` (344 MB)
-- **Verified (2026-03-04):** LoRA WORKS with pre-quantized 4-bit model (`akx/FLUX.1-Kontext-dev-mflux-4bit`). Applied 494 layers, 988/988 keys matched. Previous assumption about requiring full-precision was WRONG.
+**Tool: `mflux-train`** (native MLX on Apple Silicon) — best option for local training.
 
-**Test results (2026-03-04):**
-- 512x512, 4 steps, seed 42 → 27 sec, generated 3-view turnaround (front, 3/4, back). Blonde hair, blue jumpsuit, brown boots preserved. Low quality due to minimal steps.
-- 1280x768 parallel generation → OOM on M1 Max 32GB (two simultaneous mflux processes)
-- **Decision:** Do NOT generate turnaround sheets. Instead, generate individual views at 1024x1024 for maximum face quality.
+**Previous assumption was WRONG:** mflux now supports LoRA training (since v0.5.0), not just inference. No need for ai-toolkit, SimpleTuner, or cloud services.
 
-**Updated pipeline:**
-1. Download turnaround LoRA from HuggingFace ✅
-2. Generate individual views (NOT sheets) at 1024x1024, 24 steps, one at a time
-3. Prompts per view: "front view of this exact character on pure white background, full body, consistent lighting"
-4. Validate each with `validate_bob.py`
-5. Supplement with 3-5 crops from existing assets
+**Alternatives researched (2026-03-05):**
+- ai-toolkit Mac fork (hughescr) — PyTorch MPS, slower than native MLX
+- SimpleTuner — PyTorch MPS, float64 compatibility issues on Mac
+- fal.ai cloud — $8/1000 steps, fast but unnecessary
+- **mflux-train (chosen)** — native MLX, already installed, best Apple Silicon performance
 
-#### Tier 2: Blender MPFB2 + Cel Shading (IF TIER 1 INSUFFICIENT)
+**Config:** `godot/assets/training_data/bob_identity/train.json`
 
-**What:** Create 3D Bob in Blender, render from 8-12 angles with cel-shading.
-
-- **MPFB2 v2.0.14** (Feb 2026) — `cartoon01` asset pack for ~5-head proportions
-- **Shader:** Shader to RGB + ColorRamp (Constant) + Freestyle outlines = Vault-Tec look
-- **Batch render:** Python script for 8-12 camera positions
-- **Effort:** 4-6 hours modeling + shading
-- **Guarantee:** Perfect geometric consistency (same 3D model)
-
-#### Tier 3: Cloud Fallback
-
-- **StdGEN** (CVPR 2025): Best for anime/cartoon single-img→3D. CUDA only. RunPod ~$0.50-2/hr
-- **CharForge**: Full automated pipeline (sheet→caption→LoRA). 48GB VRAM required.
-- **fal.ai / Replicate**: Cloud LoRA training, ~$1-5 per training run
-
-#### Supplementary crops from existing assets:
-- `bob_base_vaultboy.png` — golden standard, crop to 1024x1024
-- `bob_bunker_reading.png` — crop Bob region
-- `bob_spaceship_bridge.png` — crop Bob region
-- `bob_mars_fallout.png` — crop Bob region (if face visible)
-
-**Target:** 8-12 curated images at 1024x1024, solid background, consistent face.
-
-### 2.4 Training Configuration
-
-**Tool:** ai-toolkit Mac fork ([github.com/hughescr/ai-toolkit](https://github.com/hughescr/ai-toolkit)) for local training, or fal.ai for cloud.
-
-**Note:** mflux does NOT support LoRA training (inference only). ai-toolkit requires `num_workers=0` on Mac, no T5 quantizer.
-
-**Config:**
 ```json
 {
-    "model": "black-forest-labs/FLUX.1-dev",
-    "data_dir": "godot/assets/training_data/bob_identity/",
-    "output_dir": "godot/assets/lora/",
-    "trigger_word": "vaultboy_bob",
-    "resolution": 1024,
-    "train_steps": 1000,
-    "learning_rate": 1e-4,
-    "lora_rank": 16,
+  "model": "dev",
+  "data": "./",
+  "seed": 42,
+  "steps": 24,
+  "guidance": 3.5,
+  "max_resolution": 1024,
+  "training_loop": {
+    "num_epochs": 125,
     "batch_size": 1,
-    "save_every": 250
+    "timestep_low": 4,
+    "timestep_high": 24
+  },
+  "optimizer": { "name": "AdamW", "learning_rate": 1e-4 },
+  "checkpoint": { "save_frequency": 25, "output_path": "../../lora/bob_identity_training" },
+  "monitoring": { "preview_width": 1024, "preview_height": 1024, "generate_image_frequency": 25 },
+  "lora_layers": {
+    "targets": [
+      "layers.{0-30}.attention.to_q/k/v/out.0 (rank 16)",
+      "layers.{0-30}.feed_forward.w1/w2/w3 (rank 16)",
+      "cap_embedder.1 (rank 16)",
+      "all_final_layer.2-1.linear (rank 16)"
+    ]
+  }
 }
 ```
 
 **Key parameters:**
+- `model: dev` — FLUX.1-dev base model
 - `lora_rank: 16` — good balance of quality/size for character identity
-- `train_steps: 1000` — typical for 10-15 image dataset
-- `resolution: 1024` — optimal for FLUX LoRA (updated from 512)
-- Checkpoints at 250, 500, 750, 1000 steps for quality comparison
+- `num_epochs: 125` × 8 images = ~1000 total training steps
+- `resolution: 1024` — matches training image size
+- Checkpoints every 25 epochs (~200 steps) → `godot/assets/lora/bob_identity_training/`
+- Preview images generated every 25 epochs for visual monitoring
 
-**Expected training time on Mac M1 Max 32GB:** 3-5x slower than NVIDIA → 3-12 hours
+**Training command:**
+```bash
+mflux-train --model dev --config godot/assets/training_data/bob_identity/train.json
+# Optional: --quantize 4 if OOM on full precision
+# Optional: --low-ram for reduced memory usage
+```
+
+**Expected training time on Mac M1 Max 32GB:** several hours (native MLX, faster than PyTorch MPS)
 **Expected LoRA size:** ~50-150 MB
 
 ### 2.5 Inference with LoRA
@@ -349,45 +343,50 @@ Monitor `mflux` GitHub releases for FLUX.2-dev support. FLUX.2 was released Nove
 ```
 godot/
 ├── config/
-│   └── style_guide.yaml          # Visual generation config (exists)
+│   └── style_guide.yaml                    # Visual generation config (exists)
 ├── tools/
-│   ├── validate_bob.py            # Phase 1: validation pipeline
-│   └── generate_pose.py           # Phase 1: auto-generation with retry
+│   ├── validate_bob.py                     # Phase 1: validation pipeline
+│   ├── generate_pose.py                    # Phase 1: auto-generation with retry
+│   └── .venv/                              # Python 3.12 venv for validation
 ├── assets/
 │   ├── scenes/
-│   │   └── bunker_wide.png        # Background (exists)
+│   │   └── bunker_wide.png                 # Background (exists)
 │   ├── sprites/
-│   │   └── bob_<pose>.png         # Generated sprites (Phase 1 output)
+│   │   └── bob_<pose>.png                  # Generated sprites (Phase 1 output)
 │   ├── training_data/
-│   │   └── bob_identity/          # Curated images (Phase 1 → Phase 2)
+│   │   └── bob_identity/
+│   │       ├── bob_front_s42.png + .txt    # 8 training images with captions
+│   │       ├── bob_3q_left_s43.png + .txt
+│   │       ├── ...
+│   │       ├── bob_reference.png + .txt
+│   │       ├── preview.txt                 # Preview prompt for training monitoring
+│   │       └── train.json                  # mflux-train config
 │   └── lora/
-│       └── bob_identity.safetensors  # Trained LoRA (Phase 2 output)
+│       ├── kontext-turnaround-sheet-v1.safetensors  # Pre-trained LoRA (data gen)
+│       └── bob_identity_training/           # Training output (Phase 2)
+│           ├── checkpoints/                 # LoRA checkpoints (.zip)
+│           ├── loss/                        # Loss plots
+│           └── preview/                     # Preview images per epoch
 └── scripts/
-    └── parallax_scene.gd          # Godot scene script (exists)
+    └── parallax_scene.gd                   # Godot scene script (exists)
 ```
 
 ---
 
-## Beads DAG Update
-
-Current DAG (bob-0zw blocked by identity problem):
+## Beads DAG Update (2026-03-05)
 
 ```
 bob-2a2 (epic)
   ├── bob-oxb [CLOSED] — background
-  ├── bob-0zw [OPEN] — sprites ← SPLIT into sub-tasks:
-  │   ├── NEW: validate_bob.py (Phase 1.1)
-  │   ├── NEW: generate_pose.py (Phase 1.2)
-  │   ├── NEW: generate 8 poses with validation (Phase 1.3)
-  │   └── NEW: curate training dataset (Phase 1.4)
+  ├── bob-0zw [IN_PROGRESS] — sprites + identity persistence
+  │   ├── Phase 1.1: validate_bob.py ✅
+  │   ├── Phase 1.2: generate_pose.py ✅
+  │   ├── Phase 1.3: training data (8 images + captions) ✅
+  │   ├── Phase 2.1: mflux-train config ✅
+  │   ├── Phase 2.2: train Bob LoRA ← CURRENT
+  │   ├── Phase 2.3: validate LoRA quality
+  │   └── Phase 2.4: generate 8 pose sprites with LoRA
   ├── bob-4gd [BLOCKED] — shader breathing
   ├── bob-soo [BLOCKED] — tween movement
   └── bob-3xr [BLOCKED] — full scene assembly
-```
-
-Phase 2 beads (create after Phase 1):
-```
-  ├── NEW: prepare training config (Phase 2.1)
-  ├── NEW: train Bob LoRA (Phase 2.2)
-  └── NEW: validate LoRA quality (Phase 2.3)
 ```
