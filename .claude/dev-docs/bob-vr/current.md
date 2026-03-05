@@ -284,10 +284,10 @@ mflux-train --config godot/assets/training_data/bob_identity/train.json --quanti
 
 **Note:** mflux v0.16.0 dropped FLUX.1 training support entirely, making FLUX.2 Klein the required training path.
 
-**Expected training time on Mac M1 Max 32GB (512, 240 steps):**
-- Plan A (no quant): ~2-5 hours (estimated, untested)
-- Plan B (Q4): ~5-6 hours (~80 sec/step × 240 steps)
-**Expected LoRA size:** ~50-150 MB
+**Training time on Mac M1 Max 32GB (512, 240 steps):**
+- **Plan A (no quant, --low-ram): ~5.2 hours (~78 sec/step) — ACTIVE, RUNNING**
+- Plan B (Q4): ~5.2 hours (~80 sec/step) — same speed but Q4 noise
+**Expected LoRA size:** ~50-150 MB (initial checkpoint: 85 MB)
 
 ### 2.5 Inference with LoRA
 
@@ -374,17 +374,19 @@ After LoRA training, validate with the same `validate_bob.py`:
 | 1024, rank 16, no quant, all targets | OOM (SIGKILL 137) | — | Process killed on first step |
 | 1024, rank 16, Q4, all targets | OOM (SIGKILL 137) | — | Still too much memory |
 | 1024, rank 8, Q4, 4 targets only | WORKS | **324 sec/step** | JIT compilation ~5 min for 1st step, then stable |
-| Estimate: 512, rank 16, Q4, all targets | Expected | **~80 sec/step** | 4x speedup from resolution reduction |
+| **512, rank 16, no quant, all targets, --low-ram** | **WORKS** | **~78 sec/step** | Plan A: --mlx-cache-limit-gb 24, ~7.5 GB unified memory |
+| Estimate: 512, rank 16, Q4, all targets | Expected | **~80 sec/step** | ~same as Plan A but with Q4 noise |
 
 **Key findings:**
-1. First training step takes ~5 min (MLX JIT compilation), subsequent steps are stable
-2. Without `--quantize 4`: OOM killed even with minimal targets on M1 Max 32GB
-3. With Q4 at 1024: works but 324 sec/step = 90 hours for 1000 steps (impractical)
-4. Resolution has quadratic effect on attention computation → 512 should be ~4x faster
-5. `--dry-run` validates config format but NOT architectural compatibility (passes with wrong module paths)
-6. mflux example config (`_example/train.json`) uses z-image-turbo with FLUX.1-style paths — NOT applicable to FLUX.2
+1. First training step takes ~80 sec (JIT compilation), subsequent steps ~76-78 sec (stable)
+2. Without `--quantize 4` at 1024: OOM killed even with minimal targets on M1 Max 32GB
+3. **Plan A (no quant + --low-ram + --mlx-cache-limit-gb 24) at 512: WORKS!** ~78 sec/step, ~7.5 GB unified memory
+4. Plan A gives same speed as Plan B (Q4) but better gradient quality (no quantization noise)
+5. Resolution has quadratic effect on attention computation → 512 is ~4x faster than 1024
+6. `--dry-run` validates config format but NOT architectural compatibility (passes with wrong module paths)
+7. mflux example config (`_example/train.json`) uses z-image-turbo with FLUX.1-style paths — NOT applicable to FLUX.2
 
-**Optimization plan:** 512 resolution + 30 epochs (240 steps) + try non-quantized with `--low-ram --mlx-cache-limit-gb 24`
+**Active training (Plan A):** 512, 30 epochs, 240 steps, ~78 sec/step → estimated ~5.2 hours total
 
 ---
 

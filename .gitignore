@@ -66,3 +66,4 @@ yolo*.pt
 # Logs
 *.log
 logs/
+godot/assets/lora/kontext-turnaround-sheet-v1.safetensors

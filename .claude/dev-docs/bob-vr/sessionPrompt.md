@@ -7,17 +7,27 @@ We're working on Bob's World — 2D Point-and-Click PoC. Identity Persistence (D
 - FLUX.2 Klein Edit test WITHOUT LoRA: best result ever (1:50, proper proportions, unified scene)
 - FLUX.2 Klein architecture fully mapped (transformer_blocks + single_transformer_blocks)
 - train.json: model updated to flux2-klein-4b, lora_layers rewritten for FLUX.2 architecture
-- Training experiments: OOM without quantization, Q4 works but 324 sec/step at 1024 — impractical
-- Decision: optimize to 512×512 + 30 epochs (240 steps)
+- Training experiments: OOM at 1024, Q4 works but 324 sec/step — impractical
+- Optimized: 512x512 + 30 epochs (240 steps)
+- **Plan A WORKS:** no quant + --low-ram + --mlx-cache-limit-gb 24 = ~78 sec/step, ~7.5 GB unified memory
+- **Training RUNNING** (started session 2026-03-05, ~5.2 hours ETA)
 
-**CURRENT TASK — optimized LoRA training:**
+**CURRENT TASK — post-training validation:**
 
-1. Update train.json with optimized config (512, 30 epochs, full targets, rank 16)
-2. Try Plan A: `mflux-train --config ... --low-ram --mlx-cache-limit-gb 24` (no quant, faster if fits)
-3. If OOM → Plan B: `mflux-train --config ... --quantize 4` (known to work, ~80 sec/step)
-4. Monitor training, find best checkpoint
-5. Test: `mflux-generate-flux2-edit --model flux2-klein-4b --quantize 4 --image-paths scene.png bob_ref.png --lora-paths <checkpoint> --prompt "Place vaultboy_bob..." --steps 4`
-6. Validate with validate_bob.py
+1. Check training completed successfully (240 steps, 30 epochs)
+2. Review loss.html for convergence
+3. Find best checkpoint in `godot/assets/lora/bob_identity_training/checkpoints/`
+4. Test: `mflux-generate-flux2-edit --model flux2-klein-4b --quantize 4 --image-paths scene.png bob_ref.png --lora-paths <best_checkpoint> --prompt "Place vaultboy_bob..." --steps 4`
+5. Validate with validate_bob.py
+6. Generate 8 pose sprites
+
+**Training config summary:**
+- Model: flux2-klein-4b, 512x512, 30 epochs x 8 images = 240 steps
+- No quantization, --low-ram, --mlx-cache-limit-gb 24
+- Rank 16, lr 1e-4, AdamW
+- Checkpoints every 10 epochs (steps 80, 160, 240)
+- Preview images every 10 epochs
+- Output: `godot/assets/lora/bob_identity_training/`
 
 **FLUX.2 Klein 4B architecture (CRITICAL — different from FLUX.1):**
 - `transformer_blocks` (5 double-stream, 0-4): `attn.to_q/k/v/to_out`, `attn.add_q/k/v_proj/to_add_out`, `ff.linear_in/out`, `ff_context.linear_in/out`
@@ -26,25 +36,12 @@ We're working on Bob's World — 2D Point-and-Click PoC. Identity Persistence (D
 - `steps: 4` (distilled), `timestep_low: 0`, `timestep_high: 4`
 - FLUX.1-style paths (`layers`, `cap_embedder`, `all_final_layer`) will CRASH
 
-**M1 Max 32GB training constraints:**
-- No quantization → OOM (SIGKILL 137) on first step
+**M1 Max 32GB training performance:**
+- Plan A (no quant, --low-ram, --mlx-cache-limit-gb 24): **78 sec/step** — CONFIRMED WORKING
 - Q4 + 1024 → 324 sec/step (impractical)
-- Q4 + 512 → ~80 sec/step (estimated)
-- `--low-ram` + `--mlx-cache-limit-gb 24` without Q4 → untested, might be faster
-- First step always slow (~5 min) due to MLX JIT compilation
-
-**Training dataset (8 images + captions):**
-
-| # | File | View | Validation |
-|---|------|------|-----------|
-| 1 | bob_front_s42.png | front | PASS: ArcFace 14.09, DINOv2 0.941, CLIP 0.880 |
-| 2 | bob_3q_left_s43.png | 3/4 left | no face, CLIP 0.900 |
-| 3 | bob_left_profile_s44.png | left profile | no face, CLIP 0.874 |
-| 4 | bob_back_s45.png | back | no face (expected), CLIP 0.886 |
-| 5 | bob_3q_right_s46.png | 3/4 right | PASS: ArcFace 15.23, DINOv2 0.886, CLIP 0.862 |
-| 6 | bob_sitting_s47.png | sitting | PASS: ArcFace 15.12, DINOv2 0.909, CLIP 0.855 |
-| 7 | bob_action_s48.png | action pose | PASS: ArcFace 16.24, DINOv2 0.926, CLIP 0.927 |
-| 8 | bob_reference.png | front (golden ref) | Reference image (bob_base_vaultboy.png) |
+- No quant + 1024 → OOM (SIGKILL 137)
+- First step ~80 sec (JIT compilation), subsequent steps ~76-78 sec (stable)
+- Initial checkpoint: 85 MB
 
 **After training:**
 1. Find best checkpoint (lowest validation loss or best preview quality)
