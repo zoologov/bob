@@ -230,52 +230,63 @@ Turnaround LoRA used for data generation: `godot/assets/lora/kontext-turnaround-
 
 **Config:** `godot/assets/training_data/bob_identity/train.json`
 
+**CRITICAL: FLUX.2 Klein 4B has DIFFERENT architecture from FLUX.1-dev:**
+- FLUX.1-dev: `layers` (19 MMDiT blocks), `cap_embedder`, `all_final_layer`
+- FLUX.2 Klein 4B: `transformer_blocks` (5 double-stream), `single_transformer_blocks` (20 single-stream), `x_embedder`, `context_embedder`, `proj_out`
+
 ```json
 {
   "model": "flux2-klein-4b",
   "data": "./",
   "seed": 42,
-  "steps": 24,
+  "steps": 4,
   "guidance": 3.5,
-  "max_resolution": 1024,
+  "max_resolution": 512,
   "training_loop": {
-    "num_epochs": 125,
+    "num_epochs": 30,
     "batch_size": 1,
-    "timestep_low": 4,
-    "timestep_high": 24
+    "timestep_low": 0,
+    "timestep_high": 4
   },
   "optimizer": { "name": "AdamW", "learning_rate": 1e-4 },
-  "checkpoint": { "save_frequency": 25, "output_path": "../../lora/bob_identity_training" },
-  "monitoring": { "preview_width": 1024, "preview_height": 1024, "generate_image_frequency": 25 },
+  "checkpoint": { "save_frequency": 10, "output_path": "godot/assets/lora/bob_identity_training" },
+  "monitoring": { "preview_width": 512, "preview_height": 512, "generate_image_frequency": 10 },
   "lora_layers": {
     "targets": [
-      "layers.{0-30}.attention.to_q/k/v/out.0 (rank 16)",
-      "layers.{0-30}.feed_forward.w1/w2/w3 (rank 16)",
-      "cap_embedder.1 (rank 16)",
-      "all_final_layer.2-1.linear (rank 16)"
+      "transformer_blocks.{0-5}.attn.to_q/k/v/to_out (rank 16)",
+      "transformer_blocks.{0-5}.attn.add_q/k/v_proj/to_add_out (rank 16) — cross-attention",
+      "transformer_blocks.{0-5}.ff.linear_in/out + ff_context.linear_in/out (rank 16)",
+      "single_transformer_blocks.{0-20}.attn.to_qkv_mlp_proj/to_out (rank 16)",
+      "x_embedder, context_embedder, proj_out (rank 16)"
     ]
   }
 }
 ```
 
-**Key parameters:**
-- `model: flux2-klein-4b` — FLUX.2 Klein 4B base model (mflux v0.16.0+ dropped FLUX.1 training)
+**Key parameters (optimized after training experiments):**
+- `model: flux2-klein-4b` — FLUX.2 Klein 4B (mflux v0.16.0+ dropped FLUX.1 training)
+- `steps: 4` — Klein is 4-step distilled model (NOT 24 like FLUX.1-dev)
+- `max_resolution: 512` — reduced from 1024 for ~4x speedup (quadratic attention scaling)
+- `num_epochs: 30` × 8 images = 240 total training steps (reduced from 1000)
+- `timestep_low/high: 0/4` — train on all 4 denoising steps
 - `lora_rank: 16` — good balance of quality/size for character identity
-- `num_epochs: 125` × 8 images = ~1000 total training steps
-- `resolution: 1024` — matches training image size
-- Checkpoints every 25 epochs (~200 steps) → `godot/assets/lora/bob_identity_training/`
-- Preview images generated every 25 epochs for visual monitoring
+- Checkpoints every 10 epochs (~80 steps) → `godot/assets/lora/bob_identity_training/`
+- `output_path` is CWD-relative (from project root), NOT config-file-relative
 
-**Training command:**
+**Training commands (two strategies):**
 ```bash
-mflux-train --model flux2-klein-4b --config godot/assets/training_data/bob_identity/train.json
-# Optional: --quantize 4 if OOM on full precision
-# Optional: --low-ram for reduced memory usage
+# Plan A: no quantization + memory management (expected faster if fits)
+mflux-train --config godot/assets/training_data/bob_identity/train.json --low-ram --mlx-cache-limit-gb 24
+
+# Plan B: quantized (known to work, but ~80 sec/step at 512 resolution)
+mflux-train --config godot/assets/training_data/bob_identity/train.json --quantize 4
 ```
 
 **Note:** mflux v0.16.0 dropped FLUX.1 training support entirely, making FLUX.2 Klein the required training path.
 
-**Expected training time on Mac M1 Max 32GB:** several hours (native MLX, faster than PyTorch MPS)
+**Expected training time on Mac M1 Max 32GB (512, 240 steps):**
+- Plan A (no quant): ~2-5 hours (estimated, untested)
+- Plan B (Q4): ~5-6 hours (~80 sec/step × 240 steps)
 **Expected LoRA size:** ~50-150 MB
 
 ### 2.5 Inference with LoRA
@@ -336,6 +347,44 @@ After LoRA training, validate with the same `validate_bob.py`:
 - Eyes/pupils slightly cross-eyed
 
 **Decision: D-021** — migrate entire pipeline to FLUX.2 Klein
+
+### 2.9 Training Experiments (2026-03-05)
+
+**Problem:** FLUX.1-dev lora_layers config (`layers.{block}`, `cap_embedder`, `all_final_layer`) is INCOMPATIBLE with FLUX.2 Klein 4B transformer architecture.
+
+**Root cause:** `Flux2Transformer` has no `layers` attribute. FLUX.2 uses `transformer_blocks` (double-stream) and `single_transformer_blocks` (single-stream) — completely different module paths.
+
+**Architecture discovery (from mflux source code):**
+
+| Component | FLUX.1-dev | FLUX.2 Klein 4B |
+|-----------|-----------|-----------------|
+| Main blocks | `layers` (19 blocks) | `transformer_blocks` (5 double-stream) |
+| Single blocks | — | `single_transformer_blocks` (20 single-stream) |
+| Attention | `layers.{b}.attention.to_q/k/v/out.0` | `transformer_blocks.{b}.attn.to_q/k/v/to_out` |
+| Cross-attention | — | `transformer_blocks.{b}.attn.add_q/k/v_proj/to_add_out` |
+| Feed-forward | `layers.{b}.feed_forward.w1/w2/w3` | `transformer_blocks.{b}.ff.linear_in/linear_out` |
+| Context FF | — | `transformer_blocks.{b}.ff_context.linear_in/linear_out` |
+| Single attention | — | `single_transformer_blocks.{b}.attn.to_qkv_mlp_proj` (fused) |
+| Global | `cap_embedder.1`, `all_final_layer.2-1.linear` | `x_embedder`, `context_embedder`, `proj_out` |
+
+**Experiment results on M1 Max 32GB:**
+
+| Config | Result | Speed | Notes |
+|--------|--------|-------|-------|
+| 1024, rank 16, no quant, all targets | OOM (SIGKILL 137) | — | Process killed on first step |
+| 1024, rank 16, Q4, all targets | OOM (SIGKILL 137) | — | Still too much memory |
+| 1024, rank 8, Q4, 4 targets only | WORKS | **324 sec/step** | JIT compilation ~5 min for 1st step, then stable |
+| Estimate: 512, rank 16, Q4, all targets | Expected | **~80 sec/step** | 4x speedup from resolution reduction |
+
+**Key findings:**
+1. First training step takes ~5 min (MLX JIT compilation), subsequent steps are stable
+2. Without `--quantize 4`: OOM killed even with minimal targets on M1 Max 32GB
+3. With Q4 at 1024: works but 324 sec/step = 90 hours for 1000 steps (impractical)
+4. Resolution has quadratic effect on attention computation → 512 should be ~4x faster
+5. `--dry-run` validates config format but NOT architectural compatibility (passes with wrong module paths)
+6. mflux example config (`_example/train.json`) uses z-image-turbo with FLUX.1-style paths — NOT applicable to FLUX.2
+
+**Optimization plan:** 512 resolution + 30 epochs (240 steps) + try non-quantized with `--low-ram --mlx-cache-limit-gb 24`
 
 ---
 

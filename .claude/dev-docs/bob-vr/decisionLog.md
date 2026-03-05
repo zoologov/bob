@@ -726,3 +726,16 @@ Validation tools tested on actual Bob cartoon images:
 - No more inset hack, no version downgrades needed
 
 **Impact:** Unified FLUX.2 stack — faster generation, native LoRA training, cleaner pipeline. Supersedes D-020 Phase 2 approach (FLUX.1 LoRA).
+
+**Training architecture discovery (2026-03-05):**
+FLUX.2 Klein 4B has completely different transformer architecture from FLUX.1-dev:
+- `transformer_blocks` (5 double-stream) + `single_transformer_blocks` (20 single-stream) instead of `layers` (19 MMDiT)
+- Different attention module paths: `attn.to_q` (not `attention.to_q`), fused `to_qkv_mlp_proj` in single-stream
+- Different global modules: `x_embedder/context_embedder/proj_out` (not `cap_embedder/all_final_layer`)
+- FLUX.1-style lora_layers config crashes with `AttributeError: 'Flux2Transformer' object has no attribute 'layers'`
+- `--dry-run` does NOT catch this — only validates JSON structure, not model compatibility
+
+**Training performance on M1 Max 32GB:**
+- Without quantization: OOM killed (SIGKILL 137) even with minimal LoRA targets
+- With `--quantize 4` at 1024×1024: works but 324 sec/step (impractical for 1000 steps)
+- Optimization: 512×512 + 30 epochs (240 steps) — estimated ~5-6 hours with Q4

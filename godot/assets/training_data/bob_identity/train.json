@@ -1,43 +1,51 @@
 {
-  "model": "dev",
+  "model": "flux2-klein-4b",
   "data": "./",
   "seed": 42,
-  "steps": 24,
+  "steps": 4,
   "guidance": 3.5,
   "quantize": null,
-  "max_resolution": 1024,
+  "max_resolution": 512,
   "low_ram": false,
   "training_loop": {
-    "num_epochs": 125,
+    "num_epochs": 30,
     "batch_size": 1,
-    "timestep_low": 4,
-    "timestep_high": 24
+    "timestep_low": 0,
+    "timestep_high": 4
   },
   "optimizer": {
     "name": "AdamW",
     "learning_rate": 1e-4
   },
   "checkpoint": {
-    "save_frequency": 25,
+    "save_frequency": 10,
     "output_path": "godot/assets/lora/bob_identity_training"
   },
   "monitoring": {
-    "preview_width": 1024,
-    "preview_height": 1024,
+    "preview_width": 512,
+    "preview_height": 512,
     "plot_frequency": 1,
-    "generate_image_frequency": 25
+    "generate_image_frequency": 10
   },
   "lora_layers": {
     "targets": [
-      { "module_path": "layers.{block}.attention.to_q", "blocks": { "start": 0, "end": 30 }, "rank": 16 },
-      { "module_path": "layers.{block}.attention.to_k", "blocks": { "start": 0, "end": 30 }, "rank": 16 },
-      { "module_path": "layers.{block}.attention.to_v", "blocks": { "start": 0, "end": 30 }, "rank": 16 },
-      { "module_path": "layers.{block}.attention.to_out.0", "blocks": { "start": 0, "end": 30 }, "rank": 16 },
-      { "module_path": "layers.{block}.feed_forward.w1", "blocks": { "start": 0, "end": 30 }, "rank": 16 },
-      { "module_path": "layers.{block}.feed_forward.w2", "blocks": { "start": 0, "end": 30 }, "rank": 16 },
-      { "module_path": "layers.{block}.feed_forward.w3", "blocks": { "start": 0, "end": 30 }, "rank": 16 },
-      { "module_path": "cap_embedder.1", "rank": 16 },
-      { "module_path": "all_final_layer.2-1.linear", "rank": 16 }
+      { "module_path": "transformer_blocks.{block}.attn.to_q", "blocks": { "start": 0, "end": 5 }, "rank": 16 },
+      { "module_path": "transformer_blocks.{block}.attn.to_k", "blocks": { "start": 0, "end": 5 }, "rank": 16 },
+      { "module_path": "transformer_blocks.{block}.attn.to_v", "blocks": { "start": 0, "end": 5 }, "rank": 16 },
+      { "module_path": "transformer_blocks.{block}.attn.to_out", "blocks": { "start": 0, "end": 5 }, "rank": 16 },
+      { "module_path": "transformer_blocks.{block}.attn.add_q_proj", "blocks": { "start": 0, "end": 5 }, "rank": 16 },
+      { "module_path": "transformer_blocks.{block}.attn.add_k_proj", "blocks": { "start": 0, "end": 5 }, "rank": 16 },
+      { "module_path": "transformer_blocks.{block}.attn.add_v_proj", "blocks": { "start": 0, "end": 5 }, "rank": 16 },
+      { "module_path": "transformer_blocks.{block}.attn.to_add_out", "blocks": { "start": 0, "end": 5 }, "rank": 16 },
+      { "module_path": "transformer_blocks.{block}.ff.linear_in", "blocks": { "start": 0, "end": 5 }, "rank": 16 },
+      { "module_path": "transformer_blocks.{block}.ff.linear_out", "blocks": { "start": 0, "end": 5 }, "rank": 16 },
+      { "module_path": "transformer_blocks.{block}.ff_context.linear_in", "blocks": { "start": 0, "end": 5 }, "rank": 16 },
+      { "module_path": "transformer_blocks.{block}.ff_context.linear_out", "blocks": { "start": 0, "end": 5 }, "rank": 16 },
+      { "module_path": "single_transformer_blocks.{block}.attn.to_qkv_mlp_proj", "blocks": { "start": 0, "end": 20 }, "rank": 16 },
+      { "module_path": "single_transformer_blocks.{block}.attn.to_out", "blocks": { "start": 0, "end": 20 }, "rank": 16 },
+      { "module_path": "x_embedder", "rank": 16 },
+      { "module_path": "context_embedder", "rank": 16 },
+      { "module_path": "proj_out", "rank": 16 }
     ]
   }
 }
