@@ -66,7 +66,12 @@ yolo*.pt
 # Logs
 *.log
 logs/
-godot/assets/lora/kontext-turnaround-sheet-v1.safetensors
+
+# Frozen visual track: model weights + generated assets (regeneratable from tracked dataset)
+*.safetensors
+godot/assets/lora/
+godot/assets/sprites/
+godot/tools/.venv/
 
 # Beads / Dolt files (added by bd init)
 .dolt/

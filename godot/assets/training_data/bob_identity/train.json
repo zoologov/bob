@@ -8,7 +8,7 @@
   "max_resolution": 512,
   "low_ram": false,
   "training_loop": {
-    "num_epochs": 125,
+    "num_epochs": 188,
     "batch_size": 1,
     "timestep_low": 0,
     "timestep_high": 4

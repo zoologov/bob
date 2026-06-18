@@ -1,0 +1,4 @@
+tools: [claude]            # IDE adapter set to generate
+architecture: [ddd]        # methodology: ddd | fsd
+stack: [python]            # stack/framework overlays
+quality: [clean-code, tdd] # quality bars (informational)

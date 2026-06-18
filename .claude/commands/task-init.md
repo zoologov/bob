@@ -97,9 +97,11 @@ Draft  →  Approved  →  Done
 4. **WAIT for explicit approval**
 5. Update both to `Status: Approved`
 6. **Create beads in tracker** (ONLY after PLAN is Approved):
-   - Create parent bead: `bd create --type feature --title "[ISSUE-KEY] Name"`
+   - One-time per clone: ensure `git config beads.role maintainer` is set (see CLAUDE.md §0 Setup).
+   - Create parent bead: `bd create --type feature --title "[ISSUE-KEY] Name"` (use `--type epic` if you want `bd swarm` orchestration — swarm requires an epic-type parent; feature parents still work via bead dependencies)
    - Create sub-beads with mandatory structure (see below): `bd create --type task --parent <parent-id>`
-   - Set up dependencies: `bd dep add`
+   - Set up dependencies: `bd dep add <blocked> <blocker>`
+   - **Faster alternative (1.0.4):** create the whole bead DAG in one shot from a JSON plan — `bd create --graph <plan.json>` (define nodes + dependencies in the file).
 7. **Immediately proceed to Step 4** (no additional approval needed)
 
 **Process gate:** Do NOT create beads before PLAN is Approved. If PLAN is rejected or modified, no stale beads to clean up.
@@ -114,10 +116,10 @@ Draft  →  Approved  →  Done
 ```
 
 Every feature/epic MUST include sub-tasks for all four agent roles:
-- `/dev` — implementation beads (one per logical unit of work)
-- `/test` — test verification bead (depends on all dev beads)
-- `/review` — code review bead (depends on test bead)
-- `/tech-writer` — documentation update bead (depends on review bead)
+- `dev` — implementation beads (one per logical unit of work)
+- `test` — test verification bead (depends on all dev beads)
+- `review` — code review bead (depends on test bead)
+- `tech-writer` — documentation update bead (depends on review bead)
 
 ### Step 4: ACTIVE
 
