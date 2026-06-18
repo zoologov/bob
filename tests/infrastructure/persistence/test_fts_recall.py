@@ -87,3 +87,27 @@ async def test_recall_empty_query_returns_empty(populated: SqliteMemoryRepo) -> 
     # Act / Assert
     assert await recall.recall("   ", k=5) == []
     await populated.close()
+
+
+async def test_recall_survives_a_process_restart(tmp_path: Path) -> None:
+    # PRD US-3: facts must be keyword-recallable after a process restart —
+    # the FTS5 index lives on disk and is not lost when the process dies.
+    db_path = tmp_path / "bob.db"
+
+    # Arrange: a first "process" persists a fact, then closes (dies).
+    first = SqliteMemoryRepo(db_path)
+    await first.initialize()
+    await first.save_fact(
+        SemanticFact(ts=_ts(), category="personal", content="user adores deep-space probes")
+    )
+    await first.close()
+
+    # Act: a brand-new repo + recall over the same file simulates a restart.
+    second = SqliteMemoryRepo(db_path)
+    await second.initialize()
+    recall = Fts5MemoryRecall(second)
+    results = await recall.recall("probes", k=5)
+
+    # Assert: the fact survived and is still recallable by keyword.
+    assert any("probes" in str(r["content"]) for r in results)
+    await second.close()

@@ -65,3 +65,37 @@ def test_missing_required_key_raises() -> None:
     # Act / Assert
     with pytest.raises(KeyError):
         build_tier_providers(config)
+
+
+def test_missing_llm_section_raises() -> None:
+    # Act / Assert: no 'llm' section at all is a configuration error.
+    with pytest.raises(KeyError, match="llm"):
+        build_tier_providers({})
+
+
+def _full_llm() -> dict[str, object]:
+    return {
+        "tier0_base_url": "http://localhost:8080/v1",
+        "tier0_model": "local",
+        "tier1_base_url": "https://api.qwen.example/v1",
+        "tier1_model": "remote",
+    }
+
+
+def test_optional_api_key_absent_yields_no_auth() -> None:
+    # Arrange: tier1_api_key omitted entirely -> Tier 1 has no key.
+    providers = build_tier_providers({"llm": _full_llm()})
+
+    # Assert
+    tier1 = providers[1]
+    assert isinstance(tier1, OpenAICompatProvider)
+    assert tier1._api_key is None
+
+
+def test_optional_api_key_wrong_type_raises() -> None:
+    # Arrange: a non-string tier1_api_key is a configuration error.
+    config = {"llm": {**_full_llm(), "tier1_api_key": 123}}
+
+    # Act / Assert
+    with pytest.raises(KeyError, match="tier1_api_key"):
+        build_tier_providers(config)
