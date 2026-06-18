@@ -47,6 +47,7 @@ dev = [
     "ruff>=0.9",
     "mypy>=1.14",
     "pre-commit>=4.0",
+    "types-PyYAML>=6.0",
 ]
 all = ["bob[embeddings,visual,voice,vision,dev]"]
 

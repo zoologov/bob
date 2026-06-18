@@ -19,7 +19,10 @@
 
 ## Прогресс
 
-- [ ] BEAD-01 (bob-d1p.1) — старт
+- [x] BEAD-01 (bob-d1p.1) — DONE: DDD-скелет src/bob/{domain,application,infrastructure}+app.py.
+      ports.py (5 Protocol-портов), AsyncEventBus, AgentRuntime (lifecycle), ConfigLoader
+      (defaults→YAML→env), app.py (composition root + стабы портов). 42 теста, ruff/mypy зелёные, cov 91%.
+      Граф/доки beadloom отложены на BEAD-10.
 
 ## Статусы беадов
 

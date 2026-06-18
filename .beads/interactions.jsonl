@@ -1,0 +1,2 @@
+{"id":"int-1f1280c9","kind":"field_change","created_at":"2026-06-18T11:15:52.386175Z","actor":"v.zoologov","issue_id":"bob-d1p.1","extra":{"field":"status","new_value":"in_progress","old_value":"open"}}
+{"id":"int-fa5f8a52","kind":"field_change","created_at":"2026-06-18T11:26:27.968625Z","actor":"v.zoologov","issue_id":"bob-d1p.1","extra":{"field":"status","new_value":"closed","old_value":"in_progress","reason":"Closed"}}
