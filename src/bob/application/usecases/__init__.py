@@ -10,3 +10,29 @@ Use-cases depend on the domain (through ports) but never on infrastructure
 directly; ``bob.app`` wires concrete adapters. They keep I/O at the edges and
 delegate all rules to the pure domain.
 """
+
+from __future__ import annotations
+
+from bob.application.usecases.handle_message import HandleMessage, PersonalityState
+from bob.application.usecases.heartbeat import (
+    InnerMonologueTick,
+    MoodDriftTick,
+    ReflectTick,
+)
+from bob.application.usecases.run_genesis import GenesisResult, RunGenesis
+from bob.application.usecases.update_mood_from_text import (
+    TextSignals,
+    UpdateMoodFromText,
+)
+
+__all__ = [
+    "GenesisResult",
+    "HandleMessage",
+    "InnerMonologueTick",
+    "MoodDriftTick",
+    "PersonalityState",
+    "ReflectTick",
+    "RunGenesis",
+    "TextSignals",
+    "UpdateMoodFromText",
+]

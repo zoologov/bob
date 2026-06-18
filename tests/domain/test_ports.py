@@ -36,7 +36,7 @@ def test_clock_is_runtime_checkable_and_structural() -> None:
             return datetime(2026, 1, 1, tzinfo=UTC)
 
     # Act / Assert: Clock is structurally satisfiable (runtime_checkable).
-    assert runtime_checkable(ports.Clock)
+    assert ports.Clock is runtime_checkable(ports.Clock)
     assert isinstance(SystemClock(), ports.Clock)
 
 

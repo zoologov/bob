@@ -1,0 +1,33 @@
+# Copyright (c) 2026 Vladimir Zoologov. All Rights Reserved.
+# SPDX-License-Identifier: BUSL-1.1
+#
+# Example Bob configuration. Copy to config/bob.yaml and fill in.
+# Precedence: built-in defaults <- this YAML <- environment (BOB_* with __ nesting,
+# e.g. BOB_TELEGRAM__TOKEN, BOB_LLM__TIER1_API_KEY).
+#
+# SECRETS (telegram.token, llm.tier1_api_key) — prefer environment variables over
+# committing them here. Never commit a real token/key.
+
+runtime:
+  log_level: INFO
+  heartbeat_seconds: 30        # cadence of the inner-monologue / reflect heartbeat
+
+llm:
+  # Tier 0 — local mlx-lm server (no API key): cheap, privacy-sensitive work.
+  tier0_base_url: http://localhost:8080/v1
+  tier0_model: qwen2.5:0.5b
+  # Tier 1 — Qwen API (bearer key): quality-critical, user-facing replies.
+  tier1_base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
+  tier1_model: qwen2.5:7b
+  tier1_api_key: ""            # set via BOB_LLM__TIER1_API_KEY, not here
+
+telegram:
+  token: ""                    # set via BOB_TELEGRAM__TOKEN, not here
+  poll_timeout: 10
+
+persistence:
+  db_path: data/bob.db         # SQLite (WAL) — episodic/semantic memory + state
+  soul_dir: data/soul          # Genesis-written soul artifacts (SOUL.md, JSON profiles)
+
+genesis:
+  templates_dir: bob-soul      # personality "genome" templates (repo-root default)

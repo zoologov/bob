@@ -8,5 +8,6 @@
 
 from bob.application.runtime.agent import AgentRuntime, RuntimeState
 from bob.application.runtime.event_bus import AsyncEventBus
+from bob.application.runtime.heartbeat import periodic
 
-__all__ = ["AgentRuntime", "AsyncEventBus", "RuntimeState"]
+__all__ = ["AgentRuntime", "AsyncEventBus", "RuntimeState", "periodic"]
