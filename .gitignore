@@ -67,3 +67,8 @@ yolo*.pt
 *.log
 logs/
 godot/assets/lora/kontext-turnaround-sheet-v1.safetensors
+
+# Beads / Dolt files (added by bd init)
+.dolt/
+*.db
+.beads-credential-key
