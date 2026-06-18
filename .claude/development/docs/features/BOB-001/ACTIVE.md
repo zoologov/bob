@@ -11,11 +11,7 @@
 
 ## Текущий беад
 
-**Беад:** bob-d1p.1 — dev: GUPPI core (runtime, EventBus, config, ports, app.py)
-**Цель:** walking skeleton — процесс стартует/останавливается graceful, есть event loop, шина, конфиг,
-порты-протоколы и composition root.
-**Done when:** `AgentRuntime` (asyncio) + `EventBus` (pub/sub) + `ConfigLoader` (defaults→YAML→env) +
-`domain/ports.py` + `app.py` (заглушки), тесты зелёные.
+**Беад:** — (между беадами; W2 в работе параллельно)
 
 ## Прогресс
 
@@ -23,6 +19,12 @@
       ports.py (5 Protocol-портов), AsyncEventBus, AgentRuntime (lifecycle), ConfigLoader
       (defaults→YAML→env), app.py (composition root + стабы портов). 42 теста, ruff/mypy зелёные, cov 91%.
       Граф/доки beadloom отложены на BEAD-10.
+- [x] BEAD-03 (bob-d1p.3) — DONE: LLM-слой + router. `OpenAICompatProvider` (aiohttp, non-stream JSON +
+      SSE-стриминг, optional Bearer) реализует порт `LLMProvider`; `build_tier_providers(config)`→{0,1}
+      (Tier0 локально без ключа, Tier1 = ключ из конфига/env). `LLMRouter`: `TaskType`→Tier
+      (REPLY_TO_USER/GENESIS→Tier1, SENTIMENT/INNER_MONOLOGUE/REFLECT→Tier0), **редакция** personal_context
+      перед Tier1, fallback Tier1→Tier0. Приватность протестирована (captured fake: сырьё не уходит в Tier1).
+      15 новых тестов (in-process aiohttp loopback, без сети). ruff/mypy --strict (src+tests)/100 тестов зелёные.
 
 ## Статусы беадов
 
