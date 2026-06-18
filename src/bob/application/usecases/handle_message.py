@@ -6,7 +6,7 @@
 
 """HandleMessage — the full message→reply→persist flow (GUPPI's act loop).
 
-Subscribed to :class:`~bob.infrastructure.telegram.events.MessageReceived`, this
+Subscribed to :class:`~bob.application.runtime.events.MessageReceived`, this
 use-case runs Bob's perceive→decide→act turn (RFC §"Поток обработки"):
 
 1. **Perceive** — :class:`UpdateMoodFromText` (Tier 0 sentiment + signals) updates
@@ -39,10 +39,10 @@ if TYPE_CHECKING:
     from datetime import datetime
 
     from bob.application.router.llm_router import LLMRouter
+    from bob.application.runtime.events import MessageReceived
     from bob.application.usecases.update_mood_from_text import UpdateMoodFromText
     from bob.domain.personality.soul import SOUL
     from bob.domain.ports import Clock, MemoryRecall, Recalled
-    from bob.infrastructure.telegram.events import MessageReceived
 
 logger = logging.getLogger(__name__)
 

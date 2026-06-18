@@ -18,7 +18,7 @@ import pytest
 from telegram.error import RetryAfter
 
 from bob.application.runtime.event_bus import AsyncEventBus
-from bob.infrastructure.telegram.events import MESSAGE_RECEIVED, MessageReceived
+from bob.application.runtime.events import MESSAGE_RECEIVED, MessageReceived
 from bob.infrastructure.telegram.gateway import TelegramGateway
 
 if TYPE_CHECKING:

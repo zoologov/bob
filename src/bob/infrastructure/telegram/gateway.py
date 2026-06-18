@@ -31,7 +31,7 @@ from typing import TYPE_CHECKING, Protocol
 
 from telegram.error import RetryAfter
 
-from bob.infrastructure.telegram.events import MessageReceived
+from bob.application.runtime.events import MessageReceived
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
@@ -40,13 +40,15 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["BotLike", "TelegramGateway", "UpdateLike"]
+__all__ = ["BotLike", "MessageLike", "TelegramGateway", "UpdateLike"]
 
 
 # --- Minimal structural views of the bits of PTB the gateway touches ----------
 
 
-class _MessageLike(Protocol):
+class MessageLike(Protocol):
+    """The subset of a Telegram ``Message`` the gateway/bot adapter touches."""
+
     @property
     def message_id(self) -> int: ...
     @property
@@ -71,7 +73,7 @@ class UpdateLike(Protocol):
     @property
     def update_id(self) -> int: ...
     @property
-    def message(self) -> _MessageLike | None: ...
+    def message(self) -> MessageLike | None: ...
     @property
     def effective_chat(self) -> _ChatLike | None: ...
     @property
@@ -85,7 +87,7 @@ class BotLike(Protocol):
         self, *, offset: int, timeout: int
     ) -> Sequence[UpdateLike]: ...
 
-    async def send_message(self, *, chat_id: int, text: str) -> _MessageLike: ...
+    async def send_message(self, *, chat_id: int, text: str) -> MessageLike: ...
 
     async def edit_message_text(
         self, *, chat_id: int, message_id: int, text: str

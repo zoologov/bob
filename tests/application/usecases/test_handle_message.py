@@ -16,12 +16,12 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from bob.application.router.llm_router import LLMRouter
+from bob.application.runtime.events import MessageReceived
 from bob.application.usecases.handle_message import HandleMessage, PersonalityState
 from bob.application.usecases.update_mood_from_text import UpdateMoodFromText
 from bob.domain.personality.mood import Mood
 from bob.domain.personality.soul import SOUL
 from bob.domain.personality.taste import TasteAxis, TasteEngine
-from bob.infrastructure.telegram.events import MessageReceived
 from bob.infrastructure.telegram.gateway import TelegramGateway
 
 if TYPE_CHECKING:

@@ -4,12 +4,14 @@
 
 # beadloom:domain=bob
 
-"""Transport-level events the Telegram gateway publishes onto the EventBus.
+"""Application-level events carried on the EventBus.
 
-These are plain, frozen value objects: the gateway translates an inbound
-Telegram update into a :class:`MessageReceived` and publishes it. They carry no
-Higher-Mind / LLM / memory logic — only the data a use-case needs to react.
-:class:`MessageReceived` exposes a stable ``name`` so it satisfies the
+These are plain, frozen value objects the runtime and use-cases exchange. The
+Telegram gateway (infrastructure) translates an inbound update into a
+:class:`MessageReceived` and publishes it; a use-case (application) consumes it.
+The event is an application concern — transport-agnostic data a use-case needs
+to react — not an infrastructure detail, so it lives with the runtime that owns
+the bus. :class:`MessageReceived` exposes a stable ``name`` so it satisfies the
 :class:`bob.domain.ports.DomainEvent` contract for bus routing.
 """
 

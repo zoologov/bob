@@ -18,9 +18,9 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from bob.app import build_application
+from bob.application.runtime.events import MessageReceived
 from bob.domain.memory.entities import SemanticFact
 from bob.infrastructure.persistence import SoulStore
-from bob.infrastructure.telegram.events import MessageReceived
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Mapping, Sequence

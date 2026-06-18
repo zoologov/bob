@@ -24,14 +24,20 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from bob.application.router import LLMRouter
-from bob.application.runtime import AgentRuntime, AsyncEventBus, periodic
+from bob.application.runtime import (
+    MESSAGE_RECEIVED,
+    AgentRuntime,
+    AsyncEventBus,
+    MessageReceived,
+    periodic,
+)
 from bob.application.usecases.handle_message import HandleMessage, PersonalityState
 from bob.application.usecases.heartbeat import (
     InnerMonologueTick,
@@ -46,8 +52,12 @@ from bob.domain.personality.taste import TasteAxis, TasteEngine
 from bob.infrastructure.config import ConfigLoader
 from bob.infrastructure.llm import build_tier_providers
 from bob.infrastructure.persistence import Fts5MemoryRecall, SoulStore, SqliteMemoryRepo
-from bob.infrastructure.telegram.events import MESSAGE_RECEIVED, MessageReceived
-from bob.infrastructure.telegram.gateway import BotLike, TelegramGateway
+from bob.infrastructure.telegram.gateway import (
+    BotLike,
+    MessageLike,
+    TelegramGateway,
+    UpdateLike,
+)
 
 if TYPE_CHECKING:
     from bob.application.runtime.agent import BackgroundTask
@@ -403,11 +413,13 @@ class _PtbBotAdapter:
     def __init__(self, bot: object) -> None:
         self._bot = bot
 
-    async def get_updates(self, *, offset: int, timeout: int):  # type: ignore[no-untyped-def]
-        return await self._bot.get_updates(offset=offset, timeout=timeout)  # type: ignore[attr-defined]
+    async def get_updates(
+        self, *, offset: int, timeout: int
+    ) -> Sequence[UpdateLike]:
+        return await self._bot.get_updates(offset=offset, timeout=timeout)  # type: ignore[attr-defined,no-any-return]
 
-    async def send_message(self, *, chat_id: int, text: str):  # type: ignore[no-untyped-def]
-        return await self._bot.send_message(chat_id=chat_id, text=text)  # type: ignore[attr-defined]
+    async def send_message(self, *, chat_id: int, text: str) -> MessageLike:
+        return await self._bot.send_message(chat_id=chat_id, text=text)  # type: ignore[attr-defined,no-any-return]
 
     async def edit_message_text(self, *, chat_id: int, message_id: int, text: str) -> object:
         return await self._bot.edit_message_text(  # type: ignore[attr-defined]

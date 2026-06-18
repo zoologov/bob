@@ -28,11 +28,13 @@ __all__ = [
     "DomainEvent",
     "EventBus",
     "EventHandler",
+    "JsonValue",
     "LLMMessage",
     "LLMProvider",
     "MemoryRecall",
     "MemoryRepo",
     "Recalled",
+    "SoulStore",
 ]
 
 
@@ -43,6 +45,9 @@ type LLMMessage = Mapping[str, str]
 
 # A single recalled memory item (content + relevance score), returned by recall.
 type Recalled = Mapping[str, object]
+
+# A JSON-decodable soul-artifact value (object/array/scalar) carried by SoulStore.
+type JsonValue = dict[str, object] | list[object] | str | int | float | bool | None
 
 
 class DomainEvent(Protocol):
@@ -123,4 +128,33 @@ class MemoryRecall(Protocol):
 
     async def recall(self, query: str, *, k: int) -> Sequence[Recalled]:
         """Return the top-``k`` memories relevant to ``query``."""
+        ...
+
+
+@runtime_checkable
+class SoulStore(Protocol):
+    """Reader/writer for Bob's on-disk soul artifacts (SOUL.md + JSON profiles).
+
+    Genesis writes these once on first awakening; the runtime reads them on every
+    boot. The concrete file-backed adapter lives in ``bob.infrastructure``.
+    """
+
+    def soul_exists(self) -> bool:
+        """Whether ``SOUL.md`` has been written (Genesis-done signal on disk)."""
+        ...
+
+    def read_soul(self) -> str:
+        """Return the SOUL.md narrative (raises if absent)."""
+        ...
+
+    def write_soul(self, markdown: str) -> None:
+        """Write the SOUL.md narrative."""
+        ...
+
+    def write_json(self, name: str, data: JsonValue) -> None:
+        """Write a JSON artifact ``<name>.json`` (e.g. ``taste_profile``)."""
+        ...
+
+    def append_genesis_log(self, line: str) -> None:
+        """Append a line to the append-only genesis log."""
         ...

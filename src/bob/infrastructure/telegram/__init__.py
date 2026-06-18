@@ -12,7 +12,7 @@ receives updates and publishes :class:`MessageReceived` onto the EventBus, and
 streams out a reply given a token async-iterator.
 """
 
-from bob.infrastructure.telegram.events import MESSAGE_RECEIVED, MessageReceived
+from bob.application.runtime.events import MESSAGE_RECEIVED, MessageReceived
 from bob.infrastructure.telegram.gateway import BotLike, TelegramGateway, UpdateLike
 
 __all__ = [

@@ -16,7 +16,8 @@ use-case:
    ``TaskType.GENESIS`` (routed to **Tier 1**, Qwen): chosen traits, taste
    values + convictions, a resting mood baseline, phantom prefs, and a
    self-aware **awakening narrative** that references the book.
-3. **Persists** the result via :class:`SoulStore` — ``SOUL.md`` plus the JSON
+3. **Persists** the result via the :class:`~bob.domain.ports.SoulStore` port —
+   ``SOUL.md`` plus the JSON
    profiles (``taste_profile`` / ``mood`` / ``phantom_prefs``) and an append-only
    ``genesis_log.md``. Once ``SOUL.md`` exists, a second run is a **no-op**:
    identity is born once and survives every restart.
@@ -40,8 +41,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from bob.application.router.llm_router import LLMRouter
-    from bob.domain.ports import Clock
-    from bob.infrastructure.persistence.soul_store import JsonValue, SoulStore
+    from bob.domain.ports import Clock, JsonValue, SoulStore
 
 logger = logging.getLogger(__name__)
 

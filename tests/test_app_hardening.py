@@ -157,9 +157,11 @@ async def test_ptb_adapter_delegates_every_call() -> None:
     inner = RecordingBot()
     adapter = _PtbBotAdapter(inner)
 
-    # Act
-    updates = await adapter.get_updates(offset=10, timeout=5)
-    sent = await adapter.send_message(chat_id=42, text="hi")
+    # Act: the adapter's declared return types are the gateway's structural
+    # views; we only assert the inner result is forwarded verbatim, so compare
+    # as plain objects (the fake returns simple sentinels).
+    updates: object = await adapter.get_updates(offset=10, timeout=5)
+    sent: object = await adapter.send_message(chat_id=42, text="hi")
     edited = await adapter.edit_message_text(chat_id=42, message_id=7, text="bye")
 
     # Assert: each call forwarded its kwargs and returned the inner result.

@@ -19,13 +19,14 @@ import json
 import logging
 from typing import TYPE_CHECKING
 
+from bob.domain.ports import JsonValue
+
 if TYPE_CHECKING:
     from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-# A JSON-decodable artifact value (object/array/scalar).
-type JsonValue = dict[str, object] | list[object] | str | int | float | bool | None
+__all__ = ["JsonValue", "SoulStore"]
 
 _SOUL_FILE = "SOUL.md"
 _GENESIS_LOG_FILE = "genesis_log.md"
