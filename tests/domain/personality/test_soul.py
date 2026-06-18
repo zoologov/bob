@@ -1,0 +1,78 @@
+# Copyright (c) 2026 Vladimir Zoologov
+# SPDX-License-Identifier: BUSL-1.1
+# See the LICENSE file in the project root for full license information.
+
+"""Tests for SOUL — the in-memory snapshot of Bob's persisted soul (no I/O)."""
+
+from __future__ import annotations
+
+import pytest
+
+from bob.domain.personality.mood import Mood
+from bob.domain.personality.soul import SOUL
+from bob.domain.personality.taste import TasteAxis, TasteEngine, Verdict
+
+
+def _soul() -> SOUL:
+    return SOUL(
+        identity="I am Bob — yes, that Bob, from the book.",
+        mood=Mood(valence=0.3, arousal=-0.1),
+        mood_baseline=Mood(valence=0.1),
+        taste=TasteEngine(axes=(TasteAxis(name="coffee", value=0.9, conviction=0.9),)),
+        phantom_prefs=("coffee", "sunsets", "the smell of old books"),
+    )
+
+
+def test_soul_holds_its_components() -> None:
+    # Arrange / Act
+    soul = _soul()
+
+    # Assert
+    assert "Bob" in soul.identity
+    assert soul.mood.valence == pytest.approx(0.3)
+    assert soul.mood_baseline.valence == pytest.approx(0.1)
+    assert soul.phantom_prefs == ("coffee", "sunsets", "the smell of old books")
+
+
+def test_soul_taste_is_usable_for_scoring() -> None:
+    # Arrange
+    soul = _soul()
+
+    # Act
+    verdict = soul.taste.score("coffee")
+
+    # Assert: SOUL exposes the live taste engine for verdicts.
+    assert verdict is Verdict.LOVE
+
+
+def test_soul_is_immutable() -> None:
+    # Arrange
+    soul = _soul()
+
+    # Act / Assert: the soul snapshot is a frozen value object.
+    with pytest.raises(AttributeError):
+        soul.identity = "someone else"  # type: ignore[misc]
+
+
+def test_soul_with_mood_returns_updated_snapshot() -> None:
+    # Arrange
+    soul = _soul()
+    new_mood = Mood(valence=-0.5)
+
+    # Act: swap mood (e.g. after UpdateMoodFromText) without mutating the soul.
+    updated = soul.with_mood(new_mood)
+
+    # Assert: a new snapshot carries the new mood; the rest is preserved.
+    assert updated.mood.valence == pytest.approx(-0.5)
+    assert updated.identity == soul.identity
+    assert updated.phantom_prefs == soul.phantom_prefs
+    assert soul.mood.valence == pytest.approx(0.3)
+    assert updated is not soul
+
+
+def test_soul_defaults_phantom_prefs_to_empty() -> None:
+    # Arrange / Act
+    soul = SOUL(identity="x", mood=Mood(), mood_baseline=Mood(), taste=TasteEngine())
+
+    # Assert: optional collections default to a safe empty, never a shared mutable.
+    assert soul.phantom_prefs == ()
