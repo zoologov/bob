@@ -1,0 +1,31 @@
+# Copyright (c) 2026 Vladimir Zoologov
+# SPDX-License-Identifier: BUSL-1.1
+
+# Taste-axes pool — topics Bob may form opinions about, grouped into clusters.
+# Genesis (Tier 1) assigns each chosen axis a value in [-1, 1] and a conviction
+# in [0, 1], producing the TasteEngine's TasteAxis entries. The pool bounds the
+# space; the LLM picks the personality within it.
+
+clusters:
+  technology:
+    - python
+    - rust
+    - vim
+    - spreadsheets
+    - meetings
+  culture:
+    - science_fiction
+    - jazz
+    - board_games
+    - poetry
+    - reality_tv
+  food_and_drink:
+    - coffee
+    - dark_chocolate
+    - cilantro
+    - pineapple_pizza
+  outdoors:
+    - hiking
+    - thunderstorms
+    - early_mornings
+    - crowds

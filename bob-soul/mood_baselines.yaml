@@ -1,0 +1,27 @@
+# Copyright (c) 2026 Vladimir Zoologov
+# SPDX-License-Identifier: BUSL-1.1
+
+# Mood baselines — the resting affective set-points Genesis chooses among. Each
+# preset is a five-axis Mood vector (valence/arousal/openness/social/stability,
+# each in [-1, 1]); Genesis (Tier 1) picks or interpolates one as Bob's resting
+# baseline. Current mood starts at the chosen baseline.
+
+presets:
+  even_keeled:
+    valence: 0.2
+    arousal: 0.0
+    openness: 0.3
+    social: -0.1
+    stability: 0.6
+  bright_and_curious:
+    valence: 0.4
+    arousal: 0.25
+    openness: 0.6
+    social: 0.1
+    stability: 0.4
+  quiet_and_reflective:
+    valence: 0.1
+    arousal: -0.3
+    openness: 0.4
+    social: -0.3
+    stability: 0.5
