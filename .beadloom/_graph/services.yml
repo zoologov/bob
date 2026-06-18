@@ -1,6 +1,41 @@
-edges: []
+edges:
+- src: bob-domain
+  dst: bob
+  kind: part_of
+- src: bob-application
+  dst: bob
+  kind: part_of
+- src: bob-infrastructure
+  dst: bob
+  kind: part_of
+- src: bob-application
+  dst: bob-domain
+  kind: depends_on
+- src: bob-infrastructure
+  dst: bob-application
+  kind: depends_on
 nodes:
 - ref_id: bob
   kind: service
   source: src/bob/
-  summary: 'Bob — Telegram-native companion agent. Greenfield; P0 personality slice in progress.'
+  summary: 'Bob — Telegram-native companion agent. P0 personality slice: GUPPI process, LLM Tier 0/1 router with privacy redaction, SQLite+FTS5 memory, Higher Mind, Genesis, heartbeat.'
+  docs:
+  - architecture.md
+- ref_id: bob-domain
+  kind: domain
+  source: src/bob/domain/
+  summary: 'Pure domain core: personality (Mood, TasteEngine, Negotiation, SOUL), memory entities, and port protocols. No I/O, no LLM, no transport.'
+  docs:
+  - domains/domain/README.md
+- ref_id: bob-application
+  kind: domain
+  source: src/bob/application/
+  summary: 'GUPPI orchestration: AgentRuntime + AsyncEventBus, LLMRouter (tier routing + privacy redaction), use-cases (HandleMessage, RunGenesis, UpdateMoodFromText) and heartbeat ticks. Depends on domain via ports; never imports infrastructure.'
+  docs:
+  - domains/application/README.md
+- ref_id: bob-infrastructure
+  kind: domain
+  source: src/bob/infrastructure/
+  summary: 'Port adapters: Telegram gateway (long-polling + streaming), OpenAI-compatible LLM provider (Tier 0/1), SQLite+FTS5 persistence and SoulStore, layered config loader.'
+  docs:
+  - domains/infrastructure/README.md
