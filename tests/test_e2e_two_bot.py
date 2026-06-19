@@ -339,6 +339,118 @@ async def test_owner_authorize_in_general_is_handled_by_guppi_and_persisted(
 
 
 @pytest.mark.asyncio
+async def test_owner_deauthorize_in_general_persists_revocation(
+    tmp_path: Path,
+) -> None:
+    # US-3: owner manages access via GUPPI in General. Pre-authorize a user, then
+    # /deauthorize them; the revocation must land in the live SQLite allowlist
+    # (survives a restart) — the same authz store BOB-002 owns, driven by GUPPI.
+    _seed_soul(tmp_path)
+    repo = SqliteMemoryRepo(tmp_path / "bob.db")
+    await repo.initialize()
+    try:
+        await KvAllowlistStore(repo).add(555)
+    finally:
+        await repo.close()
+
+    bob_bot, guppi_bot = _FakeBot(), _FakeBot()
+    guppi_bot.updates_batches = [
+        [_update(15, text="/deauthorize 555", thread_id=None, user_id=_OWNER_ID)]
+    ]
+    app = _build(tmp_path, bob_bot=bob_bot, guppi_bot=guppi_bot)
+    await app.startup()
+
+    # Act
+    try:
+        published = await app.multibot.poll_once()
+    finally:
+        await app.shutdown()
+
+    # Assert: GUPPI consumed it (Bob untouched); the allowlist is empty again.
+    assert published == 0
+    assert bob_bot.sends == []
+    assert len(guppi_bot.sends) == 1
+    repo = SqliteMemoryRepo(tmp_path / "bob.db")
+    await repo.initialize()
+    try:
+        assert await KvAllowlistStore(repo).load() == set()
+    finally:
+        await repo.close()
+
+
+@pytest.mark.asyncio
+async def test_non_owner_authorize_in_general_is_ignored_and_not_persisted(
+    tmp_path: Path,
+) -> None:
+    # US-3: only the owner drives GUPPI. A stranger's /authorize in General is
+    # ignored — no grant persisted, no reveal (GUPPI stays silent).
+    _seed_soul(tmp_path)
+    bob_bot, guppi_bot = _FakeBot(), _FakeBot()
+    guppi_bot.updates_batches = [
+        [_update(16, text="/authorize 999", thread_id=None, user_id=_STRANGER_ID)]
+    ]
+    app = _build(tmp_path, bob_bot=bob_bot, guppi_bot=guppi_bot)
+    await app.startup()
+
+    # Act
+    try:
+        published = await app.multibot.poll_once()
+    finally:
+        await app.shutdown()
+
+    # Assert: nothing published, both bots silent, allowlist untouched.
+    assert published == 0
+    assert bob_bot.sends == []
+    assert guppi_bot.sends == []
+    repo = SqliteMemoryRepo(tmp_path / "bob.db")
+    await repo.initialize()
+    try:
+        assert await KvAllowlistStore(repo).load() == set()
+    finally:
+        await repo.close()
+
+
+@pytest.mark.asyncio
+async def test_cross_bot_duplicate_is_processed_once_end_to_end(
+    tmp_path: Path,
+) -> None:
+    # US-4: both admin bots are in the group, so the same Bob-topic message can be
+    # delivered to BOTH update streams. The (chat_id, message_id) dedup must make
+    # the full pipeline run exactly once — one reply from Bob, not two.
+    _seed_soul(tmp_path)
+    bob_bot, guppi_bot = _FakeBot(), _FakeBot()
+
+    def _dup(update_id: int) -> _FakeUpdate:
+        # Same chat+message_id on both streams (distinct update_ids per stream).
+        return _FakeUpdate(
+            update_id=update_id,
+            message=_FakeMessage(
+                message_id=17, text="hi Bob, dup", message_thread_id=_BOB_TOPIC_ID
+            ),
+            effective_chat=_FakeChat(id=_CHAT_ID),
+            effective_user=_FakeUser(id=_OWNER_ID),
+        )
+
+    bob_dup, guppi_dup = _dup(17), _dup(99)
+    bob_bot.updates_batches = [[bob_dup]]
+    guppi_bot.updates_batches = [[guppi_dup]]
+    app = _build(tmp_path, bob_bot=bob_bot, guppi_bot=guppi_bot)
+    await app.startup()
+
+    # Act
+    try:
+        published = await app.multibot.poll_once()
+    finally:
+        await app.shutdown()
+
+    # Assert: processed once; exactly one committed Bob reply pinned to his thread.
+    assert published == 1
+    committed = [s for s in bob_bot.sends if s.text == _REPLY]
+    assert len(committed) == 1
+    assert committed[0].message_thread_id == _BOB_TOPIC_ID
+
+
+@pytest.mark.asyncio
 async def test_message_in_general_or_other_topic_is_ignored_by_bob(
     tmp_path: Path,
 ) -> None:

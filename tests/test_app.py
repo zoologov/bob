@@ -155,3 +155,33 @@ async def test_application_runtime_starts_and_stops(tmp_path: Path) -> None:
     # Assert
     assert running is True
     assert app.runtime.state is RuntimeState.STOPPED
+
+
+@pytest.mark.parametrize(
+    ("missing", "identity"),
+    [("bob", "bob"), ("guppi", "guppi")],
+)
+def test_build_application_without_injected_bot_requires_token(
+    tmp_path: Path, missing: str, identity: str
+) -> None:
+    # Arrange: no injected bot for one identity AND its token blanked → the real
+    # aiogram-bot path is taken and must reject the empty token (secrets are env
+    # only; a missing token is a config error, never a silent network attempt).
+    config = _config(tmp_path)
+    telegram = config["telegram"]
+    assert isinstance(telegram, dict)
+    bot_section = telegram[missing]
+    assert isinstance(bot_section, dict)
+    bot_section["token"] = ""
+    # Inject only the OTHER bot so the failure is isolated to `missing`.
+    bob_bot = None if missing == "bob" else _Bot()
+    guppi_bot = None if missing == "guppi" else _Bot()
+
+    # Act / Assert
+    with pytest.raises(KeyError, match=f"telegram.{identity}.token"):
+        build_application(
+            config=config,
+            providers=_providers(),
+            bob_bot=bob_bot,
+            guppi_bot=guppi_bot,
+        )
