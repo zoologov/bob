@@ -28,15 +28,20 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from bob.application.authz import Authorizer
+from bob.application.capabilities import (
+    CapabilityRegistry,
+    make_recall_memory_capability,
+)
 from bob.application.router import LLMRouter
 from bob.application.runtime import (
     MESSAGE_RECEIVED,
     AgentRuntime,
     AsyncEventBus,
     MessageReceived,
+    RetryPolicy,
     periodic,
 )
 from bob.application.usecases.extract_facts import ExtractFacts
@@ -71,7 +76,12 @@ if TYPE_CHECKING:
 
     from bob.application.runtime.agent import BackgroundTask
     from bob.application.usecases.run_genesis import GenesisResult
-    from bob.domain.ports import DomainEvent, EventHandler, LLMProvider
+    from bob.domain.ports import (
+        DomainEvent,
+        EventHandler,
+        LLMProvider,
+        ToolCallingProvider,
+    )
 
 logger = logging.getLogger(__name__)
 
@@ -81,6 +91,14 @@ _DEFAULT_POLL_TIMEOUT = 10
 _BATCH_TOKENS = 4
 _THROTTLE_INTERVAL = 0.5
 _MOOD_DRIFT_SECONDS = 60.0
+
+# Production tick resilience: retry a tick's *transient* LLM/network blips with
+# bounded exponential backoff (BEAD-04) before isolating whatever it ultimately
+# raises, so a momentary hiccup never silently skips an idle tick.
+_TICK_RETRY_POLICY = RetryPolicy()
+
+# The reply tier (Tier 1) is the one whose provider drives the capability tool-loop.
+_REPLY_TIER = 1
 
 # Where the bob-soul personality templates live (repo root / bob-soul).
 _DEFAULT_TEMPLATES_DIR = Path(__file__).resolve().parents[2] / "bob-soul"
@@ -116,6 +134,7 @@ class Application:
     handle_message: HandleMessage
     gateway: TelegramGateway
     authorizer: Authorizer
+    registry: CapabilityRegistry
     inner_monologue_tick: InnerMonologueTick
     mood_drift_tick: MoodDriftTick
     reflect_tick: ReflectTick
@@ -162,6 +181,14 @@ def build_application(
     recall = Fts5MemoryRecall(memory_repo)
     soul_store = SoulStore(_soul_dir(merged))
 
+    # Capability seam (BEAD-05/06): advertise recall_memory to the model so the
+    # production tool-loop is active — the model may call it, GUPPI executes it,
+    # the result loops back into the reply. The tier-1 reply provider is the
+    # tool-calling provider; when it cannot do tools the loop stays dormant and
+    # HandleMessage keeps the plain reply path.
+    registry = _build_registry(recall)
+    tool_provider = _as_tool_provider(tier_providers)
+
     genesis = RunGenesis(
         templates_dir=_templates_dir(merged),
         router=router,
@@ -187,6 +214,8 @@ def build_application(
         extract_facts=extract_facts,
         clock=clock,
         state=personality,
+        registry=registry,
+        tool_provider=tool_provider,
     )
     event_bus.subscribe(MESSAGE_RECEIVED, _as_handler(handle_message))
 
@@ -217,6 +246,7 @@ def build_application(
         handle_message=handle_message,
         gateway=gateway,
         authorizer=authorizer,
+        registry=registry,
         inner_monologue_tick=inner_monologue_tick,
         mood_drift_tick=mood_drift_tick,
         reflect_tick=reflect_tick,
@@ -274,6 +304,34 @@ def _build_authorizer(
     )
 
 
+def _build_registry(recall: Fts5MemoryRecall) -> CapabilityRegistry:
+    """Build the capability registry GUPPI advertises and dispatches.
+
+    Registers the first real capability — ``recall_memory`` (BEAD-06), a thin
+    wrapper over the live :class:`MemoryRecall` — so the tool-loop has something
+    to call end to end. New skills register here without touching consumers.
+    """
+    registry = CapabilityRegistry()
+    registry.register(make_recall_memory_capability(recall))
+    return registry
+
+
+def _as_tool_provider(
+    providers: Mapping[int, LLMProvider],
+) -> ToolCallingProvider | None:
+    """Pick the reply-tier provider as the tool-calling provider, if it supports it.
+
+    The Tier 1 reply provider (:class:`OpenAICompatProvider`) realises
+    :class:`ToolCallingProvider`; a fake or a tool-less endpoint may not, in which
+    case the tool-loop stays dormant and HandleMessage keeps the plain path.
+    """
+    provider = providers.get(_REPLY_TIER)
+    if provider is not None and hasattr(provider, "complete_with_tools"):
+        # The reply tier advertises complete_with_tools → it can drive the loop.
+        return cast("ToolCallingProvider", provider)
+    return None
+
+
 def _build_real_bot(telegram: Mapping[str, object]) -> BotLike:
     """Construct the real aiogram ``Bot`` from the configured token."""
     from aiogram import Bot  # noqa: PLC0415 — lazy: only the real-bot path needs aiogram
@@ -301,9 +359,21 @@ def _background_tasks(
 
     return [
         periodic(poll, interval_seconds=0.0),
-        periodic(inner_monologue_tick.run, interval_seconds=heartbeat),
-        periodic(mood_drift_tick.run, interval_seconds=_MOOD_DRIFT_SECONDS),
-        periodic(reflect_tick.run, interval_seconds=heartbeat * 10),
+        periodic(
+            inner_monologue_tick.run,
+            interval_seconds=heartbeat,
+            retry=_TICK_RETRY_POLICY,
+        ),
+        periodic(
+            mood_drift_tick.run,
+            interval_seconds=_MOOD_DRIFT_SECONDS,
+            retry=_TICK_RETRY_POLICY,
+        ),
+        periodic(
+            reflect_tick.run,
+            interval_seconds=heartbeat * 10,
+            retry=_TICK_RETRY_POLICY,
+        ),
     ]
 
 

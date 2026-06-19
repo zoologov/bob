@@ -11,8 +11,8 @@
 
 ## Текущий беад
 
-**Беад:** — (W1 завершён; следующий ready — bob-j4f.2 Rich + Thinking).
-**Предыдущий:** bob-j4f.1 (aiogram-миграция) — DONE, закрыт.
+**Беад:** — (W4 .7 завершён; следующий ready — bob-j4f.8 test: покрытие + приёмка).
+**Предыдущий:** bob-j4f.7 (integration + e2e) — DONE, закрыт.
 
 ## Прогресс
 
@@ -21,6 +21,15 @@
       дедуп по update_id; dep-свап pyproject (PTB удалён, aiogram добавлен); app.py — AiogramBotAdapter
       + `_build_real_bot` на aiogram. Тесты на fake-aiogram (без сети). pytest 269 / ruff / mypy --strict
       (src+tests) — зелёные. Доки architecture.md — стейл (BEAD-10 tech-writer).
+- [x] W4: bob-j4f.7 (integration + e2e) — DONE. app.py: построен `CapabilityRegistry` +
+      зарегистрирован `recall_memory` (над live `MemoryRecall`); tier-1 провайдер выбран как
+      `ToolCallingProvider` (`_as_tool_provider`) и оба переданы в `HandleMessage` — tool-loop активен в
+      проде (манифест кладётся в системный промпт). Тики (inner_monologue/mood_drift/reflect)
+      зарегистрированы с `retry=RetryPolicy()` (BEAD-04) — резилентны. `Application` получил публичное
+      поле `registry`. Rich-gateway (BEAD-02) + authz (BEAD-03) — проверены, композиция связна.
+      e2e на фейках (`tests/test_e2e_integration.py`, 6 тестов): authz-drop, reply, tool-loop→recall_memory,
+      RichBlockThinking-рендер, тик переживает транзиентную ошибку. pytest 390 / ruff / mypy --strict
+      (bare + src+tests) — зелёные. architecture.md — стейл (предсуществующий; BEAD-10 tech-writer).
 
 ## Статусы беадов
 
