@@ -80,3 +80,6 @@ godot/tools/.venv/
 .dolt/
 *.db
 .beads-credential-key
+
+# Live-test dialogue artifact (local only)
+first_dialogue.txt
