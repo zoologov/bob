@@ -89,6 +89,34 @@ async def test_load_episodes_returns_newest_first(repo: SqliteMemoryRepo) -> Non
     await repo.close()
 
 
+async def test_recent_episodes_returns_last_k_in_chronological_order(
+    repo: SqliteMemoryRepo,
+) -> None:
+    # Arrange: four episodes across increasing timestamps.
+    for hour, text in ((9, "first"), (10, "second"), (11, "third"), (12, "fourth")):
+        await repo.save_episode(
+            {"ts": _ts(hour).isoformat(), "event_type": "message", "content": text}
+        )
+
+    # Act: ask for the last 2 by recency.
+    episodes = await repo.recent_episodes(2)
+
+    # Assert: the two most-recent, returned oldest-first (reads naturally in a prompt).
+    assert [e["content"] for e in episodes] == ["third", "fourth"]
+    await repo.close()
+
+
+async def test_recent_episodes_zero_returns_empty(repo: SqliteMemoryRepo) -> None:
+    # Arrange
+    await repo.save_episode(
+        {"ts": _ts().isoformat(), "event_type": "message", "content": "x"}
+    )
+
+    # Act / Assert: a non-positive window yields nothing.
+    assert await repo.recent_episodes(0) == []
+    await repo.close()
+
+
 async def test_state_survives_a_process_restart(tmp_path: Path) -> None:
     # Arrange: write with one repo instance, then drop it.
     db_path = tmp_path / "bob.db"

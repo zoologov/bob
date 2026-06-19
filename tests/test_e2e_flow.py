@@ -8,8 +8,10 @@ The whole GUPPI graph is wired by ``bob.app.build_application`` with injected
 fakes — captured LLM providers (no network), a fake Telegram bot (no Telegram),
 and a temp on-disk SQLite database (real persistence). Driving a
 ``MessageReceived`` through the real EventBus must run the full
-perceive→decide→act→persist path; a heartbeat tick must move mood; and privacy
-must hold (no raw personal context reaches Tier 1).
+perceive→decide→act→persist path; a heartbeat tick must move mood; and the
+selective-redaction invariant must hold (Variant 2): reply-shaping
+conversation/memory MAY reach Tier 1, while genuinely-internal ``private_context``
+never does.
 """
 
 from __future__ import annotations
@@ -18,6 +20,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from bob.app import build_application
+from bob.application.router.llm_router import LLMRequest, LLMRouter, TaskType
 from bob.application.runtime.events import MessageReceived
 from bob.domain.memory.entities import SemanticFact
 from bob.infrastructure.persistence import SoulStore
@@ -156,8 +159,11 @@ async def test_e2e_message_to_reply_and_persist(tmp_path: Path) -> None:
     await app.shutdown()
 
 
-async def test_e2e_privacy_no_personal_context_to_tier1(tmp_path: Path) -> None:
-    # Arrange: a recallable secret fact must never reach Tier 1.
+async def test_e2e_private_context_redacted_but_memory_shared(tmp_path: Path) -> None:
+    # Arrange (Variant 2, selective redaction): conversation/memory IS reply-shaping
+    # and MAY reach the Tier 1 reply; only genuinely-internal private_context is
+    # Tier-0-only. The reply prompt is built once and the router strips
+    # private_context for Tier 1 — assert that seam directly on a crafted request.
     _seed_soul(tmp_path)
     providers, _tier0, tier1 = _providers()
     bot = FakeBot()
@@ -165,18 +171,38 @@ async def test_e2e_privacy_no_personal_context_to_tier1(tmp_path: Path) -> None:
     await app.startup()
 
     await app.memory_repo.save_fact(
-        SemanticFact(ts=datetime.now(tz=UTC), category="personal", content=_SECRET_FACT)
+        SemanticFact(ts=datetime.now(tz=UTC), category="personal", content=_RECALL_FACT)
     )
 
-    # Act
+    # Act: a reply turn whose context carries the recallable memory.
     await app.event_bus.publish(
-        MessageReceived(update_id=2, chat_id=42, message_id=8, text="address", sender_id=5)
+        MessageReceived(
+            update_id=2, chat_id=42, message_id=8, text="probes", sender_id=5
+        )
     )
 
-    # Assert: raw personal/memory material never left for Tier 1.
-    assert _SECRET_FACT not in tier1.all_text
+    # Assert: the shareable recalled memory reached the Tier 1 reply (Bob remembers),
+    # while a router-level private_context would not have (see router unit tests).
+    assert _RECALL_FACT in tier1.all_text
+
+    assert _SECRET_FACT not in await _tier1_text_for_private_context()
 
     await app.shutdown()
+
+
+async def _tier1_text_for_private_context() -> str:
+    """Drive one reply request carrying private_context and return what Tier 1 saw."""
+    providers, _t0, tier1 = _providers()
+    router = LLMRouter(providers=providers)
+    await router.run(
+        LLMRequest(
+            task_type=TaskType.REPLY_TO_USER,
+            messages=[{"role": "user", "content": "address"}],
+            shareable_context="ok to share",
+            private_context=_SECRET_FACT,
+        )
+    )
+    return tier1.all_text
 
 
 async def test_e2e_heartbeat_tick_moves_mood(tmp_path: Path) -> None:

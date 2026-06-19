@@ -5,9 +5,12 @@
 """Tests for HandleMessage — the full message→reply→persist flow on fakes.
 
 Everything external is faked: a captured LLM provider (no network), a fake
-Telegram bot (no Telegram), and an in-memory SQLite repo/recall (temp DB). The
-test asserts the whole perceive→decide→act path: mood update → recall + context
-→ Tier 1 reply (with redaction) → streamed reply out → episode + mood persisted.
+Telegram bot (no Telegram), and an in-memory repo/recall. The test asserts the
+whole perceive→decide→act path: mood update → recent history + recall + context
+→ Tier 1 reply (selective redaction) → streamed reply out → episode + mood
+persisted. The privacy invariant is Variant 2: conversation/memory IS allowed to
+reach the Tier 1 reply (it shapes Bob's reply and returns to that same user);
+only genuinely-internal ``private_context`` stays Tier-0-only.
 """
 
 from __future__ import annotations
@@ -30,8 +33,10 @@ if TYPE_CHECKING:
     from bob.domain.ports import Recalled
     from bob.infrastructure.telegram.gateway import UpdateLike
 
-_SECRET_PHANTOM = "phantom-secret-coffee"  # noqa: S105 — test fixture, not a credential
-_RECALL_SECRET = "user lives at 42 Privacy Lane"  # noqa: S105 — test fixture
+_PHANTOM_PREF = "phantom-coffee-craving"  # shareable taste material (shapes the reply)
+_RECALL_MEMORY = "the user said earlier they enjoy pour-over"  # shareable recalled memory
+# A prior turn already on record: the user told Bob their name (must reach the reply).
+_PRIOR_TURN = "Ada: my name is Ada\nbob: nice to meet you"
 
 
 class FixedClock:
@@ -99,12 +104,17 @@ class FakeBot:
 
 
 class FakeRepo:
-    """In-memory MemoryRepo capturing episodes, facts, and the persisted mood."""
+    """In-memory MemoryRepo: writes episodes/mood and reads recent history.
 
-    def __init__(self) -> None:
+    ``history`` seeds prior turns so ``recent_episodes`` can replay them — this
+    is how a name said one message ago reaches the next reply's context.
+    """
+
+    def __init__(self, *, history: Sequence[Mapping[str, object]] = ()) -> None:
         self.episodes: list[Mapping[str, object]] = []
         self.facts: list[object] = []
         self.mood: Mapping[str, object] | None = None
+        self._history: list[Mapping[str, object]] = list(history)
 
     async def save_episode(self, episode: Mapping[str, object]) -> None:
         self.episodes.append(episode)
@@ -115,12 +125,15 @@ class FakeRepo:
     async def set_mood(self, state: Mapping[str, object], *, at: datetime) -> None:  # noqa: ARG002
         self.mood = state
 
+    async def recent_episodes(self, k: int) -> Sequence[Mapping[str, object]]:
+        return self._history[-k:] if k > 0 else []
+
 
 class FakeRecall:
-    """Recall returning a canned secret memory (to test redaction)."""
+    """Recall returning a canned (shareable) recalled memory."""
 
     async def recall(self, query: str, *, k: int) -> Sequence[Recalled]:  # noqa: ARG002
-        return [{"content": _RECALL_SECRET, "category": "personal"}]
+        return [{"content": _RECALL_MEMORY, "category": "personal"}]
 
 
 def _moment() -> datetime:
@@ -135,17 +148,19 @@ def _soul() -> SOUL:
         mood=baseline,
         mood_baseline=baseline,
         taste=taste,
-        phantom_prefs=(_SECRET_PHANTOM,),
+        phantom_prefs=(_PHANTOM_PREF,),
     )
 
 
-def _build(*, reply: str) -> tuple[HandleMessage, FakeBot, FakeRepo, CapturingProvider]:
+def _build(
+    *, reply: str, history: Sequence[Mapping[str, object]] = ()
+) -> tuple[HandleMessage, FakeBot, FakeRepo, CapturingProvider]:
     tier0 = CapturingProvider(reply="positive")
     tier1 = CapturingProvider(reply=reply)
     router = LLMRouter(providers={0: tier0, 1: tier1})
     clock = FixedClock(_moment())
     bot = FakeBot()
-    repo = FakeRepo()
+    repo = FakeRepo(history=history)
     gateway = TelegramGateway(
         bot=bot,
         bus=_NullBus(),
@@ -160,6 +175,7 @@ def _build(*, reply: str) -> tuple[HandleMessage, FakeBot, FakeRepo, CapturingPr
         gateway=gateway,
         recall=FakeRecall(),
         repo=repo,
+        episodes=repo,
         update_mood=UpdateMoodFromText(router=router, clock=clock),
         clock=clock,
         state=PersonalityState(soul=_soul()),
@@ -227,16 +243,31 @@ async def test_reply_uses_tier1_provider() -> None:
     assert len(tier1.payloads) == 1
 
 
-async def test_personal_context_never_reaches_tier1() -> None:
-    # Arrange: recall carries a secret; SOUL carries a phantom secret.
+async def test_recalled_memory_reaches_tier1_reply() -> None:
+    # Arrange: recall carries a (shareable) recalled memory; SOUL carries phantom prefs.
     handler, _bot, _repo, tier1 = _build(reply="hi")
 
     # Act
     await handler.handle(_message())
 
-    # Assert: privacy — no raw personal/memory material leaked to Tier 1.
-    assert _RECALL_SECRET not in tier1.all_text
-    assert _SECRET_PHANTOM not in tier1.all_text
+    # Assert (Variant 2): reply-shaping memory/taste DOES reach the Tier 1 reply.
+    assert _RECALL_MEMORY in tier1.all_text
+    assert _PHANTOM_PREF in tier1.all_text
+
+
+async def test_recent_conversation_history_reaches_tier1_reply() -> None:
+    # Arrange: a prior turn where the user told Bob their name is on record.
+    handler, _bot, _repo, tier1 = _build(
+        reply="hi",
+        history=[{"content": _PRIOR_TURN, "event_type": "message"}],
+    )
+
+    # Act: a fresh message comes in.
+    await handler.handle(_message("what's my name?"))
+
+    # Assert: the earlier turn (the name) is in the Tier 1 reply context — Bob remembers.
+    assert _PRIOR_TURN in tier1.all_text
+    assert "Ada" in tier1.all_text
 
 
 async def test_mood_updates_from_message() -> None:

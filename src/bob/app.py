@@ -167,6 +167,7 @@ def build_application(
         gateway=gateway,
         recall=recall,
         repo=memory_repo,
+        episodes=memory_repo,
         update_mood=update_mood,
         clock=clock,
         state=personality,

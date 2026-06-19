@@ -11,11 +11,14 @@ use-case runs Bob's perceive→decide→act turn (RFC §"Поток обрабо
 
 1. **Perceive** — :class:`UpdateMoodFromText` (Tier 0 sentiment + signals) updates
    the in-memory mood; the new mood is held on :class:`PersonalityState`.
-2. **Decide** — recall relevant memory (:class:`MemoryRecall`, FTS5) and assemble
-   the personality context (identity, mood tone, taste verdict, phantom prefs).
-   That context is private: it is handed to the :class:`LLMRouter` as
-   ``personal_context``, which the router strips before any Tier 1 call so raw
-   personal/memory material never leaves the machine (VISION §7.1).
+2. **Decide** — replay recent conversation history (:class:`EpisodeReader`),
+   recall relevant memory (:class:`MemoryRecall`, FTS5) and assemble the context.
+   Following Variant 2 (selective redaction), the reply-shaping material
+   (recent history, recalled memory, mood tone, identity, taste verdict, phantom
+   prefs) is handed to the :class:`LLMRouter` as ``shareable_context`` — it MAY
+   accompany the Tier 1 reply because it shapes Bob's reply and returns to that
+   same user. Genuinely-internal material would go in ``private_context``
+   (Tier-0-only); in P0.1 that channel is empty but the seam is kept (VISION §7.1).
 3. **Act** — the router replies on ``TaskType.REPLY_TO_USER`` (Tier 1 + redaction,
    fallback Tier 0); the reply is streamed back through the Telegram gateway and
    the turn is persisted (episode + mood snapshot) via the :class:`MemoryRepo`.
@@ -49,6 +52,9 @@ logger = logging.getLogger(__name__)
 # How many memories to recall when assembling the reply context.
 _RECALL_K = 5
 
+# How many recent conversation turns to replay into the reply context.
+_HISTORY_K = 6
+
 # Each streamed reply is a single message; a present sender is engaged.
 _SINGLE_MESSAGE = 1
 
@@ -72,6 +78,12 @@ class EpisodeWriter(Protocol):
     async def set_mood(self, state: Mapping[str, object], *, at: datetime) -> None: ...
 
 
+class EpisodeReader(Protocol):
+    """The read seam HandleMessage needs: replay recent conversation history."""
+
+    async def recent_episodes(self, k: int) -> Sequence[Mapping[str, object]]: ...
+
+
 @dataclass
 class PersonalityState:
     """Mutable in-memory holder for Bob's current soul snapshot across turns.
@@ -93,6 +105,7 @@ class HandleMessage:
         gateway: ReplyStreamer,
         recall: MemoryRecall,
         repo: EpisodeWriter,
+        episodes: EpisodeReader,
         update_mood: UpdateMoodFromText,
         clock: Clock,
         state: PersonalityState,
@@ -101,6 +114,7 @@ class HandleMessage:
         self._gateway = gateway
         self._recall = recall
         self._repo = repo
+        self._episodes = episodes
         self._update_mood = update_mood
         self._clock = clock
         self._state = state
@@ -109,7 +123,8 @@ class HandleMessage:
         """Process one received message end to end (the EventBus subscriber)."""
         soul = await self._perceive(event)
         recalled = await self._recall.recall(event.text, k=_RECALL_K)
-        reply = await self._decide(event.text, soul, recalled)
+        history = await self._episodes.recent_episodes(_HISTORY_K)
+        reply = await self._decide(event.text, soul, recalled, history)
         await self._gateway.stream_reply(chat_id=event.chat_id, tokens=_iter_tokens(reply))
         await self._persist(event, reply, soul)
 
@@ -122,16 +137,26 @@ class HandleMessage:
         return soul
 
     async def _decide(
-        self, text: str, soul: SOUL, recalled: Sequence[Recalled]
+        self,
+        text: str,
+        soul: SOUL,
+        recalled: Sequence[Recalled],
+        history: Sequence[Mapping[str, object]],
     ) -> str:
-        """Build the request (private context redacted for Tier 1) and get the reply."""
+        """Build the request (selective redaction) and get the reply.
+
+        Reply-shaping context (history + memory + mood/identity/taste) goes in
+        ``shareable_context`` so it reaches the Tier 1 reply; the
+        ``private_context`` channel is kept for Tier-0-only material (empty here).
+        """
         request = LLMRequest(
             task_type=TaskType.REPLY_TO_USER,
             messages=[
                 {"role": "system", "content": _SYSTEM_PROMPT},
                 {"role": "user", "content": text},
             ],
-            personal_context=_assemble_context(soul, text, recalled),
+            shareable_context=_assemble_shareable_context(soul, text, recalled, history),
+            private_context=None,
         )
         return await self._router.run(request)
 
@@ -157,12 +182,19 @@ class HandleMessage:
         await self._repo.set_mood(_mood_state(soul), at=now)
 
 
-def _assemble_context(soul: SOUL, topic: str, recalled: Sequence[Recalled]) -> str:
-    """Compose Bob's private personality + memory context (Tier-0-only).
+def _assemble_shareable_context(
+    soul: SOUL,
+    topic: str,
+    recalled: Sequence[Recalled],
+    history: Sequence[Mapping[str, object]],
+) -> str:
+    """Compose Bob's reply-shaping context (Variant 2: MAY reach Tier 1).
 
-    This string is deliberately NEVER sent to Tier 1: the router redacts it for
-    remote calls. It carries identity, mood tone, the taste verdict on the topic,
-    phantom preferences, and recalled memories.
+    Carries recent conversation history, identity, mood tone, the taste verdict
+    on the topic, phantom preferences, and recalled memories — all material that
+    shapes Bob's reply and returns to the same user, so the reply tier sees it
+    (this is what lets Bob remember a name said one message ago). Genuinely
+    internal material is NOT assembled here; it belongs in ``private_context``.
     """
     verdict = soul.taste.score(topic).value
     lines = [
@@ -172,6 +204,9 @@ def _assemble_context(soul: SOUL, topic: str, recalled: Sequence[Recalled]) -> s
     ]
     if soul.phantom_prefs:
         lines.append("Phantom preferences: " + ", ".join(soul.phantom_prefs))
+    turns = [str(item.get("content", "")) for item in history if item.get("content")]
+    if turns:
+        lines.append("Recent conversation:\n" + "\n".join(turns))
     memories = [str(item.get("content", "")) for item in recalled]
     if memories:
         lines.append("Recalled memories: " + " | ".join(memories))

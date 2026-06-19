@@ -121,6 +121,14 @@ class MemoryRepo(Protocol):
         """Return up to ``limit`` most-recent episodes (newest first)."""
         ...
 
+    async def recent_episodes(self, k: int) -> Sequence[Mapping[str, object]]:
+        """Return the last ``k`` episodes by recency, in chronological order.
+
+        Oldest-first within the window so callers can replay recent conversation
+        history into a reply prompt; a non-positive ``k`` yields an empty sequence.
+        """
+        ...
+
 
 @runtime_checkable
 class MemoryRecall(Protocol):

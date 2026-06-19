@@ -12,11 +12,14 @@ GUPPI's policy layer over the provider-agnostic :class:`LLMProvider` ports
 1. **Classifies** the task type to a preferred tier — replying to the user
    defaults to **Tier 1** (Qwen) for quality (CONTEXT Q2); cheap or sensitive
    work (sentiment, inner monologue) stays on **Tier 0** locally.
-2. **Redacts** before any Tier 1 call — raw personal/memory context is stripped
-   from the payload so it never leaves the machine (VISION §7.1 privacy rule).
-   Redaction is a property of the *request*, applied whenever the destination is
-   Tier 1, including on a Tier 1 -> Tier 0 fallback (the redacted payload is what
-   was built, so it is what the fallback sees too).
+2. **Selectively redacts** before any Tier 1 call (Variant 2, VISION §7.1).
+   Each request splits its context in two: ``shareable_context``
+   (conversation/memory/mood/identity/taste — material that shapes Bob's reply
+   and returns to that same user) MAY accompany a Tier 1 call, while
+   ``private_context`` (genuinely-internal scratch) is Tier-0-only and is
+   stripped before any Tier 1 call. Redaction is a property of the *request*,
+   applied whenever the destination is Tier 1, including on a Tier 1 -> Tier 0
+   fallback (the redacted payload is what was built, so the fallback sees it too).
 3. **Falls back** Tier 1 -> Tier 0 if the preferred tier errors or is
    unavailable, so a flaky Qwen API never blocks a reply.
 
@@ -65,21 +68,28 @@ _PREFERRED_TIER: dict[TaskType, int] = {
 
 @dataclass(frozen=True)
 class LLMRequest:
-    """A unit of LLM work: the prompt plus optional private context.
+    """A unit of LLM work: the prompt plus its two-tier context split.
 
-    ``personal_context`` carries personality/memory material that is safe for the
-    local Tier 0 but MUST be redacted before any Tier 1 (remote API) call.
+    Context is split by destination policy (Variant 2, selective redaction):
+
+    - ``shareable_context`` — conversation/memory/mood/identity/taste material
+      that shapes Bob's reply and returns to that same user. It MAY accompany a
+      Tier 1 (remote API) call.
+    - ``private_context`` — genuinely-internal material that is Tier-0-only and
+      MUST be redacted before any Tier 1 call. May be empty in P0.1, but the seam
+      is kept so internal-only context never silently leaks.
     """
 
     task_type: TaskType
     messages: Sequence[LLMMessage]
-    personal_context: str | None = None
+    shareable_context: str | None = None
+    private_context: str | None = None
     stream: bool = False
     metadata: Mapping[str, str] = field(default_factory=dict)
 
 
 class LLMRouter:
-    """Route a task to a tier, redacting personal context before Tier 1, with fallback."""
+    """Route a task to a tier, redacting private context before Tier 1, with fallback."""
 
     def __init__(self, *, providers: Mapping[int, LLMProvider]) -> None:
         if _TIER_LOCAL not in providers:
@@ -89,10 +99,10 @@ class LLMRouter:
     async def run(self, request: LLMRequest) -> str:
         """Complete ``request`` on its preferred tier, falling back to Tier 0 on error.
 
-        The payload is built once: personal context is attached only when the
-        request is allowed to stay local (its preferred tier is Tier 0). A
-        request bound for Tier 1 is redacted, and that same redacted payload is
-        what a Tier 1 -> Tier 0 fallback sends — privacy is preserved end to end.
+        The payload is built once: a Tier 1-bound request carries only its
+        ``shareable_context`` (private context is stripped); a local-only Tier 0
+        request carries both. That same built payload is what a Tier 1 -> Tier 0
+        fallback sends — the private-context redaction is preserved end to end.
         """
         preferred = _PREFERRED_TIER[request.task_type]
         messages = self._build_messages(request)
@@ -110,19 +120,22 @@ class LLMRouter:
 
     @staticmethod
     def _build_messages(request: LLMRequest) -> list[LLMMessage]:
-        """Build the payload; attach personal context only for local-only requests.
+        """Build the payload with selective redaction by destination tier.
 
-        A request whose preferred tier is the remote API is redacted here by
-        simply never attaching ``personal_context`` — so raw personal/memory
-        material cannot reach Tier 1 (nor a redacted-then-fallback Tier 0 call).
+        A local-only (Tier 0) request gets BOTH ``shareable_context`` and
+        ``private_context``; a Tier 1-bound request gets ONLY
+        ``shareable_context`` — ``private_context`` is never attached, so
+        genuinely-internal material cannot reach Tier 1 (nor a Tier 1 -> Tier 0
+        fallback, since the payload is built once).
         """
-        messages: list[LLMMessage] = list(request.messages)
         stays_local = _PREFERRED_TIER[request.task_type] == _TIER_LOCAL
-        if request.personal_context and stays_local:
-            context_message: LLMMessage = {
-                "role": "system",
-                "content": request.personal_context,
-            }
+        parts = [request.shareable_context]
+        if stays_local:
+            parts.append(request.private_context)
+        context = "\n".join(part for part in parts if part)
+        messages: list[LLMMessage] = list(request.messages)
+        if context:
+            context_message: LLMMessage = {"role": "system", "content": context}
             return [context_message, *messages]
         return messages
 

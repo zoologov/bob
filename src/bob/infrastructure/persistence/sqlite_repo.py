@@ -111,6 +111,24 @@ class SqliteMemoryRepo:
             rows = await cursor.fetchall()
         return [dict(row) for row in rows]
 
+    async def recent_episodes(self, k: int) -> Sequence[Mapping[str, object]]:
+        """Return the last ``k`` episodes by recency, in chronological order.
+
+        Selects the ``k`` newest rows, then reverses them so the result reads
+        oldest-first — the natural order for replaying conversation history into a
+        reply prompt. A non-positive ``k`` yields an empty sequence.
+        """
+        if k <= 0:
+            return []
+        async with self._db().execute(
+            "SELECT ts, event_type, content, mood_snapshot, tags "
+            "FROM episodic_log ORDER BY ts DESC, id DESC LIMIT ?",
+            (k,),
+        ) as cursor:
+            rows = list(await cursor.fetchall())
+        rows.reverse()
+        return [dict(row) for row in rows]
+
     # --- Semantic memory ------------------------------------------------------
 
     async def save_fact(self, fact: SemanticFact) -> None:
