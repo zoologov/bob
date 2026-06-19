@@ -235,7 +235,10 @@ async def test_fact_stated_in_one_turn_reaches_a_later_turns_reply_context(
     await app.event_bus.publish(_message("my name is Vova", update_id=1, message_id=1))
     # Act 2: a LATER turn asks about it; recall (real FTS5) must surface the fact.
     tier1_before = len(tier1.payloads)
-    await app.event_bus.publish(_message("what is my name?", update_id=2, message_id=2))
+    # A complex (depth-keyword) probe so the hybrid selector escalates to Tier 1.
+    await app.event_bus.publish(
+        _message("объясни подробно, как меня зовут?", update_id=2, message_id=2)
+    )
 
     # Assert: the stated fact reached the SECOND turn's Tier 1 reply context, so
     # within the session Bob remembers a fact from an earlier turn.
@@ -326,8 +329,9 @@ async def test_extracted_fact_in_semantic_memory_reaches_the_reply_context(
         SemanticFact(ts=datetime.now(tz=UTC), category="user", content=_EXTRACTED_FACT)
     )
 
-    # Act: a turn whose keywords match the stored fact (real FTS5 recall).
-    await app.event_bus.publish(_message("tell me my name, Vova"))
+    # Act: a complex turn whose keywords match the stored fact (real FTS5 recall);
+    # the depth keyword escalates the reply to Tier 1.
+    await app.event_bus.publish(_message("расскажи подробно про Vova"))
 
     # Assert: the recalled fact reached the Tier 1 reply context.
     assert _EXTRACTED_FACT in tier1.all_text
@@ -352,8 +356,9 @@ async def test_shareable_memory_reaches_tier1_but_private_context_never_does(
         SemanticFact(ts=datetime.now(tz=UTC), category="user", content=_EXTRACTED_FACT)
     )
 
-    # Act: a normal reply turn (matches the shareable fact by keyword) ...
-    await app.event_bus.publish(_message("hi Vova here"))
+    # Act: a complex reply turn (matches the shareable fact by keyword) — the
+    # depth keyword escalates the reply to Tier 1 ...
+    await app.event_bus.publish(_message("расскажи подробно про Vova"))
     # ... and a crafted reply request carrying a private_context secret.
     private_tier1 = SequencedProvider(reply=_TIER1_REPLY)
     router = LLMRouter(providers={0: SequencedProvider(reply="x"), 1: private_tier1})
@@ -389,13 +394,13 @@ async def test_fact_extraction_failure_does_not_break_the_turn(tmp_path: Path) -
     app = _build_app(tmp_path, bot=bot, tier0=tier0, tier1=tier1)
     await app.startup()
 
-    # Act
-    await app.event_bus.publish(_message("just making conversation"))
+    # Act: a complex message escalates the reply to Tier 1.
+    await app.event_bus.publish(_message("объясни подробно правила игры"))
 
     # Assert: the reply still streamed out and the episode persisted; no fact stored.
     assert bot.final_text == _TIER1_REPLY
     episodes = await app.memory_repo.load_episodes(limit=10)
-    assert any("just making conversation" in str(e["content"]) for e in episodes)
+    assert any("объясни подробно правила игры" in str(e["content"]) for e in episodes)
     assert await app.memory_repo.load_facts(limit=10) == []
 
     await app.shutdown()

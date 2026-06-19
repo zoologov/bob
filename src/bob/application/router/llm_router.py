@@ -80,6 +80,12 @@ class LLMRequest:
     - ``private_context`` — genuinely-internal material that is Tier-0-only and
       MUST be redacted before any Tier 1 call. May be empty in P0.1, but the seam
       is kept so internal-only context never silently leaks.
+
+    ``tier_override`` lets a caller pick the destination tier for *this* request,
+    overriding the task's default (BOB-006 hybrid reply tiering: a casual reply
+    runs on the fast Tier 0 model, a complex one on the quality Tier 1 model).
+    Redaction is unaffected — it follows the *task* policy, not the chosen tier,
+    so a reply overridden down to Tier 0 still never bundles ``private_context``.
     """
 
     task_type: TaskType
@@ -88,6 +94,7 @@ class LLMRequest:
     private_context: str | None = None
     stream: bool = False
     metadata: Mapping[str, str] = field(default_factory=dict)
+    tier_override: int | None = None
 
 
 class LLMRouter:
@@ -106,7 +113,7 @@ class LLMRouter:
         request carries both. That same built payload is what a Tier 1 -> Tier 0
         fallback sends — the private-context redaction is preserved end to end.
         """
-        preferred = _PREFERRED_TIER[request.task_type]
+        preferred = self._destination_tier(request)
         messages = self._build_messages(request)
         try:
             return await self._complete(preferred, messages)
@@ -119,6 +126,17 @@ class LLMRouter:
                 request.task_type.value,
             )
         return await self._complete(_TIER_LOCAL, messages)
+
+    def _destination_tier(self, request: LLMRequest) -> int:
+        """The tier to attempt first: the caller's override if wired, else the task default.
+
+        An override naming an unknown tier is ignored (falls through to the task
+        default) so a mis-set override can never route to a missing provider.
+        """
+        override = request.tier_override
+        if override is not None and override in self._providers:
+            return override
+        return _PREFERRED_TIER[request.task_type]
 
     @staticmethod
     def _build_messages(request: LLMRequest) -> list[LLMMessage]:

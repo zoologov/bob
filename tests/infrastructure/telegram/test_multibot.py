@@ -32,6 +32,7 @@ import pytest
 
 from bob.application.runtime.event_bus import AsyncEventBus
 from bob.application.runtime.events import MESSAGE_RECEIVED, MessageReceived
+from bob.infrastructure.telegram import multibot
 from bob.infrastructure.telegram.multibot import (
     BotIdentity,
     BotRegistry,
@@ -257,8 +258,17 @@ def _build(
         bus=bus,
         poll_timeout=10,
         authorizer=authorizer,
+        # Deterministic reply-streaming timing: a zero throttle + no-op sleep so
+        # the live-edit path never actually waits in tests.
+        reply_throttle_interval=0.0,
+        reply_clock=lambda: 0.0,
+        reply_sleep=_noop_sleep,
     )
     return gateway, bus
+
+
+async def _noop_sleep(_seconds: float) -> None:
+    return None
 
 
 async def _collect(bus: AsyncEventBus) -> list[MessageReceived]:
@@ -440,3 +450,17 @@ async def test_bob_reply_streamer_sets_thread_id() -> None:
     assert bob.edits, "the placeholder should have been edited live"
     assert bob.deletes, "the live placeholder should be deleted by the rich final"
     assert guppi.sends == []  # GUPPI never sends Bob's reply
+
+
+def test_live_inner_gateways_throttle_against_flood_control() -> None:
+    """The live wiring must actually throttle edits, not run with a 0s window.
+
+    The flood incident came from the inner gateways being wired with a zero
+    throttle + a no-op sleep, so every streamed token fired an immediate
+    ``editMessageText``/rich final. The live default must be a real (>= 2.5s)
+    interval driven by a real monotonic clock + real sleep.
+    """
+    assert multibot._DEFAULT_THROTTLE_INTERVAL >= 2.5
+    # The live clock/sleep must be real, not the deterministic test stubs.
+    assert multibot._LIVE_CLOCK is not multibot._zero_clock
+    assert multibot._LIVE_SLEEP is not multibot._noop_sleep

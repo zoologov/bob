@@ -26,7 +26,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 from aiogram.exceptions import TelegramRetryAfter
-from aiogram.methods import EditMessageText
+from aiogram.methods import EditMessageText, SendMessage
 
 from bob.application.runtime.event_bus import AsyncEventBus
 from bob.infrastructure.telegram.gateway import TelegramGateway, UpdateLike
@@ -59,6 +59,7 @@ class _EditCall:
     chat_id: int
     message_id: int
     text: str
+    at: float = 0.0
 
 
 @dataclass
@@ -66,6 +67,7 @@ class _RichCall:
     chat_id: int
     markdown: str | None
     message_thread_id: int | None
+    at: float = 0.0
 
 
 @dataclass
@@ -84,12 +86,15 @@ class _FakeBot:
     """
 
     rich_fails: bool = False
+    rich_retry_after: bool = False
     edit_retry_after_on_call: int | None = None
+    clock: _FakeClock | None = None
     sends: list[_SendCall] = field(default_factory=list)
     edits: list[_EditCall] = field(default_factory=list)
     rich_sends: list[_RichCall] = field(default_factory=list)
     deletes: list[_DeleteCall] = field(default_factory=list)
     drafts: list[str] = field(default_factory=list)
+    rich_attempts: int = 0
     _next_message_id: int = 1
     _edit_calls: int = 0
 
@@ -121,7 +126,10 @@ class _FakeBot:
                 message="flood",
                 retry_after=3,
             )
-        self.edits.append(_EditCall(chat_id=chat_id, message_id=message_id, text=text))
+        at = self.clock.now if self.clock is not None else 0.0
+        self.edits.append(
+            _EditCall(chat_id=chat_id, message_id=message_id, text=text, at=at)
+        )
         return _FakeMessage(message_id=message_id, text=text)
 
     async def delete_message(self, *, chat_id: int, message_id: int) -> bool:
@@ -146,6 +154,13 @@ class _FakeBot:
         rich_message: InputRichMessage,
         message_thread_id: int | None = None,
     ) -> _FakeMessage:
+        self.rich_attempts += 1
+        if self.rich_retry_after:
+            raise TelegramRetryAfter(
+                method=SendMessage(chat_id=chat_id, text=""),
+                message="Flood control exceeded on method 'SendRichMessage'",
+                retry_after=38,
+            )
         if self.rich_fails:
             raise ValueError("rich send boom")
         self.rich_sends.append(
@@ -153,6 +168,7 @@ class _FakeBot:
                 chat_id=chat_id,
                 markdown=rich_message.markdown,
                 message_thread_id=message_thread_id,
+                at=self.clock.now if self.clock is not None else 0.0,
             )
         )
         return _FakeMessage(message_id=999, text=rich_message.markdown)
@@ -191,6 +207,7 @@ async def _tokens(*items: str) -> AsyncIterator[str]:
 def _topic_gateway(
     bot: _FakeBot, clock: _FakeClock, *, throttle: float = 0.0
 ) -> TelegramGateway:
+    bot.clock = clock
     return TelegramGateway(
         bot=bot,
         bus=AsyncEventBus(),
@@ -272,6 +289,45 @@ async def test_topic_edits_are_throttled() -> None:
     # With a non-zero throttle the gateway must sleep between edits, never spam.
     assert clock.slept, "edits were not throttled"
     assert all(amount > 0 for amount in clock.slept)
+
+
+@pytest.mark.asyncio
+async def test_topic_rich_final_is_throttled_after_edits() -> None:
+    # The flood incident was on 'SendRichMessage' — the rich final fired right
+    # after the last edit, with no interval. The rich final must honour the same
+    # throttle window as the edits so a burst never floods Telegram.
+    bot = _FakeBot()
+    clock = _FakeClock()
+    gateway = _topic_gateway(bot, clock, throttle=2.5)
+
+    await gateway.stream_reply(chat_id=_CHAT, tokens=_tokens("a", "b", "c"))
+
+    assert bot.rich_sends, "the rich final was not sent"
+    assert bot.edits, "no live edits were streamed"
+    # The rich final must be sent at least one full throttle window AFTER the last
+    # edit — never immediately (that was the 'SendRichMessage' flood).
+    last_edit_at = bot.edits[-1].at
+    rich_at = bot.rich_sends[-1].at
+    assert rich_at - last_edit_at >= 2.5, "rich final fired without throttle"
+
+
+@pytest.mark.asyncio
+async def test_topic_rich_final_retry_after_degrades_without_spam() -> None:
+    # A flood/RetryAfter on the rich final must NOT trigger a retry storm; the
+    # gateway makes a single rich attempt and degrades to the streamed placeholder
+    # (entity-plain) instead of re-sending send_rich_message.
+    bot = _FakeBot(rich_retry_after=True)
+    clock = _FakeClock()
+    gateway = _topic_gateway(bot, clock, throttle=2.5)
+
+    await gateway.stream_reply(chat_id=_CHAT, tokens=_tokens("Hel", "lo"))
+
+    # Exactly one rich attempt was made (it raised); no spam of send_rich_message.
+    assert bot.rich_attempts == 1, "rich final was retried (spam) on RetryAfter"
+    assert bot.rich_sends == [], "a rich final landed despite the flood"
+    # The reply is not lost: the placeholder is edited to the final plain text.
+    assert bot.deletes == [], "placeholder deleted despite rich-final flood"
+    assert bot.edits[-1].text == "Hello"
 
 
 @pytest.mark.asyncio

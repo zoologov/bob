@@ -288,7 +288,9 @@ def _message(*, chat_id: int = _CHAT, user_id: int = _OWNER) -> MessageReceived:
         update_id=1,
         chat_id=chat_id,
         message_id=7,
-        text="hi Bob, love the probes",
+        # A complex (depth-keyword) message so the hybrid reply selector escalates
+        # the plain-reply path to the quality Tier 1 model this e2e asserts against.
+        text="расскажи подробно про зонды, Bob",
         sender_id=user_id,
         sender_name="Ada",
     )
@@ -419,7 +421,8 @@ async def test_e2e_bob_reply_is_pinned_to_his_topic_thread(tmp_path: Path) -> No
     # Act: route the owner's message in Bob's topic through the central router.
     try:
         published = await app.multibot.route(
-            _Update(7, chat_id=_CHAT, user_id=_OWNER, text="hi Bob"), BotIdentity.BOB
+            _Update(7, chat_id=_CHAT, user_id=_OWNER, text="расскажи подробно, Bob"),
+            BotIdentity.BOB,
         )
     finally:
         await app.shutdown()

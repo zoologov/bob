@@ -40,6 +40,7 @@ from typing import TYPE_CHECKING, Protocol
 from bob.application.capabilities.registry import CapabilityRegistry
 from bob.application.capabilities.tool_loop import ToolLoop
 from bob.application.router.llm_router import LLMRequest, TaskType
+from bob.application.router.reply_tier_selector import select_reply_tier
 from bob.application.usecases.update_mood_from_text import TextSignals
 from bob.domain.memory.entities import EpisodicEvent
 
@@ -191,6 +192,11 @@ class HandleMessage:
         provider = self._tool_provider
         if provider is not None and not self._registry.is_empty:
             return await self._reply_with_tools(provider, text, context)
+        # Hybrid reply tiering (BOB-006): a casual/short message answers on the
+        # fast Tier 0 (flash) model for responsiveness; a complex/long message
+        # escalates to the quality Tier 1 (plus) model — picked by a pure
+        # heuristic on the user's message, no extra LLM round-trip.
+        tier = select_reply_tier(text)
         request = LLMRequest(
             task_type=TaskType.REPLY_TO_USER,
             messages=[
@@ -199,6 +205,7 @@ class HandleMessage:
             ],
             shareable_context=context,
             private_context=None,
+            tier_override=tier,
         )
         return await self._router.run(request)
 
