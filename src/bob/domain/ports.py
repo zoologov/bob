@@ -28,6 +28,7 @@ if TYPE_CHECKING:
     from bob.domain.memory.entities import SemanticFact
 
 __all__ = [
+    "AllowlistStore",
     "Capability",
     "Clock",
     "DomainEvent",
@@ -243,6 +244,28 @@ class MemoryRecall(Protocol):
 
     async def recall(self, query: str, *, k: int) -> Sequence[Recalled]:
         """Return the top-``k`` memories relevant to ``query``."""
+        ...
+
+
+@runtime_checkable
+class AllowlistStore(Protocol):
+    """Durable store for the runtime authorization allowlist (user ids).
+
+    Backs the :class:`bob.application.authz.Authorizer`: ``/authorize`` adds a
+    user here so the grant survives a restart. The concrete SQLite-backed adapter
+    lives in ``bob.infrastructure.persistence``.
+    """
+
+    async def load(self) -> set[int]:
+        """Return the set of currently allowlisted user ids."""
+        ...
+
+    async def add(self, user_id: int) -> None:
+        """Add ``user_id`` to the allowlist (idempotent) and persist it."""
+        ...
+
+    async def remove(self, user_id: int) -> None:
+        """Remove ``user_id`` from the allowlist (idempotent) and persist it."""
         ...
 
 

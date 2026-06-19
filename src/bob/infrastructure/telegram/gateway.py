@@ -50,6 +50,7 @@ logger = logging.getLogger(__name__)
 
 __all__ = [
     "PLAIN_TEXT_LIMIT",
+    "AuthorizerLike",
     "BotLike",
     "MessageLike",
     "TelegramGateway",
@@ -127,9 +128,26 @@ class BotLike(Protocol):
     ) -> bool: ...
 
 
+class AuthorizerLike(Protocol):
+    """The access-policy surface the gate calls (realised by ``Authorizer``).
+
+    Defined structurally so the gateway stays decoupled from the application
+    type while the hexagon still allows ``infrastructure → application``.
+    """
+
+    def is_owner(self, user_id: int | None) -> bool: ...
+    async def is_authorized(self, *, user_id: int | None, chat_id: int) -> bool: ...
+    async def authorize(self, user_id: int) -> None: ...
+    async def deauthorize(self, user_id: int) -> None: ...
+
+
 # Injected seams for deterministic timing.
 type MonotonicClock = Callable[[], float]
 type Sleep = Callable[[float], Awaitable[None]]
+
+# Owner-only privileged commands handled at the gate (never published as messages).
+_AUTHORIZE_COMMAND = "/authorize"
+_DEAUTHORIZE_COMMAND = "/deauthorize"
 
 
 class TelegramGateway:
@@ -145,6 +163,7 @@ class TelegramGateway:
         throttle_interval: float,
         clock: MonotonicClock,
         sleep: Sleep,
+        authorizer: AuthorizerLike | None = None,
     ) -> None:
         if batch_tokens < 1:
             raise ValueError("batch_tokens must be >= 1")
@@ -157,6 +176,7 @@ class TelegramGateway:
         self._throttle_interval = throttle_interval
         self._clock = clock
         self._sleep = sleep
+        self._authorizer = authorizer
         self._offset = 0
         self._seen_update_ids: set[int] = set()
         self._converter = MarkdownToRichMessage()
@@ -180,21 +200,99 @@ class TelegramGateway:
         return published
 
     async def intake(self, update: UpdateLike) -> bool:
-        """Deduplicate, normalise, and publish one update.
+        """Deduplicate, authorize, normalise, and publish one update.
 
-        Returns ``True`` when a :class:`MessageReceived` was published, ``False``
-        when the update was a duplicate or carried no usable text.
+        The **single authorization gate** lives here: when an authorizer is wired,
+        a message from a disallowed chat or an unauthorized user is **silently
+        dropped** — no :class:`MessageReceived`, no reply. The owner's privileged
+        ``/authorize``/``/deauthorize`` commands are consumed here too (never
+        published). Returns ``True`` only when a :class:`MessageReceived` was
+        published; ``False`` for a duplicate, an unusable update, a dropped one, or
+        a consumed owner command.
         """
         if update.update_id in self._seen_update_ids:
             logger.debug("dropping duplicate update_id=%d", update.update_id)
             return False
         self._seen_update_ids.add(update.update_id)
 
+        if not await self._passes_gate(update):
+            return False
+
         event = self._to_message_received(update)
         if event is None:
             return False
         await self._bus.publish(event)
         return True
+
+    async def _passes_gate(self, update: UpdateLike) -> bool:
+        """Enforce authorization + privileged commands; the one bypass-free gate.
+
+        Returns ``True`` when the update may proceed to publication, ``False`` when
+        it was dropped (unauthorized / wrong chat) or consumed (owner command).
+        With no authorizer wired the gate is open (backward-compatible).
+        """
+        if self._authorizer is None:
+            return True
+        chat = update.effective_chat
+        if chat is None:
+            return False
+        user = update.effective_user
+        user_id = user.id if user is not None else None
+        if not await self._authorizer.is_authorized(
+            user_id=user_id, chat_id=chat.id
+        ):
+            logger.info(
+                "dropping unauthorized update from user=%s chat=%d",
+                user_id,
+                chat.id,
+            )
+            return False
+        return not await self._handle_owner_command(update, chat.id, user_id)
+
+    async def _handle_owner_command(
+        self, update: UpdateLike, chat_id: int, user_id: int | None
+    ) -> bool:
+        """Consume an owner-only ``/authorize``/``/deauthorize`` command.
+
+        Returns ``True`` when the update was a privileged command (handled here,
+        not published). Only the owner may run these; for anyone else the command
+        text falls through as an ordinary message.
+        """
+        assert self._authorizer is not None  # guarded by the caller
+        message = update.message
+        text = message.text if message is not None else None
+        if text is None or not self._authorizer.is_owner(user_id):
+            return False
+        command, _, argument = text.strip().partition(" ")
+        if command == _AUTHORIZE_COMMAND:
+            await self._run_authorize(chat_id, argument, grant=True)
+            return True
+        if command == _DEAUTHORIZE_COMMAND:
+            await self._run_authorize(chat_id, argument, grant=False)
+            return True
+        return False
+
+    async def _run_authorize(
+        self, chat_id: int, argument: str, *, grant: bool
+    ) -> None:
+        """Apply an ``/authorize``/``/deauthorize`` grant and confirm to the owner."""
+        assert self._authorizer is not None  # guarded by the caller
+        target = _parse_user_id(argument)
+        if target is None:
+            await self._bot.send_message(
+                chat_id=chat_id, text="Usage: /authorize <user_id>"
+            )
+            return
+        if grant:
+            await self._authorizer.authorize(target)
+            await self._bot.send_message(
+                chat_id=chat_id, text=f"Authorized user {target}."
+            )
+        else:
+            await self._authorizer.deauthorize(target)
+            await self._bot.send_message(
+                chat_id=chat_id, text=f"Deauthorized user {target}."
+            )
 
     @staticmethod
     def _to_message_received(update: UpdateLike) -> MessageReceived | None:
@@ -380,6 +478,14 @@ class TelegramGateway:
         """Send ``text`` as plain message(s), splitting on the length limit."""
         for chunk in _split_for_length(text):
             await self._bot.send_message(chat_id=chat_id, text=chunk)
+
+
+def _parse_user_id(argument: str) -> int | None:
+    """Parse the ``<user_id>`` argument of an owner command; ``None`` if invalid."""
+    cleaned = argument.strip()
+    if not cleaned.lstrip("-").isdigit():
+        return None
+    return int(cleaned)
 
 
 def _split_for_length(text: str) -> list[str]:

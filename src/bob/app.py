@@ -30,6 +30,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from bob.application.authz import Authorizer
 from bob.application.router import LLMRouter
 from bob.application.runtime import (
     MESSAGE_RECEIVED,
@@ -52,7 +53,12 @@ from bob.domain.personality.soul import SOUL
 from bob.domain.personality.taste import TasteAxis, TasteEngine
 from bob.infrastructure.config import ConfigLoader
 from bob.infrastructure.llm import build_tier_providers
-from bob.infrastructure.persistence import Fts5MemoryRecall, SoulStore, SqliteMemoryRepo
+from bob.infrastructure.persistence import (
+    Fts5MemoryRecall,
+    KvAllowlistStore,
+    SoulStore,
+    SqliteMemoryRepo,
+)
 from bob.infrastructure.telegram.gateway import (
     BotLike,
     MessageLike,
@@ -108,6 +114,8 @@ class Application:
     genesis: RunGenesis
     personality: PersonalityState
     handle_message: HandleMessage
+    gateway: TelegramGateway
+    authorizer: Authorizer
     inner_monologue_tick: InnerMonologueTick
     mood_drift_tick: MoodDriftTick
     reflect_tick: ReflectTick
@@ -164,7 +172,10 @@ def build_application(
     personality = PersonalityState(soul=_default_soul())
     update_mood = UpdateMoodFromText(router=router, clock=clock)
     extract_facts = ExtractFacts(router=router, repo=memory_repo, clock=clock)
-    gateway = _build_gateway(merged, bus=event_bus, bot=bot)
+    authorizer = _build_authorizer(merged, repo=memory_repo)
+    gateway = _build_gateway(
+        merged, bus=event_bus, bot=bot, authorizer=authorizer
+    )
 
     handle_message = HandleMessage(
         router=router,
@@ -204,6 +215,8 @@ def build_application(
         genesis=genesis,
         personality=personality,
         handle_message=handle_message,
+        gateway=gateway,
+        authorizer=authorizer,
         inner_monologue_tick=inner_monologue_tick,
         mood_drift_tick=mood_drift_tick,
         reflect_tick=reflect_tick,
@@ -224,7 +237,11 @@ def _as_handler(handle_message: HandleMessage) -> EventHandler:
 
 
 def _build_gateway(
-    config: Mapping[str, object], *, bus: AsyncEventBus, bot: BotLike | None
+    config: Mapping[str, object],
+    *,
+    bus: AsyncEventBus,
+    bot: BotLike | None,
+    authorizer: Authorizer,
 ) -> TelegramGateway:
     """Build the Telegram gateway; the bot is injected (real aiogram or a fake)."""
     telegram = _section(config, "telegram")
@@ -236,6 +253,24 @@ def _build_gateway(
         throttle_interval=_THROTTLE_INTERVAL,
         clock=_monotonic,
         sleep=_async_sleep,
+        authorizer=authorizer,
+    )
+
+
+def _build_authorizer(
+    config: Mapping[str, object], *, repo: SqliteMemoryRepo
+) -> Authorizer:
+    """Build the access-policy Authorizer from config over the SQLite allowlist.
+
+    ``owner_id`` and ``allowed_chat_ids`` come from the ``telegram`` config; the
+    dynamic allowlist is persisted in the kv store so ``/authorize`` survives a
+    restart.
+    """
+    telegram = _section(config, "telegram")
+    return Authorizer(
+        owner_id=_int(telegram, "owner_id", 0),
+        allowed_chat_ids=_int_list(telegram, "allowed_chat_ids"),
+        store=KvAllowlistStore(repo),
     )
 
 
@@ -399,6 +434,16 @@ def _int(section: Mapping[str, object], key: str, default: int) -> int:
     if isinstance(value, str) and value.isdigit():
         return int(value)
     return default
+
+
+def _int_list(section: Mapping[str, object], key: str) -> tuple[int, ...]:
+    """Read a list of ints from config (YAML list or a CSV env string)."""
+    value = section.get(key)
+    if isinstance(value, str):
+        return tuple(int(part) for part in value.split(",") if part.strip())
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
+        return tuple(int(item) for item in value if isinstance(item, int))
+    return ()
 
 
 def _float(section: Mapping[str, object], key: str) -> float:

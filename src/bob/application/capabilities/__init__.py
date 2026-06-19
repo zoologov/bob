@@ -5,3 +5,19 @@
 # beadloom:domain=bob
 
 """Capability seam — the registry GUPPI uses to advertise and execute skills."""
+
+from __future__ import annotations
+
+from bob.application.capabilities.recall_memory import make_recall_memory_capability
+from bob.application.capabilities.registry import (
+    CapabilityRegistry,
+    UnknownCapabilityError,
+)
+from bob.application.capabilities.tool_loop import ToolLoop
+
+__all__ = [
+    "CapabilityRegistry",
+    "ToolLoop",
+    "UnknownCapabilityError",
+    "make_recall_memory_capability",
+]

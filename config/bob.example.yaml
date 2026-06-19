@@ -34,6 +34,14 @@ llm:
 telegram:
   token: ""                    # set via BOB_TELEGRAM__TOKEN, not here
   poll_timeout: 10
+  # Authorization (Bob is private). Only the owner + allowlisted users, and only
+  # inside allowed_chat_ids, may interact; everyone else is silently ignored.
+  owner_id: 0                  # your Telegram user id (always authorized)
+  allowed_chat_ids: []         # chat ids Bob will respond in, e.g. [123456789]
+  #                            # env: BOB_TELEGRAM__OWNER_ID, and a CSV string for
+  #                            # BOB_TELEGRAM__ALLOWED_CHAT_IDS (e.g. "111,222").
+  # Runtime allowlist grows via the owner command "/authorize <user_id>" and is
+  # persisted in SQLite (kv), so grants survive a restart.
 
 persistence:
   db_path: data/bob.db         # SQLite (WAL) — episodic/semantic memory + state
