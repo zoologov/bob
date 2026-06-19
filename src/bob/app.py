@@ -616,7 +616,9 @@ class _AiogramBotAdapter:
 
     Intake calls ``get_updates`` and normalises each aiogram ``Update`` into an
     :class:`UpdateLike`; the streaming reply uses the native ``send_message_draft``
-    channel for partials and ``send_message`` to commit the finished reply.
+    channel for DM partials, or ``edit_message_text`` (live edit-streaming) plus
+    ``delete_message`` for a forum topic, committing the finished reply with
+    ``send_message`` / ``send_rich_message``.
     """
 
     def __init__(self, bot: object) -> None:
@@ -633,6 +635,18 @@ class _AiogramBotAdapter:
     ) -> MessageLike:
         return await self._bot.send_message(  # type: ignore[attr-defined,no-any-return]
             chat_id=chat_id, text=text, message_thread_id=message_thread_id
+        )
+
+    async def edit_message_text(
+        self, *, chat_id: int, message_id: int, text: str
+    ) -> MessageLike | bool:
+        return await self._bot.edit_message_text(  # type: ignore[attr-defined,no-any-return]
+            chat_id=chat_id, message_id=message_id, text=text
+        )
+
+    async def delete_message(self, *, chat_id: int, message_id: int) -> bool:
+        return await self._bot.delete_message(  # type: ignore[attr-defined,no-any-return]
+            chat_id=chat_id, message_id=message_id
         )
 
     async def send_message_draft(

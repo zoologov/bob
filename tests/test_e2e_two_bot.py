@@ -104,6 +104,8 @@ class _FakeBot:
 
     updates_batches: list[list[_FakeUpdate]] = field(default_factory=list)
     sends: list[_SendCall] = field(default_factory=list)
+    rich_sends: list[_SendCall] = field(default_factory=list)
+    deletes: list[int] = field(default_factory=list)
     next_message_id: int = 900
 
     async def get_updates(
@@ -123,6 +125,15 @@ class _FakeBot:
         self.next_message_id += 1
         return msg
 
+    async def edit_message_text(
+        self, *, chat_id: int, message_id: int, text: str  # noqa: ARG002
+    ) -> _FakeMessage:
+        return _FakeMessage(message_id=message_id, text=text)
+
+    async def delete_message(self, *, chat_id: int, message_id: int) -> bool:  # noqa: ARG002
+        self.deletes.append(message_id)
+        return True
+
     async def send_message_draft(
         self,
         *,
@@ -137,15 +148,19 @@ class _FakeBot:
         self,
         *,
         chat_id: int,
-        rich_message: InputRichMessage,  # noqa: ARG002
+        rich_message: InputRichMessage,
         message_thread_id: int | None = None,
     ) -> _FakeMessage:
-        # Bob's committed reply travels via the plain stream path; the rich path
-        # is unused here. Record it anyway so an accidental rich send is visible.
-        self.sends.append(
-            _SendCall(chat_id=chat_id, text="<rich>", message_thread_id=message_thread_id)
+        # In a topic Bob's committed reply is the rich final; record its markdown
+        # so the test can assert the reply text landed in Bob's thread.
+        self.rich_sends.append(
+            _SendCall(
+                chat_id=chat_id,
+                text=rich_message.markdown or "",
+                message_thread_id=message_thread_id,
+            )
         )
-        return _FakeMessage(message_id=0, text="")
+        return _FakeMessage(message_id=0, text=rich_message.markdown)
 
     async def send_rich_message_draft(
         self,
@@ -296,12 +311,13 @@ async def test_authorized_message_in_bob_topic_replies_into_thread(
     finally:
         await app.shutdown()
 
-    # Assert: exactly one turn published; Bob's bot committed the reply pinned to
-    # his topic thread; GUPPI did not reject.
+    # Assert: exactly one turn published; Bob's bot committed the reply (the rich
+    # final of the live-edit stream) pinned to his topic thread; GUPPI did not
+    # reject.
     assert published == 1
-    assert bob_bot.sends, "Bob should have replied"
-    final = bob_bot.sends[-1]
-    assert final.text == _REPLY
+    assert bob_bot.rich_sends, "Bob should have replied (rich final)"
+    final = bob_bot.rich_sends[-1]
+    assert _REPLY in final.text
     assert final.message_thread_id == _BOB_TOPIC_ID
     assert all(s.text != GUPPI_REJECT_TEXT for s in guppi_bot.sends)
 
@@ -443,9 +459,10 @@ async def test_cross_bot_duplicate_is_processed_once_end_to_end(
     finally:
         await app.shutdown()
 
-    # Assert: processed once; exactly one committed Bob reply pinned to his thread.
+    # Assert: processed once; exactly one committed Bob reply (the rich final of
+    # the live-edit stream) pinned to his thread.
     assert published == 1
-    committed = [s for s in bob_bot.sends if s.text == _REPLY]
+    committed = [s for s in bob_bot.rich_sends if _REPLY in s.text]
     assert len(committed) == 1
     assert committed[0].message_thread_id == _BOB_TOPIC_ID
 

@@ -159,6 +159,14 @@ class FakeBot:
         self.sent.append((chat_id, text))
         return FakeMessage(message_id=999)
 
+    async def edit_message_text(
+        self, *, chat_id: int, message_id: int, text: str  # noqa: ARG002
+    ) -> FakeMessage:
+        return FakeMessage(message_id=message_id)
+
+    async def delete_message(self, *, chat_id: int, message_id: int) -> bool:  # noqa: ARG002
+        return True
+
     async def send_message_draft(
         self,
         *,
