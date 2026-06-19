@@ -91,6 +91,14 @@ class _Bot:
     ) -> _Msg:
         return _Msg(text)
 
+    async def edit_message_text(
+        self, *, chat_id: int, message_id: int, text: str  # noqa: ARG002
+    ) -> _Msg:
+        return _Msg(text)
+
+    async def delete_message(self, *, chat_id: int, message_id: int) -> bool:  # noqa: ARG002
+        return True
+
     async def send_message_draft(
         self,
         *,

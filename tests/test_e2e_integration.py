@@ -147,6 +147,9 @@ class FakeBot:
         self.sent_threads: list[int | None] = []
         self.drafts: list[tuple[int, int, str]] = []
         self.rich_sent: list[tuple[int, str]] = []
+        self.rich_threads: list[int | None] = []
+        self.deletes: list[int] = []
+        self._next_id = 1
 
     async def get_updates(self, *, offset: int, timeout: int) -> Sequence[UpdateLike]:  # noqa: ARG002
         return []
@@ -156,7 +159,18 @@ class FakeBot:
     ) -> FakeMessage:
         self.sent.append((chat_id, text))
         self.sent_threads.append(message_thread_id)
-        return FakeMessage(message_id=1)
+        message_id = self._next_id
+        self._next_id += 1
+        return FakeMessage(message_id=message_id)
+
+    async def edit_message_text(
+        self, *, chat_id: int, message_id: int, text: str  # noqa: ARG002
+    ) -> FakeMessage:
+        return FakeMessage(message_id=message_id)
+
+    async def delete_message(self, *, chat_id: int, message_id: int) -> bool:  # noqa: ARG002
+        self.deletes.append(message_id)
+        return True
 
     async def send_message_draft(
         self,
@@ -174,10 +188,11 @@ class FakeBot:
         *,
         chat_id: int,
         rich_message: object,
-        message_thread_id: int | None = None,  # noqa: ARG002
+        message_thread_id: int | None = None,
     ) -> FakeMessage:
         self.rich_sent.append((chat_id, _rich_markdown(rich_message)))
-        return FakeMessage(message_id=1)
+        self.rich_threads.append(message_thread_id)
+        return FakeMessage(message_id=999)
 
     async def send_rich_message_draft(
         self,
@@ -191,6 +206,9 @@ class FakeBot:
 
     @property
     def final_text(self) -> str:
+        """Bob's committed reply: the rich final in a topic, else the last plain."""
+        if self.rich_sent:
+            return self.rich_sent[-1][1]
         return self.sent[-1][1] if self.sent else ""
 
 

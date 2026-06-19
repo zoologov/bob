@@ -101,6 +101,8 @@ class _FakeBot:
     updates_batches: list[list[_FakeUpdate]] = field(default_factory=list)
     sends: list[_SendCall] = field(default_factory=list)
     drafts: list[_DraftCall] = field(default_factory=list)
+    edits: list[int] = field(default_factory=list)
+    deletes: list[int] = field(default_factory=list)
     next_message_id: int = 900
     raise_on_poll: bool = False
 
@@ -122,6 +124,16 @@ class _FakeBot:
         msg = _FakeMessage(message_id=self.next_message_id, text=text)
         self.next_message_id += 1
         return msg
+
+    async def edit_message_text(
+        self, *, chat_id: int, message_id: int, text: str  # noqa: ARG002
+    ) -> _FakeMessage:
+        self.edits.append(message_id)
+        return _FakeMessage(message_id=message_id, text=text)
+
+    async def delete_message(self, *, chat_id: int, message_id: int) -> bool:  # noqa: ARG002
+        self.deletes.append(message_id)
+        return True
 
     async def send_message_draft(
         self,
@@ -406,7 +418,12 @@ async def test_one_bot_poll_failure_does_not_kill_the_other() -> None:
 
 @pytest.mark.asyncio
 async def test_bob_reply_streamer_sets_thread_id() -> None:
-    """Bob's reply streamer pins message_thread_id to his topic."""
+    """Bob's reply streamer pins message_thread_id to his topic.
+
+    Bob lives in a forum topic, so the streamer types live via incremental
+    ``editMessageText`` (drafts are private-chat only) and commits the rich final —
+    both the placeholder and the rich final are pinned to Bob's thread.
+    """
     bob, guppi = _FakeBot(), _FakeBot()
     gateway, _ = _build({BotIdentity.BOB: bob, BotIdentity.GUPPI: guppi})
     streamer = gateway.reply_streamer(BotIdentity.BOB)
@@ -419,5 +436,7 @@ async def test_bob_reply_streamer_sets_thread_id() -> None:
 
     assert bob.sends, "Bob's bot should have received the committed reply"
     assert all(call.message_thread_id == _BOB_TOPIC_ID for call in bob.sends)
-    assert all(call.message_thread_id == _BOB_TOPIC_ID for call in bob.drafts)
+    assert bob.drafts == []  # a topic never drafts (live typing is via edits)
+    assert bob.edits, "the placeholder should have been edited live"
+    assert bob.deletes, "the live placeholder should be deleted by the rich final"
     assert guppi.sends == []  # GUPPI never sends Bob's reply
