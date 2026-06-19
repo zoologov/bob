@@ -384,16 +384,19 @@ async def test_rich_draft_backs_off_and_retries_on_rate_limit() -> None:
 
 @pytest.mark.asyncio
 async def test_rich_draft_error_is_skipped_without_killing_the_stream() -> None:
-    # A non-rate-limit rich-draft error must be swallowed: that partial is skipped,
-    # later partials/commit proceed. The user still receives the finished reply.
+    # A non-rate-limit rich-draft error must be swallowed without killing the stream
+    # (US-1 streaming resilience). Drafting is best-effort: once a chat rejects a
+    # draft the gateway STOPS attempting drafts for the rest of the turn (BOB-004), so
+    # only the first partial is attempted — but the finished reply still commits via
+    # the rich channel, so the user always receives the answer.
     bot = _FakeBot(rich_draft_bad_request_on_call=1)
     gateway = _gateway(bot, batch_tokens=1, throttle_interval=0.0)
 
     drafts = await gateway.stream_reply_rich(chat_id=_CHAT, tokens=_tokens("a", "b"))
 
-    # Both tokens were attempted as drafts (drafts_made counts attempts), the first
-    # errored and was skipped, and the reply committed via the rich channel.
-    assert drafts == 2
+    # The first partial was attempted and rejected; the second skipped the draft
+    # channel entirely. The reply still committed via the rich channel.
+    assert drafts == 1
     assert bot.rich_sends
     assert bot.rich_sends[-1][1] == "ab"
 

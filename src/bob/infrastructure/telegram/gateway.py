@@ -32,7 +32,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Protocol
 
-from aiogram.exceptions import AiogramError, TelegramRetryAfter
+from aiogram.exceptions import AiogramError, TelegramBadRequest, TelegramRetryAfter
 from aiogram.types import InputRichMessage
 
 from bob.application.runtime.events import MessageReceived
@@ -202,6 +202,11 @@ class TelegramGateway:
         self._reply_thread_id = reply_thread_id
         self._offset = 0
         self._seen_update_ids: set[int] = set()
+        # Chats whose peer rejected a draft (e.g. a supergroup forum topic raises
+        # ``TEXTDRAFT_PEER_INVALID``). Drafting is best-effort: once a chat refuses
+        # a draft we stop attempting drafts there and only ever commit the final,
+        # non-draft reply — so the user always gets an answer.
+        self._draft_unsupported_chats: set[int] = set()
         self._converter = MarkdownToRichMessage()
         self._serializer = RichMessageSerializer()
 
@@ -348,9 +353,13 @@ class TelegramGateway:
 
         Partial text is sent through ``send_message_draft`` as tokens arrive: a
         draft is flushed once ``batch_tokens`` new tokens have accumulated,
-        throttled to at most one draft per ``throttle_interval`` seconds. When the
-        stream ends, the completed text (if any) is committed as a real message
-        via ``send_message``. Returns the number of drafts streamed.
+        throttled to at most one draft per ``throttle_interval`` seconds. Drafting
+        is **best-effort**: if the chat's peer rejects a draft (a supergroup forum
+        topic raises ``TEXTDRAFT_PEER_INVALID``) the error is swallowed, the chat is
+        remembered as draft-unsupported, and the rest of the turn skips drafts. When
+        the stream ends the completed text (if any) is **always** committed as a real
+        message via ``send_message`` — the user gets the reply even when no draft
+        landed. Returns the number of drafts streamed.
         """
         accumulated = ""
         drafted_text = ""
@@ -361,7 +370,12 @@ class TelegramGateway:
         async for token in tokens:
             accumulated += token
             pending_tokens += 1
-            if pending_tokens >= self._batch_tokens and accumulated != drafted_text:
+            should_draft = (
+                pending_tokens >= self._batch_tokens
+                and accumulated != drafted_text
+                and chat_id not in self._draft_unsupported_chats
+            )
+            if should_draft:
                 last_draft_at = await self._draft(
                     chat_id, accumulated, last_draft_at
                 )
@@ -370,11 +384,7 @@ class TelegramGateway:
                 pending_tokens = 0
 
         if accumulated:
-            await self._bot.send_message(
-                chat_id=chat_id,
-                text=accumulated,
-                message_thread_id=self._reply_thread_id,
-            )
+            await self._send_plain(chat_id, accumulated)
 
         return drafts_made
 
@@ -411,6 +421,9 @@ class TelegramGateway:
                 wait = float(exc.retry_after)
                 logger.warning("Telegram rate-limited draft; backing off %.1fs", wait)
                 await self._sleep(wait)
+            except (AiogramError, ValueError) as exc:
+                self._mark_drafts_unsupported(chat_id, exc)
+                return
 
     # --- Rich reply -----------------------------------------------------------
 
@@ -450,9 +463,12 @@ class TelegramGateway:
 
         Mirrors :meth:`stream_reply` but over the native rich channel
         (``send_rich_message_draft`` for partials, ``send_rich_message`` to
-        commit). Any rich error on commit degrades to plain ``send_message`` so the
-        completed reply still reaches the user. Returns the number of drafts
-        streamed.
+        commit). Drafting is **best-effort**: a peer that rejects a draft
+        (``TEXTDRAFT_PEER_INVALID`` in a forum topic) is remembered as
+        draft-unsupported and the rest of the turn skips drafts. The completed reply
+        is always committed via :meth:`reply`, whose rich error degrades to plain
+        ``send_message`` so the answer still reaches the user. Returns the number of
+        drafts streamed.
         """
         accumulated = ""
         drafted_text = ""
@@ -463,7 +479,12 @@ class TelegramGateway:
         async for token in tokens:
             accumulated += token
             pending_tokens += 1
-            if pending_tokens >= self._batch_tokens and accumulated != drafted_text:
+            should_draft = (
+                pending_tokens >= self._batch_tokens
+                and accumulated != drafted_text
+                and chat_id not in self._draft_unsupported_chats
+            )
+            if should_draft:
                 last_draft_at = await self._rich_draft(
                     chat_id, accumulated, last_draft_at
                 )
@@ -509,8 +530,33 @@ class TelegramGateway:
                 )
                 await self._sleep(wait)
             except (AiogramError, ValueError) as exc:
-                logger.warning("rich draft failed; skipping partial: %s", exc)
+                self._mark_drafts_unsupported(chat_id, exc)
                 return
+
+    def _mark_drafts_unsupported(self, chat_id: int, exc: Exception) -> None:
+        """Record that ``chat_id`` rejected a draft; skip drafts there from now on.
+
+        Telegram rejects drafts for some peers (e.g. a supergroup forum topic raises
+        ``TEXTDRAFT_PEER_INVALID``). Drafting is best-effort, so we swallow the error,
+        remember the chat does not support drafts, and let the caller fall through to
+        the non-draft final send — the user always gets the finished reply.
+        """
+        already_known = chat_id in self._draft_unsupported_chats
+        self._draft_unsupported_chats.add(chat_id)
+        if already_known:
+            return
+        if isinstance(exc, TelegramBadRequest):
+            logger.info(
+                "chat %d rejects drafts (%s); delivering reply without streaming",
+                chat_id,
+                exc,
+            )
+        else:
+            logger.warning(
+                "draft failed for chat %d; delivering reply without streaming: %s",
+                chat_id,
+                exc,
+            )
 
     async def _send_plain(self, chat_id: int, text: str) -> None:
         """Send ``text`` as plain message(s), splitting on the length limit."""
