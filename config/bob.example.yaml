@@ -16,6 +16,9 @@ llm:
   # Tier 0 — local mlx-lm server (no API key): cheap, privacy-sensitive work.
   tier0_base_url: http://localhost:8080/v1
   tier0_model: qwen2.5:0.5b
+  # tier0_api_key: ""          # optional; set via BOB_LLM__TIER0_API_KEY.
+  #                            # Leave unset for keyless local mlx; only needed
+  #                            # when Tier 0 is a keyed/remote endpoint.
   # Tier 1 — Qwen API (bearer key): quality-critical, user-facing replies.
   tier1_base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
   tier1_model: qwen2.5:7b

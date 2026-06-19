@@ -58,6 +58,38 @@ def test_tier0_has_no_api_key_tier1_uses_configured_key() -> None:
     assert tier1._api_key == "sk-qwen"
 
 
+def test_tier0_picks_up_configured_api_key() -> None:
+    # Arrange: Tier 0 points at a keyed/remote endpoint (e.g. Qwen API).
+    config = {
+        "llm": {
+            "tier0_base_url": "https://api.qwen.example/v1",
+            "tier0_model": "remote",
+            "tier0_api_key": "sk-tier0",
+            "tier1_base_url": "https://api.qwen.example/v1",
+            "tier1_model": "remote",
+            "tier1_api_key": "sk-qwen",
+        }
+    }
+
+    # Act
+    providers = build_tier_providers(config)
+
+    # Assert: Tier 0 uses its configured key.
+    tier0 = providers[0]
+    assert isinstance(tier0, OpenAICompatProvider)
+    assert tier0._api_key == "sk-tier0"
+
+
+def test_tier0_api_key_absent_stays_keyless() -> None:
+    # Arrange: no tier0_api_key -> keyless local mlx (backward compat).
+    providers = build_tier_providers({"llm": _full_llm()})
+
+    # Assert
+    tier0 = providers[0]
+    assert isinstance(tier0, OpenAICompatProvider)
+    assert tier0._api_key is None
+
+
 def test_missing_required_key_raises() -> None:
     # Arrange: tier1_base_url omitted.
     config = {"llm": {"tier0_base_url": "http://x/v1", "tier0_model": "m", "tier1_model": "r"}}

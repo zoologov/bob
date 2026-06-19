@@ -52,6 +52,9 @@ data/
 *.pem
 *.key
 
+# Local run config (may reference secrets; bob.example.yaml is the tracked template)
+config/bob.yaml
+
 # Ollama models (large binaries)
 models/
 

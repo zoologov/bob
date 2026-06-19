@@ -10,7 +10,8 @@ Reads the ``llm`` section of the merged config (defaults -> YAML -> env, see
 :mod:`bob.infrastructure.config.loader`) and constructs one
 :class:`OpenAICompatProvider` per tier:
 
-* Tier 0 — the local mlx-lm server (no API key);
+* Tier 0 — the local mlx-lm server (keyless by default; an optional
+  ``llm.tier0_api_key`` lets Tier 0 point at a keyed/remote endpoint);
 * Tier 1 — the Qwen API (bearer key from ``llm.tier1_api_key``, sourced from
   config/env; never inlined).
 
@@ -41,7 +42,7 @@ def build_tier_providers(config: Mapping[str, object]) -> dict[int, LLMProvider]
     tier0 = OpenAICompatProvider(
         base_url=_require_str(llm, "tier0_base_url"),
         model=_require_str(llm, "tier0_model"),
-        api_key=None,
+        api_key=_optional_str(llm, "tier0_api_key"),
     )
     tier1 = OpenAICompatProvider(
         base_url=_require_str(llm, "tier1_base_url"),
