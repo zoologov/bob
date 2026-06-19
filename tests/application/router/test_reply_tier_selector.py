@@ -17,7 +17,11 @@ stays on flash. A turn that needs tools always prefers the quality model.
 
 from __future__ import annotations
 
+import pytest
+
 from bob.application.router.reply_tier_selector import (
+    _LONG_MESSAGE_CHARS,
+    _MAX_CASUAL_QUESTIONS,
     _TIER_API,
     _TIER_LOCAL,
     select_reply_tier,
@@ -85,3 +89,66 @@ def test_selection_is_deterministic() -> None:
     first = select_reply_tier(message)
     second = select_reply_tier(message)
     assert first == second == _TIER_API
+
+
+# --- Boundary / edge cases (BOB-006 BEAD-03 hardening) ------------------------
+
+
+def test_empty_message_selects_flash() -> None:
+    # An empty turn carries no escalation signal — it must not crash and must
+    # stay on the fast default rather than spuriously escalating.
+    assert select_reply_tier("") == _TIER_LOCAL
+
+
+def test_whitespace_only_message_selects_flash() -> None:
+    assert select_reply_tier("   \n\t  ") == _TIER_LOCAL
+
+
+def test_message_at_exact_length_threshold_stays_flash() -> None:
+    # The threshold is strict ("> _LONG_MESSAGE_CHARS"): a message of exactly the
+    # threshold length is NOT long, so it stays on flash (off-by-one boundary).
+    message = "a" * _LONG_MESSAGE_CHARS
+    assert len(message) == _LONG_MESSAGE_CHARS
+    assert select_reply_tier(message) == _TIER_LOCAL
+
+
+def test_message_one_char_over_threshold_escalates_to_plus() -> None:
+    message = "a" * (_LONG_MESSAGE_CHARS + 1)
+    assert select_reply_tier(message) == _TIER_API
+
+
+def test_single_question_stays_flash() -> None:
+    # One question mark is casual (at the allowed maximum); it must not escalate.
+    assert _MAX_CASUAL_QUESTIONS == 1
+    assert select_reply_tier("как дела?") == _TIER_LOCAL
+
+
+def test_question_count_just_over_the_casual_maximum_escalates() -> None:
+    # One more question than the casual maximum tips the turn into the quality tier.
+    message = "?" * (_MAX_CASUAL_QUESTIONS + 1)
+    assert select_reply_tier(message) == _TIER_API
+
+
+@pytest.mark.parametrize(
+    ("message", "expected"),
+    [
+        ("спасибо!", _TIER_LOCAL),
+        ("да", _TIER_LOCAL),
+        ("ну норм 😄", _TIER_LOCAL),
+        ("объясни почему", _TIER_API),
+        ("сравни X и Y подробно", _TIER_API),
+    ],
+)
+def test_tier_selection_table(message: str, expected: int) -> None:
+    # A small table pinning representative casual vs. complex turns.
+    assert select_reply_tier(message) == expected
+
+
+def test_needs_tools_overrides_a_long_complex_message_still_plus() -> None:
+    # needs_tools and complexity both point to plus; the result is unambiguously
+    # the quality tier (no contradictory downgrade).
+    assert select_reply_tier("объясни " * 50, needs_tools=True) == _TIER_API
+
+
+def test_unicode_emoji_only_message_does_not_crash_and_stays_flash() -> None:
+    assert select_reply_tier("🔥🔥🔥") == _TIER_LOCAL
