@@ -96,6 +96,7 @@ known-first-party = ["bob"]
 
 [tool.mypy]
 python_version = "3.12"
+files = ["src", "tests"]
 strict = true
 warn_return_any = true
 warn_unused_configs = true
@@ -103,6 +104,12 @@ disallow_untyped_defs = true
 disallow_any_generics = true
 check_untyped_defs = true
 no_implicit_reexport = true
+# Exclude frozen/non-product trees (godot = frozen FLUX visual track; build artifacts)
+exclude = [
+    "^godot/",
+    "^build/",
+    "^dist/",
+]
 
 [[tool.mypy.overrides]]
 module = ["ultralytics.*", "open_clip.*", "mlx_audio.*", "faiss.*", "sentence_transformers.*"]
