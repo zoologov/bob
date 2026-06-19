@@ -15,6 +15,10 @@ from bob.infrastructure.config.loader import DEFAULT_CONFIG, ConfigLoader
 if TYPE_CHECKING:
     from pathlib import Path
 
+# Fake tokens for the env-mapping tests (not real credentials).
+_BOB_TOKEN = "bob-secret"  # noqa: S105 — test fixture, not a credential
+_GUPPI_TOKEN = "guppi-secret"  # noqa: S105 — test fixture, not a credential
+
 
 def test_load_returns_defaults_when_no_yaml_no_env() -> None:
     # Arrange
@@ -140,3 +144,115 @@ def test_load_does_not_mutate_default_config(tmp_path: Path) -> None:
 
     # Assert: the shared defaults are never mutated by a load.
     assert DEFAULT_CONFIG["llm"]["tier1_model"] != "mutated"
+
+
+# --- Two-bot telegram config (BOB-003 BEAD-01) ------------------------------
+
+
+def test_telegram_defaults_have_two_bot_shape() -> None:
+    # Arrange
+    loader = ConfigLoader(yaml_path=None, env={})
+
+    # Act
+    telegram = loader.load()["telegram"]
+
+    # Assert: nested bob/guppi sub-bots + shared ids, with sane defaults.
+    assert telegram["bob"]["token"] == ""
+    assert telegram["bob"]["topic_id"] == 0
+    assert telegram["guppi"]["token"] == ""
+    assert telegram["chat_id"] == 0
+    assert telegram["owner_id"] == 0
+    assert telegram["allowed_chat_ids"] == []
+    assert telegram["poll_timeout"] == 10
+
+
+def test_bob_token_loads_from_bob_telegram_token_env() -> None:
+    # Arrange: the existing var maps explicitly onto telegram.bob.token.
+    env = {"BOB_TELEGRAM__TOKEN": _BOB_TOKEN}
+    loader = ConfigLoader(yaml_path=None, env=env)
+
+    # Act
+    telegram = loader.load()["telegram"]
+
+    # Assert
+    assert telegram["bob"]["token"] == _BOB_TOKEN
+
+
+def test_guppi_token_loads_from_guppi_telegram_token_env() -> None:
+    # Arrange: the non-standard GUPPI_ prefix needs an explicit mapping.
+    env = {"GUPPI_TELEGRAM__TOKEN": _GUPPI_TOKEN}
+    loader = ConfigLoader(yaml_path=None, env=env)
+
+    # Act
+    telegram = loader.load()["telegram"]
+
+    # Assert
+    assert telegram["guppi"]["token"] == _GUPPI_TOKEN
+
+
+def test_guppi_token_absent_keeps_empty_default() -> None:
+    # Arrange: no GUPPI var set — graceful empty default (wired in BEAD-02).
+    loader = ConfigLoader(yaml_path=None, env={})
+
+    # Act
+    telegram = loader.load()["telegram"]
+
+    # Assert
+    assert telegram["guppi"]["token"] == ""
+
+
+def test_both_bot_tokens_load_together_from_their_env_vars() -> None:
+    # Arrange
+    env = {
+        "BOB_TELEGRAM__TOKEN": _BOB_TOKEN,
+        "GUPPI_TELEGRAM__TOKEN": _GUPPI_TOKEN,
+    }
+    loader = ConfigLoader(yaml_path=None, env=env)
+
+    # Act
+    telegram = loader.load()["telegram"]
+
+    # Assert
+    assert telegram["bob"]["token"] == _BOB_TOKEN
+    assert telegram["guppi"]["token"] == _GUPPI_TOKEN
+
+
+def test_telegram_ids_parse_from_yaml(tmp_path: Path) -> None:
+    # Arrange: the shared/topic ids come from YAML (non-secret).
+    yaml_file = tmp_path / "bob.yaml"
+    yaml_file.write_text(
+        "telegram:\n"
+        "  chat_id: -1004372947307\n"
+        "  owner_id: 27468732\n"
+        "  allowed_chat_ids: [-1004372947307]\n"
+        "  bob:\n"
+        "    topic_id: 32\n",
+        encoding="utf-8",
+    )
+    loader = ConfigLoader(yaml_path=yaml_file, env={})
+
+    # Act
+    telegram = loader.load()["telegram"]
+
+    # Assert: ids parse; the env-fed token default survives the deep-merge.
+    assert telegram["chat_id"] == -1004372947307
+    assert telegram["owner_id"] == 27468732
+    assert telegram["allowed_chat_ids"] == [-1004372947307]
+    assert telegram["bob"]["topic_id"] == 32
+    assert telegram["bob"]["token"] == ""
+
+
+def test_guppi_env_token_overrides_yaml_placeholder(tmp_path: Path) -> None:
+    # Arrange: env (highest precedence) wins over any YAML value for guppi.token.
+    yaml_file = tmp_path / "bob.yaml"
+    yaml_file.write_text(
+        "telegram:\n  guppi:\n    token: from-yaml\n", encoding="utf-8"
+    )
+    env = {"GUPPI_TELEGRAM__TOKEN": _GUPPI_TOKEN}
+    loader = ConfigLoader(yaml_path=yaml_file, env=env)
+
+    # Act
+    telegram = loader.load()["telegram"]
+
+    # Assert
+    assert telegram["guppi"]["token"] == _GUPPI_TOKEN

@@ -3,10 +3,13 @@
 #
 # Example Bob configuration. Copy to config/bob.yaml and fill in.
 # Precedence: built-in defaults <- this YAML <- environment (BOB_* with __ nesting,
-# e.g. BOB_TELEGRAM__TOKEN, BOB_LLM__TIER1_API_KEY).
+# e.g. BOB_LLM__TIER1_API_KEY).
 #
-# SECRETS (telegram.token, llm.tier1_api_key) — prefer environment variables over
-# committing them here. Never commit a real token/key.
+# SECRETS (the two bot tokens, llm.tier1_api_key) — prefer environment variables
+# over committing them here. Never commit a real token/key. The bot tokens are
+# env-only via an EXPLICIT mapping (not the generic BOB_ nesting):
+#   BOB_TELEGRAM__TOKEN    -> telegram.bob.token
+#   GUPPI_TELEGRAM__TOKEN  -> telegram.guppi.token   (non-standard prefix)
 
 runtime:
   log_level: INFO
@@ -32,12 +35,18 @@ llm:
   disable_thinking: true
 
 telegram:
-  token: ""                    # set via BOB_TELEGRAM__TOKEN, not here
+  # Two bots in one process (BOB-003): Bob lives in his topic; GUPPI is the
+  # gatekeeper/admin in General. Tokens are env-only (see header) — never here.
   poll_timeout: 10
+  chat_id: 0                   # group chat id, e.g. -1004372947307
+  bob:
+    # token: env BOB_TELEGRAM__TOKEN (not here)
+    topic_id: 0                # Bob's forum topic (message_thread_id), e.g. 32
+  # guppi.token: env GUPPI_TELEGRAM__TOKEN (not here) — no non-secret guppi keys yet
   # Authorization (Bob is private). Only the owner + allowlisted users, and only
   # inside allowed_chat_ids, may interact; everyone else is silently ignored.
   owner_id: 0                  # your Telegram user id (always authorized)
-  allowed_chat_ids: []         # chat ids Bob will respond in, e.g. [123456789]
+  allowed_chat_ids: []         # chat ids Bob will respond in, e.g. [-1004372947307]
   #                            # env: BOB_TELEGRAM__OWNER_ID, and a CSV string for
   #                            # BOB_TELEGRAM__ALLOWED_CHAT_IDS (e.g. "111,222").
   # Runtime allowlist grows via the owner command "/authorize <user_id>" and is
