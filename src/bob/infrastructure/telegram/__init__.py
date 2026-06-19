@@ -22,6 +22,7 @@ from bob.infrastructure.telegram.gateway import (
     TelegramGateway,
     UpdateLike,
 )
+from bob.infrastructure.telegram.guppi import GUPPI_REJECT_TEXT, GuppiHandler
 from bob.infrastructure.telegram.multibot import (
     BotIdentity,
     BotRegistration,
@@ -35,6 +36,7 @@ from bob.infrastructure.telegram.rich import (
 )
 
 __all__ = [
+    "GUPPI_REJECT_TEXT",
     "MESSAGE_RECEIVED",
     "PLAIN_TEXT_LIMIT",
     "BotIdentity",
@@ -42,6 +44,7 @@ __all__ = [
     "BotRegistration",
     "BotRegistry",
     "BotScope",
+    "GuppiHandler",
     "MarkdownToRichMessage",
     "MessageReceived",
     "MultiBotGateway",

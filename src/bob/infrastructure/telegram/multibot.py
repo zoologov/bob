@@ -20,13 +20,15 @@ sane and forward-compatible with future replica bots (Bobiverse):
   delivered it (a different key from the per-bot ``update_id`` dedup the inner
   :class:`TelegramGateway` does).
 * **Central router** — every deduplicated update is routed with its delivering
-  **bot identity**. This bead implements the **Bob path**: an *authorized*
-  message in **Bob's topic** (``chat_id == bob.chat_id`` AND
-  ``message_thread_id == bob.topic_id``) publishes one
-  :class:`MessageReceived` onto the bus (Bob's pipeline, as today) and Bob's
-  replies are pinned to his topic thread. The **unauthorized** branch and the
-  **GUPPI / owner-command** branch are left as clear drop-hooks for BEAD-03 —
-  here non-Bob-topic / unauthorized updates are dropped without crashing.
+  **bot identity**. The **Bob path**: an *authorized* message in **Bob's topic**
+  (``chat_id == bob.chat_id`` AND ``message_thread_id == bob.topic_id``)
+  publishes one :class:`MessageReceived` onto the bus (Bob's pipeline) and Bob's
+  replies are pinned to his topic thread. The **GUPPI path** (BEAD-03,
+  :class:`~bob.infrastructure.telegram.guppi.GuppiHandler`): an *unauthorized*
+  message in Bob's topic gets GUPPI's visible reject (Bob's pipeline is NOT
+  invoked); an owner command in General (``/authorize`` / ``/deauthorize`` /
+  ``/status``) is consumed by GUPPI. Everything else — a stranger DM, a foreign
+  chat, a non-owner command — is dropped silently (no reveal).
 
 Transport only: no Higher-Mind / LLM / memory logic. Bots are injected behind the
 :class:`~bob.infrastructure.telegram.gateway.BotLike` protocol so tests use fake
@@ -47,6 +49,7 @@ from bob.infrastructure.telegram.gateway import (
     TelegramGateway,
     UpdateLike,
 )
+from bob.infrastructure.telegram.guppi import GuppiHandler
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -164,6 +167,21 @@ class MultiBotGateway:
         # update streams; we process each (chat_id, message_id) exactly once.
         self._seen_messages: set[tuple[int, int]] = set()
         self._offsets: dict[BotIdentity, int] = dict.fromkeys(self._inner, 0)
+        # GUPPI's gatekeeper identity (the visible reject + owner commands). Built
+        # only when GUPPI is registered AND an authorizer is wired; otherwise the
+        # GUPPI hooks fall back to silent drops (backward-compatible).
+        self._guppi = self._build_guppi(authorizer)
+
+    def _build_guppi(self, authorizer: AuthorizerLike | None) -> GuppiHandler | None:
+        """Construct GUPPI's handler from its registration, if both are present."""
+        if authorizer is None or BotIdentity.GUPPI not in self._inner:
+            return None
+        guppi_reg = self._registry.get(BotIdentity.GUPPI)
+        return GuppiHandler(
+            bot=guppi_reg.bot,
+            authorizer=authorizer,
+            general_chat_id=guppi_reg.scope.chat_id,
+        )
 
     # --- Intake (all bots) ----------------------------------------------------
 
@@ -207,11 +225,12 @@ class MultiBotGateway:
         topic-scope + authorization, publishing onto Bob's pipeline when the
         update is his. Dedup + scope are identity-independent (a group message is
         processed once whichever admin bot delivered it); ``identity`` is the
-        routing key future replicas and BEAD-03's GUPPI branch dispatch on.
-        Returns ``True`` iff a :class:`MessageReceived` was published.
+        routing key future replicas and the GUPPI branch dispatch on. Returns
+        ``True`` iff a :class:`MessageReceived` was published (the Bob path only).
 
-        Non-Bob-topic and unauthorized updates are dropped here (clear hooks for
-        the GUPPI reject / owner-command branches BEAD-03 fills in).
+        Bob's topic + unauthorized → GUPPI's visible reject (no publish). General +
+        owner command → GUPPI consumes it (no publish). Everything else (stranger
+        DM, foreign chat, non-owner command) is dropped silently — no reveal.
         """
         message = update.message
         chat = update.effective_chat
@@ -228,17 +247,39 @@ class MultiBotGateway:
         if not bob_scope.matches(
             chat_id=chat.id, message_thread_id=message.message_thread_id
         ):
-            # Not Bob's topic (General / other topic / foreign chat) → drop.
-            # BEAD-03 hook: GUPPI owner-commands in General route here.
+            # Not Bob's topic (General / other topic / foreign chat): GUPPI may
+            # consume an owner command in General; otherwise drop silently.
+            await self._maybe_guppi_command(update, chat.id)
             return False
 
         if not await self._is_authorized(update, chat.id):
-            # BEAD-03 hook: GUPPI sends the visible "unauthorized" reject here;
-            # for this bead the unauthorized update is simply dropped.
+            # Unauthorized inside Bob's topic → GUPPI's visible reject; Bob's
+            # pipeline is NOT invoked.
+            await self._guppi_reject(chat.id, message.message_thread_id)
             return False
 
         # Authorized, in Bob's topic → publish onto Bob's pipeline (as today).
         return await self._inner[BotIdentity.BOB].intake(update)
+
+    async def _maybe_guppi_command(self, update: UpdateLike, chat_id: int) -> None:
+        """Let GUPPI consume an owner command in General (silent otherwise)."""
+        if self._guppi is None:
+            return
+        message = update.message
+        text = message.text if message is not None else None
+        if text is None:
+            return
+        user = update.effective_user
+        user_id = user.id if user is not None else None
+        await self._guppi.handle_general_command(
+            text=text, user_id=user_id, chat_id=chat_id
+        )
+
+    async def _guppi_reject(self, chat_id: int, thread_id: int | None) -> None:
+        """Send GUPPI's visible "unauthorized" reject into Bob's topic thread."""
+        if self._guppi is None:
+            return
+        await self._guppi.reject(chat_id=chat_id, thread_id=thread_id)
 
     async def _is_authorized(self, update: UpdateLike, chat_id: int) -> bool:
         """Classify the sender via the injected Authorizer (open if unwired)."""
