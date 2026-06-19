@@ -47,6 +47,14 @@ auth), и Tier 1 (Qwen API, bearer-auth). Два режима: non-stream (POST
 при отсутствии (Tier 0) заголовок `Authorization` не отправляется.
 `build_tier_providers()` читает секцию `llm` и строит по одному провайдеру на тир.
 
+Под reasoning-модели провайдер настраивается: `timeout_seconds` (по умолчанию
+`180`) не даёт медленному reasoning-ответу ложно упасть в таймаут, а
+`disable_thinking` (по умолчанию `true` в `DEFAULT_CONFIG`) шлёт директиву
+«no thinking» сразу в двух формах (`extra_body` и `chat_template_kwargs`) — ответам
+chain-of-thought не нужен, без него быстрее и дешевле. Разбор содержимого терпим:
+структурные ошибки (нет `choices`/`message`) поднимаются, но отсутствующий, `null`
+или нестроковый `content` деградирует в пустую строку, не вызывая ложного отката.
+
 ### Хранилище (SQLite + FTS5)
 
 `SqliteMemoryRepo` реализует `MemoryRepo` и является единственным домом SQL.
@@ -56,10 +64,19 @@ auth), и Tier 1 (Qwen API, bearer-auth). Два режима: non-stream (POST
 здесь, чтобы домен оставался без I/O.
 
 `Fts5MemoryRecall` реализует `MemoryRecall` через FTS5 `MATCH` с ранжированием
-BM25. Порт — шов для будущего вектора: домен видит только
+BM25. Recall охватывает оба индекса — распознанные факты (`semantic_fts`) и весь
+архив переписки (`episodic_fts`): даже не извлечённый в факт ход остаётся
+доступным, так что Боб вспоминает сказанное много ходов назад. Совпадения из обоих
+индексов сливаются, дедуплицируются по содержимому, ранжируются по BM25 и
+обрезаются до `k` лучших; каждый элемент несёт тег источника (`semantic` /
+`episodic`). Порт — шов для будущего вектора: домен видит только
 `recall(query, k) → [Recalled]` и не знает про keyword. Сырой пользовательский
 текст санитизируется в безопасное FTS5-выражение (OR кавыченных терминов), так
 что операторные символы не вызывают синтаксической ошибки и не инжектятся.
+
+Индекс `episodic_fts` синхронизируется триггерами, а `SqliteMemoryRepo.initialize()`
+ещё и идемпотентно его перестраивает (команда FTS5 `rebuild`), подхватывая ходы,
+записанные до появления индекса.
 
 `SoulStore` — файловый reader/writer артефактов `data/soul/`: `SOUL.md`,
 JSON-профили (`taste_profile`, `mood`, `phantom_prefs`) и append-only
@@ -90,7 +107,7 @@ JSON-профили (`taste_profile`, `mood`, `phantom_prefs`) и append-only
 - `BotLike`, `UpdateLike`, `MessageLike`.
 
 Модуль `src/bob/infrastructure/llm/openai_compat.py`:
-- `OpenAICompatProvider(*, base_url, model, api_key, timeout_seconds=60.0)` —
+- `OpenAICompatProvider(*, base_url, model, api_key, timeout_seconds=180.0, disable_thinking=False)` —
   `async complete(messages, *, stream=False)`.
 
 Модуль `src/bob/infrastructure/llm/factory.py`:
@@ -102,7 +119,8 @@ JSON-профили (`taste_profile`, `mood`, `phantom_prefs`) и append-only
   `get_mood()`, `set_taste_axis(...)`, `set_relationship()`, `kv_set()/kv_get()`.
 
 Модуль `src/bob/infrastructure/persistence/fts_recall.py`:
-- `Fts5MemoryRecall(repo)` — `async recall(query, *, k)` → `Sequence[Recalled]`.
+- `Fts5MemoryRecall(repo)` — `async recall(query, *, k)` → `Sequence[Recalled]`
+  (поиск по `semantic_fts` + `episodic_fts`, слияние, дедуп, ранжирование BM25).
 
 Модуль `src/bob/infrastructure/persistence/soul_store.py`:
 - `SoulStore(soul_dir)` — `soul_exists()`, `read_soul()`, `write_soul()`,
