@@ -12,30 +12,73 @@ LLM-провайдер, SQLite-хранилище с FTS5, файловый `Sou
 
 ### Модули
 
-- **telegram/gateway.py** — `TelegramGateway`, long-polling приём и стриминг
-  ответа (только транспорт); структурные протоколы `BotLike`, `UpdateLike`,
-  `MessageLike`.
+- **telegram/gateway.py** — `TelegramGateway` на aiogram: long-polling приём с
+  единым гейтом авторизации + нативный draft-стриминг и Rich Messages (только
+  транспорт); структурные протоколы `BotLike`, `UpdateLike`, `MessageLike`,
+  `AuthorizerLike`.
+- **telegram/rich.py** — `MarkdownToRichMessage` (markdown → типизированное дерево
+  aiogram `RichMessage`/`RichBlock`/`RichText`) и `RichMessageSerializer` (дерево →
+  rich-message markdown для отправки).
 - **llm/openai_compat.py** — `OpenAICompatProvider`, OpenAI-совместимые
-  completions поверх aiohttp (non-stream и SSE-стриминг).
+  completions поверх aiohttp (non-stream, SSE-стриминг и tool-calling).
 - **llm/factory.py** — `build_tier_providers()`, сборка провайдеров Tier 0/1 из
   конфигурации.
 - **persistence/sqlite_repo.py** — `SqliteMemoryRepo`, единственный дом SQL.
 - **persistence/fts_recall.py** — `Fts5MemoryRecall`, keyword-recall через FTS5.
+- **persistence/allowlist_store.py** — `KvAllowlistStore`, долговечный
+  authz-allowlist поверх таблицы `kv`.
 - **persistence/soul_store.py** — `SoulStore`, файловые артефакты `data/soul/`.
 - **persistence/schema.sql** — схема SQLite (таблицы + FTS5 + триггеры).
 - **config/loader.py** — `ConfigLoader`, слоистая конфигурация.
 
-### Telegram-gateway
+### Telegram-gateway (aiogram)
 
-`TelegramGateway` — граница между Telegram и приложением; делает две транспортные
-задачи и **не** содержит логики Higher Mind / LLM / памяти. **Приём:**
-long-polls `get_updates`, дедуплицирует по `update_id` (Telegram может
-переслать), нормализует текстовый апдейт в `MessageReceived` и публикует его в
-`EventBus`. **Стриминг ответа:** шлёт одно placeholder-сообщение и прогрессивно
-правит его (`editMessageText`), батчит правки по числу токенов и троттлит не
-чаще одной за интервал; при rate-limit `RetryAfter` делает backoff и повтор.
+`TelegramGateway` — граница между Telegram и приложением; делает только
+транспортные задачи и **не** содержит логики Higher Mind / LLM / памяти. Адаптер
+переписан на **aiogram** (Bot API 10.1): нативные draft-стриминг и Rich Messages
+заменили прежний хак на `editMessageText`-loop из PTB.
+
+**Приём + единый гейт авторизации.** `poll_once()` long-polls `get_updates`,
+`intake()` дедуплицирует по `update_id` (Telegram может переслать), затем проходит
+**единый гейт** `_passes_gate`: при подключённом `AuthorizerLike` сообщение из
+неразрешённого чата или от неавторизованного пользователя **молча отбрасывается**
+(ни `MessageReceived`, ни ответа) — это единственная точка проверки, без обхода и
+fail-closed. Owner-команды `/authorize <user_id>` и `/deauthorize <user_id>`
+потребляются прямо здесь (не публикуются) и доступны только owner; для остальных
+их текст проходит как обычное сообщение. Прошедший гейт текстовый апдейт
+нормализуется в `MessageReceived` и публикуется в `EventBus`. Без подключённого
+авторизатора гейт открыт (обратная совместимость).
+
+**Стриминг ответа.** `stream_reply` шлёт частичный текст нативными draft'ами
+(`send_message_draft`), батчит по числу токенов и троттлит не чаще одной за
+интервал, при `TelegramRetryAfter` делает backoff и повтор, по завершении
+коммитит готовый ответ как реальное сообщение (`send_message`).
+
+**Rich Messages + thinking.** `reply` конвертирует markdown-ответ Боба в
+типизированное дерево `RichMessage` (опционально с ведущим сворачиваемым блоком
+`RichBlockThinking`, когда задан `thinking`), сериализует его в rich-message
+markdown и шлёт через `send_rich_message`. `stream_reply_rich` стримит rich-драфты
+(`send_rich_message_draft`) и коммитит готовый rich-ответ. При **любой** ошибке
+rich происходит тихая деградация на обычный `send_message` — пользователь всегда
+получает текст, никогда ошибку; plain-fallback дробит длину по лимиту
+`PLAIN_TEXT_LIMIT` (4096).
+
 Время и sleep инъецируются для детерминизма; бот инъецируется за минимальным
-протоколом `BotLike`, поэтому тесты идут без сети.
+протоколом `BotLike`, поэтому тесты идут без сети. Реальная сборка aiogram `Bot`
+и адаптер `UpdateLike` живут в `app.py`.
+
+### Markdown → Rich Message
+
+`MarkdownToRichMessage` — чистая детерминированная трансформация (без I/O, сети и
+часов): подмножество markdown ответа Боба → типизированное дерево aiogram
+`RichMessage`. Блоки: заголовки `#..######` → `RichBlockSectionHeading`, fenced
+код → `RichBlockPreformatted`, цитаты `>` → `RichBlockBlockQuotation`, списки
+`-`/`1.` → `RichBlockList`, `---`/`***` → `RichBlockDivider`, остальное —
+`RichBlockParagraph`. Инлайн-спаны: `**bold**`, `*italic*`, `` `code` ``,
+`~~strike~~`, `||spoiler||`, `$math$`. `RichMessageSerializer` рендерит дерево
+обратно в rich-message markdown, который aiogram `InputRichMessage(markdown=...)`
+принимает на отправку (на send-стороне дерево не передаётся). Обе операции чисты
+и тестируемы в изоляции.
 
 ### LLM-провайдер
 
@@ -54,6 +97,17 @@ auth), и Tier 1 (Qwen API, bearer-auth). Два режима: non-stream (POST
 chain-of-thought не нужен, без него быстрее и дешевле. Разбор содержимого терпим:
 структурные ошибки (нет `choices`/`message`) поднимаются, но отсутствующий, `null`
 или нестроковый `content` деградирует в пустую строку, не вызывая ложного отката.
+
+**Tool-calling** реализует порт `ToolCallingProvider`: `complete_with_tools`
+отправляет манифест навыков как нативные OpenAI `tools` и разбирает ответ в
+`ToolCallResult`. Предпочитается нативный массив `tool_calls`; если его нет —
+включается **prompt-fallback**: из текста ответа терпимо извлекается
+prompt-протокольный JSON-объект `{"tool_call": {"name": ..., "arguments": {...}}}`
+(терпя reasoning-обёртку: преамбулу-рассуждение и markdown-фенсы), сканированием
+первого сбалансированного `{...}`. Если ни того, ни другого — ход финальный и
+`text` есть ответ. Аргументы вызова (JSON-строка) декодируются терпимо: битый или
+не-объектный payload даёт `{}`, а не ошибку, чтобы сбойная модель не уронила
+диспатч.
 
 ### Хранилище (SQLite + FTS5)
 
@@ -78,6 +132,13 @@ BM25. Recall охватывает оба индекса — распознанн
 ещё и идемпотентно его перестраивает (команда FTS5 `rebuild`), подхватывая ходы,
 записанные до появления индекса.
 
+`KvAllowlistStore` реализует порт `AllowlistStore`, персистя множество
+allowlisted `user_id` как JSON-массив под единым ключом `authz.allowlist` в
+существующей таблице `kv` (`kv_get`/`kv_set` репозитория). Весь SQL остаётся в
+`SqliteMemoryRepo` (параметризован), а `/authorize` переживает рестарт: свежий
+процесс читает тот же ключ и видит те же гранты. Декодирование защищено по форме
+(не-список или не-int элементы игнорируются).
+
 `SoulStore` — файловый reader/writer артефактов `data/soul/`: `SOUL.md`,
 JSON-профили (`taste_profile`, `mood`, `phantom_prefs`) и append-only
 `genesis_log.md`. Каталог создаётся по требованию.
@@ -98,17 +159,31 @@ JSON-профили (`taste_profile`, `mood`, `phantom_prefs`) и append-only
   заголовка `Authorization`.
 - Везде `yaml.safe_load` и `pathlib`.
 - Gateway не содержит логики Higher Mind / LLM / памяти.
+- Единый гейт авторизации в gateway fail-closed: при подключённом авторизаторе
+  неразрешённый чат/пользователь молча отброшены, без обхода.
+- Rich-отправка деградирует на plain при любой ошибке — пользователь не видит
+  ошибку транспорта.
+- `MarkdownToRichMessage` и `RichMessageSerializer` — чистые и детерминированные
+  (без I/O, сети, часов).
+- Allowlist персистится в таблице `kv` (параметризованный SQL) и переживает рестарт.
 
 ## API
 
 Модуль `src/bob/infrastructure/telegram/gateway.py`:
-- `TelegramGateway(*, bot, bus, poll_timeout, batch_tokens, throttle_interval, clock, sleep)` —
-  `async poll_once()`, `async intake(update)`, `async stream_reply(*, chat_id, tokens)`.
-- `BotLike`, `UpdateLike`, `MessageLike`.
+- `TelegramGateway(*, bot, bus, poll_timeout, batch_tokens, throttle_interval, clock, sleep, authorizer=None)` —
+  `async poll_once()`, `async intake(update)`, `async stream_reply(*, chat_id, tokens)`,
+  `async reply(*, chat_id, markdown, thinking=None)`,
+  `async stream_reply_rich(*, chat_id, tokens, thinking=None)`.
+- `BotLike`, `UpdateLike`, `MessageLike`, `AuthorizerLike`, `PLAIN_TEXT_LIMIT`.
+
+Модуль `src/bob/infrastructure/telegram/rich.py`:
+- `MarkdownToRichMessage` — `convert(markdown, *, thinking=None)` → `RichMessage`.
+- `RichMessageSerializer` — `to_markdown(message)` → `str`.
 
 Модуль `src/bob/infrastructure/llm/openai_compat.py`:
 - `OpenAICompatProvider(*, base_url, model, api_key, timeout_seconds=180.0, disable_thinking=False)` —
-  `async complete(messages, *, stream=False)`.
+  `async complete(messages, *, stream=False)`,
+  `async complete_with_tools(messages, *, tools)` → `ToolCallResult`.
 
 Модуль `src/bob/infrastructure/llm/factory.py`:
 - `build_tier_providers(config)` → `dict[int, LLMProvider]`.
@@ -122,6 +197,10 @@ JSON-профили (`taste_profile`, `mood`, `phantom_prefs`) и append-only
 - `Fts5MemoryRecall(repo)` — `async recall(query, *, k)` → `Sequence[Recalled]`
   (поиск по `semantic_fts` + `episodic_fts`, слияние, дедуп, ранжирование BM25).
 
+Модуль `src/bob/infrastructure/persistence/allowlist_store.py`:
+- `KvAllowlistStore(kv)` — `async load()` → `set[int]`, `async add(user_id)`,
+  `async remove(user_id)`.
+
 Модуль `src/bob/infrastructure/persistence/soul_store.py`:
 - `SoulStore(soul_dir)` — `soul_exists()`, `read_soul()`, `write_soul()`,
   `read_json()/write_json()`, `append_genesis_log()/read_genesis_log()`.
@@ -132,10 +211,15 @@ JSON-профили (`taste_profile`, `mood`, `phantom_prefs`) и append-only
 ## Тесты
 
 Тесты: `tests/infrastructure/telegram/test_gateway.py`,
+`tests/infrastructure/telegram/test_gateway_authz.py`,
+`tests/infrastructure/telegram/test_gateway_hardening.py`,
+`tests/infrastructure/telegram/test_rich.py`,
+`tests/infrastructure/telegram/test_rich_hardening.py`,
 `tests/infrastructure/llm/test_openai_compat.py`,
 `tests/infrastructure/llm/test_openai_compat_parsers.py`,
 `tests/infrastructure/llm/test_factory.py`,
 `tests/infrastructure/persistence/test_sqlite_repo.py`,
 `tests/infrastructure/persistence/test_fts_recall.py`,
+`tests/infrastructure/persistence/test_allowlist_store.py`,
 `tests/infrastructure/persistence/test_soul_store.py`,
 `tests/infrastructure/config/test_loader.py`.

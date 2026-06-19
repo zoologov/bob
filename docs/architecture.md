@@ -1,18 +1,22 @@
 <!-- Copyright (c) 2026 Vladimir Zoologov. All Rights Reserved.
      SPDX-License-Identifier: BUSL-1.1 -->
 
-# Архитектура Боба — P0 (личность в Telegram)
+# Архитектура Боба
 
-Боб — это единый Python-процесс (GUPPI), который держит Telegram-бота, локальный
-и облачный LLM за провайдер-агностичным роутером, память на SQLite и ядро
-личности (Higher Mind). Пользователь пишет в приватную Telegram-supergroup, Боб
-отвечает со стримингом — с учётом настроения, вкусов и памяти — и переживает
-рестарты процесса и машины.
+Боб — это единый Python-процесс (GUPPI), который держит Telegram-бота (на
+aiogram), локальный и облачный LLM за провайдер-агностичным роутером, память на
+SQLite и ядро личности (Higher Mind). Пользователь пишет в приватную
+Telegram-supergroup, Боб отвечает со стримингом и форматированием — с учётом
+настроения, вкусов и памяти — и переживает рестарты процесса и машины. Доступ
+закрыт авторизацией (owner + allowlist + scope по чату), петля устойчива к
+транзиентным сетевым сбоям, а навыки Боба исполняются GUPPI через стабильный
+Capability-шов.
 
-Этот документ описывает реальную, поставленную в P0 систему: слои, поток
-обработки сообщения, LLM-тиры с редакцией приватного контекста, память, ядро
-личности, Genesis и фоновый heartbeat. Подробности по каждому слою — в
-отдельных документах:
+Этот документ описывает реальную, поставленную систему: слои, поток обработки
+сообщения, LLM-тиры с редакцией приватного контекста, память, ядро личности,
+Genesis и фоновый heartbeat, а также ближний батч поверх P0 — Telegram-транспорт
+на aiogram (нативный стриминг + Rich Messages), авторизацию, резилентность тиков и
+Capability-шов. Подробности по каждому слою — в отдельных документах:
 
 - [`domains/domain/README.md`](domains/domain/README.md) — чистый домен (личность и память).
 - [`domains/application/README.md`](domains/application/README.md) — GUPPI: рантайм, use-cases, роутер.
@@ -32,14 +36,18 @@ src/bob/
     memory/          # EpisodicEvent, SemanticFact
     ports.py         # порты-протоколы: LLMProvider, MemoryRepo, MemoryRecall,
                      #                   SoulStore, EventBus, Clock
+    ports.py         #   + Capability, ToolCallingProvider, AllowlistStore
   application/       # GUPPI: use-cases + оркестрация. Зависит от domain через порты.
-    runtime/         # AgentRuntime (жизненный цикл), AsyncEventBus, события, periodic
+    runtime/         # AgentRuntime (жизненный цикл), AsyncEventBus, события, periodic, retry
     router/          # LLMRouter: классификация задачи → Tier + правило редакции
     usecases/        # HandleMessage, RunGenesis, UpdateMoodFromText, heartbeat-тики
+    authz/           # Authorizer: политика owner/allowlist/chat-scope
+    capabilities/    # CapabilityRegistry, ToolLoop, recall_memory (навыки GUPPI)
   infrastructure/    # Адаптеры портов (наружу).
-    telegram/        # TelegramGateway: long-polling, дедуп, стриминг editMessageText
-    llm/             # OpenAICompatProvider (Tier 0/1) + фабрика по конфигурации
-    persistence/     # SqliteMemoryRepo + FTS5 recall + SoulStore + schema.sql
+    telegram/        # TelegramGateway (aiogram): long-polling + authz-гейт,
+                     #   draft-стриминг, Rich Messages; rich.py: markdown↔RichMessage
+    llm/             # OpenAICompatProvider (Tier 0/1, + tool-calling) + фабрика
+    persistence/     # SqliteMemoryRepo + FTS5 recall + KvAllowlistStore + SoulStore
     config/          # ConfigLoader (defaults → YAML → env)
   app.py             # composition root: собирает порты и адаптеры, запускает рантайм
 ```
@@ -56,9 +64,13 @@ src/bob/
 Когда пользователь пишет в Telegram, Боб проживает один ход. Поток собирается в
 `HandleMessage`, подписанном на событие `MessageReceived` в `AsyncEventBus`.
 
-1. **Приём.** `TelegramGateway` (инфраструктура) опрашивает Telegram через
-   long-polling, дедуплицирует апдейты по `update_id`, нормализует текстовый
-   апдейт в `MessageReceived` и публикует его в `AsyncEventBus`.
+1. **Приём (+ единый гейт авторизации).** `TelegramGateway` (инфраструктура, на
+   aiogram) опрашивает Telegram через long-polling, дедуплицирует апдейты по
+   `update_id`, затем проходит **единый гейт** `Authorizer`: апдейт из
+   неразрешённого чата или от неавторизованного пользователя молча отбрасывается
+   (ни `MessageReceived`, ни ответа). Owner-команды `/authorize`/`/deauthorize`
+   потребляются прямо в гейте. Прошедший текстовый апдейт нормализуется в
+   `MessageReceived` и публикуется в `AsyncEventBus`.
 2. **Perceive (обновление настроения, Tier 0).** `UpdateMoodFromText` читает
    сигналы сообщения — сентимент (классификация на **Tier 0**, локально),
    частоту сообщений, время суток (из инъецированного `Clock`) и присутствие — и
@@ -79,14 +91,19 @@ src/bob/
    `private_context` и **редактируется** перед любым вызовом Tier 1 (только
    Tier 0). При сбое Tier 1 роутер откатывается на **Tier 0** локально, отправляя
    тот же payload (с уже вырезанным `private_context`).
-5. **Стриминг.** Токены ответа стримятся обратно через `TelegramGateway`, который
-   батчит правки `editMessageText` по числу токенов и троттлит их не чаще одной за
-   интервал, с backoff при rate-limit (`RetryAfter`).
+5. **Стриминг.** Токены ответа стримятся обратно через `TelegramGateway`
+   нативными draft'ами aiogram (`send_message_draft`): батч по числу токенов,
+   троттлинг не чаще одной за интервал, backoff при `TelegramRetryAfter`; готовый
+   ответ коммитится реальным сообщением. Форматированные ответы идут через Rich
+   Messages (`send_rich_message`), с тихой деградацией на plain при ошибке. (См.
+   раздел «Telegram-транспорт» ниже — это заменило прежний хак на
+   `editMessageText`.)
 6. **Persist.** Ход сохраняется как эпизод в `episodic_log`, а снапшот настроения
    записывается в `mood_state` и `mood_history` через `MemoryRepo`.
 
 Параллельно идёт лёгкий **heartbeat** — фоновые asyncio-задачи рантайма, каждая
-изолирована: ошибка в одном тике не роняет остальные.
+изолирована: ошибка в одном тике не роняет остальные, а транзиентный сетевой сбой
+ретраится с backoff (см. «Резилентность тиков»).
 
 ## LLM: тиры и селективная редакция контекста
 
@@ -147,6 +164,96 @@ Tier 1 может оказаться reasoning-моделью, которая т
 сбалансированный JSON-массив `[...]` (терпя преамбулу-рассуждение до и любой текст
 после массива). Невалидный JSON, не-массив или записи без `content` дают ноль
 фактов, а не ошибку.
+
+## Telegram-транспорт: aiogram, нативный стриминг, Rich Messages
+
+`TelegramGateway` переписан с `python-telegram-bot` на **aiogram** (Bot API 10.1):
+нативные draft-стриминг и Rich Messages заменили прежний хак на
+`editMessageText`-loop. Адаптер остаётся чистым транспортом за портом
+`ReplyStreamer`/`EventBus` — домен и приложение не тронуты, сменилась только
+зависимость и реализация gateway.
+
+- **Нативный стриминг.** Частичный текст уходит draft'ами `send_message_draft`
+  (для rich — `send_rich_message_draft`): батч по числу токенов, троттлинг не
+  чаще одной правки за интервал, backoff при `TelegramRetryAfter`. По завершении
+  готовый ответ коммитится реальным сообщением.
+- **Rich Messages.** `MarkdownToRichMessage` (чистая детерминированная
+  трансформация) превращает подмножество markdown ответа в типизированное дерево
+  aiogram `RichMessage` — заголовки, списки, код, цитаты, разделители, инлайн
+  bold/italic/code/strike/spoiler/math. `RichMessageSerializer` рендерит дерево в
+  rich-message markdown, который `InputRichMessage(markdown=...)` принимает на
+  отправку через `send_rich_message`.
+- **`RichBlockThinking`.** Ответ Боба несёт опциональное поле `thinking`; при
+  наличии оно рендерится ведущим сворачиваемым блоком `RichBlockThinking` перед
+  основным ответом — задел под монолог/размышления Боба.
+- **Тихий plain-fallback.** Любая ошибка rich деградирует на обычный
+  `send_message` (с дроблением по лимиту длины 4096) — пользователь всегда
+  получает текст, никогда не ошибку транспорта. `editMessageText`+rich не
+  используется (известный баг: edit-стрим ломает rich).
+
+## Авторизация (owner + allowlist + chat-scope)
+
+Боб приватен: до любой автономности и расширения доступ закрыт. Политика — чистый
+`Authorizer` (`application/authz`) поверх порта `AllowlistStore`, а применяется она
+**единым гейтом в gateway** — единственной точкой проверки, без обхода и
+fail-closed.
+
+- **Политика.** `is_authorized(user_id, chat_id)` сперва проверяет chat-scope:
+  сообщение из чата вне `allowed_chat_ids` отвергается для всех, включая owner —
+  даже при утечке токена в чужом чате Боб мёртв. Внутри разрешённого чата owner
+  пропускается всегда, любой другой — только если он в персистентном allowlist.
+- **Персистентность.** `owner_id` и `allowed_chat_ids` берутся из конфигурации
+  (`telegram`) и неизменны на процесс; динамический allowlist хранится в
+  `KvAllowlistStore` (таблица `kv` SQLite) и читается на каждом решении, поэтому
+  команда `/authorize <user_id>` переживает рестарт.
+- **Owner-команды.** `/authorize`/`/deauthorize` потребляются прямо в гейте
+  (не публикуются как сообщения) и доступны только owner.
+
+## Резилентность тиков (retry/backoff + изоляция)
+
+Чтобы петля была надёжно живой 24/7, heartbeat-тики переживают транзиентные
+сетевые сбои. `retry_with_backoff` (`application/runtime/retry`) повторяет операцию
+на **транзиентных** ошибках (сетевые сбои соединения aiohttp, включая
+`Server disconnected`, таймауты, 5xx) с ограниченным экспоненциальным backoff;
+**перманентная** ошибка (4xx, баг, структурная) пробрасывается сразу, чтобы
+backoff не маскировал дефект. `sleep` инъецируется для детерминизма тестов.
+
+Резилентность слоёная: `periodic(...)` оборачивает тик в `retry_with_backoff`
+(когда задана `RetryPolicy`), затем **изолирует** то, что тик в итоге бросил,
+логируя и продолжая — так одна сбойная итерация не валит heartbeat и не глушит
+соседние тики; отмена на остановке рантайма пробрасывается чисто.
+
+## Capability-шов (навыки GUPPI)
+
+Стабильный, forward-compatible шов навыков — фундамент, на котором поедут «Память»
+и «Автономность». Это именно **шов**, не полная плагин-машинерия (sandbox,
+авто-дискавери, self-creation придут позже за тем же контрактом). По канону книги
+**GUPPI — исполнитель** того, что Боб решает применить.
+
+- **Контракт `Capability`** (`domain/ports.py`): `name`, `description`,
+  `input_schema` (JSON-схема), `permission` (`safe` исполняется напрямую;
+  `confirm` — задел под approval-гейт) и `async execute(args)`.
+- **`CapabilityRegistry`** (`application/capabilities`): `register` (имя
+  уникально), `manifest` (рендер навыков в OpenAI-определения `tools`),
+  `dispatch` (исполнить навык = GUPPI исполняет), `describe` (короткий перечень
+  для системного промпта, чтобы Боб знал, что умеет).
+- **`ToolLoop`** — петля «модель ↔ инструменты»: даёт модели манифест как
+  `tools` через `ToolCallingProvider.complete_with_tools`; если модель вернула
+  `tool_calls` — диспатчит каждый через реестр, дописывает результат и повторяет,
+  пока не финальный текст. Число ходов ограничено (turn-cap); неизвестный навык не
+  фатален (ошибка возвращается как результат).
+- **Tool-calling в провайдере** (`OpenAICompatProvider`): нативные OpenAI `tools`,
+  а при отсутствии нативной поддержки — prompt-fallback (терпимый разбор
+  prompt-протокольного JSON `{"tool_call": {...}}` из текста ответа).
+- **Манифест в контексте.** Перечень навыков попадает в системный промпт Боба
+  (преамбула о GUPPI как исполнителе), так что Боб ссылается на свои возможности.
+- **Первый навык `recall_memory`** — тонкая обёртка над `MemoryRecall` (архивный
+  keyword-recall) для обкатки петли e2e без нового I/O. Агентный `search_memory` с
+  векторами — отдельный эпик «Память». Полная плагин-система — позже, за этим швом.
+
+`HandleMessage` подхватывает шов опционально: tool-loop включается, только когда
+зарегистрированы навыки **и** подан `ToolCallingProvider` (в сборке — провайдер
+Tier 1); иначе ход идёт прежним plain-путём роутера.
 
 ## Память (SQLite + FTS5)
 
@@ -245,8 +352,10 @@ no-op (без обращения к LLM и без записи файлов). И
 - **ReflectTick** — периодическая рефлексия на Tier 0, сохраняемая как эпизод.
 
 Все три читают и пишут общий `PersonalityState`, поэтому тики и обработка
-сообщений видят одно согласованное настроение. Цикл `periodic` изолирует ошибку
-тика и корректно завершается при остановке рантайма.
+сообщений видят одно согласованное настроение. Цикл `periodic` ретраит
+транзиентный сбой тика с backoff (`RetryPolicy`), изолирует то, что тик в итоге
+бросил, и корректно завершается при остановке рантайма (см. «Резилентность
+тиков»).
 
 ## Конфигурация и запуск
 
@@ -256,18 +365,29 @@ no-op (без обращения к LLM и без записи файлов). И
 только из конфигурации/env и нигде не инлайнятся. Секция `llm` несёт и
 настройки reasoning-модели — `timeout_seconds` (по умолчанию `180`) и
 `disable_thinking` (по умолчанию `true`); оба значения терпят строковую форму из
-env-переменных.
+env-переменных. Секция `telegram` несёт также authz-параметры `owner_id` и
+`allowed_chat_ids` (список целых или CSV-строка из env).
 
 `app.py` — единственный модуль, которому разрешено зависеть сразу от всех слоёв.
 Он строит реальные адаптеры, собирает политику приложения, подписывает
-`HandleMessage` на шину, регистрирует Telegram-polling и три heartbeat-тика как
-фоновые задачи рантайма, один раз запускает Genesis на первом старте и стартует
-`AgentRuntime`. Провайдеры и Telegram-бот — инъецируемые швы, поэтому весь граф
-прогоняется end-to-end на фейках без сети.
+`HandleMessage` на шину, регистрирует Telegram-polling и три heartbeat-тика
+(с `RetryPolicy`) как фоновые задачи рантайма, один раз запускает Genesis на
+первом старте и стартует `AgentRuntime`. Здесь же собираются `Authorizer` (над
+`KvAllowlistStore`) для гейта в gateway и `CapabilityRegistry` с навыком
+`recall_memory`; провайдер Tier 1 подключается как `ToolCallingProvider`, когда
+поддерживает tool-calling, иначе tool-loop остаётся дремлющим. Здесь же живёт
+адаптер реального aiogram `Bot` к протоколу `BotLike`. Провайдеры и Telegram-бот —
+инъецируемые швы, поэтому весь граф прогоняется end-to-end на фейках без сети.
 
 ## Тесты
 
 Тесты лежат под `tests/`, повторяя структуру слоёв: `tests/domain/`,
-`tests/application/`, `tests/infrastructure/`, плюс end-to-end (`tests/test_e2e_flow.py`)
-и сборка приложения (`tests/test_app.py`). Граница слоёв проверяется
-`tests/application/test_layering.py`.
+`tests/application/` (включая `authz/`, `runtime/test_retry.py`,
+`test_capability_registry.py`, `test_tool_loop.py`,
+`test_recall_memory_capability.py`), `tests/infrastructure/` (включая
+`telegram/test_gateway_authz.py`, `telegram/test_rich.py`,
+`persistence/test_allowlist_store.py`). Сверху — end-to-end
+(`tests/test_e2e_flow.py`, `tests/test_e2e_integration.py`), сборка приложения
+(`tests/test_app.py`, `tests/test_app_authz.py`) и приёмочные сценарии US-1..US-4
+(`tests/test_acceptance_memory.py`, `tests/test_acceptance_reasoning.py`). Граница
+слоёв проверяется `tests/application/test_layering.py`.
