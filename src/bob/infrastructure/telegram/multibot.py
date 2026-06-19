@@ -172,6 +172,11 @@ class MultiBotGateway:
         # GUPPI hooks fall back to silent drops (backward-compatible).
         self._guppi = self._build_guppi(authorizer)
 
+    @property
+    def registry(self) -> BotRegistry:
+        """The bot registry this gateway polls (read-only view for composition)."""
+        return self._registry
+
     def _build_guppi(self, authorizer: AuthorizerLike | None) -> GuppiHandler | None:
         """Construct GUPPI's handler from its registration, if both are present."""
         if authorizer is None or BotIdentity.GUPPI not in self._inner:

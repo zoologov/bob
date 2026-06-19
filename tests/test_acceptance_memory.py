@@ -158,7 +158,11 @@ def _config(tmp_path: Path) -> dict[str, object]:
             "tier1_model": "tier1",
             "tier1_api_key": "sk-test",
         },
-        "telegram": {"token": "tok", "poll_timeout": 1},
+        "telegram": {
+            "poll_timeout": 1,
+            "bob": {"token": "bob-tok", "topic_id": 0},
+            "guppi": {"token": "guppi-tok"},
+        },
         "persistence": {
             "db_path": str(tmp_path / "bob.db"),
             "soul_dir": str(tmp_path / "soul"),
@@ -185,7 +189,10 @@ def _build_app(
 ) -> Application:
     """Wire the whole graph on the temp db with the given fakes."""
     return build_application(
-        config=_config(tmp_path), providers={0: tier0, 1: tier1}, bot=bot
+        config=_config(tmp_path),
+        providers={0: tier0, 1: tier1},
+        bob_bot=bot,
+        guppi_bot=bot,
     )
 
 

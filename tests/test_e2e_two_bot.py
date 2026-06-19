@@ -1,0 +1,366 @@
+# Copyright (c) 2026 Vladimir Zoologov
+# SPDX-License-Identifier: BUSL-1.1
+# See the LICENSE file in the project root for full license information.
+
+"""BOB-003 BEAD-04 — two-bot integration e2e over the composition root.
+
+``build_application`` now wires BOTH admin bots (Bob + GUPPI) into one
+:class:`~bob.infrastructure.telegram.multibot.MultiBotGateway`: Bob is scoped to
+his topic thread, GUPPI is the gatekeeper in General, and one poll drives both.
+These tests prove that wiring end to end with fakes only — two fake aiogram bots
+(no Telegram), fake LLM providers (no network), and a real temp SQLite database:
+
+* (a) an unauthorized user in Bob's topic → GUPPI sends the visible reject and
+  Bob's pipeline is NOT invoked (no reply from Bob's bot);
+* (b) an authorized message in Bob's topic → Bob replies **into his thread**
+  (``message_thread_id`` pinned to the topic);
+* (c) owner ``/authorize <id>`` in General → consumed by GUPPI and persisted to
+  the live SQLite allowlist (survives a restart);
+* (d) a message in General / another topic → ignored by Bob (no Bob publish).
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
+
+import pytest
+
+from bob.app import Application, build_application
+from bob.infrastructure.persistence import KvAllowlistStore, SoulStore, SqliteMemoryRepo
+from bob.infrastructure.telegram.guppi import GUPPI_REJECT_TEXT
+from bob.infrastructure.telegram.multibot import BotIdentity
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncIterator, Mapping, Sequence
+    from pathlib import Path
+
+    from aiogram.types import InputRichMessage
+
+    from bob.domain.ports import LLMProvider
+
+_CHAT_ID = -1004372947307
+_BOB_TOPIC_ID = 32
+_OWNER_ID = 27468732
+_STRANGER_ID = 555
+_OTHER_TOPIC_ID = 99
+_REPLY = "Hello from Bob."
+
+
+# --- Fakes at the external edges (no network, no Telegram) --------------------
+
+
+class _Provider:
+    """Fake LLMProvider returning a fixed reply (stands in for a tier)."""
+
+    def __init__(self, *, reply: str) -> None:
+        self.reply = reply
+
+    async def complete(
+        self,
+        messages: Sequence[Mapping[str, str]],  # noqa: ARG002
+        *,
+        stream: bool = False,  # noqa: ARG002
+    ) -> str | AsyncIterator[str]:
+        return self.reply
+
+
+@dataclass
+class _FakeMessage:
+    message_id: int
+    text: str | None
+    message_thread_id: int | None = None
+
+
+@dataclass
+class _FakeUser:
+    id: int
+    full_name: str = "Ada"
+
+
+@dataclass
+class _FakeChat:
+    id: int
+
+
+@dataclass
+class _FakeUpdate:
+    update_id: int
+    message: _FakeMessage | None = None
+    effective_chat: _FakeChat | None = None
+    effective_user: _FakeUser | None = None
+
+
+@dataclass
+class _SendCall:
+    chat_id: int
+    text: str
+    message_thread_id: int | None
+
+
+@dataclass
+class _FakeBot:
+    """Fake aiogram bot: scripted update batches + recorded sends."""
+
+    updates_batches: list[list[_FakeUpdate]] = field(default_factory=list)
+    sends: list[_SendCall] = field(default_factory=list)
+    next_message_id: int = 900
+
+    async def get_updates(
+        self, *, offset: int, timeout: int  # noqa: ARG002
+    ) -> Sequence[_FakeUpdate]:
+        if not self.updates_batches:
+            return []
+        return self.updates_batches.pop(0)
+
+    async def send_message(
+        self, *, chat_id: int, text: str, message_thread_id: int | None = None
+    ) -> _FakeMessage:
+        self.sends.append(
+            _SendCall(chat_id=chat_id, text=text, message_thread_id=message_thread_id)
+        )
+        msg = _FakeMessage(message_id=self.next_message_id, text=text)
+        self.next_message_id += 1
+        return msg
+
+    async def send_message_draft(
+        self,
+        *,
+        chat_id: int,  # noqa: ARG002
+        draft_id: int,  # noqa: ARG002
+        text: str,  # noqa: ARG002
+        message_thread_id: int | None = None,  # noqa: ARG002
+    ) -> bool:
+        return True
+
+    async def send_rich_message(
+        self,
+        *,
+        chat_id: int,
+        rich_message: InputRichMessage,  # noqa: ARG002
+        message_thread_id: int | None = None,
+    ) -> _FakeMessage:
+        # Bob's committed reply travels via the plain stream path; the rich path
+        # is unused here. Record it anyway so an accidental rich send is visible.
+        self.sends.append(
+            _SendCall(chat_id=chat_id, text="<rich>", message_thread_id=message_thread_id)
+        )
+        return _FakeMessage(message_id=0, text="")
+
+    async def send_rich_message_draft(
+        self,
+        *,
+        chat_id: int,  # noqa: ARG002
+        draft_id: int,  # noqa: ARG002
+        rich_message: InputRichMessage,  # noqa: ARG002
+        message_thread_id: int | None = None,  # noqa: ARG002
+    ) -> bool:
+        return True
+
+
+# --- Config + builders --------------------------------------------------------
+
+
+def _config(tmp_path: Path) -> dict[str, object]:
+    return {
+        "runtime": {"log_level": "INFO", "heartbeat_seconds": 0},
+        "llm": {
+            "tier0_base_url": "http://localhost:8080/v1",
+            "tier0_model": "tier0",
+            "tier1_base_url": "https://api.example/v1",
+            "tier1_model": "tier1",
+            "tier1_api_key": "sk-test",
+        },
+        "telegram": {
+            "poll_timeout": 1,
+            "chat_id": _CHAT_ID,
+            "owner_id": _OWNER_ID,
+            "allowed_chat_ids": [_CHAT_ID],
+            "bob": {"token": "bob-tok", "topic_id": _BOB_TOPIC_ID},
+            "guppi": {"token": "guppi-tok"},
+        },
+        "persistence": {
+            "db_path": str(tmp_path / "bob.db"),
+            "soul_dir": str(tmp_path / "soul"),
+        },
+    }
+
+
+def _seed_soul(tmp_path: Path) -> None:
+    store = SoulStore(tmp_path / "soul")
+    store.write_soul("# SOUL\n\nI am the Bob from the book.\n")
+    zero = {"valence": 0.0, "arousal": 0.0, "openness": 0.0, "social": 0.0, "stability": 0.0}
+    store.write_json("mood", {"baseline": zero, "current": zero})
+    store.write_json("taste_profile", {"axes": []})
+    store.write_json("phantom_prefs", {"preferences": []})
+
+
+def _providers() -> dict[int, LLMProvider]:
+    return {0: _Provider(reply="positive"), 1: _Provider(reply=_REPLY)}
+
+
+def _build(
+    tmp_path: Path, *, bob_bot: _FakeBot, guppi_bot: _FakeBot
+) -> Application:
+    return build_application(
+        config=_config(tmp_path),
+        providers=_providers(),
+        bob_bot=bob_bot,
+        guppi_bot=guppi_bot,
+    )
+
+
+def _update(
+    update_id: int,
+    *,
+    text: str,
+    chat_id: int = _CHAT_ID,
+    thread_id: int | None = _BOB_TOPIC_ID,
+    user_id: int = _OWNER_ID,
+) -> _FakeUpdate:
+    return _FakeUpdate(
+        update_id=update_id,
+        message=_FakeMessage(
+            message_id=update_id, text=text, message_thread_id=thread_id
+        ),
+        effective_chat=_FakeChat(id=chat_id),
+        effective_user=_FakeUser(id=user_id),
+    )
+
+
+# --- Tests --------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_two_bots_are_registered_in_the_gateway(tmp_path: Path) -> None:
+    # Arrange/Act: the composition root builds both bots behind one gateway.
+    bob_bot, guppi_bot = _FakeBot(), _FakeBot()
+    app = _build(tmp_path, bob_bot=bob_bot, guppi_bot=guppi_bot)
+
+    # Assert: both identities are registered with their scopes.
+    bob_reg = app.multibot.registry.get(BotIdentity.BOB)
+    guppi_reg = app.multibot.registry.get(BotIdentity.GUPPI)
+    assert bob_reg.bot is bob_bot
+    assert guppi_reg.bot is guppi_bot
+    assert bob_reg.scope.chat_id == _CHAT_ID
+    assert bob_reg.scope.topic_id == _BOB_TOPIC_ID
+    assert guppi_reg.scope.chat_id == _CHAT_ID
+    assert guppi_reg.scope.topic_id is None
+
+
+@pytest.mark.asyncio
+async def test_unauthorized_in_bob_topic_rejects_and_bob_not_invoked(
+    tmp_path: Path,
+) -> None:
+    # Arrange: a stranger (not owner, not allowlisted) writes in Bob's topic.
+    _seed_soul(tmp_path)
+    bob_bot, guppi_bot = _FakeBot(), _FakeBot()
+    bob_bot.updates_batches = [
+        [_update(10, text="hi Bob", thread_id=_BOB_TOPIC_ID, user_id=_STRANGER_ID)]
+    ]
+    app = _build(tmp_path, bob_bot=bob_bot, guppi_bot=guppi_bot)
+    await app.startup()
+
+    # Act: one poll drives both bots through the central router.
+    try:
+        published = await app.multibot.poll_once()
+    finally:
+        await app.shutdown()
+
+    # Assert: GUPPI sent the reject into Bob's thread; Bob's pipeline was NOT
+    # invoked (Bob's bot stayed silent, nothing published).
+    assert published == 0
+    assert len(guppi_bot.sends) == 1
+    assert guppi_bot.sends[0].text == GUPPI_REJECT_TEXT
+    assert guppi_bot.sends[0].message_thread_id == _BOB_TOPIC_ID
+    assert bob_bot.sends == []
+
+
+@pytest.mark.asyncio
+async def test_authorized_message_in_bob_topic_replies_into_thread(
+    tmp_path: Path,
+) -> None:
+    # Arrange: the owner (always authorized in the allowed chat) writes in Bob's
+    # topic. Drive the full pipeline via the multi-bot gateway's central router.
+    _seed_soul(tmp_path)
+    bob_bot, guppi_bot = _FakeBot(), _FakeBot()
+    bob_bot.updates_batches = [
+        [_update(11, text="hi Bob, love the probes", user_id=_OWNER_ID)]
+    ]
+    app = _build(tmp_path, bob_bot=bob_bot, guppi_bot=guppi_bot)
+    await app.startup()
+
+    # Act
+    try:
+        published = await app.multibot.poll_once()
+    finally:
+        await app.shutdown()
+
+    # Assert: exactly one turn published; Bob's bot committed the reply pinned to
+    # his topic thread; GUPPI did not reject.
+    assert published == 1
+    assert bob_bot.sends, "Bob should have replied"
+    final = bob_bot.sends[-1]
+    assert final.text == _REPLY
+    assert final.message_thread_id == _BOB_TOPIC_ID
+    assert all(s.text != GUPPI_REJECT_TEXT for s in guppi_bot.sends)
+
+
+@pytest.mark.asyncio
+async def test_owner_authorize_in_general_is_handled_by_guppi_and_persisted(
+    tmp_path: Path,
+) -> None:
+    # Arrange: the owner sends /authorize in General (no thread).
+    _seed_soul(tmp_path)
+    bob_bot, guppi_bot = _FakeBot(), _FakeBot()
+    guppi_bot.updates_batches = [
+        [_update(12, text="/authorize 555", thread_id=None, user_id=_OWNER_ID)]
+    ]
+    app = _build(tmp_path, bob_bot=bob_bot, guppi_bot=guppi_bot)
+    await app.startup()
+
+    # Act
+    try:
+        published = await app.multibot.poll_once()
+    finally:
+        await app.shutdown()
+
+    # Assert: GUPPI consumed it (no Bob publish), confirmed, and the grant landed
+    # in the live SQLite allowlist (survives a restart).
+    assert published == 0
+    assert bob_bot.sends == []
+    assert len(guppi_bot.sends) == 1
+    repo = SqliteMemoryRepo(tmp_path / "bob.db")
+    await repo.initialize()
+    try:
+        assert await KvAllowlistStore(repo).load() == {555}
+    finally:
+        await repo.close()
+
+
+@pytest.mark.asyncio
+async def test_message_in_general_or_other_topic_is_ignored_by_bob(
+    tmp_path: Path,
+) -> None:
+    # Arrange: the owner writes in General and in another topic — neither is Bob's.
+    _seed_soul(tmp_path)
+    bob_bot, guppi_bot = _FakeBot(), _FakeBot()
+    bob_bot.updates_batches = [
+        [
+            _update(13, text="hello", thread_id=None, user_id=_OWNER_ID),
+            _update(14, text="hello", thread_id=_OTHER_TOPIC_ID, user_id=_OWNER_ID),
+        ]
+    ]
+    app = _build(tmp_path, bob_bot=bob_bot, guppi_bot=guppi_bot)
+    await app.startup()
+
+    # Act
+    try:
+        published = await app.multibot.poll_once()
+    finally:
+        await app.shutdown()
+
+    # Assert: Bob never replied (neither message was in his topic); nothing
+    # published onto Bob's pipeline.
+    assert published == 0
+    assert bob_bot.sends == []

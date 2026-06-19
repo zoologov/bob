@@ -126,7 +126,11 @@ def _config(tmp_path: Path) -> dict[str, object]:
             "tier1_model": "tier1",
             "tier1_api_key": "sk-test",
         },
-        "telegram": {"token": "tok", "poll_timeout": 1},
+        "telegram": {
+            "poll_timeout": 1,
+            "bob": {"token": "bob-tok", "topic_id": 0},
+            "guppi": {"token": "guppi-tok"},
+        },
         "persistence": {
             "db_path": str(tmp_path / "bob.db"),
             "soul_dir": str(tmp_path / "soul"),
@@ -166,7 +170,9 @@ async def test_e2e_message_to_reply_and_persist(tmp_path: Path) -> None:
     _seed_soul(tmp_path)
     providers, _tier0, _tier1 = _providers()
     bot = FakeBot()
-    app = build_application(config=_config(tmp_path), providers=providers, bot=bot)
+    app = build_application(
+        config=_config(tmp_path), providers=providers, bob_bot=bot, guppi_bot=bot
+    )
     await app.startup()
 
     # seed a recallable fact so recall has something to find
@@ -194,7 +200,9 @@ async def test_e2e_private_context_redacted_but_memory_shared(tmp_path: Path) ->
     _seed_soul(tmp_path)
     providers, _tier0, tier1 = _providers()
     bot = FakeBot()
-    app = build_application(config=_config(tmp_path), providers=providers, bot=bot)
+    app = build_application(
+        config=_config(tmp_path), providers=providers, bob_bot=bot, guppi_bot=bot
+    )
     await app.startup()
 
     await app.memory_repo.save_fact(
@@ -237,7 +245,9 @@ async def test_e2e_heartbeat_tick_moves_mood(tmp_path: Path) -> None:
     _seed_soul(tmp_path)
     providers, _tier0, _tier1 = _providers()
     bot = FakeBot()
-    app = build_application(config=_config(tmp_path), providers=providers, bot=bot)
+    app = build_application(
+        config=_config(tmp_path), providers=providers, bob_bot=bot, guppi_bot=bot
+    )
     await app.startup()
     before = app.personality.soul.mood.valence
 
@@ -266,7 +276,10 @@ async def test_e2e_genesis_runs_once_on_first_start(tmp_path: Path) -> None:
     tier1 = CapturingProvider(reply=genesis_reply)
     bot = FakeBot()
     app = build_application(
-        config=_config(tmp_path), providers={0: tier0, 1: tier1}, bot=bot
+        config=_config(tmp_path),
+        providers={0: tier0, 1: tier1},
+        bob_bot=bot,
+        guppi_bot=bot,
     )
 
     # Act

@@ -86,7 +86,11 @@ class _Bot:
 def _config(tmp_path: Path) -> dict[str, object]:
     return {
         "runtime": {"log_level": "INFO", "heartbeat_seconds": 1},
-        "telegram": {"token": "tok", "poll_timeout": 1},
+        "telegram": {
+            "poll_timeout": 1,
+            "bob": {"token": "bob-tok", "topic_id": 0},
+            "guppi": {"token": "guppi-tok"},
+        },
         "persistence": {
             "db_path": str(tmp_path / "bob.db"),
             "soul_dir": str(tmp_path / "soul"),
@@ -99,7 +103,12 @@ def _providers() -> dict[int, LLMProvider]:
 
 
 def _app(tmp_path: Path):  # type: ignore[no-untyped-def]
-    return build_application(config=_config(tmp_path), providers=_providers(), bot=_Bot())
+    return build_application(
+        config=_config(tmp_path),
+        providers=_providers(),
+        bob_bot=_Bot(),
+        guppi_bot=_Bot(),
+    )
 
 
 def test_build_application_returns_wired_runtime_and_bus(tmp_path: Path) -> None:
