@@ -39,6 +39,14 @@ _CHAT_COMPLETIONS_PATH = "chat/completions"
 _SSE_DATA_PREFIX = "data:"
 _SSE_DONE_SENTINEL = "[DONE]"
 
+# qwen3 "no thinking" directive for OpenAI-compatible endpoints. Both keys are
+# sent so the call works whether the upstream reads it from ``extra_body`` (the
+# OpenAI-SDK passthrough) or ``chat_template_kwargs`` (the vLLM/dashscope shape).
+_NO_THINKING_DIRECTIVE: dict[str, object] = {
+    "extra_body": {"enable_thinking": False},
+    "chat_template_kwargs": {"enable_thinking": False},
+}
+
 
 class OpenAICompatProvider:
     """OpenAI-compatible completion provider (Tier 0 local / Tier 1 API).
@@ -53,12 +61,14 @@ class OpenAICompatProvider:
         base_url: str,
         model: str,
         api_key: str | None,
-        timeout_seconds: float = 60.0,
+        timeout_seconds: float = 180.0,
+        disable_thinking: bool = False,
     ) -> None:
         self._base_url = base_url.rstrip("/")
         self._model = model
         self._api_key = api_key
         self._timeout = aiohttp.ClientTimeout(total=timeout_seconds)
+        self._disable_thinking = disable_thinking
 
     async def complete(
         self,
@@ -67,11 +77,13 @@ class OpenAICompatProvider:
         stream: bool = False,
     ) -> str | AsyncIterator[str]:
         """Complete a chat turn; yield delta tokens when ``stream`` is true."""
-        payload = {
+        payload: dict[str, object] = {
             "model": self._model,
             "messages": [dict(message) for message in messages],
             "stream": stream,
         }
+        if self._disable_thinking:
+            payload.update(_NO_THINKING_DIRECTIVE)
         if stream:
             return self._stream_tokens(payload)
         return await self._complete_once(payload)
@@ -107,7 +119,14 @@ class OpenAICompatProvider:
 
 
 def _extract_message_content(body: Mapping[str, object]) -> str:
-    """Pull the assistant message content from a non-stream completion body."""
+    """Pull the assistant message content from a non-stream completion body.
+
+    Structural errors (no choices / no message) still raise — they mean the
+    upstream is broken. A missing/null/non-string ``content`` does NOT: a
+    reasoning model can return a successful response having spent its budget on
+    ``reasoning_content``, leaving ``content`` empty. Degrade to ``""`` so the
+    turn proceeds gracefully instead of erroring the caller into a fallback.
+    """
     choices = body.get("choices")
     if not isinstance(choices, list) or not choices:
         raise ValueError("completion response has no choices")
@@ -118,9 +137,7 @@ def _extract_message_content(body: Mapping[str, object]) -> str:
     if not isinstance(message, Mapping):
         raise ValueError("completion choice has no message")
     content = message.get("content")
-    if not isinstance(content, str):
-        raise ValueError("completion message content is not a string")
-    return content
+    return content if isinstance(content, str) else ""
 
 
 def _parse_sse_token(raw_line: bytes) -> str | None:

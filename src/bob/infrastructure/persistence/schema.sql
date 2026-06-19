@@ -14,6 +14,29 @@ CREATE TABLE IF NOT EXISTS episodic_log (
 
 CREATE INDEX IF NOT EXISTS idx_episodic_ts ON episodic_log (ts DESC);
 
+-- FTS5 virtual table over episodic content — full-archive keyword recall (Fix A).
+-- 'content'-less external-content index keyed back to episodic_log.id via rowid,
+-- so the whole conversation is searchable even for turns never fact-extracted.
+CREATE VIRTUAL TABLE IF NOT EXISTS episodic_fts USING fts5 (
+    content,
+    content='episodic_log',
+    content_rowid='id'
+);
+
+-- Triggers keep the episodic FTS index in sync with the base table.
+CREATE TRIGGER IF NOT EXISTS episodic_fts_ai AFTER INSERT ON episodic_log BEGIN
+    INSERT INTO episodic_fts (rowid, content) VALUES (new.id, new.content);
+END;
+
+CREATE TRIGGER IF NOT EXISTS episodic_fts_ad AFTER DELETE ON episodic_log BEGIN
+    INSERT INTO episodic_fts (episodic_fts, rowid, content) VALUES ('delete', old.id, old.content);
+END;
+
+CREATE TRIGGER IF NOT EXISTS episodic_fts_au AFTER UPDATE ON episodic_log BEGIN
+    INSERT INTO episodic_fts (episodic_fts, rowid, content) VALUES ('delete', old.id, old.content);
+    INSERT INTO episodic_fts (rowid, content) VALUES (new.id, new.content);
+END;
+
 -- Semantic memory: distilled, durable facts/beliefs.
 CREATE TABLE IF NOT EXISTS semantic_memory (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,

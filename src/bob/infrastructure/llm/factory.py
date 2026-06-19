@@ -32,6 +32,10 @@ if TYPE_CHECKING:
 _TIER_LOCAL = 0
 _TIER_API = 1
 
+# Generous default so a slow Tier 1 reasoning model (1000+ reasoning tokens per
+# reply) does not time out and spuriously fall back to Tier 0.
+_DEFAULT_TIMEOUT_SECONDS = 180.0
+
 
 def build_tier_providers(config: Mapping[str, object]) -> dict[int, LLMProvider]:
     """Build ``{0: tier0_provider, 1: tier1_provider}`` from ``config['llm']``."""
@@ -39,15 +43,22 @@ def build_tier_providers(config: Mapping[str, object]) -> dict[int, LLMProvider]
     if not isinstance(llm, Mapping):
         raise KeyError("config is missing the 'llm' section")
 
+    timeout_seconds = _optional_float(llm, "timeout_seconds", _DEFAULT_TIMEOUT_SECONDS)
+    disable_thinking = _optional_bool(llm, "disable_thinking", default=False)
+
     tier0 = OpenAICompatProvider(
         base_url=_require_str(llm, "tier0_base_url"),
         model=_require_str(llm, "tier0_model"),
         api_key=_optional_str(llm, "tier0_api_key"),
+        timeout_seconds=timeout_seconds,
+        disable_thinking=disable_thinking,
     )
     tier1 = OpenAICompatProvider(
         base_url=_require_str(llm, "tier1_base_url"),
         model=_require_str(llm, "tier1_model"),
         api_key=_optional_str(llm, "tier1_api_key"),
+        timeout_seconds=timeout_seconds,
+        disable_thinking=disable_thinking,
     )
     return {_TIER_LOCAL: tier0, _TIER_API: tier1}
 
@@ -66,3 +77,32 @@ def _optional_str(section: Mapping[str, object], key: str) -> str | None:
     if not isinstance(value, str):
         raise KeyError(f"llm.{key} must be a string when set")
     return value or None
+
+
+def _optional_float(section: Mapping[str, object], key: str, default: float) -> float:
+    """Read a numeric setting, tolerating env-string values; fall back to ``default``."""
+    value = section.get(key)
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        raise KeyError(f"llm.{key} must be a number")
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        try:
+            return float(value)
+        except ValueError as exc:
+            raise KeyError(f"llm.{key} must be a number") from exc
+    raise KeyError(f"llm.{key} must be a number")
+
+
+def _optional_bool(section: Mapping[str, object], key: str, *, default: bool) -> bool:
+    """Read a boolean setting, tolerating env-string values; fall back to ``default``."""
+    value = section.get(key)
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "on"}
+    raise KeyError(f"llm.{key} must be a boolean")

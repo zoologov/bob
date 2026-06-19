@@ -23,6 +23,13 @@ llm:
   tier1_base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
   tier1_model: qwen2.5:7b
   tier1_api_key: ""            # set via BOB_LLM__TIER1_API_KEY, not here
+  # Provider timeout (seconds). Tier 1 reasoning models can spend 1000+ tokens
+  # on reasoning per reply; 60s is too low and causes spurious Tier 0 fallback.
+  timeout_seconds: 180
+  # Disable qwen3 "thinking" for replies (extra_body/chat_template_kwargs
+  # enable_thinking=false). Cheaper + faster, and avoids the empty-content case
+  # where a reasoning model spends its whole budget on reasoning_content.
+  disable_thinking: true
 
 telegram:
   token: ""                    # set via BOB_TELEGRAM__TOKEN, not here

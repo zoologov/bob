@@ -89,6 +89,81 @@ async def test_recall_empty_query_returns_empty(populated: SqliteMemoryRepo) -> 
     await populated.close()
 
 
+async def test_recall_surfaces_old_episode_and_fact(tmp_path: Path) -> None:
+    # Fix A: recall must search the whole conversation archive, not only
+    # extracted facts. An old episodic turn that was never fact-extracted must
+    # still surface by keyword, alongside any matching semantic fact.
+    repo = SqliteMemoryRepo(tmp_path / "bob.db")
+    await repo.initialize()
+    # An old un-extracted conversation turn (only in episodic_log).
+    await repo.save_episode(
+        {
+            "ts": _ts().isoformat(),
+            "event_type": "user_message",
+            "content": "my name is Vladimir and I love sailing",
+        }
+    )
+    # A distilled fact mentioning the same keyword.
+    await repo.save_fact(
+        SemanticFact(ts=_ts(), category="identity", content="the user is named Vladimir")
+    )
+    recall = Fts5MemoryRecall(repo)
+
+    results = await recall.recall("Vladimir", k=10)
+
+    contents = [str(r["content"]) for r in results]
+    # The old episode is reachable purely from the episodic archive.
+    assert any("sailing" in c for c in contents)
+    # The semantic fact still surfaces too.
+    assert any("named Vladimir" in c for c in contents)
+    await repo.close()
+
+
+async def test_recall_backfills_preexisting_episodes(tmp_path: Path) -> None:
+    # CRITICAL: a live db may already hold episodes written before the episodic
+    # FTS index existed. Re-initialising must backfill them so they become
+    # searchable — without re-applying the FTS triggers (idempotent).
+    db_path = tmp_path / "bob.db"
+    repo = SqliteMemoryRepo(db_path)
+    await repo.initialize()
+    content = "ancient turn about quantum entanglement"
+    await repo.save_episode(
+        {"ts": _ts().isoformat(), "event_type": "user_message", "content": content}
+    )
+    # Simulate a turn written before the episodic FTS existed: evict its index
+    # entry (external-content FTS5 needs a 'delete' token, not plain DELETE).
+    await repo.connection.execute(
+        "INSERT INTO episodic_fts (episodic_fts, rowid, content) VALUES ('delete', 1, ?)",
+        (content,),
+    )
+    await repo.connection.commit()
+    # Pre-condition: the un-indexed turn is NOT yet searchable.
+    pre = await Fts5MemoryRecall(repo).recall("entanglement", k=5)
+    assert pre == []
+    await repo.close()
+
+    # A fresh init over the same file must rebuild the missing index entries.
+    reopened = SqliteMemoryRepo(db_path)
+    await reopened.initialize()
+    recall = Fts5MemoryRecall(reopened)
+    results = await recall.recall("entanglement", k=5)
+
+    assert any("entanglement" in str(r["content"]) for r in results)
+    await reopened.close()
+
+
+async def test_recall_tags_result_sources(populated: SqliteMemoryRepo) -> None:
+    # Each recalled item carries a source tag so callers can tell archive turns
+    # from distilled facts.
+    recall = Fts5MemoryRecall(populated)
+
+    results = await recall.recall("jazz", k=5)
+
+    assert all("source" in r for r in results)
+    assert all(r["source"] in {"semantic", "episodic"} for r in results)
+    await populated.close()
+
+
 async def test_recall_survives_a_process_restart(tmp_path: Path) -> None:
     # PRD US-3: facts must be keyword-recallable after a process restart —
     # the FTS5 index lives on disk and is not lost when the process dies.

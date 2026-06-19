@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from typing import TYPE_CHECKING, Protocol
 
 from bob.application.router.llm_router import LLMRequest, TaskType
@@ -115,18 +116,86 @@ def _exchange(user_message: str, reply: str | None) -> str:
     return f"User: {user_message}"
 
 
+# Markdown code fence, optionally tagged (``` or ```json), capturing its body.
+_FENCE_RE = re.compile(r"```[^\n]*\n(.*?)```", re.DOTALL)
+
+
+def _strip_code_fence(raw: str) -> str:
+    """Return the body of the first markdown code fence, or ``raw`` unchanged.
+
+    Reasoning models often wrap their answer in a fenced block (``` or ```json);
+    parsing the body is more reliable than parsing the fenced wrapper.
+    """
+    match = _FENCE_RE.search(raw)
+    return match.group(1) if match else raw
+
+
+def _first_json_array(text: str) -> str | None:
+    """Extract the first balanced ``[...]`` substring, or ``None``.
+
+    Scans from the first ``[`` to its matching ``]``, respecting nesting and
+    skipping brackets inside JSON string literals (with escapes). Tolerates a
+    prose/reasoning preamble before, and any trailing text after, the array.
+    """
+    start = text.find("[")
+    if start == -1:
+        return None
+    depth = 0
+    in_string = False
+    escaped = False
+    for index in range(start, len(text)):
+        char = text[index]
+        if in_string:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+            continue
+        if char == '"':
+            in_string = True
+        elif char == "[":
+            depth += 1
+        elif char == "]":
+            depth -= 1
+            if depth == 0:
+                return text[start : index + 1]
+    return None
+
+
+def _decode_array(raw: str) -> list[object] | None:
+    """Decode ``raw`` into a JSON list, recovering from reasoning-model wrapping.
+
+    Tries, in order: the raw text, its code-fence body, then the first balanced
+    JSON array substring (tolerating a prose preamble or trailing text). Returns
+    ``None`` if no JSON array can be recovered.
+    """
+    candidates = [raw, _strip_code_fence(raw)]
+    array = _first_json_array(raw)
+    if array is not None:
+        candidates.append(array)
+    for candidate in candidates:
+        try:
+            decoded = json.loads(candidate)
+        except (json.JSONDecodeError, ValueError):
+            continue
+        if isinstance(decoded, list):
+            return decoded
+    return None
+
+
 def _parse_facts(raw: str) -> list[tuple[str, str]]:
     """Parse the model's JSON array into ``(category, content)`` pairs.
 
-    Tolerant by design (best-effort): non-JSON, a non-array, non-object entries,
-    or missing/blank ``content`` yield no item rather than an error.
+    Tolerant by design (best-effort): reasoning-model wrapping (markdown code
+    fences, a prose/reasoning preamble, or trailing text) is stripped before
+    parsing; genuine non-JSON, a non-array, non-object entries, or missing/blank
+    ``content`` yield no item rather than an error.
     """
-    try:
-        decoded = json.loads(raw)
-    except (json.JSONDecodeError, ValueError):
-        logger.debug("Fact extraction returned non-JSON output; ignoring")
-        return []
-    if not isinstance(decoded, list):
+    decoded = _decode_array(raw)
+    if decoded is None:
+        logger.debug("Fact extraction returned no parseable JSON array; ignoring")
         return []
     facts: list[tuple[str, str]] = []
     for entry in decoded:

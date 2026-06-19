@@ -57,8 +57,21 @@ class SqliteMemoryRepo:
             await self._conn.execute("PRAGMA journal_mode=WAL")
             await self._conn.execute("PRAGMA foreign_keys=ON")
         await self._conn.executescript(_load_schema())
+        await self._backfill_episodic_fts()
         await self._conn.commit()
         logger.info("SqliteMemoryRepo initialised at %s", self._db_path)
+
+    async def _backfill_episodic_fts(self) -> None:
+        """Reindex the whole episodic archive into ``episodic_fts`` (idempotent).
+
+        The episodic FTS index (Fix A) ships after episodes were already being
+        written, so a live db can hold turns that predate the index — they are
+        invisible to recall until reindexed. FTS5's external-content ``rebuild``
+        command reconstructs the index from ``episodic_log`` in one shot; it is
+        idempotent (a no-op in effect when already in sync) and, at the MVP
+        archive scale, cheap to run on every boot.
+        """
+        await self._db().execute("INSERT INTO episodic_fts (episodic_fts) VALUES ('rebuild')")
 
     async def close(self) -> None:
         """Close the underlying connection (idempotent)."""

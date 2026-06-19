@@ -42,6 +42,12 @@ DEFAULT_CONFIG: Config = {
     "llm": {
         "tier0_model": "qwen2.5:0.5b",
         "tier1_model": "qwen2.5:7b",
+        # Generous timeout for slow Tier 1 reasoning replies (seconds).
+        "timeout_seconds": 180,
+        # Replies don't need chain-of-thought: disabling it cuts cost/latency and
+        # avoids the empty-content case where a reasoning model spends its whole
+        # budget on reasoning_content.
+        "disable_thinking": True,
     },
     "telegram": {
         "poll_timeout": 10,

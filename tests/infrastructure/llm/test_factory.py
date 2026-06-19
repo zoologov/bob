@@ -131,3 +131,53 @@ def test_optional_api_key_wrong_type_raises() -> None:
     # Act / Assert
     with pytest.raises(KeyError, match="tier1_api_key"):
         build_tier_providers(config)
+
+
+def test_timeout_seconds_threaded_into_both_providers() -> None:
+    # Arrange: a generous timeout for slow reasoning models.
+    config = {"llm": {**_full_llm(), "timeout_seconds": 180}}
+
+    # Act
+    providers = build_tier_providers(config)
+
+    # Assert: both tiers carry the configured timeout.
+    tier0, tier1 = providers[0], providers[1]
+    assert isinstance(tier0, OpenAICompatProvider)
+    assert isinstance(tier1, OpenAICompatProvider)
+    assert tier0._timeout.total == 180.0
+    assert tier1._timeout.total == 180.0
+
+
+def test_timeout_seconds_defaults_when_absent() -> None:
+    # Arrange: no timeout configured -> a safe reasoning-friendly default.
+    providers = build_tier_providers({"llm": _full_llm()})
+
+    # Assert
+    tier1 = providers[1]
+    assert isinstance(tier1, OpenAICompatProvider)
+    assert tier1._timeout.total == 180.0
+
+
+def test_disable_thinking_flag_threaded_into_providers() -> None:
+    # Arrange: thinking disabled for cheap/fast non-reasoning replies.
+    config = {"llm": {**_full_llm(), "disable_thinking": True}}
+
+    # Act
+    providers = build_tier_providers(config)
+
+    # Assert
+    tier0, tier1 = providers[0], providers[1]
+    assert isinstance(tier0, OpenAICompatProvider)
+    assert isinstance(tier1, OpenAICompatProvider)
+    assert tier0._disable_thinking is True
+    assert tier1._disable_thinking is True
+
+
+def test_disable_thinking_defaults_off_when_absent() -> None:
+    # Arrange: backward compat — no flag means thinking stays enabled.
+    providers = build_tier_providers({"llm": _full_llm()})
+
+    # Assert
+    tier1 = providers[1]
+    assert isinstance(tier1, OpenAICompatProvider)
+    assert tier1._disable_thinking is False

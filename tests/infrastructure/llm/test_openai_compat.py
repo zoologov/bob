@@ -130,6 +130,88 @@ async def test_no_api_key_omits_authorization_header(captured: dict[str, object]
         await runner.cleanup()
 
 
+async def test_disable_thinking_injects_enable_thinking_false(
+    captured: dict[str, object],
+) -> None:
+    # Arrange: a reasoning-model provider with thinking disabled.
+    async def handler(request: web.Request) -> web.Response:
+        captured["payload"] = await request.json()
+        return web.json_response({"choices": [{"message": {"content": "ok"}}]})
+
+    base_url, runner = await _start_server(handler)
+    try:
+        provider = OpenAICompatProvider(
+            base_url=base_url, model="m", api_key="k", disable_thinking=True
+        )
+
+        # Act
+        await provider.complete([{"role": "user", "content": "hi"}], stream=False)
+
+        # Assert: the qwen3 no-thinking directive rides in extra_body.
+        payload = captured["payload"]
+        assert isinstance(payload, dict)
+        assert payload["extra_body"] == {"enable_thinking": False}
+        assert payload["chat_template_kwargs"] == {"enable_thinking": False}
+    finally:
+        await runner.cleanup()
+
+
+async def test_thinking_enabled_omits_directive(captured: dict[str, object]) -> None:
+    # Arrange: default provider keeps thinking on (no directive in payload).
+    async def handler(request: web.Request) -> web.Response:
+        captured["payload"] = await request.json()
+        return web.json_response({"choices": [{"message": {"content": "ok"}}]})
+
+    base_url, runner = await _start_server(handler)
+    try:
+        provider = OpenAICompatProvider(base_url=base_url, model="m", api_key="k")
+
+        # Act
+        await provider.complete([{"role": "user", "content": "hi"}], stream=False)
+
+        # Assert
+        payload = captured["payload"]
+        assert isinstance(payload, dict)
+        assert "extra_body" not in payload
+        assert "chat_template_kwargs" not in payload
+    finally:
+        await runner.cleanup()
+
+
+async def test_null_content_degrades_to_empty_string(captured: dict[str, object]) -> None:
+    # Arrange: a reasoning model that spent its budget on reasoning_content,
+    # leaving message.content null — must NOT error, degrade to "".
+    async def handler(request: web.Request) -> web.Response:
+        body = {
+            "choices": [
+                {"message": {"content": None, "reasoning_content": "thought a lot"}}
+            ]
+        }
+        return web.json_response(body)
+
+    base_url, runner = await _start_server(handler)
+    try:
+        provider = OpenAICompatProvider(base_url=base_url, model="m", api_key="k")
+
+        # Act
+        result = await provider.complete([{"role": "user", "content": "hi"}], stream=False)
+
+        # Assert
+        assert result == ""
+    finally:
+        await runner.cleanup()
+
+
+async def test_timeout_is_configurable() -> None:
+    # Arrange: a slow reasoning model needs a generous timeout, threaded in.
+    provider = OpenAICompatProvider(
+        base_url="http://x/v1", model="m", api_key="k", timeout_seconds=180.0
+    )
+
+    # Assert
+    assert provider._timeout.total == 180.0
+
+
 async def test_http_error_raises() -> None:
     async def handler(request: web.Request) -> web.Response:
         return web.json_response({"error": "boom"}, status=500)

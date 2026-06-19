@@ -29,15 +29,30 @@ from bob.infrastructure.llm.openai_compat import (
         {"choices": []},  # empty choices
         {"choices": ["not-an-object"]},  # choice not a mapping
         {"choices": [{}]},  # choice has no message
-        {"choices": [{"message": {}}]},  # message has no content
-        {"choices": [{"message": {"content": 5}}]},  # content not a string
     ],
 )
-def test_extract_message_content_rejects_malformed_bodies(
+def test_extract_message_content_rejects_structurally_malformed_bodies(
     body: dict[str, object],
 ) -> None:
     with pytest.raises(ValueError, match="completion"):
         _extract_message_content(body)
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"choices": [{"message": {}}]},  # message has no content
+        {"choices": [{"message": {"content": None}}]},  # content is null
+        {"choices": [{"message": {"content": 5}}]},  # content not a string
+        {"choices": [{"message": {"content": ""}}]},  # content empty
+    ],
+)
+def test_extract_message_content_tolerates_missing_content(
+    body: dict[str, object],
+) -> None:
+    # A reasoning model may emit a successful response with null/empty content
+    # (budget spent on reasoning_content); degrade to "" rather than erroring.
+    assert _extract_message_content(body) == ""
 
 
 def test_extract_message_content_returns_well_formed_content() -> None:

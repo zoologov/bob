@@ -169,6 +169,112 @@ async def test_malformed_output_does_not_raise() -> None:
     assert writer.facts == []
 
 
+async def test_parses_fenced_json_block() -> None:
+    # Arrange: a reasoning model wraps the array in a ```json code fence.
+    extractor, writer, _tier0 = _build(
+        reply='```json\n[{"category": "user", "content": "name is Vova"}]\n```'
+    )
+
+    # Act
+    await extractor.run(user_message="my name is Vova", reply="hi")
+
+    # Assert: the wrapped fact is extracted despite the fence.
+    assert [f.content for f in writer.facts] == ["name is Vova"]
+
+
+async def test_parses_bare_fence_without_language_tag() -> None:
+    # Arrange: a fence with no language tag (just ```).
+    extractor, writer, _tier0 = _build(
+        reply='```\n[{"category": "user", "content": "name is Vova"}]\n```'
+    )
+
+    # Act
+    await extractor.run(user_message="my name is Vova", reply="hi")
+
+    # Assert
+    assert [f.content for f in writer.facts] == ["name is Vova"]
+
+
+async def test_parses_prose_preamble_before_array() -> None:
+    # Arrange: the model prefixes a prose sentence before the array.
+    extractor, writer, _tier0 = _build(
+        reply='Here are the facts:\n[{"category": "user", "content": "name is Vova"}]'
+    )
+
+    # Act
+    await extractor.run(user_message="my name is Vova", reply="hi")
+
+    # Assert: the stated name survives the prose preamble.
+    assert [f.content for f in writer.facts] == ["name is Vova"]
+
+
+async def test_parses_leading_reasoning_text_then_array() -> None:
+    # Arrange: a reasoning model emits chain-of-thought, then the JSON array.
+    extractor, writer, _tier0 = _build(
+        reply=(
+            "Let me think. The user told me their name, which is a durable "
+            'user fact, so I will record it.\n'
+            '[{"category": "user", "content": "name is Vova"}]'
+        )
+    )
+
+    # Act
+    await extractor.run(user_message="my name is Vova", reply="hi")
+
+    # Assert
+    assert [f.content for f in writer.facts] == ["name is Vova"]
+
+
+async def test_parses_array_with_trailing_prose() -> None:
+    # Arrange: the array is followed by extra trailing commentary.
+    extractor, writer, _tier0 = _build(
+        reply=(
+            '[{"category": "user", "content": "name is Vova"}]\n'
+            "That is the only durable fact I found."
+        )
+    )
+
+    # Act
+    await extractor.run(user_message="my name is Vova", reply="hi")
+
+    # Assert
+    assert [f.content for f in writer.facts] == ["name is Vova"]
+
+
+async def test_parses_fenced_block_wrapped_in_reasoning_and_prose() -> None:
+    # Arrange: the full reasoning-model envelope — preamble + fenced json + trailer.
+    extractor, writer, _tier0 = _build(
+        reply=(
+            "Sure, here is what I extracted from the exchange:\n\n"
+            "```json\n"
+            '[{"category": "user", "content": "name is Vova"},'
+            ' {"category": "preference", "content": "likes pour-over coffee"}]\n'
+            "```\n\n"
+            "Let me know if you need anything else."
+        )
+    )
+
+    # Act
+    await extractor.run(user_message="I'm Vova and I like pour-over", reply="ok")
+
+    # Assert: both facts extracted, including the stated name.
+    assert {f.content for f in writer.facts} == {
+        "name is Vova",
+        "likes pour-over coffee",
+    }
+
+
+async def test_genuine_garbage_persists_nothing() -> None:
+    # Arrange: no JSON array anywhere — genuine non-JSON output.
+    extractor, writer, _tier0 = _build(
+        reply="I'm sorry, I couldn't determine any durable facts from that."
+    )
+
+    # Act / Assert: best-effort — nothing persisted, no raise.
+    await extractor.run(user_message="hello", reply="hi")
+    assert writer.facts == []
+
+
 async def test_provider_error_does_not_raise() -> None:
     # Arrange: the Tier 0 provider raises.
     extractor, writer, _tier0 = _build(raises=True)
