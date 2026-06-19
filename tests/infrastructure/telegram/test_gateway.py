@@ -40,6 +40,7 @@ if TYPE_CHECKING:
 class _FakeMessage:
     message_id: int
     text: str | None
+    message_thread_id: int | None = None
 
 
 @dataclass
@@ -127,14 +128,21 @@ class _FakeBot:
             return []
         return self.updates_batches.pop(0)
 
-    async def send_message(self, *, chat_id: int, text: str) -> _FakeMessage:
+    async def send_message(
+        self, *, chat_id: int, text: str, message_thread_id: int | None = None  # noqa: ARG002
+    ) -> _FakeMessage:
         self.sends.append(_SendCall(chat_id=chat_id, text=text))
         msg = _FakeMessage(message_id=self.next_message_id, text=text)
         self.next_message_id += 1
         return msg
 
     async def send_message_draft(
-        self, *, chat_id: int, draft_id: int, text: str
+        self,
+        *,
+        chat_id: int,
+        draft_id: int,
+        text: str,
+        message_thread_id: int | None = None,  # noqa: ARG002
     ) -> bool:
         self._draft_calls += 1
         if self.draft_retry_after_on_call == self._draft_calls:
@@ -150,7 +158,11 @@ class _FakeBot:
         return True
 
     async def send_rich_message(
-        self, *, chat_id: int, rich_message: InputRichMessage
+        self,
+        *,
+        chat_id: int,
+        rich_message: InputRichMessage,
+        message_thread_id: int | None = None,  # noqa: ARG002
     ) -> _FakeMessage:
         if self.rich_send_raises:
             raise TelegramBadRequest(
@@ -165,7 +177,12 @@ class _FakeBot:
         return msg
 
     async def send_rich_message_draft(
-        self, *, chat_id: int, draft_id: int, rich_message: InputRichMessage
+        self,
+        *,
+        chat_id: int,
+        draft_id: int,
+        rich_message: InputRichMessage,
+        message_thread_id: int | None = None,  # noqa: ARG002
     ) -> bool:
         if self.rich_draft_raises:
             raise TelegramBadRequest(

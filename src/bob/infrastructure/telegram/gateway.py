@@ -74,6 +74,8 @@ class MessageLike(Protocol):
     def message_id(self) -> int: ...
     @property
     def text(self) -> str | None: ...
+    @property
+    def message_thread_id(self) -> int | None: ...
 
 
 class _ChatLike(Protocol):
@@ -113,18 +115,34 @@ class BotLike(Protocol):
         self, *, offset: int, timeout: int
     ) -> Sequence[UpdateLike]: ...
 
-    async def send_message(self, *, chat_id: int, text: str) -> MessageLike: ...
+    async def send_message(
+        self, *, chat_id: int, text: str, message_thread_id: int | None = None
+    ) -> MessageLike: ...
 
     async def send_message_draft(
-        self, *, chat_id: int, draft_id: int, text: str
+        self,
+        *,
+        chat_id: int,
+        draft_id: int,
+        text: str,
+        message_thread_id: int | None = None,
     ) -> bool: ...
 
     async def send_rich_message(
-        self, *, chat_id: int, rich_message: InputRichMessage
+        self,
+        *,
+        chat_id: int,
+        rich_message: InputRichMessage,
+        message_thread_id: int | None = None,
     ) -> MessageLike: ...
 
     async def send_rich_message_draft(
-        self, *, chat_id: int, draft_id: int, rich_message: InputRichMessage
+        self,
+        *,
+        chat_id: int,
+        draft_id: int,
+        rich_message: InputRichMessage,
+        message_thread_id: int | None = None,
     ) -> bool: ...
 
 
@@ -164,6 +182,7 @@ class TelegramGateway:
         clock: MonotonicClock,
         sleep: Sleep,
         authorizer: AuthorizerLike | None = None,
+        reply_thread_id: int | None = None,
     ) -> None:
         if batch_tokens < 1:
             raise ValueError("batch_tokens must be >= 1")
@@ -177,6 +196,10 @@ class TelegramGateway:
         self._clock = clock
         self._sleep = sleep
         self._authorizer = authorizer
+        # When set (the Bob bot), every outgoing reply is pinned to this topic
+        # thread so Bob's replies land in his topic; ``None`` keeps the legacy
+        # un-threaded behaviour (single-bot / General).
+        self._reply_thread_id = reply_thread_id
         self._offset = 0
         self._seen_update_ids: set[int] = set()
         self._converter = MarkdownToRichMessage()
@@ -280,18 +303,24 @@ class TelegramGateway:
         target = _parse_user_id(argument)
         if target is None:
             await self._bot.send_message(
-                chat_id=chat_id, text="Usage: /authorize <user_id>"
+                chat_id=chat_id,
+                text="Usage: /authorize <user_id>",
+                message_thread_id=self._reply_thread_id,
             )
             return
         if grant:
             await self._authorizer.authorize(target)
             await self._bot.send_message(
-                chat_id=chat_id, text=f"Authorized user {target}."
+                chat_id=chat_id,
+                text=f"Authorized user {target}.",
+                message_thread_id=self._reply_thread_id,
             )
         else:
             await self._authorizer.deauthorize(target)
             await self._bot.send_message(
-                chat_id=chat_id, text=f"Deauthorized user {target}."
+                chat_id=chat_id,
+                text=f"Deauthorized user {target}.",
+                message_thread_id=self._reply_thread_id,
             )
 
     @staticmethod
@@ -341,7 +370,11 @@ class TelegramGateway:
                 pending_tokens = 0
 
         if accumulated:
-            await self._bot.send_message(chat_id=chat_id, text=accumulated)
+            await self._bot.send_message(
+                chat_id=chat_id,
+                text=accumulated,
+                message_thread_id=self._reply_thread_id,
+            )
 
         return drafts_made
 
@@ -368,7 +401,10 @@ class TelegramGateway:
         while True:
             try:
                 await self._bot.send_message_draft(
-                    chat_id=chat_id, draft_id=_DRAFT_ID, text=text
+                    chat_id=chat_id,
+                    draft_id=_DRAFT_ID,
+                    text=text,
+                    message_thread_id=self._reply_thread_id,
                 )
                 return
             except TelegramRetryAfter as exc:
@@ -397,6 +433,7 @@ class TelegramGateway:
             await self._bot.send_rich_message(
                 chat_id=chat_id,
                 rich_message=InputRichMessage(markdown=rich_markdown),
+                message_thread_id=self._reply_thread_id,
             )
         except (AiogramError, ValueError) as exc:
             logger.warning("rich send failed; falling back to plain: %s", exc)
@@ -462,6 +499,7 @@ class TelegramGateway:
                     chat_id=chat_id,
                     draft_id=_DRAFT_ID,
                     rich_message=InputRichMessage(markdown=rich_markdown),
+                    message_thread_id=self._reply_thread_id,
                 )
                 return
             except TelegramRetryAfter as exc:
@@ -477,7 +515,11 @@ class TelegramGateway:
     async def _send_plain(self, chat_id: int, text: str) -> None:
         """Send ``text`` as plain message(s), splitting on the length limit."""
         for chunk in _split_for_length(text):
-            await self._bot.send_message(chat_id=chat_id, text=chunk)
+            await self._bot.send_message(
+                chat_id=chat_id,
+                text=chunk,
+                message_thread_id=self._reply_thread_id,
+            )
 
 
 def _parse_user_id(argument: str) -> int | None:

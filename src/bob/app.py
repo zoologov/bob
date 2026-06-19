@@ -575,28 +575,54 @@ class _AiogramBotAdapter:
         updates = await self._bot.get_updates(offset=offset, timeout=timeout)  # type: ignore[attr-defined]
         return [_to_update_view(update) for update in updates]
 
-    async def send_message(self, *, chat_id: int, text: str) -> MessageLike:
-        return await self._bot.send_message(chat_id=chat_id, text=text)  # type: ignore[attr-defined,no-any-return]
+    async def send_message(
+        self, *, chat_id: int, text: str, message_thread_id: int | None = None
+    ) -> MessageLike:
+        return await self._bot.send_message(  # type: ignore[attr-defined,no-any-return]
+            chat_id=chat_id, text=text, message_thread_id=message_thread_id
+        )
 
     async def send_message_draft(
-        self, *, chat_id: int, draft_id: int, text: str
+        self,
+        *,
+        chat_id: int,
+        draft_id: int,
+        text: str,
+        message_thread_id: int | None = None,
     ) -> bool:
         return await self._bot.send_message_draft(  # type: ignore[attr-defined,no-any-return]
-            chat_id=chat_id, draft_id=draft_id, text=text
+            chat_id=chat_id,
+            draft_id=draft_id,
+            text=text,
+            message_thread_id=message_thread_id,
         )
 
     async def send_rich_message(
-        self, *, chat_id: int, rich_message: InputRichMessage
+        self,
+        *,
+        chat_id: int,
+        rich_message: InputRichMessage,
+        message_thread_id: int | None = None,
     ) -> MessageLike:
         return await self._bot.send_rich_message(  # type: ignore[attr-defined,no-any-return]
-            chat_id=chat_id, rich_message=rich_message
+            chat_id=chat_id,
+            rich_message=rich_message,
+            message_thread_id=message_thread_id,
         )
 
     async def send_rich_message_draft(
-        self, *, chat_id: int, draft_id: int, rich_message: InputRichMessage
+        self,
+        *,
+        chat_id: int,
+        draft_id: int,
+        rich_message: InputRichMessage,
+        message_thread_id: int | None = None,
     ) -> bool:
         return await self._bot.send_rich_message_draft(  # type: ignore[attr-defined,no-any-return]
-            chat_id=chat_id, draft_id=draft_id, rich_message=rich_message
+            chat_id=chat_id,
+            draft_id=draft_id,
+            rich_message=rich_message,
+            message_thread_id=message_thread_id,
         )
 
 

@@ -134,6 +134,7 @@ class FakeMessage:
     def __init__(self, message_id: int) -> None:
         self.message_id = message_id
         self.text: str | None = None
+        self.message_thread_id: int | None = None
 
 
 class FakeBot:
@@ -147,24 +148,40 @@ class FakeBot:
     async def get_updates(self, *, offset: int, timeout: int) -> Sequence[UpdateLike]:  # noqa: ARG002
         return []
 
-    async def send_message(self, *, chat_id: int, text: str) -> FakeMessage:
+    async def send_message(
+        self, *, chat_id: int, text: str, message_thread_id: int | None = None  # noqa: ARG002
+    ) -> FakeMessage:
         self.sent.append((chat_id, text))
         return FakeMessage(message_id=1)
 
     async def send_message_draft(
-        self, *, chat_id: int, draft_id: int, text: str
+        self,
+        *,
+        chat_id: int,
+        draft_id: int,
+        text: str,
+        message_thread_id: int | None = None,  # noqa: ARG002
     ) -> bool:
         self.drafts.append((chat_id, draft_id, text))
         return True
 
     async def send_rich_message(
-        self, *, chat_id: int, rich_message: object
+        self,
+        *,
+        chat_id: int,
+        rich_message: object,
+        message_thread_id: int | None = None,  # noqa: ARG002
     ) -> FakeMessage:
         self.rich_sent.append((chat_id, _rich_markdown(rich_message)))
         return FakeMessage(message_id=1)
 
     async def send_rich_message_draft(
-        self, *, chat_id: int, draft_id: int, rich_message: object  # noqa: ARG002
+        self,
+        *,
+        chat_id: int,  # noqa: ARG002
+        draft_id: int,  # noqa: ARG002
+        rich_message: object,  # noqa: ARG002
+        message_thread_id: int | None = None,  # noqa: ARG002
     ) -> bool:
         return True
 

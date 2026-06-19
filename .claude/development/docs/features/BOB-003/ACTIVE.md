@@ -11,20 +11,20 @@
 
 ## Текущий беад
 
-**Беад:** bob-6ub.1 — dev: конфиг двух ботов (W1).
-**Done when:** `telegram`-секция под два бота (bob/guppi токены, GUPPI env-маппинг) + chat_id/topic_id/owner_id; example.yaml; тесты лоадера.
+**Беад:** bob-6ub.2 — dev: мульти-бот gateway + topic-scope (W2). **Готов.** Следующий: bob-6ub.3 (GUPPI reject + owner-команды).
 
 ## Прогресс
 
-- [ ] W1: bob-6ub.1 (конфиг двух ботов) — старт
+- [x] W1: bob-6ub.1 (конфиг двух ботов)
+- [x] W2: bob-6ub.2 — multibot.py: BotRegistry + 2-бот поллинг + центр. роутер + кросс-бот дедуп (chat_id,message_id) + Bob topic-scope + thread-reply + изоляция. Хуки под unauthorized/GUPPI оставлены для BEAD-03. 429 тестов зелёные, ruff/mypy --strict чисто.
 
 ## Статусы беадов
 
 | Беад | Роль | Зависит от | Статус |
 |------|------|-----------|--------|
-| bob-6ub.1 | dev: конфиг двух ботов | — | open (ready) |
-| bob-6ub.2 | dev: мульти-бот gateway + topic-scope | .1 | blocked |
-| bob-6ub.3 | dev: GUPPI-идентичность (reject + команды) | .2 | blocked |
+| bob-6ub.1 | dev: конфиг двух ботов | — | closed |
+| bob-6ub.2 | dev: мульти-бот gateway + topic-scope | .1 | closed |
+| bob-6ub.3 | dev: GUPPI-идентичность (reject + команды) | .2 | ready |
 | bob-6ub.4 | dev: интеграция two-bot app.py + e2e | .3 | blocked |
 | bob-6ub.5 | test | .4 | blocked |
 | bob-6ub.6 | review | .5 | blocked |

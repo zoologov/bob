@@ -41,23 +41,44 @@ class _Provider:
 class _Msg:
     message_id = 1
     text: str | None = None
+    message_thread_id: int | None = None
 
 
 class _Bot:
     async def get_updates(self, *, offset: int, timeout: int) -> Sequence[UpdateLike]:  # noqa: ARG002
         return []
 
-    async def send_message(self, *, chat_id: int, text: str) -> _Msg:  # noqa: ARG002
+    async def send_message(
+        self, *, chat_id: int, text: str, message_thread_id: int | None = None  # noqa: ARG002
+    ) -> _Msg:
         return _Msg()
 
-    async def send_message_draft(self, *, chat_id: int, draft_id: int, text: str) -> bool:  # noqa: ARG002
+    async def send_message_draft(
+        self,
+        *,
+        chat_id: int,  # noqa: ARG002
+        draft_id: int,  # noqa: ARG002
+        text: str,  # noqa: ARG002
+        message_thread_id: int | None = None,  # noqa: ARG002
+    ) -> bool:
         return True
 
-    async def send_rich_message(self, *, chat_id: int, rich_message: object) -> _Msg:  # noqa: ARG002
+    async def send_rich_message(
+        self,
+        *,
+        chat_id: int,  # noqa: ARG002
+        rich_message: object,  # noqa: ARG002
+        message_thread_id: int | None = None,  # noqa: ARG002
+    ) -> _Msg:
         return _Msg()
 
     async def send_rich_message_draft(
-        self, *, chat_id: int, draft_id: int, rich_message: object  # noqa: ARG002
+        self,
+        *,
+        chat_id: int,  # noqa: ARG002
+        draft_id: int,  # noqa: ARG002
+        rich_message: object,  # noqa: ARG002
+        message_thread_id: int | None = None,  # noqa: ARG002
     ) -> bool:
         return True
 

@@ -22,6 +22,13 @@ from bob.infrastructure.telegram.gateway import (
     TelegramGateway,
     UpdateLike,
 )
+from bob.infrastructure.telegram.multibot import (
+    BotIdentity,
+    BotRegistration,
+    BotRegistry,
+    BotScope,
+    MultiBotGateway,
+)
 from bob.infrastructure.telegram.rich import (
     MarkdownToRichMessage,
     RichMessageSerializer,
@@ -30,9 +37,14 @@ from bob.infrastructure.telegram.rich import (
 __all__ = [
     "MESSAGE_RECEIVED",
     "PLAIN_TEXT_LIMIT",
+    "BotIdentity",
     "BotLike",
+    "BotRegistration",
+    "BotRegistry",
+    "BotScope",
     "MarkdownToRichMessage",
     "MessageReceived",
+    "MultiBotGateway",
     "RichMessageSerializer",
     "TelegramGateway",
     "UpdateLike",
