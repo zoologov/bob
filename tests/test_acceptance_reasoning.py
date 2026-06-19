@@ -307,7 +307,10 @@ async def test_old_fact_from_many_turns_ago_is_recalled_and_reaches_tier1(
     recalled = await _recall(app, _OLD_FACT_NAME)
     # And drive a full turn so the recalled OLD episode reaches the reply context.
     tier1_before = len(tier1.payloads)
-    await app.event_bus.publish(_message("remind me, what is my name?", update_id=99))
+    # A complex (depth-keyword) probe so the hybrid selector escalates to Tier 1.
+    await app.event_bus.publish(
+        _message("объясни подробно, как меня зовут?", update_id=99)
+    )
 
     # Assert: recall surfaced the OLD episodic turn (proving whole-archive search),
     # and it reached the Tier 1 reply context — Bob remembers across the whole convo.
@@ -382,7 +385,9 @@ async def test_fenced_json_extraction_lands_fact_and_is_recalled(tmp_path: Path)
     # ("name") match the stored fact content so semantic recall fires.
     await app.event_bus.publish(_message(_OLD_FACT_TEXT, update_id=1, message_id=1))
     tier1_before = len(tier1.payloads)
-    await app.event_bus.publish(_message("remind me of my name please", update_id=2, message_id=2))
+    await app.event_bus.publish(
+        _message("объясни подробно, как меня зовут?", update_id=2, message_id=2)
+    )
 
     # Assert: the fenced fact was parsed into semantic memory and recalled into reply.
     facts = await app.memory_repo.load_facts(limit=10)
@@ -436,8 +441,8 @@ async def test_reasoning_tier1_reply_is_used_with_no_spurious_fallback(
     app = _build_app(tmp_path, bot=bot, tier0=tier0, tier1=tier1)
     await app.startup()
 
-    # Act
-    await app.event_bus.publish(_message("tell me about probes"))
+    # Act: a complex message escalates the reply to the Tier 1 reasoning model.
+    await app.event_bus.publish(_message("расскажи подробно про зонды"))
 
     # Assert: the streamed reply is the Tier 1 reasoning output, not the Tier 0
     # fallback marker — Tier 1 was used and did NOT spuriously fall back.

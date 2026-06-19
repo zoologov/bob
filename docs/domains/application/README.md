@@ -79,6 +79,27 @@ over-aggressive редакция (когда на Tier 1 не доходила �
 делала Боба stateless; Вариант 2 это исправляет, не раскрывая внутренний
 материал.
 
+Предпочтительный тир задачи — это **умолчание**: вызывающий может задать
+`LLMRequest.tier_override`, чтобы направить конкретный запрос на другой тир
+(если такой провайдер подан; неизвестный override игнорируется и запрос идёт на
+умолчание задачи). **Важно:** редакция привязана к политике **задачи**, а не к
+выбранному тиру, поэтому ответ, опущенный override'ом на Tier 0, по-прежнему
+никогда не несёт `private_context`.
+
+### Гибридный тиринг ответа пользователю (BOB-006)
+
+Живой ответ на reasoning-модели Tier 1 (`qwen3.7-plus`) может занимать минуты —
+слишком медленно для чата. `select_reply_tier`
+(`router/reply_tier_selector.py`) — чистая детерминированная эвристика по тексту
+пользователя (без отдельного LLM-round-trip): casual/короткая реплика отвечается
+на быстрый Tier 0 (`qwen3.6-flash`), а на качественный Tier 1 (`qwen3.7-plus`)
+эскалируется только сложный ход. Эскалация — когда ход требует инструментов
+(`needs_tools`) **или** сообщение выглядит сложным: длиннее 240 символов, более
+одного знака вопроса, содержит блок кода или несёт ключевое слово глубины
+(`объясни`, `проанализируй`, `сравни`, `напиши`, …; целыми словами,
+регистронезависимо). `HandleMessage` зовёт селектор и передаёт результат роутеру
+как `LLMRequest.tier_override`.
+
 ### Use-cases (поток, память и Genesis)
 
 `HandleMessage` (подписан на `MessageReceived`) проводит один ход
@@ -86,10 +107,11 @@ perceive → decide → act → persist → remember: обновляет нас�
 `UpdateMoodFromText`, воспроизводит недавнюю историю диалога
 (`recent_episodes(k)` через шов `EpisodeReader`), делает recall памяти
 (`MemoryRecall`, FTS5) и собирает `shareable_context` (история, память,
-настроение, идентичность, вкус), получает ответ от роутера (`REPLY_TO_USER`,
-Tier 1 + селективная редакция / fallback Tier 0), стримит его через gateway,
+настроение, идентичность, вкус), получает ответ от роутера (`REPLY_TO_USER` +
+селективная редакция / fallback Tier 0; тир ответа выбирается гибридно через
+`select_reply_tier` и передаётся как `tier_override`), стримит его через gateway,
 сохраняет эпизод и снапшот настроения. Именно прикрепление `shareable_context`
-к вызову Tier 1 даёт Бобу память — он помнит имя, названное ход назад.
+к вызову даёт Бобу память — он помнит имя, названное ход назад.
 
 После ответа отрабатывает шаг **remember**: `ExtractFacts` (Tier 0,
 `EXTRACT_FACTS`) дистиллирует устойчивые факты о пользователе (имя,
@@ -181,6 +203,8 @@ Tier 1); иначе ход идёт прежним plain-путём роутер
 - Payload LLM-запроса собирается один раз; `private_context` никогда не доходит до
   Tier 1, в том числе на пути fallback Tier 1 → Tier 0; `shareable_context`
   (история/память/настроение/идентичность/вкус) на Tier 1 разрешён.
+- Редакция приватного контекста привязана к политике задачи, а не к выбранному
+  тиру: `tier_override`, опускающий ответ на Tier 0, не раскрывает `private_context`.
 - Шаг remember (`ExtractFacts`) best-effort: ошибка извлечения фактов не роняет
   уже отправленный ответ.
 - Время берётся только из инъецированного `Clock`.
@@ -196,9 +220,16 @@ Tier 1); иначе ход идёт прежним plain-путём роутер
 
 Модуль `src/bob/application/router/llm_router.py`:
 - `LLMRouter(*, providers: Mapping[int, LLMProvider])` — `async run(request)` → `str`.
-- `LLMRequest` — поля `shareable_context` / `private_context` (два канала контекста);
-  `TaskType` (значения `REPLY_TO_USER`, `GENESIS`, `SENTIMENT`, `INNER_MONOLOGUE`,
-  `REFLECT`, `EXTRACT_FACTS`).
+- `LLMRequest` — поля `shareable_context` / `private_context` (два канала контекста)
+  и `tier_override: int | None` (направить запрос на конкретный тир в обход умолчания
+  задачи); `TaskType` (значения `REPLY_TO_USER`, `GENESIS`, `SENTIMENT`,
+  `INNER_MONOLOGUE`, `REFLECT`, `EXTRACT_FACTS`).
+
+Модуль `src/bob/application/router/reply_tier_selector.py`:
+- `select_reply_tier(message: str, *, needs_tools: bool = False)` → `int` — чистая
+  эвристика выбора тира ответа: `0` (быстрый flash) для casual/короткого хода, `1`
+  (качественный plus) при `needs_tools` или сложном сообщении (длина, мульти-вопрос,
+  код, ключевое слово глубины). Детерминирована.
 
 Модуль `src/bob/application/runtime/agent.py`:
 - `AgentRuntime(*, background_tasks=None)` — `start()`, `stop()`,

@@ -45,7 +45,9 @@ aiogram bots — no network. The concrete aiogram wiring lives in ``bob.app``
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import time
 from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING
@@ -53,6 +55,8 @@ from typing import TYPE_CHECKING
 from bob.infrastructure.telegram.gateway import (
     AuthorizerLike,
     BotLike,
+    MonotonicClock,
+    Sleep,
     TelegramGateway,
     UpdateLike,
 )
@@ -65,6 +69,34 @@ if TYPE_CHECKING:
     from bob.infrastructure.telegram.gateway import MessageLike
 
 logger = logging.getLogger(__name__)
+
+# Reply-streaming knobs for the inner gateways. Replies flow through
+# reply_streamer, where batching/throttle are exercised by the inner gateway's own
+# (tested) live-edit path.
+#
+# BOB-006 flood-control fix: the live edit-streaming + rich final hit Telegram's
+# flood control ("Flood control exceeded on method 'SendRichMessage'. Retry in 38
+# seconds.") because the inner gateways were wired with a 0s throttle + a no-op
+# sleep — every streamed token fired an immediate ``editMessageText`` and the rich
+# final followed with no gap. The live wiring now throttles successive edits (and
+# the rich final) to one per ``_DEFAULT_THROTTLE_INTERVAL`` seconds, driven by a
+# real monotonic clock + real sleep, so a normal back-and-forth never floods.
+_DEFAULT_BATCH_TOKENS = 1
+_DEFAULT_THROTTLE_INTERVAL = 3.0
+
+
+def _zero_clock() -> float:
+    return 0.0
+
+
+async def _noop_sleep(_seconds: float) -> None:
+    return None
+
+
+# Real timing seams for the live inner gateways (the deterministic stubs above are
+# kept for tests/intake-only wiring that must not actually wait).
+_LIVE_CLOCK: MonotonicClock = time.monotonic
+_LIVE_SLEEP: Sleep = asyncio.sleep
 
 __all__ = [
     "BotIdentity",
@@ -167,6 +199,9 @@ class MultiBotGateway:
         bus: EventBus,
         poll_timeout: int,
         authorizer: AuthorizerLike | None = None,
+        reply_throttle_interval: float = _DEFAULT_THROTTLE_INTERVAL,
+        reply_clock: MonotonicClock = _LIVE_CLOCK,
+        reply_sleep: Sleep = _LIVE_SLEEP,
     ) -> None:
         self._registry = registry
         self._bus = bus
@@ -174,6 +209,11 @@ class MultiBotGateway:
         self._poll_timeout = poll_timeout
         # One inner TelegramGateway per bot does the per-bot intake/normalisation
         # and reply streaming. Bob's inner gateway pins replies to his topic.
+        #
+        # The reply-streaming clock/sleep/throttle default to the live values
+        # (a real monotonic clock + ``asyncio.sleep`` + a >= 2.5s throttle window)
+        # so a normal back-and-forth never trips Telegram flood control (BOB-006);
+        # tests inject deterministic stubs to avoid real waiting.
         self._inner: dict[BotIdentity, TelegramGateway] = {}
         for reg in registry.all():
             self._inner[reg.identity] = TelegramGateway(
@@ -181,9 +221,9 @@ class MultiBotGateway:
                 bus=bus,
                 poll_timeout=poll_timeout,
                 batch_tokens=_DEFAULT_BATCH_TOKENS,
-                throttle_interval=_DEFAULT_THROTTLE_INTERVAL,
-                clock=_zero_clock,
-                sleep=_noop_sleep,
+                throttle_interval=reply_throttle_interval,
+                clock=reply_clock,
+                sleep=reply_sleep,
                 reply_thread_id=reg.scope.topic_id,
             )
         # Cross-bot dedup: a group message both admin bots see arrives on two
@@ -364,17 +404,3 @@ class _ReplyStreamer:
         return await self._gateway.stream_reply(chat_id=chat_id, tokens=tokens)
 
 
-# Reply-streaming knobs for the inner gateways. The multi-bot intake does not
-# itself stream drafts during routing; replies flow through reply_streamer, where
-# batching/throttle are exercised by the inner gateway's own (tested) path. These
-# defaults keep a single committed message per reply without timed throttling.
-_DEFAULT_BATCH_TOKENS = 1
-_DEFAULT_THROTTLE_INTERVAL = 0.0
-
-
-def _zero_clock() -> float:
-    return 0.0
-
-
-async def _noop_sleep(_seconds: float) -> None:
-    return None

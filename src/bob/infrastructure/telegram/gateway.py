@@ -513,7 +513,7 @@ class TelegramGateway:
             pending_tokens = 0
 
         await self._finish_live_edit(
-            chat_id, placeholder_id, accumulated, thinking
+            chat_id, placeholder_id, accumulated, thinking, last_edit_at
         )
         return edits_made
 
@@ -566,6 +566,7 @@ class TelegramGateway:
         placeholder_id: int | None,
         accumulated: str,
         thinking: str | None,
+        last_edit_at: float | None,
     ) -> None:
         """Commit the rich final and delete the placeholder; fall back on failure.
 
@@ -573,11 +574,18 @@ class TelegramGateway:
         rich final replaces it. If the rich send fails the placeholder is instead
         edited to the final plain text (the safety net of BEAD-01), so the reply is
         never lost — and the placeholder is never left empty.
+
+        The rich final honours the **same throttle window** as the live edits
+        (``last_edit_at``): firing ``send_rich_message`` immediately after the last
+        ``editMessageText`` was the live ``SendRichMessage`` flood-control source
+        (BOB-006). It is a **single** attempt — on a flood/``RetryAfter`` it degrades
+        to the already-streamed placeholder (entity-plain) rather than retrying.
         """
         has_content = bool(accumulated) or bool(thinking and thinking.strip())
         if not has_content:
             await self._delete_placeholder(chat_id, placeholder_id)
             return
+        await self._await_throttle(last_edit_at)
         if await self._send_rich_final(chat_id, accumulated, thinking):
             await self._delete_placeholder(chat_id, placeholder_id)
             return

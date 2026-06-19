@@ -264,7 +264,11 @@ class _NullBus:
         return None
 
 
-def _message(text: str = "tell me about coffee") -> MessageReceived:
+# A complex default message (depth keyword "расскажи" + "подробно") so the hybrid
+# reply selector routes the default turn to the quality Tier 1 (plus) model — the
+# tier most of these flow tests assert against. Tier-specific behaviour is covered
+# by the dedicated casual/complex tests above.
+def _message(text: str = "расскажи подробно про кофе") -> MessageReceived:
     return MessageReceived(
         update_id=1,
         chat_id=555,
@@ -312,6 +316,41 @@ async def test_reply_uses_tier1_provider() -> None:
     assert len(tier1.payloads) == 1
 
 
+async def test_casual_reply_runs_on_the_fast_tier0_model() -> None:
+    # Arrange (BOB-006): a casual short message should answer on the fast Tier 0
+    # (flash) model for responsiveness, NOT the slow Tier 1 (plus) model.
+    handler, bot, _repo, tier1 = _build(reply="plus")
+
+    # Act
+    await handler.handle(_message("привет!"))
+
+    # Assert: Tier 1 (plus) was NOT used for the reply; the turn still completed.
+    assert tier1.payloads == []
+    assert bot.sent
+
+
+async def test_complex_reply_escalates_to_the_quality_tier1_model() -> None:
+    # Arrange: a depth-keyword message escalates to the quality Tier 1 (plus) model.
+    handler, _bot, _repo, tier1 = _build(reply="a thorough answer")
+
+    # Act
+    await handler.handle(_message("объясни подробно как ты устроен"))
+
+    # Assert: the reply went to the Tier 1 (plus) provider.
+    assert len(tier1.payloads) == 1
+
+
+async def test_long_reply_escalates_to_the_quality_tier1_model() -> None:
+    # Arrange: a long message escalates to the quality model.
+    handler, _bot, _repo, tier1 = _build(reply="long-form answer")
+
+    # Act
+    await handler.handle(_message("слово " * 80))
+
+    # Assert
+    assert len(tier1.payloads) == 1
+
+
 async def test_recalled_memory_reaches_tier1_reply() -> None:
     # Arrange: recall carries a (shareable) recalled memory; SOUL carries phantom prefs.
     handler, _bot, _repo, tier1 = _build(reply="hi")
@@ -331,8 +370,8 @@ async def test_recent_conversation_history_reaches_tier1_reply() -> None:
         history=[{"content": _PRIOR_TURN, "event_type": "message"}],
     )
 
-    # Act: a fresh message comes in.
-    await handler.handle(_message("what's my name?"))
+    # Act: a fresh (complex) message comes in — escalated to the Tier 1 reply.
+    await handler.handle(_message("объясни подробно, как меня зовут?"))
 
     # Assert: the earlier turn (the name) is in the Tier 1 reply context — Bob remembers.
     assert _PRIOR_TURN in tier1.all_text
@@ -360,8 +399,8 @@ async def test_extraction_failure_does_not_break_the_turn() -> None:
         tier0_replies=["positive", "sorry, no facts here"],
     )
 
-    # Act
-    await handler.handle(_message("just chatting"))
+    # Act: a complex message escalates to the Tier 1 reply ("all good").
+    await handler.handle(_message("объясни подробно теорию относительности"))
 
     # Assert: the reply still went out and the episode persisted; no fact stored.
     assert bot.final_text == "all good"

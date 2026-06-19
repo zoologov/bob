@@ -300,7 +300,7 @@ async def test_authorized_message_in_bob_topic_replies_into_thread(
     _seed_soul(tmp_path)
     bob_bot, guppi_bot = _FakeBot(), _FakeBot()
     bob_bot.updates_batches = [
-        [_update(11, text="hi Bob, love the probes", user_id=_OWNER_ID)]
+        [_update(11, text="расскажи подробно про зонды, Bob", user_id=_OWNER_ID)]
     ]
     app = _build(tmp_path, bob_bot=bob_bot, guppi_bot=guppi_bot)
     await app.startup()
@@ -441,7 +441,9 @@ async def test_cross_bot_duplicate_is_processed_once_end_to_end(
         return _FakeUpdate(
             update_id=update_id,
             message=_FakeMessage(
-                message_id=17, text="hi Bob, dup", message_thread_id=_BOB_TOPIC_ID
+                message_id=17,
+                text="расскажи подробно, Bob",
+                message_thread_id=_BOB_TOPIC_ID,
             ),
             effective_chat=_FakeChat(id=_CHAT_ID),
             effective_user=_FakeUser(id=_OWNER_ID),

@@ -167,7 +167,9 @@ def _message() -> MessageReceived:
         update_id=1,
         chat_id=42,
         message_id=7,
-        text="hi Bob, love the probes",
+        # A complex (depth-keyword) message so the hybrid selector routes the
+        # reply to the quality Tier 1 model this e2e flow asserts against.
+        text="расскажи подробно про зонды, Bob",
         sender_id=5,
         sender_name="Ada",
     )
@@ -220,7 +222,11 @@ async def test_e2e_private_context_redacted_but_memory_shared(tmp_path: Path) ->
     # Act: a reply turn whose context carries the recallable memory.
     await app.event_bus.publish(
         MessageReceived(
-            update_id=2, chat_id=42, message_id=8, text="probes", sender_id=5
+            update_id=2,
+            chat_id=42,
+            message_id=8,
+            text="расскажи подробно про probes",
+            sender_id=5,
         )
     )
 

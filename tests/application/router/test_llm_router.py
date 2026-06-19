@@ -209,3 +209,65 @@ async def test_tier0_failure_with_no_fallback_raises() -> None:
     # Act / Assert
     with pytest.raises(ConnectionError):
         await router.run(request)
+
+
+async def test_tier_override_routes_a_reply_to_the_fast_tier0_model() -> None:
+    # Arrange: a casual reply overrides REPLY_TO_USER's default Tier 1 down to the
+    # fast Tier 0 (flash) model for responsiveness (BOB-006 hybrid tiering).
+    tier0, tier1 = CapturingProvider(reply="flash"), CapturingProvider(reply="plus")
+    router = _router(tier0, tier1)
+    request = LLMRequest(
+        task_type=TaskType.REPLY_TO_USER,
+        messages=[{"role": "user", "content": "hi"}],
+        tier_override=0,
+    )
+
+    # Act
+    result = await router.run(request)
+
+    # Assert: the fast Tier 0 model served it; Tier 1 was untouched.
+    assert result == "flash"
+    assert len(tier0.calls) == 1
+    assert tier1.calls == []
+
+
+async def test_tier_override_keeps_reply_private_context_redacted() -> None:
+    # Arrange: overriding a REPLY down to Tier 0 must NOT suddenly bundle the
+    # genuinely-private context — redaction follows the task policy, not the tier.
+    tier0, tier1 = CapturingProvider(reply="flash"), CapturingProvider(reply="plus")
+    router = _router(tier0, tier1)
+    request = LLMRequest(
+        task_type=TaskType.REPLY_TO_USER,
+        messages=[{"role": "user", "content": "hi"}],
+        shareable_context=SHAREABLE_CONTEXT,
+        private_context=PRIVATE_CONTEXT,
+        tier_override=0,
+    )
+
+    # Act
+    await router.run(request)
+
+    # Assert: the flash reply carries the shareable context but NOT the private one.
+    joined = " ".join(m.get("content", "") for call in tier0.calls for m in call)
+    assert SHAREABLE_CONTEXT in joined
+    assert PRIVATE_CONTEXT not in joined
+
+
+async def test_override_to_tier1_still_falls_back_to_tier0_on_error() -> None:
+    # Arrange: an escalated (plus) reply that errors still falls back to Tier 0.
+    tier0 = CapturingProvider(reply="fallback")
+    tier1 = CapturingProvider(fail=True)
+    router = _router(tier0, tier1)
+    request = LLMRequest(
+        task_type=TaskType.REPLY_TO_USER,
+        messages=[{"role": "user", "content": "hi"}],
+        tier_override=1,
+    )
+
+    # Act
+    result = await router.run(request)
+
+    # Assert
+    assert result == "fallback"
+    assert len(tier1.calls) == 1
+    assert len(tier0.calls) == 1
