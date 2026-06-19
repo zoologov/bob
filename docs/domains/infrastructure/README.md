@@ -56,10 +56,20 @@ fail-closed. Owner-команды `/authorize <user_id>` и `/deauthorize <user_
 нормализуется в `MessageReceived` и публикуется в `EventBus`. Без подключённого
 авторизатора гейт открыт (обратная совместимость).
 
-**Стриминг ответа.** `stream_reply` шлёт частичный текст нативными draft'ами
-(`send_message_draft`), батчит по числу токенов и троттлит не чаще одной за
-интервал, при `TelegramRetryAfter` делает backoff и повтор, по завершении
-коммитит готовый ответ как реальное сообщение (`send_message`).
+**Стриминг ответа (зависит от типа чата).** `stream_reply` выбирает способ живой
+печати по `reply_thread_id` (`_is_forum_topic`). В **ЛС / General** (нет форум-
+топика) — нативные draft'ы: `send_message_draft` батчит по числу токенов и троттлит
+не чаще одной за интервал, при `TelegramRetryAfter` делает backoff и повтор, по
+завершении коммитит готовый ответ реальным сообщением (`send_message`). В **форум-
+топике Боба** драфты отклоняются peer'ом (`TEXTDRAFT_PEER_INVALID`), поэтому живая
+печать — инкрементальный `editMessageText`: plain-плейсхолдер в тред, затем правки
+накопленным текстом. Последовательные правки **троттлятся на 3.0с** (флуд-контроль
+BOB-006: до фикса троттл в проде стоял `0.0`, и каждый токен немедленно дёргал
+`editMessageText` + rich-финал, упираясь в Telegram flood control); no-op-правки
+(текст не изменился) пропускаются, `TelegramRetryAfter` уважается. Финал уходит
+`send_rich_message` в **том же троттл-окне** и **одной** попыткой — при флуде он
+деградирует на уже отрисованный плейсхолдер (а не ретраит), плейсхолдер удаляется
+на успехе или редактируется в финальный plain на сбое rich (ответ не теряется).
 
 **Rich Messages + thinking.** `reply` конвертирует markdown-ответ Боба в
 типизированное дерево `RichMessage` (опционально с ведущим сворачиваемым блоком
@@ -225,6 +235,9 @@ non-secret и может прийти из YAML.
   неразрешённый чат/пользователь молча отброшены, без обхода.
 - Rich-отправка деградирует на plain при любой ошибке — пользователь не видит
   ошибку транспорта.
+- Живой edit-стриминг троттлится (по умолчанию 3.0с между правками) на реальных
+  часах + `asyncio.sleep`; no-op-правки пропускаются, rich-финал — одна попытка в
+  том же троттл-окне, при флуде деградирует на плейсхолдер (ответ не теряется).
 - `MarkdownToRichMessage` и `RichMessageSerializer` — чистые и детерминированные
   (без I/O, сети, часов).
 - Allowlist персистится в таблице `kv` (параметризованный SQL) и переживает рестарт.
@@ -232,9 +245,12 @@ non-secret и может прийти из YAML.
 ## API
 
 Модуль `src/bob/infrastructure/telegram/multibot.py`:
-- `MultiBotGateway(*, registry, bus, poll_timeout, authorizer=None)` —
-  `async poll_once()` → `int`, `async route(update, identity)` → `bool`,
-  `reply_streamer(identity)` → `ReplyStreamer`; свойство `registry`.
+- `MultiBotGateway(*, registry, bus, poll_timeout, authorizer=None,
+  reply_throttle_interval=3.0, reply_clock=time.monotonic, reply_sleep=asyncio.sleep)`
+  — `async poll_once()` → `int`, `async route(update, identity)` → `bool`,
+  `reply_streamer(identity)` → `ReplyStreamer`; свойство `registry`. Реплеи-параметры
+  по умолчанию живые (реальные часы/sleep + троттл 3.0с, флуд-контроль BOB-006);
+  тесты инъецируют детерминированные заглушки.
 - `BotRegistry` — `register(*, identity, bot, scope)`, `get(identity)`, `all()`,
   `scope_of(identity)`.
 - `BotIdentity` (`BOB`/`GUPPI`), `BotScope(chat_id, topic_id)` с
