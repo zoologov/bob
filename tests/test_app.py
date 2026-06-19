@@ -50,8 +50,16 @@ class _Bot:
     async def send_message(self, *, chat_id: int, text: str) -> _Msg:  # noqa: ARG002
         return _Msg()
 
-    async def edit_message_text(self, *, chat_id: int, message_id: int, text: str) -> object:  # noqa: ARG002
-        return object()
+    async def send_message_draft(self, *, chat_id: int, draft_id: int, text: str) -> bool:  # noqa: ARG002
+        return True
+
+    async def send_rich_message(self, *, chat_id: int, rich_message: object) -> _Msg:  # noqa: ARG002
+        return _Msg()
+
+    async def send_rich_message_draft(
+        self, *, chat_id: int, draft_id: int, rich_message: object  # noqa: ARG002
+    ) -> bool:
+        return True
 
 
 def _config(tmp_path: Path) -> dict[str, object]:

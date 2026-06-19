@@ -147,7 +147,7 @@ class FakeBot:
 
     def __init__(self) -> None:
         self.sent: list[tuple[int, str]] = []
-        self.edits: list[tuple[int, int, str]] = []
+        self.drafts: list[tuple[int, int, str]] = []
 
     async def get_updates(self, *, offset: int, timeout: int) -> Sequence[UpdateLike]:  # noqa: ARG002
         return []
@@ -156,14 +156,24 @@ class FakeBot:
         self.sent.append((chat_id, text))
         return FakeMessage(message_id=999)
 
-    async def edit_message_text(self, *, chat_id: int, message_id: int, text: str) -> object:
-        self.edits.append((chat_id, message_id, text))
-        return object()
+    async def send_message_draft(self, *, chat_id: int, draft_id: int, text: str) -> bool:
+        self.drafts.append((chat_id, draft_id, text))
+        return True
+
+    async def send_rich_message(
+        self, *, chat_id: int, rich_message: object  # noqa: ARG002
+    ) -> FakeMessage:
+        return FakeMessage(message_id=999)
+
+    async def send_rich_message_draft(
+        self, *, chat_id: int, draft_id: int, rich_message: object  # noqa: ARG002
+    ) -> bool:
+        return True
 
     @property
     def final_text(self) -> str:
-        """Text the reply message was last edited to (the full streamed reply)."""
-        return self.edits[-1][2] if self.edits else ""
+        """The committed reply text (full streamed reply sent via send_message)."""
+        return self.sent[-1][1] if self.sent else ""
 
 
 def _config(tmp_path: Path) -> dict[str, object]:

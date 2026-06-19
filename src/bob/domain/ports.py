@@ -18,15 +18,18 @@ later beads (.2-.4); BEAD-01 ships the contracts and stub/fake wiring only.
 from __future__ import annotations
 
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
+from dataclasses import dataclass, field
 from datetime import (
     datetime,  # noqa: TC003 — runtime-resolvable for get_type_hints on the Clock port
 )
-from typing import TYPE_CHECKING, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Literal, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     from bob.domain.memory.entities import SemanticFact
 
 __all__ = [
+    "AllowlistStore",
+    "Capability",
     "Clock",
     "DomainEvent",
     "EventBus",
@@ -36,8 +39,13 @@ __all__ = [
     "LLMProvider",
     "MemoryRecall",
     "MemoryRepo",
+    "Permission",
     "Recalled",
     "SoulStore",
+    "ToolCall",
+    "ToolCallResult",
+    "ToolCallingProvider",
+    "ToolDefinition",
 ]
 
 
@@ -51,6 +59,43 @@ type Recalled = Mapping[str, object]
 
 # A JSON-decodable soul-artifact value (object/array/scalar) carried by SoulStore.
 type JsonValue = dict[str, object] | list[object] | str | int | float | bool | None
+
+# An OpenAI-shaped tool definition (``{"type": "function", "function": {...}}``),
+# as emitted by the CapabilityRegistry manifest and sent to the LLM as ``tools``.
+type ToolDefinition = Mapping[str, object]
+
+# A capability's permission seam: "safe" runs straight through; "confirm" marks a
+# capability that a future approval gate must clear before GUPPI executes it.
+type Permission = Literal["safe", "confirm"]
+
+
+# --- Capability seam (stable, forward-compatible) -----------------------------
+
+
+@dataclass(frozen=True)
+class ToolCall:
+    """One tool invocation the model asked for (OpenAI ``tool_calls`` shape).
+
+    ``id`` correlates the call with the ``tool`` result message fed back into the
+    next turn; ``name`` selects the capability; ``arguments`` are the decoded
+    JSON arguments the capability's ``execute`` receives.
+    """
+
+    id: str
+    name: str
+    arguments: Mapping[str, object] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class ToolCallResult:
+    """A tool-aware completion: free-text ``text`` plus any requested tool calls.
+
+    When ``tool_calls`` is empty the turn is final and ``text`` is the answer;
+    otherwise GUPPI must dispatch each call and feed the results back to loop.
+    """
+
+    text: str
+    tool_calls: tuple[ToolCall, ...] = ()
 
 
 class DomainEvent(Protocol):
@@ -113,6 +158,62 @@ class LLMProvider(Protocol):
 
 
 @runtime_checkable
+class Capability(Protocol):
+    """A single thing GUPPI can do for Bob — the stable capability seam.
+
+    This is the contract, NOT the plugin machinery: a capability names itself,
+    describes itself, advertises a JSON-Schema for its arguments, declares a
+    ``permission`` (``"safe"`` runs straight through; ``"confirm"`` is the seam a
+    future approval gate will read), and ``execute``s against decoded arguments.
+    New skills register an object against this contract; consumers never change.
+    """
+
+    @property
+    def name(self) -> str:
+        """Unique tool name advertised to the model (OpenAI function name)."""
+        ...
+
+    @property
+    def description(self) -> str:
+        """Human/model-facing description of what the capability does."""
+        ...
+
+    @property
+    def input_schema(self) -> Mapping[str, object]:
+        """JSON-Schema object describing the capability's arguments."""
+        ...
+
+    @property
+    def permission(self) -> Permission:
+        """Approval seam: ``"safe"`` or ``"confirm"`` (future gate)."""
+        ...
+
+    async def execute(self, args: Mapping[str, object]) -> object:
+        """Run the capability against ``args`` and return its result."""
+        ...
+
+
+@runtime_checkable
+class ToolCallingProvider(Protocol):
+    """An LLM provider that can be handed ``tools`` and return ``tool_calls``.
+
+    The tool-aware sibling of :class:`LLMProvider`: given the conversation and a
+    manifest of tool definitions, it returns a :class:`ToolCallResult` (final
+    text, or the tool calls the model requested). Adapters realise this over a
+    native OpenAI ``tools`` round-trip or a prompt-protocol fallback.
+    """
+
+    async def complete_with_tools(
+        self,
+        messages: Sequence[LLMMessage],
+        *,
+        tools: Sequence[ToolDefinition],
+    ) -> ToolCallResult:
+        """Complete a turn that may request tool calls."""
+        ...
+
+
+@runtime_checkable
 class MemoryRepo(Protocol):
     """Persistent store for episodes, facts, and personality state (SQLite)."""
 
@@ -143,6 +244,28 @@ class MemoryRecall(Protocol):
 
     async def recall(self, query: str, *, k: int) -> Sequence[Recalled]:
         """Return the top-``k`` memories relevant to ``query``."""
+        ...
+
+
+@runtime_checkable
+class AllowlistStore(Protocol):
+    """Durable store for the runtime authorization allowlist (user ids).
+
+    Backs the :class:`bob.application.authz.Authorizer`: ``/authorize`` adds a
+    user here so the grant survives a restart. The concrete SQLite-backed adapter
+    lives in ``bob.infrastructure.persistence``.
+    """
+
+    async def load(self) -> set[int]:
+        """Return the set of currently allowlisted user ids."""
+        ...
+
+    async def add(self, user_id: int) -> None:
+        """Add ``user_id`` to the allowlist (idempotent) and persist it."""
+        ...
+
+    async def remove(self, user_id: int) -> None:
+        """Remove ``user_id`` from the allowlist (idempotent) and persist it."""
         ...
 
 

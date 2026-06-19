@@ -18,7 +18,7 @@ import aiohttp
 import pytest
 from aiohttp import web
 
-from bob.domain.ports import LLMProvider
+from bob.domain.ports import LLMProvider, ToolCallingProvider
 from bob.infrastructure.llm.openai_compat import OpenAICompatProvider
 
 _CHAT_PATH = "/v1/chat/completions"
@@ -109,6 +109,69 @@ async def test_complete_stream_yields_tokens(captured: dict[str, object]) -> Non
 async def test_provider_satisfies_llm_provider_protocol() -> None:
     provider = OpenAICompatProvider(base_url="http://x/v1", model="m", api_key="k")
     assert isinstance(provider, LLMProvider)
+
+
+async def test_provider_satisfies_tool_calling_provider_protocol() -> None:
+    provider = OpenAICompatProvider(base_url="http://x/v1", model="m", api_key="k")
+    assert isinstance(provider, ToolCallingProvider)
+
+
+async def test_complete_with_tools_sends_tools_and_parses_tool_calls(
+    captured: dict[str, object],
+) -> None:
+    # Arrange: a server that echoes the payload and returns a native tool_call.
+    async def handler(request: web.Request) -> web.Response:
+        captured["payload"] = await request.json()
+        body = {
+            "choices": [
+                {
+                    "message": {
+                        "content": None,
+                        "tool_calls": [
+                            {
+                                "id": "call_1",
+                                "type": "function",
+                                "function": {
+                                    "name": "recall_memory",
+                                    "arguments": '{"query": "coffee"}',
+                                },
+                            }
+                        ],
+                    }
+                }
+            ]
+        }
+        return web.json_response(body)
+
+    base_url, runner = await _start_server(handler)
+    tools = [
+        {
+            "type": "function",
+            "function": {
+                "name": "recall_memory",
+                "description": "Search memory.",
+                "parameters": {"type": "object", "properties": {}},
+            },
+        }
+    ]
+    try:
+        provider = OpenAICompatProvider(base_url=base_url, model="m", api_key="sk")
+
+        # Act
+        result = await provider.complete_with_tools(
+            [{"role": "user", "content": "what did I say?"}], tools=tools
+        )
+
+        # Assert: tools were sent and the tool_call parsed back.
+        payload = captured["payload"]
+        assert isinstance(payload, dict)
+        assert payload["tools"] == tools
+        assert payload["stream"] is False
+        assert len(result.tool_calls) == 1
+        assert result.tool_calls[0].name == "recall_memory"
+        assert result.tool_calls[0].arguments == {"query": "coffee"}
+    finally:
+        await runner.cleanup()
 
 
 async def test_no_api_key_omits_authorization_header(captured: dict[str, object]) -> None:

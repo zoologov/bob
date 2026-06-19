@@ -28,14 +28,20 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
+from bob.application.authz import Authorizer
+from bob.application.capabilities import (
+    CapabilityRegistry,
+    make_recall_memory_capability,
+)
 from bob.application.router import LLMRouter
 from bob.application.runtime import (
     MESSAGE_RECEIVED,
     AgentRuntime,
     AsyncEventBus,
     MessageReceived,
+    RetryPolicy,
     periodic,
 )
 from bob.application.usecases.extract_facts import ExtractFacts
@@ -52,7 +58,12 @@ from bob.domain.personality.soul import SOUL
 from bob.domain.personality.taste import TasteAxis, TasteEngine
 from bob.infrastructure.config import ConfigLoader
 from bob.infrastructure.llm import build_tier_providers
-from bob.infrastructure.persistence import Fts5MemoryRecall, SoulStore, SqliteMemoryRepo
+from bob.infrastructure.persistence import (
+    Fts5MemoryRecall,
+    KvAllowlistStore,
+    SoulStore,
+    SqliteMemoryRepo,
+)
 from bob.infrastructure.telegram.gateway import (
     BotLike,
     MessageLike,
@@ -61,9 +72,16 @@ from bob.infrastructure.telegram.gateway import (
 )
 
 if TYPE_CHECKING:
+    from aiogram.types import InputRichMessage
+
     from bob.application.runtime.agent import BackgroundTask
     from bob.application.usecases.run_genesis import GenesisResult
-    from bob.domain.ports import DomainEvent, EventHandler, LLMProvider
+    from bob.domain.ports import (
+        DomainEvent,
+        EventHandler,
+        LLMProvider,
+        ToolCallingProvider,
+    )
 
 logger = logging.getLogger(__name__)
 
@@ -73,6 +91,14 @@ _DEFAULT_POLL_TIMEOUT = 10
 _BATCH_TOKENS = 4
 _THROTTLE_INTERVAL = 0.5
 _MOOD_DRIFT_SECONDS = 60.0
+
+# Production tick resilience: retry a tick's *transient* LLM/network blips with
+# bounded exponential backoff (BEAD-04) before isolating whatever it ultimately
+# raises, so a momentary hiccup never silently skips an idle tick.
+_TICK_RETRY_POLICY = RetryPolicy()
+
+# The reply tier (Tier 1) is the one whose provider drives the capability tool-loop.
+_REPLY_TIER = 1
 
 # Where the bob-soul personality templates live (repo root / bob-soul).
 _DEFAULT_TEMPLATES_DIR = Path(__file__).resolve().parents[2] / "bob-soul"
@@ -106,6 +132,9 @@ class Application:
     genesis: RunGenesis
     personality: PersonalityState
     handle_message: HandleMessage
+    gateway: TelegramGateway
+    authorizer: Authorizer
+    registry: CapabilityRegistry
     inner_monologue_tick: InnerMonologueTick
     mood_drift_tick: MoodDriftTick
     reflect_tick: ReflectTick
@@ -152,6 +181,14 @@ def build_application(
     recall = Fts5MemoryRecall(memory_repo)
     soul_store = SoulStore(_soul_dir(merged))
 
+    # Capability seam (BEAD-05/06): advertise recall_memory to the model so the
+    # production tool-loop is active — the model may call it, GUPPI executes it,
+    # the result loops back into the reply. The tier-1 reply provider is the
+    # tool-calling provider; when it cannot do tools the loop stays dormant and
+    # HandleMessage keeps the plain reply path.
+    registry = _build_registry(recall)
+    tool_provider = _as_tool_provider(tier_providers)
+
     genesis = RunGenesis(
         templates_dir=_templates_dir(merged),
         router=router,
@@ -162,7 +199,10 @@ def build_application(
     personality = PersonalityState(soul=_default_soul())
     update_mood = UpdateMoodFromText(router=router, clock=clock)
     extract_facts = ExtractFacts(router=router, repo=memory_repo, clock=clock)
-    gateway = _build_gateway(merged, bus=event_bus, bot=bot)
+    authorizer = _build_authorizer(merged, repo=memory_repo)
+    gateway = _build_gateway(
+        merged, bus=event_bus, bot=bot, authorizer=authorizer
+    )
 
     handle_message = HandleMessage(
         router=router,
@@ -174,6 +214,8 @@ def build_application(
         extract_facts=extract_facts,
         clock=clock,
         state=personality,
+        registry=registry,
+        tool_provider=tool_provider,
     )
     event_bus.subscribe(MESSAGE_RECEIVED, _as_handler(handle_message))
 
@@ -202,6 +244,9 @@ def build_application(
         genesis=genesis,
         personality=personality,
         handle_message=handle_message,
+        gateway=gateway,
+        authorizer=authorizer,
+        registry=registry,
         inner_monologue_tick=inner_monologue_tick,
         mood_drift_tick=mood_drift_tick,
         reflect_tick=reflect_tick,
@@ -222,9 +267,13 @@ def _as_handler(handle_message: HandleMessage) -> EventHandler:
 
 
 def _build_gateway(
-    config: Mapping[str, object], *, bus: AsyncEventBus, bot: BotLike | None
+    config: Mapping[str, object],
+    *,
+    bus: AsyncEventBus,
+    bot: BotLike | None,
+    authorizer: Authorizer,
 ) -> TelegramGateway:
-    """Build the Telegram gateway; the bot is injected (real PTB or a fake)."""
+    """Build the Telegram gateway; the bot is injected (real aiogram or a fake)."""
     telegram = _section(config, "telegram")
     return TelegramGateway(
         bot=bot if bot is not None else _build_real_bot(telegram),
@@ -234,17 +283,63 @@ def _build_gateway(
         throttle_interval=_THROTTLE_INTERVAL,
         clock=_monotonic,
         sleep=_async_sleep,
+        authorizer=authorizer,
     )
 
 
+def _build_authorizer(
+    config: Mapping[str, object], *, repo: SqliteMemoryRepo
+) -> Authorizer:
+    """Build the access-policy Authorizer from config over the SQLite allowlist.
+
+    ``owner_id`` and ``allowed_chat_ids`` come from the ``telegram`` config; the
+    dynamic allowlist is persisted in the kv store so ``/authorize`` survives a
+    restart.
+    """
+    telegram = _section(config, "telegram")
+    return Authorizer(
+        owner_id=_int(telegram, "owner_id", 0),
+        allowed_chat_ids=_int_list(telegram, "allowed_chat_ids"),
+        store=KvAllowlistStore(repo),
+    )
+
+
+def _build_registry(recall: Fts5MemoryRecall) -> CapabilityRegistry:
+    """Build the capability registry GUPPI advertises and dispatches.
+
+    Registers the first real capability — ``recall_memory`` (BEAD-06), a thin
+    wrapper over the live :class:`MemoryRecall` — so the tool-loop has something
+    to call end to end. New skills register here without touching consumers.
+    """
+    registry = CapabilityRegistry()
+    registry.register(make_recall_memory_capability(recall))
+    return registry
+
+
+def _as_tool_provider(
+    providers: Mapping[int, LLMProvider],
+) -> ToolCallingProvider | None:
+    """Pick the reply-tier provider as the tool-calling provider, if it supports it.
+
+    The Tier 1 reply provider (:class:`OpenAICompatProvider`) realises
+    :class:`ToolCallingProvider`; a fake or a tool-less endpoint may not, in which
+    case the tool-loop stays dormant and HandleMessage keeps the plain path.
+    """
+    provider = providers.get(_REPLY_TIER)
+    if provider is not None and hasattr(provider, "complete_with_tools"):
+        # The reply tier advertises complete_with_tools → it can drive the loop.
+        return cast("ToolCallingProvider", provider)
+    return None
+
+
 def _build_real_bot(telegram: Mapping[str, object]) -> BotLike:
-    """Construct the real python-telegram-bot ``Bot`` from the configured token."""
-    from telegram import Bot  # noqa: PLC0415 — lazy: only the real-bot path needs PTB
+    """Construct the real aiogram ``Bot`` from the configured token."""
+    from aiogram import Bot  # noqa: PLC0415 — lazy: only the real-bot path needs aiogram
 
     token = telegram.get("token")
     if not isinstance(token, str) or not token:
         raise KeyError("telegram.token is required to build the real bot")
-    return _PtbBotAdapter(Bot(token=token))
+    return _AiogramBotAdapter(Bot(token=token))
 
 
 def _background_tasks(
@@ -264,9 +359,21 @@ def _background_tasks(
 
     return [
         periodic(poll, interval_seconds=0.0),
-        periodic(inner_monologue_tick.run, interval_seconds=heartbeat),
-        periodic(mood_drift_tick.run, interval_seconds=_MOOD_DRIFT_SECONDS),
-        periodic(reflect_tick.run, interval_seconds=heartbeat * 10),
+        periodic(
+            inner_monologue_tick.run,
+            interval_seconds=heartbeat,
+            retry=_TICK_RETRY_POLICY,
+        ),
+        periodic(
+            mood_drift_tick.run,
+            interval_seconds=_MOOD_DRIFT_SECONDS,
+            retry=_TICK_RETRY_POLICY,
+        ),
+        periodic(
+            reflect_tick.run,
+            interval_seconds=heartbeat * 10,
+            retry=_TICK_RETRY_POLICY,
+        ),
     ]
 
 
@@ -399,6 +506,16 @@ def _int(section: Mapping[str, object], key: str, default: int) -> int:
     return default
 
 
+def _int_list(section: Mapping[str, object], key: str) -> tuple[int, ...]:
+    """Read a list of ints from config (YAML list or a CSV env string)."""
+    value = section.get(key)
+    if isinstance(value, str):
+        return tuple(int(part) for part in value.split(",") if part.strip())
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
+        return tuple(int(item) for item in value if isinstance(item, int))
+    return ()
+
+
 def _float(section: Mapping[str, object], key: str) -> float:
     value = section.get(key)
     if isinstance(value, bool):
@@ -408,11 +525,46 @@ def _float(section: Mapping[str, object], key: str) -> float:
     return 0.0
 
 
-# --- PTB bot adapter ----------------------------------------------------------
+# --- aiogram bot adapter ------------------------------------------------------
 
 
-class _PtbBotAdapter:
-    """Adapt python-telegram-bot's async ``Bot`` to the gateway's :class:`BotLike`."""
+@dataclass(frozen=True)
+class _ChatView:
+    """An :class:`UpdateLike` chat view over an aiogram ``Update``."""
+
+    id: int
+
+
+@dataclass(frozen=True)
+class _UserView:
+    """An :class:`UpdateLike` user view over an aiogram ``Update``."""
+
+    id: int
+    full_name: str
+
+
+@dataclass(frozen=True)
+class _UpdateView:
+    """Adapt an aiogram ``Update`` to the gateway's :class:`UpdateLike`.
+
+    aiogram nests chat/sender under ``message``; the gateway reads them as the
+    flat ``effective_chat`` / ``effective_user`` accessors, so this view lifts them
+    up while leaving the underlying aiogram message as the message.
+    """
+
+    update_id: int
+    message: MessageLike | None
+    effective_chat: _ChatView | None
+    effective_user: _UserView | None
+
+
+class _AiogramBotAdapter:
+    """Adapt aiogram's async ``Bot`` to the gateway's :class:`BotLike`.
+
+    Intake calls ``get_updates`` and normalises each aiogram ``Update`` into an
+    :class:`UpdateLike`; the streaming reply uses the native ``send_message_draft``
+    channel for partials and ``send_message`` to commit the finished reply.
+    """
 
     def __init__(self, bot: object) -> None:
         self._bot = bot
@@ -420,15 +572,47 @@ class _PtbBotAdapter:
     async def get_updates(
         self, *, offset: int, timeout: int
     ) -> Sequence[UpdateLike]:
-        return await self._bot.get_updates(offset=offset, timeout=timeout)  # type: ignore[attr-defined,no-any-return]
+        updates = await self._bot.get_updates(offset=offset, timeout=timeout)  # type: ignore[attr-defined]
+        return [_to_update_view(update) for update in updates]
 
     async def send_message(self, *, chat_id: int, text: str) -> MessageLike:
         return await self._bot.send_message(chat_id=chat_id, text=text)  # type: ignore[attr-defined,no-any-return]
 
-    async def edit_message_text(self, *, chat_id: int, message_id: int, text: str) -> object:
-        return await self._bot.edit_message_text(  # type: ignore[attr-defined]
-            chat_id=chat_id, message_id=message_id, text=text
+    async def send_message_draft(
+        self, *, chat_id: int, draft_id: int, text: str
+    ) -> bool:
+        return await self._bot.send_message_draft(  # type: ignore[attr-defined,no-any-return]
+            chat_id=chat_id, draft_id=draft_id, text=text
         )
+
+    async def send_rich_message(
+        self, *, chat_id: int, rich_message: InputRichMessage
+    ) -> MessageLike:
+        return await self._bot.send_rich_message(  # type: ignore[attr-defined,no-any-return]
+            chat_id=chat_id, rich_message=rich_message
+        )
+
+    async def send_rich_message_draft(
+        self, *, chat_id: int, draft_id: int, rich_message: InputRichMessage
+    ) -> bool:
+        return await self._bot.send_rich_message_draft(  # type: ignore[attr-defined,no-any-return]
+            chat_id=chat_id, draft_id=draft_id, rich_message=rich_message
+        )
+
+
+def _to_update_view(update: object) -> _UpdateView:
+    """Lift an aiogram ``Update``'s nested chat/sender into an :class:`UpdateLike`."""
+    message: MessageLike | None = getattr(update, "message", None)
+    chat = getattr(message, "chat", None)
+    user = getattr(message, "from_user", None)
+    return _UpdateView(
+        update_id=update.update_id,  # type: ignore[attr-defined]
+        message=message,
+        effective_chat=_ChatView(id=chat.id) if chat is not None else None,
+        effective_user=(
+            _UserView(id=user.id, full_name=user.full_name) if user is not None else None
+        ),
+    )
 
 
 # --- Entrypoint ---------------------------------------------------------------

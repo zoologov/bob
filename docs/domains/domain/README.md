@@ -12,10 +12,12 @@ LLM, хранилищем и временем исключительно чер�
 ### Модули
 
 - **ports.py** — порты-протоколы (структурные `typing.Protocol`, только
-  интерфейсы): `LLMProvider`, `MemoryRepo`, `MemoryRecall`, `SoulStore`,
-  `EventBus`, `Clock`, `DomainEvent`. Здесь же общие value-объекты: `LLMMessage`,
-  `Recalled`, `JsonValue`, `EventHandler`. Адаптеры в `bob.infrastructure`
-  реализуют эти порты, `app.py` связывает конкретные адаптеры с ними.
+  интерфейсы): `LLMProvider`, `ToolCallingProvider`, `MemoryRepo`, `MemoryRecall`,
+  `SoulStore`, `AllowlistStore`, `EventBus`, `Clock`, `Capability`, `DomainEvent`.
+  Здесь же общие value-объекты: `LLMMessage`, `Recalled`, `JsonValue`,
+  `EventHandler`, `ToolCall`, `ToolCallResult`, `ToolDefinition`, `Permission`.
+  Адаптеры в `bob.infrastructure` реализуют эти порты, `app.py` связывает
+  конкретные адаптеры с ними.
 - **personality/mood.py** — `Mood` (пять осей в `[-1, 1]`), `MoodDelta` и
   деривация тона.
 - **personality/taste.py** — `TasteEngine`, `TasteAxis`, перечисление `Verdict`.
@@ -61,6 +63,27 @@ conviction соглашается (`AGREE`), на пороге и выше пр�
 памяти. Адаптер хранилища переводит эти сущности в строки SQLite и обратно —
 домен не видит базу.
 
+### Capability-шов (контракт навыков)
+
+`Capability` — стабильный контракт одного навыка, который GUPPI умеет исполнять
+для Боба. Это именно **контракт**, а не машинерия плагинов (sandbox, авто-дискавери,
+self-creation придут позже за тем же швом). Навык называет себя (`name`),
+описывает себя (`description`), объявляет JSON-схему аргументов (`input_schema`),
+несёт уровень доступа `permission` (`safe` исполняется напрямую; `confirm` —
+задел под будущий approval-гейт) и `async execute(args)`. Новый навык — это
+регистрация объекта под этот контракт; потребители не меняются.
+
+Вокруг контракта лежат value-объекты вызова инструментов в форме OpenAI:
+`ToolCall` (один запрошенный моделью вызов: `id`, `name`, `arguments`),
+`ToolCallResult` (финальный текст плюс кортеж `tool_calls`; пустой кортеж = ход
+финальный) и `ToolDefinition` (определение функции-инструмента, которое реестр
+отдаёт модели как `tools`). `ToolCallingProvider` — tool-aware двойник
+`LLMProvider`: `async complete_with_tools(messages, *, tools)` → `ToolCallResult`.
+
+`AllowlistStore` — порт долговечного хранилища рантайм-allowlist (множество
+`user_id`): `load()`, `add()`, `remove()`. На нём держится `Authorizer`, чтобы
+команда `/authorize` пережила рестарт; SQLite-адаптер живёт в инфраструктуре.
+
 ## Инварианты
 
 - Домен не выполняет I/O и не импортирует `application` или `infrastructure`.
@@ -70,6 +93,8 @@ conviction соглашается (`AGREE`), на пороге и выше пр�
 - Вердикты `TasteEngine` и позиции `Negotiation` детерминированны и тестируемы
   без LLM.
 - Порты — только контракты: в этом модуле нет реализаций.
+- `Capability`-шов forward-compatible: новый навык регистрируется как объект под
+  контракт, потребители (реестр, tool-loop) не меняются.
 
 ## API
 
@@ -77,15 +102,21 @@ conviction соглашается (`AGREE`), на пороге и выше пр�
 
 Модуль `src/bob/domain/ports.py`:
 - `LLMProvider` — `async complete(messages, *, stream)` → `str | AsyncIterator[str]`.
+- `ToolCallingProvider` — `async complete_with_tools(messages, *, tools)` → `ToolCallResult`.
+- `Capability` — свойства `name`, `description`, `input_schema`, `permission`
+  (`"safe" | "confirm"`) и `async execute(args)` → `object`.
 - `MemoryRepo` — `save_episode()`, `save_fact()`, `load_episodes(*, limit)`,
   `recent_episodes(k)` (последние `k` эпизодов в хронологическом порядке — для
   воспроизведения недавней истории диалога в промпт ответа).
 - `MemoryRecall` — `recall(query, *, k)` → `Sequence[Recalled]`.
 - `SoulStore` — `soul_exists()`, `read_soul()`, `write_soul()`, `write_json()`,
   `append_genesis_log()`.
+- `AllowlistStore` — `load()` → `set[int]`, `add(user_id)`, `remove(user_id)`.
 - `EventBus` — `publish(event)`, `subscribe(event_name, handler)`.
 - `Clock` — `now()` → `datetime` (инъекция времени; запрет `datetime.now()` в домене).
 - `DomainEvent` — маркер с `name` для маршрутизации на шине.
+- `ToolCall`, `ToolCallResult` — value-объекты OpenAI-формата вызова инструментов;
+  `Permission` (`"safe" | "confirm"`), `ToolDefinition` — определение функции-инструмента.
 
 Модуль `src/bob/domain/personality/mood.py`:
 - `Mood` — `update(delta)`, `drift_toward(baseline, *, rate)`, `tone()`.

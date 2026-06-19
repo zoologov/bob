@@ -107,7 +107,7 @@ bd close <bead-id> --suggest-next
 ## 0.1 Project: bob
 
 <!-- beadloom:auto-start project-info -->
-- **Stack:** Python 3.10+, SQLite
+- **Stack:** Python 3.10+, SQLite, Rich
 - **Tests:** pytest + pytest-cov
 - **Linter/formatter:** ruff (lint + format)
 - **Type checking:** mypy --strict

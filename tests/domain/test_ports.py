@@ -10,7 +10,7 @@ import ast
 import inspect
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import get_type_hints, runtime_checkable
+from typing import ClassVar, get_type_hints, runtime_checkable
 
 import pytest
 
@@ -19,7 +19,15 @@ from bob.domain import ports
 
 @pytest.mark.parametrize(
     "name",
-    ["Clock", "EventBus", "LLMProvider", "MemoryRepo", "MemoryRecall"],
+    [
+        "Clock",
+        "EventBus",
+        "LLMProvider",
+        "MemoryRepo",
+        "MemoryRecall",
+        "Capability",
+        "ToolCallingProvider",
+    ],
 )
 def test_port_is_exported_protocol(name: str) -> None:
     # Arrange / Act
@@ -64,6 +72,43 @@ def test_memory_repo_declares_persistence_methods() -> None:
 
 def test_memory_recall_declares_recall() -> None:
     assert hasattr(ports.MemoryRecall, "recall")
+
+
+def test_capability_declares_seam_attributes() -> None:
+    # Assert the Capability contract exposes the stable seam (name/description/
+    # input_schema/permission + async execute) used by the registry/tool-loop.
+    for attr in ("name", "description", "input_schema", "permission", "execute"):
+        assert hasattr(ports.Capability, attr)
+
+
+def test_capability_is_structurally_satisfiable() -> None:
+    # Arrange: a minimal object that satisfies the Capability shape.
+    class Echo:
+        name = "echo"
+        description = "Echo the args back."
+        input_schema: ClassVar[dict[str, object]] = {"type": "object", "properties": {}}
+        permission = "safe"
+
+        async def execute(self, args: dict[str, object]) -> object:
+            return args
+
+    # Act / Assert: it is recognised as a Capability (runtime_checkable).
+    assert isinstance(Echo(), ports.Capability)
+
+
+def test_tool_call_and_result_value_objects_exist() -> None:
+    # Assert the tool-calling value objects carry the expected fields.
+    call = ports.ToolCall(id="c1", name="recall_memory", arguments={"query": "x"})
+    assert call.id == "c1"
+    assert call.name == "recall_memory"
+    assert call.arguments == {"query": "x"}
+    result = ports.ToolCallResult(text="", tool_calls=(call,))
+    assert result.text == ""
+    assert result.tool_calls == (call,)
+
+
+def test_tool_calling_provider_declares_complete_with_tools() -> None:
+    assert hasattr(ports.ToolCallingProvider, "complete_with_tools")
 
 
 def _imported_modules(module_source: str) -> set[str]:

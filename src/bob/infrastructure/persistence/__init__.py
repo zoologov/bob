@@ -13,8 +13,9 @@ durable state live here; the schema is bundled as ``schema.sql``.
 
 from __future__ import annotations
 
+from bob.infrastructure.persistence.allowlist_store import KvAllowlistStore
 from bob.infrastructure.persistence.fts_recall import Fts5MemoryRecall
 from bob.infrastructure.persistence.soul_store import SoulStore
 from bob.infrastructure.persistence.sqlite_repo import SqliteMemoryRepo
 
-__all__ = ["Fts5MemoryRecall", "SoulStore", "SqliteMemoryRepo"]
+__all__ = ["Fts5MemoryRecall", "KvAllowlistStore", "SoulStore", "SqliteMemoryRepo"]
