@@ -19,11 +19,18 @@ sane and forward-compatible with future replica bots (Bobiverse):
   ``(chat_id, message_id)`` and processed **once** — independent of which bot
   delivered it (a different key from the per-bot ``update_id`` dedup the inner
   :class:`TelegramGateway` does).
-* **Central router** — every deduplicated update is routed with its delivering
-  **bot identity**. The **Bob path**: an *authorized* message in **Bob's topic**
-  (``chat_id == bob.chat_id`` AND ``message_thread_id == bob.topic_id``)
-  publishes one :class:`MessageReceived` onto the bus (Bob's pipeline) and Bob's
-  replies are pinned to his topic thread. The **GUPPI path** (BEAD-03,
+* **Central router (routes by content, not by the delivering bot).** The same
+  group message arrives once per admin bot, and the copies are *not*
+  interchangeable: Telegram may deliver the General-scoped GUPPI bot's copy of a
+  Bob-topic message **without** ``message_thread_id`` while the Bob bot's copy
+  carries it. So the handler is chosen from the message's **content** (chat +
+  topic-thread + authorization), independent of which bot delivered it, and the
+  cross-bot dedup slot is committed only **after** a copy was actually handled —
+  a non-routable copy leaves the slot open for its routable sibling. The **Bob
+  path**: an *authorized* message in **Bob's topic** (``chat_id == bob.chat_id``
+  AND ``message_thread_id == bob.topic_id``) publishes one
+  :class:`MessageReceived` onto the bus (Bob's pipeline) and Bob's replies are
+  pinned to his topic thread. The **GUPPI path** (BEAD-03,
   :class:`~bob.infrastructure.telegram.guppi.GuppiHandler`): an *unauthorized*
   message in Bob's topic gets GUPPI's visible reject (Bob's pipeline is NOT
   invoked); an owner command in General (``/authorize`` / ``/deauthorize`` /
@@ -55,6 +62,7 @@ if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
     from bob.domain.ports import EventBus
+    from bob.infrastructure.telegram.gateway import MessageLike
 
 logger = logging.getLogger(__name__)
 
@@ -65,6 +73,21 @@ __all__ = [
     "BotScope",
     "MultiBotGateway",
 ]
+
+
+class _RouteOutcome(Enum):
+    """What the central router did with one message copy (drives cross-bot dedup).
+
+    ``PUBLISHED`` / ``HANDLED`` mean a real handler ran (Bob's pipeline, GUPPI's
+    reject, or a GUPPI command) → the ``(chat_id, message_id)`` slot is committed.
+    ``UNROUTABLE`` means this copy matched no handler (e.g. a thread-less duplicate
+    of a Bob-topic message) → the slot stays open so a routable sibling copy can
+    still be handled.
+    """
+
+    PUBLISHED = "published"
+    HANDLED = "handled"
+    UNROUTABLE = "unroutable"
 
 
 class BotIdentity(Enum):
@@ -135,7 +158,7 @@ class BotRegistry:
 
 
 class MultiBotGateway:
-    """Polls every registered bot, dedups cross-bot, routes by identity + scope."""
+    """Polls every registered bot, dedups cross-bot, routes by message content."""
 
     def __init__(
         self,
@@ -226,16 +249,22 @@ class MultiBotGateway:
     async def route(self, update: UpdateLike, identity: BotIdentity) -> bool:
         """Route one ``(update, bot_identity)`` through the central router.
 
-        The public ``(update, identity)`` seam: cross-bot dedup, then Bob's
-        topic-scope + authorization, publishing onto Bob's pipeline when the
-        update is his. Dedup + scope are identity-independent (a group message is
-        processed once whichever admin bot delivered it); ``identity`` is the
-        routing key future replicas and the GUPPI branch dispatch on. Returns
-        ``True`` iff a :class:`MessageReceived` was published (the Bob path only).
+        The public ``(update, identity)`` seam. Both admin bots are group admins,
+        so the same group message arrives once per bot — and the copies are *not*
+        interchangeable: Telegram may deliver the General-scoped GUPPI bot's copy
+        of a Bob-topic message **without** ``message_thread_id`` while the Bob
+        bot's copy carries it. So the routing decision is made from the message's
+        **content** (chat + topic-thread + authorization), never from which bot
+        delivered it; the cross-bot dedup keyed on ``(chat_id, message_id)`` only
+        commits **after** a copy has actually been handled, so a non-routable copy
+        (a thread-less duplicate that matches neither Bob's topic nor a General
+        command) does not swallow the slot a later, routable copy needs.
 
-        Bob's topic + unauthorized → GUPPI's visible reject (no publish). General +
-        owner command → GUPPI consumes it (no publish). Everything else (stranger
-        DM, foreign chat, non-owner command) is dropped silently — no reveal.
+        Returns ``True`` iff a :class:`MessageReceived` was published (the Bob
+        path only). Bob's topic + unauthorized → GUPPI's visible reject (no
+        publish). General + owner command → GUPPI consumes it (no publish).
+        Everything else (stranger DM, foreign chat, non-owner command, a
+        non-routable duplicate) is dropped silently — no reveal.
         """
         message = update.message
         chat = update.effective_chat
@@ -246,37 +275,54 @@ class MultiBotGateway:
         if key in self._seen_messages:
             logger.debug("dropping cross-bot duplicate %s via %s", key, identity.value)
             return False
-        self._seen_messages.add(key)
 
+        outcome = await self._route_by_content(update, chat.id, message)
+        # Only a copy that actually reached a handler commits the dedup slot. A
+        # non-routable copy (e.g. GUPPI's thread-less copy of a Bob-topic message)
+        # leaves the slot open so the Bob-topic copy can still be routed.
+        if outcome is not _RouteOutcome.UNROUTABLE:
+            self._seen_messages.add(key)
+        return outcome is _RouteOutcome.PUBLISHED
+
+    async def _route_by_content(
+        self, update: UpdateLike, chat_id: int, message: MessageLike
+    ) -> _RouteOutcome:
+        """Classify the message by its content (not the delivering bot) and act.
+
+        * Bob's topic + authorized → publish onto Bob's pipeline.
+        * Bob's topic + unauthorized → GUPPI's visible reject.
+        * General owner command → GUPPI consumes it.
+        * anything else → unroutable (caller leaves the dedup slot open).
+        """
         bob_scope = self._registry.scope_of(BotIdentity.BOB)
-        if not bob_scope.matches(
-            chat_id=chat.id, message_thread_id=message.message_thread_id
+        if bob_scope.matches(
+            chat_id=chat_id, message_thread_id=message.message_thread_id
         ):
-            # Not Bob's topic (General / other topic / foreign chat): GUPPI may
-            # consume an owner command in General; otherwise drop silently.
-            await self._maybe_guppi_command(update, chat.id)
-            return False
+            if not await self._is_authorized(update, chat_id):
+                # Unauthorized inside Bob's topic → GUPPI's visible reject; Bob's
+                # pipeline is NOT invoked.
+                await self._guppi_reject(chat_id, message.message_thread_id)
+                return _RouteOutcome.HANDLED
+            # Authorized, in Bob's topic → publish onto Bob's pipeline.
+            if await self._inner[BotIdentity.BOB].intake(update):
+                return _RouteOutcome.PUBLISHED
+            return _RouteOutcome.HANDLED
+        # Not Bob's topic: GUPPI may consume an owner command in General.
+        if await self._maybe_guppi_command(update, chat_id):
+            return _RouteOutcome.HANDLED
+        return _RouteOutcome.UNROUTABLE
 
-        if not await self._is_authorized(update, chat.id):
-            # Unauthorized inside Bob's topic → GUPPI's visible reject; Bob's
-            # pipeline is NOT invoked.
-            await self._guppi_reject(chat.id, message.message_thread_id)
-            return False
-
-        # Authorized, in Bob's topic → publish onto Bob's pipeline (as today).
-        return await self._inner[BotIdentity.BOB].intake(update)
-
-    async def _maybe_guppi_command(self, update: UpdateLike, chat_id: int) -> None:
-        """Let GUPPI consume an owner command in General (silent otherwise)."""
+    async def _maybe_guppi_command(self, update: UpdateLike, chat_id: int) -> bool:
+        """Let GUPPI consume an owner command in General; return whether it did."""
         if self._guppi is None:
-            return
+            return False
         message = update.message
         text = message.text if message is not None else None
         if text is None:
-            return
+            return False
         user = update.effective_user
         user_id = user.id if user is not None else None
-        await self._guppi.handle_general_command(
+        return await self._guppi.handle_general_command(
             text=text, user_id=user_id, chat_id=chat_id
         )
 
