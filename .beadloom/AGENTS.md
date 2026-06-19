@@ -29,20 +29,30 @@
 
 | Tool | Description |
 |------|-------------|
-| `prime` | Compact project context for session start |
 | `get_context` | Full context bundle (graph + docs + code) |
 | `get_graph` | Subgraph around a node |
 | `list_nodes` | List nodes, optionally by kind |
 | `sync_check` | Check doc-code freshness |
 | `get_status` | Index statistics and coverage |
-| `search` | Full-text search across nodes and docs |
 | `update_node` | Update node summary or source |
 | `mark_synced` | Mark doc-code pair as synchronized |
+| `search` | Full-text search across nodes and docs |
 | `generate_docs` | Enrichment data for AI doc polish |
+| `prime` | Compact project context for session start |
 | `why` | Impact analysis — upstream and downstream deps |
 | `diff` | Graph changes since a git ref |
 | `lint` | Architecture boundary violations with severity |
+| `get_debt_report` | Architecture debt report with score and offenders |
+| `task_init` | Scaffold a work item: docs folder + 4-role bead DAG |
+| `bead_context` | One payload: ctx + why + doc excerpt + active rules |
+| `complete_bead` | Refusing gate: run beadloom ci (+tests); close only on PASS |
+| `checkpoint` | bd comment + timestamped ACTIVE.md progress note |
+## Architecture Rules
+
+- **domain-needs-parent** (require): Every domain must have a part_of edge
 
 ## Custom
 
+<!-- beadloom:custom-start -->
 <!-- Add project-specific instructions below this line -->
+<!-- beadloom:custom-end -->

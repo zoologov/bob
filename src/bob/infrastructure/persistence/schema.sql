@@ -1,0 +1,107 @@
+-- Copyright (c) 2026 Vladimir Zoologov
+-- SPDX-License-Identifier: BUSL-1.1
+-- Bob persistence schema (SQLite + FTS5). Applied idempotently on init.
+
+-- Episodic memory: the append-only timeline of lived experience.
+CREATE TABLE IF NOT EXISTS episodic_log (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts            TEXT    NOT NULL,            -- ISO-8601, timezone-aware
+    event_type    TEXT    NOT NULL,
+    content       TEXT    NOT NULL,
+    mood_snapshot TEXT,                        -- mood at the moment (nullable)
+    tags          TEXT    NOT NULL DEFAULT ''  -- comma-separated labels
+);
+
+CREATE INDEX IF NOT EXISTS idx_episodic_ts ON episodic_log (ts DESC);
+
+-- FTS5 virtual table over episodic content — full-archive keyword recall (Fix A).
+-- 'content'-less external-content index keyed back to episodic_log.id via rowid,
+-- so the whole conversation is searchable even for turns never fact-extracted.
+CREATE VIRTUAL TABLE IF NOT EXISTS episodic_fts USING fts5 (
+    content,
+    content='episodic_log',
+    content_rowid='id'
+);
+
+-- Triggers keep the episodic FTS index in sync with the base table.
+CREATE TRIGGER IF NOT EXISTS episodic_fts_ai AFTER INSERT ON episodic_log BEGIN
+    INSERT INTO episodic_fts (rowid, content) VALUES (new.id, new.content);
+END;
+
+CREATE TRIGGER IF NOT EXISTS episodic_fts_ad AFTER DELETE ON episodic_log BEGIN
+    INSERT INTO episodic_fts (episodic_fts, rowid, content) VALUES ('delete', old.id, old.content);
+END;
+
+CREATE TRIGGER IF NOT EXISTS episodic_fts_au AFTER UPDATE ON episodic_log BEGIN
+    INSERT INTO episodic_fts (episodic_fts, rowid, content) VALUES ('delete', old.id, old.content);
+    INSERT INTO episodic_fts (rowid, content) VALUES (new.id, new.content);
+END;
+
+-- Semantic memory: distilled, durable facts/beliefs.
+CREATE TABLE IF NOT EXISTS semantic_memory (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts         TEXT    NOT NULL,
+    category   TEXT    NOT NULL,
+    content    TEXT    NOT NULL,
+    confidence REAL    NOT NULL DEFAULT 1.0
+);
+
+CREATE INDEX IF NOT EXISTS idx_semantic_ts ON semantic_memory (ts DESC);
+
+-- FTS5 virtual table over semantic content — P0 keyword recall (seam for vectors).
+-- 'content'-less external-content index keyed back to semantic_memory.id via rowid.
+CREATE VIRTUAL TABLE IF NOT EXISTS semantic_fts USING fts5 (
+    content,
+    content='semantic_memory',
+    content_rowid='id'
+);
+
+-- Triggers keep the FTS index in sync with the base table.
+CREATE TRIGGER IF NOT EXISTS semantic_fts_ai AFTER INSERT ON semantic_memory BEGIN
+    INSERT INTO semantic_fts (rowid, content) VALUES (new.id, new.content);
+END;
+
+CREATE TRIGGER IF NOT EXISTS semantic_fts_ad AFTER DELETE ON semantic_memory BEGIN
+    INSERT INTO semantic_fts (semantic_fts, rowid, content) VALUES ('delete', old.id, old.content);
+END;
+
+CREATE TRIGGER IF NOT EXISTS semantic_fts_au AFTER UPDATE ON semantic_memory BEGIN
+    INSERT INTO semantic_fts (semantic_fts, rowid, content) VALUES ('delete', old.id, old.content);
+    INSERT INTO semantic_fts (rowid, content) VALUES (new.id, new.content);
+END;
+
+-- Current mood: a single-row snapshot (id = 1) holding a JSON blob.
+CREATE TABLE IF NOT EXISTS mood_state (
+    id    INTEGER PRIMARY KEY CHECK (id = 1),
+    state TEXT NOT NULL,  -- JSON object
+    ts    TEXT NOT NULL
+);
+
+-- Mood history: every mood snapshot, for drift/analysis.
+CREATE TABLE IF NOT EXISTS mood_history (
+    id    INTEGER PRIMARY KEY AUTOINCREMENT,
+    state TEXT NOT NULL,  -- JSON object
+    ts    TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_mood_history_ts ON mood_history (ts DESC);
+
+-- Taste axes: learned preferences with conviction and experience counts.
+CREATE TABLE IF NOT EXISTS taste_axes (
+    axis             TEXT PRIMARY KEY,
+    value            REAL    NOT NULL,
+    conviction       REAL    NOT NULL DEFAULT 0.0,
+    experience_count INTEGER NOT NULL DEFAULT 0
+);
+
+-- Relationship state with the user: a single-row JSON blob (id = 1).
+CREATE TABLE IF NOT EXISTS relationship (
+    id    INTEGER PRIMARY KEY CHECK (id = 1),
+    state TEXT NOT NULL  -- JSON object (trust, familiarity, ...)
+);
+
+-- Generic key/value store (genesis_done flag, misc state).
+CREATE TABLE IF NOT EXISTS kv (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);

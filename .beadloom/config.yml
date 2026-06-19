@@ -1,6 +1,6 @@
 docs_dir: docs
 languages:
-- python
+- .py
 preset: monolith
 scan_paths:
 - src
