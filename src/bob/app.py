@@ -61,6 +61,8 @@ from bob.infrastructure.telegram.gateway import (
 )
 
 if TYPE_CHECKING:
+    from aiogram.types import InputRichMessage
+
     from bob.application.runtime.agent import BackgroundTask
     from bob.application.usecases.run_genesis import GenesisResult
     from bob.domain.ports import DomainEvent, EventHandler, LLMProvider
@@ -466,6 +468,20 @@ class _AiogramBotAdapter:
     ) -> bool:
         return await self._bot.send_message_draft(  # type: ignore[attr-defined,no-any-return]
             chat_id=chat_id, draft_id=draft_id, text=text
+        )
+
+    async def send_rich_message(
+        self, *, chat_id: int, rich_message: InputRichMessage
+    ) -> MessageLike:
+        return await self._bot.send_rich_message(  # type: ignore[attr-defined,no-any-return]
+            chat_id=chat_id, rich_message=rich_message
+        )
+
+    async def send_rich_message_draft(
+        self, *, chat_id: int, draft_id: int, rich_message: InputRichMessage
+    ) -> bool:
+        return await self._bot.send_rich_message_draft(  # type: ignore[attr-defined,no-any-return]
+            chat_id=chat_id, draft_id=draft_id, rich_message=rich_message
         )
 
 

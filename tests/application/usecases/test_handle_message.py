@@ -18,6 +18,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
+from bob.application.capabilities.registry import CapabilityRegistry
 from bob.application.router.llm_router import LLMRouter
 from bob.application.runtime.events import MessageReceived
 from bob.application.usecases.extract_facts import ExtractFacts
@@ -26,12 +27,19 @@ from bob.application.usecases.update_mood_from_text import UpdateMoodFromText
 from bob.domain.personality.mood import Mood
 from bob.domain.personality.soul import SOUL
 from bob.domain.personality.taste import TasteAxis, TasteEngine
+from bob.domain.ports import ToolCall, ToolCallResult
 from bob.infrastructure.telegram.gateway import TelegramGateway
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Mapping, Sequence
 
-    from bob.domain.ports import Recalled
+    from bob.domain.ports import (
+        LLMMessage,
+        Permission,
+        Recalled,
+        ToolCallingProvider,
+        ToolDefinition,
+    )
     from bob.infrastructure.telegram.gateway import UpdateLike
 
 _PHANTOM_PREF = "phantom-coffee-craving"  # shareable taste material (shapes the reply)
@@ -113,6 +121,16 @@ class FakeBot:
         self.drafts.append((chat_id, draft_id, text))
         return True
 
+    async def send_rich_message(
+        self, *, chat_id: int, rich_message: object  # noqa: ARG002
+    ) -> FakeMessage:
+        return FakeMessage(message_id=777)
+
+    async def send_rich_message_draft(
+        self, *, chat_id: int, draft_id: int, rich_message: object  # noqa: ARG002
+    ) -> bool:
+        return True
+
     @property
     def final_text(self) -> str:
         """The committed reply text (the full reply sent via send_message)."""
@@ -173,6 +191,8 @@ def _build(
     reply: str,
     history: Sequence[Mapping[str, object]] = (),
     tier0_replies: Sequence[str] | None = None,
+    registry: CapabilityRegistry | None = None,
+    tool_provider: ToolCallingProvider | None = None,
 ) -> tuple[HandleMessage, FakeBot, FakeRepo, CapturingProvider]:
     tier0 = CapturingProvider(reply="positive", replies=tier0_replies)
     tier1 = CapturingProvider(reply=reply)
@@ -199,6 +219,8 @@ def _build(
         extract_facts=ExtractFacts(router=router, repo=repo, clock=clock),
         clock=clock,
         state=PersonalityState(soul=_soul()),
+        registry=registry,
+        tool_provider=tool_provider,
     )
     return handler, bot, repo, tier1
 
@@ -332,3 +354,135 @@ async def test_mood_updates_from_message() -> None:
     valence = repo.mood["valence"]
     assert isinstance(valence, float)
     assert valence > 0.1
+
+
+# --- Capability seam / tool-use loop ------------------------------------------
+
+_CAP_RESULT = "the user told you their name is Ada earlier"
+
+
+class FakeCapability:
+    """A Capability that records its dispatched args and returns a canned result."""
+
+    name = "recall_memory"
+    description = "Search Bob's archived memory for relevant facts."
+    input_schema: Mapping[str, object] = {
+        "type": "object",
+        "properties": {"query": {"type": "string"}},
+        "required": ["query"],
+    }
+    permission: Permission = "safe"
+
+    def __init__(self) -> None:
+        self.calls: list[Mapping[str, object]] = []
+
+    async def execute(self, args: Mapping[str, object]) -> object:
+        self.calls.append(args)
+        return _CAP_RESULT
+
+
+class ScriptedToolProvider:
+    """Tool-calling provider: first asks for a tool, then gives a final answer.
+
+    Records the tools it was offered and the messages of each turn so the test can
+    assert the manifest reached the model and the tool result was fed back.
+    """
+
+    def __init__(self) -> None:
+        self.tools_seen: list[Sequence[ToolDefinition]] = []
+        self.turns: list[list[dict[str, str]]] = []
+        self._call = 0
+
+    async def complete_with_tools(
+        self,
+        messages: Sequence[LLMMessage],
+        *,
+        tools: Sequence[ToolDefinition],
+    ) -> ToolCallResult:
+        self.tools_seen.append(list(tools))
+        self.turns.append([dict(m) for m in messages])
+        self._call += 1
+        if self._call == 1:
+            call = ToolCall(id="c1", name="recall_memory", arguments={"query": "name"})
+            return ToolCallResult(text="", tool_calls=(call,))
+        return ToolCallResult(text="Your name is Ada.", tool_calls=())
+
+    @property
+    def all_text(self) -> str:
+        return "\n".join(m["content"] for turn in self.turns for m in turn)
+
+
+def _registry_with_recall() -> tuple[CapabilityRegistry, FakeCapability]:
+    registry = CapabilityRegistry()
+    cap = FakeCapability()
+    registry.register(cap)
+    return registry, cap
+
+
+async def test_tool_loop_dispatches_and_feeds_result_back_to_final_answer() -> None:
+    # Arrange: a registry with recall_memory + a provider that requests it once.
+    registry, cap = _registry_with_recall()
+    provider = ScriptedToolProvider()
+    handler, bot, _repo, _tier1 = _build(
+        reply="unused", registry=registry, tool_provider=provider
+    )
+
+    # Act
+    await handler.handle(_message("what's my name?"))
+
+    # Assert: the capability was dispatched with the model's args (GUPPI executed),
+    assert cap.calls == [{"query": "name"}]
+    # the manifest reached the model as tools,
+    assert provider.tools_seen[0]
+    assert provider.tools_seen[0][0]["function"]["name"] == "recall_memory"  # type: ignore[index]
+    # the tool result was fed back into the second turn,
+    assert _CAP_RESULT in provider.all_text
+    # and the final answer was streamed to Telegram.
+    assert bot.final_text == "Your name is Ada."
+
+
+async def test_tool_loop_puts_capability_manifest_in_system_prompt() -> None:
+    # Arrange
+    registry, _cap = _registry_with_recall()
+    provider = ScriptedToolProvider()
+    handler, _bot, _repo, _tier1 = _build(
+        reply="unused", registry=registry, tool_provider=provider
+    )
+
+    # Act
+    await handler.handle(_message("what's my name?"))
+
+    # Assert: Bob's prompt advertises what GUPPI can do (capability + persona ref).
+    assert "recall_memory" in provider.all_text
+    assert "GUPPI" in provider.all_text
+
+
+async def test_empty_registry_keeps_the_plain_router_path_unchanged() -> None:
+    # Arrange: no registry (default) + a tool provider that must NOT be used.
+    provider = ScriptedToolProvider()
+    handler, bot, repo, tier1 = _build(
+        reply="Coffee is the best.", tool_provider=provider
+    )
+
+    # Act
+    await handler.handle(_message())
+
+    # Assert: behaves exactly as today — router reply, no tool provider call.
+    assert bot.final_text == "Coffee is the best."
+    assert len(tier1.payloads) == 1
+    assert provider.turns == []
+    assert len(repo.episodes) == 1
+
+
+async def test_no_tool_provider_falls_back_to_router_even_with_capabilities() -> None:
+    # Arrange: a non-empty registry but NO tool provider wired (e.g. before BEAD-07).
+    registry, cap = _registry_with_recall()
+    handler, bot, _repo, tier1 = _build(reply="hello there", registry=registry)
+
+    # Act
+    await handler.handle(_message())
+
+    # Assert: degrades to the plain router reply; the capability is not invoked.
+    assert bot.final_text == "hello there"
+    assert len(tier1.payloads) == 1
+    assert cap.calls == []

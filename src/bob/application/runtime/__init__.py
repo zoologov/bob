@@ -9,13 +9,17 @@
 from bob.application.runtime.agent import AgentRuntime, RuntimeState
 from bob.application.runtime.event_bus import AsyncEventBus
 from bob.application.runtime.events import MESSAGE_RECEIVED, MessageReceived
-from bob.application.runtime.heartbeat import periodic
+from bob.application.runtime.heartbeat import RetryPolicy, periodic
+from bob.application.runtime.retry import is_transient, retry_with_backoff
 
 __all__ = [
     "MESSAGE_RECEIVED",
     "AgentRuntime",
     "AsyncEventBus",
     "MessageReceived",
+    "RetryPolicy",
     "RuntimeState",
+    "is_transient",
     "periodic",
+    "retry_with_backoff",
 ]

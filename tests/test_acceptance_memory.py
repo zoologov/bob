@@ -112,6 +112,16 @@ class FakeBot:
         self.drafts.append((chat_id, draft_id, text))
         return True
 
+    async def send_rich_message(
+        self, *, chat_id: int, rich_message: object  # noqa: ARG002
+    ) -> FakeMessage:
+        return FakeMessage(message_id=999)
+
+    async def send_rich_message_draft(
+        self, *, chat_id: int, draft_id: int, rich_message: object  # noqa: ARG002
+    ) -> bool:
+        return True
+
     @property
     def final_text(self) -> str:
         """The committed reply text (full streamed reply sent via send_message)."""

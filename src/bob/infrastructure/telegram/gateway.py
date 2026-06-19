@@ -32,9 +32,14 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Protocol
 
-from aiogram.exceptions import TelegramRetryAfter
+from aiogram.exceptions import AiogramError, TelegramRetryAfter
+from aiogram.types import InputRichMessage
 
 from bob.application.runtime.events import MessageReceived
+from bob.infrastructure.telegram.rich import (
+    MarkdownToRichMessage,
+    RichMessageSerializer,
+)
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
@@ -43,10 +48,19 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["BotLike", "MessageLike", "TelegramGateway", "UpdateLike"]
+__all__ = [
+    "PLAIN_TEXT_LIMIT",
+    "BotLike",
+    "MessageLike",
+    "TelegramGateway",
+    "UpdateLike",
+]
 
 # Each streamed reply uses one draft slot; drafts share this id within a reply.
 _DRAFT_ID = 1
+
+# Telegram's hard cap on a single message's text; the plain fallback splits here.
+PLAIN_TEXT_LIMIT = 4096
 
 
 # --- Minimal structural views of the bits of aiogram the gateway touches ------
@@ -104,6 +118,14 @@ class BotLike(Protocol):
         self, *, chat_id: int, draft_id: int, text: str
     ) -> bool: ...
 
+    async def send_rich_message(
+        self, *, chat_id: int, rich_message: InputRichMessage
+    ) -> MessageLike: ...
+
+    async def send_rich_message_draft(
+        self, *, chat_id: int, draft_id: int, rich_message: InputRichMessage
+    ) -> bool: ...
+
 
 # Injected seams for deterministic timing.
 type MonotonicClock = Callable[[], float]
@@ -137,6 +159,8 @@ class TelegramGateway:
         self._sleep = sleep
         self._offset = 0
         self._seen_update_ids: set[int] = set()
+        self._converter = MarkdownToRichMessage()
+        self._serializer = RichMessageSerializer()
 
     # --- Intake ---------------------------------------------------------------
 
@@ -253,3 +277,116 @@ class TelegramGateway:
                 wait = float(exc.retry_after)
                 logger.warning("Telegram rate-limited draft; backing off %.1fs", wait)
                 await self._sleep(wait)
+
+    # --- Rich reply -----------------------------------------------------------
+
+    async def reply(
+        self, *, chat_id: int, markdown: str, thinking: str | None = None
+    ) -> None:
+        """Send Bob's ``markdown`` reply as a native rich message.
+
+        The markdown is converted to a typed rich-message tree (optionally led by
+        a collapsible :class:`RichBlockThinking` block when ``thinking`` is given),
+        serialized to rich-message markdown, and sent via ``send_rich_message``. On
+        **any** rich failure the reply degrades silently to plain ``send_message``
+        — the user always gets the text, never an error. An empty reply with no
+        thinking sends nothing.
+        """
+        if not markdown.strip() and not (thinking and thinking.strip()):
+            return
+        rich_markdown = self._render(markdown, thinking)
+        try:
+            await self._bot.send_rich_message(
+                chat_id=chat_id,
+                rich_message=InputRichMessage(markdown=rich_markdown),
+            )
+        except (AiogramError, ValueError) as exc:
+            logger.warning("rich send failed; falling back to plain: %s", exc)
+            await self._send_plain(chat_id, markdown)
+
+    async def stream_reply_rich(
+        self,
+        *,
+        chat_id: int,
+        tokens: AsyncIterator[str],
+        thinking: str | None = None,
+    ) -> int:
+        """Stream ``tokens`` as rich drafts, then commit the finished rich reply.
+
+        Mirrors :meth:`stream_reply` but over the native rich channel
+        (``send_rich_message_draft`` for partials, ``send_rich_message`` to
+        commit). Any rich error on commit degrades to plain ``send_message`` so the
+        completed reply still reaches the user. Returns the number of drafts
+        streamed.
+        """
+        accumulated = ""
+        drafted_text = ""
+        pending_tokens = 0
+        drafts_made = 0
+        last_draft_at: float | None = None
+
+        async for token in tokens:
+            accumulated += token
+            pending_tokens += 1
+            if pending_tokens >= self._batch_tokens and accumulated != drafted_text:
+                last_draft_at = await self._rich_draft(
+                    chat_id, accumulated, last_draft_at
+                )
+                drafted_text = accumulated
+                drafts_made += 1
+                pending_tokens = 0
+
+        if accumulated or (thinking and thinking.strip()):
+            await self.reply(chat_id=chat_id, markdown=accumulated, thinking=thinking)
+
+        return drafts_made
+
+    def _render(self, markdown: str, thinking: str | None) -> str:
+        message = self._converter.convert(markdown, thinking=thinking)
+        return self._serializer.to_markdown(message)
+
+    async def _rich_draft(
+        self,
+        chat_id: int,
+        text: str,
+        last_draft_at: float | None,
+    ) -> float:
+        """Throttle, then stream ``text`` as a rich draft; return the draft time."""
+        await self._await_throttle(last_draft_at)
+        await self._rich_draft_with_backoff(chat_id, text)
+        return self._clock()
+
+    async def _rich_draft_with_backoff(self, chat_id: int, text: str) -> None:
+        rich_markdown = self._render(text, None)
+        while True:
+            try:
+                await self._bot.send_rich_message_draft(
+                    chat_id=chat_id,
+                    draft_id=_DRAFT_ID,
+                    rich_message=InputRichMessage(markdown=rich_markdown),
+                )
+                return
+            except TelegramRetryAfter as exc:
+                wait = float(exc.retry_after)
+                logger.warning(
+                    "Telegram rate-limited rich draft; backing off %.1fs", wait
+                )
+                await self._sleep(wait)
+            except (AiogramError, ValueError) as exc:
+                logger.warning("rich draft failed; skipping partial: %s", exc)
+                return
+
+    async def _send_plain(self, chat_id: int, text: str) -> None:
+        """Send ``text`` as plain message(s), splitting on the length limit."""
+        for chunk in _split_for_length(text):
+            await self._bot.send_message(chat_id=chat_id, text=chunk)
+
+
+def _split_for_length(text: str) -> list[str]:
+    """Split ``text`` into chunks no longer than :data:`PLAIN_TEXT_LIMIT`."""
+    if len(text) <= PLAIN_TEXT_LIMIT:
+        return [text]
+    return [
+        text[start : start + PLAIN_TEXT_LIMIT]
+        for start in range(0, len(text), PLAIN_TEXT_LIMIT)
+    ]

@@ -37,6 +37,8 @@ import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol
 
+from bob.application.capabilities.registry import CapabilityRegistry
+from bob.application.capabilities.tool_loop import ToolLoop
 from bob.application.router.llm_router import LLMRequest, TaskType
 from bob.application.usecases.update_mood_from_text import TextSignals
 from bob.domain.memory.entities import EpisodicEvent
@@ -50,7 +52,13 @@ if TYPE_CHECKING:
     from bob.application.usecases.extract_facts import ExtractFacts
     from bob.application.usecases.update_mood_from_text import UpdateMoodFromText
     from bob.domain.personality.soul import SOUL
-    from bob.domain.ports import Clock, MemoryRecall, Recalled
+    from bob.domain.ports import (
+        Clock,
+        LLMMessage,
+        MemoryRecall,
+        Recalled,
+        ToolCallingProvider,
+    )
 
 logger = logging.getLogger(__name__)
 
@@ -66,6 +74,13 @@ _SINGLE_MESSAGE = 1
 _SYSTEM_PROMPT = (
     "You are Bob, a digital person from the Bobiverse. Reply in character, "
     "warmly and concisely, coloured by your current mood."
+)
+
+# Preface for the capability manifest in Bob's prompt: GUPPI is his executor, so
+# he knows what he can do and that the tools run through GUPPI (persona ref).
+_CAPABILITY_PREFACE = (
+    "Your subsystem GUPPI can run these capabilities for you; call one when it "
+    "helps you answer:"
 )
 
 
@@ -115,6 +130,8 @@ class HandleMessage:
         extract_facts: ExtractFacts,
         clock: Clock,
         state: PersonalityState,
+        registry: CapabilityRegistry | None = None,
+        tool_provider: ToolCallingProvider | None = None,
     ) -> None:
         self._router = router
         self._gateway = gateway
@@ -125,6 +142,12 @@ class HandleMessage:
         self._extract_facts = extract_facts
         self._clock = clock
         self._state = state
+        # The capability seam (BEAD-05): an empty registry (the default) means no
+        # capabilities, so HandleMessage behaves exactly as before. The tool-loop
+        # only engages when capabilities are registered AND a tool-calling
+        # provider is wired (integration wires both in BEAD-07).
+        self._registry = registry if registry is not None else CapabilityRegistry()
+        self._tool_provider = tool_provider
 
     async def handle(self, event: MessageReceived) -> None:
         """Process one received message end to end (the EventBus subscriber)."""
@@ -159,17 +182,38 @@ class HandleMessage:
         Reply-shaping context (history + memory + mood/identity/taste) goes in
         ``shareable_context`` so it reaches the Tier 1 reply; the
         ``private_context`` channel is kept for Tier-0-only material (empty here).
+        When capabilities are registered AND a tool-calling provider is wired, the
+        reply runs through the capability tool-loop (the model may call a
+        capability, GUPPI executes it, the result loops back); otherwise it stays
+        on today's plain router path.
         """
+        context = _assemble_shareable_context(soul, text, recalled, history)
+        provider = self._tool_provider
+        if provider is not None and not self._registry.is_empty:
+            return await self._reply_with_tools(provider, text, context)
         request = LLMRequest(
             task_type=TaskType.REPLY_TO_USER,
             messages=[
                 {"role": "system", "content": _SYSTEM_PROMPT},
                 {"role": "user", "content": text},
             ],
-            shareable_context=_assemble_shareable_context(soul, text, recalled, history),
+            shareable_context=context,
             private_context=None,
         )
         return await self._router.run(request)
+
+    async def _reply_with_tools(
+        self, provider: ToolCallingProvider, text: str, context: str
+    ) -> str:
+        """Drive the capability tool-loop, advertising the manifest in the prompt."""
+        manifest = "\n".join([_CAPABILITY_PREFACE, self._registry.describe()])
+        parts = [_SYSTEM_PROMPT, manifest, context] if context else [_SYSTEM_PROMPT, manifest]
+        messages: list[LLMMessage] = [
+            {"role": "system", "content": "\n".join(parts)},
+            {"role": "user", "content": text},
+        ]
+        loop = ToolLoop(provider=provider, registry=self._registry)
+        return await loop.run(messages)
 
     async def _persist(self, event: MessageReceived, reply: str, soul: SOUL) -> None:
         """Save the turn as an episode and snapshot the updated mood."""

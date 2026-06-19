@@ -16,6 +16,7 @@ import pytest
 
 from bob.infrastructure.llm.openai_compat import (
     _extract_message_content,
+    _extract_tool_call_result,
     _parse_sse_token,
 )
 
@@ -82,3 +83,111 @@ def test_parse_sse_token_extracts_delta_content() -> None:
 )
 def test_parse_sse_token_ignores_non_token_lines(line: bytes) -> None:
     assert _parse_sse_token(line) is None
+
+
+# --- _extract_tool_call_result (tool-calling body) ----------------------------
+
+
+def test_extract_tool_call_result_reads_native_tool_calls() -> None:
+    # Arrange: an OpenAI-native tool_calls response (the MaaS-supports-tools path).
+    body = {
+        "choices": [
+            {
+                "message": {
+                    "content": None,
+                    "tool_calls": [
+                        {
+                            "id": "call_1",
+                            "type": "function",
+                            "function": {
+                                "name": "recall_memory",
+                                "arguments": '{"query": "coffee"}',
+                            },
+                        }
+                    ],
+                }
+            }
+        ]
+    }
+
+    # Act
+    result = _extract_tool_call_result(body)
+
+    # Assert: the native call is decoded into a ToolCall (arguments JSON parsed).
+    assert result.text == ""
+    assert len(result.tool_calls) == 1
+    call = result.tool_calls[0]
+    assert call.id == "call_1"
+    assert call.name == "recall_memory"
+    assert call.arguments == {"query": "coffee"}
+
+
+def test_extract_tool_call_result_final_answer_has_no_tool_calls() -> None:
+    # Arrange: a plain final answer (no tools requested).
+    body = {"choices": [{"message": {"content": "Coffee is great."}}]}
+
+    # Act
+    result = _extract_tool_call_result(body)
+
+    # Assert
+    assert result.text == "Coffee is great."
+    assert result.tool_calls == ()
+
+
+def test_extract_tool_call_result_parses_prompt_protocol_fallback() -> None:
+    # Arrange: NO native tool_calls — the model emitted a JSON tool-call as TEXT,
+    # wrapped in reasoning prose + a code fence (the prompt-protocol fallback for
+    # a MaaS endpoint that does not support native OpenAI tools).
+    content = (
+        "Let me think... I should look that up.\n"
+        '```json\n{"tool_call": {"name": "recall_memory", '
+        '"arguments": {"query": "coffee"}}}\n```\n'
+        "Calling it now."
+    )
+    body = {"choices": [{"message": {"content": content}}]}
+
+    # Act
+    result = _extract_tool_call_result(body)
+
+    # Assert: the fenced JSON tool-call is recovered tolerantly.
+    assert len(result.tool_calls) == 1
+    call = result.tool_calls[0]
+    assert call.name == "recall_memory"
+    assert call.arguments == {"query": "coffee"}
+
+
+def test_extract_tool_call_result_ignores_plain_prose_without_tool_call() -> None:
+    # Arrange: prose that merely mentions JSON braces but is no tool-call.
+    body = {"choices": [{"message": {"content": "I think {coffee} is nice."}}]}
+
+    # Act
+    result = _extract_tool_call_result(body)
+
+    # Assert: treated as a final answer, no spurious tool call.
+    assert result.tool_calls == ()
+    assert result.text == "I think {coffee} is nice."
+
+
+def test_extract_tool_call_result_tolerates_malformed_native_arguments() -> None:
+    # Arrange: native tool_call whose arguments are not valid JSON.
+    body = {
+        "choices": [
+            {
+                "message": {
+                    "tool_calls": [
+                        {
+                            "id": "c9",
+                            "function": {"name": "recall_memory", "arguments": "not json"},
+                        }
+                    ]
+                }
+            }
+        ]
+    }
+
+    # Act
+    result = _extract_tool_call_result(body)
+
+    # Assert: the call survives with empty arguments rather than erroring.
+    assert len(result.tool_calls) == 1
+    assert result.tool_calls[0].arguments == {}
