@@ -53,6 +53,7 @@ class TaskType(Enum):
     SENTIMENT = "sentiment"
     INNER_MONOLOGUE = "inner_monologue"
     REFLECT = "reflect"
+    EXTRACT_FACTS = "extract_facts"
 
 
 # Task -> preferred tier. Quality-critical, user-facing work goes to Tier 1
@@ -63,6 +64,7 @@ _PREFERRED_TIER: dict[TaskType, int] = {
     TaskType.SENTIMENT: _TIER_LOCAL,
     TaskType.INNER_MONOLOGUE: _TIER_LOCAL,
     TaskType.REFLECT: _TIER_LOCAL,
+    TaskType.EXTRACT_FACTS: _TIER_LOCAL,
 }
 
 

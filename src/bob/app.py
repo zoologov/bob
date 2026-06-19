@@ -38,6 +38,7 @@ from bob.application.runtime import (
     MessageReceived,
     periodic,
 )
+from bob.application.usecases.extract_facts import ExtractFacts
 from bob.application.usecases.handle_message import HandleMessage, PersonalityState
 from bob.application.usecases.heartbeat import (
     InnerMonologueTick,
@@ -160,6 +161,7 @@ def build_application(
 
     personality = PersonalityState(soul=_default_soul())
     update_mood = UpdateMoodFromText(router=router, clock=clock)
+    extract_facts = ExtractFacts(router=router, repo=memory_repo, clock=clock)
     gateway = _build_gateway(merged, bus=event_bus, bot=bot)
 
     handle_message = HandleMessage(
@@ -169,6 +171,7 @@ def build_application(
         repo=memory_repo,
         episodes=memory_repo,
         update_mood=update_mood,
+        extract_facts=extract_facts,
         clock=clock,
         state=personality,
     )

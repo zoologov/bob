@@ -22,6 +22,10 @@ use-case runs Bob's perceive→decide→act turn (RFC §"Поток обрабо
 3. **Act** — the router replies on ``TaskType.REPLY_TO_USER`` (Tier 1 + redaction,
    fallback Tier 0); the reply is streamed back through the Telegram gateway and
    the turn is persisted (episode + mood snapshot) via the :class:`MemoryRepo`.
+4. **Remember** — after the reply, :class:`ExtractFacts` (Tier 0) distils durable,
+   user-specific facts into ``semantic_memory`` so a later turn's
+   :class:`MemoryRecall` can surface them. Best-effort: it never raises, so a
+   flaky local model cannot break a turn that has already replied.
 
 This layer only orchestrates: tone/verdict come from the pure domain, transport
 and storage live behind ports, and time is injected via :class:`Clock`.
@@ -43,6 +47,7 @@ if TYPE_CHECKING:
 
     from bob.application.router.llm_router import LLMRouter
     from bob.application.runtime.events import MessageReceived
+    from bob.application.usecases.extract_facts import ExtractFacts
     from bob.application.usecases.update_mood_from_text import UpdateMoodFromText
     from bob.domain.personality.soul import SOUL
     from bob.domain.ports import Clock, MemoryRecall, Recalled
@@ -107,6 +112,7 @@ class HandleMessage:
         repo: EpisodeWriter,
         episodes: EpisodeReader,
         update_mood: UpdateMoodFromText,
+        extract_facts: ExtractFacts,
         clock: Clock,
         state: PersonalityState,
     ) -> None:
@@ -116,6 +122,7 @@ class HandleMessage:
         self._repo = repo
         self._episodes = episodes
         self._update_mood = update_mood
+        self._extract_facts = extract_facts
         self._clock = clock
         self._state = state
 
@@ -127,6 +134,10 @@ class HandleMessage:
         reply = await self._decide(event.text, soul, recalled, history)
         await self._gateway.stream_reply(chat_id=event.chat_id, tokens=_iter_tokens(reply))
         await self._persist(event, reply, soul)
+        # Tier 0 "remember" step: distil durable facts into semantic memory so a
+        # later turn's recall can surface them. Best-effort — run() never raises,
+        # so a flaky local model can never break a turn that already replied.
+        await self._extract_facts.run(user_message=event.text, reply=reply)
 
     async def _perceive(self, event: MessageReceived) -> SOUL:
         """Update mood from the message text and store the new soul snapshot."""

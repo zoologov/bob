@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING
 
 from bob.application.router.llm_router import LLMRouter
 from bob.application.runtime.events import MessageReceived
+from bob.application.usecases.extract_facts import ExtractFacts
 from bob.application.usecases.handle_message import HandleMessage, PersonalityState
 from bob.application.usecases.update_mood_from_text import UpdateMoodFromText
 from bob.domain.personality.mood import Mood
@@ -50,10 +51,17 @@ class FixedClock:
 
 
 class CapturingProvider:
-    """Fake LLMProvider that records every payload it is asked to complete."""
+    """Fake LLMProvider that records every payload it is asked to complete.
 
-    def __init__(self, *, reply: str) -> None:
+    ``replies`` lets a single provider answer successive calls differently (the
+    Tier 0 provider serves both sentiment and fact extraction in one turn); when
+    exhausted it falls back to the last reply.
+    """
+
+    def __init__(self, *, reply: str, replies: Sequence[str] | None = None) -> None:
         self.reply = reply
+        self._replies = list(replies) if replies is not None else None
+        self._call = 0
         self.payloads: list[list[dict[str, str]]] = []
 
     async def complete(
@@ -63,7 +71,11 @@ class CapturingProvider:
         stream: bool = False,  # noqa: ARG002 — part of the LLMProvider protocol
     ) -> str | AsyncIterator[str]:
         self.payloads.append([dict(m) for m in messages])
-        return self.reply
+        if self._replies is None:
+            return self.reply
+        index = min(self._call, len(self._replies) - 1)
+        self._call += 1
+        return self._replies[index]
 
     @property
     def all_text(self) -> str:
@@ -153,9 +165,12 @@ def _soul() -> SOUL:
 
 
 def _build(
-    *, reply: str, history: Sequence[Mapping[str, object]] = ()
+    *,
+    reply: str,
+    history: Sequence[Mapping[str, object]] = (),
+    tier0_replies: Sequence[str] | None = None,
 ) -> tuple[HandleMessage, FakeBot, FakeRepo, CapturingProvider]:
-    tier0 = CapturingProvider(reply="positive")
+    tier0 = CapturingProvider(reply="positive", replies=tier0_replies)
     tier1 = CapturingProvider(reply=reply)
     router = LLMRouter(providers={0: tier0, 1: tier1})
     clock = FixedClock(_moment())
@@ -177,6 +192,7 @@ def _build(
         repo=repo,
         episodes=repo,
         update_mood=UpdateMoodFromText(router=router, clock=clock),
+        extract_facts=ExtractFacts(router=router, repo=repo, clock=clock),
         clock=clock,
         state=PersonalityState(soul=_soul()),
     )
@@ -268,6 +284,36 @@ async def test_recent_conversation_history_reaches_tier1_reply() -> None:
     # Assert: the earlier turn (the name) is in the Tier 1 reply context — Bob remembers.
     assert _PRIOR_TURN in tier1.all_text
     assert "Ada" in tier1.all_text
+
+
+async def test_durable_fact_is_extracted_into_semantic_memory() -> None:
+    # Arrange: Tier 0 first answers sentiment, then returns one durable fact.
+    handler, _bot, repo, _tier1 = _build(
+        reply="nice to meet you",
+        tier0_replies=["positive", '[{"category": "user", "content": "name is Vova"}]'],
+    )
+
+    # Act: the user states a durable fact.
+    await handler.handle(_message("my name is Vova"))
+
+    # Assert: it landed in semantic memory (Tier 0 extraction, best-effort).
+    assert any(getattr(f, "content", "") == "name is Vova" for f in repo.facts)
+
+
+async def test_extraction_failure_does_not_break_the_turn() -> None:
+    # Arrange: Tier 0 returns prose (not JSON) on the extraction call.
+    handler, bot, repo, _tier1 = _build(
+        reply="all good",
+        tier0_replies=["positive", "sorry, no facts here"],
+    )
+
+    # Act
+    await handler.handle(_message("just chatting"))
+
+    # Assert: the reply still went out and the episode persisted; no fact stored.
+    assert bot.final_text == "all good"
+    assert len(repo.episodes) == 1
+    assert repo.facts == []
 
 
 async def test_mood_updates_from_message() -> None:

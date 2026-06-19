@@ -21,7 +21,10 @@ from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequenc
 from datetime import (
     datetime,  # noqa: TC003 — runtime-resolvable for get_type_hints on the Clock port
 )
-from typing import Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
+
+if TYPE_CHECKING:
+    from bob.domain.memory.entities import SemanticFact
 
 __all__ = [
     "Clock",
@@ -115,6 +118,10 @@ class MemoryRepo(Protocol):
 
     async def save_episode(self, episode: Mapping[str, object]) -> None:
         """Append one episodic event to durable storage."""
+        ...
+
+    async def save_fact(self, fact: SemanticFact) -> None:
+        """Persist one durable semantic fact (the FTS index is updated too)."""
         ...
 
     async def load_episodes(self, *, limit: int) -> Sequence[Mapping[str, object]]:
