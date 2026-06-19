@@ -62,6 +62,7 @@ class FakeMessage:
     def __init__(self, message_id: int) -> None:
         self.message_id = message_id
         self.text: str | None = None
+        self.message_thread_id: int | None = None
 
 
 class FakeBot:
@@ -74,23 +75,39 @@ class FakeBot:
     async def get_updates(self, *, offset: int, timeout: int) -> Sequence[UpdateLike]:  # noqa: ARG002
         return []
 
-    async def send_message(self, *, chat_id: int, text: str) -> FakeMessage:
+    async def send_message(
+        self, *, chat_id: int, text: str, message_thread_id: int | None = None  # noqa: ARG002
+    ) -> FakeMessage:
         self.sent.append((chat_id, text))
         return FakeMessage(message_id=1)
 
     async def send_message_draft(
-        self, *, chat_id: int, draft_id: int, text: str
+        self,
+        *,
+        chat_id: int,
+        draft_id: int,
+        text: str,
+        message_thread_id: int | None = None,  # noqa: ARG002
     ) -> bool:
         self.drafts.append((chat_id, draft_id, text))
         return True
 
     async def send_rich_message(
-        self, *, chat_id: int, rich_message: object  # noqa: ARG002
+        self,
+        *,
+        chat_id: int,  # noqa: ARG002
+        rich_message: object,  # noqa: ARG002
+        message_thread_id: int | None = None,  # noqa: ARG002
     ) -> FakeMessage:
         return FakeMessage(message_id=1)
 
     async def send_rich_message_draft(
-        self, *, chat_id: int, draft_id: int, rich_message: object  # noqa: ARG002
+        self,
+        *,
+        chat_id: int,  # noqa: ARG002
+        draft_id: int,  # noqa: ARG002
+        rich_message: object,  # noqa: ARG002
+        message_thread_id: int | None = None,  # noqa: ARG002
     ) -> bool:
         return True
 
@@ -109,7 +126,11 @@ def _config(tmp_path: Path) -> dict[str, object]:
             "tier1_model": "tier1",
             "tier1_api_key": "sk-test",
         },
-        "telegram": {"token": "tok", "poll_timeout": 1},
+        "telegram": {
+            "poll_timeout": 1,
+            "bob": {"token": "bob-tok", "topic_id": 0},
+            "guppi": {"token": "guppi-tok"},
+        },
         "persistence": {
             "db_path": str(tmp_path / "bob.db"),
             "soul_dir": str(tmp_path / "soul"),
@@ -149,7 +170,9 @@ async def test_e2e_message_to_reply_and_persist(tmp_path: Path) -> None:
     _seed_soul(tmp_path)
     providers, _tier0, _tier1 = _providers()
     bot = FakeBot()
-    app = build_application(config=_config(tmp_path), providers=providers, bot=bot)
+    app = build_application(
+        config=_config(tmp_path), providers=providers, bob_bot=bot, guppi_bot=bot
+    )
     await app.startup()
 
     # seed a recallable fact so recall has something to find
@@ -177,7 +200,9 @@ async def test_e2e_private_context_redacted_but_memory_shared(tmp_path: Path) ->
     _seed_soul(tmp_path)
     providers, _tier0, tier1 = _providers()
     bot = FakeBot()
-    app = build_application(config=_config(tmp_path), providers=providers, bot=bot)
+    app = build_application(
+        config=_config(tmp_path), providers=providers, bob_bot=bot, guppi_bot=bot
+    )
     await app.startup()
 
     await app.memory_repo.save_fact(
@@ -220,7 +245,9 @@ async def test_e2e_heartbeat_tick_moves_mood(tmp_path: Path) -> None:
     _seed_soul(tmp_path)
     providers, _tier0, _tier1 = _providers()
     bot = FakeBot()
-    app = build_application(config=_config(tmp_path), providers=providers, bot=bot)
+    app = build_application(
+        config=_config(tmp_path), providers=providers, bob_bot=bot, guppi_bot=bot
+    )
     await app.startup()
     before = app.personality.soul.mood.valence
 
@@ -249,7 +276,10 @@ async def test_e2e_genesis_runs_once_on_first_start(tmp_path: Path) -> None:
     tier1 = CapturingProvider(reply=genesis_reply)
     bot = FakeBot()
     app = build_application(
-        config=_config(tmp_path), providers={0: tier0, 1: tier1}, bot=bot
+        config=_config(tmp_path),
+        providers={0: tier0, 1: tier1},
+        bob_bot=bot,
+        guppi_bot=bot,
     )
 
     # Act

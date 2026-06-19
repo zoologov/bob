@@ -12,10 +12,17 @@ LLM-провайдер, SQLite-хранилище с FTS5, файловый `Sou
 
 ### Модули
 
+- **telegram/multibot.py** — `MultiBotGateway`: `BotRegistry` (Боб + GUPPI), один
+  поллинг обоих ботов с изоляцией, кросс-бот дедуп по `(chat_id, message_id)` и
+  центральный роутер по identity+scope; `BotIdentity`, `BotScope`,
+  `BotRegistration`.
+- **telegram/guppi.py** — `GuppiHandler`: видимый reject `GUPPI_REJECT_TEXT` в
+  топике Боба + owner-команды `/authorize`/`/deauthorize`/`/status` в General
+  поверх общего `Authorizer`.
 - **telegram/gateway.py** — `TelegramGateway` на aiogram: long-polling приём с
-  единым гейтом авторизации + нативный draft-стриминг и Rich Messages (только
-  транспорт); структурные протоколы `BotLike`, `UpdateLike`, `MessageLike`,
-  `AuthorizerLike`.
+  единым гейтом авторизации + нативный draft-стриминг и Rich Messages, приколачивание
+  ответа к топику через `reply_thread_id` (только транспорт); структурные протоколы
+  `BotLike`, `UpdateLike`, `MessageLike`, `AuthorizerLike`.
 - **telegram/rich.py** — `MarkdownToRichMessage` (markdown → типизированное дерево
   aiogram `RichMessage`/`RichBlock`/`RichText`) и `RichMessageSerializer` (дерево →
   rich-message markdown для отправки).
@@ -66,6 +73,47 @@ rich происходит тихая деградация на обычный `s
 Время и sleep инъецируются для детерминизма; бот инъецируется за минимальным
 протоколом `BotLike`, поэтому тесты идут без сети. Реальная сборка aiogram `Bot`
 и адаптер `UpdateLike` живут в `app.py`.
+
+### Мульти-бот gateway и GUPPI (BOB-003)
+
+Один процесс держит два бота — Боба и GUPPI — за `MultiBotGateway`, который чисто
+транспортный шов поверх внутренних `TelegramGateway` (по одному на бота).
+
+**`BotRegistry`** регистрирует бота как `{identity, bot, scope}` (`BotRegistration`,
+`BotIdentity` BOB/GUPPI, `BotScope` с `chat_id` и опциональным `topic_id`). Боб
+получает scope своего топика, GUPPI — General (`topic_id = None`). Добавление
+реплики — один вызов `register` (forward-compatible под Bobiverse).
+
+**`poll_once()`** поллит каждого зарегистрированного бота по очереди и
+**изолированно**: сбой `get_updates` одного бота (`OSError`/`RuntimeError`/
+`TimeoutError`) логируется и пропускается, не роняя остальных. Под каждого бота
+заведён внутренний `TelegramGateway` для приёма/нормализации и стриминга; у Боба он
+приколочен к его топику через `reply_thread_id`.
+
+**Кросс-бот дедуп.** Оба бота-админа видят одно групповое сообщение, поэтому оно
+приходит на два потока апдейтов. `route` дедуплицирует по `(chat_id, message_id)` и
+обрабатывает сообщение один раз — это отдельный ключ от per-бот дедупа по
+`update_id` внутри `TelegramGateway`.
+
+**Центральный роутер `route(update, identity)`.** После дедупа: авторизованный в
+топике Боба → публикация `MessageReceived` (пайплайн Боба, ответ ботом-Бобом в его
+тред); неавторизованный в топике Боба → видимый reject GUPPI (пайплайн Боба не
+запускается); owner-команда в General → GUPPI; всё прочее (другой топик, чужой чат,
+DM незнакомца, не-owner команда) — молча игнорируется. GUPPI-привратник строится
+только когда GUPPI зарегистрирован и подан `Authorizer`; иначе GUPPI-хуки
+деградируют в молчаливые дропы (обратная совместимость).
+
+**`GuppiHandler`** владеет только поведением GUPPI и шлёт ответы своим ботом (не
+Боба): `reject(chat_id, thread_id)` отправляет `GUPPI_REJECT_TEXT` в тред Боба (его
+вызывает роутер только для разрешённой группы, поэтому DM незнакомца reject не
+триггерит); `handle_general_command(text, user_id, chat_id)` обрабатывает
+`/authorize`/`/deauthorize` (мутируют allowlist через общий `Authorizer`) и
+`/status`, возвращая `True` только когда команда от owner в General — иначе молча
+`False`. Невалидный `<user_id>` даёт подсказку, а не грант.
+
+`reply_streamer(identity)` отдаёт `ReplyStreamer`-шов нужного бота; ответы Боба
+приколочены к его треду, а контракт `stream_reply(chat_id, tokens)` для
+`HandleMessage` не меняется.
 
 ### Markdown → Rich Message
 
@@ -150,9 +198,23 @@ JSON-профили (`taste_profile`, `mood`, `phantom_prefs`) и append-only
 (префикс `BOB_`, `__` для вложенности, например `BOB_LLM__TIER1_MODEL` →
 `config["llm"]["tier1_model"]`). Поздние слои deep-merge поверх ранних.
 
+**Два токена ботов (BOB-003)** не выражаются generic-правилом вложенности, поэтому
+special-cased в `_TOKEN_ENV_MAPPING`: env `BOB_TELEGRAM__TOKEN` →
+`telegram.bob.token` (иначе попал бы в `telegram.token`), env `GUPPI_TELEGRAM__TOKEN`
+→ `telegram.guppi.token` (нестандартный префикс `GUPPI_`, который `BOB_`-механизм не
+видит). Маппинг применяется после generic-env-слоя, поэтому env по-прежнему
+выигрывает. Токены — единственные секреты в `telegram` (только из env); остальное
+(`chat_id`, `bob.topic_id`, `owner_id`, `poll_timeout`, `allowed_chat_ids`) —
+non-secret и может прийти из YAML.
+
 ## Инварианты
 
 - Адаптеры реализуют порты `bob.domain.ports`; связывание — только в `app.py`.
+- Один процесс поллит обоих ботов; кросс-бот дедуп по `(chat_id, message_id)` —
+  групповое сообщение обрабатывается ровно один раз.
+- Изоляция ботов: сбой поллинга одного бота не роняет другого.
+- GUPPI шлёт ответы только своим ботом; reject виден только в разрешённой группе
+  (DM незнакомца его не триггерит); owner-команды — только для owner в General.
 - Весь SQL живёт в `SqliteMemoryRepo` и параметризован (`?`).
 - Пользовательский текст для FTS5 санитизируется (без инъекций/синтаксических ошибок).
 - API-ключ и токен берутся из конфигурации/env и не инлайнятся; на Tier 0 нет
@@ -169,8 +231,23 @@ JSON-профили (`taste_profile`, `mood`, `phantom_prefs`) и append-only
 
 ## API
 
+Модуль `src/bob/infrastructure/telegram/multibot.py`:
+- `MultiBotGateway(*, registry, bus, poll_timeout, authorizer=None)` —
+  `async poll_once()` → `int`, `async route(update, identity)` → `bool`,
+  `reply_streamer(identity)` → `ReplyStreamer`; свойство `registry`.
+- `BotRegistry` — `register(*, identity, bot, scope)`, `get(identity)`, `all()`,
+  `scope_of(identity)`.
+- `BotIdentity` (`BOB`/`GUPPI`), `BotScope(chat_id, topic_id)` с
+  `matches(*, chat_id, message_thread_id)`, `BotRegistration`.
+
+Модуль `src/bob/infrastructure/telegram/guppi.py`:
+- `GuppiHandler(*, bot, authorizer, general_chat_id)` —
+  `async reject(*, chat_id, thread_id)`,
+  `async handle_general_command(*, text, user_id, chat_id)` → `bool`.
+- `GUPPI_REJECT_TEXT`.
+
 Модуль `src/bob/infrastructure/telegram/gateway.py`:
-- `TelegramGateway(*, bot, bus, poll_timeout, batch_tokens, throttle_interval, clock, sleep, authorizer=None)` —
+- `TelegramGateway(*, bot, bus, poll_timeout, batch_tokens, throttle_interval, clock, sleep, authorizer=None, reply_thread_id=None)` —
   `async poll_once()`, `async intake(update)`, `async stream_reply(*, chat_id, tokens)`,
   `async reply(*, chat_id, markdown, thinking=None)`,
   `async stream_reply_rich(*, chat_id, tokens, thinking=None)`.
@@ -213,6 +290,11 @@ JSON-профили (`taste_profile`, `mood`, `phantom_prefs`) и append-only
 Тесты: `tests/infrastructure/telegram/test_gateway.py`,
 `tests/infrastructure/telegram/test_gateway_authz.py`,
 `tests/infrastructure/telegram/test_gateway_hardening.py`,
+`tests/infrastructure/telegram/test_multibot.py`,
+`tests/infrastructure/telegram/test_multibot_hardening.py`,
+`tests/infrastructure/telegram/test_guppi.py`,
+`tests/infrastructure/telegram/test_multibot_guppi.py`,
+`tests/infrastructure/telegram/test_e2e_two_bot.py`,
 `tests/infrastructure/telegram/test_rich.py`,
 `tests/infrastructure/telegram/test_rich_hardening.py`,
 `tests/infrastructure/llm/test_openai_compat.py`,

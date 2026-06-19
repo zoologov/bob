@@ -10,6 +10,13 @@ Precedence (lowest to highest): built-in :data:`DEFAULT_CONFIG`, an optional YAM
 file (``yaml.safe_load``), then environment variables. Env vars use the prefix
 ``BOB_`` and ``__`` to denote nesting, e.g. ``BOB_LLM__TIER1_MODEL`` maps to
 ``config["llm"]["tier1_model"]``. Later layers deep-merge over earlier ones.
+
+Two-bot tokens are special-cased because they don't follow the nesting rule
+one-to-one: the bot tokens live under ``telegram.bob.token`` /
+``telegram.guppi.token`` but are fed by the flat env vars ``BOB_TELEGRAM__TOKEN``
+(the historical name) and ``GUPPI_TELEGRAM__TOKEN`` (a non-standard prefix the
+generic ``BOB_`` mechanism cannot pick up). :data:`_TOKEN_ENV_MAPPING` maps each
+env var to its explicit nested path; these are applied last so env still wins.
 """
 
 from __future__ import annotations
@@ -33,6 +40,15 @@ type Config = dict[str, Any]
 _ENV_PREFIX = "BOB_"
 _ENV_NESTING_SEPARATOR = "__"
 
+# Explicit env-var -> nested config path mapping for the two bot tokens. The
+# generic BOB_ nesting cannot express either: BOB_TELEGRAM__TOKEN would land at
+# telegram.token (not telegram.bob.token), and GUPPI_TELEGRAM__TOKEN does not
+# carry the BOB_ prefix at all. Applied after the generic env layer so env wins.
+_TOKEN_ENV_MAPPING: dict[str, tuple[str, ...]] = {
+    "BOB_TELEGRAM__TOKEN": ("telegram", "bob", "token"),
+    "GUPPI_TELEGRAM__TOKEN": ("telegram", "guppi", "token"),
+}
+
 # Built-in defaults — the safe baseline the runtime boots from with no YAML/env.
 DEFAULT_CONFIG: Config = {
     "runtime": {
@@ -49,8 +65,21 @@ DEFAULT_CONFIG: Config = {
         # budget on reasoning_content.
         "disable_thinking": True,
     },
+    # Two bots in one process (BOB-003): Bob lives in his topic, GUPPI is the
+    # gatekeeper in General. Each bot's token comes from env only (never YAML);
+    # the shared ids (chat/owner/allowlist) and Bob's topic are non-secret.
     "telegram": {
         "poll_timeout": 10,
+        "chat_id": 0,
+        "owner_id": 0,
+        "allowed_chat_ids": [],
+        "bob": {
+            "token": "",
+            "topic_id": 0,
+        },
+        "guppi": {
+            "token": "",
+        },
     },
 }
 
@@ -72,6 +101,7 @@ class ConfigLoader:
         config: Config = copy.deepcopy(DEFAULT_CONFIG)
         _deep_merge(config, self._load_yaml())
         _deep_merge(config, self._load_env())
+        self._apply_token_mapping(config)
         return config
 
     def _load_yaml(self) -> Config:
@@ -87,11 +117,20 @@ class ConfigLoader:
     def _load_env(self) -> Config:
         overrides: Config = {}
         for key, value in self._env.items():
-            if not key.startswith(_ENV_PREFIX):
+            # The explicitly mapped bot tokens are applied separately (with their
+            # own nested path); skip them so the generic rule doesn't misplace one.
+            if key in _TOKEN_ENV_MAPPING or not key.startswith(_ENV_PREFIX):
                 continue
             path = key[len(_ENV_PREFIX) :].lower().split(_ENV_NESTING_SEPARATOR)
             _assign_nested(overrides, path, value)
         return overrides
+
+    def _apply_token_mapping(self, config: Config) -> None:
+        """Overlay the two bot tokens from their explicit env vars (env wins)."""
+        for env_var, path in _TOKEN_ENV_MAPPING.items():
+            value = self._env.get(env_var)
+            if value is not None:
+                _assign_nested(config, list(path), value)
 
 
 def _deep_merge(base: MutableMapping[str, Any], overlay: Mapping[str, Any]) -> None:

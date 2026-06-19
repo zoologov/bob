@@ -46,6 +46,7 @@ _CHAT = 100
 class _FakeMessage:
     message_id: int
     text: str | None
+    message_thread_id: int | None = None
 
 
 @dataclass
@@ -95,23 +96,39 @@ class _FakeBot:
     ) -> Sequence[_FakeUpdate]:
         return []
 
-    async def send_message(self, *, chat_id: int, text: str) -> _FakeMessage:
+    async def send_message(
+        self, *, chat_id: int, text: str, message_thread_id: int | None = None  # noqa: ARG002
+    ) -> _FakeMessage:
         self.sends.append(_SendCall(chat_id=chat_id, text=text))
         return _FakeMessage(message_id=1, text=text)
 
     async def send_message_draft(
-        self, *, chat_id: int, draft_id: int, text: str  # noqa: ARG002
+        self,
+        *,
+        chat_id: int,  # noqa: ARG002
+        draft_id: int,  # noqa: ARG002
+        text: str,  # noqa: ARG002
+        message_thread_id: int | None = None,  # noqa: ARG002
     ) -> bool:
         return True
 
     async def send_rich_message(
-        self, *, chat_id: int, rich_message: InputRichMessage
+        self,
+        *,
+        chat_id: int,
+        rich_message: InputRichMessage,
+        message_thread_id: int | None = None,  # noqa: ARG002
     ) -> _FakeMessage:
         self.rich_sends.append((chat_id, rich_message.markdown))
         return _FakeMessage(message_id=1, text=rich_message.markdown)
 
     async def send_rich_message_draft(
-        self, *, chat_id: int, draft_id: int, rich_message: InputRichMessage
+        self,
+        *,
+        chat_id: int,
+        draft_id: int,
+        rich_message: InputRichMessage,
+        message_thread_id: int | None = None,  # noqa: ARG002
     ) -> bool:
         self._rich_draft_calls += 1
         if self.rich_draft_retry_after_on_call == self._rich_draft_calls:

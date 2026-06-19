@@ -59,13 +59,16 @@ class _Provider:
 class _Msg:
     message_id = 1
     text: str | None = None
+    message_thread_id: int | None = None
 
 
 class _Bot:
     async def get_updates(self, *, offset: int, timeout: int) -> Sequence[UpdateLike]:  # noqa: ARG002
         return []
 
-    async def send_message(self, *, chat_id: int, text: str) -> _Msg:  # noqa: ARG002
+    async def send_message(
+        self, *, chat_id: int, text: str, message_thread_id: int | None = None  # noqa: ARG002
+    ) -> _Msg:
         return _Msg()
 
     async def send_message_draft(
@@ -74,14 +77,26 @@ class _Bot:
         chat_id: int,  # noqa: ARG002
         draft_id: int,  # noqa: ARG002
         text: str,  # noqa: ARG002
+        message_thread_id: int | None = None,  # noqa: ARG002
     ) -> bool:
         return True
 
-    async def send_rich_message(self, *, chat_id: int, rich_message: object) -> _Msg:  # noqa: ARG002
+    async def send_rich_message(
+        self,
+        *,
+        chat_id: int,  # noqa: ARG002
+        rich_message: object,  # noqa: ARG002
+        message_thread_id: int | None = None,  # noqa: ARG002
+    ) -> _Msg:
         return _Msg()
 
     async def send_rich_message_draft(
-        self, *, chat_id: int, draft_id: int, rich_message: object  # noqa: ARG002
+        self,
+        *,
+        chat_id: int,  # noqa: ARG002
+        draft_id: int,  # noqa: ARG002
+        rich_message: object,  # noqa: ARG002
+        message_thread_id: int | None = None,  # noqa: ARG002
     ) -> bool:
         return True
 
@@ -89,7 +104,11 @@ class _Bot:
 def _config(tmp_path: Path) -> dict[str, object]:
     return {
         "runtime": {"log_level": "INFO", "heartbeat_seconds": 1},
-        "telegram": {"token": "tok", "poll_timeout": 1},
+        "telegram": {
+            "poll_timeout": 1,
+            "bob": {"token": "bob-tok", "topic_id": 0},
+            "guppi": {"token": "guppi-tok"},
+        },
         "persistence": {
             "db_path": str(tmp_path / "bob.db"),
             "soul_dir": str(tmp_path / "soul"),
@@ -102,7 +121,12 @@ def _providers() -> dict[int, LLMProvider]:
 
 
 def _app(tmp_path: Path) -> Application:
-    return build_application(config=_config(tmp_path), providers=_providers(), bot=_Bot())
+    return build_application(
+        config=_config(tmp_path),
+        providers=_providers(),
+        bob_bot=_Bot(),
+        guppi_bot=_Bot(),
+    )
 
 
 # --- Real-bot construction & token validation ---------------------------------
@@ -111,33 +135,39 @@ def _app(tmp_path: Path) -> Application:
 def test_build_real_bot_requires_a_token() -> None:
     # Act / Assert: an absent token must fail loudly, not build a broken bot.
     with pytest.raises(KeyError):
-        _build_real_bot({})
+        _build_real_bot({}, "bob")
 
 
 def test_build_real_bot_rejects_empty_token() -> None:
     # Act / Assert: an empty-string token is as invalid as a missing one.
     with pytest.raises(KeyError):
-        _build_real_bot({"token": ""})
+        _build_real_bot({"token": ""}, "bob")
 
 
-def test_build_application_builds_real_bot_when_none_injected(
+def test_build_application_builds_real_bots_when_none_injected(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    # Arrange: stub the real-bot factory so no PTB Bot / network is constructed.
-    built_with: dict[str, object] = {}
+    # Arrange: stub the real-bot factory so no aiogram Bot / network is built. The
+    # composition root now builds TWO real bots (Bob + GUPPI) from their sections.
+    built_tokens: list[object] = []
 
-    def fake_build_real_bot(telegram: Mapping[str, object]) -> _Bot:
-        built_with.update(telegram)
+    def fake_build_real_bot(
+        bot_section: Mapping[str, object], identity: str
+    ) -> _Bot:
+        built_tokens.append(bot_section.get("token"))
         return _Bot()
 
     monkeypatch.setattr(app_module, "_build_real_bot", fake_build_real_bot)
 
-    # Act: omit the bot seam -> the real-bot path runs.
-    app = build_application(config=_config(tmp_path), providers=_providers(), bot=None)
+    # Act: omit both bot seams -> the real-bot path runs for each.
+    app = build_application(
+        config=_config(tmp_path), providers=_providers(), bob_bot=None, guppi_bot=None
+    )
 
-    # Assert: the gateway was wired from the configured telegram section.
+    # Assert: both bots were wired from their configured telegram sections.
     assert isinstance(app, Application)
-    assert built_with["token"] == "tok"  # noqa: S105 — test fixture, not a credential
+    assert "bob-tok" in built_tokens
+    assert "guppi-tok" in built_tokens
 
 
 # --- aiogram bot adapter delegation -------------------------------------------
@@ -188,11 +218,20 @@ async def test_aiogram_adapter_delegates_every_call() -> None:
                 )
             ]
 
-        async def send_message(self, *, chat_id: int, text: str) -> str:
+        async def send_message(
+            self, *, chat_id: int, text: str, message_thread_id: int | None = None  # noqa: ARG002
+        ) -> str:
             self.calls.append(("send_message", {"chat_id": chat_id, "text": text}))
             return "sent"
 
-        async def send_message_draft(self, *, chat_id: int, draft_id: int, text: str) -> bool:
+        async def send_message_draft(
+            self,
+            *,
+            chat_id: int,
+            draft_id: int,
+            text: str,
+            message_thread_id: int | None = None,  # noqa: ARG002
+        ) -> bool:
             self.calls.append(
                 ("draft", {"chat_id": chat_id, "draft_id": draft_id, "text": text})
             )
@@ -240,7 +279,12 @@ async def test_poll_background_task_polls_the_gateway(tmp_path: Path) -> None:
             return []
 
     bot = CountingBot()
-    app = build_application(config=_config(tmp_path), providers=_providers(), bot=bot)
+    app = build_application(
+        config=_config(tmp_path),
+        providers=_providers(),
+        bob_bot=bot,
+        guppi_bot=_Bot(),
+    )
 
     # Act: the poll loop is a supervised background task; let it tick.
     await app.runtime.start()
@@ -269,7 +313,7 @@ def test_main_builds_and_runs_until_stopped(
     # Arrange: pre-seed a SOUL so startup's Genesis is a no-op; stub the
     # real-bot factory + asyncio.run so main() drives _run without a network.
     SoulStore(tmp_path / "soul").write_soul("# SOUL\n\nBob.\n")
-    monkeypatch.setattr(app_module, "_build_real_bot", lambda _t: _Bot())
+    monkeypatch.setattr(app_module, "_build_real_bot", lambda _section, _identity: _Bot())
 
     ran: dict[str, object] = {}
 

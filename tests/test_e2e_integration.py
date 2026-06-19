@@ -33,7 +33,8 @@ from bob.application.runtime.events import MessageReceived
 from bob.domain.memory.entities import SemanticFact
 from bob.domain.ports import ToolCall, ToolCallResult
 from bob.infrastructure.persistence import SoulStore
-from bob.infrastructure.telegram.rich import MarkdownToRichMessage, RichMessageSerializer
+from bob.infrastructure.telegram.guppi import GUPPI_REJECT_TEXT
+from bob.infrastructure.telegram.multibot import BotIdentity
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Callable, Sequence
@@ -44,6 +45,7 @@ if TYPE_CHECKING:
 
 _OWNER = 1
 _CHAT = 100
+_TOPIC = 32
 _RECALL_FACT = "user adores deep-space probes"
 _PLAIN_REPLY = "Hey, good to hear from you!"
 
@@ -134,6 +136,7 @@ class FakeMessage:
     def __init__(self, message_id: int) -> None:
         self.message_id = message_id
         self.text: str | None = None
+        self.message_thread_id: int | None = None
 
 
 class FakeBot:
@@ -141,30 +144,48 @@ class FakeBot:
 
     def __init__(self) -> None:
         self.sent: list[tuple[int, str]] = []
+        self.sent_threads: list[int | None] = []
         self.drafts: list[tuple[int, int, str]] = []
         self.rich_sent: list[tuple[int, str]] = []
 
     async def get_updates(self, *, offset: int, timeout: int) -> Sequence[UpdateLike]:  # noqa: ARG002
         return []
 
-    async def send_message(self, *, chat_id: int, text: str) -> FakeMessage:
+    async def send_message(
+        self, *, chat_id: int, text: str, message_thread_id: int | None = None
+    ) -> FakeMessage:
         self.sent.append((chat_id, text))
+        self.sent_threads.append(message_thread_id)
         return FakeMessage(message_id=1)
 
     async def send_message_draft(
-        self, *, chat_id: int, draft_id: int, text: str
+        self,
+        *,
+        chat_id: int,
+        draft_id: int,
+        text: str,
+        message_thread_id: int | None = None,  # noqa: ARG002
     ) -> bool:
         self.drafts.append((chat_id, draft_id, text))
         return True
 
     async def send_rich_message(
-        self, *, chat_id: int, rich_message: object
+        self,
+        *,
+        chat_id: int,
+        rich_message: object,
+        message_thread_id: int | None = None,  # noqa: ARG002
     ) -> FakeMessage:
         self.rich_sent.append((chat_id, _rich_markdown(rich_message)))
         return FakeMessage(message_id=1)
 
     async def send_rich_message_draft(
-        self, *, chat_id: int, draft_id: int, rich_message: object  # noqa: ARG002
+        self,
+        *,
+        chat_id: int,  # noqa: ARG002
+        draft_id: int,  # noqa: ARG002
+        rich_message: object,  # noqa: ARG002
+        message_thread_id: int | None = None,  # noqa: ARG002
     ) -> bool:
         return True
 
@@ -190,10 +211,19 @@ class _User:
 
 
 class _Update:
-    def __init__(self, update_id: int, *, chat_id: int, user_id: int, text: str) -> None:
+    def __init__(
+        self,
+        update_id: int,
+        *,
+        chat_id: int,
+        user_id: int,
+        text: str,
+        thread_id: int | None = _TOPIC,
+    ) -> None:
         self.update_id = update_id
         self.message = FakeMessage(message_id=update_id)
         self.message.text = text
+        self.message.message_thread_id = thread_id
         self.effective_chat = _Chat(chat_id)
         self.effective_user = _User(user_id)
 
@@ -212,10 +242,12 @@ def _config(tmp_path: Path) -> dict[str, object]:
             "tier1_api_key": "sk-test",
         },
         "telegram": {
-            "token": "tok",
             "poll_timeout": 1,
+            "chat_id": _CHAT,
             "owner_id": _OWNER,
             "allowed_chat_ids": [_CHAT],
+            "bob": {"token": "bob-tok", "topic_id": _TOPIC},
+            "guppi": {"token": "guppi-tok"},
         },
         "persistence": {
             "db_path": str(tmp_path / "bob.db"),
@@ -255,23 +287,28 @@ async def test_e2e_unauthorized_user_is_dropped(tmp_path: Path) -> None:
         1: CapturingProvider(reply=_PLAIN_REPLY),
     }
     bot = FakeBot()
-    app = build_application(config=_config(tmp_path), providers=providers, bot=bot)
+    guppi_bot = FakeBot()
+    app = build_application(
+        config=_config(tmp_path), providers=providers, bob_bot=bot, guppi_bot=guppi_bot
+    )
     await app.startup()
 
-    # Act: an outsider in the allowed chat; an owner message right after.
+    # Act: an outsider in Bob's topic (GUPPI rejects), then the owner.
     try:
-        outsider = await app.gateway.intake(
-            _Update(1, chat_id=_CHAT, user_id=555, text="hi")
+        outsider = await app.multibot.route(
+            _Update(1, chat_id=_CHAT, user_id=555, text="hi"), BotIdentity.BOB
         )
-        owner = await app.gateway.intake(
-            _Update(2, chat_id=_CHAT, user_id=_OWNER, text="hi")
+        owner = await app.multibot.route(
+            _Update(2, chat_id=_CHAT, user_id=_OWNER, text="hi"), BotIdentity.BOB
         )
     finally:
         await app.shutdown()
 
-    # Assert: the outsider was dropped; only the owner published a turn.
+    # Assert: the outsider was dropped (GUPPI rejected, Bob not invoked); only the
+    # owner published a turn onto Bob's pipeline.
     assert outsider is False
     assert owner is True
+    assert GUPPI_REJECT_TEXT in [text for _, text in guppi_bot.sent]
 
 
 async def test_e2e_authorized_message_yields_reply(tmp_path: Path) -> None:
@@ -280,7 +317,10 @@ async def test_e2e_authorized_message_yields_reply(tmp_path: Path) -> None:
     tier1 = CapturingProvider(reply=_PLAIN_REPLY)
     providers: dict[int, LLMProvider] = {0: CapturingProvider(reply="positive"), 1: tier1}
     bot = FakeBot()
-    app = build_application(config=_config(tmp_path), providers=providers, bot=bot)
+    guppi_bot = FakeBot()
+    app = build_application(
+        config=_config(tmp_path), providers=providers, bob_bot=bot, guppi_bot=guppi_bot
+    )
     await app.startup()
 
     # Act
@@ -300,7 +340,10 @@ async def test_e2e_tool_loop_calls_recall_memory(tmp_path: Path) -> None:
     tier1 = ToolCallingTier1(plain_reply=_PLAIN_REPLY)
     providers: dict[int, LLMProvider] = {0: CapturingProvider(reply="positive"), 1: tier1}
     bot = FakeBot()
-    app = build_application(config=_config(tmp_path), providers=providers, bot=bot)
+    guppi_bot = FakeBot()
+    app = build_application(
+        config=_config(tmp_path), providers=providers, bob_bot=bot, guppi_bot=guppi_bot
+    )
     await app.startup()
 
     # A recallable fact the capability will surface.
@@ -328,7 +371,10 @@ async def test_e2e_registry_is_populated_with_recall_memory(tmp_path: Path) -> N
         1: ToolCallingTier1(plain_reply=_PLAIN_REPLY),
     }
     app = build_application(
-        config=_config(tmp_path), providers=providers, bot=FakeBot()
+        config=_config(tmp_path),
+        providers=providers,
+        bob_bot=FakeBot(),
+        guppi_bot=FakeBot(),
     )
 
     # Assert: the composition root registered recall_memory in the manifest.
@@ -337,31 +383,34 @@ async def test_e2e_registry_is_populated_with_recall_memory(tmp_path: Path) -> N
     assert not app.registry.is_empty
 
 
-async def test_e2e_rich_thinking_block_renders(tmp_path: Path) -> None:
-    # Arrange: the gateway is the wired rich gateway; render a reply with a
-    # thinking block straight through it (proves RichBlockThinking is composed).
+async def test_e2e_bob_reply_is_pinned_to_his_topic_thread(tmp_path: Path) -> None:
+    # Arrange: an authorized owner message routed into Bob's topic. The reply
+    # streams through the multi-bot gateway's Bob seam, which pins his topic.
     _seed_soul(tmp_path)
     providers: dict[int, LLMProvider] = {
         0: CapturingProvider(reply="positive"),
         1: CapturingProvider(reply=_PLAIN_REPLY),
     }
     bot = FakeBot()
-    app = build_application(config=_config(tmp_path), providers=providers, bot=bot)
-
-    # Act: send a rich reply carrying a thinking block.
-    await app.gateway.reply(
-        chat_id=_CHAT, markdown="Hello there.", thinking="weighing the probes"
+    guppi_bot = FakeBot()
+    app = build_application(
+        config=_config(tmp_path), providers=providers, bob_bot=bot, guppi_bot=guppi_bot
     )
+    await app.startup()
 
-    # Assert: a rich message was sent and its markdown carries the thinking text,
-    # matching the standalone serializer (RichBlockThinking is present).
-    assert bot.rich_sent
-    _chat_id, sent_markdown = bot.rich_sent[-1]
-    expected = RichMessageSerializer().to_markdown(
-        MarkdownToRichMessage().convert("Hello there.", thinking="weighing the probes")
-    )
-    assert sent_markdown == expected
-    assert "weighing the probes" in sent_markdown
+    # Act: route the owner's message in Bob's topic through the central router.
+    try:
+        published = await app.multibot.route(
+            _Update(7, chat_id=_CHAT, user_id=_OWNER, text="hi Bob"), BotIdentity.BOB
+        )
+    finally:
+        await app.shutdown()
+
+    # Assert: Bob replied, pinned to his topic thread; GUPPI stayed silent.
+    assert published is True
+    assert bot.final_text == _PLAIN_REPLY
+    assert bot.sent_threads[-1] == _TOPIC
+    assert guppi_bot.sent == []
 
 
 async def test_e2e_tick_survives_transient_error(tmp_path: Path) -> None:
@@ -371,7 +420,10 @@ async def test_e2e_tick_survives_transient_error(tmp_path: Path) -> None:
     tier0 = _FlakyTier0(reply="positive")
     providers: dict[int, LLMProvider] = {0: tier0, 1: CapturingProvider(reply=_PLAIN_REPLY)}
     bot = FakeBot()
-    app = build_application(config=_config(tmp_path), providers=providers, bot=bot)
+    guppi_bot = FakeBot()
+    app = build_application(
+        config=_config(tmp_path), providers=providers, bob_bot=bot, guppi_bot=guppi_bot
+    )
     await app.startup()
     before = app.personality.soul.mood.valence
 

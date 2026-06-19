@@ -92,6 +92,7 @@ class FakeMessage:
     def __init__(self, message_id: int) -> None:
         self.message_id = message_id
         self.text: str | None = None
+        self.message_thread_id: int | None = None
 
 
 class FakeBot:
@@ -104,21 +105,39 @@ class FakeBot:
     async def get_updates(self, *, offset: int, timeout: int) -> Sequence[UpdateLike]:  # noqa: ARG002
         return []
 
-    async def send_message(self, *, chat_id: int, text: str) -> FakeMessage:
+    async def send_message(
+        self, *, chat_id: int, text: str, message_thread_id: int | None = None  # noqa: ARG002
+    ) -> FakeMessage:
         self.sent.append((chat_id, text))
         return FakeMessage(message_id=999)
 
-    async def send_message_draft(self, *, chat_id: int, draft_id: int, text: str) -> bool:
+    async def send_message_draft(
+        self,
+        *,
+        chat_id: int,
+        draft_id: int,
+        text: str,
+        message_thread_id: int | None = None,  # noqa: ARG002
+    ) -> bool:
         self.drafts.append((chat_id, draft_id, text))
         return True
 
     async def send_rich_message(
-        self, *, chat_id: int, rich_message: object  # noqa: ARG002
+        self,
+        *,
+        chat_id: int,  # noqa: ARG002
+        rich_message: object,  # noqa: ARG002
+        message_thread_id: int | None = None,  # noqa: ARG002
     ) -> FakeMessage:
         return FakeMessage(message_id=999)
 
     async def send_rich_message_draft(
-        self, *, chat_id: int, draft_id: int, rich_message: object  # noqa: ARG002
+        self,
+        *,
+        chat_id: int,  # noqa: ARG002
+        draft_id: int,  # noqa: ARG002
+        rich_message: object,  # noqa: ARG002
+        message_thread_id: int | None = None,  # noqa: ARG002
     ) -> bool:
         return True
 
@@ -139,7 +158,11 @@ def _config(tmp_path: Path) -> dict[str, object]:
             "tier1_model": "tier1",
             "tier1_api_key": "sk-test",
         },
-        "telegram": {"token": "tok", "poll_timeout": 1},
+        "telegram": {
+            "poll_timeout": 1,
+            "bob": {"token": "bob-tok", "topic_id": 0},
+            "guppi": {"token": "guppi-tok"},
+        },
         "persistence": {
             "db_path": str(tmp_path / "bob.db"),
             "soul_dir": str(tmp_path / "soul"),
@@ -166,7 +189,10 @@ def _build_app(
 ) -> Application:
     """Wire the whole graph on the temp db with the given fakes."""
     return build_application(
-        config=_config(tmp_path), providers={0: tier0, 1: tier1}, bot=bot
+        config=_config(tmp_path),
+        providers={0: tier0, 1: tier1},
+        bob_bot=bot,
+        guppi_bot=bot,
     )
 
 

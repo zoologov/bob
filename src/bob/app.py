@@ -8,16 +8,24 @@
 
 This is the ONLY module allowed to depend on all layers at once. It loads the
 layered config, builds the real infrastructure adapters (SQLite repo + FTS5
-recall, OpenAI-compatible Tier 0/1 providers, the Telegram gateway, the soul
-store), composes the application policy (the :class:`LLMRouter`, the personality
-state, the message handler, and the heartbeat ticks), subscribes
+recall, OpenAI-compatible Tier 0/1 providers, the **two-bot** Telegram gateway,
+the soul store), composes the application policy (the :class:`LLMRouter`, the
+personality state, the message handler, and the heartbeat ticks), subscribes
 :class:`HandleMessage` to the EventBus, registers the ticks + Telegram polling as
 runtime background tasks, runs :class:`RunGenesis` once on first boot, and starts
 the :class:`AgentRuntime`.
 
-Secrets (``telegram.token``, ``llm.tier1_api_key``) come from config/env only —
-never inlined here. The providers and the Telegram bot are injectable seams so
-the whole graph can be exercised end-to-end on fakes (no network).
+Two admin bots live in one process (BOB-003): Bob is scoped to his forum topic
+and GUPPI is the gatekeeper/admin in General, both registered behind one
+:class:`~bob.infrastructure.telegram.multibot.MultiBotGateway` whose single poll
+drives both. Bob's pipeline (``HandleMessage``) streams replies through the
+gateway's Bob reply-seam so they pin to his topic thread; GUPPI's reject + owner
+commands run off the shared :class:`Authorizer`.
+
+Secrets (``telegram.bob.token``, ``telegram.guppi.token``, ``llm.tier1_api_key``)
+come from config/env only — never inlined here. The providers and both bots are
+injectable seams so the whole graph can be exercised end-to-end on fakes (no
+network).
 """
 
 from __future__ import annotations
@@ -64,11 +72,11 @@ from bob.infrastructure.persistence import (
     SoulStore,
     SqliteMemoryRepo,
 )
-from bob.infrastructure.telegram.gateway import (
-    BotLike,
-    MessageLike,
-    TelegramGateway,
-    UpdateLike,
+from bob.infrastructure.telegram.multibot import (
+    BotIdentity,
+    BotRegistry,
+    BotScope,
+    MultiBotGateway,
 )
 
 if TYPE_CHECKING:
@@ -81,6 +89,11 @@ if TYPE_CHECKING:
         EventHandler,
         LLMProvider,
         ToolCallingProvider,
+    )
+    from bob.infrastructure.telegram.gateway import (
+        BotLike,
+        MessageLike,
+        UpdateLike,
     )
 
 logger = logging.getLogger(__name__)
@@ -132,7 +145,7 @@ class Application:
     genesis: RunGenesis
     personality: PersonalityState
     handle_message: HandleMessage
-    gateway: TelegramGateway
+    multibot: MultiBotGateway
     authorizer: Authorizer
     registry: CapabilityRegistry
     inner_monologue_tick: InnerMonologueTick
@@ -162,13 +175,18 @@ def build_application(
     config_path: Path | None = None,
     config: Mapping[str, object] | None = None,
     providers: Mapping[int, LLMProvider] | None = None,
-    bot: BotLike | None = None,
+    bob_bot: BotLike | None = None,
+    guppi_bot: BotLike | None = None,
 ) -> Application:
-    """Wire the full GUPPI graph from configuration into a runnable application.
+    """Wire the full two-bot GUPPI graph from configuration into an application.
 
-    ``config`` / ``providers`` / ``bot`` are injectable seams: when omitted the
-    real adapters are built from config; tests pass fakes to exercise the whole
-    graph without a network or a Telegram account.
+    ``config`` / ``providers`` / ``bob_bot`` / ``guppi_bot`` are injectable seams:
+    when omitted the real adapters are built from config (each bot's token from
+    env via ``telegram.bob.token`` / ``telegram.guppi.token``); tests pass fake
+    aiogram bots to exercise the whole graph without a network or a Telegram
+    account. Bob and GUPPI are registered behind one
+    :class:`~bob.infrastructure.telegram.multibot.MultiBotGateway` — Bob scoped to
+    his topic thread, GUPPI to General — and one Dispatcher polls both.
     """
     merged = dict(config) if config is not None else ConfigLoader(yaml_path=config_path).load()
 
@@ -200,13 +218,17 @@ def build_application(
     update_mood = UpdateMoodFromText(router=router, clock=clock)
     extract_facts = ExtractFacts(router=router, repo=memory_repo, clock=clock)
     authorizer = _build_authorizer(merged, repo=memory_repo)
-    gateway = _build_gateway(
-        merged, bus=event_bus, bot=bot, authorizer=authorizer
+    multibot = _build_multibot(
+        merged,
+        bus=event_bus,
+        bob_bot=bob_bot,
+        guppi_bot=guppi_bot,
+        authorizer=authorizer,
     )
 
     handle_message = HandleMessage(
         router=router,
-        gateway=gateway,
+        gateway=multibot.reply_streamer(BotIdentity.BOB),
         recall=recall,
         repo=memory_repo,
         episodes=memory_repo,
@@ -228,7 +250,7 @@ def build_application(
     runtime = AgentRuntime(
         background_tasks=_background_tasks(
             merged,
-            gateway=gateway,
+            multibot=multibot,
             inner_monologue_tick=inner_monologue_tick,
             mood_drift_tick=mood_drift_tick,
             reflect_tick=reflect_tick,
@@ -244,7 +266,7 @@ def build_application(
         genesis=genesis,
         personality=personality,
         handle_message=handle_message,
-        gateway=gateway,
+        multibot=multibot,
         authorizer=authorizer,
         registry=registry,
         inner_monologue_tick=inner_monologue_tick,
@@ -266,23 +288,44 @@ def _as_handler(handle_message: HandleMessage) -> EventHandler:
     return handler
 
 
-def _build_gateway(
+def _build_multibot(
     config: Mapping[str, object],
     *,
     bus: AsyncEventBus,
-    bot: BotLike | None,
+    bob_bot: BotLike | None,
+    guppi_bot: BotLike | None,
     authorizer: Authorizer,
-) -> TelegramGateway:
-    """Build the Telegram gateway; the bot is injected (real aiogram or a fake)."""
+) -> MultiBotGateway:
+    """Build the two-bot gateway: Bob (his topic) + GUPPI (General), one poller.
+
+    Each bot is injected (a fake in tests) or built from its env token
+    (``telegram.bob.token`` / ``telegram.guppi.token``). Bob is scoped to the
+    group's Bob topic so his replies pin to that thread; GUPPI owns the General /
+    un-threaded scope. The shared :class:`Authorizer` drives GUPPI's reject + the
+    owner commands — no duplicated authz.
+    """
     telegram = _section(config, "telegram")
-    return TelegramGateway(
-        bot=bot if bot is not None else _build_real_bot(telegram),
+    chat_id = _int(telegram, "chat_id", 0)
+    bob_section = _section(telegram, "bob")
+    registry = BotRegistry()
+    registry.register(
+        identity=BotIdentity.BOB,
+        bot=bob_bot if bob_bot is not None else _build_real_bot(bob_section, "bob"),
+        scope=BotScope(chat_id=chat_id, topic_id=_int(bob_section, "topic_id", 0)),
+    )
+    registry.register(
+        identity=BotIdentity.GUPPI,
+        bot=(
+            guppi_bot
+            if guppi_bot is not None
+            else _build_real_bot(_section(telegram, "guppi"), "guppi")
+        ),
+        scope=BotScope(chat_id=chat_id, topic_id=None),
+    )
+    return MultiBotGateway(
+        registry=registry,
         bus=bus,
         poll_timeout=_int(telegram, "poll_timeout", _DEFAULT_POLL_TIMEOUT),
-        batch_tokens=_BATCH_TOKENS,
-        throttle_interval=_THROTTLE_INTERVAL,
-        clock=_monotonic,
-        sleep=_async_sleep,
         authorizer=authorizer,
     )
 
@@ -332,30 +375,40 @@ def _as_tool_provider(
     return None
 
 
-def _build_real_bot(telegram: Mapping[str, object]) -> BotLike:
-    """Construct the real aiogram ``Bot`` from the configured token."""
+def _build_real_bot(bot_section: Mapping[str, object], identity: str) -> BotLike:
+    """Construct a real aiogram ``Bot`` from a bot's configured (env) token.
+
+    ``identity`` (``"bob"`` / ``"guppi"``) only names the missing token in the
+    error — the token itself comes from env (``BOB_TELEGRAM__TOKEN`` /
+    ``GUPPI_TELEGRAM__TOKEN``), never inlined.
+    """
     from aiogram import Bot  # noqa: PLC0415 — lazy: only the real-bot path needs aiogram
 
-    token = telegram.get("token")
+    token = bot_section.get("token")
     if not isinstance(token, str) or not token:
-        raise KeyError("telegram.token is required to build the real bot")
+        raise KeyError(
+            f"telegram.{identity}.token is required to build the real {identity} bot"
+        )
     return _AiogramBotAdapter(Bot(token=token))
 
 
 def _background_tasks(
     config: Mapping[str, object],
     *,
-    gateway: TelegramGateway,
+    multibot: MultiBotGateway,
     inner_monologue_tick: InnerMonologueTick,
     mood_drift_tick: MoodDriftTick,
     reflect_tick: ReflectTick,
 ) -> list[BackgroundTask]:
-    """Build the supervised background tasks: polling + the three heartbeat ticks."""
+    """Build the supervised background tasks: polling + the three heartbeat ticks.
+
+    One poll task drives BOTH bots (Bob + GUPPI) through the multi-bot gateway.
+    """
     runtime = _section(config, "runtime")
     heartbeat = float(_int(runtime, "heartbeat_seconds", _DEFAULT_HEARTBEAT_SECONDS))
 
     async def poll() -> None:
-        await gateway.poll_once()
+        await multibot.poll_once()
 
     return [
         periodic(poll, interval_seconds=0.0),
@@ -575,28 +628,54 @@ class _AiogramBotAdapter:
         updates = await self._bot.get_updates(offset=offset, timeout=timeout)  # type: ignore[attr-defined]
         return [_to_update_view(update) for update in updates]
 
-    async def send_message(self, *, chat_id: int, text: str) -> MessageLike:
-        return await self._bot.send_message(chat_id=chat_id, text=text)  # type: ignore[attr-defined,no-any-return]
+    async def send_message(
+        self, *, chat_id: int, text: str, message_thread_id: int | None = None
+    ) -> MessageLike:
+        return await self._bot.send_message(  # type: ignore[attr-defined,no-any-return]
+            chat_id=chat_id, text=text, message_thread_id=message_thread_id
+        )
 
     async def send_message_draft(
-        self, *, chat_id: int, draft_id: int, text: str
+        self,
+        *,
+        chat_id: int,
+        draft_id: int,
+        text: str,
+        message_thread_id: int | None = None,
     ) -> bool:
         return await self._bot.send_message_draft(  # type: ignore[attr-defined,no-any-return]
-            chat_id=chat_id, draft_id=draft_id, text=text
+            chat_id=chat_id,
+            draft_id=draft_id,
+            text=text,
+            message_thread_id=message_thread_id,
         )
 
     async def send_rich_message(
-        self, *, chat_id: int, rich_message: InputRichMessage
+        self,
+        *,
+        chat_id: int,
+        rich_message: InputRichMessage,
+        message_thread_id: int | None = None,
     ) -> MessageLike:
         return await self._bot.send_rich_message(  # type: ignore[attr-defined,no-any-return]
-            chat_id=chat_id, rich_message=rich_message
+            chat_id=chat_id,
+            rich_message=rich_message,
+            message_thread_id=message_thread_id,
         )
 
     async def send_rich_message_draft(
-        self, *, chat_id: int, draft_id: int, rich_message: InputRichMessage
+        self,
+        *,
+        chat_id: int,
+        draft_id: int,
+        rich_message: InputRichMessage,
+        message_thread_id: int | None = None,
     ) -> bool:
         return await self._bot.send_rich_message_draft(  # type: ignore[attr-defined,no-any-return]
-            chat_id=chat_id, draft_id=draft_id, rich_message=rich_message
+            chat_id=chat_id,
+            draft_id=draft_id,
+            rich_message=rich_message,
+            message_thread_id=message_thread_id,
         )
 
 
