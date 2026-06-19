@@ -77,7 +77,9 @@ conviction соглашается (`AGREE`), на пороге и выше пр�
 
 Модуль `src/bob/domain/ports.py`:
 - `LLMProvider` — `async complete(messages, *, stream)` → `str | AsyncIterator[str]`.
-- `MemoryRepo` — `save_episode()`, `load_episodes(*, limit)`.
+- `MemoryRepo` — `save_episode()`, `save_fact()`, `load_episodes(*, limit)`,
+  `recent_episodes(k)` (последние `k` эпизодов в хронологическом порядке — для
+  воспроизведения недавней истории диалога в промпт ответа).
 - `MemoryRecall` — `recall(query, *, k)` → `Sequence[Recalled]`.
 - `SoulStore` — `soul_exists()`, `read_soul()`, `write_soul()`, `write_json()`,
   `append_genesis_log()`.

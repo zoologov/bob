@@ -20,12 +20,16 @@ LLM-роутера. Зависит от домена через порты-пр�
 - **runtime/heartbeat.py** — `periodic()`, обёртка одноразового тика в
   супервизируемый повторяющийся фоновый цикл (sleep инъецируется для
   детерминизма).
-- **router/llm_router.py** — `LLMRouter`, классификация задачи, редакция
-  приватности и fallback тиров; `LLMRequest`, `TaskType`.
+- **router/llm_router.py** — `LLMRouter`, классификация задачи, селективная
+  редакция приватности и fallback тиров; `LLMRequest` (с двумя каналами
+  контекста — `shareable_context` и `private_context`), `TaskType`.
 - **usecases/handle_message.py** — `HandleMessage`, полный поток
-  сообщение → ответ → персист; `PersonalityState`.
+  сообщение → ответ → персист → запоминание; `PersonalityState`,
+  `EpisodeReader` (шов чтения недавней истории).
 - **usecases/update_mood_from_text.py** — `UpdateMoodFromText`, шаг perceive:
   сигналы текста → `MoodDelta`.
+- **usecases/extract_facts.py** — `ExtractFacts`, шаг remember на Tier 0: дистилляция
+  устойчивых фактов о пользователе в `semantic_memory` (best-effort).
 - **usecases/run_genesis.py** — `RunGenesis`, первое пробуждение Боба.
 - **usecases/heartbeat.py** — `InnerMonologueTick`, `MoodDriftTick`, `ReflectTick`.
 
@@ -42,29 +46,47 @@ callable-фабриками корутин, так что рантайм про�
 упавший обработчик логируется и изолируется, чтобы не «заморить» соседей и не
 уронить публикатора.
 
-### Роутер LLM и редакция приватности
+### Роутер LLM и селективная редакция приватности
 
 `LLMRouter` — политика приложения поверх портов `LLMProvider` (Tier 0 локальный /
 Tier 1 API). Для каждого запроса он: **классифицирует** задачу (`TaskType`) в
 предпочтительный тир (`REPLY_TO_USER` и `GENESIS` → Tier 1; `SENTIMENT`,
-`INNER_MONOLOGUE`, `REFLECT` → Tier 0); **редактирует** перед любым вызовом
-Tier 1 (сырой личный контекст в payload не попадает); **откатывается**
-Tier 1 → Tier 0 при сбое предпочтительного тира.
+`INNER_MONOLOGUE`, `REFLECT`, `EXTRACT_FACTS` → Tier 0); **селективно
+редактирует** перед любым вызовом Tier 1; **откатывается** Tier 1 → Tier 0 при
+сбое предпочтительного тира.
 
-Редакция — свойство построения payload: `personal_context` прикрепляется только
-когда запрос остаётся локальным (предпочтительный тир — Tier 0). Payload
-собирается один раз, поэтому отредактированный payload — это ровно то, что
-увидит и Tier 0 при fallback. Приватность держится сквозь весь путь.
+Селективная редакция (Вариант 2) делит контекст запроса на два канала по
+политике назначения. `shareable_context` — история диалога, вспомненная память,
+настроение, идентичность и вкус: этот материал формирует ответ Боба и
+возвращается тому же пользователю, поэтому он **разрешён** на Tier 1.
+`private_context` — сугубо внутренний материал (только Tier 0), который
+**никогда** не прикрепляется к payload, идущему на Tier 1 (в P0.1 канал пуст, но
+шов сохранён). Запрос на Tier 0 получает оба канала; запрос на Tier 1 — только
+`shareable_context`. Payload собирается один раз, поэтому при откате
+Tier 1 → Tier 0 уходит ровно тот же payload (с уже вырезанным
+`private_context`) — инвариант держится и на пути fallback. Прежняя
+over-aggressive редакция (когда на Tier 1 не доходила вообще никакая память)
+делала Боба stateless; Вариант 2 это исправляет, не раскрывая внутренний
+материал.
 
-### Use-cases (поток и Genesis)
+### Use-cases (поток, память и Genesis)
 
 `HandleMessage` (подписан на `MessageReceived`) проводит один ход
-perceive → decide → act → persist: обновляет настроение через
-`UpdateMoodFromText`, делает recall памяти и собирает приватный контекст
-личности, получает ответ от роутера (`REPLY_TO_USER`, Tier 1 + редакция /
-fallback Tier 0), стримит его через gateway и сохраняет эпизод и снапшот
-настроения. Приватный контекст передаётся роутеру как `personal_context` и
-редактируется перед Tier 1.
+perceive → decide → act → persist → remember: обновляет настроение через
+`UpdateMoodFromText`, воспроизводит недавнюю историю диалога
+(`recent_episodes(k)` через шов `EpisodeReader`), делает recall памяти
+(`MemoryRecall`, FTS5) и собирает `shareable_context` (история, память,
+настроение, идентичность, вкус), получает ответ от роутера (`REPLY_TO_USER`,
+Tier 1 + селективная редакция / fallback Tier 0), стримит его через gateway,
+сохраняет эпизод и снапшот настроения. Именно прикрепление `shareable_context`
+к вызову Tier 1 даёт Бобу память — он помнит имя, названное ход назад.
+
+После ответа отрабатывает шаг **remember**: `ExtractFacts` (Tier 0,
+`EXTRACT_FACTS`) дистиллирует устойчивые факты о пользователе (имя,
+предпочтения, важные люди, решения) в `semantic_memory` (FTS5), чтобы recall на
+следующих ходах поднял их обратно в контекст. Шаг best-effort: он никогда не
+бросает исключение, так что сбойная локальная модель не ломает уже
+отправленный ответ. Память переживает рестарт.
 
 `UpdateMoodFromText` — шаг perceive: читает сентимент (классификация на Tier 0),
 частоту сообщений, время суток (из `Clock`) и присутствие, превращая их в
@@ -85,8 +107,11 @@ Tier 0, сохраняемая как эпизод). Все читают и пи
 ## Инварианты
 
 - `application` не импортирует `bob.infrastructure` (включая `TYPE_CHECKING`).
-- Payload LLM-запроса собирается один раз; личный контекст никогда не доходит до
-  Tier 1, в том числе на пути fallback Tier 1 → Tier 0.
+- Payload LLM-запроса собирается один раз; `private_context` никогда не доходит до
+  Tier 1, в том числе на пути fallback Tier 1 → Tier 0; `shareable_context`
+  (история/память/настроение/идентичность/вкус) на Tier 1 разрешён.
+- Шаг remember (`ExtractFacts`) best-effort: ошибка извлечения фактов не роняет
+  уже отправленный ответ.
 - Время берётся только из инъецированного `Clock`.
 - Ошибка одного heartbeat-тика изолируется и не роняет остальные.
 - Genesis идемпотентен по on-disk флагу `SOUL.md`.
@@ -95,7 +120,9 @@ Tier 0, сохраняемая как эпизод). Все читают и пи
 
 Модуль `src/bob/application/router/llm_router.py`:
 - `LLMRouter(*, providers: Mapping[int, LLMProvider])` — `async run(request)` → `str`.
-- `LLMRequest`, `TaskType`.
+- `LLMRequest` — поля `shareable_context` / `private_context` (два канала контекста);
+  `TaskType` (значения `REPLY_TO_USER`, `GENESIS`, `SENTIMENT`, `INNER_MONOLOGUE`,
+  `REFLECT`, `EXTRACT_FACTS`).
 
 Модуль `src/bob/application/runtime/agent.py`:
 - `AgentRuntime(*, background_tasks=None)` — `start()`, `stop()`,
@@ -111,10 +138,13 @@ Tier 0, сохраняемая как эпизод). Все читают и пи
 - `periodic(tick, *, interval_seconds, sleep=None)` → фабрика фоновой задачи.
 
 Модуль `src/bob/application/usecases/handle_message.py`:
-- `HandleMessage` — `async handle(event)`; `PersonalityState`.
+- `HandleMessage` — `async handle(event)`; `PersonalityState`, `EpisodeReader`.
 
 Модуль `src/bob/application/usecases/update_mood_from_text.py`:
 - `UpdateMoodFromText` — `async run(mood, signals)` → `Mood`; `TextSignals`.
+
+Модуль `src/bob/application/usecases/extract_facts.py`:
+- `ExtractFacts` — `async run(*, user_message, reply=None)` (best-effort); `FactWriter`.
 
 Модуль `src/bob/application/usecases/run_genesis.py`:
 - `RunGenesis` — `async run()` → `GenesisResult`; `GenesisError`.
@@ -130,6 +160,7 @@ Tier 0, сохраняемая как эпизод). Все читают и пи
 `tests/application/runtime/test_event_bus.py`,
 `tests/application/runtime/test_heartbeat_scheduler.py`,
 `tests/application/usecases/test_handle_message.py`,
+`tests/application/usecases/test_extract_facts.py`,
 `tests/application/usecases/test_update_mood_from_text.py`,
 `tests/application/usecases/test_run_genesis.py`,
 `tests/application/usecases/test_run_genesis_hardening.py`,
