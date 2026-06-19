@@ -5,15 +5,16 @@
 """Hardening tests for the composition root (bob.app).
 
 These cover the wiring/entrypoint branches the happy-path suite does not reach:
-the real-bot construction + token validation, the PTB bot adapter delegation,
+the real-bot construction + token validation, the aiogram bot adapter delegation,
 the poll background task, the ``_run`` / ``main`` lifecycle, and the defensive
 config-reader + soul-loading branches. Everything runs on fakes — no network,
-no Telegram, no real PTB ``Bot``.
+no Telegram, no real aiogram ``Bot``.
 """
 
 from __future__ import annotations
 
 import asyncio
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import pytest
@@ -22,11 +23,11 @@ import bob.app as app_module
 from bob.app import (
     Application,
     SystemClock,
+    _AiogramBotAdapter,
     _build_real_bot,
     _float,
     _int,
     _load_soul,
-    _PtbBotAdapter,
     _str,
     build_application,
     main,
@@ -67,14 +68,14 @@ class _Bot:
     async def send_message(self, *, chat_id: int, text: str) -> _Msg:  # noqa: ARG002
         return _Msg()
 
-    async def edit_message_text(
+    async def send_message_draft(
         self,
         *,
         chat_id: int,  # noqa: ARG002
-        message_id: int,  # noqa: ARG002
+        draft_id: int,  # noqa: ARG002
         text: str,  # noqa: ARG002
-    ) -> object:
-        return object()
+    ) -> bool:
+        return True
 
 
 def _config(tmp_path: Path) -> dict[str, object]:
@@ -131,44 +132,85 @@ def test_build_application_builds_real_bot_when_none_injected(
     assert built_with["token"] == "tok"  # noqa: S105 — test fixture, not a credential
 
 
-# --- PTB bot adapter delegation ----------------------------------------------
+# --- aiogram bot adapter delegation -------------------------------------------
 
 
-async def test_ptb_adapter_delegates_every_call() -> None:
-    # Arrange: a recording stand-in for PTB's async Bob.
+async def test_aiogram_adapter_delegates_every_call() -> None:
+    # Arrange: a recording stand-in for aiogram's async Bot. get_updates returns
+    # aiogram-shaped updates (chat/sender nested under message); send/draft return
+    # sentinels the adapter forwards verbatim.
+    @dataclass(frozen=True)
+    class _AiogramChat:
+        id: int
+
+    @dataclass(frozen=True)
+    class _AiogramUser:
+        id: int
+        full_name: str
+
+    @dataclass(frozen=True)
+    class _AiogramMessage:
+        message_id: int
+        text: str | None
+        chat: _AiogramChat
+        from_user: _AiogramUser
+
+    @dataclass(frozen=True)
+    class _AiogramUpdate:
+        update_id: int
+        message: _AiogramMessage
+
     class RecordingBot:
         def __init__(self) -> None:
             self.calls: list[tuple[str, dict[str, object]]] = []
 
-        async def get_updates(self, *, offset: int, timeout: int) -> list[str]:
+        async def get_updates(
+            self, *, offset: int, timeout: int
+        ) -> list[_AiogramUpdate]:
             self.calls.append(("get_updates", {"offset": offset, "timeout": timeout}))
-            return ["u"]
+            return [
+                _AiogramUpdate(
+                    update_id=3,
+                    message=_AiogramMessage(
+                        message_id=7,
+                        text="hi",
+                        chat=_AiogramChat(id=42),
+                        from_user=_AiogramUser(id=9, full_name="Ann"),
+                    ),
+                )
+            ]
 
         async def send_message(self, *, chat_id: int, text: str) -> str:
             self.calls.append(("send_message", {"chat_id": chat_id, "text": text}))
             return "sent"
 
-        async def edit_message_text(self, *, chat_id: int, message_id: int, text: str) -> str:
+        async def send_message_draft(self, *, chat_id: int, draft_id: int, text: str) -> bool:
             self.calls.append(
-                ("edit", {"chat_id": chat_id, "message_id": message_id, "text": text})
+                ("draft", {"chat_id": chat_id, "draft_id": draft_id, "text": text})
             )
-            return "edited"
+            return True
 
     inner = RecordingBot()
-    adapter = _PtbBotAdapter(inner)
+    adapter = _AiogramBotAdapter(inner)
 
-    # Act: the adapter's declared return types are the gateway's structural
-    # views; we only assert the inner result is forwarded verbatim, so compare
-    # as plain objects (the fake returns simple sentinels).
-    updates: object = await adapter.get_updates(offset=10, timeout=5)
+    # Act
+    updates = await adapter.get_updates(offset=10, timeout=5)
     sent: object = await adapter.send_message(chat_id=42, text="hi")
-    edited = await adapter.edit_message_text(chat_id=42, message_id=7, text="bye")
+    drafted = await adapter.send_message_draft(chat_id=42, draft_id=1, text="bye")
 
-    # Assert: each call forwarded its kwargs and returned the inner result.
-    assert updates == ["u"]
+    # Assert: get_updates normalises the aiogram update into the gateway's flat
+    # UpdateLike (chat/sender lifted up); send/draft forward verbatim.
+    assert len(updates) == 1
+    view = updates[0]
+    assert view.update_id == 3
+    assert view.effective_chat is not None
+    assert view.effective_chat.id == 42
+    assert view.effective_user is not None
+    assert view.effective_user.id == 9
+    assert view.effective_user.full_name == "Ann"
     assert sent == "sent"
-    assert edited == "edited"
-    assert [name for name, _ in inner.calls] == ["get_updates", "send_message", "edit"]
+    assert drafted is True
+    assert [name for name, _ in inner.calls] == ["get_updates", "send_message", "draft"]
 
 
 # --- Poll background task ------------------------------------------------------

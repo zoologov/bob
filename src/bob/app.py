@@ -224,7 +224,7 @@ def _as_handler(handle_message: HandleMessage) -> EventHandler:
 def _build_gateway(
     config: Mapping[str, object], *, bus: AsyncEventBus, bot: BotLike | None
 ) -> TelegramGateway:
-    """Build the Telegram gateway; the bot is injected (real PTB or a fake)."""
+    """Build the Telegram gateway; the bot is injected (real aiogram or a fake)."""
     telegram = _section(config, "telegram")
     return TelegramGateway(
         bot=bot if bot is not None else _build_real_bot(telegram),
@@ -238,13 +238,13 @@ def _build_gateway(
 
 
 def _build_real_bot(telegram: Mapping[str, object]) -> BotLike:
-    """Construct the real python-telegram-bot ``Bot`` from the configured token."""
-    from telegram import Bot  # noqa: PLC0415 — lazy: only the real-bot path needs PTB
+    """Construct the real aiogram ``Bot`` from the configured token."""
+    from aiogram import Bot  # noqa: PLC0415 — lazy: only the real-bot path needs aiogram
 
     token = telegram.get("token")
     if not isinstance(token, str) or not token:
         raise KeyError("telegram.token is required to build the real bot")
-    return _PtbBotAdapter(Bot(token=token))
+    return _AiogramBotAdapter(Bot(token=token))
 
 
 def _background_tasks(
@@ -408,11 +408,46 @@ def _float(section: Mapping[str, object], key: str) -> float:
     return 0.0
 
 
-# --- PTB bot adapter ----------------------------------------------------------
+# --- aiogram bot adapter ------------------------------------------------------
 
 
-class _PtbBotAdapter:
-    """Adapt python-telegram-bot's async ``Bot`` to the gateway's :class:`BotLike`."""
+@dataclass(frozen=True)
+class _ChatView:
+    """An :class:`UpdateLike` chat view over an aiogram ``Update``."""
+
+    id: int
+
+
+@dataclass(frozen=True)
+class _UserView:
+    """An :class:`UpdateLike` user view over an aiogram ``Update``."""
+
+    id: int
+    full_name: str
+
+
+@dataclass(frozen=True)
+class _UpdateView:
+    """Adapt an aiogram ``Update`` to the gateway's :class:`UpdateLike`.
+
+    aiogram nests chat/sender under ``message``; the gateway reads them as the
+    flat ``effective_chat`` / ``effective_user`` accessors, so this view lifts them
+    up while leaving the underlying aiogram message as the message.
+    """
+
+    update_id: int
+    message: MessageLike | None
+    effective_chat: _ChatView | None
+    effective_user: _UserView | None
+
+
+class _AiogramBotAdapter:
+    """Adapt aiogram's async ``Bot`` to the gateway's :class:`BotLike`.
+
+    Intake calls ``get_updates`` and normalises each aiogram ``Update`` into an
+    :class:`UpdateLike`; the streaming reply uses the native ``send_message_draft``
+    channel for partials and ``send_message`` to commit the finished reply.
+    """
 
     def __init__(self, bot: object) -> None:
         self._bot = bot
@@ -420,15 +455,33 @@ class _PtbBotAdapter:
     async def get_updates(
         self, *, offset: int, timeout: int
     ) -> Sequence[UpdateLike]:
-        return await self._bot.get_updates(offset=offset, timeout=timeout)  # type: ignore[attr-defined,no-any-return]
+        updates = await self._bot.get_updates(offset=offset, timeout=timeout)  # type: ignore[attr-defined]
+        return [_to_update_view(update) for update in updates]
 
     async def send_message(self, *, chat_id: int, text: str) -> MessageLike:
         return await self._bot.send_message(chat_id=chat_id, text=text)  # type: ignore[attr-defined,no-any-return]
 
-    async def edit_message_text(self, *, chat_id: int, message_id: int, text: str) -> object:
-        return await self._bot.edit_message_text(  # type: ignore[attr-defined]
-            chat_id=chat_id, message_id=message_id, text=text
+    async def send_message_draft(
+        self, *, chat_id: int, draft_id: int, text: str
+    ) -> bool:
+        return await self._bot.send_message_draft(  # type: ignore[attr-defined,no-any-return]
+            chat_id=chat_id, draft_id=draft_id, text=text
         )
+
+
+def _to_update_view(update: object) -> _UpdateView:
+    """Lift an aiogram ``Update``'s nested chat/sender into an :class:`UpdateLike`."""
+    message: MessageLike | None = getattr(update, "message", None)
+    chat = getattr(message, "chat", None)
+    user = getattr(message, "from_user", None)
+    return _UpdateView(
+        update_id=update.update_id,  # type: ignore[attr-defined]
+        message=message,
+        effective_chat=_ChatView(id=chat.id) if chat is not None else None,
+        effective_user=(
+            _UserView(id=user.id, full_name=user.full_name) if user is not None else None
+        ),
+    )
 
 
 # --- Entrypoint ---------------------------------------------------------------

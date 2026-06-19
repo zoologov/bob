@@ -14,7 +14,7 @@ authors = [{ name = "v.zoologov" }]
 
 # Core runtime — P0 "Личность в Telegram" (text MVP). See .claude/dev-docs/VISION.md §7.
 dependencies = [
-    "python-telegram-bot>=21.0",   # Telegram transport — Bob's "body" (the interface)
+    "aiogram>=3.29",               # Telegram transport (Bot API 10.1: rich/stream/thinking) — Bob's "body"
     "aiohttp>=3.11",               # async HTTP client — Ollama API (Qwen 7B/0.5B)
     "aiosqlite>=0.21",             # SQLite — structured state & memory (FTS5, no RAG/embeddings in P0)
     "pydantic>=2.10",              # domain models (Mood/Taste/Negotiation/SOUL)

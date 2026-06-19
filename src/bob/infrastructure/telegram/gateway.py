@@ -13,23 +13,26 @@ two transport jobs and *no* Higher-Mind / LLM / memory logic:
    ``update_id`` (Telegram may redeliver), normalises each text update into a
    :class:`MessageReceived`, and publishes it onto the :class:`EventBus`. A
    use-case elsewhere decides what to do.
-2. **Streaming reply.** Given an async iterator of reply tokens, it sends one
-   placeholder message then progressively edits it (``editMessageText``),
-   **batching** edits by token count and **throttling** them to at most one per
-   interval. On a Telegram ``RetryAfter`` rate-limit it backs off and retries.
+2. **Streaming reply.** Given an async iterator of reply tokens, it streams the
+   partial text through aiogram's native **draft** channel
+   (``send_message_draft``) — **batching** drafts by token count and
+   **throttling** them to at most one per interval — then **commits** the
+   completed reply as a real message (``send_message``). On a Telegram
+   ``RetryAfter`` rate-limit it backs off and retries. (This replaces the old
+   ``editMessageText`` loop; native drafts stream without breaking formatting.)
 
 Time and sleeping are injected (``clock`` / ``sleep``) so batching/backoff are
 deterministic in tests; the bot is injected behind a minimal :class:`BotLike`
-protocol so tests use a fake — no real network.
+protocol so tests use a fake aiogram bot — no real network. The concrete
+aiogram ``Bot``/``Dispatcher`` wiring lives in ``bob.app``.
 """
 
 from __future__ import annotations
 
 import logging
-from datetime import timedelta
 from typing import TYPE_CHECKING, Protocol
 
-from telegram.error import RetryAfter
+from aiogram.exceptions import TelegramRetryAfter
 
 from bob.application.runtime.events import MessageReceived
 
@@ -42,8 +45,11 @@ logger = logging.getLogger(__name__)
 
 __all__ = ["BotLike", "MessageLike", "TelegramGateway", "UpdateLike"]
 
+# Each streamed reply uses one draft slot; drafts share this id within a reply.
+_DRAFT_ID = 1
 
-# --- Minimal structural views of the bits of PTB the gateway touches ----------
+
+# --- Minimal structural views of the bits of aiogram the gateway touches ------
 
 
 class MessageLike(Protocol):
@@ -81,7 +87,12 @@ class UpdateLike(Protocol):
 
 
 class BotLike(Protocol):
-    """The subset of a PTB ``Bot`` the gateway calls (keeps tests network-free)."""
+    """The subset of an aiogram ``Bot`` the gateway calls (keeps tests network-free).
+
+    Intake uses ``get_updates``; the streaming reply uses the native draft channel
+    (``send_message_draft``) for progressive partials and ``send_message`` to
+    commit the finished reply.
+    """
 
     async def get_updates(
         self, *, offset: int, timeout: int
@@ -89,9 +100,9 @@ class BotLike(Protocol):
 
     async def send_message(self, *, chat_id: int, text: str) -> MessageLike: ...
 
-    async def edit_message_text(
-        self, *, chat_id: int, message_id: int, text: str
-    ) -> object: ...
+    async def send_message_draft(
+        self, *, chat_id: int, draft_id: int, text: str
+    ) -> bool: ...
 
 
 # Injected seams for deterministic timing.
@@ -100,7 +111,7 @@ type Sleep = Callable[[float], Awaitable[None]]
 
 
 class TelegramGateway:
-    """Long-polling intake + throttled streaming reply over an injected bot."""
+    """Long-polling intake + throttled draft streaming over an injected bot."""
 
     def __init__(
         self,
@@ -182,77 +193,63 @@ class TelegramGateway:
     async def stream_reply(
         self, *, chat_id: int, tokens: AsyncIterator[str]
     ) -> int:
-        """Stream ``tokens`` into a single message via batched, throttled edits.
+        """Stream ``tokens`` as native drafts, then commit the finished reply.
 
-        Sends one placeholder message, then edits it as tokens arrive: an edit is
-        flushed once ``batch_tokens`` new tokens have accumulated, throttled to at
-        most one edit per ``throttle_interval`` seconds. A final flush emits any
-        remainder. Returns the number of edits performed.
+        Partial text is sent through ``send_message_draft`` as tokens arrive: a
+        draft is flushed once ``batch_tokens`` new tokens have accumulated,
+        throttled to at most one draft per ``throttle_interval`` seconds. When the
+        stream ends, the completed text (if any) is committed as a real message
+        via ``send_message``. Returns the number of drafts streamed.
         """
-        placeholder = await self._bot.send_message(chat_id=chat_id, text="…")
-        message_id = placeholder.message_id
-
         accumulated = ""
-        sent_text = ""
+        drafted_text = ""
         pending_tokens = 0
-        edits_made = 0
-        last_edit_at: float | None = None
+        drafts_made = 0
+        last_draft_at: float | None = None
 
         async for token in tokens:
             accumulated += token
             pending_tokens += 1
-            if pending_tokens >= self._batch_tokens and accumulated != sent_text:
-                last_edit_at = await self._edit(
-                    chat_id, message_id, accumulated, last_edit_at
+            if pending_tokens >= self._batch_tokens and accumulated != drafted_text:
+                last_draft_at = await self._draft(
+                    chat_id, accumulated, last_draft_at
                 )
-                sent_text = accumulated
-                edits_made += 1
+                drafted_text = accumulated
+                drafts_made += 1
                 pending_tokens = 0
 
-        if accumulated != sent_text:
-            await self._edit(chat_id, message_id, accumulated, last_edit_at)
-            edits_made += 1
+        if accumulated:
+            await self._bot.send_message(chat_id=chat_id, text=accumulated)
 
-        return edits_made
+        return drafts_made
 
-    async def _edit(
+    async def _draft(
         self,
         chat_id: int,
-        message_id: int,
         text: str,
-        last_edit_at: float | None,
+        last_draft_at: float | None,
     ) -> float:
-        """Throttle, then edit the message to ``text``; return the edit time."""
-        await self._await_throttle(last_edit_at)
-        await self._edit_with_backoff(chat_id, message_id, text)
+        """Throttle, then stream ``text`` as a draft; return the draft time."""
+        await self._await_throttle(last_draft_at)
+        await self._draft_with_backoff(chat_id, text)
         return self._clock()
 
-    async def _await_throttle(self, last_edit_at: float | None) -> None:
-        if last_edit_at is None or self._throttle_interval <= 0:
+    async def _await_throttle(self, last_draft_at: float | None) -> None:
+        if last_draft_at is None or self._throttle_interval <= 0:
             return
-        elapsed = self._clock() - last_edit_at
+        elapsed = self._clock() - last_draft_at
         remaining = self._throttle_interval - elapsed
         if remaining > 0:
             await self._sleep(remaining)
 
-    async def _edit_with_backoff(
-        self, chat_id: int, message_id: int, text: str
-    ) -> None:
+    async def _draft_with_backoff(self, chat_id: int, text: str) -> None:
         while True:
             try:
-                await self._bot.edit_message_text(
-                    chat_id=chat_id, message_id=message_id, text=text
+                await self._bot.send_message_draft(
+                    chat_id=chat_id, draft_id=_DRAFT_ID, text=text
                 )
                 return
-            except RetryAfter as exc:
-                wait = _retry_after_seconds(exc)
-                logger.warning("Telegram rate-limited edit; backing off %.1fs", wait)
+            except TelegramRetryAfter as exc:
+                wait = float(exc.retry_after)
+                logger.warning("Telegram rate-limited draft; backing off %.1fs", wait)
                 await self._sleep(wait)
-
-
-def _retry_after_seconds(exc: RetryAfter) -> float:
-    """Seconds to wait from a ``RetryAfter`` (int or, in future PTB, timedelta)."""
-    value = exc.retry_after
-    if isinstance(value, timedelta):
-        return value.total_seconds()
-    return float(value)

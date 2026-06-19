@@ -84,7 +84,7 @@ class CapturingProvider:
 
 
 class FakeMessage:
-    """A minimal Telegram message with a stable id (for the placeholder)."""
+    """A minimal Telegram message with a stable id (the committed reply)."""
 
     def __init__(self, message_id: int) -> None:
         self.message_id = message_id
@@ -92,11 +92,15 @@ class FakeMessage:
 
 
 class FakeBot:
-    """Fake Telegram bot capturing the streamed reply (no network)."""
+    """Fake aiogram bot capturing the streamed reply (no network).
+
+    ``send_message_draft`` records progressive drafts; ``send_message`` commits the
+    finished reply — the gateway's native-draft streaming model.
+    """
 
     def __init__(self) -> None:
         self.sent: list[tuple[int, str]] = []
-        self.edits: list[tuple[int, int, str]] = []
+        self.drafts: list[tuple[int, int, str]] = []
 
     async def get_updates(self, *, offset: int, timeout: int) -> Sequence[UpdateLike]:  # noqa: ARG002
         return []
@@ -105,14 +109,14 @@ class FakeBot:
         self.sent.append((chat_id, text))
         return FakeMessage(message_id=777)
 
-    async def edit_message_text(self, *, chat_id: int, message_id: int, text: str) -> object:
-        self.edits.append((chat_id, message_id, text))
-        return object()
+    async def send_message_draft(self, *, chat_id: int, draft_id: int, text: str) -> bool:
+        self.drafts.append((chat_id, draft_id, text))
+        return True
 
     @property
     def final_text(self) -> str:
-        """The last text the reply message was edited to (the full reply)."""
-        return self.edits[-1][2] if self.edits else ""
+        """The committed reply text (the full reply sent via send_message)."""
+        return self.sent[-1][1] if self.sent else ""
 
 
 class FakeRepo:

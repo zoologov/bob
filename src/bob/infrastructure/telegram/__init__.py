@@ -4,12 +4,13 @@
 
 # beadloom:domain=bob
 
-"""Telegram transport adapter (python-telegram-bot).
+"""Telegram transport adapter (aiogram).
 
-Long-polling intake with dedup, and streaming replies via batched, throttled
-``editMessageText``. Transport only: no Higher-Mind / LLM / memory logic — it
-receives updates and publishes :class:`MessageReceived` onto the EventBus, and
-streams out a reply given a token async-iterator.
+Long-polling intake with dedup, and streaming replies via aiogram's native
+``send_message_draft`` (batched, throttled) committed with ``send_message``.
+Transport only: no Higher-Mind / LLM / memory logic — it receives updates and
+publishes :class:`MessageReceived` onto the EventBus, and streams out a reply
+given a token async-iterator.
 """
 
 from bob.application.runtime.events import MESSAGE_RECEIVED, MessageReceived

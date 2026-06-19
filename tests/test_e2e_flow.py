@@ -65,11 +65,11 @@ class FakeMessage:
 
 
 class FakeBot:
-    """Fake Telegram bot capturing the streamed reply."""
+    """Fake aiogram bot capturing the streamed reply (native drafts + commit)."""
 
     def __init__(self) -> None:
         self.sent: list[tuple[int, str]] = []
-        self.edits: list[tuple[int, int, str]] = []
+        self.drafts: list[tuple[int, int, str]] = []
 
     async def get_updates(self, *, offset: int, timeout: int) -> Sequence[UpdateLike]:  # noqa: ARG002
         return []
@@ -78,15 +78,15 @@ class FakeBot:
         self.sent.append((chat_id, text))
         return FakeMessage(message_id=1)
 
-    async def edit_message_text(
-        self, *, chat_id: int, message_id: int, text: str
-    ) -> object:
-        self.edits.append((chat_id, message_id, text))
-        return object()
+    async def send_message_draft(
+        self, *, chat_id: int, draft_id: int, text: str
+    ) -> bool:
+        self.drafts.append((chat_id, draft_id, text))
+        return True
 
     @property
     def final_text(self) -> str:
-        return self.edits[-1][2] if self.edits else ""
+        return self.sent[-1][1] if self.sent else ""
 
 
 def _config(tmp_path: Path) -> dict[str, object]:
