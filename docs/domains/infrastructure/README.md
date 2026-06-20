@@ -20,9 +20,10 @@ LLM-провайдер, SQLite-хранилище с FTS5, файловый `Sou
   топике Боба + owner-команды `/authorize`/`/deauthorize`/`/status` в General
   поверх общего `Authorizer`.
 - **telegram/gateway.py** — `TelegramGateway` на aiogram: long-polling приём с
-  единым гейтом авторизации + нативный draft-стриминг и Rich Messages, приколачивание
-  ответа к топику через `reply_thread_id` (только транспорт); структурные протоколы
-  `BotLike`, `UpdateLike`, `MessageLike`, `AuthorizerLike`.
+  единым гейтом авторизации + typing-индикатор во время генерации и один rich-финал
+  (Вариант A, BOB-008), приколачивание ответа к топику через `reply_thread_id`
+  (только транспорт); структурные протоколы `BotLike`, `UpdateLike`, `MessageLike`,
+  `AuthorizerLike`.
 - **telegram/rich.py** — `MarkdownToRichMessage` (markdown → типизированное дерево
   aiogram `RichMessage`/`RichBlock`/`RichText`) и `RichMessageSerializer` (дерево →
   rich-message markdown для отправки).
@@ -42,8 +43,8 @@ LLM-провайдер, SQLite-хранилище с FTS5, файловый `Sou
 
 `TelegramGateway` — граница между Telegram и приложением; делает только
 транспортные задачи и **не** содержит логики Higher Mind / LLM / памяти. Адаптер
-переписан на **aiogram** (Bot API 10.1): нативные draft-стриминг и Rich Messages
-заменили прежний хак на `editMessageText`-loop из PTB.
+построен на **aiogram** (Bot API 10.1): typing-индикатор во время генерации и
+нативные Rich Messages для финального ответа.
 
 **Приём + единый гейт авторизации.** `poll_once()` long-polls `get_updates`,
 `intake()` дедуплицирует по `update_id` (Telegram может переслать), затем проходит
@@ -56,43 +57,40 @@ fail-closed. Owner-команды `/authorize <user_id>` и `/deauthorize <user_
 нормализуется в `MessageReceived` и публикуется в `EventBus`. Без подключённого
 авторизатора гейт открыт (обратная совместимость).
 
-**Стриминг ответа (драфты-first для всех чатов, BOB-007).** `stream_reply` стримит
-**одинаково** для ЛС, General и форум-топика Боба: основной путь — нативные драфты,
-edit-стриминг — fallback только на отказ драфта.
+**Ответ в группе (Вариант A: typing-индикатор + rich-финал, BOB-008).** Нативный
+токен-стрим в групповом топике Telegram невозможен: драфты работают только в ЛС
+(Threaded Mode = темы в личке, не в группе), а `editMessageText` в группе медленный
+и флуд-опасный. Боб доступен **только** через групповой топик (ЛС закрыта authz),
+поэтому стримить негде — гейтвей **не стримит**.
 
-*Основной путь — нативные rich-драфты.* По мере накопления токенов частичный текст
-уходит через `send_rich_message_draft`, привязанный к `message_thread_id` (топик
-Боба) — **без троттла** (драфты — это нативный механизм стрима, а не edit-спам);
-rich-блоки и блок `RichBlockThinking` (когда задан `thinking`) стримятся нативно. С
-включённым **Threaded Mode** у бота peer принимает драфты и **в форум-топике** —
-прежняя заметка «драфты работают только в ЛС» больше неверна; причиной старого
-`TEXTDRAFT_PEER_INVALID` был именно выключенный Threaded Mode. При
-`TelegramRetryAfter` драфт делает backoff и повтор. Готовый ответ коммитится
-`send_rich_message`, деградируя на plain при ошибке rich.
+*Во время генерации — `sendChatAction("typing")`.* `stream_reply` шлёт
+`sendChatAction("typing")` в тред Боба (`message_thread_id` через `reply_thread_id`)
+и **повторяет** его примерно каждые `typing_interval` секунд (Telegram сам гасит
+индикатор через несколько секунд), пока дренирует поток токенов в полный ответ —
+пользователь видит «Bob печатает…». Индикатор шлётся один раз сразу (чтобы
+«печатает…» появилось мгновенно) и затем по каденсу; каденс задаётся инъецированным
+`clock`, поэтому детерминирован в тестах. Поток токенов **потребляется целиком**, а
+не стримится, так что порт `ReplyStreamer` не меняется — приложение прежнее. Сбой
+typing-действия логируется и проглатывается, ход не ломается.
 
-*Fallback — живой `editMessageText` (Вариант B).* Только если вызов драфта бросил
-`TelegramBadRequest` (напр. peer, который всё ещё не принимает драфты,
-`TEXTDRAFT_PEER_INVALID`), гейтвей переключается на инкрементальный edit: в тред
-шлётся plain-плейсхолдер с уже накопленным текстом, затем плейсхолдер правится
-накопленным plain-текстом. Накопленный до отказа текст («seed») передаётся в
-fallback, так что ни один токен не теряется. Последовательные правки **троттлятся на
-3.0с** (флуд-контроль BOB-006: до фикса троттл в проде стоял `0.0`, и каждый токен
-немедленно дёргал `editMessageText` + rich-финал, упираясь в Telegram flood
-control); no-op-правки (текст не изменился) пропускаются, `TelegramRetryAfter`
-уважается. Финал уходит `send_rich_message` в **том же троттл-окне** и **одной**
-попыткой — при флуде он деградирует на уже отрисованный плейсхолдер (а не ретраит),
-плейсхолдер удаляется на успехе или редактируется в финальный plain на сбое rich, а
-при сбое и правки — plain `send_message` (ответ не теряется). **3.0с-троттл живёт
-только на этом fallback-пути.**
+*Готовый ответ — один `send_rich_message`.* Когда поток закончился, собранный ответ
+коммитится **одним** rich-сообщением через `reply()` (`send_rich_message`: rich-блоки
++ ведущий блок `RichBlockThinking`, когда задан `thinking`), привязанным к треду
+Боба. При **любой** ошибке rich — тихая деградация на обычный `send_message`, так что
+ответ **никогда не теряется**; plain-fallback дробит длину по лимиту
+`PLAIN_TEXT_LIMIT` (4096). Одиночный (не-драфт) `send_rich_message` в групповом
+топике работает. Поскольку финал — единственное rich-сообщение, прежний баг
+«edit-стрим ломает rich» больше не возникает.
+
+*Стриминг удалён.* Прежняя машинерия стрима — edit-стриминг (`editMessageText`-loop),
+draft-стриминг (`send_rich_message_draft`) и **3.0с-троттл** флуд-контроля BOB-006 —
+**выпилена**: в группе не стримим, ЛС закрыта. Гейтвей упростился до
+typing → rich-финал → plain-fallback.
 
 **Rich Messages + thinking.** `reply` конвертирует markdown-ответ Боба в
 типизированное дерево `RichMessage` (опционально с ведущим сворачиваемым блоком
 `RichBlockThinking`, когда задан `thinking`), сериализует его в rich-message
-markdown и шлёт через `send_rich_message`. `stream_reply_rich` стримит rich-драфты
-(`send_rich_message_draft`) и коммитит готовый rich-ответ. При **любой** ошибке
-rich происходит тихая деградация на обычный `send_message` — пользователь всегда
-получает текст, никогда ошибку; plain-fallback дробит длину по лимиту
-`PLAIN_TEXT_LIMIT` (4096).
+markdown и шлёт через `send_rich_message`, деградируя на plain при любой ошибке rich.
 
 Время и sleep инъецируются для детерминизма; бот инъецируется за минимальным
 протоколом `BotLike`, поэтому тесты идут без сети. Реальная сборка aiogram `Bot`
@@ -111,8 +109,9 @@ rich происходит тихая деградация на обычный `s
 **`poll_once()`** поллит каждого зарегистрированного бота по очереди и
 **изолированно**: сбой `get_updates` одного бота (`OSError`/`RuntimeError`/
 `TimeoutError`) логируется и пропускается, не роняя остальных. Под каждого бота
-заведён внутренний `TelegramGateway` для приёма/нормализации и стриминга; у Боба он
-приколочен к его топику через `reply_thread_id`.
+заведён внутренний `TelegramGateway` для приёма/нормализации и ответа
+(typing-индикатор + rich-финал); у Боба он приколочен к его топику через
+`reply_thread_id`.
 
 **Кросс-бот дедуп.** Оба бота-админа видят одно групповое сообщение, поэтому оно
 приходит на два потока апдейтов. `route` дедуплицирует по `(chat_id, message_id)` и
@@ -248,14 +247,12 @@ non-secret и может прийти из YAML.
 - Единый гейт авторизации в gateway fail-closed: при подключённом авторизаторе
   неразрешённый чат/пользователь молча отброшены, без обхода.
 - Rich-отправка деградирует на plain при любой ошибке — пользователь не видит
-  ошибку транспорта.
-- Основной путь стриминга — нативные драфты (`send_rich_message_draft`) для всех
-  чатов, включая форум-топик при Threaded Mode, **без троттла**.
-- Fallback edit-стриминг (на отказ драфта) троттлится (по умолчанию 3.0с между
-  правками) на реальных часах + `asyncio.sleep`; no-op-правки пропускаются,
-  rich-финал — одна попытка в том же троттл-окне, при флуде деградирует на
-  плейсхолдер, а при сбое и правки — на plain (ответ не теряется). 3.0с-троттл —
-  только на этом fallback-пути.
+  ошибку транспорта, ответ никогда не теряется.
+- В группе стриминга нет (Вариант A, BOB-008): во время генерации — повторяемый
+  `sendChatAction("typing")` в тред Боба, готовый ответ — **один**
+  `send_rich_message` с plain-fallback.
+- Edit-стриминг, draft-стриминг и 3.0с-троттл флуд-контроля удалены — гейтвей
+  упрощён до typing → rich-финал → plain-fallback.
 - `MarkdownToRichMessage` и `RichMessageSerializer` — чистые и детерминированные
   (без I/O, сети, часов).
 - Allowlist персистится в таблице `kv` (параметризованный SQL) и переживает рестарт.
@@ -264,11 +261,11 @@ non-secret и может прийти из YAML.
 
 Модуль `src/bob/infrastructure/telegram/multibot.py`:
 - `MultiBotGateway(*, registry, bus, poll_timeout, authorizer=None,
-  reply_throttle_interval=3.0, reply_clock=time.monotonic, reply_sleep=asyncio.sleep)`
+  reply_typing_interval=4.0, reply_clock=time.monotonic, reply_sleep=asyncio.sleep)`
   — `async poll_once()` → `int`, `async route(update, identity)` → `bool`,
   `reply_streamer(identity)` → `ReplyStreamer`; свойство `registry`. Реплеи-параметры
-  по умолчанию живые (реальные часы/sleep + троттл 3.0с, флуд-контроль BOB-006);
-  тесты инъецируют детерминированные заглушки.
+  по умолчанию живые (реальные часы/sleep + каденс typing ~4с, BOB-008); тесты
+  инъецируют детерминированные заглушки.
 - `BotRegistry` — `register(*, identity, bot, scope)`, `get(identity)`, `all()`,
   `scope_of(identity)`.
 - `BotIdentity` (`BOB`/`GUPPI`), `BotScope(chat_id, topic_id)` с
@@ -281,10 +278,10 @@ non-secret и может прийти из YAML.
 - `GUPPI_REJECT_TEXT`.
 
 Модуль `src/bob/infrastructure/telegram/gateway.py`:
-- `TelegramGateway(*, bot, bus, poll_timeout, batch_tokens, throttle_interval, clock, sleep, authorizer=None, reply_thread_id=None)` —
-  `async poll_once()`, `async intake(update)`, `async stream_reply(*, chat_id, tokens)`,
-  `async reply(*, chat_id, markdown, thinking=None)`,
-  `async stream_reply_rich(*, chat_id, tokens, thinking=None)`.
+- `TelegramGateway(*, bot, bus, poll_timeout, typing_interval, clock, sleep, authorizer=None, reply_thread_id=None)` —
+  `async poll_once()`, `async intake(update)`,
+  `async stream_reply(*, chat_id, tokens, thinking=None)` → `int` (число посланных
+  typing-действий), `async reply(*, chat_id, markdown, thinking=None)`.
 - `BotLike`, `UpdateLike`, `MessageLike`, `AuthorizerLike`, `PLAIN_TEXT_LIMIT`.
 
 Модуль `src/bob/infrastructure/telegram/rich.py`:
