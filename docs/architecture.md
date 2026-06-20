@@ -45,23 +45,26 @@ src/bob/
     proactivity/     # UrgeModel, SocialEnergy, Governance, ProactiveDecider, ProactivityState
     ports.py         # порты-протоколы: LLMProvider, MemoryRepo, MemoryRecall,
                      #                   SoulStore, EventBus, Clock, ProactivityStore
-    ports.py         #   + Capability, ToolCallingProvider, AllowlistStore
+    ports.py         #   + Capability, ToolCallingProvider, AllowlistStore,
+                     #     Embedder, Reranker (семантическая память, BOB-011)
   application/       # GUPPI: use-cases + оркестрация. Зависит от domain через порты.
     runtime/         # AgentRuntime (жизненный цикл), AsyncEventBus, события, periodic, retry
     router/          # LLMRouter: классификация задачи → Tier + правило редакции
     usecases/        # HandleMessage, RunGenesis, UpdateMoodFromText, heartbeat-тики
     proactivity/     # ProactivityEngine, ProactiveTick, RecordOwnerActivity
     authz/           # Authorizer: политика owner/allowlist/chat-scope
-    capabilities/    # CapabilityRegistry, ToolLoop, recall_memory (навыки GUPPI)
+    capabilities/    # CapabilityRegistry, ToolLoop, recall_memory, search_memory
   infrastructure/    # Адаптеры портов (наружу).
     telegram/        # MultiBotGateway: BotRegistry (Боб+GUPPI), кросс-бот дедуп,
                      #   центральный роутер по содержимому; GuppiHandler (reject +
                      #   owner-команды + /quiet,/wake); TelegramGateway (aiogram):
                      #   long-polling + authz-гейт, typing-индикатор + rich-финал
                      #   (Вариант A), Rich Messages, thread-reply; rich.py: markdown↔RichMessage
-    llm/             # OpenAICompatProvider (Tier 0/1, + tool-calling) + фабрика
+    llm/             # OpenAICompatProvider (Tier 0/1, + tool-calling) + фабрика;
+                     #   OllamaEmbedder (BGE-M3) + OllamaReranker + их фабрики
     persistence/     # SqliteMemoryRepo + FTS5 recall + KvAllowlistStore + SoulStore
-                     #   + SqliteProactivityStore + RepoProactivitySources
+                     #   + SqliteProactivityStore + RepoProactivitySources;
+                     #   MemoryVectorStore (sqlite-vec) + HybridMemoryRecall (RRF)
     config/          # ConfigLoader (defaults → YAML → env)
   app.py             # composition root: собирает порты и адаптеры, запускает рантайм
 ```
@@ -398,20 +401,27 @@ backoff не маскировал дефект. `sleep` инъецируется
   prompt-протокольного JSON `{"tool_call": {...}}` из текста ответа).
 - **Манифест в контексте.** Перечень навыков попадает в системный промпт Боба
   (преамбула о GUPPI как исполнителе), так что Боб ссылается на свои возможности.
-- **Первый навык `recall_memory`** — тонкая обёртка над `MemoryRecall` (архивный
-  keyword-recall) для обкатки петли e2e без нового I/O. Агентный `search_memory` с
-  векторами — отдельный эпик «Память». Полная плагин-система — позже, за этим швом.
+- **`recall_memory`** — тонкий *авто*-recall: обёртка над `MemoryRecall`, которой
+  GUPPI тихо подмешивает память в ответ (обкатала петлю e2e без нового I/O).
+- **`search_memory`** (BOB-011) — первая содержательная **агентная** capability:
+  навык, который Боб *сам решает* вызвать через tool-loop, чтобы поискать по всему
+  долгому архиву реальным запросом (гибрид семантика+keyword за `MemoryRecall`) и
+  использовать результат. JSON-схема — обязательный `query` плюс опциональный `k`
+  (клампится в безопасное окно). Полная плагин-система — позже, за этим швом.
 
 `HandleMessage` подхватывает шов опционально: tool-loop включается, только когда
 зарегистрированы навыки **и** подан `ToolCallingProvider` (в сборке — провайдер
 Tier 1); иначе ход идёт прежним plain-путём роутера.
 
-## Память (SQLite + FTS5)
+## Память (SQLite + FTS5 + гибрид)
 
 Память живёт в SQLite (режим WAL) за портами `MemoryRepo` и `MemoryRecall`.
-RAG и эмбеддингов в P0 нет — `MemoryRecall` реализован через FTS5 keyword-поиск с
-ранжированием BM25 и служит швом для будущей замены keyword → vector без правки
-домена.
+В P0 за `MemoryRecall` стоял только FTS5 keyword-поиск с ранжированием BM25.
+Эпик «Память» (BOB-011, Фаза 1) встроил за тот же порт **гибридный** recall —
+FTS5(BM25) + sqlite-vec(KNN) → RRF — drop-in заменой, поэтому потребители
+(`HandleMessage`, навыки) не изменились. Всё локально/приватно: эмбеддинги и
+реранкинг считаются на машине через Ollama, а вектора лежат в той же локальной
+SQLite. Подробности — в разделе «Гибридная память» ниже.
 
 Схема (`schema.sql`, применяется идемпотентно при инициализации):
 
@@ -420,6 +430,9 @@ RAG и эмбеддингов в P0 нет — `MemoryRecall` реализова
   insert/delete/update) — полнотекстовый индекс над всей перепиской;
 - `semantic_memory` + виртуальная таблица `semantic_fts` (FTS5, синхронизируется
   триггерами) — распознаваемые факты;
+- `memory_vec` — vec0-таблица sqlite-vec (`embedding float[1024]`, BOB-011),
+  привязанная к строкам `semantic_memory`/`episodic_log` через `(source, src_id)`;
+  семантическая (векторная) сторона гибрид-recall;
 - `mood_state` (текущее настроение, одна строка) и `mood_history` (все снапшоты);
 - `taste_axes` — оси вкусов с conviction и счётчиком опыта;
 - `relationship` — состояние отношений с пользователем (JSON-блоб);
@@ -453,6 +466,47 @@ no-op, когда индекс уже синхронен, и на масштаб
 текст для FTS5 токенизируется в безопасное выражение «OR кавыченных терминов», так
 что операторные символы не вызывают синтаксической ошибки и не инжектятся
 (injection-safe). Состояние переживает рестарт процесса и машины.
+
+### Гибридная память: эмбеддинги + вектор + RRF + реранк (BOB-011)
+
+Только keyword-поиск пропускает семантически близкое без совпадения слов
+(«машина» не найдёт «автомобиль»). Эпик «Память» (Фаза 1) добавил семантическую
+половину **за тем же портом `MemoryRecall`**, drop-in: потребители не меняются.
+
+**Эмбеддинги (порт + локальный Ollama).** Порт `Embedder` (`embed(texts)` → один
+dense-вектор на текст) провайдер-агностичен; первая реализация — `OllamaEmbedder`
+на **BGE-M3** (dense, **1024-dim**, мультиязычный/русский) поверх локального
+Ollama. Эмбеддинги считаются **на машине** — контент памяти не уходит наружу.
+Другой локальный эмбеддер (например Qwen3-Embedding) свопается конфигом
+(`embeddings.base_url`/`model`/`dim`), без правки потребителей.
+
+**Вектор-стор (sqlite-vec).** `MemoryVectorStore` держит vec0-таблицу `memory_vec`
+(`float[1024]`) в нашей же SQLite в синхроне с архивом: загружаемое расширение
+sqlite-vec грузится на соединение до применения схемы, идемпотентный **бэкфилл**
+эмбеддит существующие факты+эпизоды на старте (батчами, без дублей), а **on-write**
+эмбеддит свежесохранённую строку. Оба пути best-effort — недоступный эмбеддер
+пропускается и логируется, а не роняет запись/старт.
+
+**Гибридный recall (`HybridMemoryRecall` за `MemoryRecall`).** На запрос он берёт
+два пула кандидатов по одному архиву — FTS5(BM25) keyword и sqlite-vec(KNN) по
+эмбеддингу запроса — и сливает их **Reciprocal Rank Fusion** (RRF-скор = сумма по
+спискам `1 / (k0 + rank)`, **k0 = 60**), дедуплицируя по содержимому; элемент,
+попавший в оба списка, копит больший слитый скор. **Мягкий фоллбэк:** если эмбеддер
+недоступен (Ollama выключен), recall деградирует на чистый FTS5 keyword — Боб «не
+теряет память», теряет лишь семантическую половину (сбой логируется, не
+пробрасывается).
+
+**Реранкер (аддитивный буст).** Порт `Reranker` (`OllamaReranker` —
+Ollama-as-scorer, нативного rerank-API у Ollama нет) опционально переоценивает
+широкий слитый top-K и подрезает до тесного top-N. Он строго аддитивен: без
+реранкера (или при выключенном/недоступном) гибридный порядок возвращается как
+есть — реранк никогда не ухудшает извлечение. По умолчанию выключен
+(`reranker.enabled = false`).
+
+**Агентный `search_memory`.** Поверх гибрид-recall живёт первая содержательная
+агентная capability — навык, который Боб *сам решает* вызвать через tool-loop:
+ищет по всему долгому архиву реальным запросом и использует результат (см.
+«Capability-шов»).
 
 ## Higher Mind (ядро личности)
 
@@ -684,9 +738,14 @@ reflect и проактивный `ProactiveTick`, все с `RetryPolicy`) ка
 — со scope General, и оба идут в `MultiBotGateway`. `HandleMessage` отдаёт ответы
 через `multibot.reply_gateway(BotIdentity.BOB)`, поэтому они приколочены к топику
 Боба. Здесь же собираются общий `Authorizer` (над `KvAllowlistStore`) для гейта и
-GUPPI и `CapabilityRegistry` с навыком `recall_memory`; провайдер Tier 1
-подключается как `ToolCallingProvider`, когда поддерживает tool-calling, иначе
-tool-loop остаётся дремлющим. Реальный aiogram `Bot` каждого бота строится из его
+GUPPI и `CapabilityRegistry` с навыками `recall_memory` и **`search_memory`**;
+провайдер Tier 1 подключается как `ToolCallingProvider`, когда поддерживает
+tool-calling, иначе tool-loop остаётся дремлющим. Гибридная память (BOB-011)
+собирается здесь же: эмбеддер и опциональный реранкер — инъецируемые швы (по
+умолчанию строятся из `embeddings.*`/`reranker.*`, без сетевого вызова на сборке),
+эмбеддер заводится в `SqliteMemoryRepo` (бэкфилл + on-write), а живой recall —
+`HybridMemoryRecall` (FTS5 + sqlite-vec → RRF, опц. реранк). Отсутствие/невалидность
+секции `embeddings` логируется и даёт keyword-only recall — app всё равно стартует. Реальный aiogram `Bot` каждого бота строится из его
 env-токена (`_build_real_bot`) и адаптируется к протоколу `BotLike`
 (`_AiogramBotAdapter`). Провайдеры и оба бота — инъецируемые швы (`bob_bot`,
 `guppi_bot`), поэтому весь граф прогоняется end-to-end на фейках без сети.
@@ -703,6 +762,31 @@ env-токена (`_build_real_bot`) и адаптируется к проток
 `telegram.owner_id` (владелец, кому доступны owner-команды) и
 `telegram.allowed_chat_ids`. General — это тред без `message_thread_id`
 (служебный, под GUPPI).
+
+### Операционная заметка: локальный стек памяти (BOB-011)
+
+Гибридной памяти нужен **локальный Ollama** с двумя моделями — эмбеддером и
+(опционально) реранкером. Ставится одним скриптом:
+
+```bash
+bash scripts/setup-ollama.sh
+```
+
+Скрипт ставит **standalone Ollama** (НЕ `brew install ollama`): Homebrew-формула
+тянет `python@3.14` как зависимость и может сломать toolchain проекта, поэтому
+бинарь Ollama скачивается напрямую (релизный `.tgz`) в `~/.local/ollama` и
+добавляется в `PATH` — Python проекта не трогается. Затем скрипт поднимает
+`ollama serve` и делает `pull` эмбеддера (`bge-m3`) и реранкера
+(`bge-reranker-v2-m3`, best-effort — финальный тег/подача добиваются по Q1).
+Модели переопределяются через env: `EMBED_MODEL=…`, `RERANK_MODEL=…`,
+`OLLAMA_DIR=…`. На Linux — `https://ollama.com/install.sh`, дальше с шага pull.
+
+Конфигурация памяти — секции `embeddings.*` (`base_url`, `model` по умолчанию
+`bge-m3`, `dim` 1024) и `reranker.*` (`enabled` по умолчанию `false`, `base_url`,
+`model`, `top_n`); по умолчанию обе указывают на `http://localhost:11434`. **App
+стартует и при выключенном Ollama:** сборка эмбеддера/реранкера сетку не трогает,
+а первый недоступный `embed()` мягко деградирует recall на keyword-only (graceful
+degradation) — Боб не теряет память, лишь её семантическую половину.
 
 ## Тесты
 
@@ -731,6 +815,16 @@ topic-scope), `telegram/test_multibot_hardening.py`, `telegram/test_guppi.py`
 `tests/infrastructure/telegram/test_guppi_proactivity.py` (`/quiet`/`/wake`); плюс
 сквозной приёмочный `tests/test_e2e_proactivity.py` (US-1 порыв, US-2 owner-контроль
 и дешевизна).
+
+Гибридная память (BOB-011 Ф1) покрыта по слоям: домен — порты `Embedder`/`Reranker`
+в `tests/domain/test_ports.py`; приложение — агентный навык
+`tests/application/test_search_memory_capability.py`; инфраструктура —
+`tests/infrastructure/llm/test_ollama_embedder.py` (+ `_hardening`),
+`test_embedder_factory.py`, `test_ollama_reranker.py` (+ `_hardening`),
+`test_reranker_factory.py`, `tests/infrastructure/persistence/test_vector_store.py`
+(+ `_hardening`) и `test_hybrid_recall.py` (RRF, keyword-фоллбэк, аддитивный реранк).
+Эмбеддер/реранкер тестируются на фейках, без сети в CI. Сверху — приёмочный
+`tests/test_acceptance_memory.py` (US-1/2/3) и e2e `tests/test_e2e_memory_hybrid.py`.
 
 Защитный механизм CI (BOB-009): `pytest-timeout` задаёт дефолтный пер-тестовый
 таймаут (`timeout=60`, `timeout_method="thread"` в `pyproject.toml`), чтобы будущий

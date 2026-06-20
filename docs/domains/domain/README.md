@@ -13,11 +13,11 @@ LLM, хранилищем и временем исключительно чер�
 
 - **ports.py** — порты-протоколы (структурные `typing.Protocol`, только
   интерфейсы): `LLMProvider`, `ToolCallingProvider`, `MemoryRepo`, `MemoryRecall`,
-  `SoulStore`, `AllowlistStore`, `EventBus`, `Clock`, `Capability`, `DomainEvent`.
-  Здесь же общие value-объекты: `LLMMessage`, `Recalled`, `JsonValue`,
-  `EventHandler`, `ToolCall`, `ToolCallResult`, `ToolDefinition`, `Permission`.
-  Адаптеры в `bob.infrastructure` реализуют эти порты, `app.py` связывает
-  конкретные адаптеры с ними.
+  `Embedder`, `Reranker`, `SoulStore`, `AllowlistStore`, `EventBus`, `Clock`,
+  `Capability`, `DomainEvent`. Здесь же общие value-объекты: `LLMMessage`,
+  `Recalled`, `JsonValue`, `EventHandler`, `ToolCall`, `ToolCallResult`,
+  `ToolDefinition`, `Permission`. Адаптеры в `bob.infrastructure` реализуют эти
+  порты, `app.py` связывает конкретные адаптеры с ними.
 - **personality/mood.py** — `Mood` (пять осей в `[-1, 1]`), `MoodDelta` и
   деривация тона.
 - **personality/taste.py** — `TasteEngine`, `TasteAxis`, перечисление `Verdict`.
@@ -72,6 +72,31 @@ conviction соглашается (`AGREE`), на пороге и выше пр�
 `confidence` — в единичном интервале. Невалидная запись не может существовать в
 памяти. Адаптер хранилища переводит эти сущности в строки SQLite и обратно —
 домен не видит базу.
+
+### Порты памяти: recall, эмбеддинги, реранкинг (BOB-011)
+
+`MemoryRecall` — единственный контракт извлечения для домена и приложения:
+`recall(query, *, k)` → `Sequence[Recalled]`. За ним свободно меняется реализация
+(keyword-only FTS5 или гибрид с вектором) — потребители не знают, что стоит позади.
+Гибридный recall эпика «Память» (BOB-011) встаёт за этот же порт как drop-in замена.
+
+`Embedder` — шов семантической памяти: `embed(texts)` → один dense-вектор на текст
+(порядок сохраняется, пустой вход даёт пустой список). Порт намеренно
+**провайдер-агностичен**: первая реализация — Ollama-адаптер на BGE-M3 (dense,
+1024-dim, мультиязычный/русский), но контракт обещает лишь «текст на входе — вектор
+на выходе», поэтому другой локальный эмбеддер (например Qwen3-Embedding) свопается
+без правки потребителей. Размерность фиксируется выбранной моделью. Эмбеддинги
+считаются **локально** — контент памяти не уходит наружу.
+
+`Reranker` — аддитивный буст качества **поверх** `MemoryRecall`: `rerank(query,
+candidates)` → переупорядоченные (и подрезанные до top-N) кандидаты. Гибрид-recall
+поднимает широкий top-K (RRF над keyword + vector), а реранкер переоценивает пул
+более резким суждением о релевантности. Контракт строго **аддитивный**: реализация
+обязана деградировать мягко — при недоступности (реранк выключен, модель/эндпоинт
+недоступны, скор не разобрался) она возвращает вход **без изменений** и **никогда
+не бросает** в вызывающего, поэтому реранк никогда не ухудшает recall. Порт тоже
+провайдер-агностичен (первая реализация — Ollama-как-scorer, нативного rerank-API
+у Ollama нет), и, как эмбеддинги, работает локально.
 
 ### Capability-шов (контракт навыков)
 
@@ -152,6 +177,11 @@ plain value-объект, который порт `ProactivityStore` round-trip'
   `recent_episodes(k)` (последние `k` эпизодов в хронологическом порядке — для
   воспроизведения недавней истории диалога в промпт ответа).
 - `MemoryRecall` — `recall(query, *, k)` → `Sequence[Recalled]`.
+- `Embedder` — `async embed(texts)` → `list[list[float]]` (один dense-вектор на
+  текст, порядок сохраняется; локально, провайдер-агностично).
+- `Reranker` — `async rerank(query, candidates)` → `list[Recalled]`
+  (переупорядоченные/подрезанные кандидаты; аддитивно, при недоступности возвращает
+  вход без изменений).
 - `SoulStore` — `soul_exists()`, `read_soul()`, `write_soul()`, `write_json()`,
   `append_genesis_log()`.
 - `AllowlistStore` — `load()` → `set[int]`, `add(user_id)`, `remove(user_id)`.
