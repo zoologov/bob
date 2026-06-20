@@ -13,27 +13,27 @@ two transport jobs and *no* Higher-Mind / LLM / memory logic:
    ``update_id`` (Telegram may redeliver), normalises each text update into a
    :class:`MessageReceived`, and publishes it onto the :class:`EventBus`. A
    use-case elsewhere decides what to do.
-2. **Streaming reply (chat-type-aware).** Given an async iterator of reply tokens,
-   the gateway types "live" — but *how* depends on the peer:
+2. **Streaming reply (drafts-first for every chat — BOB-007).** Given an async
+   iterator of reply tokens, the gateway types "live":
 
-   * **Private chat (DM):** aiogram's native **draft** channel
-     (``send_message_draft``) — best there. Partials batch by token count and
-     throttle to at most one per interval; the completed reply commits as a real
-     message (``send_message``). On a Telegram ``RetryAfter`` it backs off.
-   * **Group / supergroup forum topic (Bob's home):** native drafts are rejected
-     by the peer (``TEXTDRAFT_PEER_INVALID``), so live typing is done by
-     **incremental ``editMessageText``** — a plain **placeholder** is sent into
-     Bob's thread, then edited with the accumulating plain text (throttled,
-     respecting ``RetryAfter``, skipping no-op edits). On completion (Variant B)
-     the **rich** final is sent via ``send_rich_message`` (headings/lists/code/
-     tables/math + a ``RichBlockThinking`` block when a ``thinking`` is present)
-     and the plain placeholder is **deleted** — the live text is replaced by the
-     rich final (a minor flicker is expected). If the rich send fails the
-     placeholder is edited to the final plain text instead (never deleted, never
-     lost).
-
-   The chat-type decision uses ``reply_thread_id``: set (Bob's topic) → live edit
-   streaming; ``None`` (DM / un-threaded) → native drafts.
+   * **Primary — native drafts.** Partials stream through the native rich draft
+     channel (``send_rich_message_draft``) as tokens arrive, pinned to
+     ``reply_thread_id`` for topic messages. Rich blocks + a ``RichBlockThinking``
+     block (when a ``thinking`` is present) stream natively. This is the native
+     streaming mechanism, so it runs **unthrottled** (no edit-spam). With Threaded
+     Mode enabled the peer accepts drafts in group forum topics too. The completed
+     reply commits as a rich message (``send_rich_message``), degrading to plain
+     ``send_message`` on a rich error. On a Telegram ``RetryAfter`` a draft backs off.
+   * **Fallback — edit-streaming.** Only when a draft call raises
+     ``TelegramBadRequest`` (e.g. a peer that still rejects drafts with
+     ``TEXTDRAFT_PEER_INVALID``) the gateway switches to **incremental
+     ``editMessageText``**: a plain **placeholder** carries the text streamed so
+     far, then is edited with the accumulating plain text (throttled, respecting
+     ``RetryAfter``, skipping no-op edits). On completion the **rich** final is sent
+     and the placeholder **deleted** (a minor flicker is expected); if the rich send
+     fails the placeholder is edited to the final plain text, and if that edit also
+     fails a plain ``send_message`` is the last safety net — the reply is never lost.
+     The 3.0s throttle stays **only** on this fallback edit path.
 
 Time and sleeping are injected (``clock`` / ``sleep``) so batching/backoff are
 deterministic in tests; the bot is injected behind a minimal :class:`BotLike`
@@ -120,9 +120,11 @@ class UpdateLike(Protocol):
 class BotLike(Protocol):
     """The subset of an aiogram ``Bot`` the gateway calls (keeps tests network-free).
 
-    Intake uses ``get_updates``; the streaming reply uses the native draft channel
-    (``send_message_draft``) for progressive partials and ``send_message`` to
-    commit the finished reply.
+    Intake uses ``get_updates``; the streaming reply streams progressive partials via
+    the native rich draft channel (``send_rich_message_draft``) and commits the
+    finished reply via ``send_rich_message``. The plain ``send_message_draft`` /
+    ``edit_message_text`` / ``send_message`` calls back the edit-streaming fallback
+    used when a peer rejects drafts.
     """
 
     async def get_updates(
@@ -369,110 +371,110 @@ class TelegramGateway:
     async def stream_reply(
         self, *, chat_id: int, tokens: AsyncIterator[str], thinking: str | None = None
     ) -> int:
-        """Type Bob's reply "live", routed by chat type (see the module docstring).
+        """Type Bob's reply "live", drafts-first for **every** chat (BOB-007).
 
-        In a **group / topic** (``reply_thread_id`` set) live typing uses
-        incremental ``editMessageText`` and commits a rich final (with a
-        ``RichBlockThinking`` block when ``thinking`` is present); in a **DM /
-        General** (no forum-topic thread) it uses the native draft channel. Either
-        way the finished reply is always delivered. Returns the number of live
-        updates streamed (edits in a topic, drafts in a DM).
+        The **primary** path is the native draft channel — smooth token streaming
+        via ``send_rich_message_draft`` (rich blocks + a ``RichBlockThinking`` block
+        when ``thinking`` is present stream natively), pinned to ``reply_thread_id``
+        for topic messages, with **no edit throttle** (drafts are the native
+        streaming mechanism, not edit-spam). This now covers group forum topics too:
+        with Threaded Mode enabled the peer accepts drafts.
+
+        The **fallback** (no regression) engages only when a draft call raises
+        :class:`TelegramBadRequest` (e.g. a peer that still rejects drafts with
+        ``TEXTDRAFT_PEER_INVALID``): the gateway switches to the throttled
+        ``editMessageText`` placeholder stream and, failing that, a plain
+        ``send_message`` — the BOB-004 safety net. The 3.0s throttle stays **only**
+        on this fallback edit path. Either way the finished reply is always
+        delivered. Returns the number of native drafts streamed before any fallback.
         """
-        if self._is_forum_topic():
-            return await self._stream_reply_live_edit(
-                chat_id=chat_id, tokens=tokens, thinking=thinking
-            )
-        return await self._stream_reply_draft(chat_id=chat_id, tokens=tokens)
+        return await self._stream_reply_drafts_first(
+            chat_id=chat_id, tokens=tokens, thinking=thinking
+        )
 
-    def _is_forum_topic(self) -> bool:
-        """Whether replies go into a supergroup forum topic (live edit-streaming).
-
-        A real forum topic has a **positive** ``message_thread_id``; ``None`` (DM)
-        and ``0`` (the un-configured / General scope) are not topics, so they keep
-        the native-draft path where drafts are accepted.
-        """
-        return self._reply_thread_id is not None and self._reply_thread_id > 0
-
-    async def _stream_reply_draft(
-        self, *, chat_id: int, tokens: AsyncIterator[str]
+    async def _stream_reply_drafts_first(
+        self,
+        *,
+        chat_id: int,
+        tokens: AsyncIterator[str],
+        thinking: str | None,
     ) -> int:
-        """Stream ``tokens`` as native drafts, then commit the finished reply.
+        """Stream native rich drafts; on a draft rejection switch to edit-fallback.
 
-        Partial text is sent through ``send_message_draft`` as tokens arrive: a
-        draft is flushed once ``batch_tokens`` new tokens have accumulated,
-        throttled to at most one draft per ``throttle_interval`` seconds. Drafting
-        is **best-effort**: if the chat's peer rejects a draft (a supergroup forum
-        topic raises ``TEXTDRAFT_PEER_INVALID``) the error is swallowed, the chat is
-        remembered as draft-unsupported, and the rest of the turn skips drafts. When
-        the stream ends the completed text (if any) is **always** committed as a real
-        message via ``send_message`` — the user gets the reply even when no draft
-        landed. Returns the number of drafts streamed.
+        Drafts stream unthrottled until either the stream ends (then commit the rich
+        final) or a draft raises :class:`TelegramBadRequest`. On a rejection the
+        accumulated-so-far text seeds the throttled edit-streaming fallback, which
+        drains the remaining tokens and commits the final — the reply is never lost.
         """
         accumulated = ""
         drafted_text = ""
         pending_tokens = 0
         drafts_made = 0
-        last_draft_at: float | None = None
 
         async for token in tokens:
             accumulated += token
             pending_tokens += 1
-            should_draft = (
-                pending_tokens >= self._batch_tokens
-                and accumulated != drafted_text
-                and chat_id not in self._draft_unsupported_chats
-            )
-            if should_draft:
-                last_draft_at = await self._draft(
-                    chat_id, accumulated, last_draft_at
+            if pending_tokens < self._batch_tokens or accumulated == drafted_text:
+                continue
+            if not await self._try_rich_draft(chat_id, accumulated):
+                # The peer rejected the draft: hand the rest of the turn (including
+                # what we have so far) to the throttled edit-streaming fallback.
+                return await self._stream_reply_live_edit(
+                    chat_id=chat_id,
+                    tokens=tokens,
+                    thinking=thinking,
+                    seed=accumulated,
                 )
-                drafted_text = accumulated
-                drafts_made += 1
-                pending_tokens = 0
+            drafted_text = accumulated
+            drafts_made += 1
+            pending_tokens = 0
 
-        if accumulated:
-            await self._send_plain(chat_id, accumulated)
-
+        if accumulated or (thinking and thinking.strip()):
+            await self.reply(chat_id=chat_id, markdown=accumulated, thinking=thinking)
         return drafts_made
 
-    async def _draft(
-        self,
-        chat_id: int,
-        text: str,
-        last_draft_at: float | None,
-    ) -> float:
-        """Throttle, then stream ``text`` as a draft; return the draft time."""
-        await self._await_throttle(last_draft_at)
-        await self._draft_with_backoff(chat_id, text)
-        return self._clock()
+    async def _try_rich_draft(self, chat_id: int, text: str) -> bool:
+        """Stream ``text`` as one native rich draft (no throttle).
 
-    async def _await_throttle(self, last_draft_at: float | None) -> None:
-        if last_draft_at is None or self._throttle_interval <= 0:
+        Returns ``True`` on success, ``False`` when the peer rejects the draft with
+        :class:`TelegramBadRequest` (the signal to fall back to edit-streaming). A
+        transient ``RetryAfter`` backs off and retries; any other aiogram error is
+        treated as a draft rejection so the reply still reaches the user.
+        """
+        rich_markdown = self._render(text, None)
+        while True:
+            try:
+                await self._bot.send_rich_message_draft(
+                    chat_id=chat_id,
+                    draft_id=_DRAFT_ID,
+                    rich_message=InputRichMessage(markdown=rich_markdown),
+                    message_thread_id=self._reply_thread_id,
+                )
+                return True
+            except TelegramRetryAfter as exc:
+                wait = float(exc.retry_after)
+                logger.warning(
+                    "Telegram rate-limited rich draft; backing off %.1fs", wait
+                )
+                await self._sleep(wait)
+            except (AiogramError, ValueError) as exc:
+                self._mark_drafts_unsupported(chat_id, exc)
+                return False
+
+    async def _await_throttle(self, last_action_at: float | None) -> None:
+        """Sleep so the next call is at least ``throttle_interval`` after the last.
+
+        Used only on the **fallback** edit-streaming path (BOB-007): the primary
+        native-draft path is unthrottled.
+        """
+        if last_action_at is None or self._throttle_interval <= 0:
             return
-        elapsed = self._clock() - last_draft_at
+        elapsed = self._clock() - last_action_at
         remaining = self._throttle_interval - elapsed
         if remaining > 0:
             await self._sleep(remaining)
 
-    async def _draft_with_backoff(self, chat_id: int, text: str) -> None:
-        while True:
-            try:
-                await self._bot.send_message_draft(
-                    chat_id=chat_id,
-                    draft_id=_DRAFT_ID,
-                    text=text,
-                    message_thread_id=self._reply_thread_id,
-                )
-                return
-            except TelegramRetryAfter as exc:
-                wait = float(exc.retry_after)
-                logger.warning("Telegram rate-limited draft; backing off %.1fs", wait)
-                await self._sleep(wait)
-            except (AiogramError, ValueError) as exc:
-                self._mark_drafts_unsupported(chat_id, exc)
-                return
-
-    # --- Live edit streaming (group / topic) ----------------------------------
+    # --- Live edit streaming (draft fallback) ---------------------------------
 
     async def _stream_reply_live_edit(
         self,
@@ -480,22 +482,30 @@ class TelegramGateway:
         chat_id: int,
         tokens: AsyncIterator[str],
         thinking: str | None,
+        seed: str = "",
     ) -> int:
-        """Type "live" in a topic via incremental ``editMessageText`` (Variant B).
+        """Type "live" via incremental ``editMessageText`` — the draft fallback.
 
-        A plain **placeholder** carries the first partial text into Bob's thread;
-        as tokens arrive the placeholder is edited with the accumulating plain text
+        Engaged only when native drafts were rejected (BOB-007). A plain
+        **placeholder** carries the first partial text into Bob's thread; as tokens
+        arrive the placeholder is edited with the accumulating plain text
         (throttled, skipping no-op edits). On completion the **rich** final is sent
         and the placeholder deleted; if the rich send fails the placeholder is
-        edited to the final plain text instead — the reply is never lost. Returns
-        the number of edits streamed.
+        edited to the final plain text instead — the reply is never lost. ``seed`` is
+        the text already accumulated on the draft path before it fell back, so no
+        tokens are dropped. Returns the number of edits streamed.
         """
-        accumulated = ""
+        accumulated = seed
         edited_text = ""
-        pending_tokens = 0
+        pending_tokens = self._batch_tokens if seed else 0
         edits_made = 0
         placeholder_id: int | None = None
         last_edit_at: float | None = None
+
+        if seed:
+            placeholder_id = await self._send_placeholder(chat_id, seed)
+            edited_text = seed
+            pending_tokens = 0
 
         async for token in tokens:
             accumulated += token
@@ -544,21 +554,26 @@ class TelegramGateway:
 
     async def _edit_with_backoff(
         self, chat_id: int, message_id: int, text: str
-    ) -> None:
-        """Edit the placeholder, backing off on ``RetryAfter``; never crash a turn."""
+    ) -> bool:
+        """Edit the placeholder, backing off on ``RetryAfter``; never crash a turn.
+
+        Returns ``True`` when the edit landed, ``False`` when it failed (and was
+        swallowed) — so the final-commit path can fall back to a plain send rather
+        than silently losing the reply.
+        """
         while True:
             try:
                 await self._bot.edit_message_text(
                     chat_id=chat_id, message_id=message_id, text=text
                 )
-                return
+                return True
             except TelegramRetryAfter as exc:
                 wait = float(exc.retry_after)
                 logger.warning("Telegram rate-limited edit; backing off %.1fs", wait)
                 await self._sleep(wait)
             except (AiogramError, ValueError) as exc:
                 logger.info("live edit failed (ignored): %s", exc)
-                return
+                return False
 
     async def _finish_live_edit(
         self,
@@ -590,10 +605,13 @@ class TelegramGateway:
             await self._delete_placeholder(chat_id, placeholder_id)
             return
         # Rich failed: deliver the final via the placeholder (edit) or a plain send.
-        if placeholder_id is not None:
-            await self._edit_with_backoff(chat_id, placeholder_id, accumulated)
-        else:
-            await self._send_plain(chat_id, accumulated)
+        # If the placeholder edit also fails, a plain send is the last safety net so
+        # the reply is never lost (draft -> edit -> plain).
+        if placeholder_id is not None and await self._edit_with_backoff(
+            chat_id, placeholder_id, accumulated
+        ):
+            return
+        await self._send_plain(chat_id, accumulated)
 
     async def _delete_placeholder(
         self, chat_id: int, placeholder_id: int | None

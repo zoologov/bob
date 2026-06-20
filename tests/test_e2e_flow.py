@@ -103,20 +103,23 @@ class FakeBot:
     async def send_rich_message(
         self,
         *,
-        chat_id: int,  # noqa: ARG002
-        rich_message: object,  # noqa: ARG002
+        chat_id: int,
+        rich_message: object,
         message_thread_id: int | None = None,  # noqa: ARG002
     ) -> FakeMessage:
+        # BOB-007: the committed reply now lands via the rich channel.
+        self.sent.append((chat_id, getattr(rich_message, "markdown", "")))
         return FakeMessage(message_id=1)
 
     async def send_rich_message_draft(
         self,
         *,
-        chat_id: int,  # noqa: ARG002
-        draft_id: int,  # noqa: ARG002
-        rich_message: object,  # noqa: ARG002
+        chat_id: int,
+        draft_id: int,
+        rich_message: object,
         message_thread_id: int | None = None,  # noqa: ARG002
     ) -> bool:
+        self.drafts.append((chat_id, draft_id, getattr(rich_message, "markdown", "")))
         return True
 
     @property

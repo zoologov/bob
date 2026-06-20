@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 from aiogram.exceptions import TelegramBadRequest, TelegramRetryAfter
-from aiogram.methods import SendMessage, SendMessageDraft
+from aiogram.methods import SendMessage, SendMessageDraft, SendRichMessageDraft
 
 from bob.application.runtime.event_bus import AsyncEventBus
 from bob.application.runtime.events import MESSAGE_RECEIVED, MessageReceived
@@ -116,9 +116,11 @@ class _FakeBot:
     rich_drafts: list[_RichDraftCall] = field(default_factory=list)
     next_message_id: int = 500
     draft_retry_after_on_call: int | None = None
+    rich_draft_retry_after_on_call: int | None = None
     rich_send_raises: bool = False
     rich_draft_raises: bool = False
     _draft_calls: int = 0
+    _rich_draft_calls: int = 0
 
     async def get_updates(
         self, *, offset: int, timeout: int
@@ -192,6 +194,16 @@ class _FakeBot:
         rich_message: InputRichMessage,
         message_thread_id: int | None = None,  # noqa: ARG002
     ) -> bool:
+        self._rich_draft_calls += 1
+        if self.rich_draft_retry_after_on_call == self._rich_draft_calls:
+            self.rich_draft_retry_after_on_call = None
+            raise TelegramRetryAfter(
+                method=SendRichMessageDraft(
+                    chat_id=chat_id, draft_id=draft_id, rich_message=rich_message
+                ),
+                message="flood",
+                retry_after=3,
+            )
         if self.rich_draft_raises:
             raise TelegramBadRequest(
                 method=SendMessage(chat_id=chat_id, text=""),
@@ -356,25 +368,23 @@ async def test_poll_once_dedup_persists_across_polls() -> None:
 
 @pytest.mark.asyncio
 async def test_stream_reply_batches_drafts_by_token_count() -> None:
+    # BOB-007: stream_reply streams via the native *rich* draft channel.
     bot = _FakeBot()
     clock = _FakeClock()
     sleep = _RecordingSleep(clock)
-    # batch_tokens=3, throttle disabled (interval 0) to isolate token batching.
+    # batch_tokens=3, throttle 0 — the primary draft path is unthrottled anyway.
     gateway = _make_gateway(
         bot, batch_tokens=3, throttle_interval=0.0, clock=clock, sleep=sleep
     )
 
     drafts = await gateway.stream_reply(chat_id=42, tokens=_tokens("a", "b", "c", "d"))
 
-    # A draft is streamed once 3 tokens accumulate ("abc"); the final remainder
-    # ("abcd") is committed as a real message, not a draft.
+    # A rich draft is streamed once 3 tokens accumulate ("abc"); the completed reply
+    # ("abcd") is committed via the rich final.
     assert drafts == 1
-    assert [d.text for d in bot.drafts] == ["abc"]
-    assert all(d.chat_id == 42 for d in bot.drafts)
-    # The completed reply is committed via send_message.
-    assert len(bot.sends) == 1
-    assert bot.sends[0].chat_id == 42
-    assert bot.sends[0].text == "abcd"
+    assert [d.markdown for d in bot.rich_drafts] == ["abc"]
+    assert all(d.chat_id == 42 for d in bot.rich_drafts)
+    assert [s.markdown for s in bot.rich_sends] == ["abcd"]
 
 
 @pytest.mark.asyncio
@@ -384,28 +394,27 @@ async def test_stream_reply_uses_a_single_draft_id() -> None:
 
     await gateway.stream_reply(chat_id=7, tokens=_tokens("a", "b", "c"))
 
-    # Every progressive draft for one reply shares the same draft_id.
-    draft_ids = {d.draft_id for d in bot.drafts}
+    # Every progressive rich draft for one reply shares the same draft_id.
+    draft_ids = {d.draft_id for d in bot.rich_drafts}
     assert len(draft_ids) == 1
 
 
 @pytest.mark.asyncio
-async def test_stream_reply_throttles_drafts_by_interval() -> None:
+async def test_stream_reply_primary_draft_path_is_not_throttled() -> None:
+    # BOB-007: native drafts are the smooth-streaming mechanism, not edit-spam — the
+    # primary path must NOT throttle, even with a non-zero throttle_interval (that
+    # window applies only to the edit-streaming fallback).
     bot = _FakeBot()
     clock = _FakeClock()
     sleep = _RecordingSleep(clock)
-    # Flush every token by count, but throttle to one draft per 1.0s.
     gateway = _make_gateway(
         bot, batch_tokens=1, throttle_interval=1.0, clock=clock, sleep=sleep
     )
 
     await gateway.stream_reply(chat_id=7, tokens=_tokens("x", "y", "z"))
 
-    # The gateway must have slept to honour the interval between drafts.
-    assert sleep.durations  # at least one throttle wait happened
-    assert all(d <= 1.0 for d in sleep.durations)
-    # Final committed text is the full accumulation.
-    assert bot.sends[-1].text == "xyz"
+    assert sleep.durations == [], "the primary native-draft path was throttled"
+    assert bot.rich_sends[-1].markdown == "xyz"
 
 
 @pytest.mark.asyncio
@@ -415,13 +424,13 @@ async def test_stream_reply_commits_full_text() -> None:
 
     await gateway.stream_reply(chat_id=7, tokens=_tokens("only"))
 
-    # The completed reply is committed once via send_message.
-    assert [s.text for s in bot.sends] == ["only"]
+    # The completed reply is committed once via the rich final.
+    assert [s.markdown for s in bot.rich_sends] == ["only"]
 
 
 @pytest.mark.asyncio
 async def test_stream_reply_backoff_on_rate_limit() -> None:
-    bot = _FakeBot(draft_retry_after_on_call=1)
+    bot = _FakeBot(rich_draft_retry_after_on_call=1)
     clock = _FakeClock()
     sleep = _RecordingSleep(clock)
     gateway = _make_gateway(
@@ -430,9 +439,9 @@ async def test_stream_reply_backoff_on_rate_limit() -> None:
 
     await gateway.stream_reply(chat_id=7, tokens=_tokens("a", "b"))
 
-    # The first draft hit RetryAfter(3): we slept 3s then retried successfully.
+    # The first rich draft hit RetryAfter(3): we slept 3s then retried successfully.
     assert 3 in sleep.durations
-    assert bot.drafts[0].text == "a"
+    assert bot.rich_drafts[0].markdown == "a"
 
 
 @pytest.mark.asyncio
@@ -444,7 +453,8 @@ async def test_stream_reply_empty_stream_sends_nothing() -> None:
 
     # Nothing to stream and nothing to commit.
     assert drafts == 0
-    assert bot.drafts == []
+    assert bot.rich_drafts == []
+    assert bot.rich_sends == []
     assert bot.sends == []
 
 

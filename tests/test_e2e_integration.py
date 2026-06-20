@@ -428,10 +428,13 @@ async def test_e2e_bob_reply_is_pinned_to_his_topic_thread(tmp_path: Path) -> No
         await app.shutdown()
 
     # Assert: Bob replied, pinned to his topic thread; GUPPI stayed silent.
+    # BOB-007: the topic streams via native drafts and commits the rich final, so the
+    # thread pin is asserted on the rich final (rich_threads), not a plain send.
     assert published is True
     assert bot.final_text == _PLAIN_REPLY
-    assert bot.sent_threads[-1] == _TOPIC
+    assert bot.rich_threads[-1] == _TOPIC
     assert guppi_bot.sent == []
+    assert guppi_bot.rich_sent == []
 
 
 async def test_e2e_tick_survives_transient_error(tmp_path: Path) -> None:

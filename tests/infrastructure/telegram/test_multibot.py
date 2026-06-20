@@ -430,9 +430,9 @@ async def test_one_bot_poll_failure_does_not_kill_the_other() -> None:
 async def test_bob_reply_streamer_sets_thread_id() -> None:
     """Bob's reply streamer pins message_thread_id to his topic.
 
-    Bob lives in a forum topic, so the streamer types live via incremental
-    ``editMessageText`` (drafts are private-chat only) and commits the rich final —
-    both the placeholder and the rich final are pinned to Bob's thread.
+    BOB-007: with Threaded Mode on, Bob's topic streams via native drafts (the
+    primary path) and commits the rich final — both the drafts and the rich final
+    are pinned to Bob's thread; no edit-streaming fallback is used.
     """
     bob, guppi = _FakeBot(), _FakeBot()
     gateway, _ = _build({BotIdentity.BOB: bob, BotIdentity.GUPPI: guppi})
@@ -446,9 +446,10 @@ async def test_bob_reply_streamer_sets_thread_id() -> None:
 
     assert bob.sends, "Bob's bot should have received the committed reply"
     assert all(call.message_thread_id == _BOB_TOPIC_ID for call in bob.sends)
-    assert bob.drafts == []  # a topic never drafts (live typing is via edits)
-    assert bob.edits, "the placeholder should have been edited live"
-    assert bob.deletes, "the live placeholder should be deleted by the rich final"
+    assert bob.drafts, "the topic should have streamed via native drafts"
+    assert all(call.message_thread_id == _BOB_TOPIC_ID for call in bob.drafts)
+    assert bob.edits == []  # drafts are primary; no edit-streaming fallback
+    assert bob.deletes == []  # no placeholder to delete on the draft path
     assert guppi.sends == []  # GUPPI never sends Bob's reply
 
 
