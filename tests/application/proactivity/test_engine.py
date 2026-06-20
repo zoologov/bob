@@ -363,6 +363,89 @@ async def test_gate_skip_posts_nothing_but_runs_gate_only() -> None:
     assert store.saved is None or store.saved.last_spoke_at is None
 
 
+async def test_empty_gate_verdict_skips_with_no_message() -> None:
+    # Arrange: Bob fires the drive, but the Tier-0 gate returns an empty/blank
+    # verdict (no decision line at all) — the lenient parse treats that as skip.
+    moment = _evening()
+    seed = _seed_that_fires(moment, _HIGH_MOOD)
+    store = FakeStore(_state(energy=1.0, last_spoke_at=None))
+    router, providers = _router(gate_reply="   \n\n  ", compose_reply="unreachable")
+    gateway = CapturingGateway()
+    engine = _engine(
+        store=store,
+        router=router,
+        gateway=gateway,
+        state_holder=PersonalityState(soul=_soul(_HIGH_MOOD)),
+        moment=moment,
+        seed=seed,
+        salience=0.9,
+    )
+
+    # Act
+    spoke = await engine.tick()
+
+    # Assert: an empty gate verdict is a skip — no post, compose never runs, and
+    # the silent-tick invariant holds (state not advanced).
+    assert spoke is False
+    assert gateway.replies == []
+    assert providers[0].calls == 1  # gate ran once
+    assert providers[1].calls == 0  # compose never ran
+    assert store.saved is None or store.saved.last_spoke_at is None
+
+
+async def test_fire_outcome_varies_across_seeds_at_a_borderline_urge() -> None:
+    # Arrange: a genuinely borderline urge (neutral mood, modest signals) so the
+    # stochastic draw is the deciding factor. Across many seeds the engine must
+    # both speak and stay silent — proving the firing is a real seeded sample, not
+    # a deterministic gate masquerading as stochastic.
+    moment = datetime(2026, 6, 18, 14, 0, 0, tzinfo=UTC)  # midday, governance-clear
+
+    async def spoke_for(seed: int) -> bool:
+        store = FakeStore(_state(energy=0.5, last_spoke_at=None, last_user_msg_at=None))
+        router, _ = _router(gate_reply="SAY: a small thought", compose_reply="A small thought.")
+        engine = _engine(
+            store=store,
+            router=router,
+            gateway=CapturingGateway(),
+            state_holder=PersonalityState(soul=_soul(Mood())),
+            moment=moment,
+            seed=seed,
+            salience=0.3,
+        )
+        return await engine.tick()
+
+    # Act: sweep a range of seeds.
+    outcomes = [await spoke_for(seed) for seed in range(60)]
+
+    # Assert: a real stochastic sample — some ticks fire, some do not.
+    assert any(outcomes), "a borderline urge should fire on at least one seed"
+    assert not all(outcomes), "a borderline urge should stay silent on at least one seed"
+
+
+async def test_fire_decision_is_reproducible_under_a_fixed_seed() -> None:
+    # Arrange: two identically-seeded engines over identical state must reach the
+    # exact same speak/silent verdict — determinism is total (clock + RNG injected).
+    moment = datetime(2026, 6, 18, 14, 0, 0, tzinfo=UTC)
+    fixed_seed = 7
+
+    async def spoke() -> bool:
+        store = FakeStore(_state(energy=0.5, last_spoke_at=None, last_user_msg_at=None))
+        router, _ = _router(gate_reply="SAY: x", compose_reply="x")
+        engine = _engine(
+            store=store,
+            router=router,
+            gateway=CapturingGateway(),
+            state_holder=PersonalityState(soul=_soul(Mood())),
+            moment=moment,
+            seed=fixed_seed,
+            salience=0.3,
+        )
+        return await engine.tick()
+
+    # Act / Assert: the same seed reproduces the same decision.
+    assert await spoke() == await spoke()
+
+
 async def test_recovers_energy_over_silence_when_speaking() -> None:
     # Arrange: a depleted reservoir but a 2h silence since the owner last wrote.
     # The engine recovers energy over that gap before scoring the urge and, when

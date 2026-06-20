@@ -111,6 +111,31 @@ async def test_message_episode_is_not_a_reflection(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_latest_salience_uses_system_clock_when_none_injected(tmp_path: Path) -> None:
+    # Arrange: no clock injected — the adapter falls back to its internal UTC
+    # system clock (the production-wiring default). A reflection stamped at the
+    # real "now" must still read as fresh (salience near full).
+    repo = await _repo(tmp_path)
+    now = datetime.now(tz=UTC)
+    await _add_episode(
+        repo,
+        event_type="reflection",
+        content="A thought I am having right now.",
+        ts=now,
+        tags="heartbeat",
+    )
+    sources = RepoProactivitySources(repo)  # no clock= → _SystemClock fallback
+    try:
+        salience = await sources.latest_salience()
+    finally:
+        await repo.close()
+
+    # Assert: a just-written reflection scores high even through the wall-clock
+    # fallback; a tiny processing delay keeps it well inside the 6h horizon.
+    assert salience > 0.99
+
+
+@pytest.mark.asyncio
 async def test_counts_proactive_messages_in_window(tmp_path: Path) -> None:
     repo = await _repo(tmp_path)
     # Two proactive posts inside the 24h window, one well outside it.

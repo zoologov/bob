@@ -162,6 +162,25 @@ def test_owner_mute_blocks_everything() -> None:
     assert allowed is False
 
 
+def test_non_wrapping_quiet_window_blocks_inside_daytime_band() -> None:
+    # Arrange: a same-day quiet band (start <= end, e.g. a daytime do-not-disturb
+    # 12:00 to 14:00) exercises the non-wrapping branch of the quiet-hours check.
+    config = GovernanceConfig(quiet_start_hour=12, quiet_end_hour=14)
+    governance = Governance(config=config)
+
+    # Act: 13:00 sits inside [12:00, 14:00).
+    blocked = governance.allows(now=_NOW.replace(hour=13), history=_history())
+    # 11:00 is before the band; 14:00 is the exclusive end — both awake.
+    before = governance.allows(now=_NOW.replace(hour=11), history=_history())
+    at_end = governance.allows(now=_NOW.replace(hour=14), history=_history())
+
+    # Assert: only the in-band hour is vetoed; the boundaries behave like the
+    # wrapping window ([start, end) with start inclusive, end exclusive).
+    assert blocked is False
+    assert before is True
+    assert at_end is True
+
+
 def test_governance_is_deterministic() -> None:
     # Arrange
     governance = Governance()
