@@ -42,6 +42,13 @@ LLM-роутера. Зависит от домена через порты-пр�
   устойчивых фактов о пользователе в `semantic_memory` (best-effort).
 - **usecases/run_genesis.py** — `RunGenesis`, первое пробуждение Боба.
 - **usecases/heartbeat.py** — `InnerMonologueTick`, `MoodDriftTick`, `ReflectTick`.
+- **proactivity/engine.py** — `ProactivityEngine`, drive-модель → проактивное
+  сообщение (решить дёшево, говорить и платить редко); протоколы-швы
+  `ProactivityStoreLike`, `ReflectionSalienceSource`, `ProactiveWindowCounter`.
+- **proactivity/tick.py** — `ProactiveTick`, heartbeat-обёртка движка;
+  `ProactiveRunner`.
+- **proactivity/record_owner_activity.py** — `RecordOwnerActivity`, сворачивает
+  сообщение owner в проактивное состояние.
 
 ### Рантайм (GUPPI)
 
@@ -141,6 +148,33 @@ best-effort: он никогда не бросает исключение, та�
 Tier 0, сохраняемая как эпизод). Все читают и пишут общий `PersonalityState`.
 Внутренняя жизнь не эскалирует на удалённый API.
 
+### Проактивность: drive-движок (BOB-010 Ф1)
+
+`ProactivityEngine` превращает чистую drive-модель в реальное проактивное
+сообщение — поведение рождается из состояния (mood/тишина/рефлексия/циркада), не из
+расписания. Движок дёшев по построению: решение «заговорить» чистое (без LLM),
+поэтому подавляющее большинство тиков завершается с **нулём** обращений к модели.
+На каждом тике, cheapest-first: загрузить per-persona `ProactivityState` через
+`ProactivityStore`; снять лапснувший тайм-мьют (`/quiet 2h` — durably вернуть флаг и
+очистить `mute_until` один раз, постоянный `/quiet` держится до `/wake`);
+восстановить энергию за тишину; решить через `ProactiveDecider` (`urge` →
+`p(speak)` → seeded-розыгрыш под governance-вето, **по умолчанию молчать**); только
+при срабатывании — дешёвый Tier-0-гейт (`SAY: <seed>` говорит, `SKIP`/пустой/битый
+ответ молчит); на не-skip — компоновка через `LLMRouter` с гибридным
+`select_reply_tier` и постинг в топик Боба через `typing_indicator` + `reply`;
+наконец потратить энергию и проставить `last_spoke_at`. Всё инъектируется (store,
+decider, router, gateway, личность, `Clock`, seeded RNG, read-seams), движок не
+держит ни глобалов, ни конфигурации, ни знания о транспорте.
+
+`ProactiveTick` — тонкая обёртка, которую рантайм планирует на heartbeat-каденсе
+рядом с тремя другими тиками и под той же `RetryPolicy`. `RecordOwnerActivity`
+вызывается из `HandleMessage` после каждого сообщения owner: проставляет
+`last_user_msg_at` (взводит owner-cooldown) и частично восполняет резервуар энергии
+(«ты вернулся»), сохраняя мьют и `last_spoke_at`. Движок читает два дешёвых сигнала
+через швы `ReflectionSalienceSource` (салиентность свежей рефлексии) и
+`ProactiveWindowCounter` (счётчик проактивов в окне для анти-спама) — реализованы
+инфраструктурой над `episodic_log`.
+
 ### Авторизация (owner + allowlist + chat-scope)
 
 `Authorizer` — чистая политика доступа поверх порта `AllowlistStore`, без
@@ -217,6 +251,11 @@ Tier 1); иначе ход идёт прежним plain-путём роутер
   связывает даже owner; решение читает динамический allowlist на каждом вызове.
 - Capability-шов forward-compatible: новый навык — регистрация объекта, потребители
   (реестр, tool-loop, `HandleMessage`) не меняются; tool-loop ограничен turn-cap.
+- Проактивный тик дёшев по умолчанию: решение чистое (без LLM), поэтому вето или
+  непрошедший розыгрыш завершают тик с нулём LLM-вызовов; гейт Tier 0 платится
+  только при срабатывании, компоновка — только на не-skip seed.
+- Проактив управляется состоянием, не расписанием; всё проактивное состояние
+  per-persona; время и стохастика — из инъецированных `Clock` и seeded RNG.
 
 ## API
 
@@ -282,6 +321,17 @@ Tier 1); иначе ход идёт прежним plain-путём роутер
 Модуль `src/bob/application/usecases/heartbeat.py`:
 - `InnerMonologueTick`, `MoodDriftTick`, `ReflectTick` — каждый `async run()`.
 
+Модуль `src/bob/application/proactivity/engine.py`:
+- `ProactivityEngine(*, persona_id, chat_id, store, decider, router, gateway,
+  personality, reflection, window, clock, rng)` — `async tick()` → `bool` (говорил ли).
+- `ProactivityStoreLike`, `ReflectionSalienceSource`, `ProactiveWindowCounter` — швы-протоколы.
+
+Модуль `src/bob/application/proactivity/tick.py`:
+- `ProactiveTick(*, engine)` — `async run()`; `ProactiveRunner`.
+
+Модуль `src/bob/application/proactivity/record_owner_activity.py`:
+- `RecordOwnerActivity(*, store, clock, persona_id="bob")` — `async run()`.
+
 ## Тесты
 
 Тесты: `tests/application/router/test_llm_router.py`,
@@ -301,4 +351,7 @@ Tier 1); иначе ход идёт прежним plain-путём роутер
 `tests/application/usecases/test_run_genesis.py`,
 `tests/application/usecases/test_run_genesis_hardening.py`,
 `tests/application/usecases/test_heartbeat.py`,
+`tests/application/proactivity/test_engine.py`,
+`tests/application/proactivity/test_tick.py`,
+`tests/application/proactivity/test_record_owner_activity.py`,
 `tests/application/test_layering.py`.

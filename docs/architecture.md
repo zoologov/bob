@@ -15,7 +15,9 @@ Telegram-supergroup: Боб живёт в своём форум-топике и 
 закрыт авторизацией (owner + allowlist + scope по чату), отказ неавторизованному
 **виден** (GUPPI отвечает «не авторизован», пайплайн Боба не запускается), петля
 устойчива к транзиентным сетевым сбоям, а навыки Боба исполняются GUPPI через
-стабильный Capability-шов.
+стабильный Capability-шов. Боб не только реактивен: проактивный drive-движок
+(BOB-010) иногда пишет первым по «порыву» из внутреннего состояния, под
+governance-потолками и owner-командами `/quiet`/`/wake`.
 
 Этот документ описывает реальную, поставленную систему: слои, мульти-бот gateway и
 GUPPI-идентичность, поток обработки сообщения, LLM-тиры с редакцией приватного
@@ -40,23 +42,26 @@ src/bob/
   domain/            # ЧИСТО: без I/O, LLM и Telegram. Только логика и модели.
     personality/     # Mood, TasteEngine, Negotiation, SOUL
     memory/          # EpisodicEvent, SemanticFact
+    proactivity/     # UrgeModel, SocialEnergy, Governance, ProactiveDecider, ProactivityState
     ports.py         # порты-протоколы: LLMProvider, MemoryRepo, MemoryRecall,
-                     #                   SoulStore, EventBus, Clock
+                     #                   SoulStore, EventBus, Clock, ProactivityStore
     ports.py         #   + Capability, ToolCallingProvider, AllowlistStore
   application/       # GUPPI: use-cases + оркестрация. Зависит от domain через порты.
     runtime/         # AgentRuntime (жизненный цикл), AsyncEventBus, события, periodic, retry
     router/          # LLMRouter: классификация задачи → Tier + правило редакции
     usecases/        # HandleMessage, RunGenesis, UpdateMoodFromText, heartbeat-тики
+    proactivity/     # ProactivityEngine, ProactiveTick, RecordOwnerActivity
     authz/           # Authorizer: политика owner/allowlist/chat-scope
     capabilities/    # CapabilityRegistry, ToolLoop, recall_memory (навыки GUPPI)
   infrastructure/    # Адаптеры портов (наружу).
     telegram/        # MultiBotGateway: BotRegistry (Боб+GUPPI), кросс-бот дедуп,
                      #   центральный роутер по содержимому; GuppiHandler (reject +
-                     #   owner-команды); TelegramGateway (aiogram): long-polling +
-                     #   authz-гейт, typing-индикатор + rich-финал (Вариант A),
-                     #   Rich Messages, thread-reply; rich.py: markdown↔RichMessage
+                     #   owner-команды + /quiet,/wake); TelegramGateway (aiogram):
+                     #   long-polling + authz-гейт, typing-индикатор + rich-финал
+                     #   (Вариант A), Rich Messages, thread-reply; rich.py: markdown↔RichMessage
     llm/             # OpenAICompatProvider (Tier 0/1, + tool-calling) + фабрика
     persistence/     # SqliteMemoryRepo + FTS5 recall + KvAllowlistStore + SoulStore
+                     #   + SqliteProactivityStore + RepoProactivitySources
     config/          # ConfigLoader (defaults → YAML → env)
   app.py             # composition root: собирает порты и адаптеры, запускает рантайм
 ```
@@ -418,6 +423,9 @@ RAG и эмбеддингов в P0 нет — `MemoryRecall` реализова
 - `mood_state` (текущее настроение, одна строка) и `mood_history` (все снапшоты);
 - `taste_axes` — оси вкусов с conviction и счётчиком опыта;
 - `relationship` — состояние отношений с пользователем (JSON-блоб);
+- `proactivity_state` — per-persona состояние drive-движка (резервуар энергии,
+  маркеры `last_spoke_at`/`last_user_msg_at`, флаг `proactivity_enabled` и
+  инфраструктурный `mute_until` тайм-мьюта), одна строка на `persona_id`;
 - `kv` — генерик-хранилище ключ/значение.
 
 ### Recall по всему архиву переписки
@@ -503,6 +511,141 @@ no-op (без обращения к LLM и без записи файлов). И
 бросил, и корректно завершается при остановке рантайма (см. «Резилентность
 тиков»).
 
+## Проактивность: drive-движок (BOB-010, Фаза 1)
+
+Боб не только отвечает по вызову — иногда он пишет первым. Этот четвёртый
+heartbeat-тик отличается от трёх предыдущих принципиально: его поведение
+**рождается из внутреннего состояния** (настроение Higher Mind, тоска по тишине,
+салиентность свежей рефлексии, циркадный ритм), а **не из cron или расписания**.
+Проактив — это выражение уже построенного субстрата (mood/память/heartbeat), а не
+таймер, который раз в N минут «решает поболтать». Момент стохастичен: всплески и
+паузы возникают сами, фиксированного ритма нет.
+
+Движок устроен дёшево по построению: «порыв заговорить» — это чистая формула без
+LLM, поэтому подавляющее большинство тиков завершается мгновенно и не делает
+**ни одного** обращения к модели. LLM включается только на редком тике, когда Боб
+действительно решил заговорить: сначала дешёвый Tier-0-гейт, затем компоновка
+реплики. Всё состояние — **per-persona** (реплики Bobiverse наследуют тот же код,
+но держат своё), а время и стохастика инъецируются (`Clock` + seeded RNG), поэтому
+решение детерминировано в тестах.
+
+### Drive-модель порыва (чистый домен)
+
+Четыре именованных, настраиваемых «тяги» дают единый порыв `urge ∈ [0, 1]`
+(`domain/proactivity/urge.py`, `UrgeModel.urge` — чистая функция без I/O и часов):
+
+- **настроение** — открытое, возбуждённое, социальное настроение поднимает порыв,
+  замкнутое опускает (среднее по осям `arousal`/`openness`/`social` из `Mood`);
+- **тоска** (`longing`) — растёт с секундами тишины и насыщается (экспонента с
+  постоянной времени ~6 ч), так что сутки молчания ощущаются сильно, но порыв
+  никогда не «убегает» за пределы;
+- **салиентность** — насколько свежа и ярка последняя reflect-мысль heartbeat;
+- **циркадный ритм** — базовый уровень по **локальному** часу (низкий ночью, с
+  утренним и вечерним пиками и дневным провалом); час берётся из `Clock`.
+
+К ним добавляется уровень социальной энергии. Взвешенная сумма нормируется в
+`[0, 1]`. Энергия (`domain/proactivity/social_energy.py`, `SocialEnergy`) — это
+ограниченный `[0, 1]` резервуар: он **копится** в тишине (`recover`), **тратится**
+на реплику (`spend`, фиксированная доля) и **частично восполняется** ответом owner
+(`replenish_from_reply`). Так cooldown после разговора возникает естественно, без
+отдельного таймера.
+
+### Стохастика и решение
+
+`ProactiveDecider` (`domain/proactivity/decision.py`) — шов, который движок зовёт
+на каждом тике. Он берёт «сейчас» из инъецированного `Clock`, считает `urge`,
+переводит его в вероятность срабатывания `p(speak)` монотонной **логистической**
+кривой (`urge_to_probability`) и делает **один** розыгрыш из инъецированного
+seeded `Random`. Governance проверяется **первой**: любое вето означает молчание
+независимо от порыва.
+
+### Governance — только потолки безопасности
+
+Governance — это тормоз, а не двигатель: он **никогда не поднимает** порыв, только
+блокирует (`domain/proactivity/governance.py`, `Governance.allows` → `bool`). Пять
+вето, все чистые и над инъецированным «сейчас»:
+
+- **quiet hours** — жёсткий ночной пол по **локальному** времени (по умолчанию
+  23:00–09:00, окно переваливает через полночь);
+- **owner-mute** — персист-флаг, который owner переключает командами `/quiet` /
+  `/wake`;
+- **анти-спам** — потолок на число проактивных сообщений в окне (по умолчанию 4 за
+  сутки);
+- **мин-гэп** — минимальный интервал между двумя проактивами (по умолчанию 1 ч);
+- **owner-cooldown** — тихий интервал после последнего сообщения owner (по
+  умолчанию 15 мин), чтобы Боб не говорил поверх собеседника.
+
+Пороги вынесены в `GovernanceConfig` (все именованы и имеют дефолты) — тюнятся на
+живой эксплуатации.
+
+### От тика к реплике (дёшево по умолчанию)
+
+`ProactivityEngine` (`application/proactivity/engine.py`) — оркестратор за RFC
+§«Фаза 1». На каждом проактивном тике, cheapest-first:
+
+1. **Загрузка** per-persona `ProactivityState` через порт `ProactivityStore`
+   (энергия, маркеры `last_spoke_at`/`last_user_msg_at`, флаг `/quiet`).
+2. **Истечение тайм-мьюта.** Постоянный `/quiet` держит молчание до `/wake`.
+   Срочный `/quiet 2h` (`mute_until` выставлен) снимается в указанный момент:
+   движок один раз durably возвращает флаг проактивности и чистит `mute_until`,
+   так что лапснувший мьют не пересчитывается на каждом дальнейшем тике.
+3. **Восстановление энергии** за тишину с последнего сообщения owner.
+4. **Решение** — `ProactiveDecider`: `urge` → `p(speak)` → seeded-розыгрыш под
+   governance-вето. **По умолчанию — молчать.** Вето или непрошедший розыгрыш
+   завершают тик с **нулём** LLM-вызовов.
+5. **Гейт (Tier 0)** — только при срабатывании дешёвый внутренний редактор
+   спрашивает «есть ли сейчас что сказать на самом деле и о чём?». Он склонен
+   пропускать молчание: только финальная строка `SAY: <seed>` даёт говорить,
+   `SKIP` (или пустой/искажённый ответ) завершает тик одним дешёвым вызовом без
+   сообщения.
+6. **Компоновка + постинг** — на не-skip seed реплика собирается через `LLMRouter`
+   с гибридным выбором тира (`select_reply_tier`: обычно быстрый flash, качественный
+   plus — на содержательное) и постится в топик Боба через `typing_indicator` +
+   `reply` его gateway.
+7. **Персист** — потратить энергию (`spend`) и проставить `last_spoke_at`.
+
+`ProactiveTick` (`application/proactivity/tick.py`) — тонкая обёртка, которую
+рантайм планирует на heartbeat-каденсе (`app.py`, `_background_tasks`) рядом с
+inner-monologue / mood-drift / reflect и под той же `RetryPolicy`: транзиентный
+сбой LLM/сети на сработавшем тике ретраится с backoff до изоляции. Тик дёшев —
+большинство циклов не трогают LLM.
+
+### Связь с реактивным чатом и owner-команды
+
+`RecordOwnerActivity` (`application/proactivity/record_owner_activity.py`)
+вызывается после каждого сообщения owner в реактивном пути (`HandleMessage`): он
+проставляет `last_user_msg_at` (взводит owner-cooldown, чтобы Боб не говорил поверх
+собеседника) и частично восполняет резервуар энергии — «ты вернулся». Остальное
+состояние сохраняется как есть: мьют `/quiet` переживает входящее сообщение,
+`last_spoke_at` не трогается.
+
+Owner управляет проактивностью через GUPPI (топик General), только owner:
+
+- **`/quiet`** — заглушить проактив (сбросить `proactivity_enabled`); опциональная
+  длительность `/quiet 2h` / `/quiet 30m` дополнительно выставляет `mute_until`,
+  по истечении которого движок сам разбудит проактив (см. шаг 2 выше);
+- **`/wake`** — снять мьют и очистить `mute_until`.
+
+Невалидный аргумент `/quiet` даёт подсказку по использованию, а не молчаливый
+мьют. Команды живут в `GuppiHandler` и подключены, только когда в сборку подан
+proactivity-store; иначе они деградируют в no-op (обратная совместимость).
+
+### Хранилище и read-seams
+
+`SqliteProactivityStore` (`infrastructure/persistence/proactivity_store.py`)
+реализует порт `ProactivityStore` над таблицей `proactivity_state` — одна строка на
+`persona_id`, так что реплики Bobiverse держат свои резервуар, маркеры и флаг. Поверх
+порта он несёт инфраструктурный тайм-мьют `mute_until` (он **не** часть доменного
+value-объекта `ProactivityState`, живёт только в строке и читается/пишется через
+`get_mute_until` / `set_mute_until`). Весь SQL параметризован (`?`).
+
+`RepoProactivitySources` (`infrastructure/persistence/proactivity_sources.py`) даёт
+движку два дешёвых (без LLM) сигнала прямо из `episodic_log`: **салиентность
+рефлексии** (свежий `reflection`-эпизод даёт салиентность около `1.0`, линейно
+затухающую к `0.0` за 6 ч) и **счётчик проактивов в окне** (число `proactive`-
+эпизодов за последние сутки — потолок анти-спама). Время инъектируется через
+`Clock`, поэтому затухание детерминировано.
+
 ## Конфигурация и запуск
 
 `ConfigLoader` собирает эффективную конфигурацию слоями: встроенные дефолты →
@@ -527,8 +670,16 @@ env-переменных.
 `app.py` — единственный модуль, которому разрешено зависеть сразу от всех слоёв.
 Он строит реальные адаптеры, собирает политику приложения, подписывает
 `HandleMessage` на шину, регистрирует **один** poll-таск (он гонит обоих ботов
-через `MultiBotGateway`) и три heartbeat-тика (с `RetryPolicy`) как фоновые задачи
+через `MultiBotGateway`) и **четыре** heartbeat-тика (inner-monologue, mood-drift,
+reflect и проактивный `ProactiveTick`, все с `RetryPolicy`) как фоновые задачи
 рантайма, один раз запускает Genesis на первом старте и стартует `AgentRuntime`.
+Проактивный движок собирается в `_build_proactivity_engine`: чистый
+`ProactiveDecider` (urge-модель + `Governance`) над общим `SqliteProactivityStore`,
+роутером, gateway Боба и read-seams `RepoProactivitySources`; RNG-seed резолвится
+детерминированно (аргумент → `runtime.proactivity_seed` → env `BOB_PROACTIVITY_SEED`
+→ свежий на процесс), чтобы тесты пинили стохастический розыгрыш. Тот же store
+питает owner-команды `/quiet`/`/wake` в GUPPI, а `RecordOwnerActivity` сворачивает
+каждое сообщение owner в проактивное состояние.
 Здесь же собирается `BotRegistry`: Боб регистрируется со scope своего топика, GUPPI
 — со scope General, и оба идут в `MultiBotGateway`. `HandleMessage` отдаёт ответы
 через `multibot.reply_gateway(BotIdentity.BOB)`, поэтому они приколочены к топику
@@ -569,6 +720,17 @@ topic-scope), `telegram/test_multibot_hardening.py`, `telegram/test_guppi.py`
 (`tests/test_app.py`, `tests/test_app_authz.py`) и приёмочные сценарии US-1..US-4
 (`tests/test_acceptance_memory.py`, `tests/test_acceptance_reasoning.py`). Граница
 слоёв проверяется `tests/application/test_layering.py`.
+
+Проактивный drive-движок (BOB-010 Ф1) покрыт по слоям: домен —
+`tests/domain/proactivity/` (`test_urge.py`, `test_urge_monotonicity.py`,
+`test_social_energy.py`, `test_governance.py`, `test_decision.py`,
+`test_store_port.py`); приложение — `tests/application/proactivity/`
+(`test_engine.py`, `test_tick.py`, `test_record_owner_activity.py`); инфраструктура —
+`tests/infrastructure/persistence/test_proactivity_store.py`,
+`tests/infrastructure/persistence/test_proactivity_sources.py` и
+`tests/infrastructure/telegram/test_guppi_proactivity.py` (`/quiet`/`/wake`); плюс
+сквозной приёмочный `tests/test_e2e_proactivity.py` (US-1 порыв, US-2 owner-контроль
+и дешевизна).
 
 Защитный механизм CI (BOB-009): `pytest-timeout` задаёт дефолтный пер-тестовый
 таймаут (`timeout=60`, `timeout_method="thread"` в `pyproject.toml`), чтобы будущий

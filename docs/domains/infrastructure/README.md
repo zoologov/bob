@@ -18,7 +18,7 @@ LLM-провайдер, SQLite-хранилище с FTS5, файловый `Sou
   `BotRegistration`.
 - **telegram/guppi.py** — `GuppiHandler`: видимый reject `GUPPI_REJECT_TEXT` в
   топике Боба + owner-команды `/authorize`/`/deauthorize`/`/status` в General
-  поверх общего `Authorizer`.
+  поверх общего `Authorizer`, плюс `/quiet`/`/wake` управления проактивностью.
 - **telegram/gateway.py** — `TelegramGateway` на aiogram: long-polling приём с
   единым гейтом авторизации + typing-индикатор во время генерации и один rich-финал
   (Вариант A, BOB-008), приколачивание ответа к топику через `reply_thread_id`
@@ -36,6 +36,10 @@ LLM-провайдер, SQLite-хранилище с FTS5, файловый `Sou
 - **persistence/allowlist_store.py** — `KvAllowlistStore`, долговечный
   authz-allowlist поверх таблицы `kv`.
 - **persistence/soul_store.py** — `SoulStore`, файловые артефакты `data/soul/`.
+- **persistence/proactivity_store.py** — `SqliteProactivityStore`, per-persona
+  состояние drive-движка над таблицей `proactivity_state` (+ тайм-мьют `mute_until`).
+- **persistence/proactivity_sources.py** — `RepoProactivitySources`, дешёвые
+  read-seams движка (салиентность рефлексии + счётчик проактивов) над `episodic_log`.
 - **persistence/schema.sql** — схема SQLite (таблицы + FTS5 + триггеры).
 - **config/loader.py** — `ConfigLoader`, слоистая конфигурация.
 
@@ -130,9 +134,18 @@ DM незнакомца, не-owner команда) — молча игнори�
 Боба): `reject(chat_id, thread_id)` отправляет `GUPPI_REJECT_TEXT` в тред Боба (его
 вызывает роутер только для разрешённой группы, поэтому DM незнакомца reject не
 триггерит); `handle_general_command(text, user_id, chat_id)` обрабатывает
-`/authorize`/`/deauthorize` (мутируют allowlist через общий `Authorizer`) и
-`/status`, возвращая `True` только когда команда от owner в General — иначе молча
-`False`. Невалидный `<user_id>` даёт подсказку, а не грант.
+`/authorize`/`/deauthorize` (мутируют allowlist через общий `Authorizer`),
+`/status` и команды проактивности `/quiet`/`/wake`, возвращая `True` только когда
+команда от owner в General — иначе молча `False`. Невалидный `<user_id>` даёт
+подсказку, а не грант.
+
+**Owner-команды проактивности (BOB-010 Ф1).** `/quiet` заглушает проактив (сбрасывает
+персист-флаг `proactivity_enabled` через `ProactivityStoreLike`); опциональная
+длительность `/quiet 2h` / `/quiet 30m` дополнительно выставляет тайм-мьют
+`mute_until` (по истечении движок сам разбудит проактив). `/wake` снимает мьют и
+чистит `mute_until`. Невалидный аргумент `/quiet` даёт подсказку по использованию, а
+не молчаливый мьют. Команды подключены, только когда в сборку подан
+proactivity-store; иначе они деградируют в no-op (обратная совместимость).
 
 `reply_gateway(identity)` отдаёт `ReplyGateway`-шов нужного бота; ответы Боба
 приколочены к его треду, а контракт (`typing_indicator(chat_id)` +
@@ -214,6 +227,23 @@ allowlisted `user_id` как JSON-массив под единым ключом 
 JSON-профили (`taste_profile`, `mood`, `phantom_prefs`) и append-only
 `genesis_log.md`. Каталог создаётся по требованию.
 
+`SqliteProactivityStore` реализует порт `ProactivityStore` над таблицей
+`proactivity_state` — одна строка на `persona_id`, так что реплики Bobiverse держат
+свои резервуар, маркеры и owner-флаг. Доменный `ProactivityState` маппится в строку
+и обратно (энергия — REAL, маркеры — nullable ISO-8601, флаг — 0/1). Поверх порта
+адаптер несёт инфраструктурный тайм-мьют `mute_until` (выставляется `/quiet 2h`): он
+**не** часть доменного value-объекта, живёт только в строке и читается/пишется через
+`get_mute_until`/`set_mute_until`. `save` апсертит только доменные колонки, не трогая
+`mute_until`, поэтому запись состояния не сбрасывает срочный мьют. Весь SQL
+параметризован (`?`).
+
+`RepoProactivitySources` даёт движку два дешёвых (без LLM) сигнала прямо с живого
+`episodic_log`: `latest_salience()` — салиентность последней рефлексии (свежий
+`reflection`-эпизод даёт около `1.0`, линейно затухая к `0.0` за 6 ч; нет рефлексий
+— `0.0`) и `proactive_count_in_window(*, now)` — число `proactive`-эпизодов за окно
+суток до `now` (потолок анти-спама). Время инъектируется через `Clock` (фолбэк —
+системные UTC-часы), поэтому затухание детерминировано в тестах; SQL параметризован.
+
 ### Конфигурация
 
 `ConfigLoader` строит эффективную конфигурацию слоями: встроенные
@@ -256,6 +286,10 @@ non-secret и может прийти из YAML.
 - `MarkdownToRichMessage` и `RichMessageSerializer` — чистые и детерминированные
   (без I/O, сети, часов).
 - Allowlist персистится в таблице `kv` (параметризованный SQL) и переживает рестарт.
+- Проактивное состояние per-persona персистится в `proactivity_state`; `save` не
+  трогает `mute_until`, поэтому запись состояния не сбрасывает срочный мьют.
+- `/quiet`/`/wake` доступны только owner в General; без поданного proactivity-store
+  деградируют в no-op.
 
 ## API
 
@@ -273,10 +307,11 @@ non-secret и может прийти из YAML.
   `matches(*, chat_id, message_thread_id)`, `BotRegistration`.
 
 Модуль `src/bob/infrastructure/telegram/guppi.py`:
-- `GuppiHandler(*, bot, authorizer, general_chat_id)` —
-  `async reject(*, chat_id, thread_id)`,
-  `async handle_general_command(*, text, user_id, chat_id)` → `bool`.
-- `GUPPI_REJECT_TEXT`.
+- `GuppiHandler(*, bot, authorizer, general_chat_id, proactivity_store=None,
+  clock=None, persona_id="bob")` — `async reject(*, chat_id, thread_id)`,
+  `async handle_general_command(*, text, user_id, chat_id)` → `bool` (включая
+  `/quiet`/`/wake`, когда подан proactivity-store).
+- `GUPPI_REJECT_TEXT`, `ProactivityStoreLike`.
 
 Модуль `src/bob/infrastructure/telegram/gateway.py`:
 - `TelegramGateway(*, bot, bus, poll_timeout, typing_interval, clock, sleep, authorizer=None, reply_thread_id=None)` —
@@ -315,6 +350,15 @@ non-secret и может прийти из YAML.
 - `SoulStore(soul_dir)` — `soul_exists()`, `read_soul()`, `write_soul()`,
   `read_json()/write_json()`, `append_genesis_log()/read_genesis_log()`.
 
+Модуль `src/bob/infrastructure/persistence/proactivity_store.py`:
+- `SqliteProactivityStore(repo)` — `async load(persona_id)` → `ProactivityState`,
+  `async save(persona_id, state)`, `async get_mute_until(persona_id)` → `datetime | None`,
+  `async set_mute_until(persona_id, until)`.
+
+Модуль `src/bob/infrastructure/persistence/proactivity_sources.py`:
+- `RepoProactivitySources(repo, *, clock=None)` — `async latest_salience()` → `float`,
+  `async proactive_count_in_window(*, now)` → `int`.
+
 Модуль `src/bob/infrastructure/config/loader.py`:
 - `ConfigLoader(*, yaml_path, env=None)` — `load()` → `Config`; `DEFAULT_CONFIG`.
 
@@ -337,4 +381,7 @@ non-secret и может прийти из YAML.
 `tests/infrastructure/persistence/test_fts_recall.py`,
 `tests/infrastructure/persistence/test_allowlist_store.py`,
 `tests/infrastructure/persistence/test_soul_store.py`,
+`tests/infrastructure/persistence/test_proactivity_store.py`,
+`tests/infrastructure/persistence/test_proactivity_sources.py`,
+`tests/infrastructure/telegram/test_guppi_proactivity.py`,
 `tests/infrastructure/config/test_loader.py`.
