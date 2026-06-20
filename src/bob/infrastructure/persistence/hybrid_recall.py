@@ -26,6 +26,14 @@ higher fused score than one seen in only one — the point of rank fusion.
 **Graceful fallback:** if the embedder is absent or raises (Ollama down), recall
 degrades to pure FTS5 keyword search — Bob never "loses his memory", he just
 loses the semantic half. The failure is logged, not propagated.
+
+**Reranker (additive boost, BEAD-04):** an optional :class:`~bob.domain.ports.Reranker`
+collaborator re-scores the wide fused top-``K`` pool and trims it to a tight
+top-``N`` (a sharper relevance judgement layered on top of RRF). It is strictly
+additive: with no reranker wired — or one that is disabled / unavailable — recall
+returns the hybrid order unchanged, so reranking never regresses retrieval. The
+reranker itself owns its graceful fallback (returns its input on failure), so the
+recall pipeline simply hands it the pool and uses whatever order comes back.
 """
 
 from __future__ import annotations
@@ -38,7 +46,7 @@ from bob.infrastructure.persistence.fts_recall import Fts5MemoryRecall
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from bob.domain.ports import Embedder, Recalled
+    from bob.domain.ports import Embedder, Recalled, Reranker
     from bob.infrastructure.persistence.sqlite_repo import SqliteMemoryRepo
 
 logger = logging.getLogger(__name__)
@@ -57,27 +65,52 @@ _CANDIDATE_POOL = 20
 class HybridMemoryRecall:
     """Top-``k`` recall fusing sqlite-vec KNN and FTS5 BM25 via RRF (drop-in)."""
 
-    def __init__(self, repo: SqliteMemoryRepo, embedder: Embedder | None) -> None:
+    def __init__(
+        self,
+        repo: SqliteMemoryRepo,
+        embedder: Embedder | None,
+        *,
+        reranker: Reranker | None = None,
+    ) -> None:
         self._repo = repo
         self._embedder = embedder
+        self._reranker = reranker
         self._keyword = Fts5MemoryRecall(repo)
 
     async def recall(self, query: str, *, k: int) -> Sequence[Recalled]:
         """Return up to ``k`` memories relevant to ``query`` (best first).
 
         Fuses a semantic (vector) candidate list with a keyword (FTS5) list via
-        RRF. Falls back to pure keyword recall when the embedder is unavailable.
+        RRF, then — when a reranker is wired — re-orders the fused pool by a sharper
+        relevance score. Falls back to pure keyword recall when the embedder is
+        unavailable; reranking is additive and never regresses the result.
         """
         if not query.strip() or k <= 0:
             return []
+        pool = await self._candidate_pool(query)
+        ranked = await self._rerank(query, pool)
+        return ranked[:k]
+
+    async def _candidate_pool(self, query: str) -> list[Recalled]:
+        """The fused (or keyword-only) top-``K`` pool before reranking/trimming."""
         keyword_hits = list(await self._keyword.recall(query, k=_CANDIDATE_POOL))
         vector_hits = await self._semantic_candidates(query)
         if not vector_hits:
             # No semantic half (no embedder, embedder failed, or empty store):
             # degrade to pure keyword recall — never lose Bob's memory.
-            return keyword_hits[:k]
-        fused = _fuse_rrf((vector_hits, keyword_hits))
-        return fused[:k]
+            return keyword_hits
+        return _fuse_rrf((vector_hits, keyword_hits))
+
+    async def _rerank(self, query: str, pool: list[Recalled]) -> list[Recalled]:
+        """Re-score ``pool`` with the optional reranker (additive boost, BEAD-04).
+
+        No reranker wired -> the hybrid order is returned unchanged. The reranker
+        owns its own graceful fallback, so the pipeline trusts whatever order it
+        returns; reranking never regresses retrieval.
+        """
+        if self._reranker is None or not pool:
+            return pool
+        return list(await self._reranker.rerank(query, pool))
 
     async def _semantic_candidates(self, query: str) -> list[dict[str, object]]:
         """Vector-KNN candidates for ``query`` (empty on any embedder problem).

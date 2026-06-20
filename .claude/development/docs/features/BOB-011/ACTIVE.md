@@ -18,6 +18,17 @@
 - [ ] Setup: `scripts/setup-ollama.sh` — установка Ollama + pull bge-m3 (+ реранкер) — в процессе
 - [x] W1: bob-6vo.1 (Embedder + Ollama) — DONE.
 - [x] W2: bob-6vo.2 (sqlite-vec + бэкфилл + on-write) — DONE.
+- [x] W4: bob-6vo.4 (Reranker) — DONE. `Reranker` порт (domain/ports.py:
+      `async rerank(query, candidates) -> list[Recalled]`), `OllamaReranker`
+      адаптер (infrastructure/llm/ollama_reranker.py, Ollama-as-scorer
+      per-candidate через /v1/chat/completions + retry; недоступность/ошибка/
+      непарсимый score -> вход без изменений + лог), `build_reranker` factory
+      (config reranker.{enabled,base_url,model,top_n}; None при absent/disabled,
+      enabled=false by default), врезка в `HybridMemoryRecall` опциональным
+      reranker-коллаборатором (top-K RRF pool -> rerank -> [:k]). ADDITIVE:
+      None/disabled/ошибка -> гибрид без изменений (нет регрессии). +22 теста на
+      фейках (no net). 678 passed / ruff / mypy --strict (src+tests). app.py
+      wiring — на .6; architecture.md doc refresh — на .9.
 - [x] W3: bob-6vo.3 (гибридный recall FTS5+vector+RRF) — DONE. `HybridMemoryRecall`
       (infrastructure/persistence/hybrid_recall.py) за `MemoryRecall` drop-in: эмбед запроса →
       sqlite-vec KNN (`MemoryVectorStore.knn` / `SqliteMemoryRepo.vector_knn`) + FTS5 BM25 →
@@ -32,7 +43,7 @@
 | bob-6vo.1 | dev: Embedder + OllamaEmbedder (BGE-M3) | — | ready |
 | bob-6vo.2 | dev: sqlite-vec + бэкфилл + on-write | .1 | done |
 | bob-6vo.3 | dev: гибридный recall (FTS5+vector+RRF) + фоллбэк | .2 | done |
-| bob-6vo.4 | dev: Reranker + Qwen3-Reranker (Q1) | .3 | ready |
+| bob-6vo.4 | dev: Reranker + Qwen3-Reranker (Q1) | .3 | done |
 | bob-6vo.5 | dev: search_memory capability | .3 | ready |
 | bob-6vo.6 | dev: интеграция app.py + e2e | .4,.5 | blocked |
 | bob-6vo.7 | test | .6 | blocked |

@@ -44,6 +44,7 @@ __all__ = [
     "Permission",
     "ProactivityStore",
     "Recalled",
+    "Reranker",
     "SoulStore",
     "ToolCall",
     "ToolCallResult",
@@ -267,6 +268,37 @@ class Embedder(Protocol):
         Returns a list aligned with ``texts``: element ``i`` is the embedding of
         ``texts[i]``. Every vector shares the model's fixed dimension. An empty
         input yields an empty list.
+        """
+        ...
+
+
+@runtime_checkable
+class Reranker(Protocol):
+    """Re-scores recall candidates by relevance (an additive quality boost).
+
+    Sits *on top of* :class:`MemoryRecall`: the hybrid recall surfaces a wide
+    top-``K`` pool (RRF over keyword + vector), and the reranker re-orders that
+    pool by a sharper relevance judgement and trims it to a tight top-``N``. It is
+    deliberately ADDITIVE — a recall that cannot reach a reranker (disabled, model
+    absent, endpoint down) returns the hybrid order unchanged, so reranking never
+    regresses retrieval. Provider-agnostic by design: the first realisation is an
+    Ollama-as-scorer (there is no native rerank endpoint — Q1), but the port
+    commits only to "query + candidates in, re-ordered (trimmed) candidates out",
+    so a dedicated local rerank service swaps in without any consumer change.
+    Like embeddings, it runs locally — memory content never leaves the machine.
+    """
+
+    async def rerank(
+        self,
+        query: str,
+        candidates: Sequence[Recalled],
+    ) -> list[Recalled]:
+        """Return ``candidates`` re-ordered by relevance to ``query`` (best first).
+
+        The result is optionally trimmed to the adapter's configured top-``N``.
+        Implementations MUST degrade gracefully: on any unavailability or scoring
+        failure they return the input ``candidates`` unchanged (never raise into
+        the caller). An empty input yields an empty list.
         """
         ...
 

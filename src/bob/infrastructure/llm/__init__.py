@@ -11,11 +11,15 @@ from __future__ import annotations
 from bob.infrastructure.llm.embedder_factory import build_embedder
 from bob.infrastructure.llm.factory import build_tier_providers
 from bob.infrastructure.llm.ollama_embedder import OllamaEmbedder
+from bob.infrastructure.llm.ollama_reranker import OllamaReranker
 from bob.infrastructure.llm.openai_compat import OpenAICompatProvider
+from bob.infrastructure.llm.reranker_factory import build_reranker
 
 __all__ = [
     "OllamaEmbedder",
+    "OllamaReranker",
     "OpenAICompatProvider",
     "build_embedder",
+    "build_reranker",
     "build_tier_providers",
 ]

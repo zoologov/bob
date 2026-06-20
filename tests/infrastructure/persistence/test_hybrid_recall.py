@@ -24,7 +24,7 @@ from bob.infrastructure.persistence.hybrid_recall import HybridMemoryRecall
 from bob.infrastructure.persistence.sqlite_repo import SqliteMemoryRepo
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Mapping, Sequence
     from pathlib import Path
 
 # The schema fixes embeddings at BGE-M3's 1024 dims, so test vectors match it.
@@ -237,4 +237,140 @@ async def test_empty_query_returns_empty(tmp_path: Path) -> None:
 
     assert await recall.recall("   ", k=5) == []
     assert await recall.recall("jazz", k=0) == []
+    await db.close()
+
+
+# --- Reranker integration (BEAD-04) -------------------------------------------
+#
+# The reranker is an ADDITIVE quality boost: hybrid recall surfaces a wide top-K
+# pool, the reranker re-orders it and trims to top-N. It must never regress recall
+# — a disabled/None/failing reranker yields the hybrid order unchanged. A FAKE
+# reranker (no network) drives the wiring deterministically.
+
+
+class FakeReranker:
+    """Reranker that re-scores by an explicit content->score table, trims to top_n.
+
+    Realises :class:`bob.domain.ports.Reranker`. Higher score ranks first; unknown
+    content scores 0.0. Set ``fail`` to simulate an unavailable reranker — per the
+    additive contract it then returns the input candidates unchanged (never raises).
+    """
+
+    def __init__(
+        self,
+        scores: dict[str, float],
+        *,
+        top_n: int,
+        fail: bool = False,
+    ) -> None:
+        self._scores = scores
+        self._top_n = top_n
+        self.fail = fail
+        self.calls = 0
+
+    async def rerank(
+        self, query: str, candidates: Sequence[Mapping[str, object]]
+    ) -> list[Mapping[str, object]]:
+        del query  # this fake ranks by a content->score table, ignoring the query
+        self.calls += 1
+        items = list(candidates)
+        if self.fail:
+            return items  # graceful: keep hybrid order, never crash recall
+        ranked = sorted(
+            items,
+            key=lambda hit: -self._scores.get(str(hit["content"]), 0.0),
+        )
+        return ranked[: self._top_n]
+
+
+async def test_reranker_reorders_hybrid_candidates_to_top_n(tmp_path: Path) -> None:
+    # The reranker re-scores the hybrid pool by a known key: the candidate it
+    # scores highest is promoted to the front, and the list is trimmed to top_n.
+    query = "jazz"
+    embedder = StubEmbedder(
+        {
+            query: _unit(0),
+            "bob loves jazz": _unit(0),
+            "smooth saxophone evenings": _unit(0),
+            "late night blue notes": _unit(0),
+        }
+    )
+    db = SqliteMemoryRepo(tmp_path / "bob.db", embedder=embedder)
+    await db.initialize()
+    await db.save_fact(_fact("bob loves jazz"))
+    await db.save_fact(_fact("smooth saxophone evenings"))
+    await db.save_fact(_fact("late night blue notes"))
+
+    # Reranker prefers the vector-only candidate that keyword fusion ranked lower.
+    reranker = FakeReranker(
+        {"smooth saxophone evenings": 0.9, "bob loves jazz": 0.5, "late night blue notes": 0.1},
+        top_n=2,
+    )
+    recall = HybridMemoryRecall(db, embedder, reranker=reranker)
+    results = await recall.recall(query, k=5)
+
+    contents = [str(r["content"]) for r in results]
+    assert contents == ["smooth saxophone evenings", "bob loves jazz"]  # reordered + trimmed
+    assert reranker.calls == 1
+    await db.close()
+
+
+async def test_no_reranker_returns_hybrid_order_unchanged(tmp_path: Path) -> None:
+    # With no reranker wired, recall == the BEAD-03 hybrid result (drop-in).
+    query = "jazz"
+    embedder = StubEmbedder({query: _unit(0), "bob loves jazz": _unit(0)})
+    db = SqliteMemoryRepo(tmp_path / "bob.db", embedder=embedder)
+    await db.initialize()
+    await db.save_fact(_fact("bob loves jazz"))
+
+    hybrid = await HybridMemoryRecall(db, embedder).recall(query, k=5)
+    with_none = await HybridMemoryRecall(db, embedder, reranker=None).recall(query, k=5)
+
+    assert [str(r["content"]) for r in with_none] == [str(r["content"]) for r in hybrid]
+    await db.close()
+
+
+async def test_failing_reranker_falls_back_to_hybrid_order(tmp_path: Path) -> None:
+    # The reranker is unavailable (raises/returns input): recall must NOT crash and
+    # must return the hybrid order — reranking is additive, never a regression.
+    query = "jazz"
+    embedder = StubEmbedder(
+        {query: _unit(0), "bob loves jazz": _unit(0), "smooth saxophone evenings": _unit(0)}
+    )
+    db = SqliteMemoryRepo(tmp_path / "bob.db", embedder=embedder)
+    await db.initialize()
+    await db.save_fact(_fact("bob loves jazz"))
+    await db.save_fact(_fact("smooth saxophone evenings"))
+
+    hybrid = await HybridMemoryRecall(db, embedder).recall(query, k=5)
+    failing = FakeReranker({}, top_n=5, fail=True)
+    results = await HybridMemoryRecall(db, embedder, reranker=failing).recall(query, k=5)
+
+    assert [str(r["content"]) for r in results] == [str(r["content"]) for r in hybrid]
+    assert failing.calls == 1  # it was consulted, then fell back
+    await db.close()
+
+
+async def test_reranker_runs_after_keyword_only_fallback(tmp_path: Path) -> None:
+    # Even when the embedder is down (pure-FTS5 fallback), the reranker still gets
+    # to re-score the keyword pool: the boost is independent of the semantic half.
+    query = "jazz"
+    write_embedder = StubEmbedder(
+        {"bob loves jazz": _unit(0), "jazz festival tonight": _unit(0)}
+    )
+    db = SqliteMemoryRepo(tmp_path / "bob.db", embedder=write_embedder)
+    await db.initialize()
+    await db.save_fact(_fact("bob loves jazz"))
+    await db.save_fact(_fact("jazz festival tonight"))
+
+    failing_embedder = StubEmbedder({}, fail=True)  # recall's embedder is down
+    reranker = FakeReranker(
+        {"jazz festival tonight": 0.9, "bob loves jazz": 0.2}, top_n=2
+    )
+    recall = HybridMemoryRecall(db, failing_embedder, reranker=reranker)
+    results = await recall.recall(query, k=5)
+
+    contents = [str(r["content"]) for r in results]
+    assert contents[0] == "jazz festival tonight"  # reranked atop keyword-only pool
+    assert reranker.calls == 1
     await db.close()
