@@ -15,6 +15,7 @@ only genuinely-internal ``private_context`` stays Tier-0-only.
 
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
@@ -214,7 +215,7 @@ def _build(
         poll_timeout=1,
         typing_interval=4.0,
         clock=lambda: 0.0,
-        sleep=_no_sleep,
+        sleep=_parking_sleep,
     )
     handler = HandleMessage(
         router=router,
@@ -232,8 +233,15 @@ def _build(
     return handler, bot, repo, tier1
 
 
-async def _no_sleep(_seconds: float) -> None:
-    return None
+async def _parking_sleep(_seconds: float) -> None:
+    # Drive the typing keepalive deterministically with NO busy-spin: the
+    # context manager fires the up-front "typing…" before its first ``_sleep``,
+    # so by the time the keepalive reaches here typing has already landed. This
+    # fake then parks forever (until the keepalive task is cancelled on context
+    # exit), so the ``while True`` loop runs a bounded number of iterations and
+    # never starves the event loop. A no-op ``async def f(): pass`` here would
+    # spin the loop at 100% CPU and hang the suite.
+    await asyncio.Event().wait()
 
 
 class _NullBus:
@@ -259,17 +267,32 @@ def _message(text: str = "расскажи подробно про кофе") ->
     )
 
 
-async def test_handle_streams_reply_back_to_telegram() -> None:
+async def test_handle_sends_reply_back_to_telegram() -> None:
     # Arrange
     handler, bot, _repo, _tier1 = _build(reply="Coffee is the best.")
 
     # Act
     await handler.handle(_message())
 
-    # Assert: the reply was streamed out (placeholder + final edit).
+    # Assert: the reply was committed as one rich final into Bob's chat.
     assert bot.sent
-    assert bot.sent[0][0] == 555
+    assert bot.sent[-1][0] == 555
     assert bot.final_text == "Coffee is the best."
+
+
+async def test_handle_shows_typing_during_generation_then_one_final() -> None:
+    # BOB-009: the slow generation runs inside the typing keepalive, so at least one
+    # "Bob is typing…" action fires before the (single) rich final is committed.
+    handler, bot, _repo, _tier1 = _build(reply="thinking it over")
+
+    await handler.handle(_message())
+
+    assert bot.typings >= 1, "no typing indicator fired during generation"
+    # Exactly one committed reply (one rich final), and the keepalive left no task.
+    assert len(bot.sent) == 1
+    assert bot.final_text == "thinking it over"
+    pending = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
+    assert pending == [], "the typing keepalive task leaked past the turn"
 
 
 async def test_handle_persists_episode_and_mood() -> None:

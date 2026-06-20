@@ -13,33 +13,37 @@ two transport jobs and *no* Higher-Mind / LLM / memory logic:
    ``update_id`` (Telegram may redeliver), normalises each text update into a
    :class:`MessageReceived`, and publishes it onto the :class:`EventBus`. A
    use-case elsewhere decides what to do.
-2. **Reply (BOB-008 — Variant A: typing indicator + one rich final).** Native
-   token streaming is impossible in a Telegram **group** topic — drafts are
-   DM-only (Threaded Mode = DM topics, not group topics) and ``editMessageText``
-   in groups is slow and flood-prone. Bob is reached **only** through the group
-   (DMs are closed by authz), so the gateway no longer streams. Instead, given an
-   async iterator of reply tokens it:
+2. **Reply (BOB-009 — typing keepalive + one rich final).** Native token
+   streaming is impossible in a Telegram **group** topic — drafts are DM-only
+   (Threaded Mode = DM topics, not group topics) and ``editMessageText`` in groups
+   is slow and flood-prone. Bob is reached **only** through the group (DMs are
+   closed by authz), so the gateway never streams. Instead it exposes:
 
-   * sends ``sendChatAction("typing")`` into Bob's thread (``reply_thread_id``)
-     and **repeats** it about every ``typing_interval`` seconds while the reply is
-     being assembled, so the user sees "Bob is typing…";
-   * drains the token stream to assemble the **full** reply (the ``ReplyStreamer``
-     port still hands tokens, so the application is unchanged), then stops the
-     typing loop;
-   * commits the finished reply as **one** rich message (``send_rich_message`` —
-     headings/lists/code/quotes + a :class:`RichBlockThinking` block when a
-     ``thinking`` is present), pinned to ``reply_thread_id``; on **any** rich
-     error it degrades to a plain ``send_message`` so the reply is never lost. A
-     single non-draft ``send_rich_message`` works in group topics.
+   * :meth:`typing_indicator` — an async context manager wrapping the **slow
+     generation**. On enter it fires ``sendChatAction("typing")`` into Bob's
+     thread (``reply_thread_id``) immediately, then a background task **re-sends**
+     it every ``typing_interval`` seconds (Telegram auto-clears typing after a few
+     seconds), so "Bob is typing…" stays visible for the whole real wait. On exit
+     it **cancels** that task (no leak). A failed typing action is logged and
+     swallowed — it never breaks the turn.
+   * :meth:`reply` — commits the finished reply as **one** rich message
+     (``send_rich_message`` — headings/lists/code/quotes + a
+     :class:`RichBlockThinking` block when a ``thinking`` is present), pinned to
+     ``reply_thread_id``; on **any** rich error it degrades to a plain
+     ``send_message`` so the reply is never lost. A single non-draft
+     ``send_rich_message`` works in group topics.
 
-Time and sleeping are injected (``clock`` / ``sleep``) so the typing cadence is
-deterministic in tests; the bot is injected behind a minimal :class:`BotLike`
+Sleeping is injected (``sleep``) so the keepalive cadence is deterministic in
+tests (``clock`` is kept on the seam for callers); the bot is injected behind a
+minimal :class:`BotLike`
 protocol so tests use a fake aiogram bot — no real network. The concrete aiogram
 ``Bot``/``Dispatcher`` wiring lives in ``bob.app``.
 """
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import logging
 from typing import TYPE_CHECKING, Protocol
 
@@ -333,39 +337,34 @@ class TelegramGateway:
             sender_name=user.full_name if user is not None else None,
         )
 
-    # --- Reply (typing indicator + one rich final) ----------------------------
+    # --- Reply (typing keepalive + one rich final) ----------------------------
 
-    async def stream_reply(
-        self, *, chat_id: int, tokens: AsyncIterator[str], thinking: str | None = None
-    ) -> int:
-        """Show "typing…" while assembling the reply, then send it as one rich message.
+    @contextlib.asynccontextmanager
+    async def typing_indicator(self, *, chat_id: int) -> AsyncIterator[None]:
+        """Keep "Bob is typing…" visible for the whole (slow) generation.
 
-        Variant A (BOB-008): Bob cannot stream in a group topic, so the gateway
-        shows a ``sendChatAction("typing")`` indicator — pinned to
-        ``reply_thread_id`` — while it drains ``tokens`` into the full reply. The
-        indicator fires once up front (so "Bob is typing…" appears immediately) and
-        is **re-sent** about every ``typing_interval`` seconds of generation
-        (Telegram auto-clears it after a few seconds); the cadence is driven by the
-        injected ``clock`` so it is deterministic in tests. When the stream ends the
-        finished reply is committed via a **single** :meth:`reply` (rich, with a
-        ``RichBlockThinking`` block when ``thinking`` is set), degrading to a plain
-        ``send_message`` on a rich error. The token stream is consumed (not
-        streamed) so the ``ReplyStreamer`` port is unchanged. Returns the number of
-        typing actions sent.
+        BOB-009: the slow ``router.run`` runs INSIDE this context. On enter it fires
+        one ``sendChatAction("typing")`` into ``reply_thread_id`` immediately, then
+        spawns a background task that re-sends it every ``typing_interval`` seconds
+        (the injected ``sleep`` drives the cadence, deterministic in tests) so the
+        indicator never lapses while the model thinks. On exit the task is
+        **cancelled** and awaited — no leaked task. A failed typing action is logged
+        and swallowed, so it can never break the turn.
         """
-        actions_sent = await self._send_typing(chat_id)
-        last_typing_at = self._clock()
-        chunks: list[str] = []
-        async for token in tokens:
-            chunks.append(token)
-            if self._clock() - last_typing_at >= self._typing_interval:
-                actions_sent += await self._send_typing(chat_id)
-                last_typing_at = self._clock()
+        await self._send_typing(chat_id)
+        task = asyncio.create_task(self._typing_keepalive(chat_id))
+        try:
+            yield
+        finally:
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
 
-        accumulated = "".join(chunks)
-        if accumulated or (thinking and thinking.strip()):
-            await self.reply(chat_id=chat_id, markdown=accumulated, thinking=thinking)
-        return actions_sent
+    async def _typing_keepalive(self, chat_id: int) -> None:
+        """Re-send the typing action every ``typing_interval`` until cancelled."""
+        while True:
+            await self._sleep(self._typing_interval)
+            await self._send_typing(chat_id)
 
     async def _send_typing(self, chat_id: int) -> int:
         """Send one ``sendChatAction("typing")`` into the thread (best-effort).

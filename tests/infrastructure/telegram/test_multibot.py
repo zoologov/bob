@@ -25,6 +25,7 @@ are just drop-hooks, so this bead's router never crashes on them.
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
@@ -41,7 +42,7 @@ from bob.infrastructure.telegram.multibot import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator, Sequence
+    from collections.abc import Sequence
 
     from aiogram.types import InputRichMessage
 
@@ -238,7 +239,9 @@ def _build(
 
 
 async def _noop_sleep(_seconds: float) -> None:
-    return None
+    # A real suspension point (so the typing keepalive cooperates with the turn)
+    # without an actual wall-clock wait.
+    await asyncio.sleep(0)
 
 
 async def _collect(bus: AsyncEventBus) -> list[MessageReceived]:
@@ -397,22 +400,19 @@ async def test_one_bot_poll_failure_does_not_kill_the_other() -> None:
 
 
 @pytest.mark.asyncio
-async def test_bob_reply_streamer_sets_thread_id() -> None:
-    """Bob's reply streamer pins message_thread_id to his topic.
+async def test_bob_reply_gateway_sets_thread_id() -> None:
+    """Bob's reply gateway pins message_thread_id to his topic.
 
-    BOB-008 (Variant A): Bob's topic shows a "typing…" indicator while generating,
-    then commits one rich final — both the typing action and the rich final are
-    pinned to Bob's thread; no streaming.
+    BOB-009: the typing keepalive and the one rich final both target Bob's thread —
+    typing fires on enter, the rich final commits on ``reply``; no streaming.
     """
     bob, guppi = _FakeBot(), _FakeBot()
     gateway, _ = _build({BotIdentity.BOB: bob, BotIdentity.GUPPI: guppi})
-    streamer = gateway.reply_streamer(BotIdentity.BOB)
+    reply_gateway = gateway.reply_gateway(BotIdentity.BOB)
 
-    async def _tokens() -> AsyncIterator[str]:
-        for tok in ("hel", "lo"):
-            yield tok
-
-    await streamer.stream_reply(chat_id=_CHAT_ID, tokens=_tokens())
+    async with reply_gateway.typing_indicator(chat_id=_CHAT_ID):
+        await asyncio.sleep(0)
+    await reply_gateway.reply(chat_id=_CHAT_ID, markdown="hello")
 
     assert bob.sends, "Bob's bot should have received the committed reply"
     assert all(call.message_thread_id == _BOB_TOPIC_ID for call in bob.sends)

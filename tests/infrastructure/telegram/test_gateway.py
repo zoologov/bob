@@ -7,14 +7,17 @@
 No real Telegram network: a hand-rolled fake aiogram-style bot records calls. A
 monotonic fake clock makes the "Bob is typing…" cadence deterministic.
 
-BOB-008 (Variant A): native streaming is gone — Bob is reached only through a group
-topic, where drafts are DM-only and edits are slow + flood-prone. The reply path now
-shows ``sendChatAction("typing")`` while it assembles the reply, then commits a single
-rich ``send_rich_message`` (degrading to a plain ``send_message`` on a rich error).
+BOB-009 (typing keepalive): the slow generation runs INSIDE
+``typing_indicator(chat_id)`` — an async context manager that fires
+``sendChatAction("typing")`` immediately, then re-sends it every ``typing_interval``
+seconds from a background task (driven by the injected ``sleep``), and cancels that
+task on exit (no leak). The finished reply is committed once via :meth:`reply`
+(rich ``send_rich_message``, degrading to a plain ``send_message`` on a rich error).
 """
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -110,6 +113,7 @@ class _FakeBot:
     rich_sends: list[_RichCall] = field(default_factory=list)
     next_message_id: int = 500
     rich_send_raises: bool = False
+    typing_raises: bool = False
 
     async def get_updates(
         self, *, offset: int, timeout: int
@@ -132,6 +136,8 @@ class _FakeBot:
     async def send_chat_action(
         self, *, chat_id: int, action: str, message_thread_id: int | None = None
     ) -> bool:
+        if self.typing_raises:
+            raise ValueError("typing boom")
         self.typings.append(
             _TypingCall(
                 chat_id=chat_id, action=action, message_thread_id=message_thread_id
@@ -309,104 +315,95 @@ async def test_poll_once_dedup_persists_across_polls() -> None:
     assert second == 0
 
 
-# --- Reply: typing indicator + single rich final (Variant A) ------------------
+# --- Typing keepalive: indicator concurrent with the (slow) generation --------
+
+
+class _GatedSleep:
+    """Async sleep whose every call blocks until the test releases one tick.
+
+    Lets a test step the keepalive loop deterministically: each ``sleep(interval)``
+    parks on an event the test fires with :meth:`tick`, modelling the passage of one
+    ``typing_interval`` of real generation time without any wall-clock wait.
+    """
+
+    def __init__(self) -> None:
+        self.durations: list[float] = []
+        self._gate = asyncio.Event()
+
+    async def __call__(self, seconds: float) -> None:
+        self.durations.append(seconds)
+        self._gate.clear()
+        await self._gate.wait()
+
+    def tick(self) -> None:
+        self._gate.set()
 
 
 @pytest.mark.asyncio
-async def test_stream_reply_shows_typing_then_one_rich_final() -> None:
+async def test_typing_indicator_fires_immediately_on_enter() -> None:
     bot = _FakeBot()
-    gateway = _make_gateway(bot, reply_thread_id=37)
+    gateway = _make_gateway(bot, reply_thread_id=37, sleep=_GatedSleep())
 
-    await gateway.stream_reply(chat_id=42, tokens=_tokens("Hel", "lo ", "world"))
+    async with gateway.typing_indicator(chat_id=42):
+        # The up-front "Bob is typing…" must appear at once, before any wait.
+        await asyncio.sleep(0)
+        assert bot.typings, "typing did not fire immediately on enter"
 
-    # "Bob is typing…" fired at least once, pinned to Bob's thread.
-    assert bot.typings, "no typing indicator was sent during generation"
     assert all(t.action == "typing" for t in bot.typings)
     assert all(t.message_thread_id == 37 for t in bot.typings)
-    # Exactly ONE rich final into the thread; no plain send.
-    assert len(bot.rich_sends) == 1
-    assert bot.rich_sends[0].markdown == "Hello world"
-    assert bot.rich_sends[0].message_thread_id == 37
-    assert bot.sends == []
 
 
 @pytest.mark.asyncio
-async def test_stream_reply_repeats_typing_on_interval_for_long_generation() -> None:
-    # A long generation keeps re-sending "typing…": the injected clock advances past
-    # the typing_interval between tokens, so the indicator is re-sent each interval.
+async def test_typing_indicator_repeats_on_interval_during_slow_generation() -> None:
     bot = _FakeBot()
-    clock = _FakeClock()
+    sleep = _GatedSleep()
+    gateway = _make_gateway(bot, sleep=sleep, typing_interval=4.0)
 
-    async def slow_tokens() -> AsyncIterator[str]:
-        for token in ("a", "b", "c"):
-            clock.value += 5.0  # > typing_interval=4.0, so each token re-types
-            yield token
+    async with gateway.typing_indicator(chat_id=7):
+        await asyncio.sleep(0)  # let the up-front action + first sleep happen
+        before = len(bot.typings)
+        sleep.tick()  # one interval of generation elapses
+        await asyncio.sleep(0)
+        sleep.tick()  # a second interval
+        await asyncio.sleep(0)
 
-    gateway = _make_gateway(
-        bot, clock=clock, sleep=_RecordingSleep(clock), typing_interval=4.0
-    )
-
-    await gateway.stream_reply(chat_id=7, tokens=slow_tokens())
-
-    # One up-front action + one per elapsed interval (3 tokens) = 4 typing actions.
-    assert len(bot.typings) >= 2, "typing was not repeated for a long generation"
-    assert len(bot.rich_sends) == 1
+    # Re-sent on each elapsed interval, always on the keepalive's interval cadence.
+    assert len(bot.typings) > before
+    assert sleep.durations
+    assert all(d == 4.0 for d in sleep.durations)
 
 
 @pytest.mark.asyncio
-async def test_stream_reply_renders_thinking_block() -> None:
+async def test_typing_indicator_cancels_keepalive_on_exit() -> None:
     bot = _FakeBot()
-    gateway = _make_gateway(bot)
+    sleep = _GatedSleep()
+    gateway = _make_gateway(bot, sleep=sleep)
 
-    await gateway.stream_reply(
-        chat_id=7, tokens=_tokens("answer"), thinking="my private reasoning"
-    )
+    async with gateway.typing_indicator(chat_id=7):
+        await asyncio.sleep(0)
+    sent_at_exit = len(bot.typings)
+
+    # No leaked task and no further typing after the context closed.
+    pending = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
+    assert pending == [], "the keepalive task leaked past the context"
+    sleep.tick()  # would re-type if the loop were still alive
+    await asyncio.sleep(0)
+    assert len(bot.typings) == sent_at_exit
+
+
+@pytest.mark.asyncio
+async def test_typing_indicator_failure_does_not_break_the_turn() -> None:
+    # A failing sendChatAction is swallowed: entering/exiting the context must not
+    # raise, so the surrounding generation + reply still go through.
+    bot = _FakeBot(typing_raises=True)
+    gateway = _make_gateway(bot, sleep=_GatedSleep())
+
+    async with gateway.typing_indicator(chat_id=7):
+        await asyncio.sleep(0)
+    await gateway.reply(chat_id=7, markdown="still here")
 
     assert len(bot.rich_sends) == 1
-    markdown = bot.rich_sends[0].markdown or ""
-    assert "my private reasoning" in markdown
-    assert markdown.strip().endswith("answer")
-
-
-@pytest.mark.asyncio
-async def test_stream_reply_rich_failure_falls_back_to_plain() -> None:
-    bot = _FakeBot(rich_send_raises=True)
-    gateway = _make_gateway(bot, reply_thread_id=37)
-
-    await gateway.stream_reply(chat_id=7, tokens=_tokens("hel", "lo"))
-
-    # Rich failed → the reply is NOT lost: it lands via a plain send into the thread.
-    assert bot.rich_sends == []
-    assert len(bot.sends) == 1
-    assert bot.sends[0].text == "hello"
-    assert bot.sends[0].message_thread_id == 37
-
-
-@pytest.mark.asyncio
-async def test_stream_reply_no_edit_or_draft_calls() -> None:
-    # The fake bot has no edit/draft methods at all; this just pins that the gateway
-    # only ever uses typing + rich/plain — a regression guard against streaming.
-    bot = _FakeBot()
-    gateway = _make_gateway(bot)
-
-    await gateway.stream_reply(chat_id=7, tokens=_tokens("x", "y", "z"))
-
-    assert not hasattr(bot, "edits")
-    assert not hasattr(bot, "drafts")
-    assert len(bot.rich_sends) == 1
-
-
-@pytest.mark.asyncio
-async def test_stream_reply_empty_stream_sends_nothing_but_may_type() -> None:
-    bot = _FakeBot()
-    gateway = _make_gateway(bot)
-
-    actions = await gateway.stream_reply(chat_id=7, tokens=_tokens())
-
-    # Nothing to commit; the up-front typing action may still have fired.
-    assert actions >= 0
-    assert bot.rich_sends == []
-    assert bot.sends == []
+    assert bot.rich_sends[0].markdown == "still here"
 
 
 # --- Rich reply: send_rich_message + thinking + plain fallback ----------------

@@ -63,20 +63,20 @@ from bob.infrastructure.telegram.gateway import (
 from bob.infrastructure.telegram.guppi import GuppiHandler
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator
+    from contextlib import AbstractAsyncContextManager
 
     from bob.domain.ports import EventBus
     from bob.infrastructure.telegram.gateway import MessageLike
 
 logger = logging.getLogger(__name__)
 
-# Reply-typing cadence for the inner gateways. Replies flow through reply_streamer,
-# which (BOB-008, Variant A) shows a "typing…" indicator while it assembles the
-# reply, then commits one rich final — no streaming. Bob cannot stream in a group
-# topic (drafts are DM-only, edits are slow + flood-prone), so the inner gateways
-# re-send ``sendChatAction("typing")`` about every ``_DEFAULT_TYPING_INTERVAL``
-# seconds (Telegram auto-clears the indicator after a few seconds), driven by a real
-# monotonic clock so a long generation keeps showing "Bob is typing…".
+# Reply-typing cadence for the inner gateways. Replies flow through reply_gateway,
+# which (BOB-009) wraps the slow generation in a ``typing_indicator`` keepalive,
+# then commits one rich final — no streaming. Bob cannot stream in a group topic
+# (drafts are DM-only, edits are slow + flood-prone), so the inner gateways re-send
+# ``sendChatAction("typing")`` about every ``_DEFAULT_TYPING_INTERVAL`` seconds
+# (Telegram auto-clears the indicator after a few seconds), driven by the injected
+# ``sleep`` so a long generation keeps showing "Bob is typing…".
 _DEFAULT_TYPING_INTERVAL = 4.0
 
 
@@ -85,7 +85,11 @@ def _zero_clock() -> float:
 
 
 async def _noop_sleep(_seconds: float) -> None:
-    return None
+    # A "no real wait" sleep for intake-only / deterministic wiring. It still
+    # ``await``s a real suspension point so it can NEVER starve the event loop:
+    # the reply path's typing keepalive runs a ``while True`` loop driven by this
+    # sleep, and a sleep that returns without yielding would spin it at 100% CPU.
+    await asyncio.sleep(0)
 
 
 # Real timing seams for the live inner gateways (the deterministic stubs above are
@@ -377,25 +381,30 @@ class MultiBotGateway:
 
     # --- Reply (per identity) -------------------------------------------------
 
-    def reply_streamer(self, identity: BotIdentity) -> _ReplyStreamer:
+    def reply_gateway(self, identity: BotIdentity) -> _ReplyGateway:
         """Return the reply seam for ``identity`` (Bob's pins his topic thread)."""
-        return _ReplyStreamer(self._inner[identity])
+        return _ReplyGateway(self._inner[identity])
 
 
-class _ReplyStreamer:
-    """Adapts a per-bot :class:`TelegramGateway` to the ``ReplyStreamer`` port.
+class _ReplyGateway:
+    """Adapts a per-bot :class:`TelegramGateway` to the ``ReplyGateway`` port (BOB-009).
 
-    Delegates to the inner gateway, which already pins ``message_thread_id`` for
-    its bot, so HandleMessage's ``stream_reply(chat_id, tokens)`` stays untouched
-    yet Bob's replies land in his topic thread.
+    Delegates to the inner gateway, which already pins ``message_thread_id`` for its
+    bot, so HandleMessage's ``typing_indicator`` keepalive and the one rich ``reply``
+    both land in Bob's topic thread.
     """
 
     def __init__(self, gateway: TelegramGateway) -> None:
         self._gateway = gateway
 
-    async def stream_reply(
-        self, *, chat_id: int, tokens: AsyncIterator[str]
-    ) -> int:
-        return await self._gateway.stream_reply(chat_id=chat_id, tokens=tokens)
+    def typing_indicator(
+        self, *, chat_id: int
+    ) -> AbstractAsyncContextManager[None]:
+        return self._gateway.typing_indicator(chat_id=chat_id)
+
+    async def reply(
+        self, *, chat_id: int, markdown: str, thinking: str | None = None
+    ) -> None:
+        await self._gateway.reply(chat_id=chat_id, markdown=markdown, thinking=thinking)
 
 
