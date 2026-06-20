@@ -2,15 +2,15 @@
 # SPDX-License-Identifier: BUSL-1.1
 # See the LICENSE file in the project root for full license information.
 
-"""Tests for the Telegram gateway (transport-only: intake, dedup, streaming).
+"""Tests for the Telegram gateway (transport-only: intake, dedup, typing+rich reply).
 
-No real Telegram network: a hand-rolled fake aiogram-style bot records calls and
-can be told to raise ``TelegramRetryAfter`` to drive the throttle/backoff path. A
-monotonic fake clock + recording sleep make draft batching deterministic.
+No real Telegram network: a hand-rolled fake aiogram-style bot records calls. A
+monotonic fake clock makes the "Bob is typing…" cadence deterministic.
 
-Streaming uses aiogram's native ``send_message_draft`` (progressive draft) rather
-than the old ``editMessageText`` loop: drafts stream the partial text, and a final
-``send_message`` commits the completed reply.
+BOB-008 (Variant A): native streaming is gone — Bob is reached only through a group
+topic, where drafts are DM-only and edits are slow + flood-prone. The reply path now
+shows ``sendChatAction("typing")`` while it assembles the reply, then commits a single
+rich ``send_rich_message`` (degrading to a plain ``send_message`` on a rich error).
 """
 
 from __future__ import annotations
@@ -19,8 +19,8 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 import pytest
-from aiogram.exceptions import TelegramBadRequest, TelegramRetryAfter
-from aiogram.methods import SendMessage, SendMessageDraft, SendRichMessageDraft
+from aiogram.exceptions import TelegramBadRequest
+from aiogram.methods import SendMessage
 
 from bob.application.runtime.event_bus import AsyncEventBus
 from bob.application.runtime.events import MESSAGE_RECEIVED, MessageReceived
@@ -82,45 +82,34 @@ def _update(
 class _SendCall:
     chat_id: int
     text: str
+    message_thread_id: int | None
 
 
 @dataclass
-class _DraftCall:
+class _TypingCall:
     chat_id: int
-    draft_id: int
-    text: str
+    action: str
+    message_thread_id: int | None
 
 
 @dataclass
 class _RichCall:
     chat_id: int
     markdown: str | None
-
-
-@dataclass
-class _RichDraftCall:
-    chat_id: int
-    draft_id: int
-    markdown: str | None
+    message_thread_id: int | None
 
 
 @dataclass
 class _FakeBot:
-    """Records send/draft calls; can be scripted to raise Telegram errors."""
+    """Records send/typing/rich calls; can be scripted to fail the rich final."""
 
     updates_batches: list[list[_FakeUpdate]] = field(default_factory=list)
     get_updates_calls: list[tuple[int, int]] = field(default_factory=list)
     sends: list[_SendCall] = field(default_factory=list)
-    drafts: list[_DraftCall] = field(default_factory=list)
+    typings: list[_TypingCall] = field(default_factory=list)
     rich_sends: list[_RichCall] = field(default_factory=list)
-    rich_drafts: list[_RichDraftCall] = field(default_factory=list)
     next_message_id: int = 500
-    draft_retry_after_on_call: int | None = None
-    rich_draft_retry_after_on_call: int | None = None
     rich_send_raises: bool = False
-    rich_draft_raises: bool = False
-    _draft_calls: int = 0
-    _rich_draft_calls: int = 0
 
     async def get_updates(
         self, *, offset: int, timeout: int
@@ -131,39 +120,22 @@ class _FakeBot:
         return self.updates_batches.pop(0)
 
     async def send_message(
-        self, *, chat_id: int, text: str, message_thread_id: int | None = None  # noqa: ARG002
+        self, *, chat_id: int, text: str, message_thread_id: int | None = None
     ) -> _FakeMessage:
-        self.sends.append(_SendCall(chat_id=chat_id, text=text))
+        self.sends.append(
+            _SendCall(chat_id=chat_id, text=text, message_thread_id=message_thread_id)
+        )
         msg = _FakeMessage(message_id=self.next_message_id, text=text)
         self.next_message_id += 1
         return msg
 
-    async def edit_message_text(
-        self, *, chat_id: int, message_id: int, text: str  # noqa: ARG002
-    ) -> _FakeMessage:
-        return _FakeMessage(message_id=message_id, text=text)
-
-    async def delete_message(self, *, chat_id: int, message_id: int) -> bool:  # noqa: ARG002
-        return True
-
-    async def send_message_draft(
-        self,
-        *,
-        chat_id: int,
-        draft_id: int,
-        text: str,
-        message_thread_id: int | None = None,  # noqa: ARG002
+    async def send_chat_action(
+        self, *, chat_id: int, action: str, message_thread_id: int | None = None
     ) -> bool:
-        self._draft_calls += 1
-        if self.draft_retry_after_on_call == self._draft_calls:
-            self.draft_retry_after_on_call = None
-            raise TelegramRetryAfter(
-                method=SendMessageDraft(chat_id=chat_id, draft_id=draft_id, text=text),
-                message="flood",
-                retry_after=3,
+        self.typings.append(
+            _TypingCall(
+                chat_id=chat_id, action=action, message_thread_id=message_thread_id
             )
-        self.drafts.append(
-            _DraftCall(chat_id=chat_id, draft_id=draft_id, text=text)
         )
         return True
 
@@ -172,7 +144,7 @@ class _FakeBot:
         *,
         chat_id: int,
         rich_message: InputRichMessage,
-        message_thread_id: int | None = None,  # noqa: ARG002
+        message_thread_id: int | None = None,
     ) -> _FakeMessage:
         if self.rich_send_raises:
             raise TelegramBadRequest(
@@ -180,45 +152,19 @@ class _FakeBot:
                 message="rich rejected",
             )
         self.rich_sends.append(
-            _RichCall(chat_id=chat_id, markdown=rich_message.markdown)
+            _RichCall(
+                chat_id=chat_id,
+                markdown=rich_message.markdown,
+                message_thread_id=message_thread_id,
+            )
         )
         msg = _FakeMessage(message_id=self.next_message_id, text=rich_message.markdown)
         self.next_message_id += 1
         return msg
 
-    async def send_rich_message_draft(
-        self,
-        *,
-        chat_id: int,
-        draft_id: int,
-        rich_message: InputRichMessage,
-        message_thread_id: int | None = None,  # noqa: ARG002
-    ) -> bool:
-        self._rich_draft_calls += 1
-        if self.rich_draft_retry_after_on_call == self._rich_draft_calls:
-            self.rich_draft_retry_after_on_call = None
-            raise TelegramRetryAfter(
-                method=SendRichMessageDraft(
-                    chat_id=chat_id, draft_id=draft_id, rich_message=rich_message
-                ),
-                message="flood",
-                retry_after=3,
-            )
-        if self.rich_draft_raises:
-            raise TelegramBadRequest(
-                method=SendMessage(chat_id=chat_id, text=""),
-                message="rich draft rejected",
-            )
-        self.rich_drafts.append(
-            _RichDraftCall(
-                chat_id=chat_id, draft_id=draft_id, markdown=rich_message.markdown
-            )
-        )
-        return True
-
 
 class _FakeClock:
-    """Monotonic seconds source advanced explicitly or by the recording sleep."""
+    """Monotonic seconds source advanced explicitly (drives the typing cadence)."""
 
     def __init__(self) -> None:
         self.value = 0.0
@@ -252,10 +198,10 @@ def _make_gateway(bot: _FakeBot, **kwargs: Any) -> TelegramGateway:
         bot=bot,
         bus=bus,
         poll_timeout=kwargs.pop("poll_timeout", 10),
-        batch_tokens=kwargs.pop("batch_tokens", 3),
-        throttle_interval=kwargs.pop("throttle_interval", 1.0),
+        typing_interval=kwargs.pop("typing_interval", 4.0),
         clock=clock,
         sleep=sleep,
+        reply_thread_id=kwargs.pop("reply_thread_id", None),
     )
 
 
@@ -363,97 +309,102 @@ async def test_poll_once_dedup_persists_across_polls() -> None:
     assert second == 0
 
 
-# --- Streaming reply: draft batching / throttle / backoff / commit ------------
+# --- Reply: typing indicator + single rich final (Variant A) ------------------
 
 
 @pytest.mark.asyncio
-async def test_stream_reply_batches_drafts_by_token_count() -> None:
-    # BOB-007: stream_reply streams via the native *rich* draft channel.
+async def test_stream_reply_shows_typing_then_one_rich_final() -> None:
+    bot = _FakeBot()
+    gateway = _make_gateway(bot, reply_thread_id=37)
+
+    await gateway.stream_reply(chat_id=42, tokens=_tokens("Hel", "lo ", "world"))
+
+    # "Bob is typing…" fired at least once, pinned to Bob's thread.
+    assert bot.typings, "no typing indicator was sent during generation"
+    assert all(t.action == "typing" for t in bot.typings)
+    assert all(t.message_thread_id == 37 for t in bot.typings)
+    # Exactly ONE rich final into the thread; no plain send.
+    assert len(bot.rich_sends) == 1
+    assert bot.rich_sends[0].markdown == "Hello world"
+    assert bot.rich_sends[0].message_thread_id == 37
+    assert bot.sends == []
+
+
+@pytest.mark.asyncio
+async def test_stream_reply_repeats_typing_on_interval_for_long_generation() -> None:
+    # A long generation keeps re-sending "typing…": the injected clock advances past
+    # the typing_interval between tokens, so the indicator is re-sent each interval.
     bot = _FakeBot()
     clock = _FakeClock()
-    sleep = _RecordingSleep(clock)
-    # batch_tokens=3, throttle 0 — the primary draft path is unthrottled anyway.
+
+    async def slow_tokens() -> AsyncIterator[str]:
+        for token in ("a", "b", "c"):
+            clock.value += 5.0  # > typing_interval=4.0, so each token re-types
+            yield token
+
     gateway = _make_gateway(
-        bot, batch_tokens=3, throttle_interval=0.0, clock=clock, sleep=sleep
+        bot, clock=clock, sleep=_RecordingSleep(clock), typing_interval=4.0
     )
 
-    drafts = await gateway.stream_reply(chat_id=42, tokens=_tokens("a", "b", "c", "d"))
+    await gateway.stream_reply(chat_id=7, tokens=slow_tokens())
 
-    # A rich draft is streamed once 3 tokens accumulate ("abc"); the completed reply
-    # ("abcd") is committed via the rich final.
-    assert drafts == 1
-    assert [d.markdown for d in bot.rich_drafts] == ["abc"]
-    assert all(d.chat_id == 42 for d in bot.rich_drafts)
-    assert [s.markdown for s in bot.rich_sends] == ["abcd"]
+    # One up-front action + one per elapsed interval (3 tokens) = 4 typing actions.
+    assert len(bot.typings) >= 2, "typing was not repeated for a long generation"
+    assert len(bot.rich_sends) == 1
 
 
 @pytest.mark.asyncio
-async def test_stream_reply_uses_a_single_draft_id() -> None:
+async def test_stream_reply_renders_thinking_block() -> None:
     bot = _FakeBot()
-    gateway = _make_gateway(bot, batch_tokens=1, throttle_interval=0.0)
+    gateway = _make_gateway(bot)
 
-    await gateway.stream_reply(chat_id=7, tokens=_tokens("a", "b", "c"))
+    await gateway.stream_reply(
+        chat_id=7, tokens=_tokens("answer"), thinking="my private reasoning"
+    )
 
-    # Every progressive rich draft for one reply shares the same draft_id.
-    draft_ids = {d.draft_id for d in bot.rich_drafts}
-    assert len(draft_ids) == 1
+    assert len(bot.rich_sends) == 1
+    markdown = bot.rich_sends[0].markdown or ""
+    assert "my private reasoning" in markdown
+    assert markdown.strip().endswith("answer")
 
 
 @pytest.mark.asyncio
-async def test_stream_reply_primary_draft_path_is_not_throttled() -> None:
-    # BOB-007: native drafts are the smooth-streaming mechanism, not edit-spam — the
-    # primary path must NOT throttle, even with a non-zero throttle_interval (that
-    # window applies only to the edit-streaming fallback).
+async def test_stream_reply_rich_failure_falls_back_to_plain() -> None:
+    bot = _FakeBot(rich_send_raises=True)
+    gateway = _make_gateway(bot, reply_thread_id=37)
+
+    await gateway.stream_reply(chat_id=7, tokens=_tokens("hel", "lo"))
+
+    # Rich failed → the reply is NOT lost: it lands via a plain send into the thread.
+    assert bot.rich_sends == []
+    assert len(bot.sends) == 1
+    assert bot.sends[0].text == "hello"
+    assert bot.sends[0].message_thread_id == 37
+
+
+@pytest.mark.asyncio
+async def test_stream_reply_no_edit_or_draft_calls() -> None:
+    # The fake bot has no edit/draft methods at all; this just pins that the gateway
+    # only ever uses typing + rich/plain — a regression guard against streaming.
     bot = _FakeBot()
-    clock = _FakeClock()
-    sleep = _RecordingSleep(clock)
-    gateway = _make_gateway(
-        bot, batch_tokens=1, throttle_interval=1.0, clock=clock, sleep=sleep
-    )
+    gateway = _make_gateway(bot)
 
     await gateway.stream_reply(chat_id=7, tokens=_tokens("x", "y", "z"))
 
-    assert sleep.durations == [], "the primary native-draft path was throttled"
-    assert bot.rich_sends[-1].markdown == "xyz"
+    assert not hasattr(bot, "edits")
+    assert not hasattr(bot, "drafts")
+    assert len(bot.rich_sends) == 1
 
 
 @pytest.mark.asyncio
-async def test_stream_reply_commits_full_text() -> None:
+async def test_stream_reply_empty_stream_sends_nothing_but_may_type() -> None:
     bot = _FakeBot()
-    gateway = _make_gateway(bot, batch_tokens=1, throttle_interval=0.0)
+    gateway = _make_gateway(bot)
 
-    await gateway.stream_reply(chat_id=7, tokens=_tokens("only"))
+    actions = await gateway.stream_reply(chat_id=7, tokens=_tokens())
 
-    # The completed reply is committed once via the rich final.
-    assert [s.markdown for s in bot.rich_sends] == ["only"]
-
-
-@pytest.mark.asyncio
-async def test_stream_reply_backoff_on_rate_limit() -> None:
-    bot = _FakeBot(rich_draft_retry_after_on_call=1)
-    clock = _FakeClock()
-    sleep = _RecordingSleep(clock)
-    gateway = _make_gateway(
-        bot, batch_tokens=1, throttle_interval=0.0, clock=clock, sleep=sleep
-    )
-
-    await gateway.stream_reply(chat_id=7, tokens=_tokens("a", "b"))
-
-    # The first rich draft hit RetryAfter(3): we slept 3s then retried successfully.
-    assert 3 in sleep.durations
-    assert bot.rich_drafts[0].markdown == "a"
-
-
-@pytest.mark.asyncio
-async def test_stream_reply_empty_stream_sends_nothing() -> None:
-    bot = _FakeBot()
-    gateway = _make_gateway(bot, batch_tokens=1, throttle_interval=0.0)
-
-    drafts = await gateway.stream_reply(chat_id=7, tokens=_tokens())
-
-    # Nothing to stream and nothing to commit.
-    assert drafts == 0
-    assert bot.rich_drafts == []
+    # Nothing to commit; the up-front typing action may still have fired.
+    assert actions >= 0
     assert bot.rich_sends == []
     assert bot.sends == []
 
@@ -471,7 +422,6 @@ async def test_reply_rich_sends_rich_message() -> None:
     assert len(bot.rich_sends) == 1
     assert bot.rich_sends[0].chat_id == 7
     assert bot.rich_sends[0].markdown == "a **bold** word"
-    # The rich path was used — no plain send_message.
     assert bot.sends == []
 
 
@@ -496,7 +446,6 @@ async def test_reply_falls_back_to_plain_on_rich_error() -> None:
 
     await gateway.reply(chat_id=7, markdown="hello **world**")
 
-    # Rich failed → degrade silently to a single plain send_message.
     assert bot.rich_sends == []
     assert len(bot.sends) == 1
     assert bot.sends[0].chat_id == 7
@@ -511,7 +460,6 @@ async def test_reply_plain_fallback_splits_on_length_limit() -> None:
 
     await gateway.reply(chat_id=7, markdown=long_text)
 
-    # The plain fallback splits oversized text into limit-sized chunks.
     assert len(bot.sends) == 2
     assert all(len(s.text) <= PLAIN_TEXT_LIMIT for s in bot.sends)
     assert "".join(s.text for s in bot.sends) == long_text
@@ -526,49 +474,3 @@ async def test_reply_empty_markdown_without_thinking_sends_nothing() -> None:
 
     assert bot.rich_sends == []
     assert bot.sends == []
-
-
-# --- Rich streaming: send_rich_message_draft + plain fallback -----------------
-
-
-@pytest.mark.asyncio
-async def test_stream_reply_rich_drafts_then_commits_rich() -> None:
-    bot = _FakeBot()
-    gateway = _make_gateway(bot, batch_tokens=3, throttle_interval=0.0)
-
-    await gateway.stream_reply_rich(chat_id=42, tokens=_tokens("a", "b", "c", "d"))
-
-    # Partial drafts stream as rich drafts; the final reply commits via rich send.
-    assert [d.markdown for d in bot.rich_drafts] == ["abc"]
-    assert all(d.chat_id == 42 for d in bot.rich_drafts)
-    assert len(bot.rich_sends) == 1
-    assert bot.rich_sends[0].markdown == "abcd"
-    assert bot.sends == []
-
-
-@pytest.mark.asyncio
-async def test_stream_reply_rich_falls_back_to_plain_on_commit_error() -> None:
-    bot = _FakeBot(rich_send_raises=True)
-    gateway = _make_gateway(bot, batch_tokens=1, throttle_interval=0.0)
-
-    await gateway.stream_reply_rich(chat_id=7, tokens=_tokens("hi"))
-
-    # Rich commit failed → the finished reply still reaches the user as plain text.
-    assert bot.rich_sends == []
-    assert len(bot.sends) == 1
-    assert bot.sends[0].text == "hi"
-
-
-@pytest.mark.asyncio
-async def test_stream_reply_rich_renders_thinking_on_commit() -> None:
-    bot = _FakeBot()
-    gateway = _make_gateway(bot, batch_tokens=1, throttle_interval=0.0)
-
-    await gateway.stream_reply_rich(
-        chat_id=7, tokens=_tokens("done"), thinking="quick note"
-    )
-
-    sent = bot.rich_sends[0].markdown
-    assert sent is not None
-    assert "quick note" in sent
-    assert sent.strip().endswith("done")

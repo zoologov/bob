@@ -105,7 +105,7 @@ class _FakeBot:
     updates_batches: list[list[_FakeUpdate]] = field(default_factory=list)
     sends: list[_SendCall] = field(default_factory=list)
     rich_sends: list[_SendCall] = field(default_factory=list)
-    deletes: list[int] = field(default_factory=list)
+    typings: int = 0
     next_message_id: int = 900
 
     async def get_updates(
@@ -125,23 +125,10 @@ class _FakeBot:
         self.next_message_id += 1
         return msg
 
-    async def edit_message_text(
-        self, *, chat_id: int, message_id: int, text: str  # noqa: ARG002
-    ) -> _FakeMessage:
-        return _FakeMessage(message_id=message_id, text=text)
-
-    async def delete_message(self, *, chat_id: int, message_id: int) -> bool:  # noqa: ARG002
-        self.deletes.append(message_id)
-        return True
-
-    async def send_message_draft(
-        self,
-        *,
-        chat_id: int,  # noqa: ARG002
-        draft_id: int,  # noqa: ARG002
-        text: str,  # noqa: ARG002
-        message_thread_id: int | None = None,  # noqa: ARG002
+    async def send_chat_action(
+        self, *, chat_id: int, action: str, message_thread_id: int | None = None  # noqa: ARG002
     ) -> bool:
+        self.typings += 1
         return True
 
     async def send_rich_message(
@@ -161,16 +148,6 @@ class _FakeBot:
             )
         )
         return _FakeMessage(message_id=0, text=rich_message.markdown)
-
-    async def send_rich_message_draft(
-        self,
-        *,
-        chat_id: int,  # noqa: ARG002
-        draft_id: int,  # noqa: ARG002
-        rich_message: InputRichMessage,  # noqa: ARG002
-        message_thread_id: int | None = None,  # noqa: ARG002
-    ) -> bool:
-        return True
 
 
 # --- Config + builders --------------------------------------------------------

@@ -145,10 +145,9 @@ class FakeBot:
     def __init__(self) -> None:
         self.sent: list[tuple[int, str]] = []
         self.sent_threads: list[int | None] = []
-        self.drafts: list[tuple[int, int, str]] = []
+        self.typings: int = 0
         self.rich_sent: list[tuple[int, str]] = []
         self.rich_threads: list[int | None] = []
-        self.deletes: list[int] = []
         self._next_id = 1
 
     async def get_updates(self, *, offset: int, timeout: int) -> Sequence[UpdateLike]:  # noqa: ARG002
@@ -163,24 +162,10 @@ class FakeBot:
         self._next_id += 1
         return FakeMessage(message_id=message_id)
 
-    async def edit_message_text(
-        self, *, chat_id: int, message_id: int, text: str  # noqa: ARG002
-    ) -> FakeMessage:
-        return FakeMessage(message_id=message_id)
-
-    async def delete_message(self, *, chat_id: int, message_id: int) -> bool:  # noqa: ARG002
-        self.deletes.append(message_id)
-        return True
-
-    async def send_message_draft(
-        self,
-        *,
-        chat_id: int,
-        draft_id: int,
-        text: str,
-        message_thread_id: int | None = None,  # noqa: ARG002
+    async def send_chat_action(
+        self, *, chat_id: int, action: str, message_thread_id: int | None = None  # noqa: ARG002
     ) -> bool:
-        self.drafts.append((chat_id, draft_id, text))
+        self.typings += 1
         return True
 
     async def send_rich_message(
@@ -193,16 +178,6 @@ class FakeBot:
         self.rich_sent.append((chat_id, _rich_markdown(rich_message)))
         self.rich_threads.append(message_thread_id)
         return FakeMessage(message_id=999)
-
-    async def send_rich_message_draft(
-        self,
-        *,
-        chat_id: int,  # noqa: ARG002
-        draft_id: int,  # noqa: ARG002
-        rich_message: object,  # noqa: ARG002
-        message_thread_id: int | None = None,  # noqa: ARG002
-    ) -> bool:
-        return True
 
     @property
     def final_text(self) -> str:

@@ -71,20 +71,11 @@ class _Bot:
     ) -> _Msg:
         return _Msg()
 
-    async def edit_message_text(
-        self, *, chat_id: int, message_id: int, text: str  # noqa: ARG002
-    ) -> _Msg:
-        return _Msg()
-
-    async def delete_message(self, *, chat_id: int, message_id: int) -> bool:  # noqa: ARG002
-        return True
-
-    async def send_message_draft(
+    async def send_chat_action(
         self,
         *,
         chat_id: int,  # noqa: ARG002
-        draft_id: int,  # noqa: ARG002
-        text: str,  # noqa: ARG002
+        action: str,  # noqa: ARG002
         message_thread_id: int | None = None,  # noqa: ARG002
     ) -> bool:
         return True
@@ -97,16 +88,6 @@ class _Bot:
         message_thread_id: int | None = None,  # noqa: ARG002
     ) -> _Msg:
         return _Msg()
-
-    async def send_rich_message_draft(
-        self,
-        *,
-        chat_id: int,  # noqa: ARG002
-        draft_id: int,  # noqa: ARG002
-        rich_message: object,  # noqa: ARG002
-        message_thread_id: int | None = None,  # noqa: ARG002
-    ) -> bool:
-        return True
 
 
 def _config(tmp_path: Path) -> dict[str, object]:
@@ -232,16 +213,15 @@ async def test_aiogram_adapter_delegates_every_call() -> None:
             self.calls.append(("send_message", {"chat_id": chat_id, "text": text}))
             return "sent"
 
-        async def send_message_draft(
+        async def send_chat_action(
             self,
             *,
             chat_id: int,
-            draft_id: int,
-            text: str,
+            action: str,
             message_thread_id: int | None = None,  # noqa: ARG002
         ) -> bool:
             self.calls.append(
-                ("draft", {"chat_id": chat_id, "draft_id": draft_id, "text": text})
+                ("typing", {"chat_id": chat_id, "action": action})
             )
             return True
 
@@ -251,10 +231,10 @@ async def test_aiogram_adapter_delegates_every_call() -> None:
     # Act
     updates = await adapter.get_updates(offset=10, timeout=5)
     sent: object = await adapter.send_message(chat_id=42, text="hi")
-    drafted = await adapter.send_message_draft(chat_id=42, draft_id=1, text="bye")
+    typed = await adapter.send_chat_action(chat_id=42, action="typing")
 
     # Assert: get_updates normalises the aiogram update into the gateway's flat
-    # UpdateLike (chat/sender lifted up); send/draft forward verbatim.
+    # UpdateLike (chat/sender lifted up); send/typing forward verbatim.
     assert len(updates) == 1
     view = updates[0]
     assert view.update_id == 3
@@ -264,8 +244,8 @@ async def test_aiogram_adapter_delegates_every_call() -> None:
     assert view.effective_user.id == 9
     assert view.effective_user.full_name == "Ann"
     assert sent == "sent"
-    assert drafted is True
-    assert [name for name, _ in inner.calls] == ["get_updates", "send_message", "draft"]
+    assert typed is True
+    assert [name for name, _ in inner.calls] == ["get_updates", "send_message", "typing"]
 
 
 # --- Poll background task ------------------------------------------------------

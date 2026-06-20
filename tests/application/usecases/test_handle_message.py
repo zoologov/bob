@@ -101,18 +101,17 @@ class FakeMessage:
 
 
 class FakeBot:
-    """Fake aiogram bot capturing the streamed reply (no network).
+    """Fake aiogram bot capturing the reply (no network).
 
-    BOB-007: the gateway streams via the native *rich* draft channel and commits the
-    rich final, so ``send_rich_message_draft`` records progressive drafts and
-    ``send_rich_message`` records the committed reply (both folded into ``drafts`` /
-    ``sent`` so the existing reply assertions keep working). The plain
-    ``send_message``/``send_message_draft`` remain as the fallback safety net.
+    BOB-008 (Variant A): the gateway shows a "typing…" indicator while it assembles
+    the reply, then commits one rich final via ``send_rich_message`` (recorded in
+    ``sent``); ``send_chat_action`` records the typing pings. The plain
+    ``send_message`` remains as the rich-failure safety net.
     """
 
     def __init__(self) -> None:
         self.sent: list[tuple[int, str]] = []
-        self.drafts: list[tuple[int, int, str]] = []
+        self.typings: int = 0
 
     async def get_updates(self, *, offset: int, timeout: int) -> Sequence[UpdateLike]:  # noqa: ARG002
         return []
@@ -123,23 +122,10 @@ class FakeBot:
         self.sent.append((chat_id, text))
         return FakeMessage(message_id=777)
 
-    async def edit_message_text(
-        self, *, chat_id: int, message_id: int, text: str  # noqa: ARG002
-    ) -> FakeMessage:
-        return FakeMessage(message_id=message_id)
-
-    async def delete_message(self, *, chat_id: int, message_id: int) -> bool:  # noqa: ARG002
-        return True
-
-    async def send_message_draft(
-        self,
-        *,
-        chat_id: int,
-        draft_id: int,
-        text: str,
-        message_thread_id: int | None = None,  # noqa: ARG002
+    async def send_chat_action(
+        self, *, chat_id: int, action: str, message_thread_id: int | None = None  # noqa: ARG002
     ) -> bool:
-        self.drafts.append((chat_id, draft_id, text))
+        self.typings += 1
         return True
 
     async def send_rich_message(
@@ -153,21 +139,9 @@ class FakeBot:
         self.sent.append((chat_id, markdown))
         return FakeMessage(message_id=777)
 
-    async def send_rich_message_draft(
-        self,
-        *,
-        chat_id: int,
-        draft_id: int,
-        rich_message: object,
-        message_thread_id: int | None = None,  # noqa: ARG002
-    ) -> bool:
-        markdown = getattr(rich_message, "markdown", "")
-        self.drafts.append((chat_id, draft_id, markdown))
-        return True
-
     @property
     def final_text(self) -> str:
-        """The committed reply text (the full reply sent via send_message)."""
+        """The committed reply text (the full reply sent via the rich final)."""
         return self.sent[-1][1] if self.sent else ""
 
 
@@ -238,8 +212,7 @@ def _build(
         bot=bot,
         bus=_NullBus(),
         poll_timeout=1,
-        batch_tokens=1,
-        throttle_interval=0.0,
+        typing_interval=4.0,
         clock=lambda: 0.0,
         sleep=_no_sleep,
     )

@@ -148,7 +148,7 @@ class FakeBot:
 
     def __init__(self) -> None:
         self.sent: list[tuple[int, str]] = []
-        self.drafts: list[tuple[int, int, str]] = []
+        self.typings: int = 0
 
     async def get_updates(self, *, offset: int, timeout: int) -> Sequence[UpdateLike]:  # noqa: ARG002
         return []
@@ -159,23 +159,10 @@ class FakeBot:
         self.sent.append((chat_id, text))
         return FakeMessage(message_id=999)
 
-    async def edit_message_text(
-        self, *, chat_id: int, message_id: int, text: str  # noqa: ARG002
-    ) -> FakeMessage:
-        return FakeMessage(message_id=message_id)
-
-    async def delete_message(self, *, chat_id: int, message_id: int) -> bool:  # noqa: ARG002
-        return True
-
-    async def send_message_draft(
-        self,
-        *,
-        chat_id: int,
-        draft_id: int,
-        text: str,
-        message_thread_id: int | None = None,  # noqa: ARG002
+    async def send_chat_action(
+        self, *, chat_id: int, action: str, message_thread_id: int | None = None  # noqa: ARG002
     ) -> bool:
-        self.drafts.append((chat_id, draft_id, text))
+        self.typings += 1
         return True
 
     async def send_rich_message(
@@ -185,20 +172,9 @@ class FakeBot:
         rich_message: object,
         message_thread_id: int | None = None,  # noqa: ARG002
     ) -> FakeMessage:
-        # BOB-007: the committed reply now lands via the rich channel.
+        # BOB-008 (Variant A): the committed reply lands via the rich channel.
         self.sent.append((chat_id, getattr(rich_message, "markdown", "")))
         return FakeMessage(message_id=999)
-
-    async def send_rich_message_draft(
-        self,
-        *,
-        chat_id: int,
-        draft_id: int,
-        rich_message: object,
-        message_thread_id: int | None = None,  # noqa: ARG002
-    ) -> bool:
-        self.drafts.append((chat_id, draft_id, getattr(rich_message, "markdown", "")))
-        return True
 
     @property
     def final_text(self) -> str:

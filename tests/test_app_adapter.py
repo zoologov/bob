@@ -88,21 +88,15 @@ class _FakeAiogramBot:
         )
         return "sent"
 
-    async def send_message_draft(
-        self,
-        *,
-        chat_id: int,
-        draft_id: int,
-        text: str,
-        message_thread_id: int | None = None,
+    async def send_chat_action(
+        self, *, chat_id: int, action: str, message_thread_id: int | None = None
     ) -> bool:
         self.calls.append(
             _Call(
-                "send_message_draft",
+                "send_chat_action",
                 {
                     "chat_id": chat_id,
-                    "draft_id": draft_id,
-                    "text": text,
+                    "action": action,
                     "message_thread_id": message_thread_id,
                 },
             )
@@ -123,27 +117,6 @@ class _FakeAiogramBot:
             )
         )
         return "rich-sent"
-
-    async def send_rich_message_draft(
-        self,
-        *,
-        chat_id: int,
-        draft_id: int,
-        rich_message: object,
-        message_thread_id: int | None = None,
-    ) -> bool:
-        self.calls.append(
-            _Call(
-                "send_rich_message_draft",
-                {
-                    "chat_id": chat_id,
-                    "draft_id": draft_id,
-                    "rich_message": rich_message,
-                    "message_thread_id": message_thread_id,
-                },
-            )
-        )
-        return True
 
 
 # --- get_updates + _to_update_view --------------------------------------------
@@ -224,17 +197,17 @@ async def test_send_message_delegates_with_thread_id() -> None:
 
 
 @pytest.mark.asyncio
-async def test_send_message_draft_delegates() -> None:
+async def test_send_chat_action_delegates() -> None:
     bot = _FakeAiogramBot()
     adapter = _AiogramBotAdapter(bot)
 
-    ok = await adapter.send_message_draft(
-        chat_id=_CHAT_ID, draft_id=5, text="partial", message_thread_id=_THREAD_ID
+    ok = await adapter.send_chat_action(
+        chat_id=_CHAT_ID, action="typing", message_thread_id=_THREAD_ID
     )
 
     assert ok is True
-    assert bot.calls[0].name == "send_message_draft"
-    assert bot.calls[0].kwargs["draft_id"] == 5
+    assert bot.calls[0].name == "send_chat_action"
+    assert bot.calls[0].kwargs["action"] == "typing"
     assert bot.calls[0].kwargs["message_thread_id"] == _THREAD_ID
 
 
@@ -253,17 +226,3 @@ async def test_send_rich_message_delegates_with_thread_id() -> None:
     assert bot.calls[0].kwargs["message_thread_id"] == _THREAD_ID
 
 
-@pytest.mark.asyncio
-async def test_send_rich_message_draft_delegates() -> None:
-    bot = _FakeAiogramBot()
-    adapter = _AiogramBotAdapter(bot)
-    rich = InputRichMessage(markdown="**hi**")
-
-    ok = await adapter.send_rich_message_draft(
-        chat_id=_CHAT_ID, draft_id=8, rich_message=rich, message_thread_id=None
-    )
-
-    assert ok is True
-    assert bot.calls[0].name == "send_rich_message_draft"
-    assert bot.calls[0].kwargs["draft_id"] == 8
-    assert bot.calls[0].kwargs["rich_message"] is rich
