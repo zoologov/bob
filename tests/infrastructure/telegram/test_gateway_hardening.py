@@ -18,6 +18,7 @@ remaining behavioural edges (BOB-008, Variant A):
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
@@ -29,7 +30,7 @@ from bob.application.runtime.events import MESSAGE_RECEIVED, MessageReceived
 from bob.infrastructure.telegram.gateway import TelegramGateway
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator, Sequence
+    from collections.abc import Sequence
 
     from aiogram.types import InputRichMessage
 
@@ -133,6 +134,15 @@ class _FakeClock:
 
 
 class _RecordingSleep:
+    """Async sleep that records durations, advances the bound clock, and yields.
+
+    The ``await asyncio.sleep(0)`` is essential: the typing keepalive runs a
+    ``while True`` loop driven by this injected sleep, so the fake MUST hand
+    control back to the event loop on every tick. A no-op (``async def f(): pass``)
+    would starve the loop — the keepalive would spin at 100% CPU and the
+    surrounding context body / ``task.cancel()`` would never get scheduled.
+    """
+
     def __init__(self, clock: _FakeClock) -> None:
         self.clock = clock
         self.durations: list[float] = []
@@ -140,11 +150,7 @@ class _RecordingSleep:
     async def __call__(self, seconds: float) -> None:
         self.durations.append(seconds)
         self.clock.value += seconds
-
-
-async def _tokens(*items: str) -> AsyncIterator[str]:
-    for item in items:
-        yield item
+        await asyncio.sleep(0)
 
 
 def _gateway(
@@ -313,16 +319,47 @@ async def test_owner_authorize_accepts_negative_user_id() -> None:
 # --- Typing resilience (US-1) -------------------------------------------------
 
 
+class _GatedSleep:
+    """Async sleep that parks on an event until the test releases one tick.
+
+    Models one ``typing_interval`` of generation per :meth:`tick`, with no
+    wall-clock wait and no busy-spin: the keepalive blocks on the gate between
+    ticks instead of looping freely.
+    """
+
+    def __init__(self) -> None:
+        self.durations: list[float] = []
+        self._gate = asyncio.Event()
+
+    async def __call__(self, seconds: float) -> None:
+        self.durations.append(seconds)
+        self._gate.clear()
+        await self._gate.wait()
+
+    def tick(self) -> None:
+        self._gate.set()
+
+
 @pytest.mark.asyncio
 async def test_typing_action_failure_is_swallowed_and_reply_still_lands() -> None:
-    # A failing sendChatAction must not break the turn: typing is best-effort, the
-    # finished reply still commits via the rich channel.
+    # A failing sendChatAction must not break the turn: typing is best-effort, so the
+    # typing_indicator context still enters/exits cleanly and the finished reply
+    # commits via the rich channel. The gated sleep parks the keepalive (no spin).
     bot = _FakeBot(typing_raises=True)
-    gateway = _gateway(bot)
+    gateway = TelegramGateway(
+        bot=bot,
+        bus=AsyncEventBus(),
+        poll_timeout=10,
+        typing_interval=4.0,
+        clock=_FakeClock(),
+        sleep=_GatedSleep(),
+    )
 
-    actions = await gateway.stream_reply(chat_id=_CHAT, tokens=_tokens("a", "b"))
+    async with gateway.typing_indicator(chat_id=_CHAT):
+        await asyncio.sleep(0)
+    await gateway.reply(chat_id=_CHAT, markdown="ab")
 
-    assert actions == 0  # no typing landed, but it did not crash
+    assert bot.typings == 0  # no typing landed, but it did not crash
     assert bot.rich_sends  # the reply still committed
     assert bot.rich_sends[-1][1] == "ab"
 

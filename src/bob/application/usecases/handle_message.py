@@ -20,8 +20,11 @@ use-case runs Bob's perceive→decide→act turn (RFC §"Поток обрабо
    same user. Genuinely-internal material would go in ``private_context``
    (Tier-0-only); in P0.1 that channel is empty but the seam is kept (VISION §7.1).
 3. **Act** — the router replies on ``TaskType.REPLY_TO_USER`` (Tier 1 + redaction,
-   fallback Tier 0); the reply is streamed back through the Telegram gateway and
-   the turn is persisted (episode + mood snapshot) via the :class:`MemoryRepo`.
+   fallback Tier 0). The slow generation runs INSIDE the gateway's
+   ``typing_indicator`` so "Bob is typing…" stays visible for the whole wait
+   (BOB-009); the finished reply is then committed once via the gateway's rich
+   ``reply`` and the turn is persisted (episode + mood snapshot) via the
+   :class:`MemoryRepo`.
 4. **Remember** — after the reply, :class:`ExtractFacts` (Tier 0) distils durable,
    user-specific facts into ``semantic_memory`` so a later turn's
    :class:`MemoryRecall` can surface them. Best-effort: it never raises, so a
@@ -45,7 +48,8 @@ from bob.application.usecases.update_mood_from_text import TextSignals
 from bob.domain.memory.entities import EpisodicEvent
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator, Mapping, Sequence
+    from collections.abc import Mapping, Sequence
+    from contextlib import AbstractAsyncContextManager
     from datetime import datetime
 
     from bob.application.router.llm_router import LLMRouter
@@ -69,7 +73,7 @@ _RECALL_K = 5
 # How many recent conversation turns to replay into the reply context.
 _HISTORY_K = 6
 
-# Each streamed reply is a single message; a present sender is engaged.
+# Each turn perceives one message; a present sender is engaged.
 _SINGLE_MESSAGE = 1
 
 _SYSTEM_PROMPT = (
@@ -85,10 +89,21 @@ _CAPABILITY_PREFACE = (
 )
 
 
-class ReplyStreamer(Protocol):
-    """The Telegram seam HandleMessage needs: stream a reply into a chat."""
+class ReplyGateway(Protocol):
+    """The Telegram seam HandleMessage needs (BOB-009).
 
-    async def stream_reply(self, *, chat_id: int, tokens: AsyncIterator[str]) -> int: ...
+    ``typing_indicator`` wraps the slow generation so "Bob is typing…" stays
+    visible for the whole wait; ``reply`` commits the finished answer once (rich,
+    plain fallback). No token streaming — Bob can't stream in a group topic.
+    """
+
+    def typing_indicator(
+        self, *, chat_id: int
+    ) -> AbstractAsyncContextManager[None]: ...
+
+    async def reply(
+        self, *, chat_id: int, markdown: str, thinking: str | None = None
+    ) -> None: ...
 
 
 class EpisodeWriter(Protocol):
@@ -123,7 +138,7 @@ class HandleMessage:
         self,
         *,
         router: LLMRouter,
-        gateway: ReplyStreamer,
+        gateway: ReplyGateway,
         recall: MemoryRecall,
         repo: EpisodeWriter,
         episodes: EpisodeReader,
@@ -155,8 +170,11 @@ class HandleMessage:
         soul = await self._perceive(event)
         recalled = await self._recall.recall(event.text, k=_RECALL_K)
         history = await self._episodes.recent_episodes(_HISTORY_K)
-        reply = await self._decide(event.text, soul, recalled, history)
-        await self._gateway.stream_reply(chat_id=event.chat_id, tokens=_iter_tokens(reply))
+        # Run the slow generation inside the typing keepalive so "Bob is typing…"
+        # stays visible for the whole real wait (BOB-009); then commit one rich final.
+        async with self._gateway.typing_indicator(chat_id=event.chat_id):
+            reply = await self._decide(event.text, soul, recalled, history)
+        await self._gateway.reply(chat_id=event.chat_id, markdown=reply)
         await self._persist(event, reply, soul)
         # Tier 0 "remember" step: distil durable facts into semantic memory so a
         # later turn's recall can surface them. Best-effort — run() never raises,
@@ -285,10 +303,3 @@ def _mood_state(soul: SOUL) -> dict[str, object]:
         "social": mood.social,
         "stability": mood.stability,
     }
-
-
-async def _iter_tokens(text: str) -> AsyncIterator[str]:
-    """Yield ``text`` word by word so the gateway streams it as a reply."""
-    words = text.split(" ")
-    for index, word in enumerate(words):
-        yield word if index == 0 else f" {word}"

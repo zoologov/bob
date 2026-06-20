@@ -228,7 +228,7 @@ def build_application(
 
     handle_message = HandleMessage(
         router=router,
-        gateway=multibot.reply_streamer(BotIdentity.BOB),
+        gateway=multibot.reply_gateway(BotIdentity.BOB),
         recall=recall,
         repo=memory_repo,
         episodes=memory_repo,

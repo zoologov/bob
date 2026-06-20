@@ -120,6 +120,11 @@ ignore_missing_imports = true
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+# CI safety net (BOB-009): a default per-test timeout so a future busy-loop (e.g. a
+# typing keepalive driven by a non-yielding fake sleep) FAILS FAST instead of
+# hanging the suite/CI for minutes. ``thread`` works without signals/async magic.
+timeout = 60
+timeout_method = "thread"
 addopts = [
     "--strict-markers",
     "--strict-config",
@@ -128,4 +133,9 @@ addopts = [
 markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
     "integration: marks integration tests",
+]
+
+[dependency-groups]
+dev = [
+    "pytest-timeout>=2.4.0",
 ]

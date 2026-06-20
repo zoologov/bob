@@ -109,8 +109,10 @@ perceive → decide → act → persist → remember: обновляет нас�
 (`MemoryRecall`, FTS5) и собирает `shareable_context` (история, память,
 настроение, идентичность, вкус), получает ответ от роутера (`REPLY_TO_USER` +
 селективная редакция / fallback Tier 0; тир ответа выбирается гибридно через
-`select_reply_tier` и передаётся как `tier_override`), стримит его через gateway,
-сохраняет эпизод и снапшот настроения. Именно прикрепление `shareable_context`
+`select_reply_tier` и передаётся как `tier_override`). Медленная генерация идёт
+внутри `typing_indicator(chat_id)` шва `ReplyGateway` (keepalive «Bob печатает…»),
+затем готовый ответ коммитится **одним** `reply()` (rich, plain fallback); далее
+сохраняются эпизод и снапшот настроения. Именно прикрепление `shareable_context`
 к вызову даёт Бобу память — он помнит имя, названное ход назад.
 
 После ответа отрабатывает шаг **remember**: `ExtractFacts` (Tier 0,

@@ -144,8 +144,9 @@ GUPPI и шлёт ответы своим инъецированным бото�
 `message_thread_id == bob.topic_id` (`BotScope.matches`); General и прочие топики
 игнорятся. Отправка Боба приколочена к его треду: внутренний `TelegramGateway`
 проставляет `message_thread_id = reply_thread_id` во всех ответах, поэтому ответы
-Боба падают в его топик. Порт `ReplyStreamer` `stream_reply(chat_id, tokens)` для
-`HandleMessage` не меняется — приколачивание треда живёт за швом `reply_streamer`.
+Боба падают в его топик. Порт `ReplyGateway` (`typing_indicator(chat_id)` +
+`reply(chat_id, markdown, thinking)`) для `HandleMessage` не меняется —
+приколачивание треда живёт за швом `reply_gateway`.
 
 ## Поток обработки сообщения (perceive → decide → act → persist)
 
@@ -187,19 +188,21 @@ GUPPI и шлёт ответы своим инъецированным бото�
    а не к выбранному тиру — ответ, опущенный на Tier 0, всё равно никогда не несёт
    `private_context`. При сбое Tier 1 роутер откатывается на **Tier 0** локально,
    отправляя тот же payload (с уже вырезанным `private_context`).
-5. **Ответ (typing-индикатор + rich-финал, Вариант A, BOB-008).** Нативный
+5. **Ответ (typing-индикатор во время генерации + rich-финал, BOB-009).** Нативный
    токен-стрим в групповом топике Telegram невозможен (драфты — только ЛС, а
    `editMessageText` в группе медленный и флуд-опасный), а Боб доступен **только**
-   через групповой топик (ЛС закрыта authz). Поэтому `TelegramGateway` не стримит:
-   во время генерации он шлёт `sendChatAction("typing")` в тред Боба и **повторяет**
-   его примерно каждые `typing_interval` секунд (Telegram сам гасит индикатор), пока
-   собирается ответ — пользователь видит «Bob печатает…». Поток токенов
-   **вычитывается** в полный текст (порт `ReplyStreamer` не меняется), затем ответ
-   коммитится **одним** Rich Message'ом (`send_rich_message`: заголовки/списки/код/
-   цитаты + `RichBlockThinking`, если есть `thinking`), привязанным к
-   `message_thread_id`. При **любой** ошибке rich — деградация на plain
-   `send_message` (ответ никогда не теряется). Каденс typing задаётся
-   инъецированным `clock`, поэтому в тестах детерминирован. См. раздел
+   через групповой топик (ЛС закрыта authz). Поэтому `TelegramGateway` не стримит.
+   Медленная генерация (`router.run`) выполняется **внутри** async-контекста
+   `typing_indicator(chat_id)`: на входе он сразу шлёт `sendChatAction("typing")` в
+   тред Боба, затем фоновый таск **повторяет** его каждые `typing_interval` секунд
+   (Telegram сам гасит индикатор), пока модель думает — пользователь видит «Bob
+   печатает…» всё ожидание. На выходе из контекста keepalive-таск **отменяется**
+   (без утечки); сбой `sendChatAction` best-effort (проглатывается, ход не падает).
+   Готовый ответ затем коммитится **одним** вызовом `reply()` — Rich Message'ом
+   (`send_rich_message`: заголовки/списки/код/цитаты + `RichBlockThinking`, если есть
+   `thinking`), привязанным к `message_thread_id`. При **любой** ошибке rich —
+   деградация на plain `send_message` (ответ никогда не теряется). Каденс typing
+   задаётся инъецированным `sleep`, поэтому в тестах детерминирован. См. раздел
    «Telegram-транспорт» ниже.
 6. **Persist.** Ход сохраняется как эпизод в `episodic_log`, а снапшот настроения
    записывается в `mood_state` и `mood_history` через `MemoryRepo`.
@@ -295,22 +298,24 @@ Tier 1 может оказаться reasoning-моделью, которая т
 
 `TelegramGateway` переписан с `python-telegram-bot` на **aiogram** (Bot API 10.1):
 typing-индикатор + Rich Messages. Адаптер остаётся чистым транспортом за портом
-`ReplyStreamer`/`EventBus` — домен и приложение не тронуты, сменилась только
+`ReplyGateway`/`EventBus` — домен и приложение не тронуты, сменилась только
 зависимость и реализация gateway.
 
-- **Typing-индикатор + rich-финал (Вариант A, BOB-008).** Нативный токен-стрим в
-  групповом топике невозможен (драфты — только ЛС/Threaded Mode = темы в личке, а
-  `editMessageText` в группе медленный и флуд-опасный), а Боб доступен **только**
-  через групповой топик BobNet (ЛС закрыта authz). Поэтому стриминг убран:
-  - **Во время генерации** `stream_reply` шлёт `sendChatAction("typing")` в тред
-    Боба (`message_thread_id`) и **повторяет** его примерно каждые `typing_interval`
-    секунд (Telegram сам гасит индикатор через несколько секунд), пока собирается
-    ответ — пользователь видит «Bob печатает…». Каденс задаётся инъецированным
-    `clock`, поэтому в тестах детерминирован; сбой `sendChatAction` — best-effort
-    (проглатывается, ход не падает).
-  - **Поток токенов вычитывается** в полный текст (порт `ReplyStreamer`
-    `stream_reply(chat_id, tokens)` не меняется), затем готовый ответ коммитится
-    **одним** `send_rich_message` через `reply()`.
+- **Typing-индикатор во время генерации + rich-финал (BOB-009).** Нативный
+  токен-стрим в групповом топике невозможен (драфты — только ЛС/Threaded Mode = темы
+  в личке, а `editMessageText` в группе медленный и флуд-опасный), а Боб доступен
+  **только** через групповой топик BobNet (ЛС закрыта authz). Поэтому стриминг убран
+  (`stream_reply`/`_iter_tokens` удалены — псевдо-стрим из готового текста больше не
+  используется):
+  - **Во время генерации** медленный `router.run` оборачивается в async-контекст
+    `typing_indicator(chat_id)`: на входе сразу шлётся `sendChatAction("typing")` в
+    тред Боба (`message_thread_id`), затем фоновый таск **повторяет** его каждые
+    `typing_interval` секунд (Telegram сам гасит индикатор через несколько секунд),
+    пока собирается ответ — пользователь видит «Bob печатает…» всё ожидание. На
+    выходе из контекста таск **отменяется** (без утечки). Каденс задаётся
+    инъецированным `sleep`, поэтому в тестах детерминирован; сбой `sendChatAction` —
+    best-effort (проглатывается, ход не падает).
+  - **Готовый ответ** коммитится **одним** `send_rich_message` через `reply()`.
 - **Rich Messages.** `MarkdownToRichMessage` (чистая детерминированная
   трансформация) превращает подмножество markdown ответа в типизированное дерево
   aiogram `RichMessage` — заголовки, списки, код, цитаты, разделители, инлайн
@@ -526,7 +531,7 @@ env-переменных.
 рантайма, один раз запускает Genesis на первом старте и стартует `AgentRuntime`.
 Здесь же собирается `BotRegistry`: Боб регистрируется со scope своего топика, GUPPI
 — со scope General, и оба идут в `MultiBotGateway`. `HandleMessage` отдаёт ответы
-через `multibot.reply_streamer(BotIdentity.BOB)`, поэтому они приколочены к топику
+через `multibot.reply_gateway(BotIdentity.BOB)`, поэтому они приколочены к топику
 Боба. Здесь же собираются общий `Authorizer` (над `KvAllowlistStore`) для гейта и
 GUPPI и `CapabilityRegistry` с навыком `recall_memory`; провайдер Tier 1
 подключается как `ToolCallingProvider`, когда поддерживает tool-calling, иначе
@@ -564,3 +569,8 @@ topic-scope), `telegram/test_multibot_hardening.py`, `telegram/test_guppi.py`
 (`tests/test_app.py`, `tests/test_app_authz.py`) и приёмочные сценарии US-1..US-4
 (`tests/test_acceptance_memory.py`, `tests/test_acceptance_reasoning.py`). Граница
 слоёв проверяется `tests/application/test_layering.py`.
+
+Защитный механизм CI (BOB-009): `pytest-timeout` задаёт дефолтный пер-тестовый
+таймаут (`timeout=60`, `timeout_method="thread"` в `pyproject.toml`), чтобы будущий
+busy-loop (например, в keepalive typing-индикатора с неинъецированным `sleep`) падал
+по таймауту, а не вешал прогон.

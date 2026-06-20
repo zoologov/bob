@@ -20,6 +20,7 @@ arrived first, and the reply still goes via the Bob bot.
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
@@ -36,7 +37,7 @@ from bob.infrastructure.telegram.multibot import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator, Sequence
+    from collections.abc import Sequence
 
     from aiogram.types import InputRichMessage
 
@@ -325,13 +326,11 @@ async def test_bob_reply_goes_via_the_bob_bot() -> None:
     """The reply still uses the Bob bot's identity, pinned to his topic thread."""
     bob, guppi = _FakeBot(), _FakeBot()
     gateway, _ = _build(bob, guppi, authorizer=_AllowAuthorizer())
-    streamer = gateway.reply_streamer(BotIdentity.BOB)
+    reply_gateway = gateway.reply_gateway(BotIdentity.BOB)
 
-    async def _tokens() -> AsyncIterator[str]:
-        for tok in ("hel", "lo"):
-            yield tok
-
-    await streamer.stream_reply(chat_id=_CHAT_ID, tokens=_tokens())
+    async with reply_gateway.typing_indicator(chat_id=_CHAT_ID):
+        await asyncio.sleep(0)
+    await reply_gateway.reply(chat_id=_CHAT_ID, markdown="hello")
 
     assert bob.sends, "Bob's bot should have delivered the reply"
     assert all(call.message_thread_id == _BOB_TOPIC_ID for call in bob.sends)

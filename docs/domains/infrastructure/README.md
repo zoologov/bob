@@ -57,20 +57,20 @@ fail-closed. Owner-команды `/authorize <user_id>` и `/deauthorize <user_
 нормализуется в `MessageReceived` и публикуется в `EventBus`. Без подключённого
 авторизатора гейт открыт (обратная совместимость).
 
-**Ответ в группе (Вариант A: typing-индикатор + rich-финал, BOB-008).** Нативный
-токен-стрим в групповом топике Telegram невозможен: драфты работают только в ЛС
-(Threaded Mode = темы в личке, не в группе), а `editMessageText` в группе медленный
-и флуд-опасный. Боб доступен **только** через групповой топик (ЛС закрыта authz),
-поэтому стримить негде — гейтвей **не стримит**.
+**Ответ в группе (typing-индикатор во время генерации + rich-финал, BOB-009).**
+Нативный токен-стрим в групповом топике Telegram невозможен: драфты работают только
+в ЛС (Threaded Mode = темы в личке, не в группе), а `editMessageText` в группе
+медленный и флуд-опасный. Боб доступен **только** через групповой топик (ЛС закрыта
+authz), поэтому стримить негде — гейтвей **не стримит** (`stream_reply`/`_iter_tokens`
+удалены, псевдо-стрим из готового текста больше не используется).
 
-*Во время генерации — `sendChatAction("typing")`.* `stream_reply` шлёт
-`sendChatAction("typing")` в тред Боба (`message_thread_id` через `reply_thread_id`)
-и **повторяет** его примерно каждые `typing_interval` секунд (Telegram сам гасит
-индикатор через несколько секунд), пока дренирует поток токенов в полный ответ —
-пользователь видит «Bob печатает…». Индикатор шлётся один раз сразу (чтобы
-«печатает…» появилось мгновенно) и затем по каденсу; каденс задаётся инъецированным
-`clock`, поэтому детерминирован в тестах. Поток токенов **потребляется целиком**, а
-не стримится, так что порт `ReplyStreamer` не меняется — приложение прежнее. Сбой
+*Во время генерации — `sendChatAction("typing")`.* Медленная генерация (`router.run`)
+оборачивается в async-контекст `typing_indicator(chat_id)`: на входе сразу шлётся
+`sendChatAction("typing")` в тред Боба (`message_thread_id` через `reply_thread_id`),
+затем фоновый таск **повторяет** его каждые `typing_interval` секунд (Telegram сам
+гасит индикатор через несколько секунд), пока модель думает — пользователь видит «Bob
+печатает…» всё ожидание. На выходе из контекста keepalive-таск **отменяется** (без
+утечки). Каденс задаётся инъецированным `sleep`, поэтому детерминирован в тестах. Сбой
 typing-действия логируется и проглатывается, ход не ломается.
 
 *Готовый ответ — один `send_rich_message`.* Когда поток закончился, собранный ответ
@@ -134,9 +134,9 @@ DM незнакомца, не-owner команда) — молча игнори�
 `/status`, возвращая `True` только когда команда от owner в General — иначе молча
 `False`. Невалидный `<user_id>` даёт подсказку, а не грант.
 
-`reply_streamer(identity)` отдаёт `ReplyStreamer`-шов нужного бота; ответы Боба
-приколочены к его треду, а контракт `stream_reply(chat_id, tokens)` для
-`HandleMessage` не меняется.
+`reply_gateway(identity)` отдаёт `ReplyGateway`-шов нужного бота; ответы Боба
+приколочены к его треду, а контракт (`typing_indicator(chat_id)` +
+`reply(chat_id, markdown, thinking)`) для `HandleMessage` не меняется.
 
 ### Markdown → Rich Message
 
@@ -263,8 +263,9 @@ non-secret и может прийти из YAML.
 - `MultiBotGateway(*, registry, bus, poll_timeout, authorizer=None,
   reply_typing_interval=4.0, reply_clock=time.monotonic, reply_sleep=asyncio.sleep)`
   — `async poll_once()` → `int`, `async route(update, identity)` → `bool`,
-  `reply_streamer(identity)` → `ReplyStreamer`; свойство `registry`. Реплеи-параметры
-  по умолчанию живые (реальные часы/sleep + каденс typing ~4с, BOB-008); тесты
+  `reply_gateway(identity)` → `ReplyGateway` (`typing_indicator(chat_id)` +
+  `reply(chat_id, markdown, thinking)`); свойство `registry`. Реплеи-параметры
+  по умолчанию живые (реальные часы/sleep + каденс typing ~4с); тесты
   инъецируют детерминированные заглушки.
 - `BotRegistry` — `register(*, identity, bot, scope)`, `get(identity)`, `all()`,
   `scope_of(identity)`.
@@ -280,8 +281,9 @@ non-secret и может прийти из YAML.
 Модуль `src/bob/infrastructure/telegram/gateway.py`:
 - `TelegramGateway(*, bot, bus, poll_timeout, typing_interval, clock, sleep, authorizer=None, reply_thread_id=None)` —
   `async poll_once()`, `async intake(update)`,
-  `async stream_reply(*, chat_id, tokens, thinking=None)` → `int` (число посланных
-  typing-действий), `async reply(*, chat_id, markdown, thinking=None)`.
+  `typing_indicator(*, chat_id)` → async-контекст (keepalive `sendChatAction("typing")`
+  каждые `typing_interval`, отменяется на выходе),
+  `async reply(*, chat_id, markdown, thinking=None)`.
 - `BotLike`, `UpdateLike`, `MessageLike`, `AuthorizerLike`, `PLAIN_TEXT_LIMIT`.
 
 Модуль `src/bob/infrastructure/telegram/rich.py`:
