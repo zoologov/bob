@@ -26,6 +26,16 @@ LLM, хранилищем и временем исключительно чер�
 - **personality/soul.py** — `SOUL`, неизменяемый снапшот загруженной личности.
 - **memory/entities.py** — `EpisodicEvent` и `SemanticFact`, неизменяемые
   value-объекты памяти.
+- **proactivity/urge.py** — `UrgeModel`, чистая формула «порыва заговорить» из
+  настроения, тоски, салиентности и циркадного ритма.
+- **proactivity/social_energy.py** — `SocialEnergy`, ограниченный `[0, 1]`
+  резервуар порыва (копится/тратится/восполняется).
+- **proactivity/governance.py** — `Governance`, чистые потолки-вето над проактивом;
+  `GovernanceConfig`, `ProactiveHistory`.
+- **proactivity/decision.py** — `ProactiveDecider` (`urge` → вероятность →
+  seeded-розыгрыш под вето); `urge_to_probability`.
+- **proactivity/state.py** — `ProactivityState`, per-persona состояние,
+  персистируемое между тиками.
 
 ### Личность (Higher Mind)
 
@@ -84,6 +94,33 @@ self-creation придут позже за тем же швом). Навык н�
 `user_id`): `load()`, `add()`, `remove()`. На нём держится `Authorizer`, чтобы
 команда `/authorize` пережила рестарт; SQLite-адаптер живёт в инфраструктуре.
 
+### Проактивность (drive-модель порыва)
+
+Чистое ядро проактивности (BOB-010 Ф1): поведение Боба «писать первым» рождается из
+состояния, а не из таймера. `UrgeModel.urge` складывает четыре именованных,
+настраиваемых тяги в порыв `[0, 1]`: настроение (среднее по осям
+`arousal`/`openness`/`social` из `Mood`), тоску по тишине (растёт с секундами
+молчания и насыщается за ~6 ч), салиентность свежей рефлексии и циркадную базу по
+**локальному** часу (утренний и вечерний пики, дневной провал, низ ночью); плюс
+текущий уровень социальной энергии. Функция чистая: тот же вход — тот же порыв,
+час суток приходит уже выведенным из `Clock`.
+
+`SocialEnergy` — ограниченный `[0, 1]` резервуар: `recover(elapsed_seconds)`
+копит его в тишине, `spend()` тратит фиксированную долю на реплику, а
+`replenish_from_reply()` частично восполняет на ответ owner — естественный cooldown
+без таймера. Все переходы чисты (прошедшее время передаёт вызывающая сторона).
+
+`ProactiveDecider` — шов решения на тике: берёт «сейчас» из инъецированного `Clock`,
+считает `urge`, переводит его в вероятность `p(speak)` монотонной логистической
+кривой (`urge_to_probability`) и делает **один** розыгрыш из инъецированного seeded
+`Random`. `Governance` проверяется первой и только **блокирует**, никогда не поднимает
+порыв: пять чистых вето — quiet hours (жёсткий пол по локальному времени),
+owner-mute, анти-спам (потолок в окне), мин-гэп и owner-cooldown; пороги вынесены в
+`GovernanceConfig`, а недавняя история — в `ProactiveHistory`. `ProactivityState` —
+plain value-объект, который порт `ProactivityStore` round-trip'ит в хранилище:
+резервуар, маркеры `last_spoke_at`/`last_user_msg_at` и флаг `proactivity_enabled`
+(`/quiet`/`/wake`). Всё per-persona — реплики Bobiverse наследуют код, но держат своё.
+
 ## Инварианты
 
 - Домен не выполняет I/O и не импортирует `application` или `infrastructure`.
@@ -95,6 +132,12 @@ self-creation придут позже за тем же швом). Навык н�
 - Порты — только контракты: в этом модуле нет реализаций.
 - `Capability`-шов forward-compatible: новый навык регистрируется как объект под
   контракт, потребители (реестр, tool-loop) не меняются.
+- Проактивность чистая и детерминированная: `urge`, вероятность и governance-вето
+  тестируемы без LLM; час суток и стохастика приходят из инъецированных `Clock` и
+  seeded RNG, в домене нет `datetime.now()`/`random`.
+- Социальная энергия и порыв ограничены `[0, 1]`; выход за границу — `ValueError`.
+- Governance только блокирует и никогда не поднимает порыв; всё состояние
+  проактивности — per-persona.
 
 ## API
 
@@ -136,9 +179,38 @@ self-creation придут позже за тем же швом). Навык н�
 Модуль `src/bob/domain/memory/entities.py`:
 - `EpisodicEvent`, `SemanticFact`.
 
+Модуль `src/bob/domain/proactivity/urge.py`:
+- `UrgeModel` — `urge(*, mood, silence_seconds, salience, time_of_day_local, social_energy)` → `float[0..1]`.
+
+Модуль `src/bob/domain/proactivity/social_energy.py`:
+- `SocialEnergy(level)` — `recover(*, elapsed_seconds)`, `spend()`, `replenish_from_reply()` → `SocialEnergy`.
+
+Модуль `src/bob/domain/proactivity/governance.py`:
+- `Governance(config=GovernanceConfig())` — `allows(*, now, history)` → `bool`.
+- `GovernanceConfig(quiet_start_hour, quiet_end_hour, max_per_window, min_gap, owner_cooldown)`,
+  `ProactiveHistory(last_spoke_at, last_user_msg_at, sent_in_window, muted)`.
+
+Модуль `src/bob/domain/proactivity/decision.py`:
+- `ProactiveDecider(clock, governance, urge_model=UrgeModel())` —
+  `should_speak(*, mood, silence_seconds, salience, social_energy, history, rng)` → `bool`.
+- `urge_to_probability(urge)` → `float`.
+
+Модуль `src/bob/domain/proactivity/state.py`:
+- `ProactivityState(social_energy, last_spoke_at, last_user_msg_at, proactivity_enabled)`.
+
+Модуль `src/bob/domain/ports.py` (проактивность):
+- `ProactivityStore` — `async load(persona_id)` → `ProactivityState`,
+  `async save(persona_id, state)`.
+
 ## Тесты
 
 Тесты: `tests/domain/test_ports.py`, `tests/domain/personality/test_mood.py`,
 `tests/domain/personality/test_taste.py`,
 `tests/domain/personality/test_negotiation.py`,
-`tests/domain/personality/test_soul.py`, `tests/domain/memory/test_entities.py`.
+`tests/domain/personality/test_soul.py`, `tests/domain/memory/test_entities.py`,
+`tests/domain/proactivity/test_urge.py`,
+`tests/domain/proactivity/test_urge_monotonicity.py`,
+`tests/domain/proactivity/test_social_energy.py`,
+`tests/domain/proactivity/test_governance.py`,
+`tests/domain/proactivity/test_decision.py`,
+`tests/domain/proactivity/test_store_port.py`.

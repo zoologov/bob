@@ -15,7 +15,16 @@ from __future__ import annotations
 
 from bob.infrastructure.persistence.allowlist_store import KvAllowlistStore
 from bob.infrastructure.persistence.fts_recall import Fts5MemoryRecall
+from bob.infrastructure.persistence.proactivity_sources import RepoProactivitySources
+from bob.infrastructure.persistence.proactivity_store import SqliteProactivityStore
 from bob.infrastructure.persistence.soul_store import SoulStore
 from bob.infrastructure.persistence.sqlite_repo import SqliteMemoryRepo
 
-__all__ = ["Fts5MemoryRecall", "KvAllowlistStore", "SoulStore", "SqliteMemoryRepo"]
+__all__ = [
+    "Fts5MemoryRecall",
+    "KvAllowlistStore",
+    "RepoProactivitySources",
+    "SoulStore",
+    "SqliteMemoryRepo",
+    "SqliteProactivityStore",
+]
