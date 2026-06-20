@@ -11,13 +11,25 @@
 
 ## Текущий беад
 
-**Беад:** W4 — bob-6vo.4 (Reranker) ∥ bob-6vo.5 (search_memory) — оба разблокированы.
+**Беад:** W5 — bob-6vo.6 (интеграция app.py + e2e) — DONE. Дальше .7 (test).
 
 ## Прогресс
 
 - [ ] Setup: `scripts/setup-ollama.sh` — установка Ollama + pull bge-m3 (+ реранкер) — в процессе
 - [x] W1: bob-6vo.1 (Embedder + Ollama) — DONE.
 - [x] W2: bob-6vo.2 (sqlite-vec + бэкфилл + on-write) — DONE.
+- [x] W5: bob-6vo.6 (интеграция app.py + e2e) — DONE. `build_application`
+      получил инъектируемые швы `embedder`/`reranker` (из конфига при отсутствии,
+      graceful: сборка embedder НЕ ходит в сеть → старт даже при Ollama down).
+      `SqliteMemoryRepo(embedder=...)` → бэкфилл + on-write эмбеддинг на старте.
+      Живой recall: `Fts5MemoryRecall` → **`HybridMemoryRecall`** (FTS5+vec+RRF,
+      опц. reranker), drop-in. `search_memory` зарегистрирован в реестре рядом с
+      `recall_memory`. Фоллбэк-врезка: `vector_store.embed_row`/`backfill` стали
+      best-effort (Ollama-down в рантайме → лог, сохранение не падает). e2e
+      (tests/test_e2e_memory_hybrid.py): семантика-без-keyword, search_memory
+      tool-loop, фоллбэк на FTS5 при недоступном/отсутствующем эмбеддере, старт
+      без секции embeddings, reranker wired. +9 e2e +2 vector-store = 687 passed /
+      ruff / mypy --strict (src+tests+bare). architecture.md refresh — на .9.
 - [x] W4: bob-6vo.4 (Reranker) — DONE. `Reranker` порт (domain/ports.py:
       `async rerank(query, candidates) -> list[Recalled]`), `OllamaReranker`
       адаптер (infrastructure/llm/ollama_reranker.py, Ollama-as-scorer
@@ -45,7 +57,7 @@
 | bob-6vo.3 | dev: гибридный recall (FTS5+vector+RRF) + фоллбэк | .2 | done |
 | bob-6vo.4 | dev: Reranker + Qwen3-Reranker (Q1) | .3 | done |
 | bob-6vo.5 | dev: search_memory capability | .3 | ready |
-| bob-6vo.6 | dev: интеграция app.py + e2e | .4,.5 | blocked |
+| bob-6vo.6 | dev: интеграция app.py + e2e | .4,.5 | done |
 | bob-6vo.7 | test | .6 | blocked |
 | bob-6vo.8 | review (приватность) | .7 | blocked |
 | bob-6vo.9 | tech-writer (+ ops-note Ollama) | .8 | blocked |

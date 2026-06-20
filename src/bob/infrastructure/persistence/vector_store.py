@@ -104,11 +104,14 @@ class MemoryVectorStore:
         """Embed one freshly-saved row's ``content`` and insert its vector.
 
         The on-write path: a no-op without an embedder, and skipped if a vector
-        for ``(source, src_id)`` already exists (idempotent under retries).
+        for ``(source, src_id)`` already exists (idempotent under retries). The
+        embedding is **best-effort** — if the embedder is unavailable at runtime
+        (Ollama down) the embed is skipped and logged, never crashing the write, so
+        recall degrades to keyword-only rather than the save failing.
         """
         if self._embedder is None or await self._has_vector(source, src_id):
             return
-        vectors = await self._embedder.embed([content])
+        vectors = await self._safe_embed([content])
         if vectors:
             await self._insert(source, src_id, vectors[0])
             await self._conn.commit()
@@ -143,12 +146,39 @@ class MemoryVectorStore:
     async def _embed_batch(
         self, source: VectorSource, batch: list[tuple[int, str]]
     ) -> None:
-        """Embed one batch of (id, content) rows and insert their vectors."""
+        """Embed one batch of (id, content) rows and insert their vectors.
+
+        Best-effort: an embedder that is unavailable at runtime (Ollama down) yields
+        no vectors and the batch is skipped (logged), so a boot-time backfill never
+        crashes the app — the archive simply stays keyword-only until the embedder
+        is reachable on a later boot.
+        """
         if self._embedder is None or not batch:
             return
-        vectors = await self._embedder.embed([content for _, content in batch])
+        vectors = await self._safe_embed([content for _, content in batch])
+        if not vectors:
+            # Embedder unavailable (already logged): leave the batch un-embedded.
+            return
         for (src_id, _), vector in zip(batch, vectors, strict=True):
             await self._insert(source, src_id, vector)
+
+    async def _safe_embed(self, texts: list[str]) -> list[list[float]]:
+        """Embed ``texts``, returning ``[]`` (logged) on any embedder failure.
+
+        Guards only the embedder call (the runtime "Ollama down" fault). A wrong
+        dimension is NOT caught here: the embedder still returns a vector, and the
+        SQL insert enforces the schema's width — a misconfiguration must surface.
+        """
+        if self._embedder is None:
+            return []
+        try:
+            return await self._embedder.embed(texts)
+        except Exception:
+            logger.warning(
+                "embedder unavailable; skipping embedding (keyword-only memory)",
+                exc_info=True,
+            )
+            return []
 
     async def _has_vector(self, source: VectorSource, src_id: int) -> bool:
         """Whether a vector for ``(source, src_id)`` already exists."""

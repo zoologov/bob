@@ -44,6 +44,7 @@ from bob.application.authz import Authorizer
 from bob.application.capabilities import (
     CapabilityRegistry,
     make_recall_memory_capability,
+    make_search_memory_capability,
 )
 from bob.application.proactivity import (
     ProactiveTick,
@@ -74,9 +75,9 @@ from bob.domain.personality.taste import TasteAxis, TasteEngine
 from bob.domain.proactivity.decision import ProactiveDecider
 from bob.domain.proactivity.governance import Governance
 from bob.infrastructure.config import ConfigLoader
-from bob.infrastructure.llm import build_tier_providers
+from bob.infrastructure.llm import build_embedder, build_reranker, build_tier_providers
 from bob.infrastructure.persistence import (
-    Fts5MemoryRecall,
+    HybridMemoryRecall,
     KvAllowlistStore,
     RepoProactivitySources,
     SoulStore,
@@ -99,8 +100,10 @@ if TYPE_CHECKING:
     from bob.domain.ports import (
         Clock,
         DomainEvent,
+        Embedder,
         EventHandler,
         LLMProvider,
+        Reranker,
         ToolCallingProvider,
     )
     from bob.infrastructure.telegram.gateway import (
@@ -201,18 +204,34 @@ def build_application(
     providers: Mapping[int, LLMProvider] | None = None,
     bob_bot: BotLike | None = None,
     guppi_bot: BotLike | None = None,
+    embedder: Embedder | None = None,
+    reranker: Reranker | None = None,
     clock: Clock | None = None,
     proactivity_seed: int | None = None,
 ) -> Application:
     """Wire the full two-bot GUPPI graph from configuration into an application.
 
-    ``config`` / ``providers`` / ``bob_bot`` / ``guppi_bot`` are injectable seams:
-    when omitted the real adapters are built from config (each bot's token from
-    env via ``telegram.bob.token`` / ``telegram.guppi.token``); tests pass fake
-    aiogram bots to exercise the whole graph without a network or a Telegram
-    account. Bob and GUPPI are registered behind one
+    ``config`` / ``providers`` / ``bob_bot`` / ``guppi_bot`` / ``embedder`` /
+    ``reranker`` are injectable seams: when omitted the real adapters are built
+    from config (each bot's token from env via ``telegram.bob.token`` /
+    ``telegram.guppi.token``); tests pass fake aiogram bots and a fake embedder to
+    exercise the whole graph without a network or a Telegram account. Bob and GUPPI
+    are registered behind one
     :class:`~bob.infrastructure.telegram.multibot.MultiBotGateway` — Bob scoped to
     his topic thread, GUPPI to General — and one Dispatcher polls both.
+
+    **Hybrid memory (BOB-011):** a local :class:`~bob.domain.ports.Embedder`
+    (BGE-M3/Ollama) and an optional :class:`~bob.domain.ports.Reranker` are built
+    from config (``embeddings.*`` / ``reranker.*``). The live recall is the
+    :class:`~bob.infrastructure.persistence.HybridMemoryRecall` (FTS5 + sqlite-vec
+    KNN fused by RRF, optionally reranked) — a drop-in for the keyword-only recall,
+    so reactive recall and the ``recall_memory`` / ``search_memory`` capabilities
+    all gain semantic retrieval. The embedder is wired into the repo so existing
+    memory is backfilled and new facts/episodes are embedded on write. Graceful
+    degradation is by construction: building the embedder NEVER touches the network,
+    so a missing ``embeddings`` section just yields a keyword-only recall (the app
+    still starts), and an embedder that fails at runtime (Ollama down) degrades the
+    same way inside the hybrid recall — Bob never loses his memory.
     """
     merged = dict(config) if config is not None else ConfigLoader(yaml_path=config_path).load()
 
@@ -225,15 +244,26 @@ def build_application(
     tier_providers = providers if providers is not None else build_tier_providers(merged)
     router = LLMRouter(providers=tier_providers)
 
-    memory_repo = SqliteMemoryRepo(_db_path(merged))
-    recall = Fts5MemoryRecall(memory_repo)
+    # Hybrid memory (BOB-011): the embedder + optional reranker are injectable
+    # seams; when omitted they are built from config. Building them never touches
+    # the network (only `embed()`/`rerank()` calls do), so the app starts even with
+    # Ollama down — the embedder is then `None` (keyword-only) and the hybrid recall
+    # degrades gracefully at call time.
+    resolved_embedder = embedder if embedder is not None else _build_embedder(merged)
+    resolved_reranker = reranker if reranker is not None else _build_reranker(merged)
+
+    # The embedder is wired into the repo so the sqlite-vec table is backfilled with
+    # existing memory on startup (initialize) and new facts/episodes are embedded on
+    # write — a no-op when there is no embedder (keyword-only).
+    memory_repo = SqliteMemoryRepo(_db_path(merged), embedder=resolved_embedder)
+    recall = HybridMemoryRecall(memory_repo, resolved_embedder, reranker=resolved_reranker)
     soul_store = SoulStore(_soul_dir(merged))
 
-    # Capability seam (BEAD-05/06): advertise recall_memory to the model so the
-    # production tool-loop is active — the model may call it, GUPPI executes it,
-    # the result loops back into the reply. The tier-1 reply provider is the
-    # tool-calling provider; when it cannot do tools the loop stays dormant and
-    # HandleMessage keeps the plain reply path.
+    # Capability seam (BEAD-05/06): advertise recall_memory + the agentic
+    # search_memory to the model so the production tool-loop is active — the model
+    # may call either, GUPPI executes it, the result loops back into the reply. The
+    # tier-1 reply provider is the tool-calling provider; when it cannot do tools the
+    # loop stays dormant and HandleMessage keeps the plain reply path.
     registry = _build_registry(recall)
     tool_provider = _as_tool_provider(tier_providers)
 
@@ -464,16 +494,52 @@ def _build_authorizer(
     )
 
 
-def _build_registry(recall: Fts5MemoryRecall) -> CapabilityRegistry:
+def _build_registry(recall: HybridMemoryRecall) -> CapabilityRegistry:
     """Build the capability registry GUPPI advertises and dispatches.
 
-    Registers the first real capability — ``recall_memory`` (BEAD-06), a thin
-    wrapper over the live :class:`MemoryRecall` — so the tool-loop has something
-    to call end to end. New skills register here without touching consumers.
+    Registers the two memory capabilities over the live hybrid
+    :class:`~bob.domain.ports.MemoryRecall`: ``recall_memory`` (the thin auto-recall
+    wrapper) and ``search_memory`` (BOB-011 — the agentic skill Bob chooses to
+    invoke through the tool-loop). New skills register here without touching
+    consumers.
     """
     registry = CapabilityRegistry()
     registry.register(make_recall_memory_capability(recall))
+    registry.register(make_search_memory_capability(recall))
     return registry
+
+
+def _build_embedder(config: Mapping[str, object]) -> Embedder | None:
+    """Build the local :class:`Embedder` from ``embeddings.*``, or ``None``.
+
+    Graceful degradation: a missing/invalid ``embeddings`` section is logged and
+    yields ``None`` (keyword-only recall) rather than failing the whole boot —
+    building the embedder never touches the network, so this only guards config
+    shape. An embedder that later fails at runtime (Ollama down) is handled inside
+    the hybrid recall, not here.
+    """
+    try:
+        return build_embedder(config)
+    except (KeyError, ValueError) as error:
+        logger.warning(
+            "embeddings not configured (%s); memory recall degrades to keyword-only",
+            error,
+        )
+        return None
+
+
+def _build_reranker(config: Mapping[str, object]) -> Reranker | None:
+    """Build the optional :class:`Reranker` from ``reranker.*``, or ``None``.
+
+    The reranker is an ADDITIVE boost: it is off by default (``reranker.enabled``
+    false) and a missing/invalid section degrades to ``None`` (the hybrid order
+    ships unchanged) rather than failing the boot.
+    """
+    try:
+        return build_reranker(config)
+    except (KeyError, ValueError) as error:
+        logger.warning("reranker not configured (%s); using hybrid order", error)
+        return None
 
 
 def _as_tool_provider(

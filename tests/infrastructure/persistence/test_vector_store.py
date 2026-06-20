@@ -157,3 +157,43 @@ async def test_dimension_mismatch_is_rejected(tmp_path: Path) -> None:
     with pytest.raises(sqlite3.OperationalError, match=r"[Dd]imension"):
         await repo.save_fact(_fact("bob loves jazz"))
     await repo.close()
+
+
+class _UnavailableEmbedder:
+    """Embedder that always raises — stands in for Ollama being down at runtime."""
+
+    async def embed(self, texts: object) -> list[list[float]]:  # noqa: ARG002
+        raise ConnectionError("ollama unavailable")
+
+
+async def test_on_write_survives_embedder_runtime_failure(tmp_path: Path) -> None:
+    # Arrange: the embedder fails at runtime (Ollama down). Saving a fact MUST NOT
+    # crash — on-write embedding is best-effort (graceful keyword-only fallback).
+    repo = SqliteMemoryRepo(tmp_path / "bob.db", embedder=_UnavailableEmbedder())
+    await repo.initialize()
+
+    # Act: the save itself succeeds; only the (best-effort) embedding is skipped.
+    await repo.save_fact(_fact("bob loves jazz"))
+
+    # Assert: the fact persisted, no vector landed (embedder was unavailable).
+    facts = await repo.load_facts(limit=5)
+    assert any("jazz" in str(f["content"]) for f in facts)
+    assert await repo.vector_count() == 0
+    await repo.close()
+
+
+async def test_backfill_survives_embedder_runtime_failure(tmp_path: Path) -> None:
+    # Arrange: legacy rows with no vectors, then reopen with an unavailable embedder.
+    db_path = tmp_path / "bob.db"
+    legacy = SqliteMemoryRepo(db_path)
+    await legacy.initialize()
+    await legacy.save_fact(_fact("bob loves jazz"))
+    await legacy.close()
+
+    # Act: initialize() must not crash when the backfill embedder is down.
+    repo = SqliteMemoryRepo(db_path, embedder=_UnavailableEmbedder())
+    await repo.initialize()
+
+    # Assert: the app booted (no vectors backfilled) — Bob still has his keyword memory.
+    assert await repo.vector_count() == 0
+    await repo.close()
