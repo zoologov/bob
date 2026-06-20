@@ -2,18 +2,17 @@
 # SPDX-License-Identifier: BUSL-1.1
 # See the LICENSE file in the project root for full license information.
 
-"""Live edit-streaming in a group topic (BOB-004, Variant B).
+"""Live edit-streaming as the draft **fallback** (BOB-004 net, BOB-007 fallback).
 
-Native drafts are private-chat only — a supergroup forum topic rejects them with
-``TEXTDRAFT_PEER_INVALID``. So in Bob's topic the gateway types "live" GPT-style by
-**incremental ``editMessageText``**: send a plain placeholder, edit it with the
-accumulating plain text as tokens stream (throttled, respecting
-``TelegramRetryAfter``), then commit the **rich** final (``send_rich_message`` —
-headings/lists/code/tables/math + ``RichBlockThinking`` when a ``thinking`` is
-present) into the thread and **delete the plain placeholder** (Variant B: live text
-replaced by the rich final, a minor flicker is expected).
-
-A DM (no ``reply_thread_id``) keeps the native draft path — drafts are best there.
+Since BOB-007 native drafts are the primary streaming path for every chat. The
+incremental ``editMessageText`` stream below is the **fallback** taken only when a
+peer rejects drafts (``TEXTDRAFT_PEER_INVALID``). These tests reject drafts so the
+fallback runs: send a plain placeholder, edit it with the accumulating plain text as
+tokens stream (throttled, respecting ``TelegramRetryAfter``), then commit the
+**rich** final (``send_rich_message`` — headings/lists/code/tables/math +
+``RichBlockThinking`` when a ``thinking`` is present) into the thread and **delete
+the plain placeholder** (Variant B: live text replaced by the rich final, a minor
+flicker is expected).
 
 No real Telegram network: a fake aiogram bot records every call. A monotonic fake
 clock + recording sleep make the throttle deterministic (no real waiting).
@@ -25,8 +24,13 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 import pytest
-from aiogram.exceptions import TelegramRetryAfter
-from aiogram.methods import EditMessageText, SendMessage
+from aiogram.exceptions import TelegramBadRequest, TelegramRetryAfter
+from aiogram.methods import (
+    EditMessageText,
+    SendMessage,
+    SendMessageDraft,
+    SendRichMessageDraft,
+)
 
 from bob.application.runtime.event_bus import AsyncEventBus
 from bob.infrastructure.telegram.gateway import TelegramGateway, UpdateLike
@@ -88,6 +92,9 @@ class _FakeBot:
     rich_fails: bool = False
     rich_retry_after: bool = False
     edit_retry_after_on_call: int | None = None
+    # Drafts are rejected so the edit-streaming fallback (the subject of these tests)
+    # runs (BOB-007). A DM test flips this off to exercise the native-draft path.
+    drafts_rejected: bool = True
     clock: _FakeClock | None = None
     sends: list[_SendCall] = field(default_factory=list)
     edits: list[_EditCall] = field(default_factory=list)
@@ -139,11 +146,16 @@ class _FakeBot:
     async def send_message_draft(
         self,
         *,
-        chat_id: int,  # noqa: ARG002
-        draft_id: int,  # noqa: ARG002
+        chat_id: int,
+        draft_id: int,
         text: str,
         message_thread_id: int | None = None,  # noqa: ARG002
     ) -> bool:
+        if self.drafts_rejected:
+            raise TelegramBadRequest(
+                method=SendMessageDraft(chat_id=chat_id, draft_id=draft_id, text=""),
+                message="Bad Request: TEXTDRAFT_PEER_INVALID",
+            )
         self.drafts.append(text)
         return True
 
@@ -176,11 +188,19 @@ class _FakeBot:
     async def send_rich_message_draft(
         self,
         *,
-        chat_id: int,  # noqa: ARG002
-        draft_id: int,  # noqa: ARG002
-        rich_message: InputRichMessage,  # noqa: ARG002
+        chat_id: int,
+        draft_id: int,
+        rich_message: InputRichMessage,
         message_thread_id: int | None = None,  # noqa: ARG002
     ) -> bool:
+        if self.drafts_rejected:
+            raise TelegramBadRequest(
+                method=SendRichMessageDraft(
+                    chat_id=chat_id, draft_id=draft_id, rich_message=rich_message
+                ),
+                message="Bad Request: TEXTDRAFT_PEER_INVALID",
+            )
+        self.drafts.append(rich_message.markdown or "")
         return True
 
 
@@ -377,19 +397,19 @@ async def test_topic_rich_final_failure_falls_back_to_plain_and_keeps_placeholde
     assert bot.edits[-1].text == "Hello"
 
 
-# --- DM keeps the native draft path -------------------------------------------
+# --- DM uses the native draft path (drafts accepted) --------------------------
 
 
 @pytest.mark.asyncio
 async def test_dm_uses_native_draft_not_edit_streaming() -> None:
-    bot = _FakeBot()
+    bot = _FakeBot(drafts_rejected=False)
     clock = _FakeClock()
     gateway = _dm_gateway(bot, clock)
 
     await gateway.stream_reply(chat_id=_CHAT, tokens=_tokens("a", "b"))
 
-    # DM streams via native drafts and commits a plain send; never edits.
-    assert bot.drafts == ["a", "ab"]
+    # DM streams via native (rich) drafts and commits a rich final; never edits.
+    assert bot.drafts, "the DM did not stream via native drafts"
     assert bot.edits == []
     assert bot.deletes == []
-    assert bot.sends[-1].text == "ab"
+    assert bot.rich_sends, "the DM reply was not committed"

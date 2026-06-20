@@ -2,7 +2,12 @@
 # SPDX-License-Identifier: BUSL-1.1
 # See the LICENSE file in the project root for full license information.
 
-"""BOB-006 acceptance: the live edit-stream never floods Telegram.
+"""BOB-006 acceptance: the live edit-stream **fallback** never floods Telegram.
+
+Since BOB-007 native drafts are the primary, unthrottled streaming path; the
+throttled ``editMessageText`` stream is the **fallback** taken only when a peer
+rejects drafts. These tests therefore reject drafts (``drafts_rejected=True``) so
+the edit-streaming fallback runs, and pin its flood guarantees.
 
 The live incident was a flood-control storm — the inner gateways streamed with a
 0s throttle, so every token fired an immediate ``editMessageText`` and the rich
@@ -34,8 +39,8 @@ from itertools import pairwise
 from typing import TYPE_CHECKING
 
 import pytest
-from aiogram.exceptions import AiogramError, TelegramRetryAfter
-from aiogram.methods import SendMessage
+from aiogram.exceptions import AiogramError, TelegramBadRequest, TelegramRetryAfter
+from aiogram.methods import SendMessage, SendMessageDraft, SendRichMessageDraft
 
 from bob.application.runtime.event_bus import AsyncEventBus
 from bob.infrastructure.telegram.gateway import TelegramGateway, UpdateLike
@@ -98,6 +103,9 @@ class _FloodBot:
     rich_retry_after: bool = False
     placeholder_fails: bool = False
     rich_fails: bool = False
+    # Drafts are rejected so the throttled edit-streaming fallback (the subject of
+    # these flood guarantees) runs (BOB-007).
+    drafts_rejected: bool = True
     sends: list[str] = field(default_factory=list)
     edits: list[_EditCall] = field(default_factory=list)
     rich_sends: list[_RichCall] = field(default_factory=list)
@@ -149,11 +157,16 @@ class _FloodBot:
     async def send_message_draft(
         self,
         *,
-        chat_id: int,  # noqa: ARG002
-        draft_id: int,  # noqa: ARG002
+        chat_id: int,
+        draft_id: int,
         text: str,  # noqa: ARG002
         message_thread_id: int | None = None,  # noqa: ARG002
     ) -> bool:
+        if self.drafts_rejected:
+            raise TelegramBadRequest(
+                method=SendMessageDraft(chat_id=chat_id, draft_id=draft_id, text=""),
+                message="Bad Request: TEXTDRAFT_PEER_INVALID",
+            )
         return True
 
     async def send_rich_message(
@@ -178,11 +191,18 @@ class _FloodBot:
     async def send_rich_message_draft(
         self,
         *,
-        chat_id: int,  # noqa: ARG002
-        draft_id: int,  # noqa: ARG002
-        rich_message: InputRichMessage,  # noqa: ARG002
+        chat_id: int,
+        draft_id: int,
+        rich_message: InputRichMessage,
         message_thread_id: int | None = None,  # noqa: ARG002
     ) -> bool:
+        if self.drafts_rejected:
+            raise TelegramBadRequest(
+                method=SendRichMessageDraft(
+                    chat_id=chat_id, draft_id=draft_id, rich_message=rich_message
+                ),
+                message="Bad Request: TEXTDRAFT_PEER_INVALID",
+            )
         return True
 
 

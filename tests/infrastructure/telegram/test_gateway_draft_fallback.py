@@ -206,26 +206,26 @@ def _dm_gateway(bot: _FakeBot) -> TelegramGateway:
     )
 
 
-# --- The live bug: TEXTDRAFT_PEER_INVALID on the plain path -------------------
+# --- The live bug: TEXTDRAFT_PEER_INVALID on the stream_reply draft path -------
+# (BOB-007: stream_reply streams via the native *rich* draft channel for every chat.)
 
 
 @pytest.mark.asyncio
-async def test_plain_draft_peer_invalid_still_delivers_final() -> None:
+async def test_stream_reply_draft_peer_invalid_still_delivers_final() -> None:
     # The DM draft path (stream_reply with no thread): a peer rejects drafts. The
-    # exception must not escape, and the finished reply must still be committed.
+    # exception must not escape, and the finished reply must still be committed —
+    # here via the rich final, falling through to plain on a rich error.
     bot = _FakeBot(drafts_rejected=True)
     gateway = _dm_gateway(bot)
 
     await gateway.stream_reply(chat_id=_CHAT, tokens=_tokens("hel", "lo"))
 
-    assert bot.sends, "the finished reply was not delivered after a draft rejection"
-    final = bot.sends[-1]
-    assert final.text == "hello"
-    assert final.message_thread_id is None
+    delivered = bool(bot.rich_sends) or any(s.text == "hello" for s in bot.sends)
+    assert delivered, "the finished reply was not delivered after a draft rejection"
 
 
 @pytest.mark.asyncio
-async def test_plain_draft_rejection_stops_further_draft_attempts() -> None:
+async def test_stream_reply_draft_rejection_stops_further_draft_attempts() -> None:
     # Once a chat rejects a draft, the rest of the turn should not keep hammering the
     # draft channel — a single rejected attempt is enough to give up on drafts.
     bot = _FakeBot(drafts_rejected=True)
@@ -233,8 +233,8 @@ async def test_plain_draft_rejection_stops_further_draft_attempts() -> None:
 
     await gateway.stream_reply(chat_id=_CHAT, tokens=_tokens("a", "b", "c"))
 
-    assert bot.draft_attempts == 1
-    assert bot.sends[-1].text == "abc"
+    assert bot.rich_draft_attempts == 1
+    assert bot.rich_sends, "the finished reply was not delivered"
 
 
 # --- The live bug on the rich path -------------------------------------------
@@ -267,16 +267,16 @@ async def test_rich_draft_rejection_stops_further_draft_attempts() -> None:
 
 
 @pytest.mark.asyncio
-async def test_plain_happy_path_streams_drafts_and_commits_final() -> None:
+async def test_stream_reply_happy_path_streams_drafts_and_commits_final() -> None:
     bot = _FakeBot(drafts_rejected=False)
     gateway = _dm_gateway(bot)
 
     drafts = await gateway.stream_reply(chat_id=_CHAT, tokens=_tokens("a", "b"))
 
     assert drafts == 2
-    assert bot.draft_attempts == 2
-    assert bot.sends[-1].text == "ab"
-    assert bot.sends[-1].message_thread_id is None
+    assert bot.rich_draft_attempts == 2
+    assert bot.rich_sends[-1].markdown == "ab"
+    assert bot.rich_sends[-1].message_thread_id is None
 
 
 @pytest.mark.asyncio

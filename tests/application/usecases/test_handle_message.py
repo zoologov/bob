@@ -103,8 +103,11 @@ class FakeMessage:
 class FakeBot:
     """Fake aiogram bot capturing the streamed reply (no network).
 
-    ``send_message_draft`` records progressive drafts; ``send_message`` commits the
-    finished reply — the gateway's native-draft streaming model.
+    BOB-007: the gateway streams via the native *rich* draft channel and commits the
+    rich final, so ``send_rich_message_draft`` records progressive drafts and
+    ``send_rich_message`` records the committed reply (both folded into ``drafts`` /
+    ``sent`` so the existing reply assertions keep working). The plain
+    ``send_message``/``send_message_draft`` remain as the fallback safety net.
     """
 
     def __init__(self) -> None:
@@ -142,20 +145,24 @@ class FakeBot:
     async def send_rich_message(
         self,
         *,
-        chat_id: int,  # noqa: ARG002
-        rich_message: object,  # noqa: ARG002
+        chat_id: int,
+        rich_message: object,
         message_thread_id: int | None = None,  # noqa: ARG002
     ) -> FakeMessage:
+        markdown = getattr(rich_message, "markdown", "")
+        self.sent.append((chat_id, markdown))
         return FakeMessage(message_id=777)
 
     async def send_rich_message_draft(
         self,
         *,
-        chat_id: int,  # noqa: ARG002
-        draft_id: int,  # noqa: ARG002
-        rich_message: object,  # noqa: ARG002
+        chat_id: int,
+        draft_id: int,
+        rich_message: object,
         message_thread_id: int | None = None,  # noqa: ARG002
     ) -> bool:
+        markdown = getattr(rich_message, "markdown", "")
+        self.drafts.append((chat_id, draft_id, markdown))
         return True
 
     @property
