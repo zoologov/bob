@@ -19,6 +19,7 @@ dependencies = [
     "aiosqlite>=0.21",             # SQLite — structured state & memory (FTS5, no RAG/embeddings in P0)
     "pydantic>=2.10",              # domain models (Mood/Taste/Negotiation/SOUL)
     "pyyaml>=6.0",                 # layered config + bob-soul templates
+    "sqlite-vec>=0.1.9",
 ]
 
 [project.optional-dependencies]
@@ -122,7 +123,7 @@ exclude = [
 ]
 
 [[tool.mypy.overrides]]
-module = ["ultralytics.*", "open_clip.*", "mlx_audio.*", "faiss.*", "sentence_transformers.*"]
+module = ["ultralytics.*", "open_clip.*", "mlx_audio.*", "faiss.*", "sentence_transformers.*", "sqlite_vec.*"]
 ignore_missing_imports = true
 
 # --- Pytest ---
