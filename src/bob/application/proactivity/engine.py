@@ -40,6 +40,7 @@ tests given a fixed clock and seed.
 from __future__ import annotations
 
 import logging
+from dataclasses import replace
 from typing import TYPE_CHECKING, Protocol
 
 from bob.application.router.llm_router import LLMRequest, TaskType
@@ -54,7 +55,7 @@ if TYPE_CHECKING:
     from bob.application.router.llm_router import LLMRouter
     from bob.application.usecases.handle_message import PersonalityState, ReplyGateway
     from bob.domain.personality.mood import Mood
-    from bob.domain.ports import Clock, ProactivityStore
+    from bob.domain.ports import Clock
     from bob.domain.proactivity.decision import ProactiveDecider
     from bob.domain.proactivity.social_energy import SocialEnergy
 
@@ -81,6 +82,22 @@ _COMPOSE_SYSTEM = (
 )
 
 
+class ProactivityStoreLike(Protocol):
+    """The proactivity-store surface the engine needs on a tick.
+
+    A superset of the domain :class:`~bob.domain.ports.ProactivityStore` port: on
+    top of the value-object round-trip the engine also reads and clears the
+    infrastructure-level timed-mute expiry (``/quiet 2h``), so the store must
+    expose ``get_mute_until`` / ``set_mute_until`` (the live
+    :class:`SqliteProactivityStore` does). Kept structural so a fake satisfies it.
+    """
+
+    async def load(self, persona_id: str) -> ProactivityState: ...
+    async def save(self, persona_id: str, state: ProactivityState) -> None: ...
+    async def get_mute_until(self, persona_id: str) -> datetime | None: ...
+    async def set_mute_until(self, persona_id: str, until: datetime | None) -> None: ...
+
+
 class ReflectionSalienceSource(Protocol):
     """Read seam: how striking Bob's most recent reflection is right now ([0, 1])."""
 
@@ -105,7 +122,7 @@ class ProactivityEngine:
         *,
         persona_id: str,
         chat_id: int,
-        store: ProactivityStore,
+        store: ProactivityStoreLike,
         decider: ProactiveDecider,
         router: LLMRouter,
         gateway: ReplyGateway,
@@ -136,7 +153,8 @@ class ProactivityEngine:
         gate pays for the composed reply.
         """
         now = self._clock.now()
-        state = await self._store.load(self._persona_id)
+        loaded = await self._store.load(self._persona_id)
+        state = await self._resolve_mute_expiry(loaded, now)
         energy = self._recovered_energy(state, now)
 
         if not await self._should_speak(state, energy, now):
@@ -160,7 +178,12 @@ class ProactivityEngine:
     async def _should_speak(
         self, state: ProactivityState, energy: SocialEnergy, now: datetime
     ) -> bool:
-        """Pure drive decision: urge → seeded sample → governance veto (no LLM)."""
+        """Pure drive decision: urge → seeded sample → governance veto (no LLM).
+
+        ``state`` is already mute-resolved (see :meth:`_resolve_mute_expiry`), so a
+        lapsed timed mute reads as ``proactivity_enabled`` here — only a still-in-
+        force mute (permanent, or timed-and-unexpired) leaves ``muted`` true.
+        """
         history = ProactiveHistory(
             last_spoke_at=state.last_spoke_at,
             last_user_msg_at=state.last_user_msg_at,
@@ -175,6 +198,28 @@ class ProactivityEngine:
             history=history,
             rng=self._rng,
         )
+
+    async def _resolve_mute_expiry(
+        self, state: ProactivityState, now: datetime
+    ) -> ProactivityState:
+        """Apply timed-mute expiry to ``state`` and return the effective state.
+
+        A permanent ``/quiet`` (proactivity off, no ``mute_until``) stays muted
+        until ``/wake``. A timed ``/quiet 2h`` (``mute_until`` set) lifts at/after
+        that instant: the engine durably re-enables the persisted flag and clears
+        the expiry once — so a lapsed mute is not recomputed on every later tick —
+        and returns the re-enabled state for this tick to act on. An active (still
+        enabled) persona or an unexpired timed mute passes through unchanged.
+        """
+        if state.proactivity_enabled:
+            return state
+        mute_until = await self._store.get_mute_until(self._persona_id)
+        if mute_until is None or now < mute_until:
+            return state
+        woken = replace(state, proactivity_enabled=True)
+        await self._store.save(self._persona_id, woken)
+        await self._store.set_mute_until(self._persona_id, None)
+        return woken
 
     async def _gate(self) -> str | None:
         """Run the cheap Tier-0 gate; return the seed/topic, or ``None`` to skip."""

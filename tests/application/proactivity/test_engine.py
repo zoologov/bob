@@ -77,11 +77,15 @@ class CountingProvider:
 
 
 class FakeStore:
-    """In-memory ProactivityStore double, recording the saved state."""
+    """In-memory ProactivityStore double, recording the saved state + timed mute."""
 
-    def __init__(self, state: ProactivityState) -> None:
+    def __init__(
+        self, state: ProactivityState, *, mute_until: datetime | None = None
+    ) -> None:
         self._state = state
         self.saved: ProactivityState | None = None
+        self.mute_until = mute_until
+        self.cleared_mute = False
 
     async def load(self, persona_id: str) -> ProactivityState:  # noqa: ARG002
         return self._state
@@ -89,6 +93,16 @@ class FakeStore:
     async def save(self, persona_id: str, state: ProactivityState) -> None:  # noqa: ARG002
         self.saved = state
         self._state = state
+
+    async def get_mute_until(self, persona_id: str) -> datetime | None:  # noqa: ARG002
+        return self.mute_until
+
+    async def set_mute_until(
+        self, persona_id: str, until: datetime | None  # noqa: ARG002
+    ) -> None:
+        self.mute_until = until
+        if until is None:
+            self.cleared_mute = True
 
 
 class CapturingGateway:
@@ -475,3 +489,127 @@ async def test_recovers_energy_over_silence_when_speaking() -> None:
     # so it sits above the floor a never-recovered (0 - spend) reservoir would hold.
     assert store.saved is not None
     assert store.saved.social_energy.level > 0.0
+
+
+# --- Timed-mute auto-expiry (BOB-010 Ф1 BEAD-08) ------------------------------
+
+
+async def test_timed_quiet_keeps_bob_muted_before_expiry() -> None:
+    # Arrange: a high-urge state that WOULD fire, but /quiet 2h is active — the
+    # mute has not expired yet (now < mute_until), so governance must veto.
+    moment = _evening()
+    seed = _seed_that_fires(moment, _HIGH_MOOD)
+    store = FakeStore(
+        _state(energy=1.0, enabled=False), mute_until=moment + timedelta(hours=2)
+    )
+    router, providers = _router(gate_reply="SAY: x", compose_reply="x")
+    gateway = CapturingGateway()
+    engine = _engine(
+        store=store,
+        router=router,
+        gateway=gateway,
+        state_holder=PersonalityState(soul=_soul(_HIGH_MOOD)),
+        moment=moment,
+        seed=seed,
+        salience=0.9,
+    )
+
+    # Act
+    spoke = await engine.tick()
+
+    # Assert: still muted — silent, no LLM, and the (unexpired) mute is untouched.
+    assert spoke is False
+    assert gateway.replies == []
+    assert sum(p.calls for p in providers) == 0
+    assert store.mute_until == moment + timedelta(hours=2)
+    assert store.cleared_mute is False
+
+
+async def test_timed_quiet_auto_unmutes_at_expiry() -> None:
+    # Arrange: /quiet 2h was set in the past; now is exactly at the expiry instant,
+    # so the timed mute has elapsed and Bob should be proactive again.
+    moment = _evening()
+    seed = _seed_that_fires(moment, _HIGH_MOOD)
+    store = FakeStore(_state(energy=1.0, enabled=False), mute_until=moment)
+    router, _ = _router(
+        gate_reply="SAY: how did it go", compose_reply="How did the day go?"
+    )
+    gateway = CapturingGateway()
+    engine = _engine(
+        store=store,
+        router=router,
+        gateway=gateway,
+        state_holder=PersonalityState(soul=_soul(_HIGH_MOOD)),
+        moment=moment,
+        seed=seed,
+        salience=0.9,
+    )
+
+    # Act
+    spoke = await engine.tick()
+
+    # Assert: the mute expired → Bob spoke, and the expiry is cleared + the flag
+    # re-enabled durably (not recomputed every tick forever).
+    assert spoke is True
+    assert gateway.replies == ["How did the day go?"]
+    assert store.mute_until is None
+    assert store.cleared_mute is True
+    assert store.saved is not None
+    assert store.saved.proactivity_enabled is True
+
+
+async def test_timed_quiet_auto_unmutes_after_expiry() -> None:
+    # Arrange: now is well past the expiry instant — the timed mute has elapsed.
+    moment = _evening()
+    seed = _seed_that_fires(moment, _HIGH_MOOD)
+    store = FakeStore(
+        _state(energy=1.0, enabled=False), mute_until=moment - timedelta(hours=1)
+    )
+    router, _ = _router(gate_reply="SAY: a thought", compose_reply="A thought.")
+    gateway = CapturingGateway()
+    engine = _engine(
+        store=store,
+        router=router,
+        gateway=gateway,
+        state_holder=PersonalityState(soul=_soul(_HIGH_MOOD)),
+        moment=moment,
+        seed=seed,
+        salience=0.9,
+    )
+
+    # Act
+    spoke = await engine.tick()
+
+    # Assert: expired mute → Bob spoke again, expiry cleared, flag re-enabled.
+    assert spoke is True
+    assert store.mute_until is None
+    assert store.cleared_mute is True
+
+
+async def test_permanent_quiet_stays_muted_without_expiry() -> None:
+    # Arrange: a permanent /quiet (proactivity off, NO mute_until) — Bob must stay
+    # muted indefinitely (only /wake un-mutes him), never auto-re-enabled.
+    moment = _evening()
+    seed = _seed_that_fires(moment, _HIGH_MOOD)
+    store = FakeStore(_state(energy=1.0, enabled=False), mute_until=None)
+    router, providers = _router(gate_reply="SAY: x", compose_reply="x")
+    gateway = CapturingGateway()
+    engine = _engine(
+        store=store,
+        router=router,
+        gateway=gateway,
+        state_holder=PersonalityState(soul=_soul(_HIGH_MOOD)),
+        moment=moment,
+        seed=seed,
+        salience=0.9,
+    )
+
+    # Act
+    spoke = await engine.tick()
+
+    # Assert: still muted — silent, zero LLM, no auto re-enable, no state write.
+    assert spoke is False
+    assert gateway.replies == []
+    assert sum(p.calls for p in providers) == 0
+    assert store.cleared_mute is False
+    assert store.saved is None or store.saved.proactivity_enabled is False
