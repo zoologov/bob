@@ -16,8 +16,10 @@ facts/episodes on :meth:`backfill`, and **on-write** embedding of a freshly
 saved fact/episode via :meth:`embed_row`. With no embedder injected it is inert
 (graceful keyword-only fallback) — the vector table still exists, just empty.
 
-Hybrid recall (FTS5 + KNN -> RRF) is a *later* bead: this module only populates
-the table, it does not query it for relevance.
+It also serves the *read* side of semantic recall: :meth:`knn` runs a sqlite-vec
+KNN over ``memory_vec``, joins each hit back to its source row's content, and
+returns the nearest neighbours (vector distance, ascending). The RRF fusion of
+this list with FTS5 keyword hits lives in the hybrid-recall adapter, not here.
 """
 
 from __future__ import annotations
@@ -46,10 +48,23 @@ _EPISODIC: VectorSource = "episodic"
 # Backfill embeds in batches to keep a single Embedder round-trip bounded.
 _BACKFILL_BATCH = 64
 
+# Which source table a vector's content lives in (a fixed internal mapping, never
+# user input — safe to interpolate into the KNN JOIN). Maps the vec0 partition key
+# to its (table, category-column) pair so each hit carries a matching source tag.
+_SOURCE_TABLES: dict[VectorSource, tuple[str, str]] = {
+    _SEMANTIC: ("semantic_memory", "category"),
+    _EPISODIC: ("episodic_log", "event_type"),
+}
+
 
 def _pack(vector: Sequence[float]) -> bytes:
     """Pack a float vector into sqlite-vec's little-endian float32 blob format."""
     return struct.pack(f"<{len(vector)}f", *vector)
+
+
+def _distance(hit: dict[str, object]) -> float:
+    """KNN distance of a hit (lower is nearer); coerced from the SQL row."""
+    return float(str(hit["distance"]))
 
 
 class MemoryVectorStore:
@@ -151,6 +166,49 @@ class MemoryVectorStore:
             "INSERT INTO memory_vec (source, src_id, embedding) VALUES (?, ?, ?)",
             (source, src_id, _pack(vector)),
         )
+
+    async def knn(self, vector: Sequence[float], k: int) -> list[dict[str, object]]:
+        """Top-``k`` nearest neighbours of ``vector`` across both sources.
+
+        Runs a sqlite-vec KNN per source partition, joins each hit back to its
+        source row's ``content``, merges the two lists and returns the globally
+        nearest ``k`` by vector distance (ascending). Each item carries its
+        ``content``, ``source`` tag, the source row's ``category`` and the raw
+        ``distance``. Empty when ``k <= 0`` (no neighbours requested).
+        """
+        if k <= 0:
+            return []
+        packed = _pack(vector)
+        merged: list[dict[str, object]] = []
+        for source, (table, category_col) in _SOURCE_TABLES.items():
+            merged.extend(await self._knn_source(source, table, category_col, packed, k))
+        merged.sort(key=_distance)
+        return merged[:k]
+
+    async def _knn_source(
+        self,
+        source: VectorSource,
+        table: str,
+        category_col: str,
+        packed: bytes,
+        k: int,
+    ) -> list[dict[str, object]]:
+        """KNN within one source partition, joined to its content/category.
+
+        ``table`` / ``category_col`` are fixed internal literals from
+        ``_SOURCE_TABLES`` (never user input), so interpolating them into the
+        JOIN is safe; the query vector, partition key and ``k`` stay parameterised.
+        """
+        sql = (
+            "SELECT t.content AS content, "  # noqa: S608 — literals are internal, not user input
+            f"t.{category_col} AS category, ? AS source, v.distance AS distance "
+            f"FROM memory_vec v JOIN {table} t ON t.id = v.src_id "
+            "WHERE v.source = ? AND v.embedding MATCH ? AND k = ? "
+            "ORDER BY v.distance"
+        )
+        async with self._conn.execute(sql, (source, source, packed, k)) as cursor:
+            rows = await cursor.fetchall()
+        return [dict(row) for row in rows]
 
     async def count(self, source: VectorSource | None = None) -> int:
         """Number of stored vectors, optionally restricted to one ``source``."""

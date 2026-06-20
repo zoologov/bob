@@ -11,26 +11,29 @@
 
 ## Текущий беад
 
-**Беад:** bob-6vo.1 — dev: Embedder + OllamaEmbedder (W1) — стартует ПОСЛЕ установки Ollama.
+**Беад:** W4 — bob-6vo.4 (Reranker) ∥ bob-6vo.5 (search_memory) — оба разблокированы.
 
 ## Прогресс
 
 - [ ] Setup: `scripts/setup-ollama.sh` — установка Ollama + pull bge-m3 (+ реранкер) — в процессе
-- [x] W1: bob-6vo.1 (Embedder + Ollama) — DONE. Порт `Embedder` (domain/ports.py),
-      `OllamaEmbedder` (infrastructure/llm/ollama_embedder.py: batch `/api/embed` + per-text
-      `/api/embeddings` 404-фоллбэк + `retry_with_backoff` + валидация dim), `build_embedder`
-      factory, секция `embeddings.{base_url,model,dim}` в loader + bob.example.yaml,
-      детерминированный `FakeEmbedder` (tests/support). pytest/ruff/mypy --strict зелёные.
+- [x] W1: bob-6vo.1 (Embedder + Ollama) — DONE.
+- [x] W2: bob-6vo.2 (sqlite-vec + бэкфилл + on-write) — DONE.
+- [x] W3: bob-6vo.3 (гибридный recall FTS5+vector+RRF) — DONE. `HybridMemoryRecall`
+      (infrastructure/persistence/hybrid_recall.py) за `MemoryRecall` drop-in: эмбед запроса →
+      sqlite-vec KNN (`MemoryVectorStore.knn` / `SqliteMemoryRepo.vector_knn`) + FTS5 BM25 →
+      RRF-слияние (k0=60, пул=20) → дедуп → top-N с тегом source. Graceful-фоллбэк: эмбеддер
+      недоступен/падает → чистый FTS5 (лог). 8 тестов на StubEmbedder. pytest 650 / ruff /
+      mypy --strict зелёные. Врезка в app.py — на .6.
 
 ## Статусы беадов (Фаза 1)
 
 | Беад | Роль | Зависит от | Статус |
 |------|------|-----------|--------|
 | bob-6vo.1 | dev: Embedder + OllamaEmbedder (BGE-M3) | — | ready |
-| bob-6vo.2 | dev: sqlite-vec + бэкфилл + on-write | .1 | blocked |
-| bob-6vo.3 | dev: гибридный recall (FTS5+vector+RRF) + фоллбэк | .2 | blocked |
-| bob-6vo.4 | dev: Reranker + Qwen3-Reranker (Q1) | .3 | blocked |
-| bob-6vo.5 | dev: search_memory capability | .3 | blocked |
+| bob-6vo.2 | dev: sqlite-vec + бэкфилл + on-write | .1 | done |
+| bob-6vo.3 | dev: гибридный recall (FTS5+vector+RRF) + фоллбэк | .2 | done |
+| bob-6vo.4 | dev: Reranker + Qwen3-Reranker (Q1) | .3 | ready |
+| bob-6vo.5 | dev: search_memory capability | .3 | ready |
 | bob-6vo.6 | dev: интеграция app.py + e2e | .4,.5 | blocked |
 | bob-6vo.7 | test | .6 | blocked |
 | bob-6vo.8 | review (приватность) | .7 | blocked |

@@ -283,6 +283,17 @@ class SqliteMemoryRepo:
         """Number of stored embeddings, optionally restricted to one source."""
         return await self._vector_store().count(source)
 
+    async def vector_knn(
+        self, vector: Sequence[float], *, k: int
+    ) -> list[dict[str, object]]:
+        """Top-``k`` nearest-neighbour memories to ``vector`` (semantic recall).
+
+        Delegates to the vector store's KNN: each hit carries ``content``,
+        ``source``, ``category`` and ``distance``. The hybrid-recall adapter fuses
+        this with FTS5 keyword hits.
+        """
+        return await self._vector_store().knn(vector, k)
+
     async def _embed_on_write(
         self, src_id: int | None, source: VectorSource, content: object
     ) -> None:
