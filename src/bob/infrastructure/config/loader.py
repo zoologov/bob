@@ -65,6 +65,15 @@ DEFAULT_CONFIG: Config = {
         # budget on reasoning_content.
         "disable_thinking": True,
     },
+    # Local semantic-memory embeddings (BOB-011). Provider-agnostic: a LOCAL
+    # Ollama server (privacy — memory content never leaves the machine), default
+    # model BGE-M3 (dense, 1024-dim, multilingual/Russian). Swap ``model``/``dim``
+    # (e.g. Qwen3-Embedding) without touching consumers.
+    "embeddings": {
+        "base_url": "http://localhost:11434",
+        "model": "bge-m3",
+        "dim": 1024,
+    },
     # Two bots in one process (BOB-003): Bob lives in his topic, GUPPI is the
     # gatekeeper in General. Each bot's token comes from env only (never YAML);
     # the shared ids (chat/owner/allowlist) and Bob's topic are non-secret.

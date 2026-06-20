@@ -10,9 +10,12 @@ import ast
 import inspect
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import ClassVar, get_type_hints, runtime_checkable
+from typing import TYPE_CHECKING, ClassVar, get_type_hints, runtime_checkable
 
 import pytest
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 from bob.domain import ports
 
@@ -27,6 +30,7 @@ from bob.domain import ports
         "MemoryRecall",
         "Capability",
         "ToolCallingProvider",
+        "Embedder",
     ],
 )
 def test_port_is_exported_protocol(name: str) -> None:
@@ -72,6 +76,23 @@ def test_memory_repo_declares_persistence_methods() -> None:
 
 def test_memory_recall_declares_recall() -> None:
     assert hasattr(ports.MemoryRecall, "recall")
+
+
+def test_embedder_is_exported_protocol_declaring_embed() -> None:
+    # Assert the Embedder port is an exported Protocol with an ``embed`` method.
+    assert "Embedder" in ports.__all__
+    assert getattr(ports.Embedder, "_is_protocol", False) is True
+    assert hasattr(ports.Embedder, "embed")
+
+
+def test_embedder_is_structurally_satisfiable() -> None:
+    # Arrange: a minimal object that satisfies the Embedder shape.
+    class ConstEmbedder:
+        async def embed(self, texts: Sequence[str]) -> list[list[float]]:
+            return [[0.0] for _ in texts]
+
+    # Act / Assert: recognised as an Embedder (runtime_checkable, structural).
+    assert isinstance(ConstEmbedder(), ports.Embedder)
 
 
 def test_capability_declares_seam_attributes() -> None:

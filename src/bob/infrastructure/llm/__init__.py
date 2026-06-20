@@ -4,11 +4,18 @@
 
 # beadloom:domain=bob
 
-"""LLM infrastructure: OpenAI-compatible provider + Tier 0/1 factory."""
+"""LLM infrastructure: OpenAI-compatible provider + Tier 0/1 + local embedder."""
 
 from __future__ import annotations
 
+from bob.infrastructure.llm.embedder_factory import build_embedder
 from bob.infrastructure.llm.factory import build_tier_providers
+from bob.infrastructure.llm.ollama_embedder import OllamaEmbedder
 from bob.infrastructure.llm.openai_compat import OpenAICompatProvider
 
-__all__ = ["OpenAICompatProvider", "build_tier_providers"]
+__all__ = [
+    "OllamaEmbedder",
+    "OpenAICompatProvider",
+    "build_embedder",
+    "build_tier_providers",
+]

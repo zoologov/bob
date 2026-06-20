@@ -33,6 +33,7 @@ __all__ = [
     "Capability",
     "Clock",
     "DomainEvent",
+    "Embedder",
     "EventBus",
     "EventHandler",
     "JsonValue",
@@ -246,6 +247,27 @@ class MemoryRecall(Protocol):
 
     async def recall(self, query: str, *, k: int) -> Sequence[Recalled]:
         """Return the top-``k`` memories relevant to ``query``."""
+        ...
+
+
+@runtime_checkable
+class Embedder(Protocol):
+    """Maps texts to dense embedding vectors (the semantic-memory seam).
+
+    Provider-agnostic by design: an Ollama-backed adapter (BGE-M3, 1024-dim) is
+    the first realisation, but the port commits only to "text in, one vector per
+    text out" so a later local model (e.g. Qwen3-Embedding) swaps in without any
+    consumer change. Embeddings stay local for privacy — memory content never
+    leaves the machine. The vector dimension is fixed by the configured model.
+    """
+
+    async def embed(self, texts: Sequence[str]) -> list[list[float]]:
+        """Embed ``texts`` into one dense vector each (order-preserving).
+
+        Returns a list aligned with ``texts``: element ``i`` is the embedding of
+        ``texts[i]``. Every vector shares the model's fixed dimension. An empty
+        input yields an empty list.
+        """
         ...
 
 

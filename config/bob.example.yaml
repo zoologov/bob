@@ -34,6 +34,15 @@ llm:
   # where a reasoning model spends its whole budget on reasoning_content.
   disable_thinking: true
 
+embeddings:
+  # Local semantic-memory embeddings (BOB-011). Runs against a LOCAL Ollama server
+  # so memory content never leaves the machine (privacy). Provider-agnostic:
+  # point base_url/model/dim at a different local model (e.g. qwen3-embedding)
+  # without any consumer change. Defaults: BGE-M3 dense, 1024-dim, multilingual.
+  base_url: http://localhost:11434   # local Ollama (env: BOB_EMBEDDINGS__BASE_URL)
+  model: bge-m3                      # embedding model (env: BOB_EMBEDDINGS__MODEL)
+  dim: 1024                          # vector dimension fixed by the model
+
 telegram:
   # Two bots in one process (BOB-003): Bob lives in his topic; GUPPI is the
   # gatekeeper/admin in General. Tokens are env-only (see header) — never here.
