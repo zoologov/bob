@@ -16,7 +16,11 @@
 ## Прогресс
 
 - [ ] Setup: `scripts/setup-ollama.sh` — установка Ollama + pull bge-m3 (+ реранкер) — в процессе
-- [ ] W1: bob-6vo.1 (Embedder + Ollama) — ждёт установку
+- [x] W1: bob-6vo.1 (Embedder + Ollama) — DONE. Порт `Embedder` (domain/ports.py),
+      `OllamaEmbedder` (infrastructure/llm/ollama_embedder.py: batch `/api/embed` + per-text
+      `/api/embeddings` 404-фоллбэк + `retry_with_backoff` + валидация dim), `build_embedder`
+      factory, секция `embeddings.{base_url,model,dim}` в loader + bob.example.yaml,
+      детерминированный `FakeEmbedder` (tests/support). pytest/ruff/mypy --strict зелёные.
 
 ## Статусы беадов (Фаза 1)
 

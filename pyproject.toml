@@ -44,8 +44,8 @@ dev = [
     "pytest>=8.3",
     "pytest-cov>=6.0",
     "pytest-asyncio>=0.25",
-    "ruff>=0.9",
-    "mypy>=1.14",
+    "ruff>=0.15",
+    "mypy>=1.19",
     "pre-commit>=4.0",
     "types-PyYAML>=6.0",
 ]
@@ -95,6 +95,9 @@ ignore = [
 # The proactivity integration e2e seeds `random.Random` to find a deterministic
 # firing seed; the non-crypto PRNG is the point, so S311 does not apply.
 "tests/test_e2e_proactivity.py" = ["S101", "ARG001", "PLR2004", "S311"]
+# The FakeEmbedder seeds `random.Random` from a text hash to produce stable
+# pseudo-vectors for tests; the non-crypto PRNG is the point, so S311 does not apply.
+"tests/support/*.py" = ["S101", "ARG001", "PLR2004", "S311"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["bob"]
