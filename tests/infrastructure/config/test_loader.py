@@ -166,6 +166,35 @@ def test_telegram_defaults_have_two_bot_shape() -> None:
     assert telegram["poll_timeout"] == 10
 
 
+def test_embeddings_defaults_are_local_bge_m3_1024() -> None:
+    # Arrange
+    loader = ConfigLoader(yaml_path=None, env={})
+
+    # Act
+    embeddings = loader.load()["embeddings"]
+
+    # Assert: local Ollama, BGE-M3 dense 1024 (the BOB-011 locked stack).
+    assert embeddings["base_url"] == "http://localhost:11434"
+    assert embeddings["model"] == "bge-m3"
+    assert embeddings["dim"] == 1024
+
+
+def test_embeddings_section_overridable_via_env() -> None:
+    # Arrange: point the embedder at a different local model without code change.
+    loader = ConfigLoader(
+        yaml_path=None,
+        env={"BOB_EMBEDDINGS__MODEL": "qwen3-embedding"},
+    )
+
+    # Act
+    embeddings = loader.load()["embeddings"]
+
+    # Assert: env wins; the rest of the section keeps its defaults.
+    assert embeddings["model"] == "qwen3-embedding"
+    assert embeddings["base_url"] == "http://localhost:11434"
+    assert embeddings["dim"] == 1024
+
+
 def test_bob_token_loads_from_bob_telegram_token_env() -> None:
     # Arrange: the existing var maps explicitly onto telegram.bob.token.
     env = {"BOB_TELEGRAM__TOKEN": _BOB_TOKEN}

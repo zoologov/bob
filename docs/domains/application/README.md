@@ -28,8 +28,10 @@ LLM-роутера. Зависит от домена через порты-пр�
   (`register`/`manifest`/`dispatch`/`describe`); `UnknownCapabilityError`.
 - **capabilities/tool_loop.py** — `ToolLoop`, петля «модель ↔ инструменты» до
   финального текста (turn-cap, GUPPI исполняет вызовы).
-- **capabilities/recall_memory.py** — `make_recall_memory_capability()`, первый
-  реальный навык `recall_memory` — тонкая обёртка над `MemoryRecall`.
+- **capabilities/recall_memory.py** — `make_recall_memory_capability()`, тонкий
+  *авто*-recall `recall_memory` — обёртка над `MemoryRecall`.
+- **capabilities/search_memory.py** — `make_search_memory_capability()`, агентный
+  навык `search_memory`: Боб сам ищет по всему архиву через гибрид-recall (BOB-011).
 - **router/llm_router.py** — `LLMRouter`, классификация задачи, селективная
   редакция приватности и fallback тиров; `LLMRequest` (с двумя каналами
   контекста — `shareable_context` и `private_context`), `TaskType`.
@@ -223,10 +225,18 @@ heartbeat и не глушит соседние тики; отмена (на о�
   повторяет, пока не финальный текст. Число ходов ограничено `max_turns` (по
   умолчанию 6), чтобы не зациклиться; неизвестный навык не фатален — ошибка
   возвращается как результат, чтобы модель восстановилась.
-- `recall_memory` (`make_recall_memory_capability(recall)`) — первый реальный
-  навык: тонкая обёртка над `MemoryRecall` (архивный keyword-recall), `permission`
-  `safe`. Обкатывает петлю e2e без нового I/O; агентный `search_memory` с
-  векторами — отдельный эпик «Память».
+- `recall_memory` (`make_recall_memory_capability(recall)`) — тонкий *авто*-recall:
+  обёртка над `MemoryRecall`, `permission` `safe`. GUPPI тихо подмешивает память в
+  ответ; навык обкатал петлю e2e без нового I/O.
+- `search_memory` (`make_search_memory_capability(recall)`, BOB-011) — первая
+  содержательная **агентная** capability: то, что Боб *решает* вызвать сам через
+  tool-loop. Он ищет по всему долгому архиву реальным запросом (гибрид
+  семантика+keyword за тем же портом `MemoryRecall`) и использует результат.
+  `permission` `safe`; JSON-схема — обязательный `query` плюс опциональный `k`
+  (модель тюнит число воспоминаний; мусорный/нулевой/огромный `k` клампится в
+  безопасное окно `[1, 50]`, по умолчанию 8, чтобы небрежная модель не затопила и
+  не оголила свой контекст). Возвращает компактный список `content` найденных
+  воспоминаний.
 
 `HandleMessage` подхватывает шов опционально: tool-loop включается, только когда
 зарегистрированы навыки **и** подан `ToolCallingProvider` (в P0-сборке — провайдер
@@ -305,6 +315,10 @@ Tier 1); иначе ход идёт прежним plain-путём роутер
 Модуль `src/bob/application/capabilities/recall_memory.py`:
 - `make_recall_memory_capability(recall)` → `Capability` (навык `recall_memory`).
 
+Модуль `src/bob/application/capabilities/search_memory.py`:
+- `make_search_memory_capability(recall)` → `Capability` (агентный навык
+  `search_memory`: `query` + опциональный `k`, клампится в `[1, 50]`).
+
 Модуль `src/bob/application/usecases/handle_message.py`:
 - `HandleMessage` — `async handle(event)`; `PersonalityState`, `EpisodeReader`,
   опциональные `registry` и `tool_provider` (включают capability tool-loop).
@@ -345,6 +359,7 @@ Tier 1); иначе ход идёт прежним plain-путём роутер
 `tests/application/test_tool_loop.py`,
 `tests/application/test_tool_loop_hardening.py`,
 `tests/application/test_recall_memory_capability.py`,
+`tests/application/test_search_memory_capability.py`,
 `tests/application/usecases/test_handle_message.py`,
 `tests/application/usecases/test_extract_facts.py`,
 `tests/application/usecases/test_update_mood_from_text.py`,

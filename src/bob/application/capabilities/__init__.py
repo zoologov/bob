@@ -13,6 +13,7 @@ from bob.application.capabilities.registry import (
     CapabilityRegistry,
     UnknownCapabilityError,
 )
+from bob.application.capabilities.search_memory import make_search_memory_capability
 from bob.application.capabilities.tool_loop import ToolLoop
 
 __all__ = [
@@ -20,4 +21,5 @@ __all__ = [
     "ToolLoop",
     "UnknownCapabilityError",
     "make_recall_memory_capability",
+    "make_search_memory_capability",
 ]

@@ -70,6 +70,18 @@ CREATE TRIGGER IF NOT EXISTS semantic_fts_au AFTER UPDATE ON semantic_memory BEG
     INSERT INTO semantic_fts (rowid, content) VALUES (new.id, new.content);
 END;
 
+-- Vector store (sqlite-vec): dense BGE-M3 embeddings (1024-dim) for semantic
+-- search over memory. A vec0 virtual table whose rows map back to a source row
+-- via (source, src_id): 'semantic' -> semantic_memory.id, 'episodic' ->
+-- episodic_log.id. `source` is a partition key so KNN / existence checks stay
+-- per-source-cheap. Created idempotently; populated by backfill + on-write embed
+-- (the loadable sqlite-vec extension must be loaded on the connection first).
+CREATE VIRTUAL TABLE IF NOT EXISTS memory_vec USING vec0 (
+    source    TEXT partition key,  -- 'semantic' | 'episodic'
+    src_id    INTEGER,             -- id in the source table this vector embeds
+    embedding float[1024]          -- BGE-M3 dense vector
+);
+
 -- Current mood: a single-row snapshot (id = 1) holding a JSON blob.
 CREATE TABLE IF NOT EXISTS mood_state (
     id    INTEGER PRIMARY KEY CHECK (id = 1),

@@ -31,8 +31,21 @@ LLM-провайдер, SQLite-хранилище с FTS5, файловый `Sou
   completions поверх aiohttp (non-stream, SSE-стриминг и tool-calling).
 - **llm/factory.py** — `build_tier_providers()`, сборка провайдеров Tier 0/1 из
   конфигурации.
+- **llm/ollama_embedder.py** — `OllamaEmbedder`, локальные dense-эмбеддинги
+  (BGE-M3, 1024-dim) поверх локального Ollama; реализует порт `Embedder`.
+- **llm/embedder_factory.py** — `build_embedder()`, сборка `OllamaEmbedder` из
+  секции `embeddings`.
+- **llm/ollama_reranker.py** — `OllamaReranker`, локальный реранкер как
+  Ollama-scorer (top-K → top-N); реализует порт `Reranker`, аддитивно и с мягкой
+  деградацией.
+- **llm/reranker_factory.py** — `build_reranker()`, сборка `OllamaReranker` из
+  секции `reranker` (или `None`, когда реранк выключен).
 - **persistence/sqlite_repo.py** — `SqliteMemoryRepo`, единственный дом SQL.
 - **persistence/fts_recall.py** — `Fts5MemoryRecall`, keyword-recall через FTS5.
+- **persistence/vector_store.py** — `MemoryVectorStore`, sqlite-vec сторона памяти
+  (vec0-таблица `memory_vec`, бэкфилл + on-write эмбеддинг + KNN-чтение).
+- **persistence/hybrid_recall.py** — `HybridMemoryRecall`, гибридный recall за
+  портом `MemoryRecall` (FTS5 BM25 + sqlite-vec KNN → RRF, опц. реранкер).
 - **persistence/allowlist_store.py** — `KvAllowlistStore`, долговечный
   authz-allowlist поверх таблицы `kv`.
 - **persistence/soul_store.py** — `SoulStore`, файловые артефакты `data/soul/`.
@@ -193,13 +206,86 @@ prompt-протокольный JSON-объект `{"tool_call": {"name": ..., "
 не-объектный payload даёт `{}`, а не ошибку, чтобы сбойная модель не уронила
 диспатч.
 
+### Локальные эмбеддинги и реранкер (BOB-011)
+
+`OllamaEmbedder` реализует порт `Embedder` против эмбеддинг-API локального Ollama,
+модель по умолчанию `bge-m3` (dense, 1024-dim, мультиязычный/русский). Эмбеддинги
+считаются **на машине** — контент памяти не уходит наружу (приватность). `embed`
+пробует два формата запроса по очереди: батч (`POST /api/embed` с
+`{"model", "input": [...]}`, один round-trip на все тексты), а при 404 — legacy
+per-text (`POST /api/embeddings` с `{"prompt": ...}`) для старого Ollama без батча.
+Транзиентные сбои (обрывы соединения, таймауты, 5xx) ретраятся с ограниченным
+экспоненциальным backoff (повторно используется `retry_with_backoff` BOB-002);
+перманентные (4xx, битое тело, несовпадение размерности) поднимаются сразу.
+`build_embedder` читает секцию `embeddings` (`base_url`/`model`/`dim`) — провайдер
+свопается конфигом.
+
+`OllamaReranker` реализует порт `Reranker` как **Ollama-as-scorer**: нативного
+rerank-эндпоинта у Ollama нет (открытый Q1), поэтому адаптер оценивает каждую пару
+`(query, candidate)`, спрашивая у локальной модели одно число релевантности
+`[0, 1]` через OpenAI-совместимый `/v1/chat/completions`, сортирует кандидаты по
+убыванию скора и оставляет top-N. Скор парсится терпимо (первое число в ответе,
+кламп в `[0, 1]`). **Аддитивный контракт — реранк никогда не роняет recall:** при
+недоступности эндпоинта, исчерпании ретраев или непарсящемся скоре адаптер
+возвращает вход **без изменений** (гибридный порядок) и логирует одну строку — Боб
+не теряет извлечение из-за того, что реранк был недоступен. `build_reranker` читает
+секцию `reranker`; реранк выключен по умолчанию (`enabled` false) — тогда фабрика
+возвращает `None`, и пайплайн просто пропускает реранкинг.
+
+### Вектор-стор (sqlite-vec)
+
+`MemoryVectorStore` держит vec0-таблицу `memory_vec` (загружаемое расширение
+`sqlite-vec`, `float[1024]`) в синхроне с архивом памяти. Расширение грузится на
+(aiosqlite) соединение **до** применения схемы, потому что vec0-таблица — часть
+`schema.sql`. Вектора кладутся с привязкой к исходной строке по `(source, src_id)`,
+где `source` — `semantic` или `episodic`. Два пути записи питают стор: идемпотентный
+**бэкфилл** существующих фактов/эпизодов (`backfill`, батчами по 64, на каждом
+старте — как FTS-бэкфилл, без дублей) и **on-write** эмбеддинг свежесохранённой
+строки (`embed_row`, идемпотентно). Оба пути **best-effort**: недоступный в рантайме
+эмбеддер (Ollama выключен) пропускается и логируется, а не роняет запись или старт —
+recall просто деградирует на keyword-only до следующего доступного эмбеддера.
+`knn(vector, k)` обслуживает чтение: sqlite-vec KNN по каждой партиции-источнику,
+JOIN к контенту исходной строки, слияние и top-`k` по возрастанию дистанции. Без
+поданного эмбеддера стор инертен — таблица существует, но пустая (keyword-only).
+Внутренние имена таблиц/колонок — фиксированные литералы (не пользовательский ввод),
+а вектор, ключ партиции и `k` параметризованы.
+
+### Гибридный recall (FTS5 + sqlite-vec → RRF)
+
+`HybridMemoryRecall` реализует порт `MemoryRecall` как **drop-in** замену
+keyword-only `Fts5MemoryRecall`: потребители (`handle_message`, `recall_memory`,
+`search_memory`) по-прежнему зовут `recall(query, k) → [Recalled]` и не знают, что
+извлечение отрастило семантическую половину. Внутри он гоняет два поиска по одному
+архиву и сливает их **Reciprocal Rank Fusion** (RRF-скор = сумма по спискам
+`1 / (k0 + rank)`, **k0 = 60** — значение из оригинальной статьи Cormack и де-факто
+дефолт):
+
+- **семантика** — эмбеддит запрос через инъецированный `Embedder` и гоняет
+  sqlite-vec KNN по `memory_vec` (находит по смыслу даже без общих слов);
+- **keyword** — FTS5 BM25 по семантическому + эпизодическому индексам (переиспользует
+  `Fts5MemoryRecall`).
+
+Из каждой половины берётся широкий пул кандидатов (по 20), пул сливается RRF и
+дедуплицируется по содержимому; элемент, попавший в **оба** списка, копит больший
+слитый скор — в этом и смысл рангового фьюжна. **Мягкий фоллбэк:** если эмбеддер
+отсутствует или бросил (Ollama выключен), recall деградирует на чистый FTS5
+keyword — Боб «не теряет память», теряет лишь семантическую половину; сбой логируется,
+а не пробрасывается. **Реранкер (аддитивно):** опциональный `Reranker`-коллаборатор
+переоценивает широкий слитый top-K и подрезает до тесного top-N; без поданного
+реранкера (или при выключенном/недоступном) гибридный порядок возвращается как есть —
+реранк никогда не ухудшает извлечение.
+
 ### Хранилище (SQLite + FTS5)
 
 `SqliteMemoryRepo` реализует `MemoryRepo` и является единственным домом SQL.
 Схема (`schema.sql`) применяется идемпотентно на `initialize()`, соединение
 работает в режиме WAL, каждый оператор параметризован (`?`) — никаких f-strings.
 Доменные сущности (`EpisodicEvent`, `SemanticFact`) маппятся в строки и обратно
-здесь, чтобы домен оставался без I/O.
+здесь, чтобы домен оставался без I/O. С опциональным `embedder` (BOB-011)
+репозиторий владеет `MemoryVectorStore`: `initialize()` грузит расширение
+sqlite-vec перед применением схемы и бэкфилит существующий архив в `memory_vec`, а
+запись факта/эпизода эмбеддит строку on-write; `vector_knn(vector, k)` обслуживает
+семантическую сторону гибрид-recall. Без эмбеддера всё это no-op (keyword-only).
 
 `Fts5MemoryRecall` реализует `MemoryRecall` через FTS5 `MATCH` с ранжированием
 BM25. Recall охватывает оба индекса — распознанные факты (`semantic_fts`) и весь
@@ -260,6 +346,14 @@ special-cased в `_TOKEN_ENV_MAPPING`: env `BOB_TELEGRAM__TOKEN` →
 (`chat_id`, `bob.topic_id`, `owner_id`, `poll_timeout`, `allowed_chat_ids`) —
 non-secret и может прийти из YAML.
 
+**Память (BOB-011).** Секция `embeddings` (`base_url`, `model` по умолчанию
+`bge-m3`, `dim` 1024) настраивает локальный эмбеддер; секция `reranker`
+(`enabled` по умолчанию `false`, `base_url`, `model`, `top_n`) — опциональный
+реранкер. Целочисленные значения (`dim`, `top_n`) терпят строковую форму из env, а
+`reranker.enabled` — строковые `true`/`false`. По умолчанию обе секции указывают на
+локальный Ollama (`http://localhost:11434`) — приватно, контент памяти не уходит
+наружу.
+
 ## Инварианты
 
 - Адаптеры реализуют порты `bob.domain.ports`; связывание — только в `app.py`.
@@ -270,6 +364,14 @@ non-secret и может прийти из YAML.
   (DM незнакомца его не триггерит); owner-команды — только для owner в General.
 - Весь SQL живёт в `SqliteMemoryRepo` и параметризован (`?`).
 - Пользовательский текст для FTS5 санитизируется (без инъекций/синтаксических ошибок).
+- Контент памяти не уходит наружу: эмбеддинги и реранкинг считаются локально
+  (Ollama на машине), вектора — в той же локальной SQLite (`memory_vec`).
+- Гибрид-recall (`HybridMemoryRecall`) — drop-in за `MemoryRecall`; при недоступном
+  эмбеддере мягко деградирует на чистый FTS5 keyword (память не теряется).
+- Эмбеддинг строк best-effort: недоступный в рантайме эмбеддер пропускается и
+  логируется, не роняя запись или старт (recall становится keyword-only).
+- Реранкер аддитивен: при отсутствии/выключении/недоступности возвращает вход без
+  изменений — реранк никогда не ухудшает извлечение.
 - API-ключ и токен берутся из конфигурации/env и не инлайнятся; на Tier 0 нет
   заголовка `Authorization`.
 - Везде `yaml.safe_load` и `pathlib`.
@@ -334,13 +436,39 @@ non-secret и может прийти из YAML.
 - `build_tier_providers(config)` → `dict[int, LLMProvider]`.
 
 Модуль `src/bob/infrastructure/persistence/sqlite_repo.py`:
-- `SqliteMemoryRepo(db_path)` — `initialize()`, `close()`, `save_episode()`,
-  `load_episodes(*, limit)`, `save_fact()`, `set_mood(state, *, at)`,
-  `get_mood()`, `set_taste_axis(...)`, `set_relationship()`, `kv_set()/kv_get()`.
+- `SqliteMemoryRepo(db_path, *, embedder=None)` — `initialize()`, `close()`,
+  `save_episode()`, `load_episodes(*, limit)`, `recent_episodes(k)`, `save_fact()`,
+  `set_mood(state, *, at)`, `get_mood()`, `set_taste_axis(...)`,
+  `set_relationship()`, `kv_set()/kv_get()`, `async vector_knn(vector, *, k)`.
 
 Модуль `src/bob/infrastructure/persistence/fts_recall.py`:
 - `Fts5MemoryRecall(repo)` — `async recall(query, *, k)` → `Sequence[Recalled]`
   (поиск по `semantic_fts` + `episodic_fts`, слияние, дедуп, ранжирование BM25).
+
+Модуль `src/bob/infrastructure/persistence/vector_store.py`:
+- `MemoryVectorStore(conn, embedder)` — `async load_extension()`, `async backfill()`,
+  `async embed_row(source, src_id, content)`, `async knn(vector, k)` →
+  `list[dict]`, `async count(source=None)`.
+
+Модуль `src/bob/infrastructure/persistence/hybrid_recall.py`:
+- `HybridMemoryRecall(repo, embedder, *, reranker=None)` —
+  `async recall(query, *, k)` → `Sequence[Recalled]` (FTS5 BM25 + sqlite-vec KNN →
+  RRF k0=60, фоллбэк на keyword, опц. реранк top-K → top-N).
+
+Модуль `src/bob/infrastructure/llm/ollama_embedder.py`:
+- `OllamaEmbedder(*, base_url, model, dim, timeout_seconds=120.0, sleep=None)` —
+  `async embed(texts)` → `list[list[float]]`.
+
+Модуль `src/bob/infrastructure/llm/embedder_factory.py`:
+- `build_embedder(config)` → `OllamaEmbedder` (из секции `embeddings`).
+
+Модуль `src/bob/infrastructure/llm/ollama_reranker.py`:
+- `OllamaReranker(*, base_url, model, top_n, timeout_seconds=30.0, max_attempts=2,
+  sleep=None)` — `async rerank(query, candidates)` → `list[Recalled]`.
+
+Модуль `src/bob/infrastructure/llm/reranker_factory.py`:
+- `build_reranker(config)` → `OllamaReranker | None` (из секции `reranker`;
+  `None`, когда реранк выключен/отсутствует).
 
 Модуль `src/bob/infrastructure/persistence/allowlist_store.py`:
 - `KvAllowlistStore(kv)` — `async load()` → `set[int]`, `async add(user_id)`,
@@ -360,7 +488,8 @@ non-secret и может прийти из YAML.
   `async proactive_count_in_window(*, now)` → `int`.
 
 Модуль `src/bob/infrastructure/config/loader.py`:
-- `ConfigLoader(*, yaml_path, env=None)` — `load()` → `Config`; `DEFAULT_CONFIG`.
+- `ConfigLoader(*, yaml_path, env=None)` — `load()` → `Config`; `DEFAULT_CONFIG`
+  (включая секции `embeddings.*` и `reranker.*`).
 
 ## Тесты
 
@@ -377,8 +506,17 @@ non-secret и может прийти из YAML.
 `tests/infrastructure/llm/test_openai_compat.py`,
 `tests/infrastructure/llm/test_openai_compat_parsers.py`,
 `tests/infrastructure/llm/test_factory.py`,
+`tests/infrastructure/llm/test_ollama_embedder.py`,
+`tests/infrastructure/llm/test_ollama_embedder_hardening.py`,
+`tests/infrastructure/llm/test_embedder_factory.py`,
+`tests/infrastructure/llm/test_ollama_reranker.py`,
+`tests/infrastructure/llm/test_ollama_reranker_hardening.py`,
+`tests/infrastructure/llm/test_reranker_factory.py`,
 `tests/infrastructure/persistence/test_sqlite_repo.py`,
 `tests/infrastructure/persistence/test_fts_recall.py`,
+`tests/infrastructure/persistence/test_vector_store.py`,
+`tests/infrastructure/persistence/test_vector_store_hardening.py`,
+`tests/infrastructure/persistence/test_hybrid_recall.py`,
 `tests/infrastructure/persistence/test_allowlist_store.py`,
 `tests/infrastructure/persistence/test_soul_store.py`,
 `tests/infrastructure/persistence/test_proactivity_store.py`,

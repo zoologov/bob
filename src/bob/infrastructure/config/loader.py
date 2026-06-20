@@ -65,6 +65,28 @@ DEFAULT_CONFIG: Config = {
         # budget on reasoning_content.
         "disable_thinking": True,
     },
+    # Local semantic-memory embeddings (BOB-011). Provider-agnostic: a LOCAL
+    # Ollama server (privacy — memory content never leaves the machine), default
+    # model BGE-M3 (dense, 1024-dim, multilingual/Russian). Swap ``model``/``dim``
+    # (e.g. Qwen3-Embedding) without touching consumers.
+    "embeddings": {
+        "base_url": "http://localhost:11434",
+        "model": "bge-m3",
+        "dim": 1024,
+    },
+    # Local reranker (BOB-011 BEAD-04) — an ADDITIVE quality boost on top of the
+    # hybrid recall: re-scores the top-K pool and trims to top_n. Off by default
+    # (``enabled`` false): wiring it in is BEAD-06's job. Ollama exposes no native
+    # rerank endpoint (Q1), so the adapter scores via a LOCAL model over the
+    # OpenAI-compatible chat API — memory content never leaves the machine. Swap
+    # ``model`` (e.g. a Qwen3-Reranker / bge-reranker-v2-m3 GGUF) via config.
+    "reranker": {
+        "enabled": False,
+        "base_url": "http://localhost:11434",
+        "model": "bge-reranker-v2-m3",
+        # top-K candidates from RRF in, top-N reranked out (Q4: ~20-50 -> ~5-8).
+        "top_n": 8,
+    },
     # Two bots in one process (BOB-003): Bob lives in his topic, GUPPI is the
     # gatekeeper in General. Each bot's token comes from env only (never YAML);
     # the shared ids (chat/owner/allowlist) and Bob's topic are non-secret.

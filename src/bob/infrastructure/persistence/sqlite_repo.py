@@ -24,12 +24,16 @@ from typing import TYPE_CHECKING
 
 import aiosqlite
 
+from bob.infrastructure.persistence.vector_store import MemoryVectorStore
+
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
     from datetime import datetime
     from pathlib import Path
 
     from bob.domain.memory.entities import EpisodicEvent, SemanticFact
+    from bob.domain.ports import Embedder
+    from bob.infrastructure.persistence.vector_store import VectorSource
 
 logger = logging.getLogger(__name__)
 
@@ -44,21 +48,32 @@ _RELATIONSHIP_ROW_ID = 1
 class SqliteMemoryRepo:
     """SQLite adapter for episodic/semantic memory and personality state."""
 
-    def __init__(self, db_path: Path) -> None:
+    def __init__(self, db_path: Path, *, embedder: Embedder | None = None) -> None:
         self._db_path = db_path
+        self._embedder = embedder
         self._conn: aiosqlite.Connection | None = None
+        self._vectors: MemoryVectorStore | None = None
 
     async def initialize(self) -> None:
-        """Open the connection (WAL) and apply the schema (idempotent)."""
+        """Open the connection (WAL), apply the schema, and embed the archive.
+
+        Idempotent. The sqlite-vec extension is loaded onto the connection before
+        the schema runs (the ``memory_vec`` vec0 table needs it), then existing
+        facts/episodes are backfilled into the vector store via the injected
+        embedder (a no-op when none is wired).
+        """
         if self._conn is None:
             self._db_path.parent.mkdir(parents=True, exist_ok=True)
             self._conn = await aiosqlite.connect(self._db_path)
             self._conn.row_factory = aiosqlite.Row
             await self._conn.execute("PRAGMA journal_mode=WAL")
             await self._conn.execute("PRAGMA foreign_keys=ON")
+            self._vectors = MemoryVectorStore(self._conn, self._embedder)
+            await self._vectors.load_extension()
         await self._conn.executescript(_load_schema())
         await self._backfill_episodic_fts()
         await self._conn.commit()
+        await self._vector_store().backfill()
         logger.info("SqliteMemoryRepo initialised at %s", self._db_path)
 
     async def _backfill_episodic_fts(self) -> None:
@@ -88,8 +103,8 @@ class SqliteMemoryRepo:
     # --- Episodic memory ------------------------------------------------------
 
     async def save_episode(self, episode: Mapping[str, object]) -> None:
-        """Append one episodic event (raw mapping form) to durable storage."""
-        await self._db().execute(
+        """Append one episodic event (raw mapping form); embed it on write."""
+        cursor = await self._db().execute(
             "INSERT INTO episodic_log (ts, event_type, content, mood_snapshot, tags) "
             "VALUES (?, ?, ?, ?, ?)",
             (
@@ -101,6 +116,7 @@ class SqliteMemoryRepo:
             ),
         )
         await self._db().commit()
+        await self._embed_on_write(cursor.lastrowid, "episodic", episode["content"])
 
     async def save_episode_entity(self, event: EpisodicEvent) -> None:
         """Append an :class:`EpisodicEvent` domain entity."""
@@ -145,12 +161,13 @@ class SqliteMemoryRepo:
     # --- Semantic memory ------------------------------------------------------
 
     async def save_fact(self, fact: SemanticFact) -> None:
-        """Persist a semantic fact (FTS index is updated by trigger)."""
-        await self._db().execute(
+        """Persist a semantic fact (FTS via trigger); embed it on write."""
+        cursor = await self._db().execute(
             "INSERT INTO semantic_memory (ts, category, content, confidence) VALUES (?, ?, ?, ?)",
             (fact.ts.isoformat(), fact.category, fact.content, fact.confidence),
         )
         await self._db().commit()
+        await self._embed_on_write(cursor.lastrowid, "semantic", fact.content)
 
     async def load_facts(self, *, limit: int) -> Sequence[Mapping[str, object]]:
         """Return up to ``limit`` most-recent semantic facts (newest first)."""
@@ -259,6 +276,36 @@ class SqliteMemoryRepo:
         async with self._db().execute("SELECT value FROM kv WHERE key = ?", (key,)) as cursor:
             row = await cursor.fetchone()
         return None if row is None else str(row[0])
+
+    # --- Vector store ---------------------------------------------------------
+
+    async def vector_count(self, *, source: VectorSource | None = None) -> int:
+        """Number of stored embeddings, optionally restricted to one source."""
+        return await self._vector_store().count(source)
+
+    async def vector_knn(
+        self, vector: Sequence[float], *, k: int
+    ) -> list[dict[str, object]]:
+        """Top-``k`` nearest-neighbour memories to ``vector`` (semantic recall).
+
+        Delegates to the vector store's KNN: each hit carries ``content``,
+        ``source``, ``category`` and ``distance``. The hybrid-recall adapter fuses
+        this with FTS5 keyword hits.
+        """
+        return await self._vector_store().knn(vector, k)
+
+    async def _embed_on_write(
+        self, src_id: int | None, source: VectorSource, content: object
+    ) -> None:
+        """Embed a just-inserted row's content into the vector store (best-effort)."""
+        if src_id is None:
+            return
+        await self._vector_store().embed_row(source, src_id, str(content))
+
+    def _vector_store(self) -> MemoryVectorStore:
+        if self._vectors is None:
+            raise RuntimeError("SqliteMemoryRepo used before initialize()")
+        return self._vectors
 
     # --- Internals ------------------------------------------------------------
 

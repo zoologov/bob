@@ -33,6 +33,7 @@ __all__ = [
     "Capability",
     "Clock",
     "DomainEvent",
+    "Embedder",
     "EventBus",
     "EventHandler",
     "JsonValue",
@@ -43,6 +44,7 @@ __all__ = [
     "Permission",
     "ProactivityStore",
     "Recalled",
+    "Reranker",
     "SoulStore",
     "ToolCall",
     "ToolCallResult",
@@ -246,6 +248,58 @@ class MemoryRecall(Protocol):
 
     async def recall(self, query: str, *, k: int) -> Sequence[Recalled]:
         """Return the top-``k`` memories relevant to ``query``."""
+        ...
+
+
+@runtime_checkable
+class Embedder(Protocol):
+    """Maps texts to dense embedding vectors (the semantic-memory seam).
+
+    Provider-agnostic by design: an Ollama-backed adapter (BGE-M3, 1024-dim) is
+    the first realisation, but the port commits only to "text in, one vector per
+    text out" so a later local model (e.g. Qwen3-Embedding) swaps in without any
+    consumer change. Embeddings stay local for privacy — memory content never
+    leaves the machine. The vector dimension is fixed by the configured model.
+    """
+
+    async def embed(self, texts: Sequence[str]) -> list[list[float]]:
+        """Embed ``texts`` into one dense vector each (order-preserving).
+
+        Returns a list aligned with ``texts``: element ``i`` is the embedding of
+        ``texts[i]``. Every vector shares the model's fixed dimension. An empty
+        input yields an empty list.
+        """
+        ...
+
+
+@runtime_checkable
+class Reranker(Protocol):
+    """Re-scores recall candidates by relevance (an additive quality boost).
+
+    Sits *on top of* :class:`MemoryRecall`: the hybrid recall surfaces a wide
+    top-``K`` pool (RRF over keyword + vector), and the reranker re-orders that
+    pool by a sharper relevance judgement and trims it to a tight top-``N``. It is
+    deliberately ADDITIVE — a recall that cannot reach a reranker (disabled, model
+    absent, endpoint down) returns the hybrid order unchanged, so reranking never
+    regresses retrieval. Provider-agnostic by design: the first realisation is an
+    Ollama-as-scorer (there is no native rerank endpoint — Q1), but the port
+    commits only to "query + candidates in, re-ordered (trimmed) candidates out",
+    so a dedicated local rerank service swaps in without any consumer change.
+    Like embeddings, it runs locally — memory content never leaves the machine.
+    """
+
+    async def rerank(
+        self,
+        query: str,
+        candidates: Sequence[Recalled],
+    ) -> list[Recalled]:
+        """Return ``candidates`` re-ordered by relevance to ``query`` (best first).
+
+        The result is optionally trimmed to the adapter's configured top-``N``.
+        Implementations MUST degrade gracefully: on any unavailability or scoring
+        failure they return the input ``candidates`` unchanged (never raise into
+        the caller). An empty input yields an empty list.
+        """
         ...
 
 
