@@ -25,6 +25,7 @@ from bob.app import (
     SystemClock,
     _AiogramBotAdapter,
     _build_real_bot,
+    _build_reranker,
     _float,
     _int,
     _load_soul,
@@ -131,6 +132,20 @@ def test_build_real_bot_rejects_empty_token() -> None:
     # Act / Assert: an empty-string token is as invalid as a missing one.
     with pytest.raises(KeyError):
         _build_real_bot({"token": ""}, "bob")
+
+
+def test_build_reranker_off_by_default_returns_none() -> None:
+    # The reranker is an ADDITIVE boost, off by default: with no ``reranker`` section
+    # the composition root wires None (the hybrid order ships) rather than erroring.
+    assert _build_reranker({}) is None
+
+
+def test_build_reranker_degrades_to_none_on_misconfiguration() -> None:
+    # US-3 resilience: a malformed ``reranker`` section (enabled but missing required
+    # fields) must NOT crash the boot — it degrades to None (hybrid order unchanged).
+    misconfigured = {"reranker": {"enabled": True}}  # no base_url/model/top_n
+
+    assert _build_reranker(misconfigured) is None
 
 
 def test_build_application_builds_real_bots_when_none_injected(

@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from bob.domain.memory.entities import SemanticFact
+from bob.infrastructure.persistence.fts_recall import Fts5MemoryRecall
 from bob.infrastructure.persistence.hybrid_recall import HybridMemoryRecall
 from bob.infrastructure.persistence.sqlite_repo import SqliteMemoryRepo
 
@@ -106,6 +107,26 @@ async def test_semantic_hit_without_keyword_overlap(tmp_path: Path) -> None:
     await db.close()
 
 
+async def test_hybrid_beats_pure_keyword_on_a_no_overlap_query(tmp_path: Path) -> None:
+    # US-1 acceptance, made explicit as a SIDE-BY-SIDE: a query semantically near a
+    # fact but with ZERO shared words is MISSED by pure keyword FTS5 yet FOUND by the
+    # hybrid (its vector half bridges meaning). One db, two recall strategies.
+    query = "feline companion"
+    target = "bob adores his cat whiskers"  # no word overlap with the query
+    embedder = StubEmbedder({query: _unit(0), target: _unit(0)})
+    db = SqliteMemoryRepo(tmp_path / "bob.db", embedder=embedder)
+    await db.initialize()
+    await db.save_fact(_fact(target))
+
+    keyword_only = [str(r["content"]) for r in await Fts5MemoryRecall(db).recall(query, k=5)]
+    hybrid = [str(r["content"]) for r in await HybridMemoryRecall(db, embedder).recall(query, k=5)]
+
+    # Assert: keyword recall misses the meaning-only match; the hybrid surfaces it.
+    assert target not in keyword_only  # pure FTS5 cannot bridge the synonym gap
+    assert target in hybrid  # the hybrid's vector half does
+    await db.close()
+
+
 async def test_rrf_ranks_item_in_both_lists_higher(tmp_path: Path) -> None:
     # An item present in BOTH the keyword list and the vector list must outrank
     # an item present in only one — that is the whole point of rank fusion.
@@ -168,6 +189,39 @@ async def test_fallback_to_keyword_when_embedder_fails(tmp_path: Path) -> None:
     contents = [str(r["content"]) for r in results]
     assert any("jazz" in c for c in contents)  # still recalled by keyword
     assert failing.calls == 1  # it tried the semantic half, then fell back
+    await db.close()
+
+
+class _EmptyEmbedder:
+    """Embedder that succeeds but returns NO vectors (e.g. an empty model reply).
+
+    Distinct from a raising embedder: the call does not fault, it just yields an
+    empty list, so hybrid recall must still degrade to keyword-only rather than
+    index ``vectors[0]`` and crash.
+    """
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def embed(self, texts: Sequence[str]) -> list[list[float]]:  # noqa: ARG002
+        self.calls += 1
+        return []
+
+
+async def test_empty_embedding_result_degrades_to_keyword(tmp_path: Path) -> None:
+    # Embedder returns an empty list (no fault, but no vector either) -> there is no
+    # query vector to KNN with, so recall degrades to pure keyword without crashing.
+    write_embedder = StubEmbedder({"bob loves jazz": _unit(0)})
+    db = SqliteMemoryRepo(tmp_path / "bob.db", embedder=write_embedder)
+    await db.initialize()
+    await db.save_fact(_fact("bob loves jazz"))
+
+    empty = _EmptyEmbedder()
+    recall = HybridMemoryRecall(db, empty)
+    results = await recall.recall("jazz", k=5)
+
+    assert any("jazz" in str(r["content"]) for r in results)  # keyword carried it
+    assert empty.calls == 1  # it tried the semantic half, got nothing, fell back
     await db.close()
 
 

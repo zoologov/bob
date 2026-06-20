@@ -64,3 +64,22 @@ def test_missing_model_raises() -> None:
 def test_non_integer_top_n_raises() -> None:
     with pytest.raises(KeyError, match=r"reranker\.top_n"):
         build_reranker({"reranker": _section(top_n="not-a-number")})
+
+
+def test_non_bool_non_str_enabled_is_treated_as_off() -> None:
+    # A junk ``enabled`` value (neither bool nor string) is the safe "off" state:
+    # the additive reranker stays disabled rather than the factory erroring.
+    assert build_reranker({"reranker": _section(enabled=123)}) is None
+
+
+def test_bool_top_n_is_rejected() -> None:
+    # ``bool`` is an ``int`` subclass in Python; a True/False top_n is nonsense and
+    # must be rejected rather than silently coerced to 1/0.
+    with pytest.raises(KeyError, match=r"reranker\.top_n must be an integer"):
+        build_reranker({"reranker": _section(top_n=True)})
+
+
+def test_non_int_non_str_top_n_is_rejected() -> None:
+    # A top_n that is neither an int nor a parseable string is a config error.
+    with pytest.raises(KeyError, match=r"reranker\.top_n"):
+        build_reranker({"reranker": _section(top_n=[8])})
