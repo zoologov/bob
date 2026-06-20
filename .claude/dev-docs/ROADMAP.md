@@ -159,9 +159,10 @@ Bob — **личный инструмент-компаньон, а не рыно
 > + своё состояние + свой бот + своя тема), НЕ отдельный процесс/модель. **Шов уже кладётся в BOB-003**
 > (мульти-бот gateway + `BotRegistry`; GUPPI = оркестратор). **Железо:** не упираемся в RAM на реплику —
 > Tier 1 (Qwen API) для reasoning + одна общая Tier-0 small-модель + persona-state в SQLite; пределы —
-> throughput Tier 0 / стоимость Tier 1 / внимание, регулирует GUPPI. **Рождение:** GUPPI →
-> `createForumTopic` + пул бот-токенов + Genesis с seed + опц. наследование памяти родителя.
-> **Открытые вопросы:** наследование памяти · провижн ботов · owner-only-спавн vs саморазмножение · governance.
+> throughput Tier 0 / стоимость Tier 1 / внимание, регулирует GUPPI. **Рождение (Managed Bots, 2026-06-20):**
+> GUPPI = manager-бот → newbot-ссылка + `getManagedBotToken` (без ручного BotFather/токенов) → `BotRegistry`
+> + `createForumTopic` + seeded Genesis. **Общение:** bot-to-bot + GUPPI-governance (loop-termination
+> обязателен — каждый ответ бота = LLM-вызов). **Открыто:** наследование памяти · owner-only-спавн vs саморазмножение.
 
 ---
 

@@ -70,19 +70,14 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Reply-streaming knobs for the inner gateways. Replies flow through
-# reply_streamer, where batching/throttle are exercised by the inner gateway's own
-# (tested) live-edit path.
-#
-# BOB-006 flood-control fix: the live edit-streaming + rich final hit Telegram's
-# flood control ("Flood control exceeded on method 'SendRichMessage'. Retry in 38
-# seconds.") because the inner gateways were wired with a 0s throttle + a no-op
-# sleep — every streamed token fired an immediate ``editMessageText`` and the rich
-# final followed with no gap. The live wiring now throttles successive edits (and
-# the rich final) to one per ``_DEFAULT_THROTTLE_INTERVAL`` seconds, driven by a
-# real monotonic clock + real sleep, so a normal back-and-forth never floods.
-_DEFAULT_BATCH_TOKENS = 1
-_DEFAULT_THROTTLE_INTERVAL = 3.0
+# Reply-typing cadence for the inner gateways. Replies flow through reply_streamer,
+# which (BOB-008, Variant A) shows a "typing…" indicator while it assembles the
+# reply, then commits one rich final — no streaming. Bob cannot stream in a group
+# topic (drafts are DM-only, edits are slow + flood-prone), so the inner gateways
+# re-send ``sendChatAction("typing")`` about every ``_DEFAULT_TYPING_INTERVAL``
+# seconds (Telegram auto-clears the indicator after a few seconds), driven by a real
+# monotonic clock so a long generation keeps showing "Bob is typing…".
+_DEFAULT_TYPING_INTERVAL = 4.0
 
 
 def _zero_clock() -> float:
@@ -199,7 +194,7 @@ class MultiBotGateway:
         bus: EventBus,
         poll_timeout: int,
         authorizer: AuthorizerLike | None = None,
-        reply_throttle_interval: float = _DEFAULT_THROTTLE_INTERVAL,
+        reply_typing_interval: float = _DEFAULT_TYPING_INTERVAL,
         reply_clock: MonotonicClock = _LIVE_CLOCK,
         reply_sleep: Sleep = _LIVE_SLEEP,
     ) -> None:
@@ -208,20 +203,20 @@ class MultiBotGateway:
         self._authorizer = authorizer
         self._poll_timeout = poll_timeout
         # One inner TelegramGateway per bot does the per-bot intake/normalisation
-        # and reply streaming. Bob's inner gateway pins replies to his topic.
+        # and reply. Bob's inner gateway pins replies — and the "typing…" indicator
+        # — to his topic.
         #
-        # The reply-streaming clock/sleep/throttle default to the live values
-        # (a real monotonic clock + ``asyncio.sleep`` + a >= 2.5s throttle window)
-        # so a normal back-and-forth never trips Telegram flood control (BOB-006);
-        # tests inject deterministic stubs to avoid real waiting.
+        # The reply clock/sleep/typing-interval default to the live values (a real
+        # monotonic clock + ``asyncio.sleep`` + a ~4s typing cadence) so a long
+        # generation keeps showing "Bob is typing…" (BOB-008); tests inject
+        # deterministic stubs to avoid real waiting.
         self._inner: dict[BotIdentity, TelegramGateway] = {}
         for reg in registry.all():
             self._inner[reg.identity] = TelegramGateway(
                 bot=reg.bot,
                 bus=bus,
                 poll_timeout=poll_timeout,
-                batch_tokens=_DEFAULT_BATCH_TOKENS,
-                throttle_interval=reply_throttle_interval,
+                typing_interval=reply_typing_interval,
                 clock=reply_clock,
                 sleep=reply_sleep,
                 reply_thread_id=reg.scope.topic_id,

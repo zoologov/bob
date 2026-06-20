@@ -2,19 +2,18 @@
 # SPDX-License-Identifier: BUSL-1.1
 # See the LICENSE file in the project root for full license information.
 
-"""Hardening for the Telegram gateway — construction guards, gate edges, rich draft.
+"""Hardening for the Telegram gateway — construction guards, gate edges, resilience.
 
-Complements ``test_gateway.py`` (streaming/rich happy paths) and
+Complements ``test_gateway.py`` (typing/rich happy paths) and
 ``test_gateway_authz.py`` (the gate's authorize/deny matrix) by pinning the
-remaining behavioural edges:
+remaining behavioural edges (BOB-008, Variant A):
 
-* construction rejects nonsensical batching/throttle config (US-1 robustness);
+* construction rejects a non-positive ``typing_interval`` (US-1 robustness);
 * the gate drops an update with no chat even when an authorizer is wired (US-2);
 * the owner ``/authorize`` command with a missing/invalid argument is answered
   with a usage hint, granting nobody (US-2 — no silent bad grant);
-* a rich **draft** that hits a Telegram rate-limit backs off and retries, and a
-  rich draft that errors is skipped without killing the stream (US-1 streaming
-  resilience), while the committed reply still lands.
+* a failing ``sendChatAction`` is swallowed (best-effort typing), and the finished
+  reply still commits via the rich channel — the answer is never lost.
 """
 
 from __future__ import annotations
@@ -23,8 +22,6 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 import pytest
-from aiogram.exceptions import TelegramBadRequest, TelegramRetryAfter
-from aiogram.methods import SendMessage, SendRichMessageDraft
 
 from bob.application.authz import Authorizer
 from bob.application.runtime.event_bus import AsyncEventBus
@@ -75,21 +72,13 @@ class _SendCall:
 
 
 @dataclass
-class _RichDraftCall:
-    chat_id: int
-    markdown: str | None
-
-
-@dataclass
 class _FakeBot:
-    """Records sends + rich drafts; can be scripted to raise on a given draft."""
+    """Records sends + rich finals; can be scripted to fail the typing action."""
 
     sends: list[_SendCall] = field(default_factory=list)
     rich_sends: list[tuple[int, str | None]] = field(default_factory=list)
-    rich_drafts: list[_RichDraftCall] = field(default_factory=list)
-    rich_draft_retry_after_on_call: int | None = None
-    rich_draft_bad_request_on_call: int | None = None
-    _rich_draft_calls: int = 0
+    typings: int = 0
+    typing_raises: bool = False
 
     async def get_updates(
         self, *, offset: int, timeout: int  # noqa: ARG002
@@ -102,22 +91,12 @@ class _FakeBot:
         self.sends.append(_SendCall(chat_id=chat_id, text=text))
         return _FakeMessage(message_id=1, text=text)
 
-    async def edit_message_text(
-        self, *, chat_id: int, message_id: int, text: str  # noqa: ARG002
-    ) -> _FakeMessage:
-        return _FakeMessage(message_id=message_id, text=text)
-
-    async def delete_message(self, *, chat_id: int, message_id: int) -> bool:  # noqa: ARG002
-        return True
-
-    async def send_message_draft(
-        self,
-        *,
-        chat_id: int,  # noqa: ARG002
-        draft_id: int,  # noqa: ARG002
-        text: str,  # noqa: ARG002
-        message_thread_id: int | None = None,  # noqa: ARG002
+    async def send_chat_action(
+        self, *, chat_id: int, action: str, message_thread_id: int | None = None  # noqa: ARG002
     ) -> bool:
+        if self.typing_raises:
+            raise ValueError("typing boom")
+        self.typings += 1
         return True
 
     async def send_rich_message(
@@ -129,34 +108,6 @@ class _FakeBot:
     ) -> _FakeMessage:
         self.rich_sends.append((chat_id, rich_message.markdown))
         return _FakeMessage(message_id=1, text=rich_message.markdown)
-
-    async def send_rich_message_draft(
-        self,
-        *,
-        chat_id: int,
-        draft_id: int,
-        rich_message: InputRichMessage,
-        message_thread_id: int | None = None,  # noqa: ARG002
-    ) -> bool:
-        self._rich_draft_calls += 1
-        if self.rich_draft_retry_after_on_call == self._rich_draft_calls:
-            self.rich_draft_retry_after_on_call = None
-            raise TelegramRetryAfter(
-                method=SendRichMessageDraft(
-                    chat_id=chat_id, draft_id=draft_id, rich_message=rich_message
-                ),
-                message="flood",
-                retry_after=2,
-            )
-        if self.rich_draft_bad_request_on_call == self._rich_draft_calls:
-            raise TelegramBadRequest(
-                method=SendMessage(chat_id=chat_id, text=""),
-                message="rich draft rejected",
-            )
-        self.rich_drafts.append(
-            _RichDraftCall(chat_id=chat_id, markdown=rich_message.markdown)
-        )
-        return True
 
 
 class _FakeAllowlistStore:
@@ -203,8 +154,7 @@ def _gateway(
     with_authz: bool = False,
     clock: _FakeClock | None = None,
     sleep: _RecordingSleep | None = None,
-    batch_tokens: int = 1,
-    throttle_interval: float = 0.0,
+    typing_interval: float = 4.0,
 ) -> TelegramGateway:
     clk = clock or _FakeClock()
     slp = sleep or _RecordingSleep(clk)
@@ -221,8 +171,7 @@ def _gateway(
         bot=bot,
         bus=bus or AsyncEventBus(),
         poll_timeout=10,
-        batch_tokens=batch_tokens,
-        throttle_interval=throttle_interval,
+        typing_interval=typing_interval,
         clock=clk,
         sleep=slp,
         authorizer=authorizer,
@@ -232,14 +181,9 @@ def _gateway(
 # --- Construction guards (US-1 robustness) ------------------------------------
 
 
-def test_construction_rejects_non_positive_batch_tokens() -> None:
-    with pytest.raises(ValueError, match="batch_tokens"):
-        _gateway(_FakeBot(), batch_tokens=0)
-
-
-def test_construction_rejects_negative_throttle_interval() -> None:
-    with pytest.raises(ValueError, match="throttle_interval"):
-        _gateway(_FakeBot(), throttle_interval=-1.0)
+def test_construction_rejects_non_positive_typing_interval() -> None:
+    with pytest.raises(ValueError, match="typing_interval"):
+        _gateway(_FakeBot(), typing_interval=0.0)
 
 
 # --- Gate edges (US-2) --------------------------------------------------------
@@ -284,8 +228,7 @@ async def test_owner_authorize_with_missing_argument_answers_usage_and_grants_no
         bot=bot,
         bus=bus,
         poll_timeout=10,
-        batch_tokens=1,
-        throttle_interval=0.0,
+        typing_interval=4.0,
         clock=_FakeClock(),
         sleep=lambda _s: _noop(),
         authorizer=authorizer,
@@ -318,8 +261,7 @@ async def test_owner_authorize_with_non_numeric_argument_answers_usage() -> None
         bot=bot,
         bus=AsyncEventBus(),
         poll_timeout=10,
-        batch_tokens=1,
-        throttle_interval=0.0,
+        typing_interval=4.0,
         clock=_FakeClock(),
         sleep=lambda _s: _noop(),
         authorizer=authorizer,
@@ -350,8 +292,7 @@ async def test_owner_authorize_accepts_negative_user_id() -> None:
         bot=bot,
         bus=AsyncEventBus(),
         poll_timeout=10,
-        batch_tokens=1,
-        throttle_interval=0.0,
+        typing_interval=4.0,
         clock=_FakeClock(),
         sleep=lambda _s: _noop(),
         authorizer=authorizer,
@@ -369,43 +310,20 @@ async def test_owner_authorize_accepts_negative_user_id() -> None:
     assert store.users == {-42}
 
 
-# --- Rich draft resilience (US-1 streaming) -----------------------------------
+# --- Typing resilience (US-1) -------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_rich_draft_backs_off_and_retries_on_rate_limit() -> None:
-    # The first rich draft hits RetryAfter(2): the gateway sleeps then retries, so
-    # the partial still streams and the reply commits.
-    bot = _FakeBot(rich_draft_retry_after_on_call=1)
-    clock = _FakeClock()
-    sleep = _RecordingSleep(clock)
-    gateway = _gateway(
-        bot, clock=clock, sleep=sleep, batch_tokens=1, throttle_interval=0.0
-    )
+async def test_typing_action_failure_is_swallowed_and_reply_still_lands() -> None:
+    # A failing sendChatAction must not break the turn: typing is best-effort, the
+    # finished reply still commits via the rich channel.
+    bot = _FakeBot(typing_raises=True)
+    gateway = _gateway(bot)
 
-    await gateway.stream_reply_rich(chat_id=_CHAT, tokens=_tokens("a", "b"))
+    actions = await gateway.stream_reply(chat_id=_CHAT, tokens=_tokens("a", "b"))
 
-    assert 2 in sleep.durations  # backed off the advertised retry_after
-    assert bot.rich_drafts  # retry succeeded, a draft landed
-    assert bot.rich_sends  # the finished reply still committed
-
-
-@pytest.mark.asyncio
-async def test_rich_draft_error_is_skipped_without_killing_the_stream() -> None:
-    # A non-rate-limit rich-draft error must be swallowed without killing the stream
-    # (US-1 streaming resilience). Drafting is best-effort: once a chat rejects a
-    # draft the gateway STOPS attempting drafts for the rest of the turn (BOB-004), so
-    # only the first partial is attempted — but the finished reply still commits via
-    # the rich channel, so the user always receives the answer.
-    bot = _FakeBot(rich_draft_bad_request_on_call=1)
-    gateway = _gateway(bot, batch_tokens=1, throttle_interval=0.0)
-
-    drafts = await gateway.stream_reply_rich(chat_id=_CHAT, tokens=_tokens("a", "b"))
-
-    # The first partial was attempted and rejected; the second skipped the draft
-    # channel entirely. The reply still committed via the rich channel.
-    assert drafts == 1
-    assert bot.rich_sends
+    assert actions == 0  # no typing landed, but it did not crash
+    assert bot.rich_sends  # the reply still committed
     assert bot.rich_sends[-1][1] == "ab"
 
 

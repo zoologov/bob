@@ -73,22 +73,13 @@ class _FakeBot:
         )
         return _FakeMessage(message_id=0, text=text)
 
-    async def edit_message_text(
-        self, *, chat_id: int, message_id: int, text: str  # noqa: ARG002
-    ) -> _FakeMessage:
-        return _FakeMessage(message_id=message_id, text=text)
-
-    async def delete_message(self, *, chat_id: int, message_id: int) -> bool:  # noqa: ARG002
-        return True
-
-    async def send_message_draft(
+    async def send_chat_action(
         self,
         *,
         chat_id: int,  # noqa: ARG002
-        draft_id: int,  # noqa: ARG002
-        text: str,  # noqa: ARG002
+        action: str,  # noqa: ARG002
         message_thread_id: int | None = None,  # noqa: ARG002
-    ) -> bool:  # pragma: no cover - GuppiHandler never streams drafts
+    ) -> bool:  # pragma: no cover - GuppiHandler never types
         return True
 
     async def send_rich_message(
@@ -99,16 +90,6 @@ class _FakeBot:
         message_thread_id: int | None = None,  # noqa: ARG002
     ) -> _FakeMessage:  # pragma: no cover - GuppiHandler sends plain only
         return _FakeMessage(message_id=0, text="")
-
-    async def send_rich_message_draft(
-        self,
-        *,
-        chat_id: int,  # noqa: ARG002
-        draft_id: int,  # noqa: ARG002
-        rich_message: InputRichMessage,  # noqa: ARG002
-        message_thread_id: int | None = None,  # noqa: ARG002
-    ) -> bool:  # pragma: no cover - GuppiHandler sends plain only
-        return True
 
 
 @dataclass

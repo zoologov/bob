@@ -101,20 +101,11 @@ class _FakeBot:
         self.sends.append(_SendCall(chat_id=chat_id, text=text))
         return _FakeMessage(message_id=1, text=text)
 
-    async def edit_message_text(
-        self, *, chat_id: int, message_id: int, text: str  # noqa: ARG002
-    ) -> _FakeMessage:
-        return _FakeMessage(message_id=message_id, text=text)
-
-    async def delete_message(self, *, chat_id: int, message_id: int) -> bool:  # noqa: ARG002
-        return True
-
-    async def send_message_draft(
+    async def send_chat_action(
         self,
         *,
         chat_id: int,  # noqa: ARG002
-        draft_id: int,  # noqa: ARG002
-        text: str,  # noqa: ARG002
+        action: str,  # noqa: ARG002
         message_thread_id: int | None = None,  # noqa: ARG002
     ) -> bool:
         return True
@@ -127,16 +118,6 @@ class _FakeBot:
         message_thread_id: int | None = None,  # noqa: ARG002
     ) -> _FakeMessage:
         return _FakeMessage(message_id=1, text=rich_message.markdown)
-
-    async def send_rich_message_draft(
-        self,
-        *,
-        chat_id: int,  # noqa: ARG002
-        draft_id: int,  # noqa: ARG002
-        rich_message: InputRichMessage,  # noqa: ARG002
-        message_thread_id: int | None = None,  # noqa: ARG002
-    ) -> bool:
-        return True
 
 
 class _FakeAllowlistStore:
@@ -175,8 +156,7 @@ def _gateway(
         bot=bot,
         bus=bus,
         poll_timeout=10,
-        batch_tokens=3,
-        throttle_interval=0.0,
+        typing_interval=4.0,
         clock=_clock,
         sleep=lambda _seconds: _monotonic(),
         authorizer=authorizer,
@@ -321,8 +301,7 @@ async def test_no_authorizer_means_no_gate() -> None:
         bot=_FakeBot(),
         bus=bus,
         poll_timeout=10,
-        batch_tokens=3,
-        throttle_interval=0.0,
+        typing_interval=4.0,
         clock=_clock,
         sleep=lambda _s: _monotonic(),
     )

@@ -90,20 +90,18 @@ class _SendCall:
 
 
 @dataclass
-class _DraftCall:
+class _TypingCall:
     chat_id: int
     message_thread_id: int | None
 
 
 @dataclass
 class _FakeBot:
-    """Records sends/drafts; serves scripted update batches; can fail one poll."""
+    """Records sends/typing; serves scripted update batches; can fail one poll."""
 
     updates_batches: list[list[_FakeUpdate]] = field(default_factory=list)
     sends: list[_SendCall] = field(default_factory=list)
-    drafts: list[_DraftCall] = field(default_factory=list)
-    edits: list[int] = field(default_factory=list)
-    deletes: list[int] = field(default_factory=list)
+    typings: list[_TypingCall] = field(default_factory=list)
     next_message_id: int = 900
     raise_on_poll: bool = False
 
@@ -126,26 +124,11 @@ class _FakeBot:
         self.next_message_id += 1
         return msg
 
-    async def edit_message_text(
-        self, *, chat_id: int, message_id: int, text: str  # noqa: ARG002
-    ) -> _FakeMessage:
-        self.edits.append(message_id)
-        return _FakeMessage(message_id=message_id, text=text)
-
-    async def delete_message(self, *, chat_id: int, message_id: int) -> bool:  # noqa: ARG002
-        self.deletes.append(message_id)
-        return True
-
-    async def send_message_draft(
-        self,
-        *,
-        chat_id: int,
-        draft_id: int,  # noqa: ARG002
-        text: str,  # noqa: ARG002
-        message_thread_id: int | None = None,
+    async def send_chat_action(
+        self, *, chat_id: int, action: str, message_thread_id: int | None = None  # noqa: ARG002
     ) -> bool:
-        self.drafts.append(
-            _DraftCall(chat_id=chat_id, message_thread_id=message_thread_id)
+        self.typings.append(
+            _TypingCall(chat_id=chat_id, message_thread_id=message_thread_id)
         )
         return True
 
@@ -166,19 +149,6 @@ class _FakeBot:
         msg = _FakeMessage(message_id=self.next_message_id, text=rich_message.markdown)
         self.next_message_id += 1
         return msg
-
-    async def send_rich_message_draft(
-        self,
-        *,
-        chat_id: int,
-        draft_id: int,  # noqa: ARG002
-        rich_message: InputRichMessage,  # noqa: ARG002
-        message_thread_id: int | None = None,
-    ) -> bool:
-        self.drafts.append(
-            _DraftCall(chat_id=chat_id, message_thread_id=message_thread_id)
-        )
-        return True
 
 
 class _AllowAuthorizer:
@@ -258,9 +228,9 @@ def _build(
         bus=bus,
         poll_timeout=10,
         authorizer=authorizer,
-        # Deterministic reply-streaming timing: a zero throttle + no-op sleep so
-        # the live-edit path never actually waits in tests.
-        reply_throttle_interval=0.0,
+        # Deterministic reply timing: a fixed clock + no-op sleep so the typing
+        # cadence never actually waits in tests.
+        reply_typing_interval=4.0,
         reply_clock=lambda: 0.0,
         reply_sleep=_noop_sleep,
     )
@@ -430,9 +400,9 @@ async def test_one_bot_poll_failure_does_not_kill_the_other() -> None:
 async def test_bob_reply_streamer_sets_thread_id() -> None:
     """Bob's reply streamer pins message_thread_id to his topic.
 
-    BOB-007: with Threaded Mode on, Bob's topic streams via native drafts (the
-    primary path) and commits the rich final — both the drafts and the rich final
-    are pinned to Bob's thread; no edit-streaming fallback is used.
+    BOB-008 (Variant A): Bob's topic shows a "typing…" indicator while generating,
+    then commits one rich final — both the typing action and the rich final are
+    pinned to Bob's thread; no streaming.
     """
     bob, guppi = _FakeBot(), _FakeBot()
     gateway, _ = _build({BotIdentity.BOB: bob, BotIdentity.GUPPI: guppi})
@@ -446,22 +416,18 @@ async def test_bob_reply_streamer_sets_thread_id() -> None:
 
     assert bob.sends, "Bob's bot should have received the committed reply"
     assert all(call.message_thread_id == _BOB_TOPIC_ID for call in bob.sends)
-    assert bob.drafts, "the topic should have streamed via native drafts"
-    assert all(call.message_thread_id == _BOB_TOPIC_ID for call in bob.drafts)
-    assert bob.edits == []  # drafts are primary; no edit-streaming fallback
-    assert bob.deletes == []  # no placeholder to delete on the draft path
+    assert bob.typings, "the topic should have shown a typing indicator"
+    assert all(call.message_thread_id == _BOB_TOPIC_ID for call in bob.typings)
     assert guppi.sends == []  # GUPPI never sends Bob's reply
 
 
-def test_live_inner_gateways_throttle_against_flood_control() -> None:
-    """The live wiring must actually throttle edits, not run with a 0s window.
+def test_live_inner_gateways_use_real_clock_and_sleep() -> None:
+    """The live wiring must drive the typing cadence with a real clock + sleep.
 
-    The flood incident came from the inner gateways being wired with a zero
-    throttle + a no-op sleep, so every streamed token fired an immediate
-    ``editMessageText``/rich final. The live default must be a real (>= 2.5s)
-    interval driven by a real monotonic clock + real sleep.
+    BOB-008: the typing indicator is re-sent every ``_DEFAULT_TYPING_INTERVAL``
+    seconds of generation, driven by a real monotonic clock + real sleep — not the
+    deterministic test stubs.
     """
-    assert multibot._DEFAULT_THROTTLE_INTERVAL >= 2.5
-    # The live clock/sleep must be real, not the deterministic test stubs.
+    assert multibot._DEFAULT_TYPING_INTERVAL > 0
     assert multibot._LIVE_CLOCK is not multibot._zero_clock
     assert multibot._LIVE_SLEEP is not multibot._noop_sleep

@@ -91,20 +91,11 @@ class _Bot:
     ) -> _Msg:
         return _Msg(text)
 
-    async def edit_message_text(
-        self, *, chat_id: int, message_id: int, text: str  # noqa: ARG002
-    ) -> _Msg:
-        return _Msg(text)
-
-    async def delete_message(self, *, chat_id: int, message_id: int) -> bool:  # noqa: ARG002
-        return True
-
-    async def send_message_draft(
+    async def send_chat_action(
         self,
         *,
         chat_id: int,  # noqa: ARG002
-        draft_id: int,  # noqa: ARG002
-        text: str,  # noqa: ARG002
+        action: str,  # noqa: ARG002
         message_thread_id: int | None = None,  # noqa: ARG002
     ) -> bool:
         return True
@@ -117,16 +108,6 @@ class _Bot:
         message_thread_id: int | None = None,  # noqa: ARG002
     ) -> _Msg:
         return _Msg()
-
-    async def send_rich_message_draft(
-        self,
-        *,
-        chat_id: int,  # noqa: ARG002
-        draft_id: int,  # noqa: ARG002
-        rich_message: object,  # noqa: ARG002
-        message_thread_id: int | None = None,  # noqa: ARG002
-    ) -> bool:
-        return True
 
 
 def _config(tmp_path: Path) -> dict[str, object]:

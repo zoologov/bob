@@ -615,10 +615,10 @@ class _AiogramBotAdapter:
     """Adapt aiogram's async ``Bot`` to the gateway's :class:`BotLike`.
 
     Intake calls ``get_updates`` and normalises each aiogram ``Update`` into an
-    :class:`UpdateLike`; the streaming reply uses the native ``send_message_draft``
-    channel for DM partials, or ``edit_message_text`` (live edit-streaming) plus
-    ``delete_message`` for a forum topic, committing the finished reply with
-    ``send_message`` / ``send_rich_message``.
+    :class:`UpdateLike`; the reply path (BOB-008, Variant A) shows a "typing…"
+    indicator via ``send_chat_action`` while it assembles the reply, then commits
+    the finished reply with ``send_rich_message`` (degrading to ``send_message`` on
+    a rich error).
     """
 
     def __init__(self, bot: object) -> None:
@@ -637,31 +637,11 @@ class _AiogramBotAdapter:
             chat_id=chat_id, text=text, message_thread_id=message_thread_id
         )
 
-    async def edit_message_text(
-        self, *, chat_id: int, message_id: int, text: str
-    ) -> MessageLike | bool:
-        return await self._bot.edit_message_text(  # type: ignore[attr-defined,no-any-return]
-            chat_id=chat_id, message_id=message_id, text=text
-        )
-
-    async def delete_message(self, *, chat_id: int, message_id: int) -> bool:
-        return await self._bot.delete_message(  # type: ignore[attr-defined,no-any-return]
-            chat_id=chat_id, message_id=message_id
-        )
-
-    async def send_message_draft(
-        self,
-        *,
-        chat_id: int,
-        draft_id: int,
-        text: str,
-        message_thread_id: int | None = None,
+    async def send_chat_action(
+        self, *, chat_id: int, action: str, message_thread_id: int | None = None
     ) -> bool:
-        return await self._bot.send_message_draft(  # type: ignore[attr-defined,no-any-return]
-            chat_id=chat_id,
-            draft_id=draft_id,
-            text=text,
-            message_thread_id=message_thread_id,
+        return await self._bot.send_chat_action(  # type: ignore[attr-defined,no-any-return]
+            chat_id=chat_id, action=action, message_thread_id=message_thread_id
         )
 
     async def send_rich_message(
@@ -673,21 +653,6 @@ class _AiogramBotAdapter:
     ) -> MessageLike:
         return await self._bot.send_rich_message(  # type: ignore[attr-defined,no-any-return]
             chat_id=chat_id,
-            rich_message=rich_message,
-            message_thread_id=message_thread_id,
-        )
-
-    async def send_rich_message_draft(
-        self,
-        *,
-        chat_id: int,
-        draft_id: int,
-        rich_message: InputRichMessage,
-        message_thread_id: int | None = None,
-    ) -> bool:
-        return await self._bot.send_rich_message_draft(  # type: ignore[attr-defined,no-any-return]
-            chat_id=chat_id,
-            draft_id=draft_id,
             rich_message=rich_message,
             message_thread_id=message_thread_id,
         )
