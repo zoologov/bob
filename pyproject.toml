@@ -91,6 +91,7 @@ ignore = [
 # Proactivity tests seed `random.Random` for deterministic stochastic-sampling
 # assertions; the non-crypto PRNG is the point here, so S311 does not apply.
 "tests/domain/proactivity/*.py" = ["S101", "ARG001", "PLR2004", "S311"]
+"tests/application/proactivity/*.py" = ["S101", "ARG001", "PLR2004", "S311"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["bob"]

@@ -11,11 +11,12 @@
 
 ## Текущий беад
 
-**Беад:** bob-uns.1 — dev: domain (UrgeModel + SocialEnergy + Governance + порт), W1.
+**Беад:** bob-uns.3 — dev: SQLite per-persona ProactivityStore + owner /quiet,/wake в GUPPI, W2.
 
 ## Прогресс
 
-- [ ] W1: bob-uns.1 (domain-движок) — старт
+- [x] W1: bob-uns.1 (domain-движок) — done
+- [x] W2: bob-uns.3 — схема proactivity_state + SqliteProactivityStore + GUPPI /quiet,/wake — done
 
 ## Статусы беадов (Фаза 1)
 

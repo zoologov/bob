@@ -105,3 +105,16 @@ CREATE TABLE IF NOT EXISTS kv (
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
 );
+
+-- Per-persona proactivity state (drive engine). One row per persona_id so
+-- Bobiverse replicas each keep their own reservoir/markers/flag. Round-tripped
+-- by the SqliteProactivityStore adapter; mute_until is the optional timed-mute
+-- expiry set by '/quiet 2h' (NULL = no timed mute).
+CREATE TABLE IF NOT EXISTS proactivity_state (
+    persona_id          TEXT    PRIMARY KEY,
+    social_energy       REAL    NOT NULL,
+    last_spoke_at       TEXT,                       -- ISO-8601, timezone-aware (nullable)
+    last_user_msg_at    TEXT,                       -- ISO-8601, timezone-aware (nullable)
+    proactivity_enabled INTEGER NOT NULL DEFAULT 1, -- 0/1 owner-mute flag
+    mute_until          TEXT                        -- ISO-8601 timed-mute expiry (nullable)
+);
