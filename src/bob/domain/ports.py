@@ -26,6 +26,7 @@ from typing import TYPE_CHECKING, Literal, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     from bob.domain.memory.entities import SemanticFact
+    from bob.domain.proactivity.state import ProactivityState
 
 __all__ = [
     "AllowlistStore",
@@ -40,6 +41,7 @@ __all__ = [
     "MemoryRecall",
     "MemoryRepo",
     "Permission",
+    "ProactivityStore",
     "Recalled",
     "SoulStore",
     "ToolCall",
@@ -266,6 +268,27 @@ class AllowlistStore(Protocol):
 
     async def remove(self, user_id: int) -> None:
         """Remove ``user_id`` from the allowlist (idempotent) and persist it."""
+        ...
+
+
+@runtime_checkable
+class ProactivityStore(Protocol):
+    """Durable per-persona store for Bob's proactivity state (drive engine).
+
+    Round-trips the :class:`bob.domain.proactivity.state.ProactivityState` the
+    engine reads on each heartbeat tick and writes after it fires or the owner
+    acts: the :class:`SocialEnergy` reservoir, ``last_spoke_at`` /
+    ``last_user_msg_at`` markers, and the ``proactivity_enabled`` flag toggled by
+    ``/quiet`` / ``/wake``. State is per ``persona_id`` so Bobiverse replicas each
+    keep their own. The concrete SQLite-backed adapter arrives in BEAD-03.
+    """
+
+    async def load(self, persona_id: str) -> ProactivityState:
+        """Return the persisted proactivity state for ``persona_id``."""
+        ...
+
+    async def save(self, persona_id: str, state: ProactivityState) -> None:
+        """Persist ``state`` for ``persona_id`` (replacing any prior state)."""
         ...
 
 
