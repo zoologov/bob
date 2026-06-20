@@ -120,6 +120,18 @@ class EpisodeReader(Protocol):
     async def recent_episodes(self, k: int) -> Sequence[Mapping[str, object]]: ...
 
 
+class OwnerActivityRecorder(Protocol):
+    """The proactivity seam HandleMessage notifies when the owner writes.
+
+    Lets the proactivity drive-model reflect real interaction: each handled
+    message stamps the owner-message marker and restores some social energy, so
+    the engine's owner-cooldown and energy track the live conversation. Best-effort
+    and optional — when unwired the reactive path behaves exactly as before.
+    """
+
+    async def run(self) -> None: ...
+
+
 @dataclass
 class PersonalityState:
     """Mutable in-memory holder for Bob's current soul snapshot across turns.
@@ -148,6 +160,7 @@ class HandleMessage:
         state: PersonalityState,
         registry: CapabilityRegistry | None = None,
         tool_provider: ToolCallingProvider | None = None,
+        owner_activity: OwnerActivityRecorder | None = None,
     ) -> None:
         self._router = router
         self._gateway = gateway
@@ -158,6 +171,10 @@ class HandleMessage:
         self._extract_facts = extract_facts
         self._clock = clock
         self._state = state
+        # The proactivity seam (BOB-010): when wired, each handled message updates
+        # the owner-activity marker + restores energy so the drive-model reflects
+        # real interaction. Unwired (the default) leaves the reactive path intact.
+        self._owner_activity = owner_activity
         # The capability seam (BEAD-05): an empty registry (the default) means no
         # capabilities, so HandleMessage behaves exactly as before. The tool-loop
         # only engages when capabilities are registered AND a tool-calling
@@ -176,10 +193,25 @@ class HandleMessage:
             reply = await self._decide(event.text, soul, recalled, history)
         await self._gateway.reply(chat_id=event.chat_id, markdown=reply)
         await self._persist(event, reply, soul)
+        await self._record_owner_activity()
         # Tier 0 "remember" step: distil durable facts into semantic memory so a
         # later turn's recall can surface them. Best-effort — run() never raises,
         # so a flaky local model can never break a turn that already replied.
         await self._extract_facts.run(user_message=event.text, reply=reply)
+
+    async def _record_owner_activity(self) -> None:
+        """Notify proactivity the owner just wrote (best-effort, optional seam).
+
+        Stamps the owner-message marker and restores some social energy so the
+        engine's cooldown/energy reflect this turn. Best-effort: a flaky store can
+        never break a turn that has already replied.
+        """
+        if self._owner_activity is None:
+            return
+        try:
+            await self._owner_activity.run()
+        except Exception:
+            logger.exception("recording owner activity failed (ignored)")
 
     async def _perceive(self, event: MessageReceived) -> SOUL:
         """Update mood from the message text and store the new soul snapshot."""

@@ -32,6 +32,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
+import random
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -42,6 +44,11 @@ from bob.application.authz import Authorizer
 from bob.application.capabilities import (
     CapabilityRegistry,
     make_recall_memory_capability,
+)
+from bob.application.proactivity import (
+    ProactiveTick,
+    ProactivityEngine,
+    RecordOwnerActivity,
 )
 from bob.application.router import LLMRouter
 from bob.application.runtime import (
@@ -64,13 +71,17 @@ from bob.application.usecases.update_mood_from_text import UpdateMoodFromText
 from bob.domain.personality.mood import Mood
 from bob.domain.personality.soul import SOUL
 from bob.domain.personality.taste import TasteAxis, TasteEngine
+from bob.domain.proactivity.decision import ProactiveDecider
+from bob.domain.proactivity.governance import Governance
 from bob.infrastructure.config import ConfigLoader
 from bob.infrastructure.llm import build_tier_providers
 from bob.infrastructure.persistence import (
     Fts5MemoryRecall,
     KvAllowlistStore,
+    RepoProactivitySources,
     SoulStore,
     SqliteMemoryRepo,
+    SqliteProactivityStore,
 )
 from bob.infrastructure.telegram.multibot import (
     BotIdentity,
@@ -83,8 +94,10 @@ if TYPE_CHECKING:
     from aiogram.types import InputRichMessage
 
     from bob.application.runtime.agent import BackgroundTask
+    from bob.application.usecases.handle_message import ReplyGateway
     from bob.application.usecases.run_genesis import GenesisResult
     from bob.domain.ports import (
+        Clock,
         DomainEvent,
         EventHandler,
         LLMProvider,
@@ -112,6 +125,14 @@ _TICK_RETRY_POLICY = RetryPolicy()
 
 # The reply tier (Tier 1) is the one whose provider drives the capability tool-loop.
 _REPLY_TIER = 1
+
+# Per-persona id for Bob's proactivity state (Bobiverse replicas each get their own).
+_BOB_PERSONA = "bob"
+
+# The proactivity engine ticks on the heartbeat cadence: cheap by construction
+# (the urge/governance decision is pure, defaulting to silence), so most ticks
+# make ZERO LLM calls.
+_PROACTIVE_TICK_MULTIPLIER = 1
 
 # Where the bob-soul personality templates live (repo root / bob-soul).
 _DEFAULT_TEMPLATES_DIR = Path(__file__).resolve().parents[2] / "bob-soul"
@@ -151,6 +172,9 @@ class Application:
     inner_monologue_tick: InnerMonologueTick
     mood_drift_tick: MoodDriftTick
     reflect_tick: ReflectTick
+    proactivity_store: SqliteProactivityStore
+    proactivity_engine: ProactivityEngine
+    proactive_tick: ProactiveTick
 
     async def startup(self) -> GenesisResult:
         """Initialise persistence, awaken Bob on first boot, load his soul.
@@ -177,6 +201,8 @@ def build_application(
     providers: Mapping[int, LLMProvider] | None = None,
     bob_bot: BotLike | None = None,
     guppi_bot: BotLike | None = None,
+    clock: Clock | None = None,
+    proactivity_seed: int | None = None,
 ) -> Application:
     """Wire the full two-bot GUPPI graph from configuration into an application.
 
@@ -190,7 +216,11 @@ def build_application(
     """
     merged = dict(config) if config is not None else ConfigLoader(yaml_path=config_path).load()
 
-    clock = SystemClock()
+    # The clock is an injectable seam: production uses the real UTC SystemClock;
+    # tests inject a fixed clock so the proactivity engine's circadian/governance
+    # decision and the owner-cooldown are deterministic.
+    resolved_clock: Clock = clock if clock is not None else SystemClock()
+    del clock  # use resolved_clock everywhere below (narrowed, never None)
     event_bus = AsyncEventBus()
     tier_providers = providers if providers is not None else build_tier_providers(merged)
     router = LLMRouter(providers=tier_providers)
@@ -211,19 +241,30 @@ def build_application(
         templates_dir=_templates_dir(merged),
         router=router,
         soul_store=soul_store,
-        clock=clock,
+        clock=resolved_clock,
     )
 
     personality = PersonalityState(soul=_default_soul())
-    update_mood = UpdateMoodFromText(router=router, clock=clock)
-    extract_facts = ExtractFacts(router=router, repo=memory_repo, clock=clock)
+    update_mood = UpdateMoodFromText(router=router, clock=resolved_clock)
+    extract_facts = ExtractFacts(router=router, repo=memory_repo, clock=resolved_clock)
     authorizer = _build_authorizer(merged, repo=memory_repo)
+
+    # Proactivity (BOB-010 Ф1): the per-persona store backs both the engine and
+    # GUPPI's /quiet,/wake; RecordOwnerActivity folds each owner message into the
+    # drive-state. The store/clock are handed to GUPPI through the gateway.
+    proactivity_store = SqliteProactivityStore(memory_repo)
+    record_owner_activity = RecordOwnerActivity(
+        store=proactivity_store, clock=resolved_clock, persona_id=_BOB_PERSONA
+    )
+
     multibot = _build_multibot(
         merged,
         bus=event_bus,
         bob_bot=bob_bot,
         guppi_bot=guppi_bot,
         authorizer=authorizer,
+        proactivity_store=proactivity_store,
+        proactivity_clock=resolved_clock,
     )
 
     handle_message = HandleMessage(
@@ -234,18 +275,31 @@ def build_application(
         episodes=memory_repo,
         update_mood=update_mood,
         extract_facts=extract_facts,
-        clock=clock,
+        clock=resolved_clock,
         state=personality,
         registry=registry,
         tool_provider=tool_provider,
+        owner_activity=record_owner_activity,
     )
     event_bus.subscribe(MESSAGE_RECEIVED, _as_handler(handle_message))
 
     inner_monologue_tick = InnerMonologueTick(router=router, state=personality)
     mood_drift_tick = MoodDriftTick(state=personality)
     reflect_tick = ReflectTick(
-        router=router, repo=memory_repo, state=personality, clock=clock
+        router=router, repo=memory_repo, state=personality, clock=resolved_clock
     )
+
+    proactivity_engine = _build_proactivity_engine(
+        merged,
+        store=proactivity_store,
+        router=router,
+        gateway=multibot.reply_gateway(BotIdentity.BOB),
+        personality=personality,
+        repo=memory_repo,
+        clock=resolved_clock,
+        seed=proactivity_seed,
+    )
+    proactive_tick = ProactiveTick(engine=proactivity_engine)
 
     runtime = AgentRuntime(
         background_tasks=_background_tasks(
@@ -254,6 +308,7 @@ def build_application(
             inner_monologue_tick=inner_monologue_tick,
             mood_drift_tick=mood_drift_tick,
             reflect_tick=reflect_tick,
+            proactive_tick=proactive_tick,
         )
     )
 
@@ -272,6 +327,9 @@ def build_application(
         inner_monologue_tick=inner_monologue_tick,
         mood_drift_tick=mood_drift_tick,
         reflect_tick=reflect_tick,
+        proactivity_store=proactivity_store,
+        proactivity_engine=proactivity_engine,
+        proactive_tick=proactive_tick,
     )
 
 
@@ -295,6 +353,8 @@ def _build_multibot(
     bob_bot: BotLike | None,
     guppi_bot: BotLike | None,
     authorizer: Authorizer,
+    proactivity_store: SqliteProactivityStore,
+    proactivity_clock: Clock,
 ) -> MultiBotGateway:
     """Build the two-bot gateway: Bob (his topic) + GUPPI (General), one poller.
 
@@ -327,7 +387,64 @@ def _build_multibot(
         bus=bus,
         poll_timeout=_int(telegram, "poll_timeout", _DEFAULT_POLL_TIMEOUT),
         authorizer=authorizer,
+        proactivity_store=proactivity_store,
+        proactivity_clock=proactivity_clock,
     )
+
+
+def _build_proactivity_engine(
+    config: Mapping[str, object],
+    *,
+    store: SqliteProactivityStore,
+    router: LLMRouter,
+    gateway: ReplyGateway,
+    personality: PersonalityState,
+    repo: SqliteMemoryRepo,
+    clock: Clock,
+    seed: int | None,
+) -> ProactivityEngine:
+    """Assemble the per-persona proactivity engine (drive-model → message).
+
+    Wires the pure :class:`ProactiveDecider` (urge model + :class:`Governance`
+    ceilings over the injected clock and a **seeded** RNG) to the live store, the
+    LLM router (Tier-0 gate + composed reply), Bob's reply gateway (posts into his
+    topic), and the live reflection-salience / proactive-window read-seams over the
+    episodic log. The seed is injectable/deterministic: an explicit ``seed`` wins,
+    else config (``runtime.proactivity_seed``) or the ``BOB_PROACTIVITY_SEED`` env,
+    else a fresh per-process seed — so tests pin the stochastic draw exactly.
+    """
+    telegram = _section(config, "telegram")
+    sources = RepoProactivitySources(repo, clock=clock)
+    decider = ProactiveDecider(clock=clock, governance=Governance())
+    return ProactivityEngine(
+        persona_id=_BOB_PERSONA,
+        chat_id=_int(telegram, "chat_id", 0),
+        store=store,
+        decider=decider,
+        router=router,
+        gateway=gateway,
+        personality=personality,
+        reflection=sources,
+        window=sources,
+        clock=clock,
+        # The drive-model's stochastic draw is deterministic-by-seed, NOT
+        # cryptographic: a seeded PRNG is exactly what makes the proactive decision
+        # reproducible in tests.
+        rng=random.Random(_resolve_seed(config, seed)),  # noqa: S311
+    )
+
+
+def _resolve_seed(config: Mapping[str, object], seed: int | None) -> int:
+    """Resolve the proactivity RNG seed: arg → config → env → fresh per-process."""
+    if seed is not None:
+        return seed
+    configured = _int(_section(config, "runtime"), "proactivity_seed", -1)
+    if configured >= 0:
+        return configured
+    env = os.environ.get("BOB_PROACTIVITY_SEED")
+    if env is not None and env.isdigit():
+        return int(env)
+    return random.SystemRandom().randrange(2**32)
 
 
 def _build_authorizer(
@@ -399,10 +516,15 @@ def _background_tasks(
     inner_monologue_tick: InnerMonologueTick,
     mood_drift_tick: MoodDriftTick,
     reflect_tick: ReflectTick,
+    proactive_tick: ProactiveTick,
 ) -> list[BackgroundTask]:
-    """Build the supervised background tasks: polling + the three heartbeat ticks.
+    """Build the supervised background tasks: polling + the heartbeat ticks.
 
-    One poll task drives BOTH bots (Bob + GUPPI) through the multi-bot gateway.
+    One poll task drives BOTH bots (Bob + GUPPI) through the multi-bot gateway. The
+    proactivity tick runs on the heartbeat cadence like its siblings and is wrapped
+    in the same :data:`_TICK_RETRY_POLICY` so a transient LLM/network blip on a
+    firing tick is retried before isolation — it is cheap by construction (most
+    ticks make ZERO LLM calls).
     """
     runtime = _section(config, "runtime")
     heartbeat = float(_int(runtime, "heartbeat_seconds", _DEFAULT_HEARTBEAT_SECONDS))
@@ -425,6 +547,11 @@ def _background_tasks(
         periodic(
             reflect_tick.run,
             interval_seconds=heartbeat * 10,
+            retry=_TICK_RETRY_POLICY,
+        ),
+        periodic(
+            proactive_tick.run,
+            interval_seconds=heartbeat * _PROACTIVE_TICK_MULTIPLIER,
             retry=_TICK_RETRY_POLICY,
         ),
     ]

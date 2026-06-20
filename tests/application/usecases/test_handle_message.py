@@ -23,7 +23,11 @@ from bob.application.capabilities.registry import CapabilityRegistry
 from bob.application.router.llm_router import LLMRouter
 from bob.application.runtime.events import MessageReceived
 from bob.application.usecases.extract_facts import ExtractFacts
-from bob.application.usecases.handle_message import HandleMessage, PersonalityState
+from bob.application.usecases.handle_message import (
+    HandleMessage,
+    OwnerActivityRecorder,
+    PersonalityState,
+)
 from bob.application.usecases.update_mood_from_text import UpdateMoodFromText
 from bob.domain.personality.mood import Mood
 from bob.domain.personality.soul import SOUL
@@ -202,6 +206,7 @@ def _build(
     tier0_replies: Sequence[str] | None = None,
     registry: CapabilityRegistry | None = None,
     tool_provider: ToolCallingProvider | None = None,
+    owner_activity: OwnerActivityRecorder | None = None,
 ) -> tuple[HandleMessage, FakeBot, FakeRepo, CapturingProvider]:
     tier0 = CapturingProvider(reply="positive", replies=tier0_replies)
     tier1 = CapturingProvider(reply=reply)
@@ -229,6 +234,7 @@ def _build(
         state=PersonalityState(soul=_soul()),
         registry=registry,
         tool_provider=tool_provider,
+        owner_activity=owner_activity,
     )
     return handler, bot, repo, tier1
 
@@ -555,3 +561,49 @@ async def test_no_tool_provider_falls_back_to_router_even_with_capabilities() ->
     assert bot.final_text == "hello there"
     assert len(tier1.payloads) == 1
     assert cap.calls == []
+
+
+class _RecordingOwnerActivity:
+    """An OwnerActivityRecorder double counting how many times it was notified."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def run(self) -> None:
+        self.calls += 1
+
+
+class _RaisingOwnerActivity:
+    """An OwnerActivityRecorder that always raises (a flaky proactivity store)."""
+
+    async def run(self) -> None:
+        raise RuntimeError("store unavailable")
+
+
+async def test_owner_activity_is_recorded_after_reply() -> None:
+    # Arrange: a wired owner-activity recorder (the proactivity seam).
+    recorder = _RecordingOwnerActivity()
+    handler, bot, _repo, _tier1 = _build(
+        reply="Coffee is the best.", owner_activity=recorder
+    )
+
+    # Act
+    await handler.handle(_message())
+
+    # Assert: the turn replied AND the owner-activity marker was recorded once.
+    assert bot.final_text == "Coffee is the best."
+    assert recorder.calls == 1
+
+
+async def test_owner_activity_failure_never_breaks_the_replied_turn() -> None:
+    # Arrange: the recorder raises (a flaky proactivity store).
+    handler, bot, repo, _tier1 = _build(
+        reply="hello there", owner_activity=_RaisingOwnerActivity()
+    )
+
+    # Act: the turn must still complete — the reply and the episode persist.
+    await handler.handle(_message())
+
+    # Assert: best-effort — the reply landed and the episode was saved regardless.
+    assert bot.final_text == "hello there"
+    assert len(repo.episodes) == 1

@@ -45,6 +45,7 @@ if TYPE_CHECKING:
 __all__ = [
     "GUPPI_REJECT_TEXT",
     "GuppiHandler",
+    "ProactivityStoreLike",
 ]
 
 # The single visible reject shown to an unauthorized user inside Bob's topic.
@@ -69,8 +70,14 @@ _WAKE_TEXT = "Боб снова на связи — проактивность �
 _DURATION_UNITS = {"h": 3600, "m": 60, "s": 1}
 
 
-class _ProactivityStoreLike(Protocol):
-    """The proactivity-store surface the owner /quiet, /wake commands need."""
+class ProactivityStoreLike(Protocol):
+    """The proactivity-store surface the owner /quiet, /wake commands need.
+
+    A superset of the domain :class:`~bob.domain.ports.ProactivityStore` port: the
+    owner commands also toggle the infrastructure-level timed-mute expiry, so the
+    store must expose ``set_mute_until`` (the live :class:`SqliteProactivityStore`
+    does). Kept structural so a fake satisfies it in tests.
+    """
 
     async def load(self, persona_id: str) -> ProactivityState: ...
     async def save(self, persona_id: str, state: ProactivityState) -> None: ...
@@ -86,7 +93,7 @@ class GuppiHandler:
         bot: BotLike,
         authorizer: AuthorizerLike,
         general_chat_id: int,
-        proactivity_store: _ProactivityStoreLike | None = None,
+        proactivity_store: ProactivityStoreLike | None = None,
         clock: Clock | None = None,
         persona_id: str = "bob",
     ) -> None:
@@ -173,12 +180,12 @@ class GuppiHandler:
         await store.set_mute_until(self._persona_id, None)
         await self._reply(chat_id, _WAKE_TEXT)
 
-    async def _set_enabled(self, store: _ProactivityStoreLike, *, enabled: bool) -> None:
+    async def _set_enabled(self, store: ProactivityStoreLike, *, enabled: bool) -> None:
         """Toggle the persisted ``proactivity_enabled`` flag (state-preserving)."""
         state = await store.load(self._persona_id)
         await store.save(self._persona_id, replace(state, proactivity_enabled=enabled))
 
-    def _require_store(self) -> _ProactivityStoreLike:
+    def _require_store(self) -> ProactivityStoreLike:
         """Return the wired proactivity store (the command guard ensures it exists)."""
         if self._proactivity_store is None:  # pragma: no cover - guarded by caller
             raise RuntimeError("proactivity store not configured")

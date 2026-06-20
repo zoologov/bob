@@ -65,8 +65,9 @@ from bob.infrastructure.telegram.guppi import GuppiHandler
 if TYPE_CHECKING:
     from contextlib import AbstractAsyncContextManager
 
-    from bob.domain.ports import EventBus
+    from bob.domain.ports import Clock, EventBus
     from bob.infrastructure.telegram.gateway import MessageLike
+    from bob.infrastructure.telegram.guppi import ProactivityStoreLike
 
 logger = logging.getLogger(__name__)
 
@@ -198,6 +199,8 @@ class MultiBotGateway:
         bus: EventBus,
         poll_timeout: int,
         authorizer: AuthorizerLike | None = None,
+        proactivity_store: ProactivityStoreLike | None = None,
+        proactivity_clock: Clock | None = None,
         reply_typing_interval: float = _DEFAULT_TYPING_INTERVAL,
         reply_clock: MonotonicClock = _LIVE_CLOCK,
         reply_sleep: Sleep = _LIVE_SLEEP,
@@ -205,6 +208,8 @@ class MultiBotGateway:
         self._registry = registry
         self._bus = bus
         self._authorizer = authorizer
+        self._proactivity_store = proactivity_store
+        self._proactivity_clock = proactivity_clock
         self._poll_timeout = poll_timeout
         # One inner TelegramGateway per bot does the per-bot intake/normalisation
         # and reply. Bob's inner gateway pins replies — and the "typing…" indicator
@@ -240,7 +245,13 @@ class MultiBotGateway:
         return self._registry
 
     def _build_guppi(self, authorizer: AuthorizerLike | None) -> GuppiHandler | None:
-        """Construct GUPPI's handler from its registration, if both are present."""
+        """Construct GUPPI's handler from its registration, if both are present.
+
+        When a proactivity store (and clock) are wired in, GUPPI also owns the
+        owner ``/quiet`` / ``/wake`` commands that toggle Bob's persisted
+        proactivity flag; without a store those commands fall through to a silent
+        drop (backward-compatible).
+        """
         if authorizer is None or BotIdentity.GUPPI not in self._inner:
             return None
         guppi_reg = self._registry.get(BotIdentity.GUPPI)
@@ -248,6 +259,8 @@ class MultiBotGateway:
             bot=guppi_reg.bot,
             authorizer=authorizer,
             general_chat_id=guppi_reg.scope.chat_id,
+            proactivity_store=self._proactivity_store,
+            clock=self._proactivity_clock,
         )
 
     # --- Intake (all bots) ----------------------------------------------------

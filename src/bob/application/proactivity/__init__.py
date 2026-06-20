@@ -23,6 +23,7 @@ from bob.application.proactivity.engine import (
     ProactivityEngine,
     ReflectionSalienceSource,
 )
+from bob.application.proactivity.record_owner_activity import RecordOwnerActivity
 from bob.application.proactivity.tick import ProactiveRunner, ProactiveTick
 
 __all__ = [
@@ -30,5 +31,6 @@ __all__ = [
     "ProactiveTick",
     "ProactiveWindowCounter",
     "ProactivityEngine",
+    "RecordOwnerActivity",
     "ReflectionSalienceSource",
 ]
