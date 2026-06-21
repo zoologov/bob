@@ -556,6 +556,63 @@ async def test_tool_loop_puts_capability_manifest_in_system_prompt() -> None:
     assert "GUPPI" in provider.all_text
 
 
+# --- BOB-016: anti-bait voice + GUPPI canon in the reply prompts ---------------
+
+
+async def test_reactive_reply_prompt_carries_the_anti_bait_voice_and_few_shot() -> None:
+    # BOB-016: the reply system prompt must steer Bob off the engagement-bait
+    # closing reflex (no fishing for continuation, emoji are rare) AND carry a
+    # substance-ending few-shot exemplar — the part that actually breaks the tic.
+    handler, _bot, _repo, tier1 = _build(reply="hi")
+
+    await handler.handle(_message("объясни подробно про минимализм в дизайне"))
+
+    folded = tier1.all_text.casefold()
+    assert "не выпрашивай продолжение" in folded
+    assert "эмодзи" in folded
+    # A substance-ending exemplar rides along (no trailing question, no ☕).
+    assert "мне так спокойнее" in folded
+    # The warm base persona is preserved alongside the new voice guidance.
+    assert "warmly" in folded
+
+
+async def test_reactive_reply_prompt_establishes_guppi_as_male_non_sentient() -> None:
+    # BOB-016: the GUPPI canon rides in the base persona, so even a plain reply
+    # (no tools wired) — exactly the dialog.txt symptom where Bob said "она" —
+    # carries GUPPI as "он", a non-sentient executor, with the running-gag seeds.
+    handler, _bot, _repo, tier1 = _build(reply="hi")
+
+    # A substantive question (escalates to Tier 1) about GUPPI — the dialog symptom.
+    await handler.handle(_message("расскажи подробно, как ты относишься к guppi и почему"))
+
+    folded = tier1.all_text.casefold()
+    # The masculine pronoun is present as its own word; non-sentience is named.
+    assert "он" in {t.strip(".,:;«»()—-") for t in folded.split()}
+    assert "не разумен" in folded
+    # The wry running-relationship flavor (literal to a fault; coffee gag) is seeded.
+    assert "буквален" in folded
+    assert "кофе" in folded
+
+
+async def test_tool_loop_preface_establishes_guppi_as_male_non_sentient() -> None:
+    # BOB-016: the GUPPI canon also reaches the tool-loop prompt (it rides in the
+    # base persona, which the manifest path prepends) — GUPPI is "он", a
+    # non-sentient executor — so Bob never says "она" when capabilities are wired.
+    registry, _cap = _registry_with_recall()
+    provider = ScriptedToolProvider()
+    handler, _bot, _repo, _tier1 = _build(
+        reply="unused", registry=registry, tool_provider=provider
+    )
+
+    await handler.handle(_message("what's my name?"))
+
+    folded = provider.all_text.casefold()
+    assert "он" in {t.strip(".,:;«»()—-") for t in folded.split()}
+    assert "не разумен" in folded
+    assert "буквален" in folded
+    assert "кофе" in folded
+
+
 async def test_empty_registry_keeps_the_plain_router_path_unchanged() -> None:
     # Arrange: no registry (default) + a tool provider that must NOT be used.
     provider = ScriptedToolProvider()

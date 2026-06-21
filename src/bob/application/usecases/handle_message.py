@@ -52,6 +52,7 @@ from bob.domain.personality.negotiation import (
     Stance,
 )
 from bob.domain.personality.taste import Verdict
+from bob.domain.personality.voice import anti_bait_directive, guppi_canon
 from bob.domain.personality.zone_classifier import TasteZoneClassifier
 
 if TYPE_CHECKING:
@@ -84,16 +85,30 @@ _HISTORY_K = 6
 # Each turn perceives one message; a present sender is engaged.
 _SINGLE_MESSAGE = 1
 
+# The warm base persona, then Bob's voice guidance (BOB-016): the anti-bait
+# directive + substance-ending few-shot break the base model's reflex of closing
+# every reply with an engagement-bait question and a ☕ signature, so Bob lands
+# like a person, not an assistant. The directive lives in the domain (persona
+# voice), assembled in here onto the warm base tone.
+# The warm base persona, then two voice concerns Bob's persona leans on (BOB-016):
+# the anti-bait directive + few-shot (so he lands like a person, not an assistant
+# fishing for the next reply with a ☕ signature), and the GUPPI canon (so whenever
+# GUPPI comes up — tools wired or not — Bob speaks of him as "он", his
+# non-sentient executor, with the wry running relationship). Both live in the
+# domain (persona voice) and are assembled onto the warm base tone here.
 _SYSTEM_PROMPT = (
     "You are Bob, a digital person from the Bobiverse. Reply in character, "
-    "warmly and concisely, coloured by your current mood."
+    "warmly and concisely, coloured by your current mood.\n"
+    f"{guppi_canon()}\n"
+    f"{anti_bait_directive()}"
 )
 
-# Preface for the capability manifest in Bob's prompt: GUPPI is his executor, so
-# he knows what he can do and that the tools run through GUPPI (persona ref).
+# Preface for the capability manifest in Bob's prompt: GUPPI is Bob's executor
+# subsystem (canon already in the base persona above), so this just frames the
+# manifest as the skills GUPPI runs for Bob.
 _CAPABILITY_PREFACE = (
-    "Your subsystem GUPPI can run these capabilities for you; call one when it "
-    "helps you answer:"
+    "Эти возможности GUPPI исполняет для тебя; вызови одну, когда она помогает "
+    "ответить:"
 )
 
 # Stance→prompt directive (BOB-013 Phase 1): the negotiation stance augments —

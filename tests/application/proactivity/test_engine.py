@@ -329,6 +329,37 @@ async def test_gate_and_compose_prompts_carry_the_russian_directive() -> None:
     assert "по-русски" in tier0.prompts[1].casefold()  # compose
 
 
+async def test_compose_prompt_carries_the_anti_bait_voice_and_few_shot() -> None:
+    # BOB-016: reaching out unprompted is exactly where the base model wants to
+    # bait for a reply + sign off with ☕, so the compose prompt must carry the
+    # anti-bait voice directive AND its substance-ending few-shot exemplar.
+    moment = _evening()
+    seed = _seed_that_fires(moment, _HIGH_MOOD)
+    store = FakeStore(_state(energy=1.0))
+    router, providers = _router(
+        gate_reply="SAY: ask about the day", compose_reply="Как прошёл день?"
+    )
+    engine = _engine(
+        store=store,
+        router=router,
+        gateway=CapturingGateway(),
+        state_holder=PersonalityState(soul=_soul(_HIGH_MOOD)),
+        moment=moment,
+        seed=seed,
+        salience=0.9,
+        language="ru",
+    )
+
+    await engine.tick()
+
+    compose_prompt = providers[0].prompts[1].casefold()
+    # The voice guidance (don't fish for continuation; emoji are rare) is present…
+    assert "не выпрашивай продолжение" in compose_prompt
+    assert "эмодзи" in compose_prompt
+    # …and a substance-ending exemplar rides along (the part that breaks the tic).
+    assert "мне так спокойнее" in compose_prompt
+
+
 async def test_proactive_message_is_persisted_to_episodic_memory() -> None:
     # Arrange: a fire that composes + posts must also be saved to the episode store
     # (the same store the reactive turn uses) so Bob can reference/explain it later.
