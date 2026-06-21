@@ -32,6 +32,16 @@ def test_load_returns_defaults_when_no_yaml_no_env() -> None:
     assert config is not DEFAULT_CONFIG
 
 
+def test_runtime_language_defaults_to_russian() -> None:
+    # Self-generated text (proactive/monologue/reflection) defaults to Russian so
+    # Bob does not drift to English when there is no user message to mirror (BOB-012).
+    loader = ConfigLoader(yaml_path=None, env={})
+
+    config = loader.load()
+
+    assert config["runtime"]["language"] == "ru"
+
+
 def test_yaml_overrides_defaults(tmp_path: Path) -> None:
     # Arrange
     yaml_file = tmp_path / "bob.yaml"

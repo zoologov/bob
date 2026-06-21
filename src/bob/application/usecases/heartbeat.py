@@ -29,6 +29,7 @@ from typing import TYPE_CHECKING, Protocol
 
 from bob.application.router.llm_router import LLMRequest, TaskType
 from bob.domain.memory.entities import EpisodicEvent
+from bob.domain.personality.language import DEFAULT_LANGUAGE, language_directive
 from bob.domain.personality.mood import MoodDelta
 
 if TYPE_CHECKING:
@@ -60,6 +61,15 @@ _REFLECT_PROMPT = (
 )
 
 
+def _localised(prompt: str, language: str) -> str:
+    """Prepend the persona language directive to a self-generated prompt (BOB-012).
+
+    Inner-monologue and reflection prompts have no user message to mirror, so they
+    must carry an explicit language constraint or the model drifts to English.
+    """
+    return f"{language_directive(language)}\n{prompt}"
+
+
 class EpisodeWriter(Protocol):
     """The persistence seam the reflect tick needs: save an episode."""
 
@@ -69,16 +79,28 @@ class EpisodeWriter(Protocol):
 class InnerMonologueTick:
     """Bob thinks privately on Tier 0; the thought's sentiment feeds his mood."""
 
-    def __init__(self, *, router: LLMRouter, state: PersonalityState) -> None:
+    def __init__(
+        self,
+        *,
+        router: LLMRouter,
+        state: PersonalityState,
+        language: str = DEFAULT_LANGUAGE,
+    ) -> None:
         self._router = router
         self._state = state
+        self._language = language
 
     async def run(self) -> None:
         """Generate a private thought, classify it, and nudge mood accordingly."""
         thought = await self._router.run(
             LLMRequest(
                 task_type=TaskType.INNER_MONOLOGUE,
-                messages=[{"role": "system", "content": _MONOLOGUE_PROMPT}],
+                messages=[
+                    {
+                        "role": "system",
+                        "content": _localised(_MONOLOGUE_PROMPT, self._language),
+                    }
+                ],
             )
         )
         delta = MoodDelta(valence=_valence_step(_last_label(thought)))
@@ -109,18 +131,25 @@ class ReflectTick:
         repo: EpisodeWriter,
         state: PersonalityState,
         clock: Clock,
+        language: str = DEFAULT_LANGUAGE,
     ) -> None:
         self._router = router
         self._repo = repo
         self._state = state
         self._clock = clock
+        self._language = language
 
     async def run(self) -> None:
         """Reflect on Tier 0 and log the reflection as an episode."""
         reflection = await self._router.run(
             LLMRequest(
                 task_type=TaskType.REFLECT,
-                messages=[{"role": "system", "content": _REFLECT_PROMPT}],
+                messages=[
+                    {
+                        "role": "system",
+                        "content": _localised(_REFLECT_PROMPT, self._language),
+                    }
+                ],
             )
         )
         now = self._clock.now()
