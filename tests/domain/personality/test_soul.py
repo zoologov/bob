@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import pytest
 
-from bob.domain.personality.mood import Mood
+from bob.domain.personality.mood import Mood, MoodDelta
 from bob.domain.personality.soul import SOUL
 from bob.domain.personality.taste import TasteAxis, TasteEngine, Verdict
 
@@ -76,3 +76,43 @@ def test_soul_defaults_phantom_prefs_to_empty() -> None:
 
     # Assert: optional collections default to a safe empty, never a shared mutable.
     assert soul.phantom_prefs == ()
+
+
+def test_soul_defaults_experience_count_to_zero() -> None:
+    # Arrange / Act
+    soul = SOUL(identity="x", mood=Mood(), mood_baseline=Mood(), taste=TasteEngine())
+
+    # Assert: a fresh soul has experienced no self-evolution yet.
+    assert soul.experience_count == 0
+
+
+def test_soul_with_taste_swaps_axes_and_bumps_experience() -> None:
+    # Arrange
+    soul = _soul()
+    evolved_axes = (TasteAxis(name="coffee", value=0.95, conviction=0.92),)
+
+    # Act: self-evolution applied a reinforced axis set.
+    updated = soul.with_taste(evolved_axes)
+
+    # Assert: the live taste engine carries the new axes and experience ticks up.
+    assert updated.taste.axes == evolved_axes
+    assert updated.experience_count == soul.experience_count + 1
+    assert updated.identity == soul.identity
+    assert updated is not soul
+    # Original is untouched (immutable).
+    assert soul.experience_count == 0
+
+
+def test_soul_with_baseline_shifts_resting_mood() -> None:
+    # Arrange
+    soul = _soul()
+    delta = MoodDelta(valence=0.1)
+
+    # Act: a small, durable shift of the resting set-point.
+    updated = soul.with_baseline(delta)
+
+    # Assert: baseline moved by the delta, clamped; mood/identity preserved.
+    assert updated.mood_baseline.valence == pytest.approx(0.2)
+    assert updated.mood == soul.mood
+    assert updated is not soul
+    assert soul.mood_baseline.valence == pytest.approx(0.1)
