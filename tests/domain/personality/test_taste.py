@@ -130,3 +130,27 @@ def test_low_conviction_strong_value_softens_to_like_not_love() -> None:
 
     # Assert: without conviction, a strong value cannot reach LOVE.
     assert verdict is Verdict.LIKE
+
+
+def test_conviction_for_returns_axis_conviction_when_topic_is_known() -> None:
+    # Arrange / Act: the relevant axis is selected exactly like score() does.
+    conviction = _engine().conviction_for("coffee")
+
+    # Assert
+    assert conviction == pytest.approx(0.6)
+
+
+def test_conviction_for_is_case_insensitive() -> None:
+    # Arrange / Act: topic matching ignores case, mirroring score().
+    conviction = _engine().conviction_for("JAZZ")
+
+    # Assert
+    assert conviction == pytest.approx(0.9)
+
+
+def test_conviction_for_unknown_topic_is_zero() -> None:
+    # Arrange / Act: no axis Bob holds an opinion on → no conviction.
+    conviction = _engine().conviction_for("quantum chromodynamics")
+
+    # Assert
+    assert conviction == pytest.approx(0.0)

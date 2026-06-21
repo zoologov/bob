@@ -46,6 +46,13 @@ from bob.application.router.llm_router import LLMRequest, TaskType
 from bob.application.router.reply_tier_selector import select_reply_tier
 from bob.application.usecases.update_mood_from_text import TextSignals
 from bob.domain.memory.entities import EpisodicEvent
+from bob.domain.personality.negotiation import (
+    Negotiation,
+    NegotiationZone,
+    Stance,
+)
+from bob.domain.personality.taste import Verdict
+from bob.domain.personality.zone_classifier import TasteZoneClassifier
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -63,6 +70,7 @@ if TYPE_CHECKING:
         MemoryRecall,
         Recalled,
         ToolCallingProvider,
+        ZoneClassifier,
     )
 
 logger = logging.getLogger(__name__)
@@ -87,6 +95,21 @@ _CAPABILITY_PREFACE = (
     "Your subsystem GUPPI can run these capabilities for you; call one when it "
     "helps you answer:"
 )
+
+# Stance→prompt directive (BOB-013 Phase 1): the negotiation stance augments —
+# never replaces — the warm base tone, so Bob stays warm without being a yes-man.
+# These are a pure mapping; no extra LLM call. A stance with no directive (none
+# below) leaves the prompt exactly as it was before BOB-013.
+_STANCE_DIRECTIVE: dict[Stance, str] = {
+    # Russian persona directives (project language); Cyrillic look-alikes are
+    # intentional, so the ambiguous-character lint is silenced for these literals.
+    Stance.CONCEDE: "Стойка: это территория пользователя — спокойно прими его выбор.",  # noqa: RUF001
+    Stance.AGREE: "Стойка: у тебя нет сильной позиции — поддержи, без навязывания.",  # noqa: RUF001
+    Stance.PROPOSE_ALTERNATIVE: (
+        "Стойка: у тебя есть своё мнение и убеждённость — аргументируй и предложи "  # noqa: RUF001
+        "своё, уважительно, без агрессии и без капитуляции."
+    ),
+}
 
 
 class ReplyGateway(Protocol):
@@ -161,6 +184,8 @@ class HandleMessage:
         registry: CapabilityRegistry | None = None,
         tool_provider: ToolCallingProvider | None = None,
         owner_activity: OwnerActivityRecorder | None = None,
+        zone_classifier: ZoneClassifier | None = None,
+        negotiation: Negotiation | None = None,
     ) -> None:
         self._router = router
         self._gateway = gateway
@@ -171,6 +196,15 @@ class HandleMessage:
         self._extract_facts = extract_facts
         self._clock = clock
         self._state = state
+        # The negotiation seam (BOB-013): the zone classifier decides who owns the
+        # topic and Negotiation maps zone+conviction to a stance, which augments
+        # the warm prompt with a directive. The default is the deterministic
+        # taste/keyword classifier — no network, no LLM, behaviour as before when
+        # the topic is a neutral SHARED matter.
+        self._zone_classifier = (
+            zone_classifier if zone_classifier is not None else TasteZoneClassifier()
+        )
+        self._negotiation = negotiation if negotiation is not None else Negotiation()
         # The proactivity seam (BOB-010): when wired, each handled message updates
         # the owner-activity marker + restores energy so the drive-model reflects
         # real interaction. Unwired (the default) leaves the reactive path intact.
@@ -239,9 +273,10 @@ class HandleMessage:
         on today's plain router path.
         """
         context = _assemble_shareable_context(soul, text, recalled, history)
+        system_prompt = self._system_prompt_for(soul, text)
         provider = self._tool_provider
         if provider is not None and not self._registry.is_empty:
-            return await self._reply_with_tools(provider, text, context)
+            return await self._reply_with_tools(provider, system_prompt, text, context)
         # Hybrid reply tiering (BOB-006): a casual/short message answers on the
         # fast Tier 0 (flash) model for responsiveness; a complex/long message
         # escalates to the quality Tier 1 (plus) model — picked by a pure
@@ -250,7 +285,7 @@ class HandleMessage:
         request = LLMRequest(
             task_type=TaskType.REPLY_TO_USER,
             messages=[
-                {"role": "system", "content": _SYSTEM_PROMPT},
+                {"role": "system", "content": system_prompt},
                 {"role": "user", "content": text},
             ],
             shareable_context=context,
@@ -259,12 +294,34 @@ class HandleMessage:
         )
         return await self._router.run(request)
 
+    def _system_prompt_for(self, soul: SOUL, text: str) -> str:
+        """Augment the warm base prompt with Bob's negotiation stance directive.
+
+        The taste verdict + conviction on ``text`` pick the zone (who owns the
+        matter) and the stance (how firmly Bob holds); the stance maps to a
+        directive appended to — never replacing — the warm base tone. With no
+        target opinion and no user-domain signal the prompt is unchanged from
+        before BOB-013 (the AGREE-on-neutral-shared baseline carries no directive).
+        """
+        verdict = soul.taste.score(text)
+        conviction = soul.taste.conviction_for(text)
+        zone = self._zone_classifier.classify(
+            text, taste_verdict=verdict, conviction=conviction
+        )
+        stance = self._negotiation.decide(zone, conviction=conviction)
+        directive = _stance_directive(stance, verdict=verdict, zone=zone)
+        return f"{_SYSTEM_PROMPT}\n{directive}" if directive else _SYSTEM_PROMPT
+
     async def _reply_with_tools(
-        self, provider: ToolCallingProvider, text: str, context: str
+        self, provider: ToolCallingProvider, system_prompt: str, text: str, context: str
     ) -> str:
         """Drive the capability tool-loop, advertising the manifest in the prompt."""
         manifest = "\n".join([_CAPABILITY_PREFACE, self._registry.describe()])
-        parts = [_SYSTEM_PROMPT, manifest, context] if context else [_SYSTEM_PROMPT, manifest]
+        parts = (
+            [system_prompt, manifest, context]
+            if context
+            else [system_prompt, manifest]
+        )
         messages: list[LLMMessage] = [
             {"role": "system", "content": "\n".join(parts)},
             {"role": "user", "content": text},
@@ -292,6 +349,22 @@ class HandleMessage:
             }
         )
         await self._repo.set_mood(_mood_state(soul), at=now)
+
+
+def _stance_directive(
+    stance: Stance, *, verdict: Verdict, zone: NegotiationZone
+) -> str:
+    """Map a stance to its prompt directive, gated to a real negotiation signal.
+
+    The directive is emitted only when there is something to negotiate: Bob holds
+    an opinion on the topic (a non-NEUTRAL verdict) or the matter is explicitly
+    the user's domain (a logistics signal). A neutral, jointly-owned topic carries
+    no directive, so that path behaves exactly as it did before BOB-013.
+    """
+    has_signal = verdict is not Verdict.NEUTRAL or zone is NegotiationZone.USER_DOMAIN
+    if not has_signal:
+        return ""
+    return _STANCE_DIRECTIVE.get(stance, "")
 
 
 def _assemble_shareable_context(

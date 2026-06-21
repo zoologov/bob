@@ -30,8 +30,9 @@ from bob.application.usecases.handle_message import (
 )
 from bob.application.usecases.update_mood_from_text import UpdateMoodFromText
 from bob.domain.personality.mood import Mood
+from bob.domain.personality.negotiation import NegotiationZone
 from bob.domain.personality.soul import SOUL
-from bob.domain.personality.taste import TasteAxis, TasteEngine
+from bob.domain.personality.taste import TasteAxis, TasteEngine, Verdict
 from bob.domain.ports import ToolCall, ToolCallResult
 from bob.infrastructure.telegram.gateway import TelegramGateway
 
@@ -44,6 +45,7 @@ if TYPE_CHECKING:
         Recalled,
         ToolCallingProvider,
         ToolDefinition,
+        ZoneClassifier,
     )
     from bob.infrastructure.telegram.gateway import UpdateLike
 
@@ -199,6 +201,25 @@ def _soul() -> SOUL:
     )
 
 
+class _StubZoneClassifier:
+    """A ZoneClassifier double that always returns one preset zone.
+
+    Lets the integration test pin the negotiation zone deterministically so the
+    Stance→directive mapping in the prompt can be asserted without depending on
+    the heuristic's keyword/threshold details (covered by its own unit tests).
+    """
+
+    def __init__(self, zone: NegotiationZone) -> None:
+        self._zone = zone
+        self.seen: list[tuple[str, Verdict, float]] = []
+
+    def classify(
+        self, topic: str, *, taste_verdict: Verdict, conviction: float
+    ) -> NegotiationZone:
+        self.seen.append((topic, taste_verdict, conviction))
+        return self._zone
+
+
 def _build(
     *,
     reply: str,
@@ -207,6 +228,8 @@ def _build(
     registry: CapabilityRegistry | None = None,
     tool_provider: ToolCallingProvider | None = None,
     owner_activity: OwnerActivityRecorder | None = None,
+    zone_classifier: ZoneClassifier | None = None,
+    soul: SOUL | None = None,
 ) -> tuple[HandleMessage, FakeBot, FakeRepo, CapturingProvider]:
     tier0 = CapturingProvider(reply="positive", replies=tier0_replies)
     tier1 = CapturingProvider(reply=reply)
@@ -231,10 +254,11 @@ def _build(
         update_mood=UpdateMoodFromText(router=router, clock=clock),
         extract_facts=ExtractFacts(router=router, repo=repo, clock=clock),
         clock=clock,
-        state=PersonalityState(soul=_soul()),
+        state=PersonalityState(soul=soul if soul is not None else _soul()),
         registry=registry,
         tool_provider=tool_provider,
         owner_activity=owner_activity,
+        zone_classifier=zone_classifier,
     )
     return handler, bot, repo, tier1
 
@@ -607,3 +631,95 @@ async def test_owner_activity_failure_never_breaks_the_replied_turn() -> None:
     # Assert: best-effort — the reply landed and the episode was saved regardless.
     assert bot.final_text == "hello there"
     assert len(repo.episodes) == 1
+
+
+# --- Negotiation-врезка (BOB-013 Phase 1) -------------------------------------
+
+# Stable fragments of the Stance→prompt directives (Russian, per the RFC). The
+# integration asserts the right fragment reaches the reply prompt by zone.
+_PROPOSE_DIRECTIVE = "аргументируй и предложи своё"
+_CONCEDE_DIRECTIVE = "это территория пользователя"
+_AGREE_DIRECTIVE = "нет сильной позиции"
+
+
+def _soul_with_strong_dislike(topic: str) -> SOUL:
+    # A soul holding a firm negative opinion on ``topic`` → HATE + high conviction.
+    baseline = Mood(valence=0.1, social=0.2)
+    taste = TasteEngine(axes=(TasteAxis(name=topic, value=-0.9, conviction=0.9),))
+    return SOUL(
+        identity="I am the Bob from the book.",
+        mood=baseline,
+        mood_baseline=baseline,
+        taste=taste,
+        phantom_prefs=(_PHANTOM_PREF,),
+    )
+
+
+async def test_bob_personal_high_conviction_yields_propose_directive() -> None:
+    # Arrange: a strongly-held opinion in Bob's own territory → PROPOSE_ALTERNATIVE.
+    # The taste axis is keyed on the full message text (how score()/conviction_for
+    # match the topic today), so Bob's HATE verdict + high conviction is in play.
+    topic = "объясни подробно почему минимализм лучше"
+    handler, _bot, _repo, tier1 = _build(
+        reply="hi",
+        soul=_soul_with_strong_dislike(topic),
+        zone_classifier=_StubZoneClassifier(NegotiationZone.BOB_PERSONAL),
+    )
+
+    # Act: a complex message (Tier 1) whose topic Bob holds a firm opinion on.
+    await handler.handle(_message(topic))
+
+    # Assert: Bob is told to argue and propose his own (not capitulate); "warmly" kept.
+    assert _PROPOSE_DIRECTIVE in tier1.all_text
+    assert "warmly" in tier1.all_text
+
+
+async def test_user_domain_yields_concede_directive() -> None:
+    # Arrange: a logistics matter the user owns → CONCEDE, regardless of taste.
+    handler, _bot, _repo, tier1 = _build(
+        reply="hi",
+        zone_classifier=_StubZoneClassifier(NegotiationZone.USER_DOMAIN),
+    )
+
+    # Act
+    await handler.handle(_message("во сколько подробно расскажешь про кофе"))
+
+    # Assert: Bob is told to accept the user's choice; warm tone preserved.
+    assert _CONCEDE_DIRECTIVE in tier1.all_text
+    assert "warmly" in tier1.all_text
+    assert _PROPOSE_DIRECTIVE not in tier1.all_text
+
+
+async def test_no_topic_path_is_unchanged_when_verdict_is_neutral_and_shared() -> None:
+    # Arrange: a neutral SHARED topic (no opinion, no logistics) → behaves as
+    # before BOB-013: no negotiation directive is injected.
+    handler, _bot, _repo, tier1 = _build(
+        reply="hi",
+        zone_classifier=_StubZoneClassifier(NegotiationZone.SHARED),
+    )
+
+    # Act: the default message's topic ("кофе") has no matching English axis → NEUTRAL.
+    await handler.handle(_message("расскажи подробно про погоду"))
+
+    # Assert: none of the negotiation directives appear — the prompt is unchanged.
+    assert _PROPOSE_DIRECTIVE not in tier1.all_text
+    assert _CONCEDE_DIRECTIVE not in tier1.all_text
+    assert _AGREE_DIRECTIVE not in tier1.all_text
+    # The base warm prompt is still there.
+    assert "warmly" in tier1.all_text
+
+
+async def test_default_classifier_is_used_when_none_is_injected() -> None:
+    # Arrange: no classifier wired → the deterministic TasteZoneClassifier default.
+    # A strong-dislike topic with NO logistics marker lands in BOB_PERSONAL. The
+    # axis is keyed on the full message text so the HATE verdict is in play.
+    topic = "объясни подробно почему канцелярит ужасен"
+    handler, _bot, _repo, tier1 = _build(
+        reply="hi", soul=_soul_with_strong_dislike(topic)
+    )
+
+    # Act
+    await handler.handle(_message(topic))
+
+    # Assert: the default heuristic routed Bob to defend his view.
+    assert _PROPOSE_DIRECTIVE in tier1.all_text

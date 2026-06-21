@@ -26,6 +26,8 @@ from typing import TYPE_CHECKING, Literal, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     from bob.domain.memory.entities import SemanticFact
+    from bob.domain.personality.negotiation import NegotiationZone
+    from bob.domain.personality.taste import Verdict
     from bob.domain.proactivity.state import ProactivityState
 
 __all__ = [
@@ -50,6 +52,7 @@ __all__ = [
     "ToolCallResult",
     "ToolCallingProvider",
     "ToolDefinition",
+    "ZoneClassifier",
 ]
 
 
@@ -372,4 +375,27 @@ class SoulStore(Protocol):
 
     def append_genesis_log(self, line: str) -> None:
         """Append a line to the append-only genesis log."""
+        ...
+
+
+@runtime_checkable
+class ZoneClassifier(Protocol):
+    """Classify a topic into a :class:`NegotiationZone` for Bob's stance.
+
+    Decides *who owns the matter at hand* — Bob's own territory of opinions
+    (``BOB_PERSONAL``), the user's own business (``USER_DOMAIN``), or jointly
+    owned (``SHARED``) — so :class:`Negotiation` can pick how firmly Bob holds.
+    The contract is abstract on purpose: the default realisation is a
+    deterministic taste/keyword heuristic, but a Tier-0 LLM classifier swaps in
+    later without any consumer change.
+    """
+
+    def classify(
+        self,
+        topic: str,
+        *,
+        taste_verdict: Verdict,
+        conviction: float,
+    ) -> NegotiationZone:
+        """Return the negotiation zone that owns ``topic``."""
         ...

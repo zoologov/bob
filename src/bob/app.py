@@ -71,8 +71,10 @@ from bob.application.usecases.run_genesis import RunGenesis
 from bob.application.usecases.update_mood_from_text import UpdateMoodFromText
 from bob.domain.personality.language import DEFAULT_LANGUAGE
 from bob.domain.personality.mood import Mood
+from bob.domain.personality.negotiation import Negotiation
 from bob.domain.personality.soul import SOUL
 from bob.domain.personality.taste import TasteAxis, TasteEngine
+from bob.domain.personality.zone_classifier import TasteZoneClassifier
 from bob.domain.proactivity.decision import ProactiveDecider
 from bob.domain.proactivity.governance import Governance
 from bob.infrastructure.config import ConfigLoader
@@ -312,6 +314,12 @@ def build_application(
         registry=registry,
         tool_provider=tool_provider,
         owner_activity=record_owner_activity,
+        # Negotiation-врезка (BOB-013): the deterministic taste/keyword zone
+        # classifier + Negotiation let Bob defend his values via a prompt
+        # directive (no network, no extra LLM call). Tier-0 LLM classifier is a
+        # later swap behind the same port.
+        zone_classifier=TasteZoneClassifier(),
+        negotiation=Negotiation(),
     )
     event_bus.subscribe(MESSAGE_RECEIVED, _as_handler(handle_message))
 

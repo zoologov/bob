@@ -86,6 +86,17 @@ class TasteEngine:
             return Verdict.NEUTRAL
         return self._verdict_for(axis)
 
+    def conviction_for(self, topic: str) -> float:
+        """Return how firmly Bob holds his opinion on ``topic`` (0.0 if none).
+
+        Selects the relevant axis exactly as :meth:`score` does (case-insensitive
+        name match) and returns its conviction; an unknown topic yields ``0.0``.
+        Pure and deterministic — the negotiation layer reads it to gauge how hard
+        Bob should hold a position.
+        """
+        axis = self._find(topic)
+        return axis.conviction if axis is not None else 0.0
+
     def _find(self, topic: str) -> TasteAxis | None:
         key = topic.strip().casefold()
         for axis in self.axes:
