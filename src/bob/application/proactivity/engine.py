@@ -25,11 +25,16 @@ flow, cheapest-first (so most ticks do nothing and make ZERO LLM calls):
 4. **Gate (Tier 0)** — only on a fire, a cheap gate asks "does Bob genuinely have
    something worth saying right now, and what is the seed?". It leans to skip; a
    ``SKIP`` ends the tick with one cheap call and no message.
-5. **Compose + post** — on a non-skip seed, compose the message via the router
+5. **Compose + post** — on a non-skip seed, first recall relevant REAL memory via
+   :class:`~bob.domain.ports.MemoryRecall` and hand it to the compose prompt so Bob
+   grounds the message in something that actually happened (never confabulates a
+   shared moment), pinning the persona language (BOB-012). Compose via the router
    (reply-tier selection: usually the fast model, the quality model for something
    substantive) and post it into Bob's topic through the gateway's typing-
    indicator + rich-reply path.
-6. **Persist** — spend energy and set ``last_spoke_at`` via the store.
+6. **Persist** — spend energy, set ``last_spoke_at`` via the store, AND append the
+   posted message to episodic memory (the same store the reactive turn uses) so it
+   enters recall + recent-history and Bob can reference / explain it later.
 
 Everything is injected — store port, decider, router, gateway, clock, seeded RNG,
 the personality state (mood), and the reflection / window seams — so the engine
@@ -45,17 +50,20 @@ from typing import TYPE_CHECKING, Protocol
 
 from bob.application.router.llm_router import LLMRequest, TaskType
 from bob.application.router.reply_tier_selector import select_reply_tier
+from bob.domain.memory.entities import EpisodicEvent
+from bob.domain.personality.language import DEFAULT_LANGUAGE, language_directive
 from bob.domain.proactivity.governance import ProactiveHistory
 from bob.domain.proactivity.state import ProactivityState
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping, Sequence
     from datetime import datetime
     from random import Random
 
     from bob.application.router.llm_router import LLMRouter
     from bob.application.usecases.handle_message import PersonalityState, ReplyGateway
     from bob.domain.personality.mood import Mood
-    from bob.domain.ports import Clock
+    from bob.domain.ports import Clock, MemoryRecall, Recalled
     from bob.domain.proactivity.decision import ProactiveDecider
     from bob.domain.proactivity.social_energy import SocialEnergy
 
@@ -78,8 +86,15 @@ _GATE_PROMPT = (
 _COMPOSE_SYSTEM = (
     "You are Bob, a digital person from the Bobiverse, reaching out unprompted. "
     "Write one warm, concise, in-character message, coloured by your current mood. "
-    "Do not mention that you were prompted; just speak."
+    "Do not mention that you were prompted; just speak. Draw ONLY on real "
+    "remembered moments from the recalled memory below -- never invent a shared "
+    "experience that is not there; if nothing fits, speak generally about how you "
+    "feel rather than fabricating a past event."
 )
+
+# How many real memories to recall to ground the proactive compose (keeps the
+# prompt tight; the grounding is a steer, not a dump).
+_RECALL_K = 3
 
 
 class ProactivityStoreLike(Protocol):
@@ -114,6 +129,17 @@ class ProactiveWindowCounter(Protocol):
         ...
 
 
+class EpisodeWriter(Protocol):
+    """Persistence seam: append the posted proactive message to episodic memory.
+
+    A subset of :class:`~bob.domain.ports.MemoryRepo`: the engine only needs to
+    save an episode, so a proactive message enters recall + recent-history exactly
+    like a reactive turn and Bob can reference or explain it later (BOB-012).
+    """
+
+    async def save_episode(self, episode: Mapping[str, object]) -> None: ...
+
+
 class ProactivityEngine:
     """Drive-model → proactive message: decide cheaply, speak (and pay) rarely."""
 
@@ -129,8 +155,11 @@ class ProactivityEngine:
         personality: PersonalityState,
         reflection: ReflectionSalienceSource,
         window: ProactiveWindowCounter,
+        recall: MemoryRecall,
+        repo: EpisodeWriter,
         clock: Clock,
         rng: Random,
+        language: str = DEFAULT_LANGUAGE,
     ) -> None:
         self._persona_id = persona_id
         self._chat_id = chat_id
@@ -141,8 +170,11 @@ class ProactivityEngine:
         self._personality = personality
         self._reflection = reflection
         self._window = window
+        self._recall = recall
+        self._repo = repo
         self._clock = clock
         self._rng = rng
+        self._language = language
 
     async def tick(self) -> bool:
         """Run one proactive tick; return whether Bob spoke.
@@ -165,9 +197,11 @@ class ProactivityEngine:
             logger.debug("proactive gate chose to skip for persona %s", self._persona_id)
             return False
 
-        message = await self._compose(seed)
+        memories = await self._recall.recall(seed, k=_RECALL_K)
+        message = await self._compose(seed, memories)
         await self._post(message)
         await self._record_spoke(state, energy, now)
+        await self._remember(message, now)
         return True
 
     def _recovered_energy(self, state: ProactivityState, now: datetime) -> SocialEnergy:
@@ -226,25 +260,66 @@ class ProactivityEngine:
         verdict = await self._router.run(
             LLMRequest(
                 task_type=TaskType.INNER_MONOLOGUE,
-                messages=[{"role": "system", "content": _GATE_PROMPT}],
+                messages=[{"role": "system", "content": self._localised(_GATE_PROMPT)}],
             )
         )
         return _parse_gate(verdict)
 
-    async def _compose(self, seed: str) -> str:
-        """Compose the proactive message via the router (reply-tier selection)."""
+    async def _compose(self, seed: str, memories: Sequence[Recalled]) -> str:
+        """Compose the proactive message via the router (reply-tier selection).
+
+        The compose is *grounded*: the recalled real memories are handed to the
+        model as shareable context so Bob draws on something that actually happened
+        instead of confabulating a shared moment. The persona language is pinned
+        too — a self-generated message has no user text to mirror.
+        """
         tier = select_reply_tier(seed)
         return await self._router.run(
             LLMRequest(
                 task_type=TaskType.REPLY_TO_USER,
                 messages=[
-                    {"role": "system", "content": _COMPOSE_SYSTEM},
+                    {"role": "system", "content": self._localised(_COMPOSE_SYSTEM)},
                     {"role": "user", "content": f"Seed: {seed}"},
                 ],
-                shareable_context=f"Mood tone: {self._mood().tone()}",
+                shareable_context=self._compose_context(memories),
                 private_context=None,
                 tier_override=tier,
             )
+        )
+
+    def _compose_context(self, memories: Sequence[Recalled]) -> str:
+        """Assemble the grounding context: mood tone + the recalled real memories."""
+        lines = [f"Mood tone: {self._mood().tone()}"]
+        recalled = [str(item.get("content", "")) for item in memories if item.get("content")]
+        if recalled:
+            lines.append("Real recalled memories (draw on these): " + " | ".join(recalled))
+        return "\n".join(lines)
+
+    def _localised(self, prompt: str) -> str:
+        """Prepend the persona language directive to a self-generated prompt (BOB-012)."""
+        return f"{language_directive(self._language)}\n{prompt}"
+
+    async def _remember(self, message: str, now: datetime) -> None:
+        """Persist the posted proactive message to episodic memory (BOB-012).
+
+        Writes into the same episode store the reactive turn uses, so the message
+        enters recall + recent-history and Bob can reference or explain it later.
+        """
+        episode = EpisodicEvent(
+            ts=now,
+            event_type="proactive",
+            content=f"bob (proactive): {message}",
+            mood_snapshot=self._mood().tone(),
+            tags=("telegram", "proactive"),
+        )
+        await self._repo.save_episode(
+            {
+                "ts": episode.ts.isoformat(),
+                "event_type": episode.event_type,
+                "content": episode.content,
+                "mood_snapshot": episode.mood_snapshot,
+                "tags": ",".join(episode.tags),
+            }
         )
 
     async def _post(self, message: str) -> None:

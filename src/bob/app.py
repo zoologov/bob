@@ -69,6 +69,7 @@ from bob.application.usecases.heartbeat import (
 )
 from bob.application.usecases.run_genesis import RunGenesis
 from bob.application.usecases.update_mood_from_text import UpdateMoodFromText
+from bob.domain.personality.language import DEFAULT_LANGUAGE
 from bob.domain.personality.mood import Mood
 from bob.domain.personality.soul import SOUL
 from bob.domain.personality.taste import TasteAxis, TasteEngine
@@ -103,6 +104,7 @@ if TYPE_CHECKING:
         Embedder,
         EventHandler,
         LLMProvider,
+        MemoryRecall,
         Reranker,
         ToolCallingProvider,
     )
@@ -313,10 +315,19 @@ def build_application(
     )
     event_bus.subscribe(MESSAGE_RECEIVED, _as_handler(handle_message))
 
-    inner_monologue_tick = InnerMonologueTick(router=router, state=personality)
+    # The persona language pins self-generated text (proactive/monologue/reflection)
+    # so Bob does not drift to English when there is no user message to mirror (BOB-012).
+    language = _str(_section(merged, "runtime"), "language", DEFAULT_LANGUAGE)
+    inner_monologue_tick = InnerMonologueTick(
+        router=router, state=personality, language=language
+    )
     mood_drift_tick = MoodDriftTick(state=personality)
     reflect_tick = ReflectTick(
-        router=router, repo=memory_repo, state=personality, clock=resolved_clock
+        router=router,
+        repo=memory_repo,
+        state=personality,
+        clock=resolved_clock,
+        language=language,
     )
 
     proactivity_engine = _build_proactivity_engine(
@@ -326,8 +337,10 @@ def build_application(
         gateway=multibot.reply_gateway(BotIdentity.BOB),
         personality=personality,
         repo=memory_repo,
+        recall=recall,
         clock=resolved_clock,
         seed=proactivity_seed,
+        language=language,
     )
     proactive_tick = ProactiveTick(engine=proactivity_engine)
 
@@ -430,8 +443,10 @@ def _build_proactivity_engine(
     gateway: ReplyGateway,
     personality: PersonalityState,
     repo: SqliteMemoryRepo,
+    recall: MemoryRecall,
     clock: Clock,
     seed: int | None,
+    language: str = DEFAULT_LANGUAGE,
 ) -> ProactivityEngine:
     """Assemble the per-persona proactivity engine (drive-model → message).
 
@@ -456,11 +471,14 @@ def _build_proactivity_engine(
         personality=personality,
         reflection=sources,
         window=sources,
+        recall=recall,
+        repo=repo,
         clock=clock,
         # The drive-model's stochastic draw is deterministic-by-seed, NOT
         # cryptographic: a seeded PRNG is exactly what makes the proactive decision
         # reproducible in tests.
         rng=random.Random(_resolve_seed(config, seed)),  # noqa: S311
+        language=language,
     )
 
 

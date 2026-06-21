@@ -42,14 +42,16 @@ class CapturingProvider:
     def __init__(self, *, reply: str) -> None:
         self.reply = reply
         self.calls = 0
+        self.prompts: list[str] = []
 
     async def complete(
         self,
-        messages: Sequence[Mapping[str, str]],  # noqa: ARG002
+        messages: Sequence[Mapping[str, str]],
         *,
         stream: bool = False,  # noqa: ARG002
     ) -> str | AsyncIterator[str]:
         self.calls += 1
+        self.prompts.append(" ".join(m.get("content", "") for m in messages))
         return self.reply
 
 
@@ -96,6 +98,39 @@ async def test_inner_monologue_runs_on_tier0() -> None:
 
     # Assert: a private monologue was classified locally (Tier 0), not Tier 1.
     assert tier0.calls == 1
+
+
+async def test_inner_monologue_prompt_carries_the_russian_directive() -> None:
+    # Arrange: a self-generated thought has nothing to mirror, so the language must
+    # be pinned in the prompt (BOB-012) — default Russian.
+    router, tier0 = _router(reply="positive")
+    state = _state(Mood(valence=0.0), Mood())
+    tick = InnerMonologueTick(router=router, state=state, language="ru")
+
+    # Act
+    await tick.run()
+
+    # Assert: the Russian directive reached the model.
+    assert "по-русски" in tier0.prompts[0].casefold()
+
+
+async def test_reflect_prompt_carries_the_russian_directive() -> None:
+    # Arrange: the reflection tick is self-generated too — pin the language.
+    router, tier0 = _router(reply="A quiet reflection.")
+    state = _state(Mood(), Mood())
+    tick = ReflectTick(
+        router=router,
+        repo=FakeRepo(),
+        state=state,
+        clock=FixedClock(_moment()),
+        language="ru",
+    )
+
+    # Act
+    await tick.run()
+
+    # Assert
+    assert "по-русски" in tier0.prompts[0].casefold()
 
 
 async def test_inner_monologue_feeds_mood() -> None:

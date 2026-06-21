@@ -54,6 +54,11 @@ DEFAULT_CONFIG: Config = {
     "runtime": {
         "log_level": "INFO",
         "heartbeat_seconds": 30,
+        # The persona's language for self-generated text (proactive compose, the
+        # Tier-0 gate, the inner-monologue / reflection ticks) — these have no user
+        # message to mirror, so without this constraint the model drifts to English
+        # (BOB-012). Default Russian; a Bobiverse replica can override by config.
+        "language": "ru",
     },
     "llm": {
         "tier0_model": "qwen2.5:0.5b",

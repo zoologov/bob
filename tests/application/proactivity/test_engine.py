@@ -58,22 +58,47 @@ class CountingProvider:
     Replies are scripted in order: the first ``complete`` returns the first item,
     the second the second, and so on, repeating the last item thereafter. This
     lets one Tier-0 provider serve both the gate call and the (flash) compose call
-    with distinct, asserted text.
+    with distinct, asserted text. Each prompt's flattened content is captured so a
+    test can assert what reached the model (language directive, recalled memory).
     """
 
     def __init__(self, *, replies: Sequence[str]) -> None:
         self._replies = list(replies)
         self.calls = 0
+        self.prompts: list[str] = []
 
     async def complete(
         self,
-        messages: Sequence[Mapping[str, str]],  # noqa: ARG002
+        messages: Sequence[Mapping[str, str]],
         *,
         stream: bool = False,  # noqa: ARG002
     ) -> str | AsyncIterator[str]:
         index = min(self.calls, len(self._replies) - 1)
         self.calls += 1
+        self.prompts.append(" ".join(m.get("content", "") for m in messages))
         return self._replies[index]
+
+
+class FakeRecall:
+    """A MemoryRecall double returning a fixed set of recalled memories."""
+
+    def __init__(self, memories: Sequence[str]) -> None:
+        self._memories = list(memories)
+        self.queries: list[str] = []
+
+    async def recall(self, query: str, *, k: int) -> Sequence[Mapping[str, object]]:  # noqa: ARG002
+        self.queries.append(query)
+        return [{"content": m} for m in self._memories]
+
+
+class FakeEpisodeRepo:
+    """An episode-save double recording every episode the engine persists."""
+
+    def __init__(self) -> None:
+        self.episodes: list[Mapping[str, object]] = []
+
+    async def save_episode(self, episode: Mapping[str, object]) -> None:
+        self.episodes.append(episode)
 
 
 class FakeStore:
@@ -190,6 +215,9 @@ def _engine(
     salience: float = 0.5,
     window_count: int = 0,
     governance: Governance | None = None,
+    recall: FakeRecall | None = None,
+    repo: FakeEpisodeRepo | None = None,
+    language: str = "ru",
 ) -> ProactivityEngine:
     return ProactivityEngine(
         persona_id=_PERSONA,
@@ -204,8 +232,11 @@ def _engine(
         personality=state_holder,
         reflection=StubReflection(salience),
         window=StubWindow(window_count),
+        recall=recall if recall is not None else FakeRecall([]),
+        repo=repo if repo is not None else FakeEpisodeRepo(),
         clock=FixedClock(moment),
         rng=random.Random(seed),
+        language=language,
     )
 
 
@@ -266,6 +297,123 @@ async def test_fire_runs_gate_compose_and_posts() -> None:
     assert gateway.replies == ["Hey, how did the launch go today?"]
     assert gateway.typing_opened == 1
     assert sum(p.calls for p in providers) >= 2  # gate + compose
+
+
+async def test_gate_and_compose_prompts_carry_the_russian_directive() -> None:
+    # Arrange: a proactive message is self-generated (nothing to mirror), so both
+    # the Tier-0 gate and the compose prompt must pin the language (BOB-012).
+    moment = _evening()
+    seed = _seed_that_fires(moment, _HIGH_MOOD)
+    store = FakeStore(_state(energy=1.0))
+    router, providers = _router(
+        gate_reply="SAY: ask about the day", compose_reply="Как прошёл день?"
+    )
+    engine = _engine(
+        store=store,
+        router=router,
+        gateway=CapturingGateway(),
+        state_holder=PersonalityState(soul=_soul(_HIGH_MOOD)),
+        moment=moment,
+        seed=seed,
+        salience=0.9,
+        language="ru",
+    )
+
+    # Act
+    await engine.tick()
+
+    # Assert: both the gate call and the compose call carried the Russian directive.
+    tier0 = providers[0]
+    assert len(tier0.prompts) >= 2
+    assert "по-русски" in tier0.prompts[0].casefold()  # gate
+    assert "по-русски" in tier0.prompts[1].casefold()  # compose
+
+
+async def test_proactive_message_is_persisted_to_episodic_memory() -> None:
+    # Arrange: a fire that composes + posts must also be saved to the episode store
+    # (the same store the reactive turn uses) so Bob can reference/explain it later.
+    moment = _evening()
+    seed = _seed_that_fires(moment, _HIGH_MOOD)
+    store = FakeStore(_state(energy=1.0))
+    router, _ = _router(
+        gate_reply="SAY: a warm hello", compose_reply="Привет, как ты сегодня?"
+    )
+    repo = FakeEpisodeRepo()
+    engine = _engine(
+        store=store,
+        router=router,
+        gateway=CapturingGateway(),
+        state_holder=PersonalityState(soul=_soul(_HIGH_MOOD)),
+        moment=moment,
+        seed=seed,
+        salience=0.9,
+        repo=repo,
+    )
+
+    # Act
+    await engine.tick()
+
+    # Assert: the composed message entered the episode store.
+    assert len(repo.episodes) == 1
+    saved = repo.episodes[0]
+    assert "Привет, как ты сегодня?" in str(saved["content"])
+    assert saved["event_type"] == "proactive"
+
+
+async def test_compose_is_grounded_in_recalled_real_memory() -> None:
+    # Arrange: a fake recall returns a known real memory; the compose prompt must
+    # carry that memory so Bob draws on something real instead of confabulating.
+    moment = _evening()
+    seed = _seed_that_fires(moment, _HIGH_MOOD)
+    store = FakeStore(_state(energy=1.0))
+    router, providers = _router(
+        gate_reply="SAY: follow up on the trip", compose_reply="Как поездка в горы?"
+    )
+    recall = FakeRecall(["Owner mentioned a hiking trip to the mountains last week"])
+    engine = _engine(
+        store=store,
+        router=router,
+        gateway=CapturingGateway(),
+        state_holder=PersonalityState(soul=_soul(_HIGH_MOOD)),
+        moment=moment,
+        seed=seed,
+        salience=0.9,
+        recall=recall,
+    )
+
+    # Act
+    await engine.tick()
+
+    # Assert: recall was consulted and the real memory reached the compose prompt.
+    assert recall.queries  # recall happened
+    compose_prompt = providers[0].prompts[1]
+    assert "hiking trip to the mountains" in compose_prompt
+
+
+async def test_skip_persists_nothing_and_does_not_recall_for_nothing() -> None:
+    # Arrange: a gate that skips must not persist an episode (no message to save).
+    moment = _evening()
+    seed = _seed_that_fires(moment, _HIGH_MOOD)
+    store = FakeStore(_state(energy=1.0, last_spoke_at=None))
+    router, _ = _router(gate_reply="SKIP", compose_reply="unreachable")
+    repo = FakeEpisodeRepo()
+    engine = _engine(
+        store=store,
+        router=router,
+        gateway=CapturingGateway(),
+        state_holder=PersonalityState(soul=_soul(_HIGH_MOOD)),
+        moment=moment,
+        seed=seed,
+        salience=0.9,
+        repo=repo,
+    )
+
+    # Act
+    spoke = await engine.tick()
+
+    # Assert: silent → nothing persisted to episodic memory.
+    assert spoke is False
+    assert repo.episodes == []
 
 
 async def test_fire_spends_energy_and_advances_last_spoke() -> None:

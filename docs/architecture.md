@@ -40,7 +40,7 @@ P0 — Telegram-транспорт на aiogram (typing-индикатор + Ric
 ```
 src/bob/
   domain/            # ЧИСТО: без I/O, LLM и Telegram. Только логика и модели.
-    personality/     # Mood, TasteEngine, Negotiation, SOUL
+    personality/     # Mood, TasteEngine, Negotiation, SOUL, язык персоны
     memory/          # EpisodicEvent, SemanticFact
     proactivity/     # UrgeModel, SocialEnergy, Governance, ProactiveDecider, ProactivityState
     ports.py         # порты-протоколы: LLMProvider, MemoryRepo, MemoryRecall,
@@ -527,6 +527,24 @@ Ollama-as-scorer, нативного rerank-API у Ollama нет) опциона
   текущее настроение и baseline, движок вкусов, фантомные предпочтения), который
   рантайм читает на каждом ходе.
 
+### Язык персоны (BOB-012)
+
+Когда Боб говорит **сам, без входящего сообщения** — компоновка проактива,
+Tier-0-гейт проактива, тики внутреннего монолога и рефлексии, — зеркалить нечего,
+и без явного ограничения модель уходит в дефолтный английский. `language.py`
+(`domain/personality/`) — чистый домен этого: `language_directive(language)`
+возвращает короткую императивную строку-директиву («Думай и пиши только
+по-русски.»), которую вызывающий код **дописывает в начало** этих промптов.
+Известный код языка даёт директиву, написанную на самом языке (самый сильный
+стир); неизвестный код — общую инструкцию, которая всё равно называет код, так что
+модель никогда не остаётся без ограничения.
+
+Текст директивы живёт в домене (это вопрос персоны/идентичности), а **выбор** языка
+приходит из конфигурации (`runtime.language`, по умолчанию `ru` — `DEFAULT_LANGUAGE`)
+и инъецируется в use-cases. Будущая реплика Bobiverse может говорить на другом языке
+одной лишь настройкой, не трогая этот контракт. Реактивный чат директиву не несёт —
+он зеркалит ввод пользователя.
+
 ## Genesis и bob-soul
 
 При первом запуске (нет `data/soul/SOUL.md`) `RunGenesis` «пробуждает» уникального
@@ -558,6 +576,12 @@ no-op (без обращения к LLM и без записи файлов). И
 - **MoodDriftTick** — эмоциональный гомеостаз: настроение шагом дрейфует к
   baseline (`Mood.drift_toward`), и всплески затухают.
 - **ReflectTick** — периодическая рефлексия на Tier 0, сохраняемая как эпизод.
+
+`InnerMonologueTick` и `ReflectTick` принимают параметр `language` (по умолчанию
+`DEFAULT_LANGUAGE`, из `runtime.language`) и **дописывают директиву языка персоны**
+в начало своих промптов (BOB-012): этим само-генерируемым тикам нечего зеркалить,
+поэтому без явного ограничения модель уходила бы в английский (см. «Язык
+персоны»).
 
 Все три читают и пишут общий `PersonalityState`, поэтому тики и обработка
 сообщений видят одно согласованное настроение. Цикл `periodic` ретраит
@@ -635,7 +659,10 @@ Governance — это тормоз, а не двигатель: он **нико�
 ### От тика к реплике (дёшево по умолчанию)
 
 `ProactivityEngine` (`application/proactivity/engine.py`) — оркестратор за RFC
-§«Фаза 1». На каждом проактивном тике, cheapest-first:
+§«Фаза 1». Помимо store/decider/router/gateway/clock/RNG ему инъецируются
+`MemoryRecall` (grounding компоновки в реальной памяти), `EpisodeWriter` (персист
+проактива в `episodic_log`) и `language` (директива языка персоны, по умолчанию
+`DEFAULT_LANGUAGE`). На каждом проактивном тике, cheapest-first:
 
 1. **Загрузка** per-persona `ProactivityState` через порт `ProactivityStore`
    (энергия, маркеры `last_spoke_at`/`last_user_msg_at`, флаг `/quiet`).
@@ -651,12 +678,26 @@ Governance — это тормоз, а не двигатель: он **нико�
    спрашивает «есть ли сейчас что сказать на самом деле и о чём?». Он склонен
    пропускать молчание: только финальная строка `SAY: <seed>` даёт говорить,
    `SKIP` (или пустой/искажённый ответ) завершает тик одним дешёвым вызовом без
-   сообщения.
-6. **Компоновка + постинг** — на не-skip seed реплика собирается через `LLMRouter`
-   с гибридным выбором тира (`select_reply_tier`: обычно быстрый flash, качественный
-   plus — на содержательное) и постится в топик Боба через `typing_indicator` +
-   `reply` его gateway.
-7. **Персист** — потратить энергию (`spend`) и проставить `last_spoke_at`.
+   сообщения. Промпт гейта несёт директиву языка персоны (BOB-012).
+6. **Grounding в реальной памяти + компоновка + постинг** — на не-skip seed движок
+   сперва тянет релевантную **настоящую** память через инъецированный `MemoryRecall`
+   (гибрид-recall по seed, `k=3`) и кладёт вспомненные строки в `shareable_context`
+   компоновки. Системный промпт несёт явную анти-конфабуляционную инструкцию:
+   опираться **только** на реально вспомненные моменты, а если ничего не подходит —
+   говорить в общем о своём состоянии, а не выдумывать прошлое событие. Так Боб
+   ссылается на настоящие моменты, а не сочиняет фейковый «общий момент». Промпт
+   компоновки тоже несёт директиву языка персоны. Реплика собирается через
+   `LLMRouter` с гибридным выбором тира (`select_reply_tier`: обычно быстрый flash,
+   качественный plus — на содержательное) и постится в топик Боба через
+   `typing_indicator` + `reply` его gateway.
+7. **Персист** — потратить энергию (`spend`), проставить `last_spoke_at`, **и
+   дописать отправленную реплику в эпизодическую память** (BOB-012). Движок пишет
+   реплику в `episodic_log` через инъецированный порт `EpisodeWriter` (подмножество
+   `MemoryRepo`) — эпизод `event_type=proactive`, контент `bob (proactive): <текст>`,
+   снапшот настроения, теги `telegram,proactive`. Тем же путём, что реактивный ход
+   сохраняет turn, проактив попадает в recall + recent-history, поэтому Боб может
+   потом сослаться на сказанное и объяснить его (раньше реплика никуда не писалась,
+   и Боб «не помнил», что сказал).
 
 `ProactiveTick` (`application/proactivity/tick.py`) — тонкая обёртка, которую
 рантайм планирует на heartbeat-каденсе (`app.py`, `_background_tasks`) рядом с
@@ -719,7 +760,10 @@ value-объекта `ProactivityState`, живёт только в строке
 и `telegram.allowed_chat_ids` (список целых или CSV-строка из env). Секция `llm`
 несёт настройки reasoning-модели — `timeout_seconds` (по умолчанию `180`) и
 `disable_thinking` (по умолчанию `true`); оба значения терпят строковую форму из
-env-переменных.
+env-переменных. Секция `runtime` несёт `language` (по умолчанию `ru`) — язык
+персоны для само-генерируемого текста (проактив-компоновка, Tier-0-гейт, тики
+монолога и рефлексии); этим само-генерациям нечего зеркалить, поэтому без явного
+ограничения модель уходит в английский (BOB-012, см. «Язык персоны»).
 
 `app.py` — единственный модуль, которому разрешено зависеть сразу от всех слоёв.
 Он строит реальные адаптеры, собирает политику приложения, подписывает
@@ -727,11 +771,16 @@ env-переменных.
 через `MultiBotGateway`) и **четыре** heartbeat-тика (inner-monologue, mood-drift,
 reflect и проактивный `ProactiveTick`, все с `RetryPolicy`) как фоновые задачи
 рантайма, один раз запускает Genesis на первом старте и стартует `AgentRuntime`.
+Язык персоны (`runtime.language`, по умолчанию `DEFAULT_LANGUAGE`) читается один раз
+и протягивается в `InnerMonologueTick`, `ReflectTick` и проактивный движок (BOB-012).
 Проактивный движок собирается в `_build_proactivity_engine`: чистый
 `ProactiveDecider` (urge-модель + `Governance`) над общим `SqliteProactivityStore`,
-роутером, gateway Боба и read-seams `RepoProactivitySources`; RNG-seed резолвится
-детерминированно (аргумент → `runtime.proactivity_seed` → env `BOB_PROACTIVITY_SEED`
-→ свежий на процесс), чтобы тесты пинили стохастический розыгрыш. Тот же store
+роутером, gateway Боба и read-seams `RepoProactivitySources`; сюда же инъецируются
+живой `recall` (`HybridMemoryRecall` — grounding компоновки в реальной памяти),
+`repo` (`SqliteMemoryRepo` как `EpisodeWriter` — персист проактива в `episodic_log`)
+и `language` из `runtime.language`. RNG-seed резолвится детерминированно (аргумент →
+`runtime.proactivity_seed` → env `BOB_PROACTIVITY_SEED` → свежий на процесс), чтобы
+тесты пинили стохастический розыгрыш. Тот же store
 питает owner-команды `/quiet`/`/wake` в GUPPI, а `RecordOwnerActivity` сворачивает
 каждое сообщение owner в проактивное состояние.
 Здесь же собирается `BotRegistry`: Боб регистрируется со scope своего топика, GUPPI
@@ -815,6 +864,15 @@ topic-scope), `telegram/test_multibot_hardening.py`, `telegram/test_guppi.py`
 `tests/infrastructure/telegram/test_guppi_proactivity.py` (`/quiet`/`/wake`); плюс
 сквозной приёмочный `tests/test_e2e_proactivity.py` (US-1 порыв, US-2 owner-контроль
 и дешевизна).
+
+Язык персоны, grounding и персист проактива (BOB-012) покрыты:
+`tests/domain/personality/test_language.py` (директива `language_directive`,
+`DEFAULT_LANGUAGE=ru`); `tests/infrastructure/config/test_loader.py`
+(`runtime.language` по умолчанию `ru`); `tests/application/usecases/test_heartbeat.py`
+(директива языка в промптах монолога и рефлексии); `tests/application/proactivity/test_engine.py`
+(директива языка в гейте и компоновке, grounding компоновки в реально вспомненной
+памяти, персист проактива как эпизод `event_type=proactive`, отсутствие персиста на
+SKIP).
 
 Гибридная память (BOB-011 Ф1) покрыта по слоям: домен — порты `Embedder`/`Reranker`
 в `tests/domain/test_ports.py`; приложение — агентный навык
