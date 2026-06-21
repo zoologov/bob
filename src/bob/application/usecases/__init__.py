@@ -13,6 +13,12 @@ delegate all rules to the pure domain.
 
 from __future__ import annotations
 
+from bob.application.usecases.apply_reflection import (
+    ApplyReflection,
+    ReflectionOutcome,
+    ReflectionParser,
+    ReflectionSignal,
+)
 from bob.application.usecases.extract_facts import ExtractFacts
 from bob.application.usecases.handle_message import HandleMessage, PersonalityState
 from bob.application.usecases.heartbeat import (
@@ -20,6 +26,7 @@ from bob.application.usecases.heartbeat import (
     MoodDriftTick,
     ReflectTick,
 )
+from bob.application.usecases.reflection_parser import HeuristicReflectionParser
 from bob.application.usecases.run_genesis import GenesisResult, RunGenesis
 from bob.application.usecases.update_mood_from_text import (
     TextSignals,
@@ -27,13 +34,18 @@ from bob.application.usecases.update_mood_from_text import (
 )
 
 __all__ = [
+    "ApplyReflection",
     "ExtractFacts",
     "GenesisResult",
     "HandleMessage",
+    "HeuristicReflectionParser",
     "InnerMonologueTick",
     "MoodDriftTick",
     "PersonalityState",
     "ReflectTick",
+    "ReflectionOutcome",
+    "ReflectionParser",
+    "ReflectionSignal",
     "RunGenesis",
     "TextSignals",
     "UpdateMoodFromText",

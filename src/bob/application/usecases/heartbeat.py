@@ -36,8 +36,10 @@ if TYPE_CHECKING:
     from collections.abc import Mapping
 
     from bob.application.router.llm_router import LLMRouter
+    from bob.application.usecases.apply_reflection import ApplyReflection
     from bob.application.usecases.handle_message import PersonalityState
-    from bob.domain.ports import Clock
+    from bob.domain.personality.taste import TasteEngine
+    from bob.domain.ports import Clock, JsonValue
 
 logger = logging.getLogger(__name__)
 
@@ -74,6 +76,17 @@ class EpisodeWriter(Protocol):
     """The persistence seam the reflect tick needs: save an episode."""
 
     async def save_episode(self, episode: Mapping[str, object]) -> None: ...
+
+
+class TasteProfileWriter(Protocol):
+    """The narrow persistence seam self-evolution needs: write a JSON artifact.
+
+    A focused view of ``SoulStore`` (interface segregation) — the reflect tick
+    only ever persists the evolved ``taste_profile``, so it depends on this one
+    method rather than the full soul-store contract.
+    """
+
+    def write_json(self, name: str, data: JsonValue) -> None: ...
 
 
 class InnerMonologueTick:
@@ -122,7 +135,15 @@ class MoodDriftTick:
 
 
 class ReflectTick:
-    """Periodic Tier 0 reflection, persisted as an episodic memory."""
+    """Periodic Tier 0 reflection: logged as an episode, then applied to the soul.
+
+    After persisting the reflection as memory, an optional self-evolution step
+    (``apply_reflection`` + ``soul_store``) lets the reflection reshape Bob's
+    tastes (BOB-013 Фаза 2). It is **idempotent**: the same reflection text is
+    applied at most once — ``last_evolved`` records the last applied reflection so
+    a re-run of the identical tick is a no-op. Without the evolution collaborators
+    wired the tick is log-only (its prior behaviour).
+    """
 
     def __init__(
         self,
@@ -132,15 +153,21 @@ class ReflectTick:
         state: PersonalityState,
         clock: Clock,
         language: str = DEFAULT_LANGUAGE,
+        apply_reflection: ApplyReflection | None = None,
+        soul_store: TasteProfileWriter | None = None,
     ) -> None:
         self._router = router
         self._repo = repo
         self._state = state
         self._clock = clock
         self._language = language
+        self._apply_reflection = apply_reflection
+        self._soul_store = soul_store
+        # Idempotency marker: the last reflection text already applied to the soul.
+        self._last_evolved: str | None = None
 
     async def run(self) -> None:
-        """Reflect on Tier 0 and log the reflection as an episode."""
+        """Reflect on Tier 0, log it as an episode, then (optionally) evolve the soul."""
         reflection = await self._router.run(
             LLMRequest(
                 task_type=TaskType.REFLECT,
@@ -161,6 +188,39 @@ class ReflectTick:
             tags=("heartbeat",),
         )
         await self._repo.save_episode(_episode_row(episode))
+        self._evolve(reflection)
+
+    def _evolve(self, reflection: str) -> None:
+        """Apply ``reflection`` to the soul once, persisting taste on a real change."""
+        if self._apply_reflection is None or self._soul_store is None:
+            return
+        if reflection == self._last_evolved:  # idempotency: already applied.
+            return
+        self._last_evolved = reflection
+        outcome = self._apply_reflection.run(reflection, self._state.soul)
+        if not outcome.changed:
+            return
+        self._state.soul = outcome.soul
+        self._soul_store.write_json("taste_profile", _taste_profile(outcome.soul.taste))
+
+
+def _taste_profile(taste: TasteEngine) -> dict[str, object]:
+    """Serialise a taste engine into the persisted ``taste_profile`` JSON shape.
+
+    Mirrors the structure Genesis writes and ``_load_soul`` reads back, so an
+    evolved soul round-trips across a restart.
+    """
+    return {
+        "axes": [
+            {
+                "name": axis.name,
+                "value": axis.value,
+                "conviction": axis.conviction,
+                "experience_count": axis.experience_count,
+            }
+            for axis in taste.axes
+        ]
+    }
 
 
 def _episode_row(episode: EpisodicEvent) -> dict[str, object]:

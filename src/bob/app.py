@@ -60,6 +60,7 @@ from bob.application.runtime import (
     RetryPolicy,
     periodic,
 )
+from bob.application.usecases.apply_reflection import ApplyReflection
 from bob.application.usecases.extract_facts import ExtractFacts
 from bob.application.usecases.handle_message import HandleMessage, PersonalityState
 from bob.application.usecases.heartbeat import (
@@ -67,6 +68,7 @@ from bob.application.usecases.heartbeat import (
     MoodDriftTick,
     ReflectTick,
 )
+from bob.application.usecases.reflection_parser import HeuristicReflectionParser
 from bob.application.usecases.run_genesis import RunGenesis
 from bob.application.usecases.update_mood_from_text import UpdateMoodFromText
 from bob.domain.personality.language import DEFAULT_LANGUAGE
@@ -74,6 +76,8 @@ from bob.domain.personality.mood import Mood
 from bob.domain.personality.negotiation import Negotiation
 from bob.domain.personality.soul import SOUL
 from bob.domain.personality.taste import TasteAxis, TasteEngine
+from bob.domain.personality.taste_evolution import ALPHA as _EVOLUTION_ALPHA
+from bob.domain.personality.taste_evolution import BETA as _EVOLUTION_BETA
 from bob.domain.personality.zone_classifier import TasteZoneClassifier
 from bob.domain.proactivity.decision import ProactiveDecider
 from bob.domain.proactivity.governance import Governance
@@ -140,6 +144,11 @@ _BOB_PERSONA = "bob"
 # (the urge/governance decision is pure, defaulting to silence), so most ticks
 # make ZERO LLM calls.
 _PROACTIVE_TICK_MULTIPLIER = 1
+
+# Default self-evolution learning rates (BOB-013 Фаза 2); overridable via
+# personality.evolution.{alpha,beta}. Sourced from the pure kernel's constants.
+EVOLUTION_ALPHA = _EVOLUTION_ALPHA
+EVOLUTION_BETA = _EVOLUTION_BETA
 
 # Where the bob-soul personality templates live (repo root / bob-soul).
 _DEFAULT_TEMPLATES_DIR = Path(__file__).resolve().parents[2] / "bob-soul"
@@ -330,12 +339,23 @@ def build_application(
         router=router, state=personality, language=language
     )
     mood_drift_tick = MoodDriftTick(state=personality)
+    # Self-evolution (BOB-013 Фаза 2): the reflect tick reshapes Bob's tastes and
+    # persists them. Learning rates are tunable via personality.evolution.{alpha,beta}.
+    evolution = _section(merged, "personality").get("evolution")
+    evolution_cfg = evolution if isinstance(evolution, Mapping) else {}
+    apply_reflection = ApplyReflection(
+        parser=HeuristicReflectionParser(),
+        alpha=_float_or(evolution_cfg, "alpha", EVOLUTION_ALPHA),
+        beta=_float_or(evolution_cfg, "beta", EVOLUTION_BETA),
+    )
     reflect_tick = ReflectTick(
         router=router,
         repo=memory_repo,
         state=personality,
         clock=resolved_clock,
         language=language,
+        apply_reflection=apply_reflection,
+        soul_store=soul_store,
     )
 
     proactivity_engine = _build_proactivity_engine(
@@ -795,6 +815,16 @@ def _float(section: Mapping[str, object], key: str) -> float:
     if isinstance(value, (int, float)):
         return float(value)
     return 0.0
+
+
+def _float_or(section: Mapping[str, object], key: str, default: float) -> float:
+    """Read a float from config, falling back to ``default`` when absent/invalid."""
+    value = section.get(key)
+    if isinstance(value, bool):
+        return default
+    if isinstance(value, (int, float)):
+        return float(value)
+    return default
 
 
 # --- aiogram bot adapter ------------------------------------------------------
