@@ -111,6 +111,20 @@ def test_conviction_never_exceeds_one() -> None:
     assert 0.0 <= evolved.conviction <= 1.0
 
 
+def test_full_conviction_freezes_the_axis_no_runaway() -> None:
+    # Arrange: a maximally-settled opinion — the strongest anti-runaway extreme.
+    # At conviction=1.0 the (1 - conviction) damping is zero, so neither value nor
+    # conviction may move however hard the nudge pushes (US-3: no drift at extremes).
+    axis = TasteAxis(name="jazz", value=0.4, conviction=1.0)
+
+    # Act: a full-strength nudge against a fully-convinced axis.
+    evolved = reinforce(axis, nudge=1.0)
+
+    # Assert: a settled opinion is immovable — value and conviction are unchanged.
+    assert evolved.value == pytest.approx(0.4)
+    assert evolved.conviction == pytest.approx(1.0)
+
+
 def test_name_and_experience_count_are_preserved() -> None:
     # Arrange
     axis = TasteAxis(name="jazz", value=0.2, conviction=0.1, experience_count=5)

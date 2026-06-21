@@ -15,6 +15,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
+from bob.app import _load_soul
 from bob.application.router.llm_router import LLMRouter
 from bob.application.usecases.apply_reflection import ApplyReflection, ReflectionSignal
 from bob.application.usecases.handle_message import PersonalityState
@@ -26,9 +27,11 @@ from bob.application.usecases.heartbeat import (
 from bob.domain.personality.mood import Mood
 from bob.domain.personality.soul import SOUL
 from bob.domain.personality.taste import TasteAxis, TasteEngine
+from bob.infrastructure.persistence.soul_store import SoulStore
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Mapping, Sequence
+    from pathlib import Path
 
 
 class FixedClock:
@@ -291,6 +294,43 @@ async def test_reflect_double_run_is_idempotent() -> None:
     assert state.soul.taste.axes[0].value == value_after_first
     assert state.soul.experience_count == 1
     assert len(soul_store.writes) == writes_after_first
+
+
+async def test_reflect_evolution_survives_a_restart_via_real_soul_store(
+    tmp_path: Path,
+) -> None:
+    # Arrange: persist through the REAL SoulStore so the change is visible "between
+    # runs" (US-2). A SOUL.md + taste_profile seed make _load_soul reconstruct the
+    # soul exactly as a fresh boot would after Genesis has written the artifacts.
+    soul_store = SoulStore(tmp_path)
+    soul_store.write_soul("# I am the Bob from the book.")
+    soul_store.write_json(
+        "taste_profile",
+        {"axes": [{"name": "jazz", "value": 0.2, "conviction": 0.1, "experience_count": 0}]},
+    )
+    boot_soul = _load_soul(soul_store)
+    state = PersonalityState(soul=boot_soul)
+    router, _ = _router(reply="I love jazz lately.")
+    tick = ReflectTick(
+        router=router,
+        repo=FakeRepo(),
+        state=state,
+        clock=FixedClock(_moment()),
+        apply_reflection=ApplyReflection(
+            parser=StubParser(ReflectionSignal(topic="jazz", nudge=1.0))
+        ),
+        soul_store=soul_store,
+    )
+
+    # Act: the reflection evolves the live soul and persists it; a "restart" reloads
+    # the soul from disk exactly as the next boot would.
+    await tick.run()
+    reloaded = _load_soul(soul_store)
+
+    # Assert: the evolved liking persisted and a fresh load reflects the change —
+    # the round-trip the RFC promised ("изменение видно между запусками").
+    assert reloaded.taste.axes[0].value > 0.2
+    assert reloaded.taste.axes[0].value == state.soul.taste.axes[0].value
 
 
 async def test_reflect_without_evolution_wiring_is_log_only() -> None:

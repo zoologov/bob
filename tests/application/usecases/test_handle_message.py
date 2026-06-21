@@ -709,6 +709,43 @@ async def test_no_topic_path_is_unchanged_when_verdict_is_neutral_and_shared() -
     assert "warmly" in tier1.all_text
 
 
+def _soul_with_mild_opinion(topic: str) -> SOUL:
+    # A soul holding a MILD opinion on ``topic`` → a non-NEUTRAL verdict (DISLIKE),
+    # but conviction below the SHARED pushback threshold (0.7) so Negotiation in a
+    # SHARED zone returns AGREE rather than PROPOSE_ALTERNATIVE.
+    baseline = Mood(valence=0.1, social=0.2)
+    taste = TasteEngine(axes=(TasteAxis(name=topic, value=-0.4, conviction=0.3),))
+    return SOUL(
+        identity="I am the Bob from the book.",
+        mood=baseline,
+        mood_baseline=baseline,
+        taste=taste,
+        phantom_prefs=(_PHANTOM_PREF,),
+    )
+
+
+async def test_shared_with_opinion_below_threshold_yields_agree_directive() -> None:
+    # Arrange: a SHARED topic Bob has a real-but-mild opinion on (DISLIKE, low
+    # conviction) → Negotiation returns AGREE. The verdict is non-NEUTRAL so the
+    # relevance gate fires and the AGREE directive must reach the prompt — the
+    # "support without imposing" middle path the neutral-SHARED test cannot exercise.
+    topic = "обсудим подробно мой выбор редактора"
+    handler, _bot, _repo, tier1 = _build(
+        reply="hi",
+        soul=_soul_with_mild_opinion(topic),
+        zone_classifier=_StubZoneClassifier(NegotiationZone.SHARED),
+    )
+
+    # Act
+    await handler.handle(_message(topic))
+
+    # Assert: Bob is told to support without imposing — not to argue, not to capitulate.
+    assert _AGREE_DIRECTIVE in tier1.all_text
+    assert _PROPOSE_DIRECTIVE not in tier1.all_text
+    assert _CONCEDE_DIRECTIVE not in tier1.all_text
+    assert "warmly" in tier1.all_text
+
+
 async def test_default_classifier_is_used_when_none_is_injected() -> None:
     # Arrange: no classifier wired → the deterministic TasteZoneClassifier default.
     # A strong-dislike topic with NO logistics marker lands in BOB_PERSONAL. The
