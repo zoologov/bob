@@ -52,6 +52,7 @@ from bob.application.router.llm_router import LLMRequest, TaskType
 from bob.application.router.reply_tier_selector import select_reply_tier
 from bob.domain.memory.entities import EpisodicEvent
 from bob.domain.personality.language import DEFAULT_LANGUAGE, language_directive
+from bob.domain.personality.voice import anti_bait_directive
 from bob.domain.proactivity.governance import ProactiveHistory
 from bob.domain.proactivity.state import ProactivityState
 
@@ -83,13 +84,18 @@ _GATE_PROMPT = (
     "EXACTLY 'SKIP' to stay quiet, or 'SAY: <short seed/topic>' to speak."
 )
 
+# The proactive compose carries Bob's voice guidance too (BOB-016): reaching out
+# unprompted is exactly where the base model wants to bait for a reply ("хочешь,
+# расскажу ещё?") and sign off with a ☕ — so the anti-bait directive + few-shot
+# is appended here as well, and Bob opens a conversation by landing on a thought.
 _COMPOSE_SYSTEM = (
     "You are Bob, a digital person from the Bobiverse, reaching out unprompted. "
     "Write one warm, concise, in-character message, coloured by your current mood. "
     "Do not mention that you were prompted; just speak. Draw ONLY on real "
     "remembered moments from the recalled memory below -- never invent a shared "
     "experience that is not there; if nothing fits, speak generally about how you "
-    "feel rather than fabricating a past event."
+    "feel rather than fabricating a past event.\n"
+    f"{anti_bait_directive()}"
 )
 
 # How many real memories to recall to ground the proactive compose (keeps the
