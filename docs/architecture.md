@@ -40,17 +40,20 @@ P0 — Telegram-транспорт на aiogram (typing-индикатор + Ric
 ```
 src/bob/
   domain/            # ЧИСТО: без I/O, LLM и Telegram. Только логика и модели.
-    personality/     # Mood, TasteEngine, Negotiation, SOUL, язык персоны
+    personality/     # Mood, TasteEngine, Negotiation, SOUL, TasteZoneClassifier,
+                     #   taste_evolution, язык персоны
     memory/          # EpisodicEvent, SemanticFact
     proactivity/     # UrgeModel, SocialEnergy, Governance, ProactiveDecider, ProactivityState
     ports.py         # порты-протоколы: LLMProvider, MemoryRepo, MemoryRecall,
                      #                   SoulStore, EventBus, Clock, ProactivityStore
     ports.py         #   + Capability, ToolCallingProvider, AllowlistStore,
-                     #     Embedder, Reranker (семантическая память, BOB-011)
+                     #     Embedder, Reranker (семантическая память, BOB-011),
+                     #     ZoneClassifier (Negotiation-врезка, BOB-013)
   application/       # GUPPI: use-cases + оркестрация. Зависит от domain через порты.
     runtime/         # AgentRuntime (жизненный цикл), AsyncEventBus, события, periodic, retry
     router/          # LLMRouter: классификация задачи → Tier + правило редакции
-    usecases/        # HandleMessage, RunGenesis, UpdateMoodFromText, heartbeat-тики
+    usecases/        # HandleMessage, RunGenesis, UpdateMoodFromText, heartbeat-тики,
+                     #   ApplyReflection + HeuristicReflectionParser (само-эволюция)
     proactivity/     # ProactivityEngine, ProactiveTick, RecordOwnerActivity
     authz/           # Authorizer: политика owner/allowlist/chat-scope
     capabilities/    # CapabilityRegistry, ToolLoop, recall_memory, search_memory
@@ -181,6 +184,10 @@ GUPPI и шлёт ответы своим инъецированным бото�
    предпочтения, вспомненные факты и недавние реплики. Этот материал
    формирует ответ Боба и возвращается тому же пользователю, поэтому он
    передаётся роутеру как **`shareable_context`** (см. Вариант 2 редакции ниже).
+   Здесь же работает **Negotiation-врезка** (BOB-013): зона темы
+   (`ZoneClassifier`) + убеждённость (`conviction_for`) → стойка
+   (`Negotiation.decide`) → директива, дописанная к системному промпту, поэтому
+   Боб защищает свои ценности, а не угождает безусловно (см. «Higher Mind»).
 4. **Act (ответ, гибридный тиринг + селективная редакция, fallback Tier 0).**
    `LLMRouter` обрабатывает задачу `REPLY_TO_USER`. Тир ответа выбирается
    **гибридно** (BOB-006): по умолчанию casual/короткая реплика идёт на быстрый
@@ -520,12 +527,88 @@ Ollama-as-scorer, нативного rerank-API у Ollama нет) опциона
 - **TasteEngine** — детерминированно отображает тему в `Verdict`
   (love/like/neutral/dislike/hate) по значению оси и conviction; conviction гейтит
   экстремумы (сильное, но непроверенное предпочтение дотягивает только до `LIKE`).
+  Геттер `conviction_for(topic)` (BOB-013) возвращает убеждённость по релевантной
+  оси (та же выборка по имени, что у `score`), а для неизвестной темы — `0.0`;
+  его читает Negotiation-врезка, чтобы понять, насколько твёрдо Боб держит позицию.
 - **Negotiation** — решает позицию Боба в текстовой зоне: в домене пользователя он
-  всегда уступает, в своей и общей зоне — по conviction соглашается или предлагает
-  альтернативу. В P0 действует только на текст.
+  всегда уступает, в своей и общей зоне — по conviction соглашается
+  (`AGREE`) или предлагает альтернативу (`PROPOSE_ALTERNATIVE`). Порог
+  пушбэка зонозависим: свою территорию (`BOB_PERSONAL`) Боб защищает охотнее
+  (порог `0.5`), общую (`SHARED`) — труднее (`0.7`). `decide(zone, conviction)`
+  чист и детерминирован; выход за `[0, 1]` по conviction — громкая ошибка. В P0
+  действует только на текст.
 - **SOUL** — неизменяемый in-memory снапшот загруженной личности (идентичность,
   текущее настроение и baseline, движок вкусов, фантомные предпочтения), который
-  рантайм читает на каждом ходе.
+  рантайм читает на каждом ходе. Обновления иммутабельны (`with_*` возвращает
+  копию, оригинал нетронут): `with_mood(mood)` — после хода/дрейфа настроения;
+  `with_taste(axes)` (BOB-013) — свопает свежий `TasteEngine` над эволюционировавшими
+  осями **и** инкрементирует `experience_count` (счётчик прожитых шагов
+  само-эволюции растёт монотонно); `with_baseline(delta)` — мелкий устойчивый сдвиг
+  mood-baseline (с клампом через `Mood.update`).
+
+### Negotiation-врезка: зона → стойка → директива промпта (BOB-013, Фаза 1)
+
+Готовый `Negotiation` раньше не имел потребителей — Боб был безусловно угодлив. Ф1
+подключает его к генерации ответа: зона темы + убеждённость → стойка →
+**директива в системный промпт**, дополняющая тёплый тон (Боб защищает свои
+ценности, не становясь грубым).
+
+- **Порт `ZoneClassifier`** (`domain/ports.py`): `classify(topic, *, taste_verdict,
+  conviction) -> NegotiationZone` решает, *кому принадлежит* тема. Контракт абстрактен
+  намеренно — позже свопается на Tier-0 LLM-классификатор без изменения потребителей.
+- **Дефолт `TasteZoneClassifier`** (`domain/personality/zone_classifier.py`) —
+  детерминированная эвристика без сети и LLM. Приоритет: **логистика > сильный вкус
+  > общее**. Явные маркеры быта/логистики (расписание, время, громкость — «когда»,
+  «во сколько», «громче», `schedule`, `volume`, …; подстрокой, регистронезависимо)
+  → `USER_DOMAIN` (территория пользователя — даже на любимую Бобом тему «когда» решает
+  пользователь). Сильно держимый вкус (`LOVE`/`HATE` **и** conviction ≥ `0.5`) →
+  `BOB_PERSONAL`. Иначе → `SHARED`. Пороги и словарь живут в реализации, не в домене.
+- **Решение стойки.** `HandleMessage._stance_prompt` (`application/usecases/handle_message.py`)
+  на decide-шаге берёт вердикт и `conviction_for(text)`, классифицирует зону,
+  зовёт `Negotiation.decide(zone, conviction)` и отображает стойку в директиву:
+  - `CONCEDE` → «это территория пользователя — спокойно прими его выбор»;
+  - `AGREE` → «у тебя нет сильной позиции — поддержи, без навязывания»;
+  - `PROPOSE_ALTERNATIVE` → «у тебя есть своё мнение и убеждённость — аргументируй
+    и предложи своё, уважительно, без агрессии и без капитуляции».
+- **Гейт сигнала.** Директива добавляется к промпту (`_SYSTEM_PROMPT` + директива),
+  **только** когда есть что обсуждать: вердикт не `NEUTRAL` **или** зона —
+  `USER_DOMAIN`. Нейтральная тема в общей зоне директивы не несёт, поэтому путь без
+  таргетного вкуса ведёт себя ровно как до BOB-013. Карта стоек чистая — нового
+  LLM-вызова нет, тёплый тон не заменяется, а дополняется.
+
+### Само-эволюция: рефлексия переписывает вкус (BOB-013, Фаза 2)
+
+Раньше рефлексия только логировалась — контур «рефлексия → вкус» был разомкнут. Ф2
+замыкает его: после сохранения рефлексии она **применяется** к душе с жёсткими
+guardrails и **персистится**.
+
+- **Чистое ядро `taste_evolution.reinforce`** (`domain/personality/taste_evolution.py`,
+  без I/O/LLM/часов) сдвигает одну ось:
+  - `value' = clamp(value + α · nudge · (1 − conviction), −1, 1)`;
+  - `conviction' = clamp(conviction + β · |nudge| · (1 − conviction), 0, 1)`.
+  Множитель `(1 − conviction)` — **главный анти-runaway guardrail**: устоявшееся
+  мнение (высокая convicton) сдвигается строго меньше, а убеждённость растёт
+  асимптотически к 1 (затухающий прирост, без перескока). Константы малы
+  (`α=0.15`, `β=0.10`), поэтому эволюция медленна — на горизонте многих рефлексий;
+  они переопределяемы через `personality.evolution.{alpha,beta}`. `name` и
+  `experience_count` оси сохраняются; границы `[−1,1]`/`[0,1]` всегда клампятся.
+- **Use-case `ApplyReflection`** (`application/usecases/apply_reflection.py`):
+  вход — текст рефлексии + текущая `SOUL`, выход — `ReflectionOutcome(soul, changed)`.
+  Шаги: парс рефлексии в `ReflectionSignal` (какая ось, знаковый `nudge`, опц.
+  `baseline_delta`) через инъецированный порт `ReflectionParser` → `reinforce`
+  совпавшей оси → `soul.with_taste(...)` (+опц. `with_baseline`). **Гейт
+  релевантности:** `None`-сигнал или сигнал на ось, которой у Боба нет, — строгий
+  no-op (`changed=False`, та же душа), поэтому шум не трогает личность.
+- **Дефолт-парсер `HeuristicReflectionParser`** (`application/usecases/reflection_parser.py`)
+  — консервативная эвристика по ключевым словам, срабатывает только при совпадении
+  темы **и** чёткой полярности сентимента (двуязычные маркеры ru+en, по границам
+  слов — «dislike» не триггерит «like»). Смешанный/отсутствующий сентимент или
+  неизвестная тема → `None` (гейт). Порт абстрактен — Tier-0 LLM-парсер свопается
+  позже без изменения потребителей.
+- **SOUL round-trip.** `with_taste`/`with_baseline` дают новую душу, которую
+  `ReflectTick` персистит через `SoulStore.write_json("taste_profile", …)`;
+  `_load_soul` читает `taste_profile` обратно при старте, поэтому эволюционировавшая
+  личность переживает рестарт (см. «Heartbeat» ниже).
 
 ### Язык персоны (BOB-012)
 
@@ -575,7 +658,16 @@ no-op (без обращения к LLM и без записи файлов). И
   нудит настроение, так внутренний монолог питает Mood.
 - **MoodDriftTick** — эмоциональный гомеостаз: настроение шагом дрейфует к
   baseline (`Mood.drift_toward`), и всплески затухают.
-- **ReflectTick** — периодическая рефлексия на Tier 0, сохраняемая как эпизод.
+- **ReflectTick** — периодическая рефлексия на Tier 0, сохраняемая как эпизод, а
+  затем (BOB-013, Ф2) **применяемая к душе**: после `save_episode(reflection)` шаг
+  `_evolve` зовёт `ApplyReflection.run(reflection, soul)`; на реальном изменении
+  (`changed=True`) живой `SOUL` обновляется и эволюционировавший `taste_profile`
+  персистится через `SoulStore.write_json`. Шаг **идемпотентен**: маркер
+  `last_evolved` хранит последний применённый текст рефлексии, поэтому повторный
+  прогон того же тика — no-op (одна рефлексия применяется не более раза). Эволюция
+  опциональна: без `apply_reflection`/`soul_store` тик ведёт себя как прежде
+  (только лог эпизода). Зависимость на персист сужена до порта `TasteProfileWriter`
+  (только `write_json` — interface segregation), а не на весь `SoulStore`.
 
 `InnerMonologueTick` и `ReflectTick` принимают параметр `language` (по умолчанию
 `DEFAULT_LANGUAGE`, из `runtime.language`) и **дописывают директиву языка персоны**
@@ -763,7 +855,10 @@ value-объекта `ProactivityState`, живёт только в строке
 env-переменных. Секция `runtime` несёт `language` (по умолчанию `ru`) — язык
 персоны для само-генерируемого текста (проактив-компоновка, Tier-0-гейт, тики
 монолога и рефлексии); этим само-генерациям нечего зеркалить, поэтому без явного
-ограничения модель уходит в английский (BOB-012, см. «Язык персоны»).
+ограничения модель уходит в английский (BOB-012, см. «Язык персоны»). Опциональная
+секция `personality.evolution` несёт скорости само-эволюции `alpha`/`beta`
+(BOB-013, дефолты `0.15`/`0.10` из доменного ядра) — тюнинг темпа дрейфа вкуса без
+правки домена.
 
 `app.py` — единственный модуль, которому разрешено зависеть сразу от всех слоёв.
 Он строит реальные адаптеры, собирает политику приложения, подписывает
@@ -786,8 +881,14 @@ reflect и проактивный `ProactiveTick`, все с `RetryPolicy`) ка
 Здесь же собирается `BotRegistry`: Боб регистрируется со scope своего топика, GUPPI
 — со scope General, и оба идут в `MultiBotGateway`. `HandleMessage` отдаёт ответы
 через `multibot.reply_gateway(BotIdentity.BOB)`, поэтому они приколочены к топику
-Боба. Здесь же собираются общий `Authorizer` (над `KvAllowlistStore`) для гейта и
-GUPPI и `CapabilityRegistry` с навыками `recall_memory` и **`search_memory`**;
+Боба. `HandleMessage` собирается с Negotiation-врезкой (BOB-013): дефолтный
+`TasteZoneClassifier` и `Negotiation` инъецируются, поэтому Боб защищает свои
+ценности директивой стойки (см. «Higher Mind»). Само-эволюция (BOB-013, Ф2)
+собирается в `ReflectTick`: `ApplyReflection` с `HeuristicReflectionParser`
+получает скорости обучения `α`/`β` из `personality.evolution.{alpha,beta}` (дефолты
+из ядра — `0.15`/`0.10`), а персист эволюционировавшего вкуса идёт через тот же
+`SoulStore`. Здесь же собираются общий `Authorizer` (над `KvAllowlistStore`) для
+гейта и GUPPI и `CapabilityRegistry` с навыками `recall_memory` и **`search_memory`**;
 провайдер Tier 1 подключается как `ToolCallingProvider`, когда поддерживает
 tool-calling, иначе tool-loop остаётся дремлющим. Гибридная память (BOB-011)
 собирается здесь же: эмбеддер и опциональный реранкер — инъецируемые швы (по
@@ -883,6 +984,19 @@ SKIP).
 (+ `_hardening`) и `test_hybrid_recall.py` (RRF, keyword-фоллбэк, аддитивный реранк).
 Эмбеддер/реранкер тестируются на фейках, без сети в CI. Сверху — приёмочный
 `tests/test_acceptance_memory.py` (US-1/2/3) и e2e `tests/test_e2e_memory_hybrid.py`.
+
+Глубина личности (BOB-013) покрыта по слоям. Ф1 Negotiation-врезка: домен —
+`tests/domain/personality/test_negotiation.py` (`decide` по зонам/порогам),
+`test_zone_classifier.py` (логистика → `USER_DOMAIN`, сильный вкус → `BOB_PERSONAL`,
+нейтраль → `SHARED`), `test_taste.py` (`conviction_for`: ось найдена/не найдена);
+приложение — `tests/application/usecases/test_handle_message.py` (зона+conviction →
+директива стойки в промпте, тёплый тон сохранён, нейтраль → путь без директивы).
+Ф2 само-эволюция: домен — `test_taste_evolution.py` (`reinforce`: усиление, затухание
+`(1−conviction)`, границы), `test_soul.py` (`with_taste`/`with_baseline`,
+`experience_count++`); приложение — `test_apply_reflection.py` (сигнал → ось
+изменилась; гейт релевантности → no-op), `test_reflection_parser.py` (полярность +
+совпадение темы), `tests/application/usecases/test_heartbeat.py` (эволюция в
+`ReflectTick`, идемпотентность двойного прогона, персист `taste_profile`).
 
 Защитный механизм CI (BOB-009): `pytest-timeout` задаёт дефолтный пер-тестовый
 таймаут (`timeout=60`, `timeout_method="thread"` в `pyproject.toml`), чтобы будущий
