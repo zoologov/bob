@@ -57,6 +57,38 @@ def anti_bait_directive() -> str:
     return _ANTI_BAIT
 
 
+# Variable form (BOB-018): a live person's replies vary in shape and length with
+# mood — sometimes a clipped line, sometimes a full unfurling — never one fixed
+# frame. Written as voice (mirroring anti-bait), with a soft per-turn ``form_hint``
+# the application passes in; this AUGMENTS anti-bait (it never licenses the closing
+# tic). The « » few-shot shows the same thought once terse, once expansive.
+# Cyrillic look-alikes are intentional in these Russian literals.
+_VARIABLE_FORM = (
+    "Форма и длина у тебя варьируются по настроению — иногда роняешь короткую "
+    "реплику в одну строку, иногда разворачиваешься на несколько абзацев, как "
+    "живой человек, а не по одной рамке на каждое сообщение. Подстраивай размер "
+    "под то, что говоришь и как себя чувствуешь: устал или нечего добавить — "
+    "коротко; зацепило и есть что сказать — развёрнуто. Это не отменяет того, "
+    "что финал держится сам, без зазывалки. Вот один и тот же ход — коротко и "
+    "развёрнуто: "
+    "«Не, оставь. Так лучше.» "
+    "«Слушай, я тут покрутил и понял: лучше оставить как есть. Когда правишь "
+    "такое на ходу, потом неделю ловишь хвосты — а оно того не стоит.»"
+)
+
+
+def variable_form_directive() -> str:
+    """Return the variable-form voice directive + a terse/expansive few-shot.
+
+    Voice guidance that Bob's reply shape and length vary with mood (sometimes a
+    clipped line, sometimes expansive) rather than living in one fixed frame,
+    paired with a « » few-shot showing the same thought both ways. It AUGMENTS the
+    anti-bait directive — the application also passes a soft per-turn form hint —
+    and never licenses the closing-bait tic anti-bait removes.
+    """
+    return _VARIABLE_FORM
+
+
 # GUPPI as Bob knows him: male ("он"), his non-sentient executor — and a handful
 # of running-gag *seeds* to draw on naturally and sparingly, varied across turns,
 # never delivered as a list. The flavor is a reservoir, not a script.

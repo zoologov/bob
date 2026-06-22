@@ -72,6 +72,17 @@ class _Bot:
     ) -> _Msg:
         return _Msg()
 
+    async def set_message_reaction(
+        self,
+        *,
+        chat_id: int,  # noqa: ARG002
+        message_id: int,  # noqa: ARG002
+        reaction: object,  # noqa: ARG002
+        message_thread_id: int | None = None,  # noqa: ARG002
+    ) -> bool:
+        # BOB-018: react-only seam; fakes accept the BotLike reaction call.
+        return True
+
     async def send_chat_action(
         self,
         *,
@@ -227,6 +238,17 @@ async def test_aiogram_adapter_delegates_every_call() -> None:
         ) -> str:
             self.calls.append(("send_message", {"chat_id": chat_id, "text": text}))
             return "sent"
+
+        async def set_message_reaction(
+            self,
+            *,
+            chat_id: int,  # noqa: ARG002
+            message_id: int,  # noqa: ARG002
+            reaction: object,  # noqa: ARG002
+            message_thread_id: int | None = None,  # noqa: ARG002
+        ) -> bool:
+            # BOB-018: react-only seam; fakes accept the BotLike reaction call.
+            return True
 
         async def send_chat_action(
             self,

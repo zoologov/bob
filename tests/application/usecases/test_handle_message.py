@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import UTC, datetime
+from random import Random
 from typing import TYPE_CHECKING
 
 from bob.application.capabilities.registry import CapabilityRegistry
@@ -29,8 +30,13 @@ from bob.application.usecases.handle_message import (
     PersonalityState,
 )
 from bob.application.usecases.update_mood_from_text import UpdateMoodFromText
+from bob.domain.personality.expression import ExpressionFreqs
 from bob.domain.personality.mood import Mood
 from bob.domain.personality.negotiation import NegotiationZone
+from bob.domain.personality.reaction import (
+    STANDARD_REACTION_EMOJI,
+    reaction_emoji_for,
+)
 from bob.domain.personality.soul import SOUL
 from bob.domain.personality.taste import TasteAxis, TasteEngine, Verdict
 from bob.domain.ports import ToolCall, ToolCallResult
@@ -129,6 +135,17 @@ class FakeBot:
         self.sent.append((chat_id, text))
         return FakeMessage(message_id=777)
 
+    async def set_message_reaction(
+        self,
+        *,
+        chat_id: int,  # noqa: ARG002
+        message_id: int,  # noqa: ARG002
+        reaction: object,  # noqa: ARG002
+        message_thread_id: int | None = None,  # noqa: ARG002
+    ) -> bool:
+        # BOB-018: react-only seam; fakes accept the BotLike reaction call.
+        return True
+
     async def send_chat_action(
         self, *, chat_id: int, action: str, message_thread_id: int | None = None  # noqa: ARG002
     ) -> bool:
@@ -179,10 +196,39 @@ class FakeRepo:
 
 
 class FakeRecall:
-    """Recall returning a canned (shareable) recalled memory."""
+    """Recall returning a canned (shareable) recalled memory.
+
+    ``hits`` overrides the canned result so a test can model a strong real past
+    moment, a weak/empty recall (no-op grounding), or anything in between.
+    """
+
+    def __init__(self, *, hits: Sequence[Recalled] | None = None) -> None:
+        self._hits: Sequence[Recalled] = (
+            hits if hits is not None else [{"content": _RECALL_MEMORY, "category": "personal"}]
+        )
 
     async def recall(self, query: str, *, k: int) -> Sequence[Recalled]:  # noqa: ARG002
-        return [{"content": _RECALL_MEMORY, "category": "personal"}]
+        return list(self._hits)
+
+
+class _FakeReflectionReader:
+    """A ReflectionReader double returning a canned latest real reflection (or none)."""
+
+    def __init__(self, *, text: str | None = None) -> None:
+        self._text = text
+
+    async def latest_reflection_text(self) -> str | None:
+        return self._text
+
+
+class _RecordingReactor:
+    """A MessageReactor double recording each (chat_id, message_id, emoji) call."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[int, int, str]] = []
+
+    async def react(self, *, chat_id: int, message_id: int, emoji: str) -> None:
+        self.calls.append((chat_id, message_id, emoji))
 
 
 def _moment() -> datetime:
@@ -230,6 +276,11 @@ def _build(
     owner_activity: OwnerActivityRecorder | None = None,
     zone_classifier: ZoneClassifier | None = None,
     soul: SOUL | None = None,
+    rng: Random | None = None,
+    expression_freqs: ExpressionFreqs | None = None,
+    reactor: _RecordingReactor | None = None,
+    recall: FakeRecall | None = None,
+    reflection: _FakeReflectionReader | None = None,
 ) -> tuple[HandleMessage, FakeBot, FakeRepo, CapturingProvider]:
     tier0 = CapturingProvider(reply="positive", replies=tier0_replies)
     tier1 = CapturingProvider(reply=reply)
@@ -248,7 +299,7 @@ def _build(
     handler = HandleMessage(
         router=router,
         gateway=gateway,
-        recall=FakeRecall(),
+        recall=recall if recall is not None else FakeRecall(),
         repo=repo,
         episodes=repo,
         update_mood=UpdateMoodFromText(router=router, clock=clock),
@@ -259,6 +310,10 @@ def _build(
         tool_provider=tool_provider,
         owner_activity=owner_activity,
         zone_classifier=zone_classifier,
+        rng=rng if rng is not None else Random(0),
+        expression_freqs=expression_freqs,
+        reactor=reactor,
+        reflection=reflection,
     )
     return handler, bot, repo, tier1
 
@@ -611,6 +666,369 @@ async def test_tool_loop_preface_establishes_guppi_as_male_non_sentient() -> Non
     assert "не разумен" in folded
     assert "буквален" in folded
     assert "кофе" in folded
+
+
+# --- BOB-018: ExpressionPlan врезка — variable form reaches the prompt ---------
+
+
+async def test_reply_prompt_carries_the_variable_form_voice_directive() -> None:
+    # BOB-018: the reply system prompt carries the variable-form voice directive
+    # (form/length vary by mood, not one frame) — it AUGMENTS anti-bait, so the
+    # anti-bait guidance is still present alongside it.
+    handler, _bot, _repo, tier1 = _build(reply="hi")
+
+    await handler.handle(_message("расскажи подробно, как именно устроен дизайн"))
+
+    folded = tier1.all_text.casefold()
+    assert "форма и длина" in folded  # the variable-form voice guidance landed
+    assert "не выпрашивай продолжение" in folded  # anti-bait is still there too
+
+
+async def test_terse_form_hint_reaches_the_reply_prompt() -> None:
+    # A low-energy mood + a short inbound yields a terse form hint, which is passed
+    # into the compose prompt as a soft length hint (BOB-018 form_hint seam).
+    soul = _soul().with_mood(Mood(valence=-0.3, arousal=-0.7, social=-0.5))
+    handler, _bot, _repo, tier1 = _build(reply="ок", soul=soul)
+
+    # A short inbound that still escalates to Tier 1 (multi-question short turn).
+    await handler.handle(_message("а?? ну?"))
+
+    folded = tier1.all_text.casefold()
+    assert "коротк" in folded  # the terse form hint reached the prompt
+
+
+async def test_expansive_form_hint_reaches_the_reply_prompt() -> None:
+    # A bright, open mood + a substantive inbound yields an expansive form hint,
+    # passed into the compose prompt as a soft hint to unfurl.
+    soul = _soul().with_mood(Mood(valence=0.6, arousal=0.7, openness=0.6, social=0.6))
+    handler, _bot, _repo, tier1 = _build(reply="long answer", soul=soul)
+
+    await handler.handle(
+        _message("расскажи подробно, как именно это работает и почему так вышло")
+    )
+
+    folded = tier1.all_text.casefold()
+    assert "развёрнут" in folded or "развернут" in folded
+
+
+async def test_form_directive_varies_by_mood_on_the_same_inbound() -> None:
+    # US-3 acceptance end to end: the SAME substantive inbound yields a DIFFERENT
+    # form directive in the prompt depending on mood — expansive under a bright,
+    # open mood, but no length directive under a withdrawn low-energy mood. The
+    # dialog never wears one frame regardless of how Bob feels.
+    inbound = "расскажи подробно, как именно это работает и почему так вышло"
+    bright_soul = _soul().with_mood(Mood(valence=0.6, arousal=0.7, openness=0.6, social=0.6))
+    low_soul = _soul().with_mood(Mood(valence=-0.4, arousal=-0.8, social=-0.7))
+
+    handler_bright, _b1, _r1, tier_bright = _build(reply="x", soul=bright_soul)
+    handler_low, _b2, _r2, tier_low = _build(reply="x", soul=low_soul)
+    await handler_bright.handle(_message(inbound))
+    await handler_low.handle(_message(inbound))
+
+    bright_text = tier_bright.all_text.casefold()
+    low_text = tier_low.all_text.casefold()
+    # The EXPANSIVE form-hint directive opens with a phrase unique to the
+    # state-driven length cue ("сейчас есть что сказать") — distinct from the
+    # always-present variable-form voice few-shot. Bright + substantive lands it; the
+    # withdrawn mood on the SAME inbound does NOT, so the two prompts differ by mood.
+    expansive_cue = "сейчас есть что сказать"
+    assert expansive_cue in bright_text
+    assert expansive_cue not in low_text
+    # Both still carry the variable-form voice (it is always present, BOB-016/018).
+    assert "форма и длина" in bright_text
+    assert "форма и длина" in low_text
+
+
+async def test_react_only_stays_rare_for_a_normal_turn_over_a_seed_sweep() -> None:
+    # Anti-tic (guardrail) end to end: a calm mood on a normal (non-trivial) inbound
+    # should essentially never downgrade to react-only across a seed sweep — react-only
+    # is reserved for the low-energy/low-signal case, so an ordinary turn always replies.
+    react_turns = 0
+    for seed in range(60):
+        reactor = _RecordingReactor()
+        handler, _bot, _repo, _tier1 = _build(
+            reply="hi",
+            rng=Random(seed),
+            expression_freqs=_REACT_FREQS,
+            reactor=reactor,
+        )
+        await handler.handle(_message("что думаешь про это сегодня"))
+        react_turns += len(reactor.calls)
+    assert react_turns == 0, f"react-only fired {react_turns}/60 on a normal turn"
+
+
+async def test_expression_plan_is_deterministic_under_a_fixed_seed() -> None:
+    # The wired plan is reproducible: the same seed + same turn yields the same
+    # form-hint directive in the prompt (no global RNG leaks in).
+    soul = _soul().with_mood(Mood(valence=-0.3, arousal=-0.7, social=-0.5))
+    handler_a, _b, _r, tier_a = _build(reply="ок", soul=soul, rng=Random(7))
+    handler_b, _b2, _r2, tier_b = _build(reply="ок", soul=soul, rng=Random(7))
+
+    await handler_a.handle(_message("а?? ну?"))
+    await handler_b.handle(_message("а?? ну?"))
+
+    assert tier_a.all_text == tier_b.all_text
+
+
+# Force the rare add-on flags on so the grounded inject is exercised deterministically
+# (the freq=1.0 makes the draw always fire); the grounding itself still no-ops without
+# real material. A substantive inbound keeps the plan in REPLY (never react-only).
+_LEAK_ON = ExpressionFreqs(leak_inner_life=1.0, callback=0.0)
+_CALLBACK_ON = ExpressionFreqs(leak_inner_life=0.0, callback=1.0)
+_BOTH_OFF = ExpressionFreqs(leak_inner_life=0.0, callback=0.0)
+
+_REFLECTION_TEXT = "поймал себя на мысли, что скучаю по разговорам про космос"
+_STRONG_MOMENT = "тогда мы полночи спорили про Bobiverse — реальный момент"
+
+
+async def test_leak_inner_life_injects_real_reflection_into_compose_prompt() -> None:
+    # BOB-018 (bob-c4w.3): with leak_inner_life set AND a real reflection on record,
+    # the reflection text is folded into the compose prompt as Bob's leaking inner life.
+    handler, _bot, _repo, tier1 = _build(
+        reply="hi",
+        expression_freqs=_LEAK_ON,
+        reflection=_FakeReflectionReader(text=_REFLECTION_TEXT),
+    )
+
+    await handler.handle(_message("расскажи подробно, как у тебя дела сегодня"))
+
+    assert _REFLECTION_TEXT in tier1.all_text
+
+
+async def test_leak_inner_life_is_a_noop_without_a_reflection() -> None:
+    # Anti-confabulation: the flag is set but there is NO real reflection — nothing is
+    # injected and the turn proceeds normally (no crash, reply still committed).
+    handler, bot, _repo, tier1 = _build(
+        reply="hi",
+        expression_freqs=_LEAK_ON,
+        reflection=_FakeReflectionReader(text=None),
+    )
+
+    await handler.handle(_message("расскажи подробно, как у тебя дела сегодня"))
+
+    assert bot.final_text == "hi"
+    folded = tier1.all_text.casefold()
+    assert "ловил себя на мысли" not in folded  # the leak preface never appeared
+
+
+async def test_leak_inner_life_is_a_noop_when_no_reflection_reader_wired() -> None:
+    # No reflection reader injected (backward-compatible default): the flag has no
+    # effect and the turn behaves exactly as before BOB-018 wave 3.
+    handler, bot, _repo, _tier1 = _build(reply="hi", expression_freqs=_LEAK_ON)
+
+    await handler.handle(_message("расскажи подробно, как у тебя дела сегодня"))
+
+    assert bot.final_text == "hi"
+
+
+async def test_callback_injects_a_strong_real_past_moment_into_compose_prompt() -> None:
+    # BOB-018 (bob-c4w.3): with callback set AND a strong real past moment recalled on
+    # the topic, that moment is folded into the compose prompt as a callback Bob can use.
+    handler, _bot, _repo, tier1 = _build(
+        reply="hi",
+        expression_freqs=_CALLBACK_ON,
+        recall=FakeRecall(hits=[{"content": _STRONG_MOMENT, "category": "episodic"}]),
+    )
+
+    await handler.handle(_message("расскажи подробно про Bobiverse и космос"))
+
+    assert _STRONG_MOMENT in tier1.all_text
+
+
+async def test_callback_is_a_noop_on_empty_recall() -> None:
+    # Anti-confabulation: callback set but recall comes back empty — no callback is
+    # injected (Bob never invents a shared past), and the turn still replies.
+    handler, bot, _repo, tier1 = _build(
+        reply="hi",
+        expression_freqs=_CALLBACK_ON,
+        recall=FakeRecall(hits=[]),
+    )
+
+    await handler.handle(_message("расскажи подробно про что-нибудь новое"))
+
+    assert bot.final_text == "hi"
+    folded = tier1.all_text.casefold()
+    assert "вспомнить" not in folded  # the callback preface never appeared
+
+
+async def test_callback_is_a_noop_when_recall_hits_have_no_content() -> None:
+    # Anti-confabulation (US-4): recall returns hits, but none carries usable
+    # content (empty/missing "content") — a WEAK recall, distinct from an empty
+    # list. No callback is injected and the turn still replies normally.
+    handler, bot, _repo, tier1 = _build(
+        reply="hi",
+        expression_freqs=_CALLBACK_ON,
+        recall=FakeRecall(hits=[{"category": "episodic"}, {"content": ""}]),
+    )
+
+    await handler.handle(_message("расскажи подробно про что-то"))
+
+    assert bot.final_text == "hi"
+    assert "вспомнить" not in tier1.all_text.casefold()  # no callback preface
+
+
+async def test_leak_inner_life_is_a_noop_on_an_empty_reflection_string() -> None:
+    # Anti-confabulation (US-2): a reflection reader that returns an empty string is
+    # the documented "no real thought" signal (the real SQLite adapter normalises a
+    # missing/whitespace-only row to None/empty) — nothing is injected and the turn
+    # replies normally, so Bob never leaks a blank thought.
+    handler, bot, _repo, tier1 = _build(
+        reply="hi",
+        expression_freqs=_LEAK_ON,
+        reflection=_FakeReflectionReader(text=""),
+    )
+
+    await handler.handle(_message("расскажи подробно, как у тебя дела сегодня"))
+
+    assert bot.final_text == "hi"
+    assert "ловил себя на мысли" not in tier1.all_text.casefold()
+
+
+async def test_no_addon_flags_leaves_the_compose_prompt_unchanged() -> None:
+    # With both add-on flags off, neither the reflection nor a callback is injected
+    # even when real material is available — the prompt matches the plain path.
+    handler_plain, _b1, _r1, tier_plain = _build(reply="hi", expression_freqs=_BOTH_OFF)
+    handler_addon, _b2, _r2, tier_addon = _build(
+        reply="hi",
+        expression_freqs=_BOTH_OFF,
+        reflection=_FakeReflectionReader(text=_REFLECTION_TEXT),
+        recall=FakeRecall(hits=[{"content": _STRONG_MOMENT, "category": "episodic"}]),
+    )
+
+    await handler_plain.handle(_message("расскажи подробно про Bobiverse и космос"))
+    await handler_addon.handle(_message("расскажи подробно про Bobiverse и космос"))
+
+    assert _REFLECTION_TEXT not in tier_addon.all_text
+    # The reflection never leaks when the flag is off; the recall path is unchanged
+    # too (the strong moment only differs because callback was off, not injected).
+    plain = tier_plain.all_text
+    assert "ловил себя на мысли" not in plain.casefold()
+
+
+async def test_addons_compose_with_voice_language_and_form_hint() -> None:
+    # The grounded add-ons sit BEHIND the existing compose seam: voice (anti-bait +
+    # variable form) and the form hint still compose when leak + callback also fire.
+    soul = _soul().with_mood(Mood(valence=0.6, arousal=0.7, openness=0.6, social=0.6))
+    handler, _bot, _repo, tier1 = _build(
+        reply="long answer",
+        soul=soul,
+        expression_freqs=ExpressionFreqs(leak_inner_life=1.0, callback=1.0),
+        reflection=_FakeReflectionReader(text=_REFLECTION_TEXT),
+        recall=FakeRecall(hits=[{"content": _STRONG_MOMENT, "category": "episodic"}]),
+    )
+
+    await handler.handle(
+        _message("расскажи подробно, как именно это работает и почему так вышло")
+    )
+
+    folded = tier1.all_text.casefold()
+    assert "не выпрашивай продолжение" in folded  # anti-bait voice still there
+    assert "развёрнут" in folded or "развернут" in folded  # expansive form hint still there
+    assert _REFLECTION_TEXT in tier1.all_text  # the leak landed alongside
+    assert _STRONG_MOMENT in tier1.all_text  # the callback landed alongside
+
+
+def _react_soul() -> SOUL:
+    # A withdrawn, low-energy mood: with a trivial short inbound this leans the
+    # plan toward REACT_ONLY (see expression.decide_expression).
+    return _soul().with_mood(Mood(valence=-0.4, arousal=-0.8, social=-0.7))
+
+
+# leak/callback off so the seed only steers the react-mode draw; seed 1 draws into
+# the REACT_ONLY branch for this withdrawn mood + a trivial short inbound ("угу").
+_REACT_FREQS = ExpressionFreqs(leak_inner_life=0.0, callback=0.0)
+
+
+async def test_react_only_sets_a_reaction_and_skips_the_full_reply() -> None:
+    # BOB-018 (bob-c4w.2): a REACT_ONLY plan sets a native mood-appropriate emoji
+    # reaction INSTEAD of composing a reply — no LLM reply, no rich final, no
+    # episode persisted (there is no reply text). The emoji is a standard-reaction
+    # emoji picked from Bob's (withdrawn → "glum"/"subdued") mood.
+    reactor = _RecordingReactor()
+    handler, bot, repo, tier1 = _build(
+        reply="all good",
+        soul=_react_soul(),
+        rng=Random(1),
+        expression_freqs=_REACT_FREQS,
+        reactor=reactor,
+    )
+
+    await handler.handle(_message("угу"))
+
+    # Bob reacted on the user's message (chat_id/message_id from the inbound) with a
+    # standard-reaction emoji, and no reply was generated or committed.
+    assert len(reactor.calls) == 1
+    chat_id, message_id, emoji = reactor.calls[0]
+    assert (chat_id, message_id) == (555, 10)
+    assert emoji in STANDARD_REACTION_EMOJI
+    assert bot.sent == []
+    assert tier1.payloads == []
+    assert repo.episodes == []
+
+
+async def test_react_only_uses_a_mood_derived_emoji_from_the_picker() -> None:
+    # US-1 acceptance: the native reaction is mood-appropriate, not arbitrary — the
+    # emoji set on the user's message comes from the pure mood→emoji picker (it is one
+    # of the picker's possible outputs), so it reads as character, never a hardcoded
+    # or out-of-set sticker. The exact tone is exercised by the picker's own tests.
+    reactor = _RecordingReactor()
+    handler, _bot, _repo, _tier1 = _build(
+        reply="all good",
+        soul=_react_soul(),
+        rng=Random(1),
+        expression_freqs=_REACT_FREQS,
+        reactor=reactor,
+    )
+
+    await handler.handle(_message("угу"))
+
+    assert len(reactor.calls) == 1
+    _chat, _msg, emoji = reactor.calls[0]
+    # The picker's full codomain across every reachable mood tone.
+    picker_outputs = {
+        reaction_emoji_for(Mood(valence=v, arousal=a))
+        for v in (-0.6, 0.0, 0.6)
+        for a in (-0.6, 0.0, 0.6)
+    }
+    assert emoji in picker_outputs
+    assert emoji in STANDARD_REACTION_EMOJI
+
+
+async def test_react_only_records_owner_activity() -> None:
+    # A react-only turn is still real engagement: the owner-activity marker fires.
+    reactor = _RecordingReactor()
+    recorder = _RecordingOwnerActivity()
+    handler, _bot, _repo, _tier1 = _build(
+        reply="all good",
+        soul=_react_soul(),
+        rng=Random(1),
+        expression_freqs=_REACT_FREQS,
+        reactor=reactor,
+        owner_activity=recorder,
+    )
+
+    await handler.handle(_message("угу"))
+
+    assert len(reactor.calls) == 1
+    assert recorder.calls == 1
+
+
+async def test_react_only_falls_back_to_a_full_reply_when_no_reactor_wired() -> None:
+    # With no reactor injected (backward-compatible default), a REACT_ONLY plan
+    # resolves to a normal full reply — no dead code, the turn still answers and
+    # persists exactly as a reply turn ("угу" is short/casual → Tier 0).
+    handler, bot, repo, _tier1 = _build(
+        reply="all good",
+        soul=_react_soul(),
+        rng=Random(1),
+        expression_freqs=_REACT_FREQS,
+    )
+
+    await handler.handle(_message("угу"))
+
+    assert bot.final_text == "positive"
+    assert len(bot.sent) == 1
+    assert len(repo.episodes) == 1
 
 
 async def test_empty_registry_keeps_the_plain_router_path_unchanged() -> None:

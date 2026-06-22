@@ -92,6 +92,20 @@ DEFAULT_CONFIG: Config = {
         # top-K candidates from RRF in, top-N reranked out (Q4: ~20-50 -> ~5-8).
         "top_n": 8,
     },
+    # Spontaneous expression (BOB-018): per turn a pure ExpressionPlan picks how
+    # Bob expresses himself (full reply vs. a terse react-only ack + rare add-on
+    # flags + a soft form hint), deterministically from mood + a seeded RNG. The
+    # add-on flags fire on a small, configurable fraction of turns (anti-tic):
+    # ``leak_inner_life`` surfaces a real recent reflection, ``callback`` a real
+    # past moment. Defaults are deliberately small; tune per persona. The seed
+    # reuses the proactivity seed (``runtime.proactivity_seed``) so one knob makes
+    # all of Bob's stochastic behaviour reproducible in tests.
+    "expression": {
+        "freqs": {
+            "leak_inner_life": 0.12,
+            "callback": 0.1,
+        },
+    },
     # Two bots in one process (BOB-003): Bob lives in his topic, GUPPI is the
     # gatekeeper in General. Each bot's token comes from env only (never YAML);
     # the shared ids (chat/owner/allowlist) and Bob's topic are non-secret.

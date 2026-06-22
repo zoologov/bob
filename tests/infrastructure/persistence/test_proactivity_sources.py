@@ -168,6 +168,92 @@ async def test_window_count_ignores_non_proactive_episodes(tmp_path: Path) -> No
         await repo.close()
 
 
+@pytest.mark.asyncio
+async def test_latest_reflection_text_returns_most_recent_real_reflection(
+    tmp_path: Path,
+) -> None:
+    # BOB-018 leak seam: the newest reflection/inner_monologue text comes back so the
+    # reactive reply can leak it (here the inner_monologue is the most recent).
+    repo = await _repo(tmp_path)
+    await _add_episode(
+        repo,
+        event_type="reflection",
+        content="старая рефлексия",
+        ts=_NOW - timedelta(hours=2),
+    )
+    await _add_episode(
+        repo,
+        event_type="inner_monologue",
+        content="свежая внутренняя мысль про космос",
+        ts=_NOW,
+    )
+    sources = RepoProactivitySources(repo)
+    try:
+        text = await sources.latest_reflection_text()
+    finally:
+        await repo.close()
+    assert text == "свежая внутренняя мысль про космос"
+
+
+@pytest.mark.asyncio
+async def test_latest_reflection_text_is_none_without_any_inner_life(
+    tmp_path: Path,
+) -> None:
+    # Anti-confabulation: a plain conversation turn is NOT inner life, so there is
+    # nothing real to leak — the reader returns None and the caller no-ops.
+    repo = await _repo(tmp_path)
+    await _add_episode(repo, event_type="message", content="привет", ts=_NOW)
+    sources = RepoProactivitySources(repo)
+    try:
+        assert await sources.latest_reflection_text() is None
+    finally:
+        await repo.close()
+
+
+@pytest.mark.asyncio
+async def test_latest_reflection_text_is_none_on_empty_log(tmp_path: Path) -> None:
+    repo = await _repo(tmp_path)
+    sources = RepoProactivitySources(repo)
+    try:
+        assert await sources.latest_reflection_text() is None
+    finally:
+        await repo.close()
+
+
+@pytest.mark.asyncio
+async def test_latest_reflection_text_is_none_for_whitespace_only_content(
+    tmp_path: Path,
+) -> None:
+    # Anti-confabulation edge: a reflection row whose content is only whitespace has
+    # nothing real to leak — the reader normalises it to None so the leak no-ops
+    # rather than injecting a blank "thought" into the compose prompt.
+    repo = await _repo(tmp_path)
+    await _add_episode(repo, event_type="reflection", content="   \n\t  ", ts=_NOW)
+    sources = RepoProactivitySources(repo)
+    try:
+        assert await sources.latest_reflection_text() is None
+    finally:
+        await repo.close()
+
+
+@pytest.mark.asyncio
+async def test_latest_reflection_text_trims_surrounding_whitespace(
+    tmp_path: Path,
+) -> None:
+    # The leaked text is the trimmed reflection content — no stray newlines/padding
+    # bleed into the compose prompt around the real thought.
+    repo = await _repo(tmp_path)
+    await _add_episode(
+        repo, event_type="reflection", content="  думал про звёзды  \n", ts=_NOW
+    )
+    sources = RepoProactivitySources(repo)
+    try:
+        text = await sources.latest_reflection_text()
+    finally:
+        await repo.close()
+    assert text == "думал про звёзды"
+
+
 def _clock(moment: datetime) -> _FixedClock:
     return _FixedClock(moment)
 

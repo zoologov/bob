@@ -48,7 +48,7 @@ import logging
 from typing import TYPE_CHECKING, Protocol
 
 from aiogram.exceptions import AiogramError
-from aiogram.types import InputRichMessage
+from aiogram.types import InputRichMessage, ReactionTypeEmoji
 
 from bob.application.runtime.events import MessageReceived
 from bob.infrastructure.telegram.rich import (
@@ -77,6 +77,11 @@ PLAIN_TEXT_LIMIT = 4096
 
 # The chat action Bob shows while assembling a reply ("Bob is typing…").
 _TYPING_ACTION = "typing"
+
+# The brief textual acknowledgement Bob sends when a native reaction is rejected
+# (best-effort fallback) — a short "noted" so a react-only turn still lands a sign
+# of life rather than going silent. Russian persona text (project language).
+_REACTION_FALLBACK_ACK = "Угу."  # noqa: RUF001 — Cyrillic ack is intentional
 
 
 # --- Minimal structural views of the bits of aiogram the gateway touches ------
@@ -146,6 +151,15 @@ class BotLike(Protocol):
         rich_message: InputRichMessage,
         message_thread_id: int | None = None,
     ) -> MessageLike: ...
+
+    async def set_message_reaction(
+        self,
+        *,
+        chat_id: int,
+        message_id: int,
+        reaction: Sequence[ReactionTypeEmoji],
+        message_thread_id: int | None = None,
+    ) -> bool: ...
 
 
 class AuthorizerLike(Protocol):
@@ -430,6 +444,31 @@ class TelegramGateway:
                 text=chunk,
                 message_thread_id=self._reply_thread_id,
             )
+
+    # --- React-only (native reaction + best-effort fallback) ------------------
+
+    async def react(self, *, chat_id: int, message_id: int, emoji: str) -> None:
+        """Set a single native ``emoji`` reaction on ``message_id`` (best-effort).
+
+        BOB-018: a react-only turn acknowledges with one native Telegram reaction
+        instead of a composed reply. ``emoji`` is a standard-reaction emoji Bob
+        picked from his mood. On **any** reaction error (the API rejects the emoji,
+        a flaky connection) the reaction degrades to a brief textual ack so the
+        user still gets a sign of life; it is logged and swallowed, so a failed
+        reaction can never break a turn.
+        """
+        try:
+            await self._bot.set_message_reaction(
+                chat_id=chat_id,
+                message_id=message_id,
+                reaction=[ReactionTypeEmoji(emoji=emoji)],
+                message_thread_id=self._reply_thread_id,
+            )
+        except (AiogramError, ValueError) as exc:
+            logger.warning(
+                "reaction failed; falling back to a brief ack: %s", exc
+            )
+            await self._send_plain(chat_id, _REACTION_FALLBACK_ACK)
 
 
 def _parse_user_id(argument: str) -> int | None:

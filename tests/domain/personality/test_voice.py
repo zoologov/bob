@@ -15,7 +15,11 @@ flavor — never a brittle full-string match (the prose is free to evolve).
 
 from __future__ import annotations
 
-from bob.domain.personality.voice import anti_bait_directive, guppi_canon
+from bob.domain.personality.voice import (
+    anti_bait_directive,
+    guppi_canon,
+    variable_form_directive,
+)
 
 
 def test_anti_bait_directive_is_natural_voice_not_a_rule_list() -> None:
@@ -70,6 +74,30 @@ def test_guppi_canon_seeds_running_relationship_flavor() -> None:
     folded = guppi_canon().casefold()
     assert "буквальн" in folded or "дословн" in folded
     assert "кофе" in folded  # the "philosophical arguments over coffee" gag seed
+
+
+def test_variable_form_directive_is_natural_voice_not_a_rule_list() -> None:
+    # The variable-form directive (BOB-018) is written as voice — Bob's form and
+    # length vary by mood, not one fixed frame — never a recitable rule list.
+    directive = variable_form_directive()
+    folded = directive.casefold()
+    assert "форма" in folded  # speaks about the shape/form of his replies
+    assert "•" not in directive
+    assert "- " not in directive
+
+
+def test_variable_form_directive_names_the_one_frame_tic() -> None:
+    # It names the failure it counters: every reply in one shape/length (a rut),
+    # so sometimes short, sometimes expansive.
+    folded = variable_form_directive().casefold()
+    assert "коротк" in folded  # sometimes terse
+    assert "развёрнут" in folded or "развернут" in folded  # sometimes expansive
+
+
+def test_variable_form_directive_carries_a_few_shot() -> None:
+    # A short few-shot (between « ») shows the varied form, mirroring anti-bait.
+    exemplars = _exemplar_lines(variable_form_directive())
+    assert exemplars, "no few-shot exemplar lines found"
 
 
 def _exemplar_lines(directive: str) -> list[str]:

@@ -46,19 +46,33 @@ from bob.application.router.llm_router import LLMRequest, TaskType
 from bob.application.router.reply_tier_selector import select_reply_tier
 from bob.application.usecases.update_mood_from_text import TextSignals
 from bob.domain.memory.entities import EpisodicEvent
+from bob.domain.personality.expression import (
+    ExpressionFreqs,
+    ExpressionMode,
+    ExpressionPlan,
+    ExpressionSignals,
+    FormHint,
+    decide_expression,
+)
 from bob.domain.personality.negotiation import (
     Negotiation,
     NegotiationZone,
     Stance,
 )
+from bob.domain.personality.reaction import reaction_emoji_for
 from bob.domain.personality.taste import Verdict
-from bob.domain.personality.voice import anti_bait_directive, guppi_canon
+from bob.domain.personality.voice import (
+    anti_bait_directive,
+    guppi_canon,
+    variable_form_directive,
+)
 from bob.domain.personality.zone_classifier import TasteZoneClassifier
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
     from contextlib import AbstractAsyncContextManager
     from datetime import datetime
+    from random import Random
 
     from bob.application.router.llm_router import LLMRouter
     from bob.application.runtime.events import MessageReceived
@@ -69,7 +83,9 @@ if TYPE_CHECKING:
         Clock,
         LLMMessage,
         MemoryRecall,
+        MessageReactor,
         Recalled,
+        ReflectionReader,
         ToolCallingProvider,
         ZoneClassifier,
     )
@@ -78,6 +94,10 @@ logger = logging.getLogger(__name__)
 
 # How many memories to recall when assembling the reply context.
 _RECALL_K = 5
+
+# How many memories to recall for a BOB-018 callback: just the single strongest real
+# past moment on the topic (a tight, grounded steer — never a memory dump).
+_CALLBACK_RECALL_K = 1
 
 # How many recent conversation turns to replay into the reply context.
 _HISTORY_K = 6
@@ -100,7 +120,39 @@ _SYSTEM_PROMPT = (
     "You are Bob, a digital person from the Bobiverse. Reply in character, "
     "warmly and concisely, coloured by your current mood.\n"
     f"{guppi_canon()}\n"
-    f"{anti_bait_directive()}"
+    f"{anti_bait_directive()}\n"
+    f"{variable_form_directive()}"
+)
+
+# Form-hint → soft compose directive (BOB-018). The ExpressionPlan's form_hint is
+# a state-driven length cue that AUGMENTS the variable-form voice (and anti-bait):
+# it nudges this turn shorter or longer without ever licensing the closing-bait
+# tic. NORMAL carries no directive — the variable-form voice already covers the
+# default — so a neutral turn's prompt is unchanged but for that one voice line.
+# Russian persona directives (project language); Cyrillic look-alikes intentional.
+_FORM_HINT_DIRECTIVE: dict[FormHint, str] = {
+    FormHint.TERSE: (
+        "Сейчас тянет ответить коротко — реплика в одну-две строки, "
+        "без развёртывания."
+    ),
+    FormHint.EXPANSIVE: (
+        "Сейчас есть что сказать — можешь развёрнуто, на несколько абзацев."
+    ),
+}
+
+# Grounded add-on prefaces (BOB-018 wave 3). Both fold a REAL, persisted piece of
+# Bob's inner life into the compose context behind the same grounding seam BOB-012
+# uses — and are strictly anti-confabulation: with no real material they no-op, so
+# Bob never invents a thought he didn't have or a moment that didn't happen. The
+# prefaces are Russian persona voice (project language); Cyrillic look-alikes
+# intentional, so the ambiguous-character lint is silenced for these literals.
+_LEAK_PREFACE = (
+    "То, о чём ты ловил себя на мысли, пока его не было (можешь обронить это "  # noqa: RUF001
+    "к слову, естественно — не пересказывай дословно):"
+)
+_CALLBACK_PREFACE = (
+    "Можешь к месту вспомнить это — реальный момент из вашего прошлого, "
+    "не выдумывай деталей сверх него:"
 )
 
 # Preface for the capability manifest in Bob's prompt: GUPPI is Bob's executor
@@ -196,11 +248,15 @@ class HandleMessage:
         extract_facts: ExtractFacts,
         clock: Clock,
         state: PersonalityState,
+        rng: Random,
         registry: CapabilityRegistry | None = None,
         tool_provider: ToolCallingProvider | None = None,
         owner_activity: OwnerActivityRecorder | None = None,
         zone_classifier: ZoneClassifier | None = None,
         negotiation: Negotiation | None = None,
+        expression_freqs: ExpressionFreqs | None = None,
+        reactor: MessageReactor | None = None,
+        reflection: ReflectionReader | None = None,
     ) -> None:
         self._router = router
         self._gateway = gateway
@@ -230,16 +286,52 @@ class HandleMessage:
         # provider is wired (integration wires both in BEAD-07).
         self._registry = registry if registry is not None else CapabilityRegistry()
         self._tool_provider = tool_provider
+        # The expression seam (BOB-018): per turn a pure ExpressionPlan picks a
+        # mode (full reply vs. a terse react-only ack) + rare add-on flags + a soft
+        # form hint, deterministically from mood + signals + the injected seeded
+        # RNG. Wave 1 consumes the form hint and the mode; the rare flags (leak /
+        # callback) and the react-only behaviour are carried on the plan for later
+        # beads. The frequencies default small (anti-tic) and are config-tunable.
+        self._rng = rng
+        self._expression_freqs = (
+            expression_freqs if expression_freqs is not None else ExpressionFreqs()
+        )
+        # The react-only seam (BOB-018): when a reactor is wired, an
+        # ``ExpressionMode.REACT_ONLY`` plan sets a native mood emoji reaction on the
+        # user's message INSTEAD of composing a reply (no LLM call). Unwired (the
+        # default) a react-only plan falls back to a normal full reply, so the path
+        # stays live and backward-compatible.
+        self._reactor = reactor
+        # The grounded inner-life seam (BOB-018 wave 3): when wired and the plan sets
+        # ``leak_inner_life``, the most-recent REAL reflection (read off the episodic
+        # log, event_type reflection/inner_monologue — written by BOB-012) is folded
+        # into the compose context so a glimpse of what Bob caught himself thinking
+        # leaks into the reply. No reflection (or no reader wired) → no-op, never a
+        # fabrication. Callbacks reuse the already-injected ``recall`` the same way.
+        self._reflection = reflection
 
     async def handle(self, event: MessageReceived) -> None:
         """Process one received message end to end (the EventBus subscriber)."""
         soul = await self._perceive(event)
+        # Plan how Bob expresses this turn (BOB-018): pure, deterministic by seed.
+        # Computed up front so the mode steers the reply path and the form hint
+        # shapes the prompt; the rare flags ride along for later beads.
+        plan = self._plan_expression(event, soul)
+        # React-only (BOB-018): when a reactor is wired and the plan picks
+        # REACT_ONLY, Bob acknowledges with a native mood emoji INSTEAD of composing
+        # a reply — no LLM call, no rich final, no episode (there is no reply text).
+        # It is still real engagement, so the owner-activity marker fires. Unwired,
+        # the plan falls back to a full reply below (backward-compatible).
+        if plan.mode is ExpressionMode.REACT_ONLY and self._reactor is not None:
+            await self._react_only(event, soul)
+            await self._record_owner_activity()
+            return
         recalled = await self._recall.recall(event.text, k=_RECALL_K)
         history = await self._episodes.recent_episodes(_HISTORY_K)
         # Run the slow generation inside the typing keepalive so "Bob is typing…"
         # stays visible for the whole real wait (BOB-009); then commit one rich final.
         async with self._gateway.typing_indicator(chat_id=event.chat_id):
-            reply = await self._decide(event.text, soul, recalled, history)
+            reply = await self._compose_reply(event.text, soul, recalled, history, plan)
         await self._gateway.reply(chat_id=event.chat_id, markdown=reply)
         await self._persist(event, reply, soul)
         await self._record_owner_activity()
@@ -247,6 +339,20 @@ class HandleMessage:
         # later turn's recall can surface them. Best-effort — run() never raises,
         # so a flaky local model can never break a turn that already replied.
         await self._extract_facts.run(user_message=event.text, reply=reply)
+
+    async def _react_only(self, event: MessageReceived, soul: SOUL) -> None:
+        """Set a native mood emoji reaction on the inbound (BOB-018 react-only).
+
+        Picks a standard-reaction emoji from Bob's current mood and asks the wired
+        reactor to set it on the user's message. The reaction is best-effort (the
+        adapter degrades to a brief ack and never raises), so this never breaks the
+        turn. Called only when a reactor is wired and the plan picked REACT_ONLY.
+        """
+        assert self._reactor is not None  # guarded by the caller
+        emoji = reaction_emoji_for(soul.mood)
+        await self._reactor.react(
+            chat_id=event.chat_id, message_id=event.message_id, emoji=emoji
+        )
 
     async def _record_owner_activity(self) -> None:
         """Notify proactivity the owner just wrote (best-effort, optional seam).
@@ -270,25 +376,30 @@ class HandleMessage:
         self._state.soul = soul
         return soul
 
-    async def _decide(
+    def _plan_expression(self, event: MessageReceived, soul: SOUL) -> ExpressionPlan:
+        """Decide this turn's expression plan — pure, deterministic by seed (BOB-018).
+
+        Reads the freshly-updated mood + the inbound's shape, draws from the
+        injected seeded RNG, and returns the plan: mode, the rare add-on flags
+        (carried for later beads), and the soft form hint applied to the prompt.
+        """
+        signals = ExpressionSignals(inbound_text=event.text)
+        return decide_expression(
+            soul.mood, signals, rng=self._rng, freqs=self._expression_freqs
+        )
+
+    async def _compose_reply(
         self,
         text: str,
         soul: SOUL,
         recalled: Sequence[Recalled],
         history: Sequence[Mapping[str, object]],
+        plan: ExpressionPlan,
     ) -> str:
-        """Build the request (selective redaction) and get the reply.
-
-        Reply-shaping context (history + memory + mood/identity/taste) goes in
-        ``shareable_context`` so it reaches the Tier 1 reply; the
-        ``private_context`` channel is kept for Tier-0-only material (empty here).
-        When capabilities are registered AND a tool-calling provider is wired, the
-        reply runs through the capability tool-loop (the model may call a
-        capability, GUPPI executes it, the result loops back); otherwise it stays
-        on today's plain router path.
-        """
+        """Compose a full reply, folding the plan's form hint into the prompt."""
         context = _assemble_shareable_context(soul, text, recalled, history)
-        system_prompt = self._system_prompt_for(soul, text)
+        context = await self._with_grounded_addons(context, text, plan)
+        system_prompt = self._system_prompt_for(soul, text, plan)
         provider = self._tool_provider
         if provider is not None and not self._registry.is_empty:
             return await self._reply_with_tools(provider, system_prompt, text, context)
@@ -309,14 +420,63 @@ class HandleMessage:
         )
         return await self._router.run(request)
 
-    def _system_prompt_for(self, soul: SOUL, text: str) -> str:
-        """Augment the warm base prompt with Bob's negotiation stance directive.
+    async def _with_grounded_addons(
+        self, context: str, text: str, plan: ExpressionPlan
+    ) -> str:
+        """Fold the plan's grounded add-ons into the compose context (BOB-018 w3).
+
+        Behind the existing grounding seam, when the plan sets ``leak_inner_life``
+        and a real reflection exists, Bob's latest reflection is appended as a
+        leaking-inner-life line; when it sets ``callback`` and a STRONG real past
+        moment is recalled on the topic, that moment is appended as a callback.
+        Both are strictly anti-confabulation: no real material → no line added (a
+        clean no-op), so Bob never invents a thought or a shared past that is not
+        there. Composes additively with the existing context (voice/language/
+        negotiation/form-hint all live elsewhere and are untouched).
+        """
+        additions = [
+            await self._leak_inner_life(plan),
+            await self._callback(plan, text),
+        ]
+        suffix = "".join(f"\n{line}" for line in additions if line)
+        return f"{context}{suffix}" if suffix else context
+
+    async def _leak_inner_life(self, plan: ExpressionPlan) -> str:
+        """The leak line for this turn, or ``""`` (no flag / no reader / no reflection)."""
+        if not plan.leak_inner_life or self._reflection is None:
+            return ""
+        reflection = await self._reflection.latest_reflection_text()
+        if not reflection:
+            return ""
+        return f"{_LEAK_PREFACE} {reflection}"
+
+    async def _callback(self, plan: ExpressionPlan, text: str) -> str:
+        """The callback line for this turn, or ``""`` (no flag / weak-or-empty recall).
+
+        Reuses the hybrid recall (BOB-011) on the current topic; a real past moment
+        comes back → it is offered as a callback. Mirrors BOB-012 grounding: an
+        empty recall yields nothing, so Bob never confabulates a shared moment.
+        """
+        if not plan.callback:
+            return ""
+        recalled = await self._recall.recall(text, k=_CALLBACK_RECALL_K)
+        moment = next(
+            (str(item.get("content", "")) for item in recalled if item.get("content")),
+            "",
+        )
+        if not moment:
+            return ""
+        return f"{_CALLBACK_PREFACE} {moment}"
+
+    def _system_prompt_for(self, soul: SOUL, text: str, plan: ExpressionPlan) -> str:
+        """Augment the warm base prompt with the stance + form-hint directives.
 
         The taste verdict + conviction on ``text`` pick the zone (who owns the
         matter) and the stance (how firmly Bob holds); the stance maps to a
-        directive appended to — never replacing — the warm base tone. With no
-        target opinion and no user-domain signal the prompt is unchanged from
-        before BOB-013 (the AGREE-on-neutral-shared baseline carries no directive).
+        directive appended to — never replacing — the warm base tone. The plan's
+        ``form_hint`` then appends a soft length cue (BOB-018), augmenting the
+        variable-form voice. With no target opinion, no user-domain signal, and a
+        NORMAL form hint, the prompt is unchanged but for the base voice line.
         """
         verdict = soul.taste.score(text)
         conviction = soul.taste.conviction_for(text)
@@ -324,8 +484,12 @@ class HandleMessage:
             text, taste_verdict=verdict, conviction=conviction
         )
         stance = self._negotiation.decide(zone, conviction=conviction)
-        directive = _stance_directive(stance, verdict=verdict, zone=zone)
-        return f"{_SYSTEM_PROMPT}\n{directive}" if directive else _SYSTEM_PROMPT
+        directives = [
+            _stance_directive(stance, verdict=verdict, zone=zone),
+            _FORM_HINT_DIRECTIVE.get(plan.form_hint, ""),
+        ]
+        suffix = "".join(f"\n{d}" for d in directives if d)
+        return f"{_SYSTEM_PROMPT}{suffix}"
 
     async def _reply_with_tools(
         self, provider: ToolCallingProvider, system_prompt: str, text: str, context: str

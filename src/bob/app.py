@@ -71,6 +71,7 @@ from bob.application.usecases.heartbeat import (
 from bob.application.usecases.reflection_parser import HeuristicReflectionParser
 from bob.application.usecases.run_genesis import RunGenesis
 from bob.application.usecases.update_mood_from_text import UpdateMoodFromText
+from bob.domain.personality.expression import ExpressionFreqs
 from bob.domain.personality.language import DEFAULT_LANGUAGE
 from bob.domain.personality.mood import Mood
 from bob.domain.personality.negotiation import Negotiation
@@ -99,7 +100,7 @@ from bob.infrastructure.telegram.multibot import (
 )
 
 if TYPE_CHECKING:
-    from aiogram.types import InputRichMessage
+    from aiogram.types import InputRichMessage, ReactionTypeEmoji
 
     from bob.application.runtime.agent import BackgroundTask
     from bob.application.usecases.handle_message import ReplyGateway
@@ -329,6 +330,21 @@ def build_application(
         # later swap behind the same port.
         zone_classifier=TasteZoneClassifier(),
         negotiation=Negotiation(),
+        # Expression-врезка (BOB-018): a seeded RNG (sharing the proactivity seed
+        # so one knob makes Bob's stochastic behaviour reproducible) + the small
+        # config-tuned add-on frequencies drive the per-turn ExpressionPlan (form
+        # hint applied now; mode + rare flags carried for later beads).
+        rng=random.Random(_resolve_seed(merged, proactivity_seed)),  # noqa: S311
+        expression_freqs=_build_expression_freqs(merged),
+        # React-only seam (BOB-018): a REACT_ONLY plan sets a native mood emoji
+        # reaction on Bob's bot (pinned to his topic, best-effort) instead of
+        # composing a reply — no LLM call.
+        reactor=multibot.reactor(BotIdentity.BOB),
+        # Inner-life leak seam (BOB-018 wave 3): the same episodic-log reflection
+        # reader proactivity uses supplies Bob's most-recent REAL reflection so a
+        # ``leak_inner_life`` turn can leak a glimpse of what he caught himself
+        # thinking about — strictly grounded (no reflection → no-op).
+        reflection=RepoProactivitySources(memory_repo, clock=resolved_clock),
     )
     event_bus.subscribe(MESSAGE_RECEIVED, _as_handler(handle_message))
 
@@ -507,6 +523,22 @@ def _build_proactivity_engine(
         # reproducible in tests.
         rng=random.Random(_resolve_seed(config, seed)),  # noqa: S311
         language=language,
+    )
+
+
+def _build_expression_freqs(config: Mapping[str, object]) -> ExpressionFreqs:
+    """Build the BOB-018 expression add-on frequencies from config (small defaults).
+
+    Reads ``expression.freqs.{leak_inner_life,callback}`` — the small fractions of
+    turns the rare add-on flags fire on (anti-tic). Falls back to the dataclass
+    defaults when a value is absent. Out-of-range values are rejected by
+    :class:`ExpressionFreqs` itself ([0, 1] probabilities).
+    """
+    freqs = _section(_section(config, "expression"), "freqs")
+    defaults = ExpressionFreqs()
+    return ExpressionFreqs(
+        leak_inner_life=_float_or(freqs, "leak_inner_life", defaults.leak_inner_life),
+        callback=_float_or(freqs, "callback", defaults.callback),
     )
 
 
@@ -904,6 +936,20 @@ class _AiogramBotAdapter:
             chat_id=chat_id,
             rich_message=rich_message,
             message_thread_id=message_thread_id,
+        )
+
+    async def set_message_reaction(
+        self,
+        *,
+        chat_id: int,
+        message_id: int,
+        reaction: Sequence[ReactionTypeEmoji],
+        message_thread_id: int | None = None,  # noqa: ARG002
+    ) -> bool:
+        # Telegram's ``setMessageReaction`` targets the message directly (no thread
+        # arg); ``message_thread_id`` is accepted for BotLike parity and dropped.
+        return await self._bot.set_message_reaction(  # type: ignore[attr-defined,no-any-return]
+            chat_id=chat_id, message_id=message_id, reaction=list(reaction)
         )
 
 

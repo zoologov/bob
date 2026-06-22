@@ -81,6 +81,17 @@ class FakeBot:
         self.sent.append((chat_id, text))
         return FakeMessage(message_id=1)
 
+    async def set_message_reaction(
+        self,
+        *,
+        chat_id: int,  # noqa: ARG002
+        message_id: int,  # noqa: ARG002
+        reaction: object,  # noqa: ARG002
+        message_thread_id: int | None = None,  # noqa: ARG002
+    ) -> bool:
+        # BOB-018: react-only seam; fakes accept the BotLike reaction call.
+        return True
+
     async def send_chat_action(
         self, *, chat_id: int, action: str, message_thread_id: int | None = None  # noqa: ARG002
     ) -> bool:
