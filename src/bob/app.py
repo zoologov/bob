@@ -71,6 +71,7 @@ from bob.application.usecases.heartbeat import (
 from bob.application.usecases.reflection_parser import HeuristicReflectionParser
 from bob.application.usecases.run_genesis import RunGenesis
 from bob.application.usecases.update_mood_from_text import UpdateMoodFromText
+from bob.domain.personality.expression import ExpressionFreqs
 from bob.domain.personality.language import DEFAULT_LANGUAGE
 from bob.domain.personality.mood import Mood
 from bob.domain.personality.negotiation import Negotiation
@@ -329,6 +330,12 @@ def build_application(
         # later swap behind the same port.
         zone_classifier=TasteZoneClassifier(),
         negotiation=Negotiation(),
+        # Expression-врезка (BOB-018): a seeded RNG (sharing the proactivity seed
+        # so one knob makes Bob's stochastic behaviour reproducible) + the small
+        # config-tuned add-on frequencies drive the per-turn ExpressionPlan (form
+        # hint applied now; mode + rare flags carried for later beads).
+        rng=random.Random(_resolve_seed(merged, proactivity_seed)),  # noqa: S311
+        expression_freqs=_build_expression_freqs(merged),
     )
     event_bus.subscribe(MESSAGE_RECEIVED, _as_handler(handle_message))
 
@@ -507,6 +514,22 @@ def _build_proactivity_engine(
         # reproducible in tests.
         rng=random.Random(_resolve_seed(config, seed)),  # noqa: S311
         language=language,
+    )
+
+
+def _build_expression_freqs(config: Mapping[str, object]) -> ExpressionFreqs:
+    """Build the BOB-018 expression add-on frequencies from config (small defaults).
+
+    Reads ``expression.freqs.{leak_inner_life,callback}`` — the small fractions of
+    turns the rare add-on flags fire on (anti-tic). Falls back to the dataclass
+    defaults when a value is absent. Out-of-range values are rejected by
+    :class:`ExpressionFreqs` itself ([0, 1] probabilities).
+    """
+    freqs = _section(_section(config, "expression"), "freqs")
+    defaults = ExpressionFreqs()
+    return ExpressionFreqs(
+        leak_inner_life=_float_or(freqs, "leak_inner_life", defaults.leak_inner_life),
+        callback=_float_or(freqs, "callback", defaults.callback),
     )
 
 

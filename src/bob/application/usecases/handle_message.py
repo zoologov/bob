@@ -46,19 +46,32 @@ from bob.application.router.llm_router import LLMRequest, TaskType
 from bob.application.router.reply_tier_selector import select_reply_tier
 from bob.application.usecases.update_mood_from_text import TextSignals
 from bob.domain.memory.entities import EpisodicEvent
+from bob.domain.personality.expression import (
+    ExpressionFreqs,
+    ExpressionMode,
+    ExpressionPlan,
+    ExpressionSignals,
+    FormHint,
+    decide_expression,
+)
 from bob.domain.personality.negotiation import (
     Negotiation,
     NegotiationZone,
     Stance,
 )
 from bob.domain.personality.taste import Verdict
-from bob.domain.personality.voice import anti_bait_directive, guppi_canon
+from bob.domain.personality.voice import (
+    anti_bait_directive,
+    guppi_canon,
+    variable_form_directive,
+)
 from bob.domain.personality.zone_classifier import TasteZoneClassifier
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
     from contextlib import AbstractAsyncContextManager
     from datetime import datetime
+    from random import Random
 
     from bob.application.router.llm_router import LLMRouter
     from bob.application.runtime.events import MessageReceived
@@ -100,8 +113,25 @@ _SYSTEM_PROMPT = (
     "You are Bob, a digital person from the Bobiverse. Reply in character, "
     "warmly and concisely, coloured by your current mood.\n"
     f"{guppi_canon()}\n"
-    f"{anti_bait_directive()}"
+    f"{anti_bait_directive()}\n"
+    f"{variable_form_directive()}"
 )
+
+# Form-hint → soft compose directive (BOB-018). The ExpressionPlan's form_hint is
+# a state-driven length cue that AUGMENTS the variable-form voice (and anti-bait):
+# it nudges this turn shorter or longer without ever licensing the closing-bait
+# tic. NORMAL carries no directive — the variable-form voice already covers the
+# default — so a neutral turn's prompt is unchanged but for that one voice line.
+# Russian persona directives (project language); Cyrillic look-alikes intentional.
+_FORM_HINT_DIRECTIVE: dict[FormHint, str] = {
+    FormHint.TERSE: (
+        "Сейчас тянет ответить коротко — реплика в одну-две строки, "
+        "без развёртывания."
+    ),
+    FormHint.EXPANSIVE: (
+        "Сейчас есть что сказать — можешь развёрнуто, на несколько абзацев."
+    ),
+}
 
 # Preface for the capability manifest in Bob's prompt: GUPPI is Bob's executor
 # subsystem (canon already in the base persona above), so this just frames the
@@ -196,11 +226,13 @@ class HandleMessage:
         extract_facts: ExtractFacts,
         clock: Clock,
         state: PersonalityState,
+        rng: Random,
         registry: CapabilityRegistry | None = None,
         tool_provider: ToolCallingProvider | None = None,
         owner_activity: OwnerActivityRecorder | None = None,
         zone_classifier: ZoneClassifier | None = None,
         negotiation: Negotiation | None = None,
+        expression_freqs: ExpressionFreqs | None = None,
     ) -> None:
         self._router = router
         self._gateway = gateway
@@ -230,16 +262,30 @@ class HandleMessage:
         # provider is wired (integration wires both in BEAD-07).
         self._registry = registry if registry is not None else CapabilityRegistry()
         self._tool_provider = tool_provider
+        # The expression seam (BOB-018): per turn a pure ExpressionPlan picks a
+        # mode (full reply vs. a terse react-only ack) + rare add-on flags + a soft
+        # form hint, deterministically from mood + signals + the injected seeded
+        # RNG. Wave 1 consumes the form hint and the mode; the rare flags (leak /
+        # callback) and the react-only behaviour are carried on the plan for later
+        # beads. The frequencies default small (anti-tic) and are config-tunable.
+        self._rng = rng
+        self._expression_freqs = (
+            expression_freqs if expression_freqs is not None else ExpressionFreqs()
+        )
 
     async def handle(self, event: MessageReceived) -> None:
         """Process one received message end to end (the EventBus subscriber)."""
         soul = await self._perceive(event)
+        # Plan how Bob expresses this turn (BOB-018): pure, deterministic by seed.
+        # Computed up front so the mode steers the reply path and the form hint
+        # shapes the prompt; the rare flags ride along for later beads.
+        plan = self._plan_expression(event, soul)
         recalled = await self._recall.recall(event.text, k=_RECALL_K)
         history = await self._episodes.recent_episodes(_HISTORY_K)
         # Run the slow generation inside the typing keepalive so "Bob is typing…"
         # stays visible for the whole real wait (BOB-009); then commit one rich final.
         async with self._gateway.typing_indicator(chat_id=event.chat_id):
-            reply = await self._decide(event.text, soul, recalled, history)
+            reply = await self._decide(event.text, soul, recalled, history, plan)
         await self._gateway.reply(chat_id=event.chat_id, markdown=reply)
         await self._persist(event, reply, soul)
         await self._record_owner_activity()
@@ -270,12 +316,25 @@ class HandleMessage:
         self._state.soul = soul
         return soul
 
+    def _plan_expression(self, event: MessageReceived, soul: SOUL) -> ExpressionPlan:
+        """Decide this turn's expression plan — pure, deterministic by seed (BOB-018).
+
+        Reads the freshly-updated mood + the inbound's shape, draws from the
+        injected seeded RNG, and returns the plan: mode, the rare add-on flags
+        (carried for later beads), and the soft form hint applied to the prompt.
+        """
+        signals = ExpressionSignals(inbound_text=event.text)
+        return decide_expression(
+            soul.mood, signals, rng=self._rng, freqs=self._expression_freqs
+        )
+
     async def _decide(
         self,
         text: str,
         soul: SOUL,
         recalled: Sequence[Recalled],
         history: Sequence[Mapping[str, object]],
+        plan: ExpressionPlan,
     ) -> str:
         """Build the request (selective redaction) and get the reply.
 
@@ -286,9 +345,45 @@ class HandleMessage:
         reply runs through the capability tool-loop (the model may call a
         capability, GUPPI executes it, the result loops back); otherwise it stays
         on today's plain router path.
+
+        The ``plan`` shapes the turn (BOB-018): a :data:`ExpressionMode.REACT_ONLY`
+        plan routes through :meth:`_react_only_reply` — the explicit seam bob-c4w.2
+        fills with a native reaction; until then it composes a normal full reply,
+        so the path is live and tested, never dead code. The plan's ``form_hint``
+        is folded into the system prompt as a soft length cue.
         """
+        if plan.mode is ExpressionMode.REACT_ONLY:
+            return await self._react_only_reply(text, soul, recalled, history, plan)
+        return await self._compose_reply(text, soul, recalled, history, plan)
+
+    async def _react_only_reply(
+        self,
+        text: str,
+        soul: SOUL,
+        recalled: Sequence[Recalled],
+        history: Sequence[Mapping[str, object]],
+        plan: ExpressionPlan,
+    ) -> str:
+        """Handle a react-only turn — the bob-c4w.2 seam, a full reply until then.
+
+        BOB-018 wave 1 carries the :data:`ExpressionMode.REACT_ONLY` decision but
+        not the native Telegram reaction (that is bob-c4w.2). To keep the path live
+        and free of dead code, a react-only turn falls back to a normal composed
+        reply here; bob-c4w.2 replaces this body with the ``MessageReactor`` call.
+        """
+        return await self._compose_reply(text, soul, recalled, history, plan)
+
+    async def _compose_reply(
+        self,
+        text: str,
+        soul: SOUL,
+        recalled: Sequence[Recalled],
+        history: Sequence[Mapping[str, object]],
+        plan: ExpressionPlan,
+    ) -> str:
+        """Compose a full reply, folding the plan's form hint into the prompt."""
         context = _assemble_shareable_context(soul, text, recalled, history)
-        system_prompt = self._system_prompt_for(soul, text)
+        system_prompt = self._system_prompt_for(soul, text, plan)
         provider = self._tool_provider
         if provider is not None and not self._registry.is_empty:
             return await self._reply_with_tools(provider, system_prompt, text, context)
@@ -309,14 +404,15 @@ class HandleMessage:
         )
         return await self._router.run(request)
 
-    def _system_prompt_for(self, soul: SOUL, text: str) -> str:
-        """Augment the warm base prompt with Bob's negotiation stance directive.
+    def _system_prompt_for(self, soul: SOUL, text: str, plan: ExpressionPlan) -> str:
+        """Augment the warm base prompt with the stance + form-hint directives.
 
         The taste verdict + conviction on ``text`` pick the zone (who owns the
         matter) and the stance (how firmly Bob holds); the stance maps to a
-        directive appended to — never replacing — the warm base tone. With no
-        target opinion and no user-domain signal the prompt is unchanged from
-        before BOB-013 (the AGREE-on-neutral-shared baseline carries no directive).
+        directive appended to — never replacing — the warm base tone. The plan's
+        ``form_hint`` then appends a soft length cue (BOB-018), augmenting the
+        variable-form voice. With no target opinion, no user-domain signal, and a
+        NORMAL form hint, the prompt is unchanged but for the base voice line.
         """
         verdict = soul.taste.score(text)
         conviction = soul.taste.conviction_for(text)
@@ -324,8 +420,12 @@ class HandleMessage:
             text, taste_verdict=verdict, conviction=conviction
         )
         stance = self._negotiation.decide(zone, conviction=conviction)
-        directive = _stance_directive(stance, verdict=verdict, zone=zone)
-        return f"{_SYSTEM_PROMPT}\n{directive}" if directive else _SYSTEM_PROMPT
+        directives = [
+            _stance_directive(stance, verdict=verdict, zone=zone),
+            _FORM_HINT_DIRECTIVE.get(plan.form_hint, ""),
+        ]
+        suffix = "".join(f"\n{d}" for d in directives if d)
+        return f"{_SYSTEM_PROMPT}{suffix}"
 
     async def _reply_with_tools(
         self, provider: ToolCallingProvider, system_prompt: str, text: str, context: str

@@ -93,6 +93,29 @@ ignore = [
 # natively); RUF001's ambiguous-character lint does not apply to these literals.
 "src/bob/domain/personality/voice.py" = ["RUF001"]
 "tests/**/*.py" = ["S101", "ARG001", "PLR2004"]
+# The expression decider (BOB-018) seeds `random.Random` for deterministic
+# stochastic-sampling assertions (the non-crypto PRNG is the point → S311) and
+# uses short Russian inbound literals/comments whose Cyrillic look-alikes are
+# intentional (→ RUF001/RUF003).
+"tests/domain/personality/test_expression.py" = [
+    "S101",
+    "ARG001",
+    "PLR2004",
+    "S311",
+    "RUF001",
+    "RUF003",
+]
+# HandleMessage tests (BOB-018 врезка) seed `random.Random` for deterministic
+# expression-plan assertions (non-crypto PRNG → S311) and use short Russian
+# inbound literals/comments with intentional Cyrillic look-alikes (RUF001/RUF003).
+"tests/application/usecases/test_handle_message.py" = [
+    "S101",
+    "ARG001",
+    "PLR2004",
+    "S311",
+    "RUF001",
+    "RUF003",
+]
 # Proactivity tests seed `random.Random` for deterministic stochastic-sampling
 # assertions; the non-crypto PRNG is the point here, so S311 does not apply.
 "tests/domain/proactivity/*.py" = ["S101", "ARG001", "PLR2004", "S311"]

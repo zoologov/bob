@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import UTC, datetime
+from random import Random
 from typing import TYPE_CHECKING
 
 from bob.application.capabilities.registry import CapabilityRegistry
@@ -29,6 +30,7 @@ from bob.application.usecases.handle_message import (
     PersonalityState,
 )
 from bob.application.usecases.update_mood_from_text import UpdateMoodFromText
+from bob.domain.personality.expression import ExpressionFreqs
 from bob.domain.personality.mood import Mood
 from bob.domain.personality.negotiation import NegotiationZone
 from bob.domain.personality.soul import SOUL
@@ -230,6 +232,8 @@ def _build(
     owner_activity: OwnerActivityRecorder | None = None,
     zone_classifier: ZoneClassifier | None = None,
     soul: SOUL | None = None,
+    rng: Random | None = None,
+    expression_freqs: ExpressionFreqs | None = None,
 ) -> tuple[HandleMessage, FakeBot, FakeRepo, CapturingProvider]:
     tier0 = CapturingProvider(reply="positive", replies=tier0_replies)
     tier1 = CapturingProvider(reply=reply)
@@ -259,6 +263,8 @@ def _build(
         tool_provider=tool_provider,
         owner_activity=owner_activity,
         zone_classifier=zone_classifier,
+        rng=rng if rng is not None else Random(0),
+        expression_freqs=expression_freqs,
     )
     return handler, bot, repo, tier1
 
@@ -611,6 +617,85 @@ async def test_tool_loop_preface_establishes_guppi_as_male_non_sentient() -> Non
     assert "не разумен" in folded
     assert "буквален" in folded
     assert "кофе" in folded
+
+
+# --- BOB-018: ExpressionPlan врезка — variable form reaches the prompt ---------
+
+
+async def test_reply_prompt_carries_the_variable_form_voice_directive() -> None:
+    # BOB-018: the reply system prompt carries the variable-form voice directive
+    # (form/length vary by mood, not one frame) — it AUGMENTS anti-bait, so the
+    # anti-bait guidance is still present alongside it.
+    handler, _bot, _repo, tier1 = _build(reply="hi")
+
+    await handler.handle(_message("расскажи подробно, как именно устроен дизайн"))
+
+    folded = tier1.all_text.casefold()
+    assert "форма и длина" in folded  # the variable-form voice guidance landed
+    assert "не выпрашивай продолжение" in folded  # anti-bait is still there too
+
+
+async def test_terse_form_hint_reaches_the_reply_prompt() -> None:
+    # A low-energy mood + a short inbound yields a terse form hint, which is passed
+    # into the compose prompt as a soft length hint (BOB-018 form_hint seam).
+    soul = _soul().with_mood(Mood(valence=-0.3, arousal=-0.7, social=-0.5))
+    handler, _bot, _repo, tier1 = _build(reply="ок", soul=soul)
+
+    # A short inbound that still escalates to Tier 1 (multi-question short turn).
+    await handler.handle(_message("а?? ну?"))
+
+    folded = tier1.all_text.casefold()
+    assert "коротк" in folded  # the terse form hint reached the prompt
+
+
+async def test_expansive_form_hint_reaches_the_reply_prompt() -> None:
+    # A bright, open mood + a substantive inbound yields an expansive form hint,
+    # passed into the compose prompt as a soft hint to unfurl.
+    soul = _soul().with_mood(Mood(valence=0.6, arousal=0.7, openness=0.6, social=0.6))
+    handler, _bot, _repo, tier1 = _build(reply="long answer", soul=soul)
+
+    await handler.handle(
+        _message("расскажи подробно, как именно это работает и почему так вышло")
+    )
+
+    folded = tier1.all_text.casefold()
+    assert "развёрнут" in folded or "развернут" in folded
+
+
+async def test_expression_plan_is_deterministic_under_a_fixed_seed() -> None:
+    # The wired plan is reproducible: the same seed + same turn yields the same
+    # form-hint directive in the prompt (no global RNG leaks in).
+    soul = _soul().with_mood(Mood(valence=-0.3, arousal=-0.7, social=-0.5))
+    handler_a, _b, _r, tier_a = _build(reply="ок", soul=soul, rng=Random(7))
+    handler_b, _b2, _r2, tier_b = _build(reply="ок", soul=soul, rng=Random(7))
+
+    await handler_a.handle(_message("а?? ну?"))
+    await handler_b.handle(_message("а?? ну?"))
+
+    assert tier_a.all_text == tier_b.all_text
+
+
+async def test_react_only_plan_falls_back_to_a_full_reply_for_now() -> None:
+    # The REACT_ONLY seam (bob-c4w.2 fills it): until reactions land, a react-only
+    # plan resolves to a normal full REPLY — no dead code, the turn still answers
+    # and persists exactly as a reply turn. Forced via a withdrawn mood + a trivial
+    # short inbound + a seed that draws into the react-only branch.
+    soul = _soul().with_mood(Mood(valence=-0.4, arousal=-0.8, social=-0.7))
+    # leak/callback off so the seed only steers the react-mode draw; seed 1 draws
+    # into the REACT_ONLY branch for this withdrawn mood + trivial inbound.
+    freqs = ExpressionFreqs(leak_inner_life=0.0, callback=0.0)
+    handler, bot, repo, _tier1 = _build(
+        reply="all good", soul=soul, rng=Random(1), expression_freqs=freqs
+    )
+
+    await handler.handle(_message("угу"))
+
+    # The turn behaves like a normal reply: a final is committed and the episode
+    # is persisted (the react-only seam composes a full reply for now — no dead
+    # code, no reaction yet; "угу" is short/casual so it answers on Tier 0).
+    assert bot.final_text == "positive"
+    assert len(bot.sent) == 1
+    assert len(repo.episodes) == 1
 
 
 async def test_empty_registry_keeps_the_plain_router_path_unchanged() -> None:
