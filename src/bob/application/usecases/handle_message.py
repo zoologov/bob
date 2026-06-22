@@ -54,6 +54,7 @@ from bob.domain.personality.expression import (
     FormHint,
     decide_expression,
 )
+from bob.domain.personality.mood_taste import experiment_bias, modulate
 from bob.domain.personality.negotiation import (
     Negotiation,
     NegotiationZone,
@@ -62,8 +63,10 @@ from bob.domain.personality.negotiation import (
 from bob.domain.personality.reaction import reaction_emoji_for
 from bob.domain.personality.taste import Verdict
 from bob.domain.personality.voice import (
+    OffDayThresholds,
     anti_bait_directive,
     guppi_canon,
+    tone_directive,
     variable_form_directive,
 )
 from bob.domain.personality.zone_classifier import TasteZoneClassifier
@@ -105,20 +108,17 @@ _HISTORY_K = 6
 # Each turn perceives one message; a present sender is engaged.
 _SINGLE_MESSAGE = 1
 
-# The warm base persona, then Bob's voice guidance (BOB-016): the anti-bait
-# directive + substance-ending few-shot break the base model's reflex of closing
-# every reply with an engagement-bait question and a ☕ signature, so Bob lands
-# like a person, not an assistant. The directive lives in the domain (persona
-# voice), assembled in here onto the warm base tone.
-# The warm base persona, then two voice concerns Bob's persona leans on (BOB-016):
-# the anti-bait directive + few-shot (so he lands like a person, not an assistant
+# The base persona, then two voice concerns Bob's persona leans on (BOB-016): the
+# anti-bait directive + few-shot (so he lands like a person, not an assistant
 # fishing for the next reply with a ☕ signature), and the GUPPI canon (so whenever
-# GUPPI comes up — tools wired or not — Bob speaks of him as "он", his
-# non-sentient executor, with the wry running relationship). Both live in the
-# domain (persona voice) and are assembled onto the warm base tone here.
+# GUPPI comes up — tools wired or not — Bob speaks of him as "он", his non-sentient
+# executor, with the wry running relationship). Both live in the domain (persona
+# voice) and are assembled here. The TONE itself is no longer baked in as an
+# unconditional "warmly and concisely" line: it is now mood-conditioned per turn via
+# voice.tone_directive (BOB-020), appended in _system_prompt_for, so Bob can have an
+# off-day instead of forcing warmth.
 _SYSTEM_PROMPT = (
-    "You are Bob, a digital person from the Bobiverse. Reply in character, "
-    "warmly and concisely, coloured by your current mood.\n"
+    "You are Bob, a digital person from the Bobiverse. Reply in character.\n"
     f"{guppi_canon()}\n"
     f"{anti_bait_directive()}\n"
     f"{variable_form_directive()}"
@@ -257,6 +257,7 @@ class HandleMessage:
         expression_freqs: ExpressionFreqs | None = None,
         reactor: MessageReactor | None = None,
         reflection: ReflectionReader | None = None,
+        offday_thresholds: OffDayThresholds | None = None,
     ) -> None:
         self._router = router
         self._gateway = gateway
@@ -309,6 +310,14 @@ class HandleMessage:
         # leaks into the reply. No reflection (or no reader wired) → no-op, never a
         # fabrication. Callbacks reuse the already-injected ``recall`` the same way.
         self._reflection = reflection
+        # The emotional-depth seam (BOB-020): Bob's TONE is mood-conditioned via
+        # voice.tone_directive — below this off-day floor he reads quieter, more
+        # vulnerable, honest ("не знаю" over confabulation) instead of forced warmth.
+        # The floor is config-tunable (emotion.offday.*); the default sits in the
+        # low/negative band so a normal or good mood always keeps the warm tone.
+        self._offday_thresholds = (
+            offday_thresholds if offday_thresholds is not None else OffDayThresholds()
+        )
 
     async def handle(self, event: MessageReceived) -> None:
         """Process one received message end to end (the EventBus subscriber)."""
@@ -469,14 +478,15 @@ class HandleMessage:
         return f"{_CALLBACK_PREFACE} {moment}"
 
     def _system_prompt_for(self, soul: SOUL, text: str, plan: ExpressionPlan) -> str:
-        """Augment the warm base prompt with the stance + form-hint directives.
+        """Augment the base prompt with the mood tone, stance, and form-hint directives.
 
-        The taste verdict + conviction on ``text`` pick the zone (who owns the
-        matter) and the stance (how firmly Bob holds); the stance maps to a
-        directive appended to — never replacing — the warm base tone. The plan's
-        ``form_hint`` then appends a soft length cue (BOB-018), augmenting the
-        variable-form voice. With no target opinion, no user-domain signal, and a
-        NORMAL form hint, the prompt is unchanged but for the base voice line.
+        The mood-conditioned tone directive (BOB-020) leads: a normal/good mood keeps
+        Bob's warm, concise tone, a flat low mood swaps it for the quieter, honest
+        off-day band ("не знаю" over confabulation) — replacing the old unconditional
+        warm line. The taste verdict + conviction on ``text`` then pick the zone and
+        stance (BOB-013), and the plan's ``form_hint`` appends a soft length cue
+        (BOB-018). With a normal mood, no target opinion, no user-domain signal, and a
+        NORMAL form hint, only the warm tone line augments the base voice.
         """
         verdict = soul.taste.score(text)
         conviction = soul.taste.conviction_for(text)
@@ -485,6 +495,7 @@ class HandleMessage:
         )
         stance = self._negotiation.decide(zone, conviction=conviction)
         directives = [
+            tone_directive(soul.mood, thresholds=self._offday_thresholds),
             _stance_directive(stance, verdict=verdict, zone=zone),
             _FORM_HINT_DIRECTIVE.get(plan.form_hint, ""),
         ]
@@ -546,6 +557,23 @@ def _stance_directive(
     return _STANCE_DIRECTIVE.get(stance, "")
 
 
+# Effective-verdict modulation (BOB-020) needs the sign of Bob's liking to lean a
+# NEUTRAL verdict the right way; the stored axis value is private to TasteEngine, so
+# we read the sign off the verdict itself (positive verdicts → +1, negative → -1,
+# NEUTRAL → 0 so an unknown topic stays a clean identity under any mood).
+_POSITIVE_VERDICTS = frozenset({Verdict.LOVE, Verdict.LIKE})
+_NEGATIVE_VERDICTS = frozenset({Verdict.DISLIKE, Verdict.HATE})
+
+
+def _verdict_sign(verdict: Verdict) -> float:
+    """+1.0 for a positive verdict, -1.0 for a negative one, 0.0 for NEUTRAL."""
+    if verdict in _POSITIVE_VERDICTS:
+        return 1.0
+    if verdict in _NEGATIVE_VERDICTS:
+        return -1.0
+    return 0.0
+
+
 def _assemble_shareable_context(
     soul: SOUL,
     topic: str,
@@ -559,12 +587,19 @@ def _assemble_shareable_context(
     shapes Bob's reply and returns to the same user, so the reply tier sees it
     (this is what lets Bob remember a name said one message ago). Genuinely
     internal material is NOT assembled here; it belongs in ``private_context``.
+
+    The taste verdict injected is the EFFECTIVE one (BOB-020): Bob's current mood
+    temporarily colours it via :func:`modulate` — a flat day reads it stricter, a
+    bright day softer — and an experiment-readiness hint from the same mood rides
+    along. This is temporary modulation only; the stored taste axes are untouched.
     """
-    verdict = soul.taste.score(topic).value
+    stored = soul.taste.score(topic)
+    effective = modulate(stored, _verdict_sign(stored), soul.mood)
     lines = [
         f"Identity: {soul.identity}",
         f"Mood tone: {soul.mood.tone()}",
-        f"Taste verdict on '{topic}': {verdict}",
+        f"Taste verdict on '{topic}': {effective.value}",
+        f"Experiment readiness: {experiment_bias(soul.mood):.2f}",
     ]
     if soul.phantom_prefs:
         lines.append("Phantom preferences: " + ", ".join(soul.phantom_prefs))

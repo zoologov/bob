@@ -627,8 +627,10 @@ async def test_reactive_reply_prompt_carries_the_anti_bait_voice_and_few_shot() 
     assert "эмодзи" in folded
     # A substance-ending exemplar rides along (no trailing question, no ☕).
     assert "мне так спокойнее" in folded
-    # The warm base persona is preserved alongside the new voice guidance.
-    assert "warmly" in folded
+    # The warm tone is preserved — now via the mood-conditioned tone_directive
+    # (BOB-020) rather than the old unconditional English "warmly" line. The default
+    # soul's normal mood lands the warm band.
+    assert "тепл" in folded
 
 
 async def test_reactive_reply_prompt_establishes_guppi_as_male_non_sentient() -> None:
@@ -737,6 +739,91 @@ async def test_form_directive_varies_by_mood_on_the_same_inbound() -> None:
     # Both still carry the variable-form voice (it is always present, BOB-016/018).
     assert "форма и длина" in bright_text
     assert "форма и длина" in low_text
+
+
+# --- BOB-020: off-day tone + mood→taste modulation reach the prompt -----------
+
+
+async def test_normal_mood_reply_prompt_carries_the_warm_tone_band() -> None:
+    # BOB-020: a normal/good mood keeps Bob's warm base tone — now delivered via the
+    # mood-conditioned tone_directive rather than the old unconditional warm line.
+    soul = _soul().with_mood(Mood(valence=0.3, arousal=0.2))
+    handler, _bot, _repo, tier1 = _build(reply="hi", soul=soul)
+
+    await handler.handle(_message("расскажи подробно про дизайн интерфейсов"))
+
+    folded = tier1.all_text.casefold()
+    assert "тепл" in folded  # warm tone band landed
+    assert "не в ресурсе" not in folded  # not the off-day band on a good day
+
+
+async def test_off_day_mood_reply_prompt_carries_the_vulnerable_honest_tone() -> None:
+    # BOB-020: a flat, low-energy mood swaps the warm tone for the off-day band —
+    # quieter, vulnerable, an honest "не знаю" over forced warmth — and it is never
+    # the relational sulk of BOB-014 (it disavows rudeness).
+    soul = _soul().with_mood(Mood(valence=-0.7, arousal=-0.6))
+    handler, _bot, _repo, tier1 = _build(reply="...", soul=soul)
+
+    await handler.handle(_message("расскажи подробно, что ты думаешь про это"))
+
+    folded = tier1.all_text.casefold()
+    assert "не в ресурсе" in folded  # off-day band reached the prompt
+    assert "не знаю" in folded  # honest over confabulation
+    assert "без груб" in folded or "не груб" in folded  # not rude
+
+
+async def test_tone_band_varies_by_mood_on_the_same_inbound() -> None:
+    # The SAME inbound yields a DIFFERENT tone band by mood: warm when bright,
+    # vulnerable/off-day when flat — "warmly" is no longer unconditional.
+    inbound = "расскажи подробно, как ты к этому относишься"
+    bright = _soul().with_mood(Mood(valence=0.4, arousal=0.3))
+    flat = _soul().with_mood(Mood(valence=-0.7, arousal=-0.6))
+
+    handler_b, _b1, _r1, tier_b = _build(reply="x", soul=bright)
+    handler_f, _b2, _r2, tier_f = _build(reply="x", soul=flat)
+    await handler_b.handle(_message(inbound))
+    await handler_f.handle(_message(inbound))
+
+    bright_text = tier_b.all_text.casefold()
+    flat_text = tier_f.all_text.casefold()
+    assert "не в ресурсе" not in bright_text
+    assert "не в ресурсе" in flat_text
+
+
+async def test_low_mood_modulates_the_taste_verdict_stricter_in_context() -> None:
+    # BOB-020: the EFFECTIVE (mood-modulated) verdict reaches the context. The soul
+    # loves the topic (LOVE); a flat mood reads it one step stricter (LIKE) in the
+    # prompt — WITHOUT mutating the stored axes.
+    topic = "расскажи подробно, что ты думаешь про этот фреймворк"
+    taste = TasteEngine(axes=(TasteAxis(name=topic, value=0.9, conviction=0.8),))
+    base = _soul()
+    soul = SOUL(
+        identity=base.identity,
+        mood=Mood(valence=-0.7, openness=-0.6, arousal=-0.5),
+        mood_baseline=base.mood_baseline,
+        taste=taste,
+        phantom_prefs=base.phantom_prefs,
+    )
+    handler, _bot, _repo, tier1 = _build(reply="ok", soul=soul)
+
+    await handler.handle(_message(topic))
+
+    folded = tier1.all_text.casefold()
+    assert "taste verdict on" in folded
+    assert "like" in folded  # dampened from love → like
+    # The stored axis is untouched: a fresh, neutral-mood score still reads LOVE.
+    assert handler._state.soul.taste.score(topic) is Verdict.LOVE
+
+
+async def test_modulated_context_carries_an_experiment_hint() -> None:
+    # An experiment-readiness hint (derived from mood) accompanies the verdict so
+    # the reply can read how willing Bob is to try something new.
+    soul = _soul().with_mood(Mood(valence=-0.7, openness=-0.6))
+    handler, _bot, _repo, tier1 = _build(reply="ok", soul=soul)
+
+    await handler.handle(_message("расскажи подробно про дизайн"))
+
+    assert "experiment" in tier1.all_text.casefold()
 
 
 async def test_react_only_stays_rare_for_a_normal_turn_over_a_seed_sweep() -> None:
@@ -1146,7 +1233,7 @@ async def test_bob_personal_high_conviction_yields_propose_directive() -> None:
 
     # Assert: Bob is told to argue and propose his own (not capitulate); "warmly" kept.
     assert _PROPOSE_DIRECTIVE in tier1.all_text
-    assert "warmly" in tier1.all_text
+    assert "тепл" in tier1.all_text
 
 
 async def test_user_domain_yields_concede_directive() -> None:
@@ -1161,7 +1248,7 @@ async def test_user_domain_yields_concede_directive() -> None:
 
     # Assert: Bob is told to accept the user's choice; warm tone preserved.
     assert _CONCEDE_DIRECTIVE in tier1.all_text
-    assert "warmly" in tier1.all_text
+    assert "тепл" in tier1.all_text
     assert _PROPOSE_DIRECTIVE not in tier1.all_text
 
 
@@ -1180,8 +1267,8 @@ async def test_no_topic_path_is_unchanged_when_verdict_is_neutral_and_shared() -
     assert _PROPOSE_DIRECTIVE not in tier1.all_text
     assert _CONCEDE_DIRECTIVE not in tier1.all_text
     assert _AGREE_DIRECTIVE not in tier1.all_text
-    # The base warm prompt is still there.
-    assert "warmly" in tier1.all_text
+    # The warm tone band (now via tone_directive, BOB-020) is still there.
+    assert "тепл" in tier1.all_text
 
 
 def _soul_with_mild_opinion(topic: str) -> SOUL:
@@ -1218,7 +1305,7 @@ async def test_shared_with_opinion_below_threshold_yields_agree_directive() -> N
     assert _AGREE_DIRECTIVE in tier1.all_text
     assert _PROPOSE_DIRECTIVE not in tier1.all_text
     assert _CONCEDE_DIRECTIVE not in tier1.all_text
-    assert "warmly" in tier1.all_text
+    assert "тепл" in tier1.all_text
 
 
 async def test_default_classifier_is_used_when_none_is_injected() -> None:

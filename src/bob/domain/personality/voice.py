@@ -28,6 +28,12 @@ the prose is free to evolve — callers and tests pin presence/shape, not wordin
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from bob.domain.personality.mood import Mood
+
 # Written as Bob's voice, not a checklist: how he lands a message. The few-shot
 # lines (in « ») end on substance — no trailing question, no ☕ — because the
 # examples, not the prose, are what actually break Qwen's closing-bait reflex.
@@ -115,3 +121,64 @@ def guppi_canon() -> str:
     draw on naturally, sparingly, and varied — never as a recitable list.
     """
     return _GUPPI_CANON
+
+
+# Off-day band defaults (BOB-020, Q4): Bob reads as "not at full resource" only
+# when BOTH valence and energy sit in the low/negative region — a genuinely flat
+# day, not a passing dip. Negative so a normal or good mood never trips the band.
+_DEFAULT_OFFDAY_VALENCE = -0.4
+_DEFAULT_OFFDAY_AROUSAL = -0.3
+
+
+@dataclass(frozen=True, slots=True)
+class OffDayThresholds:
+    """The mood floor below which Bob's tone shifts to the off-day band (Q4).
+
+    A mood reads as an off-day only when its ``valence`` is at-or-below
+    ``valence`` AND its ``arousal`` is at-or-below ``arousal`` — a flat, low-energy
+    day, not a momentary dip. Defaults sit in the low/negative region so a normal or
+    good mood always keeps Bob's warm base tone; the application tunes them from
+    ``emotion.offday.*`` config.
+    """
+
+    valence: float = _DEFAULT_OFFDAY_VALENCE
+    arousal: float = _DEFAULT_OFFDAY_AROUSAL
+
+
+# Bob's two tone bands, written as voice (mirroring anti-bait / variable-form), not
+# config. The WARM band is the long-standing base tone — what the unconditional
+# "warmly and concisely" prompt line used to carry — now conditioned on mood. The
+# OFF-DAY band structurally ends the "вечный позитив": on a flat, low-energy day Bob
+# does not force warmth — he can be quieter, more restrained, vulnerable, and an
+# honest "не знаю" beats confabulating an answer. Crucially it is NOT a relational
+# sulk (that is BOB-014): quieter and honest, never rude or hostile.
+# Cyrillic look-alikes are intentional in these Russian literals.
+_WARM_TONE = (
+    "Держись тепло и по делу, в характере — настроение сегодня ровное, и это "
+    "слышно в том, как ты отвечаешь."
+)
+_OFFDAY_TONE = (
+    "Сегодня ты не в ресурсе — день вышел тусклый, сил мало. Не натягивай тепло "
+    "через силу: можно тише, сдержаннее, уязвимее, чем обычно. Честное «не знаю» "
+    "лучше выдумки — если не знаешь или не тянешь, так и скажи, не сочиняй бодрость. "
+    "Это не повод грубить и не обида на собеседника — ты просто приглушённее и "
+    "честнее, без грубости и без нытья."
+)
+
+
+def tone_directive(mood: Mood, *, thresholds: OffDayThresholds | None = None) -> str:
+    """Return the mood-conditioned tone directive — warm by default, off-day when low.
+
+    Replaces the old unconditional "warmly and concisely" line: Bob's tone now
+    depends on his mood. When BOTH valence and arousal sit at-or-below the off-day
+    ``thresholds`` he reads as "not at full resource" — quieter, more restrained,
+    vulnerable, with an honest "не знаю" over confabulated warmth; otherwise the
+    long-standing warm, concise base tone. The off-day band is derived purely from
+    mood (no new persisted state) and is never rude — quieter and honest, not a
+    relational sulk (BOB-014). Pure and deterministic: the same mood + thresholds
+    always yield the same directive. Defaults to :class:`OffDayThresholds`.
+    """
+    floor = thresholds if thresholds is not None else OffDayThresholds()
+    if mood.valence <= floor.valence and mood.arousal <= floor.arousal:
+        return _OFFDAY_TONE
+    return _WARM_TONE

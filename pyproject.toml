@@ -92,6 +92,15 @@ ignore = [
 # whose Cyrillic look-alikes are intentional (the model reads the directives
 # natively); RUF001's ambiguous-character lint does not apply to these literals.
 "src/bob/domain/personality/voice.py" = ["RUF001"]
+# The voice tests (BOB-016/BOB-020) assert on multi-line Russian persona/tone
+# literals whose Cyrillic look-alikes are intentional (→ RUF001/RUF003).
+"tests/domain/personality/test_voice.py" = [
+    "S101",
+    "ARG001",
+    "PLR2004",
+    "RUF001",
+    "RUF003",
+]
 "tests/**/*.py" = ["S101", "ARG001", "PLR2004"]
 # The expression decider (BOB-018) seeds `random.Random` for deterministic
 # stochastic-sampling assertions (the non-crypto PRNG is the point → S311) and

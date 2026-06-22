@@ -79,6 +79,7 @@ from bob.domain.personality.soul import SOUL
 from bob.domain.personality.taste import TasteAxis, TasteEngine
 from bob.domain.personality.taste_evolution import ALPHA as _EVOLUTION_ALPHA
 from bob.domain.personality.taste_evolution import BETA as _EVOLUTION_BETA
+from bob.domain.personality.voice import OffDayThresholds
 from bob.domain.personality.zone_classifier import TasteZoneClassifier
 from bob.domain.proactivity.decision import ProactiveDecider
 from bob.domain.proactivity.governance import Governance
@@ -345,6 +346,11 @@ def build_application(
         # ``leak_inner_life`` turn can leak a glimpse of what he caught himself
         # thinking about — strictly grounded (no reflection → no-op).
         reflection=RepoProactivitySources(memory_repo, clock=resolved_clock),
+        # Emotional-depth seam (BOB-020): the off-day tone floor — below it Bob's
+        # tone goes quieter/vulnerable/honest instead of forced warmth. Tunable via
+        # emotion.offday.{valence,arousal}; the low/negative defaults keep a normal
+        # or good mood on the warm tone.
+        offday_thresholds=_build_offday_thresholds(merged),
     )
     event_bus.subscribe(MESSAGE_RECEIVED, _as_handler(handle_message))
 
@@ -523,6 +529,22 @@ def _build_proactivity_engine(
         # reproducible in tests.
         rng=random.Random(_resolve_seed(config, seed)),  # noqa: S311
         language=language,
+    )
+
+
+def _build_offday_thresholds(config: Mapping[str, object]) -> OffDayThresholds:
+    """Build the BOB-020 off-day tone thresholds from config (low/negative defaults).
+
+    Reads ``emotion.offday.{valence,arousal}`` — the mood floor below which Bob's
+    tone shifts to the quieter, vulnerable, honest off-day band instead of forced
+    warmth. Falls back to the dataclass defaults (which sit in the low/negative band,
+    so a normal or good mood always keeps the warm tone) when a value is absent.
+    """
+    offday = _section(_section(config, "emotion"), "offday")
+    defaults = OffDayThresholds()
+    return OffDayThresholds(
+        valence=_float_or(offday, "valence", defaults.valence),
+        arousal=_float_or(offday, "arousal", defaults.arousal),
     )
 
 

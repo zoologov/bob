@@ -15,9 +15,12 @@ flavor — never a brittle full-string match (the prose is free to evolve).
 
 from __future__ import annotations
 
+from bob.domain.personality.mood import Mood
 from bob.domain.personality.voice import (
+    OffDayThresholds,
     anti_bait_directive,
     guppi_canon,
+    tone_directive,
     variable_form_directive,
 )
 
@@ -98,6 +101,65 @@ def test_variable_form_directive_carries_a_few_shot() -> None:
     # A short few-shot (between « ») shows the varied form, mirroring anti-bait.
     exemplars = _exemplar_lines(variable_form_directive())
     assert exemplars, "no few-shot exemplar lines found"
+
+
+def test_tone_directive_normal_mood_is_warm_and_concise() -> None:
+    # A neutral/good mood keeps Bob's current warm, concise base tone (BOB-020):
+    # tone_directive replaces the old unconditional "warmly and concisely" line,
+    # so on a normal day it must still read as warm.
+    directive = tone_directive(Mood(valence=0.3, arousal=0.2))
+    folded = directive.casefold()
+    assert "тепл" in folded  # warm
+    assert "не в ресурсе" not in folded  # not the off-day band
+
+
+def test_tone_directive_off_day_is_vulnerable_and_honest_not_warm_forced() -> None:
+    # Low valence AND low energy (below the off-day threshold) → Bob may be quieter,
+    # more restrained, vulnerable; an honest "не знаю" beats confabulating warmth.
+    directive = tone_directive(Mood(valence=-0.6, arousal=-0.5))
+    folded = directive.casefold()
+    assert "не в ресурсе" in folded  # off-day band: not at full resource
+    assert "не знаю" in folded  # honest "I don't know" over forcing an answer
+    assert "уязвим" in folded or "тише" in folded  # vulnerable / quieter
+
+
+def test_tone_directive_off_day_is_not_rude() -> None:
+    # Off-day is quieter/honest, NOT a relational sulk (that is BOB-014). The
+    # directive must not license rudeness/hostility.
+    folded = tone_directive(Mood(valence=-0.7, arousal=-0.6)).casefold()
+    # It explicitly disavows rudeness/sulking rather than licensing it.
+    assert "не груб" in folded or "без груб" in folded  # explicitly: not rude
+    assert "обида" in folded  # names off-day != BOB-014 relational sulk
+    # No hostile/aggressive licensing leaks in.
+    assert "агресс" not in folded
+    assert "огрызай" not in folded
+
+
+def test_tone_directive_is_voice_not_a_rule_list() -> None:
+    # Written as character voice (like anti_bait/variable_form), never a recitable
+    # bullet/numbered list.
+    directive = tone_directive(Mood(valence=-0.6, arousal=-0.5))
+    assert "•" not in directive
+    assert "- " not in directive
+
+
+def test_tone_directive_threshold_comes_from_config() -> None:
+    # The off-day threshold(s) are configurable: a strict threshold leaves a mildly
+    # low mood on the warm tone, while a lenient one trips the off-day band for the
+    # same mood — so the boundary is config-driven, not hardcoded.
+    mood = Mood(valence=-0.2, arousal=-0.15)
+    strict = OffDayThresholds(valence=-0.9, arousal=-0.9)
+    lenient = OffDayThresholds(valence=-0.1, arousal=-0.1)
+    assert "не в ресурсе" not in tone_directive(mood, thresholds=strict).casefold()
+    assert "не в ресурсе" in tone_directive(mood, thresholds=lenient).casefold()
+
+
+def test_off_day_thresholds_defaults_are_negative_low_band() -> None:
+    # Sensible defaults (Q4): the off-day band sits in the low/negative region of
+    # the axes, so a normal or good mood never trips it.
+    defaults = OffDayThresholds()
+    assert defaults.valence < 0.0
+    assert defaults.arousal < 0.0
 
 
 def _exemplar_lines(directive: str) -> list[str]:
