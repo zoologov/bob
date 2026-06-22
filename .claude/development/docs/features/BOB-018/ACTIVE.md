@@ -3,33 +3,33 @@
 
 # ACTIVE: BOB-018 — «Выражение» (BOB-010 Ф2 · T1.1)
 
-> **Last updated:** 2026-06-21
-> **Phase:** Development
+> **Last updated:** 2026-06-22
+> **Phase:** Done
 > **Feature:** bob-c4w · branch `features/BOB-018`
 
 ---
 
 ## Текущий беад
 
-**Беад:** `bob-c4w.1` — dev: ExpressionPlan + переменная форма (в работе).
+**Беад:** `bob-c4w.6` — tech-writer: architecture.md + Gate (завершается).
 
 ## Прогресс
 
-- [ ] `.1` ядро: ExpressionPlan (decide_expression) + form_hint + voice.py + врезка в handle_message
-- [ ] `.2` реакции: MessageReactor + set_message_reaction + REACT_ONLY
-- [ ] `.3` grounded-добавки: внутренняя жизнь + колбэки (no-op без материала)
-- [ ] `.4` test · `.5` review · `.6` tech-writer
+- [x] `.1` ядро: ExpressionPlan (decide_expression) + form_hint + voice.py + врезка в handle_message
+- [x] `.2` реакции: MessageReactor + set_message_reaction + REACT_ONLY
+- [x] `.3` grounded-добавки: внутренняя жизнь (ReflectionReader) + колбэки (MemoryRecall, no-op без материала)
+- [x] `.4` test · [x] `.5` review · [x] `.6` tech-writer
 
 ## Статусы беадов
 
 | Беад | Роль | Зависит | Статус |
 |------|------|---------|--------|
-| bob-c4w.1 | dev ядро+форма | — | in_progress |
-| bob-c4w.2 | dev реакции | .1 | blocked |
-| bob-c4w.3 | dev grounded-добавки | .1 | blocked |
-| bob-c4w.4 | test | .1,.2,.3 | blocked |
-| bob-c4w.5 | review | .4 | blocked |
-| bob-c4w.6 | tech-writer | .5 | blocked |
+| bob-c4w.1 | dev ядро+форма | — | done |
+| bob-c4w.2 | dev реакции | .1 | done |
+| bob-c4w.3 | dev grounded-добавки | .1 | done |
+| bob-c4w.4 | test | .1,.2,.3 | done |
+| bob-c4w.5 | review | .4 | done |
+| bob-c4w.6 | tech-writer | .5 | done |
 
 ## Заметки
 
