@@ -130,3 +130,14 @@ CREATE TABLE IF NOT EXISTS proactivity_state (
     proactivity_enabled INTEGER NOT NULL DEFAULT 1, -- 0/1 owner-mute flag
     mute_until          TEXT                        -- ISO-8601 timed-mute expiry (nullable)
 );
+
+-- Per-persona current fascination (BOB-020): the topic Bob is into right now,
+-- its decaying intensity, and when it took hold. One row per persona_id so
+-- Bobiverse replicas each keep their own. Round-tripped by SqliteFascinationStore;
+-- a persona with no current fascination simply has no row.
+CREATE TABLE IF NOT EXISTS fascination_state (
+    persona_id TEXT PRIMARY KEY,
+    topic      TEXT NOT NULL,
+    intensity  REAL NOT NULL,
+    created_at TEXT NOT NULL  -- ISO-8601, timezone-aware
+);

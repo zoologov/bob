@@ -81,6 +81,7 @@ if TYPE_CHECKING:
     from bob.application.runtime.events import MessageReceived
     from bob.application.usecases.extract_facts import ExtractFacts
     from bob.application.usecases.update_mood_from_text import UpdateMoodFromText
+    from bob.domain.personality.fascination import Fascination
     from bob.domain.personality.soul import SOUL
     from bob.domain.ports import (
         Clock,
@@ -155,6 +156,16 @@ _CALLBACK_PREFACE = (
     "не выдумывай деталей сверх него:"
 )
 
+# Fascination preface (BOB-020 wave 2). When the plan sets ``mention_fascination``
+# AND Bob has a real, current passion (a persisted Fascination that has not faded),
+# its topic is folded into the compose context so Bob can drop it à propos — it is
+# his REAL state, never a fabricated interest. No current fascination → no line (a
+# clean no-op). Russian persona voice; Cyrillic look-alikes intentional.
+_FASCINATION_PREFACE = (
+    "Можешь к месту обронить, чем сейчас увлечён — это твоё реальное состояние, "
+    "не пересказывай как факт, просто упомяни живо, если в тему:"
+)
+
 # Preface for the capability manifest in Bob's prompt: GUPPI is Bob's executor
 # subsystem (canon already in the base persona above), so this just frames the
 # manifest as the skills GUPPI runs for Bob.
@@ -210,6 +221,22 @@ class EpisodeReader(Protocol):
     async def recent_episodes(self, k: int) -> Sequence[Mapping[str, object]]: ...
 
 
+class CurrentFascinationReader(Protocol):
+    """Read seam: Bob's CURRENT fascination, aged and still-alive (BOB-020 wave 2).
+
+    On a :data:`~bob.domain.personality.expression.ExpressionPlan.mention_fascination`
+    turn the compose path folds the topic in so Bob can drop it à propos — but only a
+    REAL, persisted passion that has not yet faded. ``None`` means Bob has no current
+    fascination, so the mention no-ops (never a fabricated interest). The concrete
+    adapter loads the :class:`~bob.domain.ports.FascinationStore`, ages the stored
+    passion against the clock, and drops a faded one.
+    """
+
+    async def current_fascination(self) -> Fascination | None:
+        """Return Bob's current, non-faded fascination, or ``None`` if there is none."""
+        ...
+
+
 class OwnerActivityRecorder(Protocol):
     """The proactivity seam HandleMessage notifies when the owner writes.
 
@@ -257,6 +284,7 @@ class HandleMessage:
         expression_freqs: ExpressionFreqs | None = None,
         reactor: MessageReactor | None = None,
         reflection: ReflectionReader | None = None,
+        fascination: CurrentFascinationReader | None = None,
         offday_thresholds: OffDayThresholds | None = None,
     ) -> None:
         self._router = router
@@ -310,6 +338,12 @@ class HandleMessage:
         # leaks into the reply. No reflection (or no reader wired) → no-op, never a
         # fabrication. Callbacks reuse the already-injected ``recall`` the same way.
         self._reflection = reflection
+        # The fascination seam (BOB-020 wave 2): when wired and the plan sets
+        # ``mention_fascination``, Bob's current, non-faded passion (loaded + aged off
+        # the FascinationStore) is folded into the compose context so he can drop it à
+        # propos — strictly his REAL state. No current fascination (or no reader) →
+        # no-op, never a fabricated interest. Surfacing stays rare/anti-tic.
+        self._fascination = fascination
         # The emotional-depth seam (BOB-020): Bob's TONE is mood-conditioned via
         # voice.tone_directive — below this off-day floor he reads quieter, more
         # vulnerable, honest ("не знаю" over confabulation) instead of forced warmth.
@@ -446,6 +480,7 @@ class HandleMessage:
         additions = [
             await self._leak_inner_life(plan),
             await self._callback(plan, text),
+            await self._mention_fascination(plan),
         ]
         suffix = "".join(f"\n{line}" for line in additions if line)
         return f"{context}{suffix}" if suffix else context
@@ -476,6 +511,21 @@ class HandleMessage:
         if not moment:
             return ""
         return f"{_CALLBACK_PREFACE} {moment}"
+
+    async def _mention_fascination(self, plan: ExpressionPlan) -> str:
+        """The fascination line for this turn, or ``""`` (no flag / no reader / none).
+
+        On a ``mention_fascination`` turn, asks the wired reader for Bob's current,
+        non-faded passion; a real one is offered as something he can drop à propos.
+        Strictly anti-confabulation: ``None`` (no reader, or no current fascination)
+        yields nothing, so Bob never invents an interest he does not have.
+        """
+        if not plan.mention_fascination or self._fascination is None:
+            return ""
+        fascination = await self._fascination.current_fascination()
+        if fascination is None:
+            return ""
+        return f"{_FASCINATION_PREFACE} {fascination.topic}"
 
     def _system_prompt_for(self, soul: SOUL, text: str, plan: ExpressionPlan) -> str:
         """Augment the base prompt with the mood tone, stance, and form-hint directives.

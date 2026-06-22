@@ -220,3 +220,39 @@ def test_freqs_rejects_out_of_range_values() -> None:
         except ValueError:
             continue
         raise AssertionError(f"frequency {bad} should have been rejected")
+
+
+# --- mention_fascination flag (BOB-020 dev wave 2) ----------------------------
+
+
+def test_plan_carries_the_mention_fascination_flag() -> None:
+    # The fascination-surfacing flag rides on the plan like the other rare add-ons.
+    plan = decide_expression(_calm(), _signals(), rng=Random(0), freqs=ExpressionFreqs())
+    assert isinstance(plan.mention_fascination, bool)
+
+
+def test_mention_fascination_is_rare_by_default() -> None:
+    # Surfacing the current passion is occasional, never a per-message tic.
+    mentions = sum(
+        decide_expression(
+            _calm(), _signals(), rng=Random(seed), freqs=ExpressionFreqs()
+        ).mention_fascination
+        for seed in range(300)
+    )
+    assert mentions < 90  # well under a third of turns
+
+
+def test_zero_mention_frequency_disables_the_flag() -> None:
+    off = ExpressionFreqs(mention_fascination=0.0)
+    for seed in range(200):
+        plan = decide_expression(_calm(), _signals(), rng=Random(seed), freqs=off)
+        assert plan.mention_fascination is False
+
+
+def test_mention_frequency_rejects_out_of_range_values() -> None:
+    for bad in (-0.1, 1.1):
+        try:
+            ExpressionFreqs(mention_fascination=bad)
+        except ValueError:
+            continue
+        raise AssertionError(f"frequency {bad} should have been rejected")

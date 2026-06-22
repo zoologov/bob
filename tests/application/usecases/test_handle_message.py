@@ -31,6 +31,7 @@ from bob.application.usecases.handle_message import (
 )
 from bob.application.usecases.update_mood_from_text import UpdateMoodFromText
 from bob.domain.personality.expression import ExpressionFreqs
+from bob.domain.personality.fascination import Fascination
 from bob.domain.personality.mood import Mood
 from bob.domain.personality.negotiation import NegotiationZone
 from bob.domain.personality.reaction import (
@@ -221,6 +222,16 @@ class _FakeReflectionReader:
         return self._text
 
 
+class _FakeFascinationReader:
+    """A CurrentFascinationReader double returning a canned current passion (or none)."""
+
+    def __init__(self, *, fascination: Fascination | None = None) -> None:
+        self._fascination = fascination
+
+    async def current_fascination(self) -> Fascination | None:
+        return self._fascination
+
+
 class _RecordingReactor:
     """A MessageReactor double recording each (chat_id, message_id, emoji) call."""
 
@@ -281,6 +292,7 @@ def _build(
     reactor: _RecordingReactor | None = None,
     recall: FakeRecall | None = None,
     reflection: _FakeReflectionReader | None = None,
+    fascination: _FakeFascinationReader | None = None,
 ) -> tuple[HandleMessage, FakeBot, FakeRepo, CapturingProvider]:
     tier0 = CapturingProvider(reply="positive", replies=tier0_replies)
     tier1 = CapturingProvider(reply=reply)
@@ -314,6 +326,7 @@ def _build(
         expression_freqs=expression_freqs,
         reactor=reactor,
         reflection=reflection,
+        fascination=fascination,
     )
     return handler, bot, repo, tier1
 
@@ -1322,3 +1335,69 @@ async def test_default_classifier_is_used_when_none_is_injected() -> None:
 
     # Assert: the default heuristic routed Bob to defend his view.
     assert _PROPOSE_DIRECTIVE in tier1.all_text
+
+
+# --- mention current fascination (BOB-020 dev wave 2) -------------------------
+
+# Force the mention flag on so the inject is exercised deterministically; the
+# surfacing itself still no-ops without a current fascination.
+_MENTION_ON = ExpressionFreqs(
+    leak_inner_life=0.0, callback=0.0, mention_fascination=1.0
+)
+_MENTION_OFF = ExpressionFreqs(
+    leak_inner_life=0.0, callback=0.0, mention_fascination=0.0
+)
+_FASCINATION = Fascination(
+    topic="орбитальная механика", intensity=0.8, created_at=_moment()
+)
+
+
+async def test_mention_fascination_surfaces_the_current_passion_in_the_prompt() -> None:
+    # With the mention flag set AND a current fascination, its topic is folded into
+    # the compose prompt as something Bob can drop à propos (his real state).
+    handler, _bot, _repo, tier1 = _build(
+        reply="hi",
+        expression_freqs=_MENTION_ON,
+        fascination=_FakeFascinationReader(fascination=_FASCINATION),
+    )
+
+    await handler.handle(_message("расскажи подробно, чем занимался сегодня"))
+
+    assert "орбитальная механика" in tier1.all_text
+
+
+async def test_mention_fascination_is_a_noop_without_a_current_fascination() -> None:
+    # No fascination on record (returns None): nothing is injected, the turn replies.
+    handler, bot, _repo, tier1 = _build(
+        reply="hi",
+        expression_freqs=_MENTION_ON,
+        fascination=_FakeFascinationReader(fascination=None),
+    )
+
+    await handler.handle(_message("расскажи подробно, чем занимался сегодня"))
+
+    assert bot.final_text == "hi"
+    assert "увлеч" not in tier1.all_text.casefold()  # the preface never appeared
+
+
+async def test_mention_fascination_is_a_noop_when_no_reader_wired() -> None:
+    # No fascination reader injected (backward-compatible default): no effect.
+    handler, bot, _repo, _tier1 = _build(reply="hi", expression_freqs=_MENTION_ON)
+
+    await handler.handle(_message("расскажи подробно, чем занимался сегодня"))
+
+    assert bot.final_text == "hi"
+
+
+async def test_mention_fascination_is_a_noop_when_flag_is_off() -> None:
+    # The flag is off (the common case): the passion is NOT surfaced even though one
+    # exists — surfacing stays rare/à propos, never a per-message tic.
+    handler, _bot, _repo, tier1 = _build(
+        reply="hi",
+        expression_freqs=_MENTION_OFF,
+        fascination=_FakeFascinationReader(fascination=_FASCINATION),
+    )
+
+    await handler.handle(_message("расскажи подробно, чем занимался сегодня"))
+
+    assert "орбитальная механика" not in tier1.all_text

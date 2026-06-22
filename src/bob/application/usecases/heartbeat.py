@@ -78,6 +78,21 @@ class EpisodeWriter(Protocol):
     async def save_episode(self, episode: Mapping[str, object]) -> None: ...
 
 
+class FascinationEvolver(Protocol):
+    """The narrow seam the reflect tick drives to evolve Bob's fascination (BOB-020).
+
+    Realised by :class:`~bob.application.usecases.evolve_fascination.EvolveFascination`:
+    a rare, grounded, idempotent step that — only when the current passion has spent
+    itself — picks a fresh one from Bob's real inner life. Driven AFTER the reflection
+    is logged so that fresh reflection is available as grounding. Optional: unwired,
+    the reflect tick behaves exactly as before.
+    """
+
+    async def run(self) -> None:
+        """Run one fascination-evolution step (a no-op unless a shift is due)."""
+        ...
+
+
 class TasteProfileWriter(Protocol):
     """The narrow persistence seam self-evolution needs: write a JSON artifact.
 
@@ -155,6 +170,7 @@ class ReflectTick:
         language: str = DEFAULT_LANGUAGE,
         apply_reflection: ApplyReflection | None = None,
         soul_store: TasteProfileWriter | None = None,
+        evolve_fascination: FascinationEvolver | None = None,
     ) -> None:
         self._router = router
         self._repo = repo
@@ -163,6 +179,11 @@ class ReflectTick:
         self._language = language
         self._apply_reflection = apply_reflection
         self._soul_store = soul_store
+        # The fascination-evolution seam (BOB-020 wave 2): driven AFTER the reflection
+        # is logged (so it is available as grounding). Itself idempotent — it shifts
+        # only when the current passion has faded — so a re-run in the same period is a
+        # no-op. Unwired, the tick behaves exactly as before.
+        self._evolve_fascination = evolve_fascination
         # Idempotency marker: the last reflection text already applied to the soul.
         self._last_evolved: str | None = None
 
@@ -189,6 +210,8 @@ class ReflectTick:
         )
         await self._repo.save_episode(_episode_row(episode))
         self._evolve(reflection)
+        if self._evolve_fascination is not None:
+            await self._evolve_fascination.run()
 
     def _evolve(self, reflection: str) -> None:
         """Apply ``reflection`` to the soul once, persisting taste on a real change."""
