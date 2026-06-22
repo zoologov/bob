@@ -96,9 +96,9 @@ def test_form_hint_varies_by_mood_on_the_same_inbound() -> None:
         _low_energy(), short, rng=Random(0), freqs=ExpressionFreqs()
     )
     normal = decide_expression(_calm(), short, rng=Random(0), freqs=ExpressionFreqs())
+    # Distinct hints from the same inbound — the contrast is the mood alone.
     assert terse.form_hint is FormHint.TERSE
     assert normal.form_hint is FormHint.NORMAL
-    assert terse.form_hint is not normal.form_hint
 
 
 def test_expansive_only_for_a_bright_mood_not_a_calm_one_on_the_same_inbound() -> None:
