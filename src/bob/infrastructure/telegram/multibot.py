@@ -398,6 +398,15 @@ class MultiBotGateway:
         """Return the reply seam for ``identity`` (Bob's pins his topic thread)."""
         return _ReplyGateway(self._inner[identity])
 
+    def reactor(self, identity: BotIdentity) -> _ReactorGateway:
+        """Return the react-only seam for ``identity`` (BOB-018).
+
+        Wraps the per-bot inner gateway so a react-only turn sets a native
+        reaction (pinned to the bot's thread) instead of composing a reply; the
+        inner gateway makes the reaction best-effort (fallback to a brief ack).
+        """
+        return _ReactorGateway(self._inner[identity])
+
 
 class _ReplyGateway:
     """Adapts a per-bot :class:`TelegramGateway` to the ``ReplyGateway`` port (BOB-009).
@@ -419,5 +428,20 @@ class _ReplyGateway:
         self, *, chat_id: int, markdown: str, thinking: str | None = None
     ) -> None:
         await self._gateway.reply(chat_id=chat_id, markdown=markdown, thinking=thinking)
+
+
+class _ReactorGateway:
+    """Adapts a per-bot :class:`TelegramGateway` to the ``MessageReactor`` port (BOB-018).
+
+    Delegates to the inner gateway, which sets a native ``set_message_reaction``
+    pinned to the bot's thread (best-effort, with a brief textual-ack fallback), so
+    HandleMessage's react-only turn lands Bob's reaction in his topic thread.
+    """
+
+    def __init__(self, gateway: TelegramGateway) -> None:
+        self._gateway = gateway
+
+    async def react(self, *, chat_id: int, message_id: int, emoji: str) -> None:
+        await self._gateway.react(chat_id=chat_id, message_id=message_id, emoji=emoji)
 
 

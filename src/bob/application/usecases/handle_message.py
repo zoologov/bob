@@ -59,6 +59,7 @@ from bob.domain.personality.negotiation import (
     NegotiationZone,
     Stance,
 )
+from bob.domain.personality.reaction import reaction_emoji_for
 from bob.domain.personality.taste import Verdict
 from bob.domain.personality.voice import (
     anti_bait_directive,
@@ -82,6 +83,7 @@ if TYPE_CHECKING:
         Clock,
         LLMMessage,
         MemoryRecall,
+        MessageReactor,
         Recalled,
         ToolCallingProvider,
         ZoneClassifier,
@@ -233,6 +235,7 @@ class HandleMessage:
         zone_classifier: ZoneClassifier | None = None,
         negotiation: Negotiation | None = None,
         expression_freqs: ExpressionFreqs | None = None,
+        reactor: MessageReactor | None = None,
     ) -> None:
         self._router = router
         self._gateway = gateway
@@ -272,6 +275,12 @@ class HandleMessage:
         self._expression_freqs = (
             expression_freqs if expression_freqs is not None else ExpressionFreqs()
         )
+        # The react-only seam (BOB-018): when a reactor is wired, an
+        # ``ExpressionMode.REACT_ONLY`` plan sets a native mood emoji reaction on the
+        # user's message INSTEAD of composing a reply (no LLM call). Unwired (the
+        # default) a react-only plan falls back to a normal full reply, so the path
+        # stays live and backward-compatible.
+        self._reactor = reactor
 
     async def handle(self, event: MessageReceived) -> None:
         """Process one received message end to end (the EventBus subscriber)."""
@@ -280,12 +289,21 @@ class HandleMessage:
         # Computed up front so the mode steers the reply path and the form hint
         # shapes the prompt; the rare flags ride along for later beads.
         plan = self._plan_expression(event, soul)
+        # React-only (BOB-018): when a reactor is wired and the plan picks
+        # REACT_ONLY, Bob acknowledges with a native mood emoji INSTEAD of composing
+        # a reply — no LLM call, no rich final, no episode (there is no reply text).
+        # It is still real engagement, so the owner-activity marker fires. Unwired,
+        # the plan falls back to a full reply below (backward-compatible).
+        if plan.mode is ExpressionMode.REACT_ONLY and self._reactor is not None:
+            await self._react_only(event, soul)
+            await self._record_owner_activity()
+            return
         recalled = await self._recall.recall(event.text, k=_RECALL_K)
         history = await self._episodes.recent_episodes(_HISTORY_K)
         # Run the slow generation inside the typing keepalive so "Bob is typing…"
         # stays visible for the whole real wait (BOB-009); then commit one rich final.
         async with self._gateway.typing_indicator(chat_id=event.chat_id):
-            reply = await self._decide(event.text, soul, recalled, history, plan)
+            reply = await self._compose_reply(event.text, soul, recalled, history, plan)
         await self._gateway.reply(chat_id=event.chat_id, markdown=reply)
         await self._persist(event, reply, soul)
         await self._record_owner_activity()
@@ -293,6 +311,20 @@ class HandleMessage:
         # later turn's recall can surface them. Best-effort — run() never raises,
         # so a flaky local model can never break a turn that already replied.
         await self._extract_facts.run(user_message=event.text, reply=reply)
+
+    async def _react_only(self, event: MessageReceived, soul: SOUL) -> None:
+        """Set a native mood emoji reaction on the inbound (BOB-018 react-only).
+
+        Picks a standard-reaction emoji from Bob's current mood and asks the wired
+        reactor to set it on the user's message. The reaction is best-effort (the
+        adapter degrades to a brief ack and never raises), so this never breaks the
+        turn. Called only when a reactor is wired and the plan picked REACT_ONLY.
+        """
+        assert self._reactor is not None  # guarded by the caller
+        emoji = reaction_emoji_for(soul.mood)
+        await self._reactor.react(
+            chat_id=event.chat_id, message_id=event.message_id, emoji=emoji
+        )
 
     async def _record_owner_activity(self) -> None:
         """Notify proactivity the owner just wrote (best-effort, optional seam).
@@ -327,51 +359,6 @@ class HandleMessage:
         return decide_expression(
             soul.mood, signals, rng=self._rng, freqs=self._expression_freqs
         )
-
-    async def _decide(
-        self,
-        text: str,
-        soul: SOUL,
-        recalled: Sequence[Recalled],
-        history: Sequence[Mapping[str, object]],
-        plan: ExpressionPlan,
-    ) -> str:
-        """Build the request (selective redaction) and get the reply.
-
-        Reply-shaping context (history + memory + mood/identity/taste) goes in
-        ``shareable_context`` so it reaches the Tier 1 reply; the
-        ``private_context`` channel is kept for Tier-0-only material (empty here).
-        When capabilities are registered AND a tool-calling provider is wired, the
-        reply runs through the capability tool-loop (the model may call a
-        capability, GUPPI executes it, the result loops back); otherwise it stays
-        on today's plain router path.
-
-        The ``plan`` shapes the turn (BOB-018): a :data:`ExpressionMode.REACT_ONLY`
-        plan routes through :meth:`_react_only_reply` — the explicit seam bob-c4w.2
-        fills with a native reaction; until then it composes a normal full reply,
-        so the path is live and tested, never dead code. The plan's ``form_hint``
-        is folded into the system prompt as a soft length cue.
-        """
-        if plan.mode is ExpressionMode.REACT_ONLY:
-            return await self._react_only_reply(text, soul, recalled, history, plan)
-        return await self._compose_reply(text, soul, recalled, history, plan)
-
-    async def _react_only_reply(
-        self,
-        text: str,
-        soul: SOUL,
-        recalled: Sequence[Recalled],
-        history: Sequence[Mapping[str, object]],
-        plan: ExpressionPlan,
-    ) -> str:
-        """Handle a react-only turn — the bob-c4w.2 seam, a full reply until then.
-
-        BOB-018 wave 1 carries the :data:`ExpressionMode.REACT_ONLY` decision but
-        not the native Telegram reaction (that is bob-c4w.2). To keep the path live
-        and free of dead code, a react-only turn falls back to a normal composed
-        reply here; bob-c4w.2 replaces this body with the ``MessageReactor`` call.
-        """
-        return await self._compose_reply(text, soul, recalled, history, plan)
 
     async def _compose_reply(
         self,

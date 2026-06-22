@@ -100,7 +100,7 @@ from bob.infrastructure.telegram.multibot import (
 )
 
 if TYPE_CHECKING:
-    from aiogram.types import InputRichMessage
+    from aiogram.types import InputRichMessage, ReactionTypeEmoji
 
     from bob.application.runtime.agent import BackgroundTask
     from bob.application.usecases.handle_message import ReplyGateway
@@ -336,6 +336,10 @@ def build_application(
         # hint applied now; mode + rare flags carried for later beads).
         rng=random.Random(_resolve_seed(merged, proactivity_seed)),  # noqa: S311
         expression_freqs=_build_expression_freqs(merged),
+        # React-only seam (BOB-018): a REACT_ONLY plan sets a native mood emoji
+        # reaction on Bob's bot (pinned to his topic, best-effort) instead of
+        # composing a reply — no LLM call.
+        reactor=multibot.reactor(BotIdentity.BOB),
     )
     event_bus.subscribe(MESSAGE_RECEIVED, _as_handler(handle_message))
 
@@ -927,6 +931,20 @@ class _AiogramBotAdapter:
             chat_id=chat_id,
             rich_message=rich_message,
             message_thread_id=message_thread_id,
+        )
+
+    async def set_message_reaction(
+        self,
+        *,
+        chat_id: int,
+        message_id: int,
+        reaction: Sequence[ReactionTypeEmoji],
+        message_thread_id: int | None = None,  # noqa: ARG002
+    ) -> bool:
+        # Telegram's ``setMessageReaction`` targets the message directly (no thread
+        # arg); ``message_thread_id`` is accepted for BotLike parity and dropped.
+        return await self._bot.set_message_reaction(  # type: ignore[attr-defined,no-any-return]
+            chat_id=chat_id, message_id=message_id, reaction=list(reaction)
         )
 
 

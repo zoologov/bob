@@ -103,6 +103,9 @@ class _FakeBot:
     updates_batches: list[list[_FakeUpdate]] = field(default_factory=list)
     sends: list[_SendCall] = field(default_factory=list)
     typings: list[_TypingCall] = field(default_factory=list)
+    reactions: list[tuple[int, int, tuple[str, ...], int | None]] = field(
+        default_factory=list
+    )
     next_message_id: int = 900
     raise_on_poll: bool = False
 
@@ -150,6 +153,18 @@ class _FakeBot:
         msg = _FakeMessage(message_id=self.next_message_id, text=rich_message.markdown)
         self.next_message_id += 1
         return msg
+
+    async def set_message_reaction(
+        self,
+        *,
+        chat_id: int,
+        message_id: int,
+        reaction: Sequence[object],
+        message_thread_id: int | None = None,
+    ) -> bool:
+        emoji = tuple(getattr(r, "emoji", "") for r in reaction)
+        self.reactions.append((chat_id, message_id, emoji, message_thread_id))
+        return True
 
 
 class _AllowAuthorizer:
@@ -419,6 +434,19 @@ async def test_bob_reply_gateway_sets_thread_id() -> None:
     assert bob.typings, "the topic should have shown a typing indicator"
     assert all(call.message_thread_id == _BOB_TOPIC_ID for call in bob.typings)
     assert guppi.sends == []  # GUPPI never sends Bob's reply
+
+
+async def test_bob_reactor_sets_a_native_reaction_pinned_to_the_thread() -> None:
+    # BOB-018: the react-only seam sets a native reaction on Bob's bot, pinned to
+    # his topic thread — and only on Bob's bot (GUPPI never reacts for Bob).
+    bob, guppi = _FakeBot(), _FakeBot()
+    gateway, _ = _build({BotIdentity.BOB: bob, BotIdentity.GUPPI: guppi})
+    reactor = gateway.reactor(BotIdentity.BOB)
+
+    await reactor.react(chat_id=_CHAT_ID, message_id=7, emoji="🔥")
+
+    assert bob.reactions == [(_CHAT_ID, 7, ("🔥",), _BOB_TOPIC_ID)]
+    assert guppi.reactions == []
 
 
 def test_live_inner_gateways_use_real_clock_and_sleep() -> None:

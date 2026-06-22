@@ -33,6 +33,7 @@ from bob.application.usecases.update_mood_from_text import UpdateMoodFromText
 from bob.domain.personality.expression import ExpressionFreqs
 from bob.domain.personality.mood import Mood
 from bob.domain.personality.negotiation import NegotiationZone
+from bob.domain.personality.reaction import STANDARD_REACTION_EMOJI
 from bob.domain.personality.soul import SOUL
 from bob.domain.personality.taste import TasteAxis, TasteEngine, Verdict
 from bob.domain.ports import ToolCall, ToolCallResult
@@ -131,6 +132,17 @@ class FakeBot:
         self.sent.append((chat_id, text))
         return FakeMessage(message_id=777)
 
+    async def set_message_reaction(
+        self,
+        *,
+        chat_id: int,  # noqa: ARG002
+        message_id: int,  # noqa: ARG002
+        reaction: object,  # noqa: ARG002
+        message_thread_id: int | None = None,  # noqa: ARG002
+    ) -> bool:
+        # BOB-018: react-only seam; fakes accept the BotLike reaction call.
+        return True
+
     async def send_chat_action(
         self, *, chat_id: int, action: str, message_thread_id: int | None = None  # noqa: ARG002
     ) -> bool:
@@ -187,6 +199,16 @@ class FakeRecall:
         return [{"content": _RECALL_MEMORY, "category": "personal"}]
 
 
+class _RecordingReactor:
+    """A MessageReactor double recording each (chat_id, message_id, emoji) call."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[int, int, str]] = []
+
+    async def react(self, *, chat_id: int, message_id: int, emoji: str) -> None:
+        self.calls.append((chat_id, message_id, emoji))
+
+
 def _moment() -> datetime:
     return datetime(2026, 6, 18, 14, 0, 0, tzinfo=UTC)
 
@@ -234,6 +256,7 @@ def _build(
     soul: SOUL | None = None,
     rng: Random | None = None,
     expression_freqs: ExpressionFreqs | None = None,
+    reactor: _RecordingReactor | None = None,
 ) -> tuple[HandleMessage, FakeBot, FakeRepo, CapturingProvider]:
     tier0 = CapturingProvider(reply="positive", replies=tier0_replies)
     tier1 = CapturingProvider(reply=reply)
@@ -265,6 +288,7 @@ def _build(
         zone_classifier=zone_classifier,
         rng=rng if rng is not None else Random(0),
         expression_freqs=expression_freqs,
+        reactor=reactor,
     )
     return handler, bot, repo, tier1
 
@@ -675,24 +699,76 @@ async def test_expression_plan_is_deterministic_under_a_fixed_seed() -> None:
     assert tier_a.all_text == tier_b.all_text
 
 
-async def test_react_only_plan_falls_back_to_a_full_reply_for_now() -> None:
-    # The REACT_ONLY seam (bob-c4w.2 fills it): until reactions land, a react-only
-    # plan resolves to a normal full REPLY — no dead code, the turn still answers
-    # and persists exactly as a reply turn. Forced via a withdrawn mood + a trivial
-    # short inbound + a seed that draws into the react-only branch.
-    soul = _soul().with_mood(Mood(valence=-0.4, arousal=-0.8, social=-0.7))
-    # leak/callback off so the seed only steers the react-mode draw; seed 1 draws
-    # into the REACT_ONLY branch for this withdrawn mood + trivial inbound.
-    freqs = ExpressionFreqs(leak_inner_life=0.0, callback=0.0)
-    handler, bot, repo, _tier1 = _build(
-        reply="all good", soul=soul, rng=Random(1), expression_freqs=freqs
+def _react_soul() -> SOUL:
+    # A withdrawn, low-energy mood: with a trivial short inbound this leans the
+    # plan toward REACT_ONLY (see expression.decide_expression).
+    return _soul().with_mood(Mood(valence=-0.4, arousal=-0.8, social=-0.7))
+
+
+# leak/callback off so the seed only steers the react-mode draw; seed 1 draws into
+# the REACT_ONLY branch for this withdrawn mood + a trivial short inbound ("угу").
+_REACT_FREQS = ExpressionFreqs(leak_inner_life=0.0, callback=0.0)
+
+
+async def test_react_only_sets_a_reaction_and_skips_the_full_reply() -> None:
+    # BOB-018 (bob-c4w.2): a REACT_ONLY plan sets a native mood-appropriate emoji
+    # reaction INSTEAD of composing a reply — no LLM reply, no rich final, no
+    # episode persisted (there is no reply text). The emoji is a standard-reaction
+    # emoji picked from Bob's (withdrawn → "glum"/"subdued") mood.
+    reactor = _RecordingReactor()
+    handler, bot, repo, tier1 = _build(
+        reply="all good",
+        soul=_react_soul(),
+        rng=Random(1),
+        expression_freqs=_REACT_FREQS,
+        reactor=reactor,
     )
 
     await handler.handle(_message("угу"))
 
-    # The turn behaves like a normal reply: a final is committed and the episode
-    # is persisted (the react-only seam composes a full reply for now — no dead
-    # code, no reaction yet; "угу" is short/casual so it answers on Tier 0).
+    # Bob reacted on the user's message (chat_id/message_id from the inbound) with a
+    # standard-reaction emoji, and no reply was generated or committed.
+    assert len(reactor.calls) == 1
+    chat_id, message_id, emoji = reactor.calls[0]
+    assert (chat_id, message_id) == (555, 10)
+    assert emoji in STANDARD_REACTION_EMOJI
+    assert bot.sent == []
+    assert tier1.payloads == []
+    assert repo.episodes == []
+
+
+async def test_react_only_records_owner_activity() -> None:
+    # A react-only turn is still real engagement: the owner-activity marker fires.
+    reactor = _RecordingReactor()
+    recorder = _RecordingOwnerActivity()
+    handler, _bot, _repo, _tier1 = _build(
+        reply="all good",
+        soul=_react_soul(),
+        rng=Random(1),
+        expression_freqs=_REACT_FREQS,
+        reactor=reactor,
+        owner_activity=recorder,
+    )
+
+    await handler.handle(_message("угу"))
+
+    assert len(reactor.calls) == 1
+    assert recorder.calls == 1
+
+
+async def test_react_only_falls_back_to_a_full_reply_when_no_reactor_wired() -> None:
+    # With no reactor injected (backward-compatible default), a REACT_ONLY plan
+    # resolves to a normal full reply — no dead code, the turn still answers and
+    # persists exactly as a reply turn ("угу" is short/casual → Tier 0).
+    handler, bot, repo, _tier1 = _build(
+        reply="all good",
+        soul=_react_soul(),
+        rng=Random(1),
+        expression_freqs=_REACT_FREQS,
+    )
+
+    await handler.handle(_message("угу"))
+
     assert bot.final_text == "positive"
     assert len(bot.sent) == 1
     assert len(repo.episodes) == 1

@@ -43,6 +43,7 @@ __all__ = [
     "LLMProvider",
     "MemoryRecall",
     "MemoryRepo",
+    "MessageReactor",
     "Permission",
     "ProactivityStore",
     "Recalled",
@@ -251,6 +252,25 @@ class MemoryRecall(Protocol):
 
     async def recall(self, query: str, *, k: int) -> Sequence[Recalled]:
         """Return the top-``k`` memories relevant to ``query``."""
+        ...
+
+
+@runtime_checkable
+class MessageReactor(Protocol):
+    """Set a native reaction on a received message (the react-only seam, BOB-018).
+
+    On a :data:`~bob.domain.personality.expression.ExpressionMode.REACT_ONLY` turn
+    Bob acknowledges with a single emoji reaction *instead of* composing a reply —
+    cheap, no LLM. The Telegram realisation calls ``set_message_reaction``; the
+    ``emoji`` is always one Bob picked from the standard reaction set
+    (:func:`~bob.domain.personality.reaction.reaction_emoji_for`). The reaction is
+    **best-effort**: an adapter MUST degrade gracefully (a textual ack, or a no-op)
+    on any transport error and never raise into the caller, so a failed reaction
+    can never break a turn.
+    """
+
+    async def react(self, *, chat_id: int, message_id: int, emoji: str) -> None:
+        """React to ``message_id`` in ``chat_id`` with ``emoji`` (best-effort)."""
         ...
 
 

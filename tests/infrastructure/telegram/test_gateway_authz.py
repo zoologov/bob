@@ -101,6 +101,17 @@ class _FakeBot:
         self.sends.append(_SendCall(chat_id=chat_id, text=text))
         return _FakeMessage(message_id=1, text=text)
 
+    async def set_message_reaction(
+        self,
+        *,
+        chat_id: int,  # noqa: ARG002
+        message_id: int,  # noqa: ARG002
+        reaction: object,  # noqa: ARG002
+        message_thread_id: int | None = None,  # noqa: ARG002
+    ) -> bool:
+        # BOB-018: react-only seam; fakes accept the BotLike reaction call.
+        return True
+
     async def send_chat_action(
         self,
         *,
