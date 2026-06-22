@@ -86,6 +86,60 @@ def test_bright_mood_long_inbound_can_expand() -> None:
     assert plan.form_hint is FormHint.EXPANSIVE
 
 
+def test_form_hint_varies_by_mood_on_the_same_inbound() -> None:
+    # US-3 acceptance: form is state-driven, not one frame. A short inbound reads
+    # TERSE under a withdrawn low-energy mood but stays NORMAL under a calm mood —
+    # the SAME inbound, a different form, purely because the mood differs (no RNG,
+    # so the contrast is the mood alone).
+    short = _signals("ну")
+    terse = decide_expression(
+        _low_energy(), short, rng=Random(0), freqs=ExpressionFreqs()
+    )
+    normal = decide_expression(_calm(), short, rng=Random(0), freqs=ExpressionFreqs())
+    assert terse.form_hint is FormHint.TERSE
+    assert normal.form_hint is FormHint.NORMAL
+    assert terse.form_hint is not normal.form_hint
+
+
+def test_expansive_only_for_a_bright_mood_not_a_calm_one_on_the_same_inbound() -> None:
+    # The other end of US-3: a substantive inbound expands ONLY when the mood is
+    # bright/open; the very same inbound under a neutral mood stays NORMAL. Form
+    # tracks state, so the dialog never wears one length regardless of feeling.
+    substantive = _signals("расскажи подробно, как именно это устроено внутри")
+    bright = decide_expression(
+        _bright(), substantive, rng=Random(0), freqs=ExpressionFreqs()
+    )
+    calm = decide_expression(_calm(), substantive, rng=Random(0), freqs=ExpressionFreqs())
+    assert bright.form_hint is FormHint.EXPANSIVE
+    assert calm.form_hint is FormHint.NORMAL
+
+
+def test_a_question_is_substantive_so_never_react_only_even_when_short() -> None:
+    # Boundary: a short inbound that carries a question mark is substantive (it wants
+    # an answer), so the mode is never downgraded to react-only — a question always
+    # earns a reply. (Its brevity may still pull the FORM terse under low energy; the
+    # mode contract is what the "?" signal guards.)
+    for seed in range(50):
+        plan = decide_expression(
+            _low_energy(), _signals("а?"), rng=Random(seed), freqs=ExpressionFreqs()
+        )
+        assert plan.mode is ExpressionMode.REPLY
+
+
+def test_idle_seconds_signal_is_accepted_without_changing_the_plan_shape() -> None:
+    # The signals carry idle_seconds (silence before the turn) as an extensible
+    # input; passing a large gap still yields a well-formed plan (the decider tolerates
+    # it — later beads may weight it without changing the call shape).
+    plan = decide_expression(
+        _calm(),
+        _signals("привет", idle_seconds=86_400.0),
+        rng=Random(0),
+        freqs=ExpressionFreqs(),
+    )
+    assert isinstance(plan, ExpressionPlan)
+    assert plan.mode in (ExpressionMode.REPLY, ExpressionMode.REACT_ONLY)
+
+
 def test_low_energy_short_inbound_leans_react_only_over_a_seed_sweep() -> None:
     # Anti-tic the other way: a withdrawn, low-energy state on a trivial inbound
     # should produce at least SOME react-only turns across seeds (state raises the
@@ -125,6 +179,16 @@ def test_rare_flags_are_rare_by_default() -> None:
         callbacks += plan.callback
     assert 0 < leaks < n // 3, f"leak fired {leaks}/{n} — not rare"
     assert 0 < callbacks < n // 3, f"callback fired {callbacks}/{n} — not rare"
+
+
+def test_empty_inbound_is_short_and_yields_a_well_formed_plan() -> None:
+    # Input edge: an empty/whitespace-only inbound is a short, low-signal turn — it
+    # must not error and must produce a valid plan (terse under low energy).
+    plan = decide_expression(
+        _low_energy(), _signals("   "), rng=Random(0), freqs=ExpressionFreqs()
+    )
+    assert plan.form_hint is FormHint.TERSE
+    assert plan.mode in (ExpressionMode.REPLY, ExpressionMode.REACT_ONLY)
 
 
 def test_zero_frequency_disables_a_flag_entirely() -> None:

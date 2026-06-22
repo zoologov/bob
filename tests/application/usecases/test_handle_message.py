@@ -33,7 +33,10 @@ from bob.application.usecases.update_mood_from_text import UpdateMoodFromText
 from bob.domain.personality.expression import ExpressionFreqs
 from bob.domain.personality.mood import Mood
 from bob.domain.personality.negotiation import NegotiationZone
-from bob.domain.personality.reaction import STANDARD_REACTION_EMOJI
+from bob.domain.personality.reaction import (
+    STANDARD_REACTION_EMOJI,
+    reaction_emoji_for,
+)
 from bob.domain.personality.soul import SOUL
 from bob.domain.personality.taste import TasteAxis, TasteEngine, Verdict
 from bob.domain.ports import ToolCall, ToolCallResult
@@ -708,6 +711,52 @@ async def test_expansive_form_hint_reaches_the_reply_prompt() -> None:
     assert "развёрнут" in folded or "развернут" in folded
 
 
+async def test_form_directive_varies_by_mood_on_the_same_inbound() -> None:
+    # US-3 acceptance end to end: the SAME substantive inbound yields a DIFFERENT
+    # form directive in the prompt depending on mood — expansive under a bright,
+    # open mood, but no length directive under a withdrawn low-energy mood. The
+    # dialog never wears one frame regardless of how Bob feels.
+    inbound = "расскажи подробно, как именно это работает и почему так вышло"
+    bright_soul = _soul().with_mood(Mood(valence=0.6, arousal=0.7, openness=0.6, social=0.6))
+    low_soul = _soul().with_mood(Mood(valence=-0.4, arousal=-0.8, social=-0.7))
+
+    handler_bright, _b1, _r1, tier_bright = _build(reply="x", soul=bright_soul)
+    handler_low, _b2, _r2, tier_low = _build(reply="x", soul=low_soul)
+    await handler_bright.handle(_message(inbound))
+    await handler_low.handle(_message(inbound))
+
+    bright_text = tier_bright.all_text.casefold()
+    low_text = tier_low.all_text.casefold()
+    # The EXPANSIVE form-hint directive opens with a phrase unique to the
+    # state-driven length cue ("сейчас есть что сказать") — distinct from the
+    # always-present variable-form voice few-shot. Bright + substantive lands it; the
+    # withdrawn mood on the SAME inbound does NOT, so the two prompts differ by mood.
+    expansive_cue = "сейчас есть что сказать"
+    assert expansive_cue in bright_text
+    assert expansive_cue not in low_text
+    # Both still carry the variable-form voice (it is always present, BOB-016/018).
+    assert "форма и длина" in bright_text
+    assert "форма и длина" in low_text
+
+
+async def test_react_only_stays_rare_for_a_normal_turn_over_a_seed_sweep() -> None:
+    # Anti-tic (guardrail) end to end: a calm mood on a normal (non-trivial) inbound
+    # should essentially never downgrade to react-only across a seed sweep — react-only
+    # is reserved for the low-energy/low-signal case, so an ordinary turn always replies.
+    react_turns = 0
+    for seed in range(60):
+        reactor = _RecordingReactor()
+        handler, _bot, _repo, _tier1 = _build(
+            reply="hi",
+            rng=Random(seed),
+            expression_freqs=_REACT_FREQS,
+            reactor=reactor,
+        )
+        await handler.handle(_message("что думаешь про это сегодня"))
+        react_turns += len(reactor.calls)
+    assert react_turns == 0, f"react-only fired {react_turns}/60 on a normal turn"
+
+
 async def test_expression_plan_is_deterministic_under_a_fixed_seed() -> None:
     # The wired plan is reproducible: the same seed + same turn yields the same
     # form-hint directive in the prompt (no global RNG leaks in).
@@ -802,6 +851,39 @@ async def test_callback_is_a_noop_on_empty_recall() -> None:
     assert "вспомнить" not in folded  # the callback preface never appeared
 
 
+async def test_callback_is_a_noop_when_recall_hits_have_no_content() -> None:
+    # Anti-confabulation (US-4): recall returns hits, but none carries usable
+    # content (empty/missing "content") — a WEAK recall, distinct from an empty
+    # list. No callback is injected and the turn still replies normally.
+    handler, bot, _repo, tier1 = _build(
+        reply="hi",
+        expression_freqs=_CALLBACK_ON,
+        recall=FakeRecall(hits=[{"category": "episodic"}, {"content": ""}]),
+    )
+
+    await handler.handle(_message("расскажи подробно про что-то"))
+
+    assert bot.final_text == "hi"
+    assert "вспомнить" not in tier1.all_text.casefold()  # no callback preface
+
+
+async def test_leak_inner_life_is_a_noop_on_an_empty_reflection_string() -> None:
+    # Anti-confabulation (US-2): a reflection reader that returns an empty string is
+    # the documented "no real thought" signal (the real SQLite adapter normalises a
+    # missing/whitespace-only row to None/empty) — nothing is injected and the turn
+    # replies normally, so Bob never leaks a blank thought.
+    handler, bot, _repo, tier1 = _build(
+        reply="hi",
+        expression_freqs=_LEAK_ON,
+        reflection=_FakeReflectionReader(text=""),
+    )
+
+    await handler.handle(_message("расскажи подробно, как у тебя дела сегодня"))
+
+    assert bot.final_text == "hi"
+    assert "ловил себя на мысли" not in tier1.all_text.casefold()
+
+
 async def test_no_addon_flags_leaves_the_compose_prompt_unchanged() -> None:
     # With both add-on flags off, neither the reflection nor a callback is injected
     # even when real material is available — the prompt matches the plain path.
@@ -882,6 +964,34 @@ async def test_react_only_sets_a_reaction_and_skips_the_full_reply() -> None:
     assert bot.sent == []
     assert tier1.payloads == []
     assert repo.episodes == []
+
+
+async def test_react_only_uses_a_mood_derived_emoji_from_the_picker() -> None:
+    # US-1 acceptance: the native reaction is mood-appropriate, not arbitrary — the
+    # emoji set on the user's message comes from the pure mood→emoji picker (it is one
+    # of the picker's possible outputs), so it reads as character, never a hardcoded
+    # or out-of-set sticker. The exact tone is exercised by the picker's own tests.
+    reactor = _RecordingReactor()
+    handler, _bot, _repo, _tier1 = _build(
+        reply="all good",
+        soul=_react_soul(),
+        rng=Random(1),
+        expression_freqs=_REACT_FREQS,
+        reactor=reactor,
+    )
+
+    await handler.handle(_message("угу"))
+
+    assert len(reactor.calls) == 1
+    _chat, _msg, emoji = reactor.calls[0]
+    # The picker's full codomain across every reachable mood tone.
+    picker_outputs = {
+        reaction_emoji_for(Mood(valence=v, arousal=a))
+        for v in (-0.6, 0.0, 0.6)
+        for a in (-0.6, 0.0, 0.6)
+    }
+    assert emoji in picker_outputs
+    assert emoji in STANDARD_REACTION_EMOJI
 
 
 async def test_react_only_records_owner_activity() -> None:
