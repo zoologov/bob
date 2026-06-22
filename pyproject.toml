@@ -125,6 +125,26 @@ ignore = [
     "RUF001",
     "RUF003",
 ]
+# Phantom-evolution tests (BOB-020 wave 3) seed `random.Random` for deterministic
+# slow-membership assertions (non-crypto PRNG is the point → S311) and use short
+# Russian phantom-preference literals with intentional Cyrillic look-alikes
+# (RUF001/RUF003).
+"tests/domain/personality/test_phantom_evolution.py" = [
+    "S101",
+    "ARG001",
+    "PLR2004",
+    "S311",
+    "RUF001",
+    "RUF003",
+]
+"tests/application/usecases/test_evolve_phantoms.py" = [
+    "S101",
+    "ARG001",
+    "PLR2004",
+    "S311",
+    "RUF001",
+    "RUF003",
+]
 # Proactivity tests seed `random.Random` for deterministic stochastic-sampling
 # assertions; the non-crypto PRNG is the point here, so S311 does not apply.
 "tests/domain/proactivity/*.py" = ["S101", "ARG001", "PLR2004", "S311"]

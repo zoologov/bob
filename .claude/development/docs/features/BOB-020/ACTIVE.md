@@ -3,7 +3,7 @@
 
 # ACTIVE: BOB-020 — «Эмоциональная глубина и уязвимость» (T1.2)
 
-> **Last updated:** 2026-06-22
+> **Last updated:** 2026-06-23
 > **Phase:** Development
 > **Feature:** bob-36q · branch `features/BOB-020`
 
@@ -11,14 +11,29 @@
 
 ## Текущий беад
 
-**Беад:** `bob-36q.2` — dev: увлечение (Fascination) — ГОТОВО.
+**Беад:** все dev-беады (`.1`/`.2`/`.3`) ГОТОВЫ. Дальше — `bob-36q.4` (test).
 
 ## Прогресс
 
 - [x] `.1` off-day тон (voice.tone_directive) + mood→taste модуляция (mood_taste.py) + врезка
 - [x] `.2` увлечение (Fascination + FascinationStore + grounded-эволюция + проявление)
-- [ ] `.3` эволюция фантомов (SOUL.with_phantoms + phantom_evolution + reflect-тик + персист)
+- [x] `.3` эволюция фантомов (SOUL.with_phantoms + phantom_evolution + reflect-тик + персист)
 - [ ] `.4` test · `.5` review · `.6` tech-writer
+
+### `.3` итог (dev)
+- `domain/personality/phantom_evolution.py` — чистый `evolve_phantoms(phantoms, signals, rng)` +
+  `PhantomSignals(candidate, max_count, change_rate)`. Медленное членство: grounded-кандидат проступает
+  (gate на seeded-RNG `change_rate`), при переполнении `max_count` затухает самый старый (один вход/один
+  выход за шаг), идемпотентно (кандидат уже в наборе → no-op), без фабрикации (нет материала → no-op).
+- `domain/personality/soul.py` — `SOUL.with_phantoms(phantoms)` (иммутабельно, bump `experience_count`,
+  как `with_taste`).
+- `application/usecases/evolve_phantoms.py` — `EvolvePhantoms`: grounded-шаг на reflect-тике (переиспользует
+  `FascinationGrounding`: сильные вкусы → последняя рефлексия); при реальном изменении → `with_phantoms` +
+  персист `SoulStore.write_json("phantom_prefs", {preferences:[...]})` (round-trip через `_load_soul`).
+- Врезка: `ReflectTick.evolve_phantoms` (после логирования рефлексии, рядом с `evolve_fascination`).
+- Композиция `app.py`: seeded `random.Random`, grounding, `emotion.phantom.{max_count,change_rate}` (клампы).
+- Тесты: +21 (901 → 922), все зелёные. ruff чисто; mypy --strict чисто на src+tests.
+  architecture.md помечен stale (soul/app/heartbeat/phantom_evolution/evolve_phantoms) — для tech-writer (`.6`).
 
 ### `.2` итог (dev)
 - `domain/personality/fascination.py` — `Fascination` (topic+intensity+created_at), чистый,
@@ -41,9 +56,9 @@
 
 | Беад | Роль | Зависит | Статус |
 |------|------|---------|--------|
-| bob-36q.1 | dev off-day+mood→taste | — | in_progress |
-| bob-36q.2 | dev увлечение | .1 | blocked |
-| bob-36q.3 | dev эволюция фантомов | .1 | blocked |
+| bob-36q.1 | dev off-day+mood→taste | — | done |
+| bob-36q.2 | dev увлечение | .1 | done |
+| bob-36q.3 | dev эволюция фантомов | .1 | done |
 | bob-36q.4 | test | .1,.2,.3 | blocked |
 | bob-36q.5 | review | .4 | blocked |
 | bob-36q.6 | tech-writer | .5 | blocked |

@@ -62,6 +62,7 @@ from bob.application.runtime import (
 )
 from bob.application.usecases.apply_reflection import ApplyReflection
 from bob.application.usecases.evolve_fascination import EvolveFascination
+from bob.application.usecases.evolve_phantoms import EvolvePhantoms
 from bob.application.usecases.extract_facts import ExtractFacts
 from bob.application.usecases.fascination_sources import (
     RepoFascinationGrounding,
@@ -80,6 +81,8 @@ from bob.domain.personality.expression import ExpressionFreqs
 from bob.domain.personality.language import DEFAULT_LANGUAGE
 from bob.domain.personality.mood import Mood
 from bob.domain.personality.negotiation import Negotiation
+from bob.domain.personality.phantom_evolution import CHANGE_RATE as _PHANTOM_RATE
+from bob.domain.personality.phantom_evolution import MAX_PHANTOMS as _PHANTOM_MAX
 from bob.domain.personality.soul import SOUL
 from bob.domain.personality.taste import TasteAxis, TasteEngine
 from bob.domain.personality.taste_evolution import ALPHA as _EVOLUTION_ALPHA
@@ -151,6 +154,12 @@ _BOB_PERSONA = "bob"
 # Default vividness of a freshly-grounded fascination (BOB-020); it then decays with
 # age. Overridable via ``emotion.fascination.initial_intensity``.
 _DEFAULT_FASCINATION_INTENSITY = 0.85
+
+# Default phantom-evolution bound + cadence (BOB-020 wave 3); overridable via
+# ``emotion.phantom.{max_count,change_rate}``. Sourced from the pure kernel's constants
+# so the domain and composition agree on the conservative defaults.
+_PHANTOM_MAX_COUNT = _PHANTOM_MAX
+_PHANTOM_CHANGE_RATE = _PHANTOM_RATE
 
 # The proactivity engine ticks on the heartbeat cadence: cheap by construction
 # (the urge/governance decision is pure, defaulting to silence), so most ticks
@@ -411,6 +420,22 @@ def build_application(
         initial_intensity=_fascination_initial_intensity(merged),
         language=language,
     )
+    # Phantom evolution (BOB-020 wave 3): a rare, grounded, slow, idempotent step driven
+    # on the same reflect tick. It reuses the fascination grounding (latest reflection +
+    # strongest taste topics) to derive a fresh phantom preference — never random — and
+    # the pure evolve_phantoms kernel slowly shifts membership (a seeded-RNG gate keeps it
+    # slow; an already-present candidate is a no-op). On a real change the live soul is
+    # swapped (with_phantoms, bumping experience) and persisted via SoulStore.write_json,
+    # so it round-trips. Bound/cadence are config-tunable (emotion.phantom.*).
+    phantom_max, phantom_rate = _phantom_evolution_params(merged)
+    evolve_phantoms = EvolvePhantoms(
+        state=personality,
+        writer=soul_store,
+        grounding=fascination_grounding,
+        rng=random.Random(_resolve_seed(merged, proactivity_seed)),  # noqa: S311
+        max_count=phantom_max,
+        change_rate=phantom_rate,
+    )
     reflect_tick = ReflectTick(
         router=router,
         repo=memory_repo,
@@ -420,6 +445,7 @@ def build_application(
         apply_reflection=apply_reflection,
         soul_store=soul_store,
         evolve_fascination=evolve_fascination,
+        evolve_phantoms=evolve_phantoms,
     )
 
     proactivity_engine = _build_proactivity_engine(
@@ -586,6 +612,21 @@ def _fascination_initial_intensity(config: Mapping[str, object]) -> float:
     """
     fascination = _section(_section(config, "emotion"), "fascination")
     return _float_or(fascination, "initial_intensity", _DEFAULT_FASCINATION_INTENSITY)
+
+
+def _phantom_evolution_params(config: Mapping[str, object]) -> tuple[int, float]:
+    """Read the BOB-020 phantom-evolution bound + cadence from ``emotion.phantom.*``.
+
+    ``max_count`` caps how many phantom preferences Bob carries at once; ``change_rate``
+    is the small per-step probability a grounded candidate actually emerges (keeping the
+    drift slow). Both fall back to the kernel's conservative defaults when absent; an
+    out-of-range ``change_rate`` is clamped to ``[0, 1]`` and a non-positive ``max_count``
+    to at least 1, so misconfiguration cannot break the bound.
+    """
+    phantom = _section(_section(config, "emotion"), "phantom")
+    max_count = max(1, _int(phantom, "max_count", _PHANTOM_MAX_COUNT))
+    change_rate = min(1.0, max(0.0, _float_or(phantom, "change_rate", _PHANTOM_CHANGE_RATE)))
+    return max_count, change_rate
 
 
 def _build_offday_thresholds(config: Mapping[str, object]) -> OffDayThresholds:

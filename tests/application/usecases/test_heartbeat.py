@@ -392,3 +392,48 @@ async def test_reflect_without_a_fascination_evolver_is_unaffected() -> None:
     await tick.run()
 
     assert len(repo.episodes) == 1
+
+
+class _RecordingPhantomEvolver:
+    """A PhantomEvolver double recording how many times the tick drove it."""
+
+    def __init__(self) -> None:
+        self.runs = 0
+
+    async def run(self) -> None:
+        self.runs += 1
+
+
+async def test_reflect_drives_the_phantom_evolver_after_logging() -> None:
+    # BOB-020 wave 3: when wired, the reflect tick drives the phantom-evolution step
+    # once per tick (after the reflection episode is logged so it is available as
+    # grounding). The evolver is itself slow/idempotent; the tick just invokes it.
+    router, _ = _router(reply="старые маяки на рассвете")
+    repo = FakeRepo()
+    state = _state(Mood(), Mood())
+    evolver = _RecordingPhantomEvolver()
+    tick = ReflectTick(
+        router=router,
+        repo=repo,
+        state=state,
+        clock=FixedClock(_moment()),
+        evolve_phantoms=evolver,
+    )
+
+    await tick.run()
+
+    assert len(repo.episodes) == 1  # reflection still logged
+    assert evolver.runs == 1  # phantom evolver driven once
+
+
+async def test_reflect_without_a_phantom_evolver_is_unaffected() -> None:
+    # Backward-compatible default: no phantom evolver wired → the tick behaves as before.
+    router, _ = _router(reply="тихая мысль")
+    repo = FakeRepo()
+    tick = ReflectTick(
+        router=router, repo=repo, state=_state(Mood(), Mood()), clock=FixedClock(_moment())
+    )
+
+    await tick.run()
+
+    assert len(repo.episodes) == 1

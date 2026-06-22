@@ -59,6 +59,21 @@ class SOUL:
             experience_count=self.experience_count + 1,
         )
 
+    def with_phantoms(self, phantoms: tuple[str, ...]) -> SOUL:
+        """Return a copy carrying an evolved phantom-preference set, experience bumped.
+
+        The phantom-evolution analogue of :meth:`with_taste`: a slow membership step
+        (see :func:`bob.domain.personality.phantom_evolution.evolve_phantoms`) yields
+        a new set of phantom preferences, this swaps it in and increments
+        ``experience_count`` — a phantom shift is a self-evolution step too. The
+        original is untouched.
+        """
+        return replace(
+            self,
+            phantom_prefs=phantoms,
+            experience_count=self.experience_count + 1,
+        )
+
     def with_baseline(self, delta: MoodDelta) -> SOUL:
         """Return a copy whose resting baseline is nudged by ``delta`` (clamped).
 

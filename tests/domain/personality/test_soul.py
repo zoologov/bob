@@ -103,6 +103,25 @@ def test_soul_with_taste_swaps_axes_and_bumps_experience() -> None:
     assert soul.experience_count == 0
 
 
+def test_soul_with_phantoms_swaps_membership_and_bumps_experience() -> None:
+    # Arrange
+    soul = _soul()
+    evolved = ("coffee", "sunsets", "night trains")
+
+    # Act: a phantom-evolution step swapped in a new membership (a self-evolution step).
+    updated = soul.with_phantoms(evolved)
+
+    # Assert: the new phantom set is carried; experience ticks up like with_taste.
+    assert updated.phantom_prefs == evolved
+    assert updated.experience_count == soul.experience_count + 1
+    assert updated.identity == soul.identity
+    assert updated.mood == soul.mood
+    assert updated is not soul
+    # Original is untouched (immutable).
+    assert soul.phantom_prefs == ("coffee", "sunsets", "the smell of old books")
+    assert soul.experience_count == 0
+
+
 def test_soul_with_baseline_shifts_resting_mood() -> None:
     # Arrange
     soul = _soul()

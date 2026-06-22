@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
+from random import Random
 from typing import TYPE_CHECKING
 
 import pytest
@@ -34,6 +35,11 @@ from bob.app import (
     main,
 )
 from bob.application.runtime import RuntimeState
+from bob.application.usecases.evolve_phantoms import EvolvePhantoms
+from bob.application.usecases.handle_message import PersonalityState
+from bob.domain.personality.mood import Mood
+from bob.domain.personality.soul import SOUL
+from bob.domain.personality.taste import TasteEngine
 from bob.infrastructure.persistence import SoulStore
 
 if TYPE_CHECKING:
@@ -482,3 +488,42 @@ def test_load_soul_parses_well_formed_taste_axes(tmp_path: Path) -> None:
     # Assert: only the valid axis survived; phantom prefs loaded.
     assert [a.name for a in soul.taste.axes] == ["probes"]
     assert soul.phantom_prefs == ("coffee", "sunset")
+
+
+async def test_evolved_phantoms_round_trip_through_soul_store(tmp_path: Path) -> None:
+    # BOB-020 wave 3: a phantom-evolution step persists via SoulStore.write_json, and
+    # _load_soul reads the evolved set straight back — the membership survives a reload.
+    class _Grounding:
+        async def latest_reflection_text(self) -> str | None:
+            return None
+
+        def strong_taste_topics(self) -> tuple[str, ...]:
+            return ("night trains",)
+
+    class _AlwaysFires(Random):
+        def random(self) -> float:
+            return 0.0
+
+    store = SoulStore(tmp_path / "soul")
+    store.write_soul("# SOUL\n\nBob.\n")
+    state = PersonalityState(
+        soul=SOUL(
+            identity="Bob.",
+            mood=Mood(),
+            mood_baseline=Mood(),
+            taste=TasteEngine(),
+            phantom_prefs=("coffee",),
+        )
+    )
+
+    # Act: evolve (persists), then reload from disk.
+    step = EvolvePhantoms(
+        state=state, writer=store, grounding=_Grounding(), rng=_AlwaysFires()
+    )
+    await step.run()
+    reloaded = _load_soul(store)
+
+    # Assert: the emerged phantom survives the round-trip.
+    assert "night trains" in state.soul.phantom_prefs
+    assert "night trains" in reloaded.phantom_prefs
+    assert reloaded.phantom_prefs == state.soul.phantom_prefs
