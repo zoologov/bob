@@ -47,6 +47,7 @@ __all__ = [
     "Permission",
     "ProactivityStore",
     "Recalled",
+    "ReflectionReader",
     "Reranker",
     "SoulStore",
     "ToolCall",
@@ -271,6 +272,24 @@ class MessageReactor(Protocol):
 
     async def react(self, *, chat_id: int, message_id: int, emoji: str) -> None:
         """React to ``message_id`` in ``chat_id`` with ``emoji`` (best-effort)."""
+        ...
+
+
+@runtime_checkable
+class ReflectionReader(Protocol):
+    """Read the text of Bob's most recent REAL reflection (the leak-inner-life seam).
+
+    On a :data:`~bob.domain.personality.expression.ExpressionPlan.leak_inner_life`
+    turn the compose path injects this text so Bob's reply carries a glimpse of what
+    he caught himself thinking about — but only from a real, persisted reflection
+    (an ``episodic_log`` row whose ``event_type`` is ``reflection`` or
+    ``inner_monologue``, already grounded and in the persona language by BOB-012).
+    There is NO fabrication: ``None`` means there is no real reflection on record, so
+    the leak no-ops. The concrete adapter reads SQLite in ``bob.infrastructure``.
+    """
+
+    async def latest_reflection_text(self) -> str | None:
+        """Return the most recent real reflection's text, or ``None`` if there is none."""
         ...
 
 

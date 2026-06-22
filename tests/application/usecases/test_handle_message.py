@@ -193,10 +193,29 @@ class FakeRepo:
 
 
 class FakeRecall:
-    """Recall returning a canned (shareable) recalled memory."""
+    """Recall returning a canned (shareable) recalled memory.
+
+    ``hits`` overrides the canned result so a test can model a strong real past
+    moment, a weak/empty recall (no-op grounding), or anything in between.
+    """
+
+    def __init__(self, *, hits: Sequence[Recalled] | None = None) -> None:
+        self._hits: Sequence[Recalled] = (
+            hits if hits is not None else [{"content": _RECALL_MEMORY, "category": "personal"}]
+        )
 
     async def recall(self, query: str, *, k: int) -> Sequence[Recalled]:  # noqa: ARG002
-        return [{"content": _RECALL_MEMORY, "category": "personal"}]
+        return list(self._hits)
+
+
+class _FakeReflectionReader:
+    """A ReflectionReader double returning a canned latest real reflection (or none)."""
+
+    def __init__(self, *, text: str | None = None) -> None:
+        self._text = text
+
+    async def latest_reflection_text(self) -> str | None:
+        return self._text
 
 
 class _RecordingReactor:
@@ -257,6 +276,8 @@ def _build(
     rng: Random | None = None,
     expression_freqs: ExpressionFreqs | None = None,
     reactor: _RecordingReactor | None = None,
+    recall: FakeRecall | None = None,
+    reflection: _FakeReflectionReader | None = None,
 ) -> tuple[HandleMessage, FakeBot, FakeRepo, CapturingProvider]:
     tier0 = CapturingProvider(reply="positive", replies=tier0_replies)
     tier1 = CapturingProvider(reply=reply)
@@ -275,7 +296,7 @@ def _build(
     handler = HandleMessage(
         router=router,
         gateway=gateway,
-        recall=FakeRecall(),
+        recall=recall if recall is not None else FakeRecall(),
         repo=repo,
         episodes=repo,
         update_mood=UpdateMoodFromText(router=router, clock=clock),
@@ -289,6 +310,7 @@ def _build(
         rng=rng if rng is not None else Random(0),
         expression_freqs=expression_freqs,
         reactor=reactor,
+        reflection=reflection,
     )
     return handler, bot, repo, tier1
 
@@ -697,6 +719,131 @@ async def test_expression_plan_is_deterministic_under_a_fixed_seed() -> None:
     await handler_b.handle(_message("а?? ну?"))
 
     assert tier_a.all_text == tier_b.all_text
+
+
+# Force the rare add-on flags on so the grounded inject is exercised deterministically
+# (the freq=1.0 makes the draw always fire); the grounding itself still no-ops without
+# real material. A substantive inbound keeps the plan in REPLY (never react-only).
+_LEAK_ON = ExpressionFreqs(leak_inner_life=1.0, callback=0.0)
+_CALLBACK_ON = ExpressionFreqs(leak_inner_life=0.0, callback=1.0)
+_BOTH_OFF = ExpressionFreqs(leak_inner_life=0.0, callback=0.0)
+
+_REFLECTION_TEXT = "поймал себя на мысли, что скучаю по разговорам про космос"
+_STRONG_MOMENT = "тогда мы полночи спорили про Bobiverse — реальный момент"
+
+
+async def test_leak_inner_life_injects_real_reflection_into_compose_prompt() -> None:
+    # BOB-018 (bob-c4w.3): with leak_inner_life set AND a real reflection on record,
+    # the reflection text is folded into the compose prompt as Bob's leaking inner life.
+    handler, _bot, _repo, tier1 = _build(
+        reply="hi",
+        expression_freqs=_LEAK_ON,
+        reflection=_FakeReflectionReader(text=_REFLECTION_TEXT),
+    )
+
+    await handler.handle(_message("расскажи подробно, как у тебя дела сегодня"))
+
+    assert _REFLECTION_TEXT in tier1.all_text
+
+
+async def test_leak_inner_life_is_a_noop_without_a_reflection() -> None:
+    # Anti-confabulation: the flag is set but there is NO real reflection — nothing is
+    # injected and the turn proceeds normally (no crash, reply still committed).
+    handler, bot, _repo, tier1 = _build(
+        reply="hi",
+        expression_freqs=_LEAK_ON,
+        reflection=_FakeReflectionReader(text=None),
+    )
+
+    await handler.handle(_message("расскажи подробно, как у тебя дела сегодня"))
+
+    assert bot.final_text == "hi"
+    folded = tier1.all_text.casefold()
+    assert "ловил себя на мысли" not in folded  # the leak preface never appeared
+
+
+async def test_leak_inner_life_is_a_noop_when_no_reflection_reader_wired() -> None:
+    # No reflection reader injected (backward-compatible default): the flag has no
+    # effect and the turn behaves exactly as before BOB-018 wave 3.
+    handler, bot, _repo, _tier1 = _build(reply="hi", expression_freqs=_LEAK_ON)
+
+    await handler.handle(_message("расскажи подробно, как у тебя дела сегодня"))
+
+    assert bot.final_text == "hi"
+
+
+async def test_callback_injects_a_strong_real_past_moment_into_compose_prompt() -> None:
+    # BOB-018 (bob-c4w.3): with callback set AND a strong real past moment recalled on
+    # the topic, that moment is folded into the compose prompt as a callback Bob can use.
+    handler, _bot, _repo, tier1 = _build(
+        reply="hi",
+        expression_freqs=_CALLBACK_ON,
+        recall=FakeRecall(hits=[{"content": _STRONG_MOMENT, "category": "episodic"}]),
+    )
+
+    await handler.handle(_message("расскажи подробно про Bobiverse и космос"))
+
+    assert _STRONG_MOMENT in tier1.all_text
+
+
+async def test_callback_is_a_noop_on_empty_recall() -> None:
+    # Anti-confabulation: callback set but recall comes back empty — no callback is
+    # injected (Bob never invents a shared past), and the turn still replies.
+    handler, bot, _repo, tier1 = _build(
+        reply="hi",
+        expression_freqs=_CALLBACK_ON,
+        recall=FakeRecall(hits=[]),
+    )
+
+    await handler.handle(_message("расскажи подробно про что-нибудь новое"))
+
+    assert bot.final_text == "hi"
+    folded = tier1.all_text.casefold()
+    assert "вспомнить" not in folded  # the callback preface never appeared
+
+
+async def test_no_addon_flags_leaves_the_compose_prompt_unchanged() -> None:
+    # With both add-on flags off, neither the reflection nor a callback is injected
+    # even when real material is available — the prompt matches the plain path.
+    handler_plain, _b1, _r1, tier_plain = _build(reply="hi", expression_freqs=_BOTH_OFF)
+    handler_addon, _b2, _r2, tier_addon = _build(
+        reply="hi",
+        expression_freqs=_BOTH_OFF,
+        reflection=_FakeReflectionReader(text=_REFLECTION_TEXT),
+        recall=FakeRecall(hits=[{"content": _STRONG_MOMENT, "category": "episodic"}]),
+    )
+
+    await handler_plain.handle(_message("расскажи подробно про Bobiverse и космос"))
+    await handler_addon.handle(_message("расскажи подробно про Bobiverse и космос"))
+
+    assert _REFLECTION_TEXT not in tier_addon.all_text
+    # The reflection never leaks when the flag is off; the recall path is unchanged
+    # too (the strong moment only differs because callback was off, not injected).
+    plain = tier_plain.all_text
+    assert "ловил себя на мысли" not in plain.casefold()
+
+
+async def test_addons_compose_with_voice_language_and_form_hint() -> None:
+    # The grounded add-ons sit BEHIND the existing compose seam: voice (anti-bait +
+    # variable form) and the form hint still compose when leak + callback also fire.
+    soul = _soul().with_mood(Mood(valence=0.6, arousal=0.7, openness=0.6, social=0.6))
+    handler, _bot, _repo, tier1 = _build(
+        reply="long answer",
+        soul=soul,
+        expression_freqs=ExpressionFreqs(leak_inner_life=1.0, callback=1.0),
+        reflection=_FakeReflectionReader(text=_REFLECTION_TEXT),
+        recall=FakeRecall(hits=[{"content": _STRONG_MOMENT, "category": "episodic"}]),
+    )
+
+    await handler.handle(
+        _message("расскажи подробно, как именно это работает и почему так вышло")
+    )
+
+    folded = tier1.all_text.casefold()
+    assert "не выпрашивай продолжение" in folded  # anti-bait voice still there
+    assert "развёрнут" in folded or "развернут" in folded  # expansive form hint still there
+    assert _REFLECTION_TEXT in tier1.all_text  # the leak landed alongside
+    assert _STRONG_MOMENT in tier1.all_text  # the callback landed alongside
 
 
 def _react_soul() -> SOUL:

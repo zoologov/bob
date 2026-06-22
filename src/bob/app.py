@@ -340,6 +340,11 @@ def build_application(
         # reaction on Bob's bot (pinned to his topic, best-effort) instead of
         # composing a reply — no LLM call.
         reactor=multibot.reactor(BotIdentity.BOB),
+        # Inner-life leak seam (BOB-018 wave 3): the same episodic-log reflection
+        # reader proactivity uses supplies Bob's most-recent REAL reflection so a
+        # ``leak_inner_life`` turn can leak a glimpse of what he caught himself
+        # thinking about — strictly grounded (no reflection → no-op).
+        reflection=RepoProactivitySources(memory_repo, clock=resolved_clock),
     )
     event_bus.subscribe(MESSAGE_RECEIVED, _as_handler(handle_message))
 

@@ -49,6 +49,10 @@ _WINDOW = timedelta(hours=24)
 _REFLECTION = "reflection"
 _PROACTIVE = "proactive"
 
+# The inner-life episode kinds the leak seam reads (BOB-018): both are REAL,
+# grounded, persona-language reflections written by BOB-012's heartbeat ticks.
+_INNER_LIFE_KINDS = ("reflection", "inner_monologue")
+
 
 class _ConnectionProvider(Protocol):
     """The connection seam these read-seams need (realised by SqliteMemoryRepo)."""
@@ -67,7 +71,13 @@ class _SystemClock:
 
 
 class RepoProactivitySources:
-    """Back the engine's reflection-salience + proactive-window seams off SQLite."""
+    """Back the engine's reflection-salience + proactive-window seams off SQLite.
+
+    Also realises :class:`~bob.domain.ports.ReflectionReader` (BOB-018): the same
+    reflection rows that drive proactivity salience supply the most-recent REAL
+    reflection text the reactive reply path leaks into Bob's voice when the
+    expression plan sets ``leak_inner_life`` (no reflection → ``None`` → no-op).
+    """
 
     def __init__(
         self, repo: _ConnectionProvider, *, clock: Clock | None = None
@@ -98,6 +108,27 @@ class RepoProactivitySources:
         ) as cursor:
             row = await cursor.fetchone()
         return 0 if row is None else int(row[0])
+
+    async def latest_reflection_text(self) -> str | None:
+        """Return the most recent REAL reflection's text, or ``None`` if there is none.
+
+        Realises :class:`~bob.domain.ports.ReflectionReader` (the BOB-018 leak seam):
+        reads the newest ``episodic_log`` row whose ``event_type`` is a real
+        inner-life kind (``reflection`` / ``inner_monologue``, written grounded and
+        in the persona language by BOB-012). ``None`` means there is nothing real to
+        leak, so the caller no-ops — never a fabrication. Parameterised SQL only.
+        """
+        placeholders = ", ".join("?" for _ in _INNER_LIFE_KINDS)
+        async with self._db().execute(
+            "SELECT content FROM episodic_log "  # noqa: S608 — placeholders are static "?" only
+            f"WHERE event_type IN ({placeholders}) ORDER BY ts DESC, id DESC LIMIT 1",
+            _INNER_LIFE_KINDS,
+        ) as cursor:
+            row = await cursor.fetchone()
+        if row is None:
+            return None
+        content = str(row[0]).strip()
+        return content or None
 
     async def _latest_reflection_ts(self) -> datetime | None:
         """Return the timestamp of the most recent reflection episode, or ``None``."""

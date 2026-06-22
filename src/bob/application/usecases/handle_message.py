@@ -85,6 +85,7 @@ if TYPE_CHECKING:
         MemoryRecall,
         MessageReactor,
         Recalled,
+        ReflectionReader,
         ToolCallingProvider,
         ZoneClassifier,
     )
@@ -93,6 +94,10 @@ logger = logging.getLogger(__name__)
 
 # How many memories to recall when assembling the reply context.
 _RECALL_K = 5
+
+# How many memories to recall for a BOB-018 callback: just the single strongest real
+# past moment on the topic (a tight, grounded steer — never a memory dump).
+_CALLBACK_RECALL_K = 1
 
 # How many recent conversation turns to replay into the reply context.
 _HISTORY_K = 6
@@ -134,6 +139,21 @@ _FORM_HINT_DIRECTIVE: dict[FormHint, str] = {
         "Сейчас есть что сказать — можешь развёрнуто, на несколько абзацев."
     ),
 }
+
+# Grounded add-on prefaces (BOB-018 wave 3). Both fold a REAL, persisted piece of
+# Bob's inner life into the compose context behind the same grounding seam BOB-012
+# uses — and are strictly anti-confabulation: with no real material they no-op, so
+# Bob never invents a thought he didn't have or a moment that didn't happen. The
+# prefaces are Russian persona voice (project language); Cyrillic look-alikes
+# intentional, so the ambiguous-character lint is silenced for these literals.
+_LEAK_PREFACE = (
+    "То, о чём ты ловил себя на мысли, пока его не было (можешь обронить это "  # noqa: RUF001
+    "к слову, естественно — не пересказывай дословно):"
+)
+_CALLBACK_PREFACE = (
+    "Можешь к месту вспомнить это — реальный момент из вашего прошлого, "
+    "не выдумывай деталей сверх него:"
+)
 
 # Preface for the capability manifest in Bob's prompt: GUPPI is Bob's executor
 # subsystem (canon already in the base persona above), so this just frames the
@@ -236,6 +256,7 @@ class HandleMessage:
         negotiation: Negotiation | None = None,
         expression_freqs: ExpressionFreqs | None = None,
         reactor: MessageReactor | None = None,
+        reflection: ReflectionReader | None = None,
     ) -> None:
         self._router = router
         self._gateway = gateway
@@ -281,6 +302,13 @@ class HandleMessage:
         # default) a react-only plan falls back to a normal full reply, so the path
         # stays live and backward-compatible.
         self._reactor = reactor
+        # The grounded inner-life seam (BOB-018 wave 3): when wired and the plan sets
+        # ``leak_inner_life``, the most-recent REAL reflection (read off the episodic
+        # log, event_type reflection/inner_monologue — written by BOB-012) is folded
+        # into the compose context so a glimpse of what Bob caught himself thinking
+        # leaks into the reply. No reflection (or no reader wired) → no-op, never a
+        # fabrication. Callbacks reuse the already-injected ``recall`` the same way.
+        self._reflection = reflection
 
     async def handle(self, event: MessageReceived) -> None:
         """Process one received message end to end (the EventBus subscriber)."""
@@ -370,6 +398,7 @@ class HandleMessage:
     ) -> str:
         """Compose a full reply, folding the plan's form hint into the prompt."""
         context = _assemble_shareable_context(soul, text, recalled, history)
+        context = await self._with_grounded_addons(context, text, plan)
         system_prompt = self._system_prompt_for(soul, text, plan)
         provider = self._tool_provider
         if provider is not None and not self._registry.is_empty:
@@ -390,6 +419,54 @@ class HandleMessage:
             tier_override=tier,
         )
         return await self._router.run(request)
+
+    async def _with_grounded_addons(
+        self, context: str, text: str, plan: ExpressionPlan
+    ) -> str:
+        """Fold the plan's grounded add-ons into the compose context (BOB-018 w3).
+
+        Behind the existing grounding seam, when the plan sets ``leak_inner_life``
+        and a real reflection exists, Bob's latest reflection is appended as a
+        leaking-inner-life line; when it sets ``callback`` and a STRONG real past
+        moment is recalled on the topic, that moment is appended as a callback.
+        Both are strictly anti-confabulation: no real material → no line added (a
+        clean no-op), so Bob never invents a thought or a shared past that is not
+        there. Composes additively with the existing context (voice/language/
+        negotiation/form-hint all live elsewhere and are untouched).
+        """
+        additions = [
+            await self._leak_inner_life(plan),
+            await self._callback(plan, text),
+        ]
+        suffix = "".join(f"\n{line}" for line in additions if line)
+        return f"{context}{suffix}" if suffix else context
+
+    async def _leak_inner_life(self, plan: ExpressionPlan) -> str:
+        """The leak line for this turn, or ``""`` (no flag / no reader / no reflection)."""
+        if not plan.leak_inner_life or self._reflection is None:
+            return ""
+        reflection = await self._reflection.latest_reflection_text()
+        if not reflection:
+            return ""
+        return f"{_LEAK_PREFACE} {reflection}"
+
+    async def _callback(self, plan: ExpressionPlan, text: str) -> str:
+        """The callback line for this turn, or ``""`` (no flag / weak-or-empty recall).
+
+        Reuses the hybrid recall (BOB-011) on the current topic; a real past moment
+        comes back → it is offered as a callback. Mirrors BOB-012 grounding: an
+        empty recall yields nothing, so Bob never confabulates a shared moment.
+        """
+        if not plan.callback:
+            return ""
+        recalled = await self._recall.recall(text, k=_CALLBACK_RECALL_K)
+        moment = next(
+            (str(item.get("content", "")) for item in recalled if item.get("content")),
+            "",
+        )
+        if not moment:
+            return ""
+        return f"{_CALLBACK_PREFACE} {moment}"
 
     def _system_prompt_for(self, soul: SOUL, text: str, plan: ExpressionPlan) -> str:
         """Augment the warm base prompt with the stance + form-hint directives.
