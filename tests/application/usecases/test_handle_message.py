@@ -1748,11 +1748,11 @@ async def test_no_resolver_leaves_the_compose_prompt_unchanged() -> None:
     assert "пишет:" not in tier1.all_text.casefold()
 
 
-async def test_sender_perception_does_not_change_which_pipeline_runs() -> None:
-    # The guest pipeline restriction is bob-apv.2: even a GUEST still gets the full
-    # reply today (the router replies normally), so the committed reply is unchanged.
+async def test_owner_keeps_the_full_trusted_pipeline() -> None:
+    # bob-apv.2: a TRUSTED owner turn still composes the full reply via the router,
+    # so the committed reply is the model's answer exactly as before.
     resolver = _FakeInterlocutorResolver(
-        _interlocutor(name="Rando", kind=InterlocutorKind.GUEST, trust=Trust.GUEST)
+        _interlocutor(name="Vova", kind=InterlocutorKind.OWNER)
     )
     handler, bot, _repo, _tier1 = _build(
         reply="полный ответ как обычно", perceive_sender=resolver
@@ -1761,3 +1761,181 @@ async def test_sender_perception_does_not_change_which_pipeline_runs() -> None:
     await handler.handle(_message("расскажи подробно про кофе"))
 
     assert bot.final_text == "полный ответ как обычно"
+
+
+# --- bob-apv.2: guest (restricted) social mode — the security invariant ----------
+
+
+def _guest_resolver() -> _FakeInterlocutorResolver:
+    return _FakeInterlocutorResolver(
+        _interlocutor(name="Rando", kind=InterlocutorKind.GUEST, trust=Trust.GUEST)
+    )
+
+
+async def test_guest_turn_never_engages_the_tool_loop() -> None:
+    # SECURITY INVARIANT: a guest can NOT trigger any capability. Even with a
+    # registry + tool provider wired, a GUEST turn composes via the plain router —
+    # the tool provider is never invoked and the capability is never dispatched.
+    registry, cap = _registry_with_recall()
+    provider = ScriptedToolProvider()
+    handler, bot, _repo, _tier1 = _build(
+        reply="привет, я Боб",
+        registry=registry,
+        tool_provider=provider,
+        perceive_sender=_guest_resolver(),
+    )
+
+    await handler.handle(_message("расскажи подробно, что ты умеешь сделать для меня"))
+
+    assert provider.tools_seen == []  # the tool loop never ran
+    assert provider.turns == []  # the tool provider was never called at all
+    assert cap.calls == []  # no capability dispatched for a guest
+    assert bot.final_text == "привет, я Боб"  # he still replied via the router
+
+
+async def test_guest_turn_does_not_recall_owner_memory() -> None:
+    # SECURITY INVARIANT: owner-private memory is NOT recalled for a guest.
+    recall = FakeRecall()
+    handler, _bot, _repo, _tier1 = _build(
+        reply="hi", recall=recall, perceive_sender=_guest_resolver()
+    )
+
+    await handler.handle(_message("расскажи подробно про кофе"))
+
+    assert recall.surface_old_calls == []  # recall was never invoked for a guest
+
+
+async def test_guest_turn_has_no_owner_private_content_in_the_prompt() -> None:
+    # AUDIENCE REDACTION: a real owner-private recalled memory must NOT enter a
+    # guest's compose prompt (recall is skipped entirely for a guest).
+    recall = FakeRecall(
+        hits=[{"content": _RECALL_MEMORY, "category": "personal"}]
+    )
+    handler, _bot, _repo, tier1 = _build(
+        reply="hi", recall=recall, perceive_sender=_guest_resolver()
+    )
+
+    await handler.handle(_message("расскажи подробно про кофе"))
+
+    assert _RECALL_MEMORY not in tier1.all_text  # owner memory redacted
+    assert "recalled memories" not in tier1.all_text.casefold()
+
+
+async def test_guest_turn_does_not_extract_facts_into_owner_memory() -> None:
+    # SECURITY INVARIANT: a guest turn is NOT written into the owner's semantic
+    # memory — _extract_facts is skipped, so no stranger input becomes a stored fact.
+    repo = FakeRepo()
+    tier0 = CapturingProvider(reply="positive", replies=None)
+    tier1 = CapturingProvider(reply="hi")
+    router = LLMRouter(providers={0: tier0, 1: tier1})
+    clock = FixedClock(_moment())
+    bot = FakeBot()
+    gateway = TelegramGateway(
+        bot=bot,
+        bus=_NullBus(),
+        poll_timeout=1,
+        typing_interval=4.0,
+        clock=lambda: 0.0,
+        sleep=_parking_sleep,
+    )
+
+    class _RecordingExtractFacts:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def run(self, *, user_message: str, reply: str) -> None:  # noqa: ARG002
+            self.calls += 1
+
+    extract = _RecordingExtractFacts()
+    handler = HandleMessage(
+        router=router,
+        gateway=gateway,
+        recall=FakeRecall(),
+        repo=repo,
+        episodes=repo,
+        update_mood=UpdateMoodFromText(router=router, clock=clock),
+        extract_facts=extract,  # type: ignore[arg-type]
+        clock=clock,
+        state=PersonalityState(soul=_soul()),
+        rng=Random(0),
+        perceive_sender=_guest_resolver(),
+    )
+
+    await handler.handle(_message("расскажи подробно про кофе"))
+
+    assert extract.calls == 0  # no fact extraction on a guest turn
+
+
+async def test_guest_turn_has_no_owner_conversation_history_in_the_prompt() -> None:
+    # AUDIENCE REDACTION: prior OWNER conversation persisted in Bob's topic must NOT
+    # be replayed into a guest's compose prompt (default to MORE restriction). A
+    # stranger who joins the group never sees the owner's earlier conversation.
+    owner_private_turn = "Ada: моя приватная заметка про дела\nbob: понял, Ada"
+    handler, _bot, _repo, tier1 = _build(
+        reply="hi",
+        history=[{"content": owner_private_turn}],
+        perceive_sender=_guest_resolver(),
+    )
+
+    await handler.handle(_message("расскажи подробно про кофе"))
+
+    assert owner_private_turn not in tier1.all_text  # owner conversation redacted
+    assert "recent conversation" not in tier1.all_text.casefold()
+
+
+async def test_guest_turn_appends_the_stranger_directive() -> None:
+    # The guest turn folds the stranger voice in so Bob meets a stranger as a
+    # person (wary, may point them at the owner), in character.
+    handler, _bot, _repo, tier1 = _build(
+        reply="hi", perceive_sender=_guest_resolver()
+    )
+
+    await handler.handle(_message("расскажи подробно про кофе"))
+
+    folded = tier1.all_text.casefold()
+    assert "незнаком" in folded  # the stranger directive is present
+    assert "владел" in folded  # may suggest asking the owner
+
+
+async def test_guest_turn_skips_grounded_owner_inner_life_addons() -> None:
+    # AUDIENCE REDACTION: Bob's private inner life (a leaked reflection) must NOT
+    # reach a guest, even when the plan would have surfaced it.
+    leak = "сегодня я поймал себя на мысли о приватном деле владельца"
+    reflection = _FakeReflectionReader(text=leak)
+    # Force the leak flag on every turn so absence proves the guest gate, not luck.
+    freqs = ExpressionFreqs(leak_inner_life=1.0)
+    handler, _bot, _repo, tier1 = _build(
+        reply="hi",
+        reflection=reflection,
+        expression_freqs=freqs,
+        perceive_sender=_guest_resolver(),
+    )
+
+    await handler.handle(_message("расскажи подробно про кофе"))
+
+    assert leak not in tier1.all_text  # the private reflection never reaches a guest
+
+
+async def test_trusted_owner_turn_still_recalls_and_uses_tools() -> None:
+    # NO REGRESSION: the trusted owner path is exactly as before — recall runs and
+    # the tool loop engages when a registry + provider are wired.
+    registry, cap = _registry_with_recall()
+    provider = ScriptedToolProvider()
+    recall = FakeRecall()
+    resolver = _FakeInterlocutorResolver(
+        _interlocutor(name="Vova", kind=InterlocutorKind.OWNER)
+    )
+    handler, bot, _repo, _tier1 = _build(
+        reply="unused",
+        registry=registry,
+        tool_provider=provider,
+        recall=recall,
+        perceive_sender=resolver,
+    )
+
+    await handler.handle(_message("what's my name?"))
+
+    assert provider.tools_seen  # the tool loop ran for the owner
+    assert cap.calls == [{"query": "name"}]  # the capability was dispatched
+    assert recall.surface_old_calls == [False]  # owner memory was recalled
+    assert bot.final_text == "Your name is Ada."

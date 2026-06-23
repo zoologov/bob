@@ -285,8 +285,13 @@ def _message(*, chat_id: int = _CHAT, user_id: int = _OWNER) -> MessageReceived:
 # --- Tests --------------------------------------------------------------------
 
 
-async def test_e2e_unauthorized_user_is_dropped(tmp_path: Path) -> None:
-    # Arrange: the single authz gate is wired from config.
+async def test_e2e_guest_in_topic_routed_but_foreign_chat_dropped(
+    tmp_path: Path,
+) -> None:
+    # BOB-019 bob-apv.2: the single authz gate is wired from config. A stranger IN
+    # the allowed chat + Bob's topic is a GUEST (Bob's pipeline runs, restricted
+    # downstream); a stranger OUTSIDE the allowed chat is still dropped (chat-scope
+    # intact). The owner is the trusted path. No GUPPI hard-reject for the guest.
     _seed_soul(tmp_path)
     providers: dict[int, LLMProvider] = {
         0: CapturingProvider(reply="positive"),
@@ -299,22 +304,25 @@ async def test_e2e_unauthorized_user_is_dropped(tmp_path: Path) -> None:
     )
     await app.startup()
 
-    # Act: an outsider in Bob's topic (GUPPI rejects), then the owner.
     try:
-        outsider = await app.multibot.route(
+        guest = await app.multibot.route(
             _Update(1, chat_id=_CHAT, user_id=555, text="hi"), BotIdentity.BOB
         )
+        foreign = await app.multibot.route(
+            _Update(2, chat_id=_CHAT + 1, user_id=555, text="hi", thread_id=None),
+            BotIdentity.BOB,
+        )
         owner = await app.multibot.route(
-            _Update(2, chat_id=_CHAT, user_id=_OWNER, text="hi"), BotIdentity.BOB
+            _Update(3, chat_id=_CHAT, user_id=_OWNER, text="hi"), BotIdentity.BOB
         )
     finally:
         await app.shutdown()
 
-    # Assert: the outsider was dropped (GUPPI rejected, Bob not invoked); only the
-    # owner published a turn onto Bob's pipeline.
-    assert outsider is False
+    assert guest is True  # guest in Bob's topic reaches the pipeline
+    assert foreign is False  # outside the allowed chat → dropped
     assert owner is True
-    assert GUPPI_REJECT_TEXT in [text for _, text in guppi_bot.sent]
+    # No GUPPI hard-reject for the guest (the visible reject path is gone).
+    assert GUPPI_REJECT_TEXT not in [text for _, text in guppi_bot.sent]
 
 
 async def test_e2e_authorized_message_yields_reply(tmp_path: Path) -> None:

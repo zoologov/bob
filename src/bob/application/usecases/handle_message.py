@@ -55,6 +55,7 @@ from bob.domain.personality.expression import (
     FormHint,
     decide_expression,
 )
+from bob.domain.personality.interlocutor import Trust
 from bob.domain.personality.mood_taste import experiment_bias, modulate
 from bob.domain.personality.negotiation import (
     Negotiation,
@@ -67,6 +68,7 @@ from bob.domain.personality.voice import (
     OffDayThresholds,
     anti_bait_directive,
     guppi_canon,
+    stranger_directive,
     tone_directive,
     user_repeat_directive,
     variable_form_directive,
@@ -426,8 +428,29 @@ class HandleMessage:
             await self._react_only(event, soul)
             await self._record_owner_activity()
             return
-        recalled = await self._recall.recall(event.text, k=_RECALL_K)
-        history = await self._episodes.recent_episodes(_HISTORY_K)
+        # Guest (restricted social) mode (BOB-019 bob-apv.2 — the security core).
+        # An unauthorized GUEST reached Bob's social path (routed in by multibot),
+        # so Bob may talk to them like a person, but NEVER as a trusted peer:
+        #   * NO owner-private memory — recall is skipped (empty), so no stored
+        #     owner fact can enter a stranger's prompt (audience redaction);
+        #   * NO owner conversation history — the replayed recent episodes (the
+        #     owner's earlier turns in Bob's topic) are withheld too, so a stranger
+        #     who joins the group never sees the owner's prior conversation;
+        #   * NO tool-loop / capabilities — composition stays on the plain router
+        #     (a guest can trigger no capability), enforced in _compose_reply;
+        #   * NO grounded owner inner-life add-ons (leak/callback/fascination) —
+        #     they surface Bob's private world, withheld from a stranger;
+        #   * NO fact extraction — a guest turn is never written into the owner's
+        #     semantic memory.
+        # The stranger voice directive is appended so the wariness reads as
+        # character. Default to MORE restriction when unsure.
+        is_guest = interlocutor is not None and interlocutor.trust is Trust.GUEST
+        recalled: Sequence[Recalled] = (
+            [] if is_guest else await self._recall.recall(event.text, k=_RECALL_K)
+        )
+        history: Sequence[Mapping[str, object]] = (
+            [] if is_guest else await self._episodes.recent_episodes(_HISTORY_K)
+        )
         # User-repeat detection (BOB-022): does the OWNER repeat (near-)verbatim what
         # he already said in the recent window? Pure, no-LLM, conservative (exact after
         # normalise). When True the compose prompt carries the user-repeat directive so
@@ -445,6 +468,7 @@ class HandleMessage:
                 plan,
                 user_repeated=user_repeated,
                 interlocutor=interlocutor,
+                is_guest=is_guest,
             )
             # Anti-repeat guard (BOB-022, defense in depth): if the fresh reply is
             # byte-identical (after strip) to Bob's most-recent prior reply, regenerate
@@ -460,10 +484,15 @@ class HandleMessage:
                 plan,
                 user_repeated,
                 interlocutor,
+                is_guest=is_guest,
             )
         await self._gateway.reply(chat_id=event.chat_id, markdown=reply)
         await self._persist(event, reply, soul)
         await self._record_owner_activity()
+        if is_guest:
+            # SECURITY: a guest turn is never distilled into the owner's semantic
+            # memory — no stranger input becomes a stored owner fact.
+            return
         # Tier 0 "remember" step: distil durable facts into semantic memory so a
         # later turn's recall can surface them. Best-effort — run() never raises,
         # so a flaky local model can never break a turn that already replied.
@@ -541,15 +570,31 @@ class HandleMessage:
         *,
         user_repeated: bool = False,
         interlocutor: Interlocutor | None = None,
+        is_guest: bool = False,
     ) -> str:
-        """Compose a full reply, folding the plan's form hint into the prompt."""
+        """Compose a full reply, folding the plan's form hint into the prompt.
+
+        On a guest turn (``is_guest``) the restricted social mode applies: the
+        grounded owner inner-life add-ons (leak / callback / fascination) are
+        skipped (they surface Bob's private world), the tool-loop is NEVER used (a
+        guest can trigger no capability), and the stranger voice directive is
+        appended — the application half of the security invariant.
+        """
         context = _assemble_shareable_context(soul, text, recalled, history)
-        context = await self._with_grounded_addons(context, text, plan)
+        if not is_guest:
+            # Grounded add-ons surface Bob's PRIVATE inner life / shared past —
+            # withheld from a stranger (audience redaction).
+            context = await self._with_grounded_addons(context, text, plan)
         system_prompt = self._system_prompt_for(
-            soul, text, plan, user_repeated=user_repeated, interlocutor=interlocutor
+            soul,
+            text,
+            plan,
+            user_repeated=user_repeated,
+            interlocutor=interlocutor,
+            is_guest=is_guest,
         )
         provider = self._tool_provider
-        if provider is not None and not self._registry.is_empty:
+        if not is_guest and provider is not None and not self._registry.is_empty:
             return await self._reply_with_tools(provider, system_prompt, text, context)
         # Hybrid reply tiering (BOB-006): a casual/short message answers on the
         # fast Tier 0 (flash) model for responsiveness; a complex/long message
@@ -578,6 +623,8 @@ class HandleMessage:
         plan: ExpressionPlan,
         user_repeated: bool = False,
         interlocutor: Interlocutor | None = None,
+        *,
+        is_guest: bool = False,
     ) -> str:
         """Recompose once if ``reply`` byte-repeats Bob's last reply (BOB-022).
 
@@ -599,6 +646,7 @@ class HandleMessage:
             plan,
             user_repeated=user_repeated,
             interlocutor=interlocutor,
+            is_guest=is_guest,
         )
 
     async def _with_grounded_addons(
@@ -694,6 +742,7 @@ class HandleMessage:
         *,
         user_repeated: bool = False,
         interlocutor: Interlocutor | None = None,
+        is_guest: bool = False,
     ) -> str:
         """Augment the base prompt with the mood tone, stance, and form-hint directives.
 
@@ -725,6 +774,10 @@ class HandleMessage:
             # BOB-019: fold WHO is writing (owner / known / guest / bot) into the
             # voice as character — additive, no-op when no interlocutor perceived.
             who_is_writing_directive(interlocutor) if interlocutor is not None else "",
+            # BOB-019 bob-apv.2: on a guest turn, the stranger voice — Bob meets a
+            # stranger warily-but-human and never reveals the owner's private info
+            # (the voice half of the restricted-mode security invariant).
+            stranger_directive() if is_guest else "",
         ]
         suffix = "".join(f"\n{d}" for d in directives if d)
         return f"{_SYSTEM_PROMPT}{suffix}"

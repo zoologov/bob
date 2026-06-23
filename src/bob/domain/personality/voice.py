@@ -234,6 +234,39 @@ def who_is_writing_directive(interlocutor: Interlocutor) -> str:
     )
 
 
+# Stranger directive (BOB-019 bob-apv.2): the guest (restricted) turn appends this.
+# A guest is an unauthorized person who nonetheless reached Bob socially (in the
+# allowed chat + his topic); Bob meets them as a person — but warily, and WITHOUT
+# spilling the owner's private world. Written as character (how Bob meets a stranger),
+# not a config flag: greet or stay reserved, politely decline what he won't do, and
+# point them at the owner — but never reveal the owner's private information. The
+# application path already enforces the hard invariant (no tools, no owner memory);
+# this is the matching voice so the wariness reads as personality, not a wall.
+# Cyrillic look-alikes are intentional in these Russian literals.
+_STRANGER = (
+    "Тебе пишет незнакомый человек — не твой владелец и не кто-то из знакомых. "
+    "Встреть его как живой человек, но настороже: реши по себе — поздороваться "
+    "и поговорить, держаться сдержанно или вежливо отшить. Можешь предложить "
+    "обратиться к твоему владельцу, если просят то, чего ты для чужого делать не "
+    "станешь. Главное: не раскрывай личное и приватное владельца — ни его дела, "
+    "ни память, ни детали о нём; о таком — только с ним самим. Без грубости без "
+    "причины, но и без наивной открытости."
+)
+
+
+def stranger_directive() -> str:
+    """Return the stranger (guest-mode) voice directive (BOB-019 bob-apv.2).
+
+    Character guidance for a turn where the sender is an unauthorized GUEST who
+    reached Bob's social path: he meets them as a person but warily — greet or stay
+    reserved, politely decline, or point them at the owner — and crucially NEVER
+    reveals the owner's private information. Pure, argument-free, appended to the
+    compose prompt by HandleMessage ONLY on a guest turn; it is the voice half of
+    the hard restriction the application enforces (no tools, no owner memory recall).
+    """
+    return _STRANGER
+
+
 def tone_directive(mood: Mood, *, thresholds: OffDayThresholds | None = None) -> str:
     """Return the mood-conditioned tone directive — warm by default, off-day when low.
 

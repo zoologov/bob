@@ -339,8 +339,12 @@ async def test_other_topic_message_is_dropped() -> None:
 
 
 @pytest.mark.asyncio
-async def test_unauthorized_bob_topic_message_is_dropped() -> None:
-    """Unauthorized branch is a drop-hook in this bead (GUPPI reject is BEAD-03)."""
+async def test_unauthorized_bob_topic_message_routes_to_bob_as_guest() -> None:
+    """BOB-019: an unauthorized sender in Bob's topic is a GUEST → Bob's pipeline.
+
+    (Previously this was a hard drop / GUPPI reject; bob-apv.2 routes the guest to
+    Bob's social pipeline — the restricted mode is enforced downstream.)
+    """
     bob, guppi = _FakeBot(), _FakeBot()
     bob.updates_batches = [[_bob_topic_update(22)]]
     gateway, bus = _build(
@@ -351,7 +355,8 @@ async def test_unauthorized_bob_topic_message_is_dropped() -> None:
 
     await gateway.poll_once()
 
-    assert received == []
+    assert len(received) == 1  # the guest reaches Bob's pipeline
+    assert guppi.sends == []  # no GUPPI hard-reject
 
 
 # --- Cross-bot dedup ----------------------------------------------------------

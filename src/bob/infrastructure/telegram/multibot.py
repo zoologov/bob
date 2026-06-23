@@ -27,15 +27,21 @@ sane and forward-compatible with future replica bots (Bobiverse):
   topic-thread + authorization), independent of which bot delivered it, and the
   cross-bot dedup slot is committed only **after** a copy was actually handled —
   a non-routable copy leaves the slot open for its routable sibling. The **Bob
-  path**: an *authorized* message in **Bob's topic** (``chat_id == bob.chat_id``
-  AND ``message_thread_id == bob.topic_id``) publishes one
-  :class:`MessageReceived` onto the bus (Bob's pipeline) and Bob's replies are
-  pinned to his topic thread. The **GUPPI path** (BEAD-03,
-  :class:`~bob.infrastructure.telegram.guppi.GuppiHandler`): an *unauthorized*
-  message in Bob's topic gets GUPPI's visible reject (Bob's pipeline is NOT
-  invoked); an owner command in General (``/authorize`` / ``/deauthorize`` /
-  ``/status``) is consumed by GUPPI. Everything else — a stranger DM, a foreign
-  chat, a non-owner command — is dropped silently (no reveal).
+  path**: ANY message in **Bob's topic** (``chat_id == bob.chat_id`` AND
+  ``message_thread_id == bob.topic_id`` — so, by construction, inside the allowed
+  chat) publishes one :class:`MessageReceived` onto the bus (Bob's pipeline) and
+  Bob's replies are pinned to his topic thread. An *authorized* sender (owner /
+  allowlisted) gets Bob's full trusted path; an *unauthorized* one is a **guest**
+  (BOB-019): instead of GUPPI's old hard reject they reach Bob's social pipeline,
+  and the *restricted* guest mode (no tools, no owner memory, audience-redacted) is
+  enforced downstream in :class:`~bob.application.usecases.handle_message.HandleMessage`
+  (which re-derives trust from the same Authorizer via sender perception). The
+  **GUPPI path** (BEAD-03,
+  :class:`~bob.infrastructure.telegram.guppi.GuppiHandler`): an owner command in
+  General (``/authorize`` / ``/deauthorize`` / ``/status``) is consumed by GUPPI.
+  Everything else — a stranger DM, a foreign chat, a non-owner command — is dropped
+  silently (no reveal); chat-scope is unchanged, so only the allowed chat's Bob
+  topic earns the guest route.
 
 Transport only: no Higher-Mind / LLM / memory logic. Bots are injected behind the
 :class:`~bob.infrastructure.telegram.gateway.BotLike` protocol so tests use fake
@@ -341,21 +347,29 @@ class MultiBotGateway:
     ) -> _RouteOutcome:
         """Classify the message by its content (not the delivering bot) and act.
 
-        * Bob's topic + authorized → publish onto Bob's pipeline.
-        * Bob's topic + unauthorized → GUPPI's visible reject.
+        * Bob's topic (authorized OR a guest) → publish onto Bob's pipeline.
         * General owner command → GUPPI consumes it.
         * anything else → unroutable (caller leaves the dedup slot open).
+
+        A message inside Bob's topic is by construction inside the **allowed chat**
+        (Bob's scope chat is the allowed chat), so reaching this branch already
+        means the sender passed chat-scope. An *authorized* sender (owner /
+        allowlisted) takes Bob's full trusted path; an *unauthorized* one is a
+        **guest** (BOB-019 bob-apv.2) — instead of GUPPI's old hard reject they are
+        published onto Bob's pipeline so Bob can meet them socially, and the
+        *restricted* guest mode (no tools, no owner memory, audience-redacted) is
+        enforced downstream in :class:`HandleMessage` (which re-derives trust from
+        the same Authorizer via sender perception). Outside Bob's topic nothing
+        changes: a foreign chat / DM never matches Bob's scope and is dropped here.
         """
         bob_scope = self._registry.scope_of(BotIdentity.BOB)
         if bob_scope.matches(
             chat_id=chat_id, message_thread_id=message.message_thread_id
         ):
-            if not await self._is_authorized(update, chat_id):
-                # Unauthorized inside Bob's topic → GUPPI's visible reject; Bob's
-                # pipeline is NOT invoked.
-                await self._guppi_reject(chat_id, message.message_thread_id)
-                return _RouteOutcome.HANDLED
-            # Authorized, in Bob's topic → publish onto Bob's pipeline.
+            # In Bob's topic (so in the allowed chat): publish onto Bob's pipeline,
+            # whether the sender is authorized (trusted path) or a guest (restricted
+            # path) — the trusted/guest split is HandleMessage's concern, not the
+            # router's. The visible hard reject is gone for Bob-topic messages.
             if await self._inner[BotIdentity.BOB].intake(update):
                 return _RouteOutcome.PUBLISHED
             return _RouteOutcome.HANDLED
@@ -377,20 +391,6 @@ class MultiBotGateway:
         return await self._guppi.handle_general_command(
             text=text, user_id=user_id, chat_id=chat_id
         )
-
-    async def _guppi_reject(self, chat_id: int, thread_id: int | None) -> None:
-        """Send GUPPI's visible "unauthorized" reject into Bob's topic thread."""
-        if self._guppi is None:
-            return
-        await self._guppi.reject(chat_id=chat_id, thread_id=thread_id)
-
-    async def _is_authorized(self, update: UpdateLike, chat_id: int) -> bool:
-        """Classify the sender via the injected Authorizer (open if unwired)."""
-        if self._authorizer is None:
-            return True
-        user = update.effective_user
-        user_id = user.id if user is not None else None
-        return await self._authorizer.is_authorized(user_id=user_id, chat_id=chat_id)
 
     # --- Reply (per identity) -------------------------------------------------
 

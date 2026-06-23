@@ -25,6 +25,7 @@ from bob.domain.personality.voice import (
     OffDayThresholds,
     anti_bait_directive,
     guppi_canon,
+    stranger_directive,
     tone_directive,
     user_repeat_directive,
     variable_form_directive,
@@ -249,6 +250,29 @@ def test_who_is_writing_directive_is_voice_not_a_rule_list() -> None:
         trust=Trust.TRUSTED,
     )
     directive = who_is_writing_directive(who)
+    assert "•" not in directive
+    assert "- " not in directive
+
+
+def test_stranger_directive_is_a_wary_but_human_greeting() -> None:
+    # BOB-019 bob-apv.2: the guest (restricted) turn appends this — Bob meets a
+    # stranger as a person (greet / stay wary / politely decline / suggest asking
+    # the owner), in character, never a config flag.
+    folded = stranger_directive().casefold()
+    assert "незнаком" in folded  # he is meeting a stranger
+    # it covers the human options Bob can take with a stranger
+    assert "владел" in folded  # may suggest asking the owner
+
+
+def test_stranger_directive_forbids_revealing_owner_private_info() -> None:
+    # The security character line: Bob must NOT spill the owner's private info to
+    # a guest. This is voice mirroring the application-level redaction invariant.
+    folded = stranger_directive().casefold()
+    assert "личн" in folded or "приват" in folded  # do not reveal owner's private stuff
+
+
+def test_stranger_directive_is_voice_not_a_rule_list() -> None:
+    directive = stranger_directive()
     assert "•" not in directive
     assert "- " not in directive
 
