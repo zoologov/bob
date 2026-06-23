@@ -25,6 +25,7 @@ from bob.domain.personality.voice import (
     OffDayThresholds,
     anti_bait_directive,
     guppi_canon,
+    recalled_impression_directive,
     stranger_directive,
     tone_directive,
     user_repeat_directive,
@@ -275,6 +276,28 @@ def test_stranger_directive_is_voice_not_a_rule_list() -> None:
     directive = stranger_directive()
     assert "•" not in directive
     assert "- " not in directive
+
+
+def test_recalled_impression_directive_carries_the_prior_note() -> None:
+    # BOB-019 bob-apv.3: when a sender Bob has met before writes again, the prior
+    # first-impression note is folded in so Bob recalls them wryly — the actual note
+    # text must reach the line so the recall is grounded in what he really thought.
+    note = "тот самый незнакомец, держался настороже"
+    line = recalled_impression_directive(note)
+    assert note in line
+
+
+def test_recalled_impression_directive_signals_prior_contact() -> None:
+    # It reads as recognition ("кажется, мы уже сталкивались"), not a fresh meeting.
+    folded = recalled_impression_directive("впечатление").casefold()
+    assert "уже" in folded or "снова" in folded or "прежд" in folded
+
+
+def test_recalled_impression_directive_is_voice_not_a_rule_list() -> None:
+    line = recalled_impression_directive("впечатление")
+    assert "•" not in line
+    assert "- " not in line
+    assert "\n" not in line
 
 
 def _exemplar_lines(directive: str) -> list[str]:

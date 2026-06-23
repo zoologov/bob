@@ -70,6 +70,7 @@ from bob.application.usecases.fascination_sources import (
     RepoFascinationGrounding,
     StoreFascinationReader,
 )
+from bob.application.usecases.first_impression_sources import FirstImpressionTracker
 from bob.application.usecases.handle_message import HandleMessage, PersonalityState
 from bob.application.usecases.heartbeat import (
     InnerMonologueTick,
@@ -101,6 +102,7 @@ from bob.infrastructure.persistence import (
     RepoProactivitySources,
     SoulStore,
     SqliteFascinationStore,
+    SqliteFirstImpressionStore,
     SqliteMemoryRepo,
     SqliteProactivityStore,
 )
@@ -349,6 +351,16 @@ def build_application(
         persona_id=_BOB_PERSONA, store=fascination_store, clock=resolved_clock
     )
 
+    # First impression (BOB-019 bob-apv.3): a LIGHT per-sender store backs the tracker
+    # that recalls a returning person's prior impression into the compose prompt and
+    # records a fresh, grounded note on first contact. Keyed by sender_id (owner /
+    # known / guest / bot alike); per-PERSON data (about them), not owner memory, so it
+    # is safe even on a guest turn. The minimal foundation for multi-party BOB-014.
+    first_impression_store = SqliteFirstImpressionStore(memory_repo)
+    first_impression_tracker = FirstImpressionTracker(
+        store=first_impression_store, clock=resolved_clock
+    )
+
     multibot = _build_multibot(
         merged,
         bus=event_bus,
@@ -413,6 +425,12 @@ def build_application(
         # ("сейчас пишет: …"). Additive only: it shapes HOW Bob sounds, never which
         # pipeline runs (the guest-restricted path is a later bead).
         perceive_sender=SenderPerception(authorizer=authorizer),
+        # First-impression seam (BOB-019 bob-apv.3): Bob forms + remembers a LIGHT
+        # per-person first impression keyed by sender — a returning person's prior
+        # note is recalled into the prompt ("кажется, мы уже сталкивались"), a new
+        # person's grounded note is recorded after the turn. Per-PERSON data, safe even
+        # for a guest (about the guest, never an owner-memory leak). Additive only.
+        first_impression=first_impression_tracker,
     )
     event_bus.subscribe(MESSAGE_RECEIVED, _as_handler(handle_message))
 

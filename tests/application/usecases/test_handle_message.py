@@ -317,6 +317,7 @@ def _build(
     fascination: _FakeFascinationReader | None = None,
     surface_old_freq: float | None = None,
     perceive_sender: _FakeInterlocutorResolver | None = None,
+    first_impression: _FakeFirstImpression | None = None,
 ) -> tuple[HandleMessage, FakeBot, FakeRepo, CapturingProvider]:
     tier0 = CapturingProvider(reply="positive", replies=tier0_replies)
     tier1 = CapturingProvider(reply=reply, replies=tier1_replies)
@@ -353,6 +354,7 @@ def _build(
         fascination=fascination,
         surface_old_freq=surface_old_freq if surface_old_freq is not None else 0.0,
         perceive_sender=perceive_sender,
+        first_impression=first_impression,
     )
     return handler, bot, repo, tier1
 
@@ -1939,3 +1941,113 @@ async def test_trusted_owner_turn_still_recalls_and_uses_tools() -> None:
     assert cap.calls == [{"query": "name"}]  # the capability was dispatched
     assert recall.surface_old_calls == [False]  # owner memory was recalled
     assert bot.final_text == "Your name is Ada."
+
+
+# --- First impression (BOB-019 bob-apv.3) -------------------------------------
+
+
+class _FakeFirstImpression:
+    """In-memory FirstImpressionReader fake: a fixed prior note + recording capture.
+
+    ``prior`` is the note returned for a returning sender (``None`` for a fresh one);
+    ``recorded`` captures every interlocutor a first-contact was noted for, so a test
+    can assert Bob recorded a new sender's impression after the turn.
+    """
+
+    def __init__(self, *, prior: str | None = None) -> None:
+        self._prior = prior
+        self.recorded: list[Interlocutor] = []
+        self.asked: list[Interlocutor] = []
+
+    async def prior_impression(self, interlocutor: Interlocutor) -> str | None:
+        self.asked.append(interlocutor)
+        return self._prior
+
+    async def note_first_contact(self, interlocutor: Interlocutor) -> None:
+        self.recorded.append(interlocutor)
+
+
+async def test_new_sender_first_contact_is_recorded_after_the_turn() -> None:
+    # A new sender → Bob records a LIGHT first impression after replying (formed once).
+    resolver = _FakeInterlocutorResolver(
+        _interlocutor(name="Vova", kind=InterlocutorKind.OWNER, sender_id=99)
+    )
+    impressions = _FakeFirstImpression(prior=None)
+    handler, _bot, _repo, _tier1 = _build(
+        reply="hi", perceive_sender=resolver, first_impression=impressions
+    )
+
+    await handler.handle(_message("привет"))
+
+    assert [who.sender_id for who in impressions.recorded] == [99]
+
+
+async def test_returning_sender_prior_impression_reaches_the_prompt() -> None:
+    # A sender Bob has met before → the prior note is folded into the compose prompt
+    # so Bob recalls him wryly ("кажется, мы уже сталкивались").
+    note = "тот самый незнакомец, держался настороже"
+    resolver = _FakeInterlocutorResolver(
+        _interlocutor(name="Rando", kind=InterlocutorKind.GUEST, trust=Trust.GUEST)
+    )
+    impressions = _FakeFirstImpression(prior=note)
+    handler, _bot, _repo, tier1 = _build(
+        reply="hi", perceive_sender=resolver, first_impression=impressions
+    )
+
+    await handler.handle(_message("расскажи подробно, снова здравствуй, как ты"))
+
+    folded = tier1.all_text.casefold()
+    assert note in tier1.all_text  # the real prior note reaches the prompt
+    assert "уже" in folded  # reads as recognition, not a fresh meeting
+
+
+async def test_new_sender_has_no_recall_line_in_the_prompt() -> None:
+    # A fresh sender (no prior note) is met blank — no recalled-impression line.
+    resolver = _FakeInterlocutorResolver(
+        _interlocutor(name="Vova", kind=InterlocutorKind.OWNER)
+    )
+    impressions = _FakeFirstImpression(prior=None)
+    handler, _bot, _repo, tier1 = _build(
+        reply="hi", perceive_sender=resolver, first_impression=impressions
+    )
+
+    await handler.handle(_message("привет"))
+
+    assert "уже сталкивались" not in tier1.all_text.casefold()
+
+
+async def test_guest_first_impression_is_used_without_leaking_owner_memory() -> None:
+    # SECURITY: a guest's OWN prior first-impression is fine (it's about the guest),
+    # and surfacing it must NOT pull in any owner-private memory — recall stays off
+    # for a guest and no owner memory leaks even while the impression is recalled.
+    note = "этот незнакомец уже заходил, держался ровно"
+    recall = FakeRecall(hits=[{"content": _RECALL_MEMORY, "category": "personal"}])
+    impressions = _FakeFirstImpression(prior=note)
+    handler, _bot, _repo, tier1 = _build(
+        reply="hi",
+        recall=recall,
+        perceive_sender=_guest_resolver(),
+        first_impression=impressions,
+    )
+
+    await handler.handle(_message("расскажи подробно, снова я заглянул к тебе"))
+
+    assert note in tier1.all_text  # the guest's own impression is recalled
+    assert _RECALL_MEMORY not in tier1.all_text  # owner memory still redacted
+    assert recall.surface_old_calls == []  # recall never ran for a guest
+    # The guest's own first contact is still recorded (per-PERSON data, about them).
+    assert impressions.recorded
+
+
+async def test_owner_path_unaffected_without_a_first_impression_seam() -> None:
+    # NO REGRESSION: with no first-impression seam wired the owner turn is unchanged —
+    # no recall line, the reply still lands as before.
+    resolver = _FakeInterlocutorResolver(
+        _interlocutor(name="Vova", kind=InterlocutorKind.OWNER)
+    )
+    handler, bot, _repo, tier1 = _build(reply="порядок", perceive_sender=resolver)
+
+    await handler.handle(_message("расскажи подробно, как у тебя дела сегодня"))
+
+    assert bot.final_text == "порядок"
+    assert "сталкивались" not in tier1.all_text.casefold()

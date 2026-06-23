@@ -267,6 +267,39 @@ def stranger_directive() -> str:
     return _STRANGER
 
 
+# Recalled-impression directive (BOB-019 bob-apv.3): when someone Bob has met before
+# writes again, his LIGHT first-impression note (formed on first contact, kept per
+# sender) is folded in so he recalls them wryly — "кажется, мы уже сталкивались" —
+# instead of meeting them as a blank stranger. Written as voice (Bob naturally clocks
+# a returning face), not a config flag; it is grounded in the REAL stored note, never a
+# fabricated past. The application appends it only when a prior impression exists.
+# Cyrillic look-alikes are intentional in these Russian literals.
+_RECALLED_IMPRESSION_PREFIX = (
+    # Cyrillic look-alikes intentional in these Russian literals.
+    "Этого человека ты уже видел — кажется, вы уже сталкивались. "
+    "Твоё прежнее впечатление о нём было такое: "
+)
+_RECALLED_IMPRESSION_SUFFIX = (
+    # Cyrillic look-alikes intentional in this Russian literal.
+    " Можешь припомнить это к слову, в своём стиле, "
+    "не делая из этого досье."
+)
+
+
+def recalled_impression_directive(note: str) -> str:
+    """Return the recalled first-impression voice line for a returning sender (BOB-019).
+
+    Folds Bob's LIGHT prior first-impression ``note`` (formed on first contact, kept
+    per sender) into the prompt so he recalls a returning person wryly — "кажется, мы
+    уже сталкивались" — rather than meeting them blank. Written as character (a person
+    clocks a face he has seen before), grounded strictly in the real stored note (no
+    fabricated past), and kept light — not a dossier. Pure and deterministic: the same
+    note always yields the same line. The application appends it only when a prior
+    impression exists for this sender.
+    """
+    return f"{_RECALLED_IMPRESSION_PREFIX}{note}{_RECALLED_IMPRESSION_SUFFIX}"
+
+
 def tone_directive(mood: Mood, *, thresholds: OffDayThresholds | None = None) -> str:
     """Return the mood-conditioned tone directive — warm by default, off-day when low.
 
