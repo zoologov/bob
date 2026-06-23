@@ -211,8 +211,9 @@ class MemoryVectorStore:
         Runs a sqlite-vec KNN per source partition, joins each hit back to its
         source row's ``content``, merges the two lists and returns the globally
         nearest ``k`` by vector distance (ascending). Each item carries its
-        ``content``, ``source`` tag, the source row's ``category`` and the raw
-        ``distance``. Empty when ``k <= 0`` (no neighbours requested).
+        ``content``, ``source`` tag, the source row's ``category``, its ``ts``
+        (ISO-8601 string — the age signal BOB-021's surface_old leans on) and the
+        raw ``distance``. Empty when ``k <= 0`` (no neighbours requested).
         """
         if k <= 0:
             return []
@@ -237,13 +238,16 @@ class MemoryVectorStore:
         literals from ``_SOURCE_TABLES`` / ``_SOURCE_FILTERS`` (never user input),
         so interpolating them into the JOIN is safe; the query vector, partition key
         and ``k`` stay parameterised. The semantic filter excludes facts superseded
-        by BOB-021 dedup so a merged near-duplicate never resurfaces.
+        by BOB-021 dedup so a merged near-duplicate never resurfaces. Each hit also
+        carries its ``ts`` (both source tables have it) — the age signal surface_old
+        reads to bias toward an old-but-relevant memory.
         """
         extra = _SOURCE_FILTERS.get(source)
         extra_clause = f" AND {extra}" if extra else ""
         sql = (
             "SELECT t.content AS content, "  # noqa: S608 — literals are internal, not user input
-            f"t.{category_col} AS category, ? AS source, v.distance AS distance "
+            f"t.{category_col} AS category, t.ts AS ts, ? AS source, "
+            "v.distance AS distance "
             f"FROM memory_vec v JOIN {table} t ON t.id = v.src_id "
             f"WHERE v.source = ? AND v.embedding MATCH ? AND k = ?{extra_clause} "
             "ORDER BY v.distance"

@@ -142,6 +142,15 @@ DEFAULT_CONFIG: Config = {
             "threshold": 0.92,
             "batch_size": 200,
         },
+        # Surface-old (BOB-021 mechanism 1, "что-то напомнило"): on a (rare) BOB-018
+        # callback turn, Bob occasionally reaches for an OLD-but-relevant memory via
+        # recall's additive ``surface_old`` opt-in, so a deep cut can come back à propos.
+        # ``freq`` is how often a callback asks for the old blend — small (anti-tic), and
+        # it rides ONLY the callback path. The default recall is unchanged (drop-in); a
+        # callback with no old-but-relevant hit is a clean no-op (Bob never confabulates).
+        "surface_old": {
+            "freq": 0.15,
+        },
     },
     # Two bots in one process (BOB-003): Bob lives in his topic, GUPPI is the
     # gatekeeper in General. Each bot's token comes from env only (never YAML);

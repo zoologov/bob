@@ -14,7 +14,7 @@ vectors so cosine-near pairs and embedder failures are both reproducible.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
 import pytest
@@ -36,8 +36,8 @@ def _ts() -> datetime:
     return datetime(2026, 6, 18, 12, 0, 0, tzinfo=UTC)
 
 
-def _fact(content: str) -> SemanticFact:
-    return SemanticFact(ts=_ts(), category="pref", content=content)
+def _fact(content: str, *, ts: datetime | None = None) -> SemanticFact:
+    return SemanticFact(ts=ts if ts is not None else _ts(), category="pref", content=content)
 
 
 class StubEmbedder:
@@ -427,4 +427,115 @@ async def test_reranker_runs_after_keyword_only_fallback(tmp_path: Path) -> None
     contents = [str(r["content"]) for r in results]
     assert contents[0] == "jazz festival tonight"  # reranked atop keyword-only pool
     assert reranker.calls == 1
+    await db.close()
+
+
+# --- surface_old (BOB-021 mechanism 1: "что-то напомнило") --------------------
+#
+# An ADDITIVE opt-in on recall: ``surface_old=True`` blends an OLD-but-relevant
+# memory into the result (relevant by embedding/RRF but biased toward an older
+# ``ts``), so a deep-cut moment can surface that recency-bias would drop. The
+# DEFAULT (no flag) is unchanged — a drop-in contract the BOB-011 tests still pin.
+
+
+async def test_surface_old_default_is_unchanged_drop_in(tmp_path: Path) -> None:
+    # The drop-in contract: recall(query, k) with NO surface_old flag returns
+    # exactly what recall(query, k, surface_old=False) does — and exactly what it
+    # returned before the flag existed. Several relevant facts, mixed ages.
+    query = "jazz"
+    old = "bob loved jazz years ago"
+    recent = "bob loves jazz now"
+    embedder = StubEmbedder({query: _unit(0), old: _unit(0), recent: _unit(0)})
+    db = SqliteMemoryRepo(tmp_path / "bob.db", embedder=embedder)
+    await db.initialize()
+    await db.save_fact(_fact(old, ts=_ts() - timedelta(days=400)))
+    await db.save_fact(_fact(recent, ts=_ts()))
+
+    recall = HybridMemoryRecall(db, embedder)
+    implicit = [str(r["content"]) for r in await recall.recall(query, k=2)]
+    explicit = [str(r["content"]) for r in await recall.recall(query, k=2, surface_old=False)]
+
+    assert implicit == explicit  # the flag defaults off -> identical behaviour
+    await db.close()
+
+
+async def test_surface_old_blends_an_old_but_relevant_memory(tmp_path: Path) -> None:
+    # The deep-cut: many recent relevant facts crowd out a much older relevant one
+    # at a tight k. With surface_old, the OLD-but-relevant memory enters the result
+    # even though recency/RRF order alone would drop it at that k.
+    query = "jazz"
+    # The deep cut is relevant by MEANING (vector-near) but shares no keyword with the
+    # query, and is a touch farther than the recents — so default fusion ranks it below
+    # them and a tight k drops it. (No "jazz" keyword, so FTS5 never promotes it.)
+    deep_cut = "bob first heard those swinging horns as a teenager"
+    recents = [f"bob mentioned jazz on day {i}" for i in range(6)]
+    table = {query: _unit(0), deep_cut: _unit(0, 1)}
+    for text in recents:
+        table[text] = _unit(0)
+    embedder = StubEmbedder(table)
+    db = SqliteMemoryRepo(tmp_path / "bob.db", embedder=embedder)
+    await db.initialize()
+    # The deep cut — the OLDEST by ts — is less relevant than the recents, so default
+    # recall crowds it out of the top-k; surface_old reaches it via the age bias.
+    for i, text in enumerate(recents):
+        await db.save_fact(_fact(text, ts=_ts() - timedelta(days=i)))
+    await db.save_fact(_fact(deep_cut, ts=_ts() - timedelta(days=3650)))
+
+    recall = HybridMemoryRecall(db, embedder)
+    k = 2
+    without = [str(r["content"]) for r in await recall.recall(query, k=k)]
+    surfaced = [str(r["content"]) for r in await recall.recall(query, k=k, surface_old=True)]
+
+    assert deep_cut not in without  # recency/RRF drops the deep cut at this k
+    assert deep_cut in surfaced  # surface_old reaches it
+    assert len(surfaced) <= k  # still bounded by k (a blend, not a dump)
+    await db.close()
+
+
+async def test_surface_old_noops_without_embedder(tmp_path: Path) -> None:
+    # Graceful fallback: with no embedder there is no semantic age-signal, so
+    # surface_old degrades to exactly the keyword-only result (never crashes).
+    db = SqliteMemoryRepo(tmp_path / "bob.db")
+    await db.initialize()
+    await db.save_fact(_fact("bob loves jazz"))
+
+    recall = HybridMemoryRecall(db, embedder=None)
+    plain = [str(r["content"]) for r in await recall.recall("jazz", k=5)]
+    surfaced = [str(r["content"]) for r in await recall.recall("jazz", k=5, surface_old=True)]
+
+    assert surfaced == plain  # no embedder -> same as default
+    await db.close()
+
+
+async def test_surface_old_noops_when_embedder_fails(tmp_path: Path) -> None:
+    # Embedder down at recall time: surface_old falls back to the keyword pool just
+    # like the default path (Bob never loses his memory, just the semantic half).
+    write_embedder = StubEmbedder({"bob loves jazz": _unit(0)})
+    db = SqliteMemoryRepo(tmp_path / "bob.db", embedder=write_embedder)
+    await db.initialize()
+    await db.save_fact(_fact("bob loves jazz"))
+
+    failing = StubEmbedder({}, fail=True)
+    recall = HybridMemoryRecall(db, failing)
+    surfaced = [str(r["content"]) for r in await recall.recall("jazz", k=5, surface_old=True)]
+
+    assert any("jazz" in c for c in surfaced)  # keyword half carried it
+    await db.close()
+
+
+async def test_surface_old_excludes_superseded(tmp_path: Path) -> None:
+    # A superseded (deduped) fact must NOT resurface even via surface_old — the
+    # vector KNN already filters superseded facts, so the old-but-relevant blend
+    # can only reach still-active memory.
+    query = "jazz"
+    old_active = "bob loved jazz long ago"
+    embedder = StubEmbedder({query: _unit(0), old_active: _unit(0)})
+    db = SqliteMemoryRepo(tmp_path / "bob.db", embedder=embedder)
+    await db.initialize()
+    await db.save_fact(_fact(old_active, ts=_ts() - timedelta(days=500)))
+
+    recall = HybridMemoryRecall(db, embedder)
+    surfaced = [str(r["content"]) for r in await recall.recall(query, k=5, surface_old=True)]
+
+    assert old_active in surfaced  # active old fact reachable
     await db.close()

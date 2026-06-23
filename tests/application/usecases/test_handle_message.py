@@ -203,12 +203,28 @@ class FakeRecall:
     moment, a weak/empty recall (no-op grounding), or anything in between.
     """
 
-    def __init__(self, *, hits: Sequence[Recalled] | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        hits: Sequence[Recalled] | None = None,
+        old_hits: Sequence[Recalled] | None = None,
+    ) -> None:
         self._hits: Sequence[Recalled] = (
             hits if hits is not None else [{"content": _RECALL_MEMORY, "category": "personal"}]
         )
+        # When set, recall returns these only when surface_old=True (an old-but-relevant
+        # deep cut), modelling the hybrid recall's age blend; the default call still
+        # returns ``hits``. Records every surface_old flag seen for assertions.
+        self._old_hits = old_hits
+        self.surface_old_calls: list[bool] = []
 
-    async def recall(self, query: str, *, k: int) -> Sequence[Recalled]:  # noqa: ARG002
+    async def recall(
+        self, query: str, *, k: int, surface_old: bool = False
+    ) -> Sequence[Recalled]:
+        del query, k  # this fake ignores the topic/limit, modelling only the age blend
+        self.surface_old_calls.append(surface_old)
+        if surface_old and self._old_hits is not None:
+            return list(self._old_hits)
         return list(self._hits)
 
 
@@ -293,6 +309,7 @@ def _build(
     recall: FakeRecall | None = None,
     reflection: _FakeReflectionReader | None = None,
     fascination: _FakeFascinationReader | None = None,
+    surface_old_freq: float | None = None,
 ) -> tuple[HandleMessage, FakeBot, FakeRepo, CapturingProvider]:
     tier0 = CapturingProvider(reply="positive", replies=tier0_replies)
     tier1 = CapturingProvider(reply=reply)
@@ -327,6 +344,7 @@ def _build(
         reactor=reactor,
         reflection=reflection,
         fascination=fascination,
+        surface_old_freq=surface_old_freq if surface_old_freq is not None else 0.0,
     )
     return handler, bot, repo, tier1
 
@@ -963,6 +981,89 @@ async def test_callback_is_a_noop_when_recall_hits_have_no_content() -> None:
 
     await handler.handle(_message("расскажи подробно про что-то"))
 
+    assert bot.final_text == "hi"
+    assert "вспомнить" not in tier1.all_text.casefold()  # no callback preface
+
+
+# --- surface_old via the callback path (BOB-021 mechanism 1) ------------------
+#
+# On a callback turn (already rare/state-driven from BOB-018), Bob OCCASIONALLY
+# requests surface_old so the callback can reach an OLD moment. Frequency comes from
+# config (small default); the draw uses the injected seeded RNG, so it is rare,
+# reproducible, and a no-op when nothing relevant comes back.
+
+
+async def test_callback_requests_surface_old_when_the_frequency_draw_fires() -> None:
+    # surface_old_freq=1.0 forces the rare draw on a callback turn: the callback's
+    # recall is asked with surface_old=True, so an OLD-but-relevant deep cut can come
+    # back and is folded into the compose prompt (grounded — a real recall hit).
+    deep_cut = "когда-то давно мы говорили про звёзды над пустыней"
+    recall = FakeRecall(
+        hits=[{"content": _STRONG_MOMENT, "category": "episodic"}],
+        old_hits=[{"content": deep_cut, "category": "episodic"}],
+    )
+    handler, _bot, _repo, tier1 = _build(
+        reply="hi",
+        expression_freqs=_CALLBACK_ON,
+        recall=recall,
+        surface_old_freq=1.0,
+    )
+
+    await handler.handle(_message("расскажи подробно про Bobiverse и космос"))
+
+    assert True in recall.surface_old_calls  # the callback asked for the old blend
+    assert deep_cut in tier1.all_text  # the old moment surfaced into the prompt
+
+
+async def test_callback_does_not_request_surface_old_by_default() -> None:
+    # The default (surface_old_freq=0.0) never fires the rare draw: a callback turn
+    # recalls exactly as before BOB-021 — surface_old is never requested, so the
+    # callback path stays a pure drop-in unless the knob is turned up.
+    recall = FakeRecall(hits=[{"content": _STRONG_MOMENT, "category": "episodic"}])
+    handler, _bot, _repo, tier1 = _build(
+        reply="hi",
+        expression_freqs=_CALLBACK_ON,
+        recall=recall,
+    )
+
+    await handler.handle(_message("расскажи подробно про Bobiverse и космос"))
+
+    assert recall.surface_old_calls  # the callback did recall
+    assert not any(recall.surface_old_calls)  # but never with surface_old
+    assert _STRONG_MOMENT in tier1.all_text  # the ordinary callback still landed
+
+
+async def test_surface_old_does_not_fire_on_a_non_callback_turn() -> None:
+    # surface_old rides ONLY the callback path: with callback off, even a high
+    # surface_old_freq never reaches recall with the flag (no per-message age blend).
+    recall = FakeRecall(hits=[{"content": _RECALL_MEMORY, "category": "personal"}])
+    handler, _bot, _repo, _tier1 = _build(
+        reply="hi",
+        expression_freqs=_BOTH_OFF,
+        recall=recall,
+        surface_old_freq=1.0,
+    )
+
+    await handler.handle(_message("расскажи подробно про кофе"))
+
+    assert not any(recall.surface_old_calls)  # never blended outside a callback
+
+
+async def test_callback_surface_old_is_a_noop_when_no_old_memory_comes_back() -> None:
+    # Grounded no-op: the draw fires and surface_old is requested, but recall finds
+    # no old-but-relevant memory (empty) — no callback is injected and the turn still
+    # replies, so Bob never confabulates a deep cut that is not there.
+    recall = FakeRecall(hits=[], old_hits=[])
+    handler, bot, _repo, tier1 = _build(
+        reply="hi",
+        expression_freqs=_CALLBACK_ON,
+        recall=recall,
+        surface_old_freq=1.0,
+    )
+
+    await handler.handle(_message("расскажи подробно про что-нибудь новое"))
+
+    assert True in recall.surface_old_calls  # it asked for the old blend
     assert bot.final_text == "hi"
     assert "вспомнить" not in tier1.all_text.casefold()  # no callback preface
 

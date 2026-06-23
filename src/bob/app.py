@@ -175,6 +175,11 @@ _CONSOLIDATION_BATCH_SIZE = 50
 _DEDUP_THRESHOLD = 0.92
 _DEDUP_BATCH_SIZE = 200
 
+# Default surface-old frequency (BOB-021 mechanism 1); overridable via
+# ``memory.surface_old.freq``. Small (anti-tic): a callback turn only occasionally
+# reaches for an OLD-but-relevant deep cut; the default recall stays unchanged.
+_SURFACE_OLD_FREQ = 0.15
+
 # The proactivity engine ticks on the heartbeat cadence: cheap by construction
 # (the urge/governance decision is pure, defaulting to silence), so most ticks
 # make ZERO LLM calls.
@@ -397,6 +402,12 @@ def build_application(
         # emotion.offday.{valence,arousal}; the low/negative defaults keep a normal
         # or good mood on the warm tone.
         offday_thresholds=_build_offday_thresholds(merged),
+        # Surface-old seam (BOB-021 mechanism 1): on a rare callback turn, Bob
+        # occasionally reaches for an OLD-but-relevant memory via recall's additive
+        # surface_old opt-in ("что-то напомнило") — grounded, no-op when nothing old is
+        # relevant. Small (anti-tic), tunable via memory.surface_old.freq; the default
+        # recall path is unchanged (the blend only ever rides the callback).
+        surface_old_freq=_build_surface_old_freq(merged),
     )
     event_bus.subscribe(MESSAGE_RECEIVED, _as_handler(handle_message))
 
@@ -776,6 +787,19 @@ def _build_expression_freqs(config: Mapping[str, object]) -> ExpressionFreqs:
         callback=_float_or(freqs, "callback", defaults.callback),
         mention_fascination=mention,
     )
+
+
+def _build_surface_old_freq(config: Mapping[str, object]) -> float:
+    """Resolve the BOB-021 surface-old frequency from config (small default).
+
+    Reads ``memory.surface_old.freq`` — how often a (rare) callback turn reaches for
+    an OLD-but-relevant memory via recall's additive opt-in ("что-то напомнило").
+    Falls back to the small anti-tic default when absent; the default recall path is
+    unchanged regardless (surface_old only ever rides the callback). HandleMessage
+    validates the value is a [0, 1] probability.
+    """
+    section = _section(_section(config, "memory"), "surface_old")
+    return _float_or(section, "freq", _SURFACE_OLD_FREQ)
 
 
 def _resolve_seed(config: Mapping[str, object], seed: int | None) -> int:
