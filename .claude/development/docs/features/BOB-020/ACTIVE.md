@@ -4,21 +4,25 @@
 # ACTIVE: BOB-020 — «Эмоциональная глубина и уязвимость» (T1.2)
 
 > **Last updated:** 2026-06-23
-> **Phase:** Development
+> **Phase:** Done
 > **Feature:** bob-36q · branch `features/BOB-020`
 
 ---
 
 ## Текущий беад
 
-**Беад:** все dev-беады (`.1`/`.2`/`.3`) ГОТОВЫ. Дальше — `bob-36q.4` (test).
+**Беад:** все беады готовы — `.1`/`.2`/`.3` (dev), `.4` (test), `.5` (review),
+`.6` (tech-writer). Фича готова к PR.
 
 ## Прогресс
 
 - [x] `.1` off-day тон (voice.tone_directive) + mood→taste модуляция (mood_taste.py) + врезка
 - [x] `.2` увлечение (Fascination + FascinationStore + grounded-эволюция + проявление)
 - [x] `.3` эволюция фантомов (SOUL.with_phantoms + phantom_evolution + reflect-тик + персист)
-- [ ] `.4` test · `.5` review · `.6` tech-writer
+- [x] `.4` test
+- [x] `.5` review
+- [x] `.6` tech-writer — `docs/architecture.md`: новый раздел «Эмоциональная глубина (BOB-020)»
+  (off-day, mood→taste, увлечение, эволюция фантомов + шаги эволюции на reflect-тике + конфиг)
 
 ### `.3` итог (dev)
 - `domain/personality/phantom_evolution.py` — чистый `evolve_phantoms(phantoms, signals, rng)` +
@@ -59,9 +63,9 @@
 | bob-36q.1 | dev off-day+mood→taste | — | done |
 | bob-36q.2 | dev увлечение | .1 | done |
 | bob-36q.3 | dev эволюция фантомов | .1 | done |
-| bob-36q.4 | test | .1,.2,.3 | blocked |
-| bob-36q.5 | review | .4 | blocked |
-| bob-36q.6 | tech-writer | .5 | blocked |
+| bob-36q.4 | test | .1,.2,.3 | done |
+| bob-36q.5 | review | .4 | done |
+| bob-36q.6 | tech-writer | .5 | done |
 
 ## Заметки
 
