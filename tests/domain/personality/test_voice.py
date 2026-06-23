@@ -23,9 +23,11 @@ from bob.domain.personality.interlocutor import (
 from bob.domain.personality.mood import Mood
 from bob.domain.personality.voice import (
     OffDayThresholds,
+    RelationshipToneThresholds,
     anti_bait_directive,
     guppi_canon,
     recalled_impression_directive,
+    relationship_tone_directive,
     stranger_directive,
     tone_directive,
     user_repeat_directive,
@@ -142,6 +144,47 @@ def test_tone_directive_off_day_is_not_rude() -> None:
     # No hostile/aggressive licensing leaks in.
     assert "агресс" not in folded
     assert "огрызай" not in folded
+
+
+def test_relationship_tone_warm_for_a_close_relationship() -> None:
+    # BOB-014: a high-warmth relationship colours Bob's voice warmer/closer.
+    directive = relationship_tone_directive(0.8)
+    folded = directive.casefold()
+    assert "тепл" in folded or "близ" in folded  # warmer / closer
+
+
+def test_relationship_tone_cooler_for_a_distant_relationship() -> None:
+    # A low-warmth relationship reads cooler/more reserved — but NOT rude/hostile
+    # (relational hostility is the sulk, BOB-014 .2, not this).
+    directive = relationship_tone_directive(-0.8)
+    folded = directive.casefold()
+    assert "суш" in folded or "сдержан" in folded or "прохлад" in folded  # cooler
+    # Never rude here (relational hostility is the sulk, .2): the cool band reads as
+    # reserved and EXPLICITLY disavows rudeness rather than licensing it.
+    assert "не груб" in folded or "без груб" in folded  # disavows, never licenses
+    assert "агресс" not in folded
+    assert "огрызай" not in folded
+
+
+def test_relationship_tone_neutral_band_adds_no_directive() -> None:
+    # A neutral (mid-band) relationship adds no extra colour — the base voice/tone
+    # already covers it, so the default path is unchanged.
+    assert relationship_tone_directive(0.0) == ""
+
+
+def test_relationship_tone_thresholds_come_from_config() -> None:
+    # The warm/cool bands are configurable, so the boundary is not hardcoded.
+    mood = 0.2
+    strict = RelationshipToneThresholds(warm=0.9, cool=-0.9)
+    lenient = RelationshipToneThresholds(warm=0.1, cool=-0.1)
+    assert relationship_tone_directive(mood, thresholds=strict) == ""
+    assert relationship_tone_directive(mood, thresholds=lenient) != ""
+
+
+def test_relationship_tone_is_voice_not_a_rule_list() -> None:
+    directive = relationship_tone_directive(0.9)
+    assert "•" not in directive
+    assert "- " not in directive
 
 
 def test_tone_directive_is_voice_not_a_rule_list() -> None:

@@ -38,11 +38,12 @@ from bob.domain.personality.interlocutor import (
     Trust,
 )
 from bob.domain.personality.mood import Mood
-from bob.domain.personality.negotiation import NegotiationZone
+from bob.domain.personality.negotiation import NegotiationZone, Stance
 from bob.domain.personality.reaction import (
     STANDARD_REACTION_EMOJI,
     reaction_emoji_for,
 )
+from bob.domain.personality.relationship import Relationship
 from bob.domain.personality.soul import SOUL
 from bob.domain.personality.taste import TasteAxis, TasteEngine, Verdict
 from bob.domain.ports import ToolCall, ToolCallResult
@@ -318,6 +319,7 @@ def _build(
     surface_old_freq: float | None = None,
     perceive_sender: _FakeInterlocutorResolver | None = None,
     first_impression: _FakeFirstImpression | None = None,
+    relationship: _FakeRelationship | None = None,
 ) -> tuple[HandleMessage, FakeBot, FakeRepo, CapturingProvider]:
     tier0 = CapturingProvider(reply="positive", replies=tier0_replies)
     tier1 = CapturingProvider(reply=reply, replies=tier1_replies)
@@ -355,6 +357,7 @@ def _build(
         surface_old_freq=surface_old_freq if surface_old_freq is not None else 0.0,
         perceive_sender=perceive_sender,
         first_impression=first_impression,
+        relationship=relationship,
     )
     return handler, bot, repo, tier1
 
@@ -2146,3 +2149,239 @@ async def test_anonymous_guest_turn_replies_and_records_nothing() -> None:
     # The seam is still invoked with the no-id interlocutor (the tracker no-ops on it);
     # the recorded interlocutor carries no sender_id, so nothing keyable is stored.
     assert all(who.sender_id is None for who in impressions.recorded)
+
+
+# --- Relationship (BOB-014) --------------------------------------------------
+
+
+class _FakeRelationship:
+    """In-memory RelationshipReader fake: a fixed current relationship + capture.
+
+    ``current`` is the relationship returned for the turn (``None`` → a new person);
+    ``interactions`` captures every (interlocutor, stance, mood, sentiment) recorded
+    after a turn, so a test can assert the relationship is updated + persisted.
+    """
+
+    def __init__(self, *, current: Relationship | None = None) -> None:
+        self._current = current
+        self.interactions: list[tuple[Interlocutor, Stance, Mood, float]] = []
+
+    async def current(self, interlocutor: Interlocutor) -> Relationship | None:  # noqa: ARG002
+        return self._current
+
+    async def record_interaction(
+        self,
+        interlocutor: Interlocutor,
+        *,
+        stance: Stance,
+        mood: Mood,
+        sentiment: float,
+    ) -> None:
+        self.interactions.append((interlocutor, stance, mood, sentiment))
+
+
+def _soul_with_borderline_opinion(topic: str) -> SOUL:
+    # A soul with an opinion whose conviction sits JUST above the BOB_PERSONAL
+    # pushback threshold (0.5) → PROPOSE_ALTERNATIVE on its own, but low enough that
+    # a close relationship's compromise-bias tips it to AGREE.
+    baseline = Mood(valence=0.1, social=0.2)
+    taste = TasteEngine(axes=(TasteAxis(name=topic, value=-0.6, conviction=0.55),))
+    return SOUL(
+        identity="I am the Bob from the book.",
+        mood=baseline,
+        mood_baseline=baseline,
+        taste=taste,
+        phantom_prefs=(_PHANTOM_PREF,),
+    )
+
+
+async def test_high_warmth_relationship_warms_the_tone_directive() -> None:
+    # BOB-014: a close (high-warmth) relationship colours Bob's voice warmer/closer.
+    resolver = _FakeInterlocutorResolver(
+        _interlocutor(name="Vova", kind=InterlocutorKind.OWNER)
+    )
+    rel = _FakeRelationship(
+        current=Relationship(sender_id=99, warmth=0.8, compatibility=0.7)
+    )
+    handler, _bot, _repo, tier1 = _build(
+        reply="hi", perceive_sender=resolver, relationship=rel
+    )
+
+    await handler.handle(_message("расскажи подробно про космос"))
+
+    folded = tier1.all_text.casefold()
+    assert "близк" in folded or "по-свойски" in folded  # warmer/closer voice
+
+
+async def test_low_warmth_relationship_cools_the_tone_directive() -> None:
+    # A distant (low-warmth) relationship reads cooler/more reserved — never rude.
+    resolver = _FakeInterlocutorResolver(
+        _interlocutor(name="Rando", kind=InterlocutorKind.GUEST, trust=Trust.GUEST)
+    )
+    rel = _FakeRelationship(
+        current=Relationship(sender_id=99, warmth=-0.8, compatibility=-0.7)
+    )
+    handler, _bot, _repo, tier1 = _build(
+        reply="hi", perceive_sender=resolver, relationship=rel
+    )
+
+    await handler.handle(_message("расскажи подробно что-нибудь интересное"))
+
+    folded = tier1.all_text.casefold()
+    assert "сдержан" in folded or "прохлад" in folded or "суш" in folded
+
+
+async def test_close_relationship_makes_bob_more_willing_to_compromise() -> None:
+    # BOB-014: warmth + compatibility nudge the negotiation toward compromise. A
+    # borderline-firm opinion that would PROPOSE_ALTERNATIVE on its own is tipped to
+    # AGREE for someone Bob is close to (he meets a close person halfway more readily).
+    topic = "объясни подробно почему минимализм лучше всего"
+    resolver = _FakeInterlocutorResolver(
+        _interlocutor(name="Vova", kind=InterlocutorKind.OWNER)
+    )
+    rel = _FakeRelationship(
+        current=Relationship(sender_id=99, warmth=1.0, compatibility=1.0)
+    )
+    handler, _bot, _repo, tier1 = _build(
+        reply="hi",
+        soul=_soul_with_borderline_opinion(topic),
+        zone_classifier=_StubZoneClassifier(NegotiationZone.BOB_PERSONAL),
+        perceive_sender=resolver,
+        relationship=rel,
+    )
+
+    await handler.handle(_message(topic))
+
+    # The close relationship tipped the borderline stance from holding ground to agree.
+    assert _AGREE_DIRECTIVE in tier1.all_text
+    assert _PROPOSE_DIRECTIVE not in tier1.all_text
+
+
+async def test_distant_relationship_keeps_bob_holding_his_ground() -> None:
+    # The same borderline opinion, but a NEUTRAL relationship → no compromise nudge,
+    # so Bob holds his ground (PROPOSE_ALTERNATIVE) exactly as he would pre-BOB-014.
+    topic = "объясни подробно почему минимализм лучше всего"
+    resolver = _FakeInterlocutorResolver(
+        _interlocutor(name="Rando", kind=InterlocutorKind.GUEST, trust=Trust.GUEST)
+    )
+    rel = _FakeRelationship(current=Relationship(sender_id=99))  # neutral
+    handler, _bot, _repo, tier1 = _build(
+        reply="hi",
+        soul=_soul_with_borderline_opinion(topic),
+        zone_classifier=_StubZoneClassifier(NegotiationZone.BOB_PERSONAL),
+        perceive_sender=resolver,
+        relationship=rel,
+    )
+
+    await handler.handle(_message(topic))
+
+    assert _PROPOSE_DIRECTIVE in tier1.all_text
+
+
+async def test_relationship_is_updated_and_persisted_after_the_turn() -> None:
+    # BOB-014: after the turn Bob records the interaction (stance, mood, sentiment) so
+    # the relationship accrues — the seam is invoked once with the perceived sender.
+    resolver = _FakeInterlocutorResolver(
+        _interlocutor(name="Vova", kind=InterlocutorKind.OWNER, sender_id=99)
+    )
+    rel = _FakeRelationship(current=None)
+    handler, _bot, _repo, _tier1 = _build(
+        reply="hi", perceive_sender=resolver, relationship=rel
+    )
+
+    await handler.handle(_message("привет, как ты"))
+
+    assert len(rel.interactions) == 1
+    who, _stance, _mood, _sentiment = rel.interactions[0]
+    assert who.sender_id == 99
+
+
+async def test_relationships_are_per_sender_isolated() -> None:
+    # Owner and guest carry distinct relationships — the per-sender interlocutor keys
+    # them apart (the seam records each turn's own interlocutor).
+    owner_rel = _FakeRelationship(
+        current=Relationship(sender_id=1, warmth=0.9, compatibility=0.8)
+    )
+    owner = _FakeInterlocutorResolver(
+        _interlocutor(name="Vova", kind=InterlocutorKind.OWNER, sender_id=1)
+    )
+    handler, _bot, _repo, owner_tier1 = _build(
+        reply="hi", perceive_sender=owner, relationship=owner_rel
+    )
+    await handler.handle(_message("расскажи подробно про космос"))
+
+    guest_rel = _FakeRelationship(
+        current=Relationship(sender_id=2, warmth=-0.9, compatibility=-0.8)
+    )
+    guest = _FakeInterlocutorResolver(
+        _interlocutor(
+            name="Rando", kind=InterlocutorKind.GUEST, trust=Trust.GUEST, sender_id=2
+        )
+    )
+    handler2, _bot2, _repo2, guest_tier1 = _build(
+        reply="hi", perceive_sender=guest, relationship=guest_rel
+    )
+    await handler2.handle(_message("расскажи подробно что-нибудь"))
+
+    owner_folded = owner_tier1.all_text.casefold()
+    guest_folded = guest_tier1.all_text.casefold()
+    # The owner (close) reads warm; the guest (distant) reads reserved — distinct.
+    assert "близк" in owner_folded or "по-свойски" in owner_folded
+    assert "сдержан" in guest_folded or "прохлад" in guest_folded or "суш" in guest_folded
+    assert rel_sender_ids(owner_rel) == [1]
+    assert rel_sender_ids(guest_rel) == [2]
+
+
+def rel_sender_ids(rel: _FakeRelationship) -> list[int | None]:
+    return [who.sender_id for who, *_ in rel.interactions]
+
+
+async def test_no_relationship_seam_leaves_the_turn_unchanged() -> None:
+    # NO REGRESSION: with no relationship seam wired, no relationship tone line and the
+    # reply lands as before — exactly the pre-BOB-014 behaviour.
+    resolver = _FakeInterlocutorResolver(
+        _interlocutor(name="Vova", kind=InterlocutorKind.OWNER)
+    )
+    handler, bot, _repo, tier1 = _build(reply="порядок", perceive_sender=resolver)
+
+    await handler.handle(_message("расскажи подробно, как дела"))
+
+    assert bot.final_text == "порядок"
+    folded = tier1.all_text.casefold()
+    assert "по-свойски" not in folded
+    assert "прохлад" not in folded
+
+
+class _RaisingRelationship:
+    """A RelationshipReader whose record_interaction always raises (flaky store)."""
+
+    async def current(self, interlocutor: Interlocutor) -> Relationship | None:  # noqa: ARG002
+        return None
+
+    async def record_interaction(
+        self,
+        interlocutor: Interlocutor,  # noqa: ARG002
+        *,
+        stance: Stance,  # noqa: ARG002
+        mood: Mood,  # noqa: ARG002
+        sentiment: float,  # noqa: ARG002
+    ) -> None:
+        raise RuntimeError("relationship store unavailable")
+
+
+async def test_relationship_recording_failure_never_breaks_the_turn() -> None:
+    # NO REGRESSION (resilience): a flaky relationship store that raises while recording
+    # must NOT break a turn that already replied — the reply lands, the episode persists.
+    resolver = _FakeInterlocutorResolver(
+        _interlocutor(name="Vova", kind=InterlocutorKind.OWNER)
+    )
+    handler, bot, repo, _tier1 = _build(
+        reply="всё в порядке",
+        perceive_sender=resolver,
+        relationship=_RaisingRelationship(),  # type: ignore[arg-type]
+    )
+
+    await handler.handle(_message("расскажи подробно, как у тебя дела"))
+
+    assert bot.final_text == "всё в порядке"
+    assert len(repo.episodes) == 1

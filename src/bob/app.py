@@ -78,6 +78,7 @@ from bob.application.usecases.heartbeat import (
     ReflectTick,
 )
 from bob.application.usecases.reflection_parser import HeuristicReflectionParser
+from bob.application.usecases.relationship_sources import RelationshipTracker
 from bob.application.usecases.run_genesis import RunGenesis
 from bob.application.usecases.update_mood_from_text import UpdateMoodFromText
 from bob.domain.personality.expression import ExpressionFreqs
@@ -105,6 +106,7 @@ from bob.infrastructure.persistence import (
     SqliteFirstImpressionStore,
     SqliteMemoryRepo,
     SqliteProactivityStore,
+    SqliteRelationshipStore,
 )
 from bob.infrastructure.telegram.multibot import (
     BotIdentity,
@@ -360,6 +362,12 @@ def build_application(
     first_impression_tracker = FirstImpressionTracker(
         store=first_impression_store, clock=resolved_clock
     )
+    # Relationship-врезка (BOB-014): per-sender relationship quality (trust / respect
+    # / warmth / compatibility) accrued over turns — it warms/cools Bob's tone and
+    # nudges his willingness to compromise with a close person, then is updated after
+    # each turn. Keyed by sender_id; per-PERSON data (about them), not owner memory.
+    relationship_store = SqliteRelationshipStore(memory_repo)
+    relationship_tracker = RelationshipTracker(store=relationship_store)
 
     multibot = _build_multibot(
         merged,
@@ -431,6 +439,11 @@ def build_application(
         # person's grounded note is recorded after the turn. Per-PERSON data, safe even
         # for a guest (about the guest, never an owner-memory leak). Additive only.
         first_impression=first_impression_tracker,
+        # Relationship seam (BOB-014): Bob's accrued per-person relationship colours
+        # his tone (warmth) and willingness to compromise (warmth + compatibility) for
+        # WHO is writing, then is updated after the turn from (stance, mood, sentiment)
+        # and persisted so it accrues. Additive only; per-PERSON, safe on a guest turn.
+        relationship=relationship_tracker,
     )
     event_bus.subscribe(MESSAGE_RECEIVED, _as_handler(handle_message))
 

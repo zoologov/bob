@@ -300,6 +300,61 @@ def recalled_impression_directive(note: str) -> str:
     return f"{_RECALLED_IMPRESSION_PREFIX}{note}{_RECALLED_IMPRESSION_SUFFIX}"
 
 
+# Relationship-tone bands (BOB-014). On TOP of the mood-conditioned tone, Bob's
+# WARMTH toward the specific person colours how he sounds to THEM: someone he is
+# close to gets a warmer, more familiar voice; someone he is cool toward gets a more
+# reserved, drier one. Crucially this is NOT hostility — relational coldness/sulk is
+# BOB-014 .2; the cool band here is merely more reserved, explicitly never rude.
+# Written as voice (mirroring tone_directive), config-banded, with a neutral middle
+# that adds nothing. Cyrillic look-alikes are intentional in these Russian literals.
+_DEFAULT_RELATIONSHIP_WARM = 0.4
+_DEFAULT_RELATIONSHIP_COOL = -0.4
+
+_RELATIONSHIP_WARM_TONE = (
+    "С этим человеком у вас сложились тёплые, близкие отношения — это слышно в "
+    "том, как ты с ним говоришь: свободнее, теплее, по-свойски, чем с малознакомым."
+)
+_RELATIONSHIP_COOL_TONE = (
+    "С этим человеком отношения пока прохладные и дистанцированные — держись "
+    "сдержаннее и суше, чем с близким, без лишней теплоты. Это не грубость и не "
+    "обида — просто более сдержанный тон с тем, с кем ты пока не сблизился."
+)
+
+
+@dataclass(frozen=True, slots=True)
+class RelationshipToneThresholds:
+    """The warmth bands at which Bob's voice reads warmer / cooler (BOB-014).
+
+    A relationship whose ``warmth`` is at-or-above ``warm`` colours the voice warm
+    and familiar; at-or-below ``cool`` it reads more reserved and dry (never rude —
+    relational hostility is the sulk, BOB-014 .2). Between the two bands no extra
+    colour is added. The application tunes them from ``relationship.tone.*`` config.
+    """
+
+    warm: float = _DEFAULT_RELATIONSHIP_WARM
+    cool: float = _DEFAULT_RELATIONSHIP_COOL
+
+
+def relationship_tone_directive(
+    warmth: float, *, thresholds: RelationshipToneThresholds | None = None
+) -> str:
+    """Return the relationship-warmth tone line for this person, or ``""`` (neutral).
+
+    On TOP of the mood-conditioned :func:`tone_directive`, Bob's WARMTH toward the
+    specific person colours how he sounds to THEM (BOB-014): at-or-above the ``warm``
+    band a warmer, more familiar voice; at-or-below the ``cool`` band a more reserved,
+    drier one — explicitly NOT rude (relational hostility is the sulk, .2). A neutral
+    mid-band ``warmth`` adds no line, so the default path is unchanged. Pure and
+    deterministic; the bands are config-tunable via :class:`RelationshipToneThresholds`.
+    """
+    bands = thresholds if thresholds is not None else RelationshipToneThresholds()
+    if warmth >= bands.warm:
+        return _RELATIONSHIP_WARM_TONE
+    if warmth <= bands.cool:
+        return _RELATIONSHIP_COOL_TONE
+    return ""
+
+
 def tone_directive(mood: Mood, *, thresholds: OffDayThresholds | None = None) -> str:
     """Return the mood-conditioned tone directive — warm by default, off-day when low.
 

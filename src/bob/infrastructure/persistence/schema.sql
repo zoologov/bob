@@ -165,3 +165,19 @@ CREATE TABLE IF NOT EXISTS first_impression (
     first_seen_at TEXT NOT NULL,  -- ISO-8601, timezone-aware (when Bob first met them)
     note          TEXT NOT NULL   -- a short, grounded one-line impression
 );
+
+-- Per-sender relationship quality (BOB-014): how Bob STANDS with each person, on
+-- four axes (trust / respect / warmth / compatibility), each bounded to [-1, 1].
+-- Keyed by sender_id so it works for owner / known / guest / bot alike. Unlike the
+-- formed-once first_impression, a relationship EVOLVES — a save UPSERTs the row with
+-- the newer state after each turn (RelationshipTracker.apply_interaction). This is
+-- per-PERSON data (about THEM), not owner-private memory — allowed even for a guest.
+-- NB: named `person_relationship`, NOT `relationship` — the latter is the legacy
+-- single-row owner-relationship JSON blob above (sqlite_repo), a different concept.
+CREATE TABLE IF NOT EXISTS person_relationship (
+    sender_id     INTEGER PRIMARY KEY,
+    trust         REAL NOT NULL,
+    respect       REAL NOT NULL,
+    warmth        REAL NOT NULL,
+    compatibility REAL NOT NULL
+);

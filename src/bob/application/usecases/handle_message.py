@@ -63,12 +63,15 @@ from bob.domain.personality.negotiation import (
     Stance,
 )
 from bob.domain.personality.reaction import reaction_emoji_for
+from bob.domain.personality.relationship import compromise_bias
 from bob.domain.personality.taste import Verdict
 from bob.domain.personality.voice import (
     OffDayThresholds,
+    RelationshipToneThresholds,
     anti_bait_directive,
     guppi_canon,
     recalled_impression_directive,
+    relationship_tone_directive,
     stranger_directive,
     tone_directive,
     user_repeat_directive,
@@ -89,6 +92,8 @@ if TYPE_CHECKING:
     from bob.application.usecases.update_mood_from_text import UpdateMoodFromText
     from bob.domain.personality.fascination import Fascination
     from bob.domain.personality.interlocutor import Interlocutor
+    from bob.domain.personality.mood import Mood
+    from bob.domain.personality.relationship import Relationship
     from bob.domain.personality.soul import SOUL
     from bob.domain.ports import (
         Clock,
@@ -120,6 +125,11 @@ _DEFAULT_SURFACE_OLD_FREQ = 0.15
 # A frequency must read as a probability in the closed unit interval.
 _MIN_FREQ = 0.0
 _MAX_FREQ = 1.0
+
+# Conviction is a [0, 1] strength; the relationship compromise-bias nudge must keep
+# the effective conviction it feeds Negotiation inside those bounds.
+_MIN_CONVICTION = 0.0
+_MAX_CONVICTION = 1.0
 
 # How many recent conversation turns to replay into the reply context.
 _HISTORY_K = 6
@@ -295,6 +305,37 @@ class FirstImpressionReader(Protocol):
     async def note_first_contact(self, interlocutor: Interlocutor) -> None: ...
 
 
+class RelationshipReader(Protocol):
+    """Relationship seam: load + evolve Bob's per-person relationship quality (BOB-014).
+
+    The compose path uses this to let Bob's accrued relationship with WHO is writing
+    shape THIS turn: :meth:`current` returns the stored
+    :class:`~bob.domain.personality.relationship.Relationship` (an unknown sender →
+    ``None``) so the prompt can warm/cool his tone (by ``warmth``) and the negotiation
+    can nudge his willingness to compromise (by ``warmth`` + ``compatibility``);
+    :meth:`record_interaction` updates + persists the relationship AFTER the turn from
+    the negotiation ``stance``, Bob's ``mood``, and a ``sentiment`` scalar (the pure
+    :func:`~bob.domain.personality.relationship.apply_interaction`). The concrete
+    adapter (:class:`~bob.application.usecases.relationship_sources.RelationshipTracker`)
+    keys on ``sender_id``. Optional and additive: unwired (the default) the tone/
+    willingness are unchanged and no relationship is recorded.
+
+    Crucially this is per-PERSON data (about THEM), NOT owner-private memory, so it is
+    safe even on a guest turn — a guest's own relationship is about the guest.
+    """
+
+    async def current(self, interlocutor: Interlocutor) -> Relationship | None: ...
+
+    async def record_interaction(
+        self,
+        interlocutor: Interlocutor,
+        *,
+        stance: Stance,
+        mood: Mood,
+        sentiment: float,
+    ) -> None: ...
+
+
 class OwnerActivityRecorder(Protocol):
     """The proactivity seam HandleMessage notifies when the owner writes.
 
@@ -347,6 +388,8 @@ class HandleMessage:
         surface_old_freq: float = _DEFAULT_SURFACE_OLD_FREQ,
         perceive_sender: InterlocutorResolver | None = None,
         first_impression: FirstImpressionReader | None = None,
+        relationship: RelationshipReader | None = None,
+        relationship_tone_thresholds: RelationshipToneThresholds | None = None,
     ) -> None:
         self._router = router
         self._gateway = gateway
@@ -442,6 +485,16 @@ class HandleMessage:
         # never recalls a first impression and the turn behaves exactly as before.
         # This is the minimal foundation for multi-party BOB-014, not that engine.
         self._first_impression = first_impression
+        # The relationship seam (BOB-014): when wired, Bob's accrued per-person
+        # relationship quality shapes THIS turn — high warmth → a warmer voice
+        # directive, low warmth → cooler (composes over mood/voice, never rude here;
+        # relational hostility is the sulk, .2); warmth + compatibility nudge the
+        # negotiation toward compromise with a close person. After the turn the
+        # relationship is updated from (stance, mood, sentiment) and persisted, so it
+        # accrues. Per-PERSON data, safe even on a guest turn. Additive only: unwired
+        # (the default) tone/willingness are unchanged and nothing is recorded.
+        self._relationship = relationship
+        self._relationship_tone_thresholds = relationship_tone_thresholds
 
     async def handle(self, event: MessageReceived) -> None:
         """Process one received message end to end (the EventBus subscriber)."""
@@ -456,6 +509,11 @@ class HandleMessage:
         # (about THEM), so it is recalled even on a guest turn (a guest's own first
         # impression is about the guest, never an owner-memory leak).
         prior_impression = await self._recall_prior_impression(interlocutor)
+        # Load Bob's accrued relationship with this sender (BOB-014): a known person →
+        # his stored relationship, so his tone (warmth) and willingness to compromise
+        # (warmth + compatibility) are coloured for THEM this turn; a new person →
+        # None (a neutral turn). Per-PERSON data, so it is loaded even on a guest turn.
+        relationship = await self._load_relationship(interlocutor)
         # Plan how Bob expresses this turn (BOB-018): pure, deterministic by seed.
         # Computed up front so the mode steers the reply path and the form hint
         # shapes the prompt; the rare flags ride along for later beads.
@@ -511,6 +569,7 @@ class HandleMessage:
                 interlocutor=interlocutor,
                 is_guest=is_guest,
                 prior_impression=prior_impression,
+                relationship=relationship,
             )
             # Anti-repeat guard (BOB-022, defense in depth): if the fresh reply is
             # byte-identical (after strip) to Bob's most-recent prior reply, regenerate
@@ -528,9 +587,18 @@ class HandleMessage:
                 interlocutor,
                 is_guest=is_guest,
                 prior_impression=prior_impression,
+                relationship=relationship,
             )
         await self._gateway.reply(chat_id=event.chat_id, markdown=reply)
         await self._persist(event, reply, soul)
+        # Update Bob's relationship with this sender AFTER the turn (BOB-014): the
+        # negotiation stance he took + his mood + the turn's sentiment evolve the
+        # accrued relationship and persist it, so it warms/cools over time. Best-effort
+        # and per-PERSON (runs on a guest turn too — about the guest, never an owner
+        # leak). A flaky store can never break a turn that already replied.
+        await self._record_relationship(
+            interlocutor, soul, event.text, relationship
+        )
         # Record Bob's LIGHT first impression of this sender on FIRST contact
         # (BOB-019 bob-apv.3): formed once and grounded in WHO they are; a returning
         # sender is left untouched (the store records once). Per-PERSON data, so it
@@ -627,6 +695,88 @@ class HandleMessage:
         except Exception:
             logger.exception("recording first impression failed (ignored)")
 
+    async def _load_relationship(
+        self, interlocutor: Interlocutor | None
+    ) -> Relationship | None:
+        """Load Bob's accrued relationship with this sender, or ``None`` (BOB-014).
+
+        Asks the wired relationship seam for the stored relationship of a known
+        sender; a new sender (or no seam / no perceived interlocutor) yields ``None``
+        so the turn behaves as a neutral one (no tone/willingness colour). Per-PERSON
+        data, so it is loaded even on a guest turn (about the guest).
+        """
+        if self._relationship is None or interlocutor is None:
+            return None
+        return await self._relationship.current(interlocutor)
+
+    async def _record_relationship(
+        self,
+        interlocutor: Interlocutor | None,
+        soul: SOUL,
+        text: str,
+        relationship: Relationship | None,
+    ) -> None:
+        """Evolve + persist Bob's relationship with this sender after the turn (BOB-014).
+
+        Best-effort and optional: with no seam wired (or no perceived interlocutor)
+        this is a no-op. The negotiation stance Bob took THIS turn (decided over the
+        same relationship-nudged conviction the prompt used), his current mood, and the
+        turn's sentiment (read off the mood valence — the mood already reflects the
+        perceived sentiment of the message) evolve the relationship via the pure
+        :func:`~bob.domain.personality.relationship.apply_interaction`. A flaky store
+        can never break a turn that has already replied.
+        """
+        if self._relationship is None or interlocutor is None:
+            return
+        # Sentiment of the turn: the mood valence already folds in the message's
+        # perceived sentiment (UpdateMoodFromText nudges valence by it), so it is the
+        # grounded affective signal here — no second classification round-trip.
+        sentiment = soul.mood.valence
+        stance, _verdict, _zone = self._decide_stance(soul, text, relationship)
+        try:
+            await self._relationship.record_interaction(
+                interlocutor, stance=stance, mood=soul.mood, sentiment=sentiment
+            )
+        except Exception:
+            logger.exception("recording relationship failed (ignored)")
+
+    def _decide_stance(
+        self, soul: SOUL, text: str, relationship: Relationship | None
+    ) -> tuple[Stance, Verdict, NegotiationZone]:
+        """Decide Bob's negotiation stance for the turn (BOB-013 + BOB-014).
+
+        Classifies the zone owning ``text`` from the taste verdict + conviction, then
+        maps zone + an EFFECTIVE conviction to a :class:`Stance`. The effective
+        conviction is the raw conviction lowered by the relationship's
+        :func:`~bob.domain.personality.relationship.compromise_bias` — a close person
+        (high warmth + compatibility) tips a borderline stance from holding ground
+        toward agreeing (more willing to compromise), clamped to ``[0, 1]``. Returns
+        the stance plus the verdict + zone so the prompt's stance-directive gate can
+        reuse them. Pure-ish: no I/O, deterministic for a given soul/text/relationship.
+        """
+        verdict = soul.taste.score(text)
+        conviction = soul.taste.conviction_for(text)
+        zone = self._zone_classifier.classify(
+            text, taste_verdict=verdict, conviction=conviction
+        )
+        effective = _clamp_conviction(conviction - compromise_bias(relationship))
+        stance = self._negotiation.decide(zone, conviction=effective)
+        return stance, verdict, zone
+
+    def _relationship_tone(self, relationship: Relationship | None) -> str:
+        """The relationship-warmth tone line for this turn, or ``""`` (BOB-014).
+
+        No relationship on record (a new person) or a neutral warmth → no line, so the
+        turn keeps the base mood tone. A close relationship reads warmer, a distant one
+        more reserved (never rude — relational hostility is the sulk, .2). The warm/
+        cool bands are config-tunable via ``relationship_tone_thresholds``.
+        """
+        if relationship is None:
+            return ""
+        return relationship_tone_directive(
+            relationship.warmth, thresholds=self._relationship_tone_thresholds
+        )
+
     def _plan_expression(self, event: MessageReceived, soul: SOUL) -> ExpressionPlan:
         """Decide this turn's expression plan — pure, deterministic by seed (BOB-018).
 
@@ -651,6 +801,7 @@ class HandleMessage:
         interlocutor: Interlocutor | None = None,
         is_guest: bool = False,
         prior_impression: str | None = None,
+        relationship: Relationship | None = None,
     ) -> str:
         """Compose a full reply, folding the plan's form hint into the prompt.
 
@@ -673,6 +824,7 @@ class HandleMessage:
             interlocutor=interlocutor,
             is_guest=is_guest,
             prior_impression=prior_impression,
+            relationship=relationship,
         )
         provider = self._tool_provider
         if not is_guest and provider is not None and not self._registry.is_empty:
@@ -707,6 +859,7 @@ class HandleMessage:
         *,
         is_guest: bool = False,
         prior_impression: str | None = None,
+        relationship: Relationship | None = None,
     ) -> str:
         """Recompose once if ``reply`` byte-repeats Bob's last reply (BOB-022).
 
@@ -730,6 +883,7 @@ class HandleMessage:
             interlocutor=interlocutor,
             is_guest=is_guest,
             prior_impression=prior_impression,
+            relationship=relationship,
         )
 
     async def _with_grounded_addons(
@@ -827,6 +981,7 @@ class HandleMessage:
         interlocutor: Interlocutor | None = None,
         is_guest: bool = False,
         prior_impression: str | None = None,
+        relationship: Relationship | None = None,
     ) -> str:
         """Augment the base prompt with the mood tone, stance, and form-hint directives.
 
@@ -844,14 +999,14 @@ class HandleMessage:
         repeat, and no perceived interlocutor, only the warm tone line augments the
         base voice.
         """
-        verdict = soul.taste.score(text)
-        conviction = soul.taste.conviction_for(text)
-        zone = self._zone_classifier.classify(
-            text, taste_verdict=verdict, conviction=conviction
-        )
-        stance = self._negotiation.decide(zone, conviction=conviction)
+        stance, verdict, zone = self._decide_stance(soul, text, relationship)
         directives = [
             tone_directive(soul.mood, thresholds=self._offday_thresholds),
+            # BOB-014: Bob's accrued WARMTH toward this specific person colours his
+            # voice on TOP of the mood tone — warmer for a close relationship, more
+            # reserved (never rude) for a distant one. No relationship / neutral
+            # warmth → no line (a new person is met at the base tone).
+            self._relationship_tone(relationship),
             _stance_directive(stance, verdict=verdict, zone=zone),
             _FORM_HINT_DIRECTIVE.get(plan.form_hint, ""),
             user_repeat_directive() if user_repeated else "",
@@ -911,6 +1066,11 @@ class HandleMessage:
             }
         )
         await self._repo.set_mood(_mood_state(soul), at=now)
+
+
+def _clamp_conviction(value: float) -> float:
+    """Saturate ``value`` into the conviction bounds Negotiation requires."""
+    return max(_MIN_CONVICTION, min(_MAX_CONVICTION, value))
 
 
 def _stance_directive(
