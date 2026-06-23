@@ -31,6 +31,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from bob.domain.personality.engagement import EngagementLevel
 from bob.domain.personality.interlocutor import InterlocutorKind
 
 if TYPE_CHECKING:
@@ -353,6 +354,46 @@ def relationship_tone_directive(
     if warmth <= bands.cool:
         return _RELATIONSHIP_COOL_TONE
     return ""
+
+
+# Engagement-appetite directives (BOB-014 .2a). On TOP of mood/relationship tone, Bob's
+# APPETITE to converse this turn colours HOW he engages — written as voice (mirroring
+# tone_directive), never config. PLAYFUL → he is up for banter / подурачиться / поиграть;
+# TERSE → interest is thinning, he keeps it short; DECLINE → he softly winds the chatter
+# down ("что-то заболтались / не тянет сейчас") — explicitly NEVER rude (relational
+# hostility is the sulk, .2b), just no appetite for THIS aimless thread right now. FULL
+# adds no line — full engagement is the default voice. Cyrillic look-alikes intentional.
+_ENGAGEMENT_PLAYFUL = (
+    "Сейчас тебе в кайф поболтать и подурачиться — можешь подыграть, поддеть "
+    "по-доброму, уйти в трёп «ни о чём», если в настроении. Лёгкий, живой тон."
+)
+_ENGAGEMENT_TERSE = (
+    "Разговор тебя сейчас не очень держит — интерес тает. Отвечай коротко и по "
+    "делу, без развёртывания, как человек, которому тема не особо зашла."
+)
+_ENGAGEMENT_DECLINE = (
+    "Сейчас не тянет трепаться на эту тему — можешь мягко свернуть разговор: "
+    "обронить, что что-то заболтались или не тянет сейчас, без грубости и без "
+    "обиды на собеседника. Просто честно: аппетита к этому трёпу нет."
+)
+
+_ENGAGEMENT_DIRECTIVE: dict[EngagementLevel, str] = {
+    EngagementLevel.PLAYFUL: _ENGAGEMENT_PLAYFUL,
+    EngagementLevel.TERSE: _ENGAGEMENT_TERSE,
+    EngagementLevel.DECLINE: _ENGAGEMENT_DECLINE,
+}
+
+
+def engagement_directive(level: EngagementLevel) -> str:
+    """Return the voice directive for Bob's conversational APPETITE this turn (BOB-014).
+
+    On TOP of the mood/relationship tone, Bob's appetite colours HOW he engages:
+    ``PLAYFUL`` invites banter / подурачиться; ``TERSE`` keeps it short as interest
+    thins; ``DECLINE`` softly winds the chatter down ("что-то заболтались / не тянет
+    сейчас") — never rude (relational hostility is the sulk, .2b); ``FULL`` adds no
+    line (full engagement is the default voice). Pure and deterministic.
+    """
+    return _ENGAGEMENT_DIRECTIVE.get(level, "")
 
 
 def tone_directive(mood: Mood, *, thresholds: OffDayThresholds | None = None) -> str:

@@ -25,11 +25,17 @@ from bob.application.router.llm_router import LLMRouter
 from bob.application.runtime.events import MessageReceived
 from bob.application.usecases.extract_facts import ExtractFacts
 from bob.application.usecases.handle_message import (
+    EngagementState,
     HandleMessage,
     OwnerActivityRecorder,
     PersonalityState,
 )
 from bob.application.usecases.update_mood_from_text import UpdateMoodFromText
+from bob.domain.personality.engagement import (
+    ConversationalFatigue,
+    EngagementThresholds,
+    FatigueRates,
+)
 from bob.domain.personality.expression import ExpressionFreqs
 from bob.domain.personality.fascination import Fascination
 from bob.domain.personality.interlocutor import (
@@ -320,11 +326,15 @@ def _build(
     perceive_sender: _FakeInterlocutorResolver | None = None,
     first_impression: _FakeFirstImpression | None = None,
     relationship: _FakeRelationship | None = None,
+    engagement_state: EngagementState | None = None,
+    engagement_thresholds: EngagementThresholds | None = None,
+    fatigue_rates: FatigueRates | None = None,
+    clock: FixedClock | None = None,
 ) -> tuple[HandleMessage, FakeBot, FakeRepo, CapturingProvider]:
     tier0 = CapturingProvider(reply="positive", replies=tier0_replies)
     tier1 = CapturingProvider(reply=reply, replies=tier1_replies)
     router = LLMRouter(providers={0: tier0, 1: tier1})
-    clock = FixedClock(_moment())
+    clock = clock if clock is not None else FixedClock(_moment())
     bot = FakeBot()
     repo = FakeRepo(history=history)
     gateway = TelegramGateway(
@@ -358,6 +368,9 @@ def _build(
         perceive_sender=perceive_sender,
         first_impression=first_impression,
         relationship=relationship,
+        engagement_state=engagement_state,
+        engagement_thresholds=engagement_thresholds,
+        fatigue_rates=fatigue_rates,
     )
     return handler, bot, repo, tier1
 
@@ -2385,3 +2398,155 @@ async def test_relationship_recording_failure_never_breaks_the_turn() -> None:
 
     assert bot.final_text == "всё в порядке"
     assert len(repo.episodes) == 1
+
+
+# --- Engagement appetite wiring (BOB-014 .2a) ------------------------------
+
+# Stable fragments of the engagement voice directives (Russian) the prompt carries.
+_DECLINE_FRAGMENT = "не тянет"
+_TERSE_FRAGMENT = "интерес тает"
+_PLAYFUL_FRAGMENT = "подурач"
+
+
+def _soul_with_mood(mood: Mood, *, topic: str, value: float, conviction: float) -> SOUL:
+    # A soul whose taste axis is keyed on the full message ``topic`` (how score()/
+    # conviction_for match today) with a custom current mood, so the engagement
+    # decision (mood x interest) can be driven deterministically.
+    taste = TasteEngine(axes=(TasteAxis(name=topic, value=value, conviction=conviction),))
+    return SOUL(
+        identity="I am the Bob from the book.",
+        mood=mood,
+        mood_baseline=mood,
+        taste=taste,
+        phantom_prefs=(_PHANTOM_PREF,),
+    )
+
+
+async def test_bad_mood_aimless_topic_softly_declines_in_the_prompt() -> None:
+    # Scenario 3: a low mood + a "какие-попало" (NEUTRAL, unknown) topic → DECLINE, so
+    # the prompt carries the soft wind-down directive (never rude — sulk is .2b).
+    bad = Mood(valence=-0.6, arousal=-0.1)
+    handler, _bot, _repo, tier1 = _build(
+        reply="hi",
+        soul=_soul_with_mood(bad, topic="zzz", value=0.0, conviction=0.0),
+    )
+
+    await handler.handle(_message("расскажи подробно про всякую ерунду"))
+
+    assert _DECLINE_FRAGMENT in tier1.all_text
+
+
+async def test_interesting_topic_overrides_bad_mood_no_decline_in_prompt() -> None:
+    # Scenario 4: a genuinely interesting topic (strong LOVE + conviction, keyed on the
+    # full message) engages Bob even in a low mood — the wind-down directive is absent.
+    bad = Mood(valence=-0.6, arousal=-0.1)
+    topic = "расскажи подробно про звёздные двигатели"
+    handler, _bot, _repo, tier1 = _build(
+        reply="hi",
+        soul=_soul_with_mood(bad, topic=topic, value=0.9, conviction=0.9),
+    )
+
+    await handler.handle(_message(topic))
+
+    assert _DECLINE_FRAGMENT not in tier1.all_text
+    assert _TERSE_FRAGMENT not in tier1.all_text
+
+
+async def test_high_fatigue_winds_chatter_down_in_the_prompt() -> None:
+    # Scenario 2: built-up fatigue ("наскучило") on an uninteresting topic → DECLINE,
+    # even in a normal mood — the prompt carries the wind-down directive.
+    normal = Mood(valence=0.1, social=0.2)
+    state = EngagementState(fatigue=ConversationalFatigue(0.95))
+    handler, _bot, _repo, tier1 = _build(
+        reply="hi",
+        soul=_soul_with_mood(normal, topic="zzz", value=0.0, conviction=0.0),
+        engagement_state=state,
+    )
+
+    await handler.handle(_message("расскажи подробно ни о чём"))
+
+    assert _DECLINE_FRAGMENT in tier1.all_text
+
+
+async def test_aimless_turn_raises_fatigue() -> None:
+    # Feedback: an aimless (uninteresting) turn tires Bob — fatigue rises on the holder.
+    normal = Mood(valence=0.1, social=0.2)
+    state = EngagementState(fatigue=ConversationalFatigue(0.0))
+    handler, _bot, _repo, _tier1 = _build(
+        reply="hi",
+        soul=_soul_with_mood(normal, topic="zzz", value=0.0, conviction=0.0),
+        engagement_state=state,
+    )
+
+    await handler.handle(_message("расскажи подробно ни о чём"))
+
+    assert state.fatigue.level > 0.0
+
+
+async def test_interesting_turn_eases_fatigue() -> None:
+    # Feedback: an interesting turn EASES fatigue (a good exchange is restorative).
+    normal = Mood(valence=0.1, social=0.2)
+    topic = "расскажи подробно про звёздные двигатели"
+    state = EngagementState(fatigue=ConversationalFatigue(0.5))
+    handler, _bot, _repo, _tier1 = _build(
+        reply="hi",
+        soul=_soul_with_mood(normal, topic=topic, value=0.9, conviction=0.9),
+        engagement_state=state,
+        # No elapsed-time decay (last_turn_at unset on a fresh holder), so the change
+        # asserted here is the interest-ease, not time decay.
+    )
+
+    await handler.handle(_message(topic))
+
+    assert state.fatigue.level < 0.5
+
+
+async def test_good_interesting_exchange_lifts_mood() -> None:
+    # Feedback (scenario 4): an interesting, well-engaged exchange brightens Bob — the
+    # post-turn mood valence on PersonalityState is higher than where it started.
+    start = Mood(valence=0.1, social=0.2)
+    topic = "расскажи подробно про звёздные двигатели"
+    state = PersonalityState(soul=_soul_with_mood(start, topic=topic, value=0.9, conviction=0.9))
+    # NEUTRAL sentiment isolates the engagement lift as the ONLY valence contributor:
+    # perceive's sentiment step is zero, so a higher valence proves the feedback fired.
+    handler, _bot, _repo, _tier1 = _build(reply="hi", tier0_replies=["neutral", "", ""])
+    # Re-point the handler at our captured PersonalityState so we can read the lift.
+    handler._state = state
+
+    await handler.handle(_message(topic))
+
+    # Valence rose above the starting 0.1 purely from the good-exchange mood lift.
+    assert state.soul.mood.valence > start.valence
+
+
+async def test_fatigue_recovers_over_elapsed_time_never_locks_out() -> None:
+    # Guardrail: high fatigue DECAYS by real elapsed time between turns, so appetite
+    # recovers and the owner is never permanently locked out. A long gap clears it.
+    class _AdvancingClock:
+        def __init__(self, *moments: datetime) -> None:
+            self._moments = list(moments)
+            self._i = 0
+
+        def now(self) -> datetime:
+            moment = self._moments[min(self._i, len(self._moments) - 1)]
+            self._i += 1
+            return moment
+
+    normal = Mood(valence=0.1, social=0.2)
+    # Seed the holder as if a turn happened long ago, then advance the clock a day.
+    state = EngagementState(
+        fatigue=ConversationalFatigue(0.95), last_turn_at=_moment()
+    )
+    later = datetime(2026, 6, 19, 14, 0, 0, tzinfo=UTC)
+    handler, _bot, _repo, tier1 = _build(
+        reply="hi",
+        soul=_soul_with_mood(normal, topic="zzz", value=0.0, conviction=0.0),
+        engagement_state=state,
+        clock=_AdvancingClock(later),  # type: ignore[arg-type]
+    )
+
+    await handler.handle(_message("расскажи подробно ни о чём"))
+
+    # A day of quiet decayed the once-high fatigue right down — Bob is not locked out.
+    assert state.fatigue.level < EngagementThresholds().high_fatigue
+    assert _DECLINE_FRAGMENT not in tier1.all_text

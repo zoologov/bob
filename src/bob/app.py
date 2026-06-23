@@ -71,7 +71,11 @@ from bob.application.usecases.fascination_sources import (
     StoreFascinationReader,
 )
 from bob.application.usecases.first_impression_sources import FirstImpressionTracker
-from bob.application.usecases.handle_message import HandleMessage, PersonalityState
+from bob.application.usecases.handle_message import (
+    EngagementState,
+    HandleMessage,
+    PersonalityState,
+)
 from bob.application.usecases.heartbeat import (
     InnerMonologueTick,
     MoodDriftTick,
@@ -81,6 +85,7 @@ from bob.application.usecases.reflection_parser import HeuristicReflectionParser
 from bob.application.usecases.relationship_sources import RelationshipTracker
 from bob.application.usecases.run_genesis import RunGenesis
 from bob.application.usecases.update_mood_from_text import UpdateMoodFromText
+from bob.domain.personality.engagement import EngagementThresholds, FatigueRates
 from bob.domain.personality.expression import ExpressionFreqs
 from bob.domain.personality.language import DEFAULT_LANGUAGE
 from bob.domain.personality.mood import Mood
@@ -183,6 +188,11 @@ _DEDUP_BATCH_SIZE = 200
 # ``memory.surface_old.freq``. Small (anti-tic): a callback turn only occasionally
 # reaches for an OLD-but-relevant deep cut; the default recall stays unchanged.
 _SURFACE_OLD_FREQ = 0.15
+
+# Default good-exchange mood lift (BOB-014 .2a); overridable via ``engagement.mood_lift``.
+# Small: a genuinely interesting, well-engaged exchange brightens Bob a touch — it
+# accrues over a real exchange rather than jolting his mood.
+_DEFAULT_ENGAGEMENT_MOOD_LIFT = 0.1
 
 # The proactivity engine ticks on the heartbeat cadence: cheap by construction
 # (the urge/governance decision is pure, defaulting to silence), so most ticks
@@ -444,6 +454,17 @@ def build_application(
         # WHO is writing, then is updated after the turn from (stance, mood, sentiment)
         # and persisted so it accrues. Additive only; per-PERSON, safe on a guest turn.
         relationship=relationship_tracker,
+        # Engagement-appetite seam (BOB-014 .2a): Bob's appetite to converse is a LEVEL
+        # (full / playful / terse / decline) from mood x topic interest x conversational
+        # fatigue x relationship. The fatigue is a small per-boot decaying counter held on
+        # EngagementState (like mood on PersonalityState) — it always recovers, so the
+        # owner is never locked out. Thresholds/rates/mood-lift are config-tunable via
+        # engagement.*; the decided level appends a voice directive and the feedback loops
+        # (interesting exchange → mood↑, aimless turn → fatigue↑) run after the turn.
+        engagement_state=EngagementState(),
+        engagement_thresholds=_build_engagement_thresholds(merged),
+        fatigue_rates=_build_fatigue_rates(merged),
+        engagement_mood_lift=_build_engagement_mood_lift(merged),
     )
     event_bus.subscribe(MESSAGE_RECEIVED, _as_handler(handle_message))
 
@@ -823,6 +844,54 @@ def _build_expression_freqs(config: Mapping[str, object]) -> ExpressionFreqs:
         callback=_float_or(freqs, "callback", defaults.callback),
         mention_fascination=mention,
     )
+
+
+def _build_engagement_thresholds(config: Mapping[str, object]) -> EngagementThresholds:
+    """Build the BOB-014 .2a appetite thresholds from ``engagement.thresholds.*``.
+
+    Tunes the appetite boundaries: ``interesting`` (the interest bar a topic clears even
+    on a low mood), ``high_fatigue`` (the "наскучило" point), ``low_mood`` / ``bright_mood``
+    (the mood bands raising the bar / unlocking banter), and ``playful_chance`` (how
+    often a bright-mood engaged turn tips into playful banter). Each falls back to the
+    dataclass default — which keeps a normal mood fully engaging on any non-trivial topic.
+    """
+    section = _section(_section(config, "engagement"), "thresholds")
+    defaults = EngagementThresholds()
+    return EngagementThresholds(
+        interesting=_float_or(section, "interesting", defaults.interesting),
+        high_fatigue=_float_or(section, "high_fatigue", defaults.high_fatigue),
+        low_mood=_float_or(section, "low_mood", defaults.low_mood),
+        bright_mood=_float_or(section, "bright_mood", defaults.bright_mood),
+        playful_chance=_float_or(section, "playful_chance", defaults.playful_chance),
+    )
+
+
+def _build_fatigue_rates(config: Mapping[str, object]) -> FatigueRates:
+    """Build the BOB-014 .2a conversational-fatigue dynamics from ``engagement.fatigue.*``.
+
+    Tunes the bounded reservoir: ``decay_per_second`` (the recovery guarantee — fatigue
+    always unwinds with time, so the owner is never permanently locked out),
+    ``aimless_rise`` (how much one aimless turn tires Bob) and ``interest_ease`` (how much
+    an interesting turn restores). Each falls back to the dataclass default.
+    """
+    section = _section(_section(config, "engagement"), "fatigue")
+    defaults = FatigueRates()
+    return FatigueRates(
+        decay_per_second=_float_or(section, "decay_per_second", defaults.decay_per_second),
+        aimless_rise=_float_or(section, "aimless_rise", defaults.aimless_rise),
+        interest_ease=_float_or(section, "interest_ease", defaults.interest_ease),
+    )
+
+
+def _build_engagement_mood_lift(config: Mapping[str, object]) -> float:
+    """Resolve the BOB-014 .2a good-exchange mood lift from ``engagement.mood_lift``.
+
+    The small mood-valence bump a good, interesting exchange earns (scenario 4's
+    feedback). Falls back to the small default; HandleMessage validates it is a [0, 1]
+    amount.
+    """
+    section = _section(config, "engagement")
+    return _float_or(section, "mood_lift", _DEFAULT_ENGAGEMENT_MOOD_LIFT)
 
 
 def _build_surface_old_freq(config: Mapping[str, object]) -> float:

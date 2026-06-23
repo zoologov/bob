@@ -92,6 +92,10 @@ ignore = [
 # whose Cyrillic look-alikes are intentional (the model reads the directives
 # natively); RUF001's ambiguous-character lint does not apply to these literals.
 "src/bob/domain/personality/voice.py" = ["RUF001"]
+# The engagement-appetite module (BOB-014 .2a) carries Russian persona/affect terms in
+# its docstring + comments ("наскучило", "какие-попало", "ни о чём") whose Cyrillic
+# look-alikes are intentional — RUF002/RUF003 do not apply to these.
+"src/bob/domain/personality/engagement.py" = ["RUF002", "RUF003"]
 # The voice tests (BOB-016/BOB-020) assert on multi-line Russian persona/tone
 # literals whose Cyrillic look-alikes are intentional (→ RUF001/RUF003).
 "tests/domain/personality/test_voice.py" = [
@@ -118,6 +122,18 @@ ignore = [
 # expression-plan assertions (non-crypto PRNG → S311) and use short Russian
 # inbound literals/comments with intentional Cyrillic look-alikes (RUF001/RUF003).
 "tests/application/usecases/test_handle_message.py" = [
+    "S101",
+    "ARG001",
+    "PLR2004",
+    "S311",
+    "RUF001",
+    "RUF003",
+    "SLF001",
+]
+# The engagement-appetite decider (BOB-014 .2a) seeds `random.Random` for deterministic
+# scenario assertions (non-crypto PRNG is the point → S311) and uses short Russian
+# comments with intentional Cyrillic look-alikes ("какие-попало" → RUF001/RUF003).
+"tests/domain/personality/test_engagement.py" = [
     "S101",
     "ARG001",
     "PLR2004",

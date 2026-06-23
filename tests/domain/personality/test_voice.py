@@ -15,6 +15,7 @@ flavor — never a brittle full-string match (the prose is free to evolve).
 
 from __future__ import annotations
 
+from bob.domain.personality.engagement import EngagementLevel
 from bob.domain.personality.interlocutor import (
     Interlocutor,
     InterlocutorKind,
@@ -25,6 +26,7 @@ from bob.domain.personality.voice import (
     OffDayThresholds,
     RelationshipToneThresholds,
     anti_bait_directive,
+    engagement_directive,
     guppi_canon,
     recalled_impression_directive,
     relationship_tone_directive,
@@ -340,6 +342,40 @@ def test_recalled_impression_directive_is_voice_not_a_rule_list() -> None:
     line = recalled_impression_directive("впечатление")
     assert "•" not in line
     assert "- " not in line
+
+
+def test_engagement_directive_full_adds_no_line() -> None:
+    # Full engagement is the default voice — it appends nothing.
+    assert engagement_directive(EngagementLevel.FULL) == ""
+
+
+def test_engagement_directive_playful_invites_banter() -> None:
+    # BOB-014 .2a: a playful appetite reads as "up for banter / подурачиться".
+    folded = engagement_directive(EngagementLevel.PLAYFUL).casefold()
+    assert "подурач" in folded or "подыгр" in folded
+
+
+def test_engagement_directive_terse_keeps_it_short() -> None:
+    folded = engagement_directive(EngagementLevel.TERSE).casefold()
+    assert "коротко" in folded
+
+
+def test_engagement_directive_decline_winds_down_never_rude() -> None:
+    # DECLINE softly winds the chatter down and is explicitly NOT rude (sulk is .2b).
+    folded = engagement_directive(EngagementLevel.DECLINE).casefold()
+    assert "заболтал" in folded or "не тянет" in folded
+    assert "без груб" in folded
+
+
+def test_engagement_directive_is_voice_not_a_rule_list() -> None:
+    for level in (
+        EngagementLevel.PLAYFUL,
+        EngagementLevel.TERSE,
+        EngagementLevel.DECLINE,
+    ):
+        line = engagement_directive(level)
+        assert "•" not in line
+        assert "- " not in line
     assert "\n" not in line
 
 

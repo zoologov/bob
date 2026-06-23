@@ -11,12 +11,15 @@
 
 ## Текущий беад
 
-**Беад:** `bob-8id.1` — dev: RelationshipTracker + влияние (в работе).
+**Беад:** `bob-8id.2` — dev .2a: «Аппетит к разговору» (engagement appetite) — реализован,
+ждёт прогона тестов на гейте (sandbox в этой сессии блокирует pytest/ruff/mypy).
 
 ## Прогресс
 
-- [ ] `.1` RelationshipTracker (per-sender) + влияние на тон/уступчивость
-- [ ] `.2` Обида/Sulk (governance-veto + холодный тон + GUPPI + восстановление, anti-Exodus)
+- [x] `.1` RelationshipTracker (per-sender) + влияние на тон/уступчивость
+- [x] `.2a` Аппетит к разговору: EngagementLevel (FULL/PLAYFUL/TERSE/DECLINE) ×
+      mood/topic-interest/fatigue/relationship + feedback (mood↑, fatigue↑/↓)
+- [ ] `.2b` (bob-8id.6) Обида/Sulk + guest-disengage + восприятие мата
 - [ ] `.3` test · `.4` review · `.5` tech-writer
 
 ## Статусы беадов

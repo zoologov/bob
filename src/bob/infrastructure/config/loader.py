@@ -127,6 +127,30 @@ DEFAULT_CONFIG: Config = {
             "mention_freq": 0.1,
         },
     },
+    # Conversational appetite (BOB-014 .2a): Bob's appetite to converse is a LEVEL
+    # (full / playful / terse / decline) decided per turn from mood x topic interest x
+    # conversational fatigue x relationship. ``thresholds`` tune the appetite boundaries
+    # (``interesting`` interest bar, ``high_fatigue`` "наскучило" point, ``low_mood`` /
+    # ``bright_mood`` mood bands, ``playful_chance`` banter probability); ``fatigue`` tunes
+    # the bounded reservoir's dynamics (``decay_per_second`` — the recovery guarantee,
+    # ``aimless_rise``, ``interest_ease``); ``mood_lift`` is the small valence bump a good,
+    # interesting exchange earns. Defaults keep a normal mood fully engaging on any
+    # non-trivial topic and guarantee fatigue always recovers (no permanent lock-out).
+    "engagement": {
+        "thresholds": {
+            "interesting": 0.5,
+            "high_fatigue": 0.7,
+            "low_mood": -0.3,
+            "bright_mood": 0.3,
+            "playful_chance": 0.6,
+        },
+        "fatigue": {
+            "decay_per_second": 1.0 / 3600.0,
+            "aimless_rise": 0.15,
+            "interest_ease": 0.25,
+        },
+        "mood_lift": 0.1,
+    },
     # Memory consolidation (BOB-021): a rare, non-destructive reflect-tick step that
     # folds OLD un-consolidated episodes into a Tier-0 digest (embedded, recalled like
     # any episode) and flags the sources. Conservative defaults: only episodes at least

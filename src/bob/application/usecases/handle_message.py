@@ -37,7 +37,7 @@ and storage live behind ports, and time is injected via :class:`Clock`.
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Protocol
 
 from bob.application.capabilities.registry import CapabilityRegistry
@@ -47,6 +47,15 @@ from bob.application.router.reply_tier_selector import select_reply_tier
 from bob.application.usecases.update_mood_from_text import TextSignals
 from bob.domain.memory.entities import EpisodicEvent
 from bob.domain.personality.conversation import is_user_repeat
+from bob.domain.personality.engagement import (
+    ConversationalFatigue,
+    EngagementLevel,
+    EngagementThresholds,
+    FatigueRates,
+    decide_engagement,
+    engagement_mood_lift,
+    topic_interest,
+)
 from bob.domain.personality.expression import (
     ExpressionFreqs,
     ExpressionMode,
@@ -56,6 +65,7 @@ from bob.domain.personality.expression import (
     decide_expression,
 )
 from bob.domain.personality.interlocutor import Trust
+from bob.domain.personality.mood import MoodDelta
 from bob.domain.personality.mood_taste import experiment_bias, modulate
 from bob.domain.personality.negotiation import (
     Negotiation,
@@ -69,6 +79,7 @@ from bob.domain.personality.voice import (
     OffDayThresholds,
     RelationshipToneThresholds,
     anti_bait_directive,
+    engagement_directive,
     guppi_canon,
     recalled_impression_directive,
     relationship_tone_directive,
@@ -133,6 +144,10 @@ _MAX_CONVICTION = 1.0
 
 # How many recent conversation turns to replay into the reply context.
 _HISTORY_K = 6
+
+# Default small mood-valence lift a good, interesting exchange earns (BOB-014 .2a
+# feedback loop). Mirrors the engagement domain default; tunable via emotion.* config.
+_DEFAULT_ENGAGEMENT_MOOD_LIFT = 0.1
 
 # Each turn perceives one message; a present sender is engaged.
 _SINGLE_MESSAGE = 1
@@ -359,6 +374,23 @@ class PersonalityState:
     soul: SOUL
 
 
+@dataclass
+class EngagementState:
+    """Mutable in-memory holder for Bob's conversational fatigue across turns (BOB-014).
+
+    The lightest correct home for the small, decaying fatigue counter: a per-boot
+    holder (mirroring :class:`PersonalityState` for mood) that the turn loads, decays by
+    the elapsed wall-clock since the last turn, reads for the appetite decision, then
+    updates (an aimless turn tires Bob, an interesting one eases him). It is bounded and
+    always decays with time, so appetite is guaranteed to recover — the owner is never
+    permanently locked out, even across a long aimless run. ``last_turn_at`` is stamped
+    from the injected clock so decay is real elapsed time, not a turn count.
+    """
+
+    fatigue: ConversationalFatigue = field(default_factory=ConversationalFatigue)
+    last_turn_at: datetime | None = None
+
+
 class HandleMessage:
     """Run one full Telegram turn: perceive mood, decide a reply, act, persist."""
 
@@ -390,6 +422,10 @@ class HandleMessage:
         first_impression: FirstImpressionReader | None = None,
         relationship: RelationshipReader | None = None,
         relationship_tone_thresholds: RelationshipToneThresholds | None = None,
+        engagement_state: EngagementState | None = None,
+        engagement_thresholds: EngagementThresholds | None = None,
+        fatigue_rates: FatigueRates | None = None,
+        engagement_mood_lift: float = _DEFAULT_ENGAGEMENT_MOOD_LIFT,
     ) -> None:
         self._router = router
         self._gateway = gateway
@@ -495,6 +531,34 @@ class HandleMessage:
         # (the default) tone/willingness are unchanged and nothing is recorded.
         self._relationship = relationship
         self._relationship_tone_thresholds = relationship_tone_thresholds
+        # The engagement-appetite seam (BOB-014 .2a): Bob's APPETITE to converse is a
+        # LEVEL (full / playful / terse / decline), decided per turn from mood x topic
+        # interest x conversational fatigue x relationship. The fatigue is a small,
+        # bounded, per-boot decaying counter (held like the mood on PersonalityState):
+        # it rises on aimless low-interest turns ("наскучило") and recedes with time /
+        # on interesting turns, so prolonged pointless chatter winds Bob down but
+        # appetite always recovers (never a permanent lock-out). The decided level
+        # appends a voice directive (playful banter / terse / soft decline — never rude),
+        # and the feedback loops run after the turn: an interesting good exchange lifts
+        # his mood a touch, an aimless turn tires him. Thresholds/rates are config-tunable;
+        # unset, the state
+        # is a fresh per-boot holder so a normal mood stays fully engaging as before.
+        self._engagement_state = (
+            engagement_state if engagement_state is not None else EngagementState()
+        )
+        self._engagement_thresholds = (
+            engagement_thresholds
+            if engagement_thresholds is not None
+            else EngagementThresholds()
+        )
+        self._fatigue_rates = fatigue_rates if fatigue_rates is not None else FatigueRates()
+        if not _MIN_FREQ <= engagement_mood_lift <= _MAX_FREQ:
+            msg = (
+                f"engagement_mood_lift must be within [{_MIN_FREQ}, {_MAX_FREQ}], "
+                f"got {engagement_mood_lift}"
+            )
+            raise ValueError(msg)
+        self._engagement_mood_lift = engagement_mood_lift
 
     async def handle(self, event: MessageReceived) -> None:
         """Process one received message end to end (the EventBus subscriber)."""
@@ -518,6 +582,13 @@ class HandleMessage:
         # Computed up front so the mode steers the reply path and the form hint
         # shapes the prompt; the rare flags ride along for later beads.
         plan = self._plan_expression(event, soul)
+        # Decide Bob's APPETITE to converse this turn (BOB-014 .2a): a LEVEL from mood x
+        # topic interest x conversational fatigue x relationship. Computed up front so the
+        # level appends a voice directive to the prompt and the topic interest feeds the
+        # after-turn feedback (mood lift + fatigue update). The fatigue is decayed by the
+        # real elapsed time since the last turn first, so appetite always recovers.
+        interest = await self._topic_interest(soul, event.text)
+        level = self._decide_engagement(soul, interest, relationship)
         # React-only (BOB-018): when a reactor is wired and the plan picks
         # REACT_ONLY, Bob acknowledges with a native mood emoji INSTEAD of composing
         # a reply — no LLM call, no rich final, no episode (there is no reply text).
@@ -570,6 +641,7 @@ class HandleMessage:
                 is_guest=is_guest,
                 prior_impression=prior_impression,
                 relationship=relationship,
+                engagement=level,
             )
             # Anti-repeat guard (BOB-022, defense in depth): if the fresh reply is
             # byte-identical (after strip) to Bob's most-recent prior reply, regenerate
@@ -588,8 +660,16 @@ class HandleMessage:
                 is_guest=is_guest,
                 prior_impression=prior_impression,
                 relationship=relationship,
+                engagement=level,
             )
         await self._gateway.reply(chat_id=event.chat_id, markdown=reply)
+        # Run the engagement feedback loops (BOB-014 .2a) BEFORE persisting the mood,
+        # so the mood snapshot reflects this turn: an interesting, well-engaged exchange
+        # lifts Bob's mood a touch; an aimless turn tires him. The fatigue holder's
+        # elapsed-time decay was already applied in _decide_engagement; here it is
+        # updated with the turn outcome. (The fascination-grounding nudge toward a
+        # well-going topic is left to the reflect-tick evolution path it already owns.)
+        soul = self._apply_engagement_feedback(soul, level, interest)
         await self._persist(event, reply, soul)
         # Update Bob's relationship with this sender AFTER the turn (BOB-014): the
         # negotiation stance he took + his mood + the turn's sentiment evolve the
@@ -777,6 +857,97 @@ class HandleMessage:
             relationship.warmth, thresholds=self._relationship_tone_thresholds
         )
 
+    async def _topic_interest(self, soul: SOUL, text: str) -> float:
+        """Return how INTERESTING the inbound topic is to Bob, a [0, 1] scalar (BOB-014).
+
+        Derived from his deterministic taste verdict + conviction on ``text`` (a strong
+        love/hate is engaging, a NEUTRAL/unknown topic is "какие-попало" — low) and
+        lifted when the topic MATCHES his current, non-faded fascination (the strongest
+        pull — it clears the bar even on a bad day). The fascination match reuses the
+        wired :class:`CurrentFascinationReader`; with no reader / no current passion the
+        match is simply ``False``, so the interest is taste-only (behaviour as before).
+        """
+        verdict = soul.taste.score(text)
+        conviction = soul.taste.conviction_for(text)
+        match = await self._fascination_matches(text)
+        return topic_interest(verdict, conviction, fascination_match=match)
+
+    async def _fascination_matches(self, text: str) -> bool:
+        """Whether the inbound topic is the thing Bob is currently fascinated by (BOB-014).
+
+        Loads Bob's current, non-faded passion off the wired reader and checks whether
+        its topic is mentioned in ``text`` (a light, case-insensitive substring match).
+        No reader / no current fascination → ``False`` (a clean no-op). Best-effort —
+        the appetite decision must never break on a flaky read, so a failure reads as no
+        match rather than raising.
+        """
+        if self._fascination is None:
+            return False
+        try:
+            fascination = await self._fascination.current_fascination()
+        except Exception:
+            logger.exception("reading current fascination for engagement failed (ignored)")
+            return False
+        if fascination is None:
+            return False
+        return fascination.topic.strip().casefold() in text.casefold()
+
+    def _decide_engagement(
+        self, soul: SOUL, interest: float, relationship: Relationship | None
+    ) -> EngagementLevel:
+        """Decide Bob's appetite LEVEL for this turn, decaying fatigue first (BOB-014 .2a).
+
+        Decays the per-boot fatigue holder by the REAL elapsed time since the last turn
+        (so appetite recovers between turns — the recovery guarantee), stores the decayed
+        value back, then maps mood x ``interest`` x fatigue x ``relationship`` to an
+        :class:`~bob.domain.personality.engagement.EngagementLevel` via the pure
+        :func:`~bob.domain.personality.engagement.decide_engagement` (seeded by the same
+        injected RNG, so the whole turn stays reproducible).
+        """
+        now = self._clock.now()
+        state = self._engagement_state
+        if state.last_turn_at is not None:
+            elapsed = max(0.0, (now - state.last_turn_at).total_seconds())
+            state.fatigue = state.fatigue.decayed(
+                elapsed_seconds=elapsed, rates=self._fatigue_rates
+            )
+        return decide_engagement(
+            mood=soul.mood,
+            topic_interest=interest,
+            fatigue=state.fatigue,
+            relationship=relationship,
+            rng=self._rng,
+            thresholds=self._engagement_thresholds,
+        )
+
+    def _apply_engagement_feedback(
+        self, soul: SOUL, level: EngagementLevel, interest: float
+    ) -> SOUL:
+        """Run the after-turn engagement feedback loops (BOB-014 .2a) and stamp the clock.
+
+        Two loops close the appetite model: (1) an interesting, well-engaged exchange
+        (FULL/PLAYFUL on an interesting topic) lifts Bob's mood valence a touch — a small
+        bounded :class:`~bob.domain.personality.mood.MoodDelta` returned on a fresh soul
+        snapshot, stored on :class:`PersonalityState`; (2) the fatigue holder is updated
+        with the turn outcome — an aimless turn tires Bob, an interesting one eases him —
+        and ``last_turn_at`` is stamped so the next turn decays the elapsed gap. Returns
+        the (possibly mood-lifted) soul so the caller persists the post-feedback mood.
+        (Fascination grounding toward a well-going topic stays with the reflect-tick
+        evolution path that already owns it — this loop only lifts mood + eases fatigue.)
+        """
+        interesting = interest >= self._engagement_thresholds.interesting
+        lift = engagement_mood_lift(
+            level, interesting=interesting, lift=self._engagement_mood_lift
+        )
+        if lift > 0.0:
+            soul = soul.with_mood(soul.mood.update(MoodDelta(valence=lift)))
+            self._state.soul = soul
+        self._engagement_state.fatigue = self._engagement_state.fatigue.after_turn(
+            interesting=interesting, rates=self._fatigue_rates
+        )
+        self._engagement_state.last_turn_at = self._clock.now()
+        return soul
+
     def _plan_expression(self, event: MessageReceived, soul: SOUL) -> ExpressionPlan:
         """Decide this turn's expression plan — pure, deterministic by seed (BOB-018).
 
@@ -802,6 +973,7 @@ class HandleMessage:
         is_guest: bool = False,
         prior_impression: str | None = None,
         relationship: Relationship | None = None,
+        engagement: EngagementLevel = EngagementLevel.FULL,
     ) -> str:
         """Compose a full reply, folding the plan's form hint into the prompt.
 
@@ -825,6 +997,7 @@ class HandleMessage:
             is_guest=is_guest,
             prior_impression=prior_impression,
             relationship=relationship,
+            engagement=engagement,
         )
         provider = self._tool_provider
         if not is_guest and provider is not None and not self._registry.is_empty:
@@ -860,6 +1033,7 @@ class HandleMessage:
         is_guest: bool = False,
         prior_impression: str | None = None,
         relationship: Relationship | None = None,
+        engagement: EngagementLevel = EngagementLevel.FULL,
     ) -> str:
         """Recompose once if ``reply`` byte-repeats Bob's last reply (BOB-022).
 
@@ -884,6 +1058,7 @@ class HandleMessage:
             is_guest=is_guest,
             prior_impression=prior_impression,
             relationship=relationship,
+            engagement=engagement,
         )
 
     async def _with_grounded_addons(
@@ -982,6 +1157,7 @@ class HandleMessage:
         is_guest: bool = False,
         prior_impression: str | None = None,
         relationship: Relationship | None = None,
+        engagement: EngagementLevel = EngagementLevel.FULL,
     ) -> str:
         """Augment the base prompt with the mood tone, stance, and form-hint directives.
 
@@ -1008,6 +1184,11 @@ class HandleMessage:
             # warmth → no line (a new person is met at the base tone).
             self._relationship_tone(relationship),
             _stance_directive(stance, verdict=verdict, zone=zone),
+            # BOB-014 .2a: Bob's APPETITE to converse this turn colours HOW he engages
+            # on TOP of mood/relationship tone — PLAYFUL invites banter, TERSE keeps it
+            # short as interest thins, DECLINE softly winds the chatter down (never rude;
+            # relational hostility is the sulk, .2b). FULL adds no line (default voice).
+            engagement_directive(engagement),
             _FORM_HINT_DIRECTIVE.get(plan.form_hint, ""),
             user_repeat_directive() if user_repeated else "",
             # BOB-019: fold WHO is writing (owner / known / guest / bot) into the
