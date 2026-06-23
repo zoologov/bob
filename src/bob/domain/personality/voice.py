@@ -123,6 +123,36 @@ def guppi_canon() -> str:
     return _GUPPI_CANON
 
 
+# User-repeat directive (BOB-022): when the OWNER sends (near-)the-same message he
+# already sent recently, Bob NOTICES it and reacts in his own wry style instead of
+# silently re-answering. Written as voice (mirroring anti-bait / variable-form), not
+# a rule: the two failure modes it targets are named — never pretend you did not
+# notice, never hand back the same answer again. The detection (a real, exact repeat)
+# lives in :mod:`conversation`; this is the downstream reaction the application
+# appends to the compose prompt only when a repeat is detected.
+# Cyrillic look-alikes are intentional in these Russian literals.
+_USER_REPEAT = (
+    "Собеседник повторяет то, что уже говорил недавно — почти слово в слово. "
+    "Заметь это по-человечески, в своём стиле: можешь подколоть, переспросить, "
+    "зачем повтор, или зайти иначе, чем в прошлый раз. Не делай вид, что не "
+    "заметил, и не выдавай ровно тот же ответ заново — живой человек на дословный "
+    "повтор так и реагирует."
+)
+
+
+def user_repeat_directive() -> str:
+    """Return the user-repeat voice directive (BOB-022).
+
+    Character guidance for the turn where the owner has just repeated himself
+    (near-)verbatim: Bob notices it in his own wry voice — a dig, a "зачем повтор?",
+    or simply a different angle than last time — and never pretends he did not
+    notice nor silently re-answers the same way. Pure, argument-free, appended to
+    the compose prompt only when :func:`~bob.domain.personality.conversation.is_user_repeat`
+    fires; it composes additively with the other voice directives.
+    """
+    return _USER_REPEAT
+
+
 # Off-day band defaults (BOB-020, Q4): Bob reads as "not at full resource" only
 # when BOTH valence and energy sit in the low/negative region — a genuinely flat
 # day, not a passing dip. Negative so a normal or good mood never trips the band.

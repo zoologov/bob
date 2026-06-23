@@ -206,3 +206,11 @@
 {"id":"int-863f8178","kind":"field_change","created_at":"2026-06-23T01:53:37.17024Z","actor":"v.zoologov","issue_id":"bob-0xz.5","extra":{"field":"status","new_value":"closed","old_value":"in_progress","reason":"Closed"}}
 {"id":"int-6f014f00","kind":"field_change","created_at":"2026-06-23T01:54:12.779379Z","actor":"v.zoologov","issue_id":"bob-0xz.6","extra":{"field":"status","new_value":"in_progress","old_value":"open"}}
 {"id":"int-d08f2423","kind":"field_change","created_at":"2026-06-23T01:57:41.83349Z","actor":"v.zoologov","issue_id":"bob-0xz.6","extra":{"field":"status","new_value":"closed","old_value":"in_progress","reason":"Closed"}}
+{"id":"int-60aaecf8","kind":"field_change","created_at":"2026-06-23T02:44:24.92317Z","actor":"v.zoologov","issue_id":"bob-9x3.1","extra":{"field":"status","new_value":"in_progress","old_value":"open"}}
+{"id":"int-7eab72e7","kind":"field_change","created_at":"2026-06-23T02:49:16.130023Z","actor":"v.zoologov","issue_id":"bob-9x3.1","extra":{"field":"status","new_value":"closed","old_value":"in_progress","reason":"Closed"}}
+{"id":"int-b16d13f4","kind":"field_change","created_at":"2026-06-23T02:50:16.300886Z","actor":"v.zoologov","issue_id":"bob-9x3.4","extra":{"field":"status","new_value":"in_progress","old_value":"open"}}
+{"id":"int-58ecaf83","kind":"field_change","created_at":"2026-06-23T02:56:09.356066Z","actor":"v.zoologov","issue_id":"bob-9x3.4","extra":{"field":"status","new_value":"closed","old_value":"in_progress","reason":"Closed"}}
+{"id":"int-d7981d65","kind":"field_change","created_at":"2026-06-23T02:56:59.309454Z","actor":"v.zoologov","issue_id":"bob-9x3.2","extra":{"field":"status","new_value":"in_progress","old_value":"open"}}
+{"id":"int-1e8a9c84","kind":"field_change","created_at":"2026-06-23T02:58:48.064556Z","actor":"v.zoologov","issue_id":"bob-9x3.2","extra":{"field":"status","new_value":"closed","old_value":"in_progress","reason":"Closed"}}
+{"id":"int-e060039c","kind":"field_change","created_at":"2026-06-23T02:59:24.273248Z","actor":"v.zoologov","issue_id":"bob-9x3.3","extra":{"field":"status","new_value":"in_progress","old_value":"open"}}
+{"id":"int-68c97315","kind":"field_change","created_at":"2026-06-23T03:02:21.147028Z","actor":"v.zoologov","issue_id":"bob-9x3.3","extra":{"field":"status","new_value":"closed","old_value":"in_progress","reason":"Closed"}}

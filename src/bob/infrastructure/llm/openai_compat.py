@@ -70,12 +70,21 @@ class OpenAICompatProvider:
         api_key: str | None,
         timeout_seconds: float = 180.0,
         disable_thinking: bool = False,
+        temperature: float | None = None,
+        top_p: float | None = None,
     ) -> None:
         self._base_url = base_url.rstrip("/")
         self._model = model
         self._api_key = api_key
         self._timeout = aiohttp.ClientTimeout(total=timeout_seconds)
         self._disable_thinking = disable_thinking
+        # Sampling controls (BOB-022): without an explicit ``temperature`` Qwen MaaS
+        # decodes greedily, so an identical prompt yields byte-identical output (the
+        # verbatim-repeat bug). A set temperature makes decoding stochastic; ``top_p``
+        # is an optional nucleus-sampling companion. Either is sent ONLY when set, so
+        # an unconfigured provider keeps the endpoint's own defaults.
+        self._temperature = temperature
+        self._top_p = top_p
 
     async def complete(
         self,
@@ -91,6 +100,7 @@ class OpenAICompatProvider:
         }
         if self._disable_thinking:
             payload.update(_NO_THINKING_DIRECTIVE)
+        self._apply_sampling(payload)
         if stream:
             return self._stream_tokens(payload)
         return await self._complete_once(payload)
@@ -117,8 +127,21 @@ class OpenAICompatProvider:
         }
         if self._disable_thinking:
             payload.update(_NO_THINKING_DIRECTIVE)
+        self._apply_sampling(payload)
         body = await self._post_json(payload)
         return _extract_tool_call_result(body)
+
+    def _apply_sampling(self, payload: dict[str, object]) -> None:
+        """Fold the configured sampling controls into ``payload`` (only when set).
+
+        Adds ``temperature`` / ``top_p`` to the request body only when configured,
+        so an unconfigured provider sends neither and the endpoint keeps its own
+        defaults (BOB-022 — a set temperature stops greedy verbatim-repeat decoding).
+        """
+        if self._temperature is not None:
+            payload["temperature"] = self._temperature
+        if self._top_p is not None:
+            payload["top_p"] = self._top_p
 
     async def _complete_once(self, payload: Mapping[str, object]) -> str:
         body = await self._post_json(payload)

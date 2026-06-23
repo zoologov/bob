@@ -298,6 +298,7 @@ def _build(
     reply: str,
     history: Sequence[Mapping[str, object]] = (),
     tier0_replies: Sequence[str] | None = None,
+    tier1_replies: Sequence[str] | None = None,
     registry: CapabilityRegistry | None = None,
     tool_provider: ToolCallingProvider | None = None,
     owner_activity: OwnerActivityRecorder | None = None,
@@ -312,7 +313,7 @@ def _build(
     surface_old_freq: float | None = None,
 ) -> tuple[HandleMessage, FakeBot, FakeRepo, CapturingProvider]:
     tier0 = CapturingProvider(reply="positive", replies=tier0_replies)
-    tier1 = CapturingProvider(reply=reply)
+    tier1 = CapturingProvider(reply=reply, replies=tier1_replies)
     router = LLMRouter(providers={0: tier0, 1: tier1})
     clock = FixedClock(_moment())
     bot = FakeBot()
@@ -1502,3 +1503,140 @@ async def test_mention_fascination_is_a_noop_when_flag_is_off() -> None:
     await handler.handle(_message("расскажи подробно, чем занимался сегодня"))
 
     assert "орбитальная механика" not in tier1.all_text
+
+
+# --- BOB-022: anti-repeat guard (defense in depth) ----------------------------
+
+# A prior turn whose Bob reply is exactly what the model is about to repeat.
+_REPEATED_REPLY = "Это длинный осмысленный ответ про космос и Бобиверс."
+_PRIOR_DUP_TURN = f"Ada: расскажи\nbob: {_REPEATED_REPLY}"
+
+
+async def test_verbatim_duplicate_reply_triggers_one_regeneration() -> None:
+    # BOB-022: when the fresh reply is byte-identical (after strip) to Bob's most-
+    # recent prior reply on record, handle() regenerates ONCE; with sampling now
+    # stochastic the retry differs, so the committed reply is the fresh one.
+    handler, bot, _repo, tier1 = _build(
+        reply="unused",
+        tier1_replies=[_REPEATED_REPLY, "А вот теперь совсем другой ответ."],
+        history=[{"content": _PRIOR_DUP_TURN, "event_type": "message"}],
+    )
+
+    await handler.handle(_message("объясни подробно ещё раз то же самое"))
+
+    # The guard fired exactly one extra generation and the final reply differs.
+    assert len(tier1.payloads) == 2
+    assert bot.final_text == "А вот теперь совсем другой ответ."
+
+
+async def test_verbatim_duplicate_kept_when_regeneration_still_identical() -> None:
+    # No infinite loop: if the single retry is ALSO identical, the reply is kept.
+    handler, bot, _repo, tier1 = _build(
+        reply="unused",
+        tier1_replies=[_REPEATED_REPLY, _REPEATED_REPLY],
+        history=[{"content": _PRIOR_DUP_TURN, "event_type": "message"}],
+    )
+
+    await handler.handle(_message("объясни подробно ещё раз то же самое"))
+
+    # At most one extra generation; the (still-duplicate) reply is committed.
+    assert len(tier1.payloads) == 2
+    assert bot.final_text == _REPEATED_REPLY
+
+
+async def test_non_duplicate_reply_does_not_regenerate() -> None:
+    # The common case: a fresh, non-duplicate reply is committed with no extra
+    # generation — the guard only fires on an exact repeat of the last Bob reply.
+    handler, bot, _repo, tier1 = _build(
+        reply="Совершенно свежий ответ, не повтор.",
+        history=[{"content": _PRIOR_DUP_TURN, "event_type": "message"}],
+    )
+
+    await handler.handle(_message("объясни подробно что-то новое"))
+
+    assert len(tier1.payloads) == 1
+    assert bot.final_text == "Совершенно свежий ответ, не повтор."
+
+
+async def test_guard_is_a_noop_with_no_prior_bob_reply_in_history() -> None:
+    # With no prior Bob turn on record there is nothing to duplicate: the first
+    # reply is committed as-is, no extra generation.
+    handler, bot, _repo, tier1 = _build(
+        reply="Первый ответ в диалоге.",
+    )
+
+    await handler.handle(_message("расскажи подробно про кофе"))
+
+    assert len(tier1.payloads) == 1
+    assert bot.final_text == "Первый ответ в диалоге."
+
+
+# --- BOB-022: user repeats themselves → Bob notices (voice directive) ----------
+
+# A prior turn where the USER already said exactly what they are about to send again.
+_USER_REPEATED_TEXT = "расскажи подробно про кофе"
+_PRIOR_USER_REPEAT_TURN = f"Ada: {_USER_REPEATED_TEXT}\nbob: вот что я думаю про кофе"
+
+
+def _has_user_repeat_directive(text: str) -> bool:
+    # The directive's stable spine: it tells Bob the interlocutor is repeating and
+    # that he must not pretend he did not notice.
+    folded = text.casefold()
+    return "повтор" in folded and "не делай вид" in folded
+
+
+async def test_user_repeat_injects_the_voice_directive_into_the_prompt() -> None:
+    # When the owner sends the same message they already sent in the recent window,
+    # the compose prompt carries the user-repeat directive so Bob reacts in voice.
+    handler, _bot, _repo, tier1 = _build(
+        reply="другой ответ про кофе",
+        history=[{"content": _PRIOR_USER_REPEAT_TURN, "event_type": "message"}],
+    )
+
+    await handler.handle(_message(_USER_REPEATED_TEXT))
+
+    assert _has_user_repeat_directive(tier1.all_text)
+
+
+async def test_non_repeat_does_not_inject_the_user_repeat_directive() -> None:
+    # A fresh, different message must NOT trip the directive (conservative: exact
+    # normalised match only, never fuzzy/false-firing).
+    handler, _bot, _repo, tier1 = _build(
+        reply="ответ про чай",
+        history=[{"content": _PRIOR_USER_REPEAT_TURN, "event_type": "message"}],
+    )
+
+    await handler.handle(_message("а теперь расскажи про чай"))
+
+    assert not _has_user_repeat_directive(tier1.all_text)
+
+
+async def test_user_repeat_directive_composes_with_voice_and_tone() -> None:
+    # The new directive AUGMENTS the existing voice/tone/form/language — it does not
+    # displace the anti-bait voice or the mood-conditioned warm tone.
+    handler, _bot, _repo, tier1 = _build(
+        reply="другой ответ про кофе",
+        history=[{"content": _PRIOR_USER_REPEAT_TURN, "event_type": "message"}],
+    )
+
+    await handler.handle(_message(_USER_REPEATED_TEXT))
+
+    folded = tier1.all_text.casefold()
+    assert _has_user_repeat_directive(folded)
+    assert "эмодзи" in folded  # anti-bait voice still present
+    assert "тепло" in folded  # warm tone_directive still present
+
+
+async def test_user_repeat_only_counts_user_turns_not_bobs_reply() -> None:
+    # Only the USER half of a prior episode counts: the current text matching Bob's
+    # PRIOR reply (not the user's) must NOT be treated as the owner repeating himself.
+    bob_said = "это был длинный ответ бориса про космос"
+    prior = f"Ada: что нового\nbob: {bob_said}"
+    handler, _bot, _repo, tier1 = _build(
+        reply="свежий ответ",
+        history=[{"content": prior, "event_type": "message"}],
+    )
+
+    await handler.handle(_message(bob_said))
+
+    assert not _has_user_repeat_directive(tier1.all_text)

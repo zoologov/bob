@@ -69,6 +69,13 @@ DEFAULT_CONFIG: Config = {
         # avoids the empty-content case where a reasoning model spends its whole
         # budget on reasoning_content.
         "disable_thinking": True,
+        # Sampling temperature per tier (BOB-022): without it Qwen MaaS decodes
+        # greedily, so an identical prompt returns byte-identical text (the
+        # verbatim-repeat bug). Tier 0 (classification/sentiment/summary) runs
+        # steadier; Tier 1 (user-facing replies/monologue) runs more varied for
+        # natural variation. The factory threads these into each provider.
+        "tier0_temperature": 0.5,
+        "tier1_temperature": 0.8,
     },
     # Local semantic-memory embeddings (BOB-011). Provider-agnostic: a LOCAL
     # Ollama server (privacy — memory content never leaves the machine), default
