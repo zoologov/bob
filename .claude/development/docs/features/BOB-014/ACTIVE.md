@@ -4,15 +4,16 @@
 # ACTIVE: BOB-014 — «Отношения (multi-party) + обида/охлаждение» (T1.5)
 
 > **Last updated:** 2026-06-23
-> **Phase:** Development (финал Тира 1)
+> **Phase:** Done (все волны закрыты — **закрывает Тир 1**)
 > **Epic:** bob-8id · branch `features/BOB-014`
 
 ---
 
 ## Текущий беад
 
-**Нет активного беада** (dev .2b `bob-8id.6` закрыт). Следующий: `bob-8id.3` (test) — разблокирован.
-Все три dev-беада (.1/.2a/.2b) готовы; `.venv/bin/pytest` = 1226 passed, mypy/ruff/lint чисто.
+**Нет активного беада.** Все волны закрыты: dev (.1/.2a/.2b) → test → review →
+tech-writer. `docs/architecture.md` обновлён (новая секция «Отношения и обида
+(BOB-014)»). **Закрывает Тир 1.**
 
 ### План .2b — ГОТОВО (dev)
 1. [x] `domain/personality/sulk.py` (чистый): `SulkState`/`SulkConfig` + `observe_relationship` (порог+устойчивость, идемпотентность) + `recover` (гарант. выход по времени, тепло ускоряет, чистит announced).
@@ -33,18 +34,18 @@
 - [x] `.1` RelationshipTracker (per-sender) + влияние на тон/уступчивость
 - [x] `.2a` Аппетит к разговору: EngagementLevel (FULL/PLAYFUL/TERSE/DECLINE) ×
       mood/topic-interest/fatigue/relationship + feedback (mood↑, fatigue↑/↓)
-- [ ] `.2b` (bob-8id.6) Обида/Sulk + guest-disengage + восприятие мата
-- [ ] `.3` test · `.4` review · `.5` tech-writer
+- [x] `.2b` (bob-8id.6) Обида/Sulk + guest-disengage + восприятие мата
+- [x] `.3` test · `.4` review · `.5` tech-writer (`docs/architecture.md`)
 
 ## Статусы беадов
 
 | Беад | Роль | Зависит | Статус |
 |------|------|---------|--------|
-| bob-8id.1 | dev RelationshipTracker | — | in_progress |
-| bob-8id.2 | dev Обида/Sulk | .1 | blocked |
-| bob-8id.3 | test | .1,.2 | blocked |
-| bob-8id.4 | review | .3 | blocked |
-| bob-8id.5 | tech-writer | .4 | blocked |
+| bob-8id.1 | dev RelationshipTracker | — | done |
+| bob-8id.2 | dev Обида/Sulk | .1 | done |
+| bob-8id.3 | test | .1,.2 | done |
+| bob-8id.4 | review | .3 | done |
+| bob-8id.5 | tech-writer | .4 | done |
 
 ## Заметки
 
