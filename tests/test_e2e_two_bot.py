@@ -252,14 +252,23 @@ async def test_two_bots_are_registered_in_the_gateway(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_unauthorized_in_bob_topic_rejects_and_bob_not_invoked(
+async def test_unauthorized_in_bob_topic_reaches_bob_as_guest(
     tmp_path: Path,
 ) -> None:
-    # Arrange: a stranger (not owner, not allowlisted) writes in Bob's topic.
+    # BOB-019 bob-apv.2: a stranger (not owner, not allowlisted) in the allowed chat
+    # + Bob's topic is a GUEST — Bob's social pipeline runs (the restricted mode is
+    # enforced inside HandleMessage), NOT GUPPI's old hard reject.
     _seed_soul(tmp_path)
     bob_bot, guppi_bot = _FakeBot(), _FakeBot()
     bob_bot.updates_batches = [
-        [_update(10, text="hi Bob", thread_id=_BOB_TOPIC_ID, user_id=_STRANGER_ID)]
+        [
+            _update(
+                10,
+                text="расскажи подробно про себя, Bob",
+                thread_id=_BOB_TOPIC_ID,
+                user_id=_STRANGER_ID,
+            )
+        ]
     ]
     app = _build(tmp_path, bob_bot=bob_bot, guppi_bot=guppi_bot)
     await app.startup()
@@ -270,13 +279,11 @@ async def test_unauthorized_in_bob_topic_rejects_and_bob_not_invoked(
     finally:
         await app.shutdown()
 
-    # Assert: GUPPI sent the reject into Bob's thread; Bob's pipeline was NOT
-    # invoked (Bob's bot stayed silent, nothing published).
-    assert published == 0
-    assert len(guppi_bot.sends) == 1
-    assert guppi_bot.sends[0].text == GUPPI_REJECT_TEXT
-    assert guppi_bot.sends[0].message_thread_id == _BOB_TOPIC_ID
-    assert bob_bot.sends == []
+    # Assert: the guest reached Bob's pipeline and Bob replied into his thread; no
+    # GUPPI hard-reject was sent.
+    assert published == 1
+    assert bob_bot.rich_sends, "Bob should have replied to the guest (restricted)"
+    assert all(s.text != GUPPI_REJECT_TEXT for s in guppi_bot.sends)
 
 
 @pytest.mark.asyncio

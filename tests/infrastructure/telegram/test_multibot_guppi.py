@@ -25,7 +25,6 @@ import pytest
 
 from bob.application.runtime.event_bus import AsyncEventBus
 from bob.application.runtime.events import MESSAGE_RECEIVED, MessageReceived
-from bob.infrastructure.telegram.guppi import GUPPI_REJECT_TEXT
 from bob.infrastructure.telegram.multibot import (
     BotIdentity,
     BotRegistry,
@@ -208,11 +207,14 @@ async def _collect(bus: AsyncEventBus) -> list[MessageReceived]:
     return received
 
 
-# --- Reject -------------------------------------------------------------------
+# --- Guest route (BOB-019 bob-apv.2) ------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_unauthorized_in_bob_topic_triggers_guppi_reject() -> None:
+async def test_unauthorized_in_bob_topic_routes_to_bob_as_guest() -> None:
+    # BOB-019 bob-apv.2: an unauthorized sender in the allowed chat + Bob's topic is
+    # a GUEST — they reach Bob's social pipeline (restricted mode enforced downstream
+    # in HandleMessage), NOT GUPPI's old hard reject.
     authorizer = _FakeAuthorizer(allow_all=False)  # everyone denied
     gateway, bus, bob, guppi = _build(authorizer=authorizer)
     bob.updates_batches = [
@@ -222,12 +224,9 @@ async def test_unauthorized_in_bob_topic_triggers_guppi_reject() -> None:
 
     await gateway.poll_once()
 
-    assert received == []  # Bob's pipeline NOT invoked
-    assert len(guppi.sends) == 1  # GUPPI (not Bob) speaks
-    assert guppi.sends[0].text == GUPPI_REJECT_TEXT
-    assert guppi.sends[0].chat_id == _CHAT_ID
-    assert guppi.sends[0].message_thread_id == _BOB_TOPIC_ID
-    assert bob.sends == []
+    assert len(received) == 1  # the guest reaches Bob's pipeline
+    assert received[0].sender_id == _STRANGER_ID  # the guest identity rides along
+    assert guppi.sends == []  # no GUPPI hard-reject for a guest
 
 
 # --- Owner commands -----------------------------------------------------------

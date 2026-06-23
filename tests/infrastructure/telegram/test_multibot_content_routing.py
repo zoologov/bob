@@ -28,7 +28,6 @@ import pytest
 
 from bob.application.runtime.event_bus import AsyncEventBus
 from bob.application.runtime.events import MESSAGE_RECEIVED, MessageReceived
-from bob.infrastructure.telegram.guppi import GUPPI_REJECT_TEXT
 from bob.infrastructure.telegram.multibot import (
     BotIdentity,
     BotRegistry,
@@ -371,19 +370,87 @@ async def test_owner_command_in_general_still_handled_by_guppi() -> None:
 
 
 @pytest.mark.asyncio
-async def test_unauthorized_in_bob_topic_still_rejected_by_guppi() -> None:
+async def test_unauthorized_in_bob_topic_routes_to_bob_as_guest() -> None:
+    # BOB-019 bob-apv.2: an unauthorized sender IN the allowed chat + Bob's topic is
+    # a GUEST — instead of GUPPI's hard reject they reach Bob's social pipeline (the
+    # restricted guest mode is enforced downstream in HandleMessage). The guest's
+    # identity (sender_id / name) rides the published event so perception can
+    # classify them GUEST.
     bob, guppi = _FakeBot(), _FakeBot()
     gateway, bus = _build(bob, guppi, authorizer=_DenyAuthorizer())
     received = await _collect(bus)
 
     published = await gateway.route(
         _bob_topic_update(31, message_id=51, user_id=_STRANGER_ID),
-        BotIdentity.GUPPI,
+        BotIdentity.BOB,
     )
 
-    assert published is False
+    assert published is True  # routed to Bob's pipeline (guest), not rejected
+    assert len(received) == 1
+    assert received[0].sender_id == _STRANGER_ID  # the guest identity reaches HM
+    assert guppi.sends == []  # no GUPPI hard-reject for a guest
+
+
+@pytest.mark.asyncio
+async def test_guest_route_works_whichever_bot_delivered_the_copy() -> None:
+    # Routing is by CONTENT, not delivering bot: the guest reaches Bob's pipeline
+    # exactly once even when GUPPI's thread-less copy arrives first.
+    bob, guppi = _FakeBot(), _FakeBot()
+    gateway, bus = _build(bob, guppi, authorizer=_DenyAuthorizer())
+    received = await _collect(bus)
+
+    # GUPPI's thread-less copy (un-routable for it) arrives first, then Bob's copy.
+    first = await gateway.route(
+        _bob_topic_update(60, message_id=70, thread_id=None, user_id=_STRANGER_ID),
+        BotIdentity.GUPPI,
+    )
+    second = await gateway.route(
+        _bob_topic_update(61, message_id=70, user_id=_STRANGER_ID),
+        BotIdentity.BOB,
+    )
+
+    assert (first, second).count(True) == 1  # published exactly once
+    assert len(received) == 1
+    assert guppi.sends == []  # no hard reject
+
+
+@pytest.mark.asyncio
+async def test_unauthorized_outside_bob_topic_still_dropped() -> None:
+    # CHAT-SCOPE intact: an unauthorized sender OUTSIDE Bob's topic (a foreign chat)
+    # never matches Bob's scope, so they are dropped silently — NOT a guest, no
+    # publish, no reveal. Only the allowed chat + Bob's topic earns the guest route.
+    bob, guppi = _FakeBot(), _FakeBot()
+    gateway, bus = _build(bob, guppi, authorizer=_DenyAuthorizer())
+    received = await _collect(bus)
+
+    foreign_chat = _CHAT_ID + 1
+    published = await gateway.route(
+        _bob_topic_update(
+            32, message_id=52, chat_id=foreign_chat, thread_id=None,
+            user_id=_STRANGER_ID,
+        ),
+        BotIdentity.BOB,
+    )
+
+    assert published is False  # dropped, never published
     assert received == []
-    assert bob.sends == []  # Bob's pipeline NOT invoked
-    assert len(guppi.sends) == 1
-    assert guppi.sends[0].text == GUPPI_REJECT_TEXT
-    assert guppi.sends[0].message_thread_id == _BOB_TOPIC_ID
+    assert bob.sends == []
+    assert guppi.sends == []  # silent — no reveal outside the allowed chat
+
+
+@pytest.mark.asyncio
+async def test_owner_in_bob_topic_still_reaches_bob_pipeline() -> None:
+    # NO REGRESSION: the trusted owner in Bob's topic still publishes to Bob's
+    # pipeline exactly as before (the trusted/guest split is downstream perception).
+    bob, guppi = _FakeBot(), _FakeBot()
+    gateway, bus = _build(bob, guppi, authorizer=_AllowAuthorizer())
+    received = await _collect(bus)
+
+    published = await gateway.route(
+        _bob_topic_update(33, message_id=53, user_id=_OWNER_ID),
+        BotIdentity.BOB,
+    )
+
+    assert published is True
+    assert len(received) == 1
+    assert guppi.sends == []

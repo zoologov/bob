@@ -154,7 +154,13 @@ def test_build_application_wires_an_authorizer(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_wired_gate_drops_unauthorized_user(tmp_path: Path) -> None:
+async def test_wired_gate_routes_guest_in_topic_but_drops_foreign_chat(
+    tmp_path: Path,
+) -> None:
+    # BOB-019 bob-apv.2: an unauthorized sender IN the allowed chat + Bob's topic is
+    # a GUEST → Bob's pipeline (restricted mode is downstream). An unauthorized
+    # sender OUTSIDE the allowed chat stays dropped (chat-scope intact). The owner is
+    # the trusted path as ever.
     SoulStore(tmp_path / "soul").write_soul("# SOUL\n\nBob.\n")
     app = _build(tmp_path)
     await app.startup()
@@ -166,18 +172,25 @@ async def test_wired_gate_drops_unauthorized_user(tmp_path: Path) -> None:
 
     app.event_bus.subscribe(MESSAGE_RECEIVED, handler)
     try:
-        outsider = await app.multibot.route(
+        guest = await app.multibot.route(
             _Update(1, chat_id=_CHAT, user_id=555, text="hi"), BotIdentity.BOB
         )
+        foreign = await app.multibot.route(
+            _Update(2, chat_id=_CHAT + 1, user_id=555, text="hi", thread_id=None),
+            BotIdentity.BOB,
+        )
         owner = await app.multibot.route(
-            _Update(2, chat_id=_CHAT, user_id=_OWNER, text="hi"), BotIdentity.BOB
+            _Update(3, chat_id=_CHAT, user_id=_OWNER, text="hi"), BotIdentity.BOB
         )
     finally:
         await app.shutdown()
 
-    assert outsider is False
+    assert guest is True  # guest in Bob's topic reaches the pipeline
+    assert foreign is False  # outside the allowed chat → still dropped
     assert owner is True
-    assert [event.update_id for event in received] == [2]
+    # Only the guest (1) and the owner (3) reached the pipeline; the foreign chat
+    # message (2) was dropped at the router.
+    assert [event.update_id for event in received] == [1, 3]
 
 
 @pytest.mark.asyncio

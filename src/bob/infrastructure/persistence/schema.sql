@@ -153,3 +153,15 @@ CREATE TABLE IF NOT EXISTS fascination_state (
     intensity  REAL NOT NULL,
     created_at TEXT NOT NULL  -- ISO-8601, timezone-aware
 );
+
+-- Per-sender first impression (BOB-019): Bob's LIGHT first read on each person he
+-- meets, keyed by sender_id so it works for owner / known / guest / bot alike. One
+-- row per sender, written once on first contact (a save never moves first_seen or
+-- the note), so a returning sender is recognised ("кажется, мы уже сталкивались").
+-- This is per-PERSON data (about THEM), not owner-private memory — allowed even for
+-- a guest. The deliberately minimal foundation for multi-party BOB-014, not it.
+CREATE TABLE IF NOT EXISTS first_impression (
+    sender_id     INTEGER PRIMARY KEY,
+    first_seen_at TEXT NOT NULL,  -- ISO-8601, timezone-aware (when Bob first met them)
+    note          TEXT NOT NULL   -- a short, grounded one-line impression
+);

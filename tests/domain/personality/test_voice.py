@@ -15,14 +15,22 @@ flavor — never a brittle full-string match (the prose is free to evolve).
 
 from __future__ import annotations
 
+from bob.domain.personality.interlocutor import (
+    Interlocutor,
+    InterlocutorKind,
+    Trust,
+)
 from bob.domain.personality.mood import Mood
 from bob.domain.personality.voice import (
     OffDayThresholds,
     anti_bait_directive,
     guppi_canon,
+    recalled_impression_directive,
+    stranger_directive,
     tone_directive,
     user_repeat_directive,
     variable_form_directive,
+    who_is_writing_directive,
 )
 
 
@@ -183,6 +191,113 @@ def test_user_repeat_directive_is_voice_not_a_rule_list() -> None:
     directive = user_repeat_directive()
     assert "•" not in directive
     assert "- " not in directive
+
+
+def test_who_is_writing_directive_names_the_owner_by_name_as_owner() -> None:
+    # BOB-019: Bob perceives WHO is writing and recognises the owner AS the owner,
+    # by name, folded into the prompt as character — not as a config flag.
+    who = Interlocutor(
+        sender_id=1,
+        display_name="Vova",
+        kind=InterlocutorKind.OWNER,
+        trust=Trust.TRUSTED,
+    )
+    folded = who_is_writing_directive(who).casefold()
+    assert "vova" in folded  # the name reaches the prompt
+    assert "владел" in folded  # recognised as the owner (владелец)
+
+
+def test_who_is_writing_directive_names_a_known_friend() -> None:
+    who = Interlocutor(
+        sender_id=2,
+        display_name="Ada",
+        kind=InterlocutorKind.KNOWN,
+        trust=Trust.TRUSTED,
+    )
+    folded = who_is_writing_directive(who).casefold()
+    assert "ada" in folded
+    assert "знаком" in folded  # a known person (знакомый)
+
+
+def test_who_is_writing_directive_marks_a_stranger() -> None:
+    who = Interlocutor(
+        sender_id=3,
+        display_name="Stranger",
+        kind=InterlocutorKind.GUEST,
+        trust=Trust.GUEST,
+    )
+    folded = who_is_writing_directive(who).casefold()
+    assert "stranger" in folded
+    assert "незнаком" in folded  # a stranger (незнакомец)
+
+
+def test_who_is_writing_directive_marks_a_bot() -> None:
+    who = Interlocutor(
+        sender_id=4,
+        display_name="PeerBot",
+        kind=InterlocutorKind.BOT,
+        trust=Trust.GUEST,
+    )
+    folded = who_is_writing_directive(who).casefold()
+    assert "peerbot" in folded
+    assert "бот" in folded
+
+
+def test_who_is_writing_directive_is_voice_not_a_rule_list() -> None:
+    who = Interlocutor(
+        sender_id=1,
+        display_name="Vova",
+        kind=InterlocutorKind.OWNER,
+        trust=Trust.TRUSTED,
+    )
+    directive = who_is_writing_directive(who)
+    assert "•" not in directive
+    assert "- " not in directive
+
+
+def test_stranger_directive_is_a_wary_but_human_greeting() -> None:
+    # BOB-019 bob-apv.2: the guest (restricted) turn appends this — Bob meets a
+    # stranger as a person (greet / stay wary / politely decline / suggest asking
+    # the owner), in character, never a config flag.
+    folded = stranger_directive().casefold()
+    assert "незнаком" in folded  # he is meeting a stranger
+    # it covers the human options Bob can take with a stranger
+    assert "владел" in folded  # may suggest asking the owner
+
+
+def test_stranger_directive_forbids_revealing_owner_private_info() -> None:
+    # The security character line: Bob must NOT spill the owner's private info to
+    # a guest. This is voice mirroring the application-level redaction invariant.
+    folded = stranger_directive().casefold()
+    assert "личн" in folded or "приват" in folded  # do not reveal owner's private stuff
+
+
+def test_stranger_directive_is_voice_not_a_rule_list() -> None:
+    directive = stranger_directive()
+    assert "•" not in directive
+    assert "- " not in directive
+
+
+def test_recalled_impression_directive_carries_the_prior_note() -> None:
+    # BOB-019 bob-apv.3: when a sender Bob has met before writes again, the prior
+    # first-impression note is folded in so Bob recalls them wryly — the actual note
+    # text must reach the line so the recall is grounded in what he really thought.
+    note = "тот самый незнакомец, держался настороже"
+    line = recalled_impression_directive(note)
+    assert note in line
+
+
+def test_recalled_impression_directive_signals_prior_contact() -> None:
+    # It reads as recognition ("кажется, мы уже сталкивались"), not a fresh meeting.
+    folded = recalled_impression_directive("впечатление").casefold()
+    assert "уже" in folded or "снова" in folded or "прежд" in folded
+
+
+def test_recalled_impression_directive_is_voice_not_a_rule_list() -> None:
+    line = recalled_impression_directive("впечатление")
+    assert "•" not in line
+    assert "- " not in line
+    assert "\n" not in line
 
 
 def _exemplar_lines(directive: str) -> list[str]:

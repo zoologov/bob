@@ -282,9 +282,10 @@ async def test_no_authorizer_treats_bob_topic_message_as_authorized() -> None:
 
 
 @pytest.mark.asyncio
-async def test_reject_hook_is_silent_when_guppi_not_registered() -> None:
-    # Arrange: only Bob registered + a denying authorizer; the reject hook must
-    # not raise even though there is no GUPPI to speak it.
+async def test_guest_route_works_without_guppi_registered() -> None:
+    # BOB-019 bob-apv.2: the guest route does not depend on GUPPI — an unauthorized
+    # sender in Bob's topic reaches Bob's pipeline even with no GUPPI wired (the old
+    # reject hook is gone), and nothing raises.
     bob = _FakeBot()
     bus = AsyncEventBus()
 
@@ -309,7 +310,7 @@ async def test_reject_hook_is_silent_when_guppi_not_registered() -> None:
     )
     received = await _collect(bus)
 
-    # Act: unauthorized in Bob's topic, but no GUPPI wired.
+    # Act: a guest (unauthorized) in Bob's topic, no GUPPI wired.
     published = await gateway.route(
         _bob_update(
             1,
@@ -321,10 +322,10 @@ async def test_reject_hook_is_silent_when_guppi_not_registered() -> None:
         BotIdentity.BOB,
     )
 
-    # Assert: silent drop, Bob not invoked, no crash.
-    assert published is False
-    assert received == []
-    assert bob.sends == []
+    # Assert: the guest reaches Bob's pipeline; no crash, no GUPPI needed.
+    assert published is True
+    assert len(received) == 1
+    assert bob.sends == []  # the reply is composed downstream, not here
 
 
 @pytest.mark.asyncio

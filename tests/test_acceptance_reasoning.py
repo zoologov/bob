@@ -206,6 +206,11 @@ def _config(tmp_path: Path) -> dict[str, object]:
         },
         "telegram": {
             "poll_timeout": 1,
+            # The stable sender (id 7, chat 42) is the trusted OWNER so the wired
+            # SenderPerception (BOB-019) classifies him TRUSTED — fact extraction +
+            # recall run as usual (a guest would have them redacted away).
+            "owner_id": 7,
+            "allowed_chat_ids": [42],
             "bob": {"token": "bob-tok", "topic_id": 0},
             "guppi": {"token": "guppi-tok"},
         },

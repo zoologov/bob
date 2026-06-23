@@ -55,6 +55,7 @@ from bob.domain.personality.expression import (
     FormHint,
     decide_expression,
 )
+from bob.domain.personality.interlocutor import Trust
 from bob.domain.personality.mood_taste import experiment_bias, modulate
 from bob.domain.personality.negotiation import (
     Negotiation,
@@ -67,9 +68,12 @@ from bob.domain.personality.voice import (
     OffDayThresholds,
     anti_bait_directive,
     guppi_canon,
+    recalled_impression_directive,
+    stranger_directive,
     tone_directive,
     user_repeat_directive,
     variable_form_directive,
+    who_is_writing_directive,
 )
 from bob.domain.personality.zone_classifier import TasteZoneClassifier
 
@@ -84,6 +88,7 @@ if TYPE_CHECKING:
     from bob.application.usecases.extract_facts import ExtractFacts
     from bob.application.usecases.update_mood_from_text import UpdateMoodFromText
     from bob.domain.personality.fascination import Fascination
+    from bob.domain.personality.interlocutor import Interlocutor
     from bob.domain.personality.soul import SOUL
     from bob.domain.ports import (
         Clock,
@@ -250,6 +255,46 @@ class CurrentFascinationReader(Protocol):
         ...
 
 
+class InterlocutorResolver(Protocol):
+    """Perception seam: WHO is writing this turn (BOB-019).
+
+    Resolves the inbound :class:`MessageReceived` into an
+    :class:`~bob.domain.personality.interlocutor.Interlocutor` — the sender's
+    social identity (owner / known / guest / bot + trust) — so the compose path can
+    fold WHO is on the other side into Bob's voice. The concrete adapter derives it
+    from the :class:`~bob.application.authz.Authorizer` (``is_owner`` +
+    ``is_authorized``) already known for the turn. Optional and additive: unwired
+    (the default) the perception line is simply absent and the turn behaves exactly
+    as before — it never changes which pipeline runs (the guest-restricted path is
+    a later bead).
+    """
+
+    async def resolve(self, event: MessageReceived) -> Interlocutor: ...
+
+
+class FirstImpressionReader(Protocol):
+    """First-impression seam: recall + record Bob's LIGHT per-person read (BOB-019).
+
+    The compose path uses this to give Bob a light memory of WHO he has met before:
+    :meth:`prior_impression` returns the stored impression note for a returning
+    sender (a new one → ``None``), so the prompt can fold in "этого человека ты уже
+    видел; впечатление было такое-то"; :meth:`note_first_contact` records a fresh,
+    grounded note on FIRST contact (formed once — a known sender is left untouched).
+    The concrete adapter
+    (:class:`~bob.application.usecases.first_impression_sources.FirstImpressionTracker`)
+    keys on ``sender_id`` and stamps the clock. Optional and additive: unwired (the
+    default) Bob simply never recalls a first impression and the turn is unchanged.
+
+    Crucially this is per-PERSON data (about THEM), NOT owner-private memory, so it
+    is safe even on a guest turn — a guest's own first-impression is about the guest,
+    and surfacing it never leaks the owner's private world.
+    """
+
+    async def prior_impression(self, interlocutor: Interlocutor) -> str | None: ...
+
+    async def note_first_contact(self, interlocutor: Interlocutor) -> None: ...
+
+
 class OwnerActivityRecorder(Protocol):
     """The proactivity seam HandleMessage notifies when the owner writes.
 
@@ -300,6 +345,8 @@ class HandleMessage:
         fascination: CurrentFascinationReader | None = None,
         offday_thresholds: OffDayThresholds | None = None,
         surface_old_freq: float = _DEFAULT_SURFACE_OLD_FREQ,
+        perceive_sender: InterlocutorResolver | None = None,
+        first_impression: FirstImpressionReader | None = None,
     ) -> None:
         self._router = router
         self._gateway = gateway
@@ -378,10 +425,37 @@ class HandleMessage:
             )
             raise ValueError(msg)
         self._surface_old_freq = surface_old_freq
+        # The perception seam (BOB-019): when wired, Bob perceives WHO is writing —
+        # owner / known / guest / bot — and a who-is-writing voice line is folded
+        # into the reply prompt so he answers as a person who knows who he's talking
+        # to (the owner recognised AS owner). Additive only: unwired (the default)
+        # the line is absent and the turn behaves exactly as before. It NEVER changes
+        # which pipeline runs — the guest-restricted path is a later bead.
+        self._perceive_sender = perceive_sender
+        # The first-impression seam (BOB-019 bob-apv.3): when wired, Bob forms +
+        # remembers a LIGHT per-person first impression keyed by sender. A returning
+        # sender's prior note is recalled into the compose prompt ("этого человека ты
+        # уже видел; впечатление было такое-то"); a new sender's grounded note is
+        # recorded after the turn. It is per-PERSON data (about THEM), NOT owner-
+        # private memory — safe even on a guest turn (a guest's first-impression is
+        # about the guest, never an owner-memory leak). Unwired (the default) Bob
+        # never recalls a first impression and the turn behaves exactly as before.
+        # This is the minimal foundation for multi-party BOB-014, not that engine.
+        self._first_impression = first_impression
 
     async def handle(self, event: MessageReceived) -> None:
         """Process one received message end to end (the EventBus subscriber)."""
         soul = await self._perceive(event)
+        # Perceive WHO is writing (BOB-019): owner / known / guest / bot. Resolved
+        # once per turn so the same identity threads through every (re)compose; None
+        # when no perception seam is wired (additive, behaviour as before).
+        interlocutor = await self._perceive_interlocutor(event)
+        # Recall Bob's LIGHT prior first impression of this sender (BOB-019 bob-apv.3):
+        # a returning person → his stored note, so the compose prompt can recall him
+        # ("кажется, мы уже сталкивались"); a new person → None. It is per-PERSON data
+        # (about THEM), so it is recalled even on a guest turn (a guest's own first
+        # impression is about the guest, never an owner-memory leak).
+        prior_impression = await self._recall_prior_impression(interlocutor)
         # Plan how Bob expresses this turn (BOB-018): pure, deterministic by seed.
         # Computed up front so the mode steers the reply path and the form hint
         # shapes the prompt; the rare flags ride along for later beads.
@@ -395,8 +469,29 @@ class HandleMessage:
             await self._react_only(event, soul)
             await self._record_owner_activity()
             return
-        recalled = await self._recall.recall(event.text, k=_RECALL_K)
-        history = await self._episodes.recent_episodes(_HISTORY_K)
+        # Guest (restricted social) mode (BOB-019 bob-apv.2 — the security core).
+        # An unauthorized GUEST reached Bob's social path (routed in by multibot),
+        # so Bob may talk to them like a person, but NEVER as a trusted peer:
+        #   * NO owner-private memory — recall is skipped (empty), so no stored
+        #     owner fact can enter a stranger's prompt (audience redaction);
+        #   * NO owner conversation history — the replayed recent episodes (the
+        #     owner's earlier turns in Bob's topic) are withheld too, so a stranger
+        #     who joins the group never sees the owner's prior conversation;
+        #   * NO tool-loop / capabilities — composition stays on the plain router
+        #     (a guest can trigger no capability), enforced in _compose_reply;
+        #   * NO grounded owner inner-life add-ons (leak/callback/fascination) —
+        #     they surface Bob's private world, withheld from a stranger;
+        #   * NO fact extraction — a guest turn is never written into the owner's
+        #     semantic memory.
+        # The stranger voice directive is appended so the wariness reads as
+        # character. Default to MORE restriction when unsure.
+        is_guest = interlocutor is not None and interlocutor.trust is Trust.GUEST
+        recalled: Sequence[Recalled] = (
+            [] if is_guest else await self._recall.recall(event.text, k=_RECALL_K)
+        )
+        history: Sequence[Mapping[str, object]] = (
+            [] if is_guest else await self._episodes.recent_episodes(_HISTORY_K)
+        )
         # User-repeat detection (BOB-022): does the OWNER repeat (near-)verbatim what
         # he already said in the recent window? Pure, no-LLM, conservative (exact after
         # normalise). When True the compose prompt carries the user-repeat directive so
@@ -407,7 +502,15 @@ class HandleMessage:
         # stays visible for the whole real wait (BOB-009); then commit one rich final.
         async with self._gateway.typing_indicator(chat_id=event.chat_id):
             reply = await self._compose_reply(
-                event.text, soul, recalled, history, plan, user_repeated=user_repeated
+                event.text,
+                soul,
+                recalled,
+                history,
+                plan,
+                user_repeated=user_repeated,
+                interlocutor=interlocutor,
+                is_guest=is_guest,
+                prior_impression=prior_impression,
             )
             # Anti-repeat guard (BOB-022, defense in depth): if the fresh reply is
             # byte-identical (after strip) to Bob's most-recent prior reply, regenerate
@@ -415,11 +518,29 @@ class HandleMessage:
             # generation, only on an exact duplicate; if the retry is still identical it
             # is kept (no infinite loop).
             reply = await self._guard_against_verbatim_repeat(
-                reply, event.text, soul, recalled, history, plan, user_repeated
+                reply,
+                event.text,
+                soul,
+                recalled,
+                history,
+                plan,
+                user_repeated,
+                interlocutor,
+                is_guest=is_guest,
+                prior_impression=prior_impression,
             )
         await self._gateway.reply(chat_id=event.chat_id, markdown=reply)
         await self._persist(event, reply, soul)
+        # Record Bob's LIGHT first impression of this sender on FIRST contact
+        # (BOB-019 bob-apv.3): formed once and grounded in WHO they are; a returning
+        # sender is left untouched (the store records once). Per-PERSON data, so it
+        # runs on a guest turn too — a guest's first impression is about the guest.
+        await self._record_first_impression(interlocutor)
         await self._record_owner_activity()
+        if is_guest:
+            # SECURITY: a guest turn is never distilled into the owner's semantic
+            # memory — no stranger input becomes a stored owner fact.
+            return
         # Tier 0 "remember" step: distil durable facts into semantic memory so a
         # later turn's recall can surface them. Best-effort — run() never raises,
         # so a flaky local model can never break a turn that already replied.
@@ -461,6 +582,51 @@ class HandleMessage:
         self._state.soul = soul
         return soul
 
+    async def _perceive_interlocutor(
+        self, event: MessageReceived
+    ) -> Interlocutor | None:
+        """Perceive WHO is writing this turn, or ``None`` (no seam wired) (BOB-019).
+
+        Asks the wired perception seam to resolve the inbound into an
+        :class:`~bob.domain.personality.interlocutor.Interlocutor` (owner / known /
+        guest / bot). Unwired (the default) returns ``None`` so the compose path
+        adds no who-is-writing line and the turn behaves exactly as before.
+        """
+        if self._perceive_sender is None:
+            return None
+        return await self._perceive_sender.resolve(event)
+
+    async def _recall_prior_impression(
+        self, interlocutor: Interlocutor | None
+    ) -> str | None:
+        """Recall Bob's LIGHT prior first-impression note for this sender (BOB-019).
+
+        Asks the wired first-impression seam for the stored note of a returning
+        sender; a new sender (or no seam / no perceived interlocutor) yields ``None``
+        so the compose path adds no recall line. Per-PERSON data, so it is recalled
+        even on a guest turn (a guest's own impression is about the guest).
+        """
+        if self._first_impression is None or interlocutor is None:
+            return None
+        return await self._first_impression.prior_impression(interlocutor)
+
+    async def _record_first_impression(
+        self, interlocutor: Interlocutor | None
+    ) -> None:
+        """Record Bob's LIGHT first impression of this sender on first contact (BOB-019).
+
+        Best-effort and optional: with no seam wired (or no perceived interlocutor)
+        this is a no-op. The grounded note is formed once (the store records once), so
+        a returning sender is never overwritten. A flaky store can never break a turn
+        that has already replied.
+        """
+        if self._first_impression is None or interlocutor is None:
+            return
+        try:
+            await self._first_impression.note_first_contact(interlocutor)
+        except Exception:
+            logger.exception("recording first impression failed (ignored)")
+
     def _plan_expression(self, event: MessageReceived, soul: SOUL) -> ExpressionPlan:
         """Decide this turn's expression plan — pure, deterministic by seed (BOB-018).
 
@@ -482,15 +648,34 @@ class HandleMessage:
         plan: ExpressionPlan,
         *,
         user_repeated: bool = False,
+        interlocutor: Interlocutor | None = None,
+        is_guest: bool = False,
+        prior_impression: str | None = None,
     ) -> str:
-        """Compose a full reply, folding the plan's form hint into the prompt."""
+        """Compose a full reply, folding the plan's form hint into the prompt.
+
+        On a guest turn (``is_guest``) the restricted social mode applies: the
+        grounded owner inner-life add-ons (leak / callback / fascination) are
+        skipped (they surface Bob's private world), the tool-loop is NEVER used (a
+        guest can trigger no capability), and the stranger voice directive is
+        appended — the application half of the security invariant.
+        """
         context = _assemble_shareable_context(soul, text, recalled, history)
-        context = await self._with_grounded_addons(context, text, plan)
+        if not is_guest:
+            # Grounded add-ons surface Bob's PRIVATE inner life / shared past —
+            # withheld from a stranger (audience redaction).
+            context = await self._with_grounded_addons(context, text, plan)
         system_prompt = self._system_prompt_for(
-            soul, text, plan, user_repeated=user_repeated
+            soul,
+            text,
+            plan,
+            user_repeated=user_repeated,
+            interlocutor=interlocutor,
+            is_guest=is_guest,
+            prior_impression=prior_impression,
         )
         provider = self._tool_provider
-        if provider is not None and not self._registry.is_empty:
+        if not is_guest and provider is not None and not self._registry.is_empty:
             return await self._reply_with_tools(provider, system_prompt, text, context)
         # Hybrid reply tiering (BOB-006): a casual/short message answers on the
         # fast Tier 0 (flash) model for responsiveness; a complex/long message
@@ -518,6 +703,10 @@ class HandleMessage:
         history: Sequence[Mapping[str, object]],
         plan: ExpressionPlan,
         user_repeated: bool = False,
+        interlocutor: Interlocutor | None = None,
+        *,
+        is_guest: bool = False,
+        prior_impression: str | None = None,
     ) -> str:
         """Recompose once if ``reply`` byte-repeats Bob's last reply (BOB-022).
 
@@ -532,7 +721,15 @@ class HandleMessage:
         if not previous or reply.strip() != previous.strip():
             return reply
         return await self._compose_reply(
-            text, soul, recalled, history, plan, user_repeated=user_repeated
+            text,
+            soul,
+            recalled,
+            history,
+            plan,
+            user_repeated=user_repeated,
+            interlocutor=interlocutor,
+            is_guest=is_guest,
+            prior_impression=prior_impression,
         )
 
     async def _with_grounded_addons(
@@ -627,6 +824,9 @@ class HandleMessage:
         plan: ExpressionPlan,
         *,
         user_repeated: bool = False,
+        interlocutor: Interlocutor | None = None,
+        is_guest: bool = False,
+        prior_impression: str | None = None,
     ) -> str:
         """Augment the base prompt with the mood tone, stance, and form-hint directives.
 
@@ -636,9 +836,13 @@ class HandleMessage:
         warm line. The taste verdict + conviction on ``text`` then pick the zone and
         stance (BOB-013), and the plan's ``form_hint`` appends a soft length cue
         (BOB-018). When ``user_repeated`` (BOB-022 — the owner sent a near-verbatim
-        repeat) the user-repeat directive is appended so Bob notices it in voice. With
-        a normal mood, no target opinion, no user-domain signal, a NORMAL form hint,
-        and no repeat, only the warm tone line augments the base voice.
+        repeat) the user-repeat directive is appended so Bob notices it in voice. When
+        an ``interlocutor`` is perceived (BOB-019) the who-is-writing line is appended
+        so Bob answers as someone who knows WHO is on the other side (the owner
+        recognised AS owner) — additive, never changing which pipeline runs. With a
+        normal mood, no target opinion, no user-domain signal, a NORMAL form hint, no
+        repeat, and no perceived interlocutor, only the warm tone line augments the
+        base voice.
         """
         verdict = soul.taste.score(text)
         conviction = soul.taste.conviction_for(text)
@@ -651,6 +855,21 @@ class HandleMessage:
             _stance_directive(stance, verdict=verdict, zone=zone),
             _FORM_HINT_DIRECTIVE.get(plan.form_hint, ""),
             user_repeat_directive() if user_repeated else "",
+            # BOB-019: fold WHO is writing (owner / known / guest / bot) into the
+            # voice as character — additive, no-op when no interlocutor perceived.
+            who_is_writing_directive(interlocutor) if interlocutor is not None else "",
+            # BOB-019 bob-apv.2: on a guest turn, the stranger voice — Bob meets a
+            # stranger warily-but-human and never reveals the owner's private info
+            # (the voice half of the restricted-mode security invariant).
+            stranger_directive() if is_guest else "",
+            # BOB-019 bob-apv.3: a returning sender Bob has met before — recall his
+            # LIGHT prior first impression ("кажется, мы уже сталкивались"), grounded
+            # in the real stored note. Per-PERSON data (about THEM), so it is folded
+            # in even on a guest turn — never an owner-memory leak. No prior note → no
+            # line (a new person is met fresh).
+            recalled_impression_directive(prior_impression)
+            if prior_impression
+            else "",
         ]
         suffix = "".join(f"\n{d}" for d in directives if d)
         return f"{_SYSTEM_PROMPT}{suffix}"

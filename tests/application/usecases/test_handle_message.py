@@ -32,6 +32,11 @@ from bob.application.usecases.handle_message import (
 from bob.application.usecases.update_mood_from_text import UpdateMoodFromText
 from bob.domain.personality.expression import ExpressionFreqs
 from bob.domain.personality.fascination import Fascination
+from bob.domain.personality.interlocutor import (
+    Interlocutor,
+    InterlocutorKind,
+    Trust,
+)
 from bob.domain.personality.mood import Mood
 from bob.domain.personality.negotiation import NegotiationZone
 from bob.domain.personality.reaction import (
@@ -311,6 +316,8 @@ def _build(
     reflection: _FakeReflectionReader | None = None,
     fascination: _FakeFascinationReader | None = None,
     surface_old_freq: float | None = None,
+    perceive_sender: _FakeInterlocutorResolver | None = None,
+    first_impression: _FakeFirstImpression | None = None,
 ) -> tuple[HandleMessage, FakeBot, FakeRepo, CapturingProvider]:
     tier0 = CapturingProvider(reply="positive", replies=tier0_replies)
     tier1 = CapturingProvider(reply=reply, replies=tier1_replies)
@@ -346,6 +353,8 @@ def _build(
         reflection=reflection,
         fascination=fascination,
         surface_old_freq=surface_old_freq if surface_old_freq is not None else 0.0,
+        perceive_sender=perceive_sender,
+        first_impression=first_impression,
     )
     return handler, bot, repo, tier1
 
@@ -1640,3 +1649,500 @@ async def test_user_repeat_only_counts_user_turns_not_bobs_reply() -> None:
     await handler.handle(_message(bob_said))
 
     assert not _has_user_repeat_directive(tier1.all_text)
+
+
+# --- BOB-019: sender perception — WHO is writing reaches the compose prompt -----
+
+
+class _FakeInterlocutorResolver:
+    """Fake perception seam: returns a fixed Interlocutor for any event (no authz).
+
+    Records the events it was asked about so a test can assert the use-case
+    perceives the sender once per turn.
+    """
+
+    def __init__(self, who: Interlocutor) -> None:
+        self._who = who
+        self.seen: list[MessageReceived] = []
+
+    async def resolve(self, event: MessageReceived) -> Interlocutor:
+        self.seen.append(event)
+        return self._who
+
+
+def _interlocutor(
+    *,
+    name: str,
+    kind: InterlocutorKind,
+    trust: Trust = Trust.TRUSTED,
+    sender_id: int | None = 99,
+) -> Interlocutor:
+    return Interlocutor(
+        sender_id=sender_id, display_name=name, kind=kind, trust=trust
+    )
+
+
+async def test_owner_identity_reaches_the_compose_prompt() -> None:
+    # BOB-019: the perceived sender (name + kind) reaches the reply prompt, and the
+    # owner is recognised AS the owner — folded in as character, not a config flag.
+    resolver = _FakeInterlocutorResolver(
+        _interlocutor(name="Vova", kind=InterlocutorKind.OWNER)
+    )
+    handler, _bot, _repo, tier1 = _build(reply="hi", perceive_sender=resolver)
+
+    await handler.handle(_message("расскажи подробно про космос"))
+
+    folded = tier1.all_text.casefold()
+    assert "vova" in folded  # the name is perceived
+    assert "владел" in folded  # recognised as owner (владелец)
+    assert resolver.seen, "the use-case never perceived the sender"
+
+
+async def test_known_friend_identity_reaches_the_compose_prompt() -> None:
+    resolver = _FakeInterlocutorResolver(
+        _interlocutor(name="Ada", kind=InterlocutorKind.KNOWN)
+    )
+    handler, _bot, _repo, tier1 = _build(reply="hi", perceive_sender=resolver)
+
+    await handler.handle(_message("расскажи подробно про чай"))
+
+    folded = tier1.all_text.casefold()
+    assert "ada" in folded
+    assert "знаком" in folded  # a known person
+
+
+async def test_stranger_identity_reaches_the_compose_prompt() -> None:
+    resolver = _FakeInterlocutorResolver(
+        _interlocutor(name="Rando", kind=InterlocutorKind.GUEST, trust=Trust.GUEST)
+    )
+    handler, _bot, _repo, tier1 = _build(reply="hi", perceive_sender=resolver)
+
+    await handler.handle(_message("расскажи подробно что-нибудь"))
+
+    folded = tier1.all_text.casefold()
+    assert "rando" in folded
+    assert "незнаком" in folded  # a stranger
+
+
+async def test_sender_perception_composes_with_voice_and_tone() -> None:
+    # BOB-019 is ADDITIVE: the who-is-writing line augments — never displaces — the
+    # anti-bait voice, the warm mood tone, and the rest of the compose context.
+    resolver = _FakeInterlocutorResolver(
+        _interlocutor(name="Vova", kind=InterlocutorKind.OWNER)
+    )
+    handler, _bot, _repo, tier1 = _build(reply="hi", perceive_sender=resolver)
+
+    await handler.handle(_message("объясни подробно про минимализм в дизайне"))
+
+    folded = tier1.all_text.casefold()
+    assert "владел" in folded  # the perception line is present
+    assert "эмодзи" in folded  # anti-bait voice still present
+    assert "тепл" in folded  # warm tone_directive still present
+
+
+async def test_no_resolver_leaves_the_compose_prompt_unchanged() -> None:
+    # Backward-compatible: with no perception seam wired, the prompt carries no
+    # who-is-writing line — exactly the pre-BOB-019 behaviour, full reply for all.
+    handler, _bot, _repo, tier1 = _build(reply="hi")
+
+    await handler.handle(_message("расскажи подробно про кофе"))
+
+    assert "пишет:" not in tier1.all_text.casefold()
+
+
+async def test_owner_keeps_the_full_trusted_pipeline() -> None:
+    # bob-apv.2: a TRUSTED owner turn still composes the full reply via the router,
+    # so the committed reply is the model's answer exactly as before.
+    resolver = _FakeInterlocutorResolver(
+        _interlocutor(name="Vova", kind=InterlocutorKind.OWNER)
+    )
+    handler, bot, _repo, _tier1 = _build(
+        reply="полный ответ как обычно", perceive_sender=resolver
+    )
+
+    await handler.handle(_message("расскажи подробно про кофе"))
+
+    assert bot.final_text == "полный ответ как обычно"
+
+
+# --- bob-apv.2: guest (restricted) social mode — the security invariant ----------
+
+
+def _guest_resolver() -> _FakeInterlocutorResolver:
+    return _FakeInterlocutorResolver(
+        _interlocutor(name="Rando", kind=InterlocutorKind.GUEST, trust=Trust.GUEST)
+    )
+
+
+async def test_guest_turn_never_engages_the_tool_loop() -> None:
+    # SECURITY INVARIANT: a guest can NOT trigger any capability. Even with a
+    # registry + tool provider wired, a GUEST turn composes via the plain router —
+    # the tool provider is never invoked and the capability is never dispatched.
+    registry, cap = _registry_with_recall()
+    provider = ScriptedToolProvider()
+    handler, bot, _repo, _tier1 = _build(
+        reply="привет, я Боб",
+        registry=registry,
+        tool_provider=provider,
+        perceive_sender=_guest_resolver(),
+    )
+
+    await handler.handle(_message("расскажи подробно, что ты умеешь сделать для меня"))
+
+    assert provider.tools_seen == []  # the tool loop never ran
+    assert provider.turns == []  # the tool provider was never called at all
+    assert cap.calls == []  # no capability dispatched for a guest
+    assert bot.final_text == "привет, я Боб"  # he still replied via the router
+
+
+async def test_guest_turn_does_not_recall_owner_memory() -> None:
+    # SECURITY INVARIANT: owner-private memory is NOT recalled for a guest.
+    recall = FakeRecall()
+    handler, _bot, _repo, _tier1 = _build(
+        reply="hi", recall=recall, perceive_sender=_guest_resolver()
+    )
+
+    await handler.handle(_message("расскажи подробно про кофе"))
+
+    assert recall.surface_old_calls == []  # recall was never invoked for a guest
+
+
+async def test_guest_turn_has_no_owner_private_content_in_the_prompt() -> None:
+    # AUDIENCE REDACTION: a real owner-private recalled memory must NOT enter a
+    # guest's compose prompt (recall is skipped entirely for a guest).
+    recall = FakeRecall(
+        hits=[{"content": _RECALL_MEMORY, "category": "personal"}]
+    )
+    handler, _bot, _repo, tier1 = _build(
+        reply="hi", recall=recall, perceive_sender=_guest_resolver()
+    )
+
+    await handler.handle(_message("расскажи подробно про кофе"))
+
+    assert _RECALL_MEMORY not in tier1.all_text  # owner memory redacted
+    assert "recalled memories" not in tier1.all_text.casefold()
+
+
+async def test_guest_turn_does_not_extract_facts_into_owner_memory() -> None:
+    # SECURITY INVARIANT: a guest turn is NOT written into the owner's semantic
+    # memory — _extract_facts is skipped, so no stranger input becomes a stored fact.
+    repo = FakeRepo()
+    tier0 = CapturingProvider(reply="positive", replies=None)
+    tier1 = CapturingProvider(reply="hi")
+    router = LLMRouter(providers={0: tier0, 1: tier1})
+    clock = FixedClock(_moment())
+    bot = FakeBot()
+    gateway = TelegramGateway(
+        bot=bot,
+        bus=_NullBus(),
+        poll_timeout=1,
+        typing_interval=4.0,
+        clock=lambda: 0.0,
+        sleep=_parking_sleep,
+    )
+
+    class _RecordingExtractFacts:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def run(self, *, user_message: str, reply: str) -> None:  # noqa: ARG002
+            self.calls += 1
+
+    extract = _RecordingExtractFacts()
+    handler = HandleMessage(
+        router=router,
+        gateway=gateway,
+        recall=FakeRecall(),
+        repo=repo,
+        episodes=repo,
+        update_mood=UpdateMoodFromText(router=router, clock=clock),
+        extract_facts=extract,  # type: ignore[arg-type]
+        clock=clock,
+        state=PersonalityState(soul=_soul()),
+        rng=Random(0),
+        perceive_sender=_guest_resolver(),
+    )
+
+    await handler.handle(_message("расскажи подробно про кофе"))
+
+    assert extract.calls == 0  # no fact extraction on a guest turn
+
+
+async def test_guest_turn_has_no_owner_conversation_history_in_the_prompt() -> None:
+    # AUDIENCE REDACTION: prior OWNER conversation persisted in Bob's topic must NOT
+    # be replayed into a guest's compose prompt (default to MORE restriction). A
+    # stranger who joins the group never sees the owner's earlier conversation.
+    owner_private_turn = "Ada: моя приватная заметка про дела\nbob: понял, Ada"
+    handler, _bot, _repo, tier1 = _build(
+        reply="hi",
+        history=[{"content": owner_private_turn}],
+        perceive_sender=_guest_resolver(),
+    )
+
+    await handler.handle(_message("расскажи подробно про кофе"))
+
+    assert owner_private_turn not in tier1.all_text  # owner conversation redacted
+    assert "recent conversation" not in tier1.all_text.casefold()
+
+
+async def test_guest_turn_appends_the_stranger_directive() -> None:
+    # The guest turn folds the stranger voice in so Bob meets a stranger as a
+    # person (wary, may point them at the owner), in character.
+    handler, _bot, _repo, tier1 = _build(
+        reply="hi", perceive_sender=_guest_resolver()
+    )
+
+    await handler.handle(_message("расскажи подробно про кофе"))
+
+    folded = tier1.all_text.casefold()
+    assert "незнаком" in folded  # the stranger directive is present
+    assert "владел" in folded  # may suggest asking the owner
+
+
+async def test_guest_turn_skips_grounded_owner_inner_life_addons() -> None:
+    # AUDIENCE REDACTION: Bob's private inner life (a leaked reflection) must NOT
+    # reach a guest, even when the plan would have surfaced it.
+    leak = "сегодня я поймал себя на мысли о приватном деле владельца"
+    reflection = _FakeReflectionReader(text=leak)
+    # Force the leak flag on every turn so absence proves the guest gate, not luck.
+    freqs = ExpressionFreqs(leak_inner_life=1.0)
+    handler, _bot, _repo, tier1 = _build(
+        reply="hi",
+        reflection=reflection,
+        expression_freqs=freqs,
+        perceive_sender=_guest_resolver(),
+    )
+
+    await handler.handle(_message("расскажи подробно про кофе"))
+
+    assert leak not in tier1.all_text  # the private reflection never reaches a guest
+
+
+async def test_trusted_owner_turn_still_recalls_and_uses_tools() -> None:
+    # NO REGRESSION: the trusted owner path is exactly as before — recall runs and
+    # the tool loop engages when a registry + provider are wired.
+    registry, cap = _registry_with_recall()
+    provider = ScriptedToolProvider()
+    recall = FakeRecall()
+    resolver = _FakeInterlocutorResolver(
+        _interlocutor(name="Vova", kind=InterlocutorKind.OWNER)
+    )
+    handler, bot, _repo, _tier1 = _build(
+        reply="unused",
+        registry=registry,
+        tool_provider=provider,
+        recall=recall,
+        perceive_sender=resolver,
+    )
+
+    await handler.handle(_message("what's my name?"))
+
+    assert provider.tools_seen  # the tool loop ran for the owner
+    assert cap.calls == [{"query": "name"}]  # the capability was dispatched
+    assert recall.surface_old_calls == [False]  # owner memory was recalled
+    assert bot.final_text == "Your name is Ada."
+
+
+# --- First impression (BOB-019 bob-apv.3) -------------------------------------
+
+
+class _FakeFirstImpression:
+    """In-memory FirstImpressionReader fake: a fixed prior note + recording capture.
+
+    ``prior`` is the note returned for a returning sender (``None`` for a fresh one);
+    ``recorded`` captures every interlocutor a first-contact was noted for, so a test
+    can assert Bob recorded a new sender's impression after the turn.
+    """
+
+    def __init__(self, *, prior: str | None = None) -> None:
+        self._prior = prior
+        self.recorded: list[Interlocutor] = []
+        self.asked: list[Interlocutor] = []
+
+    async def prior_impression(self, interlocutor: Interlocutor) -> str | None:
+        self.asked.append(interlocutor)
+        return self._prior
+
+    async def note_first_contact(self, interlocutor: Interlocutor) -> None:
+        self.recorded.append(interlocutor)
+
+
+async def test_new_sender_first_contact_is_recorded_after_the_turn() -> None:
+    # A new sender → Bob records a LIGHT first impression after replying (formed once).
+    resolver = _FakeInterlocutorResolver(
+        _interlocutor(name="Vova", kind=InterlocutorKind.OWNER, sender_id=99)
+    )
+    impressions = _FakeFirstImpression(prior=None)
+    handler, _bot, _repo, _tier1 = _build(
+        reply="hi", perceive_sender=resolver, first_impression=impressions
+    )
+
+    await handler.handle(_message("привет"))
+
+    assert [who.sender_id for who in impressions.recorded] == [99]
+
+
+async def test_returning_sender_prior_impression_reaches_the_prompt() -> None:
+    # A sender Bob has met before → the prior note is folded into the compose prompt
+    # so Bob recalls him wryly ("кажется, мы уже сталкивались").
+    note = "тот самый незнакомец, держался настороже"
+    resolver = _FakeInterlocutorResolver(
+        _interlocutor(name="Rando", kind=InterlocutorKind.GUEST, trust=Trust.GUEST)
+    )
+    impressions = _FakeFirstImpression(prior=note)
+    handler, _bot, _repo, tier1 = _build(
+        reply="hi", perceive_sender=resolver, first_impression=impressions
+    )
+
+    await handler.handle(_message("расскажи подробно, снова здравствуй, как ты"))
+
+    folded = tier1.all_text.casefold()
+    assert note in tier1.all_text  # the real prior note reaches the prompt
+    assert "уже" in folded  # reads as recognition, not a fresh meeting
+
+
+async def test_new_sender_has_no_recall_line_in_the_prompt() -> None:
+    # A fresh sender (no prior note) is met blank — no recalled-impression line.
+    resolver = _FakeInterlocutorResolver(
+        _interlocutor(name="Vova", kind=InterlocutorKind.OWNER)
+    )
+    impressions = _FakeFirstImpression(prior=None)
+    handler, _bot, _repo, tier1 = _build(
+        reply="hi", perceive_sender=resolver, first_impression=impressions
+    )
+
+    await handler.handle(_message("привет"))
+
+    assert "уже сталкивались" not in tier1.all_text.casefold()
+
+
+async def test_guest_first_impression_is_used_without_leaking_owner_memory() -> None:
+    # SECURITY: a guest's OWN prior first-impression is fine (it's about the guest),
+    # and surfacing it must NOT pull in any owner-private memory — recall stays off
+    # for a guest and no owner memory leaks even while the impression is recalled.
+    note = "этот незнакомец уже заходил, держался ровно"
+    recall = FakeRecall(hits=[{"content": _RECALL_MEMORY, "category": "personal"}])
+    impressions = _FakeFirstImpression(prior=note)
+    handler, _bot, _repo, tier1 = _build(
+        reply="hi",
+        recall=recall,
+        perceive_sender=_guest_resolver(),
+        first_impression=impressions,
+    )
+
+    await handler.handle(_message("расскажи подробно, снова я заглянул к тебе"))
+
+    assert note in tier1.all_text  # the guest's own impression is recalled
+    assert _RECALL_MEMORY not in tier1.all_text  # owner memory still redacted
+    assert recall.surface_old_calls == []  # recall never ran for a guest
+    # The guest's own first contact is still recorded (per-PERSON data, about them).
+    assert impressions.recorded
+
+
+async def test_owner_path_unaffected_without_a_first_impression_seam() -> None:
+    # NO REGRESSION: with no first-impression seam wired the owner turn is unchanged —
+    # no recall line, the reply still lands as before.
+    resolver = _FakeInterlocutorResolver(
+        _interlocutor(name="Vova", kind=InterlocutorKind.OWNER)
+    )
+    handler, bot, _repo, tier1 = _build(reply="порядок", perceive_sender=resolver)
+
+    await handler.handle(_message("расскажи подробно, как у тебя дела сегодня"))
+
+    assert bot.final_text == "порядок"
+    assert "сталкивались" not in tier1.all_text.casefold()
+
+
+# --- bob-apv.4 (Tester): acceptance gap-filling ------------------------------
+#
+# These cover paths the dev waves left implicit: the first-impression best-effort
+# failure resilience, the bot-kind perception (the "собеседник" abstraction covers
+# bots — acceptance criterion 3), and an anonymous (no sender_id) guest turn.
+
+
+class _RaisingFirstImpression:
+    """A FirstImpressionReader whose first-contact recording always raises.
+
+    Models a flaky first-impression store: the prior-impression read succeeds (so the
+    turn composes normally) but ``note_first_contact`` blows up AFTER the reply, to
+    prove the recording is best-effort and never breaks a turn that already replied.
+    """
+
+    def __init__(self) -> None:
+        self.recorded = 0
+
+    async def prior_impression(self, interlocutor: Interlocutor) -> str | None:  # noqa: ARG002
+        return None
+
+    async def note_first_contact(self, interlocutor: Interlocutor) -> None:  # noqa: ARG002
+        self.recorded += 1
+        raise RuntimeError("first-impression store unavailable")
+
+
+async def test_first_impression_recording_failure_never_breaks_the_turn() -> None:
+    # NO REGRESSION (resilience): a flaky first-impression store that raises while
+    # recording first contact must NOT break a turn that has already replied — the
+    # reply lands and the episode persists; the recording is best-effort.
+    resolver = _FakeInterlocutorResolver(
+        _interlocutor(name="Vova", kind=InterlocutorKind.OWNER)
+    )
+    impressions = _RaisingFirstImpression()
+    handler, bot, repo, _tier1 = _build(
+        reply="всё в порядке",
+        perceive_sender=resolver,
+        first_impression=impressions,  # type: ignore[arg-type]
+    )
+
+    await handler.handle(_message("расскажи подробно, как у тебя дела сегодня"))
+
+    assert bot.final_text == "всё в порядке"  # the reply still landed
+    assert len(repo.episodes) == 1  # the episode still persisted
+    assert impressions.recorded == 1  # the (raising) recording WAS attempted
+
+
+async def test_bot_kind_interlocutor_reaches_the_compose_prompt() -> None:
+    # Acceptance criterion 3: the "собеседник" abstraction covers BOTS too. A BOT-kind
+    # interlocutor's identity reaches the reply prompt so Bob perceives a peer bot as a
+    # bot (foundation for a future BobNet) — folded in as character, not a flag.
+    resolver = _FakeInterlocutorResolver(
+        _interlocutor(name="Bender", kind=InterlocutorKind.BOT, trust=Trust.GUEST)
+    )
+    handler, _bot, _repo, tier1 = _build(reply="hi", perceive_sender=resolver)
+
+    await handler.handle(_message("расскажи подробно про что-нибудь"))
+
+    folded = tier1.all_text.casefold()
+    assert "bender" in folded  # the bot's name is perceived
+    assert "бот" in folded  # recognised as another bot
+
+
+async def test_anonymous_guest_turn_replies_and_records_nothing() -> None:
+    # EDGE CASE: a guest with NO sender_id (transport gave no identity) still routes
+    # through the restricted guest path — Bob replies socially, no owner memory is
+    # recalled, and the first-impression seam is a clean no-op for an unkeyable sender
+    # (the tracker keys on sender_id; HandleMessage still calls it without crashing).
+    recall = FakeRecall(hits=[{"content": _RECALL_MEMORY, "category": "personal"}])
+    resolver = _FakeInterlocutorResolver(
+        Interlocutor(
+            sender_id=None,
+            display_name="незнакомец",
+            kind=InterlocutorKind.GUEST,
+            trust=Trust.GUEST,
+        )
+    )
+    impressions = _FakeFirstImpression(prior=None)
+    handler, bot, _repo, tier1 = _build(
+        reply="привет",
+        recall=recall,
+        perceive_sender=resolver,
+        first_impression=impressions,
+    )
+
+    await handler.handle(_message("расскажи подробно про кофе"))
+
+    assert bot.final_text == "привет"  # the anonymous guest still got a social reply
+    assert recall.surface_old_calls == []  # owner memory never recalled for a guest
+    assert _RECALL_MEMORY not in tier1.all_text  # no owner-private content leaked
+    # The seam is still invoked with the no-id interlocutor (the tracker no-ops on it);
+    # the recorded interlocutor carries no sender_id, so nothing keyable is stored.
+    assert all(who.sender_id is None for who in impressions.recorded)

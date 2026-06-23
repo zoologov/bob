@@ -31,7 +31,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from bob.domain.personality.interlocutor import InterlocutorKind
+
 if TYPE_CHECKING:
+    from bob.domain.personality.interlocutor import Interlocutor
     from bob.domain.personality.mood import Mood
 
 # Written as Bob's voice, not a checklist: how he lands a message. The few-shot
@@ -194,6 +197,107 @@ _OFFDAY_TONE = (
     "Это не повод грубить и не обида на собеседника — ты просто приглушённее и "
     "честнее, без грубости и без нытья."
 )
+
+
+# Who-is-writing directive (BOB-019): Bob *perceives* who is on the other side of
+# the turn and lets it colour his voice — the owner he knows by name, a known
+# friend, a stranger to meet warily-but-warmly, or another bot. Written as
+# character (a person naturally clocks who he's talking to), not a config flag:
+# the kind is rendered as a short Russian label the model reads as social context,
+# never a rule to recite. It is perception only — it changes HOW Bob sounds, not
+# WHICH pipeline runs (the guest-restricted path is a later bead).
+# Cyrillic look-alikes are intentional in these Russian literals.
+_KIND_LABEL: dict[InterlocutorKind, str] = {
+    InterlocutorKind.OWNER: "твой владелец",
+    InterlocutorKind.KNOWN: "твой знакомый",
+    InterlocutorKind.GUEST: "незнакомец",
+    InterlocutorKind.BOT: "другой бот",
+}
+
+
+def who_is_writing_directive(interlocutor: Interlocutor) -> str:
+    """Return the who-is-writing voice line for this turn's sender (BOB-019).
+
+    Folds WHO Bob is talking to into the prompt as social context — the display
+    name plus a short Russian kind-label (owner / known / stranger / bot) — so Bob
+    recognises the owner AS the owner, greets a known friend, and clocks a stranger
+    or a bot. Written as character (a person naturally senses who he is speaking
+    with), not a config switch; it shapes the voice only and never decides which
+    pipeline runs. Pure and deterministic: same interlocutor → same line.
+    """
+    label = _KIND_LABEL[interlocutor.kind]
+    # Russian persona line (project language); Cyrillic look-alikes intentional.
+    return (
+        f"Сейчас тебе пишет: {interlocutor.display_name} ({label}). "
+        "Держи в голове, кто перед тобой, и отвечай соответственно — "
+        "как живой человек, который понимает, с кем говорит."
+    )
+
+
+# Stranger directive (BOB-019 bob-apv.2): the guest (restricted) turn appends this.
+# A guest is an unauthorized person who nonetheless reached Bob socially (in the
+# allowed chat + his topic); Bob meets them as a person — but warily, and WITHOUT
+# spilling the owner's private world. Written as character (how Bob meets a stranger),
+# not a config flag: greet or stay reserved, politely decline what he won't do, and
+# point them at the owner — but never reveal the owner's private information. The
+# application path already enforces the hard invariant (no tools, no owner memory);
+# this is the matching voice so the wariness reads as personality, not a wall.
+# Cyrillic look-alikes are intentional in these Russian literals.
+_STRANGER = (
+    "Тебе пишет незнакомый человек — не твой владелец и не кто-то из знакомых. "
+    "Встреть его как живой человек, но настороже: реши по себе — поздороваться "
+    "и поговорить, держаться сдержанно или вежливо отшить. Можешь предложить "
+    "обратиться к твоему владельцу, если просят то, чего ты для чужого делать не "
+    "станешь. Главное: не раскрывай личное и приватное владельца — ни его дела, "
+    "ни память, ни детали о нём; о таком — только с ним самим. Без грубости без "
+    "причины, но и без наивной открытости."
+)
+
+
+def stranger_directive() -> str:
+    """Return the stranger (guest-mode) voice directive (BOB-019 bob-apv.2).
+
+    Character guidance for a turn where the sender is an unauthorized GUEST who
+    reached Bob's social path: he meets them as a person but warily — greet or stay
+    reserved, politely decline, or point them at the owner — and crucially NEVER
+    reveals the owner's private information. Pure, argument-free, appended to the
+    compose prompt by HandleMessage ONLY on a guest turn; it is the voice half of
+    the hard restriction the application enforces (no tools, no owner memory recall).
+    """
+    return _STRANGER
+
+
+# Recalled-impression directive (BOB-019 bob-apv.3): when someone Bob has met before
+# writes again, his LIGHT first-impression note (formed on first contact, kept per
+# sender) is folded in so he recalls them wryly — "кажется, мы уже сталкивались" —
+# instead of meeting them as a blank stranger. Written as voice (Bob naturally clocks
+# a returning face), not a config flag; it is grounded in the REAL stored note, never a
+# fabricated past. The application appends it only when a prior impression exists.
+# Cyrillic look-alikes are intentional in these Russian literals.
+_RECALLED_IMPRESSION_PREFIX = (
+    # Cyrillic look-alikes intentional in these Russian literals.
+    "Этого человека ты уже видел — кажется, вы уже сталкивались. "
+    "Твоё прежнее впечатление о нём было такое: "
+)
+_RECALLED_IMPRESSION_SUFFIX = (
+    # Cyrillic look-alikes intentional in this Russian literal.
+    " Можешь припомнить это к слову, в своём стиле, "
+    "не делая из этого досье."
+)
+
+
+def recalled_impression_directive(note: str) -> str:
+    """Return the recalled first-impression voice line for a returning sender (BOB-019).
+
+    Folds Bob's LIGHT prior first-impression ``note`` (formed on first contact, kept
+    per sender) into the prompt so he recalls a returning person wryly — "кажется, мы
+    уже сталкивались" — rather than meeting them blank. Written as character (a person
+    clocks a face he has seen before), grounded strictly in the real stored note (no
+    fabricated past), and kept light — not a dossier. Pure and deterministic: the same
+    note always yields the same line. The application appends it only when a prior
+    impression exists for this sender.
+    """
+    return f"{_RECALLED_IMPRESSION_PREFIX}{note}{_RECALLED_IMPRESSION_SUFFIX}"
 
 
 def tone_directive(mood: Mood, *, thresholds: OffDayThresholds | None = None) -> str:

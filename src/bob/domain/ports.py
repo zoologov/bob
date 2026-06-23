@@ -27,6 +27,7 @@ from typing import TYPE_CHECKING, Literal, Protocol, runtime_checkable
 if TYPE_CHECKING:
     from bob.domain.memory.entities import SemanticFact
     from bob.domain.personality.fascination import Fascination
+    from bob.domain.personality.first_impression import FirstImpression
     from bob.domain.personality.negotiation import NegotiationZone
     from bob.domain.personality.taste import Verdict
     from bob.domain.proactivity.state import ProactivityState
@@ -40,6 +41,7 @@ __all__ = [
     "EventBus",
     "EventHandler",
     "FascinationStore",
+    "FirstImpressionStore",
     "JsonValue",
     "LLMMessage",
     "LLMProvider",
@@ -419,6 +421,30 @@ class FascinationStore(Protocol):
 
     async def save(self, persona_id: str, fascination: Fascination) -> None:
         """Persist ``fascination`` for ``persona_id`` (replacing any prior one)."""
+        ...
+
+
+@runtime_checkable
+class FirstImpressionStore(Protocol):
+    """Durable per-sender store for Bob's LIGHT first impression (BOB-019).
+
+    Round-trips the :class:`bob.domain.personality.first_impression.FirstImpression`
+    Bob forms on first contact with a person — who (``sender_id``), when he first met
+    them, and a short impression note — so a returning sender is *recognised*
+    ("кажется, мы уже сталкивались"). Keyed by ``sender_id`` it covers owner / known /
+    guest / bot alike; this is per-PERSON data (about them), NOT owner-private memory,
+    so it is allowed even for a guest. ``load`` returns ``None`` for an unseen sender;
+    ``save`` records once and never overwrites a known sender (the impression is formed
+    on first contact). The deliberately minimal foundation for multi-party BOB-014, not
+    that engine. The concrete SQLite-backed adapter lives in ``bob.infrastructure``.
+    """
+
+    async def load(self, sender_id: int) -> FirstImpression | None:
+        """Return ``sender_id``'s first impression, or ``None`` if there is none."""
+        ...
+
+    async def save(self, impression: FirstImpression) -> None:
+        """Record ``impression`` once — a known sender is never overwritten."""
         ...
 
 
