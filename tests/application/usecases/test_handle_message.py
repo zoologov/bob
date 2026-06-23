@@ -298,6 +298,7 @@ def _build(
     reply: str,
     history: Sequence[Mapping[str, object]] = (),
     tier0_replies: Sequence[str] | None = None,
+    tier1_replies: Sequence[str] | None = None,
     registry: CapabilityRegistry | None = None,
     tool_provider: ToolCallingProvider | None = None,
     owner_activity: OwnerActivityRecorder | None = None,
@@ -312,7 +313,7 @@ def _build(
     surface_old_freq: float | None = None,
 ) -> tuple[HandleMessage, FakeBot, FakeRepo, CapturingProvider]:
     tier0 = CapturingProvider(reply="positive", replies=tier0_replies)
-    tier1 = CapturingProvider(reply=reply)
+    tier1 = CapturingProvider(reply=reply, replies=tier1_replies)
     router = LLMRouter(providers={0: tier0, 1: tier1})
     clock = FixedClock(_moment())
     bot = FakeBot()
@@ -1502,3 +1503,69 @@ async def test_mention_fascination_is_a_noop_when_flag_is_off() -> None:
     await handler.handle(_message("расскажи подробно, чем занимался сегодня"))
 
     assert "орбитальная механика" not in tier1.all_text
+
+
+# --- BOB-022: anti-repeat guard (defense in depth) ----------------------------
+
+# A prior turn whose Bob reply is exactly what the model is about to repeat.
+_REPEATED_REPLY = "Это длинный осмысленный ответ про космос и Бобиверс."
+_PRIOR_DUP_TURN = f"Ada: расскажи\nbob: {_REPEATED_REPLY}"
+
+
+async def test_verbatim_duplicate_reply_triggers_one_regeneration() -> None:
+    # BOB-022: when the fresh reply is byte-identical (after strip) to Bob's most-
+    # recent prior reply on record, handle() regenerates ONCE; with sampling now
+    # stochastic the retry differs, so the committed reply is the fresh one.
+    handler, bot, _repo, tier1 = _build(
+        reply="unused",
+        tier1_replies=[_REPEATED_REPLY, "А вот теперь совсем другой ответ."],
+        history=[{"content": _PRIOR_DUP_TURN, "event_type": "message"}],
+    )
+
+    await handler.handle(_message("объясни подробно ещё раз то же самое"))
+
+    # The guard fired exactly one extra generation and the final reply differs.
+    assert len(tier1.payloads) == 2
+    assert bot.final_text == "А вот теперь совсем другой ответ."
+
+
+async def test_verbatim_duplicate_kept_when_regeneration_still_identical() -> None:
+    # No infinite loop: if the single retry is ALSO identical, the reply is kept.
+    handler, bot, _repo, tier1 = _build(
+        reply="unused",
+        tier1_replies=[_REPEATED_REPLY, _REPEATED_REPLY],
+        history=[{"content": _PRIOR_DUP_TURN, "event_type": "message"}],
+    )
+
+    await handler.handle(_message("объясни подробно ещё раз то же самое"))
+
+    # At most one extra generation; the (still-duplicate) reply is committed.
+    assert len(tier1.payloads) == 2
+    assert bot.final_text == _REPEATED_REPLY
+
+
+async def test_non_duplicate_reply_does_not_regenerate() -> None:
+    # The common case: a fresh, non-duplicate reply is committed with no extra
+    # generation — the guard only fires on an exact repeat of the last Bob reply.
+    handler, bot, _repo, tier1 = _build(
+        reply="Совершенно свежий ответ, не повтор.",
+        history=[{"content": _PRIOR_DUP_TURN, "event_type": "message"}],
+    )
+
+    await handler.handle(_message("объясни подробно что-то новое"))
+
+    assert len(tier1.payloads) == 1
+    assert bot.final_text == "Совершенно свежий ответ, не повтор."
+
+
+async def test_guard_is_a_noop_with_no_prior_bob_reply_in_history() -> None:
+    # With no prior Bob turn on record there is nothing to duplicate: the first
+    # reply is committed as-is, no extra generation.
+    handler, bot, _repo, tier1 = _build(
+        reply="Первый ответ в диалоге.",
+    )
+
+    await handler.handle(_message("расскажи подробно про кофе"))
+
+    assert len(tier1.payloads) == 1
+    assert bot.final_text == "Первый ответ в диалоге."

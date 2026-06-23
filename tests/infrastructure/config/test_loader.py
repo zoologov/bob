@@ -176,6 +176,33 @@ def test_telegram_defaults_have_two_bot_shape() -> None:
     assert telegram["poll_timeout"] == 10
 
 
+def test_llm_temperature_defaults_steady_tier0_varied_tier1() -> None:
+    # BOB-022: a steadier Tier 0 (classification/sentiment) and a more varied Tier 1
+    # (user-facing replies) so identical prompts no longer decode to identical text.
+    loader = ConfigLoader(yaml_path=None, env={})
+
+    # Act
+    llm = loader.load()["llm"]
+
+    # Assert
+    assert llm["tier0_temperature"] == 0.5
+    assert llm["tier1_temperature"] == 0.8
+
+
+def test_llm_temperature_overridable_via_env() -> None:
+    # Arrange: override the Tier 1 reply temperature via env only.
+    loader = ConfigLoader(
+        yaml_path=None,
+        env={"BOB_LLM__TIER1_TEMPERATURE": "0.9"},
+    )
+
+    # Act
+    llm = loader.load()["llm"]
+
+    # Assert: env wins (arrives as a string; the factory parses it numerically).
+    assert llm["tier1_temperature"] == "0.9"
+
+
 def test_embeddings_defaults_are_local_bge_m3_1024() -> None:
     # Arrange
     loader = ConfigLoader(yaml_path=None, env={})

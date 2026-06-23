@@ -241,6 +241,137 @@ async def test_thinking_enabled_omits_directive(captured: dict[str, object]) -> 
         await runner.cleanup()
 
 
+async def test_temperature_rides_in_non_stream_payload(
+    captured: dict[str, object],
+) -> None:
+    # BOB-022: a configured sampling temperature must reach the request body so
+    # identical prompts no longer decode greedily to byte-identical output.
+    async def handler(request: web.Request) -> web.Response:
+        captured["payload"] = await request.json()
+        return web.json_response({"choices": [{"message": {"content": "ok"}}]})
+
+    base_url, runner = await _start_server(handler)
+    try:
+        provider = OpenAICompatProvider(
+            base_url=base_url, model="m", api_key="k", temperature=0.8
+        )
+
+        # Act
+        await provider.complete([{"role": "user", "content": "hi"}], stream=False)
+
+        # Assert
+        payload = captured["payload"]
+        assert isinstance(payload, dict)
+        assert payload["temperature"] == 0.8
+    finally:
+        await runner.cleanup()
+
+
+async def test_temperature_rides_in_stream_payload(
+    captured: dict[str, object],
+) -> None:
+    # The sampling temperature must reach the streaming path too.
+    async def handler(request: web.Request) -> web.StreamResponse:
+        captured["payload"] = await request.json()
+        response = web.StreamResponse()
+        response.headers["Content-Type"] = "text/event-stream"
+        await response.prepare(request)
+        await response.write(b"data: [DONE]\n\n")
+        await response.write_eof()
+        return response
+
+    base_url, runner = await _start_server(handler)
+    try:
+        provider = OpenAICompatProvider(
+            base_url=base_url, model="m", api_key="k", temperature=0.5
+        )
+
+        # Act
+        result = await provider.complete([{"role": "user", "content": "hi"}], stream=True)
+        assert isinstance(result, AsyncIterator)
+        [_tok async for _tok in result]
+
+        # Assert
+        payload = captured["payload"]
+        assert isinstance(payload, dict)
+        assert payload["temperature"] == 0.5
+    finally:
+        await runner.cleanup()
+
+
+async def test_temperature_rides_in_tool_call_payload(
+    captured: dict[str, object],
+) -> None:
+    # The sampling temperature must reach the tool-calling path too.
+    async def handler(request: web.Request) -> web.Response:
+        captured["payload"] = await request.json()
+        return web.json_response({"choices": [{"message": {"content": "done"}}]})
+
+    base_url, runner = await _start_server(handler)
+    try:
+        provider = OpenAICompatProvider(
+            base_url=base_url, model="m", api_key="k", temperature=0.8
+        )
+
+        # Act
+        await provider.complete_with_tools(
+            [{"role": "user", "content": "hi"}], tools=[]
+        )
+
+        # Assert
+        payload = captured["payload"]
+        assert isinstance(payload, dict)
+        assert payload["temperature"] == 0.8
+    finally:
+        await runner.cleanup()
+
+
+async def test_top_p_rides_in_payload_when_set(captured: dict[str, object]) -> None:
+    # An optional nucleus-sampling top_p reaches the body when configured.
+    async def handler(request: web.Request) -> web.Response:
+        captured["payload"] = await request.json()
+        return web.json_response({"choices": [{"message": {"content": "ok"}}]})
+
+    base_url, runner = await _start_server(handler)
+    try:
+        provider = OpenAICompatProvider(
+            base_url=base_url, model="m", api_key="k", temperature=0.8, top_p=0.95
+        )
+
+        # Act
+        await provider.complete([{"role": "user", "content": "hi"}], stream=False)
+
+        # Assert
+        payload = captured["payload"]
+        assert isinstance(payload, dict)
+        assert payload["top_p"] == 0.95
+    finally:
+        await runner.cleanup()
+
+
+async def test_temperature_omitted_when_unset(captured: dict[str, object]) -> None:
+    # Backward compatible: with no temperature configured, the field is NOT forced
+    # into the payload (the endpoint keeps its own default).
+    async def handler(request: web.Request) -> web.Response:
+        captured["payload"] = await request.json()
+        return web.json_response({"choices": [{"message": {"content": "ok"}}]})
+
+    base_url, runner = await _start_server(handler)
+    try:
+        provider = OpenAICompatProvider(base_url=base_url, model="m", api_key="k")
+
+        # Act
+        await provider.complete([{"role": "user", "content": "hi"}], stream=False)
+
+        # Assert
+        payload = captured["payload"]
+        assert isinstance(payload, dict)
+        assert "temperature" not in payload
+        assert "top_p" not in payload
+    finally:
+        await runner.cleanup()
+
+
 async def test_null_content_degrades_to_empty_string(captured: dict[str, object]) -> None:
     # Arrange: a reasoning model that spent its budget on reasoning_content,
     # leaving message.content null — must NOT error, degrade to "".

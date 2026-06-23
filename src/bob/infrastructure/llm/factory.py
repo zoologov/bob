@@ -52,6 +52,7 @@ def build_tier_providers(config: Mapping[str, object]) -> dict[int, LLMProvider]
         api_key=_optional_str(llm, "tier0_api_key"),
         timeout_seconds=timeout_seconds,
         disable_thinking=disable_thinking,
+        temperature=_optional_float_or_none(llm, "tier0_temperature"),
     )
     tier1 = OpenAICompatProvider(
         base_url=_require_str(llm, "tier1_base_url"),
@@ -59,6 +60,7 @@ def build_tier_providers(config: Mapping[str, object]) -> dict[int, LLMProvider]
         api_key=_optional_str(llm, "tier1_api_key"),
         timeout_seconds=timeout_seconds,
         disable_thinking=disable_thinking,
+        temperature=_optional_float_or_none(llm, "tier1_temperature"),
     )
     return {_TIER_LOCAL: tier0, _TIER_API: tier1}
 
@@ -94,6 +96,17 @@ def _optional_float(section: Mapping[str, object], key: str, default: float) -> 
         except ValueError as exc:
             raise KeyError(f"llm.{key} must be a number") from exc
     raise KeyError(f"llm.{key} must be a number")
+
+
+def _optional_float_or_none(section: Mapping[str, object], key: str) -> float | None:
+    """Read an optional numeric setting (env-string tolerated); ``None`` when absent.
+
+    Used for the per-tier sampling temperature (BOB-022): absent means the provider
+    forces nothing and the endpoint keeps its own default.
+    """
+    if section.get(key) is None:
+        return None
+    return _optional_float(section, key, default=0.0)
 
 
 def _optional_bool(section: Mapping[str, object], key: str, *, default: bool) -> bool:

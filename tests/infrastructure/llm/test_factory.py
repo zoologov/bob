@@ -181,3 +181,45 @@ def test_disable_thinking_defaults_off_when_absent() -> None:
     tier1 = providers[1]
     assert isinstance(tier1, OpenAICompatProvider)
     assert tier1._disable_thinking is False
+
+
+def test_per_tier_temperature_threaded_into_providers() -> None:
+    # BOB-022: a steadier Tier 0 (classification) and a more varied Tier 1
+    # (user-facing replies) temperature reach the right provider.
+    config = {"llm": {**_full_llm(), "tier0_temperature": 0.5, "tier1_temperature": 0.8}}
+
+    # Act
+    providers = build_tier_providers(config)
+
+    # Assert
+    tier0, tier1 = providers[0], providers[1]
+    assert isinstance(tier0, OpenAICompatProvider)
+    assert isinstance(tier1, OpenAICompatProvider)
+    assert tier0._temperature == 0.5
+    assert tier1._temperature == 0.8
+
+
+def test_temperature_absent_stays_none() -> None:
+    # Arrange: no temperature configured -> the provider forces nothing (endpoint
+    # keeps its own default).
+    providers = build_tier_providers({"llm": _full_llm()})
+
+    # Assert
+    tier0, tier1 = providers[0], providers[1]
+    assert isinstance(tier0, OpenAICompatProvider)
+    assert isinstance(tier1, OpenAICompatProvider)
+    assert tier0._temperature is None
+    assert tier1._temperature is None
+
+
+def test_temperature_parses_from_env_string() -> None:
+    # Env overlays arrive as strings; the factory tolerates a numeric string.
+    config = {"llm": {**_full_llm(), "tier1_temperature": "0.8"}}
+
+    # Act
+    providers = build_tier_providers(config)
+
+    # Assert
+    tier1 = providers[1]
+    assert isinstance(tier1, OpenAICompatProvider)
+    assert tier1._temperature == 0.8

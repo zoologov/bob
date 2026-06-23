@@ -399,6 +399,14 @@ class HandleMessage:
         # stays visible for the whole real wait (BOB-009); then commit one rich final.
         async with self._gateway.typing_indicator(chat_id=event.chat_id):
             reply = await self._compose_reply(event.text, soul, recalled, history, plan)
+            # Anti-repeat guard (BOB-022, defense in depth): if the fresh reply is
+            # byte-identical (after strip) to Bob's most-recent prior reply, regenerate
+            # ONCE — with sampling now stochastic the retry differs. At most one extra
+            # generation, only on an exact duplicate; if the retry is still identical it
+            # is kept (no infinite loop).
+            reply = await self._guard_against_verbatim_repeat(
+                reply, event.text, soul, recalled, history, plan
+            )
         await self._gateway.reply(chat_id=event.chat_id, markdown=reply)
         await self._persist(event, reply, soul)
         await self._record_owner_activity()
@@ -486,6 +494,29 @@ class HandleMessage:
             tier_override=tier,
         )
         return await self._router.run(request)
+
+    async def _guard_against_verbatim_repeat(
+        self,
+        reply: str,
+        text: str,
+        soul: SOUL,
+        recalled: Sequence[Recalled],
+        history: Sequence[Mapping[str, object]],
+        plan: ExpressionPlan,
+    ) -> str:
+        """Recompose once if ``reply`` byte-repeats Bob's last reply (BOB-022).
+
+        The verbatim-repeat bug was greedy decoding: an identical prompt returned
+        byte-identical text. Sampling temperature (the primary fix) makes that
+        stochastic; this is defense in depth. Only an EXACT duplicate (after strip)
+        of Bob's most-recent prior reply on record triggers a single regeneration —
+        the retry, drawn stochastically, almost always differs. If it is still
+        identical it is kept, so there is never more than one extra generation.
+        """
+        previous = _last_bob_reply(history)
+        if not previous or reply.strip() != previous.strip():
+            return reply
+        return await self._compose_reply(text, soul, recalled, history, plan)
 
     async def _with_grounded_addons(
         self, context: str, text: str, plan: ExpressionPlan
@@ -705,6 +736,29 @@ def _assemble_shareable_context(
     if memories:
         lines.append("Recalled memories: " + " | ".join(memories))
     return "\n".join(lines)
+
+
+# Marker prefixing Bob's turn inside a persisted episode's ``content`` (see
+# :meth:`HandleMessage._persist`, which writes "<sender>: <text>\nbob: <reply>").
+_BOB_TURN_MARKER = "\nbob: "
+
+
+def _last_bob_reply(history: Sequence[Mapping[str, object]]) -> str:
+    """Return Bob's most-recent reply text from the replayed history, or ``""``.
+
+    Episodes are stored as ``"<sender>: <text>\\nbob: <reply>"`` (see
+    :meth:`HandleMessage._persist`); this scans the most-recent episodes back to
+    front and recovers the ``bob:`` half so the anti-repeat guard can compare the
+    fresh reply against it (BOB-022). No Bob turn on record yields ``""``.
+    """
+    for item in reversed(list(history)):
+        content = item.get("content")
+        if not isinstance(content, str):
+            continue
+        marker = content.rfind(_BOB_TURN_MARKER)
+        if marker != -1:
+            return content[marker + len(_BOB_TURN_MARKER) :]
+    return ""
 
 
 def _mood_state(soul: SOUL) -> dict[str, object]:
