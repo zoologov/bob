@@ -253,8 +253,18 @@ class MemoryRepo(Protocol):
 class MemoryRecall(Protocol):
     """Relevance retrieval over memory (P0: FTS5 keyword; seam for vectors)."""
 
-    async def recall(self, query: str, *, k: int) -> Sequence[Recalled]:
-        """Return the top-``k`` memories relevant to ``query``."""
+    async def recall(
+        self, query: str, *, k: int, surface_old: bool = False
+    ) -> Sequence[Recalled]:
+        """Return the top-``k`` memories relevant to ``query``.
+
+        ``surface_old`` is an ADDITIVE opt-in (BOB-021 mechanism 1): when set, an
+        implementation MAY blend ONE old-but-relevant memory into the result (relevant
+        by embedding, biased toward an older timestamp) so a deep cut can surface that
+        recency ordering would otherwise drop. It defaults off — the default call is a
+        drop-in, unchanged contract — and an implementation with no age signal
+        (keyword-only) treats it as a graceful no-op.
+        """
         ...
 
 

@@ -120,6 +120,38 @@ DEFAULT_CONFIG: Config = {
             "mention_freq": 0.1,
         },
     },
+    # Memory consolidation (BOB-021): a rare, non-destructive reflect-tick step that
+    # folds OLD un-consolidated episodes into a Tier-0 digest (embedded, recalled like
+    # any episode) and flags the sources. Conservative defaults: only episodes at least
+    # two weeks old are eligible, a modest batch per tick. ``enabled`` false keeps the
+    # step inert until deliberately switched on per persona.
+    "memory": {
+        "consolidation": {
+            "enabled": False,
+            "max_age_days": 14.0,
+            "batch_size": 50,
+        },
+        # Fact dedup (BOB-021): a rare, conservative, non-destructive reflect-tick step
+        # that merges near-duplicate semantic facts (cosine of embeddings above a high
+        # threshold) into a canonical one, flagging the rest superseded (excluded from
+        # recall, never deleted). ``threshold`` is deliberately high so dissimilar facts
+        # are never merged; ``enabled`` false keeps the step inert until switched on. It
+        # needs an embedder — with keyword-only memory the step is a no-op.
+        "dedup": {
+            "enabled": False,
+            "threshold": 0.92,
+            "batch_size": 200,
+        },
+        # Surface-old (BOB-021 mechanism 1, "что-то напомнило"): on a (rare) BOB-018
+        # callback turn, Bob occasionally reaches for an OLD-but-relevant memory via
+        # recall's additive ``surface_old`` opt-in, so a deep cut can come back à propos.
+        # ``freq`` is how often a callback asks for the old blend — small (anti-tic), and
+        # it rides ONLY the callback path. The default recall is unchanged (drop-in); a
+        # callback with no old-but-relevant hit is a clean no-op (Bob never confabulates).
+        "surface_old": {
+            "freq": 0.15,
+        },
+    },
     # Two bots in one process (BOB-003): Bob lives in his topic, GUPPI is the
     # gatekeeper in General. Each bot's token comes from env only (never YAML);
     # the shared ids (chat/owner/allowlist) and Bob's topic are non-secret.

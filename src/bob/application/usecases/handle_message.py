@@ -103,6 +103,17 @@ _RECALL_K = 5
 # past moment on the topic (a tight, grounded steer — never a memory dump).
 _CALLBACK_RECALL_K = 1
 
+# How often a callback turn reaches for an OLD-but-relevant memory instead of the
+# default best hit (BOB-021 mechanism 1, "что-то напомнило"). On a callback (already
+# rare/state-driven from BOB-018), a small extra draw occasionally asks recall for the
+# surface_old blend so a deep cut can come back à propos — grounded, no-op when nothing
+# old is relevant. Deliberately small (anti-tic); tunable via ``memory.surface_old.freq``.
+_DEFAULT_SURFACE_OLD_FREQ = 0.15
+
+# A frequency must read as a probability in the closed unit interval.
+_MIN_FREQ = 0.0
+_MAX_FREQ = 1.0
+
 # How many recent conversation turns to replay into the reply context.
 _HISTORY_K = 6
 
@@ -286,6 +297,7 @@ class HandleMessage:
         reflection: ReflectionReader | None = None,
         fascination: CurrentFascinationReader | None = None,
         offday_thresholds: OffDayThresholds | None = None,
+        surface_old_freq: float = _DEFAULT_SURFACE_OLD_FREQ,
     ) -> None:
         self._router = router
         self._gateway = gateway
@@ -352,6 +364,18 @@ class HandleMessage:
         self._offday_thresholds = (
             offday_thresholds if offday_thresholds is not None else OffDayThresholds()
         )
+        # The surface-old seam (BOB-021 mechanism 1): on a (rare) callback turn, Bob
+        # occasionally reaches for an OLD-but-relevant memory via recall's additive
+        # surface_old opt-in, so a deep cut can come back à propos ("что-то напомнило").
+        # The extra draw uses the same seeded RNG (reproducible) and fires on a small
+        # fraction of callbacks only — not every callback, never on a non-callback turn.
+        if not _MIN_FREQ <= surface_old_freq <= _MAX_FREQ:
+            msg = (
+                f"surface_old_freq must be within [{_MIN_FREQ}, {_MAX_FREQ}], "
+                f"got {surface_old_freq}"
+            )
+            raise ValueError(msg)
+        self._surface_old_freq = surface_old_freq
 
     async def handle(self, event: MessageReceived) -> None:
         """Process one received message end to end (the EventBus subscriber)."""
@@ -500,10 +524,19 @@ class HandleMessage:
         Reuses the hybrid recall (BOB-011) on the current topic; a real past moment
         comes back → it is offered as a callback. Mirrors BOB-012 grounding: an
         empty recall yields nothing, so Bob never confabulates a shared moment.
+
+        Occasionally (a small seeded draw, BOB-021 mechanism 1) the recall is asked
+        with ``surface_old`` so the callback can reach an OLD-but-relevant deep cut
+        ("что-то напомнило") instead of only the freshest hit — still grounded (a real
+        recall hit) and a no-op when nothing relevant comes back. The draw rides ONLY
+        the callback path and fires on a fraction of callbacks, never every turn.
         """
         if not plan.callback:
             return ""
-        recalled = await self._recall.recall(text, k=_CALLBACK_RECALL_K)
+        surface_old = self._draw_surface_old()
+        recalled = await self._recall.recall(
+            text, k=_CALLBACK_RECALL_K, surface_old=surface_old
+        )
         moment = next(
             (str(item.get("content", "")) for item in recalled if item.get("content")),
             "",
@@ -511,6 +544,18 @@ class HandleMessage:
         if not moment:
             return ""
         return f"{_CALLBACK_PREFACE} {moment}"
+
+    def _draw_surface_old(self) -> bool:
+        """Fire the rare surface_old draw for this callback (BOB-021, seeded RNG).
+
+        A hard off at frequency ``0`` (the default path never asks for the old blend);
+        otherwise an occasional ``True`` so a callback reaches an old-but-relevant deep
+        cut on a small fraction of callbacks. Uses the same injected seeded RNG as the
+        expression plan, so the whole turn stays reproducible under a fixed seed.
+        """
+        if self._surface_old_freq <= _MIN_FREQ:
+            return False
+        return self._rng.random() < self._surface_old_freq
 
     async def _mention_fascination(self, plan: ExpressionPlan) -> str:
         """The fascination line for this turn, or ``""`` (no flag / no reader / none).

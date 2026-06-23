@@ -9,7 +9,12 @@ CREATE TABLE IF NOT EXISTS episodic_log (
     event_type    TEXT    NOT NULL,
     content       TEXT    NOT NULL,
     mood_snapshot TEXT,                        -- mood at the moment (nullable)
-    tags          TEXT    NOT NULL DEFAULT ''  -- comma-separated labels
+    tags          TEXT    NOT NULL DEFAULT '', -- comma-separated labels
+    -- BOB-021 consolidation: 1 once this episode has been folded into a digest
+    -- (event_type='digest'). Non-destructive — the original row is kept, only
+    -- flagged, so it is excluded from re-consolidation. Additive for fresh DBs;
+    -- a guarded ALTER in initialize() migrates pre-existing DBs (defaults to 0).
+    consolidated  INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE INDEX IF NOT EXISTS idx_episodic_ts ON episodic_log (ts DESC);
@@ -43,7 +48,14 @@ CREATE TABLE IF NOT EXISTS semantic_memory (
     ts         TEXT    NOT NULL,
     category   TEXT    NOT NULL,
     content    TEXT    NOT NULL,
-    confidence REAL    NOT NULL DEFAULT 1.0
+    confidence REAL    NOT NULL DEFAULT 1.0,
+    -- BOB-021 dedup: when set, this fact was merged into the canonical fact with
+    -- this id (a near-duplicate by embedding cosine, above a conservative
+    -- threshold). Non-destructive — the row is kept with provenance (the canonical
+    -- id), only excluded from recall so the duplicate never resurfaces. Additive
+    -- for fresh DBs; a guarded ALTER in initialize() migrates pre-existing DBs
+    -- (defaults to NULL, i.e. an active, un-superseded fact).
+    superseded_by INTEGER
 );
 
 CREATE INDEX IF NOT EXISTS idx_semantic_ts ON semantic_memory (ts DESC);

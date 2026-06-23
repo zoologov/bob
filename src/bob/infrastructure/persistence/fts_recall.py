@@ -39,13 +39,18 @@ class Fts5MemoryRecall:
     def __init__(self, repo: SqliteMemoryRepo) -> None:
         self._repo = repo
 
-    async def recall(self, query: str, *, k: int) -> Sequence[Recalled]:
+    async def recall(
+        self, query: str, *, k: int, surface_old: bool = False
+    ) -> Sequence[Recalled]:
         """Return up to ``k`` archive memories matching ``query`` (best first).
 
         Searches semantic facts and the episodic conversation archive, merges
         the hits, drops duplicate content, ranks by BM25 (lower is better) and
-        returns the top ``k``.
+        returns the top ``k``. ``surface_old`` is accepted for drop-in parity with
+        the hybrid recall but ignored here: keyword-only recall has no embedding age
+        signal, so the old-but-relevant blend is a graceful no-op (same as today).
         """
+        del surface_old  # keyword-only has no age signal — a graceful no-op
         match_expr = _to_match_query(query)
         if not match_expr or k <= 0:
             return []
@@ -57,13 +62,17 @@ class Fts5MemoryRecall:
         return _dedup_by_content(merged)[:k]
 
     async def _semantic_hits(self, match_expr: str, k: int) -> list[dict[str, object]]:
-        """Top-``k`` distilled semantic facts matching ``match_expr``."""
+        """Top-``k`` distilled semantic facts matching ``match_expr``.
+
+        Superseded facts (``superseded_by`` set by BOB-021 dedup) are excluded so a
+        near-duplicate merged into a canonical one never resurfaces in recall.
+        """
         async with self._repo.connection.execute(
             "SELECT sm.content AS content, sm.category AS category, "
             "bm25(semantic_fts) AS score, 'semantic' AS source "
             "FROM semantic_fts "
             "JOIN semantic_memory sm ON sm.id = semantic_fts.rowid "
-            "WHERE semantic_fts MATCH ? "
+            "WHERE semantic_fts MATCH ? AND sm.superseded_by IS NULL "
             "ORDER BY score LIMIT ?",
             (match_expr, k),
         ) as cursor:

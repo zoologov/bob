@@ -189,6 +189,38 @@ def test_embeddings_defaults_are_local_bge_m3_1024() -> None:
     assert embeddings["dim"] == 1024
 
 
+def test_consolidation_defaults_are_conservative_and_off() -> None:
+    # Arrange
+    loader = ConfigLoader(yaml_path=None, env={})
+
+    # Act
+    consolidation = loader.load()["memory"]["consolidation"]
+
+    # Assert: BOB-021 — off by default, conservative age/batch guardrails.
+    assert consolidation["enabled"] is False
+    assert consolidation["max_age_days"] == 14.0
+    assert consolidation["batch_size"] == 50
+
+
+def test_consolidation_overridable_via_env() -> None:
+    # Arrange: switch consolidation on and tighten the age threshold via env only.
+    loader = ConfigLoader(
+        yaml_path=None,
+        env={
+            "BOB_MEMORY__CONSOLIDATION__ENABLED": "true",
+            "BOB_MEMORY__CONSOLIDATION__MAX_AGE_DAYS": "7",
+        },
+    )
+
+    # Act
+    consolidation = loader.load()["memory"]["consolidation"]
+
+    # Assert: env wins; the rest of the section keeps its defaults.
+    assert consolidation["enabled"] == "true"
+    assert consolidation["max_age_days"] == "7"
+    assert consolidation["batch_size"] == 50
+
+
 def test_embeddings_section_overridable_via_env() -> None:
     # Arrange: point the embedder at a different local model without code change.
     loader = ConfigLoader(

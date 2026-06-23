@@ -37,7 +37,10 @@ class FakeRecall:
         self._hits = list(hits)
         self.calls: list[tuple[str, int]] = []
 
-    async def recall(self, query: str, *, k: int) -> Sequence[Recalled]:
+    async def recall(
+        self, query: str, *, k: int, surface_old: bool = False
+    ) -> Sequence[Recalled]:
+        del surface_old  # this capability never asks for the BOB-021 old blend
         self.calls.append((query, k))
         return self._hits
 

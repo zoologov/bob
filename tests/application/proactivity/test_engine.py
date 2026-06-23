@@ -86,7 +86,10 @@ class FakeRecall:
         self._memories = list(memories)
         self.queries: list[str] = []
 
-    async def recall(self, query: str, *, k: int) -> Sequence[Mapping[str, object]]:  # noqa: ARG002
+    async def recall(
+        self, query: str, *, k: int, surface_old: bool = False
+    ) -> Sequence[Mapping[str, object]]:
+        del k, surface_old  # this fake ignores the limit and never asks for the old blend
         self.queries.append(query)
         return [{"content": m} for m in self._memories]
 
