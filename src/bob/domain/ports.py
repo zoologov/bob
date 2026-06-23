@@ -26,6 +26,7 @@ from typing import TYPE_CHECKING, Literal, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     from bob.domain.memory.entities import SemanticFact
+    from bob.domain.personality.fascination import Fascination
     from bob.domain.personality.negotiation import NegotiationZone
     from bob.domain.personality.taste import Verdict
     from bob.domain.proactivity.state import ProactivityState
@@ -38,6 +39,7 @@ __all__ = [
     "Embedder",
     "EventBus",
     "EventHandler",
+    "FascinationStore",
     "JsonValue",
     "LLMMessage",
     "LLMProvider",
@@ -385,6 +387,28 @@ class ProactivityStore(Protocol):
 
     async def save(self, persona_id: str, state: ProactivityState) -> None:
         """Persist ``state`` for ``persona_id`` (replacing any prior state)."""
+        ...
+
+
+@runtime_checkable
+class FascinationStore(Protocol):
+    """Durable per-persona store for Bob's current fascination (BOB-020).
+
+    Round-trips the :class:`bob.domain.personality.fascination.Fascination` Bob is
+    into right now — the grounded topic, its decaying intensity, and when it took
+    hold — so his current passion survives a restart and keeps evolving. State is
+    per ``persona_id`` so Bobiverse replicas each keep their own. ``load`` returns
+    ``None`` when Bob has no current fascination (a fresh persona, or one whose
+    passion was retired and not yet replaced). The concrete SQLite-backed adapter
+    lives in ``bob.infrastructure.persistence``.
+    """
+
+    async def load(self, persona_id: str) -> Fascination | None:
+        """Return ``persona_id``'s current fascination, or ``None`` if there is none."""
+        ...
+
+    async def save(self, persona_id: str, fascination: Fascination) -> None:
+        """Persist ``fascination`` for ``persona_id`` (replacing any prior one)."""
         ...
 
 

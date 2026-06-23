@@ -68,6 +68,11 @@ _MAX_FREQ = 1.0
 _DEFAULT_LEAK_FREQ = 0.12
 _DEFAULT_CALLBACK_FREQ = 0.1
 
+# How often Bob, à propos, surfaces his CURRENT fascination (BOB-020) — small, so
+# it reads as occasional spontaneity, never a per-message tic. No fascination → the
+# compose path no-ops regardless. Tunable via ``emotion.fascination.mention_freq``.
+_DEFAULT_MENTION_FASCINATION_FREQ = 0.1
+
 
 class ExpressionMode(Enum):
     """Whether Bob composes a full reply or a terse react-only acknowledgement."""
@@ -108,9 +113,10 @@ class ExpressionFreqs:
 
     leak_inner_life: float = _DEFAULT_LEAK_FREQ
     callback: float = _DEFAULT_CALLBACK_FREQ
+    mention_fascination: float = _DEFAULT_MENTION_FASCINATION_FREQ
 
     def __post_init__(self) -> None:
-        for name in ("leak_inner_life", "callback"):
+        for name in ("leak_inner_life", "callback", "mention_fascination"):
             value = getattr(self, name)
             if not _MIN_FREQ <= value <= _MAX_FREQ:
                 raise ValueError(
@@ -126,6 +132,7 @@ class ExpressionPlan:
     mode: ExpressionMode
     leak_inner_life: bool
     callback: bool
+    mention_fascination: bool
     form_hint: FormHint
 
 
@@ -143,15 +150,20 @@ def decide_expression(
     draws, so an equal ``(mood, signals, seed, freqs)`` always yields an equal
     plan. A substantive inbound is never downgraded to react-only.
 
-    The draw ORDER is fixed (react mode, then leak, then callback) so the plan is
-    stable under a fixed seed regardless of which branch is taken.
+    The draw ORDER is fixed (react mode, then leak, callback, mention-fascination)
+    so the plan is stable under a fixed seed regardless of which branch is taken.
     """
     form_hint = _form_hint(mood, signals)
     mode = _mode(mood, signals, rng=rng)
     leak = _draw(rng, freqs.leak_inner_life)
     callback = _draw(rng, freqs.callback)
+    mention_fascination = _draw(rng, freqs.mention_fascination)
     return ExpressionPlan(
-        mode=mode, leak_inner_life=leak, callback=callback, form_hint=form_hint
+        mode=mode,
+        leak_inner_life=leak,
+        callback=callback,
+        mention_fascination=mention_fascination,
+        form_hint=form_hint,
     )
 
 

@@ -104,6 +104,20 @@ DEFAULT_CONFIG: Config = {
         "freqs": {
             "leak_inner_life": 0.12,
             "callback": 0.1,
+            # How often Bob surfaces his CURRENT fascination à propos (BOB-020). Small
+            # (anti-tic); no fascination → the compose no-ops regardless.
+            "mention_fascination": 0.1,
+        },
+    },
+    # Emotional depth (BOB-020). ``offday`` is the mood floor below which Bob's tone
+    # goes quieter/vulnerable/honest. ``fascination`` tunes his evolving current
+    # passion: ``initial_intensity`` is how vivid a freshly-picked fascination starts
+    # (it then decays with age); ``mention_freq`` mirrors the expression flag above so
+    # surfacing stays a single configurable knob.
+    "emotion": {
+        "fascination": {
+            "initial_intensity": 0.85,
+            "mention_freq": 0.1,
         },
     },
     # Two bots in one process (BOB-003): Bob lives in his topic, GUPPI is the

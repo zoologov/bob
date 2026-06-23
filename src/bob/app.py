@@ -61,7 +61,13 @@ from bob.application.runtime import (
     periodic,
 )
 from bob.application.usecases.apply_reflection import ApplyReflection
+from bob.application.usecases.evolve_fascination import EvolveFascination
+from bob.application.usecases.evolve_phantoms import EvolvePhantoms
 from bob.application.usecases.extract_facts import ExtractFacts
+from bob.application.usecases.fascination_sources import (
+    RepoFascinationGrounding,
+    StoreFascinationReader,
+)
 from bob.application.usecases.handle_message import HandleMessage, PersonalityState
 from bob.application.usecases.heartbeat import (
     InnerMonologueTick,
@@ -75,10 +81,13 @@ from bob.domain.personality.expression import ExpressionFreqs
 from bob.domain.personality.language import DEFAULT_LANGUAGE
 from bob.domain.personality.mood import Mood
 from bob.domain.personality.negotiation import Negotiation
+from bob.domain.personality.phantom_evolution import CHANGE_RATE as _PHANTOM_RATE
+from bob.domain.personality.phantom_evolution import MAX_PHANTOMS as _PHANTOM_MAX
 from bob.domain.personality.soul import SOUL
 from bob.domain.personality.taste import TasteAxis, TasteEngine
 from bob.domain.personality.taste_evolution import ALPHA as _EVOLUTION_ALPHA
 from bob.domain.personality.taste_evolution import BETA as _EVOLUTION_BETA
+from bob.domain.personality.voice import OffDayThresholds
 from bob.domain.personality.zone_classifier import TasteZoneClassifier
 from bob.domain.proactivity.decision import ProactiveDecider
 from bob.domain.proactivity.governance import Governance
@@ -89,6 +98,7 @@ from bob.infrastructure.persistence import (
     KvAllowlistStore,
     RepoProactivitySources,
     SoulStore,
+    SqliteFascinationStore,
     SqliteMemoryRepo,
     SqliteProactivityStore,
 )
@@ -140,6 +150,16 @@ _REPLY_TIER = 1
 
 # Per-persona id for Bob's proactivity state (Bobiverse replicas each get their own).
 _BOB_PERSONA = "bob"
+
+# Default vividness of a freshly-grounded fascination (BOB-020); it then decays with
+# age. Overridable via ``emotion.fascination.initial_intensity``.
+_DEFAULT_FASCINATION_INTENSITY = 0.85
+
+# Default phantom-evolution bound + cadence (BOB-020 wave 3); overridable via
+# ``emotion.phantom.{max_count,change_rate}``. Sourced from the pure kernel's constants
+# so the domain and composition agree on the conservative defaults.
+_PHANTOM_MAX_COUNT = _PHANTOM_MAX
+_PHANTOM_CHANGE_RATE = _PHANTOM_RATE
 
 # The proactivity engine ticks on the heartbeat cadence: cheap by construction
 # (the urge/governance decision is pure, defaulting to silence), so most ticks
@@ -301,6 +321,15 @@ def build_application(
         store=proactivity_store, clock=resolved_clock, persona_id=_BOB_PERSONA
     )
 
+    # Fascination (BOB-020 wave 2): the per-persona store backs both the evolution
+    # step (on the reflect tick) and the compose-surfacing reader. The reader loads
+    # + ages the stored passion and drops a faded one, so a spent fascination never
+    # surfaces and the reply/proactive compose no-ops until evolution grounds a fresh one.
+    fascination_store = SqliteFascinationStore(memory_repo)
+    fascination_reader = StoreFascinationReader(
+        persona_id=_BOB_PERSONA, store=fascination_store, clock=resolved_clock
+    )
+
     multibot = _build_multibot(
         merged,
         bus=event_bus,
@@ -345,6 +374,15 @@ def build_application(
         # ``leak_inner_life`` turn can leak a glimpse of what he caught himself
         # thinking about — strictly grounded (no reflection → no-op).
         reflection=RepoProactivitySources(memory_repo, clock=resolved_clock),
+        # Fascination-surfacing seam (BOB-020 wave 2): on a rare ``mention_fascination``
+        # turn, Bob's current, non-faded passion (loaded + aged off the store) is folded
+        # into the compose context so he can drop it à propos. No current passion → no-op.
+        fascination=fascination_reader,
+        # Emotional-depth seam (BOB-020): the off-day tone floor — below it Bob's
+        # tone goes quieter/vulnerable/honest instead of forced warmth. Tunable via
+        # emotion.offday.{valence,arousal}; the low/negative defaults keep a normal
+        # or good mood on the warm tone.
+        offday_thresholds=_build_offday_thresholds(merged),
     )
     event_bus.subscribe(MESSAGE_RECEIVED, _as_handler(handle_message))
 
@@ -364,6 +402,40 @@ def build_application(
         alpha=_float_or(evolution_cfg, "alpha", EVOLUTION_ALPHA),
         beta=_float_or(evolution_cfg, "beta", EVOLUTION_BETA),
     )
+    # Fascination evolution (BOB-020 wave 2): a rare, grounded, idempotent step driven
+    # on the reflect tick. It grounds a fresh passion in Bob's REAL inner life — his
+    # latest reflection + the topics he holds strongest opinions on — never random, and
+    # shifts only once the current passion has faded. The initial intensity is config-
+    # tunable (emotion.fascination.initial_intensity).
+    fascination_grounding = RepoFascinationGrounding(
+        reflection=RepoProactivitySources(memory_repo, clock=resolved_clock),
+        personality=personality,
+    )
+    evolve_fascination = EvolveFascination(
+        persona_id=_BOB_PERSONA,
+        store=fascination_store,
+        router=router,
+        grounding=fascination_grounding,
+        clock=resolved_clock,
+        initial_intensity=_fascination_initial_intensity(merged),
+        language=language,
+    )
+    # Phantom evolution (BOB-020 wave 3): a rare, grounded, slow, idempotent step driven
+    # on the same reflect tick. It reuses the fascination grounding (latest reflection +
+    # strongest taste topics) to derive a fresh phantom preference — never random — and
+    # the pure evolve_phantoms kernel slowly shifts membership (a seeded-RNG gate keeps it
+    # slow; an already-present candidate is a no-op). On a real change the live soul is
+    # swapped (with_phantoms, bumping experience) and persisted via SoulStore.write_json,
+    # so it round-trips. Bound/cadence are config-tunable (emotion.phantom.*).
+    phantom_max, phantom_rate = _phantom_evolution_params(merged)
+    evolve_phantoms = EvolvePhantoms(
+        state=personality,
+        writer=soul_store,
+        grounding=fascination_grounding,
+        rng=random.Random(_resolve_seed(merged, proactivity_seed)),  # noqa: S311
+        max_count=phantom_max,
+        change_rate=phantom_rate,
+    )
     reflect_tick = ReflectTick(
         router=router,
         repo=memory_repo,
@@ -372,6 +444,8 @@ def build_application(
         language=language,
         apply_reflection=apply_reflection,
         soul_store=soul_store,
+        evolve_fascination=evolve_fascination,
+        evolve_phantoms=evolve_phantoms,
     )
 
     proactivity_engine = _build_proactivity_engine(
@@ -385,6 +459,7 @@ def build_application(
         clock=resolved_clock,
         seed=proactivity_seed,
         language=language,
+        fascination=fascination_reader,
     )
     proactive_tick = ProactiveTick(engine=proactivity_engine)
 
@@ -491,6 +566,7 @@ def _build_proactivity_engine(
     clock: Clock,
     seed: int | None,
     language: str = DEFAULT_LANGUAGE,
+    fascination: StoreFascinationReader | None = None,
 ) -> ProactivityEngine:
     """Assemble the per-persona proactivity engine (drive-model → message).
 
@@ -523,6 +599,49 @@ def _build_proactivity_engine(
         # reproducible in tests.
         rng=random.Random(_resolve_seed(config, seed)),  # noqa: S311
         language=language,
+        fascination=fascination,
+    )
+
+
+def _fascination_initial_intensity(config: Mapping[str, object]) -> float:
+    """Read the BOB-020 fresh-fascination intensity from ``emotion.fascination.*``.
+
+    How vivid a freshly-grounded fascination starts (it then decays with age). Falls
+    back to the :class:`EvolveFascination` default when absent; out-of-range values
+    are clamped to ``[0, 1]`` by the use-case itself.
+    """
+    fascination = _section(_section(config, "emotion"), "fascination")
+    return _float_or(fascination, "initial_intensity", _DEFAULT_FASCINATION_INTENSITY)
+
+
+def _phantom_evolution_params(config: Mapping[str, object]) -> tuple[int, float]:
+    """Read the BOB-020 phantom-evolution bound + cadence from ``emotion.phantom.*``.
+
+    ``max_count`` caps how many phantom preferences Bob carries at once; ``change_rate``
+    is the small per-step probability a grounded candidate actually emerges (keeping the
+    drift slow). Both fall back to the kernel's conservative defaults when absent; an
+    out-of-range ``change_rate`` is clamped to ``[0, 1]`` and a non-positive ``max_count``
+    to at least 1, so misconfiguration cannot break the bound.
+    """
+    phantom = _section(_section(config, "emotion"), "phantom")
+    max_count = max(1, _int(phantom, "max_count", _PHANTOM_MAX_COUNT))
+    change_rate = min(1.0, max(0.0, _float_or(phantom, "change_rate", _PHANTOM_CHANGE_RATE)))
+    return max_count, change_rate
+
+
+def _build_offday_thresholds(config: Mapping[str, object]) -> OffDayThresholds:
+    """Build the BOB-020 off-day tone thresholds from config (low/negative defaults).
+
+    Reads ``emotion.offday.{valence,arousal}`` — the mood floor below which Bob's
+    tone shifts to the quieter, vulnerable, honest off-day band instead of forced
+    warmth. Falls back to the dataclass defaults (which sit in the low/negative band,
+    so a normal or good mood always keeps the warm tone) when a value is absent.
+    """
+    offday = _section(_section(config, "emotion"), "offday")
+    defaults = OffDayThresholds()
+    return OffDayThresholds(
+        valence=_float_or(offday, "valence", defaults.valence),
+        arousal=_float_or(offday, "arousal", defaults.arousal),
     )
 
 
@@ -536,9 +655,20 @@ def _build_expression_freqs(config: Mapping[str, object]) -> ExpressionFreqs:
     """
     freqs = _section(_section(config, "expression"), "freqs")
     defaults = ExpressionFreqs()
+    # The fascination-surfacing frequency (BOB-020) can be set under either
+    # ``expression.freqs.mention_fascination`` (alongside the other add-ons) or the
+    # emotion-scoped ``emotion.fascination.mention_freq`` knob; the emotion knob wins
+    # when present so all fascination tuning lives in one place.
+    fascination = _section(_section(config, "emotion"), "fascination")
+    mention = _float_or(
+        freqs,
+        "mention_fascination",
+        _float_or(fascination, "mention_freq", defaults.mention_fascination),
+    )
     return ExpressionFreqs(
         leak_inner_life=_float_or(freqs, "leak_inner_life", defaults.leak_inner_life),
         callback=_float_or(freqs, "callback", defaults.callback),
+        mention_fascination=mention,
     )
 
 

@@ -218,6 +218,7 @@ def _engine(
     recall: FakeRecall | None = None,
     repo: FakeEpisodeRepo | None = None,
     language: str = "ru",
+    fascination: object | None = None,
 ) -> ProactivityEngine:
     return ProactivityEngine(
         persona_id=_PERSONA,
@@ -237,6 +238,7 @@ def _engine(
         clock=FixedClock(moment),
         rng=random.Random(seed),
         language=language,
+        fascination=fascination,  # type: ignore[arg-type]
     )
 
 
@@ -419,6 +421,62 @@ async def test_compose_is_grounded_in_recalled_real_memory() -> None:
     assert recall.queries  # recall happened
     compose_prompt = providers[0].prompts[1]
     assert "hiking trip to the mountains" in compose_prompt
+
+
+class _FakeFascinationReader:
+    """A CurrentFascinationReader double returning a canned current passion (or none)."""
+
+    def __init__(self, fascination: object | None) -> None:
+        self._fascination = fascination
+
+    async def current_fascination(self) -> object | None:
+        return self._fascination
+
+
+async def test_proactive_compose_folds_in_the_current_fascination() -> None:
+    # BOB-020 wave 2: when Bob has a live fascination, its topic reaches the proactive
+    # compose prompt so an unprompted reach-out can land on what he is into right now.
+    from bob.domain.personality.fascination import Fascination  # noqa: PLC0415
+
+    moment = _evening()
+    seed = _seed_that_fires(moment, _HIGH_MOOD)
+    router, providers = _router(gate_reply="SAY: thinking aloud", compose_reply="привет")
+    fascination = Fascination(topic="орбитальная механика", intensity=0.8, created_at=moment)
+    engine = _engine(
+        store=FakeStore(_state(energy=1.0)),
+        router=router,
+        gateway=CapturingGateway(),
+        state_holder=PersonalityState(soul=_soul(_HIGH_MOOD)),
+        moment=moment,
+        seed=seed,
+        salience=0.9,
+        fascination=_FakeFascinationReader(fascination),
+    )
+
+    await engine.tick()
+
+    assert "орбитальная механика" in providers[0].prompts[1]
+
+
+async def test_proactive_compose_no_ops_without_a_current_fascination() -> None:
+    # No live passion (reader returns None): nothing about a fascination is injected.
+    moment = _evening()
+    seed = _seed_that_fires(moment, _HIGH_MOOD)
+    router, providers = _router(gate_reply="SAY: thinking aloud", compose_reply="привет")
+    engine = _engine(
+        store=FakeStore(_state(energy=1.0)),
+        router=router,
+        gateway=CapturingGateway(),
+        state_holder=PersonalityState(soul=_soul(_HIGH_MOOD)),
+        moment=moment,
+        seed=seed,
+        salience=0.9,
+        fascination=_FakeFascinationReader(None),
+    )
+
+    await engine.tick()
+
+    assert "увлеч" not in providers[0].prompts[1].casefold()
 
 
 async def test_skip_persists_nothing_and_does_not_recall_for_nothing() -> None:

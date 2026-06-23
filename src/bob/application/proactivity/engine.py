@@ -62,7 +62,11 @@ if TYPE_CHECKING:
     from random import Random
 
     from bob.application.router.llm_router import LLMRouter
-    from bob.application.usecases.handle_message import PersonalityState, ReplyGateway
+    from bob.application.usecases.handle_message import (
+        CurrentFascinationReader,
+        PersonalityState,
+        ReplyGateway,
+    )
     from bob.domain.personality.mood import Mood
     from bob.domain.ports import Clock, MemoryRecall, Recalled
     from bob.domain.proactivity.decision import ProactiveDecider
@@ -166,6 +170,7 @@ class ProactivityEngine:
         clock: Clock,
         rng: Random,
         language: str = DEFAULT_LANGUAGE,
+        fascination: CurrentFascinationReader | None = None,
     ) -> None:
         self._persona_id = persona_id
         self._chat_id = chat_id
@@ -181,6 +186,12 @@ class ProactivityEngine:
         self._clock = clock
         self._rng = rng
         self._language = language
+        # The fascination seam (BOB-020 wave 2): when wired and Bob has a current,
+        # non-faded passion, its topic is folded into the proactive grounding context
+        # so an unprompted reach-out can land on what he is into right now — à propos,
+        # his REAL state. Proactive messages are already rare by construction. No
+        # current fascination (or no reader) → nothing added (a clean no-op).
+        self._fascination = fascination
 
     async def tick(self) -> bool:
         """Run one proactive tick; return whether Bob spoke.
@@ -287,19 +298,37 @@ class ProactivityEngine:
                     {"role": "system", "content": self._localised(_COMPOSE_SYSTEM)},
                     {"role": "user", "content": f"Seed: {seed}"},
                 ],
-                shareable_context=self._compose_context(memories),
+                shareable_context=await self._compose_context(memories),
                 private_context=None,
                 tier_override=tier,
             )
         )
 
-    def _compose_context(self, memories: Sequence[Recalled]) -> str:
-        """Assemble the grounding context: mood tone + the recalled real memories."""
+    async def _compose_context(self, memories: Sequence[Recalled]) -> str:
+        """Assemble the grounding context: mood tone, recalled memory, current passion.
+
+        Folds in Bob's current fascination (BOB-020) when one is alive so an
+        unprompted reach-out can land on what he is genuinely into right now — his
+        REAL state, à propos. No current fascination (or no reader) adds nothing.
+        """
         lines = [f"Mood tone: {self._mood().tone()}"]
         recalled = [str(item.get("content", "")) for item in memories if item.get("content")]
         if recalled:
             lines.append("Real recalled memories (draw on these): " + " | ".join(recalled))
+        topic = await self._current_fascination_topic()
+        if topic:
+            lines.append(
+                "Чем ты сейчас увлечён (можешь к месту обронить, это твоё "
+                f"реальное состояние): {topic}"
+            )
         return "\n".join(lines)
+
+    async def _current_fascination_topic(self) -> str:
+        """Bob's current, non-faded fascination topic, or ``""`` (none / no reader)."""
+        if self._fascination is None:
+            return ""
+        fascination = await self._fascination.current_fascination()
+        return fascination.topic if fascination is not None else ""
 
     def _localised(self, prompt: str) -> str:
         """Prepend the persona language directive to a self-generated prompt (BOB-012)."""

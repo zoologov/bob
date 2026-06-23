@@ -54,6 +54,7 @@ from bob.domain.personality.expression import (
     FormHint,
     decide_expression,
 )
+from bob.domain.personality.mood_taste import experiment_bias, modulate
 from bob.domain.personality.negotiation import (
     Negotiation,
     NegotiationZone,
@@ -62,8 +63,10 @@ from bob.domain.personality.negotiation import (
 from bob.domain.personality.reaction import reaction_emoji_for
 from bob.domain.personality.taste import Verdict
 from bob.domain.personality.voice import (
+    OffDayThresholds,
     anti_bait_directive,
     guppi_canon,
+    tone_directive,
     variable_form_directive,
 )
 from bob.domain.personality.zone_classifier import TasteZoneClassifier
@@ -78,6 +81,7 @@ if TYPE_CHECKING:
     from bob.application.runtime.events import MessageReceived
     from bob.application.usecases.extract_facts import ExtractFacts
     from bob.application.usecases.update_mood_from_text import UpdateMoodFromText
+    from bob.domain.personality.fascination import Fascination
     from bob.domain.personality.soul import SOUL
     from bob.domain.ports import (
         Clock,
@@ -105,20 +109,17 @@ _HISTORY_K = 6
 # Each turn perceives one message; a present sender is engaged.
 _SINGLE_MESSAGE = 1
 
-# The warm base persona, then Bob's voice guidance (BOB-016): the anti-bait
-# directive + substance-ending few-shot break the base model's reflex of closing
-# every reply with an engagement-bait question and a ☕ signature, so Bob lands
-# like a person, not an assistant. The directive lives in the domain (persona
-# voice), assembled in here onto the warm base tone.
-# The warm base persona, then two voice concerns Bob's persona leans on (BOB-016):
-# the anti-bait directive + few-shot (so he lands like a person, not an assistant
+# The base persona, then two voice concerns Bob's persona leans on (BOB-016): the
+# anti-bait directive + few-shot (so he lands like a person, not an assistant
 # fishing for the next reply with a ☕ signature), and the GUPPI canon (so whenever
-# GUPPI comes up — tools wired or not — Bob speaks of him as "он", his
-# non-sentient executor, with the wry running relationship). Both live in the
-# domain (persona voice) and are assembled onto the warm base tone here.
+# GUPPI comes up — tools wired or not — Bob speaks of him as "он", his non-sentient
+# executor, with the wry running relationship). Both live in the domain (persona
+# voice) and are assembled here. The TONE itself is no longer baked in as an
+# unconditional "warmly and concisely" line: it is now mood-conditioned per turn via
+# voice.tone_directive (BOB-020), appended in _system_prompt_for, so Bob can have an
+# off-day instead of forcing warmth.
 _SYSTEM_PROMPT = (
-    "You are Bob, a digital person from the Bobiverse. Reply in character, "
-    "warmly and concisely, coloured by your current mood.\n"
+    "You are Bob, a digital person from the Bobiverse. Reply in character.\n"
     f"{guppi_canon()}\n"
     f"{anti_bait_directive()}\n"
     f"{variable_form_directive()}"
@@ -153,6 +154,16 @@ _LEAK_PREFACE = (
 _CALLBACK_PREFACE = (
     "Можешь к месту вспомнить это — реальный момент из вашего прошлого, "
     "не выдумывай деталей сверх него:"
+)
+
+# Fascination preface (BOB-020 wave 2). When the plan sets ``mention_fascination``
+# AND Bob has a real, current passion (a persisted Fascination that has not faded),
+# its topic is folded into the compose context so Bob can drop it à propos — it is
+# his REAL state, never a fabricated interest. No current fascination → no line (a
+# clean no-op). Russian persona voice; Cyrillic look-alikes intentional.
+_FASCINATION_PREFACE = (
+    "Можешь к месту обронить, чем сейчас увлечён — это твоё реальное состояние, "
+    "не пересказывай как факт, просто упомяни живо, если в тему:"
 )
 
 # Preface for the capability manifest in Bob's prompt: GUPPI is Bob's executor
@@ -210,6 +221,22 @@ class EpisodeReader(Protocol):
     async def recent_episodes(self, k: int) -> Sequence[Mapping[str, object]]: ...
 
 
+class CurrentFascinationReader(Protocol):
+    """Read seam: Bob's CURRENT fascination, aged and still-alive (BOB-020 wave 2).
+
+    On a :data:`~bob.domain.personality.expression.ExpressionPlan.mention_fascination`
+    turn the compose path folds the topic in so Bob can drop it à propos — but only a
+    REAL, persisted passion that has not yet faded. ``None`` means Bob has no current
+    fascination, so the mention no-ops (never a fabricated interest). The concrete
+    adapter loads the :class:`~bob.domain.ports.FascinationStore`, ages the stored
+    passion against the clock, and drops a faded one.
+    """
+
+    async def current_fascination(self) -> Fascination | None:
+        """Return Bob's current, non-faded fascination, or ``None`` if there is none."""
+        ...
+
+
 class OwnerActivityRecorder(Protocol):
     """The proactivity seam HandleMessage notifies when the owner writes.
 
@@ -257,6 +284,8 @@ class HandleMessage:
         expression_freqs: ExpressionFreqs | None = None,
         reactor: MessageReactor | None = None,
         reflection: ReflectionReader | None = None,
+        fascination: CurrentFascinationReader | None = None,
+        offday_thresholds: OffDayThresholds | None = None,
     ) -> None:
         self._router = router
         self._gateway = gateway
@@ -309,6 +338,20 @@ class HandleMessage:
         # leaks into the reply. No reflection (or no reader wired) → no-op, never a
         # fabrication. Callbacks reuse the already-injected ``recall`` the same way.
         self._reflection = reflection
+        # The fascination seam (BOB-020 wave 2): when wired and the plan sets
+        # ``mention_fascination``, Bob's current, non-faded passion (loaded + aged off
+        # the FascinationStore) is folded into the compose context so he can drop it à
+        # propos — strictly his REAL state. No current fascination (or no reader) →
+        # no-op, never a fabricated interest. Surfacing stays rare/anti-tic.
+        self._fascination = fascination
+        # The emotional-depth seam (BOB-020): Bob's TONE is mood-conditioned via
+        # voice.tone_directive — below this off-day floor he reads quieter, more
+        # vulnerable, honest ("не знаю" over confabulation) instead of forced warmth.
+        # The floor is config-tunable (emotion.offday.*); the default sits in the
+        # low/negative band so a normal or good mood always keeps the warm tone.
+        self._offday_thresholds = (
+            offday_thresholds if offday_thresholds is not None else OffDayThresholds()
+        )
 
     async def handle(self, event: MessageReceived) -> None:
         """Process one received message end to end (the EventBus subscriber)."""
@@ -437,6 +480,7 @@ class HandleMessage:
         additions = [
             await self._leak_inner_life(plan),
             await self._callback(plan, text),
+            await self._mention_fascination(plan),
         ]
         suffix = "".join(f"\n{line}" for line in additions if line)
         return f"{context}{suffix}" if suffix else context
@@ -468,15 +512,31 @@ class HandleMessage:
             return ""
         return f"{_CALLBACK_PREFACE} {moment}"
 
-    def _system_prompt_for(self, soul: SOUL, text: str, plan: ExpressionPlan) -> str:
-        """Augment the warm base prompt with the stance + form-hint directives.
+    async def _mention_fascination(self, plan: ExpressionPlan) -> str:
+        """The fascination line for this turn, or ``""`` (no flag / no reader / none).
 
-        The taste verdict + conviction on ``text`` pick the zone (who owns the
-        matter) and the stance (how firmly Bob holds); the stance maps to a
-        directive appended to — never replacing — the warm base tone. The plan's
-        ``form_hint`` then appends a soft length cue (BOB-018), augmenting the
-        variable-form voice. With no target opinion, no user-domain signal, and a
-        NORMAL form hint, the prompt is unchanged but for the base voice line.
+        On a ``mention_fascination`` turn, asks the wired reader for Bob's current,
+        non-faded passion; a real one is offered as something he can drop à propos.
+        Strictly anti-confabulation: ``None`` (no reader, or no current fascination)
+        yields nothing, so Bob never invents an interest he does not have.
+        """
+        if not plan.mention_fascination or self._fascination is None:
+            return ""
+        fascination = await self._fascination.current_fascination()
+        if fascination is None:
+            return ""
+        return f"{_FASCINATION_PREFACE} {fascination.topic}"
+
+    def _system_prompt_for(self, soul: SOUL, text: str, plan: ExpressionPlan) -> str:
+        """Augment the base prompt with the mood tone, stance, and form-hint directives.
+
+        The mood-conditioned tone directive (BOB-020) leads: a normal/good mood keeps
+        Bob's warm, concise tone, a flat low mood swaps it for the quieter, honest
+        off-day band ("не знаю" over confabulation) — replacing the old unconditional
+        warm line. The taste verdict + conviction on ``text`` then pick the zone and
+        stance (BOB-013), and the plan's ``form_hint`` appends a soft length cue
+        (BOB-018). With a normal mood, no target opinion, no user-domain signal, and a
+        NORMAL form hint, only the warm tone line augments the base voice.
         """
         verdict = soul.taste.score(text)
         conviction = soul.taste.conviction_for(text)
@@ -485,6 +545,7 @@ class HandleMessage:
         )
         stance = self._negotiation.decide(zone, conviction=conviction)
         directives = [
+            tone_directive(soul.mood, thresholds=self._offday_thresholds),
             _stance_directive(stance, verdict=verdict, zone=zone),
             _FORM_HINT_DIRECTIVE.get(plan.form_hint, ""),
         ]
@@ -546,6 +607,23 @@ def _stance_directive(
     return _STANCE_DIRECTIVE.get(stance, "")
 
 
+# Effective-verdict modulation (BOB-020) needs the sign of Bob's liking to lean a
+# NEUTRAL verdict the right way; the stored axis value is private to TasteEngine, so
+# we read the sign off the verdict itself (positive verdicts → +1, negative → -1,
+# NEUTRAL → 0 so an unknown topic stays a clean identity under any mood).
+_POSITIVE_VERDICTS = frozenset({Verdict.LOVE, Verdict.LIKE})
+_NEGATIVE_VERDICTS = frozenset({Verdict.DISLIKE, Verdict.HATE})
+
+
+def _verdict_sign(verdict: Verdict) -> float:
+    """+1.0 for a positive verdict, -1.0 for a negative one, 0.0 for NEUTRAL."""
+    if verdict in _POSITIVE_VERDICTS:
+        return 1.0
+    if verdict in _NEGATIVE_VERDICTS:
+        return -1.0
+    return 0.0
+
+
 def _assemble_shareable_context(
     soul: SOUL,
     topic: str,
@@ -559,12 +637,19 @@ def _assemble_shareable_context(
     shapes Bob's reply and returns to the same user, so the reply tier sees it
     (this is what lets Bob remember a name said one message ago). Genuinely
     internal material is NOT assembled here; it belongs in ``private_context``.
+
+    The taste verdict injected is the EFFECTIVE one (BOB-020): Bob's current mood
+    temporarily colours it via :func:`modulate` — a flat day reads it stricter, a
+    bright day softer — and an experiment-readiness hint from the same mood rides
+    along. This is temporary modulation only; the stored taste axes are untouched.
     """
-    verdict = soul.taste.score(topic).value
+    stored = soul.taste.score(topic)
+    effective = modulate(stored, _verdict_sign(stored), soul.mood)
     lines = [
         f"Identity: {soul.identity}",
         f"Mood tone: {soul.mood.tone()}",
-        f"Taste verdict on '{topic}': {verdict}",
+        f"Taste verdict on '{topic}': {effective.value}",
+        f"Experiment readiness: {experiment_bias(soul.mood):.2f}",
     ]
     if soul.phantom_prefs:
         lines.append("Phantom preferences: " + ", ".join(soul.phantom_prefs))

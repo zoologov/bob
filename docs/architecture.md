@@ -41,7 +41,8 @@ P0 — Telegram-транспорт на aiogram (typing-индикатор + Ric
 src/bob/
   domain/            # ЧИСТО: без I/O, LLM и Telegram. Только логика и модели.
     personality/     # Mood, TasteEngine, Negotiation, SOUL, TasteZoneClassifier,
-                     #   taste_evolution, язык персоны
+                     #   taste_evolution, voice (тон по mood), mood_taste, fascination,
+                     #   phantom_evolution, expression, reaction, язык персоны
     memory/          # EpisodicEvent, SemanticFact
     proactivity/     # UrgeModel, SocialEnergy, Governance, ProactiveDecider, ProactivityState
     ports.py         # порты-протоколы: LLMProvider, MemoryRepo, MemoryRecall,
@@ -53,7 +54,8 @@ src/bob/
     runtime/         # AgentRuntime (жизненный цикл), AsyncEventBus, события, periodic, retry
     router/          # LLMRouter: классификация задачи → Tier + правило редакции
     usecases/        # HandleMessage, RunGenesis, UpdateMoodFromText, heartbeat-тики,
-                     #   ApplyReflection + HeuristicReflectionParser (само-эволюция)
+                     #   ApplyReflection + HeuristicReflectionParser (само-эволюция),
+                     #   EvolveFascination, EvolvePhantoms (эмоциональная глубина)
     proactivity/     # ProactivityEngine, ProactiveTick, RecordOwnerActivity
     authz/           # Authorizer: политика owner/allowlist/chat-scope
     capabilities/    # CapabilityRegistry, ToolLoop, recall_memory, search_memory
@@ -66,7 +68,8 @@ src/bob/
     llm/             # OpenAICompatProvider (Tier 0/1, + tool-calling) + фабрика;
                      #   OllamaEmbedder (BGE-M3) + OllamaReranker + их фабрики
     persistence/     # SqliteMemoryRepo + FTS5 recall + KvAllowlistStore + SoulStore
-                     #   + SqliteProactivityStore + RepoProactivitySources;
+                     #   + SqliteProactivityStore + RepoProactivitySources
+                     #   + SqliteFascinationStore (BOB-020);
                      #   MemoryVectorStore (sqlite-vec) + HybridMemoryRecall (RRF)
     config/          # ConfigLoader (defaults → YAML → env)
   app.py             # composition root: собирает порты и адаптеры, запускает рантайм
@@ -452,6 +455,8 @@ SQLite. Подробности — в разделе «Гибридная пам
 - `proactivity_state` — per-persona состояние drive-движка (резервуар энергии,
   маркеры `last_spoke_at`/`last_user_msg_at`, флаг `proactivity_enabled` и
   инфраструктурный `mute_until` тайм-мьюта), одна строка на `persona_id`;
+- `fascination_state` — per-persona текущее увлечение Боба (`topic`, `intensity`,
+  `created_at`), одна строка на `persona_id` (BOB-020, см. «Эмоциональная глубина»);
 - `kv` — генерик-хранилище ключ/значение.
 
 ### Recall по всему архиву переписки
@@ -549,8 +554,10 @@ Ollama-as-scorer, нативного rerank-API у Ollama нет) опциона
   копию, оригинал нетронут): `with_mood(mood)` — после хода/дрейфа настроения;
   `with_taste(axes)` (BOB-013) — свопает свежий `TasteEngine` над эволюционировавшими
   осями **и** инкрементирует `experience_count` (счётчик прожитых шагов
-  само-эволюции растёт монотонно); `with_baseline(delta)` — мелкий устойчивый сдвиг
-  mood-baseline (с клампом через `Mood.update`).
+  само-эволюции растёт монотонно); `with_phantoms(phantoms)` (BOB-020) — свопает
+  эволюционировавший набор фантомных предпочтений и так же инкрементирует
+  `experience_count` (см. «Эмоциональная глубина»); `with_baseline(delta)` — мелкий
+  устойчивый сдвиг mood-baseline (с клампом через `Mood.update`).
 
 ### Negotiation-врезка: зона → стойка → директива промпта (BOB-013, Фаза 1)
 
@@ -783,6 +790,163 @@ Seed выражения переиспользует seed проактивнос
 `0.1`). Сборка читает их в `app.py` (`_build_expression_freqs`) в `ExpressionFreqs`,
 дефолты малы (анти-тик), тюнятся per-persona.
 
+## Эмоциональная глубина (BOB-020)
+
+Боб выразителен (BOB-018) и имеет растущее мнение (BOB-013), но прежде был
+эмоционально ровным и однобоко-позитивным. Эмоциональная глубина даёт четыре
+элемента поверх готового аффекта (`Mood`) и само-эволюции (BOB-013): тон зависит от
+настроения, настроение временно окрашивает вкусовой вердикт, у Боба есть текущее
+увлечение, которое медленно эволюционирует, а его фантомные предпочтения тоже
+оживают и дрейфуют. Всё пишется **как характер, не как конфиг** и под теми же
+guardrails, что BOB-013: границы, плавность, идемпотентность, seeded-RNG, никакой
+runaway-эволюции. Ничего не выдумывается — off-day и модуляция выводятся из
+настроения, увлечение и фантомы grounded в реальной внутренней жизни (рефлексии и
+сильные вкусы).
+
+### (1) Off-day: тон зависит от настроения
+
+`voice.tone_directive(mood, *, thresholds)` (`domain/personality/voice.py`) —
+чистая, детерминированная функция, заменившая прежнюю безусловную строку «отвечай
+тепло и кратко». Теперь тон зависит от настроения: когда **И** `valence`, **И**
+`arousal` опускаются на-или-ниже порога `OffDayThresholds`, Боб читается как «не в
+ресурсе» — тон становится тише, сдержаннее, уязвимее, а честное «не знаю» лучше
+выдуманного тепла. В норме или при хорошем настроении возвращается прежний тёплый,
+краткий базовый тон.
+
+- **Off-day = производное от настроения**, без нового персист-состояния: бэнд
+  выводится прямо из `Mood`. Это **не грубость** — тише и честнее, а не реляционная
+  обида (та живёт в BOB-014).
+- `OffDayThresholds(valence, arousal)` — frozen-дефолты в низком/отрицательном
+  бэнде (`valence = -0.4`, `arousal = -0.3`), поэтому нормальное или хорошее
+  настроение всегда остаётся на тёплом тоне. Пороги тюнятся через
+  `emotion.offday.{valence,arousal}`.
+- Равные `(mood, thresholds)` всегда дают одну директиву (тестируемо без модели).
+  `handle_message` собирает её в системный промпт через инъецированный
+  `offday_thresholds`.
+
+### (2) Mood→Taste модуляция
+
+`mood_taste.py` (`domain/personality/`) — чистый, без I/O и LLM модулятор: текущее
+настроение **временно** окрашивает вкусовой вердикт, **не мутируя сами оси** (это не
+само-эволюция BOB-013, а лишь настроение, читающее уже сложившееся мнение).
+
+- **`modulate(verdict, value, mood) -> Verdict`** сдвигает вердикт по шкале
+  love → like → neutral → dislike → hate **не больше чем на один шаг**. Плоское,
+  низкое настроение читается строже/консервативнее (симпатия гасится, антипатия
+  твердеет), светлое и открытое — мягче/любопытнее (антипатия смягчается, симпатия
+  теплеет). На `NEUTRAL` знак `value` решает, в какую сторону клонит скос; при
+  подлинном безразличии (`value ≈ 0`) тема остаётся `NEUTRAL` — плоский день не
+  выдумывает антипатию из равнодушия. Концы шкалы насыщаются, результат всегда —
+  валидный `Verdict`.
+- **`experiment_bias(mood) -> float`** выводит из настроения готовность Боба
+  попробовать новое, в границах `[0, 1]`: низкая при плоском настроении, выше при
+  светлом и открытом. И сдвиг, и bias считаются от одной диспозиции — среднего
+  `valence` и `openness`, — с небольшой мёртвой зоной, чтобы обычное настроение
+  было чистой тождественностью без дрожания.
+- Обе функции детерминированы. Вызывающий код кладёт в промпт **эффективный**
+  (модулированный) вердикт и хинт готовности, а персистентные оси остаются
+  нетронутыми.
+
+### (3) Увлечение (fascination)
+
+У Боба есть **текущее увлечение** — тема, которой он сейчас захвачен. Это
+персистентное внутреннее состояние, которое медленно эволюционирует и редко, к
+месту, проявляется в речи.
+
+- **`Fascination`** (`domain/personality/fascination.py`) — чистый, иммутабельный
+  value-объект: `topic` (grounded в реальной внутренней жизни, не рандом),
+  `intensity` в `[0, 1]` и момент `created_at`. `aged(now)` экспоненциально гасит
+  интенсивность с возрастом (полураспад 72 ч — медленно, чтобы увлечение читалось
+  настоящим, а не вспышкой), клампя в границы; `has_faded()` истинно, когда
+  интенсивность опустилась на-или-ниже `DECAY_FLOOR` (0.15) — сигнал заменить
+  выгоревшее увлечение свежим. Без I/O и собственных часов (`now` инъецируется).
+- **`SqliteFascinationStore`** (`infrastructure/persistence/fascination_store.py`)
+  реализует порт `FascinationStore` над таблицей `fascination_state` — одна строка
+  на `persona_id`, поэтому реплики Bobiverse держат своё увлечение. Домен мапится в
+  строку и обратно (intensity как REAL, `created_at` как ISO-8601); неувиденная или
+  ещё не заменённая после выгорания персона строки не имеет (`load` → `None`). Весь
+  SQL параметризован (`?`).
+- **`EvolveFascination`** (`application/usecases/evolve_fascination.py`) — редкий
+  grounded-шаг на reflect-тике. Каждый прогон: загружает и старит текущее увлечение,
+  решает сдвиг (только когда увлечения нет или оно выгорело по `has_faded`),
+  grounds выбор в **реальной** внутренней жизни Боба (дешёвый Tier-0-вызов выбирает
+  тему из последней рефлексии и сильнейших вкусов; детерминированный эвристик-
+  фоллбэк, если Tier 0 не дал годного; **чистый no-op без материала**) и
+  персистит свежее увлечение. Шаг **идемпотентен**: свеже выбранное увлечение имеет
+  возраст ≈ 0, поэтому второй тик в том же периоде не сдвигает повторно. Стартовая
+  интенсивность тюнится через `emotion.fascination.initial_intensity`.
+- **Проявление** — редкий флаг `mention_fascination` в `ExpressionPlan`/
+  `ExpressionFreqs` (BOB-018). При нём текущее **не выгоревшее** увлечение (загружено
+  и состарено через `StoreFascinationReader`) подаётся в compose-контекст ответа
+  (`handle_message`) и проактива (engine) как «можешь к месту упомянуть, чем сейчас
+  увлечён (реальное)». Нет увлечения → no-op. Частота настраивается под одним
+  ключом `emotion.fascination.mention_freq` (зеркалится
+  `expression.freqs.mention_fascination`).
+
+### (4) Эволюция фантомных предпочтений
+
+Фантомные предпочтения Боба (`SOUL.phantom_prefs` — кофе, дождь, книги…) — не
+застывший кортеж: они оживают и медленно дрейфуют. Новая симпатия проступает из
+сильного свежего вкуса или рефлексии, старая затухает.
+
+- **`SOUL.with_phantoms(phantoms)`** (`domain/personality/soul.py`) — иммутабельный
+  аналог `with_taste`: свопает эволюционировавший набор фантомов и инкрементирует
+  `experience_count` (сдвиг фантома — тоже шаг само-эволюции). Оригинал нетронут.
+- **`evolve_phantoms(phantoms, signals, *, rng) -> tuple[str, ...]`**
+  (`domain/personality/phantom_evolution.py`) — чистое мембершип-ядро в дисциплине
+  `taste_evolution` (BOB-013): **grounded** (проступает только `candidate`, который
+  приложение вывело из реальной внутренней жизни; нет кандидата — нет изменения,
+  Боб не выдумывает предпочтение), **медленно** (изменение за швом малой
+  per-step-вероятности на seeded-RNG, большинство шагов — no-op), **ограниченно**
+  (набор не растёт выше `max_count`; при переполнении затухает самый старый — один
+  вход, один выход), **идемпотентно** (уже присутствующий кандидат → no-op). Чисто и
+  детерминированно: без I/O, LLM и часов. `PhantomSignals(candidate, max_count,
+  change_rate)` несёт grounded-кандидат и настройки. Дефолты — `MAX_PHANTOMS = 5`,
+  `CHANGE_RATE = 0.2`.
+- **`EvolvePhantoms`** (`application/usecases/evolve_phantoms.py`) — редкий
+  grounded-шаг на том же reflect-тике, рядом с `ApplyReflection` и
+  `EvolveFascination`. Grounds кандидата через тот же шов `FascinationGrounding`
+  (сильнейший вкус, иначе последняя рефлексия), прогоняет чистое ядро
+  `evolve_phantoms`, а **на реальном изменении** свопает живой `SOUL` через
+  `with_phantoms` и
+  персистит набор через узкий шов `PhantomProfileWriter` (`write_json`,
+  interface-segregation над `SoulStore`) в форме `{"preferences": [...]}` — той же,
+  что пишет Genesis и читает `_load_soul`, поэтому эволюционировавший набор переживает
+  рестарт. Бесполезный шаг (нет изменения членства) — строгий no-op. Бэнд и каденс
+  тюнятся через `emotion.phantom.{max_count,change_rate}`.
+
+### Шаги эволюции на reflect-тике
+
+`ReflectTick` (`application/usecases/heartbeat.py`) после сохранения рефлексии
+эпизодом запускает **три** опциональных шага эволюции по порядку:
+
+1. **`ApplyReflection`** (BOB-013, Ф2) — рефлексия переписывает вкус (см.
+   «Само-эволюция»). Идемпотентен через маркер `last_evolved`.
+2. **`EvolveFascination`** (BOB-020) — редкий grounded-сдвиг текущего увлечения.
+3. **`EvolvePhantoms`** (BOB-020) — редкий grounded-сдвиг фантомных предпочтений.
+
+Все три инъецируются опционально (`None` → тик ведёт себя как прежде, только лог
+эпизода), grounded в реальной внутренней жизни Боба, идемпотентны в пределах периода
+и под guardrails. Так фоновая внутренняя жизнь Боба — настроение, вкус, увлечение и
+фантомы — эволюционирует медленно и связно, не убегая вразнос.
+
+### Конфигурация
+
+Блок `emotion.*` (`infrastructure/config/loader.py`, читается в `app.py`):
+
+- `emotion.offday.{valence,arousal}` — порог off-day-тона; дефолты в
+  низком/отрицательном бэнде (`-0.4`/`-0.3`), поэтому нормальное настроение остаётся
+  тёплым (`_build_offday_thresholds`).
+- `emotion.fascination.initial_intensity` (дефолт `0.85`) — стартовая интенсивность
+  свежего увлечения; out-of-range клампится в `[0, 1]`.
+- `emotion.fascination.mention_freq` (дефолт `0.1`) — частота проявления увлечения;
+  зеркалится `expression.freqs.mention_fascination` (emotion-ключ выигрывает, чтобы
+  весь тюнинг увлечения жил в одном месте).
+- `emotion.phantom.max_count` (дефолт `5`) и `emotion.phantom.change_rate` (дефолт
+  `0.2`) — бэнд и каденс эволюции фантомов; `max_count` клампится минимум к 1, а
+  `change_rate` — в `[0, 1]`, поэтому misconfiguration не ломает границы
+  (`_phantom_evolution_params`).
+
 ## Genesis и bob-soul
 
 При первом запуске (нет `data/soul/SOUL.md`) `RunGenesis` «пробуждает» уникального
@@ -814,14 +978,19 @@ no-op (без обращения к LLM и без записи файлов). И
 - **MoodDriftTick** — эмоциональный гомеостаз: настроение шагом дрейфует к
   baseline (`Mood.drift_toward`), и всплески затухают.
 - **ReflectTick** — периодическая рефлексия на Tier 0, сохраняемая как эпизод, а
-  затем (BOB-013, Ф2) **применяемая к душе**: после `save_episode(reflection)` шаг
-  `_evolve` зовёт `ApplyReflection.run(reflection, soul)`; на реальном изменении
-  (`changed=True`) живой `SOUL` обновляется и эволюционировавший `taste_profile`
-  персистится через `SoulStore.write_json`. Шаг **идемпотентен**: маркер
-  `last_evolved` хранит последний применённый текст рефлексии, поэтому повторный
-  прогон того же тика — no-op (одна рефлексия применяется не более раза). Эволюция
-  опциональна: без `apply_reflection`/`soul_store` тик ведёт себя как прежде
-  (только лог эпизода). Зависимость на персист сужена до порта `TasteProfileWriter`
+  затем **применяемая к душе** тремя опциональными шагами эволюции по порядку.
+  Сначала (BOB-013, Ф2) `_evolve` зовёт `ApplyReflection.run(reflection, soul)`: на
+  реальном изменении (`changed=True`) живой `SOUL` обновляется и эволюционировавший
+  `taste_profile` персистится через `SoulStore.write_json`. Затем (BOB-020) тик
+  прогоняет `EvolveFascination` (редкий grounded-сдвиг текущего увлечения) и
+  `EvolvePhantoms` (редкий grounded-сдвиг фантомных предпочтений) — см.
+  «Эмоциональная глубина». Все шаги **идемпотентны**: маркер `last_evolved` хранит
+  последний применённый текст рефлексии, увлечение сдвигается только когда выгорело,
+  а уже присутствующий фантом-кандидат — no-op, поэтому повторный прогон того же
+  тика не плодит изменений. Каждый шаг опционален: без
+  `apply_reflection`/`soul_store`/`evolve_fascination`/`evolve_phantoms` тик ведёт
+  себя как прежде (только лог эпизода). Зависимость на персист вкуса сужена до порта
+  `TasteProfileWriter`
   (только `write_json` — interface segregation), а не на весь `SoulStore`.
 
 `InnerMonologueTick` и `ReflectTick` принимают параметр `language` (по умолчанию
@@ -1013,7 +1182,11 @@ env-переменных. Секция `runtime` несёт `language` (по у�
 ограничения модель уходит в английский (BOB-012, см. «Язык персоны»). Опциональная
 секция `personality.evolution` несёт скорости само-эволюции `alpha`/`beta`
 (BOB-013, дефолты `0.15`/`0.10` из доменного ядра) — тюнинг темпа дрейфа вкуса без
-правки домена.
+правки домена. Блок `emotion.*` (BOB-020) тюнит эмоциональную глубину: порог
+off-day-тона `emotion.offday.{valence,arousal}`, стартовую интенсивность и частоту
+проявления увлечения `emotion.fascination.{initial_intensity,mention_freq}` и
+бэнд/каденс эволюции фантомов `emotion.phantom.{max_count,change_rate}` (см.
+«Эмоциональная глубина»).
 
 `app.py` — единственный модуль, которому разрешено зависеть сразу от всех слоёв.
 Он строит реальные адаптеры, собирает политику приложения, подписывает
@@ -1042,7 +1215,13 @@ reflect и проактивный `ProactiveTick`, все с `RetryPolicy`) ка
 собирается в `ReflectTick`: `ApplyReflection` с `HeuristicReflectionParser`
 получает скорости обучения `α`/`β` из `personality.evolution.{alpha,beta}` (дефолты
 из ядра — `0.15`/`0.10`), а персист эволюционировавшего вкуса идёт через тот же
-`SoulStore`. Здесь же собираются общий `Authorizer` (над `KvAllowlistStore`) для
+`SoulStore`. Сюда же (BOB-020) подключаются два эмоциональных шага эволюции на том же
+тике: `EvolveFascination` (над `SqliteFascinationStore`, роутером и общим швом
+`RepoFascinationGrounding`, стартовая интенсивность из `emotion.fascination.
+initial_intensity`) и `EvolvePhantoms` (над живым `SOUL`, персист через `SoulStore`,
+seeded-RNG и бэнд/каденс из `emotion.phantom.*`); оба grounded в реальной внутренней
+жизни Боба. Off-day-тон собирается в `handle_message` через
+`_build_offday_thresholds` (`emotion.offday.*`). Здесь же собираются общий `Authorizer` (над `KvAllowlistStore`) для
 гейта и GUPPI и `CapabilityRegistry` с навыками `recall_memory` и **`search_memory`**;
 провайдер Tier 1 подключается как `ToolCallingProvider`, когда поддерживает
 tool-calling, иначе tool-loop остаётся дремлющим. Гибридная память (BOB-011)
@@ -1147,11 +1326,27 @@ SKIP).
 приложение — `tests/application/usecases/test_handle_message.py` (зона+conviction →
 директива стойки в промпте, тёплый тон сохранён, нейтраль → путь без директивы).
 Ф2 само-эволюция: домен — `test_taste_evolution.py` (`reinforce`: усиление, затухание
-`(1−conviction)`, границы), `test_soul.py` (`with_taste`/`with_baseline`,
-`experience_count++`); приложение — `test_apply_reflection.py` (сигнал → ось
-изменилась; гейт релевантности → no-op), `test_reflection_parser.py` (полярность +
-совпадение темы), `tests/application/usecases/test_heartbeat.py` (эволюция в
-`ReflectTick`, идемпотентность двойного прогона, персист `taste_profile`).
+`(1−conviction)`, границы), `test_soul.py` (`with_taste`/`with_baseline`/
+`with_phantoms`, `experience_count++`); приложение — `test_apply_reflection.py`
+(сигнал → ось изменилась; гейт релевантности → no-op), `test_reflection_parser.py`
+(полярность + совпадение темы), `tests/application/usecases/test_heartbeat.py`
+(эволюция в `ReflectTick`, идемпотентность двойного прогона, персист `taste_profile`).
+
+Эмоциональная глубина (BOB-020) покрыта по слоям. Домен —
+`tests/domain/personality/test_voice.py` (`tone_directive`: off-day-бэнд по
+порогу, тёплый тон в норме, не грубит), `test_mood_taste.py` (`modulate` ≤1 шаг,
+насыщение концов, `NEUTRAL` без выдумки антипатии, `experiment_bias` в `[0, 1]`,
+оси не мутируют), `test_fascination.py` (`aged` полураспад, `has_faded` по floor,
+границы интенсивности), `test_phantom_evolution.py` (`evolve_phantoms`: grounded-
+проступание, медленность по seeded-RNG, бэнд `max_count` с затуханием старого,
+идемпотентность), `test_soul.py` (`with_phantoms`). Приложение —
+`test_evolve_fascination.py` (grounded Tier-0-пик + эвристик-фоллбэк, сдвиг только
+при выгорании, no-op без материала, идемпотентность), `test_fascination_sources.py`
+(`RepoFascinationGrounding` + `StoreFascinationReader`), `test_evolve_phantoms.py`
+(grounded-кандидат → членство, персист `phantom_prefs`, no-op без изменения) и
+`tests/application/usecases/test_heartbeat.py` (оба шага на reflect-тике).
+Инфраструктура — `tests/infrastructure/persistence/test_fascination_store.py`
+(per-persona round-trip, `None` для неувиденной персоны).
 
 Защитный механизм CI (BOB-009): `pytest-timeout` задаёт дефолтный пер-тестовый
 таймаут (`timeout=60`, `timeout_method="thread"` в `pyproject.toml`), чтобы будущий
