@@ -31,7 +31,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from bob.domain.personality.interlocutor import InterlocutorKind
+
 if TYPE_CHECKING:
+    from bob.domain.personality.interlocutor import Interlocutor
     from bob.domain.personality.mood import Mood
 
 # Written as Bob's voice, not a checklist: how he lands a message. The few-shot
@@ -194,6 +197,41 @@ _OFFDAY_TONE = (
     "Это не повод грубить и не обида на собеседника — ты просто приглушённее и "
     "честнее, без грубости и без нытья."
 )
+
+
+# Who-is-writing directive (BOB-019): Bob *perceives* who is on the other side of
+# the turn and lets it colour his voice — the owner he knows by name, a known
+# friend, a stranger to meet warily-but-warmly, or another bot. Written as
+# character (a person naturally clocks who he's talking to), not a config flag:
+# the kind is rendered as a short Russian label the model reads as social context,
+# never a rule to recite. It is perception only — it changes HOW Bob sounds, not
+# WHICH pipeline runs (the guest-restricted path is a later bead).
+# Cyrillic look-alikes are intentional in these Russian literals.
+_KIND_LABEL: dict[InterlocutorKind, str] = {
+    InterlocutorKind.OWNER: "твой владелец",
+    InterlocutorKind.KNOWN: "твой знакомый",
+    InterlocutorKind.GUEST: "незнакомец",
+    InterlocutorKind.BOT: "другой бот",
+}
+
+
+def who_is_writing_directive(interlocutor: Interlocutor) -> str:
+    """Return the who-is-writing voice line for this turn's sender (BOB-019).
+
+    Folds WHO Bob is talking to into the prompt as social context — the display
+    name plus a short Russian kind-label (owner / known / stranger / bot) — so Bob
+    recognises the owner AS the owner, greets a known friend, and clocks a stranger
+    or a bot. Written as character (a person naturally senses who he is speaking
+    with), not a config switch; it shapes the voice only and never decides which
+    pipeline runs. Pure and deterministic: same interlocutor → same line.
+    """
+    label = _KIND_LABEL[interlocutor.kind]
+    # Russian persona line (project language); Cyrillic look-alikes intentional.
+    return (
+        f"Сейчас тебе пишет: {interlocutor.display_name} ({label}). "
+        "Держи в голове, кто перед тобой, и отвечай соответственно — "
+        "как живой человек, который понимает, с кем говорит."
+    )
 
 
 def tone_directive(mood: Mood, *, thresholds: OffDayThresholds | None = None) -> str:

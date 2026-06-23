@@ -9,5 +9,6 @@
 from __future__ import annotations
 
 from bob.application.authz.authorizer import Authorizer
+from bob.application.authz.sender_perception import SenderPerception
 
-__all__ = ["Authorizer"]
+__all__ = ["Authorizer", "SenderPerception"]

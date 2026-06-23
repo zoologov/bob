@@ -15,6 +15,11 @@ flavor — never a brittle full-string match (the prose is free to evolve).
 
 from __future__ import annotations
 
+from bob.domain.personality.interlocutor import (
+    Interlocutor,
+    InterlocutorKind,
+    Trust,
+)
 from bob.domain.personality.mood import Mood
 from bob.domain.personality.voice import (
     OffDayThresholds,
@@ -23,6 +28,7 @@ from bob.domain.personality.voice import (
     tone_directive,
     user_repeat_directive,
     variable_form_directive,
+    who_is_writing_directive,
 )
 
 
@@ -181,6 +187,68 @@ def test_user_repeat_directive_forbids_pretending_and_re_answering() -> None:
 def test_user_repeat_directive_is_voice_not_a_rule_list() -> None:
     # Character guidance, not a recitable checklist (mirrors the other directives).
     directive = user_repeat_directive()
+    assert "•" not in directive
+    assert "- " not in directive
+
+
+def test_who_is_writing_directive_names_the_owner_by_name_as_owner() -> None:
+    # BOB-019: Bob perceives WHO is writing and recognises the owner AS the owner,
+    # by name, folded into the prompt as character — not as a config flag.
+    who = Interlocutor(
+        sender_id=1,
+        display_name="Vova",
+        kind=InterlocutorKind.OWNER,
+        trust=Trust.TRUSTED,
+    )
+    folded = who_is_writing_directive(who).casefold()
+    assert "vova" in folded  # the name reaches the prompt
+    assert "владел" in folded  # recognised as the owner (владелец)
+
+
+def test_who_is_writing_directive_names_a_known_friend() -> None:
+    who = Interlocutor(
+        sender_id=2,
+        display_name="Ada",
+        kind=InterlocutorKind.KNOWN,
+        trust=Trust.TRUSTED,
+    )
+    folded = who_is_writing_directive(who).casefold()
+    assert "ada" in folded
+    assert "знаком" in folded  # a known person (знакомый)
+
+
+def test_who_is_writing_directive_marks_a_stranger() -> None:
+    who = Interlocutor(
+        sender_id=3,
+        display_name="Stranger",
+        kind=InterlocutorKind.GUEST,
+        trust=Trust.GUEST,
+    )
+    folded = who_is_writing_directive(who).casefold()
+    assert "stranger" in folded
+    assert "незнаком" in folded  # a stranger (незнакомец)
+
+
+def test_who_is_writing_directive_marks_a_bot() -> None:
+    who = Interlocutor(
+        sender_id=4,
+        display_name="PeerBot",
+        kind=InterlocutorKind.BOT,
+        trust=Trust.GUEST,
+    )
+    folded = who_is_writing_directive(who).casefold()
+    assert "peerbot" in folded
+    assert "бот" in folded
+
+
+def test_who_is_writing_directive_is_voice_not_a_rule_list() -> None:
+    who = Interlocutor(
+        sender_id=1,
+        display_name="Vova",
+        kind=InterlocutorKind.OWNER,
+        trust=Trust.TRUSTED,
+    )
+    directive = who_is_writing_directive(who)
     assert "•" not in directive
     assert "- " not in directive
 

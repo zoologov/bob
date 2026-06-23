@@ -32,6 +32,11 @@ from bob.application.usecases.handle_message import (
 from bob.application.usecases.update_mood_from_text import UpdateMoodFromText
 from bob.domain.personality.expression import ExpressionFreqs
 from bob.domain.personality.fascination import Fascination
+from bob.domain.personality.interlocutor import (
+    Interlocutor,
+    InterlocutorKind,
+    Trust,
+)
 from bob.domain.personality.mood import Mood
 from bob.domain.personality.negotiation import NegotiationZone
 from bob.domain.personality.reaction import (
@@ -311,6 +316,7 @@ def _build(
     reflection: _FakeReflectionReader | None = None,
     fascination: _FakeFascinationReader | None = None,
     surface_old_freq: float | None = None,
+    perceive_sender: _FakeInterlocutorResolver | None = None,
 ) -> tuple[HandleMessage, FakeBot, FakeRepo, CapturingProvider]:
     tier0 = CapturingProvider(reply="positive", replies=tier0_replies)
     tier1 = CapturingProvider(reply=reply, replies=tier1_replies)
@@ -346,6 +352,7 @@ def _build(
         reflection=reflection,
         fascination=fascination,
         surface_old_freq=surface_old_freq if surface_old_freq is not None else 0.0,
+        perceive_sender=perceive_sender,
     )
     return handler, bot, repo, tier1
 
@@ -1640,3 +1647,117 @@ async def test_user_repeat_only_counts_user_turns_not_bobs_reply() -> None:
     await handler.handle(_message(bob_said))
 
     assert not _has_user_repeat_directive(tier1.all_text)
+
+
+# --- BOB-019: sender perception — WHO is writing reaches the compose prompt -----
+
+
+class _FakeInterlocutorResolver:
+    """Fake perception seam: returns a fixed Interlocutor for any event (no authz).
+
+    Records the events it was asked about so a test can assert the use-case
+    perceives the sender once per turn.
+    """
+
+    def __init__(self, who: Interlocutor) -> None:
+        self._who = who
+        self.seen: list[MessageReceived] = []
+
+    async def resolve(self, event: MessageReceived) -> Interlocutor:
+        self.seen.append(event)
+        return self._who
+
+
+def _interlocutor(
+    *,
+    name: str,
+    kind: InterlocutorKind,
+    trust: Trust = Trust.TRUSTED,
+    sender_id: int | None = 99,
+) -> Interlocutor:
+    return Interlocutor(
+        sender_id=sender_id, display_name=name, kind=kind, trust=trust
+    )
+
+
+async def test_owner_identity_reaches_the_compose_prompt() -> None:
+    # BOB-019: the perceived sender (name + kind) reaches the reply prompt, and the
+    # owner is recognised AS the owner — folded in as character, not a config flag.
+    resolver = _FakeInterlocutorResolver(
+        _interlocutor(name="Vova", kind=InterlocutorKind.OWNER)
+    )
+    handler, _bot, _repo, tier1 = _build(reply="hi", perceive_sender=resolver)
+
+    await handler.handle(_message("расскажи подробно про космос"))
+
+    folded = tier1.all_text.casefold()
+    assert "vova" in folded  # the name is perceived
+    assert "владел" in folded  # recognised as owner (владелец)
+    assert resolver.seen, "the use-case never perceived the sender"
+
+
+async def test_known_friend_identity_reaches_the_compose_prompt() -> None:
+    resolver = _FakeInterlocutorResolver(
+        _interlocutor(name="Ada", kind=InterlocutorKind.KNOWN)
+    )
+    handler, _bot, _repo, tier1 = _build(reply="hi", perceive_sender=resolver)
+
+    await handler.handle(_message("расскажи подробно про чай"))
+
+    folded = tier1.all_text.casefold()
+    assert "ada" in folded
+    assert "знаком" in folded  # a known person
+
+
+async def test_stranger_identity_reaches_the_compose_prompt() -> None:
+    resolver = _FakeInterlocutorResolver(
+        _interlocutor(name="Rando", kind=InterlocutorKind.GUEST, trust=Trust.GUEST)
+    )
+    handler, _bot, _repo, tier1 = _build(reply="hi", perceive_sender=resolver)
+
+    await handler.handle(_message("расскажи подробно что-нибудь"))
+
+    folded = tier1.all_text.casefold()
+    assert "rando" in folded
+    assert "незнаком" in folded  # a stranger
+
+
+async def test_sender_perception_composes_with_voice_and_tone() -> None:
+    # BOB-019 is ADDITIVE: the who-is-writing line augments — never displaces — the
+    # anti-bait voice, the warm mood tone, and the rest of the compose context.
+    resolver = _FakeInterlocutorResolver(
+        _interlocutor(name="Vova", kind=InterlocutorKind.OWNER)
+    )
+    handler, _bot, _repo, tier1 = _build(reply="hi", perceive_sender=resolver)
+
+    await handler.handle(_message("объясни подробно про минимализм в дизайне"))
+
+    folded = tier1.all_text.casefold()
+    assert "владел" in folded  # the perception line is present
+    assert "эмодзи" in folded  # anti-bait voice still present
+    assert "тепл" in folded  # warm tone_directive still present
+
+
+async def test_no_resolver_leaves_the_compose_prompt_unchanged() -> None:
+    # Backward-compatible: with no perception seam wired, the prompt carries no
+    # who-is-writing line — exactly the pre-BOB-019 behaviour, full reply for all.
+    handler, _bot, _repo, tier1 = _build(reply="hi")
+
+    await handler.handle(_message("расскажи подробно про кофе"))
+
+    assert "пишет:" not in tier1.all_text.casefold()
+
+
+async def test_sender_perception_does_not_change_which_pipeline_runs() -> None:
+    # The guest pipeline restriction is bob-apv.2: even a GUEST still gets the full
+    # reply today (the router replies normally), so the committed reply is unchanged.
+    resolver = _FakeInterlocutorResolver(
+        _interlocutor(name="Rando", kind=InterlocutorKind.GUEST, trust=Trust.GUEST)
+    )
+    handler, bot, _repo, _tier1 = _build(
+        reply="полный ответ как обычно", perceive_sender=resolver
+    )
+
+    await handler.handle(_message("расскажи подробно про кофе"))
+
+    assert bot.final_text == "полный ответ как обычно"

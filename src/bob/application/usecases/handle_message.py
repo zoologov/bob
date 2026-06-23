@@ -70,6 +70,7 @@ from bob.domain.personality.voice import (
     tone_directive,
     user_repeat_directive,
     variable_form_directive,
+    who_is_writing_directive,
 )
 from bob.domain.personality.zone_classifier import TasteZoneClassifier
 
@@ -84,6 +85,7 @@ if TYPE_CHECKING:
     from bob.application.usecases.extract_facts import ExtractFacts
     from bob.application.usecases.update_mood_from_text import UpdateMoodFromText
     from bob.domain.personality.fascination import Fascination
+    from bob.domain.personality.interlocutor import Interlocutor
     from bob.domain.personality.soul import SOUL
     from bob.domain.ports import (
         Clock,
@@ -250,6 +252,23 @@ class CurrentFascinationReader(Protocol):
         ...
 
 
+class InterlocutorResolver(Protocol):
+    """Perception seam: WHO is writing this turn (BOB-019).
+
+    Resolves the inbound :class:`MessageReceived` into an
+    :class:`~bob.domain.personality.interlocutor.Interlocutor` — the sender's
+    social identity (owner / known / guest / bot + trust) — so the compose path can
+    fold WHO is on the other side into Bob's voice. The concrete adapter derives it
+    from the :class:`~bob.application.authz.Authorizer` (``is_owner`` +
+    ``is_authorized``) already known for the turn. Optional and additive: unwired
+    (the default) the perception line is simply absent and the turn behaves exactly
+    as before — it never changes which pipeline runs (the guest-restricted path is
+    a later bead).
+    """
+
+    async def resolve(self, event: MessageReceived) -> Interlocutor: ...
+
+
 class OwnerActivityRecorder(Protocol):
     """The proactivity seam HandleMessage notifies when the owner writes.
 
@@ -300,6 +319,7 @@ class HandleMessage:
         fascination: CurrentFascinationReader | None = None,
         offday_thresholds: OffDayThresholds | None = None,
         surface_old_freq: float = _DEFAULT_SURFACE_OLD_FREQ,
+        perceive_sender: InterlocutorResolver | None = None,
     ) -> None:
         self._router = router
         self._gateway = gateway
@@ -378,10 +398,21 @@ class HandleMessage:
             )
             raise ValueError(msg)
         self._surface_old_freq = surface_old_freq
+        # The perception seam (BOB-019): when wired, Bob perceives WHO is writing —
+        # owner / known / guest / bot — and a who-is-writing voice line is folded
+        # into the reply prompt so he answers as a person who knows who he's talking
+        # to (the owner recognised AS owner). Additive only: unwired (the default)
+        # the line is absent and the turn behaves exactly as before. It NEVER changes
+        # which pipeline runs — the guest-restricted path is a later bead.
+        self._perceive_sender = perceive_sender
 
     async def handle(self, event: MessageReceived) -> None:
         """Process one received message end to end (the EventBus subscriber)."""
         soul = await self._perceive(event)
+        # Perceive WHO is writing (BOB-019): owner / known / guest / bot. Resolved
+        # once per turn so the same identity threads through every (re)compose; None
+        # when no perception seam is wired (additive, behaviour as before).
+        interlocutor = await self._perceive_interlocutor(event)
         # Plan how Bob expresses this turn (BOB-018): pure, deterministic by seed.
         # Computed up front so the mode steers the reply path and the form hint
         # shapes the prompt; the rare flags ride along for later beads.
@@ -407,7 +438,13 @@ class HandleMessage:
         # stays visible for the whole real wait (BOB-009); then commit one rich final.
         async with self._gateway.typing_indicator(chat_id=event.chat_id):
             reply = await self._compose_reply(
-                event.text, soul, recalled, history, plan, user_repeated=user_repeated
+                event.text,
+                soul,
+                recalled,
+                history,
+                plan,
+                user_repeated=user_repeated,
+                interlocutor=interlocutor,
             )
             # Anti-repeat guard (BOB-022, defense in depth): if the fresh reply is
             # byte-identical (after strip) to Bob's most-recent prior reply, regenerate
@@ -415,7 +452,14 @@ class HandleMessage:
             # generation, only on an exact duplicate; if the retry is still identical it
             # is kept (no infinite loop).
             reply = await self._guard_against_verbatim_repeat(
-                reply, event.text, soul, recalled, history, plan, user_repeated
+                reply,
+                event.text,
+                soul,
+                recalled,
+                history,
+                plan,
+                user_repeated,
+                interlocutor,
             )
         await self._gateway.reply(chat_id=event.chat_id, markdown=reply)
         await self._persist(event, reply, soul)
@@ -461,6 +505,20 @@ class HandleMessage:
         self._state.soul = soul
         return soul
 
+    async def _perceive_interlocutor(
+        self, event: MessageReceived
+    ) -> Interlocutor | None:
+        """Perceive WHO is writing this turn, or ``None`` (no seam wired) (BOB-019).
+
+        Asks the wired perception seam to resolve the inbound into an
+        :class:`~bob.domain.personality.interlocutor.Interlocutor` (owner / known /
+        guest / bot). Unwired (the default) returns ``None`` so the compose path
+        adds no who-is-writing line and the turn behaves exactly as before.
+        """
+        if self._perceive_sender is None:
+            return None
+        return await self._perceive_sender.resolve(event)
+
     def _plan_expression(self, event: MessageReceived, soul: SOUL) -> ExpressionPlan:
         """Decide this turn's expression plan — pure, deterministic by seed (BOB-018).
 
@@ -482,12 +540,13 @@ class HandleMessage:
         plan: ExpressionPlan,
         *,
         user_repeated: bool = False,
+        interlocutor: Interlocutor | None = None,
     ) -> str:
         """Compose a full reply, folding the plan's form hint into the prompt."""
         context = _assemble_shareable_context(soul, text, recalled, history)
         context = await self._with_grounded_addons(context, text, plan)
         system_prompt = self._system_prompt_for(
-            soul, text, plan, user_repeated=user_repeated
+            soul, text, plan, user_repeated=user_repeated, interlocutor=interlocutor
         )
         provider = self._tool_provider
         if provider is not None and not self._registry.is_empty:
@@ -518,6 +577,7 @@ class HandleMessage:
         history: Sequence[Mapping[str, object]],
         plan: ExpressionPlan,
         user_repeated: bool = False,
+        interlocutor: Interlocutor | None = None,
     ) -> str:
         """Recompose once if ``reply`` byte-repeats Bob's last reply (BOB-022).
 
@@ -532,7 +592,13 @@ class HandleMessage:
         if not previous or reply.strip() != previous.strip():
             return reply
         return await self._compose_reply(
-            text, soul, recalled, history, plan, user_repeated=user_repeated
+            text,
+            soul,
+            recalled,
+            history,
+            plan,
+            user_repeated=user_repeated,
+            interlocutor=interlocutor,
         )
 
     async def _with_grounded_addons(
@@ -627,6 +693,7 @@ class HandleMessage:
         plan: ExpressionPlan,
         *,
         user_repeated: bool = False,
+        interlocutor: Interlocutor | None = None,
     ) -> str:
         """Augment the base prompt with the mood tone, stance, and form-hint directives.
 
@@ -636,9 +703,13 @@ class HandleMessage:
         warm line. The taste verdict + conviction on ``text`` then pick the zone and
         stance (BOB-013), and the plan's ``form_hint`` appends a soft length cue
         (BOB-018). When ``user_repeated`` (BOB-022 — the owner sent a near-verbatim
-        repeat) the user-repeat directive is appended so Bob notices it in voice. With
-        a normal mood, no target opinion, no user-domain signal, a NORMAL form hint,
-        and no repeat, only the warm tone line augments the base voice.
+        repeat) the user-repeat directive is appended so Bob notices it in voice. When
+        an ``interlocutor`` is perceived (BOB-019) the who-is-writing line is appended
+        so Bob answers as someone who knows WHO is on the other side (the owner
+        recognised AS owner) — additive, never changing which pipeline runs. With a
+        normal mood, no target opinion, no user-domain signal, a NORMAL form hint, no
+        repeat, and no perceived interlocutor, only the warm tone line augments the
+        base voice.
         """
         verdict = soul.taste.score(text)
         conviction = soul.taste.conviction_for(text)
@@ -651,6 +722,9 @@ class HandleMessage:
             _stance_directive(stance, verdict=verdict, zone=zone),
             _FORM_HINT_DIRECTIVE.get(plan.form_hint, ""),
             user_repeat_directive() if user_repeated else "",
+            # BOB-019: fold WHO is writing (owner / known / guest / bot) into the
+            # voice as character — additive, no-op when no interlocutor perceived.
+            who_is_writing_directive(interlocutor) if interlocutor is not None else "",
         ]
         suffix = "".join(f"\n{d}" for d in directives if d)
         return f"{_SYSTEM_PROMPT}{suffix}"

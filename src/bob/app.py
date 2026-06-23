@@ -40,7 +40,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
-from bob.application.authz import Authorizer
+from bob.application.authz import Authorizer, SenderPerception
 from bob.application.capabilities import (
     CapabilityRegistry,
     make_recall_memory_capability,
@@ -408,6 +408,11 @@ def build_application(
         # relevant. Small (anti-tic), tunable via memory.surface_old.freq; the default
         # recall path is unchanged (the blend only ever rides the callback).
         surface_old_freq=_build_surface_old_freq(merged),
+        # Sender-perception seam (BOB-019): Bob perceives WHO is writing — owner /
+        # known / guest — off the shared Authorizer and folds it into his voice
+        # ("сейчас пишет: …"). Additive only: it shapes HOW Bob sounds, never which
+        # pipeline runs (the guest-restricted path is a later bead).
+        perceive_sender=SenderPerception(authorizer=authorizer),
     )
     event_bus.subscribe(MESSAGE_RECEIVED, _as_handler(handle_message))
 
