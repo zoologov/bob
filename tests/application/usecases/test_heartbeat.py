@@ -481,3 +481,47 @@ async def test_reflect_without_a_consolidator_is_unaffected() -> None:
     await tick.run()
 
     assert len(repo.episodes) == 1
+
+
+class _RecordingDeduper:
+    """A FactDeduper double recording how many times the tick drove it."""
+
+    def __init__(self) -> None:
+        self.runs = 0
+
+    async def run(self) -> None:
+        self.runs += 1
+
+
+async def test_reflect_drives_the_deduper_after_logging() -> None:
+    # BOB-021: when wired, the reflect tick drives the fact-dedup step once per tick
+    # (after the reflection episode is logged). The deduper is itself rare/idempotent;
+    # the tick just invokes it on the slow cadence.
+    router, _ = _router(reply="дайджест дня")
+    repo = FakeRepo()
+    deduper = _RecordingDeduper()
+    tick = ReflectTick(
+        router=router,
+        repo=repo,
+        state=_state(Mood(), Mood()),
+        clock=FixedClock(_moment()),
+        dedup_facts=deduper,
+    )
+
+    await tick.run()
+
+    assert len(repo.episodes) == 1  # reflection still logged
+    assert deduper.runs == 1  # deduper driven once
+
+
+async def test_reflect_without_a_deduper_is_unaffected() -> None:
+    # Backward-compatible default: no deduper wired → the tick behaves as before.
+    router, _ = _router(reply="тихая мысль")
+    repo = FakeRepo()
+    tick = ReflectTick(
+        router=router, repo=repo, state=_state(Mood(), Mood()), clock=FixedClock(_moment())
+    )
+
+    await tick.run()
+
+    assert len(repo.episodes) == 1

@@ -56,6 +56,14 @@ _SOURCE_TABLES: dict[VectorSource, tuple[str, str]] = {
     _EPISODIC: ("episodic_log", "event_type"),
 }
 
+# Per-source extra WHERE predicate applied to the KNN join (a fixed internal SQL
+# literal, never user input). For the semantic source, exclude facts merged by
+# BOB-021 dedup (``superseded_by`` set) so a near-duplicate folded into a canonical
+# fact never resurfaces in recall. Other sources have no extra filter.
+_SOURCE_FILTERS: dict[VectorSource, str] = {
+    _SEMANTIC: "t.superseded_by IS NULL",
+}
+
 
 def _pack(vector: Sequence[float]) -> bytes:
     """Pack a float vector into sqlite-vec's little-endian float32 blob format."""
@@ -225,15 +233,19 @@ class MemoryVectorStore:
     ) -> list[dict[str, object]]:
         """KNN within one source partition, joined to its content/category.
 
-        ``table`` / ``category_col`` are fixed internal literals from
-        ``_SOURCE_TABLES`` (never user input), so interpolating them into the
-        JOIN is safe; the query vector, partition key and ``k`` stay parameterised.
+        ``table`` / ``category_col`` and the per-source filter are fixed internal
+        literals from ``_SOURCE_TABLES`` / ``_SOURCE_FILTERS`` (never user input),
+        so interpolating them into the JOIN is safe; the query vector, partition key
+        and ``k`` stay parameterised. The semantic filter excludes facts superseded
+        by BOB-021 dedup so a merged near-duplicate never resurfaces.
         """
+        extra = _SOURCE_FILTERS.get(source)
+        extra_clause = f" AND {extra}" if extra else ""
         sql = (
             "SELECT t.content AS content, "  # noqa: S608 — literals are internal, not user input
             f"t.{category_col} AS category, ? AS source, v.distance AS distance "
             f"FROM memory_vec v JOIN {table} t ON t.id = v.src_id "
-            "WHERE v.source = ? AND v.embedding MATCH ? AND k = ? "
+            f"WHERE v.source = ? AND v.embedding MATCH ? AND k = ?{extra_clause} "
             "ORDER BY v.distance"
         )
         async with self._conn.execute(sql, (source, source, packed, k)) as cursor:

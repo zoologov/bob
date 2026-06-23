@@ -72,6 +72,7 @@ class SqliteMemoryRepo:
             await self._vectors.load_extension()
         await self._conn.executescript(_load_schema())
         await self._migrate_episodic_consolidated()
+        await self._migrate_semantic_superseded_by()
         await self._backfill_episodic_fts()
         await self._conn.commit()
         await self._vector_store().backfill()
@@ -95,6 +96,27 @@ class SqliteMemoryRepo:
     async def _episodic_columns(self) -> set[str]:
         """Names of the columns currently on ``episodic_log``."""
         async with self._db().execute("PRAGMA table_info(episodic_log)") as cursor:
+            rows = await cursor.fetchall()
+        return {str(row[1]) for row in rows}
+
+    async def _migrate_semantic_superseded_by(self) -> None:
+        """Add ``semantic_memory.superseded_by`` to a pre-existing DB (idempotent, BOB-021).
+
+        ``CREATE TABLE IF NOT EXISTS`` never alters an already-present table, so a DB
+        written before this column existed would lack it. This guarded ``ALTER`` adds
+        it only when missing — additive and non-destructive: existing rows take the
+        column default (NULL, i.e. an active, un-superseded fact). Skipped when the
+        column is already there, so re-running ``initialize()`` is a clean no-op.
+        """
+        if "superseded_by" in await self._semantic_columns():
+            return
+        await self._db().execute(
+            "ALTER TABLE semantic_memory ADD COLUMN superseded_by INTEGER"
+        )
+
+    async def _semantic_columns(self) -> set[str]:
+        """Names of the columns currently on ``semantic_memory``."""
+        async with self._db().execute("PRAGMA table_info(semantic_memory)") as cursor:
             rows = await cursor.fetchall()
         return {str(row[1]) for row in rows}
 
@@ -238,6 +260,41 @@ class SqliteMemoryRepo:
         await self._db().execute(
             f"UPDATE episodic_log SET consolidated = 1 WHERE id IN ({placeholders})",  # noqa: S608
             ids,
+        )
+        await self._db().commit()
+
+    # --- Fact dedup (BOB-021) -------------------------------------------------
+
+    async def select_active_facts(self) -> Sequence[Mapping[str, object]]:
+        """Return every ACTIVE (un-superseded) semantic fact, newest first.
+
+        The dedup eligibility predicate: only facts not yet merged into a canonical
+        one (``superseded_by IS NULL``) — so an already-merged duplicate is excluded
+        and a re-run never re-merges it (idempotent). Each row carries ``id``, ``ts``
+        and ``content`` so the use-case can embed, cluster by cosine and pick a
+        canonical.
+        """
+        async with self._db().execute(
+            "SELECT id, ts, category, content, confidence "
+            "FROM semantic_memory WHERE superseded_by IS NULL "
+            "ORDER BY ts DESC, id DESC"
+        ) as cursor:
+            rows = await cursor.fetchall()
+        return [dict(row) for row in rows]
+
+    async def supersede_facts(self, mapping: Mapping[int, int]) -> None:
+        """Flag duplicate facts as superseded into their canonical fact (non-destructive).
+
+        ``mapping`` is ``{duplicate_id: canonical_id}``: each duplicate's
+        ``superseded_by`` is set to its canonical id — the row is kept (provenance
+        intact), only marked, so it drops out of ``select_active_facts`` and recall.
+        An empty mapping is a no-op.
+        """
+        if not mapping:
+            return
+        await self._db().executemany(
+            "UPDATE semantic_memory SET superseded_by = ? WHERE id = ?",
+            [(canonical_id, duplicate_id) for duplicate_id, canonical_id in mapping.items()],
         )
         await self._db().commit()
 

@@ -62,6 +62,7 @@ from bob.application.runtime import (
 )
 from bob.application.usecases.apply_reflection import ApplyReflection
 from bob.application.usecases.consolidate_memory import ConsolidateMemory
+from bob.application.usecases.dedup_facts import DedupFacts
 from bob.application.usecases.evolve_fascination import EvolveFascination
 from bob.application.usecases.evolve_phantoms import EvolvePhantoms
 from bob.application.usecases.extract_facts import ExtractFacts
@@ -167,6 +168,12 @@ _PHANTOM_CHANGE_RATE = _PHANTOM_RATE
 # episodes at least two weeks old, a modest batch per rare reflect tick.
 _CONSOLIDATION_MAX_AGE_DAYS = 14.0
 _CONSOLIDATION_BATCH_SIZE = 50
+
+# Default fact-dedup guardrails (BOB-021); overridable via
+# ``memory.dedup.{threshold,batch_size}``. Conservative: a high cosine threshold so
+# only true near-duplicates merge, a bounded batch per rare reflect tick.
+_DEDUP_THRESHOLD = 0.92
+_DEDUP_BATCH_SIZE = 200
 
 # The proactivity engine ticks on the heartbeat cadence: cheap by construction
 # (the urge/governance decision is pure, defaulting to silence), so most ticks
@@ -455,6 +462,17 @@ def build_application(
         clock=resolved_clock,
         language=language,
     )
+    # Fact dedup (BOB-021): a rare, conservative, non-destructive, idempotent step driven
+    # on the same reflect tick. It merges near-duplicate semantic facts (cosine of
+    # embeddings above a high threshold) into a canonical one and flags the rest
+    # superseded — kept with provenance, only excluded from recall. Off unless switched
+    # on via memory.dedup.enabled; needs an embedder (keyword-only memory -> no-op).
+    dedup_facts = _build_dedup_facts(
+        merged,
+        store=memory_repo,
+        embedder=resolved_embedder,
+        clock=resolved_clock,
+    )
     reflect_tick = ReflectTick(
         router=router,
         repo=memory_repo,
@@ -466,6 +484,7 @@ def build_application(
         evolve_fascination=evolve_fascination,
         evolve_phantoms=evolve_phantoms,
         consolidate_memory=consolidate_memory,
+        dedup_facts=dedup_facts,
     )
 
     proactivity_engine = _build_proactivity_engine(
@@ -675,6 +694,34 @@ def _build_consolidate_memory(
         max_age_days=_float_or(section, "max_age_days", _CONSOLIDATION_MAX_AGE_DAYS),
         batch_size=_int(section, "batch_size", _CONSOLIDATION_BATCH_SIZE),
         language=language,
+    )
+
+
+def _build_dedup_facts(
+    config: Mapping[str, object],
+    *,
+    store: SqliteMemoryRepo,
+    embedder: Embedder | None,
+    clock: Clock,
+) -> DedupFacts | None:
+    """Build the optional BOB-021 :class:`DedupFacts`, or ``None`` when off.
+
+    Reads ``memory.dedup.*``: ``enabled`` (off by default — the step stays inert until
+    deliberately switched on), ``threshold`` (the conservative cosine bar) and
+    ``batch_size``. Returns ``None`` when disabled OR when there is no embedder
+    (keyword-only memory cannot compute cosine), so the reflect tick gets no deduper and
+    behaves exactly as before. ``SqliteMemoryRepo`` structurally satisfies the
+    use-case's ``DedupStore`` seam.
+    """
+    section = _section(_section(config, "memory"), "dedup")
+    if not _flag(section, "enabled") or embedder is None:
+        return None
+    return DedupFacts(
+        store=store,
+        embedder=embedder,
+        clock=clock,
+        threshold=_float_or(section, "threshold", _DEDUP_THRESHOLD),
+        batch_size=_int(section, "batch_size", _DEDUP_BATCH_SIZE),
     )
 
 

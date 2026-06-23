@@ -131,6 +131,17 @@ DEFAULT_CONFIG: Config = {
             "max_age_days": 14.0,
             "batch_size": 50,
         },
+        # Fact dedup (BOB-021): a rare, conservative, non-destructive reflect-tick step
+        # that merges near-duplicate semantic facts (cosine of embeddings above a high
+        # threshold) into a canonical one, flagging the rest superseded (excluded from
+        # recall, never deleted). ``threshold`` is deliberately high so dissimilar facts
+        # are never merged; ``enabled`` false keeps the step inert until switched on. It
+        # needs an embedder — with keyword-only memory the step is a no-op.
+        "dedup": {
+            "enabled": False,
+            "threshold": 0.92,
+            "batch_size": 200,
+        },
     },
     # Two bots in one process (BOB-003): Bob lives in his topic, GUPPI is the
     # gatekeeper in General. Each bot's token comes from env only (never YAML);

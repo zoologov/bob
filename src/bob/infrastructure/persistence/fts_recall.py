@@ -57,13 +57,17 @@ class Fts5MemoryRecall:
         return _dedup_by_content(merged)[:k]
 
     async def _semantic_hits(self, match_expr: str, k: int) -> list[dict[str, object]]:
-        """Top-``k`` distilled semantic facts matching ``match_expr``."""
+        """Top-``k`` distilled semantic facts matching ``match_expr``.
+
+        Superseded facts (``superseded_by`` set by BOB-021 dedup) are excluded so a
+        near-duplicate merged into a canonical one never resurfaces in recall.
+        """
         async with self._repo.connection.execute(
             "SELECT sm.content AS content, sm.category AS category, "
             "bm25(semantic_fts) AS score, 'semantic' AS source "
             "FROM semantic_fts "
             "JOIN semantic_memory sm ON sm.id = semantic_fts.rowid "
-            "WHERE semantic_fts MATCH ? "
+            "WHERE semantic_fts MATCH ? AND sm.superseded_by IS NULL "
             "ORDER BY score LIMIT ?",
             (match_expr, k),
         ) as cursor:

@@ -123,6 +123,22 @@ class MemoryConsolidator(Protocol):
         ...
 
 
+class FactDeduper(Protocol):
+    """The narrow seam the reflect tick drives to merge near-duplicate facts (BOB-021).
+
+    Realised by :class:`~bob.application.usecases.dedup_facts.DedupFacts`: a rare,
+    conservative, non-destructive, idempotent step that merges near-duplicate semantic
+    facts (cosine of embeddings above a conservative threshold) into a canonical one,
+    flagging the rest superseded — so Bob's facts stay clean without false merges.
+    Driven AFTER the reflection is logged, on the same slow cadence. Optional: unwired,
+    the reflect tick behaves exactly as before.
+    """
+
+    async def run(self) -> None:
+        """Run one dedup step (a no-op unless near-duplicate facts are due)."""
+        ...
+
+
 class TasteProfileWriter(Protocol):
     """The narrow persistence seam self-evolution needs: write a JSON artifact.
 
@@ -203,6 +219,7 @@ class ReflectTick:
         evolve_fascination: FascinationEvolver | None = None,
         evolve_phantoms: PhantomEvolver | None = None,
         consolidate_memory: MemoryConsolidator | None = None,
+        dedup_facts: FactDeduper | None = None,
     ) -> None:
         self._router = router
         self._repo = repo
@@ -227,6 +244,12 @@ class ReflectTick:
         # eligible is a no-op), so a re-run in the same period causes no churn. Unwired,
         # the tick behaves exactly as before.
         self._consolidate_memory = consolidate_memory
+        # The fact-dedup seam (BOB-021): same slow cadence — driven AFTER the reflection
+        # is logged. Itself rare, conservative, idempotent and non-destructive (only
+        # near-duplicate facts above a high cosine threshold are merged; a re-run with
+        # nothing to merge is a no-op), so a re-run in the same period causes no churn.
+        # Unwired, the tick behaves exactly as before.
+        self._dedup_facts = dedup_facts
         # Idempotency marker: the last reflection text already applied to the soul.
         self._last_evolved: str | None = None
 
@@ -259,6 +282,8 @@ class ReflectTick:
             await self._evolve_phantoms.run()
         if self._consolidate_memory is not None:
             await self._consolidate_memory.run()
+        if self._dedup_facts is not None:
+            await self._dedup_facts.run()
 
     def _evolve(self, reflection: str) -> None:
         """Apply ``reflection`` to the soul once, persisting taste on a real change."""

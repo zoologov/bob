@@ -48,7 +48,14 @@ CREATE TABLE IF NOT EXISTS semantic_memory (
     ts         TEXT    NOT NULL,
     category   TEXT    NOT NULL,
     content    TEXT    NOT NULL,
-    confidence REAL    NOT NULL DEFAULT 1.0
+    confidence REAL    NOT NULL DEFAULT 1.0,
+    -- BOB-021 dedup: when set, this fact was merged into the canonical fact with
+    -- this id (a near-duplicate by embedding cosine, above a conservative
+    -- threshold). Non-destructive — the row is kept with provenance (the canonical
+    -- id), only excluded from recall so the duplicate never resurfaces. Additive
+    -- for fresh DBs; a guarded ALTER in initialize() migrates pre-existing DBs
+    -- (defaults to NULL, i.e. an active, un-superseded fact).
+    superseded_by INTEGER
 );
 
 CREATE INDEX IF NOT EXISTS idx_semantic_ts ON semantic_memory (ts DESC);
