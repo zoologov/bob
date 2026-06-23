@@ -250,6 +250,16 @@ class MultiBotGateway:
         """The bot registry this gateway polls (read-only view for composition)."""
         return self._registry
 
+    @property
+    def guppi(self) -> GuppiHandler | None:
+        """GUPPI's handler (or ``None`` if GUPPI is not registered) — for composition.
+
+        Exposed so the composition root can hand GUPPI to the обида seam as the
+        one-shot :class:`~bob.application.usecases.sulk_sources.SulkAnnouncer`
+        (GUPPI posts "Боб обижен …" on a fresh sulk entry, BOB-014 .2b). Read-only.
+        """
+        return self._guppi
+
     def _build_guppi(self, authorizer: AuthorizerLike | None) -> GuppiHandler | None:
         """Construct GUPPI's handler from its registration, if both are present.
 

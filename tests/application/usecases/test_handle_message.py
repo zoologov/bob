@@ -25,11 +25,17 @@ from bob.application.router.llm_router import LLMRouter
 from bob.application.runtime.events import MessageReceived
 from bob.application.usecases.extract_facts import ExtractFacts
 from bob.application.usecases.handle_message import (
+    EngagementState,
     HandleMessage,
     OwnerActivityRecorder,
     PersonalityState,
 )
 from bob.application.usecases.update_mood_from_text import UpdateMoodFromText
+from bob.domain.personality.engagement import (
+    ConversationalFatigue,
+    EngagementThresholds,
+    FatigueRates,
+)
 from bob.domain.personality.expression import ExpressionFreqs
 from bob.domain.personality.fascination import Fascination
 from bob.domain.personality.interlocutor import (
@@ -38,12 +44,14 @@ from bob.domain.personality.interlocutor import (
     Trust,
 )
 from bob.domain.personality.mood import Mood
-from bob.domain.personality.negotiation import NegotiationZone
+from bob.domain.personality.negotiation import NegotiationZone, Stance
 from bob.domain.personality.reaction import (
     STANDARD_REACTION_EMOJI,
     reaction_emoji_for,
 )
+from bob.domain.personality.relationship import Relationship
 from bob.domain.personality.soul import SOUL
+from bob.domain.personality.sulk import SulkState
 from bob.domain.personality.taste import TasteAxis, TasteEngine, Verdict
 from bob.domain.ports import ToolCall, ToolCallResult
 from bob.infrastructure.telegram.gateway import TelegramGateway
@@ -318,11 +326,17 @@ def _build(
     surface_old_freq: float | None = None,
     perceive_sender: _FakeInterlocutorResolver | None = None,
     first_impression: _FakeFirstImpression | None = None,
+    relationship: _FakeRelationship | None = None,
+    sulk: _FakeSulk | None = None,
+    engagement_state: EngagementState | None = None,
+    engagement_thresholds: EngagementThresholds | None = None,
+    fatigue_rates: FatigueRates | None = None,
+    clock: FixedClock | None = None,
 ) -> tuple[HandleMessage, FakeBot, FakeRepo, CapturingProvider]:
     tier0 = CapturingProvider(reply="positive", replies=tier0_replies)
     tier1 = CapturingProvider(reply=reply, replies=tier1_replies)
     router = LLMRouter(providers={0: tier0, 1: tier1})
-    clock = FixedClock(_moment())
+    clock = clock if clock is not None else FixedClock(_moment())
     bot = FakeBot()
     repo = FakeRepo(history=history)
     gateway = TelegramGateway(
@@ -355,6 +369,11 @@ def _build(
         surface_old_freq=surface_old_freq if surface_old_freq is not None else 0.0,
         perceive_sender=perceive_sender,
         first_impression=first_impression,
+        relationship=relationship,
+        sulk=sulk,
+        engagement_state=engagement_state,
+        engagement_thresholds=engagement_thresholds,
+        fatigue_rates=fatigue_rates,
     )
     return handler, bot, repo, tier1
 
@@ -2146,3 +2165,518 @@ async def test_anonymous_guest_turn_replies_and_records_nothing() -> None:
     # The seam is still invoked with the no-id interlocutor (the tracker no-ops on it);
     # the recorded interlocutor carries no sender_id, so nothing keyable is stored.
     assert all(who.sender_id is None for who in impressions.recorded)
+
+
+# --- Relationship (BOB-014) --------------------------------------------------
+
+
+class _FakeRelationship:
+    """In-memory RelationshipReader fake: a fixed current relationship + capture.
+
+    ``current`` is the relationship returned for the turn (``None`` → a new person);
+    ``interactions`` captures every (interlocutor, stance, mood, sentiment) recorded
+    after a turn, so a test can assert the relationship is updated + persisted.
+    """
+
+    def __init__(self, *, current: Relationship | None = None) -> None:
+        self._current = current
+        self.interactions: list[tuple[Interlocutor, Stance, Mood, float]] = []
+
+    async def current(self, interlocutor: Interlocutor) -> Relationship | None:  # noqa: ARG002
+        return self._current
+
+    async def record_interaction(
+        self,
+        interlocutor: Interlocutor,
+        *,
+        stance: Stance,
+        mood: Mood,
+        sentiment: float,
+    ) -> None:
+        self.interactions.append((interlocutor, stance, mood, sentiment))
+
+
+def _soul_with_borderline_opinion(topic: str) -> SOUL:
+    # A soul with an opinion whose conviction sits JUST above the BOB_PERSONAL
+    # pushback threshold (0.5) → PROPOSE_ALTERNATIVE on its own, but low enough that
+    # a close relationship's compromise-bias tips it to AGREE.
+    baseline = Mood(valence=0.1, social=0.2)
+    taste = TasteEngine(axes=(TasteAxis(name=topic, value=-0.6, conviction=0.55),))
+    return SOUL(
+        identity="I am the Bob from the book.",
+        mood=baseline,
+        mood_baseline=baseline,
+        taste=taste,
+        phantom_prefs=(_PHANTOM_PREF,),
+    )
+
+
+async def test_high_warmth_relationship_warms_the_tone_directive() -> None:
+    # BOB-014: a close (high-warmth) relationship colours Bob's voice warmer/closer.
+    resolver = _FakeInterlocutorResolver(
+        _interlocutor(name="Vova", kind=InterlocutorKind.OWNER)
+    )
+    rel = _FakeRelationship(
+        current=Relationship(sender_id=99, warmth=0.8, compatibility=0.7)
+    )
+    handler, _bot, _repo, tier1 = _build(
+        reply="hi", perceive_sender=resolver, relationship=rel
+    )
+
+    await handler.handle(_message("расскажи подробно про космос"))
+
+    folded = tier1.all_text.casefold()
+    assert "близк" in folded or "по-свойски" in folded  # warmer/closer voice
+
+
+async def test_low_warmth_relationship_cools_the_tone_directive() -> None:
+    # A distant (low-warmth) relationship reads cooler/more reserved — never rude.
+    resolver = _FakeInterlocutorResolver(
+        _interlocutor(name="Rando", kind=InterlocutorKind.GUEST, trust=Trust.GUEST)
+    )
+    rel = _FakeRelationship(
+        current=Relationship(sender_id=99, warmth=-0.8, compatibility=-0.7)
+    )
+    handler, _bot, _repo, tier1 = _build(
+        reply="hi", perceive_sender=resolver, relationship=rel
+    )
+
+    await handler.handle(_message("расскажи подробно что-нибудь интересное"))
+
+    folded = tier1.all_text.casefold()
+    assert "сдержан" in folded or "прохлад" in folded or "суш" in folded
+
+
+async def test_close_relationship_makes_bob_more_willing_to_compromise() -> None:
+    # BOB-014: warmth + compatibility nudge the negotiation toward compromise. A
+    # borderline-firm opinion that would PROPOSE_ALTERNATIVE on its own is tipped to
+    # AGREE for someone Bob is close to (he meets a close person halfway more readily).
+    topic = "объясни подробно почему минимализм лучше всего"
+    resolver = _FakeInterlocutorResolver(
+        _interlocutor(name="Vova", kind=InterlocutorKind.OWNER)
+    )
+    rel = _FakeRelationship(
+        current=Relationship(sender_id=99, warmth=1.0, compatibility=1.0)
+    )
+    handler, _bot, _repo, tier1 = _build(
+        reply="hi",
+        soul=_soul_with_borderline_opinion(topic),
+        zone_classifier=_StubZoneClassifier(NegotiationZone.BOB_PERSONAL),
+        perceive_sender=resolver,
+        relationship=rel,
+    )
+
+    await handler.handle(_message(topic))
+
+    # The close relationship tipped the borderline stance from holding ground to agree.
+    assert _AGREE_DIRECTIVE in tier1.all_text
+    assert _PROPOSE_DIRECTIVE not in tier1.all_text
+
+
+async def test_distant_relationship_keeps_bob_holding_his_ground() -> None:
+    # The same borderline opinion, but a NEUTRAL relationship → no compromise nudge,
+    # so Bob holds his ground (PROPOSE_ALTERNATIVE) exactly as he would pre-BOB-014.
+    topic = "объясни подробно почему минимализм лучше всего"
+    resolver = _FakeInterlocutorResolver(
+        _interlocutor(name="Rando", kind=InterlocutorKind.GUEST, trust=Trust.GUEST)
+    )
+    rel = _FakeRelationship(current=Relationship(sender_id=99))  # neutral
+    handler, _bot, _repo, tier1 = _build(
+        reply="hi",
+        soul=_soul_with_borderline_opinion(topic),
+        zone_classifier=_StubZoneClassifier(NegotiationZone.BOB_PERSONAL),
+        perceive_sender=resolver,
+        relationship=rel,
+    )
+
+    await handler.handle(_message(topic))
+
+    assert _PROPOSE_DIRECTIVE in tier1.all_text
+
+
+async def test_relationship_is_updated_and_persisted_after_the_turn() -> None:
+    # BOB-014: after the turn Bob records the interaction (stance, mood, sentiment) so
+    # the relationship accrues — the seam is invoked once with the perceived sender.
+    resolver = _FakeInterlocutorResolver(
+        _interlocutor(name="Vova", kind=InterlocutorKind.OWNER, sender_id=99)
+    )
+    rel = _FakeRelationship(current=None)
+    handler, _bot, _repo, _tier1 = _build(
+        reply="hi", perceive_sender=resolver, relationship=rel
+    )
+
+    await handler.handle(_message("привет, как ты"))
+
+    assert len(rel.interactions) == 1
+    who, _stance, _mood, _sentiment = rel.interactions[0]
+    assert who.sender_id == 99
+
+
+async def test_relationships_are_per_sender_isolated() -> None:
+    # Owner and guest carry distinct relationships — the per-sender interlocutor keys
+    # them apart (the seam records each turn's own interlocutor).
+    owner_rel = _FakeRelationship(
+        current=Relationship(sender_id=1, warmth=0.9, compatibility=0.8)
+    )
+    owner = _FakeInterlocutorResolver(
+        _interlocutor(name="Vova", kind=InterlocutorKind.OWNER, sender_id=1)
+    )
+    handler, _bot, _repo, owner_tier1 = _build(
+        reply="hi", perceive_sender=owner, relationship=owner_rel
+    )
+    await handler.handle(_message("расскажи подробно про космос"))
+
+    guest_rel = _FakeRelationship(
+        current=Relationship(sender_id=2, warmth=-0.9, compatibility=-0.8)
+    )
+    guest = _FakeInterlocutorResolver(
+        _interlocutor(
+            name="Rando", kind=InterlocutorKind.GUEST, trust=Trust.GUEST, sender_id=2
+        )
+    )
+    handler2, _bot2, _repo2, guest_tier1 = _build(
+        reply="hi", perceive_sender=guest, relationship=guest_rel
+    )
+    await handler2.handle(_message("расскажи подробно что-нибудь"))
+
+    owner_folded = owner_tier1.all_text.casefold()
+    guest_folded = guest_tier1.all_text.casefold()
+    # The owner (close) reads warm; the guest (distant) reads reserved — distinct.
+    assert "близк" in owner_folded or "по-свойски" in owner_folded
+    assert "сдержан" in guest_folded or "прохлад" in guest_folded or "суш" in guest_folded
+    assert rel_sender_ids(owner_rel) == [1]
+    assert rel_sender_ids(guest_rel) == [2]
+
+
+def rel_sender_ids(rel: _FakeRelationship) -> list[int | None]:
+    return [who.sender_id for who, *_ in rel.interactions]
+
+
+async def test_no_relationship_seam_leaves_the_turn_unchanged() -> None:
+    # NO REGRESSION: with no relationship seam wired, no relationship tone line and the
+    # reply lands as before — exactly the pre-BOB-014 behaviour.
+    resolver = _FakeInterlocutorResolver(
+        _interlocutor(name="Vova", kind=InterlocutorKind.OWNER)
+    )
+    handler, bot, _repo, tier1 = _build(reply="порядок", perceive_sender=resolver)
+
+    await handler.handle(_message("расскажи подробно, как дела"))
+
+    assert bot.final_text == "порядок"
+    folded = tier1.all_text.casefold()
+    assert "по-свойски" not in folded
+    assert "прохлад" not in folded
+
+
+class _RaisingRelationship:
+    """A RelationshipReader whose record_interaction always raises (flaky store)."""
+
+    async def current(self, interlocutor: Interlocutor) -> Relationship | None:  # noqa: ARG002
+        return None
+
+    async def record_interaction(
+        self,
+        interlocutor: Interlocutor,  # noqa: ARG002
+        *,
+        stance: Stance,  # noqa: ARG002
+        mood: Mood,  # noqa: ARG002
+        sentiment: float,  # noqa: ARG002
+    ) -> None:
+        raise RuntimeError("relationship store unavailable")
+
+
+async def test_relationship_recording_failure_never_breaks_the_turn() -> None:
+    # NO REGRESSION (resilience): a flaky relationship store that raises while recording
+    # must NOT break a turn that already replied — the reply lands, the episode persists.
+    resolver = _FakeInterlocutorResolver(
+        _interlocutor(name="Vova", kind=InterlocutorKind.OWNER)
+    )
+    handler, bot, repo, _tier1 = _build(
+        reply="всё в порядке",
+        perceive_sender=resolver,
+        relationship=_RaisingRelationship(),  # type: ignore[arg-type]
+    )
+
+    await handler.handle(_message("расскажи подробно, как у тебя дела"))
+
+    assert bot.final_text == "всё в порядке"
+    assert len(repo.episodes) == 1
+
+
+# --- Engagement appetite wiring (BOB-014 .2a) ------------------------------
+
+# Stable fragments of the engagement voice directives (Russian) the prompt carries.
+_DECLINE_FRAGMENT = "не тянет"
+_TERSE_FRAGMENT = "интерес тает"
+_PLAYFUL_FRAGMENT = "подурач"
+
+
+def _soul_with_mood(mood: Mood, *, topic: str, value: float, conviction: float) -> SOUL:
+    # A soul whose taste axis is keyed on the full message ``topic`` (how score()/
+    # conviction_for match today) with a custom current mood, so the engagement
+    # decision (mood x interest) can be driven deterministically.
+    taste = TasteEngine(axes=(TasteAxis(name=topic, value=value, conviction=conviction),))
+    return SOUL(
+        identity="I am the Bob from the book.",
+        mood=mood,
+        mood_baseline=mood,
+        taste=taste,
+        phantom_prefs=(_PHANTOM_PREF,),
+    )
+
+
+async def test_bad_mood_aimless_topic_softly_declines_in_the_prompt() -> None:
+    # Scenario 3: a low mood + a "какие-попало" (NEUTRAL, unknown) topic → DECLINE, so
+    # the prompt carries the soft wind-down directive (never rude — sulk is .2b).
+    bad = Mood(valence=-0.6, arousal=-0.1)
+    handler, _bot, _repo, tier1 = _build(
+        reply="hi",
+        soul=_soul_with_mood(bad, topic="zzz", value=0.0, conviction=0.0),
+    )
+
+    await handler.handle(_message("расскажи подробно про всякую ерунду"))
+
+    assert _DECLINE_FRAGMENT in tier1.all_text
+
+
+async def test_interesting_topic_overrides_bad_mood_no_decline_in_prompt() -> None:
+    # Scenario 4: a genuinely interesting topic (strong LOVE + conviction, keyed on the
+    # full message) engages Bob even in a low mood — the wind-down directive is absent.
+    bad = Mood(valence=-0.6, arousal=-0.1)
+    topic = "расскажи подробно про звёздные двигатели"
+    handler, _bot, _repo, tier1 = _build(
+        reply="hi",
+        soul=_soul_with_mood(bad, topic=topic, value=0.9, conviction=0.9),
+    )
+
+    await handler.handle(_message(topic))
+
+    assert _DECLINE_FRAGMENT not in tier1.all_text
+    assert _TERSE_FRAGMENT not in tier1.all_text
+
+
+async def test_high_fatigue_winds_chatter_down_in_the_prompt() -> None:
+    # Scenario 2: built-up fatigue ("наскучило") on an uninteresting topic → DECLINE,
+    # even in a normal mood — the prompt carries the wind-down directive.
+    normal = Mood(valence=0.1, social=0.2)
+    state = EngagementState(fatigue=ConversationalFatigue(0.95))
+    handler, _bot, _repo, tier1 = _build(
+        reply="hi",
+        soul=_soul_with_mood(normal, topic="zzz", value=0.0, conviction=0.0),
+        engagement_state=state,
+    )
+
+    await handler.handle(_message("расскажи подробно ни о чём"))
+
+    assert _DECLINE_FRAGMENT in tier1.all_text
+
+
+async def test_aimless_turn_raises_fatigue() -> None:
+    # Feedback: an aimless (uninteresting) turn tires Bob — fatigue rises on the holder.
+    normal = Mood(valence=0.1, social=0.2)
+    state = EngagementState(fatigue=ConversationalFatigue(0.0))
+    handler, _bot, _repo, _tier1 = _build(
+        reply="hi",
+        soul=_soul_with_mood(normal, topic="zzz", value=0.0, conviction=0.0),
+        engagement_state=state,
+    )
+
+    await handler.handle(_message("расскажи подробно ни о чём"))
+
+    assert state.fatigue.level > 0.0
+
+
+async def test_interesting_turn_eases_fatigue() -> None:
+    # Feedback: an interesting turn EASES fatigue (a good exchange is restorative).
+    normal = Mood(valence=0.1, social=0.2)
+    topic = "расскажи подробно про звёздные двигатели"
+    state = EngagementState(fatigue=ConversationalFatigue(0.5))
+    handler, _bot, _repo, _tier1 = _build(
+        reply="hi",
+        soul=_soul_with_mood(normal, topic=topic, value=0.9, conviction=0.9),
+        engagement_state=state,
+        # No elapsed-time decay (last_turn_at unset on a fresh holder), so the change
+        # asserted here is the interest-ease, not time decay.
+    )
+
+    await handler.handle(_message(topic))
+
+    assert state.fatigue.level < 0.5
+
+
+async def test_good_interesting_exchange_lifts_mood() -> None:
+    # Feedback (scenario 4): an interesting, well-engaged exchange brightens Bob — the
+    # post-turn mood valence on PersonalityState is higher than where it started.
+    start = Mood(valence=0.1, social=0.2)
+    topic = "расскажи подробно про звёздные двигатели"
+    state = PersonalityState(soul=_soul_with_mood(start, topic=topic, value=0.9, conviction=0.9))
+    # NEUTRAL sentiment isolates the engagement lift as the ONLY valence contributor:
+    # perceive's sentiment step is zero, so a higher valence proves the feedback fired.
+    handler, _bot, _repo, _tier1 = _build(reply="hi", tier0_replies=["neutral", "", ""])
+    # Re-point the handler at our captured PersonalityState so we can read the lift.
+    handler._state = state
+
+    await handler.handle(_message(topic))
+
+    # Valence rose above the starting 0.1 purely from the good-exchange mood lift.
+    assert state.soul.mood.valence > start.valence
+
+
+async def test_fatigue_recovers_over_elapsed_time_never_locks_out() -> None:
+    # Guardrail: high fatigue DECAYS by real elapsed time between turns, so appetite
+    # recovers and the owner is never permanently locked out. A long gap clears it.
+    class _AdvancingClock:
+        def __init__(self, *moments: datetime) -> None:
+            self._moments = list(moments)
+            self._i = 0
+
+        def now(self) -> datetime:
+            moment = self._moments[min(self._i, len(self._moments) - 1)]
+            self._i += 1
+            return moment
+
+    normal = Mood(valence=0.1, social=0.2)
+    # Seed the holder as if a turn happened long ago, then advance the clock a day.
+    state = EngagementState(
+        fatigue=ConversationalFatigue(0.95), last_turn_at=_moment()
+    )
+    later = datetime(2026, 6, 19, 14, 0, 0, tzinfo=UTC)
+    handler, _bot, _repo, tier1 = _build(
+        reply="hi",
+        soul=_soul_with_mood(normal, topic="zzz", value=0.0, conviction=0.0),
+        engagement_state=state,
+        clock=_AdvancingClock(later),  # type: ignore[arg-type]
+    )
+
+    await handler.handle(_message("расскажи подробно ни о чём"))
+
+    # A day of quiet decayed the once-high fatigue right down — Bob is not locked out.
+    assert state.fatigue.level < EngagementThresholds().high_fatigue
+    assert _DECLINE_FRAGMENT not in tier1.all_text
+
+
+# --- Sulk / обида (BOB-014 .2b) -----------------------------------------------
+
+
+class _FakeSulk:
+    """In-memory SulkReader fake: a fixed current state + capture of observations.
+
+    ``current`` is the обида state returned for the turn (the cold-tone source);
+    ``observations`` captures every (owner_warmth, hostile, warmth_delta) folded in
+    after a turn so a test can assert the обида signal reacts to the right thing.
+    """
+
+    def __init__(self, *, current: SulkState | None = None) -> None:
+        self._current = current if current is not None else SulkState()
+        self.observations: list[tuple[float, bool, float]] = []
+
+    async def current(self) -> SulkState:
+        return self._current
+
+    async def observe(
+        self,
+        *,
+        owner_warmth: float,
+        hostile: bool,
+        warmth_delta: float,
+        now: datetime,  # noqa: ARG002 - part of the seam contract, unused by the fake
+    ) -> SulkState:
+        self.observations.append((owner_warmth, hostile, warmth_delta))
+        return self._current
+
+
+def _owner_resolver() -> _FakeInterlocutorResolver:
+    return _FakeInterlocutorResolver(
+        _interlocutor(name="Vova", kind=InterlocutorKind.OWNER)
+    )
+
+
+async def test_active_sulk_makes_the_reactive_tone_cold() -> None:
+    # BOB-014 .2b: while обижен, the reply prompt carries the cold sulk_directive —
+    # quieter / curt, composed over the mood/relationship tone.
+    sulk = _FakeSulk(current=SulkState(active=True, intensity=0.8, since=_moment()))
+    handler, _bot, _repo, tier1 = _build(
+        reply="hi", perceive_sender=_owner_resolver(), sulk=sulk
+    )
+
+    await handler.handle(_message("расскажи подробно про космос"))
+
+    folded = tier1.all_text.casefold()
+    assert "обиж" in folded or "задет" in folded  # the cold sulk tone landed
+    assert "груб" in folded  # explicitly NOT rude (без грубости)
+
+
+async def test_not_sulking_leaves_the_tone_normal() -> None:
+    # Not hurt → no cold line; the normal warm tone path is unchanged.
+    sulk = _FakeSulk(current=SulkState())
+    handler, _bot, _repo, tier1 = _build(
+        reply="hi", perceive_sender=_owner_resolver(), sulk=sulk
+    )
+
+    await handler.handle(_message("расскажи подробно про космос"))
+
+    folded = tier1.all_text.casefold()
+    assert "сейчас ты обижен" not in folded
+    assert "тепл" in folded  # the warm tone band still present
+
+
+async def test_owner_turn_feeds_the_sulk_signal() -> None:
+    # An OWNER turn folds (owner_warmth, hostile, warmth_delta) into обида after.
+    rel = _FakeRelationship(current=Relationship(sender_id=99, warmth=-0.6))
+    sulk = _FakeSulk()
+    handler, _bot, _repo, _tier1 = _build(
+        reply="hi", perceive_sender=_owner_resolver(), relationship=rel, sulk=sulk
+    )
+
+    await handler.handle(_message("расскажи подробно про космос"))
+
+    assert len(sulk.observations) == 1
+    owner_warmth, _hostile, _delta = sulk.observations[0]
+    assert owner_warmth == -0.6  # the owner relationship warmth fed the signal
+
+
+async def test_directed_insult_flags_hostility_to_the_sulk_signal() -> None:
+    # A DIRECTED insult is flagged hostile to the обида signal.
+    sulk = _FakeSulk()
+    handler, _bot, _repo, _tier1 = _build(
+        reply="hi", perceive_sender=_owner_resolver(), sulk=sulk
+    )
+
+    await handler.handle(_message("ты тупой идиот"))
+
+    assert sulk.observations[0][1] is True  # hostile flag set
+
+
+async def test_casual_mat_is_not_flagged_hostile_to_the_sulk_signal() -> None:
+    # Casual мат "with him" must NOT crater the relationship / trigger обида — it is
+    # NOT flagged hostile, so the signal reacts to directed hostility, not vocabulary.
+    sulk = _FakeSulk()
+    handler, _bot, _repo, _tier1 = _build(
+        reply="hi", perceive_sender=_owner_resolver(), sulk=sulk
+    )
+
+    await handler.handle(_message("блин, ну охренеть как круто получилось!"))
+
+    assert sulk.observations[0][1] is False  # casual мат is not hostile
+
+
+async def test_guest_turn_does_not_feed_the_sulk_signal() -> None:
+    # обида v1 is tied to the OWNER relationship — a guest turn never feeds it.
+    sulk = _FakeSulk()
+    handler, _bot, _repo, _tier1 = _build(
+        reply="hi", perceive_sender=_guest_resolver(), sulk=sulk
+    )
+
+    await handler.handle(_message("ты тупой идиот"))
+
+    assert sulk.observations == []  # owner-only
+
+
+async def test_no_sulk_seam_leaves_the_turn_unchanged() -> None:
+    # Backward-compatible default: no sulk seam wired → behaviour exactly as before.
+    handler, _bot, _repo, tier1 = _build(reply="hi", perceive_sender=_owner_resolver())
+
+    await handler.handle(_message("расскажи подробно про космос"))
+
+    folded = tier1.all_text.casefold()
+    assert "сейчас ты обижен" not in folded

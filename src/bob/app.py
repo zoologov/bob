@@ -71,15 +71,22 @@ from bob.application.usecases.fascination_sources import (
     StoreFascinationReader,
 )
 from bob.application.usecases.first_impression_sources import FirstImpressionTracker
-from bob.application.usecases.handle_message import HandleMessage, PersonalityState
+from bob.application.usecases.handle_message import (
+    EngagementState,
+    HandleMessage,
+    PersonalityState,
+)
 from bob.application.usecases.heartbeat import (
     InnerMonologueTick,
     MoodDriftTick,
     ReflectTick,
 )
 from bob.application.usecases.reflection_parser import HeuristicReflectionParser
+from bob.application.usecases.relationship_sources import RelationshipTracker
 from bob.application.usecases.run_genesis import RunGenesis
+from bob.application.usecases.sulk_sources import SulkRecoveryStep, SulkTracker
 from bob.application.usecases.update_mood_from_text import UpdateMoodFromText
+from bob.domain.personality.engagement import EngagementThresholds, FatigueRates
 from bob.domain.personality.expression import ExpressionFreqs
 from bob.domain.personality.language import DEFAULT_LANGUAGE
 from bob.domain.personality.mood import Mood
@@ -105,6 +112,8 @@ from bob.infrastructure.persistence import (
     SqliteFirstImpressionStore,
     SqliteMemoryRepo,
     SqliteProactivityStore,
+    SqliteRelationshipStore,
+    SqliteSulkStore,
 )
 from bob.infrastructure.telegram.multibot import (
     BotIdentity,
@@ -181,6 +190,11 @@ _DEDUP_BATCH_SIZE = 200
 # ``memory.surface_old.freq``. Small (anti-tic): a callback turn only occasionally
 # reaches for an OLD-but-relevant deep cut; the default recall stays unchanged.
 _SURFACE_OLD_FREQ = 0.15
+
+# Default good-exchange mood lift (BOB-014 .2a); overridable via ``engagement.mood_lift``.
+# Small: a genuinely interesting, well-engaged exchange brightens Bob a touch — it
+# accrues over a real exchange rather than jolting his mood.
+_DEFAULT_ENGAGEMENT_MOOD_LIFT = 0.1
 
 # The proactivity engine ticks on the heartbeat cadence: cheap by construction
 # (the urge/governance decision is pure, defaulting to silence), so most ticks
@@ -360,6 +374,17 @@ def build_application(
     first_impression_tracker = FirstImpressionTracker(
         store=first_impression_store, clock=resolved_clock
     )
+    # Relationship-врезка (BOB-014): per-sender relationship quality (trust / respect
+    # / warmth / compatibility) accrued over turns — it warms/cools Bob's tone and
+    # nudges his willingness to compromise with a close person, then is updated after
+    # each turn. Keyed by sender_id; per-PERSON data (about them), not owner memory.
+    relationship_store = SqliteRelationshipStore(memory_repo)
+    relationship_tracker = RelationshipTracker(store=relationship_store)
+    # Sulk/обида store (BOB-014 .2b): the per-persona affect state — entered on a
+    # SUSTAINED critical owner-drop / directed hostility, decaying to a GUARANTEED exit.
+    # Carries NO memory and NO soul (anti-Exodus). The tracker is built AFTER multibot
+    # so GUPPI can be its one-shot announcer.
+    sulk_store = SqliteSulkStore(memory_repo)
 
     multibot = _build_multibot(
         merged,
@@ -369,6 +394,15 @@ def build_application(
         authorizer=authorizer,
         proactivity_store=proactivity_store,
         proactivity_clock=resolved_clock,
+    )
+    # обида seam (BOB-014 .2b): GUPPI announces a fresh sulk entry once ("Боб обижен …")
+    # — the внеличностный systemic voice. The tracker loads/evolves/recovers обида and
+    # is read by HandleMessage (cold tone + owner-turn observation), the reflect tick
+    # (guaranteed time-decay recovery), and the proactivity engine (the sulk veto).
+    sulk_tracker = SulkTracker(
+        store=sulk_store,
+        persona_id=_BOB_PERSONA,
+        announcer=multibot.guppi,
     )
 
     handle_message = HandleMessage(
@@ -431,6 +465,29 @@ def build_application(
         # person's grounded note is recorded after the turn. Per-PERSON data, safe even
         # for a guest (about the guest, never an owner-memory leak). Additive only.
         first_impression=first_impression_tracker,
+        # Relationship seam (BOB-014): Bob's accrued per-person relationship colours
+        # his tone (warmth) and willingness to compromise (warmth + compatibility) for
+        # WHO is writing, then is updated after the turn from (stance, mood, sentiment)
+        # and persisted so it accrues. Additive only; per-PERSON, safe on a guest turn.
+        relationship=relationship_tracker,
+        # Sulk seam (BOB-014 .2b): while обижен Bob's reactive tone goes COLD (a
+        # quieter, curt sulk_directive composed over mood/relationship tone), and each
+        # OWNER turn is folded into обида — a SUSTAINED critical owner-drop OR sustained
+        # DIRECTED hostility (casual мат never counts) enters обида (GUPPI announces it
+        # once). The guaranteed time-decay exit is owned by the reflect tick. обида
+        # carries NO memory and NO soul (anti-Exodus). Additive; per-PERSONA.
+        sulk=sulk_tracker,
+        # Engagement-appetite seam (BOB-014 .2a): Bob's appetite to converse is a LEVEL
+        # (full / playful / terse / decline) from mood x topic interest x conversational
+        # fatigue x relationship. The fatigue is a small per-boot decaying counter held on
+        # EngagementState (like mood on PersonalityState) — it always recovers, so the
+        # owner is never locked out. Thresholds/rates/mood-lift are config-tunable via
+        # engagement.*; the decided level appends a voice directive and the feedback loops
+        # (interesting exchange → mood↑, aimless turn → fatigue↑) run after the turn.
+        engagement_state=EngagementState(),
+        engagement_thresholds=_build_engagement_thresholds(merged),
+        fatigue_rates=_build_fatigue_rates(merged),
+        engagement_mood_lift=_build_engagement_mood_lift(merged),
     )
     event_bus.subscribe(MESSAGE_RECEIVED, _as_handler(handle_message))
 
@@ -507,6 +564,11 @@ def build_application(
         embedder=resolved_embedder,
         clock=resolved_clock,
     )
+    # Sulk recovery (BOB-014 .2b): a reflect-tick step that decays обида by the REAL
+    # elapsed time since the last tick — the GUARANTEED exit (time alone brings Bob
+    # back, no permanent lock-out), accelerated separately by warm owner turns on the
+    # message path. A no-op when Bob is not hurt.
+    recover_sulk = SulkRecoveryStep(tracker=sulk_tracker, clock=resolved_clock)
     reflect_tick = ReflectTick(
         router=router,
         repo=memory_repo,
@@ -519,6 +581,7 @@ def build_application(
         evolve_phantoms=evolve_phantoms,
         consolidate_memory=consolidate_memory,
         dedup_facts=dedup_facts,
+        recover_sulk=recover_sulk,
     )
 
     proactivity_engine = _build_proactivity_engine(
@@ -533,6 +596,7 @@ def build_application(
         seed=proactivity_seed,
         language=language,
         fascination=fascination_reader,
+        sulk=sulk_tracker,
     )
     proactive_tick = ProactiveTick(engine=proactivity_engine)
 
@@ -640,6 +704,7 @@ def _build_proactivity_engine(
     seed: int | None,
     language: str = DEFAULT_LANGUAGE,
     fascination: StoreFascinationReader | None = None,
+    sulk: SulkTracker | None = None,
 ) -> ProactivityEngine:
     """Assemble the per-persona proactivity engine (drive-model → message).
 
@@ -673,6 +738,8 @@ def _build_proactivity_engine(
         rng=random.Random(_resolve_seed(config, seed)),  # noqa: S311
         language=language,
         fascination=fascination,
+        # The sulk veto (BOB-014 .2b): while обижен Bob does not write first.
+        sulk=sulk,
     )
 
 
@@ -810,6 +877,54 @@ def _build_expression_freqs(config: Mapping[str, object]) -> ExpressionFreqs:
         callback=_float_or(freqs, "callback", defaults.callback),
         mention_fascination=mention,
     )
+
+
+def _build_engagement_thresholds(config: Mapping[str, object]) -> EngagementThresholds:
+    """Build the BOB-014 .2a appetite thresholds from ``engagement.thresholds.*``.
+
+    Tunes the appetite boundaries: ``interesting`` (the interest bar a topic clears even
+    on a low mood), ``high_fatigue`` (the "наскучило" point), ``low_mood`` / ``bright_mood``
+    (the mood bands raising the bar / unlocking banter), and ``playful_chance`` (how
+    often a bright-mood engaged turn tips into playful banter). Each falls back to the
+    dataclass default — which keeps a normal mood fully engaging on any non-trivial topic.
+    """
+    section = _section(_section(config, "engagement"), "thresholds")
+    defaults = EngagementThresholds()
+    return EngagementThresholds(
+        interesting=_float_or(section, "interesting", defaults.interesting),
+        high_fatigue=_float_or(section, "high_fatigue", defaults.high_fatigue),
+        low_mood=_float_or(section, "low_mood", defaults.low_mood),
+        bright_mood=_float_or(section, "bright_mood", defaults.bright_mood),
+        playful_chance=_float_or(section, "playful_chance", defaults.playful_chance),
+    )
+
+
+def _build_fatigue_rates(config: Mapping[str, object]) -> FatigueRates:
+    """Build the BOB-014 .2a conversational-fatigue dynamics from ``engagement.fatigue.*``.
+
+    Tunes the bounded reservoir: ``decay_per_second`` (the recovery guarantee — fatigue
+    always unwinds with time, so the owner is never permanently locked out),
+    ``aimless_rise`` (how much one aimless turn tires Bob) and ``interest_ease`` (how much
+    an interesting turn restores). Each falls back to the dataclass default.
+    """
+    section = _section(_section(config, "engagement"), "fatigue")
+    defaults = FatigueRates()
+    return FatigueRates(
+        decay_per_second=_float_or(section, "decay_per_second", defaults.decay_per_second),
+        aimless_rise=_float_or(section, "aimless_rise", defaults.aimless_rise),
+        interest_ease=_float_or(section, "interest_ease", defaults.interest_ease),
+    )
+
+
+def _build_engagement_mood_lift(config: Mapping[str, object]) -> float:
+    """Resolve the BOB-014 .2a good-exchange mood lift from ``engagement.mood_lift``.
+
+    The small mood-valence bump a good, interesting exchange earns (scenario 4's
+    feedback). Falls back to the small default; HandleMessage validates it is a [0, 1]
+    amount.
+    """
+    section = _section(config, "engagement")
+    return _float_or(section, "mood_lift", _DEFAULT_ENGAGEMENT_MOOD_LIFT)
 
 
 def _build_surface_old_freq(config: Mapping[str, object]) -> float:

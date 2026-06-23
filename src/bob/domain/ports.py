@@ -29,6 +29,8 @@ if TYPE_CHECKING:
     from bob.domain.personality.fascination import Fascination
     from bob.domain.personality.first_impression import FirstImpression
     from bob.domain.personality.negotiation import NegotiationZone
+    from bob.domain.personality.relationship import Relationship
+    from bob.domain.personality.sulk import SulkState
     from bob.domain.personality.taste import Verdict
     from bob.domain.proactivity.state import ProactivityState
 
@@ -52,8 +54,10 @@ __all__ = [
     "ProactivityStore",
     "Recalled",
     "ReflectionReader",
+    "RelationshipStore",
     "Reranker",
     "SoulStore",
+    "SulkStore",
     "ToolCall",
     "ToolCallResult",
     "ToolCallingProvider",
@@ -445,6 +449,54 @@ class FirstImpressionStore(Protocol):
 
     async def save(self, impression: FirstImpression) -> None:
         """Record ``impression`` once — a known sender is never overwritten."""
+        ...
+
+
+@runtime_checkable
+class RelationshipStore(Protocol):
+    """Durable per-sender store for Bob's relationship quality (BOB-014).
+
+    Round-trips the :class:`bob.domain.personality.relationship.Relationship` Bob has
+    with each person — the four bounded axes (trust / respect / warmth /
+    compatibility) — so a relationship accrued over many turns survives a restart and
+    keeps shaping his tone + willingness to compromise. Keyed by ``sender_id`` it
+    covers owner / known / guest / bot alike; this is per-PERSON data (about THEM),
+    NOT owner-private memory, so it is allowed even for a guest. ``load`` returns
+    ``None`` for an unknown sender (Bob has formed no read on them yet). Unlike the
+    formed-once :class:`FirstImpressionStore`, ``save`` UPSERTs — a relationship
+    evolves, so each turn re-saves the newer state. The concrete SQLite-backed adapter
+    lives in ``bob.infrastructure``.
+    """
+
+    async def load(self, sender_id: int) -> Relationship | None:
+        """Return ``sender_id``'s relationship, or ``None`` if there is none yet."""
+        ...
+
+    async def save(self, relationship: Relationship) -> None:
+        """Persist ``relationship`` (UPSERT — an evolving relationship is updated)."""
+        ...
+
+
+@runtime_checkable
+class SulkStore(Protocol):
+    """Durable per-persona store for Bob's обида state (BOB-014 .2b).
+
+    Round-trips the :class:`bob.domain.personality.sulk.SulkState` Bob carries — the
+    active flag, the decaying intensity, the low/hostile streak, the entry stamp, and
+    the one-shot ``announced`` flag — so an обида (and its recovery progress) survives
+    a restart. State is per ``persona_id`` so Bobiverse replicas each keep their own.
+    ``load`` returns the fresh, not-sulking default for an unseen persona, so the
+    application always has something to read. Crucially this carries NO memory and NO
+    soul (anti-Exodus) — only the affect state. The concrete SQLite-backed adapter
+    lives in ``bob.infrastructure.persistence``.
+    """
+
+    async def load(self, persona_id: str) -> SulkState:
+        """Return the persisted обида state for ``persona_id`` (fresh if unseen)."""
+        ...
+
+    async def save(self, persona_id: str, state: SulkState) -> None:
+        """Persist ``state`` for ``persona_id`` (replacing any prior обида state)."""
         ...
 
 

@@ -15,6 +15,7 @@ flavor — never a brittle full-string match (the prose is free to evolve).
 
 from __future__ import annotations
 
+from bob.domain.personality.engagement import EngagementLevel
 from bob.domain.personality.interlocutor import (
     Interlocutor,
     InterlocutorKind,
@@ -23,10 +24,15 @@ from bob.domain.personality.interlocutor import (
 from bob.domain.personality.mood import Mood
 from bob.domain.personality.voice import (
     OffDayThresholds,
+    RelationshipToneThresholds,
     anti_bait_directive,
+    engagement_directive,
     guppi_canon,
+    profanity_stance,
     recalled_impression_directive,
+    relationship_tone_directive,
     stranger_directive,
+    sulk_directive,
     tone_directive,
     user_repeat_directive,
     variable_form_directive,
@@ -142,6 +148,47 @@ def test_tone_directive_off_day_is_not_rude() -> None:
     # No hostile/aggressive licensing leaks in.
     assert "агресс" not in folded
     assert "огрызай" not in folded
+
+
+def test_relationship_tone_warm_for_a_close_relationship() -> None:
+    # BOB-014: a high-warmth relationship colours Bob's voice warmer/closer.
+    directive = relationship_tone_directive(0.8)
+    folded = directive.casefold()
+    assert "тепл" in folded or "близ" in folded  # warmer / closer
+
+
+def test_relationship_tone_cooler_for_a_distant_relationship() -> None:
+    # A low-warmth relationship reads cooler/more reserved — but NOT rude/hostile
+    # (relational hostility is the sulk, BOB-014 .2, not this).
+    directive = relationship_tone_directive(-0.8)
+    folded = directive.casefold()
+    assert "суш" in folded or "сдержан" in folded or "прохлад" in folded  # cooler
+    # Never rude here (relational hostility is the sulk, .2): the cool band reads as
+    # reserved and EXPLICITLY disavows rudeness rather than licensing it.
+    assert "не груб" in folded or "без груб" in folded  # disavows, never licenses
+    assert "агресс" not in folded
+    assert "огрызай" not in folded
+
+
+def test_relationship_tone_neutral_band_adds_no_directive() -> None:
+    # A neutral (mid-band) relationship adds no extra colour — the base voice/tone
+    # already covers it, so the default path is unchanged.
+    assert relationship_tone_directive(0.0) == ""
+
+
+def test_relationship_tone_thresholds_come_from_config() -> None:
+    # The warm/cool bands are configurable, so the boundary is not hardcoded.
+    mood = 0.2
+    strict = RelationshipToneThresholds(warm=0.9, cool=-0.9)
+    lenient = RelationshipToneThresholds(warm=0.1, cool=-0.1)
+    assert relationship_tone_directive(mood, thresholds=strict) == ""
+    assert relationship_tone_directive(mood, thresholds=lenient) != ""
+
+
+def test_relationship_tone_is_voice_not_a_rule_list() -> None:
+    directive = relationship_tone_directive(0.9)
+    assert "•" not in directive
+    assert "- " not in directive
 
 
 def test_tone_directive_is_voice_not_a_rule_list() -> None:
@@ -297,6 +344,80 @@ def test_recalled_impression_directive_is_voice_not_a_rule_list() -> None:
     line = recalled_impression_directive("впечатление")
     assert "•" not in line
     assert "- " not in line
+
+
+def test_engagement_directive_full_adds_no_line() -> None:
+    # Full engagement is the default voice — it appends nothing.
+    assert engagement_directive(EngagementLevel.FULL) == ""
+
+
+def test_engagement_directive_playful_invites_banter() -> None:
+    # BOB-014 .2a: a playful appetite reads as "up for banter / подурачиться".
+    folded = engagement_directive(EngagementLevel.PLAYFUL).casefold()
+    assert "подурач" in folded or "подыгр" in folded
+
+
+def test_engagement_directive_terse_keeps_it_short() -> None:
+    folded = engagement_directive(EngagementLevel.TERSE).casefold()
+    assert "коротко" in folded
+
+
+def test_engagement_directive_decline_winds_down_never_rude() -> None:
+    # DECLINE softly winds the chatter down and is explicitly NOT rude (sulk is .2b).
+    folded = engagement_directive(EngagementLevel.DECLINE).casefold()
+    assert "заболтал" in folded or "не тянет" in folded
+    assert "без груб" in folded
+
+
+def test_engagement_directive_is_voice_not_a_rule_list() -> None:
+    for level in (
+        EngagementLevel.PLAYFUL,
+        EngagementLevel.TERSE,
+        EngagementLevel.DECLINE,
+    ):
+        line = engagement_directive(level)
+        assert "•" not in line
+        assert "- " not in line
+    assert "\n" not in line
+
+
+def test_sulk_directive_is_cold_and_curt() -> None:
+    # BOB-014 .2b: while обижен Bob is quieter / curt — minimal, not warm.
+    folded = sulk_directive(intensity=0.8).casefold()
+    assert "обиж" in folded or "задел" in folded
+    assert "суше" in folded or "коротко" in folded or "сдержан" in folded
+
+
+def test_sulk_directive_is_never_a_reset_still_bob() -> None:
+    # Cold-but-still-Bob: never a personality reset, never gratuitously rude.
+    folded = sulk_directive(intensity=0.9).casefold()
+    assert "всё ещё ты" in folded or "не сброс" in folded or "остаёшься собой" in folded
+    assert "груб" in folded  # explicitly NOT rude (mentions без грубости)
+
+
+def test_sulk_directive_is_voice_not_a_rule_list() -> None:
+    line = sulk_directive(intensity=0.5)
+    assert "•" not in line
+    assert "\n" not in line
+
+
+def test_profanity_stance_is_calm_about_casual_mat() -> None:
+    # BOB-014 .2b: Bob is calm about casual мат (мат "с ним", not "на него") and may
+    # quip back in his dry style — never offended by vocabulary.
+    folded = profanity_stance().casefold()
+    assert "мат" in folded
+    assert "подкол" in folded or "поддел" in folded or "в том же" in folded
+
+
+def test_profanity_stance_registers_directed_hostility() -> None:
+    # He DOES register hostility aimed AT him (directed insults), unlike casual мат.
+    folded = profanity_stance().casefold()
+    assert "на тебя" in folded or "направлен" in folded or "оскорбл" in folded
+
+
+def test_profanity_stance_is_voice_not_a_rule_list() -> None:
+    line = profanity_stance()
+    assert "•" not in line
     assert "\n" not in line
 
 

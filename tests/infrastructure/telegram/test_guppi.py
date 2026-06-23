@@ -24,7 +24,11 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from bob.infrastructure.telegram.guppi import GUPPI_REJECT_TEXT, GuppiHandler
+from bob.infrastructure.telegram.guppi import (
+    GUPPI_REJECT_TEXT,
+    GUPPI_SULK_ANNOUNCE_TEXT,
+    GuppiHandler,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -150,6 +154,24 @@ async def test_reject_sends_into_same_chat_and_thread() -> None:
     assert call.chat_id == _CHAT_ID
     assert call.text == GUPPI_REJECT_TEXT
     assert call.message_thread_id == _BOB_TOPIC_ID
+
+
+# --- Sulk announce (BOB-014 .2b) ----------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_announce_sulk_posts_the_systemic_line_into_general() -> None:
+    handler, bot, _ = _build()
+
+    await handler.announce_sulk()
+
+    # The внеличностный systemic voice (GUPPI, not Bob) posts the обида line into
+    # General (un-threaded) where the owner sees GUPPI's system messages.
+    assert len(bot.sends) == 1
+    call = bot.sends[0]
+    assert call.chat_id == _CHAT_ID
+    assert call.text == GUPPI_SULK_ANNOUNCE_TEXT
+    assert call.message_thread_id is None
 
 
 # --- Owner commands -----------------------------------------------------------

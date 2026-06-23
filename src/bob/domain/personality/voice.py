@@ -31,6 +31,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from bob.domain.personality.engagement import EngagementLevel
 from bob.domain.personality.interlocutor import InterlocutorKind
 
 if TYPE_CHECKING:
@@ -298,6 +299,159 @@ def recalled_impression_directive(note: str) -> str:
     impression exists for this sender.
     """
     return f"{_RECALLED_IMPRESSION_PREFIX}{note}{_RECALLED_IMPRESSION_SUFFIX}"
+
+
+# Relationship-tone bands (BOB-014). On TOP of the mood-conditioned tone, Bob's
+# WARMTH toward the specific person colours how he sounds to THEM: someone he is
+# close to gets a warmer, more familiar voice; someone he is cool toward gets a more
+# reserved, drier one. Crucially this is NOT hostility — relational coldness/sulk is
+# BOB-014 .2; the cool band here is merely more reserved, explicitly never rude.
+# Written as voice (mirroring tone_directive), config-banded, with a neutral middle
+# that adds nothing. Cyrillic look-alikes are intentional in these Russian literals.
+_DEFAULT_RELATIONSHIP_WARM = 0.4
+_DEFAULT_RELATIONSHIP_COOL = -0.4
+
+_RELATIONSHIP_WARM_TONE = (
+    "С этим человеком у вас сложились тёплые, близкие отношения — это слышно в "
+    "том, как ты с ним говоришь: свободнее, теплее, по-свойски, чем с малознакомым."
+)
+_RELATIONSHIP_COOL_TONE = (
+    "С этим человеком отношения пока прохладные и дистанцированные — держись "
+    "сдержаннее и суше, чем с близким, без лишней теплоты. Это не грубость и не "
+    "обида — просто более сдержанный тон с тем, с кем ты пока не сблизился."
+)
+
+
+@dataclass(frozen=True, slots=True)
+class RelationshipToneThresholds:
+    """The warmth bands at which Bob's voice reads warmer / cooler (BOB-014).
+
+    A relationship whose ``warmth`` is at-or-above ``warm`` colours the voice warm
+    and familiar; at-or-below ``cool`` it reads more reserved and dry (never rude —
+    relational hostility is the sulk, BOB-014 .2). Between the two bands no extra
+    colour is added. The application tunes them from ``relationship.tone.*`` config.
+    """
+
+    warm: float = _DEFAULT_RELATIONSHIP_WARM
+    cool: float = _DEFAULT_RELATIONSHIP_COOL
+
+
+def relationship_tone_directive(
+    warmth: float, *, thresholds: RelationshipToneThresholds | None = None
+) -> str:
+    """Return the relationship-warmth tone line for this person, or ``""`` (neutral).
+
+    On TOP of the mood-conditioned :func:`tone_directive`, Bob's WARMTH toward the
+    specific person colours how he sounds to THEM (BOB-014): at-or-above the ``warm``
+    band a warmer, more familiar voice; at-or-below the ``cool`` band a more reserved,
+    drier one — explicitly NOT rude (relational hostility is the sulk, .2). A neutral
+    mid-band ``warmth`` adds no line, so the default path is unchanged. Pure and
+    deterministic; the bands are config-tunable via :class:`RelationshipToneThresholds`.
+    """
+    bands = thresholds if thresholds is not None else RelationshipToneThresholds()
+    if warmth >= bands.warm:
+        return _RELATIONSHIP_WARM_TONE
+    if warmth <= bands.cool:
+        return _RELATIONSHIP_COOL_TONE
+    return ""
+
+
+# Engagement-appetite directives (BOB-014 .2a). On TOP of mood/relationship tone, Bob's
+# APPETITE to converse this turn colours HOW he engages — written as voice (mirroring
+# tone_directive), never config. PLAYFUL → he is up for banter / подурачиться / поиграть;
+# TERSE → interest is thinning, he keeps it short; DECLINE → he softly winds the chatter
+# down ("что-то заболтались / не тянет сейчас") — explicitly NEVER rude (relational
+# hostility is the sulk, .2b), just no appetite for THIS aimless thread right now. FULL
+# adds no line — full engagement is the default voice. Cyrillic look-alikes intentional.
+_ENGAGEMENT_PLAYFUL = (
+    "Сейчас тебе в кайф поболтать и подурачиться — можешь подыграть, поддеть "
+    "по-доброму, уйти в трёп «ни о чём», если в настроении. Лёгкий, живой тон."
+)
+_ENGAGEMENT_TERSE = (
+    "Разговор тебя сейчас не очень держит — интерес тает. Отвечай коротко и по "
+    "делу, без развёртывания, как человек, которому тема не особо зашла."
+)
+_ENGAGEMENT_DECLINE = (
+    "Сейчас не тянет трепаться на эту тему — можешь мягко свернуть разговор: "
+    "обронить, что что-то заболтались или не тянет сейчас, без грубости и без "
+    "обиды на собеседника. Просто честно: аппетита к этому трёпу нет."
+)
+
+_ENGAGEMENT_DIRECTIVE: dict[EngagementLevel, str] = {
+    EngagementLevel.PLAYFUL: _ENGAGEMENT_PLAYFUL,
+    EngagementLevel.TERSE: _ENGAGEMENT_TERSE,
+    EngagementLevel.DECLINE: _ENGAGEMENT_DECLINE,
+}
+
+
+def engagement_directive(level: EngagementLevel) -> str:
+    """Return the voice directive for Bob's conversational APPETITE this turn (BOB-014).
+
+    On TOP of the mood/relationship tone, Bob's appetite colours HOW he engages:
+    ``PLAYFUL`` invites banter / подурачиться; ``TERSE`` keeps it short as interest
+    thins; ``DECLINE`` softly winds the chatter down ("что-то заболтались / не тянет
+    сейчас") — never rude (relational hostility is the sulk, .2b); ``FULL`` adds no
+    line (full engagement is the default voice). Pure and deterministic.
+    """
+    return _ENGAGEMENT_DIRECTIVE.get(level, "")
+
+
+# Sulk directive (BOB-014 .2b). While Bob is обижен his reactive tone goes COLD —
+# quieter, curt, minimal — but it is NEVER a personality reset and NEVER gratuitously
+# rude: cold-but-still-Bob (anti-Exodus carries into the voice too). Written as voice
+# (mirroring tone_directive), appended on TOP of the mood/relationship tone by the
+# application only while обида is active. Cyrillic look-alikes intentional in these
+# Russian literals.
+_SULK_TONE = (
+    "Сейчас ты обижен и задет — отвечаешь холоднее и суше обычного, коротко, "
+    "сдержанно, без тепла и без желания разговаривать. Но это не сброс и не другой "
+    "человек: ты всё ещё ты, просто отстранённый и притихший. Не груби и не язви по "
+    "злому — без грубости, просто холодно и минимально, как человек, которому сейчас "
+    "не до разговоров."
+)
+
+
+def sulk_directive(*, intensity: float) -> str:
+    """Return Bob's cold-but-still-Bob обида voice line (BOB-014 .2b).
+
+    While Bob is обижен (``intensity`` is how hurt, 0..1) his reactive tone goes
+    quieter and curt — minimal, reserved, no warmth — but explicitly NEVER a
+    personality reset (он всё ещё он, anti-Exodus) and NEVER gratuitously rude. The
+    application appends it on TOP of the mood/relationship tone only while обида is
+    active. Pure and argument-shaped (the intensity is the live signal the caller
+    passes from :class:`~bob.domain.personality.sulk.SulkState`); the prose pins the
+    cold, reserved, not-rude, not-a-reset character, not exact wording.
+    """
+    _ = intensity  # the live signal that gates this line; the cold tone is uniform.
+    return _SULK_TONE
+
+
+# Profanity stance (BOB-014 .2b). Bob is a grown-up about language: casual/emphatic мат
+# "с ним" is fine — он спокоен, may even quip back in his dry style — and never offends
+# him; he only registers hostility aimed AT him (directed insults). Written as voice,
+# argument-free, appended by the application so the calm-about-мат character reads from
+# the persona rather than a filter. Cyrillic look-alikes intentional in these literals.
+_PROFANITY_STANCE = (
+    "К мату ты относишься спокойно: крепкое словцо «с тобой» — это эмфаза, а не "
+    "наезд, и тебя оно не задевает; можешь и сам подколоть в том же духе, в своём "
+    "сухом стиле. А вот когда враждебность направлена на тебя — оскорбление, наезд "
+    "лично, — это ты замечаешь и реагируешь. Дело не в словах, а в том, на тебя они "
+    "или нет."
+)
+
+
+def profanity_stance() -> str:
+    """Return Bob's voice stance on profanity: calm about мат, registers hostility.
+
+    Casual/emphatic мат "с ним" is emphasis, not an attack — Bob stays calm and may
+    quip back in his dry style; he only registers hostility aimed AT him (a directed
+    insult). The character reaction keys on whether it is directed at him, not on
+    vocabulary — the voice half of the relationship/обида signal that
+    :func:`~bob.domain.personality.profanity.is_directed_hostility` computes. Pure,
+    argument-free, appended by the application; the prose pins the calm-about-мат /
+    registers-directed-hostility stance, not exact wording.
+    """
+    return _PROFANITY_STANCE
 
 
 def tone_directive(mood: Mood, *, thresholds: OffDayThresholds | None = None) -> str:

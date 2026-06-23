@@ -37,7 +37,7 @@ and storage live behind ports, and time is injected via :class:`Clock`.
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Protocol
 
 from bob.application.capabilities.registry import CapabilityRegistry
@@ -47,6 +47,15 @@ from bob.application.router.reply_tier_selector import select_reply_tier
 from bob.application.usecases.update_mood_from_text import TextSignals
 from bob.domain.memory.entities import EpisodicEvent
 from bob.domain.personality.conversation import is_user_repeat
+from bob.domain.personality.engagement import (
+    ConversationalFatigue,
+    EngagementLevel,
+    EngagementThresholds,
+    FatigueRates,
+    decide_engagement,
+    engagement_mood_lift,
+    topic_interest,
+)
 from bob.domain.personality.expression import (
     ExpressionFreqs,
     ExpressionMode,
@@ -55,21 +64,29 @@ from bob.domain.personality.expression import (
     FormHint,
     decide_expression,
 )
-from bob.domain.personality.interlocutor import Trust
+from bob.domain.personality.interlocutor import InterlocutorKind, Trust
+from bob.domain.personality.mood import MoodDelta
 from bob.domain.personality.mood_taste import experiment_bias, modulate
 from bob.domain.personality.negotiation import (
     Negotiation,
     NegotiationZone,
     Stance,
 )
+from bob.domain.personality.profanity import is_directed_hostility
 from bob.domain.personality.reaction import reaction_emoji_for
+from bob.domain.personality.relationship import compromise_bias
 from bob.domain.personality.taste import Verdict
 from bob.domain.personality.voice import (
     OffDayThresholds,
+    RelationshipToneThresholds,
     anti_bait_directive,
+    engagement_directive,
     guppi_canon,
+    profanity_stance,
     recalled_impression_directive,
+    relationship_tone_directive,
     stranger_directive,
+    sulk_directive,
     tone_directive,
     user_repeat_directive,
     variable_form_directive,
@@ -89,7 +106,10 @@ if TYPE_CHECKING:
     from bob.application.usecases.update_mood_from_text import UpdateMoodFromText
     from bob.domain.personality.fascination import Fascination
     from bob.domain.personality.interlocutor import Interlocutor
+    from bob.domain.personality.mood import Mood
+    from bob.domain.personality.relationship import Relationship
     from bob.domain.personality.soul import SOUL
+    from bob.domain.personality.sulk import SulkState
     from bob.domain.ports import (
         Clock,
         LLMMessage,
@@ -121,8 +141,17 @@ _DEFAULT_SURFACE_OLD_FREQ = 0.15
 _MIN_FREQ = 0.0
 _MAX_FREQ = 1.0
 
+# Conviction is a [0, 1] strength; the relationship compromise-bias nudge must keep
+# the effective conviction it feeds Negotiation inside those bounds.
+_MIN_CONVICTION = 0.0
+_MAX_CONVICTION = 1.0
+
 # How many recent conversation turns to replay into the reply context.
 _HISTORY_K = 6
+
+# Default small mood-valence lift a good, interesting exchange earns (BOB-014 .2a
+# feedback loop). Mirrors the engagement domain default; tunable via emotion.* config.
+_DEFAULT_ENGAGEMENT_MOOD_LIFT = 0.1
 
 # Each turn perceives one message; a present sender is engaged.
 _SINGLE_MESSAGE = 1
@@ -140,7 +169,11 @@ _SYSTEM_PROMPT = (
     "You are Bob, a digital person from the Bobiverse. Reply in character.\n"
     f"{guppi_canon()}\n"
     f"{anti_bait_directive()}\n"
-    f"{variable_form_directive()}"
+    f"{variable_form_directive()}\n"
+    # BOB-014 .2b: Bob's persona stance on profanity — calm about casual emphatic мат
+    # (may quip back), registers hostility aimed AT him. Lives in the base persona so
+    # the calm-about-profanity character is always present, not a per-turn filter.
+    f"{profanity_stance()}"
 )
 
 # Form-hint → soft compose directive (BOB-018). The ExpressionPlan's form_hint is
@@ -295,6 +328,66 @@ class FirstImpressionReader(Protocol):
     async def note_first_contact(self, interlocutor: Interlocutor) -> None: ...
 
 
+class RelationshipReader(Protocol):
+    """Relationship seam: load + evolve Bob's per-person relationship quality (BOB-014).
+
+    The compose path uses this to let Bob's accrued relationship with WHO is writing
+    shape THIS turn: :meth:`current` returns the stored
+    :class:`~bob.domain.personality.relationship.Relationship` (an unknown sender →
+    ``None``) so the prompt can warm/cool his tone (by ``warmth``) and the negotiation
+    can nudge his willingness to compromise (by ``warmth`` + ``compatibility``);
+    :meth:`record_interaction` updates + persists the relationship AFTER the turn from
+    the negotiation ``stance``, Bob's ``mood``, and a ``sentiment`` scalar (the pure
+    :func:`~bob.domain.personality.relationship.apply_interaction`). The concrete
+    adapter (:class:`~bob.application.usecases.relationship_sources.RelationshipTracker`)
+    keys on ``sender_id``. Optional and additive: unwired (the default) the tone/
+    willingness are unchanged and no relationship is recorded.
+
+    Crucially this is per-PERSON data (about THEM), NOT owner-private memory, so it is
+    safe even on a guest turn — a guest's own relationship is about the guest.
+    """
+
+    async def current(self, interlocutor: Interlocutor) -> Relationship | None: ...
+
+    async def record_interaction(
+        self,
+        interlocutor: Interlocutor,
+        *,
+        stance: Stance,
+        mood: Mood,
+        sentiment: float,
+    ) -> None: ...
+
+
+class SulkReader(Protocol):
+    """Sulk seam: load Bob's обида state + fold an owner turn into it (BOB-014 .2b).
+
+    The compose path uses this to go COLD while Bob is hurt and to let обида take hold
+    or warm up over the live message path: :meth:`current` returns the persisted
+    :class:`~bob.domain.personality.sulk.SulkState` so the prompt appends the cold
+    :func:`~bob.domain.personality.voice.sulk_directive` while ``active``;
+    :meth:`observe` folds ONE owner turn's signals (the relationship ``owner_warmth``,
+    a ``hostile`` directed-hostility flag, and a ``warmth_delta``) into обида AFTER the
+    turn — a sustained critical owner-drop OR sustained directed hostility enters обида
+    (announced once via GUPPI), while a warm turn accelerates recovery if already hurt.
+    The concrete adapter
+    (:class:`~bob.application.usecases.sulk_sources.SulkTracker`) is per-PERSONA and
+    persists. Optional and additive: unwired (the default) Bob never sulks and the turn
+    behaves exactly as before. обида carries NO memory and NO soul (anti-Exodus).
+    """
+
+    async def current(self) -> SulkState: ...
+
+    async def observe(
+        self,
+        *,
+        owner_warmth: float,
+        hostile: bool,
+        warmth_delta: float,
+        now: datetime,
+    ) -> SulkState: ...
+
+
 class OwnerActivityRecorder(Protocol):
     """The proactivity seam HandleMessage notifies when the owner writes.
 
@@ -316,6 +409,23 @@ class PersonalityState:
     """
 
     soul: SOUL
+
+
+@dataclass
+class EngagementState:
+    """Mutable in-memory holder for Bob's conversational fatigue across turns (BOB-014).
+
+    The lightest correct home for the small, decaying fatigue counter: a per-boot
+    holder (mirroring :class:`PersonalityState` for mood) that the turn loads, decays by
+    the elapsed wall-clock since the last turn, reads for the appetite decision, then
+    updates (an aimless turn tires Bob, an interesting one eases him). It is bounded and
+    always decays with time, so appetite is guaranteed to recover — the owner is never
+    permanently locked out, even across a long aimless run. ``last_turn_at`` is stamped
+    from the injected clock so decay is real elapsed time, not a turn count.
+    """
+
+    fatigue: ConversationalFatigue = field(default_factory=ConversationalFatigue)
+    last_turn_at: datetime | None = None
 
 
 class HandleMessage:
@@ -347,6 +457,13 @@ class HandleMessage:
         surface_old_freq: float = _DEFAULT_SURFACE_OLD_FREQ,
         perceive_sender: InterlocutorResolver | None = None,
         first_impression: FirstImpressionReader | None = None,
+        relationship: RelationshipReader | None = None,
+        relationship_tone_thresholds: RelationshipToneThresholds | None = None,
+        sulk: SulkReader | None = None,
+        engagement_state: EngagementState | None = None,
+        engagement_thresholds: EngagementThresholds | None = None,
+        fatigue_rates: FatigueRates | None = None,
+        engagement_mood_lift: float = _DEFAULT_ENGAGEMENT_MOOD_LIFT,
     ) -> None:
         self._router = router
         self._gateway = gateway
@@ -442,6 +559,52 @@ class HandleMessage:
         # never recalls a first impression and the turn behaves exactly as before.
         # This is the minimal foundation for multi-party BOB-014, not that engine.
         self._first_impression = first_impression
+        # The relationship seam (BOB-014): when wired, Bob's accrued per-person
+        # relationship quality shapes THIS turn — high warmth → a warmer voice
+        # directive, low warmth → cooler (composes over mood/voice, never rude here;
+        # relational hostility is the sulk, .2); warmth + compatibility nudge the
+        # negotiation toward compromise with a close person. After the turn the
+        # relationship is updated from (stance, mood, sentiment) and persisted, so it
+        # accrues. Per-PERSON data, safe even on a guest turn. Additive only: unwired
+        # (the default) tone/willingness are unchanged and nothing is recorded.
+        self._relationship = relationship
+        self._relationship_tone_thresholds = relationship_tone_thresholds
+        # The sulk seam (BOB-014 .2b): when wired, Bob's persisted обида state goes
+        # COLD on the reactive tone (a quieter, curt sulk_directive while active) and
+        # is FED by each owner turn — a sustained critical owner-drop OR sustained
+        # DIRECTED hostility (casual мат never counts) enters обида (GUPPI announces it
+        # once), while a warm turn accelerates recovery if already hurt. The guaranteed
+        # time-decay exit is owned by the reflect tick. обида carries NO memory and NO
+        # soul (anti-Exodus). Per-PERSONA; additive — unwired, Bob never sulks.
+        self._sulk = sulk
+        # The engagement-appetite seam (BOB-014 .2a): Bob's APPETITE to converse is a
+        # LEVEL (full / playful / terse / decline), decided per turn from mood x topic
+        # interest x conversational fatigue x relationship. The fatigue is a small,
+        # bounded, per-boot decaying counter (held like the mood on PersonalityState):
+        # it rises on aimless low-interest turns ("наскучило") and recedes with time /
+        # on interesting turns, so prolonged pointless chatter winds Bob down but
+        # appetite always recovers (never a permanent lock-out). The decided level
+        # appends a voice directive (playful banter / terse / soft decline — never rude),
+        # and the feedback loops run after the turn: an interesting good exchange lifts
+        # his mood a touch, an aimless turn tires him. Thresholds/rates are config-tunable;
+        # unset, the state
+        # is a fresh per-boot holder so a normal mood stays fully engaging as before.
+        self._engagement_state = (
+            engagement_state if engagement_state is not None else EngagementState()
+        )
+        self._engagement_thresholds = (
+            engagement_thresholds
+            if engagement_thresholds is not None
+            else EngagementThresholds()
+        )
+        self._fatigue_rates = fatigue_rates if fatigue_rates is not None else FatigueRates()
+        if not _MIN_FREQ <= engagement_mood_lift <= _MAX_FREQ:
+            msg = (
+                f"engagement_mood_lift must be within [{_MIN_FREQ}, {_MAX_FREQ}], "
+                f"got {engagement_mood_lift}"
+            )
+            raise ValueError(msg)
+        self._engagement_mood_lift = engagement_mood_lift
 
     async def handle(self, event: MessageReceived) -> None:
         """Process one received message end to end (the EventBus subscriber)."""
@@ -456,10 +619,26 @@ class HandleMessage:
         # (about THEM), so it is recalled even on a guest turn (a guest's own first
         # impression is about the guest, never an owner-memory leak).
         prior_impression = await self._recall_prior_impression(interlocutor)
+        # Load Bob's accrued relationship with this sender (BOB-014): a known person →
+        # his stored relationship, so his tone (warmth) and willingness to compromise
+        # (warmth + compatibility) are coloured for THEM this turn; a new person →
+        # None (a neutral turn). Per-PERSON data, so it is loaded even on a guest turn.
+        relationship = await self._load_relationship(interlocutor)
+        # Load Bob's обида state (BOB-014 .2b): while active, the reactive tone goes
+        # COLD (a quieter, curt sulk_directive) — composed over mood/relationship tone.
+        # None when no seam is wired / not hurt, so the turn behaves exactly as before.
+        sulk = await self._load_sulk()
         # Plan how Bob expresses this turn (BOB-018): pure, deterministic by seed.
         # Computed up front so the mode steers the reply path and the form hint
         # shapes the prompt; the rare flags ride along for later beads.
         plan = self._plan_expression(event, soul)
+        # Decide Bob's APPETITE to converse this turn (BOB-014 .2a): a LEVEL from mood x
+        # topic interest x conversational fatigue x relationship. Computed up front so the
+        # level appends a voice directive to the prompt and the topic interest feeds the
+        # after-turn feedback (mood lift + fatigue update). The fatigue is decayed by the
+        # real elapsed time since the last turn first, so appetite always recovers.
+        interest = await self._topic_interest(soul, event.text)
+        level = self._decide_engagement(soul, interest, relationship)
         # React-only (BOB-018): when a reactor is wired and the plan picks
         # REACT_ONLY, Bob acknowledges with a native mood emoji INSTEAD of composing
         # a reply — no LLM call, no rich final, no episode (there is no reply text).
@@ -511,6 +690,9 @@ class HandleMessage:
                 interlocutor=interlocutor,
                 is_guest=is_guest,
                 prior_impression=prior_impression,
+                relationship=relationship,
+                engagement=level,
+                sulk=sulk,
             )
             # Anti-repeat guard (BOB-022, defense in depth): if the fresh reply is
             # byte-identical (after strip) to Bob's most-recent prior reply, regenerate
@@ -528,9 +710,33 @@ class HandleMessage:
                 interlocutor,
                 is_guest=is_guest,
                 prior_impression=prior_impression,
+                relationship=relationship,
+                engagement=level,
+                sulk=sulk,
             )
         await self._gateway.reply(chat_id=event.chat_id, markdown=reply)
+        # Run the engagement feedback loops (BOB-014 .2a) BEFORE persisting the mood,
+        # so the mood snapshot reflects this turn: an interesting, well-engaged exchange
+        # lifts Bob's mood a touch; an aimless turn tires him. The fatigue holder's
+        # elapsed-time decay was already applied in _decide_engagement; here it is
+        # updated with the turn outcome. (The fascination-grounding nudge toward a
+        # well-going topic is left to the reflect-tick evolution path it already owns.)
+        soul = self._apply_engagement_feedback(soul, level, interest)
         await self._persist(event, reply, soul)
+        # Update Bob's relationship with this sender AFTER the turn (BOB-014): the
+        # negotiation stance he took + his mood + the turn's sentiment evolve the
+        # accrued relationship and persist it, so it warms/cools over time. Best-effort
+        # and per-PERSON (runs on a guest turn too — about the guest, never an owner
+        # leak). A flaky store can never break a turn that already replied.
+        await self._record_relationship(
+            interlocutor, soul, event.text, relationship
+        )
+        # Fold this OWNER turn into Bob's обида state AFTER the turn (BOB-014 .2b): a
+        # sustained critical owner-drop OR sustained DIRECTED hostility enters обида
+        # (GUPPI announces it once), while a warm owner turn accelerates recovery if
+        # already hurt. Casual мат never counts — only directed hostility does. Best-
+        # effort, owner-only, per-PERSONA — never touches memory/soul (anti-Exodus).
+        await self._observe_sulk(interlocutor, soul, event.text)
         # Record Bob's LIGHT first impression of this sender on FIRST contact
         # (BOB-019 bob-apv.3): formed once and grounded in WHO they are; a returning
         # sender is left untouched (the store records once). Per-PERSON data, so it
@@ -627,6 +833,239 @@ class HandleMessage:
         except Exception:
             logger.exception("recording first impression failed (ignored)")
 
+    async def _load_relationship(
+        self, interlocutor: Interlocutor | None
+    ) -> Relationship | None:
+        """Load Bob's accrued relationship with this sender, or ``None`` (BOB-014).
+
+        Asks the wired relationship seam for the stored relationship of a known
+        sender; a new sender (or no seam / no perceived interlocutor) yields ``None``
+        so the turn behaves as a neutral one (no tone/willingness colour). Per-PERSON
+        data, so it is loaded even on a guest turn (about the guest).
+        """
+        if self._relationship is None or interlocutor is None:
+            return None
+        return await self._relationship.current(interlocutor)
+
+    async def _record_relationship(
+        self,
+        interlocutor: Interlocutor | None,
+        soul: SOUL,
+        text: str,
+        relationship: Relationship | None,
+    ) -> None:
+        """Evolve + persist Bob's relationship with this sender after the turn (BOB-014).
+
+        Best-effort and optional: with no seam wired (or no perceived interlocutor)
+        this is a no-op. The negotiation stance Bob took THIS turn (decided over the
+        same relationship-nudged conviction the prompt used), his current mood, and the
+        turn's sentiment (read off the mood valence — the mood already reflects the
+        perceived sentiment of the message) evolve the relationship via the pure
+        :func:`~bob.domain.personality.relationship.apply_interaction`. A flaky store
+        can never break a turn that has already replied.
+        """
+        if self._relationship is None or interlocutor is None:
+            return
+        # Sentiment of the turn: the mood valence already folds in the message's
+        # perceived sentiment (UpdateMoodFromText nudges valence by it), so it is the
+        # grounded affective signal here — no second classification round-trip.
+        sentiment = soul.mood.valence
+        stance, _verdict, _zone = self._decide_stance(soul, text, relationship)
+        try:
+            await self._relationship.record_interaction(
+                interlocutor, stance=stance, mood=soul.mood, sentiment=sentiment
+            )
+        except Exception:
+            logger.exception("recording relationship failed (ignored)")
+
+    async def _load_sulk(self) -> SulkState | None:
+        """Load Bob's обида state for this turn, or ``None`` (BOB-014 .2b).
+
+        With no sulk seam wired returns ``None`` so the compose path adds no cold-tone
+        line and the turn behaves exactly as before. Otherwise returns the persisted
+        :class:`~bob.domain.personality.sulk.SulkState` so the prompt can go cold while
+        Bob is hurt. обида carries NO memory and NO soul — only the affect state.
+        """
+        if self._sulk is None:
+            return None
+        return await self._sulk.current()
+
+    async def _observe_sulk(
+        self, interlocutor: Interlocutor | None, soul: SOUL, text: str
+    ) -> None:
+        """Fold this OWNER turn into Bob's обида state after the turn (BOB-014 .2b).
+
+        Owner-only (обида v1 is tied to the OWNER relationship that leads proactivity).
+        The "low" signal is BOTH the owner relationship warmth (a critically cold
+        relationship) AND a DIRECTED hostility flag from
+        :func:`~bob.domain.personality.profanity.is_directed_hostility` — so it reacts to
+        sustained directed hostility, NOT to casual мат (which is never flagged hostile).
+        A warm turn (positive ``warmth_delta``, read off the turn's mood valence)
+        accelerates recovery if already hurt. Best-effort: a flaky store can never break
+        a turn that already replied.
+        """
+        if self._sulk is None or interlocutor is None:
+            return
+        if interlocutor.kind is not InterlocutorKind.OWNER:
+            return
+        # The owner relationship warmth this turn (the relationship was just re-recorded
+        # for the owner); a not-yet-formed relationship reads as neutral 0.
+        owner_warmth = await self._owner_warmth(interlocutor)
+        hostile = is_directed_hostility(text)
+        # A warm message has positive sentiment; the mood valence folds in the perceived
+        # sentiment of the turn (UpdateMoodFromText nudged it), so it is the grounded
+        # "how warm was this turn" signal that accelerates отход while sulking.
+        warmth_delta = soul.mood.valence
+        try:
+            await self._sulk.observe(
+                owner_warmth=owner_warmth,
+                hostile=hostile,
+                warmth_delta=warmth_delta,
+                now=self._clock.now(),
+            )
+        except Exception:
+            logger.exception("observing sulk failed (ignored)")
+
+    async def _owner_warmth(self, interlocutor: Interlocutor) -> float:
+        """The owner relationship warmth for the обида signal, or neutral 0 (BOB-014).
+
+        Reads the freshly-updated relationship for the owner (re-recorded earlier this
+        turn) off the relationship seam; a not-yet-formed relationship (or no seam)
+        reads as neutral ``0.0`` so a fresh Bob never sulks from a blank read.
+        """
+        if self._relationship is None:
+            return 0.0
+        rel = await self._relationship.current(interlocutor)
+        return rel.warmth if rel is not None else 0.0
+
+    def _decide_stance(
+        self, soul: SOUL, text: str, relationship: Relationship | None
+    ) -> tuple[Stance, Verdict, NegotiationZone]:
+        """Decide Bob's negotiation stance for the turn (BOB-013 + BOB-014).
+
+        Classifies the zone owning ``text`` from the taste verdict + conviction, then
+        maps zone + an EFFECTIVE conviction to a :class:`Stance`. The effective
+        conviction is the raw conviction lowered by the relationship's
+        :func:`~bob.domain.personality.relationship.compromise_bias` — a close person
+        (high warmth + compatibility) tips a borderline stance from holding ground
+        toward agreeing (more willing to compromise), clamped to ``[0, 1]``. Returns
+        the stance plus the verdict + zone so the prompt's stance-directive gate can
+        reuse them. Pure-ish: no I/O, deterministic for a given soul/text/relationship.
+        """
+        verdict = soul.taste.score(text)
+        conviction = soul.taste.conviction_for(text)
+        zone = self._zone_classifier.classify(
+            text, taste_verdict=verdict, conviction=conviction
+        )
+        effective = _clamp_conviction(conviction - compromise_bias(relationship))
+        stance = self._negotiation.decide(zone, conviction=effective)
+        return stance, verdict, zone
+
+    def _relationship_tone(self, relationship: Relationship | None) -> str:
+        """The relationship-warmth tone line for this turn, or ``""`` (BOB-014).
+
+        No relationship on record (a new person) or a neutral warmth → no line, so the
+        turn keeps the base mood tone. A close relationship reads warmer, a distant one
+        more reserved (never rude — relational hostility is the sulk, .2). The warm/
+        cool bands are config-tunable via ``relationship_tone_thresholds``.
+        """
+        if relationship is None:
+            return ""
+        return relationship_tone_directive(
+            relationship.warmth, thresholds=self._relationship_tone_thresholds
+        )
+
+    async def _topic_interest(self, soul: SOUL, text: str) -> float:
+        """Return how INTERESTING the inbound topic is to Bob, a [0, 1] scalar (BOB-014).
+
+        Derived from his deterministic taste verdict + conviction on ``text`` (a strong
+        love/hate is engaging, a NEUTRAL/unknown topic is "какие-попало" — low) and
+        lifted when the topic MATCHES his current, non-faded fascination (the strongest
+        pull — it clears the bar even on a bad day). The fascination match reuses the
+        wired :class:`CurrentFascinationReader`; with no reader / no current passion the
+        match is simply ``False``, so the interest is taste-only (behaviour as before).
+        """
+        verdict = soul.taste.score(text)
+        conviction = soul.taste.conviction_for(text)
+        match = await self._fascination_matches(text)
+        return topic_interest(verdict, conviction, fascination_match=match)
+
+    async def _fascination_matches(self, text: str) -> bool:
+        """Whether the inbound topic is the thing Bob is currently fascinated by (BOB-014).
+
+        Loads Bob's current, non-faded passion off the wired reader and checks whether
+        its topic is mentioned in ``text`` (a light, case-insensitive substring match).
+        No reader / no current fascination → ``False`` (a clean no-op). Best-effort —
+        the appetite decision must never break on a flaky read, so a failure reads as no
+        match rather than raising.
+        """
+        if self._fascination is None:
+            return False
+        try:
+            fascination = await self._fascination.current_fascination()
+        except Exception:
+            logger.exception("reading current fascination for engagement failed (ignored)")
+            return False
+        if fascination is None:
+            return False
+        return fascination.topic.strip().casefold() in text.casefold()
+
+    def _decide_engagement(
+        self, soul: SOUL, interest: float, relationship: Relationship | None
+    ) -> EngagementLevel:
+        """Decide Bob's appetite LEVEL for this turn, decaying fatigue first (BOB-014 .2a).
+
+        Decays the per-boot fatigue holder by the REAL elapsed time since the last turn
+        (so appetite recovers between turns — the recovery guarantee), stores the decayed
+        value back, then maps mood x ``interest`` x fatigue x ``relationship`` to an
+        :class:`~bob.domain.personality.engagement.EngagementLevel` via the pure
+        :func:`~bob.domain.personality.engagement.decide_engagement` (seeded by the same
+        injected RNG, so the whole turn stays reproducible).
+        """
+        now = self._clock.now()
+        state = self._engagement_state
+        if state.last_turn_at is not None:
+            elapsed = max(0.0, (now - state.last_turn_at).total_seconds())
+            state.fatigue = state.fatigue.decayed(
+                elapsed_seconds=elapsed, rates=self._fatigue_rates
+            )
+        return decide_engagement(
+            mood=soul.mood,
+            topic_interest=interest,
+            fatigue=state.fatigue,
+            relationship=relationship,
+            rng=self._rng,
+            thresholds=self._engagement_thresholds,
+        )
+
+    def _apply_engagement_feedback(
+        self, soul: SOUL, level: EngagementLevel, interest: float
+    ) -> SOUL:
+        """Run the after-turn engagement feedback loops (BOB-014 .2a) and stamp the clock.
+
+        Two loops close the appetite model: (1) an interesting, well-engaged exchange
+        (FULL/PLAYFUL on an interesting topic) lifts Bob's mood valence a touch — a small
+        bounded :class:`~bob.domain.personality.mood.MoodDelta` returned on a fresh soul
+        snapshot, stored on :class:`PersonalityState`; (2) the fatigue holder is updated
+        with the turn outcome — an aimless turn tires Bob, an interesting one eases him —
+        and ``last_turn_at`` is stamped so the next turn decays the elapsed gap. Returns
+        the (possibly mood-lifted) soul so the caller persists the post-feedback mood.
+        (Fascination grounding toward a well-going topic stays with the reflect-tick
+        evolution path that already owns it — this loop only lifts mood + eases fatigue.)
+        """
+        interesting = interest >= self._engagement_thresholds.interesting
+        lift = engagement_mood_lift(
+            level, interesting=interesting, lift=self._engagement_mood_lift
+        )
+        if lift > 0.0:
+            soul = soul.with_mood(soul.mood.update(MoodDelta(valence=lift)))
+            self._state.soul = soul
+        self._engagement_state.fatigue = self._engagement_state.fatigue.after_turn(
+            interesting=interesting, rates=self._fatigue_rates
+        )
+        self._engagement_state.last_turn_at = self._clock.now()
+        return soul
+
     def _plan_expression(self, event: MessageReceived, soul: SOUL) -> ExpressionPlan:
         """Decide this turn's expression plan — pure, deterministic by seed (BOB-018).
 
@@ -651,6 +1090,9 @@ class HandleMessage:
         interlocutor: Interlocutor | None = None,
         is_guest: bool = False,
         prior_impression: str | None = None,
+        relationship: Relationship | None = None,
+        engagement: EngagementLevel = EngagementLevel.FULL,
+        sulk: SulkState | None = None,
     ) -> str:
         """Compose a full reply, folding the plan's form hint into the prompt.
 
@@ -673,6 +1115,9 @@ class HandleMessage:
             interlocutor=interlocutor,
             is_guest=is_guest,
             prior_impression=prior_impression,
+            relationship=relationship,
+            engagement=engagement,
+            sulk=sulk,
         )
         provider = self._tool_provider
         if not is_guest and provider is not None and not self._registry.is_empty:
@@ -707,6 +1152,9 @@ class HandleMessage:
         *,
         is_guest: bool = False,
         prior_impression: str | None = None,
+        relationship: Relationship | None = None,
+        engagement: EngagementLevel = EngagementLevel.FULL,
+        sulk: SulkState | None = None,
     ) -> str:
         """Recompose once if ``reply`` byte-repeats Bob's last reply (BOB-022).
 
@@ -730,6 +1178,9 @@ class HandleMessage:
             interlocutor=interlocutor,
             is_guest=is_guest,
             prior_impression=prior_impression,
+            relationship=relationship,
+            engagement=engagement,
+            sulk=sulk,
         )
 
     async def _with_grounded_addons(
@@ -827,6 +1278,9 @@ class HandleMessage:
         interlocutor: Interlocutor | None = None,
         is_guest: bool = False,
         prior_impression: str | None = None,
+        relationship: Relationship | None = None,
+        engagement: EngagementLevel = EngagementLevel.FULL,
+        sulk: SulkState | None = None,
     ) -> str:
         """Augment the base prompt with the mood tone, stance, and form-hint directives.
 
@@ -844,15 +1298,27 @@ class HandleMessage:
         repeat, and no perceived interlocutor, only the warm tone line augments the
         base voice.
         """
-        verdict = soul.taste.score(text)
-        conviction = soul.taste.conviction_for(text)
-        zone = self._zone_classifier.classify(
-            text, taste_verdict=verdict, conviction=conviction
-        )
-        stance = self._negotiation.decide(zone, conviction=conviction)
+        stance, verdict, zone = self._decide_stance(soul, text, relationship)
         directives = [
             tone_directive(soul.mood, thresholds=self._offday_thresholds),
+            # BOB-014: Bob's accrued WARMTH toward this specific person colours his
+            # voice on TOP of the mood tone — warmer for a close relationship, more
+            # reserved (never rude) for a distant one. No relationship / neutral
+            # warmth → no line (a new person is met at the base tone).
+            self._relationship_tone(relationship),
+            # BOB-014 .2b: while Bob is обижен his reactive tone goes COLD — quieter,
+            # curt, minimal (sulk_directive) — composed on TOP of the mood/relationship
+            # tone. It is cold-but-still-Bob, never rude, never a reset. No sulk / not
+            # active → no line (a not-hurt Bob keeps his normal tone).
+            sulk_directive(intensity=sulk.intensity)
+            if sulk is not None and sulk.active
+            else "",
             _stance_directive(stance, verdict=verdict, zone=zone),
+            # BOB-014 .2a: Bob's APPETITE to converse this turn colours HOW he engages
+            # on TOP of mood/relationship tone — PLAYFUL invites banter, TERSE keeps it
+            # short as interest thins, DECLINE softly winds the chatter down (never rude;
+            # relational hostility is the sulk, .2b). FULL adds no line (default voice).
+            engagement_directive(engagement),
             _FORM_HINT_DIRECTIVE.get(plan.form_hint, ""),
             user_repeat_directive() if user_repeated else "",
             # BOB-019: fold WHO is writing (owner / known / guest / bot) into the
@@ -911,6 +1377,11 @@ class HandleMessage:
             }
         )
         await self._repo.set_mood(_mood_state(soul), at=now)
+
+
+def _clamp_conviction(value: float) -> float:
+    """Saturate ``value`` into the conviction bounds Negotiation requires."""
+    return max(_MIN_CONVICTION, min(_MAX_CONVICTION, value))
 
 
 def _stance_directive(

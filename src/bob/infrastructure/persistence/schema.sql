@@ -165,3 +165,34 @@ CREATE TABLE IF NOT EXISTS first_impression (
     first_seen_at TEXT NOT NULL,  -- ISO-8601, timezone-aware (when Bob first met them)
     note          TEXT NOT NULL   -- a short, grounded one-line impression
 );
+
+-- Per-sender relationship quality (BOB-014): how Bob STANDS with each person, on
+-- four axes (trust / respect / warmth / compatibility), each bounded to [-1, 1].
+-- Keyed by sender_id so it works for owner / known / guest / bot alike. Unlike the
+-- formed-once first_impression, a relationship EVOLVES — a save UPSERTs the row with
+-- the newer state after each turn (RelationshipTracker.apply_interaction). This is
+-- per-PERSON data (about THEM), not owner-private memory — allowed even for a guest.
+-- NB: named `person_relationship`, NOT `relationship` — the latter is the legacy
+-- single-row owner-relationship JSON blob above (sqlite_repo), a different concept.
+CREATE TABLE IF NOT EXISTS person_relationship (
+    sender_id     INTEGER PRIMARY KEY,
+    trust         REAL NOT NULL,
+    respect       REAL NOT NULL,
+    warmth        REAL NOT NULL,
+    compatibility REAL NOT NULL
+);
+
+-- Per-persona обида/sulk state (BOB-014 .2b): Bob's hurt affect, entered on a
+-- SUSTAINED critical owner-drop, decaying to a GUARANTEED exit. One row per persona_id
+-- so Bobiverse replicas each keep their own. Round-tripped by SqliteSulkStore; an
+-- unseen persona simply has no row (the store returns the not-sulking default). This
+-- carries NO memory and NO soul — only the affect state (anti-Exodus). `since` is a
+-- nullable ISO-8601 entry stamp; `announced` is the one-shot GUPPI-announce flag.
+CREATE TABLE IF NOT EXISTS sulk_state (
+    persona_id TEXT    PRIMARY KEY,
+    active     INTEGER NOT NULL DEFAULT 0,  -- 0/1 whether Bob is обижен
+    intensity  REAL    NOT NULL DEFAULT 0,  -- [0,1] how hurt, decaying to exit
+    low_streak INTEGER NOT NULL DEFAULT 0,  -- consecutive low/hostile observations
+    since      TEXT,                        -- ISO-8601 entry stamp (nullable)
+    announced  INTEGER NOT NULL DEFAULT 0   -- 0/1 one-shot GUPPI-announce flag
+);
