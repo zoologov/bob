@@ -227,6 +227,19 @@ class TestHeuristicFallback:
         assert store.current is None
         assert store.saves == 0
 
+    async def test_no_op_when_grounding_yields_only_a_blank_topic(self) -> None:
+        # Edge: a degenerate strong-taste source surfaces an EMPTY topic (no reflection,
+        # Tier 0 also blank). The heuristic fallback yields that empty topic, so the
+        # step must no-op rather than persist a blank fascination (no fabrication).
+        store = FakeStore(initial=None)
+        router = FakeRouter(reply="")  # Tier 0 gave nothing
+        grounding = FakeGrounding(reflection=None, taste_topics=("",))
+
+        await _evolve(store=store, router=router, grounding=grounding, clock=FakeClock(_T0)).run()
+
+        assert store.current is None
+        assert store.saves == 0
+
 
 def test_grounding_protocol_is_structural() -> None:
     # FakeGrounding satisfies the FascinationGrounding protocol structurally.

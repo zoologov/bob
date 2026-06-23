@@ -15,6 +15,7 @@ from bob.domain.personality.fascination import (
     MAX_INTENSITY,
     MIN_INTENSITY,
     Fascination,
+    _clamp,
 )
 
 
@@ -86,3 +87,21 @@ class TestDecayFloor:
     def test_fresh_strong_fascination_has_not_faded(self) -> None:
         fresh = Fascination(topic="x", intensity=0.9, created_at=_at())
         assert not fresh.aged(now=_at(hours=1)).has_faded()
+
+
+class TestClampBoundary:
+    """The defensive intensity clamp — the never-runaway guardrail invariant."""
+
+    def test_clamp_keeps_a_valid_intensity_unchanged(self) -> None:
+        assert _clamp(0.5) == 0.5
+
+    def test_clamp_pins_above_max_back_to_max(self) -> None:
+        assert _clamp(MAX_INTENSITY + 1.0) == MAX_INTENSITY
+
+    def test_clamp_pins_below_min_back_to_min(self) -> None:
+        assert _clamp(MIN_INTENSITY - 1.0) == MIN_INTENSITY
+
+    def test_clamp_maps_nan_to_min_never_propagates(self) -> None:
+        # Defensive guard: a NaN intensity (degenerate arithmetic) must collapse to the
+        # floor, never propagate — intensity stays a real, bounded scalar (no runaway).
+        assert _clamp(float("nan")) == MIN_INTENSITY
