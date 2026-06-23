@@ -13,9 +13,9 @@ sulking, the reflect-tick recover() is the guaranteed time-decay exit, and the s
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
-from bob.application.usecases.sulk_sources import SulkTracker
+from bob.application.usecases.sulk_sources import SulkRecoveryStep, SulkTracker
 from bob.domain.personality.sulk import SulkConfig, SulkState
 
 _PERSONA = "bob"
@@ -172,3 +172,143 @@ async def test_observe_with_no_announcer_is_silent_but_enters() -> None:
 
     # обида still takes hold even with no announcer wired (best-effort, optional).
     assert state.active is True
+
+
+async def test_announce_failure_never_breaks_the_entry() -> None:
+    # The announce is best-effort: if GUPPI throws, обида must still take hold and be
+    # persisted (the systemic notice is a nicety, not a precondition of the affect).
+    class _BoomAnnouncer:
+        async def announce_sulk(self) -> None:
+            raise RuntimeError("guppi is down")
+
+    store = _FakeSulkStore()
+    tracker = SulkTracker(
+        store=store,
+        persona_id=_PERSONA,
+        config=SulkConfig(sustain_count=3),
+        announcer=_BoomAnnouncer(),
+    )
+
+    for _ in range(3):
+        state = await tracker.observe(
+            owner_warmth=_LOW_WARMTH, hostile=False, warmth_delta=0.0, now=_NOW
+        )
+
+    assert state.active is True
+    assert store.states[_PERSONA].active is True
+
+
+# --- US-3 anti-Exodus: a full hurt → отход cycle touches ONLY the affect ------
+
+
+async def test_full_sulk_cycle_is_anti_exodus_and_reusable() -> None:
+    # US-3 / anti-Exodus: a complete обида cycle (enter → announce once → guaranteed
+    # time-decay exit) is an AFFECT state only — the tracker's sole store is the
+    # SulkStore (no memory/soul reset, no new Genesis), and after отход Bob is fully
+    # reusable: a fresh later drop enters AND announces AFRESH (exit cleared the
+    # one-shot flag), proving there is no permanent lock-out and no identity reset.
+    store = _FakeSulkStore()
+    announcer = _FakeAnnouncer()
+    tracker = SulkTracker(
+        store=store,
+        persona_id=_PERSONA,
+        config=SulkConfig(
+            sustain_count=3, decay_per_second=0.001, exit_intensity=0.05
+        ),
+        announcer=announcer,
+    )
+
+    # Enter обида (sustained critical drop) → announced exactly once.
+    for _ in range(3):
+        await tracker.observe(
+            owner_warmth=_LOW_WARMTH, hostile=False, warmth_delta=0.0, now=_NOW
+        )
+    assert (await tracker.current()).active is True
+    assert announcer.calls == 1
+
+    # Guaranteed exit by time alone (no warmth offered at all).
+    exited = await tracker.recover(elapsed_seconds=10_000.0, now=_NOW)
+    assert exited.active is False
+    # Anti-Exodus: still a normal SulkState row (state cleared, not the persona wiped).
+    assert store.states[_PERSONA].active is False
+    assert store.states[_PERSONA].announced is False  # one-shot flag reset for re-entry
+
+    # Reusable: a fresh later sustained drop enters AND announces a SECOND time.
+    later = _NOW + timedelta(days=1)
+    for _ in range(3):
+        await tracker.observe(
+            owner_warmth=_LOW_WARMTH, hostile=False, warmth_delta=0.0, now=later
+        )
+    assert (await tracker.current()).active is True
+    assert announcer.calls == 2  # announces afresh — no stuck flag, no lock-out
+    assert store.states[_PERSONA].since == later  # re-stamped to the new entry
+
+
+# --- SulkRecoveryStep: the reflect-tick collaborator (real-elapsed decay) -----
+
+
+class _AdvanceableClock:
+    """A Clock fake whose ``now()`` can be advanced between reflect ticks."""
+
+    def __init__(self, start: datetime) -> None:
+        self._now = start
+
+    def now(self) -> datetime:
+        return self._now
+
+    def advance(self, *, seconds: float) -> None:
+        self._now += timedelta(seconds=seconds)
+
+
+async def test_recovery_step_first_run_only_stamps_no_decay() -> None:
+    # The first reflect tick has no prior stamp, so it cannot know an elapsed gap — it
+    # only stamps the clock and must NOT decay (no spurious exit before any time passes).
+    store = _FakeSulkStore()
+    store.states[_PERSONA] = SulkState(
+        active=True, intensity=1.0, since=_NOW, announced=True
+    )
+    clock = _AdvanceableClock(_NOW)
+    step = SulkRecoveryStep(tracker=_tracker(store), clock=clock)
+
+    await step.run()
+
+    # Intensity is untouched on the very first tick (stamp-only), so Bob is not
+    # accidentally recovered by a tick with no measured elapsed time.
+    assert store.states[_PERSONA].intensity == 1.0
+
+
+async def test_recovery_step_decays_by_real_elapsed_on_later_ticks() -> None:
+    # After the first (stamp-only) tick, the next tick decays обида by the REAL elapsed
+    # time between ticks — the guaranteed time-decay exit, driven on the reflect cadence.
+    store = _FakeSulkStore()
+    store.states[_PERSONA] = SulkState(
+        active=True, intensity=1.0, since=_NOW, announced=True
+    )
+    clock = _AdvanceableClock(_NOW)
+    tracker = SulkTracker(
+        store=store,
+        persona_id=_PERSONA,
+        config=SulkConfig(decay_per_second=0.001, exit_intensity=0.05),
+    )
+    step = SulkRecoveryStep(tracker=tracker, clock=clock)
+
+    await step.run()  # stamp only
+    clock.advance(seconds=10_000.0)  # a long quiet stretch
+    await step.run()  # decays by the real elapsed gap
+
+    # Enough real elapsed time has passed for the guaranteed exit (no warmth needed).
+    assert store.states[_PERSONA].active is False
+
+
+async def test_recovery_step_is_a_no_op_when_not_sulking() -> None:
+    # An idle/never-hurt Bob: the recovery step never writes — it behaves exactly as
+    # before BOB-014 (no spurious persistence on the reflect cadence).
+    store = _FakeSulkStore()
+    clock = _AdvanceableClock(_NOW)
+    step = SulkRecoveryStep(tracker=_tracker(store), clock=clock)
+
+    await step.run()  # stamp only
+    clock.advance(seconds=10_000.0)
+    await step.run()  # would decay, but there is nothing to recover
+
+    assert store.save_calls == 0
