@@ -91,11 +91,19 @@ ignore = [
 # The persona voice module (BOB-016) is, by nature, multi-line Russian prose
 # whose Cyrillic look-alikes are intentional (the model reads the directives
 # natively); RUF001's ambiguous-character lint does not apply to these literals.
-"src/bob/domain/personality/voice.py" = ["RUF001"]
+"src/bob/domain/personality/voice.py" = ["RUF001", "RUF002", "RUF003"]
 # The engagement-appetite module (BOB-014 .2a) carries Russian persona/affect terms in
 # its docstring + comments ("наскучило", "какие-попало", "ни о чём") whose Cyrillic
 # look-alikes are intentional — RUF002/RUF003 do not apply to these.
 "src/bob/domain/personality/engagement.py" = ["RUF002", "RUF003"]
+# The обида/sulk module (BOB-014 .2b) carries Russian persona/affect terms in its
+# docstring + comments ("обида", "отходит", "тёплые сообщения") whose Cyrillic
+# look-alikes are intentional — RUF002/RUF003 do not apply to these.
+"src/bob/domain/personality/sulk.py" = ["RUF002", "RUF003"]
+# The profanity-perception module (BOB-014 .2b) carries short Russian мат/insult
+# literals + comments whose Cyrillic look-alikes are intentional (the heuristic matches
+# real Russian text) — RUF001/RUF002/RUF003 do not apply to these.
+"src/bob/domain/personality/profanity.py" = ["RUF001", "RUF002", "RUF003"]
 # The voice tests (BOB-016/BOB-020) assert on multi-line Russian persona/tone
 # literals whose Cyrillic look-alikes are intentional (→ RUF001/RUF003).
 "tests/domain/personality/test_voice.py" = [
@@ -106,6 +114,24 @@ ignore = [
     "RUF003",
 ]
 "tests/**/*.py" = ["S101", "ARG001", "PLR2004"]
+# The profanity-perception tests (BOB-014 .2b) assert on short Russian мат/insult
+# literals whose Cyrillic look-alikes are intentional (→ RUF001/RUF003).
+"tests/domain/personality/test_profanity.py" = [
+    "S101",
+    "ARG001",
+    "PLR2004",
+    "RUF001",
+    "RUF003",
+]
+# The обида/sulk tests (BOB-014 .2b) carry short Russian affect literals/comments
+# whose Cyrillic look-alikes are intentional (→ RUF001/RUF003).
+"tests/domain/personality/test_sulk.py" = [
+    "S101",
+    "ARG001",
+    "PLR2004",
+    "RUF001",
+    "RUF003",
+]
 # The expression decider (BOB-018) seeds `random.Random` for deterministic
 # stochastic-sampling assertions (the non-crypto PRNG is the point → S311) and
 # uses short Russian inbound literals/comments whose Cyrillic look-alikes are

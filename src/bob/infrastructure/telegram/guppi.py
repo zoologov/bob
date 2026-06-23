@@ -51,6 +51,12 @@ __all__ = [
 # The single visible reject shown to an unauthorized user inside Bob's topic.
 GUPPI_REJECT_TEXT = "⛔ Пользователь не авторизован"
 
+# The one-shot обида announcement GUPPI posts on a fresh sulk entry (BOB-014 .2b):
+# the внеличностный systemic voice (NOT Bob himself) telling the owner Bob is hurt
+# and not in the mood to talk right now. Posted once per entry (guarded upstream by
+# the SulkState one-shot flag). Russian (project language).
+GUPPI_SULK_ANNOUNCE_TEXT = "Боб обижен и сейчас не хочет разговаривать."
+
 # Owner-only privileged commands GUPPI consumes in General.
 _AUTHORIZE_COMMAND = "/authorize"
 _DEAUTHORIZE_COMMAND = "/deauthorize"
@@ -116,6 +122,18 @@ class GuppiHandler:
             text=GUPPI_REJECT_TEXT,
             message_thread_id=thread_id,
         )
+
+    async def announce_sulk(self) -> None:
+        """Post the one-shot обида announcement into General (BOB-014 .2b).
+
+        Realises :class:`~bob.application.usecases.sulk_sources.SulkAnnouncer`: on a
+        fresh sulk entry GUPPI — the внеличностный systemic voice, never Bob himself —
+        tells the owner Bob is hurt and not in the mood to talk. Posted into the General
+        chat (where the owner sees GUPPI's system messages), exactly once per entry (the
+        one-shot guard lives in the SulkState flag, so the application only calls this on
+        the entry transition). Transport only — sent through GUPPI's own bot.
+        """
+        await self._reply(self._general_chat_id, GUPPI_SULK_ANNOUNCE_TEXT)
 
     async def handle_general_command(
         self, *, text: str, user_id: int | None, chat_id: int

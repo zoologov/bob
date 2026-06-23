@@ -394,6 +394,36 @@ async def test_reflect_without_a_fascination_evolver_is_unaffected() -> None:
     assert len(repo.episodes) == 1
 
 
+class _RecordingSulkRecoverer:
+    """A SulkRecoverer double recording how many times the tick drove it."""
+
+    def __init__(self) -> None:
+        self.runs = 0
+
+    async def run(self) -> None:
+        self.runs += 1
+
+
+async def test_reflect_drives_the_sulk_recoverer_after_logging() -> None:
+    # BOB-014 .2b: when wired, the reflect tick drives обида recovery once per tick
+    # (after the reflection episode is logged), the GUARANTEED time-decay exit.
+    router, _ = _router(reply="что-то приутих сегодня")
+    repo = FakeRepo()
+    recoverer = _RecordingSulkRecoverer()
+    tick = ReflectTick(
+        router=router,
+        repo=repo,
+        state=_state(Mood(), Mood()),
+        clock=FixedClock(_moment()),
+        recover_sulk=recoverer,
+    )
+
+    await tick.run()
+
+    assert len(repo.episodes) == 1  # reflection still logged
+    assert recoverer.runs == 1  # recovery driven once
+
+
 class _RecordingPhantomEvolver:
     """A PhantomEvolver double recording how many times the tick drove it."""
 

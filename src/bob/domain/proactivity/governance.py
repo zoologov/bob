@@ -8,13 +8,15 @@
 
 The urge model is the engine; governance is the brake. Given the current local
 time and a snapshot of recent history, :meth:`Governance.allows` answers a single
-boolean — may Bob speak proactively right now? — by applying five vetoes:
+boolean — may Bob speak proactively right now? — by applying six vetoes:
 
 * **quiet-hours** — a hard floor on the local clock (default 23:00 to 09:00),
 * **owner-mute** — a persisted flag the owner toggles via ``/quiet`` / ``/wake``,
 * **anti-spam** — a per-window ceiling on proactive messages,
-* **min-gap** — a minimum interval between two proactive messages, and
-* **owner-cooldown** — a quiet interval after the owner's own last message.
+* **min-gap** — a minimum interval between two proactive messages,
+* **owner-cooldown** — a quiet interval after the owner's own last message, and
+* **sulk** — a ceiling while Bob is обижен (BOB-014 .2b): he does not write first
+  while hurt; it lifts on its own as обида recovers (guaranteed exit).
 
 These are ceilings only: governance never *raises* the urge, it only blocks. The
 "now" is injected by the caller (clock lives in the application layer), so the
@@ -53,12 +55,18 @@ class GovernanceConfig:
 
 @dataclass(frozen=True, slots=True)
 class ProactiveHistory:
-    """The recent-activity snapshot governance reasons over (caller-supplied)."""
+    """The recent-activity snapshot governance reasons over (caller-supplied).
+
+    ``sulk_active`` (BOB-014 .2b) is the обида ceiling: while Bob is hurt он не пишет
+    первым. It defaults to ``False`` so a caller that does not model обида (or a Bob
+    who is not hurt) behaves exactly as before — the veto only ever blocks.
+    """
 
     last_spoke_at: datetime | None
     last_user_msg_at: datetime | None
     sent_in_window: int
     muted: bool
+    sulk_active: bool = False
 
 
 def _in_quiet_hours(now: datetime, *, start_hour: int, end_hour: int) -> bool:
@@ -85,12 +93,15 @@ class Governance:
     def allows(self, *, now: datetime, history: ProactiveHistory) -> bool:
         """Return whether a proactive message is permitted at ``now``.
 
-        ``True`` only when every veto clears: not muted, outside quiet hours,
-        below the per-window ceiling, past the min-gap since Bob last spoke, and
-        past the cooldown since the owner's last message.
+        ``True`` only when every veto clears: not muted, not обижен (sulk), outside
+        quiet hours, below the per-window ceiling, past the min-gap since Bob last
+        spoke, and past the cooldown since the owner's last message.
         """
         vetoes = (
             history.muted,
+            # BOB-014 .2b: обида suppresses the reach-out — Bob doesn't write first
+            # while hurt. It lifts on its own as обида recovers (guaranteed exit).
+            history.sulk_active,
             _in_quiet_hours(
                 now,
                 start_hour=self.config.quiet_start_hour,

@@ -25,6 +25,7 @@ from bob.infrastructure.persistence.proactivity_store import SqliteProactivitySt
 from bob.infrastructure.persistence.relationship_store import SqliteRelationshipStore
 from bob.infrastructure.persistence.soul_store import SoulStore
 from bob.infrastructure.persistence.sqlite_repo import SqliteMemoryRepo
+from bob.infrastructure.persistence.sulk_store import SqliteSulkStore
 
 __all__ = [
     "Fts5MemoryRecall",
@@ -37,4 +38,5 @@ __all__ = [
     "SqliteMemoryRepo",
     "SqliteProactivityStore",
     "SqliteRelationshipStore",
+    "SqliteSulkStore",
 ]

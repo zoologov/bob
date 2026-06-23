@@ -222,6 +222,7 @@ def _engine(
     repo: FakeEpisodeRepo | None = None,
     language: str = "ru",
     fascination: object | None = None,
+    sulk: object | None = None,
 ) -> ProactivityEngine:
     return ProactivityEngine(
         persona_id=_PERSONA,
@@ -242,6 +243,7 @@ def _engine(
         rng=random.Random(seed),
         language=language,
         fascination=fascination,  # type: ignore[arg-type]
+        sulk=sulk,  # type: ignore[arg-type]
     )
 
 
@@ -557,6 +559,67 @@ async def test_governance_veto_stays_silent_with_zero_llm_calls() -> None:
     assert spoke is False
     assert gateway.replies == []
     assert sum(p.calls for p in providers) == 0
+
+
+class _FakeSulkSource:
+    """A SulkSource double: a fixed обида state for the proactivity veto."""
+
+    def __init__(self, *, active: bool) -> None:
+        self._active = active
+
+    async def current_active(self) -> bool:
+        return self._active
+
+
+async def test_sulk_vetoes_proactivity_with_zero_llm_calls() -> None:
+    # BOB-014 .2b: while обижен Bob does not write first — the sulk veto suppresses
+    # proactivity exactly like /quiet, with zero LLM calls.
+    moment = _evening()
+    seed = _seed_that_fires(moment, _HIGH_MOOD)
+    store = FakeStore(_state(energy=1.0))
+    router, providers = _router(gate_reply="SAY: x", compose_reply="x")
+    gateway = CapturingGateway()
+    engine = _engine(
+        store=store,
+        router=router,
+        gateway=gateway,
+        state_holder=PersonalityState(soul=_soul(_HIGH_MOOD)),
+        moment=moment,
+        seed=seed,
+        salience=0.9,
+        sulk=_FakeSulkSource(active=True),
+    )
+
+    spoke = await engine.tick()
+
+    assert spoke is False
+    assert gateway.replies == []
+    assert sum(p.calls for p in providers) == 0
+
+
+async def test_not_sulking_does_not_veto_proactivity() -> None:
+    # Not hurt → the sulk veto is off; the reach-out proceeds exactly as before.
+    moment = _evening()
+    seed = _seed_that_fires(moment, _HIGH_MOOD)
+    store = FakeStore(_state(energy=1.0))
+    router, _providers = _router(
+        gate_reply="SAY: ask how it went", compose_reply="hey, how did it go?"
+    )
+    gateway = CapturingGateway()
+    engine = _engine(
+        store=store,
+        router=router,
+        gateway=gateway,
+        state_holder=PersonalityState(soul=_soul(_HIGH_MOOD)),
+        moment=moment,
+        seed=seed,
+        salience=0.9,
+        sulk=_FakeSulkSource(active=False),
+    )
+
+    spoke = await engine.tick()
+
+    assert spoke is True  # the veto is off → Bob speaks
 
 
 async def test_low_urge_stays_silent_with_zero_llm_calls() -> None:

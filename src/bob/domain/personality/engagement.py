@@ -131,9 +131,11 @@ _DEFAULT_HIGH_FATIGUE = 0.7
 _DEFAULT_LOW_MOOD = -0.3
 _DEFAULT_BRIGHT_MOOD = 0.3
 
-# How much a close relationship (warmth + compatibility) lowers Bob's interest bar:
-# he plays along more readily with someone he is close to. Small + bounded — closeness
-# NUDGES the threshold, it never forces engagement on a topic that bores him.
+# How much the relationship shifts Bob's interest bar (warmth + compatibility), both
+# ways: closeness LOWERS the bar (he plays along more readily with someone close), a
+# cratered/hostile relationship RAISES it (BOB-014 .2b guest-disengage — he winds down
+# with a person he has soured on). Small + bounded — the relationship NUDGES the
+# threshold, never forcing engagement on a boring topic nor a permanent block.
 _RELATIONSHIP_BAR_DISCOUNT = 0.2
 
 # Probability that an otherwise-FULL turn tips into PLAYFUL when the mood is bright —
@@ -187,8 +189,10 @@ def decide_engagement(
        bar engages Bob (:data:`~EngagementLevel.FULL`) even in a low mood — and a good
        exchange can lift his mood (see :func:`engagement_mood_lift`).
 
-    Closeness (``relationship`` warmth + compatibility) lowers the interest bar a little
-    (Bob plays along more readily with someone close). One RNG draw resolves the
+    Closeness (``relationship`` warmth + compatibility) shifts the interest bar a
+    little: a close person lowers it (Bob plays along more readily), a cratered/hostile
+    relationship RAISES it (BOB-014 .2b guest-disengage — Bob winds down with a person
+    he has soured on, recovering as the relationship does). One RNG draw resolves the
     PLAYFUL boundary; it is ALWAYS taken so the stream position stays stable whatever
     branch runs, keeping the turn reproducible under a fixed seed.
     """
@@ -198,7 +202,7 @@ def decide_engagement(
     playful_roll = rng.random()
 
     interest = _clamp(topic_interest)
-    bar = max(_MIN_LEVEL, bands.interesting - _relationship_discount(relationship))
+    bar = _clamp(bands.interesting - _relationship_bar_shift(relationship))
     interesting = interest >= bar
     bored = fatigue.level >= bands.high_fatigue
     low_mood = mood.valence <= bands.low_mood
@@ -222,19 +226,21 @@ def decide_engagement(
     return EngagementLevel.TERSE
 
 
-def _relationship_discount(relationship: Relationship | None) -> float:
-    """How much closeness lowers Bob's interest bar (0..bound) — pure.
+def _relationship_bar_shift(relationship: Relationship | None) -> float:
+    """How the relationship shifts Bob's interest bar — signed, pure (BOB-014).
 
-    A close relationship (positive warmth + compatibility) makes Bob play along more
-    readily, so it shaves a small, bounded amount off the ``interesting`` threshold. A
-    neutral or negative relationship (or none) yields zero — coldness does not make him
-    engage LESS than a stranger would here (the cool side is carried by tone/the sulk).
+    Positive when CLOSE (positive warmth + compatibility): closeness shaves a small,
+    bounded amount OFF the ``interesting`` threshold, so Bob plays along more readily
+    with someone he is close to. NEGATIVE when CRATERED (a soured, hostile relationship,
+    BOB-014 .2b guest-disengage): a very negative warmth + compatibility RAISES the bar
+    instead, so Bob disengages (terse / winds down) from a person he has soured on —
+    keyed on THAT person's cratered relationship, and recovers as the relationship does
+    (no permanent block). A neutral relationship (or none) shifts nothing. Bounded both
+    ways by :data:`_RELATIONSHIP_BAR_DISCOUNT`.
     """
     if relationship is None:
         return 0.0
     closeness = (relationship.warmth + relationship.compatibility) / 2.0
-    if closeness <= 0.0:
-        return 0.0
     return _RELATIONSHIP_BAR_DISCOUNT * closeness
 
 

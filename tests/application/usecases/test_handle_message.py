@@ -51,6 +51,7 @@ from bob.domain.personality.reaction import (
 )
 from bob.domain.personality.relationship import Relationship
 from bob.domain.personality.soul import SOUL
+from bob.domain.personality.sulk import SulkState
 from bob.domain.personality.taste import TasteAxis, TasteEngine, Verdict
 from bob.domain.ports import ToolCall, ToolCallResult
 from bob.infrastructure.telegram.gateway import TelegramGateway
@@ -326,6 +327,7 @@ def _build(
     perceive_sender: _FakeInterlocutorResolver | None = None,
     first_impression: _FakeFirstImpression | None = None,
     relationship: _FakeRelationship | None = None,
+    sulk: _FakeSulk | None = None,
     engagement_state: EngagementState | None = None,
     engagement_thresholds: EngagementThresholds | None = None,
     fatigue_rates: FatigueRates | None = None,
@@ -368,6 +370,7 @@ def _build(
         perceive_sender=perceive_sender,
         first_impression=first_impression,
         relationship=relationship,
+        sulk=sulk,
         engagement_state=engagement_state,
         engagement_thresholds=engagement_thresholds,
         fatigue_rates=fatigue_rates,
@@ -2550,3 +2553,130 @@ async def test_fatigue_recovers_over_elapsed_time_never_locks_out() -> None:
     # A day of quiet decayed the once-high fatigue right down — Bob is not locked out.
     assert state.fatigue.level < EngagementThresholds().high_fatigue
     assert _DECLINE_FRAGMENT not in tier1.all_text
+
+
+# --- Sulk / обида (BOB-014 .2b) -----------------------------------------------
+
+
+class _FakeSulk:
+    """In-memory SulkReader fake: a fixed current state + capture of observations.
+
+    ``current`` is the обида state returned for the turn (the cold-tone source);
+    ``observations`` captures every (owner_warmth, hostile, warmth_delta) folded in
+    after a turn so a test can assert the обида signal reacts to the right thing.
+    """
+
+    def __init__(self, *, current: SulkState | None = None) -> None:
+        self._current = current if current is not None else SulkState()
+        self.observations: list[tuple[float, bool, float]] = []
+
+    async def current(self) -> SulkState:
+        return self._current
+
+    async def observe(
+        self,
+        *,
+        owner_warmth: float,
+        hostile: bool,
+        warmth_delta: float,
+        now: datetime,  # noqa: ARG002 - part of the seam contract, unused by the fake
+    ) -> SulkState:
+        self.observations.append((owner_warmth, hostile, warmth_delta))
+        return self._current
+
+
+def _owner_resolver() -> _FakeInterlocutorResolver:
+    return _FakeInterlocutorResolver(
+        _interlocutor(name="Vova", kind=InterlocutorKind.OWNER)
+    )
+
+
+async def test_active_sulk_makes_the_reactive_tone_cold() -> None:
+    # BOB-014 .2b: while обижен, the reply prompt carries the cold sulk_directive —
+    # quieter / curt, composed over the mood/relationship tone.
+    sulk = _FakeSulk(current=SulkState(active=True, intensity=0.8, since=_moment()))
+    handler, _bot, _repo, tier1 = _build(
+        reply="hi", perceive_sender=_owner_resolver(), sulk=sulk
+    )
+
+    await handler.handle(_message("расскажи подробно про космос"))
+
+    folded = tier1.all_text.casefold()
+    assert "обиж" in folded or "задет" in folded  # the cold sulk tone landed
+    assert "груб" in folded  # explicitly NOT rude (без грубости)
+
+
+async def test_not_sulking_leaves_the_tone_normal() -> None:
+    # Not hurt → no cold line; the normal warm tone path is unchanged.
+    sulk = _FakeSulk(current=SulkState())
+    handler, _bot, _repo, tier1 = _build(
+        reply="hi", perceive_sender=_owner_resolver(), sulk=sulk
+    )
+
+    await handler.handle(_message("расскажи подробно про космос"))
+
+    folded = tier1.all_text.casefold()
+    assert "сейчас ты обижен" not in folded
+    assert "тепл" in folded  # the warm tone band still present
+
+
+async def test_owner_turn_feeds_the_sulk_signal() -> None:
+    # An OWNER turn folds (owner_warmth, hostile, warmth_delta) into обида after.
+    rel = _FakeRelationship(current=Relationship(sender_id=99, warmth=-0.6))
+    sulk = _FakeSulk()
+    handler, _bot, _repo, _tier1 = _build(
+        reply="hi", perceive_sender=_owner_resolver(), relationship=rel, sulk=sulk
+    )
+
+    await handler.handle(_message("расскажи подробно про космос"))
+
+    assert len(sulk.observations) == 1
+    owner_warmth, _hostile, _delta = sulk.observations[0]
+    assert owner_warmth == -0.6  # the owner relationship warmth fed the signal
+
+
+async def test_directed_insult_flags_hostility_to_the_sulk_signal() -> None:
+    # A DIRECTED insult is flagged hostile to the обида signal.
+    sulk = _FakeSulk()
+    handler, _bot, _repo, _tier1 = _build(
+        reply="hi", perceive_sender=_owner_resolver(), sulk=sulk
+    )
+
+    await handler.handle(_message("ты тупой идиот"))
+
+    assert sulk.observations[0][1] is True  # hostile flag set
+
+
+async def test_casual_mat_is_not_flagged_hostile_to_the_sulk_signal() -> None:
+    # Casual мат "with him" must NOT crater the relationship / trigger обида — it is
+    # NOT flagged hostile, so the signal reacts to directed hostility, not vocabulary.
+    sulk = _FakeSulk()
+    handler, _bot, _repo, _tier1 = _build(
+        reply="hi", perceive_sender=_owner_resolver(), sulk=sulk
+    )
+
+    await handler.handle(_message("блин, ну охренеть как круто получилось!"))
+
+    assert sulk.observations[0][1] is False  # casual мат is not hostile
+
+
+async def test_guest_turn_does_not_feed_the_sulk_signal() -> None:
+    # обида v1 is tied to the OWNER relationship — a guest turn never feeds it.
+    sulk = _FakeSulk()
+    handler, _bot, _repo, _tier1 = _build(
+        reply="hi", perceive_sender=_guest_resolver(), sulk=sulk
+    )
+
+    await handler.handle(_message("ты тупой идиот"))
+
+    assert sulk.observations == []  # owner-only
+
+
+async def test_no_sulk_seam_leaves_the_turn_unchanged() -> None:
+    # Backward-compatible default: no sulk seam wired → behaviour exactly as before.
+    handler, _bot, _repo, tier1 = _build(reply="hi", perceive_sender=_owner_resolver())
+
+    await handler.handle(_message("расскажи подробно про космос"))
+
+    folded = tier1.all_text.casefold()
+    assert "сейчас ты обижен" not in folded

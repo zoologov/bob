@@ -131,6 +131,20 @@ class ReflectionSalienceSource(Protocol):
         ...
 
 
+class SulkSource(Protocol):
+    """Read seam: whether Bob is обижен right now (the proactivity sulk veto, BOB-014).
+
+    Realised by :class:`~bob.application.usecases.sulk_sources.SulkTracker`: while Bob
+    is обижен он не пишет первым, so the engine folds ``active`` into the governance
+    veto. It lifts on its own as обида recovers (guaranteed exit). Optional: unwired,
+    the veto is simply off and proactivity behaves exactly as before.
+    """
+
+    async def current_active(self) -> bool:
+        """Return whether Bob is currently обижен (the sulk veto)."""
+        ...
+
+
 class ProactiveWindowCounter(Protocol):
     """Read seam: how many proactive messages Bob has sent in the anti-spam window."""
 
@@ -171,6 +185,7 @@ class ProactivityEngine:
         rng: Random,
         language: str = DEFAULT_LANGUAGE,
         fascination: CurrentFascinationReader | None = None,
+        sulk: SulkSource | None = None,
     ) -> None:
         self._persona_id = persona_id
         self._chat_id = chat_id
@@ -192,6 +207,11 @@ class ProactivityEngine:
         # his REAL state. Proactive messages are already rare by construction. No
         # current fascination (or no reader) → nothing added (a clean no-op).
         self._fascination = fascination
+        # The sulk seam (BOB-014 .2b): when wired, while Bob is обижен он не пишет
+        # первым — ``active`` folds into the governance veto as a ceiling (like mute /
+        # quiet-hours). It lifts on its own as обида recovers (guaranteed exit). Unwired
+        # (the default), the veto is off and proactivity behaves exactly as before.
+        self._sulk = sulk
 
     async def tick(self) -> bool:
         """Run one proactive tick; return whether Bob spoke.
@@ -240,6 +260,9 @@ class ProactivityEngine:
             last_user_msg_at=state.last_user_msg_at,
             sent_in_window=await self._window.proactive_count_in_window(now=now),
             muted=not state.proactivity_enabled,
+            # BOB-014 .2b: обида suppresses the reach-out — Bob doesn't write first
+            # while hurt. It lifts on its own as обида recovers (guaranteed exit).
+            sulk_active=await self._is_sulking(),
         )
         return self._decider.should_speak(
             mood=self._mood(),
@@ -249,6 +272,17 @@ class ProactivityEngine:
             history=history,
             rng=self._rng,
         )
+
+    async def _is_sulking(self) -> bool:
+        """Whether Bob is обижен right now — the proactivity sulk veto (BOB-014 .2b).
+
+        Reads the wired sulk seam; unwired (the default) the veto is off (``False``),
+        so proactivity behaves exactly as before. The вето lifts on its own as обида
+        recovers (the guaranteed time-decay exit), so this is never a permanent block.
+        """
+        if self._sulk is None:
+            return False
+        return await self._sulk.current_active()
 
     async def _resolve_mute_expiry(
         self, state: ProactivityState, now: datetime

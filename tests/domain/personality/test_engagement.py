@@ -198,6 +198,30 @@ def test_close_relationship_lowers_the_interest_bar() -> None:
     assert close_level is EngagementLevel.FULL
 
 
+def test_cratered_relationship_raises_the_bar_guest_disengage() -> None:
+    # BOB-014 .2b guest-disengage: a badgering guest drives their relationship down →
+    # Bob disengages from THAT person. A cratered (very negative) relationship RAISES
+    # the interest bar, so a borderline topic a stranger would stay present on gets
+    # declined/terse from a person Bob has soured on — keyed on the cratered relationship.
+    borderline = EngagementThresholds().interesting + 0.05
+    cratered = Relationship(sender_id=1, warmth=-0.9, compatibility=-0.9)
+
+    stranger_level = decide_engagement(
+        mood=_NEUTRAL_MOOD, topic_interest=borderline, fatigue=_FRESH, rng=_rng()
+    )
+    cratered_level = decide_engagement(
+        mood=_NEUTRAL_MOOD,
+        topic_interest=borderline,
+        fatigue=_FRESH,
+        relationship=cratered,
+        rng=_rng(),
+    )
+
+    # The stranger stays engaged; the soured person is disengaged from (the bar rose).
+    assert stranger_level in (EngagementLevel.FULL, EngagementLevel.PLAYFUL)
+    assert cratered_level in (EngagementLevel.TERSE, EngagementLevel.DECLINE)
+
+
 # --- determinism ------------------------------------------------------------
 
 

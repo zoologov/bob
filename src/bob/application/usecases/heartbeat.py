@@ -139,6 +139,21 @@ class FactDeduper(Protocol):
         ...
 
 
+class SulkRecoverer(Protocol):
+    """The narrow seam the reflect tick drives to recover Bob's обида (BOB-014 .2b).
+
+    Realised by :class:`~bob.application.usecases.sulk_sources.SulkRecoveryStep`: a
+    step that decays обида by the REAL elapsed time since the last tick — the GUARANTEED
+    exit, since time alone always brings Bob back (no permanent lock-out). Driven on the
+    same slow cadence as the other reflect-tick steps. Idempotent and a no-op when Bob
+    is not hurt. Optional: unwired, the reflect tick behaves exactly as before.
+    """
+
+    async def run(self) -> None:
+        """Run one обида-recovery step (a no-op unless Bob is currently hurt)."""
+        ...
+
+
 class TasteProfileWriter(Protocol):
     """The narrow persistence seam self-evolution needs: write a JSON artifact.
 
@@ -220,6 +235,7 @@ class ReflectTick:
         evolve_phantoms: PhantomEvolver | None = None,
         consolidate_memory: MemoryConsolidator | None = None,
         dedup_facts: FactDeduper | None = None,
+        recover_sulk: SulkRecoverer | None = None,
     ) -> None:
         self._router = router
         self._repo = repo
@@ -250,6 +266,11 @@ class ReflectTick:
         # nothing to merge is a no-op), so a re-run in the same period causes no churn.
         # Unwired, the tick behaves exactly as before.
         self._dedup_facts = dedup_facts
+        # The обида-recovery seam (BOB-014 .2b): same slow cadence — driven AFTER the
+        # reflection is logged. It decays обида by the REAL elapsed time since the last
+        # tick (the GUARANTEED exit — time alone brings Bob back, no permanent lock-out)
+        # and is a no-op when Bob is not hurt. Unwired, the tick behaves as before.
+        self._recover_sulk = recover_sulk
         # Idempotency marker: the last reflection text already applied to the soul.
         self._last_evolved: str | None = None
 
@@ -284,6 +305,8 @@ class ReflectTick:
             await self._consolidate_memory.run()
         if self._dedup_facts is not None:
             await self._dedup_facts.run()
+        if self._recover_sulk is not None:
+            await self._recover_sulk.run()
 
     def _evolve(self, reflection: str) -> None:
         """Apply ``reflection`` to the soul once, persisting taste on a real change."""

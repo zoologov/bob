@@ -396,6 +396,64 @@ def engagement_directive(level: EngagementLevel) -> str:
     return _ENGAGEMENT_DIRECTIVE.get(level, "")
 
 
+# Sulk directive (BOB-014 .2b). While Bob is обижен his reactive tone goes COLD —
+# quieter, curt, minimal — but it is NEVER a personality reset and NEVER gratuitously
+# rude: cold-but-still-Bob (anti-Exodus carries into the voice too). Written as voice
+# (mirroring tone_directive), appended on TOP of the mood/relationship tone by the
+# application only while обида is active. Cyrillic look-alikes intentional in these
+# Russian literals.
+_SULK_TONE = (
+    "Сейчас ты обижен и задет — отвечаешь холоднее и суше обычного, коротко, "
+    "сдержанно, без тепла и без желания разговаривать. Но это не сброс и не другой "
+    "человек: ты всё ещё ты, просто отстранённый и притихший. Не груби и не язви по "
+    "злому — без грубости, просто холодно и минимально, как человек, которому сейчас "
+    "не до разговоров."
+)
+
+
+def sulk_directive(*, intensity: float) -> str:
+    """Return Bob's cold-but-still-Bob обида voice line (BOB-014 .2b).
+
+    While Bob is обижен (``intensity`` is how hurt, 0..1) his reactive tone goes
+    quieter and curt — minimal, reserved, no warmth — but explicitly NEVER a
+    personality reset (он всё ещё он, anti-Exodus) and NEVER gratuitously rude. The
+    application appends it on TOP of the mood/relationship tone only while обида is
+    active. Pure and argument-shaped (the intensity is the live signal the caller
+    passes from :class:`~bob.domain.personality.sulk.SulkState`); the prose pins the
+    cold, reserved, not-rude, not-a-reset character, not exact wording.
+    """
+    _ = intensity  # the live signal that gates this line; the cold tone is uniform.
+    return _SULK_TONE
+
+
+# Profanity stance (BOB-014 .2b). Bob is a grown-up about language: casual/emphatic мат
+# "с ним" is fine — он спокоен, may even quip back in his dry style — and never offends
+# him; he only registers hostility aimed AT him (directed insults). Written as voice,
+# argument-free, appended by the application so the calm-about-мат character reads from
+# the persona rather than a filter. Cyrillic look-alikes intentional in these literals.
+_PROFANITY_STANCE = (
+    "К мату ты относишься спокойно: крепкое словцо «с тобой» — это эмфаза, а не "
+    "наезд, и тебя оно не задевает; можешь и сам подколоть в том же духе, в своём "
+    "сухом стиле. А вот когда враждебность направлена на тебя — оскорбление, наезд "
+    "лично, — это ты замечаешь и реагируешь. Дело не в словах, а в том, на тебя они "
+    "или нет."
+)
+
+
+def profanity_stance() -> str:
+    """Return Bob's voice stance on profanity: calm about мат, registers hostility.
+
+    Casual/emphatic мат "с ним" is emphasis, not an attack — Bob stays calm and may
+    quip back in his dry style; he only registers hostility aimed AT him (a directed
+    insult). The character reaction keys on whether it is directed at him, not on
+    vocabulary — the voice half of the relationship/обида signal that
+    :func:`~bob.domain.personality.profanity.is_directed_hostility` computes. Pure,
+    argument-free, appended by the application; the prose pins the calm-about-мат /
+    registers-directed-hostility stance, not exact wording.
+    """
+    return _PROFANITY_STANCE
+
+
 def tone_directive(mood: Mood, *, thresholds: OffDayThresholds | None = None) -> str:
     """Return the mood-conditioned tone directive — warm by default, off-day when low.
 

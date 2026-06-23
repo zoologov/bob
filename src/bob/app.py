@@ -84,6 +84,7 @@ from bob.application.usecases.heartbeat import (
 from bob.application.usecases.reflection_parser import HeuristicReflectionParser
 from bob.application.usecases.relationship_sources import RelationshipTracker
 from bob.application.usecases.run_genesis import RunGenesis
+from bob.application.usecases.sulk_sources import SulkRecoveryStep, SulkTracker
 from bob.application.usecases.update_mood_from_text import UpdateMoodFromText
 from bob.domain.personality.engagement import EngagementThresholds, FatigueRates
 from bob.domain.personality.expression import ExpressionFreqs
@@ -112,6 +113,7 @@ from bob.infrastructure.persistence import (
     SqliteMemoryRepo,
     SqliteProactivityStore,
     SqliteRelationshipStore,
+    SqliteSulkStore,
 )
 from bob.infrastructure.telegram.multibot import (
     BotIdentity,
@@ -378,6 +380,11 @@ def build_application(
     # each turn. Keyed by sender_id; per-PERSON data (about them), not owner memory.
     relationship_store = SqliteRelationshipStore(memory_repo)
     relationship_tracker = RelationshipTracker(store=relationship_store)
+    # Sulk/обида store (BOB-014 .2b): the per-persona affect state — entered on a
+    # SUSTAINED critical owner-drop / directed hostility, decaying to a GUARANTEED exit.
+    # Carries NO memory and NO soul (anti-Exodus). The tracker is built AFTER multibot
+    # so GUPPI can be its one-shot announcer.
+    sulk_store = SqliteSulkStore(memory_repo)
 
     multibot = _build_multibot(
         merged,
@@ -387,6 +394,15 @@ def build_application(
         authorizer=authorizer,
         proactivity_store=proactivity_store,
         proactivity_clock=resolved_clock,
+    )
+    # обида seam (BOB-014 .2b): GUPPI announces a fresh sulk entry once ("Боб обижен …")
+    # — the внеличностный systemic voice. The tracker loads/evolves/recovers обида and
+    # is read by HandleMessage (cold tone + owner-turn observation), the reflect tick
+    # (guaranteed time-decay recovery), and the proactivity engine (the sulk veto).
+    sulk_tracker = SulkTracker(
+        store=sulk_store,
+        persona_id=_BOB_PERSONA,
+        announcer=multibot.guppi,
     )
 
     handle_message = HandleMessage(
@@ -454,6 +470,13 @@ def build_application(
         # WHO is writing, then is updated after the turn from (stance, mood, sentiment)
         # and persisted so it accrues. Additive only; per-PERSON, safe on a guest turn.
         relationship=relationship_tracker,
+        # Sulk seam (BOB-014 .2b): while обижен Bob's reactive tone goes COLD (a
+        # quieter, curt sulk_directive composed over mood/relationship tone), and each
+        # OWNER turn is folded into обида — a SUSTAINED critical owner-drop OR sustained
+        # DIRECTED hostility (casual мат never counts) enters обида (GUPPI announces it
+        # once). The guaranteed time-decay exit is owned by the reflect tick. обида
+        # carries NO memory and NO soul (anti-Exodus). Additive; per-PERSONA.
+        sulk=sulk_tracker,
         # Engagement-appetite seam (BOB-014 .2a): Bob's appetite to converse is a LEVEL
         # (full / playful / terse / decline) from mood x topic interest x conversational
         # fatigue x relationship. The fatigue is a small per-boot decaying counter held on
@@ -541,6 +564,11 @@ def build_application(
         embedder=resolved_embedder,
         clock=resolved_clock,
     )
+    # Sulk recovery (BOB-014 .2b): a reflect-tick step that decays обида by the REAL
+    # elapsed time since the last tick — the GUARANTEED exit (time alone brings Bob
+    # back, no permanent lock-out), accelerated separately by warm owner turns on the
+    # message path. A no-op when Bob is not hurt.
+    recover_sulk = SulkRecoveryStep(tracker=sulk_tracker, clock=resolved_clock)
     reflect_tick = ReflectTick(
         router=router,
         repo=memory_repo,
@@ -553,6 +581,7 @@ def build_application(
         evolve_phantoms=evolve_phantoms,
         consolidate_memory=consolidate_memory,
         dedup_facts=dedup_facts,
+        recover_sulk=recover_sulk,
     )
 
     proactivity_engine = _build_proactivity_engine(
@@ -567,6 +596,7 @@ def build_application(
         seed=proactivity_seed,
         language=language,
         fascination=fascination_reader,
+        sulk=sulk_tracker,
     )
     proactive_tick = ProactiveTick(engine=proactivity_engine)
 
@@ -674,6 +704,7 @@ def _build_proactivity_engine(
     seed: int | None,
     language: str = DEFAULT_LANGUAGE,
     fascination: StoreFascinationReader | None = None,
+    sulk: SulkTracker | None = None,
 ) -> ProactivityEngine:
     """Assemble the per-persona proactivity engine (drive-model → message).
 
@@ -707,6 +738,8 @@ def _build_proactivity_engine(
         rng=random.Random(_resolve_seed(config, seed)),  # noqa: S311
         language=language,
         fascination=fascination,
+        # The sulk veto (BOB-014 .2b): while обижен Bob does not write first.
+        sulk=sulk,
     )
 
 

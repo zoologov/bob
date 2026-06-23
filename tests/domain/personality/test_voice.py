@@ -28,9 +28,11 @@ from bob.domain.personality.voice import (
     anti_bait_directive,
     engagement_directive,
     guppi_canon,
+    profanity_stance,
     recalled_impression_directive,
     relationship_tone_directive,
     stranger_directive,
+    sulk_directive,
     tone_directive,
     user_repeat_directive,
     variable_form_directive,
@@ -376,6 +378,46 @@ def test_engagement_directive_is_voice_not_a_rule_list() -> None:
         line = engagement_directive(level)
         assert "•" not in line
         assert "- " not in line
+    assert "\n" not in line
+
+
+def test_sulk_directive_is_cold_and_curt() -> None:
+    # BOB-014 .2b: while обижен Bob is quieter / curt — minimal, not warm.
+    folded = sulk_directive(intensity=0.8).casefold()
+    assert "обиж" in folded or "задел" in folded
+    assert "суше" in folded or "коротко" in folded or "сдержан" in folded
+
+
+def test_sulk_directive_is_never_a_reset_still_bob() -> None:
+    # Cold-but-still-Bob: never a personality reset, never gratuitously rude.
+    folded = sulk_directive(intensity=0.9).casefold()
+    assert "всё ещё ты" in folded or "не сброс" in folded or "остаёшься собой" in folded
+    assert "груб" in folded  # explicitly NOT rude (mentions без грубости)
+
+
+def test_sulk_directive_is_voice_not_a_rule_list() -> None:
+    line = sulk_directive(intensity=0.5)
+    assert "•" not in line
+    assert "\n" not in line
+
+
+def test_profanity_stance_is_calm_about_casual_mat() -> None:
+    # BOB-014 .2b: Bob is calm about casual мат (мат "с ним", not "на него") and may
+    # quip back in his dry style — never offended by vocabulary.
+    folded = profanity_stance().casefold()
+    assert "мат" in folded
+    assert "подкол" in folded or "поддел" in folded or "в том же" in folded
+
+
+def test_profanity_stance_registers_directed_hostility() -> None:
+    # He DOES register hostility aimed AT him (directed insults), unlike casual мат.
+    folded = profanity_stance().casefold()
+    assert "на тебя" in folded or "направлен" in folded or "оскорбл" in folded
+
+
+def test_profanity_stance_is_voice_not_a_rule_list() -> None:
+    line = profanity_stance()
+    assert "•" not in line
     assert "\n" not in line
 
 

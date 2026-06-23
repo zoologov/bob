@@ -181,3 +181,18 @@ CREATE TABLE IF NOT EXISTS person_relationship (
     warmth        REAL NOT NULL,
     compatibility REAL NOT NULL
 );
+
+-- Per-persona обида/sulk state (BOB-014 .2b): Bob's hurt affect, entered on a
+-- SUSTAINED critical owner-drop, decaying to a GUARANTEED exit. One row per persona_id
+-- so Bobiverse replicas each keep their own. Round-tripped by SqliteSulkStore; an
+-- unseen persona simply has no row (the store returns the not-sulking default). This
+-- carries NO memory and NO soul — only the affect state (anti-Exodus). `since` is a
+-- nullable ISO-8601 entry stamp; `announced` is the one-shot GUPPI-announce flag.
+CREATE TABLE IF NOT EXISTS sulk_state (
+    persona_id TEXT    PRIMARY KEY,
+    active     INTEGER NOT NULL DEFAULT 0,  -- 0/1 whether Bob is обижен
+    intensity  REAL    NOT NULL DEFAULT 0,  -- [0,1] how hurt, decaying to exit
+    low_streak INTEGER NOT NULL DEFAULT 0,  -- consecutive low/hostile observations
+    since      TEXT,                        -- ISO-8601 entry stamp (nullable)
+    announced  INTEGER NOT NULL DEFAULT 0   -- 0/1 one-shot GUPPI-announce flag
+);

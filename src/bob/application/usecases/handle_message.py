@@ -64,7 +64,7 @@ from bob.domain.personality.expression import (
     FormHint,
     decide_expression,
 )
-from bob.domain.personality.interlocutor import Trust
+from bob.domain.personality.interlocutor import InterlocutorKind, Trust
 from bob.domain.personality.mood import MoodDelta
 from bob.domain.personality.mood_taste import experiment_bias, modulate
 from bob.domain.personality.negotiation import (
@@ -72,6 +72,7 @@ from bob.domain.personality.negotiation import (
     NegotiationZone,
     Stance,
 )
+from bob.domain.personality.profanity import is_directed_hostility
 from bob.domain.personality.reaction import reaction_emoji_for
 from bob.domain.personality.relationship import compromise_bias
 from bob.domain.personality.taste import Verdict
@@ -81,9 +82,11 @@ from bob.domain.personality.voice import (
     anti_bait_directive,
     engagement_directive,
     guppi_canon,
+    profanity_stance,
     recalled_impression_directive,
     relationship_tone_directive,
     stranger_directive,
+    sulk_directive,
     tone_directive,
     user_repeat_directive,
     variable_form_directive,
@@ -106,6 +109,7 @@ if TYPE_CHECKING:
     from bob.domain.personality.mood import Mood
     from bob.domain.personality.relationship import Relationship
     from bob.domain.personality.soul import SOUL
+    from bob.domain.personality.sulk import SulkState
     from bob.domain.ports import (
         Clock,
         LLMMessage,
@@ -165,7 +169,11 @@ _SYSTEM_PROMPT = (
     "You are Bob, a digital person from the Bobiverse. Reply in character.\n"
     f"{guppi_canon()}\n"
     f"{anti_bait_directive()}\n"
-    f"{variable_form_directive()}"
+    f"{variable_form_directive()}\n"
+    # BOB-014 .2b: Bob's persona stance on profanity — calm about casual emphatic мат
+    # (may quip back), registers hostility aimed AT him. Lives in the base persona so
+    # the calm-about-profanity character is always present, not a per-turn filter.
+    f"{profanity_stance()}"
 )
 
 # Form-hint → soft compose directive (BOB-018). The ExpressionPlan's form_hint is
@@ -351,6 +359,35 @@ class RelationshipReader(Protocol):
     ) -> None: ...
 
 
+class SulkReader(Protocol):
+    """Sulk seam: load Bob's обида state + fold an owner turn into it (BOB-014 .2b).
+
+    The compose path uses this to go COLD while Bob is hurt and to let обида take hold
+    or warm up over the live message path: :meth:`current` returns the persisted
+    :class:`~bob.domain.personality.sulk.SulkState` so the prompt appends the cold
+    :func:`~bob.domain.personality.voice.sulk_directive` while ``active``;
+    :meth:`observe` folds ONE owner turn's signals (the relationship ``owner_warmth``,
+    a ``hostile`` directed-hostility flag, and a ``warmth_delta``) into обида AFTER the
+    turn — a sustained critical owner-drop OR sustained directed hostility enters обида
+    (announced once via GUPPI), while a warm turn accelerates recovery if already hurt.
+    The concrete adapter
+    (:class:`~bob.application.usecases.sulk_sources.SulkTracker`) is per-PERSONA and
+    persists. Optional and additive: unwired (the default) Bob never sulks and the turn
+    behaves exactly as before. обида carries NO memory and NO soul (anti-Exodus).
+    """
+
+    async def current(self) -> SulkState: ...
+
+    async def observe(
+        self,
+        *,
+        owner_warmth: float,
+        hostile: bool,
+        warmth_delta: float,
+        now: datetime,
+    ) -> SulkState: ...
+
+
 class OwnerActivityRecorder(Protocol):
     """The proactivity seam HandleMessage notifies when the owner writes.
 
@@ -422,6 +459,7 @@ class HandleMessage:
         first_impression: FirstImpressionReader | None = None,
         relationship: RelationshipReader | None = None,
         relationship_tone_thresholds: RelationshipToneThresholds | None = None,
+        sulk: SulkReader | None = None,
         engagement_state: EngagementState | None = None,
         engagement_thresholds: EngagementThresholds | None = None,
         fatigue_rates: FatigueRates | None = None,
@@ -531,6 +569,14 @@ class HandleMessage:
         # (the default) tone/willingness are unchanged and nothing is recorded.
         self._relationship = relationship
         self._relationship_tone_thresholds = relationship_tone_thresholds
+        # The sulk seam (BOB-014 .2b): when wired, Bob's persisted обида state goes
+        # COLD on the reactive tone (a quieter, curt sulk_directive while active) and
+        # is FED by each owner turn — a sustained critical owner-drop OR sustained
+        # DIRECTED hostility (casual мат never counts) enters обида (GUPPI announces it
+        # once), while a warm turn accelerates recovery if already hurt. The guaranteed
+        # time-decay exit is owned by the reflect tick. обида carries NO memory and NO
+        # soul (anti-Exodus). Per-PERSONA; additive — unwired, Bob never sulks.
+        self._sulk = sulk
         # The engagement-appetite seam (BOB-014 .2a): Bob's APPETITE to converse is a
         # LEVEL (full / playful / terse / decline), decided per turn from mood x topic
         # interest x conversational fatigue x relationship. The fatigue is a small,
@@ -578,6 +624,10 @@ class HandleMessage:
         # (warmth + compatibility) are coloured for THEM this turn; a new person →
         # None (a neutral turn). Per-PERSON data, so it is loaded even on a guest turn.
         relationship = await self._load_relationship(interlocutor)
+        # Load Bob's обида state (BOB-014 .2b): while active, the reactive tone goes
+        # COLD (a quieter, curt sulk_directive) — composed over mood/relationship tone.
+        # None when no seam is wired / not hurt, so the turn behaves exactly as before.
+        sulk = await self._load_sulk()
         # Plan how Bob expresses this turn (BOB-018): pure, deterministic by seed.
         # Computed up front so the mode steers the reply path and the form hint
         # shapes the prompt; the rare flags ride along for later beads.
@@ -642,6 +692,7 @@ class HandleMessage:
                 prior_impression=prior_impression,
                 relationship=relationship,
                 engagement=level,
+                sulk=sulk,
             )
             # Anti-repeat guard (BOB-022, defense in depth): if the fresh reply is
             # byte-identical (after strip) to Bob's most-recent prior reply, regenerate
@@ -661,6 +712,7 @@ class HandleMessage:
                 prior_impression=prior_impression,
                 relationship=relationship,
                 engagement=level,
+                sulk=sulk,
             )
         await self._gateway.reply(chat_id=event.chat_id, markdown=reply)
         # Run the engagement feedback loops (BOB-014 .2a) BEFORE persisting the mood,
@@ -679,6 +731,12 @@ class HandleMessage:
         await self._record_relationship(
             interlocutor, soul, event.text, relationship
         )
+        # Fold this OWNER turn into Bob's обида state AFTER the turn (BOB-014 .2b): a
+        # sustained critical owner-drop OR sustained DIRECTED hostility enters обида
+        # (GUPPI announces it once), while a warm owner turn accelerates recovery if
+        # already hurt. Casual мат never counts — only directed hostility does. Best-
+        # effort, owner-only, per-PERSONA — never touches memory/soul (anti-Exodus).
+        await self._observe_sulk(interlocutor, soul, event.text)
         # Record Bob's LIGHT first impression of this sender on FIRST contact
         # (BOB-019 bob-apv.3): formed once and grounded in WHO they are; a returning
         # sender is left untouched (the store records once). Per-PERSON data, so it
@@ -819,6 +877,66 @@ class HandleMessage:
             )
         except Exception:
             logger.exception("recording relationship failed (ignored)")
+
+    async def _load_sulk(self) -> SulkState | None:
+        """Load Bob's обида state for this turn, or ``None`` (BOB-014 .2b).
+
+        With no sulk seam wired returns ``None`` so the compose path adds no cold-tone
+        line and the turn behaves exactly as before. Otherwise returns the persisted
+        :class:`~bob.domain.personality.sulk.SulkState` so the prompt can go cold while
+        Bob is hurt. обида carries NO memory and NO soul — only the affect state.
+        """
+        if self._sulk is None:
+            return None
+        return await self._sulk.current()
+
+    async def _observe_sulk(
+        self, interlocutor: Interlocutor | None, soul: SOUL, text: str
+    ) -> None:
+        """Fold this OWNER turn into Bob's обида state after the turn (BOB-014 .2b).
+
+        Owner-only (обида v1 is tied to the OWNER relationship that leads proactivity).
+        The "low" signal is BOTH the owner relationship warmth (a critically cold
+        relationship) AND a DIRECTED hostility flag from
+        :func:`~bob.domain.personality.profanity.is_directed_hostility` — so it reacts to
+        sustained directed hostility, NOT to casual мат (which is never flagged hostile).
+        A warm turn (positive ``warmth_delta``, read off the turn's mood valence)
+        accelerates recovery if already hurt. Best-effort: a flaky store can never break
+        a turn that already replied.
+        """
+        if self._sulk is None or interlocutor is None:
+            return
+        if interlocutor.kind is not InterlocutorKind.OWNER:
+            return
+        # The owner relationship warmth this turn (the relationship was just re-recorded
+        # for the owner); a not-yet-formed relationship reads as neutral 0.
+        owner_warmth = await self._owner_warmth(interlocutor)
+        hostile = is_directed_hostility(text)
+        # A warm message has positive sentiment; the mood valence folds in the perceived
+        # sentiment of the turn (UpdateMoodFromText nudged it), so it is the grounded
+        # "how warm was this turn" signal that accelerates отход while sulking.
+        warmth_delta = soul.mood.valence
+        try:
+            await self._sulk.observe(
+                owner_warmth=owner_warmth,
+                hostile=hostile,
+                warmth_delta=warmth_delta,
+                now=self._clock.now(),
+            )
+        except Exception:
+            logger.exception("observing sulk failed (ignored)")
+
+    async def _owner_warmth(self, interlocutor: Interlocutor) -> float:
+        """The owner relationship warmth for the обида signal, or neutral 0 (BOB-014).
+
+        Reads the freshly-updated relationship for the owner (re-recorded earlier this
+        turn) off the relationship seam; a not-yet-formed relationship (or no seam)
+        reads as neutral ``0.0`` so a fresh Bob never sulks from a blank read.
+        """
+        if self._relationship is None:
+            return 0.0
+        rel = await self._relationship.current(interlocutor)
+        return rel.warmth if rel is not None else 0.0
 
     def _decide_stance(
         self, soul: SOUL, text: str, relationship: Relationship | None
@@ -974,6 +1092,7 @@ class HandleMessage:
         prior_impression: str | None = None,
         relationship: Relationship | None = None,
         engagement: EngagementLevel = EngagementLevel.FULL,
+        sulk: SulkState | None = None,
     ) -> str:
         """Compose a full reply, folding the plan's form hint into the prompt.
 
@@ -998,6 +1117,7 @@ class HandleMessage:
             prior_impression=prior_impression,
             relationship=relationship,
             engagement=engagement,
+            sulk=sulk,
         )
         provider = self._tool_provider
         if not is_guest and provider is not None and not self._registry.is_empty:
@@ -1034,6 +1154,7 @@ class HandleMessage:
         prior_impression: str | None = None,
         relationship: Relationship | None = None,
         engagement: EngagementLevel = EngagementLevel.FULL,
+        sulk: SulkState | None = None,
     ) -> str:
         """Recompose once if ``reply`` byte-repeats Bob's last reply (BOB-022).
 
@@ -1059,6 +1180,7 @@ class HandleMessage:
             prior_impression=prior_impression,
             relationship=relationship,
             engagement=engagement,
+            sulk=sulk,
         )
 
     async def _with_grounded_addons(
@@ -1158,6 +1280,7 @@ class HandleMessage:
         prior_impression: str | None = None,
         relationship: Relationship | None = None,
         engagement: EngagementLevel = EngagementLevel.FULL,
+        sulk: SulkState | None = None,
     ) -> str:
         """Augment the base prompt with the mood tone, stance, and form-hint directives.
 
@@ -1183,6 +1306,13 @@ class HandleMessage:
             # reserved (never rude) for a distant one. No relationship / neutral
             # warmth → no line (a new person is met at the base tone).
             self._relationship_tone(relationship),
+            # BOB-014 .2b: while Bob is обижен his reactive tone goes COLD — quieter,
+            # curt, minimal (sulk_directive) — composed on TOP of the mood/relationship
+            # tone. It is cold-but-still-Bob, never rude, never a reset. No sulk / not
+            # active → no line (a not-hurt Bob keeps his normal tone).
+            sulk_directive(intensity=sulk.intensity)
+            if sulk is not None and sulk.active
+            else "",
             _stance_directive(stance, verdict=verdict, zone=zone),
             # BOB-014 .2a: Bob's APPETITE to converse this turn colours HOW he engages
             # on TOP of mood/relationship tone — PLAYFUL invites banter, TERSE keeps it

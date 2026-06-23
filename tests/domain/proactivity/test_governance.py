@@ -20,12 +20,14 @@ def _history(
     last_user_msg_at: datetime | None = None,
     sent_in_window: int = 0,
     muted: bool = False,
+    sulk_active: bool = False,
 ) -> ProactiveHistory:
     return ProactiveHistory(
         last_spoke_at=last_spoke_at,
         last_user_msg_at=last_user_msg_at,
         sent_in_window=sent_in_window,
         muted=muted,
+        sulk_active=sulk_active,
     )
 
 
@@ -160,6 +162,27 @@ def test_owner_mute_blocks_everything() -> None:
 
     # Assert
     assert allowed is False
+
+
+def test_sulk_blocks_proactivity() -> None:
+    # Arrange: Bob is обижен — proactivity is suppressed while sulking (BOB-014 .2b),
+    # a ceiling like quiet-hours / mute. Everything else is clear.
+    sulking = _history(sulk_active=True)
+
+    # Act
+    allowed = Governance().allows(now=_NOW, history=sulking)
+
+    # Assert: обида vetoes the reach-out — Bob doesn't write first while hurt.
+    assert allowed is False
+
+
+def test_not_sulking_does_not_veto() -> None:
+    # Arrange: default (not обижен) leaves the reach-out permitted.
+    # Act
+    allowed = Governance().allows(now=_NOW, history=_history(sulk_active=False))
+
+    # Assert: the sulk veto is off by default — behaviour unchanged when not hurt.
+    assert allowed is True
 
 
 def test_non_wrapping_quiet_window_blocks_inside_daytime_band() -> None:
