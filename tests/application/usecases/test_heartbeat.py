@@ -437,3 +437,47 @@ async def test_reflect_without_a_phantom_evolver_is_unaffected() -> None:
     await tick.run()
 
     assert len(repo.episodes) == 1
+
+
+class _RecordingConsolidator:
+    """A MemoryConsolidator double recording how many times the tick drove it."""
+
+    def __init__(self) -> None:
+        self.runs = 0
+
+    async def run(self) -> None:
+        self.runs += 1
+
+
+async def test_reflect_drives_the_consolidator_after_logging() -> None:
+    # BOB-021: when wired, the reflect tick drives the memory-consolidation step once
+    # per tick (after the reflection episode is logged). The consolidator is itself
+    # rare/idempotent; the tick just invokes it on the slow cadence.
+    router, _ = _router(reply="дайджест дня")
+    repo = FakeRepo()
+    consolidator = _RecordingConsolidator()
+    tick = ReflectTick(
+        router=router,
+        repo=repo,
+        state=_state(Mood(), Mood()),
+        clock=FixedClock(_moment()),
+        consolidate_memory=consolidator,
+    )
+
+    await tick.run()
+
+    assert len(repo.episodes) == 1  # reflection still logged
+    assert consolidator.runs == 1  # consolidator driven once
+
+
+async def test_reflect_without_a_consolidator_is_unaffected() -> None:
+    # Backward-compatible default: no consolidator wired → the tick behaves as before.
+    router, _ = _router(reply="тихая мысль")
+    repo = FakeRepo()
+    tick = ReflectTick(
+        router=router, repo=repo, state=_state(Mood(), Mood()), clock=FixedClock(_moment())
+    )
+
+    await tick.run()
+
+    assert len(repo.episodes) == 1

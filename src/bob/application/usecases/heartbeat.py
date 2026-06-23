@@ -108,6 +108,21 @@ class PhantomEvolver(Protocol):
         ...
 
 
+class MemoryConsolidator(Protocol):
+    """The narrow seam the reflect tick drives to consolidate old memory (BOB-021).
+
+    Realised by :class:`~bob.application.usecases.consolidate_memory.ConsolidateMemory`:
+    a rare, non-destructive, idempotent step that folds OLD un-consolidated episodes
+    into a Tier-0 digest (embedded, recalled like any episode) and flags the sources.
+    Driven AFTER the reflection is logged, on the same slow cadence. Optional: unwired,
+    the reflect tick behaves exactly as before.
+    """
+
+    async def run(self) -> None:
+        """Run one consolidation step (a no-op unless an eligible batch is due)."""
+        ...
+
+
 class TasteProfileWriter(Protocol):
     """The narrow persistence seam self-evolution needs: write a JSON artifact.
 
@@ -187,6 +202,7 @@ class ReflectTick:
         soul_store: TasteProfileWriter | None = None,
         evolve_fascination: FascinationEvolver | None = None,
         evolve_phantoms: PhantomEvolver | None = None,
+        consolidate_memory: MemoryConsolidator | None = None,
     ) -> None:
         self._router = router
         self._repo = repo
@@ -205,6 +221,12 @@ class ReflectTick:
         # idempotent (a grounded candidate already present is a no-op), so a re-run in
         # the same period causes no churn. Unwired, the tick behaves as before.
         self._evolve_phantoms = evolve_phantoms
+        # The memory-consolidation seam (BOB-021): same slow cadence — driven AFTER the
+        # reflection is logged. Itself rare, idempotent and non-destructive (only OLD
+        # un-consolidated episodes are folded into a digest; a re-run with nothing
+        # eligible is a no-op), so a re-run in the same period causes no churn. Unwired,
+        # the tick behaves exactly as before.
+        self._consolidate_memory = consolidate_memory
         # Idempotency marker: the last reflection text already applied to the soul.
         self._last_evolved: str | None = None
 
@@ -235,6 +257,8 @@ class ReflectTick:
             await self._evolve_fascination.run()
         if self._evolve_phantoms is not None:
             await self._evolve_phantoms.run()
+        if self._consolidate_memory is not None:
+            await self._consolidate_memory.run()
 
     def _evolve(self, reflection: str) -> None:
         """Apply ``reflection`` to the soul once, persisting taste on a real change."""

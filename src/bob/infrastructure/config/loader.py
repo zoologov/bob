@@ -120,6 +120,18 @@ DEFAULT_CONFIG: Config = {
             "mention_freq": 0.1,
         },
     },
+    # Memory consolidation (BOB-021): a rare, non-destructive reflect-tick step that
+    # folds OLD un-consolidated episodes into a Tier-0 digest (embedded, recalled like
+    # any episode) and flags the sources. Conservative defaults: only episodes at least
+    # two weeks old are eligible, a modest batch per tick. ``enabled`` false keeps the
+    # step inert until deliberately switched on per persona.
+    "memory": {
+        "consolidation": {
+            "enabled": False,
+            "max_age_days": 14.0,
+            "batch_size": 50,
+        },
+    },
     # Two bots in one process (BOB-003): Bob lives in his topic, GUPPI is the
     # gatekeeper in General. Each bot's token comes from env only (never YAML);
     # the shared ids (chat/owner/allowlist) and Bob's topic are non-secret.

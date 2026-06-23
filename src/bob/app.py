@@ -61,6 +61,7 @@ from bob.application.runtime import (
     periodic,
 )
 from bob.application.usecases.apply_reflection import ApplyReflection
+from bob.application.usecases.consolidate_memory import ConsolidateMemory
 from bob.application.usecases.evolve_fascination import EvolveFascination
 from bob.application.usecases.evolve_phantoms import EvolvePhantoms
 from bob.application.usecases.extract_facts import ExtractFacts
@@ -160,6 +161,12 @@ _DEFAULT_FASCINATION_INTENSITY = 0.85
 # so the domain and composition agree on the conservative defaults.
 _PHANTOM_MAX_COUNT = _PHANTOM_MAX
 _PHANTOM_CHANGE_RATE = _PHANTOM_RATE
+
+# Default memory-consolidation guardrails (BOB-021); overridable via
+# ``memory.consolidation.{max_age_days,batch_size}``. Conservative: only fold
+# episodes at least two weeks old, a modest batch per rare reflect tick.
+_CONSOLIDATION_MAX_AGE_DAYS = 14.0
+_CONSOLIDATION_BATCH_SIZE = 50
 
 # The proactivity engine ticks on the heartbeat cadence: cheap by construction
 # (the urge/governance decision is pure, defaulting to silence), so most ticks
@@ -436,6 +443,18 @@ def build_application(
         max_count=phantom_max,
         change_rate=phantom_rate,
     )
+    # Memory consolidation (BOB-021): a rare, non-destructive, idempotent step driven on
+    # the same reflect tick. It folds OLD un-consolidated episodes into a Tier-0 digest
+    # (a normal episodic_log row, embedded → recalled like any episode) and flags the
+    # sources consolidated=1 — originals are kept, only marked. Off unless switched on
+    # via memory.consolidation.enabled; age/batch guardrails are config-tunable.
+    consolidate_memory = _build_consolidate_memory(
+        merged,
+        store=memory_repo,
+        router=router,
+        clock=resolved_clock,
+        language=language,
+    )
     reflect_tick = ReflectTick(
         router=router,
         repo=memory_repo,
@@ -446,6 +465,7 @@ def build_application(
         soul_store=soul_store,
         evolve_fascination=evolve_fascination,
         evolve_phantoms=evolve_phantoms,
+        consolidate_memory=consolidate_memory,
     )
 
     proactivity_engine = _build_proactivity_engine(
@@ -627,6 +647,45 @@ def _phantom_evolution_params(config: Mapping[str, object]) -> tuple[int, float]
     max_count = max(1, _int(phantom, "max_count", _PHANTOM_MAX_COUNT))
     change_rate = min(1.0, max(0.0, _float_or(phantom, "change_rate", _PHANTOM_CHANGE_RATE)))
     return max_count, change_rate
+
+
+def _build_consolidate_memory(
+    config: Mapping[str, object],
+    *,
+    store: SqliteMemoryRepo,
+    router: LLMRouter,
+    clock: Clock,
+    language: str,
+) -> ConsolidateMemory | None:
+    """Build the optional BOB-021 :class:`ConsolidateMemory`, or ``None`` when off.
+
+    Reads ``memory.consolidation.*``: ``enabled`` (off by default — the step stays
+    inert until deliberately switched on), ``max_age_days`` and ``batch_size`` (the
+    conservative age/batch guardrails). When disabled, the reflect tick gets no
+    consolidator and behaves exactly as before. ``SqliteMemoryRepo`` structurally
+    satisfies the use-case's ``ConsolidationStore`` seam.
+    """
+    section = _section(_section(config, "memory"), "consolidation")
+    if not _flag(section, "enabled"):
+        return None
+    return ConsolidateMemory(
+        store=store,
+        router=router,
+        clock=clock,
+        max_age_days=_float_or(section, "max_age_days", _CONSOLIDATION_MAX_AGE_DAYS),
+        batch_size=_int(section, "batch_size", _CONSOLIDATION_BATCH_SIZE),
+        language=language,
+    )
+
+
+def _flag(section: Mapping[str, object], key: str) -> bool:
+    """Read a boolean config flag, tolerating env-string ``"true"``/``"false"``."""
+    value = section.get(key, False)
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "on"}
+    return False
 
 
 def _build_offday_thresholds(config: Mapping[str, object]) -> OffDayThresholds:

@@ -9,7 +9,12 @@ CREATE TABLE IF NOT EXISTS episodic_log (
     event_type    TEXT    NOT NULL,
     content       TEXT    NOT NULL,
     mood_snapshot TEXT,                        -- mood at the moment (nullable)
-    tags          TEXT    NOT NULL DEFAULT ''  -- comma-separated labels
+    tags          TEXT    NOT NULL DEFAULT '', -- comma-separated labels
+    -- BOB-021 consolidation: 1 once this episode has been folded into a digest
+    -- (event_type='digest'). Non-destructive — the original row is kept, only
+    -- flagged, so it is excluded from re-consolidation. Additive for fresh DBs;
+    -- a guarded ALTER in initialize() migrates pre-existing DBs (defaults to 0).
+    consolidated  INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE INDEX IF NOT EXISTS idx_episodic_ts ON episodic_log (ts DESC);
