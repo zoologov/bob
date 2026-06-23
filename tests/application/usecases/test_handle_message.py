@@ -2051,3 +2051,98 @@ async def test_owner_path_unaffected_without_a_first_impression_seam() -> None:
 
     assert bot.final_text == "порядок"
     assert "сталкивались" not in tier1.all_text.casefold()
+
+
+# --- bob-apv.4 (Tester): acceptance gap-filling ------------------------------
+#
+# These cover paths the dev waves left implicit: the first-impression best-effort
+# failure resilience, the bot-kind perception (the "собеседник" abstraction covers
+# bots — acceptance criterion 3), and an anonymous (no sender_id) guest turn.
+
+
+class _RaisingFirstImpression:
+    """A FirstImpressionReader whose first-contact recording always raises.
+
+    Models a flaky first-impression store: the prior-impression read succeeds (so the
+    turn composes normally) but ``note_first_contact`` blows up AFTER the reply, to
+    prove the recording is best-effort and never breaks a turn that already replied.
+    """
+
+    def __init__(self) -> None:
+        self.recorded = 0
+
+    async def prior_impression(self, interlocutor: Interlocutor) -> str | None:  # noqa: ARG002
+        return None
+
+    async def note_first_contact(self, interlocutor: Interlocutor) -> None:  # noqa: ARG002
+        self.recorded += 1
+        raise RuntimeError("first-impression store unavailable")
+
+
+async def test_first_impression_recording_failure_never_breaks_the_turn() -> None:
+    # NO REGRESSION (resilience): a flaky first-impression store that raises while
+    # recording first contact must NOT break a turn that has already replied — the
+    # reply lands and the episode persists; the recording is best-effort.
+    resolver = _FakeInterlocutorResolver(
+        _interlocutor(name="Vova", kind=InterlocutorKind.OWNER)
+    )
+    impressions = _RaisingFirstImpression()
+    handler, bot, repo, _tier1 = _build(
+        reply="всё в порядке",
+        perceive_sender=resolver,
+        first_impression=impressions,  # type: ignore[arg-type]
+    )
+
+    await handler.handle(_message("расскажи подробно, как у тебя дела сегодня"))
+
+    assert bot.final_text == "всё в порядке"  # the reply still landed
+    assert len(repo.episodes) == 1  # the episode still persisted
+    assert impressions.recorded == 1  # the (raising) recording WAS attempted
+
+
+async def test_bot_kind_interlocutor_reaches_the_compose_prompt() -> None:
+    # Acceptance criterion 3: the "собеседник" abstraction covers BOTS too. A BOT-kind
+    # interlocutor's identity reaches the reply prompt so Bob perceives a peer bot as a
+    # bot (foundation for a future BobNet) — folded in as character, not a flag.
+    resolver = _FakeInterlocutorResolver(
+        _interlocutor(name="Bender", kind=InterlocutorKind.BOT, trust=Trust.GUEST)
+    )
+    handler, _bot, _repo, tier1 = _build(reply="hi", perceive_sender=resolver)
+
+    await handler.handle(_message("расскажи подробно про что-нибудь"))
+
+    folded = tier1.all_text.casefold()
+    assert "bender" in folded  # the bot's name is perceived
+    assert "бот" in folded  # recognised as another bot
+
+
+async def test_anonymous_guest_turn_replies_and_records_nothing() -> None:
+    # EDGE CASE: a guest with NO sender_id (transport gave no identity) still routes
+    # through the restricted guest path — Bob replies socially, no owner memory is
+    # recalled, and the first-impression seam is a clean no-op for an unkeyable sender
+    # (the tracker keys on sender_id; HandleMessage still calls it without crashing).
+    recall = FakeRecall(hits=[{"content": _RECALL_MEMORY, "category": "personal"}])
+    resolver = _FakeInterlocutorResolver(
+        Interlocutor(
+            sender_id=None,
+            display_name="незнакомец",
+            kind=InterlocutorKind.GUEST,
+            trust=Trust.GUEST,
+        )
+    )
+    impressions = _FakeFirstImpression(prior=None)
+    handler, bot, _repo, tier1 = _build(
+        reply="привет",
+        recall=recall,
+        perceive_sender=resolver,
+        first_impression=impressions,
+    )
+
+    await handler.handle(_message("расскажи подробно про кофе"))
+
+    assert bot.final_text == "привет"  # the anonymous guest still got a social reply
+    assert recall.surface_old_calls == []  # owner memory never recalled for a guest
+    assert _RECALL_MEMORY not in tier1.all_text  # no owner-private content leaked
+    # The seam is still invoked with the no-id interlocutor (the tracker no-ops on it);
+    # the recorded interlocutor carries no sender_id, so nothing keyable is stored.
+    assert all(who.sender_id is None for who in impressions.recorded)
