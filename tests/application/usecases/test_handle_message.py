@@ -1569,3 +1569,74 @@ async def test_guard_is_a_noop_with_no_prior_bob_reply_in_history() -> None:
 
     assert len(tier1.payloads) == 1
     assert bot.final_text == "Первый ответ в диалоге."
+
+
+# --- BOB-022: user repeats themselves → Bob notices (voice directive) ----------
+
+# A prior turn where the USER already said exactly what they are about to send again.
+_USER_REPEATED_TEXT = "расскажи подробно про кофе"
+_PRIOR_USER_REPEAT_TURN = f"Ada: {_USER_REPEATED_TEXT}\nbob: вот что я думаю про кофе"
+
+
+def _has_user_repeat_directive(text: str) -> bool:
+    # The directive's stable spine: it tells Bob the interlocutor is repeating and
+    # that he must not pretend he did not notice.
+    folded = text.casefold()
+    return "повтор" in folded and "не делай вид" in folded
+
+
+async def test_user_repeat_injects_the_voice_directive_into_the_prompt() -> None:
+    # When the owner sends the same message they already sent in the recent window,
+    # the compose prompt carries the user-repeat directive so Bob reacts in voice.
+    handler, _bot, _repo, tier1 = _build(
+        reply="другой ответ про кофе",
+        history=[{"content": _PRIOR_USER_REPEAT_TURN, "event_type": "message"}],
+    )
+
+    await handler.handle(_message(_USER_REPEATED_TEXT))
+
+    assert _has_user_repeat_directive(tier1.all_text)
+
+
+async def test_non_repeat_does_not_inject_the_user_repeat_directive() -> None:
+    # A fresh, different message must NOT trip the directive (conservative: exact
+    # normalised match only, never fuzzy/false-firing).
+    handler, _bot, _repo, tier1 = _build(
+        reply="ответ про чай",
+        history=[{"content": _PRIOR_USER_REPEAT_TURN, "event_type": "message"}],
+    )
+
+    await handler.handle(_message("а теперь расскажи про чай"))
+
+    assert not _has_user_repeat_directive(tier1.all_text)
+
+
+async def test_user_repeat_directive_composes_with_voice_and_tone() -> None:
+    # The new directive AUGMENTS the existing voice/tone/form/language — it does not
+    # displace the anti-bait voice or the mood-conditioned warm tone.
+    handler, _bot, _repo, tier1 = _build(
+        reply="другой ответ про кофе",
+        history=[{"content": _PRIOR_USER_REPEAT_TURN, "event_type": "message"}],
+    )
+
+    await handler.handle(_message(_USER_REPEATED_TEXT))
+
+    folded = tier1.all_text.casefold()
+    assert _has_user_repeat_directive(folded)
+    assert "эмодзи" in folded  # anti-bait voice still present
+    assert "тепло" in folded  # warm tone_directive still present
+
+
+async def test_user_repeat_only_counts_user_turns_not_bobs_reply() -> None:
+    # Only the USER half of a prior episode counts: the current text matching Bob's
+    # PRIOR reply (not the user's) must NOT be treated as the owner repeating himself.
+    bob_said = "это был длинный ответ бориса про космос"
+    prior = f"Ada: что нового\nbob: {bob_said}"
+    handler, _bot, _repo, tier1 = _build(
+        reply="свежий ответ",
+        history=[{"content": prior, "event_type": "message"}],
+    )
+
+    await handler.handle(_message(bob_said))
+
+    assert not _has_user_repeat_directive(tier1.all_text)

@@ -21,6 +21,7 @@ from bob.domain.personality.voice import (
     anti_bait_directive,
     guppi_canon,
     tone_directive,
+    user_repeat_directive,
     variable_form_directive,
 )
 
@@ -160,6 +161,28 @@ def test_off_day_thresholds_defaults_are_negative_low_band() -> None:
     defaults = OffDayThresholds()
     assert defaults.valence < 0.0
     assert defaults.arousal < 0.0
+
+
+def test_user_repeat_directive_tells_bob_to_notice_the_repeat() -> None:
+    # BOB-022: when the owner repeats himself, Bob notices it in character — he
+    # never pretends he did not, and never silently re-answers the same way.
+    folded = user_repeat_directive().casefold()
+    assert "повтор" in folded  # it names that the interlocutor is repeating
+
+
+def test_user_repeat_directive_forbids_pretending_and_re_answering() -> None:
+    # The two anti-patterns this fix targets are named: don't act as if you did
+    # not notice, and don't just hand back the same answer again.
+    folded = user_repeat_directive().casefold()
+    assert "не делай вид" in folded
+    assert "тот же" in folded
+
+
+def test_user_repeat_directive_is_voice_not_a_rule_list() -> None:
+    # Character guidance, not a recitable checklist (mirrors the other directives).
+    directive = user_repeat_directive()
+    assert "•" not in directive
+    assert "- " not in directive
 
 
 def _exemplar_lines(directive: str) -> list[str]:

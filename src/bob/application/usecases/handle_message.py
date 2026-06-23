@@ -46,6 +46,7 @@ from bob.application.router.llm_router import LLMRequest, TaskType
 from bob.application.router.reply_tier_selector import select_reply_tier
 from bob.application.usecases.update_mood_from_text import TextSignals
 from bob.domain.memory.entities import EpisodicEvent
+from bob.domain.personality.conversation import is_user_repeat
 from bob.domain.personality.expression import (
     ExpressionFreqs,
     ExpressionMode,
@@ -67,6 +68,7 @@ from bob.domain.personality.voice import (
     anti_bait_directive,
     guppi_canon,
     tone_directive,
+    user_repeat_directive,
     variable_form_directive,
 )
 from bob.domain.personality.zone_classifier import TasteZoneClassifier
@@ -395,17 +397,25 @@ class HandleMessage:
             return
         recalled = await self._recall.recall(event.text, k=_RECALL_K)
         history = await self._episodes.recent_episodes(_HISTORY_K)
+        # User-repeat detection (BOB-022): does the OWNER repeat (near-)verbatim what
+        # he already said in the recent window? Pure, no-LLM, conservative (exact after
+        # normalise). When True the compose prompt carries the user-repeat directive so
+        # Bob NOTICES it in voice instead of silently re-answering. This is the opposite
+        # side of the own-reply guard below (which catches BOB repeating himself).
+        user_repeated = is_user_repeat(event.text, _user_turns(history))
         # Run the slow generation inside the typing keepalive so "Bob is typing…"
         # stays visible for the whole real wait (BOB-009); then commit one rich final.
         async with self._gateway.typing_indicator(chat_id=event.chat_id):
-            reply = await self._compose_reply(event.text, soul, recalled, history, plan)
+            reply = await self._compose_reply(
+                event.text, soul, recalled, history, plan, user_repeated=user_repeated
+            )
             # Anti-repeat guard (BOB-022, defense in depth): if the fresh reply is
             # byte-identical (after strip) to Bob's most-recent prior reply, regenerate
             # ONCE — with sampling now stochastic the retry differs. At most one extra
             # generation, only on an exact duplicate; if the retry is still identical it
             # is kept (no infinite loop).
             reply = await self._guard_against_verbatim_repeat(
-                reply, event.text, soul, recalled, history, plan
+                reply, event.text, soul, recalled, history, plan, user_repeated
             )
         await self._gateway.reply(chat_id=event.chat_id, markdown=reply)
         await self._persist(event, reply, soul)
@@ -470,11 +480,15 @@ class HandleMessage:
         recalled: Sequence[Recalled],
         history: Sequence[Mapping[str, object]],
         plan: ExpressionPlan,
+        *,
+        user_repeated: bool = False,
     ) -> str:
         """Compose a full reply, folding the plan's form hint into the prompt."""
         context = _assemble_shareable_context(soul, text, recalled, history)
         context = await self._with_grounded_addons(context, text, plan)
-        system_prompt = self._system_prompt_for(soul, text, plan)
+        system_prompt = self._system_prompt_for(
+            soul, text, plan, user_repeated=user_repeated
+        )
         provider = self._tool_provider
         if provider is not None and not self._registry.is_empty:
             return await self._reply_with_tools(provider, system_prompt, text, context)
@@ -503,6 +517,7 @@ class HandleMessage:
         recalled: Sequence[Recalled],
         history: Sequence[Mapping[str, object]],
         plan: ExpressionPlan,
+        user_repeated: bool = False,
     ) -> str:
         """Recompose once if ``reply`` byte-repeats Bob's last reply (BOB-022).
 
@@ -516,7 +531,9 @@ class HandleMessage:
         previous = _last_bob_reply(history)
         if not previous or reply.strip() != previous.strip():
             return reply
-        return await self._compose_reply(text, soul, recalled, history, plan)
+        return await self._compose_reply(
+            text, soul, recalled, history, plan, user_repeated=user_repeated
+        )
 
     async def _with_grounded_addons(
         self, context: str, text: str, plan: ExpressionPlan
@@ -603,7 +620,14 @@ class HandleMessage:
             return ""
         return f"{_FASCINATION_PREFACE} {fascination.topic}"
 
-    def _system_prompt_for(self, soul: SOUL, text: str, plan: ExpressionPlan) -> str:
+    def _system_prompt_for(
+        self,
+        soul: SOUL,
+        text: str,
+        plan: ExpressionPlan,
+        *,
+        user_repeated: bool = False,
+    ) -> str:
         """Augment the base prompt with the mood tone, stance, and form-hint directives.
 
         The mood-conditioned tone directive (BOB-020) leads: a normal/good mood keeps
@@ -611,8 +635,10 @@ class HandleMessage:
         off-day band ("не знаю" over confabulation) — replacing the old unconditional
         warm line. The taste verdict + conviction on ``text`` then pick the zone and
         stance (BOB-013), and the plan's ``form_hint`` appends a soft length cue
-        (BOB-018). With a normal mood, no target opinion, no user-domain signal, and a
-        NORMAL form hint, only the warm tone line augments the base voice.
+        (BOB-018). When ``user_repeated`` (BOB-022 — the owner sent a near-verbatim
+        repeat) the user-repeat directive is appended so Bob notices it in voice. With
+        a normal mood, no target opinion, no user-domain signal, a NORMAL form hint,
+        and no repeat, only the warm tone line augments the base voice.
         """
         verdict = soul.taste.score(text)
         conviction = soul.taste.conviction_for(text)
@@ -624,6 +650,7 @@ class HandleMessage:
             tone_directive(soul.mood, thresholds=self._offday_thresholds),
             _stance_directive(stance, verdict=verdict, zone=zone),
             _FORM_HINT_DIRECTIVE.get(plan.form_hint, ""),
+            user_repeat_directive() if user_repeated else "",
         ]
         suffix = "".join(f"\n{d}" for d in directives if d)
         return f"{_SYSTEM_PROMPT}{suffix}"
@@ -759,6 +786,37 @@ def _last_bob_reply(history: Sequence[Mapping[str, object]]) -> str:
         if marker != -1:
             return content[marker + len(_BOB_TURN_MARKER) :]
     return ""
+
+
+# Separator between a turn's sender label and the user's message text inside a
+# persisted episode's ``content`` ("<sender>: <text>\nbob: <reply>"); the user half
+# is what sits between this and ``_BOB_TURN_MARKER`` (see :meth:`HandleMessage._persist`).
+_SENDER_TEXT_SEPARATOR = ": "
+
+
+def _user_turns(history: Sequence[Mapping[str, object]]) -> list[str]:
+    """Recover the USER half of each replayed episode (BOB-022 repeat detection).
+
+    Episodes are stored as ``"<sender>: <text>\\nbob: <reply>"`` (see
+    :meth:`HandleMessage._persist`); this extracts the ``<text>`` between the first
+    ``"<sender>: "`` and the ``"\\nbob: "`` marker for each episode so the user-repeat
+    predicate compares the current message ONLY against prior USER turns — never
+    against Bob's own replies. Episodes without the expected shape are skipped.
+    """
+    turns: list[str] = []
+    for item in history:
+        content = item.get("content")
+        if not isinstance(content, str):
+            continue
+        marker = content.find(_BOB_TURN_MARKER)
+        head = content[:marker] if marker != -1 else content
+        sep = head.find(_SENDER_TEXT_SEPARATOR)
+        if sep == -1:
+            continue
+        user_text = head[sep + len(_SENDER_TEXT_SEPARATOR) :]
+        if user_text:
+            turns.append(user_text)
+    return turns
 
 
 def _mood_state(soul: SOUL) -> dict[str, object]:
