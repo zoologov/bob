@@ -4,32 +4,33 @@
 # ACTIVE: BOB-019 — «Свои и чужие» (соц. идентичность · T1.4)
 
 > **Last updated:** 2026-06-23
-> **Phase:** Development
+> **Phase:** Done
 > **Epic:** bob-apv · branch `features/BOB-019`
 
 ---
 
 ## Текущий беад
 
-**Беад:** `bob-apv.1` — dev: Interlocutor + восприятие отправителя (в работе).
+Все беады закрыты. Фича готова к PR (commits dev .1/.2/.3 + test + review +
+tech-writer на ветке `features/BOB-019`).
 
 ## Прогресс
 
-- [ ] `.1` Interlocutor (owner/known/guest/bot + trust) + восприятие sender_id/name
-- [ ] `.2` 🔴 гость-роут + соц.-режим (без tools/owner-памяти, redaction) + stranger_directive
-- [ ] `.3` first-impression per-sender стор
-- [ ] `.4` test · `.5` review (+безопасность) · `.6` tech-writer
+- [x] `.1` Interlocutor (owner/known/guest/bot + trust) + восприятие sender_id/name
+- [x] `.2` 🔴 гость-роут + соц.-режим (без tools/owner-памяти, redaction) + stranger_directive
+- [x] `.3` first-impression per-sender стор
+- [x] `.4` test (cov 98.7%, новые модули 100%) · `.5` review (+безопасность) · `.6` tech-writer
 
 ## Статусы беадов
 
 | Беад | Роль | Зависит | Статус |
 |------|------|---------|--------|
-| bob-apv.1 | dev Interlocutor+восприятие | — | in_progress |
-| bob-apv.2 | dev гость-роут+соц.-режим | .1 | blocked |
-| bob-apv.3 | dev first-impression | .1 | blocked |
-| bob-apv.4 | test | .1,.2,.3 | blocked |
-| bob-apv.5 | review (+безопасность) | .4 | blocked |
-| bob-apv.6 | tech-writer | .5 | blocked |
+| bob-apv.1 | dev Interlocutor+восприятие | — | done |
+| bob-apv.2 | dev гость-роут+соц.-режим | .1 | done |
+| bob-apv.3 | dev first-impression | .1 | done |
+| bob-apv.4 | test | .1,.2,.3 | done |
+| bob-apv.5 | review (+безопасность) | .4 | done |
+| bob-apv.6 | tech-writer | .5 | done |
 
 ## Заметки
 
