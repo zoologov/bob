@@ -72,9 +72,14 @@ from bob.infrastructure.telegram.guppi import GuppiHandler
 if TYPE_CHECKING:
     from contextlib import AbstractAsyncContextManager
 
+    from bob.application.usecases.plan_goal import PlanGoal
     from bob.domain.ports import Clock, EventBus
     from bob.infrastructure.telegram.gateway import MessageLike
-    from bob.infrastructure.telegram.guppi import ProactivityStoreLike
+    from bob.infrastructure.telegram.guppi import (
+        GoalStoreLike,
+        ProactivityStoreLike,
+        PursuitStoreLike,
+    )
 
 logger = logging.getLogger(__name__)
 
@@ -208,6 +213,9 @@ class MultiBotGateway:
         authorizer: AuthorizerLike | None = None,
         proactivity_store: ProactivityStoreLike | None = None,
         proactivity_clock: Clock | None = None,
+        goal_store: GoalStoreLike | None = None,
+        plan_goal: PlanGoal | None = None,
+        pursuit_store: PursuitStoreLike | None = None,
         reply_typing_interval: float = _DEFAULT_TYPING_INTERVAL,
         reply_clock: MonotonicClock = _LIVE_CLOCK,
         reply_sleep: Sleep = _LIVE_SLEEP,
@@ -217,6 +225,9 @@ class MultiBotGateway:
         self._authorizer = authorizer
         self._proactivity_store = proactivity_store
         self._proactivity_clock = proactivity_clock
+        self._goal_store = goal_store
+        self._plan_goal = plan_goal
+        self._pursuit_store = pursuit_store
         self._poll_timeout = poll_timeout
         # One inner TelegramGateway per bot does the per-bot intake/normalisation
         # and reply. Bob's inner gateway pins replies — and the "typing…" indicator
@@ -266,8 +277,11 @@ class MultiBotGateway:
 
         When a proactivity store (and clock) are wired in, GUPPI also owns the
         owner ``/quiet`` / ``/wake`` commands that toggle Bob's persisted
-        proactivity flag; without a store those commands fall through to a silent
-        drop (backward-compatible).
+        proactivity flag; with a goal store + plan use-case + pursuit store wired,
+        it additionally owns the BOB-015 goal commands (``/goals``,
+        ``/goal approve|plan|plan-approve|pause|resume|cancel``, ``/goals stop|go``).
+        Each unwired group of commands falls through to a silent drop
+        (backward-compatible).
         """
         if authorizer is None or BotIdentity.GUPPI not in self._inner:
             return None
@@ -278,6 +292,9 @@ class MultiBotGateway:
             general_chat_id=guppi_reg.scope.chat_id,
             proactivity_store=self._proactivity_store,
             clock=self._proactivity_clock,
+            goal_store=self._goal_store,
+            plan_goal=self._plan_goal,
+            pursuit_store=self._pursuit_store,
         )
 
     # --- Startup --------------------------------------------------------------

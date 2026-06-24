@@ -45,9 +45,13 @@ _SALIENCE_HORIZON = timedelta(hours=6)
 # ceiling. A day-long window matches the small per-day ceiling in Governance.
 _WINDOW = timedelta(hours=24)
 
-# The episode kinds the two seams read off the episodic log.
+# The episode kinds the read-seams count off the episodic log.
 _REFLECTION = "reflection"
 _PROACTIVE = "proactive"
+# Each autonomous goal advance (BOB-015 .3) writes a ``goal_progress`` episode; the
+# self-directed tick reads them back to cap advances per window (a rate-limit on top
+# of the governance ceiling).
+_GOAL_PROGRESS = "goal_progress"
 
 # The inner-life episode kinds the leak seam reads (BOB-018): both are REAL,
 # grounded, persona-language reflections written by BOB-012's heartbeat ticks.
@@ -105,6 +109,21 @@ class RepoProactivitySources:
             "SELECT COUNT(*) FROM episodic_log "
             "WHERE event_type = ? AND ts >= ?",
             (_PROACTIVE, cutoff),
+        ) as cursor:
+            row = await cursor.fetchone()
+        return 0 if row is None else int(row[0])
+
+    async def progress_count_in_window(self, *, now: datetime) -> int:
+        """Count ``goal_progress`` episodes within the window before ``now``.
+
+        The per-window task ceiling the self-directed tick (BOB-015 .3) enforces on
+        top of governance — read with parameterised SQL over the timestamp column,
+        the same machinery as the proactive-window count.
+        """
+        cutoff = (now - _WINDOW).isoformat()
+        async with self._db().execute(
+            "SELECT COUNT(*) FROM episodic_log WHERE event_type = ? AND ts >= ?",
+            (_GOAL_PROGRESS, cutoff),
         ) as cursor:
             row = await cursor.fetchone()
         return 0 if row is None else int(row[0])

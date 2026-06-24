@@ -35,17 +35,23 @@ from dataclasses import replace
 from datetime import timedelta
 from typing import TYPE_CHECKING, Protocol
 
+from bob.domain.goals.state import GoalState, can_transition
+
 if TYPE_CHECKING:
     from datetime import datetime
 
+    from bob.application.usecases.plan_goal import PlanGoal
+    from bob.domain.goals.graph import GoalGraph
     from bob.domain.ports import Clock
     from bob.domain.proactivity.state import ProactivityState
     from bob.infrastructure.telegram.gateway import AuthorizerLike, BotLike
 
 __all__ = [
     "GUPPI_REJECT_TEXT",
+    "GoalStoreLike",
     "GuppiHandler",
     "ProactivityStoreLike",
+    "PursuitStoreLike",
 ]
 
 # The single visible reject shown to an unauthorized user inside Bob's topic.
@@ -63,6 +69,39 @@ _DEAUTHORIZE_COMMAND = "/deauthorize"
 _STATUS_COMMAND = "/status"
 _QUIET_COMMAND = "/quiet"
 _WAKE_COMMAND = "/wake"
+
+# Owner-only goal-control commands GUPPI consumes in General (BOB-015 .2).
+# `/goals` (+ the `stop`/`go` kill-switch sub-words) and `/goal <action> <id>`.
+_GOALS_COMMAND = "/goals"
+_GOAL_COMMAND = "/goal"
+_GOALS_STOP_WORD = "stop"
+_GOALS_GO_WORD = "go"
+_GOAL_APPROVE = "approve"
+_GOAL_PLAN = "plan"
+_GOAL_PLAN_APPROVE = "plan-approve"
+_GOAL_PAUSE = "pause"
+_GOAL_RESUME = "resume"
+_GOAL_CANCEL = "cancel"
+
+# A goal action word -> the target GoalState its transition aims at. Each move is
+# gated by ``can_transition`` so an illegal transition is rejected (not forced).
+_GOAL_STATE_ACTIONS: dict[str, GoalState] = {
+    _GOAL_APPROVE: GoalState.APPROVED,
+    _GOAL_PAUSE: GoalState.PAUSED,
+    _GOAL_RESUME: GoalState.ACTIVE,
+    _GOAL_CANCEL: GoalState.CANCELLED,
+}
+
+_USAGE_GOAL = (
+    "Использование: /goal <approve|plan|plan-approve|pause|resume|cancel> <id> "
+    "или /goals [stop|go]"
+)
+_GOALS_EMPTY_TEXT = "Целей пока нет."
+_GOALS_STOP_TEXT = "Остановил преследование целей — Боб больше не берётся за задачи сам."
+_GOALS_GO_TEXT = "Снял стоп — Боб снова может браться за свои цели."
+_PURSUIT_UNAVAILABLE = "Управление преследованием целей не подключено."
+_GOAL_REJECT_TEXT = "Не могу — для цели «{goal_id}» этот переход недопустим (сейчас {state})."
+_GOAL_NOT_FOUND_TEXT = "Цель «{goal_id}» не найдена."
 
 _USAGE_AUTHORIZE = "Использование: /authorize <user_id>"
 _USAGE_DEAUTHORIZE = "Использование: /deauthorize <user_id>"
@@ -90,6 +129,27 @@ class ProactivityStoreLike(Protocol):
     async def set_mute_until(self, persona_id: str, until: datetime | None) -> None: ...
 
 
+class GoalStoreLike(Protocol):
+    """The goal-store surface GUPPI's goal commands need (load + state move).
+
+    The read side (``load`` → a :class:`GoalGraph`) backs ``/goals`` and resolves a
+    goal for an action; ``update_goal_state`` performs the owner state move
+    (approve / pause / resume / cancel), each gated upstream by ``can_transition``.
+    A structural subset of :class:`~bob.domain.ports.GoalStore` so a fake satisfies it.
+    """
+
+    async def load(self, persona_id: str) -> GoalGraph: ...
+    async def update_goal_state(
+        self, persona_id: str, goal_id: str, state: GoalState
+    ) -> None: ...
+
+
+class PursuitStoreLike(Protocol):
+    """The kill-switch surface ``/goals stop`` / ``/goals go`` need (persist flag)."""
+
+    async def set_pursuit_stopped(self, persona_id: str, *, stopped: bool) -> None: ...
+
+
 class GuppiHandler:
     """GUPPI's gatekeeper behaviours: the visible reject + owner commands."""
 
@@ -102,6 +162,9 @@ class GuppiHandler:
         proactivity_store: ProactivityStoreLike | None = None,
         clock: Clock | None = None,
         persona_id: str = "bob",
+        goal_store: GoalStoreLike | None = None,
+        plan_goal: PlanGoal | None = None,
+        pursuit_store: PursuitStoreLike | None = None,
     ) -> None:
         self._bot = bot
         self._authorizer = authorizer
@@ -109,6 +172,9 @@ class GuppiHandler:
         self._proactivity_store = proactivity_store
         self._clock = clock
         self._persona_id = persona_id
+        self._goal_store = goal_store
+        self._plan_goal = plan_goal
+        self._pursuit_store = pursuit_store
 
     async def reject(self, *, chat_id: int, thread_id: int | None) -> None:
         """Send the visible "unauthorized" reject into ``chat_id``/``thread_id``.
@@ -148,8 +214,10 @@ class GuppiHandler:
         if chat_id != self._general_chat_id or not self._authorizer.is_owner(user_id):
             return False
         command, _, argument = text.strip().partition(" ")
-        return await self._dispatch_authz(chat_id, command, argument) or (
-            await self._dispatch_proactivity(chat_id, command, argument)
+        return (
+            await self._dispatch_authz(chat_id, command, argument)
+            or await self._dispatch_proactivity(chat_id, command, argument)
+            or await self._dispatch_goals(chat_id, command, argument)
         )
 
     async def _dispatch_authz(self, chat_id: int, command: str, argument: str) -> bool:
@@ -176,6 +244,126 @@ class GuppiHandler:
             await self._wake(chat_id)
             return True
         return False
+
+    async def _dispatch_goals(self, chat_id: int, command: str, argument: str) -> bool:
+        """Handle the goal-control owner commands (BOB-015 .2); ``False`` if none match.
+
+        ``/goals`` lists goals (``stop``/``go`` toggle the kill-switch); ``/goal
+        <action> <id>`` runs a goal action. An unknown ``/goal`` action returns
+        ``False`` (not consumed) so it never silently swallows a typo.
+        """
+        if self._goal_store is None:
+            return False
+        if command == _GOALS_COMMAND:
+            await self._goals(chat_id, argument)
+            return True
+        if command == _GOAL_COMMAND:
+            return await self._goal_action(chat_id, argument)
+        return False
+
+    async def _goals(self, chat_id: int, argument: str) -> None:
+        """``/goals`` — list goals, or toggle the pursuit kill-switch (stop/go)."""
+        word = argument.strip().lower()
+        if word == _GOALS_STOP_WORD:
+            await self._set_pursuit(chat_id, stopped=True, text=_GOALS_STOP_TEXT)
+            return
+        if word == _GOALS_GO_WORD:
+            await self._set_pursuit(chat_id, stopped=False, text=_GOALS_GO_TEXT)
+            return
+        await self._reply(chat_id, await self._render_goals())
+
+    async def _set_pursuit(self, chat_id: int, *, stopped: bool, text: str) -> None:
+        """Persist the goal-pursuit kill-switch flag and confirm to the owner."""
+        if self._pursuit_store is None:
+            await self._reply(chat_id, _PURSUIT_UNAVAILABLE)
+            return
+        await self._pursuit_store.set_pursuit_stopped(self._persona_id, stopped=stopped)
+        await self._reply(chat_id, text)
+
+    async def _render_goals(self) -> str:
+        """Render the owner-facing ``/goals`` list (goal title + state + task count)."""
+        store = self._require_goal_store()
+        graph = await store.load(self._persona_id)
+        if not graph.goals:
+            return _GOALS_EMPTY_TEXT
+        lines = ["Цели Боба:"]
+        for goal in graph.goals:
+            count = len(graph.tasks_of(goal.id))
+            lines.append(
+                f"• [{goal.id}] {goal.title} — {goal.state.value} (задач: {count})"
+            )
+        return "\n".join(lines)
+
+    async def _goal_action(self, chat_id: int, argument: str) -> bool:
+        """Run a ``/goal <action> <id>`` command; ``False`` for an unknown action."""
+        action, _, raw_id = argument.strip().partition(" ")
+        goal_id = raw_id.strip()
+        if not action or not goal_id:
+            await self._reply(chat_id, _USAGE_GOAL)
+            return True
+        if action == _GOAL_PLAN:
+            await self._goal_plan(chat_id, goal_id)
+            return True
+        if action == _GOAL_PLAN_APPROVE:
+            await self._goal_plan_approve(chat_id, goal_id)
+            return True
+        if action in _GOAL_STATE_ACTIONS:
+            await self._goal_state_move(chat_id, goal_id, _GOAL_STATE_ACTIONS[action])
+            return True
+        return False
+
+    async def _goal_plan(self, chat_id: int, goal_id: str) -> None:
+        """``/goal plan <id>`` — decompose the goal and show the plan (gate stays)."""
+        if self._plan_goal is None:
+            await self._reply(chat_id, _PURSUIT_UNAVAILABLE)
+            return
+        result = await self._plan_goal.run(goal_id)
+        await self._reply(chat_id, result.message)
+
+    async def _goal_plan_approve(self, chat_id: int, goal_id: str) -> None:
+        """``/goal plan-approve <id>`` — the second gate (APPROVED → ACTIVE)."""
+        if self._plan_goal is None:
+            await self._reply(chat_id, _PURSUIT_UNAVAILABLE)
+            return
+        moved = await self._plan_goal.approve_plan(goal_id)
+        if moved:
+            await self._reply(chat_id, f"Цель «{goal_id}» активна — Боб может ей заняться.")
+        else:
+            await self._reply(chat_id, await self._reject_or_missing(goal_id))
+
+    async def _goal_state_move(
+        self, chat_id: int, goal_id: str, target: GoalState
+    ) -> None:
+        """Apply an owner state move (approve/pause/resume/cancel), gated by transition."""
+        store = self._require_goal_store()
+        graph = await store.load(self._persona_id)
+        goal = graph.goal_by_id(goal_id)
+        if goal is None:
+            await self._reply(chat_id, _GOAL_NOT_FOUND_TEXT.format(goal_id=goal_id))
+            return
+        if not can_transition(goal.state, target):
+            await self._reply(
+                chat_id,
+                _GOAL_REJECT_TEXT.format(goal_id=goal_id, state=goal.state.value),
+            )
+            return
+        await store.update_goal_state(self._persona_id, goal_id, target)
+        await self._reply(chat_id, f"Цель «{goal_id}» → {target.value}.")
+
+    async def _reject_or_missing(self, goal_id: str) -> str:
+        """Pick the right failure note for a plan-approve that didn't move the goal."""
+        store = self._require_goal_store()
+        graph = await store.load(self._persona_id)
+        goal = graph.goal_by_id(goal_id)
+        if goal is None:
+            return _GOAL_NOT_FOUND_TEXT.format(goal_id=goal_id)
+        return _GOAL_REJECT_TEXT.format(goal_id=goal_id, state=goal.state.value)
+
+    def _require_goal_store(self) -> GoalStoreLike:
+        """Return the wired goal store (the command guard ensures it exists)."""
+        if self._goal_store is None:  # pragma: no cover - guarded by caller
+            raise RuntimeError("goal store not configured")
+        return self._goal_store
 
     async def _quiet(self, chat_id: int, argument: str) -> None:
         """Mute proactivity; an optional duration (``2h``/``30m``) adds an expiry."""

@@ -73,6 +73,7 @@ class SqliteMemoryRepo:
         await self._conn.executescript(_load_schema())
         await self._migrate_episodic_consolidated()
         await self._migrate_semantic_superseded_by()
+        await self._migrate_pursuit_stopped()
         await self._backfill_episodic_fts()
         await self._conn.commit()
         await self._vector_store().backfill()
@@ -117,6 +118,28 @@ class SqliteMemoryRepo:
     async def _semantic_columns(self) -> set[str]:
         """Names of the columns currently on ``semantic_memory``."""
         async with self._db().execute("PRAGMA table_info(semantic_memory)") as cursor:
+            rows = await cursor.fetchall()
+        return {str(row[1]) for row in rows}
+
+    async def _migrate_pursuit_stopped(self) -> None:
+        """Add ``proactivity_state.pursuit_stopped`` to a pre-existing DB (BOB-015 .2).
+
+        The goal-pursuit kill-switch flag (``/goals stop``). ``CREATE TABLE IF NOT
+        EXISTS`` never alters an already-present table, so a DB written before this
+        column existed would lack it. This guarded ``ALTER`` adds it only when
+        missing — additive and non-destructive: existing rows take the column
+        default (0, i.e. pursuit NOT stopped). A clean no-op once present.
+        """
+        if "pursuit_stopped" in await self._proactivity_columns():
+            return
+        await self._db().execute(
+            "ALTER TABLE proactivity_state "
+            "ADD COLUMN pursuit_stopped INTEGER NOT NULL DEFAULT 0"
+        )
+
+    async def _proactivity_columns(self) -> set[str]:
+        """Names of the columns currently on ``proactivity_state``."""
+        async with self._db().execute("PRAGMA table_info(proactivity_state)") as cursor:
             rows = await cursor.fetchall()
         return {str(row[1]) for row in rows}
 

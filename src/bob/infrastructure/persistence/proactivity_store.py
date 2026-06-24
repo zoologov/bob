@@ -121,6 +121,37 @@ class SqliteProactivityStore:
         )
         await self._db().commit()
 
+    async def is_pursuit_stopped(self, persona_id: str) -> bool:
+        """Return whether the goal-pursuit kill-switch is set for ``persona_id``.
+
+        The persisted ``/goals stop`` flag the self-directed tick (.3) reads before
+        it advances any goal: ``True`` silences pursuit instantly. An unseen persona
+        (no row) yields ``False`` — pursuit is allowed by default (a goal must still
+        be APPROVED, so this only gates an already-authorised goal).
+        """
+        async with self._db().execute(
+            "SELECT pursuit_stopped FROM proactivity_state WHERE persona_id = ?",
+            (persona_id,),
+        ) as cursor:
+            row = await cursor.fetchone()
+        return False if row is None else bool(row[0])
+
+    async def set_pursuit_stopped(self, persona_id: str, *, stopped: bool) -> None:
+        """Set (or clear) the goal-pursuit kill-switch for ``persona_id``.
+
+        Upserts on ``persona_id`` so the flag can be set before any domain state
+        exists; a new row defaults the other columns to the schema defaults. Touches
+        only ``pursuit_stopped`` — a kill-switch toggle never disturbs the energy
+        reservoir, the owner-mute flag, or the timed-mute expiry.
+        """
+        await self._db().execute(
+            "INSERT INTO proactivity_state (persona_id, social_energy, pursuit_stopped) "
+            "VALUES (?, ?, ?) "
+            "ON CONFLICT(persona_id) DO UPDATE SET pursuit_stopped = excluded.pursuit_stopped",
+            (persona_id, _DEFAULT_STATE.social_energy.level, int(stopped)),
+        )
+        await self._db().commit()
+
     def _db(self) -> aiosqlite.Connection:
         return self._repo.connection
 

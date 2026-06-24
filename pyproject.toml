@@ -114,6 +114,31 @@ ignore = [
 # look-alikes are intentional (the heuristic matches real Russian text) —
 # RUF001/RUF002/RUF003 do not apply to these.
 "src/bob/domain/personality/brevity.py" = ["RUF001", "RUF002", "RUF003"]
+# The Goal Engine (BOB-015) carries Russian persona/policy docstrings + blocked-reason
+# literals ("требует внешней агентности", "ждёт незавершённых задач") whose Cyrillic
+# look-alikes are intentional — RUF001/RUF002/RUF003 do not apply to these.
+"src/bob/domain/goals/state.py" = ["RUF001", "RUF002", "RUF003"]
+"src/bob/domain/goals/entities.py" = ["RUF001", "RUF002", "RUF003"]
+"src/bob/domain/goals/graph.py" = ["RUF001", "RUF002", "RUF003"]
+"src/bob/domain/goals/__init__.py" = ["RUF001", "RUF002", "RUF003"]
+# The SqliteGoalStore (BOB-015) carries Russian docstrings whose Cyrillic look-alikes
+# are intentional — RUF001/RUF002/RUF003 do not apply to these.
+"src/bob/infrastructure/persistence/goal_store.py" = ["RUF001", "RUF002", "RUF003"]
+# The Planner + plan_goal use-case (BOB-015 .2) carries Russian planner prompts +
+# owner-facing plan/status literals whose Cyrillic look-alikes are intentional —
+# RUF001/RUF002/RUF003 do not apply to these.
+"src/bob/application/usecases/plan_goal.py" = ["RUF001", "RUF002", "RUF003"]
+# The self-directed pursue_goals use-case (BOB-015 .3) carries Russian persona/policy
+# docstrings + owner-facing progress/proposal literals ("Занялся целью", "стадия C")
+# whose Cyrillic look-alikes are intentional — RUF001/RUF002/RUF003 do not apply.
+"src/bob/application/usecases/pursue_goals.py" = ["RUF001", "RUF002", "RUF003"]
+# build_application is the composition ROOT: it wires every adapter/use-case/tick in
+# one place by design (a single readable assembly), so the per-function statement
+# ceiling does not apply to it — splitting it would only scatter the wiring.
+"src/bob/app.py" = ["PLR0915"]
+# GUPPI's owner commands (BOB-003 + BOB-015 .2) carry Russian command usage/reply
+# literals whose Cyrillic look-alikes are intentional — RUF001/RUF002/RUF003 here.
+"src/bob/infrastructure/telegram/guppi.py" = ["RUF001", "RUF002", "RUF003"]
 # The voice tests (BOB-016/BOB-020) assert on multi-line Russian persona/tone
 # literals whose Cyrillic look-alikes are intentional (→ RUF001/RUF003).
 "tests/domain/personality/test_voice.py" = [
@@ -124,6 +149,42 @@ ignore = [
     "RUF003",
 ]
 "tests/**/*.py" = ["S101", "ARG001", "PLR2004"]
+# The Planner + plan_goal use-case tests (BOB-015 .2) and GUPPI goal-command tests
+# assert on Russian goal/plan/command literals whose Cyrillic look-alikes are
+# intentional (→ RUF001/RUF002/RUF003).
+"tests/application/usecases/test_plan_goal.py" = [
+    "S101",
+    "ARG001",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+"tests/infrastructure/telegram/test_guppi_goals.py" = [
+    "S101",
+    "ARG001",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+# The pursue_goals tick tests (BOB-015 .3) assert on Russian goal/progress/proposal
+# literals + comments whose Cyrillic look-alikes are intentional, and a couple of
+# tests reach into protected tick attrs / hold local imports for a focused check
+# (→ RUF001/RUF002/RUF003, SLF001, PLC0415).
+"tests/application/usecases/test_pursue_goals.py" = [
+    "S101",
+    "ARG001",
+    "ARG002",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+    "RUF059",
+    "SLF001",
+    "PLC0415",
+    "S311",
+]
 # The profanity-perception tests (BOB-014 .2b) assert on short Russian мат/insult
 # literals whose Cyrillic look-alikes are intentional (→ RUF001/RUF003).
 "tests/domain/personality/test_profanity.py" = [
@@ -223,6 +284,26 @@ ignore = [
     "ARG001",
     "PLR2004",
     "S311",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+# The Goal Engine tests (BOB-015) assert on short Russian goal/task literals + comments
+# whose Cyrillic look-alikes are intentional (→ RUF001/RUF002/RUF003).
+"tests/domain/goals/*.py" = [
+    "S101",
+    "ARG001",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+# The SqliteGoalStore tests (BOB-015) assert on short Russian goal/task literals whose
+# Cyrillic look-alikes are intentional (→ RUF001/RUF002/RUF003).
+"tests/infrastructure/persistence/test_goal_store.py" = [
+    "S101",
+    "ARG001",
+    "PLR2004",
     "RUF001",
     "RUF002",
     "RUF003",

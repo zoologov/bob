@@ -10,14 +10,18 @@ from __future__ import annotations
 
 from bob.application.capabilities.recall_memory import make_recall_memory_capability
 from bob.application.capabilities.registry import (
+    CapabilityNotAllowedError,
     CapabilityRegistry,
+    SafeCapabilityDispatcher,
     UnknownCapabilityError,
 )
 from bob.application.capabilities.search_memory import make_search_memory_capability
 from bob.application.capabilities.tool_loop import ToolLoop
 
 __all__ = [
+    "CapabilityNotAllowedError",
     "CapabilityRegistry",
+    "SafeCapabilityDispatcher",
     "ToolLoop",
     "UnknownCapabilityError",
     "make_recall_memory_capability",
