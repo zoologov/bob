@@ -55,6 +55,7 @@ class TaskType(Enum):
     REFLECT = "reflect"
     EXTRACT_FACTS = "extract_facts"
     PLAN_GOAL = "plan_goal"
+    DETECT_PATTERNS = "detect_patterns"
 
 
 # Task -> preferred tier. Quality-critical, user-facing work goes to Tier 1
@@ -69,6 +70,9 @@ _PREFERRED_TIER: dict[TaskType, int] = {
     # Goal decomposition (BOB-015) is reasoning-heavy: Tier 1 by default for a
     # sensible plan (the config can pin the tier per persona via tier_override).
     TaskType.PLAN_GOAL: _TIER_API,
+    # Pattern detection (BOB-028) is reasoning over self-signals: Tier 1 by default
+    # for a human-readable rule (config can pin the tier via detector_tier override).
+    TaskType.DETECT_PATTERNS: _TIER_API,
 }
 
 

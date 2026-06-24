@@ -180,6 +180,24 @@ class SulkRecoverer(Protocol):
         ...
 
 
+class PatternDetectorStep(Protocol):
+    """The narrow seam the reflect tick drives to detect self-patterns (BOB-028 .2).
+
+    Realised by :class:`~bob.application.usecases.detect_patterns.DetectPatterns`: a
+    rare, metacognitive step that gathers signals about Bob's own behaviour (self-
+    repeats, addressivity outcomes, verbosity misses, relationship deltas, a stuck
+    mood, owner friction, what landed), asks a detector to formulate human-readable
+    candidate rules, de-duplicates them against existing ones, and PERSISTS new
+    candidates in ``PROPOSED`` — it only PROPOSES, never applies (application is .3).
+    Driven AFTER the reflection is logged, on the same slow cadence. Optional: unwired,
+    the reflect tick behaves exactly as before.
+    """
+
+    async def run(self) -> None:
+        """Run one pattern-detection step (a no-op unless fresh candidates are due)."""
+        ...
+
+
 class TasteProfileWriter(Protocol):
     """The narrow persistence seam self-evolution needs: write a JSON artifact.
 
@@ -262,6 +280,7 @@ class ReflectTick:
         consolidate_memory: MemoryConsolidator | None = None,
         dedup_facts: FactDeduper | None = None,
         recover_sulk: SulkRecoverer | None = None,
+        detect_patterns: PatternDetectorStep | None = None,
         reflection_context: ReflectionContext | None = None,
         repeat_thresholds: RepeatThresholds | None = None,
         grounding_episodes: int = _DEFAULT_REFLECT_GROUNDING,
@@ -315,6 +334,12 @@ class ReflectTick:
         # tick (the GUARANTEED exit — time alone brings Bob back, no permanent lock-out)
         # and is a no-op when Bob is not hurt. Unwired, the tick behaves as before.
         self._recover_sulk = recover_sulk
+        # The pattern-detection seam (BOB-028 .2): same slow cadence — driven AFTER the
+        # reflection is logged. It gathers signals about Bob's own behaviour, asks a
+        # detector for candidate rules, de-duplicates them, and PERSISTS new ones in
+        # PROPOSED — it only proposes, never applies (application is .3). Itself rare and
+        # best-effort. Unwired, the tick behaves exactly as before.
+        self._detect_patterns = detect_patterns
         # Idempotency marker: the last reflection text already applied to the soul.
         self._last_evolved: str | None = None
 
@@ -355,6 +380,8 @@ class ReflectTick:
             await self._dedup_facts.run()
         if self._recover_sulk is not None:
             await self._recover_sulk.run()
+        if self._detect_patterns is not None:
+            await self._detect_patterns.run()
 
     async def _recent_episodes(self) -> Sequence[Mapping[str, object]]:
         """Read recent episodes for grounding + dedup (empty when no seam is wired).

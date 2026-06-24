@@ -30,22 +30,31 @@ ALLOWLIST состояний (authz-before-autonomy): детектор (.2) со
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime  # noqa: TC003 — runtime-needed for the frozen field type
+from difflib import SequenceMatcher
 from enum import StrEnum
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
+    from collections.abc import Iterable, Mapping
+
+# Порог сходства наблюдений для дедупа кандидата против существующего правила
+# (BOB-028 .2). Реюз бара анти-повтора BOB-026: консервативно высокий, чтобы
+# ловить near-дубли (одна и та же мысль, переформулированная), но НЕ сливать
+# два разных по сути наблюдения по одному рычагу.
+_DEFAULT_DEDUP_THRESHOLD = 0.85
 
 __all__ = [
     "ImprovementRule",
+    "ImprovementSignals",
     "Lever",
     "RuleOrigin",
     "RuleState",
     "active_rules",
     "can_transition",
     "clamp_magnitude",
+    "is_duplicate_rule",
     "rules_for_lever",
 ]
 
@@ -133,6 +142,57 @@ class ImprovementRule:
     evidence: str
 
 
+@dataclass(frozen=True, slots=True)
+class ImprovementSignals:
+    """Структурированный срез наблюдений Боба за собой — вход детектора (BOB-028 .2).
+
+    Чистые данные: то, что use-case ``detect_patterns`` собирает из read-seam'ов
+    (недавние эпизоды, mood_history, relationship/engagement) и передаёт детектору,
+    чтобы тот сформулировал человечное правило. Поля — минимальный РЕАЛЬНО
+    достижимый набор; каждый источник опционален, поэтому дефолты — «нет сигнала»
+    (unwired seam -> пустые сигналы -> детектору нечего предлагать):
+
+    * ``self_repeat_count`` — сколько раз сработал анти-повтор ответа Боба
+      (BOB-026): Боб ловит себя на самоповторах.
+    * ``addressivity_outcomes`` — счётчики исходов адресности
+      (``SILENT`` / ``REACT`` / ``ENGAGE``, BOB-023/025): перекос к молчанию или к
+      разговорчивости — кандидат на наклон ``ADDRESSIVITY_BIAS`` / ``PROACTIVITY``.
+    * ``verbosity_misses`` — промахи длины-vs-спрос (BOB-024): ответ заметно
+      длиннее/короче запрошенного — кандидат на ``LENGTH``.
+    * ``relationship_deltas`` — дельты осей отношений (BOB-014, ``warmth`` и т.п.):
+      проседание тепла — кандидат на ``TONE`` / ``HUMOR``.
+    * ``mood_stuck`` / ``mood_stuck_tone`` — застряло ли настроение (valence/arousal
+      вне окна базлайна дольше порога — из mood_history) и каким тоном: кандидат на
+      ``TONE`` / ``PROACTIVITY``.
+    * ``owner_friction`` — счётчик трения owner'а (повтор вопроса, «почему молчишь»):
+      сигнал, что текущее поведение не попадает в ожидание.
+    * ``positive_signals`` — что зашло (позитивные дельты: шутка сработала, тон
+      попал): чтобы правило закрепляло удачное, а не только чинило неудачное.
+    * ``recent_observations`` — короткий хвост недавних эпизодов как грундинг
+      формулировки (детектор пишет наблюдение в реальном контексте, не в вакууме).
+
+    ``frozen, slots``: без I/O, детерминированно, переиспользуемо детектором.
+    """
+
+    self_repeat_count: int = 0
+    addressivity_outcomes: Mapping[str, int] = field(default_factory=dict)
+    verbosity_misses: int = 0
+    relationship_deltas: Mapping[str, float] = field(default_factory=dict)
+    mood_stuck: bool = False
+    mood_stuck_tone: str = ""
+    owner_friction: int = 0
+    positive_signals: tuple[str, ...] = ()
+    recent_observations: tuple[str, ...] = ()
+
+
+# «Живые» состояния для дедупа: новое предложение не должно блокироваться
+# терминальным правилом (REJECTED/REMOVED — owner уже разобрался с тем правилом),
+# но должно — любым ещё актуальным (PROPOSED ждёт апрува, APPROVED/PAUSED активно).
+_LIVE_DEDUP_STATES: frozenset[RuleState] = frozenset(
+    {RuleState.PROPOSED, RuleState.APPROVED, RuleState.PAUSED}
+)
+
+
 def can_transition(frm: RuleState, to: RuleState) -> bool:
     """Можно ли перевести правило из ``frm`` в ``to`` (чистый предикат).
 
@@ -158,6 +218,44 @@ def rules_for_lever(
 ) -> tuple[ImprovementRule, ...]:
     """Вернуть правила, наклоняющие ``lever`` (один рычаг — одна точка применения)."""
     return tuple(rule for rule in rules if rule.lever is lever)
+
+
+def _normalise_observation(text: str) -> str:
+    """Strip / casefold / collapse whitespace для сравнения наблюдений (как BOB-026)."""
+    return " ".join(text.split()).casefold()
+
+
+def is_duplicate_rule(
+    candidate: ImprovementRule,
+    existing: Iterable[ImprovementRule],
+    *,
+    threshold: float = _DEFAULT_DEDUP_THRESHOLD,
+) -> bool:
+    """Дублирует ли ``candidate`` какое-то «живое» правило (BOB-028 .2).
+
+    Дубль = ТОТ ЖЕ рычаг И близкое наблюдение (один рычаг -> одна точка наклона,
+    дважды чинить одно и то же незачем). Реюз идеи анти-повтора BOB-026: наблюдения
+    нормализуются (strip / casefold / collapse whitespace) и сравниваются
+    :class:`difflib.SequenceMatcher`; дубль, если совпадают дословно ИЛИ сходство
+    не ниже ``threshold``. Сравнение только против «живых» правил
+    (:data:`_LIVE_DEDUP_STATES`): отклонённое/убранное правило не блокирует новое
+    предложение. Пустое ``candidate``-наблюдение дублем не считается.
+    """
+    normalised_candidate = _normalise_observation(candidate.observation)
+    if not normalised_candidate:
+        return False
+    for rule in existing:
+        if rule.state not in _LIVE_DEDUP_STATES or rule.lever is not candidate.lever:
+            continue
+        normalised_prior = _normalise_observation(rule.observation)
+        if not normalised_prior:
+            continue
+        if normalised_candidate == normalised_prior:
+            return True
+        ratio = SequenceMatcher(None, normalised_candidate, normalised_prior).ratio()
+        if ratio >= threshold:
+            return True
+    return False
 
 
 def clamp_magnitude(value: float, *, cap: float) -> float:

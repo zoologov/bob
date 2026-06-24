@@ -147,6 +147,10 @@ ignore = [
 # owner-facing plan/status literals whose Cyrillic look-alikes are intentional —
 # RUF001/RUF002/RUF003 do not apply to these.
 "src/bob/application/usecases/plan_goal.py" = ["RUF001", "RUF002", "RUF003"]
+# The pattern detector + detect_patterns use-case (BOB-028 .2) carries Russian detector
+# prompts + observation/adjustment/evidence literals whose Cyrillic look-alikes are
+# intentional — RUF001/RUF002/RUF003 do not apply to these.
+"src/bob/application/usecases/detect_patterns.py" = ["RUF001", "RUF002", "RUF003"]
 # The self-directed pursue_goals use-case (BOB-015 .3) carries Russian persona/policy
 # docstrings + owner-facing progress/proposal literals ("Занялся целью", "стадия C")
 # whose Cyrillic look-alikes are intentional — RUF001/RUF002/RUF003 do not apply.
@@ -208,6 +212,25 @@ ignore = [
     "RUF003",
 ]
 "tests/infrastructure/persistence/test_self_improvement_store.py" = [
+    "S101",
+    "ARG001",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+# The improvement-signals + detect-patterns tests (BOB-028 .2) assert on Russian
+# observation/adjustment/prompt literals + comments whose Cyrillic look-alikes are
+# intentional — RUF001/RUF002/RUF003 (+ the test-wide ignores) do not apply.
+"tests/domain/personality/test_improvement_signals.py" = [
+    "S101",
+    "ARG001",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+"tests/application/usecases/test_detect_patterns.py" = [
     "S101",
     "ARG001",
     "PLR2004",

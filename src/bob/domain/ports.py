@@ -34,7 +34,11 @@ if TYPE_CHECKING:
     from bob.domain.personality.first_impression import FirstImpression
     from bob.domain.personality.negotiation import NegotiationZone
     from bob.domain.personality.relationship import Relationship
-    from bob.domain.personality.self_improvement import ImprovementRule, RuleState
+    from bob.domain.personality.self_improvement import (
+        ImprovementRule,
+        ImprovementSignals,
+        RuleState,
+    )
     from bob.domain.personality.sulk import SulkState
     from bob.domain.personality.taste import Verdict
     from bob.domain.proactivity.state import ProactivityState
@@ -57,6 +61,7 @@ __all__ = [
     "MemoryRecall",
     "MemoryRepo",
     "MessageReactor",
+    "PatternDetector",
     "Permission",
     "Planner",
     "ProactivityStore",
@@ -256,6 +261,31 @@ class Planner(Protocol):
 
     async def decompose(self, goal: Goal) -> Sequence[Task]:
         """Return the tasks ``goal`` decomposes into (in :class:`TaskState.NEW`)."""
+        ...
+
+
+@runtime_checkable
+class PatternDetector(Protocol):
+    """Formulate candidate rules from signals about Bob's own behaviour (BOB-028 .2).
+
+    The metacognitive detector: given :class:`ImprovementSignals` (a slice of Bob's
+    self-observations — self-repeats, addressivity outcomes, verbosity misses,
+    relationship deltas, a stuck mood, owner friction, what landed) it returns
+    candidate :class:`~bob.domain.personality.self_improvement.ImprovementRule`
+    objects — EACH strictly in ``state=PROPOSED`` and ``origin=BOB_PROPOSED`` (the
+    detector only PROPOSES; only the owner approval of the .3 use-case moves a rule to
+    APPROVED), with ``lever`` taken ONLY from the hard
+    :class:`~bob.domain.personality.self_improvement.Lever` allowlist and ``magnitude``
+    in ``[0, 1]`` (application .3 clamps it again).
+
+    The contract is abstract on purpose: the live realisation asks an LLM and parses
+    strict JSON as tolerantly as fact extraction (markdown-fenced / preamble / trailing
+    garbage tolerated; malformed output -> an empty sequence, never a raise), while a
+    deterministic fake proposes in tests with no network. No I/O in the contract.
+    """
+
+    async def detect(self, signals: ImprovementSignals) -> Sequence[ImprovementRule]:
+        """Return candidate rules in ``PROPOSED`` (empty when there are no patterns)."""
         ...
 
 
