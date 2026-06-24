@@ -3883,12 +3883,11 @@ async def test_floor_advance_save_failure_is_best_effort_and_never_breaks_the_tu
     assert failing.save_calls, "the advance was attempted (and swallowed its failure)"
 
 
-async def test_floor_store_resolve_load_failure_propagates() -> None:
-    # PRODUCTION OBSERVATION (asymmetry, not a desired guarantee): unlike the advance
-    # path, the resolve-phase load (_resolve_effective_addressivity) is NOT wrapped in a
-    # best-effort guard, so a store that raises on LOAD breaks the whole turn. This test
-    # PINS the current behaviour; if the resolve load is later made best-effort too, this
-    # should flip to asserting the turn still replies.
+async def test_floor_store_resolve_load_failure_degrades_gracefully() -> None:
+    # Best-effort floor (BOB-025): a store that raises on LOAD must NEVER break the turn.
+    # The resolve phase (_resolve_effective_addressivity) is wrapped like the advance
+    # path, so Bob falls back to the per-message BOB-023 classification and still replies
+    # — a floor-store hiccup can never mute him.
     class _LoadFailingStore:
         async def load(self, chat_id: int, thread_id: int | None) -> ConversationFloor:  # noqa: ARG002
             raise RuntimeError("floor store load is down")
@@ -3898,16 +3897,19 @@ async def test_floor_store_resolve_load_failure_propagates() -> None:
             chat_id: int,  # noqa: ARG002
             thread_id: int | None,  # noqa: ARG002
             floor: ConversationFloor,  # noqa: ARG002
-        ) -> None:  # pragma: no cover - never reached, load raises first
+        ) -> None:  # pragma: no cover - the advance path also hits the failing load first
             raise AssertionError("save should not be reached")
 
-    handler, _bot, _repo, _tier1 = _build(
-        reply="не дойдёт",
+    handler, bot, _repo, _tier1 = _build(
+        reply="я на месте",
         floor_store=_LoadFailingStore(),  # type: ignore[arg-type]
     )
 
-    with pytest.raises(RuntimeError, match="floor store load is down"):
-        await handler.handle(_addr_message("Боб, ты тут?", mentions_bob=True))
+    # A direct mention is DIRECTED_TO_BOB even on the per-message fallback, so Bob engages.
+    await handler.handle(_addr_message("Боб, ты тут?", mentions_bob=True))
+
+    # The store failure is swallowed best-effort — the turn still produced a reply.
+    assert bot.sent, "a floor-store load failure must not mute Bob (best-effort floor)"
 
 
 async def test_reactonly_turn_advances_floor_without_bob_replied() -> None:

@@ -1337,16 +1337,25 @@ class HandleMessage:
         With the floor wired AND enabled, an ``AMBIENT`` message in a thread where Bob
         holds a live floor is raised to ``DIRECTED_TO_BOB`` (continuity); the floor is
         loaded for ``(chat_id, thread_id)``. Floor unwired or disabled → the per-message
-        classification is returned unchanged (BOB-023 behaviour).
+        classification is returned unchanged (BOB-023 behaviour). Best-effort: a flaky
+        floor store can never break a turn — on a load/resolve failure Bob falls back to
+        the per-message BOB-023 classification (a hiccup must never mute him), mirroring
+        the advance side.
         """
         if self._floor_store is None or not self._floor_enabled:
             return per_message
-        floor = await self._floor_store.load(
-            event.chat_id, self._floor_thread_id(event)
-        )
-        return resolve_addressivity(
-            per_message, floor, now=self._clock.now(), config=self._floor_config
-        )
+        try:
+            floor = await self._floor_store.load(
+                event.chat_id, self._floor_thread_id(event)
+            )
+            return resolve_addressivity(
+                per_message, floor, now=self._clock.now(), config=self._floor_config
+            )
+        except Exception:
+            logger.exception(
+                "resolving the conversation floor failed; using per-message addressivity"
+            )
+            return per_message
 
     async def _advance_floor_after_turn(
         self,
