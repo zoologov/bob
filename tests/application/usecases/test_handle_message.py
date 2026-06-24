@@ -4082,3 +4082,145 @@ async def test_length_rule_never_inverts_a_terse_base() -> None:
 
     # Still the strong terse cue (a tilt at the floor is a no-op, never an inversion).
     assert "коротк" in tier1.all_text.casefold()
+
+
+async def test_approved_humor_rule_folds_a_voice_tilt_into_the_prompt() -> None:
+    # US-3: a HUMOR lever rule shares the voice point with TONE — its adjustment folds
+    # into the same soft voice line (one lever → one point), grounded in the real rule.
+    si = _FakeSelfImprovement(
+        (_si_rule("h", lever=Lever.HUMOR, adjustment="чуть больше лёгкой иронии"),)
+    )
+    handler, _bot, _repo, tier1 = _build(reply="ok", self_improvement=si)
+
+    await handler.handle(_message("расскажи подробно, почему так вышло"))
+
+    folded = tier1.all_text
+    assert "решил их мягко подправить" in folded
+    assert "чуть больше лёгкой иронии" in folded
+
+
+async def test_positive_observation_rule_applies_like_any_other_lever() -> None:
+    # US-4 (learns from good): an APPROVED rule that closes a POSITIVE observation
+    # ("шутка зашла — добавь ещё") tilts exactly like any other — the mechanism is the
+    # lever, not "fixing a mistake". The adjustment reaches the voice prompt unchanged.
+    rule = ImprovementRule(
+        id="good",
+        observation="заметил, что тёплая шутка тут заходит",
+        adjustment="закрепить эту тёплую интонацию",
+        lever=Lever.TONE,
+        magnitude=0.3,
+        state=RuleState.APPROVED,
+        origin=RuleOrigin.BOB_PROPOSED,
+        created_at=_moment(),
+        evidence="positive_signals",
+    )
+    si = _FakeSelfImprovement((rule,))
+    handler, _bot, _repo, tier1 = _build(reply="ok", self_improvement=si)
+
+    await handler.handle(_message("расскажи подробно, почему так вышло"))
+
+    assert "закрепить эту тёплую интонацию" in tier1.all_text
+
+
+@pytest.mark.parametrize(
+    "state",
+    [RuleState.PROPOSED, RuleState.PAUSED, RuleState.REJECTED, RuleState.REMOVED],
+)
+async def test_no_non_approved_state_ever_tilts_behaviour(state: RuleState) -> None:
+    # SAFETY SWEEP (authz-before-autonomy): across EVERY non-APPROVED state, a rule with
+    # a voice lever NEVER colours the prompt — only active_rules (APPROVED) apply.
+    si = _FakeSelfImprovement(
+        (_si_rule("x", lever=Lever.TONE, state=state, adjustment="говорить теплее"),)
+    )
+    handler, _bot, _repo, tier1 = _build(reply="ok", self_improvement=si)
+
+    await handler.handle(_message("расскажи подробно, почему так вышло"))
+
+    assert "решил их мягко подправить" not in tier1.all_text
+
+
+async def test_addressivity_rule_lifts_a_quiet_turn_into_engagement() -> None:
+    # US-3 (ADDRESSIVITY_BIAS apply): an ambient multi-party turn that only REACTS by
+    # default (interest below the engage threshold) ENGAGES with a full reply once an
+    # APPROVED ADDRESSIVITY_BIAS rule lifts the effective interest over the threshold —
+    # a bounded nudge on TOP of BOB-023/025, never a base override. ambient_barge_in_freq
+    # =1.0 keeps the roll out of the picture so ONLY the interest lift flips the outcome;
+    # a wired reactor makes the base REACT visible (reactor called, no composed reply).
+    thresholds = AddressivityThresholds(
+        ambient_interest=0.99, ambient_barge_in_freq=1.0
+    )
+
+    base_reactor = _RecordingReactor()
+    handler_base, base_bot, _r0, _t0 = _build(
+        reply="не должен",
+        history=_MULTIPARTY_HISTORY,
+        soul=_low_interest_soul(),
+        addressivity_thresholds=thresholds,
+        reactor=base_reactor,
+        rng=Random(0),
+    )
+    await handler_base.handle(_addr_message("вот это денёк", sender_name="Ada"))
+    assert base_bot.sent == []  # no composed reply without a rule (REACT, not ENGAGE)
+    assert base_reactor.calls  # base interest only earns a like-reaction
+
+    tilt_reactor = _RecordingReactor()
+    si = _FakeSelfImprovement(
+        (_si_rule("addr", lever=Lever.ADDRESSIVITY_BIAS, magnitude=1.0),)
+    )
+    handler_tilt, tilt_bot, _r1, _t1 = _build(
+        reply="ладно, встряну",
+        history=_MULTIPARTY_HISTORY,
+        soul=_low_interest_soul(),
+        addressivity_thresholds=thresholds,
+        reactor=tilt_reactor,
+        rng=Random(0),
+        self_improvement=si,
+        self_improvement_max_magnitude=1.0,
+    )
+    await handler_tilt.handle(_addr_message("вот это денёк", sender_name="Ada"))
+    assert tilt_bot.sent, "the addressivity tilt should lift the quiet turn to engage"
+
+
+async def test_addressivity_rule_never_silences_an_engaging_turn() -> None:
+    # SAFETY: the ADDRESSIVITY_BIAS bias is non-negative — it can only RAISE willingness,
+    # never silence Bob. A 1:1 turn that engages stays engaging with the rule present.
+    si = _FakeSelfImprovement(
+        (_si_rule("addr", lever=Lever.ADDRESSIVITY_BIAS, magnitude=0.3),)
+    )
+    handler, bot, _repo, _tier1 = _build(
+        reply="как обычно", self_improvement=si
+    )
+
+    await handler.handle(_addr_message("расскажи подробно про кофе"))
+
+    assert bot.sent, "a non-negative addressivity bias must never silence Bob"
+
+
+async def test_summed_length_rules_stay_one_step_and_clipped() -> None:
+    # SAFETY: even MANY APPROVED LENGTH rules together shift verbosity at most ONE step
+    # (summed magnitude is clamped to the ceiling, then mapped to a single step) — the
+    # ladder is never inverted no matter how many rules pile up.
+    bright = _soul().with_mood(Mood(valence=0.6, arousal=0.7, openness=0.6, social=0.6))
+    inbound = "расскажи подробно, как именно это работает и почему так вышло"
+    si = _FakeSelfImprovement(
+        tuple(
+            _si_rule(f"len{i}", lever=Lever.LENGTH, magnitude=1.0) for i in range(5)
+        )
+    )
+    handler, _bot, _repo, tier1 = _build(
+        reply="x", soul=bright, self_improvement=si, self_improvement_max_magnitude=0.3
+    )
+
+    await handler.handle(_message(inbound))
+
+    # One step shorter only: the EXPANSIVE-only cue is dropped, never inverted to TERSE
+    # cues stacking — the single bounded step holds even under five maxed-out rules.
+    assert "можно развернуться" not in tier1.all_text.casefold()
+
+
+@pytest.mark.parametrize("ceiling", [-0.1, 1.5])
+def test_out_of_range_max_magnitude_is_rejected_at_construction(ceiling: float) -> None:
+    # SAFETY: the soft-tilt ceiling must lie in [0, 1] — an out-of-range value is a
+    # configuration error and is rejected up front, never silently allowing a huge tilt.
+    with pytest.raises(ValueError, match="self_improvement_max_magnitude"):
+        _build(reply="ok", self_improvement_max_magnitude=ceiling)

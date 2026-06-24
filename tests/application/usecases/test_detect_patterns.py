@@ -211,6 +211,93 @@ async def test_detector_skips_entries_missing_required_fields() -> None:
     assert list(rules) == []
 
 
+async def test_detector_parses_string_magnitude() -> None:
+    # Граница: модель прислала magnitude строкой — приводится к числу и клампится.
+    reply = (
+        '[{"observation": "Я слишком резок.", "adjustment": "Мягче.", '
+        '"lever": "tone", "magnitude": "0.4"}]'
+    )
+    rules = await _detector(reply=reply).detect(ImprovementSignals())
+    assert len(rules) == 1
+    assert rules[0].magnitude == 0.4
+
+
+async def test_detector_treats_unparseable_string_magnitude_as_zero() -> None:
+    # Нечисловая строка magnitude -> 0.0 (best-effort), правило всё равно PROPOSED.
+    reply = (
+        '[{"observation": "Я зануден.", "adjustment": "Живее.", '
+        '"lever": "humor", "magnitude": "много"}]'
+    )
+    rules = await _detector(reply=reply).detect(ImprovementSignals())
+    assert len(rules) == 1
+    assert rules[0].magnitude == 0.0
+
+
+async def test_detector_treats_boolean_magnitude_as_zero() -> None:
+    # bool — подкласс int в Python; magnitude=true НЕ должен стать 1.0 (трактуем как 0).
+    reply = (
+        '[{"observation": "Я резок.", "adjustment": "Мягче.", '
+        '"lever": "tone", "magnitude": true}]'
+    )
+    rules = await _detector(reply=reply).detect(ImprovementSignals())
+    assert len(rules) == 1
+    assert rules[0].magnitude == 0.0
+
+
+async def test_detector_treats_null_magnitude_as_zero() -> None:
+    # Отсутствующее/null magnitude -> 0.0 (ни int/float/str/bool).
+    reply = (
+        '[{"observation": "Я резок.", "adjustment": "Мягче.", '
+        '"lever": "tone", "magnitude": null}]'
+    )
+    rules = await _detector(reply=reply).detect(ImprovementSignals())
+    assert len(rules) == 1
+    assert rules[0].magnitude == 0.0
+
+
+async def test_detector_handles_escaped_quotes_and_brackets_inside_strings() -> None:
+    # Парсер массива должен пропускать [ ] и кавычки ВНУТРИ строк (string-aware скан),
+    # извлекая сбалансированный [...] даже когда наблюдение содержит [скобки] и \"кавычки\".
+    reply = (
+        'Вот: [{"observation": "Я пишу [список] и говорю \\"ок\\".", '
+        '"adjustment": "Короче.", "lever": "length", "magnitude": 0.2}] — конец.'
+    )
+    rules = await _detector(reply=reply).detect(ImprovementSignals())
+    assert len(rules) == 1
+    assert rules[0].lever is Lever.LENGTH
+    assert "[список]" in rules[0].observation
+
+
+async def test_detector_skips_non_object_array_entries() -> None:
+    # Массив с мусорным НЕ-объектным элементом: он пропускается, валидный объект остаётся.
+    reply = (
+        '[42, "строка", {"observation": "Я резок.", "adjustment": "Мягче.", '
+        '"lever": "tone", "magnitude": 0.3}]'
+    )
+    rules = await _detector(reply=reply).detect(ImprovementSignals())
+    assert [r.lever for r in rules] == [Lever.TONE]
+
+
+async def test_detector_returns_empty_on_unbalanced_array() -> None:
+    # Открыли [ но не закрыли -> сбалансированного массива нет -> ни одного кандидата.
+    reply = '[{"observation": "Я резок.", "lever": "tone", "magnitude": 0.3}'
+    rules = await _detector(reply=reply).detect(ImprovementSignals())
+    assert list(rules) == []
+
+
+async def test_detector_renders_recent_observations_into_the_prompt() -> None:
+    # Сигнал recent_observations попадает в пользовательский промпт (грундинг детектора).
+    router, provider = _router(reply="[]")
+    detector = LlmPatternDetector(router=router, clock=FixedClock(_NOW))
+
+    await detector.detect(
+        ImprovementSignals(recent_observations=("вчера буркнул в ответ",))
+    )
+
+    user = provider.payloads[0][1]["content"]
+    assert "вчера буркнул в ответ" in user
+
+
 # --- DetectPatterns use-case --------------------------------------------------
 
 

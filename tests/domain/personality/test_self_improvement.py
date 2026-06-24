@@ -25,6 +25,7 @@ from bob.domain.personality.self_improvement import (
     active_rules,
     can_transition,
     clamp_magnitude,
+    is_duplicate_rule,
     rules_for_lever,
 )
 
@@ -216,3 +217,66 @@ def test_rule_is_frozen() -> None:
 
 def test_rule_origin_values() -> None:
     assert RuleOrigin.BOB_PROPOSED.value == "bob_proposed"
+
+
+# --- is_duplicate_rule (дедуп против существующих, реюз идеи анти-повтора BOB-026) ---
+
+
+def _obs_rule(
+    observation: str,
+    *,
+    lever: Lever = Lever.TONE,
+    state: RuleState = RuleState.PROPOSED,
+) -> ImprovementRule:
+    """ImprovementRule с заданным наблюдением/рычагом/состоянием (для дедуп-тестов)."""
+    return ImprovementRule(
+        id="x",
+        observation=observation,
+        adjustment="поправка",
+        lever=lever,
+        magnitude=0.2,
+        state=state,
+        origin=RuleOrigin.BOB_PROPOSED,
+        created_at=_NOW,
+        evidence="",
+    )
+
+
+def test_duplicate_exact_match_same_lever_is_a_dup() -> None:
+    candidate = _obs_rule("Отвечаю слишком сухо")
+    existing = _obs_rule("отвечаю   слишком  СУХО")  # нормализация: reginstr/case/space
+    assert is_duplicate_rule(candidate, [existing]) is True
+
+
+def test_empty_candidate_observation_is_never_a_dup() -> None:
+    # Пустое (после нормализации) наблюдение кандидата дублем не считается (ветка 248).
+    candidate = _obs_rule("   ")
+    existing = _obs_rule("Отвечаю слишком сухо")
+    assert is_duplicate_rule(candidate, [existing]) is False
+
+
+def test_empty_prior_observation_is_skipped() -> None:
+    # Существующее правило с пустым наблюдением пропускается, не блокирует (ветка 254).
+    candidate = _obs_rule("Отвечаю слишком сухо")
+    existing = _obs_rule("   ")
+    assert is_duplicate_rule(candidate, [existing]) is False
+
+
+def test_different_lever_is_not_a_dup_even_with_same_observation() -> None:
+    candidate = _obs_rule("Отвечаю слишком сухо", lever=Lever.TONE)
+    existing = _obs_rule("Отвечаю слишком сухо", lever=Lever.HUMOR)
+    assert is_duplicate_rule(candidate, [existing]) is False
+
+
+@pytest.mark.parametrize("state", [RuleState.REJECTED, RuleState.REMOVED])
+def test_terminal_prior_does_not_block_a_new_proposal(state: RuleState) -> None:
+    # Отклонённое/убранное правило (owner уже разобрался) НЕ блокирует новое предложение.
+    candidate = _obs_rule("Отвечаю слишком сухо")
+    existing = _obs_rule("Отвечаю слишком сухо", state=state)
+    assert is_duplicate_rule(candidate, [existing]) is False
+
+
+def test_distinct_observations_same_lever_are_not_dups() -> None:
+    candidate = _obs_rule("Слишком часто шучу не к месту")
+    existing = _obs_rule("Отвечаю слишком сухо и формально без эмпатии")
+    assert is_duplicate_rule(candidate, [existing]) is False

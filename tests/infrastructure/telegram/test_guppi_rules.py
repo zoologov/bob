@@ -304,6 +304,40 @@ async def test_foreign_chat_cannot_manage_rules() -> None:
     assert bot.sends == []
 
 
+async def test_bare_rule_command_shows_usage() -> None:
+    # `/rule` with no action/id → the usage hint (consumed, no store write).
+    handler, bot, store = _build(rules={"r1": _rule("r1")})
+
+    consumed = await _send(handler, "/rule")
+
+    assert consumed
+    assert store.moves == []
+    assert "Использование" in bot.sends[-1].text
+
+
+async def test_rule_action_without_id_shows_usage() -> None:
+    # `/rule approve` (action but no id) → usage hint, never a blind state move.
+    handler, bot, store = _build(rules={"r1": _rule("r1")})
+
+    consumed = await _send(handler, "/rule approve")
+
+    assert consumed
+    assert store.moves == []
+    assert "Использование" in bot.sends[-1].text
+
+
+async def test_unrelated_command_is_not_consumed_by_rules_dispatch() -> None:
+    # A non-rule owner command reaches the rules dispatcher (store wired) but matches
+    # neither /rules nor /rule → not consumed, no store write.
+    handler, bot, store = _build(rules={"r1": _rule("r1")})
+
+    consumed = await _send(handler, "/somethingelse")
+
+    assert not consumed
+    assert store.moves == []
+    assert bot.sends == []
+
+
 async def test_no_rule_store_means_commands_not_consumed() -> None:
     # Unwired (rule_store=None) → the rule commands are not consumed (behaviour as before).
     bot = _FakeBot()
