@@ -11,12 +11,12 @@
 
 ## Текущий беад
 
-**Беад:** `bob-xnz.2` — dev: Planner + двойной апрув + контроль owner (следующий).
+**Беад:** `bob-xnz.3` — dev: самонаправленный тик PursueGoalsTick (следующий).
 
 ## Прогресс
 
 - [x] `.1` Goal Engine + persist — зелёный (1424 passed; машина переходов + граф + SqliteGoalStore; authz/стадия-C закодированы в домене)
-- [ ] `.2` Planner + двойной апрув + контроль owner
+- [x] `.2` Planner + двойной апрув + контроль owner — зелёный (1453 passed; mypy+ruff чисто, lint --strict 0 violations)
 - [ ] `.3` самонаправленный тик PursueGoalsTick
 - [ ] `.4` test · `.5` review · `.6` tech-writer
 
@@ -25,8 +25,8 @@
 | Беад | Роль | Зависит | Статус |
 |------|------|---------|--------|
 | bob-xnz.1 | dev Goal Engine | — | done |
-| bob-xnz.2 | dev Planner+контроль | .1 | in_progress |
-| bob-xnz.3 | dev самонаправленный тик | .1,.2 | blocked |
+| bob-xnz.2 | dev Planner+контроль | .1 | done |
+| bob-xnz.3 | dev самонаправленный тик | .1,.2 | ready |
 | bob-xnz.4 | test | .1,.2,.3 | blocked |
 | bob-xnz.5 | review | .4 | blocked |
 | bob-xnz.6 | tech-writer | .5 | blocked |
@@ -39,3 +39,8 @@
   гость-инвариант. Реюз proactivity-governance + capability-шов.
 - Гейт каждой волны проверяет КООРДИНАТОР через `.venv/bin/pytest` (uv run висит; при обрыве агента —
   инлайн). Источник: PRD/RFC/CONTEXT.
+- **Для .3 (готовые швы из .2):** `LlmPlanner`/`PlanGoal` (`run`/`approve_plan`) собраны в `app.py`
+  через `_build_goal_engine`; kill-switch читается `SqliteProactivityStore.is_pursuit_stopped(persona_id)`
+  (флаг `proactivity_state.pursuit_stopped`, ставится `/goals stop`); конфиг-плейсхолдеры `goals.tick_seconds`/
+  `max_tasks_per_window`/`safe_capabilities` заведены — .3 их только читает. Естественный язык «стоп» →
+  тот же флаг помечен TODO (команды `/goals stop|go` уже есть).

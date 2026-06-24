@@ -140,7 +140,8 @@ CREATE TABLE IF NOT EXISTS proactivity_state (
     last_spoke_at       TEXT,                       -- ISO-8601, timezone-aware (nullable)
     last_user_msg_at    TEXT,                       -- ISO-8601, timezone-aware (nullable)
     proactivity_enabled INTEGER NOT NULL DEFAULT 1, -- 0/1 owner-mute flag
-    mute_until          TEXT                        -- ISO-8601 timed-mute expiry (nullable)
+    mute_until          TEXT,                       -- ISO-8601 timed-mute expiry (nullable)
+    pursuit_stopped     INTEGER NOT NULL DEFAULT 0  -- 0/1 goal-pursuit kill-switch (BOB-015)
 );
 
 -- Per-persona current fascination (BOB-020): the topic Bob is into right now,

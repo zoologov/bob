@@ -223,6 +223,24 @@ DEFAULT_CONFIG: Config = {
             "freq": 0.15,
         },
     },
+    # Autonomy — Goal Engine (BOB-015). ``require_plan_approval`` is the DOUBLE-gate
+    # default (true): after the owner approves a goal, the Planner decomposes it and
+    # the plan must ALSO be approved before the goal goes ACTIVE — conservative at the
+    # start of autonomy (set false for a single-gate flow). ``planner_tier`` pins the
+    # decomposition tier (1 = reasoning model). The remaining keys are PLACEHOLDERS the
+    # self-directed tick (.3) will read: ``tick_seconds`` (pursuit cadence),
+    # ``max_tasks_per_window`` (a rate-limit on top of governance), ``pursuit_stopped``
+    # (kill-switch default — false = Bob may pursue, but a goal must still be APPROVED),
+    # and ``safe_capabilities`` (the allowlist the autonomous path may execute; an empty
+    # default means the tick runs no capability until one is deliberately allowed).
+    "goals": {
+        "require_plan_approval": True,
+        "planner_tier": 1,
+        "tick_seconds": 900,
+        "max_tasks_per_window": 1,
+        "pursuit_stopped": False,
+        "safe_capabilities": [],
+    },
     # Two bots in one process (BOB-003): Bob lives in his topic, GUPPI is the
     # gatekeeper in General. Each bot's token comes from env only (never YAML);
     # the shared ids (chat/owner/allowlist) and Bob's topic are non-secret.

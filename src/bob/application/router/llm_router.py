@@ -54,6 +54,7 @@ class TaskType(Enum):
     INNER_MONOLOGUE = "inner_monologue"
     REFLECT = "reflect"
     EXTRACT_FACTS = "extract_facts"
+    PLAN_GOAL = "plan_goal"
 
 
 # Task -> preferred tier. Quality-critical, user-facing work goes to Tier 1
@@ -65,6 +66,9 @@ _PREFERRED_TIER: dict[TaskType, int] = {
     TaskType.INNER_MONOLOGUE: _TIER_LOCAL,
     TaskType.REFLECT: _TIER_LOCAL,
     TaskType.EXTRACT_FACTS: _TIER_LOCAL,
+    # Goal decomposition (BOB-015) is reasoning-heavy: Tier 1 by default for a
+    # sensible plan (the config can pin the tier per persona via tier_override).
+    TaskType.PLAN_GOAL: _TIER_API,
 }
 
 

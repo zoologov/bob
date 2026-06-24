@@ -124,6 +124,13 @@ ignore = [
 # The SqliteGoalStore (BOB-015) carries Russian docstrings whose Cyrillic look-alikes
 # are intentional — RUF001/RUF002/RUF003 do not apply to these.
 "src/bob/infrastructure/persistence/goal_store.py" = ["RUF001", "RUF002", "RUF003"]
+# The Planner + plan_goal use-case (BOB-015 .2) carries Russian planner prompts +
+# owner-facing plan/status literals whose Cyrillic look-alikes are intentional —
+# RUF001/RUF002/RUF003 do not apply to these.
+"src/bob/application/usecases/plan_goal.py" = ["RUF001", "RUF002", "RUF003"]
+# GUPPI's owner commands (BOB-003 + BOB-015 .2) carry Russian command usage/reply
+# literals whose Cyrillic look-alikes are intentional — RUF001/RUF002/RUF003 here.
+"src/bob/infrastructure/telegram/guppi.py" = ["RUF001", "RUF002", "RUF003"]
 # The voice tests (BOB-016/BOB-020) assert on multi-line Russian persona/tone
 # literals whose Cyrillic look-alikes are intentional (→ RUF001/RUF003).
 "tests/domain/personality/test_voice.py" = [
@@ -134,6 +141,25 @@ ignore = [
     "RUF003",
 ]
 "tests/**/*.py" = ["S101", "ARG001", "PLR2004"]
+# The Planner + plan_goal use-case tests (BOB-015 .2) and GUPPI goal-command tests
+# assert on Russian goal/plan/command literals whose Cyrillic look-alikes are
+# intentional (→ RUF001/RUF002/RUF003).
+"tests/application/usecases/test_plan_goal.py" = [
+    "S101",
+    "ARG001",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+"tests/infrastructure/telegram/test_guppi_goals.py" = [
+    "S101",
+    "ARG001",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
 # The profanity-perception tests (BOB-014 .2b) assert on short Russian мат/insult
 # literals whose Cyrillic look-alikes are intentional (→ RUF001/RUF003).
 "tests/domain/personality/test_profanity.py" = [

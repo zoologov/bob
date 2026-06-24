@@ -55,6 +55,7 @@ __all__ = [
     "MemoryRepo",
     "MessageReactor",
     "Permission",
+    "Planner",
     "ProactivityStore",
     "Recalled",
     "ReflectionReader",
@@ -231,6 +232,26 @@ class ToolCallingProvider(Protocol):
         tools: Sequence[ToolDefinition],
     ) -> ToolCallResult:
         """Complete a turn that may request tool calls."""
+        ...
+
+
+@runtime_checkable
+class Planner(Protocol):
+    """Decompose a goal into executable tasks (the Planner seam, BOB-015 .2).
+
+    Given an APPROVED :class:`~bob.domain.goals.entities.Goal`, an implementation
+    asks an LLM (Tier-1 reasoning) to break it into atomic
+    :class:`~bob.domain.goals.entities.Task` units — each carrying its ``deps``
+    (predecessor task ids, same goal) and the ``needs_external_agency`` flag
+    classifying whether it requires stage-C (code / external tools / filesystem /
+    external APIs). Returned tasks are fresh, in :class:`TaskState.NEW`. The
+    contract is deliberately abstract: the live realisation parses strict JSON from
+    a reasoning model (markdown-fenced / preamble-tolerant, like fact extraction),
+    and a deterministic fake decomposes in tests with no network.
+    """
+
+    async def decompose(self, goal: Goal) -> Sequence[Task]:
+        """Return the tasks ``goal`` decomposes into (in :class:`TaskState.NEW`)."""
         ...
 
 

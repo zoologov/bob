@@ -205,3 +205,52 @@ async def test_state_survives_a_restart(tmp_path: Path) -> None:
         assert await store.get_mute_until(_PERSONA) == _MUTE_UNTIL
     finally:
         await second.close()
+
+
+# --- Goal-pursuit kill-switch (BOB-015 .2) ------------------------------------
+
+
+async def test_pursuit_not_stopped_by_default(repo: SqliteMemoryRepo) -> None:
+    store = SqliteProactivityStore(repo)
+
+    assert await store.is_pursuit_stopped(_PERSONA) is False
+
+
+async def test_set_pursuit_stopped_round_trips(repo: SqliteMemoryRepo) -> None:
+    store = SqliteProactivityStore(repo)
+
+    await store.set_pursuit_stopped(_PERSONA, stopped=True)
+    assert await store.is_pursuit_stopped(_PERSONA) is True
+
+    await store.set_pursuit_stopped(_PERSONA, stopped=False)
+    assert await store.is_pursuit_stopped(_PERSONA) is False
+
+
+async def test_pursuit_stop_is_per_persona(repo: SqliteMemoryRepo) -> None:
+    store = SqliteProactivityStore(repo)
+
+    await store.set_pursuit_stopped(_PERSONA, stopped=True)
+
+    assert await store.is_pursuit_stopped(_PERSONA) is True
+    assert await store.is_pursuit_stopped(_OTHER_PERSONA) is False
+
+
+async def test_pursuit_stop_does_not_disturb_state_or_mute(repo: SqliteMemoryRepo) -> None:
+    store = SqliteProactivityStore(repo)
+    await store.save(
+        _PERSONA,
+        ProactivityState(
+            social_energy=SocialEnergy(0.5),
+            last_spoke_at=_SPOKE_AT,
+            last_user_msg_at=None,
+            proactivity_enabled=True,
+        ),
+    )
+    await store.set_mute_until(_PERSONA, _MUTE_UNTIL)
+
+    await store.set_pursuit_stopped(_PERSONA, stopped=True)
+
+    loaded = await store.load(_PERSONA)
+    assert loaded.proactivity_enabled is True
+    assert loaded.social_energy == SocialEnergy(0.5)
+    assert await store.get_mute_until(_PERSONA) == _MUTE_UNTIL

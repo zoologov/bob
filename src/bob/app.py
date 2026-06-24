@@ -81,6 +81,7 @@ from bob.application.usecases.heartbeat import (
     MoodDriftTick,
     ReflectTick,
 )
+from bob.application.usecases.plan_goal import LlmPlanner, PlanGoal
 from bob.application.usecases.reflection_parser import HeuristicReflectionParser
 from bob.application.usecases.relationship_sources import RelationshipTracker
 from bob.application.usecases.run_genesis import RunGenesis
@@ -112,6 +113,7 @@ from bob.infrastructure.persistence import (
     SoulStore,
     SqliteFascinationStore,
     SqliteFirstImpressionStore,
+    SqliteGoalStore,
     SqliteMemoryRepo,
     SqliteProactivityStore,
     SqliteRelationshipStore,
@@ -397,6 +399,12 @@ def build_application(
     # so GUPPI can be its one-shot announcer.
     sulk_store = SqliteSulkStore(memory_repo)
 
+    # Goal Engine (BOB-015): the per-persona goal store backs the Planner-driven
+    # plan_goal use-case (double approval) and GUPPI's owner goal-commands. The
+    # kill-switch (`/goals stop`) persists on the proactivity store, which the
+    # self-directed tick (.3) will read. No tick is wired here — that is .3's job.
+    goal_store, plan_goal = _build_goal_engine(merged, router=router, repo=memory_repo)
+
     multibot = _build_multibot(
         merged,
         bus=event_bus,
@@ -405,6 +413,9 @@ def build_application(
         authorizer=authorizer,
         proactivity_store=proactivity_store,
         proactivity_clock=resolved_clock,
+        goal_store=goal_store,
+        plan_goal=plan_goal,
+        pursuit_store=proactivity_store,
     )
     # обида seam (BOB-014 .2b): GUPPI announces a fresh sulk entry once ("Боб обижен …")
     # — the внеличностный systemic voice. The tracker loads/evolves/recovers обида and
@@ -684,6 +695,9 @@ def _build_multibot(
     authorizer: Authorizer,
     proactivity_store: SqliteProactivityStore,
     proactivity_clock: Clock,
+    goal_store: SqliteGoalStore | None = None,
+    plan_goal: PlanGoal | None = None,
+    pursuit_store: SqliteProactivityStore | None = None,
 ) -> MultiBotGateway:
     """Build the two-bot gateway: Bob (his topic) + GUPPI (General), one poller.
 
@@ -718,7 +732,35 @@ def _build_multibot(
         authorizer=authorizer,
         proactivity_store=proactivity_store,
         proactivity_clock=proactivity_clock,
+        goal_store=goal_store,
+        plan_goal=plan_goal,
+        pursuit_store=pursuit_store,
     )
+
+
+def _build_goal_engine(
+    config: Mapping[str, object],
+    *,
+    router: LLMRouter,
+    repo: SqliteMemoryRepo,
+) -> tuple[SqliteGoalStore, PlanGoal]:
+    """Assemble the Goal Engine store + plan use-case (BOB-015 .2).
+
+    The per-persona :class:`SqliteGoalStore` round-trips Bob's goals; the
+    :class:`LlmPlanner` decomposes an APPROVED goal via the Tier-1 router (strict
+    JSON, ``needs_external_agency`` classification); :class:`PlanGoal` saves the tasks
+    and shows the owner the plan, holding the goal at APPROVED until the plan is also
+    approved (``goals.require_plan_approval``, default true — the double gate). No
+    self-directed tick is wired here — that is .3's job.
+    """
+    store = SqliteGoalStore(repo)
+    plan_goal = PlanGoal(
+        planner=LlmPlanner(router=router),
+        store=store,
+        persona_id=_BOB_PERSONA,
+        require_plan_approval=_build_require_plan_approval(config),
+    )
+    return store, plan_goal
 
 
 def _build_proactivity_engine(
@@ -980,6 +1022,23 @@ def _build_brevity_thresholds(config: Mapping[str, object]) -> BrevityThresholds
         low_engagement=_float_or(section, "low_engagement", defaults.low_engagement),
         tilt_mood=_float_or(section, "tilt_mood", defaults.tilt_mood),
     )
+
+
+def _build_require_plan_approval(config: Mapping[str, object]) -> bool:
+    """Whether the Goal Engine DOUBLE gate is on (``goals.require_plan_approval``).
+
+    Default ``True`` (conservative at the start of autonomy): after the owner
+    approves a goal, the decomposed plan must ALSO be approved before the goal goes
+    ACTIVE. Only an explicit falsy value (``false``/``0``/``no``/``off``) drops to
+    the single-gate flow. Tolerates an env-string boolean.
+    """
+    section = _section(config, "goals")
+    value = section.get("require_plan_approval", True)
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() not in {"0", "false", "no", "off"}
+    return True
 
 
 def _build_length_guard_enabled(config: Mapping[str, object]) -> bool:
