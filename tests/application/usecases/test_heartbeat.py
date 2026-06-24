@@ -513,6 +513,189 @@ async def test_reflect_without_a_consolidator_is_unaffected() -> None:
     assert len(repo.episodes) == 1
 
 
+class FakeReflectionContext:
+    """A read-seam double: serves recent episodes for grounding + dedup (BOB-026 .2)."""
+
+    def __init__(self, episodes: Sequence[Mapping[str, object]]) -> None:
+        self._episodes = list(episodes)
+        self.calls: list[int] = []
+
+    async def recent_episodes(self, k: int) -> Sequence[Mapping[str, object]]:
+        self.calls.append(k)
+        # Mirror the real repo: the k newest, oldest-first.
+        return list(self._episodes[-k:]) if k > 0 else []
+
+
+class SequencedProvider:
+    """A Tier-0 provider returning each reply in turn (to model regeneration)."""
+
+    def __init__(self, replies: Sequence[str]) -> None:
+        self._replies = list(replies)
+        self.calls = 0
+
+    async def complete(
+        self,
+        messages: Sequence[Mapping[str, str]],  # noqa: ARG002
+        *,
+        stream: bool = False,  # noqa: ARG002
+    ) -> str | AsyncIterator[str]:
+        reply = self._replies[min(self.calls, len(self._replies) - 1)]
+        self.calls += 1
+        return reply
+
+
+def _sequenced_router(replies: Sequence[str]) -> tuple[LLMRouter, SequencedProvider]:
+    tier0 = SequencedProvider(replies)
+    router = LLMRouter(providers={0: tier0, 1: CapturingProvider(reply="unused")})
+    return router, tier0
+
+
+def _reflection_episode(content: str) -> dict[str, object]:
+    return {"event_type": "reflection", "content": content}
+
+
+def _message_episode(content: str) -> dict[str, object]:
+    return {"event_type": "message", "content": content}
+
+
+async def test_reflect_grounds_the_prompt_in_recent_episodes() -> None:
+    # BOB-026 .2: wired with a context seam, the reflect prompt carries fresh context
+    # (recent episode content + mood tone) instead of the static generic template.
+    router, tier0 = _router(reply="свежая мысль про орбиты")
+    context = FakeReflectionContext([_message_episode("owner: думал про орбиты?")])
+    tick = ReflectTick(
+        router=router,
+        repo=FakeRepo(),
+        state=_state(Mood(), Mood()),
+        clock=FixedClock(_moment()),
+        reflection_context=context,
+    )
+
+    await tick.run()
+
+    assert "орбиты" in tier0.prompts[0]
+
+
+async def test_reflect_without_a_context_seam_uses_the_generic_prompt() -> None:
+    # Backward-compatible default: no context seam wired -> the legacy static prompt.
+    router, tier0 = _router(reply="тихая мысль")
+    tick = ReflectTick(
+        router=router,
+        repo=FakeRepo(),
+        state=_state(Mood(), Mood()),
+        clock=FixedClock(_moment()),
+    )
+
+    await tick.run()
+
+    assert "how things have been going lately" in tier0.prompts[0]
+
+
+async def test_reflect_regenerates_a_near_duplicate_reflection() -> None:
+    # BOB-026 .2: a fresh reflection that near-repeats a recent one triggers ONE
+    # regeneration (reuse of the .1 is_bob_repeat predicate), exactly like the reply
+    # guard. The retry differs and is saved.
+    router, tier0 = _sequenced_router(
+        ["плыву по течению этих дней", "сегодня собрал телескоп"]
+    )
+    context = FakeReflectionContext([_reflection_episode("плыву по течению этих дней")])
+    repo = FakeRepo()
+    tick = ReflectTick(
+        router=router,
+        repo=repo,
+        state=_state(Mood(), Mood()),
+        clock=FixedClock(_moment()),
+        reflection_context=context,
+    )
+
+    await tick.run()
+
+    assert tier0.calls == 2  # one regeneration
+    assert len(repo.episodes) == 1
+    assert repo.episodes[0]["content"] == "сегодня собрал телескоп"
+
+
+async def test_reflect_skips_when_the_regeneration_is_still_a_duplicate() -> None:
+    # If even the regeneration near-repeats a recent reflection, skip the save — do
+    # not add another copy to the stuck record.
+    router, tier0 = _sequenced_router(["плыву по течению этих дней"])
+    context = FakeReflectionContext([_reflection_episode("плыву по течению этих дней")])
+    repo = FakeRepo()
+    tick = ReflectTick(
+        router=router,
+        repo=repo,
+        state=_state(Mood(), Mood()),
+        clock=FixedClock(_moment()),
+        reflection_context=context,
+    )
+
+    await tick.run()
+
+    assert tier0.calls == 2  # original + one regeneration, both duplicates
+    assert repo.episodes == []  # skipped, not persisted
+
+
+async def test_reflect_saves_a_novel_reflection_without_regenerating() -> None:
+    # A reflection unlike any recent one is saved on the first generation (no waste).
+    router, tier0 = _sequenced_router(["сегодня собрал телескоп"])
+    context = FakeReflectionContext([_reflection_episode("плыву по течению этих дней")])
+    repo = FakeRepo()
+    tick = ReflectTick(
+        router=router,
+        repo=repo,
+        state=_state(Mood(), Mood()),
+        clock=FixedClock(_moment()),
+        reflection_context=context,
+    )
+
+    await tick.run()
+
+    assert tier0.calls == 1  # no regeneration needed
+    assert len(repo.episodes) == 1
+
+
+async def test_reflect_dedup_only_compares_reflection_episodes() -> None:
+    # Dedup compares against recent REFLECTION episodes only, not message turns — a
+    # reflection that happens to echo a message is still saved.
+    router, tier0 = _sequenced_router(["owner: привет\nbob: привет"])
+    context = FakeReflectionContext([_message_episode("owner: привет\nbob: привет")])
+    repo = FakeRepo()
+    tick = ReflectTick(
+        router=router,
+        repo=repo,
+        state=_state(Mood(), Mood()),
+        clock=FixedClock(_moment()),
+        reflection_context=context,
+    )
+
+    await tick.run()
+
+    assert tier0.calls == 1
+    assert len(repo.episodes) == 1
+
+
+async def test_reflect_skips_evolution_when_the_reflection_is_skipped() -> None:
+    # When a near-duplicate reflection is skipped, the soul-evolution + downstream
+    # steps must not run on a thought that was never logged.
+    router, _ = _sequenced_router(["плыву по течению этих дней"])
+    context = FakeReflectionContext([_reflection_episode("плыву по течению этих дней")])
+    repo = FakeRepo()
+    consolidator = _RecordingConsolidator()
+    tick = ReflectTick(
+        router=router,
+        repo=repo,
+        state=_state(Mood(), Mood()),
+        clock=FixedClock(_moment()),
+        reflection_context=context,
+        consolidate_memory=consolidator,
+    )
+
+    await tick.run()
+
+    assert repo.episodes == []
+    assert consolidator.runs == 0  # downstream steps skipped with the reflection
+
+
 class _RecordingDeduper:
     """A FactDeduper double recording how many times the tick drove it."""
 

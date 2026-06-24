@@ -29,11 +29,13 @@ from typing import TYPE_CHECKING, Protocol
 
 from bob.application.router.llm_router import LLMRequest, TaskType
 from bob.domain.memory.entities import EpisodicEvent
+from bob.domain.personality.conversation import RepeatThresholds, is_bob_repeat
 from bob.domain.personality.language import DEFAULT_LANGUAGE, language_directive
 from bob.domain.personality.mood import MoodDelta
+from bob.domain.personality.reflection import build_reflection_prompt
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Mapping, Sequence
 
     from bob.application.router.llm_router import LLMRouter
     from bob.application.usecases.apply_reflection import ApplyReflection
@@ -57,10 +59,12 @@ _MONOLOGUE_PROMPT = (
     "new line classify its mood as exactly one lowercase word: positive, "
     "negative, or neutral."
 )
-_REFLECT_PROMPT = (
-    "As Bob, write one short, reflective sentence about how things have been "
-    "going lately. Keep it private and introspective."
-)
+# How many of Bob's most-recent episodes the reflect tick reads to GROUND a fresh
+# reflection in what is happening now (a handful — enough flavour, not the whole log).
+_DEFAULT_REFLECT_GROUNDING = 3
+# How many recent REFLECTION episodes the reflect tick compares a fresh thought
+# against for near-duplicate detection (the anti-record window).
+_DEFAULT_REFLECT_DEDUP_WINDOW = 5
 
 
 def _localised(prompt: str, language: str) -> str:
@@ -76,6 +80,23 @@ class EpisodeWriter(Protocol):
     """The persistence seam the reflect tick needs: save an episode."""
 
     async def save_episode(self, episode: Mapping[str, object]) -> None: ...
+
+
+class ReflectionContext(Protocol):
+    """The narrow READ seam that grounds + de-duplicates reflections (BOB-026 .2).
+
+    Realised structurally by :class:`~bob.infrastructure.persistence.sqlite_repo.SqliteMemoryRepo`
+    (which already exposes ``recent_episodes``). It serves Bob's most-recent episodes
+    (oldest-first) so the reflect tick can (1) GROUND a fresh reflection in what is
+    happening now instead of a static template, and (2) compare the fresh thought
+    against recent REFLECTION episodes to suppress near-duplicates (the stuck record).
+    Optional: unwired, the reflect tick uses the legacy generic prompt and saves every
+    reflection — exactly its prior behaviour.
+    """
+
+    async def recent_episodes(self, k: int) -> Sequence[Mapping[str, object]]:
+        """Return the last ``k`` episodes by recency, oldest-first."""
+        ...
 
 
 class FascinationEvolver(Protocol):
@@ -236,6 +257,10 @@ class ReflectTick:
         consolidate_memory: MemoryConsolidator | None = None,
         dedup_facts: FactDeduper | None = None,
         recover_sulk: SulkRecoverer | None = None,
+        reflection_context: ReflectionContext | None = None,
+        repeat_thresholds: RepeatThresholds | None = None,
+        grounding_episodes: int = _DEFAULT_REFLECT_GROUNDING,
+        dedup_window: int = _DEFAULT_REFLECT_DEDUP_WINDOW,
     ) -> None:
         self._router = router
         self._repo = repo
@@ -244,6 +269,20 @@ class ReflectTick:
         self._language = language
         self._apply_reflection = apply_reflection
         self._soul_store = soul_store
+        # The grounding + dedup read seam (BOB-026 .2): serves recent episodes so a
+        # fresh reflection is grounded in NOW and checked against recent reflections
+        # for near-duplicates. Unwired -> the legacy generic prompt, every reflection
+        # saved (prior behaviour).
+        self._reflection_context = reflection_context
+        # Near-duplicate thresholds — reuse the .1 reply predicate's bar (verbatim OR
+        # near-verbatim via difflib). Injected from config; conservative defaults.
+        self._repeat_thresholds = (
+            repeat_thresholds if repeat_thresholds is not None else RepeatThresholds()
+        )
+        # How many recent episodes ground the prompt, and how many recent reflection
+        # episodes the dedup compares against.
+        self._grounding_episodes = grounding_episodes
+        self._dedup_window = dedup_window
         # The fascination-evolution seam (BOB-020 wave 2): driven AFTER the reflection
         # is logged (so it is available as grounding). Itself idempotent — it shifts
         # only when the current passion has faded — so a re-run in the same period is a
@@ -275,18 +314,22 @@ class ReflectTick:
         self._last_evolved: str | None = None
 
     async def run(self) -> None:
-        """Reflect on Tier 0, log it as an episode, then (optionally) evolve the soul."""
-        reflection = await self._router.run(
-            LLMRequest(
-                task_type=TaskType.REFLECT,
-                messages=[
-                    {
-                        "role": "system",
-                        "content": _localised(_REFLECT_PROMPT, self._language),
-                    }
-                ],
-            )
-        )
+        """Reflect on Tier 0, log it as an episode, then (optionally) evolve the soul.
+
+        Grounds the reflection in fresh context (recent episodes + mood) when the
+        read seam is wired (BOB-026 .2), then suppresses near-duplicates: a fresh
+        thought that echoes a recent reflection is regenerated once (reusing the .1
+        :func:`is_bob_repeat` predicate); if the retry still echoes one, the
+        reflection is skipped — so the inner monologue stops being a stuck record.
+        """
+        recent = await self._recent_episodes()
+        reflection = await self._reflect(recent)
+        recent_reflections = _reflection_contents(recent, self._dedup_window)
+        if self._is_near_duplicate(reflection, recent_reflections):
+            reflection = await self._reflect(recent)
+            if self._is_near_duplicate(reflection, recent_reflections):
+                logger.debug("reflect tick skipped a near-duplicate reflection")
+                return
         now = self._clock.now()
         episode = EpisodicEvent(
             ts=now,
@@ -307,6 +350,43 @@ class ReflectTick:
             await self._dedup_facts.run()
         if self._recover_sulk is not None:
             await self._recover_sulk.run()
+
+    async def _recent_episodes(self) -> Sequence[Mapping[str, object]]:
+        """Read recent episodes for grounding + dedup (empty when no seam is wired)."""
+        if self._reflection_context is None:
+            return []
+        want = max(self._grounding_episodes, self._dedup_window)
+        return await self._reflection_context.recent_episodes(want)
+
+    async def _reflect(self, recent: Sequence[Mapping[str, object]]) -> str:
+        """Generate one reflection, grounded in ``recent`` when context is wired.
+
+        With no context seam wired (``recent`` empty) the mood tone is withheld too,
+        so :func:`build_reflection_prompt` returns the legacy generic prompt and the
+        unwired tick is byte-for-byte unchanged.
+        """
+        grounding = _episode_contents(recent, self._grounding_episodes)
+        mood_tone = self._state.soul.mood.tone() if self._reflection_context else ""
+        prompt = build_reflection_prompt(grounding, mood_tone=mood_tone)
+        return await self._router.run(
+            LLMRequest(
+                task_type=TaskType.REFLECT,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": _localised(prompt, self._language),
+                    }
+                ],
+            )
+        )
+
+    def _is_near_duplicate(self, reflection: str, recent_reflections: Sequence[str]) -> bool:
+        """Whether ``reflection`` (near-)repeats a recent reflection (BOB-026 .2)."""
+        return is_bob_repeat(
+            reflection,
+            recent_reflections,
+            threshold=self._repeat_thresholds.similarity_threshold,
+        )
 
     def _evolve(self, reflection: str) -> None:
         """Apply ``reflection`` to the soul once, persisting taste on a real change."""
@@ -339,6 +419,39 @@ def _taste_profile(taste: TasteEngine) -> dict[str, object]:
             for axis in taste.axes
         ]
     }
+
+
+def _episode_contents(
+    episodes: Sequence[Mapping[str, object]], limit: int
+) -> tuple[str, ...]:
+    """The ``content`` of the ``limit`` most-recent episodes, oldest-first (BOB-026 .2).
+
+    Grounds a reflection in what is actually happening now. ``episodes`` arrive
+    oldest-first; the tail of length ``limit`` is the freshest context.
+    """
+    if limit <= 0:
+        return ()
+    return tuple(str(row.get("content", "")) for row in episodes[-limit:])
+
+
+def _reflection_contents(
+    episodes: Sequence[Mapping[str, object]], window: int
+) -> tuple[str, ...]:
+    """The ``content`` of the recent REFLECTION episodes within ``window`` (BOB-026 .2).
+
+    Dedup compares a fresh thought only against Bob's own recent REFLECTIONS, never
+    message turns — so a reflection that merely echoes something the owner said is
+    still kept. Filters to ``event_type == "reflection"``, newest-last, capped at
+    ``window``.
+    """
+    if window <= 0:
+        return ()
+    reflections = [
+        str(row.get("content", ""))
+        for row in episodes
+        if row.get("event_type") == "reflection"
+    ]
+    return tuple(reflections[-window:])
 
 
 def _episode_row(episode: EpisodicEvent) -> dict[str, object]:

@@ -638,6 +638,13 @@ def build_application(
         consolidate_memory=consolidate_memory,
         dedup_facts=dedup_facts,
         recover_sulk=recover_sulk,
+        # Grounding + dedup read seam (BOB-026 .2): the same memory repo serves recent
+        # episodes so a fresh reflection is grounded in NOW (not a static template) and
+        # checked against recent reflections for near-duplicates — a near-dup is
+        # regenerated once, else skipped, so the inner monologue stops being a stuck
+        # record. Reuses the .1 near-verbatim bar (``repeat.similarity_threshold``).
+        reflection_context=memory_repo,
+        repeat_thresholds=_build_repeat_thresholds(merged),
     )
 
     proactivity_engine = _build_proactivity_engine(
