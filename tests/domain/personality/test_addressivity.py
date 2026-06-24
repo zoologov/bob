@@ -175,3 +175,93 @@ def test_others_present_ignores_bob_turns() -> None:
     # «bob:» — не сторонний собеседник.
     history = ["Ada: привет\nbob: здравствуй"]
     assert others_present(history, current_sender_name="Ada") is False
+
+
+def test_others_present_skips_entries_without_a_sender_label() -> None:
+    # Запись без разделителя «<sender>: » (битая/системная строка) пропускается,
+    # а не считается сторонним участником: тред остаётся 1:1.
+    history = ["системное уведомление без метки", "Ada: привет\nbob: здравствуй"]
+    assert others_present(history, current_sender_name="Ada") is False
+
+
+def test_others_present_true_when_label_missing_among_others() -> None:
+    # Битая запись пропускается, но реальный сторонний участник всё равно ловится.
+    history = ["битая строка", "Гость: эй\nbob: о, привет"]
+    assert others_present(history, current_sender_name="Ada") is True
+
+
+def test_others_present_true_without_current_name_when_any_other_speaks() -> None:
+    # Без имени текущего собеседника любая сторонняя (не-Боб) реплика читается как
+    # присутствие другого: мы не можем сопоставить метку → считаем тред не-1:1.
+    history = ["Ada: привет\nbob: здравствуй"]
+    assert others_present(history, current_sender_name=None) is True
+
+
+def test_others_present_false_without_current_name_when_history_is_unlabelled() -> None:
+    # Без имени текущего собеседника история без меток отправителя (только текст без
+    # «<sender>: ») — не присутствие другого: метку не из чего считать.
+    history = ["просто строка", "ещё одна без метки"]
+    assert others_present(history, current_sender_name=None) is False
+
+
+def test_name_address_with_colon_or_dash_is_directed_to_bob() -> None:
+    # Разделитель-обращение может быть не только запятой: двоеточие/тире/длинное тире
+    # сразу за именем тоже читаются как обращение («Боб: …» / «Боб-…» / «Боб—…»).
+    for text in ("Боб: слушай", "Боб-привет", "Bob: hey", "боб—ну что"):
+        result = classify_addressivity(
+            text=text,
+            mentions_bob=False,
+            reply_to_sender_id=None,
+            bob_user_id=_BOB_ID,
+            others_present=False,
+        )
+        assert result is Addressivity.DIRECTED_TO_BOB, text
+
+
+def test_name_address_with_leading_whitespace_is_directed_to_bob() -> None:
+    # Ведущие пробелы перед обращением не мешают распознаванию («  Боб, …»).
+    result = classify_addressivity(
+        text="   Боб, ты тут?",
+        mentions_bob=False,
+        reply_to_sender_id=None,
+        bob_user_id=_BOB_ID,
+        others_present=False,
+    )
+    assert result is Addressivity.DIRECTED_TO_BOB
+
+
+def test_name_only_bob_without_separator_is_ambient() -> None:
+    # Ровно «Боб» без разделителя за именем — не обращение (нет запятой/двоеточия).
+    result = classify_addressivity(
+        text="Боб",
+        mentions_bob=False,
+        reply_to_sender_id=None,
+        bob_user_id=_BOB_ID,
+        others_present=False,
+    )
+    assert result is Addressivity.AMBIENT
+
+
+def test_name_address_inside_text_is_not_directed() -> None:
+    # Имя НЕ в начале реплики не считается обращением («…, Боб» в конце) → AMBIENT.
+    result = classify_addressivity(
+        text="привет, Боб",
+        mentions_bob=False,
+        reply_to_sender_id=None,
+        bob_user_id=_BOB_ID,
+        others_present=False,
+    )
+    assert result is Addressivity.AMBIENT
+
+
+def test_reply_to_bob_needs_resolved_identity() -> None:
+    # Реплай на сообщение с тем же id, что у «Боба», но identity не резолвнута
+    # (bob_user_id=None) → не можем утверждать, что это Боб → DIRECTED_TO_OTHER.
+    result = classify_addressivity(
+        text="ага",
+        mentions_bob=False,
+        reply_to_sender_id=_BOB_ID,
+        bob_user_id=None,
+        others_present=True,
+    )
+    assert result is Addressivity.DIRECTED_TO_OTHER
