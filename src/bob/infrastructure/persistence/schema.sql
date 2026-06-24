@@ -196,3 +196,40 @@ CREATE TABLE IF NOT EXISTS sulk_state (
     since      TEXT,                        -- ISO-8601 entry stamp (nullable)
     announced  INTEGER NOT NULL DEFAULT 0   -- 0/1 one-shot GUPPI-announce flag
 );
+
+-- Goal Engine (BOB-015): Bob's goals + their tasks, per persona, so he keeps his
+-- goals between sessions (autonomy stage B). One `goal` row per (persona_id, id);
+-- `state`/`origin` are the string GoalState/GoalOrigin enum values. Round-tripped by
+-- SqliteGoalStore into a domain GoalGraph; an unseen persona simply has no rows.
+-- authz-before-autonomy lives above this table (the tick only advances APPROVED/
+-- ACTIVE goals) — the store just persists the state the use-cases set.
+CREATE TABLE IF NOT EXISTS goal (
+    persona_id  TEXT NOT NULL,
+    id          TEXT NOT NULL,
+    title       TEXT NOT NULL,
+    description TEXT NOT NULL,
+    priority    INTEGER NOT NULL,
+    criteria    TEXT NOT NULL,              -- textual completion criterion
+    state       TEXT NOT NULL,              -- GoalState value (proposed/approved/…)
+    origin      TEXT NOT NULL,              -- GoalOrigin value (owner/bob_proposed)
+    created_at  TEXT NOT NULL,              -- ISO-8601, timezone-aware
+    deadline    TEXT,                       -- ISO-8601, timezone-aware (nullable)
+    PRIMARY KEY (persona_id, id)
+);
+
+-- One `task` row per (persona_id, id) — a unit of work of a goal. `deps` is a JSON
+-- array of predecessor task ids (the topo-sort over readiness is built from it, so a
+-- separate edge table is unnecessary at MVP scale); `needs_external_agency` (0/1) is
+-- the stage-C gate flag — such a task is never executed autonomously, only proposed.
+CREATE TABLE IF NOT EXISTS task (
+    persona_id            TEXT NOT NULL,
+    id                    TEXT NOT NULL,
+    goal_id               TEXT NOT NULL,
+    summary               TEXT NOT NULL,
+    deps                  TEXT NOT NULL DEFAULT '[]',  -- JSON array of dep task ids
+    state                 TEXT NOT NULL,               -- TaskState value
+    needs_external_agency INTEGER NOT NULL DEFAULT 0,  -- 0/1 stage-C gate flag
+    PRIMARY KEY (persona_id, id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_task_goal ON task (persona_id, goal_id);

@@ -114,6 +114,16 @@ ignore = [
 # look-alikes are intentional (the heuristic matches real Russian text) —
 # RUF001/RUF002/RUF003 do not apply to these.
 "src/bob/domain/personality/brevity.py" = ["RUF001", "RUF002", "RUF003"]
+# The Goal Engine (BOB-015) carries Russian persona/policy docstrings + blocked-reason
+# literals ("требует внешней агентности", "ждёт незавершённых задач") whose Cyrillic
+# look-alikes are intentional — RUF001/RUF002/RUF003 do not apply to these.
+"src/bob/domain/goals/state.py" = ["RUF001", "RUF002", "RUF003"]
+"src/bob/domain/goals/entities.py" = ["RUF001", "RUF002", "RUF003"]
+"src/bob/domain/goals/graph.py" = ["RUF001", "RUF002", "RUF003"]
+"src/bob/domain/goals/__init__.py" = ["RUF001", "RUF002", "RUF003"]
+# The SqliteGoalStore (BOB-015) carries Russian docstrings whose Cyrillic look-alikes
+# are intentional — RUF001/RUF002/RUF003 do not apply to these.
+"src/bob/infrastructure/persistence/goal_store.py" = ["RUF001", "RUF002", "RUF003"]
 # The voice tests (BOB-016/BOB-020) assert on multi-line Russian persona/tone
 # literals whose Cyrillic look-alikes are intentional (→ RUF001/RUF003).
 "tests/domain/personality/test_voice.py" = [
@@ -223,6 +233,26 @@ ignore = [
     "ARG001",
     "PLR2004",
     "S311",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+# The Goal Engine tests (BOB-015) assert on short Russian goal/task literals + comments
+# whose Cyrillic look-alikes are intentional (→ RUF001/RUF002/RUF003).
+"tests/domain/goals/*.py" = [
+    "S101",
+    "ARG001",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+# The SqliteGoalStore tests (BOB-015) assert on short Russian goal/task literals whose
+# Cyrillic look-alikes are intentional (→ RUF001/RUF002/RUF003).
+"tests/infrastructure/persistence/test_goal_store.py" = [
+    "S101",
+    "ARG001",
+    "PLR2004",
     "RUF001",
     "RUF002",
     "RUF003",

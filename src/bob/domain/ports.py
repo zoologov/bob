@@ -25,6 +25,9 @@ from datetime import (
 from typing import TYPE_CHECKING, Literal, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
+    from bob.domain.goals.entities import Goal, Task
+    from bob.domain.goals.graph import GoalGraph
+    from bob.domain.goals.state import GoalState, TaskState
     from bob.domain.memory.entities import SemanticFact
     from bob.domain.personality.fascination import Fascination
     from bob.domain.personality.first_impression import FirstImpression
@@ -44,6 +47,7 @@ __all__ = [
     "EventHandler",
     "FascinationStore",
     "FirstImpressionStore",
+    "GoalStore",
     "JsonValue",
     "LLMMessage",
     "LLMProvider",
@@ -474,6 +478,48 @@ class RelationshipStore(Protocol):
 
     async def save(self, relationship: Relationship) -> None:
         """Persist ``relationship`` (UPSERT — an evolving relationship is updated)."""
+        ...
+
+
+@runtime_checkable
+class GoalStore(Protocol):
+    """Durable per-persona store for Bob's goal graph (Goal Engine, BOB-015).
+
+    Round-trips the :class:`bob.domain.goals.graph.GoalGraph` — the goals
+    (:class:`bob.domain.goals.entities.Goal`) Bob holds and their tasks
+    (:class:`bob.domain.goals.entities.Task`, each carrying its ``deps`` and the
+    ``needs_external_agency`` flag) — so Bob keeps his goals between sessions. State
+    is per ``persona_id`` so Bobiverse replicas each keep their own. :meth:`load`
+    returns an empty graph for an unseen persona, so the application always has
+    something to read. ``save_goal`` / ``save_task`` UPSERT (a goal/task evolves), and
+    ``update_goal_state`` / ``update_task_state`` are atomic state moves the approval
+    use-case (.2) and the self-directed tick (.3) drive — keeping the authz-before-
+    autonomy machine honest (a tick only ever advances an APPROVED/ACTIVE goal). The
+    concrete SQLite-backed adapter lives in ``bob.infrastructure.persistence``.
+    """
+
+    async def load(self, persona_id: str) -> GoalGraph:
+        """Return the persisted goal graph for ``persona_id`` (empty if unseen)."""
+        ...
+
+    async def save_goal(self, persona_id: str, goal: Goal) -> None:
+        """Persist ``goal`` for ``persona_id`` (UPSERT — an evolving goal is updated)."""
+        ...
+
+    async def save_task(self, persona_id: str, task: Task) -> None:
+        """Persist ``task`` for ``persona_id`` (UPSERT — deps + flag round-trip)."""
+        ...
+
+    async def update_goal_state(
+        self, persona_id: str, goal_id: str, state: GoalState
+    ) -> None:
+        """Atomically set ``goal_id``'s state (owner approval / tick progress)."""
+        ...
+
+    async def update_task_state(
+        self, persona_id: str, task_id: str, state: TaskState
+    ) -> None:
+        """Atomically set ``task_id``'s state (a tick advances one safe task)."""
         ...
 
 
