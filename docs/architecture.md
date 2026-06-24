@@ -157,7 +157,11 @@ GUPPI и шлёт ответы своим инъецированным бото�
 При нормализации апдейта внутренний `TelegramGateway` извлекает из aiogram-сообщения
 **сигналы адресности** и кладёт их в `MessageReceived` (см. «Поток обработки» и
 «Адресность»): `reply_to_sender_id` — id автора сообщения, на которое сделан реплай
-(`reply_to_message.from_user.id`; `None`, если это не реплай); `mentions_bob` —
+(`reply_to_message.from_user.id`; `None`, если это не реплай). **Форум-гард (BOB-027):**
+в форум-топике каждое сообщение неявно «реплаит» корень топика
+(`reply_to_message.message_id == message_thread_id`, создан owner'ом) — это не настоящий
+реплай и игнорируется (`None`), иначе адресность читала бы весь топик как «к другому».
+`mentions_bob` —
 упомянут ли бот Боба (`_mentions_bob` сканит `entities`: `mention` сверяется с
 `@username` Боба, `text_mention` — с его `user_id`).
 

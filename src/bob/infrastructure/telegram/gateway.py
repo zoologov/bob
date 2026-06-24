@@ -572,9 +572,21 @@ class TelegramGateway:
 
 
 def _reply_to_sender_id(message: MessageLike) -> int | None:
-    """The from-user id of the message ``message`` replies to (``None`` if not a reply)."""
+    """The from-user id of the message ``message`` replies to (``None`` if not a reply).
+
+    Forum-topic guard (BOB-027): in a Telegram forum topic EVERY message carries an
+    *implicit* ``reply_to_message`` pointing at the topic's root message — whose
+    ``message_id`` equals the message's ``message_thread_id``. That is NOT a real reply
+    (the user did not reply to anyone), so it is ignored; only a reply to a DIFFERENT
+    message counts. Without this, every message in Bob's topic looks like a reply to the
+    topic creator (the owner), and addressivity (BOB-023) misreads the whole topic as
+    "directed to someone else" → Bob stays silent unless explicitly named.
+    """
     replied = getattr(message, "reply_to_message", None)
     if replied is None:
+        return None
+    thread_id = message.message_thread_id
+    if thread_id is not None and getattr(replied, "message_id", None) == thread_id:
         return None
     replied_user = replied.from_user
     return replied_user.id if replied_user is not None else None

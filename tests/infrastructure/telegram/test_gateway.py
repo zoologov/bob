@@ -385,6 +385,59 @@ async def test_reply_to_another_user_carries_that_users_id() -> None:
 
 
 @pytest.mark.asyncio
+async def test_reply_to_topic_root_is_not_a_real_reply() -> None:
+    # BOB-027: in a forum topic every message implicitly "replies" to the topic root
+    # (reply_to_message.message_id == message_thread_id), created by the owner. That is
+    # NOT a real reply, else addressivity reads the whole topic as directed-to-other.
+    bus = AsyncEventBus()
+    gateway = _make_gateway(_FakeBot(), bus=bus, bob_identity=_bob_identity())
+    topic_root = _FakeMessage(
+        message_id=555, text="topic", from_user=_FakeUser(id=27468732)
+    )
+    update = _FakeUpdate(
+        update_id=10,
+        message=_FakeMessage(
+            message_id=999,
+            text="как настроение?",
+            message_thread_id=555,
+            from_user=_FakeUser(id=27468732),
+            reply_to_message=topic_root,
+        ),
+        effective_chat=_FakeChat(id=100),
+        effective_user=_FakeUser(id=27468732),
+    )
+
+    event = await _capture(gateway, update)
+
+    assert event.reply_to_sender_id is None
+
+
+@pytest.mark.asyncio
+async def test_real_reply_in_a_topic_still_carries_sender() -> None:
+    # A real reply to a DIFFERENT message in the topic (message_id != thread_id) is
+    # genuine: its sender_id is preserved (the forum guard only drops the root).
+    bus = AsyncEventBus()
+    gateway = _make_gateway(_FakeBot(), bus=bus, bob_identity=_bob_identity())
+    replied = _FakeMessage(message_id=777, text="earlier", from_user=_FakeUser(id=42))
+    update = _FakeUpdate(
+        update_id=11,
+        message=_FakeMessage(
+            message_id=1000,
+            text="re",
+            message_thread_id=555,
+            from_user=_FakeUser(id=27468732),
+            reply_to_message=replied,
+        ),
+        effective_chat=_FakeChat(id=100),
+        effective_user=_FakeUser(id=27468732),
+    )
+
+    event = await _capture(gateway, update)
+
+    assert event.reply_to_sender_id == 42
+
+
+@pytest.mark.asyncio
 async def test_reply_to_without_from_user_yields_none() -> None:
     bus = AsyncEventBus()
     gateway = _make_gateway(_FakeBot(), bus=bus, bob_identity=_bob_identity())
