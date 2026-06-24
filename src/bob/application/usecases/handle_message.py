@@ -61,7 +61,11 @@ from bob.domain.personality.brevity import (
     classify_answer_demand,
     decide_verbosity,
 )
-from bob.domain.personality.conversation import is_user_repeat
+from bob.domain.personality.conversation import (
+    RepeatThresholds,
+    is_bob_repeat,
+    is_user_repeat,
+)
 from bob.domain.personality.engagement import (
     ConversationalFatigue,
     EngagementLevel,
@@ -498,6 +502,7 @@ class HandleMessage:
         brevity_thresholds: BrevityThresholds | None = None,
         length_guard_enabled: bool = False,
         length_guard_max_chars: int = _DEFAULT_LENGTH_GUARD_MAX_CHARS,
+        repeat_thresholds: RepeatThresholds | None = None,
     ) -> None:
         self._router = router
         self._gateway = gateway
@@ -673,6 +678,13 @@ class HandleMessage:
             msg = f"length_guard_max_chars must be positive, got {length_guard_max_chars}"
             raise ValueError(msg)
         self._length_guard_max_chars = length_guard_max_chars
+        # Anti-repeat window (BOB-026 .1): the fresh reply is checked against a WINDOW
+        # of Bob's recent replies (not just the last), verbatim OR near-verbatim, so a
+        # repeat "через ход" no longer slips through. Conservative defaults; tunable
+        # via repeat.*.
+        self._repeat_thresholds = (
+            repeat_thresholds if repeat_thresholds is not None else RepeatThresholds()
+        )
 
     async def handle(self, event: MessageReceived) -> None:
         """Process one received message end to end (the EventBus subscriber)."""
@@ -1369,17 +1381,23 @@ class HandleMessage:
         sulk: SulkState | None = None,
         verbosity: Verbosity = Verbosity.NORMAL,
     ) -> str:
-        """Recompose once if ``reply`` byte-repeats Bob's last reply (BOB-022).
+        """Recompose once if ``reply`` (near-)repeats a recent Bob reply (BOB-026 .1).
 
         The verbatim-repeat bug was greedy decoding: an identical prompt returned
         byte-identical text. Sampling temperature (the primary fix) makes that
-        stochastic; this is defense in depth. Only an EXACT duplicate (after strip)
-        of Bob's most-recent prior reply on record triggers a single regeneration —
-        the retry, drawn stochastically, almost always differs. If it is still
-        identical it is kept, so there is never more than one extra generation.
+        stochastic; this is defense in depth. BOB-026 .1 widens it from Bob's single
+        most-recent reply to a WINDOW of his last N replies and from exact-only to
+        verbatim-OR-near-verbatim — so a repeat "через ход" (отказ → another turn →
+        the SAME отказ) no longer slips through. A match triggers a single
+        regeneration; the retry, drawn stochastically, almost always differs. If it is
+        still a repeat it is kept, so there is never more than one extra generation.
         """
-        previous = _last_bob_reply(history)
-        if not previous or reply.strip() != previous.strip():
+        recent = _recent_bob_replies(history, limit=self._repeat_thresholds.window)
+        if not is_bob_repeat(
+            reply,
+            recent,
+            threshold=self._repeat_thresholds.similarity_threshold,
+        ):
             return reply
         return await self._compose_reply(
             text,
@@ -1682,22 +1700,28 @@ def _assemble_shareable_context(
 _BOB_TURN_MARKER = "\nbob: "
 
 
-def _last_bob_reply(history: Sequence[Mapping[str, object]]) -> str:
-    """Return Bob's most-recent reply text from the replayed history, or ``""``.
+def _recent_bob_replies(
+    history: Sequence[Mapping[str, object]], *, limit: int
+) -> tuple[str, ...]:
+    """Return Bob's last ``limit`` reply texts (freshest first) from history (BOB-026 .1).
 
     Episodes are stored as ``"<sender>: <text>\\nbob: <reply>"`` (see
     :meth:`HandleMessage._persist`); this scans the most-recent episodes back to
-    front and recovers the ``bob:`` half so the anti-repeat guard can compare the
-    fresh reply against it (BOB-022). No Bob turn on record yields ``""``.
+    front and recovers the ``bob:`` half of each so the anti-repeat guard can compare
+    the fresh reply against a WINDOW of Bob's own recent replies — not just the last —
+    catching a repeat "через ход". No Bob turn on record yields an empty tuple.
     """
+    replies: list[str] = []
     for item in reversed(list(history)):
+        if len(replies) >= limit:
+            break
         content = item.get("content")
         if not isinstance(content, str):
             continue
         marker = content.rfind(_BOB_TURN_MARKER)
         if marker != -1:
-            return content[marker + len(_BOB_TURN_MARKER) :]
-    return ""
+            replies.append(content[marker + len(_BOB_TURN_MARKER) :])
+    return tuple(replies)
 
 
 # Separator between a turn's sender label and the user's message text inside a

@@ -91,6 +91,7 @@ from bob.application.usecases.sulk_sources import SulkRecoveryStep, SulkTracker
 from bob.application.usecases.update_mood_from_text import UpdateMoodFromText
 from bob.domain.personality.addressivity import AddressivityThresholds
 from bob.domain.personality.brevity import BrevityThresholds
+from bob.domain.personality.conversation import RepeatThresholds
 from bob.domain.personality.engagement import EngagementThresholds, FatigueRates
 from bob.domain.personality.expression import ExpressionFreqs
 from bob.domain.personality.language import DEFAULT_LANGUAGE
@@ -538,6 +539,11 @@ def build_application(
         brevity_thresholds=_build_brevity_thresholds(merged),
         length_guard_enabled=_build_length_guard_enabled(merged),
         length_guard_max_chars=_build_length_guard_max_chars(merged),
+        # Anti-repeat window (BOB-026 .1): the fresh reply is compared against a WINDOW
+        # of Bob's recent replies (not just the last), verbatim OR near-verbatim, so a
+        # repeat "через ход" (отказ → another turn → the SAME отказ) regenerates once.
+        # Tunable via repeat.* (window / similarity_threshold); conservative defaults.
+        repeat_thresholds=_build_repeat_thresholds(merged),
     )
     event_bus.subscribe(MESSAGE_RECEIVED, _as_handler(handle_message))
 
@@ -1139,6 +1145,25 @@ def _build_brevity_thresholds(config: Mapping[str, object]) -> BrevityThresholds
         bad_mood=_float_or(section, "bad_mood", defaults.bad_mood),
         low_engagement=_float_or(section, "low_engagement", defaults.low_engagement),
         tilt_mood=_float_or(section, "tilt_mood", defaults.tilt_mood),
+    )
+
+
+def _build_repeat_thresholds(config: Mapping[str, object]) -> RepeatThresholds:
+    """Build the BOB-026 .1 anti-repeat window thresholds from ``repeat.*``.
+
+    Tunes the own-reply guard: ``window`` (how many of Bob's recent replies the fresh
+    reply is compared against — not just the last, so a repeat "через ход" is caught)
+    and ``similarity_threshold`` (the conservative near-verbatim bar, so a merely
+    topically-similar but substantively different reply never false-fires a needless
+    regeneration). Each falls back to the conservative dataclass default.
+    """
+    section = _section(config, "repeat")
+    defaults = RepeatThresholds()
+    return RepeatThresholds(
+        window=_int(section, "window", defaults.window),
+        similarity_threshold=_float_or(
+            section, "similarity_threshold", defaults.similarity_threshold
+        ),
     )
 
 

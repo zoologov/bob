@@ -34,6 +34,7 @@ from bob.application.usecases.handle_message import (
 )
 from bob.application.usecases.update_mood_from_text import UpdateMoodFromText
 from bob.domain.personality.addressivity import AddressivityThresholds
+from bob.domain.personality.conversation import RepeatThresholds
 from bob.domain.personality.engagement import (
     ConversationalFatigue,
     EngagementThresholds,
@@ -339,6 +340,7 @@ def _build(
     addressivity_thresholds: AddressivityThresholds | None = None,
     length_guard_enabled: bool = False,
     length_guard_max_chars: int = 280,
+    repeat_thresholds: RepeatThresholds | None = None,
 ) -> tuple[HandleMessage, FakeBot, FakeRepo, CapturingProvider]:
     tier0 = CapturingProvider(reply="positive", replies=tier0_replies)
     tier1 = CapturingProvider(reply=reply, replies=tier1_replies)
@@ -385,6 +387,7 @@ def _build(
         addressivity_thresholds=addressivity_thresholds,
         length_guard_enabled=length_guard_enabled,
         length_guard_max_chars=length_guard_max_chars,
+        repeat_thresholds=repeat_thresholds,
     )
     return handler, bot, repo, tier1
 
@@ -1829,6 +1832,71 @@ async def test_guard_is_a_noop_with_no_prior_bob_reply_in_history() -> None:
 
     assert len(tier1.payloads) == 1
     assert bot.final_text == "Первый ответ в диалоге."
+
+
+# --- BOB-026 .1: anti-repeat over a WINDOW (repeat "через ход") ----------------
+
+# The user's reproduced case: the same отказ слips back AFTER another turn wedged
+# between the two identical replies. The window guard (not just the last reply)
+# must still catch it.
+_OLDER_DECLINE = "Нет, таблицу я пока не нарисую — это вне моих возможностей."
+_WEDGED_TURN = "Ada: таблицу?\nbob: " + _OLDER_DECLINE
+_INTERVENING_TURN = "Ada: плохое настроение?\nbob: Да, серое какое-то."
+
+
+async def test_repeat_through_a_turn_triggers_regeneration() -> None:
+    # отказ → другой ход → ТОТ ЖЕ отказ 1-в-1. The previous guard compared only with
+    # the LAST Bob reply ("Да, серое…") and let the repeat through; the window guard
+    # catches the older identical decline and regenerates once.
+    handler, bot, _repo, tier1 = _build(
+        reply="unused",
+        tier1_replies=[_OLDER_DECLINE, "Ладно, давай попробую описать словами."],
+        history=[
+            {"content": _WEDGED_TURN, "event_type": "message"},
+            {"content": _INTERVENING_TURN, "event_type": "message"},
+        ],
+    )
+
+    await handler.handle(_message("слушай, а нарисуй мне всё-таки таблицу подробно ещё раз"))
+
+    assert len(tier1.payloads) == 2
+    assert bot.final_text == "Ладно, давай попробую описать словами."
+
+
+async def test_window_of_one_misses_the_repeat_through_a_turn() -> None:
+    # Proof the WINDOW is the fix: with window=1 (the old behaviour — compare only the
+    # last reply) the same repeat "через ход" is NOT caught — the older identical
+    # decline is outside the one-reply window, so no regeneration fires.
+    handler, bot, _repo, tier1 = _build(
+        reply="unused",
+        tier1_replies=[_OLDER_DECLINE, "Ладно, давай попробую описать словами."],
+        history=[
+            {"content": _WEDGED_TURN, "event_type": "message"},
+            {"content": _INTERVENING_TURN, "event_type": "message"},
+        ],
+        repeat_thresholds=RepeatThresholds(window=1),
+    )
+
+    await handler.handle(_message("слушай, а нарисуй мне всё-таки таблицу подробно ещё раз"))
+
+    assert len(tier1.payloads) == 1
+    assert bot.final_text == _OLDER_DECLINE
+
+
+async def test_near_verbatim_reply_triggers_regeneration() -> None:
+    # Near-verbatim (a minor edit of the last reply) is caught too — not just an exact
+    # byte match. The guard regenerates once and commits the genuinely-different retry.
+    near = _OLDER_DECLINE.replace("пока не нарисую", "сейчас не нарисую")
+    handler, bot, _repo, tier1 = _build(
+        reply="unused",
+        tier1_replies=[near, "Ладно, опишу словами."],
+        history=[{"content": _WEDGED_TURN, "event_type": "message"}],
+    )
+
+    await handler.handle(_message("слушай, а нарисуй мне всё-таки таблицу подробно ещё раз"))
+
+    assert len(tier1.payloads) == 2
+    assert bot.final_text == "Ладно, опишу словами."
 
 
 # --- BOB-022: user repeats themselves → Bob notices (voice directive) ----------

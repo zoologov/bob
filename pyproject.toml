@@ -114,6 +114,10 @@ ignore = [
 # look-alikes are intentional (the heuristic matches real Russian text) —
 # RUF001/RUF002/RUF003 do not apply to these.
 "src/bob/domain/personality/brevity.py" = ["RUF001", "RUF002", "RUF003"]
+# The conversation module (BOB-022 + BOB-026 .1) carries Russian persona/policy
+# docstrings + comments ("повтор через ход", "анти-ложно-срабатывание") whose
+# Cyrillic look-alikes are intentional — RUF001/RUF002/RUF003 do not apply to these.
+"src/bob/domain/personality/conversation.py" = ["RUF001", "RUF002", "RUF003"]
 # The Goal Engine (BOB-015) carries Russian persona/policy docstrings + blocked-reason
 # literals ("требует внешней агентности", "ждёт незавершённых задач") whose Cyrillic
 # look-alikes are intentional — RUF001/RUF002/RUF003 do not apply to these.
@@ -146,6 +150,16 @@ ignore = [
     "ARG001",
     "PLR2004",
     "RUF001",
+    "RUF003",
+]
+# The conversation tests (BOB-022 + BOB-026 .1) assert on Russian reply/decline
+# literals whose Cyrillic look-alikes are intentional (→ RUF001/RUF002/RUF003).
+"tests/domain/personality/test_conversation.py" = [
+    "S101",
+    "ARG001",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
     "RUF003",
 ]
 "tests/**/*.py" = ["S101", "ARG001", "PLR2004"]
