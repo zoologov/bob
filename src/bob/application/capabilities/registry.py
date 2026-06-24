@@ -36,6 +36,10 @@ class UnknownCapabilityError(LookupError):
     """Raised when dispatch is asked for a capability that was never registered."""
 
 
+class CapabilityNotAllowedError(LookupError):
+    """Raised when the safe dispatcher is asked for a capability off its allowlist."""
+
+
 class CapabilityRegistry:
     """An ordered, name-unique index of capabilities GUPPI can advertise and run."""
 
@@ -71,6 +75,36 @@ class CapabilityRegistry:
             f"- {cap.name}: {cap.description}" for cap in self._capabilities.values()
         ]
         return "\n".join(lines)
+
+
+class SafeCapabilityDispatcher:
+    """An allowlist-restricted view over a registry — the autonomous safe boundary.
+
+    The hard boundary for the self-directed tick (BOB-015 .3): it wraps a
+    :class:`CapabilityRegistry` but exposes EXCLUSIVELY the intersection of the
+    registry and an explicit safe-allowlist (``goals.safe_capabilities``). A
+    capability outside the allowlist is unreachable — :meth:`allows` returns
+    ``False`` and :meth:`dispatch` raises :class:`CapabilityNotAllowedError` — so an
+    external-agency or arbitrary capability can NEVER be executed on the autonomous
+    path by construction, no matter what the registry holds. An empty allowlist
+    means nothing is runnable autonomously (the conservative default).
+    """
+
+    def __init__(self, registry: CapabilityRegistry, *, allowlist: tuple[str, ...]) -> None:
+        self._registry = registry
+        self._allowlist = frozenset(allowlist)
+
+    def allows(self, name: str) -> bool:
+        """Whether ``name`` is on the safe-allowlist (runnable autonomously)."""
+        return name in self._allowlist
+
+    async def dispatch(self, name: str, args: Mapping[str, object]) -> object:
+        """Run the named capability ONLY if allow-listed; raise otherwise."""
+        if not self.allows(name):
+            raise CapabilityNotAllowedError(
+                f"capability not on the autonomous safe-allowlist: {name}"
+            )
+        return await self._registry.dispatch(name, args)
 
 
 def _tool_definition(capability: Capability) -> ToolDefinition:

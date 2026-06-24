@@ -43,6 +43,7 @@ from typing import TYPE_CHECKING, cast
 from bob.application.authz import Authorizer, SenderPerception
 from bob.application.capabilities import (
     CapabilityRegistry,
+    SafeCapabilityDispatcher,
     make_recall_memory_capability,
     make_search_memory_capability,
 )
@@ -82,6 +83,7 @@ from bob.application.usecases.heartbeat import (
     ReflectTick,
 )
 from bob.application.usecases.plan_goal import LlmPlanner, PlanGoal
+from bob.application.usecases.pursue_goals import PursueGoalsTick
 from bob.application.usecases.reflection_parser import HeuristicReflectionParser
 from bob.application.usecases.relationship_sources import RelationshipTracker
 from bob.application.usecases.run_genesis import RunGenesis
@@ -211,6 +213,10 @@ _DEFAULT_LENGTH_GUARD_MAX_CHARS = 280
 # make ZERO LLM calls.
 _PROACTIVE_TICK_MULTIPLIER = 1
 
+# Default cadence of the self-directed goal-pursuit tick (BOB-015 .3) when wired:
+# rare (≈15 min) and under the governance ceiling; overridable via goals.tick_seconds.
+_DEFAULT_PURSUIT_TICK_SECONDS = 900
+
 # Default self-evolution learning rates (BOB-013 Фаза 2); overridable via
 # personality.evolution.{alpha,beta}. Sourced from the pure kernel's constants.
 EVOLUTION_ALPHA = _EVOLUTION_ALPHA
@@ -257,6 +263,9 @@ class Application:
     proactivity_store: SqliteProactivityStore
     proactivity_engine: ProactivityEngine
     proactive_tick: ProactiveTick
+    # Self-directed goal-pursuit tick (BOB-015 .3): wired only when
+    # ``goals.pursuit_enabled`` is on (conservative default off → runtime as before).
+    pursue_goals_tick: PursueGoalsTick | None = None
 
     async def startup(self) -> GenesisResult:
         """Initialise persistence, awaken Bob on first boot, load his soul.
@@ -641,6 +650,25 @@ def build_application(
     )
     proactive_tick = ProactiveTick(engine=proactivity_engine)
 
+    # Self-directed goal-pursuit (BOB-015 .3): built ONLY when the owner has switched
+    # autonomy on (``goals.pursuit_enabled``). It reuses the SAME governance + the
+    # kill-switch the proactive chat uses, the Goal Engine store, and a safe-allowlist
+    # view over the registry (the hard stage-C boundary). Off (the default) → None, and
+    # the runtime schedules exactly the same ticks as before (drop-in, no behaviour
+    # change). The seed is shared so the autonomous choice is reproducible in tests.
+    pursue_goals_tick = _build_pursue_goals_tick(
+        merged,
+        goal_store=goal_store,
+        pursuit_store=proactivity_store,
+        history=proactivity_store,
+        registry=registry,
+        gateway=multibot.reply_gateway(BotIdentity.BOB),
+        personality=personality,
+        repo=memory_repo,
+        clock=resolved_clock,
+        seed=proactivity_seed,
+    )
+
     runtime = AgentRuntime(
         background_tasks=_background_tasks(
             merged,
@@ -649,6 +677,7 @@ def build_application(
             mood_drift_tick=mood_drift_tick,
             reflect_tick=reflect_tick,
             proactive_tick=proactive_tick,
+            pursue_goals_tick=pursue_goals_tick,
         )
     )
 
@@ -670,6 +699,7 @@ def build_application(
         proactivity_store=proactivity_store,
         proactivity_engine=proactivity_engine,
         proactive_tick=proactive_tick,
+        pursue_goals_tick=pursue_goals_tick,
     )
 
 
@@ -813,6 +843,94 @@ def _build_proactivity_engine(
         # The sulk veto (BOB-014 .2b): while обижен Bob does not write first.
         sulk=sulk,
     )
+
+
+def _build_pursue_goals_tick(
+    config: Mapping[str, object],
+    *,
+    goal_store: SqliteGoalStore,
+    pursuit_store: SqliteProactivityStore,
+    history: SqliteProactivityStore,
+    registry: CapabilityRegistry,
+    gateway: ReplyGateway,
+    personality: PersonalityState,
+    repo: SqliteMemoryRepo,
+    clock: Clock,
+    seed: int | None,
+) -> PursueGoalsTick | None:
+    """Assemble the self-directed goal-pursuit tick, or ``None`` when off (BOB-015 .3).
+
+    Built ONLY when ``goals.pursuit_enabled`` is on (conservative default off): the
+    self-directed tick is the most safety-critical path, so it stays unwired unless
+    the owner deliberately enables it (unwired → the runtime behaves exactly as
+    before). It reuses the SAME :class:`Governance` ceilings and the kill-switch the
+    proactive chat uses (one config governs both reach-out paths), the Goal Engine
+    store (only an APPROVED/ACTIVE goal is ever advanced), and a
+    :class:`SafeCapabilityDispatcher` over the registry restricted to
+    ``goals.safe_capabilities`` — the hard boundary that keeps an external-agency or
+    arbitrary capability unreachable on the autonomous path. The window-count seam
+    (over ``goal_progress`` episodes) enforces ``goals.max_tasks_per_window`` on top
+    of governance. The seed is shared so the autonomous choice is reproducible.
+    """
+    if not _build_pursuit_enabled(config):
+        return None
+    telegram = _section(config, "telegram")
+    sources = RepoProactivitySources(repo, clock=clock)
+    dispatcher = SafeCapabilityDispatcher(
+        registry, allowlist=_build_safe_capabilities(config)
+    )
+    return PursueGoalsTick(
+        persona_id=_BOB_PERSONA,
+        chat_id=_int(telegram, "chat_id", 0),
+        goal_store=goal_store,
+        pursuit_store=pursuit_store,
+        governance=Governance(),
+        history=history,
+        window=sources,
+        dispatcher=dispatcher,
+        episodes=repo,
+        gateway=gateway,
+        personality=personality,
+        clock=clock,
+        # Deterministic-by-seed, NOT cryptographic: the same seed knob that pins the
+        # proactive draw also pins which safe capability the tick picks.
+        rng=random.Random(_resolve_seed(config, seed)),  # noqa: S311
+        safe_capabilities=_build_safe_capabilities(config),
+        max_tasks_per_window=_build_max_tasks_per_window(config),
+    )
+
+
+def _build_pursuit_enabled(config: Mapping[str, object]) -> bool:
+    """Whether the self-directed goal-pursuit tick is wired (``goals.pursuit_enabled``).
+
+    Off by default — the conservative start of autonomy-execution: the tick is the
+    most safety-critical path, so it is scheduled ONLY when the owner explicitly
+    switches it on. Tolerates an env-string boolean.
+    """
+    return _flag(_section(config, "goals"), "pursuit_enabled")
+
+
+def _build_safe_capabilities(config: Mapping[str, object]) -> tuple[str, ...]:
+    """The autonomous safe-allowlist (``goals.safe_capabilities``) as capability names.
+
+    Only these capability names are runnable on the self-directed path; anything
+    else (external-agency / arbitrary) is unreachable. An absent or empty list means
+    the tick runs no capability at all (the conservative default).
+    """
+    section = _section(config, "goals")
+    raw = section.get("safe_capabilities", [])
+    if not isinstance(raw, (list, tuple)):
+        return ()
+    return tuple(str(name) for name in raw if isinstance(name, str) and name)
+
+
+def _build_max_tasks_per_window(config: Mapping[str, object]) -> int:
+    """The per-window autonomous-advance ceiling (``goals.max_tasks_per_window``).
+
+    A rate-limit ON TOP of the governance per-window ceiling — at most this many
+    goal advances per window. Falls back to a conservative ``1`` when unset.
+    """
+    return _int(_section(config, "goals"), "max_tasks_per_window", 1)
 
 
 def _fascination_initial_intensity(config: Mapping[str, object]) -> float:
@@ -1223,6 +1341,7 @@ def _background_tasks(
     mood_drift_tick: MoodDriftTick,
     reflect_tick: ReflectTick,
     proactive_tick: ProactiveTick,
+    pursue_goals_tick: PursueGoalsTick | None = None,
 ) -> list[BackgroundTask]:
     """Build the supervised background tasks: polling + the heartbeat ticks.
 
@@ -1230,7 +1349,9 @@ def _background_tasks(
     proactivity tick runs on the heartbeat cadence like its siblings and is wrapped
     in the same :data:`_TICK_RETRY_POLICY` so a transient LLM/network blip on a
     firing tick is retried before isolation — it is cheap by construction (most
-    ticks make ZERO LLM calls).
+    ticks make ZERO LLM calls). The self-directed goal-pursuit tick (BOB-015 .3) is
+    scheduled ONLY when wired (``goals.pursuit_enabled``), on its own (rare) cadence
+    ``goals.tick_seconds``; unwired (the default) the schedule is exactly as before.
     """
     runtime = _section(config, "runtime")
     heartbeat = float(_int(runtime, "heartbeat_seconds", _DEFAULT_HEARTBEAT_SECONDS))
@@ -1238,7 +1359,7 @@ def _background_tasks(
     async def poll() -> None:
         await multibot.poll_once()
 
-    return [
+    tasks: list[BackgroundTask] = [
         periodic(poll, interval_seconds=0.0),
         periodic(
             inner_monologue_tick.run,
@@ -1261,6 +1382,24 @@ def _background_tasks(
             retry=_TICK_RETRY_POLICY,
         ),
     ]
+    if pursue_goals_tick is not None:
+        tasks.append(
+            periodic(
+                pursue_goals_tick.run,
+                interval_seconds=_build_pursuit_tick_seconds(config),
+                retry=_TICK_RETRY_POLICY,
+            )
+        )
+    return tasks
+
+
+def _build_pursuit_tick_seconds(config: Mapping[str, object]) -> float:
+    """The self-directed pursuit cadence (``goals.tick_seconds``), in seconds.
+
+    A rare cadence (the default is 900s ≈ 15 min) under the governance ceiling.
+    Falls back to that conservative default when unset.
+    """
+    return float(_int(_section(config, "goals"), "tick_seconds", _DEFAULT_PURSUIT_TICK_SECONDS))
 
 
 def _monotonic() -> float:

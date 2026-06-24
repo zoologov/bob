@@ -128,6 +128,14 @@ ignore = [
 # owner-facing plan/status literals whose Cyrillic look-alikes are intentional —
 # RUF001/RUF002/RUF003 do not apply to these.
 "src/bob/application/usecases/plan_goal.py" = ["RUF001", "RUF002", "RUF003"]
+# The self-directed pursue_goals use-case (BOB-015 .3) carries Russian persona/policy
+# docstrings + owner-facing progress/proposal literals ("Занялся целью", "стадия C")
+# whose Cyrillic look-alikes are intentional — RUF001/RUF002/RUF003 do not apply.
+"src/bob/application/usecases/pursue_goals.py" = ["RUF001", "RUF002", "RUF003"]
+# build_application is the composition ROOT: it wires every adapter/use-case/tick in
+# one place by design (a single readable assembly), so the per-function statement
+# ceiling does not apply to it — splitting it would only scatter the wiring.
+"src/bob/app.py" = ["PLR0915"]
 # GUPPI's owner commands (BOB-003 + BOB-015 .2) carry Russian command usage/reply
 # literals whose Cyrillic look-alikes are intentional — RUF001/RUF002/RUF003 here.
 "src/bob/infrastructure/telegram/guppi.py" = ["RUF001", "RUF002", "RUF003"]
@@ -159,6 +167,23 @@ ignore = [
     "RUF001",
     "RUF002",
     "RUF003",
+]
+# The pursue_goals tick tests (BOB-015 .3) assert on Russian goal/progress/proposal
+# literals + comments whose Cyrillic look-alikes are intentional, and a couple of
+# tests reach into protected tick attrs / hold local imports for a focused check
+# (→ RUF001/RUF002/RUF003, SLF001, PLC0415).
+"tests/application/usecases/test_pursue_goals.py" = [
+    "S101",
+    "ARG001",
+    "ARG002",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+    "RUF059",
+    "SLF001",
+    "PLC0415",
+    "S311",
 ]
 # The profanity-perception tests (BOB-014 .2b) assert on short Russian мат/insult
 # literals whose Cyrillic look-alikes are intentional (→ RUF001/RUF003).

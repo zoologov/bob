@@ -236,6 +236,15 @@ DEFAULT_CONFIG: Config = {
     "goals": {
         "require_plan_approval": True,
         "planner_tier": 1,
+        # ``pursuit_enabled`` (BOB-015 .3) is the master switch for the self-directed
+        # tick — OFF by default (conservative start of autonomy-execution): the tick
+        # is scheduled ONLY when the owner switches it on. ``tick_seconds`` is its
+        # (rare) cadence; ``max_tasks_per_window`` rate-limits advances on top of the
+        # governance ceiling; ``safe_capabilities`` is the allowlist the autonomous
+        # path may run (an empty default → it runs no capability); ``pursuit_stopped``
+        # is the kill-switch default (false = Bob may pursue, but a goal must still be
+        # APPROVED).
+        "pursuit_enabled": False,
         "tick_seconds": 900,
         "max_tasks_per_window": 1,
         "pursuit_stopped": False,

@@ -11,13 +11,13 @@
 
 ## Текущий беад
 
-**Беад:** `bob-xnz.3` — dev: самонаправленный тик PursueGoalsTick (следующий).
+**Беад:** `bob-xnz.4` — test: US-1..6 + guardrails автономности (следующий).
 
 ## Прогресс
 
-- [x] `.1` Goal Engine + persist — зелёный (1424 passed; машина переходов + граф + SqliteGoalStore; authz/стадия-C закодированы в домене)
-- [x] `.2` Planner + двойной апрув + контроль owner — зелёный (1453 passed; mypy+ruff чисто, lint --strict 0 violations)
-- [ ] `.3` самонаправленный тик PursueGoalsTick
+- [x] `.1` Goal Engine + persist — зелёный (1424 passed; машина переходов + граф; authz/стадия-C в домене)
+- [x] `.2` Planner + двойной апрув + контроль owner — зелёный (1453 passed)
+- [x] `.3` самонаправленный тик PursueGoalsTick — зелёный (1466 passed; gate-порядок + SafeCapabilityDispatcher + pursuit_enabled OFF по умолчанию)
 - [ ] `.4` test · `.5` review · `.6` tech-writer
 
 ## Статусы беадов
