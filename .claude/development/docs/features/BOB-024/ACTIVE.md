@@ -9,9 +9,7 @@
 
 ---
 
-## Текущий беад
-
-**Беад:** `bob-09y.5` — tech-writer (architecture.md рус) (следующий).
+## Статус: ВСЕ ВОЛНЫ ЗАКРЫТЫ → PR
 
 ## Прогресс
 
@@ -19,7 +17,7 @@
 - [x] `.2` байес+интеграция — зелёный (1349 passed)
 - [x] `.3` test — зелёный (1363 passed, cov 98%: brevity 100% / voice 100% / handle_message 98%)
 - [x] `.4` review — **APPROVE** без блокеров (1 минор: RNG-бросок перенесён за addressivity-гейт)
-- [ ] `.5` tech-writer
+- [x] `.5` tech-writer — architecture.md обновлён, sync-check exit 0, lint 0
 
 ## Статусы беадов
 
@@ -29,7 +27,7 @@
 | bob-09y.2 | dev байес+интеграция | .1 | done |
 | bob-09y.3 | test | .1,.2 | done |
 | bob-09y.4 | review | .3 | done |
-| bob-09y.5 | tech-writer | .4 | in_progress |
+| bob-09y.5 | tech-writer | .4 | done |
 | bob-09y.3 | test | .1,.2 | blocked |
 | bob-09y.4 | review | .3 | blocked |
 | bob-09y.5 | tech-writer | .4 | blocked |
