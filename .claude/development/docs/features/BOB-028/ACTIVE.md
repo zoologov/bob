@@ -9,17 +9,16 @@
 
 ---
 
-## Текущий беад
-
-**Беад:** `bob-7xn.5` — review: безопасность по конструкции (следующий).
+## Статус: ВСЕ ВОЛНЫ ЗАКРЫТЫ → PR
 
 ## Прогресс
 
 - [x] `.1` модель правила + persist — зелёный (Lever-allowlist без рычага безопасности)
 - [x] `.2` детектор паттернов — зелёный (1681 passed; только PROPOSED, рычаг из allowlist)
 - [x] `.3` апрув-флоу + мягкое применение — зелёный (1720 passed; наклон-не-перехват; OFF default)
-- [x] `.4` test — зелёный (1749 passed; cov 98%, BOB-028-модули 100%; safety-инварианты ДОКАЗАНЫ: свип состояний, allowlist по конструкции, наклон-не-перехват, owner-only, OFF)
-- [ ] `.5` review · `.6` tech-writer
+- [x] `.4` test — зелёный (1749 passed; cov 98%, BOB-028-модули 100%; safety ДОКАЗАНЫ)
+- [x] `.5` review — **APPROVE** без блокеров (9 инвариантов ✓ по конструкции, тройная defense-in-depth; минор: proactivity collect-not-apply → задокументировать в .6)
+- [ ] `.6` tech-writer
 
 ## Статусы беадов
 
@@ -29,7 +28,8 @@
 | bob-7xn.2 | dev детектор | .1 | done |
 | bob-7xn.3 | dev апрув+применение | .1,.2 | done |
 | bob-7xn.4 | test | .1,.2,.3 | done |
-| bob-7xn.5 | review | .4 | in_progress |
+| bob-7xn.5 | review | .4 | done |
+| bob-7xn.6 | tech-writer | .5 | in_progress |
 | bob-7xn.4 | test | .1,.2,.3 | blocked |
 | bob-7xn.5 | review | .4 | blocked |
 | bob-7xn.6 | tech-writer | .5 | blocked |
