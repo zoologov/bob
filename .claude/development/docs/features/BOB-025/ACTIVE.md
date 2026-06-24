@@ -9,16 +9,15 @@
 
 ---
 
-## Текущий беад
-
-**Беад:** `bob-v0k.4` — review (следующий).
+## Статус: ВСЕ ВОЛНЫ ЗАКРЫТЫ → PR
 
 ## Прогресс
 
 - [x] `.1` трекер conversation_floor + персист — зелёный (1584 passed)
 - [x] `.2` интеграция в handle_message + конфиг — зелёный (1599 passed)
-- [x] `.3` test — зелёный (1611 passed; cov 98%, floor 100%); + фикс резилентности (резолв-load best-effort) + переворот теста
-- [ ] `.4` review · `.5` tech-writer · PR #29 · merge · перезапуск
+- [x] `.3` test — зелёный (1611 passed; cov 98%, floor 100%) + фикс резилентности
+- [x] `.4` review — **APPROVE** без блокеров (все 9 пунктов ✓; новые модули 100%)
+- [x] `.5` tech-writer — architecture.md обновлён, sync-check exit 0, lint 0
 
 ## Статусы беадов
 
@@ -27,8 +26,8 @@
 | bob-v0k.1 | dev трекер+персист | — | done |
 | bob-v0k.2 | dev интеграция+конфиг | .1 | done |
 | bob-v0k.3 | test | .1,.2 | done |
-| bob-v0k.4 | review | .3 | in_progress |
-| bob-v0k.5 | tech-writer | .4 | blocked |
+| bob-v0k.4 | review | .3 | done |
+| bob-v0k.5 | tech-writer | .4 | in_progress |
 | bob-v0k.3 | test | .1,.2 | blocked |
 | bob-v0k.4 | review | .3 | blocked |
 | bob-v0k.5 | tech-writer | .4 | blocked |
