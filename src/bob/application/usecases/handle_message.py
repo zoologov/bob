@@ -707,13 +707,6 @@ class HandleMessage:
         # real elapsed time since the last turn first, so appetite always recovers.
         interest = await self._topic_interest(soul, event.text)
         level = self._decide_engagement(soul, interest, relationship)
-        # Decide how SHORT Bob answers this turn (BOB-024): the answer-demand of the
-        # message x interest x mood/appetite x the BOB-018 form_hint → a Verbosity. It
-        # becomes the single final length directive + (on a terse turn) the short-answer
-        # few-shot. Computed up front so it threads through every (re)compose; the LOW
-        # answer-demand is also reused by the optional length guard after generation.
-        demand = classify_answer_demand(text=event.text)
-        verbosity = self._decide_verbosity(soul, demand, interest, level, plan, interlocutor)
         # Addressivity gate (BOB-023): decide WHO this message is for and whether to
         # take the turn at all, BEFORE composing anything. A message clearly FOR Bob
         # always engages; one aimed at another participant is left alone (SILENT) unless
@@ -739,6 +732,15 @@ class HandleMessage:
             await self._react_only(event, soul)
             await self._record_owner_activity()
             return
+        # Decide how SHORT Bob answers this ENGAGE turn (BOB-024): answer-demand of the
+        # message x interest x mood/appetite x the BOB-018 form_hint → a Verbosity, the
+        # single final length directive + (on a terse turn) the short-answer few-shot.
+        # Computed only after the addressivity gate commits to engaging — a SILENT/REACT
+        # turn never needs it and never spends the seeded brevity roll, so addressivity's
+        # own roll stays unperturbed. The LOW answer-demand is reused by the optional
+        # length guard after generation.
+        demand = classify_answer_demand(text=event.text)
+        verbosity = self._decide_verbosity(soul, demand, interest, level, plan, interlocutor)
         # Guest (restricted social) mode (BOB-019 bob-apv.2 — the security core).
         # An unauthorized GUEST reached Bob's social path (routed in by multibot),
         # so Bob may talk to them like a person, but NEVER as a trusted peer:
