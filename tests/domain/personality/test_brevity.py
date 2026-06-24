@@ -16,6 +16,7 @@ from bob.domain.personality.brevity import (
     AnswerDemand,
     BrevityThresholds,
     Verbosity,
+    clamp_reply,
     classify_answer_demand,
     decide_verbosity,
 )
@@ -385,3 +386,35 @@ class TestBrevityThresholds:
     def test_rejects_out_of_range_frequency(self) -> None:
         with pytest.raises(ValueError, match="upgrade_freq"):
             BrevityThresholds(upgrade_freq=1.5)
+
+
+# --- clamp_reply (опц. страж длины) ------------------------------------------
+
+
+class TestClampReply:
+    """Лёгкое ужатие переразвёрнутого ответа без перегенерации."""
+
+    def test_short_reply_is_left_untouched(self) -> None:
+        text = "Да, готово."
+        assert clamp_reply(text, max_chars=200) == text
+
+    def test_long_reply_is_trimmed_to_a_sentence_boundary(self) -> None:
+        text = "Да, готово. Я проверил всё дважды и записал результат в лог."
+        clamped = clamp_reply(text, max_chars=12)
+        # Берём первую законченную мысль, не рубим на полуслове.
+        assert clamped == "Да, готово."
+        assert len(clamped) <= len(text)
+
+    def test_trims_on_question_and_exclamation_boundaries_too(self) -> None:
+        text = "Получилось? Ага, всё на месте, проверил."
+        clamped = clamp_reply(text, max_chars=12)
+        assert clamped == "Получилось?"
+
+    def test_no_sentence_boundary_keeps_text_intact(self) -> None:
+        # Нет точки/знака конца — ужимать по предложению нечего, отдаём как есть
+        # (страж лёгкий, не рубит на полуслове).
+        text = "это одна длинная фраза без знаков конца предложения вообще"
+        assert clamp_reply(text, max_chars=10) == text
+
+    def test_empty_text_is_returned_as_is(self) -> None:
+        assert clamp_reply("", max_chars=10) == ""

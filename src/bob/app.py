@@ -87,6 +87,7 @@ from bob.application.usecases.run_genesis import RunGenesis
 from bob.application.usecases.sulk_sources import SulkRecoveryStep, SulkTracker
 from bob.application.usecases.update_mood_from_text import UpdateMoodFromText
 from bob.domain.personality.addressivity import AddressivityThresholds
+from bob.domain.personality.brevity import BrevityThresholds
 from bob.domain.personality.engagement import EngagementThresholds, FatigueRates
 from bob.domain.personality.expression import ExpressionFreqs
 from bob.domain.personality.language import DEFAULT_LANGUAGE
@@ -197,6 +198,11 @@ _SURFACE_OLD_FREQ = 0.15
 # Small: a genuinely interesting, well-engaged exchange brightens Bob a touch — it
 # accrues over a real exchange rather than jolting his mood.
 _DEFAULT_ENGAGEMENT_MOOD_LIFT = 0.1
+
+# Default char ceiling for the BOB-024 brevity length guard (mirrors HandleMessage's
+# default). The guard is off by default; when on, an over-long reply to a LOW-demand
+# message is lightly clamped to its first finished thought at this ceiling.
+_DEFAULT_LENGTH_GUARD_MAX_CHARS = 280
 
 # The proactivity engine ticks on the heartbeat cadence: cheap by construction
 # (the urge/governance decision is pure, defaulting to silence), so most ticks
@@ -503,6 +509,15 @@ def build_application(
         # tunable via addressivity.*; a 1:1 owner thread always engages as before.
         bob_user_id_source=multibot.bob_user_id,
         addressivity_thresholds=_build_addressivity_thresholds(merged),
+        # Brevity seam (BOB-024): Bob's reply LENGTH stops being a constant — the
+        # answer-demand of the message x interest x mood/appetite x the BOB-018 form_hint
+        # decide a verbosity that becomes the single final length directive + (on a terse
+        # turn) the short-answer few-shot that beats Qwen's verbosity prior. The optional
+        # length guard is a conservative backstop, OFF by default. Thresholds + guard are
+        # tunable via brevity.*; unset, the bayes runs with conservative defaults.
+        brevity_thresholds=_build_brevity_thresholds(merged),
+        length_guard_enabled=_build_length_guard_enabled(merged),
+        length_guard_max_chars=_build_length_guard_max_chars(merged),
     )
     event_bus.subscribe(MESSAGE_RECEIVED, _as_handler(handle_message))
 
@@ -942,6 +957,51 @@ def _build_addressivity_thresholds(
         ),
         react_chance=_float_or(section, "react_chance", defaults.react_chance),
     )
+
+
+def _build_brevity_thresholds(config: Mapping[str, object]) -> BrevityThresholds:
+    """Build the BOB-024 brevity verbosity thresholds from ``brevity.thresholds.*``.
+
+    Tunes the verbosity decision: ``interest_upgrade`` (the high interest bar that can
+    rarely upgrade a turn's length) at ``upgrade_freq`` (the small seeded chance);
+    ``bad_mood`` / ``low_engagement`` (the mood/appetite points that pull length a step
+    down); ``tilt_mood`` (the soft-mood point where a terse form_hint adds a downshift).
+    Each falls back to the conservative dataclass default — so Bob rarely unfurls "from
+    interest" and trims only on a clearly bad mood / thin appetite.
+    """
+    section = _section(_section(config, "brevity"), "thresholds")
+    defaults = BrevityThresholds()
+    return BrevityThresholds(
+        interest_upgrade=_float_or(
+            section, "interest_upgrade", defaults.interest_upgrade
+        ),
+        upgrade_freq=_float_or(section, "upgrade_freq", defaults.upgrade_freq),
+        bad_mood=_float_or(section, "bad_mood", defaults.bad_mood),
+        low_engagement=_float_or(section, "low_engagement", defaults.low_engagement),
+        tilt_mood=_float_or(section, "tilt_mood", defaults.tilt_mood),
+    )
+
+
+def _build_length_guard_enabled(config: Mapping[str, object]) -> bool:
+    """Whether the BOB-024 brevity length guard is on (``brevity.length_guard.enabled``).
+
+    Off by default (the bayes — directive + few-shot — is the mechanism); when on, an
+    over-long reply to a LOW-demand message is lightly clamped to its first finished
+    thought (no regeneration). Tolerates an env-string ``"true"``/``"false"``.
+    """
+    section = _section(_section(config, "brevity"), "length_guard")
+    return _flag(section, "enabled")
+
+
+def _build_length_guard_max_chars(config: Mapping[str, object]) -> int:
+    """The BOB-024 length-guard char ceiling (``brevity.length_guard.max_chars``).
+
+    The threshold above which a LOW-demand reply is clamped to its first finished
+    thought when the guard is enabled. Falls back to the conservative default;
+    HandleMessage validates it is positive.
+    """
+    section = _section(_section(config, "brevity"), "length_guard")
+    return _int(section, "max_chars", _DEFAULT_LENGTH_GUARD_MAX_CHARS)
 
 
 def _build_fatigue_rates(config: Mapping[str, object]) -> FatigueRates:

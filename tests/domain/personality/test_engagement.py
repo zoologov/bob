@@ -23,6 +23,7 @@ from bob.domain.personality.engagement import (
     EngagementLevel,
     EngagementThresholds,
     FatigueRates,
+    appetite_of,
     decide_engagement,
     engagement_mood_lift,
     topic_interest,
@@ -318,3 +319,22 @@ def test_terse_or_uninteresting_turn_does_not_lift_mood() -> None:
     assert engagement_mood_lift(EngagementLevel.TERSE, interesting=True) == 0.0
     assert engagement_mood_lift(EngagementLevel.FULL, interesting=False) == 0.0
     assert engagement_mood_lift(EngagementLevel.DECLINE, interesting=True) == 0.0
+
+
+# --- appetite_of: EngagementLevel → [0, 1] аппетит (BOB-024) ------------------
+
+
+def test_appetite_of_is_monotonic_full_to_decline() -> None:
+    # Аппетит как float для decide_verbosity (BOB-024): убывает от FULL к DECLINE.
+    full = appetite_of(EngagementLevel.FULL)
+    playful = appetite_of(EngagementLevel.PLAYFUL)
+    terse = appetite_of(EngagementLevel.TERSE)
+    decline = appetite_of(EngagementLevel.DECLINE)
+    assert full == 1.0
+    assert decline == 0.0
+    assert full >= playful > terse > decline
+
+
+def test_appetite_of_is_bounded_unit_interval() -> None:
+    for level in EngagementLevel:
+        assert 0.0 <= appetite_of(level) <= 1.0

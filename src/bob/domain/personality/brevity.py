@@ -34,9 +34,15 @@ __all__ = [
     "AnswerDemand",
     "BrevityThresholds",
     "Verbosity",
+    "clamp_reply",
     "classify_answer_demand",
     "decide_verbosity",
 ]
+
+# Sentence-ending marks the optional length guard trims on: the first finished
+# thought up to (and including) one of these is kept; a reply with none is left
+# whole (the guard is light — it never cuts mid-word).
+_SENTENCE_ENDINGS = (".", "?", "!", "…")
 
 # --- answer-demand: словари и пороги эвристики --------------------------------
 # Кириллические литералы намеренны: эвристика матчит реальный русский текст.
@@ -368,3 +374,32 @@ def _at_least(level: Verbosity, floor: Verbosity) -> Verbosity:
     if _VERBOSITY_LADDER.index(level) < _VERBOSITY_LADDER.index(floor):
         return floor
     return level
+
+
+def clamp_reply(text: str, *, max_chars: int) -> str:
+    """Лёгкое ужатие переразвёрнутого ответа до первой мысли — чисто (BOB-024).
+
+    Опциональный страж длины (за флагом ``brevity.length_guard.enabled``, выкл по
+    умолчанию): когда ответ на простой вопрос вышел длиннее ``max_chars``, берём
+    первую законченную мысль — текст до первого знака конца предложения
+    (``. ? ! …``) включительно — БЕЗ перегенерации и БЕЗ обрезки на полуслове.
+    Страховка, а не основной рычаг (тот — байес директивы + few-shot).
+
+    Не трогаем текст, если он уже в пределах ``max_chars`` или если в нём нет ни
+    одного знака конца предложения (рубить по предложению нечего — отдаём как есть,
+    чтобы не обрубать мысль на полуслове). Чисто и детерминировано.
+    """
+    stripped = text.strip()
+    if len(stripped) <= max_chars:
+        return text
+    cut = _first_sentence_end(stripped)
+    if cut is None:
+        return text
+    return stripped[: cut + 1]
+
+
+def _first_sentence_end(text: str) -> int | None:
+    """Индекс первого знака конца предложения (``. ? ! …``), или ``None``."""
+    positions = [text.find(mark) for mark in _SENTENCE_ENDINGS]
+    found = [index for index in positions if index >= 0]
+    return min(found) if found else None
