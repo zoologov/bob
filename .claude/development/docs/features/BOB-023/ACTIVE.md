@@ -9,9 +9,7 @@
 
 ---
 
-## Текущий беад
-
-**Беад:** `bob-0vh.5` — tech-writer (architecture.md рус) (следующий).
+## Статус: ВСЕ ВОЛНЫ ЗАКРЫТЫ → PR
 
 ## Прогресс
 
@@ -19,7 +17,7 @@
 - [x] `.2` детектор Addressivity + политика + SILENT — зелёный (1272 passed)
 - [x] `.3` test — зелёный (1297 passed, cov 98%: addressivity 99% / handle_message 97%)
 - [x] `.4` review — **APPROVE** без блокеров (2 минора применены координатором)
-- [ ] `.5` tech-writer
+- [x] `.5` tech-writer — architecture.md обновлён, sync-check exit 0, lint 0
 
 ## Статусы беадов
 
@@ -29,8 +27,7 @@
 | bob-0vh.2 | dev детектор+политика+SILENT | .1 | done |
 | bob-0vh.3 | test | .1,.2 | done |
 | bob-0vh.4 | review | .3 | done |
-| bob-0vh.5 | tech-writer | .4 | in_progress |
-| bob-0vh.3 | test | .1,.2 | blocked |
+| bob-0vh.5 | tech-writer | .4 | done |
 | bob-0vh.4 | review | .3 | blocked |
 | bob-0vh.5 | tech-writer | .4 | blocked |
 
