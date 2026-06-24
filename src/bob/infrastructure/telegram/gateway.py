@@ -284,6 +284,18 @@ class TelegramGateway:
         """
         self._bob_identity = identity
 
+    def bob_user_id(self) -> int | None:
+        """Bob's own bot ``user_id``, or ``None`` until identity is resolved (BOB-023).
+
+        Read lazily by the addressivity policy in the use-case: the id is resolved
+        asynchronously at startup (``get_me``), long after the synchronous
+        composition root wired the gateway, so this returns ``None`` until then (and
+        for the GUPPI gateway, which has no Bob identity) — a graceful degrade where
+        reply-to-Bob cannot fire but @mention-of-Bob still does.
+        """
+        identity = self._bob_identity
+        return identity.user_id if identity is not None else None
+
     # --- Intake ---------------------------------------------------------------
 
     async def poll_once(self) -> int:

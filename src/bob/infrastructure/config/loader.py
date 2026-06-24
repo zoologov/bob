@@ -151,6 +151,21 @@ DEFAULT_CONFIG: Config = {
         },
         "mood_lift": 0.1,
     },
+    # Addressivity policy (BOB-023): Bob perceives WHO a message is for — him, another
+    # participant, or no one — and decides engage / quietly like-react / stay SILENT, so
+    # he no longer barges into every group exchange. Conservative defaults: he almost
+    # never cuts into someone else's exchange. ``barge_in_interest`` is the HIGH interest
+    # bar to RARELY join a message aimed at another (at ``barge_in_freq`` frequency);
+    # ``ambient_interest`` is the lower bar to join a general ambient turn with others
+    # around (at ``ambient_barge_in_freq``, easier); ``react_chance`` is how often an
+    # ambient-with-others turn becomes a quiet like-reaction instead of full silence.
+    "addressivity": {
+        "barge_in_interest": 0.8,
+        "ambient_interest": 0.6,
+        "barge_in_freq": 0.05,
+        "ambient_barge_in_freq": 0.15,
+        "react_chance": 0.3,
+    },
     # Memory consolidation (BOB-021): a rare, non-destructive reflect-tick step that
     # folds OLD un-consolidated episodes into a Tier-0 digest (embedded, recalled like
     # any episode) and flags the sources. Conservative defaults: only episodes at least

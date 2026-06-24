@@ -31,6 +31,7 @@ from bob.application.usecases.handle_message import (
     PersonalityState,
 )
 from bob.application.usecases.update_mood_from_text import UpdateMoodFromText
+from bob.domain.personality.addressivity import AddressivityThresholds
 from bob.domain.personality.engagement import (
     ConversationalFatigue,
     EngagementThresholds,
@@ -57,7 +58,7 @@ from bob.domain.ports import ToolCall, ToolCallResult
 from bob.infrastructure.telegram.gateway import TelegramGateway
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator, Mapping, Sequence
+    from collections.abc import AsyncIterator, Callable, Mapping, Sequence
 
     from bob.domain.ports import (
         LLMMessage,
@@ -332,6 +333,8 @@ def _build(
     engagement_thresholds: EngagementThresholds | None = None,
     fatigue_rates: FatigueRates | None = None,
     clock: FixedClock | None = None,
+    bob_user_id_source: Callable[[], int | None] | None = None,
+    addressivity_thresholds: AddressivityThresholds | None = None,
 ) -> tuple[HandleMessage, FakeBot, FakeRepo, CapturingProvider]:
     tier0 = CapturingProvider(reply="positive", replies=tier0_replies)
     tier1 = CapturingProvider(reply=reply, replies=tier1_replies)
@@ -374,6 +377,8 @@ def _build(
         engagement_state=engagement_state,
         engagement_thresholds=engagement_thresholds,
         fatigue_rates=fatigue_rates,
+        bob_user_id_source=bob_user_id_source,
+        addressivity_thresholds=addressivity_thresholds,
     )
     return handler, bot, repo, tier1
 
@@ -2680,3 +2685,169 @@ async def test_no_sulk_seam_leaves_the_turn_unchanged() -> None:
 
     folded = tier1.all_text.casefold()
     assert "сейчас ты обижен" not in folded
+
+
+# --- BOB-023: addressivity policy (engage / react / silent) ------------------
+
+
+def _addr_message(
+    text: str = "расскажи подробно про кофе",
+    *,
+    mentions_bob: bool = False,
+    reply_to_sender_id: int | None = None,
+    sender_name: str = "Ada",
+) -> MessageReceived:
+    """A MessageReceived carrying the BOB-023 addressivity signals."""
+    return MessageReceived(
+        update_id=1,
+        chat_id=555,
+        message_id=10,
+        text=text,
+        sender_id=99,
+        sender_name=sender_name,
+        reply_to_sender_id=reply_to_sender_id,
+        mentions_bob=mentions_bob,
+    )
+
+
+# Recent thread history with a THIRD participant ("Гость"), so others_present is True
+# and the ambient/directed-to-other policy engages.
+_MULTIPARTY_HISTORY: tuple[Mapping[str, object], ...] = (
+    {"content": "Ada: привет\nbob: здравствуй"},
+    {"content": "Гость: всем привет\nbob: о, привет"},
+)
+
+# A 1:1 owner thread: every recent sender is the current one, so others_present is False.
+_ONE_TO_ONE_HISTORY: tuple[Mapping[str, object], ...] = (
+    {"content": "Ada: привет\nbob: здравствуй"},
+    {"content": "Ada: как дела\nbob: норм"},
+)
+
+
+async def test_mention_always_engages_even_with_others_present() -> None:
+    # DIRECTED_TO_BOB (an @mention) ALWAYS engages — never SILENT — even in a busy
+    # multi-party thread and a boring topic.
+    handler, bot, _repo, _tier1 = _build(
+        reply="ответ Бобу", history=_MULTIPARTY_HISTORY
+    )
+
+    await handler.handle(_addr_message("ну такое", mentions_bob=True))
+
+    assert bot.sent, "Bob did not reply to a message addressed to him"  # engaged
+
+
+async def test_reply_to_bob_always_engages() -> None:
+    # A reply to Bob's OWN message is for him → engages (reply_to == bob_user_id).
+    handler, bot, _repo, _tier1 = _build(
+        reply="продолжаю",
+        history=_MULTIPARTY_HISTORY,
+        bob_user_id_source=lambda: 777,
+    )
+
+    await handler.handle(_addr_message("ага", reply_to_sender_id=777))
+
+    assert bot.sent, "Bob did not reply to a message that replied to him"
+
+
+async def test_reply_to_another_person_stays_silent() -> None:
+    # DIRECTED_TO_OTHER (a reply to a third party, not Bob) → SILENT by default: Bob
+    # does not barge into someone else's exchange. No reply, no reaction, no episode.
+    reactor = _RecordingReactor()
+    handler, bot, repo, _tier1 = _build(
+        reply="не должен ответить",
+        history=_MULTIPARTY_HISTORY,
+        bob_user_id_source=lambda: 777,
+        reactor=reactor,
+    )
+
+    await handler.handle(_addr_message("согласен", reply_to_sender_id=12345))
+
+    assert bot.sent == []  # silent: no reply
+    assert reactor.calls == []  # and no like-reaction
+    assert repo.episodes == []  # nothing persisted
+
+
+async def test_directed_to_other_high_interest_can_barge_in() -> None:
+    # A STRONGLY interesting topic can RARELY pull Bob into another's exchange — with
+    # the barge-in threshold lowered + a seed whose roll clears the (small) frequency.
+    thresholds = AddressivityThresholds(barge_in_interest=0.0, barge_in_freq=1.0)
+    handler, bot, _repo, _tier1 = _build(
+        reply="встряну на секунду",
+        history=_MULTIPARTY_HISTORY,
+        bob_user_id_source=lambda: 777,
+        addressivity_thresholds=thresholds,
+    )
+
+    await handler.handle(_addr_message("обожаю кофе", reply_to_sender_id=12345))
+
+    assert bot.sent, "a strongly interesting topic should rarely pull Bob in"
+
+
+async def test_ambient_one_to_one_engages() -> None:
+    # AMBIENT in a 1:1 owner thread (no others present) → engages: Bob's own space.
+    handler, bot, _repo, _tier1 = _build(
+        reply="конечно отвечу", history=_ONE_TO_ONE_HISTORY
+    )
+
+    await handler.handle(_addr_message("просто так подумалось"))
+
+    assert bot.sent, "Bob should engage on ambient chatter in his own 1:1 space"
+
+
+async def test_ambient_with_others_stays_silent_by_default() -> None:
+    # AMBIENT with other participants + boring topic + a roll above the react band →
+    # SILENT (read it, not worth a word). react_chance=0 forces SILENT over REACT.
+    thresholds = AddressivityThresholds(react_chance=0.0)
+    handler, bot, _repo, _tier1 = _build(
+        reply="не должен",
+        history=_MULTIPARTY_HISTORY,
+        soul=_low_interest_soul(),
+        addressivity_thresholds=thresholds,
+        rng=Random(0),
+    )
+
+    await handler.handle(_addr_message("вот это денёк", sender_name="Ada"))
+
+    assert bot.sent == []  # silent
+
+
+async def test_ambient_with_others_can_like_react() -> None:
+    # AMBIENT with others → a like-reaction (REACT) instead of a full reply, when the
+    # roll falls in the react band (react_chance=1.0 forces REACT over SILENT).
+    reactor = _RecordingReactor()
+    thresholds = AddressivityThresholds(react_chance=1.0)
+    handler, bot, _repo, _tier1 = _build(
+        reply="не должен",
+        history=_MULTIPARTY_HISTORY,
+        soul=_low_interest_soul(),
+        addressivity_thresholds=thresholds,
+        reactor=reactor,
+    )
+
+    await handler.handle(_addr_message("вот это денёк"))
+
+    assert reactor.calls, "expected a like-reaction"
+    assert bot.sent == []  # no composed reply
+
+
+async def test_no_addressivity_signals_default_engages() -> None:
+    # Backward-compatible: with no bob-id source and no multi-party history, a plain
+    # message is AMBIENT in a 1:1 → engages exactly as before BOB-023.
+    handler, bot, _repo, _tier1 = _build(reply="как обычно")
+
+    await handler.handle(_addr_message("расскажи подробно про кофе"))
+
+    assert bot.final_text == "как обычно"
+
+
+def _low_interest_soul() -> SOUL:
+    # A flat soul with no strong taste, so a neutral topic reads as low interest and
+    # the ambient-with-others policy does not barge in on interest.
+    baseline = Mood(valence=0.0, social=0.0)
+    return SOUL(
+        identity="I am the Bob from the book.",
+        mood=baseline,
+        mood_baseline=baseline,
+        taste=TasteEngine(axes=()),
+        phantom_prefs=(),
+    )

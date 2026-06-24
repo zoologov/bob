@@ -46,6 +46,13 @@ from bob.application.router.llm_router import LLMRequest, TaskType
 from bob.application.router.reply_tier_selector import select_reply_tier
 from bob.application.usecases.update_mood_from_text import TextSignals
 from bob.domain.memory.entities import EpisodicEvent
+from bob.domain.personality.addressivity import (
+    AddressivityThresholds,
+    ResponseOutcome,
+    classify_addressivity,
+    decide_response,
+    others_present,
+)
 from bob.domain.personality.conversation import is_user_repeat
 from bob.domain.personality.engagement import (
     ConversationalFatigue,
@@ -400,6 +407,21 @@ class OwnerActivityRecorder(Protocol):
     async def run(self) -> None: ...
 
 
+class BobUserIdSource(Protocol):
+    """Read seam: Bob's own bot ``user_id``, resolved at startup (BOB-023).
+
+    The addressivity detector needs Bob's numeric Telegram id to tell a reply that
+    targets *Bob* from a reply that targets someone else. The id is resolved
+    asynchronously at startup (``get_me`` → ``BotIdentitySignals.user_id``) — long
+    after this synchronous use-case is constructed — so it is read lazily through
+    this seam, which yields ``None`` until identity is resolved (or for the GUPPI
+    gateway, which has none). A ``None`` degrades gracefully: reply-to-Bob simply
+    cannot fire, while @mention-of-Bob addressivity still works.
+    """
+
+    def __call__(self) -> int | None: ...
+
+
 @dataclass
 class PersonalityState:
     """Mutable in-memory holder for Bob's current soul snapshot across turns.
@@ -464,6 +486,8 @@ class HandleMessage:
         engagement_thresholds: EngagementThresholds | None = None,
         fatigue_rates: FatigueRates | None = None,
         engagement_mood_lift: float = _DEFAULT_ENGAGEMENT_MOOD_LIFT,
+        bob_user_id_source: BobUserIdSource | None = None,
+        addressivity_thresholds: AddressivityThresholds | None = None,
     ) -> None:
         self._router = router
         self._gateway = gateway
@@ -605,6 +629,22 @@ class HandleMessage:
             )
             raise ValueError(msg)
         self._engagement_mood_lift = engagement_mood_lift
+        # The addressivity seam (BOB-023): Bob perceives WHO a message is FOR — him,
+        # another participant, or no one — and the policy decides whether to engage,
+        # quietly like-react, or stay SILENT, so he no longer barges into every
+        # conversation. ``bob_user_id_source`` lazily reads Bob's own bot id (resolved
+        # at startup) so a reply that targets Bob is told from one targeting someone
+        # else; ``None`` degrades gracefully (reply-to-Bob can't fire; @mention still
+        # does). Unwired (the default) the source yields ``None`` and the thresholds
+        # are the conservative defaults, so a 1:1 owner thread always engages exactly
+        # as before — the addressivity gate only ever ADDS "stay quiet if it's not for
+        # me" in a multi-party thread.
+        self._bob_user_id_source = bob_user_id_source
+        self._addressivity_thresholds = (
+            addressivity_thresholds
+            if addressivity_thresholds is not None
+            else AddressivityThresholds()
+        )
 
     async def handle(self, event: MessageReceived) -> None:
         """Process one received message end to end (the EventBus subscriber)."""
@@ -639,6 +679,21 @@ class HandleMessage:
         # real elapsed time since the last turn first, so appetite always recovers.
         interest = await self._topic_interest(soul, event.text)
         level = self._decide_engagement(soul, interest, relationship)
+        # Addressivity gate (BOB-023): decide WHO this message is for and whether to
+        # take the turn at all, BEFORE composing anything. A message clearly FOR Bob
+        # always engages; one aimed at another participant is left alone (SILENT) unless
+        # a strongly interesting topic rarely pulls Bob in; an ambient message engages in
+        # a 1:1 (his space) but is mostly read quietly (SILENT) or like-reacted (REACT)
+        # when others are around. SILENT is an early return (read, not worth a word);
+        # REACT reuses the BOB-018 react-only path. In a 1:1 owner thread the outcome is
+        # always ENGAGE, so the turn behaves exactly as before.
+        outcome = await self._decide_addressivity(event, interest)
+        if outcome is ResponseOutcome.SILENT:
+            return
+        if outcome is ResponseOutcome.REACT and self._reactor is not None:
+            await self._react_only(event, soul)
+            await self._record_owner_activity()
+            return
         # React-only (BOB-018): when a reactor is wired and the plan picks
         # REACT_ONLY, Bob acknowledges with a native mood emoji INSTEAD of composing
         # a reply — no LLM call, no rich final, no episode (there is no reply text).
@@ -1065,6 +1120,67 @@ class HandleMessage:
         )
         self._engagement_state.last_turn_at = self._clock.now()
         return soul
+
+    async def _decide_addressivity(
+        self, event: MessageReceived, interest: float
+    ) -> ResponseOutcome:
+        """Decide whether/how Bob takes THIS turn by addressivity (BOB-023).
+
+        Classifies who the message is for from the gateway's signals (``mentions_bob``,
+        ``reply_to_sender_id`` against Bob's own resolved id, an "Боб, …" name-address
+        in the text), reads whether the recent thread has other participants, then maps
+        that to an outcome (ENGAGE / REACT / SILENT) via the pure
+        :func:`~bob.domain.personality.addressivity.decide_response`. One seeded RNG draw
+        (the same injected RNG, so the turn stays reproducible) resolves the rare
+        barge-in / like-react branches. Pure-ish: only reads recent history + the id seam.
+        """
+        present = await self._others_present(event)
+        addressivity = classify_addressivity(
+            text=event.text,
+            mentions_bob=event.mentions_bob,
+            reply_to_sender_id=event.reply_to_sender_id,
+            bob_user_id=self._bob_user_id(),
+            others_present=present,
+        )
+        roll = self._rng.random()
+        return decide_response(
+            addressivity,
+            interest=interest,
+            others_present=present,
+            roll=roll,
+            thresholds=self._addressivity_thresholds,
+        )
+
+    def _bob_user_id(self) -> int | None:
+        """Bob's own bot ``user_id`` (resolved at startup), or ``None`` (BOB-023).
+
+        Read lazily through the injected seam so the synchronous use-case need not
+        know Bob's id at construction; ``None`` (unwired / not yet resolved / the GUPPI
+        gateway) degrades gracefully — reply-to-Bob cannot fire, @mention still does.
+        """
+        if self._bob_user_id_source is None:
+            return None
+        return self._bob_user_id_source()
+
+    async def _others_present(self, event: MessageReceived) -> bool:
+        """Whether the recent thread has senders OTHER than the current one (BOB-023).
+
+        A light, grounded heuristic over the replayed recent episodes (stored as
+        ``"<sender>: <text>\\nbob: <reply>"``): in a 1:1 owner↔Bob thread every label
+        matches the current sender → ``False`` (Bob's space, he engages on ambient); a
+        third participant appears → ``True`` (mostly stay quiet / like-react on ambient).
+        Best-effort: a flaky history read degrades to ``False`` (treat as 1:1 — never
+        wrongly silences Bob in his own space).
+        """
+        try:
+            history = await self._episodes.recent_episodes(_HISTORY_K)
+        except Exception:
+            logger.exception("reading history for addressivity failed (ignored)")
+            return False
+        lines = [
+            str(item.get("content", "")) for item in history if item.get("content")
+        ]
+        return others_present(lines, current_sender_name=event.sender_name)
 
     def _plan_expression(self, event: MessageReceived, soul: SOUL) -> ExpressionPlan:
         """Decide this turn's expression plan — pure, deterministic by seed (BOB-018).

@@ -11,12 +11,12 @@
 
 ## Текущий беад
 
-**Беад:** `bob-0vh.2` — dev: детектор Addressivity + политика + SILENT (следующий).
+**Беад:** `bob-0vh.3` — test: покрытие US-1..3 + guardrails (следующий).
 
 ## Прогресс
 
-- [x] `.1` пламбинг (reply-to/@mention в MessageReceived + multibot) — зелёный (1240 passed, mypy/ruff чисто)
-- [ ] `.2` детектор Addressivity + политика + SILENT
+- [x] `.1` пламбинг (reply-to/@mention в MessageReceived + multibot) — зелёный (1240 passed)
+- [x] `.2` детектор Addressivity + политика + SILENT — зелёный (1272 passed, mypy/ruff/lint чисто)
 - [ ] `.3` test · `.4` review · `.5` tech-writer
 
 ## Статусы беадов
@@ -24,7 +24,8 @@
 | Беад | Роль | Зависит | Статус |
 |------|------|---------|--------|
 | bob-0vh.1 | dev пламбинг | — | done |
-| bob-0vh.2 | dev детектор+политика+SILENT | .1 | in_progress |
+| bob-0vh.2 | dev детектор+политика+SILENT | .1 | done |
+| bob-0vh.3 | test | .1,.2 | in_progress |
 | bob-0vh.3 | test | .1,.2 | blocked |
 | bob-0vh.4 | review | .3 | blocked |
 | bob-0vh.5 | tech-writer | .4 | blocked |

@@ -436,6 +436,19 @@ class MultiBotGateway:
         """Return the reply seam for ``identity`` (Bob's pins his topic thread)."""
         return _ReplyGateway(self._inner[identity])
 
+    def bob_user_id(self) -> int | None:
+        """Bob's own bot ``user_id``, or ``None`` until resolved at startup (BOB-023).
+
+        The addressivity policy reads this lazily through the use-case's id seam so a
+        reply that targets Bob is told from one targeting someone else. It is resolved
+        asynchronously by :meth:`resolve_bot_identities` (``get_me``) AFTER the
+        synchronous composition root wired the use-case, so it is ``None`` until then
+        (and when Bob's gateway is absent) — a graceful degrade (reply-to-Bob cannot
+        fire; @mention still does).
+        """
+        gateway = self._inner.get(BotIdentity.BOB)
+        return gateway.bob_user_id() if gateway is not None else None
+
     def reactor(self, identity: BotIdentity) -> _ReactorGateway:
         """Return the react-only seam for ``identity`` (BOB-018).
 
