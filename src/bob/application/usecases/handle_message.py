@@ -47,6 +47,7 @@ from bob.application.router.reply_tier_selector import select_reply_tier
 from bob.application.usecases.update_mood_from_text import TextSignals
 from bob.domain.memory.entities import EpisodicEvent
 from bob.domain.personality.addressivity import (
+    Addressivity,
     AddressivityThresholds,
     ResponseOutcome,
     classify_addressivity,
@@ -65,6 +66,11 @@ from bob.domain.personality.conversation import (
     RepeatThresholds,
     is_bob_repeat,
     is_user_repeat,
+)
+from bob.domain.personality.conversation_floor import (
+    FloorConfig,
+    advance_floor,
+    resolve_addressivity,
 )
 from bob.domain.personality.engagement import (
     ConversationalFatigue,
@@ -133,6 +139,7 @@ if TYPE_CHECKING:
     from bob.domain.personality.sulk import SulkState
     from bob.domain.ports import (
         Clock,
+        ConversationFloorStore,
         LLMMessage,
         MemoryRecall,
         MessageReactor,
@@ -461,6 +468,24 @@ class EngagementState:
     last_turn_at: datetime | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class _AddressivityDecision:
+    """The addressivity gate's result for one turn (BOB-023 + BOB-025 floor).
+
+    ``outcome`` is the policy decision (ENGAGE / REACT / SILENT) taken on the
+    EFFECTIVE addressivity (per-message raised by the conversation floor when Bob
+    holds a live floor). ``per_message`` is the RAW per-message classification — it
+    is what ``advance_floor`` reads after the turn (the floor reflects the real
+    signals; whether Bob actually replied is tracked separately). ``directed_to_id``
+    is the person the turn turned to on a ``DIRECTED_TO_OTHER`` per-message (so the
+    floor can pass to them), else ``None``.
+    """
+
+    outcome: ResponseOutcome
+    per_message: Addressivity
+    directed_to_id: int | None
+
+
 class HandleMessage:
     """Run one full Telegram turn: perceive mood, decide a reply, act, persist."""
 
@@ -503,6 +528,9 @@ class HandleMessage:
         length_guard_enabled: bool = False,
         length_guard_max_chars: int = _DEFAULT_LENGTH_GUARD_MAX_CHARS,
         repeat_thresholds: RepeatThresholds | None = None,
+        floor_store: ConversationFloorStore | None = None,
+        floor_config: FloorConfig | None = None,
+        floor_enabled: bool = True,
     ) -> None:
         self._router = router
         self._gateway = gateway
@@ -685,6 +713,18 @@ class HandleMessage:
         self._repeat_thresholds = (
             repeat_thresholds if repeat_thresholds is not None else RepeatThresholds()
         )
+        # The conversation-floor seam (BOB-025): over the per-message addressivity
+        # (BOB-023) lives a tracker of who currently holds the "talking turn" in a
+        # thread. When wired AND enabled, an AMBIENT message in a thread where Bob holds
+        # a live floor is RAISED to DIRECTED_TO_BOB — so the owner (or a guest) keeps
+        # talking to Bob without re-tagging every message (continuity). After the turn
+        # the floor advances on the RAW per-message signal + whether Bob actually
+        # replied, then persists. Unwired (the default) OR ``floor_enabled`` false →
+        # the effective addressivity is the per-message classification, so behaviour is
+        # exactly BOB-023 (Bob never hijacks a third-party exchange).
+        self._floor_store = floor_store
+        self._floor_config = floor_config if floor_config is not None else FloorConfig()
+        self._floor_enabled = floor_enabled
 
     async def handle(self, event: MessageReceived) -> None:
         """Process one received message end to end (the EventBus subscriber)."""
@@ -728,12 +768,19 @@ class HandleMessage:
         # REACT reuses the BOB-018 react-only path (and, like REACT_ONLY, degrades to a
         # full reply when no reactor is wired). In a 1:1 owner thread the outcome is
         # always ENGAGE, so the turn behaves exactly as before.
-        outcome = await self._decide_addressivity(event, interest)
-        if outcome is ResponseOutcome.SILENT:
+        # The decision carries the RAW per-message addressivity too (BOB-025), so the
+        # conversation floor can advance on the real signal after the turn while
+        # tracking whether Bob actually replied separately. A turn that does NOT reach
+        # the reply (SILENT / REACT / react-only) advances the floor with
+        # ``bob_replied=False`` before returning, so idle_streak / decay are counted.
+        decision = await self._decide_addressivity(event, interest)
+        if decision.outcome is ResponseOutcome.SILENT:
+            await self._advance_floor_after_turn(event, decision, bob_replied=False)
             return
-        if outcome is ResponseOutcome.REACT and self._reactor is not None:
+        if decision.outcome is ResponseOutcome.REACT and self._reactor is not None:
             await self._react_only(event, soul)
             await self._record_owner_activity()
+            await self._advance_floor_after_turn(event, decision, bob_replied=False)
             return
         # React-only (BOB-018): when a reactor is wired and the plan picks
         # REACT_ONLY, Bob acknowledges with a native mood emoji INSTEAD of composing
@@ -743,6 +790,7 @@ class HandleMessage:
         if plan.mode is ExpressionMode.REACT_ONLY and self._reactor is not None:
             await self._react_only(event, soul)
             await self._record_owner_activity()
+            await self._advance_floor_after_turn(event, decision, bob_replied=False)
             return
         # Decide how SHORT Bob answers this ENGAGE turn (BOB-024): answer-demand of the
         # message x interest x mood/appetite x the BOB-018 form_hint → a Verbosity, the
@@ -827,6 +875,12 @@ class HandleMessage:
         # (no regeneration, never a mid-word cut). Off by default → the reply is untouched.
         reply = self._guard_reply_length(reply, demand)
         await self._gateway.reply(chat_id=event.chat_id, markdown=reply)
+        # Advance the conversation floor AFTER Bob actually replied (BOB-025): an ENGAGE
+        # turn that reached the reply sticks the floor to Bob (``bob_replied=True``), so
+        # the next ambient message in the thread is read as continuity. Pass the RAW
+        # per-message addressivity — the floor reflects the real signal, while
+        # ``bob_replied`` separately records that Bob held the turn.
+        await self._advance_floor_after_turn(event, decision, bob_replied=True)
         # Run the engagement feedback loops (BOB-014 .2a) BEFORE persisting the mood,
         # so the mood snapshot reflects this turn: an interesting, well-engaged exchange
         # lifts Bob's mood a touch; an aimless turn tires him. The fatigue holder's
@@ -1230,33 +1284,124 @@ class HandleMessage:
 
     async def _decide_addressivity(
         self, event: MessageReceived, interest: float
-    ) -> ResponseOutcome:
-        """Decide whether/how Bob takes THIS turn by addressivity (BOB-023).
+    ) -> _AddressivityDecision:
+        """Decide whether/how Bob takes THIS turn by addressivity (BOB-023 + BOB-025).
 
         Classifies who the message is for from the gateway's signals (``mentions_bob``,
         ``reply_to_sender_id`` against Bob's own resolved id, an "Боб, …" name-address
-        in the text), reads whether the recent thread has other participants, then maps
-        that to an outcome (ENGAGE / REACT / SILENT) via the pure
-        :func:`~bob.domain.personality.addressivity.decide_response`. One seeded RNG draw
-        (the same injected RNG, so the turn stays reproducible) resolves the rare
-        barge-in / like-react branches. Pure-ish: only reads recent history + the id seam.
+        in the text), reads whether the recent thread has other participants, then —
+        when the conversation floor is wired AND enabled — RAISES that per-message
+        classification to the EFFECTIVE addressivity: an ``AMBIENT`` message in a thread
+        where Bob holds a live floor reads as ``DIRECTED_TO_BOB`` (continuity, BOB-025).
+        The policy (:func:`~bob.domain.personality.addressivity.decide_response`) runs on
+        the EFFECTIVE addressivity, so a barge/react/silent decision honours continuity.
+        One seeded RNG draw (the same injected RNG, so the turn stays reproducible)
+        resolves the rare barge-in / like-react branches. The RAW per-message
+        classification is returned alongside the outcome so the floor can advance on the
+        real signal after the turn. Floor unwired / disabled → effective == per-message,
+        so behaviour is exactly BOB-023.
         """
         present = await self._others_present(event)
-        addressivity = classify_addressivity(
+        per_message = classify_addressivity(
             text=event.text,
             mentions_bob=event.mentions_bob,
             reply_to_sender_id=event.reply_to_sender_id,
             bob_user_id=self._bob_user_id(),
             others_present=present,
         )
+        effective = await self._resolve_effective_addressivity(event, per_message)
         roll = self._rng.random()
-        return decide_response(
-            addressivity,
+        outcome = decide_response(
+            effective,
             interest=interest,
             others_present=present,
             roll=roll,
             thresholds=self._addressivity_thresholds,
         )
+        directed_to_id = (
+            event.reply_to_sender_id
+            if per_message is Addressivity.DIRECTED_TO_OTHER
+            else None
+        )
+        return _AddressivityDecision(
+            outcome=outcome,
+            per_message=per_message,
+            directed_to_id=directed_to_id,
+        )
+
+    async def _resolve_effective_addressivity(
+        self, event: MessageReceived, per_message: Addressivity
+    ) -> Addressivity:
+        """Raise per-message addressivity by the conversation floor (BOB-025).
+
+        With the floor wired AND enabled, an ``AMBIENT`` message in a thread where Bob
+        holds a live floor is raised to ``DIRECTED_TO_BOB`` (continuity); the floor is
+        loaded for ``(chat_id, thread_id)``. Floor unwired or disabled → the per-message
+        classification is returned unchanged (BOB-023 behaviour). Best-effort: a flaky
+        floor store can never break a turn — on a load/resolve failure Bob falls back to
+        the per-message BOB-023 classification (a hiccup must never mute him), mirroring
+        the advance side.
+        """
+        if self._floor_store is None or not self._floor_enabled:
+            return per_message
+        try:
+            floor = await self._floor_store.load(
+                event.chat_id, self._floor_thread_id(event)
+            )
+            return resolve_addressivity(
+                per_message, floor, now=self._clock.now(), config=self._floor_config
+            )
+        except Exception:
+            logger.exception(
+                "resolving the conversation floor failed; using per-message addressivity"
+            )
+            return per_message
+
+    async def _advance_floor_after_turn(
+        self,
+        event: MessageReceived,
+        decision: _AddressivityDecision,
+        *,
+        bob_replied: bool,
+    ) -> None:
+        """Advance + persist the conversation floor after a turn (BOB-025).
+
+        Reloads the floor for the thread, advances it on the RAW per-message addressivity
+        (the floor reflects the real signal) plus whether Bob actually replied
+        (``bob_replied`` sticks the floor to him on an ENGAGE turn; a SILENT/REACT turn
+        passes ``False`` so idle_streak / decay are counted), then UPSERTs it. No-op when
+        the floor is unwired or disabled (BOB-023 behaviour). Best-effort: a flaky floor
+        store can never break a turn that has already acted.
+        """
+        if self._floor_store is None or not self._floor_enabled:
+            return
+        thread_id = self._floor_thread_id(event)
+        try:
+            floor = await self._floor_store.load(event.chat_id, thread_id)
+            new_floor = advance_floor(
+                floor,
+                addressivity=decision.per_message,
+                sender_id=event.sender_id,
+                directed_to_id=decision.directed_to_id,
+                bob_replied=bob_replied,
+                now=self._clock.now(),
+                config=self._floor_config,
+            )
+            await self._floor_store.save(event.chat_id, thread_id, new_floor)
+        except Exception:
+            logger.exception("advancing the conversation floor failed (ignored)")
+
+    @staticmethod
+    def _floor_thread_id(event: MessageReceived) -> int | None:
+        """The thread key for the conversation floor (BOB-025).
+
+        The floor is a property of one running exchange (Bob's forum topic). The
+        application event does not yet carry a forum ``thread_id``, so the floor is
+        keyed by ``chat_id`` alone for now (``None`` = main chat / no topic — the store's
+        sentinel). Kept as a seam so a real per-topic key threads through later.
+        """
+        del event  # no forum thread id on the event yet; keyed by chat for now
+        return None
 
     def _bob_user_id(self) -> int | None:
         """Bob's own bot ``user_id`` (resolved at startup), or ``None`` (BOB-023).

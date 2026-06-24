@@ -36,6 +36,12 @@ from bob.application.usecases.handle_message import (
 from bob.application.usecases.update_mood_from_text import UpdateMoodFromText
 from bob.domain.personality.addressivity import AddressivityThresholds
 from bob.domain.personality.conversation import RepeatThresholds
+from bob.domain.personality.conversation_floor import (
+    ConversationFloor,
+    FloorConfig,
+    FloorHolder,
+    idle_floor,
+)
 from bob.domain.personality.engagement import (
     ConversationalFatigue,
     EngagementThresholds,
@@ -311,6 +317,42 @@ class _StubZoneClassifier:
         return self._zone
 
 
+class _FakeFloorStore:
+    """In-memory ConversationFloorStore double (BOB-025 floor integration).
+
+    Seeds an initial floor (default IDLE) for the (chat_id, thread_id) the turn
+    touches, records every ``save`` so a test can assert the floor advanced as
+    expected, and exposes ``loaded`` / ``saved`` for inspection. ``load`` returns
+    the seeded floor for an unseen key (a fresh thread starts IDLE).
+    """
+
+    def __init__(self, *, initial: ConversationFloor | None = None) -> None:
+        self._initial = initial if initial is not None else idle_floor()
+        self._store: dict[tuple[int, int | None], ConversationFloor] = {}
+        self.loaded: list[tuple[int, int | None]] = []
+        self.saved: list[tuple[int, int | None, ConversationFloor]] = []
+
+    async def load(self, chat_id: int, thread_id: int | None) -> ConversationFloor:
+        self.loaded.append((chat_id, thread_id))
+        return self._store.get((chat_id, thread_id), self._initial)
+
+    async def save(
+        self, chat_id: int, thread_id: int | None, floor: ConversationFloor
+    ) -> None:
+        self._store[(chat_id, thread_id)] = floor
+        self.saved.append((chat_id, thread_id, floor))
+
+
+def _live_bob_floor(moment: datetime | None = None) -> ConversationFloor:
+    """A floor where Bob currently holds the talking turn (since=now, not timed out)."""
+    return ConversationFloor(
+        holder=FloorHolder.BOB,
+        holder_id=None,
+        since=moment if moment is not None else _moment(),
+        idle_streak=0,
+    )
+
+
 def _build(
     *,
     reply: str,
@@ -342,6 +384,9 @@ def _build(
     length_guard_enabled: bool = False,
     length_guard_max_chars: int = 280,
     repeat_thresholds: RepeatThresholds | None = None,
+    floor_store: _FakeFloorStore | None = None,
+    floor_config: FloorConfig | None = None,
+    floor_enabled: bool = True,
 ) -> tuple[HandleMessage, FakeBot, FakeRepo, CapturingProvider]:
     tier0 = CapturingProvider(reply="positive", replies=tier0_replies)
     tier1 = CapturingProvider(reply=reply, replies=tier1_replies)
@@ -389,6 +434,9 @@ def _build(
         length_guard_enabled=length_guard_enabled,
         length_guard_max_chars=length_guard_max_chars,
         repeat_thresholds=repeat_thresholds,
+        floor_store=floor_store,
+        floor_config=floor_config,
+        floor_enabled=floor_enabled,
     )
     return handler, bot, repo, tier1
 
@@ -3440,3 +3488,450 @@ async def test_guest_directed_to_other_stays_silent_and_leaks_nothing() -> None:
     assert repo.episodes == []
     assert recall.surface_old_calls == []  # never recalled owner memory
     assert _RECALL_MEMORY not in tier1.all_text
+
+
+# --- BOB-025: conversational floor (continuity over BOB-023) -----------------
+
+
+async def test_ambient_with_others_engages_when_bob_holds_the_floor() -> None:
+    # US-1/US-2 (continuity): an AMBIENT message amid other participants that would be
+    # SILENT under BOB-023 is RAISED to DIRECTED_TO_BOB while Bob holds a live floor →
+    # Bob engages (someone keeps talking to him without re-tagging).
+    floor_store = _FakeFloorStore(initial=_live_bob_floor())
+    handler, bot, _repo, _tier1 = _build(
+        reply="продолжаю разговор",
+        history=_MULTIPARTY_HISTORY,
+        soul=_low_interest_soul(),
+        addressivity_thresholds=AddressivityThresholds(react_chance=0.0),
+        floor_store=floor_store,
+    )
+
+    await handler.handle(_addr_message("вот это денёк", sender_name="Ada"))
+
+    assert bot.sent, "Bob should engage on ambient chatter while he holds the floor"
+
+
+async def test_ambient_with_others_stays_silent_when_floor_is_idle() -> None:
+    # Non-interception: with an IDLE floor the continuity lift never fires, so an
+    # ambient message amid others stays SILENT exactly as BOB-023 (Bob does not
+    # hijack a third-party exchange).
+    floor_store = _FakeFloorStore(initial=idle_floor())
+    handler, bot, _repo, _tier1 = _build(
+        reply="не должен",
+        history=_MULTIPARTY_HISTORY,
+        soul=_low_interest_soul(),
+        addressivity_thresholds=AddressivityThresholds(react_chance=0.0),
+        floor_store=floor_store,
+    )
+
+    await handler.handle(_addr_message("вот это денёк", sender_name="Ada"))
+
+    assert bot.sent == []  # silent — floor is not Bob's, BOB-023 unchanged
+
+
+async def test_no_floor_store_keeps_bob_023_behaviour() -> None:
+    # Backward-compatible: with NO floor store wired, the effective addressivity is the
+    # per-message classification (BOB-023), so an ambient-with-others turn stays SILENT.
+    handler, bot, _repo, _tier1 = _build(
+        reply="не должен",
+        history=_MULTIPARTY_HISTORY,
+        soul=_low_interest_soul(),
+        addressivity_thresholds=AddressivityThresholds(react_chance=0.0),
+    )
+
+    await handler.handle(_addr_message("вот это денёк", sender_name="Ada"))
+
+    assert bot.sent == []  # SILENT — no continuity without a store
+
+
+async def test_floor_disabled_keeps_bob_023_behaviour() -> None:
+    # Kill-switch: addressivity.floor.enabled=false → the floor is never resolved/
+    # advanced even with a store wired, so behaviour is exactly BOB-023.
+    floor_store = _FakeFloorStore(initial=_live_bob_floor())
+    handler, bot, _repo, _tier1 = _build(
+        reply="не должен",
+        history=_MULTIPARTY_HISTORY,
+        soul=_low_interest_soul(),
+        addressivity_thresholds=AddressivityThresholds(react_chance=0.0),
+        floor_store=floor_store,
+        floor_enabled=False,
+    )
+
+    await handler.handle(_addr_message("вот это денёк", sender_name="Ada"))
+
+    assert bot.sent == []  # SILENT — floor disabled
+    assert floor_store.loaded == []  # never even loaded
+    assert floor_store.saved == []  # never advanced
+
+
+async def test_engage_turn_advances_floor_to_bob_and_saves() -> None:
+    # After an ENGAGE turn Bob replied → advance_floor(bob_replied=True) gives a BOB
+    # floor (since=now, streak reset) and it is persisted on (chat_id, thread_id).
+    floor_store = _FakeFloorStore(initial=idle_floor())
+    handler, bot, _repo, _tier1 = _build(
+        reply="да, слушаю",
+        floor_store=floor_store,
+    )
+
+    await handler.handle(_addr_message("Боб, ты тут?"))
+
+    assert bot.sent, "Bob should engage when called by name"
+    assert floor_store.saved, "the floor must be saved after the turn"
+    _chat, _thread, saved = floor_store.saved[-1]
+    assert saved.holder is FloorHolder.BOB  # Bob's reply sticks the floor to him
+    assert saved.idle_streak == 0
+
+
+async def test_silent_turn_advances_floor_without_bob_replied() -> None:
+    # A SILENT third-party turn still advances + saves the floor (bob_replied=False),
+    # so idle_streak / decay are tracked. A reply to ANOTHER person → floor=OTHER.
+    floor_store = _FakeFloorStore(initial=idle_floor())
+    handler, bot, _repo, _tier1 = _build(
+        reply="не должен ответить",
+        history=_MULTIPARTY_HISTORY,
+        bob_user_id_source=lambda: 777,
+        floor_store=floor_store,
+    )
+
+    await handler.handle(_addr_message("согласен", reply_to_sender_id=12345))
+
+    assert bot.sent == []  # SILENT
+    assert floor_store.saved, "the floor must advance even on a silent turn"
+    _chat, _thread, saved = floor_store.saved[-1]
+    assert saved.holder is FloorHolder.OTHER  # turned to the third party
+    assert saved.holder_id == 12345
+
+
+async def test_timed_out_floor_does_not_lift_and_decays_to_idle() -> None:
+    # US-4 (decay by timeout): a BOB floor older than the timeout is NOT live, so an
+    # ambient-with-others turn is NOT raised (stays SILENT, BOB-023 cautious) and the
+    # advance collapses the stale floor to IDLE.
+    stale = ConversationFloor(
+        holder=FloorHolder.BOB,
+        holder_id=None,
+        since=datetime(2026, 6, 18, 13, 0, 0, tzinfo=UTC),  # an hour before _moment()
+        idle_streak=0,
+    )
+    floor_store = _FakeFloorStore(initial=stale)
+    handler, bot, _repo, _tier1 = _build(
+        reply="не должен",
+        history=_MULTIPARTY_HISTORY,
+        soul=_low_interest_soul(),
+        addressivity_thresholds=AddressivityThresholds(react_chance=0.0),
+        floor_store=floor_store,
+        floor_config=FloorConfig(timeout_seconds=300),
+    )
+
+    await handler.handle(_addr_message("опять болтают", sender_name="Ada"))
+
+    assert bot.sent == []  # SILENT — the stale floor does not lift ambient
+    _chat, _thread, saved = floor_store.saved[-1]
+    assert saved.holder is FloorHolder.IDLE  # decayed (timed out)
+
+
+# --- BOB-025 acceptance: US-1..5 + guardrails (end-to-end through handle_message) --
+
+
+class _SaveFailingFloorStore:
+    """A floor store that LOADS fine but always raises on SAVE (BOB-025 best-effort).
+
+    The floor *advance* (load → advance → save, in ``_advance_floor_after_turn``) is
+    explicitly best-effort: a flaky store must NEVER break a turn that has already
+    acted. This double makes the advance's save blow up so a test can assert the reply
+    still lands and the failure is swallowed.
+
+    NB: the resolve-phase load (``_resolve_effective_addressivity``) is NOT wrapped in
+    that guard — see ``test_floor_store_resolve_load_failure_propagates`` documenting
+    that asymmetry (a production observation, not asserted as desired).
+    """
+
+    def __init__(self) -> None:
+        self.load_calls = 0
+        self.save_calls = 0
+
+    async def load(self, chat_id: int, thread_id: int | None) -> ConversationFloor:  # noqa: ARG002
+        self.load_calls += 1
+        return idle_floor()
+
+    async def save(
+        self,
+        chat_id: int,  # noqa: ARG002
+        thread_id: int | None,  # noqa: ARG002
+        floor: ConversationFloor,  # noqa: ARG002
+    ) -> None:
+        self.save_calls += 1
+        raise RuntimeError("floor store save is down")
+
+
+async def test_us1_owner_continuity_lifts_ambient_to_bob_after_he_held_the_floor() -> (
+    None
+):
+    # US-1 (owner continuity): Bob holds a live floor (he just replied), so the owner's
+    # NEXT untagged (AMBIENT) line amid other participants is RAISED to DIRECTED_TO_BOB
+    # → Bob engages instead of going SILENT, and the advance re-glues the floor to him.
+    floor_store = _FakeFloorStore(initial=_live_bob_floor())
+    handler, bot, _repo, _tier1 = _build(
+        reply="продолжаю с тобой",
+        history=_MULTIPARTY_HISTORY,
+        soul=_low_interest_soul(),
+        addressivity_thresholds=AddressivityThresholds(react_chance=0.0),
+        perceive_sender=_owner_resolver(),
+        floor_store=floor_store,
+    )
+
+    await handler.handle(_addr_message("а ещё подумал вот о чём", sender_name="Vova"))
+
+    assert bot.sent, "Bob should keep talking to the owner while he holds the floor"
+    _chat, _thread, saved = floor_store.saved[-1]
+    assert saved.holder is FloorHolder.BOB  # his reply re-sticks the floor
+    assert saved.idle_streak == 0
+
+
+async def test_us2_continuity_follows_the_addressee_not_the_speaker_guest_keeps_it() -> (
+    None
+):
+    # US-2 (continuity through a GUEST): the headline case — continuity is tied to the
+    # ADDRESSEE (Bob), NOT to who spoke. Bob holds a live floor; an untagged line from a
+    # DIFFERENT participant (a guest, not the one Bob last answered) is still lifted to
+    # DIRECTED_TO_BOB → Bob engages.
+    floor_store = _FakeFloorStore(initial=_live_bob_floor())
+    handler, bot, _repo, _tier1 = _build(
+        reply="да, и тебе отвечу",
+        history=_MULTIPARTY_HISTORY,
+        soul=_low_interest_soul(),
+        addressivity_thresholds=AddressivityThresholds(react_chance=0.0),
+        perceive_sender=_guest_resolver(),
+        floor_store=floor_store,
+    )
+
+    await handler.handle(_addr_message("а я вот что думаю", sender_name="Rando"))
+
+    assert bot.sent, "continuity is the addressee's — a guest in the thread keeps it"
+
+
+async def test_us2_guest_continuity_lift_engages_but_stays_restricted() -> None:
+    # US-2 + GUEST INVARIANT (BOB-019): when a guest's AMBIENT line is lifted to
+    # DIRECTED_TO_BOB by continuity (not an @mention), Bob engages BUT the guest guard
+    # still holds — no owner memory recalled, no tools dispatched, nothing leaked. The
+    # floor changes addressivity only; it never relaxes the rights guard.
+    recall = FakeRecall(hits=[{"content": _RECALL_MEMORY, "category": "personal"}])
+    registry, cap = _registry_with_recall()
+    provider = ScriptedToolProvider()
+    floor_store = _FakeFloorStore(initial=_live_bob_floor())
+    handler, bot, _repo, tier1 = _build(
+        reply="отвечаю гостю",
+        history=_MULTIPARTY_HISTORY,
+        soul=_low_interest_soul(),
+        addressivity_thresholds=AddressivityThresholds(react_chance=0.0),
+        recall=recall,
+        registry=registry,
+        tool_provider=provider,
+        perceive_sender=_guest_resolver(),
+        floor_store=floor_store,
+    )
+
+    await handler.handle(_addr_message("просто продолжаю мысль", sender_name="Rando"))
+
+    assert bot.sent  # engaged via continuity lift
+    assert recall.surface_old_calls == []  # but no owner memory recalled
+    assert cap.calls == []  # and no capability dispatched
+    assert _RECALL_MEMORY not in tier1.all_text  # owner content stays redacted
+
+
+async def test_us3_turn_to_another_hands_floor_to_other_and_bob_steps_back() -> None:
+    # US-3 (turn to another): while Bob holds the floor, a reply to a NON-Bob person
+    # (DIRECTED_TO_OTHER) is NOT lifted — Bob steps back (SILENT) and the floor is handed
+    # to OTHER, so the next ambient line will no longer reach Bob.
+    floor_store = _FakeFloorStore(initial=_live_bob_floor())
+    handler, bot, _repo, _tier1 = _build(
+        reply="не должен встревать",
+        history=_MULTIPARTY_HISTORY,
+        soul=_low_interest_soul(),
+        addressivity_thresholds=AddressivityThresholds(react_chance=0.0),
+        bob_user_id_source=lambda: 777,
+        floor_store=floor_store,
+    )
+
+    await handler.handle(_addr_message("согласен с тобой", reply_to_sender_id=12345))
+
+    assert bot.sent == []  # Bob steps back: the turn is to someone else
+    _chat, _thread, saved = floor_store.saved[-1]
+    assert saved.holder is FloorHolder.OTHER  # floor handed to the third party
+    assert saved.holder_id == 12345
+
+
+async def test_us4_answered_ambient_in_live_floor_refreshes_and_resets_streak() -> None:
+    # US-4 (refresh, the complement of decay): while Bob holds a LIVE floor, an AMBIENT
+    # line amid others is lifted to DIRECTED_TO_BOB → Bob answers, so the advance runs
+    # with bob_replied=True and the floor re-sticks to him with idle_streak reset to 0
+    # (an answered ambient refreshes the floor; silence-driven decay is the unit layer).
+    # Seed a floor already one silent step in, to prove the answer RESETS that streak.
+    brink = ConversationFloor(
+        holder=FloorHolder.BOB, holder_id=None, since=_moment(), idle_streak=1
+    )
+    floor_store = _FakeFloorStore(initial=brink)
+    handler, bot, _repo, _tier1 = _build(
+        reply="продолжаю",
+        history=_MULTIPARTY_HISTORY,
+        soul=_low_interest_soul(),
+        addressivity_thresholds=AddressivityThresholds(react_chance=0.0),
+        floor_store=floor_store,
+        floor_config=FloorConfig(reset_after_silent=2),
+    )
+
+    await handler.handle(_addr_message("ещё мысль", sender_name="Ada"))
+
+    assert bot.sent, "an ambient in a live floor lifts → Bob answers"
+    _chat, _thread, saved = floor_store.saved[-1]
+    assert saved.holder is FloorHolder.BOB
+    assert saved.idle_streak == 0  # an answered ambient resets the streak
+
+
+async def test_us4_decayed_floor_stops_lifting_and_bob_stays_out_of_others_talk() -> (
+    None
+):
+    # US-4 (post-decay non-interception): once the floor has decayed to IDLE, an
+    # ambient line amid others is no longer lifted — Bob stays SILENT, exactly BOB-023.
+    floor_store = _FakeFloorStore(initial=idle_floor())
+    handler, bot, _repo, _tier1 = _build(
+        reply="не должен",
+        history=_MULTIPARTY_HISTORY,
+        soul=_low_interest_soul(),
+        addressivity_thresholds=AddressivityThresholds(react_chance=0.0),
+        floor_store=floor_store,
+    )
+
+    await handler.handle(_addr_message("они всё болтают", sender_name="Ada"))
+
+    assert bot.sent == []  # IDLE floor never lifts → BOB-023 caution holds
+    _chat, _thread, saved = floor_store.saved[-1]
+    assert saved.holder is FloorHolder.IDLE  # stays released (ambient amid others)
+
+
+async def test_us5_reply_to_bob_reclaims_floor_from_another_holder() -> None:
+    # US-5 (direct always wins): a reply to Bob (DIRECTED_TO_BOB) (re)takes the floor
+    # even when another person currently holds it — direct address always reaches Bob.
+    other_floor = ConversationFloor(
+        holder=FloorHolder.OTHER, holder_id=12345, since=_moment(), idle_streak=0
+    )
+    floor_store = _FakeFloorStore(initial=other_floor)
+    handler, bot, _repo, _tier1 = _build(
+        reply="да, я тут",
+        history=_MULTIPARTY_HISTORY,
+        bob_user_id_source=lambda: 777,
+        floor_store=floor_store,
+    )
+
+    await handler.handle(_addr_message("Боб, вернись", reply_to_sender_id=777))
+
+    assert bot.sent, "a reply to Bob always engages, reclaiming the floor"
+    _chat, _thread, saved = floor_store.saved[-1]
+    assert saved.holder is FloorHolder.BOB  # reclaimed from OTHER
+    assert saved.holder_id is None
+
+
+async def test_us5_name_address_takes_floor_from_idle() -> None:
+    # US-5 (direct always wins): a "Боб, …" name-address from an IDLE floor amid others
+    # is DIRECTED_TO_BOB → engages and the floor is taken to BOB (continuity then begins).
+    floor_store = _FakeFloorStore(initial=idle_floor())
+    handler, bot, _repo, _tier1 = _build(
+        reply="слушаю",
+        history=_MULTIPARTY_HISTORY,
+        floor_store=floor_store,
+    )
+
+    await handler.handle(_addr_message("Боб, глянь сюда", sender_name="Ada"))
+
+    assert bot.sent, "a name-address always engages even amid others"
+    _chat, _thread, saved = floor_store.saved[-1]
+    assert saved.holder is FloorHolder.BOB
+    assert saved.idle_streak == 0
+
+
+async def test_floor_is_keyed_by_chat_with_none_thread_sentinel() -> None:
+    # Persistence seam: the floor is keyed by (chat_id, thread_id) with thread_id=None
+    # (main chat) for now — load + save both address the same None-thread key.
+    floor_store = _FakeFloorStore(initial=idle_floor())
+    handler, _bot, _repo, _tier1 = _build(
+        reply="ага",
+        floor_store=floor_store,
+    )
+
+    await handler.handle(_addr_message("Боб, привет", sender_name="Ada"))
+
+    assert floor_store.loaded, "the floor is loaded for the turn"
+    assert all(thread_id is None for _chat, thread_id in floor_store.loaded)
+    _chat, thread_id, _saved = floor_store.saved[-1]
+    assert thread_id is None  # main-chat sentinel
+
+
+async def test_floor_advance_save_failure_is_best_effort_and_never_breaks_the_turn() -> (
+    None
+):
+    # GUARDRAIL (best-effort advance): a floor store that raises on SAVE during the
+    # post-turn advance must NOT break a turn that has already acted — Bob still replies;
+    # the failure is swallowed (logged), not propagated.
+    failing = _SaveFailingFloorStore()
+    handler, bot, _repo, _tier1 = _build(
+        reply="всё равно отвечу",
+        floor_store=failing,  # type: ignore[arg-type]
+    )
+
+    await handler.handle(_addr_message("Боб, ты тут?", mentions_bob=True))
+
+    assert bot.sent, "a flaky floor save must never break a turn that already acted"
+    assert failing.save_calls, "the advance was attempted (and swallowed its failure)"
+
+
+async def test_floor_store_resolve_load_failure_degrades_gracefully() -> None:
+    # Best-effort floor (BOB-025): a store that raises on LOAD must NEVER break the turn.
+    # The resolve phase (_resolve_effective_addressivity) is wrapped like the advance
+    # path, so Bob falls back to the per-message BOB-023 classification and still replies
+    # — a floor-store hiccup can never mute him.
+    class _LoadFailingStore:
+        async def load(self, chat_id: int, thread_id: int | None) -> ConversationFloor:  # noqa: ARG002
+            raise RuntimeError("floor store load is down")
+
+        async def save(
+            self,
+            chat_id: int,  # noqa: ARG002
+            thread_id: int | None,  # noqa: ARG002
+            floor: ConversationFloor,  # noqa: ARG002
+        ) -> None:  # pragma: no cover - the advance path also hits the failing load first
+            raise AssertionError("save should not be reached")
+
+    handler, bot, _repo, _tier1 = _build(
+        reply="я на месте",
+        floor_store=_LoadFailingStore(),  # type: ignore[arg-type]
+    )
+
+    # A direct mention is DIRECTED_TO_BOB even on the per-message fallback, so Bob engages.
+    await handler.handle(_addr_message("Боб, ты тут?", mentions_bob=True))
+
+    # The store failure is swallowed best-effort — the turn still produced a reply.
+    assert bot.sent, "a floor-store load failure must not mute Bob (best-effort floor)"
+
+
+async def test_reactonly_turn_advances_floor_without_bob_replied() -> None:
+    # REACT_ONLY-style outcome (a like-reaction, no composed reply) still advances the
+    # floor with bob_replied=False — the floor tracks the real signal, and a reaction is
+    # not a held turn (idle_streak counting continues).
+    reactor = _RecordingReactor()
+    floor_store = _FakeFloorStore(initial=idle_floor())
+    handler, bot, _repo, _tier1 = _build(
+        reply="не должен",
+        history=_MULTIPARTY_HISTORY,
+        soul=_low_interest_soul(),
+        addressivity_thresholds=AddressivityThresholds(react_chance=1.0),
+        reactor=reactor,
+        floor_store=floor_store,
+    )
+
+    await handler.handle(_addr_message("вот это денёк", sender_name="Ada"))
+
+    assert reactor.calls, "expected a like-reaction (REACT)"
+    assert bot.sent == []  # no composed reply
+    assert floor_store.saved, "even a react-only turn advances the floor"
+    _chat, _thread, saved = floor_store.saved[-1]
+    # An ambient react amid others with an IDLE floor → stays IDLE (Bob did not reply).
+    assert saved.holder is FloorHolder.IDLE

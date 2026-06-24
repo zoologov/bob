@@ -118,6 +118,10 @@ ignore = [
 # docstrings + comments ("повтор через ход", "анти-ложно-срабатывание") whose
 # Cyrillic look-alikes are intentional — RUF001/RUF002/RUF003 do not apply to these.
 "src/bob/domain/personality/conversation.py" = ["RUF001", "RUF002", "RUF003"]
+# The conversation-floor module (BOB-025) carries Russian persona/policy docstrings +
+# comments ("у микрофона", "разговорной реплики", "распад") whose Cyrillic look-alikes
+# are intentional — RUF001/RUF002/RUF003 do not apply to these.
+"src/bob/domain/personality/conversation_floor.py" = ["RUF001", "RUF002", "RUF003"]
 # The Goal Engine (BOB-015) carries Russian persona/policy docstrings + blocked-reason
 # literals ("требует внешней агентности", "ждёт незавершённых задач") whose Cyrillic
 # look-alikes are intentional — RUF001/RUF002/RUF003 do not apply to these.
