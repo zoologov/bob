@@ -142,6 +142,7 @@ if TYPE_CHECKING:
         BotLike,
         MessageLike,
         UpdateLike,
+        _BotUserLike,
     )
 
 logger = logging.getLogger(__name__)
@@ -258,6 +259,9 @@ class Application:
         await self.memory_repo.initialize()
         result = await self.genesis.run()
         self.personality.soul = _load_soul(self.soul_store)
+        # Resolve Bob's own bot identity (id + @username) so the addressivity scan
+        # (BOB-023) can tell a mention of Bob from a mention of someone else.
+        await self.multibot.resolve_bot_identities()
         return result
 
     async def shutdown(self) -> None:
@@ -1302,6 +1306,11 @@ class _AiogramBotAdapter:
 
     def __init__(self, bot: object) -> None:
         self._bot = bot
+
+    async def get_me(self) -> _BotUserLike:
+        # Bob's own bot identity (id + @username), resolved once at startup so the
+        # addressivity scan (BOB-023) can tell a mention of Bob from one of others.
+        return await self._bot.get_me()  # type: ignore[attr-defined,no-any-return]
 
     async def get_updates(
         self, *, offset: int, timeout: int

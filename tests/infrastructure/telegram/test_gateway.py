@@ -27,7 +27,11 @@ from aiogram.methods import SendMessage
 
 from bob.application.runtime.event_bus import AsyncEventBus
 from bob.application.runtime.events import MESSAGE_RECEIVED, MessageReceived
-from bob.infrastructure.telegram.gateway import PLAIN_TEXT_LIMIT, TelegramGateway
+from bob.infrastructure.telegram.gateway import (
+    PLAIN_TEXT_LIMIT,
+    BotIdentitySignals,
+    TelegramGateway,
+)
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Sequence
@@ -40,16 +44,28 @@ if TYPE_CHECKING:
 
 
 @dataclass
+class _FakeEntity:
+    type: str
+    offset: int
+    length: int
+    user: _FakeUser | None = None
+
+
+@dataclass
 class _FakeMessage:
     message_id: int
     text: str | None
     message_thread_id: int | None = None
+    from_user: _FakeUser | None = None
+    reply_to_message: _FakeMessage | None = None
+    entities: list[_FakeEntity] | None = None
 
 
 @dataclass
 class _FakeUser:
     id: int
-    full_name: str
+    full_name: str = ""
+    username: str | None = None
 
 
 @dataclass
@@ -72,10 +88,18 @@ def _update(
     text: str | None = "hello",
     message_id: int = 1,
     user: _FakeUser | None = None,
+    reply_to_message: _FakeMessage | None = None,
+    entities: list[_FakeEntity] | None = None,
 ) -> _FakeUpdate:
     return _FakeUpdate(
         update_id=update_id,
-        message=_FakeMessage(message_id=message_id, text=text),
+        message=_FakeMessage(
+            message_id=message_id,
+            text=text,
+            from_user=user,
+            reply_to_message=reply_to_message,
+            entities=entities,
+        ),
         effective_chat=_FakeChat(id=chat_id),
         effective_user=user,
     )
@@ -114,6 +138,9 @@ class _FakeBot:
     next_message_id: int = 500
     rich_send_raises: bool = False
     typing_raises: bool = False
+
+    async def get_me(self) -> _FakeUser:
+        return _FakeUser(id=4242, username="bob_companion_bot")
 
     async def get_updates(
         self, *, offset: int, timeout: int
@@ -219,6 +246,7 @@ def _make_gateway(bot: _FakeBot, **kwargs: Any) -> TelegramGateway:
         clock=clock,
         sleep=sleep,
         reply_thread_id=kwargs.pop("reply_thread_id", None),
+        bob_identity=kwargs.pop("bob_identity", None),
     )
 
 
@@ -291,6 +319,155 @@ async def test_intake_carries_sender_metadata() -> None:
 
     assert received[0].sender_id == 99
     assert received[0].sender_name == "Alice"
+
+
+# --- Addressivity signals (BOB-023) -------------------------------------------
+
+_BOB_ID = 4242
+_BOB_USERNAME = "bob_companion_bot"
+
+
+def _bob_identity() -> BotIdentitySignals:
+    return BotIdentitySignals(user_id=_BOB_ID, username=_BOB_USERNAME)
+
+
+async def _capture(gateway: TelegramGateway, update: _FakeUpdate) -> MessageReceived:
+    received: list[MessageReceived] = []
+
+    async def handler(event: ports.DomainEvent) -> None:
+        assert isinstance(event, MessageReceived)
+        received.append(event)
+
+    gateway._bus.subscribe(MESSAGE_RECEIVED, handler)
+    await gateway.intake(update)
+    assert len(received) == 1
+    return received[0]
+
+
+@pytest.mark.asyncio
+async def test_addressivity_defaults_when_no_reply_or_entities() -> None:
+    bus = AsyncEventBus()
+    gateway = _make_gateway(_FakeBot(), bus=bus, bob_identity=_bob_identity())
+
+    event = await _capture(gateway, _update(10, text="just talking"))
+
+    assert event.reply_to_sender_id is None
+    assert event.mentions_bob is False
+
+
+@pytest.mark.asyncio
+async def test_reply_to_carries_replied_sender_id() -> None:
+    bus = AsyncEventBus()
+    gateway = _make_gateway(_FakeBot(), bus=bus, bob_identity=_bob_identity())
+    replied = _FakeMessage(
+        message_id=1, text="earlier", from_user=_FakeUser(id=_BOB_ID)
+    )
+
+    event = await _capture(
+        gateway, _update(10, text="re", reply_to_message=replied)
+    )
+
+    assert event.reply_to_sender_id == _BOB_ID
+
+
+@pytest.mark.asyncio
+async def test_reply_to_another_user_carries_that_users_id() -> None:
+    bus = AsyncEventBus()
+    gateway = _make_gateway(_FakeBot(), bus=bus, bob_identity=_bob_identity())
+    replied = _FakeMessage(message_id=1, text="earlier", from_user=_FakeUser(id=777))
+
+    event = await _capture(
+        gateway, _update(10, text="re", reply_to_message=replied)
+    )
+
+    assert event.reply_to_sender_id == 777
+    assert event.mentions_bob is False
+
+
+@pytest.mark.asyncio
+async def test_reply_to_without_from_user_yields_none() -> None:
+    bus = AsyncEventBus()
+    gateway = _make_gateway(_FakeBot(), bus=bus, bob_identity=_bob_identity())
+    replied = _FakeMessage(message_id=1, text="anon", from_user=None)
+
+    event = await _capture(
+        gateway, _update(10, text="re", reply_to_message=replied)
+    )
+
+    assert event.reply_to_sender_id is None
+
+
+@pytest.mark.asyncio
+async def test_username_mention_of_bob_sets_mentions_bob() -> None:
+    bus = AsyncEventBus()
+    gateway = _make_gateway(_FakeBot(), bus=bus, bob_identity=_bob_identity())
+    text = f"hey @{_BOB_USERNAME} look"
+    entity = _FakeEntity(type="mention", offset=4, length=len(_BOB_USERNAME) + 1)
+
+    event = await _capture(
+        gateway, _update(10, text=text, entities=[entity])
+    )
+
+    assert event.mentions_bob is True
+
+
+@pytest.mark.asyncio
+async def test_username_mention_of_other_does_not_set_mentions_bob() -> None:
+    bus = AsyncEventBus()
+    gateway = _make_gateway(_FakeBot(), bus=bus, bob_identity=_bob_identity())
+    text = "hey @someone_else look"
+    entity = _FakeEntity(type="mention", offset=4, length=len("@someone_else"))
+
+    event = await _capture(
+        gateway, _update(10, text=text, entities=[entity])
+    )
+
+    assert event.mentions_bob is False
+
+
+@pytest.mark.asyncio
+async def test_text_mention_of_bob_sets_mentions_bob() -> None:
+    bus = AsyncEventBus()
+    gateway = _make_gateway(_FakeBot(), bus=bus, bob_identity=_bob_identity())
+    entity = _FakeEntity(
+        type="text_mention", offset=0, length=3, user=_FakeUser(id=_BOB_ID)
+    )
+
+    event = await _capture(gateway, _update(10, text="Bob hi", entities=[entity]))
+
+    assert event.mentions_bob is True
+
+
+@pytest.mark.asyncio
+async def test_text_mention_of_other_does_not_set_mentions_bob() -> None:
+    bus = AsyncEventBus()
+    gateway = _make_gateway(_FakeBot(), bus=bus, bob_identity=_bob_identity())
+    entity = _FakeEntity(
+        type="text_mention", offset=0, length=3, user=_FakeUser(id=999)
+    )
+
+    event = await _capture(gateway, _update(10, text="Ann hi", entities=[entity]))
+
+    assert event.mentions_bob is False
+
+
+@pytest.mark.asyncio
+async def test_addressivity_signals_absent_without_bob_identity() -> None:
+    # No bob_identity wired (e.g. the GUPPI inner gateway): mentions cannot be
+    # resolved, so mentions_bob stays False, but reply-to is still carried.
+    bus = AsyncEventBus()
+    gateway = _make_gateway(_FakeBot(), bus=bus)
+    text = f"hey @{_BOB_USERNAME}"
+    entity = _FakeEntity(type="mention", offset=4, length=len(_BOB_USERNAME) + 1)
+    replied = _FakeMessage(message_id=1, text="x", from_user=_FakeUser(id=5))
+
+    event = await _capture(
+        gateway,
+        _update(10, text=text, entities=[entity], reply_to_message=replied),
+    )
+
+    assert event.mentions_bob is False
+    assert event.reply_to_sender_id == 5
 
 
 @pytest.mark.asyncio

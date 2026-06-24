@@ -39,12 +39,16 @@ class _FakeMessage:
     message_id: int
     text: str | None
     message_thread_id: int | None = None
+    from_user: _FakeUser | None = None
+    reply_to_message: _FakeMessage | None = None
+    entities: list[object] | None = None
 
 
 @dataclass
 class _FakeUser:
     id: int
     full_name: str
+    username: str | None = None
 
 
 @dataclass

@@ -60,6 +60,7 @@ from typing import TYPE_CHECKING
 
 from bob.infrastructure.telegram.gateway import (
     AuthorizerLike,
+    BotIdentitySignals,
     BotLike,
     MonotonicClock,
     Sleep,
@@ -277,6 +278,33 @@ class MultiBotGateway:
             general_chat_id=guppi_reg.scope.chat_id,
             proactivity_store=self._proactivity_store,
             clock=self._proactivity_clock,
+        )
+
+    # --- Startup --------------------------------------------------------------
+
+    async def resolve_bot_identities(self) -> None:
+        """Resolve Bob's own bot identity via ``get_me`` and thread it in (BOB-023).
+
+        Called once at startup (the synchronous constructor cannot ``await``):
+        asks Bob's bot who it is (id + ``@username``) and wires that into Bob's
+        inner gateway so the addressivity scan can tell an @mention of Bob from a
+        mention of someone else. Best-effort — a transient ``get_me`` failure is
+        logged and leaves mentions unresolved (``mentions_bob`` stays ``False``)
+        rather than blocking startup; reply-to addressivity is unaffected.
+        """
+        if BotIdentity.BOB not in self._inner:
+            return
+        bob_bot = self._registry.get(BotIdentity.BOB).bot
+        get_me = getattr(bob_bot, "get_me", None)
+        if get_me is None:
+            return
+        try:
+            me = await get_me()
+        except (OSError, RuntimeError, TimeoutError) as exc:
+            logger.warning("could not resolve Bob's bot identity (get_me): %s", exc)
+            return
+        self._inner[BotIdentity.BOB].set_bob_identity(
+            BotIdentitySignals(user_id=me.id, username=me.username)
         )
 
     # --- Intake (all bots) ----------------------------------------------------
