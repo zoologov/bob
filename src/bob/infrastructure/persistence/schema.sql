@@ -254,3 +254,23 @@ CREATE TABLE IF NOT EXISTS task (
 );
 
 CREATE INDEX IF NOT EXISTS idx_task_goal ON task (persona_id, goal_id);
+
+-- One `improvement_rule` row per (persona_id, id) — a self-improvement rule Bob
+-- proposed about his own behaviour (BOB-028 .1). `lever` is a Lever allowlist value
+-- (tone/length/proactivity/addressivity_bias/humor — and only those); `magnitude` is
+-- the bounded soft-tilt amount; `state` is the RuleState (proposed/approved/paused/
+-- rejected/removed); `origin` is the RuleOrigin (bob_proposed). All enums persist as
+-- TEXT. The detector only ever writes `proposed`; only owner approval moves it onward.
+CREATE TABLE IF NOT EXISTS improvement_rule (
+    persona_id  TEXT NOT NULL,
+    id          TEXT NOT NULL,
+    observation TEXT NOT NULL,              -- human-readable, what Bob noticed (ru)
+    adjustment  TEXT NOT NULL,              -- the correction Bob proposes
+    lever       TEXT NOT NULL,              -- Lever value (allowlist)
+    magnitude   REAL NOT NULL,              -- bounded soft-tilt amount
+    state       TEXT NOT NULL,              -- RuleState value
+    origin      TEXT NOT NULL,              -- RuleOrigin value (bob_proposed)
+    created_at  TEXT NOT NULL,              -- ISO-8601, timezone-aware
+    evidence    TEXT NOT NULL,              -- which patterns fired
+    PRIMARY KEY (persona_id, id)
+);

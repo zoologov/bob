@@ -2068,6 +2068,141 @@ Use-case **`PlanGoal`** держит **двойной апрув**:
   (`ready_tasks`/`next_safe_task`), а `SafeCapabilityDispatcher` физически не даёт
   вызвать ничего вне safe-allowlist — даже если бы задача прорвалась.
 
+## Self-Improvement (Тир 2): метакогнитивное обучение (BOB-028)
+
+Рядом с автономностью BOB-015 лежит **метакогнитивный слой**: Боб замечает
+поведенческие паттерны за собой (перебарщивает с длиной, повторяется, промолчал
+когда стоило ответить, залип в низком настроении), формулирует человекочитаемое
+**правило-стратегию** (наблюдение + поправка + рычаг + ограниченная величина),
+предлагает его владельцу, и по апруву применяет как **мягкий, обратимый наклон**
+поведения. Это шлифовка Тир-1-личности на собственной истории общения. Та же
+дисциплина, что и автономность: правило ничего не меняет молча и **никогда не
+трогает безопасность/ядро**.
+
+### Модель правила — чистый домен (`domain/personality/self_improvement.py`)
+
+- **`Lever`** (`StrEnum`) — **жёсткий allowlist** рычагов, которые правило вправе
+  наклонять: `TONE`, `LENGTH`, `PROACTIVITY`, `ADDRESSIVITY_BIAS`, `HUMOR` — **и
+  только они**. У него намеренно нет члена для authz, гость-инварианта (BOB-019),
+  ядра SOUL или safety-инвариантов автономии (BOB-015): правило не может выбрать
+  несуществующий рычаг, поэтому граница безопасности здесь **конструктивна**, а не
+  держится на проверках.
+- **`RuleState`** (`StrEnum`) — машина жизненного цикла под owner-апрувом:
+  `PROPOSED` → `APPROVED` ↔ `PAUSED`; `PROPOSED` → `REJECTED`; `APPROVED`/`PAUSED`
+  → `REMOVED`. `REJECTED`/`REMOVED` терминальны. Переход в `APPROVED` валиден на
+  уровне домена, но его инициирует **только** owner-апрув на уровне use-case.
+  `RuleOrigin.BOB_PROPOSED` фиксирует, что правило вывел сам Боб.
+- **`ImprovementRule`** (`frozen, slots`) — `id`, `observation` (рус,
+  человекочитаемо), `adjustment`, `lever`, `magnitude` (в `[0, 1]`), `state`,
+  `origin`, `created_at`, `evidence` (какие паттерны сработали).
+- Чистые функции: `active_rules(rules)` возвращает только `APPROVED` (на этом
+  держится authz-before-autonomy на applied-стороне), `rules_for_lever(rules,
+  lever)`, `can_transition(frm, to)`, `clamp_magnitude(value, *, cap)` (зажимает
+  наклон в `[0, cap]`, отрицательное обнуляет — наклон не инвертирует базовое
+  поведение), `is_duplicate_rule(candidate, existing, *, threshold)` (дубль = тот
+  же рычаг и близкое наблюдение, реюз идеи анти-повтора BOB-026 через
+  `SequenceMatcher`, порог `0.85`).
+- **`build_modulators(rules, *, max_magnitude)` → `RuleModulators`** — собирает
+  мягкие наклоны из `active_rules`, каждый рычаг в свою точку. `RuleModulators`
+  (`frozen, slots`) несёт `voice_adjustments` (поправки тона/юмора),
+  `length_step` (сдвиг ступени многословия, `-1` короче либо `0`),
+  `proactivity_bias` и `addressivity_bias` (в `[0, max_magnitude]`); `has_any()`
+  отвечает, есть ли хоть один ненулевой наклон. Несколько правил по одному рычагу
+  суммируются, но суммарный наклон зажат потолком.
+
+Персист — порт **`SelfImprovementStore`** (`domain/ports.py`) +
+`SqliteSelfImprovementStore` (`infrastructure/persistence/self_improvement_store.py`)
+над таблицей `improvement_rule` (строка на `(persona_id, id)` — реплики Bobiverse
+держат свои правила раздельно). `load` / `save_rule` (UPSERT) /
+`update_rule_state` (атомарная запись одного столбца, которую гонит owner-апрув);
+enum'ы персистятся строковым `.value`, SQL параметризован.
+
+### Детектор паттернов (`application/usecases/detect_patterns.py`)
+
+- Порт **`PatternDetector`** (`domain/ports.py`): `detect(signals)` возвращает
+  правила-кандидаты строго в `PROPOSED`. **`LlmPatternDetector`** — реализация
+  через Tier-1 LLM (`TaskType.DETECT_PATTERNS`): из среза сигналов формулирует
+  человечное правило и **выбирает рычаг только из `Lever`-allowlist**. Разбор JSON
+  терпимый, как при извлечении фактов (markdown-fence / преамбула / мусор по краям
+  переживаются); каждый кандидат жёстко нормализуется в коде — `state` принудительно
+  `PROPOSED`, `origin` — `BOB_PROPOSED`, рычаг вне allowlist отбрасывается,
+  `magnitude` клампится. Сбой провайдера или непарсимый ответ дают **пустой список**
+  (best-effort, без падения тика).
+- **`ImprovementSignals`** (`frozen, slots`, домен) — структурированный срез
+  наблюдений Боба за собой: `self_repeat_count` (самоповторы BOB-026),
+  `addressivity_outcomes` (исходы SILENT/REACT/ENGAGE, BOB-023/025),
+  `verbosity_misses` (промахи длины-vs-спрос BOB-024), `relationship_deltas`
+  (BOB-014), `mood_stuck`/`mood_stuck_tone` (застревание настроения),
+  `owner_friction`, `positive_signals` (что зашло), `recent_observations`
+  (грундинг формулировки). Каждый источник опционален, дефолт — «нет сигнала».
+- **`DetectPatterns`** — use-case с ReflectTick-seam (редкий каденс): собрать
+  сигналы (опциональный `SignalSource`; unwired → пустые сигналы) → `detect` →
+  **дедуп** против существующих правил → сохранить новых кандидатов в `PROPOSED`.
+  Лимит `max_active_rules` (по «живым» — PROPOSED/APPROVED/PAUSED) не даёт плодить
+  правила. Здесь только предложение, никакого применения.
+
+### Апрув-флоу и применение
+
+**Боб проговаривает предложение.** `AnnounceProposedRules`
+(`application/usecases/announce_rules.py`) на медленном reflect-каденсе тактично
+произносит **одно** свежее `PROPOSED`-правило за прогон (самое старое
+непроговорённое) — «Заметил за собой: …. Предлагаю: …. Включить? (/rule approve
+<id>)». In-memory-страж не повторяет уже проговорённое; проговариваются только
+`PROPOSED`; best-effort (сбой логируется, тик не валит). `ActiveRulesReader`
+(`application/usecases/self_improvement_sources.py`) — read-seam applied-стороны:
+грузит правила из стора и отдаёт только `active_rules` (`APPROVED`).
+
+**Owner-команды GUPPI** (`infrastructure/telegram/guppi.py`, owner-only в General,
+как `/goals`): `/rules` (список id / состояние / рычаг / наблюдение) и `/rule
+approve|reject|pause|resume|remove <id>`. Переход правила проверяется машиной
+(`can_transition`): нелегальный ход (например, апрув уже убранного правила)
+отклоняется, не форсится. Это **единственный** путь `PROPOSED → APPROVED` —
+authz-before-autonomy. Незнакомое действие `/rule` не «съедается» (возвращает
+`False`); без подключённого стора команды тоже не активны.
+
+**Мягкое применение** в `HandleMessage` (read-seam `SelfImprovementReader`): когда
+шов подключён и мастер-выключатель включён, `_load_modulators` собирает
+`build_modulators(active_rules, max_magnitude=…)` и раздаёт наклоны по точкам —
+
+- `TONE`/`HUMOR` → `voice.improvement_directive(adjustments)` сворачивает поправки
+  одобренных правил в одну мягкую voice-строку поверх тона настроения/отношений
+  (наклон, не команда и не подмена личности);
+- `LENGTH` → сдвиг ступени многословия BOB-024 на одну позицию (только к короче),
+  край лестницы клиппится приёмником;
+- `ADDRESSIVITY_BIAS` → повышает `interest` адресности (BOB-023/025) на величину
+  байеса (клампится в `[0, 1]`);
+- **`PROACTIVITY` → байес собирается** в `RuleModulators.proactivity_bias`, **но
+  точка применения (urge/governance BOB-010) пока не провязана** — это намеренный
+  **known-gap** (collect-not-apply): рычаг входит в allowlist, детектируется и
+  суммируется в байес, однако `proactivity_bias` сейчас не читается ни в
+  `handle_message`, ни в проактивном тике. Поведение проактивности от этого не
+  меняется (безопасный недо-провод, не недосмотр); провязка urge-точки — отдельный
+  seam на потом.
+
+Конфигурация — секция `self_improvement.*` (`infrastructure/config/loader.py`):
+мастер-выключатель **`enabled` (по умолчанию `false`)**, `detect_cadence` (`20`),
+`detector_tier` (`1`), `max_active_rules` (`5`), `max_magnitude` (потолок наклона,
+`0.3`). Сборка — в `app.py` (`_build_self_improvement`): выключатель OFF → ни
+reader'а, ни `DetectPatterns`, ни `AnnounceProposedRules` (поведение ровно как до
+BOB-028); ON → шов подключён к `HandleMessage` и к reflect-тику (`heartbeat.py`).
+
+### Границы безопасности по конструкции
+
+- **Defense-in-depth** — три эшелона: `Lever`-allowlist в домене (нет рычага для
+  authz/гостя/SOUL/safety → правило их не представит), парсер детектора (рычаг вне
+  allowlist отбрасывается), применение (`build_modulators` читает только allowlist).
+- **Authz-before-autonomy** — применяются только `active_rules` (`APPROVED`);
+  детектор лишь предлагает (`PROPOSED`); без owner-апрува ничего не наклоняется.
+- **Наклон, не перехват** — величины клампятся к `max_magnitude`; `LENGTH`
+  сдвигает не больше одной ступени и только к короче; суммарный дрейф по рычагу
+  зажат потолком, число правил — лимитом `max_active_rules`.
+- **OFF по умолчанию** — `self_improvement.enabled=false`: детектор не запущен,
+  правил нет, ход и тики ровно как до BOB-028.
+- **Known-gap (зафиксирован):** `RuleModulators.proactivity_bias` собирается, но
+  его точка применения в urge/governance (BOB-010) пока не провязана —
+  collect-not-apply. Это безопасно (проактивность не меняется) и оставлено как
+  отдельный seam на потом, а не как пропущенная провязка.
+
 ## Конфигурация и запуск
 
 `ConfigLoader` собирает эффективную конфигурацию слоями: встроенные дефолты →

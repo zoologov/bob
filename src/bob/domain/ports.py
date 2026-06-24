@@ -34,6 +34,11 @@ if TYPE_CHECKING:
     from bob.domain.personality.first_impression import FirstImpression
     from bob.domain.personality.negotiation import NegotiationZone
     from bob.domain.personality.relationship import Relationship
+    from bob.domain.personality.self_improvement import (
+        ImprovementRule,
+        ImprovementSignals,
+        RuleState,
+    )
     from bob.domain.personality.sulk import SulkState
     from bob.domain.personality.taste import Verdict
     from bob.domain.proactivity.state import ProactivityState
@@ -56,6 +61,7 @@ __all__ = [
     "MemoryRecall",
     "MemoryRepo",
     "MessageReactor",
+    "PatternDetector",
     "Permission",
     "Planner",
     "ProactivityStore",
@@ -63,6 +69,7 @@ __all__ = [
     "ReflectionReader",
     "RelationshipStore",
     "Reranker",
+    "SelfImprovementStore",
     "SoulStore",
     "SulkStore",
     "ToolCall",
@@ -254,6 +261,31 @@ class Planner(Protocol):
 
     async def decompose(self, goal: Goal) -> Sequence[Task]:
         """Return the tasks ``goal`` decomposes into (in :class:`TaskState.NEW`)."""
+        ...
+
+
+@runtime_checkable
+class PatternDetector(Protocol):
+    """Formulate candidate rules from signals about Bob's own behaviour (BOB-028 .2).
+
+    The metacognitive detector: given :class:`ImprovementSignals` (a slice of Bob's
+    self-observations — self-repeats, addressivity outcomes, verbosity misses,
+    relationship deltas, a stuck mood, owner friction, what landed) it returns
+    candidate :class:`~bob.domain.personality.self_improvement.ImprovementRule`
+    objects — EACH strictly in ``state=PROPOSED`` and ``origin=BOB_PROPOSED`` (the
+    detector only PROPOSES; only the owner approval of the .3 use-case moves a rule to
+    APPROVED), with ``lever`` taken ONLY from the hard
+    :class:`~bob.domain.personality.self_improvement.Lever` allowlist and ``magnitude``
+    in ``[0, 1]`` (application .3 clamps it again).
+
+    The contract is abstract on purpose: the live realisation asks an LLM and parses
+    strict JSON as tolerantly as fact extraction (markdown-fenced / preamble / trailing
+    garbage tolerated; malformed output -> an empty sequence, never a raise), while a
+    deterministic fake proposes in tests with no network. No I/O in the contract.
+    """
+
+    async def detect(self, signals: ImprovementSignals) -> Sequence[ImprovementRule]:
+        """Return candidate rules in ``PROPOSED`` (empty when there are no patterns)."""
         ...
 
 
@@ -570,6 +602,38 @@ class GoalStore(Protocol):
         self, persona_id: str, task_id: str, state: TaskState
     ) -> None:
         """Atomically set ``task_id``'s state (a tick advances one safe task)."""
+        ...
+
+
+@runtime_checkable
+class SelfImprovementStore(Protocol):
+    """Durable per-persona store for Bob's self-improvement rules (BOB-028 .1).
+
+    Round-trips the :class:`bob.domain.personality.self_improvement.ImprovementRule`
+    set Bob holds — each rule's observation / adjustment, its :class:`Lever` (from the
+    hard allowlist), the bounded ``magnitude``, its :class:`RuleState`, ``origin``,
+    ``created_at`` and ``evidence`` — so a curated rule (and its approval state)
+    survives a restart. State is per ``persona_id`` so Bobiverse replicas each keep
+    their own. :meth:`load` returns an empty tuple for an unseen persona, so the
+    application always has something to read. ``save_rule`` UPSERTs (a proposed rule
+    is persisted, then re-saved as it evolves), and ``update_rule_state`` is an atomic
+    state move the manage-rules use-case (.3) drives — keeping authz-before-autonomy
+    honest (only owner approval moves PROPOSED -> APPROVED). The concrete SQLite-backed
+    adapter lives in ``bob.infrastructure.persistence``.
+    """
+
+    async def load(self, persona_id: str) -> tuple[ImprovementRule, ...]:
+        """Return the persisted rules for ``persona_id`` (empty tuple if unseen)."""
+        ...
+
+    async def save_rule(self, persona_id: str, rule: ImprovementRule) -> None:
+        """Persist ``rule`` for ``persona_id`` (UPSERT — an evolving rule is updated)."""
+        ...
+
+    async def update_rule_state(
+        self, persona_id: str, rule_id: str, state: RuleState
+    ) -> None:
+        """Atomically set ``rule_id``'s state (owner approval / pause / removal)."""
         ...
 
 

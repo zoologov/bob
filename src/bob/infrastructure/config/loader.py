@@ -263,6 +263,23 @@ DEFAULT_CONFIG: Config = {
         "pursuit_stopped": False,
         "safe_capabilities": [],
     },
+    # Self-improvement — metacognitive learning on patterns (BOB-028). PLACEHOLDERS
+    # the detector (.2) + apply flow (.3) read. ``enabled`` is the MASTER SWITCH —
+    # OFF by default (conservative start of metacognition): the detector is scheduled
+    # and rules are applied ONLY when the owner switches it on; OFF → behaviour is
+    # exactly as before BOB-028. ``detect_cadence`` is how rarely the reflect-tick
+    # seam runs the detector (every Nth slow tick); ``detector_tier`` pins the LLM
+    # tier the detector reasons on (1 = reasoning model). ``max_active_rules`` caps
+    # how many LIVE rules (PROPOSED/APPROVED/PAUSED) may accrue so the detector never
+    # floods the owner. ``max_magnitude`` (the soft-tilt ceiling) is read by the
+    # apply flow (.3), kept here so the whole knob set lives in one section.
+    "self_improvement": {
+        "enabled": False,
+        "detect_cadence": 20,
+        "detector_tier": 1,
+        "max_active_rules": 5,
+        "max_magnitude": 0.3,
+    },
     # Two bots in one process (BOB-003): Bob lives in his topic, GUPPI is the
     # gatekeeper in General. Each bot's token comes from env only (never YAML);
     # the shared ids (chat/owner/allowlist) and Bob's topic are non-secret.

@@ -31,6 +31,7 @@ from bob.domain.personality.voice import (
     brevity_few_shot,
     engagement_directive,
     guppi_canon,
+    improvement_directive,
     profanity_stance,
     recalled_impression_directive,
     relationship_tone_directive,
@@ -41,6 +42,19 @@ from bob.domain.personality.voice import (
     variable_form_directive,
     who_is_writing_directive,
 )
+
+
+def test_improvement_directive_empty_when_no_adjustments() -> None:
+    # Нет TONE/HUMOR-поправок → нет директивы (поведение как до BOB-028).
+    assert improvement_directive(()) == ""
+
+
+def test_improvement_directive_folds_grounded_adjustments() -> None:
+    text = improvement_directive(("говорить теплее", "чуть больше иронии"))
+    assert text != ""
+    # Директива грундирована в реальных поправках (не выдумана).
+    assert "говорить теплее" in text
+    assert "чуть больше иронии" in text
 
 
 def test_anti_bait_directive_is_natural_voice_not_a_rule_list() -> None:

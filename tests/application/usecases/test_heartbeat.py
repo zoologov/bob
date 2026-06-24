@@ -847,3 +847,47 @@ async def test_reflect_without_a_deduper_is_unaffected() -> None:
     await tick.run()
 
     assert len(repo.episodes) == 1
+
+
+class _RecordingPatternDetectorStep:
+    """A PatternDetectorStep double recording how many times the tick drove it."""
+
+    def __init__(self) -> None:
+        self.runs = 0
+
+    async def run(self) -> None:
+        self.runs += 1
+
+
+async def test_reflect_drives_the_pattern_detector_after_logging() -> None:
+    # BOB-028 .2: when wired, the reflect tick drives the pattern-detection step once
+    # per tick (after the reflection episode is logged so it is available as grounding).
+    # The step is itself rare/idempotent; the tick just invokes it.
+    router, _ = _router(reply="думал, что часто повторяюсь")
+    repo = FakeRepo()
+    detector = _RecordingPatternDetectorStep()
+    tick = ReflectTick(
+        router=router,
+        repo=repo,
+        state=_state(Mood(), Mood()),
+        clock=FixedClock(_moment()),
+        detect_patterns=detector,
+    )
+
+    await tick.run()
+
+    assert len(repo.episodes) == 1  # reflection still logged
+    assert detector.runs == 1  # detector driven once
+
+
+async def test_reflect_without_a_pattern_detector_is_unaffected() -> None:
+    # Backward-compatible default: no detector wired -> the tick behaves as before.
+    router, _ = _router(reply="тихая мысль")
+    repo = FakeRepo()
+    tick = ReflectTick(
+        router=router, repo=repo, state=_state(Mood(), Mood()), clock=FixedClock(_moment())
+    )
+
+    await tick.run()
+
+    assert len(repo.episodes) == 1
