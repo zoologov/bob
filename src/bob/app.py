@@ -61,9 +61,11 @@ from bob.application.runtime import (
     RetryPolicy,
     periodic,
 )
+from bob.application.usecases.announce_rules import AnnounceProposedRules
 from bob.application.usecases.apply_reflection import ApplyReflection
 from bob.application.usecases.consolidate_memory import ConsolidateMemory
 from bob.application.usecases.dedup_facts import DedupFacts
+from bob.application.usecases.detect_patterns import DetectPatterns, LlmPatternDetector
 from bob.application.usecases.evolve_fascination import EvolveFascination
 from bob.application.usecases.evolve_phantoms import EvolvePhantoms
 from bob.application.usecases.extract_facts import ExtractFacts
@@ -87,6 +89,7 @@ from bob.application.usecases.pursue_goals import PursueGoalsTick
 from bob.application.usecases.reflection_parser import HeuristicReflectionParser
 from bob.application.usecases.relationship_sources import RelationshipTracker
 from bob.application.usecases.run_genesis import RunGenesis
+from bob.application.usecases.self_improvement_sources import ActiveRulesReader
 from bob.application.usecases.sulk_sources import SulkRecoveryStep, SulkTracker
 from bob.application.usecases.update_mood_from_text import UpdateMoodFromText
 from bob.domain.personality.addressivity import AddressivityThresholds
@@ -122,6 +125,7 @@ from bob.infrastructure.persistence import (
     SqliteMemoryRepo,
     SqliteProactivityStore,
     SqliteRelationshipStore,
+    SqliteSelfImprovementStore,
     SqliteSulkStore,
 )
 from bob.infrastructure.telegram.multibot import (
@@ -173,6 +177,12 @@ _REPLY_TIER = 1
 
 # Per-persona id for Bob's proactivity state (Bobiverse replicas each get their own).
 _BOB_PERSONA = "bob"
+
+# Self-improvement defaults (BOB-028 .3): the soft-tilt ceiling each APPROVED rule's
+# magnitude is clamped to, and the cap on how many LIVE rules may accrue. Mirror the
+# ``self_improvement.*`` config defaults; only matter when the master switch is on.
+_DEFAULT_SI_MAX_MAGNITUDE = 0.3
+_DEFAULT_SI_MAX_ACTIVE_RULES = 5
 
 # Default vividness of a freshly-grounded fascination (BOB-020); it then decays with
 # age. Overridable via ``emotion.fascination.initial_intensity``.
@@ -423,6 +433,15 @@ def build_application(
     # self-directed tick (.3) will read. No tick is wired here — that is .3's job.
     goal_store, plan_goal = _build_goal_engine(merged, router=router, repo=memory_repo)
 
+    # Self-improvement (BOB-028): the master switch (``self_improvement.enabled``, OFF by
+    # default) gates the WHOLE feature. Off → ``rule_store`` is None, so GUPPI has no /rules
+    # command and (below) HandleMessage applies no rule and the reflect tick runs no
+    # detector/announcer — the runtime behaves EXACTLY as before BOB-028. The store is built
+    # here (before multibot) because GUPPI needs it; the apply reader + reflect-tick seams,
+    # which need Bob's gateway, are assembled just after multibot.
+    si_enabled = _build_self_improvement_enabled(merged)
+    rule_store = SqliteSelfImprovementStore(memory_repo) if si_enabled else None
+
     multibot = _build_multibot(
         merged,
         bus=event_bus,
@@ -433,6 +452,7 @@ def build_application(
         proactivity_clock=resolved_clock,
         goal_store=goal_store,
         plan_goal=plan_goal,
+        rule_store=rule_store,
         pursuit_store=proactivity_store,
     )
     # обида seam (BOB-014 .2b): GUPPI announces a fresh sulk entry once ("Боб обижен …")
@@ -443,6 +463,21 @@ def build_application(
         store=sulk_store,
         persona_id=_BOB_PERSONA,
         announcer=multibot.guppi,
+    )
+
+    # Self-improvement apply + reflect-tick seams (BOB-028): assembled now that Bob's
+    # gateway exists (the announcer voices a proposal into his topic). All pieces are None
+    # when the master switch is off → HandleMessage applies no rule, the reflect tick runs
+    # no detector/announcer — exactly as before BOB-028. The detector runs on empty signals
+    # for now (a signal-collection adapter is a later step); the announcer voices proposed
+    # rules to the owner.
+    self_improvement = _build_self_improvement(
+        merged,
+        router=router,
+        rule_store=rule_store,
+        gateway=multibot.reply_gateway(BotIdentity.BOB),
+        chat_id=_int(_section(merged, "telegram"), "chat_id", 0),
+        clock=resolved_clock,
     )
 
     handle_message = HandleMessage(
@@ -562,6 +597,13 @@ def build_application(
         floor_store=floor_store,
         floor_config=_build_floor_config(merged),
         floor_enabled=floor_enabled,
+        # Self-improvement apply seam (BOB-028 .3): Bob's OWNER-APPROVED rules apply as
+        # soft, bounded tilts — TONE/HUMOR colour the voice, LENGTH nudges verbosity, an
+        # ADDRESSIVITY_BIAS rule biases the addressivity interest. Only active_rules
+        # (APPROVED) apply and only the Lever allowlist is read. Off / unwired → no rules,
+        # behaviour exactly as before BOB-028. The magnitude ceiling clamps the drift.
+        self_improvement=self_improvement.reader,
+        self_improvement_max_magnitude=self_improvement.max_magnitude,
     )
     event_bus.subscribe(MESSAGE_RECEIVED, _as_handler(handle_message))
 
@@ -663,6 +705,11 @@ def build_application(
         # record. Reuses the .1 near-verbatim bar (``repeat.similarity_threshold``).
         reflection_context=memory_repo,
         repeat_thresholds=_build_repeat_thresholds(merged),
+        # Self-improvement reflect-tick seams (BOB-028): on the slow cadence Bob detects
+        # behavioural patterns into PROPOSED rules and tactfully voices ONE fresh proposal
+        # to the owner. Both are None when the master switch is off → the tick is unchanged.
+        detect_patterns=self_improvement.detect_patterns,
+        announce_rules=self_improvement.announce_rules,
     )
 
     proactivity_engine = _build_proactivity_engine(
@@ -759,6 +806,7 @@ def _build_multibot(
     goal_store: SqliteGoalStore | None = None,
     plan_goal: PlanGoal | None = None,
     pursuit_store: SqliteProactivityStore | None = None,
+    rule_store: SqliteSelfImprovementStore | None = None,
 ) -> MultiBotGateway:
     """Build the two-bot gateway: Bob (his topic) + GUPPI (General), one poller.
 
@@ -796,6 +844,7 @@ def _build_multibot(
         goal_store=goal_store,
         plan_goal=plan_goal,
         pursuit_store=pursuit_store,
+        rule_store=rule_store,
     )
 
 
@@ -822,6 +871,82 @@ def _build_goal_engine(
         require_plan_approval=_build_require_plan_approval(config),
     )
     return store, plan_goal
+
+
+@dataclass(frozen=True)
+class _SelfImprovement:
+    """The wired self-improvement pieces (BOB-028 .3), all None when the switch is off.
+
+    ``reader`` is the apply-side seam HandleMessage reads (APPROVED-only soft tilts);
+    ``detect_patterns`` + ``announce_rules`` are the reflect-tick seams; ``max_magnitude``
+    is the soft-tilt ceiling. Off → ``reader`` / ``detect_patterns`` / ``announce_rules``
+    are None and the magnitude is the default, so every consumer is a no-op.
+    """
+
+    reader: ActiveRulesReader | None
+    detect_patterns: DetectPatterns | None
+    announce_rules: AnnounceProposedRules | None
+    max_magnitude: float
+
+
+def _build_self_improvement_enabled(config: Mapping[str, object]) -> bool:
+    """Whether self-improvement is wired (``self_improvement.enabled``, OFF default).
+
+    The master switch: OFF (the conservative start of metacognition) → the whole feature
+    is unwired, so behaviour is exactly as before BOB-028. Tolerates an env-string bool.
+    """
+    return _flag(_section(config, "self_improvement"), "enabled")
+
+
+def _build_self_improvement(
+    config: Mapping[str, object],
+    *,
+    router: LLMRouter,
+    rule_store: SqliteSelfImprovementStore | None,
+    gateway: ReplyGateway,
+    chat_id: int,
+    clock: Clock,
+) -> _SelfImprovement:
+    """Assemble the self-improvement apply + reflect-tick pieces, or no-ops (BOB-028 .3).
+
+    Built ONLY when the master switch is on AND the rule store is wired: the
+    :class:`ActiveRulesReader` (APPROVED-only soft tilts into HandleMessage), the
+    :class:`DetectPatterns` reflect-tick seam (Tier-``detector_tier`` LLM detector →
+    candidate PROPOSED rules, capped by ``max_active_rules``; it runs on empty signals
+    for now — a signal-collection adapter is a later step), and the
+    :class:`AnnounceProposedRules` reflect-tick seam (Bob tactfully voices ONE fresh
+    proposal into his topic). Off / no store → every piece is None and the magnitude is
+    the config ceiling, so the runtime behaves exactly as before BOB-028.
+    """
+    section = _section(config, "self_improvement")
+    max_magnitude = _float_or(section, "max_magnitude", _DEFAULT_SI_MAX_MAGNITUDE)
+    if rule_store is None:
+        return _SelfImprovement(
+            reader=None,
+            detect_patterns=None,
+            announce_rules=None,
+            max_magnitude=max_magnitude,
+        )
+    detector = LlmPatternDetector(router=router, clock=clock)
+    detect_patterns = DetectPatterns(
+        detector=detector,
+        store=rule_store,
+        persona_id=_BOB_PERSONA,
+        max_active_rules=_int(section, "max_active_rules", _DEFAULT_SI_MAX_ACTIVE_RULES),
+    )
+    announce_rules = AnnounceProposedRules(
+        store=rule_store,
+        gateway=gateway,
+        chat_id=chat_id,
+        persona_id=_BOB_PERSONA,
+    )
+    reader = ActiveRulesReader(store=rule_store, persona_id=_BOB_PERSONA)
+    return _SelfImprovement(
+        reader=reader,
+        detect_patterns=detect_patterns,
+        announce_rules=announce_rules,
+        max_magnitude=max_magnitude,
+    )
 
 
 def _build_proactivity_engine(

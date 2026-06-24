@@ -49,9 +49,11 @@ __all__ = [
     "ImprovementRule",
     "ImprovementSignals",
     "Lever",
+    "RuleModulators",
     "RuleOrigin",
     "RuleState",
     "active_rules",
+    "build_modulators",
     "can_transition",
     "clamp_magnitude",
     "is_duplicate_rule",
@@ -266,3 +268,125 @@ def clamp_magnitude(value: float, *, cap: float) -> float:
     базовое поведение), величина выше потолка усекается до ``cap``.
     """
     return max(0.0, min(value, cap))
+
+
+# --- Мягкое применение: сборка модуляторов из active_rules (BOB-028 .3) -------
+
+# Порог суммарной (заклампленной) LENGTH-величины, выше которого правило сдвигает
+# многословие на ОДНУ ступень. Ниже порога — наклона нет (микро-правило не дёргает
+# длину). Один шаг и только один — это наклон, а не перехват: лестница многословия
+# (TERSE/NORMAL/EXPANSIVE) не переворачивается, край клиппится приёмником.
+_LENGTH_STEP_THRESHOLD = 0.05
+
+# Консервативное направление LENGTH-наклона: к КОРОЧЕ (-1). Север-звезда Боба —
+# краткость по запросу (BOB-024); правило-самоулучшение про длину почти всегда
+# означает «я слишком многословен». Рычаг сам по себе направления не несёт
+# (magnitude в [0, 1]), поэтому направление фиксировано и безопасно: один шаг вниз,
+# никогда не раздувание ответа.
+_LENGTH_STEP_DIRECTION = -1
+
+
+@dataclass(frozen=True, slots=True)
+class RuleModulators:
+    """Набор мягких наклонов, собранных из ``active_rules`` — каждый в свою точку.
+
+    Каждое поле — отдельный рычаг :class:`Lever`, который применяется В СВОЕЙ точке
+    поведения (один рычаг → одна точка, без перекрёстных эффектов):
+
+    * ``voice_adjustments`` — человекочитаемые поправки ТОНА / ЮМОРА (``adjustment``
+      одобренных TONE/HUMOR-правил), которые ``voice.improvement_directive`` оборачивает
+      в наклон-голоса для ``_system_prompt_for``. Пустой кортеж → ничего не добавляется
+      (прозу владеет voice — домен отдаёт только данные).
+    * ``length_step`` — целочисленный сдвиг ступени многословия (BOB-024): ``-1``
+      короче, ``0`` без сдвига. Не больше одной ступени — мягкий наклон, не перехват;
+      приёмник клиппит по краям лестницы.
+    * ``proactivity_bias`` — байес к urge/governance (BOB-010) в ``[0, max_magnitude]``.
+    * ``addressivity_bias`` — байес к порогам адресности (BOB-023/025) в
+      ``[0, max_magnitude]``.
+
+    Все величины уже закламплены к ``max_magnitude`` сборщиком. Дефолт (все поля
+    нейтральны) — это «нет применения»: поведение ровно как до BOB-028.
+    """
+
+    voice_adjustments: tuple[str, ...] = ()
+    length_step: int = 0
+    proactivity_bias: float = 0.0
+    addressivity_bias: float = 0.0
+
+    def has_any(self) -> bool:
+        """Есть ли хоть один ненулевой наклон (иначе применять нечего)."""
+        return bool(
+            self.voice_adjustments
+            or self.length_step
+            or self.proactivity_bias
+            or self.addressivity_bias
+        )
+
+
+def _summed_clamped(
+    rules: Iterable[ImprovementRule], lever: Lever, *, cap: float
+) -> float:
+    """Суммарная величина правил рычага ``lever``, зажатая в ``[0, cap]``.
+
+    Несколько правил по одному рычагу складываются, но суммарный наклон НЕ
+    превышает ``cap`` — суммарный дрейф ограничен (число правил ограничивает
+    ``max_active_rules`` на стороне детектора/применения, величину — этот кламп).
+    """
+    total = sum(rule.magnitude for rule in rules if rule.lever is lever)
+    return clamp_magnitude(total, cap=cap)
+
+
+def _voice_adjustments_for(rules: Iterable[ImprovementRule]) -> tuple[str, ...]:
+    """Поправки ГОЛОСА из TONE/HUMOR-правил — человекочитаемый ``adjustment`` каждого.
+
+    Берёт непустой ``adjustment`` каждого APPROVED TONE/HUMOR-правила (без рычага —
+    пусто). Прозу из них лепит ``voice.improvement_directive`` — домен отдаёт лишь
+    грундированные данные (поправки реальны, не выдуманы).
+    """
+    return tuple(
+        rule.adjustment.strip()
+        for rule in rules
+        if rule.lever in _VOICE_LEVERS and rule.adjustment.strip()
+    )
+
+
+# Рычаги, наклоняющие ГОЛОС (тон/юмор) — обе наклоняют одну точку (voice-директиву).
+_VOICE_LEVERS: frozenset[Lever] = frozenset({Lever.TONE, Lever.HUMOR})
+
+
+def build_modulators(
+    rules: Iterable[ImprovementRule], *, max_magnitude: float
+) -> RuleModulators:
+    """Собрать мягкие модуляторы из ``rules`` — каждый рычаг в свою точку (BOB-028 .3).
+
+    Safety-инварианты ПО КОНСТРУКЦИИ (defense-in-depth, второй слой над доменом):
+
+    1. Применяются ТОЛЬКО ``APPROVED`` правила (через :func:`active_rules`):
+       ``PROPOSED`` ждёт апрува, ``PAUSED`` отключено, ``REJECTED``/``REMOVED``
+       терминальны — ни одно не наклоняет поведение (authz-before-autonomy).
+    2. Читается ТОЛЬКО :class:`Lever`-allowlist: каждый рычаг сопоставлен своей
+       точке (TONE/HUMOR → голос, LENGTH → многословие, PROACTIVITY → urge,
+       ADDRESSIVITY_BIAS → пороги адресности). authz/гость/SOUL/safety не имеют
+       рычага → их нельзя наклонить (граница безопасности конструктивна).
+    3. Наклон, НЕ перехват: величины клампятся к ``max_magnitude``; LENGTH сдвигает
+       не больше одной ступени и только к короче (не раздувает ответ). Суммарный
+       дрейф по рычагу зажат потолком.
+
+    Пустой ``rules`` или ни одного APPROVED → нейтральные :class:`RuleModulators`
+    (поведение ровно как до BOB-028).
+    """
+    approved = active_rules(rules)
+    if not approved:
+        return RuleModulators()
+    length_magnitude = _summed_clamped(approved, Lever.LENGTH, cap=max_magnitude)
+    length_step = (
+        _LENGTH_STEP_DIRECTION if length_magnitude > _LENGTH_STEP_THRESHOLD else 0
+    )
+    return RuleModulators(
+        voice_adjustments=_voice_adjustments_for(approved),
+        length_step=length_step,
+        proactivity_bias=_summed_clamped(approved, Lever.PROACTIVITY, cap=max_magnitude),
+        addressivity_bias=_summed_clamped(
+            approved, Lever.ADDRESSIVITY_BIAS, cap=max_magnitude
+        ),
+    )

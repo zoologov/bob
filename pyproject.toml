@@ -151,6 +151,17 @@ ignore = [
 # prompts + observation/adjustment/evidence literals whose Cyrillic look-alikes are
 # intentional — RUF001/RUF002/RUF003 do not apply to these.
 "src/bob/application/usecases/detect_patterns.py" = ["RUF001", "RUF002", "RUF003"]
+# The announce-rules use-case (BOB-028 .3) carries Russian persona/proposal docstrings +
+# the tactful proposal template whose Cyrillic look-alikes are intentional —
+# RUF001/RUF002/RUF003 do not apply to these.
+"src/bob/application/usecases/announce_rules.py" = ["RUF001", "RUF002", "RUF003"]
+# The active-rules reader adapter (BOB-028 .3) carries Russian persona/policy docstrings
+# whose Cyrillic look-alikes are intentional — RUF001/RUF002/RUF003 do not apply.
+"src/bob/application/usecases/self_improvement_sources.py" = [
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
 # The self-directed pursue_goals use-case (BOB-015 .3) carries Russian persona/policy
 # docstrings + owner-facing progress/proposal literals ("Занялся целью", "стадия C")
 # whose Cyrillic look-alikes are intentional — RUF001/RUF002/RUF003 do not apply.
@@ -296,6 +307,32 @@ ignore = [
     "RUF001",
     "RUF003",
     "SLF001",
+]
+# The self-improvement application/voice tests (BOB-028 .3) assert on Russian
+# observation/adjustment/proposal literals whose Cyrillic look-alikes are intentional.
+"tests/domain/personality/test_self_improvement_modulators.py" = [
+    "S101",
+    "ARG001",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+"tests/application/usecases/test_announce_rules.py" = [
+    "S101",
+    "ARG001",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+"tests/infrastructure/telegram/test_guppi_rules.py" = [
+    "S101",
+    "ARG001",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
 ]
 # The engagement-appetite decider (BOB-014 .2a) seeds `random.Random` for deterministic
 # scenario assertions (non-crypto PRNG is the point → S311) and uses short Russian

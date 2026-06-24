@@ -100,6 +100,7 @@ from bob.domain.personality.negotiation import (
 from bob.domain.personality.profanity import is_directed_hostility
 from bob.domain.personality.reaction import reaction_emoji_for
 from bob.domain.personality.relationship import compromise_bias
+from bob.domain.personality.self_improvement import RuleModulators, build_modulators
 from bob.domain.personality.taste import Verdict
 from bob.domain.personality.voice import (
     OffDayThresholds,
@@ -109,6 +110,7 @@ from bob.domain.personality.voice import (
     brevity_few_shot,
     engagement_directive,
     guppi_canon,
+    improvement_directive,
     profanity_stance,
     recalled_impression_directive,
     relationship_tone_directive,
@@ -135,6 +137,7 @@ if TYPE_CHECKING:
     from bob.domain.personality.interlocutor import Interlocutor
     from bob.domain.personality.mood import Mood
     from bob.domain.personality.relationship import Relationship
+    from bob.domain.personality.self_improvement import ImprovementRule
     from bob.domain.personality.soul import SOUL
     from bob.domain.personality.sulk import SulkState
     from bob.domain.ports import (
@@ -189,6 +192,12 @@ _SINGLE_MESSAGE = 1
 # clamped to its first finished thought (no regeneration). Conservative — the guard
 # is a safety net behind the bayes (directive + few-shot), off by default.
 _DEFAULT_LENGTH_GUARD_MAX_CHARS = 280
+
+# Default soft-tilt ceiling for self-improvement rules (BOB-028 .3): an APPROVED rule's
+# magnitude is clamped to this before it biases its point, so the per-turn drift stays
+# small. Conservative — mirrors the ``self_improvement.max_magnitude`` config default;
+# only matters when the master switch is on AND the owner has approved a rule.
+_DEFAULT_MAX_MAGNITUDE = 0.3
 
 # The base persona, then two voice concerns Bob's persona leans on (BOB-016): the
 # anti-bait directive + few-shot (so he lands like a person, not an assistant
@@ -413,6 +422,26 @@ class SulkReader(Protocol):
     ) -> SulkState: ...
 
 
+class SelfImprovementReader(Protocol):
+    """Read seam: Bob's APPROVED self-improvement rules for this turn (BOB-028 .3).
+
+    The compose path uses this to APPLY Bob's owner-approved self-improvement rules as
+    soft, bounded tilts — a TONE/HUMOR rule colours the voice, a LENGTH rule nudges the
+    verbosity one step shorter, a PROACTIVITY/ADDRESSIVITY_BIAS rule biases their points
+    (built into :class:`~bob.domain.personality.self_improvement.RuleModulators` by
+    :func:`~bob.domain.personality.self_improvement.build_modulators`). Safety: it
+    returns rules the use-case then filters to APPROVED-only via ``active_rules`` (no
+    PROPOSED/PAUSED rule ever applies — authz-before-autonomy), and only the
+    :class:`~bob.domain.personality.self_improvement.Lever` allowlist is read (authz /
+    guest / SOUL / safety have no lever). Optional and additive: unwired (the default)
+    OR the master switch off → no rules, so the turn behaves exactly as before BOB-028.
+    """
+
+    async def active(self) -> tuple[ImprovementRule, ...]:
+        """Return Bob's APPROVED self-improvement rules (empty when none / disabled)."""
+        ...
+
+
 class OwnerActivityRecorder(Protocol):
     """The proactivity seam HandleMessage notifies when the owner writes.
 
@@ -531,6 +560,8 @@ class HandleMessage:
         floor_store: ConversationFloorStore | None = None,
         floor_config: FloorConfig | None = None,
         floor_enabled: bool = True,
+        self_improvement: SelfImprovementReader | None = None,
+        self_improvement_max_magnitude: float = _DEFAULT_MAX_MAGNITUDE,
     ) -> None:
         self._router = router
         self._gateway = gateway
@@ -725,6 +756,32 @@ class HandleMessage:
         self._floor_store = floor_store
         self._floor_config = floor_config if floor_config is not None else FloorConfig()
         self._floor_enabled = floor_enabled
+        # Self-improvement seam (BOB-028 .3): when wired AND the master switch is on,
+        # Bob's OWNER-APPROVED rules apply as soft, bounded tilts — a TONE/HUMOR rule
+        # colours the voice (improvement_directive), a LENGTH rule nudges verbosity one
+        # step shorter, a PROACTIVITY/ADDRESSIVITY_BIAS rule biases its own point. ONLY
+        # active_rules (APPROVED) apply (authz-before-autonomy) and ONLY the Lever
+        # allowlist is read (authz/guest/SOUL/safety have no lever — границу безопасности
+        # держит конструкция). The magnitude ceiling clamps the per-turn drift. Unwired
+        # (the default) OR disabled → no rules, behaviour exactly as before BOB-028.
+        self._self_improvement = self_improvement
+        self._self_improvement_max_magnitude = _validated_magnitude(
+            self_improvement_max_magnitude
+        )
+
+    async def _load_modulators(self) -> RuleModulators:
+        """Build this turn's soft modulators from Bob's APPROVED rules (BOB-028 .3).
+
+        Unwired seam → neutral :class:`RuleModulators` (no tilt), so the turn behaves
+        exactly as before. ``build_modulators`` re-filters to APPROVED-only and reads
+        ONLY the Lever allowlist, clamping every tilt to the magnitude ceiling.
+        """
+        if self._self_improvement is None:
+            return RuleModulators()
+        rules = await self._self_improvement.active()
+        return build_modulators(
+            rules, max_magnitude=self._self_improvement_max_magnitude
+        )
 
     async def handle(self, event: MessageReceived) -> None:
         """Process one received message end to end (the EventBus subscriber)."""
@@ -748,6 +805,11 @@ class HandleMessage:
         # COLD (a quieter, curt sulk_directive) — composed over mood/relationship tone.
         # None when no seam is wired / not hurt, so the turn behaves exactly as before.
         sulk = await self._load_sulk()
+        # Build this turn's self-improvement modulators (BOB-028 .3): the soft, bounded
+        # tilts Bob's OWNER-APPROVED rules apply — voice (tone/humor), length, proactivity
+        # and addressivity biases — each into ITS OWN point below. Unwired / disabled → a
+        # neutral RuleModulators (no tilt), so the turn behaves exactly as before BOB-028.
+        modulators = await self._load_modulators()
         # Plan how Bob expresses this turn (BOB-018): pure, deterministic by seed.
         # Computed up front so the mode steers the reply path and the form hint
         # shapes the prompt; the rare flags ride along for later beads.
@@ -773,7 +835,13 @@ class HandleMessage:
         # tracking whether Bob actually replied separately. A turn that does NOT reach
         # the reply (SILENT / REACT / react-only) advances the floor with
         # ``bob_replied=False`` before returning, so idle_streak / decay are counted.
-        decision = await self._decide_addressivity(event, interest)
+        # ADDRESSIVITY self-improvement tilt (BOB-028 .3): an APPROVED ADDRESSIVITY_BIAS
+        # rule softly RAISES the effective interest the addressivity policy reads — Bob is
+        # a touch more willing to engage an ambient/borderline turn. It is a bounded nudge
+        # (clamped to [0, 1]) on TOP of the BOB-023/025 decision, never a base override and
+        # never able to silence Bob (the bias is non-negative). No rule → interest unchanged.
+        addressivity_interest = _clamp_unit(interest + modulators.addressivity_bias)
+        decision = await self._decide_addressivity(event, addressivity_interest)
         if decision.outcome is ResponseOutcome.SILENT:
             await self._advance_floor_after_turn(event, decision, bob_replied=False)
             return
@@ -801,6 +869,11 @@ class HandleMessage:
         # length guard after generation.
         demand = classify_answer_demand(text=event.text)
         verbosity = self._decide_verbosity(soul, demand, interest, level, plan, interlocutor)
+        # LENGTH self-improvement tilt (BOB-028 .3): an APPROVED LENGTH rule nudges the
+        # decided verbosity ONE step shorter (clipped at TERSE) — a soft bias on TOP of
+        # the BOB-024 decision, never a base override (наклон, не перехват). No such rule
+        # (the default) → length_step 0 → verbosity unchanged.
+        verbosity = _shift_verbosity(verbosity, modulators.length_step)
         # Guest (restricted social) mode (BOB-019 bob-apv.2 — the security core).
         # An unauthorized GUEST reached Bob's social path (routed in by multibot),
         # so Bob may talk to them like a person, but NEVER as a trusted peer:
@@ -847,6 +920,7 @@ class HandleMessage:
                 engagement=level,
                 sulk=sulk,
                 verbosity=verbosity,
+                modulators=modulators,
             )
             # Anti-repeat guard (BOB-022, defense in depth): if the fresh reply is
             # byte-identical (after strip) to Bob's most-recent prior reply, regenerate
@@ -868,6 +942,7 @@ class HandleMessage:
                 engagement=level,
                 sulk=sulk,
                 verbosity=verbosity,
+                modulators=modulators,
             )
         # Optional brevity length guard (BOB-024): a conservative safety net behind
         # the bayes — when enabled AND the message wanted a short answer (LOW demand),
@@ -1462,6 +1537,7 @@ class HandleMessage:
         engagement: EngagementLevel = EngagementLevel.FULL,
         sulk: SulkState | None = None,
         verbosity: Verbosity = Verbosity.NORMAL,
+        modulators: RuleModulators | None = None,
     ) -> str:
         """Compose a full reply, folding the decided verbosity into the prompt.
 
@@ -1487,6 +1563,7 @@ class HandleMessage:
             engagement=engagement,
             sulk=sulk,
             verbosity=verbosity,
+            modulators=modulators,
         )
         provider = self._tool_provider
         if not is_guest and provider is not None and not self._registry.is_empty:
@@ -1525,6 +1602,7 @@ class HandleMessage:
         engagement: EngagementLevel = EngagementLevel.FULL,
         sulk: SulkState | None = None,
         verbosity: Verbosity = Verbosity.NORMAL,
+        modulators: RuleModulators | None = None,
     ) -> str:
         """Recompose once if ``reply`` (near-)repeats a recent Bob reply (BOB-026 .1).
 
@@ -1558,6 +1636,7 @@ class HandleMessage:
             engagement=engagement,
             sulk=sulk,
             verbosity=verbosity,
+            modulators=modulators,
         )
 
     async def _with_grounded_addons(
@@ -1658,6 +1737,7 @@ class HandleMessage:
         engagement: EngagementLevel = EngagementLevel.FULL,
         sulk: SulkState | None = None,
         verbosity: Verbosity = Verbosity.NORMAL,
+        modulators: RuleModulators | None = None,
     ) -> str:
         """Augment the base prompt with the mood tone, stance, and brevity directives.
 
@@ -1721,6 +1801,14 @@ class HandleMessage:
             recalled_impression_directive(prior_impression)
             if prior_impression
             else "",
+            # BOB-028 .3: Bob's OWNER-APPROVED TONE/HUMOR self-improvement rules fold
+            # into ONE soft voice tilt on TOP of mood/relationship tone — a reminder he
+            # gives himself, never a command or a reset (наклон, не перехват). No such
+            # rule (the default / disabled) → no line. Only the Lever allowlist is ever
+            # read (authz/guest/SOUL/safety have no lever).
+            improvement_directive(
+                modulators.voice_adjustments if modulators is not None else ()
+            ),
         ]
         suffix = "".join(f"\n{d}" for d in directives if d)
         return f"{_SYSTEM_PROMPT}{suffix}"
@@ -1762,6 +1850,47 @@ class HandleMessage:
             }
         )
         await self._repo.set_mood(_mood_state(soul), at=now)
+
+
+# The verbosity ladder, low → high, for the self-improvement LENGTH tilt (BOB-028 .3).
+# A LENGTH rule shifts the BOB-024 verbosity by ``step`` (only ever -1 → shorter),
+# clipped at the ends — a soft bias on TOP of the decision, never a base override.
+_VERBOSITY_LADDER: tuple[Verbosity, ...] = (
+    Verbosity.TERSE,
+    Verbosity.NORMAL,
+    Verbosity.EXPANSIVE,
+)
+
+
+def _shift_verbosity(verbosity: Verbosity, step: int) -> Verbosity:
+    """Shift ``verbosity`` by ``step`` steps on the ladder, clipped at the ends (BOB-028).
+
+    The LENGTH self-improvement tilt: ``step`` is the modulator's ``length_step`` (0 →
+    unchanged, -1 → one step shorter). A no-op for ``step == 0`` (the default / disabled
+    path), and clipped at TERSE/EXPANSIVE so a tilt never wraps the ladder — наклон, не
+    перехват.
+    """
+    if step == 0:
+        return verbosity
+    index = _VERBOSITY_LADDER.index(verbosity)
+    clamped = max(0, min(len(_VERBOSITY_LADDER) - 1, index + step))
+    return _VERBOSITY_LADDER[clamped]
+
+
+def _validated_magnitude(value: float) -> float:
+    """Validate the self-improvement soft-tilt ceiling lies in [0, 1] (BOB-028 .3)."""
+    if not _MIN_FREQ <= value <= _MAX_FREQ:
+        msg = (
+            f"self_improvement_max_magnitude must be within "
+            f"[{_MIN_FREQ}, {_MAX_FREQ}], got {value}"
+        )
+        raise ValueError(msg)
+    return value
+
+
+def _clamp_unit(value: float) -> float:
+    """Saturate ``value`` into the closed unit interval (a bounded interest/bias)."""
+    return max(_MIN_FREQ, min(_MAX_FREQ, value))
 
 
 def _clamp_conviction(value: float) -> float:

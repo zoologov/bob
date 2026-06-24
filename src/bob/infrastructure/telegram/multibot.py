@@ -79,6 +79,7 @@ if TYPE_CHECKING:
         GoalStoreLike,
         ProactivityStoreLike,
         PursuitStoreLike,
+        RuleStoreLike,
     )
 
 logger = logging.getLogger(__name__)
@@ -216,6 +217,7 @@ class MultiBotGateway:
         goal_store: GoalStoreLike | None = None,
         plan_goal: PlanGoal | None = None,
         pursuit_store: PursuitStoreLike | None = None,
+        rule_store: RuleStoreLike | None = None,
         reply_typing_interval: float = _DEFAULT_TYPING_INTERVAL,
         reply_clock: MonotonicClock = _LIVE_CLOCK,
         reply_sleep: Sleep = _LIVE_SLEEP,
@@ -228,6 +230,7 @@ class MultiBotGateway:
         self._goal_store = goal_store
         self._plan_goal = plan_goal
         self._pursuit_store = pursuit_store
+        self._rule_store = rule_store
         self._poll_timeout = poll_timeout
         # One inner TelegramGateway per bot does the per-bot intake/normalisation
         # and reply. Bob's inner gateway pins replies — and the "typing…" indicator
@@ -295,6 +298,7 @@ class MultiBotGateway:
             goal_store=self._goal_store,
             plan_goal=self._plan_goal,
             pursuit_store=self._pursuit_store,
+            rule_store=self._rule_store,
         )
 
     # --- Startup --------------------------------------------------------------

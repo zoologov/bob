@@ -132,6 +132,35 @@ def test_build_application_wires_handler_and_ticks(tmp_path: Path) -> None:
     assert isinstance(app.reflect_tick, ReflectTick)
 
 
+def test_self_improvement_off_by_default_wires_nothing(tmp_path: Path) -> None:
+    # BOB-028 .3: the master switch defaults OFF → no rule is applied, the reflect tick
+    # runs no detector/announcer, GUPPI has no rule store. Behaviour exactly as before.
+    app = _app(tmp_path)
+
+    assert app.handle_message._self_improvement is None
+    assert app.reflect_tick._detect_patterns is None
+    assert app.reflect_tick._announce_rules is None
+
+
+def test_self_improvement_enabled_wires_the_apply_and_reflect_seams(
+    tmp_path: Path,
+) -> None:
+    # BOB-028 .3: with the master switch ON, the apply reader + the reflect-tick detector
+    # and announcer are wired (the owner can now approve a rule and have it softly applied).
+    config = _config(tmp_path)
+    config["self_improvement"] = {"enabled": True}
+    app = build_application(
+        config=config,
+        providers=_providers(),
+        bob_bot=_Bot(),
+        guppi_bot=_Bot(),
+    )
+
+    assert app.handle_message._self_improvement is not None
+    assert app.reflect_tick._detect_patterns is not None
+    assert app.reflect_tick._announce_rules is not None
+
+
 def test_system_clock_returns_timezone_aware_now() -> None:
     # Act
     now = SystemClock().now()

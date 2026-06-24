@@ -517,6 +517,35 @@ def profanity_stance() -> str:
     return _PROFANITY_STANCE
 
 
+# Self-improvement voice tilt (BOB-028 .3). On a turn where Bob holds APPROVED TONE/
+# HUMOR self-improvement rules, their human-readable adjustments are folded into ONE
+# soft voice line on TOP of mood/relationship tone — a tilt he reminds himself of, never
+# a command and never a personality override (наклон, не перехват; границу безопасности
+# держит the Lever allowlist upstream). No such rule → no line. Cyrillic look-alikes
+# intentional in these Russian literals.
+_IMPROVEMENT_VOICE_PREFIX = (
+    "Ты заметил за собой пару вещей и решил их мягко подправить — держи это в голосе, "
+    "ненавязчиво, оставаясь собой: "
+)
+
+
+def improvement_directive(adjustments: tuple[str, ...]) -> str:
+    """Return Bob's self-improvement voice tilt for this turn, or ``""`` (BOB-028 .3).
+
+    Folds the human-readable ``adjustments`` of Bob's APPROVED TONE/HUMOR self-
+    improvement rules (built by
+    :func:`~bob.domain.personality.self_improvement.build_modulators`) into ONE soft
+    voice line the application appends on TOP of the mood/relationship tone. It is a
+    TILT he reminds himself of — never a command, never a personality override (наклон,
+    не перехват). An empty ``adjustments`` (no approved tone/humor rule, the default)
+    adds no line, so the unwired/disabled path is unchanged. Pure and deterministic;
+    the prose pins the soft, still-Bob character, not exact wording.
+    """
+    if not adjustments:
+        return ""
+    return _IMPROVEMENT_VOICE_PREFIX + "; ".join(adjustments) + "."
+
+
 def tone_directive(mood: Mood, *, thresholds: OffDayThresholds | None = None) -> str:
     """Return the mood-conditioned tone directive — warm by default, off-day when low.
 

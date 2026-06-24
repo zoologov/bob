@@ -11,13 +11,13 @@
 
 ## Текущий беад
 
-**Беад:** `bob-7xn.3` — dev: апрув-флоу + мягкое применение + конфиг (следующий, разблокирован).
+**Беад:** `bob-7xn.4` — test: US-1..6 + guardrails (следующий).
 
 ## Прогресс
 
-- [x] `.1` модель правила + persist — зелёный (Lever-allowlist без рычага безопасности; машина; SqliteSelfImprovementStore)
-- [x] `.2` детектор паттернов — зелёный (1681 passed; ImprovementSignals+is_duplicate_rule в домене; порт PatternDetector; LlmPatternDetector строгий JSON + рычаг ТОЛЬКО из Lever; DetectPatterns use-case: SignalSource-seam->detect->дедуп->save PROPOSED, лимит max_active_rules; опц. ReflectTick-seam detect_patterns; конфиг self_improvement.* OFF). Детектор СОЗДАЁТ ТОЛЬКО PROPOSED, ничего не применяет.
-- [ ] `.3` апрув-флоу + мягкое применение + конфиг
+- [x] `.1` модель правила + persist — зелёный (Lever-allowlist без рычага безопасности)
+- [x] `.2` детектор паттернов — зелёный (1681 passed; только PROPOSED, рычаг из allowlist)
+- [x] `.3` апрув-флоу + мягкое применение — зелёный (1720 passed; build_modulators только active_rules+allowlist+кламп, наклон-не-перехват; /rules owner-команды; Боб проговаривает; OFF default). NB: PROACTIVITY-байес собирается, urge-точка TODO (безопасно).
 - [ ] `.4` test · `.5` review · `.6` tech-writer
 
 ## Статусы беадов
@@ -26,7 +26,8 @@
 |------|------|---------|--------|
 | bob-7xn.1 | dev модель+persist | — | done |
 | bob-7xn.2 | dev детектор | .1 | done |
-| bob-7xn.3 | dev апрув+применение | .1,.2 | blocked |
+| bob-7xn.3 | dev апрув+применение | .1,.2 | done |
+| bob-7xn.4 | test | .1,.2,.3 | in_progress |
 | bob-7xn.4 | test | .1,.2,.3 | blocked |
 | bob-7xn.5 | review | .4 | blocked |
 | bob-7xn.6 | tech-writer | .5 | blocked |

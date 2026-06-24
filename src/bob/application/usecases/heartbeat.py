@@ -198,6 +198,24 @@ class PatternDetectorStep(Protocol):
         ...
 
 
+class RuleAnnouncerStep(Protocol):
+    """The narrow seam the reflect tick drives to voice a proposed rule (BOB-028 .3).
+
+    Realised by
+    :class:`~bob.application.usecases.announce_rules.AnnounceProposedRules`: a rare,
+    tactful step where Bob speaks ONE fresh ``PROPOSED`` self-improvement rule to the
+    owner ("Заметил за собой… Предлагаю… Включить?") and marks it announced so he does
+    not repeat it. Driven AFTER pattern detection on the same slow cadence (a freshly
+    proposed rule can be voiced next tick). It only PROPOSES — owner approval (the apply
+    gate) happens via the ``/rule approve`` command, never here. Best-effort and
+    optional: unwired, the reflect tick behaves exactly as before.
+    """
+
+    async def run(self) -> None:
+        """Voice one un-announced proposed rule (a no-op unless one is pending)."""
+        ...
+
+
 class TasteProfileWriter(Protocol):
     """The narrow persistence seam self-evolution needs: write a JSON artifact.
 
@@ -281,6 +299,7 @@ class ReflectTick:
         dedup_facts: FactDeduper | None = None,
         recover_sulk: SulkRecoverer | None = None,
         detect_patterns: PatternDetectorStep | None = None,
+        announce_rules: RuleAnnouncerStep | None = None,
         reflection_context: ReflectionContext | None = None,
         repeat_thresholds: RepeatThresholds | None = None,
         grounding_episodes: int = _DEFAULT_REFLECT_GROUNDING,
@@ -340,6 +359,11 @@ class ReflectTick:
         # PROPOSED — it only proposes, never applies (application is .3). Itself rare and
         # best-effort. Unwired, the tick behaves exactly as before.
         self._detect_patterns = detect_patterns
+        # The rule-announce seam (BOB-028 .3): same slow cadence — driven AFTER pattern
+        # detection so a freshly proposed rule can be voiced. Bob tactfully proposes ONE
+        # un-announced PROPOSED rule to the owner; it only proposes (owner approval is the
+        # /rule approve command), best-effort. Unwired, the tick behaves exactly as before.
+        self._announce_rules = announce_rules
         # Idempotency marker: the last reflection text already applied to the soul.
         self._last_evolved: str | None = None
 
@@ -382,6 +406,8 @@ class ReflectTick:
             await self._recover_sulk.run()
         if self._detect_patterns is not None:
             await self._detect_patterns.run()
+        if self._announce_rules is not None:
+            await self._announce_rules.run()
 
     async def _recent_episodes(self) -> Sequence[Mapping[str, object]]:
         """Read recent episodes for grounding + dedup (empty when no seam is wired).

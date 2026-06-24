@@ -36,12 +36,17 @@ from datetime import timedelta
 from typing import TYPE_CHECKING, Protocol
 
 from bob.domain.goals.state import GoalState, can_transition
+from bob.domain.personality.self_improvement import RuleState
+from bob.domain.personality.self_improvement import (
+    can_transition as rule_can_transition,
+)
 
 if TYPE_CHECKING:
     from datetime import datetime
 
     from bob.application.usecases.plan_goal import PlanGoal
     from bob.domain.goals.graph import GoalGraph
+    from bob.domain.personality.self_improvement import ImprovementRule
     from bob.domain.ports import Clock
     from bob.domain.proactivity.state import ProactivityState
     from bob.infrastructure.telegram.gateway import AuthorizerLike, BotLike
@@ -52,6 +57,7 @@ __all__ = [
     "GuppiHandler",
     "ProactivityStoreLike",
     "PursuitStoreLike",
+    "RuleStoreLike",
 ]
 
 # The single visible reject shown to an unauthorized user inside Bob's topic.
@@ -91,6 +97,34 @@ _GOAL_STATE_ACTIONS: dict[str, GoalState] = {
     _GOAL_RESUME: GoalState.ACTIVE,
     _GOAL_CANCEL: GoalState.CANCELLED,
 }
+
+# Owner-only self-improvement-rule commands GUPPI consumes in General (BOB-028 .3).
+# `/rules` lists Bob's rules; `/rule <action> <id>` is the owner approval gate —
+# PROPOSED -> APPROVED happens ONLY here (authz-before-autonomy).
+_RULES_COMMAND = "/rules"
+_RULE_COMMAND = "/rule"
+_RULE_APPROVE = "approve"
+_RULE_REJECT = "reject"
+_RULE_PAUSE = "pause"
+_RULE_RESUME = "resume"
+_RULE_REMOVE = "remove"
+
+# A rule action word -> the target RuleState its transition aims at. Each move is
+# gated by ``rule_can_transition`` so an illegal transition is rejected (not forced).
+# Only these levers of CONTROL exist — owner approve/reject/pause/resume/remove; a rule
+# can never grant a permission or a tool (it only ever tilts the Lever allowlist).
+_RULE_STATE_ACTIONS: dict[str, RuleState] = {
+    _RULE_APPROVE: RuleState.APPROVED,
+    _RULE_REJECT: RuleState.REJECTED,
+    _RULE_PAUSE: RuleState.PAUSED,
+    _RULE_RESUME: RuleState.APPROVED,
+    _RULE_REMOVE: RuleState.REMOVED,
+}
+
+_USAGE_RULE = "Использование: /rule <approve|reject|pause|resume|remove> <id> или /rules"
+_RULES_EMPTY_TEXT = "Правил самоулучшения пока нет."
+_RULE_REJECT_TEXT = "Не могу — для правила «{rule_id}» этот переход недопустим (сейчас {state})."
+_RULE_NOT_FOUND_TEXT = "Правило «{rule_id}» не найдено."
 
 _USAGE_GOAL = (
     "Использование: /goal <approve|plan|plan-approve|pause|resume|cancel> <id> "
@@ -150,6 +184,23 @@ class PursuitStoreLike(Protocol):
     async def set_pursuit_stopped(self, persona_id: str, *, stopped: bool) -> None: ...
 
 
+class RuleStoreLike(Protocol):
+    """The self-improvement-rule-store surface GUPPI's rule commands need (BOB-028 .3).
+
+    The read side (``load`` → the persisted rules) backs ``/rules`` and resolves a rule
+    for an action; ``update_rule_state`` performs the owner state move (approve / reject
+    / pause / resume / remove), each gated upstream by ``rule_can_transition``. ONLY the
+    owner can call this path (the command guard), and the move never grants a permission
+    or a tool — it merely flips the rule's :class:`RuleState`. A structural subset of
+    :class:`~bob.domain.ports.SelfImprovementStore` so a fake satisfies it in tests.
+    """
+
+    async def load(self, persona_id: str) -> tuple[ImprovementRule, ...]: ...
+    async def update_rule_state(
+        self, persona_id: str, rule_id: str, state: RuleState
+    ) -> None: ...
+
+
 class GuppiHandler:
     """GUPPI's gatekeeper behaviours: the visible reject + owner commands."""
 
@@ -165,6 +216,7 @@ class GuppiHandler:
         goal_store: GoalStoreLike | None = None,
         plan_goal: PlanGoal | None = None,
         pursuit_store: PursuitStoreLike | None = None,
+        rule_store: RuleStoreLike | None = None,
     ) -> None:
         self._bot = bot
         self._authorizer = authorizer
@@ -175,6 +227,7 @@ class GuppiHandler:
         self._goal_store = goal_store
         self._plan_goal = plan_goal
         self._pursuit_store = pursuit_store
+        self._rule_store = rule_store
 
     async def reject(self, *, chat_id: int, thread_id: int | None) -> None:
         """Send the visible "unauthorized" reject into ``chat_id``/``thread_id``.
@@ -218,6 +271,7 @@ class GuppiHandler:
             await self._dispatch_authz(chat_id, command, argument)
             or await self._dispatch_proactivity(chat_id, command, argument)
             or await self._dispatch_goals(chat_id, command, argument)
+            or await self._dispatch_rules(chat_id, command, argument)
         )
 
     async def _dispatch_authz(self, chat_id: int, command: str, argument: str) -> bool:
@@ -364,6 +418,81 @@ class GuppiHandler:
         if self._goal_store is None:  # pragma: no cover - guarded by caller
             raise RuntimeError("goal store not configured")
         return self._goal_store
+
+    async def _dispatch_rules(self, chat_id: int, command: str, argument: str) -> bool:
+        """Handle the self-improvement-rule owner commands (BOB-028 .3); ``False`` if none.
+
+        ``/rules`` lists Bob's rules (id / state / lever); ``/rule <action> <id>`` runs
+        an owner state move (approve / reject / pause / resume / remove). The approval
+        gate lives ONLY here — PROPOSED -> APPROVED happens nowhere else (authz-before-
+        autonomy). An unknown ``/rule`` action returns ``False`` (not consumed) so it
+        never silently swallows a typo. No rule store wired → ``False`` (not consumed).
+        """
+        if self._rule_store is None:
+            return False
+        if command == _RULES_COMMAND:
+            await self._reply(chat_id, await self._render_rules())
+            return True
+        if command == _RULE_COMMAND:
+            return await self._rule_action(chat_id, argument)
+        return False
+
+    async def _render_rules(self) -> str:
+        """Render the owner-facing ``/rules`` list (rule id + state + lever + observation)."""
+        store = self._require_rule_store()
+        rules = await store.load(self._persona_id)
+        if not rules:
+            return _RULES_EMPTY_TEXT
+        lines = ["Правила самоулучшения Боба:"]
+        for rule in rules:
+            lines.append(
+                f"• [{rule.id}] {rule.state.value} · {rule.lever.value} — "
+                f"{rule.observation}"
+            )
+        return "\n".join(lines)
+
+    async def _rule_action(self, chat_id: int, argument: str) -> bool:
+        """Run a ``/rule <action> <id>`` command; ``False`` for an unknown action."""
+        action, _, raw_id = argument.strip().partition(" ")
+        rule_id = raw_id.strip()
+        if not action or not rule_id:
+            await self._reply(chat_id, _USAGE_RULE)
+            return True
+        if action in _RULE_STATE_ACTIONS:
+            await self._rule_state_move(chat_id, rule_id, _RULE_STATE_ACTIONS[action])
+            return True
+        return False
+
+    async def _rule_state_move(
+        self, chat_id: int, rule_id: str, target: RuleState
+    ) -> None:
+        """Apply an owner rule state move, gated by the rule transition machine.
+
+        Loads the rule, checks ``rule_can_transition`` (an illegal move — e.g. approving
+        an already-REMOVED rule — is rejected, not forced), then persists the new state
+        via ``update_rule_state``. This is the SOLE path PROPOSED -> APPROVED, so no rule
+        ever influences behaviour without the owner's explicit approve here.
+        """
+        store = self._require_rule_store()
+        rules = await store.load(self._persona_id)
+        rule = next((r for r in rules if r.id == rule_id), None)
+        if rule is None:
+            await self._reply(chat_id, _RULE_NOT_FOUND_TEXT.format(rule_id=rule_id))
+            return
+        if not rule_can_transition(rule.state, target):
+            await self._reply(
+                chat_id,
+                _RULE_REJECT_TEXT.format(rule_id=rule_id, state=rule.state.value),
+            )
+            return
+        await store.update_rule_state(self._persona_id, rule_id, target)
+        await self._reply(chat_id, f"Правило «{rule_id}» → {target.value}.")
+
+    def _require_rule_store(self) -> RuleStoreLike:
+        """Return the wired rule store (the command guard ensures it exists)."""
+        if self._rule_store is None:  # pragma: no cover - guarded by caller
+            raise RuntimeError("rule store not configured")
+        return self._rule_store
 
     async def _quiet(self, chat_id: int, argument: str) -> None:
         """Mute proactivity; an optional duration (``2h``/``30m``) adds an expiry."""
