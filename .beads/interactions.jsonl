@@ -288,3 +288,4 @@
 {"id":"int-17cf3e94","kind":"field_change","created_at":"2026-06-24T14:25:52.092567Z","actor":"v.zoologov","issue_id":"bob-629","extra":{"field":"status","new_value":"closed","old_value":"open","reason":"Closed"}}
 {"id":"int-fd4b0fdd","kind":"field_change","created_at":"2026-06-24T15:22:18.314977Z","actor":"v.zoologov","issue_id":"bob-v0k.1","extra":{"field":"status","new_value":"in_progress","old_value":"open"}}
 {"id":"int-d5f7bccb","kind":"field_change","created_at":"2026-06-24T15:31:31.515242Z","actor":"v.zoologov","issue_id":"bob-v0k.1","extra":{"field":"status","new_value":"closed","old_value":"in_progress","reason":"Closed"}}
+{"id":"int-15d88ebd","kind":"field_change","created_at":"2026-06-24T15:33:41.687975Z","actor":"v.zoologov","issue_id":"bob-v0k.2","extra":{"field":"status","new_value":"in_progress","old_value":"open"}}

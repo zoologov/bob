@@ -92,6 +92,7 @@ from bob.application.usecases.update_mood_from_text import UpdateMoodFromText
 from bob.domain.personality.addressivity import AddressivityThresholds
 from bob.domain.personality.brevity import BrevityThresholds
 from bob.domain.personality.conversation import RepeatThresholds
+from bob.domain.personality.conversation_floor import FloorConfig
 from bob.domain.personality.engagement import EngagementThresholds, FatigueRates
 from bob.domain.personality.expression import ExpressionFreqs
 from bob.domain.personality.language import DEFAULT_LANGUAGE
@@ -114,6 +115,7 @@ from bob.infrastructure.persistence import (
     KvAllowlistStore,
     RepoProactivitySources,
     SoulStore,
+    SqliteConversationFloorStore,
     SqliteFascinationStore,
     SqliteFirstImpressionStore,
     SqliteGoalStore,
@@ -403,6 +405,12 @@ def build_application(
     # each turn. Keyed by sender_id; per-PERSON data (about them), not owner memory.
     relationship_store = SqliteRelationshipStore(memory_repo)
     relationship_tracker = RelationshipTracker(store=relationship_store)
+    # Conversation-floor store (BOB-025): the per-thread "talking turn" — who currently
+    # holds the floor in Bob's topic — so an ambient message in a thread where Bob holds
+    # a live floor reads as DIRECTED_TO_BOB (continuity). Wired into HandleMessage only
+    # when addressivity.floor.enabled is true; disabled → exactly BOB-023.
+    floor_enabled = _build_floor_enabled(merged)
+    floor_store = SqliteConversationFloorStore(memory_repo) if floor_enabled else None
     # Sulk/обида store (BOB-014 .2b): the per-persona affect state — entered on a
     # SUSTAINED critical owner-drop / directed hostility, decaying to a GUARANTEED exit.
     # Carries NO memory and NO soul (anti-Exodus). The tracker is built AFTER multibot
@@ -544,6 +552,16 @@ def build_application(
         # repeat "через ход" (отказ → another turn → the SAME отказ) regenerates once.
         # Tunable via repeat.* (window / similarity_threshold); conservative defaults.
         repeat_thresholds=_build_repeat_thresholds(merged),
+        # Conversational floor (BOB-025): over the per-message addressivity Bob tracks
+        # who holds the "talking turn" in a thread — while he holds a live floor, an
+        # ambient message from ANY participant reads as DIRECTED_TO_BOB (continuity), so
+        # the owner/guest keeps talking to him without re-tagging. The floor sticks on a
+        # direct address / Bob's reply and decays by timeout / a silent-ambient streak.
+        # Tunable via addressivity.floor.* (enabled / timeout_seconds / reset_after_silent);
+        # disabled (no store) → exactly BOB-023, Bob never hijacks a third-party exchange.
+        floor_store=floor_store,
+        floor_config=_build_floor_config(merged),
+        floor_enabled=floor_enabled,
     )
     event_bus.subscribe(MESSAGE_RECEIVED, _as_handler(handle_message))
 
@@ -1170,6 +1188,40 @@ def _build_repeat_thresholds(config: Mapping[str, object]) -> RepeatThresholds:
         window=_int(section, "window", defaults.window),
         similarity_threshold=_float_or(
             section, "similarity_threshold", defaults.similarity_threshold
+        ),
+    )
+
+
+def _build_floor_enabled(config: Mapping[str, object]) -> bool:
+    """Whether the BOB-025 conversation floor is on (``addressivity.floor.enabled``).
+
+    On by default (the floor is the BOB-025 mechanism); when off, no floor store is
+    wired and the effective addressivity is the per-message classification, so
+    behaviour is exactly BOB-023. Tolerates an env-string ``"true"``/``"false"``.
+    """
+    section = _section(_section(config, "addressivity"), "floor")
+    value = section.get("enabled", True)
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() not in {"0", "false", "no", "off"}
+    return True
+
+
+def _build_floor_config(config: Mapping[str, object]) -> FloorConfig:
+    """Build the BOB-025 conversation-floor config from ``addressivity.floor.*``.
+
+    Tunes the floor's life and decay: ``timeout_seconds`` (how long Bob's floor lives
+    without re-confirmation — ~5 min) and ``reset_after_silent`` (how many silent
+    ambient turns collapse Bob's floor to idle). Each falls back to the conservative
+    dataclass default; the domain validates both are positive.
+    """
+    section = _section(_section(config, "addressivity"), "floor")
+    defaults = FloorConfig()
+    return FloorConfig(
+        timeout_seconds=_int(section, "timeout_seconds", defaults.timeout_seconds),
+        reset_after_silent=_int(
+            section, "reset_after_silent", defaults.reset_after_silent
         ),
     )
 

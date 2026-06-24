@@ -11,12 +11,12 @@
 
 ## Текущий беад
 
-**Беад:** `bob-v0k.2` — dev: интеграция в handle_message + конфиг (следующий).
+**Беад:** `bob-v0k.3` — test: US-1..5 + guardrails (следующий).
 
 ## Прогресс
 
-- [x] `.1` трекер conversation_floor + персист — зелёный (1584 passed; advance_floor/resolve_addressivity + SqliteConversationFloorStore)
-- [ ] `.2` интеграция в handle_message + конфиг addressivity.floor.*
+- [x] `.1` трекер conversation_floor + персист — зелёный (1584 passed)
+- [x] `.2` интеграция в handle_message + конфиг — зелёный (1599 passed; _AddressivityDecision, advance/save на всех путях, enabled-флаг)
 - [ ] `.3` test · `.4` review · `.5` tech-writer
 
 ## Статусы беадов
@@ -24,7 +24,8 @@
 | Беад | Роль | Зависит | Статус |
 |------|------|---------|--------|
 | bob-v0k.1 | dev трекер+персист | — | done |
-| bob-v0k.2 | dev интеграция+конфиг | .1 | in_progress |
+| bob-v0k.2 | dev интеграция+конфиг | .1 | done |
+| bob-v0k.3 | test | .1,.2 | in_progress |
 | bob-v0k.3 | test | .1,.2 | blocked |
 | bob-v0k.4 | review | .3 | blocked |
 | bob-v0k.5 | tech-writer | .4 | blocked |

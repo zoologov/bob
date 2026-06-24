@@ -165,6 +165,19 @@ DEFAULT_CONFIG: Config = {
         "barge_in_freq": 0.05,
         "ambient_barge_in_freq": 0.15,
         "react_chance": 0.3,
+        # Conversational floor (BOB-025): over the per-message addressivity lives a
+        # tracker of who currently holds the "talking turn" in a thread. While Bob holds
+        # a live floor, an ambient message from ANY participant reads as DIRECTED_TO_BOB
+        # (continuity — owner and guest talk to Bob without re-tagging each message); the
+        # floor sticks on a direct address / Bob's reply and decays by timeout or after a
+        # silent-ambient streak. ``enabled`` true wires it; ``timeout_seconds`` (~5 min)
+        # is the floor's life without re-confirmation; ``reset_after_silent`` is how many
+        # silent ambient turns collapse Bob's floor to idle. Disabled → exactly BOB-023.
+        "floor": {
+            "enabled": True,
+            "timeout_seconds": 300,
+            "reset_after_silent": 2,
+        },
     },
     # Brevity — краткость по запросу (BOB-024): Bob's reply LENGTH stops being a constant.
     # The answer-demand of the message x topic interest x mood/appetite x the BOB-018
