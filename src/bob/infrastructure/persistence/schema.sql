@@ -183,6 +183,26 @@ CREATE TABLE IF NOT EXISTS person_relationship (
     compatibility REAL NOT NULL
 );
 
+-- Conversation floor (BOB-025): who currently holds the "talking turn" in a thread,
+-- so a label-less AMBIENT turn can be lifted to DIRECTED_TO_BOB while Bob holds the
+-- floor (continuity). Keyed by the THREAD — (chat_id, thread_id) — since the floor is
+-- a property of one running exchange, not of a person. thread_id is NOT NULL with a
+-- sentinel (-1) standing for "no forum topic / main chat", because SQLite treats NULL
+-- as distinct in a PRIMARY KEY (which would break the UPSERT); the adapter maps a
+-- domain None to/from that sentinel. holder is the FloorHolder enum value
+-- (bob/other/idle); holder_id is the OTHER person's id (nullable); since is a nullable
+-- ISO-8601 stamp of when the holder was last confirmed; idle_streak is the silent-
+-- ambient run. A thread never seen has no row (the store returns the default IDLE).
+CREATE TABLE IF NOT EXISTS conversation_floor (
+    chat_id     INTEGER NOT NULL,
+    thread_id   INTEGER NOT NULL,             -- -1 sentinel = no topic / main chat
+    holder      TEXT    NOT NULL,             -- FloorHolder value (bob/other/idle)
+    holder_id   INTEGER,                      -- OTHER person's id (nullable)
+    since        TEXT,                         -- ISO-8601 holder-confirmed stamp (nullable)
+    idle_streak INTEGER NOT NULL DEFAULT 0,   -- silent-ambient run toward decay
+    PRIMARY KEY (chat_id, thread_id)
+);
+
 -- Per-persona обида/sulk state (BOB-014 .2b): Bob's hurt affect, entered on a
 -- SUSTAINED critical owner-drop, decaying to a GUARANTEED exit. One row per persona_id
 -- so Bobiverse replicas each keep their own. Round-tripped by SqliteSulkStore; an

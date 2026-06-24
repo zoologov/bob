@@ -29,6 +29,7 @@ if TYPE_CHECKING:
     from bob.domain.goals.graph import GoalGraph
     from bob.domain.goals.state import GoalState, TaskState
     from bob.domain.memory.entities import SemanticFact
+    from bob.domain.personality.conversation_floor import ConversationFloor
     from bob.domain.personality.fascination import Fascination
     from bob.domain.personality.first_impression import FirstImpression
     from bob.domain.personality.negotiation import NegotiationZone
@@ -41,6 +42,7 @@ __all__ = [
     "AllowlistStore",
     "Capability",
     "Clock",
+    "ConversationFloorStore",
     "DomainEvent",
     "Embedder",
     "EventBus",
@@ -499,6 +501,33 @@ class RelationshipStore(Protocol):
 
     async def save(self, relationship: Relationship) -> None:
         """Persist ``relationship`` (UPSERT — an evolving relationship is updated)."""
+        ...
+
+
+@runtime_checkable
+class ConversationFloorStore(Protocol):
+    """Durable per-thread store for the conversation floor (BOB-025).
+
+    Round-trips the :class:`bob.domain.personality.conversation_floor.ConversationFloor`
+    — who currently holds the "talking turn" in a thread (Bob / another person / idle),
+    when that holder was last confirmed, and the silent-ambient streak — so the
+    continuity read survives a restart and across heartbeat ticks. Keyed by the THREAD
+    (``chat_id`` + an optional ``thread_id`` for a forum topic; ``None`` for the main
+    chat), since the floor is a property of one running exchange, not of a person.
+    :meth:`load` returns the default IDLE floor for a thread that has never been seen,
+    so the application always has something to read. :meth:`save` UPSERTs — the floor
+    advances every turn, so each turn re-saves the newer state. The concrete
+    SQLite-backed adapter lives in ``bob.infrastructure.persistence``.
+    """
+
+    async def load(self, chat_id: int, thread_id: int | None) -> ConversationFloor:
+        """Return the persisted floor for the thread (default IDLE if unseen)."""
+        ...
+
+    async def save(
+        self, chat_id: int, thread_id: int | None, floor: ConversationFloor
+    ) -> None:
+        """Persist ``floor`` for the thread (UPSERT — an advancing floor is updated)."""
         ...
 
 
