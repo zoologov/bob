@@ -65,6 +65,11 @@ _DEFAULT_REFLECT_GROUNDING = 3
 # How many recent REFLECTION episodes the reflect tick compares a fresh thought
 # against for near-duplicate detection (the anti-record window).
 _DEFAULT_REFLECT_DEDUP_WINDOW = 5
+# The dedup window counts REFLECTIONS, but the episode log interleaves message turns.
+# Fetch this many times the dedup window of raw episodes so the scan still finds the
+# intended number of reflections even amid a burst of messages (the tick is slow, so a
+# larger read costs nothing). Grounding still takes only the freshest tail, unaffected.
+_DEDUP_FETCH_FACTOR = 6
 
 
 def _localised(prompt: str, language: str) -> str:
@@ -352,10 +357,16 @@ class ReflectTick:
             await self._recover_sulk.run()
 
     async def _recent_episodes(self) -> Sequence[Mapping[str, object]]:
-        """Read recent episodes for grounding + dedup (empty when no seam is wired)."""
+        """Read recent episodes for grounding + dedup (empty when no seam is wired).
+
+        Over-fetches for dedup (``_DEDUP_FETCH_FACTOR x dedup_window``) so a burst of
+        interleaved message turns cannot shrink the effective reflection window below
+        ``dedup_window``. Grounding takes only the freshest tail, so the larger read
+        does not change what grounds the reflection.
+        """
         if self._reflection_context is None:
             return []
-        want = max(self._grounding_episodes, self._dedup_window)
+        want = max(self._grounding_episodes, self._dedup_window * _DEDUP_FETCH_FACTOR)
         return await self._reflection_context.recent_episodes(want)
 
     async def _reflect(self, recent: Sequence[Mapping[str, object]]) -> str:

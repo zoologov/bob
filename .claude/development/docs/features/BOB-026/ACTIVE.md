@@ -11,14 +11,15 @@
 
 ## Текущий беад
 
-**Беад:** `bob-629.4` — review (следующий).
+**Беад:** `bob-629.5` — tech-writer (следующий).
 
 ## Прогресс
 
 - [x] `.1` окно анти-повтора ответа — зелёный (1531 passed; кейс пользователя чинится)
 - [x] `.2` reflect-тик грундинг + дедуп — зелёный (1542 passed; (C) двойной записи НЕТ)
-- [x] `.3` test — зелёный (1559 passed; ~100% изменённого кода; acceptance-кейс + границы окна/дедупа)
-- [ ] `.4` review · `.5` tech-writer
+- [x] `.3` test — зелёный (1559 passed; ~100% изменённого кода)
+- [x] `.4` review — **APPROVE** без блокеров (минор: дедуп-окно укреплено over-fetch ×6 координатором)
+- [ ] `.5` tech-writer
 
 ## Статусы беадов
 
@@ -27,7 +28,8 @@
 | bob-629.1 | dev окно анти-повтора | — | done |
 | bob-629.2 | dev reflect грундинг+дедуп | .1 | done |
 | bob-629.3 | test | .1,.2 | done |
-| bob-629.4 | review | .3 | in_progress |
+| bob-629.4 | review | .3 | done |
+| bob-629.5 | tech-writer | .4 | in_progress |
 | bob-629.3 | test | .1,.2 | blocked |
 | bob-629.4 | review | .3 | blocked |
 | bob-629.5 | tech-writer | .4 | blocked |
