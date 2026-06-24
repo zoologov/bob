@@ -685,7 +685,8 @@ class HandleMessage:
         # a strongly interesting topic rarely pulls Bob in; an ambient message engages in
         # a 1:1 (his space) but is mostly read quietly (SILENT) or like-reacted (REACT)
         # when others are around. SILENT is an early return (read, not worth a word);
-        # REACT reuses the BOB-018 react-only path. In a 1:1 owner thread the outcome is
+        # REACT reuses the BOB-018 react-only path (and, like REACT_ONLY, degrades to a
+        # full reply when no reactor is wired). In a 1:1 owner thread the outcome is
         # always ENGAGE, so the turn behaves exactly as before.
         outcome = await self._decide_addressivity(event, interest)
         if outcome is ResponseOutcome.SILENT:

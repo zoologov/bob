@@ -141,9 +141,9 @@ if TYPE_CHECKING:
     )
     from bob.infrastructure.telegram.gateway import (
         BotLike,
+        BotUserLike,
         MessageLike,
         UpdateLike,
-        _BotUserLike,
     )
 
 logger = logging.getLogger(__name__)
@@ -1348,7 +1348,7 @@ class _AiogramBotAdapter:
     def __init__(self, bot: object) -> None:
         self._bot = bot
 
-    async def get_me(self) -> _BotUserLike:
+    async def get_me(self) -> BotUserLike:
         # Bob's own bot identity (id + @username), resolved once at startup so the
         # addressivity scan (BOB-023) can tell a mention of Bob from one of others.
         return await self._bot.get_me()  # type: ignore[attr-defined,no-any-return]

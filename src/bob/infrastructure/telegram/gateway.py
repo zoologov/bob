@@ -69,6 +69,7 @@ __all__ = [
     "AuthorizerLike",
     "BotIdentitySignals",
     "BotLike",
+    "BotUserLike",
     "MessageEntityLike",
     "MessageLike",
     "TelegramGateway",
@@ -101,7 +102,7 @@ class _UserLike(Protocol):
     def full_name(self) -> str: ...
 
 
-class _BotUserLike(Protocol):
+class BotUserLike(Protocol):
     """The subset of the aiogram ``User`` returned by ``Bot.get_me()`` we read.
 
     The composition root resolves Bob's bot identity once at startup via
