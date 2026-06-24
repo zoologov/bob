@@ -31,6 +31,7 @@ from bob.application.usecases.handle_message import (
     HandleMessage,
     OwnerActivityRecorder,
     PersonalityState,
+    _recent_bob_replies,
 )
 from bob.application.usecases.update_mood_from_text import UpdateMoodFromText
 from bob.domain.personality.addressivity import AddressivityThresholds
@@ -1897,6 +1898,95 @@ async def test_near_verbatim_reply_triggers_regeneration() -> None:
 
     assert len(tier1.payloads) == 2
     assert bot.final_text == "Ладно, опишу словами."
+
+
+async def test_same_topic_different_reply_in_window_does_not_regenerate() -> None:
+    # No false positive: an older decline on the SAME topic sits in the window, but a
+    # substantively different fresh reply (same subject, different words) is committed
+    # as-is — the conservative threshold does NOT mistake "related" for "repeat".
+    substantively_different = (
+        "Ладно, уговорил — давай я хотя бы наброшу структуру таблицы текстом."
+    )
+    handler, bot, _repo, tier1 = _build(
+        reply=substantively_different,
+        history=[
+            {"content": _WEDGED_TURN, "event_type": "message"},
+            {"content": _INTERVENING_TURN, "event_type": "message"},
+        ],
+    )
+
+    await handler.handle(_message("слушай, а нарисуй мне всё-таки таблицу подробно ещё раз"))
+
+    assert len(tier1.payloads) == 1  # no needless regeneration
+    assert bot.final_text == substantively_different
+
+
+async def test_repeat_just_outside_the_window_is_not_caught() -> None:
+    # Window boundary (off-by-one): with window=2 a verbatim repeat of a reply that is
+    # the THIRD-newest Bob turn — one past the window edge — slips through, while the
+    # companion through-a-turn test (window default 5) proves an in-window repeat is
+    # caught. Together they pin the window as a real, bounded cutoff.
+    older_reply = "Древний ответ, который выпал за пределы окна сравнения."
+    handler, bot, _repo, tier1 = _build(
+        reply=older_reply,
+        history=[
+            {"content": f"Ada: один\nbob: {older_reply}", "event_type": "message"},
+            {"content": "Ada: два\nbob: Второй ответ.", "event_type": "message"},
+            {"content": "Ada: три\nbob: Третий ответ.", "event_type": "message"},
+        ],
+        repeat_thresholds=RepeatThresholds(window=2),
+    )
+
+    await handler.handle(_message("слушай, а нарисуй мне всё-таки таблицу подробно ещё раз"))
+
+    # older_reply is the 3rd-newest Bob reply; window=2 compares only the two freshest,
+    # so it is outside the window and no regeneration fires.
+    assert len(tier1.payloads) == 1
+    assert bot.final_text == older_reply
+
+
+# --- BOB-026 .1: _recent_bob_replies window extractor (unit) -------------------
+
+
+def test_recent_bob_replies_returns_window_freshest_first() -> None:
+    # The extractor recovers the bob: half of each episode, newest-first, capped at
+    # the window — this is the WINDOW the guard compares the fresh reply against.
+    history = [
+        {"content": "Ada: один\nbob: ответ один"},
+        {"content": "Ada: два\nbob: ответ два"},
+        {"content": "Ada: три\nbob: ответ три"},
+    ]
+
+    replies = _recent_bob_replies(history, limit=2)
+
+    assert replies == ("ответ три", "ответ два")
+
+
+def test_recent_bob_replies_skips_non_string_content() -> None:
+    # A malformed episode whose content is not a string is skipped, not crashed on —
+    # the scan continues to the next well-formed episode.
+    history: list[dict[str, object]] = [
+        {"content": "Ada: один\nbob: ответ один"},
+        {"content": None},
+        {"content": 123},
+        {"content": "Ada: два\nbob: ответ два"},
+    ]
+
+    replies = _recent_bob_replies(history, limit=5)
+
+    assert replies == ("ответ два", "ответ один")
+
+
+def test_recent_bob_replies_empty_history_is_empty_tuple() -> None:
+    # No Bob turn on record -> an empty tuple (the guard then never fires).
+    assert _recent_bob_replies([], limit=5) == ()
+
+
+def test_recent_bob_replies_ignores_turns_without_a_bob_half() -> None:
+    # A user-only turn (no "\nbob: " marker) contributes no reply to the window.
+    history = [{"content": "Ada: просто вопрос без ответа Боба"}]
+
+    assert _recent_bob_replies(history, limit=5) == ()
 
 
 # --- BOB-022: user repeats themselves → Bob notices (voice directive) ----------

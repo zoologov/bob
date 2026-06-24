@@ -696,6 +696,115 @@ async def test_reflect_skips_evolution_when_the_reflection_is_skipped() -> None:
     assert consolidator.runs == 0  # downstream steps skipped with the reflection
 
 
+# --- BOB-026 .3: grounding carries the MOOD tone + zero-window edge cases -------
+
+
+async def test_reflect_grounds_the_prompt_in_the_current_mood_tone() -> None:
+    # BOB-026 .2: the grounded prompt weaves the current mood's deterministic tone
+    # word in (not just recent episodes) so the reflection is coloured by how Bob
+    # actually feels now. An excited (high valence + arousal) mood surfaces "excited".
+    router, tier0 = _router(reply="свежая мысль")
+    context = FakeReflectionContext([_message_episode("owner: что нового?")])
+    tick = ReflectTick(
+        router=router,
+        repo=FakeRepo(),
+        state=_state(Mood(valence=0.8, arousal=0.8), Mood()),
+        clock=FixedClock(_moment()),
+        reflection_context=context,
+    )
+
+    await tick.run()
+
+    assert "excited" in tier0.prompts[0]
+
+
+async def test_reflect_with_only_mood_and_no_episodes_still_grounds() -> None:
+    # Mood-only grounding: the seam is wired but serves NO episodes, so the prompt is
+    # grounded by the mood tone alone — it must NOT fall back to the generic template.
+    router, tier0 = _router(reply="свежая мысль")
+    context = FakeReflectionContext([])  # wired seam, but empty
+    tick = ReflectTick(
+        router=router,
+        repo=FakeRepo(),
+        state=_state(Mood(valence=0.8, arousal=0.8), Mood()),
+        clock=FixedClock(_moment()),
+        reflection_context=context,
+    )
+
+    await tick.run()
+
+    assert "excited" in tier0.prompts[0]
+    assert "how things have been going lately" not in tier0.prompts[0]
+
+
+async def test_reflect_with_zero_grounding_episodes_omits_episode_context() -> None:
+    # grounding_episodes=0 -> _episode_contents short-circuits (no episode lines), but
+    # the wired seam still supplies the mood tone, so the prompt is grounded by mood.
+    router, tier0 = _router(reply="свежая мысль")
+    context = FakeReflectionContext([_message_episode("owner: помнишь про орбиты?")])
+    tick = ReflectTick(
+        router=router,
+        repo=FakeRepo(),
+        state=_state(Mood(valence=0.8, arousal=0.8), Mood()),
+        clock=FixedClock(_moment()),
+        reflection_context=context,
+        grounding_episodes=0,
+    )
+
+    await tick.run()
+
+    assert "орбиты" not in tier0.prompts[0]  # no episode lines woven in
+    assert "excited" in tier0.prompts[0]  # mood still grounds it
+
+
+async def test_reflect_with_zero_dedup_window_never_suppresses() -> None:
+    # dedup_window=0 -> _reflection_contents short-circuits to empty, so even an exact
+    # repeat of a recent reflection is NOT suppressed: it is saved on the first try.
+    router, tier0 = _sequenced_router(["плыву по течению этих дней"])
+    context = FakeReflectionContext([_reflection_episode("плыву по течению этих дней")])
+    repo = FakeRepo()
+    tick = ReflectTick(
+        router=router,
+        repo=repo,
+        state=_state(Mood(), Mood()),
+        clock=FixedClock(_moment()),
+        reflection_context=context,
+        dedup_window=0,
+    )
+
+    await tick.run()
+
+    assert tier0.calls == 1  # no regeneration — dedup disabled
+    assert len(repo.episodes) == 1  # the duplicate is kept
+
+
+async def test_reflect_dedup_only_compares_within_the_window() -> None:
+    # Off-by-one at the window edge: with dedup_window=1 only the SINGLE freshest
+    # reflection is compared. An older identical reflection that has fallen outside
+    # the window no longer suppresses a fresh thought equal to it.
+    router, tier0 = _sequenced_router(["старая мысль"])
+    context = FakeReflectionContext(
+        [
+            _reflection_episode("старая мысль"),  # outside a window of 1
+            _reflection_episode("свежее наблюдение"),  # the only one compared
+        ]
+    )
+    repo = FakeRepo()
+    tick = ReflectTick(
+        router=router,
+        repo=repo,
+        state=_state(Mood(), Mood()),
+        clock=FixedClock(_moment()),
+        reflection_context=context,
+        dedup_window=1,
+    )
+
+    await tick.run()
+
+    assert tier0.calls == 1  # not a duplicate of the in-window reflection
+    assert len(repo.episodes) == 1
+
+
 class _RecordingDeduper:
     """A FactDeduper double recording how many times the tick drove it."""
 
