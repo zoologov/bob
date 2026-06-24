@@ -297,3 +297,100 @@ def test_external_agency_tasks_respects_deps() -> None:
 
     # ext зависит от незавершённой a -> ещё не готова к предложению.
     assert external_agency_tasks(graph) == ()
+
+
+# --- GoalGraph accessors ------------------------------------------------------
+
+
+def test_goal_by_id_returns_none_for_missing_goal() -> None:
+    graph = _graph((_goal("g1"),), ())
+
+    assert graph.goal_by_id("ghost") is None
+
+
+def test_goal_by_id_finds_the_goal() -> None:
+    goal = _goal("g1")
+    graph = _graph((goal,), ())
+
+    assert graph.goal_by_id("g1") is goal
+
+
+def test_tasks_of_returns_only_that_goals_tasks() -> None:
+    graph = _graph(
+        (_goal("g1"), _goal("g2")),
+        (_task("a", "g1"), _task("b", "g2"), _task("c", "g1")),
+    )
+
+    assert tuple(t.id for t in graph.tasks_of("g1")) == ("a", "c")
+
+
+def test_tasks_of_unknown_goal_is_empty() -> None:
+    graph = _graph((_goal("g1"),), (_task("a", "g1"),))
+
+    assert graph.tasks_of("ghost") == ()
+
+
+# --- orphan task whose goal is absent from the snapshot -----------------------
+
+
+def test_orphan_task_without_a_goal_is_never_ready() -> None:
+    # A task pointing at a goal not present in the snapshot is not pursuable (the
+    # authz machine can't confirm the goal is APPROVED/ACTIVE → it stays out).
+    graph = _graph((), (_task("orphan", "ghost"),))
+
+    assert ready_tasks(graph) == ()
+    assert next_safe_task(graph) is None
+
+
+def test_blocked_reason_for_orphan_task_names_missing_goal() -> None:
+    graph = _graph((), (_task("orphan", "ghost"),))
+
+    reason = blocked_reason(graph, graph.tasks[0])
+
+    assert reason is not None
+    assert "отсутствует" in reason
+
+
+def test_blocked_reason_for_non_advanceable_state() -> None:
+    # A task on an active goal, deps satisfied, but already IN_PROGRESS → not
+    # auto-advanceable; the reason names the state.
+    graph = _graph(
+        (_goal("g1"),),
+        (_task("t1", "g1", state=TaskState.IN_PROGRESS),),
+    )
+
+    reason = blocked_reason(graph, graph.tasks[0])
+
+    assert reason is not None
+    assert "in_progress" in reason
+
+
+# --- next_safe_task deterministic tie-break by id -----------------------------
+
+
+def test_next_safe_task_breaks_priority_ties_by_id() -> None:
+    # Two equal-priority goals; the tie-break is the task id (stable, deterministic),
+    # so the lexicographically greatest id wins (max over (priority, id)).
+    graph = _graph(
+        (_goal("g1", priority=2), _goal("g2", priority=2)),
+        (_task("aaa", "g1"), _task("zzz", "g2")),
+    )
+
+    chosen = next_safe_task(graph)
+
+    assert chosen is not None
+    assert chosen.id == "zzz"
+
+
+# --- is_goal_complete ignores other goals' tasks ------------------------------
+
+
+def test_is_goal_complete_ignores_tasks_of_other_goals() -> None:
+    goal = _goal("g1")
+    # An unfinished task belongs to g2, not g1 → g1's own (done) task completes it.
+    tasks = (
+        _task("a", "g1", state=TaskState.DONE),
+        _task("b", "g2", state=TaskState.NEW),
+    )
+
+    assert is_goal_complete(goal, tasks) is True

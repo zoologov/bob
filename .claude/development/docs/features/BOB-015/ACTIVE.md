@@ -11,14 +11,15 @@
 
 ## Текущий беад
 
-**Беад:** `bob-xnz.4` — test: US-1..6 + guardrails автономности (следующий).
+**Беад:** `bob-xnz.5` — review: authz-before-autonomy + граница стадии C (следующий).
 
 ## Прогресс
 
-- [x] `.1` Goal Engine + persist — зелёный (1424 passed; машина переходов + граф; authz/стадия-C в домене)
+- [x] `.1` Goal Engine + persist — зелёный (1424 passed)
 - [x] `.2` Planner + двойной апрув + контроль owner — зелёный (1453 passed)
-- [x] `.3` самонаправленный тик PursueGoalsTick — зелёный (1466 passed; gate-порядок + SafeCapabilityDispatcher + pursuit_enabled OFF по умолчанию)
-- [ ] `.4` test · `.5` review · `.6` tech-writer
+- [x] `.3` самонаправленный тик PursueGoalsTick — зелёный (1466 passed; SafeCapabilityDispatcher; pursuit OFF по умолчанию)
+- [x] `.4` test — зелёный (1515 passed; 100% новых модулей; safety-инварианты ДОКАЗАНЫ: матрица состояний, ZERO-работы при стопе/вето, граница стадии C)
+- [ ] `.5` review · `.6` tech-writer
 
 ## Статусы беадов
 

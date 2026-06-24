@@ -294,3 +294,208 @@ async def test_approve_plan_rejects_illegal_transition() -> None:
 
     assert moved is False
     assert "g1" not in store.goal_states
+
+
+@pytest.mark.asyncio
+async def test_approve_plan_unknown_goal_is_false() -> None:
+    store = _FakeGoalStore()
+    plan_goal = PlanGoal(
+        planner=_FakePlanner(_tasks()), store=store, persona_id=_PERSONA
+    )
+
+    moved = await plan_goal.approve_plan("missing")
+
+    assert moved is False
+    assert store.goal_states == {}
+
+
+# --- LlmPlanner: tolerant JSON parsing edge cases -----------------------------
+
+
+@pytest.mark.asyncio
+async def test_planner_bare_json_array_without_fence() -> None:
+    # A clean JSON array with no markdown fence still parses.
+    raw = '[{"id": "a", "summary": "Подумать", "deps": [], "needs_external_agency": false}]'
+    planner = LlmPlanner(router=_StubRouter(raw))
+
+    tasks = await planner.decompose(_goal())
+
+    assert [t.summary for t in tasks] == ["Подумать"]
+
+
+@pytest.mark.asyncio
+async def test_planner_array_embedded_in_prose_is_extracted() -> None:
+    # A reasoning preamble + trailing text around a balanced [...] is tolerated.
+    raw = (
+        'Вот мой план: [{"id": "a", "summary": "Вспомнить", "deps": [], '
+        '"needs_external_agency": false}] — как-то так.'
+    )
+    planner = LlmPlanner(router=_StubRouter(raw))
+
+    tasks = await planner.decompose(_goal())
+
+    assert [t.summary for t in tasks] == ["Вспомнить"]
+
+
+@pytest.mark.asyncio
+async def test_planner_skips_non_dict_and_blank_summary_entries() -> None:
+    # A non-object entry and an entry with a blank summary yield NO task; only the
+    # well-formed entry survives.
+    raw = (
+        "[\n"
+        '  "не объект",\n'
+        '  {"id": "a", "summary": "   ", "deps": [], "needs_external_agency": false},\n'
+        '  {"id": "b", "summary": "Настоящая задача", "deps": [], '
+        '"needs_external_agency": false}\n'
+        "]"
+    )
+    planner = LlmPlanner(router=_StubRouter(raw))
+
+    tasks = await planner.decompose(_goal())
+
+    assert [t.summary for t in tasks] == ["Настоящая задача"]
+
+
+@pytest.mark.asyncio
+async def test_planner_unknown_dep_is_dropped() -> None:
+    # A dep referencing a local id not present in the array is silently dropped
+    # (never resolves to a dangling task id).
+    raw = (
+        '[{"id": "a", "summary": "Задача A", "deps": ["ghost"], '
+        '"needs_external_agency": false}]'
+    )
+    planner = LlmPlanner(router=_StubRouter(raw))
+
+    tasks = await planner.decompose(_goal())
+
+    assert tasks[0].deps == ()
+
+
+@pytest.mark.asyncio
+async def test_planner_non_list_deps_is_treated_as_empty() -> None:
+    # A deps field that is not a list is treated as no deps (lenient).
+    raw = (
+        '[{"id": "a", "summary": "Задача", "deps": "не список", '
+        '"needs_external_agency": false}]'
+    )
+    planner = LlmPlanner(router=_StubRouter(raw))
+
+    tasks = await planner.decompose(_goal())
+
+    assert tasks[0].deps == ()
+
+
+@pytest.mark.asyncio
+async def test_planner_missing_external_flag_defaults_to_safe() -> None:
+    # The SAFE default: a missing needs_external_agency is treated as False (a task
+    # is autonomous-safe unless explicitly flagged external).
+    raw = '[{"id": "a", "summary": "Задача", "deps": []}]'
+    planner = LlmPlanner(router=_StubRouter(raw))
+
+    tasks = await planner.decompose(_goal())
+
+    assert tasks[0].needs_external_agency is False
+
+
+@pytest.mark.asyncio
+async def test_planner_non_true_external_flag_is_not_external() -> None:
+    # Only an explicit boolean True flags external; a truthy non-True (e.g. the
+    # string "true") does NOT — the conservative read keeps the safe boundary tight.
+    raw = '[{"id": "a", "summary": "Задача", "deps": [], "needs_external_agency": "true"}]'
+    planner = LlmPlanner(router=_StubRouter(raw))
+
+    tasks = await planner.decompose(_goal())
+
+    assert tasks[0].needs_external_agency is False
+
+
+@pytest.mark.asyncio
+async def test_planner_entry_without_id_gets_positional_local_id() -> None:
+    # An entry missing its local id still produces a task (a positional fallback id
+    # keeps it addressable); the generated task id is namespaced as usual.
+    raw = '[{"summary": "Без id", "deps": [], "needs_external_agency": false}]'
+    planner = LlmPlanner(router=_StubRouter(raw))
+
+    tasks = await planner.decompose(_goal("goalZ"))
+
+    assert len(tasks) == 1
+    assert tasks[0].id.startswith("goalZ")
+
+
+@pytest.mark.asyncio
+async def test_planner_json_object_not_array_yields_no_tasks() -> None:
+    # A JSON object (not the expected array) is not a plan → empty (best-effort).
+    raw = '{"summary": "не массив"}'
+    planner = LlmPlanner(router=_StubRouter(raw))
+
+    tasks = await planner.decompose(_goal())
+
+    assert tasks == ()
+
+
+@pytest.mark.asyncio
+async def test_planner_empty_array_yields_no_tasks() -> None:
+    planner = LlmPlanner(router=_StubRouter("[]"))
+
+    tasks = await planner.decompose(_goal())
+
+    assert tasks == ()
+
+
+@pytest.mark.asyncio
+async def test_planner_summary_with_brackets_in_quoted_string_parses() -> None:
+    # The array extractor is string-aware: a bracket INSIDE a quoted summary must
+    # not confuse the balance counter (the array ends at the real closing bracket).
+    raw = (
+        'Вот: [{"id": "a", "summary": "посчитать arr[0] и arr[1]", '
+        '"deps": [], "needs_external_agency": false}] всё.'
+    )
+    planner = LlmPlanner(router=_StubRouter(raw))
+
+    tasks = await planner.decompose(_goal())
+
+    assert [t.summary for t in tasks] == ["посчитать arr[0] и arr[1]"]
+
+
+@pytest.mark.asyncio
+async def test_planner_summary_with_escaped_quote_parses() -> None:
+    # An escaped quote inside the summary string is handled by the escape-aware
+    # scanner (the string does not terminate early, the array stays balanced).
+    raw = (
+        r'[{"id": "a", "summary": "сказать \"привет\"", "deps": [], '
+        r'"needs_external_agency": false}]'
+    )
+    planner = LlmPlanner(router=_StubRouter(raw))
+
+    tasks = await planner.decompose(_goal())
+
+    assert tasks[0].summary == 'сказать "привет"'
+
+
+@pytest.mark.asyncio
+async def test_planner_unbalanced_bracket_yields_no_tasks() -> None:
+    # An opening bracket that never closes is not a parseable array → empty plan.
+    planner = LlmPlanner(router=_StubRouter('Думаю так: [{"id": "a"'))
+
+    tasks = await planner.decompose(_goal())
+
+    assert tasks == ()
+
+
+# --- PlanGoal: empty plan still produces an owner message ---------------------
+
+
+@pytest.mark.asyncio
+async def test_plan_goal_empty_plan_messages_owner() -> None:
+    # The planner returns nothing → the goal stays APPROVED and the owner gets a
+    # "plan empty" message (planned is True: the run happened, just yielded no tasks).
+    goal = _goal()
+    store = _build_store(goal)
+    plan_goal = PlanGoal(planner=_FakePlanner(()), store=store, persona_id=_PERSONA)
+
+    result = await plan_goal.run("g1")
+
+    assert result.planned is True
+    assert result.tasks == ()
+    assert "пуст" in result.message.lower()
+    assert "g1" not in store.goal_states or store.goal_states["g1"] is GoalState.APPROVED

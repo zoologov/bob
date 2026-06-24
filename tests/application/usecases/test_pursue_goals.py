@@ -497,3 +497,399 @@ def test_governance_config_is_the_proactive_machine() -> None:
     # one config governs both reach-out paths.
     gov = Governance(config=GovernanceConfig(max_per_window=2))
     assert isinstance(gov, Governance)
+
+
+# --- gate ORDER (the safety-critical invariant: gates fire BEFORE any work) ----
+
+
+class _SpyGoalStore(_FakeGoalStore):
+    """A goal store that records whether ``load`` was ever consulted."""
+
+    def __init__(self, graph: GoalGraph) -> None:
+        super().__init__(graph)
+        self.load_calls = 0
+
+    async def load(self, persona_id: str) -> GoalGraph:
+        self.load_calls += 1
+        return await super().load(persona_id)
+
+
+def _build_with_spy_store(
+    *,
+    graph: GoalGraph,
+    stopped: bool = False,
+    state: ProactivityState | None = None,
+    now: datetime = NOW,
+) -> tuple[PursueGoalsTick, _SpyGoalStore, _CapturingGateway]:
+    spy = _SpyGoalStore(graph)
+    episodes = _RecordingEpisodes()
+    gateway = _CapturingGateway()
+    registry = CapabilityRegistry()
+    cap = _SafeCapability("note_capability")
+    registry.register(cap)
+    dispatcher = SafeCapabilityDispatcher(registry, allowlist=("note_capability",))
+    tick = PursueGoalsTick(
+        persona_id=PERSONA,
+        chat_id=CHAT_ID,
+        goal_store=spy,
+        pursuit_store=_FakePursuitStore(stopped=stopped),
+        governance=Governance(),
+        history=_FakeHistory(state if state is not None else _enabled_state()),
+        window=_FakeWindow(0),
+        dispatcher=dispatcher,
+        episodes=episodes,
+        gateway=gateway,
+        personality=PersonalityState(soul=_soul()),
+        clock=_FixedClock(now),
+        rng=random.Random(7),
+        safe_capabilities=("note_capability",),
+        max_tasks_per_window=1,
+    )
+    return tick, spy, gateway
+
+
+async def test_kill_switch_short_circuits_before_loading_the_graph() -> None:
+    # Authz-before-autonomy ordering: a set kill-switch ends the tick BEFORE the
+    # goal store is even consulted — zero work, not "work then discard".
+    graph = GoalGraph(
+        goals=(_goal("g1", state=GoalState.ACTIVE),),
+        tasks=(_task("t1", "g1"),),
+    )
+    tick, spy, gateway = _build_with_spy_store(graph=graph, stopped=True)
+
+    await tick.run()
+
+    assert spy.load_calls == 0
+    assert spy.task_moves == []
+    assert gateway.messages == []
+
+
+async def test_governance_veto_short_circuits_before_loading_the_graph() -> None:
+    # A governance veto (owner-mute here) also ends the tick before any goal load.
+    graph = GoalGraph(
+        goals=(_goal("g1", state=GoalState.ACTIVE),),
+        tasks=(_task("t1", "g1"),),
+    )
+    muted = ProactivityState(
+        social_energy=SocialEnergy(0.0),
+        last_spoke_at=None,
+        last_user_msg_at=None,
+        proactivity_enabled=False,
+    )
+    tick, spy, _ = _build_with_spy_store(graph=graph, state=muted)
+
+    await tick.run()
+
+    assert spy.load_calls == 0
+    assert spy.task_moves == []
+
+
+async def test_kill_switch_is_checked_before_governance_history() -> None:
+    # Strict order: the kill-switch read happens, the governance history read does
+    # NOT (the tick exits at the kill-switch before building the history snapshot).
+    graph = GoalGraph(
+        goals=(_goal("g1", state=GoalState.ACTIVE),),
+        tasks=(_task("t1", "g1"),),
+    )
+
+    class _CountingHistory:
+        def __init__(self, state: ProactivityState) -> None:
+            self._state = state
+            self.loads = 0
+
+        async def load(self, persona_id: str) -> ProactivityState:
+            self.loads += 1
+            return self._state
+
+    history = _CountingHistory(_enabled_state())
+    pursuit = _FakePursuitStore(stopped=True)
+    registry = CapabilityRegistry()
+    registry.register(_SafeCapability("note_capability"))
+    dispatcher = SafeCapabilityDispatcher(registry, allowlist=("note_capability",))
+    tick = PursueGoalsTick(
+        persona_id=PERSONA,
+        chat_id=CHAT_ID,
+        goal_store=_FakeGoalStore(graph),
+        pursuit_store=pursuit,
+        governance=Governance(),
+        history=history,
+        window=_FakeWindow(0),
+        dispatcher=dispatcher,
+        episodes=_RecordingEpisodes(),
+        gateway=_CapturingGateway(),
+        personality=PersonalityState(soul=_soul()),
+        clock=_FixedClock(NOW),
+        rng=random.Random(7),
+        safe_capabilities=("note_capability",),
+    )
+
+    await tick.run()
+
+    assert pursuit.checked is True
+    assert history.loads == 0  # never reached — kill-switch came first
+
+
+# --- authz-before-autonomy matrix: only APPROVED/ACTIVE goals are touched ------
+
+
+async def test_tick_advances_only_approved_and_active_goals_in_a_mixed_graph() -> None:
+    # A graph with a goal in EVERY state, each with one ready safe task. The tick
+    # must pick a task from an APPROVED/ACTIVE goal and never from the others.
+    states = [
+        GoalState.PROPOSED,
+        GoalState.APPROVED,
+        GoalState.ACTIVE,
+        GoalState.BLOCKED,
+        GoalState.PAUSED,
+        GoalState.DONE,
+        GoalState.CANCELLED,
+    ]
+    goals = tuple(_goal(f"g_{s.value}", state=s) for s in states)
+    tasks = tuple(_task(f"t_{s.value}", f"g_{s.value}") for s in states)
+    graph = GoalGraph(goals=goals, tasks=tasks)
+    tick, store, _episodes, _gateway, _caps = _build_tick(graph=graph)
+
+    await tick.run()
+
+    advanced = {task_id for task_id, _state in store.task_moves}
+    pursuable = {"t_approved", "t_active"}
+    # Exactly the pursuable goals' tasks may move; nothing from PROPOSED/BLOCKED/
+    # PAUSED/DONE/CANCELLED ever does (one task advances per tick).
+    assert advanced <= pursuable
+    assert advanced  # something DID advance (the gate is not over-eager)
+
+
+async def test_blocked_goal_is_unreachable() -> None:
+    graph = GoalGraph(
+        goals=(_goal("g1", state=GoalState.BLOCKED),),
+        tasks=(_task("t1", "g1"),),
+    )
+    tick, store, _episodes, _gateway, caps = _build_tick(graph=graph)
+
+    await tick.run()
+
+    assert store.task_moves == []
+    assert caps["note_capability"].calls == []
+
+
+async def test_cancelled_and_done_goals_are_unreachable() -> None:
+    graph = GoalGraph(
+        goals=(
+            _goal("g_done", state=GoalState.DONE),
+            _goal("g_cancelled", state=GoalState.CANCELLED),
+        ),
+        tasks=(_task("t1", "g_done"), _task("t2", "g_cancelled")),
+    )
+    tick, store, _episodes, _gateway, caps = _build_tick(graph=graph)
+
+    await tick.run()
+
+    assert store.task_moves == []
+    assert caps["note_capability"].calls == []
+
+
+# --- dispatch failure is contained (BLOCKED, never an escalation) -------------
+
+
+async def test_dispatch_failure_blocks_task_without_escalating() -> None:
+    graph = GoalGraph(
+        goals=(_goal("g1", state=GoalState.ACTIVE),),
+        tasks=(_task("t1", "g1"),),
+    )
+
+    class _BoomCapability(_SafeCapability):
+        async def execute(self, args: Mapping[str, object]) -> object:
+            raise RuntimeError("capability blew up")
+
+    goal_store = _FakeGoalStore(graph)
+    episodes = _RecordingEpisodes()
+    gateway = _CapturingGateway()
+    registry = CapabilityRegistry()
+    registry.register(_BoomCapability("note_capability"))
+    dispatcher = SafeCapabilityDispatcher(registry, allowlist=("note_capability",))
+    tick = PursueGoalsTick(
+        persona_id=PERSONA,
+        chat_id=CHAT_ID,
+        goal_store=goal_store,
+        pursuit_store=_FakePursuitStore(stopped=False),
+        governance=Governance(),
+        history=_FakeHistory(_enabled_state()),
+        window=_FakeWindow(0),
+        dispatcher=dispatcher,
+        episodes=episodes,
+        gateway=gateway,
+        personality=PersonalityState(soul=_soul()),
+        clock=_FixedClock(NOW),
+        rng=random.Random(7),
+        safe_capabilities=("note_capability",),
+    )
+
+    await tick.run()
+
+    # A failed safe step BLOCKS the task — it is never marked DONE, no episode, no
+    # owner message (a stuck step is visible, not a silent success/escalation).
+    assert ("t1", TaskState.BLOCKED) in goal_store.task_moves
+    assert ("t1", TaskState.DONE) not in goal_store.task_moves
+    assert episodes.saved == []
+    assert gateway.messages == []
+
+
+# --- external proposal even when a graph mixes safe + external tasks ----------
+
+
+async def test_external_task_offered_when_no_safe_task_remains() -> None:
+    # The only ready task needs external agency; there is no safe task → the tick
+    # OFFERS the stage-C gate (proposal), it never executes anything.
+    graph = GoalGraph(
+        goals=(_goal("g1", state=GoalState.APPROVED),),
+        tasks=(_task("ext", "g1", external=True),),
+    )
+    tick, store, episodes, gateway, caps = _build_tick(graph=graph)
+
+    await tick.run()
+
+    assert store.task_moves == []
+    assert caps["note_capability"].calls == []
+    assert episodes.saved == []
+    assert len(gateway.messages) == 1
+    assert "стадия C" in gateway.messages[0]
+
+
+async def test_no_proposal_when_external_task_not_yet_ready() -> None:
+    # An external task gated behind an unfinished dep is NOT yet a proposal — the
+    # tick stays completely silent (nothing ready, nothing to offer).
+    graph = GoalGraph(
+        goals=(_goal("g1", state=GoalState.ACTIVE),),
+        tasks=(
+            _task("a", "g1", state=TaskState.IN_PROGRESS),
+            _task("ext", "g1", deps=("a",), external=True),
+        ),
+    )
+    tick, store, episodes, gateway, _caps = _build_tick(graph=graph)
+
+    await tick.run()
+
+    assert store.task_moves == []
+    assert episodes.saved == []
+    assert gateway.messages == []
+
+
+# --- transparency: the episode carries the goal/task trail --------------------
+
+
+async def test_progress_episode_records_goal_and_task_content() -> None:
+    graph = GoalGraph(
+        goals=(_goal("g1", state=GoalState.ACTIVE),),
+        tasks=(_task("t1", "g1"),),
+    )
+    tick, _store, episodes, gateway, _caps = _build_tick(graph=graph)
+
+    await tick.run()
+
+    assert len(episodes.saved) == 1
+    episode = episodes.saved[0]
+    assert episode["event_type"] == "goal_progress"
+    # The episode is a recallable trail: it names the goal and the task advanced.
+    assert "цель g1" in str(episode["content"])
+    assert "задача t1" in str(episode["content"])
+    assert "goal" in str(episode["tags"])
+    # And the owner is told in the same cycle (episode + message together).
+    assert len(gateway.messages) == 1
+
+
+# --- conservative defaults (pursuit is OFF/inert until explicitly wired) -------
+
+
+def test_safe_capabilities_default_to_empty_allowlist() -> None:
+    # The tick's default safe-allowlist is empty: with no capabilities wired,
+    # nothing is runnable autonomously (the conservative default).
+    tick = PursueGoalsTick(
+        persona_id=PERSONA,
+        chat_id=CHAT_ID,
+        goal_store=_FakeGoalStore(GoalGraph(goals=(), tasks=())),
+        pursuit_store=_FakePursuitStore(stopped=False),
+        governance=Governance(),
+        history=_FakeHistory(_enabled_state()),
+        window=_FakeWindow(0),
+        dispatcher=SafeCapabilityDispatcher(CapabilityRegistry(), allowlist=()),
+        episodes=_RecordingEpisodes(),
+        gateway=_CapturingGateway(),
+        personality=PersonalityState(soul=_soul()),
+        clock=_FixedClock(NOW),
+        rng=random.Random(7),
+    )
+
+    assert tick._safe_capabilities == ()
+    assert tick._max_tasks_per_window == 1
+
+
+async def test_skips_preference_name_not_allowed_then_runs_an_allowed_one() -> None:
+    # safe_capabilities (the preference order) lists a name the dispatcher does NOT
+    # allow, FOLLOWED by one it does. The tick skips the disallowed preference and
+    # runs the allowed capability — the dispatcher allowlist is the hard boundary,
+    # the preference order is only a hint among what is already safe.
+    graph = GoalGraph(
+        goals=(_goal("g1", state=GoalState.ACTIVE),),
+        tasks=(_task("t1", "g1"),),
+    )
+    note = _SafeCapability("note_capability")
+    registry = CapabilityRegistry()
+    registry.register(note)
+    # Dispatcher allows ONLY note_capability; the preference also lists ghost_pref.
+    dispatcher = SafeCapabilityDispatcher(registry, allowlist=("note_capability",))
+    goal_store = _FakeGoalStore(graph)
+    tick = PursueGoalsTick(
+        persona_id=PERSONA,
+        chat_id=CHAT_ID,
+        goal_store=goal_store,
+        pursuit_store=_FakePursuitStore(stopped=False),
+        governance=Governance(),
+        history=_FakeHistory(_enabled_state()),
+        window=_FakeWindow(0),
+        dispatcher=dispatcher,
+        episodes=_RecordingEpisodes(),
+        gateway=_CapturingGateway(),
+        personality=PersonalityState(soul=_soul()),
+        clock=_FixedClock(NOW),
+        rng=random.Random(0),
+        safe_capabilities=("ghost_pref", "note_capability"),
+    )
+
+    await tick.run()
+
+    # ghost_pref was skipped (dispatcher disallows it); note_capability ran.
+    assert note.calls == [{"query": "задача t1"}]
+    assert ("t1", TaskState.DONE) in goal_store.task_moves
+
+
+async def test_goal_with_remaining_tasks_is_not_completed() -> None:
+    # Advancing one task of a two-task goal does NOT complete the goal (the other
+    # task is still NEW) — is_goal_complete stays False, no ACTIVE→DONE move.
+    graph = GoalGraph(
+        goals=(_goal("g1", state=GoalState.ACTIVE),),
+        tasks=(
+            _task("t1", "g1"),
+            _task("t2", "g1", state=TaskState.NEW),
+        ),
+    )
+    tick, store, _episodes, _gateway, _caps = _build_tick(graph=graph)
+
+    await tick.run()
+
+    # One task advanced to DONE, but the goal is NOT marked DONE (t2 outstanding).
+    assert any(state is TaskState.DONE for _tid, state in store.task_moves)
+    assert ("g1", GoalState.DONE) not in store.goal_moves
+
+
+async def test_empty_graph_is_a_silent_no_op() -> None:
+    # No goals at all → the tick loads, finds nothing, and does nothing (no crash,
+    # no message). The everyday steady state when Bob has no approved goals.
+    graph = GoalGraph(goals=(), tasks=())
+    tick, store, episodes, gateway, _caps = _build_tick(graph=graph)
+
+    await tick.run()
+
+    assert store.task_moves == []
+    assert store.goal_moves == []
+    assert episodes.saved == []
+    assert gateway.messages == []

@@ -374,3 +374,166 @@ async def test_unknown_goal_command_not_consumed() -> None:
 def test_plan_result_shape() -> None:
     result = PlanResult(planned=True, tasks=(), message="x")
     assert result.planned is True
+
+
+# --- usage / not-found / illegal-transition feedback --------------------------
+
+
+@pytest.mark.asyncio
+async def test_goal_action_without_id_shows_usage() -> None:
+    handler, bot, store, _ = _build(goals={"g1": _goal(state=GoalState.APPROVED)})
+
+    # `/goal approve` with no id is consumed (True) but only echoes usage, no move.
+    handled = await _send(handler, "/goal approve")
+
+    assert handled is True
+    assert store.goal_states == {}
+    assert "Использование" in bot.sends[0].text
+
+
+@pytest.mark.asyncio
+async def test_goal_state_move_on_missing_goal_reports_not_found() -> None:
+    handler, bot, store, _ = _build(goals={})
+
+    handled = await _send(handler, "/goal pause ghost")
+
+    assert handled is True
+    assert store.goal_states == {}
+    assert "не найдена" in bot.sends[0].text
+
+
+@pytest.mark.asyncio
+async def test_goal_plan_approve_missing_goal_reports_not_found() -> None:
+    handler, bot, _, _ = _build(goals={})
+
+    handled = await _send(handler, "/goal plan-approve ghost")
+
+    assert handled is True
+    assert "не найдена" in bot.sends[0].text
+
+
+@pytest.mark.asyncio
+async def test_goal_plan_approve_illegal_transition_reports_reject() -> None:
+    # The goal exists but is PROPOSED → plan-approve can't move it; the owner gets a
+    # rejection naming the current state (not a silent no-op).
+    handler, bot, store, _ = _build(goals={"g1": _goal(state=GoalState.PROPOSED)})
+
+    handled = await _send(handler, "/goal plan-approve g1")
+
+    assert handled is True
+    assert "g1" not in store.goal_states
+    assert "недопустим" in bot.sends[0].text
+    assert "proposed" in bot.sends[0].text
+
+
+@pytest.mark.asyncio
+async def test_goal_state_move_illegal_transition_names_current_state() -> None:
+    handler, bot, store, _ = _build(goals={"g1": _goal(state=GoalState.DONE)})
+
+    handled = await _send(handler, "/goal pause g1")
+
+    assert handled is True
+    assert "g1" not in store.goal_states
+    assert "недопустим" in bot.sends[0].text
+
+
+# --- kill-switch list reflects state ------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_goals_list_shows_task_counts() -> None:
+    handler, bot, store, _ = _build(goals={"g1": _goal(state=GoalState.ACTIVE)})
+    store.tasks.append(_task("g1::t0"))
+
+    handled = await _send(handler, "/goals")
+
+    assert handled is True
+    assert "задач: 1" in bot.sends[0].text
+
+
+# --- unwired sub-stores degrade gracefully (no crash, owner is told) ----------
+
+
+def _build_without(
+    *,
+    drop_goal_store: bool = False,
+    drop_plan: bool = False,
+    drop_pursuit: bool = False,
+    goals: dict[str, Goal] | None = None,
+) -> tuple[GuppiHandler, _FakeBot, _FakeGoalStore]:
+    bot = _FakeBot()
+    goal_store = _FakeGoalStore(goals=goals or {})
+    plan_goal = (
+        None
+        if drop_plan
+        else PlanGoal(planner=_FakePlanner(()), store=goal_store, persona_id=_PERSONA)
+    )
+    handler = GuppiHandler(
+        bot=bot,
+        authorizer=_FakeAuthorizer(),
+        general_chat_id=_CHAT_ID,
+        goal_store=None if drop_goal_store else goal_store,
+        plan_goal=plan_goal,
+        pursuit_store=None if drop_pursuit else _FakePursuitStore(),
+        persona_id=_PERSONA,
+    )
+    return handler, bot, goal_store
+
+
+@pytest.mark.asyncio
+async def test_goals_command_not_consumed_when_goal_store_unwired() -> None:
+    # With no goal store wired, the goal commands are simply not GUPPI's — they fall
+    # through (False), never crash.
+    handler, bot, _ = _build_without(drop_goal_store=True)
+
+    handled = await _send(handler, "/goals")
+
+    assert handled is False
+    assert bot.sends == []
+
+
+@pytest.mark.asyncio
+async def test_kill_switch_reports_unavailable_when_pursuit_store_unwired() -> None:
+    handler, bot, _ = _build_without(drop_pursuit=True)
+
+    handled = await _send(handler, "/goals stop")
+
+    assert handled is True
+    assert "не подключено" in bot.sends[0].text
+
+
+@pytest.mark.asyncio
+async def test_goal_plan_reports_unavailable_when_plan_use_case_unwired() -> None:
+    handler, bot, _ = _build_without(
+        drop_plan=True, goals={"g1": _goal(state=GoalState.APPROVED)}
+    )
+
+    handled = await _send(handler, "/goal plan g1")
+
+    assert handled is True
+    assert "не подключено" in bot.sends[0].text
+
+
+@pytest.mark.asyncio
+async def test_goal_plan_approve_reports_unavailable_when_plan_use_case_unwired() -> None:
+    handler, bot, _ = _build_without(
+        drop_plan=True, goals={"g1": _goal(state=GoalState.APPROVED)}
+    )
+
+    handled = await _send(handler, "/goal plan-approve g1")
+
+    assert handled is True
+    assert "не подключено" in bot.sends[0].text
+
+
+# --- authz: a non-command from the owner is not consumed ----------------------
+
+
+@pytest.mark.asyncio
+async def test_owner_non_goal_command_falls_through() -> None:
+    handler, bot, _, _ = _build()
+
+    handled = await _send(handler, "просто болтаю")
+
+    assert handled is False
+    assert bot.sends == []
