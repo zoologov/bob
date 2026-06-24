@@ -132,6 +132,17 @@ ignore = [
 # The SqliteGoalStore (BOB-015) carries Russian docstrings whose Cyrillic look-alikes
 # are intentional — RUF001/RUF002/RUF003 do not apply to these.
 "src/bob/infrastructure/persistence/goal_store.py" = ["RUF001", "RUF002", "RUF003"]
+# The self-improvement model (BOB-028 .1) carries Russian persona/policy docstrings +
+# observation/adjustment literals whose Cyrillic look-alikes are intentional —
+# RUF001/RUF002/RUF003 do not apply to these.
+"src/bob/domain/personality/self_improvement.py" = ["RUF001", "RUF002", "RUF003"]
+# The SqliteSelfImprovementStore (BOB-028 .1) carries Russian docstrings whose Cyrillic
+# look-alikes are intentional — RUF001/RUF002/RUF003 do not apply to these.
+"src/bob/infrastructure/persistence/self_improvement_store.py" = [
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
 # The Planner + plan_goal use-case (BOB-015 .2) carries Russian planner prompts +
 # owner-facing plan/status literals whose Cyrillic look-alikes are intentional —
 # RUF001/RUF002/RUF003 do not apply to these.
@@ -179,6 +190,24 @@ ignore = [
     "RUF003",
 ]
 "tests/infrastructure/telegram/test_guppi_goals.py" = [
+    "S101",
+    "ARG001",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+# The self-improvement tests (BOB-028 .1) assert on Russian observation/adjustment
+# literals whose Cyrillic look-alikes are intentional (→ RUF001/RUF002/RUF003).
+"tests/domain/personality/test_self_improvement.py" = [
+    "S101",
+    "ARG001",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+"tests/infrastructure/persistence/test_self_improvement_store.py" = [
     "S101",
     "ARG001",
     "PLR2004",
