@@ -10,6 +10,8 @@
 
 from __future__ import annotations
 
+from random import Random
+
 import pytest
 
 from bob.domain.personality.brevity import (
@@ -418,3 +420,112 @@ class TestClampReply:
 
     def test_empty_text_is_returned_as_is(self) -> None:
         assert clamp_reply("", max_chars=10) == ""
+
+    def test_clamp_never_cuts_mid_word(self) -> None:
+        # US-страж: ужатие всегда заканчивается на знаке конца предложения, ни одно
+        # слово не обрублено на полуслове (cut оканчивается на . ? ! …).
+        text = "Готово. " + "ещё много слов в этом длинном продолжении мысли" * 3
+        clamped = clamp_reply(text, max_chars=20)
+        assert clamped.rstrip()[-1] in ".?!…"
+        # Ужатый префикс — целое начало исходного текста (не вырезка из середины).
+        assert text.lstrip().startswith(clamped)
+
+    def test_clamp_at_exact_boundary_is_untouched(self) -> None:
+        # Off-by-one: длина ровно max_chars — ещё «в пределах», не трогаем.
+        text = "Ровно."  # 6 символов
+        assert clamp_reply(text, max_chars=len(text)) == text
+
+
+# --- US-4: интерес разворачивает РЕДКО (seeded-частота) ----------------------
+
+
+class TestInterestUpgradeIsRareUS4:
+    """US-4: высокий интерес апгрейдит ступень лишь изредка на дефолтных порогах."""
+
+    def test_upgrade_is_a_small_fraction_over_a_seeded_sweep(self) -> None:
+        # Свип честных roll'ов из seeded RNG: даже при максимальном интересе апгрейд
+        # срабатывает лишь у малой доли ходов (дефолт upgrade_freq=0.1) — не монолог.
+        thresholds = BrevityThresholds()
+        rng = Random(0)
+        trials = 2000
+        upgrades = 0
+        for _ in range(trials):
+            result = decide_verbosity(
+                demand=AnswerDemand.MEDIUM,
+                interest=1.0,
+                mood_valence=_NEUTRAL_MOOD,
+                engagement=_GOOD_ENGAGEMENT,
+                form_hint=FormHint.NORMAL,
+                roll=rng.random(),
+                is_owner=False,
+                thresholds=thresholds,
+            )
+            if result is Verbosity.EXPANSIVE:  # NORMAL → EXPANSIVE = апгрейд
+                upgrades += 1
+        fraction = upgrades / trials
+        # Около upgrade_freq (0.1) с честной долей — заведомо «изредка», не больше ~20%.
+        assert 0.0 < fraction < 0.2
+
+    def test_modest_interest_never_upgrades_over_a_sweep(self) -> None:
+        # Интерес ниже высокого порога: НИ один roll не апгрейдит (порог интереса не взят).
+        rng = Random(1)
+        for _ in range(500):
+            result = decide_verbosity(
+                demand=AnswerDemand.MEDIUM,
+                interest=0.5,
+                mood_valence=_NEUTRAL_MOOD,
+                engagement=_GOOD_ENGAGEMENT,
+                form_hint=FormHint.NORMAL,
+                roll=rng.random(),
+                is_owner=False,
+            )
+            assert result is Verbosity.NORMAL
+
+
+# --- US-5: HIGH-demand owner НИКОГДА не ниже NORMAL (свип) --------------------
+
+
+class TestAntiCurtOwnerSweepUS5:
+    """US-5 свип: для HIGH-demand owner итог не падает ниже NORMAL ни на одном входе."""
+
+    def test_owner_high_demand_never_below_normal_across_mood_engagement_roll(
+        self,
+    ) -> None:
+        # Декартов свип худших сигналов: любое плохое настроение/аппетит/наклон + любой
+        # roll — owner на HIGH всегда >= NORMAL (анти-обрубок не пробивается).
+        rng = Random(7)
+        moods = (-1.0, -0.8, -0.5, -0.25, 0.0)
+        engagements = (0.0, 0.1, 0.25, 0.5, 1.0)
+        for mood in moods:
+            for engagement in engagements:
+                for form_hint in (FormHint.NORMAL, FormHint.TERSE):
+                    result = decide_verbosity(
+                        demand=AnswerDemand.HIGH,
+                        interest=0.0,
+                        mood_valence=mood,
+                        engagement=engagement,
+                        form_hint=form_hint,
+                        roll=rng.random(),
+                        is_owner=True,
+                    )
+                    assert result in (Verbosity.NORMAL, Verbosity.EXPANSIVE)
+
+
+# --- US-3: складывающиеся наклоны режут содержательный ход сильнее ------------
+
+
+class TestStackedDownshiftUS3:
+    """US-3: плохое настроение И низкий аппетит вместе режут на две ступени."""
+
+    def test_bad_mood_and_low_engagement_drop_expansive_to_terse(self) -> None:
+        # Оба наклона сразу: EXPANSIVE (-2) → TERSE, для НЕ-owner (без анти-обрубка).
+        result = decide_verbosity(
+            demand=AnswerDemand.HIGH,
+            interest=_LOW_INTEREST,
+            mood_valence=-0.8,
+            engagement=0.1,
+            form_hint=FormHint.NORMAL,
+            roll=_NO_UPGRADE_ROLL,
+            is_owner=False,
+        )
+        assert result is Verbosity.TERSE

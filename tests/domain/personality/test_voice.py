@@ -480,3 +480,30 @@ def test_brevity_few_shot_normal_and_expansive_are_empty() -> None:
     # Few-shot is the TERSE lever only; NORMAL/EXPANSIVE add no examples.
     assert brevity_few_shot(Verbosity.NORMAL) == ""
     assert brevity_few_shot(Verbosity.EXPANSIVE) == ""
+
+
+def test_brevity_few_shot_exemplars_are_russian_short_dialogue() -> None:
+    # Guardrail (тон/язык): the TERSE few-shot stays Bob's voice — each exemplar is a
+    # short «вопрос → ответ» dialogue pair in Russian (Cyrillic), never an English or
+    # multi-line block, so it cannot drift Bob's language or tone.
+    examples = _exemplar_lines(brevity_few_shot(Verbosity.TERSE))
+    assert examples, "TERSE few-shot carries no exemplar pairs"
+    for example in examples:
+        assert "—" in example  # a «вопрос — ответ» pair, not a bare line
+        assert "\n" not in example  # one short line, no unfurling
+        assert any("а" <= ch.casefold() <= "я" for ch in example)  # Cyrillic, Russian
+
+
+def test_brevity_directive_and_few_shot_are_one_signal_per_verbosity() -> None:
+    # Guardrail (single length signal): for any verbosity at most ONE of directive /
+    # few-shot is non-empty per role — TERSE pairs a directive WITH its short-answer
+    # few-shot; NORMAL is silent; EXPANSIVE carries only a directive (no shots). There is
+    # never a competing/contradictory length cue.
+    assert brevity_directive(Verbosity.NORMAL) == ""
+    assert brevity_few_shot(Verbosity.NORMAL) == ""
+    # EXPANSIVE: directive licenses unfurling, NO short-answer few-shot to contradict it.
+    assert brevity_directive(Verbosity.EXPANSIVE) != ""
+    assert brevity_few_shot(Verbosity.EXPANSIVE) == ""
+    # TERSE: directive + few-shot pull the SAME way (short), never against each other.
+    assert brevity_directive(Verbosity.TERSE) != ""
+    assert brevity_few_shot(Verbosity.TERSE) != ""
