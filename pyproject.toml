@@ -100,6 +100,11 @@ ignore = [
 # docstring + comments ("обида", "отходит", "тёплые сообщения") whose Cyrillic
 # look-alikes are intentional — RUF002/RUF003 do not apply to these.
 "src/bob/domain/personality/sulk.py" = ["RUF002", "RUF003"]
+# The addressivity module (BOB-023) carries Russian persona/policy terms in its
+# docstring + comments ("обращение", "вклиниться", "в воздух") and short Russian
+# name-address literals whose Cyrillic look-alikes are intentional (the heuristic
+# matches real Russian text) — RUF001/RUF002/RUF003 do not apply to these.
+"src/bob/domain/personality/addressivity.py" = ["RUF001", "RUF002", "RUF003"]
 # The profanity-perception module (BOB-014 .2b) carries short Russian мат/insult
 # literals + comments whose Cyrillic look-alikes are intentional (the heuristic matches
 # real Russian text) — RUF001/RUF002/RUF003 do not apply to these.
@@ -185,6 +190,25 @@ ignore = [
     "PLR2004",
     "S311",
     "RUF001",
+    "RUF003",
+]
+# The addressivity tests (BOB-023) assert on short Russian name-address / chatter
+# literals + comments whose Cyrillic look-alikes are intentional (→ RUF001/RUF002/
+# RUF003).
+"tests/domain/personality/test_addressivity.py" = [
+    "S101",
+    "ARG001",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+"tests/domain/personality/test_addressivity_policy.py" = [
+    "S101",
+    "ARG001",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
     "RUF003",
 ]
 # Proactivity tests seed `random.Random` for deterministic stochastic-sampling

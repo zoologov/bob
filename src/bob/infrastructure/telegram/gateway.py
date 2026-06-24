@@ -45,6 +45,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol
 
 from aiogram.exceptions import AiogramError
@@ -66,11 +67,18 @@ logger = logging.getLogger(__name__)
 __all__ = [
     "PLAIN_TEXT_LIMIT",
     "AuthorizerLike",
+    "BotIdentitySignals",
     "BotLike",
+    "BotUserLike",
+    "MessageEntityLike",
     "MessageLike",
     "TelegramGateway",
     "UpdateLike",
 ]
+
+# Telegram message-entity types that mark an @mention of a user (BOB-023).
+_MENTION_TYPE = "mention"  # ``@username`` — the username is the entity's text slice.
+_TEXT_MENTION_TYPE = "text_mention"  # a user without a username — carries ``user``.
 
 # Telegram's hard cap on a single message's text; the plain fallback splits here.
 PLAIN_TEXT_LIMIT = 4096
@@ -87,6 +95,59 @@ _REACTION_FALLBACK_ACK = "Угу."  # noqa: RUF001 — Cyrillic ack is intention
 # --- Minimal structural views of the bits of aiogram the gateway touches ------
 
 
+class _UserLike(Protocol):
+    @property
+    def id(self) -> int: ...
+    @property
+    def full_name(self) -> str: ...
+
+
+class BotUserLike(Protocol):
+    """The subset of the aiogram ``User`` returned by ``Bot.get_me()`` we read.
+
+    The composition root resolves Bob's bot identity once at startup via
+    ``get_me`` and threads it into the gateway as :class:`BotIdentitySignals`; the
+    addressivity scan needs only the bot's numeric ``id`` and ``@username``.
+    """
+
+    @property
+    def id(self) -> int: ...
+    @property
+    def username(self) -> str | None: ...
+
+
+@dataclass(frozen=True, slots=True)
+class BotIdentitySignals:
+    """Bob's own bot identity (BOB-023), resolved once at startup via ``get_me``.
+
+    Threaded into the gateway so the addressivity scan can tell a mention of
+    *Bob* (this ``user_id`` / ``@username``) from a mention of someone else. The
+    GUPPI inner gateway is wired without it (mentions cannot be resolved → never
+    a Bob mention), so it is optional.
+    """
+
+    user_id: int
+    username: str | None
+
+
+class MessageEntityLike(Protocol):
+    """The subset of a Telegram ``MessageEntity`` the addressivity scan reads.
+
+    A ``mention`` entity (``@username``) carries no ``user``; the username is the
+    text slice ``text[offset : offset + length]``. A ``text_mention`` entity (a
+    user without a username) carries the mentioned ``user`` instead.
+    """
+
+    @property
+    def type(self) -> str: ...
+    @property
+    def offset(self) -> int: ...
+    @property
+    def length(self) -> int: ...
+    @property
+    def user(self) -> _UserLike | None: ...
+
+
 class MessageLike(Protocol):
     """The subset of a Telegram ``Message`` the gateway/bot adapter touches."""
 
@@ -101,13 +162,6 @@ class MessageLike(Protocol):
 class _ChatLike(Protocol):
     @property
     def id(self) -> int: ...
-
-
-class _UserLike(Protocol):
-    @property
-    def id(self) -> int: ...
-    @property
-    def full_name(self) -> str: ...
 
 
 class UpdateLike(Protocol):
@@ -198,6 +252,7 @@ class TelegramGateway:
         sleep: Sleep,
         authorizer: AuthorizerLike | None = None,
         reply_thread_id: int | None = None,
+        bob_identity: BotIdentitySignals | None = None,
     ) -> None:
         if typing_interval <= 0:
             raise ValueError("typing_interval must be > 0")
@@ -208,6 +263,10 @@ class TelegramGateway:
         self._clock = clock
         self._sleep = sleep
         self._authorizer = authorizer
+        # Bob's own bot identity (BOB-023), if known: lets the addressivity scan
+        # tell an @mention of Bob from a mention of someone else. ``None`` (e.g.
+        # the GUPPI inner gateway) means mentions cannot be resolved.
+        self._bob_identity = bob_identity
         # When set (the Bob bot), every outgoing reply — and the typing action —
         # is pinned to this topic thread so Bob's replies land in his topic;
         # ``None`` keeps the legacy un-threaded behaviour (single-bot / General).
@@ -216,6 +275,27 @@ class TelegramGateway:
         self._seen_update_ids: set[int] = set()
         self._converter = MarkdownToRichMessage()
         self._serializer = RichMessageSerializer()
+
+    def set_bob_identity(self, identity: BotIdentitySignals) -> None:
+        """Wire Bob's own bot identity after construction (BOB-023).
+
+        Resolved once at startup from ``get_me`` (an async call the synchronous
+        constructor cannot make), so the addressivity scan can tell a mention of
+        Bob from one of someone else.
+        """
+        self._bob_identity = identity
+
+    def bob_user_id(self) -> int | None:
+        """Bob's own bot ``user_id``, or ``None`` until identity is resolved (BOB-023).
+
+        Read lazily by the addressivity policy in the use-case: the id is resolved
+        asynchronously at startup (``get_me``), long after the synchronous
+        composition root wired the gateway, so this returns ``None`` until then (and
+        for the GUPPI gateway, which has no Bob identity) — a graceful degrade where
+        reply-to-Bob cannot fire but @mention-of-Bob still does.
+        """
+        identity = self._bob_identity
+        return identity.user_id if identity is not None else None
 
     # --- Intake ---------------------------------------------------------------
 
@@ -335,8 +415,7 @@ class TelegramGateway:
                 message_thread_id=self._reply_thread_id,
             )
 
-    @staticmethod
-    def _to_message_received(update: UpdateLike) -> MessageReceived | None:
+    def _to_message_received(self, update: UpdateLike) -> MessageReceived | None:
         message = update.message
         chat = update.effective_chat
         if message is None or chat is None or not message.text:
@@ -349,7 +428,28 @@ class TelegramGateway:
             text=message.text,
             sender_id=user.id if user is not None else None,
             sender_name=user.full_name if user is not None else None,
+            reply_to_sender_id=_reply_to_sender_id(message),
+            mentions_bob=self._mentions_bob(message),
         )
+
+    def _mentions_bob(self, message: MessageLike) -> bool:
+        """Whether ``message`` @mentions Bob's own bot (BOB-023).
+
+        Scans the Telegram ``entities`` for an @mention of Bob — a ``mention``
+        entity whose text slice is Bob's ``@username``, or a ``text_mention``
+        entity carrying Bob's user id. Without a known bot identity (the GUPPI
+        inner gateway) mentions cannot be resolved, so it is never a Bob mention.
+        """
+        identity = self._bob_identity
+        if identity is None:
+            return False
+        text = message.text
+        if text is None:
+            return False
+        for entity in getattr(message, "entities", None) or ():
+            if _entity_mentions_bob(entity, text=text, identity=identity):
+                return True
+        return False
 
     # --- Reply (typing keepalive + one rich final) ----------------------------
 
@@ -469,6 +569,35 @@ class TelegramGateway:
                 "reaction failed; falling back to a brief ack: %s", exc
             )
             await self._send_plain(chat_id, _REACTION_FALLBACK_ACK)
+
+
+def _reply_to_sender_id(message: MessageLike) -> int | None:
+    """The from-user id of the message ``message`` replies to (``None`` if not a reply)."""
+    replied = getattr(message, "reply_to_message", None)
+    if replied is None:
+        return None
+    replied_user = replied.from_user
+    return replied_user.id if replied_user is not None else None
+
+
+def _entity_mentions_bob(
+    entity: MessageEntityLike, *, text: str, identity: BotIdentitySignals
+) -> bool:
+    """Whether a single entity is an @mention of Bob's bot (BOB-023).
+
+    A ``mention`` entity carries no ``user``; its text slice is ``@username`` —
+    compared (case-insensitively, sans the leading ``@``) to Bob's username. A
+    ``text_mention`` entity carries the mentioned ``user`` — matched on Bob's id.
+    """
+    if entity.type == _MENTION_TYPE:
+        if identity.username is None:
+            return False
+        slice_ = text[entity.offset : entity.offset + entity.length]
+        return slice_.lstrip("@").casefold() == identity.username.casefold()
+    if entity.type == _TEXT_MENTION_TYPE:
+        user = entity.user
+        return user is not None and user.id == identity.user_id
+    return False
 
 
 def _parse_user_id(argument: str) -> int | None:

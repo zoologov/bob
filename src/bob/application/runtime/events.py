@@ -32,6 +32,15 @@ class MessageReceived:
 
     Attributes mirror just enough of a Telegram message for a use-case to reply
     in the right place and attribute the text to a sender.
+
+    ``reply_to_sender_id`` and ``mentions_bob`` are the **addressivity signals**
+    (BOB-023): who, if anyone, this message is for. ``reply_to_sender_id`` is the
+    from-user id of the message this one replies to (``None`` when it is not a
+    reply); ``mentions_bob`` is whether the text @mentions Bob's bot (by username
+    or a ``text_mention`` to his user id). Both are populated by the Telegram
+    gateway from the inbound update and default to absence (``None`` / ``False``)
+    so the event stays backward-compatible — a later use-case (the addressivity
+    detector + policy) decides what to do with them.
     """
 
     update_id: int
@@ -40,6 +49,8 @@ class MessageReceived:
     text: str
     sender_id: int | None = None
     sender_name: str | None = None
+    reply_to_sender_id: int | None = None
+    mentions_bob: bool = False
 
     @property
     def name(self) -> str:

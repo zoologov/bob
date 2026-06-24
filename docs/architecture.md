@@ -152,6 +152,25 @@ GUPPI и шлёт ответы своим инъецированным бото�
   `Authorizer`; иначе GUPPI-хуки деградируют в молчаливые дропы (обратная
   совместимость с одно-ботовой сборкой).
 
+### Сигналы адресности и идентичность Боба (BOB-023)
+
+При нормализации апдейта внутренний `TelegramGateway` извлекает из aiogram-сообщения
+**сигналы адресности** и кладёт их в `MessageReceived` (см. «Поток обработки» и
+«Адресность»): `reply_to_sender_id` — id автора сообщения, на которое сделан реплай
+(`reply_to_message.from_user.id`; `None`, если это не реплай); `mentions_bob` —
+упомянут ли бот Боба (`_mentions_bob` сканит `entities`: `mention` сверяется с
+`@username` Боба, `text_mention` — с его `user_id`).
+
+Чтобы отличить упоминание Боба от упоминания другого, gateway знает собственную
+идентичность бота. `BotIdentitySignals(user_id, username)` резолвится один раз на
+старте: `MultiBotGateway.resolve_bot_identities()` зовёт `get_me` бота Боба и
+прокидывает результат через `set_bob_identity`; провязано в `app.py` при запуске.
+До резолва (а также во внутреннем gateway GUPPI, у которого идентичности нет)
+`bob_user_id()` возвращает `None` — graceful degrade: `mentions_bob` остаётся `False`,
+reply-на-Боба не срабатывает, но @mention по `username` всё равно ловится после
+резолва. Сам id читается лениво политикой адресности через шов
+`multibot.bob_user_id`.
+
 ### Topic-scope Боба
 
 Боб обрабатывает только апдейты с `chat_id == bob.chat_id` И
@@ -183,7 +202,18 @@ GUPPI и шлёт ответы своим инъецированным бото�
    частоту сообщений, время суток (из инъецированного `Clock`) и присутствие — и
    собирает `MoodDelta`, который применяет чистый домен `Mood`. Новое настроение
    сохраняется в `PersonalityState`.
-3. **Decide (план выражения + recall + история + личность).** Сначала считается
+3. **Адресность (кому сообщение, гейт хода, BOB-023).** Перед компоновкой
+   `HandleMessage._decide_addressivity` решает, **берёт ли Боб этот ход вообще**.
+   `classify_addressivity` (чистый домен) по сигналам `reply_to_sender_id` /
+   `mentions_bob` / тексту и `others_present` относит сообщение к
+   `DIRECTED_TO_BOB` / `DIRECTED_TO_OTHER` / `AMBIENT`, а `decide_response` маппит это
+   в исход `ENGAGE` / `REACT` / `SILENT` (по `interest` из аппетита .2a и одной
+   seeded-пробе). К Бобу → всегда `ENGAGE`; к другому → `SILENT` (изредка `ENGAGE` при
+   очень высоком интересе); ambient → `ENGAGE` в 1:1, иначе чаще `SILENT`/`REACT`. На
+   `SILENT` — ранний выход без ответа и реакции, на `REACT` — лайк через путь
+   `REACT_ONLY` (см. «Адресность»). Без `reply_to`/`mention`/других участников ход
+   всегда `ENGAGE`, и поток идёт как раньше.
+4. **Decide (план выражения + recall + история + личность).** Сначала считается
    чистый **план выражения** (BOB-018, `decide_expression` по свежему настроению +
    сигналам хода + seeded-RNG): он выбирает режим хода (полный ответ vs. краткая
    нативная реакция `REACT_ONLY`), редкие grounded-добавки (протекающая внутренняя
@@ -200,7 +230,7 @@ GUPPI и шлёт ответы своим инъецированным бото�
    (`ZoneClassifier`) + убеждённость (`conviction_for`) → стойка
    (`Negotiation.decide`) → директива, дописанная к системному промпту, поэтому
    Боб защищает свои ценности, а не угождает безусловно (см. «Higher Mind»).
-4. **Act (ответ, гибридный тиринг + селективная редакция, fallback Tier 0).**
+5. **Act (ответ, гибридный тиринг + селективная редакция, fallback Tier 0).**
    `LLMRouter` обрабатывает задачу `REPLY_TO_USER`. Тир ответа выбирается
    **гибридно** (BOB-006): по умолчанию casual/короткая реплика идёт на быстрый
    **Tier 0** (flash, секунды) ради отзывчивости, а сложная/длинная/требующая
@@ -215,7 +245,7 @@ GUPPI и шлёт ответы своим инъецированным бото�
    а не к выбранному тиру — ответ, опущенный на Tier 0, всё равно никогда не несёт
    `private_context`. При сбое Tier 1 роутер откатывается на **Tier 0** локально,
    отправляя тот же payload (с уже вырезанным `private_context`).
-5. **Ответ (typing-индикатор во время генерации + rich-финал, BOB-009).** Нативный
+6. **Ответ (typing-индикатор во время генерации + rich-финал, BOB-009).** Нативный
    токен-стрим в групповом топике Telegram невозможен (драфты — только ЛС, а
    `editMessageText` в группе медленный и флуд-опасный), а Боб доступен **только**
    через групповой топик (ЛС закрыта authz). Поэтому `TelegramGateway` не стримит.
@@ -231,7 +261,7 @@ GUPPI и шлёт ответы своим инъецированным бото�
    деградация на plain `send_message` (ответ никогда не теряется). Каденс typing
    задаётся инъецированным `sleep`, поэтому в тестах детерминирован. См. раздел
    «Telegram-транспорт» ниже.
-6. **Persist.** Ход сохраняется как эпизод в `episodic_log`, а снапшот настроения
+7. **Persist.** Ход сохраняется как эпизод в `episodic_log`, а снапшот настроения
    записывается в `mood_state` и `mood_history` через `MemoryRepo`.
 
 Параллельно идёт лёгкий **heartbeat** — фоновые asyncio-задачи рантайма, каждая
@@ -510,6 +540,72 @@ typing-индикатор + Rich Messages. Адаптер остаётся чи�
 first-impression (даже на гостевом ходу — впечатление о госте, не утечка памяти
 owner) → `stranger_directive` на гостевом ходу / `recalled_impression_directive`
 при наличии прежней заметки.
+
+## Адресность: кому сообщение и стоит ли отвечать (BOB-023)
+
+Живой человек в чате знает, когда обращаются к нему, а когда нет, и на риторическое
+может молча лайкнуть или просто прочитать. BOB-023 даёт Бобу то же: он **воспринимает
+адресность** хода и решает — **вступить, молча лайкнуть или промолчать**, — поэтому
+больше не встревает в каждый разговор. Это перцептивный слой поверх восприятия
+собеседника (BOB-019) и аппетита (.2a); он лишь **добавляет** «молчать, если не к
+нему», поэтому гостевой инвариант BOB-019 цел. Заодно это фундамент turn-taking под
+BobNet (реплики отвечают по очереди, а не галдят хором) и маркер theory-of-mind.
+
+### Детектор адресности (чистый домен)
+
+`domain/personality/addressivity.py` — чистый, детерминированный, без I/O и рандома,
+поверх сигналов, уже извлечённых gateway'ем.
+
+- **`Addressivity`** — `DIRECTED_TO_BOB` / `DIRECTED_TO_OTHER` / `AMBIENT` (восприятие,
+  не решение).
+- **`classify_addressivity(*, text, mentions_bob, reply_to_sender_id, bob_user_id,
+  others_present)`** относит ход по приоритету сигналов: **к Бобу** —
+  `mentions_bob`, либо reply на сообщение Боба (`reply_to_sender_id == bob_user_id`),
+  либо имя-обращение в начале («Боб, …» — первое слово плюс разделитель-запятая, так
+  что «Боб классный» — не обращение); **к другому** — reply на чужое сообщение;
+  **ambient** — ни reply, ни mention, ни имя. Прямое обращение всегда перевешивает.
+  `others_present` здесь не влияет на классификацию (его читает политика) — он в
+  сигнатуре ради единообразия вызова.
+- **`others_present(history, *, current_sender_name)`** — лёгкая эвристика «в недавней
+  истории треда есть НЕ текущий собеседник» (тред не 1:1) поверх уже реплеенной
+  истории вида `"<sender>: <text>\nbob: <reply>"`: реплика Боба не считается, в личном
+  1:1 owner↔Bob все метки совпадают → `False`, появился третий → `True`.
+
+### Политика отклика (perception → исход)
+
+`decide_response(addressivity, *, interest, others_present, roll, thresholds)` →
+**`ResponseOutcome`** `ENGAGE` / `REACT` / `SILENT`. `roll` — одна seeded-проба
+`[0, 1)` (из общего RNG, чтобы ход воспроизводился), `interest` — интерес к теме из
+аппетита .2a.
+
+- **`DIRECTED_TO_BOB` → всегда `ENGAGE`** (никогда `SILENT`): прямое обращение не
+  игнорируется; дальше форму решают engagement/`REACT_ONLY` как прежде.
+- **`DIRECTED_TO_OTHER` → `SILENT`** по умолчанию (не лезет в чужой 1:1); **изредка**
+  вклинивается (`ENGAGE`), только если `interest` берёт высокий порог
+  `barge_in_interest` И редкий `roll` ниже `barge_in_freq`. Не перехватывает чужой
+  диалог.
+- **`AMBIENT`** в 1:1 (`not others_present`) → `ENGAGE` (пространство Боба). С другими
+  — чаще `SILENT` или `REACT` (молчаливый лайк присутствия), а при высоком интересе и
+  удачном (более частом, чем для чужого диалога) `roll` — `ENGAGE`.
+
+Пороги — frozen `AddressivityThresholds` (`barge_in_interest` `0.8` >
+`ambient_interest` `0.6`; `barge_in_freq` `0.05` ≤ `ambient_barge_in_freq` `0.15`;
+`react_chance` `0.3`), инъецируются из конфигурации `addressivity.*`
+(`infrastructure/config/loader.py`, собираются в `app.py` через
+`_build_addressivity_thresholds`). Значения по умолчанию консервативны: в чужой
+разговор Боб почти не лезет.
+
+### Где это в потоке хода
+
+`HandleMessage._decide_addressivity` (см. «Поток обработки», шаг 3) после perceive
+читает `others_present` (через шов истории), зовёт `classify_addressivity` и
+`decide_response` с одной seeded-пробой из общего RNG. `bob_user_id` читается лениво
+через `bob_user_id_source` (`multibot.bob_user_id`, резолвится на старте, см.
+«Сигналы адресности»). Исход: `SILENT` — ранний выход без ответа и реакции; `REACT`
+— лайк через тот же путь `REACT_ONLY` (деградирует в краткий ack, если реактор не
+подключён); `ENGAGE` — ход идёт дальше в обычную компоновку. Непровязанный
+`bob_user_id_source` даёт `None`, и без сигналов адресности ход всегда `ENGAGE` —
+поведение как до BOB-023.
 
 ## Резилентность тиков (retry/backoff + изоляция)
 
@@ -1797,6 +1893,22 @@ per-tier температуры), плюс `tests/infrastructure/config/test_loa
 `tests/domain/personality/test_voice.py` (`user_repeat_directive`). Приложение —
 `tests/application/usecases/test_handle_message.py` (повтор пользователя → директива в
 промпте; анти-повтор-страж регенерирует один раз при дословном дубле ответа Боба).
+
+Адресность (BOB-023) покрыта по слоям. Домен —
+`tests/domain/personality/test_addressivity.py` (`classify_addressivity`:
+mention/reply-на-Боба/имя-обращение → `DIRECTED_TO_BOB`, reply на чужое →
+`DIRECTED_TO_OTHER`, иначе `AMBIENT`; `others_present`: 1:1 → `False`, третий →
+`True`) и `test_addressivity_policy.py` (`decide_response`: к Бобу всегда `ENGAGE`,
+к другому `SILENT` с редким seeded-вклиниванием по порогу, ambient → 1:1 `ENGAGE` /
+с другими `SILENT`/`REACT`/редкий `ENGAGE`). Инфраструктура —
+`tests/infrastructure/telegram/test_gateway.py` (извлечение `reply_to_sender_id`,
+скан `entities` на @mention/text_mention Боба против `BotIdentitySignals`,
+graceful degrade без идентичности) и `tests/infrastructure/telegram/test_multibot.py`
+(`resolve_bot_identities` через `get_me` → `set_bob_identity`, `bob_user_id`-шов).
+Приложение — `tests/application/usecases/test_handle_message.py`
+(`_decide_addressivity` как гейт хода: `SILENT` → ранний выход, `REACT` → путь
+`REACT_ONLY`, `ENGAGE` → обычная компоновка; непровязанный `bob_user_id_source` →
+поведение как до BOB-023).
 
 Защитный механизм CI (BOB-009): `pytest-timeout` задаёт дефолтный пер-тестовый
 таймаут (`timeout=60`, `timeout_method="thread"` в `pyproject.toml`), чтобы будущий

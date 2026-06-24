@@ -60,6 +60,7 @@ from typing import TYPE_CHECKING
 
 from bob.infrastructure.telegram.gateway import (
     AuthorizerLike,
+    BotIdentitySignals,
     BotLike,
     MonotonicClock,
     Sleep,
@@ -279,6 +280,33 @@ class MultiBotGateway:
             clock=self._proactivity_clock,
         )
 
+    # --- Startup --------------------------------------------------------------
+
+    async def resolve_bot_identities(self) -> None:
+        """Resolve Bob's own bot identity via ``get_me`` and thread it in (BOB-023).
+
+        Called once at startup (the synchronous constructor cannot ``await``):
+        asks Bob's bot who it is (id + ``@username``) and wires that into Bob's
+        inner gateway so the addressivity scan can tell an @mention of Bob from a
+        mention of someone else. Best-effort — a transient ``get_me`` failure is
+        logged and leaves mentions unresolved (``mentions_bob`` stays ``False``)
+        rather than blocking startup; reply-to addressivity is unaffected.
+        """
+        if BotIdentity.BOB not in self._inner:
+            return
+        bob_bot = self._registry.get(BotIdentity.BOB).bot
+        get_me = getattr(bob_bot, "get_me", None)
+        if get_me is None:
+            return
+        try:
+            me = await get_me()
+        except (OSError, RuntimeError, TimeoutError) as exc:
+            logger.warning("could not resolve Bob's bot identity (get_me): %s", exc)
+            return
+        self._inner[BotIdentity.BOB].set_bob_identity(
+            BotIdentitySignals(user_id=me.id, username=me.username)
+        )
+
     # --- Intake (all bots) ----------------------------------------------------
 
     async def poll_once(self) -> int:
@@ -407,6 +435,19 @@ class MultiBotGateway:
     def reply_gateway(self, identity: BotIdentity) -> _ReplyGateway:
         """Return the reply seam for ``identity`` (Bob's pins his topic thread)."""
         return _ReplyGateway(self._inner[identity])
+
+    def bob_user_id(self) -> int | None:
+        """Bob's own bot ``user_id``, or ``None`` until resolved at startup (BOB-023).
+
+        The addressivity policy reads this lazily through the use-case's id seam so a
+        reply that targets Bob is told from one targeting someone else. It is resolved
+        asynchronously by :meth:`resolve_bot_identities` (``get_me``) AFTER the
+        synchronous composition root wired the use-case, so it is ``None`` until then
+        (and when Bob's gateway is absent) — a graceful degrade (reply-to-Bob cannot
+        fire; @mention still does).
+        """
+        gateway = self._inner.get(BotIdentity.BOB)
+        return gateway.bob_user_id() if gateway is not None else None
 
     def reactor(self, identity: BotIdentity) -> _ReactorGateway:
         """Return the react-only seam for ``identity`` (BOB-018).

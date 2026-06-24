@@ -86,6 +86,7 @@ from bob.application.usecases.relationship_sources import RelationshipTracker
 from bob.application.usecases.run_genesis import RunGenesis
 from bob.application.usecases.sulk_sources import SulkRecoveryStep, SulkTracker
 from bob.application.usecases.update_mood_from_text import UpdateMoodFromText
+from bob.domain.personality.addressivity import AddressivityThresholds
 from bob.domain.personality.engagement import EngagementThresholds, FatigueRates
 from bob.domain.personality.expression import ExpressionFreqs
 from bob.domain.personality.language import DEFAULT_LANGUAGE
@@ -140,6 +141,7 @@ if TYPE_CHECKING:
     )
     from bob.infrastructure.telegram.gateway import (
         BotLike,
+        BotUserLike,
         MessageLike,
         UpdateLike,
     )
@@ -258,6 +260,9 @@ class Application:
         await self.memory_repo.initialize()
         result = await self.genesis.run()
         self.personality.soul = _load_soul(self.soul_store)
+        # Resolve Bob's own bot identity (id + @username) so the addressivity scan
+        # (BOB-023) can tell a mention of Bob from a mention of someone else.
+        await self.multibot.resolve_bot_identities()
         return result
 
     async def shutdown(self) -> None:
@@ -488,6 +493,16 @@ def build_application(
         engagement_thresholds=_build_engagement_thresholds(merged),
         fatigue_rates=_build_fatigue_rates(merged),
         engagement_mood_lift=_build_engagement_mood_lift(merged),
+        # Addressivity seam (BOB-023): Bob perceives WHO a message is for — him,
+        # another participant, or no one — and the policy decides engage / quietly
+        # like-react / stay SILENT, so he no longer barges into every group exchange.
+        # ``bob_user_id`` is read lazily off the multibot (resolved at startup via
+        # get_me), so a reply targeting Bob is told from one targeting someone else;
+        # ``None`` degrades gracefully (@mention still works). The conservative
+        # thresholds (interest bars + small seeded barge-in/react frequencies) are
+        # tunable via addressivity.*; a 1:1 owner thread always engages as before.
+        bob_user_id_source=multibot.bob_user_id,
+        addressivity_thresholds=_build_addressivity_thresholds(merged),
     )
     event_bus.subscribe(MESSAGE_RECEIVED, _as_handler(handle_message))
 
@@ -899,6 +914,36 @@ def _build_engagement_thresholds(config: Mapping[str, object]) -> EngagementThre
     )
 
 
+def _build_addressivity_thresholds(
+    config: Mapping[str, object],
+) -> AddressivityThresholds:
+    """Build the BOB-023 addressivity policy thresholds from ``addressivity.*``.
+
+    Tunes how readily Bob takes a turn by who it is for: ``barge_in_interest`` (the
+    HIGH interest bar to rarely cut into someone ELSE's exchange) and ``barge_in_freq``
+    (the small seeded frequency of doing so); ``ambient_interest`` (the lower bar to
+    join a general ambient turn when others are around) and ``ambient_barge_in_freq``
+    (its — easier — frequency); ``react_chance`` (how often an ambient-with-others turn
+    becomes a quiet like-reaction instead of full silence). Each falls back to the
+    conservative dataclass default — so Bob almost never intrudes into a private 1:1.
+    """
+    section = _section(config, "addressivity")
+    defaults = AddressivityThresholds()
+    return AddressivityThresholds(
+        barge_in_interest=_float_or(
+            section, "barge_in_interest", defaults.barge_in_interest
+        ),
+        ambient_interest=_float_or(
+            section, "ambient_interest", defaults.ambient_interest
+        ),
+        barge_in_freq=_float_or(section, "barge_in_freq", defaults.barge_in_freq),
+        ambient_barge_in_freq=_float_or(
+            section, "ambient_barge_in_freq", defaults.ambient_barge_in_freq
+        ),
+        react_chance=_float_or(section, "react_chance", defaults.react_chance),
+    )
+
+
 def _build_fatigue_rates(config: Mapping[str, object]) -> FatigueRates:
     """Build the BOB-014 .2a conversational-fatigue dynamics from ``engagement.fatigue.*``.
 
@@ -1302,6 +1347,11 @@ class _AiogramBotAdapter:
 
     def __init__(self, bot: object) -> None:
         self._bot = bot
+
+    async def get_me(self) -> BotUserLike:
+        # Bob's own bot identity (id + @username), resolved once at startup so the
+        # addressivity scan (BOB-023) can tell a mention of Bob from one of others.
+        return await self._bot.get_me()  # type: ignore[attr-defined,no-any-return]
 
     async def get_updates(
         self, *, offset: int, timeout: int
