@@ -109,6 +109,11 @@ ignore = [
 # literals + comments whose Cyrillic look-alikes are intentional (the heuristic matches
 # real Russian text) — RUF001/RUF002/RUF003 do not apply to these.
 "src/bob/domain/personality/profanity.py" = ["RUF001", "RUF002", "RUF003"]
+# The brevity module (BOB-024) carries Russian answer-demand keyword literals
+# ("почему", "расскажи", "ты тут") + persona/policy comments whose Cyrillic
+# look-alikes are intentional (the heuristic matches real Russian text) —
+# RUF001/RUF002/RUF003 do not apply to these.
+"src/bob/domain/personality/brevity.py" = ["RUF001", "RUF002", "RUF003"]
 # The voice tests (BOB-016/BOB-020) assert on multi-line Russian persona/tone
 # literals whose Cyrillic look-alikes are intentional (→ RUF001/RUF003).
 "tests/domain/personality/test_voice.py" = [
@@ -207,6 +212,17 @@ ignore = [
     "S101",
     "ARG001",
     "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+# The brevity tests (BOB-024) assert on short Russian question/demand literals +
+# comments whose Cyrillic look-alikes are intentional (→ RUF001/RUF002/RUF003).
+"tests/domain/personality/test_brevity.py" = [
+    "S101",
+    "ARG001",
+    "PLR2004",
+    "S311",
     "RUF001",
     "RUF002",
     "RUF003",

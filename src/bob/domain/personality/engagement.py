@@ -48,6 +48,7 @@ __all__ = [
     "EngagementLevel",
     "EngagementThresholds",
     "FatigueRates",
+    "appetite_of",
     "decide_engagement",
     "engagement_mood_lift",
     "topic_interest",
@@ -72,6 +73,33 @@ class EngagementLevel(Enum):
     PLAYFUL = "playful"
     TERSE = "terse"
     DECLINE = "decline"
+
+
+# How the discrete appetite LEVEL reads as a [0, 1] scalar (BOB-024). The brevity
+# decision (decide_verbosity) takes a numeric ``engagement`` — the appetite of the
+# turn as a continuous signal — while the rest of the app reasons in the four-way
+# level. This pure mapping bridges the two without a parallel numeric model: FULL is
+# maximum appetite (1.0), DECLINE is none (0.0), PLAYFUL is high, TERSE is thin. It
+# is strictly decreasing FULL → PLAYFUL → TERSE → DECLINE so a thinning appetite
+# always pulls verbosity DOWN, never up.
+_APPETITE_OF: dict[EngagementLevel, float] = {
+    EngagementLevel.FULL: 1.0,
+    EngagementLevel.PLAYFUL: 0.7,
+    EngagementLevel.TERSE: 0.3,
+    EngagementLevel.DECLINE: 0.0,
+}
+
+
+def appetite_of(level: EngagementLevel) -> float:
+    """Return Bob's conversational appetite this turn as a [0, 1] scalar (BOB-024).
+
+    Bridges the four-way :class:`EngagementLevel` to the numeric ``engagement`` that
+    :func:`~bob.domain.personality.brevity.decide_verbosity` consumes — FULL is full
+    appetite (``1.0``), DECLINE is none (``0.0``), with PLAYFUL/TERSE between. Strictly
+    decreasing FULL → DECLINE so a thinning appetite only ever pulls verbosity down.
+    Pure and deterministic: same level → same appetite.
+    """
+    return _APPETITE_OF[level]
 
 
 # How firmly a strong taste opinion + conviction reads as "interesting". A loved/hated

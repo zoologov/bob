@@ -15,6 +15,7 @@ flavor — never a brittle full-string match (the prose is free to evolve).
 
 from __future__ import annotations
 
+from bob.domain.personality.brevity import Verbosity
 from bob.domain.personality.engagement import EngagementLevel
 from bob.domain.personality.interlocutor import (
     Interlocutor,
@@ -26,6 +27,8 @@ from bob.domain.personality.voice import (
     OffDayThresholds,
     RelationshipToneThresholds,
     anti_bait_directive,
+    brevity_directive,
+    brevity_few_shot,
     engagement_directive,
     guppi_canon,
     profanity_stance,
@@ -431,3 +434,76 @@ def _exemplar_lines(directive: str) -> list[str]:
         lines.append(rest[start:end])
         rest = rest[end + 1 :]
     return lines
+
+
+# --- brevity_directive (BOB-024) ---------------------------------------------
+
+
+def test_brevity_directive_terse_is_a_strong_short_instruction() -> None:
+    # TERSE → a STRONG instruction (not a soft hint): one short line, no preamble,
+    # no lists, like a live person in a chat.
+    folded = brevity_directive(Verbosity.TERSE).casefold()
+    assert "коротк" in folded or "одной фраз" in folded or "одну строк" in folded
+    assert "без" in folded  # без преамбул/списков/воды
+    assert "как живой человек" in folded
+
+
+def test_brevity_directive_expansive_permits_unfurling() -> None:
+    folded = brevity_directive(Verbosity.EXPANSIVE).casefold()
+    assert "развернут" in folded or "разверн" in folded or "подробн" in folded
+
+
+def test_brevity_directive_normal_is_empty() -> None:
+    # NORMAL is the neutral default — it adds no length directive of its own.
+    assert brevity_directive(Verbosity.NORMAL) == ""
+
+
+def test_brevity_directive_is_voice_not_a_rule_list() -> None:
+    for verbosity in (Verbosity.TERSE, Verbosity.EXPANSIVE):
+        assert "•" not in brevity_directive(verbosity)
+
+
+# --- brevity_few_shot (BOB-024) ----------------------------------------------
+
+
+def test_brevity_few_shot_terse_carries_short_answer_examples() -> None:
+    # TERSE mixes in 2-3 "простой вопрос → КОРОТКИЙ ответ" exemplars — the main lever
+    # against Qwen's verbosity prior (examples beat the directive).
+    few_shot = brevity_few_shot(Verbosity.TERSE)
+    examples = _exemplar_lines(few_shot)
+    assert len(examples) >= 2
+    # The model-facing examples are short — no long unfurling.
+    assert all(len(example) <= 80 for example in examples)
+
+
+def test_brevity_few_shot_normal_and_expansive_are_empty() -> None:
+    # Few-shot is the TERSE lever only; NORMAL/EXPANSIVE add no examples.
+    assert brevity_few_shot(Verbosity.NORMAL) == ""
+    assert brevity_few_shot(Verbosity.EXPANSIVE) == ""
+
+
+def test_brevity_few_shot_exemplars_are_russian_short_dialogue() -> None:
+    # Guardrail (тон/язык): the TERSE few-shot stays Bob's voice — each exemplar is a
+    # short «вопрос → ответ» dialogue pair in Russian (Cyrillic), never an English or
+    # multi-line block, so it cannot drift Bob's language or tone.
+    examples = _exemplar_lines(brevity_few_shot(Verbosity.TERSE))
+    assert examples, "TERSE few-shot carries no exemplar pairs"
+    for example in examples:
+        assert "—" in example  # a «вопрос — ответ» pair, not a bare line
+        assert "\n" not in example  # one short line, no unfurling
+        assert any("а" <= ch.casefold() <= "я" for ch in example)  # Cyrillic, Russian
+
+
+def test_brevity_directive_and_few_shot_are_one_signal_per_verbosity() -> None:
+    # Guardrail (single length signal): for any verbosity at most ONE of directive /
+    # few-shot is non-empty per role — TERSE pairs a directive WITH its short-answer
+    # few-shot; NORMAL is silent; EXPANSIVE carries only a directive (no shots). There is
+    # never a competing/contradictory length cue.
+    assert brevity_directive(Verbosity.NORMAL) == ""
+    assert brevity_few_shot(Verbosity.NORMAL) == ""
+    # EXPANSIVE: directive licenses unfurling, NO short-answer few-shot to contradict it.
+    assert brevity_directive(Verbosity.EXPANSIVE) != ""
+    assert brevity_few_shot(Verbosity.EXPANSIVE) == ""
+    # TERSE: directive + few-shot pull the SAME way (short), never against each other.
+    assert brevity_directive(Verbosity.TERSE) != ""
+    assert brevity_few_shot(Verbosity.TERSE) != ""

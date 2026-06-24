@@ -53,12 +53,21 @@ from bob.domain.personality.addressivity import (
     decide_response,
     others_present,
 )
+from bob.domain.personality.brevity import (
+    AnswerDemand,
+    BrevityThresholds,
+    Verbosity,
+    clamp_reply,
+    classify_answer_demand,
+    decide_verbosity,
+)
 from bob.domain.personality.conversation import is_user_repeat
 from bob.domain.personality.engagement import (
     ConversationalFatigue,
     EngagementLevel,
     EngagementThresholds,
     FatigueRates,
+    appetite_of,
     decide_engagement,
     engagement_mood_lift,
     topic_interest,
@@ -68,7 +77,6 @@ from bob.domain.personality.expression import (
     ExpressionMode,
     ExpressionPlan,
     ExpressionSignals,
-    FormHint,
     decide_expression,
 )
 from bob.domain.personality.interlocutor import InterlocutorKind, Trust
@@ -87,6 +95,8 @@ from bob.domain.personality.voice import (
     OffDayThresholds,
     RelationshipToneThresholds,
     anti_bait_directive,
+    brevity_directive,
+    brevity_few_shot,
     engagement_directive,
     guppi_canon,
     profanity_stance,
@@ -163,6 +173,12 @@ _DEFAULT_ENGAGEMENT_MOOD_LIFT = 0.1
 # Each turn perceives one message; a present sender is engaged.
 _SINGLE_MESSAGE = 1
 
+# Default char ceiling for the OPTIONAL brevity length guard (BOB-024). When the
+# guard is enabled AND the answer-demand is LOW, a reply longer than this is lightly
+# clamped to its first finished thought (no regeneration). Conservative — the guard
+# is a safety net behind the bayes (directive + few-shot), off by default.
+_DEFAULT_LENGTH_GUARD_MAX_CHARS = 280
+
 # The base persona, then two voice concerns Bob's persona leans on (BOB-016): the
 # anti-bait directive + few-shot (so he lands like a person, not an assistant
 # fishing for the next reply with a ☕ signature), and the GUPPI canon (so whenever
@@ -183,21 +199,12 @@ _SYSTEM_PROMPT = (
     f"{profanity_stance()}"
 )
 
-# Form-hint → soft compose directive (BOB-018). The ExpressionPlan's form_hint is
-# a state-driven length cue that AUGMENTS the variable-form voice (and anti-bait):
-# it nudges this turn shorter or longer without ever licensing the closing-bait
-# tic. NORMAL carries no directive — the variable-form voice already covers the
-# default — so a neutral turn's prompt is unchanged but for that one voice line.
-# Russian persona directives (project language); Cyrillic look-alikes intentional.
-_FORM_HINT_DIRECTIVE: dict[FormHint, str] = {
-    FormHint.TERSE: (
-        "Сейчас тянет ответить коротко — реплика в одну-две строки, "
-        "без развёртывания."
-    ),
-    FormHint.EXPANSIVE: (
-        "Сейчас есть что сказать — можешь развёрнуто, на несколько абзацев."
-    ),
-}
+# Final length authority (BOB-024). The old soft form_hint → length directive path
+# (BOB-018) is GONE: it competed with this bead's decided Verbosity (two length
+# signals). ``form_hint`` is now an INPUT to decide_verbosity (a mood-driven length
+# lean), and the single final directive is voice.brevity_directive(verbosity) +
+# voice.brevity_few_shot(verbosity) — a strong instruction plus, on a TERSE turn,
+# the short-answer few-shot that actually beats Qwen's verbosity prior.
 
 # Grounded add-on prefaces (BOB-018 wave 3). Both fold a REAL, persisted piece of
 # Bob's inner life into the compose context behind the same grounding seam BOB-012
@@ -488,6 +495,9 @@ class HandleMessage:
         engagement_mood_lift: float = _DEFAULT_ENGAGEMENT_MOOD_LIFT,
         bob_user_id_source: BobUserIdSource | None = None,
         addressivity_thresholds: AddressivityThresholds | None = None,
+        brevity_thresholds: BrevityThresholds | None = None,
+        length_guard_enabled: bool = False,
+        length_guard_max_chars: int = _DEFAULT_LENGTH_GUARD_MAX_CHARS,
     ) -> None:
         self._router = router
         self._gateway = gateway
@@ -645,6 +655,24 @@ class HandleMessage:
             if addressivity_thresholds is not None
             else AddressivityThresholds()
         )
+        # The brevity seam (BOB-024): Bob's reply LENGTH stops being a constant. The
+        # answer-demand of the message x topic interest x mood/appetite x the BOB-018
+        # form_hint decide a Verbosity (terse / normal / expansive), which becomes the
+        # SINGLE final length directive + (on a terse turn) the short-answer few-shot
+        # that beats Qwen's verbosity prior — replacing the old soft form_hint length
+        # path. The optional length guard is a conservative safety net: when enabled AND
+        # the demand is LOW, an over-long reply is lightly clamped to its first finished
+        # thought (no regeneration). Thresholds are config-tunable; the guard is OFF by
+        # default, so the bayes (directive + few-shot) is the mechanism, the guard a
+        # backstop.
+        self._brevity_thresholds = (
+            brevity_thresholds if brevity_thresholds is not None else BrevityThresholds()
+        )
+        self._length_guard_enabled = length_guard_enabled
+        if length_guard_max_chars <= 0:
+            msg = f"length_guard_max_chars must be positive, got {length_guard_max_chars}"
+            raise ValueError(msg)
+        self._length_guard_max_chars = length_guard_max_chars
 
     async def handle(self, event: MessageReceived) -> None:
         """Process one received message end to end (the EventBus subscriber)."""
@@ -704,6 +732,15 @@ class HandleMessage:
             await self._react_only(event, soul)
             await self._record_owner_activity()
             return
+        # Decide how SHORT Bob answers this ENGAGE turn (BOB-024): answer-demand of the
+        # message x interest x mood/appetite x the BOB-018 form_hint → a Verbosity, the
+        # single final length directive + (on a terse turn) the short-answer few-shot.
+        # Computed only after the addressivity gate commits to engaging — a SILENT/REACT
+        # turn never needs it and never spends the seeded brevity roll, so addressivity's
+        # own roll stays unperturbed. The LOW answer-demand is reused by the optional
+        # length guard after generation.
+        demand = classify_answer_demand(text=event.text)
+        verbosity = self._decide_verbosity(soul, demand, interest, level, plan, interlocutor)
         # Guest (restricted social) mode (BOB-019 bob-apv.2 — the security core).
         # An unauthorized GUEST reached Bob's social path (routed in by multibot),
         # so Bob may talk to them like a person, but NEVER as a trusted peer:
@@ -749,6 +786,7 @@ class HandleMessage:
                 relationship=relationship,
                 engagement=level,
                 sulk=sulk,
+                verbosity=verbosity,
             )
             # Anti-repeat guard (BOB-022, defense in depth): if the fresh reply is
             # byte-identical (after strip) to Bob's most-recent prior reply, regenerate
@@ -769,7 +807,13 @@ class HandleMessage:
                 relationship=relationship,
                 engagement=level,
                 sulk=sulk,
+                verbosity=verbosity,
             )
+        # Optional brevity length guard (BOB-024): a conservative safety net behind
+        # the bayes — when enabled AND the message wanted a short answer (LOW demand),
+        # a reply that still ran long is lightly clamped to its first finished thought
+        # (no regeneration, never a mid-word cut). Off by default → the reply is untouched.
+        reply = self._guard_reply_length(reply, demand)
         await self._gateway.reply(chat_id=event.chat_id, markdown=reply)
         # Run the engagement feedback loops (BOB-014 .2a) BEFORE persisting the mood,
         # so the mood snapshot reflects this turn: an interesting, well-engaged exchange
@@ -1122,6 +1166,56 @@ class HandleMessage:
         self._engagement_state.last_turn_at = self._clock.now()
         return soul
 
+    def _decide_verbosity(
+        self,
+        soul: SOUL,
+        demand: AnswerDemand,
+        interest: float,
+        engagement: EngagementLevel,
+        plan: ExpressionPlan,
+        interlocutor: Interlocutor | None,
+    ) -> Verbosity:
+        """Decide how SHORT Bob answers this turn — pure, deterministic by seed (BOB-024).
+
+        Folds the already-computed turn signals into the pure
+        :func:`~bob.domain.personality.brevity.decide_verbosity`: the message's
+        answer-``demand`` is the base; topic ``interest`` can rarely upgrade it (seeded);
+        a low ``mood_valence`` / thin appetite (the :class:`EngagementLevel` mapped to a
+        [0, 1] appetite via :func:`~bob.domain.personality.engagement.appetite_of`) pull
+        it down; the BOB-018 ``form_hint`` is a mood length lean (now an INPUT, not a
+        rival directive); and a HIGH-demand owner is never clipped below NORMAL. The
+        seeded ``roll`` is one draw off the same injected RNG, so the whole turn stays
+        reproducible. ``is_owner`` keys off the perceived interlocutor (BOB-019).
+        """
+        is_owner = (
+            interlocutor is not None and interlocutor.kind is InterlocutorKind.OWNER
+        )
+        roll = self._rng.random()
+        return decide_verbosity(
+            demand=demand,
+            interest=interest,
+            mood_valence=soul.mood.valence,
+            engagement=appetite_of(engagement),
+            form_hint=plan.form_hint,
+            roll=roll,
+            is_owner=is_owner,
+            thresholds=self._brevity_thresholds,
+        )
+
+    def _guard_reply_length(self, reply: str, demand: AnswerDemand) -> str:
+        """Lightly clamp an over-long reply to a simple question (BOB-024 length guard).
+
+        The OPTIONAL safety net behind the brevity bayes: only when the guard is enabled
+        AND the message wanted a short answer (``demand`` LOW) does an over-long reply get
+        trimmed to its first finished thought via
+        :func:`~bob.domain.personality.brevity.clamp_reply` (no regeneration, never a
+        mid-word cut). Disabled (the default) or a non-LOW demand leaves the reply exactly
+        as composed — the bayes is the mechanism, this is only a backstop.
+        """
+        if not self._length_guard_enabled or demand is not AnswerDemand.LOW:
+            return reply
+        return clamp_reply(reply, max_chars=self._length_guard_max_chars)
+
     async def _decide_addressivity(
         self, event: MessageReceived, interest: float
     ) -> ResponseOutcome:
@@ -1210,8 +1304,9 @@ class HandleMessage:
         relationship: Relationship | None = None,
         engagement: EngagementLevel = EngagementLevel.FULL,
         sulk: SulkState | None = None,
+        verbosity: Verbosity = Verbosity.NORMAL,
     ) -> str:
-        """Compose a full reply, folding the plan's form hint into the prompt.
+        """Compose a full reply, folding the decided verbosity into the prompt.
 
         On a guest turn (``is_guest``) the restricted social mode applies: the
         grounded owner inner-life add-ons (leak / callback / fascination) are
@@ -1227,7 +1322,6 @@ class HandleMessage:
         system_prompt = self._system_prompt_for(
             soul,
             text,
-            plan,
             user_repeated=user_repeated,
             interlocutor=interlocutor,
             is_guest=is_guest,
@@ -1235,6 +1329,7 @@ class HandleMessage:
             relationship=relationship,
             engagement=engagement,
             sulk=sulk,
+            verbosity=verbosity,
         )
         provider = self._tool_provider
         if not is_guest and provider is not None and not self._registry.is_empty:
@@ -1272,6 +1367,7 @@ class HandleMessage:
         relationship: Relationship | None = None,
         engagement: EngagementLevel = EngagementLevel.FULL,
         sulk: SulkState | None = None,
+        verbosity: Verbosity = Verbosity.NORMAL,
     ) -> str:
         """Recompose once if ``reply`` byte-repeats Bob's last reply (BOB-022).
 
@@ -1298,6 +1394,7 @@ class HandleMessage:
             relationship=relationship,
             engagement=engagement,
             sulk=sulk,
+            verbosity=verbosity,
         )
 
     async def _with_grounded_addons(
@@ -1389,7 +1486,6 @@ class HandleMessage:
         self,
         soul: SOUL,
         text: str,
-        plan: ExpressionPlan,
         *,
         user_repeated: bool = False,
         interlocutor: Interlocutor | None = None,
@@ -1398,22 +1494,25 @@ class HandleMessage:
         relationship: Relationship | None = None,
         engagement: EngagementLevel = EngagementLevel.FULL,
         sulk: SulkState | None = None,
+        verbosity: Verbosity = Verbosity.NORMAL,
     ) -> str:
-        """Augment the base prompt with the mood tone, stance, and form-hint directives.
+        """Augment the base prompt with the mood tone, stance, and brevity directives.
 
         The mood-conditioned tone directive (BOB-020) leads: a normal/good mood keeps
         Bob's warm, concise tone, a flat low mood swaps it for the quieter, honest
         off-day band ("не знаю" over confabulation) — replacing the old unconditional
         warm line. The taste verdict + conviction on ``text`` then pick the zone and
-        stance (BOB-013), and the plan's ``form_hint`` appends a soft length cue
-        (BOB-018). When ``user_repeated`` (BOB-022 — the owner sent a near-verbatim
-        repeat) the user-repeat directive is appended so Bob notices it in voice. When
-        an ``interlocutor`` is perceived (BOB-019) the who-is-writing line is appended
-        so Bob answers as someone who knows WHO is on the other side (the owner
-        recognised AS owner) — additive, never changing which pipeline runs. With a
-        normal mood, no target opinion, no user-domain signal, a NORMAL form hint, no
-        repeat, and no perceived interlocutor, only the warm tone line augments the
-        base voice.
+        stance (BOB-013), and the decided ``verbosity`` (BOB-024) appends the SINGLE
+        final length directive + (on a terse turn) the short-answer few-shot — replacing
+        the old soft form_hint length cue (form_hint is now an INPUT to the verbosity
+        decision, so there are no competing length signals). When ``user_repeated``
+        (BOB-022 — the owner sent a near-verbatim repeat) the user-repeat directive is
+        appended so Bob notices it in voice. When an ``interlocutor`` is perceived
+        (BOB-019) the who-is-writing line is appended so Bob answers as someone who knows
+        WHO is on the other side (the owner recognised AS owner) — additive, never
+        changing which pipeline runs. With a normal mood, no target opinion, no
+        user-domain signal, a NORMAL verbosity, no repeat, and no perceived interlocutor,
+        only the warm tone line augments the base voice.
         """
         stance, verdict, zone = self._decide_stance(soul, text, relationship)
         directives = [
@@ -1436,7 +1535,13 @@ class HandleMessage:
             # short as interest thins, DECLINE softly winds the chatter down (never rude;
             # relational hostility is the sulk, .2b). FULL adds no line (default voice).
             engagement_directive(engagement),
-            _FORM_HINT_DIRECTIVE.get(plan.form_hint, ""),
+            # BOB-024: the SINGLE final length authority — a strong directive for the
+            # decided Verbosity plus, on a TERSE turn, the short-answer few-shot that
+            # beats Qwen's verbosity prior (replacing the old soft form_hint length cue,
+            # which is now an INPUT to decide_verbosity — no competing length signals).
+            # NORMAL adds nothing; the few-shot is empty off a TERSE turn.
+            brevity_directive(verbosity),
+            brevity_few_shot(verbosity),
             user_repeat_directive() if user_repeated else "",
             # BOB-019: fold WHO is writing (owner / known / guest / bot) into the
             # voice as character — additive, no-op when no interlocutor perceived.

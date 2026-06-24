@@ -20,6 +20,8 @@ from datetime import UTC, datetime
 from random import Random
 from typing import TYPE_CHECKING
 
+import pytest
+
 from bob.application.capabilities.registry import CapabilityRegistry
 from bob.application.router.llm_router import LLMRouter
 from bob.application.runtime.events import MessageReceived
@@ -335,6 +337,8 @@ def _build(
     clock: FixedClock | None = None,
     bob_user_id_source: Callable[[], int | None] | None = None,
     addressivity_thresholds: AddressivityThresholds | None = None,
+    length_guard_enabled: bool = False,
+    length_guard_max_chars: int = 280,
 ) -> tuple[HandleMessage, FakeBot, FakeRepo, CapturingProvider]:
     tier0 = CapturingProvider(reply="positive", replies=tier0_replies)
     tier1 = CapturingProvider(reply=reply, replies=tier1_replies)
@@ -379,6 +383,8 @@ def _build(
         fatigue_rates=fatigue_rates,
         bob_user_id_source=bob_user_id_source,
         addressivity_thresholds=addressivity_thresholds,
+        length_guard_enabled=length_guard_enabled,
+        length_guard_max_chars=length_guard_max_chars,
     )
     return handler, bot, repo, tier1
 
@@ -805,9 +811,9 @@ async def test_reply_prompt_carries_the_variable_form_voice_directive() -> None:
     assert "не выпрашивай продолжение" in folded  # anti-bait is still there too
 
 
-async def test_terse_form_hint_reaches_the_reply_prompt() -> None:
-    # A low-energy mood + a short inbound yields a terse form hint, which is passed
-    # into the compose prompt as a soft length hint (BOB-018 form_hint seam).
+async def test_terse_brevity_directive_reaches_the_reply_prompt() -> None:
+    # BOB-024: a short, low-demand inbound resolves to a TERSE verbosity, whose strong
+    # brevity directive (replacing the old soft form_hint length cue) reaches the prompt.
     soul = _soul().with_mood(Mood(valence=-0.3, arousal=-0.7, social=-0.5))
     handler, _bot, _repo, tier1 = _build(reply="ок", soul=soul)
 
@@ -815,12 +821,12 @@ async def test_terse_form_hint_reaches_the_reply_prompt() -> None:
     await handler.handle(_message("а?? ну?"))
 
     folded = tier1.all_text.casefold()
-    assert "коротк" in folded  # the terse form hint reached the prompt
+    assert "коротк" in folded  # the strong terse brevity directive reached the prompt
 
 
-async def test_expansive_form_hint_reaches_the_reply_prompt() -> None:
-    # A bright, open mood + a substantive inbound yields an expansive form hint,
-    # passed into the compose prompt as a soft hint to unfurl.
+async def test_expansive_brevity_directive_reaches_the_reply_prompt() -> None:
+    # BOB-024: a substantive, open-demand inbound resolves to an EXPANSIVE verbosity,
+    # whose directive licenses unfurling — folded into the prompt as the final length cue.
     soul = _soul().with_mood(Mood(valence=0.6, arousal=0.7, openness=0.6, social=0.6))
     handler, _bot, _repo, tier1 = _build(reply="long answer", soul=soul)
 
@@ -832,14 +838,14 @@ async def test_expansive_form_hint_reaches_the_reply_prompt() -> None:
     assert "развёрнут" in folded or "развернут" in folded
 
 
-async def test_form_directive_varies_by_mood_on_the_same_inbound() -> None:
-    # US-3 acceptance end to end: the SAME substantive inbound yields a DIFFERENT
-    # form directive in the prompt depending on mood — expansive under a bright,
-    # open mood, but no length directive under a withdrawn low-energy mood. The
-    # dialog never wears one frame regardless of how Bob feels.
+async def test_brevity_directive_varies_by_state_on_the_same_inbound() -> None:
+    # BOB-024 end to end: the SAME substantive (HIGH-demand) inbound yields a DIFFERENT
+    # final length directive by state — a bright, open mood unfurls (EXPANSIVE), while a
+    # withdrawn low-energy mood pulls the same turn down to a terse line. The single final
+    # length authority (replacing the old form_hint path) makes length follow state.
     inbound = "расскажи подробно, как именно это работает и почему так вышло"
     bright_soul = _soul().with_mood(Mood(valence=0.6, arousal=0.7, openness=0.6, social=0.6))
-    low_soul = _soul().with_mood(Mood(valence=-0.4, arousal=-0.8, social=-0.7))
+    low_soul = _soul().with_mood(Mood(valence=-0.55, arousal=-0.8, social=-0.7))
 
     handler_bright, _b1, _r1, tier_bright = _build(reply="x", soul=bright_soul)
     handler_low, _b2, _r2, tier_low = _build(reply="x", soul=low_soul)
@@ -848,16 +854,183 @@ async def test_form_directive_varies_by_mood_on_the_same_inbound() -> None:
 
     bright_text = tier_bright.all_text.casefold()
     low_text = tier_low.all_text.casefold()
-    # The EXPANSIVE form-hint directive opens with a phrase unique to the
-    # state-driven length cue ("сейчас есть что сказать") — distinct from the
-    # always-present variable-form voice few-shot. Bright + substantive lands it; the
-    # withdrawn mood on the SAME inbound does NOT, so the two prompts differ by mood.
-    expansive_cue = "сейчас есть что сказать"
-    assert expansive_cue in bright_text
-    assert expansive_cue not in low_text
+    # The EXPANSIVE brevity directive opens "здесь можно развернуться"; a bad mood +
+    # thin appetite downshifts the same HIGH-demand turn so that cue is gone (and a
+    # non-owner is not protected by the HIGH-demand-owner floor).
+    assert "можно развернуться" in bright_text
+    assert "можно развернуться" not in low_text
     # Both still carry the variable-form voice (it is always present, BOB-016/018).
     assert "форма и длина" in bright_text
     assert "форма и длина" in low_text
+
+
+# A long reply to a simple question (no trailing space — the rich gateway normalises
+# trailing whitespace, which is unrelated to the guard). A LOW-demand inbound routes
+# Tier 0, so this is wired as the tier0 reply via ``tier0_replies``.
+_GUARD_LONG_REPLY = "Да, всё готово. " + "Я проверил каждую деталь дважды." * 20
+
+
+async def test_length_guard_disabled_leaves_a_long_low_demand_reply_intact() -> None:
+    # The guard is OFF by default: even a long reply to a simple question is untouched
+    # (the bayes — directive + few-shot — is the mechanism; the guard a backstop).
+    handler, bot, _repo, _tier1 = _build(
+        reply="x", tier0_replies=[_GUARD_LONG_REPLY], length_guard_enabled=False
+    )
+
+    await handler.handle(_message("получилось?"))
+
+    assert bot.final_text == _GUARD_LONG_REPLY
+
+
+async def test_length_guard_enabled_clamps_a_long_low_demand_reply() -> None:
+    # With the guard ON and a LOW-demand inbound, an over-long reply is lightly clamped
+    # to its first finished thought — no regeneration, never a mid-word cut.
+    handler, bot, _repo, _tier1 = _build(
+        reply="x",
+        tier0_replies=[_GUARD_LONG_REPLY],
+        length_guard_enabled=True,
+        length_guard_max_chars=40,
+    )
+
+    await handler.handle(_message("получилось?"))
+
+    assert bot.final_text == "Да, всё готово."
+
+
+async def test_length_guard_enabled_leaves_a_high_demand_reply_intact() -> None:
+    # The guard only fires on a LOW-demand turn: a substantive (HIGH-demand) inbound that
+    # legitimately wanted a long answer is never clamped, even with the guard on. A HIGH
+    # inbound routes Tier 1, so the long reply is the (default) tier1 reply.
+    handler, bot, _repo, _tier1 = _build(
+        reply=_GUARD_LONG_REPLY, length_guard_enabled=True, length_guard_max_chars=40
+    )
+
+    await handler.handle(
+        _message("расскажи подробно, как именно это работает и почему так вышло")
+    )
+
+    assert bot.final_text == _GUARD_LONG_REPLY
+
+
+# --- BOB-024 US-1: простой вопрос → TERSE директива + few-shot в промпте -------
+
+# A short multi-question inbound that escalates to Tier 1 (so the reply prompt is
+# observable). With a withdrawn mood its HIGH base verbosity is downshifted to TERSE —
+# the recipe the existing terse-directive test uses, here extended to also assert the
+# short-answer FEW-SHOT (the real lever against Qwen's verbosity prior) reaches the prompt.
+_TERSE_INBOUND = "а?? ну?"
+_WITHDRAWN_MOOD = Mood(valence=-0.6, arousal=-0.8, social=-0.7)
+
+
+async def test_terse_turn_lands_directive_and_few_shot_in_prompt() -> None:
+    # US-1 end to end: on a TERSE turn the prompt carries BOTH the strong terse directive
+    # AND the short-answer few-shot exemplars — the few-shot (examples > rule) is what
+    # actually beats Qwen's verbosity prior, so its presence is the load-bearing assertion.
+    soul = _soul().with_mood(_WITHDRAWN_MOOD)
+    handler, _bot, _repo, tier1 = _build(reply="ок", soul=soul)
+
+    await handler.handle(_message(_TERSE_INBOUND))
+
+    folded = tier1.all_text.casefold()
+    assert "коротк" in folded  # the strong terse directive landed
+    # The few-shot exemplars reached the prompt (the «вопрос → короткий ответ» shapes).
+    assert "получилось" in folded
+    assert "ага, готово" in folded
+
+
+# --- BOB-024 US-2: открытый/глубокий вопрос → НЕ TERSE ------------------------
+
+
+async def test_open_question_prompt_is_not_terse() -> None:
+    # US-2: a substantive, open-demand inbound in a bright open mood resolves EXPANSIVE —
+    # it never gets the TERSE short-answer few-shot (which would wrongly cap a turn that
+    # legitimately wants room) nor the terse "одной фразой" cue, and is not clamped.
+    bright = _soul().with_mood(Mood(valence=0.6, arousal=0.7, openness=0.6, social=0.6))
+    handler, _bot, _repo, tier1 = _build(reply="long", soul=bright)
+
+    await handler.handle(
+        _message("расскажи подробно, как именно это работает и почему так вышло")
+    )
+
+    folded = tier1.all_text.casefold()
+    assert "ага, готово" not in folded  # the terse few-shot is absent
+    assert "одной фраз" not in folded  # the terse directive is absent
+    assert "можно развернуться" in folded  # EXPANSIVE: unfurling is licensed
+
+
+# --- BOB-024 US-5: HIGH-demand owner НЕ обрубается даже в плохом настроении ----
+
+
+async def test_owner_high_demand_is_not_curt_even_in_a_withdrawn_mood() -> None:
+    # US-5 end to end: a direct substantive (HIGH-demand) question from the OWNER is never
+    # answered with a curt terse line, even in a withdrawn low-energy mood that downshifts
+    # a non-owner — the HIGH-demand-owner floor keeps the turn at least NORMAL, so the
+    # terse short-answer few-shot is NOT folded into the prompt.
+    low = _soul().with_mood(_WITHDRAWN_MOOD)
+    resolver = _FakeInterlocutorResolver(
+        _interlocutor(name="Vova", kind=InterlocutorKind.OWNER)
+    )
+    handler, _bot, _repo, tier1 = _build(reply="x", soul=low, perceive_sender=resolver)
+
+    await handler.handle(
+        _message("расскажи подробно, как именно это работает и почему так вышло")
+    )
+
+    folded = tier1.all_text.casefold()
+    assert "ага, готово" not in folded  # not curt: the terse few-shot is absent
+
+
+async def test_owner_high_demand_contrasts_with_non_owner_on_the_same_withdrawn_turn(
+) -> None:
+    # The contrast that makes US-5 load-bearing: SAME HIGH-demand inbound + withdrawn mood.
+    # The OWNER is floored (no terse few-shot); a KNOWN non-owner is NOT protected and is
+    # downshifted further, so the non-owner prompt carries at least as much terseness as the
+    # owner's — the floor only ever protects the owner, never makes him MORE terse.
+    low = _soul().with_mood(_WITHDRAWN_MOOD)
+    inbound = "расскажи подробно, как именно это работает и почему так вышло"
+    owner = _FakeInterlocutorResolver(
+        _interlocutor(name="Vova", kind=InterlocutorKind.OWNER)
+    )
+    known = _FakeInterlocutorResolver(
+        _interlocutor(name="Ada", kind=InterlocutorKind.KNOWN)
+    )
+    h_owner, _b1, _r1, tier_owner = _build(reply="x", soul=low, perceive_sender=owner)
+    h_known, _b2, _r2, tier_known = _build(reply="x", soul=low, perceive_sender=known)
+    await h_owner.handle(_message(inbound))
+    await h_known.handle(_message(inbound))
+
+    owner_text = tier_owner.all_text.casefold()
+    known_text = tier_known.all_text.casefold()
+    # The owner is never given the expansive-unfurling cue here (downshifted off EXPANSIVE)
+    # but is also never curt; the non-owner is at least as terse (the floor protects only
+    # the owner). Concretely: if the owner got the terse few-shot, the non-owner did too.
+    if "ага, готово" in owner_text:
+        assert "ага, готово" in known_text
+
+
+# --- BOB-024 guardrail: ровно одна директива длины (нет старого form_hint-пути) -
+
+
+async def test_terse_turn_has_no_competing_expansive_length_cue() -> None:
+    # Guardrail (single length signal): the old soft BOB-018 form_hint → length path was
+    # REMOVED — brevity_directive + few-shot are now the single final length authority.
+    # On a TERSE turn the prompt carries the short directive ("одной фразой") and must NOT
+    # also carry the EXPANSIVE "можно развернуться" cue — no two competing length signals.
+    soul = _soul().with_mood(_WITHDRAWN_MOOD)
+    handler, _bot, _repo, tier1 = _build(reply="ок", soul=soul)
+
+    await handler.handle(_message(_TERSE_INBOUND))
+
+    folded = tier1.all_text.casefold()
+    assert "одной фраз" in folded  # the terse length directive landed
+    assert "можно развернуться" not in folded  # no contradicting expansive cue
+
+
+async def test_length_guard_rejects_non_positive_max_chars() -> None:
+    # Config guardrail: a non-positive length-guard ceiling is rejected at construction
+    # (a clamp to 0 chars would erase every reply) — fail fast, not silently.
+    with pytest.raises(ValueError, match="length_guard_max_chars"):
+        _build(reply="x", length_guard_enabled=True, length_guard_max_chars=0)
 
 
 # --- BOB-020: off-day tone + mood→taste modulation reach the prompt -----------

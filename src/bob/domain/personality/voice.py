@@ -31,6 +31,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from bob.domain.personality.brevity import Verbosity
 from bob.domain.personality.engagement import EngagementLevel
 from bob.domain.personality.interlocutor import InterlocutorKind
 
@@ -394,6 +395,68 @@ def engagement_directive(level: EngagementLevel) -> str:
     line (full engagement is the default voice). Pure and deterministic.
     """
     return _ENGAGEMENT_DIRECTIVE.get(level, "")
+
+
+# Brevity directives + few-shot (BOB-024). This is the FINAL length authority —
+# it replaces the soft BOB-018 form_hint length path so Bob never gets two competing
+# length signals (form_hint now feeds decide_verbosity instead). The TERSE directive
+# is STRONG (not a soft hint): one short line, no preamble, no lists, no padding —
+# like a live person in a chat; EXPANSIVE explicitly licenses unfurling; NORMAL adds
+# nothing (the neutral default). The directive alone does not beat Qwen's verbosity
+# prior — the brevity_few_shot exemplars do (examples > rule), so TERSE pairs the
+# directive WITH 2-3 "простой вопрос → короткий ответ" shots. Cyrillic look-alikes
+# are intentional in these Russian literals.
+_BREVITY_TERSE = (
+    "Ответь очень коротко — одной фразой, как живой человек в чате. Без преамбул, "
+    "без вводных, без списков и без воды: только суть, в одну-две строки. Не "
+    "разворачивай и не объясняй больше, чем спросили."
+)
+_BREVITY_EXPANSIVE = (
+    "Здесь можно развернуться — тема того стоит. Если есть что сказать, ответь "
+    "подробно, на несколько абзацев, не зажимай мысль в одну строку."
+)
+
+_BREVITY_DIRECTIVE: dict[Verbosity, str] = {
+    Verbosity.TERSE: _BREVITY_TERSE,
+    Verbosity.EXPANSIVE: _BREVITY_EXPANSIVE,
+}
+
+# Few-shot for TERSE: 2-3 "простой вопрос → КОРОТКИЙ ответ" pairs in Bob's voice —
+# the MAIN lever against Qwen's verbosity prior (examples beat any directive). The
+# answers end on substance and stay one short line, so the model copies the SHAPE.
+# Cyrillic look-alikes are intentional in these Russian literals.
+_BREVITY_TERSE_FEW_SHOT = (
+    "Вот как ты отвечаешь коротко на простой вопрос — копируй размер, не длину "
+    "вопроса: "
+    "«— Получилось? — Ага, готово.» "
+    "«— Ты тут? — Тут, слушаю.» "
+    "«— Во сколько встреча? — В шесть.»"
+)
+
+
+def brevity_directive(verbosity: Verbosity) -> str:
+    """Return the FINAL length directive for this turn's verbosity, or ``""`` (BOB-024).
+
+    The single length authority (replacing the soft BOB-018 form_hint path so Bob
+    never gets two competing length cues): ``TERSE`` is a STRONG instruction — one
+    short line, no preamble/lists/padding, like a live person in a chat; ``EXPANSIVE``
+    licenses unfurling; ``NORMAL`` adds nothing (the neutral default). The directive is
+    paired with :func:`brevity_few_shot` on a TERSE turn — the examples, not the rule,
+    are what actually beat Qwen's verbosity prior. Pure and deterministic.
+    """
+    return _BREVITY_DIRECTIVE.get(verbosity, "")
+
+
+def brevity_few_shot(verbosity: Verbosity) -> str:
+    """Return the short-answer few-shot for a TERSE turn, or ``""`` (BOB-024).
+
+    For ``TERSE`` only: 2-3 "простой вопрос → КОРОТКИЙ ответ" exemplars in Bob's voice
+    (same mechanism as the anti-bait few-shot) — this is the MAIN lever against Qwen's
+    verbosity prior, since the examples teach the SHORT shape more reliably than any
+    directive. ``NORMAL`` / ``EXPANSIVE`` add nothing (a turn that may run long needs no
+    short-answer shots). Pure and deterministic.
+    """
+    return _BREVITY_TERSE_FEW_SHOT if verbosity is Verbosity.TERSE else ""
 
 
 # Sulk directive (BOB-014 .2b). While Bob is обижен his reactive tone goes COLD —

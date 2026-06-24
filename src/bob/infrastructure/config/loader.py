@@ -166,6 +166,31 @@ DEFAULT_CONFIG: Config = {
         "ambient_barge_in_freq": 0.15,
         "react_chance": 0.3,
     },
+    # Brevity — краткость по запросу (BOB-024): Bob's reply LENGTH stops being a constant.
+    # The answer-demand of the message x topic interest x mood/appetite x the BOB-018
+    # form_hint decide a verbosity (terse / normal / expansive), which becomes the single
+    # final length directive + (on a terse turn) the short-answer few-shot that beats
+    # Qwen's verbosity prior. ``thresholds`` tune the verbosity decision: ``interest_upgrade``
+    # (the high interest bar that can rarely upgrade a turn) at ``upgrade_freq`` (the small
+    # seeded chance), ``bad_mood`` / ``low_engagement`` (the mood/appetite points that pull a
+    # step down), ``tilt_mood`` (the soft-mood point where a terse form_hint adds a downshift).
+    # ``length_guard`` is the OPTIONAL safety net behind the bayes: ``enabled`` false by
+    # default — only when on AND the demand is LOW is an over-long reply lightly clamped to
+    # its first finished thought (``max_chars``), never a regeneration. Defaults are
+    # conservative; the bayes (directive + few-shot) is the mechanism, the guard a backstop.
+    "brevity": {
+        "thresholds": {
+            "interest_upgrade": 0.85,
+            "upgrade_freq": 0.1,
+            "bad_mood": -0.5,
+            "low_engagement": 0.25,
+            "tilt_mood": -0.25,
+        },
+        "length_guard": {
+            "enabled": False,
+            "max_chars": 280,
+        },
+    },
     # Memory consolidation (BOB-021): a rare, non-destructive reflect-tick step that
     # folds OLD un-consolidated episodes into a Tier-0 digest (embedded, recalled like
     # any episode) and flags the sources. Conservative defaults: only episodes at least
