@@ -31,9 +31,11 @@ from bob.application.usecases.handle_message import (
     HandleMessage,
     OwnerActivityRecorder,
     PersonalityState,
+    _recent_bob_replies,
 )
 from bob.application.usecases.update_mood_from_text import UpdateMoodFromText
 from bob.domain.personality.addressivity import AddressivityThresholds
+from bob.domain.personality.conversation import RepeatThresholds
 from bob.domain.personality.engagement import (
     ConversationalFatigue,
     EngagementThresholds,
@@ -339,6 +341,7 @@ def _build(
     addressivity_thresholds: AddressivityThresholds | None = None,
     length_guard_enabled: bool = False,
     length_guard_max_chars: int = 280,
+    repeat_thresholds: RepeatThresholds | None = None,
 ) -> tuple[HandleMessage, FakeBot, FakeRepo, CapturingProvider]:
     tier0 = CapturingProvider(reply="positive", replies=tier0_replies)
     tier1 = CapturingProvider(reply=reply, replies=tier1_replies)
@@ -385,6 +388,7 @@ def _build(
         addressivity_thresholds=addressivity_thresholds,
         length_guard_enabled=length_guard_enabled,
         length_guard_max_chars=length_guard_max_chars,
+        repeat_thresholds=repeat_thresholds,
     )
     return handler, bot, repo, tier1
 
@@ -1829,6 +1833,160 @@ async def test_guard_is_a_noop_with_no_prior_bob_reply_in_history() -> None:
 
     assert len(tier1.payloads) == 1
     assert bot.final_text == "Первый ответ в диалоге."
+
+
+# --- BOB-026 .1: anti-repeat over a WINDOW (repeat "через ход") ----------------
+
+# The user's reproduced case: the same отказ слips back AFTER another turn wedged
+# between the two identical replies. The window guard (not just the last reply)
+# must still catch it.
+_OLDER_DECLINE = "Нет, таблицу я пока не нарисую — это вне моих возможностей."
+_WEDGED_TURN = "Ada: таблицу?\nbob: " + _OLDER_DECLINE
+_INTERVENING_TURN = "Ada: плохое настроение?\nbob: Да, серое какое-то."
+
+
+async def test_repeat_through_a_turn_triggers_regeneration() -> None:
+    # отказ → другой ход → ТОТ ЖЕ отказ 1-в-1. The previous guard compared only with
+    # the LAST Bob reply ("Да, серое…") and let the repeat through; the window guard
+    # catches the older identical decline and regenerates once.
+    handler, bot, _repo, tier1 = _build(
+        reply="unused",
+        tier1_replies=[_OLDER_DECLINE, "Ладно, давай попробую описать словами."],
+        history=[
+            {"content": _WEDGED_TURN, "event_type": "message"},
+            {"content": _INTERVENING_TURN, "event_type": "message"},
+        ],
+    )
+
+    await handler.handle(_message("слушай, а нарисуй мне всё-таки таблицу подробно ещё раз"))
+
+    assert len(tier1.payloads) == 2
+    assert bot.final_text == "Ладно, давай попробую описать словами."
+
+
+async def test_window_of_one_misses_the_repeat_through_a_turn() -> None:
+    # Proof the WINDOW is the fix: with window=1 (the old behaviour — compare only the
+    # last reply) the same repeat "через ход" is NOT caught — the older identical
+    # decline is outside the one-reply window, so no regeneration fires.
+    handler, bot, _repo, tier1 = _build(
+        reply="unused",
+        tier1_replies=[_OLDER_DECLINE, "Ладно, давай попробую описать словами."],
+        history=[
+            {"content": _WEDGED_TURN, "event_type": "message"},
+            {"content": _INTERVENING_TURN, "event_type": "message"},
+        ],
+        repeat_thresholds=RepeatThresholds(window=1),
+    )
+
+    await handler.handle(_message("слушай, а нарисуй мне всё-таки таблицу подробно ещё раз"))
+
+    assert len(tier1.payloads) == 1
+    assert bot.final_text == _OLDER_DECLINE
+
+
+async def test_near_verbatim_reply_triggers_regeneration() -> None:
+    # Near-verbatim (a minor edit of the last reply) is caught too — not just an exact
+    # byte match. The guard regenerates once and commits the genuinely-different retry.
+    near = _OLDER_DECLINE.replace("пока не нарисую", "сейчас не нарисую")
+    handler, bot, _repo, tier1 = _build(
+        reply="unused",
+        tier1_replies=[near, "Ладно, опишу словами."],
+        history=[{"content": _WEDGED_TURN, "event_type": "message"}],
+    )
+
+    await handler.handle(_message("слушай, а нарисуй мне всё-таки таблицу подробно ещё раз"))
+
+    assert len(tier1.payloads) == 2
+    assert bot.final_text == "Ладно, опишу словами."
+
+
+async def test_same_topic_different_reply_in_window_does_not_regenerate() -> None:
+    # No false positive: an older decline on the SAME topic sits in the window, but a
+    # substantively different fresh reply (same subject, different words) is committed
+    # as-is — the conservative threshold does NOT mistake "related" for "repeat".
+    substantively_different = (
+        "Ладно, уговорил — давай я хотя бы наброшу структуру таблицы текстом."
+    )
+    handler, bot, _repo, tier1 = _build(
+        reply=substantively_different,
+        history=[
+            {"content": _WEDGED_TURN, "event_type": "message"},
+            {"content": _INTERVENING_TURN, "event_type": "message"},
+        ],
+    )
+
+    await handler.handle(_message("слушай, а нарисуй мне всё-таки таблицу подробно ещё раз"))
+
+    assert len(tier1.payloads) == 1  # no needless regeneration
+    assert bot.final_text == substantively_different
+
+
+async def test_repeat_just_outside_the_window_is_not_caught() -> None:
+    # Window boundary (off-by-one): with window=2 a verbatim repeat of a reply that is
+    # the THIRD-newest Bob turn — one past the window edge — slips through, while the
+    # companion through-a-turn test (window default 5) proves an in-window repeat is
+    # caught. Together they pin the window as a real, bounded cutoff.
+    older_reply = "Древний ответ, который выпал за пределы окна сравнения."
+    handler, bot, _repo, tier1 = _build(
+        reply=older_reply,
+        history=[
+            {"content": f"Ada: один\nbob: {older_reply}", "event_type": "message"},
+            {"content": "Ada: два\nbob: Второй ответ.", "event_type": "message"},
+            {"content": "Ada: три\nbob: Третий ответ.", "event_type": "message"},
+        ],
+        repeat_thresholds=RepeatThresholds(window=2),
+    )
+
+    await handler.handle(_message("слушай, а нарисуй мне всё-таки таблицу подробно ещё раз"))
+
+    # older_reply is the 3rd-newest Bob reply; window=2 compares only the two freshest,
+    # so it is outside the window and no regeneration fires.
+    assert len(tier1.payloads) == 1
+    assert bot.final_text == older_reply
+
+
+# --- BOB-026 .1: _recent_bob_replies window extractor (unit) -------------------
+
+
+def test_recent_bob_replies_returns_window_freshest_first() -> None:
+    # The extractor recovers the bob: half of each episode, newest-first, capped at
+    # the window — this is the WINDOW the guard compares the fresh reply against.
+    history = [
+        {"content": "Ada: один\nbob: ответ один"},
+        {"content": "Ada: два\nbob: ответ два"},
+        {"content": "Ada: три\nbob: ответ три"},
+    ]
+
+    replies = _recent_bob_replies(history, limit=2)
+
+    assert replies == ("ответ три", "ответ два")
+
+
+def test_recent_bob_replies_skips_non_string_content() -> None:
+    # A malformed episode whose content is not a string is skipped, not crashed on —
+    # the scan continues to the next well-formed episode.
+    history: list[dict[str, object]] = [
+        {"content": "Ada: один\nbob: ответ один"},
+        {"content": None},
+        {"content": 123},
+        {"content": "Ada: два\nbob: ответ два"},
+    ]
+
+    replies = _recent_bob_replies(history, limit=5)
+
+    assert replies == ("ответ два", "ответ один")
+
+
+def test_recent_bob_replies_empty_history_is_empty_tuple() -> None:
+    # No Bob turn on record -> an empty tuple (the guard then never fires).
+    assert _recent_bob_replies([], limit=5) == ()
+
+
+def test_recent_bob_replies_ignores_turns_without_a_bob_half() -> None:
+    # A user-only turn (no "\nbob: " marker) contributes no reply to the window.
+    history = [{"content": "Ada: просто вопрос без ответа Боба"}]
+
+    assert _recent_bob_replies(history, limit=5) == ()
 
 
 # --- BOB-022: user repeats themselves → Bob notices (voice directive) ----------
