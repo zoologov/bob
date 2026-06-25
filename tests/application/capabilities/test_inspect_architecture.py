@@ -64,3 +64,10 @@ async def test_execute_requires_a_string_ref() -> None:
 
     with pytest.raises(ValueError, match="ref"):
         await cap.execute({"ref": 123})
+
+
+async def test_execute_with_missing_ref_key_raises() -> None:
+    cap = make_inspect_architecture_capability(FakeRepoIntrospector())
+
+    with pytest.raises(ValueError, match="ref"):
+        await cap.execute({})

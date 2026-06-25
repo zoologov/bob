@@ -16,7 +16,7 @@ tmp repo layout.
 from __future__ import annotations
 
 import asyncio
-from typing import TYPE_CHECKING
+from pathlib import Path
 
 import pytest
 
@@ -27,9 +27,6 @@ from bob.infrastructure.introspection.subprocess_introspector import (
     SubprocessRepoIntrospector,
     _ExecRunner,
 )
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 
 class _FakeRunner:
@@ -256,6 +253,115 @@ async def test_read_file_on_directory_returns_refusal(tmp_path: Path) -> None:
     out = await intro.read_file("src/pkg", max_lines=10)
 
     assert "not found" in out.lower()
+
+
+# --- 🔴 US-6 privacy invariant: symlink / absolute-path bypass attempts --------
+
+
+@pytest.mark.asyncio
+async def test_read_file_refuses_symlink_escaping_allowed_root_into_denied(
+    tmp_path: Path,
+) -> None:
+    # 🔴 US-6: the pure name-based guard cannot see where a symlink points, so the
+    # infra adapter re-checks the symlink-resolved REAL path before opening. A link
+    # planted UNDER an allowed root but pointing at SOUL must NOT leak its content.
+    soul = tmp_path / "data" / "soul" / "SOUL.md"
+    soul.parent.mkdir(parents=True)
+    soul.write_text("DEEP_PRIVATE_SOUL_CONTENT", encoding="utf-8")
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "leak.md").symlink_to(soul)
+    intro = _make(tmp_path, _FakeRunner())
+
+    with pytest.raises(DeniedPathError):
+        await intro.read_file("src/leak.md", max_lines=100)
+
+
+@pytest.mark.asyncio
+async def test_read_file_refuses_symlink_to_env_secret(tmp_path: Path) -> None:
+    # 🔴 US-6: same defence for a symlink aimed at the secrets file.
+    env = tmp_path / ".env"
+    env.write_text("TELEGRAM_TOKEN=should-never-leak", encoding="utf-8")
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "env_link").symlink_to(env)
+    intro = _make(tmp_path, _FakeRunner())
+
+    with pytest.raises(DeniedPathError):
+        await intro.read_file("src/env_link", max_lines=100)
+
+
+@pytest.mark.asyncio
+async def test_read_file_refuses_symlink_escaping_repo_entirely(tmp_path: Path) -> None:
+    # 🔴 US-6: a link under src pointing OUTSIDE the repo (an absolute system path) is
+    # refused — the real path lands in no allowed root.
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "etc_link").symlink_to("/etc/hosts")
+    intro = _make(tmp_path, _FakeRunner())
+
+    with pytest.raises(DeniedPathError):
+        await intro.read_file("src/etc_link", max_lines=100)
+
+
+@pytest.mark.asyncio
+async def test_read_file_allows_symlink_staying_within_allowed_root(
+    tmp_path: Path,
+) -> None:
+    # The symlink defence is precise, not blanket: a link that resolves to a path
+    # still INSIDE an allowed root reads normally (no false denial).
+    pkg = tmp_path / "src" / "pkg"
+    pkg.mkdir(parents=True)
+    (pkg / "m.py").write_text("module_code = 1\n", encoding="utf-8")
+    (tmp_path / "src" / "alias").symlink_to(pkg)
+    intro = _make(tmp_path, _FakeRunner())
+
+    out = await intro.read_file("src/alias/m.py", max_lines=10)
+
+    assert "module_code = 1" in out
+
+
+@pytest.mark.asyncio
+async def test_read_file_refuses_absolute_path_outside_repo(tmp_path: Path) -> None:
+    # 🔴 US-6: an absolute path outside the repo is denied by the guard BEFORE any
+    # disk touch (no symlink even involved).
+    intro = _make(tmp_path, _FakeRunner())
+
+    with pytest.raises(DeniedPathError):
+        await intro.read_file("/etc/passwd", max_lines=10)
+
+
+@pytest.mark.asyncio
+async def test_read_file_refuses_dotdot_traversal_into_denied_root(
+    tmp_path: Path,
+) -> None:
+    # 🔴 US-6: a ``..`` path that climbs out of src into config is denied (the guard
+    # collapses ``..`` purely and sees it leave the allowed root).
+    cfg = tmp_path / "config"
+    cfg.mkdir()
+    (cfg / "bob.yaml").write_text("secret: value", encoding="utf-8")
+    intro = _make(tmp_path, _FakeRunner())
+
+    with pytest.raises(DeniedPathError):
+        await intro.read_file("src/../config/bob.yaml", max_lines=10)
+
+
+@pytest.mark.asyncio
+async def test_read_file_surfaces_oserror_as_honest_refusal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # An allowed, present file whose open raises a generic OSError (e.g. permissions)
+    # yields an honest refusal string — never a traceback, never fabricated content.
+    src = tmp_path / "src" / "locked.py"
+    src.parent.mkdir(parents=True)
+    src.write_text("code = 1\n", encoding="utf-8")
+    intro = _make(tmp_path, _FakeRunner())
+
+    def _boom(*_args: object, **_kwargs: object) -> str:
+        raise PermissionError("permission denied")
+
+    monkeypatch.setattr(Path, "read_text", _boom)
+
+    out = await intro.read_file("src/locked.py", max_lines=10)
+
+    assert "could not read" in out.lower()
 
 
 # --- default exec runner (real subprocess, no shell) --------------------------

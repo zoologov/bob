@@ -106,6 +106,43 @@ def test_allows_path_is_pure_and_repeatable(guard: PrivacyGuard) -> None:
     assert guard.allows_path(p) == guard.allows_path(p)
 
 
+def test_allows_collapses_dot_segments(guard: PrivacyGuard) -> None:
+    # A ``.`` (current-dir) segment is collapsed purely — the path still lands in src.
+    p = REPO_ROOT / "src" / "." / "bob" / "." / "app.py"
+    assert guard.allows_path(p) is True
+
+
+def test_allows_unicode_and_special_chars_within_allowed_root(
+    guard: PrivacyGuard,
+) -> None:
+    # The invariant is about the ROOT, not the leaf name: Unicode / spaces / odd chars
+    # under src/ are fine; the guard never inspects file contents or names for secrets.
+    assert guard.allows_path(REPO_ROOT / "src" / "файл.py") is True
+    assert guard.allows_path(REPO_ROOT / "src" / "a b" / "x-y_z.py") is True
+
+
+@pytest.mark.parametrize(
+    "rel",
+    [
+        "data",  # the denied parent root itself
+        "config",
+        "data/soul",  # the SOUL directory, not just SOUL.md
+        "srcfoo/x.py",  # a sibling root that merely *prefixes* an allowed name
+        "src_extra/y.py",
+    ],
+)
+def test_denies_lookalike_and_parent_denied_roots(
+    guard: PrivacyGuard, rel: str
+) -> None:
+    # Containment is by path part, not string prefix: ``srcfoo`` is not ``src``.
+    assert guard.allows_path(REPO_ROOT / rel) is False
+
+
+def test_denies_empty_relative_path(guard: PrivacyGuard) -> None:
+    # The repo root itself (empty relative) is not an allowed root.
+    assert guard.allows_path(Path(".")) is False
+
+
 # --- sanitize -----------------------------------------------------------------
 
 

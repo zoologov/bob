@@ -30,8 +30,11 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import os
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
+
+from bob.domain.introspection.privacy_guard import ALLOWED_ROOTS
 
 if TYPE_CHECKING:
     from bob.domain.introspection.privacy_guard import PrivacyGuard
@@ -124,6 +127,18 @@ class SubprocessRepoIntrospector:
             raise DeniedPathError(f"reading {path!r} is denied by the privacy guard")
 
         target = candidate if candidate.is_absolute() else self._guard.repo_root / path
+        # Defence in depth at the filesystem boundary: the pure name-based guard above
+        # cannot see where a SYMLINK actually points, so a link planted under an allowed
+        # root (e.g. src/leak.md -> data/soul/SOUL.md) would otherwise leak denied
+        # content. Resolve symlinks now and re-assert the REAL path stays inside an
+        # allowed read-only root before opening — a link escaping into a denied root is
+        # refused with no read. Containment is computed on realpaths consistently so a
+        # symlinked repo root (e.g. /var -> /private/var on macOS) is not a false denial.
+        if not self._real_path_is_allowed(target):
+            raise DeniedPathError(
+                f"reading {path!r} is denied by the privacy guard (resolves outside the "
+                "read-only roots)"
+            )
         try:
             raw = target.read_text(encoding="utf-8", errors="replace")
         except (FileNotFoundError, IsADirectoryError, NotADirectoryError):
@@ -133,6 +148,23 @@ class SubprocessRepoIntrospector:
 
         capped = "\n".join(raw.splitlines()[:max_lines])
         return self._guard.sanitize(self._truncate(capped))
+
+    def _real_path_is_allowed(self, target: Path) -> bool:
+        """Whether ``target``'s symlink-resolved real path stays inside an allowed root.
+
+        Computes containment on realpaths consistently (both the candidate and the
+        allowed roots are run through :func:`os.path.realpath`) so a symlinked repo
+        root is not a false denial, while a symlink that escapes an allowed root into a
+        denied tree (SOUL / ``bob.db`` / ``.env`` / ``config``) is caught here — the
+        defence the pure name-based guard structurally cannot provide.
+        """
+        real_target = Path(os.path.realpath(target))
+        repo_root = self._guard.repo_root
+        for root in ALLOWED_ROOTS:
+            real_root = Path(os.path.realpath(repo_root / root))
+            if real_target == real_root or real_root in real_target.parents:
+                return True
+        return False
 
     # --- internals ------------------------------------------------------------
 

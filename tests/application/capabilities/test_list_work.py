@@ -62,3 +62,23 @@ async def test_execute_requires_a_string_query() -> None:
 
     with pytest.raises(ValueError, match="query"):
         await cap.execute({"query": 5})
+
+
+async def test_execute_with_missing_query_key_raises() -> None:
+    cap = make_list_work_capability(FakeRepoIntrospector())
+
+    with pytest.raises(ValueError, match="query"):
+        await cap.execute({})
+
+
+async def test_execute_ready_queue_when_query_is_blank() -> None:
+    # US-3: a whitespace-only query still grounds an answer (the port maps it to the
+    # ready queue) and renders it compactly — not an honest-not-found shortcut here.
+    introspector = FakeRepoIntrospector(tasks="bob-9eh.4  ready")
+    cap = make_list_work_capability(introspector)
+
+    result = await cap.execute({"query": "   "})
+
+    assert introspector.task_calls == ["   "]
+    assert isinstance(result, Mapping)
+    assert result["tasks"] == "bob-9eh.4  ready"

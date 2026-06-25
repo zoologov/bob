@@ -11,6 +11,10 @@ from typing import TYPE_CHECKING
 import pytest
 
 from bob.app import SystemClock, build_application
+from bob.application.capabilities import (
+    CapabilityNotAllowedError,
+    SafeCapabilityDispatcher,
+)
 from bob.application.runtime import AgentRuntime, AsyncEventBus, RuntimeState
 from bob.application.usecases.handle_message import HandleMessage
 from bob.application.usecases.heartbeat import (
@@ -205,7 +209,29 @@ def test_introspection_capabilities_absent_when_disabled(tmp_path: Path) -> None
         guppi_bot=_Bot(),
     )
 
-    assert _INTROSPECTION_CAPS.isdisjoint(_registered_names(app))
+    names = _registered_names(app)
+    assert _INTROSPECTION_CAPS.isdisjoint(names)
+    # Regression: the memory capabilities are untouched by the introspection switch —
+    # disabling introspection leaves recall/search exactly as before.
+    assert {"recall_memory", "search_memory"} <= names
+
+
+def test_memory_capabilities_present_in_both_introspection_modes(
+    tmp_path: Path,
+) -> None:
+    # Regression guard: recall_memory + search_memory are registered regardless of the
+    # introspection switch (BOB-017 adds skills behind the seam, removes none).
+    base = {"recall_memory", "search_memory"}
+    for enabled in (True, False):
+        config = _config(tmp_path)
+        config["introspection"] = {"enabled": enabled}
+        app = build_application(
+            config=config,
+            providers=_providers(),
+            bob_bot=_Bot(),
+            guppi_bot=_Bot(),
+        )
+        assert base <= _registered_names(app)
 
 
 def test_introspection_capabilities_not_on_autonomous_safe_allowlist(
@@ -227,6 +253,31 @@ def test_introspection_capabilities_not_on_autonomous_safe_allowlist(
     safe = goals.get("safe_capabilities", [])
     assert isinstance(safe, list)
     assert _INTROSPECTION_CAPS.isdisjoint(set(safe))
+
+
+async def test_safe_dispatcher_default_allowlist_refuses_introspection_caps(
+    tmp_path: Path,
+) -> None:
+    # BOB-017 stage boundary, enforced (not just configured): a SafeCapabilityDispatcher
+    # over the LIVE registry with the default/empty autonomous allowlist must NOT allow
+    # or dispatch any introspection capability — they are conversation-only.
+    config = _config(tmp_path)
+    config["introspection"] = {"enabled": True}
+    app = build_application(
+        config=config,
+        providers=_providers(),
+        bob_bot=_Bot(),
+        guppi_bot=_Bot(),
+    )
+
+    # The registry advertises them (conversation path) ...
+    assert _registered_names(app) >= _INTROSPECTION_CAPS
+    # ... but the autonomous safe dispatcher (default empty allowlist) refuses them.
+    dispatcher = SafeCapabilityDispatcher(app.registry, allowlist=())
+    for name in _INTROSPECTION_CAPS:
+        assert dispatcher.allows(name) is False
+        with pytest.raises(CapabilityNotAllowedError):
+            await dispatcher.dispatch(name, {"ref": "bob", "query": "bob"})
 
 
 def test_system_clock_returns_timezone_aware_now() -> None:

@@ -34,7 +34,10 @@ from dataclasses import dataclass
 from pathlib import Path
 
 # The ONLY roots Bob may read from — repo-relative, read-only source/docs trees.
-_ALLOWED_ROOTS: tuple[str, ...] = ("src", "tests", "docs")
+# Exposed (also under the private alias for in-module use) as the single source of
+# truth so the infra adapter's symlink-containment re-check shares the same roots.
+ALLOWED_ROOTS: tuple[str, ...] = ("src", "tests", "docs")
+_ALLOWED_ROOTS: tuple[str, ...] = ALLOWED_ROOTS
 
 # What the redaction marker leaves behind in sanitized output.
 _REDACTION = "[REDACTED]"

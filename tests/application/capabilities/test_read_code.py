@@ -19,8 +19,18 @@ from collections.abc import Mapping
 import pytest
 
 from bob.application.capabilities.read_code import make_read_code_capability
+from bob.infrastructure.introspection.subprocess_introspector import DeniedPathError
 
 from .fakes import FakeRepoIntrospector
+
+
+class _DenyingIntrospector(FakeRepoIntrospector):
+    """A port whose file read is refused by the privacy guard (raises DeniedPathError)."""
+
+    async def read_file(self, path: str, *, max_lines: int) -> str:
+        raise DeniedPathError(
+            f"reading {path!r} (max_lines={max_lines}) is denied by the privacy guard"
+        )
 
 
 def test_capability_advertises_the_read_code_contract() -> None:
@@ -76,3 +86,53 @@ async def test_execute_requires_a_string_query() -> None:
 
     with pytest.raises(ValueError, match="query"):
         await cap.execute({"query": None})
+
+
+async def test_execute_with_missing_query_key_raises() -> None:
+    # ``args.get('query')`` is None when the key is absent -> the same validation path.
+    cap = make_read_code_capability(FakeRepoIntrospector())
+
+    with pytest.raises(ValueError, match="query"):
+        await cap.execute({})
+
+
+async def test_bare_symbol_with_no_separator_is_searched_not_read() -> None:
+    # A query without a path separator is a search term, never a file read.
+    introspector = FakeRepoIntrospector(search="hit")
+    cap = make_read_code_capability(introspector)
+
+    await cap.execute({"query": "PrivacyGuard"})
+
+    assert introspector.search_calls == ["PrivacyGuard"]
+    assert introspector.read_calls == []
+
+
+async def test_path_shaped_query_without_extension_is_searched() -> None:
+    # ``src/bob/domain`` (a dir-like ref, no file extension) is treated as a search
+    # query — only a path WITH an extension routes to read_file.
+    introspector = FakeRepoIntrospector(search="dir-hit")
+    cap = make_read_code_capability(introspector)
+
+    await cap.execute({"query": "src/bob/domain"})
+
+    assert introspector.search_calls == ["src/bob/domain"]
+    assert introspector.read_calls == []
+
+
+async def test_read_max_lines_is_configurable_and_forwarded_to_port() -> None:
+    # The line cap passed to the factory reaches the port's read_file call.
+    introspector = FakeRepoIntrospector(file_text="x")
+    cap = make_read_code_capability(introspector, read_max_lines=42)
+
+    await cap.execute({"query": "src/bob/app.py"})
+
+    assert introspector.read_calls == [("src/bob/app.py", 42)]
+
+
+async def test_denied_path_refusal_propagates_not_fabricated() -> None:
+    # 🔴 US-6 at the capability layer: a guarded path read that the port REFUSES
+    # (DeniedPathError) surfaces as an error, never a fabricated "matches" answer.
+    cap = make_read_code_capability(_DenyingIntrospector())
+
+    with pytest.raises(DeniedPathError):
+        await cap.execute({"query": "data/soul/SOUL.md"})
