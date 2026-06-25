@@ -43,6 +43,42 @@ _GROUNDED_FOOTER = (
 )
 _MOOD_LINE_PREFIX = "Your current mood feels:"
 
+# The legacy static inner-monologue prompt (BOB-029 no-context fallback). Asked for
+# a "private thought" with NO mood context, so a low-temperature Tier-0 model
+# defaulted to melancholic introspection — its negative sentiment dragged valence
+# down every tick and fought the drift back to the resting baseline, even a bright
+# one. Kept verbatim so an unconditioned call behaves exactly as before.
+GENERIC_MONOLOGUE_PROMPT = (
+    "In one short sentence, think a private thought as Bob right now, then on a new "
+    "line classify its mood as exactly one lowercase word: positive, negative, or "
+    "neutral."
+)
+
+
+def build_monologue_prompt(mood_tone: str) -> str:
+    """Mood-condition Bob's private inner-monologue prompt (BOB-029).
+
+    ``mood_tone`` is the current mood's deterministic tone word (empty to omit). The
+    generic prompt (no tone) lets a Tier-0 model default to gloom, whose negative
+    sentiment pulls valence down and traps Bob in a minor key regardless of his
+    actual temperament. Telling Bob HOW he currently feels makes the thought CARRY
+    that mood — a bright, curious mood yields a bright thought (positive sentiment
+    that reinforces the baseline) instead of a reflexive lament. The monologue stops
+    being a constant downward drag and becomes a mood-mirror, so the drift toward the
+    baseline wins. With an empty tone the generic prompt is returned verbatim, so an
+    unconditioned call is byte-for-byte unchanged.
+    """
+    tone = mood_tone.strip()
+    if not tone:
+        return GENERIC_MONOLOGUE_PROMPT
+    return (
+        f"Right now your mood feels: {tone}. In one short sentence, think a private "
+        "thought as Bob that genuinely CARRIES that mood — if you feel bright and "
+        "curious, the thought is bright and alive; do not default to melancholy or "
+        "gloom out of habit. Then on a new line classify its mood as exactly one "
+        "lowercase word: positive, negative, or neutral."
+    )
+
 
 def build_reflection_prompt(
     recent_contents: Iterable[str],
