@@ -2411,6 +2411,131 @@ async def test_repeat_just_outside_the_window_is_not_caught() -> None:
     assert bot.final_text == older_reply
 
 
+# --- BOB-036 .2: acceptance + guardrails (user's case, recall union, bound) -----
+#
+# The .1 cases pin the closer-tic via HISTORY. These add the user's REAL production
+# phrase end to end, prove the tic path rides the SAME recall-aware union (history +
+# recalled Bob replies) and the SAME _MAX_REGENERATIONS bound, and prove the guard
+# never over-fires on a legitimately reused short term.
+_REAL_TIC = "Мне так спокойнее."
+_REAL_TURN_A = f"Ada: подними сервис\nbob: Развернул сервис, всё поднялось. {_REAL_TIC}"
+_REAL_TURN_B = f"Ada: прогони тесты\nbob: Прогнал тесты ещё раз. {_REAL_TIC}"
+
+
+async def test_users_real_closer_tic_is_caught_and_regenerated() -> None:
+    # 🔴 The user's actual report end to end: "Мне так спокойнее" closes the last two
+    # Bob replies on record; a fresh, substantively different draft that ALSO ends with
+    # it is a phrase-tic. The guard regenerates (proven via the fake router: a second
+    # payload is drawn) and commits the tic-free retry — the final reply DIFFERS.
+    handler, bot, _repo, tier1 = _build(
+        reply="unused",
+        tier1_replies=[
+            f"Сделал бэкап на всякий случай. {_REAL_TIC}",
+            "Готово, бэкап на месте — добавить тут нечего.",
+        ],
+        history=[
+            {"content": _REAL_TURN_A, "event_type": "message"},
+            {"content": _REAL_TURN_B, "event_type": "message"},
+        ],
+    )
+
+    await handler.handle(_message("сделай, пожалуйста, ещё и бэкап подробно"))
+
+    assert len(tier1.payloads) == 2  # the tic guard fired exactly one regeneration
+    assert bot.final_text == "Готово, бэкап на месте — добавить тут нечего."
+
+
+async def test_closer_tic_caught_via_the_recall_union_not_only_history() -> None:
+    # Integration (union): the recurring closer lives in RECALLED Bob replies that are
+    # NOT in recent history — the history-only window is blind to them. The tic path
+    # rides the SAME recall-aware union as the full-repeat guard, so two recalled replies
+    # sharing the closer + a fresh draft carrying it still fires one regeneration.
+    recalled_a: dict[str, object] = {
+        "content": f"Ada: a\nbob: Глянул дашборд. {_REAL_TIC}",
+        "category": "episodic",
+    }
+    recalled_b: dict[str, object] = {
+        "content": f"Ada: b\nbob: Перечитал лог. {_REAL_TIC}",
+        "category": "episodic",
+    }
+    handler, bot, _repo, tier1 = _build(
+        reply="unused",
+        tier1_replies=[
+            f"Проверил алерты. {_REAL_TIC}",
+            "Всё чисто, алерты молчат — добавить нечего.",
+        ],
+        recall=_recall_with(recalled_a, recalled_b),
+    )
+
+    await handler.handle(_message("проверь, пожалуйста, ещё и алерты подробно"))
+
+    assert len(tier1.payloads) == 2  # recall half of the union drove the tic catch
+    assert bot.final_text == "Всё чисто, алерты молчат — добавить нечего."
+
+
+async def test_persistent_tic_is_kept_after_the_regeneration_bound() -> None:
+    # No infinite loop on the tic path: a stubborn closer-tic anchored in HISTORY (never
+    # dropped) regenerates at most _MAX_REGENERATIONS (2) times, then keeps the last
+    # draft. Every drawn reply carries the closer, so the tic never clears — the bound,
+    # not a clear, ends the loop.
+    sticky = f"Очередной свежий повод. {_REAL_TIC}"
+    handler, bot, _repo, tier1 = _build(
+        reply="unused",
+        tier1_replies=[sticky] * 4,
+        history=[
+            {"content": _REAL_TURN_A, "event_type": "message"},
+            {"content": _REAL_TURN_B, "event_type": "message"},
+        ],
+    )
+
+    await handler.handle(_message("сделай, пожалуйста, ещё и бэкап подробно"))
+
+    # initial draft + 2 retries = 3 generations; the still-ticcing reply is kept.
+    assert len(tier1.payloads) == 3
+    assert bot.final_text == sticky
+
+
+async def test_reused_short_term_does_not_trigger_tic_regeneration() -> None:
+    # No false positive end to end: a short technical term ("Ollama") recurs in every
+    # recent reply, but it is below the notability bar — so a fresh reply reusing it is
+    # committed as-is with NO regeneration. Over-firing on common terms is the headline
+    # risk; this proves the guard stays quiet.
+    handler, bot, _repo, tier1 = _build(
+        reply="Снова дёрнул Ollama, ответ пришёл.",
+        history=[
+            {"content": "Ada: a\nbob: Подключаюсь к Ollama.", "event_type": "message"},
+            {"content": "Ada: b\nbob: Спрашиваю Ollama.", "event_type": "message"},
+        ],
+    )
+
+    await handler.handle(_message("спроси модель ещё раз подробно"))
+
+    assert len(tier1.payloads) == 1  # no needless regeneration
+    assert bot.final_text == "Снова дёрнул Ollama, ответ пришёл."
+
+
+async def test_recurring_reflection_phrase_is_not_treated_as_a_tic() -> None:
+    # BOB-033 x BOB-036 regression: a private reflection that recurs in the recall store
+    # is EXCLUDED from the recall pool BEFORE the guard runs, so even a repeating inner-
+    # monologue phrase can never feed the phrase-tic detector. The reflection text never
+    # enters the prompt (containment) AND the fresh reply commits with no regeneration.
+    reflection_phrase = "Сегодня всё кажется бессмысленным."
+    recall = FakeRecall(
+        hits=[
+            {"content": reflection_phrase, "category": "reflection", "source": "episodic"},
+            {"content": reflection_phrase, "category": "inner_monologue", "source": "episodic"},
+        ]
+    )
+    fresh = f"Разобрался с задачей. {reflection_phrase}"
+    handler, bot, _repo, tier1 = _build(reply=fresh, recall=recall)
+
+    await handler.handle(_message("объясни подробно, что ты думаешь"))
+
+    assert len(tier1.payloads) == 1  # reflections never feed the tic guard
+    assert bot.final_text == fresh
+    assert reflection_phrase not in tier1.all_text  # the reflection stayed out of the prompt
+
+
 # --- BOB-026 .1: _recent_bob_replies window extractor (unit) -------------------
 
 

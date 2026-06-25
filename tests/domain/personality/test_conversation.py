@@ -254,6 +254,63 @@ def test_same_phrase_twice_in_one_reply_counts_as_one_occurrence() -> None:
     assert is_phrase_tic(candidate, recent, min_words=3, min_occurrences=2) is False
 
 
+def test_users_real_case_signature_closer_across_two_replies_is_a_tic() -> None:
+    # 🔴 The user's actual report: "Мне так спокойнее" closes >= 2 recent Bob replies,
+    # and a fresh, otherwise-different draft ending with it is the tic to catch. This is
+    # the exact production phrase (3 words), not a synthetic one.
+    recent = [
+        "Развернул сервис, всё поднялось. Мне так спокойнее.",
+        "Прогнал тесты ещё раз перед сном. Мне так спокойнее.",
+    ]
+    candidate = "Сделал бэкап на всякий случай. Мне так спокойнее."
+    assert is_phrase_tic(candidate, recent, min_words=3, min_occurrences=2) is True
+
+
+def test_reused_proper_noun_is_not_a_tic_below_min_words() -> None:
+    # No false fire on legitimately reused proper nouns / short technical terms: a name
+    # like "Telegram" or "Ollama" is a single token, far below min_words=3, so even when
+    # it recurs every reply it is never a notable phrase and never trips the detector.
+    recent = [
+        "Подключаюсь к Ollama.",
+        "Снова дёргаю Ollama для ответа.",
+    ]
+    candidate = "Отправляю это в Ollama."
+    assert is_phrase_tic(candidate, recent, min_words=3, min_occurrences=2) is False
+
+
+def test_short_technical_term_reused_is_not_a_tic() -> None:
+    # A short technical term ("FTS5 индекс" — 2 words) recurring across replies is a
+    # legitimate domain phrase below the 3-word notability bar, not a tic.
+    recent = [
+        "Перестрою FTS5 индекс.",
+        "Снова трогаю FTS5 индекс.",
+    ]
+    candidate = "Чищу FTS5 индекс."
+    assert is_phrase_tic(candidate, recent, min_words=3, min_occurrences=2) is False
+
+
+def test_tic_fires_only_at_the_min_occurrences_boundary() -> None:
+    # Off-by-one at the threshold: the SAME notable phrase recurs in exactly two replies.
+    # With min_occurrences=3 that is below the bar (not a tic); with min_occurrences=2 it
+    # is exactly at the bar (a tic). Pins min_occurrences as a real, inclusive cutoff.
+    recent = [
+        f"Глянул дашборд. {_TIC}",
+        f"Перечитал лог. {_TIC}",
+    ]
+    candidate = f"Проверил алерты. {_TIC}"
+    assert is_phrase_tic(candidate, recent, min_words=3, min_occurrences=3) is False
+    assert is_phrase_tic(candidate, recent, min_words=3, min_occurrences=2) is True
+
+
+def test_blank_recent_replies_contribute_no_occurrence() -> None:
+    # A blank / whitespace recent reply yields no notable phrases, so it can never count
+    # toward the occurrence tally — only real shared phrases do.
+    recent = ["", "   ", f"Лог посмотрю. {_TIC}"]
+    candidate = f"Конфиг гляну. {_TIC}"
+    # Only one real occurrence -> below min_occurrences=2 -> not a tic.
+    assert is_phrase_tic(candidate, recent, min_words=3, min_occurrences=2) is False
+
+
 # --- Recall-aware anti-repeat helpers (BOB-032 .1, shared domain logic) --------
 #
 # A recalled episode is stored as a whole turn "<sender>: <text>\nbob: <old reply>"
