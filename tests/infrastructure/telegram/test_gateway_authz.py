@@ -146,6 +146,17 @@ class _FakeBot:
         raise NotImplementedError  # pragma: no cover
 
 
+    async def send_document(
+        self,
+        *,
+        chat_id: int,
+        document: object,
+        caption: str | None = None,
+        message_thread_id: int | None = None,
+    ) -> _FakeMessage:
+        # BOB-037: BotLike parity; this fake's tests never post a document.
+        raise NotImplementedError  # pragma: no cover
+
 class _FakeAllowlistStore:
     def __init__(self, initial: set[int] | None = None) -> None:
         self.users: set[int] = set(initial) if initial else set()

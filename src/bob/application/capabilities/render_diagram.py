@@ -89,6 +89,15 @@ class CollectingDiagramSink:
         """Record one rendered diagram for the reply path to send this turn."""
         self._pending.append(result)
 
+    def pending(self) -> tuple[DiagramResult, ...]:
+        """Return the diagrams collected so far WITHOUT clearing them (BOB-037).
+
+        A non-destructive peek the inline-mermaid auto-render reads to dedup against
+        a diagram the ``render_diagram`` tool already rendered this turn (by source)
+        before pushing its own; :meth:`drain` still does the clearing send.
+        """
+        return tuple(self._pending)
+
     def drain(self) -> tuple[DiagramResult, ...]:
         """Return + clear the diagrams collected this turn (empty when none)."""
         drained = tuple(self._pending)
@@ -129,7 +138,7 @@ class _RenderDiagramCapability:
         except DiagramRenderError as exc:
             logger.info("diagram render failed (graceful): %s", exc)
             return {"error": _RENDERER_UNAVAILABLE}
-        self._sink.push(DiagramResult(png=png, caption=_CAPTION))
+        self._sink.push(DiagramResult(png=png, caption=_CAPTION, source=mermaid))
         return {"status": _CONFIRMATION}
 
 

@@ -154,15 +154,19 @@ class DiagramResult:
     The structured result the ``render_diagram`` capability returns instead of plain
     text. ``png`` is the rendered image (the local mermaid-cli output), and
     ``caption`` is a short human/model-facing line ("вот диаграмма") sent alongside
-    the photo. The capability hands this to the per-turn :class:`DiagramSink` so the
-    reply path — which holds the per-turn ``chat_id`` and the gateway — can send the
-    photo into the chat; the tool-loop only ever sees the caption text. It carries NO
-    chat_id (the send is a transport concern resolved per turn), keeping the domain
-    pure of transport.
+    the image. ``source`` is the mermaid the diagram was rendered FROM — the dedup key
+    (BOB-037) so an inline ```mermaid block in Bob's reply is not re-rendered when the
+    ``render_diagram`` tool already rendered the same source this turn; it defaults to
+    ``""`` for callers that do not track it. The capability hands this to the per-turn
+    :class:`DiagramSink` so the reply path — which holds the per-turn ``chat_id`` and
+    the gateway — can send the image into the chat; the tool-loop only ever sees the
+    caption text. It carries NO chat_id (the send is a transport concern resolved per
+    turn), keeping the domain pure of transport.
     """
 
     png: bytes
     caption: str
+    source: str = ""
 
 
 class DomainEvent(Protocol):
@@ -518,6 +522,16 @@ class DiagramSink(Protocol):
 
     def push(self, result: DiagramResult) -> None:
         """Record one rendered diagram for the reply path to send this turn."""
+        ...
+
+    def pending(self) -> tuple[DiagramResult, ...]:
+        """Return the diagrams collected so far WITHOUT clearing them (BOB-037).
+
+        A non-destructive peek the inline-mermaid auto-render reads to dedup against
+        a diagram the ``render_diagram`` tool already rendered this turn (matching by
+        the :attr:`DiagramResult.source`), before pushing its own. ``drain`` still
+        does the clearing send.
+        """
         ...
 
     def drain(self) -> tuple[DiagramResult, ...]:

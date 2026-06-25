@@ -46,6 +46,8 @@ src/bob/
                      #   mood_taste, fascination, phantom_evolution, expression, reaction,
                      #   conversation (контейнмент рефлексий), язык персоны
     memory/          # EpisodicEvent, SemanticFact
+    diagrams/        # mermaid_blocks: extract/strip/normalize fenced ```mermaid
+                     #   (чистый разбор inline-mermaid из текста ответа, BOB-037)
     proactivity/     # UrgeModel, SocialEnergy, Governance, ProactiveDecider, ProactivityState
     ports.py         # порты-протоколы: LLMProvider, MemoryRepo, MemoryRecall,
                      #                   SoulStore, EventBus, Clock, ProactivityStore
@@ -81,7 +83,8 @@ src/bob/
     introspection/   # SubprocessRepoIntrospector: read-only beadloom/bd через
                      #   create_subprocess_exec (фикс-allowlist, не shell) + guarded read_file (BOB-017)
     diagrams/        # SubprocessMmdcRenderer: mermaid→PNG локально через mmdc
-                     #   (create_subprocess_exec, не shell, таймаут, graceful) (BOB-035)
+                     #   (create_subprocess_exec, не shell, таймаут, graceful;
+                     #    -s 3 -b white для чёткости, BOB-037) (BOB-035)
     config/          # ConfigLoader (defaults → YAML → env)
   app.py             # composition root: собирает порты и адаптеры, запускает рантайм
 ```
@@ -1017,9 +1020,54 @@ memory-capability, поведение как раньше. Конфиг `introsp
   оборачивает PNG-байты в aiogram `BufferedInputFile` (темп-файл на границе не нужен)
   и постит нативным фото в `chat_id`/`reply_thread_id` Боба; любая транспортная
   ошибка логируется и глотается.
-- **Конфиг** `diagrams.{enabled, mmdc_bin, timeout}` (`infrastructure/config/loader.py`):
-  `enabled` по умолчанию **true** (безопасно и локально), `mmdc_bin` — имя бинаря
-  (по умолчанию `mmdc`), `timeout` — потолок одного рендера в секундах (по умолчанию 30).
+- **Конфиг** `diagrams.{enabled, mmdc_bin, timeout, scale, background, send_as}`
+  (`infrastructure/config/loader.py`): `enabled` по умолчанию **true** (безопасно и
+  локально), `mmdc_bin` — имя бинаря (по умолчанию `mmdc`), `timeout` — потолок одного
+  рендера в секундах (по умолчанию 30). Ключи качества и отправки добавлены в BOB-037
+  (см. ниже): `scale` (по умолчанию `3`), `background` (по умолчанию `white`),
+  `send_as` (по умолчанию `document`).
+
+#### Авто-рендер inline-mermaid + качество + отправка документом (BOB-037)
+
+BOB-035 полагался на то, что модель **вызовет** навык `render_diagram`. На практике
+модель ненадёжно дёргает tool-call — обычно она просто пишет mermaid **текстом** в
+fenced-блоке ` ```mermaid `, и картинка не уходит. BOB-037 делает диаграммы надёжными
+в любом случае, поднимает их разрешение и шлёт читаемо.
+
+- **Чистый домен `domain/diagrams/mermaid_blocks.py`** (`# beadloom:domain=bob`) —
+  строковые помощники без I/O и без рендера: `extract_mermaid_blocks(text)` возвращает
+  исходники всех ` ```mermaid ` блоков по порядку (терпим к пробелу после backticks и
+  к регистру тега); `strip_mermaid_blocks(text, only=…)` убирает блоки из видимого
+  текста (схлопывая осиротевший пробельный прогон до одного абзацного разрыва), причём
+  `only` оставляет **нерендеренные** блоки как текст; `normalize_mermaid(source)` даёт
+  канонический ключ исходника для дедупа. Экспортированы из пакета `bob.domain.diagrams`.
+- **Авто-рендер (`HandleMessage._autorender_inline_mermaid`).** После того как ответ
+  собран (и пройдены гарды анти-повтора и длины), reply-путь сканирует текст
+  `extract_mermaid_blocks`. Каждый блок, который tool ещё не отрендерил в этот ход
+  (дедуп по `normalize_mermaid` против `DiagramSink.pending()`), рендерится через тот же
+  инжектированный `DiagramRenderer` (`_render_inline_block`) и кладётся в **тот же
+  per-turn `DiagramSink`** — одна картинка, без двойной отправки. Затем
+  `strip_mermaid_blocks(reply, only=handled)` **убирает обработанные блоки из видимого
+  текста** (картинка их заменяет). Это работает независимо от ненадёжного tool-call.
+- **Graceful.** Если рендер блока поднимает `DiagramRenderError` (нет `mmdc`,
+  кривой исходник), `_render_inline_block` логирует и возвращает `False`, ключ блока не
+  попадает в `handled`, и блок **остаётся текстом** — Боб всё равно отвечает, ход не
+  падает. Без подключённого рендерера/без sink авто-рендер инертен (ход как раньше).
+- **Высокое качество рендера.** `SubprocessMmdcRenderer` добавляет в argv `mmdc` флаги
+  `-s <scale> -b <background>` (по умолчанию `-s 3 -b white`): `-s` — это
+  deviceScaleFactor mermaid-cli, 3x-растр держит плотную диаграмму чёткой вместо мыльного
+  1x; `-b white` — белый фон страницы, чтобы диаграмма читалась на тёмной теме Telegram
+  (прозрачный по умолчанию «исчезает»). Оба значения конфигурируемы (`diagrams.scale` /
+  `diagrams.background`); конструктор валидирует `scale > 0`.
+- **Отправка как документ (читаемо).** `HandleMessage._send_one_diagram` выбирает режим
+  по `diagrams.send_as`: `document` (по умолчанию) шлёт PNG через
+  `gateway.send_document(chat_id=…, document=…, caption=…)` — **без пережатия**, в полном
+  разрешении (тап → панорама/зум реальных пикселей); `photo` оставляет старый
+  inline-preview через `send_photo`. Причина дефолта: Telegram `send_photo` пережимает в
+  JPEG и обрезает длинную сторону (~1280px), отчего плотная диаграмма становится
+  нечитаемой. `TelegramGateway.send_document` оборачивает байты в aiogram
+  `BufferedInputFile` (под именем `diagram.png`), постит в `chat_id`/`reply_thread_id`,
+  любая транспортная ошибка логируется и глотается (отправка best-effort).
 
 #### 🔴 Разовая установка: `mmdc` — рантайм-зависимость
 

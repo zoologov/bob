@@ -135,6 +135,15 @@ class _PhotoCall:
 
 
 @dataclass
+class _DocumentCall:
+    chat_id: int
+    data: bytes
+    filename: str
+    caption: str | None
+    message_thread_id: int | None
+
+
+@dataclass
 class _FakeBot:
     """Records send/typing/rich calls; can be scripted to fail the rich final."""
 
@@ -144,9 +153,11 @@ class _FakeBot:
     typings: list[_TypingCall] = field(default_factory=list)
     rich_sends: list[_RichCall] = field(default_factory=list)
     photo_sends: list[_PhotoCall] = field(default_factory=list)
+    document_sends: list[_DocumentCall] = field(default_factory=list)
     next_message_id: int = 500
     rich_send_raises: bool = False
     photo_send_raises: bool = False
+    document_send_raises: bool = False
     typing_raises: bool = False
 
     async def get_me(self) -> _FakeUser:
@@ -233,6 +244,32 @@ class _FakeBot:
             _PhotoCall(
                 chat_id=chat_id,
                 data=getattr(photo, "data", b""),
+                caption=caption,
+                message_thread_id=message_thread_id,
+            )
+        )
+        msg = _FakeMessage(message_id=self.next_message_id, text=caption)
+        self.next_message_id += 1
+        return msg
+
+    async def send_document(
+        self,
+        *,
+        chat_id: int,
+        document: object,
+        caption: str | None = None,
+        message_thread_id: int | None = None,
+    ) -> _FakeMessage:
+        if self.document_send_raises:
+            raise TelegramBadRequest(
+                method=SendMessage(chat_id=chat_id, text=""),
+                message="document rejected",
+            )
+        self.document_sends.append(
+            _DocumentCall(
+                chat_id=chat_id,
+                data=getattr(document, "data", b""),
+                filename=getattr(document, "filename", ""),
                 caption=caption,
                 message_thread_id=message_thread_id,
             )
@@ -776,3 +813,35 @@ async def test_send_photo_swallows_a_transport_error() -> None:
     await gateway.send_photo(chat_id=9, photo=b"PNGBYTES", caption="вот")
 
     assert bot.photo_sends == []
+
+
+# --- BOB-037: send_document (uncompressed diagram, full resolution) ------------
+
+
+@pytest.mark.asyncio
+async def test_send_document_posts_the_png_uncompressed_pinned_to_the_thread() -> None:
+    # BOB-037 C: send the PNG as an uncompressed FILE so Telegram does not recompress
+    # it — full resolution, tap → real pixels.
+    bot = _FakeBot()
+    gateway = _make_gateway(bot, reply_thread_id=37)
+
+    await gateway.send_document(chat_id=9, document=b"PNGBYTES", caption="вот")
+
+    assert len(bot.document_sends) == 1
+    call = bot.document_sends[0]
+    assert call.chat_id == 9
+    assert call.data == b"PNGBYTES"
+    assert call.caption == "вот"
+    assert call.message_thread_id == 37
+    assert call.filename.endswith(".png")
+
+
+@pytest.mark.asyncio
+async def test_send_document_swallows_a_transport_error() -> None:
+    # A failed document send is logged and swallowed — it never raises into the turn.
+    bot = _FakeBot(document_send_raises=True)
+    gateway = _make_gateway(bot)
+
+    await gateway.send_document(chat_id=9, document=b"PNGBYTES", caption="вот")
+
+    assert bot.document_sends == []

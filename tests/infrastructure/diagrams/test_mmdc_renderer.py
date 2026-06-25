@@ -102,6 +102,32 @@ async def test_render_writes_the_mermaid_source_to_the_input_file() -> None:
     assert seen["source"] == "graph TD; A-->B"
 
 
+async def test_render_passes_high_quality_scale_and_background_flags() -> None:
+    # BOB-037 B: by default the argv carries a high deviceScaleFactor (-s 3) and a
+    # readable white background (-b white) so dense diagrams stay legible on
+    # Telegram's dark theme.
+    runner = _FakeMmdc()
+    renderer = SubprocessMmdcRenderer(runner=runner)
+
+    await renderer.render("graph TD; A-->B")
+
+    argv = runner.calls[0]
+    assert argv[argv.index("-s") + 1] == "3"
+    assert argv[argv.index("-b") + 1] == "white"
+
+
+async def test_render_quality_flags_are_configurable() -> None:
+    # BOB-037 B: scale / background are config-tunable (diagrams.scale / .background).
+    runner = _FakeMmdc()
+    renderer = SubprocessMmdcRenderer(runner=runner, scale=2, background="transparent")
+
+    await renderer.render("graph TD; A-->B")
+
+    argv = runner.calls[0]
+    assert argv[argv.index("-s") + 1] == "2"
+    assert argv[argv.index("-b") + 1] == "transparent"
+
+
 async def test_render_passes_the_configured_timeout() -> None:
     runner = _FakeMmdc()
     renderer = SubprocessMmdcRenderer(runner=runner, timeout=12.5)
@@ -164,3 +190,9 @@ async def test_render_rejects_empty_source() -> None:
 def test_construction_rejects_a_non_positive_timeout() -> None:
     with pytest.raises(ValueError, match="timeout"):
         SubprocessMmdcRenderer(runner=_FakeMmdc(), timeout=0)
+
+
+def test_construction_rejects_a_non_positive_scale() -> None:
+    # BOB-037 B input edge: the deviceScaleFactor must be a positive integer.
+    with pytest.raises(ValueError, match="scale"):
+        SubprocessMmdcRenderer(runner=_FakeMmdc(), scale=0)

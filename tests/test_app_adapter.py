@@ -151,6 +151,28 @@ class _FakeAiogramBot:
         return "photo-sent"
 
 
+    async def send_document(
+        self,
+        *,
+        chat_id: int,
+        document: object,
+        caption: str | None = None,
+        message_thread_id: int | None = None,
+    ) -> str:
+        self.calls.append(
+            _Call(
+                "send_document",
+                {
+                    "chat_id": chat_id,
+                    "document": document,
+                    "caption": caption,
+                    "message_thread_id": message_thread_id,
+                },
+            )
+        )
+        return "document-sent"
+
+
 # --- get_updates + _to_update_view --------------------------------------------
 
 
@@ -271,6 +293,26 @@ async def test_send_photo_delegates_with_thread_id() -> None:
 
     assert bot.calls[0].name == "send_photo"
     assert bot.calls[0].kwargs["photo"] is photo
+    assert bot.calls[0].kwargs["caption"] == "вот"
+    assert bot.calls[0].kwargs["message_thread_id"] == _THREAD_ID
+
+
+@pytest.mark.asyncio
+async def test_send_document_delegates_with_thread_id() -> None:
+    # BOB-037: the adapter forwards the uncompressed diagram document + thread id.
+    bot = _FakeAiogramBot()
+    adapter = _AiogramBotAdapter(bot)
+    document = BufferedInputFile(b"PNGBYTES", filename="diagram.png")
+
+    await adapter.send_document(
+        chat_id=_CHAT_ID,
+        document=document,
+        caption="вот",
+        message_thread_id=_THREAD_ID,
+    )
+
+    assert bot.calls[0].name == "send_document"
+    assert bot.calls[0].kwargs["document"] is document
     assert bot.calls[0].kwargs["caption"] == "вот"
     assert bot.calls[0].kwargs["message_thread_id"] == _THREAD_ID
 

@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from bob.app import _build_diagram_renderer, _build_registry
+from bob.app import _build_diagram_renderer, _build_registry, _diagram_send_as
 from bob.infrastructure.diagrams.mmdc_renderer import SubprocessMmdcRenderer
 
 if TYPE_CHECKING:
@@ -43,7 +43,7 @@ def _config(*, diagrams: Mapping[str, object] | None = None) -> dict[str, object
 
 
 def _names(config: Mapping[str, object]) -> list[str]:
-    registry, _sink = _build_registry(config, recall=_FakeRecall())  # type: ignore[arg-type]
+    registry, _sink, _renderer = _build_registry(config, recall=_FakeRecall())  # type: ignore[arg-type]
     return [
         str(tool["function"]["name"])  # type: ignore[index]
         for tool in registry.manifest()
@@ -72,17 +72,36 @@ def test_render_diagram_absent_by_default_no_diagrams_section() -> None:
 def test_build_registry_returns_a_shared_sink() -> None:
     # The composition root must hand the SAME sink instance to the use-case as the
     # capability pushes into — so a rendered PNG actually reaches the reply path.
-    registry, sink = _build_registry(
+    registry, sink, renderer = _build_registry(
         _config(diagrams={"enabled": True}), recall=_FakeRecall()  # type: ignore[arg-type]
     )
 
     assert sink is not None
     assert sink.drain() == ()  # starts empty
+    # BOB-037: the SAME renderer is returned so it also backs the inline auto-render.
+    assert renderer is not None
     names = [
         str(tool["function"]["name"])  # type: ignore[index]
         for tool in registry.manifest()
     ]
     assert "render_diagram" in names
+
+
+def test_build_registry_returns_no_renderer_when_diagrams_disabled() -> None:
+    # BOB-037: diagrams off → no renderer, so the inline auto-render is inert.
+    _registry, _sink, renderer = _build_registry(
+        _config(diagrams={"enabled": False}), recall=_FakeRecall()  # type: ignore[arg-type]
+    )
+
+    assert renderer is None
+
+
+def test_diagram_send_as_defaults_to_document_and_honours_photo() -> None:
+    # BOB-037 C: the product default is document (uncompressed); photo is opt-in; a
+    # bad value falls back to document so a typo never crashes the boot.
+    assert _diagram_send_as({}) == "document"
+    assert _diagram_send_as({"diagrams": {"send_as": "photo"}}) == "photo"
+    assert _diagram_send_as({"diagrams": {"send_as": "nonsense"}}) == "document"
 
 
 def test_build_diagram_renderer_honours_configured_bin_and_timeout() -> None:

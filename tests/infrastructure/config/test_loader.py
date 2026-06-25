@@ -248,6 +248,37 @@ def test_consolidation_overridable_via_env() -> None:
     assert consolidation["batch_size"] == 50
 
 
+def test_diagram_defaults_are_high_quality_and_send_as_document() -> None:
+    # BOB-037: max-readability defaults — high deviceScaleFactor, white background, and
+    # send-as-document (uncompressed, full-resolution) so dense diagrams stay legible.
+    loader = ConfigLoader(yaml_path=None, env={})
+
+    diagrams = loader.load()["diagrams"]
+
+    assert diagrams["enabled"] is True
+    assert diagrams["mmdc_bin"] == "mmdc"
+    assert diagrams["timeout"] == 30
+    assert diagrams["scale"] == 3
+    assert diagrams["background"] == "white"
+    assert diagrams["send_as"] == "document"
+
+
+def test_diagram_section_overridable_via_env() -> None:
+    loader = ConfigLoader(
+        yaml_path=None,
+        env={
+            "BOB_DIAGRAMS__SEND_AS": "photo",
+            "BOB_DIAGRAMS__SCALE": "2",
+        },
+    )
+
+    diagrams = loader.load()["diagrams"]
+
+    assert diagrams["send_as"] == "photo"
+    assert diagrams["scale"] == "2"
+    assert diagrams["background"] == "white"
+
+
 def test_embeddings_section_overridable_via_env() -> None:
     # Arrange: point the embedder at a different local model without code change.
     loader = ConfigLoader(

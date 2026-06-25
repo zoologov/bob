@@ -120,6 +120,17 @@ class FakeBot:
         # BOB-035: BotLike parity; this fake's tests never post a photo.
         raise NotImplementedError  # pragma: no cover
 
+    async def send_document(
+        self,
+        *,
+        chat_id: int,
+        document: object,
+        caption: str | None = None,
+        message_thread_id: int | None = None,
+    ) -> FakeMessage:
+        # BOB-037: BotLike parity; this fake's tests never post a document.
+        raise NotImplementedError  # pragma: no cover
+
     @property
     def final_text(self) -> str:
         return self.sent[-1][1] if self.sent else ""
