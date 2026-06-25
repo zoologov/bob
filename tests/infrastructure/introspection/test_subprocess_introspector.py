@@ -224,6 +224,20 @@ async def test_list_tasks_all_keyword_runs_bd_list_unfiltered(tmp_path: Path) ->
 
 
 @pytest.mark.asyncio
+async def test_list_tasks_free_text_no_id_falls_back_to_unfiltered_list(
+    tmp_path: Path,
+) -> None:
+    # A free-text tracker query with no id and no listing keyword falls back to the
+    # unfiltered ``bd list`` rather than a doomed ``bd show`` on prose (line 236).
+    runner = _FakeRunner("all-beads")
+    intro = _make(tmp_path, runner)
+
+    await intro.list_tasks("покажи чем ты занят сегодня")
+
+    assert runner.calls == [["bd", "list"]]
+
+
+@pytest.mark.asyncio
 async def test_list_tasks_status_token_is_allowlist_validated(tmp_path: Path) -> None:
     # The bd-list status forms go through the read allowlist (no raw flag passthrough):
     # an arbitrary flag is still refused, proving the no-arbitrary-args invariant holds.
