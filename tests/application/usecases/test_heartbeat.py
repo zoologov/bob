@@ -153,6 +153,22 @@ async def test_inner_monologue_prompt_carries_the_russian_directive() -> None:
     assert "по-русски" in tier0.prompts[0].casefold()
 
 
+async def test_inner_monologue_prompt_is_conditioned_on_current_mood() -> None:
+    # Arrange: a bright, high-energy mood. The monologue prompt must MIRROR it
+    # (BOB-029) so the thought carries that mood instead of defaulting to gloom —
+    # the old generic prompt dragged valence down every tick.
+    router, tier0 = _router(reply="positive")
+    mood = Mood(valence=0.8, arousal=0.6)
+    state = _state(mood, Mood())
+    tick = InnerMonologueTick(router=router, state=state)
+
+    # Act
+    await tick.run()
+
+    # Assert: the live mood tone reached the model in the monologue prompt.
+    assert mood.tone() in tier0.prompts[0]
+
+
 async def test_reflect_prompt_carries_the_russian_directive() -> None:
     # Arrange: the reflection tick is self-generated too — pin the language.
     router, tier0 = _router(reply="A quiet reflection.")

@@ -32,7 +32,10 @@ from bob.domain.memory.entities import EpisodicEvent
 from bob.domain.personality.conversation import RepeatThresholds, is_bob_repeat
 from bob.domain.personality.language import DEFAULT_LANGUAGE, language_directive
 from bob.domain.personality.mood import MoodDelta
-from bob.domain.personality.reflection import build_reflection_prompt
+from bob.domain.personality.reflection import (
+    build_monologue_prompt,
+    build_reflection_prompt,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -54,11 +57,6 @@ _DRIFT_RATE = 0.1
 _POSITIVE_LABELS = frozenset({"positive", "pos", "good"})
 _NEGATIVE_LABELS = frozenset({"negative", "neg", "bad"})
 
-_MONOLOGUE_PROMPT = (
-    "In one short sentence, think a private thought as Bob right now, then on a "
-    "new line classify its mood as exactly one lowercase word: positive, "
-    "negative, or neutral."
-)
 # How many of Bob's most-recent episodes the reflect tick reads to GROUND a fresh
 # reflection in what is happening now (a handful — enough flavour, not the whole log).
 _DEFAULT_REFLECT_GROUNDING = 3
@@ -242,14 +240,22 @@ class InnerMonologueTick:
         self._language = language
 
     async def run(self) -> None:
-        """Generate a private thought, classify it, and nudge mood accordingly."""
+        """Generate a private thought, classify it, and nudge mood accordingly.
+
+        The prompt is conditioned on Bob's CURRENT mood (BOB-029): a generic
+        "think a private thought" prompt let the Tier-0 model default to gloom,
+        whose negative sentiment dragged valence down and trapped him in a minor
+        key. Mirroring the live mood makes a bright mood yield a bright thought,
+        so the monologue reinforces the baseline instead of fighting it.
+        """
+        prompt = build_monologue_prompt(self._state.soul.mood.tone())
         thought = await self._router.run(
             LLMRequest(
                 task_type=TaskType.INNER_MONOLOGUE,
                 messages=[
                     {
                         "role": "system",
-                        "content": _localised(_MONOLOGUE_PROMPT, self._language),
+                        "content": _localised(prompt, self._language),
                     }
                 ],
             )
