@@ -44,6 +44,9 @@ from bob.application.authz import Authorizer, SenderPerception
 from bob.application.capabilities import (
     CapabilityRegistry,
     SafeCapabilityDispatcher,
+    make_inspect_architecture_capability,
+    make_list_work_capability,
+    make_read_code_capability,
     make_recall_memory_capability,
     make_search_memory_capability,
 )
@@ -92,6 +95,7 @@ from bob.application.usecases.run_genesis import RunGenesis
 from bob.application.usecases.self_improvement_sources import ActiveRulesReader
 from bob.application.usecases.sulk_sources import SulkRecoveryStep, SulkTracker
 from bob.application.usecases.update_mood_from_text import UpdateMoodFromText
+from bob.domain.introspection.privacy_guard import PrivacyGuard
 from bob.domain.personality.addressivity import AddressivityThresholds
 from bob.domain.personality.brevity import BrevityThresholds
 from bob.domain.personality.conversation import RepeatThresholds
@@ -112,6 +116,9 @@ from bob.domain.personality.zone_classifier import TasteZoneClassifier
 from bob.domain.proactivity.decision import ProactiveDecider
 from bob.domain.proactivity.governance import Governance
 from bob.infrastructure.config import ConfigLoader
+from bob.infrastructure.introspection.subprocess_introspector import (
+    SubprocessRepoIntrospector,
+)
 from bob.infrastructure.llm import build_embedder, build_reranker, build_tier_providers
 from bob.infrastructure.persistence import (
     HybridMemoryRecall,
@@ -235,8 +242,18 @@ _DEFAULT_PURSUIT_TICK_SECONDS = 900
 EVOLUTION_ALPHA = _EVOLUTION_ALPHA
 EVOLUTION_BETA = _EVOLUTION_BETA
 
+# The repo root (``.../src/bob/app.py`` -> two parents up): the read-only tree Bob's
+# self-introspection (BOB-017 Phase A) is rooted at, so the PrivacyGuard resolves
+# ``src``/``tests``/``docs`` against it and DENIES everything else.
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+
 # Where the bob-soul personality templates live (repo root / bob-soul).
-_DEFAULT_TEMPLATES_DIR = Path(__file__).resolve().parents[2] / "bob-soul"
+_DEFAULT_TEMPLATES_DIR = _REPO_ROOT / "bob-soul"
+
+# Default self-introspection resource bounds (BOB-017 Phase A); mirror the
+# ``introspection.*`` config defaults. Only consulted when introspection is enabled.
+_DEFAULT_INTROSPECTION_MAX_OUTPUT_CHARS = 20_000
+_DEFAULT_INTROSPECTION_READ_MAX_LINES = 200
 
 
 class SystemClock:
@@ -368,7 +385,7 @@ def build_application(
     # may call either, GUPPI executes it, the result loops back into the reply. The
     # tier-1 reply provider is the tool-calling provider; when it cannot do tools the
     # loop stays dormant and HandleMessage keeps the plain reply path.
-    registry = _build_registry(recall)
+    registry = _build_registry(merged, recall=recall)
     tool_provider = _as_tool_provider(tier_providers)
 
     genesis = RunGenesis(
@@ -1461,19 +1478,66 @@ def _build_authorizer(
     )
 
 
-def _build_registry(recall: HybridMemoryRecall) -> CapabilityRegistry:
+def _build_registry(
+    config: Mapping[str, object], *, recall: HybridMemoryRecall
+) -> CapabilityRegistry:
     """Build the capability registry GUPPI advertises and dispatches.
 
-    Registers the two memory capabilities over the live hybrid
+    Always registers the two memory capabilities over the live hybrid
     :class:`~bob.domain.ports.MemoryRecall`: ``recall_memory`` (the thin auto-recall
     wrapper) and ``search_memory`` (BOB-011 — the agentic skill Bob chooses to
-    invoke through the tool-loop). New skills register here without touching
-    consumers.
+    invoke through the tool-loop). When ``introspection.enabled`` (BOB-017 Phase A,
+    default on) the three read-only self-introspection skills
+    (``inspect_architecture`` / ``read_code`` / ``list_work``) are ALSO registered,
+    over a :class:`SubprocessRepoIntrospector` guarded by the pure
+    :class:`PrivacyGuard` — so Bob can answer about his own world. They are
+    conversation-only (NOT added to ``goals.safe_capabilities``). Disabled → the
+    registry holds exactly the memory capabilities, behaviour as before. New skills
+    register here without touching consumers.
     """
     registry = CapabilityRegistry()
     registry.register(make_recall_memory_capability(recall))
     registry.register(make_search_memory_capability(recall))
+    if _build_introspection_enabled(config):
+        introspector = _build_introspector(config)
+        read_max_lines = _int(
+            _section(config, "introspection"),
+            "read_max_lines",
+            _DEFAULT_INTROSPECTION_READ_MAX_LINES,
+        )
+        registry.register(make_inspect_architecture_capability(introspector))
+        registry.register(make_read_code_capability(introspector, read_max_lines=read_max_lines))
+        registry.register(make_list_work_capability(introspector))
     return registry
+
+
+def _build_introspection_enabled(config: Mapping[str, object]) -> bool:
+    """Whether read-only self-introspection is wired (``introspection.enabled``).
+
+    Default ON (BOB-017 Phase A — read-only, owner-only chat): on → the three
+    self-introspection skills are advertised; off → the registry holds only the
+    memory capabilities, exactly as before. Tolerates an env-string boolean.
+    """
+    return _flag(_section(config, "introspection"), "enabled")
+
+
+def _build_introspector(config: Mapping[str, object]) -> SubprocessRepoIntrospector:
+    """Construct the read-only :class:`SubprocessRepoIntrospector` for BOB-017.
+
+    The pure :class:`PrivacyGuard` (rooted at the repo) enforces the DENY-invariant
+    BEFORE any file read; the subprocess adapter runs ``beadloom`` / ``bd`` against a
+    FIXED read-only allowlist (never a shell). Output bounds + the CLI binaries are
+    config-tunable via ``introspection.*``.
+    """
+    section = _section(config, "introspection")
+    return SubprocessRepoIntrospector(
+        PrivacyGuard(repo_root=_REPO_ROOT),
+        max_output_chars=_int(
+            section, "max_output_chars", _DEFAULT_INTROSPECTION_MAX_OUTPUT_CHARS
+        ),
+        beadloom_bin=_str(section, "beadloom_bin", "beadloom"),
+        bd_bin=_str(section, "bd_bin", "bd"),
+    )
 
 
 def _build_embedder(config: Mapping[str, object]) -> Embedder | None:

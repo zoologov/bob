@@ -8,6 +8,11 @@
 
 from __future__ import annotations
 
+from bob.application.capabilities.inspect_architecture import (
+    make_inspect_architecture_capability,
+)
+from bob.application.capabilities.list_work import make_list_work_capability
+from bob.application.capabilities.read_code import make_read_code_capability
 from bob.application.capabilities.recall_memory import make_recall_memory_capability
 from bob.application.capabilities.registry import (
     CapabilityNotAllowedError,
@@ -24,6 +29,9 @@ __all__ = [
     "SafeCapabilityDispatcher",
     "ToolLoop",
     "UnknownCapabilityError",
+    "make_inspect_architecture_capability",
+    "make_list_work_capability",
+    "make_read_code_capability",
     "make_recall_memory_capability",
     "make_search_memory_capability",
 ]

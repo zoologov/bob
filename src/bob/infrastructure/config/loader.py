@@ -280,6 +280,23 @@ DEFAULT_CONFIG: Config = {
         "max_active_rules": 5,
         "max_magnitude": 0.3,
     },
+    # Self-introspection — «Боб знает свой мир» (BOB-017 Phase A). Three read-only
+    # capabilities (``inspect_architecture`` / ``read_code`` / ``list_work``) let Bob
+    # answer about his OWN code/architecture/backlog with real beadloom/code/Beads. They
+    # are conversation-only (never on the autonomous safe-allowlist) and privacy-guarded
+    # by construction — only ``src``/``tests``/``docs`` are visible, SOUL/``bob.db``/
+    # ``.env``/``config`` are DENIED on the infra boundary before any read. ``enabled``
+    # defaults TRUE (read-only, owner-only chat): on → the three skills are advertised.
+    # ``max_output_chars`` caps each tool's output, ``read_max_lines`` caps a file read,
+    # and ``beadloom_bin`` / ``bd_bin`` name the local read-only CLIs the subprocess
+    # adapter runs against its fixed allowlist (never a shell).
+    "introspection": {
+        "enabled": True,
+        "max_output_chars": 20000,
+        "read_max_lines": 200,
+        "beadloom_bin": "beadloom",
+        "bd_bin": "bd",
+    },
     # Two bots in one process (BOB-003): Bob lives in his topic, GUPPI is the
     # gatekeeper in General. Each bot's token comes from env only (never YAML);
     # the shared ids (chat/owner/allowlist) and Bob's topic are non-secret.

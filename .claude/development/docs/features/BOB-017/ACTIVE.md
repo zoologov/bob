@@ -16,8 +16,8 @@ Read-only навыки самоинтроспекции за capability-швом
 
 | Беад | Роль | Статус | Зависит |
 |------|------|--------|---------|
-| `bob-9eh.1` | dev — PrivacyGuard + RepoIntrospector + SubprocessRepoIntrospector | ready | — |
-| `bob-9eh.2` | dev — навыки + провязка в app.py + конфиг | blocked | .1 |
+| `bob-9eh.1` | dev — PrivacyGuard + RepoIntrospector + SubprocessRepoIntrospector | done | — |
+| `bob-9eh.2` | dev — навыки + провязка в app.py + конфиг | done | .1 |
 | `bob-9eh.3` | test — US-1..6 + приват-инвариант + регрессии | blocked | .1,.2 |
 | `bob-9eh.4` | review — read-only/приват/границы/DDD | blocked | .3 |
 | `bob-9eh.5` | tech-writer — architecture.md | blocked | .4 |
@@ -31,6 +31,10 @@ Read-only навыки самоинтроспекции за capability-швом
 ## Прогресс
 
 - 2026-06-25 — PRD/RFC/CONTEXT/PLAN утверждены; беады созданы; запуск координатора.
+- 2026-06-25 — .2 done: 3 навыка (`inspect_architecture`/`read_code`/`list_work`) за швом,
+  провязка в `_build_registry` под `introspection.enabled`, конфиг-секция `introspection`
+  (default on). 18 новых тестов; новый код 100%; полный набор 1824 зелёный;
+  ruff/mypy --strict/lint --strict/doctor зелёные. Стейл architecture.md — на .5 tech-writer.
 
 ## Инварианты (держать в голове)
 
