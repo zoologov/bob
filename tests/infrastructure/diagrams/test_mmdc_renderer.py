@@ -190,3 +190,9 @@ async def test_render_rejects_empty_source() -> None:
 def test_construction_rejects_a_non_positive_timeout() -> None:
     with pytest.raises(ValueError, match="timeout"):
         SubprocessMmdcRenderer(runner=_FakeMmdc(), timeout=0)
+
+
+def test_construction_rejects_a_non_positive_scale() -> None:
+    # BOB-037 B input edge: the deviceScaleFactor must be a positive integer.
+    with pytest.raises(ValueError, match="scale"):
+        SubprocessMmdcRenderer(runner=_FakeMmdc(), scale=0)

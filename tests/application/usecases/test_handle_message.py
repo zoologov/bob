@@ -1350,6 +1350,225 @@ async def test_normal_reply_with_no_mermaid_sends_nothing() -> None:
     assert "просто текст без диаграмм" in bot.final_text
 
 
+# --- BOB-037 .2: acceptance/guardrail strengthening ----------------------------
+
+
+async def test_inline_mermaid_reliability_renders_queues_and_strips_end_to_end() -> None:
+    # BOB-037 A (the CORE reliability fix, end to end): the model inlined a fenced
+    # ```mermaid block instead of calling the tool. Through the WHOLE turn: the block
+    # is rendered (the fake renderer sees the source), queued + sent as a document
+    # (the product default), AND the fence is stripped from the visible text.
+    sink = CollectingDiagramSink()
+    renderer = _RecordingRenderer()
+    handler, bot, _repo, _tier1 = _build(
+        reply=_INLINE_REPLY,
+        diagram_sink=sink,
+        diagram_renderer=renderer,
+        diagram_send_as="document",
+    )
+
+    await handler.handle(_message())
+
+    # Rendered (the renderer saw the inlined source) ...
+    assert renderer.sources == ["graph TD; A-->B"]
+    # ... queued + sent as a full-resolution document (not a recompressed photo) ...
+    assert len(bot.documents) == 1
+    assert bot.photos == []
+    _chat_id, doc, _caption = bot.documents[0]
+    assert doc == b"INLINE-PNG"
+    # ... and the fence is GONE from the visible reply (the image replaced it).
+    assert "```mermaid" not in bot.final_text
+    assert "graph TD" not in bot.final_text
+    assert "Вот схема:" in bot.final_text
+    assert "Готово." in bot.final_text
+
+
+async def test_inline_auto_render_drains_the_sink_so_no_cross_turn_bleed() -> None:
+    # BOB-037 guardrail: the per-turn sink is DRAINED after sending, so a following
+    # plain turn (no mermaid) sends nothing — no diagram leaks across turns.
+    sink = CollectingDiagramSink()
+    renderer = _RecordingRenderer()
+    handler, bot, _repo, _tier1 = _build(
+        reply=_INLINE_REPLY,
+        diagram_sink=sink,
+        diagram_renderer=renderer,
+        diagram_send_as="document",
+    )
+
+    await handler.handle(_message())
+    assert len(bot.documents) == 1
+    # The sink is empty after the drain — nothing is left to re-send.
+    assert sink.pending() == ()
+
+
+async def test_inline_mermaid_with_a_non_mermaid_fence_left_untouched() -> None:
+    # BOB-037 (item 3, mixed): a ```python fence is NOT a diagram — it must be left in
+    # the visible reply verbatim, while the mermaid fence beside it is rendered + stripped.
+    reply = (
+        "Схема:\n```mermaid\ngraph TD; A-->B\n```\n"
+        "А вот код:\n```python\nprint('hi')\n```\nКонец."
+    )
+    sink = CollectingDiagramSink()
+    renderer = _RecordingRenderer()
+    handler, bot, _repo, _tier1 = _build(
+        reply=reply,
+        diagram_sink=sink,
+        diagram_renderer=renderer,
+        diagram_send_as="document",
+    )
+
+    await handler.handle(_message())
+
+    # Exactly one diagram — the python fence was never rendered.
+    assert renderer.sources == ["graph TD; A-->B"]
+    assert len(bot.documents) == 1
+    # The mermaid fence is gone; the python fence + surrounding prose stay intact.
+    assert "graph TD" not in bot.final_text
+    assert "```python" in bot.final_text
+    assert "print('hi')" in bot.final_text
+    assert "Конец." in bot.final_text
+
+
+async def test_inline_mermaid_partial_failure_sends_the_good_keeps_the_bad() -> None:
+    # BOB-037 (item 4, graceful PARTIAL): two fenced blocks where the SECOND fails to
+    # render — the first is still sent, the failed block is LEFT as text, no crash.
+    reply = (
+        "Раз:\n```mermaid\ngood-diagram\n```\n"
+        "Два:\n```mermaid\nbad-diagram\n```\nВсё."
+    )
+    sink = CollectingDiagramSink()
+
+    class _SecondFailsRenderer:
+        """Render the first block, raise on the second (mmdc choked on it)."""
+
+        def __init__(self) -> None:
+            self.sources: list[str] = []
+
+        async def render(self, mermaid_source: str) -> bytes:
+            self.sources.append(mermaid_source)
+            if mermaid_source == "bad-diagram":
+                raise DiagramRenderError("malformed mermaid")
+            return b"GOOD-PNG"
+
+    renderer = _SecondFailsRenderer()
+    handler, bot, _repo, _tier1 = _build(
+        reply=reply,
+        diagram_sink=sink,
+        diagram_renderer=renderer,
+        diagram_send_as="document",
+    )
+
+    await handler.handle(_message())
+
+    # Both were attempted; only the good one was sent.
+    assert renderer.sources == ["good-diagram", "bad-diagram"]
+    assert len(bot.documents) == 1
+    _chat_id, doc, _caption = bot.documents[0]
+    assert doc == b"GOOD-PNG"
+    # The good fence is stripped; the failed one stays as text (Bob still answered).
+    assert "good-diagram" not in bot.final_text
+    assert "bad-diagram" in bot.final_text
+    assert "Всё." in bot.final_text
+
+
+async def test_inline_mermaid_dedup_is_whitespace_insensitive() -> None:
+    # BOB-037 dedup guardrail: the tool rendered the canonical source; the model echoed
+    # the SAME diagram as a fence with different surrounding whitespace. The normalised
+    # dedup must still catch it → exactly ONE image, no double send, no re-render.
+    canonical = "graph TD; A-->B"
+    sink = CollectingDiagramSink()
+    inline_renderer = _RecordingRenderer()
+    registry = _registry_with_render_diagram(_FakeDiagramRenderer(), sink)
+
+    class _WhitespaceEchoToolProvider:
+        def __init__(self) -> None:
+            self._call = 0
+
+        async def complete_with_tools(
+            self,
+            messages: Sequence[LLMMessage],  # noqa: ARG002
+            *,
+            tools: Sequence[ToolDefinition],  # noqa: ARG002
+        ) -> ToolCallResult:
+            self._call += 1
+            if self._call == 1:
+                call = ToolCall(
+                    id="d1", name="render_diagram", arguments={"mermaid": canonical}
+                )
+                return ToolCallResult(text="", tool_calls=(call,))
+            # The echoed fence has extra leading/trailing whitespace on each line.
+            return ToolCallResult(
+                text="Готово:\n```mermaid\n  graph TD; A-->B  \n```", tool_calls=()
+            )
+
+    handler, bot, _repo, _tier1 = _build(
+        reply="unused",
+        registry=registry,
+        tool_provider=_WhitespaceEchoToolProvider(),
+        diagram_sink=sink,
+        diagram_renderer=inline_renderer,
+        diagram_send_as="document",
+    )
+
+    await handler.handle(_message("нарисуй схему"))
+
+    # One image (the tool's); the whitespace-variant echo deduped, never re-rendered.
+    assert len(bot.documents) == 1
+    assert inline_renderer.sources == []
+
+
+async def test_inline_auto_render_caption_accompanies_the_diagram() -> None:
+    # BOB-037 A: an auto-rendered inline diagram carries Bob's short in-character caption.
+    sink = CollectingDiagramSink()
+    handler, bot, _repo, _tier1 = _build(
+        reply=_INLINE_REPLY,
+        diagram_sink=sink,
+        diagram_renderer=_RecordingRenderer(),
+        diagram_send_as="document",
+    )
+
+    await handler.handle(_message())
+
+    _chat_id, _doc, caption = bot.documents[0]
+    assert caption == "Вот диаграмма."
+
+
+async def test_inline_auto_render_no_op_without_a_sink_wired() -> None:
+    # BOB-037 guardrail: a renderer wired but NO sink (an incomplete wiring) is inert —
+    # the fence stays as text, nothing is sent, no crash.
+    handler, bot, _repo, _tier1 = _build(
+        reply=_INLINE_REPLY,
+        diagram_renderer=_RecordingRenderer(),
+        diagram_send_as="document",
+    )
+
+    await handler.handle(_message())
+
+    assert bot.photos == []
+    assert bot.documents == []
+    assert "```mermaid" in bot.final_text
+
+
+async def test_render_diagram_tool_path_still_works_when_model_calls_it() -> None:
+    # BOB-037 no-regression: the BOB-035 tool path is intact — when the model DOES call
+    # render_diagram, the diagram is sent (as a document under the new default mode).
+    sink = CollectingDiagramSink()
+    registry = _registry_with_render_diagram(_FakeDiagramRenderer(png=b"TOOL-PNG"), sink)
+    handler, bot, _repo, _tier1 = _build(
+        reply="unused",
+        registry=registry,
+        tool_provider=_DiagramToolProvider(),
+        diagram_sink=sink,
+        diagram_send_as="document",
+    )
+
+    await handler.handle(_message("нарисуй схему"))
+
+    assert len(bot.documents) == 1
+    _chat_id, doc, _caption = bot.documents[0]
+    assert doc == b"TOOL-PNG"
+
+
 # --- BOB-016: anti-bait voice + GUPPI canon in the reply prompts ---------------
 
 
