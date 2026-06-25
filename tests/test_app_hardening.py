@@ -37,6 +37,7 @@ from bob.app import (
 from bob.application.runtime import RuntimeState
 from bob.application.usecases.evolve_phantoms import EvolvePhantoms
 from bob.application.usecases.handle_message import PersonalityState
+from bob.domain.personality.disposition import DEFAULT_DISPOSITION
 from bob.domain.personality.mood import Mood
 from bob.domain.personality.soul import SOUL
 from bob.domain.personality.taste import TasteEngine
@@ -464,6 +465,46 @@ def test_load_soul_tolerates_malformed_json_profiles(tmp_path: Path) -> None:
     assert soul.mood.valence == 0.0
     assert soul.taste.axes == ()
     assert soul.phantom_prefs == ()
+
+
+def test_load_soul_falls_back_to_canon_disposition_when_absent(tmp_path: Path) -> None:
+    # Arrange: a soul with no disposition.json (an existing install).
+    store = SoulStore(tmp_path / "soul")
+    store.write_soul("# SOUL\n\nBob.\n")
+
+    # Act
+    soul = _load_soul(store)
+
+    # Assert: existing installs Just Work — Bob keeps his canon-optimist default.
+    assert soul.disposition == DEFAULT_DISPOSITION
+
+
+def test_load_soul_reads_persisted_disposition(tmp_path: Path) -> None:
+    # Arrange: a fully-formed disposition.json on disk.
+    store = SoulStore(tmp_path / "soul")
+    store.write_soul("# SOUL\n\nBob.\n")
+    store.write_json("disposition", {"optimism": 0.42, "resilience": 0.66})
+
+    # Act
+    soul = _load_soul(store)
+
+    # Assert: the persisted traits round-trip into the loaded soul.
+    assert soul.disposition.optimism == pytest.approx(0.42)
+    assert soul.disposition.resilience == pytest.approx(0.66)
+
+
+def test_load_soul_tolerates_partial_disposition_with_canon_fields(tmp_path: Path) -> None:
+    # Arrange: only one trait present / malformed shape.
+    store = SoulStore(tmp_path / "soul")
+    store.write_soul("# SOUL\n\nBob.\n")
+    store.write_json("disposition", {"optimism": 0.3})
+
+    # Act
+    soul = _load_soul(store)
+
+    # Assert: the present field is read; the missing one falls back to canon.
+    assert soul.disposition.optimism == pytest.approx(0.3)
+    assert soul.disposition.resilience == pytest.approx(DEFAULT_DISPOSITION.resilience)
 
 
 def test_load_soul_parses_well_formed_taste_axes(tmp_path: Path) -> None:

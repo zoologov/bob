@@ -19,6 +19,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING
 
+from bob.domain.personality.disposition import DEFAULT_DISPOSITION, Disposition
 from bob.domain.personality.taste import TasteEngine
 
 if TYPE_CHECKING:
@@ -41,6 +42,7 @@ class SOUL:
     taste: TasteEngine
     phantom_prefs: tuple[str, ...] = field(default_factory=tuple)
     experience_count: int = 0
+    disposition: Disposition = DEFAULT_DISPOSITION
 
     def with_mood(self, mood: Mood) -> SOUL:
         """Return a copy of this soul carrying ``mood``, leaving the original intact."""

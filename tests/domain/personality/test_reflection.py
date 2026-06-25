@@ -13,9 +13,11 @@ prompt verbatim — so an unwired tick behaves exactly as before.
 
 from __future__ import annotations
 
+from bob.domain.personality.disposition import Disposition
 from bob.domain.personality.reflection import (
     GENERIC_MONOLOGUE_PROMPT,
     GENERIC_REFLECT_PROMPT,
+    LIVING_REFLECTION_EXAMPLES,
     build_monologue_prompt,
     build_reflection_prompt,
 )
@@ -55,6 +57,75 @@ def test_only_the_most_recent_contents_are_used_in_order() -> None:
     )
     # All provided lines appear, oldest-first as given.
     assert prompt.index("первая") < prompt.index("вторая") < prompt.index("третья")
+
+
+# --- BOB-033 .2: living reflections (few-shot palette + disposition valence-lean) ---
+
+
+def test_disposition_weaves_a_few_shot_living_palette() -> None:
+    # With a disposition wired, the grounded prompt carries 2-3 few-shot examples of a
+    # "living Bob" private thought (a palette: curious / bright / wry / honestly sad) so
+    # the Tier-0 model stops defaulting to monotone gloom.
+    prompt = build_reflection_prompt(
+        recent_contents=("собрал телескоп",),
+        mood_tone="content",
+        disposition=Disposition(optimism=0.8, resilience=0.7),
+    )
+    assert 2 <= len(LIVING_REFLECTION_EXAMPLES) <= 3
+    for example in LIVING_REFLECTION_EXAMPLES:
+        assert example in prompt
+
+
+def test_disposition_adds_an_honest_optimism_valence_lean() -> None:
+    # A high-optimism disposition tilts the request toward a brighter thought, but the
+    # instruction stays HONEST (lows are allowed) — never a scripted "be happy".
+    prompt = build_reflection_prompt(
+        recent_contents=("собрал телескоп",),
+        mood_tone="content",
+        disposition=Disposition(optimism=0.9, resilience=0.7),
+    ).casefold()
+    assert "optimism" in prompt
+    assert "honest" in prompt
+
+
+def test_disposition_lean_differs_by_optimism() -> None:
+    # The valence-lean is DERIVED from optimism, not a fixed string: a strong optimist
+    # and a weak one produce distinct prompts.
+    bright = build_reflection_prompt(
+        recent_contents=("собрал телескоп",),
+        mood_tone="content",
+        disposition=Disposition(optimism=0.9, resilience=0.7),
+    )
+    muted = build_reflection_prompt(
+        recent_contents=("собрал телескоп",),
+        mood_tone="content",
+        disposition=Disposition(optimism=0.1, resilience=0.7),
+    )
+    assert bright != muted
+
+
+def test_no_context_still_falls_back_even_with_a_disposition() -> None:
+    # The no-context generic fallback is preserved: with no episode and no tone the
+    # generic template is returned verbatim regardless of the disposition.
+    assert (
+        build_reflection_prompt(
+            recent_contents=(),
+            mood_tone="",
+            disposition=Disposition(optimism=0.8, resilience=0.7),
+        )
+        == GENERIC_REFLECT_PROMPT
+    )
+
+
+def test_without_a_disposition_the_few_shot_palette_is_absent() -> None:
+    # Backward-compatible: an unwired disposition keeps the prior grounded prompt
+    # (no few-shot examples), so existing behaviour is unchanged.
+    prompt = build_reflection_prompt(
+        recent_contents=("собрал телескоп",),
+        mood_tone="content",
+    )
+    for example in LIVING_REFLECTION_EXAMPLES:
+        assert example not in prompt
 
 
 # --- BOB-029: mood-conditioned inner-monologue prompt ---

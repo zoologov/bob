@@ -21,6 +21,7 @@ from bob.application.usecases.update_mood_from_text import (
     TextSignals,
     UpdateMoodFromText,
 )
+from bob.domain.personality.disposition import Disposition
 from bob.domain.personality.mood import Mood
 
 if TYPE_CHECKING:
@@ -198,3 +199,81 @@ async def test_run_is_deterministic_for_fixed_inputs() -> None:
 
     # Assert: same inputs (fixed clock + stub sentiment) → same mood.
     assert first == second
+
+
+# --- BOB-033 .3: social co-regulation (asymmetric contagion + low-displacement) ---
+
+
+def _disposed(
+    *, sentiment: str, moment: datetime, disposition: Disposition
+) -> UpdateMoodFromText:
+    provider = StubProvider(reply=sentiment)
+    router = LLMRouter(providers={0: provider, 1: StubProvider(reply="unused")})
+    return UpdateMoodFromText(
+        router=router, clock=FixedClock(moment), disposition=disposition
+    )
+
+
+async def test_positive_lifts_valence_more_than_negative_dips_it() -> None:
+    # The structural anti-depressant (BOB-033 .3): a warm message moves Bob's valence
+    # UP more than an equally-strong cold one drags it down — disposition asymmetry.
+    disp = Disposition(optimism=0.8, resilience=0.7)
+    warm = _disposed(sentiment="positive", moment=_daytime(), disposition=disp)
+    cold = _disposed(sentiment="negative", moment=_daytime(), disposition=disp)
+    signals = TextSignals(text="...", message_count=1, present=True)
+
+    lifted = await warm.run(Mood(valence=0.0), signals)
+    dipped = await cold.run(Mood(valence=0.0), signals)
+
+    lift = lifted.valence - 0.0
+    dip = 0.0 - dipped.valence
+    assert lift > dip > 0.0
+
+
+async def test_warm_message_pulls_mood_toward_disposition_baseline() -> None:
+    # "Displace the low": from a dip, a warm exchange charges Bob back up — it tugs
+    # mood TOWARD the warmer baseline (lift_toward fired), not just adds a flat delta.
+    disp = Disposition(optimism=0.8, resilience=0.7)
+    warm = _disposed(sentiment="positive", moment=_daytime(), disposition=disp)
+    low = Mood(valence=-0.6, social=-0.5)
+    target = Mood(valence=0.4, social=0.55)
+    signals = TextSignals(text="hey, missed you!", message_count=1, present=True)
+
+    updated = await warm.run(low, signals, target=target)
+
+    # Social axis is pulled toward the (higher) baseline — only lift_toward touches it
+    # here (presence already saturated apart, so the displacement is observable).
+    assert updated.social > low.social
+    # And valence is pulled up out of the dip beyond the bare positive delta alone.
+    assert updated.valence > low.valence
+
+
+async def test_cold_message_does_not_pull_toward_baseline() -> None:
+    # The pull is asymmetric: a cold/rude message lowers (weakly) but never charges
+    # Bob UP toward baseline — only warmth displaces the low.
+    disp = Disposition(optimism=0.8, resilience=0.7)
+    cold = _disposed(sentiment="negative", moment=_daytime(), disposition=disp)
+    low = Mood(valence=-0.6, social=-0.5)
+    target = Mood(valence=0.4, social=0.55)
+    signals = TextSignals(text="you're useless", message_count=1, present=True)
+
+    updated = await cold.run(low, signals, target=target)
+
+    # Cold turn dips valence further (weakly) and never tugs mood up to baseline:
+    # social moves ONLY by the presence step (+0.15), not by any lift_toward pull.
+    assert updated.valence < low.valence
+    assert updated.social == pytest.approx(low.social + 0.15)
+
+
+async def test_no_target_keeps_pure_delta_behaviour() -> None:
+    # Backward-compatible: without a target the use-case applies only the
+    # (now disposition-scaled) delta and never calls lift_toward.
+    disp = Disposition(optimism=0.8, resilience=0.7)
+    warm = _disposed(sentiment="positive", moment=_daytime(), disposition=disp)
+    low = Mood(valence=-0.6, social=-0.5)
+    signals = TextSignals(text="nice", message_count=1, present=True)
+
+    updated = await warm.run(low, signals)
+
+    # social only moved by the presence step (+), not pulled toward any baseline.
+    assert updated.social == pytest.approx(low.social + 0.15)

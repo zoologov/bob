@@ -18,6 +18,16 @@ the pure :class:`Mood` domain applies:
   ``datetime.now()``); late night winds *arousal* down;
 * **presence** — an engaged user lifts *social*, absence lowers it.
 
+On top of these, **social co-regulation** (BOB-033 .3) makes interaction genuinely
+charge Bob back up: the sentiment→valence step is scaled by the *asymmetric*
+disposition magnitudes (a warm message lifts more than a cold one dips —
+:meth:`Disposition.positive_lift_scale` > :meth:`Disposition.negative_dip_scale`),
+and a clearly warm message additionally pulls mood a proportional fraction toward
+the disposition baseline (:meth:`Mood.lift_toward`, rate from
+:meth:`Disposition.social_lift_rate`) so a warm exchange *displaces accumulated low*
+rather than only adding a delta — the structural anti-depressant ("you cheer up
+talking to people").
+
 This layer only orchestrates: every bound/clamp and the vector math live in the
 domain, so the use-case stays thin and the rules stay testable without an LLM.
 """
@@ -29,15 +39,18 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from bob.application.router.llm_router import LLMRequest, TaskType
+from bob.domain.personality.disposition import DEFAULT_DISPOSITION
 from bob.domain.personality.mood import Mood, MoodDelta
 
 if TYPE_CHECKING:
     from bob.application.router.llm_router import LLMRouter
+    from bob.domain.personality.disposition import Disposition
     from bob.domain.ports import Clock
 
 logger = logging.getLogger(__name__)
 
-# How strongly each signal moves its mood axis per update.
+# Base sentiment→valence step, then scaled by the disposition's asymmetric
+# contagion magnitudes (positive lift > negative dip) in ``_valence_step``.
 _SENTIMENT_VALENCE_STEP = 0.2
 _FREQUENCY_AROUSAL_STEP = 0.2
 _LATE_NIGHT_AROUSAL_STEP = 0.15
@@ -72,19 +85,48 @@ class TextSignals:
 class UpdateMoodFromText:
     """Turn incoming-text signals into a mood update via Tier 0 sentiment + Clock."""
 
-    def __init__(self, *, router: LLMRouter, clock: Clock) -> None:
+    def __init__(
+        self,
+        *,
+        router: LLMRouter,
+        clock: Clock,
+        disposition: Disposition = DEFAULT_DISPOSITION,
+    ) -> None:
         self._router = router
         self._clock = clock
+        # Bob's stable temperament drives the asymmetric social contagion (BOB-033 .3):
+        # the warm-vs-cold valence asymmetry and the proportional pull-toward-baseline.
+        # Defaults to canon-Bob so an unwired construction behaves as a strong optimist.
+        self._disposition = disposition
 
-    async def run(self, mood: Mood, signals: TextSignals) -> Mood:
-        """Return ``mood`` updated from ``signals`` (sentiment + frequency/time/presence)."""
+    async def run(
+        self, mood: Mood, signals: TextSignals, *, target: Mood | None = None
+    ) -> Mood:
+        """Return ``mood`` updated from ``signals`` (sentiment + frequency/time/presence).
+
+        ``target`` is the disposition baseline used for social co-regulation
+        (BOB-033 .3): on a clearly POSITIVE incoming message it pulls mood a
+        proportional fraction toward ``target`` (:meth:`Mood.lift_toward`),
+        displacing accumulated low. ``None`` (the default) skips that pull, so the
+        update is the (disposition-scaled) per-signal delta alone — backward-compatible.
+        """
         sentiment = await self._classify_sentiment(signals.text)
+        # "Displace the low" FIRST (BOB-033 .3): a warm message charges Bob back up
+        # toward his baseline before the per-signal delta lands, so the warm exchange
+        # genuinely lifts him out of a dip rather than only nudging valence.
+        lifted = self._co_regulate(mood, sentiment, target)
         delta = MoodDelta(
             valence=self._valence_step(sentiment),
             arousal=self._arousal_step(signals.message_count),
             social=self._social_step(present=signals.present),
         )
-        return mood.update(delta)
+        return lifted.update(delta)
+
+    def _co_regulate(self, mood: Mood, sentiment: str, target: Mood | None) -> Mood:
+        """Pull ``mood`` toward ``target`` on a warm message (the social-charge tug)."""
+        if target is None or sentiment not in _POSITIVE_LABELS:
+            return mood
+        return mood.lift_toward(target, rate=self._disposition.social_lift_rate())
 
     async def _classify_sentiment(self, text: str) -> str:
         """Run Tier 0 sentiment classification through the router."""
@@ -98,12 +140,17 @@ class UpdateMoodFromText:
         label = await self._router.run(request)
         return label.strip().casefold()
 
-    @staticmethod
-    def _valence_step(sentiment: str) -> float:
+    def _valence_step(self, sentiment: str) -> float:
+        """Asymmetric sentiment→valence step: a warm message lifts more than a cold dips.
+
+        Scaled by the disposition's contagion magnitudes (BOB-033 .3): the positive
+        lift always exceeds the negative dip, so connection moves Bob up more than
+        negativity drags him down — the structural anti-depressant.
+        """
         if sentiment in _POSITIVE_LABELS:
-            return _SENTIMENT_VALENCE_STEP
+            return _SENTIMENT_VALENCE_STEP * self._disposition.positive_lift_scale()
         if sentiment in _NEGATIVE_LABELS:
-            return -_SENTIMENT_VALENCE_STEP
+            return -_SENTIMENT_VALENCE_STEP * self._disposition.negative_dip_scale()
         return 0.0
 
     def _arousal_step(self, message_count: int) -> float:

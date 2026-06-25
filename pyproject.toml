@@ -88,6 +88,14 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
+# The reflection module (BOB-026 .2 + BOB-033 .2) carries a few-shot PALETTE of Russian
+# "living Bob" private thoughts ("Поймал себя на том…", "Сегодня тише, чем хотелось бы…")
+# whose Cyrillic look-alikes are intentional (the Tier-0 model reads them natively) —
+# RUF001/RUF002/RUF003 do not apply to these literals.
+"src/bob/domain/personality/reflection.py" = ["RUF001", "RUF002", "RUF003"]
+# The reappraisal module (BOB-033 .2) carries Russian persona/policy docstrings + comments
+# whose Cyrillic look-alikes are intentional — RUF001/RUF002/RUF003 do not apply to these.
+"src/bob/application/usecases/reappraise_reflection.py" = ["RUF001", "RUF002", "RUF003"]
 # The persona voice module (BOB-016) is, by nature, multi-line Russian prose
 # whose Cyrillic look-alikes are intentional (the model reads the directives
 # natively); RUF001's ambiguous-character lint does not apply to these literals.
