@@ -319,6 +319,26 @@ DEFAULT_CONFIG: Config = {
         "background": "white",
         "send_as": "document",
     },
+    # Coding sessions — «Боб запускает Claude Code», гейтед (BOB-039). The master
+    # switch ``enabled`` is OFF by default (conservative — Bob driving a code agent is
+    # the most powerful capability, so the owner switches it on deliberately, like
+    # goals/self_improvement). When off, the ``/code`` commands are inert (a clear
+    # "disabled" reply) and the assistant is never wired. ``claude_bin`` / ``gh_bin``
+    # name the local CLIs the shell-free adapters run; ``worktree_root`` is where the
+    # isolated per-session git worktrees are created (only TRACKED files, so Bob's
+    # private data never reaches Claude Code); ``timeout`` bounds one run (seconds);
+    # ``permission_mode`` is the execute-mode passed to ``claude`` after the owner
+    # approves the plan (``acceptEdits`` — apply edits in the worktree; NEVER a
+    # bypass mode). The plan gate (plan-mode first, no edits) is unbypassable above
+    # this config, and there is NO merge / push-to-main path anywhere.
+    "coder": {
+        "enabled": False,
+        "claude_bin": "claude",
+        "gh_bin": "gh",
+        "worktree_root": ".worktrees",
+        "timeout": 600,
+        "permission_mode": "acceptEdits",
+    },
     # Two bots in one process (BOB-003): Bob lives in his topic, GUPPI is the
     # gatekeeper in General. Each bot's token comes from env only (never YAML);
     # the shared ids (chat/owner/allowlist) and Bob's topic are non-secret.

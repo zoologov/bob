@@ -274,3 +274,22 @@ CREATE TABLE IF NOT EXISTS improvement_rule (
     evidence    TEXT NOT NULL,              -- which patterns fired
     PRIMARY KEY (persona_id, id)
 );
+
+-- Coding sessions (BOB-039): one `coding_session` row per gated «Bob runs Claude
+-- Code» session. `state` is the string CodingSessionState value (proposed/planning/
+-- plan_ready/executing/pr_open/done/cancelled/failed); `branch` is the safe
+-- bob/<slug> branch; `worktree_path`/`plan`/`pr_url` fill in as the session advances
+-- (nullable). Round-tripped by SqliteCodingSessionStore into a domain CodingSession.
+-- The double gate (EXECUTING only after owner-approve from PLAN_READY) lives above
+-- this table — the store just persists the state the use-cases set.
+CREATE TABLE IF NOT EXISTS coding_session (
+    id            TEXT PRIMARY KEY,
+    task          TEXT NOT NULL,
+    state         TEXT NOT NULL,              -- CodingSessionState value
+    branch        TEXT NOT NULL,              -- safe bob/<slug> branch name
+    created_at    TEXT NOT NULL,              -- ISO-8601, timezone-aware
+    updated_at    TEXT NOT NULL,              -- ISO-8601, timezone-aware
+    worktree_path TEXT,                       -- isolated worktree path (nullable)
+    plan          TEXT,                       -- plan-mode plan text (nullable)
+    pr_url        TEXT                        -- opened PR url (nullable)
+);

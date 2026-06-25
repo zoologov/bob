@@ -53,6 +53,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "GUPPI_REJECT_TEXT",
+    "CodingAssistantLike",
     "GoalStoreLike",
     "GuppiHandler",
     "ProactivityStoreLike",
@@ -97,6 +98,19 @@ _GOAL_STATE_ACTIONS: dict[str, GoalState] = {
     _GOAL_RESUME: GoalState.ACTIVE,
     _GOAL_CANCEL: GoalState.CANCELLED,
 }
+
+# Owner-only coding-session command GUPPI consumes in General (BOB-039 .3):
+# `/code <task>` starts a gated session, `/code approve|stop|status` drive it. Every
+# `/code` is owner-only (the handle_general_command guard) and inert (a clear disabled
+# reply) when the coding assistant is not wired (``coder.enabled`` false).
+_CODE_COMMAND = "/code"
+_CODE_APPROVE = "approve"
+_CODE_STOP = "stop"
+_CODE_STATUS = "status"
+_CODE_DISABLED_TEXT = (
+    "Запуск Claude Code выключен (coder.enabled=false) — включи его в конфиге."
+)
+_USAGE_CODE = "Использование: /code <задача> | /code approve | /code stop | /code status"
 
 # Owner-only self-improvement-rule commands GUPPI consumes in General (BOB-028 .3).
 # `/rules` lists Bob's rules; `/rule <action> <id>` is the owner approval gate —
@@ -184,6 +198,22 @@ class PursuitStoreLike(Protocol):
     async def set_pursuit_stopped(self, persona_id: str, *, stopped: bool) -> None: ...
 
 
+class CodingAssistantLike(Protocol):
+    """The CodingAssistant surface GUPPI's ``/code`` owner-commands need (BOB-039 .3).
+
+    A structural subset of :class:`~bob.application.usecases.coding_assistant.CodingAssistant`:
+    ``start`` begins a gated session (plan-mode, the plan gate), ``approve_plan`` is the
+    owner gate that lets execution proceed, ``stop`` is the kill-switch, ``status`` reports
+    the in-flight state. The use-case enforces owner-only itself (defense-in-depth) and owns
+    all owner messaging via its notifier, so GUPPI just routes the verb to it.
+    """
+
+    async def start(self, task: str, sender: int | None) -> object: ...
+    async def approve_plan(self, sender: int | None) -> object: ...
+    async def stop(self, sender: int | None) -> object: ...
+    async def status(self, sender: int | None) -> object: ...
+
+
 class RuleStoreLike(Protocol):
     """The self-improvement-rule-store surface GUPPI's rule commands need (BOB-028 .3).
 
@@ -217,6 +247,8 @@ class GuppiHandler:
         plan_goal: PlanGoal | None = None,
         pursuit_store: PursuitStoreLike | None = None,
         rule_store: RuleStoreLike | None = None,
+        coding_assistant: CodingAssistantLike | None = None,
+        coding_configured: bool = False,
     ) -> None:
         self._bot = bot
         self._authorizer = authorizer
@@ -228,6 +260,12 @@ class GuppiHandler:
         self._plan_goal = plan_goal
         self._pursuit_store = pursuit_store
         self._rule_store = rule_store
+        # The gated coding assistant (BOB-039 .3). ``None`` when ``coder.enabled`` is
+        # false (the conservative default); ``coding_configured`` says the feature
+        # section exists at all, so an owner ``/code`` gets a clear "disabled" reply
+        # instead of silently falling through.
+        self._coding_assistant = coding_assistant
+        self._coding_configured = coding_configured or coding_assistant is not None
 
     async def reject(self, *, chat_id: int, thread_id: int | None) -> None:
         """Send the visible "unauthorized" reject into ``chat_id``/``thread_id``.
@@ -272,6 +310,7 @@ class GuppiHandler:
             or await self._dispatch_proactivity(chat_id, command, argument)
             or await self._dispatch_goals(chat_id, command, argument)
             or await self._dispatch_rules(chat_id, command, argument)
+            or await self._dispatch_coding(chat_id, command, argument, user_id)
         )
 
     async def _dispatch_authz(self, chat_id: int, command: str, argument: str) -> bool:
@@ -418,6 +457,46 @@ class GuppiHandler:
         if self._goal_store is None:  # pragma: no cover - guarded by caller
             raise RuntimeError("goal store not configured")
         return self._goal_store
+
+    async def _dispatch_coding(
+        self, chat_id: int, command: str, argument: str, user_id: int | None
+    ) -> bool:
+        """Handle the ``/code`` owner-command (BOB-039 .3); ``False`` if not ``/code``.
+
+        ``/code <task>`` starts a gated session; ``/code approve|stop|status`` drive it.
+        When the assistant is not wired (``coder.enabled`` false) the command is INERT —
+        a clear "disabled" reply, never a silent drop. The use-case itself enforces
+        owner-only and sends ALL owner messaging (plan / narration / PR / status) through
+        its notifier, so GUPPI only routes the verb (with the verified owner id) and never
+        re-sends.
+        """
+        if command != _CODE_COMMAND:
+            return False
+        if self._coding_assistant is None:
+            if self._coding_configured:
+                await self._reply(chat_id, _CODE_DISABLED_TEXT)
+            else:
+                return False
+            return True
+        await self._run_code(self._coding_assistant, argument, user_id)
+        return True
+
+    async def _run_code(
+        self, assistant: CodingAssistantLike, argument: str, user_id: int | None
+    ) -> None:
+        """Route a ``/code`` sub-command to the gated coding assistant (owner verified)."""
+        word = argument.strip()
+        lowered = word.lower()
+        if lowered == _CODE_APPROVE:
+            await assistant.approve_plan(user_id)
+        elif lowered == _CODE_STOP:
+            await assistant.stop(user_id)
+        elif lowered == _CODE_STATUS:
+            await assistant.status(user_id)
+        elif word:
+            await assistant.start(word, user_id)
+        else:
+            await self._reply(self._general_chat_id, _USAGE_CODE)
 
     async def _dispatch_rules(self, chat_id: int, command: str, argument: str) -> bool:
         """Handle the self-improvement-rule owner commands (BOB-028 .3); ``False`` if none.
