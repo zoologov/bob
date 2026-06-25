@@ -76,6 +76,7 @@ if TYPE_CHECKING:
     from bob.domain.ports import Clock, EventBus
     from bob.infrastructure.telegram.gateway import MessageLike
     from bob.infrastructure.telegram.guppi import (
+        CodingAssistantLike,
         GoalStoreLike,
         ProactivityStoreLike,
         PursuitStoreLike,
@@ -218,6 +219,7 @@ class MultiBotGateway:
         plan_goal: PlanGoal | None = None,
         pursuit_store: PursuitStoreLike | None = None,
         rule_store: RuleStoreLike | None = None,
+        coding_assistant: CodingAssistantLike | None = None,
         reply_typing_interval: float = _DEFAULT_TYPING_INTERVAL,
         reply_clock: MonotonicClock = _LIVE_CLOCK,
         reply_sleep: Sleep = _LIVE_SLEEP,
@@ -231,6 +233,7 @@ class MultiBotGateway:
         self._plan_goal = plan_goal
         self._pursuit_store = pursuit_store
         self._rule_store = rule_store
+        self._coding_assistant = coding_assistant
         self._poll_timeout = poll_timeout
         # One inner TelegramGateway per bot does the per-bot intake/normalisation
         # and reply. Bob's inner gateway pins replies — and the "typing…" indicator
@@ -299,6 +302,8 @@ class MultiBotGateway:
             plan_goal=self._plan_goal,
             pursuit_store=self._pursuit_store,
             rule_store=self._rule_store,
+            coding_assistant=self._coding_assistant,
+            coding_configured=True,
         )
 
     # --- Startup --------------------------------------------------------------

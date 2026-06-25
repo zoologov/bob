@@ -69,6 +69,7 @@ from bob.application.runtime import (
 )
 from bob.application.usecases.announce_rules import AnnounceProposedRules
 from bob.application.usecases.apply_reflection import ApplyReflection
+from bob.application.usecases.coding_assistant import CodingAssistant
 from bob.application.usecases.consolidate_memory import ConsolidateMemory
 from bob.application.usecases.dedup_facts import DedupFacts
 from bob.application.usecases.detect_patterns import DetectPatterns, LlmPatternDetector
@@ -121,6 +122,11 @@ from bob.domain.personality.voice import OffDayThresholds
 from bob.domain.personality.zone_classifier import TasteZoneClassifier
 from bob.domain.proactivity.decision import ProactiveDecider
 from bob.domain.proactivity.governance import Governance
+from bob.infrastructure.coding import (
+    GhPullRequestOpener,
+    GitWorktree,
+    SubprocessClaudeRunner,
+)
 from bob.infrastructure.config import ConfigLoader
 from bob.infrastructure.diagrams import SubprocessMmdcRenderer
 from bob.infrastructure.introspection.subprocess_introspector import (
@@ -141,6 +147,9 @@ from bob.infrastructure.persistence import (
     SqliteRelationshipStore,
     SqliteSelfImprovementStore,
     SqliteSulkStore,
+)
+from bob.infrastructure.persistence.coding_session_store import (
+    SqliteCodingSessionStore,
 )
 from bob.infrastructure.telegram.multibot import (
     BotIdentity,
@@ -486,11 +495,35 @@ def build_application(
     si_enabled = _build_self_improvement_enabled(merged)
     rule_store = SqliteSelfImprovementStore(memory_repo) if si_enabled else None
 
+    # Resolve the GUPPI bot once so the multibot registry AND the coding-session
+    # owner-notifier share the SAME instance — GUPPI is Bob's owner-facing system voice,
+    # and the gated coding assistant speaks (plan / narration / PR) through it.
+    telegram_section = _section(merged, "telegram")
+    resolved_guppi_bot = (
+        guppi_bot
+        if guppi_bot is not None
+        else _build_real_bot(_section(telegram_section, "guppi"), "guppi")
+    )
+
+    # Gated coding sessions — «Bob runs Claude Code» (BOB-039 .3). Built ONLY when
+    # ``coder.enabled`` is on (conservative default off): the assistant orchestrates the
+    # UNBYPASSABLE plan gate, narrates each run to the owner via GUPPI and opens a PR —
+    # NEVER merging / pushing main. It is NOT on the autonomous safe-allowlist. Off → None,
+    # and ``/code`` answers a clear "disabled" reply (the feature section always exists).
+    coding_assistant = _build_coding_assistant(
+        merged,
+        repo=memory_repo,
+        authorizer=authorizer,
+        notifier_bot=resolved_guppi_bot,
+        chat_id=_int(telegram_section, "chat_id", 0),
+        clock=resolved_clock,
+    )
+
     multibot = _build_multibot(
         merged,
         bus=event_bus,
         bob_bot=bob_bot,
-        guppi_bot=guppi_bot,
+        guppi_bot=resolved_guppi_bot,
         authorizer=authorizer,
         proactivity_store=proactivity_store,
         proactivity_clock=resolved_clock,
@@ -498,6 +531,7 @@ def build_application(
         plan_goal=plan_goal,
         rule_store=rule_store,
         pursuit_store=proactivity_store,
+        coding_assistant=coding_assistant,
     )
     # обида seam (BOB-014 .2b): GUPPI announces a fresh sulk entry once ("Боб обижен …")
     # — the внеличностный systemic voice. The tracker loads/evolves/recovers обида and
@@ -881,6 +915,7 @@ def _build_multibot(
     plan_goal: PlanGoal | None = None,
     pursuit_store: SqliteProactivityStore | None = None,
     rule_store: SqliteSelfImprovementStore | None = None,
+    coding_assistant: CodingAssistant | None = None,
 ) -> MultiBotGateway:
     """Build the two-bot gateway: Bob (his topic) + GUPPI (General), one poller.
 
@@ -919,7 +954,67 @@ def _build_multibot(
         plan_goal=plan_goal,
         pursuit_store=pursuit_store,
         rule_store=rule_store,
+        coding_assistant=coding_assistant,
     )
+
+
+def _build_coding_assistant(
+    config: Mapping[str, object],
+    *,
+    repo: SqliteMemoryRepo,
+    authorizer: Authorizer,
+    notifier_bot: BotLike,
+    chat_id: int,
+    clock: Clock,
+) -> CodingAssistant | None:
+    """Assemble the gated coding assistant, or ``None`` when off (BOB-039 .3).
+
+    Built ONLY when ``coder.enabled`` is on (conservative default off): «Bob runs Claude
+    Code» is the most powerful capability, so it stays unwired unless the owner switches
+    it on (unwired → ``/code`` answers "disabled"). It composes the shell-free infra
+    adapters — :class:`SubprocessClaudeRunner` (a fixed ``--permission-mode`` allowlist),
+    :class:`GitWorktree` (an isolated worktree of TRACKED files only — Bob's private data
+    never reaches Claude Code) and :class:`GhPullRequestOpener` (``gh pr create`` only,
+    NO merge / push-main) — over the durable :class:`SqliteCodingSessionStore`, with the
+    shared :class:`Authorizer` as the owner gate and a GUPPI-bot owner-notifier. The
+    UNBYPASSABLE plan gate lives in the use-case + domain machine; this only wires it. The
+    assistant is deliberately NOT added to ``goals.safe_capabilities`` (never autonomous).
+    """
+    coder = _section(config, "coder")
+    if not _flag(coder, "enabled"):
+        return None
+    timeout = float(_int(coder, "timeout", 600))
+    return CodingAssistant(
+        runner=SubprocessClaudeRunner(
+            claude_bin=_str(coder, "claude_bin", "claude"), timeout=timeout
+        ),
+        worktree=GitWorktree(_str(coder, "worktree_root", ".worktrees")),
+        store=SqliteCodingSessionStore(repo),
+        pr_opener=GhPullRequestOpener(gh_bin=_str(coder, "gh_bin", "gh")),
+        notifier=_GuppiOwnerNotifier(bot=notifier_bot, chat_id=chat_id),
+        owner=authorizer,
+        clock=clock,
+        execute_mode=_str(coder, "permission_mode", "acceptEdits"),
+    )
+
+
+class _GuppiOwnerNotifier:
+    """Owner-notifier adapter: send one coding-session line through the GUPPI bot.
+
+    Realises the use-case's ``OwnerNotifier`` (structurally) over Bob's owner-facing
+    system voice (GUPPI in General), so the gated coding assistant streams the plan,
+    the per-event narration and the PR url to the owner without knowing any transport.
+    """
+
+    def __init__(self, *, bot: BotLike, chat_id: int) -> None:
+        self._bot = bot
+        self._chat_id = chat_id
+
+    async def send(self, text: str) -> None:
+        """Post ``text`` into General through the GUPPI bot (un-threaded)."""
+        await self._bot.send_message(
+            chat_id=self._chat_id, text=text, message_thread_id=None
+        )
 
 
 def _build_goal_engine(
