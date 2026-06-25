@@ -8,6 +8,9 @@
 
 from __future__ import annotations
 
+from bob.application.capabilities.code_rationale import (
+    make_code_rationale_capability,
+)
 from bob.application.capabilities.inspect_architecture import (
     make_inspect_architecture_capability,
 )
@@ -34,6 +37,7 @@ __all__ = [
     "SafeCapabilityDispatcher",
     "ToolLoop",
     "UnknownCapabilityError",
+    "make_code_rationale_capability",
     "make_inspect_architecture_capability",
     "make_list_work_capability",
     "make_read_code_capability",
