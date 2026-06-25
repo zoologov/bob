@@ -390,7 +390,13 @@ class RepoIntrospector(Protocol):
     """
 
     async def architecture_context(self, ref: str) -> str:
-        """Return architecture context / graph / impact for a graph ``ref`` (beadloom)."""
+        """Return grounded architecture context for ``ref`` (beadloom, read-only).
+
+        ``ref`` may be an exact graph ref-id OR a free-text question: the
+        implementation routes free text through search and an exact ref through the
+        graph (falling back to search when the ref does not resolve) so a natural
+        question always grounds rather than returning empty.
+        """
         ...
 
     async def search_code(self, query: str) -> str:
@@ -407,7 +413,12 @@ class RepoIntrospector(Protocol):
         ...
 
     async def list_tasks(self, query: str) -> str:
-        """Return the tracker state (``bd`` ready/show) for ``query`` (read-only)."""
+        """Return tracker state for ``query`` (``bd`` ready/show/list, read-only).
+
+        Routes a task id to ``bd show``, a closed/recent/in-progress/all listing
+        request to the matching ``bd list``, and an empty/"ready" query to the ready
+        queue. Tooling-noise tail lines are stripped before return.
+        """
         ...
 
 

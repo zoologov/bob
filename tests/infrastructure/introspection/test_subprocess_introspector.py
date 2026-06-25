@@ -46,9 +46,22 @@ class _FakeRunner:
         return self._stdout
 
 
+class _SeqRunner:
+    """Returns canned stdout keyed by the subcommand of each argv (for fallbacks)."""
+
+    def __init__(self, by_subcommand: dict[str, str]) -> None:
+        self.calls: list[list[str]] = []
+        self._by_subcommand = by_subcommand
+
+    async def __call__(self, argv: list[str], *, timeout: float) -> str:  # noqa: ARG002
+        self.calls.append(list(argv))
+        # argv is [bin, subcommand, *args]; key on the subcommand.
+        return self._by_subcommand.get(argv[1], "")
+
+
 def _make(
     tmp_path: Path,
-    runner: _FakeRunner,
+    runner: _FakeRunner | _SeqRunner,
     *,
     max_output_chars: int = 10_000,
     timeout: float = 5.0,
@@ -68,13 +81,70 @@ def _make(
 
 @pytest.mark.asyncio
 async def test_architecture_context_runs_beadloom_ctx(tmp_path: Path) -> None:
+    # An exact node-id shape (here a bead id) routes to ``beadloom ctx``.
     runner = _FakeRunner("graph-ctx")
     intro = _make(tmp_path, runner)
 
-    out = await intro.architecture_context("bob")
+    out = await intro.architecture_context("bob-031")
 
     assert out == "graph-ctx"
-    assert runner.calls == [["beadloom", "ctx", "bob"]]
+    assert runner.calls == [["beadloom", "ctx", "bob-031"]]
+
+
+@pytest.mark.asyncio
+async def test_architecture_context_free_text_routes_to_search(tmp_path: Path) -> None:
+    # A natural-language question is not a graph ref-id -> beadloom search grounds it.
+    runner = _FakeRunner("search-hits")
+    intro = _make(tmp_path, runner)
+
+    out = await intro.architecture_context("как устроена память")
+
+    assert out == "search-hits"
+    assert runner.calls == [["beadloom", "search", "как устроена память"]]
+
+
+@pytest.mark.asyncio
+async def test_architecture_context_ref_id_routes_to_ctx(tmp_path: Path) -> None:
+    # A bead/node-id shape (bob-..., word.py, word.md) is an exact graph ref -> ctx.
+    for ref in ("bob-1av", "subprocess_introspector.py", "architecture.md"):
+        runner = _FakeRunner("ctx-out")
+        intro = _make(tmp_path, runner)
+
+        out = await intro.architecture_context(ref)
+
+        assert out == "ctx-out"
+        assert runner.calls == [["beadloom", "ctx", ref]]
+
+
+@pytest.mark.asyncio
+async def test_architecture_context_falls_back_ctx_to_search_when_empty(
+    tmp_path: Path,
+) -> None:
+    # A ref-id-shaped query that ctx cannot resolve still grounds via search.
+    runner = _SeqRunner({"ctx": "", "search": "search-grounded"})
+    intro = _make(tmp_path, runner)
+
+    out = await intro.architecture_context("bob-missing")
+
+    assert out == "search-grounded"
+    assert runner.calls == [
+        ["beadloom", "ctx", "bob-missing"],
+        ["beadloom", "search", "bob-missing"],
+    ]
+
+
+@pytest.mark.asyncio
+async def test_architecture_context_free_text_no_fallback_when_search_empty(
+    tmp_path: Path,
+) -> None:
+    # Free text already goes straight to search; an empty search is not retried via ctx.
+    runner = _SeqRunner({"search": ""})
+    intro = _make(tmp_path, runner)
+
+    out = await intro.architecture_context("совершенно неизвестная штука")
+
+    assert out == ""
+    assert runner.calls == [["beadloom", "search", "совершенно неизвестная штука"]]
 
 
 @pytest.mark.asyncio
@@ -98,13 +168,86 @@ async def test_list_tasks_runs_bd_ready(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_list_tasks_with_query_runs_bd_show(tmp_path: Path) -> None:
+async def test_list_tasks_with_id_runs_bd_show(tmp_path: Path) -> None:
     runner = _FakeRunner("bead-detail")
     intro = _make(tmp_path, runner)
 
     await intro.list_tasks("bob-9eh")
 
     assert runner.calls == [["bd", "show", "bob-9eh"]]
+
+
+@pytest.mark.asyncio
+async def test_list_tasks_ready_keyword_runs_bd_ready(tmp_path: Path) -> None:
+    for query in ("ready", "готовые задачи", "что готово"):
+        runner = _FakeRunner("ready-beads")
+        intro = _make(tmp_path, runner)
+
+        await intro.list_tasks(query)
+
+        assert runner.calls == [["bd", "ready"]]
+
+
+@pytest.mark.asyncio
+async def test_list_tasks_closed_keyword_runs_bd_list_closed(tmp_path: Path) -> None:
+    for query in ("закрытые", "недавние задачи", "recent", "история", "closed tasks"):
+        runner = _FakeRunner("closed-beads")
+        intro = _make(tmp_path, runner)
+
+        await intro.list_tasks(query)
+
+        assert runner.calls == [["bd", "list", "--status", "closed"]]
+
+
+@pytest.mark.asyncio
+async def test_list_tasks_in_progress_keyword_runs_bd_list_in_progress(
+    tmp_path: Path,
+) -> None:
+    for query in ("в работе", "in progress", "in-progress"):
+        runner = _FakeRunner("wip-beads")
+        intro = _make(tmp_path, runner)
+
+        await intro.list_tasks(query)
+
+        assert runner.calls == [["bd", "list", "--status", "in_progress"]]
+
+
+@pytest.mark.asyncio
+async def test_list_tasks_all_keyword_runs_bd_list_unfiltered(tmp_path: Path) -> None:
+    for query in ("все задачи", "all tasks", "весь список"):
+        runner = _FakeRunner("all-beads")
+        intro = _make(tmp_path, runner)
+
+        await intro.list_tasks(query)
+
+        assert runner.calls == [["bd", "list"]]
+
+
+@pytest.mark.asyncio
+async def test_list_tasks_free_text_no_id_falls_back_to_unfiltered_list(
+    tmp_path: Path,
+) -> None:
+    # A free-text tracker query with no id and no listing keyword falls back to the
+    # unfiltered ``bd list`` rather than a doomed ``bd show`` on prose (line 236).
+    runner = _FakeRunner("all-beads")
+    intro = _make(tmp_path, runner)
+
+    await intro.list_tasks("покажи чем ты занят сегодня")
+
+    assert runner.calls == [["bd", "list"]]
+
+
+@pytest.mark.asyncio
+async def test_list_tasks_status_token_is_allowlist_validated(tmp_path: Path) -> None:
+    # The bd-list status forms go through the read allowlist (no raw flag passthrough):
+    # an arbitrary flag is still refused, proving the no-arbitrary-args invariant holds.
+    runner = _FakeRunner()
+    intro = _make(tmp_path, runner)
+
+    with pytest.raises(DisallowedCommandError):
+        await intro._run("bd", "list", "--status", "closed; rm -rf /")
+
+    assert runner.calls == []
 
 
 @pytest.mark.asyncio
@@ -139,6 +282,60 @@ async def test_argument_flags_that_could_inject_are_refused(tmp_path: Path) -> N
         await intro._run("bd", "show", "--exec=rm -rf /")
 
     assert runner.calls == []
+
+
+# --- denoise: strip bd/beadloom tooling tip + setup-hint tail -----------------
+
+
+@pytest.mark.asyncio
+async def test_tip_tail_is_stripped(tmp_path: Path) -> None:
+    raw = (
+        "○ bob-1av ● P1 [bug] real task\n"
+        "\n"
+        "Total: 50 issues (0 open, 0 in progress)\n"
+        "\n"
+        "Status: ○ open  ◐ in_progress  ● blocked  ✓ closed  ❄ deferred\n"
+        "\n"
+        "💡 Tip: install the GitHub plugin for richer output\n"
+    )
+    runner = _FakeRunner(raw)
+    intro = _make(tmp_path, runner)
+
+    out = await intro.list_tasks("закрытые")
+
+    assert "bob-1av" in out
+    assert "Total: 50 issues" in out
+    assert "💡" not in out
+    assert "Tip:" not in out
+    assert "Status: ○ open" not in out
+
+
+@pytest.mark.asyncio
+async def test_limit_hint_tail_is_stripped(tmp_path: Path) -> None:
+    raw = (
+        "○ bob-1av real task\n"
+        "Showing 50 issues; more results matched but were hidden by --limit. "
+        "Use --limit 0 for all, or --limit N to raise the cap.\n"
+    )
+    runner = _FakeRunner(raw)
+    intro = _make(tmp_path, runner)
+
+    out = await intro.list_tasks("все")
+
+    assert "bob-1av" in out
+    assert "Showing 50 issues" not in out
+    assert "--limit" not in out
+
+
+@pytest.mark.asyncio
+async def test_denoise_keeps_real_content_only(tmp_path: Path) -> None:
+    # A pure-content body with no tip tail is returned unchanged (no over-stripping).
+    runner = _FakeRunner("○ bob-1av real task\n○ bob-2bc another task")
+    intro = _make(tmp_path, runner)
+
+    out = await intro.list_tasks("все")
+
+    assert out == "○ bob-1av real task\n○ bob-2bc another task"
 
 
 # --- output truncation + sanitization -----------------------------------------
