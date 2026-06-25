@@ -49,7 +49,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol
 
 from aiogram.exceptions import AiogramError
-from aiogram.types import InputRichMessage, ReactionTypeEmoji
+from aiogram.types import BufferedInputFile, InputRichMessage, ReactionTypeEmoji
 
 from bob.application.runtime.events import MessageReceived
 from bob.infrastructure.telegram.rich import (
@@ -85,6 +85,10 @@ PLAIN_TEXT_LIMIT = 4096
 
 # The chat action Bob shows while assembling a reply ("Bob is typing…").
 _TYPING_ACTION = "typing"
+
+# The filename a rendered diagram PNG is sent under (BOB-035); Telegram only needs a
+# stable name with the right extension for the inline-image preview.
+_DIAGRAM_FILENAME = "diagram.png"
 
 # The brief textual acknowledgement Bob sends when a native reaction is rejected
 # (best-effort fallback) — a short "noted" so a react-only turn still lands a sign
@@ -203,6 +207,15 @@ class BotLike(Protocol):
         *,
         chat_id: int,
         rich_message: InputRichMessage,
+        message_thread_id: int | None = None,
+    ) -> MessageLike: ...
+
+    async def send_photo(
+        self,
+        *,
+        chat_id: int,
+        photo: BufferedInputFile,
+        caption: str | None = None,
         message_thread_id: int | None = None,
     ) -> MessageLike: ...
 
@@ -569,6 +582,30 @@ class TelegramGateway:
                 "reaction failed; falling back to a brief ack: %s", exc
             )
             await self._send_plain(chat_id, _REACTION_FALLBACK_ACK)
+
+    # --- Photo (render_diagram → PNG into the chat) ---------------------------
+
+    async def send_photo(
+        self, *, chat_id: int, photo: bytes, caption: str | None = None
+    ) -> None:
+        """Send ``photo`` (PNG bytes) as a Telegram photo, pinned to Bob's thread (BOB-035).
+
+        The transport half of the ``render_diagram`` skill: the rendered PNG is posted
+        as a native photo (tap-to-zoom) into ``chat_id`` / ``reply_thread_id`` with an
+        optional short ``caption``. The bytes are wrapped in an aiogram
+        ``BufferedInputFile`` so no temp file is needed at the transport boundary. On
+        any transport error the failure is logged and swallowed (the use-case already
+        treats the send as best-effort), so a failed photo can never break the turn.
+        """
+        try:
+            await self._bot.send_photo(
+                chat_id=chat_id,
+                photo=BufferedInputFile(photo, filename=_DIAGRAM_FILENAME),
+                caption=caption,
+                message_thread_id=self._reply_thread_id,
+            )
+        except (AiogramError, ValueError) as exc:
+            logger.warning("sending a diagram photo failed (ignored): %s", exc)
 
 
 def _reply_to_sender_id(message: MessageLike) -> int | None:

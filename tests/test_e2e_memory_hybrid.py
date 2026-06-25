@@ -223,6 +223,17 @@ class _FakeBot:
         self.rich_sent.append((chat_id, _rich_markdown(rich_message)))
         return _FakeMessage(message_id=999)
 
+    async def send_photo(
+        self,
+        *,
+        chat_id: int,
+        photo: object,
+        caption: str | None = None,
+        message_thread_id: int | None = None,
+    ) -> _FakeMessage:
+        # BOB-035: BotLike parity; this fake's tests never post a photo.
+        raise NotImplementedError  # pragma: no cover
+
     @property
     def final_text(self) -> str:
         if self.rich_sent:

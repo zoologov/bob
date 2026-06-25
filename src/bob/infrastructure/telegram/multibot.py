@@ -501,6 +501,13 @@ class _ReplyGateway:
     ) -> None:
         await self._gateway.reply(chat_id=chat_id, markdown=markdown, thinking=thinking)
 
+    async def send_photo(
+        self, *, chat_id: int, photo: bytes, caption: str | None = None
+    ) -> None:
+        # BOB-035: post a rendered diagram PNG into Bob's topic thread (the inner
+        # gateway pins ``message_thread_id``), so render_diagram's image lands in chat.
+        await self._gateway.send_photo(chat_id=chat_id, photo=photo, caption=caption)
+
 
 class _ReactorGateway:
     """Adapts a per-bot :class:`TelegramGateway` to the ``MessageReactor`` port (BOB-018).

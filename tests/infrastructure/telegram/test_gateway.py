@@ -127,6 +127,14 @@ class _RichCall:
 
 
 @dataclass
+class _PhotoCall:
+    chat_id: int
+    data: bytes
+    caption: str | None
+    message_thread_id: int | None
+
+
+@dataclass
 class _FakeBot:
     """Records send/typing/rich calls; can be scripted to fail the rich final."""
 
@@ -135,8 +143,10 @@ class _FakeBot:
     sends: list[_SendCall] = field(default_factory=list)
     typings: list[_TypingCall] = field(default_factory=list)
     rich_sends: list[_RichCall] = field(default_factory=list)
+    photo_sends: list[_PhotoCall] = field(default_factory=list)
     next_message_id: int = 500
     rich_send_raises: bool = False
+    photo_send_raises: bool = False
     typing_raises: bool = False
 
     async def get_me(self) -> _FakeUser:
@@ -203,6 +213,31 @@ class _FakeBot:
             )
         )
         msg = _FakeMessage(message_id=self.next_message_id, text=rich_message.markdown)
+        self.next_message_id += 1
+        return msg
+
+    async def send_photo(
+        self,
+        *,
+        chat_id: int,
+        photo: object,
+        caption: str | None = None,
+        message_thread_id: int | None = None,
+    ) -> _FakeMessage:
+        if self.photo_send_raises:
+            raise TelegramBadRequest(
+                method=SendMessage(chat_id=chat_id, text=""),
+                message="photo rejected",
+            )
+        self.photo_sends.append(
+            _PhotoCall(
+                chat_id=chat_id,
+                data=getattr(photo, "data", b""),
+                caption=caption,
+                message_thread_id=message_thread_id,
+            )
+        )
+        msg = _FakeMessage(message_id=self.next_message_id, text=caption)
         self.next_message_id += 1
         return msg
 
@@ -712,3 +747,32 @@ async def test_reply_empty_markdown_without_thinking_sends_nothing() -> None:
 
     assert bot.rich_sends == []
     assert bot.sends == []
+
+
+# --- BOB-035: send_photo (render_diagram PNG into the chat) --------------------
+
+
+@pytest.mark.asyncio
+async def test_send_photo_posts_the_png_pinned_to_the_thread() -> None:
+    bot = _FakeBot()
+    gateway = _make_gateway(bot, reply_thread_id=37)
+
+    await gateway.send_photo(chat_id=9, photo=b"PNGBYTES", caption="вот")
+
+    assert len(bot.photo_sends) == 1
+    call = bot.photo_sends[0]
+    assert call.chat_id == 9
+    assert call.data == b"PNGBYTES"
+    assert call.caption == "вот"
+    assert call.message_thread_id == 37
+
+
+@pytest.mark.asyncio
+async def test_send_photo_swallows_a_transport_error() -> None:
+    # A failed photo send is logged and swallowed — it never raises into the turn.
+    bot = _FakeBot(photo_send_raises=True)
+    gateway = _make_gateway(bot)
+
+    await gateway.send_photo(chat_id=9, photo=b"PNGBYTES", caption="вот")
+
+    assert bot.photo_sends == []

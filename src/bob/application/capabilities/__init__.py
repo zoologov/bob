@@ -20,12 +20,17 @@ from bob.application.capabilities.registry import (
     SafeCapabilityDispatcher,
     UnknownCapabilityError,
 )
+from bob.application.capabilities.render_diagram import (
+    CollectingDiagramSink,
+    make_render_diagram_capability,
+)
 from bob.application.capabilities.search_memory import make_search_memory_capability
 from bob.application.capabilities.tool_loop import ToolLoop
 
 __all__ = [
     "CapabilityNotAllowedError",
     "CapabilityRegistry",
+    "CollectingDiagramSink",
     "SafeCapabilityDispatcher",
     "ToolLoop",
     "UnknownCapabilityError",
@@ -33,5 +38,6 @@ __all__ = [
     "make_list_work_capability",
     "make_read_code_capability",
     "make_recall_memory_capability",
+    "make_render_diagram_capability",
     "make_search_memory_capability",
 ]

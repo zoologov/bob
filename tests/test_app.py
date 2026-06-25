@@ -86,6 +86,17 @@ class _Bot:
     ) -> _Msg:
         return _Msg()
 
+    async def send_photo(
+        self,
+        *,
+        chat_id: int,
+        photo: object,
+        caption: str | None = None,
+        message_thread_id: int | None = None,
+    ) -> _Msg:
+        # BOB-035: BotLike parity; this fake's tests never post a photo.
+        raise NotImplementedError  # pragma: no cover
+
 
 def _config(tmp_path: Path) -> dict[str, object]:
     return {

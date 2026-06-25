@@ -106,6 +106,17 @@ class _FakeBot:
     ) -> _FakeMessage:  # pragma: no cover - GuppiHandler sends plain only
         return _FakeMessage(message_id=0, text="")
 
+    async def send_photo(
+        self,
+        *,
+        chat_id: int,
+        photo: object,
+        caption: str | None = None,
+        message_thread_id: int | None = None,
+    ) -> _FakeMessage:
+        # BOB-035: BotLike parity; this fake's tests never post a photo.
+        raise NotImplementedError  # pragma: no cover
+
 
 @dataclass
 class _FakeAuthorizer:
