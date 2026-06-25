@@ -397,3 +397,4 @@
 {"id":"int-786827e0","kind":"field_change","created_at":"2026-06-25T10:35:51.345083Z","actor":"v.zoologov","issue_id":"bob-r88.1","extra":{"field":"status","new_value":"closed","old_value":"open","reason":"дубль: пересоздан как bob-r88.5 (shell-парс сломал первое создание)"}}
 {"id":"int-320c77d5","kind":"field_change","created_at":"2026-06-25T10:35:52.048185Z","actor":"v.zoologov","issue_id":"bob-r88.2","extra":{"field":"status","new_value":"closed","old_value":"open","reason":"дубль: пересоздан как bob-r88.6"}}
 {"id":"int-803a3870","kind":"field_change","created_at":"2026-06-25T10:36:38.024545Z","actor":"v.zoologov","issue_id":"bob-r88.3","extra":{"field":"status","new_value":"in_progress","old_value":"open"}}
+{"id":"int-db53c839","kind":"field_change","created_at":"2026-06-25T11:01:13.90293Z","actor":"v.zoologov","issue_id":"bob-r88.3","extra":{"field":"status","new_value":"closed","old_value":"in_progress","reason":"Closed"}}
