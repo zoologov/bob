@@ -49,7 +49,8 @@ Bob — **личный инструмент-компаньон, а не рыно
 - **🥉 Тир 3 «Боб-кодер» (BOB-017):** **T3.A «Боб знает свой мир» (read-only) — ✅ ОТГРУЖЕНО** (BOB-017
   Phase A: навыки `inspect_architecture`/`read_code`/`list_work` за capability-швом + `PrivacyGuard`;
   BOB-031 заземление навыков на реальные beadloom/bd; BOB-034 read-scope на roadmap/dev-docs/feature-доки).
-  **`render_diagram`** (mermaid→локальный PNG в Telegram, BOB-035) — ⏳ в работе. T3.B (гейтед Claude Code
+  **`render_diagram`** (mermaid→локальный PNG в Telegram, BOB-035) — ✅ ОТГРУЖЕНО (mmdc установлен,
+  рендерит вживую; интерактивный Mini App — будущая фаза). T3.B (гейтед Claude Code
   CLI в изоляции) / T3.C (живой стрим + self-proposed) — ⏳ не начаты. **Новое: T3.A⁺ «Архитектурный
   контекст»** — предложил сам Боб, прочитав карту через BOB-034 (см. блок T3 ниже).
 - **🏅 Тир 4 медиа/FLUX** — ⏳ не начат.
