@@ -302,6 +302,88 @@ async def test_safe_dispatcher_default_allowlist_refuses_introspection_caps(
             await dispatcher.dispatch(name, {"ref": "bob", "query": "bob"})
 
 
+# --- BOB-038: the code_rationale ("почему") skill rides the same seam ----------
+
+
+def test_code_rationale_advertised_when_introspection_enabled(tmp_path: Path) -> None:
+    # BOB-038: code_rationale is the fourth read-only introspection skill — advertised
+    # to the model (and described) when introspection is on, alongside the other three.
+    config = _config(tmp_path)
+    config["introspection"] = {"enabled": True}
+    app = build_application(
+        config=config,
+        providers=_providers(),
+        bob_bot=_Bot(),
+        guppi_bot=_Bot(),
+    )
+
+    names = _registered_names(app)
+    assert "code_rationale" in names
+    # Regression: BOB-038 ADDS a skill behind the seam, it removes none of the prior 3.
+    assert names >= _INTROSPECTION_CAPS
+    assert "code_rationale" in app.registry.describe()
+
+
+def test_code_rationale_absent_when_introspection_disabled(tmp_path: Path) -> None:
+    # BOB-038: with the seam off, code_rationale is not registered — same switch as
+    # the other introspection skills, no separate exposure.
+    config = _config(tmp_path)
+    config["introspection"] = {"enabled": False}
+    app = build_application(
+        config=config,
+        providers=_providers(),
+        bob_bot=_Bot(),
+        guppi_bot=_Bot(),
+    )
+
+    names = _registered_names(app)
+    assert "code_rationale" not in names
+    assert _INTROSPECTION_CAPS.isdisjoint(names)
+    # Regression: the memory capabilities are untouched by the switch.
+    assert {"recall_memory", "search_memory"} <= names
+
+
+def test_code_rationale_not_on_autonomous_safe_allowlist(tmp_path: Path) -> None:
+    # BOB-038 stage boundary: code_rationale is conversation-only — it is NEVER added
+    # to goals.safe_capabilities (the autonomous allowlist).
+    config = _config(tmp_path)
+    config["introspection"] = {"enabled": True}
+    app = build_application(
+        config=config,
+        providers=_providers(),
+        bob_bot=_Bot(),
+        guppi_bot=_Bot(),
+    )
+
+    goals = app.config.get("goals", {})
+    assert isinstance(goals, dict)
+    safe = goals.get("safe_capabilities", [])
+    assert isinstance(safe, list)
+    assert "code_rationale" not in safe
+
+
+async def test_safe_dispatcher_default_allowlist_refuses_code_rationale(
+    tmp_path: Path,
+) -> None:
+    # BOB-038 stage boundary, ENFORCED: a SafeCapabilityDispatcher over the live
+    # registry with the default/empty autonomous allowlist neither allows nor
+    # dispatches code_rationale — even though the conversation registry advertises it.
+    config = _config(tmp_path)
+    config["introspection"] = {"enabled": True}
+    app = build_application(
+        config=config,
+        providers=_providers(),
+        bob_bot=_Bot(),
+        guppi_bot=_Bot(),
+    )
+
+    assert "code_rationale" in _registered_names(app)
+    dispatcher = SafeCapabilityDispatcher(app.registry, allowlist=())
+    assert dispatcher.allows("code_rationale") is False
+    with pytest.raises(CapabilityNotAllowedError):
+        await dispatcher.dispatch("code_rationale", {"query": "src/bob/app.py"})
+
+
 def test_system_clock_returns_timezone_aware_now() -> None:
     # Act
     now = SystemClock().now()

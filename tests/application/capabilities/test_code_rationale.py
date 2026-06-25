@@ -197,6 +197,30 @@ async def test_execute_is_honest_when_history_itself_fails() -> None:
     assert "не зафиксирован" in str(result["rationale"]).lower()
 
 
+async def test_execute_is_resilient_to_a_failing_graph_source() -> None:
+    # The architecture (graph) source blows up; the skill must still return the bead
+    # trail (decision + docs) rather than crash the turn — the graph is just omitted.
+    class _ArchBoom(FakeRepoIntrospector):
+        async def architecture_context(self, ref: str) -> str:
+            self.architecture_calls.append(ref)
+            raise OSError("beadloom unavailable")
+
+    introspector = _ArchBoom(
+        history="abc123 [BOB-038] arch context",
+        tasks_by_query={"BOB-038": "BOB-038: решение про граф"},
+    )
+    cap = make_code_rationale_capability(introspector)
+
+    result = await cap.execute({"query": "src/bob/app.py"})
+
+    assert isinstance(result, Mapping)
+    rationale = str(result["rationale"])
+    assert "BOB-038" in rationale
+    assert "решение про граф" in rationale
+    # The graph source was attempted (and swallowed), no crash.
+    assert introspector.architecture_calls == ["src/bob/app.py"]
+
+
 async def test_execute_requires_a_string_query() -> None:
     cap = make_code_rationale_capability(FakeRepoIntrospector())
 
