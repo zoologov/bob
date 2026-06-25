@@ -5,12 +5,15 @@
 """Tests for ``code_rationale`` — the code↔decision "why" skill (BOB-038 .2).
 
 The orchestrating capability that ties a piece of code to the decisions behind it:
-``code_history`` → ``parse_bead_refs`` → per-key ``list_tasks`` (bd) + feature-doc
-reads (PRD/RFC/BRIEF) + ``architecture_context`` (graph), composed into one compact
-"почему". It is honest — an empty bead trail yields "история … не зафиксирована",
-never a fabricated rationale — and resilient: a missing doc or a failing source is
-skipped, not crashed. The bead-ref fan-out is bounded. It only ever reads
-feature-doc paths (privacy). Deterministic on a fake port — no subprocess, no disk.
+``code_history`` → ``parse_bead_refs`` → per-key bracketing commit line(s)
+(``commits_mentioning``) + feature-doc reads (PRD/RFC/BRIEF) +
+``architecture_context`` (graph), composed into one compact "почему". The tracker
+(``bd``) is deliberately NOT queried per key — a ``[BOB-NNN]`` human key cannot
+resolve to a ``bd show`` and the listing fallback would pollute the rationale with an
+unfiltered backlog dump. It is honest — an empty bead trail yields "история … не
+зафиксирована", never a fabricated rationale — and resilient: a missing doc or a
+failing source is skipped, not crashed. The bead-ref fan-out is bounded. It only ever
+reads feature-doc paths (privacy). Deterministic on a fake port — no subprocess.
 """
 
 from __future__ import annotations
@@ -45,9 +48,6 @@ def test_capability_advertises_the_code_rationale_contract() -> None:
 async def test_execute_links_code_to_bead_doc_and_graph() -> None:
     introspector = FakeRepoIntrospector(
         history="abc123 [BOB-037] Схемы: авто-рендер inline-mermaid",
-        tasks_by_query={
-            "BOB-037": "BOB-037: решено рендерить диаграммы локально через mmdc",
-        },
         files_by_path={
             f"{_FEATURE_DOCS_BASE}/BOB-037/PRD.md": "PRD: Боб умеет рисовать схемы",
         },
@@ -61,17 +61,18 @@ async def test_execute_links_code_to_bead_doc_and_graph() -> None:
     rationale = str(result["rationale"])
     # code → bead (US-1): the decision key is surfaced.
     assert "BOB-037" in rationale
-    # bead → decision (US-2): the tracker decision text is woven in.
-    assert "локально через mmdc" in rationale
+    # bead → commit (US-2): the bracketing commit subject is woven in (not bd).
+    assert "авто-рендер inline-mermaid" in rationale
     # bead → doc (US-2/3): the feature-doc "why" is woven in.
     assert "Боб умеет рисовать схемы" in rationale
     # code → graph (US-3): the structural picture is woven in.
     assert "infrastructure.diagrams" in rationale
+    # The tracker (bd) is never queried per key — the docs + commits are the "why".
+    assert introspector.task_calls == []
     # The orchestration delegated to the port with the original query.
     assert introspector.history_calls == [
         "src/bob/application/capabilities/render_diagram.py"
     ]
-    assert "BOB-037" in introspector.task_calls
     assert introspector.architecture_calls == [
         "src/bob/application/capabilities/render_diagram.py"
     ]
@@ -144,9 +145,11 @@ async def test_execute_bounds_the_bead_ref_fan_out() -> None:
 
     await cap.execute({"query": "src/bob/app.py"})
 
-    assert 0 < len(introspector.task_calls) <= 5
-    # Each key reads at most 3 docs (PRD/RFC/BRIEF), so reads stay bounded too.
-    assert len(introspector.read_calls) <= 5 * 3
+    # The fan-out is capped to the top-5 keys; each reads at most 3 docs
+    # (PRD/RFC/BRIEF), so reads stay bounded too — never 50 keys x 3.
+    assert 0 < len(introspector.read_calls) <= 5 * 3
+    # The tracker is still never consulted, no matter how long the history.
+    assert introspector.task_calls == []
 
 
 async def test_execute_only_reads_feature_doc_paths() -> None:
@@ -166,10 +169,11 @@ async def test_execute_only_reads_feature_doc_paths() -> None:
 
 
 async def test_execute_truncates_long_sources_for_a_compact_answer() -> None:
-    # A very long tracker entry must be trimmed (ellipsis) so the model is not flooded.
+    # A very long feature-doc "why" must be trimmed (ellipsis) so the model is not
+    # flooded — each per-source render carries a compact char budget.
     introspector = FakeRepoIntrospector(
         history="abc123 [BOB-038] arch context",
-        tasks_by_query={"BOB-038": "X" * 5000},
+        files_by_path={f"{_FEATURE_DOCS_BASE}/BOB-038/PRD.md": "X" * 5000},
     )
     cap = make_code_rationale_capability(introspector)
 
@@ -206,8 +210,8 @@ async def test_execute_is_resilient_to_a_failing_graph_source() -> None:
             raise OSError("beadloom unavailable")
 
     introspector = _ArchBoom(
-        history="abc123 [BOB-038] arch context",
-        tasks_by_query={"BOB-038": "BOB-038: решение про граф"},
+        history="abc123 [BOB-038] решение про граф",
+        files_by_path={f"{_FEATURE_DOCS_BASE}/BOB-038/PRD.md": "PRD: граф решений"},
     )
     cap = make_code_rationale_capability(introspector)
 
@@ -216,7 +220,9 @@ async def test_execute_is_resilient_to_a_failing_graph_source() -> None:
     assert isinstance(result, Mapping)
     rationale = str(result["rationale"])
     assert "BOB-038" in rationale
+    # The bead trail (commit subject + feature doc) survives a dead graph source.
     assert "решение про граф" in rationale
+    assert "граф решений" in rationale
     # The graph source was attempted (and swallowed), no crash.
     assert introspector.architecture_calls == ["src/bob/app.py"]
 

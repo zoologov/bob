@@ -61,11 +61,15 @@ _DENIED_PATHS = (
 
 
 class _RecordingRunner:
-    """A faked subprocess boundary: records every argv, returns canned per-binary text.
+    """A faked subprocess boundary: records every argv, returns canned text — ARGV-AWARE.
 
-    Keys the canned stdout on the binary (``argv[0]``) so a ``git log`` returns the
-    commit trail, ``bd`` the tracker text, and ``beadloom`` the graph — exactly the
-    three sources the skill weaves together.
+    The canned stdout is keyed on the most specific match first: a
+    ``"<binary> <subcommand>"`` key (e.g. ``"bd list"`` vs ``"bd show"``) wins over a
+    bare ``"<binary>"`` key (e.g. ``"git"`` / ``"beadloom"``). This distinction is
+    load-bearing for the regression guard: a fake keyed only on the binary cannot tell
+    an UNFILTERED ``bd list`` backlog dump apart from a targeted ``bd show <id>``, which
+    is exactly how the original pollution bug slipped past the suite. Keying on argv
+    lets a test inject a distinct ``bd list`` backlog and assert it never leaks.
     """
 
     def __init__(self, by_binary: dict[str, str]) -> None:
@@ -74,6 +78,10 @@ class _RecordingRunner:
 
     async def __call__(self, argv: list[str], *, timeout: float) -> str:  # noqa: ARG002
         self.calls.append(list(argv))
+        if len(argv) >= 2:
+            specific = self._by_binary.get(f"{argv[0]} {argv[1]}")
+            if specific is not None:
+                return specific
         return self._by_binary.get(argv[0], "")
 
 
@@ -185,6 +193,48 @@ async def test_rationale_only_issues_readonly_allowlisted_argv(
         # The dynamic path slot stays inside the repo (after the ``--`` separator).
         assert git_argv[-2] == "--"
         assert not git_argv[-1].startswith("-")
+
+
+# --- regression: an unfiltered ``bd list`` backlog must NEVER pollute the rationale --
+
+
+async def test_rationale_does_not_inject_an_unfiltered_bd_list_backlog(
+    tmp_path: Path,
+) -> None:
+    # Regression for BOB-038 review .4: a ``[BOB-025]`` human key is NOT a bd hash-id,
+    # so the old per-key ``list_tasks(key)`` fell through to an UNFILTERED ``bd list``
+    # and injected that key-agnostic backlog dump under every header (up to 5x). The
+    # fix drops the tracker source from this path — the feature doc is the "why".
+    _write_feature_doc(
+        tmp_path, "BOB-025", "PRD.md", "PRD: адресность через conversational floor"
+    )
+    # A distinct backlog blob the argv-aware fake returns ONLY for ``bd list`` — its
+    # presence in the rationale would prove the pollution regressed.
+    backlog = "BACKLOG-DUMP bob-aaa open / bob-bbb open / bob-ccc closed (unrelated)"
+    runner = _RecordingRunner(
+        {
+            "git": "abc123 [BOB-025] адресность через floor\ndef456 chore: tidy",
+            "bd list": backlog,
+            "bd show": "bob-xyz show output",
+            "beadloom": "domain bob → application.addressing",
+        }
+    )
+    introspector = _make_introspector(tmp_path, runner)
+    cap = make_code_rationale_capability(introspector)
+
+    result = await cap.execute({"query": "src/bob/application/conversation.py"})
+
+    assert isinstance(result, Mapping)
+    rationale = str(result["rationale"])
+    # The key + the feature-doc "why" are present (the clean rationale) ...
+    assert "BOB-025" in rationale
+    assert "conversational floor" in rationale
+    # ... and the unfiltered backlog dump is NOT — the regression guard.
+    assert "BACKLOG-DUMP" not in rationale
+    assert backlog not in rationale
+    # Strongest form: the skill never queries the tracker per key at all (no bd call),
+    # so the pollution source cannot be reached.
+    assert all(argv[0] != "bd" for argv in runner.calls)
 
 
 # --- US-4: honest "not recorded" through the real introspector -----------------

@@ -13,7 +13,11 @@ from __future__ import annotations
 
 import pytest
 
-from bob.domain.introspection.code_history import feature_doc_dir, parse_bead_refs
+from bob.domain.introspection.code_history import (
+    commits_mentioning,
+    feature_doc_dir,
+    parse_bead_refs,
+)
 
 # --- parse_bead_refs ----------------------------------------------------------
 
@@ -86,3 +90,39 @@ def test_feature_doc_dir_strips_surrounding_whitespace() -> None:
 def test_feature_doc_dir_rejects_a_bad_key(bad: str) -> None:
     with pytest.raises(ValueError, match="bead key"):
         feature_doc_dir(bad)
+
+
+# --- commits_mentioning -------------------------------------------------------
+
+
+def test_commits_mentioning_returns_only_lines_bracketing_the_key() -> None:
+    text = (
+        "29ceac1 [BOB-037] Схемы: авто-рендер (#44)\n"
+        "a8a5231 [BOB-036] Фраза-тик (#43)\n"
+        "20d4fc2 [BOB-037] follow-up to render (#45)\n"
+    )
+    assert commits_mentioning("BOB-037", text) == [
+        "29ceac1 [BOB-037] Схемы: авто-рендер (#44)",
+        "20d4fc2 [BOB-037] follow-up to render (#45)",
+    ]
+
+
+def test_commits_mentioning_matches_key_case_insensitively() -> None:
+    text = "aaa [bob-034] read-scope\nbbb [BOB-035] other\n"
+    assert commits_mentioning("BOB-034", text) == ["aaa [bob-034] read-scope"]
+
+
+def test_commits_mentioning_does_not_match_a_different_numbered_key() -> None:
+    # ``[BOB-3]`` must not be matched when asked for ``BOB-37`` (and vice-versa).
+    text = "aaa [BOB-3] tiny\nbbb [BOB-37] big\n"
+    assert commits_mentioning("BOB-3", text) == ["aaa [BOB-3] tiny"]
+
+
+def test_commits_mentioning_returns_empty_for_a_non_feature_key() -> None:
+    text = "aaa [BOB-037] x\n"
+    assert commits_mentioning("bob-4be.1", text) == []
+    assert commits_mentioning("", text) == []
+
+
+def test_commits_mentioning_returns_empty_on_no_match() -> None:
+    assert commits_mentioning("BOB-099", "aaa [BOB-037] x\n") == []

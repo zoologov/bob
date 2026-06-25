@@ -12,6 +12,8 @@ uses to turn raw ``git log`` text into the "why" trail:
 * :func:`parse_bead_refs` lifts the ``[BOB-XXX]`` bead keys out of commit-message
   lines (de-duplicated, first-seen order preserved) — the decisions a piece of
   code traces back to.
+* :func:`commits_mentioning` filters that same ``git log`` text down to the lines
+  that bracket ONE such key — the concrete commit trail behind that decision.
 * :func:`feature_doc_dir` maps one such bead key to its feature-doc directory
   (``.claude/development/docs/features/{KEY}``) so the skill can read the PRD/RFC
   that explains the decision.
@@ -49,6 +51,28 @@ def parse_bead_refs(git_log_text: str) -> list[str]:
         key = f"BOB-{match.group(1)}"
         seen.setdefault(key, None)
     return list(seen)
+
+
+def commits_mentioning(bead_key: str, git_log_text: str) -> list[str]:
+    """Return the ``git_log_text`` lines whose subject brackets ``bead_key``.
+
+    Filters the raw history to the commit lines carrying the ``[BOB-<n>]`` decision
+    key (matched case-insensitively, exactly — ``BOB-3`` never matches ``BOB-37``),
+    in first-seen order, each stripped of surrounding whitespace. A key that is not a
+    strict feature bead key (a node-id like ``bob-4be.1``, or empty) yields an empty
+    list, as does a history with no such line — the caller then renders nothing for
+    that key rather than guessing. Pure: no subprocess, no disk.
+    """
+    token = bead_key.strip()
+    if not _FEATURE_KEY_RE.match(token):
+        return []
+    number = token.upper().removeprefix("BOB-")
+    pattern = re.compile(rf"\[BOB-{number}\]", re.IGNORECASE)
+    return [
+        line.strip()
+        for line in git_log_text.splitlines()
+        if pattern.search(line)
+    ]
 
 
 def feature_doc_dir(bead_key: str) -> str:

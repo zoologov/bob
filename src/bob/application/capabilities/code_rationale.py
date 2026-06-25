@@ -12,19 +12,25 @@ decision trail of a path / area / topic and composes a compact rationale:
 1. :meth:`RepoIntrospector.code_history` → :func:`parse_bead_refs` lifts the
    ``[BOB-XXX]`` decision keys the code traces back to (de-duplicated, capped to the
    top-N most recent so the model's context is never flooded);
-2. for each key, :meth:`RepoIntrospector.list_tasks` (``bd show`` — the decision +
-   its comments) AND a read of the feature-doc "why" files
-   (:func:`feature_doc_dir` + ``/PRD.md`` / ``/RFC.md`` / ``/BRIEF.md``) — a missing
-   doc is simply skipped;
+2. for each key, the commit line(s) bracketing it (:func:`commits_mentioning`, sliced
+   out of the SAME history) AND a read of the feature-doc "why" files
+   (:func:`feature_doc_dir` + ``/PRD.md`` / ``/RFC.md`` / ``/BRIEF.md``) — the feature
+   docs ARE the decision/"why"; a missing doc is simply skipped;
 3. :meth:`RepoIntrospector.architecture_context` gives the structural picture.
+
+The per-key tracker source (``bd``) is deliberately NOT consulted here: a
+``[BOB-NNN]`` is a HUMAN epic key from a commit subject, not a ``bd`` hash-id, so a
+``bd show`` cannot resolve it and the listing fallback would inject an unfiltered,
+key-agnostic backlog dump under every key — pollution, not a rationale. The feature
+docs + the bracketed commit line(s) + the graph are the honest, clean "why".
 
 These are woven into ONE compact answer. It is honest (US-4): when the history
 carries no decision key it returns "история … не зафиксирована" rather than
 fabricating a rationale. It is resilient — any single source failing (a doc not
-present, the tracker erroring, git returning nothing) degrades gracefully, never
-crashes the turn. Privacy lives INSIDE the .1 port: this policy only ever requests
-feature-doc paths, so SOUL / ``bob.db`` / ``.env`` / config are never reached. It is
-``permission="safe"`` and conversation-only (never on the autonomous allowlist).
+present, git returning nothing) degrades gracefully, never crashes the turn. Privacy
+lives INSIDE the .1 port: this policy only ever requests feature-doc paths, so SOUL
+/ ``bob.db`` / ``.env`` / config are never reached. It is ``permission="safe"`` and
+conversation-only (never on the autonomous allowlist).
 
 Construct it with :func:`make_code_rationale_capability`, passing the introspector
 port (modelled on :mod:`bob.application.capabilities.inspect_architecture`).
@@ -34,7 +40,11 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from bob.domain.introspection.code_history import feature_doc_dir, parse_bead_refs
+from bob.domain.introspection.code_history import (
+    commits_mentioning,
+    feature_doc_dir,
+    parse_bead_refs,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -67,10 +77,14 @@ _WHY_DOCS = ("PRD.md", "RFC.md", "BRIEF.md")
 _MAX_BEAD_REFS = 5
 
 # Per-source render budgets — keep the composed rationale compact for the model.
-_TASK_MAX_CHARS = 600
+_COMMITS_MAX_CHARS = 600
 _DOC_MAX_CHARS = 500
 _ARCH_MAX_CHARS = 600
 _DOC_MAX_LINES = 60
+
+# Cap the commit lines rendered per key so a key referenced by a long history does not
+# itself flood the section (the most-recent-first slice keeps the relevant ones).
+_MAX_COMMIT_LINES = 5
 
 # Persona-facing section markers of the composed "почему".
 _HEADER = "Почему этот код такой — след решений:"
@@ -121,18 +135,24 @@ class _CodeRationaleCapability:
 
         sections = [_HEADER]
         for key in keys:
-            sections.append(await self._key_section(key))
+            sections.append(await self._key_section(key, history))
         arch = await self._safe_architecture(query)
         if arch:
             sections.append(f"{_ARCH_LABEL}\n{_truncate(arch, _ARCH_MAX_CHARS)}")
         return {"rationale": "\n\n".join(sections)}
 
-    async def _key_section(self, key: str) -> str:
-        """Render one decision key: its tracker entry + present feature docs."""
+    async def _key_section(self, key: str, history: str) -> str:
+        """Render one decision key: its bracketing commit line(s) + feature docs.
+
+        The "why" is the bead's feature docs (PRD/RFC/BRIEF) plus the commit subjects
+        that reference the key — both already privacy-safe. The tracker (``bd``) is
+        intentionally not queried: a ``[BOB-NNN]`` human key cannot resolve to a
+        ``bd show`` and the listing fallback would inject an unfiltered backlog dump.
+        """
         lines = [f"[{key}]"]
-        tasks = await self._safe_tasks(key)
-        if tasks:
-            lines.append(_truncate(tasks, _TASK_MAX_CHARS))
+        commits = commits_mentioning(key, history)[:_MAX_COMMIT_LINES]
+        if commits:
+            lines.append(_truncate("\n".join(commits), _COMMITS_MAX_CHARS))
         docs = await self._read_why_docs(key)
         if docs:
             lines.append(_DOCS_LABEL)
@@ -152,12 +172,6 @@ class _CodeRationaleCapability:
     async def _safe_history(self, query: str) -> str:
         try:
             return await self._introspector.code_history(query)
-        except Exception:
-            return ""
-
-    async def _safe_tasks(self, key: str) -> str:
-        try:
-            return (await self._introspector.list_tasks(key)).strip()
         except Exception:
             return ""
 
