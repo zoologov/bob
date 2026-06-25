@@ -146,6 +146,17 @@ class _CapturingGateway:
         raise NotImplementedError  # pragma: no cover
 
 
+    async def send_document(
+        self,
+        *,
+        chat_id: int,
+        document: object,
+        caption: str | None = None,
+        message_thread_id: int | None = None,
+    ) -> None:
+        # BOB-037: BotLike parity; this fake's tests never post a document.
+        raise NotImplementedError  # pragma: no cover
+
 class _SafeCapability:
     """A trivial safe capability that records its dispatched args."""
 

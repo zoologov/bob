@@ -80,6 +80,7 @@ from bob.application.usecases.fascination_sources import (
 )
 from bob.application.usecases.first_impression_sources import FirstImpressionTracker
 from bob.application.usecases.handle_message import (
+    DiagramSendMode,
     EngagementState,
     HandleMessage,
     PersonalityState,
@@ -264,6 +265,14 @@ _DEFAULT_INTROSPECTION_READ_MAX_LINES = 200
 # config default. Only consulted when the render_diagram skill is enabled.
 _DEFAULT_DIAGRAM_TIMEOUT_S = 30
 
+# Default diagram render-quality + send-mode (BOB-037); mirror the
+# ``diagrams.{scale, background, send_as}`` config defaults. ``scale`` is mmdc's
+# deviceScaleFactor (3x → crisp), ``background`` keeps a diagram readable on a dark
+# theme, and ``send_as`` defaults to ``document`` (uncompressed, full-resolution).
+_DEFAULT_DIAGRAM_SCALE = 3
+_DEFAULT_DIAGRAM_BACKGROUND = "white"
+_DEFAULT_DIAGRAM_SEND_AS = "document"
+
 
 class SystemClock:
     """Real time source (UTC). Injected so the domain avoids ``datetime.now()``."""
@@ -394,7 +403,7 @@ def build_application(
     # may call either, GUPPI executes it, the result loops back into the reply. The
     # tier-1 reply provider is the tool-calling provider; when it cannot do tools the
     # loop stays dormant and HandleMessage keeps the plain reply path.
-    registry, diagram_sink = _build_registry(merged, recall=recall)
+    registry, diagram_sink, diagram_renderer = _build_registry(merged, recall=recall)
     tool_provider = _as_tool_provider(tier_providers)
 
     genesis = RunGenesis(
@@ -643,6 +652,13 @@ def build_application(
         # rendered PNG here, the reply path drains it and posts the photo into the
         # turn's chat (chat_id stays per-turn). Unwired (diagrams disabled) → no-op.
         diagram_sink=diagram_sink,
+        # Inline-mermaid auto-render (BOB-037 A — the reliability fix): the SAME local
+        # renderer also renders any fenced ```mermaid block the model wrote into its
+        # TEXT reply (it unreliably calls the tool), and ``diagrams.send_as`` picks the
+        # send mode — ``document`` (uncompressed, full-resolution; the default) vs
+        # ``photo``. Unwired (diagrams disabled) → the auto-render is inert.
+        diagram_renderer=diagram_renderer,
+        diagram_send_as=_diagram_send_as(merged),
     )
     event_bus.subscribe(MESSAGE_RECEIVED, _as_handler(handle_message))
 
@@ -1530,7 +1546,7 @@ def _build_authorizer(
 
 def _build_registry(
     config: Mapping[str, object], *, recall: HybridMemoryRecall
-) -> tuple[CapabilityRegistry, CollectingDiagramSink]:
+) -> tuple[CapabilityRegistry, CollectingDiagramSink, SubprocessMmdcRenderer | None]:
     """Build the capability registry GUPPI advertises and dispatches + the diagram sink.
 
     Always registers the two memory capabilities over the live hybrid
@@ -1548,7 +1564,9 @@ def _build_registry(
     ``goals.safe_capabilities``). Disabled → the registry holds exactly the memory
     capabilities, behaviour as before. New skills register here without touching
     consumers. The shared sink is returned so the composition root wires the SAME
-    instance into :class:`HandleMessage`.
+    instance into :class:`HandleMessage`; the diagram renderer is returned too so the
+    SAME renderer also backs the inline-mermaid auto-render (BOB-037 A), or ``None``
+    when diagrams are disabled.
     """
     registry = CapabilityRegistry()
     diagram_sink = CollectingDiagramSink()
@@ -1564,11 +1582,13 @@ def _build_registry(
         registry.register(make_inspect_architecture_capability(introspector))
         registry.register(make_read_code_capability(introspector, read_max_lines=read_max_lines))
         registry.register(make_list_work_capability(introspector))
+    diagram_renderer: SubprocessMmdcRenderer | None = None
     if _flag(_section(config, "diagrams"), "enabled"):
+        diagram_renderer = _build_diagram_renderer(config)
         registry.register(
-            make_render_diagram_capability(_build_diagram_renderer(config), diagram_sink)
+            make_render_diagram_capability(diagram_renderer, diagram_sink)
         )
-    return registry, diagram_sink
+    return registry, diagram_sink, diagram_renderer
 
 
 def _build_diagram_renderer(config: Mapping[str, object]) -> SubprocessMmdcRenderer:
@@ -1577,13 +1597,28 @@ def _build_diagram_renderer(config: Mapping[str, object]) -> SubprocessMmdcRende
     Renders Mermaid to a PNG by running the local mermaid-cli (``mmdc``) via
     ``create_subprocess_exec`` (never a shell) — no network, the diagram source never
     leaves the machine. The binary name + per-render timeout are config-tunable via
-    ``diagrams.{mmdc_bin, timeout}``.
+    ``diagrams.{mmdc_bin, timeout}``; the BOB-037 high-quality flags — the
+    deviceScaleFactor (``diagrams.scale``) and page background (``diagrams.background``,
+    ``white`` for readability on a dark theme) — keep dense diagrams legible.
     """
     section = _section(config, "diagrams")
     return SubprocessMmdcRenderer(
         mmdc_bin=_str(section, "mmdc_bin", "mmdc"),
         timeout=float(_int(section, "timeout", _DEFAULT_DIAGRAM_TIMEOUT_S)),
+        scale=_int(section, "scale", _DEFAULT_DIAGRAM_SCALE),
+        background=_str(section, "background", _DEFAULT_DIAGRAM_BACKGROUND),
     )
+
+
+def _diagram_send_as(config: Mapping[str, object]) -> DiagramSendMode:
+    """Resolve the diagram send mode from ``diagrams.send_as`` (BOB-037 C).
+
+    ``document`` (the default) sends the PNG UNCOMPRESSED at full resolution; ``photo``
+    sends the recompressed inline-preview photo. Any other value falls back to the
+    ``document`` default, so a typo can never crash the boot.
+    """
+    raw = _str(_section(config, "diagrams"), "send_as", _DEFAULT_DIAGRAM_SEND_AS)
+    return "photo" if raw == "photo" else "document"
 
 
 def _build_introspection_enabled(config: Mapping[str, object]) -> bool:
@@ -2035,6 +2070,24 @@ class _AiogramBotAdapter:
         return await self._bot.send_photo(  # type: ignore[attr-defined,no-any-return]
             chat_id=chat_id,
             photo=photo,
+            caption=caption,
+            message_thread_id=message_thread_id,
+        )
+
+    async def send_document(
+        self,
+        *,
+        chat_id: int,
+        document: BufferedInputFile,
+        caption: str | None = None,
+        message_thread_id: int | None = None,
+    ) -> MessageLike:
+        # BOB-037: post a rendered diagram as an UNCOMPRESSED document (already wrapped
+        # as a BufferedInputFile by the gateway) so Telegram does not recompress it —
+        # full resolution, pinned to the bot's thread.
+        return await self._bot.send_document(  # type: ignore[attr-defined,no-any-return]
+            chat_id=chat_id,
+            document=document,
             caption=caption,
             message_thread_id=message_thread_id,
         )

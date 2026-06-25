@@ -508,6 +508,15 @@ class _ReplyGateway:
         # gateway pins ``message_thread_id``), so render_diagram's image lands in chat.
         await self._gateway.send_photo(chat_id=chat_id, photo=photo, caption=caption)
 
+    async def send_document(
+        self, *, chat_id: int, document: bytes, caption: str | None = None
+    ) -> None:
+        # BOB-037: post a rendered diagram as an UNCOMPRESSED file into Bob's topic
+        # thread (no Telegram recompression — full-resolution, tap → real pixels).
+        await self._gateway.send_document(
+            chat_id=chat_id, document=document, caption=caption
+        )
+
 
 class _ReactorGateway:
     """Adapts a per-bot :class:`TelegramGateway` to the ``MessageReactor`` port (BOB-018).

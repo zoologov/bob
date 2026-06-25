@@ -48,6 +48,14 @@ logger = logging.getLogger(__name__)
 # ``diagrams.timeout``.
 _DEFAULT_TIMEOUT_S = 30.0
 
+# High-quality render defaults (BOB-037 B). ``-s`` is mermaid-cli's deviceScaleFactor
+# — a 3x raster keeps dense diagrams crisp (tap → real pixels) instead of the blurry
+# 1x default; ``-b`` is the page background — ``white`` so a diagram is readable on
+# Telegram's dark theme (a transparent default goes invisible). Both are config-tunable
+# via ``diagrams.scale`` / ``diagrams.background``.
+_DEFAULT_SCALE = 3
+_DEFAULT_BACKGROUND = "white"
+
 # The mermaid source / output filenames inside the isolated temp dir.
 _INPUT_NAME = "in.mmd"
 _OUTPUT_NAME = "out.png"
@@ -73,12 +81,18 @@ class SubprocessMmdcRenderer:
         runner: _MmdcRunner | None = None,
         mmdc_bin: str = "mmdc",
         timeout: float = _DEFAULT_TIMEOUT_S,
+        scale: int = _DEFAULT_SCALE,
+        background: str = _DEFAULT_BACKGROUND,
     ) -> None:
         if timeout <= 0:
             raise ValueError("timeout must be > 0")
+        if scale <= 0:
+            raise ValueError("scale must be > 0")
         self._runner: _MmdcRunner = runner or _ExecRunner()
         self._mmdc_bin = mmdc_bin
         self._timeout = timeout
+        self._scale = scale
+        self._background = background
 
     async def render(self, mermaid_source: str) -> bytes:
         """Render ``mermaid_source`` to PNG bytes (raises :class:`DiagramRenderError`)."""
@@ -95,7 +109,17 @@ class SubprocessMmdcRenderer:
         input_path = workdir / _INPUT_NAME
         output_path = workdir / _OUTPUT_NAME
         input_path.write_text(mermaid_source, encoding="utf-8")
-        argv = [self._mmdc_bin, "-i", str(input_path), "-o", str(output_path)]
+        argv = [
+            self._mmdc_bin,
+            "-i",
+            str(input_path),
+            "-o",
+            str(output_path),
+            "-s",
+            str(self._scale),
+            "-b",
+            self._background,
+        ]
         returncode = await self._run(argv)
         if returncode != 0:
             raise DiagramRenderError(

@@ -93,6 +93,17 @@ class _FakeBot:
         # BOB-035: BotLike parity; this fake's tests never post a photo.
         raise NotImplementedError  # pragma: no cover
 
+    async def send_document(
+        self,
+        *,
+        chat_id: int,
+        document: object,
+        caption: str | None = None,
+        message_thread_id: int | None = None,
+    ) -> MessageLike:
+        # BOB-037: BotLike parity; this fake's tests never post a document.
+        raise NotImplementedError  # pragma: no cover
+
     async def set_message_reaction(
         self,
         *,

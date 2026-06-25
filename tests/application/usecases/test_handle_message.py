@@ -31,6 +31,7 @@ from bob.application.router.llm_router import LLMRouter
 from bob.application.runtime.events import MessageReceived
 from bob.application.usecases.extract_facts import ExtractFacts
 from bob.application.usecases.handle_message import (
+    DiagramSendMode,
     EngagementState,
     HandleMessage,
     OwnerActivityRecorder,
@@ -166,6 +167,7 @@ class FakeBot:
     def __init__(self, *, photo_raises: bool = False) -> None:
         self.sent: list[tuple[int, str]] = []
         self.photos: list[tuple[int, bytes, str | None]] = []
+        self.documents: list[tuple[int, bytes, str | None]] = []
         self.typings: int = 0
         self._photo_raises = photo_raises
 
@@ -222,6 +224,20 @@ class FakeBot:
             raise RuntimeError("transport blew up")
         self.photos.append((chat_id, photo.data, caption))
         return FakeMessage(message_id=778)
+
+    async def send_document(
+        self,
+        *,
+        chat_id: int,
+        document: BufferedInputFile,
+        caption: str | None = None,
+        message_thread_id: int | None = None,  # noqa: ARG002
+    ) -> FakeMessage:
+        # BOB-037: the document-send seam — records each diagram file posted to chat.
+        if self._photo_raises:
+            raise RuntimeError("transport blew up")
+        self.documents.append((chat_id, document.data, caption))
+        return FakeMessage(message_id=779)
 
     @property
     def final_text(self) -> str:
@@ -462,6 +478,8 @@ def _build(
     self_improvement: _FakeSelfImprovement | None = None,
     self_improvement_max_magnitude: float = 0.3,
     diagram_sink: DiagramSink | None = None,
+    diagram_renderer: object | None = None,
+    diagram_send_as: DiagramSendMode = "photo",
     photo_send_raises: bool = False,
 ) -> tuple[HandleMessage, FakeBot, FakeRepo, CapturingProvider]:
     tier0 = CapturingProvider(reply="positive", replies=tier0_replies)
@@ -516,6 +534,8 @@ def _build(
         self_improvement=self_improvement,
         self_improvement_max_magnitude=self_improvement_max_magnitude,
         diagram_sink=diagram_sink,
+        diagram_renderer=diagram_renderer,  # type: ignore[arg-type]
+        diagram_send_as=diagram_send_as,
     )
     return handler, bot, repo, tier1
 
@@ -1123,6 +1143,211 @@ async def test_render_diagram_photo_send_failure_never_breaks_the_turn() -> None
     # The photo send blew up but was swallowed — no photo recorded, reply still landed.
     assert bot.photos == []
     assert bot.final_text
+
+
+# --- BOB-037: auto-render inline mermaid + send-as-document ---------------------
+
+
+class _RecordingRenderer:
+    """A DiagramRenderer that records every source it rendered (no real mmdc)."""
+
+    def __init__(self, *, png: bytes = b"INLINE-PNG") -> None:
+        self.sources: list[str] = []
+        self._png = png
+
+    async def render(self, mermaid_source: str) -> bytes:
+        self.sources.append(mermaid_source)
+        return self._png
+
+
+class _FailingInlineRenderer:
+    """A DiagramRenderer that always raises (mmdc absent) — drives the graceful path."""
+
+    async def render(self, mermaid_source: str) -> bytes:  # noqa: ARG002
+        raise DiagramRenderError("mmdc not installed")
+
+
+_INLINE_REPLY = "Вот схема:\n```mermaid\ngraph TD; A-->B\n```\nГотово."
+
+
+async def test_inline_mermaid_in_reply_is_rendered_and_sent_as_a_photo() -> None:
+    # BOB-037 A (the reliability fix): the model wrote the mermaid as a fenced block in
+    # its TEXT reply (it did NOT call the tool) — the reply path renders it and sends it.
+    sink = CollectingDiagramSink()
+    handler, bot, _repo, _tier1 = _build(
+        reply=_INLINE_REPLY,
+        diagram_sink=sink,
+        diagram_renderer=_RecordingRenderer(),
+        diagram_send_as="photo",
+    )
+
+    await handler.handle(_message())
+
+    assert len(bot.photos) == 1
+    _chat_id, photo, _caption = bot.photos[0]
+    assert photo == b"INLINE-PNG"
+
+
+async def test_inline_mermaid_block_is_stripped_from_the_visible_reply() -> None:
+    # BOB-037 A: the rendered image REPLACES the fence — the fenced block is removed
+    # from the visible reply text while the surrounding prose stays.
+    sink = CollectingDiagramSink()
+    handler, bot, _repo, _tier1 = _build(
+        reply=_INLINE_REPLY,
+        diagram_sink=sink,
+        diagram_renderer=_RecordingRenderer(),
+    )
+
+    await handler.handle(_message())
+
+    assert "```mermaid" not in bot.final_text
+    assert "graph TD" not in bot.final_text
+    assert "Вот схема:" in bot.final_text
+    assert "Готово." in bot.final_text
+
+
+async def test_multiple_inline_mermaid_blocks_become_multiple_images() -> None:
+    # BOB-037 A: two fenced blocks → two rendered images.
+    reply = (
+        "Раз:\n```mermaid\ngraph TD; A-->B\n```\n"
+        "Два:\n``` mermaid\ngraph LR; X-->Y\n```\nВсё."
+    )
+    sink = CollectingDiagramSink()
+    renderer = _RecordingRenderer()
+    handler, bot, _repo, _tier1 = _build(
+        reply=reply, diagram_sink=sink, diagram_renderer=renderer
+    )
+
+    await handler.handle(_message())
+
+    assert len(bot.photos) == 2
+    assert renderer.sources == ["graph TD; A-->B", "graph LR; X-->Y"]
+
+
+async def test_inline_mermaid_is_deduped_against_a_tool_rendered_diagram() -> None:
+    # BOB-037 A dedup: the render_diagram TOOL already rendered this source AND the
+    # model also echoed the SAME mermaid as a fence — it must be sent ONCE, not twice.
+    mermaid = "graph TD; A-->B"
+    sink = CollectingDiagramSink()
+    inline_renderer = _RecordingRenderer()
+    registry = _registry_with_render_diagram(_FakeDiagramRenderer(), sink)
+
+    class _EchoToolProvider:
+        def __init__(self) -> None:
+            self._call = 0
+
+        async def complete_with_tools(
+            self,
+            messages: Sequence[LLMMessage],  # noqa: ARG002
+            *,
+            tools: Sequence[ToolDefinition],  # noqa: ARG002
+        ) -> ToolCallResult:
+            self._call += 1
+            if self._call == 1:
+                call = ToolCall(
+                    id="d1", name="render_diagram", arguments={"mermaid": mermaid}
+                )
+                return ToolCallResult(text="", tool_calls=(call,))
+            # The final reply ALSO echoes the same mermaid as a fenced block.
+            return ToolCallResult(
+                text=f"Готово:\n```mermaid\n{mermaid}\n```", tool_calls=()
+            )
+
+    handler, bot, _repo, _tier1 = _build(
+        reply="unused",
+        registry=registry,
+        tool_provider=_EchoToolProvider(),
+        diagram_sink=sink,
+        diagram_renderer=inline_renderer,
+    )
+
+    await handler.handle(_message("нарисуй схему"))
+
+    # Exactly one image (the tool's) — the inline echo was deduped, not re-rendered.
+    assert len(bot.photos) == 1
+    assert inline_renderer.sources == []
+
+
+async def test_inline_mermaid_render_failure_keeps_the_block_as_text() -> None:
+    # BOB-037 A graceful: if rendering the inline block raises (mmdc missing), the
+    # fenced block is LEFT as text (current behaviour) — no crash, no image.
+    sink = CollectingDiagramSink()
+    handler, bot, _repo, _tier1 = _build(
+        reply=_INLINE_REPLY,
+        diagram_sink=sink,
+        diagram_renderer=_FailingInlineRenderer(),
+    )
+
+    await handler.handle(_message())
+
+    assert bot.photos == []
+    assert bot.documents == []
+    # The block stayed in the visible reply (Bob still answered).
+    assert "```mermaid" in bot.final_text
+
+
+async def test_inline_auto_render_no_op_without_a_renderer_wired() -> None:
+    # BOB-037 A: with no renderer wired (the default), the auto-render is inert — the
+    # fenced block stays as text exactly as before, no image.
+    sink = CollectingDiagramSink()
+    handler, bot, _repo, _tier1 = _build(reply=_INLINE_REPLY, diagram_sink=sink)
+
+    await handler.handle(_message())
+
+    assert bot.photos == []
+    assert "```mermaid" in bot.final_text
+
+
+async def test_send_as_document_drains_via_send_document() -> None:
+    # BOB-037 C: with send_as=document (the product default) the drain posts the PNG as
+    # an uncompressed FILE, not a recompressed photo.
+    sink = CollectingDiagramSink()
+    handler, bot, _repo, _tier1 = _build(
+        reply=_INLINE_REPLY,
+        diagram_sink=sink,
+        diagram_renderer=_RecordingRenderer(),
+        diagram_send_as="document",
+    )
+
+    await handler.handle(_message())
+
+    assert len(bot.documents) == 1
+    assert bot.photos == []
+    _chat_id, doc, _caption = bot.documents[0]
+    assert doc == b"INLINE-PNG"
+
+
+async def test_send_as_photo_drains_via_send_photo() -> None:
+    # BOB-037 C: send_as=photo keeps the legacy photo send.
+    sink = CollectingDiagramSink()
+    handler, bot, _repo, _tier1 = _build(
+        reply=_INLINE_REPLY,
+        diagram_sink=sink,
+        diagram_renderer=_RecordingRenderer(),
+        diagram_send_as="photo",
+    )
+
+    await handler.handle(_message())
+
+    assert len(bot.photos) == 1
+    assert bot.documents == []
+
+
+async def test_normal_reply_with_no_mermaid_sends_nothing() -> None:
+    # BOB-037 regression: a plain reply with no fenced mermaid → no image, text intact.
+    sink = CollectingDiagramSink()
+    handler, bot, _repo, _tier1 = _build(
+        reply="просто текст без диаграмм",
+        diagram_sink=sink,
+        diagram_renderer=_RecordingRenderer(),
+        diagram_send_as="document",
+    )
+
+    await handler.handle(_message())
+
+    assert bot.photos == []
+    assert bot.documents == []
+    assert "просто текст без диаграмм" in bot.final_text
 
 
 # --- BOB-016: anti-bait voice + GUPPI canon in the reply prompts ---------------

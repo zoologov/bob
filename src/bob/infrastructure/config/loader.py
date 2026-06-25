@@ -297,18 +297,27 @@ DEFAULT_CONFIG: Config = {
         "beadloom_bin": "beadloom",
         "bd_bin": "bd",
     },
-    # Diagram rendering — «Боб рисует» (BOB-035). The ``render_diagram`` skill takes a
-    # Mermaid source, renders it to a PNG LOCALLY via the mermaid-cli (``mmdc``), and
-    # posts it as a Telegram photo. It is ``permission=safe`` and renders ONLY its
-    # input (no personal data), and the render runs strictly on-machine (privacy — the
-    # diagram source never leaves the host). ``enabled`` defaults TRUE (safe + local);
-    # ``mmdc_bin`` names the local mermaid-cli binary (a documented runtime dependency
-    # — install ``@mermaid-js/mermaid-cli``), and ``timeout`` caps one render in
-    # seconds so a stuck process cannot wedge a turn.
+    # Diagram rendering — «Боб рисует» (BOB-035 + BOB-037). The ``render_diagram`` skill
+    # takes a Mermaid source, renders it to a PNG LOCALLY via the mermaid-cli (``mmdc``),
+    # and posts it to chat. BOB-037 also AUTO-RENDERS any fenced ```mermaid block the
+    # model writes into its TEXT reply (the model unreliably calls the tool), so diagrams
+    # are reliable either way. It is ``permission=safe`` and renders ONLY its input (no
+    # personal data), and the render runs strictly on-machine (privacy — the diagram
+    # source never leaves the host). ``enabled`` defaults TRUE (safe + local);
+    # ``mmdc_bin`` names the local mermaid-cli binary (a documented runtime dependency —
+    # install ``@mermaid-js/mermaid-cli``); ``timeout`` caps one render in seconds so a
+    # stuck process cannot wedge a turn. BOB-037 readability knobs: ``scale`` is mmdc's
+    # deviceScaleFactor (3x → crisp, not blurry); ``background`` is the page background
+    # (``white`` → readable on Telegram's dark theme); ``send_as`` is ``document`` (the
+    # default — the PNG is sent UNCOMPRESSED at full resolution, since ``send_photo``
+    # recompresses to JPEG and caps ~1280px) or ``photo`` (the inline-preview photo).
     "diagrams": {
         "enabled": True,
         "mmdc_bin": "mmdc",
         "timeout": 30,
+        "scale": 3,
+        "background": "white",
+        "send_as": "document",
     },
     # Two bots in one process (BOB-003): Bob lives in his topic, GUPPI is the
     # gatekeeper in General. Each bot's token comes from env only (never YAML);

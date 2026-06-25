@@ -98,6 +98,17 @@ class _Bot:
         raise NotImplementedError  # pragma: no cover
 
 
+    async def send_document(
+        self,
+        *,
+        chat_id: int,
+        document: object,
+        caption: str | None = None,
+        message_thread_id: int | None = None,
+    ) -> _Msg:
+        # BOB-037: BotLike parity; this fake's tests never post a document.
+        raise NotImplementedError  # pragma: no cover
+
 def _config(tmp_path: Path) -> dict[str, object]:
     return {
         "runtime": {"log_level": "INFO", "heartbeat_seconds": 1},

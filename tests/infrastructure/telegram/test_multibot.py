@@ -172,6 +172,17 @@ class _FakeBot:
         self.next_message_id += 1
         return msg
 
+    async def send_document(
+        self,
+        *,
+        chat_id: int,
+        document: object,
+        caption: str | None = None,
+        message_thread_id: int | None = None,
+    ) -> _FakeMessage:
+        # BOB-037: BotLike parity; this fake's tests never post a document.
+        raise NotImplementedError  # pragma: no cover
+
     async def set_message_reaction(
         self,
         *,

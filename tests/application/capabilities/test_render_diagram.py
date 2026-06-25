@@ -135,6 +135,29 @@ def test_collecting_sink_drains_and_clears() -> None:
     assert sink.drain() == ()
 
 
+def test_collecting_sink_pending_peeks_without_clearing() -> None:
+    # BOB-037: the inline auto-render peeks the sink (to dedup) without draining it.
+    sink = CollectingDiagramSink()
+    sink.push(DiagramResult(png=_PNG, caption="one", source="graph TD; A-->B"))
+
+    peeked = sink.pending()
+
+    assert [r.source for r in peeked] == ["graph TD; A-->B"]
+    # The peek did NOT clear — drain still returns the entry.
+    assert len(sink.drain()) == 1
+
+
+async def test_execute_records_the_mermaid_source_on_the_result() -> None:
+    # BOB-037: the tool-rendered result carries its mermaid source so the inline
+    # auto-render can dedup against it.
+    sink = CollectingDiagramSink()
+    cap = make_render_diagram_capability(_FakeRenderer(), sink)
+
+    await cap.execute({"mermaid": "graph TD; A-->B"})
+
+    assert [r.source for r in sink.pending()] == ["graph TD; A-->B"]
+
+
 # --- BOB-035 .2: privacy / per-turn isolation guardrails -----------------------
 
 

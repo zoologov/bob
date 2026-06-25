@@ -219,6 +219,15 @@ class BotLike(Protocol):
         message_thread_id: int | None = None,
     ) -> MessageLike: ...
 
+    async def send_document(
+        self,
+        *,
+        chat_id: int,
+        document: BufferedInputFile,
+        caption: str | None = None,
+        message_thread_id: int | None = None,
+    ) -> MessageLike: ...
+
     async def set_message_reaction(
         self,
         *,
@@ -606,6 +615,30 @@ class TelegramGateway:
             )
         except (AiogramError, ValueError) as exc:
             logger.warning("sending a diagram photo failed (ignored): %s", exc)
+
+    async def send_document(
+        self, *, chat_id: int, document: bytes, caption: str | None = None
+    ) -> None:
+        """Send ``document`` (PNG bytes) as an uncompressed file, pinned to the thread (BOB-037).
+
+        The readability transport for a rendered diagram: Telegram ``send_photo``
+        recompresses to JPEG and caps the long side (~1280px), so a dense diagram goes
+        unreadable. Posting the PNG as a DOCUMENT keeps it byte-for-byte and full
+        resolution (tap → pan/zoom the real pixels). The bytes are wrapped in an
+        aiogram ``BufferedInputFile`` under a stable ``diagram.png`` filename so no temp
+        file is needed at the transport boundary. On any transport error the failure is
+        logged and swallowed (the use-case already treats the send as best-effort), so a
+        failed document can never break the turn.
+        """
+        try:
+            await self._bot.send_document(
+                chat_id=chat_id,
+                document=BufferedInputFile(document, filename=_DIAGRAM_FILENAME),
+                caption=caption,
+                message_thread_id=self._reply_thread_id,
+            )
+        except (AiogramError, ValueError) as exc:
+            logger.warning("sending a diagram document failed (ignored): %s", exc)
 
 
 def _reply_to_sender_id(message: MessageLike) -> int | None:
