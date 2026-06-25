@@ -47,6 +47,16 @@ _MIN_REPEAT_WINDOW = 1
 _MIN_REPEAT_THRESHOLD = 0.0
 _MAX_REPEAT_THRESHOLD = 1.0
 
+# Дефолты фраза-тик детектора (BOB-036 .1). ``tic_min_words`` ≈ 3: «Мне так
+# спокойнее» (3 слова) ловится, а короткая закрывашка «Работаем»/«Ок» — нет.
+# ``tic_min_occurrences`` = 2: фраза, повторившаяся в ≥2 недавних репликах, —
+# это тик, а одноразовое переиспользование длинной фразы — нет.
+_DEFAULT_TIC_MIN_WORDS = 3
+_DEFAULT_TIC_MIN_OCCURRENCES = 2
+
+_MIN_TIC_MIN_WORDS = 1
+_MIN_TIC_MIN_OCCURRENCES = 1
+
 
 @dataclass(frozen=True, slots=True)
 class RepeatThresholds:
@@ -57,12 +67,19 @@ class RepeatThresholds:
     * ``similarity_threshold`` — порог сходства ``[0, 1]`` для near-verbatim
       детекции; консервативно высокий, чтобы не было ложных регенераций на просто
       похожих по теме, но разных по сути ответах.
+    * ``tic_min_words`` — минимальная длина «заметной» фразы в словах для
+      фраза-тик детектора (BOB-036 .1): закрывашка короче этого порога
+      («Работаем»/«Ок») никогда не считается тиком.
+    * ``tic_min_occurrences`` — в скольких недавних репликах фраза должна
+      повториться, чтобы считаться тиком (а не одноразовым переиспользованием).
 
     Дефолты консервативны.
     """
 
     window: int = _DEFAULT_BOB_REPEAT_WINDOW
     similarity_threshold: float = _DEFAULT_BOB_REPEAT_THRESHOLD
+    tic_min_words: int = _DEFAULT_TIC_MIN_WORDS
+    tic_min_occurrences: int = _DEFAULT_TIC_MIN_OCCURRENCES
 
     def __post_init__(self) -> None:
         if self.window < _MIN_REPEAT_WINDOW:
@@ -75,6 +92,16 @@ class RepeatThresholds:
                 f"repeat threshold 'similarity_threshold' must be within "
                 f"[{_MIN_REPEAT_THRESHOLD}, {_MAX_REPEAT_THRESHOLD}], "
                 f"got {self.similarity_threshold}"
+            )
+        if self.tic_min_words < _MIN_TIC_MIN_WORDS:
+            raise ValueError(
+                f"repeat threshold 'tic_min_words' must be >= {_MIN_TIC_MIN_WORDS}, "
+                f"got {self.tic_min_words}"
+            )
+        if self.tic_min_occurrences < _MIN_TIC_MIN_OCCURRENCES:
+            raise ValueError(
+                f"repeat threshold 'tic_min_occurrences' must be >= "
+                f"{_MIN_TIC_MIN_OCCURRENCES}, got {self.tic_min_occurrences}"
             )
 
 
@@ -134,6 +161,77 @@ def is_bob_repeat(
         ratio = SequenceMatcher(None, normalised_candidate, normalised_prior).ratio()
         if ratio >= threshold:
             return True
+    return False
+
+
+# Sentence/clause boundaries used to split a reply into candidate "notable" phrases
+# for the tic detector (BOB-036 .1). A tic is usually a CLOSER, so each sentence —
+# including the final clause — becomes a candidate phrase.
+_PHRASE_BOUNDARIES = ".!?\n"
+
+
+def _notable_phrases(text: str, *, min_words: int) -> frozenset[str]:
+    """Return the reply's normalised phrases of length >= ``min_words`` words (BOB-036 .1).
+
+    Splits ``text`` on sentence/clause boundaries (``.``/``!``/``?``/newline), then
+    normalises each fragment (strip / casefold / collapse whitespace, via
+    :func:`_normalise`). A tic is usually a CLOSER, so the FINAL clause is captured
+    like any other sentence — every fragment of at least ``min_words`` words is a
+    candidate "notable" phrase. Short fragments (a one-word closer like "Работаем")
+    are dropped so common short closers never trip the detector. The result is a SET,
+    so a phrase repeated WITHIN one reply still counts once for that reply.
+    """
+    phrases: set[str] = set()
+    fragment_chars: list[str] = []
+    for char in text:
+        if char in _PHRASE_BOUNDARIES:
+            _add_phrase(phrases, "".join(fragment_chars), min_words=min_words)
+            fragment_chars = []
+        else:
+            fragment_chars.append(char)
+    _add_phrase(phrases, "".join(fragment_chars), min_words=min_words)
+    return frozenset(phrases)
+
+
+def _add_phrase(phrases: set[str], fragment: str, *, min_words: int) -> None:
+    """Add ``fragment`` to ``phrases`` iff, once normalised, it has >= ``min_words`` words."""
+    normalised = _normalise(fragment)
+    if normalised and len(normalised.split()) >= min_words:
+        phrases.add(normalised)
+
+
+def is_phrase_tic(
+    candidate: str,
+    recent_replies: Iterable[str],
+    *,
+    min_words: int,
+    min_occurrences: int,
+) -> bool:
+    """Return ``True`` iff ``candidate`` shares a RECURRING notable phrase (BOB-036 .1).
+
+    The phrase-level twin of :func:`is_bob_repeat`. BOB-032's full-reply guard compares
+    whole replies (a high similarity bar), so two substantively DIFFERENT messages that
+    merely end with the SAME signature closer ("Мне так спокойнее.") slip through. This
+    catches the closer-tic structurally — never via a scripted "do not say X".
+
+    A "notable phrase" is a sentence/clause of at least ``min_words`` words (see
+    :func:`_notable_phrases`); the FINAL clause is included, since a tic is usually a
+    closer. ``candidate`` is a tic iff one of ITS notable phrases also appears as a
+    notable phrase in at least ``min_occurrences`` of the ``recent_replies`` (each recent
+    reply counts at most once — a phrase repeated within one reply is still that one
+    reply). So a phrase recurring ACROSS the recent window is a tic, while a one-off
+    reuse (shared with a single prior reply) or a short closer (below ``min_words``) is
+    not. Pure, deterministic, no I/O. A blank ``candidate`` is never a tic.
+    """
+    candidate_phrases = _notable_phrases(candidate, min_words=min_words)
+    if not candidate_phrases:
+        return False
+    occurrences = 0
+    for reply in recent_replies:
+        if candidate_phrases & _notable_phrases(reply, min_words=min_words):
+            occurrences += 1
+            if occurrences >= min_occurrences:
+                return True
     return False
 
 

@@ -65,6 +65,7 @@ from bob.domain.personality.brevity import (
 from bob.domain.personality.conversation import (
     RepeatThresholds,
     is_bob_repeat,
+    is_phrase_tic,
     is_user_repeat,
     recalled_bob_replies,
     recalled_bob_reply,
@@ -1691,14 +1692,32 @@ class HandleMessage:
           fact content is preserved), and up to ``_MAX_REGENERATIONS`` retries are drawn,
           re-checking after each. If it is still a repeat after the bound the last draft
           is kept (no infinite loop), purely structural — no "do not repeat" instruction.
+
+        BOB-036 .1 also guards the PHRASE level: a signature CLOSER ("Мне так спокойнее.")
+        recurring across the recent window is invisible to the full-reply bar (two
+        substantively different replies can share the same tail). When
+        :func:`is_phrase_tic` fires on the same recall-aware union, the SAME regeneration
+        path runs — a structural detector, never a scripted "do not say X".
         """
         threshold = self._repeat_thresholds.similarity_threshold
+        tic_min_words = self._repeat_thresholds.tic_min_words
+        tic_min_occurrences = self._repeat_thresholds.tic_min_occurrences
         recent = _recent_bob_replies(history, limit=self._repeat_thresholds.window)
         current = reply
         current_recalled = recalled
         for _ in range(_MAX_REGENERATIONS):
             prior_replies = (*recent, *recalled_bob_replies(current_recalled))
-            if not is_bob_repeat(current, prior_replies, threshold=threshold):
+            full_repeat = is_bob_repeat(current, prior_replies, threshold=threshold)
+            # BOB-036 .1: a phrase-tic (a signature CLOSER recurring across the recent
+            # window) is invisible to the full-reply bar above — two DIFFERENT replies
+            # can share the same tail. Break it via the SAME regeneration path.
+            phrase_tic = is_phrase_tic(
+                current,
+                prior_replies,
+                min_words=tic_min_words,
+                min_occurrences=tic_min_occurrences,
+            )
+            if not (full_repeat or phrase_tic):
                 return current
             # Break the attractor: strip the recalled reply exemplar(s) the candidate
             # copied so the next draft no longer sees the text it was echoing.

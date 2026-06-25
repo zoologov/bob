@@ -84,3 +84,21 @@ def test_repeat_config_out_of_range_threshold_is_rejected() -> None:
     # wiring an impossible threshold.
     with pytest.raises(ValueError, match="similarity_threshold"):
         _build_repeat_thresholds(config)
+
+
+def test_repeat_config_tic_knobs_default_when_absent() -> None:
+    # BOB-036 .1: with no tic.* keys, the phrase-tic knobs fall back to the defaults.
+    thresholds = _build_repeat_thresholds({})
+
+    assert thresholds.tic_min_words == RepeatThresholds().tic_min_words
+    assert thresholds.tic_min_occurrences == RepeatThresholds().tic_min_occurrences
+
+
+def test_repeat_config_overrides_tic_knobs() -> None:
+    # BOB-036 .1: both tic knobs flow through verbatim.
+    config = {"repeat": {"tic_min_words": 4, "tic_min_occurrences": 3}}
+
+    thresholds = _build_repeat_thresholds(config)
+
+    assert thresholds.tic_min_words == 4
+    assert thresholds.tic_min_occurrences == 3
