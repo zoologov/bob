@@ -117,6 +117,25 @@ class Mood:
             stability=self._toward(self.stability, baseline.stability, rate),
         )
 
+    def lift_toward(self, target: Mood, *, rate: float) -> Mood:
+        """Return a new mood pulled a ``rate`` fraction of the gap toward ``target``.
+
+        The mechanics mirror :meth:`drift_toward`, but the intent differs: this is
+        an *external* lift — a warm incoming message (BOB-033 social contagion)
+        displacing accumulated low by tugging mood toward a warmer ``target`` —
+        rather than passive homeostatic decay. ``rate`` is in ``[0, 1]`` (0 = no
+        lift, 1 = snap to ``target``); results stay clamped to the axis bounds.
+        """
+        if not _MIN_RATE <= rate <= _MAX_RATE:
+            raise ValueError(f"lift rate must be within [{_MIN_RATE}, {_MAX_RATE}], got {rate}")
+        return Mood(
+            valence=self._toward(self.valence, target.valence, rate),
+            arousal=self._toward(self.arousal, target.arousal, rate),
+            openness=self._toward(self.openness, target.openness, rate),
+            social=self._toward(self.social, target.social, rate),
+            stability=self._toward(self.stability, target.stability, rate),
+        )
+
     def tone(self) -> str:
         """Derive a deterministic tone descriptor from valence and arousal.
 

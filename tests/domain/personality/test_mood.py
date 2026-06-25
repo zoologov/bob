@@ -148,3 +148,49 @@ def test_tone_is_deterministic() -> None:
 
     # Act / Assert: same input → same descriptor, every time.
     assert mood.tone() == mood.tone()
+
+
+def test_lift_toward_moves_a_fraction_of_the_gap() -> None:
+    # Arrange: an accumulated low pulled toward a warmer target.
+    low = Mood(valence=-0.4, social=-0.2)
+    target = Mood(valence=0.6, social=0.4)
+
+    # Act
+    lifted = low.lift_toward(target, rate=0.5)
+
+    # Assert: each axis moved half the gap toward the target.
+    assert lifted.valence == pytest.approx(0.1)
+    assert lifted.social == pytest.approx(0.1)
+
+
+def test_lift_toward_is_a_no_op_at_rate_zero() -> None:
+    mood = Mood(valence=-0.3, arousal=0.2)
+
+    lifted = mood.lift_toward(Mood(valence=0.8), rate=0.0)
+
+    assert lifted == mood
+
+
+def test_lift_toward_snaps_to_target_at_rate_one() -> None:
+    target = Mood(valence=0.7, social=0.5)
+
+    lifted = Mood(valence=-0.5).lift_toward(target, rate=1.0)
+
+    assert lifted == target
+
+
+def test_lift_toward_clamps_to_bounds() -> None:
+    # A target inside bounds can never push the result past the axis limits.
+    near_ceiling = Mood(valence=0.9)
+    lifted = near_ceiling.lift_toward(Mood(valence=1.0), rate=1.0)
+
+    assert lifted.valence == pytest.approx(1.0)
+
+
+def test_lift_rate_must_be_within_unit_interval() -> None:
+    mood = Mood(valence=-0.2)
+
+    with pytest.raises(ValueError, match="rate"):
+        mood.lift_toward(Mood(), rate=1.5)
+    with pytest.raises(ValueError, match="rate"):
+        mood.lift_toward(Mood(), rate=-0.1)

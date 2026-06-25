@@ -100,6 +100,7 @@ from bob.domain.personality.addressivity import AddressivityThresholds
 from bob.domain.personality.brevity import BrevityThresholds
 from bob.domain.personality.conversation import RepeatThresholds
 from bob.domain.personality.conversation_floor import FloorConfig
+from bob.domain.personality.disposition import DEFAULT_DISPOSITION, Disposition
 from bob.domain.personality.engagement import EngagementThresholds, FatigueRates
 from bob.domain.personality.expression import ExpressionFreqs
 from bob.domain.personality.language import DEFAULT_LANGUAGE
@@ -1703,12 +1704,14 @@ def _load_soul(soul_store: SoulStore) -> SOUL:
     current = _mood_from(mood_doc, "current")
     taste = _taste_from(soul_store.read_json("taste_profile"))
     phantoms = _phantoms_from(soul_store.read_json("phantom_prefs"))
+    disposition = _disposition_from(soul_store.read_json("disposition"))
     return SOUL(
         identity=identity,
         mood=current,
         mood_baseline=baseline,
         taste=taste,
         phantom_prefs=phantoms,
+        disposition=disposition,
     )
 
 
@@ -1769,6 +1772,20 @@ def _phantoms_from(doc: object) -> tuple[str, ...]:
     if not isinstance(prefs, list):
         return ()
     return tuple(str(p) for p in prefs)
+
+
+def _disposition_from(doc: object) -> Disposition:
+    """Build Bob's :class:`Disposition`, falling back to canon per missing field.
+
+    An absent or malformed ``disposition.json`` (an existing install predating
+    BOB-033) yields the canon-optimist default, so every install Just Works.
+    """
+    if not isinstance(doc, Mapping):
+        return DEFAULT_DISPOSITION
+    return Disposition(
+        optimism=_float_or(doc, "optimism", DEFAULT_DISPOSITION.optimism),
+        resilience=_float_or(doc, "resilience", DEFAULT_DISPOSITION.resilience),
+    )
 
 
 # --- Config readers -----------------------------------------------------------
