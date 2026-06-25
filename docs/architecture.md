@@ -1020,6 +1020,141 @@ memory-capability, поведение как раньше. Конфиг `introsp
 `read_max_lines` (`200`), пути бинарей `beadloom_bin`/`bd_bin`. Миграций БД нет —
 навыки только читают репозиторий и трекер.
 
+### Боб запускает Claude Code: гейтед coding-сессия (BOB-039, T3.B)
+
+Если самоинтроспекция (T3.A) — это «Боб читает свой мир», то здесь Боб **меняет** его:
+по команде owner'а он гоняет локальный `claude` CLI над собственным репозиторием,
+собирает план, после явного апрува исполняет его в изоляции и открывает PR. Это
+самая мощная способность Боба, поэтому она не «request→response», а **гейтед сессия**
+с конечной машиной состояний под owner-контролем — те же идиомы, что у Goal Engine
+(BOB-015): owner-only на каждой команде, непробиваемый гейт плана, kill-switch и
+честный провал с уборкой.
+
+#### Конечная машина состояний (чистый домен)
+
+`CodingSessionState` (`domain/coding/state.py`) — строковый `StrEnum` (значение
+совпадает с TEXT-колонкой SQLite, round-trip тривиален). Жизненный цикл:
+
+```
+PROPOSED → PLANNING → PLAN_READY → EXECUTING → PR_OPEN → DONE
+                          │ (ГЕЙТ ПЛАНА)
+CANCELLED / FAILED ← из любого нетерминального
+```
+
+- **🔴 Гейт плана непробиваем на уровне домена:** `EXECUTING` достижимо
+  **исключительно** из `PLAN_READY`. В таблице переходов `_PROGRESS` целевое состояние
+  `EXECUTING` присутствует ровно в одном множестве — целей `PLAN_READY`. Ни `PROPOSED`,
+  ни `PLANNING` в исполнение не ведут.
+- **Мержа в машине нет:** `PR_OPEN → DONE` фиксирует «PR открыт», сам мерж делает owner
+  вне Боба.
+- Чистые предикаты: `can_transition(frm, to)`, `can_start`, `can_approve_plan`
+  (предикатная форма гейта плана), `can_stop` (kill-switch из любого нетерминального),
+  `is_terminal` (`DONE`/`CANCELLED`/`FAILED`).
+
+Сессия — `CodingSession` (`domain/coding/entities.py`), immutable `frozen, slots`
+value-object: `id`, `task`, `state`, `branch`, `created_at`/`updated_at` и опциональные
+`worktree_path`/`plan`/`pr_url`. Без I/O и без часов — момент времени инжектится
+параметром `at` в мутаторы `with_state`/`with_plan`/`with_worktree`/`with_pr_url`
+(каждый возвращает новый объект и обновляет `updated_at`). Имя ветки даёт чистая
+`worktree_branch(task)` (`domain/coding/naming.py`): ascii-slug → `bob/<slug>`, что
+закрывает path-инъекции (`..`, слэши, пробелы в имя не попадают).
+
+#### Оркестратор `CodingAssistant` (use-case)
+
+`CodingAssistant` (`application/usecases/coding_assistant.py`) — чисто-оркестрационный
+use-case над чистым доменом и инжектированными портами (раннер Claude Code, worktree,
+стор, PR-открывашка, нотификатор owner, authz, часы, фабрика id, `execute_mode`).
+Четыре owner-only метода:
+
+- **`start(task, sender)`** — создаёт изолированный worktree на безопасной ветке
+  `bob/<slug>`, персистит сессию в `PLANNING`, гоняет раннер в режиме `plan` (план
+  **без правок** — это и есть гейт), собирает план, переводит в `PLAN_READY`, шлёт план
+  owner и **останавливается**. Исполнение здесь не начинается.
+- **`approve_plan(sender)`** — гейт плана: валиден **только** из `PLAN_READY`
+  (`can_approve_plan`). Переводит в `EXECUTING`, гоняет раннер в режиме правок, **нарратит
+  каждое событие** owner через `narrate`, затем открывает PR (`PullRequestOpener.open`)
+  и переводит в `PR_OPEN`. 🔴 Никакого мержа/пуша в `main` — такого вызова просто нет.
+- **`stop(sender)`** — kill-switch: добавляет id сессии в `_cancelled` (идущий narrate-цикл
+  прерывается на следующем событии → раннер закрывается → процесс убивается), переводит
+  в `CANCELLED` и убирает worktree.
+- **`status(sender)`** — докладывает состояние текущей сессии.
+
+worktree убирается в `finally` на любом завершении прогона (успех `PR_OPEN`, провал
+`FAILED`, стоп `CANCELLED`), так что висящих worktree не остаётся. Authz —
+defense-in-depth: гейт дублируется на уровне GUPPI, но use-case проверяет `OwnerCheck.is_owner`
+на **каждом** методе сам; чужому — тихий отказ без сессии и без прогона. Все порты
+объявлены в `domain/ports.py` (`ClaudeCodeRunner`, `Worktree`, `CodingSessionStore`,
+`PullRequestOpener`).
+
+#### 🔴 Изоляция: `GitWorktree` (только трекнутые файлы)
+
+`GitWorktree` (`infrastructure/coding/git_worktree.py`) — `git worktree add <path> -b
+<branch>` на **новой** ветке, фиксированной формы и **без shell** (никакой
+интерполяции метасимволов). Свежий worktree содержит **только трекнутые файлы**,
+поэтому приватные данные Боба — `data/soul/`, `bob.db*`, `.env*`, `config/*` (все
+gitignored) — в нём **отсутствуют**, и это отсутствие **и есть** приватная изоляция:
+Claude Code их физически не видит. Ветка валидируется к форме `bob/<slug>`
+(`is_safe_branch`) до запуска git; `remove` → `git worktree remove --force <path>` с
+проверкой containment (путь обязан быть symlink-resolved потомком `worktree_root`,
+иначе `WorktreeError`).
+
+#### 🔴 Только ветка + PR, НИКОГДА main: `GhPullRequestOpener`
+
+`GhPullRequestOpener` (`infrastructure/coding/gh_pr.py`) строит **единственную** форму
+`gh pr create --base main --head <branch> --title <title> --body <body>` (title/body —
+дискретные argv, без shell) и возвращает URL PR. **Инвариант безопасности:** здесь
+**намеренно нет** пути интеграции в trunk — ни `merge`-метода в порте `PullRequestOpener`,
+ни git-записи в защищённую ветку. Боб открывает PR и останавливается; мерж делает owner
+руками. Физическое отсутствие merge-пути — часть гарантии гейтед-автономии, и тест
+проверяет, что опасные токены в этом модуле не появляются.
+
+#### Раннер `SubprocessClaudeRunner` и нарратив
+
+`SubprocessClaudeRunner` (`infrastructure/coding/claude_runner.py`) реализует порт
+`ClaudeCodeRunner`: гоняет `claude` headless через `asyncio.create_subprocess_exec`
+(**никогда не shell** — `prompt` это один дискретный argv-элемент):
+
+```
+claude -p <prompt> --output-format stream-json --verbose --permission-mode <mode>
+```
+
+`mode` валидируется против **фиксированного allowlist** `_ALLOWED_MODES = {plan,
+acceptEdits}` (`plan` — план без правок, гейт; `acceptEdits` — применить правки в
+worktree); любой иной режим (в частности `bypassPermissions`) отбрасывается до старта
+процесса (`ClaudeRunError`). stdout читается как NDJSON построчно: каждая строка
+`json.loads`-ится и отдаётся как событие (async-генератор); битые/неполные строки
+пропускаются. Прогон ограничен таймаутом (`600` с), числом событий (`10_000`) и бюджетом
+байтов (`10_000_000`); процесс убивается и reaped на таймауте или раннем break (без
+зомби).
+
+`narrate(event)` (`domain/coding/narrate.py`) — **чистый** детерминированный мэппер
+одного stream-json события в короткую русскую нарратив-строку («правлю `<file>`»,
+«запускаю тесты», «тесты прошли», «готово», «ошибка: …») **или** `None` для шумных
+событий (system-init, чистый текст ассистента). Раннер только стримит, use-case шлёт
+ненулевые строки в чат owner'а. Сессии переживают рестарт — `SqliteCodingSessionStore`
+(`infrastructure/persistence/coding_session_store.py`) round-trip'ит `CodingSession`
+(UPSERT по `id`, `active()` отдаёт нетерминальные), так что двойной гейт честен и через
+границу процесса.
+
+#### Owner-команды, конфигурация и границы стадии
+
+GUPPI (`infrastructure/telegram/guppi.py`) даёт owner-only команды `/code <задача>`
+(стартовать сессию), `/code approve` (гейт плана), `/code stop` (kill-switch),
+`/code status`. Команда от не-owner туда не доходит; когда `coder.enabled` выключено,
+assistant вообще не подключён и `/code` отвечает понятным «выключено» (через структурный
+протокол `CodingAssistantLike`). Конфиг `coder.*`
+(`infrastructure/config/loader.py`): `enabled` **по умолчанию `false`** (мастер-switch —
+owner включает осознанно, как goals/self_improvement, ведь это самая мощная
+способность), `claude_bin`/`gh_bin` (имена локальных CLI), `worktree_root`
+(`.worktrees`), `timeout` (`600` с), `permission_mode` (`acceptEdits` — execute-режим
+после апрува, никогда не bypass). Сборка — `_build_coding_assistant(config, …)` в
+`app.py`, **только** при `coder.enabled`.
+
+Способность **намеренно не** входит в автономный `goals.safe_capabilities` →
+проактивный tick не может запустить coding-сессию сам. v1 — **user-driven** (сессию
+всегда инициирует owner командой `/code`); само-предложенные сессии (Боб сам решает,
+что доработать) — это будущая фаза **T3.C**, вне объёма BOB-039.
+
 ### Боб умеет рисовать: навык `render_diagram` (BOB-035)
 
 За тем же Capability-швом живёт навык, который даёт Бобу **визуальный голос**: он
