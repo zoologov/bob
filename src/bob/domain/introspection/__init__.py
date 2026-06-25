@@ -13,6 +13,10 @@ decides which paths may be read and redacts personal data from tool output. It h
 no I/O; the infrastructure adapter enforces it at the boundary before any read.
 """
 
+from bob.domain.introspection.code_history import (
+    feature_doc_dir,
+    parse_bead_refs,
+)
 from bob.domain.introspection.privacy_guard import PrivacyGuard
 
-__all__ = ["PrivacyGuard"]
+__all__ = ["PrivacyGuard", "feature_doc_dir", "parse_bead_refs"]

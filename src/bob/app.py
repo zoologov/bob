@@ -45,6 +45,7 @@ from bob.application.capabilities import (
     CapabilityRegistry,
     CollectingDiagramSink,
     SafeCapabilityDispatcher,
+    make_code_rationale_capability,
     make_inspect_architecture_capability,
     make_list_work_capability,
     make_read_code_capability,
@@ -1553,8 +1554,9 @@ def _build_registry(
     :class:`~bob.domain.ports.MemoryRecall`: ``recall_memory`` (the thin auto-recall
     wrapper) and ``search_memory`` (BOB-011 — the agentic skill Bob chooses to
     invoke through the tool-loop). When ``introspection.enabled`` (BOB-017 Phase A,
-    default on) the three read-only self-introspection skills
-    (``inspect_architecture`` / ``read_code`` / ``list_work``) are ALSO registered,
+    default on) the four read-only self-introspection skills
+    (``inspect_architecture`` / ``read_code`` / ``list_work`` / ``code_rationale``,
+    the last linking code↔decisions per BOB-038) are ALSO registered,
     over a :class:`SubprocessRepoIntrospector` guarded by the pure
     :class:`PrivacyGuard` — so Bob can answer about his own world. When
     ``diagrams.enabled`` (BOB-035, default on — safe + local) the ``render_diagram``
@@ -1582,6 +1584,7 @@ def _build_registry(
         registry.register(make_inspect_architecture_capability(introspector))
         registry.register(make_read_code_capability(introspector, read_max_lines=read_max_lines))
         registry.register(make_list_work_capability(introspector))
+        registry.register(make_code_rationale_capability(introspector))
     diagram_renderer: SubprocessMmdcRenderer | None = None
     if _flag(_section(config, "diagrams"), "enabled"):
         diagram_renderer = _build_diagram_renderer(config)
@@ -1635,9 +1638,10 @@ def _build_introspector(config: Mapping[str, object]) -> SubprocessRepoIntrospec
     """Construct the read-only :class:`SubprocessRepoIntrospector` for BOB-017.
 
     The pure :class:`PrivacyGuard` (rooted at the repo) enforces the DENY-invariant
-    BEFORE any file read; the subprocess adapter runs ``beadloom`` / ``bd`` against a
-    FIXED read-only allowlist (never a shell). Output bounds + the CLI binaries are
-    config-tunable via ``introspection.*``.
+    BEFORE any file read; the subprocess adapter runs ``beadloom`` / ``bd`` / ``git``
+    against a FIXED read-only allowlist (never a shell). Output bounds + the CLI
+    binaries (incl. ``git`` for the BOB-038 ``code_history`` form) are config-tunable
+    via ``introspection.*``.
     """
     section = _section(config, "introspection")
     return SubprocessRepoIntrospector(
@@ -1647,6 +1651,7 @@ def _build_introspector(config: Mapping[str, object]) -> SubprocessRepoIntrospec
         ),
         beadloom_bin=_str(section, "beadloom_bin", "beadloom"),
         bd_bin=_str(section, "bd_bin", "bd"),
+        git_bin=_str(section, "git_bin", "git"),
     )
 
 
