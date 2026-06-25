@@ -1084,6 +1084,104 @@ async def test_anti_repeat_retry_still_grounds_in_real_recalled_memory() -> None
     assert _RECALLED_PAST_REPLY not in retry_prompt
 
 
+async def test_proactive_posts_last_draft_that_clears_after_full_bound() -> None:
+    # Boundary (R4): the draft repeats through BOTH regenerations, then the final
+    # (third) draft clears the bar — the engine posts that last fresh draft rather than
+    # skipping. Covers the "exhausted the bound but last draft is clean" branch: it must
+    # NOT be confused with the give-up-and-skip path.
+    moment = _evening()
+    seed = _seed_that_fires(moment, _HIGH_MOOD)
+    store = FakeStore(_state(energy=1.0))
+    router, providers = _multi_compose_router(
+        gate_reply="SAY: follow up",
+        compose_replies=[
+            _RECALLED_PAST_REPLY,  # initial draft: repeat
+            _RECALLED_PAST_REPLY,  # retry 1: still a repeat
+            "Наконец-то совершенно свежая реплика.",  # retry 2: clears the bar
+        ],
+    )
+    gateway = CapturingGateway()
+    repo = FakeEpisodeRepo()
+    engine = _engine(
+        store=store,
+        router=router,
+        gateway=gateway,
+        state_holder=PersonalityState(soul=_soul(_HIGH_MOOD)),
+        moment=moment,
+        seed=seed,
+        salience=0.9,
+        recall=FakeRecall([_RECALLED_EPISODE]),
+        repo=repo,
+    )
+
+    spoke = await engine.tick()
+
+    # The last draft cleared the bar after the full bound — it posts (not skipped).
+    assert spoke is True
+    assert gateway.replies == ["Наконец-то совершенно свежая реплика."]
+    assert _RECALLED_PAST_REPLY not in str(repo.episodes[0]["content"])
+    assert providers[0].calls == 4  # gate + initial + 2 retries
+
+
+async def test_proactive_same_topic_different_wording_is_not_regenerated() -> None:
+    # No false positive (R4): the fresh draft is on the SAME topic as the recalled
+    # reply (an echoed keyword) but substantively different wording — it must NOT be
+    # mistaken for a repeat and post on the first draft (guard against over-firing).
+    moment = _evening()
+    seed = _seed_that_fires(moment, _HIGH_MOOD)
+    store = FakeStore(_state(energy=1.0))
+    router, providers = _router(
+        gate_reply="SAY: follow up",
+        compose_reply="Разве это угроза? Я передумал — давай поговорим по-другому.",
+    )
+    gateway = CapturingGateway()
+    engine = _engine(
+        store=store,
+        router=router,
+        gateway=gateway,
+        state_holder=PersonalityState(soul=_soul(_HIGH_MOOD)),
+        moment=moment,
+        seed=seed,
+        salience=0.9,
+        recall=FakeRecall([_RECALLED_EPISODE]),
+    )
+
+    spoke = await engine.tick()
+
+    assert spoke is True
+    assert gateway.replies == ["Разве это угроза? Я передумал — давай поговорим по-другому."]
+    assert providers[0].calls == 2  # gate + ONE compose — no needless regeneration
+
+
+async def test_proactive_with_no_recall_posts_without_guard_firing() -> None:
+    # Regression / boundary: with NO recalled memories the recall-aware guard has no
+    # exemplars to compare against — the normal proactive path is unaffected and posts
+    # on the first draft.
+    moment = _evening()
+    seed = _seed_that_fires(moment, _HIGH_MOOD)
+    store = FakeStore(_state(energy=1.0))
+    router, providers = _router(
+        gate_reply="SAY: follow up", compose_reply="Просто хотел сказать привет."
+    )
+    gateway = CapturingGateway()
+    engine = _engine(
+        store=store,
+        router=router,
+        gateway=gateway,
+        state_holder=PersonalityState(soul=_soul(_HIGH_MOOD)),
+        moment=moment,
+        seed=seed,
+        salience=0.9,
+        recall=FakeRecall([]),
+    )
+
+    spoke = await engine.tick()
+
+    assert spoke is True
+    assert gateway.replies == ["Просто хотел сказать привет."]
+    assert providers[0].calls == 2  # gate + ONE compose
+
+
 async def test_permanent_quiet_stays_muted_without_expiry() -> None:
     # Arrange: a permanent /quiet (proactivity off, NO mute_until) — Bob must stay
     # muted indefinitely (only /wake un-mutes him), never auto-re-enabled.

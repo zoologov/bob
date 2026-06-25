@@ -2219,6 +2219,42 @@ async def test_substantively_different_reply_with_recall_does_not_regenerate() -
     assert bot.final_text == different
 
 
+async def test_guard_compares_against_union_of_history_and_recall() -> None:
+    # R1 (union): history carries a DIFFERENT prior reply (no match there), yet the
+    # candidate copies the RECALLED reply. The guard catches it via the recall half of
+    # the union — proving recall, not only history, drives the catch — and regenerates.
+    history_turn = "Ada: о чём угодно\nbob: Это был совсем иной ответ про погоду."
+    handler, bot, _repo, tier1 = _build(
+        reply="unused",
+        tier1_replies=[_RECALLED_OLD_REPLY, "Свежий, не похожий ни на что ответ."],
+        history=[{"content": history_turn, "event_type": "message"}],
+        recall=_recall_with(_RECALLED_EPISODE),
+    )
+
+    await handler.handle(_message("ты опять про угрозу подробно ещё раз"))
+
+    assert len(tier1.payloads) == 2  # the recall half of the union fired one retry
+    assert bot.final_text == "Свежий, не похожий ни на что ответ."
+
+
+async def test_normal_reply_with_recall_and_history_is_not_regenerated() -> None:
+    # Regression / no over-firing: a genuinely fresh reply with BOTH a recalled reply
+    # exemplar and a (different) prior history reply present commits on the first draft —
+    # the union guard never false-fires when nothing is actually a repeat.
+    history_turn = "Ada: о чём угодно\nbob: Прошлый ответ про погоду."
+    fresh = "Совершенно новая мысль, не звучавшая раньше."
+    handler, bot, _repo, tier1 = _build(
+        reply=fresh,
+        history=[{"content": history_turn, "event_type": "message"}],
+        recall=_recall_with(_RECALLED_EPISODE),
+    )
+
+    await handler.handle(_message("расскажи что-то новое подробно"))
+
+    assert len(tier1.payloads) == 1
+    assert bot.final_text == fresh
+
+
 # --- BOB-022: user repeats themselves → Bob notices (voice directive) ----------
 
 # A prior turn where the USER already said exactly what they are about to send again.
