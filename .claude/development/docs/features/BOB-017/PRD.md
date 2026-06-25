@@ -3,7 +3,7 @@
 
 # PRD: BOB-017 Phase A — «Боб знает свой мир» (read-only самоинтроспекция)
 
-> **Status:** Draft
+> **Status:** Approved
 > **Created:** 2026-06-25
 > **Feature:** BOB-017 Phase A — первый shippable slice эпика Тир-3 «Боб-кодер» · эпик `bob-017`
 

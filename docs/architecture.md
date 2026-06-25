@@ -40,6 +40,7 @@ P0 — Telegram-транспорт на aiogram (typing-индикатор + Ric
 ```
 src/bob/
   domain/            # ЧИСТО: без I/O, LLM и Telegram. Только логика и модели.
+    introspection/   # PrivacyGuard — чистый приват-инвариант самоинтроспекции (BOB-017)
     personality/     # Mood, TasteEngine, Negotiation, SOUL, TasteZoneClassifier,
                      #   taste_evolution, voice (тон по mood), mood_taste, fascination,
                      #   phantom_evolution, expression, reaction, язык персоны
@@ -49,7 +50,8 @@ src/bob/
                      #                   SoulStore, EventBus, Clock, ProactivityStore
     ports.py         #   + Capability, ToolCallingProvider, AllowlistStore,
                      #     Embedder, Reranker (семантическая память, BOB-011),
-                     #     ZoneClassifier (Negotiation-врезка, BOB-013)
+                     #     ZoneClassifier (Negotiation-врезка, BOB-013),
+                     #     RepoIntrospector (read-only самоинтроспекция, BOB-017)
   application/       # GUPPI: use-cases + оркестрация. Зависит от domain через порты.
     runtime/         # AgentRuntime (жизненный цикл), AsyncEventBus, события, periodic, retry
     router/          # LLMRouter: классификация задачи → Tier + правило редакции
@@ -58,7 +60,8 @@ src/bob/
                      #   EvolveFascination, EvolvePhantoms (эмоциональная глубина)
     proactivity/     # ProactivityEngine, ProactiveTick, RecordOwnerActivity
     authz/           # Authorizer: политика owner/allowlist/chat-scope
-    capabilities/    # CapabilityRegistry, ToolLoop, recall_memory, search_memory
+    capabilities/    # CapabilityRegistry, ToolLoop, recall_memory, search_memory,
+                     #   inspect_architecture, read_code, list_work (самоинтроспекция, BOB-017)
   infrastructure/    # Адаптеры портов (наружу).
     telegram/        # MultiBotGateway: BotRegistry (Боб+GUPPI), кросс-бот дедуп,
                      #   центральный роутер по содержимому; GuppiHandler (reject +
@@ -71,6 +74,8 @@ src/bob/
                      #   + SqliteProactivityStore + RepoProactivitySources
                      #   + SqliteFascinationStore (BOB-020);
                      #   MemoryVectorStore (sqlite-vec) + HybridMemoryRecall (RRF)
+    introspection/   # SubprocessRepoIntrospector: read-only beadloom/bd через
+                     #   create_subprocess_exec (фикс-allowlist, не shell) + guarded read_file (BOB-017)
     config/          # ConfigLoader (defaults → YAML → env)
   app.py             # composition root: собирает порты и адаптеры, запускает рантайм
 ```
@@ -828,6 +833,90 @@ backoff не маскировал дефект. `sleep` инъецируется
 `HandleMessage` подхватывает шов опционально: tool-loop включается, только когда
 зарегистрированы навыки **и** подан `ToolCallingProvider` (в сборке — провайдер
 Tier 1); иначе ход идёт прежним plain-путём роутера.
+
+### Самоинтроспекция: «Боб знает свой мир» (BOB-017, фаза A)
+
+Боб умеет заглянуть в собственный мир и ответить про свой код, архитектуру и
+процесс, опираясь на **реальные** данные, а не на догадки. За тем же
+Capability-швом (без нового транспорта) живут три **read-only** навыка
+`permission="safe"`, диалоговые — Боб вызывает их через tool-loop, GUPPI исполняет
+(как `recall_memory`):
+
+- **`inspect_architecture`** (`application/capabilities/inspect_architecture.py`) —
+  делегирует граф-`ref` в `RepoIntrospector.architecture_context` (за ним
+  `beadloom ctx`/`graph`/`why`/`search`): слои, границы, зависимости, импакт.
+- **`read_code`** (`read_code.py`) — один аргумент `query` маршрутизируется по
+  форме: репо-относительный путь (есть разделитель `/` и расширение, напр.
+  `src/bob/app.py`) читается через `read_file`, всё прочее уходит в `search_code`
+  (FTS по узлам/докам).
+- **`list_work`** (`list_work.py`) — состояние трекера: `bd show <id>` для
+  конкретной задачи, иначе `bd ready` для очереди готового.
+
+Все три — фабрики `make_*_capability(introspector)` по образцу `recall_memory`: они
+лишь валидируют вход, делегируют в порт и рендерят компактный результат, а на
+пустом выводе честно отвечают «ничего не нашёл» (US-5), не выдумывая
+несуществующую ссылку/символ/задачу. Приватный инвариант в них не дублируется — он
+живёт глубже, в реализации порта.
+
+**Порт `RepoIntrospector`** (`domain/ports.py`, `Protocol`) — абстракция шва:
+`architecture_context(ref)` / `search_code(query)` / `read_file(path, *, max_lines)`
+/ `list_tasks(query)`, все **read-only**. В тестах подменяется детерминированным
+фейком (без подпроцесса и диска).
+
+**`SubprocessRepoIntrospector`** (`infrastructure/introspection/subprocess_introspector.py`)
+— живая реализация. Локальные `beadloom`/`bd` запускаются через
+`asyncio.create_subprocess_exec` (**не shell** — нет инъекции метасимволов) по
+**фиксированному allowlist** read-подкоманд (`beadloom`: `ctx`/`graph`/`why`/`search`;
+`bd`: `ready`/`show`). Всё вне allowlist — неизвестный бинарь, write-подкоманда,
+аргумент, похожий на флаг (`-…`), — отвергается `DisallowedCommandError` и **не
+исполняется**. Каждый запуск ограничен жёстким таймаутом (по умолчанию 30 с,
+дефолтный раннер на таймауте `kill`-ит и реапит процесс), вывод обрезается по
+лимиту символов и проходит санитайзер. Подпроцессная граница инжектируется как
+`runner`, поэтому тесты не плодят процессы.
+
+#### Приватный инвариант: `PrivacyGuard` (🔴 ядро)
+
+Приватность — **обязательное требование**, не опция, и не обходится промптом.
+`PrivacyGuard` (`domain/introspection/privacy_guard.py`) — **чистый** замороженный
+домен-объект (без I/O, LLM и промпта), единственная точка правды «можно ли читать
+этот путь / возвращать этот текст»:
+
+- **`allows_path(path)`** — путь резолвится относительно корня репо (схлопывание
+  `..`/`.` **без обращения к диску**) и допускается **только** если попадает в один
+  из read-only корней `ALLOWED_ROOTS = (src, tests, docs)` (или есть сам корень).
+  Всё прочее — `data/soul/**` (SOUL.md + профили), `data/bob.db*` (БД памяти + WAL/
+  SHM), `.env*` (секреты), `config/**`, файлы в корне репо, traversal за пределы
+  репо, абсолютный путь снаружи — **DENY** по построению.
+- **`sanitize(text)`** — защита в глубину: из любого вывода (даже из разрешённого
+  пути или CLI) вырезаются секрето-подобные паттерны (`KEY=value` env-присвоения,
+  `sk-…`-токены, `api_key`/`token`/`secret`/`password`), чтобы случайный секрет не
+  ушёл с машины.
+
+Адаптер сверяется с guard'ом **до** открытия файла: `read_file` на запрещённый
+путь поднимает `DeniedPathError` без касания диска, а разрешённый-но-отсутствующий
+файл даёт честное «не найдено». Поверх чистого имя-based guard'а инфра-граница
+делает **дополнительную проверку realpath-containment** (`_real_path_is_allowed`):
+имя-based проверка не видит, **куда указывает symlink**, поэтому линк, подложенный
+под разрешённый корень (напр. `src/leak.md -> data/soul/SOUL.md`), резолвится через
+`os.path.realpath` и отвергается, если реальный путь выходит из read-only корней.
+Containment считается на realpath-ах с обеих сторон, поэтому симлинкнутый корень
+репо (напр. `/var -> /private/var` на macOS) не даёт ложного отказа. Так
+`read_code` физически не может прочитать личные данные.
+
+#### Границы стадии и конфигурация
+
+Фаза A — **только чтение, локально, без записи и исполнения произвольного CLI**;
+гейтед-исполнение Claude Code в изоляции (фаза B) и стрим/self-proposed (фаза C) —
+вне объёма. Навыки **намеренно не** добавлены в автономный `goals.safe_capabilities`
+→ они **диалоговые**, не самонаправленные: проактивный tick не может их запустить
+сам. Композиция — в `_build_registry(config, recall=…)` (`app.py`): при
+`introspection.enabled` (по умолчанию **true** — это и есть фича; read-only,
+owner-only чат) три навыка регистрируются поверх `SubprocessRepoIntrospector(
+PrivacyGuard(repo_root=_REPO_ROOT), …)`; выключено → реестр держит ровно две
+memory-capability, поведение как раньше. Конфиг `introspection.*`
+(`infrastructure/config/loader.py`): `enabled`, `max_output_chars` (`20000`),
+`read_max_lines` (`200`), пути бинарей `beadloom_bin`/`bd_bin`. Миграций БД нет —
+навыки только читают репозиторий и трекер.
 
 ## Память (SQLite + FTS5 + гибрид)
 
@@ -2450,6 +2539,18 @@ graceful degrade без идентичности) и `tests/infrastructure/teleg
 (`_decide_addressivity` как гейт хода: `SILENT` → ранний выход, `REACT` → путь
 `REACT_ONLY`, `ENGAGE` → обычная компоновка; непровязанный `bob_user_id_source` →
 поведение как до BOB-023).
+
+Самоинтроспекция (BOB-017, фаза A) покрыта по слоям. Домен —
+`tests/domain/introspection/test_privacy_guard.py` (приват-инвариант: ALLOW
+`src`/`tests`/`docs`, DENY `data/soul`/`bob.db`/`.env`/`config`, traversal за репо;
+`sanitize` вырезает секрето-подобное). Приложение —
+`tests/application/capabilities/test_inspect_architecture.py`,
+`test_read_code.py` (маршрутизация путь↔поиск) и `test_list_work.py` (dispatch,
+компактный рендер, честный «ничего не нашёл» на пустом, US-5). Инфраструктура —
+`tests/infrastructure/introspection/test_subprocess_introspector.py` (фикс-allowlist
+read-подкоманд, отказ на флаг/неизвестный бинарь, таймаут, обрезка; `read_file`
+через guard + realpath-containment против symlink-обхода). Конфигурация —
+`tests/test_introspection_config.py` (`introspection.*`-дефолты + override).
 
 Защитный механизм CI (BOB-009): `pytest-timeout` задаёт дефолтный пер-тестовый
 таймаут (`timeout=60`, `timeout_method="thread"` в `pyproject.toml`), чтобы будущий

@@ -1,0 +1,5 @@
+# Copyright (c) 2026 Vladimir Zoologov
+# SPDX-License-Identifier: BUSL-1.1
+# See the LICENSE file in the project root for full license information.
+
+"""Tests for the subprocess introspection adapter (BOB-017 Phase A)."""
