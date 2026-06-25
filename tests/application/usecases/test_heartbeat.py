@@ -15,14 +15,18 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
+import pytest
+
 from bob.app import _load_soul
 from bob.application.router.llm_router import LLMRouter
 from bob.application.usecases.apply_reflection import ApplyReflection, ReflectionSignal
 from bob.application.usecases.handle_message import PersonalityState
 from bob.application.usecases.heartbeat import (
+    _MONOLOGUE_VALENCE_BAND,
     InnerMonologueTick,
     MoodDriftTick,
     ReflectTick,
+    _bounded_valence_delta,
 )
 from bob.domain.personality.mood import Mood
 from bob.domain.personality.soul import SOUL
@@ -199,6 +203,45 @@ async def test_inner_monologue_feeds_mood() -> None:
 
     # Assert
     assert state.soul.mood.valence > 0.0
+
+
+async def test_inner_monologue_does_not_spiral_mood_to_an_extreme() -> None:
+    # Arrange: baseline 0.4, and an endless run of POSITIVE private thoughts. Before
+    # BOB-030 this was a positive-feedback loop that walked valence to the +1 rail.
+    router, _ = _router(reply="positive")
+    baseline = Mood(valence=0.4)
+    state = _state(Mood(valence=0.4), baseline)
+    tick = InnerMonologueTick(router=router, state=state)
+
+    # Act: many ticks in a row, with no drift in between (worst case).
+    for _ in range(30):
+        await tick.run()
+
+    # Assert: Bob's own ruminations never push valence past the homeostatic band —
+    # he stays emotionally stable, not pinned at a mood ceiling.
+    assert state.soul.mood.valence <= baseline.valence + _MONOLOGUE_VALENCE_BAND + 1e-9
+    assert state.soul.mood.valence < 1.0
+
+
+def test_bounded_valence_delta_applies_full_step_inside_the_band() -> None:
+    # Well within baseline ± band: the nudge is applied in full (mood still colours).
+    assert _bounded_valence_delta(current=0.4, baseline=0.4, step=0.1) == pytest.approx(0.1)
+    assert _bounded_valence_delta(current=0.4, baseline=0.4, step=-0.1) == pytest.approx(-0.1)
+
+
+def test_bounded_valence_delta_caps_a_push_past_the_band() -> None:
+    # At the band ceiling (baseline 0.4 + band 0.4 = 0.8) an upward nudge is refused.
+    assert _bounded_valence_delta(current=0.8, baseline=0.4, step=0.1) == pytest.approx(0.0)
+    # Partway in, the step is clamped so it lands exactly at the ceiling, not past it.
+    assert _bounded_valence_delta(current=0.75, baseline=0.4, step=0.1) == pytest.approx(0.05)
+
+
+def test_bounded_valence_delta_does_not_yank_back_from_beyond_the_band() -> None:
+    # Already above the band (a strong external event): a bright thought neither
+    # pushes further out nor pulls back in — drift owns the return.
+    assert _bounded_valence_delta(current=0.95, baseline=0.4, step=0.1) == pytest.approx(0.0)
+    # ...but a darker thought from up there is still allowed to move toward baseline.
+    assert _bounded_valence_delta(current=0.95, baseline=0.4, step=-0.1) == pytest.approx(-0.1)
 
 
 async def test_mood_drift_pulls_toward_baseline() -> None:

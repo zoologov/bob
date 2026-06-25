@@ -54,6 +54,34 @@ _MONOLOGUE_VALENCE_STEP = 0.1
 # Fraction of the gap to baseline that mood drifts back each tick.
 _DRIFT_RATE = 0.1
 
+# Homeostatic band (BOB-030): a private thought may colour valence only within
+# ``baseline ± _MONOLOGUE_VALENCE_BAND``. Conditioning the monologue on the current
+# mood (BOB-029) created a positive-feedback loop — a bright thought lifts valence,
+# which makes the next thought brighter — that walked valence to the ±1 rail
+# (observed at 1.0). Bounding Bob's OWN ruminations to a band around his resting
+# baseline keeps him emotionally stable (orbiting the baseline, no ceiling/floor
+# swings); real external events may still move mood further and then decay via drift.
+_MONOLOGUE_VALENCE_BAND = 0.4
+
+
+def _bounded_valence_delta(*, current: float, baseline: float, step: float) -> float:
+    """Clamp a self-generated valence nudge to the homeostatic band (BOB-030).
+
+    The monologue may move valence toward the thought's sentiment, but never past
+    ``baseline ± _MONOLOGUE_VALENCE_BAND`` in the away-from-baseline direction, so
+    Bob's own thoughts cannot spiral his mood to an extreme. If valence is already
+    beyond the band (from a strong external event) the thought neither pushes it
+    further out nor yanks it back — homeostatic drift handles the return.
+    """
+    raw = current + step
+    if step > 0:
+        ceiling = max(baseline + _MONOLOGUE_VALENCE_BAND, current)
+        return min(raw, ceiling) - current
+    if step < 0:
+        floor = min(baseline - _MONOLOGUE_VALENCE_BAND, current)
+        return max(raw, floor) - current
+    return 0.0
+
 _POSITIVE_LABELS = frozenset({"positive", "pos", "good"})
 _NEGATIVE_LABELS = frozenset({"negative", "neg", "bad"})
 
@@ -260,8 +288,16 @@ class InnerMonologueTick:
                 ],
             )
         )
-        delta = MoodDelta(valence=_valence_step(_last_label(thought)))
-        self._state.soul = self._state.soul.with_mood(self._state.soul.mood.update(delta))
+        mood = self._state.soul.mood
+        step = _valence_step(_last_label(thought))
+        delta = MoodDelta(
+            valence=_bounded_valence_delta(
+                current=mood.valence,
+                baseline=self._state.soul.mood_baseline.valence,
+                step=step,
+            )
+        )
+        self._state.soul = self._state.soul.with_mood(mood.update(delta))
         logger.debug("inner monologue tick applied valence delta %.3f", delta.valence)
 
 
