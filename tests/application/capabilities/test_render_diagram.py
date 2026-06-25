@@ -133,3 +133,53 @@ def test_collecting_sink_drains_and_clears() -> None:
     assert [r.caption for r in drained] == ["one", "two"]
     # A second drain is empty — each turn starts fresh (no leak across turns).
     assert sink.drain() == ()
+
+
+# --- BOB-035 .2: privacy / per-turn isolation guardrails -----------------------
+
+
+async def test_execute_renders_only_its_input_no_personal_data_read() -> None:
+    # PRIVACY GUARDRAIL: the capability hands the renderer EXACTLY the mermaid it was
+    # given and nothing else — it never reaches for memory / soul / config / files.
+    renderer = _FakeRenderer()
+    cap = make_render_diagram_capability(renderer, CollectingDiagramSink())
+
+    await cap.execute({"mermaid": "graph TD; secret-free"})
+
+    # The renderer saw only the single mermaid source — no extra data was fetched/passed.
+    assert renderer.sources == ["graph TD; secret-free"]
+
+
+async def test_execute_ignores_extra_args_renders_only_mermaid() -> None:
+    # Even if the model passes spurious extra arguments, only ``mermaid`` is rendered —
+    # the capability does not interpret a path/personal field hidden in the args.
+    renderer = _FakeRenderer()
+    cap = make_render_diagram_capability(renderer, CollectingDiagramSink())
+
+    await cap.execute(
+        {"mermaid": "graph TD; A-->B", "file": "/etc/passwd", "user_id": 42}
+    )
+
+    assert renderer.sources == ["graph TD; A-->B"]
+
+
+def test_capability_permission_is_safe() -> None:
+    # GUARDRAIL: render_diagram is conversation-safe — local, reads nothing private.
+    cap = make_render_diagram_capability(_FakeRenderer(), CollectingDiagramSink())
+
+    assert cap.permission == "safe"
+
+
+async def test_each_turn_uses_a_fresh_drain_no_cross_turn_bleed() -> None:
+    # PER-TURN ISOLATION: two renders followed by a drain yield both; a render in a
+    # "next turn" yields ONLY that one — the prior turn's results never leak through.
+    sink = CollectingDiagramSink()
+    cap = make_render_diagram_capability(_FakeRenderer(), sink)
+
+    await cap.execute({"mermaid": "turn1-a"})
+    await cap.execute({"mermaid": "turn1-b"})
+    assert len(sink.drain()) == 2  # turn 1 drained
+
+    await cap.execute({"mermaid": "turn2"})
+    drained = sink.drain()
+    assert len(drained) == 1  # turn 2 holds only its own diagram, no bleed

@@ -163,10 +163,11 @@ class FakeBot:
     ``send_message`` remains as the rich-failure safety net.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, *, photo_raises: bool = False) -> None:
         self.sent: list[tuple[int, str]] = []
         self.photos: list[tuple[int, bytes, str | None]] = []
         self.typings: int = 0
+        self._photo_raises = photo_raises
 
     async def get_updates(self, *, offset: int, timeout: int) -> Sequence[UpdateLike]:  # noqa: ARG002
         return []
@@ -215,6 +216,10 @@ class FakeBot:
     ) -> FakeMessage:
         # BOB-035: the photo-send seam — records each diagram photo posted to chat.
         # The gateway wraps the PNG in an aiogram BufferedInputFile (``.data`` bytes).
+        if self._photo_raises:
+            # An UNEXPECTED transport error (not AiogramError/ValueError) propagates
+            # past the gateway's own guard up to the use-case's best-effort swallow.
+            raise RuntimeError("transport blew up")
         self.photos.append((chat_id, photo.data, caption))
         return FakeMessage(message_id=778)
 
@@ -457,12 +462,13 @@ def _build(
     self_improvement: _FakeSelfImprovement | None = None,
     self_improvement_max_magnitude: float = 0.3,
     diagram_sink: DiagramSink | None = None,
+    photo_send_raises: bool = False,
 ) -> tuple[HandleMessage, FakeBot, FakeRepo, CapturingProvider]:
     tier0 = CapturingProvider(reply="positive", replies=tier0_replies)
     tier1 = CapturingProvider(reply=reply, replies=tier1_replies)
     router = LLMRouter(providers={0: tier0, 1: tier1})
     clock = clock if clock is not None else FixedClock(_moment())
-    bot = FakeBot()
+    bot = FakeBot(photo_raises=photo_send_raises)
     repo = FakeRepo(history=history)
     gateway = TelegramGateway(
         bot=bot,
@@ -989,6 +995,133 @@ async def test_render_diagram_graceful_when_renderer_unavailable() -> None:
     # No photo was posted (the render failed gracefully),
     assert bot.photos == []
     # but Bob still replied (no crash).
+    assert bot.final_text
+
+
+async def test_render_diagram_sends_caption_alongside_the_photo() -> None:
+    # BOB-035 acceptance: the drained DiagramResult carries a short caption that the
+    # gateway forwards with the photo — Bob's in-character line, not a system message.
+    sink = CollectingDiagramSink()
+    registry = _registry_with_render_diagram(_FakeDiagramRenderer(), sink)
+    handler, bot, _repo, _tier1 = _build(
+        reply="unused",
+        registry=registry,
+        tool_provider=_DiagramToolProvider(),
+        diagram_sink=sink,
+    )
+
+    await handler.handle(_message("нарисуй схему"))
+
+    assert len(bot.photos) == 1
+    _chat_id, _photo, caption = bot.photos[0]
+    assert caption  # a short caption rode along with the photo
+
+
+async def test_render_diagram_drains_the_sink_so_no_residue_remains() -> None:
+    # BOB-035 per-turn isolation: after the turn the sink is fully drained — nothing is
+    # left buffered to bleed into a later turn.
+    sink = CollectingDiagramSink()
+    registry = _registry_with_render_diagram(_FakeDiagramRenderer(), sink)
+    handler, bot, _repo, _tier1 = _build(
+        reply="unused",
+        registry=registry,
+        tool_provider=_DiagramToolProvider(),
+        diagram_sink=sink,
+    )
+
+    await handler.handle(_message("нарисуй схему"))
+
+    assert len(bot.photos) == 1
+    # The reply path drained the sink; a fresh drain is empty (no residue).
+    assert sink.drain() == ()
+
+
+async def test_render_diagram_no_cross_turn_photo_bleed() -> None:
+    # BOB-035 GUARDRAIL: a diagram turn followed by a plain (no-tool) turn must NOT
+    # re-send the first turn's photo — the per-turn sink is drained, not accumulated.
+    sink = CollectingDiagramSink()
+    registry = _registry_with_render_diagram(_FakeDiagramRenderer(), sink)
+
+    # Turn 1: a render_diagram turn → exactly one photo.
+    diagram_handler, diagram_bot, _r1, _t1 = _build(
+        reply="unused",
+        registry=registry,
+        tool_provider=_DiagramToolProvider(),
+        diagram_sink=sink,
+    )
+    await diagram_handler.handle(_message("нарисуй схему"))
+    assert len(diagram_bot.photos) == 1
+
+    # Turn 2: a plain text reply over the SAME shared sink (no tool call) → no photo,
+    # and crucially NOT the first turn's photo bleeding through.
+    plain_handler, plain_bot, _r2, _t2 = _build(
+        reply="просто текст",
+        diagram_sink=sink,
+    )
+    await plain_handler.handle(_message("как дела"))
+    assert plain_bot.photos == []
+
+
+async def test_normal_text_reply_sends_no_photo_regression() -> None:
+    # BOB-035 REGRESSION: a normal reply path with a wired-but-empty diagram sink must
+    # behave exactly as before — a text reply, zero photos (no spurious send).
+    sink = CollectingDiagramSink()
+    handler, bot, _repo, _tier1 = _build(reply="привет", diagram_sink=sink)
+
+    await handler.handle(_message("привет"))
+
+    assert bot.final_text
+    assert bot.photos == []
+
+
+async def test_normal_reply_with_no_sink_wired_is_unaffected_regression() -> None:
+    # BOB-035 REGRESSION: the default wiring (no diagram sink) is a clean no-op — the
+    # reply path still replies and never reaches the photo send.
+    handler, bot, _repo, _tier1 = _build(reply="привет")
+
+    await handler.handle(_message("привет"))
+
+    assert bot.final_text
+    assert bot.photos == []
+
+
+async def test_render_diagram_photo_goes_to_the_correct_chat_id() -> None:
+    # BOB-035 GUARDRAIL: the photo lands in the CURRENT turn's chat_id (per-turn), not
+    # some stale/global chat — the chat_id is resolved by the reply path per turn.
+    sink = CollectingDiagramSink()
+    registry = _registry_with_render_diagram(_FakeDiagramRenderer(), sink)
+    handler, bot, _repo, _tier1 = _build(
+        reply="unused",
+        registry=registry,
+        tool_provider=_DiagramToolProvider(),
+        diagram_sink=sink,
+    )
+    msg = _message("нарисуй схему")
+
+    await handler.handle(msg)
+
+    assert len(bot.photos) == 1
+    chat_id, _photo, _caption = bot.photos[0]
+    assert chat_id == msg.chat_id
+
+
+async def test_render_diagram_photo_send_failure_never_breaks_the_turn() -> None:
+    # BOB-035 best-effort: an UNEXPECTED transport error on the photo send is logged
+    # and swallowed — the text reply still lands, the turn completes (no crash).
+    sink = CollectingDiagramSink()
+    registry = _registry_with_render_diagram(_FakeDiagramRenderer(), sink)
+    handler, bot, _repo, _tier1 = _build(
+        reply="unused",
+        registry=registry,
+        tool_provider=_DiagramToolProvider(),
+        diagram_sink=sink,
+        photo_send_raises=True,
+    )
+
+    await handler.handle(_message("нарисуй схему"))
+
+    # The photo send blew up but was swallowed — no photo recorded, reply still landed.
+    assert bot.photos == []
     assert bot.final_text
 
 
