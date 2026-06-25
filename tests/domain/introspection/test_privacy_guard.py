@@ -47,6 +47,52 @@ def test_allows_paths_under_allowed_roots(guard: PrivacyGuard, rel: str) -> None
     assert guard.allows_path(REPO_ROOT / rel) is True
 
 
+# --- ALLOW: the new multi-segment dev-docs roots (BOB-034) --------------------
+
+
+@pytest.mark.parametrize(
+    "rel",
+    [
+        ".claude/dev-docs/ROADMAP.md",
+        ".claude/dev-docs/VISION.md",
+        ".claude/dev-docs/PERSONALITY-DEPTH-AUDIT.md",
+        ".claude/dev-docs/archive/old.md",  # nested under the allowed subtree
+        ".claude/dev-docs",  # the multi-segment root dir itself
+        ".claude/development/docs/features/BOB-017/PRD.md",
+        ".claude/development/docs/features/BOB-017/RFC.md",
+        ".claude/development/docs/features/BOB-034/CONTEXT.md",
+        ".claude/development/docs/features/X/PLAN.md",
+        ".claude/development/docs/features/X/BRIEF.md",
+        ".claude/development/docs",  # the multi-segment root dir itself
+    ],
+)
+def test_allows_dev_docs_subtrees(guard: PrivacyGuard, rel: str) -> None:
+    # The roadmap/vision + feature specs are now readable so Bob can reason about
+    # the project's direction — but ONLY under the two whitelisted subtrees.
+    assert guard.allows_path(REPO_ROOT / rel) is True
+
+
+@pytest.mark.parametrize(
+    "rel",
+    [
+        ".claude",  # the bare .claude dir is NOT readable
+        ".claude/settings.local.json",
+        ".claude/settings.json",
+        ".claude/CLAUDE.md",
+        ".claude/agents/dev.md",  # agents/ is not a whitelisted subtree
+        ".claude/commands/coordinator.md",
+        ".claude/dev-docs-extra/x.md",  # lookalike sibling, not the allowed root
+        ".claude/development/notes.md",  # under development/ but NOT development/docs
+        ".claude/development",
+    ],
+)
+def test_denies_other_dot_claude_paths(guard: PrivacyGuard, rel: str) -> None:
+    # Multi-segment matching must NOT open all of ``.claude/``: settings, agents,
+    # commands, the top-level CLAUDE.md, and any path outside the two allowed
+    # subtrees stay denied.
+    assert guard.allows_path(REPO_ROOT / rel) is False
+
+
 def test_allows_accepts_relative_path_resolved_against_repo(guard: PrivacyGuard) -> None:
     # A relative path is interpreted against the repo root, not the CWD.
     assert guard.allows_path(Path("src/bob/app.py")) is True

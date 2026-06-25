@@ -36,9 +36,12 @@ _INPUT_SCHEMA: Mapping[str, object] = {
 }
 
 _DESCRIPTION = (
-    "Read Bob's own source code: pass a repo-relative file path (e.g. "
-    "'src/bob/app.py') to read that file, or a symbol/text query to search the "
-    "repo. Read-only and privacy-guarded; only Bob's source/tests/docs are visible."
+    "Read Bob's own source code and project plans: pass a repo-relative file path "
+    "(e.g. 'src/bob/app.py', '.claude/dev-docs/ROADMAP.md', or "
+    "'.claude/development/docs/features/<KEY>/PRD.md') to read that file, or a "
+    "symbol/text query to search the repo. Read-only and privacy-guarded: Bob's "
+    "source/tests/docs plus the roadmap, vision and feature specs are visible, but "
+    "personal data and secrets (memory DB, soul, .env, config, settings) are not."
 )
 
 # Default line cap for a file read — enough to ground an answer without flooding

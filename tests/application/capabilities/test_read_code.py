@@ -38,6 +38,10 @@ def test_capability_advertises_the_read_code_contract() -> None:
 
     assert cap.name == "read_code"
     assert cap.description
+    # BOB-034: the model is told it can now read the roadmap / feature specs too.
+    low = cap.description.lower()
+    assert "roadmap" in low or "dev-docs" in low
+    assert "feature" in low or "development/docs" in low
     assert cap.permission == "safe"
     schema = cap.input_schema
     assert schema["type"] == "object"
