@@ -396,6 +396,66 @@ async def test_read_file_reads_allowed_source(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_read_file_reads_roadmap_under_dev_docs(tmp_path: Path) -> None:
+    # BOB-034: the curation-vision docs under .claude/dev-docs are now readable.
+    roadmap = tmp_path / ".claude" / "dev-docs" / "ROADMAP.md"
+    roadmap.parent.mkdir(parents=True)
+    roadmap.write_text("# Roadmap\nP0\nP1\n", encoding="utf-8")
+    intro = _make(tmp_path, _FakeRunner())
+
+    out = await intro.read_file(".claude/dev-docs/ROADMAP.md", max_lines=10)
+
+    assert "Roadmap" in out
+
+
+@pytest.mark.asyncio
+async def test_read_file_reads_feature_spec_under_development_docs(
+    tmp_path: Path,
+) -> None:
+    # BOB-034: feature PRD/RFC/CONTEXT specs under .claude/development/docs read too.
+    prd = tmp_path / ".claude" / "development" / "docs" / "features" / "X" / "PRD.md"
+    prd.parent.mkdir(parents=True)
+    prd.write_text("# PRD\nrequirements\n", encoding="utf-8")
+    intro = _make(tmp_path, _FakeRunner())
+
+    out = await intro.read_file(
+        ".claude/development/docs/features/X/PRD.md", max_lines=10
+    )
+
+    assert "requirements" in out
+
+
+@pytest.mark.asyncio
+async def test_read_file_refuses_settings_under_dot_claude(tmp_path: Path) -> None:
+    # BOB-034: opening dev-docs must NOT open the rest of .claude/ — settings stay denied.
+    settings = tmp_path / ".claude" / "settings.local.json"
+    settings.parent.mkdir(parents=True)
+    settings.write_text('{"secret": "x"}', encoding="utf-8")
+    intro = _make(tmp_path, _FakeRunner())
+
+    with pytest.raises(DeniedPathError):
+        await intro.read_file(".claude/settings.local.json", max_lines=10)
+
+
+@pytest.mark.asyncio
+async def test_read_file_refuses_symlink_under_dev_docs_into_denied(
+    tmp_path: Path,
+) -> None:
+    # 🔴 The symlink containment re-check must hold for the new multi-segment roots:
+    # a link planted under .claude/dev-docs pointing at SOUL must NOT leak its content.
+    soul = tmp_path / "data" / "soul" / "SOUL.md"
+    soul.parent.mkdir(parents=True)
+    soul.write_text("DEEP_PRIVATE_SOUL_CONTENT", encoding="utf-8")
+    dev_docs = tmp_path / ".claude" / "dev-docs"
+    dev_docs.mkdir(parents=True)
+    (dev_docs / "leak.md").symlink_to(soul)
+    intro = _make(tmp_path, _FakeRunner())
+
+    with pytest.raises(DeniedPathError):
+        await intro.read_file(".claude/dev-docs/leak.md", max_lines=100)
+
+
+@pytest.mark.asyncio
 async def test_read_file_refuses_guarded_path_without_touching_disk(
     tmp_path: Path,
 ) -> None:

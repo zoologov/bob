@@ -15,16 +15,24 @@ tool's text output through :meth:`PrivacyGuard.sanitize`.
 
 The invariant (PRD-mandated, not an option):
 
-* **ALLOW ONLY** paths under the read-only roots ``src/``, ``tests/``, ``docs/``
-  of the repo (and those roots themselves).
+* **ALLOW ONLY** paths under the read-only roots — the source/test/doc trees
+  ``src/``, ``tests/``, ``docs/`` plus the curation-vision doc subtrees
+  ``.claude/dev-docs/`` (ROADMAP / VISION / audits) and
+  ``.claude/development/docs/`` (feature PRD/RFC/CONTEXT/PLAN/BRIEF) — and those
+  roots themselves.
 * **DENY** everything else, in particular the personal-data roots — ``data/soul/**``
   (SOUL.md + profiles), ``data/bob.db*`` (the memory DB + its WAL/SHM siblings),
-  ``.env*`` (secrets), and ``config/**`` — plus any path that escapes the repo via
-  ``..`` traversal or an absolute path outside the repo root.
+  ``.env*`` (secrets), and ``config/**`` — plus the rest of ``.claude/`` (its
+  ``settings*.json``, ``agents/``, ``commands/``, top-level ``CLAUDE.md``) and any
+  path that escapes the repo via ``..`` traversal or an absolute path outside the
+  repo root.
 
-Paths are resolved (``..`` collapsed) against the repo root and tested for
-containment in an allowed root, so a path that climbs out of an allowed root into
-a denied one is denied by construction.
+An allowed root may be MULTI-SEGMENT (``.claude/dev-docs``): containment is matched
+by FULL path-prefix — every segment of a root must be a prefix of the target's
+segments — so adding ``.claude/dev-docs`` opens ONLY that subtree, never the rest
+of ``.claude/``. Paths are resolved (``..`` collapsed) against the repo root before
+matching, so a path that climbs out of an allowed root into a denied one is denied
+by construction.
 """
 
 from __future__ import annotations
@@ -34,10 +42,27 @@ from dataclasses import dataclass
 from pathlib import Path
 
 # The ONLY roots Bob may read from — repo-relative, read-only source/docs trees.
-# Exposed (also under the private alias for in-module use) as the single source of
-# truth so the infra adapter's symlink-containment re-check shares the same roots.
-ALLOWED_ROOTS: tuple[str, ...] = ("src", "tests", "docs")
+# Each entry is a repo-relative root spec, written with ``/`` and possibly
+# MULTI-SEGMENT (``.claude/dev-docs``); a root is split into its path segments and
+# matched by full path-prefix (see :meth:`PrivacyGuard.allows_path`) so a
+# multi-segment root opens ONLY that subtree and never its siblings (the rest of
+# ``.claude/`` — settings, agents, commands, CLAUDE.md — stays denied). Exposed
+# (and aliased privately for in-module use) as the single source of truth so the
+# infra adapter's symlink-containment re-check shares the same roots.
+ALLOWED_ROOTS: tuple[str, ...] = (
+    "src",
+    "tests",
+    "docs",
+    ".claude/dev-docs",
+    ".claude/development/docs",
+)
 _ALLOWED_ROOTS: tuple[str, ...] = ALLOWED_ROOTS
+
+# Each allowed root pre-split into its path segments, so matching is a pure
+# segment-prefix comparison (no string-prefix ambiguity: ``srcfoo`` is not ``src``).
+_ALLOWED_ROOT_SEGMENTS: tuple[tuple[str, ...], ...] = tuple(
+    tuple(root.split("/")) for root in _ALLOWED_ROOTS
+)
 
 # What the redaction marker leaves behind in sanitized output.
 _REDACTION = "[REDACTED]"
@@ -66,10 +91,14 @@ class PrivacyGuard:
         """Whether ``path`` may be read under the DENY-invariant.
 
         ``path`` is resolved against the repo root (``..`` segments collapsed, no
-        disk access) and accepted ONLY when it lands inside one of the allowed
-        roots (``src``/``tests``/``docs``) or is one of those roots itself.
-        Everything else — denied personal-data roots, repo-root files, traversal
-        that escapes an allowed root, absolute paths outside the repo — is denied.
+        disk access) and accepted ONLY when its segments are prefixed by one of the
+        allowed roots (``src``/``tests``/``docs``, or the multi-segment
+        ``.claude/dev-docs`` / ``.claude/development/docs``) or exactly equal a root.
+        Matching is by full path-prefix on segments, so a multi-segment root opens
+        only its own subtree (the rest of ``.claude/`` stays denied) and a lookalike
+        sibling (``srcfoo``) is never mistaken for an allowed root. Everything else —
+        denied personal-data roots, repo-root files, traversal that escapes an
+        allowed root, absolute paths outside the repo — is denied.
         """
         root = self._resolve(self.repo_root)
         target = self._resolve(path if path.is_absolute() else self.repo_root / path)
@@ -80,8 +109,26 @@ class PrivacyGuard:
             # Escapes the repo entirely (e.g. ``../../etc/passwd`` or /etc/passwd).
             return False
 
-        head = rel.parts[0] if rel.parts else ""
-        return head in _ALLOWED_ROOTS
+        return any(
+            self._has_segment_prefix(rel.parts, allowed)
+            for allowed in _ALLOWED_ROOT_SEGMENTS
+        )
+
+    @staticmethod
+    def _has_segment_prefix(
+        parts: tuple[str, ...], prefix: tuple[str, ...]
+    ) -> bool:
+        """Whether ``prefix`` is a full leading run of path segments of ``parts``.
+
+        A pure segment comparison (never a string-prefix one): every segment of
+        ``prefix`` must equal the corresponding segment of ``parts``, so ``parts``
+        either equals the root or sits strictly under it. ``("src",)`` matches
+        ``src`` and ``src/x``; ``(".claude", "dev-docs")`` matches that subtree but
+        not ``.claude`` alone, ``.claude/agents``, or ``.claude/dev-docs-extra``.
+        """
+        if len(parts) < len(prefix):
+            return False
+        return parts[: len(prefix)] == prefix
 
     def sanitize(self, text: str) -> str:
         """Redact anything secret-shaped from tool ``text`` before it is returned.
