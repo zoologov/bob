@@ -18,6 +18,9 @@ from bob.domain.personality.conversation import (
     RepeatThresholds,
     is_bob_repeat,
     is_user_repeat,
+    recalled_bob_replies,
+    recalled_bob_reply,
+    recalled_without_copied_exemplars,
 )
 
 
@@ -133,3 +136,87 @@ def test_repeat_thresholds_rejects_window_below_one() -> None:
 def test_repeat_thresholds_rejects_out_of_range_threshold() -> None:
     with pytest.raises(ValueError, match="similarity_threshold"):
         RepeatThresholds(similarity_threshold=1.5)
+
+
+# --- Recall-aware anti-repeat helpers (BOB-032 .1, shared domain logic) --------
+#
+# A recalled episode is stored as a whole turn "<sender>: <text>\nbob: <old reply>"
+# (same shape as history; see HandleMessage._persist). These pure helpers recover
+# Bob's "bob:" half so the reactive AND proactive guards can compare a fresh
+# candidate against his OWN recalled past replies — and drop the copied exemplar on
+# the retry — without either path duplicating the predicate.
+
+_OLD_REPLY = "Звучит как угроза."
+_EPISODE: dict[str, object] = {"content": f"Ada: ты опять?\nbob: {_OLD_REPLY}"}
+_FACT: dict[str, object] = {"content": "Ada предпочитает чай"}
+
+
+def test_recalled_bob_reply_recovers_the_bob_half() -> None:
+    # The single-item extractor returns exactly the bob: half (the copyable exemplar).
+    assert recalled_bob_reply(_EPISODE) == _OLD_REPLY
+
+
+def test_recalled_bob_reply_fact_only_memory_yields_blank() -> None:
+    # A fact-only memory has no "\nbob: " marker -> no copyable exemplar.
+    assert recalled_bob_reply(_FACT) == ""
+
+
+def test_recalled_bob_reply_non_string_content_yields_blank() -> None:
+    # A non-string content (e.g. structured metadata) is not a turn -> blank.
+    assert recalled_bob_reply({"content": 123}) == ""
+    assert recalled_bob_reply({}) == ""
+
+
+def test_recalled_bob_reply_uses_the_last_marker_for_multiline_user_text() -> None:
+    # rfind on the marker: a user half that itself mentions "bob:" must not split early
+    # — only the FINAL "\nbob: " starts Bob's reply.
+    item = {"content": "Ada: помнишь bob: что-то?\nbob: Да, помню."}
+    assert recalled_bob_reply(item) == "Да, помню."
+
+
+def test_recalled_bob_replies_recovers_all_and_skips_facts_and_blanks() -> None:
+    # The plural form gathers every real bob: exemplar, dropping fact-only, blank, and
+    # non-string memories — only copyable reply exemplars feed the guard.
+    recalled: list[dict[str, object]] = [
+        _FACT,
+        {"content": "Ada: пусто\nbob: "},  # blank bob: half
+        {"content": 999},  # non-string
+        _EPISODE,
+    ]
+    assert recalled_bob_replies(recalled) == (_OLD_REPLY,)
+
+
+def test_recalled_bob_replies_empty_is_empty_tuple() -> None:
+    assert recalled_bob_replies([]) == ()
+
+
+def test_recalled_without_copied_exemplars_drops_only_the_matched_episode() -> None:
+    # R2: a candidate copying _OLD_REPLY drops exactly that episode; the fact-only
+    # memory (grounding) is preserved untouched — facts are never weakened.
+    kept = recalled_without_copied_exemplars(
+        _OLD_REPLY, [_EPISODE, _FACT], threshold=0.9
+    )
+    assert kept == (_FACT,)
+
+
+def test_recalled_without_copied_exemplars_keeps_all_when_no_match() -> None:
+    # A substantively different candidate matches no exemplar -> nothing is dropped.
+    kept = recalled_without_copied_exemplars(
+        "Свежая мысль про космос, ничего общего.", [_EPISODE, _FACT], threshold=0.9
+    )
+    assert kept == (_EPISODE, _FACT)
+
+
+def test_recalled_without_copied_exemplars_drops_every_matching_exemplar() -> None:
+    # When two recalled episodes carry the SAME copied reply, BOTH are dropped (the
+    # attractor is fully withheld), while an unrelated episode survives.
+    dup = {"content": f"Bo: эхо\nbob: {_OLD_REPLY}"}
+    other = {"content": "Cy: привет\nbob: Совсем другое."}
+    kept = recalled_without_copied_exemplars(
+        _OLD_REPLY, [_EPISODE, dup, other, _FACT], threshold=0.9
+    )
+    assert kept == (other, _FACT)
+
+
+def test_recalled_without_copied_exemplars_empty_input_is_empty() -> None:
+    assert recalled_without_copied_exemplars("что угодно", [], threshold=0.9) == ()

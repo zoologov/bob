@@ -31,6 +31,8 @@ from bob.application.usecases.handle_message import (
     HandleMessage,
     OwnerActivityRecorder,
     PersonalityState,
+    _recalled_bob_replies,
+    _recalled_without_copied_exemplars,
     _recent_bob_replies,
 )
 from bob.application.usecases.update_mood_from_text import UpdateMoodFromText
@@ -1889,17 +1891,18 @@ async def test_verbatim_duplicate_reply_triggers_one_regeneration() -> None:
 
 
 async def test_verbatim_duplicate_kept_when_regeneration_still_identical() -> None:
-    # No infinite loop: if the single retry is ALSO identical, the reply is kept.
+    # No infinite loop: a stubborn HISTORY repeat (history is never dropped) regenerates
+    # at most _MAX_REGENERATIONS (2, BOB-032 .1) times, then keeps the last draft.
     handler, bot, _repo, tier1 = _build(
         reply="unused",
-        tier1_replies=[_REPEATED_REPLY, _REPEATED_REPLY],
+        tier1_replies=[_REPEATED_REPLY] * 4,
         history=[{"content": _PRIOR_DUP_TURN, "event_type": "message"}],
     )
 
     await handler.handle(_message("объясни подробно ещё раз то же самое"))
 
-    # At most one extra generation; the (still-duplicate) reply is committed.
-    assert len(tier1.payloads) == 2
+    # initial draft + 2 retries = 3 generations; the (still-duplicate) reply is kept.
+    assert len(tier1.payloads) == 3
     assert bot.final_text == _REPEATED_REPLY
 
 
@@ -2082,6 +2085,174 @@ def test_recent_bob_replies_ignores_turns_without_a_bob_half() -> None:
     history = [{"content": "Ada: просто вопрос без ответа Боба"}]
 
     assert _recent_bob_replies(history, limit=5) == ()
+
+
+# --- BOB-032 .1: recall-aware anti-repeat (R1) + attractor-breaking regen (R2) --
+
+# A recalled semantic memory stored as a whole turn — Bob's old reply is the bob: half.
+_RECALLED_OLD_REPLY = "Звучит как угроза, Ada."
+_RECALLED_EPISODE: dict[str, object] = {
+    "content": f"Ada: ты опять?\nbob: {_RECALLED_OLD_REPLY}",
+    "category": "episodic",
+}
+# A fact-only recalled memory (no bob: half) — grounding content the retry must keep.
+_RECALLED_FACT: dict[str, object] = {"content": "Ada предпочитает чай", "category": "personal"}
+
+
+def test_recalled_bob_replies_recovers_the_bob_half() -> None:
+    # The extractor recovers the bob: half of each recalled episode (the copyable
+    # exemplar), reusing the same _BOB_TURN_MARKER recovery as history extraction.
+    recalled = [_RECALLED_EPISODE, _RECALLED_FACT]
+
+    assert _recalled_bob_replies(recalled) == (_RECALLED_OLD_REPLY,)
+
+
+def test_recalled_bob_replies_skips_fact_only_and_blank_memories() -> None:
+    # A fact-only memory (no marker), a non-string content, and a blank bob: half
+    # contribute nothing — only real copyable reply exemplars feed the guard.
+    recalled: list[dict[str, object]] = [
+        _RECALLED_FACT,
+        {"content": 123, "category": "x"},
+        {"content": "Ada: пусто\nbob: ", "category": "episodic"},
+        _RECALLED_EPISODE,
+    ]
+
+    assert _recalled_bob_replies(recalled) == (_RECALLED_OLD_REPLY,)
+
+
+def test_recalled_bob_replies_empty_is_empty_tuple() -> None:
+    # No recalled memories -> empty tuple (the guard then sees only history).
+    assert _recalled_bob_replies([]) == ()
+
+
+def test_recalled_without_copied_exemplars_drops_only_the_matched_episode() -> None:
+    # The matched reply exemplar is removed; the fact-only memory (grounding) is kept —
+    # recall-grounding of FACTS is never weakened, only the copied REPLY is withheld.
+    recalled = [_RECALLED_EPISODE, _RECALLED_FACT]
+
+    kept = _recalled_without_copied_exemplars(
+        _RECALLED_OLD_REPLY, recalled, threshold=0.9
+    )
+
+    assert kept == (_RECALLED_FACT,)
+
+
+def test_recalled_without_copied_exemplars_keeps_unmatched() -> None:
+    # A substantively different candidate matches no exemplar -> the recalled set is
+    # returned untouched (no false drop).
+    recalled = [_RECALLED_EPISODE, _RECALLED_FACT]
+
+    kept = _recalled_without_copied_exemplars(
+        "Совершенно другой ответ по сути.", recalled, threshold=0.9
+    )
+
+    assert kept == (_RECALLED_EPISODE, _RECALLED_FACT)
+
+
+def _recall_with(*memories: Mapping[str, object]) -> FakeRecall:
+    """A recall double returning the given recalled memories (BOB-032 .1)."""
+    return FakeRecall(hits=list(memories))
+
+
+async def test_copying_a_recalled_reply_is_caught_and_regenerated() -> None:
+    # R1: the candidate copies a RECALLED old reply that is NOT in recent history — the
+    # history-only guard was blind to it. The recall-aware guard catches it and the
+    # attractor-breaking retry commits the genuinely-different draft.
+    handler, bot, _repo, tier1 = _build(
+        reply="unused",
+        tier1_replies=[_RECALLED_OLD_REPLY, "А теперь по-настоящему другой ответ."],
+        recall=_recall_with(_RECALLED_EPISODE),
+    )
+
+    await handler.handle(_message("ты опять про угрозу подробно ещё раз"))
+
+    assert len(tier1.payloads) == 2  # the guard fired exactly one retry
+    assert bot.final_text == "А теперь по-настоящему другой ответ."
+
+
+async def test_retry_context_excludes_the_copied_recalled_exemplar() -> None:
+    # R2 (structural): on the retry the copied recalled reply text is DROPPED from the
+    # compose context (the model stops seeing what it echoed), while the fact-only
+    # recalled memory is preserved — recall-grounding of facts stays intact.
+    handler, _bot, _repo, tier1 = _build(
+        reply="unused",
+        tier1_replies=[_RECALLED_OLD_REPLY, "Другой ответ."],
+        recall=_recall_with(_RECALLED_EPISODE, _RECALLED_FACT),
+    )
+
+    await handler.handle(_message("ты опять про угрозу подробно ещё раз"))
+
+    retry_text = "\n".join(m["content"] for m in tier1.payloads[1])
+    assert _RECALLED_OLD_REPLY not in retry_text  # the copied exemplar is gone
+    assert "Ada предпочитает чай" in retry_text  # the fact grounding is preserved
+
+
+async def test_recall_repeat_breaks_attractor_after_one_retry() -> None:
+    # R2 (attractor break): once the copied recalled exemplar is dropped from context,
+    # the next draft — even if textually identical — is no longer a repeat (the guard can
+    # no longer see the dropped exemplar, and history is empty), so it commits after ONE
+    # retry. Dropping the attractor is what ends the loop, not the regeneration count.
+    handler, bot, _repo, tier1 = _build(
+        reply="unused",
+        tier1_replies=[_RECALLED_OLD_REPLY] * 5,
+        recall=_recall_with(_RECALLED_EPISODE),
+    )
+
+    await handler.handle(_message("ты опять про угрозу подробно ещё раз"))
+
+    assert len(tier1.payloads) == 2  # one retry: the exemplar was dropped
+    assert bot.final_text == _RECALLED_OLD_REPLY
+
+
+async def test_substantively_different_reply_with_recall_does_not_regenerate() -> None:
+    # No false positive: a recalled old reply is in context, but the fresh reply is
+    # substantively different — committed as-is, no needless regeneration.
+    different = "Ничего общего с прошлым — свежая мысль про космос."
+    handler, bot, _repo, tier1 = _build(
+        reply=different,
+        recall=_recall_with(_RECALLED_EPISODE),
+    )
+
+    await handler.handle(_message("расскажи что-нибудь новое подробно"))
+
+    assert len(tier1.payloads) == 1
+    assert bot.final_text == different
+
+
+async def test_guard_compares_against_union_of_history_and_recall() -> None:
+    # R1 (union): history carries a DIFFERENT prior reply (no match there), yet the
+    # candidate copies the RECALLED reply. The guard catches it via the recall half of
+    # the union — proving recall, not only history, drives the catch — and regenerates.
+    history_turn = "Ada: о чём угодно\nbob: Это был совсем иной ответ про погоду."
+    handler, bot, _repo, tier1 = _build(
+        reply="unused",
+        tier1_replies=[_RECALLED_OLD_REPLY, "Свежий, не похожий ни на что ответ."],
+        history=[{"content": history_turn, "event_type": "message"}],
+        recall=_recall_with(_RECALLED_EPISODE),
+    )
+
+    await handler.handle(_message("ты опять про угрозу подробно ещё раз"))
+
+    assert len(tier1.payloads) == 2  # the recall half of the union fired one retry
+    assert bot.final_text == "Свежий, не похожий ни на что ответ."
+
+
+async def test_normal_reply_with_recall_and_history_is_not_regenerated() -> None:
+    # Regression / no over-firing: a genuinely fresh reply with BOTH a recalled reply
+    # exemplar and a (different) prior history reply present commits on the first draft —
+    # the union guard never false-fires when nothing is actually a repeat.
+    history_turn = "Ada: о чём угодно\nbob: Прошлый ответ про погоду."
+    fresh = "Совершенно новая мысль, не звучавшая раньше."
+    handler, bot, _repo, tier1 = _build(
+        reply=fresh,
+        history=[{"content": history_turn, "event_type": "message"}],
+        recall=_recall_with(_RECALLED_EPISODE),
+    )
+
+    await handler.handle(_message("расскажи что-то новое подробно"))
+
+    assert len(tier1.payloads) == 1
+    assert bot.final_text == fresh
 
 
 # --- BOB-022: user repeats themselves → Bob notices (voice directive) ----------

@@ -51,6 +51,12 @@ from typing import TYPE_CHECKING, Protocol
 from bob.application.router.llm_router import LLMRequest, TaskType
 from bob.application.router.reply_tier_selector import select_reply_tier
 from bob.domain.memory.entities import EpisodicEvent
+from bob.domain.personality.conversation import (
+    RepeatThresholds,
+    is_bob_repeat,
+    recalled_bob_replies,
+    recalled_without_copied_exemplars,
+)
 from bob.domain.personality.language import DEFAULT_LANGUAGE, language_directive
 from bob.domain.personality.voice import anti_bait_directive
 from bob.domain.proactivity.governance import ProactiveHistory
@@ -105,6 +111,12 @@ _COMPOSE_SYSTEM = (
 # How many real memories to recall to ground the proactive compose (keeps the
 # prompt tight; the grounding is a steer, not a dump).
 _RECALL_K = 3
+
+# How many attractor-breaking regenerations the proactive anti-repeat draws before
+# giving up (mirrors the reactive guard's bound, BOB-032 .1/.2). On each retry the
+# recalled reply exemplar the draft copied is dropped from the grounding so the next
+# draft no longer "sees" the text it was echoing — purely structural, no instruction.
+_MAX_REGENERATIONS = 2
 
 
 class ProactivityStoreLike(Protocol):
@@ -186,6 +198,7 @@ class ProactivityEngine:
         language: str = DEFAULT_LANGUAGE,
         fascination: CurrentFascinationReader | None = None,
         sulk: SulkSource | None = None,
+        repeat_thresholds: RepeatThresholds | None = None,
     ) -> None:
         self._persona_id = persona_id
         self._chat_id = chat_id
@@ -212,6 +225,14 @@ class ProactivityEngine:
         # quiet-hours). It lifts on its own as обида recovers (guaranteed exit). Unwired
         # (the default), the veto is off and proactivity behaves exactly as before.
         self._sulk = sulk
+        # The recall-aware anti-repeat thresholds (BOB-032 .2, R4): the SAME window /
+        # similarity bar the reactive guard uses, injected from ``repeat.*`` config. The
+        # proactive compose grounds on recalled whole-turn memories, so without this it
+        # could copy Bob's OWN recalled past reply verbatim (a self-initiated repeat). The
+        # default is the conservative dataclass default.
+        self._repeat_thresholds = (
+            repeat_thresholds if repeat_thresholds is not None else RepeatThresholds()
+        )
 
     async def tick(self) -> bool:
         """Run one proactive tick; return whether Bob spoke.
@@ -235,7 +256,17 @@ class ProactivityEngine:
             return False
 
         memories = await self._recall.recall(seed, k=_RECALL_K)
-        message = await self._compose(seed, memories)
+        message = await self._compose_without_repeat(seed, memories)
+        if message is None:
+            # A persistent self-repeat survived the bounded regenerations: a proactive
+            # repeat is better SUPPRESSED than sent (BOB-032 .2, R4). Skip this tick
+            # without posting or advancing state — Bob will reach out another time.
+            logger.debug(
+                "proactive compose still repeated after regenerations; suppressing for "
+                "persona %s",
+                self._persona_id,
+            )
+            return False
         await self._post(message)
         await self._record_spoke(state, energy, now)
         await self._remember(message, now)
@@ -337,6 +368,48 @@ class ProactivityEngine:
                 tier_override=tier,
             )
         )
+
+    async def _compose_without_repeat(
+        self, seed: str, memories: Sequence[Recalled]
+    ) -> str | None:
+        """Compose, then recall-aware anti-repeat (BOB-032 .2, R4): regenerate-or-skip.
+
+        Closes the proactive path's blind spot: the compose grounds on ``recalled``
+        whole-turn memories, so the model can copy Bob's OWN recalled past reply verbatim
+        — a self-initiated repeat the engine previously posted unguarded. The fresh draft
+        is compared (via :func:`is_bob_repeat` at the injected threshold) against the
+        ``bob:`` halves recovered from the recalled memories — the SAME predicate + helper
+        the reactive guard uses (no duplicated logic).
+
+        On a match the engine breaks the attractor exactly like the reactive guard: the
+        recalled reply exemplar(s) the draft copied are dropped from the grounding (only
+        those — FACT content is preserved, grounding intact) and a fresh draft is drawn,
+        up to :data:`_MAX_REGENERATIONS`. If it STILL repeats after the bound, the engine
+        returns ``None`` to SKIP posting this tick — a proactive repeat is better
+        suppressed than sent (unlike the reactive turn, a self-initiated message has no
+        user waiting on an answer, so silence is the safe outcome). Purely structural —
+        no "do not repeat" instruction.
+        """
+        threshold = self._repeat_thresholds.similarity_threshold
+        # The full set of recalled Bob-replies is the repeat yardstick for EVERY draft —
+        # even after the matched exemplar is dropped from the grounding, a later draft that
+        # re-echoes it is still a repeat (so the final decision compares against this set,
+        # not the depleted one).
+        all_prior = recalled_bob_replies(memories)
+        current_recalled = memories
+        message = await self._compose(seed, current_recalled)
+        for _ in range(_MAX_REGENERATIONS):
+            if not is_bob_repeat(message, all_prior, threshold=threshold):
+                return message
+            # Break the attractor: strip the recalled reply exemplar(s) the draft copied so
+            # the next draft no longer sees the text it was echoing (FACT content kept).
+            current_recalled = recalled_without_copied_exemplars(
+                message, current_recalled, threshold=threshold
+            )
+            message = await self._compose(seed, current_recalled)
+        if is_bob_repeat(message, all_prior, threshold=threshold):
+            return None
+        return message
 
     async def _compose_context(self, memories: Sequence[Recalled]) -> str:
         """Assemble the grounding context: mood tone, recalled memory, current passion.
