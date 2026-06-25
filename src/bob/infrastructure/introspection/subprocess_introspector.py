@@ -9,12 +9,18 @@
 Realises :class:`bob.domain.ports.RepoIntrospector` (BOB-017 Phase A). Two seams:
 
 * **CLI introspection** — ``beadloom`` (``ctx`` / ``graph`` / ``why`` / ``search``)
-  and ``bd`` (``ready`` / ``show``) run via ``asyncio.create_subprocess_exec``
-  (NEVER a shell, so no metacharacter injection) against a FIXED allowlist of
-  read-only subcommands. Anything off the allowlist — a write subcommand, an
-  unknown binary, a flag-looking argument that could smuggle behaviour — is refused
-  with :class:`DisallowedCommandError` and never executed. Output is bounded by a
-  char cap and run through the privacy sanitiser; each run has a hard timeout.
+  and ``bd`` (``ready`` / ``show`` / ``list``) run via
+  ``asyncio.create_subprocess_exec`` (NEVER a shell, so no metacharacter injection)
+  against a FIXED allowlist of read-only subcommands. Anything off the allowlist — a
+  write subcommand, an unknown binary, a flag-looking argument that could smuggle
+  behaviour — is refused with :class:`DisallowedCommandError` and never executed. The
+  sole flag-bearing exception is the controlled ``bd list --status <enum>`` form
+  (``--status`` paired with one stored-status enum value from a fixed set); a status
+  outside the enum, or any other flag, is still refused. Free-text questions ground
+  via ``beadloom search`` (``ctx`` needs an exact ref, with a ``ctx``→``search``
+  fallback on empty); trailing tooling-noise lines (status legend / Tip / ``--limit``
+  hint) are stripped. Output is bounded by a char cap and run through the privacy
+  sanitiser; each run has a hard timeout.
 * **File reads** — :meth:`read_file` consults the pure
   :class:`~bob.domain.introspection.privacy_guard.PrivacyGuard` BEFORE opening any
   file: a denied path (SOUL / ``bob.db`` / ``.env`` / ``config``) raises
@@ -31,6 +37,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import os
+import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
 
@@ -41,13 +48,101 @@ if TYPE_CHECKING:
 
 # Fixed allowlist of read-only subcommands, keyed by binary. NOTHING else runs.
 _BEADLOOM_SUBCOMMANDS: frozenset[str] = frozenset({"ctx", "graph", "why", "search"})
-_BD_SUBCOMMANDS: frozenset[str] = frozenset({"ready", "show"})
+_BD_SUBCOMMANDS: frozenset[str] = frozenset({"ready", "show", "list"})
+
+# The ONLY argv shape allowed after ``bd list``: the literal ``--status`` flag paired
+# with one stored-status enum value. Modelled as a fixed allowlist (not raw flag
+# passthrough) so the read-only "no arbitrary args/flags" invariant still holds — a
+# status token outside this set, or any other flag, is refused before execution.
+_BD_LIST_STATUSES: frozenset[str] = frozenset(
+    {"open", "in_progress", "blocked", "deferred", "closed"}
+)
+# The exact, fully-resolved arg tuples permitted after ``bd list`` — an allowlist of
+# ``("--status", <enum>)`` pairs, NOT raw flag passthrough. Membership-checked, so a
+# status outside the enum or any other flag never reaches the subprocess.
+_BD_LIST_ARG_FORMS: frozenset[tuple[str, ...]] = frozenset(
+    ("--status", status) for status in _BD_LIST_STATUSES
+)
 
 # Default resource bounds (overridable via the constructor).
 _DEFAULT_TIMEOUT_S = 30.0
 _DEFAULT_MAX_OUTPUT_CHARS = 20_000
 
 _TRUNCATION_MARKER = "\n…[truncated]"
+
+# A graph ref-id is a node-id shape (e.g. ``bob-1av``) or a single source filename
+# (``<word>.py`` / ``<word>.md``) — always one whitespace-free token. Anything else is
+# treated as a free-text question and grounded via ``beadloom search`` instead of
+# ``ctx`` (which needs an EXACT ref). Deterministic, no I/O.
+_REF_ID_RE = re.compile(r"^(?:[a-z][a-z0-9]*-[a-z0-9.]+|[\w.-]+\.(?:py|md|ya?ml))$")
+
+# bd/beadloom append a status legend / setup tip / ``--limit`` hint to human output.
+# These TRAILING tooling lines are noise for Bob (he must not riff on them), so they
+# are stripped before the result is returned. Matched per-line, conservatively.
+_NOISE_LINE_RE = re.compile(
+    r"^\s*(?:💡|Tip:|Status:\s*○|Showing\s+\d+\s+issues|Use\s+--limit)"
+)
+
+
+def _is_ref_id(query: str) -> bool:
+    """Whether ``query`` is an exact graph/tracker ref-id (vs. a free-text question)."""
+    token = query.strip()
+    if not token or " " in token:
+        return False
+    return bool(_REF_ID_RE.match(token))
+
+
+# Intent keywords (RU + EN) mapping a free-text tracker query to a ``bd list`` form.
+# Order matters: the FIRST matching status wins, with "all" as the unfiltered list.
+_READY_KEYWORDS: tuple[str, ...] = ("ready", "готов")
+_CLOSED_KEYWORDS: tuple[str, ...] = (
+    "закрыт", "недавн", "истори", "recent", "closed", "history",
+)
+_IN_PROGRESS_RE = re.compile(r"в работе|in[\s-]?progress")
+_ALL_KEYWORDS: tuple[str, ...] = ("все", "весь", "all", "list", "список")
+
+
+def _wants_ready(token: str) -> bool:
+    """Whether a free-text tracker query asks for the ready queue."""
+    low = token.lower()
+    return any(kw in low for kw in _READY_KEYWORDS)
+
+
+def _list_status_for(token: str) -> str | None:
+    """Map a listing query to a ``bd list`` status enum (``None`` for an "all" listing).
+
+    Only call when :func:`_is_listing_query` is true. Returns ``closed`` /
+    ``in_progress`` for a filtered listing, ``None`` for an explicit unfiltered list.
+    """
+    low = token.lower()
+    if any(kw in low for kw in _CLOSED_KEYWORDS):
+        return "closed"
+    if _IN_PROGRESS_RE.search(low):
+        return "in_progress"
+    return None
+
+
+def _is_listing_query(token: str) -> bool:
+    """Whether a free-text tracker query asks for a listing (vs. a single id)."""
+    low = token.lower()
+    if _IN_PROGRESS_RE.search(low):
+        return True
+    return any(
+        kw in low for kw in (*_CLOSED_KEYWORDS, *_ALL_KEYWORDS)
+    )
+
+
+def _strip_noise_tail(text: str) -> str:
+    """Drop trailing tooling-noise lines (status legend / Tip / ``--limit`` hint).
+
+    Only the *tail* is trimmed: scanning upward, blank lines and noise lines are
+    removed until the first line of real content, so content that merely follows a
+    legend is never touched. Interior content is left intact.
+    """
+    lines = text.splitlines()
+    while lines and (not lines[-1].strip() or _NOISE_LINE_RE.match(lines[-1])):
+        lines.pop()
+    return "\n".join(lines)
 
 
 class IntrospectionError(Exception):
@@ -100,19 +195,45 @@ class SubprocessRepoIntrospector:
 
     # --- RepoIntrospector port ------------------------------------------------
 
-    async def architecture_context(self, ref: str) -> str:
-        """Run ``beadloom ctx <ref>`` (read-only graph/architecture context)."""
-        return await self._run("beadloom", "ctx", ref)
+    async def architecture_context(self, query: str) -> str:
+        """Ground ``query`` in the architecture graph (read-only, always grounded).
+
+        Free text (a natural question) routes to ``beadloom search`` so it grounds
+        without an exact ref. An exact graph ref-id routes to ``beadloom ctx``; when
+        ``ctx`` cannot resolve it (empty), the query is retried through ``search`` so
+        natural questions never fall back to ungrounded model knowledge.
+        """
+        if not _is_ref_id(query):
+            return await self._run("beadloom", "search", query)
+        ctx = await self._run("beadloom", "ctx", query)
+        if ctx.strip():
+            return ctx
+        return await self._run("beadloom", "search", query)
 
     async def search_code(self, query: str) -> str:
         """Run ``beadloom search <query>`` (read-only FTS over nodes/docs)."""
         return await self._run("beadloom", "search", query)
 
     async def list_tasks(self, query: str) -> str:
-        """Run ``bd show <query>`` for a specific task, else ``bd ready`` (read-only)."""
-        if query.strip():
-            return await self._run("bd", "show", query)
-        return await self._run("bd", "ready")
+        """Route a tracker query to the right read-only ``bd`` form.
+
+        A task id → ``bd show <id>``; a request for closed/recent/history,
+        in-progress, or all tasks → the matching ``bd list [--status <enum>]``; an
+        empty or "ready" query → ``bd ready``.
+        """
+        token = query.strip()
+        if not token or _wants_ready(token):
+            return await self._run("bd", "ready")
+        if _is_listing_query(token):
+            status = _list_status_for(token)
+            if status is None:
+                return await self._run("bd", "list")
+            return await self._run("bd", "list", "--status", status)
+        if _is_ref_id(token):
+            return await self._run("bd", "show", token)
+        # No id, no listing keyword: fall back to the unfiltered list rather than a
+        # doomed ``bd show`` on free text.
+        return await self._run("bd", "list")
 
     async def read_file(self, path: str, *, max_lines: int) -> str:
         """Return up to ``max_lines`` of ``path`` — guard-checked BEFORE opening.
@@ -182,15 +303,33 @@ class SubprocessRepoIntrospector:
             raise DisallowedCommandError(
                 f"{binary} {subcommand!r} is not a read-only allowlisted subcommand"
             )
+        self._validate_args(binary, subcommand, args)
+
+        argv = [bin_path, subcommand, *args]
+        stdout = await self._runner(argv, timeout=self._timeout)
+        return self._guard.sanitize(self._truncate(_strip_noise_tail(stdout)))
+
+    def _validate_args(
+        self, binary: str, subcommand: str, args: tuple[str, ...]
+    ) -> None:
+        """Refuse any arg outside the read-only allowlist (no arbitrary args/flags).
+
+        The sole flag-bearing exception is the controlled ``bd list --status <enum>``
+        form: the literal ``--status`` flag paired with one stored-status enum value
+        from a FIXED allowlist. Every other flag-looking arg — or a status value
+        outside the enum — is refused before execution.
+        """
+        if binary == "bd" and subcommand == "list" and args:
+            if args in _BD_LIST_ARG_FORMS:
+                return
+            raise DisallowedCommandError(
+                f"bd list arguments {args!r} are not an allowlisted read-only form"
+            )
         for arg in args:
             if _looks_like_flag(arg):
                 raise DisallowedCommandError(
                     f"flag-like argument {arg!r} is not permitted"
                 )
-
-        argv = [bin_path, subcommand, *args]
-        stdout = await self._runner(argv, timeout=self._timeout)
-        return self._guard.sanitize(self._truncate(stdout))
 
     def _truncate(self, text: str) -> str:
         """Cap ``text`` at the configured char limit with a short marker."""
