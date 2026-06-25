@@ -106,6 +106,9 @@ class _FakeBot:
     reactions: list[tuple[int, int, tuple[str, ...], int | None]] = field(
         default_factory=list
     )
+    photos: list[tuple[int, bytes, str | None, int | None]] = field(
+        default_factory=list
+    )
     next_message_id: int = 900
     raise_on_poll: bool = False
 
@@ -151,6 +154,21 @@ class _FakeBot:
             )
         )
         msg = _FakeMessage(message_id=self.next_message_id, text=rich_message.markdown)
+        self.next_message_id += 1
+        return msg
+
+    async def send_photo(
+        self,
+        *,
+        chat_id: int,
+        photo: object,
+        caption: str | None = None,
+        message_thread_id: int | None = None,
+    ) -> _FakeMessage:
+        self.photos.append(
+            (chat_id, getattr(photo, "data", b""), caption, message_thread_id)
+        )
+        msg = _FakeMessage(message_id=self.next_message_id, text=caption)
         self.next_message_id += 1
         return msg
 
@@ -439,6 +457,24 @@ async def test_bob_reply_gateway_sets_thread_id() -> None:
     assert bob.typings, "the topic should have shown a typing indicator"
     assert all(call.message_thread_id == _BOB_TOPIC_ID for call in bob.typings)
     assert guppi.sends == []  # GUPPI never sends Bob's reply
+
+
+async def test_bob_reply_gateway_sends_a_photo_pinned_to_the_thread() -> None:
+    # BOB-035: render_diagram's PNG posts as a photo into Bob's topic thread (and
+    # only on Bob's bot — GUPPI never posts Bob's diagram).
+    bob, guppi = _FakeBot(), _FakeBot()
+    gateway, _ = _build({BotIdentity.BOB: bob, BotIdentity.GUPPI: guppi})
+    reply_gateway = gateway.reply_gateway(BotIdentity.BOB)
+
+    await reply_gateway.send_photo(chat_id=_CHAT_ID, photo=b"PNGBYTES", caption="вот")
+
+    assert len(bob.photos) == 1
+    chat_id, data, caption, thread_id = bob.photos[0]
+    assert chat_id == _CHAT_ID
+    assert data == b"PNGBYTES"
+    assert caption == "вот"
+    assert thread_id == _BOB_TOPIC_ID
+    assert guppi.photos == []
 
 
 async def test_bob_reactor_sets_a_native_reaction_pinned_to_the_thread() -> None:

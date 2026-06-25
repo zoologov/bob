@@ -147,6 +147,7 @@ if TYPE_CHECKING:
     from bob.domain.ports import (
         Clock,
         ConversationFloorStore,
+        DiagramSink,
         LLMMessage,
         MemoryRecall,
         MessageReactor,
@@ -298,6 +299,10 @@ class ReplyGateway(Protocol):
 
     async def reply(
         self, *, chat_id: int, markdown: str, thinking: str | None = None
+    ) -> None: ...
+
+    async def send_photo(
+        self, *, chat_id: int, photo: bytes, caption: str | None = None
     ) -> None: ...
 
 
@@ -527,7 +532,7 @@ class _AddressivityDecision:
 class HandleMessage:
     """Run one full Telegram turn: perceive mood, decide a reply, act, persist."""
 
-    def __init__(
+    def __init__(  # noqa: PLR0915 — a flat composition-root constructor: one statement per injected seam (BOB-035 added the diagram sink), no branching to extract.
         self,
         *,
         router: LLMRouter,
@@ -571,6 +576,7 @@ class HandleMessage:
         floor_enabled: bool = True,
         self_improvement: SelfImprovementReader | None = None,
         self_improvement_max_magnitude: float = _DEFAULT_MAX_MAGNITUDE,
+        diagram_sink: DiagramSink | None = None,
     ) -> None:
         self._router = router
         self._gateway = gateway
@@ -777,6 +783,15 @@ class HandleMessage:
         self._self_improvement_max_magnitude = _validated_magnitude(
             self_improvement_max_magnitude
         )
+        # The diagram photo-send seam (BOB-035): the ``render_diagram`` capability —
+        # dispatched deep inside the global registry's tool-loop, with no chat_id —
+        # pushes each rendered :class:`~bob.domain.ports.DiagramResult` (PNG + caption)
+        # into this per-turn sink. After the tool-loop the reply path drains it and
+        # sends each as a Telegram photo into THIS turn's chat (the chat_id stays
+        # per-turn, the send a gateway concern). Unwired (the default) Bob has no
+        # diagram skill and the turn behaves exactly as before; an empty sink → no
+        # photo. The same sink instance is shared with the capability in the registry.
+        self._diagram_sink = diagram_sink
 
     async def _load_modulators(self) -> RuleModulators:
         """Build this turn's soft modulators from Bob's APPROVED rules (BOB-028 .3).
@@ -967,6 +982,12 @@ class HandleMessage:
         # a reply that still ran long is lightly clamped to its first finished thought
         # (no regeneration, never a mid-word cut). Off by default → the reply is untouched.
         reply = self._guard_reply_length(reply, demand)
+        # Send any diagrams the render_diagram capability queued this turn (BOB-035):
+        # the tool-loop (inside _compose_reply) pushed each rendered PNG into the
+        # per-turn sink; here — where the chat_id and the gateway live — they are
+        # drained and posted as Telegram photos BEFORE the text confirmation, so the
+        # image leads. Best-effort and gated on a wired sink (no diagram skill → no-op).
+        await self._send_pending_diagrams(event.chat_id)
         await self._gateway.reply(chat_id=event.chat_id, markdown=reply)
         # Advance the conversation floor AFTER Bob actually replied (BOB-025): an ENGAGE
         # turn that reached the reply sticks the floor to Bob (``bob_replied=True``), so
@@ -1024,6 +1045,26 @@ class HandleMessage:
         await self._reactor.react(
             chat_id=event.chat_id, message_id=event.message_id, emoji=emoji
         )
+
+    async def _send_pending_diagrams(self, chat_id: int) -> None:
+        """Post the diagrams the render_diagram skill queued this turn (BOB-035).
+
+        Drains the per-turn :class:`~bob.domain.ports.DiagramSink` (cleared so the
+        next turn starts empty) and sends each rendered PNG as a Telegram photo into
+        ``chat_id`` via the gateway — keeping the chat_id strictly per-turn and the
+        send a transport concern. No sink wired (the default) or an empty sink → a
+        clean no-op. Best-effort: a flaky photo send is logged and swallowed so it can
+        never break a turn whose text reply still lands.
+        """
+        if self._diagram_sink is None:
+            return
+        for diagram in self._diagram_sink.drain():
+            try:
+                await self._gateway.send_photo(
+                    chat_id=chat_id, photo=diagram.png, caption=diagram.caption
+                )
+            except Exception:
+                logger.exception("sending a diagram photo failed (ignored)")
 
     async def _record_owner_activity(self) -> None:
         """Notify proactivity the owner just wrote (best-effort, optional seam).

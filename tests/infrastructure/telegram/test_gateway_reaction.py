@@ -82,6 +82,17 @@ class _FakeBot:
     ) -> MessageLike:
         return _FakeMessage()
 
+    async def send_photo(
+        self,
+        *,
+        chat_id: int,
+        photo: object,
+        caption: str | None = None,
+        message_thread_id: int | None = None,
+    ) -> MessageLike:
+        # BOB-035: BotLike parity; this fake's tests never post a photo.
+        raise NotImplementedError  # pragma: no cover
+
     async def set_message_reaction(
         self,
         *,

@@ -43,11 +43,13 @@ from typing import TYPE_CHECKING, cast
 from bob.application.authz import Authorizer, SenderPerception
 from bob.application.capabilities import (
     CapabilityRegistry,
+    CollectingDiagramSink,
     SafeCapabilityDispatcher,
     make_inspect_architecture_capability,
     make_list_work_capability,
     make_read_code_capability,
     make_recall_memory_capability,
+    make_render_diagram_capability,
     make_search_memory_capability,
 )
 from bob.application.proactivity import (
@@ -118,6 +120,7 @@ from bob.domain.personality.zone_classifier import TasteZoneClassifier
 from bob.domain.proactivity.decision import ProactiveDecider
 from bob.domain.proactivity.governance import Governance
 from bob.infrastructure.config import ConfigLoader
+from bob.infrastructure.diagrams import SubprocessMmdcRenderer
 from bob.infrastructure.introspection.subprocess_introspector import (
     SubprocessRepoIntrospector,
 )
@@ -145,7 +148,7 @@ from bob.infrastructure.telegram.multibot import (
 )
 
 if TYPE_CHECKING:
-    from aiogram.types import InputRichMessage, ReactionTypeEmoji
+    from aiogram.types import BufferedInputFile, InputRichMessage, ReactionTypeEmoji
 
     from bob.application.runtime.agent import BackgroundTask
     from bob.application.usecases.handle_message import ReplyGateway
@@ -256,6 +259,10 @@ _DEFAULT_TEMPLATES_DIR = _REPO_ROOT / "bob-soul"
 # ``introspection.*`` config defaults. Only consulted when introspection is enabled.
 _DEFAULT_INTROSPECTION_MAX_OUTPUT_CHARS = 20_000
 _DEFAULT_INTROSPECTION_READ_MAX_LINES = 200
+
+# Default per-render diagram timeout (BOB-035); mirrors the ``diagrams.timeout``
+# config default. Only consulted when the render_diagram skill is enabled.
+_DEFAULT_DIAGRAM_TIMEOUT_S = 30
 
 
 class SystemClock:
@@ -387,7 +394,7 @@ def build_application(
     # may call either, GUPPI executes it, the result loops back into the reply. The
     # tier-1 reply provider is the tool-calling provider; when it cannot do tools the
     # loop stays dormant and HandleMessage keeps the plain reply path.
-    registry = _build_registry(merged, recall=recall)
+    registry, diagram_sink = _build_registry(merged, recall=recall)
     tool_provider = _as_tool_provider(tier_providers)
 
     genesis = RunGenesis(
@@ -631,6 +638,11 @@ def build_application(
         # behaviour exactly as before BOB-028. The magnitude ceiling clamps the drift.
         self_improvement=self_improvement.reader,
         self_improvement_max_magnitude=self_improvement.max_magnitude,
+        # Diagram photo-send seam (BOB-035): the SAME sink shared with the
+        # render_diagram capability in the registry — the capability pushes each
+        # rendered PNG here, the reply path drains it and posts the photo into the
+        # turn's chat (chat_id stays per-turn). Unwired (diagrams disabled) → no-op.
+        diagram_sink=diagram_sink,
     )
     event_bus.subscribe(MESSAGE_RECEIVED, _as_handler(handle_message))
 
@@ -1511,8 +1523,8 @@ def _build_authorizer(
 
 def _build_registry(
     config: Mapping[str, object], *, recall: HybridMemoryRecall
-) -> CapabilityRegistry:
-    """Build the capability registry GUPPI advertises and dispatches.
+) -> tuple[CapabilityRegistry, CollectingDiagramSink]:
+    """Build the capability registry GUPPI advertises and dispatches + the diagram sink.
 
     Always registers the two memory capabilities over the live hybrid
     :class:`~bob.domain.ports.MemoryRecall`: ``recall_memory`` (the thin auto-recall
@@ -1521,12 +1533,18 @@ def _build_registry(
     default on) the three read-only self-introspection skills
     (``inspect_architecture`` / ``read_code`` / ``list_work``) are ALSO registered,
     over a :class:`SubprocessRepoIntrospector` guarded by the pure
-    :class:`PrivacyGuard` — so Bob can answer about his own world. They are
-    conversation-only (NOT added to ``goals.safe_capabilities``). Disabled → the
-    registry holds exactly the memory capabilities, behaviour as before. New skills
-    register here without touching consumers.
+    :class:`PrivacyGuard` — so Bob can answer about his own world. When
+    ``diagrams.enabled`` (BOB-035, default on — safe + local) the ``render_diagram``
+    skill is registered over a LOCAL :class:`SubprocessMmdcRenderer`, sharing the
+    returned :class:`CollectingDiagramSink` with the use-case so a rendered PNG flows
+    to the reply path's photo send. They are conversation-only (NOT added to
+    ``goals.safe_capabilities``). Disabled → the registry holds exactly the memory
+    capabilities, behaviour as before. New skills register here without touching
+    consumers. The shared sink is returned so the composition root wires the SAME
+    instance into :class:`HandleMessage`.
     """
     registry = CapabilityRegistry()
+    diagram_sink = CollectingDiagramSink()
     registry.register(make_recall_memory_capability(recall))
     registry.register(make_search_memory_capability(recall))
     if _build_introspection_enabled(config):
@@ -1539,7 +1557,26 @@ def _build_registry(
         registry.register(make_inspect_architecture_capability(introspector))
         registry.register(make_read_code_capability(introspector, read_max_lines=read_max_lines))
         registry.register(make_list_work_capability(introspector))
-    return registry
+    if _flag(_section(config, "diagrams"), "enabled"):
+        registry.register(
+            make_render_diagram_capability(_build_diagram_renderer(config), diagram_sink)
+        )
+    return registry, diagram_sink
+
+
+def _build_diagram_renderer(config: Mapping[str, object]) -> SubprocessMmdcRenderer:
+    """Construct the LOCAL :class:`SubprocessMmdcRenderer` for BOB-035.
+
+    Renders Mermaid to a PNG by running the local mermaid-cli (``mmdc``) via
+    ``create_subprocess_exec`` (never a shell) — no network, the diagram source never
+    leaves the machine. The binary name + per-render timeout are config-tunable via
+    ``diagrams.{mmdc_bin, timeout}``.
+    """
+    section = _section(config, "diagrams")
+    return SubprocessMmdcRenderer(
+        mmdc_bin=_str(section, "mmdc_bin", "mmdc"),
+        timeout=float(_int(section, "timeout", _DEFAULT_DIAGRAM_TIMEOUT_S)),
+    )
 
 
 def _build_introspection_enabled(config: Mapping[str, object]) -> bool:
@@ -1976,6 +2013,23 @@ class _AiogramBotAdapter:
         # arg); ``message_thread_id`` is accepted for BotLike parity and dropped.
         return await self._bot.set_message_reaction(  # type: ignore[attr-defined,no-any-return]
             chat_id=chat_id, message_id=message_id, reaction=list(reaction)
+        )
+
+    async def send_photo(
+        self,
+        *,
+        chat_id: int,
+        photo: BufferedInputFile,
+        caption: str | None = None,
+        message_thread_id: int | None = None,
+    ) -> MessageLike:
+        # BOB-035: post a rendered diagram PNG (already wrapped as a BufferedInputFile
+        # by the gateway) as a native Telegram photo, pinned to the bot's thread.
+        return await self._bot.send_photo(  # type: ignore[attr-defined,no-any-return]
+            chat_id=chat_id,
+            photo=photo,
+            caption=caption,
+            message_thread_id=message_thread_id,
         )
 
 

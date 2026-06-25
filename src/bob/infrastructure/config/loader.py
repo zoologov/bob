@@ -297,6 +297,19 @@ DEFAULT_CONFIG: Config = {
         "beadloom_bin": "beadloom",
         "bd_bin": "bd",
     },
+    # Diagram rendering — «Боб рисует» (BOB-035). The ``render_diagram`` skill takes a
+    # Mermaid source, renders it to a PNG LOCALLY via the mermaid-cli (``mmdc``), and
+    # posts it as a Telegram photo. It is ``permission=safe`` and renders ONLY its
+    # input (no personal data), and the render runs strictly on-machine (privacy — the
+    # diagram source never leaves the host). ``enabled`` defaults TRUE (safe + local);
+    # ``mmdc_bin`` names the local mermaid-cli binary (a documented runtime dependency
+    # — install ``@mermaid-js/mermaid-cli``), and ``timeout`` caps one render in
+    # seconds so a stuck process cannot wedge a turn.
+    "diagrams": {
+        "enabled": True,
+        "mmdc_bin": "mmdc",
+        "timeout": 30,
+    },
     # Two bots in one process (BOB-003): Bob lives in his topic, GUPPI is the
     # gatekeeper in General. Each bot's token comes from env only (never YAML);
     # the shared ids (chat/owner/allowlist) and Bob's topic are non-secret.

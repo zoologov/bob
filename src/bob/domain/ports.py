@@ -48,6 +48,10 @@ __all__ = [
     "Capability",
     "Clock",
     "ConversationFloorStore",
+    "DiagramRenderError",
+    "DiagramRenderer",
+    "DiagramResult",
+    "DiagramSink",
     "DomainEvent",
     "Embedder",
     "EventBus",
@@ -128,6 +132,37 @@ class ToolCallResult:
 
     text: str
     tool_calls: tuple[ToolCall, ...] = ()
+
+
+class DiagramRenderError(Exception):
+    """Raised by a :class:`DiagramRenderer` when it cannot render (BOB-035).
+
+    The port's failure contract — defined in the domain so the application
+    (``render_diagram``) can catch it WITHOUT importing infrastructure (the hexagon
+    forbids application → infrastructure). An adapter
+    (:class:`~bob.infrastructure.diagrams.mmdc_renderer.SubprocessMmdcRenderer`)
+    raises it when the local mermaid-cli is absent, exits non-zero, times out, or
+    produces no PNG, so the capability degrades to an honest "renderer unavailable"
+    line and never crashes the turn. The infra module re-exports it for adapters.
+    """
+
+
+@dataclass(frozen=True)
+class DiagramResult:
+    """A rendered diagram a capability produced: the PNG bytes plus a short caption.
+
+    The structured result the ``render_diagram`` capability returns instead of plain
+    text. ``png`` is the rendered image (the local mermaid-cli output), and
+    ``caption`` is a short human/model-facing line ("вот диаграмма") sent alongside
+    the photo. The capability hands this to the per-turn :class:`DiagramSink` so the
+    reply path — which holds the per-turn ``chat_id`` and the gateway — can send the
+    photo into the chat; the tool-loop only ever sees the caption text. It carries NO
+    chat_id (the send is a transport concern resolved per turn), keeping the domain
+    pure of transport.
+    """
+
+    png: bytes
+    caption: str
 
 
 class DomainEvent(Protocol):
@@ -440,6 +475,53 @@ class Embedder(Protocol):
         ``texts[i]``. Every vector shares the model's fixed dimension. An empty
         input yields an empty list.
         """
+        ...
+
+
+@runtime_checkable
+class DiagramRenderer(Protocol):
+    """Render mermaid source to a PNG image — the LOCAL diagram-render seam (BOB-035).
+
+    The pure abstraction the ``render_diagram`` capability delegates to: given the
+    mermaid source the user (or Bob) wrote, return the rendered PNG bytes. The
+    realisation runs strictly LOCALLY (privacy — diagram source never leaves the
+    machine): the first adapter
+    (:class:`~bob.infrastructure.diagrams.mmdc_renderer.SubprocessMmdcRenderer`)
+    shells the local mermaid-cli (``mmdc``) via ``create_subprocess_exec`` (never a
+    shell), but the port commits only to "mermaid in, PNG bytes out" so a pure-Python
+    renderer could swap in without any consumer change. An implementation MUST raise a
+    clear :class:`DiagramRenderError` when
+    it cannot render (the binary is absent, the source is malformed, a timeout) so the
+    capability degrades to an honest "renderer unavailable" line and never crashes the
+    turn. The contract is abstract on purpose; a deterministic fake substitutes in
+    tests with no subprocess.
+    """
+
+    async def render(self, mermaid_source: str) -> bytes:
+        """Render ``mermaid_source`` to PNG bytes (raises when it cannot render)."""
+        ...
+
+
+@runtime_checkable
+class DiagramSink(Protocol):
+    """Per-turn collector for rendered diagrams awaiting a photo send (BOB-035).
+
+    The seam that carries a :class:`DiagramResult` from the ``render_diagram``
+    capability (dispatched deep inside the global registry's tool-loop, with no
+    ``chat_id``) out to the reply path (which holds the per-turn ``chat_id`` and the
+    gateway). The capability :meth:`push`es each rendered diagram; after the tool-loop
+    the reply path :meth:`drain`s them and sends each as a Telegram photo, keeping the
+    chat_id strictly per-turn and the send a transport concern. ``drain`` returns the
+    collected results and clears the sink, so each turn starts empty (no leak across
+    turns).
+    """
+
+    def push(self, result: DiagramResult) -> None:
+        """Record one rendered diagram for the reply path to send this turn."""
+        ...
+
+    def drain(self) -> tuple[DiagramResult, ...]:
+        """Return + clear the diagrams collected this turn (empty when none)."""
         ...
 
 

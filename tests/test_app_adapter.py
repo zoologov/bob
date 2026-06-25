@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 import pytest
-from aiogram.types import InputRichMessage
+from aiogram.types import BufferedInputFile, InputRichMessage
 
 from bob.app import _AiogramBotAdapter, _to_update_view
 
@@ -129,6 +129,27 @@ class _FakeAiogramBot:
         )
         return "rich-sent"
 
+    async def send_photo(
+        self,
+        *,
+        chat_id: int,
+        photo: object,
+        caption: str | None = None,
+        message_thread_id: int | None = None,
+    ) -> str:
+        self.calls.append(
+            _Call(
+                "send_photo",
+                {
+                    "chat_id": chat_id,
+                    "photo": photo,
+                    "caption": caption,
+                    "message_thread_id": message_thread_id,
+                },
+            )
+        )
+        return "photo-sent"
+
 
 # --- get_updates + _to_update_view --------------------------------------------
 
@@ -234,6 +255,23 @@ async def test_send_rich_message_delegates_with_thread_id() -> None:
 
     assert bot.calls[0].name == "send_rich_message"
     assert bot.calls[0].kwargs["rich_message"] is rich
+    assert bot.calls[0].kwargs["message_thread_id"] == _THREAD_ID
+
+
+@pytest.mark.asyncio
+async def test_send_photo_delegates_with_thread_id() -> None:
+    # BOB-035: the adapter forwards the rendered diagram photo + thread id to aiogram.
+    bot = _FakeAiogramBot()
+    adapter = _AiogramBotAdapter(bot)
+    photo = BufferedInputFile(b"PNGBYTES", filename="diagram.png")
+
+    await adapter.send_photo(
+        chat_id=_CHAT_ID, photo=photo, caption="вот", message_thread_id=_THREAD_ID
+    )
+
+    assert bot.calls[0].name == "send_photo"
+    assert bot.calls[0].kwargs["photo"] is photo
+    assert bot.calls[0].kwargs["caption"] == "вот"
     assert bot.calls[0].kwargs["message_thread_id"] == _THREAD_ID
 
 

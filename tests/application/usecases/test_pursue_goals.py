@@ -139,6 +139,12 @@ class _CapturingGateway:
     ) -> None:
         self.messages.append(markdown)
 
+    async def send_photo(
+        self, *, chat_id: int, photo: bytes, caption: str | None = None
+    ) -> None:
+        # BOB-035: ReplyGateway parity; the goal tick never posts a photo.
+        raise NotImplementedError  # pragma: no cover
+
 
 class _SafeCapability:
     """A trivial safe capability that records its dispatched args."""
