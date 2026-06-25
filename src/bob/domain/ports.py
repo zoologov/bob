@@ -68,6 +68,7 @@ __all__ = [
     "Recalled",
     "ReflectionReader",
     "RelationshipStore",
+    "RepoIntrospector",
     "Reranker",
     "SelfImprovementStore",
     "SoulStore",
@@ -367,6 +368,46 @@ class ReflectionReader(Protocol):
 
     async def latest_reflection_text(self) -> str | None:
         """Return the most recent real reflection's text, or ``None`` if there is none."""
+        ...
+
+
+@runtime_checkable
+class RepoIntrospector(Protocol):
+    """Read-only self-introspection over Bob's own repo + tracker (BOB-017 Phase A).
+
+    The seam Bob's introspection skills (``inspect_architecture`` / ``read_code`` /
+    ``list_work``, arriving in .2) delegate to so they never touch I/O directly.
+    Every method is **read-only**: an implementation may shell out to local
+    ``beadloom`` / ``bd`` (a FIXED allowlist of read subcommands, never a shell) or
+    read a source file — but never writes, executes arbitrary commands, or reaches
+    the network. The privacy invariant is enforced INSIDE the implementation, not by
+    the caller: :meth:`read_file` consults the
+    :class:`~bob.domain.introspection.privacy_guard.PrivacyGuard` before opening a
+    file and sanitises output, so a denied path (SOUL / DB / ``.env`` / ``config``)
+    can never be read. The contract is deliberately abstract — the live realisation
+    is the subprocess adapter in ``bob.infrastructure.introspection``; a deterministic
+    fake substitutes in tests with no subprocess and no disk.
+    """
+
+    async def architecture_context(self, ref: str) -> str:
+        """Return architecture context / graph / impact for a graph ``ref`` (beadloom)."""
+        ...
+
+    async def search_code(self, query: str) -> str:
+        """Return a compact result of searching the repo/graph for ``query``."""
+        ...
+
+    async def read_file(self, path: str, *, max_lines: int) -> str:
+        """Return up to ``max_lines`` of ``path`` — guard-checked BEFORE opening.
+
+        Raises / returns a refusal (implementation-defined, never a disk read) when
+        the privacy guard denies ``path``; otherwise the text is sanitised before
+        return.
+        """
+        ...
+
+    async def list_tasks(self, query: str) -> str:
+        """Return the tracker state (``bd`` ready/show) for ``query`` (read-only)."""
         ...
 
 
