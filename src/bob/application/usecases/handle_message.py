@@ -157,6 +157,11 @@ logger = logging.getLogger(__name__)
 # How many memories to recall when assembling the reply context.
 _RECALL_K = 5
 
+# Max attractor-breaking regenerations the anti-repeat guard may draw before keeping the
+# last draft (BOB-032 .1, R2). Each retry strips the recalled exemplar(s) the candidate
+# copied; bounded so a stubborn repeat can never spin an infinite loop.
+_MAX_REGENERATIONS = 2
+
 # How many memories to recall for a BOB-018 callback: just the single strongest real
 # past moment on the topic (a tight, grounded steer — never a memory dump).
 _CALLBACK_RECALL_K = 1
@@ -1604,40 +1609,58 @@ class HandleMessage:
         verbosity: Verbosity = Verbosity.NORMAL,
         modulators: RuleModulators | None = None,
     ) -> str:
-        """Recompose once if ``reply`` (near-)repeats a recent Bob reply (BOB-026 .1).
+        """Recompose if ``reply`` (near-)repeats a recent OR recalled Bob reply (BOB-032 .1).
 
         The verbatim-repeat bug was greedy decoding: an identical prompt returned
         byte-identical text. Sampling temperature (the primary fix) makes that
-        stochastic; this is defense in depth. BOB-026 .1 widens it from Bob's single
+        stochastic; this is defense in depth. BOB-026 .1 widened it from Bob's single
         most-recent reply to a WINDOW of his last N replies and from exact-only to
-        verbatim-OR-near-verbatim — so a repeat "через ход" (отказ → another turn →
-        the SAME отказ) no longer slips through. A match triggers a single
-        regeneration; the retry, drawn stochastically, almost always differs. If it is
-        still a repeat it is kept, so there is never more than one extra generation.
+        verbatim-OR-near-verbatim.
+
+        BOB-032 .1 closes the deeper hole:
+
+        * **R1 (recall-aware).** The compose context folds in ``recalled`` semantic
+          memories as whole turns, so the model can copy Bob's OWN recalled past reply
+          verbatim — a far-back repeat the history-only window never saw. The candidate
+          is now compared against the UNION of recent-history replies AND the ``bob:``
+          halves recovered from ``recalled``.
+        * **R2 (attractor-breaking).** A plain re-roll re-uses the SAME recalled exemplar
+          and falls back into the same attractor. So on each retry the recalled
+          episode(s) the candidate copied are DROPPED from the context (only those — the
+          fact content is preserved), and up to ``_MAX_REGENERATIONS`` retries are drawn,
+          re-checking after each. If it is still a repeat after the bound the last draft
+          is kept (no infinite loop), purely structural — no "do not repeat" instruction.
         """
+        threshold = self._repeat_thresholds.similarity_threshold
         recent = _recent_bob_replies(history, limit=self._repeat_thresholds.window)
-        if not is_bob_repeat(
-            reply,
-            recent,
-            threshold=self._repeat_thresholds.similarity_threshold,
-        ):
-            return reply
-        return await self._compose_reply(
-            text,
-            soul,
-            recalled,
-            history,
-            plan,
-            user_repeated=user_repeated,
-            interlocutor=interlocutor,
-            is_guest=is_guest,
-            prior_impression=prior_impression,
-            relationship=relationship,
-            engagement=engagement,
-            sulk=sulk,
-            verbosity=verbosity,
-            modulators=modulators,
-        )
+        current = reply
+        current_recalled = recalled
+        for _ in range(_MAX_REGENERATIONS):
+            prior_replies = (*recent, *_recalled_bob_replies(current_recalled))
+            if not is_bob_repeat(current, prior_replies, threshold=threshold):
+                return current
+            # Break the attractor: strip the recalled reply exemplar(s) the candidate
+            # copied so the next draft no longer sees the text it was echoing.
+            current_recalled = _recalled_without_copied_exemplars(
+                current, current_recalled, threshold=threshold
+            )
+            current = await self._compose_reply(
+                text,
+                soul,
+                current_recalled,
+                history,
+                plan,
+                user_repeated=user_repeated,
+                interlocutor=interlocutor,
+                is_guest=is_guest,
+                prior_impression=prior_impression,
+                relationship=relationship,
+                engagement=engagement,
+                sulk=sulk,
+                verbosity=verbosity,
+                modulators=modulators,
+            )
+        return current
 
     async def _with_grounded_addons(
         self, context: str, text: str, plan: ExpressionPlan
@@ -1996,6 +2019,62 @@ def _recent_bob_replies(
         if marker != -1:
             replies.append(content[marker + len(_BOB_TURN_MARKER) :])
     return tuple(replies)
+
+
+def _recalled_bob_reply(item: Recalled) -> str:
+    """Return the ``bob:`` half of a recalled episode's content, or ``""`` (BOB-032 .1).
+
+    Recalled semantic memories are stored as whole turns
+    ``"<sender>: <text>\\nbob: <old reply>"`` (the same shape as history; see
+    :meth:`HandleMessage._persist`). This recovers Bob's OWN past reply from a recalled
+    episode — reusing the same ``_BOB_TURN_MARKER`` recovery as :func:`_recent_bob_replies`
+    — so the anti-repeat guard can see (and break) Bob copying a recalled reply verbatim.
+    A non-string content or an episode with no ``bob:`` half (a fact-only memory, e.g.
+    "user prefers tea") yields ``""``, so only Bob's copyable reply exemplars feed the guard.
+    """
+    content = item.get("content")
+    if not isinstance(content, str):
+        return ""
+    marker = content.rfind(_BOB_TURN_MARKER)
+    if marker == -1:
+        return ""
+    return content[marker + len(_BOB_TURN_MARKER) :]
+
+
+def _recalled_bob_replies(recalled: Sequence[Recalled]) -> tuple[str, ...]:
+    """Return every non-blank Bob reply embedded in the recalled memories (BOB-032 .1).
+
+    R1 (recall-aware anti-repeat): the compose context folds in ``recalled`` semantic
+    memories as whole turns, so the model can copy Bob's OWN recalled past reply verbatim
+    — a repeat the history-only guard (``_recent_bob_replies``) is blind to. This recovers
+    the ``bob:`` half of each recalled episode (via :func:`_recalled_bob_reply`) so the
+    candidate can be compared against the UNION of recent-history replies AND recalled
+    Bob-replies. Fact-only memories (no ``bob:`` half) and blanks contribute nothing.
+    """
+    return tuple(
+        reply for item in recalled if (reply := _recalled_bob_reply(item))
+    )
+
+
+def _recalled_without_copied_exemplars(
+    candidate: str, recalled: Sequence[Recalled], *, threshold: float
+) -> tuple[Recalled, ...]:
+    """Drop the recalled memories whose Bob-reply ``candidate`` copied (BOB-032 .1, R2).
+
+    Attractor-breaking regeneration: when the guard catches ``candidate`` (near-)repeating
+    a recalled Bob reply, the retry must no longer SEE the text it was copying. This returns
+    ``recalled`` with exactly the episodes whose ``bob:`` half ``candidate`` matched
+    (via :func:`is_bob_repeat` at ``threshold``) removed — and ONLY those. Fact-only
+    memories and unmatched episodes are preserved untouched, so recall-grounding of FACTS is
+    never weakened; only the copied REPLY exemplar is withheld from the next draft.
+    """
+    kept: list[Recalled] = []
+    for item in recalled:
+        exemplar = _recalled_bob_reply(item)
+        if exemplar and is_bob_repeat(candidate, [exemplar], threshold=threshold):
+            continue
+        kept.append(item)
+    return tuple(kept)
 
 
 # Separator between a turn's sender label and the user's message text inside a
