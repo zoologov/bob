@@ -460,6 +460,19 @@ class RepoIntrospector(Protocol):
         """
         ...
 
+    async def code_history(self, path: str) -> str:
+        """Return the read-only git history linking ``path`` to its decisions (BOB-038).
+
+        ``path`` is either a repo-relative source path — yielding the bounded
+        ``git log --oneline`` of that file/dir — or a bead key (``BOB-031`` /
+        ``bob-4be.1``), yielding the commits whose message mentions that key
+        (``git log --grep=<key> --oneline``). The implementation runs git only as a
+        FIXED set of read-only ``log`` invocation forms with the path/key validated;
+        a path-injection, an arbitrary flag, or any non-``log`` subcommand is refused
+        (never executed). Output is sanitised and truncated like the other reads.
+        """
+        ...
+
 
 @runtime_checkable
 class Embedder(Protocol):

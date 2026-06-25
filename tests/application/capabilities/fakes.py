@@ -23,15 +23,18 @@ class FakeRepoIntrospector:
         search: str = "",
         file_text: str = "",
         tasks: str = "",
+        history: str = "",
     ) -> None:
         self._architecture = architecture
         self._search = search
         self._file_text = file_text
         self._tasks = tasks
+        self._history = history
         self.architecture_calls: list[str] = []
         self.search_calls: list[str] = []
         self.read_calls: list[tuple[str, int]] = []
         self.task_calls: list[str] = []
+        self.history_calls: list[str] = []
 
     async def architecture_context(self, ref: str) -> str:
         self.architecture_calls.append(ref)
@@ -48,3 +51,7 @@ class FakeRepoIntrospector:
     async def list_tasks(self, query: str) -> str:
         self.task_calls.append(query)
         return self._tasks
+
+    async def code_history(self, path: str) -> str:
+        self.history_calls.append(path)
+        return self._history
