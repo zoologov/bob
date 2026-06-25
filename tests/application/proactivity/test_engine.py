@@ -24,6 +24,7 @@ from typing import TYPE_CHECKING
 from bob.application.proactivity.engine import ProactivityEngine
 from bob.application.router.llm_router import LLMRouter
 from bob.application.usecases.handle_message import PersonalityState
+from bob.domain.personality.conversation import RepeatThresholds
 from bob.domain.personality.mood import Mood
 from bob.domain.personality.soul import SOUL
 from bob.domain.personality.taste import TasteEngine
@@ -223,6 +224,7 @@ def _engine(
     language: str = "ru",
     fascination: object | None = None,
     sulk: object | None = None,
+    repeat_thresholds: RepeatThresholds | None = None,
 ) -> ProactivityEngine:
     return ProactivityEngine(
         persona_id=_PERSONA,
@@ -244,6 +246,9 @@ def _engine(
         language=language,
         fascination=fascination,  # type: ignore[arg-type]
         sulk=sulk,  # type: ignore[arg-type]
+        repeat_thresholds=(
+            repeat_thresholds if repeat_thresholds is not None else RepeatThresholds()
+        ),
     )
 
 
@@ -887,6 +892,196 @@ async def test_timed_quiet_auto_unmutes_after_expiry() -> None:
     assert spoke is True
     assert store.mute_until is None
     assert store.cleared_mute is True
+
+
+# --- Recall-aware anti-repeat on the proactive path (BOB-032 .2, R4) ----------
+
+# A recalled episode is stored as a whole turn "<sender>: <text>\nbob: <old reply>"
+# (see HandleMessage._persist); the engine recovers the "bob:" half and compares the
+# fresh proactive compose against it, so Bob cannot copy his OWN recalled past reply.
+_RECALLED_PAST_REPLY = "Звучит как угроза."
+_RECALLED_EPISODE = f"owner: ты опять за своё\nbob: {_RECALLED_PAST_REPLY}"
+
+
+def _multi_compose_router(
+    *, gate_reply: str, compose_replies: Sequence[str]
+) -> tuple[LLMRouter, list[CountingProvider]]:
+    """A router whose Tier-0 provider serves the gate then SUCCESSIVE compose drafts.
+
+    Scripts: ``[gate_reply, draft_1, draft_2, ...]`` on Tier 0 (a short seed composes
+    on flash), so the anti-repeat retry path draws a fresh draft each regeneration.
+    """
+    tier0 = CountingProvider(replies=[gate_reply, *compose_replies])
+    tier1 = CountingProvider(replies=list(compose_replies) or ["x"])
+    router = LLMRouter(providers={0: tier0, 1: tier1})
+    return router, [tier0, tier1]
+
+
+async def test_proactive_repeat_of_recalled_reply_is_regenerated() -> None:
+    # Arrange: the recalled memory is Bob's OWN past reply; the first compose draft
+    # copies it verbatim (the bug). The guard must catch it against the recalled
+    # "bob:" half, drop that exemplar, and regenerate a fresh, non-repeating draft —
+    # which is what actually posts.
+    moment = _evening()
+    seed = _seed_that_fires(moment, _HIGH_MOOD)
+    store = FakeStore(_state(energy=1.0))
+    router, providers = _multi_compose_router(
+        gate_reply="SAY: follow up",
+        compose_replies=[_RECALLED_PAST_REPLY, "Я тут подумал — как ты вообще?"],
+    )
+    gateway = CapturingGateway()
+    engine = _engine(
+        store=store,
+        router=router,
+        gateway=gateway,
+        state_holder=PersonalityState(soul=_soul(_HIGH_MOOD)),
+        moment=moment,
+        seed=seed,
+        salience=0.9,
+        recall=FakeRecall([_RECALLED_EPISODE]),
+    )
+
+    # Act
+    spoke = await engine.tick()
+
+    # Assert: Bob spoke — but the posted message is the REGENERATED draft, never the
+    # recalled-reply repeat.
+    assert spoke is True
+    assert gateway.replies == ["Я тут подумал — как ты вообще?"]
+    assert _RECALLED_PAST_REPLY not in gateway.replies
+    # Compose ran more than once (the regeneration happened).
+    assert providers[0].calls >= 3  # gate + 2 compose drafts
+
+
+async def test_proactive_repeat_persisted_is_the_regenerated_message() -> None:
+    # The episode written to memory must be the regenerated draft, not the repeat —
+    # otherwise the repeat re-enters recall and the attractor persists.
+    moment = _evening()
+    seed = _seed_that_fires(moment, _HIGH_MOOD)
+    store = FakeStore(_state(energy=1.0))
+    router, _ = _multi_compose_router(
+        gate_reply="SAY: follow up",
+        compose_replies=[_RECALLED_PAST_REPLY, "Совсем другая мысль на сегодня."],
+    )
+    repo = FakeEpisodeRepo()
+    engine = _engine(
+        store=store,
+        router=router,
+        gateway=CapturingGateway(),
+        state_holder=PersonalityState(soul=_soul(_HIGH_MOOD)),
+        moment=moment,
+        seed=seed,
+        salience=0.9,
+        recall=FakeRecall([_RECALLED_EPISODE]),
+        repo=repo,
+    )
+
+    await engine.tick()
+
+    assert len(repo.episodes) == 1
+    assert "Совсем другая мысль на сегодня." in str(repo.episodes[0]["content"])
+    assert _RECALLED_PAST_REPLY not in str(repo.episodes[0]["content"])
+
+
+async def test_persistent_proactive_repeat_is_skipped_not_posted() -> None:
+    # Arrange: EVERY compose draft repeats the recalled reply (a stuck attractor).
+    # After the bounded regenerations the message still repeats — a proactive repeat
+    # is better suppressed than sent, so the tick SKIPS posting (and persists nothing).
+    moment = _evening()
+    seed = _seed_that_fires(moment, _HIGH_MOOD)
+    store = FakeStore(_state(energy=1.0, last_spoke_at=None))
+    # CountingProvider repeats its last reply forever → every draft is the repeat.
+    router, providers = _router(
+        gate_reply="SAY: follow up", compose_reply=_RECALLED_PAST_REPLY
+    )
+    gateway = CapturingGateway()
+    repo = FakeEpisodeRepo()
+    engine = _engine(
+        store=store,
+        router=router,
+        gateway=gateway,
+        state_holder=PersonalityState(soul=_soul(_HIGH_MOOD)),
+        moment=moment,
+        seed=seed,
+        salience=0.9,
+        recall=FakeRecall([_RECALLED_EPISODE]),
+        repo=repo,
+    )
+
+    # Act
+    spoke = await engine.tick()
+
+    # Assert: a persistent repeat is suppressed — nothing posted, nothing persisted,
+    # and the silent-tick invariant holds (state not advanced).
+    assert spoke is False
+    assert gateway.replies == []
+    assert repo.episodes == []
+    assert store.saved is None or store.saved.last_spoke_at is None
+    # Compose was retried up to the bound (gate + initial + retries), then gave up.
+    assert providers[0].calls >= 2
+
+
+async def test_non_repeating_proactive_message_posts_normally() -> None:
+    # A composed message that does NOT repeat any recalled reply posts on the first
+    # draft — the guard never false-fires on a genuinely fresh message.
+    moment = _evening()
+    seed = _seed_that_fires(moment, _HIGH_MOOD)
+    store = FakeStore(_state(energy=1.0))
+    router, providers = _router(
+        gate_reply="SAY: follow up", compose_reply="Как ты сегодня? Я тут вспомнил тебя."
+    )
+    gateway = CapturingGateway()
+    engine = _engine(
+        store=store,
+        router=router,
+        gateway=gateway,
+        state_holder=PersonalityState(soul=_soul(_HIGH_MOOD)),
+        moment=moment,
+        seed=seed,
+        salience=0.9,
+        recall=FakeRecall([_RECALLED_EPISODE]),
+    )
+
+    # Act
+    spoke = await engine.tick()
+
+    # Assert: posted on the first draft — no needless regeneration.
+    assert spoke is True
+    assert gateway.replies == ["Как ты сегодня? Я тут вспомнил тебя."]
+    assert providers[0].calls == 2  # gate + ONE compose (no retry)
+
+
+async def test_anti_repeat_retry_still_grounds_in_real_recalled_memory() -> None:
+    # The anti-repeat retry must NOT break grounding: the regenerated compose still
+    # carries the FACT content of the recalled memory (only the copied reply exemplar
+    # is withheld). Here the recall is a FACT-only memory (no "bob:" half) plus the
+    # copyable reply episode; the fact must survive into the retry's prompt.
+    moment = _evening()
+    seed = _seed_that_fires(moment, _HIGH_MOOD)
+    store = FakeStore(_state(energy=1.0))
+    router, providers = _multi_compose_router(
+        gate_reply="SAY: follow up",
+        compose_replies=[_RECALLED_PAST_REPLY, "Расскажи, как поход?"],
+    )
+    fact = "owner went hiking in the mountains last week"
+    engine = _engine(
+        store=store,
+        router=router,
+        gateway=CapturingGateway(),
+        state_holder=PersonalityState(soul=_soul(_HIGH_MOOD)),
+        moment=moment,
+        seed=seed,
+        salience=0.9,
+        recall=FakeRecall([fact, _RECALLED_EPISODE]),
+    )
+
+    await engine.tick()
+
+    # The retry compose (3rd Tier-0 prompt) still carries the FACT memory…
+    retry_prompt = providers[0].prompts[2]
+    assert "hiking in the mountains" in retry_prompt
+    # …but no longer carries the copied reply exemplar (attractor broken).
+    assert _RECALLED_PAST_REPLY not in retry_prompt
 
 
 async def test_permanent_quiet_stays_muted_without_expiry() -> None:

@@ -66,6 +66,9 @@ from bob.domain.personality.conversation import (
     RepeatThresholds,
     is_bob_repeat,
     is_user_repeat,
+    recalled_bob_replies,
+    recalled_bob_reply,
+    recalled_without_copied_exemplars,
 )
 from bob.domain.personality.conversation_floor import (
     FloorConfig,
@@ -1636,12 +1639,12 @@ class HandleMessage:
         current = reply
         current_recalled = recalled
         for _ in range(_MAX_REGENERATIONS):
-            prior_replies = (*recent, *_recalled_bob_replies(current_recalled))
+            prior_replies = (*recent, *recalled_bob_replies(current_recalled))
             if not is_bob_repeat(current, prior_replies, threshold=threshold):
                 return current
             # Break the attractor: strip the recalled reply exemplar(s) the candidate
             # copied so the next draft no longer sees the text it was echoing.
-            current_recalled = _recalled_without_copied_exemplars(
+            current_recalled = recalled_without_copied_exemplars(
                 current, current_recalled, threshold=threshold
             )
             current = await self._compose_reply(
@@ -2021,60 +2024,13 @@ def _recent_bob_replies(
     return tuple(replies)
 
 
-def _recalled_bob_reply(item: Recalled) -> str:
-    """Return the ``bob:`` half of a recalled episode's content, or ``""`` (BOB-032 .1).
-
-    Recalled semantic memories are stored as whole turns
-    ``"<sender>: <text>\\nbob: <old reply>"`` (the same shape as history; see
-    :meth:`HandleMessage._persist`). This recovers Bob's OWN past reply from a recalled
-    episode — reusing the same ``_BOB_TURN_MARKER`` recovery as :func:`_recent_bob_replies`
-    — so the anti-repeat guard can see (and break) Bob copying a recalled reply verbatim.
-    A non-string content or an episode with no ``bob:`` half (a fact-only memory, e.g.
-    "user prefers tea") yields ``""``, so only Bob's copyable reply exemplars feed the guard.
-    """
-    content = item.get("content")
-    if not isinstance(content, str):
-        return ""
-    marker = content.rfind(_BOB_TURN_MARKER)
-    if marker == -1:
-        return ""
-    return content[marker + len(_BOB_TURN_MARKER) :]
-
-
-def _recalled_bob_replies(recalled: Sequence[Recalled]) -> tuple[str, ...]:
-    """Return every non-blank Bob reply embedded in the recalled memories (BOB-032 .1).
-
-    R1 (recall-aware anti-repeat): the compose context folds in ``recalled`` semantic
-    memories as whole turns, so the model can copy Bob's OWN recalled past reply verbatim
-    — a repeat the history-only guard (``_recent_bob_replies``) is blind to. This recovers
-    the ``bob:`` half of each recalled episode (via :func:`_recalled_bob_reply`) so the
-    candidate can be compared against the UNION of recent-history replies AND recalled
-    Bob-replies. Fact-only memories (no ``bob:`` half) and blanks contribute nothing.
-    """
-    return tuple(
-        reply for item in recalled if (reply := _recalled_bob_reply(item))
-    )
-
-
-def _recalled_without_copied_exemplars(
-    candidate: str, recalled: Sequence[Recalled], *, threshold: float
-) -> tuple[Recalled, ...]:
-    """Drop the recalled memories whose Bob-reply ``candidate`` copied (BOB-032 .1, R2).
-
-    Attractor-breaking regeneration: when the guard catches ``candidate`` (near-)repeating
-    a recalled Bob reply, the retry must no longer SEE the text it was copying. This returns
-    ``recalled`` with exactly the episodes whose ``bob:`` half ``candidate`` matched
-    (via :func:`is_bob_repeat` at ``threshold``) removed — and ONLY those. Fact-only
-    memories and unmatched episodes are preserved untouched, so recall-grounding of FACTS is
-    never weakened; only the copied REPLY exemplar is withheld from the next draft.
-    """
-    kept: list[Recalled] = []
-    for item in recalled:
-        exemplar = _recalled_bob_reply(item)
-        if exemplar and is_bob_repeat(candidate, [exemplar], threshold=threshold):
-            continue
-        kept.append(item)
-    return tuple(kept)
+# BOB-032 .2: the recall-aware anti-repeat helpers were lifted to the domain
+# (``conversation.py``) so the reactive turn AND the proactive engine share ONE
+# implementation instead of duplicating the predicate. These module-level aliases
+# preserve the original import paths used within this module (and its tests).
+_recalled_bob_reply = recalled_bob_reply
+_recalled_bob_replies = recalled_bob_replies
+_recalled_without_copied_exemplars = recalled_without_copied_exemplars
 
 
 # Separator between a turn's sender label and the user's message text inside a

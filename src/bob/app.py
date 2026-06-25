@@ -742,6 +742,10 @@ def build_application(
         language=language,
         fascination=fascination_reader,
         sulk=sulk_tracker,
+        # The SAME recall-aware anti-repeat thresholds the reactive turn uses (BOB-032 .2):
+        # the proactive compose grounds on recalled whole-turn memories, so it gets the
+        # same window / similarity bar to keep Bob from copying his OWN recalled past reply.
+        repeat_thresholds=_build_repeat_thresholds(merged),
     )
     proactive_tick = ProactiveTick(engine=proactivity_engine)
 
@@ -980,6 +984,7 @@ def _build_proactivity_engine(
     language: str = DEFAULT_LANGUAGE,
     fascination: StoreFascinationReader | None = None,
     sulk: SulkTracker | None = None,
+    repeat_thresholds: RepeatThresholds | None = None,
 ) -> ProactivityEngine:
     """Assemble the per-persona proactivity engine (drive-model → message).
 
@@ -1015,6 +1020,8 @@ def _build_proactivity_engine(
         fascination=fascination,
         # The sulk veto (BOB-014 .2b): while обижен Bob does not write first.
         sulk=sulk,
+        # Recall-aware anti-repeat on the proactive path (BOB-032 .2, R4).
+        repeat_thresholds=repeat_thresholds,
     )
 
 
