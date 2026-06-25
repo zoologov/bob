@@ -52,7 +52,8 @@ src/bob/
     ports.py         #   + Capability, ToolCallingProvider, AllowlistStore,
                      #     Embedder, Reranker (семантическая память, BOB-011),
                      #     ZoneClassifier (Negotiation-врезка, BOB-013),
-                     #     RepoIntrospector (read-only самоинтроспекция, BOB-017)
+                     #     RepoIntrospector (read-only самоинтроспекция, BOB-017),
+                     #     DiagramRenderer + DiagramSink + DiagramResult (render_diagram, BOB-035)
   application/       # GUPPI: use-cases + оркестрация. Зависит от domain через порты.
     runtime/         # AgentRuntime (жизненный цикл), AsyncEventBus, события, periodic, retry
     router/          # LLMRouter: классификация задачи → Tier + правило редакции
@@ -63,7 +64,8 @@ src/bob/
     proactivity/     # ProactivityEngine, ProactiveTick, RecordOwnerActivity
     authz/           # Authorizer: политика owner/allowlist/chat-scope
     capabilities/    # CapabilityRegistry, ToolLoop, recall_memory, search_memory,
-                     #   inspect_architecture, read_code, list_work (самоинтроспекция, BOB-017)
+                     #   inspect_architecture, read_code, list_work (самоинтроспекция, BOB-017),
+                     #   render_diagram (mermaid→PNG в чат, BOB-035)
   infrastructure/    # Адаптеры портов (наружу).
     telegram/        # MultiBotGateway: BotRegistry (Боб+GUPPI), кросс-бот дедуп,
                      #   центральный роутер по содержимому; GuppiHandler (reject +
@@ -78,6 +80,8 @@ src/bob/
                      #   MemoryVectorStore (sqlite-vec) + HybridMemoryRecall (RRF)
     introspection/   # SubprocessRepoIntrospector: read-only beadloom/bd через
                      #   create_subprocess_exec (фикс-allowlist, не shell) + guarded read_file (BOB-017)
+    diagrams/        # SubprocessMmdcRenderer: mermaid→PNG локально через mmdc
+                     #   (create_subprocess_exec, не shell, таймаут, graceful) (BOB-035)
     config/          # ConfigLoader (defaults → YAML → env)
   app.py             # composition root: собирает порты и адаптеры, запускает рантайм
 ```
@@ -963,6 +967,70 @@ memory-capability, поведение как раньше. Конфиг `introsp
 (`infrastructure/config/loader.py`): `enabled`, `max_output_chars` (`20000`),
 `read_max_lines` (`200`), пути бинарей `beadloom_bin`/`bd_bin`. Миграций БД нет —
 навыки только читают репозиторий и трекер.
+
+### Боб умеет рисовать: навык `render_diagram` (BOB-035)
+
+За тем же Capability-швом живёт навык, который даёт Бобу **визуальный голос**: он
+пишет mermaid-исходник (`graph TD; A-->B`, sequence- или class-диаграмма), Боб
+рендерит его в PNG **локально** и постит в чат как фото с тапом-на-зум.
+`permission="safe"` — навык читает **только** свой вход (mermaid-строку) и не
+касается ни памяти, ни души, ни конфигурации, поэтому не может утечь приватным
+миром Боба.
+
+- **Навык `render_diagram`** (`application/capabilities/render_diagram.py`) —
+  фабрика `make_render_diagram_capability(renderer, sink)` по образцу остальных
+  навыков. JSON-схема — единственный обязательный `mermaid`. `execute` рендерит
+  вход через инжектированный `DiagramRenderer`, кладёт результат в шов (см. ниже)
+  и возвращает в tool-loop **короткий текст-подтверждение** (модель никогда не
+  видит байты). При ошибке рендера навык отдаёт честный «рендерер недоступен» и
+  **не роняет ход** (graceful).
+- **Порт `DiagramRenderer`** (`domain/ports.py`, `Protocol`) — чистая абстракция
+  «mermaid на входе, PNG-байты на выходе»: `async render(mermaid_source) -> bytes`.
+  Контракт обязывает реализацию поднять `DiagramRenderError` (тоже в `domain/ports.py`),
+  когда рендер невозможен. Ошибка определена в домене, чтобы приложение ловило её
+  **без импорта инфраструктуры** (гексагон запрещает application → infrastructure).
+- **Адаптер `SubprocessMmdcRenderer`** (`infrastructure/diagrams/mmdc_renderer.py`) —
+  живая реализация поверх локального mermaid-cli (`mmdc`). Один рендер: пишет
+  mermaid в `in.mmd` в свежий изолированный темп-каталог, запускает
+  `mmdc -i in.mmd -o out.png` через `asyncio.create_subprocess_exec` (**не shell** —
+  нет инъекции метасимволов) под жёстким таймаутом, читает PNG обратно и **всегда**
+  (даже при ошибке) удаляет темп-каталог. Подпроцессная граница инжектируется как
+  `runner`, поэтому тесты гоняют argv/таймаут/«бинарь не найден» фейком, а реальный
+  `mmdc` в тестах не запускается. Отсутствие `mmdc` на PATH, ненулевой код возврата,
+  таймаут или пустой PNG — всё это `DiagramRenderError`. **Сеть не трогается** —
+  исходник диаграммы не покидает машину (приватность).
+- **Шов отправки фото (per-turn).** Навык исполняется глубоко внутри tool-loop, где
+  нет `chat_id` (он живёт per-turn в `HandleMessage`), поэтому навык **сам фото не
+  шлёт**: он `push`-ит структурный `DiagramResult` (PNG + подпись) в per-turn
+  `DiagramSink` (порт; in-memory реализация `CollectingDiagramSink` в навыке) и
+  возвращает текст. После tool-loop `HandleMessage._send_pending_diagrams`
+  `drain`-ит шов (очищая его — никакая диаграмма не течёт в следующий ход) и шлёт
+  каждое фото через `gateway.send_photo(chat_id=…, photo=…, caption=…)` в `chat_id`
+  этого хода, **перед** текстовым ответом (картинка идёт первой). Отправка
+  best-effort: упавшее фото не ломает ход. `DiagramResult` **не несёт chat_id** —
+  отправка остаётся транспортной заботой, домен чист. Шов опционален: без
+  навыка/без подключённого sink ход ведёт себя ровно как раньше.
+- **Транспорт** (`infrastructure/telegram/gateway.py`): `TelegramGateway.send_photo`
+  оборачивает PNG-байты в aiogram `BufferedInputFile` (темп-файл на границе не нужен)
+  и постит нативным фото в `chat_id`/`reply_thread_id` Боба; любая транспортная
+  ошибка логируется и глотается.
+- **Конфиг** `diagrams.{enabled, mmdc_bin, timeout}` (`infrastructure/config/loader.py`):
+  `enabled` по умолчанию **true** (безопасно и локально), `mmdc_bin` — имя бинаря
+  (по умолчанию `mmdc`), `timeout` — потолок одного рендера в секундах (по умолчанию 30).
+
+#### 🔴 Разовая установка: `mmdc` — рантайм-зависимость
+
+`mmdc` (mermaid-cli) — **рантайм-зависимость, не Python-пакет**: он не ставится
+через `uv`/`pip`. Установить один раз глобально:
+
+```bash
+npm i -g @mermaid-js/mermaid-cli
+```
+
+Пакет тянет Chromium через puppeteer (mermaid рендерит в headless-браузере). **Без
+установленного `mmdc`** навык не падает — `SubprocessMmdcRenderer` поднимает
+`DiagramRenderError`, и Боб честно отвечает «рендерер недоступен» вместо отправки
+картинки. То есть `mmdc` нужен, только чтобы диаграммы реально рисовались.
 
 ## Память (SQLite + FTS5 + гибрид)
 
