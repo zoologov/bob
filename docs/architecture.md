@@ -40,7 +40,8 @@ P0 — Telegram-транспорт на aiogram (typing-индикатор + Ric
 ```
 src/bob/
   domain/            # ЧИСТО: без I/O, LLM и Telegram. Только логика и модели.
-    introspection/   # PrivacyGuard — чистый приват-инвариант самоинтроспекции (BOB-017)
+    introspection/   # PrivacyGuard — чистый приват-инвариант самоинтроспекции (BOB-017);
+                     #   code_history: чистые парсеры git↔беады↔фича-доки (BOB-038)
     personality/     # Mood, Disposition (черта-аттрактор), TasteEngine, Negotiation,
                      #   SOUL, TasteZoneClassifier, taste_evolution, voice (тон по mood),
                      #   mood_taste, fascination, phantom_evolution, expression, reaction,
@@ -67,6 +68,7 @@ src/bob/
     authz/           # Authorizer: политика owner/allowlist/chat-scope
     capabilities/    # CapabilityRegistry, ToolLoop, recall_memory, search_memory,
                      #   inspect_architecture, read_code, list_work (самоинтроспекция, BOB-017),
+                     #   code_rationale (код↔«почему»: git↔беады↔фича-доки↔граф, BOB-038),
                      #   render_diagram (mermaid→PNG в чат, BOB-035)
   infrastructure/    # Адаптеры портов (наружу).
     telegram/        # MultiBotGateway: BotRegistry (Боб+GUPPI), кросс-бот дедуп,
@@ -80,8 +82,9 @@ src/bob/
                      #   + SqliteProactivityStore + RepoProactivitySources
                      #   + SqliteFascinationStore (BOB-020);
                      #   MemoryVectorStore (sqlite-vec) + HybridMemoryRecall (RRF)
-    introspection/   # SubprocessRepoIntrospector: read-only beadloom/bd через
-                     #   create_subprocess_exec (фикс-allowlist, не shell) + guarded read_file (BOB-017)
+    introspection/   # SubprocessRepoIntrospector: read-only beadloom/bd/git log через
+                     #   create_subprocess_exec (фикс-allowlist + git фикс-формы, не shell)
+                     #   + guarded read_file (BOB-017, BOB-038)
     diagrams/        # SubprocessMmdcRenderer: mermaid→PNG локально через mmdc
                      #   (create_subprocess_exec, не shell, таймаут, graceful;
                      #    -s 3 -b white для чёткости, BOB-037) (BOB-035)
@@ -861,7 +864,7 @@ Tier 1); иначе ход идёт прежним plain-путём роутер
 
 Боб умеет заглянуть в собственный мир и ответить про свой код, архитектуру и
 процесс, опираясь на **реальные** данные, а не на догадки. За тем же
-Capability-швом (без нового транспорта) живут три **read-only** навыка
+Capability-швом (без нового транспорта) живут четыре **read-only** навыка
 `permission="safe"`, диалоговые — Боб вызывает их через tool-loop, GUPPI исполняет
 (как `recall_memory`):
 
@@ -890,8 +893,28 @@ Capability-швом (без нового транспорта) живут три
   уходит в `bd list`, а не в обречённый `bd show` по свободному тексту. Служебный
   «Tip»-хвост (легенда статусов, подсказка `--limit`) вырезается, чтобы Боб не
   риффовал на инструментальный шум.
+- **`code_rationale`** (`code_rationale.py`, BOB-038) — четвёртый introspection-навык:
+  отвечает на «почему этот код такой?». Один аргумент `query` (репо-относительный путь,
+  область или ключ беады) проходит цепочку **код → git-история → беады → фича-доки →
+  граф**. Сначала `RepoIntrospector.code_history(query)` поднимает git-историю, из неё
+  `parse_bead_refs` извлекает ключи решений `[BOB-XXX]` (де-дублированные, обрезанные до
+  top-N самых свежих, `_MAX_BEAD_REFS = 5`, чтобы не залить контекст модели). Для каждого
+  ключа рендерятся обрамляющие коммит-строки (`commits_mentioning` по той же истории) и
+  читаются **фича-доки «почему»** (`feature_doc_dir(key)` → `PRD.md`/`RFC.md`/`BRIEF.md`,
+  отсутствующий док просто пропускается — это и есть read-scope BOB-034), а сверху
+  `architecture_context(query)` даёт структурную картину из **beadloom-графа**. Всё
+  сшивается в один компактный «почему». Честность (US-4): если в истории нет ключа
+  решения, навык возвращает «История решения … не зафиксирована», а не выдумывает
+  рационал; любой отдельный источник (отсутствующий док, пустой git) деградирует мягко,
+  не роняя ход.
+  **Важно про границу источников:** рационал берётся из git-истории + фича-доков + графа,
+  а **по-ключевой `bd show` НАМЕРЕННО не вызывается**. Человеческий ключ `[BOB-NNN]` из
+  темы коммита — это эпик-ключ, а не `bd`-hash-id, поэтому `bd show` его не разрешит, а
+  листинг-фоллбэк подсунул бы под каждый ключ нефильтрованный общий бэклог — это шум, а
+  не «почему». Резолв `BOB-key`→`bd`-id для точечного `bd show` — возможное будущее
+  улучшение.
 
-Все три — фабрики `make_*_capability(introspector)` по образцу `recall_memory`: они
+Все четыре — фабрики `make_*_capability(introspector)` по образцу `recall_memory`: они
 лишь валидируют вход, делегируют в порт и рендерят компактный результат, а на
 пустом выводе честно отвечают «ничего не нашёл» (US-5), не выдумывая
 несуществующую ссылку/символ/задачу. Приватный инвариант в них не дублируется — он
@@ -899,21 +922,43 @@ Capability-швом (без нового транспорта) живут три
 
 **Порт `RepoIntrospector`** (`domain/ports.py`, `Protocol`) — абстракция шва:
 `architecture_context(ref)` / `search_code(query)` / `read_file(path, *, max_lines)`
-/ `list_tasks(query)`, все **read-only**. В тестах подменяется детерминированным
-фейком (без подпроцесса и диска).
+/ `list_tasks(query)` / `code_history(path)` (BOB-038), все **read-only**. В тестах
+подменяется детерминированным фейком (без подпроцесса и диска).
+
+**Чистые домен-парсеры** (`domain/introspection/code_history.py`, BOB-038) — без I/O и
+подпроцесса: `parse_bead_refs(git_log_text)` извлекает ключи `[BOB-XXX]` (де-дубликация,
+порядок первого появления; только в скобках — голый `BOB-999` или `[#42]`-PR не считается
+ключом решения); `commits_mentioning(bead_key, git_log_text)` фильтрует ту же историю до
+строк, обрамляющих один ключ (точное совпадение — `BOB-3` не матчит `BOB-37`; не-фича-ключ
+вроде узла `bob-4be.1` даёт пустой список); `feature_doc_dir(bead_key)` отображает
+фича-ключ в каталог `.claude/development/docs/features/<KEY>` (не-фича-ключ → `ValueError`,
+маршрут не угадывается). Сам git-read живёт за портом в инфраструктуре.
 
 **`SubprocessRepoIntrospector`** (`infrastructure/introspection/subprocess_introspector.py`)
 — живая реализация. Локальные `beadloom`/`bd` запускаются через
 `asyncio.create_subprocess_exec` (**не shell** — нет инъекции метасимволов) по
 **фиксированному allowlist** read-подкоманд (`beadloom`: `ctx`/`graph`/`why`/`search`;
-`bd`: `ready`/`show`/`list`). Всё вне allowlist — неизвестный бинарь, write-подкоманда,
-аргумент, похожий на флаг (`-…`), — отвергается `DisallowedCommandError` и **не
-исполняется**. Единственное флаг-несущее исключение (BOB-031) — контролируемая
-форма `bd list --status <enum>`: литеральный `--status` в паре с одним значением
-статуса из фиксированного набора (`open`/`in_progress`/`blocked`/`deferred`/`closed`).
+`bd`: `ready`/`show`/`list`; `git`: только `log`). Всё вне allowlist — неизвестный
+бинарь, write-подкоманда, аргумент, похожий на флаг (`-…`), — отвергается
+`DisallowedCommandError` и **не исполняется**. Первое флаг-несущее исключение (BOB-031) —
+контролируемая форма `bd list --status <enum>`: литеральный `--status` в паре с одним
+значением статуса из фиксированного набора (`open`/`in_progress`/`blocked`/`deferred`/`closed`).
 Это **не** сырой проброс флагов, а allowlist готовых argv-кортежей
 (`_BD_LIST_ARG_FORMS`): статус вне набора или любой другой флаг отвергается **до**
-исполнения, так что инвариант «никаких произвольных аргументов/флагов» цел. Перед
+исполнения, так что инвариант «никаких произвольных аргументов/флагов» цел.
+
+Второе флаг-несущее исключение (BOB-038) — `git`, которому нужны флаги
+(`--oneline`/`--grep=`). По той же логике он разрешён **только** как маленький набор
+**фиксированных форм `git log`**, у которых каждый динамический слот (путь, счётчик,
+ключ беады) проверяется: `git log --grep=<bead-key> --oneline` (по коммитам,
+упоминающим ключ) и `git log --oneline [-n <N>] -- <path>` (ограниченная история пути;
+`-n` ≤ `_GIT_MAX_LOG_COUNT = 1000`, по умолчанию `50`). Метод `code_history(path)`
+строит argv по этим формам: ключ беады/узла (`BOB-031`/`bob-4be.1`) уходит в `--grep`,
+репо-относительный путь — в `-- <path>`. Путь валидируется (`_is_safe_git_path`:
+не флаг, не абсолютный, без `..`-traversal), счётчик — как положительное ограниченное
+целое. Любая другая форма, флаг, подкоманда (`git show`/`diff`/`blame` — **не** в v1) или
+путь-инъекция отвергается `DisallowedCommandError` **до** запуска git (без shell), так что
+read-only инвариант нельзя обойти промптом. Перед
 возвратом результата срезается хвостовой инструментальный шум (`_strip_noise_tail`:
 легенда статусов / `Tip` / подсказка `--limit`) — обрезается только хвост, нутро
 вывода не трогается. Каждый запуск ограничен жёстким таймаутом (по умолчанию 30 с,
@@ -967,7 +1012,8 @@ Containment считается на realpath-ах с обеих сторон, п
 → они **диалоговые**, не самонаправленные: проактивный tick не может их запустить
 сам. Композиция — в `_build_registry(config, recall=…)` (`app.py`): при
 `introspection.enabled` (по умолчанию **true** — это и есть фича; read-only,
-owner-only чат) три навыка регистрируются поверх `SubprocessRepoIntrospector(
+owner-only чат) четыре навыка (`inspect_architecture`/`read_code`/`list_work`/
+`code_rationale`) регистрируются поверх `SubprocessRepoIntrospector(
 PrivacyGuard(repo_root=_REPO_ROOT), …)`; выключено → реестр держит ровно две
 memory-capability, поведение как раньше. Конфиг `introspection.*`
 (`infrastructure/config/loader.py`): `enabled`, `max_output_chars` (`20000`),
@@ -2824,16 +2870,20 @@ graceful degrade без идентичности) и `tests/infrastructure/teleg
 `REACT_ONLY`, `ENGAGE` → обычная компоновка; непровязанный `bob_user_id_source` →
 поведение как до BOB-023).
 
-Самоинтроспекция (BOB-017, фаза A) покрыта по слоям. Домен —
+Самоинтроспекция (BOB-017, фаза A; код↔«почему» BOB-038) покрыта по слоям. Домен —
 `tests/domain/introspection/test_privacy_guard.py` (приват-инвариант: ALLOW
 `src`/`tests`/`docs`, DENY `data/soul`/`bob.db`/`.env`/`config`, traversal за репо;
-`sanitize` вырезает секрето-подобное). Приложение —
+`sanitize` вырезает секрето-подобное) и `test_code_history.py` (чистые парсеры
+`parse_bead_refs`/`commits_mentioning`/`feature_doc_dir`). Приложение —
 `tests/application/capabilities/test_inspect_architecture.py`,
-`test_read_code.py` (маршрутизация путь↔поиск) и `test_list_work.py` (dispatch,
-компактный рендер, честный «ничего не нашёл» на пустом, US-5). Инфраструктура —
+`test_read_code.py` (маршрутизация путь↔поиск), `test_list_work.py` (dispatch,
+компактный рендер, честный «ничего не нашёл» на пустом, US-5) и `test_code_rationale.py`
+(сшивка код→git→беады→доки→граф, честное «не зафиксирована», деградация источников).
+Инфраструктура —
 `tests/infrastructure/introspection/test_subprocess_introspector.py` (фикс-allowlist
 read-подкоманд, отказ на флаг/неизвестный бинарь, таймаут, обрезка; `read_file`
-через guard + realpath-containment против symlink-обхода). Конфигурация —
+через guard + realpath-containment против symlink-обхода) и `test_git_history.py`
+(фикс-формы `git log`, отказ на путь-инъекцию/чужую подкоманду/флаг). Конфигурация —
 `tests/test_introspection_config.py` (`introspection.*`-дефолты + override).
 
 Защитный механизм CI (BOB-009): `pytest-timeout` задаёт дефолтный пер-тестовый
