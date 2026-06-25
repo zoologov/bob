@@ -140,6 +140,18 @@ ignore = [
 # The SqliteGoalStore (BOB-015) carries Russian docstrings whose Cyrillic look-alikes
 # are intentional — RUF001/RUF002/RUF003 do not apply to these.
 "src/bob/infrastructure/persistence/goal_store.py" = ["RUF001", "RUF002", "RUF003"]
+# The coding-session domain + store (BOB-039) carries Russian persona/policy docstrings
+# + comments whose Cyrillic look-alikes are intentional — RUF001/RUF002/RUF003 here.
+"src/bob/domain/coding/__init__.py" = ["RUF001", "RUF002", "RUF003"]
+"src/bob/domain/coding/state.py" = ["RUF001", "RUF002", "RUF003"]
+"src/bob/domain/coding/entities.py" = ["RUF001", "RUF002", "RUF003"]
+"src/bob/domain/coding/narrate.py" = ["RUF001", "RUF002", "RUF003"]
+"src/bob/domain/coding/naming.py" = ["RUF001", "RUF002", "RUF003"]
+"src/bob/infrastructure/persistence/coding_session_store.py" = [
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
 # The self-improvement model (BOB-028 .1) carries Russian persona/policy docstrings +
 # observation/adjustment literals whose Cyrillic look-alikes are intentional —
 # RUF001/RUF002/RUF003 do not apply to these.
@@ -250,6 +262,20 @@ ignore = [
     "RUF003",
 ]
 "tests/application/usecases/test_detect_patterns.py" = [
+    "S101",
+    "ARG001",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+# The coding-session tests (BOB-039) assert on Russian task/narrative literals + carry
+# Russian docstrings whose Cyrillic look-alikes are intentional (→ RUF001/RUF002/RUF003).
+"tests/domain/coding/test_state.py" = ["S101", "ARG001", "PLR2004", "RUF001", "RUF002", "RUF003"]
+"tests/domain/coding/test_entities.py" = ["S101", "ARG001", "PLR2004", "RUF001", "RUF002", "RUF003"]
+"tests/domain/coding/test_naming.py" = ["S101", "ARG001", "PLR2004", "RUF001", "RUF002", "RUF003"]
+"tests/domain/coding/test_narrate.py" = ["S101", "ARG001", "PLR2004", "RUF001", "RUF002", "RUF003"]
+"tests/infrastructure/persistence/test_coding_session_store.py" = [
     "S101",
     "ARG001",
     "PLR2004",

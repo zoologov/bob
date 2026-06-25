@@ -1,0 +1,125 @@
+# Copyright (c) 2026 Vladimir Zoologov
+# SPDX-License-Identifier: BUSL-1.1
+# See the LICENSE file in the project root for full license information.
+
+"""Тесты SqliteCodingSessionStore — персист coding-сессий (BOB-039 .1).
+
+Round-trip save→get восстанавливает сессию (состояние, ветка, worktree, план,
+pr_url, времена); UPSERT по id; неизвестный id → None; active() возвращает только
+нетерминальные сессии; выживание после рестарта.
+"""
+
+from __future__ import annotations
+
+from datetime import UTC, datetime
+from typing import TYPE_CHECKING
+
+import pytest
+
+from bob.domain.coding.entities import CodingSession
+from bob.domain.coding.state import CodingSessionState
+from bob.infrastructure.persistence.coding_session_store import (
+    SqliteCodingSessionStore,
+)
+from bob.infrastructure.persistence.sqlite_repo import SqliteMemoryRepo
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+_T0 = datetime(2026, 6, 26, 10, 0, tzinfo=UTC)
+_T1 = datetime(2026, 6, 26, 11, 0, tzinfo=UTC)
+
+
+@pytest.fixture
+async def repo(tmp_path: Path) -> SqliteMemoryRepo:
+    instance = SqliteMemoryRepo(tmp_path / "bob.db")
+    await instance.initialize()
+    return instance
+
+
+def _session(
+    sid: str = "cs1",
+    *,
+    state: CodingSessionState = CodingSessionState.PROPOSED,
+    worktree_path: str | None = None,
+    plan: str | None = None,
+    pr_url: str | None = None,
+) -> CodingSession:
+    return CodingSession(
+        id=sid,
+        task="починить парсер",
+        state=state,
+        branch="bob/fix-parser",
+        created_at=_T0,
+        updated_at=_T1,
+        worktree_path=worktree_path,
+        plan=plan,
+        pr_url=pr_url,
+    )
+
+
+async def test_get_unknown_returns_none(repo: SqliteMemoryRepo) -> None:
+    store = SqliteCodingSessionStore(repo)
+    assert await store.get("nope") is None
+
+
+async def test_save_round_trips_full_session(repo: SqliteMemoryRepo) -> None:
+    store = SqliteCodingSessionStore(repo)
+    session = _session(
+        state=CodingSessionState.PR_OPEN,
+        worktree_path="/work/wt/cs1",
+        plan="1. читаю 2. правлю",
+        pr_url="https://github.com/o/r/pull/7",
+    )
+
+    await store.save(session)
+    loaded = await store.get("cs1")
+
+    assert loaded == session
+
+
+async def test_save_upserts_on_id(repo: SqliteMemoryRepo) -> None:
+    store = SqliteCodingSessionStore(repo)
+    await store.save(_session(state=CodingSessionState.PROPOSED))
+
+    await store.save(_session(state=CodingSessionState.PLAN_READY, plan="готов план"))
+    loaded = await store.get("cs1")
+
+    assert loaded is not None
+    assert loaded.state is CodingSessionState.PLAN_READY
+    assert loaded.plan == "готов план"
+
+
+async def test_active_returns_only_non_terminal(repo: SqliteMemoryRepo) -> None:
+    store = SqliteCodingSessionStore(repo)
+    await store.save(_session("a", state=CodingSessionState.EXECUTING))
+    await store.save(_session("b", state=CodingSessionState.DONE))
+    await store.save(_session("c", state=CodingSessionState.CANCELLED))
+    await store.save(_session("d", state=CodingSessionState.FAILED))
+    await store.save(_session("e", state=CodingSessionState.PLAN_READY))
+
+    active = await store.active()
+
+    assert tuple(sorted(s.id for s in active)) == ("a", "e")
+
+
+async def test_survives_restart(tmp_path: Path) -> None:
+    db = tmp_path / "bob.db"
+    session = _session(
+        state=CodingSessionState.EXECUTING,
+        worktree_path="/work/wt/cs1",
+        plan="план",
+        pr_url=None,
+    )
+
+    first = SqliteMemoryRepo(db)
+    await first.initialize()
+    await SqliteCodingSessionStore(first).save(session)
+    await first.close()
+
+    second = SqliteMemoryRepo(db)
+    await second.initialize()
+    loaded = await SqliteCodingSessionStore(second).get("cs1")
+    await second.close()
+
+    assert loaded == session
