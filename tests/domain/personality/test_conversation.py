@@ -17,6 +17,7 @@ import pytest
 from bob.domain.personality.conversation import (
     RepeatThresholds,
     is_bob_repeat,
+    is_phrase_tic,
     is_user_repeat,
     recalled_bob_replies,
     recalled_bob_reply,
@@ -137,6 +138,120 @@ def test_repeat_thresholds_rejects_window_below_one() -> None:
 def test_repeat_thresholds_rejects_out_of_range_threshold() -> None:
     with pytest.raises(ValueError, match="similarity_threshold"):
         RepeatThresholds(similarity_threshold=1.5)
+
+
+def test_repeat_thresholds_tic_defaults_are_conservative() -> None:
+    # BOB-036 .1: the phrase-tic knobs default to a closer-sized phrase (>=3 words)
+    # recurring at least twice — so a short closer or a one-off never trips.
+    thresholds = RepeatThresholds()
+    assert thresholds.tic_min_words >= 3
+    assert thresholds.tic_min_occurrences >= 2
+
+
+def test_repeat_thresholds_rejects_tic_min_words_below_one() -> None:
+    with pytest.raises(ValueError, match="tic_min_words"):
+        RepeatThresholds(tic_min_words=0)
+
+
+def test_repeat_thresholds_rejects_tic_min_occurrences_below_one() -> None:
+    with pytest.raises(ValueError, match="tic_min_occurrences"):
+        RepeatThresholds(tic_min_occurrences=0)
+
+
+# --- Phrase-tic detector (BOB-036 .1) -----------------------------------------
+#
+# BOB-032 anti-repeat compares FULL replies (threshold 0.9), so two substantively
+# DIFFERENT messages that merely share a signature CLOSER ("Мне так спокойнее.")
+# slip through. is_phrase_tic is the phrase-level guard: a notable phrase of the
+# candidate (>= min_words words) that ALSO recurs as a notable phrase across
+# >= min_occurrences recent replies is a tic. Pure, deterministic, no I/O.
+
+_TIC = "Мне так спокойнее."
+
+
+def test_recurring_closer_across_two_replies_is_a_tic() -> None:
+    # The signature closer ends >= 2 recent replies; a fresh candidate ending with
+    # it (different lead-in) is a tic.
+    recent = [
+        f"Хорошо, посмотрю логи. {_TIC}",
+        f"Ладно, перепишу функцию. {_TIC}",
+    ]
+    candidate = f"Окей, проверю конфиг. {_TIC}"
+    assert is_phrase_tic(candidate, recent, min_words=3, min_occurrences=2) is True
+
+
+def test_closer_appearing_only_once_before_is_not_a_tic() -> None:
+    # A phrase that recurs only ONCE in the window is not yet a tic (min_occurrences=2).
+    recent = [
+        f"Хорошо, посмотрю логи. {_TIC}",
+        "Совсем другой ответ без закрывашки.",
+    ]
+    candidate = f"Окей, проверю конфиг. {_TIC}"
+    assert is_phrase_tic(candidate, recent, min_words=3, min_occurrences=2) is False
+
+
+def test_short_common_closer_below_min_words_is_not_a_tic() -> None:
+    # "Работаем." is a single word — below min_words=3 — so even recurring it never trips.
+    recent = ["Сделаю. Работаем.", "Понял. Работаем."]
+    candidate = "Ок, гляну. Работаем."
+    assert is_phrase_tic(candidate, recent, min_words=3, min_occurrences=2) is False
+
+
+def test_substantively_different_reply_with_no_shared_phrase_does_not_fire() -> None:
+    # No shared notable phrase across the window -> no false fire.
+    recent = [
+        "Давай разберём архитектуру по слоям.",
+        "Я бы начал с доменной модели.",
+    ]
+    candidate = "Предлагаю сначала написать тест."
+    assert is_phrase_tic(candidate, recent, min_words=3, min_occurrences=2) is False
+
+
+def test_one_off_long_phrase_reused_once_is_not_a_tic() -> None:
+    # A long phrase the candidate shares with exactly ONE recent reply is a legitimate
+    # reuse, not a tic.
+    shared = "Это решает задачу синхронизации индекса."
+    recent = [shared, "Совсем другая мысль про космос."]
+    candidate = f"Кстати: {shared}"
+    assert is_phrase_tic(candidate, recent, min_words=3, min_occurrences=2) is False
+
+
+def test_tic_is_case_and_whitespace_insensitive() -> None:
+    # Notable phrases are normalised (strip / casefold / collapse ws) before compare.
+    recent = [
+        "Лог посмотрю.   МНЕ  ТАК   спокойнее.",
+        "Код перепишу. мне так спокойнее.",
+    ]
+    candidate = "Конфиг гляну.  Мне Так Спокойнее."
+    assert is_phrase_tic(candidate, recent, min_words=3, min_occurrences=2) is True
+
+
+def test_tic_matches_a_mid_reply_sentence_not_only_the_final_one() -> None:
+    # Any sentence >= min_words counts as notable, not only the closer.
+    phrase = "это меня успокаивает совершенно"
+    recent = [
+        f"{phrase}. А дальше посмотрим.",
+        f"Ну ладно. {phrase}. Идём дальше.",
+    ]
+    candidate = f"{phrase}. И что теперь."
+    assert is_phrase_tic(candidate, recent, min_words=3, min_occurrences=2) is True
+
+
+def test_blank_candidate_is_never_a_tic() -> None:
+    assert is_phrase_tic("", [_TIC, _TIC], min_words=3, min_occurrences=2) is False
+
+
+def test_empty_recent_window_is_never_a_tic() -> None:
+    candidate = f"Окей, проверю конфиг. {_TIC}"
+    assert is_phrase_tic(candidate, [], min_words=3, min_occurrences=2) is False
+
+
+def test_same_phrase_twice_in_one_reply_counts_as_one_occurrence() -> None:
+    # A phrase repeated WITHIN a single recent reply is still that ONE reply — it must
+    # not inflate the occurrence count past min_occurrences on its own.
+    recent = [f"{_TIC} И ещё раз. {_TIC}"]
+    candidate = f"Окей. {_TIC}"
+    assert is_phrase_tic(candidate, recent, min_words=3, min_occurrences=2) is False
 
 
 # --- Recall-aware anti-repeat helpers (BOB-032 .1, shared domain logic) --------

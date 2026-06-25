@@ -2298,6 +2298,58 @@ async def test_window_of_one_misses_the_repeat_through_a_turn() -> None:
     assert bot.final_text == _OLDER_DECLINE
 
 
+# --- BOB-036 .1: phrase-tic guard (a recurring signature CLOSER) ---------------
+#
+# BOB-032's full-reply guard compares whole replies, so two substantively DIFFERENT
+# replies that merely END with the same signature closer ("Мне так спокойнее.") slip
+# through. The phrase-tic guard extends the SAME regeneration path: when the closer
+# recurs across the recent window, a fresh draft carrying it is broken and re-rolled.
+_TIC_CLOSER = "Мне так спокойнее."
+_TIC_TURN_A = f"Ada: глянь логи\nbob: Хорошо, посмотрю логи. {_TIC_CLOSER}"
+_TIC_TURN_B = f"Ada: и код\nbob: Ладно, перепишу функцию. {_TIC_CLOSER}"
+
+
+async def test_recurring_closer_tic_triggers_regeneration() -> None:
+    # The closer ends BOTH prior Bob replies in the window; a fresh, substantively
+    # different draft that ALSO ends with it is a phrase-tic -> the guard regenerates
+    # once and commits the tic-free retry. The full-reply bar alone would miss this:
+    # the three replies are not near-duplicates, only their tail is shared.
+    handler, bot, _repo, tier1 = _build(
+        reply="unused",
+        tier1_replies=[
+            f"Окей, проверю конфиг. {_TIC_CLOSER}",
+            "Готово, всё чисто — больше тут добавить нечего.",
+        ],
+        history=[
+            {"content": _TIC_TURN_A, "event_type": "message"},
+            {"content": _TIC_TURN_B, "event_type": "message"},
+        ],
+    )
+
+    await handler.handle(_message("посмотри, пожалуйста, ещё и конфиг подробно"))
+
+    assert len(tier1.payloads) == 2
+    assert bot.final_text == "Готово, всё чисто — больше тут добавить нечего."
+
+
+async def test_closer_used_once_before_is_not_a_tic_and_is_committed() -> None:
+    # No false fire: the closer appears in only ONE prior reply in the window, so a
+    # fresh draft carrying it is a legitimate reuse (not yet a tic) and is committed
+    # as-is with no extra generation.
+    handler, bot, _repo, tier1 = _build(
+        reply=f"Окей, проверю конфиг. {_TIC_CLOSER}",
+        history=[
+            {"content": _TIC_TURN_A, "event_type": "message"},
+            {"content": _INTERVENING_TURN, "event_type": "message"},
+        ],
+    )
+
+    await handler.handle(_message("посмотри, пожалуйста, ещё и конфиг подробно"))
+
+    assert len(tier1.payloads) == 1
+    assert bot.final_text == f"Окей, проверю конфиг. {_TIC_CLOSER}"
+
+
 async def test_near_verbatim_reply_triggers_regeneration() -> None:
     # Near-verbatim (a minor edit of the last reply) is caught too — not just an exact
     # byte match. The guard regenerates once and commits the genuinely-different retry.
