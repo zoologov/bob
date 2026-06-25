@@ -68,6 +68,7 @@ from bob.domain.personality.conversation import (
     is_user_repeat,
     recalled_bob_replies,
     recalled_bob_reply,
+    recalled_excluding_reflections,
     recalled_without_copied_exemplars,
 )
 from bob.domain.personality.conversation_floor import (
@@ -899,8 +900,17 @@ class HandleMessage:
         # The stranger voice directive is appended so the wariness reads as
         # character. Default to MORE restriction when unsure.
         is_guest = interlocutor is not None and interlocutor.trust is Trust.GUEST
+        # Reflection containment (BOB-033 .3): the reply-recall pool excludes private
+        # reflection episodes so Bob's inner monologue never becomes a copyable exemplar
+        # in a user-facing reply — the inner life colours tone via MOOD, not by parroting
+        # reflection TEXT. Facts + past message turns still ground the reply, and the
+        # deliberate ``leak_inner_life`` path (below, via self._reflection) is untouched.
         recalled: Sequence[Recalled] = (
-            [] if is_guest else await self._recall.recall(event.text, k=_RECALL_K)
+            []
+            if is_guest
+            else recalled_excluding_reflections(
+                await self._recall.recall(event.text, k=_RECALL_K)
+            )
         )
         history: Sequence[Mapping[str, object]] = (
             [] if is_guest else await self._episodes.recent_episodes(_HISTORY_K)
@@ -1030,9 +1040,16 @@ class HandleMessage:
             logger.exception("recording owner activity failed (ignored)")
 
     async def _perceive(self, event: MessageReceived) -> SOUL:
-        """Update mood from the message text and store the new soul snapshot."""
+        """Update mood from the message text and store the new soul snapshot.
+
+        Passes the soul's mood baseline as the social co-regulation ``target``
+        (BOB-033 .3): a warm incoming message tugs mood a proportional fraction back
+        toward this baseline, so connection genuinely displaces accumulated low.
+        """
         signals = TextSignals(text=event.text, message_count=_SINGLE_MESSAGE, present=True)
-        new_mood = await self._update_mood.run(self._state.soul.mood, signals)
+        new_mood = await self._update_mood.run(
+            self._state.soul.mood, signals, target=self._state.soul.mood_baseline
+        )
         soul = self._state.soul.with_mood(new_mood)
         self._state.soul = soul
         return soul

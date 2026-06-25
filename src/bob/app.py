@@ -398,7 +398,15 @@ def build_application(
     )
 
     personality = PersonalityState(soul=_default_soul())
-    update_mood = UpdateMoodFromText(router=router, clock=resolved_clock)
+    # Social co-regulation (BOB-033 .3): Bob's disposition drives the asymmetric
+    # contagion (a warm message lifts more than a cold one dips) and the proportional
+    # pull-toward-baseline that displaces accumulated low. Loaded off the same soul
+    # artifact as the reappraisal seam; canon-optimist fallback when absent.
+    update_mood = UpdateMoodFromText(
+        router=router,
+        clock=resolved_clock,
+        disposition=_disposition_from(soul_store.read_json("disposition")),
+    )
     extract_facts = ExtractFacts(router=router, repo=memory_repo, clock=resolved_clock)
     authorizer = _build_authorizer(merged, repo=memory_repo)
 

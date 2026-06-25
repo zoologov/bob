@@ -677,6 +677,42 @@ async def test_recalled_memory_reaches_tier1_reply() -> None:
     assert _PHANTOM_PREF in tier1.all_text
 
 
+async def test_reflection_episode_is_excluded_from_the_reply_recall_pool() -> None:
+    # BOB-033 .3 containment: a reflection episode in the recall store NEVER becomes a
+    # copyable exemplar in a user-facing reply (the inner life shapes tone via MOOD, not
+    # by parroting reflection TEXT). A fact recalled alongside it still grounds the reply.
+    reflection_text = "поймал себя на мысли, что всё тлен"
+    fact_text = "Ada предпочитает чай"
+    recall = FakeRecall(
+        hits=[
+            {"content": reflection_text, "category": "reflection", "source": "episodic"},
+            {"content": fact_text, "category": "preference", "source": "semantic"},
+        ]
+    )
+    handler, _bot, _repo, tier1 = _build(reply="hi", recall=recall)
+
+    await handler.handle(_message("объясни подробно, что ты думаешь"))
+
+    folded = tier1.all_text
+    assert reflection_text not in folded  # the reflection is contained
+    assert fact_text in folded  # the fact still grounds the reply
+
+
+async def test_leak_inner_life_still_surfaces_a_reflection_despite_containment() -> None:
+    # The deliberate leak path (BOB-018) is UNTOUCHED by .3 containment: it reaches the
+    # latest reflection through its own reader, not the (now reflection-free) recall pool.
+    handler, _bot, _repo, tier1 = _build(
+        reply="hi",
+        expression_freqs=_LEAK_ON,
+        reflection=_FakeReflectionReader(text=_REFLECTION_TEXT),
+        recall=FakeRecall(hits=[]),
+    )
+
+    await handler.handle(_message("расскажи подробно, как у тебя дела сегодня"))
+
+    assert _REFLECTION_TEXT in tier1.all_text
+
+
 async def test_recent_conversation_history_reaches_tier1_reply() -> None:
     # Arrange: a prior turn where the user told Bob their name is on record.
     handler, _bot, _repo, tier1 = _build(
@@ -948,8 +984,14 @@ async def test_brevity_directive_varies_by_state_on_the_same_inbound() -> None:
     bright_soul = _soul().with_mood(Mood(valence=0.6, arousal=0.7, openness=0.6, social=0.6))
     low_soul = _soul().with_mood(Mood(valence=-0.55, arousal=-0.8, social=-0.7))
 
-    handler_bright, _b1, _r1, tier_bright = _build(reply="x", soul=bright_soul)
-    handler_low, _b2, _r2, tier_low = _build(reply="x", soul=low_soul)
+    # Neutral incoming so the BOB-033 .3 social-charge does not lift the withdrawn mood
+    # under test — the contrast here is mood→brevity, not the incoming sentiment.
+    handler_bright, _b1, _r1, tier_bright = _build(
+        reply="x", soul=bright_soul, tier0_replies=["neutral"]
+    )
+    handler_low, _b2, _r2, tier_low = _build(
+        reply="x", soul=low_soul, tier0_replies=["neutral"]
+    )
     await handler_bright.handle(_message(inbound))
     await handler_low.handle(_message(inbound))
 
@@ -1028,7 +1070,11 @@ async def test_terse_turn_lands_directive_and_few_shot_in_prompt() -> None:
     # AND the short-answer few-shot exemplars — the few-shot (examples > rule) is what
     # actually beats Qwen's verbosity prior, so its presence is the load-bearing assertion.
     soul = _soul().with_mood(_WITHDRAWN_MOOD)
-    handler, _bot, _repo, tier1 = _build(reply="ок", soul=soul)
+    # Neutral incoming so the BOB-033 .3 social-charge does NOT lift the withdrawn mood
+    # under test — this asserts mood→brevity, isolated from the incoming sentiment.
+    handler, _bot, _repo, tier1 = _build(
+        reply="ок", soul=soul, tier0_replies=["neutral"]
+    )
 
     await handler.handle(_message(_TERSE_INBOUND))
 
@@ -1118,7 +1164,11 @@ async def test_terse_turn_has_no_competing_expansive_length_cue() -> None:
     # On a TERSE turn the prompt carries the short directive ("одной фразой") and must NOT
     # also carry the EXPANSIVE "можно развернуться" cue — no two competing length signals.
     soul = _soul().with_mood(_WITHDRAWN_MOOD)
-    handler, _bot, _repo, tier1 = _build(reply="ок", soul=soul)
+    # Neutral incoming so the BOB-033 .3 social-charge does NOT lift the withdrawn mood
+    # under test — this guardrail asserts the single TERSE length signal by mood.
+    handler, _bot, _repo, tier1 = _build(
+        reply="ок", soul=soul, tier0_replies=["neutral"]
+    )
 
     await handler.handle(_message(_TERSE_INBOUND))
 
@@ -1155,7 +1205,11 @@ async def test_off_day_mood_reply_prompt_carries_the_vulnerable_honest_tone() ->
     # quieter, vulnerable, an honest "не знаю" over forced warmth — and it is never
     # the relational sulk of BOB-014 (it disavows rudeness).
     soul = _soul().with_mood(Mood(valence=-0.7, arousal=-0.6))
-    handler, _bot, _repo, tier1 = _build(reply="...", soul=soul)
+    # Neutral incoming so the BOB-033 .3 social-charge does not lift the flat mood under
+    # test out of the off-day band — this asserts mood→tone, not the incoming sentiment.
+    handler, _bot, _repo, tier1 = _build(
+        reply="...", soul=soul, tier0_replies=["neutral"]
+    )
 
     await handler.handle(_message("расскажи подробно, что ты думаешь про это"))
 
@@ -1172,8 +1226,14 @@ async def test_tone_band_varies_by_mood_on_the_same_inbound() -> None:
     bright = _soul().with_mood(Mood(valence=0.4, arousal=0.3))
     flat = _soul().with_mood(Mood(valence=-0.7, arousal=-0.6))
 
-    handler_b, _b1, _r1, tier_b = _build(reply="x", soul=bright)
-    handler_f, _b2, _r2, tier_f = _build(reply="x", soul=flat)
+    # Neutral incoming so the BOB-033 .3 social-charge does not lift the flat mood out of
+    # its off-day band — the contrast under test is mood→tone, not the incoming sentiment.
+    handler_b, _b1, _r1, tier_b = _build(
+        reply="x", soul=bright, tier0_replies=["neutral"]
+    )
+    handler_f, _b2, _r2, tier_f = _build(
+        reply="x", soul=flat, tier0_replies=["neutral"]
+    )
     await handler_b.handle(_message(inbound))
     await handler_f.handle(_message(inbound))
 
@@ -1197,7 +1257,11 @@ async def test_low_mood_modulates_the_taste_verdict_stricter_in_context() -> Non
         taste=taste,
         phantom_prefs=base.phantom_prefs,
     )
-    handler, _bot, _repo, tier1 = _build(reply="ok", soul=soul)
+    # Neutral incoming so the BOB-033 .3 social-charge does not lift the flat mood under
+    # test — this asserts mood→taste modulation, isolated from the incoming sentiment.
+    handler, _bot, _repo, tier1 = _build(
+        reply="ok", soul=soul, tier0_replies=["neutral"]
+    )
 
     await handler.handle(_message(topic))
 

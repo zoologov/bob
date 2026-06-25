@@ -17,6 +17,9 @@ no I/O: it only exposes pure derivations the emotional-regulation mechanisms rea
   a cold one drags him down (``positive_lift_scale() > negative_dip_scale()`` for
   every disposition), the structural anti-depressant. The lift grows with
   optimism; the dip shrinks with resilience.
+- :meth:`social_lift_rate` — the (proportional, never-maxed) fraction toward the
+  baseline a warm message tugs Bob's mood (BOB-033 .3 social co-regulation), so a
+  warm exchange displaces accumulated low rather than only adding a delta.
 
 All derivations are deterministic — same traits, same result — so they are
 testable without a model and stay clamped to sane ranges.
@@ -46,6 +49,13 @@ _LIFT_BASE = 0.4
 _LIFT_OPTIMISM_GAIN = 0.4  # lift in [0.4, 0.8], growing with optimism
 _DIP_BASE = 0.3
 _DIP_RESILIENCE_DAMP = 0.5  # dip in [0.15, 0.3], shrinking with resilience
+
+# Low-displacement pull (BOB-033 .3). On a warm exchange Bob is tugged a fraction
+# of the gap back toward his baseline (Mood.lift_toward) — proportional, never a
+# mechanical snap (kept strictly inside the open interval (0, 1)). Grows with
+# optimism so a sunnier Bob recharges out of a dip faster.
+_LIFT_RATE_BASE = 0.1
+_LIFT_RATE_OPTIMISM_GAIN = 0.3  # rate in [0.1, 0.4], growing with optimism
 
 
 @dataclass(frozen=True, slots=True)
@@ -92,6 +102,18 @@ class Disposition:
         and stays strictly below :meth:`positive_lift_scale`.
         """
         return _DIP_BASE * (_MAX_TRAIT - _DIP_RESILIENCE_DAMP * self.resilience)
+
+    def social_lift_rate(self) -> float:
+        """Return the fraction toward baseline a warm message pulls mood, in ``(0, 1)``.
+
+        The "displace the low" tug (BOB-033 .3 social co-regulation): a warm exchange
+        does not just add a valence delta — it charges Bob back up out of a dip by
+        pulling his mood a *fraction* of the gap toward his disposition baseline (fed
+        to :meth:`~bob.domain.personality.mood.Mood.lift_toward`). It is proportional,
+        never a mechanical snap (strictly below ``1``), and grows with optimism so a
+        sunnier Bob recovers faster.
+        """
+        return _LIFT_RATE_BASE + _LIFT_RATE_OPTIMISM_GAIN * self.optimism
 
 
 # Canon-Bob's seed temperament, used as the load-time fallback (existing installs

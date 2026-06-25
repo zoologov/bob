@@ -20,6 +20,7 @@ from bob.domain.personality.conversation import (
     is_user_repeat,
     recalled_bob_replies,
     recalled_bob_reply,
+    recalled_excluding_reflections,
     recalled_without_copied_exemplars,
 )
 
@@ -220,3 +221,72 @@ def test_recalled_without_copied_exemplars_drops_every_matching_exemplar() -> No
 
 def test_recalled_without_copied_exemplars_empty_input_is_empty() -> None:
     assert recalled_without_copied_exemplars("что угодно", [], threshold=0.9) == ()
+
+
+# --- Reflection containment for the reply-recall pool (BOB-033 .3) -------------
+#
+# Bob's private reflections (inner monologue) must NOT become copyable exemplars in
+# user-facing replies: the inner life colours tone via MOOD, not by the model
+# parroting reflection TEXT. The recall pool that feeds compose excludes episodes
+# whose ``category`` (= the episodic ``event_type``) is a reflection kind, while
+# facts and past message turns still ground the reply.
+
+_REFLECTION: dict[str, object] = {
+    "content": "Сегодня тянет на меланхолию.",
+    "category": "reflection",
+    "source": "episodic",
+}
+_INNER_MONOLOGUE: dict[str, object] = {
+    "content": "Что-то я заскучал.",
+    "category": "inner_monologue",
+    "source": "episodic",
+}
+_MESSAGE_TURN: dict[str, object] = {
+    "content": "Ada: привет\nbob: Привет!",
+    "category": "message",
+    "source": "episodic",
+}
+_SEMANTIC_FACT: dict[str, object] = {
+    "content": "Ada любит чай",
+    "category": "preference",
+    "source": "semantic",
+}
+
+
+def test_reflection_episodes_are_excluded_from_the_reply_pool() -> None:
+    # A reflection in the store is NEVER returned as a compose exemplar.
+    kept = recalled_excluding_reflections(
+        [_REFLECTION, _INNER_MONOLOGUE, _MESSAGE_TURN, _SEMANTIC_FACT]
+    )
+    assert _REFLECTION not in kept
+    assert _INNER_MONOLOGUE not in kept
+
+
+def test_messages_and_facts_are_still_recalled() -> None:
+    # Containment is surgical: facts and past message turns still feed the reply.
+    kept = recalled_excluding_reflections(
+        [_REFLECTION, _MESSAGE_TURN, _SEMANTIC_FACT]
+    )
+    assert kept == (_MESSAGE_TURN, _SEMANTIC_FACT)
+
+
+def test_excluding_reflections_preserves_order_and_passes_through_non_reflections() -> None:
+    assert recalled_excluding_reflections([_MESSAGE_TURN, _SEMANTIC_FACT]) == (
+        _MESSAGE_TURN,
+        _SEMANTIC_FACT,
+    )
+
+
+def test_excluding_reflections_is_case_insensitive_on_category() -> None:
+    upper = {"content": "x", "category": "REFLECTION", "source": "episodic"}
+    assert recalled_excluding_reflections([upper]) == ()
+
+
+def test_excluding_reflections_empty_is_empty() -> None:
+    assert recalled_excluding_reflections([]) == ()
+
+
+def test_excluding_reflections_keeps_memory_with_no_category() -> None:
+    # A memory without a category key is not a reflection -> kept (defensive default).
+    no_cat: dict[str, object] = {"content": "что-то"}
+    assert recalled_excluding_reflections([no_cat]) == (no_cat,)

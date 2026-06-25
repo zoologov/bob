@@ -84,6 +84,21 @@ def test_negative_dip_shrinks_with_resilience() -> None:
     assert sturdy < fragile
 
 
+def test_social_lift_rate_is_a_proportional_fraction() -> None:
+    # The "displace the low" pull toward baseline (BOB-033 .3) is a proportional
+    # fraction in [0, 1] — never a mechanical snap to target (always-max).
+    for optimism in (0.0, 0.3, 0.8, 1.0):
+        rate = Disposition(optimism=optimism, resilience=0.5).social_lift_rate()
+        assert 0.0 < rate < 1.0
+
+
+def test_social_lift_rate_grows_with_optimism() -> None:
+    # A more optimistic Bob charges back up out of a dip faster on a warm exchange.
+    low = Disposition(optimism=0.2, resilience=0.5).social_lift_rate()
+    high = Disposition(optimism=0.9, resilience=0.5).social_lift_rate()
+    assert low < high
+
+
 def test_disposition_is_frozen() -> None:
     disp = Disposition(optimism=0.5, resilience=0.5)
     with pytest.raises(AttributeError):

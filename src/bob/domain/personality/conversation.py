@@ -198,3 +198,31 @@ def recalled_without_copied_exemplars(
             continue
         kept.append(item)
     return tuple(kept)
+
+
+# The episodic ``event_type`` values that mark a private inner-life reflection (the
+# heartbeat writes these via BOB-012). Mirrors
+# :data:`bob.infrastructure.persistence.proactivity_sources._INNER_LIFE_KINDS` — the
+# single source of "what is a reflection" the reply-recall containment reads.
+_REFLECTION_KINDS = frozenset({"reflection", "inner_monologue"})
+
+
+def recalled_excluding_reflections(recalled: Sequence[Recalled]) -> tuple[Recalled, ...]:
+    """Drop private REFLECTION episodes from the reply-recall pool (BOB-033 .3).
+
+    Containment of reflection mimicry: Bob's inner monologue must shape his replies
+    through MOOD, not by the model parroting reflection TEXT as a copyable exemplar.
+    This returns ``recalled`` with every episode whose ``category`` (the episodic
+    ``event_type``) is a reflection kind removed — and ONLY those, so distilled facts
+    and past message turns still ground the reply. A memory with no/other category is
+    kept (defensive default: only a known reflection kind is excluded). The deliberate
+    ``leak_inner_life`` path (BOB-018) is untouched — it reaches a reflection through a
+    separate reader, never this pool.
+    """
+    return tuple(item for item in recalled if not _is_reflection(item))
+
+
+def _is_reflection(item: Recalled) -> bool:
+    """True when a recalled memory is a private inner-life reflection episode."""
+    category = item.get("category")
+    return isinstance(category, str) and category.casefold() in _REFLECTION_KINDS
