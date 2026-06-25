@@ -89,6 +89,7 @@ from bob.application.usecases.heartbeat import (
 )
 from bob.application.usecases.plan_goal import LlmPlanner, PlanGoal
 from bob.application.usecases.pursue_goals import PursueGoalsTick
+from bob.application.usecases.reappraise_reflection import ReappraiseReflection
 from bob.application.usecases.reflection_parser import HeuristicReflectionParser
 from bob.application.usecases.relationship_sources import RelationshipTracker
 from bob.application.usecases.run_genesis import RunGenesis
@@ -703,6 +704,17 @@ def build_application(
     # back, no permanent lock-out), accelerated separately by warm owner turns on the
     # message path. A no-op when Bob is not hurt.
     recover_sulk = SulkRecoveryStep(tracker=sulk_tracker, clock=resolved_clock)
+    # Probabilistic reappraisal (BOB-033 .2): after a reflection is generated, a NEGATIVE
+    # thought is — with a seeded-RNG chance drawn from Bob's disposition (the same seed as
+    # proactivity, so one knob makes his stochastic inner life reproducible) — reframed
+    # constructively on Tier 1, lifting mood within the BOB-030 band; otherwise it stays
+    # honestly sad. Sentiment stays on Tier 0 (privacy); only the reappraisal beat escalates.
+    reappraise_reflection = ReappraiseReflection(
+        router=router,
+        rng=random.Random(_resolve_seed(merged, proactivity_seed)),  # noqa: S311
+        disposition=_disposition_from(soul_store.read_json("disposition")),
+        language=language,
+    )
     reflect_tick = ReflectTick(
         router=router,
         repo=memory_repo,
@@ -716,6 +728,9 @@ def build_application(
         consolidate_memory=consolidate_memory,
         dedup_facts=dedup_facts,
         recover_sulk=recover_sulk,
+        # Probabilistic reappraisal seam (BOB-033 .2): driven before the reflection is
+        # logged, so the (possibly reframed) text is what is stored and remembered.
+        reappraise=reappraise_reflection,
         # Grounding + dedup read seam (BOB-026 .2): the same memory repo serves recent
         # episodes so a fresh reflection is grounded in NOW (not a static template) and
         # checked against recent reflections for near-duplicates — a near-dup is

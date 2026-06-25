@@ -43,6 +43,7 @@ if TYPE_CHECKING:
     from bob.application.router.llm_router import LLMRouter
     from bob.application.usecases.apply_reflection import ApplyReflection
     from bob.application.usecases.handle_message import PersonalityState
+    from bob.application.usecases.reappraise_reflection import ReappraisalOutcome
     from bob.domain.personality.taste import TasteEngine
     from bob.domain.ports import Clock, JsonValue
 
@@ -127,6 +128,23 @@ class ReflectionContext(Protocol):
 
     async def recent_episodes(self, k: int) -> Sequence[Mapping[str, object]]:
         """Return the last ``k`` episodes by recency, oldest-first."""
+        ...
+
+
+class Reappraiser(Protocol):
+    """The narrow seam the reflect tick drives to reappraise a dark thought (BOB-033 .2).
+
+    Realised by :class:`~bob.application.usecases.reappraise_reflection.ReappraiseReflection`:
+    after a reflection is generated it classifies the thought's sentiment (Tier 0) and,
+    only for a NEGATIVE one, with a seeded-RNG probability drawn from Bob's disposition,
+    runs a Tier-1 beat that reframes it constructively and returns a positive valence
+    step. Otherwise the thought is returned as-is with a zero step (the honest low).
+    Driven BEFORE the reflection is logged, so the (possibly reframed) text is what is
+    stored. Optional: unwired, the reflect tick behaves exactly as before.
+    """
+
+    async def run(self, reflection: str) -> ReappraisalOutcome:
+        """Maybe reframe ``reflection``; return the (possibly new) thought + mood step."""
         ...
 
 
@@ -342,6 +360,7 @@ class ReflectTick:
         recover_sulk: SulkRecoverer | None = None,
         detect_patterns: PatternDetectorStep | None = None,
         announce_rules: RuleAnnouncerStep | None = None,
+        reappraise: Reappraiser | None = None,
         reflection_context: ReflectionContext | None = None,
         repeat_thresholds: RepeatThresholds | None = None,
         grounding_episodes: int = _DEFAULT_REFLECT_GROUNDING,
@@ -406,6 +425,12 @@ class ReflectTick:
         # un-announced PROPOSED rule to the owner; it only proposes (owner approval is the
         # /rule approve command), best-effort. Unwired, the tick behaves exactly as before.
         self._announce_rules = announce_rules
+        # The probabilistic reappraisal seam (BOB-033 .2): driven BEFORE the reflection
+        # is logged. For a NEGATIVE thought it may (with a disposition-/RNG-gated chance)
+        # reframe it on Tier 1 and yield a positive valence step; otherwise the thought
+        # stays honestly sad and mood is untouched. The lift is clamped to the BOB-030
+        # homeostatic band, so reappraisal cannot spiral mood up. Unwired -> unchanged.
+        self._reappraise = reappraise
         # Idempotency marker: the last reflection text already applied to the soul.
         self._last_evolved: str | None = None
 
@@ -426,6 +451,7 @@ class ReflectTick:
             if self._is_near_duplicate(reflection, recent_reflections):
                 logger.debug("reflect tick skipped a near-duplicate reflection")
                 return
+        reflection = await self._reappraised(reflection)
         now = self._clock.now()
         episode = EpisodicEvent(
             ts=now,
@@ -472,8 +498,14 @@ class ReflectTick:
         unwired tick is byte-for-byte unchanged.
         """
         grounding = _episode_contents(recent, self._grounding_episodes)
+        # Only ground (and lean) when the context seam is wired, so an unwired tick is
+        # byte-for-byte unchanged. The disposition adds the few-shot living palette and
+        # the optimism valence-lean (BOB-033 .2) on top of the existing NOW-grounding.
         mood_tone = self._state.soul.mood.tone() if self._reflection_context else ""
-        prompt = build_reflection_prompt(grounding, mood_tone=mood_tone)
+        disposition = self._state.soul.disposition if self._reflection_context else None
+        prompt = build_reflection_prompt(
+            grounding, mood_tone=mood_tone, disposition=disposition
+        )
         return await self._router.run(
             LLMRequest(
                 task_type=TaskType.REFLECT,
@@ -485,6 +517,31 @@ class ReflectTick:
                 ],
             )
         )
+
+    async def _reappraised(self, reflection: str) -> str:
+        """Maybe reframe a dark ``reflection`` and lift mood (BOB-033 .2).
+
+        Drives the optional reappraisal seam: a NEGATIVE thought is, with a
+        disposition-/RNG-gated chance, reframed constructively on Tier 1 and the
+        returned positive step lifts mood (clamped to the BOB-030 homeostatic band, so
+        no runaway). A positive/neutral thought, or a negative one that does not fire,
+        is left honestly as-is with mood untouched. Unwired, returns the thought as-is.
+        """
+        if self._reappraise is None:
+            return reflection
+        outcome = await self._reappraise.run(reflection)
+        if not outcome.reappraised:
+            return reflection
+        mood = self._state.soul.mood
+        delta = MoodDelta(
+            valence=_bounded_valence_delta(
+                current=mood.valence,
+                baseline=self._state.soul.mood_baseline.valence,
+                step=outcome.valence_step,
+            )
+        )
+        self._state.soul = self._state.soul.with_mood(mood.update(delta))
+        return outcome.thought
 
     def _is_near_duplicate(self, reflection: str, recent_reflections: Sequence[str]) -> bool:
         """Whether ``reflection`` (near-)repeats a recent reflection (BOB-026 .2)."""

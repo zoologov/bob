@@ -28,6 +28,8 @@ from bob.application.usecases.heartbeat import (
     ReflectTick,
     _bounded_valence_delta,
 )
+from bob.application.usecases.reappraise_reflection import ReappraisalOutcome
+from bob.domain.personality.disposition import Disposition
 from bob.domain.personality.mood import Mood
 from bob.domain.personality.soul import SOUL
 from bob.domain.personality.taste import TasteAxis, TasteEngine
@@ -950,3 +952,109 @@ async def test_reflect_without_a_pattern_detector_is_unaffected() -> None:
     await tick.run()
 
     assert len(repo.episodes) == 1
+
+
+# --- BOB-033 .2: the probabilistic reappraisal seam in ReflectTick --------------
+
+
+class _FakeReappraiser:
+    """A reappraiser double recording its input and returning a scripted outcome."""
+
+    def __init__(self, outcome: ReappraisalOutcome) -> None:
+        self._outcome = outcome
+        self.seen: list[str] = []
+
+    async def run(self, reflection: str) -> ReappraisalOutcome:
+        self.seen.append(reflection)
+        return self._outcome
+
+
+async def test_reflect_stores_the_reappraised_thought_and_lifts_mood() -> None:
+    # BOB-033 .2: a negative thought that the reappraiser reframes is STORED reframed,
+    # and its positive step lifts mood — clamped to the BOB-030 homeostatic band.
+    router, _ = _router(reply="всё впустую")
+    repo = FakeRepo()
+    baseline = Mood(valence=0.2)
+    state = _state(Mood(valence=0.2), baseline)
+    reappraiser = _FakeReappraiser(
+        ReappraisalOutcome(thought="но телескоп почти готов", valence_step=0.1, reappraised=True)
+    )
+    tick = ReflectTick(
+        router=router,
+        repo=repo,
+        state=state,
+        clock=FixedClock(_moment()),
+        reappraise=reappraiser,
+    )
+
+    await tick.run()
+
+    assert reappraiser.seen == ["всё впустую"]
+    assert repo.episodes[0]["content"] == "но телескоп почти готов"  # reframed text stored
+    assert state.soul.mood.valence > 0.2  # mood lifted by the reappraisal
+    # ...but bounded: never past baseline + the BOB-030 band.
+    assert state.soul.mood.valence <= baseline.valence + _MONOLOGUE_VALENCE_BAND
+
+
+async def test_reflect_keeps_an_unreappraised_thought_sad_and_mood_unchanged() -> None:
+    # The honest low: when the reappraiser does NOT fire (over p / not negative), the
+    # thought is stored as-is and mood is untouched — lows are allowed, not forced up.
+    router, _ = _router(reply="всё впустую")
+    repo = FakeRepo()
+    state = _state(Mood(valence=0.2), Mood(valence=0.2))
+    reappraiser = _FakeReappraiser(
+        ReappraisalOutcome(thought="всё впустую", valence_step=0.0, reappraised=False)
+    )
+    tick = ReflectTick(
+        router=router,
+        repo=repo,
+        state=state,
+        clock=FixedClock(_moment()),
+        reappraise=reappraiser,
+    )
+
+    await tick.run()
+
+    assert repo.episodes[0]["content"] == "всё впустую"  # stays honestly sad
+    assert state.soul.mood.valence == 0.2  # mood unchanged
+
+
+async def test_reflect_without_a_reappraiser_is_unaffected() -> None:
+    # Backward-compatible default: no reappraiser wired -> the tick behaves as before
+    # (the reflection is stored verbatim, mood untouched by reappraisal).
+    router, _ = _router(reply="тихая мысль")
+    repo = FakeRepo()
+    state = _state(Mood(valence=0.2), Mood(valence=0.2))
+    tick = ReflectTick(
+        router=router, repo=repo, state=state, clock=FixedClock(_moment())
+    )
+
+    await tick.run()
+
+    assert repo.episodes[0]["content"] == "тихая мысль"
+    assert state.soul.mood.valence == 0.2
+
+
+async def test_reflect_passes_the_disposition_into_the_prompt() -> None:
+    # BOB-033 .2: with a context seam wired, the reflect prompt carries the soul's
+    # disposition (few-shot living palette + optimism valence-lean).
+    router, tier0 = _router(reply="свежая мысль")
+    context = FakeReflectionContext([_message_episode("owner: что нового?")])
+    soul = SOUL(
+        identity="Bob",
+        mood=Mood(),
+        mood_baseline=Mood(),
+        taste=TasteEngine(),
+        disposition=Disposition(optimism=0.8, resilience=0.7),
+    )
+    tick = ReflectTick(
+        router=router,
+        repo=FakeRepo(),
+        state=PersonalityState(soul=soul),
+        clock=FixedClock(_moment()),
+        reflection_context=context,
+    )
+
+    await tick.run()
+
+    assert "optimism" in tier0.prompts[0].casefold()  # the valence-lean reached the model
