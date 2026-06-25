@@ -16,11 +16,11 @@
 
 | Беад | Роль | Статус | Зависит |
 |------|------|--------|---------|
-| `bob-kh0.1` | dev — Disposition + Mood.lift_toward + асимметрия | ready | — |
-| `bob-kh0.2` | dev — живые рефлексии + реаппрайзал | blocked | .1 |
-| `bob-kh0.3` | dev — соц-зарядка + контейнмент | blocked | .1 |
-| `bob-kh0.4` | test — US-1..5 + анти-механистичность | blocked | .1,.2,.3 |
-| `bob-kh0.5` | review | blocked | .4 |
+| `bob-kh0.1` | dev — Disposition + Mood.lift_toward + асимметрия | done | — |
+| `bob-kh0.2` | dev — живые рефлексии + реаппрайзал | done | .1 |
+| `bob-kh0.3` | dev — соц-зарядка + контейнмент | done | .1 |
+| `bob-kh0.4` | test — US-1..5 + анти-механистичность | done (99% cov, 1963 passed) | .1,.2,.3 |
+| `bob-kh0.5` | review | ready | .4 |
 | `bob-kh0.6` | tech-writer | blocked | .5 |
 
 ## Критический путь
