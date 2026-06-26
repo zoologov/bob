@@ -38,8 +38,9 @@ Worktree убирается в ``finally`` на любом завершении 
 from __future__ import annotations
 
 import logging
+import re
 import uuid
-from collections.abc import AsyncGenerator, AsyncIterator, Callable, Mapping
+from collections.abc import AsyncGenerator, AsyncIterator, Callable, Mapping, Sequence
 from contextlib import aclosing
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol, cast
@@ -282,18 +283,24 @@ class CodingAssistant:
         return await self._reply(True, _pr_message(pr_url), session=session)
 
     async def _run_plan(self, session: CodingSession, path: str) -> str:
-        """Run plan-mode, collecting the plan text (a plan with NO edits — the gate)."""
-        parts: list[str] = []
+        """Run plan-mode, collecting the plan text (a plan with NO edits — the gate).
+
+        claude in plan-mode emits the plan TWICE — once as ``assistant`` text and again
+        in the final ``result`` — so the parts are reduced by :func:`_clean_plan` to the
+        authoritative single plan (no duplicated ``## План``), with the planning preamble
+        stripped. The collect/clean split keeps the reduction a pure, testable transform.
+        """
+        parts: list[_PlanPart] = []
         async with aclosing(
             _closeable(self._runner.run(path, _plan_prompt(session.task), mode=_PLAN_MODE))
         ) as stream:
             async for event in stream:
                 if session.id in self._cancelled:
                     break
-                text = _event_text(event)
-                if text:
-                    parts.append(text)
-        return "\n".join(parts).strip()
+                part = _plan_part(event)
+                if part is not None:
+                    parts.append(part)
+        return _clean_plan(parts)
 
     async def _narrate_run(self, session: CodingSession, path: str) -> None:
         """Run execute-mode, sending each non-noise narrate line to the owner."""
@@ -432,19 +439,96 @@ def _execute_prompt(task: str) -> str:
     )
 
 
-def _event_text(event: Mapping[str, object]) -> str:
-    """Collect the plain plan text from one stream-json event (assistant text / result).
+@dataclass(frozen=True, slots=True)
+class _PlanPart:
+    """One collected plan fragment, tagged by its stream-json source.
+
+    ``kind`` is ``"result"`` (the final authoritative plan) or ``"assistant"`` (the
+    streamed draft) — :func:`_clean_plan` prefers the single ``result`` over the
+    assistant echo so the plan is captured exactly once.
+    """
+
+    kind: str
+    text: str
+
+
+def _plan_part(event: Mapping[str, object]) -> _PlanPart | None:
+    """Extract one plan fragment from a stream-json event (assistant text / result).
 
     Plan-mode's value is the plan PROSE, which :func:`narrate` deliberately treats as
     noise — so the plan is assembled here from the assistant message's text blocks and
-    the final ``result`` event's ``result`` field. Tool/system events yield ``""``.
+    the final ``result`` event's ``result`` field. Tool/system events (and empty text)
+    yield ``None``.
     """
     kind = str(event.get("type", ""))
     if kind == "result" and not _is_error_result(event):
-        return str(event.get("result", "")).strip()
+        text = str(event.get("result", "")).strip()
+        return _PlanPart("result", text) if text else None
     if kind == "assistant":
-        return _assistant_text(event)
+        text = _assistant_text(event)
+        return _PlanPart("assistant", text) if text else None
+    return None
+
+
+def _clean_plan(parts: Sequence[_PlanPart]) -> str:
+    """Reduce collected plan parts to the final plan text, once, de-noised (BOB-041 .1).
+
+    The plan arrives TWICE — as ``assistant`` text and again in the final ``result`` —
+    so the authoritative single source is the last non-empty ``result``; lacking one
+    (a degraded stream) the assistant parts are joined with contained/identical
+    duplicates dropped. The planning preamble (``ExitPlanMode`` chatter, "Let me write
+    the plan.") is then stripped so the owner sees a clean plan.
+    """
+    chosen = _last_result_text(parts) or _dedup_join(parts)
+    return _strip_plan_noise(chosen)
+
+
+def _last_result_text(parts: Sequence[_PlanPart]) -> str:
+    """The last non-empty ``result`` fragment (the authoritative final plan), or ``""``."""
+    for part in reversed(parts):
+        if part.kind == "result" and part.text:
+            return part.text
     return ""
+
+
+def _dedup_join(parts: Sequence[_PlanPart]) -> str:
+    """Join fragments, dropping any identical to or contained within another (no echo)."""
+    kept: list[str] = []
+    for part in parts:
+        text = part.text.strip()
+        if not text:
+            continue
+        kept = [k for k in kept if k not in text]  # drop fragments superseded by text
+        if any(text in k for k in kept):  # text already covered by a kept fragment
+            continue
+        kept.append(text)
+    return "\n\n".join(kept)
+
+
+def _strip_plan_noise(text: str) -> str:
+    """Drop planning-preamble noise lines and collapse the blank runs they leave."""
+    kept = [line for line in text.splitlines() if not _is_plan_noise(line)]
+    collapsed = re.sub(r"\n{3,}", "\n\n", "\n".join(kept))
+    return collapsed.strip()
+
+
+def _is_plan_noise(line: str) -> bool:
+    """Whether ``line`` is plan-mode preamble chatter (not part of the real plan)."""
+    stripped = line.strip()
+    if not stripped:
+        return False  # keep blanks; the run collapse handles spacing
+    if "exitplanmode" in stripped.lower():
+        return True
+    return bool(_PLAN_CHATTER_RE.match(stripped))
+
+
+# Planning-chatter preamble: a short "Let me / I'll … plan …" lead-in claude emits
+# before the actual plan. Matched conservatively (must open with the lead-in verb AND
+# mention "plan") so a real plan line is never mistaken for noise.
+_PLAN_CHATTER_RE = re.compile(
+    r"^(?:now\s+|ok(?:ay)?,?\s+|so\s+)*(?:let me|let's|i'?ll|i will)\b.{0,80}\bplan\b.*$",
+    re.IGNORECASE,
+)
 
 
 def _is_error_result(event: Mapping[str, object]) -> bool:

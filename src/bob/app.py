@@ -151,6 +151,7 @@ from bob.infrastructure.persistence import (
 from bob.infrastructure.persistence.coding_session_store import (
     SqliteCodingSessionStore,
 )
+from bob.infrastructure.telegram.gateway import RichMarkdownSender
 from bob.infrastructure.telegram.multibot import (
     BotIdentity,
     BotRegistry,
@@ -1004,16 +1005,20 @@ class _GuppiOwnerNotifier:
     Realises the use-case's ``OwnerNotifier`` (structurally) over Bob's owner-facing
     system voice (GUPPI in General), so the gated coding assistant streams the plan,
     the per-event narration and the PR url to the owner without knowing any transport.
+    Coding messages carry markdown (## headings, **bold**, ``code``), so they go through
+    the shared :class:`RichMarkdownSender` rich path (BOB-041 .1) — the same conversion
+    Bob's normal replies use — with a safe plain fallback so a parse error never drops a
+    message.
     """
 
     def __init__(self, *, bot: BotLike, chat_id: int) -> None:
-        self._bot = bot
+        self._sender = RichMarkdownSender(bot)
         self._chat_id = chat_id
 
     async def send(self, text: str) -> None:
-        """Post ``text`` into General through the GUPPI bot (un-threaded)."""
-        await self._bot.send_message(
-            chat_id=self._chat_id, text=text, message_thread_id=None
+        """Post ``text`` into General through the GUPPI bot (rich markdown, un-threaded)."""
+        await self._sender.send(
+            chat_id=self._chat_id, markdown=text, message_thread_id=None
         )
 
 
