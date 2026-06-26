@@ -1036,7 +1036,7 @@ memory-capability, поведение как раньше. Конфиг `introsp
 совпадает с TEXT-колонкой SQLite, round-trip тривиален). Жизненный цикл:
 
 ```
-PROPOSED → PLANNING → PLAN_READY → EXECUTING → PR_OPEN → DONE
+PROPOSED → PLANNING → PLAN_READY → EXECUTING → PR_OPEN (успешный терминал)
                           │ (ГЕЙТ ПЛАНА)
 CANCELLED / FAILED ← из любого нетерминального
 ```
@@ -1045,11 +1045,15 @@ CANCELLED / FAILED ← из любого нетерминального
   **исключительно** из `PLAN_READY`. В таблице переходов `_PROGRESS` целевое состояние
   `EXECUTING` присутствует ровно в одном множестве — целей `PLAN_READY`. Ни `PROPOSED`,
   ни `PLANNING` в исполнение не ведут.
-- **Мержа в машине нет:** `PR_OPEN → DONE` фиксирует «PR открыт», сам мерж делает owner
-  вне Боба.
+- **Мержа в машине нет, `PR_OPEN` — успешный терминал (BOB-042):** открыв PR, Боб
+  завершил свою работу, сам мерж делает owner асинхронно на GitHub вне Боба. Поэтому
+  `is_terminal(PR_OPEN)` — `True`: завершённая сессия **не блокирует** новую (read-апи
+  `active()`/`active_state()` фильтруют терминальные). Это не создаёт нового пути в
+  `EXECUTING` — гейт плана остаётся ровно из `PLAN_READY`. `DONE` сохранён как
+  легаси-терминал (старые персистнутые сессии), но машиной больше не достижим.
 - Чистые предикаты: `can_transition(frm, to)`, `can_start`, `can_approve_plan`
   (предикатная форма гейта плана), `can_stop` (kill-switch из любого нетерминального),
-  `is_terminal` (`DONE`/`CANCELLED`/`FAILED`).
+  `is_terminal` (`PR_OPEN`/`DONE`/`CANCELLED`/`FAILED`).
 
 Сессия — `CodingSession` (`domain/coding/entities.py`), immutable `frozen, slots`
 value-object: `id`, `task`, `state`, `branch`, `created_at`/`updated_at` и опциональные
@@ -1221,7 +1225,11 @@ owner включает осознанно, как goals/self_improvement, вед
 Coding-сообщения несут markdown (`## заголовки`, `**жирный**`, `` `code` ``), поэтому
 owner-нотификатор (`_GuppiOwnerNotifier` в `app.py`) шлёт их **тем же rich-путём Боба** —
 `RichMarkdownSender` (`infrastructure/telegram/gateway.py`) — что и обычные ответы, с
-безопасным plain-фолбэком (ошибка парсинга не роняет сообщение).
+безопасным plain-фолбэком (ошибка парсинга не роняет сообщение). 🔴 **Канон-тред
+(BOB-042):** owner ставит задачу Бобу в его топике (NL-путь), поэтому ответы сессии
+(план / нарратив / PR) уходят в **тот же топик** — нотификатор шлёт с
+`message_thread_id == telegram.bob.topic_id` (провязано через `_build_coding_assistant`),
+а не в General. Разговор остаётся одним тредом: ввод и вывод сессии в топике Боба.
 
 План приходит **дважды** (как текст `assistant` и снова в финальном `result`), поэтому
 `_clean_plan` (`application/usecases/coding_assistant.py`) сводит части к одному

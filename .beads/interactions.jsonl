@@ -443,3 +443,4 @@
 {"id":"int-cff2514e","kind":"field_change","created_at":"2026-06-26T06:10:45.452318Z","actor":"v.zoologov","issue_id":"bob-d9w.5","extra":{"field":"status","new_value":"closed","old_value":"open","reason":"Closed"}}
 {"id":"int-49cd0310","kind":"field_change","created_at":"2026-06-26T06:14:02.047778Z","actor":"v.zoologov","issue_id":"bob-d9w.6","extra":{"field":"status","new_value":"closed","old_value":"open","reason":"Closed"}}
 {"id":"int-6522b61e","kind":"field_change","created_at":"2026-06-26T06:14:22.338008Z","actor":"v.zoologov","issue_id":"bob-d9w","extra":{"field":"status","new_value":"closed","old_value":"open","reason":"Closed"}}
+{"id":"int-ceea7903","kind":"field_change","created_at":"2026-06-26T06:34:22.115716Z","actor":"v.zoologov","issue_id":"bob-lpn.1","extra":{"field":"status","new_value":"in_progress","old_value":"open"}}

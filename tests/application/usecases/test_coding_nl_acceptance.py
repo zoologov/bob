@@ -285,9 +285,13 @@ async def test_natural_approve_from_plan_ready_executes_and_opens_pr() -> None:
     assert consumed is True
     # NOW — and only now — the edit mode ran, exactly once, after the explicit approve.
     assert rig.runner.modes == ["plan", "acceptEdits"]
-    active = await rig.store.active()
-    assert len(active) == 1
-    assert active[0].state is CodingSessionState.PR_OPEN
+    # PR_OPEN is a SUCCESSFUL terminal (BOB-042): Bob's work is done, so the session no
+    # longer counts as active (it never blocks a fresh task), but it IS persisted PR_OPEN.
+    assert await rig.store.active() == ()
+    pr_open = [
+        s for s in rig.store.sessions.values() if s.state is CodingSessionState.PR_OPEN
+    ]
+    assert len(pr_open) == 1
     # 🔴 Bob committed + pushed the bob/<slug> branch (never main) before the single PR.
     assert len(rig.worktree.pushes) == 1
     assert rig.worktree.pushes[0][1].startswith("bob/")
@@ -372,16 +376,27 @@ async def test_misclassified_chat_at_worst_proposes_a_plan() -> None:
     assert rig.pr_opener.opens == []
 
 
-async def test_approval_word_after_pr_open_does_not_re_execute() -> None:
-    # Once the session has reached PR_OPEN (no longer PLAN_READY), a natural "давай" does
-    # NOT re-approve or re-execute — approval is valid only from PLAN_READY.
+async def test_pr_open_does_not_block_a_fresh_session() -> None:
+    # BOB-042 Fix A: once a session reaches PR_OPEN, Bob's work is DONE (the owner merges
+    # the PR asynchronously on GitHub), so PR_OPEN is a SUCCESSFUL terminal and must NOT
+    # block a new task. active_state() returns None → a fresh coding-intent message starts
+    # a brand-new session via _route_fresh (a PLAN — the gate), NOT _route_active.
     rig = _rig(coding=True)
     await rig.router.route(text=_DEV_TASK, sender=_OWNER, is_owner=True)
     await rig.router.route(text="давай", sender=_OWNER, is_owner=True)  # → PR_OPEN
     assert rig.runner.modes == ["plan", "acceptEdits"]
+    assert await rig.assistant.active_state() is None  # PR_OPEN no longer "active"
 
-    consumed = await rig.router.route(text="давай", sender=_OWNER, is_owner=True)
+    # A new dev-task is NOT routed as approve/stop of the old session — it starts fresh.
+    consumed = await rig.router.route(
+        text="Боб, добавь README", sender=_OWNER, is_owner=True
+    )
 
-    assert consumed is False  # not an approval target — left to chat
-    assert rig.runner.modes == ["plan", "acceptEdits"]  # no extra execution
-    assert len(rig.pr_opener.opens) == 1  # still exactly one PR
+    assert consumed is True
+    # The fresh session only PLANNED (the gate) — no second execution without an approve.
+    assert rig.runner.modes == ["plan", "acceptEdits", "plan"]
+    assert len(rig.pr_opener.opens) == 1  # still exactly one PR (the first session's)
+    plan_ready = [
+        s for s in rig.store.sessions.values() if s.state is CodingSessionState.PLAN_READY
+    ]
+    assert len(plan_ready) == 1  # the new session is waiting at the plan gate

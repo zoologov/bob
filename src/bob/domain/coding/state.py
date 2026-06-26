@@ -16,8 +16,11 @@
 ни любое иное состояние не ведёт в ``EXECUTING`` (таблица ниже содержит ``EXECUTING``
 ровно в одном множестве — целей ``PLAN_READY``). Переход ``PLAN_READY → EXECUTING``
 валиден на уровне домена, но его ИНИЦИИРУЕТ только явная owner-команда ``approve_plan``
-на уровне use-case (.3). Мержа в машине нет — Боб открывает PR и останавливается
-(``PR_OPEN → DONE`` фиксирует «PR открыт», мерж делает owner вне Боба).
+на уровне use-case (.3). Мержа в машине нет — Боб открывает PR и останавливается:
+``PR_OPEN`` — УСПЕШНЫЙ ТЕРМИНАЛ (BOB-042). Открыв PR, Боб закончил свою работу; мерж
+делает owner асинхронно на GitHub, вне Боба. Поэтому ``PR_OPEN`` НЕ блокирует новую
+сессию (``is_terminal(PR_OPEN)`` — ``True``), и это не создаёт нового пути в
+``EXECUTING`` (гейт плана остаётся ровно из ``PLAN_READY``).
 """
 
 from __future__ import annotations
@@ -39,9 +42,10 @@ class CodingSessionState(StrEnum):
 
     ``PROPOSED`` (поставлена, ждёт старта) → ``PLANNING`` (Claude Code в plan-mode
     строит план) → ``PLAN_READY`` (план готов, ждёт owner-апрува — ГЕЙТ ПЛАНА) →
-    ``EXECUTING`` (план одобрен, идёт исполнение в worktree) → ``PR_OPEN`` (PR открыт,
-    ждёт мержа owner) → терминальный ``DONE``; ``CANCELLED`` (kill-switch owner'а из
-    любого нетерминального) и ``FAILED`` (честный провал/таймаут) — терминальные.
+    ``EXECUTING`` (план одобрен, идёт исполнение в worktree) → ``PR_OPEN`` — УСПЕШНЫЙ
+    ТЕРМИНАЛ (PR открыт, работа Боба завершена; мерж делает owner асинхронно вне Боба,
+    BOB-042). ``CANCELLED`` (kill-switch owner'а из любого нетерминального), ``FAILED``
+    (честный провал/таймаут) и легаси-``DONE`` — тоже терминальные.
     """
 
     PROPOSED = "proposed"
@@ -54,9 +58,13 @@ class CodingSessionState(StrEnum):
     FAILED = "failed"
 
 
-# Терминальные состояния — без исходящих переходов.
+# Терминальные состояния — без исходящих переходов. PR_OPEN — УСПЕШНЫЙ терминал
+# (BOB-042): открыв PR, Боб закончил; мерж делает owner асинхронно вне Боба, поэтому
+# PR_OPEN не должен блокировать новую сессию. DONE сохранён как легаси-терминал
+# (старые персистнутые сессии), но машиной больше не достижим.
 _TERMINAL: frozenset[CodingSessionState] = frozenset(
     {
+        CodingSessionState.PR_OPEN,
         CodingSessionState.DONE,
         CodingSessionState.CANCELLED,
         CodingSessionState.FAILED,
@@ -65,13 +73,12 @@ _TERMINAL: frozenset[CodingSessionState] = frozenset(
 
 # Прогресс-путь (без CANCELLED/FAILED, которые разрешены из любого нетерминального).
 # 🔴 EXECUTING присутствует РОВНО в одном множестве — целей PLAN_READY: гейт плана
-# непробиваем. DONE достижимо только из PR_OPEN.
+# непробиваем. PR_OPEN — терминал (см. _TERMINAL), исходящих переходов у него нет.
 _PROGRESS: dict[CodingSessionState, frozenset[CodingSessionState]] = {
     CodingSessionState.PROPOSED: frozenset({CodingSessionState.PLANNING}),
     CodingSessionState.PLANNING: frozenset({CodingSessionState.PLAN_READY}),
     CodingSessionState.PLAN_READY: frozenset({CodingSessionState.EXECUTING}),
     CodingSessionState.EXECUTING: frozenset({CodingSessionState.PR_OPEN}),
-    CodingSessionState.PR_OPEN: frozenset({CodingSessionState.DONE}),
 }
 
 # Из любого нетерминального состояния owner может остановить (CANCELLED) или сессия
@@ -82,7 +89,11 @@ _STOP_TARGETS: frozenset[CodingSessionState] = frozenset(
 
 
 def is_terminal(state: CodingSessionState) -> bool:
-    """Терминально ли ``state`` (``DONE`` / ``CANCELLED`` / ``FAILED``)."""
+    """Терминально ли ``state`` (``PR_OPEN`` / ``DONE`` / ``CANCELLED`` / ``FAILED``).
+
+    ``PR_OPEN`` — успешный терминал (BOB-042): открыв PR, Боб завершил работу, мерж
+    делает owner асинхронно вне Боба, поэтому такая сессия не блокирует новую.
+    """
     return state in _TERMINAL
 
 
