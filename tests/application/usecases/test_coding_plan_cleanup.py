@@ -90,3 +90,60 @@ def test_no_result_dedupes_identical_assistant_parts() -> None:
     cleaned = _clean_plan(parts)
 
     assert cleaned.count("## План") == 1
+
+
+def test_plan_in_both_assistant_and_result_with_preamble_cleaned_once() -> None:
+    # BRIEF acceptance: a plan-mode stream carrying the plan in BOTH the streamed
+    # `assistant` text AND the final `result` — with the `result` led by planning
+    # preamble — yields the plan ONCE (no duplicated `## План`) and the preamble gone.
+    plan_body = "## План\n\n- Шаг 1: правки\n- Шаг 2: тесты"
+    result_with_preamble = (
+        "Okay, let me write the plan.\n"
+        "ExitPlanMode is unavailable, so here is the plan.\n"
+        "\n" + plan_body
+    )
+    parts = _parts(_assistant(plan_body), _result(result_with_preamble))
+
+    cleaned = _clean_plan(parts)
+
+    assert cleaned.count("## План") == 1  # captured once, not assistant + result both
+    assert cleaned.startswith("## План")  # preamble stripped — the plan leads
+    assert "let me write the plan" not in cleaned.casefold()
+    assert "ExitPlanMode" not in cleaned
+    assert "Шаг 1: правки" in cleaned
+    assert "Шаг 2: тесты" in cleaned
+
+
+def test_no_result_drops_a_shorter_fragment_superseded_by_a_later_one() -> None:
+    # A streamed draft is later re-emitted EXTENDED; the earlier (contained) fragment is
+    # dropped so the plan is not duplicated when there is no authoritative `result`.
+    short = "## План\n- Шаг 1"
+    extended = "## План\n- Шаг 1\n- Шаг 2"
+    parts = _parts(_assistant(short), _assistant(extended))
+
+    cleaned = _clean_plan(parts)
+
+    assert cleaned == extended
+    assert cleaned.count("## План") == 1
+
+
+def test_no_result_drops_a_later_fragment_already_covered() -> None:
+    # The reverse order: the extended draft arrives first, then a shorter fragment that
+    # is already contained in it — the redundant later fragment is dropped (no echo).
+    extended = "## План\n- Шаг 1\n- Шаг 2"
+    short = "## План\n- Шаг 1"
+    parts = _parts(_assistant(extended), _assistant(short))
+
+    cleaned = _clean_plan(parts)
+
+    assert cleaned == extended
+
+
+def test_no_result_skips_blank_assistant_fragments() -> None:
+    # A blank/whitespace fragment in the no-`result` join contributes nothing (it is
+    # skipped, not joined as an empty line) — robustness against a degraded stream.
+    parts = [_PlanPart("assistant", "   "), _PlanPart("assistant", "## План\n- Шаг 1")]
+
+    cleaned = _clean_plan(parts)
+
+    assert cleaned == "## План\n- Шаг 1"

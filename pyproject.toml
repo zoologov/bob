@@ -297,6 +297,17 @@ ignore = [
     "RUF002",
     "RUF003",
 ]
+# The end-to-end NL-intent safety acceptance (BOB-041 .4) drives the real router over
+# the real assistant with Russian dev-task/approve/stop literals whose Cyrillic
+# look-alikes are intentional (→ RUF001/RUF002/RUF003).
+"tests/application/usecases/test_coding_nl_acceptance.py" = [
+    "S101",
+    "ARG001",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
 # The coding plan-cleanup + rich-markdown-sender tests (BOB-041 .1) assert on Russian
 # plan/markdown literals whose Cyrillic look-alikes are intentional (→ RUF001/2/3).
 "tests/application/usecases/test_coding_plan_cleanup.py" = [

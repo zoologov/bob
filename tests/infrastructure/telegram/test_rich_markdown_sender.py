@@ -94,3 +94,37 @@ async def test_blank_markdown_sends_nothing() -> None:
 
     assert bot.rich_markdowns == []
     assert bot.plain_texts == []
+
+
+@pytest.mark.asyncio
+async def test_realistic_coding_plan_renders_rich_not_plain() -> None:
+    # BRIEF acceptance (markdown): a realistic coding plan — headings, **bold**, a list
+    # and a ``code`` span — goes through the rich path as ONE message, never leaking raw
+    # markdown via the plain ``send_message``.
+    plan = (
+        "## План\n\n"
+        "Сначала **правка** модуля, потом тесты:\n\n"
+        "- Поправить `parser.py`\n"
+        "- Запустить `pytest`\n"
+    )
+    bot = _FakeBot()
+    sender = RichMarkdownSender(bot)
+
+    await sender.send(chat_id=42, markdown=plan)
+
+    assert len(bot.rich_markdowns) == 1
+    assert bot.plain_texts == []  # nothing leaked as raw plain markdown
+
+
+@pytest.mark.asyncio
+async def test_rich_failure_falls_back_preserving_the_exact_coding_text() -> None:
+    # The plain fallback must carry the FULL original text verbatim (split only on the
+    # length limit) — a coding plan is never silently lost or truncated on a rich error.
+    plan = "## План\n\n- Шаг 1: правки в `app.py`\n- Шаг 2: тесты"
+    bot = _FakeBot(rich_raises=True)
+    sender = RichMarkdownSender(bot)
+
+    await sender.send(chat_id=42, markdown=plan)
+
+    assert bot.rich_markdowns == []
+    assert bot.plain_texts == [plan]
