@@ -247,6 +247,19 @@ class CodingAssistant:
             return await self._reply(True, _STATUS_IDLE, session=None)
         return await self._reply(True, _status_message(session), session=session)
 
+    async def active_state(self) -> CodingSessionState | None:
+        """The in-flight (non-terminal) session's state, or ``None`` (no side effects).
+
+        A read-only query for the natural-language routing (BOB-041 .2): it lets the
+        caller tell whether a session is waiting for an approve (``PLAN_READY``) or is
+        otherwise live — WITHOUT notifying the owner (unlike :meth:`status`). Owner-only
+        is NOT enforced here because it neither starts nor advances a session and sends
+        nothing; the gated mutators (:meth:`start` / :meth:`approve_plan` / :meth:`stop`)
+        each re-check the owner, so this read can never bypass a gate.
+        """
+        session = await self._active_session()
+        return session.state if session is not None else None
+
     # --- Internal orchestration ----------------------------------------------
 
     async def _execute_and_open_pr(

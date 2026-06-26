@@ -69,7 +69,9 @@ from bob.application.runtime import (
 )
 from bob.application.usecases.announce_rules import AnnounceProposedRules
 from bob.application.usecases.apply_reflection import ApplyReflection
+from bob.application.usecases.classify_coding_intent import ClassifyCodingIntent
 from bob.application.usecases.coding_assistant import CodingAssistant
+from bob.application.usecases.coding_intent_router import CodingIntentRouter
 from bob.application.usecases.consolidate_memory import ConsolidateMemory
 from bob.application.usecases.dedup_facts import DedupFacts
 from bob.application.usecases.detect_patterns import DetectPatterns, LlmPatternDetector
@@ -695,6 +697,14 @@ def build_application(
         # ``photo``. Unwired (diagrams disabled) → the auto-render is inert.
         diagram_renderer=diagram_renderer,
         diagram_send_as=_diagram_send_as(merged),
+        # Natural-language coding intent (BOB-041 .2): when the coder is enabled, an
+        # OWNER message in Bob's topic that asks Bob to do dev work on his repo — or a
+        # natural approve/stop of a live session — is routed into the SAME gated
+        # CodingAssistant the `/code` command uses (plan gate, owner-only, never-main all
+        # intact; the router only chooses WHEN to call start/approve_plan/stop). Off
+        # (coder.enabled false → coding_assistant None) → the NL path is inert and the
+        # `/code` command in General is unaffected.
+        coding_router=_build_coding_router(router=router, coder=coding_assistant),
     )
     event_bus.subscribe(MESSAGE_RECEIVED, _as_handler(handle_message))
 
@@ -956,6 +966,24 @@ def _build_multibot(
         pursuit_store=pursuit_store,
         rule_store=rule_store,
         coding_assistant=coding_assistant,
+    )
+
+
+def _build_coding_router(
+    *, router: LLMRouter, coder: CodingAssistant | None
+) -> CodingIntentRouter | None:
+    """Assemble the natural-language coding-intent router, or ``None`` when off (BOB-041 .2).
+
+    Built ONLY when the gated coding assistant is wired (``coder.enabled``). It pairs the
+    cheap Tier-0 :class:`ClassifyCodingIntent` (coding vs chat) with the same gated
+    :class:`CodingAssistant` the ``/code`` command drives, so an owner message in Bob's
+    topic can plan / approve / stop a session naturally. Off (coder disabled → ``coder``
+    is ``None``) → ``None``, and HandleMessage's natural-language path stays inert.
+    """
+    if coder is None:
+        return None
+    return CodingIntentRouter(
+        coder=coder, classifier=ClassifyCodingIntent(router=router)
     )
 
 

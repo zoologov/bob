@@ -481,6 +481,7 @@ def _build(
     diagram_renderer: object | None = None,
     diagram_send_as: DiagramSendMode = "photo",
     photo_send_raises: bool = False,
+    coding_router: _FakeCodingRouter | None = None,
 ) -> tuple[HandleMessage, FakeBot, FakeRepo, CapturingProvider]:
     tier0 = CapturingProvider(reply="positive", replies=tier0_replies)
     tier1 = CapturingProvider(reply=reply, replies=tier1_replies)
@@ -536,6 +537,7 @@ def _build(
         diagram_sink=diagram_sink,
         diagram_renderer=diagram_renderer,  # type: ignore[arg-type]
         diagram_send_as=diagram_send_as,
+        coding_router=coding_router,
     )
     return handler, bot, repo, tier1
 
@@ -5332,3 +5334,88 @@ def test_out_of_range_max_magnitude_is_rejected_at_construction(ceiling: float) 
     # configuration error and is rejected up front, never silently allowing a huge tilt.
     with pytest.raises(ValueError, match="self_improvement_max_magnitude"):
         _build(reply="ok", self_improvement_max_magnitude=ceiling)
+
+
+# --- BOB-041 .2: natural-language coding intent in Bob's topic (owner-only) --------
+
+
+class _FakeCodingRouter:
+    """Fake natural-language coding router: records routing calls, consumes on demand.
+
+    ``consume`` is the verdict the router returns (whether the message was a coding
+    command that short-circuited the normal compose). ``calls`` records every
+    ``(text, sender, is_owner)`` it was asked about, so a test can assert exactly when
+    HandleMessage delegated and with which owner verdict.
+    """
+
+    def __init__(self, *, consume: bool) -> None:
+        self._consume = consume
+        self.calls: list[tuple[str, int | None, bool]] = []
+
+    async def route(self, *, text: str, sender: int | None, is_owner: bool) -> bool:
+        self.calls.append((text, sender, is_owner))
+        return self._consume
+
+
+async def test_owner_coding_message_is_routed_and_short_circuits_compose() -> None:
+    # An owner dev-task in Bob's topic is consumed by the coding router; the normal
+    # perceive→decide→act compose is skipped (no reply committed, no episode persisted).
+    router = _FakeCodingRouter(consume=True)
+    handler, bot, repo, tier1 = _build(
+        reply="should-not-be-sent",
+        perceive_sender=_owner_resolver(),
+        coding_router=router,
+    )
+
+    await handler.handle(_message("Боб, создай файл HELLO.md"))
+
+    assert router.calls == [("Боб, создай файл HELLO.md", 99, True)]
+    assert bot.final_text == ""  # the normal reply path was short-circuited
+    assert repo.episodes == []  # no conversation episode for a coding command
+    assert tier1.payloads == []  # no Tier 1 compose call
+
+
+async def test_owner_chat_message_falls_through_to_normal_flow() -> None:
+    # An ordinary chat message: the router is consulted but does NOT consume, so the
+    # normal compose runs and the reply is committed exactly as before.
+    router = _FakeCodingRouter(consume=False)
+    handler, bot, _repo, _tier1 = _build(
+        reply="обычный ответ",
+        perceive_sender=_owner_resolver(),
+        coding_router=router,
+    )
+
+    await handler.handle(_message("расскажи подробно про кофе"))
+
+    assert router.calls  # the router was consulted on the owner turn
+    assert router.calls[0][2] is True  # owner verdict passed through
+    assert bot.final_text == "обычный ответ"  # the normal compose ran and committed
+
+
+async def test_guest_dev_message_is_never_routed_as_owner() -> None:
+    # SECURITY: a guest is never owner — the router is told is_owner=False, so it can
+    # never trigger a coding session (and the turn falls through to the normal path).
+    router = _FakeCodingRouter(consume=False)
+    handler, bot, _repo, _tier1 = _build(
+        reply="ответ гостю",
+        perceive_sender=_guest_resolver(),
+        coding_router=router,
+    )
+
+    await handler.handle(_message("создай файл X"))
+
+    assert router.calls  # the router was consulted
+    assert router.calls[0][2] is False  # not owner
+    assert bot.final_text != ""  # the turn fell through to the normal chat path
+
+
+async def test_no_coding_router_leaves_the_natural_language_path_inert() -> None:
+    # coder.enabled false → no router wired → the NL coding path is inert and the
+    # message takes the normal chat flow exactly as before BOB-041.
+    handler, bot, _repo, _tier1 = _build(
+        reply="как обычно", perceive_sender=_owner_resolver()
+    )
+
+    await handler.handle(_message("Боб, поправь баг в Z"))
+
+    assert bot.final_text != ""  # normal chat reply committed (NL path inert)
