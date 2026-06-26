@@ -37,13 +37,11 @@ _S = CodingSessionState
         (_S.PLANNING, _S.PLAN_READY),
         (_S.PLAN_READY, _S.EXECUTING),  # гейт плана — единственный путь в EXECUTING
         (_S.EXECUTING, _S.PR_OPEN),
-        (_S.PR_OPEN, _S.DONE),
         # стоп/провал из любого нетерминального состояния
         (_S.PROPOSED, _S.CANCELLED),
         (_S.PLANNING, _S.CANCELLED),
         (_S.PLAN_READY, _S.CANCELLED),
         (_S.EXECUTING, _S.CANCELLED),
-        (_S.PR_OPEN, _S.CANCELLED),
         (_S.PLANNING, _S.FAILED),
         (_S.EXECUTING, _S.FAILED),
     ],
@@ -100,11 +98,20 @@ def test_invalid_transitions(frm: CodingSessionState, to: CodingSessionState) ->
     assert can_transition(frm, to) is False
 
 
-@pytest.mark.parametrize("state", [_S.DONE, _S.CANCELLED, _S.FAILED])
+@pytest.mark.parametrize("state", [_S.PR_OPEN, _S.DONE, _S.CANCELLED, _S.FAILED])
 def test_terminal_states_have_no_exits(state: CodingSessionState) -> None:
     assert is_terminal(state) is True
     for to in CodingSessionState:
         assert can_transition(state, to) is False
+
+
+def test_pr_open_is_terminal_success() -> None:
+    # BOB-042 Fix A: открыв PR, Боб закончил свою работу — мерж делает owner
+    # асинхронно на GitHub, поэтому PR_OPEN — УСПЕШНЫЙ терминал. Это снимает
+    # блокировку новой сессии (active() фильтрует терминальные).
+    assert is_terminal(_S.PR_OPEN) is True
+    # Гейт плана НЕ ослаблен: из PR_OPEN (он уже за гейтом) апрув невозможен.
+    assert can_approve_plan(_S.PR_OPEN) is False
 
 
 def test_same_state_is_not_a_transition() -> None:
@@ -140,7 +147,6 @@ def test_non_terminal_states_are_not_terminal() -> None:
         _S.PLANNING,
         _S.PLAN_READY,
         _S.EXECUTING,
-        _S.PR_OPEN,
     ):
         assert is_terminal(state) is False
 

@@ -153,7 +153,7 @@ from bob.infrastructure.persistence import (
 from bob.infrastructure.persistence.coding_session_store import (
     SqliteCodingSessionStore,
 )
-from bob.infrastructure.telegram.gateway import RichMarkdownSender
+from bob.infrastructure.telegram.gateway import MarkdownSendBot, RichMarkdownSender
 from bob.infrastructure.telegram.multibot import (
     BotIdentity,
     BotRegistry,
@@ -519,6 +519,9 @@ def build_application(
         authorizer=authorizer,
         notifier_bot=resolved_guppi_bot,
         chat_id=_int(telegram_section, "chat_id", 0),
+        # The owner gives Bob the task in HIS topic (BOB-041 NL path), so coding-session
+        # replies thread back into that same topic, not General (BOB-042 Fix B).
+        topic_id=_int(_section(telegram_section, "bob"), "topic_id", 0),
         clock=resolved_clock,
     )
 
@@ -994,6 +997,7 @@ def _build_coding_assistant(
     authorizer: Authorizer,
     notifier_bot: BotLike,
     chat_id: int,
+    topic_id: int | None,
     clock: Clock,
 ) -> CodingAssistant | None:
     """Assemble the gated coding assistant, or ``None`` when off (BOB-039 .3).
@@ -1020,7 +1024,9 @@ def _build_coding_assistant(
         worktree=GitWorktree(_str(coder, "worktree_root", ".worktrees")),
         store=SqliteCodingSessionStore(repo),
         pr_opener=GhPullRequestOpener(gh_bin=_str(coder, "gh_bin", "gh")),
-        notifier=_GuppiOwnerNotifier(bot=notifier_bot, chat_id=chat_id),
+        notifier=_GuppiOwnerNotifier(
+            bot=notifier_bot, chat_id=chat_id, topic_id=topic_id
+        ),
         owner=authorizer,
         clock=clock,
         execute_mode=_str(coder, "permission_mode", "acceptEdits"),
@@ -1031,22 +1037,28 @@ class _GuppiOwnerNotifier:
     """Owner-notifier adapter: send one coding-session line through the GUPPI bot.
 
     Realises the use-case's ``OwnerNotifier`` (structurally) over Bob's owner-facing
-    system voice (GUPPI in General), so the gated coding assistant streams the plan,
-    the per-event narration and the PR url to the owner without knowing any transport.
-    Coding messages carry markdown (## headings, **bold**, ``code``), so they go through
-    the shared :class:`RichMarkdownSender` rich path (BOB-041 .1) — the same conversion
-    Bob's normal replies use — with a safe plain fallback so a parse error never drops a
-    message.
+    system voice, so the gated coding assistant streams the plan, the per-event narration
+    and the PR url to the owner without knowing any transport. The owner gives Bob the
+    task in BOB'S TOPIC (the BOB-041 natural-language path), so the session replies are
+    threaded back into THAT topic via ``message_thread_id == telegram.bob.topic_id``
+    (BOB-042 Fix B) — the conversation stays in one thread instead of splitting between
+    Bob's topic (input) and General (output). Coding messages carry markdown (## headings,
+    **bold**, ``code``), so they go through the shared :class:`RichMarkdownSender` rich
+    path (BOB-041 .1) — the same conversion Bob's normal replies use — with a safe plain
+    fallback so a parse error never drops a message.
     """
 
-    def __init__(self, *, bot: BotLike, chat_id: int) -> None:
+    def __init__(
+        self, *, bot: MarkdownSendBot, chat_id: int, topic_id: int | None
+    ) -> None:
         self._sender = RichMarkdownSender(bot)
         self._chat_id = chat_id
+        self._topic_id = topic_id
 
     async def send(self, text: str) -> None:
-        """Post ``text`` into General through the GUPPI bot (rich markdown, un-threaded)."""
+        """Post ``text`` into Bob's topic through the GUPPI bot (rich markdown, threaded)."""
         await self._sender.send(
-            chat_id=self._chat_id, markdown=text, message_thread_id=None
+            chat_id=self._chat_id, markdown=text, message_thread_id=self._topic_id
         )
 
 

@@ -419,3 +419,66 @@ async def test_second_start_while_in_flight_is_refused() -> None:
     # No second worktree / run for the rejected start.
     assert len(rig.worktree.created) == 1
     assert rig.runner.calls == []
+
+
+@pytest.mark.asyncio
+async def test_active_state_is_none_after_pr_open() -> None:
+    # BOB-042 Fix A: PR_OPEN is a SUCCESSFUL terminal, so the read-only routing query
+    # reports NO live session once the PR is open — that is what stops it blocking a new
+    # task. (The complement of test_status while in-flight; here the cycle has finished.)
+    runner = _FakeRunner(events={**_plan_events(), "acceptEdits": _execute_events()})
+    rig = _build(runner=runner)
+    await rig.assistant.start("Починить парсер", _OWNER_ID)
+    assert await rig.assistant.active_state() is CodingSessionState.PLAN_READY
+
+    await rig.assistant.approve_plan(_OWNER_ID)  # → PR_OPEN
+
+    assert await rig.assistant.active_state() is None
+    assert await rig.store.active() == ()  # the terminal session is filtered out
+
+
+@pytest.mark.asyncio
+async def test_start_after_pr_open_is_not_busy_and_starts_fresh() -> None:
+    # BOB-042 Fix A (use-case level): once a session reaches PR_OPEN it is terminal, so
+    # `_active_session()` is None and a SECOND `start` is NOT refused as busy — it opens a
+    # brand-new gated session (PLANNING → PLAN_READY) while the first stays at PR_OPEN.
+    # This is the direct complement of test_second_start_while_in_flight_is_refused.
+    runner = _FakeRunner(events={**_plan_events(), "acceptEdits": _execute_events()})
+    rig = _build(runner=runner)
+    await rig.assistant.start("Первая задача", _OWNER_ID)
+    await rig.assistant.approve_plan(_OWNER_ID)  # → PR_OPEN (terminal)
+
+    outcome = await rig.assistant.start("Вторая задача", _OWNER_ID)
+
+    assert outcome.ok is True  # NOT refused as busy — PR_OPEN no longer blocks
+    assert outcome.session is not None
+    assert outcome.session.state is CodingSessionState.PLAN_READY  # fresh session, gated
+    # A second worktree was created for the fresh session (the first reached PR_OPEN).
+    assert len(rig.worktree.created) == 2
+    # The fresh session is the only ACTIVE one; the first stays terminal at PR_OPEN.
+    assert await rig.assistant.active_state() is CodingSessionState.PLAN_READY
+    assert {s.state for s in rig.store.sessions.values()} == {
+        CodingSessionState.PR_OPEN,
+        CodingSessionState.PLAN_READY,
+    }
+    # 🔴 The fresh session only PLANNED — no execution without its own explicit approve.
+    assert [mode for _, _, mode in rig.runner.calls] == ["plan", "acceptEdits", "plan"]
+
+
+@pytest.mark.asyncio
+async def test_approve_after_pr_open_cannot_re_execute_a_terminal_session() -> None:
+    # 🔴 BOB-042 gate-intact: making PR_OPEN terminal did NOT open an unapproved-execution
+    # path. After PR_OPEN there is no PLAN_READY to approve, so a stray `approve_plan`
+    # finds no active session and refuses — no second EXECUTING run, no second PR.
+    runner = _FakeRunner(events={**_plan_events(), "acceptEdits": _execute_events()})
+    rig = _build(runner=runner)
+    await rig.assistant.start("Починить парсер", _OWNER_ID)
+    await rig.assistant.approve_plan(_OWNER_ID)  # → PR_OPEN
+    pushes_before = len(rig.worktree.pushes)
+
+    outcome = await rig.assistant.approve_plan(_OWNER_ID)
+
+    assert outcome.ok is False
+    assert len(rig.pr_opener.opens) == 1  # still exactly one PR — no re-execution
+    assert len(rig.worktree.pushes) == pushes_before  # no second commit+push
+    assert [mode for _, _, mode in rig.runner.calls] == ["plan", "acceptEdits"]

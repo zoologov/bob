@@ -14,9 +14,17 @@
 🔴 Канон (BOB-041 .3): фактическое исполнение — работа **GUPPI** (сухого исполнителя,
 которым дирижирует Боб), поэтому каждая ненулевая строка АТРИБУТИРОВАНА GUPPI префиксом
 ``GUPPI:`` («GUPPI: правлю `<file>`», «GUPPI: гоняю тесты», «GUPPI: тесты прошли»,
-«GUPPI: готово», «GUPPI: ошибка: …»). Боб-голос на гейтах живёт отдельно в
+«GUPPI: готово»). Боб-голос на гейтах живёт отдельно в
 :mod:`~bob.domain.coding.session_voice`; здесь — только пер-событийный нарратив GUPPI.
 Шум по-прежнему → ``None`` (без префикса).
+
+🔴 Канон (BOB-042 .5): пер-событийные ошибки ПОДАВЛЯЮТСЯ. ``tool_result`` с
+``is_error`` и верхнеуровневое ``error`` событие — обычная trial-and-error работа
+claude/GUPPI (инструмент упал → claude адаптируется), а НЕ сбой сессии: они → ``None``
+и owner их не видит. Единственный error-сигнал owner'у — session-level ``FAILED``
+от use-case (:meth:`~bob.application.usecases.coding_assistant.CodingAssistant._fail`,
+голосом Боба) при настоящем падении прогона. Финальный ``result``-event ещё несёт
+session-итог («готово» / «ошибка: …»).
 
 Поддержаны две формы события: вложенная (как отдаёт сам Claude Code — ``tool_use`` в
 ``assistant.message.content``, ``tool_result`` в ``user.message.content``) и
@@ -46,11 +54,6 @@ _EDIT_TOOLS = frozenset({"Edit", "Write", "MultiEdit", "NotebookEdit"})
 def _narrate_tool_use_event(event: Mapping[str, object]) -> str | None:
     """Нарратив уплощённого ``tool_use`` события (type=tool_use напрямую)."""
     return _narrate_tool(str(event.get("name", "")), _as_mapping(event.get("input")))
-
-
-def _narrate_error_event(event: Mapping[str, object]) -> str | None:
-    """Нарратив явного ``error`` события."""
-    return _error_line(_first_str(event, ("message", "error", "result")))
 
 
 def _narrate_assistant(event: Mapping[str, object]) -> str | None:
@@ -85,9 +88,17 @@ def _narrate_tool(name: str, tool_input: Mapping[str, object]) -> str | None:
 
 
 def _narrate_tool_result(block: Mapping[str, object]) -> str | None:
-    """Нарратив результата инструмента: ошибка / «тесты прошли» / шум (``None``)."""
+    """Нарратив результата инструмента: «тесты прошли» / шум (``None``).
+
+    🔴 Канон (BOB-042 .5): пер-тулзовая ошибка (``is_error``) ПОДАВЛЯЕТСЯ (``None``).
+    Это обычная trial-and-error работа claude/GUPPI (инструмент упал → claude
+    адаптируется, скажем ``ls docs/*`` → zsh «no matches» → правка пути), а НЕ сбой
+    сессии — пугать owner ею нельзя. Реальный провал сессии докладывает use-case
+    (:meth:`CodingAssistant._fail` → ``FAILED``, голосом Боба), это единственный
+    error-сигнал owner'у. Успех (``тесты прошли``) озвучиваем как раньше.
+    """
     if _is_truthy(block.get("is_error")):
-        return _error_line(_result_text(block))
+        return None
     if _TESTS_PASSED.search(_result_text(block)):
         return "тесты прошли"
     return None
@@ -107,7 +118,9 @@ _HANDLERS: dict[str, Callable[[Mapping[str, object]], str | None]] = {
     "tool_use": _narrate_tool_use_event,
     "tool_result": _narrate_tool_result,
     "result": _narrate_result,
-    "error": _narrate_error_event,
+    # 🔴 BOB-042 .5: a top-level stream ``error`` event has NO handler → noise (``None``).
+    # It is suppressed like a per-tool error so the owner's only error signal is the
+    # session-level FAILED message from the use-case (raised → ``CodingAssistant._fail``).
 }
 
 
