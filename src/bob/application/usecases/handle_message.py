@@ -506,6 +506,22 @@ class BobUserIdSource(Protocol):
     def __call__(self) -> int | None: ...
 
 
+class NaturalCodingRouter(Protocol):
+    """The natural-language coding-intent seam HandleMessage delegates to (BOB-041 .2).
+
+    Realised by
+    :class:`~bob.application.usecases.coding_intent_router.CodingIntentRouter`: given an
+    owner message in Bob's topic it decides WHEN to drive the gated coding session
+    (plan / approve / stop) and returns whether it CONSUMED the turn (so HandleMessage
+    short-circuits the normal compose). Owner-only and gate-bound live in the router +
+    the use-case + the domain machine, never here. Unwired (the default) OR ``coder.enabled``
+    false → no router is injected, so the natural-language path is inert and every
+    message takes the normal chat flow exactly as before.
+    """
+
+    async def route(self, *, text: str, sender: int | None, is_owner: bool) -> bool: ...
+
+
 @dataclass
 class PersonalityState:
     """Mutable in-memory holder for Bob's current soul snapshot across turns.
@@ -602,6 +618,7 @@ class HandleMessage:
         diagram_sink: DiagramSink | None = None,
         diagram_renderer: DiagramRenderer | None = None,
         diagram_send_as: DiagramSendMode = _DEFAULT_DIAGRAM_SEND_AS,
+        coding_router: NaturalCodingRouter | None = None,
     ) -> None:
         self._router = router
         self._gateway = gateway
@@ -831,6 +848,15 @@ class HandleMessage:
         # drain below.
         self._diagram_renderer = diagram_renderer
         self._diagram_send_as: DiagramSendMode = diagram_send_as
+        # Natural-language coding-intent seam (BOB-041 .2): when wired (only when
+        # ``coder.enabled``), an OWNER message in Bob's topic that asks Bob to do dev
+        # work on his repo — or a natural approve/stop of a live session — is routed
+        # into the gated CodingAssistant (plan gate, owner-only, never-main all intact;
+        # the router only chooses WHEN to call start/approve_plan/stop, it cannot bypass
+        # a gate). Unwired (the default) the natural-language path is inert and every
+        # message takes the normal chat flow exactly as before. The `/code` command in
+        # General is a separate surface and is unaffected.
+        self._coding_router = coding_router
 
     async def _load_modulators(self) -> RuleModulators:
         """Build this turn's soft modulators from Bob's APPROVED rules (BOB-028 .3).
@@ -853,6 +879,16 @@ class HandleMessage:
         # once per turn so the same identity threads through every (re)compose; None
         # when no perception seam is wired (additive, behaviour as before).
         interlocutor = await self._perceive_interlocutor(event)
+        # Natural-language coding intent (BOB-041 .2): for an OWNER message in Bob's
+        # topic (and only when the coder is wired/enabled), route a dev-work request
+        # — or a natural approve/stop of a live session — into the gated CodingAssistant
+        # BEFORE composing a normal reply. When it consumes the turn the message was a
+        # coding command, so the normal perceive→decide→act flow is skipped (the gated
+        # use-case owns its own owner messaging). 🔴 The router is owner-only and cannot
+        # bypass the plan gate; a non-owner / non-coding message returns here unconsumed
+        # and falls through to the normal chat path exactly as before.
+        if await self._maybe_route_coding(event, interlocutor):
+            return
         # Recall Bob's LIGHT prior first impression of this sender (BOB-019 bob-apv.3):
         # a returning person → his stored note, so the compose prompt can recall him
         # ("кажется, мы уже сталкивались"); a new person → None. It is per-PERSON data
@@ -1203,6 +1239,28 @@ class HandleMessage:
         soul = self._state.soul.with_mood(new_mood)
         self._state.soul = soul
         return soul
+
+    async def _maybe_route_coding(
+        self, event: MessageReceived, interlocutor: Interlocutor | None
+    ) -> bool:
+        """Route an owner coding-intent message into the gated session (BOB-041 .2).
+
+        Returns whether the natural-language coding path CONSUMED the turn (so the
+        caller short-circuits the normal compose). Inert when no router is wired (the
+        default / ``coder.enabled`` false). Owner is derived from the perceived
+        interlocutor — only an :class:`~bob.domain.personality.interlocutor.InterlocutorKind.OWNER`
+        sender is ever owner here, so with no perception seam (or a guest/known sender)
+        the message is never routed (``is_owner`` false) and the router itself re-checks;
+        the gated use-case re-checks the owner again (defense-in-depth).
+        """
+        if self._coding_router is None:
+            return False
+        is_owner = (
+            interlocutor is not None and interlocutor.kind is InterlocutorKind.OWNER
+        )
+        return await self._coding_router.route(
+            text=event.text, sender=event.sender_id, is_owner=is_owner
+        )
 
     async def _perceive_interlocutor(
         self, event: MessageReceived

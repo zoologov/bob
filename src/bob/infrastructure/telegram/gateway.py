@@ -70,8 +70,10 @@ __all__ = [
     "BotIdentitySignals",
     "BotLike",
     "BotUserLike",
+    "MarkdownSendBot",
     "MessageEntityLike",
     "MessageLike",
+    "RichMarkdownSender",
     "TelegramGateway",
     "UpdateLike",
 ]
@@ -639,6 +641,85 @@ class TelegramGateway:
             )
         except (AiogramError, ValueError) as exc:
             logger.warning("sending a diagram document failed (ignored): %s", exc)
+
+
+class MarkdownSendBot(Protocol):
+    """The narrow bot surface :class:`RichMarkdownSender` needs (rich + plain send).
+
+    Interface-segregated subset of :class:`BotLike` — only the two send calls the rich
+    seam uses — so any ``BotLike`` satisfies it structurally and a test fake need not
+    implement the whole gateway protocol.
+    """
+
+    async def send_message(
+        self, *, chat_id: int, text: str, message_thread_id: int | None = None
+    ) -> MessageLike: ...
+
+    async def send_rich_message(
+        self,
+        *,
+        chat_id: int,
+        rich_message: InputRichMessage,
+        message_thread_id: int | None = None,
+    ) -> MessageLike: ...
+
+
+class RichMarkdownSender:
+    """Send markdown as a native rich message, degrading to plain text on a rich error.
+
+    The shared rich-send seam (BOB-041 .1): the same markdown → ``send_rich_message``
+    conversion Bob's normal :meth:`TelegramGateway.reply` uses, factored out so other
+    owner-facing channels — the gated coding assistant's owner-notifier — render
+    headings / **bold** / ``code`` instead of leaking raw markdown. On **any** rich
+    failure it falls back to a plain ``send_message`` (split on the length limit), so a
+    parse error never loses the message. Stateless apart from the pure converter +
+    serializer, so it is reused across chats/threads via the per-call arguments.
+    """
+
+    def __init__(self, bot: MarkdownSendBot) -> None:
+        self._bot = bot
+        self._converter = MarkdownToRichMessage()
+        self._serializer = RichMessageSerializer()
+
+    async def send(
+        self, *, chat_id: int, markdown: str, message_thread_id: int | None = None
+    ) -> None:
+        """Send ``markdown`` as a rich message; degrade to plain text on a rich error.
+
+        An empty/blank ``markdown`` sends nothing. The rich path is tried first; on a
+        rich (parse/transport) failure the text is sent plain so it is never lost.
+        """
+        if not markdown.strip():
+            return
+        if not await self._send_rich(chat_id, markdown, message_thread_id):
+            await self._send_plain(chat_id, markdown, message_thread_id)
+
+    async def _send_rich(
+        self, chat_id: int, markdown: str, message_thread_id: int | None
+    ) -> bool:
+        """Send the rich message; return ``True`` iff it succeeded (``False`` → fall back)."""
+        rich_markdown = self._serializer.to_markdown(
+            self._converter.convert(markdown, thinking=None)
+        )
+        try:
+            await self._bot.send_rich_message(
+                chat_id=chat_id,
+                rich_message=InputRichMessage(markdown=rich_markdown),
+                message_thread_id=message_thread_id,
+            )
+        except (AiogramError, ValueError) as exc:
+            logger.warning("rich send failed; falling back to plain: %s", exc)
+            return False
+        return True
+
+    async def _send_plain(
+        self, chat_id: int, text: str, message_thread_id: int | None
+    ) -> None:
+        """Send ``text`` as plain message(s), splitting on the length limit."""
+        for chunk in _split_for_length(text):
+            await self._bot.send_message(
+                chat_id=chat_id, text=chunk, message_thread_id=message_thread_id
+            )
 
 
 def _reply_to_sender_id(message: MessageLike) -> int | None:

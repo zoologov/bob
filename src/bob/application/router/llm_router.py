@@ -56,6 +56,7 @@ class TaskType(Enum):
     EXTRACT_FACTS = "extract_facts"
     PLAN_GOAL = "plan_goal"
     DETECT_PATTERNS = "detect_patterns"
+    CODING_INTENT = "coding_intent"
 
 
 # Task -> preferred tier. Quality-critical, user-facing work goes to Tier 1
@@ -73,6 +74,9 @@ _PREFERRED_TIER: dict[TaskType, int] = {
     # Pattern detection (BOB-028) is reasoning over self-signals: Tier 1 by default
     # for a human-readable rule (config can pin the tier via detector_tier override).
     TaskType.DETECT_PATTERNS: _TIER_API,
+    # Coding-intent classification (BOB-041 .2) is a cheap one-word coding/chat call
+    # that also keeps dev-intent local (privacy) — Tier 0.
+    TaskType.CODING_INTENT: _TIER_LOCAL,
 }
 
 

@@ -38,12 +38,14 @@ Worktree убирается в ``finally`` на любом завершении 
 from __future__ import annotations
 
 import logging
+import re
 import uuid
-from collections.abc import AsyncGenerator, AsyncIterator, Callable, Mapping
+from collections.abc import AsyncGenerator, AsyncIterator, Callable, Mapping, Sequence
 from contextlib import aclosing
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol, cast
 
+from bob.domain.coding import session_voice
 from bob.domain.coding.entities import CodingSession
 from bob.domain.coding.naming import worktree_branch
 from bob.domain.coding.narrate import narrate
@@ -76,18 +78,11 @@ _DEFAULT_EXECUTE_MODE = "acceptEdits"
 # Plan mode is fixed: a plan with NO edits — the unbypassable plan gate.
 _PLAN_MODE = "plan"
 
-# --- Owner-facing messages (Russian — project language) -----------------------
-_PLAN_HEADER = "План готов. Одобрить — /code approve, отменить — /code stop."
-_NO_PLAN = "Claude Code не вернул план."
-_BUSY = "Уже идёт coding-сессия — сначала заверши её (/code stop)."
-_CANNOT_APPROVE = "Нет сессии, ждущей апрува плана (нужно /code <задача> и план)."
-_NO_SESSION = "Активной coding-сессии нет."
-_STOPPED = "Остановил coding-сессию и убрал рабочую копию."
-_FAILED = "Coding-сессия сорвалась: {detail}. Рабочую копию убрал."
-_NO_CHANGES = "Claude не внёс изменений — коммитить нечего, PR не открываю. Рабочую копию убрал."
-_PR_HEADER = "Открыл PR: {url}. Мержить — твоё дело, я в main не лезу."
-_STATUS_IDLE = "Активной coding-сессии нет."
-_STATUS_LINE = "Сессия «{task}» — состояние {state} (ветка {branch})."
+# Owner-facing messages live in Bob's voice (BOB-041 .3): the gate/framing lines are
+# built by :mod:`~bob.domain.coding.session_voice` (Bob speaks, GUPPI executes) and the
+# per-event narrative is GUPPI-attributed by :func:`~bob.domain.coding.narrate.narrate` —
+# both deterministic, template-based (no LLM). This use-case only orchestrates; the wording
+# is the domain's.
 
 
 class OwnerNotifier(Protocol):
@@ -169,7 +164,10 @@ class CodingAssistant:
         if not self._owner.is_owner(sender):
             return _refused()
         if await self._active_session() is not None:
-            return await self._reply(False, _BUSY, session=None)
+            return await self._reply(False, session_voice.busy(), session=None)
+        # Bob's voice: he takes the task on (first person) and directs GUPPI — sent
+        # before planning so the owner sees Bob accept immediately (BOB-041 .3).
+        await self._notifier.send(session_voice.accepted())
         now = self._clock.now()
         branch = worktree_branch(task)
         path = await self._worktree.create(branch)
@@ -192,7 +190,7 @@ class CodingAssistant:
             CodingSessionState.PLAN_READY, at=self._clock.now()
         )
         await self._store.save(session)
-        return await self._reply(True, _plan_message(plan), session=session)
+        return await self._reply(True, session_voice.plan(plan), session=session)
 
     async def approve_plan(self, sender: int | None) -> CodingOutcome:
         """Owner-only гейт плана: ``PLAN_READY → EXECUTING`` → нарратив → открыть PR.
@@ -206,10 +204,10 @@ class CodingAssistant:
             return _refused()
         session = await self._active_session()
         if session is None or not can_approve_plan(session.state):
-            return await self._reply(False, _CANNOT_APPROVE, session=session)
+            return await self._reply(False, session_voice.cannot_approve(), session=session)
         path = session.worktree_path
         if path is None:  # pragma: no cover - PLAN_READY always carries a worktree
-            return await self._reply(False, _CANNOT_APPROVE, session=session)
+            return await self._reply(False, session_voice.cannot_approve(), session=session)
         session = session.with_state(CodingSessionState.EXECUTING, at=self._clock.now())
         await self._store.save(session)
         try:
@@ -229,13 +227,13 @@ class CodingAssistant:
             return _refused()
         session = await self._active_session()
         if session is None:
-            return await self._reply(False, _NO_SESSION, session=None)
+            return await self._reply(False, session_voice.no_session(), session=None)
         # Signal any in-flight narrate loop to break (→ runner closed → process killed).
         self._cancelled.add(session.id)
         session = session.with_state(CodingSessionState.CANCELLED, at=self._clock.now())
         await self._store.save(session)
         await self._cleanup(session.worktree_path)
-        return await self._reply(True, _STOPPED, session=session)
+        return await self._reply(True, session_voice.stopped(), session=session)
 
     async def status(self, sender: int | None) -> CodingOutcome:
         """Owner-only: доложить состояние текущей сессии (или что её нет)."""
@@ -243,8 +241,21 @@ class CodingAssistant:
             return _refused()
         session = await self._active_session()
         if session is None:
-            return await self._reply(True, _STATUS_IDLE, session=None)
+            return await self._reply(True, session_voice.status_idle(), session=None)
         return await self._reply(True, _status_message(session), session=session)
+
+    async def active_state(self) -> CodingSessionState | None:
+        """The in-flight (non-terminal) session's state, or ``None`` (no side effects).
+
+        A read-only query for the natural-language routing (BOB-041 .2): it lets the
+        caller tell whether a session is waiting for an approve (``PLAN_READY``) or is
+        otherwise live — WITHOUT notifying the owner (unlike :meth:`status`). Owner-only
+        is NOT enforced here because it neither starts nor advances a session and sends
+        nothing; the gated mutators (:meth:`start` / :meth:`approve_plan` / :meth:`stop`)
+        each re-check the owner, so this read can never bypass a gate.
+        """
+        session = await self._active_session()
+        return session.state if session is not None else None
 
     # --- Internal orchestration ----------------------------------------------
 
@@ -262,7 +273,7 @@ class CodingAssistant:
         """
         await self._narrate_run(session, path)
         if session.id in self._cancelled:  # a stop landed mid-run — do not open a PR
-            return CodingOutcome(ok=False, message=_STOPPED, session=session)
+            return CodingOutcome(ok=False, message=session_voice.stopped(), session=session)
         committed = await self._worktree.commit_and_push(
             path, session.branch, _commit_message(session)
         )
@@ -271,7 +282,7 @@ class CodingAssistant:
                 CodingSessionState.FAILED, at=self._clock.now()
             )
             await self._store.save(session)
-            return await self._reply(False, _NO_CHANGES, session=session)
+            return await self._reply(False, session_voice.no_changes(), session=session)
         pr_url = await self._pr_opener.open(
             session.branch, _pr_title(session), _pr_body(session)
         )
@@ -279,21 +290,27 @@ class CodingAssistant:
             CodingSessionState.PR_OPEN, at=self._clock.now()
         )
         await self._store.save(session)
-        return await self._reply(True, _pr_message(pr_url), session=session)
+        return await self._reply(True, session_voice.pr(pr_url), session=session)
 
     async def _run_plan(self, session: CodingSession, path: str) -> str:
-        """Run plan-mode, collecting the plan text (a plan with NO edits — the gate)."""
-        parts: list[str] = []
+        """Run plan-mode, collecting the plan text (a plan with NO edits — the gate).
+
+        claude in plan-mode emits the plan TWICE — once as ``assistant`` text and again
+        in the final ``result`` — so the parts are reduced by :func:`_clean_plan` to the
+        authoritative single plan (no duplicated ``## План``), with the planning preamble
+        stripped. The collect/clean split keeps the reduction a pure, testable transform.
+        """
+        parts: list[_PlanPart] = []
         async with aclosing(
             _closeable(self._runner.run(path, _plan_prompt(session.task), mode=_PLAN_MODE))
         ) as stream:
             async for event in stream:
                 if session.id in self._cancelled:
                     break
-                text = _event_text(event)
-                if text:
-                    parts.append(text)
-        return "\n".join(parts).strip()
+                part = _plan_part(event)
+                if part is not None:
+                    parts.append(part)
+        return _clean_plan(parts)
 
     async def _narrate_run(self, session: CodingSession, path: str) -> None:
         """Run execute-mode, sending each non-noise narrate line to the owner."""
@@ -322,7 +339,7 @@ class CodingAssistant:
         await self._store.save(session)
         if cleanup:
             await self._cleanup(session.worktree_path)
-        return await self._reply(False, _FAILED.format(detail=str(exc)), session=session)
+        return await self._reply(False, session_voice.failed(str(exc)), session=session)
 
     async def _cleanup(self, path: str | None) -> None:
         """Remove the worktree (idempotent best-effort; never leak, never crash a turn)."""
@@ -374,20 +391,9 @@ def _refused() -> CodingOutcome:
     return CodingOutcome(ok=False, message="", session=None)
 
 
-def _plan_message(plan: str) -> str:
-    """Render the owner-facing plan message (the plan body + the approve/stop hint)."""
-    body = plan if plan else _NO_PLAN
-    return f"{body}\n\n{_PLAN_HEADER}"
-
-
-def _pr_message(url: str) -> str:
-    """Render the owner-facing PR message (url + the never-merge reminder)."""
-    return _PR_HEADER.format(url=url)
-
-
 def _status_message(session: CodingSession) -> str:
-    """Render the owner-facing status line for the in-flight session."""
-    return _STATUS_LINE.format(
+    """Render the owner-facing status line for the in-flight session (Bob's voice)."""
+    return session_voice.status_line(
         task=session.task, state=session.state.value, branch=session.branch
     )
 
@@ -432,19 +438,96 @@ def _execute_prompt(task: str) -> str:
     )
 
 
-def _event_text(event: Mapping[str, object]) -> str:
-    """Collect the plain plan text from one stream-json event (assistant text / result).
+@dataclass(frozen=True, slots=True)
+class _PlanPart:
+    """One collected plan fragment, tagged by its stream-json source.
+
+    ``kind`` is ``"result"`` (the final authoritative plan) or ``"assistant"`` (the
+    streamed draft) — :func:`_clean_plan` prefers the single ``result`` over the
+    assistant echo so the plan is captured exactly once.
+    """
+
+    kind: str
+    text: str
+
+
+def _plan_part(event: Mapping[str, object]) -> _PlanPart | None:
+    """Extract one plan fragment from a stream-json event (assistant text / result).
 
     Plan-mode's value is the plan PROSE, which :func:`narrate` deliberately treats as
     noise — so the plan is assembled here from the assistant message's text blocks and
-    the final ``result`` event's ``result`` field. Tool/system events yield ``""``.
+    the final ``result`` event's ``result`` field. Tool/system events (and empty text)
+    yield ``None``.
     """
     kind = str(event.get("type", ""))
     if kind == "result" and not _is_error_result(event):
-        return str(event.get("result", "")).strip()
+        text = str(event.get("result", "")).strip()
+        return _PlanPart("result", text) if text else None
     if kind == "assistant":
-        return _assistant_text(event)
+        text = _assistant_text(event)
+        return _PlanPart("assistant", text) if text else None
+    return None
+
+
+def _clean_plan(parts: Sequence[_PlanPart]) -> str:
+    """Reduce collected plan parts to the final plan text, once, de-noised (BOB-041 .1).
+
+    The plan arrives TWICE — as ``assistant`` text and again in the final ``result`` —
+    so the authoritative single source is the last non-empty ``result``; lacking one
+    (a degraded stream) the assistant parts are joined with contained/identical
+    duplicates dropped. The planning preamble (``ExitPlanMode`` chatter, "Let me write
+    the plan.") is then stripped so the owner sees a clean plan.
+    """
+    chosen = _last_result_text(parts) or _dedup_join(parts)
+    return _strip_plan_noise(chosen)
+
+
+def _last_result_text(parts: Sequence[_PlanPart]) -> str:
+    """The last non-empty ``result`` fragment (the authoritative final plan), or ``""``."""
+    for part in reversed(parts):
+        if part.kind == "result" and part.text:
+            return part.text
     return ""
+
+
+def _dedup_join(parts: Sequence[_PlanPart]) -> str:
+    """Join fragments, dropping any identical to or contained within another (no echo)."""
+    kept: list[str] = []
+    for part in parts:
+        text = part.text.strip()
+        if not text:
+            continue
+        kept = [k for k in kept if k not in text]  # drop fragments superseded by text
+        if any(text in k for k in kept):  # text already covered by a kept fragment
+            continue
+        kept.append(text)
+    return "\n\n".join(kept)
+
+
+def _strip_plan_noise(text: str) -> str:
+    """Drop planning-preamble noise lines and collapse the blank runs they leave."""
+    kept = [line for line in text.splitlines() if not _is_plan_noise(line)]
+    collapsed = re.sub(r"\n{3,}", "\n\n", "\n".join(kept))
+    return collapsed.strip()
+
+
+def _is_plan_noise(line: str) -> bool:
+    """Whether ``line`` is plan-mode preamble chatter (not part of the real plan)."""
+    stripped = line.strip()
+    if not stripped:
+        return False  # keep blanks; the run collapse handles spacing
+    if "exitplanmode" in stripped.lower():
+        return True
+    return bool(_PLAN_CHATTER_RE.match(stripped))
+
+
+# Planning-chatter preamble: a short "Let me / I'll … plan …" lead-in claude emits
+# before the actual plan. Matched conservatively (must open with the lead-in verb AND
+# mention "plan") so a real plan line is never mistaken for noise.
+_PLAN_CHATTER_RE = re.compile(
+    r"^(?:now\s+|ok(?:ay)?,?\s+|so\s+)*(?:let me|let's|i'?ll|i will)\b.{0,80}\bplan\b.*$",
+    re.IGNORECASE,
+)
 
 
 def _is_error_result(event: Mapping[str, object]) -> bool:

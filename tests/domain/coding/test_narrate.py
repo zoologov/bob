@@ -47,12 +47,12 @@ def _user_tool_result(
 
 def test_edit_narrates_file() -> None:
     event = _assistant_tool("Edit", {"file_path": "src/bob/parser.py"})
-    assert narrate(event) == "правлю `parser.py`"
+    assert narrate(event) == "GUPPI: правлю `parser.py`"
 
 
 def test_write_narrates_file() -> None:
     event = _assistant_tool("Write", {"file_path": "/repo/a/b/new.py"})
-    assert narrate(event) == "правлю `new.py`"
+    assert narrate(event) == "GUPPI: правлю `new.py`"
 
 
 def test_flattened_tool_use_is_supported() -> None:
@@ -61,12 +61,12 @@ def test_flattened_tool_use_is_supported() -> None:
         "name": "Edit",
         "input": {"file_path": "x/y.py"},
     }
-    assert narrate(event) == "правлю `y.py`"
+    assert narrate(event) == "GUPPI: правлю `y.py`"
 
 
 def test_read_narrates_reading() -> None:
     event = _assistant_tool("Read", {"file_path": "src/bob/app.py"})
-    assert narrate(event) == "читаю `app.py`"
+    assert narrate(event) == "GUPPI: читаю `app.py`"
 
 
 # --- Тесты / команды ----------------------------------------------------------
@@ -74,7 +74,7 @@ def test_read_narrates_reading() -> None:
 
 def test_bash_pytest_narrates_running_tests() -> None:
     event = _assistant_tool("Bash", {"command": "pytest -q tests/"})
-    assert narrate(event) == "запускаю тесты"
+    assert narrate(event) == "GUPPI: гоняю тесты"
 
 
 def test_bash_generic_command_is_noise() -> None:
@@ -92,14 +92,14 @@ def test_navigation_tools_are_noise() -> None:
 
 def test_tool_result_tests_passed() -> None:
     event = _user_tool_result(content="5 passed in 0.10s")
-    assert narrate(event) == "тесты прошли"
+    assert narrate(event) == "GUPPI: тесты прошли"
 
 
 def test_tool_result_error_narrates_error() -> None:
     event = _user_tool_result(content="Traceback: boom", is_error=True)
     line = narrate(event)
     assert line is not None
-    assert line.startswith("ошибка:")
+    assert line.startswith("GUPPI: ошибка:")
 
 
 def test_tool_result_success_noise_is_none() -> None:
@@ -109,7 +109,7 @@ def test_tool_result_success_noise_is_none() -> None:
 
 def test_tool_result_content_as_block_list() -> None:
     event = _user_tool_result(content=[{"type": "text", "text": "10 passed"}])
-    assert narrate(event) == "тесты прошли"
+    assert narrate(event) == "GUPPI: тесты прошли"
 
 
 # --- Финальный результат / ошибки ---------------------------------------------
@@ -117,7 +117,7 @@ def test_tool_result_content_as_block_list() -> None:
 
 def test_result_success_narrates_done() -> None:
     event = {"type": "result", "subtype": "success", "is_error": False, "result": "ok"}
-    assert narrate(event) == "готово"
+    assert narrate(event) == "GUPPI: готово"
 
 
 def test_result_error_narrates_error() -> None:
@@ -129,14 +129,14 @@ def test_result_error_narrates_error() -> None:
     }
     line = narrate(event)
     assert line is not None
-    assert line.startswith("ошибка:")
+    assert line.startswith("GUPPI: ошибка:")
 
 
 def test_error_event_narrates_error() -> None:
     event = {"type": "error", "message": "subprocess died"}
     line = narrate(event)
     assert line is not None
-    assert line.startswith("ошибка:")
+    assert line.startswith("GUPPI: ошибка:")
 
 
 # --- Шум ----------------------------------------------------------------------
@@ -181,4 +181,4 @@ def test_tool_result_with_scalar_content_is_noise() -> None:
 
 def test_result_error_without_detail_is_bare_error() -> None:
     event = {"type": "result", "is_error": True}
-    assert narrate(event) == "ошибка"
+    assert narrate(event) == "GUPPI: ошибка"

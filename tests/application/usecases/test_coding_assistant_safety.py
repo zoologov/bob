@@ -309,10 +309,12 @@ async def test_plan_assembly_ignores_malformed_events() -> None:
     assert outcome.ok is True
     assert outcome.session is not None
     assert outcome.session.state is CodingSessionState.PLAN_READY
-    # Only the valid text + result survived; the malformed events contributed nothing.
+    # The malformed events contributed nothing; the authoritative final plan (the
+    # ``result``) was captured cleanly, superseding the streamed assistant draft
+    # (BOB-041 .1 dedup — the plan is captured once, not assistant+result both).
     plan = outcome.session.plan or ""
-    assert "Реальный шаг" in plan
-    assert "Финальный план" in plan
+    assert plan == "Финальный план"
+    assert "Реальный шаг" not in plan
     assert "not-a" not in plan
 
 

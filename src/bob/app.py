@@ -69,7 +69,9 @@ from bob.application.runtime import (
 )
 from bob.application.usecases.announce_rules import AnnounceProposedRules
 from bob.application.usecases.apply_reflection import ApplyReflection
+from bob.application.usecases.classify_coding_intent import ClassifyCodingIntent
 from bob.application.usecases.coding_assistant import CodingAssistant
+from bob.application.usecases.coding_intent_router import CodingIntentRouter
 from bob.application.usecases.consolidate_memory import ConsolidateMemory
 from bob.application.usecases.dedup_facts import DedupFacts
 from bob.application.usecases.detect_patterns import DetectPatterns, LlmPatternDetector
@@ -151,6 +153,7 @@ from bob.infrastructure.persistence import (
 from bob.infrastructure.persistence.coding_session_store import (
     SqliteCodingSessionStore,
 )
+from bob.infrastructure.telegram.gateway import RichMarkdownSender
 from bob.infrastructure.telegram.multibot import (
     BotIdentity,
     BotRegistry,
@@ -694,6 +697,14 @@ def build_application(
         # ``photo``. Unwired (diagrams disabled) → the auto-render is inert.
         diagram_renderer=diagram_renderer,
         diagram_send_as=_diagram_send_as(merged),
+        # Natural-language coding intent (BOB-041 .2): when the coder is enabled, an
+        # OWNER message in Bob's topic that asks Bob to do dev work on his repo — or a
+        # natural approve/stop of a live session — is routed into the SAME gated
+        # CodingAssistant the `/code` command uses (plan gate, owner-only, never-main all
+        # intact; the router only chooses WHEN to call start/approve_plan/stop). Off
+        # (coder.enabled false → coding_assistant None) → the NL path is inert and the
+        # `/code` command in General is unaffected.
+        coding_router=_build_coding_router(router=router, coder=coding_assistant),
     )
     event_bus.subscribe(MESSAGE_RECEIVED, _as_handler(handle_message))
 
@@ -958,6 +969,24 @@ def _build_multibot(
     )
 
 
+def _build_coding_router(
+    *, router: LLMRouter, coder: CodingAssistant | None
+) -> CodingIntentRouter | None:
+    """Assemble the natural-language coding-intent router, or ``None`` when off (BOB-041 .2).
+
+    Built ONLY when the gated coding assistant is wired (``coder.enabled``). It pairs the
+    cheap Tier-0 :class:`ClassifyCodingIntent` (coding vs chat) with the same gated
+    :class:`CodingAssistant` the ``/code`` command drives, so an owner message in Bob's
+    topic can plan / approve / stop a session naturally. Off (coder disabled → ``coder``
+    is ``None``) → ``None``, and HandleMessage's natural-language path stays inert.
+    """
+    if coder is None:
+        return None
+    return CodingIntentRouter(
+        coder=coder, classifier=ClassifyCodingIntent(router=router)
+    )
+
+
 def _build_coding_assistant(
     config: Mapping[str, object],
     *,
@@ -1004,16 +1033,20 @@ class _GuppiOwnerNotifier:
     Realises the use-case's ``OwnerNotifier`` (structurally) over Bob's owner-facing
     system voice (GUPPI in General), so the gated coding assistant streams the plan,
     the per-event narration and the PR url to the owner without knowing any transport.
+    Coding messages carry markdown (## headings, **bold**, ``code``), so they go through
+    the shared :class:`RichMarkdownSender` rich path (BOB-041 .1) — the same conversion
+    Bob's normal replies use — with a safe plain fallback so a parse error never drops a
+    message.
     """
 
     def __init__(self, *, bot: BotLike, chat_id: int) -> None:
-        self._bot = bot
+        self._sender = RichMarkdownSender(bot)
         self._chat_id = chat_id
 
     async def send(self, text: str) -> None:
-        """Post ``text`` into General through the GUPPI bot (un-threaded)."""
-        await self._bot.send_message(
-            chat_id=self._chat_id, text=text, message_thread_id=None
+        """Post ``text`` into General through the GUPPI bot (rich markdown, un-threaded)."""
+        await self._sender.send(
+            chat_id=self._chat_id, markdown=text, message_thread_id=None
         )
 
 

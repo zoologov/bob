@@ -7,10 +7,16 @@
 """narrate — чистый мэппер stream-json событий Claude Code → нарратив (BOB-039 .1).
 
 :func:`narrate` берёт ОДНО событие потока ``--output-format stream-json`` и возвращает
-короткую русскую нарратив-строку («правлю `<file>`», «запускаю тесты», «тесты прошли»,
-«готово», «ошибка: …») ИЛИ ``None`` для шумных/внутренних событий (system-init,
+короткую русскую нарратив-строку ИЛИ ``None`` для шумных/внутренних событий (system-init,
 навигация, чистый текст ассистента). Детерминированно, без I/O — раннер (.2) только
 стримит события, а use-case (.3) шлёт ненулевые строки в чат owner'а.
+
+🔴 Канон (BOB-041 .3): фактическое исполнение — работа **GUPPI** (сухого исполнителя,
+которым дирижирует Боб), поэтому каждая ненулевая строка АТРИБУТИРОВАНА GUPPI префиксом
+``GUPPI:`` («GUPPI: правлю `<file>`», «GUPPI: гоняю тесты», «GUPPI: тесты прошли»,
+«GUPPI: готово», «GUPPI: ошибка: …»). Боб-голос на гейтах живёт отдельно в
+:mod:`~bob.domain.coding.session_voice`; здесь — только пер-событийный нарратив GUPPI.
+Шум по-прежнему → ``None`` (без префикса).
 
 Поддержаны две формы события: вложенная (как отдаёт сам Claude Code — ``tool_use`` в
 ``assistant.message.content``, ``tool_result`` в ``user.message.content``) и
@@ -24,6 +30,10 @@ import re
 from collections.abc import Callable, Mapping
 
 __all__ = ["narrate"]
+
+# Канон (BOB-041 .3): пер-событийный нарратив — работа GUPPI, поэтому каждая
+# ненулевая строка атрибутируется ему этим префиксом (Боб дирижирует, GUPPI пашет).
+_GUPPI_PREFIX = "GUPPI: "
 
 _MAX_ERROR_LEN = 80
 _WHITESPACE = re.compile(r"\s+")
@@ -70,7 +80,7 @@ def _narrate_tool(name: str, tool_input: Mapping[str, object]) -> str | None:
     if name == "Read":
         return f"читаю `{_basename(tool_input.get('file_path'))}`"
     if name == "Bash" and _TEST_COMMAND.search(str(tool_input.get("command", ""))):
-        return "запускаю тесты"
+        return "гоняю тесты"
     return None
 
 
@@ -102,9 +112,14 @@ _HANDLERS: dict[str, Callable[[Mapping[str, object]], str | None]] = {
 
 
 def narrate(event: Mapping[str, object]) -> str | None:
-    """Свести stream-json событие к короткой нарратив-строке или ``None`` (шум)."""
+    """Свести stream-json событие к короткой GUPPI-нарратив-строке или ``None`` (шум).
+
+    Ненулевая строка атрибутируется GUPPI префиксом ``GUPPI:`` (канон BOB-041 .3:
+    фактическое исполнение — его работа). Шум остаётся ``None`` (без префикса).
+    """
     handler = _HANDLERS.get(str(event.get("type", "")))
-    return handler(event) if handler is not None else None
+    line = handler(event) if handler is not None else None
+    return f"{_GUPPI_PREFIX}{line}" if line is not None else None
 
 
 # --- Хелперы (чистые) ---------------------------------------------------------
