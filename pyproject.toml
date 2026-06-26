@@ -147,6 +147,9 @@ ignore = [
 "src/bob/domain/coding/entities.py" = ["RUF001", "RUF002", "RUF003"]
 "src/bob/domain/coding/narrate.py" = ["RUF001", "RUF002", "RUF003"]
 "src/bob/domain/coding/naming.py" = ["RUF001", "RUF002", "RUF003"]
+# Bob-voiced coding-session gate messages (BOB-041 .3): Russian persona templates +
+# comments whose Cyrillic look-alikes are intentional — RUF001/RUF002/RUF003 here.
+"src/bob/domain/coding/session_voice.py" = ["RUF001", "RUF002", "RUF003"]
 "src/bob/infrastructure/persistence/coding_session_store.py" = [
     "RUF001",
     "RUF002",
@@ -355,6 +358,7 @@ ignore = [
 "tests/domain/coding/test_entities.py" = ["S101", "ARG001", "PLR2004", "RUF001", "RUF002", "RUF003"]
 "tests/domain/coding/test_naming.py" = ["S101", "ARG001", "PLR2004", "RUF001", "RUF002", "RUF003"]
 "tests/domain/coding/test_narrate.py" = ["S101", "ARG001", "PLR2004", "RUF001", "RUF002", "RUF003"]
+"tests/domain/coding/test_session_voice.py" = ["S101", "ARG001", "PLR2004", "RUF001", "RUF002", "RUF003"]
 "tests/infrastructure/persistence/test_coding_session_store.py" = [
     "S101",
     "ARG001",

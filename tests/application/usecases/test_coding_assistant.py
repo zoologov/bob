@@ -217,6 +217,32 @@ async def test_start_builds_plan_and_stops_at_plan_ready_not_executed() -> None:
 
 
 @pytest.mark.asyncio
+async def test_start_sends_bob_voiced_acceptance_before_the_plan() -> None:
+    # BOB-041 .3: Bob (first person) takes the task on and directs GUPPI, then plans.
+    rig = _build()
+
+    await rig.assistant.start("Добавить ручку health", _OWNER_ID)
+
+    # The first owner message is Bob accepting in his voice, framing GUPPI as executor.
+    assert rig.notifier.sent
+    accept = rig.notifier.sent[0]
+    assert "берусь" in accept.casefold()
+    assert "GUPPI" in accept
+
+
+@pytest.mark.asyncio
+async def test_plan_message_is_bob_voiced_and_embeds_the_plan() -> None:
+    # BOB-041 .3: the plan-ready message reads as Bob presenting GUPPI's drafted plan.
+    rig = _build()
+
+    await rig.assistant.start("Добавить ручку health", _OWNER_ID)
+
+    plan_msg = next(text for text in rig.notifier.sent if "Итоговый план" in text)
+    assert "GUPPI" in plan_msg
+    assert "давай" in plan_msg.casefold() or "approve" in plan_msg.casefold()
+
+
+@pytest.mark.asyncio
 async def test_full_happy_path_approve_executes_narrates_and_opens_pr_no_merge() -> None:
     runner = _FakeRunner(events={**_plan_events(), "acceptEdits": _execute_events()})
     rig = _build(runner=runner)

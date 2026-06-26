@@ -435,3 +435,5 @@
 {"id":"int-bc29fcea","kind":"field_change","created_at":"2026-06-26T04:31:55.729342Z","actor":"v.zoologov","issue_id":"bob-cvy","extra":{"field":"status","new_value":"closed","old_value":"open","reason":"Closed"}}
 {"id":"int-9c25ec03","kind":"field_change","created_at":"2026-06-26T05:35:03.406121Z","actor":"v.zoologov","issue_id":"bob-d9w.1","extra":{"field":"status","new_value":"closed","old_value":"open","reason":"Closed"}}
 {"id":"int-34bff8e0","kind":"field_change","created_at":"2026-06-26T05:36:08.031407Z","actor":"v.zoologov","issue_id":"bob-d9w.2","extra":{"field":"status","new_value":"in_progress","old_value":"open"}}
+{"id":"int-2feef2f5","kind":"field_change","created_at":"2026-06-26T05:48:57.655685Z","actor":"v.zoologov","issue_id":"bob-d9w.2","extra":{"field":"status","new_value":"closed","old_value":"in_progress","reason":"Closed"}}
+{"id":"int-1f5f952d","kind":"field_change","created_at":"2026-06-26T05:51:33.703803Z","actor":"v.zoologov","issue_id":"bob-d9w.3","extra":{"field":"status","new_value":"in_progress","old_value":"open"}}
