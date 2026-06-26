@@ -45,13 +45,12 @@ _BOB039_SOURCE = (
     "src/bob/application/usecases/coding_assistant.py",
 )
 
-# argv fragments that would constitute a merge / push-to-main path. Bob must never
-# build any of these — he opens a PR and stops.
+# argv fragments that would constitute a merge path. Bob must never build any of these
+# — he opens a PR and stops. (A ``git push`` of the validated ``bob/<slug>`` feature
+# branch IS allowed since BOB-040 — see the dedicated never-push-main guard below.)
 _FORBIDDEN_ARGV = (
     '"merge"',
     "'merge'",
-    '"push"',
-    "'push'",
     "pr merge",
 )
 
@@ -88,6 +87,21 @@ def test_no_source_file_builds_a_merge_or_push_main_argv(rel: str) -> None:
     # for the executable argv tokens specifically.
     for fragment in _FORBIDDEN_ARGV:
         assert fragment not in text, f"{rel} contains a forbidden argv fragment {fragment!r}"
+
+
+def test_commit_push_targets_the_validated_branch_never_literal_main() -> None:
+    # 🔴 BOB-040: the deterministic commit+push lives in git_worktree.py and pushes the
+    # validated ``bob/<slug>`` branch variable — there is physically no path that pushes
+    # the trunk. The push target is never the literal ``main``, and the branch is
+    # validated (``is_safe_branch``) before any git runs.
+    text = (_repo_root() / "src/bob/infrastructure/coding/git_worktree.py").read_text(
+        encoding="utf-8"
+    )
+    assert "is_safe_branch" in text  # the branch is re-validated before the push
+    assert '"main"' not in text  # no literal main argv token
+    assert "'main'" not in text
+    # The only push form is ``push -u origin <branch>`` with the validated branch var.
+    assert '"origin", branch' in text or "origin', branch" in text or "origin\", branch" in text
 
 
 def test_pr_command_is_create_only_with_main_as_base_not_a_push() -> None:

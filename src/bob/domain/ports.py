@@ -921,6 +921,20 @@ class Worktree(Protocol):
         """Add an isolated worktree on ``branch`` and return its filesystem path."""
         ...
 
+    async def commit_and_push(self, path: str, branch: str, message: str) -> bool:
+        """Stage, commit and push the worktree's changes to the ``bob/<slug>`` branch.
+
+        Bob's DETERMINISTIC integration step (BOB-040): after ``claude`` applies the
+        approved plan it does NOT commit (``acceptEdits`` auto-accepts file edits only,
+        never git), so the use-case commits + pushes the feature branch before a PR is
+        opened. Returns ``True`` when a real commit was pushed, ``False`` when there was
+        NOTHING to commit (claude made no change — the use-case then FAILS honestly and
+        opens no PR). 🔴 ``branch`` MUST be the validated ``bob/<slug>`` feature branch;
+        any other (e.g. ``main``) is refused before git runs — there is no path that can
+        push the trunk.
+        """
+        ...
+
     async def remove(self, path: str) -> None:
         """Remove the worktree at ``path`` (idempotent cleanup)."""
         ...

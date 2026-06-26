@@ -84,6 +84,7 @@ _CANNOT_APPROVE = "Нет сессии, ждущей апрува плана (н
 _NO_SESSION = "Активной coding-сессии нет."
 _STOPPED = "Остановил coding-сессию и убрал рабочую копию."
 _FAILED = "Coding-сессия сорвалась: {detail}. Рабочую копию убрал."
+_NO_CHANGES = "Claude не внёс изменений — коммитить нечего, PR не открываю. Рабочую копию убрал."
 _PR_HEADER = "Открыл PR: {url}. Мержить — твоё дело, я в main не лезу."
 _STATUS_IDLE = "Активной coding-сессии нет."
 _STATUS_LINE = "Сессия «{task}» — состояние {state} (ветка {branch})."
@@ -250,10 +251,27 @@ class CodingAssistant:
     async def _execute_and_open_pr(
         self, session: CodingSession, path: str
     ) -> CodingOutcome:
-        """Run the approved plan (narrated), open a PR, advance to ``PR_OPEN``."""
+        """Run the approved plan (narrated), commit+push, open a PR, advance to ``PR_OPEN``.
+
+        🔴 Commit + push are Bob's DETERMINISTIC step (BOB-040): ``claude`` in
+        ``acceptEdits`` applies file edits but never runs git, so the branch would have
+        no commits and ``gh pr create`` would fail. Bob commits + pushes the session's
+        ``bob/<slug>`` branch himself (validated inside the adapter — never ``main``)
+        BEFORE opening the PR. If ``claude`` changed nothing, the push reports nothing to
+        commit and the session FAILS honestly with no PR.
+        """
         await self._narrate_run(session, path)
         if session.id in self._cancelled:  # a stop landed mid-run — do not open a PR
             return CodingOutcome(ok=False, message=_STOPPED, session=session)
+        committed = await self._worktree.commit_and_push(
+            path, session.branch, _commit_message(session)
+        )
+        if not committed:  # claude applied no change — fail honestly, open no PR
+            session = session.with_state(
+                CodingSessionState.FAILED, at=self._clock.now()
+            )
+            await self._store.save(session)
+            return await self._reply(False, _NO_CHANGES, session=session)
         pr_url = await self._pr_opener.open(
             session.branch, _pr_title(session), _pr_body(session)
         )
@@ -374,6 +392,12 @@ def _status_message(session: CodingSession) -> str:
     )
 
 
+def _commit_message(session: CodingSession) -> str:
+    """The commit message for Bob's deterministic commit — the task's one-line subject."""
+    subject = session.task.strip().splitlines()[0][:72] if session.task.strip() else session.branch
+    return f"[bob] {subject}"
+
+
 def _pr_title(session: CodingSession) -> str:
     """The PR title — the task, trimmed to a one-line subject."""
     return session.task.strip().splitlines()[0][:72] if session.task.strip() else session.branch
@@ -394,15 +418,17 @@ def _plan_prompt(task: str) -> str:
 
 
 def _execute_prompt(task: str) -> str:
-    """The execute-mode prompt — apply the approved plan and commit to the branch.
+    """The execute-mode prompt — apply the approved plan (edits only).
 
-    🔴 Commit + push happen on the ISOLATED feature branch only — NEVER ``main``, and
-    NEVER a merge: Bob opens a PR and stops, the owner lands the change by hand.
+    🔴 claude is asked ONLY to apply the file edits — NOT to run git. In ``acceptEdits``
+    mode claude auto-accepts file edits but not Bash/git, so a commit/push it tried would
+    silently not happen and leave the branch empty. Bob commits + pushes the feature
+    branch DETERMINISTICALLY himself (BOB-040), so the prompt stays focused on the edits.
     """
     return (
         f"Задача: {task}\n\n"
-        "Реализуй одобренный план. Закоммить изменения в ТЕКУЩУЮ ветку и запушь её. "
-        "НЕ переключайся на main, НЕ мержи, НЕ пушь в main — только эту ветку."
+        "Реализуй одобренный план: внеси необходимые правки в файлы. "
+        "Не нужно коммитить или пушить — это сделаю я сам."
     )
 
 

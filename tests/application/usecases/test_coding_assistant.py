@@ -58,11 +58,17 @@ class _FakeRunner:
 class _FakeWorktree:
     created: list[str] = field(default_factory=list)
     removed: list[str] = field(default_factory=list)
+    pushes: list[tuple[str, str, str]] = field(default_factory=list)
+    committed: bool = True  # whether commit_and_push reports a real commit (vs nothing)
 
     async def create(self, branch: str) -> str:
         self.created.append(branch)
         slug = branch.split("/", 1)[1]
         return f"/wt/{slug}"
+
+    async def commit_and_push(self, path: str, branch: str, message: str) -> bool:
+        self.pushes.append((path, branch, message))
+        return self.committed
 
     async def remove(self, path: str) -> None:
         self.removed.append(path)
@@ -227,12 +233,41 @@ async def test_full_happy_path_approve_executes_narrates_and_opens_pr_no_merge()
     assert "acceptEdits" in [mode for _, _, mode in rig.runner.calls]
     # Narrative lines reached the gateway.
     assert any("правлю" in text for text in rig.notifier.sent)
+    # 🔴 Bob committed + pushed the feature branch DETERMINISTICALLY before the PR —
+    # always the session's bob/<slug> branch, never main.
+    assert len(rig.worktree.pushes) == 1
+    assert rig.worktree.pushes[0][1] == outcome.session.branch
+    assert rig.worktree.pushes[0][1].startswith("bob/")
     # 🔴 The ONLY PR action is open — exactly once, on the bob/<slug> branch; no merge.
     assert len(rig.pr_opener.opens) == 1
     assert rig.pr_opener.opens[0][0].startswith("bob/")
+    assert rig.pr_opener.opens[0][0] == outcome.session.branch
     assert not hasattr(rig.pr_opener, "merge")
     # The PR url was reported to the owner.
     assert any(rig.pr_opener.url in text for text in rig.notifier.sent)
+
+
+@pytest.mark.asyncio
+async def test_nothing_to_commit_fails_honestly_and_opens_no_pr() -> None:
+    runner = _FakeRunner(events={**_plan_events(), "acceptEdits": _execute_events()})
+    # claude applied no change → commit_and_push reports nothing to commit.
+    worktree = _FakeWorktree(committed=False)
+    rig = _build(runner=runner, worktree=worktree)
+    await rig.assistant.start("Починить парсер", _OWNER_ID)
+
+    outcome = await rig.assistant.approve_plan(_OWNER_ID)
+
+    # Honest FAILED — no PR opened, no empty commit advertised as success.
+    assert outcome.ok is False
+    assert outcome.session is not None
+    assert outcome.session.state is CodingSessionState.FAILED
+    assert rig.pr_opener.opens == []
+    # commit_and_push WAS attempted; the worktree is still cleaned up (no leak).
+    assert len(rig.worktree.pushes) == 1
+    assert len(rig.worktree.removed) == 1
+    assert await rig.store.active() == ()
+    # The owner was told claude changed nothing.
+    assert any("не внёс" in text or "изменени" in text for text in rig.notifier.sent)
 
 
 @pytest.mark.asyncio
