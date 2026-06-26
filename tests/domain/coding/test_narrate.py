@@ -95,11 +95,11 @@ def test_tool_result_tests_passed() -> None:
     assert narrate(event) == "GUPPI: тесты прошли"
 
 
-def test_tool_result_error_narrates_error() -> None:
+def test_tool_result_error_is_suppressed() -> None:
+    # BOB-042 .5: a per-tool is_error is claude/GUPPI trial-and-error (e.g. a glob that
+    # matched nothing), NOT a session failure — suppressed so it never alarms the owner.
     event = _user_tool_result(content="Traceback: boom", is_error=True)
-    line = narrate(event)
-    assert line is not None
-    assert line.startswith("GUPPI: ошибка:")
+    assert narrate(event) is None
 
 
 def test_tool_result_success_noise_is_none() -> None:
@@ -132,11 +132,12 @@ def test_result_error_narrates_error() -> None:
     assert line.startswith("GUPPI: ошибка:")
 
 
-def test_error_event_narrates_error() -> None:
+def test_error_event_is_suppressed() -> None:
+    # BOB-042 .5: a top-level stream `error` event is suppressed too — the owner's only
+    # error signal is the session-level FAILED message from the use-case (when the run
+    # raises). A per-event error must not surface a scary line on an otherwise OK run.
     event = {"type": "error", "message": "subprocess died"}
-    line = narrate(event)
-    assert line is not None
-    assert line.startswith("GUPPI: ошибка:")
+    assert narrate(event) is None
 
 
 # --- Шум ----------------------------------------------------------------------
@@ -160,7 +161,9 @@ def test_unknown_event_is_noise() -> None:
 
 
 def test_long_error_message_is_truncated() -> None:
-    event = {"type": "error", "message": "x" * 500}
+    # The final `result` event still reports a session-level error (truncated); per-event
+    # tool/stream errors are suppressed (see the tests above).
+    event = {"type": "result", "is_error": True, "result": "x" * 500}
     line = narrate(event)
     assert line is not None
     assert len(line) < 120
