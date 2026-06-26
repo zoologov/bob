@@ -400,3 +400,45 @@ async def test_pr_open_does_not_block_a_fresh_session() -> None:
         s for s in rig.store.sessions.values() if s.state is CodingSessionState.PLAN_READY
     ]
     assert len(plan_ready) == 1  # the new session is waiting at the plan gate
+
+
+async def test_pr_open_then_approval_word_does_not_re_execute() -> None:
+    # 🔴 BOB-042 gate-intact guardrail (replaces the old "approval after PR_OPEN" test).
+    # After PR_OPEN there is NO PLAN_READY to approve, so even the literal approval word
+    # "давай" (classifier biased to coding) cannot re-execute — it is routed as a FRESH
+    # request that at WORST plans (the gate), never a second acceptEdits.
+    rig = _rig(coding=True)
+    await rig.router.route(text=_DEV_TASK, sender=_OWNER, is_owner=True)
+    await rig.router.route(text="давай", sender=_OWNER, is_owner=True)  # → PR_OPEN
+    assert rig.runner.modes == ["plan", "acceptEdits"]
+
+    consumed = await rig.router.route(text="давай", sender=_OWNER, is_owner=True)
+
+    assert consumed is True  # treated as a fresh classified request (it PLANS)
+    # 🔴 No second execution — at most a fresh PLAN; the plan gate held.
+    assert rig.runner.modes == ["plan", "acceptEdits", "plan"]
+    assert len(rig.pr_opener.opens) == 1  # still exactly one PR (the first session's)
+
+
+async def test_two_full_pr_open_cycles_each_independently_gated() -> None:
+    # 🔴 BOB-042 Fix A end-to-end: PR_OPEN never blocks — a SECOND full task runs after
+    # the first reached PR_OPEN — AND each cycle stays independently gated (the edit mode
+    # runs only after that cycle's OWN explicit approve). Two plans, two approves, two PRs.
+    rig = _rig(coding=True)
+
+    await rig.router.route(text=_DEV_TASK, sender=_OWNER, is_owner=True)
+    await rig.router.route(text="давай", sender=_OWNER, is_owner=True)  # cycle 1 → PR_OPEN
+    assert await rig.assistant.active_state() is None  # nothing blocks cycle 2
+
+    await rig.router.route(text="Боб, добавь README", sender=_OWNER, is_owner=True)
+    assert rig.runner.modes == ["plan", "acceptEdits", "plan"]  # planned, awaiting approve
+    await rig.router.route(text="давай", sender=_OWNER, is_owner=True)  # cycle 2 → PR_OPEN
+
+    # 🔴 Strictly interleaved plan→approve→execute per cycle — no execution without approve.
+    assert rig.runner.modes == ["plan", "acceptEdits", "plan", "acceptEdits"]
+    assert len(rig.pr_opener.opens) == 2  # exactly one PR per completed cycle
+    assert await rig.store.active() == ()  # both sessions terminal at PR_OPEN
+    pr_open = [
+        s for s in rig.store.sessions.values() if s.state is CodingSessionState.PR_OPEN
+    ]
+    assert len(pr_open) == 2

@@ -97,6 +97,23 @@ async def test_notifier_sends_coding_message_to_bobs_topic() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("topic_id", [_BOB_TOPIC_ID, None])
+async def test_notifier_threads_into_the_configured_topic(topic_id: int | None) -> None:
+    # The notifier faithfully threads into whatever topic it is configured with: Bob's
+    # topic when set (Fix B), or General (None) when no topic is configured — the rich
+    # markdown path is used either way. This pins the General fallback branch too.
+    bot = _FakeBot()
+    notifier = _GuppiOwnerNotifier(bot=bot, chat_id=_CHAT_ID, topic_id=topic_id)
+
+    await notifier.send("## План")
+
+    assert len(bot.rich_calls) == 1
+    assert bot.rich_calls[0].chat_id == _CHAT_ID
+    assert bot.rich_calls[0].message_thread_id == topic_id
+    assert bot.plain_calls == []
+
+
+@pytest.mark.asyncio
 async def test_notifier_plain_fallback_keeps_bobs_topic() -> None:
     # On a rich failure the plain fallback must still target Bob's topic (never General).
     bot = _FakeBot(rich_raises=True)
