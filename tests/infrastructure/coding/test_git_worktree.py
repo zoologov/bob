@@ -42,6 +42,23 @@ class _FakeCommand:
         return self._stdout
 
 
+class _ScriptedCommand:
+    """A runner that returns a per-subcommand canned stdout (keyed by the git verb)."""
+
+    def __init__(self, *, status_out: str) -> None:
+        self.calls: list[list[str]] = []
+        self.timeouts: list[float] = []
+        self._status_out = status_out
+
+    async def __call__(self, argv: list[str], *, timeout: float) -> str:
+        self.calls.append(list(argv))
+        self.timeouts.append(timeout)
+        # ``git -C <path> status --porcelain`` is the only call whose stdout matters.
+        if "status" in argv:
+            return self._status_out
+        return ""
+
+
 async def test_create_builds_the_fixed_worktree_add_argv(tmp_path: Path) -> None:
     runner = _FakeCommand()
     wt = GitWorktree(tmp_path, runner=runner, git_bin="my-git")
@@ -141,3 +158,64 @@ async def test_create_then_remove_round_trips_under_root(tmp_path: Path) -> None
 
 def test_git_worktree_satisfies_the_worktree_port(tmp_path: Path) -> None:
     assert isinstance(GitWorktree(tmp_path), Worktree)
+
+
+# --- commit_and_push (BOB-040 .1): deterministic commit+push of the feature branch ---
+
+
+async def test_commit_and_push_builds_add_commit_push_argv(tmp_path: Path) -> None:
+    runner = _ScriptedCommand(status_out=" M foo.py\n")  # something to commit
+    wt = GitWorktree(tmp_path, runner=runner, git_bin="my-git")
+    target = str(tmp_path / "bob-fix")
+
+    committed = await wt.commit_and_push(target, "bob/fix", "[BOB] do the thing")
+
+    assert committed is True
+    assert runner.calls == [
+        ["my-git", "-C", target, "add", "-A"],
+        ["my-git", "-C", target, "status", "--porcelain"],
+        ["my-git", "-C", target, "commit", "-m", "[BOB] do the thing"],
+        ["my-git", "-C", target, "push", "-u", "origin", "bob/fix"],
+    ]
+
+
+async def test_commit_and_push_passes_the_configured_timeout(tmp_path: Path) -> None:
+    runner = _ScriptedCommand(status_out=" M foo.py\n")
+    wt = GitWorktree(tmp_path, runner=runner, timeout=7.0)
+
+    await wt.commit_and_push(str(tmp_path / "bob-x"), "bob/x", "msg")
+
+    # Every git call carried the adapter's configured timeout.
+    assert runner.timeouts
+    assert all(t == 7.0 for t in runner.timeouts)
+
+
+async def test_commit_and_push_nothing_to_commit_returns_false_and_never_commits(
+    tmp_path: Path,
+) -> None:
+    runner = _ScriptedCommand(status_out="")  # clean tree → nothing to commit
+    wt = GitWorktree(tmp_path, runner=runner)
+
+    committed = await wt.commit_and_push(str(tmp_path / "bob-x"), "bob/x", "msg")
+
+    assert committed is False
+    verbs = [argv[3] for argv in runner.calls]  # argv = [git, -C, path, <verb>, ...]
+    # add + status ran, but NEVER commit and NEVER push (no empty commit, no push).
+    assert verbs == ["add", "status"]
+
+
+@pytest.mark.parametrize(
+    "branch",
+    ["main", "BOB/x", "bob/../etc", "feature/x", "bob/", "origin/main", "bob/UP"],
+)
+async def test_commit_and_push_refuses_a_non_bob_branch_never_pushing(
+    tmp_path: Path, branch: str
+) -> None:
+    runner = _ScriptedCommand(status_out=" M foo.py\n")
+    wt = GitWorktree(tmp_path, runner=runner)
+
+    with pytest.raises(WorktreeError):
+        await wt.commit_and_push(str(tmp_path / "x"), branch, "msg")
+
+    # A refused branch never reaches git — there is no path that can push main.
+    assert runner.calls == []

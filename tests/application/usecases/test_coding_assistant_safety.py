@@ -61,12 +61,17 @@ class _FakeRunner:
 class _FakeWorktree:
     created: list[str] = field(default_factory=list)
     removed: list[str] = field(default_factory=list)
+    pushes: list[tuple[str, str, str]] = field(default_factory=list)
     remove_raises: Exception | None = None
 
     async def create(self, branch: str) -> str:
         self.created.append(branch)
         slug = branch.split("/", 1)[1]
         return f"/wt/{slug}"
+
+    async def commit_and_push(self, path: str, branch: str, message: str) -> bool:
+        self.pushes.append((path, branch, message))
+        return True
 
     async def remove(self, path: str) -> None:
         self.removed.append(path)
@@ -225,6 +230,9 @@ async def test_stop_during_execution_breaks_run_opens_no_pr_and_cancels() -> Non
     # Assert: no PR opened, session ended CANCELLED, worktree removed — no leak.
     assert outcome.ok is False
     assert pr_opener.opens == []
+    # 🔴 A mid-run stop short-circuits BEFORE the deterministic commit+push — nothing
+    # is committed or pushed for a cancelled run.
+    assert worktree.pushes == []
     active = await store.active()
     assert active == ()  # the only session is terminal (CANCELLED)
     cancelled = [s for s in store.sessions.values() if s.state is CodingSessionState.CANCELLED]

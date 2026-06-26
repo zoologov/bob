@@ -72,6 +72,48 @@ class GitWorktree:
         )
         return str(path)
 
+    async def commit_and_push(self, path: str, branch: str, message: str) -> bool:
+        """Stage, commit and push the worktree's changes to its ``bob/<slug>`` branch.
+
+        Bob's DETERMINISTIC integration step (BOB-040): after ``claude`` applies the
+        approved plan inside the isolated worktree it does NOT commit (``acceptEdits``
+        auto-accepts file edits only, never git), so Bob commits + pushes the feature
+        branch himself before a PR can be opened. Runs, all fixed-form and shell-free:
+
+        * ``git -C <path> add -A`` — stage every change in the worktree.
+        * ``git -C <path> status --porcelain`` — if it is EMPTY, ``claude`` made no
+          changes: return ``False`` (the honest "nothing to commit" signal) WITHOUT
+          committing — never an empty commit.
+        * ``git -C <path> commit -m <message>`` then
+          ``git -C <path> push -u origin <branch>`` — only on a real change.
+
+        🔴 ``branch`` MUST be the validated ``bob/<slug>`` feature branch
+        (:func:`is_safe_branch`); any other branch is refused BEFORE git runs, so there
+        is physically no code path that can push ``main``. Returns ``True`` when a real
+        commit was pushed, ``False`` when there was nothing to commit; a genuine git
+        failure surfaces as the runner's :class:`CommandError`.
+        """
+        if not is_safe_branch(branch):
+            raise WorktreeError(
+                f"refusing to push branch {branch!r}: not a safe bob/<slug> branch"
+            )
+        await self._runner(
+            [self._git_bin, "-C", path, "add", "-A"], timeout=self._timeout
+        )
+        status = await self._runner(
+            [self._git_bin, "-C", path, "status", "--porcelain"], timeout=self._timeout
+        )
+        if not status.strip():
+            return False  # claude applied no changes — fail honestly, no empty commit
+        await self._runner(
+            [self._git_bin, "-C", path, "commit", "-m", message], timeout=self._timeout
+        )
+        await self._runner(
+            [self._git_bin, "-C", path, "push", "-u", "origin", branch],
+            timeout=self._timeout,
+        )
+        return True
+
     async def remove(self, path: str) -> None:
         """Remove the worktree at ``path`` (refused unless it is under the root)."""
         if not self._is_under_root(path):
