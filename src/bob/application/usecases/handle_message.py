@@ -1010,20 +1010,28 @@ class HandleMessage:
         # The stranger voice directive is appended so the wariness reads as
         # character. Default to MORE restriction when unsure.
         is_guest = interlocutor is not None and interlocutor.trust is Trust.GUEST
+        is_owner = (
+            interlocutor is not None and interlocutor.kind is InterlocutorKind.OWNER
+        )
         # Reflection containment (BOB-033 .3): the reply-recall pool excludes private
         # reflection episodes so Bob's inner monologue never becomes a copyable exemplar
         # in a user-facing reply — the inner life colours tone via MOOD, not by parroting
         # reflection TEXT. Facts + past message turns still ground the reply, and the
         # deliberate ``leak_inner_life`` path (below, via self._reflection) is untouched.
-        recalled: Sequence[Recalled] = (
-            []
-            if is_guest
-            else recalled_excluding_reflections(
+        # Per-person dialogue memory (BOB-045 .2): recall is scoped to the CURRENT
+        # interlocutor for a non-owner, so a guest's prompt can ONLY ever carry that
+        # guest's OWN recalled episodes — owner-private memory never surfaces (🔴 privacy
+        # by construction). The owner keeps GLOBAL recall (trusted). This post-filter is
+        # defense-in-depth alongside the sender-filtered history replay below.
+        recalled: Sequence[Recalled] = _scoped_recall(
+            recalled_excluding_reflections(
                 await self._recall.recall(event.text, k=_RECALL_K)
-            )
+            ),
+            interlocutor=interlocutor,
+            is_owner=is_owner,
         )
-        history: Sequence[Mapping[str, object]] = (
-            [] if is_guest else await self._episodes.recent_episodes(self._recent_turns)
+        history: Sequence[Mapping[str, object]] = await self._replay_person_history(
+            interlocutor, is_guest=is_guest
         )
         # User-repeat detection (BOB-022): does the OWNER repeat (near-)verbatim what
         # he already said in the recent window? Pure, no-LLM, conservative (exact after
@@ -1742,6 +1750,27 @@ class HandleMessage:
             return None
         return self._bob_user_id_source()
 
+    async def _replay_person_history(
+        self, interlocutor: Interlocutor | None, *, is_guest: bool
+    ) -> Sequence[Mapping[str, object]]:
+        """Replay the CURRENT interlocutor's per-person thread (BOB-045 .2).
+
+        With a perceived interlocutor carrying a ``sender_id`` we replay the last
+        ``recent_turns`` episodes WITH THAT person (owner / known / guest alike) — each
+        sees only their OWN thread, the privacy boundary enforced 🔴 in the query itself
+        (``recent_episodes_for`` filters on ``sender_id``). With no interlocutor / no
+        ``sender_id`` (perception seam unwired) we DEGRADE to the pre-BOB-045 behaviour:
+        a guest gets nothing, anyone else (owner / unknown) the global window — so an
+        unresolved identity never regresses and never leaks a stranger the owner's log.
+        """
+        if interlocutor is not None and interlocutor.sender_id is not None:
+            return await self._episodes.recent_episodes_for(
+                interlocutor.sender_id, self._recent_turns
+            )
+        if is_guest:
+            return []
+        return await self._episodes.recent_episodes(self._recent_turns)
+
     async def _others_present(self, event: MessageReceived) -> bool:
         """Whether the recent thread has senders OTHER than the current one (BOB-023).
 
@@ -2268,6 +2297,30 @@ def _verdict_sign(verdict: Verdict) -> float:
     if verdict in _NEGATIVE_VERDICTS:
         return -1.0
     return 0.0
+
+
+def _scoped_recall(
+    recalled: Sequence[Recalled],
+    *,
+    interlocutor: Interlocutor | None,
+    is_owner: bool,
+) -> Sequence[Recalled]:
+    """Scope recalled memories to a non-owner's OWN episodes (BOB-045 .2, 🔴 privacy).
+
+    The owner is trusted and keeps GLOBAL recall (unchanged); with no perceived
+    interlocutor (perception seam unwired) recall also stays global, preserving the
+    pre-BOB-045 behaviour. A non-owner (known / guest) only ever sees recalled items
+    attributed to THEIR OWN ``sender_id`` — every item with a different or absent
+    ``sender_id`` (an owner-private fact, another person's episode) is dropped, so
+    owner-private memory can never surface to a stranger. A non-owner with no resolved
+    ``sender_id`` has no scopable identity, hence no recall (the safe default).
+    """
+    if is_owner or interlocutor is None:
+        return recalled
+    person = interlocutor.sender_id
+    if person is None:
+        return []
+    return [item for item in recalled if item.get("sender_id") == person]
 
 
 def _assemble_shareable_context(

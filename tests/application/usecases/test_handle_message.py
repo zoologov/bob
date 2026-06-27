@@ -891,6 +891,176 @@ async def test_non_positive_recent_window_is_rejected() -> None:
         _build(reply="hi", recent_turns=0)
 
 
+# --- BOB-045 .2: per-person history replay + privacy-scoped recall ------------
+
+# An owner's private turn (sender 1) and a guest's own turn (sender 2) share the log.
+# Each interlocutor must only ever see the turns attributed to THEMSELVES.
+_OWNER_THREAD_TURN = "Vova: секретный план на завтра\nbob: понял, держим в тайне"
+_GUEST_THREAD_TURN = "Norman: привет, расскажи о себе\nbob: привет, я Боб"
+_OWNER_SENDER_ID = 1
+_GUEST_SENDER_ID = 2
+_PERSON_THREAD: list[Mapping[str, object]] = [
+    {"content": _OWNER_THREAD_TURN, "event_type": "message", "sender_id": _OWNER_SENDER_ID},
+    {"content": _GUEST_THREAD_TURN, "event_type": "message", "sender_id": _GUEST_SENDER_ID},
+]
+
+
+def _guest_with_id(sender_id: int | None) -> _FakeInterlocutorResolver:
+    return _FakeInterlocutorResolver(
+        _interlocutor(
+            name="Norman",
+            kind=InterlocutorKind.GUEST,
+            trust=Trust.GUEST,
+            sender_id=sender_id,
+        )
+    )
+
+
+def _owner_with_id(sender_id: int | None) -> _FakeInterlocutorResolver:
+    return _FakeInterlocutorResolver(
+        _interlocutor(name="Vova", kind=InterlocutorKind.OWNER, sender_id=sender_id)
+    )
+
+
+async def test_guest_replays_only_their_own_per_person_thread() -> None:
+    # BOB-045: a guest gets THEIR OWN thread replayed (not empty, not the owner's) —
+    # the per-person window keys on the guest's sender_id, so the owner's private turn
+    # in the same log is never replayed for the stranger.
+    handler, _bot, _repo, tier1 = _build(
+        reply="hi",
+        history=_PERSON_THREAD,
+        perceive_sender=_guest_with_id(_GUEST_SENDER_ID),
+    )
+
+    await handler.handle(_message("расскажи подробно про кофе"))
+
+    assert _GUEST_THREAD_TURN in tier1.all_text  # the guest's own thread is replayed
+    assert _OWNER_THREAD_TURN not in tier1.all_text  # the owner's turn is never seen
+
+
+async def test_guest_recall_is_scoped_to_their_own_episodes() -> None:
+    # 🔴 BOB-045 privacy: a non-owner's recall is post-filtered to items attributed to
+    # THEIR OWN sender_id. An owner-private memory (sender 1) and a sender-less fact
+    # (None) are dropped; only the guest's OWN recalled episode (sender 2) survives.
+    recall = FakeRecall(
+        hits=[
+            {"content": "owner private secret", "category": "personal", "sender_id": 1},
+            {"content": "ownerless fact", "category": "fact", "sender_id": None},
+            {"content": "norman own memory", "category": "personal", "sender_id": 2},
+        ]
+    )
+    handler, _bot, _repo, tier1 = _build(
+        reply="hi", recall=recall, perceive_sender=_guest_with_id(_GUEST_SENDER_ID)
+    )
+
+    await handler.handle(_message("расскажи подробно про кофе"))
+
+    assert "norman own memory" in tier1.all_text  # the guest's own memory survives
+    assert "owner private secret" not in tier1.all_text  # owner-private dropped
+    assert "ownerless fact" not in tier1.all_text  # sender-less fact dropped
+
+
+async def test_owner_keeps_their_thread_and_global_recall() -> None:
+    # BOB-045: the owner replays THEIR OWN thread (per-person) and keeps GLOBAL recall —
+    # a sender-less fact still grounds the owner reply (owner recall is never scoped).
+    recall = FakeRecall(
+        hits=[{"content": "ownerless fact", "category": "fact", "sender_id": None}]
+    )
+    handler, _bot, _repo, tier1 = _build(
+        reply="hi",
+        history=_PERSON_THREAD,
+        recall=recall,
+        perceive_sender=_owner_with_id(_OWNER_SENDER_ID),
+    )
+
+    await handler.handle(_message("объясни подробно про кофе"))
+
+    assert _OWNER_THREAD_TURN in tier1.all_text  # the owner's own thread is replayed
+    assert _GUEST_THREAD_TURN not in tier1.all_text  # not the guest's thread
+    assert "ownerless fact" in tier1.all_text  # owner recall stays global
+
+
+async def test_guest_assembled_context_carries_no_foreign_memory() -> None:
+    # 🔴 BOB-045 privacy invariant: with a guest interlocutor, NEITHER replayed history
+    # NOR scoped recall may carry a turn/memory attributed to anyone else — defense in
+    # depth (sender-filtered query + post-filtered recall).
+    recall = FakeRecall(
+        hits=[
+            {"content": "owner private secret", "category": "personal", "sender_id": 1},
+            {"content": "ownerless fact", "category": "fact", "sender_id": None},
+            {"content": "norman own memory", "category": "personal", "sender_id": 2},
+        ]
+    )
+    handler, _bot, _repo, tier1 = _build(
+        reply="hi",
+        history=_PERSON_THREAD,
+        recall=recall,
+        perceive_sender=_guest_with_id(_GUEST_SENDER_ID),
+    )
+
+    await handler.handle(_message("расскажи подробно про кофе"))
+
+    text = tier1.all_text
+    # Only the guest's own thread + own recall remain...
+    assert _GUEST_THREAD_TURN in text
+    assert "norman own memory" in text
+    # ...nothing attributed to the owner or a sender-less memory leaks through.
+    assert _OWNER_THREAD_TURN not in text
+    assert "owner private secret" not in text
+    assert "ownerless fact" not in text
+
+
+async def test_history_degrades_to_global_for_owner_without_sender_seam() -> None:
+    # BOB-045 degradation: no perception seam → no interlocutor → owner-or-unknown keeps
+    # the pre-BOB-045 GLOBAL window (no regression for an unresolved identity).
+    handler, _bot, _repo, tier1 = _build(reply="hi", history=_THREAD_HISTORY)
+
+    await handler.handle(_message("объясни подробно про кофе"))
+
+    assert _THREAD_TOPIC_TURN in tier1.all_text  # global replay, unchanged
+
+
+async def test_guest_without_sender_id_degrades_to_empty_memory() -> None:
+    # BOB-045 degradation: a guest with no resolvable sender_id has no scopable thread,
+    # so history AND recall fall back to empty (the pre-BOB-045 guest behaviour) — never
+    # the owner's data.
+    recall = FakeRecall(
+        hits=[{"content": "norman own memory", "category": "personal", "sender_id": 2}]
+    )
+    handler, _bot, _repo, tier1 = _build(
+        reply="hi",
+        history=_PERSON_THREAD,
+        recall=recall,
+        perceive_sender=_guest_with_id(None),
+    )
+
+    await handler.handle(_message("расскажи подробно про кофе"))
+
+    assert _OWNER_THREAD_TURN not in tier1.all_text
+    assert _GUEST_THREAD_TURN not in tier1.all_text
+    assert "norman own memory" not in tier1.all_text  # scoped recall empty without an id
+
+
+async def test_guest_with_thread_still_gets_no_owner_inner_life_leak() -> None:
+    # 🔴 BOB-045 keeps ALL other guest restrictions: even though the guest now gets THEIR
+    # OWN thread, the grounded owner inner-life leak (BOB-018) is still withheld — only
+    # the memory boundary moved to per-person, the authz boundary is untouched.
+    handler, _bot, _repo, tier1 = _build(
+        reply="hi",
+        history=_PERSON_THREAD,
+        expression_freqs=_LEAK_ON,
+        reflection=_FakeReflectionReader(text=_REFLECTION_TEXT),
+        perceive_sender=_guest_with_id(_GUEST_SENDER_ID),
+        bob_user_id_source=lambda: 777,
+    )
+
+    # A direct @mention forces ENGAGE so the assertion is RNG-independent.
+    await handler.handle(_addr_message("Боб, расскажи подробно про кофе", mentions_bob=True))
+
+    assert _GUEST_THREAD_TURN in tier1.all_text  # the guest's own thread is replayed
+    assert _REFLECTION_TEXT not in tier1.all_text  # but no owner inner-life leak
+
+
 async def test_durable_fact_is_extracted_into_semantic_memory() -> None:
     # Arrange: Tier 0 first answers sentiment, then returns one durable fact.
     handler, _bot, repo, _tier1 = _build(
@@ -3792,15 +3962,19 @@ async def test_guest_turn_never_engages_the_tool_loop() -> None:
 
 
 async def test_guest_turn_does_not_recall_owner_memory() -> None:
-    # SECURITY INVARIANT: owner-private memory is NOT recalled for a guest.
+    # SECURITY INVARIANT: owner-private memory is NOT recalled for a guest. Since
+    # BOB-045 .2 recall IS invoked (the guest may surface THEIR OWN scoped episodes),
+    # but the default canned memory carries no sender_id, so the per-person post-filter
+    # drops it — no owner-private content reaches the guest's prompt.
     recall = FakeRecall()
-    handler, _bot, _repo, _tier1 = _build(
+    handler, _bot, _repo, tier1 = _build(
         reply="hi", recall=recall, perceive_sender=_guest_resolver()
     )
 
     await handler.handle(_message("расскажи подробно про кофе"))
 
-    assert recall.surface_old_calls == []  # recall was never invoked for a guest
+    assert _RECALL_MEMORY not in tier1.all_text  # owner memory scoped out for a guest
+    assert "recalled memories" not in tier1.all_text.casefold()
 
 
 async def test_guest_turn_has_no_owner_private_content_in_the_prompt() -> None:
@@ -4030,7 +4204,9 @@ async def test_guest_first_impression_is_used_without_leaking_owner_memory() -> 
 
     assert note in tier1.all_text  # the guest's own impression is recalled
     assert _RECALL_MEMORY not in tier1.all_text  # owner memory still redacted
-    assert recall.surface_old_calls == []  # recall never ran for a guest
+    # BOB-045 .2: recall runs but is scoped per-person — the sender-less owner memory
+    # is dropped, so it never surfaces to the guest.
+    assert _RECALL_MEMORY not in tier1.all_text
     # The guest's own first contact is still recorded (per-PERSON data, about them).
     assert impressions.recorded
 
@@ -4137,7 +4313,8 @@ async def test_anonymous_guest_turn_replies_and_records_nothing() -> None:
     await handler.handle(_message("расскажи подробно про кофе"))
 
     assert bot.final_text == "привет"  # the anonymous guest still got a social reply
-    assert recall.surface_old_calls == []  # owner memory never recalled for a guest
+    # BOB-045 .2: an anonymous guest (no sender_id) has no scopable thread, so recall
+    # post-filters to empty — no owner-private content leaks.
     assert _RECALL_MEMORY not in tier1.all_text  # no owner-private content leaked
     # The seam is still invoked with the no-id interlocutor (the tracker no-ops on it);
     # the recorded interlocutor carries no sender_id, so nothing keyable is stored.
@@ -5000,7 +5177,8 @@ async def test_guest_directed_to_bob_engages_but_stays_restricted() -> None:
     await handler.handle(_addr_message("Боб, что ты умеешь?", mentions_bob=True))
 
     assert bot.sent  # engaged on the direct address
-    assert recall.surface_old_calls == []  # but no owner memory recalled
+    # BOB-045 .2: recall runs but is scoped per-person; the sender-less owner memory
+    # is dropped, so no owner content reaches the guest's prompt.
     assert cap.calls == []  # and no capability dispatched
     assert _RECALL_MEMORY not in tier1.all_text  # owner content stays redacted
 
@@ -5272,7 +5450,8 @@ async def test_us2_guest_continuity_lift_engages_but_stays_restricted() -> None:
     await handler.handle(_addr_message("просто продолжаю мысль", sender_name="Rando"))
 
     assert bot.sent  # engaged via continuity lift
-    assert recall.surface_old_calls == []  # but no owner memory recalled
+    # BOB-045 .2: recall runs but is scoped per-person; the sender-less owner memory
+    # is dropped, so no owner content reaches the guest's prompt.
     assert cap.calls == []  # and no capability dispatched
     assert _RECALL_MEMORY not in tier1.all_text  # owner content stays redacted
 
