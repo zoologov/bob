@@ -155,6 +155,9 @@ ignore = [
     "RUF002",
     "RUF003",
 ]
+# The coding work-indicator adapters (BOB-046 .2): Russian docstrings whose Cyrillic
+# look-alikes are intentional — RUF001/RUF002/RUF003 do not apply to these.
+"src/bob/infrastructure/telegram/coding_indicator.py" = ["RUF001", "RUF002", "RUF003"]
 # The self-improvement model (BOB-028 .1) carries Russian persona/policy docstrings +
 # observation/adjustment literals whose Cyrillic look-alikes are intentional —
 # RUF001/RUF002/RUF003 do not apply to these.
@@ -258,6 +261,27 @@ ignore = [
 "tests/application/usecases/test_coding_assistant.py" = [
     "S101",
     "ARG001",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+# The coding work-indicator tests (BOB-046 .2) assert on Russian phase literals + use
+# unused fake-port args; S101/ARG/RUF001-003 do not apply to these test fakes.
+"tests/application/usecases/test_coding_work_indicator.py" = [
+    "S101",
+    "ARG001",
+    "ARG002",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+# The coding work-indicator adapter tests (BOB-046 .2): same test-fake allowances.
+"tests/infrastructure/telegram/test_coding_indicator.py" = [
+    "S101",
+    "ARG001",
+    "ARG002",
     "PLR2004",
     "RUF001",
     "RUF002",

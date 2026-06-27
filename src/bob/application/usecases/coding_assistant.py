@@ -37,6 +37,7 @@ Worktree убирается в ``finally`` на любом завершении 
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import re
 import uuid
@@ -52,6 +53,7 @@ from bob.domain.coding.narrate import narrate
 from bob.domain.coding.state import CodingSessionState, can_approve_plan, is_terminal
 
 if TYPE_CHECKING:
+    from contextlib import AbstractAsyncContextManager
     from datetime import datetime
 
     from bob.domain.ports import (
@@ -68,6 +70,8 @@ __all__ = [
     "CodingOutcome",
     "OwnerCheck",
     "OwnerNotifier",
+    "StatusPanel",
+    "TypingKeepalive",
 ]
 
 # The execute-mode passed to the runner when the plan is approved (apply edits inside
@@ -111,6 +115,40 @@ class OwnerCheck(Protocol):
         ...
 
 
+class TypingKeepalive(Protocol):
+    """Сейм индикатора «Боб печатает…» на время долгих немых прогонов claude (BOB-046 .2).
+
+    Ноль-арг фабрика async-контекст-менеджера: на вход — typing-action в топик Боба, на
+    выход — он гаснет. Реализуется в композиции адаптером над ботом Боба (реюз идиомы
+    BOB-009 ``typing_indicator`` с keepalive-рефрешем, чтобы 5-секундный typing не
+    истекал в минутной паузе). Use-case ОБОРАЧИВАЕТ им plan- и execute-прогоны; незавязан
+    (``None``) → no-op (индикатор просто отсутствует, без падения).
+    """
+
+    def __call__(self) -> AbstractAsyncContextManager[None]:
+        """Открыть keepalive на время прогона (закрытие гасит индикатор)."""
+        ...
+
+
+class StatusPanel(Protocol):
+    """Сейм одного editable сообщения-статуса по фазам сессии (BOB-046 .2).
+
+    «Живая панель»: ОДНО сообщение, отправленное на старте (``open``) и РЕДАКТИРУЕМОЕ по
+    фазам (``update``: план → выполняю → PR/провал/стоп) — не спам новых сообщений.
+    Реализуется адаптером над ботом Боба (``editMessageText``); если редактировать нечем
+    (нет id / не поддержано) — деградирует в no-op (current behavior: без статус-строки).
+    Незавязан (``None``) → no-op. Дополняет, а НЕ заменяет гейт/нарратив-сообщения.
+    """
+
+    async def open(self, text: str) -> None:
+        """Послать стартовое сообщение-статус (best-effort, транспорт за адаптером)."""
+        ...
+
+    async def update(self, text: str) -> None:
+        """Отредактировать то же сообщение под новую фазу (no-op, если нечего править)."""
+        ...
+
+
 @dataclass(frozen=True, slots=True)
 class CodingOutcome:
     """Итог одной команды: успех/отказ, owner-сообщение и итоговая сессия.
@@ -140,6 +178,8 @@ class CodingAssistant:
         clock: _Clock,
         id_factory: Callable[[], str] = lambda: uuid.uuid4().hex,
         execute_mode: str = _DEFAULT_EXECUTE_MODE,
+        typing_keepalive: TypingKeepalive | None = None,
+        status_panel: StatusPanel | None = None,
     ) -> None:
         self._runner = runner
         self._worktree = worktree
@@ -150,6 +190,10 @@ class CodingAssistant:
         self._clock = clock
         self._id_factory = id_factory
         self._execute_mode = execute_mode
+        # Work indicators (BOB-046 .2): both degrade to a no-op when unwired, so the gated
+        # flow is unchanged and never depends on the indicator being present.
+        self._typing: TypingKeepalive = typing_keepalive or _no_typing
+        self._panel: StatusPanel = status_panel or _NullStatusPanel()
         # Per-session cancel flags: a concurrent ``stop`` adds the session id, and the
         # narrate loop breaks at the next event (closing the runner → killing the proc).
         self._cancelled: set[str] = set()
@@ -168,6 +212,10 @@ class CodingAssistant:
         # Bob's voice: he takes the task on (first person) and directs GUPPI — sent
         # before planning so the owner sees Bob accept immediately (BOB-041 .3).
         await self._notifier.send(session_voice.accepted())
+        # Work indicator (BOB-046 .2): one editable status panel opened up front, so the
+        # owner sees "⏳ Прикидываю план…" during the silent claude wait instead of a minute
+        # of nothing. It is EDITED (never re-sent) through the phases below.
+        await self._panel.open(session_voice.panel_planning())
         now = self._clock.now()
         branch = worktree_branch(task)
         path = await self._worktree.create(branch)
@@ -182,7 +230,8 @@ class CodingAssistant:
         )
         await self._store.save(session)
         try:
-            plan = await self._run_plan(session, path)
+            async with self._typing():  # "Bob is typing…" through the long plan wait
+                plan = await self._run_plan(session, path)
         except Exception as exc:  # fault isolation: a runner fault is an honest FAILED
             logger.exception("coding: plan run failed for %s", session.id)
             return await self._fail(session, exc, cleanup=True)
@@ -190,6 +239,7 @@ class CodingAssistant:
             CodingSessionState.PLAN_READY, at=self._clock.now()
         )
         await self._store.save(session)
+        await self._panel.update(session_voice.panel_plan_ready())
         return await self._reply(True, session_voice.plan(plan), session=session)
 
     async def approve_plan(self, sender: int | None) -> CodingOutcome:
@@ -233,6 +283,7 @@ class CodingAssistant:
         session = session.with_state(CodingSessionState.CANCELLED, at=self._clock.now())
         await self._store.save(session)
         await self._cleanup(session.worktree_path)
+        await self._panel.update(session_voice.panel_stopped())
         return await self._reply(True, session_voice.stopped(), session=session)
 
     async def status(self, sender: int | None) -> CodingOutcome:
@@ -271,7 +322,9 @@ class CodingAssistant:
         BEFORE opening the PR. If ``claude`` changed nothing, the push reports nothing to
         commit and the session FAILS honestly with no PR.
         """
-        await self._narrate_run(session, path)
+        await self._panel.update(session_voice.panel_executing())
+        async with self._typing():  # "Bob is typing…" through the long execute wait
+            await self._narrate_run(session, path)
         if session.id in self._cancelled:  # a stop landed mid-run — do not open a PR
             return CodingOutcome(ok=False, message=session_voice.stopped(), session=session)
         committed = await self._worktree.commit_and_push(
@@ -282,6 +335,7 @@ class CodingAssistant:
                 CodingSessionState.FAILED, at=self._clock.now()
             )
             await self._store.save(session)
+            await self._panel.update(session_voice.panel_failed())
             return await self._reply(False, session_voice.no_changes(), session=session)
         pr_url = await self._pr_opener.open(
             session.branch, _pr_title(session), _pr_body(session)
@@ -290,6 +344,7 @@ class CodingAssistant:
             CodingSessionState.PR_OPEN, at=self._clock.now()
         )
         await self._store.save(session)
+        await self._panel.update(session_voice.panel_pr())
         return await self._reply(True, session_voice.pr(pr_url), session=session)
 
     async def _run_plan(self, session: CodingSession, path: str) -> str:
@@ -337,6 +392,7 @@ class CodingAssistant:
         """
         session = session.with_state(CodingSessionState.FAILED, at=self._clock.now())
         await self._store.save(session)
+        await self._panel.update(session_voice.panel_failed())
         if cleanup:
             await self._cleanup(session.worktree_path)
         return await self._reply(False, session_voice.failed(str(exc)), session=session)
@@ -384,6 +440,22 @@ def _closeable(
     the wider ``AsyncIterator`` type, so this documented cast restores the ``aclose`` view.
     """
     return cast("AsyncGenerator[Mapping[str, object], None]", stream)
+
+
+@contextlib.asynccontextmanager
+async def _no_typing() -> AsyncGenerator[None, None]:
+    """No-op typing keepalive: unwired indicator → no typing action, just runs the body."""
+    yield
+
+
+class _NullStatusPanel:
+    """No-op status panel: unwired indicator → no status message (graceful degrade)."""
+
+    async def open(self, text: str) -> None:
+        """Drop the open — the owner simply gets no status line (current behavior)."""
+
+    async def update(self, text: str) -> None:
+        """Drop the edit — nothing to edit when no panel was ever opened."""
 
 
 def _refused() -> CodingOutcome:

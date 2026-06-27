@@ -29,6 +29,12 @@ __all__ = [
     "failed",
     "no_changes",
     "no_session",
+    "panel_executing",
+    "panel_failed",
+    "panel_plan_ready",
+    "panel_planning",
+    "panel_pr",
+    "panel_stopped",
     "plan",
     "pr",
     "status_idle",
@@ -72,6 +78,16 @@ _CANNOT_APPROVE = (
 _NO_SESSION = "Активной сессии нет — я сейчас ничем не занят."
 _STATUS_IDLE = "Активной сессии нет — я сейчас ничем не занят."
 _STATUS_LINE = "Сессия «{task}» — состояние {state} (ветка {branch})."
+
+# --- Индикатор работы: одна короткая строка editable-панели по фазам (BOB-046 .2) ---
+# Не нарратив и не гейт — просто видимый owner маркер «процесс идёт», который use-case
+# редактирует на месте (одно сообщение, не спам): план → выполняю → PR / провал / стоп.
+_PANEL_PLANNING = "⏳ Прикидываю план…"
+_PANEL_PLAN_READY = "📝 План готов — жду добро."
+_PANEL_EXECUTING = "⚙️ GUPPI выполняет…"
+_PANEL_PR = "✅ PR открыт."
+_PANEL_FAILED = "⚠️ Не получилось."
+_PANEL_STOPPED = "⏹️ Остановил."
 
 
 def accepted() -> str:
@@ -137,3 +153,33 @@ def status_idle() -> str:
 def status_line(*, task: str, state: str, branch: str) -> str:
     """Статус идущей сессии: задача, состояние и ветка одной строкой."""
     return _STATUS_LINE.format(task=task, state=state, branch=branch)
+
+
+def panel_planning() -> str:
+    """Фаза панели «прикидываю план» — стартовая строка индикатора работы."""
+    return _PANEL_PLANNING
+
+
+def panel_plan_ready() -> str:
+    """Фаза панели «план готов» — план собран, ждём добро owner."""
+    return _PANEL_PLAN_READY
+
+
+def panel_executing() -> str:
+    """Фаза панели «выполняю» — GUPPI вносит правки по одобренному плану."""
+    return _PANEL_EXECUTING
+
+
+def panel_pr() -> str:
+    """Финал панели «PR открыт» — успешное завершение сессии."""
+    return _PANEL_PR
+
+
+def panel_failed() -> str:
+    """Финал панели «не получилось» — провал/нет правок."""
+    return _PANEL_FAILED
+
+
+def panel_stopped() -> str:
+    """Финал панели «остановил» — owner погасил сессию kill-switch'ем."""
+    return _PANEL_STOPPED

@@ -153,6 +153,7 @@ from bob.infrastructure.persistence import (
 from bob.infrastructure.persistence.coding_session_store import (
     SqliteCodingSessionStore,
 )
+from bob.infrastructure.telegram.coding_indicator import StatusPanel, TypingKeepalive
 from bob.infrastructure.telegram.gateway import MarkdownSendBot, RichMarkdownSender
 from bob.infrastructure.telegram.multibot import (
     BotIdentity,
@@ -176,6 +177,10 @@ if TYPE_CHECKING:
         MemoryRecall,
         Reranker,
         ToolCallingProvider,
+    )
+    from bob.infrastructure.telegram.coding_indicator import (
+        EditableStatusBot,
+        TypingActionBot,
     )
     from bob.infrastructure.telegram.gateway import (
         BotLike,
@@ -1031,6 +1036,11 @@ def _build_coding_router(
     )
 
 
+# Telegram clears a "typing" action after ~5s, so the coding indicator refreshes a little
+# under that so it never lapses during a minute-long claude wait (BOB-046 .2).
+_CODING_TYPING_INTERVAL = 4.0
+
+
 def _build_coding_assistant(
     config: Mapping[str, object],
     *,
@@ -1072,6 +1082,21 @@ def _build_coding_assistant(
         owner=authorizer,
         clock=clock,
         execute_mode=_str(coder, "permission_mode", "acceptEdits"),
+        # Work indicator (BOB-046 .2): "Bob is typing…" through the silent claude waits
+        # + one editable status panel, both into Bob's topic via Bob's bot. Both degrade
+        # to a no-op if the bot cannot send the action / edit the message.
+        typing_keepalive=TypingKeepalive(
+            bot=cast("TypingActionBot", notifier_bot),
+            chat_id=chat_id,
+            thread_id=topic_id,
+            interval=_CODING_TYPING_INTERVAL,
+            sleep=asyncio.sleep,
+        ),
+        status_panel=StatusPanel(
+            bot=cast("EditableStatusBot", notifier_bot),
+            chat_id=chat_id,
+            thread_id=topic_id,
+        ),
     )
 
 
@@ -2282,6 +2307,15 @@ class _AiogramBotAdapter:
             chat_id=chat_id,
             rich_message=rich_message,
             message_thread_id=message_thread_id,
+        )
+
+    async def edit_message_text(
+        self, *, chat_id: int, message_id: int, text: str
+    ) -> object:
+        # BOB-046 .2: edit the coding-session status panel in place (one message edited
+        # through the phases, not a stream of new messages).
+        return await self._bot.edit_message_text(  # type: ignore[attr-defined]
+            chat_id=chat_id, message_id=message_id, text=text
         )
 
     async def set_message_reaction(
