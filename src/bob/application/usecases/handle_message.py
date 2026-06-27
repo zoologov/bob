@@ -1937,7 +1937,11 @@ class HandleMessage:
             min_occurrences=tic_min_occurrences,
         )
         if closer is not None:
-            return strip_recurring_closer(current, closer)
+            # Guard the edge case where the ENTIRE reply is the recurring closer (a bare
+            # "Мне так спокойнее."): stripping would leave an empty string, so keep the
+            # last draft rather than ship nothing (BOB-043 review).
+            stripped = strip_recurring_closer(current, closer)
+            return stripped if stripped.strip() else current
         return current
 
     async def _recent_bob_closers(self, *, is_guest: bool) -> tuple[str, ...]:
