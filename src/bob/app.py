@@ -247,6 +247,11 @@ _DEFAULT_ENGAGEMENT_MOOD_LIFT = 0.1
 # message is lightly clamped to its first finished thought at this ceiling.
 _DEFAULT_LENGTH_GUARD_MAX_CHARS = 280
 
+# Default recent-history replay window (BOB-044; mirrors HandleMessage's default and the
+# loader's dialogue.recent_turns default). How many recent conversation turns are
+# replayed into the reply context so Bob holds the dialogue thread.
+_DEFAULT_RECENT_TURNS = 14
+
 # The proactivity engine ticks on the heartbeat cadence: cheap by construction
 # (the urge/governance decision is pure, defaulting to silence), so most ticks
 # make ZERO LLM calls.
@@ -666,6 +671,12 @@ def build_application(
         brevity_thresholds=_build_brevity_thresholds(merged),
         length_guard_enabled=_build_length_guard_enabled(merged),
         length_guard_max_chars=_build_length_guard_max_chars(merged),
+        # Recent-history replay window (BOB-044): how many recent conversation turns are
+        # replayed into the reply context so Bob holds the dialogue thread. Widened from
+        # the old hardcoded 6 (too tight — an earlier topic fell out of the window).
+        # Tunable via dialogue.recent_turns; the conversation-replay window only,
+        # independent of the anti-repeat / tic-guard windows.
+        recent_turns=_build_recent_turns(merged),
         # Anti-repeat window (BOB-026 .1): the fresh reply is compared against a WINDOW
         # of Bob's recent replies (not just the last), verbatim OR near-verbatim, so a
         # repeat "через ход" (отказ → another turn → the SAME отказ) regenerates once.
@@ -1513,6 +1524,24 @@ def _build_brevity_thresholds(config: Mapping[str, object]) -> BrevityThresholds
         low_engagement=_float_or(section, "low_engagement", defaults.low_engagement),
         tilt_mood=_float_or(section, "tilt_mood", defaults.tilt_mood),
     )
+
+
+def _build_recent_turns(config: Mapping[str, object]) -> int:
+    """Build the BOB-044 recent-history replay window from ``dialogue.recent_turns``.
+
+    How many recent conversation turns HandleMessage replays into the reply context so
+    Bob holds the dialogue thread. Falls back to the widened default (14) when the key
+    is absent or an invalid type. A non-positive value is rejected here rather than
+    silently wiring a window that replays nothing — coherence depends on a real window.
+    This is the conversation-replay window only, independent of the anti-repeat
+    ``repeat.*`` windows (BOB-026/036) and the wide tic-guard ``repeat.tic_lookback``.
+    """
+    section = _section(config, "dialogue")
+    recent_turns = _int(section, "recent_turns", _DEFAULT_RECENT_TURNS)
+    if recent_turns <= 0:
+        msg = f"dialogue.recent_turns must be positive, got {recent_turns}"
+        raise ValueError(msg)
+    return recent_turns
 
 
 def _build_repeat_thresholds(config: Mapping[str, object]) -> RepeatThresholds:
