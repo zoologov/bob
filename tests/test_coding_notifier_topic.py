@@ -6,8 +6,10 @@
 
 Owner ставит задачу Бобу в своём топике (NL-путь BOB-041), значит и ответы сессии
 (план / нарратив / PR) должны падать в тот же тред, не в General. Поэтому
-``_GuppiOwnerNotifier`` использует ``message_thread_id == telegram.bob.topic_id`` и
-сохраняет rich/markdown-путь (BOB-041 .1) плюс plain-фолбэк.
+``_CodingOwnerNotifier`` использует ``message_thread_id == telegram.bob.topic_id`` и
+сохраняет rich/markdown-путь (BOB-041 .1) плюс plain-фолбэк. Отправитель — бот Боба
+(BOB-046 .1); здесь проверяется топик/markdown-путь (отправитель — в
+``test_coding_sender_is_bob``).
 """
 
 from __future__ import annotations
@@ -19,7 +21,7 @@ import pytest
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.methods import SendMessage
 
-from bob.app import _GuppiOwnerNotifier
+from bob.app import _CodingOwnerNotifier
 
 if TYPE_CHECKING:
     from aiogram.types import InputRichMessage
@@ -84,7 +86,7 @@ async def test_notifier_sends_coding_message_to_bobs_topic() -> None:
     # Fix B: coding messages land in Bob's TOPIC (message_thread_id == bob topic_id),
     # not General (None) — the owner sees Bob's session replies in the same thread.
     bot = _FakeBot()
-    notifier = _GuppiOwnerNotifier(
+    notifier = _CodingOwnerNotifier(
         bot=bot, chat_id=_CHAT_ID, topic_id=_BOB_TOPIC_ID
     )
 
@@ -103,7 +105,7 @@ async def test_notifier_threads_into_the_configured_topic(topic_id: int | None) 
     # topic when set (Fix B), or General (None) when no topic is configured — the rich
     # markdown path is used either way. This pins the General fallback branch too.
     bot = _FakeBot()
-    notifier = _GuppiOwnerNotifier(bot=bot, chat_id=_CHAT_ID, topic_id=topic_id)
+    notifier = _CodingOwnerNotifier(bot=bot, chat_id=_CHAT_ID, topic_id=topic_id)
 
     await notifier.send("## План")
 
@@ -117,7 +119,7 @@ async def test_notifier_threads_into_the_configured_topic(topic_id: int | None) 
 async def test_notifier_plain_fallback_keeps_bobs_topic() -> None:
     # On a rich failure the plain fallback must still target Bob's topic (never General).
     bot = _FakeBot(rich_raises=True)
-    notifier = _GuppiOwnerNotifier(
+    notifier = _CodingOwnerNotifier(
         bot=bot, chat_id=_CHAT_ID, topic_id=_BOB_TOPIC_ID
     )
 

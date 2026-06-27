@@ -338,6 +338,10 @@ class Application:
     # Self-directed goal-pursuit tick (BOB-015 .3): wired only when
     # ``goals.pursuit_enabled`` is on (conservative default off → runtime as before).
     pursue_goals_tick: PursueGoalsTick | None = None
+    # Gated coding assistant (BOB-039 .3): wired only when ``coder.enabled`` is on
+    # (conservative default off → ``None``). Exposed so the entrypoint/tests can
+    # inspect the bound owner-notifier without re-running the wiring.
+    coding_assistant: CodingAssistant | None = None
 
     async def startup(self) -> GenesisResult:
         """Initialise persistence, awaken Bob on first boot, load his soul.
@@ -515,10 +519,18 @@ def build_application(
     si_enabled = _build_self_improvement_enabled(merged)
     rule_store = SqliteSelfImprovementStore(memory_repo) if si_enabled else None
 
-    # Resolve the GUPPI bot once so the multibot registry AND the coding-session
-    # owner-notifier share the SAME instance — GUPPI is Bob's owner-facing system voice,
-    # and the gated coding assistant speaks (plan / narration / PR) through it.
+    # Resolve BOTH admin bots once so the multibot registry AND the coding-session
+    # owner-notifier share the SAME instances. GUPPI is the silent under-the-hood
+    # executor; BOB is the speaker — so the gated coding assistant talks (plan /
+    # narration / PR) through BOB'S bot (BOB-046 .1): the owner converses with Bob, so
+    # Bob is the one replying. The per-event narrative stays GUPPI-attributed in TEXT
+    # («GUPPI: …», canon) — only the SENDER is Bob.
     telegram_section = _section(merged, "telegram")
+    resolved_bob_bot = (
+        bob_bot
+        if bob_bot is not None
+        else _build_real_bot(_section(telegram_section, "bob"), "bob")
+    )
     resolved_guppi_bot = (
         guppi_bot
         if guppi_bot is not None
@@ -527,14 +539,14 @@ def build_application(
 
     # Gated coding sessions — «Bob runs Claude Code» (BOB-039 .3). Built ONLY when
     # ``coder.enabled`` is on (conservative default off): the assistant orchestrates the
-    # UNBYPASSABLE plan gate, narrates each run to the owner via GUPPI and opens a PR —
-    # NEVER merging / pushing main. It is NOT on the autonomous safe-allowlist. Off → None,
-    # and ``/code`` answers a clear "disabled" reply (the feature section always exists).
+    # UNBYPASSABLE plan gate, narrates each run to the owner through BOB'S bot and opens
+    # a PR — NEVER merging / pushing main. It is NOT on the autonomous safe-allowlist.
+    # Off → None, and ``/code`` answers a clear "disabled" reply (the section always exists).
     coding_assistant = _build_coding_assistant(
         merged,
         repo=memory_repo,
         authorizer=authorizer,
-        notifier_bot=resolved_guppi_bot,
+        notifier_bot=resolved_bob_bot,
         chat_id=_int(telegram_section, "chat_id", 0),
         # The owner gives Bob the task in HIS topic (BOB-041 NL path), so coding-session
         # replies thread back into that same topic, not General (BOB-042 Fix B).
@@ -545,7 +557,7 @@ def build_application(
     multibot = _build_multibot(
         merged,
         bus=event_bus,
-        bob_bot=bob_bot,
+        bob_bot=resolved_bob_bot,
         guppi_bot=resolved_guppi_bot,
         authorizer=authorizer,
         proactivity_store=proactivity_store,
@@ -928,6 +940,7 @@ def build_application(
         proactivity_engine=proactivity_engine,
         proactive_tick=proactive_tick,
         pursue_goals_tick=pursue_goals_tick,
+        coding_assistant=coding_assistant,
     )
 
 
@@ -1037,9 +1050,10 @@ def _build_coding_assistant(
     :class:`GitWorktree` (an isolated worktree of TRACKED files only — Bob's private data
     never reaches Claude Code) and :class:`GhPullRequestOpener` (``gh pr create`` only,
     NO merge / push-main) — over the durable :class:`SqliteCodingSessionStore`, with the
-    shared :class:`Authorizer` as the owner gate and a GUPPI-bot owner-notifier. The
-    UNBYPASSABLE plan gate lives in the use-case + domain machine; this only wires it. The
-    assistant is deliberately NOT added to ``goals.safe_capabilities`` (never autonomous).
+    shared :class:`Authorizer` as the owner gate and a BOB-bot owner-notifier (BOB-046 .1:
+    Bob speaks, GUPPI executes). The UNBYPASSABLE plan gate lives in the use-case + domain
+    machine; this only wires it. The assistant is deliberately NOT added to
+    ``goals.safe_capabilities`` (never autonomous).
     """
     coder = _section(config, "coder")
     if not _flag(coder, "enabled"):
@@ -1052,7 +1066,7 @@ def _build_coding_assistant(
         worktree=GitWorktree(_str(coder, "worktree_root", ".worktrees")),
         store=SqliteCodingSessionStore(repo),
         pr_opener=GhPullRequestOpener(gh_bin=_str(coder, "gh_bin", "gh")),
-        notifier=_GuppiOwnerNotifier(
+        notifier=_CodingOwnerNotifier(
             bot=notifier_bot, chat_id=chat_id, topic_id=topic_id
         ),
         owner=authorizer,
@@ -1061,14 +1075,17 @@ def _build_coding_assistant(
     )
 
 
-class _GuppiOwnerNotifier:
-    """Owner-notifier adapter: send one coding-session line through the GUPPI bot.
+class _CodingOwnerNotifier:
+    """Owner-notifier adapter: send one coding-session line through BOB'S bot (BOB-046 .1).
 
-    Realises the use-case's ``OwnerNotifier`` (structurally) over Bob's owner-facing
-    system voice, so the gated coding assistant streams the plan, the per-event narration
-    and the PR url to the owner without knowing any transport. The owner gives Bob the
-    task in BOB'S TOPIC (the BOB-041 natural-language path), so the session replies are
-    threaded back into THAT topic via ``message_thread_id == telegram.bob.topic_id``
+    Realises the use-case's ``OwnerNotifier`` (structurally), so the gated coding assistant
+    streams the plan, the per-event narration and the PR url to the owner without knowing
+    any transport. By canon Bob is the one talking — the owner converses with Bob, GUPPI is
+    the silent executor under the hood — so the SENDER is Bob's bot (BOB-046 .1); the
+    per-event narrative text stays GUPPI-attributed («GUPPI: …») in
+    :func:`~bob.domain.coding.narrate.narrate` (only the sender changed). The owner gives
+    Bob the task in BOB'S TOPIC (the BOB-041 natural-language path), so the session replies
+    are threaded back into THAT topic via ``message_thread_id == telegram.bob.topic_id``
     (BOB-042 Fix B) — the conversation stays in one thread instead of splitting between
     Bob's topic (input) and General (output). Coding messages carry markdown (## headings,
     **bold**, ``code``), so they go through the shared :class:`RichMarkdownSender` rich
@@ -1084,7 +1101,7 @@ class _GuppiOwnerNotifier:
         self._topic_id = topic_id
 
     async def send(self, text: str) -> None:
-        """Post ``text`` into Bob's topic through the GUPPI bot (rich markdown, threaded)."""
+        """Post ``text`` into Bob's topic through Bob's bot (rich markdown, threaded)."""
         await self._sender.send(
             chat_id=self._chat_id, markdown=text, message_thread_id=self._topic_id
         )
