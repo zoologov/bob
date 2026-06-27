@@ -3223,6 +3223,122 @@ async def test_recurring_reflection_phrase_is_not_treated_as_a_tic() -> None:
     assert reflection_phrase not in tier1.all_text  # the reflection stayed out of the prompt
 
 
+# --- BOB-044: the dialogue-replay window is INDEPENDENT of the anti-repeat windows --
+#
+# BOB-044 widens the conversation-replay window (``dialogue.recent_turns``, default 14,
+# was a hardcoded 6) so Bob holds the dialogue thread. The guardrail these tests pin: that
+# window is the conversation replay ONLY — it must NOT be coupled to the anti-repeat
+# windows, which each carry their own config. The risk is real because BOTH the
+# compose/addressivity reads AND the wide tic-guard read (BOB-043) go through the SAME
+# ``recent_episodes`` seam: a naive wiring could have piped ``recent_turns`` into the
+# tic read too, blinding the scattered-tic guard whenever the dialogue window is narrow,
+# or starving it whenever it is wide. These tests prove the two windows never touch.
+
+
+async def test_tic_lookback_read_uses_its_own_window_not_the_dialogue_window() -> None:
+    # The compose/addressivity reads ask ``recent_episodes`` for ``recent_turns`` (9
+    # here), while the BOB-043 wide tic-guard read asks for its OWN ``tic_lookback`` (the
+    # default 20). Both windows appear, distinct — neither is the old hardcoded 6.
+    tic_lookback = RepeatThresholds().tic_lookback
+    handler, _bot, repo, _tier1 = _build(
+        reply="hi", history=_THREAD_HISTORY, recent_turns=9
+    )
+
+    await handler.handle(_message("расскажи подробно про кофе"))
+
+    assert 9 in repo.requested_ks  # the dialogue-replay window (recent_turns)
+    assert tic_lookback in repo.requested_ks  # the wide tic-guard window (its own config)
+    assert tic_lookback != 9  # two genuinely separate windows
+    assert 6 not in repo.requested_ks  # the old hardcoded window is gone from BOTH reads
+
+
+async def test_widening_the_dialogue_window_leaves_the_tic_lookback_untouched() -> None:
+    # Widen the dialogue window far past the tic window: the tic-guard read STILL asks for
+    # ``tic_lookback`` (its own default 20), not the widened ``recent_turns`` (30). The
+    # tic window is driven by ``repeat.*`` config, never by the dialogue window.
+    tic_lookback = RepeatThresholds().tic_lookback
+    handler, _bot, repo, _tier1 = _build(
+        reply="hi", history=_THREAD_HISTORY, recent_turns=30
+    )
+
+    await handler.handle(_message("расскажи подробно про кофе"))
+
+    assert 30 in repo.requested_ks  # the dialogue window is honored at its wide value
+    assert tic_lookback in repo.requested_ks  # the tic read kept its own (smaller) window
+
+
+async def test_tic_lookback_read_is_driven_by_repeat_config_not_recent_turns() -> None:
+    # Pin the SOURCE of the tic window: override ``repeat.tic_lookback`` to 12 with a
+    # different ``recent_turns`` (30). The wide read asks for 12 (the repeat config),
+    # proving the tic window follows ``repeat.*`` and the dialogue read follows
+    # ``dialogue.recent_turns`` — two independent knobs.
+    handler, _bot, repo, _tier1 = _build(
+        reply="hi",
+        history=_THREAD_HISTORY,
+        recent_turns=30,
+        repeat_thresholds=RepeatThresholds(tic_lookback=12),
+    )
+
+    await handler.handle(_message("расскажи подробно про кофе"))
+
+    assert 12 in repo.requested_ks  # the tic window follows repeat.tic_lookback
+    assert 30 in repo.requested_ks  # the dialogue window follows recent_turns
+    assert 20 not in repo.requested_ks  # the tic default did NOT leak through
+
+
+async def test_anti_repeat_window_fires_independent_of_a_widened_dialogue_window() -> None:
+    # BOB-026 regression: a repeat "через ход" is caught by the narrow ``repeat.window``
+    # (default 5) EVEN with the dialogue window widened to 20 — the anti-repeat guard is
+    # governed by its own window, not coupled to ``recent_turns``.
+    handler, bot, _repo, tier1 = _build(
+        reply="unused",
+        tier1_replies=[_OLDER_DECLINE, "Ладно, давай попробую описать словами."],
+        history=[
+            {"content": _WEDGED_TURN, "event_type": "message"},
+            {"content": _INTERVENING_TURN, "event_type": "message"},
+        ],
+        recent_turns=20,
+    )
+
+    await handler.handle(_message("слушай, а нарисуй мне всё-таки таблицу подробно ещё раз"))
+
+    assert len(tier1.payloads) == 2  # the window guard still regenerated once
+    assert bot.final_text == "Ладно, давай попробую описать словами."
+
+
+async def test_scattered_tic_still_caught_when_the_dialogue_window_is_narrow() -> None:
+    # 🔴 BOB-043 regression / decoupling proof: narrow the dialogue window to 3 (far below
+    # where the scattered tic sits, indices 2/5/9/13 of 20). The narrow per-turn check
+    # sees NO tic, yet the INDEPENDENT wide tic-guard read (tic_lookback=20) still scans
+    # all 20 closers, sees 4 occurrences, and regenerates. A narrow dialogue window must
+    # never blind the tic guard — which it would if the wide read used recent_turns.
+    handler, bot, _repo, tier1 = _build(
+        reply="unused",
+        tier1_replies=[
+            f"Сделал бэкап на всякий случай. {_REAL_TIC}",
+            "Готово, бэкап на месте — добавить нечего.",
+        ],
+        history=_scattered_tic_history(),
+        recent_turns=3,
+    )
+
+    await handler.handle(_message("сделай, пожалуйста, ещё и бэкап подробно"))
+
+    assert len(tier1.payloads) == 2  # the wide lookback still drove the catch
+    assert bot.final_text == "Готово, бэкап на месте — добавить нечего."
+
+
+async def test_recall_grounding_intact_regardless_of_the_dialogue_window() -> None:
+    # BOB-032 regression: recall-grounding flows through the SEPARATE recall seam, not the
+    # conversation-replay window. A custom ``recent_turns`` (7) leaves the recalled memory
+    # reaching the reply exactly as before — the dialogue window does not touch recall.
+    handler, _bot, _repo, tier1 = _build(reply="hi", recent_turns=7)
+
+    await handler.handle(_message())
+
+    assert _RECALL_MEMORY in tier1.all_text  # recall grounding is untouched by the window
+
+
 # --- BOB-026 .1: _recent_bob_replies window extractor (unit) -------------------
 
 
