@@ -196,6 +196,10 @@ ignore = [
 # owner-facing plan/PR/prompt literals whose Cyrillic look-alikes are intentional —
 # RUF001/RUF002/RUF003 do not apply.
 "src/bob/application/usecases/coding_assistant.py" = ["RUF001", "RUF002", "RUF003"]
+# The coding arch-context builder (BOB-046 .3) carries Russian convention/preamble
+# literals + persona/policy docstrings whose Cyrillic look-alikes are intentional —
+# RUF001/RUF002/RUF003 do not apply.
+"src/bob/application/usecases/coding_context.py" = ["RUF001", "RUF002", "RUF003"]
 # The coding-intent NL routing (BOB-041 .2) carries Russian persona/policy docstrings +
 # approve/stop phrase literals whose Cyrillic look-alikes are intentional —
 # RUF001/RUF002/RUF003 do not apply.
@@ -261,6 +265,17 @@ ignore = [
 "tests/application/usecases/test_coding_assistant.py" = [
     "S101",
     "ARG001",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+# The coding arch-context tests (BOB-046 .3) assert on Russian preamble/convention
+# literals + use unused fake-port args; S101/ARG/RUF001-003 do not apply to these fakes.
+"tests/application/usecases/test_coding_context.py" = [
+    "S101",
+    "ARG001",
+    "ARG002",
     "PLR2004",
     "RUF001",
     "RUF002",

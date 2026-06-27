@@ -71,6 +71,7 @@ from bob.application.usecases.announce_rules import AnnounceProposedRules
 from bob.application.usecases.apply_reflection import ApplyReflection
 from bob.application.usecases.classify_coding_intent import ClassifyCodingIntent
 from bob.application.usecases.coding_assistant import CodingAssistant
+from bob.application.usecases.coding_context import make_coding_context
 from bob.application.usecases.coding_intent_router import CodingIntentRouter
 from bob.application.usecases.consolidate_memory import ConsolidateMemory
 from bob.application.usecases.dedup_facts import DedupFacts
@@ -1070,6 +1071,9 @@ def _build_coding_assistant(
         return None
     timeout = float(_int(coder, "timeout", 600))
     return CodingAssistant(
+        context=make_coding_context(
+            _build_introspector(config), PrivacyGuard(repo_root=_REPO_ROOT)
+        ),
         runner=SubprocessClaudeRunner(
             claude_bin=_str(coder, "claude_bin", "claude"), timeout=timeout
         ),

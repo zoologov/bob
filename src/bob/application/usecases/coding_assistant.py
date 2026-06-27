@@ -67,6 +67,7 @@ logger = logging.getLogger(__name__)
 
 __all__ = [
     "CodingAssistant",
+    "CodingContext",
     "CodingOutcome",
     "OwnerCheck",
     "OwnerNotifier",
@@ -149,6 +150,21 @@ class StatusPanel(Protocol):
         ...
 
 
+class CodingContext(Protocol):
+    """Сейм лёгкого арх-контекст-префикса для claude-промпта (BOB-046 .3).
+
+    Перед прогоном Боб ПРИНОСИТ в промпт конвенции проекта + рационал области задачи
+    (T3.A⁺): реализуется :func:`~bob.application.usecases.coding_context.make_coding_context`
+    над read-only-интроспектором, ограничен по объёму и 🔴 приватно-безопасен
+    (PrivacyGuard). Use-case ПОДМЕШИВАЕТ результат в plan/execute-промпт; незавязан
+    (``None``) или пустой/упавший источник → промпт без изменений (graceful).
+    """
+
+    async def preamble(self, task: str) -> str:
+        """Построить контекст-префикс для ``task`` (``""`` → префикса нет)."""
+        ...
+
+
 @dataclass(frozen=True, slots=True)
 class CodingOutcome:
     """Итог одной команды: успех/отказ, owner-сообщение и итоговая сессия.
@@ -180,6 +196,7 @@ class CodingAssistant:
         execute_mode: str = _DEFAULT_EXECUTE_MODE,
         typing_keepalive: TypingKeepalive | None = None,
         status_panel: StatusPanel | None = None,
+        context: CodingContext | None = None,
     ) -> None:
         self._runner = runner
         self._worktree = worktree
@@ -194,6 +211,10 @@ class CodingAssistant:
         # flow is unchanged and never depends on the indicator being present.
         self._typing: TypingKeepalive = typing_keepalive or _no_typing
         self._panel: StatusPanel = status_panel or _NullStatusPanel()
+        # Architectural-context preamble (BOB-046 .3): when wired, Bob prepends a bounded,
+        # privacy-safe project-context block to the claude prompt; unwired (``None``) →
+        # the prompt is unchanged, so the flow never depends on the context being present.
+        self._context = context
         # Per-session cancel flags: a concurrent ``stop`` adds the session id, and the
         # narrate loop breaks at the next event (closing the runner → killing the proc).
         self._cancelled: set[str] = set()
@@ -355,9 +376,12 @@ class CodingAssistant:
         authoritative single plan (no duplicated ``## План``), with the planning preamble
         stripped. The collect/clean split keeps the reduction a pure, testable transform.
         """
+        prompt = _with_preamble(
+            await self._preamble(session.task), _plan_prompt(session.task)
+        )
         parts: list[_PlanPart] = []
         async with aclosing(
-            _closeable(self._runner.run(path, _plan_prompt(session.task), mode=_PLAN_MODE))
+            _closeable(self._runner.run(path, prompt, mode=_PLAN_MODE))
         ) as stream:
             async for event in stream:
                 if session.id in self._cancelled:
@@ -369,10 +393,11 @@ class CodingAssistant:
 
     async def _narrate_run(self, session: CodingSession, path: str) -> None:
         """Run execute-mode, sending each non-noise narrate line to the owner."""
+        prompt = _with_preamble(
+            await self._preamble(session.task), _execute_prompt(session.task)
+        )
         async with aclosing(
-            _closeable(
-                self._runner.run(path, _execute_prompt(session.task), mode=self._execute_mode)
-            )
+            _closeable(self._runner.run(path, prompt, mode=self._execute_mode))
         ) as stream:
             async for event in stream:
                 if session.id in self._cancelled:
@@ -380,6 +405,20 @@ class CodingAssistant:
                 line = narrate(event)
                 if line is not None:
                     await self._notifier.send(line)
+
+    async def _preamble(self, task: str) -> str:
+        """Build the architectural-context preamble for ``task`` (BOB-046 .3).
+
+        Returns ``""`` when no context source is wired or it degrades/fails — so a
+        missing or broken context never blocks the run; the prompt is just unchanged.
+        """
+        if self._context is None:
+            return ""
+        try:
+            return await self._context.preamble(task)
+        except Exception:  # a context fault must never crash the coding session
+            logger.exception("coding: context preamble failed for task")
+            return ""
 
     async def _fail(
         self, session: CodingSession, exc: Exception, *, cleanup: bool
@@ -485,6 +524,18 @@ def _pr_body(session: CodingSession) -> str:
     """The PR body — the task plus the approved plan (transparency for the owner)."""
     plan = session.plan or ""
     return f"Задача: {session.task}\n\nПлан:\n{plan}".strip()
+
+
+def _with_preamble(preamble: str, prompt: str) -> str:
+    """Prepend the architectural-context preamble to the claude prompt (BOB-046 .3).
+
+    An empty preamble (no context source wired, or a graceful degrade) leaves the
+    prompt EXACTLY as-is — the additive enrichment never changes the base prompt when
+    there is nothing to add.
+    """
+    if not preamble.strip():
+        return prompt
+    return f"{preamble}\n\n{prompt}"
 
 
 def _plan_prompt(task: str) -> str:
