@@ -76,6 +76,8 @@ from bob.domain.personality.conversation import (
     recalled_bob_reply,
     recalled_excluding_reflections,
     recalled_without_copied_exemplars,
+    recurring_closer,
+    strip_recurring_closer,
 )
 from bob.domain.personality.conversation_floor import (
     FloorConfig,
@@ -1869,6 +1871,12 @@ class HandleMessage:
         tic_min_words = self._repeat_thresholds.tic_min_words
         tic_min_occurrences = self._repeat_thresholds.tic_min_occurrences
         recent = _recent_bob_replies(history, limit=self._repeat_thresholds.window)
+        # BOB-043: a WIDE window of Bob's recent closers. The signature tic is SCATTERED
+        # (~21% prevalence), so the narrow per-turn view (recent history + query-recall)
+        # sees it 0-1 times -- below the occurrence bar -- and BOB-036 misses it live.
+        # Over the last ``tic_lookback`` (~20) replies it recurs ~4 times -> reliably >=2
+        # -> caught. The only new I/O: one extra recent_episodes read (skipped for guests).
+        wide_replies = await self._recent_bob_closers(is_guest=is_guest)
         current = reply
         current_recalled = recalled
         for _ in range(_MAX_REGENERATIONS):
@@ -1883,7 +1891,15 @@ class HandleMessage:
                 min_words=tic_min_words,
                 min_occurrences=tic_min_occurrences,
             )
-            if not (full_repeat or phrase_tic):
+            # BOB-043: ADD the wide-lookback check — a tic too scattered for the narrow
+            # union still recurs across Bob's last ~tic_lookback closers.
+            wide_tic = is_phrase_tic(
+                current,
+                wide_replies,
+                min_words=tic_min_words,
+                min_occurrences=tic_min_occurrences,
+            )
+            if not (full_repeat or phrase_tic or wide_tic):
                 return current
             # Break the attractor: strip the recalled reply exemplar(s) the candidate
             # copied so the next draft no longer sees the text it was echoing.
@@ -1906,7 +1922,41 @@ class HandleMessage:
                 verbosity=verbosity,
                 modulators=modulators,
             )
+        # BOB-043: regeneration could not shake the tic (it keeps re-copying the closer
+        # from recalled exemplars — a self-reinforcing loop). If the final draft STILL
+        # ends with a closer that RECURS across the wide window, deterministically STRIP
+        # that trailing sentence so the tic NEVER ships. Only a genuinely recurring closer
+        # is removed (``recurring_closer`` returns None for a one-off ending) — no false
+        # positive, and the substantive reply survives. The WIDE window is the
+        # authoritative recurrence signal (and a superset of ``recent``), so a one-off
+        # full-repeat — which recurs only once there — is never stripped.
+        closer = recurring_closer(
+            current,
+            wide_replies,
+            min_words=tic_min_words,
+            min_occurrences=tic_min_occurrences,
+        )
+        if closer is not None:
+            # Guard the edge case where the ENTIRE reply is the recurring closer (a bare
+            # "Мне так спокойнее."): stripping would leave an empty string, so keep the
+            # last draft rather than ship nothing (BOB-043 review).
+            stripped = strip_recurring_closer(current, closer)
+            return stripped if stripped.strip() else current
         return current
+
+    async def _recent_bob_closers(self, *, is_guest: bool) -> tuple[str, ...]:
+        """Bob's last ``tic_lookback`` reply texts for the wide tic check (BOB-043).
+
+        The single new read behind the anti-repeat guard: a WIDE window of Bob's recent
+        replies (whose closers the phrase-tic detector scans) via the existing
+        ``recent_episodes`` seam. Guests get an empty window (no owner-history tic check
+        for a stranger), mirroring the rest of the guard.
+        """
+        if is_guest:
+            return ()
+        lookback = self._repeat_thresholds.tic_lookback
+        wide_history = await self._episodes.recent_episodes(lookback)
+        return _recent_bob_replies(wide_history, limit=lookback)
 
     async def _with_grounded_addons(
         self, context: str, text: str, plan: ExpressionPlan

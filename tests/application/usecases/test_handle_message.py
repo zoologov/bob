@@ -2919,11 +2919,12 @@ async def test_closer_tic_caught_via_the_recall_union_not_only_history() -> None
     assert bot.final_text == "Всё чисто, алерты молчат — добавить нечего."
 
 
-async def test_persistent_tic_is_kept_after_the_regeneration_bound() -> None:
-    # No infinite loop on the tic path: a stubborn closer-tic anchored in HISTORY (never
-    # dropped) regenerates at most _MAX_REGENERATIONS (2) times, then keeps the last
-    # draft. Every drawn reply carries the closer, so the tic never clears — the bound,
-    # not a clear, ends the loop.
+async def test_persistent_tic_is_stripped_after_the_regeneration_bound() -> None:
+    # BOB-043: no infinite loop on the tic path — a stubborn closer-tic anchored in
+    # HISTORY (never dropped) regenerates at most _MAX_REGENERATIONS (2) times. Every
+    # drawn reply carries the closer, so the tic never clears via regeneration; after
+    # the bound the recurring closer sentence is DETERMINISTICALLY STRIPPED so the tic
+    # never ships (the substantive reply survives).
     sticky = f"Очередной свежий повод. {_REAL_TIC}"
     handler, bot, _repo, tier1 = _build(
         reply="unused",
@@ -2936,9 +2937,9 @@ async def test_persistent_tic_is_kept_after_the_regeneration_bound() -> None:
 
     await handler.handle(_message("сделай, пожалуйста, ещё и бэкап подробно"))
 
-    # initial draft + 2 retries = 3 generations; the still-ticcing reply is kept.
+    # initial draft + 2 retries = 3 generations; the still-ticcing closer is stripped.
     assert len(tier1.payloads) == 3
-    assert bot.final_text == sticky
+    assert bot.final_text == "Очередной свежий повод."
 
 
 async def test_reused_short_term_does_not_trigger_tic_regeneration() -> None:
@@ -2958,6 +2959,160 @@ async def test_reused_short_term_does_not_trigger_tic_regeneration() -> None:
 
     assert len(tier1.payloads) == 1  # no needless regeneration
     assert bot.final_text == "Снова дёрнул Ollama, ответ пришёл."
+
+
+# --- BOB-043: wide closer-lookback (catch the SCATTERED tic) + deterministic strip --
+#
+# The tic is scattered (~21% prevalence): in the narrow 6-episode history + recall view
+# it appears 0–1× (below tic_min_occurrences=2) → BOB-036 misses it live. The wide
+# closer-lookback runs is_phrase_tic against Bob's last ~tic_lookback (20) replies,
+# where a 21%-prevalence tic recurs ~4× → reliably caught. The only new I/O is the
+# extra recent_episodes(tic_lookback) read.
+
+
+def _scattered_tic_history() -> list[dict[str, object]]:
+    """20 Bob replies with the tic at indices 2/5/9/13 — all OLDER than the last 6."""
+    history: list[dict[str, object]] = []
+    for index in range(20):
+        reply = f"Реплика номер {index} готова."
+        if index in (2, 5, 9, 13):
+            reply = f"Что-то сделал по пункту {index}. {_REAL_TIC}"
+        history.append(
+            {"content": f"Ada: пункт {index}\nbob: {reply}", "event_type": "message"}
+        )
+    return history
+
+
+async def test_scattered_tic_caught_by_wide_lookback_where_narrow_misses() -> None:
+    # 🔴 BOB-043 headline: the tic is scattered across Bob's last 20 replies (4 of 20)
+    # but ABSENT from the last 6 (the narrow history window). The narrow per-turn check
+    # sees it 0× → misses (BOB-036 live failure); the WIDE closer-lookback sees 4 →
+    # catches and regenerates, committing the tic-free retry.
+    handler, bot, _repo, tier1 = _build(
+        reply="unused",
+        tier1_replies=[
+            f"Сделал бэкап на всякий случай. {_REAL_TIC}",
+            "Готово, бэкап на месте — добавить нечего.",
+        ],
+        history=_scattered_tic_history(),
+    )
+
+    await handler.handle(_message("сделай, пожалуйста, ещё и бэкап подробно"))
+
+    assert len(tier1.payloads) == 2  # the wide lookback drove the catch
+    assert bot.final_text == "Готово, бэкап на месте — добавить нечего."
+
+
+async def test_scattered_tic_slips_through_when_lookback_is_narrowed() -> None:
+    # Control for the wide-lookback win: narrow tic_lookback to 6 (== the history
+    # window) and the SAME scattered tic is no longer caught — the first draft commits
+    # as-is. Pins the WIDE window (not some other path) as the mechanism that catches it.
+    handler, bot, _repo, tier1 = _build(
+        reply=f"Сделал бэкап на всякий случай. {_REAL_TIC}",
+        history=_scattered_tic_history(),
+        repeat_thresholds=RepeatThresholds(tic_lookback=6),
+    )
+
+    await handler.handle(_message("сделай, пожалуйста, ещё и бэкап подробно"))
+
+    assert len(tier1.payloads) == 1  # narrow lookback misses the scattered tic
+    assert bot.final_text == f"Сделал бэкап на всякий случай. {_REAL_TIC}"
+
+
+async def test_persistent_scattered_tic_is_stripped_after_the_bound() -> None:
+    # End to end: a scattered tic the wide lookback catches, but every regeneration
+    # re-copies it → after _MAX_REGENERATIONS the recurring closer is DETERMINISTICALLY
+    # STRIPPED so the tic never ships, the substantive reply surviving.
+    sticky = f"Свежий повод сделать ещё раз. {_REAL_TIC}"
+    handler, bot, _repo, tier1 = _build(
+        reply="unused",
+        tier1_replies=[sticky] * 4,
+        history=_scattered_tic_history(),
+    )
+
+    await handler.handle(_message("сделай, пожалуйста, ещё и бэкап подробно"))
+
+    assert len(tier1.payloads) == 3  # initial + 2 retries, then the closer is stripped
+    assert bot.final_text == "Свежий повод сделать ещё раз."
+
+
+async def test_distinct_closer_over_a_wide_window_is_not_stripped() -> None:
+    # No false positive at the wide scale: a fresh reply ends with a UNIQUE closer that
+    # appears in no prior reply across the wide window → not a recurring closer → no
+    # regeneration and no strip; committed verbatim.
+    history = [
+        {"content": f"Ada: пункт {i}\nbob: Реплика номер {i} готова.", "event_type": "message"}
+        for i in range(20)
+    ]
+    fresh = "Готово, всё на месте. Это совершенно уникальная финальная концовка."
+    handler, bot, _repo, tier1 = _build(reply=fresh, history=history)
+
+    await handler.handle(_message("подытожь, пожалуйста, всё подробно"))
+
+    assert len(tier1.payloads) == 1  # no needless regeneration
+    assert bot.final_text == fresh
+
+
+async def test_single_occurrence_in_wide_window_does_not_regenerate() -> None:
+    # 🔴 No false positive at the wide scale (occurrence boundary): the closer appears
+    # in EXACTLY ONE of the last 20 replies — below tic_min_occurrences (2). A fresh
+    # draft carrying it is a one-off reuse, NOT a tic, so it is committed verbatim with
+    # no regeneration. Pins that the wide lookback still needs >= min_occurrences.
+    history: list[dict[str, object]] = [
+        {"content": f"Ada: пункт {i}\nbob: Реплика номер {i} готова.", "event_type": "message"}
+        for i in range(20)
+    ]
+    history[4] = {
+        "content": f"Ada: пункт 4\nbob: Однажды сделал. {_REAL_TIC}",
+        "event_type": "message",
+    }
+    fresh = f"Сделал бэкап на всякий случай. {_REAL_TIC}"
+    handler, bot, _repo, tier1 = _build(reply=fresh, history=history)
+
+    await handler.handle(_message("сделай, пожалуйста, ещё и бэкап подробно"))
+
+    assert len(tier1.payloads) == 1  # one occurrence is below the bar — no catch
+    assert bot.final_text == fresh
+
+
+async def test_short_closer_recurring_across_wide_window_is_not_caught() -> None:
+    # 🔴 No false positive: a SHORT closer ("Идём дальше." — 2 words, below
+    # tic_min_words=3) recurs in every one of Bob's last 20 replies, yet is never
+    # notable, so a fresh reply reusing it is committed as-is. Common short sign-offs
+    # must never trip the wide-lookback detector.
+    short_closer = "Идём дальше."
+    history = [
+        {
+            "content": f"Ada: пункт {i}\nbob: Реплика номер {i} готова. {short_closer}",
+            "event_type": "message",
+        }
+        for i in range(20)
+    ]
+    fresh = f"Сделал бэкап на всякий случай. {short_closer}"
+    handler, bot, _repo, tier1 = _build(reply=fresh, history=history)
+
+    await handler.handle(_message("сделай, пожалуйста, ещё и бэкап подробно"))
+
+    assert len(tier1.payloads) == 1  # short closer is below the notability bar
+    assert bot.final_text == fresh
+
+
+async def test_strip_fallback_preserves_a_multi_sentence_substantive_reply() -> None:
+    # Strip fallback keeps the BODY intact: a stubborn scattered tic the wide lookback
+    # catches, where every regeneration re-copies a TWO-sentence body + the tic closer.
+    # After the bound only the trailing tic sentence is excised — both body sentences
+    # (and their punctuation) survive, and the closer never ships.
+    sticky = f"Первая часть готова. Вторая часть тоже готова. {_REAL_TIC}"
+    handler, bot, _repo, tier1 = _build(
+        reply="unused",
+        tier1_replies=[sticky] * 4,
+        history=_scattered_tic_history(),
+    )
+
+    await handler.handle(_message("сделай, пожалуйста, ещё и бэкап подробно"))
+
+    assert len(tier1.payloads) == 3  # initial + 2 retries, then the closer is stripped
+    assert bot.final_text == "Первая часть готова. Вторая часть тоже готова."
 
 
 async def test_recurring_reflection_phrase_is_not_treated_as_a_tic() -> None:

@@ -1524,7 +1524,9 @@ def _build_repeat_thresholds(config: Mapping[str, object]) -> RepeatThresholds:
     topically-similar but substantively different reply never false-fires a needless
     regeneration). BOB-036 .1 adds the phrase-tic knobs ``tic_min_words`` (the minimum
     notable-phrase length, so short closers never trip) and ``tic_min_occurrences`` (how
-    many recent replies a phrase must recur in to be a tic). Each falls back to the
+    many recent replies a phrase must recur in to be a tic). BOB-043 adds ``tic_lookback``
+    (the WIDE window of Bob's recent closers the phrase-tic detector scans, so a SCATTERED
+    tic the narrow per-turn view misses is still caught). Each falls back to the
     conservative dataclass default.
     """
     section = _section(config, "repeat")
@@ -1538,6 +1540,7 @@ def _build_repeat_thresholds(config: Mapping[str, object]) -> RepeatThresholds:
         tic_min_occurrences=_int(
             section, "tic_min_occurrences", defaults.tic_min_occurrences
         ),
+        tic_lookback=_int(section, "tic_lookback", defaults.tic_lookback),
     )
 
 

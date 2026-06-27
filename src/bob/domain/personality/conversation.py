@@ -57,6 +57,15 @@ _DEFAULT_TIC_MIN_OCCURRENCES = 2
 _MIN_TIC_MIN_WORDS = 1
 _MIN_TIC_MIN_OCCURRENCES = 1
 
+# Default WIDE closer-lookback window (BOB-043). The signature closer is SCATTERED
+# (~21% prevalence): in the narrow per-turn view (≈6 history + ≈5 recall replies) it
+# shows up 0-1 times -- below ``tic_min_occurrences`` -- so BOB-036 misses it live. Over
+# the last ~20 of Bob's replies a 21%-prevalence tic recurs ~4 times -> reliably >=2.
+# Overridable from config (``repeat.tic_lookback``).
+_DEFAULT_TIC_LOOKBACK = 20
+
+_MIN_TIC_LOOKBACK = 1
+
 
 @dataclass(frozen=True, slots=True)
 class RepeatThresholds:
@@ -72,6 +81,10 @@ class RepeatThresholds:
       («Работаем»/«Ок») никогда не считается тиком.
     * ``tic_min_occurrences`` — в скольких недавних репликах фраза должна
       повториться, чтобы считаться тиком (а не одноразовым переиспользованием).
+    * ``tic_lookback`` — ШИРОКОЕ окно последних реплик Боба, по closer-фразам
+      которого гоняется фраза-тик детектор (BOB-043). Узкий по-ходовой обзор
+      (~6 истории + ~5 recall) видит рассеянный тик 0-1 раз — ниже порога; на ~20
+      репликах тик с распространённостью ~21% повторяется ~4 раза и ловится.
 
     Дефолты консервативны.
     """
@@ -80,6 +93,7 @@ class RepeatThresholds:
     similarity_threshold: float = _DEFAULT_BOB_REPEAT_THRESHOLD
     tic_min_words: int = _DEFAULT_TIC_MIN_WORDS
     tic_min_occurrences: int = _DEFAULT_TIC_MIN_OCCURRENCES
+    tic_lookback: int = _DEFAULT_TIC_LOOKBACK
 
     def __post_init__(self) -> None:
         if self.window < _MIN_REPEAT_WINDOW:
@@ -102,6 +116,11 @@ class RepeatThresholds:
             raise ValueError(
                 f"repeat threshold 'tic_min_occurrences' must be >= "
                 f"{_MIN_TIC_MIN_OCCURRENCES}, got {self.tic_min_occurrences}"
+            )
+        if self.tic_lookback < _MIN_TIC_LOOKBACK:
+            raise ValueError(
+                f"repeat threshold 'tic_lookback' must be >= {_MIN_TIC_LOOKBACK}, "
+                f"got {self.tic_lookback}"
             )
 
 
@@ -182,14 +201,8 @@ def _notable_phrases(text: str, *, min_words: int) -> frozenset[str]:
     so a phrase repeated WITHIN one reply still counts once for that reply.
     """
     phrases: set[str] = set()
-    fragment_chars: list[str] = []
-    for char in text:
-        if char in _PHRASE_BOUNDARIES:
-            _add_phrase(phrases, "".join(fragment_chars), min_words=min_words)
-            fragment_chars = []
-        else:
-            fragment_chars.append(char)
-    _add_phrase(phrases, "".join(fragment_chars), min_words=min_words)
+    for content, _boundary in _split_sentences(text):
+        _add_phrase(phrases, content, min_words=min_words)
     return frozenset(phrases)
 
 
@@ -233,6 +246,98 @@ def is_phrase_tic(
             if occurrences >= min_occurrences:
                 return True
     return False
+
+
+def _split_sentences(text: str) -> list[tuple[str, str]]:
+    """Split ``text`` into ``(content, boundary)`` pairs preserving order/punctuation.
+
+    Each pair is a fragment and the boundary char that terminated it (one of
+    :data:`_PHRASE_BOUNDARIES`), or ``""`` for a trailing fragment with no closing
+    boundary. Rejoining ``content + boundary`` for every pair reconstructs ``text``
+    exactly, so the strip helper can drop one sentence and rebuild the rest losslessly.
+    """
+    sentences: list[tuple[str, str]] = []
+    fragment_chars: list[str] = []
+    for char in text:
+        if char in _PHRASE_BOUNDARIES:
+            sentences.append(("".join(fragment_chars), char))
+            fragment_chars = []
+        else:
+            fragment_chars.append(char)
+    if fragment_chars:
+        sentences.append(("".join(fragment_chars), ""))
+    return sentences
+
+
+def _final_notable_phrase(text: str, *, min_words: int) -> str | None:
+    """Return ``text``'s LAST notable phrase (normalised), or ``None`` (BOB-043).
+
+    The closer is the final sentence/clause of at least ``min_words`` words (a tic is a
+    CLOSER). Scans sentences back to front and returns the first that clears the
+    notability bar — so a trailing short/blank fragment (whitespace, a one-word
+    "Работаем") is skipped and the substantive closing sentence is found. ``None`` when
+    no sentence is notable.
+    """
+    for content, _boundary in reversed(_split_sentences(text)):
+        normalised = _normalise(content)
+        if normalised and len(normalised.split()) >= min_words:
+            return normalised
+    return None
+
+
+def recurring_closer(
+    candidate: str,
+    recent_replies: Iterable[str],
+    *,
+    min_words: int,
+    min_occurrences: int,
+) -> str | None:
+    """Return ``candidate``'s FINAL phrase iff it RECURS across ``recent_replies`` (BOB-043).
+
+    Targets exactly the deterministic-strip case: ``candidate``'s closing notable phrase
+    (its tic, see :func:`_final_notable_phrase`) recurring as a notable phrase in at least
+    ``min_occurrences`` of ``recent_replies`` (each reply counts at most once). Returns the
+    recurring closer (normalised) so the caller can strip it; ``None`` when the final phrase
+    is a one-off ending (below ``min_occurrences``) or below ``min_words`` — so the strip
+    only ever fires on a closer that genuinely recurs, never on a distinct one-off tail.
+    Pure, deterministic, no I/O.
+    """
+    closer = _final_notable_phrase(candidate, min_words=min_words)
+    if closer is None:
+        return None
+    occurrences = 0
+    for reply in recent_replies:
+        if closer in _notable_phrases(reply, min_words=min_words):
+            occurrences += 1
+            if occurrences >= min_occurrences:
+                return closer
+    return None
+
+
+def strip_recurring_closer(text: str, closer: str) -> str:
+    """Remove the trailing ``closer`` sentence from ``text``, tidied (BOB-043).
+
+    The deterministic last-resort: when regeneration cannot shake a recurring closer-tic,
+    its final sentence is excised so the tic never ships. ``closer`` is the recurring
+    phrase (normalised, as returned by :func:`recurring_closer`); this drops the LAST
+    sentence of ``text`` whose normalised content equals it (and any trailing fragment
+    after it), then strips trailing whitespace — leaving the substantive reply intact. A
+    blank ``closer``, or a ``text`` whose trailing sentence is not ``closer``, is returned
+    unchanged (a no-op — never strips a sentence the closer does not match). Pure, no I/O.
+    """
+    normalised_closer = _normalise(closer)
+    if not normalised_closer:
+        return text
+    sentences = _split_sentences(text)
+    target: int | None = None
+    for index, (content, _boundary) in enumerate(sentences):
+        if _normalise(content) == normalised_closer:
+            target = index
+    if target is None:
+        return text
+    kept = sentences[:target]
+    rebuilt = "".join(content + boundary for content, boundary in kept)
+    return rebuilt.rstrip()
 
 
 # Marker prefixing Bob's turn inside a persisted/recalled episode's ``content``: an
