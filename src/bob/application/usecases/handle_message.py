@@ -38,6 +38,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import TYPE_CHECKING, Literal, Protocol
 
 from bob.application.capabilities.registry import CapabilityRegistry
@@ -51,6 +52,7 @@ from bob.domain.diagrams import (
     strip_mermaid_blocks,
 )
 from bob.domain.memory.entities import EpisodicEvent
+from bob.domain.personality.absence import absence_hint
 from bob.domain.personality.addressivity import (
     Addressivity,
     AddressivityThresholds,
@@ -139,7 +141,6 @@ from bob.domain.ports import DiagramRenderError, DiagramResult
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
     from contextlib import AbstractAsyncContextManager
-    from datetime import datetime
     from random import Random
 
     from bob.application.router.llm_router import LLMRouter
@@ -213,6 +214,13 @@ _MAX_CONVICTION = 1.0
 # hold a thread (an earlier topic fell out before Bob could come back to it), losing
 # dialogue coherence. Tunable per persona via ``dialogue.recent_turns``.
 _DEFAULT_RECENT_TURNS = 14
+
+# Default long-gap absence-hint threshold in hours (BOB-045 .3). When the CURRENT
+# interlocutor's per-person thread has been idle longer than this, a light "haven't
+# seen you in a while" hint is folded into the compose context so Bob notices the gap
+# humanly (owner and guest alike) — a hint for the reply tier, never a scripted phrase.
+# ``0`` disables it. Tunable per persona via ``dialogue.absence_hint_hours``.
+_DEFAULT_ABSENCE_HINT_HOURS = 8.0
 
 # Default small mood-valence lift a good, interesting exchange earns (BOB-014 .2a
 # feedback loop). Mirrors the engagement domain default; tunable via emotion.* config.
@@ -621,6 +629,7 @@ class HandleMessage:
         length_guard_enabled: bool = False,
         length_guard_max_chars: int = _DEFAULT_LENGTH_GUARD_MAX_CHARS,
         recent_turns: int = _DEFAULT_RECENT_TURNS,
+        absence_hint_hours: float = _DEFAULT_ABSENCE_HINT_HOURS,
         repeat_thresholds: RepeatThresholds | None = None,
         floor_store: ConversationFloorStore | None = None,
         floor_config: FloorConfig | None = None,
@@ -814,6 +823,14 @@ class HandleMessage:
             msg = f"recent_turns must be positive, got {recent_turns}"
             raise ValueError(msg)
         self._recent_turns = recent_turns
+        # Long-gap absence texture (BOB-045 .3): the per-person idle threshold (hours)
+        # past which a light "haven't seen you in a while" hint enters the compose
+        # context so Bob notices a pause humanly. Must be non-negative; ``0`` disables
+        # it. Tunable via ``dialogue.absence_hint_hours``.
+        if absence_hint_hours < 0:
+            msg = f"absence_hint_hours must be non-negative, got {absence_hint_hours}"
+            raise ValueError(msg)
+        self._absence_hint_hours = absence_hint_hours
         # Anti-repeat window (BOB-026 .1): the fresh reply is checked against a WINDOW
         # of Bob's recent replies (not just the last), verbatim OR near-verbatim, so a
         # repeat "через ход" no longer slips through. Conservative defaults; tunable
@@ -1771,6 +1788,27 @@ class HandleMessage:
             return []
         return await self._episodes.recent_episodes(self._recent_turns)
 
+    def _absence_for(
+        self, history: Sequence[Mapping[str, object]]
+    ) -> str | None:
+        """A light long-gap absence hint for the CURRENT person's thread, or ``None`` (BOB-045 .3).
+
+        Reads the freshest prior turn's timestamp from the already-fetched per-person
+        ``history`` (no extra query) and, via the pure :func:`absence_hint` domain helper,
+        turns the gap to ``self._clock.now()`` into a SHORT neutral note Bob can fold in to
+        notice the pause humanly. Returns ``None`` — add no line, unchanged behaviour — on
+        first contact (empty history), an unparseable timestamp, a gap under the configured
+        threshold, or the hint disabled (``absence_hint_hours == 0``). Applies to any
+        interlocutor with a per-person thread (owner and guest alike). Deterministic given
+        the injected clock.
+        """
+        last_seen = _last_seen_at(history)
+        if last_seen is None:
+            return None
+        return absence_hint(
+            last_seen, self._clock.now(), threshold_hours=self._absence_hint_hours
+        )
+
     async def _others_present(self, event: MessageReceived) -> bool:
         """Whether the recent thread has senders OTHER than the current one (BOB-023).
 
@@ -1829,7 +1867,9 @@ class HandleMessage:
         guest can trigger no capability), and the stranger voice directive is
         appended — the application half of the security invariant.
         """
-        context = _assemble_shareable_context(soul, text, recalled, history)
+        context = _assemble_shareable_context(
+            soul, text, recalled, history, absence=self._absence_for(history)
+        )
         if not is_guest:
             # Grounded add-ons surface Bob's PRIVATE inner life / shared past —
             # withheld from a stranger (audience redaction).
@@ -2328,6 +2368,8 @@ def _assemble_shareable_context(
     topic: str,
     recalled: Sequence[Recalled],
     history: Sequence[Mapping[str, object]],
+    *,
+    absence: str | None = None,
 ) -> str:
     """Compose Bob's reply-shaping context (Variant 2: MAY reach Tier 1).
 
@@ -2341,6 +2383,11 @@ def _assemble_shareable_context(
     temporarily colours it via :func:`modulate` — a flat day reads it stricter, a
     bright day softer — and an experiment-readiness hint from the same mood rides
     along. This is temporary modulation only; the stored taste axes are untouched.
+
+    When ``absence`` is given (BOB-045 .3) — the person's per-person thread has been
+    idle past the configured threshold — ONE light ``Absence:`` line is appended so the
+    reply tier can acknowledge the pause naturally. It is a hint, not a directive; with
+    no/short gap (or the hint disabled) ``absence`` is ``None`` and no line is added.
     """
     stored = soul.taste.score(topic)
     effective = modulate(stored, _verdict_sign(stored), soul.mood)
@@ -2355,10 +2402,33 @@ def _assemble_shareable_context(
     turns = [str(item.get("content", "")) for item in history if item.get("content")]
     if turns:
         lines.append("Recent conversation:\n" + "\n".join(turns))
+    if absence:
+        lines.append(f"Absence: {absence}")
     memories = [str(item.get("content", "")) for item in recalled]
     if memories:
         lines.append("Recalled memories: " + " | ".join(memories))
     return "\n".join(lines)
+
+
+def _last_seen_at(history: Sequence[Mapping[str, object]]) -> datetime | None:
+    """Return the timestamp of the person's MOST RECENT prior turn, or ``None`` (BOB-045 .3).
+
+    The replayed per-person ``history`` is oldest-first, so the freshest prior turn is
+    the last one carrying a parseable ``ts`` (the ISO-8601 string the episode store
+    persists, or a ``datetime`` if already typed). Scans back to front and returns the
+    first such timestamp; an empty history (first contact) or rows with no/garbled ``ts``
+    yield ``None``, so the absence hint simply does not fire — never a crash. No I/O.
+    """
+    for item in reversed(list(history)):
+        ts = item.get("ts")
+        if isinstance(ts, datetime):
+            return ts
+        if isinstance(ts, str):
+            try:
+                return datetime.fromisoformat(ts)
+            except ValueError:
+                continue
+    return None
 
 
 # Marker prefixing Bob's turn inside a persisted episode's ``content`` (see

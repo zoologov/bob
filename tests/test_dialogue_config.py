@@ -17,7 +17,12 @@ from __future__ import annotations
 
 import pytest
 
-from bob.app import _DEFAULT_RECENT_TURNS, _build_recent_turns
+from bob.app import (
+    _DEFAULT_ABSENCE_HINT_HOURS,
+    _DEFAULT_RECENT_TURNS,
+    _build_absence_hint_hours,
+    _build_recent_turns,
+)
 from bob.infrastructure.config.loader import DEFAULT_CONFIG
 
 
@@ -76,3 +81,48 @@ def test_recent_turns_negative_is_rejected() -> None:
 
     with pytest.raises(ValueError, match="recent_turns"):
         _build_recent_turns(config)
+
+
+# --- absence hint (BOB-045 .3) ----------------------------------------------
+
+
+def test_absence_hint_absent_section_yields_default() -> None:
+    # No ``dialogue`` section -> the conservative default threshold (~8h).
+    config: dict[str, object] = {}
+
+    assert _build_absence_hint_hours(config) == _DEFAULT_ABSENCE_HINT_HOURS
+
+
+def test_default_config_ships_the_absence_threshold() -> None:
+    # The built-in defaults carry the absence-hint threshold.
+    assert DEFAULT_CONFIG["dialogue"]["absence_hint_hours"] == _DEFAULT_ABSENCE_HINT_HOURS
+    assert _build_absence_hint_hours(DEFAULT_CONFIG) == _DEFAULT_ABSENCE_HINT_HOURS
+
+
+def test_absence_hint_override_flows_through() -> None:
+    # An explicit, wider pause threshold for a calmer persona.
+    config = {"dialogue": {"absence_hint_hours": 12.0}}
+
+    assert _build_absence_hint_hours(config) == 12.0
+
+
+def test_absence_hint_zero_disables() -> None:
+    # 0 is a valid value: the hint is disabled (no crash).
+    config = {"dialogue": {"absence_hint_hours": 0}}
+
+    assert _build_absence_hint_hours(config) == 0.0
+
+
+def test_absence_hint_invalid_type_falls_back_to_default() -> None:
+    # A non-numeric value -> the conservative default (never a crash).
+    config = {"dialogue": {"absence_hint_hours": "soon"}}
+
+    assert _build_absence_hint_hours(config) == _DEFAULT_ABSENCE_HINT_HOURS
+
+
+def test_absence_hint_negative_is_rejected() -> None:
+    # A negative threshold is a misconfiguration, not a silent disable.
+    config = {"dialogue": {"absence_hint_hours": -2.0}}
+
+    with pytest.raises(ValueError, match="absence_hint_hours"):
+        _build_absence_hint_hours(config)

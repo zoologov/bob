@@ -16,7 +16,7 @@ only genuinely-internal ``private_context`` stays Tier-0-only.
 from __future__ import annotations
 
 import asyncio
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from random import Random
 from typing import TYPE_CHECKING
 
@@ -484,6 +484,7 @@ def _build(
     length_guard_enabled: bool = False,
     length_guard_max_chars: int = 280,
     recent_turns: int = 14,
+    absence_hint_hours: float = 8.0,
     repeat_thresholds: RepeatThresholds | None = None,
     floor_store: _FakeFloorStore | None = None,
     floor_config: FloorConfig | None = None,
@@ -542,6 +543,7 @@ def _build(
         length_guard_enabled=length_guard_enabled,
         length_guard_max_chars=length_guard_max_chars,
         recent_turns=recent_turns,
+        absence_hint_hours=absence_hint_hours,
         repeat_thresholds=repeat_thresholds,
         floor_store=floor_store,
         floor_config=floor_config,
@@ -1059,6 +1061,89 @@ async def test_guest_with_thread_still_gets_no_owner_inner_life_leak() -> None:
 
     assert _GUEST_THREAD_TURN in tier1.all_text  # the guest's own thread is replayed
     assert _REFLECTION_TEXT not in tier1.all_text  # but no owner inner-life leak
+
+
+# --- BOB-045 .3: long-gap absence hint ----------------------------------------
+
+
+def _person_turn_at(*, sender_id: int, hours_ago: float) -> Mapping[str, object]:
+    """A per-person prior turn timestamped ``hours_ago`` before the fixed clock now."""
+    ts = (_moment() - timedelta(hours=hours_ago)).isoformat()
+    return {
+        "content": "Norman: давнее сообщение\nbob: ответил",
+        "event_type": "message",
+        "sender_id": sender_id,
+        "ts": ts,
+    }
+
+
+async def test_guest_long_gap_adds_an_absence_hint() -> None:
+    # BOB-045 .3: a guest resuming after a long pause (14h > 8h threshold) gets ONE
+    # light absence line folded into the compose context so Bob notices it humanly.
+    handler, _bot, _repo, tier1 = _build(
+        reply="hi",
+        history=[_person_turn_at(sender_id=_GUEST_SENDER_ID, hours_ago=14)],
+        perceive_sender=_guest_with_id(_GUEST_SENDER_ID),
+    )
+
+    await handler.handle(_message("расскажи подробно про кофе"))
+
+    assert "Absence:" in tier1.all_text
+    assert "час" in tier1.all_text  # the hours bucket
+
+
+async def test_owner_long_gap_adds_an_absence_hint() -> None:
+    # BOB-045 .3: applies to ANY per-person thread — the owner resuming after a day-long
+    # pause gets the "вчера" bucket hint too (symmetry; owner and guest alike).
+    handler, _bot, _repo, tier1 = _build(
+        reply="hi",
+        history=[_person_turn_at(sender_id=_OWNER_SENDER_ID, hours_ago=26)],
+        perceive_sender=_owner_with_id(_OWNER_SENDER_ID),
+    )
+
+    await handler.handle(_message("объясни подробно про кофе"))
+
+    assert "Absence: последний разговор был вчера" in tier1.all_text
+
+
+async def test_short_gap_adds_no_absence_hint() -> None:
+    # Under the threshold (2h < 8h) it is still the same conversation — no line added.
+    handler, _bot, _repo, tier1 = _build(
+        reply="hi",
+        history=[_person_turn_at(sender_id=_GUEST_SENDER_ID, hours_ago=2)],
+        perceive_sender=_guest_with_id(_GUEST_SENDER_ID),
+    )
+
+    await handler.handle(_message("расскажи подробно про кофе"))
+
+    assert "Absence:" not in tier1.all_text
+
+
+async def test_first_contact_adds_no_absence_hint() -> None:
+    # First contact (no prior per-person turn) -> nothing to compare, no hint.
+    handler, _bot, _repo, tier1 = _build(
+        reply="hi",
+        history=[],
+        perceive_sender=_guest_with_id(_GUEST_SENDER_ID),
+    )
+
+    await handler.handle(_message("расскажи подробно про кофе"))
+
+    assert "Absence:" not in tier1.all_text
+
+
+async def test_disabled_absence_hint_adds_no_line_even_after_a_long_gap() -> None:
+    # absence_hint_hours == 0 disables the texture entirely (no regression, no line).
+    handler, _bot, _repo, tier1 = _build(
+        reply="hi",
+        history=[_person_turn_at(sender_id=_GUEST_SENDER_ID, hours_ago=72)],
+        perceive_sender=_guest_with_id(_GUEST_SENDER_ID),
+        absence_hint_hours=0.0,
+    )
+
+    await handler.handle(_message("расскажи подробно про кофе"))
+
+    assert "Absence:" not in tier1.all_text
 
 
 async def test_durable_fact_is_extracted_into_semantic_memory() -> None:

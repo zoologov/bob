@@ -252,6 +252,12 @@ _DEFAULT_LENGTH_GUARD_MAX_CHARS = 280
 # replayed into the reply context so Bob holds the dialogue thread.
 _DEFAULT_RECENT_TURNS = 14
 
+# Default long-gap absence-hint threshold in hours (BOB-045 .3; mirrors the loader's
+# dialogue.absence_hint_hours default). When Bob resumes with a person after a pause
+# longer than this, a light "haven't seen you in a while" hint enters the compose
+# context. ``0`` disables it.
+_DEFAULT_ABSENCE_HINT_HOURS = 8.0
+
 # The proactivity engine ticks on the heartbeat cadence: cheap by construction
 # (the urge/governance decision is pure, defaulting to silence), so most ticks
 # make ZERO LLM calls.
@@ -683,6 +689,11 @@ def build_application(
         # Tunable via dialogue.recent_turns; the conversation-replay window only,
         # independent of the anti-repeat / tic-guard windows.
         recent_turns=_build_recent_turns(merged),
+        # Long-gap absence texture (BOB-045 .3): the per-person idle threshold (hours)
+        # past which a light "haven't seen you in a while" hint enters the compose
+        # context so Bob notices a pause humanly (owner and guest alike). ``0`` disables
+        # it. Tunable via dialogue.absence_hint_hours.
+        absence_hint_hours=_build_absence_hint_hours(merged),
         # Anti-repeat window (BOB-026 .1): the fresh reply is compared against a WINDOW
         # of Bob's recent replies (not just the last), verbatim OR near-verbatim, so a
         # repeat "через ход" (отказ → another turn → the SAME отказ) regenerates once.
@@ -1548,6 +1559,23 @@ def _build_recent_turns(config: Mapping[str, object]) -> int:
         msg = f"dialogue.recent_turns must be positive, got {recent_turns}"
         raise ValueError(msg)
     return recent_turns
+
+
+def _build_absence_hint_hours(config: Mapping[str, object]) -> float:
+    """Build the BOB-045 .3 long-gap absence threshold from ``dialogue.absence_hint_hours``.
+
+    The pause (in hours) a per-person thread must EXCEED before Bob's compose context
+    gains a light "haven't seen you in a while" hint so he notices the gap humanly
+    (applies to owner and guest alike). Falls back to the conservative default (~8h)
+    when the key is absent or an invalid type. ``0`` is valid and DISABLES the hint;
+    a negative value is rejected (a misconfiguration, not a silent disable).
+    """
+    section = _section(config, "dialogue")
+    hours = _float_or(section, "absence_hint_hours", _DEFAULT_ABSENCE_HINT_HOURS)
+    if hours < 0:
+        msg = f"dialogue.absence_hint_hours must be non-negative, got {hours}"
+        raise ValueError(msg)
+    return hours
 
 
 def _build_repeat_thresholds(config: Mapping[str, object]) -> RepeatThresholds:
