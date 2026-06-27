@@ -198,6 +198,64 @@ def test_no_context_falls_back_even_with_an_angle() -> None:
     )
 
 
+# --- BOB-047 .2: acceptance/guardrails — register variety + mood honesty + palette ---
+
+
+def test_palette_carries_both_a_bright_and_a_low_register() -> None:
+    # Range, NOT forced positivity: the broadened palette must keep BOTH a clearly
+    # bright thought AND an honestly low one, so a future edit cannot quietly collapse
+    # it back into a single cheerful register (the failure mode BOB-047 fixes).
+    palette = "\n".join(LIVING_REFLECTION_EXAMPLES)
+    assert "улыбаюсь" in palette  # a clearly BRIGHT thought...
+    assert "славно" in palette
+    assert "тише, чем хотелось бы" in palette  # ...alongside an honestly LOW one
+    # ...and at least three distinct registers in all (>= the bead's floor).
+    assert len(set(LIVING_REFLECTION_EXAMPLES)) >= 3
+
+
+def test_every_angle_preserves_mood_honesty_with_a_low_disposition() -> None:
+    # The core mood-honesty guardrail: NO angle forces positivity. For EVERY angle in
+    # the rotation, a low-optimism disposition + a subdued tone still yields a prompt
+    # that explicitly PERMITS a low thought ("stay honest ... let the thought be low").
+    for angle in REFLECTION_ANGLES:
+        prompt = build_reflection_prompt(
+            recent_contents=("сегодня тихо",),
+            mood_tone="subdued",
+            disposition=Disposition(optimism=0.05, resilience=0.5),
+            angle=angle,
+        ).casefold()
+        assert "honest" in prompt
+        assert "low" in prompt
+        assert angle.casefold() in prompt  # the angle is woven in alongside the honesty
+
+
+def test_angle_is_additive_to_grounding_and_mood() -> None:
+    # The angle does NOT replace the NOW-grounding or the mood line — it is an extra
+    # KIND-of-thought directive layered on top, so the reflection stays grounded.
+    prompt = build_reflection_prompt(
+        recent_contents=("собрал телескоп",),
+        mood_tone="content",
+        angle=REFLECTION_ANGLES[2],
+    )
+    assert "собрал телескоп" in prompt  # grounding preserved
+    assert "content" in prompt  # mood preserved
+    assert REFLECTION_ANGLES[2] in prompt  # angle added
+
+
+def test_shared_rng_rotates_the_angle_and_is_deterministic_per_seed() -> None:
+    # Register variety at the source: drawing repeatedly from ONE seeded RNG (as the
+    # tick does tick-to-tick) ROTATES through several distinct angles — not one mode
+    # repeated — and the whole sequence is reproducible for a given seed.
+    def sequence(seed: int, n: int) -> list[str]:
+        rng = Random(seed)  # noqa: S311
+        return [select_reflection_angle(rng) for _ in range(n)]
+
+    rolled = sequence(0, 12)
+    assert len(set(rolled)) >= 3  # varies — does not lock into one register
+    assert sequence(0, 12) == rolled  # same seed -> identical sequence (deterministic)
+    assert sequence(1, 12) != rolled  # a different seed -> a different rotation
+
+
 # --- BOB-029: mood-conditioned inner-monologue prompt ---
 
 
