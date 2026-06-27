@@ -411,8 +411,14 @@ def build_application(
 
     # The embedder is wired into the repo so the sqlite-vec table is backfilled with
     # existing memory on startup (initialize) and new facts/episodes are embedded on
-    # write — a no-op when there is no embedder (keyword-only).
-    memory_repo = SqliteMemoryRepo(_db_path(merged), embedder=resolved_embedder)
+    # write — a no-op when there is no embedder (keyword-only). ``name_to_sender_id``
+    # seeds the BOB-045 best-effort backfill of legacy NULL-sender episodes (owner
+    # display name -> owner_id); empty when no owner_name is configured (a no-op).
+    memory_repo = SqliteMemoryRepo(
+        _db_path(merged),
+        embedder=resolved_embedder,
+        name_to_sender_id=_backfill_name_map(merged),
+    )
     recall = HybridMemoryRecall(memory_repo, resolved_embedder, reranker=resolved_reranker)
     soul_store = SoulStore(_soul_dir(merged))
 
@@ -2076,6 +2082,19 @@ def _db_path(config: Mapping[str, object]) -> Path:
 
 def _soul_dir(config: Mapping[str, object]) -> Path:
     return Path(_str(_section(config, "persistence"), "soul_dir", "data/soul"))
+
+
+def _backfill_name_map(config: Mapping[str, object]) -> dict[str, int]:
+    """Owner display name -> owner_id, for the BOB-045 episodic backfill (best-effort).
+
+    Empty when no ``telegram.owner_name`` is configured (or no owner_id) — the
+    backfill is then a graceful no-op and legacy NULL-sender rows simply stay
+    unattributed.
+    """
+    telegram = _section(config, "telegram")
+    owner_name = _str(telegram, "owner_name", "")
+    owner_id = _int(telegram, "owner_id", 0)
+    return {owner_name: owner_id} if owner_name and owner_id else {}
 
 
 def _templates_dir(config: Mapping[str, object]) -> Path:

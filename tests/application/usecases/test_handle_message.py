@@ -274,6 +274,14 @@ class FakeRepo:
         self.requested_ks.append(k)
         return self._history[-k:] if k > 0 else []
 
+    async def recent_episodes_for(
+        self, sender_id: int, k: int
+    ) -> Sequence[Mapping[str, object]]:
+        if k <= 0:
+            return []
+        scoped = [e for e in self._history if e.get("sender_id") == sender_id]
+        return scoped[-k:]
+
 
 class FakeRecall:
     """Recall returning a canned (shareable) recalled memory.
@@ -585,6 +593,12 @@ class _RaiseOnceEpisodes:
             raise RuntimeError("history store unavailable")
         return []
 
+    async def recent_episodes_for(
+        self, sender_id: int, k: int
+    ) -> Sequence[Mapping[str, object]]:
+        del sender_id, k
+        return []
+
 
 def _build_with_episodes(
     *,
@@ -675,6 +689,17 @@ async def test_handle_persists_episode_and_mood() -> None:
     assert len(repo.episodes) == 1
     assert repo.episodes[0]["content"]
     assert repo.mood is not None
+
+
+async def test_persisted_episode_carries_sender_id() -> None:
+    # BOB-045 .1: the saved episode is attributed to its sender so the reply path
+    # can later replay a per-person thread keyed on sender_id.
+    handler, _bot, repo, _tier1 = _build(reply="ok")
+
+    await handler.handle(_message())  # _message() has sender_id=99
+
+    assert len(repo.episodes) == 1
+    assert repo.episodes[0]["sender_id"] == 99
 
 
 async def test_reply_uses_tier1_provider() -> None:

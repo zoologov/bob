@@ -347,6 +347,12 @@ class EpisodeReader(Protocol):
 
     async def recent_episodes(self, k: int) -> Sequence[Mapping[str, object]]: ...
 
+    async def recent_episodes_for(
+        self, sender_id: int, k: int
+    ) -> Sequence[Mapping[str, object]]:
+        """Replay the last ``k`` turns WITH one sender (per-person thread, BOB-045)."""
+        ...
+
 
 class CurrentFascinationReader(Protocol):
     """Read seam: Bob's CURRENT fascination, aged and still-alive (BOB-020 wave 2).
@@ -2170,6 +2176,7 @@ class HandleMessage:
             content=f"{event.sender_name or 'user'}: {event.text}\nbob: {reply}",
             mood_snapshot=soul.mood.tone(),
             tags=("telegram",),
+            sender_id=event.sender_id,
         )
         await self._repo.save_episode(
             {
@@ -2178,6 +2185,7 @@ class HandleMessage:
                 "content": episode.content,
                 "mood_snapshot": episode.mood_snapshot,
                 "tags": ",".join(episode.tags),
+                "sender_id": episode.sender_id,
             }
         )
         await self._repo.set_mood(_mood_state(soul), at=now)

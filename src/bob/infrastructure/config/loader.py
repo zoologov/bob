@@ -356,6 +356,10 @@ DEFAULT_CONFIG: Config = {
         "poll_timeout": 10,
         "chat_id": 0,
         "owner_id": 0,
+        # The owner's display name, used ONLY by the BOB-045 best-effort backfill to
+        # attribute legacy NULL-sender episodes whose content prefix is this name to
+        # owner_id. Empty (the default) -> the backfill is a graceful no-op.
+        "owner_name": "",
         "allowed_chat_ids": [],
         "bob": {
             "token": "",

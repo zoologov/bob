@@ -14,10 +14,21 @@ CREATE TABLE IF NOT EXISTS episodic_log (
     -- (event_type='digest'). Non-destructive — the original row is kept, only
     -- flagged, so it is excluded from re-consolidation. Additive for fresh DBs;
     -- a guarded ALTER in initialize() migrates pre-existing DBs (defaults to 0).
-    consolidated  INTEGER NOT NULL DEFAULT 0
+    consolidated  INTEGER NOT NULL DEFAULT 0,
+    -- BOB-045 per-person memory: the sender_id this turn is attributed to (the
+    -- interlocutor whose message Bob replied to), so a per-person dialogue thread
+    -- can be replayed by sender. Nullable — facts/ticks and legacy rows have no
+    -- sender. Additive for fresh DBs; a guarded ALTER in initialize() migrates
+    -- pre-existing DBs (defaults to NULL), and a best-effort backfill maps the
+    -- leading "<name>: " content prefix of legacy rows to a known sender id.
+    sender_id     INTEGER
 );
 
 CREATE INDEX IF NOT EXISTS idx_episodic_ts ON episodic_log (ts DESC);
+-- NB: the per-person idx_episodic_sender (sender_id, ts) index is created in
+-- initialize() AFTER the sender_id migration, not here — on a pre-existing
+-- column-less DB this schema script runs before the ALTER adds the column, so a
+-- CREATE INDEX on sender_id here would reference a not-yet-existing column.
 
 -- FTS5 virtual table over episodic content — full-archive keyword recall (Fix A).
 -- 'content'-less external-content index keyed back to episodic_log.id via rowid,

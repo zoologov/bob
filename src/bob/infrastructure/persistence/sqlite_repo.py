@@ -48,9 +48,19 @@ _RELATIONSHIP_ROW_ID = 1
 class SqliteMemoryRepo:
     """SQLite adapter for episodic/semantic memory and personality state."""
 
-    def __init__(self, db_path: Path, *, embedder: Embedder | None = None) -> None:
+    def __init__(
+        self,
+        db_path: Path,
+        *,
+        embedder: Embedder | None = None,
+        name_to_sender_id: Mapping[str, int] | None = None,
+    ) -> None:
         self._db_path = db_path
         self._embedder = embedder
+        # Best-effort backfill map (BOB-045): a content name-prefix -> known sender
+        # id (owner display name -> owner_id, allowlisted names -> their ids). Empty
+        # when no identity is wired, in which case the backfill is a graceful no-op.
+        self._name_to_sender_id = dict(name_to_sender_id or {})
         self._conn: aiosqlite.Connection | None = None
         self._vectors: MemoryVectorStore | None = None
 
@@ -72,9 +82,11 @@ class SqliteMemoryRepo:
             await self._vectors.load_extension()
         await self._conn.executescript(_load_schema())
         await self._migrate_episodic_consolidated()
+        await self._migrate_episodic_sender_id()
         await self._migrate_semantic_superseded_by()
         await self._migrate_pursuit_stopped()
         await self._backfill_episodic_fts()
+        await self._backfill_episodic_sender_id()
         await self._conn.commit()
         await self._vector_store().backfill()
         logger.info("SqliteMemoryRepo initialised at %s", self._db_path)
@@ -92,6 +104,55 @@ class SqliteMemoryRepo:
             return
         await self._db().execute(
             "ALTER TABLE episodic_log ADD COLUMN consolidated INTEGER NOT NULL DEFAULT 0"
+        )
+
+    async def _migrate_episodic_sender_id(self) -> None:
+        """Add ``episodic_log.sender_id`` + its index to a pre-existing DB (BOB-045).
+
+        ``CREATE TABLE IF NOT EXISTS`` never alters an already-present table, so a DB
+        written before this column existed would lack it. This guarded ``ALTER`` adds
+        it only when missing — additive and non-destructive: existing rows take the
+        column default (NULL, i.e. an unattributed turn). The ``idx_episodic_sender``
+        index is created here (not in ``schema.sql``) because a column-less legacy DB
+        runs the schema script before this ALTER, so a ``CREATE INDEX`` on
+        ``sender_id`` there would reference a not-yet-existing column. ``CREATE INDEX
+        IF NOT EXISTS`` keeps the whole step a clean no-op once present.
+        """
+        if "sender_id" not in await self._episodic_columns():
+            await self._db().execute("ALTER TABLE episodic_log ADD COLUMN sender_id INTEGER")
+        await self._db().execute(
+            "CREATE INDEX IF NOT EXISTS idx_episodic_sender ON episodic_log (sender_id, ts)"
+        )
+
+    async def _backfill_episodic_sender_id(self) -> None:
+        """Best-effort, idempotent backfill of ``sender_id`` for legacy NULL rows (BOB-045).
+
+        Rows written before the column existed carry the author only inside
+        ``content`` (``"<name>: …\\nbob: …"``). For each row still missing a
+        ``sender_id`` whose leading ``"<name>: "`` prefix resolves to a known sender
+        (owner display name -> owner_id, allowlisted names -> their ids), set the id.
+        Unmatched rows stay NULL (graceful — they simply do not replay per-person).
+
+        Idempotent + non-destructive: it only ever fills a NULL, and is guarded so it
+        does nothing once no NULL rows remain or no identity map is wired — so a
+        second ``initialize()`` is a clean no-op. New turns are written attributed, so
+        the NULL set only ever shrinks.
+        """
+        if not self._name_to_sender_id:
+            return
+        async with self._db().execute(
+            "SELECT id, content FROM episodic_log WHERE sender_id IS NULL"
+        ) as cursor:
+            rows = await cursor.fetchall()
+        updates = [
+            (sender_id, int(row[0]))
+            for row in rows
+            if (sender_id := self._name_to_sender_id.get(_name_prefix(str(row[1])))) is not None
+        ]
+        if not updates:
+            return
+        await self._db().executemany(
+            "UPDATE episodic_log SET sender_id = ? WHERE id = ?", updates
         )
 
     async def _episodic_columns(self) -> set[str]:
@@ -172,14 +233,15 @@ class SqliteMemoryRepo:
     async def save_episode(self, episode: Mapping[str, object]) -> None:
         """Append one episodic event (raw mapping form); embed it on write."""
         cursor = await self._db().execute(
-            "INSERT INTO episodic_log (ts, event_type, content, mood_snapshot, tags) "
-            "VALUES (?, ?, ?, ?, ?)",
+            "INSERT INTO episodic_log (ts, event_type, content, mood_snapshot, tags, sender_id) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
             (
                 episode["ts"],
                 episode["event_type"],
                 episode["content"],
                 episode.get("mood_snapshot"),
                 episode.get("tags", ""),
+                episode.get("sender_id"),
             ),
         )
         await self._db().commit()
@@ -194,6 +256,7 @@ class SqliteMemoryRepo:
                 "content": event.content,
                 "mood_snapshot": event.mood_snapshot,
                 "tags": ",".join(event.tags),
+                "sender_id": event.sender_id,
             }
         )
 
@@ -217,9 +280,32 @@ class SqliteMemoryRepo:
         if k <= 0:
             return []
         async with self._db().execute(
-            "SELECT ts, event_type, content, mood_snapshot, tags "
+            "SELECT ts, event_type, content, mood_snapshot, tags, sender_id "
             "FROM episodic_log ORDER BY ts DESC, id DESC LIMIT ?",
             (k,),
+        ) as cursor:
+            rows = list(await cursor.fetchall())
+        rows.reverse()
+        return [dict(row) for row in rows]
+
+    async def recent_episodes_for(
+        self, sender_id: int, k: int
+    ) -> Sequence[Mapping[str, object]]:
+        """Return the last ``k`` episodes WITH ``sender_id`` (chronological, BOB-045).
+
+        The per-person read seam: selects the ``k`` newest rows attributed to one
+        sender, then reverses them to oldest-first so the result replays that
+        person's dialogue thread in order — mirrors :meth:`recent_episodes` but with
+        a ``WHERE sender_id = ?`` filter. A non-positive ``k`` yields an empty
+        sequence. Privacy follows by construction: each person sees only their own
+        thread.
+        """
+        if k <= 0:
+            return []
+        async with self._db().execute(
+            "SELECT ts, event_type, content, mood_snapshot, tags, sender_id "
+            "FROM episodic_log WHERE sender_id = ? ORDER BY ts DESC, id DESC LIMIT ?",
+            (sender_id, k),
         ) as cursor:
             rows = list(await cursor.fetchall())
         rows.reverse()
@@ -486,6 +572,18 @@ class SqliteMemoryRepo:
 def _load_schema() -> str:
     """Read the bundled ``schema.sql`` from the package."""
     return resources.files(__package__).joinpath(_SCHEMA_RESOURCE).read_text(encoding="utf-8")
+
+
+def _name_prefix(content: str) -> str:
+    """The leading ``"<name>: "`` author label of an episode's content (BOB-045 backfill).
+
+    Episode content is ``"<name>: …\\nbob: …"``; the author name is the text before
+    the first ``": "`` on the first line. Returns ``""`` when there is no such
+    prefix (an unattributable row), which never matches a known sender id.
+    """
+    first_line = content.split("\n", 1)[0]
+    name, sep, _rest = first_line.partition(": ")
+    return name if sep else ""
 
 
 def _loads_object(raw: object) -> dict[str, object]:
