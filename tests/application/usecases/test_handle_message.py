@@ -1146,6 +1146,75 @@ async def test_disabled_absence_hint_adds_no_line_even_after_a_long_gap() -> Non
     assert "Absence:" not in tier1.all_text
 
 
+# --- BOB-045 acceptance: US-3 multi-party + US-2 recency-with-them -------------
+
+
+async def test_two_person_threads_do_not_bleed_into_each_other() -> None:
+    # 🔴 US-3 multi-party: over ONE shared log (owner turn + Norman turn), the owner's
+    # assembled context carries NO Norman-only episode and Norman's carries NO owner
+    # episode — the two per-person threads never bleed, in both directions.
+    owner_handler, _ob, _or, owner_tier1 = _build(
+        reply="hi",
+        history=_PERSON_THREAD,
+        perceive_sender=_owner_with_id(_OWNER_SENDER_ID),
+    )
+    guest_handler, _gb, _gr, guest_tier1 = _build(
+        reply="hi",
+        history=_PERSON_THREAD,
+        perceive_sender=_guest_with_id(_GUEST_SENDER_ID),
+    )
+
+    await owner_handler.handle(_message("объясни подробно про кофе"))
+    await guest_handler.handle(_message("расскажи подробно про кофе"))
+
+    # The owner sees ONLY their own thread...
+    assert _OWNER_THREAD_TURN in owner_tier1.all_text
+    assert _GUEST_THREAD_TURN not in owner_tier1.all_text
+    # ...and Norman sees ONLY his own thread — no cross-contamination either way.
+    assert _GUEST_THREAD_TURN in guest_tier1.all_text
+    assert _OWNER_THREAD_TURN not in guest_tier1.all_text
+
+
+# A guest's multi-turn thread: an EARLY distinct topic plus a recent turn timestamped
+# past the absence threshold — proves resumption is keyed on recency-WITH-THEM (the
+# whole per-person thread replays), not a fresh calendar window.
+_GUEST_OLD_TOPIC = "Norman: помнишь, мы обсуждали джаз?\nbob: конечно, помню"
+_GUEST_LONG_GAP_THREAD: list[Mapping[str, object]] = [
+    {
+        "content": _GUEST_OLD_TOPIC,
+        "event_type": "message",
+        "sender_id": _GUEST_SENDER_ID,
+        "ts": (_moment() - timedelta(hours=30)).isoformat(),
+    },
+    _person_turn_at(sender_id=_GUEST_SENDER_ID, hours_ago=26),
+]
+
+
+async def test_long_gap_still_replays_the_person_thread_and_adds_the_hint() -> None:
+    # US-2: after a gap beyond the threshold the guest's WHOLE per-person thread is
+    # STILL replayed (recency-with-them, not a reset) AND a single Absence hint is
+    # folded in — the two BOB-045 .2/.3 mechanisms compose on one turn.
+    handler, _bot, _repo, tier1 = _build(
+        reply="hi",
+        history=_GUEST_LONG_GAP_THREAD,
+        perceive_sender=_guest_with_id(_GUEST_SENDER_ID),
+    )
+
+    await handler.handle(_message("расскажи подробно про кофе"))
+
+    text = tier1.all_text
+    assert _GUEST_OLD_TOPIC in text  # the earlier topic survived the gap
+    assert "Absence:" in text  # and Bob is told about the pause
+    assert text.count("Absence:") == 1  # exactly one light hint, never a pile-up
+
+
+async def test_negative_absence_hint_hours_is_rejected_at_construction() -> None:
+    # Guardrail: a negative absence threshold is a misconfiguration, surfaced eagerly
+    # at construction (not a silent disable), mirroring the recent_turns guard.
+    with pytest.raises(ValueError, match="absence_hint_hours"):
+        _build(reply="hi", absence_hint_hours=-1.0)
+
+
 async def test_durable_fact_is_extracted_into_semantic_memory() -> None:
     # Arrange: Tier 0 first answers sentiment, then returns one durable fact.
     handler, _bot, repo, _tier1 = _build(
