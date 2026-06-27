@@ -252,6 +252,12 @@ _DEFAULT_LENGTH_GUARD_MAX_CHARS = 280
 # replayed into the reply context so Bob holds the dialogue thread.
 _DEFAULT_RECENT_TURNS = 14
 
+# Default long-gap absence-hint threshold in hours (BOB-045 .3; mirrors the loader's
+# dialogue.absence_hint_hours default). When Bob resumes with a person after a pause
+# longer than this, a light "haven't seen you in a while" hint enters the compose
+# context. ``0`` disables it.
+_DEFAULT_ABSENCE_HINT_HOURS = 8.0
+
 # The proactivity engine ticks on the heartbeat cadence: cheap by construction
 # (the urge/governance decision is pure, defaulting to silence), so most ticks
 # make ZERO LLM calls.
@@ -411,8 +417,14 @@ def build_application(
 
     # The embedder is wired into the repo so the sqlite-vec table is backfilled with
     # existing memory on startup (initialize) and new facts/episodes are embedded on
-    # write — a no-op when there is no embedder (keyword-only).
-    memory_repo = SqliteMemoryRepo(_db_path(merged), embedder=resolved_embedder)
+    # write — a no-op when there is no embedder (keyword-only). ``name_to_sender_id``
+    # seeds the BOB-045 best-effort backfill of legacy NULL-sender episodes (owner
+    # display name -> owner_id); empty when no owner_name is configured (a no-op).
+    memory_repo = SqliteMemoryRepo(
+        _db_path(merged),
+        embedder=resolved_embedder,
+        name_to_sender_id=_backfill_name_map(merged),
+    )
     recall = HybridMemoryRecall(memory_repo, resolved_embedder, reranker=resolved_reranker)
     soul_store = SoulStore(_soul_dir(merged))
 
@@ -677,6 +689,11 @@ def build_application(
         # Tunable via dialogue.recent_turns; the conversation-replay window only,
         # independent of the anti-repeat / tic-guard windows.
         recent_turns=_build_recent_turns(merged),
+        # Long-gap absence texture (BOB-045 .3): the per-person idle threshold (hours)
+        # past which a light "haven't seen you in a while" hint enters the compose
+        # context so Bob notices a pause humanly (owner and guest alike). ``0`` disables
+        # it. Tunable via dialogue.absence_hint_hours.
+        absence_hint_hours=_build_absence_hint_hours(merged),
         # Anti-repeat window (BOB-026 .1): the fresh reply is compared against a WINDOW
         # of Bob's recent replies (not just the last), verbatim OR near-verbatim, so a
         # repeat "через ход" (отказ → another turn → the SAME отказ) regenerates once.
@@ -1544,6 +1561,23 @@ def _build_recent_turns(config: Mapping[str, object]) -> int:
     return recent_turns
 
 
+def _build_absence_hint_hours(config: Mapping[str, object]) -> float:
+    """Build the BOB-045 .3 long-gap absence threshold from ``dialogue.absence_hint_hours``.
+
+    The pause (in hours) a per-person thread must EXCEED before Bob's compose context
+    gains a light "haven't seen you in a while" hint so he notices the gap humanly
+    (applies to owner and guest alike). Falls back to the conservative default (~8h)
+    when the key is absent or an invalid type. ``0`` is valid and DISABLES the hint;
+    a negative value is rejected (a misconfiguration, not a silent disable).
+    """
+    section = _section(config, "dialogue")
+    hours = _float_or(section, "absence_hint_hours", _DEFAULT_ABSENCE_HINT_HOURS)
+    if hours < 0:
+        msg = f"dialogue.absence_hint_hours must be non-negative, got {hours}"
+        raise ValueError(msg)
+    return hours
+
+
 def _build_repeat_thresholds(config: Mapping[str, object]) -> RepeatThresholds:
     """Build the BOB-026 .1 anti-repeat window thresholds from ``repeat.*``.
 
@@ -2076,6 +2110,19 @@ def _db_path(config: Mapping[str, object]) -> Path:
 
 def _soul_dir(config: Mapping[str, object]) -> Path:
     return Path(_str(_section(config, "persistence"), "soul_dir", "data/soul"))
+
+
+def _backfill_name_map(config: Mapping[str, object]) -> dict[str, int]:
+    """Owner display name -> owner_id, for the BOB-045 episodic backfill (best-effort).
+
+    Empty when no ``telegram.owner_name`` is configured (or no owner_id) — the
+    backfill is then a graceful no-op and legacy NULL-sender rows simply stay
+    unattributed.
+    """
+    telegram = _section(config, "telegram")
+    owner_name = _str(telegram, "owner_name", "")
+    owner_id = _int(telegram, "owner_id", 0)
+    return {owner_name: owner_id} if owner_name and owner_id else {}
 
 
 def _templates_dir(config: Mapping[str, object]) -> Path:

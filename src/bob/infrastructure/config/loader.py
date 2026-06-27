@@ -213,6 +213,12 @@ DEFAULT_CONFIG: Config = {
     # windows (BOB-026/036) and the wide tic-guard ``repeat.tic_lookback`` (BOB-043).
     "dialogue": {
         "recent_turns": 14,
+        # Long-gap absence texture (BOB-045 .3). When Bob resumes with a person after a
+        # pause longer than this many hours, a LIGHT contextual hint ("последний разговор
+        # был ...") is folded into the compose context so he notices the gap humanly — a
+        # hint for the reply tier, never a scripted phrase. Per-person (owner and guest
+        # alike). ``0`` disables it; must be non-negative.
+        "absence_hint_hours": 8.0,
     },
     # Memory consolidation (BOB-021): a rare, non-destructive reflect-tick step that
     # folds OLD un-consolidated episodes into a Tier-0 digest (embedded, recalled like
@@ -356,6 +362,10 @@ DEFAULT_CONFIG: Config = {
         "poll_timeout": 10,
         "chat_id": 0,
         "owner_id": 0,
+        # The owner's display name, used ONLY by the BOB-045 best-effort backfill to
+        # attribute legacy NULL-sender episodes whose content prefix is this name to
+        # owner_id. Empty (the default) -> the backfill is a graceful no-op.
+        "owner_name": "",
         "allowed_chat_ids": [],
         "bob": {
             "token": "",
