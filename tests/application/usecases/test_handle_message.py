@@ -3053,6 +3053,68 @@ async def test_distinct_closer_over_a_wide_window_is_not_stripped() -> None:
     assert bot.final_text == fresh
 
 
+async def test_single_occurrence_in_wide_window_does_not_regenerate() -> None:
+    # 🔴 No false positive at the wide scale (occurrence boundary): the closer appears
+    # in EXACTLY ONE of the last 20 replies — below tic_min_occurrences (2). A fresh
+    # draft carrying it is a one-off reuse, NOT a tic, so it is committed verbatim with
+    # no regeneration. Pins that the wide lookback still needs >= min_occurrences.
+    history: list[dict[str, object]] = [
+        {"content": f"Ada: пункт {i}\nbob: Реплика номер {i} готова.", "event_type": "message"}
+        for i in range(20)
+    ]
+    history[4] = {
+        "content": f"Ada: пункт 4\nbob: Однажды сделал. {_REAL_TIC}",
+        "event_type": "message",
+    }
+    fresh = f"Сделал бэкап на всякий случай. {_REAL_TIC}"
+    handler, bot, _repo, tier1 = _build(reply=fresh, history=history)
+
+    await handler.handle(_message("сделай, пожалуйста, ещё и бэкап подробно"))
+
+    assert len(tier1.payloads) == 1  # one occurrence is below the bar — no catch
+    assert bot.final_text == fresh
+
+
+async def test_short_closer_recurring_across_wide_window_is_not_caught() -> None:
+    # 🔴 No false positive: a SHORT closer ("Идём дальше." — 2 words, below
+    # tic_min_words=3) recurs in every one of Bob's last 20 replies, yet is never
+    # notable, so a fresh reply reusing it is committed as-is. Common short sign-offs
+    # must never trip the wide-lookback detector.
+    short_closer = "Идём дальше."
+    history = [
+        {
+            "content": f"Ada: пункт {i}\nbob: Реплика номер {i} готова. {short_closer}",
+            "event_type": "message",
+        }
+        for i in range(20)
+    ]
+    fresh = f"Сделал бэкап на всякий случай. {short_closer}"
+    handler, bot, _repo, tier1 = _build(reply=fresh, history=history)
+
+    await handler.handle(_message("сделай, пожалуйста, ещё и бэкап подробно"))
+
+    assert len(tier1.payloads) == 1  # short closer is below the notability bar
+    assert bot.final_text == fresh
+
+
+async def test_strip_fallback_preserves_a_multi_sentence_substantive_reply() -> None:
+    # Strip fallback keeps the BODY intact: a stubborn scattered tic the wide lookback
+    # catches, where every regeneration re-copies a TWO-sentence body + the tic closer.
+    # After the bound only the trailing tic sentence is excised — both body sentences
+    # (and their punctuation) survive, and the closer never ships.
+    sticky = f"Первая часть готова. Вторая часть тоже готова. {_REAL_TIC}"
+    handler, bot, _repo, tier1 = _build(
+        reply="unused",
+        tier1_replies=[sticky] * 4,
+        history=_scattered_tic_history(),
+    )
+
+    await handler.handle(_message("сделай, пожалуйста, ещё и бэкап подробно"))
+
+    assert len(tier1.payloads) == 3  # initial + 2 retries, then the closer is stripped
+    assert bot.final_text == "Первая часть готова. Вторая часть тоже готова."
+
+
 async def test_recurring_reflection_phrase_is_not_treated_as_a_tic() -> None:
     # BOB-033 x BOB-036 regression: a private reflection that recurs in the recall store
     # is EXCLUDED from the recall pool BEFORE the guard runs, so even a repeating inner-

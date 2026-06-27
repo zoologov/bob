@@ -160,6 +160,20 @@ def test_repeat_thresholds_rejects_tic_min_occurrences_below_one() -> None:
         RepeatThresholds(tic_min_occurrences=0)
 
 
+def test_repeat_thresholds_rejects_tic_lookback_below_one() -> None:
+    # BOB-043: the WIDE closer-lookback window must be >= 1 — a non-positive
+    # lookback would read no closers and silently disable the scattered-tic catch.
+    with pytest.raises(ValueError, match="tic_lookback"):
+        RepeatThresholds(tic_lookback=0)
+
+
+def test_repeat_thresholds_tic_lookback_default_is_wide() -> None:
+    # BOB-043: the default lookback is WIDE (>> the narrow ~6 history window) so a
+    # ~21%-prevalence scattered tic recurs enough times to clear min_occurrences.
+    thresholds = RepeatThresholds()
+    assert thresholds.tic_lookback >= 20  # pins the wide default (>> narrow ~6)
+
+
 # --- Phrase-tic detector (BOB-036 .1) -----------------------------------------
 #
 # BOB-032 anti-repeat compares FULL replies (threshold 0.9), so two substantively
@@ -389,6 +403,94 @@ def test_strip_recurring_closer_blank_closer_is_a_noop() -> None:
 def test_strip_recurring_closer_tidies_trailing_whitespace() -> None:
     text = f"Готово, всё чисто.   {_TIC}   "
     assert strip_recurring_closer(text, "мне так спокойнее") == "Готово, всё чисто."
+
+
+# --- BOB-043 .2: recurring_closer / strip_recurring_closer guardrails ----------
+#
+# Edge + no-false-positive cases for the deterministic-strip helpers. The strip is
+# the LAST line of defence (fires only after regeneration cannot shake the tic), so
+# it must (a) only ever fire on a closer that genuinely RECURS across the wide window,
+# and (b) excise EXACTLY the trailing tic sentence — never mangle the substantive body
+# or a legitimate earlier reuse of the same phrase.
+
+
+def test_recurring_closer_empty_window_is_not_a_recurrence() -> None:
+    # An empty wide window (e.g. Bob's first replies, or a guest turn) -> nothing to
+    # recur against -> None, so the strip fallback never fires with no evidence.
+    candidate = f"Сделал бэкап на всякий случай. {_TIC}"
+    assert recurring_closer(candidate, [], min_words=3, min_occurrences=2) is None
+
+
+def test_recurring_closer_blank_candidate_is_not_a_recurrence() -> None:
+    # A blank candidate has no final notable phrase -> None (never strips nothing).
+    window = [f"Развернул сервис. {_TIC}", f"Прогнал тесты. {_TIC}"]
+    assert recurring_closer("   ", window, min_words=3, min_occurrences=2) is None
+
+
+def test_recurring_closer_uses_final_notable_phrase_skipping_a_short_tail() -> None:
+    # The CLOSER is the last NOTABLE sentence: a trailing short fragment ("Ок.", 1
+    # word) after the real closer is skipped, so the recurring tic is still detected.
+    candidate = f"Сделал бэкап на всякий случай. {_TIC} Ок."
+    window = [f"Развернул сервис. {_TIC}", f"Прогнал тесты. {_TIC}"]
+    assert (
+        recurring_closer(candidate, window, min_words=3, min_occurrences=2)
+        == "мне так спокойнее"
+    )
+
+
+def test_recurring_closer_exactly_at_min_occurrences_boundary() -> None:
+    # Off-by-one at the recurrence boundary: a closer in EXACTLY min_occurrences (2)
+    # replies recurs; one in only (min_occurrences - 1) does not.
+    candidate = f"Свежий повод. {_TIC}"
+    two = [f"Развернул сервис. {_TIC}", f"Прогнал тесты. {_TIC}"]
+    one = [f"Развернул сервис. {_TIC}", "Прогнал тесты. Идём дальше работать."]
+    assert recurring_closer(candidate, two, min_words=3, min_occurrences=2) is not None
+    assert recurring_closer(candidate, one, min_words=3, min_occurrences=2) is None
+
+
+def test_strip_recurring_closer_removes_only_the_final_occurrence() -> None:
+    # No-mangle guardrail: when the closer phrase ALSO appears earlier (a legitimate
+    # mid-reply reuse), only the TRAILING occurrence is excised — the earlier sentence
+    # and the substantive body in between are left intact.
+    text = f"{_TIC} И ещё сделал бэкап подробно. {_TIC}"
+    assert (
+        strip_recurring_closer(text, "мне так спокойнее")
+        == "Мне так спокойнее. И ещё сделал бэкап подробно."
+    )
+
+
+def test_strip_recurring_closer_drops_a_short_fragment_trailing_the_closer() -> None:
+    # The closer plus any trailing short tail after it is tidied away in one go, the
+    # substantive body surviving untouched.
+    text = f"Готово, всё чисто. {_TIC} Ок."
+    assert strip_recurring_closer(text, "мне так спокойнее") == "Готово, всё чисто."
+
+
+def test_strip_recurring_closer_preserves_a_multi_sentence_body() -> None:
+    # The substantive reply can be several sentences: only the trailing tic sentence
+    # is removed; every body sentence (and its punctuation) survives intact.
+    text = f"Первая часть готова. Вторая часть тоже готова. {_TIC}"
+    assert (
+        strip_recurring_closer(text, "мне так спокойнее")
+        == "Первая часть готова. Вторая часть тоже готова."
+    )
+
+
+def test_recurring_closer_and_strip_are_pure_and_deterministic() -> None:
+    # The helpers are pure: identical inputs -> identical outputs across calls, and the
+    # caller's window list is never mutated (no I/O, no hidden state).
+    candidate = f"Сделал бэкап на всякий случай. {_TIC}"
+    window = [f"Развернул сервис. {_TIC}", f"Прогнал тесты. {_TIC}"]
+    window_snapshot = list(window)
+
+    first = recurring_closer(candidate, window, min_words=3, min_occurrences=2)
+    second = recurring_closer(candidate, window, min_words=3, min_occurrences=2)
+
+    assert first == second == "мне так спокойнее"
+    assert window == window_snapshot
+    assert strip_recurring_closer(candidate, first or "") == strip_recurring_closer(
+        candidate, first or ""
+    )
 
 
 # --- Recall-aware anti-repeat helpers (BOB-032 .1, shared domain logic) --------
