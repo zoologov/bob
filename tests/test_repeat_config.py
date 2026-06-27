@@ -102,3 +102,20 @@ def test_repeat_config_overrides_tic_knobs() -> None:
 
     assert thresholds.tic_min_words == 4
     assert thresholds.tic_min_occurrences == 3
+
+
+def test_repeat_config_tic_lookback_defaults_when_absent() -> None:
+    # BOB-043: with no ``tic_lookback`` key, the wide-lookback window falls back to
+    # the conservative dataclass default.
+    thresholds = _build_repeat_thresholds({})
+
+    assert thresholds.tic_lookback == RepeatThresholds().tic_lookback
+
+
+def test_repeat_config_overrides_tic_lookback() -> None:
+    # BOB-043: the wide closer-lookback window is tunable via ``repeat.tic_lookback``.
+    config = {"repeat": {"tic_lookback": 30}}
+
+    thresholds = _build_repeat_thresholds(config)
+
+    assert thresholds.tic_lookback == 30

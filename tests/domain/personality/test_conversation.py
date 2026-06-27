@@ -23,6 +23,8 @@ from bob.domain.personality.conversation import (
     recalled_bob_reply,
     recalled_excluding_reflections,
     recalled_without_copied_exemplars,
+    recurring_closer,
+    strip_recurring_closer,
 )
 
 
@@ -309,6 +311,84 @@ def test_blank_recent_replies_contribute_no_occurrence() -> None:
     candidate = f"Конфиг гляну. {_TIC}"
     # Only one real occurrence -> below min_occurrences=2 -> not a tic.
     assert is_phrase_tic(candidate, recent, min_words=3, min_occurrences=2) is False
+
+
+# --- BOB-043: wide-lookback recurring closer + deterministic strip --------------
+#
+# The narrow per-turn window (6-episode history + query-recall) sees a SCATTERED tic
+# (~21% prevalence) only 0–1× -> below min_occurrences. Over a WIDE window (~20 of
+# Bob's closers) it recurs ~4× -> reliably caught. ``recurring_closer`` returns the
+# candidate's FINAL notable phrase iff it recurs across that window; the pure
+# ``strip_recurring_closer`` then removes exactly that trailing tic sentence so the
+# tic never ships even if regeneration can't shake it.
+
+
+def test_recurring_closer_returns_the_final_phrase_when_it_recurs() -> None:
+    # The candidate's FINAL notable phrase recurs in >= min_occurrences of the wide
+    # window -> it is the recurring closer (returned normalised).
+    candidate = f"Сделал бэкап на всякий случай. {_TIC}"
+    window = [
+        f"Развернул сервис. {_TIC}",
+        f"Прогнал тесты. {_TIC}",
+    ]
+    assert (
+        recurring_closer(candidate, window, min_words=3, min_occurrences=2)
+        == "мне так спокойнее"
+    )
+
+
+def test_recurring_closer_catches_a_scattered_tic_in_a_wide_window() -> None:
+    # The headline case: the tic appears in only 4 of the last 20 replies (21%
+    # prevalence). A narrow 6-window would see it 0–1× (below the bar); the wide
+    # window sees 4 occurrences -> caught.
+    scattered = [f"Реплика {i}." for i in range(20)]
+    for index in (3, 8, 12, 17):
+        scattered[index] = f"Что-то сделал. {_TIC}"
+    candidate = f"Свежий повод. {_TIC}"
+    assert (
+        recurring_closer(candidate, scattered, min_words=3, min_occurrences=2)
+        == "мне так спокойнее"
+    )
+
+
+def test_recurring_closer_one_off_ending_is_not_a_recurrence() -> None:
+    # A DISTINCT, non-recurring closer (appears in only one prior reply) is below
+    # min_occurrences -> not a recurring closer -> None (no false positive strip).
+    candidate = "Готово. Это разовая концовка такая."
+    window = [
+        "Что-то сделал. Это разовая концовка такая.",
+        f"Другое сделал. {_TIC}",
+    ]
+    assert recurring_closer(candidate, window, min_words=3, min_occurrences=2) is None
+
+
+def test_recurring_closer_short_final_phrase_below_min_words_is_ignored() -> None:
+    # A short/common closer below min_words ("Работаем" — 1 word) is never notable,
+    # so it can never be a recurring closer even when it recurs every reply.
+    candidate = "Поправил конфиг. Работаем."
+    window = ["А. Работаем.", "Б. Работаем."]
+    assert recurring_closer(candidate, window, min_words=3, min_occurrences=2) is None
+
+
+def test_strip_recurring_closer_removes_the_trailing_tic_sentence() -> None:
+    text = f"Готово, бэкап на месте. {_TIC}"
+    assert strip_recurring_closer(text, "мне так спокойнее") == "Готово, бэкап на месте."
+
+
+def test_strip_recurring_closer_leaves_a_distinct_ending_intact() -> None:
+    # When the passed closer is NOT the trailing sentence, nothing is stripped.
+    text = "Готово, бэкап на месте. Совсем другая концовка тут."
+    assert strip_recurring_closer(text, "мне так спокойнее") == text
+
+
+def test_strip_recurring_closer_blank_closer_is_a_noop() -> None:
+    text = f"Готово. {_TIC}"
+    assert strip_recurring_closer(text, "   ") == text
+
+
+def test_strip_recurring_closer_tidies_trailing_whitespace() -> None:
+    text = f"Готово, всё чисто.   {_TIC}   "
+    assert strip_recurring_closer(text, "мне так спокойнее") == "Готово, всё чисто."
 
 
 # --- Recall-aware anti-repeat helpers (BOB-032 .1, shared domain logic) --------
