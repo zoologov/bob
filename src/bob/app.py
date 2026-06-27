@@ -868,6 +868,10 @@ def build_application(
         # regenerated once, else skipped, so the inner monologue stops being a stuck
         # record. Reuses the .1 near-verbatim bar (``repeat.similarity_threshold``).
         reflection_context=memory_repo,
+        # Seeded-RNG seam for reflection-angle rotation (BOB-047 .1): a separate Random
+        # off the same shared seed so the per-tick inner-thought ANGLE is reproducible
+        # yet rotates, giving Bob's reflections RANGE instead of one locked register.
+        rng=random.Random(_resolve_seed(merged, proactivity_seed)),  # noqa: S311
         repeat_thresholds=_build_repeat_thresholds(merged),
         # Self-improvement reflect-tick seams (BOB-028): on the slow cadence Bob detects
         # behavioural patterns into PROPOSED rules and tactfully voices ONE fresh proposal

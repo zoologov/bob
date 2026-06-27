@@ -13,13 +13,17 @@ prompt verbatim — so an unwired tick behaves exactly as before.
 
 from __future__ import annotations
 
+from random import Random
+
 from bob.domain.personality.disposition import Disposition
 from bob.domain.personality.reflection import (
     GENERIC_MONOLOGUE_PROMPT,
     GENERIC_REFLECT_PROMPT,
     LIVING_REFLECTION_EXAMPLES,
+    REFLECTION_ANGLES,
     build_monologue_prompt,
     build_reflection_prompt,
+    select_reflection_angle,
 )
 
 
@@ -71,7 +75,8 @@ def test_disposition_weaves_a_few_shot_living_palette() -> None:
         mood_tone="content",
         disposition=Disposition(optimism=0.8, resilience=0.7),
     )
-    assert 2 <= len(LIVING_REFLECTION_EXAMPLES) <= 3
+    # BOB-047 .1: a handful, broadened to span several registers (not 2-3).
+    assert 4 <= len(LIVING_REFLECTION_EXAMPLES) <= 7
     for example in LIVING_REFLECTION_EXAMPLES:
         assert example in prompt
 
@@ -126,6 +131,71 @@ def test_without_a_disposition_the_few_shot_palette_is_absent() -> None:
     )
     for example in LIVING_REFLECTION_EXAMPLES:
         assert example not in prompt
+
+
+# --- BOB-047 .1: broadened palette + seeded angle variety ---
+
+
+def test_living_palette_spans_several_distinct_registers() -> None:
+    # The few-shot palette must carry RANGE (not one register) — a handful of distinct
+    # thoughts so the model is not nudged into a single mood. All entries are unique.
+    assert len(LIVING_REFLECTION_EXAMPLES) >= 4
+    assert len(set(LIVING_REFLECTION_EXAMPLES)) == len(LIVING_REFLECTION_EXAMPLES)
+
+
+def test_select_reflection_angle_is_deterministic_per_seed() -> None:
+    # Same seed -> same angle (deterministic, like the BOB-033 reappraisal gate).
+    assert select_reflection_angle(Random(7)) == select_reflection_angle(Random(7))  # noqa: S311
+
+
+def test_select_reflection_angle_varies_across_seeds() -> None:
+    # Across a sequence of seeds the angle ROTATES — more than one distinct mode is
+    # produced, so reflections do not lock into a single register.
+    produced = {select_reflection_angle(Random(seed)) for seed in range(20)}  # noqa: S311
+    assert len(produced) >= 3
+    assert produced <= set(REFLECTION_ANGLES)
+
+
+def test_angle_is_woven_into_the_prompt_as_a_type_of_thought_directive() -> None:
+    # The chosen angle appears in the grounded prompt as a light "kind of thought"
+    # directive — it shapes the TYPE of thought, not a fixed canned sentence.
+    angle = REFLECTION_ANGLES[0]
+    prompt = build_reflection_prompt(
+        recent_contents=("собрал телескоп",), mood_tone="content", angle=angle
+    )
+    assert angle in prompt
+
+
+def test_different_angles_yield_different_prompts() -> None:
+    # The angle is not a constant: distinct angles produce distinct prompts.
+    a = build_reflection_prompt(
+        recent_contents=("собрал телескоп",), mood_tone="content", angle=REFLECTION_ANGLES[0]
+    )
+    b = build_reflection_prompt(
+        recent_contents=("собрал телескоп",), mood_tone="content", angle=REFLECTION_ANGLES[1]
+    )
+    assert a != b
+
+
+def test_angle_keeps_mood_honesty_with_a_low_disposition() -> None:
+    # Mood-honest: even with an angle AND a low-optimism disposition, the prompt still
+    # PERMITS a low thought — the angle nudges the KIND, never forces positivity.
+    prompt = build_reflection_prompt(
+        recent_contents=("сегодня тихо",),
+        mood_tone="subdued",
+        disposition=Disposition(optimism=0.1, resilience=0.5),
+        angle=REFLECTION_ANGLES[0],
+    ).casefold()
+    assert "honest" in prompt
+    assert "low" in prompt
+
+
+def test_no_context_falls_back_even_with_an_angle() -> None:
+    # The no-context generic fallback is preserved regardless of a wired angle.
+    assert (
+        build_reflection_prompt(recent_contents=(), mood_tone="", angle=REFLECTION_ANGLES[0])
+        == GENERIC_REFLECT_PROMPT
+    )
 
 
 # --- BOB-029: mood-conditioned inner-monologue prompt ---

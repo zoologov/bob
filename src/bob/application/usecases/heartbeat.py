@@ -35,10 +35,12 @@ from bob.domain.personality.mood import MoodDelta
 from bob.domain.personality.reflection import (
     build_monologue_prompt,
     build_reflection_prompt,
+    select_reflection_angle,
 )
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
+    from random import Random
 
     from bob.application.router.llm_router import LLMRouter
     from bob.application.usecases.apply_reflection import ApplyReflection
@@ -362,6 +364,7 @@ class ReflectTick:
         announce_rules: RuleAnnouncerStep | None = None,
         reappraise: Reappraiser | None = None,
         reflection_context: ReflectionContext | None = None,
+        rng: Random | None = None,
         repeat_thresholds: RepeatThresholds | None = None,
         grounding_episodes: int = _DEFAULT_REFLECT_GROUNDING,
         dedup_window: int = _DEFAULT_REFLECT_DEDUP_WINDOW,
@@ -378,6 +381,11 @@ class ReflectTick:
         # for near-duplicates. Unwired -> the legacy generic prompt, every reflection
         # saved (prior behaviour).
         self._reflection_context = reflection_context
+        # The seeded-RNG seam for reflection-angle rotation (BOB-047 .1): an injected,
+        # seeded Random (the same style as the BOB-033 reappraisal gate) makes the
+        # per-tick angle deterministic in tests yet varied tick to tick. Unwired (or with
+        # no context seam) the tick adds no angle directive — legacy behaviour.
+        self._rng = rng
         # Near-duplicate thresholds — reuse the .1 reply predicate's bar (verbatim OR
         # near-verbatim via difflib). Injected from config; conservative defaults.
         self._repeat_thresholds = (
@@ -497,14 +505,22 @@ class ReflectTick:
         so :func:`build_reflection_prompt` returns the legacy generic prompt and the
         unwired tick is byte-for-byte unchanged.
         """
-        grounding = _episode_contents(recent, self._grounding_episodes)
+        grounding = _grounding_contents(recent, self._grounding_episodes)
         # Only ground (and lean) when the context seam is wired, so an unwired tick is
         # byte-for-byte unchanged. The disposition adds the few-shot living palette and
         # the optimism valence-lean (BOB-033 .2) on top of the existing NOW-grounding.
         mood_tone = self._state.soul.mood.tone() if self._reflection_context else ""
         disposition = self._state.soul.disposition if self._reflection_context else None
+        # Rotate the inner-thought ANGLE per tick (BOB-047 .1) from the seeded RNG, but
+        # only when both the RNG and the context seam are wired — so an unwired tick is
+        # unchanged. The angle nudges the KIND of thought; mood-honesty is preserved.
+        angle = (
+            select_reflection_angle(self._rng)
+            if self._rng is not None and self._reflection_context is not None
+            else None
+        )
         prompt = build_reflection_prompt(
-            grounding, mood_tone=mood_tone, disposition=disposition
+            grounding, mood_tone=mood_tone, disposition=disposition, angle=angle
         )
         return await self._router.run(
             LLMRequest(
@@ -584,17 +600,27 @@ def _taste_profile(taste: TasteEngine) -> dict[str, object]:
     }
 
 
-def _episode_contents(
+def _grounding_contents(
     episodes: Sequence[Mapping[str, object]], limit: int
 ) -> tuple[str, ...]:
-    """The ``content`` of the ``limit`` most-recent episodes, oldest-first (BOB-026 .2).
+    """The ``content`` of the ``limit`` most-recent NON-reflection episodes (BOB-047 .1).
 
-    Grounds a reflection in what is actually happening now. ``episodes`` arrive
-    oldest-first; the tail of length ``limit`` is the freshest context.
+    Grounds a reflection in what is actually happening now — REAL moments (messages,
+    events, actions), NOT Bob's own prior reflections. Feeding past reflections back in
+    as the few-shot "recent moments" made the model mimic its OWN register, locking the
+    inner monologue into one tone (the mirror of the old stuck-gloom). Excluding
+    ``event_type == "reflection"`` breaks that self-feeding loop; the dedup window
+    (:func:`_reflection_contents`) STILL reads reflections, so BOB-026 is unaffected.
+    ``episodes`` arrive oldest-first; the tail of length ``limit`` is the freshest.
     """
     if limit <= 0:
         return ()
-    return tuple(str(row.get("content", "")) for row in episodes[-limit:])
+    grounding = [
+        str(row.get("content", ""))
+        for row in episodes
+        if row.get("event_type") != "reflection"
+    ]
+    return tuple(grounding[-limit:])
 
 
 def _reflection_contents(

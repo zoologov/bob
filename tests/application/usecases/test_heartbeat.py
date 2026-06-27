@@ -13,6 +13,7 @@ runtime's job and is covered there; here we test one tick's effect.
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from random import Random
 from typing import TYPE_CHECKING
 
 import pytest
@@ -31,6 +32,7 @@ from bob.application.usecases.heartbeat import (
 from bob.application.usecases.reappraise_reflection import ReappraisalOutcome
 from bob.domain.personality.disposition import Disposition
 from bob.domain.personality.mood import Mood
+from bob.domain.personality.reflection import REFLECTION_ANGLES, select_reflection_angle
 from bob.domain.personality.soul import SOUL
 from bob.domain.personality.taste import TasteAxis, TasteEngine
 from bob.infrastructure.persistence.soul_store import SoulStore
@@ -1033,6 +1035,95 @@ async def test_reflect_without_a_reappraiser_is_unaffected() -> None:
 
     assert repo.episodes[0]["content"] == "тихая мысль"
     assert state.soul.mood.valence == 0.2
+
+
+# --- BOB-047 .1: grounding excludes reflections + seeded angle variety ----------
+
+
+async def test_reflect_grounding_excludes_reflection_episodes() -> None:
+    # BOB-047 .1: the few-shot GROUNDING moments must come from NON-reflection episodes
+    # only — a prior reflection in the recent set must NOT feed the prompt (breaking the
+    # self-reinforcing register lock), while a message turn STILL grounds it.
+    router, tier0 = _router(reply="свежая мысль")
+    context = FakeReflectionContext(
+        [
+            _reflection_episode("сердце колотится в предвкушении прыжка"),
+            _message_episode("owner: глянь на орбиты"),
+        ]
+    )
+    tick = ReflectTick(
+        router=router,
+        repo=FakeRepo(),
+        state=_state(Mood(), Mood()),
+        clock=FixedClock(_moment()),
+        reflection_context=context,
+    )
+
+    await tick.run()
+
+    prompt = tier0.prompts[0]
+    assert "орбиты" in prompt  # the message grounds the reflection
+    assert "сердце колотится" not in prompt  # the prior reflection does NOT
+
+
+async def test_reflect_dedup_still_sees_reflections_after_grounding_excludes_them() -> None:
+    # BOB-047 .1: excluding reflections from GROUNDING must NOT weaken the BOB-026 dedup —
+    # a fresh thought that near-repeats a recent reflection is still regenerated.
+    router, tier0 = _sequenced_router(
+        ["плыву по течению этих дней", "сегодня собрал телескоп"]
+    )
+    context = FakeReflectionContext([_reflection_episode("плыву по течению этих дней")])
+    repo = FakeRepo()
+    tick = ReflectTick(
+        router=router,
+        repo=repo,
+        state=_state(Mood(), Mood()),
+        clock=FixedClock(_moment()),
+        reflection_context=context,
+    )
+
+    await tick.run()
+
+    assert tier0.calls == 2  # dedup still fired -> one regeneration
+    assert repo.episodes[0]["content"] == "сегодня собрал телескоп"
+
+
+async def test_reflect_threads_a_seeded_angle_into_the_prompt() -> None:
+    # BOB-047 .1: with a seeded RNG wired, the reflect prompt carries the deterministically
+    # chosen inner-thought angle — same seed -> same angle (reproducible in tests).
+    router, tier0 = _router(reply="свежая мысль")
+    context = FakeReflectionContext([_message_episode("owner: что нового?")])
+    expected = select_reflection_angle(Random(0))  # noqa: S311
+    tick = ReflectTick(
+        router=router,
+        repo=FakeRepo(),
+        state=_state(Mood(), Mood()),
+        clock=FixedClock(_moment()),
+        reflection_context=context,
+        rng=Random(0),  # noqa: S311
+    )
+
+    await tick.run()
+
+    assert expected in tier0.prompts[0]
+
+
+async def test_reflect_without_an_rng_threads_no_angle() -> None:
+    # Backward-compatible default: no RNG wired -> no angle directive (legacy prompt).
+    router, tier0 = _router(reply="свежая мысль")
+    context = FakeReflectionContext([_message_episode("owner: что нового?")])
+    tick = ReflectTick(
+        router=router,
+        repo=FakeRepo(),
+        state=_state(Mood(), Mood()),
+        clock=FixedClock(_moment()),
+        reflection_context=context,
+    )
+
+    await tick.run()
+
+    for angle in REFLECTION_ANGLES:
+        assert angle not in tier0.prompts[0]
 
 
 async def test_reflect_passes_the_disposition_into_the_prompt() -> None:
