@@ -302,6 +302,17 @@ ignore = [
     "RUF002",
     "RUF003",
 ]
+# The block-A acceptance/guardrails (BOB-046 .4) assert on Russian persona/phase literals
+# + use unused fake-port args; S101/ARG/RUF001-003 do not apply to these test fakes.
+"tests/application/usecases/test_coding_block_a_acceptance.py" = [
+    "S101",
+    "ARG001",
+    "ARG002",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
 "tests/infrastructure/telegram/test_guppi_coding.py" = [
     "S101",
     "ARG001",
