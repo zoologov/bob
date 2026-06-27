@@ -25,6 +25,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
+    from random import Random
 
     from bob.domain.personality.disposition import Disposition
 
@@ -45,14 +46,36 @@ _GROUNDED_FOOTER = (
 )
 _MOOD_LINE_PREFIX = "Your current mood feels:"
 
-# A few-shot PALETTE of a "living Bob" private thought (BOB-033 .2): curious, bright,
-# wry, and — honestly — occasionally sad. It is NOT forced-positive: the point is to
-# widen the distribution a low-temperature Tier-0 model collapses onto (monotone
-# "пустота/тишина" gloom) back toward the canon range, WITHOUT forbidding genuine lows.
+# A few-shot PALETTE of a "living Bob" private thought (BOB-033 .2 / BOB-047 .1):
+# deliberately broadened to span SEVERAL registers — excitement, quiet contentment,
+# curiosity, a plain everyday note, and — honestly — a mild wistful low. It is NOT
+# forced-positive and NOT a rule: the point is to widen the distribution a
+# low-temperature Tier-0 model collapses onto (one monotone register — gloom OR, after
+# BOB-033, a single "сердце колотится в предвкушении" excitement) back toward Bob's
+# canon RANGE, WITHOUT forbidding a genuine low.
 LIVING_REFLECTION_EXAMPLES: tuple[str, ...] = (
     "Любопытно, выдержит ли крепление вторую линзу — надо проверить вечером.",
     "Поймал себя на том, что улыбаюсь этой возне с орбитами, и это славно.",
+    "Хорошо вот так посидеть в тишине, без спешки — просто есть, и ладно.",
+    "Надо бы разобрать тот ящик с проводами, всё руки не доходят.",
     "Сегодня тише, чем хотелось бы; ну да ладно, бывает и так.",
+)
+
+# Inner-thought ANGLES (BOB-047 .1): the KIND of thought, not its words. Rotating the
+# angle per tick keeps reflections from locking into a single register (the mirror of
+# the old stuck-gloom). Each is a light directive shaping the TYPE of thought — never a
+# canned sentence — and mood-honesty still governs the valence (a low mood may still
+# yield a low thought even under a "bright" angle). Drawn deterministically from an
+# injected seeded RNG (the same style as the BOB-033 reappraisal gate).
+REFLECTION_ANGLES: tuple[str, ...] = (
+    "Let this thought take the shape of a small MEMORY — something recalled from before.",
+    "Let this thought be a SENSATION — what you notice around you or in yourself right now.",
+    "Let this thought LOOK FORWARD — a quiet anticipation of something still to come.",
+    "Let this thought be a plain, EVERYDAY note about some ordinary thing of yours.",
+    "Let this thought be GRATITUDE — something small you are quietly thankful for.",
+    "Let this thought be QUIET CONTENTMENT — a settled, unhurried ease with how things are.",
+    "Let this thought carry a faint UNEASE — a mild worry, honestly held, nothing dramatic.",
+    "Let this thought be CURIOSITY — a small wondering about how something works.",
 )
 _FEW_SHOT_HEADER = (
     "A few of your past private thoughts, for the flavour (curious, bright, wry — and "
@@ -107,6 +130,17 @@ def build_monologue_prompt(mood_tone: str) -> str:
     )
 
 
+def select_reflection_angle(rng: Random) -> str:
+    """Pick one inner-thought angle from :data:`REFLECTION_ANGLES` (BOB-047 .1).
+
+    A pure function of the injected, seeded RNG: same seed → same angle (deterministic
+    in tests, like the BOB-033 reappraisal gate), yet it ROTATES tick to tick so the
+    reflection's KIND of thought varies and does not lock into one register. The angle
+    nudges the TYPE of thought only — mood-honesty still governs the valence.
+    """
+    return rng.choice(REFLECTION_ANGLES)
+
+
 def _valence_lean_line(disposition: Disposition) -> str:
     """The disposition-derived, honest valence-lean instruction (BOB-033 .2).
 
@@ -127,14 +161,15 @@ def build_reflection_prompt(
     *,
     mood_tone: str,
     disposition: Disposition | None = None,
+    angle: str | None = None,
 ) -> str:
     """Weave fresh context into a grounded reflection prompt (BOB-026 .2 / BOB-033 .2).
 
-    ``recent_contents`` are the textual contents of Bob's most-recent episodes,
-    oldest-first; blank entries are skipped. ``mood_tone`` is the current mood's
-    deterministic tone word (empty to omit). With neither — no usable episode and
-    no tone — the generic template is returned verbatim (legacy behaviour), even
-    when a ``disposition`` is wired (the no-context fallback is preserved).
+    ``recent_contents`` are the textual contents of Bob's most-recent NON-reflection
+    episodes, oldest-first; blank entries are skipped. ``mood_tone`` is the current
+    mood's deterministic tone word (empty to omit). With neither — no usable episode
+    and no tone — the generic template is returned verbatim (legacy behaviour), even
+    when a ``disposition``/``angle`` is wired (the no-context fallback is preserved).
 
     The grounded prompt lists the recent moments and the mood, then asks for ONE
     short introspective sentence about the present moment, so the reflection is
@@ -142,8 +177,14 @@ def build_reflection_prompt(
 
     When ``disposition`` is wired (BOB-033 .2) the prompt additionally carries a
     few-shot PALETTE of "living Bob" thoughts and an optimism-derived valence-lean,
-    shifting a low-temperature Tier-0 model away from monotone gloom toward Bob's
-    canon range — WITHOUT forbidding a genuine low. Unwired, behaviour is unchanged.
+    shifting a low-temperature Tier-0 model away from a monotone register toward Bob's
+    canon range — WITHOUT forbidding a genuine low.
+
+    When ``angle`` is wired (BOB-047 .1) it adds a light directive shaping the KIND of
+    thought (a memory / a sensation / looking forward / …) so the reflection's register
+    rotates tick to tick instead of locking into one. The angle nudges the TYPE of
+    thought only; the honest valence-lean still permits a genuine low. Unwired (no
+    disposition, no angle), behaviour is unchanged.
     """
     moments = [content.strip() for content in recent_contents if content.strip()]
     tone = mood_tone.strip()
@@ -158,6 +199,8 @@ def build_reflection_prompt(
     if tone:
         lines.append(f"{_MOOD_LINE_PREFIX} {tone}.")
     lines.append(_GROUNDED_FOOTER)
+    if angle:
+        lines.append(angle)
     if disposition is not None:
         lines.append(_valence_lean_line(disposition))
     return "\n".join(lines)

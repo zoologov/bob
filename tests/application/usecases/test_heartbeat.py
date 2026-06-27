@@ -13,6 +13,7 @@ runtime's job and is covered there; here we test one tick's effect.
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from random import Random
 from typing import TYPE_CHECKING
 
 import pytest
@@ -31,6 +32,11 @@ from bob.application.usecases.heartbeat import (
 from bob.application.usecases.reappraise_reflection import ReappraisalOutcome
 from bob.domain.personality.disposition import Disposition
 from bob.domain.personality.mood import Mood
+from bob.domain.personality.reflection import (
+    LIVING_REFLECTION_EXAMPLES,
+    REFLECTION_ANGLES,
+    select_reflection_angle,
+)
 from bob.domain.personality.soul import SOUL
 from bob.domain.personality.taste import TasteAxis, TasteEngine
 from bob.infrastructure.persistence.soul_store import SoulStore
@@ -1035,6 +1041,95 @@ async def test_reflect_without_a_reappraiser_is_unaffected() -> None:
     assert state.soul.mood.valence == 0.2
 
 
+# --- BOB-047 .1: grounding excludes reflections + seeded angle variety ----------
+
+
+async def test_reflect_grounding_excludes_reflection_episodes() -> None:
+    # BOB-047 .1: the few-shot GROUNDING moments must come from NON-reflection episodes
+    # only — a prior reflection in the recent set must NOT feed the prompt (breaking the
+    # self-reinforcing register lock), while a message turn STILL grounds it.
+    router, tier0 = _router(reply="свежая мысль")
+    context = FakeReflectionContext(
+        [
+            _reflection_episode("сердце колотится в предвкушении прыжка"),
+            _message_episode("owner: глянь на орбиты"),
+        ]
+    )
+    tick = ReflectTick(
+        router=router,
+        repo=FakeRepo(),
+        state=_state(Mood(), Mood()),
+        clock=FixedClock(_moment()),
+        reflection_context=context,
+    )
+
+    await tick.run()
+
+    prompt = tier0.prompts[0]
+    assert "орбиты" in prompt  # the message grounds the reflection
+    assert "сердце колотится" not in prompt  # the prior reflection does NOT
+
+
+async def test_reflect_dedup_still_sees_reflections_after_grounding_excludes_them() -> None:
+    # BOB-047 .1: excluding reflections from GROUNDING must NOT weaken the BOB-026 dedup —
+    # a fresh thought that near-repeats a recent reflection is still regenerated.
+    router, tier0 = _sequenced_router(
+        ["плыву по течению этих дней", "сегодня собрал телескоп"]
+    )
+    context = FakeReflectionContext([_reflection_episode("плыву по течению этих дней")])
+    repo = FakeRepo()
+    tick = ReflectTick(
+        router=router,
+        repo=repo,
+        state=_state(Mood(), Mood()),
+        clock=FixedClock(_moment()),
+        reflection_context=context,
+    )
+
+    await tick.run()
+
+    assert tier0.calls == 2  # dedup still fired -> one regeneration
+    assert repo.episodes[0]["content"] == "сегодня собрал телескоп"
+
+
+async def test_reflect_threads_a_seeded_angle_into_the_prompt() -> None:
+    # BOB-047 .1: with a seeded RNG wired, the reflect prompt carries the deterministically
+    # chosen inner-thought angle — same seed -> same angle (reproducible in tests).
+    router, tier0 = _router(reply="свежая мысль")
+    context = FakeReflectionContext([_message_episode("owner: что нового?")])
+    expected = select_reflection_angle(Random(0))  # noqa: S311
+    tick = ReflectTick(
+        router=router,
+        repo=FakeRepo(),
+        state=_state(Mood(), Mood()),
+        clock=FixedClock(_moment()),
+        reflection_context=context,
+        rng=Random(0),  # noqa: S311
+    )
+
+    await tick.run()
+
+    assert expected in tier0.prompts[0]
+
+
+async def test_reflect_without_an_rng_threads_no_angle() -> None:
+    # Backward-compatible default: no RNG wired -> no angle directive (legacy prompt).
+    router, tier0 = _router(reply="свежая мысль")
+    context = FakeReflectionContext([_message_episode("owner: что нового?")])
+    tick = ReflectTick(
+        router=router,
+        repo=FakeRepo(),
+        state=_state(Mood(), Mood()),
+        clock=FixedClock(_moment()),
+        reflection_context=context,
+    )
+
+    await tick.run()
+
+    for angle in REFLECTION_ANGLES:
+        assert angle not in tier0.prompts[0]
+
+
 async def test_reflect_passes_the_disposition_into_the_prompt() -> None:
     # BOB-033 .2: with a context seam wired, the reflect prompt carries the soul's
     # disposition (few-shot living palette + optimism valence-lean).
@@ -1058,3 +1153,189 @@ async def test_reflect_passes_the_disposition_into_the_prompt() -> None:
     await tick.run()
 
     assert "optimism" in tier0.prompts[0].casefold()  # the valence-lean reached the model
+
+
+# --- BOB-047 .2: acceptance — register variety, self-feed lock, mood honesty -----
+
+
+def _angle_in(prompt: str) -> str:
+    """The single REFLECTION_ANGLES directive woven into ``prompt`` (exactly one)."""
+    present = [angle for angle in REFLECTION_ANGLES if angle in prompt]
+    assert len(present) == 1, f"expected exactly one angle, found {len(present)}"
+    return present[0]
+
+
+async def test_reflect_angle_varies_across_a_sequence_of_ticks() -> None:
+    # THE CORE FIX: over a run of ticks on ONE shared seeded RNG, the threaded inner-
+    # thought ANGLE rotates through SEVERAL distinct modes — Bob's reflections get
+    # RANGE instead of locking into a single register.
+    router, tier0 = _router(reply="свежая мысль про орбиты")
+    context = FakeReflectionContext([_message_episode("owner: глянь на орбиты")])
+    tick = ReflectTick(
+        router=router,
+        repo=FakeRepo(),
+        state=_state(Mood(), Mood()),
+        clock=FixedClock(_moment()),
+        reflection_context=context,
+        rng=Random(0),  # noqa: S311
+    )
+
+    for _ in range(12):
+        await tick.run()
+
+    angles = [_angle_in(prompt) for prompt in tier0.prompts]
+    assert len(angles) == 12
+    assert len(set(angles)) >= 3  # several distinct registers, not one repeated
+
+
+async def _run_angle_sequence(seed: int, n: int) -> list[str]:
+    router, tier0 = _router(reply="свежая мысль про орбиты")
+    context = FakeReflectionContext([_message_episode("owner: глянь на орбиты")])
+    tick = ReflectTick(
+        router=router,
+        repo=FakeRepo(),
+        state=_state(Mood(), Mood()),
+        clock=FixedClock(_moment()),
+        reflection_context=context,
+        rng=Random(seed),  # noqa: S311
+    )
+    for _ in range(n):
+        await tick.run()
+    return [_angle_in(prompt) for prompt in tier0.prompts]
+
+
+async def test_reflect_angle_sequence_is_deterministic_per_seed() -> None:
+    # Determinism: two ticks wired with the SAME seed thread the SAME angle sequence —
+    # reproducible in tests (the BOB-033 reappraisal-gate style).
+    assert await _run_angle_sequence(7, 10) == await _run_angle_sequence(7, 10)
+
+
+async def test_reflect_angle_sequences_differ_across_seeds() -> None:
+    # Different seeds -> a different rotation, so the register is not globally pinned.
+    assert await _run_angle_sequence(0, 10) != await _run_angle_sequence(1, 10)
+
+
+async def test_reflect_grounding_excludes_every_reflection_among_many_episodes() -> None:
+    # Self-feeding lock BROKEN (stronger guardrail): with several reflections AND several
+    # messages interleaved, the grounding few-shot carries ONLY the message content — not
+    # one reflection leaks back in to let the model mimic its own register.
+    router, tier0 = _router(reply="свежая мысль")
+    context = FakeReflectionContext(
+        [
+            _reflection_episode("сердце колотится в предвкушении"),
+            _message_episode("owner: первое сообщение"),
+            _reflection_episode("плыву по течению этих дней"),
+            _message_episode("owner: второе сообщение"),
+            _reflection_episode("пустота и тишина"),
+        ]
+    )
+    tick = ReflectTick(
+        router=router,
+        repo=FakeRepo(),
+        state=_state(Mood(), Mood()),
+        clock=FixedClock(_moment()),
+        reflection_context=context,
+    )
+
+    await tick.run()
+
+    prompt = tier0.prompts[0]
+    assert "первое сообщение" in prompt  # messages ground the reflection
+    assert "второе сообщение" in prompt
+    for reflection in ("сердце колотится", "плыву по течению", "пустота и тишина"):
+        assert reflection not in prompt  # no reflection feeds itself back in
+
+
+async def test_reflect_regenerates_a_near_verbatim_not_exact_reflection() -> None:
+    # Dedup INTACT (BOB-026): a thought that is NEAR-verbatim (not byte-identical) to a
+    # recent reflection — one word changed — is STILL caught by the difflib ratio and
+    # regenerated, proving the dedup compares against reflections semantically, unchanged.
+    router, tier0 = _sequenced_router(
+        [
+            "сегодня собрал телескоп и любовался орбитой",  # near-verbatim (>= 0.9)
+            "поймал далёкий зов маяка",  # the novel retry
+        ]
+    )
+    context = FakeReflectionContext(
+        [_reflection_episode("сегодня собрал телескоп и любовался орбитами")]
+    )
+    repo = FakeRepo()
+    tick = ReflectTick(
+        router=router,
+        repo=repo,
+        state=_state(Mood(), Mood()),
+        clock=FixedClock(_moment()),
+        reflection_context=context,
+    )
+
+    await tick.run()
+
+    assert tier0.calls == 2  # near-verbatim caught -> one regeneration
+    assert repo.episodes[0]["content"] == "поймал далёкий зов маяка"
+
+
+async def test_reflect_low_mood_with_an_angle_still_permits_a_low_prompt() -> None:
+    # Mood honesty PRESERVED (BOB-033) under angle variety: a genuinely low disposition +
+    # a subdued mood + a seeded angle still produces a prompt that PERMITS a low thought
+    # (the honest valence-lean) — the angle nudges the KIND, it does not force positivity.
+    router, tier0 = _router(reply="сегодня пусто")
+    context = FakeReflectionContext([_message_episode("owner: как ты?")])
+    soul = SOUL(
+        identity="Bob",
+        mood=Mood(valence=-0.4, arousal=0.2),
+        mood_baseline=Mood(valence=-0.4),
+        taste=TasteEngine(),
+        disposition=Disposition(optimism=0.05, resilience=0.4),
+    )
+    tick = ReflectTick(
+        router=router,
+        repo=FakeRepo(),
+        state=PersonalityState(soul=soul),
+        clock=FixedClock(_moment()),
+        reflection_context=context,
+        rng=Random(3),  # noqa: S311
+    )
+
+    await tick.run()
+
+    prompt = tier0.prompts[0].casefold()
+    assert "honest" in prompt  # the honest valence-lean is present...
+    assert "low" in prompt  # ...explicitly permitting a low thought
+    _angle_in(tier0.prompts[0])  # ...and an angle is still threaded in (variety holds)
+
+
+async def test_inner_monologue_negative_thought_lowers_mood() -> None:
+    # Mood honesty at the monologue tick (BOB-029 regression): a genuinely NEGATIVE
+    # private thought moves valence DOWN — Bob's lows are honoured, never forced up.
+    router, _ = _router(reply="negative")
+    baseline = Mood(valence=0.2)
+    state = _state(Mood(valence=0.2), baseline)
+    tick = InnerMonologueTick(router=router, state=state)
+
+    await tick.run()
+
+    assert state.soul.mood.valence < 0.2  # the low is honoured, not suppressed
+
+
+async def test_reflect_without_rng_is_unchanged_but_keeps_the_disposition_palette() -> None:
+    # Backward-compat regression: an UN-wired rng adds NO angle directive, yet the rest
+    # of the .1/.2 grounded prompt is intact — the grounding moment and the default
+    # disposition's few-shot palette still appear. The angle is strictly ADDITIVE, so
+    # an un-upgraded (no-rng) deployment behaves exactly as before BOB-047.
+    router, tier0 = _router(reply="тихая мысль")
+    context = FakeReflectionContext([_message_episode("owner: глянь на орбиты")])
+    tick = ReflectTick(
+        router=router,
+        repo=FakeRepo(),
+        state=_state(Mood(), Mood()),  # default soul -> default disposition (palette on)
+        clock=FixedClock(_moment()),
+        reflection_context=context,
+    )
+
+    await tick.run()
+
+    prompt = tier0.prompts[0]
+    for angle in REFLECTION_ANGLES:
+        assert angle not in prompt  # no angle directive without an rng
+    assert "орбиты" in prompt  # grounding intact
+    assert any(example in prompt for example in LIVING_REFLECTION_EXAMPLES)  # palette intact
