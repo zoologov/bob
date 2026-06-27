@@ -208,8 +208,11 @@ _MAX_FREQ = 1.0
 _MIN_CONVICTION = 0.0
 _MAX_CONVICTION = 1.0
 
-# How many recent conversation turns to replay into the reply context.
-_HISTORY_K = 6
+# Default number of recent conversation turns to replay into the reply context
+# (BOB-044). Widened from the old hardcoded 6 — a 6-turn window was too tight to
+# hold a thread (an earlier topic fell out before Bob could come back to it), losing
+# dialogue coherence. Tunable per persona via ``dialogue.recent_turns``.
+_DEFAULT_RECENT_TURNS = 14
 
 # Default small mood-valence lift a good, interesting exchange earns (BOB-014 .2a
 # feedback loop). Mirrors the engagement domain default; tunable via emotion.* config.
@@ -611,6 +614,7 @@ class HandleMessage:
         brevity_thresholds: BrevityThresholds | None = None,
         length_guard_enabled: bool = False,
         length_guard_max_chars: int = _DEFAULT_LENGTH_GUARD_MAX_CHARS,
+        recent_turns: int = _DEFAULT_RECENT_TURNS,
         repeat_thresholds: RepeatThresholds | None = None,
         floor_store: ConversationFloorStore | None = None,
         floor_config: FloorConfig | None = None,
@@ -796,6 +800,14 @@ class HandleMessage:
             msg = f"length_guard_max_chars must be positive, got {length_guard_max_chars}"
             raise ValueError(msg)
         self._length_guard_max_chars = length_guard_max_chars
+        # Recent-history replay window (BOB-044): how many recent conversation turns are
+        # replayed into the reply context. A wider window holds the dialogue thread (an
+        # earlier topic no longer falls out before Bob can return to it). Must be a
+        # positive count; tunable via ``dialogue.recent_turns``.
+        if recent_turns <= 0:
+            msg = f"recent_turns must be positive, got {recent_turns}"
+            raise ValueError(msg)
+        self._recent_turns = recent_turns
         # Anti-repeat window (BOB-026 .1): the fresh reply is checked against a WINDOW
         # of Bob's recent replies (not just the last), verbatim OR near-verbatim, so a
         # repeat "через ход" no longer slips through. Conservative defaults; tunable
@@ -1005,7 +1017,7 @@ class HandleMessage:
             )
         )
         history: Sequence[Mapping[str, object]] = (
-            [] if is_guest else await self._episodes.recent_episodes(_HISTORY_K)
+            [] if is_guest else await self._episodes.recent_episodes(self._recent_turns)
         )
         # User-repeat detection (BOB-022): does the OWNER repeat (near-)verbatim what
         # he already said in the recent window? Pure, no-LLM, conservative (exact after
@@ -1735,7 +1747,7 @@ class HandleMessage:
         wrongly silences Bob in his own space).
         """
         try:
-            history = await self._episodes.recent_episodes(_HISTORY_K)
+            history = await self._episodes.recent_episodes(self._recent_turns)
         except Exception:
             logger.exception("reading history for addressivity failed (ignored)")
             return False

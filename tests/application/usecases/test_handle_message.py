@@ -257,6 +257,9 @@ class FakeRepo:
         self.facts: list[object] = []
         self.mood: Mapping[str, object] | None = None
         self._history: list[Mapping[str, object]] = list(history)
+        # Every ``recent_episodes`` window size asked for this turn (BOB-044): lets a
+        # test assert the configured recent-history window is the one actually replayed.
+        self.requested_ks: list[int] = []
 
     async def save_episode(self, episode: Mapping[str, object]) -> None:
         self.episodes.append(episode)
@@ -268,6 +271,7 @@ class FakeRepo:
         self.mood = state
 
     async def recent_episodes(self, k: int) -> Sequence[Mapping[str, object]]:
+        self.requested_ks.append(k)
         return self._history[-k:] if k > 0 else []
 
 
@@ -471,6 +475,7 @@ def _build(
     addressivity_thresholds: AddressivityThresholds | None = None,
     length_guard_enabled: bool = False,
     length_guard_max_chars: int = 280,
+    recent_turns: int = 14,
     repeat_thresholds: RepeatThresholds | None = None,
     floor_store: _FakeFloorStore | None = None,
     floor_config: FloorConfig | None = None,
@@ -528,6 +533,7 @@ def _build(
         addressivity_thresholds=addressivity_thresholds,
         length_guard_enabled=length_guard_enabled,
         length_guard_max_chars=length_guard_max_chars,
+        recent_turns=recent_turns,
         repeat_thresholds=repeat_thresholds,
         floor_store=floor_store,
         floor_config=floor_config,
@@ -778,6 +784,86 @@ async def test_recent_conversation_history_reaches_tier1_reply() -> None:
     # Assert: the earlier turn (the name) is in the Tier 1 reply context — Bob remembers.
     assert _PRIOR_TURN in tier1.all_text
     assert "Ada" in tier1.all_text
+
+
+# A history long enough that an early topic sits ~10 turns back — the case the old
+# 6-turn window dropped (Bob "lost the thread"). The distinct early turn is the probe.
+_THREAD_TOPIC_TURN = "Ada: нарисуй архитектурную диаграмму с деталями\nbob: окей, рисую"
+_THREAD_HISTORY: list[Mapping[str, object]] = [
+    {"content": _THREAD_TOPIC_TURN, "event_type": "message"},
+    *[
+        {"content": f"Ada: реплика {i}\nbob: ответ {i}", "event_type": "message"}
+        for i in range(11)
+    ],
+]
+
+
+async def test_default_recent_window_holds_an_older_turn_a_six_window_would_drop() -> None:
+    # BOB-044: with the WIDENED default (14), a topic raised ~11 turns ago is still
+    # replayed into the reply context — Bob keeps the dialogue thread.
+    handler, _bot, _repo, tier1 = _build(reply="hi", history=_THREAD_HISTORY)
+
+    await handler.handle(_message("расскажи подробно про кофе"))
+
+    assert _THREAD_TOPIC_TURN in tier1.all_text
+
+
+async def test_a_six_turn_window_drops_the_older_topic() -> None:
+    # BOB-044 (the bug it fixes): the OLD hardcoded window of 6 drops the early topic —
+    # it falls out before Bob can return to it, so he loses the thread.
+    handler, _bot, _repo, tier1 = _build(
+        reply="hi", history=_THREAD_HISTORY, recent_turns=6
+    )
+
+    await handler.handle(_message("расскажи подробно про кофе"))
+
+    assert _THREAD_TOPIC_TURN not in tier1.all_text
+
+
+async def test_a_wider_window_brings_the_older_topic_back() -> None:
+    # BOB-044: widening the window to 14 (over the same history) re-includes the early
+    # topic a window of 6 dropped — the fix, demonstrated on one history.
+    handler, _bot, _repo, tier1 = _build(
+        reply="hi", history=_THREAD_HISTORY, recent_turns=14
+    )
+
+    await handler.handle(_message("расскажи подробно про кофе"))
+
+    assert _THREAD_TOPIC_TURN in tier1.all_text
+
+
+async def test_recent_window_replays_the_configured_number_of_turns() -> None:
+    # BOB-044: the configured window size is the one actually asked of the episode
+    # reader (not the old hardcoded 6) — both the addressivity read and the compose read.
+    handler, _bot, repo, _tier1 = _build(
+        reply="hi", history=_THREAD_HISTORY, recent_turns=9
+    )
+
+    await handler.handle(_message("расскажи подробно про кофе"))
+
+    assert 9 in repo.requested_ks
+    assert 6 not in repo.requested_ks  # the old hardcoded window is gone
+
+
+async def test_guest_turn_replays_no_history_regardless_of_window() -> None:
+    # BOB-044 keeps the GUEST invariant: a guest gets an EMPTY history window — the
+    # owner's recent conversation is never replayed for a stranger, whatever the size.
+    handler, _bot, _repo, tier1 = _build(
+        reply="hi",
+        history=_THREAD_HISTORY,
+        recent_turns=14,
+        perceive_sender=_guest_resolver(),
+    )
+
+    await handler.handle(_message("расскажи подробно про кофе"))
+
+    assert _THREAD_TOPIC_TURN not in tier1.all_text
+
+
+async def test_non_positive_recent_window_is_rejected() -> None:
+    # BOB-044: a window that replays nothing is a misconfiguration, not a silent no-op.
+    with pytest.raises(ValueError, match="recent_turns"):
+        _build(reply="hi", recent_turns=0)
 
 
 async def test_durable_fact_is_extracted_into_semantic_memory() -> None:

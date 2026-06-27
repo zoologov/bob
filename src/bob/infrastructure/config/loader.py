@@ -204,6 +204,16 @@ DEFAULT_CONFIG: Config = {
             "max_chars": 280,
         },
     },
+    # Dialogue coherence (BOB-044). ``recent_turns`` is how many recent conversation
+    # turns are replayed into the reply context so Bob holds the thread. The old
+    # hardcoded window of 6 was too tight — an earlier topic fell out before Bob could
+    # come back to it, so he "lost the thread". Widened to 14; raise it further for a
+    # persona that needs to hold longer arcs. Must be a positive int. This is the
+    # conversation-replay window only — independent of the anti-repeat ``repeat.*``
+    # windows (BOB-026/036) and the wide tic-guard ``repeat.tic_lookback`` (BOB-043).
+    "dialogue": {
+        "recent_turns": 14,
+    },
     # Memory consolidation (BOB-021): a rare, non-destructive reflect-tick step that
     # folds OLD un-consolidated episodes into a Tier-0 digest (embedded, recalled like
     # any episode) and flags the sources. Conservative defaults: only episodes at least
