@@ -84,7 +84,7 @@ class _FakeRelationships:
         self.stored: Relationship | None = rel
         self.saved: list[Relationship] = []
 
-    async def load(self, sender_id: int) -> Relationship | None:  # noqa: ARG002
+    async def load(self, sender_id: int) -> Relationship | None:
         return self.stored
 
     async def save(self, relationship: Relationship) -> None:
