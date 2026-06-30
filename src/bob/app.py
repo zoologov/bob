@@ -40,7 +40,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol, cast
 
-from bob.application.authz import Authorizer, SenderPerception
+from bob.application.authz import Authorizer, ReactorPerception, SenderPerception
 from bob.application.capabilities import (
     CapabilityRegistry,
     CollectingDiagramSink,
@@ -60,9 +60,11 @@ from bob.application.proactivity import (
 )
 from bob.application.router import LLMRouter
 from bob.application.runtime import (
+    BOB_MESSAGE_REACTION,
     MESSAGE_RECEIVED,
     AgentRuntime,
     AsyncEventBus,
+    BobMessageReaction,
     MessageReceived,
     RetryPolicy,
     periodic,
@@ -96,6 +98,7 @@ from bob.application.usecases.heartbeat import (
     MoodDriftTick,
     ReflectTick,
 )
+from bob.application.usecases.perceive_reaction import PerceiveReaction
 from bob.application.usecases.plan_goal import LlmPlanner, PlanGoal
 from bob.application.usecases.pursue_goals import PursueGoalsTick
 from bob.application.usecases.reappraise_reflection import ReappraiseReflection
@@ -137,6 +140,7 @@ from bob.infrastructure.introspection.subprocess_introspector import (
     SubprocessRepoIntrospector,
 )
 from bob.infrastructure.llm import build_embedder, build_reranker, build_tier_providers
+from bob.infrastructure.llm.reaction_judge import LlmReactionJudge
 from bob.infrastructure.llm.response_judge import LlmResponseJudge
 from bob.infrastructure.persistence import (
     HybridMemoryRecall,
@@ -614,6 +618,13 @@ def build_application(
         clock=resolved_clock,
     )
 
+    # Being-received store (BOB-050): a SINGLE kv-backed record shared by BOTH sides of
+    # the feature — the perceiving use-case (.2) WRITES a notable reaction here and the
+    # acknowledgment hint (.3) in HandleMessage READS + consumes it. They MUST share one
+    # instance, otherwise a written reaction is invisible to the hint and Bob can never
+    # mention being received. Built once and injected into both.
+    notable_reaction_store = KvNotableReactionStore(memory_repo)
+
     handle_message = HandleMessage(
         router=router,
         gateway=multibot.reply_gateway(BotIdentity.BOB),
@@ -733,7 +744,7 @@ def build_application(
         # himself. The store is the SAME kv-backed record the perceiving use-case writes;
         # the hint reads + consumes it so Bob never repeats it. Decorative: a store
         # failure drops silently. Tunable via dialogue.acknowledge_reaction_freq.
-        notable_reaction=KvNotableReactionStore(memory_repo),
+        notable_reaction=notable_reaction_store,
         acknowledge_reaction_freq=_build_acknowledge_reaction_freq(merged),
         # Anti-repeat window (BOB-026 .1): the fresh reply is compared against a WINDOW
         # of Bob's recent replies (not just the last), verbatim OR near-verbatim, so a
@@ -800,6 +811,27 @@ def build_application(
         ),
     )
     event_bus.subscribe(MESSAGE_RECEIVED, _as_handler(handle_message))
+
+    # Reaction perception (BOB-050 .2): a reaction on one of Bob's OWN messages is felt
+    # — it moves mood (BOB-033 band), warmth toward the reactor (BOB-014), a per-person
+    # memory (BOB-045) and the shared being-received note (.3). The Tier-0 judge reads
+    # what the reaction MEANS (never an emoji table); the reactor is perceived off the
+    # shared Authorizer (BOB-019). It writes the SAME ``notable_reaction_store`` the .3
+    # hint reads, so a notable reaction is later acknowledged aloud. 🔴 Decorative: the
+    # use-case catches every failure (judge/lookup/store) and drops it, so a published
+    # reaction never breaks Bob's normal replies.
+    perceive_reaction = PerceiveReaction(
+        judge=LlmReactionJudge(router=router),
+        lookup=memory_repo,
+        resolver=ReactorPerception(authorizer=authorizer),
+        state=personality,
+        relationships=relationship_store,
+        memory=memory_repo,
+        notable=notable_reaction_store,
+        clock=resolved_clock,
+        disposition=_disposition_from(soul_store.read_json("disposition")),
+    )
+    event_bus.subscribe(BOB_MESSAGE_REACTION, _as_reaction_handler(perceive_reaction))
 
     # The persona language pins self-generated text (proactive/monologue/reflection)
     # so Bob does not drift to English when there is no user message to mirror (BOB-012).
@@ -1007,6 +1039,21 @@ def _as_handler(handle_message: HandleMessage) -> EventHandler:
     async def handler(event: DomainEvent) -> None:
         if isinstance(event, MessageReceived):
             await handle_message.handle(event)
+
+    return handler
+
+
+def _as_reaction_handler(perceive_reaction: PerceiveReaction) -> EventHandler:
+    """Adapt :meth:`PerceiveReaction.perceive` to the EventBus handler signature.
+
+    Only a :class:`BobMessageReaction` is routed in; the use-case is decorative and
+    already swallows its own failures, so a published reaction is felt without ever
+    being able to break the bus or Bob's normal replies.
+    """
+
+    async def handler(event: DomainEvent) -> None:
+        if isinstance(event, BobMessageReaction):
+            await perceive_reaction.perceive(event)
 
     return handler
 
