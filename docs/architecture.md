@@ -61,7 +61,8 @@ src/bob/
                      #     Embedder, Reranker (семантическая память, BOB-011),
                      #     ZoneClassifier (Negotiation-врезка, BOB-013),
                      #     RepoIntrospector (read-only самоинтроспекция, BOB-017),
-                     #     DiagramRenderer + DiagramSink + DiagramResult (render_diagram, BOB-035)
+                     #     DiagramRenderer + DiagramSink + DiagramResult (render_diagram, BOB-035),
+                     #     WebSearchProvider + WebSearchResult + WebSource (web_search, BOB-053)
   application/       # GUPPI: use-cases + оркестрация. Зависит от domain через порты.
     runtime/         # AgentRuntime (жизненный цикл), AsyncEventBus, события, periodic, retry
     router/          # LLMRouter: классификация задачи → Tier + правило редакции
@@ -74,7 +75,8 @@ src/bob/
     capabilities/    # CapabilityRegistry, ToolLoop, recall_memory, search_memory,
                      #   inspect_architecture, read_code, list_work (самоинтроспекция, BOB-017),
                      #   code_rationale (код↔«почему»: git↔беады↔фича-доки↔граф, BOB-038),
-                     #   render_diagram (mermaid→PNG в чат, BOB-035)
+                     #   render_diagram (mermaid→PNG в чат, BOB-035),
+                     #   web_search (заземлённый веб-поиск, BOB-053)
   infrastructure/    # Адаптеры портов (наружу).
     telegram/        # MultiBotGateway: BotRegistry (Боб+GUPPI), кросс-бот дедуп,
                      #   центральный роутер по содержимому; GuppiHandler (reject +
@@ -82,7 +84,8 @@ src/bob/
                      #   long-polling + authz-гейт, typing-индикатор + rich-финал
                      #   (Вариант A), Rich Messages, thread-reply; rich.py: markdown↔RichMessage
     llm/             # OpenAICompatProvider (Tier 0/1, + tool-calling) + фабрика;
-                     #   OllamaEmbedder (BGE-M3) + OllamaReranker + их фабрики
+                     #   OllamaEmbedder (BGE-M3) + OllamaReranker + их фабрики;
+                     #   QwenWebSearchProvider (web_search через Responses API, BOB-053)
     persistence/     # SqliteMemoryRepo + FTS5 recall + KvAllowlistStore + SoulStore
                      #   + SqliteProactivityStore + RepoProactivitySources
                      #   + SqliteFascinationStore (BOB-020);
@@ -1348,6 +1351,52 @@ backoff не маскировал дефект. `sleep` инъецируется
 `HandleMessage` подхватывает шов опционально: tool-loop включается, только когда
 зарегистрированы навыки **и** подан `ToolCallingProvider` (в сборке — провайдер
 Tier 1); иначе ход идёт прежним plain-путём роутера.
+
+### Веб-поиск: «Боб ищет в интернете» (BOB-053)
+
+Заземлённый веб-поиск как ещё одна capability за тем же швом. Это **не** автодополнение
+к каждому ответу: tool-loop сам тянется к навыку только на запрос про **свежее/внешнее**
+(сегодняшние факты, недавние события, live-данные), которого нет в памяти и обучении Боба;
+иначе Боб отвечает напрямую. Результат проецируется в петлю **компактно** —
+`{answer, sources:[{title,url}]}`, — и Боб синтезирует финальный ответ **своим голосом со
+ссылками**, не вываливая сырой дамп.
+
+- **Навык `web_search`** (`application/capabilities/web_search.py`) собирается
+  `make_web_search_capability(provider, …)` над портом `WebSearchProvider`: `name="web_search"`,
+  `permission="safe"`, JSON-схема — единственный обязательный `query`. Пустой/пробельный
+  `query` отвечается честно **без вызова провайдера** (`_EMPTY_QUERY`); пустой `sources` на
+  успехе валиден (заземлённый ответ, цитировать нечего) и ответ всё равно возвращается.
+- **Порт + значения** (`domain/ports.py`): `WebSearchProvider.search(query) -> WebSearchResult`;
+  `WebSearchResult{answer, sources}`; `WebSource{title, url}` (`title=""`, когда провайдер его
+  опустил — одного URL достаточно). Порт провайдер-агностичен: «query на вход, заземлённый
+  answer + sources на выход», так что Tavily или иной провайдер встаёт без правок навыка.
+- **Провайдер `QwenWebSearchProvider`** (`infrastructure/llm/web_search_qwen.py`) — Qwen-native
+  поверх MaaS **Responses API**: `POST {base}/responses` с
+  `{model, input:<query>, tools:[{type:"web_search"}]}`. Разбор top-level списка `output[]`:
+  элементы `type=="web_search_call"` дают `action.sources[]` → `WebSource` (собираются по всем
+  search-call'ам, **dedup по url**, порядок сохранён), элементы `type=="message"` — куски
+  `content[].output_text`, склеенные в `answer`. 🔴 Источники доступны на текущем workspace-ключе
+  **именно через Responses API** — `chat/completions` их не отдаёт (verify .1). Любой сбой (сеть,
+  не-200, отсутствующее/битое поле) — **raise**: отказоустойчивость на стороне вызывающего, Боб
+  никогда не конфабулирует. Сборка — `build_web_search_provider(config)` (`factory.py`): `search.*`
+  с фолбэком `base_url`/`api_key` на Tier-1 (`llm.tier1_*` — тот же workspace-`sk`, отдельный
+  ключ не нужен). Конфиг `search.*` (`config/loader.py`): `enabled`, `model`, `base_url`,
+  `api_key`, `timeout_seconds` (`180` — Responses-поиск медленный).
+- **🔴 Гейт привилегии — по отправителю (authz/BOB-052).** `permission="safe"` корректно **только
+  потому**, что привилегированный tool-loop запускается лишь для **авторизованного** отправителя
+  (гейт upstream, см. «Память публична, привилегии — гейт»). Регистрация — в `_build_registry`
+  (`app.py`) под флагом `search.enabled` (в дефолтах `loader.py` — `True`; read-only и за
+  authz-гейтом, поэтому может быть включён по умолчанию); выключено → реестр держит прежние
+  capability. Автономия навык **не** авто-открывает: он name-based **не** добавлен в
+  `goals.safe_capabilities` (по умолчанию пуст), так что проактивный tick его не запустит.
+  BOB-051/052 не ослаблены.
+- **🔴 Отказоустойчивость (BOB-049).** Раз модель решила искать — `web_search`
+  **essential**: вызов провайдера обёрнут в `call_with_retry` (та же политика, что генерация
+  ответа: bounded `attempts`/`backoff_seconds` через инъецируемый `sleep`-шов, детерминированный в
+  тестах). Если все попытки падают — навык **не** конфабулирует и **не** роняет ход: возвращает
+  честный «не смог найти» нотис (`_SEARCH_FAILED_ANSWER`) с анти-конфабуляционным `guidance`
+  (`_SEARCH_FAILED_GUIDANCE`), чтобы Боб сам озвучил оговорку — **никогда** не выдавая знание из
+  обучения под видом найденного в сети.
 
 ### Самоинтроспекция: «Боб знает свой мир» (BOB-017, фаза A)
 
