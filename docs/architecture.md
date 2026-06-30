@@ -592,7 +592,7 @@ typing-индикатор + Rich Messages. Адаптер остаётся чи�
 — это осознанное решение owner; **привилегии остаются гейтом**. Гость = **ноль**
 вызовов capability + **ноль** owner-внутрянки (inner-life) + отказ owner-командам, но
 recall, per-person история и нормальный голос — **есть**. Разрешение неавторизованным
-на привилегированное (flow «спросить разрешение») — будущая **BOB-052**. chat-scope и
+на привилегированное (flow «спросить разрешение») — **BOB-052** (см. ниже). chat-scope и
 доступ owner/allowlist к возможностям не меняются; промоушен гость→доверенный — только
 через owner-команду `/authorize`.
 
@@ -630,6 +630,129 @@ recall, per-person история и нормальный голос — **ес�
 единый recall для всех (BOB-051, см. ниже) → извлечение фактов для любого
 участника → запись/чтение first-impression →
 `recalled_impression_directive` при наличии прежней заметки.
+
+## Разрешение на привилегированное: спросить owner (BOB-052)
+
+BOB-051 сделал память **публичной** в закрытой группе, но **привилегия** — запуск
+инструмента, раскрытие внутренней жизни Боба, выдача owner-данных — остаётся
+owner-гейтом. Раньше гость на такой запрос упирался в молчаливый гейт (Боб не звал
+инструмент, не утекал внутрянку). BOB-052 заменяет «тихо ничего» на **человеческое
+поведение**: когда **не-авторизованный** участник просит привилегированное, Боб не
+молчит и не делает сам — он заводит pending-запрос и **спрашивает owner**, а owner
+**один** решает. 🔴 Граница неизменна: только owner решает; авторизованные
+(owner/allowlist) в этот флоу **не входят** вообще; гейтятся только три вида —
+`tool` / `internal` / `owner_data`, а память BOB-051 **не** ослаблена (обычная
+болтовня и общее знание остаются публичны). Связано с BOB-051 (что публично) и
+BOB-019 (durable-промоушен через `Authorizer`).
+
+### Домен (`domain/permission/`, чистый)
+
+- **`privilege.py`** — шов семантического суждения о привилегии. `PrivilegeNeed(
+  needs_permission, kind, what)` — immutable исход: гейт `needs_permission`, при
+  `True` — `kind ∈ {tool, internal, owner_data}` (`PRIVILEGE_KINDS`) и
+  человекочитаемое `what` («показать задачи проекта») для owner-нотиса.
+  `PrivilegeContext(request_text, capability_hints, recent_thread)` — immutable
+  ВХОД (подсказки capability — сигналы, не правила). `PrivilegeJudge` — инжектируемый
+  порт `assess(ctx) -> PrivilegeNeed`. Чистая половина: `PRIVILEGE_JUDGE_SYSTEM_PROMPT`
+  + `build_privilege_user_prompt(ctx)` сворачивают вход в Tier-0 user-prompt с
+  размеченным контрактом (`needs_permission` / `kind` / `what`); `parse_privilege_need(
+  raw)` мапит ответ модели обратно и **RAISE-ит** `PrivilegeJudgeParseError` на мусор
+  (а не тихий дефолт), чтобы каллер опустил add-on с безопасным дефолтом. 🔴
+  Консервативно: болтовня и общее знание → `needs_permission=False` (обычный ответ).
+- **`entities.py`** — `PermissionRequest` (frozen, slots): один pending-запрос —
+  `requester_id` / `requester_name` (кто, не owner), `request_text` (исходное
+  сообщение **дословно**, чтобы исполнить на approve), `kind` / `what`, `state`,
+  `created_at` (инжектится, не из часов домена). `with_state(state)` возвращает копию —
+  домен I/O-free и тестируем без `datetime.now`.
+- **`state.py`** — `PermissionState` (StrEnum): `PENDING` (ждёт owner) →
+  `APPROVED` (разрешил → исполнить) / `DENIED` (отказал → мягкий отказ); `EXPIRED` —
+  протух или вытеснен новым запросом того же просящего. Значение совпадает с TEXT в
+  SQLite (тривиальный round-trip).
+- **`intent.py`** — чистые NL-предикаты owner-решения (детерминированно, без LLM/I/O,
+  в духе BOB-042 `is_approval`): `is_deny` (отказ-токены + одиночное отрицание
+  «не»/«нет»; **безопасный дефолт**, проверяется первым), `is_grant` (короткая реплика
+  ≤ 6 слов с grant-токеном, не-отказ — разовый approve), `is_authorize` (durable-токены
+  «авторизуй» / «дай доступ» / «добавь в список»). 🔴 Совпадение по границам слов после
+  нормализации; длинный абзац не апрувит; отрицание ветирует grant; неоднозначность →
+  `False`. Вычисляются ТОЛЬКО для owner.
+
+### Инфраструктура
+
+- **`infrastructure/llm/privilege_judge.py`** — `LlmPrivilegeJudge` (Tier-0): тонкая
+  реализация порта `PrivilegeJudge` одним дешёвым локальным вызовом (роутер с новым
+  `TaskType.PRIVILEGE_JUDGE` → локальный тир). Всё shaping решения — чистый домен; **не
+  глушит** сбои: ошибка модели/парсинга пропагается.
+- **`infrastructure/persistence/permission_request_store.py`** —
+  `SqlitePermissionRequestStore` за таблицей `permission_request` (одна строка на `id`).
+  `ensure_schema` — идемпотентная PRAGMA-безопасная миграция (`CREATE TABLE / INDEX IF
+  NOT EXISTS`, аддитивно), также входит в общий `schema.sql`. `save` — UPSERT на `id`;
+  `active` / `active_for(requester_id)` — ещё-PENDING запросы (старейший первым);
+  `set_state` — переход строки. Весь SQL параметризован (`?`).
+
+### Флоу (`application/usecases/permission_flow.py`)
+
+`PermissionFlow` — политика **КОГДА** (не КАК): детект привилегии, нотис owner, запись
+решения. Всё инжектится (judge / store / notifier / clock / id-factory / executor),
+поэтому в тестах детерминирован; не подключённый в `HandleMessage` шов инертен, и каждый
+ход ведёт себя как раньше.
+
+- **`maybe_request`** — на ходу **не-owner, не-авторизованного** участника спрашивает
+  `PrivilegeJudge`. Owner или авторизованный → сразу `False` (обычный путь не тронут).
+  Привилегированный need → создать + сохранить `PENDING` `PermissionRequest`, 🔴
+  **уведомить owner** голосом Боба («Вова, <кто> просит <что> — разрешить?»), сказать
+  просящему лёгкое «Секунду, спрошу Вову.» и **поглотить ход**. Один активный pending на
+  просящего — новый запрос вытесняет старый (`EXPIRED`). Вся ветка обёрнута в
+  **safe-default**: любой сбой (judge / store / нотис) логируется и **роняется в обычный
+  чат** — привилегированный путь просто не срабатывает, ничего не раскрывается.
+- **`maybe_decide`** — 🔴 ТОЛЬКО при `is_owner` и наличии активного pending. Не-owner
+  (даже голое «да») → `False`, ничего не двигает. Намерение owner читается сперва из
+  явной команды `/allow` / `/deny` / `/authorize` (по первому токену, так `/authorize 7`
+  тоже маршрутизируется), затем из чистых предикатов: authorize → grant → deny (deny
+  ветирует grant внутри `is_grant`). grant/authorize → `APPROVED`, deny → `DENIED`;
+  неоднозначная реплика owner → `False` (отдаётся чату, не случайный approve).
+- **Каналы.** `PermissionNotifier` (`notify_owner` / `tell_requester`) — двухканальный
+  шов нотиса; `PermissionRequestStoreLike` / `PermissionExecutorLike` — порты стора и
+  исполнителя.
+
+### Исполнение (`application/usecases/permission_execution.py` + `privileged_fulfiller.py`)
+
+`PermissionExecutor` — половина **КАК**: после записи решения (`maybe_decide` передаёт
+запрос + `PermissionDecision`) исполняет вердикт.
+
+- **GRANT — per-request elevation.** Перепрогнать сохранённый `request_text` через
+  `PrivilegedFulfiller` так, **как если бы** просящий был авторизован — но ТОЛЬКО для
+  ЭТОГО запроса (одноразовый поднятый контекст). 🔴 Fulfiller получает **только**
+  `request_text`: поднятие не утекает на другие/будущие сообщения просящего, durable-
+  состояние не трогается. Результат уходит просящему голосом Боба через `RequesterChannel`.
+- **AUTHORIZE — durable.** `DurableAuthorizer.authorize` (реальный `Authorizer` grant в
+  allowlist, BOB-019) — просящий становится авторизован, дальше идёт обычным путём — и
+  **затем** исполнить текущий запрос (уже авторизованно). Durable-grant **первым**: если
+  упал — всё отказывает, ничего не исполняется.
+- **DENY** — мягкий отказ голосом Боба («Спросил Вову — пока не могу с этим помочь.»);
+  ничего не исполняется и не раскрывается.
+- 🔴 **Декоративно / safe-default = ОТКАЗ.** Весь `execute` обёрнут: любой сбой
+  (fulfiller / authorize / channel) ловится и **тихо роняется** — безопасный дефолт при
+  сбое — ОТКАЗАТЬ (никогда не раскрыть и не исполнить при ошибке), **без** GUPPI-нотиса о
+  сбое (это флейвор, не обязательный шаг ответа).
+
+`PrivilegedRequestFulfiller` (конкретный `PrivilegedFulfiller`): когда подключены
+tool-провайдер И непустой реестр capability — запрос идёт через тот же capability
+tool-loop, что у авторизованного хода (GUPPI может дёрнуть инструмент); иначе — простой
+роутер (раскрытие внутрянки / обычный ответ). 🔴 В модель уходит только `request_text`.
+
+### Проводка (`app.py`, `handle_message.py`)
+
+`_build_permission_flow` собирает флоу + исполнение: Tier-0 `LlmPrivilegeJudge` в обёртке
+`_SafeDefaultPrivilegeJudge` (на живом ходу сбой суждения → безопасный дефолт
+`needs_permission=False`, ход просто падает в обычный ответ), `SqlitePermissionRequestStore`,
+двухканальный `_PermissionNotifier` (owner-нотис в **топик Боба**, ack просящему в групповой
+чат) и `PermissionExecutor` над `PrivilegedRequestFulfiller`, `_PermissionRequesterChannel`
+(ответ в групповой чат) и реальным `Authorizer`. В `HandleMessage._maybe_permission`
+(перед обычной компоновкой): authz-факты берутся из воспринятого `Interlocutor`
+(OWNER → owner, TRUSTED/KNOWN → авторизован, GUEST → не авторизован); сперва
+`maybe_decide` для owner, затем `maybe_request`; без `sender_id` запрос не заводится, а
+ветка owner-решения сработать не может — неопознанный ход никогда не авто-апрувится. Не
+подключён — шов инертен, ход без изменений.
 
 ## Память диалога по персоне и длинные паузы (BOB-045)
 
