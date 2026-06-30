@@ -35,6 +35,7 @@ from bob.domain.ports import ToolCall, ToolCallResult
 from bob.infrastructure.persistence import SoulStore
 from bob.infrastructure.telegram.guppi import GUPPI_REJECT_TEXT
 from bob.infrastructure.telegram.multibot import BotIdentity
+from tests.support.judge_stub import JUDGE_REPLY, is_judge_request
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Callable, Sequence
@@ -66,6 +67,8 @@ class CapturingProvider:
         *,
         stream: bool = False,  # noqa: ARG002 — LLMProvider protocol signature
     ) -> str | AsyncIterator[str]:
+        if is_judge_request(messages):  # BOB-049: model the judge choosing REPLY
+            return JUDGE_REPLY
         self.payloads.append([dict(m) for m in messages])
         return self.reply
 
@@ -503,10 +506,12 @@ class _FlakyTier0:
 
     async def complete(
         self,
-        messages: Sequence[Mapping[str, str]],  # noqa: ARG002
+        messages: Sequence[Mapping[str, str]],
         *,
         stream: bool = False,  # noqa: ARG002
     ) -> str | AsyncIterator[str]:
+        if is_judge_request(messages):  # BOB-049: model the judge choosing REPLY
+            return JUDGE_REPLY
         self.calls += 1
         if self.calls == 1:
             raise aiohttp.ServerDisconnectedError("transient blip")

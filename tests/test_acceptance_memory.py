@@ -36,6 +36,7 @@ from bob.application.router.llm_router import LLMRequest, LLMRouter, TaskType
 from bob.application.runtime.events import MessageReceived
 from bob.domain.memory.entities import SemanticFact
 from bob.infrastructure.persistence import Fts5MemoryRecall, SoulStore
+from tests.support.judge_stub import JUDGE_REPLY, is_judge_request
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Mapping, Sequence
@@ -73,6 +74,8 @@ class SequencedProvider:
         *,
         stream: bool = False,  # noqa: ARG002 — part of the LLMProvider protocol
     ) -> str | AsyncIterator[str]:
+        if is_judge_request(messages):  # BOB-049: model the judge choosing REPLY
+            return JUDGE_REPLY
         self.payloads.append([dict(m) for m in messages])
         if self._replies is None:
             return self._reply

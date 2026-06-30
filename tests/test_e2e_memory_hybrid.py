@@ -31,6 +31,7 @@ from bob.application.runtime.events import MessageReceived
 from bob.domain.memory.entities import SemanticFact
 from bob.domain.ports import ToolCall, ToolCallResult
 from bob.infrastructure.persistence import HybridMemoryRecall, SoulStore
+from tests.support.judge_stub import JUDGE_REPLY, is_judge_request
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Sequence
@@ -116,10 +117,12 @@ class _Provider:
 
     async def complete(
         self,
-        messages: Sequence[Mapping[str, str]],  # noqa: ARG002
+        messages: Sequence[Mapping[str, str]],
         *,
         stream: bool = False,  # noqa: ARG002
     ) -> str | AsyncIterator[str]:
+        if is_judge_request(messages):  # BOB-049: model the judge choosing REPLY
+            return JUDGE_REPLY
         return self.reply
 
 

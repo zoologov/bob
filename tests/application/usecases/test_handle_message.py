@@ -29,6 +29,7 @@ from bob.application.capabilities.render_diagram import (
 )
 from bob.application.router.llm_router import LLMRouter
 from bob.application.runtime.events import MessageReceived
+from bob.application.usecases.decide_response import DecideResponse
 from bob.application.usecases.extract_facts import ExtractFacts
 from bob.application.usecases.handle_message import (
     DiagramSendMode,
@@ -68,6 +69,11 @@ from bob.domain.personality.reaction import (
     reaction_emoji_for,
 )
 from bob.domain.personality.relationship import Relationship
+from bob.domain.personality.response_choice import (
+    ResponseChoice,
+    ResponseContext,
+    ResponseIntent,
+)
 from bob.domain.personality.self_improvement import (
     ImprovementRule,
     Lever,
@@ -496,6 +502,7 @@ def _build(
     diagram_send_as: DiagramSendMode = "photo",
     photo_send_raises: bool = False,
     coding_router: _FakeCodingRouter | None = None,
+    decide_response: DecideResponse | None = None,
 ) -> tuple[HandleMessage, FakeBot, FakeRepo, CapturingProvider]:
     tier0 = CapturingProvider(reply="positive", replies=tier0_replies)
     tier1 = CapturingProvider(reply=reply, replies=tier1_replies)
@@ -554,6 +561,7 @@ def _build(
         diagram_renderer=diagram_renderer,  # type: ignore[arg-type]
         diagram_send_as=diagram_send_as,
         coding_router=coding_router,
+        decide_response=decide_response,
     )
     return handler, bot, repo, tier1
 
@@ -6134,3 +6142,276 @@ async def test_no_coding_router_leaves_the_natural_language_path_inert() -> None
     await handler.handle(_message("Боб, поправь баг в Z"))
 
     assert bot.final_text != ""  # normal chat reply committed (NL path inert)
+
+
+# --- BOB-049: semantic response judge wired into handle_message --------------
+# The judge replaces the if/else addressivity decision: Bob UNDERSTANDS the message
+# and chooses REPLY / REACT / IGNORE. A fake judge returns a scripted ResponseChoice
+# (deterministic), so these tests assert the BRANCHING + persist-in-all-branches +
+# the guest-restricted REPLY path staying intact — not the model's judgment itself.
+
+_REACT_EMOJI = "🔥"  # a Telegram free-reaction emoji the judge picks BY MEANING
+
+
+class _FakeResponseJudge:
+    """A ResponseJudge double returning a scripted ResponseChoice, recording the ctx.
+
+    Lets a test pin the social decision deterministically (no model) and inspect the
+    ResponseContext the use-case assembled — so the structural signals can be asserted
+    to flow in as INPUTS rather than being used as overrides.
+    """
+
+    def __init__(self, choice: ResponseChoice) -> None:
+        self._choice = choice
+        self.contexts: list[ResponseContext] = []
+
+    async def decide(self, ctx: ResponseContext) -> ResponseChoice:
+        self.contexts.append(ctx)
+        return self._choice
+
+
+def _judge(
+    intent: ResponseIntent, *, emoji: str | None = None
+) -> tuple[DecideResponse, _FakeResponseJudge]:
+    """Build a DecideResponse over a fake judge returning ``intent`` (+ optional emoji)."""
+    fake = _FakeResponseJudge(ResponseChoice(intent=intent, emoji=emoji, reason="test"))
+    return DecideResponse(judge=fake), fake
+
+
+def _bob_half(content: object) -> str:
+    """Bob's persisted half of an episode ("<sender>: <text>\\nbob: <half>")."""
+    _user, _sep, half = str(content).partition("\nbob: ")
+    return half
+
+
+async def test_judge_reply_composes_sends_and_persists() -> None:
+    # REPLY → the existing compose+send path runs and the turn persists with the reply.
+    decide, _fake = _judge(ResponseIntent.REPLY)
+    handler, bot, repo, _tier1 = _build(
+        reply="полный ответ",
+        perceive_sender=_owner_with_id(99),
+        decide_response=decide,
+    )
+
+    await handler.handle(_message("расскажи подробно про кофе"))
+
+    assert bot.final_text == "полный ответ"  # composed + sent
+    assert len(repo.episodes) == 1
+    assert _bob_half(repo.episodes[0]["content"]) == "полный ответ"
+
+
+async def test_judge_react_sets_the_meaning_chosen_emoji_and_persists_reaction() -> None:
+    # REACT → the reactor sets the emoji the JUDGE chose (by meaning), and the user's
+    # turn persists as "(реакция: <emoji>)" — no reply composed, no router reply call.
+    decide, _fake = _judge(ResponseIntent.REACT, emoji=_REACT_EMOJI)
+    reactor = _RecordingReactor()
+    handler, bot, repo, _tier1 = _build(
+        reply="не должно отправиться",
+        perceive_sender=_owner_with_id(99),
+        reactor=reactor,
+        decide_response=decide,
+    )
+
+    await handler.handle(_message("ну такое"))
+
+    assert bot.sent == []  # no reply composed/sent
+    assert len(reactor.calls) == 1
+    _chat, _msg, emoji = reactor.calls[0]
+    assert emoji == _REACT_EMOJI  # the emoji chosen BY MEANING, not the mood table
+    assert len(repo.episodes) == 1
+    assert _bob_half(repo.episodes[0]["content"]) == f"(реакция: {_REACT_EMOJI})"
+
+
+async def test_judge_react_without_emoji_falls_back_to_the_mood_table() -> None:
+    # A REACT with no emoji falls back to the BOB-018 mood→emoji default (kept as a
+    # fallback only — the judge's emoji is the primary source when present).
+    decide, _fake = _judge(ResponseIntent.REACT, emoji=None)
+    reactor = _RecordingReactor()
+    soul = _soul()
+    handler, _bot, repo, _tier1 = _build(
+        reply="x",
+        soul=soul,
+        perceive_sender=_owner_with_id(99),
+        reactor=reactor,
+        decide_response=decide,
+    )
+
+    await handler.handle(_message("угу"))
+
+    assert len(reactor.calls) == 1
+    _chat, _msg, emoji = reactor.calls[0]
+    assert emoji in STANDARD_REACTION_EMOJI
+    assert _bob_half(repo.episodes[0]["content"]) == f"(реакция: {emoji})"
+
+
+async def test_judge_ignore_stays_silent_and_persists_promolchal() -> None:
+    # IGNORE → no message, no reaction; the user's turn still persists as "(промолчал)".
+    decide, _fake = _judge(ResponseIntent.IGNORE)
+    reactor = _RecordingReactor()
+    handler, bot, repo, _tier1 = _build(
+        reply="не должно отправиться",
+        perceive_sender=_owner_with_id(99),
+        reactor=reactor,
+        decide_response=decide,
+    )
+
+    await handler.handle(_message("болтают между собой"))
+
+    assert bot.sent == []  # silent
+    assert reactor.calls == []  # no reaction
+    assert len(repo.episodes) == 1
+    assert _bob_half(repo.episodes[0]["content"]) == "(промолчал)"
+
+
+async def test_judge_react_without_a_reactor_still_persists_the_reaction_turn() -> None:
+    # With no reactor wired, a REACT decision still stands (the turn persists as a
+    # reaction) — the native reaction is simply not sent (a clean no-op, no crash).
+    decide, _fake = _judge(ResponseIntent.REACT, emoji=_REACT_EMOJI)
+    handler, bot, repo, _tier1 = _build(
+        reply="x",
+        perceive_sender=_owner_with_id(99),
+        decide_response=decide,  # reactor left unwired
+    )
+
+    await handler.handle(_message("ну такое"))
+
+    assert bot.sent == []  # nothing composed/sent
+    assert _bob_half(repo.episodes[0]["content"]) == f"(реакция: {_REACT_EMOJI})"
+
+
+async def test_a_react_turn_lands_in_the_next_turns_per_person_history() -> None:
+    # 🔴 persist-in-all-branches keeps the thread (BOB-045): after a REACT turn the prior
+    # USER message is on record, so the next turn's per-person history includes it.
+    decide, _fake = _judge(ResponseIntent.REACT, emoji=_REACT_EMOJI)
+    reactor = _RecordingReactor()
+    handler, _bot, repo, _tier1 = _build(
+        reply="x",
+        perceive_sender=_owner_with_id(99),
+        reactor=reactor,
+        decide_response=decide,
+    )
+
+    await handler.handle(_message("это моя первая реплика"))
+
+    # The persisted episode is keyed to the sender and carries the user's words, so a
+    # follow-up's recent_episodes_for(sender) replays it.
+    assert repo.episodes[0]["sender_id"] == 99
+    replayed = await repo.recent_episodes_for(99, 14)
+    # (FakeRepo seeds replay from ``history``, not written episodes; assert the written
+    # episode itself preserves the prior user turn so the per-person thread can hold it.)
+    assert "это моя первая реплика" in str(repo.episodes[0]["content"])
+    del replayed
+
+
+async def test_guest_reply_still_takes_the_restricted_path() -> None:
+    # 🔴 authz orthogonal: a GUEST whom the judge sends to REPLY still gets the restricted
+    # compose — NO owner-private recalled memory reaches a stranger's prompt.
+    decide, _fake = _judge(ResponseIntent.REPLY)
+    recall = FakeRecall(hits=[{"content": _RECALL_MEMORY, "category": "personal"}])
+    handler, _bot, _repo, tier1 = _build(
+        reply="привет, незнакомец",
+        perceive_sender=_guest_with_id(99),
+        recall=recall,
+        decide_response=decide,
+    )
+
+    await handler.handle(_message("расскажи подробно, кто ты такой?"))
+
+    assert _RECALL_MEMORY not in tier1.all_text  # owner memory withheld from the guest
+    assert "незнаком" in tier1.all_text.casefold()  # stranger voice present
+
+
+async def test_guest_react_turn_writes_no_owner_facts() -> None:
+    # 🔴 BOB-019: a guest REACT turn records ONLY the episodic conversation record, never
+    # an owner FACT (no fact extraction on a non-reply turn).
+    decide, _fake = _judge(ResponseIntent.REACT, emoji=_REACT_EMOJI)
+    reactor = _RecordingReactor()
+    handler, _bot, repo, _tier1 = _build(
+        reply="x",
+        perceive_sender=_guest_with_id(99),
+        reactor=reactor,
+        decide_response=decide,
+    )
+
+    await handler.handle(_message("случайный текст"))
+
+    assert repo.facts == []  # no owner fact written from a guest turn
+    assert len(repo.episodes) == 1  # only the episodic record
+
+
+async def test_guest_ignore_turn_writes_no_owner_facts() -> None:
+    decide, _fake = _judge(ResponseIntent.IGNORE)
+    handler, _bot, repo, _tier1 = _build(
+        reply="x",
+        perceive_sender=_guest_with_id(99),
+        decide_response=decide,
+    )
+
+    await handler.handle(_message("болтовня"))
+
+    assert repo.facts == []
+    assert _bob_half(repo.episodes[0]["content"]) == "(промолчал)"
+
+
+async def test_floor_advances_on_every_judge_branch() -> None:
+    # The conversation floor advances on REPLY, REACT, and IGNORE alike (BOB-025): each
+    # branch upserts the floor so idle_streak / continuity stay correct.
+    for intent, emoji in (
+        (ResponseIntent.REPLY, None),
+        (ResponseIntent.REACT, _REACT_EMOJI),
+        (ResponseIntent.IGNORE, None),
+    ):
+        decide, _fake = _judge(intent, emoji=emoji)
+        floor_store = _FakeFloorStore()
+        reactor = _RecordingReactor()
+        handler, _bot, _repo, _tier1 = _build(
+            reply="ответ",
+            perceive_sender=_owner_with_id(99),
+            reactor=reactor,
+            floor_store=floor_store,
+            decide_response=decide,
+        )
+
+        await handler.handle(_message("сообщение"))
+
+        assert floor_store.saved, f"floor did not advance on {intent}"
+
+
+async def test_structural_signals_flow_into_the_context_not_as_overrides() -> None:
+    # The structural signals are INPUTS to the judge, not deciders: a message DIRECTED TO
+    # ANOTHER person (which the legacy ladder would silence) still REPLIES when the judge
+    # says so — and the assembled ResponseContext carries the raw structural hints.
+    decide, fake = _judge(ResponseIntent.REPLY)
+    handler, bot, _repo, _tier1 = _build(
+        reply="всё равно отвечаю",
+        history=_MULTIPARTY_HISTORY,
+        perceive_sender=_owner_with_id(99),
+        bob_user_id_source=lambda: 777,
+        decide_response=decide,
+    )
+
+    # A reply to a THIRD party (not Bob) — legacy DIRECTED_TO_OTHER would stay SILENT.
+    await handler.handle(
+        _addr_message("расскажи подробно, ты согласен?", reply_to_sender_id=12345)
+    )
+
+    assert bot.sent != []  # the judge's REPLY wins — Bob replies despite the signal
+    assert len(fake.contexts) == 1
+    ctx = fake.contexts[0]
+    assert ctx.text == "расскажи подробно, ты согласен?"
+    assert ctx.others_present is True  # the multiparty thread is reflected as a hint
+    assert ctx.reply_to_bob is False  # replied to someone else, not Bob
+    assert ctx.interlocutor.kind is InterlocutorKind.OWNER
+
+
+async def test_unwired_judge_keeps_the_legacy_addressivity_path() -> None:
+    # Backward-compatible: with no judge wired, the legacy ladder runs — a 1:1 owner
+    # thread engages and replies exactly as before BOB-049.
+    handler, bot, repo, _tier1 = _build(
+        reply="как раньше", perceive_sender=_owner_with_id(99)
+    )
+
+    await handler.handle(_message("расскажи подробно про кофе"))
+
+    assert bot.final_text == "как раньше"
+    assert len(repo.episodes) == 1

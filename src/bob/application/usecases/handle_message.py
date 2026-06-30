@@ -114,6 +114,7 @@ from bob.domain.personality.negotiation import (
 from bob.domain.personality.profanity import is_directed_hostility
 from bob.domain.personality.reaction import reaction_emoji_for
 from bob.domain.personality.relationship import compromise_bias
+from bob.domain.personality.response_choice import ResponseIntent
 from bob.domain.personality.self_improvement import RuleModulators, build_modulators
 from bob.domain.personality.taste import Verdict
 from bob.domain.personality.voice import (
@@ -145,12 +146,14 @@ if TYPE_CHECKING:
 
     from bob.application.router.llm_router import LLMRouter
     from bob.application.runtime.events import MessageReceived
+    from bob.application.usecases.decide_response import DecideResponse
     from bob.application.usecases.extract_facts import ExtractFacts
     from bob.application.usecases.update_mood_from_text import UpdateMoodFromText
     from bob.domain.personality.fascination import Fascination
     from bob.domain.personality.interlocutor import Interlocutor
     from bob.domain.personality.mood import Mood
     from bob.domain.personality.relationship import Relationship
+    from bob.domain.personality.response_choice import ResponseChoice
     from bob.domain.personality.self_improvement import ImprovementRule
     from bob.domain.personality.soul import SOUL
     from bob.domain.personality.sulk import SulkState
@@ -587,6 +590,58 @@ class _AddressivityDecision:
     directed_to_id: int | None
 
 
+@dataclass(frozen=True, slots=True)
+class _AddressivitySignals:
+    """This turn's structural addressivity signals (perception, BOB-023/025/049).
+
+    The raw, grounded read of WHO the message is for: ``per_message`` is the
+    per-message classification; ``effective`` is it raised by the conversation floor
+    (continuity); ``others_present`` whether the thread has a third participant;
+    ``floor_engaged`` whether the floor actually raised an ambient message to Bob;
+    ``reply_to_bob`` whether the inbound replies to Bob's own message; and
+    ``directed_to_id`` the person a ``DIRECTED_TO_OTHER`` turn turned to (for the
+    floor pass), else ``None``. These are INPUTS — the legacy policy decides the
+    outcome on ``effective`` (BOB-023/025), the BOB-049 judge weighs them by meaning.
+    """
+
+    per_message: Addressivity
+    effective: Addressivity
+    others_present: bool
+    floor_engaged: bool
+    reply_to_bob: bool
+    directed_to_id: int | None
+
+
+@dataclass(frozen=True, slots=True)
+class _JudgedTurn:
+    """The semantic judge's outcome for one turn + the pieces the flow reuses (BOB-049).
+
+    ``choice`` is the judge's :class:`ResponseChoice` (REPLY / REACT / IGNORE +
+    emoji); ``floor`` carries the RAW per-message addressivity the conversation floor
+    advances on after the turn; ``history`` is the CURRENT person's per-person thread
+    already replayed for the judgment, threaded into the REPLY compose path so it is
+    not re-read.
+    """
+
+    choice: ResponseChoice
+    floor: _AddressivityDecision
+    history: Sequence[Mapping[str, object]]
+
+
+@dataclass(frozen=True, slots=True)
+class _ReplyGate:
+    """A turn that PASSED the response gate as a REPLY (BOB-049): compose+send next.
+
+    ``decision`` is the floor signal the turn advances on after Bob replies;
+    ``history`` is the CURRENT person's per-person thread already replayed for the
+    judgment (the judge REPLY path), threaded into compose so it is not re-read —
+    ``None`` on the legacy path, where compose replays it itself.
+    """
+
+    decision: _AddressivityDecision
+    history: Sequence[Mapping[str, object]] | None
+
+
 class HandleMessage:
     """Run one full Telegram turn: perceive mood, decide a reply, act, persist."""
 
@@ -640,6 +695,7 @@ class HandleMessage:
         diagram_renderer: DiagramRenderer | None = None,
         diagram_send_as: DiagramSendMode = _DEFAULT_DIAGRAM_SEND_AS,
         coding_router: NaturalCodingRouter | None = None,
+        decide_response: DecideResponse | None = None,
     ) -> None:
         self._router = router
         self._gateway = gateway
@@ -894,6 +950,16 @@ class HandleMessage:
         # message takes the normal chat flow exactly as before. The `/code` command in
         # General is a separate surface and is unaffected.
         self._coding_router = coding_router
+        # The semantic response-judgment seam (BOB-049): when wired (the LIVE path),
+        # Bob UNDERSTANDS each inbound in context and chooses — as a person — REPLY /
+        # REACT / IGNORE, replacing the if/else addressivity ladder (BOB-023/025) and the
+        # BOB-018 REACT_ONLY form gate. The structural signals (addressivity / mention /
+        # reply / others-present / floor) become INPUTS the judge weighs by meaning, never
+        # deciders; the decision holds for ANY interlocutor (authz stays orthogonal — the
+        # GUEST restrictions on the REPLY path are unchanged). Unwired (the default) OR no
+        # sender perceived → Bob falls back to the legacy addressivity path, so existing
+        # constructions/tests behave exactly as before.
+        self._decide_response = decide_response
 
     async def _load_modulators(self) -> RuleModulators:
         """Build this turn's soft modulators from Bob's APPROVED rules (BOB-028 .3).
@@ -971,31 +1037,16 @@ class HandleMessage:
         # tracking whether Bob actually replied separately. A turn that does NOT reach
         # the reply (SILENT / REACT / react-only) advances the floor with
         # ``bob_replied=False`` before returning, so idle_streak / decay are counted.
-        # ADDRESSIVITY self-improvement tilt (BOB-028 .3): an APPROVED ADDRESSIVITY_BIAS
-        # rule softly RAISES the effective interest the addressivity policy reads — Bob is
-        # a touch more willing to engage an ambient/borderline turn. It is a bounded nudge
-        # (clamped to [0, 1]) on TOP of the BOB-023/025 decision, never a base override and
-        # never able to silence Bob (the bias is non-negative). No rule → interest unchanged.
-        addressivity_interest = _clamp_unit(interest + modulators.addressivity_bias)
-        decision = await self._decide_addressivity(event, addressivity_interest)
-        if decision.outcome is ResponseOutcome.SILENT:
-            await self._advance_floor_after_turn(event, decision, bob_replied=False)
+        # Decide WHETHER/HOW Bob takes this turn (BOB-049). The gate returns ``None`` when
+        # the turn was already handled as a non-reply (a silent / react / ignore early-out,
+        # persisted + floor-advanced), so we return; otherwise it returns the floor signal
+        # + any per-person history already replayed for a REPLY, and we fall through to the
+        # compose+send path below (guest restrictions intact).
+        gate = await self._gate_turn(event, soul, interlocutor, plan, interest, modulators)
+        if gate is None:
             return
-        if decision.outcome is ResponseOutcome.REACT and self._reactor is not None:
-            await self._react_only(event, soul)
-            await self._record_owner_activity()
-            await self._advance_floor_after_turn(event, decision, bob_replied=False)
-            return
-        # React-only (BOB-018): when a reactor is wired and the plan picks
-        # REACT_ONLY, Bob acknowledges with a native mood emoji INSTEAD of composing
-        # a reply — no LLM call, no rich final, no episode (there is no reply text).
-        # It is still real engagement, so the owner-activity marker fires. Unwired,
-        # the plan falls back to a full reply below (backward-compatible).
-        if plan.mode is ExpressionMode.REACT_ONLY and self._reactor is not None:
-            await self._react_only(event, soul)
-            await self._record_owner_activity()
-            await self._advance_floor_after_turn(event, decision, bob_replied=False)
-            return
+        decision = gate.decision
+        prefetched_history = gate.history
         # Decide how SHORT Bob answers this ENGAGE turn (BOB-024): answer-demand of the
         # message x interest x mood/appetite x the BOB-018 form_hint → a Verbosity, the
         # single final length directive + (on a terse turn) the short-answer few-shot.
@@ -1047,8 +1098,13 @@ class HandleMessage:
             interlocutor=interlocutor,
             is_owner=is_owner,
         )
-        history: Sequence[Mapping[str, object]] = await self._replay_person_history(
-            interlocutor, is_guest=is_guest
+        # On the judge REPLY path the per-person thread was already replayed for the
+        # judgment (BOB-049); reuse it so it is not read twice. Otherwise (legacy path or
+        # a guest with no scopable thread) replay it now.
+        history: Sequence[Mapping[str, object]] = (
+            prefetched_history
+            if prefetched_history is not None
+            else await self._replay_person_history(interlocutor, is_guest=is_guest)
         )
         # User-repeat detection (BOB-022): does the OWNER repeat (near-)verbatim what
         # he already said in the recent window? Pure, no-LLM, conservative (exact after
@@ -1654,32 +1710,193 @@ class HandleMessage:
         real signal after the turn. Floor unwired / disabled → effective == per-message,
         so behaviour is exactly BOB-023.
         """
+        signals = await self._addressivity_signals(event)
+        roll = self._rng.random()
+        outcome = decide_response(
+            signals.effective,
+            interest=interest,
+            others_present=signals.others_present,
+            roll=roll,
+            thresholds=self._addressivity_thresholds,
+        )
+        return _AddressivityDecision(
+            outcome=outcome,
+            per_message=signals.per_message,
+            directed_to_id=signals.directed_to_id,
+        )
+
+    async def _addressivity_signals(
+        self, event: MessageReceived
+    ) -> _AddressivitySignals:
+        """Compute this turn's structural addressivity signals (BOB-023/025/049).
+
+        The shared perception both the legacy policy and the BOB-049 judge read:
+        classify who the message is for from the gateway's signals (``mentions_bob``,
+        ``reply_to_sender_id`` against Bob's own resolved id, an "Боб, …" name-address),
+        read whether the recent thread has other participants, then raise the per-message
+        classification to the EFFECTIVE addressivity by the conversation floor (BOB-025 —
+        an ambient message in a thread where Bob holds a live floor reads as continuity).
+        ``floor_engaged`` records when that raise actually fired (Bob holds the floor);
+        ``reply_to_bob`` whether the inbound replies to Bob; ``directed_to_id`` the person
+        a ``DIRECTED_TO_OTHER`` turn turned to. These are INPUTS only — the policy decides
+        on ``effective``, the judge weighs them by meaning; neither overrides the other.
+        """
         present = await self._others_present(event)
+        bob_id = self._bob_user_id()
         per_message = classify_addressivity(
             text=event.text,
             mentions_bob=event.mentions_bob,
             reply_to_sender_id=event.reply_to_sender_id,
-            bob_user_id=self._bob_user_id(),
+            bob_user_id=bob_id,
             others_present=present,
         )
         effective = await self._resolve_effective_addressivity(event, per_message)
-        roll = self._rng.random()
-        outcome = decide_response(
-            effective,
-            interest=interest,
-            others_present=present,
-            roll=roll,
-            thresholds=self._addressivity_thresholds,
+        floor_engaged = (
+            effective is Addressivity.DIRECTED_TO_BOB
+            and per_message is not Addressivity.DIRECTED_TO_BOB
         )
+        reply_to_bob = bob_id is not None and event.reply_to_sender_id == bob_id
         directed_to_id = (
             event.reply_to_sender_id
             if per_message is Addressivity.DIRECTED_TO_OTHER
             else None
         )
-        return _AddressivityDecision(
-            outcome=outcome,
+        return _AddressivitySignals(
             per_message=per_message,
+            effective=effective,
+            others_present=present,
+            floor_engaged=floor_engaged,
+            reply_to_bob=reply_to_bob,
             directed_to_id=directed_to_id,
+        )
+
+    async def _gate_turn(
+        self,
+        event: MessageReceived,
+        soul: SOUL,
+        interlocutor: Interlocutor | None,
+        plan: ExpressionPlan,
+        interest: float,
+        modulators: RuleModulators,
+    ) -> _ReplyGate | None:
+        """Decide whether/how Bob takes this turn (BOB-049 judge, or legacy fallback).
+
+        With the semantic judge wired (the LIVE path) Bob UNDERSTANDS the message and
+        chooses REPLY / REACT / IGNORE — the structural signals are INPUTS he weighs, not
+        deciders, and the decision holds for ANY interlocutor (authz orthogonal). A
+        non-REPLY (REACT / IGNORE) is fully handled here — it persists the user's turn (so
+        a follow-up keeps the per-person thread, BOB-045) and advances the floor — and
+        returns ``None`` so the caller stops. A REPLY returns a :class:`_ReplyGate` so the
+        caller composes+sends (guest restrictions intact). Unwired (the default) OR no
+        sender perceived → the legacy addressivity ladder (BOB-023/025) + the BOB-018
+        REACT_ONLY form gate run exactly as before (their silent/react early-outs return
+        ``None`` WITHOUT persisting, as today).
+        """
+        if self._decide_response is not None and interlocutor is not None:
+            judged = await self._judge_turn(event, soul, interlocutor)
+            if judged.choice.intent is not ResponseIntent.REPLY:
+                await self._act_non_reply(event, soul, judged.choice, judged.floor)
+                return None
+            return _ReplyGate(decision=judged.floor, history=judged.history)
+        # Legacy addressivity path (BOB-023/025). ADDRESSIVITY self-improvement tilt
+        # (BOB-028 .3): an APPROVED ADDRESSIVITY_BIAS rule softly RAISES the effective
+        # interest the policy reads — a bounded nudge (clamped to [0, 1]) on TOP of the
+        # decision, never a base override and never able to silence Bob. No rule → unchanged.
+        addressivity_interest = _clamp_unit(interest + modulators.addressivity_bias)
+        decision = await self._decide_addressivity(event, addressivity_interest)
+        if decision.outcome is ResponseOutcome.SILENT:
+            await self._advance_floor_after_turn(event, decision, bob_replied=False)
+            return None
+        if decision.outcome is ResponseOutcome.REACT and self._reactor is not None:
+            await self._react_only(event, soul)
+            await self._record_owner_activity()
+            await self._advance_floor_after_turn(event, decision, bob_replied=False)
+            return None
+        # React-only (BOB-018): when a reactor is wired and the plan picks REACT_ONLY, Bob
+        # acknowledges with a native mood emoji INSTEAD of composing a reply — no LLM call,
+        # no rich final, no episode (there is no reply text). It is still real engagement,
+        # so the owner-activity marker fires. Unwired, the plan falls back to a full reply.
+        if plan.mode is ExpressionMode.REACT_ONLY and self._reactor is not None:
+            await self._react_only(event, soul)
+            await self._record_owner_activity()
+            await self._advance_floor_after_turn(event, decision, bob_replied=False)
+            return None
+        return _ReplyGate(decision=decision, history=None)
+
+    async def _judge_turn(
+        self, event: MessageReceived, soul: SOUL, interlocutor: Interlocutor
+    ) -> _JudgedTurn:
+        """Ask the semantic judge how Bob takes this turn (BOB-049, the LIVE path).
+
+        Assembles the turn's context — the message, the sender as social context, the
+        CURRENT person's per-person thread (BOB-045, scoped 🔴 by sender so a guest only
+        ever sees their OWN thread), the structural HINTS and the mood tone — and delegates
+        the single semantic decision to the injected :class:`DecideResponse`. The judge
+        raises on failure (the fault-tolerant path is BOB-049 .3); here we assume success.
+        Returns the choice plus the floor signal (RAW per-message addressivity) and the
+        already-replayed history so a REPLY does not re-read it.
+        """
+        assert self._decide_response is not None  # guarded by the caller
+        signals = await self._addressivity_signals(event)
+        is_guest = interlocutor.trust is Trust.GUEST
+        history = await self._replay_person_history(interlocutor, is_guest=is_guest)
+        choice = await self._decide_response.decide(
+            text=event.text,
+            interlocutor=interlocutor,
+            recent_thread=_render_thread(history),
+            mentions_bob=event.mentions_bob,
+            reply_to_bob=signals.reply_to_bob,
+            addressivity=signals.per_message,
+            others_present=signals.others_present,
+            floor_engaged=signals.floor_engaged,
+            mood_tone=soul.mood.tone(),
+        )
+        floor = _AddressivityDecision(
+            outcome=_OUTCOME_FOR_INTENT[choice.intent],
+            per_message=signals.per_message,
+            directed_to_id=signals.directed_to_id,
+        )
+        return _JudgedTurn(choice=choice, floor=floor, history=history)
+
+    async def _act_non_reply(
+        self,
+        event: MessageReceived,
+        soul: SOUL,
+        choice: ResponseChoice,
+        decision: _AddressivityDecision,
+    ) -> None:
+        """Carry out a REACT or IGNORE turn: persist the user's turn + advance (BOB-049).
+
+        🔴 The user's turn is persisted in BOTH branches so a follow-up always has the
+        prior turn in the per-person thread (BOB-045): REACT records ``bob: (реакция:
+        <emoji>)`` and sets the meaning-chosen emoji on the inbound, IGNORE records
+        ``bob: (промолчал)``. Only the episodic conversation record is written — never an
+        owner FACT (no fact extraction here), so a guest turn never enters owner memory
+        (BOB-019). The floor advances with ``bob_replied=False`` and the owner-activity
+        marker fires (the owner did interact this turn). No reply text → no typing
+        indicator / router call.
+        """
+        if choice.intent is ResponseIntent.REACT:
+            emoji = choice.emoji or reaction_emoji_for(soul.mood)
+            await self._react_with_emoji(event, emoji)
+            await self._persist(event, _reaction_marker(emoji), soul)
+        else:
+            await self._persist(event, _SILENT_MARKER, soul)
+        await self._advance_floor_after_turn(event, decision, bob_replied=False)
+        await self._record_owner_activity()
+
+    async def _react_with_emoji(self, event: MessageReceived, emoji: str) -> None:
+        """Set the meaning-chosen emoji reaction on the inbound, best-effort (BOB-049).
+
+        The judge picked the emoji BY MEANING (replacing the BOB-018 mood→emoji table as
+        the source). When a reactor is wired it is set on the user's message; unwired the
+        decision still stands (the turn persists as a reaction) but no native reaction is
+        sent — a clean no-op, so the path stays backward-compatible.
+        """
+        if self._reactor is None:
+            return
+        await self._reactor.react(
+            chat_id=event.chat_id, message_id=event.message_id, emoji=emoji
         )
 
     async def _resolve_effective_addressivity(
@@ -2258,6 +2475,39 @@ class HandleMessage:
             }
         )
         await self._repo.set_mood(_mood_state(soul), at=now)
+
+
+# Bob's persisted half of a non-reply turn (BOB-049), so a follow-up keeps the
+# per-person thread (BOB-045): IGNORE writes "(промолчал)", REACT "(реакция: <emoji>)".
+# Russian persona voice (project language); Cyrillic look-alikes are intentional.
+_SILENT_MARKER = "(промолчал)"
+
+
+def _reaction_marker(emoji: str) -> str:
+    """Bob's persisted half for a REACT turn: the meaning-chosen emoji (BOB-049)."""
+    return f"(реакция: {emoji})"
+
+
+# Map the judge's intent to the legacy outcome the conversation floor advances on
+# (BOB-049): the floor reads per_message + bob_replied, so this is the cosmetic
+# outcome label only — REPLY engages, REACT like-reacts, IGNORE stays silent.
+_OUTCOME_FOR_INTENT: dict[ResponseIntent, ResponseOutcome] = {
+    ResponseIntent.REPLY: ResponseOutcome.ENGAGE,
+    ResponseIntent.REACT: ResponseOutcome.REACT,
+    ResponseIntent.IGNORE: ResponseOutcome.SILENT,
+}
+
+
+def _render_thread(history: Sequence[Mapping[str, object]]) -> str:
+    """Render the per-person thread into the judge's recent-thread snippet (BOB-049).
+
+    Joins each replayed episode's ``content`` (stored as ``"<sender>: <text>\\nbob:
+    <reply>"``) oldest-first; an empty history yields ``""`` (the judge reads it as a
+    fresh thread). No I/O — a pure projection of the already-replayed history.
+    """
+    return "\n".join(
+        str(item.get("content", "")) for item in history if item.get("content")
+    )
 
 
 # The verbosity ladder, low → high, for the self-improvement LENGTH tilt (BOB-028 .3).

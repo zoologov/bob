@@ -74,6 +74,7 @@ from bob.application.usecases.coding_assistant import CodingAssistant
 from bob.application.usecases.coding_context import make_coding_context
 from bob.application.usecases.coding_intent_router import CodingIntentRouter
 from bob.application.usecases.consolidate_memory import ConsolidateMemory
+from bob.application.usecases.decide_response import DecideResponse
 from bob.application.usecases.dedup_facts import DedupFacts
 from bob.application.usecases.detect_patterns import DetectPatterns, LlmPatternDetector
 from bob.application.usecases.evolve_fascination import EvolveFascination
@@ -136,6 +137,7 @@ from bob.infrastructure.introspection.subprocess_introspector import (
     SubprocessRepoIntrospector,
 )
 from bob.infrastructure.llm import build_embedder, build_reranker, build_tier_providers
+from bob.infrastructure.llm.response_judge import LlmResponseJudge
 from bob.infrastructure.persistence import (
     HybridMemoryRecall,
     KvAllowlistStore,
@@ -754,6 +756,16 @@ def build_application(
         # (coder.enabled false → coding_assistant None) → the NL path is inert and the
         # `/code` command in General is unaffected.
         coding_router=_build_coding_router(router=router, coder=coding_assistant),
+        # Semantic response judgment (BOB-049): on every inbound Bob UNDERSTANDS the
+        # message in context and chooses — as a person — REPLY / REACT / IGNORE, replacing
+        # the if/else addressivity ladder (BOB-023/025) and the BOB-018 REACT_ONLY form
+        # gate. The structural signals (addressivity / mention / reply / others / floor)
+        # become INPUTS the judge weighs by meaning, never deciders; the decision holds for
+        # ANY interlocutor (authz stays orthogonal — the GUEST restrictions on the REPLY
+        # path are unchanged). The Tier-0 judge raises on failure so .3's fault-tolerant
+        # path can catch it. A REACT/IGNORE turn still persists the user's turn (so a
+        # follow-up keeps the per-person thread) and advances the floor.
+        decide_response=DecideResponse(judge=LlmResponseJudge(router=router)),
     )
     event_bus.subscribe(MESSAGE_RECEIVED, _as_handler(handle_message))
 
