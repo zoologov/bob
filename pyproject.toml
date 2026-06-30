@@ -339,6 +339,32 @@ ignore = [
     "RUF002",
     "RUF003",
 ]
+# Response-judgment seam tests (BOB-049 .1) carry Russian message/thread literals
+# whose Cyrillic look-alikes are intentional (→ RUF001/RUF002/RUF003).
+"tests/application/usecases/test_decide_response.py" = [
+    "S101",
+    "ARG001",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+"tests/domain/personality/test_response_judgment.py" = [
+    "S101",
+    "ARG001",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+"tests/infrastructure/llm/test_response_judge.py" = [
+    "S101",
+    "ARG001",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
 "tests/application/usecases/test_coding_intent_router.py" = [
     "S101",
     "ARG001",
