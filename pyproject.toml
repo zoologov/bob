@@ -446,6 +446,11 @@ ignore = [
 "tests/domain/coding/test_naming.py" = ["S101", "ARG001", "PLR2004", "RUF001", "RUF002", "RUF003"]
 "tests/domain/coding/test_narrate.py" = ["S101", "ARG001", "PLR2004", "RUF001", "RUF002", "RUF003"]
 "tests/domain/coding/test_session_voice.py" = ["S101", "ARG001", "PLR2004", "RUF001", "RUF002", "RUF003"]
+# Reaction-perception tests (BOB-050) carry Russian reaction-meaning literals ("его тронуло",
+# "зашло") whose Cyrillic look-alikes are intentional — RUF001/RUF002/RUF003 do not apply.
+"tests/domain/personality/test_reaction_judgment.py" = ["S101", "ARG001", "PLR2004", "RUF001", "RUF002", "RUF003"]
+"tests/application/usecases/test_perceive_reaction.py" = ["S101", "ARG001", "ARG002", "PLR2004", "PT018", "RUF001", "RUF002", "RUF003"]
+"tests/infrastructure/persistence/test_notable_reaction_store.py" = ["S101", "ARG001", "PLR2004", "RUF001", "RUF002", "RUF003"]
 "tests/infrastructure/persistence/test_coding_session_store.py" = [
     "S101",
     "ARG001",
