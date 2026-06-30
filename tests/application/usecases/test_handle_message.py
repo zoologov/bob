@@ -6765,3 +6765,218 @@ async def test_guest_essential_failure_gets_the_same_notice_without_leaking() ->
     assert bot.sent == []  # no reply (degraded or otherwise) — nothing leaks
     assert repo.facts == []  # a failed guest turn writes no owner facts
     assert len(repo.episodes) == 1  # only the episodic record (the turn is not lost)
+
+
+# --- BOB-049 ACCEPTANCE: PRD US-1..5 + the semantic-decision principle ----------------
+# Guardrails mapped directly to the product stories. The judge is a deterministic fake
+# (no model), so each test pins WHAT Bob decided and asserts the OBSERVABLE turn outcome:
+# the decision is SEMANTIC (the judge), never ``is_owner``; authz stays orthogonal; the
+# structural/mood/thread components feed the judge as SIGNALS, not deciders.
+
+# A real question, NO «Боб,» tag. Worded with a natural depth cue ("почему") so the
+# hybrid tier selector escalates to the quality (tier1) reply the capturing fake inspects.
+_FRIEND_QUESTION = "слушай, а почему ты сам про всё это так думаешь?"
+
+
+def _known_with_id(sender_id: int | None) -> _FakeInterlocutorResolver:
+    """A KNOWN, non-owner friend (e.g. Norman) — trusted enough for the full path."""
+    return _FakeInterlocutorResolver(
+        _interlocutor(
+            name="Norman",
+            kind=InterlocutorKind.KNOWN,
+            trust=Trust.TRUSTED,
+            sender_id=sender_id,
+        )
+    )
+
+
+@pytest.mark.parametrize(
+    "resolver_factory",
+    [_owner_with_id, _known_with_id],
+    ids=["owner", "friend-norman"],
+)
+async def test_us1_important_question_replies_by_semantic_decision_not_is_owner(
+    resolver_factory: Callable[[int], _FakeInterlocutorResolver],
+) -> None:
+    # US-1: an important message — an OWNER question AND a non-owner FRIEND (Norman)
+    # question, BOTH WITHOUT «Боб,» — that the judge reads as REPLY → Bob composes a full
+    # reply. The owner and the friend land identically: the REPLY is the judge's SEMANTIC
+    # read, not an ``is_owner`` shortcut (a friend is not silenced for lacking the tag).
+    decide, fake = _judge(ResponseIntent.REPLY)
+    handler, bot, repo, _tier1 = _build(
+        reply="вот что я думаю...",
+        perceive_sender=resolver_factory(99),
+        decide_response=decide,
+    )
+
+    await handler.handle(_message(_FRIEND_QUESTION))
+
+    assert bot.final_text == "вот что я думаю..."  # a full reply, owner and friend alike
+    assert _bob_half(repo.episodes[0]["content"]) == "вот что я думаю..."
+    assert fake.contexts[0].text == _FRIEND_QUESTION  # the judge weighed the message itself
+
+
+@pytest.mark.parametrize(
+    ("intent", "emoji"),
+    [(ResponseIntent.REACT, _REACT_EMOJI), (ResponseIntent.IGNORE, None)],
+    ids=["react", "ignore"],
+)
+async def test_us2_unimportant_ambient_message_is_not_forced_into_a_reply(
+    intent: ResponseIntent, emoji: str | None
+) -> None:
+    # US-2: a long, ambient message in a busy thread (others present) the judge reads as
+    # unimportant → REACT or IGNORE. Bob is NOT forced into a reply — no compose, no send;
+    # the user's turn still persists (the thread is never dropped).
+    long_ambient = "ну в общем мы там вчера долго гуляли и обсуждали всякое разное " * 6
+    decide, _fake = _judge(intent, emoji=emoji)
+    reactor = _RecordingReactor()
+    handler, bot, repo, _tier1 = _build(
+        reply="НЕ должно отправиться",
+        history=_MULTIPARTY_HISTORY,
+        perceive_sender=_owner_with_id(99),
+        reactor=reactor,
+        decide_response=decide,
+    )
+
+    await handler.handle(_message(long_ambient))
+
+    assert bot.sent == []  # no forced reply
+    assert len(repo.episodes) == 1  # the turn is still recorded (thread preserved)
+
+
+async def test_us3_react_uses_the_judges_emoji_not_the_mood_to_emoji_table() -> None:
+    # US-3: the REACT emoji is chosen BY MEANING — the judge's emoji is set on the message,
+    # NOT the BOB-018 mood→emoji table's pick. Guardrail: the judge's emoji genuinely
+    # DIFFERS from what the mood table would have chosen, so the table cannot be deciding.
+    soul = _soul()
+    mood_table_emoji = reaction_emoji_for(soul.mood)
+    assert mood_table_emoji != _REACT_EMOJI, "fixture must make the two emoji differ"
+    decide, _fake = _judge(ResponseIntent.REACT, emoji=_REACT_EMOJI)
+    reactor = _RecordingReactor()
+    handler, _bot, _repo, _tier1 = _build(
+        reply="x",
+        soul=soul,
+        perceive_sender=_owner_with_id(99),
+        reactor=reactor,
+        decide_response=decide,
+    )
+
+    await handler.handle(_message("любопытная мысль"))
+
+    _chat, _msg, emoji = reactor.calls[0]
+    assert emoji == _REACT_EMOJI  # the judge's meaning-chosen emoji
+    assert emoji != mood_table_emoji  # the mood table did NOT decide
+
+
+# A prior turn the owner spoke that Bob IGNORED — the «что скажешь?»-class message whose
+# loss was the original memory bug. Keyed to the owner's sender_id so the per-person
+# replay surfaces it on the follow-up.
+_PRIOR_IGNORED_TURN: tuple[Mapping[str, object], ...] = (
+    {
+        "content": "Vova: а что скажешь про новый план?\nbob: (промолчал)",
+        "event_type": "message",
+        "sender_id": 99,
+    },
+)
+
+
+async def test_us4_ignore_turn_records_the_user_message_keyed_to_the_sender() -> None:
+    # US-4 (record side): an IGNORE turn still PERSISTS the user's words keyed to the
+    # sender, so the per-person thread is never dropped — the root of the «что скажешь?» bug.
+    decide, _fake = _judge(ResponseIntent.IGNORE)
+    handler, _bot, repo, _tier1 = _build(
+        reply="x",
+        perceive_sender=_owner_with_id(99),
+        decide_response=decide,
+    )
+
+    await handler.handle(_message("а что скажешь про новый план?"))
+
+    assert repo.episodes[0]["sender_id"] == 99  # keyed to the person
+    assert "а что скажешь про новый план?" in str(repo.episodes[0]["content"])
+
+
+async def test_us4_followup_after_a_nonreply_turn_has_the_prior_thread_in_context() -> None:
+    # US-4 (follow-up side): after Bob ignored a turn, a follow-up's judgment context
+    # carries the prior user message in the per-person recent_thread — so Bob now answers
+    # WITH the context he previously stayed silent on (the bug is fixed end to end).
+    decide, fake = _judge(ResponseIntent.REPLY)
+    handler, bot, _repo, _tier1 = _build(
+        reply="да, по тому плану — вот что думаю",
+        history=_PRIOR_IGNORED_TURN,
+        perceive_sender=_owner_with_id(99),
+        decide_response=decide,
+    )
+
+    await handler.handle(_message("ну так что?"))
+
+    assert bot.sent != []  # Bob now replies
+    recent_thread = fake.contexts[0].recent_thread
+    assert "а что скажешь про новый план?" in recent_thread  # the prior turn is in context
+
+
+async def test_us5_owner_judge_reply_keeps_the_trusted_recall_path() -> None:
+    # 🔴 US-5 (orthogonality, positive side): the semantic decision does NOT strip the
+    # OWNER's trusted path — an owner REPLY still recalls owner memory into the prompt.
+    decide, _fake = _judge(ResponseIntent.REPLY)
+    recall = FakeRecall(hits=[{"content": _RECALL_MEMORY, "category": "personal"}])
+    handler, _bot, _repo, tier1 = _build(
+        reply="конечно помню",
+        perceive_sender=_owner_with_id(99),
+        recall=recall,
+        decide_response=decide,
+    )
+
+    await handler.handle(_message("расскажи подробно, помнишь, о чём я говорил?"))
+
+    assert _RECALL_MEMORY in tier1.all_text  # the owner keeps the trusted recall
+
+
+@pytest.mark.parametrize(
+    ("intent", "emoji"),
+    [
+        (ResponseIntent.REPLY, None),
+        (ResponseIntent.REACT, _REACT_EMOJI),
+        (ResponseIntent.IGNORE, None),
+    ],
+    ids=["reply", "react", "ignore"],
+)
+async def test_us5_owner_private_never_leaks_to_a_guest_regardless_of_intent(
+    intent: ResponseIntent, emoji: str | None
+) -> None:
+    # 🔴 US-5: whatever the judge decides — REPLY, REACT or IGNORE — an owner-private
+    # recalled memory NEVER reaches a guest's prompt and NO owner fact is written from the
+    # guest turn. The semantic decision is orthogonal to authz on every branch.
+    decide, _fake = _judge(intent, emoji=emoji)
+    recall = FakeRecall(hits=[{"content": _RECALL_MEMORY, "category": "personal"}])
+    reactor = _RecordingReactor()
+    handler, _bot, repo, tier1 = _build(
+        reply="не должно утечь",
+        perceive_sender=_guest_with_id(2),
+        recall=recall,
+        reactor=reactor,
+        decide_response=decide,
+    )
+
+    await handler.handle(_message("расскажи подробно, кто ты и что помнишь?"))
+
+    assert _RECALL_MEMORY not in tier1.all_text  # owner-private withheld on every branch
+    assert repo.facts == []  # no owner fact written from a guest turn
+
+
+async def test_mood_tone_flows_into_the_judgment_context_as_a_signal() -> None:
+    # Regression / signal-provider (BOB-033): Bob's mood TONE is handed to the judge as a
+    # weighed SIGNAL (ctx.mood_tone), never a decider — confirming the emotional state is
+    # an input to the semantic decision.
+    soul = _soul()
+    decide, fake = _judge(ResponseIntent.REPLY)
+    handler, _bot, _repo, _tier1 = _build(
+        reply="ответ",
+        soul=soul,
+        perceive_sender=_owner_with_id(99),
+        decide_response=decide,
+    )
+
+    await handler.handle(_message("как дела?"))
+
+    assert fake.contexts[0].mood_tone == soul.mood.tone()  # mood reaches the judge as a hint
