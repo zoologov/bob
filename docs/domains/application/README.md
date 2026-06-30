@@ -41,6 +41,10 @@ LLM-роутера. Зависит от домена через порты-пр�
   (тот ретраит только transient): для пользовательского хода любой сбой
   суждения/генерации → ретрай, затем честный GUPPI-нотис, а не деградированный
   полу-ответ.
+  <!-- beadloom:track=src/bob/application/reliability.py -->
+- **usecases/decide_response.py** — `DecideResponse`, тонкий use-case над швом
+  семантического суждения (BOB-049): собирает `ResponseContext` из частей хода и
+  делегирует решение REPLY/REACT/IGNORE инъецированному `ResponseJudge`.
 - **usecases/handle_message.py** — `HandleMessage`, полный поток
   сообщение → ответ → персист → запоминание; `PersonalityState`,
   `EpisodeReader` (шов чтения недавней истории).
