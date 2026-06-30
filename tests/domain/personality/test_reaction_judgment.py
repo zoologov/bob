@@ -135,6 +135,13 @@ def test_raises_on_unrecognised_sentiment() -> None:
         parse_reaction_meaning("interpretation: что-то\nsentiment: ???\nintensity: low")
 
 
+def test_raises_when_sentiment_label_is_absent() -> None:
+    # An interpretation but no sentiment line at all -> a real failure signal (the
+    # decorative path drops it) rather than a guessed default.
+    with pytest.raises(ReactionJudgeParseError):
+        parse_reaction_meaning("interpretation: что-то\nintensity: low")
+
+
 def test_parser_is_case_and_whitespace_tolerant() -> None:
     meaning = parse_reaction_meaning(
         "  Interpretation:  тепло \n  Sentiment: WARM \n  Intensity: Low "

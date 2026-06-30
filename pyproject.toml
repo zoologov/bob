@@ -450,6 +450,8 @@ ignore = [
 # "зашло") whose Cyrillic look-alikes are intentional — RUF001/RUF002/RUF003 do not apply.
 "tests/domain/personality/test_reaction_judgment.py" = ["S101", "ARG001", "PLR2004", "RUF001", "RUF002", "RUF003"]
 "tests/application/usecases/test_perceive_reaction.py" = ["S101", "ARG001", "ARG002", "PLR2004", "PT018", "RUF001", "RUF002", "RUF003"]
+"tests/application/usecases/test_reaction_perception_acceptance.py" = ["S101", "ARG001", "ARG002", "PLR2004", "PT018", "RUF001", "RUF002", "RUF003"]
+"tests/application/authz/test_reactor_perception.py" = ["S101", "ARG001", "ARG002", "PLR2004", "RUF001", "RUF002", "RUF003"]
 "tests/infrastructure/persistence/test_notable_reaction_store.py" = ["S101", "ARG001", "PLR2004", "RUF001", "RUF002", "RUF003"]
 "tests/infrastructure/persistence/test_coding_session_store.py" = [
     "S101",
