@@ -36,6 +36,7 @@ from bob.domain.proactivity.governance import Governance, ProactiveHistory
 from bob.domain.proactivity.social_energy import SocialEnergy
 from bob.domain.proactivity.state import ProactivityState
 from bob.infrastructure.persistence import SoulStore, SqliteProactivityStore
+from tests.support.judge_stub import JUDGE_REPLY, is_judge_request
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Mapping, Sequence
@@ -77,10 +78,12 @@ class _ScriptedProvider:
 
     async def complete(
         self,
-        messages: Sequence[Mapping[str, str]],  # noqa: ARG002
+        messages: Sequence[Mapping[str, str]],
         *,
         stream: bool = False,  # noqa: ARG002
     ) -> str | AsyncIterator[str]:
+        if is_judge_request(messages):  # BOB-049: model the judge choosing REPLY
+            return JUDGE_REPLY
         index = min(self.calls, len(self._replies) - 1)
         self.calls += 1
         return self._replies[index]

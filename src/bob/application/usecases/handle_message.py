@@ -36,6 +36,7 @@ and storage live behind ports, and time is injected via :class:`Clock`.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -43,6 +44,7 @@ from typing import TYPE_CHECKING, Literal, Protocol
 
 from bob.application.capabilities.registry import CapabilityRegistry
 from bob.application.capabilities.tool_loop import ToolLoop
+from bob.application.reliability import call_with_retry
 from bob.application.router.llm_router import LLMRequest, TaskType
 from bob.application.router.reply_tier_selector import select_reply_tier
 from bob.application.usecases.update_mood_from_text import TextSignals
@@ -114,6 +116,7 @@ from bob.domain.personality.negotiation import (
 from bob.domain.personality.profanity import is_directed_hostility
 from bob.domain.personality.reaction import reaction_emoji_for
 from bob.domain.personality.relationship import compromise_bias
+from bob.domain.personality.response_choice import ResponseIntent
 from bob.domain.personality.self_improvement import RuleModulators, build_modulators
 from bob.domain.personality.taste import Verdict
 from bob.domain.personality.voice import (
@@ -139,18 +142,21 @@ from bob.domain.personality.zone_classifier import TasteZoneClassifier
 from bob.domain.ports import DiagramRenderError, DiagramResult
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping, Sequence
+    from collections.abc import Awaitable, Callable, Mapping, Sequence
     from contextlib import AbstractAsyncContextManager
     from random import Random
 
+    from bob.application.reliability import Sleep
     from bob.application.router.llm_router import LLMRouter
     from bob.application.runtime.events import MessageReceived
+    from bob.application.usecases.decide_response import DecideResponse
     from bob.application.usecases.extract_facts import ExtractFacts
     from bob.application.usecases.update_mood_from_text import UpdateMoodFromText
     from bob.domain.personality.fascination import Fascination
     from bob.domain.personality.interlocutor import Interlocutor
     from bob.domain.personality.mood import Mood
     from bob.domain.personality.relationship import Relationship
+    from bob.domain.personality.response_choice import ResponseChoice
     from bob.domain.personality.self_improvement import ImprovementRule
     from bob.domain.personality.soul import SOUL
     from bob.domain.personality.sulk import SulkState
@@ -169,6 +175,15 @@ if TYPE_CHECKING:
     )
 
 logger = logging.getLogger(__name__)
+
+# Reliability defaults (BOB-049 .3 — «полный Боб или честный GUPPI-нотис»). An ESSENTIAL
+# LLM step (the semantic judgment, the reply generation) is retried a bounded number of
+# times before Bob falls back to the honest outage notice — never a degraded half-answer.
+# ``_DEFAULT_ESSENTIAL_ATTEMPTS`` is the TOTAL number of tries (one initial call + two
+# retries); the short backoff is awaited through an injected sleep seam (deterministic in
+# tests). Both tunable per persona via ``reliability.*``.
+_DEFAULT_ESSENTIAL_ATTEMPTS = 3
+_DEFAULT_ESSENTIAL_BACKOFF_SECONDS = 0.5
 
 # How a rendered diagram is sent (BOB-037 C). ``document`` posts the PNG as an
 # UNCOMPRESSED file (full resolution, tap → real pixels) — the product default, since
@@ -541,6 +556,37 @@ class NaturalCodingRouter(Protocol):
     async def route(self, *, text: str, sender: int | None, is_owner: bool) -> bool: ...
 
 
+class OutageNotifier(Protocol):
+    """GUPPI's honest-outage seam (BOB-049 .3 — «полный Боб или GUPPI-нотис»).
+
+    When an ESSENTIAL turn step (the semantic judgment or the reply generation) keeps
+    failing after the bounded retries, Bob — the mind — is unavailable. Rather than ship a
+    degraded half-answer («уверенный бред», the antipattern), GUPPI (the infrastructure
+    subsystem) honestly reports the outage into Bob's topic via this seam. Optional: with
+    no notifier wired the turn still ends cleanly — the user's turn is persisted and NO
+    degraded reply is produced — just without a visible notice. The concrete adapter sends
+    a fixed system line through Bob's bot into his topic; the third-person text reads as
+    GUPPI reporting, not Bob being rude.
+    """
+
+    async def notify_outage(self) -> None:
+        """Post GUPPI's honest "Bob temporarily unavailable" connectivity notice."""
+        ...
+
+
+class _EssentialStepError(Exception):
+    """An ESSENTIAL turn step failed after the bounded retries (BOB-049 .3).
+
+    Raised by the retry-wrapped essential calls (the semantic judgment, the reply
+    generation) so the turn falls back to the honest GUPPI outage notice instead of a
+    degraded reply. Carries the step label for the log only — never shown to the user.
+    """
+
+    def __init__(self, step: str) -> None:
+        super().__init__(step)
+        self.step = step
+
+
 @dataclass
 class PersonalityState:
     """Mutable in-memory holder for Bob's current soul snapshot across turns.
@@ -585,6 +631,58 @@ class _AddressivityDecision:
     outcome: ResponseOutcome
     per_message: Addressivity
     directed_to_id: int | None
+
+
+@dataclass(frozen=True, slots=True)
+class _AddressivitySignals:
+    """This turn's structural addressivity signals (perception, BOB-023/025/049).
+
+    The raw, grounded read of WHO the message is for: ``per_message`` is the
+    per-message classification; ``effective`` is it raised by the conversation floor
+    (continuity); ``others_present`` whether the thread has a third participant;
+    ``floor_engaged`` whether the floor actually raised an ambient message to Bob;
+    ``reply_to_bob`` whether the inbound replies to Bob's own message; and
+    ``directed_to_id`` the person a ``DIRECTED_TO_OTHER`` turn turned to (for the
+    floor pass), else ``None``. These are INPUTS — the legacy policy decides the
+    outcome on ``effective`` (BOB-023/025), the BOB-049 judge weighs them by meaning.
+    """
+
+    per_message: Addressivity
+    effective: Addressivity
+    others_present: bool
+    floor_engaged: bool
+    reply_to_bob: bool
+    directed_to_id: int | None
+
+
+@dataclass(frozen=True, slots=True)
+class _JudgedTurn:
+    """The semantic judge's outcome for one turn + the pieces the flow reuses (BOB-049).
+
+    ``choice`` is the judge's :class:`ResponseChoice` (REPLY / REACT / IGNORE +
+    emoji); ``floor`` carries the RAW per-message addressivity the conversation floor
+    advances on after the turn; ``history`` is the CURRENT person's per-person thread
+    already replayed for the judgment, threaded into the REPLY compose path so it is
+    not re-read.
+    """
+
+    choice: ResponseChoice
+    floor: _AddressivityDecision
+    history: Sequence[Mapping[str, object]]
+
+
+@dataclass(frozen=True, slots=True)
+class _ReplyGate:
+    """A turn that PASSED the response gate as a REPLY (BOB-049): compose+send next.
+
+    ``decision`` is the floor signal the turn advances on after Bob replies;
+    ``history`` is the CURRENT person's per-person thread already replayed for the
+    judgment (the judge REPLY path), threaded into compose so it is not re-read —
+    ``None`` on the legacy path, where compose replays it itself.
+    """
+
+    decision: _AddressivityDecision
+    history: Sequence[Mapping[str, object]] | None
 
 
 class HandleMessage:
@@ -640,6 +738,11 @@ class HandleMessage:
         diagram_renderer: DiagramRenderer | None = None,
         diagram_send_as: DiagramSendMode = _DEFAULT_DIAGRAM_SEND_AS,
         coding_router: NaturalCodingRouter | None = None,
+        decide_response: DecideResponse | None = None,
+        outage_notifier: OutageNotifier | None = None,
+        retry_sleep: Sleep | None = None,
+        essential_attempts: int = _DEFAULT_ESSENTIAL_ATTEMPTS,
+        essential_backoff_seconds: float = _DEFAULT_ESSENTIAL_BACKOFF_SECONDS,
     ) -> None:
         self._router = router
         self._gateway = gateway
@@ -894,6 +997,94 @@ class HandleMessage:
         # message takes the normal chat flow exactly as before. The `/code` command in
         # General is a separate surface and is unaffected.
         self._coding_router = coding_router
+        # The semantic response-judgment seam (BOB-049): when wired (the LIVE path),
+        # Bob UNDERSTANDS each inbound in context and chooses — as a person — REPLY /
+        # REACT / IGNORE, replacing the if/else addressivity ladder (BOB-023/025) and the
+        # BOB-018 REACT_ONLY form gate. The structural signals (addressivity / mention /
+        # reply / others-present / floor) become INPUTS the judge weighs by meaning, never
+        # deciders; the decision holds for ANY interlocutor (authz stays orthogonal — the
+        # GUEST restrictions on the REPLY path are unchanged). Unwired (the default) OR no
+        # sender perceived → Bob falls back to the legacy addressivity path, so existing
+        # constructions/tests behave exactly as before.
+        self._decide_response = decide_response
+        # Reliability seam (BOB-049 .3 — «полный Боб или честный GUPPI-нотис»): the two
+        # ESSENTIAL LLM steps (the semantic judgment + the reply generation) are retried a
+        # bounded number of times with a short backoff before Bob falls back to the honest
+        # GUPPI outage notice — never a degraded half-answer. The backoff is awaited through
+        # an injected ``retry_sleep`` (``asyncio.sleep`` at runtime, a fake in tests, so the
+        # retry is deterministic with no real delay). When an essential step still fails,
+        # ``outage_notifier`` posts the honest GUPPI outage notice into Bob's topic;
+        # unwired (the default) the turn still ends cleanly with no degraded reply, just
+        # without a visible notice. Optional flavours are NOT routed through here — they
+        # drop silently in their own call sites, so a flaky add-on never trips the notice.
+        self._outage_notifier = outage_notifier
+        self._retry_sleep: Sleep = retry_sleep if retry_sleep is not None else asyncio.sleep
+        if essential_attempts < 1:
+            msg = f"essential_attempts must be >= 1, got {essential_attempts}"
+            raise ValueError(msg)
+        self._essential_attempts = essential_attempts
+        if essential_backoff_seconds < 0:
+            msg = (
+                f"essential_backoff_seconds must be non-negative, "
+                f"got {essential_backoff_seconds}"
+            )
+            raise ValueError(msg)
+        self._essential_backoff_seconds = essential_backoff_seconds
+
+    async def _run_essential[T](
+        self, operation: Callable[[], Awaitable[T]], *, step: str
+    ) -> T:
+        """Run an ESSENTIAL LLM step with bounded retry (BOB-049 .3).
+
+        The semantic judgment and the reply generation are the steps whose persistent
+        failure must NOT yield a degraded reply. Each is retried up to
+        ``essential_attempts`` times with the injected backoff sleep; if every attempt
+        raises, the last error is wrapped in :class:`_EssentialStepError` so the turn
+        falls back to the honest GUPPI outage notice. OPTIONAL add-ons are never routed
+        through here — they drop silently at their own call sites.
+        """
+        try:
+            return await call_with_retry(
+                operation,
+                attempts=self._essential_attempts,
+                backoff_seconds=self._essential_backoff_seconds,
+                sleep=self._retry_sleep,
+            )
+        except Exception as exc:
+            raise _EssentialStepError(step) from exc
+
+    async def _notify_outage(self) -> None:
+        """Emit GUPPI's honest outage notice into Bob's topic, best-effort (BOB-049 .3).
+
+        Unwired notifier → a clean no-op (the turn already ended with no degraded reply).
+        A flaky send is logged and swallowed so the failure handling itself can never
+        raise on top of the original essential failure.
+        """
+        if self._outage_notifier is None:
+            return
+        try:
+            await self._outage_notifier.notify_outage()
+        except Exception:
+            logger.exception("sending the GUPPI outage notice failed (ignored)")
+
+    async def _handle_essential_failure(
+        self, event: MessageReceived, soul: SOUL, exc: _EssentialStepError
+    ) -> None:
+        """End a turn whose ESSENTIAL step failed: persist + GUPPI notice (BOB-049 .3).
+
+        🔴 «Полный Боб или честный GUPPI-нотис»: NO degraded reply is produced. The user's
+        turn is persisted (so the message is not lost — consistent with .2) and GUPPI
+        honestly reports the outage into Bob's topic. The same path runs for a guest turn
+        (only the episodic record is written — no owner facts, no reply — so nothing leaks).
+        """
+        logger.warning(
+            "essential turn step (%s) failed after %d attempts; "
+            "emitting GUPPI outage notice (no degraded reply)",
+            exc.step,
+            self._essential_attempts,
+        )
+        await self._persist(event, _OUTAGE_MARKER, soul)
+        await self._notify_outage()
 
     async def _load_modulators(self) -> RuleModulators:
         """Build this turn's soft modulators from Bob's APPROVED rules (BOB-028 .3).
@@ -971,31 +1162,26 @@ class HandleMessage:
         # tracking whether Bob actually replied separately. A turn that does NOT reach
         # the reply (SILENT / REACT / react-only) advances the floor with
         # ``bob_replied=False`` before returning, so idle_streak / decay are counted.
-        # ADDRESSIVITY self-improvement tilt (BOB-028 .3): an APPROVED ADDRESSIVITY_BIAS
-        # rule softly RAISES the effective interest the addressivity policy reads — Bob is
-        # a touch more willing to engage an ambient/borderline turn. It is a bounded nudge
-        # (clamped to [0, 1]) on TOP of the BOB-023/025 decision, never a base override and
-        # never able to silence Bob (the bias is non-negative). No rule → interest unchanged.
-        addressivity_interest = _clamp_unit(interest + modulators.addressivity_bias)
-        decision = await self._decide_addressivity(event, addressivity_interest)
-        if decision.outcome is ResponseOutcome.SILENT:
-            await self._advance_floor_after_turn(event, decision, bob_replied=False)
+        # Decide WHETHER/HOW Bob takes this turn (BOB-049). The gate returns ``None`` when
+        # the turn was already handled as a non-reply (a silent / react / ignore early-out,
+        # persisted + floor-advanced), so we return; otherwise it returns the floor signal
+        # + any per-person history already replayed for a REPLY, and we fall through to the
+        # compose+send path below (guest restrictions intact).
+        # 🔴 BOB-049 .3: the gate runs the ESSENTIAL semantic judgment (retry-wrapped). If
+        # it still fails after the retries, end the turn with the honest GUPPI outage notice
+        # — NOT a guessed default. A genuine REACT/IGNORE is a SUCCESS (not a failure): it is
+        # handled inside the gate and returns ``None`` with no notice.
+        try:
+            gate = await self._gate_turn(
+                event, soul, interlocutor, plan, interest, modulators
+            )
+        except _EssentialStepError as exc:
+            await self._handle_essential_failure(event, soul, exc)
             return
-        if decision.outcome is ResponseOutcome.REACT and self._reactor is not None:
-            await self._react_only(event, soul)
-            await self._record_owner_activity()
-            await self._advance_floor_after_turn(event, decision, bob_replied=False)
+        if gate is None:
             return
-        # React-only (BOB-018): when a reactor is wired and the plan picks
-        # REACT_ONLY, Bob acknowledges with a native mood emoji INSTEAD of composing
-        # a reply — no LLM call, no rich final, no episode (there is no reply text).
-        # It is still real engagement, so the owner-activity marker fires. Unwired,
-        # the plan falls back to a full reply below (backward-compatible).
-        if plan.mode is ExpressionMode.REACT_ONLY and self._reactor is not None:
-            await self._react_only(event, soul)
-            await self._record_owner_activity()
-            await self._advance_floor_after_turn(event, decision, bob_replied=False)
-            return
+        decision = gate.decision
+        prefetched_history = gate.history
         # Decide how SHORT Bob answers this ENGAGE turn (BOB-024): answer-demand of the
         # message x interest x mood/appetite x the BOB-018 form_hint → a Verbosity, the
         # single final length directive + (on a terse turn) the short-answer few-shot.
@@ -1047,8 +1233,13 @@ class HandleMessage:
             interlocutor=interlocutor,
             is_owner=is_owner,
         )
-        history: Sequence[Mapping[str, object]] = await self._replay_person_history(
-            interlocutor, is_guest=is_guest
+        # On the judge REPLY path the per-person thread was already replayed for the
+        # judgment (BOB-049); reuse it so it is not read twice. Otherwise (legacy path or
+        # a guest with no scopable thread) replay it now.
+        history: Sequence[Mapping[str, object]] = (
+            prefetched_history
+            if prefetched_history is not None
+            else await self._replay_person_history(interlocutor, is_guest=is_guest)
         )
         # User-repeat detection (BOB-022): does the OWNER repeat (near-)verbatim what
         # he already said in the recent window? Pure, no-LLM, conservative (exact after
@@ -1058,45 +1249,53 @@ class HandleMessage:
         user_repeated = is_user_repeat(event.text, _user_turns(history))
         # Run the slow generation inside the typing keepalive so "Bob is typing…"
         # stays visible for the whole real wait (BOB-009); then commit one rich final.
-        async with self._gateway.typing_indicator(chat_id=event.chat_id):
-            reply = await self._compose_reply(
-                event.text,
-                soul,
-                recalled,
-                history,
-                plan,
-                user_repeated=user_repeated,
-                interlocutor=interlocutor,
-                is_guest=is_guest,
-                prior_impression=prior_impression,
-                relationship=relationship,
-                engagement=level,
-                sulk=sulk,
-                verbosity=verbosity,
-                modulators=modulators,
-            )
-            # Anti-repeat guard (BOB-022, defense in depth): if the fresh reply is
-            # byte-identical (after strip) to Bob's most-recent prior reply, regenerate
-            # ONCE — with sampling now stochastic the retry differs. At most one extra
-            # generation, only on an exact duplicate; if the retry is still identical it
-            # is kept (no infinite loop).
-            reply = await self._guard_against_verbatim_repeat(
-                reply,
-                event.text,
-                soul,
-                recalled,
-                history,
-                plan,
-                user_repeated,
-                interlocutor,
-                is_guest=is_guest,
-                prior_impression=prior_impression,
-                relationship=relationship,
-                engagement=level,
-                sulk=sulk,
-                verbosity=verbosity,
-                modulators=modulators,
-            )
+        # 🔴 BOB-049 .3: the reply generation is the second ESSENTIAL step (retry-wrapped
+        # inside _compose_reply). If it still fails after the retries, end the turn with the
+        # honest GUPPI outage notice instead of a degraded half-answer — the user's turn is
+        # persisted and NO Bob reply ships.
+        try:
+            async with self._gateway.typing_indicator(chat_id=event.chat_id):
+                reply = await self._compose_reply(
+                    event.text,
+                    soul,
+                    recalled,
+                    history,
+                    plan,
+                    user_repeated=user_repeated,
+                    interlocutor=interlocutor,
+                    is_guest=is_guest,
+                    prior_impression=prior_impression,
+                    relationship=relationship,
+                    engagement=level,
+                    sulk=sulk,
+                    verbosity=verbosity,
+                    modulators=modulators,
+                )
+                # Anti-repeat guard (BOB-022, defense in depth): if the fresh reply is
+                # byte-identical (after strip) to Bob's most-recent prior reply, regenerate
+                # ONCE — with sampling now stochastic the retry differs. At most one extra
+                # generation, only on an exact duplicate; if the retry is still identical it
+                # is kept (no infinite loop).
+                reply = await self._guard_against_verbatim_repeat(
+                    reply,
+                    event.text,
+                    soul,
+                    recalled,
+                    history,
+                    plan,
+                    user_repeated,
+                    interlocutor,
+                    is_guest=is_guest,
+                    prior_impression=prior_impression,
+                    relationship=relationship,
+                    engagement=level,
+                    sulk=sulk,
+                    verbosity=verbosity,
+                    modulators=modulators,
+                )
+        except _EssentialStepError as exc:
+            await self._handle_essential_failure(event, soul, exc)
+            return
         # Optional brevity length guard (BOB-024): a conservative safety net behind
         # the bayes — when enabled AND the message wanted a short answer (LOW demand),
         # a reply that still ran long is lightly clamped to its first finished thought
@@ -1654,32 +1853,202 @@ class HandleMessage:
         real signal after the turn. Floor unwired / disabled → effective == per-message,
         so behaviour is exactly BOB-023.
         """
+        signals = await self._addressivity_signals(event)
+        roll = self._rng.random()
+        outcome = decide_response(
+            signals.effective,
+            interest=interest,
+            others_present=signals.others_present,
+            roll=roll,
+            thresholds=self._addressivity_thresholds,
+        )
+        return _AddressivityDecision(
+            outcome=outcome,
+            per_message=signals.per_message,
+            directed_to_id=signals.directed_to_id,
+        )
+
+    async def _addressivity_signals(
+        self, event: MessageReceived
+    ) -> _AddressivitySignals:
+        """Compute this turn's structural addressivity signals (BOB-023/025/049).
+
+        The shared perception both the legacy policy and the BOB-049 judge read:
+        classify who the message is for from the gateway's signals (``mentions_bob``,
+        ``reply_to_sender_id`` against Bob's own resolved id, an "Боб, …" name-address),
+        read whether the recent thread has other participants, then raise the per-message
+        classification to the EFFECTIVE addressivity by the conversation floor (BOB-025 —
+        an ambient message in a thread where Bob holds a live floor reads as continuity).
+        ``floor_engaged`` records when that raise actually fired (Bob holds the floor);
+        ``reply_to_bob`` whether the inbound replies to Bob; ``directed_to_id`` the person
+        a ``DIRECTED_TO_OTHER`` turn turned to. These are INPUTS only — the policy decides
+        on ``effective``, the judge weighs them by meaning; neither overrides the other.
+        """
         present = await self._others_present(event)
+        bob_id = self._bob_user_id()
         per_message = classify_addressivity(
             text=event.text,
             mentions_bob=event.mentions_bob,
             reply_to_sender_id=event.reply_to_sender_id,
-            bob_user_id=self._bob_user_id(),
+            bob_user_id=bob_id,
             others_present=present,
         )
         effective = await self._resolve_effective_addressivity(event, per_message)
-        roll = self._rng.random()
-        outcome = decide_response(
-            effective,
-            interest=interest,
-            others_present=present,
-            roll=roll,
-            thresholds=self._addressivity_thresholds,
+        floor_engaged = (
+            effective is Addressivity.DIRECTED_TO_BOB
+            and per_message is not Addressivity.DIRECTED_TO_BOB
         )
+        reply_to_bob = bob_id is not None and event.reply_to_sender_id == bob_id
         directed_to_id = (
             event.reply_to_sender_id
             if per_message is Addressivity.DIRECTED_TO_OTHER
             else None
         )
-        return _AddressivityDecision(
-            outcome=outcome,
+        return _AddressivitySignals(
             per_message=per_message,
+            effective=effective,
+            others_present=present,
+            floor_engaged=floor_engaged,
+            reply_to_bob=reply_to_bob,
             directed_to_id=directed_to_id,
+        )
+
+    async def _gate_turn(
+        self,
+        event: MessageReceived,
+        soul: SOUL,
+        interlocutor: Interlocutor | None,
+        plan: ExpressionPlan,
+        interest: float,
+        modulators: RuleModulators,
+    ) -> _ReplyGate | None:
+        """Decide whether/how Bob takes this turn (BOB-049 judge, or legacy fallback).
+
+        With the semantic judge wired (the LIVE path) Bob UNDERSTANDS the message and
+        chooses REPLY / REACT / IGNORE — the structural signals are INPUTS he weighs, not
+        deciders, and the decision holds for ANY interlocutor (authz orthogonal). A
+        non-REPLY (REACT / IGNORE) is fully handled here — it persists the user's turn (so
+        a follow-up keeps the per-person thread, BOB-045) and advances the floor — and
+        returns ``None`` so the caller stops. A REPLY returns a :class:`_ReplyGate` so the
+        caller composes+sends (guest restrictions intact). Unwired (the default) OR no
+        sender perceived → the legacy addressivity ladder (BOB-023/025) + the BOB-018
+        REACT_ONLY form gate run exactly as before (their silent/react early-outs return
+        ``None`` WITHOUT persisting, as today).
+        """
+        if self._decide_response is not None and interlocutor is not None:
+            judged = await self._judge_turn(event, soul, interlocutor)
+            if judged.choice.intent is not ResponseIntent.REPLY:
+                await self._act_non_reply(event, soul, judged.choice, judged.floor)
+                return None
+            return _ReplyGate(decision=judged.floor, history=judged.history)
+        # Legacy addressivity path (BOB-023/025). ADDRESSIVITY self-improvement tilt
+        # (BOB-028 .3): an APPROVED ADDRESSIVITY_BIAS rule softly RAISES the effective
+        # interest the policy reads — a bounded nudge (clamped to [0, 1]) on TOP of the
+        # decision, never a base override and never able to silence Bob. No rule → unchanged.
+        addressivity_interest = _clamp_unit(interest + modulators.addressivity_bias)
+        decision = await self._decide_addressivity(event, addressivity_interest)
+        if decision.outcome is ResponseOutcome.SILENT:
+            await self._advance_floor_after_turn(event, decision, bob_replied=False)
+            return None
+        if decision.outcome is ResponseOutcome.REACT and self._reactor is not None:
+            await self._react_only(event, soul)
+            await self._record_owner_activity()
+            await self._advance_floor_after_turn(event, decision, bob_replied=False)
+            return None
+        # React-only (BOB-018): when a reactor is wired and the plan picks REACT_ONLY, Bob
+        # acknowledges with a native mood emoji INSTEAD of composing a reply — no LLM call,
+        # no rich final, no episode (there is no reply text). It is still real engagement,
+        # so the owner-activity marker fires. Unwired, the plan falls back to a full reply.
+        if plan.mode is ExpressionMode.REACT_ONLY and self._reactor is not None:
+            await self._react_only(event, soul)
+            await self._record_owner_activity()
+            await self._advance_floor_after_turn(event, decision, bob_replied=False)
+            return None
+        return _ReplyGate(decision=decision, history=None)
+
+    async def _judge_turn(
+        self, event: MessageReceived, soul: SOUL, interlocutor: Interlocutor
+    ) -> _JudgedTurn:
+        """Ask the semantic judge how Bob takes this turn (BOB-049, the LIVE path).
+
+        Assembles the turn's context — the message, the sender as social context, the
+        CURRENT person's per-person thread (BOB-045, scoped 🔴 by sender so a guest only
+        ever sees their OWN thread), the structural HINTS and the mood tone — and delegates
+        the single semantic decision to the injected :class:`DecideResponse`. The judge
+        raises on failure (the fault-tolerant path is BOB-049 .3); here we assume success.
+        Returns the choice plus the floor signal (RAW per-message addressivity) and the
+        already-replayed history so a REPLY does not re-read it.
+        """
+        assert self._decide_response is not None  # guarded by the caller
+        decide_response = self._decide_response
+        signals = await self._addressivity_signals(event)
+        is_guest = interlocutor.trust is Trust.GUEST
+        history = await self._replay_person_history(interlocutor, is_guest=is_guest)
+        # ESSENTIAL step (BOB-049 .3): the semantic judgment is retry-wrapped — a flaky
+        # judge call retries with backoff, then (if still failing) raises
+        # _EssentialStepError so the turn falls back to the honest GUPPI outage notice
+        # rather than a guessed default. A SUCCESSFUL REACT/IGNORE is a genuine choice,
+        # not a failure (no retry, no notice).
+        choice = await self._run_essential(
+            lambda: decide_response.decide(
+                text=event.text,
+                interlocutor=interlocutor,
+                recent_thread=_render_thread(history),
+                mentions_bob=event.mentions_bob,
+                reply_to_bob=signals.reply_to_bob,
+                addressivity=signals.per_message,
+                others_present=signals.others_present,
+                floor_engaged=signals.floor_engaged,
+                mood_tone=soul.mood.tone(),
+            ),
+            step="response judgment",
+        )
+        floor = _AddressivityDecision(
+            outcome=_OUTCOME_FOR_INTENT[choice.intent],
+            per_message=signals.per_message,
+            directed_to_id=signals.directed_to_id,
+        )
+        return _JudgedTurn(choice=choice, floor=floor, history=history)
+
+    async def _act_non_reply(
+        self,
+        event: MessageReceived,
+        soul: SOUL,
+        choice: ResponseChoice,
+        decision: _AddressivityDecision,
+    ) -> None:
+        """Carry out a REACT or IGNORE turn: persist the user's turn + advance (BOB-049).
+
+        🔴 The user's turn is persisted in BOTH branches so a follow-up always has the
+        prior turn in the per-person thread (BOB-045): REACT records ``bob: (реакция:
+        <emoji>)`` and sets the meaning-chosen emoji on the inbound, IGNORE records
+        ``bob: (промолчал)``. Only the episodic conversation record is written — never an
+        owner FACT (no fact extraction here), so a guest turn never enters owner memory
+        (BOB-019). The floor advances with ``bob_replied=False`` and the owner-activity
+        marker fires (the owner did interact this turn). No reply text → no typing
+        indicator / router call.
+        """
+        if choice.intent is ResponseIntent.REACT:
+            emoji = choice.emoji or reaction_emoji_for(soul.mood)
+            await self._react_with_emoji(event, emoji)
+            await self._persist(event, _reaction_marker(emoji), soul)
+        else:
+            await self._persist(event, _SILENT_MARKER, soul)
+        await self._advance_floor_after_turn(event, decision, bob_replied=False)
+        await self._record_owner_activity()
+
+    async def _react_with_emoji(self, event: MessageReceived, emoji: str) -> None:
+        """Set the meaning-chosen emoji reaction on the inbound, best-effort (BOB-049).
+
+        The judge picked the emoji BY MEANING (replacing the BOB-018 mood→emoji table as
+        the source). When a reactor is wired it is set on the user's message; unwired the
+        decision still stands (the turn persists as a reaction) but no native reaction is
+        sent — a clean no-op, so the path stays backward-compatible.
+        """
+        if self._reactor is None:
+            return
+        await self._reactor.react(
+            chat_id=event.chat_id, message_id=event.message_id, emoji=emoji
         )
 
     async def _resolve_effective_addressivity(
@@ -1888,8 +2257,17 @@ class HandleMessage:
             modulators=modulators,
         )
         provider = self._tool_provider
+        # ESSENTIAL step (BOB-049 .3): the reply generation is retry-wrapped — a flaky
+        # router/tool-loop call retries with backoff, then (if still failing) raises
+        # _EssentialStepError so the turn ends in the honest GUPPI outage notice rather
+        # than a degraded half-answer. The OPTIONAL grounded add-ons folded above already
+        # dropped silently on their own (a flaky add-on never reaches here / never trips
+        # the notice).
         if not is_guest and provider is not None and not self._registry.is_empty:
-            return await self._reply_with_tools(provider, system_prompt, text, context)
+            return await self._run_essential(
+                lambda: self._reply_with_tools(provider, system_prompt, text, context),
+                step="reply generation",
+            )
         # Hybrid reply tiering (BOB-006): a casual/short message answers on the
         # fast Tier 0 (flash) model for responsiveness; a complex/long message
         # escalates to the quality Tier 1 (plus) model — picked by a pure
@@ -1905,7 +2283,9 @@ class HandleMessage:
             private_context=None,
             tier_override=tier,
         )
-        return await self._router.run(request)
+        return await self._run_essential(
+            lambda: self._router.run(request), step="reply generation"
+        )
 
     async def _guard_against_verbatim_repeat(
         self,
@@ -2059,13 +2439,33 @@ class HandleMessage:
         there. Composes additively with the existing context (voice/language/
         negotiation/form-hint all live elsewhere and are untouched).
         """
+        # 🔴 Each add-on is OPTIONAL flavour (BOB-049 .3): wrapped so a flaky reflection /
+        # recall / fascination read DROPS the add-on (logged, returns "") and the core full
+        # Bob reply still ships. A failing add-on must NEVER trip the GUPPI outage notice —
+        # it is not an essential step.
         additions = [
-            await self._leak_inner_life(plan),
-            await self._callback(plan, text),
-            await self._mention_fascination(plan),
+            await self._safe_addon(self._leak_inner_life(plan), name="inner-life leak"),
+            await self._safe_addon(self._callback(plan, text), name="memory callback"),
+            await self._safe_addon(
+                self._mention_fascination(plan), name="fascination mention"
+            ),
         ]
         suffix = "".join(f"\n{line}" for line in additions if line)
         return f"{context}{suffix}" if suffix else context
+
+    async def _safe_addon(self, addon: Awaitable[str], *, name: str) -> str:
+        """Run one OPTIONAL grounded add-on, dropping it silently on failure (BOB-049 .3).
+
+        An add-on is FLAVOUR, never the core reply: if it raises (a flaky reflection /
+        recall / fascination read), the error is logged and the add-on dropped so the full
+        Bob reply still ships. Returns the add-on's line, or ``""`` when it had nothing OR
+        failed — so a failing optional add-on can never trigger the honest outage notice.
+        """
+        try:
+            return await addon
+        except Exception:
+            logger.exception("optional grounded add-on %r failed (dropped)", name)
+            return ""
 
     async def _leak_inner_life(self, plan: ExpressionPlan) -> str:
         """The leak line for this turn, or ``""`` (no flag / no reader / no reflection)."""
@@ -2258,6 +2658,44 @@ class HandleMessage:
             }
         )
         await self._repo.set_mood(_mood_state(soul), at=now)
+
+
+# Bob's persisted half of a non-reply turn (BOB-049), so a follow-up keeps the
+# per-person thread (BOB-045): IGNORE writes "(промолчал)", REACT "(реакция: <emoji>)".
+# Russian persona voice (project language); Cyrillic look-alikes are intentional.
+_SILENT_MARKER = "(промолчал)"
+
+# Bob's persisted half when an ESSENTIAL step failed after retries (BOB-049 .3): the
+# user's turn is saved (so the message is not lost) with this marker — no degraded reply
+# was produced; GUPPI reported the outage separately. Russian persona voice.
+_OUTAGE_MARKER = "(нет ответа: проблемы со связью)"  # noqa: RUF001
+
+
+def _reaction_marker(emoji: str) -> str:
+    """Bob's persisted half for a REACT turn: the meaning-chosen emoji (BOB-049)."""
+    return f"(реакция: {emoji})"
+
+
+# Map the judge's intent to the legacy outcome the conversation floor advances on
+# (BOB-049): the floor reads per_message + bob_replied, so this is the cosmetic
+# outcome label only — REPLY engages, REACT like-reacts, IGNORE stays silent.
+_OUTCOME_FOR_INTENT: dict[ResponseIntent, ResponseOutcome] = {
+    ResponseIntent.REPLY: ResponseOutcome.ENGAGE,
+    ResponseIntent.REACT: ResponseOutcome.REACT,
+    ResponseIntent.IGNORE: ResponseOutcome.SILENT,
+}
+
+
+def _render_thread(history: Sequence[Mapping[str, object]]) -> str:
+    """Render the per-person thread into the judge's recent-thread snippet (BOB-049).
+
+    Joins each replayed episode's ``content`` (stored as ``"<sender>: <text>\\nbob:
+    <reply>"``) oldest-first; an empty history yields ``""`` (the judge reads it as a
+    fresh thread). No I/O — a pure projection of the already-replayed history.
+    """
+    return "\n".join(
+        str(item.get("content", "")) for item in history if item.get("content")
+    )
 
 
 # The verbosity ladder, low → high, for the self-improvement LENGTH tilt (BOB-028 .3).

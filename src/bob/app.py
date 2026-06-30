@@ -38,7 +38,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Protocol, cast
 
 from bob.application.authz import Authorizer, SenderPerception
 from bob.application.capabilities import (
@@ -74,6 +74,7 @@ from bob.application.usecases.coding_assistant import CodingAssistant
 from bob.application.usecases.coding_context import make_coding_context
 from bob.application.usecases.coding_intent_router import CodingIntentRouter
 from bob.application.usecases.consolidate_memory import ConsolidateMemory
+from bob.application.usecases.decide_response import DecideResponse
 from bob.application.usecases.dedup_facts import DedupFacts
 from bob.application.usecases.detect_patterns import DetectPatterns, LlmPatternDetector
 from bob.application.usecases.evolve_fascination import EvolveFascination
@@ -136,6 +137,7 @@ from bob.infrastructure.introspection.subprocess_introspector import (
     SubprocessRepoIntrospector,
 )
 from bob.infrastructure.llm import build_embedder, build_reranker, build_tier_providers
+from bob.infrastructure.llm.response_judge import LlmResponseJudge
 from bob.infrastructure.persistence import (
     HybridMemoryRecall,
     KvAllowlistStore,
@@ -156,6 +158,7 @@ from bob.infrastructure.persistence.coding_session_store import (
 )
 from bob.infrastructure.telegram.coding_indicator import StatusPanel, TypingKeepalive
 from bob.infrastructure.telegram.gateway import MarkdownSendBot, RichMarkdownSender
+from bob.infrastructure.telegram.guppi import GUPPI_OUTAGE_TEXT
 from bob.infrastructure.telegram.multibot import (
     BotIdentity,
     BotRegistry,
@@ -754,6 +757,27 @@ def build_application(
         # (coder.enabled false → coding_assistant None) → the NL path is inert and the
         # `/code` command in General is unaffected.
         coding_router=_build_coding_router(router=router, coder=coding_assistant),
+        # Semantic response judgment (BOB-049): on every inbound Bob UNDERSTANDS the
+        # message in context and chooses — as a person — REPLY / REACT / IGNORE, replacing
+        # the if/else addressivity ladder (BOB-023/025) and the BOB-018 REACT_ONLY form
+        # gate. The structural signals (addressivity / mention / reply / others / floor)
+        # become INPUTS the judge weighs by meaning, never deciders; the decision holds for
+        # ANY interlocutor (authz stays orthogonal — the GUEST restrictions on the REPLY
+        # path are unchanged). The Tier-0 judge raises on failure so .3's fault-tolerant
+        # path can catch it. A REACT/IGNORE turn still persists the user's turn (so a
+        # follow-up keeps the per-person thread) and advances the floor.
+        decide_response=DecideResponse(judge=LlmResponseJudge(router=router)),
+        # Reliability seam (BOB-049 .3 — «полный Боб или честный GUPPI-нотис»): when an
+        # ESSENTIAL step (the semantic judgment or the reply generation) keeps failing after
+        # the bounded retries, GUPPI honestly reports the outage into Bob's topic instead of
+        # shipping a degraded half-answer. The retry backoff is the real ``asyncio.sleep``
+        # in production (the use-case injects a fake in tests). The notice goes through BOB'S
+        # bot threaded into his topic (the third-person system text reads as GUPPI, not Bob).
+        outage_notifier=_GuppiOutageNotifier(
+            bot=resolved_bob_bot,
+            chat_id=_int(telegram_section, "chat_id", 0),
+            topic_id=_int(_section(telegram_section, "bob"), "topic_id", 0),
+        ),
     )
     event_bus.subscribe(MESSAGE_RECEIVED, _as_handler(handle_message))
 
@@ -1137,6 +1161,48 @@ class _CodingOwnerNotifier:
         """Post ``text`` into Bob's topic through Bob's bot (rich markdown, threaded)."""
         await self._sender.send(
             chat_id=self._chat_id, markdown=text, message_thread_id=self._topic_id
+        )
+
+
+class _PlainNotifyBot(Protocol):
+    """The minimal send surface the outage notifier needs: one plain message (BOB-049 .3).
+
+    Interface-segregated subset of :class:`BotLike` — only the single plain ``send_message``
+    the system-voice outage notice uses — so any ``BotLike`` satisfies it structurally and a
+    test fake need not implement the whole gateway protocol.
+    """
+
+    async def send_message(
+        self, *, chat_id: int, text: str, message_thread_id: int | None = None
+    ) -> object: ...
+
+
+class _GuppiOutageNotifier:
+    """Outage-notice adapter: GUPPI's honest "Bob unavailable" line into Bob's topic (BOB-049 .3).
+
+    Realises HandleMessage's ``OutageNotifier`` seam. When an ESSENTIAL turn step (the
+    semantic judgment or the reply generation) keeps failing after the bounded retries,
+    Bob — the mind — is unavailable, so GUPPI (the infrastructure subsystem) honestly
+    reports the outage rather than let a degraded half-answer ship («полный Боб или честный
+    GUPPI-нотис»). The fixed third-person :data:`GUPPI_OUTAGE_TEXT` is posted as a plain
+    system line into Bob's TOPIC (``message_thread_id == telegram.bob.topic_id``) so it
+    lands in the live conversation thread and reads as GUPPI reporting, not Bob being rude.
+    Transport only — the failure handling + best-effort swallow live in the use-case.
+    """
+
+    def __init__(
+        self, *, bot: _PlainNotifyBot, chat_id: int, topic_id: int | None
+    ) -> None:
+        self._bot = bot
+        self._chat_id = chat_id
+        self._topic_id = topic_id
+
+    async def notify_outage(self) -> None:
+        """Post GUPPI's honest outage notice into Bob's topic (system voice)."""
+        await self._bot.send_message(
+            chat_id=self._chat_id,
+            text=GUPPI_OUTAGE_TEXT,
+            message_thread_id=self._topic_id,
         )
 
 

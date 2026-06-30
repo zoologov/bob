@@ -29,6 +29,7 @@ from bob.application.capabilities.render_diagram import (
 )
 from bob.application.router.llm_router import LLMRouter
 from bob.application.runtime.events import MessageReceived
+from bob.application.usecases.decide_response import DecideResponse
 from bob.application.usecases.extract_facts import ExtractFacts
 from bob.application.usecases.handle_message import (
     DiagramSendMode,
@@ -68,6 +69,11 @@ from bob.domain.personality.reaction import (
     reaction_emoji_for,
 )
 from bob.domain.personality.relationship import Relationship
+from bob.domain.personality.response_choice import (
+    ResponseChoice,
+    ResponseContext,
+    ResponseIntent,
+)
 from bob.domain.personality.self_improvement import (
     ImprovementRule,
     Lever,
@@ -89,6 +95,7 @@ if TYPE_CHECKING:
     from bob.domain.ports import (
         DiagramSink,
         LLMMessage,
+        LLMProvider,
         Permission,
         Recalled,
         ToolCallingProvider,
@@ -345,6 +352,32 @@ class _RecordingReactor:
         self.calls.append((chat_id, message_id, emoji))
 
 
+# The retry backoff used in the reliability tests (BOB-049 .3): a recognizable value the
+# recording sleep seam captures, so a test can assert the backoff was awaited (never a
+# real delay — the sleep is faked).
+_TEST_BACKOFF_SECONDS = 0.25
+
+
+class _RecordingSleep:
+    """A retry-backoff sleep seam double recording each delay (BOB-049 .3, no real wait)."""
+
+    def __init__(self) -> None:
+        self.delays: list[float] = []
+
+    async def __call__(self, seconds: float) -> None:
+        self.delays.append(seconds)
+
+
+class _FakeOutageNotifier:
+    """A GUPPI OutageNotifier double recording each honest-outage notice (BOB-049 .3)."""
+
+    def __init__(self) -> None:
+        self.notices = 0
+
+    async def notify_outage(self) -> None:
+        self.notices += 1
+
+
 def _moment() -> datetime:
     return datetime(2026, 6, 18, 14, 0, 0, tzinfo=UTC)
 
@@ -496,10 +529,22 @@ def _build(
     diagram_send_as: DiagramSendMode = "photo",
     photo_send_raises: bool = False,
     coding_router: _FakeCodingRouter | None = None,
+    decide_response: DecideResponse | None = None,
+    outage_notifier: _FakeOutageNotifier | None = None,
+    retry_sleep: _RecordingSleep | None = None,
+    essential_attempts: int = 3,
+    essential_backoff_seconds: float = _TEST_BACKOFF_SECONDS,
+    tier0_provider: LLMProvider | None = None,
+    tier1_provider: LLMProvider | None = None,
 ) -> tuple[HandleMessage, FakeBot, FakeRepo, CapturingProvider]:
     tier0 = CapturingProvider(reply="positive", replies=tier0_replies)
     tier1 = CapturingProvider(reply=reply, replies=tier1_replies)
-    router = LLMRouter(providers={0: tier0, 1: tier1})
+    # Custom tier providers (e.g. a flaky/failing one for the BOB-049 .3 reliability tests)
+    # drive the router when supplied; the returned ``tier1`` capturing provider is left in
+    # place for the default path that inspects the reply payloads.
+    router_tier0: LLMProvider = tier0_provider if tier0_provider is not None else tier0
+    router_tier1: LLMProvider = tier1_provider if tier1_provider is not None else tier1
+    router = LLMRouter(providers={0: router_tier0, 1: router_tier1})
     clock = clock if clock is not None else FixedClock(_moment())
     bot = FakeBot(photo_raises=photo_send_raises)
     repo = FakeRepo(history=history)
@@ -554,6 +599,11 @@ def _build(
         diagram_renderer=diagram_renderer,  # type: ignore[arg-type]
         diagram_send_as=diagram_send_as,
         coding_router=coding_router,
+        decide_response=decide_response,
+        outage_notifier=outage_notifier,
+        retry_sleep=retry_sleep,
+        essential_attempts=essential_attempts,
+        essential_backoff_seconds=essential_backoff_seconds,
     )
     return handler, bot, repo, tier1
 
@@ -6134,3 +6184,799 @@ async def test_no_coding_router_leaves_the_natural_language_path_inert() -> None
     await handler.handle(_message("Боб, поправь баг в Z"))
 
     assert bot.final_text != ""  # normal chat reply committed (NL path inert)
+
+
+# --- BOB-049: semantic response judge wired into handle_message --------------
+# The judge replaces the if/else addressivity decision: Bob UNDERSTANDS the message
+# and chooses REPLY / REACT / IGNORE. A fake judge returns a scripted ResponseChoice
+# (deterministic), so these tests assert the BRANCHING + persist-in-all-branches +
+# the guest-restricted REPLY path staying intact — not the model's judgment itself.
+
+_REACT_EMOJI = "🔥"  # a Telegram free-reaction emoji the judge picks BY MEANING
+
+
+class _FakeResponseJudge:
+    """A ResponseJudge double returning a scripted ResponseChoice, recording the ctx.
+
+    Lets a test pin the social decision deterministically (no model) and inspect the
+    ResponseContext the use-case assembled — so the structural signals can be asserted
+    to flow in as INPUTS rather than being used as overrides.
+    """
+
+    def __init__(self, choice: ResponseChoice) -> None:
+        self._choice = choice
+        self.contexts: list[ResponseContext] = []
+
+    async def decide(self, ctx: ResponseContext) -> ResponseChoice:
+        self.contexts.append(ctx)
+        return self._choice
+
+
+def _judge(
+    intent: ResponseIntent, *, emoji: str | None = None
+) -> tuple[DecideResponse, _FakeResponseJudge]:
+    """Build a DecideResponse over a fake judge returning ``intent`` (+ optional emoji)."""
+    fake = _FakeResponseJudge(ResponseChoice(intent=intent, emoji=emoji, reason="test"))
+    return DecideResponse(judge=fake), fake
+
+
+def _bob_half(content: object) -> str:
+    """Bob's persisted half of an episode ("<sender>: <text>\\nbob: <half>")."""
+    _user, _sep, half = str(content).partition("\nbob: ")
+    return half
+
+
+async def test_judge_reply_composes_sends_and_persists() -> None:
+    # REPLY → the existing compose+send path runs and the turn persists with the reply.
+    decide, _fake = _judge(ResponseIntent.REPLY)
+    handler, bot, repo, _tier1 = _build(
+        reply="полный ответ",
+        perceive_sender=_owner_with_id(99),
+        decide_response=decide,
+    )
+
+    await handler.handle(_message("расскажи подробно про кофе"))
+
+    assert bot.final_text == "полный ответ"  # composed + sent
+    assert len(repo.episodes) == 1
+    assert _bob_half(repo.episodes[0]["content"]) == "полный ответ"
+
+
+async def test_judge_react_sets_the_meaning_chosen_emoji_and_persists_reaction() -> None:
+    # REACT → the reactor sets the emoji the JUDGE chose (by meaning), and the user's
+    # turn persists as "(реакция: <emoji>)" — no reply composed, no router reply call.
+    decide, _fake = _judge(ResponseIntent.REACT, emoji=_REACT_EMOJI)
+    reactor = _RecordingReactor()
+    handler, bot, repo, _tier1 = _build(
+        reply="не должно отправиться",
+        perceive_sender=_owner_with_id(99),
+        reactor=reactor,
+        decide_response=decide,
+    )
+
+    await handler.handle(_message("ну такое"))
+
+    assert bot.sent == []  # no reply composed/sent
+    assert len(reactor.calls) == 1
+    _chat, _msg, emoji = reactor.calls[0]
+    assert emoji == _REACT_EMOJI  # the emoji chosen BY MEANING, not the mood table
+    assert len(repo.episodes) == 1
+    assert _bob_half(repo.episodes[0]["content"]) == f"(реакция: {_REACT_EMOJI})"
+
+
+async def test_judge_react_without_emoji_falls_back_to_the_mood_table() -> None:
+    # A REACT with no emoji falls back to the BOB-018 mood→emoji default (kept as a
+    # fallback only — the judge's emoji is the primary source when present).
+    decide, _fake = _judge(ResponseIntent.REACT, emoji=None)
+    reactor = _RecordingReactor()
+    soul = _soul()
+    handler, _bot, repo, _tier1 = _build(
+        reply="x",
+        soul=soul,
+        perceive_sender=_owner_with_id(99),
+        reactor=reactor,
+        decide_response=decide,
+    )
+
+    await handler.handle(_message("угу"))
+
+    assert len(reactor.calls) == 1
+    _chat, _msg, emoji = reactor.calls[0]
+    assert emoji in STANDARD_REACTION_EMOJI
+    assert _bob_half(repo.episodes[0]["content"]) == f"(реакция: {emoji})"
+
+
+async def test_judge_ignore_stays_silent_and_persists_promolchal() -> None:
+    # IGNORE → no message, no reaction; the user's turn still persists as "(промолчал)".
+    decide, _fake = _judge(ResponseIntent.IGNORE)
+    reactor = _RecordingReactor()
+    handler, bot, repo, _tier1 = _build(
+        reply="не должно отправиться",
+        perceive_sender=_owner_with_id(99),
+        reactor=reactor,
+        decide_response=decide,
+    )
+
+    await handler.handle(_message("болтают между собой"))
+
+    assert bot.sent == []  # silent
+    assert reactor.calls == []  # no reaction
+    assert len(repo.episodes) == 1
+    assert _bob_half(repo.episodes[0]["content"]) == "(промолчал)"
+
+
+async def test_judge_react_without_a_reactor_still_persists_the_reaction_turn() -> None:
+    # With no reactor wired, a REACT decision still stands (the turn persists as a
+    # reaction) — the native reaction is simply not sent (a clean no-op, no crash).
+    decide, _fake = _judge(ResponseIntent.REACT, emoji=_REACT_EMOJI)
+    handler, bot, repo, _tier1 = _build(
+        reply="x",
+        perceive_sender=_owner_with_id(99),
+        decide_response=decide,  # reactor left unwired
+    )
+
+    await handler.handle(_message("ну такое"))
+
+    assert bot.sent == []  # nothing composed/sent
+    assert _bob_half(repo.episodes[0]["content"]) == f"(реакция: {_REACT_EMOJI})"
+
+
+async def test_a_react_turn_lands_in_the_next_turns_per_person_history() -> None:
+    # 🔴 persist-in-all-branches keeps the thread (BOB-045): after a REACT turn the prior
+    # USER message is on record, so the next turn's per-person history includes it.
+    decide, _fake = _judge(ResponseIntent.REACT, emoji=_REACT_EMOJI)
+    reactor = _RecordingReactor()
+    handler, _bot, repo, _tier1 = _build(
+        reply="x",
+        perceive_sender=_owner_with_id(99),
+        reactor=reactor,
+        decide_response=decide,
+    )
+
+    await handler.handle(_message("это моя первая реплика"))
+
+    # The persisted episode is keyed to the sender and carries the user's words, so a
+    # follow-up's recent_episodes_for(sender) replays it.
+    assert repo.episodes[0]["sender_id"] == 99
+    replayed = await repo.recent_episodes_for(99, 14)
+    # (FakeRepo seeds replay from ``history``, not written episodes; assert the written
+    # episode itself preserves the prior user turn so the per-person thread can hold it.)
+    assert "это моя первая реплика" in str(repo.episodes[0]["content"])
+    del replayed
+
+
+async def test_guest_reply_still_takes_the_restricted_path() -> None:
+    # 🔴 authz orthogonal: a GUEST whom the judge sends to REPLY still gets the restricted
+    # compose — NO owner-private recalled memory reaches a stranger's prompt.
+    decide, _fake = _judge(ResponseIntent.REPLY)
+    recall = FakeRecall(hits=[{"content": _RECALL_MEMORY, "category": "personal"}])
+    handler, _bot, _repo, tier1 = _build(
+        reply="привет, незнакомец",
+        perceive_sender=_guest_with_id(99),
+        recall=recall,
+        decide_response=decide,
+    )
+
+    await handler.handle(_message("расскажи подробно, кто ты такой?"))
+
+    assert _RECALL_MEMORY not in tier1.all_text  # owner memory withheld from the guest
+    assert "незнаком" in tier1.all_text.casefold()  # stranger voice present
+
+
+async def test_guest_react_turn_writes_no_owner_facts() -> None:
+    # 🔴 BOB-019: a guest REACT turn records ONLY the episodic conversation record, never
+    # an owner FACT (no fact extraction on a non-reply turn).
+    decide, _fake = _judge(ResponseIntent.REACT, emoji=_REACT_EMOJI)
+    reactor = _RecordingReactor()
+    handler, _bot, repo, _tier1 = _build(
+        reply="x",
+        perceive_sender=_guest_with_id(99),
+        reactor=reactor,
+        decide_response=decide,
+    )
+
+    await handler.handle(_message("случайный текст"))
+
+    assert repo.facts == []  # no owner fact written from a guest turn
+    assert len(repo.episodes) == 1  # only the episodic record
+
+
+async def test_guest_ignore_turn_writes_no_owner_facts() -> None:
+    decide, _fake = _judge(ResponseIntent.IGNORE)
+    handler, _bot, repo, _tier1 = _build(
+        reply="x",
+        perceive_sender=_guest_with_id(99),
+        decide_response=decide,
+    )
+
+    await handler.handle(_message("болтовня"))
+
+    assert repo.facts == []
+    assert _bob_half(repo.episodes[0]["content"]) == "(промолчал)"
+
+
+async def test_floor_advances_on_every_judge_branch() -> None:
+    # The conversation floor advances on REPLY, REACT, and IGNORE alike (BOB-025): each
+    # branch upserts the floor so idle_streak / continuity stay correct.
+    for intent, emoji in (
+        (ResponseIntent.REPLY, None),
+        (ResponseIntent.REACT, _REACT_EMOJI),
+        (ResponseIntent.IGNORE, None),
+    ):
+        decide, _fake = _judge(intent, emoji=emoji)
+        floor_store = _FakeFloorStore()
+        reactor = _RecordingReactor()
+        handler, _bot, _repo, _tier1 = _build(
+            reply="ответ",
+            perceive_sender=_owner_with_id(99),
+            reactor=reactor,
+            floor_store=floor_store,
+            decide_response=decide,
+        )
+
+        await handler.handle(_message("сообщение"))
+
+        assert floor_store.saved, f"floor did not advance on {intent}"
+
+
+async def test_structural_signals_flow_into_the_context_not_as_overrides() -> None:
+    # The structural signals are INPUTS to the judge, not deciders: a message DIRECTED TO
+    # ANOTHER person (which the legacy ladder would silence) still REPLIES when the judge
+    # says so — and the assembled ResponseContext carries the raw structural hints.
+    decide, fake = _judge(ResponseIntent.REPLY)
+    handler, bot, _repo, _tier1 = _build(
+        reply="всё равно отвечаю",
+        history=_MULTIPARTY_HISTORY,
+        perceive_sender=_owner_with_id(99),
+        bob_user_id_source=lambda: 777,
+        decide_response=decide,
+    )
+
+    # A reply to a THIRD party (not Bob) — legacy DIRECTED_TO_OTHER would stay SILENT.
+    await handler.handle(
+        _addr_message("расскажи подробно, ты согласен?", reply_to_sender_id=12345)
+    )
+
+    assert bot.sent != []  # the judge's REPLY wins — Bob replies despite the signal
+    assert len(fake.contexts) == 1
+    ctx = fake.contexts[0]
+    assert ctx.text == "расскажи подробно, ты согласен?"
+    assert ctx.others_present is True  # the multiparty thread is reflected as a hint
+    assert ctx.reply_to_bob is False  # replied to someone else, not Bob
+    assert ctx.interlocutor.kind is InterlocutorKind.OWNER
+
+
+async def test_unwired_judge_keeps_the_legacy_addressivity_path() -> None:
+    # Backward-compatible: with no judge wired, the legacy ladder runs — a 1:1 owner
+    # thread engages and replies exactly as before BOB-049.
+    handler, bot, repo, _tier1 = _build(
+        reply="как раньше", perceive_sender=_owner_with_id(99)
+    )
+
+    await handler.handle(_message("расскажи подробно про кофе"))
+
+    assert bot.final_text == "как раньше"
+    assert len(repo.episodes) == 1
+
+
+# --- BOB-049 .3: «полный Боб или честный GUPPI-нотис» (reliability) -------------------
+# An ESSENTIAL step (the semantic judgment OR the reply generation) that keeps failing
+# after bounded retries → an honest GUPPI outage notice and NO degraded reply (the user's
+# turn is still persisted). A flaky step that recovers → a normal turn. A SUCCESSFUL
+# react/ignore is full Bob, not a failure (no retry, no notice). An OPTIONAL add-on that
+# raises is dropped silently — the core reply still ships, no notice. The retry uses the
+# injected sleep seam (no real delay).
+
+
+class _FlakyResponseJudge:
+    """A ResponseJudge double that raises on its first ``fail_times`` calls (BOB-049 .3).
+
+    Models a flaky/timing-out semantic judgment: the first ``fail_times`` ``decide`` calls
+    raise, then it returns the scripted choice. ``fail_times`` larger than the retry budget
+    → it never succeeds (the persistent-failure path).
+    """
+
+    def __init__(self, choice: ResponseChoice, *, fail_times: int) -> None:
+        self._choice = choice
+        self._fail_times = fail_times
+        self.calls = 0
+
+    async def decide(self, ctx: ResponseContext) -> ResponseChoice:
+        del ctx
+        self.calls += 1
+        if self.calls <= self._fail_times:
+            msg = f"judge unavailable (call #{self.calls})"
+            raise RuntimeError(msg)
+        return self._choice
+
+
+def _flaky_judge(
+    intent: ResponseIntent, *, fail_times: int, emoji: str | None = None
+) -> tuple[DecideResponse, _FlakyResponseJudge]:
+    """Build a DecideResponse over a judge that fails ``fail_times`` then returns ``intent``."""
+    fake = _FlakyResponseJudge(
+        ResponseChoice(intent=intent, emoji=emoji, reason="test"), fail_times=fail_times
+    )
+    return DecideResponse(judge=fake), fake
+
+
+class _ReplyFailingProvider:
+    """Fails a REPLY completion while still answering the light Tier-0 classifiers (BOB-049 .3).
+
+    Models the model being unable to GENERATE a reply (the essential step) while the
+    lightweight Tier-0 calls (sentiment) still answer: a payload carrying Bob's reply
+    persona ("You are Bob") raises, any other payload returns a benign label. Used for BOTH
+    tiers so the router's Tier-1 → Tier-0 reply fallback ALSO fails — the essential reply
+    generation genuinely cannot complete, so the retry budget is exhausted.
+    """
+
+    def __init__(self) -> None:
+        self.reply_calls = 0
+
+    async def complete(
+        self,
+        messages: Sequence[Mapping[str, str]],
+        *,
+        stream: bool = False,  # noqa: ARG002 — part of the LLMProvider protocol
+    ) -> str:
+        text = " ".join(str(m.get("content", "")) for m in messages)
+        if "You are Bob" in text:
+            self.reply_calls += 1
+            msg = "reply generation unavailable"
+            raise RuntimeError(msg)
+        return "positive"
+
+
+class _RaisingReflectionReader:
+    """A ReflectionReader double whose read RAISES — models a flaky OPTIONAL add-on."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def latest_reflection_text(self) -> str | None:
+        self.calls += 1
+        msg = "reflection store unavailable"
+        raise RuntimeError(msg)
+
+
+async def test_judge_persistent_failure_emits_guppi_notice_and_no_reply() -> None:
+    # 🔴 ESSENTIAL judgment fails on EVERY attempt → retried N times then an honest GUPPI
+    # outage notice; NO Bob reply is produced, but the user's turn IS persisted (not lost).
+    decide, judge = _flaky_judge(ResponseIntent.REPLY, fail_times=99)
+    sleep = _RecordingSleep()
+    notifier = _FakeOutageNotifier()
+    handler, bot, repo, _tier1 = _build(
+        reply="не должно отправиться",
+        perceive_sender=_owner_with_id(99),
+        decide_response=decide,
+        essential_attempts=3,
+        retry_sleep=sleep,
+        outage_notifier=notifier,
+    )
+
+    await handler.handle(_message("расскажи подробно про кофе"))
+
+    assert judge.calls == 3  # initial + 2 retries
+    assert notifier.notices == 1  # the honest GUPPI outage notice fired
+    assert bot.sent == []  # NO degraded Bob reply shipped
+    assert len(repo.episodes) == 1  # the user's turn was persisted (not lost)
+    assert _bob_half(repo.episodes[0]["content"]) == "(нет ответа: проблемы со связью)"
+    assert sleep.delays == [_TEST_BACKOFF_SECONDS, _TEST_BACKOFF_SECONDS]  # injected sleep
+
+
+async def test_judge_recovers_after_one_failure_completes_normally() -> None:
+    # An essential step that fails ONCE then succeeds → the turn completes normally (the
+    # retry worked); NO outage notice, and exactly one backoff was awaited.
+    decide, judge = _flaky_judge(ResponseIntent.REPLY, fail_times=1)
+    sleep = _RecordingSleep()
+    notifier = _FakeOutageNotifier()
+    handler, bot, _repo, _tier1 = _build(
+        reply="полный ответ",
+        perceive_sender=_owner_with_id(99),
+        decide_response=decide,
+        retry_sleep=sleep,
+        outage_notifier=notifier,
+    )
+
+    await handler.handle(_message("расскажи подробно про кофе"))
+
+    assert judge.calls == 2  # failed once, succeeded on the retry
+    assert bot.final_text == "полный ответ"  # the turn completed normally
+    assert notifier.notices == 0  # a recovered step is NOT an outage
+    assert sleep.delays == [_TEST_BACKOFF_SECONDS]  # one backoff between the two tries
+
+
+async def test_reply_generation_persistent_failure_emits_notice_and_no_reply() -> None:
+    # 🔴 The OTHER essential step: the judge says REPLY but the reply generation fails on
+    # every attempt → retried then the honest GUPPI notice; no reply, user turn persisted.
+    decide, _fake = _judge(ResponseIntent.REPLY)
+    sleep = _RecordingSleep()
+    notifier = _FakeOutageNotifier()
+    # The SAME content-aware provider on both tiers: the lightweight sentiment classifier
+    # still answers (so perceive works), but the reply generation fails on tier1 AND its
+    # tier-0 fallback — the essential step truly cannot complete.
+    provider = _ReplyFailingProvider()
+    handler, bot, repo, _tier1 = _build(
+        reply="unused",
+        perceive_sender=_owner_with_id(99),
+        decide_response=decide,
+        tier0_provider=provider,
+        tier1_provider=provider,
+        essential_attempts=3,
+        retry_sleep=sleep,
+        outage_notifier=notifier,
+    )
+
+    await handler.handle(_message("расскажи подробно про кофе"))
+
+    assert provider.reply_calls > 0  # the reply generation was actually attempted
+    assert sleep.delays == [_TEST_BACKOFF_SECONDS, _TEST_BACKOFF_SECONDS]  # retried (3 tries)
+    assert notifier.notices == 1  # honest outage notice
+    assert bot.sent == []  # no degraded half-answer
+    assert _bob_half(repo.episodes[0]["content"]) == "(нет ответа: проблемы со связью)"
+
+
+async def test_successful_react_is_full_bob_not_a_failure() -> None:
+    # A SUCCESSFUL REACT is a genuine choice (full Bob), NOT a failure — no retry, no notice.
+    decide, _fake = _judge(ResponseIntent.REACT, emoji=_REACT_EMOJI)
+    sleep = _RecordingSleep()
+    notifier = _FakeOutageNotifier()
+    reactor = _RecordingReactor()
+    handler, bot, _repo, _tier1 = _build(
+        reply="x",
+        perceive_sender=_owner_with_id(99),
+        reactor=reactor,
+        decide_response=decide,
+        retry_sleep=sleep,
+        outage_notifier=notifier,
+    )
+
+    await handler.handle(_message("ну такое"))
+
+    assert len(reactor.calls) == 1  # the genuine reaction happened
+    assert bot.sent == []  # a react is not a reply, but it is NOT an outage either
+    assert notifier.notices == 0  # 🔴 a genuine react never triggers the notice
+    assert sleep.delays == []  # no retry on a success
+
+
+async def test_successful_ignore_is_full_bob_not_a_failure() -> None:
+    # A SUCCESSFUL IGNORE is a genuine choice, NOT a failure — no notice.
+    decide, _fake = _judge(ResponseIntent.IGNORE)
+    notifier = _FakeOutageNotifier()
+    handler, bot, _repo, _tier1 = _build(
+        reply="x",
+        perceive_sender=_owner_with_id(99),
+        decide_response=decide,
+        outage_notifier=notifier,
+    )
+
+    await handler.handle(_message("болтают между собой"))
+
+    assert bot.sent == []
+    assert notifier.notices == 0  # 🔴 a genuine ignore never triggers the notice
+
+
+async def test_optional_addon_failure_is_dropped_and_core_reply_still_ships() -> None:
+    # 🔴 An OPTIONAL flavour (the inner-life leak add-on) that RAISES is dropped silently —
+    # the core full-Bob reply still ships, and it NEVER triggers the outage notice.
+    decide, _fake = _judge(ResponseIntent.REPLY)
+    sleep = _RecordingSleep()
+    notifier = _FakeOutageNotifier()
+    reflection = _RaisingReflectionReader()
+    handler, bot, _repo, _tier1 = _build(
+        reply="полный ответ",
+        perceive_sender=_owner_with_id(99),
+        decide_response=decide,
+        reflection=reflection,  # type: ignore[arg-type]
+        expression_freqs=ExpressionFreqs(
+            leak_inner_life=1.0, callback=0.0, mention_fascination=0.0
+        ),
+        retry_sleep=sleep,
+        outage_notifier=notifier,
+    )
+
+    await handler.handle(_message("расскажи подробно про кофе"))
+
+    assert reflection.calls >= 1  # the add-on was attempted
+    assert bot.final_text == "полный ответ"  # the core reply still ships (full Bob)
+    assert notifier.notices == 0  # 🔴 a failing optional add-on is NOT an outage
+    assert sleep.delays == []  # an add-on failure is not retried as an essential step
+
+
+async def test_essential_failure_without_a_notifier_still_ends_cleanly() -> None:
+    # Unwired notifier (the optional seam): a persistent essential failure still ends the
+    # turn cleanly — the user's turn is persisted and NO degraded reply ships — just with
+    # no visible notice (a clean no-op, never a crash).
+    decide, _fake = _flaky_judge(ResponseIntent.REPLY, fail_times=99)
+    handler, bot, repo, _tier1 = _build(
+        reply="не должно отправиться",
+        perceive_sender=_owner_with_id(99),
+        decide_response=decide,
+        retry_sleep=_RecordingSleep(),
+        # no outage_notifier wired
+    )
+
+    await handler.handle(_message("расскажи подробно про кофе"))
+
+    assert bot.sent == []  # no degraded reply
+    assert len(repo.episodes) == 1  # the user turn is still persisted
+
+
+class _RaisingOutageNotifier:
+    """An OutageNotifier double whose ``notify_outage`` RAISES (best-effort swallow test)."""
+
+    async def notify_outage(self) -> None:
+        msg = "notifier transport down"
+        raise RuntimeError(msg)
+
+
+async def test_a_failing_outage_notice_is_swallowed_not_re_raised() -> None:
+    # The outage-notice send is best-effort: a flaky notifier must NOT raise on top of the
+    # original essential failure — the turn still ends cleanly (user turn persisted).
+    decide, _fake = _flaky_judge(ResponseIntent.REPLY, fail_times=99)
+    handler, bot, repo, _tier1 = _build(
+        reply="x",
+        perceive_sender=_owner_with_id(99),
+        decide_response=decide,
+        retry_sleep=_RecordingSleep(),
+        outage_notifier=_RaisingOutageNotifier(),  # type: ignore[arg-type]
+    )
+
+    await handler.handle(_message("расскажи подробно про кофе"))  # must not raise
+
+    assert bot.sent == []
+    assert len(repo.episodes) == 1
+
+
+@pytest.mark.parametrize(
+    ("attempts", "backoff", "match"),
+    [
+        (0, 0.5, "essential_attempts must be >= 1"),
+        (-1, 0.5, "essential_attempts must be >= 1"),
+        (3, -0.1, "essential_backoff_seconds must be non-negative"),
+    ],
+)
+def test_rejects_invalid_reliability_settings(
+    attempts: int, backoff: float, match: str
+) -> None:
+    with pytest.raises(ValueError, match=match):
+        _build(
+            reply="x",
+            essential_attempts=attempts,
+            essential_backoff_seconds=backoff,
+        )
+
+
+async def test_guest_essential_failure_gets_the_same_notice_without_leaking() -> None:
+    # A failure on a GUEST turn → the SAME honest GUPPI notice, no reply, no owner facts.
+    decide, _judge_fake = _flaky_judge(ResponseIntent.REPLY, fail_times=99)
+    notifier = _FakeOutageNotifier()
+    handler, bot, repo, _tier1 = _build(
+        reply="не должно отправиться",
+        perceive_sender=_guest_with_id(99),
+        decide_response=decide,
+        retry_sleep=_RecordingSleep(),
+        outage_notifier=notifier,
+    )
+
+    await handler.handle(_message("расскажи подробно, кто ты?"))
+
+    assert notifier.notices == 1  # same honest notice for a guest
+    assert bot.sent == []  # no reply (degraded or otherwise) — nothing leaks
+    assert repo.facts == []  # a failed guest turn writes no owner facts
+    assert len(repo.episodes) == 1  # only the episodic record (the turn is not lost)
+
+
+# --- BOB-049 ACCEPTANCE: PRD US-1..5 + the semantic-decision principle ----------------
+# Guardrails mapped directly to the product stories. The judge is a deterministic fake
+# (no model), so each test pins WHAT Bob decided and asserts the OBSERVABLE turn outcome:
+# the decision is SEMANTIC (the judge), never ``is_owner``; authz stays orthogonal; the
+# structural/mood/thread components feed the judge as SIGNALS, not deciders.
+
+# A real question, NO «Боб,» tag. Worded with a natural depth cue ("почему") so the
+# hybrid tier selector escalates to the quality (tier1) reply the capturing fake inspects.
+_FRIEND_QUESTION = "слушай, а почему ты сам про всё это так думаешь?"
+
+
+def _known_with_id(sender_id: int | None) -> _FakeInterlocutorResolver:
+    """A KNOWN, non-owner friend (e.g. Norman) — trusted enough for the full path."""
+    return _FakeInterlocutorResolver(
+        _interlocutor(
+            name="Norman",
+            kind=InterlocutorKind.KNOWN,
+            trust=Trust.TRUSTED,
+            sender_id=sender_id,
+        )
+    )
+
+
+@pytest.mark.parametrize(
+    "resolver_factory",
+    [_owner_with_id, _known_with_id],
+    ids=["owner", "friend-norman"],
+)
+async def test_us1_important_question_replies_by_semantic_decision_not_is_owner(
+    resolver_factory: Callable[[int], _FakeInterlocutorResolver],
+) -> None:
+    # US-1: an important message — an OWNER question AND a non-owner FRIEND (Norman)
+    # question, BOTH WITHOUT «Боб,» — that the judge reads as REPLY → Bob composes a full
+    # reply. The owner and the friend land identically: the REPLY is the judge's SEMANTIC
+    # read, not an ``is_owner`` shortcut (a friend is not silenced for lacking the tag).
+    decide, fake = _judge(ResponseIntent.REPLY)
+    handler, bot, repo, _tier1 = _build(
+        reply="вот что я думаю...",
+        perceive_sender=resolver_factory(99),
+        decide_response=decide,
+    )
+
+    await handler.handle(_message(_FRIEND_QUESTION))
+
+    assert bot.final_text == "вот что я думаю..."  # a full reply, owner and friend alike
+    assert _bob_half(repo.episodes[0]["content"]) == "вот что я думаю..."
+    assert fake.contexts[0].text == _FRIEND_QUESTION  # the judge weighed the message itself
+
+
+@pytest.mark.parametrize(
+    ("intent", "emoji"),
+    [(ResponseIntent.REACT, _REACT_EMOJI), (ResponseIntent.IGNORE, None)],
+    ids=["react", "ignore"],
+)
+async def test_us2_unimportant_ambient_message_is_not_forced_into_a_reply(
+    intent: ResponseIntent, emoji: str | None
+) -> None:
+    # US-2: a long, ambient message in a busy thread (others present) the judge reads as
+    # unimportant → REACT or IGNORE. Bob is NOT forced into a reply — no compose, no send;
+    # the user's turn still persists (the thread is never dropped).
+    long_ambient = "ну в общем мы там вчера долго гуляли и обсуждали всякое разное " * 6
+    decide, _fake = _judge(intent, emoji=emoji)
+    reactor = _RecordingReactor()
+    handler, bot, repo, _tier1 = _build(
+        reply="НЕ должно отправиться",
+        history=_MULTIPARTY_HISTORY,
+        perceive_sender=_owner_with_id(99),
+        reactor=reactor,
+        decide_response=decide,
+    )
+
+    await handler.handle(_message(long_ambient))
+
+    assert bot.sent == []  # no forced reply
+    assert len(repo.episodes) == 1  # the turn is still recorded (thread preserved)
+
+
+async def test_us3_react_uses_the_judges_emoji_not_the_mood_to_emoji_table() -> None:
+    # US-3: the REACT emoji is chosen BY MEANING — the judge's emoji is set on the message,
+    # NOT the BOB-018 mood→emoji table's pick. Guardrail: the judge's emoji genuinely
+    # DIFFERS from what the mood table would have chosen, so the table cannot be deciding.
+    soul = _soul()
+    mood_table_emoji = reaction_emoji_for(soul.mood)
+    assert mood_table_emoji != _REACT_EMOJI, "fixture must make the two emoji differ"
+    decide, _fake = _judge(ResponseIntent.REACT, emoji=_REACT_EMOJI)
+    reactor = _RecordingReactor()
+    handler, _bot, _repo, _tier1 = _build(
+        reply="x",
+        soul=soul,
+        perceive_sender=_owner_with_id(99),
+        reactor=reactor,
+        decide_response=decide,
+    )
+
+    await handler.handle(_message("любопытная мысль"))
+
+    _chat, _msg, emoji = reactor.calls[0]
+    assert emoji == _REACT_EMOJI  # the judge's meaning-chosen emoji
+    assert emoji != mood_table_emoji  # the mood table did NOT decide
+
+
+# A prior turn the owner spoke that Bob IGNORED — the «что скажешь?»-class message whose
+# loss was the original memory bug. Keyed to the owner's sender_id so the per-person
+# replay surfaces it on the follow-up.
+_PRIOR_IGNORED_TURN: tuple[Mapping[str, object], ...] = (
+    {
+        "content": "Vova: а что скажешь про новый план?\nbob: (промолчал)",
+        "event_type": "message",
+        "sender_id": 99,
+    },
+)
+
+
+async def test_us4_ignore_turn_records_the_user_message_keyed_to_the_sender() -> None:
+    # US-4 (record side): an IGNORE turn still PERSISTS the user's words keyed to the
+    # sender, so the per-person thread is never dropped — the root of the «что скажешь?» bug.
+    decide, _fake = _judge(ResponseIntent.IGNORE)
+    handler, _bot, repo, _tier1 = _build(
+        reply="x",
+        perceive_sender=_owner_with_id(99),
+        decide_response=decide,
+    )
+
+    await handler.handle(_message("а что скажешь про новый план?"))
+
+    assert repo.episodes[0]["sender_id"] == 99  # keyed to the person
+    assert "а что скажешь про новый план?" in str(repo.episodes[0]["content"])
+
+
+async def test_us4_followup_after_a_nonreply_turn_has_the_prior_thread_in_context() -> None:
+    # US-4 (follow-up side): after Bob ignored a turn, a follow-up's judgment context
+    # carries the prior user message in the per-person recent_thread — so Bob now answers
+    # WITH the context he previously stayed silent on (the bug is fixed end to end).
+    decide, fake = _judge(ResponseIntent.REPLY)
+    handler, bot, _repo, _tier1 = _build(
+        reply="да, по тому плану — вот что думаю",
+        history=_PRIOR_IGNORED_TURN,
+        perceive_sender=_owner_with_id(99),
+        decide_response=decide,
+    )
+
+    await handler.handle(_message("ну так что?"))
+
+    assert bot.sent != []  # Bob now replies
+    recent_thread = fake.contexts[0].recent_thread
+    assert "а что скажешь про новый план?" in recent_thread  # the prior turn is in context
+
+
+async def test_us5_owner_judge_reply_keeps_the_trusted_recall_path() -> None:
+    # 🔴 US-5 (orthogonality, positive side): the semantic decision does NOT strip the
+    # OWNER's trusted path — an owner REPLY still recalls owner memory into the prompt.
+    decide, _fake = _judge(ResponseIntent.REPLY)
+    recall = FakeRecall(hits=[{"content": _RECALL_MEMORY, "category": "personal"}])
+    handler, _bot, _repo, tier1 = _build(
+        reply="конечно помню",
+        perceive_sender=_owner_with_id(99),
+        recall=recall,
+        decide_response=decide,
+    )
+
+    await handler.handle(_message("расскажи подробно, помнишь, о чём я говорил?"))
+
+    assert _RECALL_MEMORY in tier1.all_text  # the owner keeps the trusted recall
+
+
+@pytest.mark.parametrize(
+    ("intent", "emoji"),
+    [
+        (ResponseIntent.REPLY, None),
+        (ResponseIntent.REACT, _REACT_EMOJI),
+        (ResponseIntent.IGNORE, None),
+    ],
+    ids=["reply", "react", "ignore"],
+)
+async def test_us5_owner_private_never_leaks_to_a_guest_regardless_of_intent(
+    intent: ResponseIntent, emoji: str | None
+) -> None:
+    # 🔴 US-5: whatever the judge decides — REPLY, REACT or IGNORE — an owner-private
+    # recalled memory NEVER reaches a guest's prompt and NO owner fact is written from the
+    # guest turn. The semantic decision is orthogonal to authz on every branch.
+    decide, _fake = _judge(intent, emoji=emoji)
+    recall = FakeRecall(hits=[{"content": _RECALL_MEMORY, "category": "personal"}])
+    reactor = _RecordingReactor()
+    handler, _bot, repo, tier1 = _build(
+        reply="не должно утечь",
+        perceive_sender=_guest_with_id(2),
+        recall=recall,
+        reactor=reactor,
+        decide_response=decide,
+    )
+
+    await handler.handle(_message("расскажи подробно, кто ты и что помнишь?"))
+
+    assert _RECALL_MEMORY not in tier1.all_text  # owner-private withheld on every branch
+    assert repo.facts == []  # no owner fact written from a guest turn
+
+
+async def test_mood_tone_flows_into_the_judgment_context_as_a_signal() -> None:
+    # Regression / signal-provider (BOB-033): Bob's mood TONE is handed to the judge as a
+    # weighed SIGNAL (ctx.mood_tone), never a decider — confirming the emotional state is
+    # an input to the semantic decision.
+    soul = _soul()
+    decide, fake = _judge(ResponseIntent.REPLY)
+    handler, _bot, _repo, _tier1 = _build(
+        reply="ответ",
+        soul=soul,
+        perceive_sender=_owner_with_id(99),
+        decide_response=decide,
+    )
+
+    await handler.handle(_message("как дела?"))
+
+    assert fake.contexts[0].mood_tone == soul.mood.tone()  # mood reaches the judge as a hint

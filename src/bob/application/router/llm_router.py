@@ -57,6 +57,7 @@ class TaskType(Enum):
     PLAN_GOAL = "plan_goal"
     DETECT_PATTERNS = "detect_patterns"
     CODING_INTENT = "coding_intent"
+    RESPONSE_JUDGE = "response_judge"
 
 
 # Task -> preferred tier. Quality-critical, user-facing work goes to Tier 1
@@ -77,6 +78,9 @@ _PREFERRED_TIER: dict[TaskType, int] = {
     # Coding-intent classification (BOB-041 .2) is a cheap one-word coding/chat call
     # that also keeps dev-intent local (privacy) — Tier 0.
     TaskType.CODING_INTENT: _TIER_LOCAL,
+    # Response judgment (BOB-049) is a cheap per-inbound reply/react/ignore decision
+    # run on every message — Tier 0 for cost, like the other classifiers.
+    TaskType.RESPONSE_JUDGE: _TIER_LOCAL,
 }
 
 

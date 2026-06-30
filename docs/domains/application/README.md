@@ -35,6 +35,16 @@ LLM-роутера. Зависит от домена через порты-пр�
 - **router/llm_router.py** — `LLMRouter`, классификация задачи, селективная
   редакция приватности и fallback тиров; `LLMRequest` (с двумя каналами
   контекста — `shareable_context` и `private_context`), `TaskType`.
+- **reliability.py** — `call_with_retry`, ограниченный async-ретрай ЛЮБОГО сбоя
+  essential-шага (с инъектируемым sleep) для принципа «полный Боб или честный
+  GUPPI-нотис» (BOB-049 .3). Отличается от `runtime/retry.retry_with_backoff`
+  (тот ретраит только transient): для пользовательского хода любой сбой
+  суждения/генерации → ретрай, затем честный GUPPI-нотис, а не деградированный
+  полу-ответ.
+  <!-- beadloom:track=src/bob/application/reliability.py -->
+- **usecases/decide_response.py** — `DecideResponse`, тонкий use-case над швом
+  семантического суждения (BOB-049): собирает `ResponseContext` из частей хода и
+  делегирует решение REPLY/REACT/IGNORE инъецированному `ResponseJudge`.
 - **usecases/handle_message.py** — `HandleMessage`, полный поток
   сообщение → ответ → персист → запоминание; `PersonalityState`,
   `EpisodeReader` (шов чтения недавней истории).
@@ -300,6 +310,11 @@ Tier 1); иначе ход идёт прежним plain-путём роутер
 - `retry_with_backoff(operation, *, max_attempts, base_delay_seconds, max_delay_seconds, sleep)` → `T`.
 - `is_transient(error)` → `bool`.
 
+Модуль `src/bob/application/reliability.py` (BOB-049 .3):
+- `call_with_retry(operation, *, attempts, backoff_seconds, sleep)` → `T` — ограниченный
+  ретрай ЛЮБОГО сбоя essential-шага (не только transient), затем повторный raise.
+- `Sleep` — тип инъектируемого backoff-сна.
+
 Модуль `src/bob/application/authz/authorizer.py`:
 - `Authorizer(*, owner_id, allowed_chat_ids, store)` — `is_owner(user_id)`,
   `async is_authorized(*, user_id, chat_id)`, `async authorize(user_id)`,
@@ -322,6 +337,11 @@ Tier 1); иначе ход идёт прежним plain-путём роутер
 Модуль `src/bob/application/usecases/handle_message.py`:
 - `HandleMessage` — `async handle(event)`; `PersonalityState`, `EpisodeReader`,
   опциональные `registry` и `tool_provider` (включают capability tool-loop).
+- Отказоустойчивость (BOB-049 .3): essential-шаги (суждение + генерация ответа)
+  обёрнуты `call_with_retry`; при стойком сбое — `OutageNotifier.notify_outage()`
+  (GUPPI-нотис в топик Боба), ход пользователя персистится, деградированный ответ
+  НЕ отправляется. Швы: `outage_notifier`, `retry_sleep`, `essential_attempts`,
+  `essential_backoff_seconds`.
 
 Модуль `src/bob/application/usecases/update_mood_from_text.py`:
 - `UpdateMoodFromText` — `async run(mood, signals)` → `Mood`; `TextSignals`.

@@ -52,6 +52,7 @@ if TYPE_CHECKING:
     from bob.infrastructure.telegram.gateway import AuthorizerLike, BotLike
 
 __all__ = [
+    "GUPPI_OUTAGE_TEXT",
     "GUPPI_REJECT_TEXT",
     "CodingAssistantLike",
     "GoalStoreLike",
@@ -63,6 +64,13 @@ __all__ = [
 
 # The single visible reject shown to an unauthorized user inside Bob's topic.
 GUPPI_REJECT_TEXT = "⛔ Пользователь не авторизован"
+
+# The honest outage notice GUPPI posts when an ESSENTIAL turn step fails after the
+# bounded retries (BOB-049 .3 — «полный Боб или честный GUPPI-нотис»): Bob — the mind —
+# is temporarily unavailable, so GUPPI (the infrastructure subsystem) reports it plainly
+# instead of letting a degraded half-answer ship. Third-person system voice (it reads as
+# GUPPI reporting, never Bob being rude). Russian (project language).
+GUPPI_OUTAGE_TEXT = "⚠️ Проблемы со связью — Боб временно недоступен"
 
 # The one-shot обида announcement GUPPI posts on a fresh sulk entry (BOB-014 .2b):
 # the внеличностный systemic voice (NOT Bob himself) telling the owner Bob is hurt
