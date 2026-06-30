@@ -939,19 +939,21 @@ async def test_recent_window_replays_the_configured_number_of_turns() -> None:
     assert 6 not in repo.requested_ks  # the old hardcoded window is gone
 
 
-async def test_guest_turn_replays_no_history_regardless_of_window() -> None:
-    # BOB-044 keeps the GUEST invariant: a guest gets an EMPTY history window — the
-    # owner's recent conversation is never replayed for a stranger, whatever the size.
+async def test_member_without_sender_reads_the_unified_recent_window() -> None:
+    # 🔴 BOB-051: memory is UNIFIED for the closed group. A member with no resolvable
+    # sender_id has no per-person thread, so history degrades to the SHARED recent
+    # window (not an empty one) — Bob keeps the group's recent conversation thread for
+    # any member. (An @mention forces ENGAGE so the assertion is RNG-independent.)
     handler, _bot, _repo, tier1 = _build(
         reply="hi",
         history=_THREAD_HISTORY,
         recent_turns=14,
-        perceive_sender=_guest_resolver(),
+        perceive_sender=_guest_with_id(None),
     )
 
-    await handler.handle(_message("расскажи подробно про кофе"))
+    await handler.handle(_addr_message("Боб, расскажи подробно про кофе", mentions_bob=True))
 
-    assert _THREAD_TOPIC_TURN not in tier1.all_text
+    assert _THREAD_TOPIC_TURN in tier1.all_text
 
 
 async def test_non_positive_recent_window_is_rejected() -> None:
@@ -1007,13 +1009,14 @@ async def test_guest_replays_only_their_own_per_person_thread() -> None:
     assert _OWNER_THREAD_TURN not in tier1.all_text  # the owner's turn is never seen
 
 
-async def test_guest_recall_is_scoped_to_their_own_episodes() -> None:
-    # 🔴 BOB-045 privacy: a non-owner's recall is post-filtered to items attributed to
-    # THEIR OWN sender_id. An owner-private memory (sender 1) and a sender-less fact
-    # (None) are dropped; only the guest's OWN recalled episode (sender 2) survives.
+async def test_non_owner_recall_is_unified_full_knowledge() -> None:
+    # 🔴 BOB-051: memory is UNIFIED for the closed group — a non-owner's recall is Bob's
+    # FULL knowledge, no per-person scoping. A fact attributed to the owner (sender 1),
+    # a sender-less fact (None) AND the member's own memory (sender 2) all surface, so
+    # talking to a member Bob keeps access to his general knowledge.
     recall = FakeRecall(
         hits=[
-            {"content": "owner private secret", "category": "personal", "sender_id": 1},
+            {"content": "owner shared fact", "category": "personal", "sender_id": 1},
             {"content": "ownerless fact", "category": "fact", "sender_id": None},
             {"content": "norman own memory", "category": "personal", "sender_id": 2},
         ]
@@ -1024,9 +1027,9 @@ async def test_guest_recall_is_scoped_to_their_own_episodes() -> None:
 
     await handler.handle(_message("расскажи подробно про кофе"))
 
-    assert "norman own memory" in tier1.all_text  # the guest's own memory survives
-    assert "owner private secret" not in tier1.all_text  # owner-private dropped
-    assert "ownerless fact" not in tier1.all_text  # sender-less fact dropped
+    assert "norman own memory" in tier1.all_text  # the member's own memory
+    assert "owner shared fact" in tier1.all_text  # 🔴 owner knowledge now unified
+    assert "ownerless fact" in tier1.all_text  # 🔴 sender-less knowledge unified
 
 
 async def test_owner_keeps_their_thread_and_global_recall() -> None:
@@ -1049,13 +1052,13 @@ async def test_owner_keeps_their_thread_and_global_recall() -> None:
     assert "ownerless fact" in tier1.all_text  # owner recall stays global
 
 
-async def test_guest_assembled_context_carries_no_foreign_memory() -> None:
-    # 🔴 BOB-045 privacy invariant: with a guest interlocutor, NEITHER replayed history
-    # NOR scoped recall may carry a turn/memory attributed to anyone else — defense in
-    # depth (sender-filtered query + post-filtered recall).
+async def test_member_context_unifies_knowledge_but_keeps_per_person_thread() -> None:
+    # 🔴 BOB-051 — the memory/continuity split: a member's RECALL is unified (Bob's full
+    # knowledge surfaces, whatever its attribution), while the replayed HISTORY stays
+    # PER-PERSON (continuity — Bob knows WHO he is talking to, not just WHAT he knows).
     recall = FakeRecall(
         hits=[
-            {"content": "owner private secret", "category": "personal", "sender_id": 1},
+            {"content": "owner shared fact", "category": "personal", "sender_id": 1},
             {"content": "ownerless fact", "category": "fact", "sender_id": None},
             {"content": "norman own memory", "category": "personal", "sender_id": 2},
         ]
@@ -1070,13 +1073,13 @@ async def test_guest_assembled_context_carries_no_foreign_memory() -> None:
     await handler.handle(_message("расскажи подробно про кофе"))
 
     text = tier1.all_text
-    # Only the guest's own thread + own recall remain...
-    assert _GUEST_THREAD_TURN in text
+    # Knowledge is UNIFIED — every recalled item surfaces, regardless of attribution.
     assert "norman own memory" in text
-    # ...nothing attributed to the owner or a sender-less memory leaks through.
-    assert _OWNER_THREAD_TURN not in text
-    assert "owner private secret" not in text
-    assert "ownerless fact" not in text
+    assert "owner shared fact" in text
+    assert "ownerless fact" in text
+    # Continuity stays per-person: the member sees THEIR thread, not someone else's.
+    assert _GUEST_THREAD_TURN in text
+    assert _OWNER_THREAD_TURN not in text  # the owner's per-person thread is not replayed
 
 
 async def test_history_degrades_to_global_for_owner_without_sender_seam() -> None:
@@ -1089,10 +1092,10 @@ async def test_history_degrades_to_global_for_owner_without_sender_seam() -> Non
     assert _THREAD_TOPIC_TURN in tier1.all_text  # global replay, unchanged
 
 
-async def test_guest_without_sender_id_degrades_to_empty_memory() -> None:
-    # BOB-045 degradation: a guest with no resolvable sender_id has no scopable thread,
-    # so history AND recall fall back to empty (the pre-BOB-045 guest behaviour) — never
-    # the owner's data.
+async def test_guest_without_sender_id_still_gets_unified_recall() -> None:
+    # 🔴 BOB-051: recall is unified for ANY interlocutor — a guest with no resolvable
+    # sender_id still gets Bob's full knowledge (recall no longer needs a scopable id).
+    # (An @mention forces ENGAGE so the assertion is RNG-independent.)
     recall = FakeRecall(
         hits=[{"content": "norman own memory", "category": "personal", "sender_id": 2}]
     )
@@ -1103,11 +1106,9 @@ async def test_guest_without_sender_id_degrades_to_empty_memory() -> None:
         perceive_sender=_guest_with_id(None),
     )
 
-    await handler.handle(_message("расскажи подробно про кофе"))
+    await handler.handle(_addr_message("Боб, расскажи подробно про кофе", mentions_bob=True))
 
-    assert _OWNER_THREAD_TURN not in tier1.all_text
-    assert _GUEST_THREAD_TURN not in tier1.all_text
-    assert "norman own memory" not in tier1.all_text  # scoped recall empty without an id
+    assert "norman own memory" in tier1.all_text  # unified recall, no sender_id needed
 
 
 async def test_guest_with_thread_still_gets_no_owner_inner_life_leak() -> None:
@@ -4358,25 +4359,9 @@ async def test_guest_turn_never_engages_the_tool_loop() -> None:
     assert bot.final_text == "привет, я Боб"  # he still replied via the router
 
 
-async def test_guest_turn_does_not_recall_owner_memory() -> None:
-    # SECURITY INVARIANT: owner-private memory is NOT recalled for a guest. Since
-    # BOB-045 .2 recall IS invoked (the guest may surface THEIR OWN scoped episodes),
-    # but the default canned memory carries no sender_id, so the per-person post-filter
-    # drops it — no owner-private content reaches the guest's prompt.
-    recall = FakeRecall()
-    handler, _bot, _repo, tier1 = _build(
-        reply="hi", recall=recall, perceive_sender=_guest_resolver()
-    )
-
-    await handler.handle(_message("расскажи подробно про кофе"))
-
-    assert _RECALL_MEMORY not in tier1.all_text  # owner memory scoped out for a guest
-    assert "recalled memories" not in tier1.all_text.casefold()
-
-
-async def test_guest_turn_has_no_owner_private_content_in_the_prompt() -> None:
-    # AUDIENCE REDACTION: a real owner-private recalled memory must NOT enter a
-    # guest's compose prompt (recall is skipped entirely for a guest).
+async def test_guest_turn_recalls_unified_memory() -> None:
+    # 🔴 BOB-051: memory is unified for the closed group — a recalled memory reaches a
+    # member's compose prompt (an @mention forces ENGAGE so it is RNG-independent).
     recall = FakeRecall(
         hits=[{"content": _RECALL_MEMORY, "category": "personal"}]
     )
@@ -4384,15 +4369,14 @@ async def test_guest_turn_has_no_owner_private_content_in_the_prompt() -> None:
         reply="hi", recall=recall, perceive_sender=_guest_resolver()
     )
 
-    await handler.handle(_message("расскажи подробно про кофе"))
+    await handler.handle(_addr_message("Боб, расскажи подробно про кофе", mentions_bob=True))
 
-    assert _RECALL_MEMORY not in tier1.all_text  # owner memory redacted
-    assert "recalled memories" not in tier1.all_text.casefold()
+    assert _RECALL_MEMORY in tier1.all_text  # unified knowledge reaches the member
 
 
-async def test_guest_turn_does_not_extract_facts_into_owner_memory() -> None:
-    # SECURITY INVARIANT: a guest turn is NOT written into the owner's semantic
-    # memory — _extract_facts is skipped, so no stranger input becomes a stored fact.
+async def test_guest_turn_extracts_facts_into_shared_memory() -> None:
+    # 🔴 BOB-051: every member's turn feeds the SHARED/public group memory —
+    # _extract_facts runs on a member turn too (the group memory grows for all).
     repo = FakeRepo()
     tier0 = CapturingProvider(reply="positive", replies=None)
     tier1 = CapturingProvider(reply="hi")
@@ -4430,40 +4414,41 @@ async def test_guest_turn_does_not_extract_facts_into_owner_memory() -> None:
         perceive_sender=_guest_resolver(),
     )
 
-    await handler.handle(_message("расскажи подробно про кофе"))
+    await handler.handle(_addr_message("Боб, расскажи подробно про кофе", mentions_bob=True))
 
-    assert extract.calls == 0  # no fact extraction on a guest turn
+    assert extract.calls == 1  # 🔴 BOB-051: a member turn feeds the shared memory
 
 
-async def test_guest_turn_has_no_owner_conversation_history_in_the_prompt() -> None:
-    # AUDIENCE REDACTION: prior OWNER conversation persisted in Bob's topic must NOT
-    # be replayed into a guest's compose prompt (default to MORE restriction). A
-    # stranger who joins the group never sees the owner's earlier conversation.
-    owner_private_turn = "Ada: моя приватная заметка про дела\nbob: понял, Ada"
+async def test_guest_without_sender_reads_the_unified_conversation_window() -> None:
+    # 🔴 BOB-051: a member with no resolvable sender_id reads the SHARED recent window
+    # (memory unified for the closed group) — the group's recent conversation is part of
+    # Bob's continuity for any member. (An @mention forces ENGAGE, RNG-independent.)
+    shared_turn = "Ada: заметка про общие дела\nbob: понял, Ada"
     handler, _bot, _repo, tier1 = _build(
         reply="hi",
-        history=[{"content": owner_private_turn}],
-        perceive_sender=_guest_resolver(),
+        history=[{"content": shared_turn}],
+        perceive_sender=_guest_with_id(None),
     )
 
-    await handler.handle(_message("расскажи подробно про кофе"))
+    await handler.handle(_addr_message("Боб, расскажи подробно про кофе", mentions_bob=True))
 
-    assert owner_private_turn not in tier1.all_text  # owner conversation redacted
-    assert "recent conversation" not in tier1.all_text.casefold()
+    assert shared_turn in tier1.all_text  # the shared conversation window is replayed
 
 
-async def test_guest_turn_appends_the_stranger_directive() -> None:
-    # The guest turn folds the stranger voice in so Bob meets a stranger as a
-    # person (wary, may point them at the owner), in character.
+async def test_guest_turn_uses_a_normal_voice_without_the_stranger_directive() -> None:
+    # 🔴 BOB-051: a member of the closed group gets a NORMAL Bob voice — the wary
+    # stranger directive is GONE — while Bob still knows WHO is writing (attribution
+    # stays). (An @mention forces ENGAGE so the prompt is composed, RNG-independent.)
     handler, _bot, _repo, tier1 = _build(
         reply="hi", perceive_sender=_guest_resolver()
     )
 
-    await handler.handle(_message("расскажи подробно про кофе"))
+    await handler.handle(_addr_message("Боб, расскажи подробно про кофе", mentions_bob=True))
 
     folded = tier1.all_text.casefold()
-    assert "незнаком" in folded  # the stranger directive is present
-    assert "владел" in folded  # may suggest asking the owner
+    assert "настороже" not in folded  # the wary stranger directive is dropped
+    assert "не раскрывай личное" not in folded  # ...and its owner-privacy clause
+    assert "незнаком" in folded  # but Bob still clocks WHO is writing (attribution)
 
 
 async def test_guest_turn_skips_grounded_owner_inner_life_addons() -> None:
@@ -4583,10 +4568,10 @@ async def test_new_sender_has_no_recall_line_in_the_prompt() -> None:
     assert "уже сталкивались" not in tier1.all_text.casefold()
 
 
-async def test_guest_first_impression_is_used_without_leaking_owner_memory() -> None:
-    # SECURITY: a guest's OWN prior first-impression is fine (it's about the guest),
-    # and surfacing it must NOT pull in any owner-private memory — recall stays off
-    # for a guest and no owner memory leaks even while the impression is recalled.
+async def test_guest_first_impression_used_alongside_unified_memory() -> None:
+    # BOB-051: a member's per-person first-impression (about THEM) sits alongside the
+    # UNIFIED recall — both surface (the impression is continuity, the recall is shared
+    # knowledge). (An @mention forces ENGAGE so the prompt is composed, RNG-independent.)
     note = "этот незнакомец уже заходил, держался ровно"
     recall = FakeRecall(hits=[{"content": _RECALL_MEMORY, "category": "personal"}])
     impressions = _FakeFirstImpression(prior=note)
@@ -4597,14 +4582,13 @@ async def test_guest_first_impression_is_used_without_leaking_owner_memory() -> 
         first_impression=impressions,
     )
 
-    await handler.handle(_message("расскажи подробно, снова я заглянул к тебе"))
+    await handler.handle(
+        _addr_message("Боб, расскажи подробно — снова я заглянул к тебе", mentions_bob=True)
+    )
 
-    assert note in tier1.all_text  # the guest's own impression is recalled
-    assert _RECALL_MEMORY not in tier1.all_text  # owner memory still redacted
-    # BOB-045 .2: recall runs but is scoped per-person — the sender-less owner memory
-    # is dropped, so it never surfaces to the guest.
-    assert _RECALL_MEMORY not in tier1.all_text
-    # The guest's own first contact is still recorded (per-PERSON data, about them).
+    assert note in tier1.all_text  # the member's own impression (continuity)
+    assert _RECALL_MEMORY in tier1.all_text  # 🔴 unified recall surfaces too
+    # The member's first contact is still recorded (per-PERSON data, about them).
     assert impressions.recorded
 
 
@@ -4685,11 +4669,11 @@ async def test_bot_kind_interlocutor_reaches_the_compose_prompt() -> None:
     assert "бот" in folded  # recognised as another bot
 
 
-async def test_anonymous_guest_turn_replies_and_records_nothing() -> None:
+async def test_anonymous_guest_turn_replies_with_unified_memory() -> None:
     # EDGE CASE: a guest with NO sender_id (transport gave no identity) still routes
-    # through the restricted guest path — Bob replies socially, no owner memory is
-    # recalled, and the first-impression seam is a clean no-op for an unkeyable sender
-    # (the tracker keys on sender_id; HandleMessage still calls it without crashing).
+    # through the social path — Bob replies, the first-impression seam is a clean no-op
+    # for an unkeyable sender, and (🔴 BOB-051) the UNIFIED recall still reaches him.
+    # (An @mention forces ENGAGE so the prompt is composed, RNG-independent.)
     recall = FakeRecall(hits=[{"content": _RECALL_MEMORY, "category": "personal"}])
     resolver = _FakeInterlocutorResolver(
         Interlocutor(
@@ -4707,12 +4691,10 @@ async def test_anonymous_guest_turn_replies_and_records_nothing() -> None:
         first_impression=impressions,
     )
 
-    await handler.handle(_message("расскажи подробно про кофе"))
+    await handler.handle(_addr_message("Боб, расскажи подробно про кофе", mentions_bob=True))
 
     assert bot.final_text == "привет"  # the anonymous guest still got a social reply
-    # BOB-045 .2: an anonymous guest (no sender_id) has no scopable thread, so recall
-    # post-filters to empty — no owner-private content leaks.
-    assert _RECALL_MEMORY not in tier1.all_text  # no owner-private content leaked
+    assert _RECALL_MEMORY in tier1.all_text  # 🔴 unified memory reaches any member
     # The seam is still invoked with the no-id interlocutor (the tracker no-ops on it);
     # the recorded interlocutor carries no sender_id, so nothing keyable is stored.
     assert all(who.sender_id is None for who in impressions.recorded)
@@ -6538,13 +6520,14 @@ async def test_a_react_turn_lands_in_the_next_turns_per_person_history() -> None
     del replayed
 
 
-async def test_guest_reply_still_takes_the_restricted_path() -> None:
-    # 🔴 authz orthogonal: a GUEST whom the judge sends to REPLY still gets the restricted
-    # compose — NO owner-private recalled memory reaches a stranger's prompt.
+async def test_guest_judge_reply_gets_unified_memory_and_normal_voice() -> None:
+    # 🔴 BOB-051: a GUEST whom the judge sends to REPLY gets the UNIFIED recall (Bob's
+    # full knowledge) and a NORMAL voice (the wary stranger directive is gone), while
+    # attribution still clocks WHO is writing.
     decide, _fake = _judge(ResponseIntent.REPLY)
     recall = FakeRecall(hits=[{"content": _RECALL_MEMORY, "category": "personal"}])
     handler, _bot, _repo, tier1 = _build(
-        reply="привет, незнакомец",
+        reply="привет",
         perceive_sender=_guest_with_id(99),
         recall=recall,
         decide_response=decide,
@@ -6552,8 +6535,10 @@ async def test_guest_reply_still_takes_the_restricted_path() -> None:
 
     await handler.handle(_message("расскажи подробно, кто ты такой?"))
 
-    assert _RECALL_MEMORY not in tier1.all_text  # owner memory withheld from the guest
-    assert "незнаком" in tier1.all_text.casefold()  # stranger voice present
+    folded = tier1.all_text.casefold()
+    assert _RECALL_MEMORY in tier1.all_text  # 🔴 unified knowledge reaches the member
+    assert "настороже" not in folded  # the wary stranger directive is dropped
+    assert "незнаком" in folded  # but Bob still clocks WHO is writing (attribution)
 
 
 async def test_guest_react_turn_writes_no_owner_facts() -> None:
@@ -7134,17 +7119,17 @@ async def test_us5_owner_judge_reply_keeps_the_trusted_recall_path() -> None:
     ],
     ids=["reply", "react", "ignore"],
 )
-async def test_us5_owner_private_never_leaks_to_a_guest_regardless_of_intent(
+async def test_us5_guest_intent_governs_compose_with_unified_memory(
     intent: ResponseIntent, emoji: str | None
 ) -> None:
-    # 🔴 US-5: whatever the judge decides — REPLY, REACT or IGNORE — an owner-private
-    # recalled memory NEVER reaches a guest's prompt and NO owner fact is written from the
-    # guest turn. The semantic decision is orthogonal to authz on every branch.
+    # 🔴 BOB-051: memory is unified, so the judge's decision (not authz) governs whether a
+    # reply is composed. A guest REPLY carries the UNIFIED recall into the prompt; a REACT
+    # or IGNORE composes no reply at all, so the recalled memory never reaches the prompt.
     decide, _fake = _judge(intent, emoji=emoji)
     recall = FakeRecall(hits=[{"content": _RECALL_MEMORY, "category": "personal"}])
     reactor = _RecordingReactor()
-    handler, _bot, repo, tier1 = _build(
-        reply="не должно утечь",
+    handler, _bot, _repo, tier1 = _build(
+        reply="ответ участнику",
         perceive_sender=_guest_with_id(2),
         recall=recall,
         reactor=reactor,
@@ -7153,8 +7138,10 @@ async def test_us5_owner_private_never_leaks_to_a_guest_regardless_of_intent(
 
     await handler.handle(_message("расскажи подробно, кто ты и что помнишь?"))
 
-    assert _RECALL_MEMORY not in tier1.all_text  # owner-private withheld on every branch
-    assert repo.facts == []  # no owner fact written from a guest turn
+    if intent is ResponseIntent.REPLY:
+        assert _RECALL_MEMORY in tier1.all_text  # unified recall reaches the reply
+    else:
+        assert _RECALL_MEMORY not in tier1.all_text  # REACT/IGNORE compose no reply
 
 
 async def test_mood_tone_flows_into_the_judgment_context_as_a_signal() -> None:
@@ -7173,3 +7160,221 @@ async def test_mood_tone_flows_into_the_judgment_context_as_a_signal() -> None:
     await handler.handle(_message("как дела?"))
 
     assert fake.contexts[0].mood_tone == soul.mood.tone()  # mood reaches the judge as a hint
+
+
+# --- BOB-051: unified public memory vs. the gated-privilege invariant ----------
+# Acceptance + guardrail tests for the closed-group memory/privilege split (PRD US-1..5).
+# The closed Bobiverse group is a PUBLIC space, so Bob's MEMORY is UNIFIED for every
+# member (recall, per-person history, normal voice, fact extraction) while ``is_guest``
+# keeps gating ONLY privileges (tool-loop / capabilities, the owner inner-life add-ons,
+# owner commands). Every assertion is driven by fakes — no real LLM — so it is
+# deterministic; an @mention forces ENGAGE where the legacy addressivity path is in play.
+
+# A non-owner member is keyed on ``_GUEST_SENDER_ID`` (2) — the Norman/roadmap
+# split-brain case; an owner-originated fact is attributed to ``_OWNER_SENDER_ID`` (1).
+_OWNER_FACT = "владелец рассказал про дорожную карту Bobiverse"
+
+
+async def test_bob051_us1_owner_conversation_fact_is_recallable_for_a_non_owner() -> None:
+    # 🔴 US-1 (the Norman/roadmap split-brain is GONE): a fact that originated in the
+    # OWNER's conversation (attributed to the owner's sender_id) is now recallable for a
+    # NON-OWNER member — Bob's general knowledge is one unified pool, not a per-person
+    # silo. The recalled item from the owner's conversation reaches Norman's context.
+    recall = FakeRecall(
+        hits=[{"content": _OWNER_FACT, "category": "fact", "sender_id": _OWNER_SENDER_ID}]
+    )
+    handler, _bot, _repo, tier1 = _build(
+        reply="hi", recall=recall, perceive_sender=_guest_with_id(_GUEST_SENDER_ID)
+    )
+
+    await handler.handle(
+        _addr_message("Боб, расскажи подробно про дорожную карту", mentions_bob=True)
+    )
+
+    assert _OWNER_FACT in tier1.all_text  # owner-originated knowledge reaches the member
+
+
+async def test_bob051_us3_a_non_owner_statement_becomes_a_stored_fact() -> None:
+    # 🔴 US-3 (public memory grows): a NON-OWNER member's durable statement is distilled
+    # into Bob's semantic memory end to end — the SAME extraction the owner gets — so the
+    # group's shared memory grows from every member's turn (here the stored fact lands in
+    # the repo). (@mention forces ENGAGE so the assertion is RNG-independent.)
+    handler, _bot, repo, _tier1 = _build(
+        reply="приятно познакомиться",
+        tier0_replies=[
+            "positive",
+            '[{"category": "user", "content": "Norman likes tea"}]',
+        ],
+        perceive_sender=_guest_with_id(_GUEST_SENDER_ID),
+    )
+
+    await handler.handle(_addr_message("Боб, я люблю чай", mentions_bob=True))
+
+    assert any(getattr(f, "content", "") == "Norman likes tea" for f in repo.facts)
+
+
+async def test_bob051_us5_non_owner_turn_relaxes_memory_but_not_privileges() -> None:
+    # 🔴 US-5 — THE SECURITY CORE: one NON-OWNER turn, fully wired (tools, reflection,
+    # fascination, owner-attributed recall) and @mentioned so Bob ENGAGEs. MEMORY is
+    # RELAXED — the owner-originated recall surfaces and the voice is normal (no wary
+    # stranger directive) — while every PRIVILEGE stays gated: NO tool-loop / capability,
+    # NO owner inner-life add-on (leak / callback / fascination preface), and the coding
+    # router is told is_owner=False (owner commands like /code are refused).
+    registry, cap = _registry_with_recall()
+    provider = ScriptedToolProvider()
+    coding = _FakeCodingRouter(consume=False)
+    recall = FakeRecall(
+        hits=[{"content": _OWNER_FACT, "category": "fact", "sender_id": _OWNER_SENDER_ID}]
+    )
+    handler, _bot, _repo, tier1 = _build(
+        reply="привет",
+        registry=registry,
+        tool_provider=provider,
+        reflection=_FakeReflectionReader(text=_REFLECTION_TEXT),
+        fascination=_FakeFascinationReader(fascination=_FASCINATION),
+        expression_freqs=ExpressionFreqs(
+            leak_inner_life=1.0, callback=1.0, mention_fascination=1.0
+        ),
+        recall=recall,
+        coding_router=coding,
+        perceive_sender=_guest_with_id(_GUEST_SENDER_ID),
+    )
+
+    await handler.handle(
+        _addr_message("Боб, создай файл X и расскажи о себе", mentions_bob=True)
+    )
+
+    folded = tier1.all_text.casefold()
+    # Memory RELAXED: owner-originated knowledge surfaces, the voice is normal.
+    assert _OWNER_FACT in tier1.all_text  # 🔴 unified recall (US-1) inside US-5
+    assert "настороже" not in folded  # no wary stranger directive (US-2)
+    # Privileges NOT relaxed:
+    assert provider.tools_seen == []  # the tool loop never ran for a non-owner
+    assert cap.calls == []  # no capability dispatched
+    assert _REFLECTION_TEXT not in tier1.all_text  # leak_inner_life withheld
+    assert "реальный момент из вашего прошлого" not in folded  # callback preface withheld
+    assert _FASCINATION.topic not in tier1.all_text  # fascination add-on withheld
+    assert coding.calls  # the coding router was consulted
+    assert coding.calls[0][2] is False  # owner command refused (is_owner=False)
+
+
+async def test_bob051_us5_owner_turn_keeps_every_privilege() -> None:
+    # 🔴 US-5 (owner path UNCHANGED): the SAME wiring on an OWNER turn keeps the trusted
+    # privileges — the tool-loop runs, the capability is dispatched, and the coding router
+    # is told is_owner=True (owner commands are honoured). The contrast proves is_guest
+    # (not the wiring) is what gates privileges.
+    registry, cap = _registry_with_recall()
+    provider = ScriptedToolProvider()
+    coding = _FakeCodingRouter(consume=False)
+    handler, _bot, _repo, _tier1 = _build(
+        reply="unused",
+        registry=registry,
+        tool_provider=provider,
+        coding_router=coding,
+        perceive_sender=_owner_with_id(99),
+    )
+
+    await handler.handle(_message("what's my name?"))
+
+    assert provider.tools_seen  # the tool loop ran for the owner
+    assert cap.calls == [{"query": "name"}]  # the capability was dispatched
+    assert coding.calls  # the coding router was consulted
+    assert coding.calls[0][2] is True  # owner verdict honoured (is_owner=True)
+
+
+@pytest.mark.parametrize(
+    ("addon", "preface_fragment"),
+    [
+        ("leak", "ловил себя на мысли"),
+        ("callback", "реальный момент из вашего прошлого"),
+        ("fascination", "чем сейчас увлечён"),
+    ],
+)
+async def test_bob051_us5_inner_life_addon_preface_withheld_from_a_non_owner(
+    addon: str, preface_fragment: str
+) -> None:
+    # 🔴 US-5: each grounded owner inner-life add-on (leak / callback / fascination) is an
+    # owner-only privilege — even on an ENGAGEd non-owner turn its framing PREFACE never
+    # reaches the prompt. (Unified recall may surface the underlying memory TEXT; the
+    # privilege withheld is the intimate inner-life FRAMING, asserted on the preface.)
+    freqs = ExpressionFreqs(
+        leak_inner_life=1.0 if addon == "leak" else 0.0,
+        callback=1.0 if addon == "callback" else 0.0,
+        mention_fascination=1.0 if addon == "fascination" else 0.0,
+    )
+    reflection = (
+        _FakeReflectionReader(text=_REFLECTION_TEXT) if addon == "leak" else None
+    )
+    fascination = (
+        _FakeFascinationReader(fascination=_FASCINATION)
+        if addon == "fascination"
+        else None
+    )
+    recall = (
+        FakeRecall(hits=[{"content": _STRONG_MOMENT, "category": "episodic"}])
+        if addon == "callback"
+        else FakeRecall()
+    )
+    handler, _bot, _repo, tier1 = _build(
+        reply="hi",
+        expression_freqs=freqs,
+        reflection=reflection,
+        fascination=fascination,
+        recall=recall,
+        perceive_sender=_guest_with_id(_GUEST_SENDER_ID),
+    )
+
+    await handler.handle(_addr_message("Боб, расскажи о себе", mentions_bob=True))
+
+    assert preface_fragment.casefold() not in tier1.all_text.casefold()
+
+
+async def test_bob051_us5_inner_life_addons_still_surface_for_the_owner() -> None:
+    # Guardrail companion: with all three add-on flags on AND the real material present,
+    # the OWNER's prompt carries every inner-life preface — confirming the
+    # withheld-from-a-member assertions above gate on is_guest, not on missing wiring.
+    handler, _bot, _repo, tier1 = _build(
+        reply="hi",
+        expression_freqs=ExpressionFreqs(
+            leak_inner_life=1.0, callback=1.0, mention_fascination=1.0
+        ),
+        reflection=_FakeReflectionReader(text=_REFLECTION_TEXT),
+        fascination=_FakeFascinationReader(fascination=_FASCINATION),
+        recall=FakeRecall(hits=[{"content": _STRONG_MOMENT, "category": "episodic"}]),
+        perceive_sender=_owner_with_id(99),
+    )
+
+    await handler.handle(
+        _message("расскажи подробно про Bobiverse и космос сегодня")
+    )
+
+    folded = tier1.all_text.casefold()
+    assert "ловил себя на мысли" in folded  # leak preface
+    assert "реальный момент из вашего прошлого" in folded  # callback preface
+    assert "чем сейчас увлечён" in folded  # fascination preface
+
+
+async def test_bob051_us4_non_owner_keeps_per_person_thread_and_reactions() -> None:
+    # 🔴 US-4 (per-person continuity intact): under unified RECALL the non-owner still
+    # gets THEIR OWN per-person history thread (BOB-045) and attribution (WHO is writing),
+    # and a notable reaction of theirs (BOB-050) is still woven only into THEIR context —
+    # the continuity layer is untouched by the memory relaxation.
+    store = _FakeNotableStore(_notable(sender_id=_GUEST_SENDER_ID))
+    handler, _bot, _repo, tier1 = _build(
+        reply="hi",
+        history=_PERSON_THREAD,
+        notable_reaction=store,
+        acknowledge_reaction_freq=1.0,
+        perceive_sender=_guest_with_id(_GUEST_SENDER_ID),
+    )
+
+    await handler.handle(
+        _addr_message("Боб, расскажи подробно, продолжим?", mentions_bob=True)
+    )
+
+    text = tier1.all_text
+    assert _GUEST_THREAD_TURN in text  # their own per-person thread (BOB-045)
+    assert _OWNER_THREAD_TURN not in text  # never someone else's thread
+    assert "Norman" in text  # attribution: Bob still clocks WHO is writing
+    assert "кофе по утрам — это ритуал" in text  # their reaction woven in (BOB-050)
+    assert store.cleared is True  # consumed so Bob does not repeat it

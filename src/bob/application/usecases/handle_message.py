@@ -132,7 +132,6 @@ from bob.domain.personality.voice import (
     profanity_stance,
     recalled_impression_directive,
     relationship_tone_directive,
-    stranger_directive,
     sulk_directive,
     tone_directive,
     user_repeat_directive,
@@ -1221,50 +1220,38 @@ class HandleMessage:
         # the BOB-024 decision, never a base override (наклон, не перехват). No such rule
         # (the default) → length_step 0 → verbosity unchanged.
         verbosity = _shift_verbosity(verbosity, modulators.length_step)
-        # Guest (restricted social) mode (BOB-019 bob-apv.2 — the security core).
-        # An unauthorized GUEST reached Bob's social path (routed in by multibot),
-        # so Bob may talk to them like a person, but NEVER as a trusted peer:
-        #   * NO owner-private memory — recall is skipped (empty), so no stored
-        #     owner fact can enter a stranger's prompt (audience redaction);
-        #   * NO owner conversation history — the replayed recent episodes (the
-        #     owner's earlier turns in Bob's topic) are withheld too, so a stranger
-        #     who joins the group never sees the owner's prior conversation;
-        #   * NO tool-loop / capabilities — composition stays on the plain router
-        #     (a guest can trigger no capability), enforced in _compose_reply;
-        #   * NO grounded owner inner-life add-ons (leak/callback/fascination) —
-        #     they surface Bob's private world, withheld from a stranger;
-        #   * NO fact extraction — a guest turn is never written into the owner's
-        #     semantic memory.
-        # The stranger voice directive is appended so the wariness reads as
-        # character. Default to MORE restriction when unsure.
+        # Memory/privilege split (BOB-051 — the closed-group security model).
+        # The Bobiverse group is a CLOSED, invite-only, moderated space, so Bob's
+        # MEMORY is UNIFIED for every member: recall, per-person history and voice no
+        # longer branch on guest status. ``is_guest`` survives ONLY as the PRIVILEGE
+        # flag (BOB-019/BOB-052 authz) — an unauthorized GUEST still:
+        #   * triggers NO tool-loop / capabilities — composition stays on the plain
+        #     router (enforced in _compose_reply);
+        #   * gets NO grounded owner inner-life add-ons (leak/callback/fascination) —
+        #     Bob's private inner world stays owner-only;
+        #   * is refused owner commands/data (/code, /goals, config) by authz.
+        # What it NO LONGER gates: recall (unified — Bob's full knowledge for anyone),
+        # history (per-person thread by sender_id), voice (normal, not wary) and fact
+        # extraction (every member's turn feeds the shared/public group memory).
         is_guest = interlocutor is not None and interlocutor.trust is Trust.GUEST
-        is_owner = (
-            interlocutor is not None and interlocutor.kind is InterlocutorKind.OWNER
-        )
         # Reflection containment (BOB-033 .3): the reply-recall pool excludes private
         # reflection episodes so Bob's inner monologue never becomes a copyable exemplar
         # in a user-facing reply — the inner life colours tone via MOOD, not by parroting
         # reflection TEXT. Facts + past message turns still ground the reply, and the
         # deliberate ``leak_inner_life`` path (below, via self._reflection) is untouched.
-        # Per-person dialogue memory (BOB-045 .2): recall is scoped to the CURRENT
-        # interlocutor for a non-owner, so a guest's prompt can ONLY ever carry that
-        # guest's OWN recalled episodes — owner-private memory never surfaces (🔴 privacy
-        # by construction). The owner keeps GLOBAL recall (trusted). This post-filter is
-        # defense-in-depth alongside the sender-filtered history replay below.
-        recalled: Sequence[Recalled] = _scoped_recall(
-            recalled_excluding_reflections(
-                await self._recall.recall(event.text, k=_RECALL_K)
-            ),
-            interlocutor=interlocutor,
-            is_owner=is_owner,
+        # Recall is UNIFIED (BOB-051): Bob's full knowledge surfaces for owner and member
+        # alike — no per-person scoping. Continuity (WHO Bob talked to) lives in the
+        # per-person history thread (below), not in a knowledge restriction.
+        recalled: Sequence[Recalled] = recalled_excluding_reflections(
+            await self._recall.recall(event.text, k=_RECALL_K)
         )
         # On the judge REPLY path the per-person thread was already replayed for the
-        # judgment (BOB-049); reuse it so it is not read twice. Otherwise (legacy path or
-        # a guest with no scopable thread) replay it now.
+        # judgment (BOB-049); reuse it so it is not read twice. Otherwise (legacy path)
+        # replay it now — keyed on the current interlocutor's sender_id (BOB-045).
         history: Sequence[Mapping[str, object]] = (
             prefetched_history
             if prefetched_history is not None
-            else await self._replay_person_history(interlocutor, is_guest=is_guest)
+            else await self._replay_person_history(interlocutor)
         )
         # User-repeat detection (BOB-022): does the OWNER repeat (near-)verbatim what
         # he already said in the recent window? Pure, no-LLM, conservative (exact after
@@ -1378,13 +1365,11 @@ class HandleMessage:
         # runs on a guest turn too — a guest's first impression is about the guest.
         await self._record_first_impression(interlocutor)
         await self._record_owner_activity()
-        if is_guest:
-            # SECURITY: a guest turn is never distilled into the owner's semantic
-            # memory — no stranger input becomes a stored owner fact.
-            return
-        # Tier 0 "remember" step: distil durable facts into semantic memory so a
-        # later turn's recall can surface them. Best-effort — run() never raises,
-        # so a flaky local model can never break a turn that already replied.
+        # Tier 0 "remember" step (BOB-051: every member's turn feeds the shared/public
+        # group memory): distil durable facts into semantic memory so a later turn's
+        # recall can surface them — for ANY group member, not just the owner. Best-effort
+        # — run() never raises, so a flaky local model can never break a turn that already
+        # replied.
         await self._extract_facts.run(user_message=event.text, reply=reply)
 
     async def _react_only(self, event: MessageReceived, soul: SOUL) -> None:
@@ -2012,8 +1997,7 @@ class HandleMessage:
         assert self._decide_response is not None  # guarded by the caller
         decide_response = self._decide_response
         signals = await self._addressivity_signals(event)
-        is_guest = interlocutor.trust is Trust.GUEST
-        history = await self._replay_person_history(interlocutor, is_guest=is_guest)
+        history = await self._replay_person_history(interlocutor)
         # ESSENTIAL step (BOB-049 .3): the semantic judgment is retry-wrapped — a flaky
         # judge call retries with backoff, then (if still failing) raises
         # _EssentialStepError so the turn falls back to the honest GUPPI outage notice
@@ -2167,24 +2151,22 @@ class HandleMessage:
         return self._bob_user_id_source()
 
     async def _replay_person_history(
-        self, interlocutor: Interlocutor | None, *, is_guest: bool
+        self, interlocutor: Interlocutor | None
     ) -> Sequence[Mapping[str, object]]:
-        """Replay the CURRENT interlocutor's per-person thread (BOB-045 .2).
+        """Replay the CURRENT interlocutor's per-person thread (BOB-045 .2 / BOB-051).
 
         With a perceived interlocutor carrying a ``sender_id`` we replay the last
-        ``recent_turns`` episodes WITH THAT person (owner / known / guest alike) — each
-        sees only their OWN thread, the privacy boundary enforced 🔴 in the query itself
-        (``recent_episodes_for`` filters on ``sender_id``). With no interlocutor / no
-        ``sender_id`` (perception seam unwired) we DEGRADE to the pre-BOB-045 behaviour:
-        a guest gets nothing, anyone else (owner / unknown) the global window — so an
-        unresolved identity never regresses and never leaks a stranger the owner's log.
+        ``recent_turns`` episodes WITH THAT person (owner / known / guest alike) — the
+        continuity thread that lets Bob know WHO he is talking to (``recent_episodes_for``
+        keys on ``sender_id``). With no interlocutor / no ``sender_id`` (perception seam
+        unwired) we DEGRADE to the global recent window — memory is unified for the closed
+        group (BOB-051), so an unresolved identity reads the shared thread rather than an
+        empty one.
         """
         if interlocutor is not None and interlocutor.sender_id is not None:
             return await self._episodes.recent_episodes_for(
                 interlocutor.sender_id, self._recent_turns
             )
-        if is_guest:
-            return []
         return await self._episodes.recent_episodes(self._recent_turns)
 
     def _absence_for(
@@ -2288,11 +2270,12 @@ class HandleMessage:
     ) -> str:
         """Compose a full reply, folding the decided verbosity into the prompt.
 
-        On a guest turn (``is_guest``) the restricted social mode applies: the
-        grounded owner inner-life add-ons (leak / callback / fascination) are
-        skipped (they surface Bob's private world), the tool-loop is NEVER used (a
-        guest can trigger no capability), and the stranger voice directive is
-        appended — the application half of the security invariant.
+        On a guest turn (``is_guest``) the PRIVILEGE restriction applies (BOB-051 keeps
+        the authz gate while memory/voice are unified): the grounded owner inner-life
+        add-ons (leak / callback / fascination) are skipped (they surface Bob's private
+        inner world) and the tool-loop is NEVER used (a guest can trigger no capability)
+        — the application half of the security invariant. Recall, history and voice are
+        unified for the closed group and no longer branch on guest status.
         """
         context = _assemble_shareable_context(
             soul, text, recalled, history, absence=self._absence_for(history)
@@ -2315,7 +2298,6 @@ class HandleMessage:
             text,
             user_repeated=user_repeated,
             interlocutor=interlocutor,
-            is_guest=is_guest,
             prior_impression=prior_impression,
             relationship=relationship,
             engagement=engagement,
@@ -2409,8 +2391,9 @@ class HandleMessage:
         # (~21% prevalence), so the narrow per-turn view (recent history + query-recall)
         # sees it 0-1 times -- below the occurrence bar -- and BOB-036 misses it live.
         # Over the last ``tic_lookback`` (~20) replies it recurs ~4 times -> reliably >=2
-        # -> caught. The only new I/O: one extra recent_episodes read (skipped for guests).
-        wide_replies = await self._recent_bob_closers(is_guest=is_guest)
+        # -> caught. The only new I/O: one extra recent_episodes read (BOB-051: runs for
+        # every member — it scans Bob's OWN closers, not owner-private material).
+        wide_replies = await self._recent_bob_closers()
         current = reply
         current_recalled = recalled
         for _ in range(_MAX_REGENERATIONS):
@@ -2478,16 +2461,14 @@ class HandleMessage:
             return stripped if stripped.strip() else current
         return current
 
-    async def _recent_bob_closers(self, *, is_guest: bool) -> tuple[str, ...]:
+    async def _recent_bob_closers(self) -> tuple[str, ...]:
         """Bob's last ``tic_lookback`` reply texts for the wide tic check (BOB-043).
 
         The single new read behind the anti-repeat guard: a WIDE window of Bob's recent
         replies (whose closers the phrase-tic detector scans) via the existing
-        ``recent_episodes`` seam. Guests get an empty window (no owner-history tic check
-        for a stranger), mirroring the rest of the guard.
+        ``recent_episodes`` seam. It scans Bob's OWN closers (not owner-private material),
+        so BOB-051 runs it for every member alike — the anti-tic quality is unified.
         """
-        if is_guest:
-            return ()
         lookback = self._repeat_thresholds.tic_lookback
         wide_history = await self._episodes.recent_episodes(lookback)
         return _recent_bob_replies(wide_history, limit=lookback)
@@ -2604,7 +2585,6 @@ class HandleMessage:
         *,
         user_repeated: bool = False,
         interlocutor: Interlocutor | None = None,
-        is_guest: bool = False,
         prior_impression: str | None = None,
         relationship: Relationship | None = None,
         engagement: EngagementLevel = EngagementLevel.FULL,
@@ -2662,10 +2642,6 @@ class HandleMessage:
             # BOB-019: fold WHO is writing (owner / known / guest / bot) into the
             # voice as character — additive, no-op when no interlocutor perceived.
             who_is_writing_directive(interlocutor) if interlocutor is not None else "",
-            # BOB-019 bob-apv.2: on a guest turn, the stranger voice — Bob meets a
-            # stranger warily-but-human and never reveals the owner's private info
-            # (the voice half of the restricted-mode security invariant).
-            stranger_directive() if is_guest else "",
             # BOB-019 bob-apv.3: a returning sender Bob has met before — recall his
             # LIGHT prior first impression ("кажется, мы уже сталкивались"), grounded
             # in the real stored note. Per-PERSON data (about THEM), so it is folded
@@ -2857,30 +2833,6 @@ def _verdict_sign(verdict: Verdict) -> float:
     if verdict in _NEGATIVE_VERDICTS:
         return -1.0
     return 0.0
-
-
-def _scoped_recall(
-    recalled: Sequence[Recalled],
-    *,
-    interlocutor: Interlocutor | None,
-    is_owner: bool,
-) -> Sequence[Recalled]:
-    """Scope recalled memories to a non-owner's OWN episodes (BOB-045 .2, 🔴 privacy).
-
-    The owner is trusted and keeps GLOBAL recall (unchanged); with no perceived
-    interlocutor (perception seam unwired) recall also stays global, preserving the
-    pre-BOB-045 behaviour. A non-owner (known / guest) only ever sees recalled items
-    attributed to THEIR OWN ``sender_id`` — every item with a different or absent
-    ``sender_id`` (an owner-private fact, another person's episode) is dropped, so
-    owner-private memory can never surface to a stranger. A non-owner with no resolved
-    ``sender_id`` has no scopable identity, hence no recall (the safe default).
-    """
-    if is_owner or interlocutor is None:
-        return recalled
-    person = interlocutor.sender_id
-    if person is None:
-        return []
-    return [item for item in recalled if item.get("sender_id") == person]
 
 
 def _assemble_shareable_context(
