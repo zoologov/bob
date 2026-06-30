@@ -52,6 +52,7 @@ from bob.application.capabilities import (
     make_recall_memory_capability,
     make_render_diagram_capability,
     make_search_memory_capability,
+    make_web_search_capability,
 )
 from bob.application.proactivity import (
     ProactiveTick,
@@ -143,7 +144,12 @@ from bob.infrastructure.diagrams import SubprocessMmdcRenderer
 from bob.infrastructure.introspection.subprocess_introspector import (
     SubprocessRepoIntrospector,
 )
-from bob.infrastructure.llm import build_embedder, build_reranker, build_tier_providers
+from bob.infrastructure.llm import (
+    build_embedder,
+    build_reranker,
+    build_tier_providers,
+    build_web_search_provider,
+)
 from bob.infrastructure.llm.privilege_judge import LlmPrivilegeJudge
 from bob.infrastructure.llm.reaction_judge import LlmReactionJudge
 from bob.infrastructure.llm.response_judge import LlmResponseJudge
@@ -2141,6 +2147,11 @@ def _build_registry(
         registry.register(
             make_render_diagram_capability(diagram_renderer, diagram_sink)
         )
+    # Web search (BOB-053): registered ONLY when ``search.enabled`` — the Qwen-native
+    # provider stays behind an explicit flag. Privilege is by sender (authz/BOB-052):
+    # the tool-loop only runs for an authorised sender, so no extra gate is needed.
+    if _flag(_section(config, "search"), "enabled"):
+        registry.register(make_web_search_capability(build_web_search_provider(config)))
     return registry, diagram_sink, diagram_renderer
 
 

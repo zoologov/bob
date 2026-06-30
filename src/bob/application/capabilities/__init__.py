@@ -29,6 +29,7 @@ from bob.application.capabilities.render_diagram import (
 )
 from bob.application.capabilities.search_memory import make_search_memory_capability
 from bob.application.capabilities.tool_loop import ToolLoop
+from bob.application.capabilities.web_search import make_web_search_capability
 
 __all__ = [
     "CapabilityNotAllowedError",
@@ -44,4 +45,5 @@ __all__ = [
     "make_recall_memory_capability",
     "make_render_diagram_capability",
     "make_search_memory_capability",
+    "make_web_search_capability",
 ]
