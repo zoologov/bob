@@ -34,6 +34,7 @@ if TYPE_CHECKING:
     from bob.domain.personality.fascination import Fascination
     from bob.domain.personality.first_impression import FirstImpression
     from bob.domain.personality.negotiation import NegotiationZone
+    from bob.domain.personality.reaction_effect import NotableReaction
     from bob.domain.personality.relationship import Relationship
     from bob.domain.personality.self_improvement import (
         ImprovementRule,
@@ -68,6 +69,7 @@ __all__ = [
     "MemoryRecall",
     "MemoryRepo",
     "MessageReactor",
+    "NotableReactionStore",
     "PatternDetector",
     "Permission",
     "Planner",
@@ -699,6 +701,32 @@ class RelationshipStore(Protocol):
 
     async def save(self, relationship: Relationship) -> None:
         """Persist ``relationship`` (UPSERT — an evolving relationship is updated)."""
+        ...
+
+
+@runtime_checkable
+class NotableReactionStore(Protocol):
+    """Light durable store for the most recent "being-received" reaction (BOB-050).
+
+    When someone reacts to one of Bob's messages in a way worth acknowledging, the
+    perceiving use-case records a :class:`bob.domain.personality.reaction_effect.NotableReaction`
+    here; the rare-aloud hint (BOB-050 .3) reads the latest one so Bob can naturally
+    mention being received. Deliberately tiny — a single most-recent record, not a
+    log — and per-PERSON about Bob's OWN message, never owner-private material.
+    :meth:`latest` returns ``None`` when nothing notable is on record. The concrete
+    SQLite-backed adapter lives in ``bob.infrastructure``.
+    """
+
+    async def record(self, note: NotableReaction) -> None:
+        """Persist ``note`` as the most recent being-received reaction (overwrites)."""
+        ...
+
+    async def latest(self) -> NotableReaction | None:
+        """Return the most recent recorded reaction, or ``None`` if there is none."""
+        ...
+
+    async def clear(self) -> None:
+        """Consume the recorded reaction so the rare-aloud hint surfaces it at most once."""
         ...
 
 

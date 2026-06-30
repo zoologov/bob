@@ -21,7 +21,13 @@ CREATE TABLE IF NOT EXISTS episodic_log (
     -- sender. Additive for fresh DBs; a guarded ALTER in initialize() migrates
     -- pre-existing DBs (defaults to NULL), and a best-effort backfill maps the
     -- leading "<name>: " content prefix of legacy rows to a known sender id.
-    sender_id     INTEGER
+    sender_id     INTEGER,
+    -- BOB-050 reaction perception: the Telegram message_id of Bob's OWN outgoing
+    -- reply for this turn, so a later message_reaction update can be linked back to
+    -- what Bob said. Nullable -- ticks/digests/legacy rows and turns where Bob did
+    -- not send a message have none. Additive for fresh DBs; a guarded ALTER in
+    -- initialize() migrates pre-existing DBs (defaults to NULL).
+    bob_message_id INTEGER
 );
 
 CREATE INDEX IF NOT EXISTS idx_episodic_ts ON episodic_log (ts DESC);

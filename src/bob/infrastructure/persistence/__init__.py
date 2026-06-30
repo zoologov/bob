@@ -24,6 +24,7 @@ from bob.infrastructure.persistence.first_impression_store import (
 from bob.infrastructure.persistence.fts_recall import Fts5MemoryRecall
 from bob.infrastructure.persistence.goal_store import SqliteGoalStore
 from bob.infrastructure.persistence.hybrid_recall import HybridMemoryRecall
+from bob.infrastructure.persistence.notable_reaction_store import KvNotableReactionStore
 from bob.infrastructure.persistence.proactivity_sources import RepoProactivitySources
 from bob.infrastructure.persistence.proactivity_store import SqliteProactivityStore
 from bob.infrastructure.persistence.relationship_store import SqliteRelationshipStore
@@ -38,6 +39,7 @@ __all__ = [
     "Fts5MemoryRecall",
     "HybridMemoryRecall",
     "KvAllowlistStore",
+    "KvNotableReactionStore",
     "RepoProactivitySources",
     "SoulStore",
     "SqliteConversationFloorStore",

@@ -60,12 +60,14 @@ from typing import TYPE_CHECKING
 
 from bob.infrastructure.telegram.gateway import (
     AuthorizerLike,
+    BobMessageFilter,
     BotIdentitySignals,
     BotLike,
     MonotonicClock,
     Sleep,
     TelegramGateway,
     UpdateLike,
+    is_reaction_update,
 )
 from bob.infrastructure.telegram.guppi import GuppiHandler
 
@@ -223,6 +225,7 @@ class MultiBotGateway:
         reply_typing_interval: float = _DEFAULT_TYPING_INTERVAL,
         reply_clock: MonotonicClock = _LIVE_CLOCK,
         reply_sleep: Sleep = _LIVE_SLEEP,
+        bob_reaction_filter: BobMessageFilter | None = None,
     ) -> None:
         self._registry = registry
         self._bus = bus
@@ -243,6 +246,9 @@ class MultiBotGateway:
         # monotonic clock + ``asyncio.sleep`` + a ~4s typing cadence) so a long
         # generation keeps showing "Bob is typing…" (BOB-008); tests inject
         # deterministic stubs to avoid real waiting.
+        #
+        # Only Bob's inner gateway gets the reaction filter (BOB-050): reactions are
+        # perceived for HIS messages, so GUPPI's gateway has none and drops them.
         self._inner: dict[BotIdentity, TelegramGateway] = {}
         for reg in registry.all():
             self._inner[reg.identity] = TelegramGateway(
@@ -253,6 +259,11 @@ class MultiBotGateway:
                 clock=reply_clock,
                 sleep=reply_sleep,
                 reply_thread_id=reg.scope.topic_id,
+                bob_reaction_filter=(
+                    bob_reaction_filter
+                    if reg.identity is BotIdentity.BOB
+                    else None
+                ),
             )
         # Cross-bot dedup: a group message both admin bots see arrives on two
         # update streams; we process each (chat_id, message_id) exactly once.
@@ -387,7 +398,16 @@ class MultiBotGateway:
         publish). General + owner command → GUPPI consumes it (no publish).
         Everything else (stranger DM, foreign chat, non-owner command, a
         non-routable duplicate) is dropped silently — no reveal.
+
+        A reaction update (BOB-050) is routed to Bob's inner gateway (only via Bob's
+        own bot copy, to avoid a double from GUPPI) where it is filtered to Bob's
+        messages and published as a :class:`BobMessageReaction`; it never counts as a
+        published :class:`MessageReceived`.
         """
+        if is_reaction_update(update):
+            await self._route_reaction(update, identity)
+            return False
+
         message = update.message
         chat = update.effective_chat
         if message is None or chat is None or not message.text:
@@ -441,6 +461,23 @@ class MultiBotGateway:
         if await self._maybe_guppi_command(update, chat_id):
             return _RouteOutcome.HANDLED
         return _RouteOutcome.UNROUTABLE
+
+    async def _route_reaction(
+        self, update: UpdateLike, identity: BotIdentity
+    ) -> None:
+        """Dispatch a reaction update to Bob's inner gateway (BOB-050).
+
+        Only Bob's OWN bot copy is dispatched — both admin bots may see the same
+        reaction, so routing just Bob's copy avoids a duplicate event (and the inner
+        gateway dedups by ``update_id`` on top). With no Bob gateway registered the
+        reaction is dropped.
+        """
+        if identity is not BotIdentity.BOB:
+            return
+        inner = self._inner.get(BotIdentity.BOB)
+        if inner is None:
+            return
+        await inner.intake_reaction(update)
 
     async def _maybe_guppi_command(self, update: UpdateLike, chat_id: int) -> bool:
         """Let GUPPI consume an owner command in General; return whether it did."""
@@ -503,8 +540,10 @@ class _ReplyGateway:
 
     async def reply(
         self, *, chat_id: int, markdown: str, thinking: str | None = None
-    ) -> None:
-        await self._gateway.reply(chat_id=chat_id, markdown=markdown, thinking=thinking)
+    ) -> int | None:
+        return await self._gateway.reply(
+            chat_id=chat_id, markdown=markdown, thinking=thinking
+        )
 
     async def send_photo(
         self, *, chat_id: int, photo: bytes, caption: str | None = None

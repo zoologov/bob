@@ -247,7 +247,11 @@ async def test_aiogram_adapter_delegates_every_call() -> None:
             self.calls: list[tuple[str, dict[str, object]]] = []
 
         async def get_updates(
-            self, *, offset: int, timeout: int
+            self,
+            *,
+            offset: int,
+            timeout: int,
+            allowed_updates: Sequence[str] | None = None,  # noqa: ARG002
         ) -> list[_AiogramUpdate]:
             self.calls.append(("get_updates", {"offset": offset, "timeout": timeout}))
             return [

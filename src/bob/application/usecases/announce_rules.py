@@ -53,12 +53,13 @@ class RuleAnnounceGateway(Protocol):
     """The post seam the announcer needs: send Bob's proposal into a chat (BOB-028 .3).
 
     A structural subset of the reply gateway (Bob's own voice — HE proposes), so the
-    live Telegram gateway and a fake both satisfy it.
+    live Telegram gateway and a fake both satisfy it. The returned ``message_id``
+    (BOB-050) is ignored here — the announcer only posts.
     """
 
     async def reply(
         self, *, chat_id: int, markdown: str, thinking: str | None = None
-    ) -> None: ...
+    ) -> int | None: ...
 
 
 # Шаблон тактичного предложения (рус, голос Боба). Грундирован в реальном правиле:

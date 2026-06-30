@@ -83,6 +83,7 @@ class SqliteMemoryRepo:
         await self._conn.executescript(_load_schema())
         await self._migrate_episodic_consolidated()
         await self._migrate_episodic_sender_id()
+        await self._migrate_episodic_bob_message_id()
         await self._migrate_semantic_superseded_by()
         await self._migrate_pursuit_stopped()
         await self._backfill_episodic_fts()
@@ -122,6 +123,28 @@ class SqliteMemoryRepo:
             await self._db().execute("ALTER TABLE episodic_log ADD COLUMN sender_id INTEGER")
         await self._db().execute(
             "CREATE INDEX IF NOT EXISTS idx_episodic_sender ON episodic_log (sender_id, ts)"
+        )
+
+    async def _migrate_episodic_bob_message_id(self) -> None:
+        """Add ``episodic_log.bob_message_id`` + its index to a pre-existing DB (BOB-050).
+
+        ``CREATE TABLE IF NOT EXISTS`` never alters an already-present table, so a DB
+        written before this column existed would lack it. This guarded ``ALTER`` adds
+        it only when missing -- additive and non-destructive: existing rows take the
+        column default (NULL, i.e. no linked outgoing Bob message). The
+        ``idx_episodic_bob_message_id`` index is created here (not in ``schema.sql``)
+        because a column-less legacy DB runs the schema script before this ALTER, so a
+        ``CREATE INDEX`` on ``bob_message_id`` there would reference a not-yet-existing
+        column. ``CREATE INDEX IF NOT EXISTS`` keeps the whole step a clean no-op once
+        present, so re-running ``initialize()`` is idempotent.
+        """
+        if "bob_message_id" not in await self._episodic_columns():
+            await self._db().execute(
+                "ALTER TABLE episodic_log ADD COLUMN bob_message_id INTEGER"
+            )
+        await self._db().execute(
+            "CREATE INDEX IF NOT EXISTS idx_episodic_bob_message_id "
+            "ON episodic_log (bob_message_id)"
         )
 
     async def _backfill_episodic_sender_id(self) -> None:
@@ -233,8 +256,9 @@ class SqliteMemoryRepo:
     async def save_episode(self, episode: Mapping[str, object]) -> None:
         """Append one episodic event (raw mapping form); embed it on write."""
         cursor = await self._db().execute(
-            "INSERT INTO episodic_log (ts, event_type, content, mood_snapshot, tags, sender_id) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
+            "INSERT INTO episodic_log "
+            "(ts, event_type, content, mood_snapshot, tags, sender_id, bob_message_id) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
             (
                 episode["ts"],
                 episode["event_type"],
@@ -242,6 +266,7 @@ class SqliteMemoryRepo:
                 episode.get("mood_snapshot"),
                 episode.get("tags", ""),
                 episode.get("sender_id"),
+                episode.get("bob_message_id"),
             ),
         )
         await self._db().commit()
@@ -257,8 +282,30 @@ class SqliteMemoryRepo:
                 "mood_snapshot": event.mood_snapshot,
                 "tags": ",".join(event.tags),
                 "sender_id": event.sender_id,
+                "bob_message_id": event.bob_message_id,
             }
         )
+
+    async def episode_by_bob_message_id(
+        self, bob_message_id: int
+    ) -> Mapping[str, object] | None:
+        """Return the episode whose recorded outgoing Bob message is ``bob_message_id``.
+
+        The BOB-050 link from a reaction back to what Bob said: a reaction carries the
+        Telegram ``message_id`` it was placed on; this finds the episode that recorded
+        that id as Bob's outgoing reply, so the perception use-case can read Bob's
+        reply text. ``None`` when no episode matches (an old / non-Bob message), which
+        the reaction filter treats as "not Bob's message" and drops. The most-recent
+        match wins (a message_id is effectively unique per chat).
+        """
+        async with self._db().execute(
+            "SELECT ts, event_type, content, mood_snapshot, tags, sender_id, "
+            "bob_message_id FROM episodic_log WHERE bob_message_id = ? "
+            "ORDER BY id DESC LIMIT 1",
+            (bob_message_id,),
+        ) as cursor:
+            row = await cursor.fetchone()
+        return dict(row) if row is not None else None
 
     async def load_episodes(self, *, limit: int) -> Sequence[Mapping[str, object]]:
         """Return up to ``limit`` most-recent episodes (newest first)."""

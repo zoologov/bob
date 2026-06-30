@@ -960,6 +960,130 @@ BOB-023/025 + `REACT_ONLY` BOB-018 (обратная совместимость;
   grounded-добавку: при сбое она логируется и опускается (возврат `""`), а ядро ответа
   «полного Боба» всё равно уходит — флаки-добавка **никогда** не триггерит outage-нотис.
 
+## Восприятие реакций на сообщения Боба (BOB-050)
+
+BOB-049 учит Боба **понимать**, отвечать ли на сообщение собеседника. BOB-050 — зеркало
+для другой стороны: когда кто-то ставит или снимает эмодзи-реакцию на **собственное**
+сообщение Боба, Боб это **чувствует** и понимает по смыслу, что реакция значит на этом
+сообщении от этого человека, — а не сверяет эмодзи с таблицей. Это шаг к интерсубъективности:
+Боб замечает, что его услышали, и это его меняет — ограниченно, по тому же пути социального
+заражения, что и текст (BOB-033).
+
+🔴 **Весь путь восприятия реакции декоративен и опционален.** Это флейвор, не существенный
+шаг хода: любой сбой (ошибка судьи, пропавшее сообщение, сбой хранилища) ловится и тихо
+опускается — он **никогда** не триггерит GUPPI-нотис и не ломает обычные ответы Боба.
+🔴 **Authz (два слоя BOB-019):** гость, поставивший реакцию, чувствуется и запоминается с
+привязкой к **гостю**; путь пишет только данные о персоне реактора про **собственное**
+сообщение Боба, поэтому owner-приват не утекает, а per-person память изолирована.
+
+### Транспорт: `message_reaction`-апдейт и связь `bob_message_id`
+
+Telegram не шлёт реакции в наборе апдейтов по умолчанию, поэтому их надо запросить явно.
+
+- **`infrastructure/telegram/gateway.py`** — `ALLOWED_UPDATES` добавляет `message_reaction`
+  и `message_reaction_count` к запрашиваемым типам. `TelegramGateway.intake_reaction(update)`
+  переводит входящий апдейт в событие: per-user `message_reaction` даёт диф
+  `old_reaction → new_reaction` (что реактор **поставил** и что **снял**) плюс личность
+  реактора; анонимный `message_reaction_count` (приватная группа без user) — только сводку
+  эмодзи без «кто». Фильтр **`BobMessageFilter`** (порт) отсекает реакции на чужие
+  сообщения — публикуется только реакция на сообщение, которое сам Боб отправил; иначе
+  апдейт тихо отбрасывается. `is_reaction_update`, `_reaction_diff`, `_reaction_emojis` —
+  чистые помощники разбора.
+- **`application/runtime/events.py`** — событие **`BobMessageReaction`** (frozen, имя
+  `BOB_MESSAGE_REACTION` `telegram.bob_message_reaction`): `chat_id`, `message_id`,
+  `emoji_added` / `emoji_removed` (диф), `reactor_sender_id` / `reactor_name` (кто, BOB-019;
+  `None` для анонимной реакции).
+- **Связь с тем, что Боб сказал.** Колонка `episodic_log.bob_message_id` (`schema.sql`)
+  хранит Telegram message_id **исходящего** ответа Боба за этот ход, чтобы позднюю реакцию
+  можно было связать с тем, **что** Боб сказал. Миграция идемпотентна, как в BOB-045:
+  `SqliteMemoryRepo._migrate_episodic_bob_message_id` гардом добавляет колонку и индекс
+  `idx_episodic_bob_message_id` на пред-существующих БД (existing-строки берут `NULL`).
+  `MemoryEvent.bob_message_id` несёт его в персист; `HandleMessage` берёт message_id из
+  `gateway.reply(...)` (теперь возвращает id отправленного сообщения) и кладёт в эпизод.
+  `episode_by_bob_message_id(id)` — обратный поиск; `app.py` `_BobReactionFilter` строит над
+  ним фильтр «это сообщение Боба».
+- **Мульти-бот.** `MultiBotGateway` маршрутизирует реакцию только через **внутренний** шлюз
+  бота Боба (`_route_reaction`), чтобы копия GUPPI не породила дубликат события; реакция не
+  считается «сообщением».
+
+### Семантический шов: `ReactionJudge` (Tier-0)
+
+Зеркало `ResponseJudge` (BOB-049): один смысловой судья вместо таблицы эмодзи→настроение.
+
+- **`domain/personality/reaction_meaning.py`** — типы-значения и порт. `ReactionContext`
+  (frozen-**вход**: `emoji`, `added` — поставлена или снята, `bob_message_text` —
+  на что среагировали, `reactor` как соц-контекст + `reactor_warmth`, `recent_thread`);
+  `ReactionMeaning` (frozen-**исход**: `interpretation` — короткий смысл для памяти/логов,
+  `mood_delta` с ограниченными знаком+величиной **из смысла, а не из эмодзи**, `warmth_nudge`
+  к реактору, `worth_acknowledging`); **`ReactionJudge`** (`Protocol`, инъектируемый порт —
+  `interpret(ctx) -> ReactionMeaning`, фейк в тестах).
+- **`domain/personality/reaction_judgment.py`** — чистый Tier-0 wire-протокол (без I/O и
+  RNG). `build_reaction_user_prompt(ctx)` сворачивает контекст в промпт;
+  `REACTION_JUDGE_SYSTEM_PROMPT` задаёт задачу и помеченный формат (`interpretation:` /
+  `sentiment:` / `intensity:` / `acknowledge:`) и подсказывает, что **снятая** реакция
+  склоняется в лёгкий негатив/неуверенность. `parse_reaction_meaning(raw)` маппит ответ:
+  знак сентимента и величину интенсивности сворачивает в **ограниченный** `MoodDelta`
+  (шаг ≤ `0.25`, внутри полосы BOB-030) и `warmth_nudge` (доля от величины, hard-cap
+  `0.12`), `worth_acknowledging` ставится только при положительном смысле; на мусоре —
+  `ReactionJudgeParseError`, а не молчаливый дефолт (чтобы декоративный путь уронил реальный
+  сбой, а не действовал по догадке).
+- **`infrastructure/llm/reaction_judge.py`** — `LlmReactionJudge`, Tier-0 реализация порта:
+  один дешёвый локальный вызов через `LLMRouter` (`TaskType.REACTION_JUDGE` → Tier 0). Тонкая
+  оболочка; **не глотает** сбои — ошибка модели/роутера или парс-ошибка пробрасывается, и
+  декоративный use-case её опускает.
+
+### Эффекты: настроение, отношения, память, «меня услышали»
+
+- **`domain/personality/reaction_effect.py`** — чистое ядро «реакция меняет Боба».
+  `apply_reaction_to_mood(mood, meaning, *, baseline, lift_rate)`: тёплая реакция сперва
+  тянет настроение долей к базлайну (`Mood.lift_toward`, тот же путь заражения, что и текст
+  BOB-033 — «вытесняет накопленный минус»), затем ложится ограниченная дельта; холодная/
+  отстранённая лифт пропускает и только слегка проседает. `nudge_relationship_warmth(rel,
+  meaning)` двигает **только** ось warmth к реактору на ограниченный `warmth_nudge` (BOB-014;
+  доверие/уважение накапливаются обменами, не реакцией). `NotableReaction` — лёгкая запись
+  «меня услышали», создаётся только при `worth_acknowledging`.
+- **`application/usecases/perceive_reaction.py`** — `PerceiveReaction`, сердце фичи. Подписан
+  на `BOB_MESSAGE_REACTION` через `build_application` (`_as_reaction_handler`). На событие:
+  ищет эпизод по `bob_message_id` (не сообщение Боба → мягкий пропуск), воспринимает реактора
+  через `ReactorResolver`, грузит отношение, собирает `ReactionContext`, зовёт судью и даёт
+  смыслу изменить Боба — настроение (BOB-033, ограниченно), warmth к реактору (BOB-014),
+  per-person эпизод `reaction_received` «<кто> отреагировал <emoji> на моё „<кратко>" —
+  <смысл>» с привязкой к **реактору** (BOB-045), и — при `worth_acknowledging` — запись в
+  общий `NotableReactionStore`. **Анонимная** реакция (нет `reactor_sender_id`) → только
+  лёгкий фиксированный лифт настроения, без памяти и отношения (нет «кто»). Метод `perceive`
+  🔴 обёрнут try/except: любой сбой логируется и опускается.
+- **`application/authz/reactor_perception.py`** — `ReactorPerception`, реакция-двойник
+  `SenderPerception`: композирует неизменный `Authorizer` с чистой `classify`, превращая
+  id+имя реактора в `Interlocutor` (owner / known / guest + trust). Это **восприятие**, не
+  гейт: читает `is_owner` (по личности) и `is_authorized` (chat-scoped), но решения о доступе
+  не меняет — путь касается только per-person данных о собственном сообщении Боба.
+- **`infrastructure/persistence/notable_reaction_store.py`** — `KvNotableReactionStore` над
+  обобщённой таблицей `kv` (без новой схемы): одна JSON-строка с **последней**
+  `NotableReaction`. `record` перезаписывает, `latest` читает, `clear` пишет пустой
+  tombstone (чистый consume). Пропавшая/непарсимая строка → `None` (no-op), чтобы
+  битая запись не ломала декоративный путь.
+
+### Изредка вслух: «вижу, тебе зашло про…»
+
+- **`domain/personality/reaction_aloud.py`** — чистый помощник `acknowledgment_hint(note)`:
+  превращает `NotableReaction` в **одну** лёгкую compose-подсказку (кто, эмодзи, краткий
+  отрывок того, что Боб сказал), оформленную как **опциональную** («если к месту, не
+  обязательно») — реплай-тир вплетает её сам или пропускает, никогда не зачитывает скрипт.
+- **`HandleMessage._acknowledgment_for(interlocutor)`** — низкочастотная per-person логика
+  в compose: подсказка всплывает, только если хранилище провязано, на записи есть notable
+  реакция, её реактор — **именно этот** собеседник (🔴 per-person/authz BOB-019: реакция
+  гостя не всплывёт owner-у и наоборот; у анонимной реакции нет «кого» отмечать) и сидовый
+  бросок прошёл порог `acknowledge_reaction_freq` (умолчание `0.15`, тюнится через
+  `dialogue.acknowledge_reaction_freq`). После выдачи запись `clear()`-ится (consume-once),
+  поэтому Боб отмечает момент **максимум один раз** — не назойливо. Обёрнута `_safe_addon`:
+  сбой хранилища тихо опускается.
+
+**Общий `notable_reaction_store`.** `PerceiveReaction` (пишет) и `HandleMessage` (читает +
+consume) делят **один** инстанс `KvNotableReactionStore` — иначе написанная реакция была бы
+невидима подсказке и Боб никогда не отметил бы, что его услышали. Провязка в `app.py`:
+`PerceiveReaction(judge=LlmReactionJudge(router=router), …, notable=notable_reaction_store)`
+подписан на `BOB_MESSAGE_REACTION`, а тот же стор инъектирован в `HandleMessage`.
+
 ## Краткость по запросу: длина ответа как характер (BOB-024)
 
 Живой человек на простой закрытый вопрос («ты тут?», «во сколько?», «получилось?»)

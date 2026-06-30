@@ -780,10 +780,35 @@ async def test_reply_empty_markdown_without_thinking_sends_nothing() -> None:
     bot = _FakeBot()
     gateway = _make_gateway(bot)
 
-    await gateway.reply(chat_id=7, markdown="   ")
+    result = await gateway.reply(chat_id=7, markdown="   ")
 
     assert bot.rich_sends == []
     assert bot.sends == []
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_reply_returns_sent_rich_message_id() -> None:
+    # BOB-050: reply returns the Telegram message_id of Bob's outgoing message so
+    # the caller can record which message was Bob's reply.
+    bot = _FakeBot(next_message_id=900)
+    gateway = _make_gateway(bot)
+
+    message_id = await gateway.reply(chat_id=7, markdown="hi")
+
+    assert message_id == 900
+
+
+@pytest.mark.asyncio
+async def test_reply_returns_first_chunk_id_on_plain_fallback() -> None:
+    bot = _FakeBot(next_message_id=900, rich_send_raises=True)
+    gateway = _make_gateway(bot)
+    long_text = "x" * (PLAIN_TEXT_LIMIT + 50)
+
+    message_id = await gateway.reply(chat_id=7, markdown=long_text)
+
+    # The first plain chunk's id (the message a reaction would land on).
+    assert message_id == 900
 
 
 # --- BOB-035: send_photo (render_diagram PNG into the chat) --------------------

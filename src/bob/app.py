@@ -40,7 +40,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol, cast
 
-from bob.application.authz import Authorizer, SenderPerception
+from bob.application.authz import Authorizer, ReactorPerception, SenderPerception
 from bob.application.capabilities import (
     CapabilityRegistry,
     CollectingDiagramSink,
@@ -60,9 +60,11 @@ from bob.application.proactivity import (
 )
 from bob.application.router import LLMRouter
 from bob.application.runtime import (
+    BOB_MESSAGE_REACTION,
     MESSAGE_RECEIVED,
     AgentRuntime,
     AsyncEventBus,
+    BobMessageReaction,
     MessageReceived,
     RetryPolicy,
     periodic,
@@ -96,6 +98,7 @@ from bob.application.usecases.heartbeat import (
     MoodDriftTick,
     ReflectTick,
 )
+from bob.application.usecases.perceive_reaction import PerceiveReaction
 from bob.application.usecases.plan_goal import LlmPlanner, PlanGoal
 from bob.application.usecases.pursue_goals import PursueGoalsTick
 from bob.application.usecases.reappraise_reflection import ReappraiseReflection
@@ -137,10 +140,12 @@ from bob.infrastructure.introspection.subprocess_introspector import (
     SubprocessRepoIntrospector,
 )
 from bob.infrastructure.llm import build_embedder, build_reranker, build_tier_providers
+from bob.infrastructure.llm.reaction_judge import LlmReactionJudge
 from bob.infrastructure.llm.response_judge import LlmResponseJudge
 from bob.infrastructure.persistence import (
     HybridMemoryRecall,
     KvAllowlistStore,
+    KvNotableReactionStore,
     RepoProactivitySources,
     SoulStore,
     SqliteConversationFloorStore,
@@ -157,7 +162,12 @@ from bob.infrastructure.persistence.coding_session_store import (
     SqliteCodingSessionStore,
 )
 from bob.infrastructure.telegram.coding_indicator import StatusPanel, TypingKeepalive
-from bob.infrastructure.telegram.gateway import MarkdownSendBot, RichMarkdownSender
+from bob.infrastructure.telegram.gateway import (
+    ALLOWED_UPDATES,
+    BobMessageFilter,
+    MarkdownSendBot,
+    RichMarkdownSender,
+)
 from bob.infrastructure.telegram.guppi import GUPPI_OUTAGE_TEXT
 from bob.infrastructure.telegram.multibot import (
     BotIdentity,
@@ -245,6 +255,11 @@ _DEDUP_BATCH_SIZE = 200
 # ``memory.surface_old.freq``. Small (anti-tic): a callback turn only occasionally
 # reaches for an OLD-but-relevant deep cut; the default recall stays unchanged.
 _SURFACE_OLD_FREQ = 0.15
+
+# Default being-received acknowledgment frequency (BOB-050 .3); overridable via
+# ``dialogue.acknowledge_reaction_freq``. Small (not needy): Bob only OCCASIONALLY mentions
+# that someone warmly reacted to one of his messages, and only to the person who reacted.
+_ACKNOWLEDGE_REACTION_FREQ = 0.15
 
 # Default good-exchange mood lift (BOB-014 .2a); overridable via ``engagement.mood_lift``.
 # Small: a genuinely interesting, well-engaged exchange brightens Bob a touch — it
@@ -576,6 +591,7 @@ def build_application(
         rule_store=rule_store,
         pursuit_store=proactivity_store,
         coding_assistant=coding_assistant,
+        bob_reaction_filter=_BobReactionFilter(memory_repo),
     )
     # обида seam (BOB-014 .2b): GUPPI announces a fresh sulk entry once ("Боб обижен …")
     # — the внеличностный systemic voice. The tracker loads/evolves/recovers обида and
@@ -601,6 +617,13 @@ def build_application(
         chat_id=_int(_section(merged, "telegram"), "chat_id", 0),
         clock=resolved_clock,
     )
+
+    # Being-received store (BOB-050): a SINGLE kv-backed record shared by BOTH sides of
+    # the feature — the perceiving use-case (.2) WRITES a notable reaction here and the
+    # acknowledgment hint (.3) in HandleMessage READS + consumes it. They MUST share one
+    # instance, otherwise a written reaction is invisible to the hint and Bob can never
+    # mention being received. Built once and injected into both.
+    notable_reaction_store = KvNotableReactionStore(memory_repo)
 
     handle_message = HandleMessage(
         router=router,
@@ -715,6 +738,14 @@ def build_application(
         # context so Bob notices a pause humanly (owner and guest alike). ``0`` disables
         # it. Tunable via dialogue.absence_hint_hours.
         absence_hint_hours=_build_absence_hint_hours(merged),
+        # Being-received acknowledgment seam (BOB-050 .3): Bob OCCASIONALLY mentions a
+        # notable recent reaction to one of his messages — at a small seeded frequency,
+        # only to the person who reacted (per-person), as ONE light HINT he weaves in
+        # himself. The store is the SAME kv-backed record the perceiving use-case writes;
+        # the hint reads + consumes it so Bob never repeats it. Decorative: a store
+        # failure drops silently. Tunable via dialogue.acknowledge_reaction_freq.
+        notable_reaction=notable_reaction_store,
+        acknowledge_reaction_freq=_build_acknowledge_reaction_freq(merged),
         # Anti-repeat window (BOB-026 .1): the fresh reply is compared against a WINDOW
         # of Bob's recent replies (not just the last), verbatim OR near-verbatim, so a
         # repeat "через ход" (отказ → another turn → the SAME отказ) regenerates once.
@@ -780,6 +811,27 @@ def build_application(
         ),
     )
     event_bus.subscribe(MESSAGE_RECEIVED, _as_handler(handle_message))
+
+    # Reaction perception (BOB-050 .2): a reaction on one of Bob's OWN messages is felt
+    # — it moves mood (BOB-033 band), warmth toward the reactor (BOB-014), a per-person
+    # memory (BOB-045) and the shared being-received note (.3). The Tier-0 judge reads
+    # what the reaction MEANS (never an emoji table); the reactor is perceived off the
+    # shared Authorizer (BOB-019). It writes the SAME ``notable_reaction_store`` the .3
+    # hint reads, so a notable reaction is later acknowledged aloud. 🔴 Decorative: the
+    # use-case catches every failure (judge/lookup/store) and drops it, so a published
+    # reaction never breaks Bob's normal replies.
+    perceive_reaction = PerceiveReaction(
+        judge=LlmReactionJudge(router=router),
+        lookup=memory_repo,
+        resolver=ReactorPerception(authorizer=authorizer),
+        state=personality,
+        relationships=relationship_store,
+        memory=memory_repo,
+        notable=notable_reaction_store,
+        clock=resolved_clock,
+        disposition=_disposition_from(soul_store.read_json("disposition")),
+    )
+    event_bus.subscribe(BOB_MESSAGE_REACTION, _as_reaction_handler(perceive_reaction))
 
     # The persona language pins self-generated text (proactive/monologue/reflection)
     # so Bob does not drift to English when there is no user message to mirror (BOB-012).
@@ -991,6 +1043,21 @@ def _as_handler(handle_message: HandleMessage) -> EventHandler:
     return handler
 
 
+def _as_reaction_handler(perceive_reaction: PerceiveReaction) -> EventHandler:
+    """Adapt :meth:`PerceiveReaction.perceive` to the EventBus handler signature.
+
+    Only a :class:`BobMessageReaction` is routed in; the use-case is decorative and
+    already swallows its own failures, so a published reaction is felt without ever
+    being able to break the bus or Bob's normal replies.
+    """
+
+    async def handler(event: DomainEvent) -> None:
+        if isinstance(event, BobMessageReaction):
+            await perceive_reaction.perceive(event)
+
+    return handler
+
+
 def _build_multibot(
     config: Mapping[str, object],
     *,
@@ -1005,6 +1072,7 @@ def _build_multibot(
     pursuit_store: SqliteProactivityStore | None = None,
     rule_store: SqliteSelfImprovementStore | None = None,
     coding_assistant: CodingAssistant | None = None,
+    bob_reaction_filter: BobMessageFilter | None = None,
 ) -> MultiBotGateway:
     """Build the two-bot gateway: Bob (his topic) + GUPPI (General), one poller.
 
@@ -1044,6 +1112,7 @@ def _build_multibot(
         pursuit_store=pursuit_store,
         rule_store=rule_store,
         coding_assistant=coding_assistant,
+        bob_reaction_filter=bob_reaction_filter,
     )
 
 
@@ -1694,6 +1763,18 @@ def _build_absence_hint_hours(config: Mapping[str, object]) -> float:
     return hours
 
 
+def _build_acknowledge_reaction_freq(config: Mapping[str, object]) -> float:
+    """Resolve the BOB-050 .3 being-received acknowledgment frequency from config.
+
+    Reads ``dialogue.acknowledge_reaction_freq`` — how often Bob OCCASIONALLY mentions a
+    notable recent reaction to one of his messages (only to the person who reacted). Falls
+    back to the small not-needy default when absent. HandleMessage validates the value is a
+    [0, 1] probability; ``0`` disables the acknowledgment.
+    """
+    section = _section(config, "dialogue")
+    return _float_or(section, "acknowledge_reaction_freq", _ACKNOWLEDGE_REACTION_FREQ)
+
+
 def _build_repeat_thresholds(config: Mapping[str, object]) -> RepeatThresholds:
     """Build the BOB-026 .1 anti-repeat window thresholds from ``repeat.*``.
 
@@ -2299,6 +2380,26 @@ def _float_or(section: Mapping[str, object], key: str, default: float) -> float:
     return default
 
 
+# --- Reaction filter ----------------------------------------------------------
+
+
+class _BobReactionFilter:
+    """Tell whether a reacted-to ``message_id`` is one of Bob's own messages (BOB-050).
+
+    Realises :class:`~bob.infrastructure.telegram.gateway.BobMessageFilter` over the
+    episodic store: a reaction is published only when the ``message_id`` it was placed
+    on matches an episode that recorded it as Bob's outgoing reply. No match (an old /
+    non-Bob message) → the reaction is dropped gracefully.
+    """
+
+    def __init__(self, repo: SqliteMemoryRepo) -> None:
+        self._repo = repo
+
+    async def is_bob_message(self, message_id: int) -> bool:
+        episode = await self._repo.episode_by_bob_message_id(message_id)
+        return episode is not None
+
+
 # --- aiogram bot adapter ------------------------------------------------------
 
 
@@ -2324,12 +2425,18 @@ class _UpdateView:
     aiogram nests chat/sender under ``message``; the gateway reads them as the
     flat ``effective_chat`` / ``effective_user`` accessors, so this view lifts them
     up while leaving the underlying aiogram message as the message.
+
+    A reaction update (BOB-050) carries no ``message``; the raw aiogram
+    ``message_reaction`` / ``message_reaction_count`` payloads are passed through
+    unchanged for the gateway's reaction route to read structurally.
     """
 
     update_id: int
     message: MessageLike | None
     effective_chat: _ChatView | None
     effective_user: _UserView | None
+    message_reaction: object | None = None
+    message_reaction_count: object | None = None
 
 
 class _AiogramBotAdapter:
@@ -2353,7 +2460,12 @@ class _AiogramBotAdapter:
     async def get_updates(
         self, *, offset: int, timeout: int
     ) -> Sequence[UpdateLike]:
-        updates = await self._bot.get_updates(offset=offset, timeout=timeout)  # type: ignore[attr-defined]
+        # BOB-050: request reaction updates explicitly — ``message_reaction`` /
+        # ``message_reaction_count`` are NOT in Telegram's default allowed set, so
+        # without this they are never delivered. ``message`` keeps ordinary intake.
+        updates = await self._bot.get_updates(  # type: ignore[attr-defined]
+            offset=offset, timeout=timeout, allowed_updates=list(ALLOWED_UPDATES)
+        )
         return [_to_update_view(update) for update in updates]
 
     async def send_message(
@@ -2454,6 +2566,8 @@ def _to_update_view(update: object) -> _UpdateView:
         effective_user=(
             _UserView(id=user.id, full_name=user.full_name) if user is not None else None
         ),
+        message_reaction=getattr(update, "message_reaction", None),
+        message_reaction_count=getattr(update, "message_reaction_count", None),
     )
 
 

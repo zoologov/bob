@@ -58,6 +58,7 @@ class TaskType(Enum):
     DETECT_PATTERNS = "detect_patterns"
     CODING_INTENT = "coding_intent"
     RESPONSE_JUDGE = "response_judge"
+    REACTION_JUDGE = "reaction_judge"
 
 
 # Task -> preferred tier. Quality-critical, user-facing work goes to Tier 1
@@ -81,6 +82,9 @@ _PREFERRED_TIER: dict[TaskType, int] = {
     # Response judgment (BOB-049) is a cheap per-inbound reply/react/ignore decision
     # run on every message — Tier 0 for cost, like the other classifiers.
     TaskType.RESPONSE_JUDGE: _TIER_LOCAL,
+    # Reaction judgment (BOB-050) reads what a reaction on Bob's OWN message means —
+    # a cheap, privacy-adjacent local read, like the other personality classifiers.
+    TaskType.REACTION_JUDGE: _TIER_LOCAL,
 }
 
 

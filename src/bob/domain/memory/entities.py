@@ -40,7 +40,9 @@ class EpisodicEvent:
     captures Bob's mood at the moment, and ``tags`` are free-form labels for
     later recall. ``sender_id`` attributes the turn to the interlocutor it is with
     (BOB-045 per-person memory) — ``None`` for a turn with no sender (a tick, a
-    digest, a legacy row).
+    digest, a legacy row). ``bob_message_id`` is the Telegram message_id of Bob's
+    own outgoing reply for this turn (BOB-050), so a later reaction can be linked
+    back to what Bob said; ``None`` when Bob sent no message.
     """
 
     ts: datetime
@@ -49,6 +51,7 @@ class EpisodicEvent:
     mood_snapshot: str | None = None
     tags: tuple[str, ...] = field(default_factory=tuple)
     sender_id: int | None = None
+    bob_message_id: int | None = None
 
     def __post_init__(self) -> None:
         _require_aware(self.ts)

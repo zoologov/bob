@@ -20,10 +20,18 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Final
 
-__all__ = ["MESSAGE_RECEIVED", "MessageReceived"]
+__all__ = [
+    "BOB_MESSAGE_REACTION",
+    "MESSAGE_RECEIVED",
+    "BobMessageReaction",
+    "MessageReceived",
+]
 
 # Stable event-type name used for EventBus subscription routing.
 MESSAGE_RECEIVED: Final = "telegram.message_received"
+
+# Stable event-type name for a reaction on one of Bob's own messages (BOB-050).
+BOB_MESSAGE_REACTION: Final = "telegram.bob_message_reaction"
 
 
 @dataclass(frozen=True, slots=True)
@@ -56,3 +64,37 @@ class MessageReceived:
     def name(self) -> str:
         """Stable event type name (satisfies the ``DomainEvent`` port)."""
         return MESSAGE_RECEIVED
+
+
+@dataclass(frozen=True, slots=True)
+class BobMessageReaction:
+    """A reaction added to / removed from one of **Bob's own** messages (BOB-050).
+
+    The Telegram gateway translates a ``message_reaction`` update into this event
+    after confirming the reacted-to ``message_id`` is one of Bob's recorded
+    outgoing messages, and publishes it on the :class:`EventBus`; a use-case (the
+    BOB-050 .2 ``PerceiveReaction``) consumes it to read what Bob said and judge
+    what the reaction means.
+
+    ``emoji_added`` / ``emoji_removed`` are derived from the
+    ``MessageReactionUpdated`` ``old_reaction → new_reaction`` diff: which standard
+    emoji this reactor newly placed, and which they took away. ``reactor_sender_id``
+    / ``reactor_name`` attribute the reaction to who (BOB-019 social identity).
+
+    **Defensive anonymous case:** a private group may deliver only an aggregate
+    ``message_reaction_count`` update with no user — then ``reactor_sender_id`` and
+    ``reactor_name`` are ``None`` (a "someone reacted" signal without who), and the
+    emoji currently on the message arrive as ``emoji_added`` (no diff is available).
+    """
+
+    chat_id: int
+    message_id: int
+    emoji_added: tuple[str, ...] = ()
+    emoji_removed: tuple[str, ...] = ()
+    reactor_sender_id: int | None = None
+    reactor_name: str | None = None
+
+    @property
+    def name(self) -> str:
+        """Stable event type name (satisfies the ``DomainEvent`` port)."""
+        return BOB_MESSAGE_REACTION
