@@ -110,6 +110,9 @@ class _FakeNotable:
     async def latest(self) -> NotableReaction | None:
         return self.recorded[-1] if self.recorded else None
 
+    async def clear(self) -> None:
+        self.recorded.clear()
+
 
 class _FixedClock:
     def now(self) -> datetime:

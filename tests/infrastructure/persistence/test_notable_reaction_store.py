@@ -11,10 +11,15 @@ no-op so a malformed note never breaks the decorative perceiving path).
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 
 from bob.domain.personality.reaction_effect import NotableReaction
 from bob.infrastructure.persistence.notable_reaction_store import KvNotableReactionStore
+
+if TYPE_CHECKING:
+    import pytest
 
 
 class _FakeKv:
@@ -79,3 +84,18 @@ async def test_unreadable_row_yields_none() -> None:
     kv.data["notable_reaction.latest"] = "{ not json"
     store = KvNotableReactionStore(kv)
     assert await store.latest() is None
+
+
+async def test_clear_consumes_the_record(caplog: pytest.LogCaptureFixture) -> None:
+    # BOB-050 .3: once the rare-aloud hint surfaces a reaction it is CLEARED so Bob
+    # never acknowledges the same moment twice. A subsequent latest() is None — and
+    # quietly so (no "unreadable note" warning on the tombstone).
+    kv = _FakeKv()
+    store = KvNotableReactionStore(kv)
+    await store.record(_note())
+
+    with caplog.at_level(logging.WARNING):
+        await store.clear()
+        assert await store.latest() is None
+
+    assert "unreadable" not in caplog.text

@@ -141,6 +141,7 @@ from bob.infrastructure.llm.response_judge import LlmResponseJudge
 from bob.infrastructure.persistence import (
     HybridMemoryRecall,
     KvAllowlistStore,
+    KvNotableReactionStore,
     RepoProactivitySources,
     SoulStore,
     SqliteConversationFloorStore,
@@ -250,6 +251,11 @@ _DEDUP_BATCH_SIZE = 200
 # ``memory.surface_old.freq``. Small (anti-tic): a callback turn only occasionally
 # reaches for an OLD-but-relevant deep cut; the default recall stays unchanged.
 _SURFACE_OLD_FREQ = 0.15
+
+# Default being-received acknowledgment frequency (BOB-050 .3); overridable via
+# ``dialogue.acknowledge_reaction_freq``. Small (not needy): Bob only OCCASIONALLY mentions
+# that someone warmly reacted to one of his messages, and only to the person who reacted.
+_ACKNOWLEDGE_REACTION_FREQ = 0.15
 
 # Default good-exchange mood lift (BOB-014 .2a); overridable via ``engagement.mood_lift``.
 # Small: a genuinely interesting, well-engaged exchange brightens Bob a touch — it
@@ -721,6 +727,14 @@ def build_application(
         # context so Bob notices a pause humanly (owner and guest alike). ``0`` disables
         # it. Tunable via dialogue.absence_hint_hours.
         absence_hint_hours=_build_absence_hint_hours(merged),
+        # Being-received acknowledgment seam (BOB-050 .3): Bob OCCASIONALLY mentions a
+        # notable recent reaction to one of his messages — at a small seeded frequency,
+        # only to the person who reacted (per-person), as ONE light HINT he weaves in
+        # himself. The store is the SAME kv-backed record the perceiving use-case writes;
+        # the hint reads + consumes it so Bob never repeats it. Decorative: a store
+        # failure drops silently. Tunable via dialogue.acknowledge_reaction_freq.
+        notable_reaction=KvNotableReactionStore(memory_repo),
+        acknowledge_reaction_freq=_build_acknowledge_reaction_freq(merged),
         # Anti-repeat window (BOB-026 .1): the fresh reply is compared against a WINDOW
         # of Bob's recent replies (not just the last), verbatim OR near-verbatim, so a
         # repeat "через ход" (отказ → another turn → the SAME отказ) regenerates once.
@@ -1700,6 +1714,18 @@ def _build_absence_hint_hours(config: Mapping[str, object]) -> float:
         msg = f"dialogue.absence_hint_hours must be non-negative, got {hours}"
         raise ValueError(msg)
     return hours
+
+
+def _build_acknowledge_reaction_freq(config: Mapping[str, object]) -> float:
+    """Resolve the BOB-050 .3 being-received acknowledgment frequency from config.
+
+    Reads ``dialogue.acknowledge_reaction_freq`` — how often Bob OCCASIONALLY mentions a
+    notable recent reaction to one of his messages (only to the person who reacted). Falls
+    back to the small not-needy default when absent. HandleMessage validates the value is a
+    [0, 1] probability; ``0`` disables the acknowledgment.
+    """
+    section = _section(config, "dialogue")
+    return _float_or(section, "acknowledge_reaction_freq", _ACKNOWLEDGE_REACTION_FREQ)
 
 
 def _build_repeat_thresholds(config: Mapping[str, object]) -> RepeatThresholds:

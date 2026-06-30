@@ -68,6 +68,7 @@ from bob.domain.personality.reaction import (
     STANDARD_REACTION_EMOJI,
     reaction_emoji_for,
 )
+from bob.domain.personality.reaction_effect import NotableReaction
 from bob.domain.personality.relationship import Relationship
 from bob.domain.personality.response_choice import (
     ResponseChoice,
@@ -518,6 +519,8 @@ def _build(
     length_guard_max_chars: int = 280,
     recent_turns: int = 14,
     absence_hint_hours: float = 8.0,
+    notable_reaction: _FakeNotableStore | None = None,
+    acknowledge_reaction_freq: float = 0.0,
     repeat_thresholds: RepeatThresholds | None = None,
     floor_store: _FakeFloorStore | None = None,
     floor_config: FloorConfig | None = None,
@@ -589,6 +592,8 @@ def _build(
         length_guard_max_chars=length_guard_max_chars,
         recent_turns=recent_turns,
         absence_hint_hours=absence_hint_hours,
+        notable_reaction=notable_reaction,
+        acknowledge_reaction_freq=acknowledge_reaction_freq,
         repeat_thresholds=repeat_thresholds,
         floor_store=floor_store,
         floor_config=floor_config,
@@ -1275,6 +1280,182 @@ async def test_negative_absence_hint_hours_is_rejected_at_construction() -> None
     # at construction (not a silent disable), mirroring the recent_turns guard.
     with pytest.raises(ValueError, match="absence_hint_hours"):
         _build(reply="hi", absence_hint_hours=-1.0)
+
+
+# --- BOB-050 .3: low-frequency being-received acknowledgment hint --------------
+
+
+class _FakeNotableStore:
+    """In-memory NotableReactionStore stand-in (latest/clear/record), or a raiser."""
+
+    def __init__(
+        self, note: NotableReaction | None = None, *, raises: bool = False
+    ) -> None:
+        self._note = note
+        self._raises = raises
+        self.cleared = False
+
+    async def record(self, note: NotableReaction) -> None:
+        self._note = note
+
+    async def latest(self) -> NotableReaction | None:
+        if self._raises:
+            msg = "store read failed"
+            raise RuntimeError(msg)
+        return self._note
+
+    async def clear(self) -> None:
+        self.cleared = True
+        self._note = None
+
+
+def _notable(*, sender_id: int | None) -> NotableReaction:
+    return NotableReaction(
+        sender_id=sender_id,
+        reactor_name="Norman",
+        emoji="❤️",
+        bob_excerpt="кофе по утрам — это ритуал",
+        interpretation="ему откликнулось",
+        at=_moment(),
+    )
+
+
+async def test_lucky_roll_surfaces_one_acknowledgment_hint() -> None:
+    # BOB-050 .3: a genuinely notable recent reaction from THIS person + a lucky low-freq
+    # roll (freq 1.0 ⇒ always fires) folds ONE light acknowledgment HINT into the compose
+    # context — Bob may weave it in himself, it is never a forced/scripted line.
+    store = _FakeNotableStore(_notable(sender_id=_GUEST_SENDER_ID))
+    handler, _bot, _repo, tier1 = _build(
+        reply="hi",
+        perceive_sender=_guest_with_id(_GUEST_SENDER_ID),
+        notable_reaction=store,
+        acknowledge_reaction_freq=1.0,
+    )
+
+    await handler.handle(_message("расскажи подробно про кофе"))
+
+    text = tier1.all_text
+    assert "Замечено:" in text
+    assert "кофе по утрам — это ритуал" in text
+    assert "не обязательно" in text  # a HINT, not a directive
+    assert store.cleared is True  # consumed so Bob does not repeat it
+
+
+async def test_unlucky_roll_adds_no_hint_and_keeps_the_marker() -> None:
+    # An unlucky roll (freq 0.0 ⇒ never fires) leaves the context unchanged AND keeps the
+    # marker, so a later turn may still surface it — not needy, but not lost either.
+    store = _FakeNotableStore(_notable(sender_id=_GUEST_SENDER_ID))
+    handler, _bot, _repo, tier1 = _build(
+        reply="hi",
+        perceive_sender=_guest_with_id(_GUEST_SENDER_ID),
+        notable_reaction=store,
+        acknowledge_reaction_freq=0.0,
+    )
+
+    await handler.handle(_message("расскажи подробно про кофе"))
+
+    assert "Замечено:" not in tier1.all_text
+    assert store.cleared is False
+
+
+async def test_no_notable_reaction_adds_no_hint() -> None:
+    # No recorded reaction ⇒ no hint even on a lucky roll (a clean no-op, no crash).
+    store = _FakeNotableStore(None)
+    handler, _bot, _repo, tier1 = _build(
+        reply="hi",
+        perceive_sender=_guest_with_id(_GUEST_SENDER_ID),
+        notable_reaction=store,
+        acknowledge_reaction_freq=1.0,
+    )
+
+    await handler.handle(_message("расскажи подробно про кофе"))
+
+    assert "Замечено:" not in tier1.all_text
+
+
+async def test_unwired_store_leaves_the_turn_unchanged() -> None:
+    # No store wired (the default) ⇒ the acknowledgment path is inert, behaviour as before.
+    handler, _bot, _repo, tier1 = _build(
+        reply="hi",
+        perceive_sender=_guest_with_id(_GUEST_SENDER_ID),
+        acknowledge_reaction_freq=1.0,
+    )
+
+    await handler.handle(_message("расскажи подробно про кофе"))
+
+    assert "Замечено:" not in tier1.all_text
+
+
+async def test_a_guests_reaction_is_not_woven_into_the_owners_context() -> None:
+    # 🔴 Authz (BOB-019) / per-person: a notable reaction by the GUEST must NOT surface
+    # to the OWNER — the hint is per-person, keyed on the reactor's sender_id.
+    store = _FakeNotableStore(_notable(sender_id=_GUEST_SENDER_ID))
+    handler, _bot, _repo, tier1 = _build(
+        reply="hi",
+        perceive_sender=_owner_with_id(_OWNER_SENDER_ID),
+        notable_reaction=store,
+        acknowledge_reaction_freq=1.0,
+    )
+
+    await handler.handle(_message("объясни подробно про кофе"))
+
+    assert "Замечено:" not in tier1.all_text
+    assert store.cleared is False  # someone else's marker is left untouched
+
+
+async def test_owners_reaction_is_not_woven_into_a_guests_context() -> None:
+    # 🔴 The mirror direction: the OWNER's notable reaction must NOT surface to a GUEST.
+    store = _FakeNotableStore(_notable(sender_id=_OWNER_SENDER_ID))
+    handler, _bot, _repo, tier1 = _build(
+        reply="hi",
+        perceive_sender=_guest_with_id(_GUEST_SENDER_ID),
+        notable_reaction=store,
+        acknowledge_reaction_freq=1.0,
+    )
+
+    await handler.handle(_message("расскажи подробно про кофе"))
+
+    assert "Замечено:" not in tier1.all_text
+    assert store.cleared is False
+
+
+async def test_a_failing_store_read_is_dropped_silently() -> None:
+    # 🔴 Decorative: a store failure in the hint path is caught and DROPPED — the reply
+    # is still composed, never a crash, never a GUPPI outage notice.
+    store = _FakeNotableStore(raises=True)
+    handler, bot, _repo, tier1 = _build(
+        reply="полный ответ",
+        perceive_sender=_guest_with_id(_GUEST_SENDER_ID),
+        notable_reaction=store,
+        acknowledge_reaction_freq=1.0,
+    )
+
+    await handler.handle(_message("расскажи подробно про кофе"))
+
+    assert "Замечено:" not in tier1.all_text
+    assert bot.sent  # the reply still shipped
+
+
+async def test_anonymous_reaction_is_never_woven_to_a_person() -> None:
+    # An anonymous reaction (no reactor id) is never surfaced to a specific person —
+    # there is no "who" to acknowledge it to.
+    store = _FakeNotableStore(_notable(sender_id=None))
+    handler, _bot, _repo, tier1 = _build(
+        reply="hi",
+        perceive_sender=_guest_with_id(_GUEST_SENDER_ID),
+        notable_reaction=store,
+        acknowledge_reaction_freq=1.0,
+    )
+
+    await handler.handle(_message("расскажи подробно про кофе"))
+
+    assert "Замечено:" not in tier1.all_text
+
+
+def test_out_of_range_acknowledge_freq_is_rejected_at_construction() -> None:
+    # Guardrail: the frequency is a probability — out-of-range is a misconfiguration.
+    with pytest.raises(ValueError, match="acknowledge_reaction_freq"):
+        _build(reply="hi", acknowledge_reaction_freq=1.5)
 
 
 async def test_durable_fact_is_extracted_into_semantic_memory() -> None:

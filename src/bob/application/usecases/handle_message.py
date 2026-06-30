@@ -115,6 +115,7 @@ from bob.domain.personality.negotiation import (
 )
 from bob.domain.personality.profanity import is_directed_hostility
 from bob.domain.personality.reaction import reaction_emoji_for
+from bob.domain.personality.reaction_aloud import acknowledgment_hint
 from bob.domain.personality.relationship import compromise_bias
 from bob.domain.personality.response_choice import ResponseIntent
 from bob.domain.personality.self_improvement import RuleModulators, build_modulators
@@ -168,6 +169,7 @@ if TYPE_CHECKING:
         LLMMessage,
         MemoryRecall,
         MessageReactor,
+        NotableReactionStore,
         Recalled,
         ReflectionReader,
         ToolCallingProvider,
@@ -236,6 +238,13 @@ _DEFAULT_RECENT_TURNS = 14
 # humanly (owner and guest alike) — a hint for the reply tier, never a scripted phrase.
 # ``0`` disables it. Tunable per persona via ``dialogue.absence_hint_hours``.
 _DEFAULT_ABSENCE_HINT_HOURS = 8.0
+
+# Default LOW chance Bob acknowledges a notable recent reaction to his message (BOB-050
+# .3). When someone reacted warmly to one of his messages, Bob MAY — at this small,
+# seeded frequency, and only to the person who reacted — fold one light "вижу, тебе зашло"
+# HINT into the compose context. Deliberately rare (acknowledging every time would read as
+# needy); ``0`` disables it. Tunable per persona via ``dialogue.acknowledge_reaction_freq``.
+_DEFAULT_ACKNOWLEDGE_REACTION_FREQ = 0.15
 
 # Default small mood-valence lift a good, interesting exchange earns (BOB-014 .2a
 # feedback loop). Mirrors the engagement domain default; tunable via emotion.* config.
@@ -728,6 +737,8 @@ class HandleMessage:
         length_guard_max_chars: int = _DEFAULT_LENGTH_GUARD_MAX_CHARS,
         recent_turns: int = _DEFAULT_RECENT_TURNS,
         absence_hint_hours: float = _DEFAULT_ABSENCE_HINT_HOURS,
+        notable_reaction: NotableReactionStore | None = None,
+        acknowledge_reaction_freq: float = _DEFAULT_ACKNOWLEDGE_REACTION_FREQ,
         repeat_thresholds: RepeatThresholds | None = None,
         floor_store: ConversationFloorStore | None = None,
         floor_config: FloorConfig | None = None,
@@ -934,6 +945,20 @@ class HandleMessage:
             msg = f"absence_hint_hours must be non-negative, got {absence_hint_hours}"
             raise ValueError(msg)
         self._absence_hint_hours = absence_hint_hours
+        # Being-received acknowledgment seam (BOB-050 .3): when wired, Bob OCCASIONALLY
+        # acknowledges a notable recent reaction to one of his messages — at this small
+        # seeded frequency, only to the person who reacted (per-person), as ONE light HINT
+        # he weaves in himself. Decorative: a store failure is dropped silently. The
+        # frequency is a probability; out-of-range is a misconfiguration. Unwired (the
+        # default) the path is inert and the turn behaves exactly as before.
+        if not _MIN_FREQ <= acknowledge_reaction_freq <= _MAX_FREQ:
+            msg = (
+                f"acknowledge_reaction_freq must be within [{_MIN_FREQ}, {_MAX_FREQ}], "
+                f"got {acknowledge_reaction_freq}"
+            )
+            raise ValueError(msg)
+        self._notable_reaction = notable_reaction
+        self._acknowledge_reaction_freq = acknowledge_reaction_freq
         # Anti-repeat window (BOB-026 .1): the fresh reply is checked against a WINDOW
         # of Bob's recent replies (not just the last), verbatim OR near-verbatim, so a
         # repeat "через ход" no longer slips through. Conservative defaults; tunable
@@ -2183,6 +2208,34 @@ class HandleMessage:
             last_seen, self._clock.now(), threshold_hours=self._absence_hint_hours
         )
 
+    async def _acknowledgment_for(self, interlocutor: Interlocutor | None) -> str:
+        """A RARE being-received acknowledgment hint for THIS person, or "" (BOB-050 .3).
+
+        When someone reacted warmly to one of Bob's recent messages, Bob may — at the
+        small seeded ``acknowledge_reaction_freq`` — fold ONE light HINT into the compose
+        context so he can naturally mention being received (he weaves it himself; never a
+        scripted phrase). Returns ``""`` — add no line, behave as before — unless ALL hold:
+        a store is wired, a notable reaction is on record, its reactor is THIS interlocutor
+        (per-person / BOB-019 authz: a guest's reaction never surfaces to the owner and
+        vice-versa; an anonymous reaction has no person to acknowledge), and the seeded roll
+        lands inside the low frequency. The marker is read BEFORE the roll, so an unlucky
+        turn spends no draw and LEAVES the marker for a later turn; on a lucky turn it is
+        CLEARED (consumed) so Bob acknowledges the moment at most once — never needy. The
+        whole call is wrapped by :meth:`_safe_addon` at the call site, so a store failure is
+        dropped silently (decorative, never an outage notice).
+        """
+        if self._notable_reaction is None or interlocutor is None:
+            return ""
+        note = await self._notable_reaction.latest()
+        if note is None or note.sender_id is None:
+            return ""
+        if note.sender_id != interlocutor.sender_id:
+            return ""
+        if self._rng.random() >= self._acknowledge_reaction_freq:
+            return ""
+        await self._notable_reaction.clear()
+        return acknowledgment_hint(note)
+
     async def _others_present(self, event: MessageReceived) -> bool:
         """Whether the recent thread has senders OTHER than the current one (BOB-023).
 
@@ -2244,6 +2297,15 @@ class HandleMessage:
         context = _assemble_shareable_context(
             soul, text, recalled, history, absence=self._absence_for(history)
         )
+        # Being-received acknowledgment (BOB-050 .3): a RARE, per-person hint that someone
+        # warmly reacted to one of Bob's messages — applies to ANY interlocutor (owner and
+        # guest alike, since it is about Bob's OWN message, not owner-private material) and
+        # is wrapped so a store failure drops silently (decorative, never the outage notice).
+        acknowledgment = await self._safe_addon(
+            self._acknowledgment_for(interlocutor), name="reaction acknowledgment"
+        )
+        if acknowledgment:
+            context = f"{context}\n{acknowledgment}"
         if not is_guest:
             # Grounded add-ons surface Bob's PRIVATE inner life / shared past —
             # withheld from a stranger (audience redaction).

@@ -30,6 +30,10 @@ logger = logging.getLogger(__name__)
 # The single kv key holding the most-recent being-received reaction.
 _KEY = "notable_reaction.latest"
 
+# Tombstone written by :meth:`KvNotableReactionStore.clear` — an empty value reads back
+# as "nothing on record" WITHOUT tripping the unreadable-note warning (a clean consume).
+_CLEARED = ""
+
 
 class _KvStore(Protocol):
     """The key/value seam the store needs (realised by SqliteMemoryRepo)."""
@@ -52,9 +56,18 @@ class KvNotableReactionStore:
     async def latest(self) -> NotableReaction | None:
         """Return the most recent recorded reaction, or ``None`` if absent/unreadable."""
         raw = await self._repo.kv_get(_KEY)
-        if raw is None:
+        if not raw:
             return None
         return _decode(raw)
+
+    async def clear(self) -> None:
+        """Consume the recorded reaction (BOB-050 .3) so it is acknowledged at most once.
+
+        Writes an empty tombstone so a later :meth:`latest` cleanly reads ``None`` —
+        the rare-aloud hint surfaces a moment, then clears it so Bob never repeats the
+        same acknowledgment on a following turn.
+        """
+        await self._repo.kv_set(_KEY, _CLEARED)
 
 
 def _encode(note: NotableReaction) -> str:

@@ -725,6 +725,10 @@ class NotableReactionStore(Protocol):
         """Return the most recent recorded reaction, or ``None`` if there is none."""
         ...
 
+    async def clear(self) -> None:
+        """Consume the recorded reaction so the rare-aloud hint surfaces it at most once."""
+        ...
+
 
 @runtime_checkable
 class ConversationFloorStore(Protocol):
