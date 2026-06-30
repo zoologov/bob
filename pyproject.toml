@@ -155,6 +155,20 @@ ignore = [
     "RUF002",
     "RUF003",
 ]
+# The permission domain + judge + store (BOB-052 .1) carries Russian persona/policy
+# docstrings, comments and grant/deny/authorize keyword literals whose Cyrillic
+# look-alikes are intentional — RUF001/RUF002/RUF003 here.
+"src/bob/domain/permission/__init__.py" = ["RUF001", "RUF002", "RUF003"]
+"src/bob/domain/permission/state.py" = ["RUF001", "RUF002", "RUF003"]
+"src/bob/domain/permission/entities.py" = ["RUF001", "RUF002", "RUF003"]
+"src/bob/domain/permission/privilege.py" = ["RUF001", "RUF002", "RUF003"]
+"src/bob/domain/permission/intent.py" = ["RUF001", "RUF002", "RUF003"]
+"src/bob/infrastructure/llm/privilege_judge.py" = ["RUF001", "RUF002", "RUF003"]
+"src/bob/infrastructure/persistence/permission_request_store.py" = [
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
 # The coding work-indicator adapters (BOB-046 .2): Russian docstrings whose Cyrillic
 # look-alikes are intentional — RUF001/RUF002/RUF003 do not apply to these.
 "src/bob/infrastructure/telegram/coding_indicator.py" = ["RUF001", "RUF002", "RUF003"]
@@ -358,6 +372,56 @@ ignore = [
     "RUF003",
 ]
 "tests/infrastructure/llm/test_response_judge.py" = [
+    "S101",
+    "ARG001",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+# Permission seam tests (BOB-052 .1) carry Russian request/thread/keyword literals
+# whose Cyrillic look-alikes are intentional (→ RUF001/RUF002/RUF003).
+"tests/domain/permission/test_entities.py" = [
+    "S101",
+    "ARG001",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+"tests/domain/permission/test_state.py" = [
+    "S101",
+    "ARG001",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+"tests/domain/permission/test_privilege.py" = [
+    "S101",
+    "ARG001",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+"tests/domain/permission/test_intent.py" = [
+    "S101",
+    "ARG001",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+"tests/infrastructure/llm/test_privilege_judge.py" = [
+    "S101",
+    "ARG001",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+"tests/infrastructure/persistence/test_permission_request_store.py" = [
     "S101",
     "ARG001",
     "PLR2004",

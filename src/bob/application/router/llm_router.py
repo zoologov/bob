@@ -59,6 +59,7 @@ class TaskType(Enum):
     CODING_INTENT = "coding_intent"
     RESPONSE_JUDGE = "response_judge"
     REACTION_JUDGE = "reaction_judge"
+    PRIVILEGE_JUDGE = "privilege_judge"
 
 
 # Task -> preferred tier. Quality-critical, user-facing work goes to Tier 1
@@ -85,6 +86,10 @@ _PREFERRED_TIER: dict[TaskType, int] = {
     # Reaction judgment (BOB-050) reads what a reaction on Bob's OWN message means —
     # a cheap, privacy-adjacent local read, like the other personality classifiers.
     TaskType.REACTION_JUDGE: _TIER_LOCAL,
+    # Privilege judgment (BOB-052) decides whether a not-yet-authorised person's
+    # request needs owner permission — a cheap, privacy-sensitive local read, like
+    # the other classifiers.
+    TaskType.PRIVILEGE_JUDGE: _TIER_LOCAL,
 }
 
 
