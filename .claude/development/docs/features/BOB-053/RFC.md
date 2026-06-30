@@ -68,17 +68,20 @@ dispatch). Преамбула манифеста (GUPPI исполняет на�
 ## Провайдер поиска (infrastructure)
 
 `infrastructure/llm/web_search_qwen.py` — `QwenWebSearchProvider` реализует `WebSearchProvider`. 🔴
-**Отдельный нативный DashScope-клиент**, НЕ `OpenAICompatProvider`:
+**Отдельный клиент Responses API** (НЕ chat/completions `OpenAICompatProvider`; verify .1 показал, что
+именно Responses API отдаёт источники на нашем ключе — chat/completions и legacy-native не отдают):
 
-- **Эндпоинт нативный** (не `/compatible-mode`): `…/api/v1/services/aigc/text-generation/generation`
-  (международный регион; точный base-URL для нашего workspace — verify в .1, см. ниже).
-- **Payload:** `model="qwen3.7-plus"`, `input.messages=[{role:user, content:query}]`,
-  `parameters={ enable_search: true, search_options: { enable_source: true, … } }`.
-- **Ответ:** `output.text` → `answer`; `output.search_info.search_results[*].{title,url}` → `sources`.
-- **Заголовки/ключ:** тот же `DASHSCOPE_API_KEY` Qwen MaaS, что и текущий провайдер (берётся через
-  factory/конфиг, не хардкодим); транспорт — `httpx` (как `_post_json` в `openai_compat`).
+- **Эндпоинт:** `{base}/compatible-mode/v1/responses` — **тот же workspace-хост и тот же `sk`-ключ
+  Qwen MaaS**, что у текущего провайдера (не нужен отдельный/глобальный ключ). base — из конфига.
+- **Payload:** `{ model: "qwen3.7-plus", input: <query>, tools: [{ "type": "web_search" }] }`.
+- **Ответ** `output[]` (массив items): item `type=="web_search_call"` → `action.sources[*].url` →
+  `sources` (источники, URL; `title` может отсутствовать — для v1 URL достаточно); item
+  `type=="message"` → `content[*].output_text` → `answer`. (Items `reasoning`/прочее — игнорируем.)
+- **Ключ:** тот же `BOB_LLM__TIER1_API_KEY` (Qwen MaaS), через factory/конфиг, не хардкод; транспорт —
+  `httpx` (как `_post_json` в `openai_compat`).
 - Сетевые/HTTP-ошибки и неожиданная форма ответа → **поднять исключение** (caller решает) — паттерн
-  Tier-0 джаджей (`LlmPrivilegeJudge` raise-on-failure).
+  Tier-0 джаджей (`LlmPrivilegeJudge` raise-on-failure). NB: Responses API + поиск медленнее обычного
+  (несколько секунд) → таймаут с запасом (как `timeout_seconds: 180` для reasoning-моделей).
 
 Сборка — через `infrastructure/llm/factory.py` (как прочие LLM-клиенты): из конфига
 (`search.provider=qwen`, `search.model=qwen3.7-plus`, endpoint/флаги) → `QwenWebSearchProvider`; в `app.py`
@@ -105,9 +108,9 @@ dispatch). Преамбула манифеста (GUPPI исполняет на�
 
 ## Риски и митигации
 
-- **🔴 Нативный эндпоинт/ключ** — точный международный base-URL нативного протокола и что наш
-  workspace-токен работает на нём (а не только на `compatible-mode`) → **verify-шаг в .1** (живой пробный
-  вызов перед реализацией; если токен не ходит на native — фолбэк-решение к owner, но по доке поддержан).
+- **~~Нативный эндпоинт/ключ~~ — ВЕРИФИЦИРОВАНО ✅** (verify .1, 2026-07-01): источники доступны на нашем
+  текущем workspace-ключе через **Responses API** (`/compatible-mode/v1/responses` + `tools:[web_search]`);
+  chat/completions и legacy-native их НЕ отдают. Глобальный/отдельный ключ НЕ нужен.
 - **Гипер-вызов** (Боб ищет где не надо / на каждый вопрос) → точная `description` (только свежее/внешнее/
   чего нет в памяти); тюнинг формулировки; tool-loop сам решает.
 - **Конфабуляция «найденного»** при сбое → essential-путь с честным нотисом, ответ из обучения под видом
@@ -118,9 +121,9 @@ dispatch). Преамбула манифеста (GUPPI исполняет на�
 
 ## Открытые решения (под утверждение)
 
-1. **Провайдер:** Qwen MaaS нативно (`qwen3.7-plus`, `enable_search`+`enable_source`) — **рекомендую**
-   (тот же ключ, бесплатно, с источниками; verify нативного эндпоинта в .1). Tavily — позже, за тем же
-   портом, если понадобятся другие источники/качество.
+1. **Провайдер:** Qwen MaaS через **Responses API** (`qwen3.7-plus`, `tools:[web_search]`) — **рекомендую**
+   (тот же ключ, бесплатно, **с источниками-URL**; verify .1 подтвердил). Tavily — позже, за тем же
+   портом, если понадобятся титлы источников / иное качество.
 2. **Привилегия:** `permission="safe"` + гейт по отправителю (authz/BOB-052), без отдельного `confirm` —
    **рекомендую** (web_search read-only; кто-доступ решает authz, не capability-уровень).
 3. **Сбой/пусто:** essential → честный GUPPI-нотис/оговорка, БЕЗ ответа-из-обучения под видом поиска —

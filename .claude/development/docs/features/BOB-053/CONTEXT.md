@@ -32,9 +32,10 @@ GUPPI-нотис/оговорка, без галлюцинации «найде�
 - **application:** `application/capabilities/web_search.py` — `make_web_search_capability(provider)` →
   `Capability` (`name="web_search"`, `permission="safe"`, `input_schema={query}`, валидация → делегирование
   → компактная проекция); регистрация в `app.py`/`CapabilityRegistry`.
-- **infrastructure:** `infrastructure/llm/web_search_qwen.py` — `QwenWebSearchProvider` (нативный
-  DashScope-клиент, `httpx`, парсинг `output.search_info.search_results`); сборка в
-  `infrastructure/llm/factory.py`; конфиг `search.*`.
+- **infrastructure:** `infrastructure/llm/web_search_qwen.py` — `QwenWebSearchProvider` (клиент
+  **Responses API** `/compatible-mode/v1/responses`, тот же workspace-хост+ключ; `tools:[web_search]`;
+  `httpx`; парсинг `output[]`: `web_search_call.action.sources[].url` + `message.content[].output_text`);
+  сборка в `infrastructure/llm/factory.py`; конфиг `search.*`.
 
 ## 🔴 Инварианты (НЕ нарушать)
 
@@ -58,12 +59,14 @@ GUPPI-нотис/оговорка, без галлюцинации «найде�
 - Русские литералы в src/тестах → per-file-ignore RUF001/002/003 в `pyproject.toml` (как в BOB-052).
 - Сообщения Бобу/нотисы — на русском, в голосе Боба.
 
-## Verify-зависимость (риск с планом)
+## Verify (РАЗРЕШЁНО ✅, 2026-07-01)
 
-🔴 В `.1` — **живой пробный вызов**: подтвердить точный международный нативный base-URL DashScope
-(`/api/v1/services/aigc/text-generation/generation`) и что наш workspace-`DASHSCOPE_API_KEY` ходит на
-native-путь (а не только `/compatible-mode`), и что `output.search_info.search_results` приходит с
-title/url. Если токен не ходит на native — эскалация к owner (по доке поддержан; фолбэк-решение).
+Живые вызовы подтвердили: **источники доступны на текущем workspace-ключе через Responses API**
+(`/compatible-mode/v1/responses` + `tools:[{type:web_search}]`, `qwen3.7-plus`). chat/completions и
+legacy-native text-generation источников НЕ отдают (проверено). Глобальный/отдельный DashScope-ключ
+**не нужен**. Источники = URL (`web_search_call.action.sources[].url`); title опционален. NB: поиск через
+Responses API медленнее (несколько сек) → таймаут с запасом. HTTP2-обрывы при verify были из-за
+нестабильного интернета, не эндпоинта.
 
 ## Связи
 

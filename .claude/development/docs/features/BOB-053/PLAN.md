@@ -15,7 +15,7 @@
 
 | Беад | Роль | Описание | Зависит от |
 |------|------|----------|-----------|
-| `.1` | dev | **Провайдер поиска (Qwen-native) + порт.** Domain: `WebSource`/`WebSearchResult` + порт `WebSearchProvider`. Infra: `QwenWebSearchProvider` (нативный DashScope-вызов, `enable_search`+`enable_source`, парсинг `search_info.search_results`, raise-on-failure) + сборка в `factory.py` + конфиг `search.*`. **🔴 verify-шаг:** живой пробный вызов (нативный base-URL + workspace-токен ходит на native + источники приходят). | — |
+| `.1` | dev | **Провайдер поиска (Qwen Responses API) + порт.** Domain: `WebSource`/`WebSearchResult` + порт `WebSearchProvider`. Infra: `QwenWebSearchProvider` (Responses API `/compatible-mode/v1/responses`, тот же ключ; `tools:[web_search]`; парсинг `output[]`: `web_search_call.action.sources[].url` + `message.content[].output_text`; raise-on-failure; таймаут с запасом) + сборка в `factory.py` + конфиг `search.*`. **✅ verify РАЗРЕШЁН** (источники на текущем ключе через Responses API). | — |
 | `.2` | dev | **Навык `web_search` + регистрация.** `application/capabilities/web_search.py` (`make_web_search_capability(provider)` → `Capability`, `permission="safe"`, валидация `query` → делегирование → компактная проекция ответ+источники; честное «не нашёл» на пусто). Регистрация в `app.py`/`CapabilityRegistry`. | `.1` |
 | `.3` | dev | **Отказоустойчивость + синтез.** Провязка essential-пути: сбой провайдера → ретрай → честный GUPPI-нотис/оговорка (без ответа-из-обучения под видом поиска); проекция способствует синтезу в голосе Боба, не сырому дампу. | `.2` |
 | `.4` | test | **Тесты.** domain (значения/порт), навык (валидация, проекция, пусто→«не нашёл», 🔴 инвариант «нет конфабуляции при сбое»), провайдер (парсинг `search_info`, raise-on-failure; мок HTTP), регистрация. Покрытие ≥ 80%. | `.1`,`.2`,`.3` |
@@ -43,6 +43,6 @@
 
 ## Риски
 
-- 🔴 Нативный эндпоинт/токен — verify в `.1` (живой вызов; эскалация к owner если токен не ходит на native).
+- ✅ ~~Эндпоинт/токен~~ — verify .1 разрешён: источники на текущем ключе через Responses API (новый ключ не нужен).
 - Гипер-вызов навыка → точная `description`; тюнинг.
 - Конфабуляция при сбое → тест-инвариант в `.4`.
