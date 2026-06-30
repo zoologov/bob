@@ -157,7 +157,12 @@ from bob.infrastructure.persistence.coding_session_store import (
     SqliteCodingSessionStore,
 )
 from bob.infrastructure.telegram.coding_indicator import StatusPanel, TypingKeepalive
-from bob.infrastructure.telegram.gateway import MarkdownSendBot, RichMarkdownSender
+from bob.infrastructure.telegram.gateway import (
+    ALLOWED_UPDATES,
+    BobMessageFilter,
+    MarkdownSendBot,
+    RichMarkdownSender,
+)
 from bob.infrastructure.telegram.guppi import GUPPI_OUTAGE_TEXT
 from bob.infrastructure.telegram.multibot import (
     BotIdentity,
@@ -576,6 +581,7 @@ def build_application(
         rule_store=rule_store,
         pursuit_store=proactivity_store,
         coding_assistant=coding_assistant,
+        bob_reaction_filter=_BobReactionFilter(memory_repo),
     )
     # обида seam (BOB-014 .2b): GUPPI announces a fresh sulk entry once ("Боб обижен …")
     # — the внеличностный systemic voice. The tracker loads/evolves/recovers обида and
@@ -1005,6 +1011,7 @@ def _build_multibot(
     pursuit_store: SqliteProactivityStore | None = None,
     rule_store: SqliteSelfImprovementStore | None = None,
     coding_assistant: CodingAssistant | None = None,
+    bob_reaction_filter: BobMessageFilter | None = None,
 ) -> MultiBotGateway:
     """Build the two-bot gateway: Bob (his topic) + GUPPI (General), one poller.
 
@@ -1044,6 +1051,7 @@ def _build_multibot(
         pursuit_store=pursuit_store,
         rule_store=rule_store,
         coding_assistant=coding_assistant,
+        bob_reaction_filter=bob_reaction_filter,
     )
 
 
@@ -2299,6 +2307,26 @@ def _float_or(section: Mapping[str, object], key: str, default: float) -> float:
     return default
 
 
+# --- Reaction filter ----------------------------------------------------------
+
+
+class _BobReactionFilter:
+    """Tell whether a reacted-to ``message_id`` is one of Bob's own messages (BOB-050).
+
+    Realises :class:`~bob.infrastructure.telegram.gateway.BobMessageFilter` over the
+    episodic store: a reaction is published only when the ``message_id`` it was placed
+    on matches an episode that recorded it as Bob's outgoing reply. No match (an old /
+    non-Bob message) → the reaction is dropped gracefully.
+    """
+
+    def __init__(self, repo: SqliteMemoryRepo) -> None:
+        self._repo = repo
+
+    async def is_bob_message(self, message_id: int) -> bool:
+        episode = await self._repo.episode_by_bob_message_id(message_id)
+        return episode is not None
+
+
 # --- aiogram bot adapter ------------------------------------------------------
 
 
@@ -2324,12 +2352,18 @@ class _UpdateView:
     aiogram nests chat/sender under ``message``; the gateway reads them as the
     flat ``effective_chat`` / ``effective_user`` accessors, so this view lifts them
     up while leaving the underlying aiogram message as the message.
+
+    A reaction update (BOB-050) carries no ``message``; the raw aiogram
+    ``message_reaction`` / ``message_reaction_count`` payloads are passed through
+    unchanged for the gateway's reaction route to read structurally.
     """
 
     update_id: int
     message: MessageLike | None
     effective_chat: _ChatView | None
     effective_user: _UserView | None
+    message_reaction: object | None = None
+    message_reaction_count: object | None = None
 
 
 class _AiogramBotAdapter:
@@ -2353,7 +2387,12 @@ class _AiogramBotAdapter:
     async def get_updates(
         self, *, offset: int, timeout: int
     ) -> Sequence[UpdateLike]:
-        updates = await self._bot.get_updates(offset=offset, timeout=timeout)  # type: ignore[attr-defined]
+        # BOB-050: request reaction updates explicitly — ``message_reaction`` /
+        # ``message_reaction_count`` are NOT in Telegram's default allowed set, so
+        # without this they are never delivered. ``message`` keeps ordinary intake.
+        updates = await self._bot.get_updates(  # type: ignore[attr-defined]
+            offset=offset, timeout=timeout, allowed_updates=list(ALLOWED_UPDATES)
+        )
         return [_to_update_view(update) for update in updates]
 
     async def send_message(
@@ -2454,6 +2493,8 @@ def _to_update_view(update: object) -> _UpdateView:
         effective_user=(
             _UserView(id=user.id, full_name=user.full_name) if user is not None else None
         ),
+        message_reaction=getattr(update, "message_reaction", None),
+        message_reaction_count=getattr(update, "message_reaction_count", None),
     )
 
 

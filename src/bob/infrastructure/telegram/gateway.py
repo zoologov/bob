@@ -51,7 +51,7 @@ from typing import TYPE_CHECKING, Protocol
 from aiogram.exceptions import AiogramError
 from aiogram.types import BufferedInputFile, InputRichMessage, ReactionTypeEmoji
 
-from bob.application.runtime.events import MessageReceived
+from bob.application.runtime.events import BobMessageReaction, MessageReceived
 from bob.infrastructure.telegram.rich import (
     MarkdownToRichMessage,
     RichMessageSerializer,
@@ -65,18 +65,33 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 __all__ = [
+    "ALLOWED_UPDATES",
     "PLAIN_TEXT_LIMIT",
     "AuthorizerLike",
+    "BobMessageFilter",
     "BotIdentitySignals",
     "BotLike",
     "BotUserLike",
     "MarkdownSendBot",
     "MessageEntityLike",
     "MessageLike",
+    "MessageReactionCountUpdatedLike",
+    "MessageReactionUpdatedLike",
     "RichMarkdownSender",
     "TelegramGateway",
     "UpdateLike",
+    "is_reaction_update",
 ]
+
+# The update types Bob asks Telegram to deliver. ``message_reaction`` and
+# ``message_reaction_count`` (BOB-050) are NOT in Telegram's default set, so they
+# must be requested explicitly; ``message`` keeps ordinary intake working. The
+# transport boundary (the aiogram adapter) passes this on every ``get_updates``.
+ALLOWED_UPDATES: tuple[str, ...] = (
+    "message",
+    "message_reaction",
+    "message_reaction_count",
+)
 
 # Telegram message-entity types that mark an @mention of a user (BOB-023).
 _MENTION_TYPE = "mention"  # ``@username`` — the username is the entity's text slice.
@@ -170,6 +185,44 @@ class _ChatLike(Protocol):
     def id(self) -> int: ...
 
 
+class MessageReactionUpdatedLike(Protocol):
+    """The subset of a Telegram ``MessageReactionUpdated`` the gateway reads (BOB-050).
+
+    A per-user reaction change: ``old_reaction`` / ``new_reaction`` are the reactor's
+    reaction lists before and after the change (the diff yields added/removed emoji);
+    ``user`` is who reacted (``None`` for an anonymous/channel actor). Reaction items
+    are read structurally via their ``emoji`` attribute, so non-emoji (custom/paid)
+    reactions are simply skipped.
+    """
+
+    @property
+    def chat(self) -> _ChatLike: ...
+    @property
+    def message_id(self) -> int: ...
+    @property
+    def user(self) -> _UserLike | None: ...
+    @property
+    def old_reaction(self) -> Sequence[object]: ...
+    @property
+    def new_reaction(self) -> Sequence[object]: ...
+
+
+class MessageReactionCountUpdatedLike(Protocol):
+    """The subset of a Telegram ``MessageReactionCountUpdated`` the gateway reads (BOB-050).
+
+    The anonymous aggregate a private group delivers: ``reactions`` are the emoji
+    totals currently on the message, with no per-user diff and no actor — used for
+    the defensive "someone reacted" signal.
+    """
+
+    @property
+    def chat(self) -> _ChatLike: ...
+    @property
+    def message_id(self) -> int: ...
+    @property
+    def reactions(self) -> Sequence[object]: ...
+
+
 class UpdateLike(Protocol):
     """The subset of a Telegram ``Update`` the gateway reads."""
 
@@ -181,6 +234,18 @@ class UpdateLike(Protocol):
     def effective_chat(self) -> _ChatLike | None: ...
     @property
     def effective_user(self) -> _UserLike | None: ...
+
+
+class BobMessageFilter(Protocol):
+    """Tells whether a reacted-to ``message_id`` is one of Bob's own messages (BOB-050).
+
+    The reaction route publishes a :class:`BobMessageReaction` **only** for a
+    reaction on a message Bob himself sent — looked up by the ``message_id`` recorded
+    when Bob's reply was persisted. The concrete adapter wraps the episodic store; a
+    reaction on a message with no matching episode is dropped gracefully.
+    """
+
+    async def is_bob_message(self, message_id: int) -> bool: ...
 
 
 class BotLike(Protocol):
@@ -277,6 +342,7 @@ class TelegramGateway:
         authorizer: AuthorizerLike | None = None,
         reply_thread_id: int | None = None,
         bob_identity: BotIdentitySignals | None = None,
+        bob_reaction_filter: BobMessageFilter | None = None,
     ) -> None:
         if typing_interval <= 0:
             raise ValueError("typing_interval must be > 0")
@@ -287,6 +353,10 @@ class TelegramGateway:
         self._clock = clock
         self._sleep = sleep
         self._authorizer = authorizer
+        # The "is this Bob's own message?" lookup the reaction route filters on
+        # (BOB-050). ``None`` (e.g. the GUPPI inner gateway, or before it is wired)
+        # means no reaction can be attributed to Bob → reaction updates are dropped.
+        self._bob_reaction_filter = bob_reaction_filter
         # Bob's own bot identity (BOB-023), if known: lets the addressivity scan
         # tell an @mention of Bob from a mention of someone else. ``None`` (e.g.
         # the GUPPI inner gateway) means mentions cannot be resolved.
@@ -326,7 +396,9 @@ class TelegramGateway:
     async def poll_once(self) -> int:
         """Pull one batch of updates, dispatch each, advance the offset.
 
-        Returns the number of updates that were newly published this poll.
+        Returns the number of updates that were newly published this poll. A
+        reaction update (BOB-050) is dispatched to :meth:`intake_reaction`; an
+        ordinary text update to :meth:`intake`.
         """
         updates = await self._bot.get_updates(
             offset=self._offset, timeout=self._poll_timeout
@@ -334,9 +406,15 @@ class TelegramGateway:
         published = 0
         for update in updates:
             self._offset = max(self._offset, update.update_id + 1)
-            if await self.intake(update):
+            if await self._dispatch(update):
                 published += 1
         return published
+
+    async def _dispatch(self, update: UpdateLike) -> bool:
+        """Route one update: a reaction to the reaction path, else ordinary intake."""
+        if is_reaction_update(update):
+            return await self.intake_reaction(update)
+        return await self.intake(update)
 
     async def intake(self, update: UpdateLike) -> bool:
         """Deduplicate, authorize, normalise, and publish one update.
@@ -362,6 +440,81 @@ class TelegramGateway:
             return False
         await self._bus.publish(event)
         return True
+
+    # --- Reaction intake (BOB-050) --------------------------------------------
+
+    async def intake_reaction(self, update: UpdateLike) -> bool:
+        """Translate a reaction update into a :class:`BobMessageReaction` and publish it.
+
+        Filters to reactions on **Bob's own** messages (the ``message_id`` matches a
+        recorded outgoing Bob reply, via the injected :class:`BobMessageFilter`); a
+        reaction on anyone else's message — or any reaction with no filter wired — is
+        dropped. A per-user ``message_reaction`` yields the added/removed-emoji diff +
+        the reactor's identity; an anonymous ``message_reaction_count`` yields the
+        defensive "someone reacted" signal (``reactor_sender_id=None``). Deduplicated
+        by ``update_id`` (Telegram may redeliver). Returns ``True`` iff an event was
+        published.
+        """
+        if update.update_id in self._seen_update_ids:
+            logger.debug("dropping duplicate reaction update_id=%d", update.update_id)
+            return False
+        self._seen_update_ids.add(update.update_id)
+        reaction = _reaction_of(update)
+        if reaction is not None:
+            return await self._publish_user_reaction(reaction)
+        count = _reaction_count_of(update)
+        if count is not None:
+            return await self._publish_anonymous_reaction(count)
+        return False
+
+    async def _publish_user_reaction(
+        self, reaction: MessageReactionUpdatedLike
+    ) -> bool:
+        """Publish a per-user reaction (added/removed diff + reactor) if it is Bob's."""
+        if not await self._is_bob_message(reaction.message_id):
+            return False
+        added, removed = _reaction_diff(reaction.old_reaction, reaction.new_reaction)
+        if not added and not removed:
+            return False
+        user = reaction.user
+        await self._bus.publish(
+            BobMessageReaction(
+                chat_id=reaction.chat.id,
+                message_id=reaction.message_id,
+                emoji_added=added,
+                emoji_removed=removed,
+                reactor_sender_id=user.id if user is not None else None,
+                reactor_name=user.full_name if user is not None else None,
+            )
+        )
+        return True
+
+    async def _publish_anonymous_reaction(
+        self, count: MessageReactionCountUpdatedLike
+    ) -> bool:
+        """Publish the defensive anonymous "someone reacted" signal if it is Bob's."""
+        if not await self._is_bob_message(count.message_id):
+            return False
+        emojis = _count_emojis(count.reactions)
+        if not emojis:
+            return False
+        await self._bus.publish(
+            BobMessageReaction(
+                chat_id=count.chat.id,
+                message_id=count.message_id,
+                emoji_added=emojis,
+                emoji_removed=(),
+                reactor_sender_id=None,
+                reactor_name=None,
+            )
+        )
+        return True
+
+    async def _is_bob_message(self, message_id: int) -> bool:
+        """Whether ``message_id`` is one of Bob's recorded outgoing messages."""
+        if self._bob_reaction_filter is None:
+            return False
+        return await self._bob_reaction_filter.is_bob_message(message_id)
 
     async def _passes_gate(self, update: UpdateLike) -> bool:
         """Enforce authorization + privileged commands; the one bypass-free gate.
@@ -525,7 +678,7 @@ class TelegramGateway:
 
     async def reply(
         self, *, chat_id: int, markdown: str, thinking: str | None = None
-    ) -> None:
+    ) -> int | None:
         """Send Bob's ``markdown`` reply as a native rich message.
 
         The markdown is converted to a typed rich-message tree (optionally led by
@@ -534,40 +687,51 @@ class TelegramGateway:
         **any** rich failure the reply degrades silently to plain ``send_message``
         — the user always gets the text, never an error. An empty reply with no
         thinking sends nothing.
+
+        Returns the Telegram ``message_id`` of the sent message (the first chunk
+        when the plain fallback splits a long reply), so the caller can record which
+        message was Bob's reply (BOB-050) and later link a reaction back to it.
+        ``None`` when nothing was sent.
         """
         if not markdown.strip() and not (thinking and thinking.strip()):
-            return
-        if not await self._send_rich_final(chat_id, markdown, thinking):
-            await self._send_plain(chat_id, markdown)
+            return None
+        message_id = await self._send_rich_final(chat_id, markdown, thinking)
+        if message_id is not None:
+            return message_id
+        return await self._send_plain(chat_id, markdown)
 
     async def _send_rich_final(
         self, chat_id: int, markdown: str, thinking: str | None
-    ) -> bool:
-        """Send the rich final into the thread; return ``True`` iff it succeeded."""
+    ) -> int | None:
+        """Send the rich final into the thread; return its ``message_id`` (``None`` on failure)."""
         rich_markdown = self._render(markdown, thinking)
         try:
-            await self._bot.send_rich_message(
+            sent = await self._bot.send_rich_message(
                 chat_id=chat_id,
                 rich_message=InputRichMessage(markdown=rich_markdown),
                 message_thread_id=self._reply_thread_id,
             )
         except (AiogramError, ValueError) as exc:
             logger.warning("rich final failed; falling back to plain: %s", exc)
-            return False
-        return True
+            return None
+        return sent.message_id
 
     def _render(self, markdown: str, thinking: str | None) -> str:
         message = self._converter.convert(markdown, thinking=thinking)
         return self._serializer.to_markdown(message)
 
-    async def _send_plain(self, chat_id: int, text: str) -> None:
-        """Send ``text`` as plain message(s), splitting on the length limit."""
+    async def _send_plain(self, chat_id: int, text: str) -> int | None:
+        """Send ``text`` as plain message(s); return the first chunk's ``message_id``."""
+        first_message_id: int | None = None
         for chunk in _split_for_length(text):
-            await self._bot.send_message(
+            sent = await self._bot.send_message(
                 chat_id=chat_id,
                 text=chunk,
                 message_thread_id=self._reply_thread_id,
             )
+            if first_message_id is None:
+                first_message_id = sent.message_id
+        return first_message_id
 
     # --- React-only (native reaction + best-effort fallback) ------------------
 
@@ -761,6 +925,65 @@ def _entity_mentions_bob(
         user = entity.user
         return user is not None and user.id == identity.user_id
     return False
+
+
+def is_reaction_update(update: UpdateLike) -> bool:
+    """Whether ``update`` carries a reaction change (per-user or anonymous count)."""
+    return _reaction_of(update) is not None or _reaction_count_of(update) is not None
+
+
+def _reaction_of(update: UpdateLike) -> MessageReactionUpdatedLike | None:
+    """The per-user ``message_reaction`` payload of ``update``, if present (BOB-050).
+
+    Read defensively via ``getattr`` so update views that predate reactions (and
+    the many test fakes) need not carry the attribute — they simply have no
+    reaction.
+    """
+    reaction: MessageReactionUpdatedLike | None = getattr(
+        update, "message_reaction", None
+    )
+    return reaction
+
+
+def _reaction_count_of(
+    update: UpdateLike,
+) -> MessageReactionCountUpdatedLike | None:
+    """The anonymous ``message_reaction_count`` payload of ``update``, if present."""
+    count: MessageReactionCountUpdatedLike | None = getattr(
+        update, "message_reaction_count", None
+    )
+    return count
+
+
+def _reaction_diff(
+    old_reaction: Sequence[object], new_reaction: Sequence[object]
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """Diff a reactor's old → new reaction lists into (added, removed) emoji."""
+    old_emojis = _reaction_emojis(old_reaction)
+    new_emojis = _reaction_emojis(new_reaction)
+    added = tuple(emoji for emoji in new_emojis if emoji not in old_emojis)
+    removed = tuple(emoji for emoji in old_emojis if emoji not in new_emojis)
+    return added, removed
+
+
+def _reaction_emojis(reactions: Sequence[object]) -> tuple[str, ...]:
+    """The standard emoji of each reaction item (non-emoji items are skipped)."""
+    return tuple(
+        emoji
+        for reaction in reactions
+        if isinstance(emoji := getattr(reaction, "emoji", None), str)
+    )
+
+
+def _count_emojis(reactions: Sequence[object]) -> tuple[str, ...]:
+    """The emoji of each ``ReactionCount`` item (its ``type`` carries the emoji)."""
+    return tuple(
+        emoji
+        for reaction in reactions
+        if isinstance(
+            emoji := getattr(getattr(reaction, "type", None), "emoji", None), str
+        )
+    )
 
 
 def _parse_user_id(argument: str) -> int | None:

@@ -754,6 +754,18 @@ async def test_persisted_episode_carries_sender_id() -> None:
     assert repo.episodes[0]["sender_id"] == 99
 
 
+async def test_persisted_episode_records_outgoing_bob_message_id() -> None:
+    # BOB-050 .1: the saved episode records the message_id of Bob's outgoing reply
+    # (the FakeBot's rich send returns 777) so a later reaction can be linked back
+    # to what Bob said.
+    handler, _bot, repo, _tier1 = _build(reply="ok")
+
+    await handler.handle(_message())
+
+    assert len(repo.episodes) == 1
+    assert repo.episodes[0]["bob_message_id"] == 777
+
+
 async def test_reply_uses_tier1_provider() -> None:
     # Arrange
     handler, _bot, _repo, tier1 = _build(reply="hi")

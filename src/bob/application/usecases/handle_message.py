@@ -346,7 +346,7 @@ class ReplyGateway(Protocol):
 
     async def reply(
         self, *, chat_id: int, markdown: str, thinking: str | None = None
-    ) -> None: ...
+    ) -> int | None: ...
 
     async def send_photo(
         self, *, chat_id: int, photo: bytes, caption: str | None = None
@@ -1313,7 +1313,12 @@ class HandleMessage:
         # drained and posted as Telegram photos BEFORE the text confirmation, so the
         # image leads. Best-effort and gated on a wired sink (no diagram skill → no-op).
         await self._send_pending_diagrams(event.chat_id)
-        await self._gateway.reply(chat_id=event.chat_id, markdown=reply)
+        # Capture the Telegram message_id of Bob's outgoing reply (BOB-050) so the
+        # episode records which message was Bob's — a later reaction on it can then be
+        # linked back to what Bob said. ``None`` if nothing was sent (degraded path).
+        bob_message_id = await self._gateway.reply(
+            chat_id=event.chat_id, markdown=reply
+        )
         # Advance the conversation floor AFTER Bob actually replied (BOB-025): an ENGAGE
         # turn that reached the reply sticks the floor to Bob (``bob_replied=True``), so
         # the next ambient message in the thread is read as continuity. Pass the RAW
@@ -1327,7 +1332,7 @@ class HandleMessage:
         # updated with the turn outcome. (The fascination-grounding nudge toward a
         # well-going topic is left to the reflect-tick evolution path it already owns.)
         soul = self._apply_engagement_feedback(soul, level, interest)
-        await self._persist(event, reply, soul)
+        await self._persist(event, reply, soul, bob_message_id=bob_message_id)
         # Update Bob's relationship with this sender AFTER the turn (BOB-014): the
         # negotiation stance he took + his mood + the turn's sentiment evolve the
         # accrued relationship and persist it, so it warms/cools over time. Best-effort
@@ -2636,8 +2641,21 @@ class HandleMessage:
         loop = ToolLoop(provider=provider, registry=self._registry)
         return await loop.run(messages)
 
-    async def _persist(self, event: MessageReceived, reply: str, soul: SOUL) -> None:
-        """Save the turn as an episode and snapshot the updated mood."""
+    async def _persist(
+        self,
+        event: MessageReceived,
+        reply: str,
+        soul: SOUL,
+        *,
+        bob_message_id: int | None = None,
+    ) -> None:
+        """Save the turn as an episode and snapshot the updated mood.
+
+        ``bob_message_id`` is the Telegram message_id of Bob's outgoing reply this
+        turn (BOB-050), recorded on the episode so a later reaction on that message
+        can be linked back to what Bob said. ``None`` for a turn where Bob sent no
+        message (a silent/degraded turn).
+        """
         now = self._clock.now()
         episode = EpisodicEvent(
             ts=now,
@@ -2646,6 +2664,7 @@ class HandleMessage:
             mood_snapshot=soul.mood.tone(),
             tags=("telegram",),
             sender_id=event.sender_id,
+            bob_message_id=bob_message_id,
         )
         await self._repo.save_episode(
             {
@@ -2655,6 +2674,7 @@ class HandleMessage:
                 "mood_snapshot": episode.mood_snapshot,
                 "tags": ",".join(episode.tags),
                 "sender_id": episode.sender_id,
+                "bob_message_id": episode.bob_message_id,
             }
         )
         await self._repo.set_mood(_mood_state(soul), at=now)

@@ -56,6 +56,8 @@ class _AioMessage:
 class _AioUpdate:
     update_id: int
     message: _AioMessage | None = None
+    message_reaction: object | None = None
+    message_reaction_count: object | None = None
 
 
 @dataclass
@@ -72,9 +74,22 @@ class _FakeAiogramBot:
     calls: list[_Call] = field(default_factory=list)
 
     async def get_updates(
-        self, *, offset: int, timeout: int
+        self,
+        *,
+        offset: int,
+        timeout: int,
+        allowed_updates: Sequence[str] | None = None,
     ) -> Sequence[_AioUpdate]:
-        self.calls.append(_Call("get_updates", {"offset": offset, "timeout": timeout}))
+        self.calls.append(
+            _Call(
+                "get_updates",
+                {
+                    "offset": offset,
+                    "timeout": timeout,
+                    "allowed_updates": allowed_updates,
+                },
+            )
+        )
         return self.updates
 
     async def send_message(
@@ -195,7 +210,8 @@ async def test_get_updates_lifts_nested_chat_and_sender() -> None:
     views = await adapter.get_updates(offset=3, timeout=10)
 
     # Assert: offset/timeout forwarded; nested chat/sender lifted flat.
-    assert bot.calls[0].kwargs == {"offset": 3, "timeout": 10}
+    assert bot.calls[0].kwargs["offset"] == 3
+    assert bot.calls[0].kwargs["timeout"] == 10
     assert len(views) == 1
     view = views[0]
     assert view.update_id == 7
@@ -204,6 +220,38 @@ async def test_get_updates_lifts_nested_chat_and_sender() -> None:
     assert view.effective_user is not None
     assert view.effective_user.id == 42
     assert view.effective_user.full_name == "Ada"
+
+
+@pytest.mark.asyncio
+async def test_get_updates_requests_reaction_update_types() -> None:
+    # BOB-050: Telegram only delivers reaction updates when asked, so the adapter
+    # must pass an explicit allowed_updates that includes both reaction types.
+    bot = _FakeAiogramBot(updates=())
+    adapter = _AiogramBotAdapter(bot)
+
+    await adapter.get_updates(offset=0, timeout=5)
+
+    allowed = bot.calls[0].kwargs["allowed_updates"]
+    assert isinstance(allowed, list)
+    assert "message" in allowed
+    assert "message_reaction" in allowed
+    assert "message_reaction_count" in allowed
+
+
+def test_to_update_view_passes_through_reaction_payloads() -> None:
+    # BOB-050: a reaction update has no message; its raw reaction payloads are
+    # carried through unchanged for the gateway's reaction route to read.
+    reaction = object()
+    count = object()
+    raw = _AioUpdate(
+        update_id=11, message=None, message_reaction=reaction, message_reaction_count=count
+    )
+
+    view = _to_update_view(raw)
+
+    assert view.message is None
+    assert view.message_reaction is reaction
+    assert view.message_reaction_count is count
 
 
 def test_to_update_view_handles_empty_update() -> None:
