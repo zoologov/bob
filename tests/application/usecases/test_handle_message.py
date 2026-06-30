@@ -36,6 +36,7 @@ from bob.application.usecases.handle_message import (
     EngagementState,
     HandleMessage,
     OwnerActivityRecorder,
+    PermissionFlowLike,
     PersonalityState,
     _recalled_bob_replies,
     _recalled_without_copied_exemplars,
@@ -532,6 +533,7 @@ def _build(
     diagram_send_as: DiagramSendMode = "photo",
     photo_send_raises: bool = False,
     coding_router: _FakeCodingRouter | None = None,
+    permission_flow: PermissionFlowLike | None = None,
     decide_response: DecideResponse | None = None,
     outage_notifier: _FakeOutageNotifier | None = None,
     retry_sleep: _RecordingSleep | None = None,
@@ -604,6 +606,7 @@ def _build(
         diagram_renderer=diagram_renderer,  # type: ignore[arg-type]
         diagram_send_as=diagram_send_as,
         coding_router=coding_router,
+        permission_flow=permission_flow,
         decide_response=decide_response,
         outage_notifier=outage_notifier,
         retry_sleep=retry_sleep,

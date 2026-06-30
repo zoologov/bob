@@ -99,7 +99,10 @@ from bob.application.usecases.heartbeat import (
     ReflectTick,
 )
 from bob.application.usecases.perceive_reaction import PerceiveReaction
+from bob.application.usecases.permission_execution import PermissionExecutor
+from bob.application.usecases.permission_flow import PermissionFlow
 from bob.application.usecases.plan_goal import LlmPlanner, PlanGoal
+from bob.application.usecases.privileged_fulfiller import PrivilegedRequestFulfiller
 from bob.application.usecases.pursue_goals import PursueGoalsTick
 from bob.application.usecases.reappraise_reflection import ReappraiseReflection
 from bob.application.usecases.reflection_parser import HeuristicReflectionParser
@@ -109,6 +112,7 @@ from bob.application.usecases.self_improvement_sources import ActiveRulesReader
 from bob.application.usecases.sulk_sources import SulkRecoveryStep, SulkTracker
 from bob.application.usecases.update_mood_from_text import UpdateMoodFromText
 from bob.domain.introspection.privacy_guard import PrivacyGuard
+from bob.domain.permission.privilege import PrivilegeContext, PrivilegeNeed
 from bob.domain.personality.addressivity import AddressivityThresholds
 from bob.domain.personality.brevity import BrevityThresholds
 from bob.domain.personality.conversation import RepeatThresholds
@@ -140,6 +144,7 @@ from bob.infrastructure.introspection.subprocess_introspector import (
     SubprocessRepoIntrospector,
 )
 from bob.infrastructure.llm import build_embedder, build_reranker, build_tier_providers
+from bob.infrastructure.llm.privilege_judge import LlmPrivilegeJudge
 from bob.infrastructure.llm.reaction_judge import LlmReactionJudge
 from bob.infrastructure.llm.response_judge import LlmResponseJudge
 from bob.infrastructure.persistence import (
@@ -160,6 +165,9 @@ from bob.infrastructure.persistence import (
 )
 from bob.infrastructure.persistence.coding_session_store import (
     SqliteCodingSessionStore,
+)
+from bob.infrastructure.persistence.permission_request_store import (
+    SqlitePermissionRequestStore,
 )
 from bob.infrastructure.telegram.coding_indicator import StatusPanel, TypingKeepalive
 from bob.infrastructure.telegram.gateway import (
@@ -788,6 +796,27 @@ def build_application(
         # (coder.enabled false → coding_assistant None) → the NL path is inert and the
         # `/code` command in General is unaffected.
         coding_router=_build_coding_router(router=router, coder=coding_assistant),
+        # Privilege gating (BOB-052 .2): a privilege — running a tool, revealing Bob's
+        # inner life, disclosing owner data — is OWNER-GATED even though memory is public
+        # in the closed group (BOB-051). When a NON-authorized member asks for something
+        # privileged the flow opens a pending request and asks the owner («Вова, <кто>
+        # просит <что> — разрешить?»); on the OWNER's turn it records the verdict on an
+        # active pending (grant / deny / authorize, or /allow //deny //authorize). 🔴
+        # Owner-only decision + the non-authorized-only request gate live inside the flow;
+        # an AUTHORIZED member is never gated. Execution-on-approve is .3. Off (no permission
+        # store/judge) → None → the seam is inert and the turn behaves exactly as before.
+        permission_flow=_build_permission_flow(
+            router=router,
+            repo=memory_repo,
+            bot=resolved_bob_bot,
+            chat_id=_int(telegram_section, "chat_id", 0),
+            topic_id=_int(_section(telegram_section, "bob"), "topic_id", 0),
+            owner_id=_int(telegram_section, "owner_id", 0),
+            clock=resolved_clock,
+            authorizer=authorizer,
+            registry=registry,
+            tool_provider=tool_provider,
+        ),
         # Semantic response judgment (BOB-049): on every inbound Bob UNDERSTANDS the
         # message in context and chooses — as a person — REPLY / REACT / IGNORE, replacing
         # the if/else addressivity ladder (BOB-023/025) and the BOB-018 REACT_ONLY form
@@ -1132,6 +1161,124 @@ def _build_coding_router(
     return CodingIntentRouter(
         coder=coder, classifier=ClassifyCodingIntent(router=router)
     )
+
+
+def _build_permission_flow(
+    *,
+    router: LLMRouter,
+    repo: SqliteMemoryRepo,
+    bot: BotLike,
+    chat_id: int,
+    topic_id: int | None,
+    owner_id: int,
+    clock: Clock,
+    authorizer: Authorizer,
+    registry: CapabilityRegistry,
+    tool_provider: ToolCallingProvider | None,
+) -> PermissionFlow:
+    """Assemble the privilege-gating flow + its execution (BOB-052 .2/.3).
+
+    Pairs the Tier-0 :class:`LlmPrivilegeJudge` (wrapped in a safe-default guard so a
+    flaky judgment never breaks a live turn — it refuses, i.e. falls through to a normal
+    reply) with the durable :class:`SqlitePermissionRequestStore` and the two-channel
+    :class:`_PermissionNotifier` (owner notice into Bob's topic, requester ack into the
+    chat).
+
+    The EXECUTION (.3) is wired here: a :class:`PermissionExecutor` over the
+    :class:`PrivilegedRequestFulfiller` (a one-shot elevated tool-loop / router run of the
+    stored ``request_text``), the requester-channel (Bob's reply into the group chat) and
+    the real :class:`Authorizer` (the durable grant on AUTHORIZE). 🔴 The elevation is
+    per-request (the fulfiller is invoked once per approved request and holds no durable
+    state); the durable grant happens ONLY on an explicit authorize; and the whole
+    execution is decorative (safe-default refuse inside the executor). The flow itself
+    enforces owner-only decision + the non-authorized-only request gate; HandleMessage
+    only passes the perceived authz facts. ``owner_id`` is unused (the owner is decided by
+    HandleMessage's perceived interlocutor) but kept for symmetry with the other builders.
+    """
+    del owner_id  # the owner is decided by HandleMessage's perceived interlocutor
+    return PermissionFlow(
+        judge=_SafeDefaultPrivilegeJudge(LlmPrivilegeJudge(router=router)),
+        store=SqlitePermissionRequestStore(repo),
+        notifier=_PermissionNotifier(bot=bot, chat_id=chat_id, topic_id=topic_id),
+        clock=clock,
+        executor=PermissionExecutor(
+            fulfiller=PrivilegedRequestFulfiller(
+                router=router, registry=registry, tool_provider=tool_provider
+            ),
+            channel=_PermissionRequesterChannel(bot=bot, chat_id=chat_id),
+            authorizer=authorizer,
+        ),
+    )
+
+
+class _PermissionRequesterChannel:
+    """Send Bob's fulfilment / decline to the requester through BOB'S bot (BOB-052 .3).
+
+    Realises the executor's ``RequesterChannel`` (structurally). The approved fulfilment
+    result — or the gentle decline on a denial — is sent into the GROUP CHAT (no topic
+    thread, where the requester wrote) through the shared :class:`RichMarkdownSender`
+    (rich, plain fallback). Transport only — the executor owns the wording.
+    """
+
+    def __init__(self, *, bot: BotLike, chat_id: int) -> None:
+        self._sender = RichMarkdownSender(cast("MarkdownSendBot", bot))
+        self._chat_id = chat_id
+
+    async def send(self, text: str) -> None:
+        """Post Bob's line to the requester in the group chat (rich markdown)."""
+        await self._sender.send(chat_id=self._chat_id, markdown=text)
+
+
+class _SafeDefaultPrivilegeJudge:
+    """Guard the Tier-0 privilege judge so a flaky judgment never breaks a turn (BOB-052 .2).
+
+    The raw :class:`LlmPrivilegeJudge` raises on a model/parse failure (by design, for .3's
+    decorative fault-tolerance). Wiring it into the LIVE turn, this guard swallows that into
+    the SAFE default — ``needs_permission=False`` — so the message simply falls through to a
+    normal reply instead of breaking the turn. 🔴 The safe default is REFUSE-to-gate (no
+    privileged action is ever taken from a failed judgment); .3 refines the decorative
+    handling around execution.
+    """
+
+    def __init__(self, inner: LlmPrivilegeJudge) -> None:
+        self._inner = inner
+
+    async def assess(self, ctx: PrivilegeContext) -> PrivilegeNeed:
+        """Assess ``ctx``; on any judge/parse failure return the safe non-privileged default."""
+        try:
+            return await self._inner.assess(ctx)
+        except Exception:
+            logger.exception("privilege judgment failed (treated as non-privileged)")
+            return PrivilegeNeed(needs_permission=False, kind="", what="")
+
+
+class _PermissionNotifier:
+    """Two-channel notice adapter for the permission flow through BOB'S bot (BOB-052 .2).
+
+    Realises the flow's ``PermissionNotifier`` (structurally). ``notify_owner`` posts Bob's
+    «Вова, <кто> просит <что> — разрешить?» into Bob's TOPIC (``message_thread_id ==
+    telegram.bob.topic_id``) — where the owner converses with Bob and decides — through the
+    shared :class:`RichMarkdownSender` (rich, plain fallback). ``tell_requester`` sends the
+    light «спрошу Вову» acknowledgement into the same group chat (no topic thread) so the
+    requester sees Bob took the ask to the owner. Transport only — the flow owns the wording.
+    """
+
+    def __init__(
+        self, *, bot: BotLike, chat_id: int, topic_id: int | None
+    ) -> None:
+        self._sender = RichMarkdownSender(cast("MarkdownSendBot", bot))
+        self._chat_id = chat_id
+        self._topic_id = topic_id
+
+    async def notify_owner(self, text: str) -> None:
+        """Post the owner's «разрешить?» notice into Bob's topic (rich markdown, threaded)."""
+        await self._sender.send(
+            chat_id=self._chat_id, markdown=text, message_thread_id=self._topic_id
+        )
+
+    async def tell_requester(self, text: str) -> None:
+        """Post the requester's light «спрошу Вову» ack into the group chat."""
+        await self._sender.send(chat_id=self._chat_id, markdown=text)
 
 
 # Telegram clears a "typing" action after ~5s, so the coding indicator refreshes a little

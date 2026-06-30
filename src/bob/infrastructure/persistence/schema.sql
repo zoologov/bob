@@ -310,3 +310,24 @@ CREATE TABLE IF NOT EXISTS coding_session (
     plan          TEXT,                       -- plan-mode plan text (nullable)
     pr_url        TEXT                        -- opened PR url (nullable)
 );
+
+-- Permission requests (BOB-052): one `permission_request` row per pending «a
+-- not-yet-authorised person asked for something privileged, ask the owner» request.
+-- `requester_id`/`requester_name` is who asked (not the owner); `request_text` is the
+-- original message stored verbatim so it can be fulfilled on approve (.3); `kind` is
+-- the privilege kind (tool/internal/owner_data); `what` is the human-readable phrase
+-- for the owner notice; `state` is the PermissionState value (pending/approved/denied/
+-- expired). Round-tripped by SqlitePermissionRequestStore into a domain
+-- PermissionRequest. The owner-only approve/deny gate lives above this table.
+CREATE TABLE IF NOT EXISTS permission_request (
+    id             TEXT PRIMARY KEY,
+    requester_id   INTEGER NOT NULL,           -- who asked (not the owner)
+    requester_name TEXT NOT NULL,
+    request_text   TEXT NOT NULL,              -- original message, verbatim (for fulfil)
+    kind           TEXT NOT NULL,              -- tool|internal|owner_data
+    what           TEXT NOT NULL,              -- human-readable «show project tasks»
+    state          TEXT NOT NULL,              -- PermissionState value
+    created_at     TEXT NOT NULL               -- ISO-8601, timezone-aware
+);
+CREATE INDEX IF NOT EXISTS idx_permission_request_requester
+    ON permission_request (requester_id, state);
