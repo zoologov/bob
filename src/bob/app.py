@@ -99,8 +99,10 @@ from bob.application.usecases.heartbeat import (
     ReflectTick,
 )
 from bob.application.usecases.perceive_reaction import PerceiveReaction
+from bob.application.usecases.permission_execution import PermissionExecutor
 from bob.application.usecases.permission_flow import PermissionFlow
 from bob.application.usecases.plan_goal import LlmPlanner, PlanGoal
+from bob.application.usecases.privileged_fulfiller import PrivilegedRequestFulfiller
 from bob.application.usecases.pursue_goals import PursueGoalsTick
 from bob.application.usecases.reappraise_reflection import ReappraiseReflection
 from bob.application.usecases.reflection_parser import HeuristicReflectionParser
@@ -811,6 +813,9 @@ def build_application(
             topic_id=_int(_section(telegram_section, "bob"), "topic_id", 0),
             owner_id=_int(telegram_section, "owner_id", 0),
             clock=resolved_clock,
+            authorizer=authorizer,
+            registry=registry,
+            tool_provider=tool_provider,
         ),
         # Semantic response judgment (BOB-049): on every inbound Bob UNDERSTANDS the
         # message in context and chooses — as a person — REPLY / REACT / IGNORE, replacing
@@ -1167,27 +1172,61 @@ def _build_permission_flow(
     topic_id: int | None,
     owner_id: int,
     clock: Clock,
+    authorizer: Authorizer,
+    registry: CapabilityRegistry,
+    tool_provider: ToolCallingProvider | None,
 ) -> PermissionFlow:
-    """Assemble the privilege-gating flow (BOB-052 .2).
+    """Assemble the privilege-gating flow + its execution (BOB-052 .2/.3).
 
     Pairs the Tier-0 :class:`LlmPrivilegeJudge` (wrapped in a safe-default guard so a
     flaky judgment never breaks a live turn — it refuses, i.e. falls through to a normal
     reply) with the durable :class:`SqlitePermissionRequestStore` and the two-channel
     :class:`_PermissionNotifier` (owner notice into Bob's topic, requester ack into the
-    chat). The durable-authorise hook is left UNWIRED here — execution-on-approve and the
-    real :class:`Authorizer` grant are .3. The flow itself enforces owner-only decision +
-    the non-authorized-only request gate; HandleMessage only passes the perceived authz
-    facts. ``owner_id`` is unused yet (the owner is decided by HandleMessage's perceived
-    interlocutor) but kept so .3 can wire the real durable grant by id without a signature
-    change.
+    chat).
+
+    The EXECUTION (.3) is wired here: a :class:`PermissionExecutor` over the
+    :class:`PrivilegedRequestFulfiller` (a one-shot elevated tool-loop / router run of the
+    stored ``request_text``), the requester-channel (Bob's reply into the group chat) and
+    the real :class:`Authorizer` (the durable grant on AUTHORIZE). 🔴 The elevation is
+    per-request (the fulfiller is invoked once per approved request and holds no durable
+    state); the durable grant happens ONLY on an explicit authorize; and the whole
+    execution is decorative (safe-default refuse inside the executor). The flow itself
+    enforces owner-only decision + the non-authorized-only request gate; HandleMessage
+    only passes the perceived authz facts. ``owner_id`` is unused (the owner is decided by
+    HandleMessage's perceived interlocutor) but kept for symmetry with the other builders.
     """
-    del owner_id  # reserved for the .3 durable-authorise wiring
+    del owner_id  # the owner is decided by HandleMessage's perceived interlocutor
     return PermissionFlow(
         judge=_SafeDefaultPrivilegeJudge(LlmPrivilegeJudge(router=router)),
         store=SqlitePermissionRequestStore(repo),
         notifier=_PermissionNotifier(bot=bot, chat_id=chat_id, topic_id=topic_id),
         clock=clock,
+        executor=PermissionExecutor(
+            fulfiller=PrivilegedRequestFulfiller(
+                router=router, registry=registry, tool_provider=tool_provider
+            ),
+            channel=_PermissionRequesterChannel(bot=bot, chat_id=chat_id),
+            authorizer=authorizer,
+        ),
     )
+
+
+class _PermissionRequesterChannel:
+    """Send Bob's fulfilment / decline to the requester through BOB'S bot (BOB-052 .3).
+
+    Realises the executor's ``RequesterChannel`` (structurally). The approved fulfilment
+    result — or the gentle decline on a denial — is sent into the GROUP CHAT (no topic
+    thread, where the requester wrote) through the shared :class:`RichMarkdownSender`
+    (rich, plain fallback). Transport only — the executor owns the wording.
+    """
+
+    def __init__(self, *, bot: BotLike, chat_id: int) -> None:
+        self._sender = RichMarkdownSender(cast("MarkdownSendBot", bot))
+        self._chat_id = chat_id
+
+    async def send(self, text: str) -> None:
+        """Post Bob's line to the requester in the group chat (rich markdown)."""
+        await self._sender.send(chat_id=self._chat_id, markdown=text)
 
 
 class _SafeDefaultPrivilegeJudge:

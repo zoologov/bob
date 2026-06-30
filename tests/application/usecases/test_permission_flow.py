@@ -24,7 +24,14 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from bob.application.usecases.permission_flow import PermissionFlow
+from bob.application.usecases.permission_execution import (
+    PermissionDecision,
+    PermissionExecutor,
+)
+from bob.application.usecases.permission_flow import (
+    PermissionExecutorLike,
+    PermissionFlow,
+)
 from bob.domain.permission.privilege import PrivilegeContext, PrivilegeNeed
 from bob.domain.permission.state import PermissionState
 
@@ -107,12 +114,25 @@ class _RecordingAuthorize:
         self.authorized.append(requester_id)
 
 
+class _RecordingExecutor:
+    """Records the (request, decision) the flow handed to the executor (.3)."""
+
+    def __init__(self) -> None:
+        self.executed: list[tuple[PermissionRequest, object]] = []
+
+    async def execute(
+        self, request: PermissionRequest, decision: object
+    ) -> None:
+        self.executed.append((request, decision))
+
+
 def _flow(
     *,
     need: PrivilegeNeed,
     store: _FakeStore | None = None,
     notifier: _FakeNotifier | None = None,
     on_authorize: _RecordingAuthorize | None = None,
+    executor: PermissionExecutorLike | None = None,
 ) -> tuple[PermissionFlow, _FakeStore, _FakeNotifier]:
     used_store = store if store is not None else _FakeStore()
     used_notifier = notifier if notifier is not None else _FakeNotifier()
@@ -125,6 +145,7 @@ def _flow(
         id_factory=_ids(),
         capability_hints=("render_diagram",),
         on_authorize=on_authorize,
+        executor=executor,
     )
     return flow, used_store, used_notifier
 
@@ -399,3 +420,142 @@ async def test_decision_targets_the_oldest_pending_across_requesters() -> None:
     assert norman == ()  # the oldest pending (Норман) was approved
     other = await store.active_for(_OTHER_GUEST)
     assert len(other) == 1  # the newer one stays pending
+
+
+# --- execution wiring (BOB-052 .3) ---------------------------------------------
+
+
+async def test_grant_hands_the_approved_request_to_the_executor() -> None:
+    executor = _RecordingExecutor()
+    flow, store, _ = _flow(need=_PRIVILEGED, executor=executor)
+    request = await _pending_for(store, flow)
+
+    consumed = await flow.maybe_decide(text="да", is_owner=True)
+
+    assert consumed is True
+    # The request was recorded APPROVED and then executed as a GRANT.
+    assert store.requests[request.id].state is PermissionState.APPROVED
+    assert len(executor.executed) == 1
+    executed_request, decision = executor.executed[0]
+    assert executed_request.id == request.id
+    assert executed_request.request_text == "покажи задачи"
+    assert decision is PermissionDecision.GRANT
+
+
+async def test_deny_hands_the_request_to_the_executor_as_deny() -> None:
+    executor = _RecordingExecutor()
+    flow, store, _ = _flow(need=_PRIVILEGED, executor=executor)
+    request = await _pending_for(store, flow)
+
+    consumed = await flow.maybe_decide(text="нет", is_owner=True)
+
+    assert consumed is True
+    assert store.requests[request.id].state is PermissionState.DENIED
+    assert len(executor.executed) == 1
+    _, decision = executor.executed[0]
+    assert decision is PermissionDecision.DENY
+
+
+async def test_authorize_hands_the_request_to_the_executor_as_authorize() -> None:
+    executor = _RecordingExecutor()
+    flow, store, _ = _flow(need=_PRIVILEGED, executor=executor)
+    request = await _pending_for(store, flow)
+
+    consumed = await flow.maybe_decide(text="авторизуй его", is_owner=True)
+
+    assert consumed is True
+    assert store.requests[request.id].state is PermissionState.APPROVED
+    assert len(executor.executed) == 1
+    _, decision = executor.executed[0]
+    # The executor owns the durable grant on AUTHORIZE.
+    assert decision is PermissionDecision.AUTHORIZE
+
+
+async def test_executor_takes_precedence_over_the_inert_on_authorize_hook() -> None:
+    # When an executor is wired (.3), it owns the durable grant; the legacy .2
+    # on_authorize hook is NOT also fired (no double-authorize).
+    on_authorize = _RecordingAuthorize()
+    executor = _RecordingExecutor()
+    flow, store, _ = _flow(
+        need=_PRIVILEGED, on_authorize=on_authorize, executor=executor
+    )
+    await _pending_for(store, flow)
+
+    await flow.maybe_decide(text="авторизуй его", is_owner=True)
+
+    assert on_authorize.authorized == []
+    assert len(executor.executed) == 1
+
+
+async def test_no_executor_keeps_the_legacy_on_authorize_hook() -> None:
+    # Backward-compatible (.2): with no executor wired, the legacy durable hook still
+    # fires on authorize, so existing constructions behave exactly as before.
+    on_authorize = _RecordingAuthorize()
+    flow, store, _ = _flow(need=_PRIVILEGED, on_authorize=on_authorize)
+    await _pending_for(store, flow)
+
+    await flow.maybe_decide(text="авторизуй его", is_owner=True)
+
+    assert on_authorize.authorized == [_GUEST]
+
+
+async def test_grant_elevation_does_not_carry_to_the_requesters_next_message() -> None:
+    # 🔴 After a GRANT fulfils request A for the requester, a fresh privileged message B
+    # from the SAME requester is STILL gated — it re-pends and asks the owner again. The
+    # per-request elevation never became a durable allowance.
+    class _Fulfiller:
+        def __init__(self) -> None:
+            self.fulfilled: list[str] = []
+
+        async def fulfil(
+            self, request_text: str, *, requester_id: int, requester_name: str
+        ) -> str:
+            del requester_id, requester_name
+            self.fulfilled.append(request_text)
+            return "ok"
+
+    class _Channel:
+        async def send(self, text: str) -> None:
+            del text
+
+    class _Authz:
+        def __init__(self) -> None:
+            self.granted: list[int] = []
+
+        async def authorize(self, user_id: int) -> None:
+            self.granted.append(user_id)
+
+    fulfiller = _Fulfiller()
+    authz = _Authz()
+    executor = PermissionExecutor(
+        fulfiller=fulfiller, channel=_Channel(), authorizer=authz
+    )
+    store = _FakeStore()
+    flow, _, _ = _flow(need=_PRIVILEGED, store=store, executor=executor)
+
+    # Request A → pends; owner grants → A is fulfilled (elevated, once).
+    await flow.maybe_request(
+        text="покажи задачи",
+        requester_id=_GUEST,
+        requester_name="Норман",
+        is_owner=False,
+        is_authorized=False,
+    )
+    await flow.maybe_decide(text="да", is_owner=True)
+    assert fulfiller.fulfilled == ["покажи задачи"]
+
+    # A DIFFERENT privileged message B from the same requester is STILL gated: it pends
+    # and asks the owner again (NOT auto-fulfilled). No durable grant ever happened.
+    consumed_b = await flow.maybe_request(
+        text="запусти диаграмму",
+        requester_id=_GUEST,
+        requester_name="Норман",
+        is_owner=False,
+        is_authorized=False,
+    )
+    assert consumed_b is True  # pended again, not fulfilled outright
+    assert fulfiller.fulfilled == ["покажи задачи"]  # B not fulfilled without approval
+    assert authz.granted == []  # never durably authorised
+    pending_b = await store.active_for(_GUEST)
+    assert len(pending_b) == 1
+    assert pending_b[0].request_text == "запусти диаграмму"

@@ -41,6 +41,7 @@ from enum import Enum
 from typing import TYPE_CHECKING, Protocol
 from uuid import uuid4
 
+from bob.application.usecases.permission_execution import PermissionDecision
 from bob.domain.permission.entities import PermissionRequest
 from bob.domain.permission.intent import is_authorize, is_deny, is_grant
 from bob.domain.permission.privilege import PrivilegeContext
@@ -55,6 +56,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 __all__ = [
+    "PermissionExecutorLike",
     "PermissionFlow",
     "PermissionNotifier",
     "PermissionRequestStoreLike",
@@ -100,6 +102,23 @@ class PermissionNotifier(Protocol):
     async def tell_requester(self, text: str) -> None: ...
 
 
+class PermissionExecutorLike(Protocol):
+    """The execution seam the flow drives once the owner's decision is recorded (.3).
+
+    Realised by
+    :class:`~bob.application.usecases.permission_execution.PermissionExecutor`. After
+    :meth:`PermissionFlow.maybe_decide` records APPROVED / DENIED, it hands the request
+    and the classified :class:`PermissionDecision` to :meth:`execute`, which fulfils a
+    GRANT with a one-shot elevation, durably grants + fulfils an AUTHORIZE, or sends a
+    gentle decline on a DENY — all decorative (safe-default refuse). Unwired (the .2
+    default) the flow keeps the legacy inert ``on_authorize`` hook instead.
+    """
+
+    async def execute(
+        self, request: PermissionRequest, decision: PermissionDecision
+    ) -> None: ...
+
+
 # Owner notice + requester ack templates (Russian persona voice; Cyrillic look-alikes
 # intentional — silenced via per-file-ignores). The owner notice names WHO asks WHAT so
 # the owner can decide with «да»/«нет»/«авторизуй» or /allow //deny //authorize.
@@ -124,6 +143,7 @@ class PermissionFlow:
         id_factory: Callable[[], str] | None = None,
         capability_hints: Sequence[str] = (),
         on_authorize: Callable[[int], Awaitable[None]] | None = None,
+        executor: PermissionExecutorLike | None = None,
     ) -> None:
         self._judge = judge
         self._store = store
@@ -132,12 +152,19 @@ class PermissionFlow:
         self._owner_name = owner_name
         self._id_factory = id_factory if id_factory is not None else _uuid_id
         self._capability_hints = tuple(capability_hints)
-        # Durable-authorise hook (BOB-052 .3 seam): an «авторизуй» / ``/authorize``
-        # decision approves the pending AND should durably authorise the requester via
-        # the real Authorizer. Unwired here (.2) it is an inert no-op — the state still
-        # moves to APPROVED — so .3 can wire the real grant + execution without changing
-        # this flow's contract.
+        # Durable-authorise hook (BOB-052 .2 seam): an «авторизуй» / ``/authorize``
+        # decision approves the pending AND should durably authorise the requester via the
+        # real Authorizer. With NO executor wired (.2) it is the durable seam — unwired it
+        # is an inert no-op (the state still moves to APPROVED). When an executor IS wired
+        # (.3) the executor owns the durable grant, so this hook is NOT also fired (no
+        # double-authorize).
         self._on_authorize = on_authorize
+        # Execution seam (BOB-052 .3): once the owner's decision is recorded, the request
+        # + the classified :class:`PermissionDecision` are handed to the executor, which
+        # fulfils a GRANT (one-shot elevation), durably grants + fulfils an AUTHORIZE, or
+        # sends a gentle decline on a DENY — decorative (safe-default refuse). Unwired (the
+        # .2 default) the legacy ``on_authorize`` hook fires instead and no execution runs.
+        self._executor = executor
 
     async def maybe_request(
         self,
@@ -210,12 +237,30 @@ class PermissionFlow:
             return False
         if decision is _Decision.DENY:
             await self._store.set_state(pending.id, PermissionState.DENIED)
+            await self._run_execution(pending, decision)
             return True
-        # GRANT or AUTHORIZE both approve; AUTHORIZE also fires the durable hook.
+        # GRANT or AUTHORIZE both approve; AUTHORIZE also durably authorises (the
+        # executor on the .3 path, else the legacy hook on the .2 path).
         await self._store.set_state(pending.id, PermissionState.APPROVED)
-        if decision is _Decision.AUTHORIZE:
+        if self._executor is None and decision is _Decision.AUTHORIZE:
             await self._authorize(pending.requester_id)
+        await self._run_execution(pending, decision)
         return True
+
+    async def _run_execution(
+        self, request: PermissionRequest, decision: _Decision
+    ) -> None:
+        """Hand the recorded decision to the executor, when one is wired (BOB-052 .3).
+
+        The executor owns HOW: it fulfils a GRANT with a one-shot elevation, durably
+        grants + fulfils an AUTHORIZE, or sends a gentle decline on a DENY — all
+        decorative (safe-default refuse inside the executor). Unwired (the .2 default)
+        nothing runs here and the legacy ``on_authorize`` hook already handled the durable
+        grant above.
+        """
+        if self._executor is None:
+            return
+        await self._executor.execute(request, _DECISION_TO_EXECUTION[decision])
 
     async def _supersede_active(self, requester_id: int) -> None:
         """Expire any still-PENDING request of ``requester_id`` (one active per person)."""
@@ -248,6 +293,16 @@ class _Decision(Enum):
     GRANT = "grant"
     DENY = "deny"
     AUTHORIZE = "authorize"
+
+
+# Map the flow's internal decision to the executor's verdict (BOB-052 .3). Kept as a
+# pure mapping so the flow's NL/command classification (.2) stays the single source of
+# WHICH decision was made, and the executor stays the single source of HOW it runs.
+_DECISION_TO_EXECUTION: dict[_Decision, PermissionDecision] = {
+    _Decision.GRANT: PermissionDecision.GRANT,
+    _Decision.DENY: PermissionDecision.DENY,
+    _Decision.AUTHORIZE: PermissionDecision.AUTHORIZE,
+}
 
 
 # Explicit owner-command → decision mapping (deny before allow is moot for an exact

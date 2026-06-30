@@ -173,6 +173,11 @@ ignore = [
 # docstrings, comments and the owner-notice/requester-ack literals whose Cyrillic
 # look-alikes are intentional — RUF001/RUF002/RUF003 here.
 "src/bob/application/usecases/permission_flow.py" = ["RUF001", "RUF002", "RUF003"]
+# The permission EXECUTION (BOB-052 .3): the executor's decline line + the elevated
+# fulfilment prompt carry Russian persona literals whose Cyrillic look-alikes are
+# intentional — RUF001/RUF002/RUF003 here.
+"src/bob/application/usecases/permission_execution.py" = ["RUF001", "RUF002", "RUF003"]
+"src/bob/application/usecases/privileged_fulfiller.py" = ["RUF001", "RUF002", "RUF003"]
 # The coding work-indicator adapters (BOB-046 .2): Russian docstrings whose Cyrillic
 # look-alikes are intentional — RUF001/RUF002/RUF003 do not apply to these.
 "src/bob/infrastructure/telegram/coding_indicator.py" = ["RUF001", "RUF002", "RUF003"]
@@ -434,6 +439,24 @@ ignore = [
     "RUF003",
 ]
 "tests/application/usecases/test_permission_flow.py" = [
+    "S101",
+    "ARG001",
+    "ARG002",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+"tests/application/usecases/test_permission_execution.py" = [
+    "S101",
+    "ARG001",
+    "ARG002",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+"tests/application/usecases/test_privileged_fulfiller.py" = [
     "S101",
     "ARG001",
     "ARG002",
