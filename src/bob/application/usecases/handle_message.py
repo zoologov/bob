@@ -564,6 +564,34 @@ class NaturalCodingRouter(Protocol):
     async def route(self, *, text: str, sender: int | None, is_owner: bool) -> bool: ...
 
 
+class PermissionFlowLike(Protocol):
+    """The permission-flow seam HandleMessage delegates privilege gating to (BOB-052 .2).
+
+    Realised by :class:`~bob.application.usecases.permission_flow.PermissionFlow`. On a
+    turn it owns two decisions, each returning whether it CONSUMED the turn (so
+    HandleMessage short-circuits the normal compose): ``maybe_decide`` records the
+    OWNER's verdict on an active pending request (grant / deny / authorize), and
+    ``maybe_request`` opens a pending request + asks the owner when a NON-authorized
+    member asks for something privileged. 🔴 Owner-only decision and the
+    non-authorized-only request gate live INSIDE the flow; HandleMessage only passes the
+    perceived authz facts. Unwired (the default) the seam is inert and every message
+    takes the normal chat flow exactly as before.
+    """
+
+    async def maybe_decide(self, *, text: str, is_owner: bool) -> bool: ...
+
+    async def maybe_request(
+        self,
+        *,
+        text: str,
+        requester_id: int,
+        requester_name: str,
+        is_owner: bool,
+        is_authorized: bool,
+        recent_thread: str = "",
+    ) -> bool: ...
+
+
 class OutageNotifier(Protocol):
     """GUPPI's honest-outage seam (BOB-049 .3 — «полный Боб или GUPPI-нотис»).
 
@@ -748,6 +776,7 @@ class HandleMessage:
         diagram_renderer: DiagramRenderer | None = None,
         diagram_send_as: DiagramSendMode = _DEFAULT_DIAGRAM_SEND_AS,
         coding_router: NaturalCodingRouter | None = None,
+        permission_flow: PermissionFlowLike | None = None,
         decide_response: DecideResponse | None = None,
         outage_notifier: OutageNotifier | None = None,
         retry_sleep: Sleep | None = None,
@@ -1021,6 +1050,16 @@ class HandleMessage:
         # message takes the normal chat flow exactly as before. The `/code` command in
         # General is a separate surface and is unaffected.
         self._coding_router = coding_router
+        # The permission seam (BOB-052 .2): when wired, a privilege — running a tool,
+        # revealing Bob's inner life, disclosing owner data — is OWNER-GATED even though
+        # memory is public in the closed group (BOB-051). On the OWNER's turn an active
+        # pending decision (grant / deny / authorize) is recorded; on a NON-authorized
+        # member's turn a privileged request opens a pending + asks the owner («Вова, <кто>
+        # просит <что> — разрешить?») and the member is told «спрошу Вову». 🔴 Owner-only
+        # decision + the non-authorized-only request gate live inside the flow; an
+        # AUTHORIZED member never enters it. Either consumes the turn (the normal compose
+        # is skipped). Unwired (the default) the seam is inert and the turn is unchanged.
+        self._permission_flow = permission_flow
         # The semantic response-judgment seam (BOB-049): when wired (the LIVE path),
         # Bob UNDERSTANDS each inbound in context and chooses — as a person — REPLY /
         # REACT / IGNORE, replacing the if/else addressivity ladder (BOB-023/025) and the
@@ -1140,6 +1179,16 @@ class HandleMessage:
         # bypass the plan gate; a non-owner / non-coding message returns here unconsumed
         # and falls through to the normal chat path exactly as before.
         if await self._maybe_route_coding(event, interlocutor):
+            return
+        # Privilege gating (BOB-052 .2): BEFORE composing a normal reply, route the turn
+        # through the permission flow. On the OWNER's turn it records a decision on an
+        # active pending request (grant / deny / authorize); on a NON-authorized member's
+        # turn a privileged request opens a pending + asks the owner. 🔴 Owner-only
+        # decision + the non-authorized-only request gate live inside the flow (an
+        # AUTHORIZED member is never gated). When it consumes the turn the message was a
+        # privilege decision/request, so the normal perceive→decide→act flow is skipped.
+        # Unwired (the default) this is inert and the turn falls through exactly as before.
+        if await self._maybe_permission(event, interlocutor):
             return
         # Recall Bob's LIGHT prior first impression of this sender (BOB-019 bob-apv.3):
         # a returning person → his stored note, so the compose prompt can recall him
@@ -1519,6 +1568,41 @@ class HandleMessage:
         )
         return await self._coding_router.route(
             text=event.text, sender=event.sender_id, is_owner=is_owner
+        )
+
+    async def _maybe_permission(
+        self, event: MessageReceived, interlocutor: Interlocutor | None
+    ) -> bool:
+        """Route the turn through the permission flow; return whether it consumed it.
+
+        Inert when no flow is wired (the default). The authz facts are derived from the
+        perceived interlocutor: OWNER → owner; a TRUSTED non-owner (KNOWN) → authorized;
+        a GUEST → non-authorized. 🔴 On the OWNER's turn the flow may record a decision
+        on an active pending; on a NON-authorized member's turn it may open a privileged
+        request and ask the owner. The flow itself enforces owner-only decision and the
+        non-authorized-only request gate — an AUTHORIZED member is never gated. With no
+        perceived interlocutor (no perception seam) the message is treated as
+        non-owner/non-authorized only for the request path, and the owner-decision path
+        cannot fire — so an unidentified turn is never auto-approved.
+        """
+        if self._permission_flow is None:
+            return False
+        is_owner = (
+            interlocutor is not None and interlocutor.kind is InterlocutorKind.OWNER
+        )
+        is_authorized = interlocutor is not None and interlocutor.trust is Trust.TRUSTED
+        if is_owner and await self._permission_flow.maybe_decide(
+            text=event.text, is_owner=True
+        ):
+            return True
+        if event.sender_id is None:
+            return False
+        return await self._permission_flow.maybe_request(
+            text=event.text,
+            requester_id=event.sender_id,
+            requester_name=event.sender_name or "",
+            is_owner=is_owner,
+            is_authorized=is_authorized,
         )
 
     async def _perceive_interlocutor(

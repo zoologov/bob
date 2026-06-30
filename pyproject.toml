@@ -169,6 +169,10 @@ ignore = [
     "RUF002",
     "RUF003",
 ]
+# The permission flow + its app wiring (BOB-052 .2) carry Russian persona/policy
+# docstrings, comments and the owner-notice/requester-ack literals whose Cyrillic
+# look-alikes are intentional — RUF001/RUF002/RUF003 here.
+"src/bob/application/usecases/permission_flow.py" = ["RUF001", "RUF002", "RUF003"]
 # The coding work-indicator adapters (BOB-046 .2): Russian docstrings whose Cyrillic
 # look-alikes are intentional — RUF001/RUF002/RUF003 do not apply to these.
 "src/bob/infrastructure/telegram/coding_indicator.py" = ["RUF001", "RUF002", "RUF003"]
@@ -424,6 +428,15 @@ ignore = [
 "tests/infrastructure/persistence/test_permission_request_store.py" = [
     "S101",
     "ARG001",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+"tests/application/usecases/test_permission_flow.py" = [
+    "S101",
+    "ARG001",
+    "ARG002",
     "PLR2004",
     "RUF001",
     "RUF002",
