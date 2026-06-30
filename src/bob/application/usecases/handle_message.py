@@ -36,6 +36,7 @@ and storage live behind ports, and time is injected via :class:`Clock`.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -43,6 +44,7 @@ from typing import TYPE_CHECKING, Literal, Protocol
 
 from bob.application.capabilities.registry import CapabilityRegistry
 from bob.application.capabilities.tool_loop import ToolLoop
+from bob.application.reliability import call_with_retry
 from bob.application.router.llm_router import LLMRequest, TaskType
 from bob.application.router.reply_tier_selector import select_reply_tier
 from bob.application.usecases.update_mood_from_text import TextSignals
@@ -140,10 +142,11 @@ from bob.domain.personality.zone_classifier import TasteZoneClassifier
 from bob.domain.ports import DiagramRenderError, DiagramResult
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping, Sequence
+    from collections.abc import Awaitable, Callable, Mapping, Sequence
     from contextlib import AbstractAsyncContextManager
     from random import Random
 
+    from bob.application.reliability import Sleep
     from bob.application.router.llm_router import LLMRouter
     from bob.application.runtime.events import MessageReceived
     from bob.application.usecases.decide_response import DecideResponse
@@ -172,6 +175,15 @@ if TYPE_CHECKING:
     )
 
 logger = logging.getLogger(__name__)
+
+# Reliability defaults (BOB-049 .3 — «полный Боб или честный GUPPI-нотис»). An ESSENTIAL
+# LLM step (the semantic judgment, the reply generation) is retried a bounded number of
+# times before Bob falls back to the honest outage notice — never a degraded half-answer.
+# ``_DEFAULT_ESSENTIAL_ATTEMPTS`` is the TOTAL number of tries (one initial call + two
+# retries); the short backoff is awaited through an injected sleep seam (deterministic in
+# tests). Both tunable per persona via ``reliability.*``.
+_DEFAULT_ESSENTIAL_ATTEMPTS = 3
+_DEFAULT_ESSENTIAL_BACKOFF_SECONDS = 0.5
 
 # How a rendered diagram is sent (BOB-037 C). ``document`` posts the PNG as an
 # UNCOMPRESSED file (full resolution, tap → real pixels) — the product default, since
@@ -544,6 +556,37 @@ class NaturalCodingRouter(Protocol):
     async def route(self, *, text: str, sender: int | None, is_owner: bool) -> bool: ...
 
 
+class OutageNotifier(Protocol):
+    """GUPPI's honest-outage seam (BOB-049 .3 — «полный Боб или GUPPI-нотис»).
+
+    When an ESSENTIAL turn step (the semantic judgment or the reply generation) keeps
+    failing after the bounded retries, Bob — the mind — is unavailable. Rather than ship a
+    degraded half-answer («уверенный бред», the antipattern), GUPPI (the infrastructure
+    subsystem) honestly reports the outage into Bob's topic via this seam. Optional: with
+    no notifier wired the turn still ends cleanly — the user's turn is persisted and NO
+    degraded reply is produced — just without a visible notice. The concrete adapter sends
+    a fixed system line through Bob's bot into his topic; the third-person text reads as
+    GUPPI reporting, not Bob being rude.
+    """
+
+    async def notify_outage(self) -> None:
+        """Post GUPPI's honest "Bob temporarily unavailable" connectivity notice."""
+        ...
+
+
+class _EssentialStepError(Exception):
+    """An ESSENTIAL turn step failed after the bounded retries (BOB-049 .3).
+
+    Raised by the retry-wrapped essential calls (the semantic judgment, the reply
+    generation) so the turn falls back to the honest GUPPI outage notice instead of a
+    degraded reply. Carries the step label for the log only — never shown to the user.
+    """
+
+    def __init__(self, step: str) -> None:
+        super().__init__(step)
+        self.step = step
+
+
 @dataclass
 class PersonalityState:
     """Mutable in-memory holder for Bob's current soul snapshot across turns.
@@ -696,6 +739,10 @@ class HandleMessage:
         diagram_send_as: DiagramSendMode = _DEFAULT_DIAGRAM_SEND_AS,
         coding_router: NaturalCodingRouter | None = None,
         decide_response: DecideResponse | None = None,
+        outage_notifier: OutageNotifier | None = None,
+        retry_sleep: Sleep | None = None,
+        essential_attempts: int = _DEFAULT_ESSENTIAL_ATTEMPTS,
+        essential_backoff_seconds: float = _DEFAULT_ESSENTIAL_BACKOFF_SECONDS,
     ) -> None:
         self._router = router
         self._gateway = gateway
@@ -960,6 +1007,84 @@ class HandleMessage:
         # sender perceived → Bob falls back to the legacy addressivity path, so existing
         # constructions/tests behave exactly as before.
         self._decide_response = decide_response
+        # Reliability seam (BOB-049 .3 — «полный Боб или честный GUPPI-нотис»): the two
+        # ESSENTIAL LLM steps (the semantic judgment + the reply generation) are retried a
+        # bounded number of times with a short backoff before Bob falls back to the honest
+        # GUPPI outage notice — never a degraded half-answer. The backoff is awaited through
+        # an injected ``retry_sleep`` (``asyncio.sleep`` at runtime, a fake in tests, so the
+        # retry is deterministic with no real delay). When an essential step still fails,
+        # ``outage_notifier`` posts the honest GUPPI outage notice into Bob's topic;
+        # unwired (the default) the turn still ends cleanly with no degraded reply, just
+        # without a visible notice. Optional flavours are NOT routed through here — they
+        # drop silently in their own call sites, so a flaky add-on never trips the notice.
+        self._outage_notifier = outage_notifier
+        self._retry_sleep: Sleep = retry_sleep if retry_sleep is not None else asyncio.sleep
+        if essential_attempts < 1:
+            msg = f"essential_attempts must be >= 1, got {essential_attempts}"
+            raise ValueError(msg)
+        self._essential_attempts = essential_attempts
+        if essential_backoff_seconds < 0:
+            msg = (
+                f"essential_backoff_seconds must be non-negative, "
+                f"got {essential_backoff_seconds}"
+            )
+            raise ValueError(msg)
+        self._essential_backoff_seconds = essential_backoff_seconds
+
+    async def _run_essential[T](
+        self, operation: Callable[[], Awaitable[T]], *, step: str
+    ) -> T:
+        """Run an ESSENTIAL LLM step with bounded retry (BOB-049 .3).
+
+        The semantic judgment and the reply generation are the steps whose persistent
+        failure must NOT yield a degraded reply. Each is retried up to
+        ``essential_attempts`` times with the injected backoff sleep; if every attempt
+        raises, the last error is wrapped in :class:`_EssentialStepError` so the turn
+        falls back to the honest GUPPI outage notice. OPTIONAL add-ons are never routed
+        through here — they drop silently at their own call sites.
+        """
+        try:
+            return await call_with_retry(
+                operation,
+                attempts=self._essential_attempts,
+                backoff_seconds=self._essential_backoff_seconds,
+                sleep=self._retry_sleep,
+            )
+        except Exception as exc:
+            raise _EssentialStepError(step) from exc
+
+    async def _notify_outage(self) -> None:
+        """Emit GUPPI's honest outage notice into Bob's topic, best-effort (BOB-049 .3).
+
+        Unwired notifier → a clean no-op (the turn already ended with no degraded reply).
+        A flaky send is logged and swallowed so the failure handling itself can never
+        raise on top of the original essential failure.
+        """
+        if self._outage_notifier is None:
+            return
+        try:
+            await self._outage_notifier.notify_outage()
+        except Exception:
+            logger.exception("sending the GUPPI outage notice failed (ignored)")
+
+    async def _handle_essential_failure(
+        self, event: MessageReceived, soul: SOUL, exc: _EssentialStepError
+    ) -> None:
+        """End a turn whose ESSENTIAL step failed: persist + GUPPI notice (BOB-049 .3).
+
+        🔴 «Полный Боб или честный GUPPI-нотис»: NO degraded reply is produced. The user's
+        turn is persisted (so the message is not lost — consistent with .2) and GUPPI
+        honestly reports the outage into Bob's topic. The same path runs for a guest turn
+        (only the episodic record is written — no owner facts, no reply — so nothing leaks).
+        """
+        logger.warning(
+            "essential turn step (%s) failed after %d attempts; "
+            "emitting GUPPI outage notice (no degraded reply)",
+            exc.step,
+            self._essential_attempts,
+        )
+        await self._persist(event, _OUTAGE_MARKER, soul)
+        await self._notify_outage()
 
     async def _load_modulators(self) -> RuleModulators:
         """Build this turn's soft modulators from Bob's APPROVED rules (BOB-028 .3).
@@ -1042,7 +1167,17 @@ class HandleMessage:
         # persisted + floor-advanced), so we return; otherwise it returns the floor signal
         # + any per-person history already replayed for a REPLY, and we fall through to the
         # compose+send path below (guest restrictions intact).
-        gate = await self._gate_turn(event, soul, interlocutor, plan, interest, modulators)
+        # 🔴 BOB-049 .3: the gate runs the ESSENTIAL semantic judgment (retry-wrapped). If
+        # it still fails after the retries, end the turn with the honest GUPPI outage notice
+        # — NOT a guessed default. A genuine REACT/IGNORE is a SUCCESS (not a failure): it is
+        # handled inside the gate and returns ``None`` with no notice.
+        try:
+            gate = await self._gate_turn(
+                event, soul, interlocutor, plan, interest, modulators
+            )
+        except _EssentialStepError as exc:
+            await self._handle_essential_failure(event, soul, exc)
+            return
         if gate is None:
             return
         decision = gate.decision
@@ -1114,45 +1249,53 @@ class HandleMessage:
         user_repeated = is_user_repeat(event.text, _user_turns(history))
         # Run the slow generation inside the typing keepalive so "Bob is typing…"
         # stays visible for the whole real wait (BOB-009); then commit one rich final.
-        async with self._gateway.typing_indicator(chat_id=event.chat_id):
-            reply = await self._compose_reply(
-                event.text,
-                soul,
-                recalled,
-                history,
-                plan,
-                user_repeated=user_repeated,
-                interlocutor=interlocutor,
-                is_guest=is_guest,
-                prior_impression=prior_impression,
-                relationship=relationship,
-                engagement=level,
-                sulk=sulk,
-                verbosity=verbosity,
-                modulators=modulators,
-            )
-            # Anti-repeat guard (BOB-022, defense in depth): if the fresh reply is
-            # byte-identical (after strip) to Bob's most-recent prior reply, regenerate
-            # ONCE — with sampling now stochastic the retry differs. At most one extra
-            # generation, only on an exact duplicate; if the retry is still identical it
-            # is kept (no infinite loop).
-            reply = await self._guard_against_verbatim_repeat(
-                reply,
-                event.text,
-                soul,
-                recalled,
-                history,
-                plan,
-                user_repeated,
-                interlocutor,
-                is_guest=is_guest,
-                prior_impression=prior_impression,
-                relationship=relationship,
-                engagement=level,
-                sulk=sulk,
-                verbosity=verbosity,
-                modulators=modulators,
-            )
+        # 🔴 BOB-049 .3: the reply generation is the second ESSENTIAL step (retry-wrapped
+        # inside _compose_reply). If it still fails after the retries, end the turn with the
+        # honest GUPPI outage notice instead of a degraded half-answer — the user's turn is
+        # persisted and NO Bob reply ships.
+        try:
+            async with self._gateway.typing_indicator(chat_id=event.chat_id):
+                reply = await self._compose_reply(
+                    event.text,
+                    soul,
+                    recalled,
+                    history,
+                    plan,
+                    user_repeated=user_repeated,
+                    interlocutor=interlocutor,
+                    is_guest=is_guest,
+                    prior_impression=prior_impression,
+                    relationship=relationship,
+                    engagement=level,
+                    sulk=sulk,
+                    verbosity=verbosity,
+                    modulators=modulators,
+                )
+                # Anti-repeat guard (BOB-022, defense in depth): if the fresh reply is
+                # byte-identical (after strip) to Bob's most-recent prior reply, regenerate
+                # ONCE — with sampling now stochastic the retry differs. At most one extra
+                # generation, only on an exact duplicate; if the retry is still identical it
+                # is kept (no infinite loop).
+                reply = await self._guard_against_verbatim_repeat(
+                    reply,
+                    event.text,
+                    soul,
+                    recalled,
+                    history,
+                    plan,
+                    user_repeated,
+                    interlocutor,
+                    is_guest=is_guest,
+                    prior_impression=prior_impression,
+                    relationship=relationship,
+                    engagement=level,
+                    sulk=sulk,
+                    verbosity=verbosity,
+                    modulators=modulators,
+                )
+        except _EssentialStepError as exc:
+            await self._handle_essential_failure(event, soul, exc)
+            return
         # Optional brevity length guard (BOB-024): a conservative safety net behind
         # the bayes — when enabled AND the message wanted a short answer (LOW demand),
         # a reply that still ran long is lightly clamped to its first finished thought
@@ -1837,19 +1980,28 @@ class HandleMessage:
         already-replayed history so a REPLY does not re-read it.
         """
         assert self._decide_response is not None  # guarded by the caller
+        decide_response = self._decide_response
         signals = await self._addressivity_signals(event)
         is_guest = interlocutor.trust is Trust.GUEST
         history = await self._replay_person_history(interlocutor, is_guest=is_guest)
-        choice = await self._decide_response.decide(
-            text=event.text,
-            interlocutor=interlocutor,
-            recent_thread=_render_thread(history),
-            mentions_bob=event.mentions_bob,
-            reply_to_bob=signals.reply_to_bob,
-            addressivity=signals.per_message,
-            others_present=signals.others_present,
-            floor_engaged=signals.floor_engaged,
-            mood_tone=soul.mood.tone(),
+        # ESSENTIAL step (BOB-049 .3): the semantic judgment is retry-wrapped — a flaky
+        # judge call retries with backoff, then (if still failing) raises
+        # _EssentialStepError so the turn falls back to the honest GUPPI outage notice
+        # rather than a guessed default. A SUCCESSFUL REACT/IGNORE is a genuine choice,
+        # not a failure (no retry, no notice).
+        choice = await self._run_essential(
+            lambda: decide_response.decide(
+                text=event.text,
+                interlocutor=interlocutor,
+                recent_thread=_render_thread(history),
+                mentions_bob=event.mentions_bob,
+                reply_to_bob=signals.reply_to_bob,
+                addressivity=signals.per_message,
+                others_present=signals.others_present,
+                floor_engaged=signals.floor_engaged,
+                mood_tone=soul.mood.tone(),
+            ),
+            step="response judgment",
         )
         floor = _AddressivityDecision(
             outcome=_OUTCOME_FOR_INTENT[choice.intent],
@@ -2105,8 +2257,17 @@ class HandleMessage:
             modulators=modulators,
         )
         provider = self._tool_provider
+        # ESSENTIAL step (BOB-049 .3): the reply generation is retry-wrapped — a flaky
+        # router/tool-loop call retries with backoff, then (if still failing) raises
+        # _EssentialStepError so the turn ends in the honest GUPPI outage notice rather
+        # than a degraded half-answer. The OPTIONAL grounded add-ons folded above already
+        # dropped silently on their own (a flaky add-on never reaches here / never trips
+        # the notice).
         if not is_guest and provider is not None and not self._registry.is_empty:
-            return await self._reply_with_tools(provider, system_prompt, text, context)
+            return await self._run_essential(
+                lambda: self._reply_with_tools(provider, system_prompt, text, context),
+                step="reply generation",
+            )
         # Hybrid reply tiering (BOB-006): a casual/short message answers on the
         # fast Tier 0 (flash) model for responsiveness; a complex/long message
         # escalates to the quality Tier 1 (plus) model — picked by a pure
@@ -2122,7 +2283,9 @@ class HandleMessage:
             private_context=None,
             tier_override=tier,
         )
-        return await self._router.run(request)
+        return await self._run_essential(
+            lambda: self._router.run(request), step="reply generation"
+        )
 
     async def _guard_against_verbatim_repeat(
         self,
@@ -2276,13 +2439,33 @@ class HandleMessage:
         there. Composes additively with the existing context (voice/language/
         negotiation/form-hint all live elsewhere and are untouched).
         """
+        # 🔴 Each add-on is OPTIONAL flavour (BOB-049 .3): wrapped so a flaky reflection /
+        # recall / fascination read DROPS the add-on (logged, returns "") and the core full
+        # Bob reply still ships. A failing add-on must NEVER trip the GUPPI outage notice —
+        # it is not an essential step.
         additions = [
-            await self._leak_inner_life(plan),
-            await self._callback(plan, text),
-            await self._mention_fascination(plan),
+            await self._safe_addon(self._leak_inner_life(plan), name="inner-life leak"),
+            await self._safe_addon(self._callback(plan, text), name="memory callback"),
+            await self._safe_addon(
+                self._mention_fascination(plan), name="fascination mention"
+            ),
         ]
         suffix = "".join(f"\n{line}" for line in additions if line)
         return f"{context}{suffix}" if suffix else context
+
+    async def _safe_addon(self, addon: Awaitable[str], *, name: str) -> str:
+        """Run one OPTIONAL grounded add-on, dropping it silently on failure (BOB-049 .3).
+
+        An add-on is FLAVOUR, never the core reply: if it raises (a flaky reflection /
+        recall / fascination read), the error is logged and the add-on dropped so the full
+        Bob reply still ships. Returns the add-on's line, or ``""`` when it had nothing OR
+        failed — so a failing optional add-on can never trigger the honest outage notice.
+        """
+        try:
+            return await addon
+        except Exception:
+            logger.exception("optional grounded add-on %r failed (dropped)", name)
+            return ""
 
     async def _leak_inner_life(self, plan: ExpressionPlan) -> str:
         """The leak line for this turn, or ``""`` (no flag / no reader / no reflection)."""
@@ -2481,6 +2664,11 @@ class HandleMessage:
 # per-person thread (BOB-045): IGNORE writes "(промолчал)", REACT "(реакция: <emoji>)".
 # Russian persona voice (project language); Cyrillic look-alikes are intentional.
 _SILENT_MARKER = "(промолчал)"
+
+# Bob's persisted half when an ESSENTIAL step failed after retries (BOB-049 .3): the
+# user's turn is saved (so the message is not lost) with this marker — no degraded reply
+# was produced; GUPPI reported the outage separately. Russian persona voice.
+_OUTAGE_MARKER = "(нет ответа: проблемы со связью)"  # noqa: RUF001
 
 
 def _reaction_marker(emoji: str) -> str:

@@ -513,6 +513,17 @@ ignore = [
     "RUF003",
     "SLF001",
 ]
+# The GUPPI-outage-notice topic test (BOB-049 .3) has a Russian module docstring whose
+# Cyrillic look-alikes are intentional (RUF002), accesses the private app adapter (SLF001).
+"tests/test_outage_notifier_topic.py" = [
+    "S101",
+    "ARG001",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+    "SLF001",
+]
 # The self-improvement application/voice tests (BOB-028 .3) assert on Russian
 # observation/adjustment/proposal literals whose Cyrillic look-alikes are intentional.
 "tests/domain/personality/test_self_improvement_modulators.py" = [

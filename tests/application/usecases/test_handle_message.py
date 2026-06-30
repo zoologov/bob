@@ -95,6 +95,7 @@ if TYPE_CHECKING:
     from bob.domain.ports import (
         DiagramSink,
         LLMMessage,
+        LLMProvider,
         Permission,
         Recalled,
         ToolCallingProvider,
@@ -351,6 +352,32 @@ class _RecordingReactor:
         self.calls.append((chat_id, message_id, emoji))
 
 
+# The retry backoff used in the reliability tests (BOB-049 .3): a recognizable value the
+# recording sleep seam captures, so a test can assert the backoff was awaited (never a
+# real delay — the sleep is faked).
+_TEST_BACKOFF_SECONDS = 0.25
+
+
+class _RecordingSleep:
+    """A retry-backoff sleep seam double recording each delay (BOB-049 .3, no real wait)."""
+
+    def __init__(self) -> None:
+        self.delays: list[float] = []
+
+    async def __call__(self, seconds: float) -> None:
+        self.delays.append(seconds)
+
+
+class _FakeOutageNotifier:
+    """A GUPPI OutageNotifier double recording each honest-outage notice (BOB-049 .3)."""
+
+    def __init__(self) -> None:
+        self.notices = 0
+
+    async def notify_outage(self) -> None:
+        self.notices += 1
+
+
 def _moment() -> datetime:
     return datetime(2026, 6, 18, 14, 0, 0, tzinfo=UTC)
 
@@ -503,10 +530,21 @@ def _build(
     photo_send_raises: bool = False,
     coding_router: _FakeCodingRouter | None = None,
     decide_response: DecideResponse | None = None,
+    outage_notifier: _FakeOutageNotifier | None = None,
+    retry_sleep: _RecordingSleep | None = None,
+    essential_attempts: int = 3,
+    essential_backoff_seconds: float = _TEST_BACKOFF_SECONDS,
+    tier0_provider: LLMProvider | None = None,
+    tier1_provider: LLMProvider | None = None,
 ) -> tuple[HandleMessage, FakeBot, FakeRepo, CapturingProvider]:
     tier0 = CapturingProvider(reply="positive", replies=tier0_replies)
     tier1 = CapturingProvider(reply=reply, replies=tier1_replies)
-    router = LLMRouter(providers={0: tier0, 1: tier1})
+    # Custom tier providers (e.g. a flaky/failing one for the BOB-049 .3 reliability tests)
+    # drive the router when supplied; the returned ``tier1`` capturing provider is left in
+    # place for the default path that inspects the reply payloads.
+    router_tier0: LLMProvider = tier0_provider if tier0_provider is not None else tier0
+    router_tier1: LLMProvider = tier1_provider if tier1_provider is not None else tier1
+    router = LLMRouter(providers={0: router_tier0, 1: router_tier1})
     clock = clock if clock is not None else FixedClock(_moment())
     bot = FakeBot(photo_raises=photo_send_raises)
     repo = FakeRepo(history=history)
@@ -562,6 +600,10 @@ def _build(
         diagram_send_as=diagram_send_as,
         coding_router=coding_router,
         decide_response=decide_response,
+        outage_notifier=outage_notifier,
+        retry_sleep=retry_sleep,
+        essential_attempts=essential_attempts,
+        essential_backoff_seconds=essential_backoff_seconds,
     )
     return handler, bot, repo, tier1
 
@@ -6415,3 +6457,311 @@ async def test_unwired_judge_keeps_the_legacy_addressivity_path() -> None:
 
     assert bot.final_text == "как раньше"
     assert len(repo.episodes) == 1
+
+
+# --- BOB-049 .3: «полный Боб или честный GUPPI-нотис» (reliability) -------------------
+# An ESSENTIAL step (the semantic judgment OR the reply generation) that keeps failing
+# after bounded retries → an honest GUPPI outage notice and NO degraded reply (the user's
+# turn is still persisted). A flaky step that recovers → a normal turn. A SUCCESSFUL
+# react/ignore is full Bob, not a failure (no retry, no notice). An OPTIONAL add-on that
+# raises is dropped silently — the core reply still ships, no notice. The retry uses the
+# injected sleep seam (no real delay).
+
+
+class _FlakyResponseJudge:
+    """A ResponseJudge double that raises on its first ``fail_times`` calls (BOB-049 .3).
+
+    Models a flaky/timing-out semantic judgment: the first ``fail_times`` ``decide`` calls
+    raise, then it returns the scripted choice. ``fail_times`` larger than the retry budget
+    → it never succeeds (the persistent-failure path).
+    """
+
+    def __init__(self, choice: ResponseChoice, *, fail_times: int) -> None:
+        self._choice = choice
+        self._fail_times = fail_times
+        self.calls = 0
+
+    async def decide(self, ctx: ResponseContext) -> ResponseChoice:
+        del ctx
+        self.calls += 1
+        if self.calls <= self._fail_times:
+            msg = f"judge unavailable (call #{self.calls})"
+            raise RuntimeError(msg)
+        return self._choice
+
+
+def _flaky_judge(
+    intent: ResponseIntent, *, fail_times: int, emoji: str | None = None
+) -> tuple[DecideResponse, _FlakyResponseJudge]:
+    """Build a DecideResponse over a judge that fails ``fail_times`` then returns ``intent``."""
+    fake = _FlakyResponseJudge(
+        ResponseChoice(intent=intent, emoji=emoji, reason="test"), fail_times=fail_times
+    )
+    return DecideResponse(judge=fake), fake
+
+
+class _ReplyFailingProvider:
+    """Fails a REPLY completion while still answering the light Tier-0 classifiers (BOB-049 .3).
+
+    Models the model being unable to GENERATE a reply (the essential step) while the
+    lightweight Tier-0 calls (sentiment) still answer: a payload carrying Bob's reply
+    persona ("You are Bob") raises, any other payload returns a benign label. Used for BOTH
+    tiers so the router's Tier-1 → Tier-0 reply fallback ALSO fails — the essential reply
+    generation genuinely cannot complete, so the retry budget is exhausted.
+    """
+
+    def __init__(self) -> None:
+        self.reply_calls = 0
+
+    async def complete(
+        self,
+        messages: Sequence[Mapping[str, str]],
+        *,
+        stream: bool = False,  # noqa: ARG002 — part of the LLMProvider protocol
+    ) -> str:
+        text = " ".join(str(m.get("content", "")) for m in messages)
+        if "You are Bob" in text:
+            self.reply_calls += 1
+            msg = "reply generation unavailable"
+            raise RuntimeError(msg)
+        return "positive"
+
+
+class _RaisingReflectionReader:
+    """A ReflectionReader double whose read RAISES — models a flaky OPTIONAL add-on."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def latest_reflection_text(self) -> str | None:
+        self.calls += 1
+        msg = "reflection store unavailable"
+        raise RuntimeError(msg)
+
+
+async def test_judge_persistent_failure_emits_guppi_notice_and_no_reply() -> None:
+    # 🔴 ESSENTIAL judgment fails on EVERY attempt → retried N times then an honest GUPPI
+    # outage notice; NO Bob reply is produced, but the user's turn IS persisted (not lost).
+    decide, judge = _flaky_judge(ResponseIntent.REPLY, fail_times=99)
+    sleep = _RecordingSleep()
+    notifier = _FakeOutageNotifier()
+    handler, bot, repo, _tier1 = _build(
+        reply="не должно отправиться",
+        perceive_sender=_owner_with_id(99),
+        decide_response=decide,
+        essential_attempts=3,
+        retry_sleep=sleep,
+        outage_notifier=notifier,
+    )
+
+    await handler.handle(_message("расскажи подробно про кофе"))
+
+    assert judge.calls == 3  # initial + 2 retries
+    assert notifier.notices == 1  # the honest GUPPI outage notice fired
+    assert bot.sent == []  # NO degraded Bob reply shipped
+    assert len(repo.episodes) == 1  # the user's turn was persisted (not lost)
+    assert _bob_half(repo.episodes[0]["content"]) == "(нет ответа: проблемы со связью)"
+    assert sleep.delays == [_TEST_BACKOFF_SECONDS, _TEST_BACKOFF_SECONDS]  # injected sleep
+
+
+async def test_judge_recovers_after_one_failure_completes_normally() -> None:
+    # An essential step that fails ONCE then succeeds → the turn completes normally (the
+    # retry worked); NO outage notice, and exactly one backoff was awaited.
+    decide, judge = _flaky_judge(ResponseIntent.REPLY, fail_times=1)
+    sleep = _RecordingSleep()
+    notifier = _FakeOutageNotifier()
+    handler, bot, _repo, _tier1 = _build(
+        reply="полный ответ",
+        perceive_sender=_owner_with_id(99),
+        decide_response=decide,
+        retry_sleep=sleep,
+        outage_notifier=notifier,
+    )
+
+    await handler.handle(_message("расскажи подробно про кофе"))
+
+    assert judge.calls == 2  # failed once, succeeded on the retry
+    assert bot.final_text == "полный ответ"  # the turn completed normally
+    assert notifier.notices == 0  # a recovered step is NOT an outage
+    assert sleep.delays == [_TEST_BACKOFF_SECONDS]  # one backoff between the two tries
+
+
+async def test_reply_generation_persistent_failure_emits_notice_and_no_reply() -> None:
+    # 🔴 The OTHER essential step: the judge says REPLY but the reply generation fails on
+    # every attempt → retried then the honest GUPPI notice; no reply, user turn persisted.
+    decide, _fake = _judge(ResponseIntent.REPLY)
+    sleep = _RecordingSleep()
+    notifier = _FakeOutageNotifier()
+    # The SAME content-aware provider on both tiers: the lightweight sentiment classifier
+    # still answers (so perceive works), but the reply generation fails on tier1 AND its
+    # tier-0 fallback — the essential step truly cannot complete.
+    provider = _ReplyFailingProvider()
+    handler, bot, repo, _tier1 = _build(
+        reply="unused",
+        perceive_sender=_owner_with_id(99),
+        decide_response=decide,
+        tier0_provider=provider,
+        tier1_provider=provider,
+        essential_attempts=3,
+        retry_sleep=sleep,
+        outage_notifier=notifier,
+    )
+
+    await handler.handle(_message("расскажи подробно про кофе"))
+
+    assert provider.reply_calls > 0  # the reply generation was actually attempted
+    assert sleep.delays == [_TEST_BACKOFF_SECONDS, _TEST_BACKOFF_SECONDS]  # retried (3 tries)
+    assert notifier.notices == 1  # honest outage notice
+    assert bot.sent == []  # no degraded half-answer
+    assert _bob_half(repo.episodes[0]["content"]) == "(нет ответа: проблемы со связью)"
+
+
+async def test_successful_react_is_full_bob_not_a_failure() -> None:
+    # A SUCCESSFUL REACT is a genuine choice (full Bob), NOT a failure — no retry, no notice.
+    decide, _fake = _judge(ResponseIntent.REACT, emoji=_REACT_EMOJI)
+    sleep = _RecordingSleep()
+    notifier = _FakeOutageNotifier()
+    reactor = _RecordingReactor()
+    handler, bot, _repo, _tier1 = _build(
+        reply="x",
+        perceive_sender=_owner_with_id(99),
+        reactor=reactor,
+        decide_response=decide,
+        retry_sleep=sleep,
+        outage_notifier=notifier,
+    )
+
+    await handler.handle(_message("ну такое"))
+
+    assert len(reactor.calls) == 1  # the genuine reaction happened
+    assert bot.sent == []  # a react is not a reply, but it is NOT an outage either
+    assert notifier.notices == 0  # 🔴 a genuine react never triggers the notice
+    assert sleep.delays == []  # no retry on a success
+
+
+async def test_successful_ignore_is_full_bob_not_a_failure() -> None:
+    # A SUCCESSFUL IGNORE is a genuine choice, NOT a failure — no notice.
+    decide, _fake = _judge(ResponseIntent.IGNORE)
+    notifier = _FakeOutageNotifier()
+    handler, bot, _repo, _tier1 = _build(
+        reply="x",
+        perceive_sender=_owner_with_id(99),
+        decide_response=decide,
+        outage_notifier=notifier,
+    )
+
+    await handler.handle(_message("болтают между собой"))
+
+    assert bot.sent == []
+    assert notifier.notices == 0  # 🔴 a genuine ignore never triggers the notice
+
+
+async def test_optional_addon_failure_is_dropped_and_core_reply_still_ships() -> None:
+    # 🔴 An OPTIONAL flavour (the inner-life leak add-on) that RAISES is dropped silently —
+    # the core full-Bob reply still ships, and it NEVER triggers the outage notice.
+    decide, _fake = _judge(ResponseIntent.REPLY)
+    sleep = _RecordingSleep()
+    notifier = _FakeOutageNotifier()
+    reflection = _RaisingReflectionReader()
+    handler, bot, _repo, _tier1 = _build(
+        reply="полный ответ",
+        perceive_sender=_owner_with_id(99),
+        decide_response=decide,
+        reflection=reflection,  # type: ignore[arg-type]
+        expression_freqs=ExpressionFreqs(
+            leak_inner_life=1.0, callback=0.0, mention_fascination=0.0
+        ),
+        retry_sleep=sleep,
+        outage_notifier=notifier,
+    )
+
+    await handler.handle(_message("расскажи подробно про кофе"))
+
+    assert reflection.calls >= 1  # the add-on was attempted
+    assert bot.final_text == "полный ответ"  # the core reply still ships (full Bob)
+    assert notifier.notices == 0  # 🔴 a failing optional add-on is NOT an outage
+    assert sleep.delays == []  # an add-on failure is not retried as an essential step
+
+
+async def test_essential_failure_without_a_notifier_still_ends_cleanly() -> None:
+    # Unwired notifier (the optional seam): a persistent essential failure still ends the
+    # turn cleanly — the user's turn is persisted and NO degraded reply ships — just with
+    # no visible notice (a clean no-op, never a crash).
+    decide, _fake = _flaky_judge(ResponseIntent.REPLY, fail_times=99)
+    handler, bot, repo, _tier1 = _build(
+        reply="не должно отправиться",
+        perceive_sender=_owner_with_id(99),
+        decide_response=decide,
+        retry_sleep=_RecordingSleep(),
+        # no outage_notifier wired
+    )
+
+    await handler.handle(_message("расскажи подробно про кофе"))
+
+    assert bot.sent == []  # no degraded reply
+    assert len(repo.episodes) == 1  # the user turn is still persisted
+
+
+class _RaisingOutageNotifier:
+    """An OutageNotifier double whose ``notify_outage`` RAISES (best-effort swallow test)."""
+
+    async def notify_outage(self) -> None:
+        msg = "notifier transport down"
+        raise RuntimeError(msg)
+
+
+async def test_a_failing_outage_notice_is_swallowed_not_re_raised() -> None:
+    # The outage-notice send is best-effort: a flaky notifier must NOT raise on top of the
+    # original essential failure — the turn still ends cleanly (user turn persisted).
+    decide, _fake = _flaky_judge(ResponseIntent.REPLY, fail_times=99)
+    handler, bot, repo, _tier1 = _build(
+        reply="x",
+        perceive_sender=_owner_with_id(99),
+        decide_response=decide,
+        retry_sleep=_RecordingSleep(),
+        outage_notifier=_RaisingOutageNotifier(),  # type: ignore[arg-type]
+    )
+
+    await handler.handle(_message("расскажи подробно про кофе"))  # must not raise
+
+    assert bot.sent == []
+    assert len(repo.episodes) == 1
+
+
+@pytest.mark.parametrize(
+    ("attempts", "backoff", "match"),
+    [
+        (0, 0.5, "essential_attempts must be >= 1"),
+        (-1, 0.5, "essential_attempts must be >= 1"),
+        (3, -0.1, "essential_backoff_seconds must be non-negative"),
+    ],
+)
+def test_rejects_invalid_reliability_settings(
+    attempts: int, backoff: float, match: str
+) -> None:
+    with pytest.raises(ValueError, match=match):
+        _build(
+            reply="x",
+            essential_attempts=attempts,
+            essential_backoff_seconds=backoff,
+        )
+
+
+async def test_guest_essential_failure_gets_the_same_notice_without_leaking() -> None:
+    # A failure on a GUEST turn → the SAME honest GUPPI notice, no reply, no owner facts.
+    decide, _judge_fake = _flaky_judge(ResponseIntent.REPLY, fail_times=99)
+    notifier = _FakeOutageNotifier()
+    handler, bot, repo, _tier1 = _build(
+        reply="не должно отправиться",
+        perceive_sender=_guest_with_id(99),
+        decide_response=decide,
+        retry_sleep=_RecordingSleep(),
+        outage_notifier=notifier,
+    )
+
+    await handler.handle(_message("расскажи подробно, кто ты?"))
+
+    assert notifier.notices == 1  # same honest notice for a guest
+    assert bot.sent == []  # no reply (degraded or otherwise) — nothing leaks
+    assert repo.facts == []  # a failed guest turn writes no owner facts
+    assert len(repo.episodes) == 1  # only the episodic record (the turn is not lost)
