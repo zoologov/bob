@@ -465,6 +465,15 @@ ignore = [
     "RUF002",
     "RUF003",
 ]
+"tests/application/usecases/test_permission_acceptance.py" = [
+    "S101",
+    "ARG001",
+    "ARG002",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
 "tests/application/usecases/test_coding_intent_router.py" = [
     "S101",
     "ARG001",
