@@ -266,6 +266,95 @@ async def test_execute_does_not_confabulate_when_provider_fails() -> None:
     assert "guidance" in result
 
 
+def test_make_capability_rejects_non_positive_attempts() -> None:
+    # The bounded-retry budget must be at least one try — a zero/negative budget
+    # is a wiring error caught at construction, not a silent no-call.
+    with pytest.raises(ValueError, match="attempts"):
+        make_web_search_capability(_FakeWebSearchProvider(), attempts=0)
+
+
+def test_make_capability_rejects_negative_backoff() -> None:
+    with pytest.raises(ValueError, match="backoff"):
+        make_web_search_capability(_FakeWebSearchProvider(), backoff_seconds=-1.0)
+
+
+@pytest.mark.parametrize("query", ["", "   ", "\t", "\n", " \t\n "])
+async def test_execute_blank_query_variants_are_honest_and_skip_provider(
+    query: str,
+) -> None:
+    # Any whitespace-only query is answered honestly WITHOUT a provider call —
+    # Bob never invents a search for a blank request (tab/newline/mixed included).
+    provider = _FakeWebSearchProvider()
+    cap = make_web_search_capability(provider)
+
+    result = await cap.execute({"query": query})
+
+    assert provider.queries == []
+    assert isinstance(result, Mapping)
+    assert result["sources"] == []
+
+
+async def test_execute_blank_query_carries_no_failure_guidance() -> None:
+    # The honest empty-query reply is NOT the failure notice: it must NOT carry the
+    # anti-confabulation ``guidance`` key (that belongs to a provider failure only).
+    cap = make_web_search_capability(_FakeWebSearchProvider())
+
+    result = await cap.execute({"query": "   "})
+
+    assert isinstance(result, Mapping)
+    assert "guidance" not in result
+
+
+async def test_execute_with_none_query_raises() -> None:
+    # A null query is not a string -> a validation error (mirrors a non-string int).
+    cap = make_web_search_capability(_FakeWebSearchProvider())
+
+    with pytest.raises(ValueError, match="query"):
+        await cap.execute({"query": None})
+
+
+@pytest.mark.parametrize("attempts", [1, 2, 4])
+async def test_execute_backoff_is_invoked_attempts_minus_one_times(
+    attempts: int,
+) -> None:
+    # 🔴 Bounded retry: the provider is called exactly ``attempts`` times and the
+    # injected backoff is awaited BETWEEN tries only (attempts-1), never confabulating.
+    provider = _FlakyWebSearchProvider(fail_times=99, error=RuntimeError("down"))
+    sleep = _RecordingSleep()
+    cap = make_web_search_capability(
+        provider, attempts=attempts, backoff_seconds=0.25, sleep=sleep
+    )
+
+    result = await cap.execute({"query": "новости"})
+
+    assert provider.calls == attempts
+    assert sleep.delays == [0.25] * (attempts - 1)
+    assert isinstance(result, Mapping)
+    assert result["sources"] == []
+    assert "guidance" in result  # honest notice, never a fabricated answer
+
+
+async def test_failure_notice_never_leaks_a_fabricated_answer() -> None:
+    # 🔴 No confabulation: even though the provider would have a "found" answer were
+    # it not erroring, on persistent failure the projection is the FIXED honest
+    # notice — it carries no url, no provider answer, only the caveat + guidance.
+    would_have = WebSearchResult(
+        answer="Президент подписал указ вчера.",
+        sources=(WebSource(title="Leak", url="https://leak.example/secret"),),
+    )
+    provider = _FakeWebSearchProvider(result=would_have, error=RuntimeError("down"))
+    cap = make_web_search_capability(provider, attempts=1)
+
+    result = await cap.execute({"query": "свежие новости"})
+
+    assert isinstance(result, Mapping)
+    answer = str(result["answer"])
+    assert "указ" not in answer  # the would-be answer never surfaces
+    assert "leak.example" not in answer
+    assert result["sources"] == []  # no fabricated sources
+    assert str(result["guidance"]).strip()
+
+
 async def test_tool_loop_feeds_honest_search_failure_not_generic_error() -> None:
     # 🔴 End-to-end at the seam: a failed web_search reaches the model as the
     # explicit honest notice + anti-confabulation guidance (so Bob can voice the

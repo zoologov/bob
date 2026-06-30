@@ -146,6 +146,26 @@ def test_web_search_value_objects_are_frozen() -> None:
         result.answer = "tampered"  # type: ignore[misc]
 
 
+def test_web_search_value_objects_use_slots_and_reject_new_attributes() -> None:
+    # slots=True: the value objects carry no __dict__ and reject ad-hoc attributes,
+    # so a recalled source/result cannot be silently extended downstream.
+    source = ports.WebSource(title="T", url="https://example.com")
+    result = ports.WebSearchResult(answer="a")
+    assert not hasattr(source, "__dict__")
+    assert not hasattr(result, "__dict__")
+    with pytest.raises(AttributeError):
+        source.extra = "x"  # type: ignore[attr-defined]
+    with pytest.raises(AttributeError):
+        result.extra = "x"  # type: ignore[attr-defined]
+
+
+def test_web_search_result_defaults_to_empty_sources() -> None:
+    # ``sources`` defaults to the empty tuple — a grounded answer with nothing worth
+    # citing is valid (not an error), so callers can omit sources entirely.
+    result = ports.WebSearchResult(answer="grounded")
+    assert result.sources == ()
+
+
 def test_web_search_provider_is_exported_runtime_checkable_protocol() -> None:
     # Assert the WebSearchProvider port is an exported, structural Protocol.
     assert "WebSearchProvider" in ports.__all__

@@ -227,6 +227,146 @@ async def test_search_raises_when_no_message_item() -> None:
         await runner.cleanup()
 
 
+async def test_search_raises_when_body_is_not_json_object() -> None:
+    # Arrange: a 200 whose JSON top level is a LIST, not an object — malformed,
+    # must raise (the parser commits to a JSON object), never silently degrade.
+    async def handler(request: web.Request) -> web.Response:
+        return web.json_response([{"type": "message"}])
+
+    base_url, runner = await _start_server(handler)
+    try:
+        provider = QwenWebSearchProvider(base_url=base_url, model="m", api_key="k")
+
+        # Act / Assert
+        with pytest.raises(ValueError, match="JSON object"):
+            await provider.search("q")
+    finally:
+        await runner.cleanup()
+
+
+async def test_search_ignores_malformed_search_call_items() -> None:
+    # Arrange: web_search_call items with a non-Mapping action, a non-list
+    # ``sources``, and a non-Mapping raw source are all skipped gracefully — the
+    # grounded answer is still returned (sources just come out empty), never a raise.
+    async def handler(request: web.Request) -> web.Response:
+        body = {
+            "output": [
+                {"type": "web_search_call", "action": "not-a-mapping"},
+                {"type": "web_search_call", "action": {"sources": "not-a-list"}},
+                {"type": "web_search_call", "action": {"sources": ["not-a-mapping"]}},
+                {"type": "web_search_call"},  # no action key at all
+                {
+                    "type": "message",
+                    "content": [{"type": "output_text", "text": "Ответ есть."}],
+                },
+            ]
+        }
+        return web.json_response(body)
+
+    base_url, runner = await _start_server(handler)
+    try:
+        provider = QwenWebSearchProvider(base_url=base_url, model="m", api_key="k")
+
+        # Act
+        result = await provider.search("q")
+
+        # Assert: malformed search calls ignored, answer survives, sources empty.
+        assert result.answer == "Ответ есть."
+        assert result.sources == ()
+    finally:
+        await runner.cleanup()
+
+
+async def test_search_skips_sources_with_missing_or_blank_url() -> None:
+    # Arrange: only sources with a non-empty string url survive; a missing/blank/
+    # non-string url is dropped, and a non-string title degrades to "".
+    async def handler(request: web.Request) -> web.Response:
+        body = {
+            "output": [
+                {
+                    "type": "web_search_call",
+                    "action": {
+                        "sources": [
+                            {"type": "url"},  # no url -> dropped
+                            {"type": "url", "url": ""},  # blank url -> dropped
+                            {"type": "url", "url": 42},  # non-string url -> dropped
+                            {"type": "url", "url": "https://ok.example", "title": 7},
+                        ]
+                    },
+                },
+                {
+                    "type": "message",
+                    "content": [{"type": "output_text", "text": "ok"}],
+                },
+            ]
+        }
+        return web.json_response(body)
+
+    base_url, runner = await _start_server(handler)
+    try:
+        provider = QwenWebSearchProvider(base_url=base_url, model="m", api_key="k")
+
+        # Act
+        result = await provider.search("q")
+
+        # Assert: one valid source kept; non-string title coerced to "".
+        assert result.sources == (WebSource(title="", url="https://ok.example"),)
+    finally:
+        await runner.cleanup()
+
+
+async def test_search_message_with_non_list_content_yields_empty_answer() -> None:
+    # Arrange: a message item whose ``content`` is not a list — the message exists
+    # (so it is NOT the missing-message error) but contributes no text: answer "".
+    async def handler(request: web.Request) -> web.Response:
+        body = {"output": [{"type": "message", "content": "oops-not-a-list"}]}
+        return web.json_response(body)
+
+    base_url, runner = await _start_server(handler)
+    try:
+        provider = QwenWebSearchProvider(base_url=base_url, model="m", api_key="k")
+
+        # Act
+        result = await provider.search("q")
+
+        # Assert: no raise (a message item was present), empty answer + sources.
+        assert result.answer == ""
+        assert result.sources == ()
+    finally:
+        await runner.cleanup()
+
+
+async def test_search_joins_text_across_multiple_message_items() -> None:
+    # Arrange: the answer text may be split across SEVERAL message items, not one.
+    async def handler(request: web.Request) -> web.Response:
+        body = {
+            "output": [
+                {
+                    "type": "message",
+                    "content": [{"type": "output_text", "text": "Первый. "}],
+                },
+                {"type": "foo", "content": [{"type": "output_text", "text": "ignored"}]},
+                {
+                    "type": "message",
+                    "content": [{"type": "output_text", "text": "Второй."}],
+                },
+            ]
+        }
+        return web.json_response(body)
+
+    base_url, runner = await _start_server(handler)
+    try:
+        provider = QwenWebSearchProvider(base_url=base_url, model="m", api_key="k")
+
+        # Act
+        result = await provider.search("q")
+
+        # Assert: both message items joined; the unknown ``foo`` item is ignored.
+        assert result.answer == "Первый. Второй."
+    finally:
+        await runner.cleanup()
+
+
 async def test_provider_satisfies_web_search_provider_protocol() -> None:
     provider = QwenWebSearchProvider(base_url="http://x/v1", model="m", api_key="k")
     assert isinstance(provider, WebSearchProvider)
