@@ -87,6 +87,9 @@ __all__ = [
     "ToolCallResult",
     "ToolCallingProvider",
     "ToolDefinition",
+    "WebSearchProvider",
+    "WebSearchResult",
+    "WebSource",
     "Worktree",
     "ZoneClassifier",
 ]
@@ -139,6 +142,33 @@ class ToolCallResult:
 
     text: str
     tool_calls: tuple[ToolCall, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class WebSource:
+    """One grounding source a web search returned: a human ``title`` and its ``url``.
+
+    Provider-agnostic (BOB-053): the Qwen-native Responses API yields a ``url`` and
+    sometimes a ``title``; ``title`` is ``""`` when the provider omits it (a URL alone
+    is enough for v1). Immutable so a recalled source cannot be tampered with downstream.
+    """
+
+    title: str
+    url: str
+
+
+@dataclass(frozen=True, slots=True)
+class WebSearchResult:
+    """A grounded web-search answer plus its sources (the ``web_search`` skill payload).
+
+    ``answer`` is the provider's grounded reply; ``sources`` is the (possibly empty)
+    list of :class:`WebSource` it cited. Empty ``sources`` is valid — a grounded answer
+    with nothing worth citing — NOT an error. The skill (.2) projects this compactly
+    into the tool-loop; Bob synthesises the final reply in his own voice with links.
+    """
+
+    answer: str
+    sources: tuple[WebSource, ...] = ()
 
 
 class DiagramRenderError(Exception):
@@ -288,6 +318,26 @@ class ToolCallingProvider(Protocol):
         tools: Sequence[ToolDefinition],
     ) -> ToolCallResult:
         """Complete a turn that may request tool calls."""
+        ...
+
+
+@runtime_checkable
+class WebSearchProvider(Protocol):
+    """Search the web and return a grounded answer with sources (BOB-053).
+
+    The provider-agnostic seam the ``web_search`` skill delegates to: given a
+    ``query``, return a :class:`WebSearchResult` (a grounded ``answer`` plus the
+    ``sources`` it cited). The first realisation is Qwen-native over the MaaS
+    Responses API (``QwenWebSearchProvider``), but the port commits only to "query in,
+    grounded answer + sources out" so Tavily or another provider swaps in without any
+    skill change. An implementation RAISES on any failure (network, non-200, or a
+    malformed/absent expected field) — the caller (.3) owns fault-tolerance and Bob
+    never confabulates a "found" answer. An empty ``sources`` list is allowed (a
+    grounded answer with nothing worth citing), not a failure.
+    """
+
+    async def search(self, query: str) -> WebSearchResult:
+        """Return a grounded answer with sources for ``query`` (raises on failure)."""
         ...
 
 

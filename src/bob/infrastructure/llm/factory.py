@@ -25,9 +25,10 @@ from collections.abc import Mapping
 from typing import TYPE_CHECKING
 
 from bob.infrastructure.llm.openai_compat import OpenAICompatProvider
+from bob.infrastructure.llm.web_search_qwen import QwenWebSearchProvider
 
 if TYPE_CHECKING:
-    from bob.domain.ports import LLMProvider
+    from bob.domain.ports import LLMProvider, WebSearchProvider
 
 _TIER_LOCAL = 0
 _TIER_API = 1
@@ -35,6 +36,9 @@ _TIER_API = 1
 # Generous default so a slow Tier 1 reasoning model (1000+ reasoning tokens per
 # reply) does not time out and spuriously fall back to Tier 0.
 _DEFAULT_TIMEOUT_SECONDS = 180.0
+
+# Default Qwen-native search model (verify .1: Responses API returns sources on it).
+_DEFAULT_SEARCH_MODEL = "qwen3.7-plus"
 
 
 def build_tier_providers(config: Mapping[str, object]) -> dict[int, LLMProvider]:
@@ -63,6 +67,32 @@ def build_tier_providers(config: Mapping[str, object]) -> dict[int, LLMProvider]
         temperature=_optional_float_or_none(llm, "tier1_temperature"),
     )
     return {_TIER_LOCAL: tier0, _TIER_API: tier1}
+
+
+def build_web_search_provider(config: Mapping[str, object]) -> WebSearchProvider:
+    """Build the Qwen-native web-search provider from ``config['search']`` (BOB-053).
+
+    ``search.base_url`` / ``search.api_key`` default to the Tier-1 Qwen MaaS values
+    (``llm.tier1_*``) — the same workspace host + ``sk`` key verify .1 proved returns
+    sources via the Responses API — so the search section need only flip ``enabled``.
+    """
+    search = config.get("search")
+    if not isinstance(search, Mapping):
+        raise KeyError("config is missing the 'search' section")
+    llm = config.get("llm")
+    llm = llm if isinstance(llm, Mapping) else {}
+
+    base_url = _optional_str(search, "base_url") or _require_str(llm, "tier1_base_url")
+    api_key = _optional_str(search, "api_key") or _optional_str(llm, "tier1_api_key")
+    model = _optional_str(search, "model") or _DEFAULT_SEARCH_MODEL
+    timeout_seconds = _optional_float(search, "timeout_seconds", _DEFAULT_TIMEOUT_SECONDS)
+
+    return QwenWebSearchProvider(
+        base_url=base_url,
+        model=model,
+        api_key=api_key,
+        timeout_seconds=timeout_seconds,
+    )
 
 
 def _require_str(section: Mapping[str, object], key: str) -> str:
