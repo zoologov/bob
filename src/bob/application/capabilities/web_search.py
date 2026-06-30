@@ -153,6 +153,7 @@ class _WebSearchCapability:
             logger.warning(
                 "web_search provider failed after %d attempt(s); surfacing honest notice",
                 self._attempts,
+                exc_info=True,
             )
             return {
                 "answer": _SEARCH_FAILED_ANSWER,
