@@ -186,36 +186,44 @@ class PermissionFlow:
         """
         if is_owner or is_authorized:
             return False
-        need = await self._judge.assess(
-            PrivilegeContext(
-                request_text=text,
-                capability_hints=self._capability_hints,
-                recent_thread=recent_thread,
+        # 🔴 Decorative / safe-default (BOB-052 .5 review): any failure in the request
+        # path (judge / store / owner-notice) must NOT break the normal turn and must
+        # NOT disclose. On error we DROP to the normal (privilege-gated) chat flow —
+        # the privileged path simply does not fire, so nothing is revealed.
+        try:
+            need = await self._judge.assess(
+                PrivilegeContext(
+                    request_text=text,
+                    capability_hints=self._capability_hints,
+                    recent_thread=recent_thread,
+                )
             )
-        )
-        if not need.needs_permission:
-            return False
-        await self._supersede_active(requester_id)
-        request = PermissionRequest(
-            id=self._id_factory(),
-            requester_id=requester_id,
-            requester_name=requester_name,
-            request_text=text,
-            kind=need.kind,
-            what=need.what,
-            state=PermissionState.PENDING,
-            created_at=self._clock.now(),
-        )
-        await self._store.save(request)
-        await self._notifier.notify_owner(
-            _owner_notice(
-                owner_name=self._owner_name,
+            if not need.needs_permission:
+                return False
+            await self._supersede_active(requester_id)
+            request = PermissionRequest(
+                id=self._id_factory(),
+                requester_id=requester_id,
                 requester_name=requester_name,
+                request_text=text,
+                kind=need.kind,
                 what=need.what,
+                state=PermissionState.PENDING,
+                created_at=self._clock.now(),
             )
-        )
-        await self._notifier.tell_requester(_REQUESTER_ACK)
-        return True
+            await self._store.save(request)
+            await self._notifier.notify_owner(
+                _owner_notice(
+                    owner_name=self._owner_name,
+                    requester_name=requester_name,
+                    what=need.what,
+                )
+            )
+            await self._notifier.tell_requester(_REQUESTER_ACK)
+            return True
+        except Exception:
+            logger.exception("permission request flow failed; dropping to normal chat")
+            return False
 
     async def maybe_decide(self, *, text: str, is_owner: bool) -> bool:
         """Maybe record the OWNER's decision on the active pending; return consumed.
