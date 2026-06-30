@@ -2,25 +2,40 @@
 # SPDX-License-Identifier: BUSL-1.1
 # See the LICENSE file in the project root for full license information.
 
-"""Tests for ``web_search`` — the grounded web-search skill (BOB-053 .2).
+"""Tests for ``web_search`` — the grounded web-search skill (BOB-053 .2 + .3).
 
 A thin wrapper over the :class:`~bob.domain.ports.WebSearchProvider` port: it
 exposes the stable :class:`Capability` contract, validates the ``query``,
 delegates to the port and projects the grounded answer + sources COMPACTLY into
-the tool-loop (Bob synthesises the final reply in his own voice). It never
-fabricates a "found" answer — a provider failure PROPAGATES (.3 owns
-fault-tolerance), and an empty/whitespace query is answered honestly WITHOUT
-calling the provider. Deterministic on a fake port — no network, no disk.
+the tool-loop (Bob synthesises the final reply in his own voice with links). It
+never fabricates a "found" answer — an empty/whitespace query is answered
+honestly WITHOUT calling the provider.
+
+.3 (fault-tolerance, «полный Боб или честный GUPPI-нотис»): ``web_search`` is
+ESSENTIAL when the model chose to search, so a provider failure is RETRIED a
+bounded number of times (the BOB-049 essential helper) and, if it keeps failing,
+the skill returns an HONEST "couldn't search" notice with anti-confabulation
+guidance — NEVER a fabricated answer from training presented as if found.
+Deterministic on a fake port + an injected sleep — no network, no disk, no delay.
 """
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 
 import pytest
 
+from bob.application.capabilities.registry import CapabilityRegistry
+from bob.application.capabilities.tool_loop import ToolLoop
 from bob.application.capabilities.web_search import make_web_search_capability
-from bob.domain.ports import WebSearchResult, WebSource
+from bob.domain.ports import (
+    LLMMessage,
+    ToolCall,
+    ToolCallResult,
+    ToolDefinition,
+    WebSearchResult,
+    WebSource,
+)
 
 
 class _FakeWebSearchProvider:
@@ -41,6 +56,64 @@ class _FakeWebSearchProvider:
         if self._error is not None:
             raise self._error
         return self._result
+
+
+class _FlakyWebSearchProvider:
+    """Fails ``fail_times`` then returns ``result``; records call count + queries."""
+
+    def __init__(
+        self,
+        *,
+        fail_times: int,
+        result: WebSearchResult | None = None,
+        error: Exception | None = None,
+    ) -> None:
+        self._fail_times = fail_times
+        self._result = result if result is not None else WebSearchResult(answer="ok")
+        self._error = error if error is not None else RuntimeError("transient")
+        self.calls = 0
+        self.queries: list[str] = []
+
+    async def search(self, query: str) -> WebSearchResult:
+        self.queries.append(query)
+        self.calls += 1
+        if self.calls <= self._fail_times:
+            raise self._error
+        return self._result
+
+
+class _RecordingSleep:
+    """An injectable backoff sleep that records its delays and never really waits."""
+
+    def __init__(self) -> None:
+        self.delays: list[float] = []
+
+    async def __call__(self, seconds: float) -> None:
+        self.delays.append(seconds)
+
+
+class _ScriptedToolProvider:
+    """Returns a scripted :class:`ToolCallResult` per turn; records fed messages."""
+
+    def __init__(self, results: Sequence[ToolCallResult]) -> None:
+        self._results = list(results)
+        self.turns: list[list[dict[str, str]]] = []
+        self._call = 0
+
+    async def complete_with_tools(
+        self,
+        messages: Sequence[LLMMessage],
+        *,
+        tools: Sequence[ToolDefinition],  # noqa: ARG002
+    ) -> ToolCallResult:
+        self.turns.append([dict(m) for m in messages])
+        index = min(self._call, len(self._results) - 1)
+        self._call += 1
+        return self._results[index]
+
+    @property
+    def all_text(self) -> str:
+        return "\n".join(m["content"] for turn in self.turns for m in turn)
 
 
 def test_capability_advertises_the_web_search_contract() -> None:
@@ -120,11 +193,99 @@ async def test_execute_with_missing_query_key_raises() -> None:
         await cap.execute({})
 
 
-async def test_execute_propagates_provider_failure_without_fabricating() -> None:
-    # 🔴 Invariant: the skill NEVER swallows a provider failure to confabulate a
-    # "found" answer — the error propagates and .3 owns fault-tolerance.
-    provider = _FakeWebSearchProvider(error=RuntimeError("network down"))
-    cap = make_web_search_capability(provider)
+async def test_description_steers_synthesis_with_sources_not_raw_dump() -> None:
+    # 🔴 Invariant «синтез, не дамп»: the manifest description tells the model to
+    # synthesise in its own voice WITH the source links — not paste raw snippets.
+    cap = make_web_search_capability(_FakeWebSearchProvider())
 
-    with pytest.raises(RuntimeError, match="network down"):
-        await cap.execute({"query": "свежие новости"})
+    desc = cap.description.lower()
+    assert "synthes" in desc  # steer the model to synthesise, not dump
+    assert "source" in desc  # ...and cite the source links
+
+
+async def test_execute_retries_transient_failure_then_succeeds() -> None:
+    # .3: web_search is ESSENTIAL when invoked — a transient provider blip is
+    # retried (bounded, with backoff through the injected sleep) before giving up.
+    provider = _FlakyWebSearchProvider(
+        fail_times=2,
+        result=WebSearchResult(
+            answer="Свежий ответ.",
+            sources=(WebSource(title="W", url="https://example.com/x"),),
+        ),
+    )
+    sleep = _RecordingSleep()
+    cap = make_web_search_capability(
+        provider, attempts=3, backoff_seconds=0.5, sleep=sleep
+    )
+
+    result = await cap.execute({"query": "новости"})
+
+    assert provider.calls == 3  # two failures retried, third succeeds
+    assert sleep.delays == [0.5, 0.5]  # backoff awaited BETWEEN attempts only
+    assert isinstance(result, Mapping)
+    assert result["answer"] == "Свежий ответ."
+    assert result["sources"] == [{"title": "W", "url": "https://example.com/x"}]
+
+
+async def test_execute_exhausts_retries_then_returns_honest_notice() -> None:
+    # 🔴 Invariant: a persistent provider failure NEVER yields a fabricated "found"
+    # answer. After the bounded retry the skill returns an HONEST "couldn't search"
+    # notice with anti-confabulation guidance — Bob tells the user the truth.
+    provider = _FlakyWebSearchProvider(
+        fail_times=99, error=RuntimeError("network down")
+    )
+    sleep = _RecordingSleep()
+    cap = make_web_search_capability(
+        provider, attempts=3, backoff_seconds=0.5, sleep=sleep
+    )
+
+    result = await cap.execute({"query": "свежие новости"})
+
+    assert provider.calls == 3  # bounded retry attempted, then gave up
+    assert sleep.delays == [0.5, 0.5]
+    assert isinstance(result, Mapping)
+    # No fabricated sources, and the answer is an explicit "couldn't search" caveat.
+    assert result["sources"] == []
+    answer = str(result["answer"]).lower()
+    assert "поиск" in answer or "не смог" in answer or "не удалось" in answer
+    # The projection carries an explicit anti-confabulation steer for synthesis.
+    assert "guidance" in result
+    assert str(result["guidance"]).strip()
+
+
+async def test_execute_does_not_confabulate_when_provider_fails() -> None:
+    # 🔴 Invariant: even with no retry budget (attempts=1) a provider failure is
+    # turned into an honest notice — never a propagated crash, never a confabulation.
+    provider = _FakeWebSearchProvider(error=RuntimeError("network down"))
+    cap = make_web_search_capability(provider, attempts=1)
+
+    result = await cap.execute({"query": "свежие новости"})
+
+    assert isinstance(result, Mapping)
+    assert result["sources"] == []
+    assert "guidance" in result
+
+
+async def test_tool_loop_feeds_honest_search_failure_not_generic_error() -> None:
+    # 🔴 End-to-end at the seam: a failed web_search reaches the model as the
+    # explicit honest notice + anti-confabulation guidance (so Bob can voice the
+    # caveat in his own words) — NOT the bare generic "capability failed" error,
+    # and NOT a silent answer-from-memory-as-if-found.
+    provider = _FakeWebSearchProvider(error=RuntimeError("down"))
+    registry = CapabilityRegistry()
+    registry.register(make_web_search_capability(provider, attempts=1))
+    call = ToolCall(id="c1", name="web_search", arguments={"query": "что нового"})
+    model = _ScriptedToolProvider(
+        [
+            ToolCallResult(text="", tool_calls=(call,)),
+            ToolCallResult(text="Честно: поискать не вышло.", tool_calls=()),
+        ]
+    )
+    loop = ToolLoop(provider=model, registry=registry)
+
+    answer = await loop.run([{"role": "user", "content": "что нового?"}])
+
+    fed = model.all_text
+    assert "guidance" in fed  # the anti-confabulation steer reached the model
+    assert "error: capability 'web_search' failed" not in fed  # not the bare error
+    assert answer == "Честно: поискать не вышло."
