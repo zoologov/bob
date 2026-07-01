@@ -50,6 +50,7 @@ __all__ = [
     "Capability",
     "ClaudeCodeRunner",
     "Clock",
+    "CloserLog",
     "CodingSessionStore",
     "ConversationFloorStore",
     "DiagramRenderError",
@@ -964,6 +965,32 @@ class SulkStore(Protocol):
 
     async def save(self, persona_id: str, state: SulkState) -> None:
         """Persist ``state`` for ``persona_id`` (replacing any prior обида state)."""
+        ...
+
+
+@runtime_checkable
+class CloserLog(Protocol):
+    """Bounded, local ring of Bob's recent reply CLOSERS across sessions (BOB-061 .1).
+
+    Closes gap 1 (cross-session sparsity): the signature closer-tic recurs ONCE PER
+    SESSION over days, so the live session window sees it 0-1x — below the tic bar — and
+    the tic slips through. This light ring PERSISTS Bob's normalised closer after each
+    reply, surviving restarts, so the near-verbatim tic detector
+    (:func:`~bob.domain.personality.conversation.is_recurring_closer_tic`) can see a motif
+    scattered across sessions and finally catch it. Deliberately tiny and PRIVATE — Bob's
+    OWN memory of how he tends to end turns, only normalised closer phrases (never full
+    replies), capped at a small size (the oldest fall off the ring). :meth:`append` logs
+    one closer (a blank/whitespace closer is ignored); :meth:`recent` returns the last
+    ``k`` closers (most-recent first). The concrete SQLite-backed adapter
+    (``SqliteCloserLog``) lives in ``bob.infrastructure.persistence``.
+    """
+
+    async def append(self, closer: str) -> None:
+        """Append ``closer`` to the ring (a blank closer is ignored); prune to the cap."""
+        ...
+
+    async def recent(self, k: int) -> tuple[str, ...]:
+        """Return the last ``k`` logged closers, most-recent first (empty when none)."""
         ...
 
 

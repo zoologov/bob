@@ -386,7 +386,7 @@ async def test_compose_prompt_carries_the_anti_bait_voice_and_few_shot() -> None
     assert "не выпрашивай продолжение" in compose_prompt
     assert "эмодзи" in compose_prompt
     # …and a substance-ending exemplar rides along (the part that breaks the tic).
-    assert "мне так спокойнее" in compose_prompt
+    assert "это всё, что хотел знать" in compose_prompt
 
 
 async def test_proactive_message_is_persisted_to_episodic_memory() -> None:

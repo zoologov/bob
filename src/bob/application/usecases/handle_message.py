@@ -74,8 +74,10 @@ from bob.domain.personality.brevity import (
 )
 from bob.domain.personality.conversation import (
     RepeatThresholds,
+    closer_text,
     is_bob_repeat,
     is_phrase_tic,
+    is_recurring_closer_tic,
     is_user_repeat,
     recalled_bob_replies,
     recalled_bob_reply,
@@ -169,6 +171,7 @@ if TYPE_CHECKING:
     )
     from bob.domain.ports import (
         Clock,
+        CloserLog,
         ConversationFloorStore,
         DiagramRenderer,
         DiagramSink,
@@ -207,6 +210,20 @@ _INLINE_DIAGRAM_CAPTION = "Вот диаграмма."
 
 # How many memories to recall when assembling the reply context.
 _RECALL_K = 5
+
+# The SOFT anti-tic nudge (BOB-061 .2 — the «провязка»). When Bob's recent closers
+# (the cross-session persist ring UNION the live session window) cluster into ONE
+# recurring motif — a genuine closer-tic caught by
+# :func:`~bob.domain.personality.conversation.is_recurring_closer_tic` at the CONSERVATIVE
+# ``motif_similarity_threshold`` — this ONE line folds into the generation context. 🔴 It
+# is a NUDGE toward variety, never a ban / forbidden-phrase list / topic restriction: Bob
+# is asked to END DIFFERENTLY, in his own words, WITHOUT changing the meaning — so liveness
+# (US-4) is intact and no legitimate meaning-level repetition is hollowed out. It fires
+# ONLY on a genuinely detected tic; on no tic the reply context is byte-for-byte unchanged.
+_CLOSER_TIC_NUDGE = (
+    "Эту концовку/оборот ты в последнее время повторяешь часто — заверши ПО-ДРУГОМУ, "
+    "своими словами (не меняя смысла)."
+)
 
 # Pre-answer epistemic verify (BOB-057 .2). BEFORE generation a conservative Tier-0
 # ``VolatilityJudge`` decides whether the answer hinges on a FRESH volatile fact; on
@@ -828,6 +845,7 @@ class HandleMessage:
         verify_provider: WebSearchProvider | None = None,
         verify_timeout_seconds: float = _DEFAULT_VERIFY_TIMEOUT_SECONDS,
         interim_line_generator: InterimLineGenerator | None = None,
+        closer_log: CloserLog | None = None,
     ) -> None:
         self._router = router
         self._gateway = gateway
@@ -1040,6 +1058,14 @@ class HandleMessage:
         self._repeat_thresholds = (
             repeat_thresholds if repeat_thresholds is not None else RepeatThresholds()
         )
+        # Cross-session closer ring (BOB-061 .2 wiring): the bounded, private persist of
+        # Bob's recent NORMALISED closers. After each reply his closer is APPENDED here;
+        # BEFORE generation the persisted closers UNION the live-window closers feed the
+        # near-verbatim tic detector, so a signature ending recurring ONCE PER SESSION over
+        # days is finally caught. 🔴 Fully DECORATIVE and OPTIONAL: unwired (the default)
+        # the anti-tic nudge is inert and the turn behaves exactly as before; a read/append
+        # failure is swallowed so the persist can never break a turn.
+        self._closer_log = closer_log
         # The conversation-floor seam (BOB-025): over the per-message addressivity
         # (BOB-023) lives a tracker of who currently holds the "talking turn" in a
         # thread. When wired AND enabled, an AMBIENT message in a thread where Bob holds
@@ -1398,6 +1424,15 @@ class HandleMessage:
                     interlocutor=interlocutor,
                     chat_id=event.chat_id,
                 )
+                # Anti-tic «провязка» (BOB-061 .2): BEFORE generation, detect whether Bob's
+                # recent closers (persist ring + live window) cluster into ONE recurring
+                # motif. When they do, (a) STRIP that motif off the recalled Bob-reply
+                # exemplars so the tic is not fed back as few-shot, and (b) fold a SOFT
+                # nudge («заверши по-другому») into the generation context — carried through
+                # the first composition AND every anti-repeat regeneration this turn. 🔴
+                # Fully decorative: on no tic (or an unwired/failing log) ``recalled`` is
+                # unchanged and the nudge is "" — zero change to the reply (US-4 liveness).
+                recalled, closer_nudge = await self._closer_anti_tic(recalled, history)
                 reply = await self._compose_reply(
                     event.text,
                     soul,
@@ -1415,6 +1450,7 @@ class HandleMessage:
                     modulators=modulators,
                     chat_id=event.chat_id,
                     verify_note=verify_note,
+                    closer_nudge=closer_nudge,
                 )
                 # Anti-repeat guard (BOB-022, defense in depth): if the fresh reply is
                 # byte-identical (after strip) to Bob's most-recent prior reply, regenerate
@@ -1438,6 +1474,7 @@ class HandleMessage:
                     verbosity=verbosity,
                     modulators=modulators,
                     verify_note=verify_note,
+                    closer_nudge=closer_nudge,
                 )
         except _EssentialStepError as exc:
             await self._handle_essential_failure(event, soul, exc)
@@ -1479,6 +1516,12 @@ class HandleMessage:
         # well-going topic is left to the reflect-tick evolution path it already owns.)
         soul = self._apply_engagement_feedback(soul, level, interest)
         await self._persist(event, reply, soul, bob_message_id=bob_message_id)
+        # Log Bob's closer to the cross-session ring (BOB-061 .2): only a GENUINE reply
+        # feeds the anti-tic memory (the silent/react/outage markers persist through their
+        # own paths and are never logged). 🔴 Decorative — a failed append is swallowed so
+        # this local memory can never break a turn that already replied; an empty closer is
+        # skipped.
+        await self._log_closer(reply)
         # Update Bob's relationship with this sender AFTER the turn (BOB-014): the
         # negotiation stance he took + his mood + the turn's sentiment evolve the
         # accrued relationship and persist it, so it warms/cools over time. Best-effort
@@ -2448,6 +2491,7 @@ class HandleMessage:
         modulators: RuleModulators | None = None,
         chat_id: int | None = None,
         verify_note: str | None = None,
+        closer_nudge: str = "",
     ) -> str:
         """Compose a full reply, folding the decided verbosity into the prompt.
 
@@ -2496,6 +2540,12 @@ class HandleMessage:
             )
         if verify_note:
             context = f"{context}\n{verify_note}"
+        # Anti-tic soft nudge (BOB-061 .2): when a recurring closer-tic was detected for
+        # this turn (persist + window), the single nudge line steers Bob to END DIFFERENTLY
+        # — a push toward variety, never a ban. Empty on no tic (US-4 liveness: the context
+        # is then byte-for-byte the pre-BOB-061 context).
+        if closer_nudge:
+            context = f"{context}\n{closer_nudge}"
         system_prompt = self._system_prompt_for(
             soul,
             text,
@@ -2568,6 +2618,7 @@ class HandleMessage:
         verbosity: Verbosity = Verbosity.NORMAL,
         modulators: RuleModulators | None = None,
         verify_note: str | None = None,
+        closer_nudge: str = "",
     ) -> str:
         """Recompose if ``reply`` (near-)repeats a recent OR recalled Bob reply (BOB-032 .1).
 
@@ -2659,6 +2710,7 @@ class HandleMessage:
                 verbosity=verbosity,
                 modulators=modulators,
                 verify_note=verify_note,
+                closer_nudge=closer_nudge,
             )
         # BOB-043: regeneration could not shake the tic (it keeps re-copying the closer
         # from recalled exemplars — a self-reinforcing loop). If the final draft STILL
@@ -2693,6 +2745,92 @@ class HandleMessage:
         lookback = self._repeat_thresholds.tic_lookback
         wide_history = await self._episodes.recent_episodes(lookback)
         return _recent_bob_replies(wide_history, limit=lookback)
+
+    async def _log_closer(self, reply: str) -> None:
+        """Append Bob's reply CLOSER to the cross-session ring (BOB-061 .2 wiring).
+
+        The persist half of the «провязка»: the reply's final notable closer (normalised,
+        via :func:`closer_text`) is logged so a signature ending recurring ONCE PER SESSION
+        over days accumulates in the ring and the tic detector can finally see it. An empty
+        closer (a short/blank ending, or an unwired log) is skipped. 🔴 Decorative: a store
+        failure is swallowed — this local memory NEVER breaks a turn that already replied.
+        """
+        if self._closer_log is None:
+            return
+        closer = closer_text(reply, min_words=self._repeat_thresholds.tic_min_words)
+        if not closer:
+            return
+        try:
+            await self._closer_log.append(closer)
+        except Exception:
+            # Decorative persist: log + drop, never break a turn that already replied.
+            logger.warning("appending Bob's closer to the ring failed (ignored)")
+
+    async def _closer_anti_tic(
+        self, recalled: Sequence[Recalled], history: Sequence[Mapping[str, object]]
+    ) -> tuple[Sequence[Recalled], str]:
+        """Detect a cross-session closer-tic and return (recalled, soft-nudge) (BOB-061 .2).
+
+        The detect half of the «провязка», computed ONCE per turn BEFORE generation. Reads
+        Bob's persisted closers (the ring) UNION the live-window closers and asks
+        :func:`is_recurring_closer_tic` — at the CONSERVATIVE ``motif_similarity_threshold``
+        — whether his freshest ending clusters into a recurring motif. When it fires:
+
+        * (a) the motif closer is STRIPPED off the recalled Bob-reply exemplars so the tic is
+          not fed back as few-shot (strengthening the existing anti-mimicry, now informed by
+          the persisted motif), and
+        * (b) the soft :data:`_CLOSER_TIC_NUDGE` line is returned to fold into the context.
+
+        🔴 Decorative + conservative (US-4 liveness): an unwired log, a read failure, or NO
+        tic all return ``(recalled, "")`` UNCHANGED — zero effect on the reply. The nudge is
+        a push toward variety, never a ban.
+        """
+        if self._closer_log is None:
+            return recalled, ""
+        try:
+            motif = await self._detect_closer_tic(history)
+        except Exception:
+            # Decorative detect: on any failure, no nudge and a normal reply (never break).
+            logger.warning("closer-tic detection failed (ignored) — no nudge")
+            return recalled, ""
+        if motif is None:
+            return recalled, ""
+        stripped = tuple(_strip_recalled_closer(item, motif) for item in recalled)
+        return stripped, _CLOSER_TIC_NUDGE
+
+    async def _detect_closer_tic(
+        self, history: Sequence[Mapping[str, object]]
+    ) -> str | None:
+        """Return the recurring closer MOTIF for this turn, or ``None`` (BOB-061 .2).
+
+        Assembles Bob's recent closers — the persist ring (``recent(tic_lookback)``) UNION
+        the live-window closers extracted from ``history`` — and probes the FRESHEST closer
+        against the rest via :func:`is_recurring_closer_tic`. Fires only when that ending
+        near-verbatim RECURS at least ``tic_min_occurrences`` times at the conservative
+        ``motif_similarity_threshold`` (so a genuinely distinct ending never trips it). The
+        matched closer is returned so the caller can strip it off the recalled exemplars.
+        """
+        assert self._closer_log is not None  # guarded by the caller
+        persisted = await self._closer_log.recent(self._repeat_thresholds.tic_lookback)
+        min_words = self._repeat_thresholds.tic_min_words
+        window_replies = _recent_bob_replies(
+            history, limit=self._repeat_thresholds.window
+        )
+        window_closers = tuple(
+            c for r in window_replies if (c := closer_text(r, min_words=min_words))
+        )
+        closers = (*persisted, *window_closers)
+        if not closers:
+            return None
+        current, prior = closers[0], closers[1:]
+        if is_recurring_closer_tic(
+            current,
+            prior,
+            similarity_threshold=self._repeat_thresholds.motif_similarity_threshold,
+            min_occurrences=self._repeat_thresholds.tic_min_occurrences,
+        ):
+            return current
+        return None
 
     async def _with_grounded_addons(
         self, context: str, text: str, plan: ExpressionPlan
@@ -3272,6 +3410,28 @@ def _recent_bob_replies(
         if marker != -1:
             replies.append(content[marker + len(_BOB_TURN_MARKER) :])
     return tuple(replies)
+
+
+def _strip_recalled_closer(item: Recalled, closer: str) -> Recalled:
+    """Return ``item`` with the recurring ``closer`` stripped off its content (BOB-061 .2).
+
+    On a detected closer-tic, the recalled exemplar's whole-turn content (
+    ``"<sender>: <text>\\nbob: <reply>"``) may END with the tic motif — feeding it back as
+    few-shot would reinforce the very ending the nudge is trying to break. This excises the
+    trailing motif sentence via :func:`strip_recurring_closer` (the SAME deterministic strip
+    the anti-repeat guard uses) and returns a shallow copy carrying the tidied content. When
+    the content does not end with the motif (nothing to strip) or is not a string, the
+    original ``item`` is returned untouched — the fact body is always preserved.
+    """
+    content = item.get("content")
+    if not isinstance(content, str):
+        return item
+    stripped = strip_recurring_closer(content, closer)
+    if stripped == content:
+        return item
+    updated = dict(item)
+    updated["content"] = stripped
+    return updated
 
 
 # BOB-032 .2: the recall-aware anti-repeat helpers were lifted to the domain

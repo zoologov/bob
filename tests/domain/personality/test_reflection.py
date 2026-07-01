@@ -133,6 +133,76 @@ def test_without_a_disposition_the_few_shot_palette_is_absent() -> None:
         assert example not in prompt
 
 
+# --- BOB-061 .3: disposition is NOT the recurring-closer driver (empirical) ---
+#
+# The «пусть остаётся как есть / мне так спокойнее» closer recurs (BOB-061). It has
+# two candidate drivers: (1) a TEXT-level recall/prompt echo — already handled by
+# .1 (cross-session closer persist) + .2 (near-verbatim detect + strip + soft nudge);
+# (2) a DISPOSITION lean — a semantic "leave-as-is / calmer that way" status-quo
+# stance that would REGENERATE the motif after the text-level strip.
+#
+# Empirical finding (this bead): the Disposition value object is a two-trait affective
+# vector (``optimism``, ``resilience``). Its ONLY textual surface into any prompt is the
+# disposition-derived valence-lean in ``build_reflection_prompt`` — which leans toward
+# OPTIMISM and explicitly permits a genuine low. There is NO status-quo/comfort/
+# "leave-as-is" trait, derivation, or injected phrasing anywhere; disposition never
+# enters the REPLY prompt at all (only the reflection/monologue + mood path), and
+# reappraisal MOVES a dark thought to a constructive one rather than sticking it in a
+# comfort rut. So disposition is NOT a driver of the recurring closer — the motif is a
+# text/recall-mimicry phenomenon (few-shot exemplars + Bob's own recalled closers) that
+# .1 + .2 address. These tests PIN that finding so a future edit that quietly injects a
+# fixed comfort-closer stance into the disposition path would fail.
+
+# Motif tokens of the recurring closer «(пусть) оста(ётся/нется/вить) как есть /
+# (мне) так спокойнее» plus its English status-quo/comfort synonyms.
+_COMFORT_CLOSER_MOTIF = (
+    "как есть",
+    "спокойнее",
+    "оставить",
+    "останется",
+    "остаётся",
+    "status quo",
+    "leave as is",
+    "leave it",
+    "comfort",
+    "calmer",
+)
+
+
+def test_disposition_lean_injects_no_fixed_comfort_closer_stance() -> None:
+    # The disposition-derived text carries NO "leave-as-is / calmer that way" status-quo
+    # stance for ANY temperament across the whole optimism range — confirming the
+    # recurring closer is text-level, not a disposition lean.
+    for optimism in (0.0, 0.1, 0.5, 0.8, 0.9, 1.0):
+        prompt = build_reflection_prompt(
+            recent_contents=("собрал телескоп",),
+            mood_tone="content",
+            disposition=Disposition(optimism=optimism, resilience=0.7),
+        ).casefold()
+        for token in _COMFORT_CLOSER_MOTIF:
+            assert token not in prompt, (
+                f"disposition path injected comfort-closer token {token!r} "
+                f"at optimism={optimism}"
+            )
+
+
+def test_disposition_adds_nothing_a_bare_grounded_prompt_lacks_but_an_optimism_lean() -> None:
+    # The disposition contributes ONLY the few-shot living palette + the optimism
+    # valence-lean on TOP of the bare grounded prompt — no status-quo/comfort closer.
+    # (Whatever the disposition adds beyond the bare prompt is optimism-honest, never a
+    # canned closing stance.) So even the DELTA the disposition introduces is clean.
+    bare = build_reflection_prompt(recent_contents=("собрал телескоп",), mood_tone="content")
+    leaned = build_reflection_prompt(
+        recent_contents=("собрал телескоп",),
+        mood_tone="content",
+        disposition=Disposition(optimism=0.8, resilience=0.7),
+    )
+    delta = leaned.replace(bare, "").casefold()
+    assert "optimism" in delta  # the lean is present…
+    for token in _COMFORT_CLOSER_MOTIF:
+        assert token not in delta  # …and it carries no comfort-closer stance.
+
+
 # --- BOB-047 .1: broadened palette + seeded angle variety ---
 
 

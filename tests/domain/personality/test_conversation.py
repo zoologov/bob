@@ -16,8 +16,11 @@ import pytest
 
 from bob.domain.personality.conversation import (
     RepeatThresholds,
+    closer_text,
     is_bob_repeat,
     is_phrase_tic,
+    is_recurring_closer_tic,
+    is_same_closer_motif,
     is_user_repeat,
     recalled_bob_replies,
     recalled_bob_reply,
@@ -644,3 +647,245 @@ def test_excluding_reflections_keeps_memory_with_no_category() -> None:
     # A memory without a category key is not a reflection -> kept (defensive default).
     no_cat: dict[str, object] = {"content": "что-то"}
     assert recalled_excluding_reflections([no_cat]) == (no_cat,)
+
+
+# --- BOB-061 .1: cross-session closer persist + near-verbatim motif detect ------
+#
+# Gap 2 (near-verbatim motif clustering): the signature closer recurs in lexical
+# VARIANTS — «пусть остаётся/останется как есть», «мне/ему так спокойнее» — that an
+# exact ``_normalise`` match under-counts. ``is_same_closer_motif`` clusters two
+# closers as the SAME motif when they are exact-after-normalise OR near-verbatim (a
+# SequenceMatcher ratio at/above a CONSERVATIVE motif threshold). ``is_recurring_
+# closer_tic`` is the detector .2 calls: given the current closer + the recent closers
+# (persist ∪ window), it fires when the motif recurs in >= min_occurrences of them —
+# so a once-per-session tic scattered over the PERSISTED ring is finally caught. The
+# threshold is conservative: distinct closers (ratio ~0.2) never cluster (US-4).
+
+# Real recurring closer variants (ratios ~0.88–0.94 after normalisation) + a genuinely
+# DISTINCT closer (ratio ~0.2) used as the over-suppression guardrail.
+_MOTIF_A = "пусть остаётся как есть"
+_MOTIF_B = "пусть останется как есть"  # остаётся -> останется (~0.94)
+_MOTIF_C = "мне так спокойнее"
+_MOTIF_D = "ему так спокойнее"  # мне -> ему (~0.88)
+_DISTINCT = "работаем дальше, всё по плану"  # ~0.24 vs the motif — must NOT cluster
+
+
+def test_motif_exact_match_after_normalise_clusters() -> None:
+    # The base case: two closers identical after strip/casefold/whitespace are one motif.
+    assert (
+        is_same_closer_motif("Пусть остаётся как есть", _MOTIF_A, similarity_threshold=0.82)
+        is True
+    )
+
+
+def test_motif_lexical_variant_clusters_near_verbatim() -> None:
+    # «остаётся» -> «останется» and «мне» -> «ему» are near-verbatim variants of ONE
+    # motif: they cluster at the conservative motif threshold.
+    assert is_same_closer_motif(_MOTIF_A, _MOTIF_B, similarity_threshold=0.82) is True
+    assert is_same_closer_motif(_MOTIF_C, _MOTIF_D, similarity_threshold=0.82) is True
+
+
+def test_motif_distinct_closer_does_not_cluster() -> None:
+    # 🔴 US-4 guardrail: a substantively DIFFERENT closer (ratio ~0.2) never clusters —
+    # near-verbatim clustering must not strangle legitimate, distinct endings.
+    assert is_same_closer_motif(_MOTIF_A, _DISTINCT, similarity_threshold=0.82) is False
+    assert is_same_closer_motif(_MOTIF_C, _DISTINCT, similarity_threshold=0.82) is False
+
+
+def test_motif_blank_side_is_never_a_cluster() -> None:
+    assert is_same_closer_motif("", _MOTIF_A, similarity_threshold=0.82) is False
+    assert is_same_closer_motif(_MOTIF_A, "   ", similarity_threshold=0.82) is False
+
+
+def test_motif_threshold_is_conservative_by_default() -> None:
+    # The dataclass default clusters real variants while keeping distinct closers apart.
+    thr = RepeatThresholds().motif_similarity_threshold
+    assert is_same_closer_motif(_MOTIF_C, _MOTIF_D, similarity_threshold=thr) is True
+    assert is_same_closer_motif(_MOTIF_A, _DISTINCT, similarity_threshold=thr) is False
+
+
+def test_recurring_closer_tic_fires_when_the_motif_recurs_across_persisted_closers() -> None:
+    # The headline cross-session case: the current closer plus FOUR persisted closers,
+    # each a lexical VARIANT of the one motif, spread across the ring (as if logged
+    # once-per-session over days). Exact match would under-count; near-verbatim
+    # clustering accumulates 4 occurrences -> above the bar -> a tic.
+    prior = [_MOTIF_A, "работаем", _MOTIF_B, "идём дальше", _MOTIF_D, _MOTIF_C]
+    assert (
+        is_recurring_closer_tic(
+            _MOTIF_A, prior, similarity_threshold=0.82, min_occurrences=2
+        )
+        is True
+    )
+
+
+def test_recurring_closer_tic_does_not_fire_on_a_one_off_closer() -> None:
+    # A closer that appears only ONCE in the persisted history (below min_occurrences)
+    # is not a tic — a single genuine use never trips the detector.
+    prior = ["работаем", "идём дальше", _MOTIF_A]
+    assert (
+        is_recurring_closer_tic(
+            "готово, всё чисто", prior, similarity_threshold=0.82, min_occurrences=2
+        )
+        is False
+    )
+
+
+def test_recurring_closer_tic_does_not_fire_on_distinct_closers() -> None:
+    # 🔴 US-4: many DISTINCT closers never cluster into a false tic, even in bulk.
+    prior = ["работаем дальше", "идём по плану", "готово, проверил", "сделал бэкап"]
+    assert (
+        is_recurring_closer_tic(
+            _MOTIF_A, prior, similarity_threshold=0.82, min_occurrences=2
+        )
+        is False
+    )
+
+
+def test_recurring_closer_tic_boundary_is_inclusive_on_min_occurrences() -> None:
+    # Off-by-one: the motif in EXACTLY min_occurrences prior closers fires; one fewer does
+    # not. _MOTIF_A/_MOTIF_B are the SAME («как есть») motif; _MOTIF_C/_MOTIF_D are a
+    # DIFFERENT («так спокойнее») motif, so only the «как есть» variants count here.
+    two = [_MOTIF_A, _MOTIF_B, "работаем"]
+    one = [_MOTIF_B, "работаем", "идём дальше"]
+    assert (
+        is_recurring_closer_tic(_MOTIF_A, two, similarity_threshold=0.82, min_occurrences=2)
+        is True
+    )
+    assert (
+        is_recurring_closer_tic(_MOTIF_A, one, similarity_threshold=0.82, min_occurrences=2)
+        is False
+    )
+
+
+def test_recurring_closer_tic_blank_current_is_never_a_tic() -> None:
+    assert (
+        is_recurring_closer_tic(
+            "  ", [_MOTIF_A, _MOTIF_B], similarity_threshold=0.82, min_occurrences=2
+        )
+        is False
+    )
+
+
+def test_recurring_closer_tic_empty_history_is_never_a_tic() -> None:
+    assert (
+        is_recurring_closer_tic(_MOTIF_A, [], similarity_threshold=0.82, min_occurrences=2)
+        is False
+    )
+
+
+def test_recurring_closer_tic_is_pure_and_does_not_mutate_input() -> None:
+    prior = [_MOTIF_A, _MOTIF_B, _MOTIF_D]
+    snapshot = list(prior)
+    first = is_recurring_closer_tic(
+        _MOTIF_A, prior, similarity_threshold=0.82, min_occurrences=2
+    )
+    second = is_recurring_closer_tic(
+        _MOTIF_A, prior, similarity_threshold=0.82, min_occurrences=2
+    )
+    assert first is second is True
+    assert prior == snapshot
+
+
+def test_closer_text_returns_the_final_notable_phrase_normalised() -> None:
+    # The extraction .2 uses to feed the persist ring: the reply's final notable closer,
+    # normalised (strip/casefold/collapse), so the logged closer is the comparable motif.
+    reply = f"Готово, бэкап на месте. {_MOTIF_C.capitalize()}."
+    assert closer_text(reply, min_words=3) == _MOTIF_C
+
+
+def test_closer_text_skips_a_short_trailing_fragment() -> None:
+    # A trailing short tail ("Ок.") after the real closer is skipped — the substantive
+    # closing sentence is returned.
+    assert closer_text(f"Развернул сервис. {_MOTIF_C.capitalize()}. Ок.", min_words=3) == _MOTIF_C
+
+
+def test_closer_text_returns_none_when_no_notable_closer() -> None:
+    # A reply with no sentence of >= min_words words has no closer to log.
+    assert closer_text("Ок. Да.", min_words=3) is None
+    assert closer_text("   ", min_words=3) is None
+
+
+def test_repeat_thresholds_rejects_out_of_range_motif_threshold() -> None:
+    with pytest.raises(ValueError, match="motif_similarity_threshold"):
+        RepeatThresholds(motif_similarity_threshold=1.5)
+    with pytest.raises(ValueError, match="motif_similarity_threshold"):
+        RepeatThresholds(motif_similarity_threshold=-0.1)
+
+
+# --- BOB-061 .4 HARDEN: the mechanism is GENERAL — no hardcoded phrase ----------
+#
+# 🔴 Invariant 1 (US-5 general): the near-verbatim clustering + tic detection must work
+# for an ARBITRARY recurring motif, not just the historical meme closer. These use
+# closers with NO lexical overlap with «пусть остаётся как есть» / «мне так спокойнее»
+# to prove the detector keys on RECURRENCE + near-verbatimness, never on a baked-in
+# signature phrase. Ratios were chosen off SequenceMatcher: variants sit ~0.85-0.93,
+# distinct endings ~0.1-0.26 — comfortably either side of the conservative 0.82 bar.
+
+# An arbitrary "wind down the workday" motif and its lexical variants, plus a genuinely
+# different ending. None of these share vocabulary with the historical tic.
+_ARB_MOTIF = "короче, увидимся завтра на созвоне"
+_ARB_VARIANT = "короче, увидимся послезавтра на созвоне"  # завтра -> послезавтра (~0.93)
+_ARB_MOTIF2 = "давай закроем этот таск сегодня"
+_ARB_VARIANT2 = "давай закроем этот таск сейчас"  # сегодня -> сейчас (~0.85)
+_ARB_DISTINCT = "ладно, пойду сварю себе кофе"  # ~0.1 vs the motif — never clusters
+
+
+@pytest.mark.parametrize(
+    ("first", "second"),
+    [(_ARB_MOTIF, _ARB_VARIANT), (_ARB_MOTIF2, _ARB_VARIANT2)],
+)
+def test_motif_clustering_is_general_for_an_arbitrary_motif(first: str, second: str) -> None:
+    # An arbitrary motif with no overlap with the historical meme still clusters its
+    # lexical variants — the mechanism is phrase-agnostic (no hardcoded signature).
+    assert is_same_closer_motif(first, second, similarity_threshold=0.82) is True
+
+
+@pytest.mark.parametrize("motif", [_ARB_MOTIF, _ARB_MOTIF2])
+def test_arbitrary_distinct_ending_never_clusters(motif: str) -> None:
+    # 🔴 US-4 guardrail generalised: an unrelated ending never clusters with an arbitrary
+    # motif — a genuine variety of closers is never falsely merged.
+    assert is_same_closer_motif(motif, _ARB_DISTINCT, similarity_threshold=0.82) is False
+
+
+def test_motif_clustering_is_symmetric() -> None:
+    # Order-independence: clustering is a symmetric relation (SequenceMatcher ratio is),
+    # so the same verdict holds whichever closer is "first".
+    assert is_same_closer_motif(_ARB_MOTIF, _ARB_VARIANT, similarity_threshold=0.82) is (
+        is_same_closer_motif(_ARB_VARIANT, _ARB_MOTIF, similarity_threshold=0.82)
+    )
+    assert is_same_closer_motif(_ARB_MOTIF, _ARB_DISTINCT, similarity_threshold=0.82) is (
+        is_same_closer_motif(_ARB_DISTINCT, _ARB_MOTIF, similarity_threshold=0.82)
+    )
+
+
+def test_arbitrary_motif_recurring_once_per_session_is_a_tic() -> None:
+    # 🔴 Invariant 2 (cross-session catch): an arbitrary motif scattered across the ring —
+    # as if logged ONCE PER SESSION over days, interleaved with unrelated closers — still
+    # accumulates >= min_occurrences via near-verbatim clustering and fires. No hardcode.
+    ring = [_ARB_VARIANT, "готово, всё зелёное", _ARB_MOTIF2, "сделал бэкап", _ARB_MOTIF]
+    assert (
+        is_recurring_closer_tic(
+            _ARB_MOTIF, ring, similarity_threshold=0.82, min_occurrences=2
+        )
+        is True
+    )
+
+
+def test_arbitrary_one_off_ending_across_the_ring_is_not_a_tic() -> None:
+    # 🔴 Invariant 2 contrast: a one-off ending appearing a SINGLE time across an
+    # otherwise-varied ring is NOT a tic — cross-session catch never fires on genuine
+    # variety, only on true recurrence.
+    ring = ["готово, всё зелёное", "сделал бэкап", _ARB_DISTINCT, "идём дальше"]
+    assert (
+        is_recurring_closer_tic(
+            _ARB_MOTIF, ring, similarity_threshold=0.82, min_occurrences=2
+        )
+        is False
+    )
+
+
+def test_closer_text_preserves_unicode_and_normalises() -> None:
+    # A closer carrying Unicode/punctuation is extracted + normalised (casefold/collapse),
+    # so the logged motif round-trips regardless of exotic characters.
+    reply = "Прогнал тесты.  ВСЁ Зелёное, Можно КАТИТЬ  —  наконец-то."
+    assert closer_text(reply, min_words=3) == "всё зелёное, можно катить — наконец-то"
