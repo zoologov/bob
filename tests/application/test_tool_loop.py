@@ -195,6 +195,45 @@ async def test_announcer_is_called_before_dispatch() -> None:
     assert answer == "done"
 
 
+async def test_announcer_fires_once_per_call_in_order_for_multiple_tool_calls() -> None:
+    # Arrange: a single turn requests the SAME tool twice — the announcer must fire
+    # exactly once per call and strictly before each dispatch (no batching, no double
+    # announce), so every slow hop gets its own interim line in order.
+    order: list[str] = []
+
+    class LoggingCapability(FakeCapability):
+        async def execute(self, args: Mapping[str, object]) -> object:
+            order.append("dispatch")
+            return await super().execute(args)
+
+    class LoggingAnnouncer(RecordingAnnouncer):
+        async def announce(self, capability_name: str) -> None:
+            order.append("announce")
+            await super().announce(capability_name)
+
+    cap = LoggingCapability(result="ok")
+    calls = (
+        ToolCall(id="c1", name="recall_memory", arguments={"q": "1"}),
+        ToolCall(id="c2", name="recall_memory", arguments={"q": "2"}),
+    )
+    provider = ScriptedProvider(
+        [
+            ToolCallResult(text="", tool_calls=calls),
+            ToolCallResult(text="done", tool_calls=()),
+        ]
+    )
+    announcer = LoggingAnnouncer()
+    loop = ToolLoop(provider=provider, registry=_registry(cap), announcer=announcer)
+
+    # Act
+    answer = await loop.run(_seed())
+
+    # Assert: one announce per call, each paired before its dispatch, order preserved.
+    assert announcer.announced == ["recall_memory", "recall_memory"]
+    assert order == ["announce", "dispatch", "announce", "dispatch"]
+    assert answer == "done"
+
+
 async def test_announcer_none_behaves_as_before() -> None:
     # Arrange: no announcer wired (the default) → the loop dispatches unchanged.
     cap = FakeCapability(result="ok")

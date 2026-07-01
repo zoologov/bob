@@ -109,6 +109,35 @@ async def test_different_seeds_can_pick_different_phrases() -> None:
     assert len(chosen) > 1
 
 
+async def test_capability_mapped_to_empty_phrase_set_stays_silent() -> None:
+    # Arrange: a name present in the map but with an EMPTY voiced set — the announcer
+    # must treat "no options" the same as an unmapped name (silence), never crash on
+    # an empty-sequence RNG choice. Distinct branch from the missing-key case.
+    gateway = FakeGateway()
+    announcer = _announcer(gateway, phrases={"web_search": ()})
+
+    # Act
+    await announcer.announce("web_search")
+
+    # Assert
+    assert gateway.calls == []
+
+
+async def test_successive_announces_each_send_a_line() -> None:
+    # Arrange: reusing one announcer across two slow calls in a turn must speak both
+    # times (the RNG is stateful per-instance; no accidental one-shot latch).
+    gateway = FakeGateway()
+    announcer = _announcer(gateway)
+
+    # Act
+    await announcer.announce("web_search")
+    await announcer.announce("web_search")
+
+    # Assert: both interim lines sent, each from the voiced set.
+    assert len(gateway.calls) == 2
+    assert all(call["markdown"] in WEB_SEARCH_PROGRESS_PHRASES for call in gateway.calls)
+
+
 async def test_gateway_failure_is_swallowed_not_propagated() -> None:
     # Arrange: the send blows up mid-turn.
     gateway = FakeGateway(raises=True)

@@ -480,6 +480,117 @@ async def test_search_joins_text_across_multiple_message_items() -> None:
         await runner.cleanup()
 
 
+async def test_search_parses_data_line_without_space_after_colon() -> None:
+    # Arrange: SSE spec allows ``data:<payload>`` with NO space after the colon.
+    # The decoder strips the value, so a space-less terminal must still parse (BOB-055
+    # framing robustness — real gateways vary the framing).
+    body = {
+        "output": [{"type": "message", "content": [{"type": "output_text", "text": "Готово."}]}]
+    }
+    raw = f"data:{json.dumps(_completed(body))}\n\n".encode()  # no space after colon
+    handler = _sse_handler([raw])
+
+    base_url, runner = await _start_server(handler)
+    try:
+        provider = QwenWebSearchProvider(base_url=base_url, model="m", api_key="k")
+
+        # Act
+        result = await provider.search("q")
+
+        # Assert
+        assert result.answer == "Готово."
+    finally:
+        await runner.cleanup()
+
+
+async def test_search_ignores_comment_blank_empty_and_done_lines_before_terminal() -> None:
+    # Arrange: a realistic keep-alive-laden stream — SSE comment lines (``:``), bare
+    # blank lines, an empty ``data:`` line and a ``[DONE]`` sentinel must ALL be
+    # skipped without derailing the parse; the terminal ``response.completed`` that
+    # follows is still read (framing quirks are non-fatal, only the aggregate matters).
+    body = {
+        "output": [{"type": "message", "content": [{"type": "output_text", "text": "Финал."}]}]
+    }
+    chunks = [
+        b": keep-alive\n\n",  # SSE comment line -> ignored
+        b"\n",  # bare blank separator -> ignored
+        b"data:\n\n",  # empty data payload -> ignored
+        b"data: [DONE]\n\n",  # sentinel -> ignored, NOT treated as terminal
+        _sse({"type": "response.output_text.delta", "delta": "Фи"}),
+        _sse(_completed(body)),
+    ]
+    handler = _sse_handler(chunks)
+
+    base_url, runner = await _start_server(handler)
+    try:
+        provider = QwenWebSearchProvider(base_url=base_url, model="m", api_key="k")
+
+        # Act
+        result = await provider.search("q")
+
+        # Assert
+        assert result.answer == "Финал."
+    finally:
+        await runner.cleanup()
+
+
+async def test_search_raises_when_terminal_data_is_valid_json_but_not_object() -> None:
+    # Arrange: a ``data:`` line that decodes to valid JSON which is NOT an object
+    # (a bare array) — decodable but structurally wrong, so it must raise (not be
+    # mistaken for an event), distinct from the undecodable-JSON path.
+    handler = _sse_handler([b"data: [1, 2, 3]\n\n"])
+
+    base_url, runner = await _start_server(handler)
+    try:
+        provider = QwenWebSearchProvider(base_url=base_url, model="m", api_key="k")
+
+        # Act / Assert
+        with pytest.raises(ValueError, match="JSON object"):
+            await provider.search("q")
+    finally:
+        await runner.cleanup()
+
+
+async def test_search_reasoning_only_completed_raises_no_message() -> None:
+    # Arrange: a terminal ``response.completed`` whose output carries ONLY reasoning
+    # (no message, no search call). Lock the current parser contract: no message item
+    # -> raise (honest notice upstream), NEVER an empty answer passed off as found.
+    body = {"output": [{"type": "reasoning", "content": "just thinking, no answer"}]}
+    handler = _sse_handler([_sse(_completed(body))])
+
+    base_url, runner = await _start_server(handler)
+    try:
+        provider = QwenWebSearchProvider(base_url=base_url, model="m", api_key="k")
+
+        # Act / Assert
+        with pytest.raises(ValueError, match="message"):
+            await provider.search("q")
+    finally:
+        await runner.cleanup()
+
+
+@pytest.mark.parametrize("failure_type", ["response.error", "error"])
+async def test_search_raises_on_failure_event_variants(failure_type: str) -> None:
+    # Arrange: besides ``response.failed`` (tested above), the terminal failure
+    # vocabulary also covers ``response.error`` and a bare ``error`` event — each is
+    # an explicit server-side failure that must raise, never silently degrade.
+    chunks = [
+        _sse({"type": "response.created"}),
+        _sse({"type": failure_type, "response": {"error": {"message": "boom"}}}),
+    ]
+    handler = _sse_handler(chunks)
+
+    base_url, runner = await _start_server(handler)
+    try:
+        provider = QwenWebSearchProvider(base_url=base_url, model="m", api_key="k")
+
+        # Act / Assert
+        with pytest.raises(ValueError, match="failure"):
+            await provider.search("q")
+    finally:
+        await runner.cleanup()
+
+
 async def test_provider_satisfies_web_search_provider_protocol() -> None:
     provider = QwenWebSearchProvider(base_url="http://x/v1", model="m", api_key="k")
     assert isinstance(provider, WebSearchProvider)
