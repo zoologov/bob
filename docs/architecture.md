@@ -204,6 +204,35 @@ reply-на-Боба не срабатывает, но @mention по `username` �
 резолва. Сам id читается лениво политикой адресности через шов
 `multibot.bob_user_id`.
 
+**Устойчивый старт: `get_me` переживает флап сети (BOB-059).** Резолв идентичности
+идёт в сети, а сеть на старте может моргнуть. Раньше блип поднимал
+`aiogram.exceptions.TelegramNetworkError`, которого не было в `except` — исключение
+пробивало `resolve_bot_identities`, роняло весь запуск, поллинг не стартовал, и Боб
+с GUPPI оставались немыми. Теперь вызов `get_me` обёрнут в `call_with_retry`
+(тот же примитив, что и на существенных шагах хода, BOB-049): ограниченное число
+попыток с backoff через инъецируемый sleep, seam в конструкторе —
+`identity_retry_attempts` (умолчание `_DEFAULT_IDENTITY_RETRY_ATTEMPTS = 3`),
+`identity_retry_backoff_seconds` (`1.0`) и `identity_retry_sleep` (живой
+`asyncio.sleep`; тесты инъецируют фейковый для детерминизма). Поведение по исходам:
+
+- **Транзиентный блип** переживается ретраем — идентичность всё-таки резолвится,
+  успешный путь не изменён (на живом `get_me` ретрай возвращает с первой попытки,
+  без sleep, `set_bob_identity` зовётся как раньше).
+- **Устойчивый сбой** (в том числе `TelegramNetworkError`, теперь добавленный в
+  `except (OSError, RuntimeError, TimeoutError, TelegramNetworkError)`) на всех
+  попытках → `logger.warning` + `return`: **грациозная деградация**. Запуск
+  **продолжается**, поллинг стартует, Боб слушает — идентичность просто останется
+  неразрешённой (reply-на-Боба деградирует, @mention по `username` работает) и
+  дорезолвится позже.
+- **Не-сетевой сбой** (программная ошибка — `ValueError` и т.п.) намеренно **не**
+  проглатывается: `call_with_retry` перевыбрасывает последнее исключение, а `except`
+  ловит только сетевые типы, поэтому баг всплывает, а не тонет.
+
+Это распространяет резилентность старта на резолв идентичности: поллинг (`poll_once`)
+был устойчив к сетевым сбоям уже давно (изоляция ботов, BOB-002), а теперь и стартовый
+`get_me` следует принципу ROADMAP «полный Боб / устойчивость» — транзиентный сбой
+переживается, устойчивый деградирует мягко, а не роняет процесс.
+
 ### Topic-scope Боба
 
 Боб обрабатывает только апдейты с `chat_id == bob.chat_id` И
@@ -3957,6 +3986,15 @@ mention/reply-на-Боба/имя-обращение → `DIRECTED_TO_BOB`, rep
 скан `entities` на @mention/text_mention Боба против `BotIdentitySignals`,
 graceful degrade без идентичности) и `tests/infrastructure/telegram/test_multibot.py`
 (`resolve_bot_identities` через `get_me` → `set_bob_identity`, `bob_user_id`-шов).
+Устойчивый старт (BOB-059) покрыт `tests/infrastructure/telegram/test_multibot_startup.py`:
+`TelegramNetworkError` на всех попытках → warn+return без падения
+(`test_persistent_network_error_does_not_crash_startup`), транзиентный блип
+переживается ретраем и идентичность резолвится (`test_transient_blip_is_retried_then_resolves`),
+успех с первой попытки без sleep (`test_success_on_first_try_sets_identity_without_sleeping`),
+не-сетевой баг не проглатывается (`test_non_network_exception_is_not_swallowed`),
+каждый сетевой класс деградации грациозно (параметризованный
+`test_each_network_degradation_class_warns_and_returns`) и gateway остаётся
+поллящим после устойчивого флапа (`test_gateway_stays_pollable_after_persistent_flap`).
 Приложение — `tests/application/usecases/test_handle_message.py`
 (`_decide_addressivity` как гейт хода: `SILENT` → ранний выход, `REACT` → путь
 `REACT_ONLY`, `ENGAGE` → обычная компоновка; непровязанный `bob_user_id_source` →
