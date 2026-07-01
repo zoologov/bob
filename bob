@@ -1,0 +1,101 @@
+#!/usr/bin/env bash
+# bob — лаунчер Боба: start | stop | restart | status | logs
+#
+# Запускает GUPPI/поллинг в фоне, подхватывает ключи из ./.env, пишет лог в
+# logs/bob.log и подтверждает, что поллинг Telegram реально поднялся (а не завис
+# на старте). Управление одной командой:  ./bob start | stop | restart | status | logs
+#
+# Copyright (c) 2026 Vladimir Zoologov. All Rights Reserved.
+# SPDX-License-Identifier: BUSL-1.1
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$ROOT"
+
+PY=".venv/bin/python"
+LOG="logs/bob.log"
+PATTERN="from bob.app import main"
+# Один и тот же вход, что и в app.py (main(config_path=config/bob.yaml)).
+LAUNCH='from pathlib import Path; from bob.app import main; main(config_path=Path("config/bob.yaml"))'
+
+pid() { pgrep -f "$PATTERN" || true; }
+
+start() {
+  if [ -n "$(pid)" ]; then
+    echo "Боб уже запущен (pid $(pid)). Стоп/рестарт: ./bob restart"
+    return 0
+  fi
+  if [ ! -f .env ]; then
+    echo "❌ Нет ./.env с ключами (BOB_LLM__TIER1_API_KEY …). Создай его сначала."
+    exit 1
+  fi
+  if [ ! -x "$PY" ]; then
+    echo "❌ Нет venv ($PY). Сначала установи зависимости (uv sync / venv)."
+    exit 1
+  fi
+  mkdir -p logs
+  local before; before=$([ -f "$LOG" ] && wc -l < "$LOG" || echo 0)
+
+  # Подхватываем ключи из .env (app.py сам .env НЕ грузит) и стартуем в фоне.
+  set -a; . ./.env; set +a
+  nohup "$PY" -c "$LAUNCH" >> "$LOG" 2>&1 < /dev/null &
+  disown
+
+  echo "Запускаю Боба… (лог: $LOG)"
+  # Ждём поллинга (маркер «AgentRuntime started») до ~20с, глядя ТОЛЬКО в новые строки.
+  local i new
+  for i in $(seq 1 20); do
+    sleep 1
+    new=$(tail -n +"$((before + 1))" "$LOG" 2>/dev/null || true)
+    if printf '%s' "$new" | grep -q "AgentRuntime started"; then
+      echo "✅ Боб на связи (pid $(pid)) — поллинг Telegram пошёл."
+      return 0
+    fi
+    if [ -z "$(pid)" ]; then
+      echo "❌ Процесс упал на старте. Последние строки лога:"
+      tail -n 15 "$LOG"
+      exit 1
+    fi
+  done
+  echo "⚠️ Стартовал (pid $(pid)), но «AgentRuntime started» не увидел за 20с — проверь: ./bob logs"
+}
+
+stop() {
+  local p; p="$(pid)"
+  if [ -z "$p" ]; then echo "Боб не запущен."; return 0; fi
+  echo "Останавливаю Боба (pid $p)…"
+  # shellcheck disable=SC2086
+  kill -TERM $p 2>/dev/null || true
+  local i
+  for i in $(seq 1 10); do
+    sleep 1
+    if [ -z "$(pid)" ]; then echo "✅ Остановлен."; return 0; fi
+  done
+  echo "Мягко не вышел — kill -9."
+  # shellcheck disable=SC2046
+  kill -9 $(pid) 2>/dev/null || true
+  echo "✅ Остановлен (force)."
+}
+
+status() {
+  local p; p="$(pid)"
+  if [ -z "$p" ]; then echo "🔴 Боб НЕ запущен."; return 0; fi
+  echo "🟢 Боб запущен (pid $p)."
+  local last
+  last=$(grep -n "Bob GUPPI starting" "$LOG" 2>/dev/null | tail -1 | cut -d: -f1 || true)
+  if [ -n "${last:-}" ] && tail -n +"$last" "$LOG" 2>/dev/null | grep -q "AgentRuntime started"; then
+    echo "   поллинг: активен ✅"
+  else
+    echo "   поллинг: не подтверждён — проверь ./bob logs"
+  fi
+  echo "   лог: $LOG"
+}
+
+case "${1:-}" in
+  start)   start ;;
+  stop)    stop ;;
+  restart) stop; sleep 2; start ;;
+  status)  status ;;
+  logs)    exec tail -f "$LOG" ;;
+  *) echo "Использование: ./bob {start|stop|restart|status|logs}"; exit 1 ;;
+esac
