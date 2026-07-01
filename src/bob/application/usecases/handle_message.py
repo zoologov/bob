@@ -139,6 +139,7 @@ from bob.domain.personality.voice import (
     variable_form_directive,
     who_is_writing_directive,
 )
+from bob.domain.personality.volatility_judgment import VolatilityContext
 from bob.domain.personality.zone_classifier import TasteZoneClassifier
 from bob.domain.ports import DiagramRenderError, DiagramResult
 
@@ -147,6 +148,7 @@ if TYPE_CHECKING:
     from contextlib import AbstractAsyncContextManager
     from random import Random
 
+    from bob.application.capabilities.progress_announcer import InterimLineGenerator
     from bob.application.reliability import Sleep
     from bob.application.router.llm_router import LLMRouter
     from bob.application.runtime.events import MessageReceived
@@ -161,6 +163,10 @@ if TYPE_CHECKING:
     from bob.domain.personality.self_improvement import ImprovementRule
     from bob.domain.personality.soul import SOUL
     from bob.domain.personality.sulk import SulkState
+    from bob.domain.personality.volatility_judgment import (
+        VolatilityJudge,
+        VolatilityVerdict,
+    )
     from bob.domain.ports import (
         Clock,
         ConversationFloorStore,
@@ -173,6 +179,7 @@ if TYPE_CHECKING:
         Recalled,
         ReflectionReader,
         ToolCallingProvider,
+        WebSearchProvider,
         ZoneClassifier,
     )
 
@@ -200,6 +207,34 @@ _INLINE_DIAGRAM_CAPTION = "Вот диаграмма."
 
 # How many memories to recall when assembling the reply context.
 _RECALL_K = 5
+
+# Pre-answer epistemic verify (BOB-057 .2). BEFORE generation a conservative Tier-0
+# ``VolatilityJudge`` decides whether the answer hinges on a FRESH volatile fact; on
+# ``needs_check`` Bob makes ONE DIRECT ``WebSearchProvider.search`` (NOT via the
+# capability registry / tool-loop → not the BOB-052 per-sender gate — an internal
+# public-verify that exposes only public web info) and folds the finding into the
+# reply-generation context. Everything is decorative: a judge failure degrades to
+# «no check» (normal answer), a search failure/timeout/empty to an honest hedge —
+# the turn is never blocked or broken.
+_DEFAULT_VERIFY_TIMEOUT_SECONDS = 75.0
+
+# The web finding is trimmed before it enters the generation context (it only needs to
+# ground the answer, not dump the whole search payload into the prompt).
+_VERIFY_ANSWER_MAX_CHARS = 800
+
+# The GROUNDED note (US-1/US-4): the fresh finding + an explicit nudge to react in Bob's
+# own voice/tone if the picture changed — the tone adapts through generation, unprogrammed.
+_VERIFY_GROUNDED_NOTE = (
+    "СВЕЖАЯ ПРОВЕРКА (веб): {answer}. Учти актуальное; если картина изменилась — "
+    "отреагируй по-своему, в т.ч. тоном."
+)
+
+# The HEDGE note (US-6): on a failed/timed-out/empty verify Bob makes an HONEST epistemic
+# caveat — never a confident STALE number dressed as fact, never a fabrication.
+_VERIFY_HEDGE_NOTE = (
+    "Свериться со свежими данными по {topic} не вышло — не выдавай устаревшие цифры за "  # noqa: RUF001
+    "точные, сделай честную оговорку."
+)
 
 # Max attractor-breaking regenerations the anti-repeat guard may draw before keeping the
 # last draft (BOB-032 .1, R2). Each retry strips the recalled exemplar(s) the candidate
@@ -783,6 +818,10 @@ class HandleMessage:
         retry_sleep: Sleep | None = None,
         essential_attempts: int = _DEFAULT_ESSENTIAL_ATTEMPTS,
         essential_backoff_seconds: float = _DEFAULT_ESSENTIAL_BACKOFF_SECONDS,
+        verify_judge: VolatilityJudge | None = None,
+        verify_provider: WebSearchProvider | None = None,
+        verify_timeout_seconds: float = _DEFAULT_VERIFY_TIMEOUT_SECONDS,
+        interim_line_generator: InterimLineGenerator | None = None,
     ) -> None:
         self._router = router
         self._gateway = gateway
@@ -1094,6 +1133,23 @@ class HandleMessage:
             )
             raise ValueError(msg)
         self._essential_backoff_seconds = essential_backoff_seconds
+        # Pre-answer epistemic verify seam (BOB-057 .2): when BOTH a conservative Tier-0
+        # ``VolatilityJudge`` and a ``WebSearchProvider`` are wired, a volatile-fact turn
+        # triggers ONE DIRECT ``provider.search`` (NOT the capability registry / tool-loop
+        # → NOT the BOB-052 per-sender gate; internal public-verify, only public web info)
+        # and folds the finding into the reply-generation context. Unwired (either None,
+        # the default → ``verify.enabled`` off in app.py) the seam is fully inert: zero
+        # judge/search calls, behaviour exactly as before. Decorative end to end (a judge
+        # failure → no check; a search failure/timeout/empty → an honest hedge).
+        self._verify_judge = verify_judge
+        self._verify_provider = verify_provider
+        self._verify_timeout_seconds = verify_timeout_seconds
+        # The LIVE addressed interim line (BOB-057 .3, US-3b): on a ``needs_check`` turn
+        # Bob speaks a one-liner naming WHAT he checks and WHO he's talking to before the
+        # search. When wired, a Tier-0 gen produces it; unwired (the default) the verify
+        # interim falls to the seeded BOB-055 phrase. Fully decorative (gen/send failure
+        # → seeded phrase / silence), never blocks the search or breaks the turn.
+        self._interim_line_generator = interim_line_generator
 
     async def _run_essential[T](
         self, operation: Callable[[], Awaitable[T]], *, step: str
@@ -1317,6 +1373,21 @@ class HandleMessage:
         # persisted and NO Bob reply ships.
         try:
             async with self._gateway.typing_indicator(chat_id=event.chat_id):
+                # 🔴 BOB-057 .5 (US-3 «один поиск, не петля»): compute the epistemic-verify
+                # step (judge → interim → search → grounded/hedge note) EXACTLY ONCE per turn
+                # as a PER-TURN LOCAL, then thread the SAME note into the first composition
+                # AND every anti-repeat regeneration. This makes «один поиск» a consequence of
+                # real structure — judge.assess / provider.search / the interim line each fire
+                # at most once, even on a turn that is both volatile AND trips the tic. It is a
+                # local (never a HandleMessage attribute) because the use case is a shared
+                # singleton — an instance flag would leak the note / «already searched» state
+                # across turns and concurrent users. ``""`` when the judge says «no check».
+                verify_note = await self._verify_note(
+                    event.text,
+                    history,
+                    interlocutor=interlocutor,
+                    chat_id=event.chat_id,
+                )
                 reply = await self._compose_reply(
                     event.text,
                     soul,
@@ -1333,6 +1404,7 @@ class HandleMessage:
                     verbosity=verbosity,
                     modulators=modulators,
                     chat_id=event.chat_id,
+                    verify_note=verify_note,
                 )
                 # Anti-repeat guard (BOB-022, defense in depth): if the fresh reply is
                 # byte-identical (after strip) to Bob's most-recent prior reply, regenerate
@@ -1355,6 +1427,7 @@ class HandleMessage:
                     sulk=sulk,
                     verbosity=verbosity,
                     modulators=modulators,
+                    verify_note=verify_note,
                 )
         except _EssentialStepError as exc:
             await self._handle_essential_failure(event, soul, exc)
@@ -2354,6 +2427,7 @@ class HandleMessage:
         verbosity: Verbosity = Verbosity.NORMAL,
         modulators: RuleModulators | None = None,
         chat_id: int | None = None,
+        verify_note: str | None = None,
     ) -> str:
         """Compose a full reply, folding the decided verbosity into the prompt.
 
@@ -2380,6 +2454,28 @@ class HandleMessage:
             # Grounded add-ons surface Bob's PRIVATE inner life / shared past —
             # withheld from a stranger (audience redaction).
             context = await self._with_grounded_addons(context, text, plan)
+        # Pre-answer epistemic verify (BOB-057 .2): a conservative Tier-0 judge decides if
+        # the answer hinges on a FRESH volatile fact; if so Bob does ONE DIRECT web_search
+        # (ungated internal public-verify — see _verify_note) and this grounded/hedge note
+        # folds into the SAME generation context as the other add-ons. Applies to owner and
+        # guest alike (public web info, no owner/private leak). Wrapped so ANY failure drops
+        # to «no note» — never blocks or breaks the turn (zero added latency when inert).
+        #
+        # 🔴 BOB-057 .5 (US-3 «один поиск, не петля»): the verify step is computed EXACTLY
+        # ONCE per turn and THREADED IN via ``verify_note`` so the anti-repeat regeneration
+        # loop (``_guard_against_verbatim_repeat``) REUSES it instead of re-judging /
+        # re-searching / re-announcing on every retry. ``None`` = «not yet computed» (the
+        # first composition falls through and computes it); any string (INCLUDING ``""`` =
+        # «judged, no note») means «already computed this turn» → reuse verbatim. The cache
+        # is this PER-TURN LOCAL parameter, NOT an instance attribute — ``HandleMessage`` is
+        # a shared singleton, so an instance flag would leak the note (and the «already
+        # searched» state) across turns/users.
+        if verify_note is None:
+            verify_note = await self._verify_note(
+                text, history, interlocutor=interlocutor, chat_id=chat_id
+            )
+        if verify_note:
+            context = f"{context}\n{verify_note}"
         system_prompt = self._system_prompt_for(
             soul,
             text,
@@ -2443,6 +2539,7 @@ class HandleMessage:
         sulk: SulkState | None = None,
         verbosity: Verbosity = Verbosity.NORMAL,
         modulators: RuleModulators | None = None,
+        verify_note: str | None = None,
     ) -> str:
         """Recompose if ``reply`` (near-)repeats a recent OR recalled Bob reply (BOB-032 .1).
 
@@ -2512,6 +2609,12 @@ class HandleMessage:
             current_recalled = recalled_without_copied_exemplars(
                 current, current_recalled, threshold=threshold
             )
+            # 🔴 BOB-057 .5 (US-3 «один поиск, не петля»): REUSE the verify note computed
+            # once for this turn instead of recomputing it on every regeneration. Threading
+            # the same ``verify_note`` here means judge.assess / provider.search / the live
+            # interim line each fire AT MOST ONCE per turn, even across the attractor-breaking
+            # retries. ``chat_id`` is intentionally omitted on regeneration (as before) — the
+            # interim already spoke on the first pass and rides the same once-per-turn compute.
             current = await self._compose_reply(
                 text,
                 soul,
@@ -2527,6 +2630,7 @@ class HandleMessage:
                 sulk=sulk,
                 verbosity=verbosity,
                 modulators=modulators,
+                verify_note=verify_note,
             )
         # BOB-043: regeneration could not shake the tic (it keeps re-copying the closer
         # from recalled exemplars — a self-reinforcing loop). If the final draft STILL
@@ -2603,6 +2707,102 @@ class HandleMessage:
         except Exception:
             logger.exception("optional grounded add-on %r failed (dropped)", name)
             return ""
+
+    async def _verify_note(
+        self,
+        text: str,
+        history: Sequence[Mapping[str, object]],
+        *,
+        interlocutor: Interlocutor | None = None,
+        chat_id: int | None = None,
+    ) -> str:
+        """The pre-answer epistemic-verify note for this turn, or ``""`` (BOB-057 .2).
+
+        The whole step is DECORATIVE and DIRECT:
+
+        * Unwired (no judge OR no provider — ``verify.enabled`` off) → ``""`` immediately,
+          zero judge/search calls, zero added latency (US-2 «не зануда» by default).
+        * A CONSERVATIVE Tier-0 :class:`VolatilityJudge` decides whether the answer hinges
+          on a FRESH volatile fact. A judge failure is caught and treated as «no check»
+          (``""``) — the turn is never blocked by a flaky judge.
+        * On ``needs_check`` Bob runs ONE search via :meth:`_verify_search_note`.
+
+        🔴 The search is DIRECT (``provider.search``), NOT ``registry.dispatch`` /
+        the tool-loop — so it is NOT the BOB-052 per-sender privilege gate. This is an
+        internal public-verify (nobody asked for a tool; only PUBLIC web info is exposed,
+        never owner/private data), so it works for owner and guest alike without weakening
+        BOB-051/052 on user-facing tool requests.
+        """
+        judge = self._verify_judge
+        provider = self._verify_provider
+        if judge is None or provider is None:
+            return ""
+        try:
+            verdict = await judge.assess(
+                VolatilityContext(text=text, recent_thread=_render_thread(history))
+            )
+        except Exception:
+            # Decorative: a judge failure degrades to «no check» (normal answer), never
+            # blocks or breaks the turn.
+            logger.exception("volatility judge failed (verify skipped)")
+            return ""
+        if not verdict.needs_check:
+            return ""
+        # BOB-057 .3 (US-3b): before the search, Bob sends a LIVE, ADDRESSED interim line
+        # naming WHAT he checks and WHO he's talking to («Леш, гляну свежие ставки,
+        # секунду 🙂»). Decorative (live gen → seeded BOB-055 phrase → silence) and does
+        # NOT block the search below.
+        await self._send_verify_interim(verdict, interlocutor, chat_id)
+        return await self._verify_search_note(provider, verdict)
+
+    async def _send_verify_interim(
+        self,
+        verdict: VolatilityVerdict,
+        interlocutor: Interlocutor | None,
+        chat_id: int | None,
+    ) -> None:
+        """Send the live addressed interim line for the verify search (BOB-057 US-3b).
+
+        Reuses the BOB-055 :class:`GatewayProgressAnnouncer` in its contextual mode so
+        the decorative fallback chain (live Tier-0 gen → seeded phrase → silence) lives
+        in one place. No ``chat_id`` (an unaddressed path) → no interim. The sender's
+        perceived ``display_name`` addresses the line; an unknown sender → topic-only.
+        """
+        if chat_id is None:
+            return
+        sender_name = interlocutor.display_name if interlocutor is not None else ""
+        announcer = GatewayProgressAnnouncer(
+            chat_id=chat_id,
+            gateway=self._gateway,
+            rng=self._rng,
+            line_generator=self._interim_line_generator,
+        )
+        await announcer.announce_verify(topic=verdict.topic, sender_name=sender_name)
+
+    async def _verify_search_note(
+        self, provider: WebSearchProvider, verdict: VolatilityVerdict
+    ) -> str:
+        """Run ONE direct, short-timeout web_search and return the grounded/hedge note.
+
+        On success with a non-empty answer → a GROUNDED note (the trimmed finding + a nudge
+        to react in Bob's own voice/tone). On failure / timeout / empty → an HONEST hedge
+        note (US-6: never a confident stale number as fact, never a fabrication). The
+        provider call is bounded by ``verify.timeout_seconds`` so a slow search cannot
+        stall the turn (US-3 «не 5 минут»).
+        """
+        try:
+            # ``asyncio.wait_for`` raises ``TimeoutError`` past the deadline; a slow/failing
+            # provider raises its own error — both are caught below as one honest hedge.
+            result = await asyncio.wait_for(
+                provider.search(verdict.query), timeout=self._verify_timeout_seconds
+            )
+        except Exception:
+            logger.exception("verify web_search failed (hedge)")
+            return _VERIFY_HEDGE_NOTE.format(topic=verdict.topic)
+        answer = result.answer.strip()[:_VERIFY_ANSWER_MAX_CHARS]
+        if not answer:
+            return _VERIFY_HEDGE_NOTE.format(topic=verdict.topic)
+        return _VERIFY_GROUNDED_NOTE.format(answer=answer)
 
     async def _leak_inner_life(self, plan: ExpressionPlan) -> str:
         """The leak line for this turn, or ``""`` (no flag / no reader / no reflection)."""

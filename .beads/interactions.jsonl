@@ -562,3 +562,11 @@
 {"id":"int-ba848653","kind":"field_change","created_at":"2026-07-01T12:05:51.256108Z","actor":"v.zoologov","issue_id":"bob-b1u.1","extra":{"field":"status","new_value":"in_progress","old_value":"open"}}
 {"id":"int-3a67623e","kind":"field_change","created_at":"2026-07-01T12:19:02.926442Z","actor":"v.zoologov","issue_id":"bob-b1u.1","extra":{"field":"status","new_value":"closed","old_value":"in_progress","reason":"Closed"}}
 {"id":"int-bd152061","kind":"field_change","created_at":"2026-07-01T12:20:04.06156Z","actor":"v.zoologov","issue_id":"bob-b1u.2","extra":{"field":"status","new_value":"in_progress","old_value":"open"}}
+{"id":"int-83a123ed","kind":"field_change","created_at":"2026-07-01T15:26:15.789783Z","actor":"v.zoologov","issue_id":"bob-2mh.1","extra":{"field":"status","new_value":"in_progress","old_value":"open"}}
+{"id":"int-b760f5c0","kind":"field_change","created_at":"2026-07-01T15:39:08.286548Z","actor":"v.zoologov","issue_id":"bob-2mh.1","extra":{"field":"status","new_value":"closed","old_value":"in_progress","reason":"Closed"}}
+{"id":"int-4d627933","kind":"field_change","created_at":"2026-07-01T15:40:25.703482Z","actor":"v.zoologov","issue_id":"bob-2mh.2","extra":{"field":"status","new_value":"in_progress","old_value":"open"}}
+{"id":"int-d9bbdd29","kind":"field_change","created_at":"2026-07-01T15:52:53.106736Z","actor":"v.zoologov","issue_id":"bob-2mh.2","extra":{"field":"status","new_value":"closed","old_value":"in_progress","reason":"Closed"}}
+{"id":"int-e34baa7f","kind":"field_change","created_at":"2026-07-01T15:54:00.71858Z","actor":"v.zoologov","issue_id":"bob-2mh.3","extra":{"field":"status","new_value":"in_progress","old_value":"open"}}
+{"id":"int-89993f9c","kind":"field_change","created_at":"2026-07-01T16:08:49.978299Z","actor":"v.zoologov","issue_id":"bob-2mh.3","extra":{"field":"status","new_value":"closed","old_value":"in_progress","reason":"Closed"}}
+{"id":"int-8b3617fa","kind":"field_change","created_at":"2026-07-01T16:09:53.41848Z","actor":"v.zoologov","issue_id":"bob-2mh.4","extra":{"field":"status","new_value":"in_progress","old_value":"open"}}
+{"id":"int-41ad56c7","kind":"field_change","created_at":"2026-07-01T16:19:08.513323Z","actor":"v.zoologov","issue_id":"bob-2mh.4","extra":{"field":"status","new_value":"closed","old_value":"in_progress","reason":"Closed"}}

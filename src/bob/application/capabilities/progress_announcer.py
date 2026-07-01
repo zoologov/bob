@@ -45,6 +45,18 @@ class ProgressAnnouncer(Protocol):
     async def announce(self, capability_name: str) -> None: ...
 
 
+class InterimLineGenerator(Protocol):
+    """Generate one LIVE, addressed interim one-liner in Bob's voice (BOB-057 .3).
+
+    The application port for the contextual verify interim: given the ``topic`` Bob
+    is about to check and the ``sender_name`` he's talking to, return a short living
+    line («Леш, гляну свежие ставки, секунду 🙂»). A Tier-0 LLM realisation lives in
+    infrastructure; the announcer depends only on this narrow port (DDD clean).
+    """
+
+    async def generate(self, *, topic: str, sender_name: str) -> str: ...
+
+
 class _ProgressSink(Protocol):
     """The gateway seam the announcer needs: send one live line into a chat.
 
@@ -89,11 +101,17 @@ class GatewayProgressAnnouncer:
         gateway: _ProgressSink,
         rng: Random,
         phrases: Mapping[str, Sequence[str]] = DEFAULT_PROGRESS_PHRASES,
+        line_generator: InterimLineGenerator | None = None,
     ) -> None:
         self._chat_id = chat_id
         self._gateway = gateway
         self._rng = rng
         self._phrases = phrases
+        # The contextual verify interim (BOB-057 .3): when wired, ``announce_verify``
+        # generates a LIVE, addressed one-liner instead of a scripted phrase. Unwired
+        # (the default) it falls straight to the seeded BOB-055 set — the seam stays
+        # decorative in one place.
+        self._line_generator = line_generator
 
     async def announce(self, capability_name: str) -> None:
         """Send one voiced interim line for a slow capability, or stay silent.
@@ -112,3 +130,42 @@ class GatewayProgressAnnouncer:
             logger.exception(
                 "progress announce for %r dropped (decorative)", capability_name
             )
+
+    async def announce_verify(self, *, topic: str, sender_name: str) -> None:
+        """Send the LIVE, ADDRESSED interim line before a verify search (BOB-057 US-3b).
+
+        The decorative fallback chain, in ONE place:
+
+        * a wired :class:`InterimLineGenerator` yields a live one-liner naming
+          ``topic`` and addressing ``sender_name`` («Леш, гляну свежие ставки,
+          секунду 🙂»); on failure/empty/no-generator →
+        * a seeded pick from :data:`WEB_SEARCH_PROGRESS_PHRASES` (BOB-055) via the
+          same RNG; and if even the send raises →
+        * silence — logged and dropped.
+
+        The interim NEVER blocks the search or breaks the turn.
+        """
+        line = await self._live_verify_line(topic=topic, sender_name=sender_name)
+        if not line:
+            line = self._rng.choice(list(WEB_SEARCH_PROGRESS_PHRASES))
+        try:
+            await self._gateway.reply(chat_id=self._chat_id, markdown=line)
+        except Exception:  # decorative: a failed interim line never breaks the turn
+            logger.exception("verify interim line dropped (decorative)")
+
+    async def _live_verify_line(self, *, topic: str, sender_name: str) -> str:
+        """The live Tier-0 interim line, or ``""`` (unwired / failed / empty gen).
+
+        A generator error is caught and degraded to ``""`` (the caller seeds the
+        fallback), so a flaky local model never propagates through the interim.
+        """
+        if self._line_generator is None:
+            return ""
+        try:
+            line = await self._line_generator.generate(
+                topic=topic, sender_name=sender_name
+            )
+        except Exception:  # decorative: a failed live gen falls back to a seeded phrase
+            logger.exception("live interim line gen failed (seeded fallback)")
+            return ""
+        return line.strip()

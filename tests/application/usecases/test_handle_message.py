@@ -22,6 +22,9 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from bob.application.capabilities.progress_announcer import (
+    WEB_SEARCH_PROGRESS_PHRASES,
+)
 from bob.application.capabilities.registry import CapabilityRegistry
 from bob.application.capabilities.render_diagram import (
     CollectingDiagramSink,
@@ -85,7 +88,11 @@ from bob.domain.personality.self_improvement import (
 from bob.domain.personality.soul import SOUL
 from bob.domain.personality.sulk import SulkState
 from bob.domain.personality.taste import TasteAxis, TasteEngine, Verdict
-from bob.domain.ports import ToolCall, ToolCallResult
+from bob.domain.personality.volatility_judgment import (
+    VolatilityContext,
+    VolatilityVerdict,
+)
+from bob.domain.ports import ToolCall, ToolCallResult, WebSearchResult
 from bob.infrastructure.diagrams.mmdc_renderer import DiagramRenderError
 from bob.infrastructure.telegram.gateway import TelegramGateway
 
@@ -153,6 +160,83 @@ class CapturingProvider:
     def all_text(self) -> str:
         """Concatenated content of every message ever sent to this provider."""
         return "\n".join(m["content"] for payload in self.payloads for m in payload)
+
+
+class _FakeVolatilityJudge:
+    """A scripted VolatilityJudge (BOB-057 .2): returns a fixed verdict or raises.
+
+    Records each :class:`VolatilityContext` it assessed so a test can prove the judge
+    saw the turn (or, when ``raises``, that a judge failure is caught decoratively).
+    """
+
+    def __init__(
+        self, *, verdict: VolatilityVerdict | None = None, raises: bool = False
+    ) -> None:
+        self._verdict = verdict
+        self._raises = raises
+        self.calls: list[VolatilityContext] = []
+
+    async def assess(self, ctx: VolatilityContext) -> VolatilityVerdict:
+        self.calls.append(ctx)
+        if self._raises:
+            raise RuntimeError("volatility judge unavailable")
+        assert self._verdict is not None
+        return self._verdict
+
+
+class _FakeWebSearchProvider:
+    """A scripted WebSearchProvider (BOB-057 .2): returns a result, raises, or hangs.
+
+    Records each query so a test can assert the verify path called ``search`` DIRECTLY
+    with ``verdict.query`` (never routed through the capability registry / tool-loop).
+    ``hang`` parks forever so a short ``verify.timeout_seconds`` trips the hedge path.
+    """
+
+    def __init__(
+        self,
+        *,
+        result: WebSearchResult | None = None,
+        raises: bool = False,
+        hang: bool = False,
+        on_search: Callable[[], None] | None = None,
+    ) -> None:
+        self._result = result
+        self._raises = raises
+        self._hang = hang
+        # BOB-057 .3 probe: fired at the moment ``search`` runs so a test can prove the
+        # live interim line was already sent BEFORE the search (US-3b ordering).
+        self._on_search = on_search
+        self.queries: list[str] = []
+
+    async def search(self, query: str) -> WebSearchResult:
+        self.queries.append(query)
+        if self._on_search is not None:
+            self._on_search()
+        if self._hang:
+            await asyncio.Event().wait()
+        if self._raises:
+            raise RuntimeError("web_search unavailable")
+        assert self._result is not None
+        return self._result
+
+
+class _FakeInterimLineGenerator:
+    """A scripted interim-line generator (BOB-057 .3): a live line, empty, or raises.
+
+    Records the (topic, sender_name) it saw so a test can prove the live gen was
+    asked with the turn's subject + perceived interlocutor.
+    """
+
+    def __init__(self, *, line: str = "", raises: bool = False) -> None:
+        self._line = line
+        self._raises = raises
+        self.calls: list[tuple[str, str]] = []
+
+    async def generate(self, *, topic: str, sender_name: str) -> str:
+        self.calls.append((topic, sender_name))
+        if self._raises:
+            raise RuntimeError("local model down")
+        return self._line
 
 
 class FakeMessage:
@@ -541,6 +625,10 @@ def _build(
     essential_backoff_seconds: float = _TEST_BACKOFF_SECONDS,
     tier0_provider: LLMProvider | None = None,
     tier1_provider: LLMProvider | None = None,
+    verify_judge: _FakeVolatilityJudge | None = None,
+    verify_provider: _FakeWebSearchProvider | None = None,
+    verify_timeout_seconds: float = 75.0,
+    interim_line_generator: _FakeInterimLineGenerator | None = None,
 ) -> tuple[HandleMessage, FakeBot, FakeRepo, CapturingProvider]:
     tier0 = CapturingProvider(reply="positive", replies=tier0_replies)
     tier1 = CapturingProvider(reply=reply, replies=tier1_replies)
@@ -612,6 +700,10 @@ def _build(
         retry_sleep=retry_sleep,
         essential_attempts=essential_attempts,
         essential_backoff_seconds=essential_backoff_seconds,
+        verify_judge=verify_judge,
+        verify_provider=verify_provider,
+        verify_timeout_seconds=verify_timeout_seconds,
+        interim_line_generator=interim_line_generator,
     )
     return handler, bot, repo, tier1
 
@@ -7381,3 +7473,355 @@ async def test_bob051_us4_non_owner_keeps_per_person_thread_and_reactions() -> N
     assert "Norman" in text  # attribution: Bob still clocks WHO is writing
     assert "кофе по утрам — это ритуал" in text  # their reaction woven in (BOB-050)
     assert store.cleared is True  # consumed so Bob does not repeat it
+
+
+# ---------------------------------------------------------------------------
+# BOB-057 .2 — pre-answer epistemic verify (direct web_search, ungated) + hedge
+# ---------------------------------------------------------------------------
+
+_VOLATILE_QUERY = "текущая ключевая ставка ЦБ РФ 2026"
+_VOLATILE_TOPIC = "свежая ставка ЦБ"
+_NEEDS_CHECK = VolatilityVerdict(
+    needs_check=True, query=_VOLATILE_QUERY, topic=_VOLATILE_TOPIC
+)
+_NO_CHECK = VolatilityVerdict(needs_check=False, query="", topic="")
+
+
+async def test_verify_skipped_when_judge_says_no_check() -> None:
+    # 🔴 US-2 (не зануда): a non-volatile turn — the judge returns needs_check=False, so
+    # the provider is NEVER called and no verify note reaches generation (zero latency).
+    judge = _FakeVolatilityJudge(verdict=_NO_CHECK)
+    provider = _FakeWebSearchProvider(result=WebSearchResult(answer="unused"))
+    handler, _bot, _repo, tier1 = _build(
+        reply="hi", verify_judge=judge, verify_provider=provider
+    )
+
+    await handler.handle(_message())
+
+    assert judge.calls, "the judge should assess the turn"
+    assert provider.queries == [], "no search on a non-volatile turn"
+    assert "СВЕЖАЯ ПРОВЕРКА" not in tier1.all_text
+
+
+# 🔴 US-2 «НЕ ЗАНУДА» at the FLOW boundary: a representative benign set — the
+# conservative judge returns needs_check=False for each — must take the zero-network,
+# zero-chatter path (no search, no interim line, no note reaches generation). The id
+# names the benign category the False verdict stands in for (banter, greeting, opinion,
+# joke, hypothetical, stable fact, Bob's own memory). Complements the exhaustive parser
+# table in test_volatility_judgment.py.
+_BENIGN_CATEGORIES: tuple[str, ...] = (
+    "greeting",
+    "smalltalk",
+    "opinion_feeling",
+    "joke",
+    "hypothetical",
+    "stable_fact_history",
+    "stable_fact_math",
+    "bob_memory",
+)
+
+
+@pytest.mark.parametrize("category", _BENIGN_CATEGORIES)
+async def test_verify_benign_turn_never_touches_the_net(category: str) -> None:
+    # 🔴 The anti-bore floor at the flow level: none of these categories may trigger a
+    # search, an interim line, or a folded note — zero added latency (US-2).
+    judge = _FakeVolatilityJudge(verdict=_NO_CHECK)
+    provider = _FakeWebSearchProvider(result=WebSearchResult(answer="unused"))
+    generator = _FakeInterimLineGenerator(line="не должно прозвучать")
+    handler, bot, _repo, tier1 = _build(
+        reply="hi",
+        verify_judge=judge,
+        verify_provider=provider,
+        interim_line_generator=generator,
+    )
+
+    await handler.handle(_message())
+
+    assert provider.queries == [], f"{category}: no search on a benign turn"
+    assert generator.calls == [], f"{category}: no interim gen on a benign turn"
+    assert bot.sent == [(555, "hi")], f"{category}: only the answer, no interim line"
+    assert "СВЕЖАЯ ПРОВЕРКА" not in tier1.all_text
+    assert "не вышло" not in tier1.all_text  # no hedge either
+
+
+async def test_verify_runs_direct_search_and_folds_grounded_note() -> None:
+    # US-1/US-4: on a volatile turn Bob searches DIRECTLY with verdict.query and the
+    # grounded finding is folded into the Tier-1 generation context (facts + tone nudge).
+    judge = _FakeVolatilityJudge(verdict=_NEEDS_CHECK)
+    provider = _FakeWebSearchProvider(
+        result=WebSearchResult(answer="Ставка ЦБ сейчас 16%")
+    )
+    handler, _bot, _repo, tier1 = _build(
+        reply="hi", verify_judge=judge, verify_provider=provider
+    )
+
+    await handler.handle(_message())
+
+    assert provider.queries == [_VOLATILE_QUERY], "one DIRECT search with verdict.query"
+    folded = tier1.all_text
+    assert "СВЕЖАЯ ПРОВЕРКА (веб): Ставка ЦБ сейчас 16%" in folded
+    assert "отреагируй по-своему" in folded  # the tone nudge reaches generation
+
+
+async def test_verify_direct_search_bypasses_registry_and_gate() -> None:
+    # 🔴 US-5 (не привилегия): the verify search fires even though the capability
+    # registry is EMPTY (default) and no permission flow is wired — proving it is a
+    # DIRECT internal call, never registry.dispatch / the BOB-052 per-sender gate.
+    judge = _FakeVolatilityJudge(verdict=_NEEDS_CHECK)
+    provider = _FakeWebSearchProvider(result=WebSearchResult(answer="16%"))
+    handler, _bot, _repo, _tier1 = _build(
+        reply="hi", verify_judge=judge, verify_provider=provider
+    )
+
+    await handler.handle(_message())
+
+    # An empty registry could not have dispatched web_search — the search only ran
+    # because the verify path calls the provider directly (ungated).
+    assert provider.queries == [_VOLATILE_QUERY]
+    assert handler._registry.is_empty  # the ungated boundary (empty registry)
+
+
+async def test_verify_search_failure_yields_honest_hedge() -> None:
+    # 🔴 US-6: a failing search NEVER fabricates a fact — Bob gets an honest hedge note
+    # (no grounded finding, no stale number as fact) and the answer still ships.
+    judge = _FakeVolatilityJudge(verdict=_NEEDS_CHECK)
+    provider = _FakeWebSearchProvider(raises=True)
+    handler, bot, _repo, tier1 = _build(
+        reply="hi", verify_judge=judge, verify_provider=provider
+    )
+
+    await handler.handle(_message())
+
+    folded = tier1.all_text
+    assert "Свериться со свежими данными по свежая ставка ЦБ не вышло" in folded
+    assert "СВЕЖАЯ ПРОВЕРКА" not in folded  # no fabricated grounded finding
+    assert bot.final_text == "hi"  # the turn still produced its answer
+
+
+async def test_verify_search_timeout_yields_hedge() -> None:
+    # US-3 (не 5 минут): a hanging search is bounded by verify.timeout_seconds and
+    # degrades to the honest hedge rather than stalling the turn.
+    judge = _FakeVolatilityJudge(verdict=_NEEDS_CHECK)
+    provider = _FakeWebSearchProvider(hang=True)
+    handler, _bot, _repo, tier1 = _build(
+        reply="hi",
+        verify_judge=judge,
+        verify_provider=provider,
+        verify_timeout_seconds=0.01,
+    )
+
+    await handler.handle(_message())
+
+    assert "не вышло" in tier1.all_text  # hedge on timeout
+    assert "СВЕЖАЯ ПРОВЕРКА" not in tier1.all_text
+
+
+async def test_verify_empty_answer_yields_hedge() -> None:
+    # An empty search answer is not a grounded finding — Bob hedges honestly (US-6).
+    judge = _FakeVolatilityJudge(verdict=_NEEDS_CHECK)
+    provider = _FakeWebSearchProvider(result=WebSearchResult(answer="   "))
+    handler, _bot, _repo, tier1 = _build(
+        reply="hi", verify_judge=judge, verify_provider=provider
+    )
+
+    await handler.handle(_message())
+
+    assert "не вышло" in tier1.all_text
+    assert "СВЕЖАЯ ПРОВЕРКА" not in tier1.all_text
+
+
+async def test_verify_judge_failure_is_treated_as_no_check() -> None:
+    # 🔴 Decorative: a judge that RAISES is caught and treated as «no check» — the
+    # provider is never called, no note is added, and the turn still ships its answer.
+    judge = _FakeVolatilityJudge(raises=True)
+    provider = _FakeWebSearchProvider(result=WebSearchResult(answer="unused"))
+    handler, bot, _repo, tier1 = _build(
+        reply="hi", verify_judge=judge, verify_provider=provider
+    )
+
+    await handler.handle(_message())
+
+    assert provider.queries == [], "a judge failure must not trigger a search"
+    assert "СВЕЖАЯ ПРОВЕРКА" not in tier1.all_text
+    assert "не вышло" not in tier1.all_text
+    assert bot.final_text == "hi"  # the turn is unaffected
+
+
+async def test_verify_inert_when_provider_unwired() -> None:
+    # verify.enabled off (either seam None) → the feature is fully inert: the judge is
+    # never even consulted, behaviour exactly as before.
+    judge = _FakeVolatilityJudge(verdict=_NEEDS_CHECK)
+    handler, _bot, _repo, tier1 = _build(
+        reply="hi", verify_judge=judge, verify_provider=None
+    )
+
+    await handler.handle(_message())
+
+    assert judge.calls == [], "an unwired provider makes the whole seam inert"
+    assert "СВЕЖАЯ ПРОВЕРКА" not in tier1.all_text
+
+
+# ---------------------------------------------------------------------------
+# BOB-057 .3 — the LIVE, ADDRESSED interim line before the verify search (US-3b)
+# ---------------------------------------------------------------------------
+
+
+async def test_verify_interim_sends_live_addressed_line_before_search() -> None:
+    # US-3b: on a needs_check turn Bob speaks a LIVE one-liner naming the subject and
+    # addressing the sender, sent BEFORE the search (not a scripted abstract «ищу…»).
+    judge = _FakeVolatilityJudge(verdict=_NEEDS_CHECK)
+    generator = _FakeInterimLineGenerator(line="Лёш, гляну свежие ставки, секунду 🙂")
+    sent_len_at_search: list[int] = []
+    provider = _FakeWebSearchProvider(
+        result=WebSearchResult(answer="16%"),
+        on_search=lambda: sent_len_at_search.append(len(bot.sent)),
+    )
+    resolver = _FakeInterlocutorResolver(
+        _interlocutor(name="Лёша", kind=InterlocutorKind.OWNER)
+    )
+    handler, bot, _repo, _tier1 = _build(
+        reply="hi",
+        verify_judge=judge,
+        verify_provider=provider,
+        interim_line_generator=generator,
+        perceive_sender=resolver,
+    )
+
+    await handler.handle(_message())
+
+    # The live gen saw the verdict's topic + the perceived sender name.
+    assert generator.calls == [(_VOLATILE_TOPIC, "Лёша")]
+    # The addressed interim line reached the chat FIRST, before the search ran.
+    assert bot.sent[0][1] == "Лёш, гляну свежие ставки, секунду 🙂"
+    assert sent_len_at_search == [1], "the interim was sent before the search"
+    assert provider.queries == [_VOLATILE_QUERY]
+    assert bot.final_text == "hi"  # the turn still ships its answer
+
+
+async def test_verify_interim_falls_back_to_seeded_phrase_on_empty_gen() -> None:
+    # An empty live line → a seeded BOB-055 phrase (never a dead-silent verify wait).
+    judge = _FakeVolatilityJudge(verdict=_NEEDS_CHECK)
+    provider = _FakeWebSearchProvider(result=WebSearchResult(answer="16%"))
+    handler, bot, _repo, _tier1 = _build(
+        reply="hi",
+        verify_judge=judge,
+        verify_provider=provider,
+        interim_line_generator=_FakeInterimLineGenerator(line="   "),
+    )
+
+    await handler.handle(_message())
+
+    assert bot.sent[0][1] in WEB_SEARCH_PROGRESS_PHRASES
+    assert provider.queries == [_VOLATILE_QUERY]
+
+
+async def test_verify_interim_seeded_fallback_when_no_generator() -> None:
+    # No generator wired → the interim is the seeded BOB-055 phrase (still not silent).
+    judge = _FakeVolatilityJudge(verdict=_NEEDS_CHECK)
+    provider = _FakeWebSearchProvider(result=WebSearchResult(answer="16%"))
+    handler, bot, _repo, _tier1 = _build(
+        reply="hi", verify_judge=judge, verify_provider=provider
+    )
+
+    await handler.handle(_message())
+
+    assert bot.sent[0][1] in WEB_SEARCH_PROGRESS_PHRASES
+
+
+async def test_verify_interim_gen_failure_falls_back_to_seeded() -> None:
+    # 🔴 Decorative: a raising live gen is caught → the seeded fallback still speaks and
+    # the search + turn are unaffected.
+    judge = _FakeVolatilityJudge(verdict=_NEEDS_CHECK)
+    provider = _FakeWebSearchProvider(result=WebSearchResult(answer="16%"))
+    handler, bot, _repo, _tier1 = _build(
+        reply="hi",
+        verify_judge=judge,
+        verify_provider=provider,
+        interim_line_generator=_FakeInterimLineGenerator(raises=True),
+    )
+
+    await handler.handle(_message())
+
+    assert bot.sent[0][1] in WEB_SEARCH_PROGRESS_PHRASES
+    assert provider.queries == [_VOLATILE_QUERY]
+    assert bot.final_text == "hi"
+
+
+async def test_verify_computed_once_per_turn_across_a_regeneration() -> None:
+    # 🔴 US-3 «один поиск (не петля)» — BOB-057 .5 BLOCKER fix. When a needs_check turn's
+    # first draft trips the anti-repeat guard, _compose_reply runs AGAIN (regeneration).
+    # The verify step (judge → interim → search → note) is computed EXACTLY ONCE per turn
+    # and the resulting note is THREADED into every regeneration, so the regenerated pass
+    # REUSES it instead of re-judging / re-searching / re-announcing. Even across a forced
+    # regeneration Bob hits the net once, assesses once, and speaks the interim line once —
+    # no 3× serial-search loop, no double «погоди, проверю…».
+    judge = _FakeVolatilityJudge(verdict=_NEEDS_CHECK)
+    provider = _FakeWebSearchProvider(result=WebSearchResult(answer="16%"))
+    generator = _FakeInterimLineGenerator(line="Лёш, гляну свежие ставки, секунду 🙂")
+    handler, bot, _repo, tier1 = _build(
+        reply="unused",
+        tier1_replies=[_REPEATED_REPLY, "А вот теперь совсем другой ответ."],
+        history=[{"content": _PRIOR_DUP_TURN, "event_type": "message"}],
+        verify_judge=judge,
+        verify_provider=provider,
+        interim_line_generator=generator,
+    )
+
+    await handler.handle(_message("объясни подробно ещё раз то же самое"))
+
+    assert len(tier1.payloads) == 2, "the repeat guard forced one regeneration"
+    # ONCE per turn across the regeneration: one judgment, one direct search, one interim.
+    assert len(judge.calls) == 1, "judge.assess must run once per turn (not per attempt)"
+    assert provider.queries == [_VOLATILE_QUERY], "exactly ONE search across the regen"
+    assert len(generator.calls) == 1, "no second interim line on regeneration"
+    interim_lines = [text for _cid, text in bot.sent if text != bot.final_text]
+    assert interim_lines == ["Лёш, гляну свежие ставки, секунду 🙂"]
+    assert bot.final_text == "А вот теперь совсем другой ответ."
+    # The verify note computed on attempt 1 is REUSED on the regenerated attempt — the
+    # grounded finding folds into BOTH generation payloads (not recomputed, not dropped).
+    payload_texts = [
+        "\n".join(m["content"] for m in payload) for payload in tier1.payloads
+    ]
+    assert all(
+        "СВЕЖАЯ ПРОВЕРКА (веб): 16%" in text for text in payload_texts
+    ), "the once-computed verify note is threaded into every regeneration"
+
+
+async def test_verify_note_not_leaked_across_sequential_turns() -> None:
+    # 🔴 Per-turn locality (BOB-057 .5): the verify memoization is a LOCAL threaded through
+    # the call chain, NOT a HandleMessage instance attribute — HandleMessage is a shared
+    # singleton, so an instance flag would leak the note (and the "already searched" state)
+    # into later turns/users. Two sequential turns each compute their OWN verify step:
+    # turn 2 judges + searches afresh (its own query), never reusing turn 1's note.
+    judge = _FakeVolatilityJudge(verdict=_NEEDS_CHECK)
+    provider = _FakeWebSearchProvider(result=WebSearchResult(answer="16%"))
+    handler, _bot, _repo, tier1 = _build(
+        reply="hi", verify_judge=judge, verify_provider=provider
+    )
+
+    await handler.handle(_message())
+    await handler.handle(_message())
+
+    # Each turn ran its OWN judgment + search — turn 2 is not short-circuited by turn 1.
+    assert len(judge.calls) == 2, "each turn assesses independently (no cross-turn cache)"
+    assert provider.queries == [_VOLATILE_QUERY, _VOLATILE_QUERY], "one search per turn"
+    assert len(tier1.payloads) >= 2
+
+
+async def test_verify_interim_not_sent_on_no_check_path() -> None:
+    # 🔴 The interim fires ONLY when needs_check — a non-volatile turn sends no interim
+    # (zero added chatter, US-2 «не зануда»).
+    judge = _FakeVolatilityJudge(verdict=_NO_CHECK)
+    provider = _FakeWebSearchProvider(result=WebSearchResult(answer="unused"))
+    generator = _FakeInterimLineGenerator(line="Лёш, секунду 🙂")
+    handler, bot, _repo, _tier1 = _build(
+        reply="hi",
+        verify_judge=judge,
+        verify_provider=provider,
+        interim_line_generator=generator,
+    )
+
+    await handler.handle(_message())
+
+    assert generator.calls == [], "no live gen on a non-volatile turn"
+    assert bot.sent == [(555, "hi")], "only the final answer, no interim line"
