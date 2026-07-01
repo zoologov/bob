@@ -15,6 +15,8 @@ flavor — never a brittle full-string match (the prose is free to evolve).
 
 from __future__ import annotations
 
+import pytest
+
 from bob.domain.personality.brevity import Verbosity
 from bob.domain.personality.engagement import EngagementLevel
 from bob.domain.personality.interlocutor import (
@@ -170,6 +172,33 @@ def test_no_voice_directive_pairs_the_signature_closer() -> None:
         assert not (
             "пусть остаётся как есть" in folded and "мне так спокойнее" in folded
         )
+
+
+@pytest.mark.parametrize(
+    "accessor", [anti_bait_directive, variable_form_directive, guppi_canon]
+)
+def test_no_injected_voice_directive_seeds_the_meme_closer(accessor: object) -> None:
+    # 🔴 US-1/.7 HARDEN: the seed guard covers EVERY statically-injected voice directive —
+    # including guppi_canon, whose «тихо спокойнее» phrasing was reworded in .7. No accessor
+    # may re-plant any fragment of the paired meme signature.
+    folded = accessor().casefold()  # type: ignore[operator]
+    for fragment in _MEME_CLOSER_FRAGMENTS:
+        assert fragment not in folded, f"{accessor} re-seeds the tic closer: {fragment!r}"
+
+
+def test_guppi_canon_no_longer_uses_the_spokoynee_phrasing() -> None:
+    # 🔴 .7 root-cause detail: guppi_canon's old «тебе тихо спокойнее» fed the «спокойнее»
+    # half of the tic. The reword («ты тихо рад») must leave no «спокойнее» in the canon.
+    assert "спокойнее" not in guppi_canon().casefold()
+
+
+def test_no_voice_directive_carries_the_leave_as_is_variant() -> None:
+    # The «оставить как есть» / «остаётся как есть» variant is gone from BOTH few-shots that
+    # once modelled it (anti-bait AND variable-form), so it can never be mimicked back.
+    for accessor in (anti_bait_directive, variable_form_directive):
+        folded = accessor().casefold()
+        assert "оставить как есть" not in folded
+        assert "остаётся как есть" not in folded
 
 
 def test_anti_bait_still_teaches_its_point_after_the_reword() -> None:

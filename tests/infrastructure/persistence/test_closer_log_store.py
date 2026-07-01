@@ -97,3 +97,69 @@ async def test_survives_restart(tmp_path: Path) -> None:
     await repo2.close()
 
     assert recent == ("мне так спокойнее",)
+
+
+# --- BOB-061 .4 HARDEN: edge cases of the persist ring --------------------------
+
+
+async def test_append_strips_surrounding_whitespace(repo: SqliteMemoryRepo) -> None:
+    # A closer arriving with padding is stored normalised (edges trimmed), so the ring
+    # holds exactly the comparable motif — not a whitespace-variant that would dodge
+    # clustering.
+    store = SqliteCloserLog(repo)
+    await store.append("  вот теперь всё на месте  ")
+
+    assert await store.recent(1) == ("вот теперь всё на месте",)
+
+
+async def test_closer_with_sql_metacharacters_round_trips_intact(
+    repo: SqliteMemoryRepo,
+) -> None:
+    # 🔴 Injection safety: a closer laden with quotes/semicolons/SQL-ish text is stored
+    # and returned VERBATIM (parameterised SQL, never string-built) — it neither corrupts
+    # the ring nor executes.
+    nasty = "'; DROP TABLE closer_log; -- «ну и \"ладно\", раз так»"
+    store = SqliteCloserLog(repo)
+    await store.append(nasty)
+    await store.append("следующая концовка")
+
+    assert await store.recent(2) == ("следующая концовка", nasty)
+
+
+async def test_closer_with_unicode_and_emoji_round_trips(repo: SqliteMemoryRepo) -> None:
+    # Non-ASCII closers (Cyrillic + emoji + em dash) survive the round trip unchanged.
+    store = SqliteCloserLog(repo)
+    await store.append("на сегодня хватит — до завтра 🙂")
+
+    assert await store.recent(1) == ("на сегодня хватит — до завтра 🙂",)
+
+
+async def test_default_cap_is_thirty(repo: SqliteMemoryRepo) -> None:
+    # The default ring holds ~30 closers: append 35, only the newest 30 survive.
+    store = SqliteCloserLog(repo)
+    for i in range(35):
+        await store.append(f"концовка {i}")
+
+    recent = await store.recent(1000)
+    assert len(recent) == 30
+    assert recent[0] == "концовка 34"  # freshest first
+    assert recent[-1] == "концовка 5"  # the oldest 5 fell off the ring
+
+
+async def test_recent_k_larger_than_stored_returns_all(repo: SqliteMemoryRepo) -> None:
+    # Asking for more than exist returns everything (no padding, no error).
+    store = SqliteCloserLog(repo)
+    await store.append("одна")
+    await store.append("две")
+
+    assert await store.recent(100) == ("две", "одна")
+
+
+async def test_cap_floor_is_at_least_one(repo: SqliteMemoryRepo) -> None:
+    # A non-positive cap is coerced to a floor of 1 (never an empty or negative ring):
+    # only the single freshest closer is retained.
+    store = SqliteCloserLog(repo, cap=0)
+    await store.append("старая")
+    await store.append("новая")
+
+    assert await store.recent(10) == ("новая",)

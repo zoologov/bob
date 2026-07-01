@@ -810,3 +810,82 @@ def test_repeat_thresholds_rejects_out_of_range_motif_threshold() -> None:
         RepeatThresholds(motif_similarity_threshold=1.5)
     with pytest.raises(ValueError, match="motif_similarity_threshold"):
         RepeatThresholds(motif_similarity_threshold=-0.1)
+
+
+# --- BOB-061 .4 HARDEN: the mechanism is GENERAL — no hardcoded phrase ----------
+#
+# 🔴 Invariant 1 (US-5 general): the near-verbatim clustering + tic detection must work
+# for an ARBITRARY recurring motif, not just the historical meme closer. These use
+# closers with NO lexical overlap with «пусть остаётся как есть» / «мне так спокойнее»
+# to prove the detector keys on RECURRENCE + near-verbatimness, never on a baked-in
+# signature phrase. Ratios were chosen off SequenceMatcher: variants sit ~0.85-0.93,
+# distinct endings ~0.1-0.26 — comfortably either side of the conservative 0.82 bar.
+
+# An arbitrary "wind down the workday" motif and its lexical variants, plus a genuinely
+# different ending. None of these share vocabulary with the historical tic.
+_ARB_MOTIF = "короче, увидимся завтра на созвоне"
+_ARB_VARIANT = "короче, увидимся послезавтра на созвоне"  # завтра -> послезавтра (~0.93)
+_ARB_MOTIF2 = "давай закроем этот таск сегодня"
+_ARB_VARIANT2 = "давай закроем этот таск сейчас"  # сегодня -> сейчас (~0.85)
+_ARB_DISTINCT = "ладно, пойду сварю себе кофе"  # ~0.1 vs the motif — never clusters
+
+
+@pytest.mark.parametrize(
+    ("first", "second"),
+    [(_ARB_MOTIF, _ARB_VARIANT), (_ARB_MOTIF2, _ARB_VARIANT2)],
+)
+def test_motif_clustering_is_general_for_an_arbitrary_motif(first: str, second: str) -> None:
+    # An arbitrary motif with no overlap with the historical meme still clusters its
+    # lexical variants — the mechanism is phrase-agnostic (no hardcoded signature).
+    assert is_same_closer_motif(first, second, similarity_threshold=0.82) is True
+
+
+@pytest.mark.parametrize("motif", [_ARB_MOTIF, _ARB_MOTIF2])
+def test_arbitrary_distinct_ending_never_clusters(motif: str) -> None:
+    # 🔴 US-4 guardrail generalised: an unrelated ending never clusters with an arbitrary
+    # motif — a genuine variety of closers is never falsely merged.
+    assert is_same_closer_motif(motif, _ARB_DISTINCT, similarity_threshold=0.82) is False
+
+
+def test_motif_clustering_is_symmetric() -> None:
+    # Order-independence: clustering is a symmetric relation (SequenceMatcher ratio is),
+    # so the same verdict holds whichever closer is "first".
+    assert is_same_closer_motif(_ARB_MOTIF, _ARB_VARIANT, similarity_threshold=0.82) is (
+        is_same_closer_motif(_ARB_VARIANT, _ARB_MOTIF, similarity_threshold=0.82)
+    )
+    assert is_same_closer_motif(_ARB_MOTIF, _ARB_DISTINCT, similarity_threshold=0.82) is (
+        is_same_closer_motif(_ARB_DISTINCT, _ARB_MOTIF, similarity_threshold=0.82)
+    )
+
+
+def test_arbitrary_motif_recurring_once_per_session_is_a_tic() -> None:
+    # 🔴 Invariant 2 (cross-session catch): an arbitrary motif scattered across the ring —
+    # as if logged ONCE PER SESSION over days, interleaved with unrelated closers — still
+    # accumulates >= min_occurrences via near-verbatim clustering and fires. No hardcode.
+    ring = [_ARB_VARIANT, "готово, всё зелёное", _ARB_MOTIF2, "сделал бэкап", _ARB_MOTIF]
+    assert (
+        is_recurring_closer_tic(
+            _ARB_MOTIF, ring, similarity_threshold=0.82, min_occurrences=2
+        )
+        is True
+    )
+
+
+def test_arbitrary_one_off_ending_across_the_ring_is_not_a_tic() -> None:
+    # 🔴 Invariant 2 contrast: a one-off ending appearing a SINGLE time across an
+    # otherwise-varied ring is NOT a tic — cross-session catch never fires on genuine
+    # variety, only on true recurrence.
+    ring = ["готово, всё зелёное", "сделал бэкап", _ARB_DISTINCT, "идём дальше"]
+    assert (
+        is_recurring_closer_tic(
+            _ARB_MOTIF, ring, similarity_threshold=0.82, min_occurrences=2
+        )
+        is False
+    )
+
+
+def test_closer_text_preserves_unicode_and_normalises() -> None:
+    # A closer carrying Unicode/punctuation is extracted + normalised (casefold/collapse),
+    # so the logged motif round-trips regardless of exotic characters.
+    reply = "Прогнал тесты.  ВСЁ Зелёное, Можно КАТИТЬ  —  наконец-то."
+    assert closer_text(reply, min_words=3) == "всё зелёное, можно катить — наконец-то"
