@@ -1361,12 +1361,13 @@ class HandleMessage:
         )
         # User-repeat detection (BOB-022): does THIS author repeat (near-)verbatim what
         # THEY already said in the recent window? Pure, no-LLM, conservative (exact after
-        # normalise). 🔴 BOB-058 .1: the thread is now shared, so the user turns are
-        # filtered to the CURRENT author (by ``<name>`` label) — a DIFFERENT member's
-        # similar message is never counted as this person repeating themselves. When True
+        # normalise). 🔴 BOB-058 .3: the thread is now shared, so the user turns are
+        # filtered to the CURRENT author by ``sender_id`` — a DIFFERENT member's similar
+        # message is never counted as this person repeating themselves (robust to homonyms
+        # / renames, unlike a name-label key). When True
         # the compose prompt carries the user-repeat directive so Bob NOTICES it in voice.
         user_repeated = is_user_repeat(
-            event.text, _user_turns(history, _author_label(interlocutor))
+            event.text, _user_turns(history, _author_key(interlocutor))
         )
         # Run the slow generation inside the typing keepalive so "Bob is typing…"
         # stays visible for the whole real wait (BOB-009); then commit one rich final.
@@ -2342,18 +2343,19 @@ class HandleMessage:
     ) -> str | None:
         """A light long-gap absence hint for the CURRENT person, or ``None`` (BOB-045 .3).
 
-        🔴 Per-person over the SHARED thread (BOB-058 .1): ``history`` is now the whole
+        🔴 Per-person over the SHARED thread (BOB-058 .3): ``history`` is now the whole
         group's recent thread, so the last-seen must be filtered to the CURRENT author's
-        own turns (matching the ``"<name>:"`` label to the interlocutor's display name)
-        before reading the freshest timestamp — a DIFFERENT member speaking recently must
-        never reset THIS person's gap. Via the pure :func:`absence_hint` domain helper the
+        own turns (by ``sender_id``, robust to homonyms / renames — the ``"<name>:"`` label
+        stays only for rendering) before reading the freshest timestamp — a DIFFERENT member
+        speaking recently must never reset THIS person's gap. Via the pure :func:`absence_hint`
+        domain helper the
         gap to ``self._clock.now()`` becomes a SHORT neutral note Bob can fold in to notice
         the pause humanly. Returns ``None`` — add no line, unchanged behaviour — when the
         current author has no turn in the shared window (graceful, exactly like an empty
         history today), on an unparseable timestamp, a gap under the configured threshold,
         or the hint disabled (``absence_hint_hours == 0``). Deterministic given the clock.
         """
-        mine = _history_for_author(history, _author_label(interlocutor))
+        mine = _history_for_author(history, _author_key(interlocutor))
         last_seen = _last_seen_at(mine)
         if last_seen is None:
             return None
@@ -3268,56 +3270,40 @@ _recalled_without_copied_exemplars = recalled_without_copied_exemplars
 _SENDER_TEXT_SEPARATOR = ": "
 
 
-def _episode_author(content: str) -> str | None:
-    """Recover the ``<name>`` author label of an episode's user turn, or ``None`` (BOB-058).
+def _author_key(interlocutor: Interlocutor | None) -> int | None:
+    """The CURRENT author's ``sender_id`` signal key, or ``None`` when unresolved (BOB-058 .3).
 
-    Episodes are stored as ``"<name>: <text>\\nbob: <reply>"`` (see
-    :meth:`HandleMessage._persist`); the author is the text before the FIRST
-    ``"<name>: "`` separator in the user half (the part before the ``"\\nbob: "`` marker).
-    Content without the expected shape yields ``None`` (not attributable to any author).
-    """
-    marker = content.find(_BOB_TURN_MARKER)
-    head = content[:marker] if marker != -1 else content
-    sep = head.find(_SENDER_TEXT_SEPARATOR)
-    if sep == -1:
-        return None
-    return head[:sep]
-
-
-def _author_label(interlocutor: Interlocutor | None) -> str | None:
-    """The CURRENT author's stored episode label, or ``None`` when unresolved (BOB-058 .1).
-
-    Per-person signals (absence, anti-repeat) over the SHARED thread key on the ``<name>``
-    an episode is stored under — for the current turn that is the interlocutor's
-    ``display_name`` (the same name :meth:`HandleMessage._persist` writes as the sender
-    label). ``None`` — no perception seam / no interlocutor — means "do not filter": the
+    Per-person signals (absence, anti-repeat) over the SHARED thread key on the ROBUST
+    ``sender_id`` — the same identity the per-person stores (relationship BOB-014,
+    first-impression BOB-019) already use — NOT the parsed ``"<name>:"`` label. The label
+    is brittle as a signal key: homonymous members cross-attribute, a display name with a
+    ``": "`` or a rename between turns silently drops the signal. ``None`` — no perception
+    seam, no interlocutor, or an unresolved ``sender_id`` — means "do not filter": the
     signal falls back to the whole window, exactly as before perception was wired.
     """
-    return interlocutor.display_name if interlocutor is not None else None
+    return interlocutor.sender_id if interlocutor is not None else None
 
 
 def _history_for_author(
-    history: Sequence[Mapping[str, object]], author: str | None
+    history: Sequence[Mapping[str, object]], sender_id: int | None
 ) -> list[Mapping[str, object]]:
-    """Filter the shared thread to the episodes authored by ``author`` (BOB-058 .1).
+    """Filter the shared thread to the episodes authored by ``sender_id`` (BOB-058 .3).
 
     Keeps ordering (oldest-first) so the per-person signals — absence last-seen,
     anti-repeat turns — see only the CURRENT author's own turns even though ``history``
-    now interleaves the whole group. ``author is None`` (unresolved identity) means "do
-    not filter" → the full window is returned (the pre-BOB-058 degraded behaviour).
+    now interleaves the whole group. Episodes are attributed by their persisted
+    ``sender_id`` (robust to homonyms / renames / a ``": "`` in the display name — the
+    human-readable ``"<name>:"`` label is only for rendering the thread, never the signal
+    key). ``sender_id is None`` (unresolved identity) means "do not filter" → the full
+    window is returned (the pre-BOB-058 degraded behaviour).
     """
-    if author is None:
+    if sender_id is None:
         return list(history)
-    mine: list[Mapping[str, object]] = []
-    for item in history:
-        content = item.get("content")
-        if isinstance(content, str) and _episode_author(content) == author:
-            mine.append(item)
-    return mine
+    return [item for item in history if item.get("sender_id") == sender_id]
 
 
 def _user_turns(
-    history: Sequence[Mapping[str, object]], author: str | None = None
+    history: Sequence[Mapping[str, object]], sender_id: int | None = None
 ) -> list[str]:
     """Recover the USER half of each replayed episode (BOB-022 repeat detection).
 
@@ -3325,13 +3311,13 @@ def _user_turns(
     :meth:`HandleMessage._persist`); this extracts the ``<text>`` between the first
     ``"<name>: "`` and the ``"\\nbob: "`` marker for each episode so the user-repeat
     predicate compares the current message ONLY against prior USER turns — never against
-    Bob's own replies. 🔴 BOB-058 .1: over the now-SHARED thread, ``author`` (when given)
-    restricts the turns to the CURRENT author's ``<name>`` label, so a DIFFERENT member's
+    Bob's own replies. 🔴 BOB-058 .3: over the now-SHARED thread, ``sender_id`` (when given)
+    restricts the turns to the CURRENT author's episodes BY ID, so a DIFFERENT member's
     similar line is not mistaken for this person repeating themselves. Episodes without
     the expected shape are skipped.
     """
     turns: list[str] = []
-    for item in _history_for_author(history, author):
+    for item in _history_for_author(history, sender_id):
         content = item.get("content")
         if not isinstance(content, str):
             continue

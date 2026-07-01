@@ -41,7 +41,6 @@ from bob.application.usecases.handle_message import (
     OwnerActivityRecorder,
     PermissionFlowLike,
     PersonalityState,
-    _episode_author,
     _history_for_author,
     _recalled_bob_replies,
     _recalled_without_copied_exemplars,
@@ -1242,8 +1241,9 @@ def _person_turn_at(
 ) -> Mapping[str, object]:
     """A prior turn by ``name`` timestamped ``hours_ago`` before the fixed clock now.
 
-    The ``name`` is the author label the shared thread carries (BOB-058 .1) — the
-    per-person absence filter keys on it, so it must match the interlocutor's display name.
+    The ``name`` is only the human-readable author label the shared thread carries
+    (BOB-058); the per-person absence filter keys on ``sender_id`` (BOB-058 .3), so it must
+    match the interlocutor's sender_id — the label is free to differ.
     """
     ts = (_moment() - timedelta(hours=hours_ago)).isoformat()
     return {
@@ -1519,6 +1519,94 @@ async def test_anti_repeat_detects_the_current_author_repeating() -> None:
     assert _has_user_repeat_directive(tier1.all_text)
 
 
+# --- BOB-058 .3: per-author signals key on sender_id, not the name label -------
+#
+# LOCK the robustness fix: the SIGNAL FILTER (absence, anti-repeat) keys on the persisted
+# ``sender_id`` — the same identity relationship/first-impression use — NOT the parsed
+# ``"<name>:"`` label. So homonymous members are isolated, and a display name carrying a
+# ``": "`` no longer silently drops the signal. Bob still SEES ``"<name>:"`` in context
+# (rendering unchanged) — only the key of the per-author filter moved.
+
+
+async def test_homonymous_members_are_not_cross_attributed_for_anti_repeat() -> None:
+    # 🔴 BOB-058 .3 (the invariant a name key could VIOLATE): two DIFFERENT members share
+    # the display name "Sasha" (sender_id 1 vs 2). Sasha#1 earlier said X; now Sasha#2 says
+    # the SAME X for the FIRST time. Keyed on the name they collide → a FALSE repeat fire;
+    # keyed on sender_id they are isolated → NOT a repeat.
+    x = "расскажи подробно про кофе"
+    shared: list[Mapping[str, object]] = [
+        {"content": f"Sasha: {x}\nbob: вот про кофе", "event_type": "message", "sender_id": 1}
+    ]
+    handler, _bot, _repo, tier1 = _build(
+        reply="свежий ответ",
+        history=shared,
+        perceive_sender=_member_named("Sasha", 2),  # SAME name, DIFFERENT id
+    )
+
+    await handler.handle(_addr_message(x, mentions_bob=True))
+
+    assert not _has_user_repeat_directive(tier1.all_text)
+
+
+async def test_homonymous_members_absence_isolated_by_sender_id() -> None:
+    # 🔴 BOB-058 .3: two members named "Sasha". Sasha#1 (id 1) spoke just 1h ago; Sasha#2
+    # (id 2) was last seen 14h ago. Keyed on the shared NAME, Sasha#1's fresh turn would
+    # mask Sasha#2's gap (no hint); keyed on sender_id, Sasha#2's own 14h gap still fires.
+    now = _moment()
+    shared: list[Mapping[str, object]] = [
+        {
+            "content": "Sasha: свежак\nbob: ага",
+            "event_type": "message",
+            "sender_id": 1,
+            "ts": (now - timedelta(hours=1)).isoformat(),
+        },
+        {
+            "content": "Sasha: давно был\nbob: пока",
+            "event_type": "message",
+            "sender_id": 2,
+            "ts": (now - timedelta(hours=14)).isoformat(),
+        },
+    ]
+    handler, _bot, _repo, tier1 = _build(
+        reply="hi",
+        history=shared,
+        perceive_sender=_member_named("Sasha", 2),
+    )
+
+    await handler.handle(
+        _addr_message("расскажи подробно, снова тут", mentions_bob=True)
+    )
+
+    assert "Absence:" in tier1.all_text  # Sasha#2's own gap, not masked by his homonym
+
+
+async def test_colon_in_display_name_does_not_drop_the_absence_signal() -> None:
+    # 🔴 BOB-058 .3 (minor #colon): a member whose display name contains ": " ("Dr: House").
+    # A name-label key truncated at the FIRST ": " → the filter never matched his rows → his
+    # absence silently dropped. Keyed on sender_id the label's colon is irrelevant: his own
+    # 14h gap fires the hint.
+    now = _moment()
+    shared: list[Mapping[str, object]] = [
+        {
+            "content": "Dr: House: до завтра\nbob: пока",
+            "event_type": "message",
+            "sender_id": 5,
+            "ts": (now - timedelta(hours=14)).isoformat(),
+        }
+    ]
+    handler, _bot, _repo, tier1 = _build(
+        reply="hi",
+        history=shared,
+        perceive_sender=_member_named("Dr: House", 5),
+    )
+
+    await handler.handle(
+        _addr_message("расскажи подробно, снова тут", mentions_bob=True)
+    )
+
+    assert "Absence:" in tier1.all_text  # colon-in-name signal survives, keyed by id
+
+
 # --- BOB-058 .2 (Tester): HARDEN shared-thread continuity + per-author signals --
 #
 # These LOCK the .1 invariants beyond the dev happy-path (no duplication): the SHARED
@@ -1697,39 +1785,40 @@ async def test_per_author_signals_are_graceful_on_an_empty_shared_window() -> No
     assert not _has_user_repeat_directive(tier1.all_text)  # empty window → no repeat
 
 
-# --- BOB-058 .2: the author-attribution pure helpers (unit) -------------------
+# --- BOB-058 .3: the author-attribution pure helpers (unit) -------------------
 #
 # The per-author signals stand on these pure projections of a stored episode. Unit-test
-# them directly so the attribution + extraction contract — and its GRACEFUL handling of a
-# shapeless / non-string episode (never crash, never mis-attribute) — is locked precisely.
+# them directly so the attribution (by ROBUST sender_id, BOB-058 .3) + extraction contract
+# — and its GRACEFUL handling of a shapeless / non-string episode (never crash, never
+# mis-attribute) — is locked precisely.
 
 
-def test_episode_author_recovers_the_name_label() -> None:
-    # The author is the text before the FIRST "<name>: " in the user half.
-    assert _episode_author("Alexey: смотрел фильм\nbob: расскажи") == "Alexey"
-
-
-def test_episode_author_returns_none_for_a_shapeless_episode() -> None:
-    # 🔴 BOB-058 graceful attribution: content with no "<name>: " separator is not
-    # attributable to any author — ``None`` (never mis-attributed, never crashes).
-    assert _episode_author("нет разделителя вообще") is None
-
-
-def test_history_for_author_filters_to_the_named_author() -> None:
-    # Only the named author's own episodes survive, ordering preserved.
+def test_history_for_author_filters_by_sender_id() -> None:
+    # 🔴 BOB-058 .3: only the current author's OWN episodes (matched by sender_id, NOT the
+    # "<name>:" label) survive, ordering preserved.
     hist: list[Mapping[str, object]] = [
-        {"content": "Alexey: X\nbob: a"},
-        {"content": "Vladimir: Y\nbob: b"},
-        {"content": "Alexey: Z\nbob: c"},
+        {"content": "Alexey: X\nbob: a", "sender_id": 1},
+        {"content": "Vladimir: Y\nbob: b", "sender_id": 2},
+        {"content": "Alexey: Z\nbob: c", "sender_id": 1},
     ]
-    assert [i["content"] for i in _history_for_author(hist, "Vladimir")] == [
+    assert [i["content"] for i in _history_for_author(hist, 2)] == [
         "Vladimir: Y\nbob: b"
     ]
 
 
+def test_history_for_author_keys_on_id_not_name_for_homonyms() -> None:
+    # 🔴 BOB-058 .3: two members share the display name "Sasha" (sender_id 1 vs 2). The
+    # filter isolates by sender_id — a homonym's turn is NOT cross-attributed.
+    hist: list[Mapping[str, object]] = [
+        {"content": "Sasha: чужое\nbob: a", "sender_id": 1},
+        {"content": "Sasha: моё\nbob: b", "sender_id": 2},
+    ]
+    assert [i["content"] for i in _history_for_author(hist, 2)] == ["Sasha: моё\nbob: b"]
+
+
 def test_history_for_author_none_returns_the_whole_window() -> None:
-    # 🔴 ``author is None`` (unresolved identity) → no filter, the pre-BOB-058 window.
-    hist: list[Mapping[str, object]] = [{"content": "Alexey: X\nbob: a"}]
+    # 🔴 ``sender_id is None`` (unresolved identity) → no filter, the pre-BOB-058 window.
+    hist: list[Mapping[str, object]] = [{"content": "Alexey: X\nbob: a", "sender_id": 1}]
     assert _history_for_author(hist, None) == hist
 
 
@@ -1745,12 +1834,13 @@ def test_user_turns_skips_shapeless_and_non_string_content() -> None:
 
 
 def test_user_turns_author_filter_keeps_only_that_authors_text() -> None:
-    # Over a shared thread, ``author`` restricts the extracted user turns to that person.
+    # 🔴 BOB-058 .3: over a shared thread, ``sender_id`` restricts the extracted user turns
+    # to that person BY ID (not the "<name>:" label).
     hist: list[Mapping[str, object]] = [
-        {"content": "Alexey: чужая реплика\nbob: a"},
-        {"content": "Vladimir: моя реплика\nbob: b"},
+        {"content": "Alexey: чужая реплика\nbob: a", "sender_id": 1},
+        {"content": "Vladimir: моя реплика\nbob: b", "sender_id": 2},
     ]
-    assert _user_turns(hist, "Vladimir") == ["моя реплика"]
+    assert _user_turns(hist, 2) == ["моя реплика"]
 
 
 # --- BOB-050 .3: low-frequency being-received acknowledgment hint --------------
