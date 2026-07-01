@@ -201,6 +201,30 @@ async def test_announcer_is_called_before_dispatch() -> None:
     assert answer == "done"
 
 
+async def test_announcer_receives_the_call_arguments_so_the_query_flows_as_topic() -> None:
+    # 🔴 BOB-060 US-2 wiring: the loop forwards the call's ARGUMENTS (not just its name)
+    # to announce — so a web_search's ``query`` reaches the announcer and becomes the
+    # topic of Bob's LIVE interim line (a scripted abstract «ищу…» is impossible).
+    cap = FakeCapability(result="ok")
+    call = ToolCall(
+        id="c1", name="recall_memory", arguments={"query": "свежая ставка ЦБ"}
+    )
+    provider = ScriptedProvider(
+        [
+            ToolCallResult(text="", tool_calls=(call,)),
+            ToolCallResult(text="done", tool_calls=()),
+        ]
+    )
+    announcer = RecordingAnnouncer()
+    loop = ToolLoop(provider=provider, registry=_registry(cap), announcer=announcer)
+
+    answer = await loop.run(_seed())
+
+    assert announcer.announced == ["recall_memory"]
+    assert announcer.arguments == [{"query": "свежая ставка ЦБ"}]  # query forwarded whole
+    assert answer == "done"
+
+
 async def test_announcer_fires_once_per_call_in_order_for_multiple_tool_calls() -> None:
     # Arrange: a single turn requests the SAME tool twice — the announcer must fire
     # exactly once per call and strictly before each dispatch (no batching, no double

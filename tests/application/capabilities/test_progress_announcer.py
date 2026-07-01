@@ -16,7 +16,11 @@ swallows its OWN errors. On generator failure / empty line / no generator → SI
 
 from __future__ import annotations
 
+import re
+from pathlib import Path
 from typing import TYPE_CHECKING
+
+import pytest
 
 import bob.application.capabilities.progress_announcer as _announcer_mod
 from bob.application.capabilities.progress_announcer import GatewayProgressAnnouncer
@@ -29,6 +33,62 @@ def test_hardwired_phrase_sets_are_gone() -> None:
     # 🔴 US-2: zero scripted phrases anywhere — the removed names must not be importable.
     assert not hasattr(_announcer_mod, "WEB_SEARCH_PROGRESS_PHRASES")
     assert not hasattr(_announcer_mod, "DEFAULT_PROGRESS_PHRASES")
+
+
+# 🔴 US-2 (headline) — a regression FENCE so no one silently re-adds a hardwired set.
+# The names are gone AND attribute access RAISES (a stale `mod.WEB_SEARCH_PROGRESS_PHRASES`
+# reference must fail loudly, never resolve to a resurrected constant).
+@pytest.mark.parametrize(
+    "removed_name",
+    ["WEB_SEARCH_PROGRESS_PHRASES", "DEFAULT_PROGRESS_PHRASES", "rng"],
+)
+def test_removed_scripted_symbol_access_raises(removed_name: str) -> None:
+    with pytest.raises(AttributeError):
+        getattr(_announcer_mod, removed_name)
+
+
+# A source-level guard: no residual hardwired search-progress phrase constant nor any
+# seeded-RNG fallback machinery may linger in the announcer module (a live-only engine).
+# Semantic, not brittle: it targets the DELETED constructs (a `…_PHRASES` constant, a
+# `random`/`Random`/`rng`/`.choice(` seeded pick) — the *shape* of the thing US-2 killed.
+_FORBIDDEN_RESIDUE: tuple[tuple[str, str], ...] = (
+    (r"PROGRESS_PHRASES", "a hardwired search-progress phrase constant"),
+    (r"\bimport\s+random\b", "the random module (seeded fallback)"),
+    (r"\bfrom\s+random\b", "the random module (seeded fallback)"),
+    (r"\bRandom\b", "an RNG type (seeded fallback)"),
+    (r"\brng\b", "an rng seam (seeded fallback)"),
+    (r"\.choice\(", "a seeded phrase pick (.choice)"),
+)
+
+
+def test_announcer_source_has_no_scripted_fallback_residue() -> None:
+    # 🔴 US-2 repo-level fence: read the module's own source and prove none of the
+    # deleted scriptedness (phrase constant / seeded-RNG pick) has crept back in.
+    source = Path(_announcer_mod.__file__).read_text(encoding="utf-8")
+    for pattern, why in _FORBIDDEN_RESIDUE:
+        assert re.search(pattern, source) is None, f"scripted residue re-added: {why}"
+
+
+def test_no_search_progress_phrase_constant_anywhere_in_the_bob_package() -> None:
+    # 🔴 US-2 whole-package sweep: nobody re-introduces a `…PROGRESS_PHRASES` scripted
+    # set elsewhere in the codebase (the constant was deleted for good, not relocated).
+    package_root = Path(_announcer_mod.__file__).parents[2]  # …/src/bob
+    offenders = [
+        py
+        for py in package_root.rglob("*.py")
+        if "PROGRESS_PHRASES" in py.read_text(encoding="utf-8")
+    ]
+    assert offenders == [], f"a scripted PROGRESS_PHRASES constant lingers in: {offenders}"
+
+
+def test_ctor_rejects_seeded_rng_params() -> None:
+    # 🔴 US-2 ctor-shape lock: the seeded-RNG constructor (`rng=`, `phrases=`) is GONE —
+    # the announcer is composed only from chat_id / gateway / line_generator / sender_name.
+    gateway = FakeGateway()
+    with pytest.raises(TypeError):
+        GatewayProgressAnnouncer(chat_id=1, gateway=gateway, rng=object())  # type: ignore[call-arg]
+    with pytest.raises(TypeError):
+        GatewayProgressAnnouncer(chat_id=1, gateway=gateway, phrases={})  # type: ignore[call-arg]
 
 
 class FakeGateway:
