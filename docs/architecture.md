@@ -3880,8 +3880,11 @@ degradation) — Боб не теряет память, лишь её семан
 Тесты лежат под `tests/`, повторяя структуру слоёв: `tests/domain/`,
 `tests/application/` (включая `authz/`, `runtime/test_retry.py`,
 `test_capability_registry.py`, `test_tool_loop.py`,
-`capabilities/test_progress_announcer.py` (по-имени решение + декоративное
-глотание сбоя + seeded-RNG выбор фразы, BOB-055),
+`capabilities/test_progress_announcer.py` (по-имени решение + живая генерация
+реплики из `query`/`topic` на обоих путях + декоративное глотание сбоя +
+🔴 ноль скриптованности: сбой/пусто/нет генератора → тишина, а удалённые
+символы `WEB_SEARCH_PROGRESS_PHRASES`/`DEFAULT_PROGRESS_PHRASES`/`rng` больше
+не импортируются, BOB-060),
 `test_recall_memory_capability.py`), `tests/infrastructure/` (включая
 `telegram/test_gateway_authz.py`, `telegram/test_rich.py`,
 `persistence/test_allowlist_store.py`). Мульти-бот шов покрыт
