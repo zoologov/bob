@@ -7503,6 +7503,47 @@ async def test_verify_skipped_when_judge_says_no_check() -> None:
     assert "СВЕЖАЯ ПРОВЕРКА" not in tier1.all_text
 
 
+# 🔴 US-2 «НЕ ЗАНУДА» at the FLOW boundary: a representative benign set — the
+# conservative judge returns needs_check=False for each — must take the zero-network,
+# zero-chatter path (no search, no interim line, no note reaches generation). The id
+# names the benign category the False verdict stands in for (banter, greeting, opinion,
+# joke, hypothetical, stable fact, Bob's own memory). Complements the exhaustive parser
+# table in test_volatility_judgment.py.
+_BENIGN_CATEGORIES: tuple[str, ...] = (
+    "greeting",
+    "smalltalk",
+    "opinion_feeling",
+    "joke",
+    "hypothetical",
+    "stable_fact_history",
+    "stable_fact_math",
+    "bob_memory",
+)
+
+
+@pytest.mark.parametrize("category", _BENIGN_CATEGORIES)
+async def test_verify_benign_turn_never_touches_the_net(category: str) -> None:
+    # 🔴 The anti-bore floor at the flow level: none of these categories may trigger a
+    # search, an interim line, or a folded note — zero added latency (US-2).
+    judge = _FakeVolatilityJudge(verdict=_NO_CHECK)
+    provider = _FakeWebSearchProvider(result=WebSearchResult(answer="unused"))
+    generator = _FakeInterimLineGenerator(line="не должно прозвучать")
+    handler, bot, _repo, tier1 = _build(
+        reply="hi",
+        verify_judge=judge,
+        verify_provider=provider,
+        interim_line_generator=generator,
+    )
+
+    await handler.handle(_message())
+
+    assert provider.queries == [], f"{category}: no search on a benign turn"
+    assert generator.calls == [], f"{category}: no interim gen on a benign turn"
+    assert bot.sent == [(555, "hi")], f"{category}: only the answer, no interim line"
+    assert "СВЕЖАЯ ПРОВЕРКА" not in tier1.all_text
+    assert "не вышло" not in tier1.all_text  # no hedge either
+
+
 async def test_verify_runs_direct_search_and_folds_grounded_note() -> None:
     # US-1/US-4: on a volatile turn Bob searches DIRECTLY with verdict.query and the
     # grounded finding is folded into the Tier-1 generation context (facts + tone nudge).
@@ -7704,6 +7745,37 @@ async def test_verify_interim_gen_failure_falls_back_to_seeded() -> None:
     assert bot.sent[0][1] in WEB_SEARCH_PROGRESS_PHRASES
     assert provider.queries == [_VOLATILE_QUERY]
     assert bot.final_text == "hi"
+
+
+async def test_verify_interim_sent_only_once_across_a_regeneration() -> None:
+    # 🔴 Decorative/latency guard on the regeneration path (BOB-032 anti-repeat): when a
+    # needs_check turn's first draft trips the repeat guard, _compose_reply runs AGAIN —
+    # but the SECOND pass carries no chat_id, so the live interim line is NOT re-sent
+    # (no double «погоди, проверю…»). The regenerated draft is what ships.
+    # NOTE (flag for review .5): the verify SEARCH itself re-runs on each regeneration
+    # (two provider.search calls here), so a volatile turn that trips the tic can hit the
+    # net more than once — a possible tension with US-3 «один поиск». Behaviour locked
+    # as-is; efficiency is a production concern, not a test-role fix.
+    judge = _FakeVolatilityJudge(verdict=_NEEDS_CHECK)
+    provider = _FakeWebSearchProvider(result=WebSearchResult(answer="16%"))
+    generator = _FakeInterimLineGenerator(line="Лёш, гляну свежие ставки, секунду 🙂")
+    handler, bot, _repo, tier1 = _build(
+        reply="unused",
+        tier1_replies=[_REPEATED_REPLY, "А вот теперь совсем другой ответ."],
+        history=[{"content": _PRIOR_DUP_TURN, "event_type": "message"}],
+        verify_judge=judge,
+        verify_provider=provider,
+        interim_line_generator=generator,
+    )
+
+    await handler.handle(_message("объясни подробно ещё раз то же самое"))
+
+    assert len(tier1.payloads) == 2, "the repeat guard forced one regeneration"
+    # The live interim gen ran ONLY for the first (addressed) pass — not on the regen.
+    assert len(generator.calls) == 1, "no second interim line on regeneration"
+    interim_lines = [text for _cid, text in bot.sent if text != bot.final_text]
+    assert interim_lines == ["Лёш, гляну свежие ставки, секунду 🙂"]
+    assert bot.final_text == "А вот теперь совсем другой ответ."
 
 
 async def test_verify_interim_not_sent_on_no_check_path() -> None:
