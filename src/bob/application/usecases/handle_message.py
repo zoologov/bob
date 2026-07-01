@@ -42,6 +42,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import TYPE_CHECKING, Literal, Protocol
 
+from bob.application.capabilities.progress_announcer import GatewayProgressAnnouncer
 from bob.application.capabilities.registry import CapabilityRegistry
 from bob.application.capabilities.tool_loop import ToolLoop
 from bob.application.reliability import call_with_retry
@@ -1331,6 +1332,7 @@ class HandleMessage:
                     sulk=sulk,
                     verbosity=verbosity,
                     modulators=modulators,
+                    chat_id=event.chat_id,
                 )
                 # Anti-repeat guard (BOB-022, defense in depth): if the fresh reply is
                 # byte-identical (after strip) to Bob's most-recent prior reply, regenerate
@@ -2351,6 +2353,7 @@ class HandleMessage:
         sulk: SulkState | None = None,
         verbosity: Verbosity = Verbosity.NORMAL,
         modulators: RuleModulators | None = None,
+        chat_id: int | None = None,
     ) -> str:
         """Compose a full reply, folding the decided verbosity into the prompt.
 
@@ -2398,7 +2401,9 @@ class HandleMessage:
         # the notice).
         if not is_guest and provider is not None and not self._registry.is_empty:
             return await self._run_essential(
-                lambda: self._reply_with_tools(provider, system_prompt, text, context),
+                lambda: self._reply_with_tools(
+                    provider, system_prompt, text, context, chat_id=chat_id
+                ),
                 step="reply generation",
             )
         # Hybrid reply tiering (BOB-006): a casual/short message answers on the
@@ -2747,9 +2752,21 @@ class HandleMessage:
         return f"{_SYSTEM_PROMPT}{suffix}"
 
     async def _reply_with_tools(
-        self, provider: ToolCallingProvider, system_prompt: str, text: str, context: str
+        self,
+        provider: ToolCallingProvider,
+        system_prompt: str,
+        text: str,
+        context: str,
+        *,
+        chat_id: int | None = None,
     ) -> str:
-        """Drive the capability tool-loop, advertising the manifest in the prompt."""
+        """Drive the capability tool-loop, advertising the manifest in the prompt.
+
+        ``chat_id`` (the turn's chat) wires the per-turn progress announcer (BOB-055):
+        before a SLOW capability runs, Bob sends a live "searching…" line so the owner
+        is not left in silence. Unset → no announcer (behaviour exactly as before). The
+        announce is decorative — a failure never breaks or blocks this reply.
+        """
         manifest = "\n".join([_CAPABILITY_PREFACE, self._registry.describe()])
         parts = (
             [system_prompt, manifest, context]
@@ -2760,7 +2777,14 @@ class HandleMessage:
             {"role": "system", "content": "\n".join(parts)},
             {"role": "user", "content": text},
         ]
-        loop = ToolLoop(provider=provider, registry=self._registry)
+        announcer = (
+            GatewayProgressAnnouncer(
+                chat_id=chat_id, gateway=self._gateway, rng=self._rng
+            )
+            if chat_id is not None
+            else None
+        )
+        loop = ToolLoop(provider=provider, registry=self._registry, announcer=announcer)
         return await loop.run(messages)
 
     async def _persist(
