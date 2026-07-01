@@ -66,6 +66,16 @@ _DEFAULT_TIC_LOOKBACK = 20
 
 _MIN_TIC_LOOKBACK = 1
 
+# Conservative near-verbatim threshold for CLOSER-MOTIF clustering (BOB-061 .1). The
+# closer-motif twin of ``similarity_threshold``: it reuses the SAME SequenceMatcher
+# ratio, but calibrated for SHORT closer phrases. A closer is a few words, so a
+# single-word variant («мне»->«ему», «остаётся»->«останется») costs far more ratio than
+# the same edit inside a whole reply — the whole-reply 0.9 bar would miss those genuine
+# motif variants (~0.88-0.94). 0.82 clusters them while staying FAR above distinct
+# closers (~0.2-0.25), so it never strangles a legitimately different ending (US-4).
+# Overridable from config (``repeat.motif_similarity_threshold``).
+_DEFAULT_MOTIF_SIMILARITY_THRESHOLD = 0.82
+
 
 @dataclass(frozen=True, slots=True)
 class RepeatThresholds:
@@ -85,6 +95,11 @@ class RepeatThresholds:
       которого гоняется фраза-тик детектор (BOB-043). Узкий по-ходовой обзор
       (~6 истории + ~5 recall) видит рассеянный тик 0-1 раз — ниже порога; на ~20
       репликах тик с распространённостью ~21% повторяется ~4 раза и ловится.
+    * ``motif_similarity_threshold`` — консервативный near-verbatim порог для
+      кластеризации closer-МОТИВА (BOB-061 .1): closer-twin ``similarity_threshold``,
+      калиброванный под КОРОТКИЕ closer-фразы. Реюзит тот же SequenceMatcher-ratio, но
+      ловит лексические варианты одного мотива («мне/ему так спокойнее»), не сцепляя
+      разные по сути концовки (US-4).
 
     Дефолты консервативны.
     """
@@ -94,6 +109,7 @@ class RepeatThresholds:
     tic_min_words: int = _DEFAULT_TIC_MIN_WORDS
     tic_min_occurrences: int = _DEFAULT_TIC_MIN_OCCURRENCES
     tic_lookback: int = _DEFAULT_TIC_LOOKBACK
+    motif_similarity_threshold: float = _DEFAULT_MOTIF_SIMILARITY_THRESHOLD
 
     def __post_init__(self) -> None:
         if self.window < _MIN_REPEAT_WINDOW:
@@ -121,6 +137,16 @@ class RepeatThresholds:
             raise ValueError(
                 f"repeat threshold 'tic_lookback' must be >= {_MIN_TIC_LOOKBACK}, "
                 f"got {self.tic_lookback}"
+            )
+        if not (
+            _MIN_REPEAT_THRESHOLD
+            <= self.motif_similarity_threshold
+            <= _MAX_REPEAT_THRESHOLD
+        ):
+            raise ValueError(
+                f"repeat threshold 'motif_similarity_threshold' must be within "
+                f"[{_MIN_REPEAT_THRESHOLD}, {_MAX_REPEAT_THRESHOLD}], "
+                f"got {self.motif_similarity_threshold}"
             )
 
 
@@ -338,6 +364,77 @@ def strip_recurring_closer(text: str, closer: str) -> str:
     kept = sentences[:target]
     rebuilt = "".join(content + boundary for content, boundary in kept)
     return rebuilt.rstrip()
+
+
+def closer_text(reply: str, *, min_words: int) -> str | None:
+    """Return ``reply``'s final notable closer phrase (normalised), or ``None`` (BOB-061 .1).
+
+    The public extraction the cross-session closer machinery is built on: the closer is
+    the LAST sentence/clause of at least ``min_words`` words (see
+    :func:`_final_notable_phrase`) — a trailing short/blank fragment is skipped — returned
+    normalised (strip / casefold / collapse whitespace) so the logged closer is directly
+    comparable as a motif. ``None`` when the reply has no notable closer. This is what the
+    wiring (.2) calls to (a) APPEND Bob's normalised closer to the persist ring after each
+    reply and (b) extract the current reply's closer to feed the motif detector. Pure, no I/O.
+    """
+    return _final_notable_phrase(reply, min_words=min_words)
+
+
+def is_same_closer_motif(first: str, second: str, *, similarity_threshold: float) -> bool:
+    """Return ``True`` iff two closers are the SAME recurring motif (BOB-061 .1, gap 2).
+
+    The near-verbatim clustering that closes gap 2: an exact-match-after-``_normalise``
+    tic detector UNDER-counts a motif that recurs in lexical VARIANTS («пусть остаётся/
+    останется как есть», «мне/ему так спокойнее»). Two closers cluster as one motif when
+    they are identical after normalisation OR near-verbatim — a
+    :class:`difflib.SequenceMatcher` ratio at or above ``similarity_threshold`` (the SAME
+    ratio machinery as :func:`is_bob_repeat`, reused). ``similarity_threshold`` is
+    deliberately CONSERVATIVE (see :data:`_DEFAULT_MOTIF_SIMILARITY_THRESHOLD`): genuine
+    variants sit ~0.88-0.94 while substantively distinct closers sit ~0.2-0.25, so a merely
+    different ending never clusters (US-4 — no over-suppression). A blank side never
+    clusters. Pure, deterministic, no I/O.
+    """
+    normalised_first = _normalise(first)
+    normalised_second = _normalise(second)
+    if not normalised_first or not normalised_second:
+        return False
+    if normalised_first == normalised_second:
+        return True
+    ratio = SequenceMatcher(None, normalised_first, normalised_second).ratio()
+    return ratio >= similarity_threshold
+
+
+def is_recurring_closer_tic(
+    current_closer: str,
+    prior_closers: Iterable[str],
+    *,
+    similarity_threshold: float,
+    min_occurrences: int,
+) -> bool:
+    """Return ``True`` iff ``current_closer`` near-verbatim-RECURS across ``prior_closers``.
+
+    The detector .2 calls (BOB-061 .1, gaps 1+2 together): given ``current_closer`` (the
+    current reply's closer) and ``prior_closers`` — Bob's recent closers drawn from the
+    cross-session persist ring UNION the live window — decide whether the current closer is
+    a recurring tic. It counts how many ``prior_closers`` are the SAME motif as
+    ``current_closer`` (via :func:`is_same_closer_motif` at ``similarity_threshold``, so
+    lexical variants cluster) and fires when that count reaches ``min_occurrences``. This is
+    what finally catches the once-per-session tic: a motif logged ~4×/week across the
+    persisted ring accumulates enough occurrences even though the LIVE window alone never
+    would. A blank ``current_closer`` (or empty history) is never a tic. Pure,
+    deterministic, no I/O — thresholds injected.
+    """
+    if not _normalise(current_closer):
+        return False
+    occurrences = 0
+    for prior in prior_closers:
+        if is_same_closer_motif(
+            current_closer, prior, similarity_threshold=similarity_threshold
+        ):
+            occurrences += 1
+            if occurrences >= min_occurrences:
+                return True
+    return False
 
 
 # Marker prefixing Bob's turn inside a persisted/recalled episode's ``content``: an

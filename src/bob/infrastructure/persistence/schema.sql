@@ -331,3 +331,15 @@ CREATE TABLE IF NOT EXISTS permission_request (
 );
 CREATE INDEX IF NOT EXISTS idx_permission_request_requester
     ON permission_request (requester_id, state);
+
+-- Closer log (BOB-061 .1): a bounded, LOCAL ring of Bob's recent reply closers, so the
+-- near-verbatim tic detector sees a motif that recurs ONCE PER SESSION across days
+-- (which the live session window misses). One row per logged closer; `closer` is the
+-- normalised final closer phrase (never a full reply — private, minimal); rows are
+-- ordered by the autoincrement `id` (insertion = recency) and pruned to a small cap by
+-- SqliteCloserLog on append, so the oldest fall off the ring. Round-tripped by
+-- SqliteCloserLog.recent(k). Carries NO memory and NO soul — only how Bob tends to end.
+CREATE TABLE IF NOT EXISTS closer_log (
+    id     INTEGER PRIMARY KEY AUTOINCREMENT,
+    closer TEXT NOT NULL              -- normalised final closer phrase
+);

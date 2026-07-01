@@ -1968,8 +1968,10 @@ def _build_repeat_thresholds(config: Mapping[str, object]) -> RepeatThresholds:
     notable-phrase length, so short closers never trip) and ``tic_min_occurrences`` (how
     many recent replies a phrase must recur in to be a tic). BOB-043 adds ``tic_lookback``
     (the WIDE window of Bob's recent closers the phrase-tic detector scans, so a SCATTERED
-    tic the narrow per-turn view misses is still caught). Each falls back to the
-    conservative dataclass default.
+    tic the narrow per-turn view misses is still caught). BOB-061 .1 adds
+    ``motif_similarity_threshold`` (the CONSERVATIVE near-verbatim bar for clustering
+    closer MOTIF variants, so «мне/ему так спокойнее» count as one motif without sticking
+    distinct closers together). Each falls back to the conservative dataclass default.
     """
     section = _section(config, "repeat")
     defaults = RepeatThresholds()
@@ -1983,6 +1985,9 @@ def _build_repeat_thresholds(config: Mapping[str, object]) -> RepeatThresholds:
             section, "tic_min_occurrences", defaults.tic_min_occurrences
         ),
         tic_lookback=_int(section, "tic_lookback", defaults.tic_lookback),
+        motif_similarity_threshold=_float_or(
+            section, "motif_similarity_threshold", defaults.motif_similarity_threshold
+        ),
     )
 
 
