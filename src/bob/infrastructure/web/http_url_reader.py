@@ -182,10 +182,22 @@ class HttpUrlReader:
         if not addresses:
             raise UrlReadError(f"host did not resolve: {host!r}")
         for address in addresses:
-            if _is_blocked(_parse_ip(address)):
+            # 🔴 Fail closed: an unparseable resolved address is untrusted → refuse to
+            # connect (block), never let a bare ValueError escape the SSRF contract.
+            try:
+                ip = _parse_ip(address)
+            except ValueError as exc:
+                raise SsrfBlockedError(
+                    f"unparseable resolved address {address!r} for host {host!r}"
+                ) from exc
+            if _is_blocked(ip):
                 raise SsrfBlockedError(
                     f"blocked non-public address {address} for host {host!r}"
                 )
+        # NOTE (accepted residual, v1 — see CONTEXT/RFC): this guard resolves the host
+        # and aiohttp re-resolves at connect through the SAME getaddrinfo, so the two do
+        # not diverge in practice; a TOCTOU/DNS-rebinding window remains theoretically.
+        # Full closure (connect-by-resolved-IP) is a documented future upgrade.
 
 
 class _AiohttpOpener:
@@ -278,6 +290,11 @@ def _parse_ip(address: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address:
     return ipaddress.ip_address(address.split("%", 1)[0])
 
 
+# Carrier-grade NAT (RFC 6598) — not covered by ``is_private`` on this Python; can
+# reach carrier-internal services, so block it explicitly (review .4 minor).
+_CGN_NET = ipaddress.ip_network("100.64.0.0/10")
+
+
 def _is_blocked(address: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
     return (
         address.is_private
@@ -286,6 +303,7 @@ def _is_blocked(address: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
         or address.is_reserved
         or address.is_multicast
         or address.is_unspecified
+        or (isinstance(address, ipaddress.IPv4Address) and address in _CGN_NET)
     )
 
 
