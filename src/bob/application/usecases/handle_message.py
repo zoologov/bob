@@ -1373,6 +1373,21 @@ class HandleMessage:
         # persisted and NO Bob reply ships.
         try:
             async with self._gateway.typing_indicator(chat_id=event.chat_id):
+                # 🔴 BOB-057 .5 (US-3 «один поиск, не петля»): compute the epistemic-verify
+                # step (judge → interim → search → grounded/hedge note) EXACTLY ONCE per turn
+                # as a PER-TURN LOCAL, then thread the SAME note into the first composition
+                # AND every anti-repeat regeneration. This makes «один поиск» a consequence of
+                # real structure — judge.assess / provider.search / the interim line each fire
+                # at most once, even on a turn that is both volatile AND trips the tic. It is a
+                # local (never a HandleMessage attribute) because the use case is a shared
+                # singleton — an instance flag would leak the note / «already searched» state
+                # across turns and concurrent users. ``""`` when the judge says «no check».
+                verify_note = await self._verify_note(
+                    event.text,
+                    history,
+                    interlocutor=interlocutor,
+                    chat_id=event.chat_id,
+                )
                 reply = await self._compose_reply(
                     event.text,
                     soul,
@@ -1389,6 +1404,7 @@ class HandleMessage:
                     verbosity=verbosity,
                     modulators=modulators,
                     chat_id=event.chat_id,
+                    verify_note=verify_note,
                 )
                 # Anti-repeat guard (BOB-022, defense in depth): if the fresh reply is
                 # byte-identical (after strip) to Bob's most-recent prior reply, regenerate
@@ -1411,6 +1427,7 @@ class HandleMessage:
                     sulk=sulk,
                     verbosity=verbosity,
                     modulators=modulators,
+                    verify_note=verify_note,
                 )
         except _EssentialStepError as exc:
             await self._handle_essential_failure(event, soul, exc)
@@ -2410,6 +2427,7 @@ class HandleMessage:
         verbosity: Verbosity = Verbosity.NORMAL,
         modulators: RuleModulators | None = None,
         chat_id: int | None = None,
+        verify_note: str | None = None,
     ) -> str:
         """Compose a full reply, folding the decided verbosity into the prompt.
 
@@ -2442,9 +2460,20 @@ class HandleMessage:
         # folds into the SAME generation context as the other add-ons. Applies to owner and
         # guest alike (public web info, no owner/private leak). Wrapped so ANY failure drops
         # to «no note» — never blocks or breaks the turn (zero added latency when inert).
-        verify_note = await self._verify_note(
-            text, history, interlocutor=interlocutor, chat_id=chat_id
-        )
+        #
+        # 🔴 BOB-057 .5 (US-3 «один поиск, не петля»): the verify step is computed EXACTLY
+        # ONCE per turn and THREADED IN via ``verify_note`` so the anti-repeat regeneration
+        # loop (``_guard_against_verbatim_repeat``) REUSES it instead of re-judging /
+        # re-searching / re-announcing on every retry. ``None`` = «not yet computed» (the
+        # first composition falls through and computes it); any string (INCLUDING ``""`` =
+        # «judged, no note») means «already computed this turn» → reuse verbatim. The cache
+        # is this PER-TURN LOCAL parameter, NOT an instance attribute — ``HandleMessage`` is
+        # a shared singleton, so an instance flag would leak the note (and the «already
+        # searched» state) across turns/users.
+        if verify_note is None:
+            verify_note = await self._verify_note(
+                text, history, interlocutor=interlocutor, chat_id=chat_id
+            )
         if verify_note:
             context = f"{context}\n{verify_note}"
         system_prompt = self._system_prompt_for(
@@ -2510,6 +2539,7 @@ class HandleMessage:
         sulk: SulkState | None = None,
         verbosity: Verbosity = Verbosity.NORMAL,
         modulators: RuleModulators | None = None,
+        verify_note: str | None = None,
     ) -> str:
         """Recompose if ``reply`` (near-)repeats a recent OR recalled Bob reply (BOB-032 .1).
 
@@ -2579,6 +2609,12 @@ class HandleMessage:
             current_recalled = recalled_without_copied_exemplars(
                 current, current_recalled, threshold=threshold
             )
+            # 🔴 BOB-057 .5 (US-3 «один поиск, не петля»): REUSE the verify note computed
+            # once for this turn instead of recomputing it on every regeneration. Threading
+            # the same ``verify_note`` here means judge.assess / provider.search / the live
+            # interim line each fire AT MOST ONCE per turn, even across the attractor-breaking
+            # retries. ``chat_id`` is intentionally omitted on regeneration (as before) — the
+            # interim already spoke on the first pass and rides the same once-per-turn compute.
             current = await self._compose_reply(
                 text,
                 soul,
@@ -2594,6 +2630,7 @@ class HandleMessage:
                 sulk=sulk,
                 verbosity=verbosity,
                 modulators=modulators,
+                verify_note=verify_note,
             )
         # BOB-043: regeneration could not shake the tic (it keeps re-copying the closer
         # from recalled exemplars — a self-reinforcing loop). If the final draft STILL

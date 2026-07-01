@@ -7747,15 +7747,14 @@ async def test_verify_interim_gen_failure_falls_back_to_seeded() -> None:
     assert bot.final_text == "hi"
 
 
-async def test_verify_interim_sent_only_once_across_a_regeneration() -> None:
-    # 🔴 Decorative/latency guard on the regeneration path (BOB-032 anti-repeat): when a
-    # needs_check turn's first draft trips the repeat guard, _compose_reply runs AGAIN —
-    # but the SECOND pass carries no chat_id, so the live interim line is NOT re-sent
-    # (no double «погоди, проверю…»). The regenerated draft is what ships.
-    # NOTE (flag for review .5): the verify SEARCH itself re-runs on each regeneration
-    # (two provider.search calls here), so a volatile turn that trips the tic can hit the
-    # net more than once — a possible tension with US-3 «один поиск». Behaviour locked
-    # as-is; efficiency is a production concern, not a test-role fix.
+async def test_verify_computed_once_per_turn_across_a_regeneration() -> None:
+    # 🔴 US-3 «один поиск (не петля)» — BOB-057 .5 BLOCKER fix. When a needs_check turn's
+    # first draft trips the anti-repeat guard, _compose_reply runs AGAIN (regeneration).
+    # The verify step (judge → interim → search → note) is computed EXACTLY ONCE per turn
+    # and the resulting note is THREADED into every regeneration, so the regenerated pass
+    # REUSES it instead of re-judging / re-searching / re-announcing. Even across a forced
+    # regeneration Bob hits the net once, assesses once, and speaks the interim line once —
+    # no 3× serial-search loop, no double «погоди, проверю…».
     judge = _FakeVolatilityJudge(verdict=_NEEDS_CHECK)
     provider = _FakeWebSearchProvider(result=WebSearchResult(answer="16%"))
     generator = _FakeInterimLineGenerator(line="Лёш, гляну свежие ставки, секунду 🙂")
@@ -7771,11 +7770,42 @@ async def test_verify_interim_sent_only_once_across_a_regeneration() -> None:
     await handler.handle(_message("объясни подробно ещё раз то же самое"))
 
     assert len(tier1.payloads) == 2, "the repeat guard forced one regeneration"
-    # The live interim gen ran ONLY for the first (addressed) pass — not on the regen.
+    # ONCE per turn across the regeneration: one judgment, one direct search, one interim.
+    assert len(judge.calls) == 1, "judge.assess must run once per turn (not per attempt)"
+    assert provider.queries == [_VOLATILE_QUERY], "exactly ONE search across the regen"
     assert len(generator.calls) == 1, "no second interim line on regeneration"
     interim_lines = [text for _cid, text in bot.sent if text != bot.final_text]
     assert interim_lines == ["Лёш, гляну свежие ставки, секунду 🙂"]
     assert bot.final_text == "А вот теперь совсем другой ответ."
+    # The verify note computed on attempt 1 is REUSED on the regenerated attempt — the
+    # grounded finding folds into BOTH generation payloads (not recomputed, not dropped).
+    payload_texts = [
+        "\n".join(m["content"] for m in payload) for payload in tier1.payloads
+    ]
+    assert all(
+        "СВЕЖАЯ ПРОВЕРКА (веб): 16%" in text for text in payload_texts
+    ), "the once-computed verify note is threaded into every regeneration"
+
+
+async def test_verify_note_not_leaked_across_sequential_turns() -> None:
+    # 🔴 Per-turn locality (BOB-057 .5): the verify memoization is a LOCAL threaded through
+    # the call chain, NOT a HandleMessage instance attribute — HandleMessage is a shared
+    # singleton, so an instance flag would leak the note (and the "already searched" state)
+    # into later turns/users. Two sequential turns each compute their OWN verify step:
+    # turn 2 judges + searches afresh (its own query), never reusing turn 1's note.
+    judge = _FakeVolatilityJudge(verdict=_NEEDS_CHECK)
+    provider = _FakeWebSearchProvider(result=WebSearchResult(answer="16%"))
+    handler, _bot, _repo, tier1 = _build(
+        reply="hi", verify_judge=judge, verify_provider=provider
+    )
+
+    await handler.handle(_message())
+    await handler.handle(_message())
+
+    # Each turn ran its OWN judgment + search — turn 2 is not short-circuited by turn 1.
+    assert len(judge.calls) == 2, "each turn assesses independently (no cross-turn cache)"
+    assert provider.queries == [_VOLATILE_QUERY, _VOLATILE_QUERY], "one search per turn"
+    assert len(tier1.payloads) >= 2
 
 
 async def test_verify_interim_not_sent_on_no_check_path() -> None:
