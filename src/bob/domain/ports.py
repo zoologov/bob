@@ -82,11 +82,13 @@ __all__ = [
     "Reranker",
     "SelfImprovementStore",
     "SoulStore",
+    "SsrfBlockedError",
     "SulkStore",
     "ToolCall",
     "ToolCallResult",
     "ToolCallingProvider",
     "ToolDefinition",
+    "UrlReadError",
     "UrlReader",
     "WebPage",
     "WebSearchProvider",
@@ -188,6 +190,28 @@ class WebPage:
     url: str
     title: str
     text: str
+
+
+class UrlReadError(Exception):
+    """Raised by a :class:`UrlReader` when a page cannot be read (BOB-054).
+
+    The port's failure contract — defined in the domain so the application
+    (``read_url``) can catch it WITHOUT importing infrastructure (the hexagon
+    forbids application → infrastructure, mirroring :class:`DiagramRenderError`).
+    Covers a rejected scheme, a non-2xx status, a disallowed content-type, an
+    over-``max_bytes`` body, too many redirects, or empty extracted text — every case
+    where Bob must honestly say "couldn't read it" rather than invent content. The
+    infra reader (``HttpUrlReader``) re-exports it for adapters.
+    """
+
+
+class SsrfBlockedError(UrlReadError):
+    """Raised when a URL resolves to a non-public address (the 🔴 SSRF guard, BOB-054).
+
+    A distinct subtype so the caller can tell a security block from a transient network
+    failure: a block is DETERMINISTIC and must NOT be retried, just honestly refused (the
+    ``read_url`` skill short-circuits the bounded retry for exactly this class).
+    """
 
 
 class DiagramRenderError(Exception):

@@ -44,10 +44,15 @@ from urllib.parse import urljoin, urlparse
 
 import aiohttp
 
-from bob.domain.ports import WebPage
+from bob.domain.ports import SsrfBlockedError, UrlReadError, WebPage
 
 if TYPE_CHECKING:
     from types import TracebackType
+
+# Re-exported (imported above) so adapters and infra tests keep importing the read
+# failure contract from this module; the canonical definitions live in the domain
+# (``bob.domain.ports``) so the application can catch them without importing infra.
+__all__ = ["HttpUrlReader", "SsrfBlockedError", "UrlReadError"]
 
 _ALLOWED_SCHEMES = frozenset({"http", "https"})
 _ALLOWED_CONTENT_TYPES = ("text/html", "text/plain")
@@ -57,23 +62,6 @@ _HTTP_OK = 200
 _REDIRECT_STATUSES = frozenset({301, 302, 303, 307, 308})
 _DEFAULT_HTTPS_PORT = 443
 _DEFAULT_HTTP_PORT = 80
-
-
-class UrlReadError(Exception):
-    """Raised by :class:`HttpUrlReader` when a page cannot be read (BOB-054).
-
-    Covers a rejected scheme, a non-2xx status, a disallowed content-type, an
-    over-``max_bytes`` body, too many redirects, or empty extracted text — every case
-    where Bob must honestly say "couldn't read it" rather than invent content.
-    """
-
-
-class SsrfBlockedError(UrlReadError):
-    """Raised when a URL resolves to a non-public address (the 🔴 SSRF guard, BOB-054).
-
-    A distinct subtype so the caller can tell a security block from a transient network
-    failure: a block is deterministic and must NOT be retried, just honestly refused.
-    """
 
 
 # --- Injectable transport seam (real = aiohttp; tests supply fakes, no live network) --

@@ -16,6 +16,7 @@ from bob.application.capabilities.inspect_architecture import (
 )
 from bob.application.capabilities.list_work import make_list_work_capability
 from bob.application.capabilities.read_code import make_read_code_capability
+from bob.application.capabilities.read_url import make_read_url_capability
 from bob.application.capabilities.recall_memory import make_recall_memory_capability
 from bob.application.capabilities.registry import (
     CapabilityNotAllowedError,
@@ -42,6 +43,7 @@ __all__ = [
     "make_inspect_architecture_capability",
     "make_list_work_capability",
     "make_read_code_capability",
+    "make_read_url_capability",
     "make_recall_memory_capability",
     "make_render_diagram_capability",
     "make_search_memory_capability",
