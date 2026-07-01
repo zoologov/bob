@@ -2859,7 +2859,7 @@ async def test_reactive_reply_prompt_carries_the_anti_bait_voice_and_few_shot() 
     assert "не выпрашивай продолжение" in folded
     assert "эмодзи" in folded
     # A substance-ending exemplar rides along (no trailing question, no ☕).
-    assert "мне так спокойнее" in folded
+    assert "это всё, что хотел знать" in folded
     # The warm tone is preserved — now via the mood-conditioned tone_directive
     # (BOB-020) rather than the old unconditional English "warmly" line. The default
     # soul's normal mood lands the warm band.

@@ -135,6 +135,62 @@ def test_variable_form_directive_carries_a_few_shot() -> None:
     assert exemplars, "no few-shot exemplar lines found"
 
 
+# --- BOB-061: the recurring meme closer must NOT be re-seeded by the exemplars ---
+# The verbal tic Bob kept emitting was SEEDED verbatim by the static voice exemplars
+# injected into the reply prompt every turn: the paired signature closer «пусть
+# остаётся как есть» + «мне так спокойнее» (and the «оставить как есть» variant) lived
+# inside the anti-bait and variable-form few-shots, so Bob mimicked them. The root-cause
+# fix rewords the exemplars to keep their pedagogy while removing the tic seed; these
+# guards keep the closer out so it can never be re-planted in the exemplars.
+_MEME_CLOSER_FRAGMENTS = (
+    "пусть остаётся как есть",
+    "мне так спокойнее",
+    "оставить как есть",
+    "остаётся как есть",
+)
+
+
+def test_anti_bait_exemplars_do_not_seed_the_meme_closer() -> None:
+    folded = anti_bait_directive().casefold()
+    for fragment in _MEME_CLOSER_FRAGMENTS:
+        assert fragment not in folded, f"anti-bait re-seeds the tic closer: {fragment!r}"
+
+
+def test_variable_form_exemplars_do_not_seed_the_meme_closer() -> None:
+    folded = variable_form_directive().casefold()
+    for fragment in _MEME_CLOSER_FRAGMENTS:
+        assert fragment not in folded, f"variable-form re-seeds the closer: {fragment!r}"
+
+
+def test_no_voice_directive_pairs_the_signature_closer() -> None:
+    # The specific tic is the PAIRED signature — «пусть остаётся как есть» AND «мне так
+    # спокойнее» closing together. No injected voice directive may carry both.
+    for accessor in (anti_bait_directive, variable_form_directive, guppi_canon):
+        folded = accessor().casefold()
+        assert not (
+            "пусть остаётся как есть" in folded and "мне так спокойнее" in folded
+        )
+
+
+def test_anti_bait_still_teaches_its_point_after_the_reword() -> None:
+    # The reword is surgical: anti-bait STILL teaches "end on substance, don't fish for
+    # continuation" and still carries a substance-ending exemplar (no trailing question).
+    folded = anti_bait_directive().casefold()
+    assert "не выпрашивай продолжение" in folded
+    exemplars = _exemplar_lines(anti_bait_directive())
+    assert exemplars
+    assert all(not e.rstrip().endswith("?") for e in exemplars)
+
+
+def test_variable_form_still_teaches_variety_after_the_reword() -> None:
+    # Variety pedagogy intact: still speaks about terse vs expansive form, and its
+    # few-shot shows the SAME thought both ways (>= 2 exemplars).
+    folded = variable_form_directive().casefold()
+    assert "коротк" in folded
+    assert "развёрнут" in folded or "развернут" in folded
+    assert len(_exemplar_lines(variable_form_directive())) >= 2
+
+
 def test_tone_directive_normal_mood_is_warm_and_concise() -> None:
     # A neutral/good mood keeps Bob's current warm, concise base tone (BOB-020):
     # tone_directive replaces the old unconditional "warmly and concisely" line,
