@@ -2510,9 +2510,17 @@ class HandleMessage:
         # dropped silently on their own (a flaky add-on never reaches here / never trips
         # the notice).
         if not is_guest and provider is not None and not self._registry.is_empty:
+            tool_sender_name = (
+                interlocutor.display_name if interlocutor is not None else ""
+            )
             return await self._run_essential(
                 lambda: self._reply_with_tools(
-                    provider, system_prompt, text, context, chat_id=chat_id
+                    provider,
+                    system_prompt,
+                    text,
+                    context,
+                    chat_id=chat_id,
+                    sender_name=tool_sender_name,
                 ),
                 step="reply generation",
             )
@@ -2788,10 +2796,10 @@ class HandleMessage:
         announcer = GatewayProgressAnnouncer(
             chat_id=chat_id,
             gateway=self._gateway,
-            rng=self._rng,
             line_generator=self._interim_line_generator,
+            sender_name=sender_name,
         )
-        await announcer.announce_verify(topic=verdict.topic, sender_name=sender_name)
+        await announcer.announce_verify(topic=verdict.topic)
 
     async def _verify_search_note(
         self, provider: WebSearchProvider, verdict: VolatilityVerdict
@@ -2973,13 +2981,15 @@ class HandleMessage:
         context: str,
         *,
         chat_id: int | None = None,
+        sender_name: str = "",
     ) -> str:
         """Drive the capability tool-loop, advertising the manifest in the prompt.
 
-        ``chat_id`` (the turn's chat) wires the per-turn progress announcer (BOB-055):
-        before a SLOW capability runs, Bob sends a live "searching…" line so the owner
-        is not left in silence. Unset → no announcer (behaviour exactly as before). The
-        announce is decorative — a failure never breaks or blocks this reply.
+        ``chat_id`` (the turn's chat) wires the per-turn progress announcer (BOB-060):
+        before a SLOW ``web_search`` runs, Bob sends a LIVE "searching…" line in his own
+        voice (generated from the query as the topic, addressing ``sender_name``) so the
+        owner is not left in silence. Unset ``chat_id`` → no announcer. The announce is
+        decorative and live-only — a gen/send failure stays silent, never breaks the reply.
         """
         manifest = "\n".join([_CAPABILITY_PREFACE, self._registry.describe()])
         parts = (
@@ -2993,7 +3003,10 @@ class HandleMessage:
         ]
         announcer = (
             GatewayProgressAnnouncer(
-                chat_id=chat_id, gateway=self._gateway, rng=self._rng
+                chat_id=chat_id,
+                gateway=self._gateway,
+                line_generator=self._interim_line_generator,
+                sender_name=sender_name,
             )
             if chat_id is not None
             else None

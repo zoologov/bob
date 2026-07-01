@@ -22,9 +22,6 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from bob.application.capabilities.progress_announcer import (
-    WEB_SEARCH_PROGRESS_PHRASES,
-)
 from bob.application.capabilities.registry import CapabilityRegistry
 from bob.application.capabilities.render_diagram import (
     CollectingDiagramSink,
@@ -8163,8 +8160,9 @@ async def test_verify_interim_sends_live_addressed_line_before_search() -> None:
     assert bot.final_text == "hi"  # the turn still ships its answer
 
 
-async def test_verify_interim_falls_back_to_seeded_phrase_on_empty_gen() -> None:
-    # An empty live line → a seeded BOB-055 phrase (never a dead-silent verify wait).
+async def test_verify_interim_empty_gen_stays_silent() -> None:
+    # 🔴 BOB-060 US-2: an empty live line → SILENCE (no seeded phrase). The search still
+    # runs — only the interim VOICE is dropped, never a scripted line.
     judge = _FakeVolatilityJudge(verdict=_NEEDS_CHECK)
     provider = _FakeWebSearchProvider(result=WebSearchResult(answer="16%"))
     handler, bot, _repo, _tier1 = _build(
@@ -8176,12 +8174,12 @@ async def test_verify_interim_falls_back_to_seeded_phrase_on_empty_gen() -> None
 
     await handler.handle(_message())
 
-    assert bot.sent[0][1] in WEB_SEARCH_PROGRESS_PHRASES
+    assert bot.sent[0][1] == "hi", "no interim line — only the final answer"
     assert provider.queries == [_VOLATILE_QUERY]
 
 
-async def test_verify_interim_seeded_fallback_when_no_generator() -> None:
-    # No generator wired → the interim is the seeded BOB-055 phrase (still not silent).
+async def test_verify_interim_without_generator_stays_silent() -> None:
+    # 🔴 BOB-060 US-2: no generator wired → SILENCE (there is no scripted fallback).
     judge = _FakeVolatilityJudge(verdict=_NEEDS_CHECK)
     provider = _FakeWebSearchProvider(result=WebSearchResult(answer="16%"))
     handler, bot, _repo, _tier1 = _build(
@@ -8190,11 +8188,11 @@ async def test_verify_interim_seeded_fallback_when_no_generator() -> None:
 
     await handler.handle(_message())
 
-    assert bot.sent[0][1] in WEB_SEARCH_PROGRESS_PHRASES
+    assert bot.sent[0][1] == "hi", "no interim line — only the final answer"
 
 
-async def test_verify_interim_gen_failure_falls_back_to_seeded() -> None:
-    # 🔴 Decorative: a raising live gen is caught → the seeded fallback still speaks and
+async def test_verify_interim_gen_failure_stays_silent() -> None:
+    # 🔴 Decorative + US-2: a raising live gen is caught → SILENCE (no fallback phrase);
     # the search + turn are unaffected.
     judge = _FakeVolatilityJudge(verdict=_NEEDS_CHECK)
     provider = _FakeWebSearchProvider(result=WebSearchResult(answer="16%"))
@@ -8207,7 +8205,7 @@ async def test_verify_interim_gen_failure_falls_back_to_seeded() -> None:
 
     await handler.handle(_message())
 
-    assert bot.sent[0][1] in WEB_SEARCH_PROGRESS_PHRASES
+    assert bot.sent[0][1] == "hi", "no interim line — only the final answer"
     assert provider.queries == [_VOLATILE_QUERY]
     assert bot.final_text == "hi"
 
