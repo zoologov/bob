@@ -240,6 +240,22 @@ async def test_failure_notice_never_leaks_fabricated_content() -> None:
     assert str(result["guidance"]).strip()
 
 
+async def test_single_attempt_transient_failure_calls_once_without_backoff() -> None:
+    # With attempts=1 the bounded retry degenerates to a single call: the reader is
+    # invoked exactly once, the injected backoff is NEVER awaited, and a persistent
+    # failure still surfaces the honest notice — never fabricated content.
+    reader = _FlakyUrlReader(fail_times=99, error=UrlReadError("down"))
+    sleep = _RecordingSleep()
+    cap = make_read_url_capability(reader, attempts=1, backoff_seconds=0.5, sleep=sleep)
+
+    result = await cap.execute({"url": "https://x/y"})
+
+    assert reader.calls == 1  # attempts=1 → one call, no retry
+    assert sleep.delays == []  # no backoff with a single attempt
+    assert isinstance(result, Mapping)
+    assert "guidance" in result
+
+
 def test_make_capability_rejects_non_positive_attempts() -> None:
     with pytest.raises(ValueError, match="attempts"):
         make_read_url_capability(_FakeUrlReader(), attempts=0)
