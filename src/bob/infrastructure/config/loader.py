@@ -391,6 +391,23 @@ DEFAULT_CONFIG: Config = {
         "max_chars": 10_000,
         "user_agent": "BobBot/0.1 (+https://github.com/vzoologov/bob)",
     },
+    # Pre-answer epistemic verify — «Боб знает, чего не знает» (BOB-057). BEFORE Bob
+    # answers, a conservative Tier-0 ``VolatilityJudge`` decides whether the answer hinges
+    # on a FRESH, fast-decaying fact (rates/prices/«сейчас»/standings/versions…); on a
+    # ``needs_check`` it makes ONE DIRECT ``web_search`` (reusing the ``search`` provider)
+    # and folds the finding into the reply, hedging honestly on failure. 🔴 The call is
+    # DIRECT (not the capability registry / tool-loop) → NOT the BOB-052 per-sender gate:
+    # an internal public-verify that exposes only PUBLIC web info, works for owner and
+    # guest alike, and does NOT weaken BOB-051/052 on user-facing tool requests.
+    # ``enabled`` defaults TRUE (matching the shipped read-only web skills) — note it makes
+    # a background search happen on a volatile-fact turn; set FALSE to make the seam fully
+    # inert. ``timeout_seconds`` is SHORTER than the deep ``search`` timeout so a slow
+    # search hedges rather than stalls the turn. The provider itself is built from the
+    # ``search`` section (same Qwen web_search).
+    "verify": {
+        "enabled": True,
+        "timeout_seconds": 75,
+    },
     # Two bots in one process (BOB-003): Bob lives in his topic, GUPPI is the
     # gatekeeper in General. Each bot's token comes from env only (never YAML);
     # the shared ids (chat/owner/allowlist) and Bob's topic are non-secret.

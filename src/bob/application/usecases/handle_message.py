@@ -139,6 +139,7 @@ from bob.domain.personality.voice import (
     variable_form_directive,
     who_is_writing_directive,
 )
+from bob.domain.personality.volatility_judgment import VolatilityContext
 from bob.domain.personality.zone_classifier import TasteZoneClassifier
 from bob.domain.ports import DiagramRenderError, DiagramResult
 
@@ -161,6 +162,10 @@ if TYPE_CHECKING:
     from bob.domain.personality.self_improvement import ImprovementRule
     from bob.domain.personality.soul import SOUL
     from bob.domain.personality.sulk import SulkState
+    from bob.domain.personality.volatility_judgment import (
+        VolatilityJudge,
+        VolatilityVerdict,
+    )
     from bob.domain.ports import (
         Clock,
         ConversationFloorStore,
@@ -173,6 +178,7 @@ if TYPE_CHECKING:
         Recalled,
         ReflectionReader,
         ToolCallingProvider,
+        WebSearchProvider,
         ZoneClassifier,
     )
 
@@ -200,6 +206,34 @@ _INLINE_DIAGRAM_CAPTION = "Вот диаграмма."
 
 # How many memories to recall when assembling the reply context.
 _RECALL_K = 5
+
+# Pre-answer epistemic verify (BOB-057 .2). BEFORE generation a conservative Tier-0
+# ``VolatilityJudge`` decides whether the answer hinges on a FRESH volatile fact; on
+# ``needs_check`` Bob makes ONE DIRECT ``WebSearchProvider.search`` (NOT via the
+# capability registry / tool-loop → not the BOB-052 per-sender gate — an internal
+# public-verify that exposes only public web info) and folds the finding into the
+# reply-generation context. Everything is decorative: a judge failure degrades to
+# «no check» (normal answer), a search failure/timeout/empty to an honest hedge —
+# the turn is never blocked or broken.
+_DEFAULT_VERIFY_TIMEOUT_SECONDS = 75.0
+
+# The web finding is trimmed before it enters the generation context (it only needs to
+# ground the answer, not dump the whole search payload into the prompt).
+_VERIFY_ANSWER_MAX_CHARS = 800
+
+# The GROUNDED note (US-1/US-4): the fresh finding + an explicit nudge to react in Bob's
+# own voice/tone if the picture changed — the tone adapts through generation, unprogrammed.
+_VERIFY_GROUNDED_NOTE = (
+    "СВЕЖАЯ ПРОВЕРКА (веб): {answer}. Учти актуальное; если картина изменилась — "
+    "отреагируй по-своему, в т.ч. тоном."
+)
+
+# The HEDGE note (US-6): on a failed/timed-out/empty verify Bob makes an HONEST epistemic
+# caveat — never a confident STALE number dressed as fact, never a fabrication.
+_VERIFY_HEDGE_NOTE = (
+    "Свериться со свежими данными по {topic} не вышло — не выдавай устаревшие цифры за "  # noqa: RUF001
+    "точные, сделай честную оговорку."
+)
 
 # Max attractor-breaking regenerations the anti-repeat guard may draw before keeping the
 # last draft (BOB-032 .1, R2). Each retry strips the recalled exemplar(s) the candidate
@@ -783,6 +817,9 @@ class HandleMessage:
         retry_sleep: Sleep | None = None,
         essential_attempts: int = _DEFAULT_ESSENTIAL_ATTEMPTS,
         essential_backoff_seconds: float = _DEFAULT_ESSENTIAL_BACKOFF_SECONDS,
+        verify_judge: VolatilityJudge | None = None,
+        verify_provider: WebSearchProvider | None = None,
+        verify_timeout_seconds: float = _DEFAULT_VERIFY_TIMEOUT_SECONDS,
     ) -> None:
         self._router = router
         self._gateway = gateway
@@ -1094,6 +1131,17 @@ class HandleMessage:
             )
             raise ValueError(msg)
         self._essential_backoff_seconds = essential_backoff_seconds
+        # Pre-answer epistemic verify seam (BOB-057 .2): when BOTH a conservative Tier-0
+        # ``VolatilityJudge`` and a ``WebSearchProvider`` are wired, a volatile-fact turn
+        # triggers ONE DIRECT ``provider.search`` (NOT the capability registry / tool-loop
+        # → NOT the BOB-052 per-sender gate; internal public-verify, only public web info)
+        # and folds the finding into the reply-generation context. Unwired (either None,
+        # the default → ``verify.enabled`` off in app.py) the seam is fully inert: zero
+        # judge/search calls, behaviour exactly as before. Decorative end to end (a judge
+        # failure → no check; a search failure/timeout/empty → an honest hedge).
+        self._verify_judge = verify_judge
+        self._verify_provider = verify_provider
+        self._verify_timeout_seconds = verify_timeout_seconds
 
     async def _run_essential[T](
         self, operation: Callable[[], Awaitable[T]], *, step: str
@@ -2380,6 +2428,15 @@ class HandleMessage:
             # Grounded add-ons surface Bob's PRIVATE inner life / shared past —
             # withheld from a stranger (audience redaction).
             context = await self._with_grounded_addons(context, text, plan)
+        # Pre-answer epistemic verify (BOB-057 .2): a conservative Tier-0 judge decides if
+        # the answer hinges on a FRESH volatile fact; if so Bob does ONE DIRECT web_search
+        # (ungated internal public-verify — see _verify_note) and this grounded/hedge note
+        # folds into the SAME generation context as the other add-ons. Applies to owner and
+        # guest alike (public web info, no owner/private leak). Wrapped so ANY failure drops
+        # to «no note» — never blocks or breaks the turn (zero added latency when inert).
+        verify_note = await self._verify_note(text, history)
+        if verify_note:
+            context = f"{context}\n{verify_note}"
         system_prompt = self._system_prompt_for(
             soul,
             text,
@@ -2603,6 +2660,70 @@ class HandleMessage:
         except Exception:
             logger.exception("optional grounded add-on %r failed (dropped)", name)
             return ""
+
+    async def _verify_note(
+        self, text: str, history: Sequence[Mapping[str, object]]
+    ) -> str:
+        """The pre-answer epistemic-verify note for this turn, or ``""`` (BOB-057 .2).
+
+        The whole step is DECORATIVE and DIRECT:
+
+        * Unwired (no judge OR no provider — ``verify.enabled`` off) → ``""`` immediately,
+          zero judge/search calls, zero added latency (US-2 «не зануда» by default).
+        * A CONSERVATIVE Tier-0 :class:`VolatilityJudge` decides whether the answer hinges
+          on a FRESH volatile fact. A judge failure is caught and treated as «no check»
+          (``""``) — the turn is never blocked by a flaky judge.
+        * On ``needs_check`` Bob runs ONE search via :meth:`_verify_search_note`.
+
+        🔴 The search is DIRECT (``provider.search``), NOT ``registry.dispatch`` /
+        the tool-loop — so it is NOT the BOB-052 per-sender privilege gate. This is an
+        internal public-verify (nobody asked for a tool; only PUBLIC web info is exposed,
+        never owner/private data), so it works for owner and guest alike without weakening
+        BOB-051/052 on user-facing tool requests.
+        """
+        judge = self._verify_judge
+        provider = self._verify_provider
+        if judge is None or provider is None:
+            return ""
+        try:
+            verdict = await judge.assess(
+                VolatilityContext(text=text, recent_thread=_render_thread(history))
+            )
+        except Exception:
+            # Decorative: a judge failure degrades to «no check» (normal answer), never
+            # blocks or breaks the turn.
+            logger.exception("volatility judge failed (verify skipped)")
+            return ""
+        if not verdict.needs_check:
+            return ""
+        # .3 upgrades this into a LIVE addressed interim line («погоди, проверю X»); for
+        # .2 the verify runs silently — the interim hook lands here.
+        return await self._verify_search_note(provider, verdict)
+
+    async def _verify_search_note(
+        self, provider: WebSearchProvider, verdict: VolatilityVerdict
+    ) -> str:
+        """Run ONE direct, short-timeout web_search and return the grounded/hedge note.
+
+        On success with a non-empty answer → a GROUNDED note (the trimmed finding + a nudge
+        to react in Bob's own voice/tone). On failure / timeout / empty → an HONEST hedge
+        note (US-6: never a confident stale number as fact, never a fabrication). The
+        provider call is bounded by ``verify.timeout_seconds`` so a slow search cannot
+        stall the turn (US-3 «не 5 минут»).
+        """
+        try:
+            # ``asyncio.wait_for`` raises ``TimeoutError`` past the deadline; a slow/failing
+            # provider raises its own error — both are caught below as one honest hedge.
+            result = await asyncio.wait_for(
+                provider.search(verdict.query), timeout=self._verify_timeout_seconds
+            )
+        except Exception:
+            logger.exception("verify web_search failed (hedge)")
+            return _VERIFY_HEDGE_NOTE.format(topic=verdict.topic)
+        answer = result.answer.strip()[:_VERIFY_ANSWER_MAX_CHARS]
+        if not answer:
+            return _VERIFY_HEDGE_NOTE.format(topic=verdict.topic)
+        return _VERIFY_GROUNDED_NOTE.format(answer=answer)
 
     async def _leak_inner_life(self, plan: ExpressionPlan) -> str:
         """The leak line for this turn, or ``""`` (no flag / no reader / no reflection)."""

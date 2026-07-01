@@ -154,6 +154,7 @@ from bob.infrastructure.llm import (
 from bob.infrastructure.llm.privilege_judge import LlmPrivilegeJudge
 from bob.infrastructure.llm.reaction_judge import LlmReactionJudge
 from bob.infrastructure.llm.response_judge import LlmResponseJudge
+from bob.infrastructure.llm.volatility_judge import LlmVolatilityJudge
 from bob.infrastructure.persistence import (
     HybridMemoryRecall,
     KvAllowlistStore,
@@ -641,6 +642,17 @@ def build_application(
     # mention being received. Built once and injected into both.
     notable_reaction_store = KvNotableReactionStore(memory_repo)
 
+    # Pre-answer epistemic verify (BOB-057 .2): built ONLY when ``verify.enabled`` — the
+    # Tier-0 volatility judge + the SAME Qwen web_search provider are wired into
+    # HandleMessage so a volatile-fact turn does ONE DIRECT search (NOT the tool-loop → NOT
+    # the BOB-052 gate; internal public-verify). Off → both None → the seam is fully inert.
+    verify_section = _section(merged, "verify")
+    verify_enabled = _flag(verify_section, "enabled")
+    verify_judge = LlmVolatilityJudge(router=router) if verify_enabled else None
+    verify_provider = (
+        build_web_search_provider(merged) if verify_enabled else None
+    )
+
     handle_message = HandleMessage(
         router=router,
         gateway=multibot.reply_gateway(BotIdentity.BOB),
@@ -846,6 +858,13 @@ def build_application(
             chat_id=_int(telegram_section, "chat_id", 0),
             topic_id=_int(_section(telegram_section, "bob"), "topic_id", 0),
         ),
+        # Pre-answer epistemic verify seam (BOB-057 .2): the Tier-0 volatility judge + the
+        # web_search provider (both None unless verify.enabled). On a volatile-fact turn Bob
+        # makes ONE DIRECT search and folds the finding (or an honest hedge) into the reply
+        # — internal public-verify, NOT routed through the registry/BOB-052 gate.
+        verify_judge=verify_judge,
+        verify_provider=verify_provider,
+        verify_timeout_seconds=float(_int(verify_section, "timeout_seconds", 75)),
     )
     event_bus.subscribe(MESSAGE_RECEIVED, _as_handler(handle_message))
 

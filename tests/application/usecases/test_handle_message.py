@@ -85,7 +85,11 @@ from bob.domain.personality.self_improvement import (
 from bob.domain.personality.soul import SOUL
 from bob.domain.personality.sulk import SulkState
 from bob.domain.personality.taste import TasteAxis, TasteEngine, Verdict
-from bob.domain.ports import ToolCall, ToolCallResult
+from bob.domain.personality.volatility_judgment import (
+    VolatilityContext,
+    VolatilityVerdict,
+)
+from bob.domain.ports import ToolCall, ToolCallResult, WebSearchResult
 from bob.infrastructure.diagrams.mmdc_renderer import DiagramRenderError
 from bob.infrastructure.telegram.gateway import TelegramGateway
 
@@ -153,6 +157,58 @@ class CapturingProvider:
     def all_text(self) -> str:
         """Concatenated content of every message ever sent to this provider."""
         return "\n".join(m["content"] for payload in self.payloads for m in payload)
+
+
+class _FakeVolatilityJudge:
+    """A scripted VolatilityJudge (BOB-057 .2): returns a fixed verdict or raises.
+
+    Records each :class:`VolatilityContext` it assessed so a test can prove the judge
+    saw the turn (or, when ``raises``, that a judge failure is caught decoratively).
+    """
+
+    def __init__(
+        self, *, verdict: VolatilityVerdict | None = None, raises: bool = False
+    ) -> None:
+        self._verdict = verdict
+        self._raises = raises
+        self.calls: list[VolatilityContext] = []
+
+    async def assess(self, ctx: VolatilityContext) -> VolatilityVerdict:
+        self.calls.append(ctx)
+        if self._raises:
+            raise RuntimeError("volatility judge unavailable")
+        assert self._verdict is not None
+        return self._verdict
+
+
+class _FakeWebSearchProvider:
+    """A scripted WebSearchProvider (BOB-057 .2): returns a result, raises, or hangs.
+
+    Records each query so a test can assert the verify path called ``search`` DIRECTLY
+    with ``verdict.query`` (never routed through the capability registry / tool-loop).
+    ``hang`` parks forever so a short ``verify.timeout_seconds`` trips the hedge path.
+    """
+
+    def __init__(
+        self,
+        *,
+        result: WebSearchResult | None = None,
+        raises: bool = False,
+        hang: bool = False,
+    ) -> None:
+        self._result = result
+        self._raises = raises
+        self._hang = hang
+        self.queries: list[str] = []
+
+    async def search(self, query: str) -> WebSearchResult:
+        self.queries.append(query)
+        if self._hang:
+            await asyncio.Event().wait()
+        if self._raises:
+            raise RuntimeError("web_search unavailable")
+        assert self._result is not None
+        return self._result
 
 
 class FakeMessage:
@@ -541,6 +597,9 @@ def _build(
     essential_backoff_seconds: float = _TEST_BACKOFF_SECONDS,
     tier0_provider: LLMProvider | None = None,
     tier1_provider: LLMProvider | None = None,
+    verify_judge: _FakeVolatilityJudge | None = None,
+    verify_provider: _FakeWebSearchProvider | None = None,
+    verify_timeout_seconds: float = 75.0,
 ) -> tuple[HandleMessage, FakeBot, FakeRepo, CapturingProvider]:
     tier0 = CapturingProvider(reply="positive", replies=tier0_replies)
     tier1 = CapturingProvider(reply=reply, replies=tier1_replies)
@@ -612,6 +671,9 @@ def _build(
         retry_sleep=retry_sleep,
         essential_attempts=essential_attempts,
         essential_backoff_seconds=essential_backoff_seconds,
+        verify_judge=verify_judge,
+        verify_provider=verify_provider,
+        verify_timeout_seconds=verify_timeout_seconds,
     )
     return handler, bot, repo, tier1
 
@@ -7381,3 +7443,148 @@ async def test_bob051_us4_non_owner_keeps_per_person_thread_and_reactions() -> N
     assert "Norman" in text  # attribution: Bob still clocks WHO is writing
     assert "кофе по утрам — это ритуал" in text  # their reaction woven in (BOB-050)
     assert store.cleared is True  # consumed so Bob does not repeat it
+
+
+# ---------------------------------------------------------------------------
+# BOB-057 .2 — pre-answer epistemic verify (direct web_search, ungated) + hedge
+# ---------------------------------------------------------------------------
+
+_VOLATILE_QUERY = "текущая ключевая ставка ЦБ РФ 2026"
+_VOLATILE_TOPIC = "свежая ставка ЦБ"
+_NEEDS_CHECK = VolatilityVerdict(
+    needs_check=True, query=_VOLATILE_QUERY, topic=_VOLATILE_TOPIC
+)
+_NO_CHECK = VolatilityVerdict(needs_check=False, query="", topic="")
+
+
+async def test_verify_skipped_when_judge_says_no_check() -> None:
+    # 🔴 US-2 (не зануда): a non-volatile turn — the judge returns needs_check=False, so
+    # the provider is NEVER called and no verify note reaches generation (zero latency).
+    judge = _FakeVolatilityJudge(verdict=_NO_CHECK)
+    provider = _FakeWebSearchProvider(result=WebSearchResult(answer="unused"))
+    handler, _bot, _repo, tier1 = _build(
+        reply="hi", verify_judge=judge, verify_provider=provider
+    )
+
+    await handler.handle(_message())
+
+    assert judge.calls, "the judge should assess the turn"
+    assert provider.queries == [], "no search on a non-volatile turn"
+    assert "СВЕЖАЯ ПРОВЕРКА" not in tier1.all_text
+
+
+async def test_verify_runs_direct_search_and_folds_grounded_note() -> None:
+    # US-1/US-4: on a volatile turn Bob searches DIRECTLY with verdict.query and the
+    # grounded finding is folded into the Tier-1 generation context (facts + tone nudge).
+    judge = _FakeVolatilityJudge(verdict=_NEEDS_CHECK)
+    provider = _FakeWebSearchProvider(
+        result=WebSearchResult(answer="Ставка ЦБ сейчас 16%")
+    )
+    handler, _bot, _repo, tier1 = _build(
+        reply="hi", verify_judge=judge, verify_provider=provider
+    )
+
+    await handler.handle(_message())
+
+    assert provider.queries == [_VOLATILE_QUERY], "one DIRECT search with verdict.query"
+    folded = tier1.all_text
+    assert "СВЕЖАЯ ПРОВЕРКА (веб): Ставка ЦБ сейчас 16%" in folded
+    assert "отреагируй по-своему" in folded  # the tone nudge reaches generation
+
+
+async def test_verify_direct_search_bypasses_registry_and_gate() -> None:
+    # 🔴 US-5 (не привилегия): the verify search fires even though the capability
+    # registry is EMPTY (default) and no permission flow is wired — proving it is a
+    # DIRECT internal call, never registry.dispatch / the BOB-052 per-sender gate.
+    judge = _FakeVolatilityJudge(verdict=_NEEDS_CHECK)
+    provider = _FakeWebSearchProvider(result=WebSearchResult(answer="16%"))
+    handler, _bot, _repo, _tier1 = _build(
+        reply="hi", verify_judge=judge, verify_provider=provider
+    )
+
+    await handler.handle(_message())
+
+    # An empty registry could not have dispatched web_search — the search only ran
+    # because the verify path calls the provider directly (ungated).
+    assert provider.queries == [_VOLATILE_QUERY]
+    assert handler._registry.is_empty  # the ungated boundary (empty registry)
+
+
+async def test_verify_search_failure_yields_honest_hedge() -> None:
+    # 🔴 US-6: a failing search NEVER fabricates a fact — Bob gets an honest hedge note
+    # (no grounded finding, no stale number as fact) and the answer still ships.
+    judge = _FakeVolatilityJudge(verdict=_NEEDS_CHECK)
+    provider = _FakeWebSearchProvider(raises=True)
+    handler, bot, _repo, tier1 = _build(
+        reply="hi", verify_judge=judge, verify_provider=provider
+    )
+
+    await handler.handle(_message())
+
+    folded = tier1.all_text
+    assert "Свериться со свежими данными по свежая ставка ЦБ не вышло" in folded
+    assert "СВЕЖАЯ ПРОВЕРКА" not in folded  # no fabricated grounded finding
+    assert bot.final_text == "hi"  # the turn still produced its answer
+
+
+async def test_verify_search_timeout_yields_hedge() -> None:
+    # US-3 (не 5 минут): a hanging search is bounded by verify.timeout_seconds and
+    # degrades to the honest hedge rather than stalling the turn.
+    judge = _FakeVolatilityJudge(verdict=_NEEDS_CHECK)
+    provider = _FakeWebSearchProvider(hang=True)
+    handler, _bot, _repo, tier1 = _build(
+        reply="hi",
+        verify_judge=judge,
+        verify_provider=provider,
+        verify_timeout_seconds=0.01,
+    )
+
+    await handler.handle(_message())
+
+    assert "не вышло" in tier1.all_text  # hedge on timeout
+    assert "СВЕЖАЯ ПРОВЕРКА" not in tier1.all_text
+
+
+async def test_verify_empty_answer_yields_hedge() -> None:
+    # An empty search answer is not a grounded finding — Bob hedges honestly (US-6).
+    judge = _FakeVolatilityJudge(verdict=_NEEDS_CHECK)
+    provider = _FakeWebSearchProvider(result=WebSearchResult(answer="   "))
+    handler, _bot, _repo, tier1 = _build(
+        reply="hi", verify_judge=judge, verify_provider=provider
+    )
+
+    await handler.handle(_message())
+
+    assert "не вышло" in tier1.all_text
+    assert "СВЕЖАЯ ПРОВЕРКА" not in tier1.all_text
+
+
+async def test_verify_judge_failure_is_treated_as_no_check() -> None:
+    # 🔴 Decorative: a judge that RAISES is caught and treated as «no check» — the
+    # provider is never called, no note is added, and the turn still ships its answer.
+    judge = _FakeVolatilityJudge(raises=True)
+    provider = _FakeWebSearchProvider(result=WebSearchResult(answer="unused"))
+    handler, bot, _repo, tier1 = _build(
+        reply="hi", verify_judge=judge, verify_provider=provider
+    )
+
+    await handler.handle(_message())
+
+    assert provider.queries == [], "a judge failure must not trigger a search"
+    assert "СВЕЖАЯ ПРОВЕРКА" not in tier1.all_text
+    assert "не вышло" not in tier1.all_text
+    assert bot.final_text == "hi"  # the turn is unaffected
+
+
+async def test_verify_inert_when_provider_unwired() -> None:
+    # verify.enabled off (either seam None) → the feature is fully inert: the judge is
+    # never even consulted, behaviour exactly as before.
+    judge = _FakeVolatilityJudge(verdict=_NEEDS_CHECK)
+    handler, _bot, _repo, tier1 = _build(
+        reply="hi", verify_judge=judge, verify_provider=None
+    )
+
+    await handler.handle(_message())
+
+    assert judge.calls == [], "an unwired provider makes the whole seam inert"
+    assert "СВЕЖАЯ ПРОВЕРКА" not in tier1.all_text
