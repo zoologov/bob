@@ -58,6 +58,9 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING
 
+from aiogram.exceptions import TelegramNetworkError
+
+from bob.application.reliability import call_with_retry
 from bob.infrastructure.telegram.gateway import (
     AuthorizerLike,
     BobMessageFilter,
@@ -95,6 +98,13 @@ logger = logging.getLogger(__name__)
 # (Telegram auto-clears the indicator after a few seconds), driven by the injected
 # ``sleep`` so a long generation keeps showing "Bob is typing…".
 _DEFAULT_TYPING_INTERVAL = 4.0
+
+# Startup identity resolution (BOB-059): a momentary network flap while asking Bob's
+# bot ``get_me`` must not crash startup. The call is retried a few times with a short
+# backoff (through an INJECTED sleep so tests are deterministic) before it degrades
+# gracefully — enough to ride out a blip without stalling the process on a real outage.
+_DEFAULT_IDENTITY_RETRY_ATTEMPTS = 3
+_DEFAULT_IDENTITY_RETRY_BACKOFF_SECONDS = 1.0
 
 
 def _zero_clock() -> float:
@@ -226,10 +236,21 @@ class MultiBotGateway:
         reply_clock: MonotonicClock = _LIVE_CLOCK,
         reply_sleep: Sleep = _LIVE_SLEEP,
         bob_reaction_filter: BobMessageFilter | None = None,
+        identity_retry_attempts: int = _DEFAULT_IDENTITY_RETRY_ATTEMPTS,
+        identity_retry_backoff_seconds: float = (
+            _DEFAULT_IDENTITY_RETRY_BACKOFF_SECONDS
+        ),
+        identity_retry_sleep: Sleep = _LIVE_SLEEP,
     ) -> None:
         self._registry = registry
         self._bus = bus
         self._authorizer = authorizer
+        # BOB-059: the get_me startup-retry seam. Defaults ride out a transient
+        # Telegram blip with a real ``asyncio.sleep`` backoff; tests inject a fake
+        # sleep + small attempts for deterministic, wait-free assertions.
+        self._identity_retry_attempts = identity_retry_attempts
+        self._identity_retry_backoff_seconds = identity_retry_backoff_seconds
+        self._identity_retry_sleep = identity_retry_sleep
         self._proactivity_store = proactivity_store
         self._proactivity_clock = proactivity_clock
         self._goal_store = goal_store
@@ -325,9 +346,19 @@ class MultiBotGateway:
         Called once at startup (the synchronous constructor cannot ``await``):
         asks Bob's bot who it is (id + ``@username``) and wires that into Bob's
         inner gateway so the addressivity scan can tell an @mention of Bob from a
-        mention of someone else. Best-effort — a transient ``get_me`` failure is
-        logged and leaves mentions unresolved (``mentions_bob`` stays ``False``)
-        rather than blocking startup; reply-to addressivity is unaffected.
+        mention of someone else. Best-effort — a ``get_me`` failure is logged and
+        leaves mentions unresolved (``mentions_bob`` stays ``False``) rather than
+        blocking startup; reply-to addressivity is unaffected.
+
+        A momentary network flap must not crash the whole process (BOB-059): the
+        call is retried a few times with a short injected backoff, so a transient
+        blip is ridden out and the identity still resolves. On a PERSISTENT failure
+        — including the ``TelegramNetworkError`` aiogram raises on a dropped
+        connection (which the pre-BOB-059 ``except`` did not catch, so startup died)
+        — it degrades gracefully: warn + return, and startup CONTINUES (polling is
+        resilient, so Bob still listens and the identity re-resolves later). A
+        NON-network error (a programming bug) is deliberately NOT swallowed — it
+        propagates so the fault surfaces.
         """
         if BotIdentity.BOB not in self._inner:
             return
@@ -336,8 +367,13 @@ class MultiBotGateway:
         if get_me is None:
             return
         try:
-            me = await get_me()
-        except (OSError, RuntimeError, TimeoutError) as exc:
+            me = await call_with_retry(
+                get_me,
+                attempts=self._identity_retry_attempts,
+                backoff_seconds=self._identity_retry_backoff_seconds,
+                sleep=self._identity_retry_sleep,
+            )
+        except (OSError, RuntimeError, TimeoutError, TelegramNetworkError) as exc:
             logger.warning("could not resolve Bob's bot identity (get_me): %s", exc)
             return
         self._inner[BotIdentity.BOB].set_bob_identity(
