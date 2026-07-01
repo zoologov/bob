@@ -1152,9 +1152,9 @@ class HandleMessage:
         self._verify_timeout_seconds = verify_timeout_seconds
         # The LIVE addressed interim line (BOB-057 .3, US-3b): on a ``needs_check`` turn
         # Bob speaks a one-liner naming WHAT he checks and WHO he's talking to before the
-        # search. When wired, a Tier-0 gen produces it; unwired (the default) the verify
-        # interim falls to the seeded BOB-055 phrase. Fully decorative (gen/send failure
-        # → seeded phrase / silence), never blocks the search or breaks the turn.
+        # search. When wired, a Tier-0 gen produces it live; unwired (the default) the
+        # verify interim stays silent. Fully decorative (gen/send failure → silence),
+        # never blocks the search or breaks the turn.
         self._interim_line_generator = interim_line_generator
 
     async def _run_essential[T](
@@ -2778,7 +2778,7 @@ class HandleMessage:
             return ""
         # BOB-057 .3 (US-3b): before the search, Bob sends a LIVE, ADDRESSED interim line
         # naming WHAT he checks and WHO he's talking to («Леш, гляну свежие ставки,
-        # секунду 🙂»). Decorative (live gen → seeded BOB-055 phrase → silence) and does
+        # секунду 🙂»). Decorative (live gen → silence) and does
         # NOT block the search below.
         await self._send_verify_interim(verdict, interlocutor, chat_id)
         return await self._verify_search_note(provider, verdict)
@@ -2791,8 +2791,8 @@ class HandleMessage:
     ) -> None:
         """Send the live addressed interim line for the verify search (BOB-057 US-3b).
 
-        Reuses the BOB-055 :class:`GatewayProgressAnnouncer` in its contextual mode so
-        the decorative fallback chain (live Tier-0 gen → seeded phrase → silence) lives
+        Reuses the :class:`GatewayProgressAnnouncer` in its BOB-060 live-only mode so
+        the decorative chain (live Tier-0 gen → silence) lives
         in one place. No ``chat_id`` (an unaddressed path) → no interim. The sender's
         perceived ``display_name`` addresses the line; an unknown sender → topic-only.
         """

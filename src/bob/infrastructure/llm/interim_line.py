@@ -13,8 +13,8 @@ one-liner in Bob's voice («Леш, гляну свежие ставки, сек
 
 A thin shell on purpose — all shaping is pure domain
 (:mod:`bob.domain.personality.interim_line`). It does NOT swallow router/model
-failures: an error PROPAGATES so the caller (the progress announcer) falls back to
-a seeded BOB-055 phrase, keeping the whole interim decorative in one place. The
+failures: an error PROPAGATES so the caller (the progress announcer) stays silent,
+keeping the whole interim decorative in one place. The
 +1-2s of a local gen is fine — the turn is about to wait on the web search anyway.
 """
 
@@ -46,7 +46,7 @@ class LlmInterimLineGenerator:
 
         Builds the request from the pure prompt builder, runs it on the local tier,
         and reduces the reply to one tidy line. A router/model error propagates (no
-        silent default) for the announcer's seeded fallback.
+        silent default) → the announcer stays silent.
         """
         raw = await self._router.run(self._request(topic=topic, sender_name=sender_name))
         return clean_interim_line(raw)
