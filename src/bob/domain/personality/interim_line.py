@@ -18,8 +18,8 @@ names WHAT he's about to check and WHO he's talking to — «Леш, надо к
 * :func:`clean_interim_line` — keeps the reply a single tidy line: first non-empty
   line, unquoted, bounded — so a chatty model still yields a one-liner.
 
-DECORATIVE by design: the caller (the announcer) falls back to a seeded BOB-055
-phrase when this yields nothing, so an empty clean is a legitimate "no live line".
+DECORATIVE by design: the caller (the announcer) stays silent when this yields
+nothing, so an empty clean is a legitimate "no live line".
 """
 
 from __future__ import annotations
@@ -46,10 +46,11 @@ _QUOTE_PAIRS: tuple[tuple[str, str], ...] = (
 )
 
 INTERIM_LINE_SYSTEM_PROMPT = (
-    "Ты — Боб. Прямо сейчас ты собираешься быстро проверить кое-что в сети, чтобы "
-    "ответить точно. Напиши ЖИВУЮ реплику собеседнику — как в чате, своими словами, "
-    "по-русски: обратись к человеку по имени, назови, ЧТО именно идёшь проверить, и "
-    "попроси секунду подождать. Тепло, по-человечески, можно лёгкий смайлик.\n"
+    "Ты — Боб. Прямо сейчас ты собираешься быстро глянуть кое-что в сети — свериться "
+    "с фактом или поискать по запросу, чтобы ответить точно. Напиши ЖИВУЮ реплику "
+    "собеседнику — как в чате, своими словами, по-русски: обратись к человеку по имени, "
+    "назови, ЧТО именно идёшь глянуть, и попроси секунду подождать. Тепло, "
+    "по-человечески, можно лёгкий смайлик.\n"
     "Строго: ОДНА короткая строка, без кавычек, без вступлений и пояснений — только "
     "сама реплика. Не выдумывай сам факт (ты его ещё не знаешь) — только скажи, что "
     "идёшь проверить.\n"
@@ -76,7 +77,7 @@ def clean_interim_line(raw: str) -> str:
     Keeps the FIRST non-empty line (a chatty model may add extra lines), strips a
     pair of wrapping quotes, and bounds the length so the interim stays a one-liner.
     An all-blank reply yields ``""`` — a legitimate "no live line" for the caller's
-    seeded fallback.
+    silence.
     """
     line = next((ln.strip() for ln in raw.splitlines() if ln.strip()), "")
     if not line:

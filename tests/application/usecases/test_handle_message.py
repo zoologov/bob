@@ -22,9 +22,6 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from bob.application.capabilities.progress_announcer import (
-    WEB_SEARCH_PROGRESS_PHRASES,
-)
 from bob.application.capabilities.registry import CapabilityRegistry
 from bob.application.capabilities.render_diagram import (
     CollectingDiagramSink,
@@ -35,6 +32,8 @@ from bob.application.runtime.events import MessageReceived
 from bob.application.usecases.decide_response import DecideResponse
 from bob.application.usecases.extract_facts import ExtractFacts
 from bob.application.usecases.handle_message import (
+    _VERIFY_GROUNDED_NOTE,
+    _VERIFY_HEDGE_NOTE,
     DiagramSendMode,
     EngagementState,
     HandleMessage,
@@ -8095,6 +8094,36 @@ async def test_verify_empty_answer_yields_hedge() -> None:
     assert "СВЕЖАЯ ПРОВЕРКА" not in tier1.all_text
 
 
+def test_grounded_note_steers_bobs_voice_not_an_agent_report() -> None:
+    # BOB-060 .2 register-nudge: the GROUNDED note must instruct Bob to present the
+    # finding IN HIS OWN VOICE, reacting to it — explicitly NOT as a generic agent
+    # report ("выполнен поиск, найдено N…"). Structural keyword assertions on the
+    # note builder output (not brittle full-string matches).
+    note = _VERIFY_GROUNDED_NOTE.format(answer="Ставка ЦБ сейчас 16%")
+    folded = note.casefold()
+
+    assert "Ставка ЦБ сейчас 16%" in note  # the real finding is carried in
+    # A voice-steer is present: react as Bob / in his own words.
+    assert "как боб" in folded or "по-своему" in folded
+    # And an explicit anti-report steer (do NOT read as an agent report / dry summary).
+    assert "отчёт" in folded
+
+
+def test_hedge_note_keeps_anti_confabulation_and_a_live_voice() -> None:
+    # 🔴 BOB-053 invariant intact: the HEDGE note still forbids passing a stale number
+    # off as fact / fabricating — AND now steers an HONEST, LIVE caveat in Bob's voice
+    # (not a robotic "поиск не удался").
+    note = _VERIFY_HEDGE_NOTE.format(topic="свежая ставка ЦБ")
+    folded = note.casefold()
+
+    # Anti-confabulation (BOB-053): no stale figure as fact, no invention.
+    assert "устаревш" in folded
+    assert "выдум" in folded or "выдав" in folded
+    # Live, in-voice honesty steer (not a dry robo-report).
+    assert "честно" in folded
+    assert "живо" in folded or "своими словами" in folded
+
+
 async def test_verify_judge_failure_is_treated_as_no_check() -> None:
     # 🔴 Decorative: a judge that RAISES is caught and treated as «no check» — the
     # provider is never called, no note is added, and the turn still ships its answer.
@@ -8163,8 +8192,9 @@ async def test_verify_interim_sends_live_addressed_line_before_search() -> None:
     assert bot.final_text == "hi"  # the turn still ships its answer
 
 
-async def test_verify_interim_falls_back_to_seeded_phrase_on_empty_gen() -> None:
-    # An empty live line → a seeded BOB-055 phrase (never a dead-silent verify wait).
+async def test_verify_interim_empty_gen_stays_silent() -> None:
+    # 🔴 BOB-060 US-2: an empty live line → SILENCE (no seeded phrase). The search still
+    # runs — only the interim VOICE is dropped, never a scripted line.
     judge = _FakeVolatilityJudge(verdict=_NEEDS_CHECK)
     provider = _FakeWebSearchProvider(result=WebSearchResult(answer="16%"))
     handler, bot, _repo, _tier1 = _build(
@@ -8176,12 +8206,12 @@ async def test_verify_interim_falls_back_to_seeded_phrase_on_empty_gen() -> None
 
     await handler.handle(_message())
 
-    assert bot.sent[0][1] in WEB_SEARCH_PROGRESS_PHRASES
+    assert bot.sent[0][1] == "hi", "no interim line — only the final answer"
     assert provider.queries == [_VOLATILE_QUERY]
 
 
-async def test_verify_interim_seeded_fallback_when_no_generator() -> None:
-    # No generator wired → the interim is the seeded BOB-055 phrase (still not silent).
+async def test_verify_interim_without_generator_stays_silent() -> None:
+    # 🔴 BOB-060 US-2: no generator wired → SILENCE (there is no scripted fallback).
     judge = _FakeVolatilityJudge(verdict=_NEEDS_CHECK)
     provider = _FakeWebSearchProvider(result=WebSearchResult(answer="16%"))
     handler, bot, _repo, _tier1 = _build(
@@ -8190,11 +8220,11 @@ async def test_verify_interim_seeded_fallback_when_no_generator() -> None:
 
     await handler.handle(_message())
 
-    assert bot.sent[0][1] in WEB_SEARCH_PROGRESS_PHRASES
+    assert bot.sent[0][1] == "hi", "no interim line — only the final answer"
 
 
-async def test_verify_interim_gen_failure_falls_back_to_seeded() -> None:
-    # 🔴 Decorative: a raising live gen is caught → the seeded fallback still speaks and
+async def test_verify_interim_gen_failure_stays_silent() -> None:
+    # 🔴 Decorative + US-2: a raising live gen is caught → SILENCE (no fallback phrase);
     # the search + turn are unaffected.
     judge = _FakeVolatilityJudge(verdict=_NEEDS_CHECK)
     provider = _FakeWebSearchProvider(result=WebSearchResult(answer="16%"))
@@ -8207,7 +8237,7 @@ async def test_verify_interim_gen_failure_falls_back_to_seeded() -> None:
 
     await handler.handle(_message())
 
-    assert bot.sent[0][1] in WEB_SEARCH_PROGRESS_PHRASES
+    assert bot.sent[0][1] == "hi", "no interim line — only the final answer"
     assert provider.queries == [_VOLATILE_QUERY]
     assert bot.final_text == "hi"
 

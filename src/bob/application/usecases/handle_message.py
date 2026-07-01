@@ -222,18 +222,24 @@ _DEFAULT_VERIFY_TIMEOUT_SECONDS = 75.0
 # ground the answer, not dump the whole search payload into the prompt).
 _VERIFY_ANSWER_MAX_CHARS = 800
 
-# The GROUNDED note (US-1/US-4): the fresh finding + an explicit nudge to react in Bob's
-# own voice/tone if the picture changed — the tone adapts through generation, unprogrammed.
+# The GROUNDED note (US-1/US-4 + BOB-060 .2 register-nudge): the fresh finding + an
+# explicit steer to present it IN BOB'S OWN VOICE, reacting to it — NOT as a generic
+# agent report («выполнен поиск, найдено N…»). The tone adapts through generation,
+# unprogrammed; the note only nudges the register, never the search mechanism.
 _VERIFY_GROUNDED_NOTE = (
-    "СВЕЖАЯ ПРОВЕРКА (веб): {answer}. Учти актуальное; если картина изменилась — "
-    "отреагируй по-своему, в т.ч. тоном."
+    "СВЕЖАЯ ПРОВЕРКА (веб): {answer}. Ты сходил и глянул это в сети — отреагируй "
+    "по-своему, как БОБ, со своим отношением и тоном, если картина изменилась; "  # noqa: RUF001
+    "НЕ отчётом («выполнен поиск, найдено…»), не сухой сводкой."  # noqa: RUF001
 )
 
-# The HEDGE note (US-6): on a failed/timed-out/empty verify Bob makes an HONEST epistemic
-# caveat — never a confident STALE number dressed as fact, never a fabrication.
+# The HEDGE note (US-6 + BOB-060 .2): on a failed/timed-out/empty verify Bob makes an
+# HONEST epistemic caveat — 🔴 never a confident STALE number dressed as fact, never a
+# fabrication (BOB-053 invariant). The register-nudge steers a LIVE, in-voice caveat
+# (not a robotic «поиск не удался»), without weakening the anti-confabulation intent.
 _VERIFY_HEDGE_NOTE = (
-    "Свериться со свежими данными по {topic} не вышло — не выдавай устаревшие цифры за "  # noqa: RUF001
-    "точные, сделай честную оговорку."
+    "Свериться со свежими данными по {topic} не вышло — скажи это честно и живо, "  # noqa: RUF001
+    "своими словами (не сухим «поиск не удался»); не выдавай устаревшие цифры за "
+    "точные и ничего не выдумывай."
 )
 
 # Max attractor-breaking regenerations the anti-repeat guard may draw before keeping the
@@ -1146,9 +1152,9 @@ class HandleMessage:
         self._verify_timeout_seconds = verify_timeout_seconds
         # The LIVE addressed interim line (BOB-057 .3, US-3b): on a ``needs_check`` turn
         # Bob speaks a one-liner naming WHAT he checks and WHO he's talking to before the
-        # search. When wired, a Tier-0 gen produces it; unwired (the default) the verify
-        # interim falls to the seeded BOB-055 phrase. Fully decorative (gen/send failure
-        # → seeded phrase / silence), never blocks the search or breaks the turn.
+        # search. When wired, a Tier-0 gen produces it live; unwired (the default) the
+        # verify interim stays silent. Fully decorative (gen/send failure → silence),
+        # never blocks the search or breaks the turn.
         self._interim_line_generator = interim_line_generator
 
     async def _run_essential[T](
@@ -2510,9 +2516,17 @@ class HandleMessage:
         # dropped silently on their own (a flaky add-on never reaches here / never trips
         # the notice).
         if not is_guest and provider is not None and not self._registry.is_empty:
+            tool_sender_name = (
+                interlocutor.display_name if interlocutor is not None else ""
+            )
             return await self._run_essential(
                 lambda: self._reply_with_tools(
-                    provider, system_prompt, text, context, chat_id=chat_id
+                    provider,
+                    system_prompt,
+                    text,
+                    context,
+                    chat_id=chat_id,
+                    sender_name=tool_sender_name,
                 ),
                 step="reply generation",
             )
@@ -2764,7 +2778,7 @@ class HandleMessage:
             return ""
         # BOB-057 .3 (US-3b): before the search, Bob sends a LIVE, ADDRESSED interim line
         # naming WHAT he checks and WHO he's talking to («Леш, гляну свежие ставки,
-        # секунду 🙂»). Decorative (live gen → seeded BOB-055 phrase → silence) and does
+        # секунду 🙂»). Decorative (live gen → silence) and does
         # NOT block the search below.
         await self._send_verify_interim(verdict, interlocutor, chat_id)
         return await self._verify_search_note(provider, verdict)
@@ -2777,8 +2791,8 @@ class HandleMessage:
     ) -> None:
         """Send the live addressed interim line for the verify search (BOB-057 US-3b).
 
-        Reuses the BOB-055 :class:`GatewayProgressAnnouncer` in its contextual mode so
-        the decorative fallback chain (live Tier-0 gen → seeded phrase → silence) lives
+        Reuses the :class:`GatewayProgressAnnouncer` in its BOB-060 live-only mode so
+        the decorative chain (live Tier-0 gen → silence) lives
         in one place. No ``chat_id`` (an unaddressed path) → no interim. The sender's
         perceived ``display_name`` addresses the line; an unknown sender → topic-only.
         """
@@ -2788,10 +2802,10 @@ class HandleMessage:
         announcer = GatewayProgressAnnouncer(
             chat_id=chat_id,
             gateway=self._gateway,
-            rng=self._rng,
             line_generator=self._interim_line_generator,
+            sender_name=sender_name,
         )
-        await announcer.announce_verify(topic=verdict.topic, sender_name=sender_name)
+        await announcer.announce_verify(topic=verdict.topic)
 
     async def _verify_search_note(
         self, provider: WebSearchProvider, verdict: VolatilityVerdict
@@ -2973,13 +2987,15 @@ class HandleMessage:
         context: str,
         *,
         chat_id: int | None = None,
+        sender_name: str = "",
     ) -> str:
         """Drive the capability tool-loop, advertising the manifest in the prompt.
 
-        ``chat_id`` (the turn's chat) wires the per-turn progress announcer (BOB-055):
-        before a SLOW capability runs, Bob sends a live "searching…" line so the owner
-        is not left in silence. Unset → no announcer (behaviour exactly as before). The
-        announce is decorative — a failure never breaks or blocks this reply.
+        ``chat_id`` (the turn's chat) wires the per-turn progress announcer (BOB-060):
+        before a SLOW ``web_search`` runs, Bob sends a LIVE "searching…" line in his own
+        voice (generated from the query as the topic, addressing ``sender_name``) so the
+        owner is not left in silence. Unset ``chat_id`` → no announcer. The announce is
+        decorative and live-only — a gen/send failure stays silent, never breaks the reply.
         """
         manifest = "\n".join([_CAPABILITY_PREFACE, self._registry.describe()])
         parts = (
@@ -2993,7 +3009,10 @@ class HandleMessage:
         ]
         announcer = (
             GatewayProgressAnnouncer(
-                chat_id=chat_id, gateway=self._gateway, rng=self._rng
+                chat_id=chat_id,
+                gateway=self._gateway,
+                line_generator=self._interim_line_generator,
+                sender_name=sender_name,
             )
             if chat_id is not None
             else None

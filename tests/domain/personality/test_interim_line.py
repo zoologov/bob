@@ -39,6 +39,18 @@ def test_system_prompt_demands_a_short_addressed_one_liner() -> None:
     assert "одн" in INTERIM_LINE_SYSTEM_PROMPT.casefold()  # "одну строку"/"одной"
 
 
+def test_system_prompt_reads_for_a_search_query_not_only_a_fact_check() -> None:
+    # BOB-060 .2: the interim prompt is now shared by BOTH paths — the verify
+    # «сверка факта» and the tool-loop «поиск по запросу». It must frame the moment
+    # as Bob going to LOOK something up in the net (works for a search query too),
+    # not exclusively as verifying a fact. Keep it a tight, in-voice one-liner.
+    lowered = INTERIM_LINE_SYSTEM_PROMPT.casefold()
+
+    assert "сет" in lowered  # in the net
+    assert "глян" in lowered  # "идёшь глянуть" — reads for a search, not only a check
+    assert "одн" in lowered  # still a single short line
+
+
 def test_clean_takes_the_first_nonempty_line() -> None:
     raw = "\n  Лёш, гляну свежие ставки, секунду 🙂\nвторая строка лишняя"
 

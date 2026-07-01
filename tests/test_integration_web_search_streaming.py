@@ -20,15 +20,11 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping
-from random import Random
 from typing import TYPE_CHECKING
 
 from aiohttp import web
 
-from bob.application.capabilities.progress_announcer import (
-    WEB_SEARCH_PROGRESS_PHRASES,
-    GatewayProgressAnnouncer,
-)
+from bob.application.capabilities.progress_announcer import GatewayProgressAnnouncer
 from bob.application.capabilities.registry import CapabilityRegistry
 from bob.application.capabilities.tool_loop import ToolLoop
 from bob.application.capabilities.web_search import make_web_search_capability
@@ -202,11 +198,18 @@ class _ScriptedToolProvider:
         return self._results[index]
 
 
+class _LiveInterimGenerator:
+    """A live interim-line generator (BOB-060): echoes the topic into a Bob-voice line."""
+
+    async def generate(self, *, topic: str, sender_name: str) -> str:  # noqa: ARG002
+        return f"секунду, гляну «{topic}» 🙂"
+
+
 async def test_real_announcer_speaks_before_web_search_dispatch_through_tool_loop() -> None:
     # Arrange: the REAL GatewayProgressAnnouncer + REAL ToolLoop + REAL web_search
-    # capability. When the model asks for web_search, the interim voiced line must be
-    # sent to the turn's chat BEFORE the (slow) provider search runs — the whole
-    # BOB-055 .2 wiring, end-to-end, with only a recording gateway at the boundary.
+    # capability. When the model asks for web_search, the LIVE interim line (generated
+    # from the query as topic) must be sent to the turn's chat BEFORE the (slow) provider
+    # search runs — the whole BOB-060 wiring, end-to-end, recording gateway at the boundary.
     order: list[str] = []
     gateway = _RecordingGateway(order)
     provider = _OrderingWebSearchProvider(order)
@@ -215,7 +218,8 @@ async def test_real_announcer_speaks_before_web_search_dispatch_through_tool_loo
     announcer = GatewayProgressAnnouncer(
         chat_id=777,
         gateway=gateway,
-        rng=Random(3),  # noqa: S311 — deterministic test seed, not cryptographic
+        line_generator=_LiveInterimGenerator(),
+        sender_name="Лёша",
     )
     call = ToolCall(id="c1", name="web_search", arguments={"query": "что нового"})
     model = _ScriptedToolProvider(
@@ -229,9 +233,9 @@ async def test_real_announcer_speaks_before_web_search_dispatch_through_tool_loo
     # Act
     answer = await loop.run([{"role": "user", "content": "что нового?"}])
 
-    # Assert: exactly one voiced interim line, to the right chat, strictly before dispatch.
+    # Assert: exactly one LIVE interim line, to the right chat, strictly before dispatch.
     assert order == ["announce", "dispatch"]
     assert len(gateway.calls) == 1
     assert gateway.calls[0]["chat_id"] == 777
-    assert gateway.calls[0]["markdown"] in WEB_SEARCH_PROGRESS_PHRASES
+    assert gateway.calls[0]["markdown"] == "секунду, гляну «что нового» 🙂"
     assert answer == "Вот что нашёл."

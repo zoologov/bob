@@ -1401,10 +1401,11 @@ backoff не маскировал дефект. `sleep` инъецируется
   `tool_calls` — диспатчит каждый через реестр, дописывает результат и повторяет,
   пока не финальный текст. Число ходов ограничено (turn-cap); неизвестный навык не
   фатален (ошибка возвращается как результат). Опциональный `announcer`
-  (`ProgressAnnouncer | None`, BOB-055): перед `registry.dispatch` каждого вызова
-  `_run_tool` зовёт `announcer.announce(call.name)` — интерим-реплику «ищу…» перед
-  медленным навыком. Вызов обёрнут в `try/except`: анонс декоративен, его сбой
-  никогда не задерживает и не ломает диспатч. `announcer=None` — прежнее поведение.
+  (`ProgressAnnouncer | None`, BOB-055/060): перед `registry.dispatch` каждого вызова
+  `_run_tool` зовёт `announcer.announce(call.name, call.arguments)` — ЖИВУЮ интерим-реплику
+  перед медленным навыком (аргументы передаются, чтобы реплика была контекстной от `query`).
+  Вызов обёрнут в `try/except`: анонс декоративен, его сбой никогда не задерживает и не ломает
+  диспатч. `announcer=None` — прежнее поведение.
 - **Tool-calling в провайдере** (`OpenAICompatProvider`): нативные OpenAI `tools`,
   а при отсутствии нативной поддержки — prompt-fallback (терпимый разбор
   prompt-протокольного JSON `{"tool_call": {...}}` из текста ответа).
@@ -1474,43 +1475,46 @@ Tier 1); иначе ход идёт прежним plain-путём роутер
   (`_SEARCH_FAILED_GUIDANCE`), чтобы Боб сам озвучил оговорку — **никогда** не выдавая знание из
   обучения под видом найденного в сети.
 
-### Реплика «ищу…»: интерим-анонс перед медленным навыком (BOB-055)
+### Реплика «ищу…»: живой интерим-анонс перед медленным навыком (BOB-055 → BOB-060)
 
 Стриминговый `web_search` идёт 1-2 минуты. Молчание всё это время читается owner'ом как
 «Боб не услышал», поэтому перед медленным навыком Боб роняет **одну живую реплику своим
-голосом** — «секунду, гляну в сети…», — а не роботизированное «Loading…».
+голосом**, а не роботизированное «Loading…». **BOB-060:** зашитые фразы вырезаны полностью —
+реплика **всегда** генерится ЖИВЫМ Tier-0-генератором (BOB-057), а сбой/пусто → **тишина**
+(не шаблон); оба пути (tool-loop и verify) унифицированы на одном движке `_announce_live`.
 
 - **Порт `ProgressAnnouncer`** (`application/capabilities/progress_announcer.py`) —
-  `async announce(capability_name)`: анонсировать (или промолчать про) навык **по имени**.
-  Контракт `Capability` не тронут — политика «говорить или молчать» живёт здесь, а не в навыке.
+  `async announce(capability_name, arguments)`: анонсировать (или промолчать про) навык **по имени**,
+  с аргументами вызова для контекста. Контракт `Capability` не тронут — политика «говорить или
+  молчать» живёт здесь, а не в навыке. **Зашитых фраз нет** (`WEB_SEARCH_PROGRESS_PHRASES` /
+  `DEFAULT_PROGRESS_PHRASES` удалены).
 - **`GatewayProgressAnnouncer`** — per-turn, привязанная к чату реализация: строится с
-  `chat_id` хода, тем же `reply`-швом (`_ProgressSink`, структурно = `ReplyGateway`), инъецируемым
-  seeded-`Random` (детерминизм в тестах) и картой имя→фразы. Для навыка из карты выбирает
-  RNG-вариант и шлёт; для отсутствующего (быстрого) — молчит. Набор `WEB_SEARCH_PROGRESS_PHRASES`
-  — 8 коротких живых RU-фраз; `DEFAULT_PROGRESS_PHRASES` (`MappingProxyType`) мапит только
-  `web_search`, так что в v1 говорит лишь медленный поиск, остальные навыки — тишина.
-- **Провязка (`handle_message.py`).** `_reply_with_tools` при заданном `chat_id` строит
-  per-turn `GatewayProgressAnnouncer` (`chat_id` из `_compose_reply`, реюз `self._gateway` +
-  `self._rng`) и передаёт его в `ToolLoop(announcer=…)`; при `chat_id is None` — `announcer=None`,
-  поведение ровно как прежде. `ToolLoop._run_tool` зовёт `announce()` **перед** `registry.dispatch`.
-- **🔴 Инварианты.** Анонс **декоративен на двух швах**: `GatewayProgressAnnouncer.announce`
-  глотает свои ошибки (стиль BOB-050 `_safe_addon` — логирует и роняет), а `ToolLoop._run_tool`
-  дополнительно обёрнут в `try/except` — сбой gateway или анонсера тихий, ход не блокируется и
-  не ломается. Инвариант BOB-053 **цел**: реальный сбой поиска по-прежнему даёт честный
-  анти-конфабуляционный нотис, а не выдумку; стриминг убирает лишь **ложные** нотисы от ~30с-таймаута.
-  Привилегированный fulfiller (проактивный tick) анонсера не получает (v1). Новых зависимостей нет.
-- **Живая адресная интерим-реплика для verify (BOB-057 .3, US-3b).** Когда verify-шаг (.2) решает
-  проверить факт, `GatewayProgressAnnouncer.announce_verify(topic, sender_name)` шлёт ЖИВУЮ,
-  АДРЕСНУЮ реплику в голосе Боба, называя ЧТО он проверяет и К КОМУ обращается («Леш, гляну свежие
-  ставки, секунду 🙂») — не скриптовое абстрактное «ищу…». Модель-фейсинг чист: домен
-  `domain/personality/interim_line.py` (`INTERIM_LINE_SYSTEM_PROMPT`, `build_interim_line_user_prompt`,
-  `clean_interim_line` → одна опрятная строка); инфра `infrastructure/llm/interim_line.py`
-  (`LlmInterimLineGenerator`, новый Tier-0 `TaskType.INTERIM_LINE`, ошибка ПРОПАГИРУЕТСЯ). Порт
-  `InterimLineGenerator` (в `progress_announcer.py`) инъецируется в `HandleMessage`; провязка —
-  `_send_verify_interim` строит per-turn аннонсер перед прямым `provider.search`. **🔴 Декоративная
-  цепочка фолбэков в ОДНОМ месте:** живой Tier-0-ген → seeded-фраза `WEB_SEARCH_PROGRESS_PHRASES`
-  (BOB-055) через тот же seeded-RNG → тишина (сбой `gateway.reply` глотается). Интерим фонит ТОЛЬКО
-  при `needs_check`, +1-2с латентности допустимы (ход всё равно ждёт поиск), ход/поиск не ломаются.
+  `chat_id` хода, тем же `reply`-швом (`_ProgressSink`, структурно = `ReplyGateway`), живым
+  `line_generator` (`InterimLineGenerator` — единственный источник реплики; без него → тишина) и
+  `sender_name` (адресат хода). `rng`/`phrases` убраны. Единый приватный `_announce_live(topic)`:
+  генератор → `strip()` → пусто/сбой → **тишина** (лог, drop), иначе `gateway.reply` (сбой шлёт
+  тоже глотается). `announce(name, arguments)` говорит **только** для `web_search` — тянет `query`
+  из аргументов как topic (или generic «поиск в интернете», если query нет); прочие (быстрые)
+  навыки — тишина. `announce_verify(topic)` — тот же движок, `sender_name` из ctor.
+- **Провязка (`handle_message.py`).** ОБА per-turn анонсера строятся с `line_generator` +
+  `sender_name` (из `interlocutor.display_name`): `_reply_with_tools` при заданном `chat_id` строит
+  анонсер для tool-loop и передаёт его в `ToolLoop(announcer=…)`; `_send_verify_interim` строит
+  анонсер перед прямым `provider.search`. При `chat_id is None` (tool-loop) — `announcer=None`.
+  `ToolLoop._run_tool` зовёт `announce(call.name, call.arguments)` **перед** `registry.dispatch`.
+- **🔴 Инварианты.** Анонс **декоративен на двух швах**: `_announce_live` глотает свои ошибки
+  (стиль BOB-050 `_safe_addon` — логирует и роняет), а `ToolLoop._run_tool` дополнительно обёрнут
+  в `try/except` — сбой gateway или анонсера тихий, ход не блокируется и не ломается. **🔴 Ноль
+  скриптованности (BOB-060 US-2):** сбой генерации / пустая строка / отсутствие генератора →
+  **тишина**, никогда не шаблон. Инвариант BOB-053 **цел**: реальный сбой поиска по-прежнему даёт
+  честный анти-конфабуляционный нотис. Привилегированный fulfiller (проактивный tick) анонсера не
+  получает. Новых зависимостей нет.
+- **Живой Tier-0-генератор (BOB-057 .3, реюз).** `InterimLineGenerator.generate(topic, sender_name)`
+  → ЖИВАЯ, АДРЕСНАЯ реплика в голосе Боба, называя ЧТО он ищет/проверяет и К КОМУ обращается («Леш,
+  гляну свежие ставки, секунду 🙂»). Модель-фейсинг чист: домен `domain/personality/interim_line.py`
+  (`INTERIM_LINE_SYSTEM_PROMPT`, `build_interim_line_user_prompt`, `clean_interim_line` → одна
+  опрятная строка); инфра `infrastructure/llm/interim_line.py` (`LlmInterimLineGenerator`, Tier-0
+  `TaskType.INTERIM_LINE`, ошибка ПРОПАГИРУЕТСЯ → `_announce_live` ловит и молчит). +1-2с латентности
+  допустимы (ход всё равно ждёт поиск), ход/поиск не ломаются.
 
 ### Прочитать ссылку: «Боб читает присланную страницу» (BOB-054)
 
@@ -2165,8 +2169,9 @@ Tier-0 судья решает, зависит ли хороший ответ о
 - Консервативный судья оценивает `VolatilityContext`; сбой судьи ловится и трактуется как
   «не проверять» (`""`) — ход не блокируется флаки-судьёй. `not needs_check` → `""`.
 - При `needs_check` перед поиском шлётся живая адресная интерим-реплика
-  (`_send_verify_interim` → `GatewayProgressAnnouncer.announce_verify(topic, sender_name)`,
-  см. BOB-055 выше), затем `_verify_search_note` делает **один** поиск.
+  (`_send_verify_interim` → `GatewayProgressAnnouncer.announce_verify(topic)`, `sender_name` из
+  ctor, живой генератор → тишина при сбое; см. BOB-060 выше), затем `_verify_search_note` делает
+  **один** поиск.
 - 🔴 **Прямой `provider.search(query)`, НЕ `registry.dispatch` / tool-loop** — поэтому это
   **не** per-sender гейт BOB-052, а внутренняя публичная проверка: никто не просил
   инструмент, наружу идёт только ПУБЛИЧНАЯ веб-информация (никогда owner/приватные данные).
@@ -2174,10 +2179,14 @@ Tier-0 судья решает, зависит ли хороший ответ о
   запросах инструментов.
 - Поиск ограничен коротким `verify.timeout_seconds` через `asyncio.wait_for` (US-3 «не 5
   минут»). Успех с непустым ответом → **grounded-заметка** `_VERIFY_GROUNDED_NOTE`
-  («СВЕЖАЯ ПРОВЕРКА (веб): …» + подсказка отреагировать по-своему, в т.ч. тоном — тон
-  адаптируется через генерацию, непрограммно). 🔴 Сбой / таймаут / пустой ответ →
-  **hedge-заметка** `_VERIFY_HEDGE_NOTE` (US-6: честная оговорка, **без** выдачи устаревших
-  цифр за точные и без выдумки). Заметка вклеивается в контекст генерации (факты + тон).
+  («СВЕЖАЯ ПРОВЕРКА (веб): …» + **register-nudge (BOB-060 .2)**: подать находку **голосом
+  Боба**, отреагировать по-своему, со своим отношением и тоном — **не** «отчётом агента»
+  («выполнен поиск, найдено N…»), не сухой сводкой; тон адаптируется через генерацию,
+  непрограммно). 🔴 Сбой / таймаут / пустой ответ → **hedge-заметка** `_VERIFY_HEDGE_NOTE`
+  (US-6: честная **и живая** оговорка в голосе Боба, не робо-«поиск не удался»; 🔴 BOB-053
+  цел — **без** выдачи устаревших цифр за точные и без выдумки). Заметка вклеивается в
+  контекст генерации (факты + тон). Живой интерим-анонс перед поиском (`interim_line.py`)
+  обобщён на **оба** пути — «сверка факта» и tool-loop «поиск по запросу» (BOB-060 .2).
 - **Проводка.** Инъекция `verify_judge`/`verify_provider`/`verify_timeout_seconds` в
   `HandleMessage`; в `app.py` строятся **только** под `verify.enabled` (дефолт `True`) —
   `LlmVolatilityJudge(router)` + провайдер из секции `search` (тот же Qwen web_search).
@@ -3871,8 +3880,11 @@ degradation) — Боб не теряет память, лишь её семан
 Тесты лежат под `tests/`, повторяя структуру слоёв: `tests/domain/`,
 `tests/application/` (включая `authz/`, `runtime/test_retry.py`,
 `test_capability_registry.py`, `test_tool_loop.py`,
-`capabilities/test_progress_announcer.py` (по-имени решение + декоративное
-глотание сбоя + seeded-RNG выбор фразы, BOB-055),
+`capabilities/test_progress_announcer.py` (по-имени решение + живая генерация
+реплики из `query`/`topic` на обоих путях + декоративное глотание сбоя +
+🔴 ноль скриптованности: сбой/пусто/нет генератора → тишина, а удалённые
+символы `WEB_SEARCH_PROGRESS_PHRASES`/`DEFAULT_PROGRESS_PHRASES`/`rng` больше
+не импортируются, BOB-060),
 `test_recall_memory_capability.py`), `tests/infrastructure/` (включая
 `telegram/test_gateway_authz.py`, `telegram/test_rich.py`,
 `persistence/test_allowlist_store.py`). Мульти-бот шов покрыт

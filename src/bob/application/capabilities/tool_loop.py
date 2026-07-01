@@ -84,7 +84,7 @@ class ToolLoop:
         # a decorative interim line can NEVER delay or break the dispatch below (review .4).
         if self._announcer is not None:
             try:
-                await self._announcer.announce(call.name)
+                await self._announcer.announce(call.name, call.arguments)
             except Exception:  # decorative: an announcer fault must not touch the turn
                 logger.exception("progress announce failed for %s; ignoring", call.name)
         try:
