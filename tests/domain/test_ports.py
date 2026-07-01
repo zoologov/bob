@@ -173,6 +173,26 @@ def test_web_search_provider_is_exported_runtime_checkable_protocol() -> None:
     assert hasattr(ports.WebSearchProvider, "search")
 
 
+def test_web_page_value_object_is_frozen_and_slotted() -> None:
+    # Assert the read_url value object carries final-url/title/text and is immutable.
+    page = ports.WebPage(url="https://example.com/a", title="Title", text="body")
+    assert page.url == "https://example.com/a"
+    assert page.title == "Title"
+    assert page.text == "body"
+    assert not hasattr(page, "__dict__")
+    with pytest.raises(AttributeError):
+        page.text = "tampered"  # type: ignore[misc]
+    with pytest.raises(AttributeError):
+        page.extra = "x"  # type: ignore[attr-defined]
+
+
+def test_url_reader_is_exported_runtime_checkable_protocol() -> None:
+    # Assert the UrlReader port is an exported, structural Protocol declaring read().
+    assert "UrlReader" in ports.__all__
+    assert getattr(ports.UrlReader, "_is_protocol", False) is True
+    assert hasattr(ports.UrlReader, "read")
+
+
 def test_web_search_provider_is_structurally_satisfiable() -> None:
     # Arrange: a minimal object that satisfies the WebSearchProvider shape.
     class ConstSearch:

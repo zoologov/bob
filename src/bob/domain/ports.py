@@ -82,11 +82,15 @@ __all__ = [
     "Reranker",
     "SelfImprovementStore",
     "SoulStore",
+    "SsrfBlockedError",
     "SulkStore",
     "ToolCall",
     "ToolCallResult",
     "ToolCallingProvider",
     "ToolDefinition",
+    "UrlReadError",
+    "UrlReader",
+    "WebPage",
     "WebSearchProvider",
     "WebSearchResult",
     "WebSource",
@@ -169,6 +173,45 @@ class WebSearchResult:
 
     answer: str
     sources: tuple[WebSource, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class WebPage:
+    """One fetched web page a :class:`UrlReader` extracted (the ``read_url`` payload).
+
+    Provider-agnostic (BOB-054): ``url`` is the FINAL url after any allowed redirects
+    (so Bob cites where the content actually came from); ``title`` is the page title
+    (``""`` when absent); ``text`` is the extracted, whitespace-collapsed readable body
+    (already truncated to the reader's char limit). Immutable so a read page cannot be
+    tampered with downstream. The skill (.2) projects this compactly into the tool-loop;
+    Bob synthesises the final reply in his own voice — he never confabulates content.
+    """
+
+    url: str
+    title: str
+    text: str
+
+
+class UrlReadError(Exception):
+    """Raised by a :class:`UrlReader` when a page cannot be read (BOB-054).
+
+    The port's failure contract — defined in the domain so the application
+    (``read_url``) can catch it WITHOUT importing infrastructure (the hexagon
+    forbids application → infrastructure, mirroring :class:`DiagramRenderError`).
+    Covers a rejected scheme, a non-2xx status, a disallowed content-type, an
+    over-``max_bytes`` body, too many redirects, or empty extracted text — every case
+    where Bob must honestly say "couldn't read it" rather than invent content. The
+    infra reader (``HttpUrlReader``) re-exports it for adapters.
+    """
+
+
+class SsrfBlockedError(UrlReadError):
+    """Raised when a URL resolves to a non-public address (the 🔴 SSRF guard, BOB-054).
+
+    A distinct subtype so the caller can tell a security block from a transient network
+    failure: a block is DETERMINISTIC and must NOT be retried, just honestly refused (the
+    ``read_url`` skill short-circuits the bounded retry for exactly this class).
+    """
 
 
 class DiagramRenderError(Exception):
@@ -338,6 +381,26 @@ class WebSearchProvider(Protocol):
 
     async def search(self, query: str) -> WebSearchResult:
         """Return a grounded answer with sources for ``query`` (raises on failure)."""
+        ...
+
+
+@runtime_checkable
+class UrlReader(Protocol):
+    """Open a concrete URL and return its extracted readable content (BOB-054).
+
+    The provider-agnostic seam the ``read_url`` skill delegates to: given a ``url``,
+    fetch the page and return a :class:`WebPage` (final url + title + extracted text).
+    The first realisation is ``HttpUrlReader`` (aiohttp + a 🔴 SSRF guard + stdlib
+    ``html.parser`` extraction), but a headless-render or paid-plugin reader swaps in
+    behind the same port without any skill change. An implementation RAISES on any
+    failure — a blocked (SSRF) address, a network error, a non-2xx, a disallowed
+    content-type, or empty extracted text — so the caller (.2) owns fault-tolerance and
+    Bob never confabulates what a page said. It must NEVER return a page it could not
+    genuinely read.
+    """
+
+    async def read(self, url: str) -> WebPage:
+        """Fetch ``url`` and return its extracted content (raises on failure/block)."""
         ...
 
 

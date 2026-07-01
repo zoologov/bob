@@ -49,6 +49,7 @@ from bob.application.capabilities import (
     make_inspect_architecture_capability,
     make_list_work_capability,
     make_read_code_capability,
+    make_read_url_capability,
     make_recall_memory_capability,
     make_render_diagram_capability,
     make_search_memory_capability,
@@ -189,6 +190,7 @@ from bob.infrastructure.telegram.multibot import (
     BotScope,
     MultiBotGateway,
 )
+from bob.infrastructure.web import build_url_reader
 
 if TYPE_CHECKING:
     from aiogram.types import BufferedInputFile, InputRichMessage, ReactionTypeEmoji
@@ -2152,6 +2154,12 @@ def _build_registry(
     # the tool-loop only runs for an authorised sender, so no extra gate is needed.
     if _flag(_section(config, "search"), "enabled"):
         registry.register(make_web_search_capability(build_web_search_provider(config)))
+    # Read URL (BOB-054): the twin of web_search — registered ONLY when
+    # ``read_url.enabled`` so the SSRF-guarded page reader stays behind an explicit flag.
+    # Privilege is by sender (authz/BOB-052): the tool-loop only runs for an authorised
+    # sender, so no extra gate is needed.
+    if _flag(_section(config, "read_url"), "enabled"):
+        registry.register(make_read_url_capability(build_url_reader(config)))
     return registry, diagram_sink, diagram_renderer
 
 

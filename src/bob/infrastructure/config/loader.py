@@ -373,6 +373,24 @@ DEFAULT_CONFIG: Config = {
         "api_key": "",
         "timeout_seconds": 180,
     },
+    # Read a link — «Боб читает присланную ссылку» (BOB-054). The ``read_url`` skill
+    # (behind the capability seam, twin of ``web_search``) makes ONE ``aiohttp`` GET
+    # through a 🔴 SSRF-guarded reader (http/https only, every resolved IP must be
+    # public, manual re-validated redirects, streaming byte cap, content-type allowlist)
+    # and returns the page's extracted readable text. ``enabled`` defaults TRUE — it is
+    # read-only and gated by sender authz (owner-only; the tool-loop never runs for an
+    # unauthorised sender). ``timeout_seconds`` bounds a slow host; ``max_bytes`` aborts
+    # a giant/endless body mid-stream; ``max_redirects`` caps redirect hops (each hop is
+    # re-validated by the SSRF guard); ``max_chars`` truncates the extracted text fed to
+    # the model; ``user_agent`` is the fixed UA sent on every request (no auth headers).
+    "read_url": {
+        "enabled": True,
+        "timeout_seconds": 15,
+        "max_bytes": 2_000_000,
+        "max_redirects": 5,
+        "max_chars": 10_000,
+        "user_agent": "BobBot/0.1 (+https://github.com/vzoologov/bob)",
+    },
     # Two bots in one process (BOB-003): Bob lives in his topic, GUPPI is the
     # gatekeeper in General. Each bot's token comes from env only (never YAML);
     # the shared ids (chat/owner/allowlist) and Bob's topic are non-secret.
