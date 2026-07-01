@@ -60,6 +60,7 @@ class TaskType(Enum):
     RESPONSE_JUDGE = "response_judge"
     REACTION_JUDGE = "reaction_judge"
     PRIVILEGE_JUDGE = "privilege_judge"
+    VOLATILITY_JUDGE = "volatility_judge"
 
 
 # Task -> preferred tier. Quality-critical, user-facing work goes to Tier 1
@@ -90,6 +91,9 @@ _PREFERRED_TIER: dict[TaskType, int] = {
     # request needs owner permission — a cheap, privacy-sensitive local read, like
     # the other classifiers.
     TaskType.PRIVILEGE_JUDGE: _TIER_LOCAL,
+    # Volatility judgment (BOB-057) decides, before Bob answers, whether the answer
+    # hinges on a fresh volatile fact — a cheap per-inbound classifier, Tier 0.
+    TaskType.VOLATILITY_JUDGE: _TIER_LOCAL,
 }
 
 
