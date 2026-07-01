@@ -16,7 +16,7 @@ Wave 1 — dev `.1` (общий тред + пер-персона сигналы 
 
 | Беад | Роль | Статус |
 |------|------|--------|
-| `bob-0bl.1` | dev: общий тред + absence/anti-repeat по автору | ⏳ in_progress |
+| `bob-0bl.1` | dev: общий тред + absence/anti-repeat по автору | ✅ done |
 | `bob-0bl.2` | test: связность + пер-персона целы | ○ blocked (.1) |
 | `bob-0bl.3` | review: регрессии + приватность + DDD | ○ blocked (.2) |
 | `bob-0bl.4` | tech-writer + Gate | ○ blocked (.3) |
@@ -24,6 +24,7 @@ Wave 1 — dev `.1` (общий тред + пер-персона сигналы 
 ## Прогресс
 
 - 2026-07-01: PRD/RFC/CONTEXT/PLAN утверждены; беады созданы; координатор запущен (dev `.1`).
+- 2026-07-01: dev `.1` реализован. `_replay_person_history`→`_replay_recent_thread` (общий тред `recent_episodes(k)`), вызовы в judgment (~2159) и reply (~1360). Пер-персона сигналы по автору: `_author_label`(=interlocutor.display_name) + `_history_for_author` фильтруют общий тред по метке `<имя>`; `_absence_for(history, interlocutor)` и `_user_turns(history, author)` — absence/anti-repeat считаются по текущему автору. Скоуп-хук в `_replay_recent_thread` (публ→общий; приват→задел). Окно-bump ПРОПУЩЕН (риск: правит app.py+loader+test_dialogue_config; 14 уже широкое, config-driven). +4 теста; suite 3161 pass; ruff/mypy/lint зелёные.
 
 ## Решения/заметки
 

@@ -1351,20 +1351,23 @@ class HandleMessage:
         recalled: Sequence[Recalled] = recalled_excluding_reflections(
             await self._recall.recall(event.text, k=_RECALL_K)
         )
-        # On the judge REPLY path the per-person thread was already replayed for the
+        # On the judge REPLY path the shared recent thread was already replayed for the
         # judgment (BOB-049); reuse it so it is not read twice. Otherwise (legacy path)
-        # replay it now — keyed on the current interlocutor's sender_id (BOB-045).
+        # replay it now — the SHARED group thread (BOB-058 .1), all participants labeled.
         history: Sequence[Mapping[str, object]] = (
             prefetched_history
             if prefetched_history is not None
-            else await self._replay_person_history(interlocutor)
+            else await self._replay_recent_thread(interlocutor)
         )
-        # User-repeat detection (BOB-022): does the OWNER repeat (near-)verbatim what
-        # he already said in the recent window? Pure, no-LLM, conservative (exact after
-        # normalise). When True the compose prompt carries the user-repeat directive so
-        # Bob NOTICES it in voice instead of silently re-answering. This is the opposite
-        # side of the own-reply guard below (which catches BOB repeating himself).
-        user_repeated = is_user_repeat(event.text, _user_turns(history))
+        # User-repeat detection (BOB-022): does THIS author repeat (near-)verbatim what
+        # THEY already said in the recent window? Pure, no-LLM, conservative (exact after
+        # normalise). 🔴 BOB-058 .1: the thread is now shared, so the user turns are
+        # filtered to the CURRENT author (by ``<name>`` label) — a DIFFERENT member's
+        # similar message is never counted as this person repeating themselves. When True
+        # the compose prompt carries the user-repeat directive so Bob NOTICES it in voice.
+        user_repeated = is_user_repeat(
+            event.text, _user_turns(history, _author_label(interlocutor))
+        )
         # Run the slow generation inside the typing keepalive so "Bob is typing…"
         # stays visible for the whole real wait (BOB-009); then commit one rich final.
         # 🔴 BOB-049 .3: the reply generation is the second ESSENTIAL step (retry-wrapped
@@ -2146,8 +2149,9 @@ class HandleMessage:
         """Ask the semantic judge how Bob takes this turn (BOB-049, the LIVE path).
 
         Assembles the turn's context — the message, the sender as social context, the
-        CURRENT person's per-person thread (BOB-045, scoped 🔴 by sender so a guest only
-        ever sees their OWN thread), the structural HINTS and the mood tone — and delegates
+        SHARED recent thread of the whole topic (BOB-058 .1: all participants, author-
+        labeled, so Bob holds the multi-party thread), the structural HINTS and the mood
+        tone — and delegates
         the single semantic decision to the injected :class:`DecideResponse`. The judge
         raises on failure (the fault-tolerant path is BOB-049 .3); here we assume success.
         Returns the choice plus the floor signal (RAW per-message addressivity) and the
@@ -2156,7 +2160,7 @@ class HandleMessage:
         assert self._decide_response is not None  # guarded by the caller
         decide_response = self._decide_response
         signals = await self._addressivity_signals(event)
-        history = await self._replay_person_history(interlocutor)
+        history = await self._replay_recent_thread(interlocutor)
         # ESSENTIAL step (BOB-049 .3): the semantic judgment is retry-wrapped — a flaky
         # judge call retries with backoff, then (if still failing) raises
         # _EssentialStepError so the turn falls back to the honest GUPPI outage notice
@@ -2309,40 +2313,48 @@ class HandleMessage:
             return None
         return self._bob_user_id_source()
 
-    async def _replay_person_history(
+    async def _replay_recent_thread(
         self, interlocutor: Interlocutor | None
     ) -> Sequence[Mapping[str, object]]:
-        """Replay the CURRENT interlocutor's per-person thread (BOB-045 .2 / BOB-051).
+        """Replay the SHARED recent thread of the whole topic (BOB-058 .1).
 
-        With a perceived interlocutor carrying a ``sender_id`` we replay the last
-        ``recent_turns`` episodes WITH THAT person (owner / known / guest alike) — the
-        continuity thread that lets Bob know WHO he is talking to (``recent_episodes_for``
-        keys on ``sender_id``). With no interlocutor / no ``sender_id`` (perception seam
-        unwired) we DEGRADE to the global recent window — memory is unified for the closed
-        group (BOB-051), so an unresolved identity reads the shared thread rather than an
-        empty one.
+        The conversation context for judgment + reply is the group's recent thread —
+        the last ``recent_turns`` episodes across ALL participants (``recent_episodes``),
+        already author-labeled ``"<name>: …\\nbob: …"``. So Bob hears the whole room and
+        holds the multi-party thread: when Vladimir asks Bob to answer Lyosha, Alexey's
+        film message is right there in the context (US-1/2/3) instead of hidden behind a
+        per-person replay. Memory is unified for the closed group (BOB-051), so the shared
+        read is safe — it is ordinary topic traffic, not owner-private material.
+
+        Scope hook (BOB-058 .1): a PUBLIC group reads the shared thread. A future
+        PRIVATE/DM scope would read the CURRENT interlocutor's per-person slice
+        (``recent_episodes_for(interlocutor.sender_id, …)``) instead — only the public
+        group exists today, so the per-person branch is intentionally NOT wired here. The
+        ``interlocutor`` argument is retained as the seam that a private scope would key on.
         """
-        if interlocutor is not None and interlocutor.sender_id is not None:
-            return await self._episodes.recent_episodes_for(
-                interlocutor.sender_id, self._recent_turns
-            )
+        del interlocutor  # public group → shared thread (see the scope hook above)
         return await self._episodes.recent_episodes(self._recent_turns)
 
     def _absence_for(
-        self, history: Sequence[Mapping[str, object]]
+        self,
+        history: Sequence[Mapping[str, object]],
+        interlocutor: Interlocutor | None,
     ) -> str | None:
-        """A light long-gap absence hint for the CURRENT person's thread, or ``None`` (BOB-045 .3).
+        """A light long-gap absence hint for the CURRENT person, or ``None`` (BOB-045 .3).
 
-        Reads the freshest prior turn's timestamp from the already-fetched per-person
-        ``history`` (no extra query) and, via the pure :func:`absence_hint` domain helper,
-        turns the gap to ``self._clock.now()`` into a SHORT neutral note Bob can fold in to
-        notice the pause humanly. Returns ``None`` — add no line, unchanged behaviour — on
-        first contact (empty history), an unparseable timestamp, a gap under the configured
-        threshold, or the hint disabled (``absence_hint_hours == 0``). Applies to any
-        interlocutor with a per-person thread (owner and guest alike). Deterministic given
-        the injected clock.
+        🔴 Per-person over the SHARED thread (BOB-058 .1): ``history`` is now the whole
+        group's recent thread, so the last-seen must be filtered to the CURRENT author's
+        own turns (matching the ``"<name>:"`` label to the interlocutor's display name)
+        before reading the freshest timestamp — a DIFFERENT member speaking recently must
+        never reset THIS person's gap. Via the pure :func:`absence_hint` domain helper the
+        gap to ``self._clock.now()`` becomes a SHORT neutral note Bob can fold in to notice
+        the pause humanly. Returns ``None`` — add no line, unchanged behaviour — when the
+        current author has no turn in the shared window (graceful, exactly like an empty
+        history today), on an unparseable timestamp, a gap under the configured threshold,
+        or the hint disabled (``absence_hint_hours == 0``). Deterministic given the clock.
         """
-        last_seen = _last_seen_at(history)
+        mine = _history_for_author(history, _author_label(interlocutor))
+        last_seen = _last_seen_at(mine)
         if last_seen is None:
             return None
         return absence_hint(
@@ -2439,7 +2451,7 @@ class HandleMessage:
         unified for the closed group and no longer branch on guest status.
         """
         context = _assemble_shareable_context(
-            soul, text, recalled, history, absence=self._absence_for(history)
+            soul, text, recalled, history, absence=self._absence_for(history, interlocutor)
         )
         # Being-received acknowledgment (BOB-050 .3): a RARE, per-person hint that someone
         # warmly reacted to one of Bob's messages — applies to ANY interlocutor (owner and
@@ -3053,11 +3065,12 @@ _OUTCOME_FOR_INTENT: dict[ResponseIntent, ResponseOutcome] = {
 
 
 def _render_thread(history: Sequence[Mapping[str, object]]) -> str:
-    """Render the per-person thread into the judge's recent-thread snippet (BOB-049).
+    """Render the shared recent thread into the judge's recent-thread snippet (BOB-049).
 
-    Joins each replayed episode's ``content`` (stored as ``"<sender>: <text>\\nbob:
+    Joins each replayed episode's ``content`` (stored as ``"<name>: <text>\\nbob:
     <reply>"``) oldest-first; an empty history yields ``""`` (the judge reads it as a
-    fresh thread). No I/O — a pure projection of the already-replayed history.
+    fresh thread). No I/O — a pure projection of the already-replayed history (BOB-058 .1:
+    the shared group thread, author-labeled).
     """
     return "\n".join(
         str(item.get("content", "")) for item in history if item.get("content")
@@ -3255,17 +3268,70 @@ _recalled_without_copied_exemplars = recalled_without_copied_exemplars
 _SENDER_TEXT_SEPARATOR = ": "
 
 
-def _user_turns(history: Sequence[Mapping[str, object]]) -> list[str]:
+def _episode_author(content: str) -> str | None:
+    """Recover the ``<name>`` author label of an episode's user turn, or ``None`` (BOB-058).
+
+    Episodes are stored as ``"<name>: <text>\\nbob: <reply>"`` (see
+    :meth:`HandleMessage._persist`); the author is the text before the FIRST
+    ``"<name>: "`` separator in the user half (the part before the ``"\\nbob: "`` marker).
+    Content without the expected shape yields ``None`` (not attributable to any author).
+    """
+    marker = content.find(_BOB_TURN_MARKER)
+    head = content[:marker] if marker != -1 else content
+    sep = head.find(_SENDER_TEXT_SEPARATOR)
+    if sep == -1:
+        return None
+    return head[:sep]
+
+
+def _author_label(interlocutor: Interlocutor | None) -> str | None:
+    """The CURRENT author's stored episode label, or ``None`` when unresolved (BOB-058 .1).
+
+    Per-person signals (absence, anti-repeat) over the SHARED thread key on the ``<name>``
+    an episode is stored under — for the current turn that is the interlocutor's
+    ``display_name`` (the same name :meth:`HandleMessage._persist` writes as the sender
+    label). ``None`` — no perception seam / no interlocutor — means "do not filter": the
+    signal falls back to the whole window, exactly as before perception was wired.
+    """
+    return interlocutor.display_name if interlocutor is not None else None
+
+
+def _history_for_author(
+    history: Sequence[Mapping[str, object]], author: str | None
+) -> list[Mapping[str, object]]:
+    """Filter the shared thread to the episodes authored by ``author`` (BOB-058 .1).
+
+    Keeps ordering (oldest-first) so the per-person signals — absence last-seen,
+    anti-repeat turns — see only the CURRENT author's own turns even though ``history``
+    now interleaves the whole group. ``author is None`` (unresolved identity) means "do
+    not filter" → the full window is returned (the pre-BOB-058 degraded behaviour).
+    """
+    if author is None:
+        return list(history)
+    mine: list[Mapping[str, object]] = []
+    for item in history:
+        content = item.get("content")
+        if isinstance(content, str) and _episode_author(content) == author:
+            mine.append(item)
+    return mine
+
+
+def _user_turns(
+    history: Sequence[Mapping[str, object]], author: str | None = None
+) -> list[str]:
     """Recover the USER half of each replayed episode (BOB-022 repeat detection).
 
-    Episodes are stored as ``"<sender>: <text>\\nbob: <reply>"`` (see
+    Episodes are stored as ``"<name>: <text>\\nbob: <reply>"`` (see
     :meth:`HandleMessage._persist`); this extracts the ``<text>`` between the first
-    ``"<sender>: "`` and the ``"\\nbob: "`` marker for each episode so the user-repeat
-    predicate compares the current message ONLY against prior USER turns — never
-    against Bob's own replies. Episodes without the expected shape are skipped.
+    ``"<name>: "`` and the ``"\\nbob: "`` marker for each episode so the user-repeat
+    predicate compares the current message ONLY against prior USER turns — never against
+    Bob's own replies. 🔴 BOB-058 .1: over the now-SHARED thread, ``author`` (when given)
+    restricts the turns to the CURRENT author's ``<name>`` label, so a DIFFERENT member's
+    similar line is not mistaken for this person repeating themselves. Episodes without
+    the expected shape are skipped.
     """
     turns: list[str] = []
-    for item in history:
+    for item in _history_for_author(history, author):
         content = item.get("content")
         if not isinstance(content, str):
             continue

@@ -1059,8 +1059,9 @@ async def test_non_positive_recent_window_is_rejected() -> None:
 
 # --- BOB-045 .2: per-person history replay + privacy-scoped recall ------------
 
-# An owner's private turn (sender 1) and a guest's own turn (sender 2) share the log.
-# Each interlocutor must only ever see the turns attributed to THEMSELVES.
+# An owner's turn (sender 1) and a member's turn (sender 2) share the group log. Under
+# BOB-058 .1 the conversation context is the SHARED thread, so BOTH members see BOTH turns
+# (author-labeled); only the per-person SIGNALS (absence, anti-repeat) filter by author.
 _OWNER_THREAD_TURN = "Vova: секретный план на завтра\nbob: понял, держим в тайне"
 _GUEST_THREAD_TURN = "Norman: привет, расскажи о себе\nbob: привет, я Боб"
 _OWNER_SENDER_ID = 1
@@ -1088,10 +1089,12 @@ def _owner_with_id(sender_id: int | None) -> _FakeInterlocutorResolver:
     )
 
 
-async def test_guest_replays_only_their_own_per_person_thread() -> None:
-    # BOB-045: a guest gets THEIR OWN thread replayed (not empty, not the owner's) —
-    # the per-person window keys on the guest's sender_id, so the owner's private turn
-    # in the same log is never replayed for the stranger.
+async def test_member_hears_the_shared_group_thread() -> None:
+    # 🔴 BOB-058 .1 (US-1/2/3): the conversation context is the SHARED recent thread of
+    # the whole topic, so a member replaying it hears EVERY participant — both their own
+    # turn AND another member's — with the author labels intact (the closed group's
+    # memory is unified, BOB-051). This is the continuity fix: Bob no longer loses the
+    # multi-party thread behind a per-person replay.
     handler, _bot, _repo, tier1 = _build(
         reply="hi",
         history=_PERSON_THREAD,
@@ -1100,8 +1103,8 @@ async def test_guest_replays_only_their_own_per_person_thread() -> None:
 
     await handler.handle(_message("расскажи подробно про кофе"))
 
-    assert _GUEST_THREAD_TURN in tier1.all_text  # the guest's own thread is replayed
-    assert _OWNER_THREAD_TURN not in tier1.all_text  # the owner's turn is never seen
+    assert _GUEST_THREAD_TURN in tier1.all_text  # this member's own turn
+    assert _OWNER_THREAD_TURN in tier1.all_text  # 🔴 and the other member's turn too
 
 
 async def test_non_owner_recall_is_unified_full_knowledge() -> None:
@@ -1127,9 +1130,10 @@ async def test_non_owner_recall_is_unified_full_knowledge() -> None:
     assert "ownerless fact" in tier1.all_text  # 🔴 sender-less knowledge unified
 
 
-async def test_owner_keeps_their_thread_and_global_recall() -> None:
-    # BOB-045: the owner replays THEIR OWN thread (per-person) and keeps GLOBAL recall —
-    # a sender-less fact still grounds the owner reply (owner recall is never scoped).
+async def test_owner_hears_the_shared_thread_and_keeps_global_recall() -> None:
+    # BOB-058 .1: the owner replays the SHARED thread (every member's turn, not only his
+    # own) and keeps GLOBAL recall — a sender-less fact still grounds the owner reply
+    # (owner recall is never scoped).
     recall = FakeRecall(
         hits=[{"content": "ownerless fact", "category": "fact", "sender_id": None}]
     )
@@ -1142,15 +1146,16 @@ async def test_owner_keeps_their_thread_and_global_recall() -> None:
 
     await handler.handle(_message("объясни подробно про кофе"))
 
-    assert _OWNER_THREAD_TURN in tier1.all_text  # the owner's own thread is replayed
-    assert _GUEST_THREAD_TURN not in tier1.all_text  # not the guest's thread
+    assert _OWNER_THREAD_TURN in tier1.all_text  # the owner's own turn
+    assert _GUEST_THREAD_TURN in tier1.all_text  # 🔴 and the member's turn (shared thread)
     assert "ownerless fact" in tier1.all_text  # owner recall stays global
 
 
-async def test_member_context_unifies_knowledge_but_keeps_per_person_thread() -> None:
-    # 🔴 BOB-051 — the memory/continuity split: a member's RECALL is unified (Bob's full
-    # knowledge surfaces, whatever its attribution), while the replayed HISTORY stays
-    # PER-PERSON (continuity — Bob knows WHO he is talking to, not just WHAT he knows).
+async def test_member_context_unifies_knowledge_and_hears_the_shared_thread() -> None:
+    # 🔴 BOB-051 + BOB-058 .1: a member's RECALL is unified (Bob's full knowledge surfaces,
+    # whatever its attribution) AND the replayed HISTORY is the shared group thread — Bob
+    # knows WHAT he knows AND holds the whole multi-party conversation (every member's
+    # turn is in view, author-labeled).
     recall = FakeRecall(
         hits=[
             {"content": "owner shared fact", "category": "personal", "sender_id": 1},
@@ -1172,9 +1177,9 @@ async def test_member_context_unifies_knowledge_but_keeps_per_person_thread() ->
     assert "norman own memory" in text
     assert "owner shared fact" in text
     assert "ownerless fact" in text
-    # Continuity stays per-person: the member sees THEIR thread, not someone else's.
+    # Continuity is the SHARED thread — the member sees the whole group's recent turns.
     assert _GUEST_THREAD_TURN in text
-    assert _OWNER_THREAD_TURN not in text  # the owner's per-person thread is not replayed
+    assert _OWNER_THREAD_TURN in text  # 🔴 the other member's turn is replayed too
 
 
 async def test_history_degrades_to_global_for_owner_without_sender_seam() -> None:
@@ -1229,11 +1234,17 @@ async def test_guest_with_thread_still_gets_no_owner_inner_life_leak() -> None:
 # --- BOB-045 .3: long-gap absence hint ----------------------------------------
 
 
-def _person_turn_at(*, sender_id: int, hours_ago: float) -> Mapping[str, object]:
-    """A per-person prior turn timestamped ``hours_ago`` before the fixed clock now."""
+def _person_turn_at(
+    *, sender_id: int, hours_ago: float, name: str = "Norman"
+) -> Mapping[str, object]:
+    """A prior turn by ``name`` timestamped ``hours_ago`` before the fixed clock now.
+
+    The ``name`` is the author label the shared thread carries (BOB-058 .1) — the
+    per-person absence filter keys on it, so it must match the interlocutor's display name.
+    """
     ts = (_moment() - timedelta(hours=hours_ago)).isoformat()
     return {
-        "content": "Norman: давнее сообщение\nbob: ответил",
+        "content": f"{name}: давнее сообщение\nbob: ответил",
         "event_type": "message",
         "sender_id": sender_id,
         "ts": ts,
@@ -1260,7 +1271,9 @@ async def test_owner_long_gap_adds_an_absence_hint() -> None:
     # pause gets the "вчера" bucket hint too (symmetry; owner and guest alike).
     handler, _bot, _repo, tier1 = _build(
         reply="hi",
-        history=[_person_turn_at(sender_id=_OWNER_SENDER_ID, hours_ago=26)],
+        history=[
+            _person_turn_at(sender_id=_OWNER_SENDER_ID, hours_ago=26, name="Vova")
+        ],
         perceive_sender=_owner_with_id(_OWNER_SENDER_ID),
     )
 
@@ -1312,10 +1325,11 @@ async def test_disabled_absence_hint_adds_no_line_even_after_a_long_gap() -> Non
 # --- BOB-045 acceptance: US-3 multi-party + US-2 recency-with-them -------------
 
 
-async def test_two_person_threads_do_not_bleed_into_each_other() -> None:
-    # 🔴 US-3 multi-party: over ONE shared log (owner turn + Norman turn), the owner's
-    # assembled context carries NO Norman-only episode and Norman's carries NO owner
-    # episode — the two per-person threads never bleed, in both directions.
+async def test_both_members_share_one_group_thread() -> None:
+    # 🔴 BOB-058 .1 (US-3 multi-party): over ONE shared log (owner turn + Norman turn),
+    # BOTH members' assembled context carries the WHOLE thread — the owner hears Norman
+    # and Norman hears the owner. The closed group's conversation is a single shared
+    # thread (BOB-051 unified memory), not two isolated per-person slices.
     owner_handler, _ob, _or, owner_tier1 = _build(
         reply="hi",
         history=_PERSON_THREAD,
@@ -1330,12 +1344,12 @@ async def test_two_person_threads_do_not_bleed_into_each_other() -> None:
     await owner_handler.handle(_message("объясни подробно про кофе"))
     await guest_handler.handle(_message("расскажи подробно про кофе"))
 
-    # The owner sees ONLY their own thread...
+    # The owner hears the whole thread — his own turn AND Norman's...
     assert _OWNER_THREAD_TURN in owner_tier1.all_text
-    assert _GUEST_THREAD_TURN not in owner_tier1.all_text
-    # ...and Norman sees ONLY his own thread — no cross-contamination either way.
+    assert _GUEST_THREAD_TURN in owner_tier1.all_text
+    # ...and Norman hears the whole thread too — both turns, in both directions.
     assert _GUEST_THREAD_TURN in guest_tier1.all_text
-    assert _OWNER_THREAD_TURN not in guest_tier1.all_text
+    assert _OWNER_THREAD_TURN in guest_tier1.all_text
 
 
 # A guest's multi-turn thread: an EARLY distinct topic plus a recent turn timestamped
@@ -1376,6 +1390,130 @@ async def test_negative_absence_hint_hours_is_rejected_at_construction() -> None
     # at construction (not a silent disable), mirroring the recent_turns guard.
     with pytest.raises(ValueError, match="absence_hint_hours"):
         _build(reply="hi", absence_hint_hours=-1.0)
+
+
+# --- BOB-058 .1: shared group thread + per-author absence/anti-repeat ----------
+
+# Two members of the closed group over ONE shared log: Alexey talked about a film, then
+# Vladimir writes. The shared thread carries BOTH turns, author-labeled — the continuity
+# the per-person replay used to hide ("нет такого сообщения от Лёши").
+_ALEXEY_FILM_TURN = "Alexey: смотрел вчера отличный фильм про космос\nbob: о, расскажи"
+_VLADIMIR_TURN = "Vladimir: всем привет\nbob: привет"
+_SHARED_GROUP_THREAD: list[Mapping[str, object]] = [
+    {"content": _ALEXEY_FILM_TURN, "event_type": "message", "sender_id": 1},
+    {"content": _VLADIMIR_TURN, "event_type": "message", "sender_id": 2},
+]
+
+
+def _member_named(name: str, sender_id: int | None) -> _FakeInterlocutorResolver:
+    """A perceived KNOWN member of the closed group with a stable display name."""
+    return _FakeInterlocutorResolver(
+        _interlocutor(
+            name=name,
+            kind=InterlocutorKind.KNOWN,
+            trust=Trust.TRUSTED,
+            sender_id=sender_id,
+        )
+    )
+
+
+async def test_shared_thread_lets_bob_hear_other_participants() -> None:
+    # 🔴 BOB-058 .1 (US-1/2/3, the core continuity fix): the reply context is the SHARED
+    # recent thread of the whole topic. When Vladimir asks Bob to answer Lyosha, Alexey's
+    # film message is right there in the context — with its author label — so Bob no longer
+    # replays only HIS thread with Vladimir and denies Lyosha ever wrote.
+    handler, _bot, _repo, tier1 = _build(
+        reply="про фильм Лёши",
+        history=_SHARED_GROUP_THREAD,
+        perceive_sender=_member_named("Vladimir", 2),
+    )
+
+    await handler.handle(
+        _addr_message("ответь подробно на сообщение Лёши", mentions_bob=True)
+    )
+
+    text = tier1.all_text
+    assert _ALEXEY_FILM_TURN in text  # another member's turn is in the shared thread
+    assert "Alexey:" in text  # author labels distinguish who said what (US-3)
+
+
+async def test_absence_hint_tracks_only_the_current_authors_gap() -> None:
+    # 🔴 BOB-058 .1: per-person absence (BOB-045) preserved over the SHARED thread. Vladimir
+    # was last seen 14h ago (> 8h), while Alexey spoke just 1h ago. Filtering the shared
+    # thread to THIS author, Vladimir's own gap still fires the hint — a DIFFERENT member's
+    # recent turn must not reset it (a naive last-seen over the shared thread would).
+    now = _moment()
+    shared: list[Mapping[str, object]] = [
+        {
+            "content": "Vladimir: до завтра\nbob: пока",
+            "event_type": "message",
+            "sender_id": 2,
+            "ts": (now - timedelta(hours=14)).isoformat(),
+        },
+        {
+            "content": "Alexey: я всё ещё тут\nbob: ага",
+            "event_type": "message",
+            "sender_id": 1,
+            "ts": (now - timedelta(hours=1)).isoformat(),
+        },
+    ]
+    handler, _bot, _repo, tier1 = _build(
+        reply="hi",
+        history=shared,
+        perceive_sender=_member_named("Vladimir", 2),
+    )
+
+    await handler.handle(
+        _addr_message("расскажи подробно, снова тут", mentions_bob=True)
+    )
+
+    assert "Absence:" in tier1.all_text  # Vladimir's own 14h gap, not reset by Alexey
+
+
+async def test_anti_repeat_ignores_a_different_authors_similar_line() -> None:
+    # 🔴 BOB-058 .1: per-person anti-repeat (BOB-032) over the SHARED thread. Alexey earlier
+    # said X; now Vladimir says the SAME X for the FIRST time. It is NOT Vladimir repeating
+    # himself — the repeat check is filtered to the current author's own prior turns.
+    same = "расскажи подробно про кофе"
+    shared: list[Mapping[str, object]] = [
+        {
+            "content": f"Alexey: {same}\nbob: вот про кофе",
+            "event_type": "message",
+            "sender_id": 1,
+        }
+    ]
+    handler, _bot, _repo, tier1 = _build(
+        reply="свежий ответ",
+        history=shared,
+        perceive_sender=_member_named("Vladimir", 2),
+    )
+
+    await handler.handle(_addr_message(same, mentions_bob=True))
+
+    assert not _has_user_repeat_directive(tier1.all_text)
+
+
+async def test_anti_repeat_detects_the_current_author_repeating() -> None:
+    # 🔴 BOB-058 .1 (the other side): the SAME author (Vladimir) repeating his own recent
+    # line still trips the user-repeat directive — the per-author filter keeps his own
+    # turns in view over the shared thread.
+    same = "расскажи подробно про кофе"
+    shared: list[Mapping[str, object]] = [
+        {
+            "content": f"Vladimir: {same}\nbob: вот про кофе",
+            "event_type": "message",
+            "sender_id": 2,
+        }
+    ]
+    handler, _bot, _repo, tier1 = _build(
+        reply="свежий ответ",
+        history=shared,
+        perceive_sender=_member_named("Vladimir", 2),
+    )
+
+    await handler.handle(_addr_message(same, mentions_bob=True))
+
+    assert _has_user_repeat_directive(tier1.all_text)
 
 
 # --- BOB-050 .3: low-frequency being-received acknowledgment hint --------------
@@ -7449,11 +7587,11 @@ async def test_bob051_us5_inner_life_addons_still_surface_for_the_owner() -> Non
     assert "чем сейчас увлечён" in folded  # fascination preface
 
 
-async def test_bob051_us4_non_owner_keeps_per_person_thread_and_reactions() -> None:
-    # 🔴 US-4 (per-person continuity intact): under unified RECALL the non-owner still
-    # gets THEIR OWN per-person history thread (BOB-045) and attribution (WHO is writing),
-    # and a notable reaction of theirs (BOB-050) is still woven only into THEIR context —
-    # the continuity layer is untouched by the memory relaxation.
+async def test_bob051_us4_non_owner_hears_shared_thread_and_keeps_reactions() -> None:
+    # 🔴 US-4 (continuity + per-person signals intact): under unified RECALL the non-owner
+    # hears the SHARED group thread (BOB-058 .1) with attribution (WHO is writing), and a
+    # notable reaction of theirs (BOB-050) is still woven only into THEIR context — the
+    # reaction layer stays per-person even as the conversation thread becomes shared.
     store = _FakeNotableStore(_notable(sender_id=_GUEST_SENDER_ID))
     handler, _bot, _repo, tier1 = _build(
         reply="hi",
@@ -7468,8 +7606,8 @@ async def test_bob051_us4_non_owner_keeps_per_person_thread_and_reactions() -> N
     )
 
     text = tier1.all_text
-    assert _GUEST_THREAD_TURN in text  # their own per-person thread (BOB-045)
-    assert _OWNER_THREAD_TURN not in text  # never someone else's thread
+    assert _GUEST_THREAD_TURN in text  # their own turn (shared thread, BOB-058)
+    assert _OWNER_THREAD_TURN in text  # 🔴 and the other member's turn too
     assert "Norman" in text  # attribution: Bob still clocks WHO is writing
     assert "кофе по утрам — это ритуал" in text  # their reaction woven in (BOB-050)
     assert store.cleared is True  # consumed so Bob does not repeat it
