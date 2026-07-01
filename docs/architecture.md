@@ -62,7 +62,8 @@ src/bob/
                      #     ZoneClassifier (Negotiation-врезка, BOB-013),
                      #     RepoIntrospector (read-only самоинтроспекция, BOB-017),
                      #     DiagramRenderer + DiagramSink + DiagramResult (render_diagram, BOB-035),
-                     #     WebSearchProvider + WebSearchResult + WebSource (web_search, BOB-053)
+                     #     WebSearchProvider + WebSearchResult + WebSource (web_search, BOB-053),
+                     #     UrlReader + WebPage + UrlReadError/SsrfBlockedError (read_url, BOB-054)
   application/       # GUPPI: use-cases + оркестрация. Зависит от domain через порты.
     runtime/         # AgentRuntime (жизненный цикл), AsyncEventBus, события, periodic, retry
     router/          # LLMRouter: классификация задачи → Tier + правило редакции
@@ -76,7 +77,8 @@ src/bob/
                      #   inspect_architecture, read_code, list_work (самоинтроспекция, BOB-017),
                      #   code_rationale (код↔«почему»: git↔беады↔фича-доки↔граф, BOB-038),
                      #   render_diagram (mermaid→PNG в чат, BOB-035),
-                     #   web_search (заземлённый веб-поиск, BOB-053)
+                     #   web_search (заземлённый веб-поиск, BOB-053),
+                     #   read_url (чтение конкретной ссылки за SSRF-щитом, BOB-054)
   infrastructure/    # Адаптеры портов (наружу).
     telegram/        # MultiBotGateway: BotRegistry (Боб+GUPPI), кросс-бот дедуп,
                      #   центральный роутер по содержимому; GuppiHandler (reject +
@@ -86,6 +88,8 @@ src/bob/
     llm/             # OpenAICompatProvider (Tier 0/1, + tool-calling) + фабрика;
                      #   OllamaEmbedder (BGE-M3) + OllamaReranker + их фабрики;
                      #   QwenWebSearchProvider (web_search через Responses API, BOB-053)
+    web/             # HttpUrlReader: aiohttp GET за 🔴 SSRF-щитом + извлечение текста
+                     #   через stdlib html.parser; build_url_reader (read_url, BOB-054)
     persistence/     # SqliteMemoryRepo + FTS5 recall + KvAllowlistStore + SoulStore
                      #   + SqliteProactivityStore + RepoProactivitySources
                      #   + SqliteFascinationStore (BOB-020);
@@ -1397,6 +1401,56 @@ Tier 1); иначе ход идёт прежним plain-путём роутер
   честный «не смог найти» нотис (`_SEARCH_FAILED_ANSWER`) с анти-конфабуляционным `guidance`
   (`_SEARCH_FAILED_GUIDANCE`), чтобы Боб сам озвучил оговорку — **никогда** не выдавая знание из
   обучения под видом найденного в сети.
+
+### Прочитать ссылку: «Боб читает присланную страницу» (BOB-054)
+
+Близнец `web_search` за тем же Capability-швом, но с обратной задачей: `web_search` **ищет** по
+теме, а `read_url` **открывает одну конкретную ссылку**, которую разговор уже несёт, и читает её.
+Tool-loop сам тянется к навыку, когда в диалоге есть URL для прочтения. Содержимое проецируется в
+петлю **компактно** — `{url, title, excerpt}`, — и Боб синтезирует ответ **своим голосом по
+прочитанному**, не вываливая сырой дамп страницы.
+
+- **Навык `read_url`** (`application/capabilities/read_url.py`) собирается
+  `make_read_url_capability(reader, …)` над портом `UrlReader`: `name="read_url"`,
+  `permission="safe"`, JSON-схема — единственный обязательный `url`. Пустой/пробельный `url`
+  отвечается честно **без вызова читателя** (`_BLANK_URL`). На успехе `WebPage` проецируется как
+  `{url, title, excerpt}`, где `excerpt` — уже усечённый извлечённый текст страницы.
+- **Порт + значения** (`domain/ports.py`): `UrlReader.read(url) -> WebPage`;
+  `WebPage{url, title, text}` (`url` — финальный после разрешённых редиректов, чтобы Боб цитировал
+  реальный источник; `title=""`, когда его нет). Контракт отказа объявлен в домене —
+  `UrlReadError` (страницу не прочитать: отклонённая схема, не-2xx, запрещённый content-type,
+  превышение `max_bytes`, слишком много редиректов, пустой текст) и его подтип `SsrfBlockedError`
+  (адрес не публичен) — так приложение ловит их **без** импорта инфраструктуры (гексагон); инфра
+  (`HttpUrlReader`) ре-экспортит оба.
+- **Читатель `HttpUrlReader`** (`infrastructure/web/http_url_reader.py`) — один `aiohttp` GET за
+  🔴 **SSRF-щитом**, который прогоняется **до** открытия сокета и **заново на каждом редирект-хопе**:
+  (1) схема — только `http`/`https` (блок `file://`, `ftp://` …); (2) резолв хоста → **все**
+  полученные IP должны быть публичными: блокируются private / loopback / link-local / reserved /
+  multicast / unspecified плюс явно CGN `100.64/10` (RFC 6598), для IPv4, IPv6 и IPv4-mapped;
+  нераспарсиваемый адрес → **fail-closed** (блок). (3) редиректы **ручные**
+  (`allow_redirects=False`), каждый `Location` ре-валидируется полным щитом, капается на
+  `max_redirects`; (4) лимиты — общий `timeout`, `text/html`/`text/plain` allowlist, **потоковый**
+  обрыв тела на `max_bytes`, фиксированный User-Agent, без auth-заголовков; (5) извлечение текста —
+  stdlib `html.parser` (**без новых зависимостей**): выкидывает `<script>/<style>/<head>/<noscript>`,
+  собирает видимый текст, схлопывает пробелы, ловит `<title>`, усекает до `max_chars`. Любой
+  сбой/блок/не-тот-content-type/пустой-текст — **raise**. Сборка — `build_url_reader(config)`
+  (`infrastructure/web/factory.py`), конфиг `read_url.*` (`config/loader.py`): `enabled`,
+  `timeout_seconds`, `max_bytes`, `max_redirects`, `max_chars`, `user_agent`.
+- **🔴 Гейт привилегии — по отправителю (authz/BOB-052).** `permission="safe"` корректно **только
+  потому**, что привилегированный tool-loop запускается лишь для **авторизованного** отправителя
+  (гейт upstream). Регистрация — в `_build_registry` (`app.py`) под флагом `read_url.enabled`
+  (в дефолтах `loader.py` — `True`; read-only и за authz-гейтом, поэтому включён по умолчанию);
+  выключено → реестр держит прежние capability. BOB-051/052 не ослаблены.
+- **🔴 Отказоустойчивость (BOB-049).** Раз модель решила читать — `read_url` **essential**: вызов
+  читателя обёрнут в `call_with_retry` (bounded `attempts`/`backoff_seconds` через инъецируемый
+  `sleep`-шов, детерминированный в тестах). Если все попытки падают — навык **не** конфабулирует и
+  **не** роняет ход: возвращает честный «не смог открыть» нотис (`_READ_FAILED_EXCERPT`) с
+  анти-конфабуляционным `guidance` (`_READ_FAILED_GUIDANCE`). 🔴 Важный нюанс против `web_search`:
+  `SsrfBlockedError` **детерминирован** (заблокированный внутренний адрес) — ретраить его
+  бессмысленно, поэтому `_read_transient` короткозамыкает его в `None`, и честный нотис выдаётся
+  **сразу**, не расходуя бюджет ретраев и не ожидая backoff. Остаточное окно DNS-rebinding
+  (TOCTOU между резолвом щита и коннектом aiohttp) задокументировано как **принятое для v1**;
+  полное закрытие (коннект по уже разрешённому IP) — будущий апгрейд.
 
 ### Самоинтроспекция: «Боб знает свой мир» (BOB-017, фаза A)
 
