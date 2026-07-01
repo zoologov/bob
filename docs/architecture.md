@@ -1375,13 +1375,19 @@ Tier 1); иначе ход идёт прежним plain-путём роутер
   опустил — одного URL достаточно). Порт провайдер-агностичен: «query на вход, заземлённый
   answer + sources на выход», так что Tavily или иной провайдер встаёт без правок навыка.
 - **Провайдер `QwenWebSearchProvider`** (`infrastructure/llm/web_search_qwen.py`) — Qwen-native
-  поверх MaaS **Responses API**: `POST {base}/responses` с
-  `{model, input:<query>, tools:[{type:"web_search"}]}`. Разбор top-level списка `output[]`:
+  поверх MaaS **Responses API** в режиме **стриминга** (BOB-055): `POST {base}/responses` с
+  `{model, input:<query>, tools:[{type:"web_search"}], stream:true}` и `Accept: text/event-stream`.
+  Читаем SSE построчно (`data: <json>`), игнорируем промежуточные события (дельты, прогресс,
+  неизвестные типы) и копим до терминального `response.completed`, чей `response.output` — тот же
+  список, что вернул бы небуферизованный ответ. Стриминг держит соединение живым и обходит
+  ~30с-таймаут шлюза (небуферизованный `POST` рвётся, а живой поиск идёт 1-2 мин). Разбор
+  списка `output[]`:
   элементы `type=="web_search_call"` дают `action.sources[]` → `WebSource` (собираются по всем
   search-call'ам, **dedup по url**, порядок сохранён), элементы `type=="message"` — куски
   `content[].output_text`, склеенные в `answer`. 🔴 Источники доступны на текущем workspace-ключе
   **именно через Responses API** — `chat/completions` их не отдаёт (verify .1). Любой сбой (сеть,
-  не-200, отсутствующее/битое поле) — **raise**: отказоустойчивость на стороне вызывающего, Боб
+  не-200, оборванный поток без `response.completed`, битое/undecodable событие, явный
+  `response.failed`, отсутствующее/битое поле) — **raise**: отказоустойчивость на стороне вызывающего, Боб
   никогда не конфабулирует. Сборка — `build_web_search_provider(config)` (`factory.py`): `search.*`
   с фолбэком `base_url`/`api_key` на Tier-1 (`llm.tier1_*` — тот же workspace-`sk`, отдельный
   ключ не нужен). Конфиг `search.*` (`config/loader.py`): `enabled`, `model`, `base_url`,

@@ -4,7 +4,7 @@
 
 # beadloom:domain=bob
 
-"""QwenWebSearchProvider — web search over the Qwen MaaS **Responses API**.
+"""QwenWebSearchProvider — web search over the Qwen MaaS **Responses API** (streamed).
 
 Realises :class:`bob.domain.ports.WebSearchProvider` against the Qwen MaaS
 ``/responses`` endpoint — NOT ``/chat/completions``. Verify .1 (BOB-053) proved
@@ -13,21 +13,32 @@ chat/completions and legacy-native text-generation return a grounded answer but 
 ``search_info``. The same workspace host + key as the Tier-1 provider is reused
 (no separate / global DashScope key needed); the factory injects both from config.
 
+The call is **streamed** (``stream: true``): a single buffered POST is dropped by the
+gateway after ~30s of idle, but a live web search takes 1-2 min. Streaming keeps the
+connection alive with a continuous flow of SSE events and survives 90-120s (BOB-055
+diagnosis). We read the Server-Sent-Events line by line and accumulate until the
+terminal ``response.completed`` event, whose ``response`` object carries the SAME
+final ``output`` list a non-streamed body would — then reuse the ``output[]`` parser.
+
 Request: ``POST {base}/responses`` with ``{model, input: <query>, tools:[{type:
-web_search}]}``. Response: a top-level ``output`` LIST of items —
+web_search}], stream: true}`` and ``Accept: text/event-stream``. The terminal
+``response.completed`` event's ``response.output`` is a LIST of items —
 
 * ``type == "web_search_call"`` -> ``action.sources[*]`` (``{type:"url", url, title?}``)
   -> :class:`WebSource` (sources are collected across ALL search-call items, deduped
   by url, order preserved);
 * ``type == "message"`` -> ``content[*]`` output_text pieces joined into the answer.
 
-Other item types (``reasoning`` …) are ignored. Any failure — a network error, a
-non-200, or a malformed/absent expected field — RAISES (the caller owns
-fault-tolerance; Bob never confabulates). An empty sources list is allowed.
+Intermediate events (deltas, reasoning, ``web_search_call`` progress, unknown types)
+are ignored. Any failure — a network error, a non-200, a stream that ends WITHOUT a
+``response.completed``, a malformed/undecodable event, an explicit ``response.failed``,
+or a malformed/absent expected field — RAISES (the caller owns fault-tolerance; Bob
+never confabulates). An empty sources list is allowed.
 """
 
 from __future__ import annotations
 
+import json
 from collections.abc import Mapping, Sequence
 
 import aiohttp
@@ -39,8 +50,15 @@ _WEB_SEARCH_CALL = "web_search_call"
 _MESSAGE = "message"
 _OUTPUT_TEXT = "output_text"
 
-# Generous default — a Responses-API web search is slow (several seconds), mirroring
-# the Tier-1 reasoning-model timeout so a slow search does not spuriously time out.
+# SSE framing + Responses-API stream event vocabulary.
+_SSE_DATA_PREFIX = "data:"
+_SSE_DONE_SENTINEL = "[DONE]"
+_COMPLETED_EVENT = "response.completed"
+_FAILURE_EVENTS = frozenset({"response.failed", "response.error", "error"})
+
+# Generous total timeout — a streamed web search runs 1-2 min. A *total* budget (not a
+# per-read one) must not kill a slow-but-alive stream; streaming is what dodges the
+# ~30s idle gateway cutoff, this ceiling only bounds a genuinely stuck call.
 _DEFAULT_TIMEOUT_SECONDS = 180.0
 
 
@@ -65,16 +83,24 @@ class QwenWebSearchProvider:
         self._timeout = aiohttp.ClientTimeout(total=timeout_seconds)
 
     async def search(self, query: str) -> WebSearchResult:
-        """Search the web for ``query`` over the Responses API (raises on failure)."""
+        """Search the web for ``query`` over the streamed Responses API (raises on failure)."""
         payload: dict[str, object] = {
             "model": self._model,
             "input": query,
             "tools": [{"type": "web_search"}],
+            "stream": True,
         }
-        body = await self._post_json(payload)
-        return _parse_responses_body(body)
+        final_response = await self._stream_final_response(payload)
+        return _parse_responses_body(final_response)
 
-    async def _post_json(self, payload: Mapping[str, object]) -> Mapping[str, object]:
+    async def _stream_final_response(
+        self, payload: Mapping[str, object]
+    ) -> Mapping[str, object]:
+        """Read the SSE stream and return the ``response.completed`` response object.
+
+        Raises when the stream ends without a terminal event, an event is malformed,
+        or the server reports an explicit failure.
+        """
         async with (
             aiohttp.ClientSession(timeout=self._timeout) as session,
             session.post(
@@ -82,19 +108,62 @@ class QwenWebSearchProvider:
             ) as response,
         ):
             response.raise_for_status()
-            body = await response.json()
-        if not isinstance(body, Mapping):
-            raise ValueError("web search response is not a JSON object")
-        return body
+            async for raw_line in response.content:
+                event = _decode_sse_line(raw_line)
+                if event is None:
+                    continue
+                final = _terminal_response(event)
+                if final is not None:
+                    return final
+        raise ValueError("web search stream ended without a 'response.completed' event")
 
     def _endpoint(self) -> str:
         return f"{self._base_url}/{_RESPONSES_PATH}"
 
     def _headers(self) -> dict[str, str]:
-        headers = {"Content-Type": "application/json"}
+        headers = {
+            "Content-Type": "application/json",
+            "Accept": "text/event-stream",
+        }
         if self._api_key:
             headers["Authorization"] = f"Bearer {self._api_key}"
         return headers
+
+
+def _decode_sse_line(raw_line: bytes) -> Mapping[str, object] | None:
+    """Decode one SSE line into an event mapping, or None for a non-data / blank line.
+
+    Raises when a ``data:`` payload is present but not a decodable JSON object.
+    """
+    line = raw_line.decode("utf-8", "replace").strip()
+    if not line.startswith(_SSE_DATA_PREFIX):
+        return None
+    data = line[len(_SSE_DATA_PREFIX) :].strip()
+    if not data or data == _SSE_DONE_SENTINEL:
+        return None
+    try:
+        event = json.loads(data)
+    except json.JSONDecodeError as exc:
+        raise ValueError("malformed SSE event in web search stream") from exc
+    if not isinstance(event, Mapping):
+        raise ValueError("SSE event is not a JSON object")
+    return event
+
+
+def _terminal_response(event: Mapping[str, object]) -> Mapping[str, object] | None:
+    """Return the final ``response`` object for a completed event, else None.
+
+    Raises on an explicit failure event or a completed event without a response object.
+    """
+    event_type = event.get("type")
+    if event_type in _FAILURE_EVENTS:
+        raise ValueError(f"web search stream reported failure: {event_type!r}")
+    if event_type != _COMPLETED_EVENT:
+        return None
+    response_obj = event.get("response")
+    if not isinstance(response_obj, Mapping):
+        raise ValueError("'response.completed' event has no 'response' object")
+    return response_obj
 
 
 def _parse_responses_body(body: Mapping[str, object]) -> WebSearchResult:
