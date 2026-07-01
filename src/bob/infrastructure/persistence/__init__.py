@@ -14,6 +14,7 @@ durable state live here; the schema is bundled as ``schema.sql``.
 from __future__ import annotations
 
 from bob.infrastructure.persistence.allowlist_store import KvAllowlistStore
+from bob.infrastructure.persistence.closer_log_store import SqliteCloserLog
 from bob.infrastructure.persistence.conversation_floor_store import (
     SqliteConversationFloorStore,
 )
@@ -42,6 +43,7 @@ __all__ = [
     "KvNotableReactionStore",
     "RepoProactivitySources",
     "SoulStore",
+    "SqliteCloserLog",
     "SqliteConversationFloorStore",
     "SqliteFascinationStore",
     "SqliteFirstImpressionStore",

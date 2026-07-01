@@ -162,6 +162,7 @@ from bob.infrastructure.persistence import (
     KvNotableReactionStore,
     RepoProactivitySources,
     SoulStore,
+    SqliteCloserLog,
     SqliteConversationFloorStore,
     SqliteFascinationStore,
     SqliteFirstImpressionStore,
@@ -660,6 +661,14 @@ def build_application(
         LlmInterimLineGenerator(router=router) if verify_enabled else None
     )
 
+    # Cross-session closer ring (BOB-061 .2): the bounded, PRIVATE persist of Bob's recent
+    # normalised closers, over the SAME SQLite memory DB (the ``closer_log`` table is created
+    # by ``schema.sql`` on ``memory_repo.initialize``). After each reply Bob's closer is
+    # appended; before generation the persisted closers + the live window feed the anti-tic
+    # detector so a once-per-session ending recurring over days is finally caught. Low-risk
+    # local memory — always wired; the seam is decorative (a failure never breaks a turn).
+    closer_log = SqliteCloserLog(memory_repo)
+
     handle_message = HandleMessage(
         router=router,
         gateway=multibot.reply_gateway(BotIdentity.BOB),
@@ -873,6 +882,11 @@ def build_application(
         verify_provider=verify_provider,
         interim_line_generator=interim_line_generator,
         verify_timeout_seconds=float(_int(verify_section, "timeout_seconds", 75)),
+        # Anti-tic «провязка» (BOB-061 .2): the cross-session closer ring — persist Bob's
+        # closer after each reply; before generation detect a recurring closer-motif
+        # (persist + window) and fold a SOFT «заверши по-другому» nudge into the context
+        # (never a ban). Decorative: a log failure / no tic → the turn is unchanged.
+        closer_log=closer_log,
     )
     event_bus.subscribe(MESSAGE_RECEIVED, _as_handler(handle_message))
 

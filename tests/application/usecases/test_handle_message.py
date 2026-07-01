@@ -32,6 +32,7 @@ from bob.application.runtime.events import MessageReceived
 from bob.application.usecases.decide_response import DecideResponse
 from bob.application.usecases.extract_facts import ExtractFacts
 from bob.application.usecases.handle_message import (
+    _CLOSER_TIC_NUDGE,
     _VERIFY_GROUNDED_NOTE,
     _VERIFY_HEDGE_NOTE,
     DiagramSendMode,
@@ -219,6 +220,38 @@ class _FakeWebSearchProvider:
             raise RuntimeError("web_search unavailable")
         assert self._result is not None
         return self._result
+
+
+class _FakeCloserLog:
+    """A CloserLog double (BOB-061 .2): records appends, serves canned recent closers.
+
+    ``recent`` returns the seeded closers (most-recent first, as the real ring does),
+    truncated to ``k``. ``append_raises`` / ``recent_raises`` model a flaky store so a
+    test can prove the wiring is DECORATIVE (a persist/read failure never breaks the turn
+    and never fires the nudge).
+    """
+
+    def __init__(
+        self,
+        *,
+        recent: Sequence[str] = (),
+        append_raises: bool = False,
+        recent_raises: bool = False,
+    ) -> None:
+        self._recent = tuple(recent)
+        self._append_raises = append_raises
+        self._recent_raises = recent_raises
+        self.appended: list[str] = []
+
+    async def append(self, closer: str) -> None:
+        if self._append_raises:
+            raise RuntimeError("closer-log append unavailable")
+        self.appended.append(closer)
+
+    async def recent(self, k: int) -> tuple[str, ...]:
+        if self._recent_raises:
+            raise RuntimeError("closer-log read unavailable")
+        return self._recent[:k] if k > 0 else ()
 
 
 class _FakeInterimLineGenerator:
@@ -630,6 +663,7 @@ def _build(
     verify_provider: _FakeWebSearchProvider | None = None,
     verify_timeout_seconds: float = 75.0,
     interim_line_generator: _FakeInterimLineGenerator | None = None,
+    closer_log: _FakeCloserLog | None = None,
 ) -> tuple[HandleMessage, FakeBot, FakeRepo, CapturingProvider]:
     tier0 = CapturingProvider(reply="positive", replies=tier0_replies)
     tier1 = CapturingProvider(reply=reply, replies=tier1_replies)
@@ -705,6 +739,7 @@ def _build(
         verify_provider=verify_provider,
         verify_timeout_seconds=verify_timeout_seconds,
         interim_line_generator=interim_line_generator,
+        closer_log=closer_log,
     )
     return handler, bot, repo, tier1
 
@@ -4489,6 +4524,127 @@ async def test_recall_grounding_intact_regardless_of_the_dialogue_window() -> No
     await handler.handle(_message())
 
     assert _RECALL_MEMORY in tier1.all_text  # recall grounding is untouched by the window
+
+
+# --- BOB-061 .2: cross-session closer persist + soft anti-tic nudge («провязка») -----
+#
+# The .1 mechanism (closer_text / is_recurring_closer_tic / CloserLog) is wired into the
+# reply path here: after a reply Bob's NORMALISED closer is APPENDED to the ring; BEFORE
+# generation the persisted closers ∪ the live window feed the tic detector, and on a
+# genuine recurring motif a SOFT nudge folds into the context AND the motif is stripped off
+# the recalled exemplars. 🔴 Everything is decorative + conservative (US-4 liveness): no
+# tic / an unwired-or-failing log → zero change to the reply.
+_PERSIST_TIC = "мне так спокойнее"  # a normalised closer (as the ring stores it)
+
+
+async def test_reply_closer_is_appended_to_the_ring() -> None:
+    # After a genuine reply Bob's closer (normalised, ≥ tic_min_words) is logged to the
+    # cross-session ring — the persist half of the «провязка».
+    log = _FakeCloserLog()
+    handler, _bot, _repo, _tier1 = _build(
+        reply="Развернул сервис, всё поднялось. Мне так спокойнее.", closer_log=log
+    )
+
+    await handler.handle(_message())
+
+    assert log.appended == [_PERSIST_TIC]
+
+
+async def test_empty_closer_is_not_appended() -> None:
+    # A reply with NO notable closer (every trailing fragment is below the notability bar)
+    # carries no motif → nothing is logged (skip-empty).
+    log = _FakeCloserLog()
+    handler, _bot, _repo, _tier1 = _build(reply="Ок.", closer_log=log)
+
+    await handler.handle(_message())
+
+    assert log.appended == []
+
+
+async def test_recurring_persisted_motif_nudges_and_strips_the_exemplar() -> None:
+    # The tic fires from the PERSIST ring alone (the once-per-session case the live window
+    # never sees): the freshest persisted closer recurs across the ring → (a) the soft
+    # nudge is folded into the generation context and (b) the tic motif is stripped off the
+    # recalled Bob-reply exemplar so it is not fed back as few-shot.
+    log = _FakeCloserLog(recent=(_PERSIST_TIC, _PERSIST_TIC, _PERSIST_TIC))
+    recall = FakeRecall(
+        hits=[{"content": "Ada: старое\nbob: Что-то ответил. Мне так спокойнее.",
+               "category": "personal"}]
+    )
+    handler, bot, _repo, tier1 = _build(
+        reply="Свежий, ни на что не похожий ответ по делу.",
+        closer_log=log,
+        recall=recall,
+    )
+
+    await handler.handle(_message())
+
+    assert _CLOSER_TIC_NUDGE in tier1.all_text  # (b) soft nudge present
+    assert "Что-то ответил." in tier1.all_text  # exemplar body preserved
+    # (a) the tic closer is stripped off THIS recalled exemplar (the phrase alone also
+    # appears in the baked-in anti-tic system example, so assert the exemplar combination):
+    assert "Что-то ответил. Мне так спокойнее" not in tier1.all_text
+    assert bot.final_text == "Свежий, ни на что не похожий ответ по делу."
+
+
+async def test_no_tic_leaves_the_reply_context_unchanged() -> None:
+    # 🔴 US-4 liveness: with an EMPTY ring and no recurring window closer there is no tic →
+    # no nudge, and the reply is committed exactly as composed.
+    log = _FakeCloserLog(recent=())
+    handler, bot, _repo, tier1 = _build(
+        reply="Обычный живой ответ без всякого тика.", closer_log=log
+    )
+
+    await handler.handle(_message())
+
+    assert _CLOSER_TIC_NUDGE not in tier1.all_text
+    assert bot.final_text == "Обычный живой ответ без всякого тика."
+
+
+async def test_distinct_closers_below_threshold_do_not_nudge() -> None:
+    # 🔴 US-4 no false positive: three SUBSTANTIVELY DISTINCT closers in the ring do not
+    # cluster into one motif (conservative motif_similarity_threshold) → no tic, no nudge.
+    log = _FakeCloserLog(
+        recent=(
+            "давай попробуем совсем иначе на этот раз",
+            "мне кажется тут нужен другой подход целиком",
+            "интересно чем это в итоге закончится для нас",
+        )
+    )
+    handler, bot, _repo, tier1 = _build(
+        reply="Ещё один непохожий содержательный ответ.", closer_log=log
+    )
+
+    await handler.handle(_message())
+
+    assert _CLOSER_TIC_NUDGE not in tier1.all_text
+    assert bot.final_text == "Ещё один непохожий содержательный ответ."
+
+
+async def test_closer_log_read_failure_is_decorative() -> None:
+    # 🔴 Decorative: a ring READ failure → no nudge and the turn still produces a reply
+    # (the detect error is swallowed, never breaking the turn).
+    log = _FakeCloserLog(recent_raises=True)
+    handler, bot, _repo, tier1 = _build(reply="Ответ несмотря на сбой чтения.", closer_log=log)
+
+    await handler.handle(_message())
+
+    assert _CLOSER_TIC_NUDGE not in tier1.all_text
+    assert bot.final_text == "Ответ несмотря на сбой чтения."
+
+
+async def test_closer_log_append_failure_is_decorative() -> None:
+    # 🔴 Decorative: a ring APPEND failure after the reply is swallowed — the turn already
+    # replied and is not broken.
+    log = _FakeCloserLog(append_raises=True)
+    handler, bot, _repo, _tier1 = _build(
+        reply="Развернул сервис. Мне так спокойнее.", closer_log=log
+    )
+
+    await handler.handle(_message())
+
+    assert bot.final_text == "Развернул сервис. Мне так спокойнее."
+    assert log.appended == []  # the raising append recorded nothing
 
 
 # --- BOB-026 .1: _recent_bob_replies window extractor (unit) -------------------
