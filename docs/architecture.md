@@ -1338,7 +1338,11 @@ backoff не маскировал дефект. `sleep` инъецируется
   `tools` через `ToolCallingProvider.complete_with_tools`; если модель вернула
   `tool_calls` — диспатчит каждый через реестр, дописывает результат и повторяет,
   пока не финальный текст. Число ходов ограничено (turn-cap); неизвестный навык не
-  фатален (ошибка возвращается как результат).
+  фатален (ошибка возвращается как результат). Опциональный `announcer`
+  (`ProgressAnnouncer | None`, BOB-055): перед `registry.dispatch` каждого вызова
+  `_run_tool` зовёт `announcer.announce(call.name)` — интерим-реплику «ищу…» перед
+  медленным навыком. Вызов обёрнут в `try/except`: анонс декоративен, его сбой
+  никогда не задерживает и не ломает диспатч. `announcer=None` — прежнее поведение.
 - **Tool-calling в провайдере** (`OpenAICompatProvider`): нативные OpenAI `tools`,
   а при отсутствии нативной поддержки — prompt-fallback (терпимый разбор
   prompt-протокольного JSON `{"tool_call": {...}}` из текста ответа).
@@ -1386,9 +1390,9 @@ Tier 1); иначе ход идёт прежним plain-путём роутер
   search-call'ам, **dedup по url**, порядок сохранён), элементы `type=="message"` — куски
   `content[].output_text`, склеенные в `answer`. 🔴 Источники доступны на текущем workspace-ключе
   **именно через Responses API** — `chat/completions` их не отдаёт (verify .1). Любой сбой (сеть,
-  не-200, оборванный поток без `response.completed`, битое/undecodable событие, явный
-  `response.failed`, отсутствующее/битое поле) — **raise**: отказоустойчивость на стороне вызывающего, Боб
-  никогда не конфабулирует. Сборка — `build_web_search_provider(config)` (`factory.py`): `search.*`
+  не-200, оборванный поток без `response.completed`, битое/undecodable событие, явное
+  событие-провал `response.failed`/`response.error`/`error`, отсутствующее/битое поле) —
+  **raise**: отказоустойчивость на стороне вызывающего, Боб никогда не конфабулирует. Сборка — `build_web_search_provider(config)` (`factory.py`): `search.*`
   с фолбэком `base_url`/`api_key` на Tier-1 (`llm.tier1_*` — тот же workspace-`sk`, отдельный
   ключ не нужен). Конфиг `search.*` (`config/loader.py`): `enabled`, `model`, `base_url`,
   `api_key`, `timeout_seconds` (`180` — Responses-поиск медленный).
@@ -1407,6 +1411,32 @@ Tier 1); иначе ход идёт прежним plain-путём роутер
   честный «не смог найти» нотис (`_SEARCH_FAILED_ANSWER`) с анти-конфабуляционным `guidance`
   (`_SEARCH_FAILED_GUIDANCE`), чтобы Боб сам озвучил оговорку — **никогда** не выдавая знание из
   обучения под видом найденного в сети.
+
+### Реплика «ищу…»: интерим-анонс перед медленным навыком (BOB-055)
+
+Стриминговый `web_search` идёт 1-2 минуты. Молчание всё это время читается owner'ом как
+«Боб не услышал», поэтому перед медленным навыком Боб роняет **одну живую реплику своим
+голосом** — «секунду, гляну в сети…», — а не роботизированное «Loading…».
+
+- **Порт `ProgressAnnouncer`** (`application/capabilities/progress_announcer.py`) —
+  `async announce(capability_name)`: анонсировать (или промолчать про) навык **по имени**.
+  Контракт `Capability` не тронут — политика «говорить или молчать» живёт здесь, а не в навыке.
+- **`GatewayProgressAnnouncer`** — per-turn, привязанная к чату реализация: строится с
+  `chat_id` хода, тем же `reply`-швом (`_ProgressSink`, структурно = `ReplyGateway`), инъецируемым
+  seeded-`Random` (детерминизм в тестах) и картой имя→фразы. Для навыка из карты выбирает
+  RNG-вариант и шлёт; для отсутствующего (быстрого) — молчит. Набор `WEB_SEARCH_PROGRESS_PHRASES`
+  — 8 коротких живых RU-фраз; `DEFAULT_PROGRESS_PHRASES` (`MappingProxyType`) мапит только
+  `web_search`, так что в v1 говорит лишь медленный поиск, остальные навыки — тишина.
+- **Провязка (`handle_message.py`).** `_reply_with_tools` при заданном `chat_id` строит
+  per-turn `GatewayProgressAnnouncer` (`chat_id` из `_compose_reply`, реюз `self._gateway` +
+  `self._rng`) и передаёт его в `ToolLoop(announcer=…)`; при `chat_id is None` — `announcer=None`,
+  поведение ровно как прежде. `ToolLoop._run_tool` зовёт `announce()` **перед** `registry.dispatch`.
+- **🔴 Инварианты.** Анонс **декоративен на двух швах**: `GatewayProgressAnnouncer.announce`
+  глотает свои ошибки (стиль BOB-050 `_safe_addon` — логирует и роняет), а `ToolLoop._run_tool`
+  дополнительно обёрнут в `try/except` — сбой gateway или анонсера тихий, ход не блокируется и
+  не ломается. Инвариант BOB-053 **цел**: реальный сбой поиска по-прежнему даёт честный
+  анти-конфабуляционный нотис, а не выдумку; стриминг убирает лишь **ложные** нотисы от ~30с-таймаута.
+  Привилегированный fulfiller (проактивный tick) анонсера не получает (v1). Новых зависимостей нет.
 
 ### Прочитать ссылку: «Боб читает присланную страницу» (BOB-054)
 
@@ -3672,6 +3702,8 @@ degradation) — Боб не теряет память, лишь её семан
 Тесты лежат под `tests/`, повторяя структуру слоёв: `tests/domain/`,
 `tests/application/` (включая `authz/`, `runtime/test_retry.py`,
 `test_capability_registry.py`, `test_tool_loop.py`,
+`capabilities/test_progress_announcer.py` (по-имени решение + декоративное
+глотание сбоя + seeded-RNG выбор фразы, BOB-055),
 `test_recall_memory_capability.py`), `tests/infrastructure/` (включая
 `telegram/test_gateway_authz.py`, `telegram/test_rich.py`,
 `persistence/test_allowlist_store.py`). Мульти-бот шов покрыт
