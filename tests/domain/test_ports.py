@@ -132,6 +132,57 @@ def test_tool_calling_provider_declares_complete_with_tools() -> None:
     assert hasattr(ports.ToolCallingProvider, "complete_with_tools")
 
 
+def test_web_search_value_objects_are_frozen() -> None:
+    # Assert the web-search value objects carry the expected fields and are immutable.
+    source = ports.WebSource(title="Title", url="https://example.com")
+    assert source.title == "Title"
+    assert source.url == "https://example.com"
+    result = ports.WebSearchResult(answer="grounded answer", sources=(source,))
+    assert result.answer == "grounded answer"
+    assert result.sources == (source,)
+    with pytest.raises(AttributeError):
+        source.url = "https://other.com"  # type: ignore[misc]
+    with pytest.raises(AttributeError):
+        result.answer = "tampered"  # type: ignore[misc]
+
+
+def test_web_search_value_objects_use_slots_and_reject_new_attributes() -> None:
+    # slots=True: the value objects carry no __dict__ and reject ad-hoc attributes,
+    # so a recalled source/result cannot be silently extended downstream.
+    source = ports.WebSource(title="T", url="https://example.com")
+    result = ports.WebSearchResult(answer="a")
+    assert not hasattr(source, "__dict__")
+    assert not hasattr(result, "__dict__")
+    with pytest.raises(AttributeError):
+        source.extra = "x"  # type: ignore[attr-defined]
+    with pytest.raises(AttributeError):
+        result.extra = "x"  # type: ignore[attr-defined]
+
+
+def test_web_search_result_defaults_to_empty_sources() -> None:
+    # ``sources`` defaults to the empty tuple — a grounded answer with nothing worth
+    # citing is valid (not an error), so callers can omit sources entirely.
+    result = ports.WebSearchResult(answer="grounded")
+    assert result.sources == ()
+
+
+def test_web_search_provider_is_exported_runtime_checkable_protocol() -> None:
+    # Assert the WebSearchProvider port is an exported, structural Protocol.
+    assert "WebSearchProvider" in ports.__all__
+    assert getattr(ports.WebSearchProvider, "_is_protocol", False) is True
+    assert hasattr(ports.WebSearchProvider, "search")
+
+
+def test_web_search_provider_is_structurally_satisfiable() -> None:
+    # Arrange: a minimal object that satisfies the WebSearchProvider shape.
+    class ConstSearch:
+        async def search(self, query: str) -> ports.WebSearchResult:
+            return ports.WebSearchResult(answer=query, sources=())
+
+    # Act / Assert: recognised as a WebSearchProvider (runtime_checkable, structural).
+    assert isinstance(ConstSearch(), ports.WebSearchProvider)
+
+
 def _imported_modules(module_source: str) -> set[str]:
     tree = ast.parse(module_source)
     names: set[str] = set()

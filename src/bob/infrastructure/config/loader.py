@@ -355,6 +355,24 @@ DEFAULT_CONFIG: Config = {
         "timeout": 600,
         "permission_mode": "acceptEdits",
     },
+    # Web search — «Боб ищет в интернете» (BOB-053). The ``web_search`` skill (behind
+    # the capability seam) makes ONE Qwen-native call over the MaaS **Responses API**
+    # (``/responses``, ``tools:[web_search]``) and returns a grounded answer + sources
+    # (verify .1: this is the only path that returns clickable sources on the workspace
+    # key). ``enabled`` defaults TRUE — the skill is read-only and gated by sender authz
+    # (owner-only; the tool-loop never runs for an unauthorised sender), so it can be
+    # advertised by default. ``model`` is the Qwen-native search model. ``base_url`` /
+    # ``api_key`` are BLANK by default and fall back to the Tier-1 Qwen MaaS host + key
+    # (``llm.tier1_*`` — the same workspace ``sk`` key, no separate/global key needed);
+    # set them only to point search at a different host/key. ``timeout_seconds`` is
+    # generous because a Responses-API search is slow (several seconds).
+    "search": {
+        "enabled": True,
+        "model": "qwen3.7-plus",
+        "base_url": "",
+        "api_key": "",
+        "timeout_seconds": 180,
+    },
     # Two bots in one process (BOB-003): Bob lives in his topic, GUPPI is the
     # gatekeeper in General. Each bot's token comes from env only (never YAML);
     # the shared ids (chat/owner/allowlist) and Bob's topic are non-secret.
