@@ -30,7 +30,7 @@ from bob.infrastructure.web.http_url_reader import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator, Sequence
+    from collections.abc import AsyncIterator, Mapping, Sequence
 
     from bob.infrastructure.web.http_url_reader import (
         HostResolver,
@@ -85,7 +85,7 @@ def _resolver(mapping: dict[str, Sequence[str]]) -> HostResolver:
     return resolve
 
 
-def _opener(routes: dict[str, _FakeResponse]) -> UrlOpener:
+def _opener(routes: Mapping[str, _FakeResponse | _ExplodingBodyResponse]) -> UrlOpener:
     def opener(url: str) -> _ResponseCtx:
         if url not in routes:
             raise AssertionError(f"unexpected fetch of {url!r}")
