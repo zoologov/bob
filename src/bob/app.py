@@ -151,6 +151,7 @@ from bob.infrastructure.llm import (
     build_tier_providers,
     build_web_search_provider,
 )
+from bob.infrastructure.llm.interim_line import LlmInterimLineGenerator
 from bob.infrastructure.llm.privilege_judge import LlmPrivilegeJudge
 from bob.infrastructure.llm.reaction_judge import LlmReactionJudge
 from bob.infrastructure.llm.response_judge import LlmResponseJudge
@@ -652,6 +653,12 @@ def build_application(
     verify_provider = (
         build_web_search_provider(merged) if verify_enabled else None
     )
+    # The LIVE addressed interim line (BOB-057 .3, US-3b): a cheap Tier-0 gen of a
+    # one-liner in Bob's voice («Леш, гляну свежие ставки, секунду 🙂») before the
+    # verify search. Built with verify; unwired → the interim seeds a BOB-055 phrase.
+    interim_line_generator = (
+        LlmInterimLineGenerator(router=router) if verify_enabled else None
+    )
 
     handle_message = HandleMessage(
         router=router,
@@ -864,6 +871,7 @@ def build_application(
         # — internal public-verify, NOT routed through the registry/BOB-052 gate.
         verify_judge=verify_judge,
         verify_provider=verify_provider,
+        interim_line_generator=interim_line_generator,
         verify_timeout_seconds=float(_int(verify_section, "timeout_seconds", 75)),
     )
     event_bus.subscribe(MESSAGE_RECEIVED, _as_handler(handle_message))

@@ -146,3 +146,118 @@ async def test_gateway_failure_is_swallowed_not_propagated() -> None:
     # Act / Assert: announce must NOT raise (decorative — the turn is unaffected).
     await announcer.announce("web_search")
     assert len(gateway.calls) == 1  # it tried, then dropped the error
+
+
+# ---------------------------------------------------------------------------
+# BOB-057 .3 — the contextual verify interim: a LIVE, ADDRESSED one-liner
+# (Tier-0 gen) before the verify search, with a seeded BOB-055 fallback (US-3b).
+# ---------------------------------------------------------------------------
+
+
+class _FakeLineGenerator:
+    """A scripted interim-line generator: returns a line, empty, or raises.
+
+    Records the (topic, sender_name) it saw so a test can prove the live gen was
+    asked with the turn's subject + interlocutor.
+    """
+
+    def __init__(self, *, line: str = "", raises: bool = False) -> None:
+        self._line = line
+        self._raises = raises
+        self.calls: list[tuple[str, str]] = []
+
+    async def generate(self, *, topic: str, sender_name: str) -> str:
+        self.calls.append((topic, sender_name))
+        if self._raises:
+            raise RuntimeError("local model down")
+        return self._line
+
+
+def _verify_announcer(
+    gateway: FakeGateway,
+    *,
+    generator: _FakeLineGenerator | None = None,
+    chat_id: int = 42,
+    seed: int = 0,
+) -> GatewayProgressAnnouncer:
+    return GatewayProgressAnnouncer(
+        chat_id=chat_id,
+        gateway=gateway,
+        rng=Random(seed),  # noqa: S311 — deterministic test seed, not cryptographic
+        line_generator=generator,
+    )
+
+
+async def test_announce_verify_sends_the_live_addressed_line() -> None:
+    # US-3b: a successful live gen → the exact addressed one-liner reaches the chat.
+    gateway = FakeGateway()
+    generator = _FakeLineGenerator(line="Лёш, гляну свежие ставки, секунду 🙂")
+    announcer = _verify_announcer(gateway, generator=generator, chat_id=99)
+
+    await announcer.announce_verify(topic="свежие ставки", sender_name="Лёша")
+
+    assert generator.calls == [("свежие ставки", "Лёша")]  # gen saw topic + name
+    assert len(gateway.calls) == 1
+    assert gateway.calls[0]["chat_id"] == 99
+    assert gateway.calls[0]["markdown"] == "Лёш, гляну свежие ставки, секунду 🙂"
+
+
+async def test_announce_verify_falls_back_to_seeded_phrase_on_empty_gen() -> None:
+    # An empty live line is a legitimate "no line" → seeded BOB-055 phrase instead.
+    gateway = FakeGateway()
+    announcer = _verify_announcer(gateway, generator=_FakeLineGenerator(line="   "))
+
+    await announcer.announce_verify(topic="ставки", sender_name="Лёша")
+
+    assert len(gateway.calls) == 1
+    assert gateway.calls[0]["markdown"] in WEB_SEARCH_PROGRESS_PHRASES
+
+
+async def test_announce_verify_falls_back_to_seeded_phrase_on_gen_error() -> None:
+    # A raising live gen is caught → the seeded fallback still speaks (never silent
+    # on a gen error, never propagates).
+    gateway = FakeGateway()
+    announcer = _verify_announcer(gateway, generator=_FakeLineGenerator(raises=True))
+
+    await announcer.announce_verify(topic="ставки", sender_name="Лёша")
+
+    assert len(gateway.calls) == 1
+    assert gateway.calls[0]["markdown"] in WEB_SEARCH_PROGRESS_PHRASES
+
+
+async def test_announce_verify_without_generator_uses_seeded_phrase() -> None:
+    # No generator wired → the seeded BOB-055 phrase is the whole interim.
+    gateway = FakeGateway()
+    announcer = _verify_announcer(gateway, generator=None)
+
+    await announcer.announce_verify(topic="ставки", sender_name="Лёша")
+
+    assert len(gateway.calls) == 1
+    assert gateway.calls[0]["markdown"] in WEB_SEARCH_PROGRESS_PHRASES
+
+
+async def test_announce_verify_seeded_fallback_is_deterministic() -> None:
+    # Same seed → same fallback phrase (deterministic tests, US-4 varied-not-random).
+    g1, g2 = FakeGateway(), FakeGateway()
+
+    await _verify_announcer(g1, generator=None, seed=7).announce_verify(
+        topic="ставки", sender_name="Лёша"
+    )
+    await _verify_announcer(g2, generator=None, seed=7).announce_verify(
+        topic="ставки", sender_name="Лёша"
+    )
+
+    assert g1.calls[0]["markdown"] == g2.calls[0]["markdown"]
+
+
+async def test_announce_verify_gateway_failure_is_swallowed() -> None:
+    # 🔴 The final fallback: even the send blowing up is swallowed (silence) — the
+    # verify search and the turn are never affected.
+    gateway = FakeGateway(raises=True)
+    announcer = _verify_announcer(
+        gateway, generator=_FakeLineGenerator(line="Лёш, секунду 🙂")
+    )
+
+    await announcer.announce_verify(topic="ставки", sender_name="Лёша")
+
+    assert len(gateway.calls) == 1  # it tried, then dropped the error

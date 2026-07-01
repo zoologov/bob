@@ -175,6 +175,10 @@ ignore = [
 # The volatility judge (BOB-057 .1): its conservative Russian prompt + docstrings
 # carry Cyrillic look-alikes that are intentional — RUF001/RUF002/RUF003 here.
 "src/bob/domain/personality/volatility_judgment.py" = ["RUF001", "RUF002", "RUF003"]
+# The interim-line seam (BOB-057 .3): its Russian persona prompt + one-liner
+# examples carry intentional Cyrillic look-alikes — RUF001/RUF002/RUF003 here.
+"src/bob/domain/personality/interim_line.py" = ["RUF001", "RUF002", "RUF003"]
+"src/bob/infrastructure/llm/interim_line.py" = ["RUF001", "RUF002", "RUF003"]
 "src/bob/infrastructure/persistence/permission_request_store.py" = [
     "RUF001",
     "RUF002",
@@ -452,6 +456,24 @@ ignore = [
     "RUF003",
 ]
 "tests/infrastructure/llm/test_volatility_judge.py" = [
+    "S101",
+    "ARG001",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+# Interim-line seam tests (BOB-057 .3) carry Russian topic/name/line literals whose
+# Cyrillic look-alikes are intentional (→ RUF001/RUF002/RUF003).
+"tests/domain/personality/test_interim_line.py" = [
+    "S101",
+    "ARG001",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+"tests/infrastructure/llm/test_interim_line.py" = [
     "S101",
     "ARG001",
     "PLR2004",

@@ -61,6 +61,7 @@ class TaskType(Enum):
     REACTION_JUDGE = "reaction_judge"
     PRIVILEGE_JUDGE = "privilege_judge"
     VOLATILITY_JUDGE = "volatility_judge"
+    INTERIM_LINE = "interim_line"
 
 
 # Task -> preferred tier. Quality-critical, user-facing work goes to Tier 1
@@ -94,6 +95,9 @@ _PREFERRED_TIER: dict[TaskType, int] = {
     # Volatility judgment (BOB-057) decides, before Bob answers, whether the answer
     # hinges on a fresh volatile fact — a cheap per-inbound classifier, Tier 0.
     TaskType.VOLATILITY_JUDGE: _TIER_LOCAL,
+    # Interim line (BOB-057 .3) is a cheap one-liner in Bob's voice before the verify
+    # search — a fast, latency-tolerant local gen (the search wait dwarfs it), Tier 0.
+    TaskType.INTERIM_LINE: _TIER_LOCAL,
 }
 
 

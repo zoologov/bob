@@ -22,6 +22,9 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from bob.application.capabilities.progress_announcer import (
+    WEB_SEARCH_PROGRESS_PHRASES,
+)
 from bob.application.capabilities.registry import CapabilityRegistry
 from bob.application.capabilities.render_diagram import (
     CollectingDiagramSink,
@@ -195,20 +198,45 @@ class _FakeWebSearchProvider:
         result: WebSearchResult | None = None,
         raises: bool = False,
         hang: bool = False,
+        on_search: Callable[[], None] | None = None,
     ) -> None:
         self._result = result
         self._raises = raises
         self._hang = hang
+        # BOB-057 .3 probe: fired at the moment ``search`` runs so a test can prove the
+        # live interim line was already sent BEFORE the search (US-3b ordering).
+        self._on_search = on_search
         self.queries: list[str] = []
 
     async def search(self, query: str) -> WebSearchResult:
         self.queries.append(query)
+        if self._on_search is not None:
+            self._on_search()
         if self._hang:
             await asyncio.Event().wait()
         if self._raises:
             raise RuntimeError("web_search unavailable")
         assert self._result is not None
         return self._result
+
+
+class _FakeInterimLineGenerator:
+    """A scripted interim-line generator (BOB-057 .3): a live line, empty, or raises.
+
+    Records the (topic, sender_name) it saw so a test can prove the live gen was
+    asked with the turn's subject + perceived interlocutor.
+    """
+
+    def __init__(self, *, line: str = "", raises: bool = False) -> None:
+        self._line = line
+        self._raises = raises
+        self.calls: list[tuple[str, str]] = []
+
+    async def generate(self, *, topic: str, sender_name: str) -> str:
+        self.calls.append((topic, sender_name))
+        if self._raises:
+            raise RuntimeError("local model down")
+        return self._line
 
 
 class FakeMessage:
@@ -600,6 +628,7 @@ def _build(
     verify_judge: _FakeVolatilityJudge | None = None,
     verify_provider: _FakeWebSearchProvider | None = None,
     verify_timeout_seconds: float = 75.0,
+    interim_line_generator: _FakeInterimLineGenerator | None = None,
 ) -> tuple[HandleMessage, FakeBot, FakeRepo, CapturingProvider]:
     tier0 = CapturingProvider(reply="positive", replies=tier0_replies)
     tier1 = CapturingProvider(reply=reply, replies=tier1_replies)
@@ -674,6 +703,7 @@ def _build(
         verify_judge=verify_judge,
         verify_provider=verify_provider,
         verify_timeout_seconds=verify_timeout_seconds,
+        interim_line_generator=interim_line_generator,
     )
     return handler, bot, repo, tier1
 
@@ -7588,3 +7618,108 @@ async def test_verify_inert_when_provider_unwired() -> None:
 
     assert judge.calls == [], "an unwired provider makes the whole seam inert"
     assert "СВЕЖАЯ ПРОВЕРКА" not in tier1.all_text
+
+
+# ---------------------------------------------------------------------------
+# BOB-057 .3 — the LIVE, ADDRESSED interim line before the verify search (US-3b)
+# ---------------------------------------------------------------------------
+
+
+async def test_verify_interim_sends_live_addressed_line_before_search() -> None:
+    # US-3b: on a needs_check turn Bob speaks a LIVE one-liner naming the subject and
+    # addressing the sender, sent BEFORE the search (not a scripted abstract «ищу…»).
+    judge = _FakeVolatilityJudge(verdict=_NEEDS_CHECK)
+    generator = _FakeInterimLineGenerator(line="Лёш, гляну свежие ставки, секунду 🙂")
+    sent_len_at_search: list[int] = []
+    provider = _FakeWebSearchProvider(
+        result=WebSearchResult(answer="16%"),
+        on_search=lambda: sent_len_at_search.append(len(bot.sent)),
+    )
+    resolver = _FakeInterlocutorResolver(
+        _interlocutor(name="Лёша", kind=InterlocutorKind.OWNER)
+    )
+    handler, bot, _repo, _tier1 = _build(
+        reply="hi",
+        verify_judge=judge,
+        verify_provider=provider,
+        interim_line_generator=generator,
+        perceive_sender=resolver,
+    )
+
+    await handler.handle(_message())
+
+    # The live gen saw the verdict's topic + the perceived sender name.
+    assert generator.calls == [(_VOLATILE_TOPIC, "Лёша")]
+    # The addressed interim line reached the chat FIRST, before the search ran.
+    assert bot.sent[0][1] == "Лёш, гляну свежие ставки, секунду 🙂"
+    assert sent_len_at_search == [1], "the interim was sent before the search"
+    assert provider.queries == [_VOLATILE_QUERY]
+    assert bot.final_text == "hi"  # the turn still ships its answer
+
+
+async def test_verify_interim_falls_back_to_seeded_phrase_on_empty_gen() -> None:
+    # An empty live line → a seeded BOB-055 phrase (never a dead-silent verify wait).
+    judge = _FakeVolatilityJudge(verdict=_NEEDS_CHECK)
+    provider = _FakeWebSearchProvider(result=WebSearchResult(answer="16%"))
+    handler, bot, _repo, _tier1 = _build(
+        reply="hi",
+        verify_judge=judge,
+        verify_provider=provider,
+        interim_line_generator=_FakeInterimLineGenerator(line="   "),
+    )
+
+    await handler.handle(_message())
+
+    assert bot.sent[0][1] in WEB_SEARCH_PROGRESS_PHRASES
+    assert provider.queries == [_VOLATILE_QUERY]
+
+
+async def test_verify_interim_seeded_fallback_when_no_generator() -> None:
+    # No generator wired → the interim is the seeded BOB-055 phrase (still not silent).
+    judge = _FakeVolatilityJudge(verdict=_NEEDS_CHECK)
+    provider = _FakeWebSearchProvider(result=WebSearchResult(answer="16%"))
+    handler, bot, _repo, _tier1 = _build(
+        reply="hi", verify_judge=judge, verify_provider=provider
+    )
+
+    await handler.handle(_message())
+
+    assert bot.sent[0][1] in WEB_SEARCH_PROGRESS_PHRASES
+
+
+async def test_verify_interim_gen_failure_falls_back_to_seeded() -> None:
+    # 🔴 Decorative: a raising live gen is caught → the seeded fallback still speaks and
+    # the search + turn are unaffected.
+    judge = _FakeVolatilityJudge(verdict=_NEEDS_CHECK)
+    provider = _FakeWebSearchProvider(result=WebSearchResult(answer="16%"))
+    handler, bot, _repo, _tier1 = _build(
+        reply="hi",
+        verify_judge=judge,
+        verify_provider=provider,
+        interim_line_generator=_FakeInterimLineGenerator(raises=True),
+    )
+
+    await handler.handle(_message())
+
+    assert bot.sent[0][1] in WEB_SEARCH_PROGRESS_PHRASES
+    assert provider.queries == [_VOLATILE_QUERY]
+    assert bot.final_text == "hi"
+
+
+async def test_verify_interim_not_sent_on_no_check_path() -> None:
+    # 🔴 The interim fires ONLY when needs_check — a non-volatile turn sends no interim
+    # (zero added chatter, US-2 «не зануда»).
+    judge = _FakeVolatilityJudge(verdict=_NO_CHECK)
+    provider = _FakeWebSearchProvider(result=WebSearchResult(answer="unused"))
+    generator = _FakeInterimLineGenerator(line="Лёш, секунду 🙂")
+    handler, bot, _repo, _tier1 = _build(
+        reply="hi",
+        verify_judge=judge,
+        verify_provider=provider,
+        interim_line_generator=generator,
+    )
+
+    await handler.handle(_message())
+
+    assert generator.calls == [], "no live gen on a non-volatile turn"
+    assert bot.sent == [(555, "hi")], "only the final answer, no interim line"

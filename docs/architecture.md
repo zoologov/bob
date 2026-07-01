@@ -1437,6 +1437,18 @@ Tier 1); иначе ход идёт прежним plain-путём роутер
   не ломается. Инвариант BOB-053 **цел**: реальный сбой поиска по-прежнему даёт честный
   анти-конфабуляционный нотис, а не выдумку; стриминг убирает лишь **ложные** нотисы от ~30с-таймаута.
   Привилегированный fulfiller (проактивный tick) анонсера не получает (v1). Новых зависимостей нет.
+- **Живая адресная интерим-реплика для verify (BOB-057 .3, US-3b).** Когда verify-шаг (.2) решает
+  проверить факт, `GatewayProgressAnnouncer.announce_verify(topic, sender_name)` шлёт ЖИВУЮ,
+  АДРЕСНУЮ реплику в голосе Боба, называя ЧТО он проверяет и К КОМУ обращается («Леш, гляну свежие
+  ставки, секунду 🙂») — не скриптовое абстрактное «ищу…». Модель-фейсинг чист: домен
+  `domain/personality/interim_line.py` (`INTERIM_LINE_SYSTEM_PROMPT`, `build_interim_line_user_prompt`,
+  `clean_interim_line` → одна опрятная строка); инфра `infrastructure/llm/interim_line.py`
+  (`LlmInterimLineGenerator`, новый Tier-0 `TaskType.INTERIM_LINE`, ошибка ПРОПАГИРУЕТСЯ). Порт
+  `InterimLineGenerator` (в `progress_announcer.py`) инъецируется в `HandleMessage`; провязка —
+  `_send_verify_interim` строит per-turn аннонсер перед прямым `provider.search`. **🔴 Декоративная
+  цепочка фолбэков в ОДНОМ месте:** живой Tier-0-ген → seeded-фраза `WEB_SEARCH_PROGRESS_PHRASES`
+  (BOB-055) через тот же seeded-RNG → тишина (сбой `gateway.reply` глотается). Интерим фонит ТОЛЬКО
+  при `needs_check`, +1-2с латентности допустимы (ход всё равно ждёт поиск), ход/поиск не ломаются.
 
 ### Прочитать ссылку: «Боб читает присланную страницу» (BOB-054)
 

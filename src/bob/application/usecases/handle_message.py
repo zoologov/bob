@@ -148,6 +148,7 @@ if TYPE_CHECKING:
     from contextlib import AbstractAsyncContextManager
     from random import Random
 
+    from bob.application.capabilities.progress_announcer import InterimLineGenerator
     from bob.application.reliability import Sleep
     from bob.application.router.llm_router import LLMRouter
     from bob.application.runtime.events import MessageReceived
@@ -820,6 +821,7 @@ class HandleMessage:
         verify_judge: VolatilityJudge | None = None,
         verify_provider: WebSearchProvider | None = None,
         verify_timeout_seconds: float = _DEFAULT_VERIFY_TIMEOUT_SECONDS,
+        interim_line_generator: InterimLineGenerator | None = None,
     ) -> None:
         self._router = router
         self._gateway = gateway
@@ -1142,6 +1144,12 @@ class HandleMessage:
         self._verify_judge = verify_judge
         self._verify_provider = verify_provider
         self._verify_timeout_seconds = verify_timeout_seconds
+        # The LIVE addressed interim line (BOB-057 .3, US-3b): on a ``needs_check`` turn
+        # Bob speaks a one-liner naming WHAT he checks and WHO he's talking to before the
+        # search. When wired, a Tier-0 gen produces it; unwired (the default) the verify
+        # interim falls to the seeded BOB-055 phrase. Fully decorative (gen/send failure
+        # → seeded phrase / silence), never blocks the search or breaks the turn.
+        self._interim_line_generator = interim_line_generator
 
     async def _run_essential[T](
         self, operation: Callable[[], Awaitable[T]], *, step: str
@@ -2434,7 +2442,9 @@ class HandleMessage:
         # folds into the SAME generation context as the other add-ons. Applies to owner and
         # guest alike (public web info, no owner/private leak). Wrapped so ANY failure drops
         # to «no note» — never blocks or breaks the turn (zero added latency when inert).
-        verify_note = await self._verify_note(text, history)
+        verify_note = await self._verify_note(
+            text, history, interlocutor=interlocutor, chat_id=chat_id
+        )
         if verify_note:
             context = f"{context}\n{verify_note}"
         system_prompt = self._system_prompt_for(
@@ -2662,7 +2672,12 @@ class HandleMessage:
             return ""
 
     async def _verify_note(
-        self, text: str, history: Sequence[Mapping[str, object]]
+        self,
+        text: str,
+        history: Sequence[Mapping[str, object]],
+        *,
+        interlocutor: Interlocutor | None = None,
+        chat_id: int | None = None,
     ) -> str:
         """The pre-answer epistemic-verify note for this turn, or ``""`` (BOB-057 .2).
 
@@ -2696,9 +2711,36 @@ class HandleMessage:
             return ""
         if not verdict.needs_check:
             return ""
-        # .3 upgrades this into a LIVE addressed interim line («погоди, проверю X»); for
-        # .2 the verify runs silently — the interim hook lands here.
+        # BOB-057 .3 (US-3b): before the search, Bob sends a LIVE, ADDRESSED interim line
+        # naming WHAT he checks and WHO he's talking to («Леш, гляну свежие ставки,
+        # секунду 🙂»). Decorative (live gen → seeded BOB-055 phrase → silence) and does
+        # NOT block the search below.
+        await self._send_verify_interim(verdict, interlocutor, chat_id)
         return await self._verify_search_note(provider, verdict)
+
+    async def _send_verify_interim(
+        self,
+        verdict: VolatilityVerdict,
+        interlocutor: Interlocutor | None,
+        chat_id: int | None,
+    ) -> None:
+        """Send the live addressed interim line for the verify search (BOB-057 US-3b).
+
+        Reuses the BOB-055 :class:`GatewayProgressAnnouncer` in its contextual mode so
+        the decorative fallback chain (live Tier-0 gen → seeded phrase → silence) lives
+        in one place. No ``chat_id`` (an unaddressed path) → no interim. The sender's
+        perceived ``display_name`` addresses the line; an unknown sender → topic-only.
+        """
+        if chat_id is None:
+            return
+        sender_name = interlocutor.display_name if interlocutor is not None else ""
+        announcer = GatewayProgressAnnouncer(
+            chat_id=chat_id,
+            gateway=self._gateway,
+            rng=self._rng,
+            line_generator=self._interim_line_generator,
+        )
+        await announcer.announce_verify(topic=verdict.topic, sender_name=sender_name)
 
     async def _verify_search_note(
         self, provider: WebSearchProvider, verdict: VolatilityVerdict
