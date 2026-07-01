@@ -32,6 +32,7 @@ from bob.application.capabilities.registry import UnknownCapabilityError
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
+    from bob.application.capabilities.progress_announcer import ProgressAnnouncer
     from bob.application.capabilities.registry import CapabilityRegistry
     from bob.domain.ports import LLMMessage, ToolCall, ToolCallingProvider
 
@@ -51,12 +52,14 @@ class ToolLoop:
         provider: ToolCallingProvider,
         registry: CapabilityRegistry,
         max_turns: int = _DEFAULT_MAX_TURNS,
+        announcer: ProgressAnnouncer | None = None,
     ) -> None:
         if max_turns <= 0:
             raise ValueError("max_turns must be positive")
         self._provider = provider
         self._registry = registry
         self._max_turns = max_turns
+        self._announcer = announcer
 
     async def run(self, messages: Sequence[LLMMessage]) -> str:
         """Complete ``messages`` through the tool-loop and return the final text."""
@@ -74,6 +77,12 @@ class ToolLoop:
 
     async def _run_tool(self, call: ToolCall) -> LLMMessage:
         """Dispatch one tool call (GUPPI executes) and render its ``tool`` message."""
+        # Interim "searching…" line (BOB-055): before a SLOW capability runs, let the
+        # announcer say a live word in Bob's voice so the owner is not left in silence.
+        # Decorative and by-name — the announcer stays silent for fast skills and
+        # swallows its own errors, so it never delays or breaks the dispatch below.
+        if self._announcer is not None:
+            await self._announcer.announce(call.name)
         try:
             result = await self._registry.dispatch(call.name, call.arguments)
         except UnknownCapabilityError:

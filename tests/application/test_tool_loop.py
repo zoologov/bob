@@ -148,3 +148,68 @@ def test_max_turns_must_be_positive() -> None:
             registry=CapabilityRegistry(),
             max_turns=0,
         )
+
+
+class RecordingAnnouncer:
+    """A fake ProgressAnnouncer that records the names it was asked to announce."""
+
+    def __init__(self) -> None:
+        self.announced: list[str] = []
+
+    async def announce(self, capability_name: str) -> None:
+        self.announced.append(capability_name)
+
+
+async def test_announcer_is_called_before_dispatch() -> None:
+    # Arrange: turn 1 requests the tool; a recording announcer + a capability that
+    # records the interleaving via a shared log proves announce fires BEFORE dispatch.
+    order: list[str] = []
+
+    class LoggingCapability(FakeCapability):
+        async def execute(self, args: Mapping[str, object]) -> object:
+            order.append("dispatch")
+            return await super().execute(args)
+
+    class LoggingAnnouncer(RecordingAnnouncer):
+        async def announce(self, capability_name: str) -> None:
+            order.append("announce")
+            await super().announce(capability_name)
+
+    cap = LoggingCapability(result="ok")
+    call = ToolCall(id="c1", name="recall_memory", arguments={})
+    provider = ScriptedProvider(
+        [
+            ToolCallResult(text="", tool_calls=(call,)),
+            ToolCallResult(text="done", tool_calls=()),
+        ]
+    )
+    announcer = LoggingAnnouncer()
+    loop = ToolLoop(provider=provider, registry=_registry(cap), announcer=announcer)
+
+    # Act
+    answer = await loop.run(_seed())
+
+    # Assert: announce ran, with the tool name, strictly before the dispatch.
+    assert announcer.announced == ["recall_memory"]
+    assert order == ["announce", "dispatch"]
+    assert answer == "done"
+
+
+async def test_announcer_none_behaves_as_before() -> None:
+    # Arrange: no announcer wired (the default) → the loop dispatches unchanged.
+    cap = FakeCapability(result="ok")
+    call = ToolCall(id="c1", name="recall_memory", arguments={})
+    provider = ScriptedProvider(
+        [
+            ToolCallResult(text="", tool_calls=(call,)),
+            ToolCallResult(text="done", tool_calls=()),
+        ]
+    )
+    loop = ToolLoop(provider=provider, registry=_registry(cap), announcer=None)
+
+    # Act
+    answer = await loop.run(_seed())
+
+    # Assert
+    assert cap.calls == [{}]
+    assert answer == "done"

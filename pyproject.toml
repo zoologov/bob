@@ -92,6 +92,10 @@ ignore = [
 # failure/blank notices whose Cyrillic look-alikes are intentional (Qwen reads them
 # natively) — RUF001/RUF002/RUF003 do not apply to these literals.
 "src/bob/application/capabilities/read_url.py" = ["RUF001", "RUF002", "RUF003"]
+# The progress announcer (BOB-055 .2) carries a voiced set of Russian "searching…"
+# interim lines ("секунду, гляну в сети…") + persona docstrings whose Cyrillic
+# look-alikes are intentional — RUF001/RUF002/RUF003 do not apply to these literals.
+"src/bob/application/capabilities/progress_announcer.py" = ["RUF001", "RUF002", "RUF003"]
 # The reflection module (BOB-026 .2 + BOB-033 .2) carries a few-shot PALETTE of Russian
 # "living Bob" private thoughts ("Поймал себя на том…", "Сегодня тише, чем хотелось бы…")
 # whose Cyrillic look-alikes are intentional (the Tier-0 model reads them natively) —
