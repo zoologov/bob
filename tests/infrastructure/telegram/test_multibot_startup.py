@@ -210,3 +210,157 @@ async def test_bob_not_registered_is_a_noop() -> None:
 
     assert sleep.delays == []
     assert gateway.bob_user_id() is None
+
+
+# --- HARDEN (BOB-059 .2): breadth over degradation / non-network / boundaries ---
+
+
+def _network_error(kind: type[Exception]) -> Exception:
+    """Build one instance of a *network* degradation class the ``except`` catches."""
+    if kind is TelegramNetworkError:
+        return TelegramNetworkError(method=GetMe(), message="down")
+    return kind("network down")
+
+
+@pytest.mark.parametrize(
+    "error_class",
+    [OSError, RuntimeError, TimeoutError, TelegramNetworkError],
+    ids=["OSError", "RuntimeError", "TimeoutError", "TelegramNetworkError"],
+)
+@pytest.mark.asyncio
+async def test_each_network_degradation_class_warns_and_returns(
+    error_class: type[Exception],
+) -> None:
+    """Every network degradation class on all attempts → graceful warn+return.
+
+    Locks that the broadened ``except`` catches the whole family (not just the
+    new ``TelegramNetworkError``): startup never re-raises, the retry budget is
+    spent, and the identity stays unresolved.
+    """
+    bot = _IdentityBot(outcomes=[_network_error(error_class)])
+    sleep = _SleepSpy()
+    gateway = _build(bot, sleep=sleep, attempts=3)
+
+    # Must NOT raise for any network class — startup continues.
+    await gateway.resolve_bot_identities()
+
+    assert bot.get_me_calls == 3  # all attempts exhausted
+    assert sleep.delays == [0.25, 0.25]  # attempts-1 backoffs
+    assert gateway.bob_user_id() is None  # graceful degrade
+
+
+@pytest.mark.parametrize(
+    "error_class",
+    [KeyError, TypeError, AttributeError],
+    ids=["KeyError", "TypeError", "AttributeError"],
+)
+@pytest.mark.asyncio
+async def test_non_network_bug_propagates_after_retry(
+    error_class: type[Exception],
+) -> None:
+    """A programming error (not a network class) surfaces — it is NOT swallowed.
+
+    Complements the ValueError case: the narrow ``except`` must let real bugs
+    escape so they are seen, even though the retry primitive itself is generic
+    (it does exhaust the budget before re-raising the last error).
+    """
+    bot = _IdentityBot(outcomes=[error_class("bug")])
+    sleep = _SleepSpy()
+    gateway = _build(bot, sleep=sleep, attempts=3)
+
+    with pytest.raises(error_class):
+        await gateway.resolve_bot_identities()
+
+    assert bot.get_me_calls == 3  # budget spent, then the last error is re-raised
+    assert gateway.bob_user_id() is None  # never set on a failing path
+
+
+@pytest.mark.asyncio
+async def test_two_transient_blips_then_resolves() -> None:
+    """Two blips then success (exactly attempts-1 failures) → identity resolves.
+
+    The boundary case: the retry rides out the maximum number of failures the
+    budget allows and still resolves on the final attempt.
+    """
+    bot = _IdentityBot(
+        outcomes=[
+            TelegramNetworkError(method=GetMe(), message="blip-1"),
+            TelegramNetworkError(method=GetMe(), message="blip-2"),
+            _FakeUser(id=_BOB_USER_ID, username=_BOB_USERNAME),
+        ]
+    )
+    sleep = _SleepSpy()
+    gateway = _build(bot, sleep=sleep, attempts=3)
+
+    await gateway.resolve_bot_identities()
+
+    assert bot.get_me_calls == 3  # two failures, resolved on the third
+    assert sleep.delays == [0.25, 0.25]  # a backoff before each retry
+    assert gateway.bob_user_id() == _BOB_USER_ID
+
+
+@pytest.mark.asyncio
+async def test_heterogeneous_transient_errors_are_ridden_out() -> None:
+    """A mix of transient network classes is retried, then the identity resolves.
+
+    A real flap is not always the same errno; the retry must ride out different
+    transient types back-to-back rather than only a single class.
+    """
+    bot = _IdentityBot(
+        outcomes=[
+            OSError("reset"),
+            TimeoutError("slow"),
+            _FakeUser(id=_BOB_USER_ID, username=_BOB_USERNAME),
+        ]
+    )
+    sleep = _SleepSpy()
+    gateway = _build(bot, sleep=sleep, attempts=3)
+
+    await gateway.resolve_bot_identities()
+
+    assert bot.get_me_calls == 3
+    assert sleep.delays == [0.25, 0.25]
+    assert gateway.bob_user_id() == _BOB_USER_ID
+
+
+@pytest.mark.asyncio
+async def test_single_attempt_budget_degrades_without_sleeping() -> None:
+    """attempts=1 (no retries): one failure degrades gracefully, no backoff sleep.
+
+    The lower boundary of the retry budget — a single try, then the graceful
+    warn+return, with the injected sleep left untouched.
+    """
+    bot = _IdentityBot(outcomes=[TelegramNetworkError(method=GetMe(), message="down")])
+    sleep = _SleepSpy()
+    gateway = _build(bot, sleep=sleep, attempts=1)
+
+    await gateway.resolve_bot_identities()
+
+    assert bot.get_me_calls == 1  # one and only try
+    assert sleep.delays == []  # never sleeps after the last attempt
+    assert gateway.bob_user_id() is None
+
+
+@pytest.mark.asyncio
+async def test_gateway_stays_pollable_after_persistent_flap() -> None:
+    """Integration (best-effort, invariant 7): a persistent flap leaves the gateway
+    fully usable, so the surrounding startup path would still proceed.
+
+    Startup calls ``resolve_bot_identities`` and then keeps going into polling
+    (``app.startup`` needs a whole Application, so we exercise the reachable seam
+    directly): after the degradation the gateway does not raise and ``poll_once``
+    runs across both bots — the crash the fix removed is gone, Bob still listens.
+    """
+    bot = _IdentityBot(outcomes=[TelegramNetworkError(method=GetMe(), message="down")])
+    sleep = _SleepSpy()
+    gateway = _build(bot, sleep=sleep, attempts=3)
+
+    # Degradation must not crash the identity resolution...
+    await gateway.resolve_bot_identities()
+
+    # ...and the gateway is still fully operational: polling proceeds (both bots),
+    # the identity is simply unresolved (reply-to-Bob degrades, @mention still works).
+    published = await gateway.poll_once()
+
+    assert published == 0  # the fakes have no updates, but polling did not raise
+    assert gateway.bob_user_id() is None
