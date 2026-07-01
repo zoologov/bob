@@ -32,6 +32,8 @@ from bob.application.runtime.events import MessageReceived
 from bob.application.usecases.decide_response import DecideResponse
 from bob.application.usecases.extract_facts import ExtractFacts
 from bob.application.usecases.handle_message import (
+    _VERIFY_GROUNDED_NOTE,
+    _VERIFY_HEDGE_NOTE,
     DiagramSendMode,
     EngagementState,
     HandleMessage,
@@ -8090,6 +8092,36 @@ async def test_verify_empty_answer_yields_hedge() -> None:
 
     assert "не вышло" in tier1.all_text
     assert "СВЕЖАЯ ПРОВЕРКА" not in tier1.all_text
+
+
+def test_grounded_note_steers_bobs_voice_not_an_agent_report() -> None:
+    # BOB-060 .2 register-nudge: the GROUNDED note must instruct Bob to present the
+    # finding IN HIS OWN VOICE, reacting to it — explicitly NOT as a generic agent
+    # report ("выполнен поиск, найдено N…"). Structural keyword assertions on the
+    # note builder output (not brittle full-string matches).
+    note = _VERIFY_GROUNDED_NOTE.format(answer="Ставка ЦБ сейчас 16%")
+    folded = note.casefold()
+
+    assert "Ставка ЦБ сейчас 16%" in note  # the real finding is carried in
+    # A voice-steer is present: react as Bob / in his own words.
+    assert "как боб" in folded or "по-своему" in folded
+    # And an explicit anti-report steer (do NOT read as an agent report / dry summary).
+    assert "отчёт" in folded
+
+
+def test_hedge_note_keeps_anti_confabulation_and_a_live_voice() -> None:
+    # 🔴 BOB-053 invariant intact: the HEDGE note still forbids passing a stale number
+    # off as fact / fabricating — AND now steers an HONEST, LIVE caveat in Bob's voice
+    # (not a robotic "поиск не удался").
+    note = _VERIFY_HEDGE_NOTE.format(topic="свежая ставка ЦБ")
+    folded = note.casefold()
+
+    # Anti-confabulation (BOB-053): no stale figure as fact, no invention.
+    assert "устаревш" in folded
+    assert "выдум" in folded or "выдав" in folded
+    # Live, in-voice honesty steer (not a dry robo-report).
+    assert "честно" in folded
+    assert "живо" in folded or "своими словами" in folded
 
 
 async def test_verify_judge_failure_is_treated_as_no_check() -> None:

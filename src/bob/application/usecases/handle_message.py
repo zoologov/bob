@@ -222,18 +222,24 @@ _DEFAULT_VERIFY_TIMEOUT_SECONDS = 75.0
 # ground the answer, not dump the whole search payload into the prompt).
 _VERIFY_ANSWER_MAX_CHARS = 800
 
-# The GROUNDED note (US-1/US-4): the fresh finding + an explicit nudge to react in Bob's
-# own voice/tone if the picture changed — the tone adapts through generation, unprogrammed.
+# The GROUNDED note (US-1/US-4 + BOB-060 .2 register-nudge): the fresh finding + an
+# explicit steer to present it IN BOB'S OWN VOICE, reacting to it — NOT as a generic
+# agent report («выполнен поиск, найдено N…»). The tone adapts through generation,
+# unprogrammed; the note only nudges the register, never the search mechanism.
 _VERIFY_GROUNDED_NOTE = (
-    "СВЕЖАЯ ПРОВЕРКА (веб): {answer}. Учти актуальное; если картина изменилась — "
-    "отреагируй по-своему, в т.ч. тоном."
+    "СВЕЖАЯ ПРОВЕРКА (веб): {answer}. Ты сходил и глянул это в сети — отреагируй "
+    "по-своему, как БОБ, со своим отношением и тоном, если картина изменилась; "  # noqa: RUF001
+    "НЕ отчётом («выполнен поиск, найдено…»), не сухой сводкой."  # noqa: RUF001
 )
 
-# The HEDGE note (US-6): on a failed/timed-out/empty verify Bob makes an HONEST epistemic
-# caveat — never a confident STALE number dressed as fact, never a fabrication.
+# The HEDGE note (US-6 + BOB-060 .2): on a failed/timed-out/empty verify Bob makes an
+# HONEST epistemic caveat — 🔴 never a confident STALE number dressed as fact, never a
+# fabrication (BOB-053 invariant). The register-nudge steers a LIVE, in-voice caveat
+# (not a robotic «поиск не удался»), without weakening the anti-confabulation intent.
 _VERIFY_HEDGE_NOTE = (
-    "Свериться со свежими данными по {topic} не вышло — не выдавай устаревшие цифры за "  # noqa: RUF001
-    "точные, сделай честную оговорку."
+    "Свериться со свежими данными по {topic} не вышло — скажи это честно и живо, "  # noqa: RUF001
+    "своими словами (не сухим «поиск не удался»); не выдавай устаревшие цифры за "
+    "точные и ничего не выдумывай."
 )
 
 # Max attractor-breaking regenerations the anti-repeat guard may draw before keeping the
