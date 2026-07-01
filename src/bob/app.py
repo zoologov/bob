@@ -653,9 +653,9 @@ def build_application(
     verify_provider = (
         build_web_search_provider(merged) if verify_enabled else None
     )
-    # The LIVE addressed interim line (BOB-057 .3, US-3b): a cheap Tier-0 gen of a
-    # one-liner in Bob's voice («Леш, гляну свежие ставки, секунду 🙂») before the
-    # verify search. Built with verify; unwired → the interim seeds a BOB-055 phrase.
+    # The LIVE addressed interim line (BOB-057 .3, US-3b; BOB-060): a cheap Tier-0 gen
+    # of a one-liner in Bob's voice («Леш, гляну свежие ставки, секунду 🙂») before a
+    # search. Built with verify; unwired → the interim stays SILENT (no scripted phrase).
     interim_line_generator = (
         LlmInterimLineGenerator(router=router) if verify_enabled else None
     )
