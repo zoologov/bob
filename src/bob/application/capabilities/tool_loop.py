@@ -79,10 +79,14 @@ class ToolLoop:
         """Dispatch one tool call (GUPPI executes) and render its ``tool`` message."""
         # Interim "searching…" line (BOB-055): before a SLOW capability runs, let the
         # announcer say a live word in Bob's voice so the owner is not left in silence.
-        # Decorative and by-name — the announcer stays silent for fast skills and
-        # swallows its own errors, so it never delays or breaks the dispatch below.
+        # Decorative and by-name — the announcer stays silent for fast skills. The seam
+        # does NOT trust the announcer to be well-behaved: any error here is swallowed so
+        # a decorative interim line can NEVER delay or break the dispatch below (review .4).
         if self._announcer is not None:
-            await self._announcer.announce(call.name)
+            try:
+                await self._announcer.announce(call.name)
+            except Exception:  # decorative: an announcer fault must not touch the turn
+                logger.exception("progress announce failed for %s; ignoring", call.name)
         try:
             result = await self._registry.dispatch(call.name, call.arguments)
         except UnknownCapabilityError:
