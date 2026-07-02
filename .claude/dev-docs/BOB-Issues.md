@@ -6,7 +6,7 @@
 > Потенциальные проблемы и улучшения, собираемые в процессе разработки (по образцу
 > beadloom `BDL-UX-Issues.md`). Фиксируем находки — фиксим планово.
 >
-> **Total:** 30 · **Open:** 22 · **Closed:** 8 (Фаза 1: #6, #19–24, #29)
+> **Total:** 30 · **Open:** 20 · **Closed:** 10 (Фаза 1: #6, #19–24, #29 · Фаза 2: #7, #8)
 > 2026-07-02 (комплексный аудит, 5 субагентов read-only): заведён лог. Открыты #1–#30
 > из аудита организации/DDD/доков/гигиены. Источник: сессия аудита `13b1e49b`.
 
@@ -21,7 +21,7 @@
 | Фаза | Что | Issues | Тип | Статус |
 |---|---|---|---|---|
 | **1. Быстрые победы** (параллельно, независимы) | гигиена + README ×2 | #19–24, #29, #6, #20 | chore ×2 | ✅ done (BOB-063 PR#76 + BOB-064) |
-| **2. Фундамент** | split `ports.py` (+re-export shim) · beadloom-правило слоёв | #7, #8 | feature | ○ после ф.1 |
+| **2. Фундамент** | split `ports.py` (+re-export shim) · beadloom-правило слоёв | #7, #8 | feature | ✅ done (BOB-065: пакет `domain/ports/` + shim · 11 AaC-правил слоёв · граф 28 нод) |
 | **3. Эпик BOB-062 «Domain-first + доки»** — per-module вертикали: `coding→memory→proactivity→social→conversation→personality/capabilities→runtime/application`; каждая несёт свои `beadloom:`-тэги + граф-ноды + SPEC/DOC | #1–6, #9–18, #30 | epic | ○ после ф.2 |
 | — монстры внутри ф.3 | `handle_message`(3523,#9)→растворить в conversation/personality/memory/social/application; `app.py`(2815,#10)→runtime | #9, #10 | — | ○ |
 | — после реорга | включить правило слоёв (#8) как «зубы»; удалить `ports.py`-шим (#18) | #8, #18 | — | ○ |
@@ -56,13 +56,13 @@
 > Эталон beadloom: ~65 нод → 32 SPEC + 19 DOC. Фикс — гранулярные тэги + ноды графа → генерация.
 
 ### #1 [2026-07-02] [HIGH] Пере-аннотировать исходники гранулярными `beadloom:feature=`/`component=`
-**Area:** docs · **Issue:** все 186 файлов помечены blanket `beadloom:domain=bob` — нулевая гранулярность, из-за чего граф пуст и доки не генерятся. **Expected:** тэги domain + feature/component по целевым модулям (personality/conversation/memory/capabilities/social/proactivity/coding + infra-адаптеры). **Notes:** root-fix, всё остальное по докам зависит от этого; совпадает с domain-first реорг (#12–#19).
+**Area:** docs · **Issue:** все 186 файлов помечены blanket `beadloom:domain=bob` — нулевая гранулярность, из-за чего граф пуст и доки не генерятся. **Expected:** тэги domain + feature/component по целевым модулям (personality/conversation/memory/capabilities/social/proactivity/coding + infra-адаптеры). **Notes:** root-fix, всё остальное по докам зависит от этого; совпадает с domain-first реорг (#12–#19). **🟡 Частично в Фазе 2 (BOB-065):** заложен детальный граф (28 нод); полная гранулярная пере-аннотация всех 186 файлов остаётся Фазе 3 (BOB-062).
 
 ### #2 [2026-07-02] [HIGH] Достроить `.beadloom/_graph/services.yml`: feature + component ноды
-**Area:** docs · **Issue:** граф не описывает ~30 фич + ~6 компонентов, что есть в коде. **Expected:** добавить ноды (по дереву аудита) + `part_of`/`depends_on`, `beadloom reindex`. **Depends:** #1.
+**Area:** docs · **Issue:** граф не описывает ~30 фич + ~6 компонентов, что есть в коде. **Expected:** добавить ноды (по дереву аудита) + `part_of`/`depends_on`, `beadloom reindex`. **Depends:** #1. **🟡 Частично в Фазе 2 (BOB-065):** граф расширен до 28 нод; остаток фич/компонентов + полные `part_of`/`depends_on` — Фаза 3.
 
 ### #3 [2026-07-02] [HIGH] `docs generate` + разбить `architecture.md` на per-node SPEC/DOC
-**Area:** docs · **Issue:** 4095-строчный монолит; per-feature SPEC/DOC отсутствуют (0 vs beadloom 32+19). **Expected:** сгенерировать скелеты, мигрировать секции H2/H3 по карте аудита; infra `DOC.md` + capability-seam дописать руками (component DOC beadloom не генерит). **Depends:** #2.
+**Area:** docs · **Issue:** 4095-строчный монолит; per-feature SPEC/DOC отсутствуют (0 vs beadloom 32+19). **Expected:** сгенерировать скелеты, мигрировать секции H2/H3 по карте аудита; infra `DOC.md` + capability-seam дописать руками (component DOC beadloom не генерит). **Depends:** #2. **🟡 Частично в Фазе 2 (BOB-065):** SPEC-скелеты сгенерированы под новый граф; наполнение содержимым + миграция секций из монолита + ужатие `architecture.md` (#4) остаются Фазе 3.
 
 ### #4 [2026-07-02] [MEDIUM] Ужать `architecture.md` до навигационного обзора
 **Area:** docs · **Issue:** сейчас всё-в-одном. **Expected:** таблица доменов + сервисов + Mermaid + ссылки (как beadloom `architecture.md`). **Depends:** #3.
@@ -75,12 +75,6 @@
 > Целевые модули: **personality · conversation · memory · capabilities · social · proactivity ·
 > coding** (бизнес) + **application · infrastructure · runtime** (техн.). Инкрементально,
 > поведение-сохраняюще, per-module вертикали. Карта «файл→модуль» — в аудите ④.
-
-### #7 [2026-07-02] [HIGH] Split `domain/ports.py` (1153 стр, God-ports) по модулям + shared kernel
-**Area:** architecture · **Issue:** 49 портов/значений в одном файле; импортят **141 файл** (blast radius). **Expected:** каждый модуль владеет своими `ports.py`; `Clock`/`EventBus`/`LLMProvider`/`JsonValue` → `runtime/` (kernel). Транзитный re-export-шим `domain/ports.py` на время миграции. **Notes:** фундамент — блокирует вертикали #12–#19.
-
-### #8 [2026-07-02] [HIGH] 🔴 Ввести beadloom-правило направления слоёв (сейчас НЕ энфорсится)
-**Area:** architecture/tooling · **Issue:** lint гоняет ТОЛЬКО `domain-needs-parent`; инвариант domain←application←infrastructure лишь задокументирован (`depends_on`), не проверяется → дрейф невидим. **Expected:** `forbid`/`require` правила: бизнес-модули ← application ← infrastructure; runtime — единственный, кто импортит конкреты infra. **Notes:** ставит зубы всей реорганизации.
 
 ### #9 [2026-07-02] [HIGH] Декомпозиция `handle_message.py` (3523 стр, God use-case)
 **Area:** architecture · **Issue:** 1 класс, ~50 инъекций, ~40 методов, 14 портов. **Expected:** ~14 cohesion-коллабораторов (TurnGate, VerifyStep, AntiRepeatGuard, SocialContext, VoiceComposer, EngagementDecider, RecallAssembler, ThreadReplay, DiagramPresenter, ReplyComposer, EssentialRunner…) → целевые модули; `handle()` = тонкий оркестратор (~40 строк). Волны 0→3 (аудит ②). 🔴 инварианты: verify-once-per-turn, регенерация, essential-vs-decorative, per-turn announcer, floor-advance на всех ветках.
@@ -151,3 +145,8 @@
 **BOB-064 «Актуализация README ×2» (текущий PR):**
 - ✅ **#23** [README shipped vs визия] — оба README переписаны: раздел «What Bob does today (shipped)» (Telegram-чат/личность, память SQLite+FTS5, web_search/read_url, эпистемическая самопроверка, Боб-кодер, проактивность, групповая нить) отделён от `Roadmap / bigger vision` (frozen: облик/камера/планшет/FLUX/голос).
 - ✅ **#24** [README Tech Stack + Installation/Quick-start] — стек починен (Python 3.12/asyncio · **aiogram** · Ollama+Qwen 2.5 7B/0.5B + Qwen MaaS · Claude Code CLI · SQLite+FTS5; **FastAPI убран**); добавлены Installation (`uv sync` + `config/bob.example.yaml` + env `BOB_TELEGRAM__TOKEN`/`BOB_LLM__TIER1_API_KEY`) и Quick start (`./bob start|stop|restart|status|logs`). RU=EN.
+
+### Фаза 2 — фундамент (закрыты 2026-07-02, BOB-065, PR ветка `features/BOB-065`)
+
+- ✅ **#7** [split `domain/ports.py`] — монолитный `ports.py` (God-ports) разбит на пакет `domain/ports/` с когезивными подмодулями (`kernel` · `capabilities` · `memory` · `personality` · `conversation` · `social` · `proactivity` · `coding`). `__init__.py` — re-export-шим: `from bob.domain.ports import X` резолвит все 51 публичный символ без изменения импортов (blast radius не тронут). Kernel-порты (`Clock`/`EventBus`/`LLMProvider`/`JsonValue`/`DomainEvent`/`EventHandler`/`LLMMessage`) вынесены в `kernel.py`. Удаление шима — по-прежнему #18 (после domain-first вертикалей).
+- ✅ **#8** [beadloom-правило направления слоёв] — введены AaC-правила слоёв (11 правил): направление `domain ← application ← infrastructure` теперь энфорсится `beadloom lint --strict`, а не только документировано. Дрейф границ становится видимым в CI.

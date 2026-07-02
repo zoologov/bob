@@ -55,15 +55,28 @@ src/bob/
     diagrams/        # mermaid_blocks: extract/strip/normalize fenced ```mermaid
                      #   (чистый разбор inline-mermaid из текста ответа, BOB-037)
     proactivity/     # UrgeModel, SocialEnergy, Governance, ProactiveDecider, ProactivityState
-    ports.py         # порты-протоколы: LLMProvider, MemoryRepo, MemoryRecall,
-                     #                   SoulStore, EventBus, Clock, ProactivityStore
-    ports.py         #   + Capability, ToolCallingProvider, AllowlistStore,
-                     #     Embedder, Reranker (семантическая память, BOB-011),
-                     #     ZoneClassifier (Negotiation-врезка, BOB-013),
-                     #     RepoIntrospector (read-only самоинтроспекция, BOB-017),
-                     #     DiagramRenderer + DiagramSink + DiagramResult (render_diagram, BOB-035),
-                     #     WebSearchProvider + WebSearchResult + WebSource (web_search, BOB-053),
-                     #     UrlReader + WebPage + UrlReadError/SsrfBlockedError (read_url, BOB-054)
+    ports/           # порты-протоколы (пакет, разбит из ports.py в BOB-065).
+                     #   __init__.py — re-export shim: `from bob.domain.ports import X`
+                     #     резолвит все 51 публичный символ без изменений импортов.
+                     #   kernel.py       — Clock, DomainEvent, EventBus, EventHandler,
+                     #                     JsonValue, LLMMessage, LLMProvider
+                     #   memory.py       — MemoryRepo, MemoryRecall, Recalled, Embedder,
+                     #                     Reranker (семантическая память, BOB-011)
+                     #   social.py       — SoulStore, AllowlistStore
+                     #   proactivity.py  — ProactivityStore, GoalStore, Planner,
+                     #                     SelfImprovementStore, PatternDetector
+                     #   conversation.py — ConversationFloorStore, CloserLog
+                     #   personality.py  — ZoneClassifier (Negotiation-врезка, BOB-013),
+                     #                     MessageReactor, ReflectionReader, SulkStore,
+                     #                     FascinationStore, FirstImpressionStore,
+                     #                     NotableReactionStore, RelationshipStore
+                     #   capabilities.py — Capability, ToolCallingProvider,
+                     #                     RepoIntrospector (самоинтроспекция, BOB-017),
+                     #                     DiagramRenderer + DiagramSink + DiagramResult (BOB-035),
+                     #                     WebSearchProvider + WebSearchResult + WebSource (BOB-053),
+                     #                     UrlReader + WebPage + UrlReadError/SsrfBlockedError (BOB-054)
+                     #   coding.py       — ClaudeCodeRunner, Worktree, CodingSessionStore,
+                     #                     PullRequestOpener
   application/       # GUPPI: use-cases + оркестрация. Зависит от domain через порты.
     runtime/         # AgentRuntime (жизненный цикл), AsyncEventBus, события, periodic, retry
     router/          # LLMRouter: классификация задачи → Tier + правило редакции
@@ -1037,7 +1050,7 @@ BobNet (реплики отвечают по очереди, а не галдя�
 
 ### Персист floor (порт + Sqlite)
 
-- **`ConversationFloorStore`** (`Protocol`, `domain/ports.py`) — `load(chat_id, thread_id)`
+- **`ConversationFloorStore`** (`Protocol`, `domain/ports/conversation.py`) — `load(chat_id, thread_id)`
   / `save(chat_id, thread_id, floor)`. Ключ — тред (`thread_id`, `None` = главный чат /
   без forum-топика), потому что floor — свойство одного живого обмена, не человека. `load`
   для невиданного треда возвращает дефолтный `IDLE`-floor.
@@ -1392,7 +1405,7 @@ backoff не маскировал дефект. `sleep` инъецируется
 авто-дискавери, self-creation придут позже за тем же контрактом). По канону книги
 **GUPPI — исполнитель** того, что Боб решает применить.
 
-- **Контракт `Capability`** (`domain/ports.py`): `name`, `description`,
+- **Контракт `Capability`** (`domain/ports/capabilities.py`): `name`, `description`,
   `input_schema` (JSON-схема), `permission` (`safe` исполняется напрямую;
   `confirm` — задел под approval-гейт) и `async execute(args)`.
 - **`CapabilityRegistry`** (`application/capabilities`): `register` (имя
@@ -1440,7 +1453,7 @@ Tier 1); иначе ход идёт прежним plain-путём роутер
   `permission="safe"`, JSON-схема — единственный обязательный `query`. Пустой/пробельный
   `query` отвечается честно **без вызова провайдера** (`_EMPTY_QUERY`); пустой `sources` на
   успехе валиден (заземлённый ответ, цитировать нечего) и ответ всё равно возвращается.
-- **Порт + значения** (`domain/ports.py`): `WebSearchProvider.search(query) -> WebSearchResult`;
+- **Порт + значения** (`domain/ports/capabilities.py`): `WebSearchProvider.search(query) -> WebSearchResult`;
   `WebSearchResult{answer, sources}`; `WebSource{title, url}` (`title=""`, когда провайдер его
   опустил — одного URL достаточно). Порт провайдер-агностичен: «query на вход, заземлённый
   answer + sources на выход», так что Tavily или иной провайдер встаёт без правок навыка.
@@ -1532,7 +1545,7 @@ Tool-loop сам тянется к навыку, когда в диалоге е
   `permission="safe"`, JSON-схема — единственный обязательный `url`. Пустой/пробельный `url`
   отвечается честно **без вызова читателя** (`_BLANK_URL`). На успехе `WebPage` проецируется как
   `{url, title, excerpt}`, где `excerpt` — уже усечённый извлечённый текст страницы.
-- **Порт + значения** (`domain/ports.py`): `UrlReader.read(url) -> WebPage`;
+- **Порт + значения** (`domain/ports/capabilities.py`): `UrlReader.read(url) -> WebPage`;
   `WebPage{url, title, text}` (`url` — финальный после разрешённых редиректов, чтобы Боб цитировал
   реальный источник; `title=""`, когда его нет). Контракт отказа объявлен в домене —
   `UrlReadError` (страницу не прочитать: отклонённая схема, не-2xx, запрещённый content-type,
@@ -1629,7 +1642,7 @@ Capability-швом (без нового транспорта) живут чет
 несуществующую ссылку/символ/задачу. Приватный инвариант в них не дублируется — он
 живёт глубже, в реализации порта.
 
-**Порт `RepoIntrospector`** (`domain/ports.py`, `Protocol`) — абстракция шва:
+**Порт `RepoIntrospector`** (`domain/ports/capabilities.py`, `Protocol`) — абстракция шва:
 `architecture_context(ref)` / `search_code(query)` / `read_file(path, *, max_lines)`
 / `list_tasks(query)` / `code_history(path)` (BOB-038), все **read-only**. В тестах
 подменяется детерминированным фейком (без подпроцесса и диска).
@@ -1798,7 +1811,7 @@ worktree убирается в `finally` на любом завершении п
 `FAILED`, стоп `CANCELLED`), так что висящих worktree не остаётся. Authz —
 defense-in-depth: гейт дублируется на уровне GUPPI, но use-case проверяет `OwnerCheck.is_owner`
 на **каждом** методе сам; чужому — тихий отказ без сессии и без прогона. Все порты
-объявлены в `domain/ports.py` (`ClaudeCodeRunner`, `Worktree`, `CodingSessionStore`,
+объявлены в `domain/ports/coding.py` (`ClaudeCodeRunner`, `Worktree`, `CodingSessionStore`,
 `PullRequestOpener`).
 
 #### 🔴 Изоляция: `GitWorktree` (только трекнутые файлы)
@@ -2031,9 +2044,9 @@ gracefully; при полном отсутствии материала возв
   и возвращает в tool-loop **короткий текст-подтверждение** (модель никогда не
   видит байты). При ошибке рендера навык отдаёт честный «рендерер недоступен» и
   **не роняет ход** (graceful).
-- **Порт `DiagramRenderer`** (`domain/ports.py`, `Protocol`) — чистая абстракция
+- **Порт `DiagramRenderer`** (`domain/ports/capabilities.py`, `Protocol`) — чистая абстракция
   «mermaid на входе, PNG-байты на выходе»: `async render(mermaid_source) -> bytes`.
-  Контракт обязывает реализацию поднять `DiagramRenderError` (тоже в `domain/ports.py`),
+  Контракт обязывает реализацию поднять `DiagramRenderError` (тоже в `domain/ports/capabilities.py`),
   когда рендер невозможен. Ошибка определена в домене, чтобы приложение ловило её
   **без импорта инфраструктуры** (гексагон запрещает application → infrastructure).
 - **Адаптер `SubprocessMmdcRenderer`** (`infrastructure/diagrams/mmdc_renderer.py`) —
@@ -2476,7 +2489,7 @@ reflect-тике»); оба инъецируются как `None`-able шовы
 **директива в системный промпт**, дополняющая тёплый тон (Боб защищает свои
 ценности, не становясь грубым).
 
-- **Порт `ZoneClassifier`** (`domain/ports.py`): `classify(topic, *, taste_verdict,
+- **Порт `ZoneClassifier`** (`domain/ports/personality.py`): `classify(topic, *, taste_verdict,
   conviction) -> NegotiationZone` решает, *кому принадлежит* тема. Контракт абстрактен
   намеренно — позже свопается на Tier-0 LLM-классификатор без изменения потребителей.
 - **Дефолт `TasteZoneClassifier`** (`domain/personality/zone_classifier.py`) —
@@ -2662,7 +2675,7 @@ capability-манифеста (`_CAPABILITY_PREFACE` подаёт навыки �
 модели). Кастом-эмодзи — premium, вне области; стандартный набор — то, что
 `set_message_reaction` принимает без ошибки «reaction not allowed».
 
-Порт **`MessageReactor`** (`domain/ports.py`, `react(*, chat_id, message_id, emoji)`) —
+Порт **`MessageReactor`** (`domain/ports/personality.py`, `react(*, chat_id, message_id, emoji)`) —
 шов реакции. Реализация в Telegram-гейтвее (`infrastructure/telegram/`):
 `TelegramGateway.set_message_reaction` через aiogram, адаптер `_ReactorGateway`
 (`multibot.py`) пинит реакцию к треду Боба. Реакция **best-effort**: адаптер деградирует
@@ -2671,7 +2684,7 @@ capability-манифеста (`_CAPABILITY_PREFACE` подаёт навыки �
 
 ### (2) Протекающая внутренняя жизнь — `leak_inner_life`
 
-Порт **`ReflectionReader`** (`domain/ports.py`, `latest_reflection_text() -> str | None`)
+Порт **`ReflectionReader`** (`domain/ports/personality.py`, `latest_reflection_text() -> str | None`)
 читает текст **последней реальной** рефлексии Боба. Реализация в
 `infrastructure/persistence/proactivity_sources.py`: берёт свежайшую строку
 `episodic_log`, чей `event_type` ∈ {`reflection`, `inner_monologue`} (их grounded и
@@ -2784,7 +2797,7 @@ few-shot (см. «Краткость по запросу»). Голосовая 
    **текущего** окна (история ~6 + recall ~5), поэтому подписной тик, который повторяется
    **раз в сессию через дни**, в узком окне мелькает 0–1 раз — ниже `tic_min_occurrences` — и
    проходит. BOB-061 закрывает дыру двумя доработками. **(1) Персист.** Порт `CloserLog`
-   (`domain/ports.py`) — крошечное **приватное локальное** кольцо closer-ов Боба: адаптер
+   (`domain/ports/conversation.py`) — крошечное **приватное локальное** кольцо closer-ов Боба: адаптер
    `SqliteCloserLog` (`infrastructure/persistence/closer_log_store.py`) хранит только
    **нормализованные закрывашки** (не полные реплики) в таблице `closer_log`, кэп `30` (старые
    сходят с кольца на `append`; та же SQLite-база памяти, таблица заводится идемпотентно
@@ -3553,7 +3566,7 @@ value-объекта `ProactivityState`, живёт только в строке
 Обход устойчив к циклам `deps`: незавершённый предшественник просто делает задачу
 неготовой, рекурсивного обхода нет — зависнуть негде.
 
-Персист — за портом **`GoalStore`** (`domain/ports.py`): `load(persona_id)` (пустой
+Персист — за портом **`GoalStore`** (`domain/ports/proactivity.py`): `load(persona_id)` (пустой
 граф для невиданной персоны), `save_goal` / `save_task` (UPSERT), атомарные
 `update_goal_state` / `update_task_state`. Адаптер
 **`SqliteGoalStore`** (`infrastructure/persistence/goal_store.py`) маппит граф на
@@ -3563,7 +3576,7 @@ Bobiverse держат свои цели); `deps` round-trip'ит JSON-масс�
 
 ### Planner — декомпозиция цели в задачи (`plan_goal.py`)
 
-Порт **`Planner.decompose(goal) → Sequence[Task]`** (`domain/ports.py`) разбивает
+Порт **`Planner.decompose(goal) → Sequence[Task]`** (`domain/ports/proactivity.py`) разбивает
 `APPROVED`-цель на атомарные задачи с зависимостями и **классифицирует
 `needs_external_agency`**. Живая реализация — **`LlmPlanner`**: просит
 reasoning-модель (Tier 1, `TaskType.PLAN_GOAL`) и парсит строгий JSON так же
@@ -3697,7 +3710,7 @@ Use-case **`PlanGoal`** держит **двойной апрув**:
   отвечает, есть ли хоть один ненулевой наклон. Несколько правил по одному рычагу
   суммируются, но суммарный наклон зажат потолком.
 
-Персист — порт **`SelfImprovementStore`** (`domain/ports.py`) +
+Персист — порт **`SelfImprovementStore`** (`domain/ports/proactivity.py`) +
 `SqliteSelfImprovementStore` (`infrastructure/persistence/self_improvement_store.py`)
 над таблицей `improvement_rule` (строка на `(persona_id, id)` — реплики Bobiverse
 держат свои правила раздельно). `load` / `save_rule` (UPSERT) /
@@ -3706,7 +3719,7 @@ enum'ы персистятся строковым `.value`, SQL параметр
 
 ### Детектор паттернов (`application/usecases/detect_patterns.py`)
 
-- Порт **`PatternDetector`** (`domain/ports.py`): `detect(signals)` возвращает
+- Порт **`PatternDetector`** (`domain/ports/proactivity.py`): `detect(signals)` возвращает
   правила-кандидаты строго в `PROPOSED`. **`LlmPatternDetector`** — реализация
   через Tier-1 LLM (`TaskType.DETECT_PATTERNS`): из среза сигналов формулирует
   человечное правило и **выбирает рычаг только из `Lever`-allowlist**. Разбор JSON
