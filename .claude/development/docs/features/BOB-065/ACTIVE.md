@@ -18,9 +18,16 @@
 | `bob-r3z.3` | dev — docs generate скелеты | ✓ done (15 скелетов) |
 | `bob-r3z.4` | dev — AaC rules.yml | ✓ done (11 правил, lint exit 0) |
 | `bob-r3z.8` | dev — сверка граф↔правила↔доки | ✓ done (ports-узел, 28 узлов, coverage 68%) |
-| `bob-r3z.5` | test | ○ ready (Волна 2) |
-| `bob-r3z.6` | review | ● blocked (.5) |
-| `bob-r3z.7` | tech-writer | ● blocked (.6) |
+| `bob-r3z.5` | test | ✓ done (pytest 3269, coverage 100%) |
+| `bob-r3z.6` | review | ✓ done (OK, 0 critical/major) |
+| `bob-r3z.7` | tech-writer | ✓ done (architecture.md рефреш, #7/#8 закрыты) |
+| `bob-r3z.9` | dev (Gate-fix) | ✓ done (112 аннотаций #1, скелеты отвязаны в Ф3) |
+
+## Gate
+
+`beadloom ci` **EXIT 0** — reindex/lint/sync-check/docs-audit/config-check/doctor PASS.
+Решение owner: контент SPEC-доков отложен в Фазу 3 (скелеты отвязаны, Gate требует наполнения).
+Остаток — не-блокирующий warn `no-monster-modules: usecases 217>200` (ожидаемо, #9).
 
 ## Волны
 

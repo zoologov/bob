@@ -3,6 +3,7 @@
 # See the LICENSE file in the project root for full license information.
 
 # beadloom:domain=bob
+# beadloom:feature=personality
 
 """Relationship — Bob's per-person relationship quality, accrued over turns (BOB-014).
 

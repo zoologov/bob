@@ -3,6 +3,7 @@
 # See the LICENSE file in the project root for full license information.
 
 # beadloom:domain=bob
+# beadloom:feature=usecases
 
 """PrivilegedRequestFulfiller — run ONE request with the privilege (BOB-052 .3).
 

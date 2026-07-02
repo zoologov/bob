@@ -3,6 +3,7 @@
 # See the LICENSE file in the project root for full license information.
 
 # beadloom:domain=bob
+# beadloom:feature=runtime-app
 
 """In-process asyncio publish/subscribe event bus.
 

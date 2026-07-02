@@ -3,6 +3,7 @@
 # See the LICENSE file in the project root for full license information.
 
 # beadloom:domain=bob
+# beadloom:feature=personality
 
 """Disposition — Bob's stable affective temperament as a pure value object.
 

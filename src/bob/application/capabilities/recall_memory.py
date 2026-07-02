@@ -3,6 +3,7 @@
 # See the LICENSE file in the project root for full license information.
 
 # beadloom:domain=bob
+# beadloom:feature=capabilities-app
 
 """``recall_memory`` — the first real capability: a wrapper over MemoryRecall.
 

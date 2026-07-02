@@ -3,6 +3,7 @@
 # See the LICENSE file in the project root for full license information.
 
 # beadloom:domain=bob
+# beadloom:feature=capabilities-app
 
 """``search_memory`` — the first agentic capability: Bob searches his own memory.
 

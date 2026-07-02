@@ -3,6 +3,7 @@
 # See the LICENSE file in the project root for full license information.
 
 # beadloom:domain=bob
+# beadloom:feature=personality
 
 """Negotiation — how firmly Bob holds a position, by zone and conviction.
 

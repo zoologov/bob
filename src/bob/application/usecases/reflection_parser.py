@@ -3,6 +3,7 @@
 # See the LICENSE file in the project root for full license information.
 
 # beadloom:domain=bob
+# beadloom:feature=usecases
 
 """HeuristicReflectionParser — deterministic reflection -> signal (no LLM, no I/O).
 

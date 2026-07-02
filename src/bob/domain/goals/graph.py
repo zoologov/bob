@@ -3,6 +3,7 @@
 # See the LICENSE file in the project root for full license information.
 
 # beadloom:domain=bob
+# beadloom:feature=goals
 
 """Граф целей Боба + чистые граф-функции (BOB-015 .1).
 

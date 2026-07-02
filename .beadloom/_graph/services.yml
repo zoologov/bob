@@ -71,64 +71,48 @@ nodes:
     source: src/bob/domain/personality/
     tags: [layer-domain]
     summary: 'Personality core — Mood five-axis affect, TasteEngine, Negotiation, SOUL/disposition value objects driving Bob''s tone.'
-    docs:
-      - domains/bob-domain/features/personality/SPEC.md
 
   - ref_id: memory
     kind: feature
     source: src/bob/domain/memory/
     tags: [layer-domain]
     summary: 'Memory domain entities — facts, episodes, relationship and recall value objects (pure; persistence lives in infrastructure).'
-    docs:
-      - domains/bob-domain/features/memory/SPEC.md
 
   - ref_id: goals
     kind: feature
     source: src/bob/domain/goals/
     tags: [layer-domain]
     summary: 'Goals domain — goal/plan entities and goal-state value objects for Bob''s self-directed pursuits.'
-    docs:
-      - domains/bob-domain/features/goals/SPEC.md
 
   - ref_id: coding-domain
     kind: feature
     source: src/bob/domain/coding/
     tags: [layer-domain]
     summary: 'Coding domain (domain half of the coding capability) — pure coding-intent/context entities. Paired with the `coding-infra` adapter.'
-    docs:
-      - domains/bob-domain/features/coding-domain/SPEC.md
 
   - ref_id: diagrams-domain
     kind: feature
     source: src/bob/domain/diagrams/
     tags: [layer-domain]
     summary: 'Diagrams domain (domain half) — diagram request/spec value objects. Paired with the `diagrams-infra` renderer adapter.'
-    docs:
-      - domains/bob-domain/features/diagrams-domain/SPEC.md
 
   - ref_id: introspection-domain
     kind: feature
     source: src/bob/domain/introspection/
     tags: [layer-domain]
     summary: 'Introspection domain (domain half) — architecture self-inspection entities. Paired with the `introspection-infra` adapter.'
-    docs:
-      - domains/bob-domain/features/introspection-domain/SPEC.md
 
   - ref_id: permission
     kind: feature
     source: src/bob/domain/permission/
     tags: [layer-domain]
     summary: 'Permission domain — permission-request/grant entities and access value objects (authz-before-autonomy).'
-    docs:
-      - domains/bob-domain/features/permission/SPEC.md
 
   - ref_id: proactivity-domain
     kind: feature
     source: src/bob/domain/proactivity/
     tags: [layer-domain]
     summary: 'Proactivity domain (domain half) — proactive-intent and tick-decision value objects. Paired with the `proactivity-app` orchestrator.'
-    docs:
-      - domains/bob-domain/features/proactivity-domain/SPEC.md
 
   # ── Application submodules (kind: feature, part_of bob-application) ──────────
   - ref_id: usecases
@@ -136,48 +120,36 @@ nodes:
     source: src/bob/application/usecases/
     tags: [layer-application]
     summary: 'Use-cases — HandleMessage, RunGenesis, UpdateMoodFromText, goal/memory/reflection flows orchestrating domain + ports.'
-    docs:
-      - domains/bob-application/features/usecases/SPEC.md
 
   - ref_id: authz
     kind: feature
     source: src/bob/application/authz/
     tags: [layer-application]
     summary: 'Authorization policy — Authorizer access decisions plus sender/reactor social perception (social identity ≠ authz).'
-    docs:
-      - domains/bob-application/features/authz/SPEC.md
 
   - ref_id: capabilities-app
     kind: feature
     source: src/bob/application/capabilities/
     tags: [layer-application]
     summary: 'Capability seam (application half) — CapabilityRegistry + ToolLoop and the individual capabilities (recall/search memory, read code/url, web search, render diagram, inspect architecture, progress announcer).'
-    docs:
-      - domains/bob-application/features/capabilities-app/SPEC.md
 
   - ref_id: router
     kind: feature
     source: src/bob/application/router/
     tags: [layer-application]
     summary: 'LLMRouter — Tier 0/1 model routing with privacy redaction before any model call.'
-    docs:
-      - domains/bob-application/features/router/SPEC.md
 
   - ref_id: runtime-app
     kind: feature
     source: src/bob/application/runtime/
     tags: [layer-application]
     summary: 'Application runtime — AgentRuntime, AsyncEventBus, events, and resilient heartbeat ticks (retry/backoff). Distinct from the `runtime` composition root.'
-    docs:
-      - domains/bob-application/features/runtime-app/SPEC.md
 
   - ref_id: proactivity-app
     kind: feature
     source: src/bob/application/proactivity/
     tags: [layer-application]
     summary: 'Proactivity orchestration (application half) — proactive engine, tick, and owner-activity recording driving Bob''s self-initiated actions.'
-    docs:
-      - domains/bob-application/features/proactivity-app/SPEC.md
 
   # ── Infrastructure submodules (kind: component, part_of bob-infrastructure) ──
   - ref_id: llm

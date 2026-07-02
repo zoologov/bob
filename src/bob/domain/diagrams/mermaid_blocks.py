@@ -3,6 +3,7 @@
 # See the LICENSE file in the project root for full license information.
 
 # beadloom:domain=bob
+# beadloom:feature=diagrams-domain
 
 """Pure mermaid fenced-block extraction / stripping / normalisation (BOB-037).
 

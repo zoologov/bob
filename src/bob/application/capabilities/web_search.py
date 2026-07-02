@@ -3,6 +3,7 @@
 # See the LICENSE file in the project root for full license information.
 
 # beadloom:domain=bob
+# beadloom:feature=capabilities-app
 
 """``web_search`` — the grounded web-search capability (BOB-053 .2 + .3).
 

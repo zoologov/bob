@@ -3,6 +3,7 @@
 # See the LICENSE file in the project root for full license information.
 
 # beadloom:domain=bob
+# beadloom:feature=usecases
 
 """PermissionExecutor — execute the owner's decision on a pending request (BOB-052 .3).
 

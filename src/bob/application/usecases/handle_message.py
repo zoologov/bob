@@ -3,6 +3,7 @@
 # See the LICENSE file in the project root for full license information.
 
 # beadloom:domain=bob
+# beadloom:feature=usecases
 
 """HandleMessage — the full message→reply→persist flow (GUPPI's act loop).
 

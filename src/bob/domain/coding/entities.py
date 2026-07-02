@@ -3,6 +3,7 @@
 # See the LICENSE file in the project root for full license information.
 
 # beadloom:domain=bob
+# beadloom:feature=coding-domain
 
 """Доменный дата-класс coding-сессии — immutable value-object (BOB-039 .1).
 

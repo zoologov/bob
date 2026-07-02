@@ -3,6 +3,7 @@
 # See the LICENSE file in the project root for full license information.
 
 # beadloom:domain=bob
+# beadloom:feature=usecases
 
 """RunGenesis — Bob's first-boot awakening (PRD US-1, US-4; RFC §"Genesis").
 

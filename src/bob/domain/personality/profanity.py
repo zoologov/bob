@@ -3,6 +3,7 @@
 # See the LICENSE file in the project root for full license information.
 
 # beadloom:domain=bob
+# beadloom:feature=personality
 
 """Profanity perception — directed hostility vs casual мат (BOB-014 .2b).
 

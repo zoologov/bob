@@ -3,6 +3,7 @@
 # See the LICENSE file in the project root for full license information.
 
 # beadloom:domain=bob
+# beadloom:feature=authz
 
 """ReactorPerception — turn a reactor's id+name into an Interlocutor (BOB-050).
 

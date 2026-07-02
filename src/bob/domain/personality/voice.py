@@ -3,6 +3,7 @@
 # See the LICENSE file in the project root for full license information.
 
 # beadloom:domain=bob
+# beadloom:feature=personality
 
 """Persona voice directives — how Bob *sounds*, not how he is configured (BOB-016).
 

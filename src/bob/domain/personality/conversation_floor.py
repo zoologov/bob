@@ -3,6 +3,7 @@
 # See the LICENSE file in the project root for full license information.
 
 # beadloom:domain=bob
+# beadloom:feature=personality
 
 """Conversation floor — кто сейчас «у микрофона» в треде (BOB-025).
 

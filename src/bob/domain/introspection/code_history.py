@@ -3,6 +3,7 @@
 # See the LICENSE file in the project root for full license information.
 
 # beadloom:domain=bob
+# beadloom:feature=introspection-domain
 
 """Pure parsers linking code history to its decision record (BOB-038 .1).
 

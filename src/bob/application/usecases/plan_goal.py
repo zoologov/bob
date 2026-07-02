@@ -3,6 +3,7 @@
 # See the LICENSE file in the project root for full license information.
 
 # beadloom:domain=bob
+# beadloom:feature=usecases
 
 """LlmPlanner + PlanGoal — декомпозиция цели и ДВОЙНОЙ апрув (BOB-015 .2).
 

@@ -3,6 +3,7 @@
 # See the LICENSE file in the project root for full license information.
 
 # beadloom:domain=bob
+# beadloom:feature=permission
 
 """Privilege-judgment seam — value-типы, порт, чистый промпт + парсер (BOB-052 .1).
 

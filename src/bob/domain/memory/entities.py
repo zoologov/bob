@@ -3,6 +3,7 @@
 # See the LICENSE file in the project root for full license information.
 
 # beadloom:domain=bob
+# beadloom:feature=memory
 
 """Immutable memory entities — episodic events and semantic facts.
 

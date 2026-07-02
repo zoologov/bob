@@ -3,6 +3,7 @@
 # See the LICENSE file in the project root for full license information.
 
 # beadloom:domain=bob
+# beadloom:feature=goals
 
 """Доменные дата-классы Goal Engine — immutable value-objects (BOB-015 .1).
 

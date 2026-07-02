@@ -3,6 +3,7 @@
 # See the LICENSE file in the project root for full license information.
 
 # beadloom:domain=bob
+# beadloom:feature=proactivity-domain
 
 """SocialEnergy — Bob's reservoir for reaching out, as a pure [0, 1] value object.
 

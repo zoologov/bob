@@ -3,6 +3,7 @@
 # See the LICENSE file in the project root for full license information.
 
 # beadloom:domain=bob
+# beadloom:feature=runtime-app
 
 """periodic — wrap a tick coroutine into a supervised, repeating background loop.
 

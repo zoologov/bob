@@ -3,6 +3,7 @@
 # See the LICENSE file in the project root for full license information.
 
 # beadloom:domain=bob
+# beadloom:feature=usecases
 
 """ActiveRulesReader — application-адаптер чтения APPROVED-правил для применения (BOB-028 .3).
 

@@ -3,6 +3,7 @@
 # See the LICENSE file in the project root for full license information.
 
 # beadloom:domain=bob
+# beadloom:feature=personality
 
 """Mood→Taste modulation — Bob's mood temporarily colours a verdict (no I/O, no LLM).
 

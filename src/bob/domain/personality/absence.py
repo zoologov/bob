@@ -3,6 +3,7 @@
 # See the LICENSE file in the project root for full license information.
 
 # beadloom:domain=bob
+# beadloom:feature=personality
 
 """Long-gap absence texture — "haven't seen you in a while" (BOB-045 .3).
 

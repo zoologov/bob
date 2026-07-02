@@ -3,6 +3,7 @@
 # See the LICENSE file in the project root for full license information.
 
 # beadloom:domain=bob
+# beadloom:feature=personality
 
 """Repeat detection — owner repeats himself (BOB-022) + Bob repeats himself (BOB-026).
 

@@ -3,6 +3,7 @@
 # See the LICENSE file in the project root for full license information.
 
 # beadloom:domain=bob
+# beadloom:feature=permission
 
 """Чистые NL-предикаты owner-решения по permission-request (BOB-052 .1).
 

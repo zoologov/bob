@@ -3,6 +3,7 @@
 # See the LICENSE file in the project root for full license information.
 
 # beadloom:domain=bob
+# beadloom:feature=personality
 
 """Volatility-judgment seam — value types, port, pure prompt + parser (BOB-057 .1).
 

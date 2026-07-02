@@ -3,6 +3,7 @@
 # See the LICENSE file in the project root for full license information.
 
 # beadloom:domain=bob
+# beadloom:feature=personality
 
 """Pure Tier-0 wire protocol for the reaction-judgment seam (BOB-050).
 

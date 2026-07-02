@@ -3,6 +3,7 @@
 # See the LICENSE file in the project root for full license information.
 
 # beadloom:domain=bob
+# beadloom:feature=personality
 
 """Fascination — the topic Bob is *into* right now, ageing and decaying (BOB-020).
 

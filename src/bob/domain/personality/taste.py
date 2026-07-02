@@ -3,6 +3,7 @@
 # See the LICENSE file in the project root for full license information.
 
 # beadloom:domain=bob
+# beadloom:feature=personality
 
 """TasteEngine — deterministic verdicts over Bob's taste axes (no LLM, no I/O).
 
