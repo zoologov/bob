@@ -13,11 +13,12 @@
 
 | Беад | Роль | Статус |
 |------|------|--------|
-| `bob-r3z.1` | dev — split ports.py → пакет + шим | ○ ready (Волна 0) |
-| `bob-r3z.2` | dev — детальный граф beadloom | ○ ready (Волна 0) |
-| `bob-r3z.3` | dev — docs generate скелеты | ● blocked (.2) |
-| `bob-r3z.4` | dev — AaC rules.yml | ● blocked (.2) |
-| `bob-r3z.5` | test | ● blocked (.1,.3,.4) |
+| `bob-r3z.1` | dev — split ports.py → пакет + шим | ✓ done (pytest 3269 ✓, mypy ✓) |
+| `bob-r3z.2` | dev — детальный граф beadloom | ✓ done (4→27 узлов, lint ✓) |
+| `bob-r3z.3` | dev — docs generate скелеты | ✓ done (15 скелетов) |
+| `bob-r3z.4` | dev — AaC rules.yml | ✓ done (11 правил, lint exit 0) |
+| `bob-r3z.8` | dev — сверка граф↔правила↔доки | ✓ done (ports-узел, 28 узлов, coverage 68%) |
+| `bob-r3z.5` | test | ○ ready (Волна 2) |
 | `bob-r3z.6` | review | ● blocked (.5) |
 | `bob-r3z.7` | tech-writer | ● blocked (.6) |
 
