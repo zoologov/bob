@@ -83,3 +83,9 @@ godot/tools/.venv/
 
 # Live-test dialogue artifact (local only)
 first_dialogue.txt
+
+# Agent worktrees (BOB-063)
+.claude/worktrees/
+# Live-test dialogue dumps (local only, BOB-063)
+dialog.txt
+test.txt
