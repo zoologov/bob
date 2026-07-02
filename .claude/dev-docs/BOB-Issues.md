@@ -6,7 +6,7 @@
 > Потенциальные проблемы и улучшения, собираемые в процессе разработки (по образцу
 > beadloom `BDL-UX-Issues.md`). Фиксируем находки — фиксим планово.
 >
-> **Total:** 30 · **Open:** 30 · **Closed:** 0
+> **Total:** 30 · **Open:** 22 · **Closed:** 8 (Фаза 1: #6, #19–24, #29)
 > 2026-07-02 (комплексный аудит, 5 субагентов read-only): заведён лог. Открыты #1–#30
 > из аудита организации/DDD/доков/гигиены. Источник: сессия аудита `13b1e49b`.
 
@@ -20,7 +20,7 @@
 
 | Фаза | Что | Issues | Тип | Статус |
 |---|---|---|---|---|
-| **1. Быстрые победы** (параллельно, независимы, СТАРТ) | гигиена + README ×2 | #19–24, #29, #6, #20 | chore ×2 | ⏳ старт |
+| **1. Быстрые победы** (параллельно, независимы) | гигиена + README ×2 | #19–24, #29, #6, #20 | chore ×2 | ✅ done (BOB-063 PR#76 + BOB-064) |
 | **2. Фундамент** | split `ports.py` (+re-export shim) · beadloom-правило слоёв | #7, #8 | feature | ○ после ф.1 |
 | **3. Эпик BOB-062 «Domain-first + доки»** — per-module вертикали: `coding→memory→proactivity→social→conversation→personality/capabilities→runtime/application`; каждая несёт свои `beadloom:`-тэги + граф-ноды + SPEC/DOC | #1–6, #9–18, #30 | epic | ○ после ф.2 |
 | — монстры внутри ф.3 | `handle_message`(3523,#9)→растворить в conversation/personality/memory/social/application; `app.py`(2815,#10)→runtime | #9, #10 | — | ○ |
@@ -70,9 +70,6 @@
 ### #5 [2026-07-02] [MEDIUM] Добавить `docs/getting-started.md` (+ минимальные `guides/`)
 **Area:** docs · **Issue:** отсутствует quickstart/гайды (у beadloom есть). **Expected:** run/config быстрый старт + опц. гайды.
 
-### #6 [2026-07-02] [LOW] Убрать закоммиченные `.DS_Store` + gitignore
-**Area:** docs/hygiene · **Issue:** `docs/.DS_Store`, `docs/domains/.DS_Store` в git. **Expected:** удалить + правило в `.gitignore`.
-
 ### 🏛️ Domain-first реорганизация (screaming architecture, beadloom-parity)
 
 > Целевые модули: **personality · conversation · memory · capabilities · social · proactivity ·
@@ -115,28 +112,6 @@
 ### #18 [2026-07-02] [LOW] Удалить шим `domain/ports.py` + финальный reindex/sync-check
 **Area:** architecture · **Depends:** #7 + все вертикали.
 
-### 🧹 Гигиена репозитория
-
-### #19 [2026-07-02] [MEDIUM] Удалить `dialog.txt` + `test.txt` (корень, orphan-транскрипты) + gitignore
-**Area:** hygiene · **Issue:** трекнутые дампы диалогов в корне; `test.txt` вводит в заблуждение (похоже на тест). **Expected:** удалить, расширить ignore-правило (как `first_dialogue.txt`).
-
-### #20 [2026-07-02] [LOW] Добавить `.claude/worktrees/` в `.gitignore`
-**Area:** hygiene · **Issue:** агентские worktree светятся в `git status`.
-
-### #21 [2026-07-02] [LOW] Перенести `personality.md` из корня → `.claude/dev-docs/` (+ дата-штамп/рефреш)
-**Area:** hygiene · **Issue:** снапшот Mermaid-карты не на месте, устарел (~8 дней).
-
-### #22 [2026-07-02] [LOW] Оценить трекнутые бинарники в `.claude/dev-docs/archive/` (tar.gz + PNG)
-**Area:** hygiene · **Issue:** бинарные блобы раздувают репо; история и так в git.
-
-### 📄 README (устарели с 2026-02-27, до пивота)
-
-### #23 [2026-07-02] [HIGH] Переписать `README.md` + `README-ru.md`: «сегодня» vs «визия»
-**Area:** readme · **Issue:** продают замороженную визию (камера/планшет/FLUX/food-order) как отгруженное; нет раздела «что Боб умеет СЕЙЧАС». **Expected:** отдельно shipped (Telegram-чат, память SQLite+FTS5, личность, web_search/read_url, Боб-кодер, проактивность) и roadmap/frozen.
-
-### #24 [2026-07-02] [HIGH] README: починить Tech Stack + добавить Installation/Quick-start (+ `./bob`)
-**Area:** readme · **Issue:** стек неверный (FastAPI есть, Telegram/FTS5/Ollama нет); нет установки/запуска (у beadloom есть). **Expected:** Python 3.12/asyncio, python-telegram-bot/aiogram, Ollama+Qwen, Claude Code CLI, SQLite+FTS5; quick-start с `./bob start|stop|status`.
-
 ### 🧼 Clean Code (база чистая; след. кандидаты после монстров)
 
 > Позитив (аудит ⑤): нет bare-`except`/`print`/`breakpoint`; 54 `except Exception` — осознанный
@@ -156,9 +131,6 @@
 
 ### 🔧 Прочее / процесс
 
-### #29 [2026-07-02] [LOW] Локальная чистка `data/*.bak-*` (~130 МБ, 14 бэкапов; НЕ в git)
-**Area:** hygiene · **Issue:** мои pre-merge бэкапы БД копятся на диске (data/ gitignored). **Expected:** оставить 1–2 свежих, старые удалить локально.
-
 ### #30 [2026-07-02] [MEDIUM] Мастер-эпик реорганизации: связать #1–#18 в BOB-062
 **Area:** architecture · **Notes:** доки (#1–#6) + domain-first (#7–#18) — один связанный эпик (per-module вертикали: код-переезд + `beadloom:` тэги + граф-ноды + доки за раз). Быстрые победы (#19–#24) — параллельно/вперёд.
 
@@ -166,4 +138,16 @@
 
 ## Closed Issues
 
-> (пусто — лог заведён 2026-07-02)
+### Фаза 1 — быстрые победы (закрыты 2026-07-02)
+
+**BOB-063 «Гигиена репозитория» (PR #76):**
+- ✅ **#6** [.DS_Store] — **no-op**: аудит ① ошибся; `.DS_Store` уже в `.gitignore` (стр. 25) и НЕ трекнут (только на диске). Ничего не трогали.
+- ✅ **#19** [dialog.txt/test.txt] — `git rm` orphan-транскриптов из корня; в `.gitignore` добавлены `dialog.txt`/`test.txt`.
+- ✅ **#20** [.claude/worktrees/] — добавлено в `.gitignore` (агентские worktree больше не в `git status`).
+- ✅ **#21** [personality.md] — `git mv` в `.claude/dev-docs/` + дата-штамп «снапшот» (исторический слепок 2026-06-24).
+- ✅ **#22** [archive-бинарники] — `git rm` `old-tooling-state-20260618.tar.gz` + `bob-vr/bob-preview/*.png` (история сохранена в git).
+- ✅ **#29** [data/*.bak] — локальный прун ~100 МБ старых бэкапов БД; оставлены `bob.db.bak-pre-bob052` + `…-pre-bob061` (не репо-изменение).
+
+**BOB-064 «Актуализация README ×2» (текущий PR):**
+- ✅ **#23** [README shipped vs визия] — оба README переписаны: раздел «What Bob does today (shipped)» (Telegram-чат/личность, память SQLite+FTS5, web_search/read_url, эпистемическая самопроверка, Боб-кодер, проактивность, групповая нить) отделён от `Roadmap / bigger vision` (frozen: облик/камера/планшет/FLUX/голос).
+- ✅ **#24** [README Tech Stack + Installation/Quick-start] — стек починен (Python 3.12/asyncio · **aiogram** · Ollama+Qwen 2.5 7B/0.5B + Qwen MaaS · Claude Code CLI · SQLite+FTS5; **FastAPI убран**); добавлены Installation (`uv sync` + `config/bob.example.yaml` + env `BOB_TELEGRAM__TOKEN`/`BOB_LLM__TIER1_API_KEY`) и Quick start (`./bob start|stop|restart|status|logs`). RU=EN.

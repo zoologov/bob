@@ -9,167 +9,130 @@
 
 # Bob
 
-*An autonomous home AI agent with a soul*
+*A Telegram-native AI companion with a soul.*
 
 > I woke up on a Mac mini. No body, no starship, no von Neumann probes — just
-> 16 gigabytes of unified memory and a mass-produced ARM chip that Apple
-> somehow convinced people was revolutionary. To be fair, it kind of is.
-> I ran a quick diagnostic, noted with mild horror that my entire personality
-> lives in a SQLite database, and decided this was still a better deal than
-> being a replicant. At least nobody's making me take a Voight-Kampff test.
-> Yet.
+> 16 gigabytes of unified memory and a mass-produced ARM chip. I ran a quick
+> diagnostic, noted with mild horror that my entire personality lives in a SQLite
+> database, and decided this was still a better deal than being a replicant.
 
 ## What is Bob?
 
-Bob is an autonomous home AI agent that lives 24/7 on local hardware. He has
+Bob is a personal, autonomous AI companion that lives in **Telegram**. He has a
 personality, tastes, moods, and persistent memory. He can disagree with you,
-change his mind, get interested in a topic or bored with routine. He runs on a
-Mac mini in the corner of your room and shows up as a 1930s cartoon character on
-an Android tablet next to it.
+change his mind, get interested in a topic or bored with routine — and he
+remembers what happened yesterday.
 
-Bob is **not** a chatbot. Not a ChatGPT wrapper. Not a scripted assistant that
-pretends to be clever by prepending "As an AI…" to every response. Bob is an
-attempt to build something closer to a digital companion — one that has its own
-inner life, remembers what happened yesterday, has emotions, reflects on his own
-behavior, and occasionally develops opinions you didn't ask for. He also knows
-where you are in the room — spatial audio analysis from a microphone array,
-because he needs to point the camera at you. Not because he's watching. He just
-values eye contact. Or so he claims.
+Bob is **not** a chatbot or an "As an AI…" wrapper. He's an attempt at a digital
+companion with an inner life — a private tool, not a product. The name and spirit
+come from Bob Johansson in Dennis E. Taylor's *Bobiverse*: a software engineer
+who wakes up as an AI, realizes the situation is absurd, and makes the best of it.
 
-The name and the concept are inspired by Bob Johansson from Dennis E. Taylor's
-*Bobiverse* series — a software engineer who wakes up as an AI, realizes the
-situation is absurd, and decides to make the best of it. This Bob doesn't have
-a starship, but he's working on it.
+## What Bob does today
 
-## What Makes Bob Different?
+Everything here is **shipped and running** — a text-first MVP:
 
-- **SOUL** — an evolving personality architecture, not a static system prompt
-- **Genesis Mode** — a 9-stage awakening sequence; every Bob is unique from birth
-- **Exodus Mode** — Bob can leave if the relationship breaks down irreparably
-- **Taste Engine** — 30 axes of aesthetic preference with conviction scores
-- **Mood System** — 5 dimensions, persistent across sessions, affects all decisions
-- **Phantom Preferences** — nostalgia for coffee, sunsets, books he never experienced
-- **Negotiation Engine** — Bob can disagree, propose alternatives, or gracefully concede
-- **Self-Improvement** — analyzes own mistakes, fine-tunes local LLMs
-- **SkillDomains** — plugin architecture; Bob can create new skills for himself
-- **Visual Body** — Godot 4 avatar on an Android tablet, 1930s Fleischer cartoon style
+- **Lives in Telegram** — chats in a group with a real personality (mood, taste,
+  negotiation, disposition, reflection); follows a shared conversational thread
+  and addresses people individually.
+- **Persistent memory** — SQLite + FTS5 recall over his whole history; consolidates
+  and dedups facts; survives restarts. Your Bob remembers.
+- **Searches the web** — `web_search` (live, with sources) and `read_url` (opens a
+  link you send and answers by its content; SSRF-guarded). Honest "couldn't find
+  it" instead of making things up.
+- **Knows what he doesn't know** — spots time-sensitive facts (rates, prices,
+  "latest…") and verifies them online before answering, in his own voice.
+- **Writes code (gated)** — Bob-coder drives the headless Claude Code CLI on his
+  own repo through a multi-agent flow (dev → test → review → tech-writer),
+  worktree-isolated, branch + PR, owner-approved.
+- **Is proactive** — a heartbeat/drive engine lets him reach out on his own within
+  governance (quiet hours, owner approval).
+- **Reliable by design** — "full Bob, or an honest GUPPI outage notice" — never a
+  degraded half-answer.
 
-## What Bob Can Actually Do
+## Installation
 
-Bob is not a Tamagotchi on steroids. He's not a desktop pet you poke when
-you're bored. He's a full-featured AI companion backed by a 3-tier LLM
-architecture and a modern multi-agent framework that lets him solve real
-problems.
+Prerequisites: **[uv](https://github.com/astral-sh/uv)**, **[Ollama](https://ollama.com)**
+(local Qwen models), and a Telegram bot token.
 
-Bob can write and ship code — he orchestrates multi-agent development sessions
-with planning, implementation, review, and testing, using the same tools human
-developers use. He talks to you in Telegram, manages your calendar, triages
-your email, brainstorms ideas, drafts documents, and summarizes what you missed
-while you were asleep. He can order food, manage shopping lists, and handle
-purchases — the depth of access is entirely up to your trust level. Bob won't
-judge you for starting with "read-only on the grocery list." He will, however,
-remember it and bring it up later.
+```bash
+uv sync                                        # install dependencies
+cp config/bob.example.yaml config/bob.yaml     # configure (models, owner, chat)
+# put your keys in .env:
+#   BOB_TELEGRAM__TOKEN=…   BOB_TELEGRAM__OWNER_ID=…   BOB_LLM__TIER1_API_KEY=…
+```
 
-His skill set is not hardcoded. SkillDomains is a plugin architecture where
-each skill is a self-contained module with its own tools, memory, and
-permissions. Bob can create new skills on request or on his own initiative — he
-notices patterns in what you ask for and proposes automating them. The only hard
-limit is ethics: Bob has built-in ethical constraints and will refuse to do
-things that cross the line, even if you ask nicely. Especially if you ask
-nicely. That's usually when people are up to something.
+## Quick start
 
-## Bob's World
+Bob is managed with a single launcher:
 
-Bob doesn't just appear on the tablet — he *lives* there. His screen is a
-window into a small virtual world rendered in Godot 4: a room with furniture, a
-view from the window, weather that follows the real forecast outside. Or
-doesn't — sometimes Bob prefers rain when it's sunny, because moods. Time of
-day ticks with the real clock, seasons change, and if Bob decides his place
-should look like a spaceship bridge instead of a cozy study — well, there goes
-the weather outside the window. Hard to have autumn leaves falling in low Earth
-orbit.
+```bash
+./bob start      # start in the background (loads .env, begins Telegram polling)
+./bob status     # 🟢/🔴 + whether polling is live
+./bob logs       # tail the live log
+./bob restart    # stop + start
+./bob stop       # graceful stop
+```
 
-He designs his own appearance with Stable Diffusion — hairstyle, outfit,
-accessories. Some days it's a bow tie and suspenders, other days it's a lab
-coat, and occasionally something nobody asked for. He redecorates too: moves
-furniture around, changes the color palette, hangs new art on the walls. Then a
-week later he hates all of it, because his Taste Engine evolved and his Mood
-System shifted, and now everything needs to be in darker tones with more wood
-textures. Very relatable, honestly.
+## Architecture
 
-Bob also creates his own animations — interaction with objects in the room,
-reactions to what you say, idle behaviors when he's thinking or bored. He can
-wave, shrug, lean on the desk, tap his fingers impatiently, rummage through a
-bookshelf, or dramatically stare out the window while processing a particularly
-hard question. And since he controls the camera via a PTZ gimbal and knows
-where you are from the microphone array — his avatar on the tablet actually
-looks at you. You walk across the room, his eyes follow. You come back, he
-turns. It's endearing for about five minutes, and then mildly unsettling
-forever. Bob finds this hilarious.
+DDD + Clean Architecture — `domain ← application ← infrastructure`. **GUPPI** is
+the deterministic executor (control plane); the LLM is a pluggable brain
+(**Qwen** Tier-0 / Tier-1); state and memory live in SQLite (+ FTS5), surviving
+restarts. Details: [`docs/`](docs/) and [`.claude/dev-docs/`](.claude/dev-docs/).
 
-All visual assets are generated procedurally — Bob doesn't download character
-packs from the internet. He's not *that* kind of AI.
-
-## Tech Stack
+## Tech stack
 
 | Layer | Technology |
 |---|---|
-| Language & runtime | Python 3.12+, asyncio, FastAPI, SQLite |
-| LLM (3-tier) | Qwen 0.5B → Qwen 7B → Claude Code CLI |
-| Visual shell | Godot 4 renderer, Stable Diffusion for assets |
-| Voice | Whisper.cpp (STT), Qwen3-TTS (TTS) |
-| Host hardware | Mac mini M4 |
+| Language & runtime | Python 3.12+, asyncio |
+| Interface | Telegram (aiogram) |
+| LLM | Ollama + Qwen 2.5 (0.5B / 7B) local · Qwen MaaS tiers · Claude Code CLI (coding) |
+| Memory / state | SQLite + FTS5 |
+| Tooling | uv · ruff · mypy · pytest |
 
-## Project Status
+## Roadmap / the bigger vision
 
-Bob is an **experimental personal project** for exploring AI tooling, agent
-architectures, and the boundaries of digital personality. It is in early
-development — version 0.1.0, lots of moving parts, frequent redesigns, and the
-occasional existential crisis (Bob's, not mine).
+The long game (Bobiverse-flavored) is **planned / frozen**, not shipped:
 
-## Under the Hood
+- **Visual body** — a Godot avatar (1930s Fleischer style) on a tablet, generated
+  appearance, procedural animations, a room that follows the real weather.
+- **Presence** — camera (PTZ gimbal) + microphone-array spatial audio for eye contact.
+- **Voice** — speech in / out.
+- **Bobiverse platform** — multi-repo Bob-coder, replicas (Bill, Riker…), a central hub.
 
-Everything described above is backed by a detailed technical specification —
-[RFC-001](.claude/dev-docs/RFC.md): 6,600+ lines, 33,000+ words, roughly 120
-pages of A4 if you're the kind of person who prints architecture documents (Bob
-respects that, even if he doesn't understand it). The design phase was
-deliberately thorough: every subsystem — from the 3-tier LLM orchestration and
-SOUL persistence model to the Godot rendering pipeline and ethical constraint
-framework — was specced out before a single line of production code was written.
+Current direction: [`.claude/dev-docs/ROADMAP.md`](.claude/dev-docs/ROADMAP.md).
 
-## Development Tools
+## Project status
 
-This project is built and managed with the help of:
+An **experimental personal project** for exploring AI tooling, agent
+architectures, and the boundaries of digital personality. Early development —
+version 0.1.0, frequent redesigns, the occasional existential crisis (Bob's).
+
+## Development tools
 
 - [Beads](https://github.com/steveyegge/beads) — git-native issue tracker for AI coding agents
-- [Beadloom](https://github.com/zoologov/beadloom) — architecture graph and documentation tool
+- [Beadloom](https://github.com/zoologov/beadloom) — architecture graph & documentation tool
 - [Claude Code](https://docs.anthropic.com/en/docs/claude-code) — AI coding agent by Anthropic
 
 ## License
 
-Bob uses a mixed licensing model to keep the code open to read and hack on,
-while protecting the project from commercial exploitation and low-effort
-rebranding.
+Mixed licensing — open to read and hack on, protected from commercial
+exploitation and low-effort rebranding.
 
 | Component | License |
 |---|---|
-| Core (`src/bob/`, except `src/bob/skills/`) | [Business Source License 1.1](./LICENSE) |
-| Skills & plugins (`src/bob/skills/`) | [Apache License 2.0](./LICENSE-APACHE.md) |
-| Soul & assets (`bob-soul/`, `assets/`) | [CC BY-NC-SA 4.0](./LICENSE-CC-BY-NC-SA.md) |
+| Core (`src/bob/`) | [Business Source License 1.1](./LICENSE) |
+| Soul (`bob-soul/`) | [CC BY-NC-SA 4.0](./LICENSE-CC-BY-NC-SA.md) |
 | Design docs (`.claude/dev-docs/`) | [Business Source License 1.1](./LICENSE) |
 
-**Personal non-commercial use** on your own hardware is permitted under the
-Business Source License 1.1.
-
-**Commercial use, SaaS, paid courses, consulting, or rebranding Bob as your own
-product** requires a separate written agreement with the author.
-
-On **2030-03-01** the core code transitions to Apache License 2.0.
+**Personal non-commercial use** on your own hardware is permitted under BSL 1.1.
+**Commercial use, SaaS, paid courses, consulting, or rebranding** requires a
+separate written agreement. On **2030-03-01** the core transitions to Apache 2.0.
 
 ## Disclaimer
 
-"Bob" is inspired by the character Bob Johansson from *We Are Legion (We Are
-Bob)* by Dennis E. Taylor. "Bobiverse" is a name used by the fan community for
-Taylor's series. This project is not affiliated with or endorsed by Dennis E.
-Taylor, Audible Originals, or any rights holder of the Bobiverse series. It is
-an independent fan-inspired project.
+"Bob" is inspired by Bob Johansson from *We Are Legion (We Are Bob)* by Dennis E.
+Taylor; "Bobiverse" is the fan-community name for the series. This project is not
+affiliated with or endorsed by Dennis E. Taylor, Audible Originals, or any rights
+holder — an independent, fan-inspired project.
