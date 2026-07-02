@@ -3,6 +3,7 @@
 # See the LICENSE file in the project root for full license information.
 
 # beadloom:domain=bob
+# beadloom:feature=usecases
 
 """PursueGoalsTick — Bob продвигает СВОИ цели сам, под теми же воротами (BOB-015 .3).
 

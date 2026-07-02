@@ -3,6 +3,7 @@
 # See the LICENSE file in the project root for full license information.
 
 # beadloom:domain=bob
+# beadloom:feature=capabilities-app
 
 """``render_diagram`` — render mermaid to a LOCAL PNG and send it as a photo (BOB-035).
 

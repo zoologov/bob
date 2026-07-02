@@ -3,6 +3,7 @@
 # See the LICENSE file in the project root for full license information.
 
 # beadloom:domain=bob
+# beadloom:feature=usecases
 
 """PerceiveReaction — Bob feels a reaction on one of his own messages (BOB-050).
 

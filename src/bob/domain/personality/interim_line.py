@@ -3,6 +3,7 @@
 # See the LICENSE file in the project root for full license information.
 
 # beadloom:domain=bob
+# beadloom:feature=personality
 
 """Interim-line seam — pure prompt + cleaner for the live verify reply (BOB-057 .3).
 

@@ -3,6 +3,7 @@
 # See the LICENSE file in the project root for full license information.
 
 # beadloom:domain=bob
+# beadloom:feature=capabilities-app
 
 """``code_rationale`` — the self-introspection skill that links CODE to its WHY.
 

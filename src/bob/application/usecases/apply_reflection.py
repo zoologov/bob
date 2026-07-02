@@ -3,6 +3,7 @@
 # See the LICENSE file in the project root for full license information.
 
 # beadloom:domain=bob
+# beadloom:feature=usecases
 
 """ApplyReflection — close the Reflection -> Taste loop, with the relevance gate.
 

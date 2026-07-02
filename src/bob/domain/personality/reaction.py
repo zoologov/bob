@@ -3,6 +3,7 @@
 # See the LICENSE file in the project root for full license information.
 
 # beadloom:domain=bob
+# beadloom:feature=personality
 
 """Mood→emoji — the pure picker for Bob's native react-only reaction (BOB-018).
 

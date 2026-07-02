@@ -1,9 +1,109 @@
+# Bob Architecture-as-Code ruleset — BOB-065 Часть C (max AaC).
+#
+# All primitives are real rule-engine types (beadloom graph/rules/): require,
+# forbid_cycles, layers, forbid_import, deny, module_coverage, check. Node
+# matchers key off ref_id/kind/tag (AND). Layer membership comes from the tag on
+# each node in services.yml (layer-runtime / layer-infra / layer-application /
+# layer-domain). Clean-Architecture direction: imports point INWARD —
+# runtime → infrastructure → application → domain; domain depends on nobody.
+#
+# Severity ratchet (RFC Часть C): error where the code is already clean;
+# no-monster-modules stays warn until Фаза 3 (BOB-062) decomposes the known big
+# modules (handle_message / app.py / gateway, tracked #9/#10/#25).
+version: 3
+
 rules:
-- description: Every domain must have a part_of edge
-  name: domain-needs-parent
-  require:
-    edge_kind: part_of
-    for:
-      kind: domain
-    has_edge_to: {}
-version: 1
+  # ── Structural integrity ────────────────────────────────────────────────────
+  - name: domain-needs-parent
+    description: "Каждый domain-узел (слой) — part_of сервиса bob"
+    require:
+      for: {kind: domain}
+      has_edge_to: {ref_id: bob}
+      edge_kind: part_of
+
+  - name: feature-needs-parent
+    description: "Каждая feature — part_of своего слоя (kind domain)"
+    require:
+      for: {kind: feature}
+      has_edge_to: {kind: domain}
+      edge_kind: part_of
+
+  - name: component-needs-parent
+    description: "Каждый component — part_of своего слоя (kind domain)"
+    require:
+      for: {kind: component}
+      has_edge_to: {kind: domain}
+      edge_kind: part_of
+
+  - name: no-dependency-cycles
+    description: "Никаких циклов depends_on между узлами"
+    severity: error
+    forbid_cycles: {edge_kind: depends_on}
+
+  # ── Layer direction (main teeth) ────────────────────────────────────────────
+  # Order top→bottom = most-dependent … most-independent. depends_on edges are
+  # derived from REAL imports (tree-sitter) + declared layer edges, so this bites
+  # actual code. allow_skip: true — infra→domain (port impls) and runtime→domain
+  # are legal downward skips.
+  - name: architecture-layers
+    description: "runtime → infrastructure → application → domain; не обратно"
+    severity: error
+    layers:
+      - {name: runtime,        tag: layer-runtime}
+      - {name: infrastructure, tag: layer-infra}
+      - {name: application,    tag: layer-application}
+      - {name: domain,         tag: layer-domain}
+    enforce: top-down
+    allow_skip: true
+    edge_kind: depends_on
+
+  # ── Hard import boundaries (scan real imports, path globs) ───────────────────
+  - name: domain-imports-nothing-outward
+    description: "Домен не импортит application"
+    severity: error
+    forbid_import: {from: "src/bob/domain/**", to: "src/bob/application/**"}
+
+  - name: domain-no-infra
+    description: "Домен не импортит infrastructure"
+    severity: error
+    forbid_import: {from: "src/bob/domain/**", to: "src/bob/infrastructure/**"}
+
+  - name: application-no-infra
+    description: "Application не импортит infrastructure (только через порты домена)"
+    severity: error
+    forbid_import: {from: "src/bob/application/**", to: "src/bob/infrastructure/**"}
+
+  # ── Graph-edge backstop: domain layer must not depend on a service ──────────
+  - name: no-domain-depends-on-outer
+    description: "Домен-слой не зависит от сервисов (runtime/bob), кроме part_of"
+    severity: error
+    deny:
+      from: {kind: domain}
+      to:   {kind: service}
+      unless_edge: [part_of]
+
+  # ── Coverage: every src module is a tracked node or explicitly exempt ───────
+  - name: module-coverage
+    description: "Каждый src/bob модуль — трекнутый узел (feature/component/source) или exempt"
+    severity: error
+    module_coverage:
+      source_root: src/bob/
+      min_symbols: 1
+      exempt:
+        - "**/__init__.py"
+        - "**/__main__.py"
+        - "**/py.typed"
+        # BOB-065: single util, place in Phase 3 — reliability.py is one loose
+        # application helper (call_with_retry). The `ports` package is now a
+        # tracked feature node in services.yml, so its exempt line is gone; only
+        # this single util remains uncovered. The rule STAYS error so any NEW
+        # shadow module still fails.
+        - "src/bob/application/reliability.py"  # BOB-065: single util, place in Phase 3
+
+  # ── Anti-monster (ratchet: warn now → error after Фаза 3 decomposition) ─────
+  - name: no-monster-modules
+    description: "Модуль-слой/фича не должен пухнуть (handle_message/app.py/gateway — #9/#10/#25)"
+    severity: warn
+    check:
+      for: {kind: feature}
+      max_symbols: 200

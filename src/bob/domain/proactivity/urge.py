@@ -3,6 +3,7 @@
 # See the LICENSE file in the project root for full license information.
 
 # beadloom:domain=bob
+# beadloom:feature=proactivity-domain
 
 """UrgeModel — the pure "drive to reach out" formula (no I/O, no LLM, no clock).
 

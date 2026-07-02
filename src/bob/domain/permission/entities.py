@@ -3,6 +3,7 @@
 # See the LICENSE file in the project root for full license information.
 
 # beadloom:domain=bob
+# beadloom:feature=permission
 
 """Доменный дата-класс permission-request — immutable value-object (BOB-052 .1).
 

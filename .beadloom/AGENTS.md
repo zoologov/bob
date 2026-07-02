@@ -49,7 +49,17 @@
 | `checkpoint` | bd comment + timestamped ACTIVE.md progress note |
 ## Architecture Rules
 
-- **domain-needs-parent** (require): Every domain must have a part_of edge
+- **domain-needs-parent** (require): Каждый domain-узел (слой) — part_of сервиса bob
+- **feature-needs-parent** (require): Каждая feature — part_of своего слоя (kind domain)
+- **component-needs-parent** (require): Каждый component — part_of своего слоя (kind domain)
+- **no-dependency-cycles** (forbid_cycles): Никаких циклов depends_on между узлами
+- **architecture-layers** (layers): runtime → infrastructure → application → domain; не обратно
+- **domain-imports-nothing-outward** (forbid_import): Домен не импортит application
+- **domain-no-infra** (forbid_import): Домен не импортит infrastructure
+- **application-no-infra** (forbid_import): Application не импортит infrastructure (только через порты домена)
+- **no-domain-depends-on-outer** (deny): Домен-слой не зависит от сервисов (runtime/bob), кроме part_of
+- **module-coverage** (unknown): Каждый src/bob модуль — трекнутый узел (feature/component/source) или exempt
+- **no-monster-modules** (cardinality): Модуль-слой/фича не должен пухнуть (handle_message/app.py/gateway — #9/#10/#25)
 
 ## Custom
 

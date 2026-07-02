@@ -3,6 +3,7 @@
 # See the LICENSE file in the project root for full license information.
 
 # beadloom:domain=bob
+# beadloom:feature=introspection-domain
 
 """PrivacyGuard — the deterministic privacy invariant for self-introspection.
 

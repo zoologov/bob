@@ -3,6 +3,7 @@
 # See the LICENSE file in the project root for full license information.
 
 # beadloom:domain=bob
+# beadloom:feature=proactivity-app
 
 """ProactivityEngine — turn the drive-model into an actual proactive message.
 

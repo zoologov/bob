@@ -3,6 +3,7 @@
 # See the LICENSE file in the project root for full license information.
 
 # beadloom:domain=bob
+# beadloom:feature=proactivity-domain
 
 """The proactive decision — urge → probability → seeded sample, gated by governance.
 

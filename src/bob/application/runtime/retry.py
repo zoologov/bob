@@ -3,6 +3,7 @@
 # See the LICENSE file in the project root for full license information.
 
 # beadloom:domain=bob
+# beadloom:feature=runtime-app
 
 """retry_with_backoff — bounded exponential backoff over *transient* failures.
 

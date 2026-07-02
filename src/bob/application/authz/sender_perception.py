@@ -3,6 +3,7 @@
 # See the LICENSE file in the project root for full license information.
 
 # beadloom:domain=bob
+# beadloom:feature=authz
 
 """SenderPerception — turn an inbound message into an Interlocutor (BOB-019).
 

@@ -3,6 +3,7 @@
 # See the LICENSE file in the project root for full license information.
 
 # beadloom:domain=bob
+# beadloom:feature=personality
 
 """Sulk — Bob's обида/охлаждение state, the bottom of the engagement axis (BOB-014 .2b).
 

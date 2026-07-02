@@ -3,6 +3,7 @@
 # See the LICENSE file in the project root for full license information.
 
 # beadloom:domain=bob
+# beadloom:feature=coding-domain
 
 """session_voice — голос Боба на гейтах coding-сессии (BOB-041 .3).
 

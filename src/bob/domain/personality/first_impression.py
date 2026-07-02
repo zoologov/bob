@@ -3,6 +3,7 @@
 # See the LICENSE file in the project root for full license information.
 
 # beadloom:domain=bob
+# beadloom:feature=personality
 
 """FirstImpression — a LIGHT per-person first-impression note (BOB-019).
 

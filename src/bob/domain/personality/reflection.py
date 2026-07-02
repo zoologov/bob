@@ -3,6 +3,7 @@
 # See the LICENSE file in the project root for full license information.
 
 # beadloom:domain=bob
+# beadloom:feature=personality
 
 """Grounded reflection prompt — make Bob's inner monologue about NOW (BOB-026 .2).
 

@@ -3,6 +3,7 @@
 # See the LICENSE file in the project root for full license information.
 
 # beadloom:domain=bob
+# beadloom:feature=usecases
 
 """Sulk source adapter — the live обида seam the turn + ticks read (BOB-014 .2b).
 

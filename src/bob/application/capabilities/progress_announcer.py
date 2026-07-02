@@ -3,6 +3,7 @@
 # See the LICENSE file in the project root for full license information.
 
 # beadloom:domain=bob
+# beadloom:feature=capabilities-app
 
 """ProgressAnnouncer — the LIVE interim "searching…" reply before a SLOW capability.
 

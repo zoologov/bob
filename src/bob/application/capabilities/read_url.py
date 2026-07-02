@@ -3,6 +3,7 @@
 # See the LICENSE file in the project root for full license information.
 
 # beadloom:domain=bob
+# beadloom:feature=capabilities-app
 
 """``read_url`` — the concrete-URL page-reading capability (BOB-054 .2).
 

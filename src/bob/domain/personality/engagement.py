@@ -3,6 +3,7 @@
 # See the LICENSE file in the project root for full license information.
 
 # beadloom:domain=bob
+# beadloom:feature=personality
 
 """Engagement — Bob's APPETITE to converse, modelled as a level (BOB-014 .2a).
 

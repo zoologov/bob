@@ -3,6 +3,7 @@
 # See the LICENSE file in the project root for full license information.
 
 # beadloom:domain=bob
+# beadloom:feature=personality
 
 """TasteZoneClassifier — deterministic negotiation-zone heuristic (no LLM, no I/O).
 

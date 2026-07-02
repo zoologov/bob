@@ -3,6 +3,7 @@
 # See the LICENSE file in the project root for full license information.
 
 # beadloom:domain=bob
+# beadloom:feature=usecases
 
 """EvolvePhantoms — the rare, grounded phantom-preference evolution step (BOB-020).
 

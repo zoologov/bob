@@ -3,6 +3,7 @@
 # See the LICENSE file in the project root for full license information.
 
 # beadloom:domain=bob
+# beadloom:feature=router
 
 """Hybrid reply-tier selector — pick a fast or a quality model per user message.
 
