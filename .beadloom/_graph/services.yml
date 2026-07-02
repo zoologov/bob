@@ -1,41 +1,307 @@
-edges:
-- src: bob-domain
-  dst: bob
-  kind: part_of
-- src: bob-application
-  dst: bob
-  kind: part_of
-- src: bob-infrastructure
-  dst: bob
-  kind: part_of
-- src: bob-application
-  dst: bob-domain
-  kind: depends_on
-- src: bob-infrastructure
-  dst: bob-application
-  kind: depends_on
+# Bob architecture graph — BOB-065 Часть B (detailed graph).
+#
+# Hierarchy: service `bob` → layers (domain / application / infrastructure +
+# runtime composition root) → submodule nodes on REAL current paths. Layer is
+# expressed as a tag on the node (the engine keys layer rules off tags, not code
+# markers). Files map to the DEEPEST node whose `source:` prefix contains them
+# (import_resolver._find_node_for_file), so the 186 blanket `# beadloom:domain=bob`
+# headers stay inert — they resolve to ref_id `domain:bob` (no such node) and fall
+# through to source-prefix matching; no mass re-annotation is required.
+#
+# NOTE (Фаза 3 / BOB-062 boundary): submodule `source:` paths describe the CURRENT
+# layered layout. When the code physically moves to domain-first verticals, only
+# the `source:` values are retargeted — ref_ids, kinds, tags and the layer nodes
+# survive the reorg.
+
 nodes:
-- ref_id: bob
-  kind: service
-  source: src/bob/
-  summary: 'Bob — Telegram-native companion agent: GUPPI process, LLM Tier 0/1 router with privacy redaction, SQLite+FTS5 memory, Higher Mind, Genesis, heartbeat. Two admin bots in one process (BOB-003): a MultiBotGateway (BotRegistry) polls both Bob and GUPPI, dedups cross-bot by (chat_id, message_id), and a central router dispatches by identity+scope — Bob lives in his forum topic, GUPPI is the gatekeeper in General with a visible unauthorized reject + owner commands. aiogram transport (native draft streaming + Rich Messages), owner/allowlist/chat-scope authz, resilient ticks, and a capability seam (registry + tool-loop) executed by GUPPI.'
-  docs:
-  - architecture.md
-- ref_id: bob-domain
-  kind: domain
-  source: src/bob/domain/
-  summary: 'Pure domain core: personality (Mood, TasteEngine, Negotiation, SOUL), memory entities, and port protocols (LLMProvider, ToolCallingProvider, Capability, AllowlistStore). No I/O, no LLM, no transport.'
-  docs:
-  - domains/domain/README.md
-- ref_id: bob-application
-  kind: domain
-  source: src/bob/application/
-  summary: 'GUPPI orchestration: AgentRuntime + AsyncEventBus, LLMRouter (tier routing + privacy redaction), use-cases (HandleMessage, RunGenesis, UpdateMoodFromText), resilient heartbeat ticks (retry/backoff), the Authorizer access policy and the capability seam (CapabilityRegistry + ToolLoop + recall_memory). Depends on domain via ports; never imports infrastructure.'
-  docs:
-  - domains/application/README.md
-- ref_id: bob-infrastructure
-  kind: domain
-  source: src/bob/infrastructure/
-  summary: 'Port adapters: aiogram Telegram gateway (long-polling + authz gate, native draft streaming, Rich Messages, markdown<->RichMessage, topic-thread reply pinning), MultiBotGateway (BotRegistry + cross-bot dedup + central identity/scope router) and the GuppiHandler gatekeeper (visible reject + owner commands), OpenAI-compatible LLM provider (Tier 0/1 + tool-calling), SQLite+FTS5 persistence, KvAllowlistStore and SoulStore, two-bot layered config loader.'
-  docs:
-  - domains/infrastructure/README.md
+  # ── Root service ────────────────────────────────────────────────────────────
+  - ref_id: bob
+    kind: service
+    source: src/bob/
+    tags: [layer-runtime]
+    summary: 'Bob — Telegram-native companion agent: GUPPI process, LLM Tier 0/1 router with privacy redaction, SQLite+FTS5 memory, Higher Mind, Genesis, heartbeat. Two admin bots in one process (BOB-003): a MultiBotGateway (BotRegistry) polls both Bob and GUPPI, dedups cross-bot by (chat_id, message_id), and a central router dispatches by identity+scope — Bob lives in his forum topic, GUPPI is the gatekeeper in General with a visible unauthorized reject + owner commands. aiogram transport (native draft streaming + Rich Messages), owner/allowlist/chat-scope authz, resilient ticks, and a capability seam (registry + tool-loop) executed by GUPPI.'
+    docs:
+      - architecture.md
+
+  # ── Runtime composition root ────────────────────────────────────────────────
+  - ref_id: runtime
+    kind: service
+    source: src/bob/app.py
+    tags: [layer-runtime]
+    summary: 'Composition root (`app.py`) — the only module allowed to wire all layers at once: loads layered config, builds infrastructure adapters, composes application policy + use-cases, subscribes handlers to the EventBus, registers ticks + Telegram polling, runs Genesis once, and starts the process.'
+
+  # ── Layer: Domain ───────────────────────────────────────────────────────────
+  - ref_id: bob-domain
+    kind: domain
+    source: src/bob/domain/
+    tags: [layer-domain]
+    summary: 'Pure domain core: personality (Mood, TasteEngine, Negotiation, SOUL), memory entities, and port protocols (LLMProvider, ToolCallingProvider, Capability, AllowlistStore). No I/O, no LLM, no transport.'
+    docs:
+      - domains/domain/README.md
+
+  # ── Layer: Application ──────────────────────────────────────────────────────
+  - ref_id: bob-application
+    kind: domain
+    source: src/bob/application/
+    tags: [layer-application]
+    summary: 'GUPPI orchestration: AgentRuntime + AsyncEventBus, LLMRouter (tier routing + privacy redaction), use-cases (HandleMessage, RunGenesis, UpdateMoodFromText), resilient heartbeat ticks (retry/backoff), the Authorizer access policy and the capability seam (CapabilityRegistry + ToolLoop + recall_memory). Depends on domain via ports; never imports infrastructure.'
+    docs:
+      - domains/application/README.md
+
+  # ── Layer: Infrastructure ───────────────────────────────────────────────────
+  - ref_id: bob-infrastructure
+    kind: domain
+    source: src/bob/infrastructure/
+    tags: [layer-infra]
+    summary: 'Port adapters: aiogram Telegram gateway (long-polling + authz gate, native draft streaming, Rich Messages, markdown<->RichMessage, topic-thread reply pinning), MultiBotGateway (BotRegistry + cross-bot dedup + central identity/scope router) and the GuppiHandler gatekeeper (visible reject + owner commands), OpenAI-compatible LLM provider (Tier 0/1 + tool-calling), SQLite+FTS5 persistence, KvAllowlistStore and SoulStore, two-bot layered config loader.'
+    docs:
+      - domains/infrastructure/README.md
+
+  # ── Domain submodules (kind: feature, part_of bob-domain) ───────────────────
+  - ref_id: personality
+    kind: feature
+    source: src/bob/domain/personality/
+    tags: [layer-domain]
+    summary: 'Personality core — Mood five-axis affect, TasteEngine, Negotiation, SOUL/disposition value objects driving Bob''s tone.'
+
+  - ref_id: memory
+    kind: feature
+    source: src/bob/domain/memory/
+    tags: [layer-domain]
+    summary: 'Memory domain entities — facts, episodes, relationship and recall value objects (pure; persistence lives in infrastructure).'
+
+  - ref_id: goals
+    kind: feature
+    source: src/bob/domain/goals/
+    tags: [layer-domain]
+    summary: 'Goals domain — goal/plan entities and goal-state value objects for Bob''s self-directed pursuits.'
+
+  - ref_id: coding-domain
+    kind: feature
+    source: src/bob/domain/coding/
+    tags: [layer-domain]
+    summary: 'Coding domain (domain half of the coding capability) — pure coding-intent/context entities. Paired with the `coding-infra` adapter.'
+
+  - ref_id: diagrams-domain
+    kind: feature
+    source: src/bob/domain/diagrams/
+    tags: [layer-domain]
+    summary: 'Diagrams domain (domain half) — diagram request/spec value objects. Paired with the `diagrams-infra` renderer adapter.'
+
+  - ref_id: introspection-domain
+    kind: feature
+    source: src/bob/domain/introspection/
+    tags: [layer-domain]
+    summary: 'Introspection domain (domain half) — architecture self-inspection entities. Paired with the `introspection-infra` adapter.'
+
+  - ref_id: permission
+    kind: feature
+    source: src/bob/domain/permission/
+    tags: [layer-domain]
+    summary: 'Permission domain — permission-request/grant entities and access value objects (authz-before-autonomy).'
+
+  - ref_id: proactivity-domain
+    kind: feature
+    source: src/bob/domain/proactivity/
+    tags: [layer-domain]
+    summary: 'Proactivity domain (domain half) — proactive-intent and tick-decision value objects. Paired with the `proactivity-app` orchestrator.'
+
+  # ── Application submodules (kind: feature, part_of bob-application) ──────────
+  - ref_id: usecases
+    kind: feature
+    source: src/bob/application/usecases/
+    tags: [layer-application]
+    summary: 'Use-cases — HandleMessage, RunGenesis, UpdateMoodFromText, goal/memory/reflection flows orchestrating domain + ports.'
+
+  - ref_id: authz
+    kind: feature
+    source: src/bob/application/authz/
+    tags: [layer-application]
+    summary: 'Authorization policy — Authorizer access decisions plus sender/reactor social perception (social identity ≠ authz).'
+
+  - ref_id: capabilities-app
+    kind: feature
+    source: src/bob/application/capabilities/
+    tags: [layer-application]
+    summary: 'Capability seam (application half) — CapabilityRegistry + ToolLoop and the individual capabilities (recall/search memory, read code/url, web search, render diagram, inspect architecture, progress announcer).'
+
+  - ref_id: router
+    kind: feature
+    source: src/bob/application/router/
+    tags: [layer-application]
+    summary: 'LLMRouter — Tier 0/1 model routing with privacy redaction before any model call.'
+
+  - ref_id: runtime-app
+    kind: feature
+    source: src/bob/application/runtime/
+    tags: [layer-application]
+    summary: 'Application runtime — AgentRuntime, AsyncEventBus, events, and resilient heartbeat ticks (retry/backoff). Distinct from the `runtime` composition root.'
+
+  - ref_id: proactivity-app
+    kind: feature
+    source: src/bob/application/proactivity/
+    tags: [layer-application]
+    summary: 'Proactivity orchestration (application half) — proactive engine, tick, and owner-activity recording driving Bob''s self-initiated actions.'
+
+  # ── Infrastructure submodules (kind: component, part_of bob-infrastructure) ──
+  - ref_id: llm
+    kind: component
+    source: src/bob/infrastructure/llm/
+    tags: [layer-infra]
+    summary: 'LLM adapter — OpenAI-compatible provider for Tier 0/1 completion + tool-calling (Ollama/Qwen backend).'
+
+  - ref_id: web
+    kind: component
+    source: src/bob/infrastructure/web/
+    tags: [layer-infra]
+    summary: 'Web adapter — URL fetch/read and web-search transport backing the read_url / web_search capabilities.'
+
+  - ref_id: telegram
+    kind: component
+    source: src/bob/infrastructure/telegram/
+    tags: [layer-infra]
+    summary: 'Telegram adapter — aiogram gateway (long-polling, authz gate, native draft streaming, Rich Messages, topic-thread reply pinning), MultiBotGateway (BotRegistry + cross-bot dedup + identity/scope router) and the GuppiHandler gatekeeper.'
+
+  - ref_id: persistence
+    kind: component
+    source: src/bob/infrastructure/persistence/
+    tags: [layer-infra]
+    summary: 'Persistence adapter — SQLite+FTS5 repository, KvAllowlistStore and SoulStore backing memory recall and stores.'
+
+  - ref_id: config
+    kind: component
+    source: src/bob/infrastructure/config/
+    tags: [layer-infra]
+    summary: 'Config adapter — two-bot layered config loader (env + files) for the running process.'
+
+  - ref_id: coding-infra
+    kind: component
+    source: src/bob/infrastructure/coding/
+    tags: [layer-infra]
+    summary: 'Coding adapter (infrastructure half of the coding capability) — headless Claude Code CLI / repo I/O. Paired with the `coding-domain` entities.'
+
+  - ref_id: diagrams-infra
+    kind: component
+    source: src/bob/infrastructure/diagrams/
+    tags: [layer-infra]
+    summary: 'Diagrams adapter (infrastructure half) — diagram rendering backend. Paired with the `diagrams-domain` value objects.'
+
+  - ref_id: introspection-infra
+    kind: component
+    source: src/bob/infrastructure/introspection/
+    tags: [layer-infra]
+    summary: 'Introspection adapter (infrastructure half) — beadloom/architecture read backend. Paired with the `introspection-domain` entities.'
+
+edges:
+  # ── Root service self-reference (satisfies service-needs-parent convention) ─
+  - src: bob
+    dst: bob
+    kind: part_of
+
+  # ── Layers part_of the service ──────────────────────────────────────────────
+  - src: runtime
+    dst: bob
+    kind: part_of
+  - src: bob-domain
+    dst: bob
+    kind: part_of
+  - src: bob-application
+    dst: bob
+    kind: part_of
+  - src: bob-infrastructure
+    dst: bob
+    kind: part_of
+
+  # ── Domain submodules part_of the domain layer ──────────────────────────────
+  - src: personality
+    dst: bob-domain
+    kind: part_of
+  - src: memory
+    dst: bob-domain
+    kind: part_of
+  - src: goals
+    dst: bob-domain
+    kind: part_of
+  - src: coding-domain
+    dst: bob-domain
+    kind: part_of
+  - src: diagrams-domain
+    dst: bob-domain
+    kind: part_of
+  - src: introspection-domain
+    dst: bob-domain
+    kind: part_of
+  - src: permission
+    dst: bob-domain
+    kind: part_of
+  - src: proactivity-domain
+    dst: bob-domain
+    kind: part_of
+
+  # ── Application submodules part_of the application layer ─────────────────────
+  - src: usecases
+    dst: bob-application
+    kind: part_of
+  - src: authz
+    dst: bob-application
+    kind: part_of
+  - src: capabilities-app
+    dst: bob-application
+    kind: part_of
+  - src: router
+    dst: bob-application
+    kind: part_of
+  - src: runtime-app
+    dst: bob-application
+    kind: part_of
+  - src: proactivity-app
+    dst: bob-application
+    kind: part_of
+
+  # ── Infrastructure submodules part_of the infrastructure layer ──────────────
+  - src: llm
+    dst: bob-infrastructure
+    kind: part_of
+  - src: web
+    dst: bob-infrastructure
+    kind: part_of
+  - src: telegram
+    dst: bob-infrastructure
+    kind: part_of
+  - src: persistence
+    dst: bob-infrastructure
+    kind: part_of
+  - src: config
+    dst: bob-infrastructure
+    kind: part_of
+  - src: coding-infra
+    dst: bob-infrastructure
+    kind: part_of
+  - src: diagrams-infra
+    dst: bob-infrastructure
+    kind: part_of
+  - src: introspection-infra
+    dst: bob-infrastructure
+    kind: part_of
+
+  # ── Declarative Clean-Architecture layer dependencies ───────────────────────
+  # (Fine-grained depends_on between submodules is derived from real imports by
+  #  the import resolver — not duplicated here.)
+  - src: bob-application
+    dst: bob-domain
+    kind: depends_on
+  - src: bob-infrastructure
+    dst: bob-application
+    kind: depends_on
+  - src: bob-infrastructure
+    dst: bob-domain
+    kind: depends_on
+  - src: runtime
+    dst: bob-domain
+    kind: depends_on
+  - src: runtime
+    dst: bob-application
+    kind: depends_on
+  - src: runtime
+    dst: bob-infrastructure
+    kind: depends_on
