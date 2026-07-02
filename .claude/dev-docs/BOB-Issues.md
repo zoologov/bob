@@ -12,6 +12,26 @@
 
 ---
 
+## Execution Plan (утв. 2026-07-02) — «Инженерная гигиена / организация»
+
+> Порядок и структура зафиксированы owner'ом. Резать **поведение-сохраняюще**, PR за PR, тесты
+> зелёные на каждом шаге. Доки (D) и domain-first реорг (E) — **один эпик** (per-module вертикали:
+> переезд кода + `beadloom:`-тэги + граф-ноды + SPEC/DOC едут вместе).
+
+| Фаза | Что | Issues | Тип | Статус |
+|---|---|---|---|---|
+| **1. Быстрые победы** (параллельно, независимы, СТАРТ) | гигиена + README ×2 | #19–24, #29, #6, #20 | chore ×2 | ⏳ старт |
+| **2. Фундамент** | split `ports.py` (+re-export shim) · beadloom-правило слоёв | #7, #8 | feature | ○ после ф.1 |
+| **3. Эпик BOB-062 «Domain-first + доки»** — per-module вертикали: `coding→memory→proactivity→social→conversation→personality/capabilities→runtime/application`; каждая несёт свои `beadloom:`-тэги + граф-ноды + SPEC/DOC | #1–6, #9–18, #30 | epic | ○ после ф.2 |
+| — монстры внутри ф.3 | `handle_message`(3523,#9)→растворить в conversation/personality/memory/social/application; `app.py`(2815,#10)→runtime | #9, #10 | — | ○ |
+| — после реорга | включить правило слоёв (#8) как «зубы»; удалить `ports.py`-шим (#18) | #8, #18 | — | ○ |
+
+**🔴 Инварианты рефакторинга** (не сломать при переезде): verify-once-per-turn (BOB-057), анти-повтор-регенерация (BOB-032/043), essential-vs-decorative (`_safe_addon`/GUPPI-нотис BOB-049), per-turn announcer, floor-advance на ВСЕХ ветках (BOB-025/058), shared-instance (diagram_sink/notable_reaction), feature-flag «off→None→inert», `_REPO_ROOT` при переносе app.py, boot-order в `build_application`.
+
+**Корневые находки аудита:** (1) монолит доков = граф из 4 нод, все `beadloom:domain=bob`, 0 feature/component → `docs generate` no-op (→ BDL-UX #138); (2) правило слоёв beadloom НЕ энфорсится (только `domain-needs-parent`). Полные находки — сессия аудита `13b1e49b`, 5 субагентов.
+
+---
+
 ## Template
 
 ```markdown
