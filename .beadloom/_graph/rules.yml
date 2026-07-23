@@ -111,19 +111,22 @@ rules:
 
   # Module boundary (inward): the outside world reaches `coding` only through its
   # facade (`__init__.py`) / `ports.py` — never into `usecases/` or `adapters/`.
-  # `src/bob/[adi]*/*` = the application/domain/infrastructure trees (a|d|i…);
-  # the `src/bob/app.py` composition root is excluded (it legitimately wires the
-  # internals). Future vertical modules (m…/t…) get pairwise isolation rules as
-  # they land — fnmatch cannot correlate a from≠to module in a single glob.
+  # `src/bob/[adim]*/*` = the application/domain/infrastructure trees PLUS the
+  # `memory` vertical module (a|d|i|m…); `coding`-self (`c…`) and the
+  # `src/bob/app.py` composition root are excluded (the latter legitimately wires
+  # the internals). BOB-062.2: `m` was added when the `memory` module landed —
+  # closing the pairwise isolation the original note anticipated (fnmatch cannot
+  # correlate a from≠to module in a single glob, so each module is enumerated).
+  # A future vertical (t…) extends this class again as it lands.
   - name: coding-boundary-no-outside-usecases
     description: "coding: снаружи не импортят usecases напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/[adi]*/*", to: "bob/coding/usecases/*"}
+    forbid_import: {from: "src/bob/[adim]*/*", to: "bob/coding/usecases/*"}
 
   - name: coding-boundary-no-outside-adapters
     description: "coding: снаружи не импортят adapters напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/[adi]*/*", to: "bob/coding/adapters/*"}
+    forbid_import: {from: "src/bob/[adim]*/*", to: "bob/coding/adapters/*"}
 
   # Module boundary (outward): a module must not depend on the composition root
   # that wires it (no inversion). `coding`'s ONLY legitimate outward runtime dep
@@ -135,6 +138,77 @@ rules:
     description: "coding: модуль не импортит композиционный корень (src/bob/app.py)"
     severity: error
     forbid_import: {from: "src/bob/coding/*", to: "bob/app"}
+
+  # ── Memory VERTICAL module — per-module boundaries (BOB-062.2, #12) ──────────
+  # Second domain-first vertical module (see the `coding` exemplar above): same
+  # discipline (internal layering + inward/outward boundary), enforced by real-
+  # import path globs; `memory` carries `module-vertical` so `architecture-layers`
+  # skips its edges. Two SHAPE differences from `coding` drive the glob choices:
+  #   • memory's `usecases/__init__.py` and `adapters/__init__.py` DO re-export
+  #     their own submodules (coding's `__init__` files are inert). Because fnmatch
+  #     `*` spans `/`, a blanket `from: src/bob/memory/*` source glob would false-
+  #     flag those LEGAL sibling package re-exports. So `internals-no-usecases`
+  #     excludes the `usecases/` dir as a source via `[!u]*` (see its note).
+  #   • a SECOND vertical module now exists, so the OUTSIDE-world source globs are
+  #     `src/bob/[acdi]*/*` = application/coding/domain/infrastructure — every
+  #     top-level tree EXCEPT memory-self (`m…`) and the `src/bob/app.py`
+  #     composition root. (Symmetrically, the `coding` boundary globs above gained
+  #     `m` so the two modules are isolated from each other in BOTH directions.)
+
+  # Internal layering: usecases orchestrate via PORTS, never importing concrete
+  # adapters (adapters are wired at the composition root, src/bob/app.py).
+  - name: memory-usecases-no-adapters
+    description: "memory: usecases не импортят adapters (только порты; adapters — на композиции)"
+    severity: error
+    forbid_import: {from: "src/bob/memory/usecases/*", to: "bob/memory/adapters/*"}
+
+  # Internal layering: memory's domain-root (entities/ports/__init__) and adapters
+  # must not import a usecase — usecases are instantiated only at the external
+  # composition root. `src/bob/memory/[!u]*` excludes the `usecases/` dir as a
+  # SOURCE (fnmatch `*` spans `/`), so LEGAL usecase↔usecase sibling re-exports
+  # (memory/usecases/__init__.py) are not flagged; only non-usecase internals
+  # (domain-root + adapters) are policed.
+  - name: memory-internals-no-usecases
+    description: "memory: доменная логика/адаптеры не импортят usecases (usecases — на композиции)"
+    severity: error
+    forbid_import: {from: "src/bob/memory/[!u]*", to: "bob/memory/usecases/*"}
+
+  # Layer-guard INSIDE memory: its application layer (`usecases/`) now lives UNDER
+  # src/bob/memory/ and is therefore OUTSIDE the reach of tests/application/
+  # test_layering.py (which scans only `bob.application`). This restores that
+  # guard at module scope: memory use-cases drive the pure domain through ports
+  # and must not import foreign infrastructure. Runtime-level (code_imports omits
+  # TYPE_CHECKING); a TYPE_CHECKING-level test analog is proposed for slice .3.
+  - name: memory-usecases-no-infra
+    description: "memory: usecases не импортят чужой infrastructure (только через порты)"
+    severity: error
+    forbid_import: {from: "src/bob/memory/usecases/*", to: "bob/infrastructure/*"}
+
+  # Module boundary (inward): the outside world reaches `memory` only through its
+  # facade (`__init__.py`) / `ports.py` / pure `entities` — never into `usecases/`
+  # or `adapters/`. `src/bob/[acdi]*/*` = the application/coding/domain/infra
+  # trees; memory-self (`m…`) and the `src/bob/app.py` composition root are
+  # excluded (the latter legitimately wires the internals).
+  - name: memory-boundary-no-outside-usecases
+    description: "memory: снаружи не импортят usecases напрямую (только через фасад/порты)"
+    severity: error
+    forbid_import: {from: "src/bob/[acdi]*/*", to: "bob/memory/usecases/*"}
+
+  - name: memory-boundary-no-outside-adapters
+    description: "memory: снаружи не импортят adapters напрямую (только через фасад/порты)"
+    severity: error
+    forbid_import: {from: "src/bob/[acdi]*/*", to: "bob/memory/adapters/*"}
+
+  # Module boundary (outward): memory must not import the composition root that
+  # wires it (no inversion). Its legitimate outward deps are SHARED application
+  # services that live OUTSIDE any module (`bob.application.router.llm_router`,
+  # `bob.application.runtime.retry`) — intentionally NOT forbidden. `to: bob/app`
+  # is an EXACT match for the `src/bob/app.py` root and does NOT match the longer
+  # `bob/application/...` paths.
+  - name: memory-no-composition-root
+    description: "memory: модуль не импортит композиционный корень (src/bob/app.py)"
+    severity: error
+    forbid_import: {from: "src/bob/memory/*", to: "bob/app"}
 
   # ── Graph-edge backstop: domain layer must not depend on a service ──────────
   - name: no-domain-depends-on-outer
@@ -170,6 +244,31 @@ rules:
     check:
       for: {kind: feature}
       max_symbols: 200
+
+# ── BOB-062.2: the temporary kernel → memory edge (allowed until slice .7) ────
+# The memory domain-first move left exactly ONE deliberately-allowed backward
+# reference (kernel → memory), documented here so a reviewer sees the reasoning
+# and no rule is added that would mask a real break:
+#
+#   bob.infrastructure.persistence.sqlite_repo → bob.memory.entities
+#     (TYPE_CHECKING-only: EpisodicEvent, SemanticFact)
+#   # BOB-062.2: kernel→memory, temporary until slice .7 (SqliteMemoryRepo split)
+#
+# `SqliteMemoryRepo` is genuinely a MEMORY adapter, but it still lives inside the
+# SHARED persistence kernel (one sqlite_repo.py + schema.sql feeding 13 other
+# stores through the `.connection()` seam). Owner decision (variant C, 2026-07-23):
+# memory takes its business logic NOW; the store kernel splits out in BOB-062.7,
+# where `SqliteMemoryRepo` separates into a connection-kernel and a `MemoryRepo`
+# implementation and this edge disappears.
+#
+# Why it needs NO allow-rule and produces NO finding (not suppressed — genuinely
+# clean): (a) the import is TYPE_CHECKING-only, so it is ABSENT from `code_imports`
+# — no `forbid_import` match, and no `depends_on` edge, hence no cycle with the
+# memory→kernel type-refs (hybrid_recall/fts_recall → SqliteMemoryRepo); and
+# (b) it targets `entities`, memory's PUBLIC domain surface — NOT `usecases/` or
+# `adapters/`, which the boundary globs above are the only memory paths they
+# forbid. If it ever becomes a RUNTIME import it will surface (import scan / edge)
+# and must be re-evaluated at .7 — do NOT pre-emptively suppress it.
 
 # ── BOB-062.1: 3 legalized cross-boundary refs for the `coding` module ────────
 # The domain-first move surfaced three cross-boundary references. All THREE are
