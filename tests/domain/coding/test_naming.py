@@ -11,7 +11,7 @@
 
 from __future__ import annotations
 
-from bob.domain.coding.naming import worktree_branch
+from bob.coding.naming import worktree_branch
 
 _SAFE = set("abcdefghijklmnopqrstuvwxyz0123456789-/")
 

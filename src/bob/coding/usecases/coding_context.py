@@ -3,7 +3,8 @@
 # See the LICENSE file in the project root for full license information.
 
 # beadloom:domain=bob
-# beadloom:feature=usecases
+# beadloom:feature=coding
+# beadloom:layer=application
 
 """coding_context — build a bounded, privacy-safe architectural-context preamble.
 
@@ -34,7 +35,7 @@ It is resilient — any single source failing (a doc not present, the graph retu
 nothing) degrades gracefully and never crashes the run; with NO material at all it
 returns ``""`` and the caller keeps the unmodified prompt. Construct it with
 :func:`make_coding_context`; the composition root injects it into
-:class:`~bob.application.usecases.coding_assistant.CodingAssistant` as an OPTIONAL
+:class:`~bob.coding.usecases.coding_assistant.CodingAssistant` as an OPTIONAL
 dependency (default ``None`` → no preamble), so it is off-by-default-safe and testable
 with a deterministic fake introspector.
 """
@@ -48,7 +49,7 @@ from typing import TYPE_CHECKING, Protocol
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from bob.application.usecases.coding_assistant import CodingContext
+    from bob.coding.usecases.coding_assistant import CodingContext
     from bob.domain.introspection.privacy_guard import PrivacyGuard
 
 __all__ = ["PREAMBLE_MAX_CHARS", "make_coding_context"]

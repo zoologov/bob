@@ -3,13 +3,15 @@
 # See the LICENSE file in the project root for full license information.
 
 # beadloom:domain=bob
+# beadloom:feature=coding
+# beadloom:layer=infrastructure
 
 """SqliteCodingSessionStore — durable store for gated coding sessions (BOB-039 .1).
 
 Realises :class:`bob.domain.ports.CodingSessionStore` over the ``coding_session``
 table: one row per session ``id``. The domain
-:class:`~bob.domain.coding.entities.CodingSession` (its
-:class:`~bob.domain.coding.state.CodingSessionState`, branch, worktree path, plan and
+:class:`~bob.coding.entities.CodingSession` (its
+:class:`~bob.coding.state.CodingSessionState`, branch, worktree path, plan and
 PR url) is mapped to and from rows here, so the domain stays I/O-free. ``save`` UPSERTs
 on the ``id`` (a session advances, so each step re-saves the newer state), ``get``
 returns ``None`` for an unknown id, and ``active`` lists the non-terminal sessions
@@ -22,8 +24,8 @@ from __future__ import annotations
 from datetime import datetime
 from typing import TYPE_CHECKING, Protocol
 
-from bob.domain.coding.entities import CodingSession
-from bob.domain.coding.state import CodingSessionState, is_terminal
+from bob.coding.entities import CodingSession
+from bob.coding.state import CodingSessionState, is_terminal
 
 if TYPE_CHECKING:
     import aiosqlite

@@ -3,7 +3,8 @@
 # See the LICENSE file in the project root for full license information.
 
 # beadloom:domain=bob
-# beadloom:feature=coding-domain
+# beadloom:feature=coding
+# beadloom:layer=domain
 
 """Безопасные имена ветки coding-сессии — чистая slug-функция (BOB-039 .1).
 

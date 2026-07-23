@@ -23,15 +23,15 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from bob.application.usecases.coding_assistant import CodingAssistant
-from bob.domain.coding import session_voice
-from bob.domain.coding.state import CodingSessionState, is_terminal
+from bob.coding import session_voice
+from bob.coding.state import CodingSessionState, is_terminal
+from bob.coding.usecases.coding_assistant import CodingAssistant
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Callable, Mapping
     from contextlib import AbstractAsyncContextManager
 
-    from bob.domain.coding.entities import CodingSession
+    from bob.coding.entities import CodingSession
 
 _OWNER_ID = 27468732
 _NOW = datetime(2026, 6, 25, 12, 0, tzinfo=UTC)

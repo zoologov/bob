@@ -3,6 +3,8 @@
 # See the LICENSE file in the project root for full license information.
 
 # beadloom:domain=bob
+# beadloom:feature=coding
+# beadloom:layer=infrastructure
 
 """GhPullRequestOpener — open a PR for a coding session's branch (BOB-039 .2).
 
@@ -24,8 +26,8 @@ oversight — and a test asserts the dangerous tokens never appear in this sourc
 
 from __future__ import annotations
 
-from bob.infrastructure.coding._branch import is_safe_branch
-from bob.infrastructure.coding._exec import (
+from bob.coding.adapters._branch import is_safe_branch
+from bob.coding.adapters._exec import (
     DEFAULT_TIMEOUT_S,
     CommandRunner,
     ExecRunner,

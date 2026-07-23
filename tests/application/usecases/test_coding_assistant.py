@@ -22,13 +22,13 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from bob.application.usecases.coding_assistant import CodingAssistant
-from bob.domain.coding.state import CodingSessionState, is_terminal
+from bob.coding.state import CodingSessionState, is_terminal
+from bob.coding.usecases.coding_assistant import CodingAssistant
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Callable, Mapping
 
-    from bob.domain.coding.entities import CodingSession
+    from bob.coding.entities import CodingSession
 
 _OWNER_ID = 27468732
 _STRANGER_ID = 555

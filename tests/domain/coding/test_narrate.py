@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from bob.domain.coding.narrate import narrate
+from bob.coding.narrate import narrate
 
 if TYPE_CHECKING:
     from collections.abc import Mapping

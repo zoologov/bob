@@ -16,8 +16,8 @@ from datetime import UTC, datetime
 
 import pytest
 
-from bob.domain.coding.entities import CodingSession
-from bob.domain.coding.state import CodingSessionState
+from bob.coding.entities import CodingSession
+from bob.coding.state import CodingSessionState
 
 _T0 = datetime(2026, 6, 26, 10, 0, tzinfo=UTC)
 _T1 = datetime(2026, 6, 26, 11, 0, tzinfo=UTC)

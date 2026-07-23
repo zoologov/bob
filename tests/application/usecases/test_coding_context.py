@@ -21,18 +21,18 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from bob.application.usecases.coding_assistant import CodingAssistant
-from bob.application.usecases.coding_context import (
+from bob.coding.state import CodingSessionState, is_terminal
+from bob.coding.usecases.coding_assistant import CodingAssistant
+from bob.coding.usecases.coding_context import (
     PREAMBLE_MAX_CHARS,
     make_coding_context,
 )
-from bob.domain.coding.state import CodingSessionState, is_terminal
 from bob.domain.introspection.privacy_guard import PrivacyGuard
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Callable, Mapping
 
-    from bob.domain.coding.entities import CodingSession
+    from bob.coding.entities import CodingSession
 
 _OWNER_ID = 27468732
 _NOW = datetime(2026, 6, 25, 12, 0, tzinfo=UTC)

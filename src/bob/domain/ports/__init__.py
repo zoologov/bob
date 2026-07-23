@@ -20,6 +20,12 @@ every one of the 51 public symbols unchanged, so importers never had to move.
 
 from __future__ import annotations
 
+from bob.coding.ports import (
+    ClaudeCodeRunner,
+    CodingSessionStore,
+    PullRequestOpener,
+    Worktree,
+)
 from bob.domain.ports.capabilities import (
     Capability,
     DiagramRenderer,
@@ -39,12 +45,6 @@ from bob.domain.ports.capabilities import (
     WebSearchProvider,
     WebSearchResult,
     WebSource,
-)
-from bob.domain.ports.coding import (
-    ClaudeCodeRunner,
-    CodingSessionStore,
-    PullRequestOpener,
-    Worktree,
 )
 from bob.domain.ports.conversation import CloserLog, ConversationFloorStore
 from bob.domain.ports.kernel import (

@@ -13,7 +13,7 @@ claude в plan-mode эмитит план ДВАЖДЫ — текстом ``assi
 
 from __future__ import annotations
 
-from bob.application.usecases.coding_assistant import (
+from bob.coding.usecases.coding_assistant import (
     _clean_plan,
     _plan_part,
     _PlanPart,

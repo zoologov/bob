@@ -3,6 +3,8 @@
 # See the LICENSE file in the project root for full license information.
 
 # beadloom:domain=bob
+# beadloom:feature=coding
+# beadloom:layer=domain
 
 """Coding-сессия — чистый домен «Боб запускает Claude Code» (без I/O; BOB-039).
 
@@ -21,10 +23,10 @@ BOB-015): сессия (:class:`CodingSession`) как immutable value-object, �
 
 from __future__ import annotations
 
-from bob.domain.coding.entities import CodingSession
-from bob.domain.coding.naming import worktree_branch
-from bob.domain.coding.narrate import narrate
-from bob.domain.coding.state import (
+from bob.coding.entities import CodingSession
+from bob.coding.naming import worktree_branch
+from bob.coding.narrate import narrate
+from bob.coding.state import (
     CodingSessionState,
     can_approve_plan,
     can_start,

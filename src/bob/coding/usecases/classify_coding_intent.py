@@ -3,7 +3,8 @@
 # See the LICENSE file in the project root for full license information.
 
 # beadloom:domain=bob
-# beadloom:feature=usecases
+# beadloom:feature=coding
+# beadloom:layer=application
 
 """ClassifyCodingIntent — cheap Tier-0 «coding vs chat» classifier (BOB-041 .2).
 

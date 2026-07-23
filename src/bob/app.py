@@ -73,10 +73,6 @@ from bob.application.runtime import (
 )
 from bob.application.usecases.announce_rules import AnnounceProposedRules
 from bob.application.usecases.apply_reflection import ApplyReflection
-from bob.application.usecases.classify_coding_intent import ClassifyCodingIntent
-from bob.application.usecases.coding_assistant import CodingAssistant
-from bob.application.usecases.coding_context import make_coding_context
-from bob.application.usecases.coding_intent_router import CodingIntentRouter
 from bob.application.usecases.consolidate_memory import ConsolidateMemory
 from bob.application.usecases.decide_response import DecideResponse
 from bob.application.usecases.dedup_facts import DedupFacts
@@ -113,6 +109,19 @@ from bob.application.usecases.run_genesis import RunGenesis
 from bob.application.usecases.self_improvement_sources import ActiveRulesReader
 from bob.application.usecases.sulk_sources import SulkRecoveryStep, SulkTracker
 from bob.application.usecases.update_mood_from_text import UpdateMoodFromText
+from bob.coding.adapters import (
+    GhPullRequestOpener,
+    GitWorktree,
+    SubprocessClaudeRunner,
+)
+from bob.coding.adapters.indicator import StatusPanel, TypingKeepalive
+from bob.coding.adapters.session_store import (
+    SqliteCodingSessionStore,
+)
+from bob.coding.usecases.classify_coding_intent import ClassifyCodingIntent
+from bob.coding.usecases.coding_assistant import CodingAssistant
+from bob.coding.usecases.coding_context import make_coding_context
+from bob.coding.usecases.coding_intent_router import CodingIntentRouter
 from bob.domain.introspection.privacy_guard import PrivacyGuard
 from bob.domain.permission.privilege import PrivilegeContext, PrivilegeNeed
 from bob.domain.personality.addressivity import AddressivityThresholds
@@ -135,11 +144,6 @@ from bob.domain.personality.voice import OffDayThresholds
 from bob.domain.personality.zone_classifier import TasteZoneClassifier
 from bob.domain.proactivity.decision import ProactiveDecider
 from bob.domain.proactivity.governance import Governance
-from bob.infrastructure.coding import (
-    GhPullRequestOpener,
-    GitWorktree,
-    SubprocessClaudeRunner,
-)
 from bob.infrastructure.config import ConfigLoader
 from bob.infrastructure.diagrams import SubprocessMmdcRenderer
 from bob.infrastructure.introspection.subprocess_introspector import (
@@ -173,13 +177,9 @@ from bob.infrastructure.persistence import (
     SqliteSelfImprovementStore,
     SqliteSulkStore,
 )
-from bob.infrastructure.persistence.coding_session_store import (
-    SqliteCodingSessionStore,
-)
 from bob.infrastructure.persistence.permission_request_store import (
     SqlitePermissionRequestStore,
 )
-from bob.infrastructure.telegram.coding_indicator import StatusPanel, TypingKeepalive
 from bob.infrastructure.telegram.gateway import (
     ALLOWED_UPDATES,
     BobMessageFilter,
@@ -201,6 +201,10 @@ if TYPE_CHECKING:
     from bob.application.runtime.agent import BackgroundTask
     from bob.application.usecases.handle_message import ReplyGateway
     from bob.application.usecases.run_genesis import GenesisResult
+    from bob.coding.adapters.indicator import (
+        EditableStatusBot,
+        TypingActionBot,
+    )
     from bob.domain.ports import (
         Clock,
         DomainEvent,
@@ -210,10 +214,6 @@ if TYPE_CHECKING:
         MemoryRecall,
         Reranker,
         ToolCallingProvider,
-    )
-    from bob.infrastructure.telegram.coding_indicator import (
-        EditableStatusBot,
-        TypingActionBot,
     )
     from bob.infrastructure.telegram.gateway import (
         BotLike,
@@ -1405,7 +1405,7 @@ class _CodingOwnerNotifier:
     any transport. By canon Bob is the one talking — the owner converses with Bob, GUPPI is
     the silent executor under the hood — so the SENDER is Bob's bot (BOB-046 .1); the
     per-event narrative text stays GUPPI-attributed («GUPPI: …») in
-    :func:`~bob.domain.coding.narrate.narrate` (only the sender changed). The owner gives
+    :func:`~bob.coding.narrate.narrate` (only the sender changed). The owner gives
     Bob the task in BOB'S TOPIC (the BOB-041 natural-language path), so the session replies
     are threaded back into THAT topic via ``message_thread_id == telegram.bob.topic_id``
     (BOB-042 Fix B) — the conversation stays in one thread instead of splitting between

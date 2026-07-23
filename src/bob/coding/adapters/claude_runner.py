@@ -3,6 +3,8 @@
 # See the LICENSE file in the project root for full license information.
 
 # beadloom:domain=bob
+# beadloom:feature=coding
+# beadloom:layer=infrastructure
 
 """SubprocessClaudeRunner — run the local ``claude`` CLI and stream its events.
 

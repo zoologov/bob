@@ -150,15 +150,15 @@ ignore = [
 "src/bob/infrastructure/persistence/goal_store.py" = ["RUF001", "RUF002", "RUF003"]
 # The coding-session domain + store (BOB-039) carries Russian persona/policy docstrings
 # + comments whose Cyrillic look-alikes are intentional — RUF001/RUF002/RUF003 here.
-"src/bob/domain/coding/__init__.py" = ["RUF001", "RUF002", "RUF003"]
-"src/bob/domain/coding/state.py" = ["RUF001", "RUF002", "RUF003"]
-"src/bob/domain/coding/entities.py" = ["RUF001", "RUF002", "RUF003"]
-"src/bob/domain/coding/narrate.py" = ["RUF001", "RUF002", "RUF003"]
-"src/bob/domain/coding/naming.py" = ["RUF001", "RUF002", "RUF003"]
+"src/bob/coding/__init__.py" = ["RUF001", "RUF002", "RUF003"]
+"src/bob/coding/state.py" = ["RUF001", "RUF002", "RUF003"]
+"src/bob/coding/entities.py" = ["RUF001", "RUF002", "RUF003"]
+"src/bob/coding/narrate.py" = ["RUF001", "RUF002", "RUF003"]
+"src/bob/coding/naming.py" = ["RUF001", "RUF002", "RUF003"]
 # Bob-voiced coding-session gate messages (BOB-041 .3): Russian persona templates +
 # comments whose Cyrillic look-alikes are intentional — RUF001/RUF002/RUF003 here.
-"src/bob/domain/coding/session_voice.py" = ["RUF001", "RUF002", "RUF003"]
-"src/bob/infrastructure/persistence/coding_session_store.py" = [
+"src/bob/coding/session_voice.py" = ["RUF001", "RUF002", "RUF003"]
+"src/bob/coding/adapters/session_store.py" = [
     "RUF001",
     "RUF002",
     "RUF003",
@@ -195,7 +195,7 @@ ignore = [
 "src/bob/application/usecases/privileged_fulfiller.py" = ["RUF001", "RUF002", "RUF003"]
 # The coding work-indicator adapters (BOB-046 .2): Russian docstrings whose Cyrillic
 # look-alikes are intentional — RUF001/RUF002/RUF003 do not apply to these.
-"src/bob/infrastructure/telegram/coding_indicator.py" = ["RUF001", "RUF002", "RUF003"]
+"src/bob/coding/adapters/indicator.py" = ["RUF001", "RUF002", "RUF003"]
 # The self-improvement model (BOB-028 .1) carries Russian persona/policy docstrings +
 # observation/adjustment literals whose Cyrillic look-alikes are intentional —
 # RUF001/RUF002/RUF003 do not apply to these.
@@ -233,21 +233,21 @@ ignore = [
 # The CodingAssistant use-case (BOB-039 .3) carries Russian persona/policy docstrings +
 # owner-facing plan/PR/prompt literals whose Cyrillic look-alikes are intentional —
 # RUF001/RUF002/RUF003 do not apply.
-"src/bob/application/usecases/coding_assistant.py" = ["RUF001", "RUF002", "RUF003"]
+"src/bob/coding/usecases/coding_assistant.py" = ["RUF001", "RUF002", "RUF003"]
 # The coding arch-context builder (BOB-046 .3) carries Russian convention/preamble
 # literals + persona/policy docstrings whose Cyrillic look-alikes are intentional —
 # RUF001/RUF002/RUF003 do not apply.
-"src/bob/application/usecases/coding_context.py" = ["RUF001", "RUF002", "RUF003"]
+"src/bob/coding/usecases/coding_context.py" = ["RUF001", "RUF002", "RUF003"]
 # The coding-intent NL routing (BOB-041 .2) carries Russian persona/policy docstrings +
 # approve/stop phrase literals whose Cyrillic look-alikes are intentional —
 # RUF001/RUF002/RUF003 do not apply.
-"src/bob/domain/coding/intent.py" = ["RUF001", "RUF002", "RUF003"]
-"src/bob/application/usecases/classify_coding_intent.py" = [
+"src/bob/coding/intent.py" = ["RUF001", "RUF002", "RUF003"]
+"src/bob/coding/usecases/classify_coding_intent.py" = [
     "RUF001",
     "RUF002",
     "RUF003",
 ]
-"src/bob/application/usecases/coding_intent_router.py" = [
+"src/bob/coding/usecases/coding_intent_router.py" = [
     "RUF001",
     "RUF002",
     "RUF003",

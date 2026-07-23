@@ -3,11 +3,13 @@
 # See the LICENSE file in the project root for full license information.
 
 # beadloom:domain=bob
+# beadloom:feature=coding
+# beadloom:layer=infrastructure
 
 """Safe coding-branch validation — shared by the worktree + PR adapters (BOB-039 .2).
 
 A single pure predicate: a coding branch must be the exact ``bob/<slug>`` shape the
-domain's :func:`bob.domain.coding.naming.worktree_branch` produces (lowercase ascii
+domain's :func:`bob.coding.naming.worktree_branch` produces (lowercase ascii
 ``[a-z0-9]`` with internal hyphens). Re-validating the shape at the infrastructure
 boundary closes path-injection (``bob/../etc``, slashes, whitespace, uppercase never
 pass) BEFORE a branch reaches ``git`` or ``gh``, so a malformed branch is refused

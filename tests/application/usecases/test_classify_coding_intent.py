@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from bob.application.router.llm_router import LLMRouter, TaskType
-from bob.application.usecases.classify_coding_intent import ClassifyCodingIntent
+from bob.coding.usecases.classify_coding_intent import ClassifyCodingIntent
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Mapping, Sequence

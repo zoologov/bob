@@ -26,9 +26,9 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from bob.application.usecases.coding_assistant import CodingAssistant
-from bob.domain.coding.entities import CodingSession
-from bob.domain.coding.state import CodingSessionState, is_terminal
+from bob.coding.entities import CodingSession
+from bob.coding.state import CodingSessionState, is_terminal
+from bob.coding.usecases.coding_assistant import CodingAssistant
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Awaitable, Callable, Mapping

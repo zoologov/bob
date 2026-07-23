@@ -3,7 +3,8 @@
 # See the LICENSE file in the project root for full license information.
 
 # beadloom:domain=bob
-# beadloom:feature=coding-domain
+# beadloom:feature=coding
+# beadloom:layer=domain
 
 """narrate — чистый мэппер stream-json событий Claude Code → нарратив (BOB-039 .1).
 
@@ -16,14 +17,14 @@
 которым дирижирует Боб), поэтому каждая ненулевая строка АТРИБУТИРОВАНА GUPPI префиксом
 ``GUPPI:`` («GUPPI: правлю `<file>`», «GUPPI: гоняю тесты», «GUPPI: тесты прошли»,
 «GUPPI: готово»). Боб-голос на гейтах живёт отдельно в
-:mod:`~bob.domain.coding.session_voice`; здесь — только пер-событийный нарратив GUPPI.
+:mod:`~bob.coding.session_voice`; здесь — только пер-событийный нарратив GUPPI.
 Шум по-прежнему → ``None`` (без префикса).
 
 🔴 Канон (BOB-042 .5): пер-событийные ошибки ПОДАВЛЯЮТСЯ. ``tool_result`` с
 ``is_error`` и верхнеуровневое ``error`` событие — обычная trial-and-error работа
 claude/GUPPI (инструмент упал → claude адаптируется), а НЕ сбой сессии: они → ``None``
 и owner их не видит. Единственный error-сигнал owner'у — session-level ``FAILED``
-от use-case (:meth:`~bob.application.usecases.coding_assistant.CodingAssistant._fail`,
+от use-case (:meth:`~bob.coding.usecases.coding_assistant.CodingAssistant._fail`,
 голосом Боба) при настоящем падении прогона. Финальный ``result``-event ещё несёт
 session-итог («готово» / «ошибка: …»).
 

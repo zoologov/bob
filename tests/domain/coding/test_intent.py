@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import pytest
 
-from bob.domain.coding.intent import is_approval, is_stop
+from bob.coding.intent import is_approval, is_stop
 
 
 @pytest.mark.parametrize(

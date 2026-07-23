@@ -3,7 +3,8 @@
 # See the LICENSE file in the project root for full license information.
 
 # beadloom:domain=bob
-# beadloom:feature=usecases
+# beadloom:feature=coding
+# beadloom:layer=application
 
 """CodingAssistant — гейтед оркестратор «Боб запускает Claude Code» (BOB-039 .3).
 
@@ -21,9 +22,9 @@ authz / часы). Домен остаётся I/O-free; вся машинери
   ПОКАЗЫВАЕТ план owner — и ОСТАНАВЛИВАЕТСЯ (ждёт явного апрува). Исполнение здесь не
   начинается.
 * :meth:`approve_plan` — owner-only, валиден ТОЛЬКО из ``PLAN_READY``
-  (:func:`~bob.domain.coding.state.can_approve_plan` — гейт плана). Переводит в
+  (:func:`~bob.coding.state.can_approve_plan` — гейт плана). Переводит в
   ``EXECUTING``, гоняет раннер в режиме правок, НАРРАТИТ каждое событие owner через
-  :func:`~bob.domain.coding.narrate.narrate`, затем ОТКРЫВАЕТ PR
+  :func:`~bob.coding.narrate.narrate`, затем ОТКРЫВАЕТ PR
   (:meth:`PullRequestOpener.open`) и переводит в ``PR_OPEN``. 🔴 Боб НИКОГДА не мержит
   и не пушит в ``main`` — такого вызова просто нет; мерж делает owner вне Боба.
 * :meth:`stop` — owner-only kill-switch: гасит идущий прогон (раннер закрывается →
@@ -47,11 +48,11 @@ from contextlib import aclosing
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol, cast
 
-from bob.domain.coding import session_voice
-from bob.domain.coding.entities import CodingSession
-from bob.domain.coding.naming import worktree_branch
-from bob.domain.coding.narrate import narrate
-from bob.domain.coding.state import CodingSessionState, can_approve_plan, is_terminal
+from bob.coding import session_voice
+from bob.coding.entities import CodingSession
+from bob.coding.naming import worktree_branch
+from bob.coding.narrate import narrate
+from bob.coding.state import CodingSessionState, can_approve_plan, is_terminal
 
 if TYPE_CHECKING:
     from contextlib import AbstractAsyncContextManager
@@ -85,8 +86,8 @@ _DEFAULT_EXECUTE_MODE = "acceptEdits"
 _PLAN_MODE = "plan"
 
 # Owner-facing messages live in Bob's voice (BOB-041 .3): the gate/framing lines are
-# built by :mod:`~bob.domain.coding.session_voice` (Bob speaks, GUPPI executes) and the
-# per-event narrative is GUPPI-attributed by :func:`~bob.domain.coding.narrate.narrate` —
+# built by :mod:`~bob.coding.session_voice` (Bob speaks, GUPPI executes) and the
+# per-event narrative is GUPPI-attributed by :func:`~bob.coding.narrate.narrate` —
 # both deterministic, template-based (no LLM). This use-case only orchestrates; the wording
 # is the domain's.
 
@@ -155,7 +156,7 @@ class CodingContext(Protocol):
     """Сейм лёгкого арх-контекст-префикса для claude-промпта (BOB-046 .3).
 
     Перед прогоном Боб ПРИНОСИТ в промпт конвенции проекта + рационал области задачи
-    (T3.A⁺): реализуется :func:`~bob.application.usecases.coding_context.make_coding_context`
+    (T3.A⁺): реализуется :func:`~bob.coding.usecases.coding_context.make_coding_context`
     над read-only-интроспектором, ограничен по объёму и 🔴 приватно-безопасен
     (PrivacyGuard). Use-case ПОДМЕШИВАЕТ результат в plan/execute-промпт; незавязан
     (``None``) или пустой/упавший источник → промпт без изменений (graceful).
@@ -473,7 +474,7 @@ def _closeable(
 ) -> AsyncGenerator[Mapping[str, object], None]:
     """Narrow the runner's ``AsyncIterator`` port type to a closeable async generator.
 
-    Both the live :class:`~bob.infrastructure.coding.claude_runner.SubprocessClaudeRunner`
+    Both the live :class:`~bob.coding.adapters.claude_runner.SubprocessClaudeRunner`
     and the test fakes implement :meth:`ClaudeCodeRunner.run` as an async generator, so it
     supports ``aclose`` — and closing it on an early break (a mid-run ``stop``) runs the
     adapter's ``finally`` that kills + reaps the ``claude`` subprocess. The port advertises

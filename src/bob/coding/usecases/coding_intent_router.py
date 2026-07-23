@@ -3,18 +3,19 @@
 # See the LICENSE file in the project root for full license information.
 
 # beadloom:domain=bob
-# beadloom:feature=usecases
+# beadloom:feature=coding
+# beadloom:layer=application
 
 """CodingIntentRouter — natural-language entry into the gated session (BOB-041 .2).
 
 Canon (T3.B): the owner talks to Bob naturally in Bob's topic ("Боб, создай файл X",
 "поправь баг в Z"), and Bob runs the gated coding session via GUPPI. This coordinator
-decides WHEN to call the gated :class:`~bob.application.usecases.coding_assistant.CodingAssistant`
+decides WHEN to call the gated :class:`~bob.coding.usecases.coding_assistant.CodingAssistant`
 from one owner message — and ONLY that. It is a thin policy over two seams:
 
 * a cheap Tier-0 classifier (coding vs chat) for a FRESH dev-work request, and
-* the pure :func:`~bob.domain.coding.intent.is_approval` /
-  :func:`~bob.domain.coding.intent.is_stop` predicates for natural approve/stop while
+* the pure :func:`~bob.coding.intent.is_approval` /
+  :func:`~bob.coding.intent.is_stop` predicates for natural approve/stop while
   a session is live.
 
 🔴 SAFETY — this router can NEVER bypass a gate. It only ever calls ``start`` (which
@@ -31,11 +32,11 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Protocol
 
-from bob.domain.coding.intent import is_approval, is_stop
-from bob.domain.coding.state import CodingSessionState
+from bob.coding.intent import is_approval, is_stop
+from bob.coding.state import CodingSessionState
 
 if TYPE_CHECKING:
-    from bob.domain.coding.state import CodingSessionState as _State
+    from bob.coding.state import CodingSessionState as _State
 
 __all__ = ["CodingIntentClassifierLike", "CodingIntentRouter", "GatedCoder"]
 
@@ -44,7 +45,7 @@ class GatedCoder(Protocol):
     """The narrow gated-coding surface the router drives (BOB-041 .2).
 
     A structural subset of
-    :class:`~bob.application.usecases.coding_assistant.CodingAssistant`: ``active_state``
+    :class:`~bob.coding.usecases.coding_assistant.CodingAssistant`: ``active_state``
     is the side-effect-free query of the in-flight session's state, while ``start`` /
     ``approve_plan`` / ``stop`` are the gated owner mutators (each re-checks the owner
     and is bounded by the plan gate). The router never reaches past these four methods.

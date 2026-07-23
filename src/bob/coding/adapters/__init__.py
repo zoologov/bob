@@ -3,6 +3,8 @@
 # See the LICENSE file in the project root for full license information.
 
 # beadloom:domain=bob
+# beadloom:feature=coding
+# beadloom:layer=infrastructure
 
 """Coding-session infrastructure adapters (BOB-039 .2, gated «Bob runs Claude Code»).
 
@@ -20,12 +22,12 @@ dynamic slot validated):
   PR via ``gh pr create`` only; there is no integrate-to-trunk path (the owner lands it).
 """
 
-from bob.infrastructure.coding.claude_runner import (
+from bob.coding.adapters.claude_runner import (
     ClaudeRunError,
     SubprocessClaudeRunner,
 )
-from bob.infrastructure.coding.gh_pr import GhPullRequestOpener, PullRequestError
-from bob.infrastructure.coding.git_worktree import GitWorktree, WorktreeError
+from bob.coding.adapters.gh_pr import GhPullRequestOpener, PullRequestError
+from bob.coding.adapters.git_worktree import GitWorktree, WorktreeError
 
 __all__ = [
     "ClaudeRunError",

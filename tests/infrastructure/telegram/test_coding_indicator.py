@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 
 import pytest
 
-from bob.infrastructure.telegram.coding_indicator import StatusPanel, TypingKeepalive
+from bob.coding.adapters.indicator import StatusPanel, TypingKeepalive
 
 _CHAT_ID = 100
 _THREAD_ID = 7

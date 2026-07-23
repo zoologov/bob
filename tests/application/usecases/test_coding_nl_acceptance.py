@@ -5,8 +5,8 @@
 """🔴 End-to-end NL-intent SAFETY acceptance — BOB-041 .4 (the security core).
 
 The router unit tests (``test_coding_intent_router.py``) drive a ``_FakeCoder``; these
-wire the REAL :class:`~bob.application.usecases.coding_intent_router.CodingIntentRouter`
-over the REAL :class:`~bob.application.usecases.coding_assistant.CodingAssistant` (with
+wire the REAL :class:`~bob.coding.usecases.coding_intent_router.CodingIntentRouter`
+over the REAL :class:`~bob.coding.usecases.coding_assistant.CodingAssistant` (with
 fake ports — no real claude / gh / git / LLM) so the FULL natural-language path is
 proven against the gate, not just the router's policy.
 
@@ -25,14 +25,14 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from bob.application.usecases.coding_assistant import CodingAssistant
-from bob.application.usecases.coding_intent_router import CodingIntentRouter
-from bob.domain.coding.state import CodingSessionState, is_terminal
+from bob.coding.state import CodingSessionState, is_terminal
+from bob.coding.usecases.coding_assistant import CodingAssistant
+from bob.coding.usecases.coding_intent_router import CodingIntentRouter
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Callable, Mapping
 
-    from bob.domain.coding.entities import CodingSession
+    from bob.coding.entities import CodingSession
 
 _OWNER = 27468732
 _GUEST = 555

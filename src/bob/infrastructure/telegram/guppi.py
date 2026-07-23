@@ -209,7 +209,7 @@ class PursuitStoreLike(Protocol):
 class CodingAssistantLike(Protocol):
     """The CodingAssistant surface GUPPI's ``/code`` owner-commands need (BOB-039 .3).
 
-    A structural subset of :class:`~bob.application.usecases.coding_assistant.CodingAssistant`:
+    A structural subset of :class:`~bob.coding.usecases.coding_assistant.CodingAssistant`:
     ``start`` begins a gated session (plan-mode, the plan gate), ``approve_plan`` is the
     owner gate that lets execution proceed, ``stop`` is the kill-switch, ``status`` reports
     the in-flight state. The use-case enforces owner-only itself (defense-in-depth) and owns
