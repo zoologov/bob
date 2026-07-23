@@ -537,7 +537,7 @@ def improvement_directive(adjustments: tuple[str, ...]) -> str:
 
     Folds the human-readable ``adjustments`` of Bob's APPROVED TONE/HUMOR self-
     improvement rules (built by
-    :func:`~bob.domain.personality.self_improvement.build_modulators`) into ONE soft
+    :func:`~bob.proactivity.self_improvement.build_modulators`) into ONE soft
     voice line the application appends on TOP of the mood/relationship tone. It is a
     TILT he reminds himself of — never a command, never a personality override (наклон,
     не перехват). An empty ``adjustments`` (no approved tone/humor rule, the default)

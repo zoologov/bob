@@ -55,11 +55,6 @@ from bob.application.capabilities import (
     make_search_memory_capability,
     make_web_search_capability,
 )
-from bob.application.proactivity import (
-    ProactiveTick,
-    ProactivityEngine,
-    RecordOwnerActivity,
-)
 from bob.application.router import LLMRouter
 from bob.application.runtime import (
     BOB_MESSAGE_REACTION,
@@ -71,10 +66,8 @@ from bob.application.runtime import (
     RetryPolicy,
     periodic,
 )
-from bob.application.usecases.announce_rules import AnnounceProposedRules
 from bob.application.usecases.apply_reflection import ApplyReflection
 from bob.application.usecases.decide_response import DecideResponse
-from bob.application.usecases.detect_patterns import DetectPatterns, LlmPatternDetector
 from bob.application.usecases.evolve_fascination import EvolveFascination
 from bob.application.usecases.evolve_phantoms import EvolvePhantoms
 from bob.application.usecases.fascination_sources import (
@@ -96,14 +89,11 @@ from bob.application.usecases.heartbeat import (
 from bob.application.usecases.perceive_reaction import PerceiveReaction
 from bob.application.usecases.permission_execution import PermissionExecutor
 from bob.application.usecases.permission_flow import PermissionFlow
-from bob.application.usecases.plan_goal import LlmPlanner, PlanGoal
 from bob.application.usecases.privileged_fulfiller import PrivilegedRequestFulfiller
-from bob.application.usecases.pursue_goals import PursueGoalsTick
 from bob.application.usecases.reappraise_reflection import ReappraiseReflection
 from bob.application.usecases.reflection_parser import HeuristicReflectionParser
 from bob.application.usecases.relationship_sources import RelationshipTracker
 from bob.application.usecases.run_genesis import RunGenesis
-from bob.application.usecases.self_improvement_sources import ActiveRulesReader
 from bob.application.usecases.sulk_sources import SulkRecoveryStep, SulkTracker
 from bob.application.usecases.update_mood_from_text import UpdateMoodFromText
 from bob.coding.adapters import (
@@ -139,8 +129,6 @@ from bob.domain.personality.taste_evolution import ALPHA as _EVOLUTION_ALPHA
 from bob.domain.personality.taste_evolution import BETA as _EVOLUTION_BETA
 from bob.domain.personality.voice import OffDayThresholds
 from bob.domain.personality.zone_classifier import TasteZoneClassifier
-from bob.domain.proactivity.decision import ProactiveDecider
-from bob.domain.proactivity.governance import Governance
 from bob.infrastructure.config import ConfigLoader
 from bob.infrastructure.diagrams import SubprocessMmdcRenderer
 from bob.infrastructure.introspection.subprocess_introspector import (
@@ -158,17 +146,13 @@ from bob.infrastructure.llm.volatility_judge import LlmVolatilityJudge
 from bob.infrastructure.persistence import (
     KvAllowlistStore,
     KvNotableReactionStore,
-    RepoProactivitySources,
     SoulStore,
     SqliteCloserLog,
     SqliteConversationFloorStore,
     SqliteFascinationStore,
     SqliteFirstImpressionStore,
-    SqliteGoalStore,
     SqliteMemoryRepo,
-    SqliteProactivityStore,
     SqliteRelationshipStore,
-    SqliteSelfImprovementStore,
     SqliteSulkStore,
 )
 from bob.infrastructure.persistence.permission_request_store import (
@@ -196,6 +180,24 @@ from bob.memory.adapters import (
 from bob.memory.usecases.consolidate_memory import ConsolidateMemory
 from bob.memory.usecases.dedup_facts import DedupFacts
 from bob.memory.usecases.extract_facts import ExtractFacts
+from bob.proactivity.adapters import (
+    RepoProactivitySources,
+    SqliteGoalStore,
+    SqliteProactivityStore,
+    SqliteSelfImprovementStore,
+)
+from bob.proactivity.decision import ProactiveDecider
+from bob.proactivity.governance import Governance
+from bob.proactivity.usecases import (
+    ProactiveTick,
+    ProactivityEngine,
+    RecordOwnerActivity,
+)
+from bob.proactivity.usecases.announce_rules import AnnounceProposedRules
+from bob.proactivity.usecases.detect_patterns import DetectPatterns, LlmPatternDetector
+from bob.proactivity.usecases.plan_goal import LlmPlanner, PlanGoal
+from bob.proactivity.usecases.pursue_goals import PursueGoalsTick
+from bob.proactivity.usecases.self_improvement_sources import ActiveRulesReader
 
 if TYPE_CHECKING:
     from aiogram.types import BufferedInputFile, InputRichMessage, ReactionTypeEmoji

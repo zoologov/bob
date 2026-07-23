@@ -80,12 +80,6 @@ from bob.domain.personality.response_choice import (
     ResponseContext,
     ResponseIntent,
 )
-from bob.domain.personality.self_improvement import (
-    ImprovementRule,
-    Lever,
-    RuleOrigin,
-    RuleState,
-)
 from bob.domain.personality.soul import SOUL
 from bob.domain.personality.sulk import SulkState
 from bob.domain.personality.taste import TasteAxis, TasteEngine, Verdict
@@ -97,6 +91,12 @@ from bob.domain.ports import ToolCall, ToolCallResult, WebSearchResult
 from bob.infrastructure.diagrams.mmdc_renderer import DiagramRenderError
 from bob.infrastructure.telegram.gateway import TelegramGateway
 from bob.memory.usecases.extract_facts import ExtractFacts
+from bob.proactivity.self_improvement import (
+    ImprovementRule,
+    Lever,
+    RuleOrigin,
+    RuleState,
+)
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Callable, Mapping, Sequence

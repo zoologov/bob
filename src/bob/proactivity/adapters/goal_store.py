@@ -3,13 +3,15 @@
 # See the LICENSE file in the project root for full license information.
 
 # beadloom:domain=bob
+# beadloom:feature=proactivity
+# beadloom:layer=infrastructure
 
 """SqliteGoalStore — the per-persona goal-graph adapter (Goal Engine, BOB-015).
 
 Realises :class:`bob.domain.ports.GoalStore` over the ``goal`` and ``task`` tables:
 one row per ``(persona_id, id)`` so Bobiverse replicas each keep their own goals
-between sessions. The domain :class:`~bob.domain.goals.graph.GoalGraph` (its
-:class:`~bob.domain.goals.entities.Goal` / :class:`~bob.domain.goals.entities.Task`
+between sessions. The domain :class:`~bob.proactivity.goals.graph.GoalGraph` (its
+:class:`~bob.proactivity.goals.entities.Goal` / :class:`~bob.proactivity.goals.entities.Task`
 value objects, the enum states, the ``deps`` and ``needs_external_agency`` flags) is
 mapped to and from rows here, so the domain stays I/O-free.
 
@@ -28,9 +30,9 @@ import json
 from datetime import datetime
 from typing import TYPE_CHECKING, Protocol
 
-from bob.domain.goals.entities import Goal, GoalOrigin, Task
-from bob.domain.goals.graph import GoalGraph
-from bob.domain.goals.state import GoalState, TaskState
+from bob.proactivity.goals.entities import Goal, GoalOrigin, Task
+from bob.proactivity.goals.graph import GoalGraph
+from bob.proactivity.goals.state import GoalState, TaskState
 
 if TYPE_CHECKING:
     import aiosqlite

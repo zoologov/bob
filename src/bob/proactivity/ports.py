@@ -3,6 +3,8 @@
 # See the LICENSE file in the project root for full license information.
 
 # beadloom:domain=bob
+# beadloom:feature=proactivity
+# beadloom:layer=domain
 
 """Proactivity ports — the drive engine, goals, planning, and self-improvement.
 
@@ -21,24 +23,24 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from bob.domain.goals.entities import Goal, Task
-    from bob.domain.goals.graph import GoalGraph
-    from bob.domain.goals.state import GoalState, TaskState
-    from bob.domain.personality.self_improvement import (
+    from bob.proactivity.goals.entities import Goal, Task
+    from bob.proactivity.goals.graph import GoalGraph
+    from bob.proactivity.goals.state import GoalState, TaskState
+    from bob.proactivity.self_improvement import (
         ImprovementRule,
         ImprovementSignals,
         RuleState,
     )
-    from bob.domain.proactivity.state import ProactivityState
+    from bob.proactivity.state import ProactivityState
 
 
 @runtime_checkable
 class Planner(Protocol):
     """Decompose a goal into executable tasks (the Planner seam, BOB-015 .2).
 
-    Given an APPROVED :class:`~bob.domain.goals.entities.Goal`, an implementation
+    Given an APPROVED :class:`~bob.proactivity.goals.entities.Goal`, an implementation
     asks an LLM (Tier-1 reasoning) to break it into atomic
-    :class:`~bob.domain.goals.entities.Task` units — each carrying its ``deps``
+    :class:`~bob.proactivity.goals.entities.Task` units — each carrying its ``deps``
     (predecessor task ids, same goal) and the ``needs_external_agency`` flag
     classifying whether it requires stage-C (code / external tools / filesystem /
     external APIs). Returned tasks are fresh, in :class:`TaskState.NEW`. The
@@ -59,11 +61,11 @@ class PatternDetector(Protocol):
     The metacognitive detector: given :class:`ImprovementSignals` (a slice of Bob's
     self-observations — self-repeats, addressivity outcomes, verbosity misses,
     relationship deltas, a stuck mood, owner friction, what landed) it returns
-    candidate :class:`~bob.domain.personality.self_improvement.ImprovementRule`
+    candidate :class:`~bob.proactivity.self_improvement.ImprovementRule`
     objects — EACH strictly in ``state=PROPOSED`` and ``origin=BOB_PROPOSED`` (the
     detector only PROPOSES; only the owner approval of the .3 use-case moves a rule to
     APPROVED), with ``lever`` taken ONLY from the hard
-    :class:`~bob.domain.personality.self_improvement.Lever` allowlist and ``magnitude``
+    :class:`~bob.proactivity.self_improvement.Lever` allowlist and ``magnitude``
     in ``[0, 1]`` (application .3 clamps it again).
 
     The contract is abstract on purpose: the live realisation asks an LLM and parses
@@ -81,7 +83,7 @@ class PatternDetector(Protocol):
 class ProactivityStore(Protocol):
     """Durable per-persona store for Bob's proactivity state (drive engine).
 
-    Round-trips the :class:`bob.domain.proactivity.state.ProactivityState` the
+    Round-trips the :class:`bob.proactivity.state.ProactivityState` the
     engine reads on each heartbeat tick and writes after it fires or the owner
     acts: the :class:`SocialEnergy` reservoir, ``last_spoke_at`` /
     ``last_user_msg_at`` markers, and the ``proactivity_enabled`` flag toggled by
@@ -102,9 +104,9 @@ class ProactivityStore(Protocol):
 class GoalStore(Protocol):
     """Durable per-persona store for Bob's goal graph (Goal Engine, BOB-015).
 
-    Round-trips the :class:`bob.domain.goals.graph.GoalGraph` — the goals
-    (:class:`bob.domain.goals.entities.Goal`) Bob holds and their tasks
-    (:class:`bob.domain.goals.entities.Task`, each carrying its ``deps`` and the
+    Round-trips the :class:`bob.proactivity.goals.graph.GoalGraph` — the goals
+    (:class:`bob.proactivity.goals.entities.Goal`) Bob holds and their tasks
+    (:class:`bob.proactivity.goals.entities.Task`, each carrying its ``deps`` and the
     ``needs_external_agency`` flag) — so Bob keeps his goals between sessions. State
     is per ``persona_id`` so Bobiverse replicas each keep their own. :meth:`load`
     returns an empty graph for an unseen persona, so the application always has
@@ -144,7 +146,7 @@ class GoalStore(Protocol):
 class SelfImprovementStore(Protocol):
     """Durable per-persona store for Bob's self-improvement rules (BOB-028 .1).
 
-    Round-trips the :class:`bob.domain.personality.self_improvement.ImprovementRule`
+    Round-trips the :class:`bob.proactivity.self_improvement.ImprovementRule`
     set Bob holds — each rule's observation / adjustment, its :class:`Lever` (from the
     hard allowlist), the bounded ``magnitude``, its :class:`RuleState`, ``origin``,
     ``created_at`` and ``evidence`` — so a curated rule (and its approval state)

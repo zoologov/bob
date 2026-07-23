@@ -3,7 +3,8 @@
 # See the LICENSE file in the project root for full license information.
 
 # beadloom:domain=bob
-# beadloom:feature=proactivity-app
+# beadloom:feature=proactivity
+# beadloom:layer=application
 
 """ProactivityEngine — turn the drive-model into an actual proactive message.
 
@@ -17,7 +18,7 @@ flow, cheapest-first (so most ticks do nothing and make ZERO LLM calls):
    last-user markers, the ``/quiet`` enabled flag).
 2. **Recover** the :class:`SocialEnergy` reservoir over the silence since the
    owner last wrote, using the injected :class:`~bob.domain.ports.Clock`.
-3. **Decide** — :class:`~bob.domain.proactivity.decision.ProactiveDecider`
+3. **Decide** — :class:`~bob.proactivity.decision.ProactiveDecider`
    scores the urge from the current mood (Higher Mind), the silence, the salience
    of the most recent reflection, and the local time of day, maps it to a fire
    probability, draws once from the **injected seeded RNG**, and lets
@@ -59,9 +60,9 @@ from bob.domain.personality.conversation import (
 )
 from bob.domain.personality.language import DEFAULT_LANGUAGE, language_directive
 from bob.domain.personality.voice import anti_bait_directive
-from bob.domain.proactivity.governance import ProactiveHistory
-from bob.domain.proactivity.state import ProactivityState
 from bob.memory.entities import EpisodicEvent
+from bob.proactivity.governance import ProactiveHistory
+from bob.proactivity.state import ProactivityState
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -76,8 +77,8 @@ if TYPE_CHECKING:
     )
     from bob.domain.personality.mood import Mood
     from bob.domain.ports import Clock, MemoryRecall, Recalled
-    from bob.domain.proactivity.decision import ProactiveDecider
-    from bob.domain.proactivity.social_energy import SocialEnergy
+    from bob.proactivity.decision import ProactiveDecider
+    from bob.proactivity.social_energy import SocialEnergy
 
 logger = logging.getLogger(__name__)
 

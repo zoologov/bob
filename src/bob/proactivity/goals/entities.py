@@ -3,7 +3,8 @@
 # See the LICENSE file in the project root for full license information.
 
 # beadloom:domain=bob
-# beadloom:feature=goals
+# beadloom:feature=proactivity
+# beadloom:layer=domain
 
 """Доменные дата-классы Goal Engine — immutable value-objects (BOB-015 .1).
 
@@ -26,7 +27,7 @@ from enum import StrEnum
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from bob.domain.goals.state import GoalState, TaskState
+    from bob.proactivity.goals.state import GoalState, TaskState
 
 __all__ = [
     "Goal",

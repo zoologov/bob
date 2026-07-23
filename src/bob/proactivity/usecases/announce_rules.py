@@ -3,7 +3,8 @@
 # See the LICENSE file in the project root for full license information.
 
 # beadloom:domain=bob
-# beadloom:feature=usecases
+# beadloom:feature=proactivity
+# beadloom:layer=application
 
 """AnnounceProposedRules — Боб проговаривает свежее правило owner'у (BOB-028 .3).
 
@@ -30,10 +31,10 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Protocol
 
-from bob.domain.personality.self_improvement import RuleState
+from bob.proactivity.self_improvement import RuleState
 
 if TYPE_CHECKING:
-    from bob.domain.personality.self_improvement import ImprovementRule
+    from bob.proactivity.self_improvement import ImprovementRule
 
 logger = logging.getLogger(__name__)
 

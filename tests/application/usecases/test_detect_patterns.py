@@ -22,16 +22,16 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from bob.application.router.llm_router import LLMRouter, TaskType
-from bob.application.usecases.detect_patterns import (
-    DetectPatterns,
-    LlmPatternDetector,
-)
-from bob.domain.personality.self_improvement import (
+from bob.proactivity.self_improvement import (
     ImprovementRule,
     ImprovementSignals,
     Lever,
     RuleOrigin,
     RuleState,
+)
+from bob.proactivity.usecases.detect_patterns import (
+    DetectPatterns,
+    LlmPatternDetector,
 )
 
 if TYPE_CHECKING:

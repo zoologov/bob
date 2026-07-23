@@ -12,7 +12,7 @@ the runtime's concern and is covered there.
 
 from __future__ import annotations
 
-from bob.application.proactivity.tick import ProactiveTick
+from bob.proactivity.usecases.tick import ProactiveTick
 
 
 class FakeEngine:

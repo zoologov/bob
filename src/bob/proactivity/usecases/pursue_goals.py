@@ -3,14 +3,15 @@
 # See the LICENSE file in the project root for full license information.
 
 # beadloom:domain=bob
-# beadloom:feature=usecases
+# beadloom:feature=proactivity
+# beadloom:layer=application
 
 """PursueGoalsTick — Bob продвигает СВОИ цели сам, под теми же воротами (BOB-015 .3).
 
 Самонаправленный heartbeat-тик — автономность-стадия B. Он НЕ заводит новой
 машинерии безопасности: идёт через те же ворота, что и проактивный чат
-(:class:`~bob.domain.proactivity.governance.Governance` + kill-switch), и опирается
-на чистый домен Goal Engine (:func:`~bob.domain.goals.graph.next_safe_task`,
+(:class:`~bob.proactivity.governance.Governance` + kill-switch), и опирается
+на чистый домен Goal Engine (:func:`~bob.proactivity.goals.graph.next_safe_task`,
 который сам исключает неутверждённые цели и внешне-агентные задачи). Порядок одного
 тика — СТРОГО (safety-инварианты под тестами .4, ревью .5):
 
@@ -46,14 +47,14 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Protocol
 
-from bob.domain.goals.graph import (
+from bob.memory.entities import EpisodicEvent
+from bob.proactivity.goals.graph import (
     external_agency_tasks,
     is_goal_complete,
     next_safe_task,
 )
-from bob.domain.goals.state import GoalState, TaskState, can_transition, can_transition_task
-from bob.domain.proactivity.governance import ProactiveHistory
-from bob.memory.entities import EpisodicEvent
+from bob.proactivity.goals.state import GoalState, TaskState, can_transition, can_transition_task
+from bob.proactivity.governance import ProactiveHistory
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -61,10 +62,10 @@ if TYPE_CHECKING:
     from random import Random
 
     from bob.application.usecases.handle_message import PersonalityState, ReplyGateway
-    from bob.domain.goals.entities import Goal, Task
-    from bob.domain.goals.graph import GoalGraph
     from bob.domain.ports import Clock
-    from bob.domain.proactivity.governance import Governance
+    from bob.proactivity.goals.entities import Goal, Task
+    from bob.proactivity.goals.graph import GoalGraph
+    from bob.proactivity.governance import Governance
 
 logger = logging.getLogger(__name__)
 

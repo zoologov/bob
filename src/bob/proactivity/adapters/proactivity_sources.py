@@ -3,21 +3,23 @@
 # See the LICENSE file in the project root for full license information.
 
 # beadloom:domain=bob
+# beadloom:feature=proactivity
+# beadloom:layer=infrastructure
 
 """RepoProactivitySources — the live read-seams the proactivity engine reads.
 
-The :class:`~bob.application.proactivity.engine.ProactivityEngine` needs two cheap
+The :class:`~bob.proactivity.usecases.engine.ProactivityEngine` needs two cheap
 (no-LLM) signals on every heartbeat tick, both read straight off the live
 ``episodic_log``:
 
-* **Reflection salience** (:class:`~bob.application.proactivity.engine.ReflectionSalienceSource`)
+* **Reflection salience** (:class:`~bob.proactivity.usecases.engine.ReflectionSalienceSource`)
   — how striking Bob's most recent reflection is right now. A fresh ``reflection``
   episode (written by the heartbeat reflect tick) yields a salience near ``1.0``
   that decays linearly toward ``0.0`` over a fixed horizon, so a thought he just
   had pulls harder on the urge than a stale one, and no reflection at all scores
   ``0.0``.
 * **Proactive window count**
-  (:class:`~bob.application.proactivity.engine.ProactiveWindowCounter`) — how many
+  (:class:`~bob.proactivity.usecases.engine.ProactiveWindowCounter`) — how many
   ``proactive`` episodes lie inside the anti-spam window before ``now`` (the
   ceiling governance checks). Counted with parameterised SQL over the timestamp
   column — never an f-string.

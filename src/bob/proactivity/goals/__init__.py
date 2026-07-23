@@ -3,6 +3,8 @@
 # See the LICENSE file in the project root for full license information.
 
 # beadloom:domain=bob
+# beadloom:feature=proactivity
+# beadloom:layer=domain
 
 """Goal Engine — чистый граф целей Боба (без I/O, детерминированно; BOB-015).
 
@@ -21,8 +23,8 @@ infrastructure); Planner (.2) и самонаправленный тик (.3) с
 
 from __future__ import annotations
 
-from bob.domain.goals.entities import Goal, GoalOrigin, Task
-from bob.domain.goals.graph import (
+from bob.proactivity.goals.entities import Goal, GoalOrigin, Task
+from bob.proactivity.goals.graph import (
     GoalGraph,
     blocked_reason,
     external_agency_tasks,
@@ -30,7 +32,7 @@ from bob.domain.goals.graph import (
     next_safe_task,
     ready_tasks,
 )
-from bob.domain.goals.state import (
+from bob.proactivity.goals.state import (
     GoalState,
     TaskState,
     can_transition,

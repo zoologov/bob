@@ -3,7 +3,8 @@
 # See the LICENSE file in the project root for full license information.
 
 # beadloom:domain=bob
-# beadloom:feature=usecases
+# beadloom:feature=proactivity
+# beadloom:layer=application
 
 """LlmPlanner + PlanGoal — декомпозиция цели и ДВОЙНОЙ апрув (BOB-015 .2).
 
@@ -35,16 +36,16 @@ import re
 from typing import TYPE_CHECKING, Protocol
 
 from bob.application.router.llm_router import LLMRequest, TaskType
-from bob.domain.goals.entities import Task
-from bob.domain.goals.state import GoalState, TaskState, can_transition
+from bob.proactivity.goals.entities import Task
+from bob.proactivity.goals.state import GoalState, TaskState, can_transition
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from bob.application.router.llm_router import LLMRouter
-    from bob.domain.goals.entities import Goal
-    from bob.domain.goals.graph import GoalGraph
     from bob.domain.ports import Planner
+    from bob.proactivity.goals.entities import Goal
+    from bob.proactivity.goals.graph import GoalGraph
 
 logger = logging.getLogger(__name__)
 

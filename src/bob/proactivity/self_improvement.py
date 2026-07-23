@@ -3,7 +3,8 @@
 # See the LICENSE file in the project root for full license information.
 
 # beadloom:domain=bob
-# beadloom:feature=personality
+# beadloom:feature=proactivity
+# beadloom:layer=domain
 
 """Модель правила самоулучшения — чистый домен (BOB-028 .1).
 

@@ -17,10 +17,10 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from bob.domain.goals.entities import Goal, GoalOrigin, Task
-from bob.domain.goals.state import GoalState, TaskState
-from bob.infrastructure.persistence.goal_store import SqliteGoalStore
 from bob.infrastructure.persistence.sqlite_repo import SqliteMemoryRepo
+from bob.proactivity.adapters.goal_store import SqliteGoalStore
+from bob.proactivity.goals.entities import Goal, GoalOrigin, Task
+from bob.proactivity.goals.state import GoalState, TaskState
 
 if TYPE_CHECKING:
     from pathlib import Path

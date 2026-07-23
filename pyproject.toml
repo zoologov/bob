@@ -141,13 +141,13 @@ ignore = [
 # The Goal Engine (BOB-015) carries Russian persona/policy docstrings + blocked-reason
 # literals ("требует внешней агентности", "ждёт незавершённых задач") whose Cyrillic
 # look-alikes are intentional — RUF001/RUF002/RUF003 do not apply to these.
-"src/bob/domain/goals/state.py" = ["RUF001", "RUF002", "RUF003"]
-"src/bob/domain/goals/entities.py" = ["RUF001", "RUF002", "RUF003"]
-"src/bob/domain/goals/graph.py" = ["RUF001", "RUF002", "RUF003"]
-"src/bob/domain/goals/__init__.py" = ["RUF001", "RUF002", "RUF003"]
+"src/bob/proactivity/goals/state.py" = ["RUF001", "RUF002", "RUF003"]
+"src/bob/proactivity/goals/entities.py" = ["RUF001", "RUF002", "RUF003"]
+"src/bob/proactivity/goals/graph.py" = ["RUF001", "RUF002", "RUF003"]
+"src/bob/proactivity/goals/__init__.py" = ["RUF001", "RUF002", "RUF003"]
 # The SqliteGoalStore (BOB-015) carries Russian docstrings whose Cyrillic look-alikes
 # are intentional — RUF001/RUF002/RUF003 do not apply to these.
-"src/bob/infrastructure/persistence/goal_store.py" = ["RUF001", "RUF002", "RUF003"]
+"src/bob/proactivity/adapters/goal_store.py" = ["RUF001", "RUF002", "RUF003"]
 # The coding-session domain + store (BOB-039) carries Russian persona/policy docstrings
 # + comments whose Cyrillic look-alikes are intentional — RUF001/RUF002/RUF003 here.
 "src/bob/coding/__init__.py" = ["RUF001", "RUF002", "RUF003"]
@@ -199,10 +199,10 @@ ignore = [
 # The self-improvement model (BOB-028 .1) carries Russian persona/policy docstrings +
 # observation/adjustment literals whose Cyrillic look-alikes are intentional —
 # RUF001/RUF002/RUF003 do not apply to these.
-"src/bob/domain/personality/self_improvement.py" = ["RUF001", "RUF002", "RUF003"]
+"src/bob/proactivity/self_improvement.py" = ["RUF001", "RUF002", "RUF003"]
 # The SqliteSelfImprovementStore (BOB-028 .1) carries Russian docstrings whose Cyrillic
 # look-alikes are intentional — RUF001/RUF002/RUF003 do not apply to these.
-"src/bob/infrastructure/persistence/self_improvement_store.py" = [
+"src/bob/proactivity/adapters/self_improvement_store.py" = [
     "RUF001",
     "RUF002",
     "RUF003",
@@ -210,18 +210,18 @@ ignore = [
 # The Planner + plan_goal use-case (BOB-015 .2) carries Russian planner prompts +
 # owner-facing plan/status literals whose Cyrillic look-alikes are intentional —
 # RUF001/RUF002/RUF003 do not apply to these.
-"src/bob/application/usecases/plan_goal.py" = ["RUF001", "RUF002", "RUF003"]
+"src/bob/proactivity/usecases/plan_goal.py" = ["RUF001", "RUF002", "RUF003"]
 # The pattern detector + detect_patterns use-case (BOB-028 .2) carries Russian detector
 # prompts + observation/adjustment/evidence literals whose Cyrillic look-alikes are
 # intentional — RUF001/RUF002/RUF003 do not apply to these.
-"src/bob/application/usecases/detect_patterns.py" = ["RUF001", "RUF002", "RUF003"]
+"src/bob/proactivity/usecases/detect_patterns.py" = ["RUF001", "RUF002", "RUF003"]
 # The announce-rules use-case (BOB-028 .3) carries Russian persona/proposal docstrings +
 # the tactful proposal template whose Cyrillic look-alikes are intentional —
 # RUF001/RUF002/RUF003 do not apply to these.
-"src/bob/application/usecases/announce_rules.py" = ["RUF001", "RUF002", "RUF003"]
+"src/bob/proactivity/usecases/announce_rules.py" = ["RUF001", "RUF002", "RUF003"]
 # The active-rules reader adapter (BOB-028 .3) carries Russian persona/policy docstrings
 # whose Cyrillic look-alikes are intentional — RUF001/RUF002/RUF003 do not apply.
-"src/bob/application/usecases/self_improvement_sources.py" = [
+"src/bob/proactivity/usecases/self_improvement_sources.py" = [
     "RUF001",
     "RUF002",
     "RUF003",
@@ -229,7 +229,7 @@ ignore = [
 # The self-directed pursue_goals use-case (BOB-015 .3) carries Russian persona/policy
 # docstrings + owner-facing progress/proposal literals ("Занялся целью", "стадия C")
 # whose Cyrillic look-alikes are intentional — RUF001/RUF002/RUF003 do not apply.
-"src/bob/application/usecases/pursue_goals.py" = ["RUF001", "RUF002", "RUF003"]
+"src/bob/proactivity/usecases/pursue_goals.py" = ["RUF001", "RUF002", "RUF003"]
 # The CodingAssistant use-case (BOB-039 .3) carries Russian persona/policy docstrings +
 # owner-facing plan/PR/prompt literals whose Cyrillic look-alikes are intentional —
 # RUF001/RUF002/RUF003 do not apply.

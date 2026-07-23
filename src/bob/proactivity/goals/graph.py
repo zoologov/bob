@@ -3,7 +3,8 @@
 # See the LICENSE file in the project root for full license information.
 
 # beadloom:domain=bob
-# beadloom:feature=goals
+# beadloom:feature=proactivity
+# beadloom:layer=domain
 
 """Граф целей Боба + чистые граф-функции (BOB-015 .1).
 
@@ -31,10 +32,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from bob.domain.goals.state import GoalState, TaskState
+from bob.proactivity.goals.state import GoalState, TaskState
 
 if TYPE_CHECKING:
-    from bob.domain.goals.entities import Goal, Task
+    from bob.proactivity.goals.entities import Goal, Task
 
 __all__ = [
     "GoalGraph",

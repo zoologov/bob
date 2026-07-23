@@ -3,14 +3,15 @@
 # See the LICENSE file in the project root for full license information.
 
 # beadloom:domain=bob
-# beadloom:feature=proactivity-app
+# beadloom:feature=proactivity
+# beadloom:layer=application
 
 """ProactiveTick — drive the ProactivityEngine on the heartbeat cadence.
 
 The heartbeat sibling of the inner-monologue / reflect ticks
 (:mod:`bob.application.usecases.heartbeat`): a one-shot coroutine the runtime
 schedules via :func:`bob.application.runtime.heartbeat.periodic`. Each cycle it
-runs the :class:`~bob.application.proactivity.engine.ProactivityEngine` once.
+runs the :class:`~bob.proactivity.usecases.engine.ProactivityEngine` once.
 Because the engine's decision is pure and defaults to silence, the overwhelming
 majority of ticks return immediately having made ZERO LLM calls — so running this
 on the (~30s) heartbeat cadence stays cheap, with the LLM only firing on the rare

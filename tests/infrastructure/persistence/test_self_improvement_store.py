@@ -17,16 +17,16 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from bob.domain.personality.self_improvement import (
+from bob.infrastructure.persistence.sqlite_repo import SqliteMemoryRepo
+from bob.proactivity.adapters.self_improvement_store import (
+    SqliteSelfImprovementStore,
+)
+from bob.proactivity.self_improvement import (
     ImprovementRule,
     Lever,
     RuleOrigin,
     RuleState,
 )
-from bob.infrastructure.persistence.self_improvement_store import (
-    SqliteSelfImprovementStore,
-)
-from bob.infrastructure.persistence.sqlite_repo import SqliteMemoryRepo
 
 if TYPE_CHECKING:
     from pathlib import Path

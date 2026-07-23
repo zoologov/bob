@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
-from bob.domain.proactivity.governance import Governance, GovernanceConfig, ProactiveHistory
+from bob.proactivity.governance import Governance, GovernanceConfig, ProactiveHistory
 
 # A waking-hours reference "now": 14:00 local, well clear of quiet hours.
 _NOW = datetime(2026, 6, 20, 14, 0, tzinfo=UTC)

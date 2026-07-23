@@ -20,7 +20,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from bob.domain.personality.self_improvement import (
+from bob.proactivity.self_improvement import (
     ImprovementRule,
     Lever,
     RuleModulators,

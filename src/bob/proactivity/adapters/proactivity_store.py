@@ -3,13 +3,15 @@
 # See the LICENSE file in the project root for full license information.
 
 # beadloom:domain=bob
+# beadloom:feature=proactivity
+# beadloom:layer=infrastructure
 
 """SqliteProactivityStore — the per-persona proactivity state adapter.
 
 Realises :class:`bob.domain.ports.ProactivityStore` over the ``proactivity_state``
 table: one row per ``persona_id`` so Bobiverse replicas each keep their own
 reservoir, markers, and owner-mute flag. The domain
-:class:`~bob.domain.proactivity.state.ProactivityState` is mapped to and from a
+:class:`~bob.proactivity.state.ProactivityState` is mapped to and from a
 row here (the energy reservoir as a REAL, the markers as nullable ISO-8601 text,
 the flag as 0/1) so the domain stays I/O-free.
 
@@ -24,8 +26,8 @@ from __future__ import annotations
 from datetime import datetime
 from typing import TYPE_CHECKING, Protocol
 
-from bob.domain.proactivity.social_energy import SocialEnergy
-from bob.domain.proactivity.state import ProactivityState
+from bob.proactivity.social_energy import SocialEnergy
+from bob.proactivity.state import ProactivityState
 
 if TYPE_CHECKING:
     import aiosqlite

@@ -3,7 +3,8 @@
 # See the LICENSE file in the project root for full license information.
 
 # beadloom:domain=bob
-# beadloom:feature=proactivity-domain
+# beadloom:feature=proactivity
+# beadloom:layer=domain
 
 """Governance — pure ceilings that *veto* a proactive message (no I/O, no clock).
 

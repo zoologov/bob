@@ -22,11 +22,11 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from bob.application.usecases.plan_goal import PlanGoal, PlanResult
-from bob.domain.goals.entities import Goal, GoalOrigin, Task
-from bob.domain.goals.graph import GoalGraph
-from bob.domain.goals.state import GoalState, TaskState
 from bob.infrastructure.telegram.guppi import GuppiHandler
+from bob.proactivity.goals.entities import Goal, GoalOrigin, Task
+from bob.proactivity.goals.graph import GoalGraph
+from bob.proactivity.goals.state import GoalState, TaskState
+from bob.proactivity.usecases.plan_goal import PlanGoal, PlanResult
 
 if TYPE_CHECKING:
     from collections.abc import Sequence

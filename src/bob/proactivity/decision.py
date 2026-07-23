@@ -3,7 +3,8 @@
 # See the LICENSE file in the project root for full license information.
 
 # beadloom:domain=bob
-# beadloom:feature=proactivity-domain
+# beadloom:feature=proactivity
+# beadloom:layer=domain
 
 """The proactive decision — urge → probability → seeded sample, gated by governance.
 
@@ -21,14 +22,14 @@ import math
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from bob.domain.proactivity.urge import UrgeModel
+from bob.proactivity.urge import UrgeModel
 
 if TYPE_CHECKING:
     from random import Random
 
     from bob.domain.personality.mood import Mood
     from bob.domain.ports import Clock
-    from bob.domain.proactivity.governance import Governance, ProactiveHistory
+    from bob.proactivity.governance import Governance, ProactiveHistory
 
 # Logistic mapping urge → p(speak). The midpoint sits at this urge (where p=0.5)
 # and the steepness controls how sharply probability swings around it. Tunable.

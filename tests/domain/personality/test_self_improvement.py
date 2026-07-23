@@ -17,7 +17,7 @@ from datetime import UTC, datetime
 
 import pytest
 
-from bob.domain.personality.self_improvement import (
+from bob.proactivity.self_improvement import (
     ImprovementRule,
     Lever,
     RuleOrigin,

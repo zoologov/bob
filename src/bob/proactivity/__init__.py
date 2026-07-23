@@ -3,6 +3,8 @@
 # See the LICENSE file in the project root for full license information.
 
 # beadloom:domain=bob
+# beadloom:feature=proactivity
+# beadloom:layer=domain
 
 """Proactivity domain — Bob's pure "drive to reach out" logic (no I/O, no LLM).
 
@@ -17,15 +19,15 @@ engine (BEAD-02) and the persistence adapter (BEAD-03) build on these.
 
 from __future__ import annotations
 
-from bob.domain.proactivity.decision import ProactiveDecider, urge_to_probability
-from bob.domain.proactivity.governance import (
+from bob.proactivity.decision import ProactiveDecider, urge_to_probability
+from bob.proactivity.governance import (
     Governance,
     GovernanceConfig,
     ProactiveHistory,
 )
-from bob.domain.proactivity.social_energy import SocialEnergy
-from bob.domain.proactivity.state import ProactivityState
-from bob.domain.proactivity.urge import UrgeModel
+from bob.proactivity.social_energy import SocialEnergy
+from bob.proactivity.state import ProactivityState
+from bob.proactivity.urge import UrgeModel
 
 __all__ = [
     "Governance",

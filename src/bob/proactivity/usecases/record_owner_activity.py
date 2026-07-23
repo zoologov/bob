@@ -3,7 +3,8 @@
 # See the LICENSE file in the project root for full license information.
 
 # beadloom:domain=bob
-# beadloom:feature=proactivity-app
+# beadloom:feature=proactivity
+# beadloom:layer=application
 
 """RecordOwnerActivity — fold an incoming owner message into proactivity state.
 
@@ -11,7 +12,7 @@ The reactive chat path (:class:`~bob.application.usecases.handle_message.HandleM
 calls this after each owner message so the proactivity drive-model reflects real
 interaction: it stamps ``last_user_msg_at`` to the injected ``now`` — which arms
 the engine's owner-cooldown veto so Bob never talks over the person — and
-partially restores the :class:`~bob.domain.proactivity.social_energy.SocialEnergy`
+partially restores the :class:`~bob.proactivity.social_energy.SocialEnergy`
 reservoir (the "you came back" bump), yielding a natural cooldown after a reply.
 
 The rest of the per-persona state is preserved verbatim: the owner's ``/quiet``

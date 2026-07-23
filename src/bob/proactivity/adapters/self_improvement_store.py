@@ -3,16 +3,18 @@
 # See the LICENSE file in the project root for full license information.
 
 # beadloom:domain=bob
+# beadloom:feature=proactivity
+# beadloom:layer=infrastructure
 
 """SqliteSelfImprovementStore — the per-persona self-improvement-rule adapter (BOB-028 .1).
 
 Realises :class:`bob.domain.ports.SelfImprovementStore` over the ``improvement_rule``
 table: one row per ``(persona_id, id)`` so Bobiverse replicas each keep their own
 curated rules between sessions. The domain
-:class:`~bob.domain.personality.self_improvement.ImprovementRule` value object (its
-:class:`~bob.domain.personality.self_improvement.Lever`,
-:class:`~bob.domain.personality.self_improvement.RuleState` and
-:class:`~bob.domain.personality.self_improvement.RuleOrigin` enums, the bounded
+:class:`~bob.proactivity.self_improvement.ImprovementRule` value object (its
+:class:`~bob.proactivity.self_improvement.Lever`,
+:class:`~bob.proactivity.self_improvement.RuleState` and
+:class:`~bob.proactivity.self_improvement.RuleOrigin` enums, the bounded
 ``magnitude``) is mapped to and from rows here, so the domain stays I/O-free.
 
 The enum values persist as their string ``.value`` (TEXT columns). ``save_rule``
@@ -27,7 +29,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import TYPE_CHECKING, Protocol
 
-from bob.domain.personality.self_improvement import (
+from bob.proactivity.self_improvement import (
     ImprovementRule,
     Lever,
     RuleOrigin,

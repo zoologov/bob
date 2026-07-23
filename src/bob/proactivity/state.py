@@ -3,7 +3,8 @@
 # See the LICENSE file in the project root for full license information.
 
 # beadloom:domain=bob
-# beadloom:feature=proactivity-domain
+# beadloom:feature=proactivity
+# beadloom:layer=domain
 
 """ProactivityState — the per-persona proactivity state the engine persists.
 
@@ -22,7 +23,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from datetime import datetime
 
-    from bob.domain.proactivity.social_energy import SocialEnergy
+    from bob.proactivity.social_energy import SocialEnergy
 
 
 @dataclass(frozen=True, slots=True)

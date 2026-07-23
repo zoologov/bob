@@ -14,8 +14,8 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from bob.domain.goals.entities import Goal, GoalOrigin, Task
-from bob.domain.goals.graph import (
+from bob.proactivity.goals.entities import Goal, GoalOrigin, Task
+from bob.proactivity.goals.graph import (
     GoalGraph,
     blocked_reason,
     external_agency_tasks,
@@ -23,7 +23,7 @@ from bob.domain.goals.graph import (
     next_safe_task,
     ready_tasks,
 )
-from bob.domain.goals.state import GoalState, TaskState
+from bob.proactivity.goals.state import GoalState, TaskState
 
 _NOW = datetime(2026, 6, 24, 12, 0, tzinfo=UTC)
 

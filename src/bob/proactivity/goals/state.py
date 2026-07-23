@@ -3,7 +3,8 @@
 # See the LICENSE file in the project root for full license information.
 
 # beadloom:domain=bob
-# beadloom:feature=goals
+# beadloom:feature=proactivity
+# beadloom:layer=domain
 
 """Машины состояний Goal Engine — чистые, детерминированные (BOB-015 .1).
 

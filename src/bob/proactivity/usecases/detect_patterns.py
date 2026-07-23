@@ -3,7 +3,8 @@
 # See the LICENSE file in the project root for full license information.
 
 # beadloom:domain=bob
-# beadloom:feature=usecases
+# beadloom:feature=proactivity
+# beadloom:layer=application
 
 """LlmPatternDetector + DetectPatterns — метакогнитивный детектор паттернов (BOB-028 .2).
 
@@ -37,7 +38,7 @@ import re
 from typing import TYPE_CHECKING, Protocol
 
 from bob.application.router.llm_router import LLMRequest, TaskType
-from bob.domain.personality.self_improvement import (
+from bob.proactivity.self_improvement import (
     ImprovementRule,
     ImprovementSignals,
     Lever,
@@ -51,8 +52,8 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from bob.application.router.llm_router import LLMRouter
-    from bob.domain.personality.self_improvement import RuleState as _RuleStateT
     from bob.domain.ports import Clock, PatternDetector
+    from bob.proactivity.self_improvement import RuleState as _RuleStateT
 
 logger = logging.getLogger(__name__)
 
