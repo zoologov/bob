@@ -106,6 +106,8 @@ nodes:
     # `SqliteMemoryRepo.connection()` seam (kernel stays put until BOB-062.7).
     tags: [module-vertical]
     summary: 'Proactivity module («Bob''s background life») — the full vertical capability in one place: `ports.py` + pure domain (drive-model urge/governance/social-energy, goals graph, self-improvement rules), `usecases/` (engine/tick, plan/pursue goals, detect-patterns/announce-rules), and `adapters/` (proactivity/goal/self-improvement stores + live read-seams). Domain-first slice BOB-062.3.'
+    docs:
+      - domains/proactivity/README.md
 
   - ref_id: coding
     kind: feature

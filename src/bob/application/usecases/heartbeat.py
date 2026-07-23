@@ -230,7 +230,7 @@ class SulkRecoverer(Protocol):
 class PatternDetectorStep(Protocol):
     """The narrow seam the reflect tick drives to detect self-patterns (BOB-028 .2).
 
-    Realised by :class:`~bob.application.usecases.detect_patterns.DetectPatterns`: a
+    Realised by :class:`~bob.proactivity.usecases.detect_patterns.DetectPatterns`: a
     rare, metacognitive step that gathers signals about Bob's own behaviour (self-
     repeats, addressivity outcomes, verbosity misses, relationship deltas, a stuck
     mood, owner friction, what landed), asks a detector to formulate human-readable
@@ -249,7 +249,7 @@ class RuleAnnouncerStep(Protocol):
     """The narrow seam the reflect tick drives to voice a proposed rule (BOB-028 .3).
 
     Realised by
-    :class:`~bob.application.usecases.announce_rules.AnnounceProposedRules`: a rare,
+    :class:`~bob.proactivity.usecases.announce_rules.AnnounceProposedRules`: a rare,
     tactful step where Bob speaks ONE fresh ``PROPOSED`` self-improvement rule to the
     owner ("Заметил за собой… Предлагаю… Включить?") and marks it announced so he does
     not repeat it. Driven AFTER pattern detection on the same slow cadence (a freshly

@@ -56,7 +56,12 @@ src/bob/
                      #   `from bob.domain.ports import MemoryRepo` работает как раньше
     diagrams/        # mermaid_blocks: extract/strip/normalize fenced ```mermaid
                      #   (чистый разбор inline-mermaid из текста ответа, BOB-037)
-    proactivity/     # UrgeModel, SocialEnergy, Governance, ProactiveDecider, ProactivityState
+                     #   проактивность (UrgeModel, SocialEnergy, Governance,
+                     #   ProactiveDecider, ProactivityState + goals + self_improvement,
+                     #   порты/логика/адаптеры) переехала в вертикальный модуль
+                     #   `src/bob/proactivity/` (BOB-062.3); `self_improvement` забран
+                     #   из personality; `from bob.domain.ports import ProactivityStore`
+                     #   работает как раньше
     ports/           # порты-протоколы (пакет, разбит из ports.py в BOB-065).
                      #   __init__.py — re-export shim: `from bob.domain.ports import X`
                      #     резолвит все 51 публичный символ без изменений импортов.
@@ -66,8 +71,10 @@ src/bob/
                      #     Reranker) переехали в `memory/ports.py` (вертикальный модуль,
                      #     BOB-062.2); `ports/__init__.py` их re-export'ит
                      #   social.py       — SoulStore, AllowlistStore
-                     #   proactivity.py  — ProactivityStore, GoalStore, Planner,
-                     #                     SelfImprovementStore, PatternDetector
+                     #   proactivity-порты (ProactivityStore, GoalStore, Planner,
+                     #     SelfImprovementStore, PatternDetector) переехали в
+                     #     `proactivity/ports.py` (вертикальный модуль, BOB-062.3);
+                     #     `ports/__init__.py` их re-export'ит
                      #   conversation.py — ConversationFloorStore, CloserLog
                      #   personality.py  — ZoneClassifier (Negotiation-врезка, BOB-013),
                      #                     MessageReactor, ReflectionReader, SulkStore,
@@ -89,7 +96,10 @@ src/bob/
                      #   ApplyReflection + HeuristicReflectionParser (само-эволюция),
                      #   EvolveFascination, EvolvePhantoms (эмоциональная глубина),
                      #   ReappraiseReflection (реаппрайзал, BOB-033)
-    proactivity/     # ProactivityEngine, ProactiveTick, RecordOwnerActivity
+                     #   проактивность-use-case'ы (ProactivityEngine, ProactiveTick,
+                     #   RecordOwnerActivity, plan/pursue goals, detect-patterns/
+                     #   announce-rules, self_improvement_sources) переехали в
+                     #   `proactivity/usecases/` (вертикальный модуль, BOB-062.3)
     authz/           # Authorizer: политика owner/allowlist/chat-scope
     capabilities/    # CapabilityRegistry, ToolLoop, recall_memory, search_memory,
                      #   inspect_architecture, read_code, list_work (самоинтроспекция, BOB-017),
@@ -2653,7 +2663,7 @@ Tier-0-гейт проактива, тики внутреннего моноло
 затем `anti_bait_directive()`. Канон GUPPI там же подпирает преамбулу
 capability-манифеста (`_CAPABILITY_PREFACE` подаёт навыки как то, что GUPPI исполняет
 для Боба, — раздел «Capability-шов»). Проактивная компоновка
-(`_COMPOSE_SYSTEM`, `application/proactivity/engine.py`) тоже несёт
+(`_COMPOSE_SYSTEM`, `proactivity/usecases/engine.py`) тоже несёт
 `anti_bait_directive()`: когда Боб пишет первым, его так же тянет «baitить» на
 продолжение, и финал должен держаться сам.
 
@@ -2717,7 +2727,7 @@ capability-манифеста (`_CAPABILITY_PREFACE` подаёт навыки �
 
 Порт **`ReflectionReader`** (`domain/ports/personality.py`, `latest_reflection_text() -> str | None`)
 читает текст **последней реальной** рефлексии Боба. Реализация в
-`infrastructure/persistence/proactivity_sources.py`: берёт свежайшую строку
+`proactivity/adapters/proactivity_sources.py`: берёт свежайшую строку
 `episodic_log`, чей `event_type` ∈ {`reflection`, `inner_monologue`} (их grounded и
 по-русски пишет BOB-012). При флаге `leak_inner_life` текст подаётся в compose-контекст
 как «то, о чём ты ловил себя на мысли» (естественно, не дословно). **Нет рефлексии (или
@@ -3165,7 +3175,7 @@ TERSE/DECLINE); (4) интересная тема перебивает плох�
 - **Реактив холодный:** `voice.sulk_directive(intensity)` — тише, суше, минимально,
   но **не сброс и не другой человек** (cold-but-still-Bob) и **не грубо**.
   Прикладывается поверх mood/relationship-тона, пока обида активна.
-- **Проактив подавлен (sulk-veto):** `application/proactivity/engine.py` читает шов
+- **Проактив подавлен (sulk-veto):** `proactivity/usecases/engine.py` читает шов
   `SulkSource.current_active()`; пока Боб обижен, он **не пишет первым**
   (`ProactiveHistory.sulk_active`, дефолт `False` для непровязанного Боба — поведение
   без обиды как раньше).
@@ -3388,7 +3398,7 @@ LLM, поэтому подавляющее большинство тиков з�
 ### Drive-модель порыва (чистый домен)
 
 Четыре именованных, настраиваемых «тяги» дают единый порыв `urge ∈ [0, 1]`
-(`domain/proactivity/urge.py`, `UrgeModel.urge` — чистая функция без I/O и часов):
+(`proactivity/urge.py`, `UrgeModel.urge` — чистая функция без I/O и часов):
 
 - **настроение** — открытое, возбуждённое, социальное настроение поднимает порыв,
   замкнутое опускает (среднее по осям `arousal`/`openness`/`social` из `Mood`);
@@ -3400,7 +3410,7 @@ LLM, поэтому подавляющее большинство тиков з�
   утренним и вечерним пиками и дневным провалом); час берётся из `Clock`.
 
 К ним добавляется уровень социальной энергии. Взвешенная сумма нормируется в
-`[0, 1]`. Энергия (`domain/proactivity/social_energy.py`, `SocialEnergy`) — это
+`[0, 1]`. Энергия (`proactivity/social_energy.py`, `SocialEnergy`) — это
 ограниченный `[0, 1]` резервуар: он **копится** в тишине (`recover`), **тратится**
 на реплику (`spend`, фиксированная доля) и **частично восполняется** ответом owner
 (`replenish_from_reply`). Так cooldown после разговора возникает естественно, без
@@ -3408,7 +3418,7 @@ LLM, поэтому подавляющее большинство тиков з�
 
 ### Стохастика и решение
 
-`ProactiveDecider` (`domain/proactivity/decision.py`) — шов, который движок зовёт
+`ProactiveDecider` (`proactivity/decision.py`) — шов, который движок зовёт
 на каждом тике. Он берёт «сейчас» из инъецированного `Clock`, считает `urge`,
 переводит его в вероятность срабатывания `p(speak)` монотонной **логистической**
 кривой (`urge_to_probability`) и делает **один** розыгрыш из инъецированного
@@ -3418,7 +3428,7 @@ seeded `Random`. Governance проверяется **первой**: любое 
 ### Governance — только потолки безопасности
 
 Governance — это тормоз, а не двигатель: он **никогда не поднимает** порыв, только
-блокирует (`domain/proactivity/governance.py`, `Governance.allows` → `bool`). Пять
+блокирует (`proactivity/governance.py`, `Governance.allows` → `bool`). Пять
 вето, все чистые и над инъецированным «сейчас»:
 
 - **quiet hours** — жёсткий ночной пол по **локальному** времени (по умолчанию
@@ -3436,7 +3446,7 @@ Governance — это тормоз, а не двигатель: он **нико�
 
 ### От тика к реплике (дёшево по умолчанию)
 
-`ProactivityEngine` (`application/proactivity/engine.py`) — оркестратор за RFC
+`ProactivityEngine` (`proactivity/usecases/engine.py`) — оркестратор за RFC
 §«Фаза 1». Помимо store/decider/router/gateway/clock/RNG ему инъецируются
 `MemoryRecall` (grounding компоновки в реальной памяти), `EpisodeWriter` (персист
 проактива в `episodic_log`), `language` (директива языка персоны, по умолчанию
@@ -3492,7 +3502,7 @@ cheapest-first:
    потом сослаться на сказанное и объяснить его (раньше реплика никуда не писалась,
    и Боб «не помнил», что сказал).
 
-`ProactiveTick` (`application/proactivity/tick.py`) — тонкая обёртка, которую
+`ProactiveTick` (`proactivity/usecases/tick.py`) — тонкая обёртка, которую
 рантайм планирует на heartbeat-каденсе (`app.py`, `_background_tasks`) рядом с
 inner-monologue / mood-drift / reflect и под той же `RetryPolicy`: транзиентный
 сбой LLM/сети на сработавшем тике ретраится с backoff до изоляции. Тик дёшев —
@@ -3500,7 +3510,7 @@ inner-monologue / mood-drift / reflect и под той же `RetryPolicy`: тр
 
 ### Связь с реактивным чатом и owner-команды
 
-`RecordOwnerActivity` (`application/proactivity/record_owner_activity.py`)
+`RecordOwnerActivity` (`proactivity/usecases/record_owner_activity.py`)
 вызывается после каждого сообщения owner в реактивном пути (`HandleMessage`): он
 проставляет `last_user_msg_at` (взводит owner-cooldown, чтобы Боб не говорил поверх
 собеседника) и частично восполняет резервуар энергии — «ты вернулся». Остальное
@@ -3520,14 +3530,14 @@ proactivity-store; иначе они деградируют в no-op (обрат
 
 ### Хранилище и read-seams
 
-`SqliteProactivityStore` (`infrastructure/persistence/proactivity_store.py`)
+`SqliteProactivityStore` (`proactivity/adapters/proactivity_store.py`)
 реализует порт `ProactivityStore` над таблицей `proactivity_state` — одна строка на
 `persona_id`, так что реплики Bobiverse держат свои резервуар, маркеры и флаг. Поверх
 порта он несёт инфраструктурный тайм-мьют `mute_until` (он **не** часть доменного
 value-объекта `ProactivityState`, живёт только в строке и читается/пишется через
 `get_mute_until` / `set_mute_until`). Весь SQL параметризован (`?`).
 
-`RepoProactivitySources` (`infrastructure/persistence/proactivity_sources.py`) даёт
+`RepoProactivitySources` (`proactivity/adapters/proactivity_sources.py`) даёт
 движку два дешёвых (без LLM) сигнала прямо из `episodic_log`: **салиентность
 рефлексии** (свежий `reflection`-эпизод даёт салиентность около `1.0`, линейно
 затухающую к `0.0` за 6 ч) и **счётчик проактивов в окне** (число `proactive`-
@@ -3547,7 +3557,7 @@ value-объекта `ProactivityState`, живёт только в строке
 исполняется автономно, только предлагается владельцу). Всё состояние per-persona,
 время и стохастика инъецируются, поэтому домен и тик детерминированы в тестах.
 
-### Goal Engine — чистый граф целей (`domain/goals/`)
+### Goal Engine — чистый граф целей (`proactivity/goals/`)
 
 Граф целей — чистый домен без I/O и без часов. Value-объекты (`entities.py`,
 `frozen, slots`):
@@ -3597,17 +3607,17 @@ value-объекта `ProactivityState`, живёт только в строке
 Обход устойчив к циклам `deps`: незавершённый предшественник просто делает задачу
 неготовой, рекурсивного обхода нет — зависнуть негде.
 
-Персист — за портом **`GoalStore`** (`domain/ports/proactivity.py`): `load(persona_id)` (пустой
+Персист — за портом **`GoalStore`** (`proactivity/ports.py`): `load(persona_id)` (пустой
 граф для невиданной персоны), `save_goal` / `save_task` (UPSERT), атомарные
 `update_goal_state` / `update_task_state`. Адаптер
-**`SqliteGoalStore`** (`infrastructure/persistence/goal_store.py`) маппит граф на
+**`SqliteGoalStore`** (`proactivity/adapters/goal_store.py`) маппит граф на
 таблицы `goal` и `task` (одна строка на `(persona_id, id)`, так что реплики
 Bobiverse держат свои цели); `deps` round-trip'ит JSON-массивом, enum'ы — своими
 строковыми значениями, весь SQL параметризован.
 
 ### Planner — декомпозиция цели в задачи (`plan_goal.py`)
 
-Порт **`Planner.decompose(goal) → Sequence[Task]`** (`domain/ports/proactivity.py`) разбивает
+Порт **`Planner.decompose(goal) → Sequence[Task]`** (`proactivity/ports.py`) разбивает
 `APPROVED`-цель на атомарные задачи с зависимостями и **классифицирует
 `needs_external_agency`**. Живая реализация — **`LlmPlanner`**: просит
 reasoning-модель (Tier 1, `TaskType.PLAN_GOAL`) и парсит строгий JSON так же
@@ -3710,7 +3720,7 @@ Use-case **`PlanGoal`** держит **двойной апрув**:
 дисциплина, что и автономность: правило ничего не меняет молча и **никогда не
 трогает безопасность/ядро**.
 
-### Модель правила — чистый домен (`domain/personality/self_improvement.py`)
+### Модель правила — чистый домен (`proactivity/self_improvement.py`)
 
 - **`Lever`** (`StrEnum`) — **жёсткий allowlist** рычагов, которые правило вправе
   наклонять: `TONE`, `LENGTH`, `PROACTIVITY`, `ADDRESSIVITY_BIAS`, `HUMOR` — **и
@@ -3741,8 +3751,8 @@ Use-case **`PlanGoal`** держит **двойной апрув**:
   отвечает, есть ли хоть один ненулевой наклон. Несколько правил по одному рычагу
   суммируются, но суммарный наклон зажат потолком.
 
-Персист — порт **`SelfImprovementStore`** (`domain/ports/proactivity.py`) +
-`SqliteSelfImprovementStore` (`infrastructure/persistence/self_improvement_store.py`)
+Персист — порт **`SelfImprovementStore`** (`proactivity/ports.py`) +
+`SqliteSelfImprovementStore` (`proactivity/adapters/self_improvement_store.py`)
 над таблицей `improvement_rule` (строка на `(persona_id, id)` — реплики Bobiverse
 держат свои правила раздельно). `load` / `save_rule` (UPSERT) /
 `update_rule_state` (атомарная запись одного столбца, которую гонит owner-апрув);
@@ -3750,7 +3760,7 @@ enum'ы персистятся строковым `.value`, SQL параметр
 
 ### Детектор паттернов (`application/usecases/detect_patterns.py`)
 
-- Порт **`PatternDetector`** (`domain/ports/proactivity.py`): `detect(signals)` возвращает
+- Порт **`PatternDetector`** (`proactivity/ports.py`): `detect(signals)` возвращает
   правила-кандидаты строго в `PROPOSED`. **`LlmPatternDetector`** — реализация
   через Tier-1 LLM (`TaskType.DETECT_PATTERNS`): из среза сигналов формулирует
   человечное правило и **выбирает рычаг только из `Lever`-allowlist**. Разбор JSON
@@ -3780,7 +3790,7 @@ enum'ы персистятся строковым `.value`, SQL параметр
 непроговорённое) — «Заметил за собой: …. Предлагаю: …. Включить? (/rule approve
 <id>)». In-memory-страж не повторяет уже проговорённое; проговариваются только
 `PROPOSED`; best-effort (сбой логируется, тик не валит). `ActiveRulesReader`
-(`application/usecases/self_improvement_sources.py`) — read-seam applied-стороны:
+(`proactivity/usecases/self_improvement_sources.py`) — read-seam applied-стороны:
 грузит правила из стора и отдаёт только `active_rules` (`APPROVED`).
 
 **Owner-команды GUPPI** (`infrastructure/telegram/guppi.py`, owner-only в General,
