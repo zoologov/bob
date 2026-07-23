@@ -30,7 +30,6 @@ from bob.application.capabilities.render_diagram import (
 from bob.application.router.llm_router import LLMRouter
 from bob.application.runtime.events import MessageReceived
 from bob.application.usecases.decide_response import DecideResponse
-from bob.application.usecases.extract_facts import ExtractFacts
 from bob.application.usecases.handle_message import (
     _CLOSER_TIC_NUDGE,
     _VERIFY_GROUNDED_NOTE,
@@ -97,6 +96,7 @@ from bob.domain.personality.volatility_judgment import (
 from bob.domain.ports import ToolCall, ToolCallResult, WebSearchResult
 from bob.infrastructure.diagrams.mmdc_renderer import DiagramRenderError
 from bob.infrastructure.telegram.gateway import TelegramGateway
+from bob.memory.usecases.extract_facts import ExtractFacts
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Callable, Mapping, Sequence

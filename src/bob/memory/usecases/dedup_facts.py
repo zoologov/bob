@@ -3,7 +3,8 @@
 # See the LICENSE file in the project root for full license information.
 
 # beadloom:domain=bob
-# beadloom:feature=usecases
+# beadloom:feature=memory
+# beadloom:layer=application
 
 """DedupFacts — the rare, conservative fact-merge step (BOB-021).
 

@@ -18,8 +18,8 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from bob.domain.memory.entities import EpisodicEvent, SemanticFact
 from bob.infrastructure.persistence.sqlite_repo import SqliteMemoryRepo
+from bob.memory.entities import EpisodicEvent, SemanticFact
 from tests.support.fake_embedder import FakeEmbedder
 
 if TYPE_CHECKING:

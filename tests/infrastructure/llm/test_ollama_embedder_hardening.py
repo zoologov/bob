@@ -19,7 +19,7 @@ from collections.abc import Awaitable, Callable
 import pytest
 from aiohttp import web
 
-from bob.infrastructure.llm.ollama_embedder import OllamaEmbedder
+from bob.memory.adapters.ollama_embedder import OllamaEmbedder
 
 _BATCH_PATH = "/api/embed"
 

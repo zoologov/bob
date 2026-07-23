@@ -51,7 +51,6 @@ from typing import TYPE_CHECKING, Protocol
 
 from bob.application.router.llm_router import LLMRequest, TaskType
 from bob.application.router.reply_tier_selector import select_reply_tier
-from bob.domain.memory.entities import EpisodicEvent
 from bob.domain.personality.conversation import (
     RepeatThresholds,
     is_bob_repeat,
@@ -62,6 +61,7 @@ from bob.domain.personality.language import DEFAULT_LANGUAGE, language_directive
 from bob.domain.personality.voice import anti_bait_directive
 from bob.domain.proactivity.governance import ProactiveHistory
 from bob.domain.proactivity.state import ProactivityState
+from bob.memory.entities import EpisodicEvent
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence

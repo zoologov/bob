@@ -10,8 +10,8 @@ import pytest
 
 from bob.domain.ports import Embedder
 from bob.infrastructure.config.loader import DEFAULT_CONFIG
-from bob.infrastructure.llm.embedder_factory import build_embedder
-from bob.infrastructure.llm.ollama_embedder import OllamaEmbedder
+from bob.memory.adapters.embedder_factory import build_embedder
+from bob.memory.adapters.ollama_embedder import OllamaEmbedder
 
 
 def test_builds_ollama_embedder_from_config() -> None:

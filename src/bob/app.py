@@ -73,13 +73,10 @@ from bob.application.runtime import (
 )
 from bob.application.usecases.announce_rules import AnnounceProposedRules
 from bob.application.usecases.apply_reflection import ApplyReflection
-from bob.application.usecases.consolidate_memory import ConsolidateMemory
 from bob.application.usecases.decide_response import DecideResponse
-from bob.application.usecases.dedup_facts import DedupFacts
 from bob.application.usecases.detect_patterns import DetectPatterns, LlmPatternDetector
 from bob.application.usecases.evolve_fascination import EvolveFascination
 from bob.application.usecases.evolve_phantoms import EvolvePhantoms
-from bob.application.usecases.extract_facts import ExtractFacts
 from bob.application.usecases.fascination_sources import (
     RepoFascinationGrounding,
     StoreFascinationReader,
@@ -150,8 +147,6 @@ from bob.infrastructure.introspection.subprocess_introspector import (
     SubprocessRepoIntrospector,
 )
 from bob.infrastructure.llm import (
-    build_embedder,
-    build_reranker,
     build_tier_providers,
     build_web_search_provider,
 )
@@ -161,7 +156,6 @@ from bob.infrastructure.llm.reaction_judge import LlmReactionJudge
 from bob.infrastructure.llm.response_judge import LlmResponseJudge
 from bob.infrastructure.llm.volatility_judge import LlmVolatilityJudge
 from bob.infrastructure.persistence import (
-    HybridMemoryRecall,
     KvAllowlistStore,
     KvNotableReactionStore,
     RepoProactivitySources,
@@ -194,6 +188,14 @@ from bob.infrastructure.telegram.multibot import (
     MultiBotGateway,
 )
 from bob.infrastructure.web import build_url_reader
+from bob.memory.adapters import (
+    HybridMemoryRecall,
+    build_embedder,
+    build_reranker,
+)
+from bob.memory.usecases.consolidate_memory import ConsolidateMemory
+from bob.memory.usecases.dedup_facts import DedupFacts
+from bob.memory.usecases.extract_facts import ExtractFacts
 
 if TYPE_CHECKING:
     from aiogram.types import BufferedInputFile, InputRichMessage, ReactionTypeEmoji
@@ -433,7 +435,7 @@ def build_application(
     **Hybrid memory (BOB-011):** a local :class:`~bob.domain.ports.Embedder`
     (BGE-M3/Ollama) and an optional :class:`~bob.domain.ports.Reranker` are built
     from config (``embeddings.*`` / ``reranker.*``). The live recall is the
-    :class:`~bob.infrastructure.persistence.HybridMemoryRecall` (FTS5 + sqlite-vec
+    :class:`~bob.memory.adapters.HybridMemoryRecall` (FTS5 + sqlite-vec
     KNN fused by RRF, optionally reranked) — a drop-in for the keyword-only recall,
     so reactive recall and the ``recall_memory`` / ``search_memory`` capabilities
     all gain semantic retrieval. The embedder is wired into the repo so existing

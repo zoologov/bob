@@ -22,7 +22,7 @@ import pytest
 from aiohttp import web
 
 from bob.domain.ports import Embedder
-from bob.infrastructure.llm.ollama_embedder import OllamaEmbedder
+from bob.memory.adapters.ollama_embedder import OllamaEmbedder
 
 _BATCH_PATH = "/api/embed"
 _LEGACY_PATH = "/api/embeddings"

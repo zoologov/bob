@@ -18,8 +18,8 @@ from typing import TYPE_CHECKING
 import aiosqlite
 import pytest
 
-from bob.domain.memory.entities import SemanticFact
 from bob.infrastructure.persistence.sqlite_repo import SqliteMemoryRepo
+from bob.memory.entities import SemanticFact
 
 if TYPE_CHECKING:
     from pathlib import Path

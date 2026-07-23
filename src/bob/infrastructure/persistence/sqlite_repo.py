@@ -10,9 +10,15 @@ Realises :class:`bob.domain.ports.MemoryRepo` and is the single home for SQL in
 the codebase. The schema (``schema.sql``) is applied idempotently on
 :meth:`initialize`, the connection runs in WAL mode for concurrent reads, and
 every statement is parameterised (``?``) — never an f-string. Domain entities
-(:class:`~bob.domain.memory.entities.EpisodicEvent` /
-:class:`~bob.domain.memory.entities.SemanticFact`) are mapped to and from rows
-here so the domain stays I/O-free.
+(:class:`~bob.memory.entities.EpisodicEvent` /
+:class:`~bob.memory.entities.SemanticFact`) are mapped to and from rows here so
+the domain stays I/O-free.
+
+This store is the memory adapter that temporarily lives in the shared
+persistence kernel until the runtime slice (BOB-062.7) splits the connection
+kernel from the ``MemoryRepo`` realisation. Its single reach into the memory
+module — importing the entities above — is the deliberately-allowed
+``kernel → bob.memory.entities`` edge (TODO-.7), marked in the boundary rules.
 """
 
 from __future__ import annotations
@@ -31,9 +37,9 @@ if TYPE_CHECKING:
     from datetime import datetime
     from pathlib import Path
 
-    from bob.domain.memory.entities import EpisodicEvent, SemanticFact
     from bob.domain.ports import Embedder
     from bob.infrastructure.persistence.vector_store import VectorSource
+    from bob.memory.entities import EpisodicEvent, SemanticFact
 
 logger = logging.getLogger(__name__)
 

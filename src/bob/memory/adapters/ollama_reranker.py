@@ -3,6 +3,8 @@
 # See the LICENSE file in the project root for full license information.
 
 # beadloom:domain=bob
+# beadloom:feature=memory
+# beadloom:layer=infrastructure
 
 """OllamaReranker — a LOCAL relevance reranker realised as an Ollama-as-scorer.
 
@@ -74,7 +76,7 @@ class OllamaReranker:
 
     One instance targets one ``base_url`` + ``model`` and trims to ``top_n``; build
     it from the ``reranker`` config section via
-    :func:`bob.infrastructure.llm.reranker_factory.build_reranker`.
+    :func:`bob.memory.adapters.reranker_factory.build_reranker`.
     """
 
     def __init__(

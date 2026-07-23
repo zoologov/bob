@@ -19,7 +19,6 @@ from bob.application.usecases.apply_reflection import (
     ReflectionParser,
     ReflectionSignal,
 )
-from bob.application.usecases.extract_facts import ExtractFacts
 from bob.application.usecases.handle_message import HandleMessage, PersonalityState
 from bob.application.usecases.heartbeat import (
     InnerMonologueTick,
@@ -35,7 +34,6 @@ from bob.application.usecases.update_mood_from_text import (
 
 __all__ = [
     "ApplyReflection",
-    "ExtractFacts",
     "GenesisResult",
     "HandleMessage",
     "HeuristicReflectionParser",

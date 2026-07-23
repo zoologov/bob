@@ -4,11 +4,13 @@
 
 # beadloom:domain=bob
 
-"""Persistence adapters — SQLite memory store, FTS5 recall, and SoulStore.
+"""Persistence adapters — the shared SQLite store kernel and SoulStore.
 
-Realises the domain's storage ports (:class:`bob.domain.ports.MemoryRepo`,
-:class:`bob.domain.ports.MemoryRecall`). All SQL and filesystem I/O for Bob's
-durable state live here; the schema is bundled as ``schema.sql``.
+Realises the domain's storage port (:class:`bob.domain.ports.MemoryRepo` via
+``SqliteMemoryRepo``) plus every module's durable store over one connection
+seam. All SQL and filesystem I/O for Bob's durable state live here; the schema
+is bundled as ``schema.sql``. Memory recall + local embeddings moved to
+``bob.memory.adapters`` (BOB-062.2); the store kernel splits out in a later slice.
 """
 
 from __future__ import annotations
@@ -22,9 +24,7 @@ from bob.infrastructure.persistence.fascination_store import SqliteFascinationSt
 from bob.infrastructure.persistence.first_impression_store import (
     SqliteFirstImpressionStore,
 )
-from bob.infrastructure.persistence.fts_recall import Fts5MemoryRecall
 from bob.infrastructure.persistence.goal_store import SqliteGoalStore
-from bob.infrastructure.persistence.hybrid_recall import HybridMemoryRecall
 from bob.infrastructure.persistence.notable_reaction_store import KvNotableReactionStore
 from bob.infrastructure.persistence.proactivity_sources import RepoProactivitySources
 from bob.infrastructure.persistence.proactivity_store import SqliteProactivityStore
@@ -37,8 +37,6 @@ from bob.infrastructure.persistence.sqlite_repo import SqliteMemoryRepo
 from bob.infrastructure.persistence.sulk_store import SqliteSulkStore
 
 __all__ = [
-    "Fts5MemoryRecall",
-    "HybridMemoryRecall",
     "KvAllowlistStore",
     "KvNotableReactionStore",
     "RepoProactivitySources",

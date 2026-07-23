@@ -10,7 +10,7 @@ from datetime import UTC, datetime
 
 import pytest
 
-from bob.domain.memory.entities import EpisodicEvent, SemanticFact
+from bob.memory.entities import EpisodicEvent, SemanticFact
 
 
 def _ts() -> datetime:

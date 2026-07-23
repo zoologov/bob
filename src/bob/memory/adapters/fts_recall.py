@@ -3,6 +3,8 @@
 # See the LICENSE file in the project root for full license information.
 
 # beadloom:domain=bob
+# beadloom:feature=memory
+# beadloom:layer=infrastructure
 
 """Fts5MemoryRecall — keyword relevance retrieval over the whole archive.
 

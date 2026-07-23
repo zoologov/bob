@@ -22,7 +22,7 @@ from collections.abc import Awaitable, Callable, Sequence
 from aiohttp import web
 
 from bob.domain.ports import Reranker
-from bob.infrastructure.llm.ollama_reranker import OllamaReranker
+from bob.memory.adapters.ollama_reranker import OllamaReranker
 
 _CHAT_PATH = "/v1/chat/completions"
 

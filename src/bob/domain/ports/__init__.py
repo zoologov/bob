@@ -56,13 +56,6 @@ from bob.domain.ports.kernel import (
     LLMMessage,
     LLMProvider,
 )
-from bob.domain.ports.memory import (
-    Embedder,
-    MemoryRecall,
-    MemoryRepo,
-    Recalled,
-    Reranker,
-)
 from bob.domain.ports.personality import (
     FascinationStore,
     FirstImpressionStore,
@@ -81,6 +74,13 @@ from bob.domain.ports.proactivity import (
     SelfImprovementStore,
 )
 from bob.domain.ports.social import AllowlistStore, SoulStore
+from bob.memory.ports import (
+    Embedder,
+    MemoryRecall,
+    MemoryRepo,
+    Recalled,
+    Reranker,
+)
 
 __all__ = [
     "AllowlistStore",
