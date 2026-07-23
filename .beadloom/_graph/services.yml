@@ -98,6 +98,8 @@ nodes:
     # shared `router` (needs coding ≥ application); contradictory for one layer tag.
     tags: [module-vertical]
     summary: 'Coding module («Bob writes code») — the full vertical capability in one place: `ports.py` + pure domain logic, `usecases/` orchestration, and `adapters/` (Claude Code CLI, git worktree, gh PR, session store, indicator). Domain-first slice BOB-062.1.'
+    docs:
+      - domains/coding/README.md
 
   - ref_id: diagrams-domain
     kind: feature

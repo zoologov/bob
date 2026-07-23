@@ -57,6 +57,11 @@
 - **domain-imports-nothing-outward** (forbid_import): Домен не импортит application
 - **domain-no-infra** (forbid_import): Домен не импортит infrastructure
 - **application-no-infra** (forbid_import): Application не импортит infrastructure (только через порты домена)
+- **coding-usecases-no-adapters** (forbid_import): coding: usecases не импортят adapters (только порты; adapters — на композиции)
+- **coding-internals-no-usecases** (forbid_import): coding: доменная логика/адаптеры не импортят usecases (usecases — на композиции)
+- **coding-boundary-no-outside-usecases** (forbid_import): coding: снаружи не импортят usecases напрямую (только через фасад/порты)
+- **coding-boundary-no-outside-adapters** (forbid_import): coding: снаружи не импортят adapters напрямую (только через фасад/порты)
+- **coding-no-composition-root** (forbid_import): coding: модуль не импортит композиционный корень (src/bob/app.py)
 - **no-domain-depends-on-outer** (deny): Домен-слой не зависит от сервисов (runtime/bob), кроме part_of
 - **module-coverage** (unknown): Каждый src/bob модуль — трекнутый узел (feature/component/source) или exempt
 - **no-monster-modules** (cardinality): Модуль-слой/фича не должен пухнуть (handle_message/app.py/gateway — #9/#10/#25)

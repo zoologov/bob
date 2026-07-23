@@ -75,8 +75,10 @@ src/bob/
                      #                     DiagramRenderer + DiagramSink + DiagramResult (BOB-035),
                      #                     WebSearchProvider + WebSearchResult + WebSource (BOB-053),
                      #                     UrlReader + WebPage + UrlReadError/SsrfBlockedError (BOB-054)
-                     #   coding.py       — ClaudeCodeRunner, Worktree, CodingSessionStore,
-                     #                     PullRequestOpener
+                     #   coding-порты (ClaudeCodeRunner, Worktree, CodingSessionStore,
+                     #     PullRequestOpener) переехали в `coding/ports.py` (вертикальный
+                     #     модуль, BOB-062.1); `ports/__init__.py` их re-export'ит, так что
+                     #     `from bob.domain.ports import ClaudeCodeRunner` работает как раньше
   application/       # GUPPI: use-cases + оркестрация. Зависит от domain через порты.
     runtime/         # AgentRuntime (жизненный цикл), AsyncEventBus, события, periodic, retry
     router/          # LLMRouter: классификация задачи → Tier + правило редакции
@@ -114,6 +116,17 @@ src/bob/
                      #   (create_subprocess_exec, не shell, таймаут, graceful;
                      #    -s 3 -b white для чёткости, BOB-037) (BOB-035)
     config/          # ConfigLoader (defaults → YAML → env)
+  coding/            # 🔴 ВЕРТИКАЛЬНЫЙ модуль «Боб пишет код» (BOB-062.1): вся способность
+                     #   в одном месте, а не размазана по слоям. Внутренняя раскладка:
+                     #     ports.py + логика (state, entities, naming, narrate, intent,
+                     #       session_voice) — layer=domain;
+                     #     usecases/ (coding_assistant, coding_context, classify_coding_intent,
+                     #       coding_intent_router) — layer=application;
+                     #     adapters/ (claude_runner, git_worktree, gh_pr, session_store,
+                     #       indicator, _branch, _exec) — layer=infrastructure.
+                     #   Граница «снаружи — только через ports/фасад» держится path-glob
+                     #   forbid_import-правилами (.beadloom/_graph/rules.yml). См. SPEC:
+                     #   docs/domains/coding/README.md
   app.py             # composition root: собирает порты и адаптеры, запускает рантайм
 ```
 
@@ -1754,7 +1767,7 @@ memory-capability, поведение как раньше. Конфиг `introsp
 
 #### Конечная машина состояний (чистый домен)
 
-`CodingSessionState` (`domain/coding/state.py`) — строковый `StrEnum` (значение
+`CodingSessionState` (`coding/state.py`) — строковый `StrEnum` (значение
 совпадает с TEXT-колонкой SQLite, round-trip тривиален). Жизненный цикл:
 
 ```
@@ -1777,17 +1790,17 @@ CANCELLED / FAILED ← из любого нетерминального
   (предикатная форма гейта плана), `can_stop` (kill-switch из любого нетерминального),
   `is_terminal` (`PR_OPEN`/`DONE`/`CANCELLED`/`FAILED`).
 
-Сессия — `CodingSession` (`domain/coding/entities.py`), immutable `frozen, slots`
+Сессия — `CodingSession` (`coding/entities.py`), immutable `frozen, slots`
 value-object: `id`, `task`, `state`, `branch`, `created_at`/`updated_at` и опциональные
 `worktree_path`/`plan`/`pr_url`. Без I/O и без часов — момент времени инжектится
 параметром `at` в мутаторы `with_state`/`with_plan`/`with_worktree`/`with_pr_url`
 (каждый возвращает новый объект и обновляет `updated_at`). Имя ветки даёт чистая
-`worktree_branch(task)` (`domain/coding/naming.py`): ascii-slug → `bob/<slug>`, что
+`worktree_branch(task)` (`coding/naming.py`): ascii-slug → `bob/<slug>`, что
 закрывает path-инъекции (`..`, слэши, пробелы в имя не попадают).
 
 #### Оркестратор `CodingAssistant` (use-case)
 
-`CodingAssistant` (`application/usecases/coding_assistant.py`) — чисто-оркестрационный
+`CodingAssistant` (`coding/usecases/coding_assistant.py`) — чисто-оркестрационный
 use-case над чистым доменом и инжектированными портами (раннер Claude Code, worktree,
 стор, PR-открывашка, нотификатор owner, authz, часы, фабрика id, `execute_mode`) плюс три
 **опциональных** сейма с no-op-дефолтом: индикаторы работы `typing_keepalive` /
@@ -1811,12 +1824,12 @@ worktree убирается в `finally` на любом завершении п
 `FAILED`, стоп `CANCELLED`), так что висящих worktree не остаётся. Authz —
 defense-in-depth: гейт дублируется на уровне GUPPI, но use-case проверяет `OwnerCheck.is_owner`
 на **каждом** методе сам; чужому — тихий отказ без сессии и без прогона. Все порты
-объявлены в `domain/ports/coding.py` (`ClaudeCodeRunner`, `Worktree`, `CodingSessionStore`,
+объявлены в `coding/ports.py` (`ClaudeCodeRunner`, `Worktree`, `CodingSessionStore`,
 `PullRequestOpener`).
 
 #### 🔴 Изоляция: `GitWorktree` (только трекнутые файлы)
 
-`GitWorktree` (`infrastructure/coding/git_worktree.py`) — `git worktree add <path> -b
+`GitWorktree` (`coding/adapters/git_worktree.py`) — `git worktree add <path> -b
 <branch>` на **новой** ветке, фиксированной формы и **без shell** (никакой
 интерполяции метасимволов). Свежий worktree содержит **только трекнутые файлы**,
 поэтому приватные данные Боба — `data/soul/`, `bob.db*`, `.env*`, `config/*` (все
@@ -1828,7 +1841,7 @@ Claude Code их физически не видит. Ветка валидиру
 
 #### 🔴 Только ветка + PR, НИКОГДА main: `GhPullRequestOpener`
 
-`GhPullRequestOpener` (`infrastructure/coding/gh_pr.py`) строит **единственную** форму
+`GhPullRequestOpener` (`coding/adapters/gh_pr.py`) строит **единственную** форму
 `gh pr create --base main --head <branch> --title <title> --body <body>` (title/body —
 дискретные argv, без shell) и возвращает URL PR. **Инвариант безопасности:** здесь
 **намеренно нет** пути интеграции в trunk — ни `merge`-метода в порте `PullRequestOpener`,
@@ -1838,7 +1851,7 @@ Claude Code их физически не видит. Ветка валидиру
 
 #### Раннер `SubprocessClaudeRunner` и нарратив
 
-`SubprocessClaudeRunner` (`infrastructure/coding/claude_runner.py`) реализует порт
+`SubprocessClaudeRunner` (`coding/adapters/claude_runner.py`) реализует порт
 `ClaudeCodeRunner`: гоняет `claude` headless через `asyncio.create_subprocess_exec`
 (**никогда не shell** — `prompt` это один дискретный argv-элемент):
 
@@ -1855,7 +1868,7 @@ worktree); любой иной режим (в частности `bypassPermissi
 байтов (`10_000_000`); процесс убивается и reaped на таймауте или раннем break (без
 зомби).
 
-`narrate(event)` (`domain/coding/narrate.py`) — **чистый** детерминированный мэппер
+`narrate(event)` (`coding/narrate.py`) — **чистый** детерминированный мэппер
 одного stream-json события в короткую русскую нарратив-строку **или** `None` для шумных
 событий (system-init, чистый текст ассистента). Раннер только стримит, use-case шлёт
 ненулевые строки в чат owner'а. 🔴 **Канон (BOB-041):** фактическое исполнение — работа
@@ -1863,7 +1876,7 @@ worktree); любой иной режим (в частности `bypassPermissi
 («GUPPI: правлю `<file>`», «GUPPI: гоняю тесты», «GUPPI: тесты прошли», «GUPPI: готово»,
 «GUPPI: ошибка: …»); шум остаётся `None` (без префикса). Голос Боба на гейтах живёт
 отдельно (см. ниже). Сессии переживают рестарт — `SqliteCodingSessionStore`
-(`infrastructure/persistence/coding_session_store.py`) round-trip'ит `CodingSession`
+(`coding/adapters/session_store.py`) round-trip'ит `CodingSession`
 (UPSERT по `id`, `active()` отдаёт нетерминальные), так что двойной гейт честен и через
 границу процесса.
 
@@ -1895,19 +1908,19 @@ owner включает осознанно, как goals/self_improvement, вед
 шлёт owner-сообщения):
 
 - **Tier-0 классификатор намерения.** `ClassifyCodingIntent`
-  (`application/usecases/classify_coding_intent.py`) — дешёвый Tier-0 вызов (по образцу
+  (`coding/usecases/classify_coding_intent.py`) — дешёвый Tier-0 вызов (по образцу
   классификатора настроения): `is_coding_request(text)` возвращает «это запрос dev-работы
   над репозиторием Боба?» одним словом. Парсинг **консервативный** — засчитывается только
   точный ответ `coding`; любое другое слово, мусор или сбойная локальная модель → `chat`
   (`False`). Консервативность — свойство безопасности: ложноположительное лишь **предложит
   план** за непробиваемым гейтом (без правок), так что по сомнению — просто болтаем.
-- **Чистые предикаты апрува/стопа.** `is_approval` / `is_stop` (`domain/coding/intent.py`)
+- **Чистые предикаты апрува/стопа.** `is_approval` / `is_stop` (`coding/intent.py`)
   — детерминированная, **консервативная** классификация одной строки для управления уже
   идущей сессией обычными словами: совпадает только короткая фраза-команда целиком после
   нормализации (пунктуация → пробелы, casefold). Вопрос или реплика, где слово-команда лишь
   упомянуто («а давай попозже…»), **не** совпадает. По любой неоднозначности — `False`
   (трактуется как болтовня, не команда).
-- **Маршрутизатор `CodingIntentRouter`** (`application/usecases/coding_intent_router.py`)
+- **Маршрутизатор `CodingIntentRouter`** (`coding/usecases/coding_intent_router.py`)
   — тонкая политика над двумя швами (`GatedCoder`, `CodingIntentClassifierLike` —
   структурные протоколы). `route(text, sender, is_owner)` решает, **когда** позвать гейтед
   `CodingAssistant`: при живой сессии — только естественный стоп (kill-switch из любого
@@ -1932,7 +1945,7 @@ owner включает осознанно, как goals/self_improvement, вед
 
 #### Голос Боба на гейтах: Боб дирижирует, GUPPI пашет (канон)
 
-`session_voice` (`domain/coding/session_voice.py`) — **чистые детерминированные шаблоны**
+`session_voice` (`coding/session_voice.py`) — **чистые детерминированные шаблоны**
 ключевых реплик сессии **в персоне Боба от первого лица**, с GUPPI как исполнителем, на
 которого Боб ссылается (никакого LLM-вызова на сообщение — латентность/стоимость). Билдеры:
 `accepted()` («берусь, GUPPI — погнали»), `plan(plan_text)` (интро Боба + уже очищенный
@@ -1965,7 +1978,7 @@ Coding-сообщения несут markdown (`## заголовки`, `**жи�
 сессии в топике Боба.
 
 План приходит **дважды** (как текст `assistant` и снова в финальном `result`), поэтому
-`_clean_plan` (`application/usecases/coding_assistant.py`) сводит части к одному
+`_clean_plan` (`coding/usecases/coding_assistant.py`) сводит части к одному
 авторитетному источнику — последнему непустому `result` (а при деградировавшем стриме
 джойнит части `assistant`, отбрасывая содержащиеся/идентичные дубликаты), затем
 `_strip_plan_noise` срезает планную преамбулу (`ExitPlanMode`-болтовня, «Let me write the
@@ -1974,9 +1987,9 @@ plan.» — консервативный `_PLAN_CHATTER_RE`), так что owne
 #### Индикатор работы: typing-keepalive + editable статус-панель (BOB-046)
 
 Прогон `claude` молчит десятки секунд, поэтому coding-сессия показывает owner, что
-процесс идёт. Два дополняющих индикатора живут в `coding_indicator.py`
-(`infrastructure/telegram/`) и реализуют сеймы use-case'а (`TypingKeepalive` /
-`StatusPanel`, объявлены протоколами в `coding_assistant.py`):
+процесс идёт. Два дополняющих индикатора живут в `coding/adapters/indicator.py`
+(ex-`infrastructure/telegram/coding_indicator.py`) и реализуют сеймы use-case'а
+(`TypingKeepalive` / `StatusPanel`, объявлены протоколами в `coding_assistant.py`):
 
 - **`TypingKeepalive`** — «Боб печатает…» на время немых claude-пауз. Async-контекст-менеджер
   (use-case оборачивает им plan- и execute-прогоны): на входе один
@@ -1989,7 +2002,7 @@ plan.» — консервативный `_PLAN_CHATTER_RE`), так что owne
   запоминает её `message_id`; `update(text)` **редактирует то же сообщение**
   (`editMessageText`) — одно сообщение, не спам. Нет запомненного id или сбой редактирования
   → graceful no-op (current behavior без статус-строки, без падения сессии). `CodingAssistant`
-  редактирует панель по фазам сессии шаблонами `session_voice` (`domain/coding/session_voice.py`):
+  редактирует панель по фазам сессии шаблонами `session_voice` (`coding/session_voice.py`):
   `⏳ Прикидываю план…` → `📝 План готов — жду добро.` → `⚙️ GUPPI выполняет…` →
   `✅ PR открыт.` / `⚠️ Не получилось.` / `⏹️ Остановил.`.
 
@@ -2003,7 +2016,7 @@ plan.» — консервативный `_PLAN_CHATTER_RE`), так что owne
 Прежде чем отдать задачу Claude Code, Боб подмешивает в промпт короткую преамбулу с **«почему»**
 проекта, чтобы claude кодил как партнёр, знающий конвенции и рационал области, а не как умный
 редактор, впервые увидевший дерево. Сборщик — `make_coding_context` в
-`application/usecases/coding_context.py`; он строит `_CodingContextBuilder.preamble(task)` из
+`coding/usecases/coding_context.py`; он строит `_CodingContextBuilder.preamble(task)` из
 **трёх публичных источников** по порядку:
 
 1. **конвенции проекта** — статичная публичная константа `_CONVENTIONS` (стек + DDD/Clean-слои +
