@@ -62,6 +62,12 @@
 - **coding-boundary-no-outside-usecases** (forbid_import): coding: снаружи не импортят usecases напрямую (только через фасад/порты)
 - **coding-boundary-no-outside-adapters** (forbid_import): coding: снаружи не импортят adapters напрямую (только через фасад/порты)
 - **coding-no-composition-root** (forbid_import): coding: модуль не импортит композиционный корень (src/bob/app.py)
+- **memory-usecases-no-adapters** (forbid_import): memory: usecases не импортят adapters (только порты; adapters — на композиции)
+- **memory-internals-no-usecases** (forbid_import): memory: доменная логика/адаптеры не импортят usecases (usecases — на композиции)
+- **memory-usecases-no-infra** (forbid_import): memory: usecases не импортят чужой infrastructure (только через порты)
+- **memory-boundary-no-outside-usecases** (forbid_import): memory: снаружи не импортят usecases напрямую (только через фасад/порты)
+- **memory-boundary-no-outside-adapters** (forbid_import): memory: снаружи не импортят adapters напрямую (только через фасад/порты)
+- **memory-no-composition-root** (forbid_import): memory: модуль не импортит композиционный корень (src/bob/app.py)
 - **no-domain-depends-on-outer** (deny): Домен-слой не зависит от сервисов (runtime/bob), кроме part_of
 - **module-coverage** (unknown): Каждый src/bob модуль — трекнутый узел (feature/component/source) или exempt
 - **no-monster-modules** (cardinality): Модуль-слой/фича не должен пухнуть (handle_message/app.py/gateway — #9/#10/#25)

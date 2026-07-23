@@ -51,7 +51,9 @@ src/bob/
                      #   SOUL, TasteZoneClassifier, taste_evolution, voice (тон по mood),
                      #   mood_taste, fascination, phantom_evolution, expression, reaction,
                      #   conversation (контейнмент рефлексий), язык персоны
-    memory/          # EpisodicEvent, SemanticFact
+                     #   память (EpisodicEvent, SemanticFact + порты/логика/адаптеры)
+                     #   переехала в вертикальный модуль `src/bob/memory/` (BOB-062.2);
+                     #   `from bob.domain.ports import MemoryRepo` работает как раньше
     diagrams/        # mermaid_blocks: extract/strip/normalize fenced ```mermaid
                      #   (чистый разбор inline-mermaid из текста ответа, BOB-037)
     proactivity/     # UrgeModel, SocialEnergy, Governance, ProactiveDecider, ProactivityState
@@ -60,8 +62,9 @@ src/bob/
                      #     резолвит все 51 публичный символ без изменений импортов.
                      #   kernel.py       — Clock, DomainEvent, EventBus, EventHandler,
                      #                     JsonValue, LLMMessage, LLMProvider
-                     #   memory.py       — MemoryRepo, MemoryRecall, Recalled, Embedder,
-                     #                     Reranker (семантическая память, BOB-011)
+                     #   memory-порты (MemoryRepo, MemoryRecall, Recalled, Embedder,
+                     #     Reranker) переехали в `memory/ports.py` (вертикальный модуль,
+                     #     BOB-062.2); `ports/__init__.py` их re-export'ит
                      #   social.py       — SoulStore, AllowlistStore
                      #   proactivity.py  — ProactivityStore, GoalStore, Planner,
                      #                     SelfImprovementStore, PatternDetector
@@ -101,14 +104,18 @@ src/bob/
                      #   long-polling + authz-гейт, typing-индикатор + rich-финал
                      #   (Вариант A), Rich Messages, thread-reply; rich.py: markdown↔RichMessage
     llm/             # OpenAICompatProvider (Tier 0/1, + tool-calling) + фабрика;
-                     #   OllamaEmbedder (BGE-M3) + OllamaReranker + их фабрики;
-                     #   QwenWebSearchProvider (web_search через Responses API, BOB-053)
+                     #   QwenWebSearchProvider (web_search через Responses API, BOB-053);
+                     #   OllamaEmbedder/OllamaReranker + их фабрики переехали в
+                     #   `memory/adapters/` (вертикальный модуль, BOB-062.2)
     web/             # HttpUrlReader: aiohttp GET за 🔴 SSRF-щитом + извлечение текста
                      #   через stdlib html.parser; build_url_reader (read_url, BOB-054)
-    persistence/     # SqliteMemoryRepo + FTS5 recall + KvAllowlistStore + SoulStore
-                     #   + SqliteProactivityStore + RepoProactivitySources
-                     #   + SqliteFascinationStore (BOB-020);
-                     #   MemoryVectorStore (sqlite-vec) + HybridMemoryRecall (RRF)
+    persistence/     # 🔴 shared kernel персистентности (до BOB-062.7): SqliteMemoryRepo
+                     #   + schema.sql + MemoryVectorStore (sqlite-vec) остаются здесь,
+                     #   кормят ~13 чужих сторов через .connection()-шов;
+                     #   + KvAllowlistStore + SoulStore + SqliteProactivityStore
+                     #   + RepoProactivitySources + SqliteFascinationStore (BOB-020).
+                     #   recall-адаптеры (Fts5MemoryRecall + HybridMemoryRecall, RRF)
+                     #   переехали в `memory/adapters/` (вертикальный модуль, BOB-062.2)
     introspection/   # SubprocessRepoIntrospector: read-only beadloom/bd/git log через
                      #   create_subprocess_exec (фикс-allowlist + git фикс-формы, не shell)
                      #   + guarded read_file (BOB-017, BOB-038)
@@ -127,6 +134,17 @@ src/bob/
                      #   Граница «снаружи — только через ports/фасад» держится path-glob
                      #   forbid_import-правилами (.beadloom/_graph/rules.yml). См. SPEC:
                      #   docs/domains/coding/README.md
+  memory/            # 🔴 ВЕРТИКАЛЬНЫЙ модуль «Боб помнит» (BOB-062.2): бизнес-логика
+                     #   памяти в одном месте, а не размазана по слоям. Раскладка:
+                     #     ports.py + entities (EpisodicEvent, SemanticFact) — layer=domain;
+                     #     usecases/ (extract_facts, consolidate_memory, dedup_facts)
+                     #       — layer=application;
+                     #     adapters/ (fts_recall, hybrid_recall, ollama_embedder,
+                     #       ollama_reranker + фабрики) — layer=infrastructure.
+                     #   🔴 kernel персистентности (SqliteMemoryRepo + schema + vector_store)
+                     #   ОСТАЁТСЯ в infrastructure/persistence/ до BOB-062.7 (вариант C);
+                     #   разрешённое ребро kernel→bob.memory.entities помечено TODO-.7.
+                     #   См. SPEC: docs/domains/memory/README.md
   app.py             # composition root: собирает порты и адаптеры, запускает рантайм
 ```
 
@@ -846,7 +864,7 @@ owner-приватка.
 - **Колонка `episodic_log.sender_id INTEGER`** (nullable) — id собеседника, к
   которому относится ход. `None` для хода без отправителя (тик, дайджест,
   легаси-строка). Зеркалится полем `EpisodicEvent.sender_id`
-  (`domain/memory/entities.py`); `save_episode` и `recent_episodes` несут его в обе
+  (`src/bob/memory/entities.py`); `save_episode` и `recent_episodes` несут его в обе
   стороны.
 - **Миграция (идемпотентная, guarded).** `SqliteMemoryRepo._migrate_episodic_sender_id`
   через PRAGMA-проверку колонок добавляет `sender_id` к уже существующей БД
@@ -2378,7 +2396,7 @@ guarded-`ALTER` (миграция в no-op, когда колонка уже е�
   (id канонического), только исключается из recall, чтобы дубликат не всплывал. По
   умолчанию `NULL` — активный, неслитый факт.
 
-**(1) Дайджесты — `ConsolidateMemory` (тик).** `application/usecases/consolidate_memory.py`:
+**(1) Дайджесты — `ConsolidateMemory` (тик).** `src/bob/memory/usecases/consolidate_memory.py`:
 редкий шаг на reflect-тике. Каждый прогон выбирает **старые** (старше порога)
 **не-`consolidated`** **не-дайджест** эпизоды пачкой (размер из конфига; предикат
 обеспечивает persistence-шов `ConsolidationStore`, так что дайджест не дайджестится
@@ -2392,7 +2410,7 @@ Tier 0 вернул пустой дайджест, шаг пропускаетс
 `max_age_days=14`, `batch_size=50`. Всё инъецируется (store/router/clock), step без
 глобалов и детерминирован на фейках.
 
-**(2) Дедуп фактов — `DedupFacts` (тик).** `application/usecases/dedup_facts.py`:
+**(2) Дедуп фактов — `DedupFacts` (тик).** `src/bob/memory/usecases/dedup_facts.py`:
 редкий шаг на том же тике. Каждый прогон выбирает **активные** факты (`superseded_by
 IS NULL`, `select_active_facts`, с ограничением пачки) → эмбеддит их пачкой через
 порт `Embedder` (локально, в тестах фейк) → **кластеризует по косинусу** (одно-

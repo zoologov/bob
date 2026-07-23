@@ -86,6 +86,8 @@ nodes:
     # is the deliberately-allowed `kernel → memory` edge (marked in .2).
     tags: [module-vertical]
     summary: 'Memory module («Bob remembers») — the full vertical capability in one place: `ports.py` + pure `entities`, `usecases/` (extract facts, consolidate, dedup), and `adapters/` (FTS5/hybrid recall + local Ollama embedder/reranker). Domain-first slice BOB-062.2.'
+    docs:
+      - domains/memory/README.md
 
   - ref_id: goals
     kind: feature
