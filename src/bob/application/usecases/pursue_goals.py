@@ -52,8 +52,8 @@ from bob.domain.goals.graph import (
     next_safe_task,
 )
 from bob.domain.goals.state import GoalState, TaskState, can_transition, can_transition_task
-from bob.domain.memory.entities import EpisodicEvent
 from bob.domain.proactivity.governance import ProactiveHistory
+from bob.memory.entities import EpisodicEvent
 
 if TYPE_CHECKING:
     from collections.abc import Mapping

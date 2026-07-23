@@ -28,9 +28,10 @@ from typing import TYPE_CHECKING
 
 from bob.app import build_application
 from bob.application.runtime.events import MessageReceived
-from bob.domain.memory.entities import SemanticFact
 from bob.domain.ports import ToolCall, ToolCallResult
-from bob.infrastructure.persistence import HybridMemoryRecall, SoulStore
+from bob.infrastructure.persistence import SoulStore
+from bob.memory.adapters import HybridMemoryRecall
+from bob.memory.entities import SemanticFact
 from tests.support.judge_stub import JUDGE_REPLY, is_judge_request
 
 if TYPE_CHECKING:

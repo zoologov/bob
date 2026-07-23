@@ -29,7 +29,6 @@ import logging
 from typing import TYPE_CHECKING, Protocol
 
 from bob.application.router.llm_router import LLMRequest, TaskType
-from bob.domain.memory.entities import EpisodicEvent
 from bob.domain.personality.conversation import RepeatThresholds, is_bob_repeat
 from bob.domain.personality.language import DEFAULT_LANGUAGE, language_directive
 from bob.domain.personality.mood import MoodDelta
@@ -38,6 +37,7 @@ from bob.domain.personality.reflection import (
     build_reflection_prompt,
     select_reflection_angle,
 )
+from bob.memory.entities import EpisodicEvent
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -184,7 +184,7 @@ class PhantomEvolver(Protocol):
 class MemoryConsolidator(Protocol):
     """The narrow seam the reflect tick drives to consolidate old memory (BOB-021).
 
-    Realised by :class:`~bob.application.usecases.consolidate_memory.ConsolidateMemory`:
+    Realised by :class:`~bob.memory.usecases.consolidate_memory.ConsolidateMemory`:
     a rare, non-destructive, idempotent step that folds OLD un-consolidated episodes
     into a Tier-0 digest (embedded, recalled like any episode) and flags the sources.
     Driven AFTER the reflection is logged, on the same slow cadence. Optional: unwired,
@@ -199,7 +199,7 @@ class MemoryConsolidator(Protocol):
 class FactDeduper(Protocol):
     """The narrow seam the reflect tick drives to merge near-duplicate facts (BOB-021).
 
-    Realised by :class:`~bob.application.usecases.dedup_facts.DedupFacts`: a rare,
+    Realised by :class:`~bob.memory.usecases.dedup_facts.DedupFacts`: a rare,
     conservative, non-destructive, idempotent step that merges near-duplicate semantic
     facts (cosine of embeddings above a conservative threshold) into a canonical one,
     flagging the rest superseded — so Bob's facts stay clean without false merges.

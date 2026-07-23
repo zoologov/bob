@@ -3,6 +3,8 @@
 # See the LICENSE file in the project root for full license information.
 
 # beadloom:domain=bob
+# beadloom:feature=memory
+# beadloom:layer=domain
 
 """Memory ports — persistence, relevance retrieval, and the semantic seams.
 
@@ -19,7 +21,7 @@ from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
-    from bob.domain.memory.entities import SemanticFact
+    from bob.memory.entities import SemanticFact
 
 # A single recalled memory item (content + relevance score), returned by recall.
 type Recalled = Mapping[str, object]

@@ -18,15 +18,15 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from bob.application.router.llm_router import LLMRouter
-from bob.application.usecases.extract_facts import ExtractFacts
-from bob.infrastructure.persistence.fts_recall import Fts5MemoryRecall
 from bob.infrastructure.persistence.sqlite_repo import SqliteMemoryRepo
+from bob.memory.adapters.fts_recall import Fts5MemoryRecall
+from bob.memory.usecases.extract_facts import ExtractFacts
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Mapping, Sequence
     from pathlib import Path
 
-    from bob.domain.memory.entities import SemanticFact
+    from bob.memory.entities import SemanticFact
 
 
 class FixedClock:

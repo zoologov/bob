@@ -74,9 +74,18 @@ nodes:
 
   - ref_id: memory
     kind: feature
-    source: src/bob/domain/memory/
-    tags: [layer-domain]
-    summary: 'Memory domain entities — facts, episodes, relationship and recall value objects (pure; persistence lives in infrastructure).'
+    source: src/bob/memory/
+    # BOB-062.2: domain-first VERTICAL module — spans domain+application+infra
+    # INSIDE one bounded context, so it is NOT a horizontal layer. Tag is the
+    # non-layer `module-vertical` (like `coding`) so the tag-based
+    # `architecture-layers` rule silently skips its edges; the module's INTERNAL
+    # layering and its OUTER boundary are enforced by the path-glob `forbid_import`
+    # rules in .beadloom/_graph/rules.yml (§ vertical modules, added in .2).
+    # NB: the durable episode/fact store (`SqliteMemoryRepo`) stays in the shared
+    # persistence kernel until BOB-062.7; its lone reach into `bob.memory.entities`
+    # is the deliberately-allowed `kernel → memory` edge (marked in .2).
+    tags: [module-vertical]
+    summary: 'Memory module («Bob remembers») — the full vertical capability in one place: `ports.py` + pure `entities`, `usecases/` (extract facts, consolidate, dedup), and `adapters/` (FTS5/hybrid recall + local Ollama embedder/reranker). Domain-first slice BOB-062.2.'
 
   - ref_id: goals
     kind: feature

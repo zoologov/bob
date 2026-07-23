@@ -55,7 +55,6 @@ from bob.domain.diagrams import (
     normalize_mermaid,
     strip_mermaid_blocks,
 )
-from bob.domain.memory.entities import EpisodicEvent
 from bob.domain.personality.absence import absence_hint
 from bob.domain.personality.addressivity import (
     Addressivity,
@@ -145,6 +144,7 @@ from bob.domain.personality.voice import (
 from bob.domain.personality.volatility_judgment import VolatilityContext
 from bob.domain.personality.zone_classifier import TasteZoneClassifier
 from bob.domain.ports import DiagramRenderError, DiagramResult
+from bob.memory.entities import EpisodicEvent
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Mapping, Sequence
@@ -156,7 +156,6 @@ if TYPE_CHECKING:
     from bob.application.router.llm_router import LLMRouter
     from bob.application.runtime.events import MessageReceived
     from bob.application.usecases.decide_response import DecideResponse
-    from bob.application.usecases.extract_facts import ExtractFacts
     from bob.application.usecases.update_mood_from_text import UpdateMoodFromText
     from bob.domain.personality.fascination import Fascination
     from bob.domain.personality.interlocutor import Interlocutor
@@ -186,6 +185,7 @@ if TYPE_CHECKING:
         WebSearchProvider,
         ZoneClassifier,
     )
+    from bob.memory.usecases.extract_facts import ExtractFacts
 
 logger = logging.getLogger(__name__)
 

@@ -3,12 +3,14 @@
 # See the LICENSE file in the project root for full license information.
 
 # beadloom:domain=bob
+# beadloom:feature=memory
+# beadloom:layer=infrastructure
 
 """Factory building the :class:`bob.domain.ports.Embedder` from configuration.
 
 Reads the ``embeddings`` section of the merged config (defaults -> YAML -> env,
 see :mod:`bob.infrastructure.config.loader`) and constructs an
-:class:`bob.infrastructure.llm.ollama_embedder.OllamaEmbedder`. The section is
+:class:`bob.memory.adapters.ollama_embedder.OllamaEmbedder`. The section is
 provider-agnostic (``base_url`` / ``model`` / ``dim``), so pointing the embedder
 at a different local model is a config change, not a rewrite.
 """
@@ -17,7 +19,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
-from bob.infrastructure.llm.ollama_embedder import OllamaEmbedder
+from bob.memory.adapters.ollama_embedder import OllamaEmbedder
 
 
 def build_embedder(config: Mapping[str, object]) -> OllamaEmbedder:

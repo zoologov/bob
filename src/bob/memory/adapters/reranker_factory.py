@@ -3,12 +3,14 @@
 # See the LICENSE file in the project root for full license information.
 
 # beadloom:domain=bob
+# beadloom:feature=memory
+# beadloom:layer=infrastructure
 
 """Factory building the optional :class:`bob.domain.ports.Reranker` from config.
 
 Reads the ``reranker`` section of the merged config (defaults -> YAML -> env, see
 :mod:`bob.infrastructure.config.loader`) and constructs an
-:class:`bob.infrastructure.llm.ollama_reranker.OllamaReranker` — *unless* the
+:class:`bob.memory.adapters.ollama_reranker.OllamaReranker` — *unless* the
 reranker is disabled (``reranker.enabled`` false) or the section is absent, in
 which case it returns ``None`` so the recall pipeline simply skips reranking.
 
@@ -21,7 +23,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
-from bob.infrastructure.llm.ollama_reranker import OllamaReranker
+from bob.memory.adapters.ollama_reranker import OllamaReranker
 
 
 def build_reranker(config: Mapping[str, object]) -> OllamaReranker | None:

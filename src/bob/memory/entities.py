@@ -4,6 +4,7 @@
 
 # beadloom:domain=bob
 # beadloom:feature=memory
+# beadloom:layer=domain
 
 """Immutable memory entities — episodic events and semantic facts.
 

@@ -3,6 +3,8 @@
 # See the LICENSE file in the project root for full license information.
 
 # beadloom:domain=bob
+# beadloom:feature=memory
+# beadloom:layer=infrastructure
 
 """HybridMemoryRecall — semantic + keyword recall fused with Reciprocal Rank Fusion.
 
@@ -54,7 +56,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-from bob.infrastructure.persistence.fts_recall import Fts5MemoryRecall
+from bob.memory.adapters.fts_recall import Fts5MemoryRecall
 
 if TYPE_CHECKING:
     from collections.abc import Sequence

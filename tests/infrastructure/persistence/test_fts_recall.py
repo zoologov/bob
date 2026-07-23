@@ -11,9 +11,9 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from bob.domain.memory.entities import SemanticFact
-from bob.infrastructure.persistence.fts_recall import Fts5MemoryRecall
 from bob.infrastructure.persistence.sqlite_repo import SqliteMemoryRepo
+from bob.memory.adapters.fts_recall import Fts5MemoryRecall
+from bob.memory.entities import SemanticFact
 
 if TYPE_CHECKING:
     from pathlib import Path

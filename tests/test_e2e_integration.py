@@ -30,11 +30,11 @@ import aiohttp
 
 from bob.app import build_application
 from bob.application.runtime.events import MessageReceived
-from bob.domain.memory.entities import SemanticFact
 from bob.domain.ports import ToolCall, ToolCallResult
 from bob.infrastructure.persistence import SoulStore
 from bob.infrastructure.telegram.guppi import GUPPI_REJECT_TEXT
 from bob.infrastructure.telegram.multibot import BotIdentity
+from bob.memory.entities import SemanticFact
 from tests.support.judge_stub import JUDGE_REPLY, is_judge_request
 
 if TYPE_CHECKING:

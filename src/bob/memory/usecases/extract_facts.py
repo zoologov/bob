@@ -3,7 +3,8 @@
 # See the LICENSE file in the project root for full license information.
 
 # beadloom:domain=bob
-# beadloom:feature=usecases
+# beadloom:feature=memory
+# beadloom:layer=application
 
 """ExtractFacts — distil durable, user-specific facts into semantic memory.
 
@@ -13,7 +14,7 @@ the :class:`LLMRouter`, ``TaskType.EXTRACT_FACTS``) to read the latest exchange
 and return durable facts about the user — a name, a preference, a person, a
 decision — as structured JSON items ``{"category": ..., "content": ...}``.
 
-Each item becomes a :class:`~bob.domain.memory.entities.SemanticFact` and is
+Each item becomes a :class:`~bob.memory.entities.SemanticFact` and is
 written through the :class:`FactWriter` seam (the SQLite repo, whose FTS5 trigger
 indexes the content) so a later turn's :class:`~bob.domain.ports.MemoryRecall`
 can surface it back into the reply context. Obvious repeats are de-duplicated.
@@ -33,7 +34,7 @@ import re
 from typing import TYPE_CHECKING, Protocol
 
 from bob.application.router.llm_router import LLMRequest, TaskType
-from bob.domain.memory.entities import SemanticFact
+from bob.memory.entities import SemanticFact
 
 if TYPE_CHECKING:
     from bob.application.router.llm_router import LLMRouter

@@ -33,9 +33,9 @@ from bob.app import (
     _build_surface_old_freq,
 )
 from bob.application.router.llm_router import LLMRouter
-from bob.application.usecases.consolidate_memory import ConsolidateMemory
-from bob.application.usecases.dedup_facts import DedupFacts, _cosine, _supersession_mapping
 from bob.application.usecases.handle_message import _DEFAULT_SURFACE_OLD_FREQ
+from bob.memory.usecases.consolidate_memory import ConsolidateMemory
+from bob.memory.usecases.dedup_facts import DedupFacts, _cosine, _supersession_mapping
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Mapping, Sequence

@@ -34,12 +34,12 @@ import aiosqlite
 import pytest
 
 from bob.application.router.llm_router import LLMRouter
-from bob.application.usecases.consolidate_memory import ConsolidateMemory
-from bob.application.usecases.dedup_facts import DedupFacts
-from bob.domain.memory.entities import SemanticFact
-from bob.infrastructure.persistence.fts_recall import Fts5MemoryRecall
-from bob.infrastructure.persistence.hybrid_recall import HybridMemoryRecall
 from bob.infrastructure.persistence.sqlite_repo import SqliteMemoryRepo
+from bob.memory.adapters.fts_recall import Fts5MemoryRecall
+from bob.memory.adapters.hybrid_recall import HybridMemoryRecall
+from bob.memory.entities import SemanticFact
+from bob.memory.usecases.consolidate_memory import ConsolidateMemory
+from bob.memory.usecases.dedup_facts import DedupFacts
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Mapping, Sequence

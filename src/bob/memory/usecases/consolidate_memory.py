@@ -3,7 +3,8 @@
 # See the LICENSE file in the project root for full license information.
 
 # beadloom:domain=bob
-# beadloom:feature=usecases
+# beadloom:feature=memory
+# beadloom:layer=application
 
 """ConsolidateMemory — the rare, non-destructive digest step (BOB-021).
 
