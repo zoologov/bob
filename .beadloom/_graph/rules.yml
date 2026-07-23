@@ -111,22 +111,25 @@ rules:
 
   # Module boundary (inward): the outside world reaches `coding` only through its
   # facade (`__init__.py`) / `ports.py` — never into `usecases/` or `adapters/`.
-  # `src/bob/[adim]*/*` = the application/domain/infrastructure trees PLUS the
-  # `memory` vertical module (a|d|i|m…); `coding`-self (`c…`) and the
-  # `src/bob/app.py` composition root are excluded (the latter legitimately wires
-  # the internals). BOB-062.2: `m` was added when the `memory` module landed —
-  # closing the pairwise isolation the original note anticipated (fnmatch cannot
-  # correlate a from≠to module in a single glob, so each module is enumerated).
-  # A future vertical (t…) extends this class again as it lands.
+  # `src/bob/[adimp]*/*` = the application/domain/infrastructure trees PLUS the
+  # `memory` and `proactivity` vertical modules (a|d|i|m|p…); `coding`-self (`c…`)
+  # and the `src/bob/app.py` composition root are excluded (the latter legitimately
+  # wires the internals). BOB-062.2 added `m` (memory); BOB-062.3 added `p`
+  # (proactivity) — each new vertical closes the pairwise isolation the original
+  # note anticipated (fnmatch cannot correlate a from≠to module in a single glob,
+  # so each module is enumerated). 🔴 SINGLE-CHAR LIMIT: `.4 capabilities` (also
+  # `c…`) will COLLIDE with `coding` — the char-class scheme cannot isolate two
+  # modules that share a first letter. See the generator proposal at the end of
+  # this file (evaluated in .3/.4) for the explicit-path replacement.
   - name: coding-boundary-no-outside-usecases
     description: "coding: снаружи не импортят usecases напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/[adim]*/*", to: "bob/coding/usecases/*"}
+    forbid_import: {from: "src/bob/[adimp]*/*", to: "bob/coding/usecases/*"}
 
   - name: coding-boundary-no-outside-adapters
     description: "coding: снаружи не импортят adapters напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/[adim]*/*", to: "bob/coding/adapters/*"}
+    forbid_import: {from: "src/bob/[adimp]*/*", to: "bob/coding/adapters/*"}
 
   # Module boundary (outward): a module must not depend on the composition root
   # that wires it (no inversion). `coding`'s ONLY legitimate outward runtime dep
@@ -149,11 +152,12 @@ rules:
   #     `*` spans `/`, a blanket `from: src/bob/memory/*` source glob would false-
   #     flag those LEGAL sibling package re-exports. So `internals-no-usecases`
   #     excludes the `usecases/` dir as a source via `[!u]*` (see its note).
-  #   • a SECOND vertical module now exists, so the OUTSIDE-world source globs are
-  #     `src/bob/[acdi]*/*` = application/coding/domain/infrastructure — every
-  #     top-level tree EXCEPT memory-self (`m…`) and the `src/bob/app.py`
-  #     composition root. (Symmetrically, the `coding` boundary globs above gained
-  #     `m` so the two modules are isolated from each other in BOTH directions.)
+  #   • more vertical modules now exist, so the OUTSIDE-world source globs are
+  #     `src/bob/[acdip]*/*` = application/coding/domain/infrastructure/proactivity
+  #     — every top-level tree EXCEPT memory-self (`m…`) and the `src/bob/app.py`
+  #     composition root. (Symmetrically, `coding`'s globs gained `m`+`p` and
+  #     `proactivity`'s gain `m`, so every module pair is isolated in BOTH
+  #     directions.) BOB-062.3 added `p` (proactivity) to this class.
 
   # Internal layering: usecases orchestrate via PORTS, never importing concrete
   # adapters (adapters are wired at the composition root, src/bob/app.py).
@@ -186,18 +190,19 @@ rules:
 
   # Module boundary (inward): the outside world reaches `memory` only through its
   # facade (`__init__.py`) / `ports.py` / pure `entities` — never into `usecases/`
-  # or `adapters/`. `src/bob/[acdi]*/*` = the application/coding/domain/infra
-  # trees; memory-self (`m…`) and the `src/bob/app.py` composition root are
-  # excluded (the latter legitimately wires the internals).
+  # or `adapters/`. `src/bob/[acdip]*/*` = the application/coding/domain/infra/
+  # proactivity trees; memory-self (`m…`) and the `src/bob/app.py` composition root
+  # are excluded (the latter legitimately wires the internals). BOB-062.3 added
+  # `p` (proactivity).
   - name: memory-boundary-no-outside-usecases
     description: "memory: снаружи не импортят usecases напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/[acdi]*/*", to: "bob/memory/usecases/*"}
+    forbid_import: {from: "src/bob/[acdip]*/*", to: "bob/memory/usecases/*"}
 
   - name: memory-boundary-no-outside-adapters
     description: "memory: снаружи не импортят adapters напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/[acdi]*/*", to: "bob/memory/adapters/*"}
+    forbid_import: {from: "src/bob/[acdip]*/*", to: "bob/memory/adapters/*"}
 
   # Module boundary (outward): memory must not import the composition root that
   # wires it (no inversion). Its legitimate outward deps are SHARED application
@@ -209,6 +214,94 @@ rules:
     description: "memory: модуль не импортит композиционный корень (src/bob/app.py)"
     severity: error
     forbid_import: {from: "src/bob/memory/*", to: "bob/app"}
+
+  # ── Proactivity VERTICAL module — per-module boundaries (BOB-062.3, #13) ─────
+  # Third domain-first vertical module (see `coding`/`memory` above): same
+  # discipline (internal layering + inward/outward boundary), enforced by real-
+  # import path globs; `proactivity` carries `module-vertical` so
+  # `architecture-layers` skips its edges. It is the LARGEST module (~25 files) and
+  # bundles a cohesive `goals/` sub-package — but `goals/` is still `layer=domain`
+  # inside the module, so it needs NO separate rules: the domain-root globs below
+  # (`*` spans `/`) already cover it. Two shape facts (identical to `memory`) drive
+  # the glob choices:
+  #   • BOTH `usecases/__init__.py` AND `adapters/__init__.py` re-export their own
+  #     submodules (façades). Because fnmatch `*` spans `/`, a blanket
+  #     `from: src/bob/proactivity/*` source would false-flag those LEGAL sibling
+  #     re-exports — so `internals-no-usecases` excludes the `usecases/` dir as a
+  #     source via `[!u]*` (see its note; adapter sibling re-exports are not
+  #     policed by any rule here).
+  #   • THREE verticals now exist, so proactivity's OUTSIDE-world source globs are
+  #     `src/bob/[acdim]*/*` = application/coding/domain/infrastructure/memory —
+  #     every top-level tree EXCEPT proactivity-self (`p…`) and the `src/bob/app.py`
+  #     composition root.
+
+  # Internal layering: usecases orchestrate via PORTS, never importing concrete
+  # adapters (adapters are wired at the composition root, src/bob/app.py).
+  - name: proactivity-usecases-no-adapters
+    description: "proactivity: usecases не импортят adapters (только порты; adapters — на композиции)"
+    severity: error
+    forbid_import: {from: "src/bob/proactivity/usecases/*", to: "bob/proactivity/adapters/*"}
+
+  # Internal layering: proactivity's domain-root (decision/governance/social_energy/
+  # state/urge/self_improvement/ports/__init__ + the `goals/` sub-package) and its
+  # adapters must not import a usecase — usecases are instantiated only at the
+  # external composition root. `src/bob/proactivity/[!u]*` excludes the `usecases/`
+  # dir as a SOURCE (fnmatch `*` spans `/`), so LEGAL usecase↔usecase sibling
+  # re-exports (usecases/__init__.py) are not flagged. NOTE: `[!u]*` also excludes
+  # the root `urge.py` (starts with `u`) from this source glob; that is an accepted
+  # gap — `urge.py` is pure drive-core math with no `bob.*` deps (an import-leaf),
+  # so it never reaches a usecase. Every OTHER internal (decision/governance/…, and
+  # all of `goals/`) is still policed.
+  - name: proactivity-internals-no-usecases
+    description: "proactivity: доменная логика/адаптеры не импортят usecases (usecases — на композиции)"
+    severity: error
+    forbid_import: {from: "src/bob/proactivity/[!u]*", to: "bob/proactivity/usecases/*"}
+
+  # Layer-guard INSIDE proactivity: its application layer (`usecases/`) lives UNDER
+  # src/bob/proactivity/ and is therefore OUTSIDE tests/application/test_layering.py
+  # (which scans only `bob.application`). This restores that guard at module scope:
+  # proactivity use-cases drive the pure domain through ports and must not import
+  # foreign infrastructure. (Their legitimate outward deps are SHARED application
+  # services — `bob.application.router.llm_router`, `bob.application.usecases.
+  # handle_message` TYPE_CHECKING types — which live OUTSIDE any module and target
+  # `bob/application/*`, not `bob/infrastructure/*`.) Runtime-level (code_imports
+  # omits TYPE_CHECKING).
+  - name: proactivity-usecases-no-infra
+    description: "proactivity: usecases не импортят чужой infrastructure (только через порты)"
+    severity: error
+    forbid_import: {from: "src/bob/proactivity/usecases/*", to: "bob/infrastructure/*"}
+
+  # Module boundary (inward): the outside world reaches `proactivity` only through
+  # its public domain surface (`__init__.py` / `ports.py` / the pure drive-core +
+  # `goals` + `self_improvement` value types) — never into `usecases/` or
+  # `adapters/`. `src/bob/[acdim]*/*` = application/coding/domain/infra/memory;
+  # proactivity-self (`p…`) and the `src/bob/app.py` composition root are excluded
+  # (the latter legitimately wires the internals). The legalized inbound stitches
+  # (handle_message→self_improvement, guppi→goals.state/self_improvement/state) all
+  # target that PUBLIC domain surface — NOT usecases/adapters — so they do not hit
+  # these forbids; guppi/multibot→usecases.plan_goal is TYPE_CHECKING-only (absent
+  # from code_imports). See the note block at the end of this file.
+  - name: proactivity-boundary-no-outside-usecases
+    description: "proactivity: снаружи не импортят usecases напрямую (только через фасад/порты)"
+    severity: error
+    forbid_import: {from: "src/bob/[acdim]*/*", to: "bob/proactivity/usecases/*"}
+
+  - name: proactivity-boundary-no-outside-adapters
+    description: "proactivity: снаружи не импортят adapters напрямую (только через фасад/порты)"
+    severity: error
+    forbid_import: {from: "src/bob/[acdim]*/*", to: "bob/proactivity/adapters/*"}
+
+  # Module boundary (outward): proactivity must not import the composition root
+  # that wires it (no inversion). Its legitimate outward deps are SHARED services
+  # that live OUTSIDE any module (`bob.application.router.llm_router`,
+  # `bob.application.usecases.handle_message` types) plus the shared domain-ports
+  # seam and `bob.memory.entities` — intentionally NOT forbidden. `to: bob/app` is
+  # an EXACT match for the `src/bob/app.py` root and does NOT match the longer
+  # `bob/application/...` paths.
+  - name: proactivity-no-composition-root
+    description: "proactivity: модуль не импортит композиционный корень (src/bob/app.py)"
+    severity: error
+    forbid_import: {from: "src/bob/proactivity/*", to: "bob/app"}
 
   # ── Graph-edge backstop: domain layer must not depend on a service ──────────
   - name: no-domain-depends-on-outer
@@ -296,3 +389,89 @@ rules:
 #
 # If any of these ever becomes a RUNTIME import, it will surface (edge / import
 # scan) and must be re-evaluated — do not pre-emptively suppress.
+
+# ── BOB-062.3: legalized cross-boundary refs for the `proactivity` module ─────
+# The domain-first move surfaced these cross-boundary references (edge-inventory
+# from slice .1). All are legal by design (not real violations); documented here
+# so a later reviewer sees the reasoning and no rule is added that would mask a
+# real break. None currently produces a lint finding (see rationale per item):
+#
+#   INBOUND (outside → proactivity) — all target the PUBLIC domain surface, so
+#   the `proactivity-boundary-no-outside-{usecases,adapters}` globs (which forbid
+#   only `usecases/`+`adapters/`) do NOT bite them:
+#   1. application/usecases/handle_message → proactivity/self_improvement
+#      RUNTIME import of RuleModulators/build_modulators (read-only behaviour
+#      modulators). 🔴 personality-flow → proactivity.self_improvement stitch.
+#      `self_improvement.py` is proactivity's public domain surface (root file),
+#      NOT usecases/adapters. Legal.
+#   2. infrastructure/telegram/guppi → proactivity/goals.state, /self_improvement,
+#      /state   RUNTIME imports of GoalState/can_transition/RuleState/… (the /status
+#      + /quiet + /wake UI renders proactivity domain state). 🔴 adapter reads the
+#      proactivity DOMAIN surface — again root/`goals` value types, not usecases/
+#      adapters. Legal.
+#   3. guppi & multibot → proactivity/usecases/plan_goal (PlanGoal type)
+#      TYPE_CHECKING-only — ABSENT from `code_imports`, so no forbid_import match
+#      and no depends_on edge. Legal as a compile-time type reference even though
+#      it names a usecase.
+#   domain/ports/__init__ → proactivity/ports (5-Protocol shim re-export) is a
+#   domain→module public-surface import (mirrors domain.ports→memory.ports); ports
+#   are the module's declared inward seam — legal, no forbid targets it.
+#
+#   OUTBOUND (proactivity → outside):
+#   4. usecases/engine, usecases/pursue_goals → memory/entities (EpisodicEvent)
+#      🔴 proactivity → memory.entities. RUNTIME, but `entities` is memory's PUBLIC
+#      domain surface (NOT memory/usecases|adapters — the only memory paths the
+#      boundary globs forbid), so no finding. App-layer usecases legitimately read
+#      a shared domain value type. Legal.
+#   5. usecases/engine, usecases/plan_goal → application/router.llm_router,
+#      reply_tier_selector; usecases → domain/personality.{conversation,voice,…};
+#      proactivity.* → domain/ports (Clock/Planner/MemoryRecall). SHARED
+#      application/domain services OUTSIDE any module — target `bob/application/*`
+#      or `bob/domain/*`, never `bob/infrastructure/*`, so `usecases-no-infra`
+#      stays clean and `no-composition-root` (exact `bob/app`) does not match.
+#   6. adapters/* → kernel connection: NO import — SqliteMemoryRepo is INJECTED at
+#      the composition root (app.py) via constructors; `proactivity_sources` imports
+#      only `bob.domain.ports.Clock` (TYPE). So there is NO proactivity→kernel edge,
+#      and — confirmed from .1 — NO reverse kernel→proactivity edge either
+#      (sqlite_repo/schema.sql do not import the 4 stores). No allow-rule needed.
+#
+# If any TYPE_CHECKING item ever becomes a RUNTIME import it will surface (edge /
+# import scan) and must be re-evaluated — do not pre-emptively suppress.
+
+# ── 🔴 BOUNDARY-RULE GENERATOR — evaluation & proposal (BOB-062.3, for .4) ─────
+# Signal (review .1/.2, re-confirmed .3): module isolation is expressed by MANUAL
+# single-char-class globs (`[acdim]*`, one letter per module). Every new vertical
+# forces editing the char-class of EVERY existing module's two boundary rules —
+# 2·(N−1) hand-edits per slice, silent-gap-prone if one is missed.
+#
+# DECISION: variant B (a generator) is justified IN PRINCIPLE, but NOT built in
+# this slice, and a naive char-class generator would be WRONG. Reasons:
+#   • 🔴 SINGLE-CHAR COLLISION (hard blocker, lands at .4): `capabilities` also
+#     starts with `c`, like `coding`. A single-char class CANNOT isolate two
+#     modules that share a first letter — coding's self-exclusion (`[!c]`/omitting
+#     `c`) would ALSO exclude capabilities, leaving coding↔capabilities mutual
+#     isolation UNENFORCEABLE. So the scheme itself must move to EXPLICIT per-module
+#     path globs (`src/bob/coding/`, `src/bob/capabilities/`) — a generator that
+#     merely emits char-classes would inherit the bug.
+#   • This rules.yml is deliberately RICH with hand-authored rationale comments
+#     (the point of AaC review). A generator that OVERWRITES the file would destroy
+#     them; a prose-preserving round-trip (ruamel) is >>60 lines and risky — it
+#     would BLOAT this migration slice.
+#
+# PROPOSED for .4 (design, NOT implemented here to avoid mixing generator infra
+# into the move):
+#   `scripts/gen_boundary_rules.py` — reads services.yml, selects nodes tagged
+#   `module-vertical`, and for each module M emits the 5–6 forbid_import rules
+#   with EXPLICIT paths (no char classes):
+#       for M in modules:
+#         emit usecases-no-adapters, internals-no-usecases (with `[!u]*` iff
+#           M/usecases/__init__ re-exports), usecases-no-infra, no-composition-root
+#         for the inward boundary, source = every OTHER module's path, listed
+#           explicitly: from ∈ {src/bob/<other>/ …} — one forbid per (M, other)
+#           pair OR a comment-documented multi-line list — killing the char-class
+#           correlation entirely and dodging the c-collision.
+#   Emit to a GENERATED region (marker-delimited) that a small `--check` mode
+#   verifies is in sync in CI, leaving the hand-written rationale blocks untouched.
+#   Est. ~50–70 lines. Owner/reviewer verdict requested at .4 (capabilities) —
+#   that slice is where the char-class scheme first BREAKS, so it is the natural
+#   forcing point to land the generator + convert coding/memory/proactivity globs.
