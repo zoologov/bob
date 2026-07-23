@@ -612,7 +612,7 @@ class NaturalCodingRouter(Protocol):
     """The natural-language coding-intent seam HandleMessage delegates to (BOB-041 .2).
 
     Realised by
-    :class:`~bob.application.usecases.coding_intent_router.CodingIntentRouter`: given an
+    :class:`~bob.coding.usecases.coding_intent_router.CodingIntentRouter`: given an
     owner message in Bob's topic it decides WHEN to drive the gated coding session
     (plan / approve / stop) and returns whether it CONSUMED the turn (so HandleMessage
     short-circuits the normal compose). Owner-only and gate-bound live in the router +

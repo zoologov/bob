@@ -24,7 +24,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from bob.app import build_application
-from bob.domain.coding.narrate import narrate
+from bob.coding.narrate import narrate
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Mapping, Sequence

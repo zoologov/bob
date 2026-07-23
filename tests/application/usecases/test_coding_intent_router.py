@@ -19,8 +19,8 @@ and domain). The security invariants asserted here:
 
 from __future__ import annotations
 
-from bob.application.usecases.coding_intent_router import CodingIntentRouter
-from bob.domain.coding.state import CodingSessionState
+from bob.coding.state import CodingSessionState
+from bob.coding.usecases.coding_intent_router import CodingIntentRouter
 
 _OWNER = 99
 _GUEST = 7

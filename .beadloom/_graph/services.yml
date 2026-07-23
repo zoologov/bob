@@ -84,11 +84,22 @@ nodes:
     tags: [layer-domain]
     summary: 'Goals domain — goal/plan entities and goal-state value objects for Bob''s self-directed pursuits.'
 
-  - ref_id: coding-domain
+  - ref_id: coding
     kind: feature
-    source: src/bob/domain/coding/
-    tags: [layer-domain]
-    summary: 'Coding domain (domain half of the coding capability) — pure coding-intent/context entities. Paired with the `coding-infra` adapter.'
+    source: src/bob/coding/
+    # BOB-062.1: domain-first VERTICAL module — spans domain+application+infra
+    # INSIDE one bounded context, so it is NOT a horizontal layer. Tag is the
+    # non-layer `module-vertical` (deliberately not `layer-*`) so the tag-based
+    # `architecture-layers` rule silently skips its edges; the module's INTERNAL
+    # layering and its OUTER boundary are enforced instead by the path-glob
+    # `forbid_import` rules in .beadloom/_graph/rules.yml (§ vertical modules).
+    # Rationale: as a single node it cannot satisfy the layers rule — `ports`
+    # (domain) re-exports `coding` (needs coding ≤ domain) while `coding` uses the
+    # shared `router` (needs coding ≥ application); contradictory for one layer tag.
+    tags: [module-vertical]
+    summary: 'Coding module («Bob writes code») — the full vertical capability in one place: `ports.py` + pure domain logic, `usecases/` orchestration, and `adapters/` (Claude Code CLI, git worktree, gh PR, session store, indicator). Domain-first slice BOB-062.1.'
+    docs:
+      - domains/coding/README.md
 
   - ref_id: diagrams-domain
     kind: feature
@@ -182,12 +193,6 @@ nodes:
     tags: [layer-infra]
     summary: 'Config adapter — two-bot layered config loader (env + files) for the running process.'
 
-  - ref_id: coding-infra
-    kind: component
-    source: src/bob/infrastructure/coding/
-    tags: [layer-infra]
-    summary: 'Coding adapter (infrastructure half of the coding capability) — headless Claude Code CLI / repo I/O. Paired with the `coding-domain` entities.'
-
   - ref_id: diagrams-infra
     kind: component
     source: src/bob/infrastructure/diagrams/
@@ -233,7 +238,7 @@ edges:
   - src: goals
     dst: bob-domain
     kind: part_of
-  - src: coding-domain
+  - src: coding
     dst: bob-domain
     kind: part_of
   - src: diagrams-domain
@@ -283,9 +288,6 @@ edges:
     dst: bob-infrastructure
     kind: part_of
   - src: config
-    dst: bob-infrastructure
-    kind: part_of
-  - src: coding-infra
     dst: bob-infrastructure
     kind: part_of
   - src: diagrams-infra

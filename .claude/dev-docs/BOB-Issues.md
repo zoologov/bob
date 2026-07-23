@@ -6,7 +6,7 @@
 > Потенциальные проблемы и улучшения, собираемые в процессе разработки (по образцу
 > beadloom `BDL-UX-Issues.md`). Фиксируем находки — фиксим планово.
 >
-> **Total:** 30 · **Open:** 20 · **Closed:** 10 (Фаза 1: #6, #19–24, #29 · Фаза 2: #7, #8)
+> **Total:** 30 · **Open:** 19 · **Closed:** 11 (Фаза 1: #6, #19–24, #29 · Фаза 2: #7, #8 · Фаза 3: #11)
 > 2026-07-02 (комплексный аудит, 5 субагентов read-only): заведён лог. Открыты #1–#30
 > из аудита организации/DDD/доков/гигиены. Источник: сессия аудита `13b1e49b`.
 
@@ -82,9 +82,6 @@
 ### #10 [2026-07-02] [HIGH] Декомпозиция `app.py` (2815 стр, God composition-root)
 **Area:** architecture · **Issue:** wiring + 8 инлайн-адаптеров + God-`build_application` (~700 стр) + entrypoint в одном файле. **Expected:** `runtime/{main,composition,config}.py`; инлайн-адаптеры → `infrastructure/telegram|llm/`; per-domain билдеры. 🔴 риски: boot-order, shared-instance инварианты (diagram_sink/notable_reaction), feature-flag «off→None→inert», `_REPO_ROOT` при переносе. Порядок AR-1→8 (аудит ③).
 
-### #11 [2026-07-02] [MEDIUM] Вертикаль **coding** → `coding/`
-**Area:** architecture · **Issue:** размазано (domain/coding + usecases/coding_* + infrastructure/coding). **Expected:** один вертикальный модуль. **Notes:** самый когезивный/безопасный первый реальный переезд. **Depends:** #7.
-
 ### #12 [2026-07-02] [MEDIUM] Вертикаль **memory** → `memory/`
 **Area:** architecture · **Issue:** domain/memory + extract_facts/dedup/consolidate + recall/embedder/reranker. **Depends:** #7.
 
@@ -150,3 +147,8 @@
 
 - ✅ **#7** [split `domain/ports.py`] — монолитный `ports.py` (God-ports) разбит на пакет `domain/ports/` с когезивными подмодулями (`kernel` · `capabilities` · `memory` · `personality` · `conversation` · `social` · `proactivity` · `coding`). `__init__.py` — re-export-шим: `from bob.domain.ports import X` резолвит все 51 публичный символ без изменения импортов (blast radius не тронут). Kernel-порты (`Clock`/`EventBus`/`LLMProvider`/`JsonValue`/`DomainEvent`/`EventHandler`/`LLMMessage`) вынесены в `kernel.py`. Удаление шима — по-прежнему #18 (после domain-first вертикалей).
 - ✅ **#8** [beadloom-правило направления слоёв] — введены AaC-правила слоёв (11 правил): направление `domain ← application ← infrastructure` теперь энфорсится `beadloom lint --strict`, а не только документировано. Дрейф границ становится видимым в CI.
+
+### Фаза 3 — domain-first вертикали (эпик BOB-062, срез 1/8)
+
+**BOB-062.1 «Срез coding → `src/bob/coding/`» (первый вертикальный переезд, ветка `features/BOB-062.1`):**
+- ✅ **#11** [Вертикаль **coding** → `coding/`] — способность «Боб пишет код» собрана из трёх слоёв (`domain/coding` + `application/usecases/coding_*` + `infrastructure/coding` + persistence/telegram-куски) в один вертикальный модуль `src/bob/coding/` (`ports.py` + логика — `layer=domain`; `usecases/` — `layer=application`; `adapters/` — `layer=infrastructure`). Граф-узел `coding` перецелен (тег `module-vertical`), границы модуля держат path-glob `forbid_import`-правила (внутренний layer + «снаружи только через ports/фасад»), 3 cross-boundary ссылки узаконены. Поведение идентично (`pytest`/`ruff`/`mypy --strict` зелёные), coding-инварианты целы (never-merge / двойной гейт плана / PR≠merge / worktree-изоляция / sender-is-bob). Доки наполнены: SPEC модуля `docs/domains/coding/README.md` + освежены coding-пути в `docs/architecture.md`. **Контрольный вывод:** схема модуля domain-first валидирована review'ом — применяется к срезам .2–.8. **Depends:** #7 (закрыт).

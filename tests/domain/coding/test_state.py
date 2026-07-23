@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import pytest
 
-from bob.domain.coding.state import (
+from bob.coding.state import (
     CodingSessionState,
     can_approve_plan,
     can_start,

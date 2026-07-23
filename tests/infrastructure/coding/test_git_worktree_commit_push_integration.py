@@ -5,7 +5,7 @@
 """🔴 REAL-GIT acceptance for the deterministic commit+push (BOB-040 .2).
 
 This is the gap the fakes could not cover: the *actual* git mechanics of
-:meth:`~bob.infrastructure.coding.git_worktree.GitWorktree.commit_and_push`. The
+:meth:`~bob.coding.adapters.git_worktree.GitWorktree.commit_and_push`. The
 original T3.B bug was that ``claude`` (acceptEdits) applies file edits but never runs
 git, so the ``bob/<slug>`` branch had NO commits and ``gh pr create`` failed with "No
 commits between main and bob/<slug>". Bob now commits + pushes the feature branch
@@ -35,8 +35,8 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from bob.infrastructure.coding._exec import ExecRunner
-from bob.infrastructure.coding.git_worktree import GitWorktree, WorktreeError
+from bob.coding.adapters._exec import ExecRunner
+from bob.coding.adapters.git_worktree import GitWorktree, WorktreeError
 
 if TYPE_CHECKING:
     from pathlib import Path

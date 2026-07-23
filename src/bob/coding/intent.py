@@ -3,7 +3,8 @@
 # See the LICENSE file in the project root for full license information.
 
 # beadloom:domain=bob
-# beadloom:feature=coding-domain
+# beadloom:feature=coding
+# beadloom:layer=domain
 
 """Чистые предикаты естественного апрува/стопа coding-сессии (BOB-041 .2, BOB-042 .4).
 

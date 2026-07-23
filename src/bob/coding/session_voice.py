@@ -3,7 +3,8 @@
 # See the LICENSE file in the project root for full license information.
 
 # beadloom:domain=bob
-# beadloom:feature=coding-domain
+# beadloom:feature=coding
+# beadloom:layer=domain
 
 """session_voice — голос Боба на гейтах coding-сессии (BOB-041 .3).
 
@@ -16,7 +17,7 @@
 чуть-чуть, без перебора.
 
 Это голос (как Боб ЗВУЧИТ), а не машинерия безопасности: гейты/поток/изоляция
-(BOB-039/040/.2) живут в use-case :mod:`~bob.application.usecases.coding_assistant`
+(BOB-039/040/.2) живут в use-case :mod:`~bob.coding.usecases.coding_assistant`
 и не меняются — здесь только текст owner-facing сообщений. Все строки render-safe
 (markdown .1-пути не ломается): встроенный план уже очищен апстримом.
 """

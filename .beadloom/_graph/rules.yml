@@ -58,20 +58,83 @@ rules:
     edge_kind: depends_on
 
   # ── Hard import boundaries (scan real imports, path globs) ───────────────────
+  # GLOB SEMANTICS (rule engine = Python fnmatch): `from` matches file_path,
+  # which carries the `src/bob/...` prefix; `to` matches the IMPORTED module path
+  # (dotted→slash, e.g. `bob.infrastructure.x` → `bob/infrastructure/x`) which has
+  # NO `src/` prefix. `*` in fnmatch spans `/`. BOB-062.1 fix: the `to:` globs
+  # below previously read `src/bob/...` and therefore NEVER matched (dead rules);
+  # corrected to the prefix-less `bob/...` form so they actually bite.
   - name: domain-imports-nothing-outward
     description: "Домен не импортит application"
     severity: error
-    forbid_import: {from: "src/bob/domain/**", to: "src/bob/application/**"}
+    forbid_import: {from: "src/bob/domain/**", to: "bob/application/**"}
 
   - name: domain-no-infra
     description: "Домен не импортит infrastructure"
     severity: error
-    forbid_import: {from: "src/bob/domain/**", to: "src/bob/infrastructure/**"}
+    forbid_import: {from: "src/bob/domain/**", to: "bob/infrastructure/**"}
 
   - name: application-no-infra
     description: "Application не импортит infrastructure (только через порты домена)"
     severity: error
-    forbid_import: {from: "src/bob/application/**", to: "src/bob/infrastructure/**"}
+    forbid_import: {from: "src/bob/application/**", to: "bob/infrastructure/**"}
+
+  # ── Domain-first VERTICAL modules — per-module boundaries (BOB-062, #8) ───────
+  # A vertical module (src/bob/<module>/) bundles its own domain logic (root
+  # *.py + ports.py), `usecases/` (application), and `adapters/` (infrastructure)
+  # inside ONE bounded context. It is NOT a horizontal layer, so it carries the
+  # non-layer tag `module-vertical` (skipped by `architecture-layers`); its
+  # discipline is enforced HERE, by real-import path globs. `coding` is the first
+  # module (BOB-062.1) and the EXEMPLAR — replicate this block per module in
+  # .2–.8 (swap `coding` for the module name; a future generator can parameterize
+  # it). fnmatch limits (`*` spans `/`, no `!()`/`{}` negation) shape the globs:
+  # `to:` targets are prefix-less `bob/...`; `[adi]*` selects the legacy
+  # application/domain/infrastructure trees while excluding `coding` (c…) and the
+  # `src/bob/app.py` composition root.
+
+  # Internal layering: usecases orchestrate via PORTS, never importing concrete
+  # adapters (adapters are wired at the composition root, src/bob/app.py).
+  - name: coding-usecases-no-adapters
+    description: "coding: usecases не импортят adapters (только порты; adapters — на композиции)"
+    severity: error
+    forbid_import: {from: "src/bob/coding/usecases/*", to: "bob/coding/adapters/*"}
+
+  # Internal layering: nothing INSIDE the module imports a usecase — usecases are
+  # instantiated only by the external composition root. Covers domain-root↛usecases
+  # and adapters↛usecases in one rule. (domain-root↛adapters cannot be expressed
+  # without also flagging legal adapter↔adapter sibling imports, because fnmatch
+  # `*` spans `/`; domain files stay pure by being import-leaves — see review.)
+  - name: coding-internals-no-usecases
+    description: "coding: доменная логика/адаптеры не импортят usecases (usecases — на композиции)"
+    severity: error
+    forbid_import: {from: "src/bob/coding/*", to: "bob/coding/usecases/*"}
+
+  # Module boundary (inward): the outside world reaches `coding` only through its
+  # facade (`__init__.py`) / `ports.py` — never into `usecases/` or `adapters/`.
+  # `src/bob/[adi]*/*` = the application/domain/infrastructure trees (a|d|i…);
+  # the `src/bob/app.py` composition root is excluded (it legitimately wires the
+  # internals). Future vertical modules (m…/t…) get pairwise isolation rules as
+  # they land — fnmatch cannot correlate a from≠to module in a single glob.
+  - name: coding-boundary-no-outside-usecases
+    description: "coding: снаружи не импортят usecases напрямую (только через фасад/порты)"
+    severity: error
+    forbid_import: {from: "src/bob/[adi]*/*", to: "bob/coding/usecases/*"}
+
+  - name: coding-boundary-no-outside-adapters
+    description: "coding: снаружи не импортят adapters напрямую (только через фасад/порты)"
+    severity: error
+    forbid_import: {from: "src/bob/[adi]*/*", to: "bob/coding/adapters/*"}
+
+  # Module boundary (outward): a module must not depend on the composition root
+  # that wires it (no inversion). `coding`'s ONLY legitimate outward runtime dep
+  # is the SHARED `bob.application.router.llm_router` (an application-level router
+  # that lives OUTSIDE any module) — see the 3 legalized cross-boundary refs in
+  # the note block at the end of this file. That shared-router dependency is
+  # therefore intentionally NOT forbidden here.
+  - name: coding-no-composition-root
+    description: "coding: модуль не импортит композиционный корень (src/bob/app.py)"
+    severity: error
+    forbid_import: {from: "src/bob/coding/*", to: "bob/app"}
 
   # ── Graph-edge backstop: domain layer must not depend on a service ──────────
   - name: no-domain-depends-on-outer
@@ -107,3 +170,30 @@ rules:
     check:
       for: {kind: feature}
       max_symbols: 200
+
+# ── BOB-062.1: 3 legalized cross-boundary refs for the `coding` module ────────
+# The domain-first move surfaced three cross-boundary references. All THREE are
+# legal by design (not real violations); they are documented here deliberately so
+# a later reviewer sees the reasoning and no rule is added that would mask a real
+# break. None currently produces a lint finding (see rationale per item):
+#
+#   1. usecases/classify_coding_intent → application/router/llm_router
+#      app→app dependency on the SHARED LLM router. `llm_router` is a general
+#      application-level service that lives OUTSIDE any vertical module (all
+#      capabilities route through it). Legal. It is why `coding` carries the
+#      `module-vertical` tag (skipped by `architecture-layers`, which otherwise
+#      flagged coding→router) and why `coding-no-composition-root` forbids only
+#      the composition root, NOT the shared router. No forbid rule targets it.
+#
+#   2. usecases/coding_context → domain/introspection/privacy_guard
+#      TYPE_CHECKING-only import (types, no runtime edge, no cycle). Not present
+#      in `code_imports`, so it produces no depends_on edge and no finding. Legal
+#      as a compile-time type reference to a shared domain value object.
+#
+#   3. adapters/indicator → infrastructure/telegram/gateway
+#      TYPE_CHECKING-only cross-infra import (types only). Same as (2): no runtime
+#      edge, no finding. Legal — the indicator adapter types against the gateway
+#      protocol without a runtime dependency.
+#
+# If any of these ever becomes a RUNTIME import, it will surface (edge / import
+# scan) and must be re-evaluated — do not pre-emptively suppress.

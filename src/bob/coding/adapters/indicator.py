@@ -3,12 +3,14 @@
 # See the LICENSE file in the project root for full license information.
 
 # beadloom:domain=bob
+# beadloom:feature=coding
+# beadloom:layer=infrastructure
 
 """Telegram-адаптеры индикатора работы coding-сессии (BOB-046 .2).
 
 Два дополняющих индикатора для coding-сессии, реализующих сеймы use-case
-(:class:`~bob.application.usecases.coding_assistant.TypingKeepalive` /
-:class:`~bob.application.usecases.coding_assistant.StatusPanel`) поверх бота Боба:
+(:class:`~bob.coding.usecases.coding_assistant.TypingKeepalive` /
+:class:`~bob.coding.usecases.coding_assistant.StatusPanel`) поверх бота Боба:
 
 * :class:`TypingKeepalive` — «Боб печатает…» на время немых claude-пауз. Реюз идиомы
   BOB-009 ``typing_indicator``: на вход — один ``sendChatAction("typing")`` в топик Боба,

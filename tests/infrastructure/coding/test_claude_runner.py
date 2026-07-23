@@ -20,11 +20,11 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from bob.domain.ports import ClaudeCodeRunner
-from bob.infrastructure.coding.claude_runner import (
+from bob.coding.adapters.claude_runner import (
     ClaudeRunError,
     SubprocessClaudeRunner,
 )
+from bob.domain.ports import ClaudeCodeRunner
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Mapping

@@ -21,10 +21,10 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from bob.infrastructure.coding import claude_runner, gh_pr
-from bob.infrastructure.coding._exec import CommandError, ExecRunner
-from bob.infrastructure.coding.claude_runner import SubprocessClaudeRunner
-from bob.infrastructure.coding.gh_pr import GhPullRequestOpener
+from bob.coding.adapters import claude_runner, gh_pr
+from bob.coding.adapters._exec import CommandError, ExecRunner
+from bob.coding.adapters.claude_runner import SubprocessClaudeRunner
+from bob.coding.adapters.gh_pr import GhPullRequestOpener
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator

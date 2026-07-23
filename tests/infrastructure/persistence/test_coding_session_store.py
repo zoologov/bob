@@ -16,11 +16,11 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from bob.domain.coding.entities import CodingSession
-from bob.domain.coding.state import CodingSessionState
-from bob.infrastructure.persistence.coding_session_store import (
+from bob.coding.adapters.session_store import (
     SqliteCodingSessionStore,
 )
+from bob.coding.entities import CodingSession
+from bob.coding.state import CodingSessionState
 from bob.infrastructure.persistence.sqlite_repo import SqliteMemoryRepo
 
 if TYPE_CHECKING:

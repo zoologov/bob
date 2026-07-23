@@ -8,7 +8,7 @@ BOB-039 US-5. This is the *real* isolation guarantee, so it is exercised with RE
 ``git`` on a THROW-AWAY temporary repo (never the live repo). We build a tiny repo
 whose private files mirror Bob's own — ``data/bob.db``, ``.env``, ``config/*`` and
 ``data/soul/*`` — and gitignore them (exactly as the live repo does). Then we drive
-:class:`~bob.infrastructure.coding.git_worktree.GitWorktree` (the production adapter,
+:class:`~bob.coding.adapters.git_worktree.GitWorktree` (the production adapter,
 unmodified) and assert the fresh worktree checkout contains ONLY the tracked files —
 the gitignored secrets are ABSENT. That absence IS the privacy isolation: Claude Code
 runs with the worktree as its cwd and never sees the soul / db / env / config.
@@ -30,7 +30,7 @@ from pathlib import Path
 
 import pytest
 
-from bob.infrastructure.coding.git_worktree import GitWorktree
+from bob.coding.adapters.git_worktree import GitWorktree
 
 pytestmark = pytest.mark.skipif(
     shutil.which("git") is None, reason="real git is not available on this host"

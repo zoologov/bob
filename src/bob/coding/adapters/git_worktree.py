@@ -3,6 +3,8 @@
 # See the LICENSE file in the project root for full license information.
 
 # beadloom:domain=bob
+# beadloom:feature=coding
+# beadloom:layer=infrastructure
 
 """GitWorktree — isolated git worktree for a gated coding session (BOB-039 .2).
 
@@ -28,8 +30,8 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from bob.infrastructure.coding._branch import is_safe_branch
-from bob.infrastructure.coding._exec import (
+from bob.coding.adapters._branch import is_safe_branch
+from bob.coding.adapters._exec import (
     DEFAULT_TIMEOUT_S,
     CommandRunner,
     ExecRunner,

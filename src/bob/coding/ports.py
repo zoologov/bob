@@ -3,6 +3,8 @@
 # See the LICENSE file in the project root for full license information.
 
 # beadloom:domain=bob
+# beadloom:feature=coding
+# beadloom:layer=domain
 
 """Coding ports — the gated «Bob runs Claude Code» session seam (BOB-039/040).
 
@@ -21,7 +23,7 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Mapping
 
-    from bob.domain.coding.entities import CodingSession
+    from bob.coding.entities import CodingSession
 
 
 @runtime_checkable
@@ -37,7 +39,7 @@ class ClaudeCodeRunner(Protocol):
     (``SubprocessClaudeRunner``) runs ``create_subprocess_exec`` WITHOUT a shell and
     parses NDJSON line-by-line; a deterministic fake yields canned events in tests
     with no subprocess. Events are mapped to narrative lines by the pure
-    :func:`bob.domain.coding.narrate.narrate`.
+    :func:`bob.coding.narrate.narrate`.
     """
 
     def run(
@@ -87,8 +89,8 @@ class Worktree(Protocol):
 class CodingSessionStore(Protocol):
     """Durable store for Bob's gated coding sessions (BOB-039 .1).
 
-    Round-trips the :class:`bob.domain.coding.entities.CodingSession` — its task,
-    :class:`~bob.domain.coding.state.CodingSessionState`, branch, worktree path, plan
+    Round-trips the :class:`bob.coding.entities.CodingSession` — its task,
+    :class:`~bob.coding.state.CodingSessionState`, branch, worktree path, plan
     text and PR url — so a gated session (and its stage) survives a restart, keeping
     the double gate honest across process boundaries. :meth:`save` UPSERTs on the
     session ``id`` (a session advances, so each step re-saves the newer state);

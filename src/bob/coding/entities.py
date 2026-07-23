@@ -3,7 +3,8 @@
 # See the LICENSE file in the project root for full license information.
 
 # beadloom:domain=bob
-# beadloom:feature=coding-domain
+# beadloom:feature=coding
+# beadloom:layer=domain
 
 """Доменный дата-класс coding-сессии — immutable value-object (BOB-039 .1).
 
@@ -23,7 +24,7 @@ from datetime import datetime  # noqa: TC003 — runtime-needed for the frozen f
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from bob.domain.coding.state import CodingSessionState
+    from bob.coding.state import CodingSessionState
 
 __all__ = ["CodingSession"]
 
@@ -33,7 +34,7 @@ class CodingSession:
     """Гейтед сессия «Боб запускает Claude Code» — что делаем, где и на какой стадии.
 
     ``task`` — исходная формулировка owner'а. ``branch`` — безопасное имя ветки
-    (``bob/<slug>``, см. :func:`bob.domain.coding.naming.worktree_branch`).
+    (``bob/<slug>``, см. :func:`bob.coding.naming.worktree_branch`).
     ``worktree_path`` появляется после создания изолированного worktree; ``plan`` —
     после plan-mode прогона; ``pr_url`` — после открытия PR. ``created_at`` /
     ``updated_at`` — timezone-aware метки (инжектятся, не берутся из часов домена).

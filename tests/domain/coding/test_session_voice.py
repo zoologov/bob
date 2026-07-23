@@ -14,7 +14,7 @@
 
 from __future__ import annotations
 
-from bob.domain.coding import session_voice
+from bob.coding import session_voice
 
 
 def test_accepted_is_bob_first_person_directing_guppi() -> None:

@@ -24,25 +24,25 @@ from pathlib import Path
 
 import pytest
 
-import bob.application.usecases.coding_assistant as ca_mod
-import bob.infrastructure.coding.gh_pr as gh_mod
+import bob.coding.adapters.gh_pr as gh_mod
+import bob.coding.usecases.coding_assistant as ca_mod
 from bob.app import _build_safe_capabilities
+from bob.coding.adapters.gh_pr import GhPullRequestOpener
 from bob.domain import ports
-from bob.infrastructure.coding.gh_pr import GhPullRequestOpener
 from bob.infrastructure.config.loader import DEFAULT_CONFIG
 
 # Source files that make up the BOB-039 coding feature.
 _BOB039_SOURCE = (
-    "src/bob/domain/coding/state.py",
-    "src/bob/domain/coding/entities.py",
-    "src/bob/domain/coding/naming.py",
-    "src/bob/domain/coding/narrate.py",
-    "src/bob/infrastructure/coding/git_worktree.py",
-    "src/bob/infrastructure/coding/gh_pr.py",
-    "src/bob/infrastructure/coding/claude_runner.py",
-    "src/bob/infrastructure/coding/_exec.py",
-    "src/bob/infrastructure/coding/_branch.py",
-    "src/bob/application/usecases/coding_assistant.py",
+    "src/bob/coding/state.py",
+    "src/bob/coding/entities.py",
+    "src/bob/coding/naming.py",
+    "src/bob/coding/narrate.py",
+    "src/bob/coding/adapters/git_worktree.py",
+    "src/bob/coding/adapters/gh_pr.py",
+    "src/bob/coding/adapters/claude_runner.py",
+    "src/bob/coding/adapters/_exec.py",
+    "src/bob/coding/adapters/_branch.py",
+    "src/bob/coding/usecases/coding_assistant.py",
 )
 
 # argv fragments that would constitute a merge path. Bob must never build any of these
@@ -94,7 +94,7 @@ def test_commit_push_targets_the_validated_branch_never_literal_main() -> None:
     # validated ``bob/<slug>`` branch variable — there is physically no path that pushes
     # the trunk. The push target is never the literal ``main``, and the branch is
     # validated (``is_safe_branch``) before any git runs.
-    text = (_repo_root() / "src/bob/infrastructure/coding/git_worktree.py").read_text(
+    text = (_repo_root() / "src/bob/coding/adapters/git_worktree.py").read_text(
         encoding="utf-8"
     )
     assert "is_safe_branch" in text  # the branch is re-validated before the push
@@ -107,7 +107,7 @@ def test_commit_push_targets_the_validated_branch_never_literal_main() -> None:
 def test_pr_command_is_create_only_with_main_as_base_not_a_push() -> None:
     # The gh adapter's argv is `gh pr create --base main ...` — `main` is only ever the
     # PR BASE (where the owner will land it), never a push/checkout target.
-    text = (_repo_root() / "src/bob/infrastructure/coding/gh_pr.py").read_text(
+    text = (_repo_root() / "src/bob/coding/adapters/gh_pr.py").read_text(
         encoding="utf-8"
     )
     assert '"create"' in text or "'create'" in text or "pr create" in text
