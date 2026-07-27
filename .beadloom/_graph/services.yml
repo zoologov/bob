@@ -143,6 +143,8 @@ nodes:
     # keeps a thin re-export shim for the 18 capability ports.
     tags: [module-vertical]
     summary: 'Capabilities module («Bob''s tools») — the full vertical GUPPI tool seam in one place: `ports.py` (Capability contract + tool/web/diagram/introspection ports) + pure `diagrams`/`introspection` value objects, `usecases/` (CapabilityRegistry + ToolLoop and the skills: recall/search memory, read code/url, web search, render diagram, inspect architecture, progress announcer), and `adapters/` (aiohttp URL reader behind an SSRF guard, mermaid renderer, beadloom/git introspector, Qwen web-search transport). Domain-first slice BOB-062.4.'
+    docs:
+      - domains/capabilities/README.md
 
   - ref_id: permission
     kind: feature

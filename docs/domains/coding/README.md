@@ -121,7 +121,8 @@ CANCELLED / FAILED ← из любого нетерминального
 
 Три cross-boundary ссылки узаконены по дизайну (не нарушения): `classify_coding_intent
 → application/router/llm_router` (общий shared-router вне модулей), `coding_context →
-domain/introspection/privacy_guard` (TYPE_CHECKING-only) и `adapters/indicator →
+capabilities/introspection/privacy_guard` (TYPE_CHECKING-only; `PrivacyGuard` переехал
+в вертикальный модуль `capabilities`, BOB-062.4) и `adapters/indicator →
 infrastructure/telegram/gateway` (TYPE_CHECKING-only). Если любая станет runtime-импортом
 — всплывёт в скане и подлежит переоценке.
 
