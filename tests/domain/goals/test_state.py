@@ -16,8 +16,8 @@ from datetime import UTC, datetime
 
 import pytest
 
-from bob.domain.goals.entities import Goal, GoalOrigin, Task
-from bob.domain.goals.state import (
+from bob.proactivity.goals.entities import Goal, GoalOrigin, Task
+from bob.proactivity.goals.state import (
     GoalState,
     TaskState,
     can_transition,

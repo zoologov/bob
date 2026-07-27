@@ -10,8 +10,8 @@ import random
 from datetime import UTC, datetime, timedelta
 
 from bob.domain.personality.mood import Mood
-from bob.domain.proactivity.decision import ProactiveDecider, urge_to_probability
-from bob.domain.proactivity.governance import Governance, ProactiveHistory
+from bob.proactivity.decision import ProactiveDecider, urge_to_probability
+from bob.proactivity.governance import Governance, ProactiveHistory
 
 # A clear waking-hours "now" and an unconstrained history (governance allows).
 _NOW = datetime(2026, 6, 20, 14, 0, tzinfo=UTC)

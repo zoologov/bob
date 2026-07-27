@@ -13,13 +13,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
-from bob.application.usecases.self_improvement_sources import ActiveRulesReader
-from bob.domain.personality.self_improvement import (
+from bob.proactivity.self_improvement import (
     ImprovementRule,
     Lever,
     RuleOrigin,
     RuleState,
 )
+from bob.proactivity.usecases.self_improvement_sources import ActiveRulesReader
 
 _NOW = datetime(2026, 6, 24, 12, 0, tzinfo=UTC)
 _PERSONA = "bob"

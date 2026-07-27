@@ -21,10 +21,10 @@ from datetime import UTC, datetime
 
 import pytest
 
-from bob.application.usecases.plan_goal import LlmPlanner, PlanGoal, PlanResult
-from bob.domain.goals.entities import Goal, GoalOrigin, Task
-from bob.domain.goals.graph import GoalGraph
-from bob.domain.goals.state import GoalState, TaskState
+from bob.proactivity.goals.entities import Goal, GoalOrigin, Task
+from bob.proactivity.goals.graph import GoalGraph
+from bob.proactivity.goals.state import GoalState, TaskState
+from bob.proactivity.usecases.plan_goal import LlmPlanner, PlanGoal, PlanResult
 
 _PERSONA = "bob"
 _NOW = datetime(2026, 6, 24, 12, 0, tzinfo=UTC)

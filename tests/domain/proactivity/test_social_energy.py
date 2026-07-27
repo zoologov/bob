@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import pytest
 
-from bob.domain.proactivity.social_energy import SocialEnergy
+from bob.proactivity.social_energy import SocialEnergy
 
 
 def test_level_must_be_within_unit_interval() -> None:

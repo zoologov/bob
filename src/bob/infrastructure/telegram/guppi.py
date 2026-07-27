@@ -35,21 +35,21 @@ from dataclasses import replace
 from datetime import timedelta
 from typing import TYPE_CHECKING, Protocol
 
-from bob.domain.goals.state import GoalState, can_transition
-from bob.domain.personality.self_improvement import RuleState
-from bob.domain.personality.self_improvement import (
+from bob.proactivity.goals.state import GoalState, can_transition
+from bob.proactivity.self_improvement import RuleState
+from bob.proactivity.self_improvement import (
     can_transition as rule_can_transition,
 )
 
 if TYPE_CHECKING:
     from datetime import datetime
 
-    from bob.application.usecases.plan_goal import PlanGoal
-    from bob.domain.goals.graph import GoalGraph
-    from bob.domain.personality.self_improvement import ImprovementRule
     from bob.domain.ports import Clock
-    from bob.domain.proactivity.state import ProactivityState
     from bob.infrastructure.telegram.gateway import AuthorizerLike, BotLike
+    from bob.proactivity.goals.graph import GoalGraph
+    from bob.proactivity.self_improvement import ImprovementRule
+    from bob.proactivity.state import ProactivityState
+    from bob.proactivity.usecases.plan_goal import PlanGoal
 
 __all__ = [
     "GUPPI_OUTAGE_TEXT",

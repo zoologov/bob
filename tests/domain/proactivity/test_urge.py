@@ -9,7 +9,7 @@ from __future__ import annotations
 import pytest
 
 from bob.domain.personality.mood import Mood
-from bob.domain.proactivity.urge import UrgeModel
+from bob.proactivity.urge import UrgeModel
 
 # A neutral mood and mid-day baseline used as the fixed point for monotonicity.
 _NEUTRAL_MOOD = Mood()

@@ -22,13 +22,13 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from bob.domain.personality.self_improvement import (
+from bob.infrastructure.telegram.guppi import GuppiHandler
+from bob.proactivity.self_improvement import (
     ImprovementRule,
     Lever,
     RuleOrigin,
     RuleState,
 )
-from bob.infrastructure.telegram.guppi import GuppiHandler
 
 if TYPE_CHECKING:
     from collections.abc import Sequence

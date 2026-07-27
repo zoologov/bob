@@ -19,10 +19,10 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from bob.domain.proactivity.social_energy import SocialEnergy
-from bob.domain.proactivity.state import ProactivityState
-from bob.infrastructure.persistence.proactivity_store import SqliteProactivityStore
 from bob.infrastructure.persistence.sqlite_repo import SqliteMemoryRepo
+from bob.proactivity.adapters.proactivity_store import SqliteProactivityStore
+from bob.proactivity.social_energy import SocialEnergy
+from bob.proactivity.state import ProactivityState
 
 if TYPE_CHECKING:
     from pathlib import Path

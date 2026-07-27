@@ -121,7 +121,6 @@ from bob.domain.personality.reaction import reaction_emoji_for
 from bob.domain.personality.reaction_aloud import acknowledgment_hint
 from bob.domain.personality.relationship import compromise_bias
 from bob.domain.personality.response_choice import ResponseIntent
-from bob.domain.personality.self_improvement import RuleModulators, build_modulators
 from bob.domain.personality.taste import Verdict
 from bob.domain.personality.voice import (
     OffDayThresholds,
@@ -145,6 +144,7 @@ from bob.domain.personality.volatility_judgment import VolatilityContext
 from bob.domain.personality.zone_classifier import TasteZoneClassifier
 from bob.domain.ports import DiagramRenderError, DiagramResult
 from bob.memory.entities import EpisodicEvent
+from bob.proactivity.self_improvement import RuleModulators, build_modulators
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Mapping, Sequence
@@ -162,7 +162,6 @@ if TYPE_CHECKING:
     from bob.domain.personality.mood import Mood
     from bob.domain.personality.relationship import Relationship
     from bob.domain.personality.response_choice import ResponseChoice
-    from bob.domain.personality.self_improvement import ImprovementRule
     from bob.domain.personality.soul import SOUL
     from bob.domain.personality.sulk import SulkState
     from bob.domain.personality.volatility_judgment import (
@@ -186,6 +185,7 @@ if TYPE_CHECKING:
         ZoneClassifier,
     )
     from bob.memory.usecases.extract_facts import ExtractFacts
+    from bob.proactivity.self_improvement import ImprovementRule
 
 logger = logging.getLogger(__name__)
 
@@ -567,11 +567,11 @@ class SelfImprovementReader(Protocol):
     The compose path uses this to APPLY Bob's owner-approved self-improvement rules as
     soft, bounded tilts — a TONE/HUMOR rule colours the voice, a LENGTH rule nudges the
     verbosity one step shorter, a PROACTIVITY/ADDRESSIVITY_BIAS rule biases their points
-    (built into :class:`~bob.domain.personality.self_improvement.RuleModulators` by
-    :func:`~bob.domain.personality.self_improvement.build_modulators`). Safety: it
+    (built into :class:`~bob.proactivity.self_improvement.RuleModulators` by
+    :func:`~bob.proactivity.self_improvement.build_modulators`). Safety: it
     returns rules the use-case then filters to APPROVED-only via ``active_rules`` (no
     PROPOSED/PAUSED rule ever applies — authz-before-autonomy), and only the
-    :class:`~bob.domain.personality.self_improvement.Lever` allowlist is read (authz /
+    :class:`~bob.proactivity.self_improvement.Lever` allowlist is read (authz /
     guest / SOUL / safety have no lever). Optional and additive: unwired (the default)
     OR the master switch off → no rules, so the turn behaves exactly as before BOB-028.
     """

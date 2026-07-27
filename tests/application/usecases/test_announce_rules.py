@@ -22,13 +22,13 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
-from bob.application.usecases.announce_rules import AnnounceProposedRules
-from bob.domain.personality.self_improvement import (
+from bob.proactivity.self_improvement import (
     ImprovementRule,
     Lever,
     RuleOrigin,
     RuleState,
 )
+from bob.proactivity.usecases.announce_rules import AnnounceProposedRules
 
 _NOW = datetime(2026, 6, 24, 12, 0, tzinfo=UTC)
 _CHAT_ID = -100123

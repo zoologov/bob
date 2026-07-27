@@ -66,13 +66,6 @@ from bob.domain.ports.personality import (
     SulkStore,
     ZoneClassifier,
 )
-from bob.domain.ports.proactivity import (
-    GoalStore,
-    PatternDetector,
-    Planner,
-    ProactivityStore,
-    SelfImprovementStore,
-)
 from bob.domain.ports.social import AllowlistStore, SoulStore
 from bob.memory.ports import (
     Embedder,
@@ -80,6 +73,13 @@ from bob.memory.ports import (
     MemoryRepo,
     Recalled,
     Reranker,
+)
+from bob.proactivity.ports import (
+    GoalStore,
+    PatternDetector,
+    Planner,
+    ProactivityStore,
+    SelfImprovementStore,
 )
 
 __all__ = [

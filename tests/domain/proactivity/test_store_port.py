@@ -9,8 +9,8 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 from bob.domain.ports import ProactivityStore
-from bob.domain.proactivity.social_energy import SocialEnergy
-from bob.domain.proactivity.state import ProactivityState
+from bob.proactivity.social_energy import SocialEnergy
+from bob.proactivity.state import ProactivityState
 
 
 class _InMemoryStore:

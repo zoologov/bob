@@ -32,16 +32,16 @@ from bob.application.capabilities.registry import (
     SafeCapabilityDispatcher,
 )
 from bob.application.usecases.handle_message import PersonalityState
-from bob.application.usecases.pursue_goals import PursueGoalsTick
-from bob.domain.goals.entities import Goal, GoalOrigin, Task
-from bob.domain.goals.graph import GoalGraph
-from bob.domain.goals.state import GoalState, TaskState
 from bob.domain.personality.mood import Mood
 from bob.domain.personality.soul import SOUL
 from bob.domain.personality.taste import TasteEngine
-from bob.domain.proactivity.governance import Governance, GovernanceConfig
-from bob.domain.proactivity.social_energy import SocialEnergy
-from bob.domain.proactivity.state import ProactivityState
+from bob.proactivity.goals.entities import Goal, GoalOrigin, Task
+from bob.proactivity.goals.graph import GoalGraph
+from bob.proactivity.goals.state import GoalState, TaskState
+from bob.proactivity.governance import Governance, GovernanceConfig
+from bob.proactivity.social_energy import SocialEnergy
+from bob.proactivity.state import ProactivityState
+from bob.proactivity.usecases.pursue_goals import PursueGoalsTick
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Mapping

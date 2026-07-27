@@ -21,21 +21,21 @@ import random
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
-from bob.application.proactivity.engine import ProactivityEngine
 from bob.application.router.llm_router import LLMRouter
 from bob.application.usecases.handle_message import PersonalityState
 from bob.domain.personality.conversation import RepeatThresholds
 from bob.domain.personality.mood import Mood
 from bob.domain.personality.soul import SOUL
 from bob.domain.personality.taste import TasteEngine
-from bob.domain.proactivity.decision import ProactiveDecider
-from bob.domain.proactivity.governance import (
+from bob.proactivity.decision import ProactiveDecider
+from bob.proactivity.governance import (
     Governance,
     GovernanceConfig,
     ProactiveHistory,
 )
-from bob.domain.proactivity.social_energy import SocialEnergy
-from bob.domain.proactivity.state import ProactivityState
+from bob.proactivity.social_energy import SocialEnergy
+from bob.proactivity.state import ProactivityState
+from bob.proactivity.usecases.engine import ProactivityEngine
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Mapping, Sequence

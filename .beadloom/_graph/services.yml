@@ -89,11 +89,25 @@ nodes:
     docs:
       - domains/memory/README.md
 
-  - ref_id: goals
+  - ref_id: proactivity
     kind: feature
-    source: src/bob/domain/goals/
-    tags: [layer-domain]
-    summary: 'Goals domain — goal/plan entities and goal-state value objects for Bob''s self-directed pursuits.'
+    source: src/bob/proactivity/
+    # BOB-062.3: domain-first VERTICAL module — spans domain+application+infra
+    # INSIDE one bounded context, so it is NOT a horizontal layer. Tag is the
+    # non-layer `module-vertical` (like `memory` / `coding`) so the tag-based
+    # `architecture-layers` rule silently skips its edges; the module's INTERNAL
+    # layering and its OUTER boundary are enforced by the path-glob `forbid_import`
+    # rules in .beadloom/_graph/rules.yml (§ vertical modules, extended in .2).
+    # Consolidates the former `proactivity-domain` + `proactivity-app` + `goals`
+    # nodes: drive-model, goals, and self-improvement are ONE «Bob's background
+    # life» capability. `self_improvement.py` moved in from `personality`
+    # (metacognition over behaviour, BOB-028, not a personality trait). The 4
+    # durable stores consume the shared persistence kernel via the
+    # `SqliteMemoryRepo.connection()` seam (kernel stays put until BOB-062.7).
+    tags: [module-vertical]
+    summary: 'Proactivity module («Bob''s background life») — the full vertical capability in one place: `ports.py` + pure domain (drive-model urge/governance/social-energy, goals graph, self-improvement rules), `usecases/` (engine/tick, plan/pursue goals, detect-patterns/announce-rules), and `adapters/` (proactivity/goal/self-improvement stores + live read-seams). Domain-first slice BOB-062.3.'
+    docs:
+      - domains/proactivity/README.md
 
   - ref_id: coding
     kind: feature
@@ -130,12 +144,6 @@ nodes:
     tags: [layer-domain]
     summary: 'Permission domain — permission-request/grant entities and access value objects (authz-before-autonomy).'
 
-  - ref_id: proactivity-domain
-    kind: feature
-    source: src/bob/domain/proactivity/
-    tags: [layer-domain]
-    summary: 'Proactivity domain (domain half) — proactive-intent and tick-decision value objects. Paired with the `proactivity-app` orchestrator.'
-
   # ── Application submodules (kind: feature, part_of bob-application) ──────────
   - ref_id: usecases
     kind: feature
@@ -166,12 +174,6 @@ nodes:
     source: src/bob/application/runtime/
     tags: [layer-application]
     summary: 'Application runtime — AgentRuntime, AsyncEventBus, events, and resilient heartbeat ticks (retry/backoff). Distinct from the `runtime` composition root.'
-
-  - ref_id: proactivity-app
-    kind: feature
-    source: src/bob/application/proactivity/
-    tags: [layer-application]
-    summary: 'Proactivity orchestration (application half) — proactive engine, tick, and owner-activity recording driving Bob''s self-initiated actions.'
 
   # ── Infrastructure submodules (kind: component, part_of bob-infrastructure) ──
   - ref_id: llm
@@ -246,7 +248,7 @@ edges:
   - src: memory
     dst: bob-domain
     kind: part_of
-  - src: goals
+  - src: proactivity
     dst: bob-domain
     kind: part_of
   - src: coding
@@ -259,9 +261,6 @@ edges:
     dst: bob-domain
     kind: part_of
   - src: permission
-    dst: bob-domain
-    kind: part_of
-  - src: proactivity-domain
     dst: bob-domain
     kind: part_of
 
@@ -279,9 +278,6 @@ edges:
     dst: bob-application
     kind: part_of
   - src: runtime-app
-    dst: bob-application
-    kind: part_of
-  - src: proactivity-app
     dst: bob-application
     kind: part_of
 

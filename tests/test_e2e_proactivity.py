@@ -31,11 +31,12 @@ import pytest
 
 from bob.app import Application, build_application
 from bob.domain.personality.mood import Mood
-from bob.domain.proactivity.decision import ProactiveDecider
-from bob.domain.proactivity.governance import Governance, ProactiveHistory
-from bob.domain.proactivity.social_energy import SocialEnergy
-from bob.domain.proactivity.state import ProactivityState
-from bob.infrastructure.persistence import SoulStore, SqliteProactivityStore
+from bob.infrastructure.persistence import SoulStore
+from bob.proactivity.adapters import SqliteProactivityStore
+from bob.proactivity.decision import ProactiveDecider
+from bob.proactivity.governance import Governance, ProactiveHistory
+from bob.proactivity.social_energy import SocialEnergy
+from bob.proactivity.state import ProactivityState
 from tests.support.judge_stub import JUDGE_REPLY, is_judge_request
 
 if TYPE_CHECKING:

@@ -18,9 +18,9 @@ from datetime import UTC, datetime
 
 import pytest
 
-from bob.application.proactivity.record_owner_activity import RecordOwnerActivity
-from bob.domain.proactivity.social_energy import SocialEnergy
-from bob.domain.proactivity.state import ProactivityState
+from bob.proactivity.social_energy import SocialEnergy
+from bob.proactivity.state import ProactivityState
+from bob.proactivity.usecases.record_owner_activity import RecordOwnerActivity
 
 _PERSONA = "bob"
 _NOW = datetime(2026, 6, 20, 20, 0, tzinfo=UTC)

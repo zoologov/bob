@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from bob.infrastructure.persistence import SqliteMemoryRepo
-from bob.infrastructure.persistence.proactivity_sources import RepoProactivitySources
+from bob.proactivity.adapters.proactivity_sources import RepoProactivitySources
 
 if TYPE_CHECKING:
     from pathlib import Path

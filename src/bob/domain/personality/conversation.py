@@ -503,7 +503,7 @@ def recalled_without_copied_exemplars(
 
 # The episodic ``event_type`` values that mark a private inner-life reflection (the
 # heartbeat writes these via BOB-012). Mirrors
-# :data:`bob.infrastructure.persistence.proactivity_sources._INNER_LIFE_KINDS` — the
+# :data:`bob.proactivity.adapters.proactivity_sources._INNER_LIFE_KINDS` — the
 # single source of "what is a reflection" the reply-recall containment reads.
 _REFLECTION_KINDS = frozenset({"reflection", "inner_monologue"})
 
