@@ -21,13 +21,13 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from bob.capabilities.introspection.privacy_guard import PrivacyGuard
 from bob.coding.state import CodingSessionState, is_terminal
 from bob.coding.usecases.coding_assistant import CodingAssistant
 from bob.coding.usecases.coding_context import (
     PREAMBLE_MAX_CHARS,
     make_coding_context,
 )
-from bob.domain.introspection.privacy_guard import PrivacyGuard
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Callable, Mapping

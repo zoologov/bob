@@ -28,11 +28,11 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Protocol
 
-from bob.application.capabilities.tool_loop import ToolLoop
 from bob.application.router.llm_router import LLMRequest, TaskType
+from bob.capabilities.usecases.tool_loop import ToolLoop
 
 if TYPE_CHECKING:
-    from bob.application.capabilities.registry import CapabilityRegistry
+    from bob.capabilities.usecases.registry import CapabilityRegistry
     from bob.domain.ports import LLMMessage, ToolCallingProvider
 
 

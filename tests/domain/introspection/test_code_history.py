@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import pytest
 
-from bob.domain.introspection.code_history import (
+from bob.capabilities.introspection.code_history import (
     commits_mentioning,
     feature_doc_dir,
     parse_bead_refs,

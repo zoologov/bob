@@ -19,8 +19,7 @@ from typing import TYPE_CHECKING
 import aiohttp
 import pytest
 
-from bob.domain.ports import UrlReader, WebPage
-from bob.infrastructure.web.http_url_reader import (
+from bob.capabilities.adapters.web.http_url_reader import (
     HttpUrlReader,
     SsrfBlockedError,
     UrlReadError,
@@ -28,11 +27,12 @@ from bob.infrastructure.web.http_url_reader import (
     _extract_text,
     _stream_body,
 )
+from bob.domain.ports import UrlReader, WebPage
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Mapping, Sequence
 
-    from bob.infrastructure.web.http_url_reader import (
+    from bob.capabilities.adapters.web.http_url_reader import (
         HostResolver,
         UrlOpener,
         _ResponseCtx,

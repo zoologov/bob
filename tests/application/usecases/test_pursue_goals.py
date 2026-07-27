@@ -27,11 +27,11 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from bob.application.capabilities.registry import (
+from bob.application.usecases.handle_message import PersonalityState
+from bob.capabilities.usecases.registry import (
     CapabilityRegistry,
     SafeCapabilityDispatcher,
 )
-from bob.application.usecases.handle_message import PersonalityState
 from bob.domain.personality.mood import Mood
 from bob.domain.personality.soul import SOUL
 from bob.domain.personality.taste import TasteEngine
@@ -501,7 +501,7 @@ async def test_safe_dispatcher_refuses_off_allowlist() -> None:
 
     import pytest
 
-    from bob.application.capabilities.registry import CapabilityNotAllowedError
+    from bob.capabilities.usecases.registry import CapabilityNotAllowedError
 
     with pytest.raises(CapabilityNotAllowedError):
         await dispatcher.dispatch("external_tool", {})

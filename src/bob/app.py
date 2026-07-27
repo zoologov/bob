@@ -41,20 +41,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Protocol, cast
 
 from bob.application.authz import Authorizer, ReactorPerception, SenderPerception
-from bob.application.capabilities import (
-    CapabilityRegistry,
-    CollectingDiagramSink,
-    SafeCapabilityDispatcher,
-    make_code_rationale_capability,
-    make_inspect_architecture_capability,
-    make_list_work_capability,
-    make_read_code_capability,
-    make_read_url_capability,
-    make_recall_memory_capability,
-    make_render_diagram_capability,
-    make_search_memory_capability,
-    make_web_search_capability,
-)
 from bob.application.router import LLMRouter
 from bob.application.runtime import (
     BOB_MESSAGE_REACTION,
@@ -96,6 +82,26 @@ from bob.application.usecases.relationship_sources import RelationshipTracker
 from bob.application.usecases.run_genesis import RunGenesis
 from bob.application.usecases.sulk_sources import SulkRecoveryStep, SulkTracker
 from bob.application.usecases.update_mood_from_text import UpdateMoodFromText
+from bob.capabilities.adapters.diagrams import SubprocessMmdcRenderer
+from bob.capabilities.adapters.introspection.subprocess_introspector import (
+    SubprocessRepoIntrospector,
+)
+from bob.capabilities.adapters.web import build_url_reader
+from bob.capabilities.introspection.privacy_guard import PrivacyGuard
+from bob.capabilities.usecases import (
+    CapabilityRegistry,
+    CollectingDiagramSink,
+    SafeCapabilityDispatcher,
+    make_code_rationale_capability,
+    make_inspect_architecture_capability,
+    make_list_work_capability,
+    make_read_code_capability,
+    make_read_url_capability,
+    make_recall_memory_capability,
+    make_render_diagram_capability,
+    make_search_memory_capability,
+    make_web_search_capability,
+)
 from bob.coding.adapters import (
     GhPullRequestOpener,
     GitWorktree,
@@ -109,7 +115,6 @@ from bob.coding.usecases.classify_coding_intent import ClassifyCodingIntent
 from bob.coding.usecases.coding_assistant import CodingAssistant
 from bob.coding.usecases.coding_context import make_coding_context
 from bob.coding.usecases.coding_intent_router import CodingIntentRouter
-from bob.domain.introspection.privacy_guard import PrivacyGuard
 from bob.domain.permission.privilege import PrivilegeContext, PrivilegeNeed
 from bob.domain.personality.addressivity import AddressivityThresholds
 from bob.domain.personality.brevity import BrevityThresholds
@@ -130,10 +135,6 @@ from bob.domain.personality.taste_evolution import BETA as _EVOLUTION_BETA
 from bob.domain.personality.voice import OffDayThresholds
 from bob.domain.personality.zone_classifier import TasteZoneClassifier
 from bob.infrastructure.config import ConfigLoader
-from bob.infrastructure.diagrams import SubprocessMmdcRenderer
-from bob.infrastructure.introspection.subprocess_introspector import (
-    SubprocessRepoIntrospector,
-)
 from bob.infrastructure.llm import (
     build_tier_providers,
     build_web_search_provider,
@@ -171,7 +172,6 @@ from bob.infrastructure.telegram.multibot import (
     BotScope,
     MultiBotGateway,
 )
-from bob.infrastructure.web import build_url_reader
 from bob.memory.adapters import (
     HybridMemoryRecall,
     build_embedder,

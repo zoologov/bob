@@ -30,10 +30,10 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from bob.application.capabilities.registry import CapabilityRegistry
 from bob.application.usecases.permission_execution import PermissionExecutor
 from bob.application.usecases.permission_flow import PermissionFlow
 from bob.application.usecases.privileged_fulfiller import PrivilegedRequestFulfiller
+from bob.capabilities.usecases.registry import CapabilityRegistry
 from bob.domain.permission.privilege import PrivilegeContext, PrivilegeNeed
 from bob.domain.permission.state import PermissionState
 

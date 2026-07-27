@@ -22,7 +22,7 @@ from collections.abc import Mapping
 
 import pytest
 
-from bob.application.capabilities.code_rationale import (
+from bob.capabilities.usecases.code_rationale import (
     make_code_rationale_capability,
 )
 

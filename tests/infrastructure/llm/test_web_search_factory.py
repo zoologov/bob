@@ -13,9 +13,9 @@ from __future__ import annotations
 
 import pytest
 
+from bob.capabilities.adapters.web_search_qwen import QwenWebSearchProvider
 from bob.domain.ports import WebSearchProvider
 from bob.infrastructure.llm.factory import build_web_search_provider
-from bob.infrastructure.llm.web_search_qwen import QwenWebSearchProvider
 
 
 def _llm() -> dict[str, object]:

@@ -22,8 +22,8 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-import bob.application.capabilities.progress_announcer as _announcer_mod
-from bob.application.capabilities.progress_announcer import GatewayProgressAnnouncer
+import bob.capabilities.usecases.progress_announcer as _announcer_mod
+from bob.capabilities.usecases.progress_announcer import GatewayProgressAnnouncer
 
 if TYPE_CHECKING:
     from collections.abc import Mapping

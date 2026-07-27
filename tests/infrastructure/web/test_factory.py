@@ -16,8 +16,8 @@ from __future__ import annotations
 
 import pytest
 
+from bob.capabilities.adapters.web.factory import build_url_reader
 from bob.domain.ports import UrlReader
-from bob.infrastructure.web.factory import build_url_reader
 
 
 def _config(**read_url: object) -> dict[str, object]:

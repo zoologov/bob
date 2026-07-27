@@ -24,8 +24,8 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import TYPE_CHECKING
 
+from bob.capabilities.adapters.web_search_qwen import QwenWebSearchProvider
 from bob.infrastructure.llm.openai_compat import OpenAICompatProvider
-from bob.infrastructure.llm.web_search_qwen import QwenWebSearchProvider
 
 if TYPE_CHECKING:
     from bob.domain.ports import LLMProvider, WebSearchProvider

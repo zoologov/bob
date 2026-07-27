@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from bob.application.capabilities.registry import CapabilityRegistry, UnknownCapabilityError
+from bob.capabilities.usecases.registry import CapabilityRegistry, UnknownCapabilityError
 
 if TYPE_CHECKING:
     from collections.abc import Mapping

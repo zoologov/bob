@@ -17,7 +17,7 @@ from pathlib import Path
 
 import pytest
 
-from bob.domain.introspection.privacy_guard import PrivacyGuard
+from bob.capabilities.introspection.privacy_guard import PrivacyGuard
 
 REPO_ROOT = Path("/home/bob/repo")
 

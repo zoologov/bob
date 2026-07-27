@@ -23,8 +23,8 @@ import aiohttp
 import pytest
 from aiohttp import web
 
+from bob.capabilities.adapters.web_search_qwen import QwenWebSearchProvider
 from bob.domain.ports import WebSearchProvider, WebSource
-from bob.infrastructure.llm.web_search_qwen import QwenWebSearchProvider
 
 _RESPONSES_PATH = "/v1/responses"
 

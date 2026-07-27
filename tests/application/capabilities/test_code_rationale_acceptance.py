@@ -34,12 +34,12 @@ from pathlib import Path
 
 import pytest
 
-from bob.application.capabilities.code_rationale import make_code_rationale_capability
-from bob.domain.introspection.privacy_guard import PrivacyGuard
-from bob.infrastructure.introspection.subprocess_introspector import (
+from bob.capabilities.adapters.introspection.subprocess_introspector import (
     DisallowedCommandError,
     SubprocessRepoIntrospector,
 )
+from bob.capabilities.introspection.privacy_guard import PrivacyGuard
+from bob.capabilities.usecases.code_rationale import make_code_rationale_capability
 
 _FEATURE_DOCS_BASE = ".claude/development/docs/features"
 

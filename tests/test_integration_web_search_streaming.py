@@ -24,12 +24,12 @@ from typing import TYPE_CHECKING
 
 from aiohttp import web
 
-from bob.application.capabilities.progress_announcer import GatewayProgressAnnouncer
-from bob.application.capabilities.registry import CapabilityRegistry
-from bob.application.capabilities.tool_loop import ToolLoop
-from bob.application.capabilities.web_search import make_web_search_capability
+from bob.capabilities.adapters.web_search_qwen import QwenWebSearchProvider
+from bob.capabilities.usecases.progress_announcer import GatewayProgressAnnouncer
+from bob.capabilities.usecases.registry import CapabilityRegistry
+from bob.capabilities.usecases.tool_loop import ToolLoop
+from bob.capabilities.usecases.web_search import make_web_search_capability
 from bob.domain.ports import ToolCall, ToolCallResult, WebSearchResult, WebSource
-from bob.infrastructure.llm.web_search_qwen import QwenWebSearchProvider
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Sequence

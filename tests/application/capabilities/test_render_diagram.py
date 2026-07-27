@@ -20,12 +20,12 @@ from collections.abc import Mapping
 
 import pytest
 
-from bob.application.capabilities.render_diagram import (
+from bob.capabilities.adapters.diagrams.mmdc_renderer import DiagramRenderError
+from bob.capabilities.usecases.render_diagram import (
     CollectingDiagramSink,
     make_render_diagram_capability,
 )
 from bob.domain.ports import DiagramResult
-from bob.infrastructure.diagrams.mmdc_renderer import DiagramRenderError
 
 _PNG = b"\x89PNG\r\n\x1a\nfake-bytes"
 

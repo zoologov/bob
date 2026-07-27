@@ -7,7 +7,7 @@
 The adapter realises :class:`bob.domain.ports.RepoIntrospector` by shelling out to
 local ``beadloom`` / ``bd`` via ``asyncio.create_subprocess_exec`` (NEVER a shell)
 against a FIXED allowlist of read-only subcommands, and reading source files only
-after the :class:`~bob.domain.introspection.privacy_guard.PrivacyGuard` allows the
+after the :class:`~bob.capabilities.introspection.privacy_guard.PrivacyGuard` allows the
 path. The subprocess boundary is injected as a fake here so the tests are
 deterministic and never actually spawn a process; the file reader runs against a
 tmp repo layout.
@@ -20,13 +20,13 @@ from pathlib import Path
 
 import pytest
 
-from bob.domain.introspection.privacy_guard import PrivacyGuard
-from bob.infrastructure.introspection.subprocess_introspector import (
+from bob.capabilities.adapters.introspection.subprocess_introspector import (
     DeniedPathError,
     DisallowedCommandError,
     SubprocessRepoIntrospector,
     _ExecRunner,
 )
+from bob.capabilities.introspection.privacy_guard import PrivacyGuard
 
 
 class _FakeRunner:

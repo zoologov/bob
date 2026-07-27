@@ -18,7 +18,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from bob.app import _build_diagram_renderer, _build_registry, _diagram_send_as
-from bob.infrastructure.diagrams.mmdc_renderer import SubprocessMmdcRenderer
+from bob.capabilities.adapters.diagrams.mmdc_renderer import SubprocessMmdcRenderer
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence

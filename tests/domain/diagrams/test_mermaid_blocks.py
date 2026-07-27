@@ -15,7 +15,7 @@ agnostic.)
 
 from __future__ import annotations
 
-from bob.domain.diagrams.mermaid_blocks import (
+from bob.capabilities.diagrams.mermaid_blocks import (
     extract_mermaid_blocks,
     normalize_mermaid,
     strip_mermaid_blocks,

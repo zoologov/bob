@@ -22,7 +22,7 @@ from pathlib import Path
 
 import pytest
 
-from bob.infrastructure.diagrams.mmdc_renderer import (
+from bob.capabilities.adapters.diagrams.mmdc_renderer import (
     DiagramRenderError,
     SubprocessMmdcRenderer,
 )
