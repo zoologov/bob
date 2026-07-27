@@ -36,7 +36,7 @@ import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
 
-from bob.domain.ports import DiagramRenderError
+from bob.capabilities.ports import DiagramRenderError
 
 if TYPE_CHECKING:
     from collections.abc import Sequence

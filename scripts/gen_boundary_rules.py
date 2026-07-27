@@ -36,10 +36,18 @@ RULES_YML = GRAPH_DIR / "rules.yml"
 BEGIN_MARKER = "  # BEGIN generated boundary rules"
 END_MARKER = "  # END generated boundary rules"
 
-# Clean-Architecture horizontal layers — always potential inbound sources for a
-# module boundary (a module must never be reached from a horizontal layer except
-# through its public façade/ports).
-HORIZONTAL_LAYERS = ("application", "domain", "infrastructure")
+# Inward-boundary layer sources — horizontal layers that must NOT reach into a
+# module's usecases/adapters (only its public façade/ports). This is deliberately
+# just ``domain``: the domain is PURE — it may never import a module's use-cases or
+# adapters. The coordination layers (``application`` / ``infrastructure`` /
+# ``runtime`` / the composition root) are EXCLUDED on purpose: by definition they
+# assemble and invoke modules' use-cases and adapters (cross-domain orchestration
+# such as ``handle_message`` / ``privileged_fulfiller``; the infra composition of
+# providers/factories). The inward boundary isolates BUSINESS modules from each
+# other, not the coordinators that legitimately wire them together. Per-module
+# internal layering (``usecases-no-infra`` / ``no-composition-root`` below) still
+# keeps each module from reaching OUT to infra / the composition root.
+INWARD_LAYER_SOURCES = ("domain",)
 
 
 def load_modules() -> list[tuple[str, str]]:
@@ -80,7 +88,7 @@ def _rule(name: str, description: str, from_glob: str, to_glob: str) -> list[str
 
 def render(modules: list[tuple[str, str]]) -> str:
     """Render the full generated-region body (between, not including, the markers)."""
-    all_sources = sorted({ref for ref, _ in modules} | set(HORIZONTAL_LAYERS))
+    all_sources = sorted({ref for ref, _ in modules} | set(INWARD_LAYER_SOURCES))
     lines: list[str] = []
     for ref, source in modules:
         internals_src = (
@@ -119,8 +127,10 @@ def render(modules: list[tuple[str, str]]) -> str:
             f"src/bob/{ref}/*",
             "bob/app",
         )
-        # Inward boundary: every OTHER top-level tree, listed explicitly (killing
-        # the char-class correlation and the c/c collision).
+        # Inward boundary: every OTHER business module + the pure ``domain`` layer,
+        # listed explicitly (killing the char-class correlation and the c/c
+        # collision). Coordination layers (application/infrastructure/runtime) are
+        # NOT sources here — they legitimately orchestrate/compose modules.
         for src in all_sources:
             if src == ref:
                 continue

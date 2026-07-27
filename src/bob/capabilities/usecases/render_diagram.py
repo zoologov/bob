@@ -35,7 +35,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-from bob.domain.ports import DiagramRenderError, DiagramResult
+from bob.capabilities.ports import DiagramRenderError, DiagramResult
 
 if TYPE_CHECKING:
     from collections.abc import Mapping

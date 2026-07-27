@@ -45,7 +45,7 @@ from collections.abc import Mapping, Sequence
 
 import aiohttp
 
-from bob.domain.ports import WebSearchResult, WebSource
+from bob.capabilities.ports import WebSearchResult, WebSource
 
 _RESPONSES_PATH = "responses"
 _WEB_SEARCH_CALL = "web_search_call"

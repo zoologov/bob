@@ -44,7 +44,7 @@ import logging
 from typing import TYPE_CHECKING
 
 from bob.application.reliability import call_with_retry
-from bob.domain.ports import SsrfBlockedError
+from bob.capabilities.ports import SsrfBlockedError
 
 if TYPE_CHECKING:
     from collections.abc import Mapping

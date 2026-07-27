@@ -46,7 +46,7 @@ from urllib.parse import urljoin, urlparse
 
 import aiohttp
 
-from bob.domain.ports import SsrfBlockedError, UrlReadError, WebPage
+from bob.capabilities.ports import SsrfBlockedError, UrlReadError, WebPage
 
 if TYPE_CHECKING:
     from types import TracebackType

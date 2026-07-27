@@ -103,6 +103,60 @@ rules:
 
   # BEGIN generated boundary rules
 
+  # ── capabilities VERTICAL module (generated) ──
+  - name: capabilities-usecases-no-adapters
+    description: "capabilities: usecases не импортят adapters (порты; adapters — на композиции)"
+    severity: error
+    forbid_import: {from: "src/bob/capabilities/usecases/*", to: "bob/capabilities/adapters/*"}
+  - name: capabilities-internals-no-usecases
+    description: "capabilities: доменная логика/адаптеры не импортят usecases (usecases — на композиции)"
+    severity: error
+    forbid_import: {from: "src/bob/capabilities/[!u]*", to: "bob/capabilities/usecases/*"}
+  - name: capabilities-internals-no-adapters
+    description: "capabilities: доменная логика не импортит adapters (adapters — на композиции)"
+    severity: error
+    forbid_import: {from: "src/bob/capabilities/[!au]*", to: "bob/capabilities/adapters/*"}
+  - name: capabilities-usecases-no-infra
+    description: "capabilities: usecases не импортят чужой infrastructure (только через порты)"
+    severity: error
+    forbid_import: {from: "src/bob/capabilities/usecases/*", to: "bob/infrastructure/*"}
+  - name: capabilities-no-composition-root
+    description: "capabilities: модуль не импортит композиционный корень (src/bob/app.py)"
+    severity: error
+    forbid_import: {from: "src/bob/capabilities/*", to: "bob/app"}
+  - name: capabilities-boundary-no-coding-usecases
+    description: "capabilities: coding не импортит usecases напрямую (только через фасад/порты)"
+    severity: error
+    forbid_import: {from: "src/bob/coding/*", to: "bob/capabilities/usecases/*"}
+  - name: capabilities-boundary-no-coding-adapters
+    description: "capabilities: coding не импортит adapters напрямую (только через фасад/порты)"
+    severity: error
+    forbid_import: {from: "src/bob/coding/*", to: "bob/capabilities/adapters/*"}
+  - name: capabilities-boundary-no-domain-usecases
+    description: "capabilities: domain не импортит usecases напрямую (только через фасад/порты)"
+    severity: error
+    forbid_import: {from: "src/bob/domain/*", to: "bob/capabilities/usecases/*"}
+  - name: capabilities-boundary-no-domain-adapters
+    description: "capabilities: domain не импортит adapters напрямую (только через фасад/порты)"
+    severity: error
+    forbid_import: {from: "src/bob/domain/*", to: "bob/capabilities/adapters/*"}
+  - name: capabilities-boundary-no-memory-usecases
+    description: "capabilities: memory не импортит usecases напрямую (только через фасад/порты)"
+    severity: error
+    forbid_import: {from: "src/bob/memory/*", to: "bob/capabilities/usecases/*"}
+  - name: capabilities-boundary-no-memory-adapters
+    description: "capabilities: memory не импортит adapters напрямую (только через фасад/порты)"
+    severity: error
+    forbid_import: {from: "src/bob/memory/*", to: "bob/capabilities/adapters/*"}
+  - name: capabilities-boundary-no-proactivity-usecases
+    description: "capabilities: proactivity не импортит usecases напрямую (только через фасад/порты)"
+    severity: error
+    forbid_import: {from: "src/bob/proactivity/*", to: "bob/capabilities/usecases/*"}
+  - name: capabilities-boundary-no-proactivity-adapters
+    description: "capabilities: proactivity не импортит adapters напрямую (только через фасад/порты)"
+    severity: error
+    forbid_import: {from: "src/bob/proactivity/*", to: "bob/capabilities/adapters/*"}
+
   # ── coding VERTICAL module (generated) ──
   - name: coding-usecases-no-adapters
     description: "coding: usecases не импортят adapters (порты; adapters — на композиции)"
@@ -124,14 +178,14 @@ rules:
     description: "coding: модуль не импортит композиционный корень (src/bob/app.py)"
     severity: error
     forbid_import: {from: "src/bob/coding/*", to: "bob/app"}
-  - name: coding-boundary-no-application-usecases
-    description: "coding: application не импортит usecases напрямую (только через фасад/порты)"
+  - name: coding-boundary-no-capabilities-usecases
+    description: "coding: capabilities не импортит usecases напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/application/*", to: "bob/coding/usecases/*"}
-  - name: coding-boundary-no-application-adapters
-    description: "coding: application не импортит adapters напрямую (только через фасад/порты)"
+    forbid_import: {from: "src/bob/capabilities/*", to: "bob/coding/usecases/*"}
+  - name: coding-boundary-no-capabilities-adapters
+    description: "coding: capabilities не импортит adapters напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/application/*", to: "bob/coding/adapters/*"}
+    forbid_import: {from: "src/bob/capabilities/*", to: "bob/coding/adapters/*"}
   - name: coding-boundary-no-domain-usecases
     description: "coding: domain не импортит usecases напрямую (только через фасад/порты)"
     severity: error
@@ -140,14 +194,6 @@ rules:
     description: "coding: domain не импортит adapters напрямую (только через фасад/порты)"
     severity: error
     forbid_import: {from: "src/bob/domain/*", to: "bob/coding/adapters/*"}
-  - name: coding-boundary-no-infrastructure-usecases
-    description: "coding: infrastructure не импортит usecases напрямую (только через фасад/порты)"
-    severity: error
-    forbid_import: {from: "src/bob/infrastructure/*", to: "bob/coding/usecases/*"}
-  - name: coding-boundary-no-infrastructure-adapters
-    description: "coding: infrastructure не импортит adapters напрямую (только через фасад/порты)"
-    severity: error
-    forbid_import: {from: "src/bob/infrastructure/*", to: "bob/coding/adapters/*"}
   - name: coding-boundary-no-memory-usecases
     description: "coding: memory не импортит usecases напрямую (только через фасад/порты)"
     severity: error
@@ -186,14 +232,14 @@ rules:
     description: "memory: модуль не импортит композиционный корень (src/bob/app.py)"
     severity: error
     forbid_import: {from: "src/bob/memory/*", to: "bob/app"}
-  - name: memory-boundary-no-application-usecases
-    description: "memory: application не импортит usecases напрямую (только через фасад/порты)"
+  - name: memory-boundary-no-capabilities-usecases
+    description: "memory: capabilities не импортит usecases напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/application/*", to: "bob/memory/usecases/*"}
-  - name: memory-boundary-no-application-adapters
-    description: "memory: application не импортит adapters напрямую (только через фасад/порты)"
+    forbid_import: {from: "src/bob/capabilities/*", to: "bob/memory/usecases/*"}
+  - name: memory-boundary-no-capabilities-adapters
+    description: "memory: capabilities не импортит adapters напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/application/*", to: "bob/memory/adapters/*"}
+    forbid_import: {from: "src/bob/capabilities/*", to: "bob/memory/adapters/*"}
   - name: memory-boundary-no-coding-usecases
     description: "memory: coding не импортит usecases напрямую (только через фасад/порты)"
     severity: error
@@ -210,14 +256,6 @@ rules:
     description: "memory: domain не импортит adapters напрямую (только через фасад/порты)"
     severity: error
     forbid_import: {from: "src/bob/domain/*", to: "bob/memory/adapters/*"}
-  - name: memory-boundary-no-infrastructure-usecases
-    description: "memory: infrastructure не импортит usecases напрямую (только через фасад/порты)"
-    severity: error
-    forbid_import: {from: "src/bob/infrastructure/*", to: "bob/memory/usecases/*"}
-  - name: memory-boundary-no-infrastructure-adapters
-    description: "memory: infrastructure не импортит adapters напрямую (только через фасад/порты)"
-    severity: error
-    forbid_import: {from: "src/bob/infrastructure/*", to: "bob/memory/adapters/*"}
   - name: memory-boundary-no-proactivity-usecases
     description: "memory: proactivity не импортит usecases напрямую (только через фасад/порты)"
     severity: error
@@ -248,14 +286,14 @@ rules:
     description: "proactivity: модуль не импортит композиционный корень (src/bob/app.py)"
     severity: error
     forbid_import: {from: "src/bob/proactivity/*", to: "bob/app"}
-  - name: proactivity-boundary-no-application-usecases
-    description: "proactivity: application не импортит usecases напрямую (только через фасад/порты)"
+  - name: proactivity-boundary-no-capabilities-usecases
+    description: "proactivity: capabilities не импортит usecases напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/application/*", to: "bob/proactivity/usecases/*"}
-  - name: proactivity-boundary-no-application-adapters
-    description: "proactivity: application не импортит adapters напрямую (только через фасад/порты)"
+    forbid_import: {from: "src/bob/capabilities/*", to: "bob/proactivity/usecases/*"}
+  - name: proactivity-boundary-no-capabilities-adapters
+    description: "proactivity: capabilities не импортит adapters напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/application/*", to: "bob/proactivity/adapters/*"}
+    forbid_import: {from: "src/bob/capabilities/*", to: "bob/proactivity/adapters/*"}
   - name: proactivity-boundary-no-coding-usecases
     description: "proactivity: coding не импортит usecases напрямую (только через фасад/порты)"
     severity: error
@@ -272,14 +310,6 @@ rules:
     description: "proactivity: domain не импортит adapters напрямую (только через фасад/порты)"
     severity: error
     forbid_import: {from: "src/bob/domain/*", to: "bob/proactivity/adapters/*"}
-  - name: proactivity-boundary-no-infrastructure-usecases
-    description: "proactivity: infrastructure не импортит usecases напрямую (только через фасад/порты)"
-    severity: error
-    forbid_import: {from: "src/bob/infrastructure/*", to: "bob/proactivity/usecases/*"}
-  - name: proactivity-boundary-no-infrastructure-adapters
-    description: "proactivity: infrastructure не импортит adapters напрямую (только через фасад/порты)"
-    severity: error
-    forbid_import: {from: "src/bob/infrastructure/*", to: "bob/proactivity/adapters/*"}
   - name: proactivity-boundary-no-memory-usecases
     description: "proactivity: memory не импортит usecases напрямую (только через фасад/порты)"
     severity: error
@@ -424,6 +454,67 @@ rules:
 #
 # If any TYPE_CHECKING item ever becomes a RUNTIME import it will surface (edge /
 # import scan) and must be re-evaluated — do not pre-emptively suppress.
+
+# ── BOB-062.4: cross-boundary refs for the `capabilities` module ──────────────
+# The domain-first move of capabilities (slice .2 edge-inventory) surfaced these
+# cross-boundary references. The generated `capabilities-*` boundary rules above now
+# ENFORCE the module seam (explicit-path, c/c-collision-proof). Splitting the refs
+# into two groups by whether the generated rules find them CLEAN or FLAG them:
+#
+# ── GROUP A — genuinely CLEAN (no finding; documented so a rule is not added that
+#    would mask a real break) ──
+#   A1. coding/usecases/coding_context → capabilities.introspection.privacy_guard
+#       (PrivacyGuard). TYPE_CHECKING-only — ABSENT from `code_imports`, so no
+#       `forbid_import` match and no depends_on edge. Carried-over coding→introspection
+#       TC ref from BOB-062.1 item (2), retargeted to the capabilities surface. Legal
+#       (compile-time type ref); names the module ROOT surface, not usecases/adapters.
+#   A2. domain/ports/__init__ → capabilities.ports (18-port shim re-export). A
+#       domain→module public-surface import (mirrors domain.ports→memory.ports and
+#       →proactivity.ports); ports are the module's declared inward seam — no forbid
+#       targets it. (This one-way shim leg is fine on its own — the return runtime
+#       edge that used to close it into a cycle was removed in B4 below.)
+#   A3. capabilities/usecases → application.reliability (call_with_retry). SHARED
+#       app-level service OUTSIDE any vertical module (same status as the shared
+#       llm_router in BOB-062.1 item 1). Targets `bob/application/*`, never
+#       `bob/infrastructure/*`, so `capabilities-usecases-no-infra` stays clean and
+#       `capabilities-no-composition-root` (exact `bob/app`) does not match. Legal.
+#
+# ── GROUP B — RUNTIME refs the .3 rules flagged, now RESOLVED in slice .7 (a note
+#    block cannot legalize them: `forbid_import` has NO allow-list, and the cycle
+#    rule is import-derived — so each was fixed at its source). Kept as a resolution
+#    record so the reasoning is not lost: ──
+#   B1/B2/B3 — RULE-MODEL fix (`scripts/gen_boundary_rules.py`). These were NOT real
+#     leaks: the .1 generator wrongly listed the COORDINATION layers `application` /
+#     `infrastructure` as inward-boundary sources. But `application` is cross-domain
+#     orchestration (`handle_message`, `privileged_fulfiller`) and `infrastructure` is
+#     composition (`llm/factory` wiring `QwenWebSearchProvider`) — by definition they
+#     assemble and invoke modules' use-cases/adapters. The inward boundary must isolate
+#     BUSINESS modules from each other, not the coordinators that wire them. Slice .7
+#     narrowed the generator's inward-boundary sources to `INWARD_LAYER_SOURCES =
+#     ("domain",)` + other module-verticals, so B1 (llm/factory→capabilities.adapters),
+#     B2 (handle_message→capabilities.usecases ×3) and B3 (privileged_fulfiller→
+#     tool_loop) are no longer emitted as violations — no src façade-routing needed.
+#     (Per-module internal layering — usecases-no-adapters / internals-no-usecases /
+#     internals-no-adapters / usecases-no-infra / no-composition-root — is UNCHANGED;
+#     vertical↔vertical isolation, incl. the c/c coding↔capabilities pair, still bites,
+#     verified by an inject-and-revert probe both directions in .7.)
+#   B4 — ports↔capabilities NODE CYCLE (`no-dependency-cycles`), RESOLVED in src/**.
+#     The `capabilities/ports.py` kernel import was already direct-to-`bob.domain.ports.
+#     kernel` (TYPE_CHECKING, .2) — NOT a runtime cycle leg. The real return edge was 5
+#     RUNTIME imports where capabilities modules pulled their OWN value objects back
+#     through the `bob.domain.ports` shim (round-trip): WebSearchResult/WebSource
+#     (adapters/web_search_qwen), WebPage/UrlReadError/SsrfBlockedError (adapters/web/
+#     http_url_reader + usecases/read_url), DiagramRenderError/DiagramResult (adapters/
+#     diagrams/mmdc_renderer + usecases/render_diagram). Those VOs already LIVE in
+#     `capabilities.ports`; .7 redirected the 5 imports to `from bob.capabilities.ports
+#     import …` (identical objects, minus the shim hop) — killing the capabilities→ports
+#     runtime edge, so the A2 shim's ports→capabilities leg no longer closes a cycle.
+#     Behavior-preserving; siblings (coding/memory/proactivity) never had the return edge
+#     (their ports import own entities TYPE_CHECKING-only), which is why only capabilities
+#     cycled.
+#
+# If any GROUP-A TYPE_CHECKING item ever becomes a RUNTIME import it will surface
+# (edge / import scan) and must be re-evaluated — do not pre-emptively suppress.
 
 # ── 🔴 BOUNDARY-RULE GENERATOR — IMPLEMENTED in BOB-062.4 (.1) ─────────────────
 # STATUS: the proposal below is now BUILT — `scripts/gen_boundary_rules.py` emits
