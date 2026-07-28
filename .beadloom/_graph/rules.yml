@@ -124,6 +124,10 @@ rules:
     description: "capabilities: модуль не импортит композиционный корень (src/bob/app.py)"
     severity: error
     forbid_import: {from: "src/bob/capabilities/*", to: "bob/app"}
+  - name: capabilities-no-runtime-root
+    description: "capabilities: модуль не импортит композиционный корень (bob.runtime.*)"
+    severity: error
+    forbid_import: {from: "src/bob/capabilities/*", to: "bob/runtime*"}
   - name: capabilities-boundary-no-coding-usecases
     description: "capabilities: coding не импортит usecases напрямую (только через фасад/порты)"
     severity: error
@@ -202,6 +206,10 @@ rules:
     description: "coding: модуль не импортит композиционный корень (src/bob/app.py)"
     severity: error
     forbid_import: {from: "src/bob/coding/*", to: "bob/app"}
+  - name: coding-no-runtime-root
+    description: "coding: модуль не импортит композиционный корень (bob.runtime.*)"
+    severity: error
+    forbid_import: {from: "src/bob/coding/*", to: "bob/runtime*"}
   - name: coding-boundary-no-capabilities-usecases
     description: "coding: capabilities не импортит usecases напрямую (только через фасад/порты)"
     severity: error
@@ -280,6 +288,10 @@ rules:
     description: "conversation: модуль не импортит композиционный корень (src/bob/app.py)"
     severity: error
     forbid_import: {from: "src/bob/conversation/*", to: "bob/app"}
+  - name: conversation-no-runtime-root
+    description: "conversation: модуль не импортит композиционный корень (bob.runtime.*)"
+    severity: error
+    forbid_import: {from: "src/bob/conversation/*", to: "bob/runtime*"}
   - name: conversation-boundary-no-capabilities-usecases
     description: "conversation: capabilities не импортит usecases напрямую (только через фасад/порты)"
     severity: error
@@ -358,6 +370,10 @@ rules:
     description: "memory: модуль не импортит композиционный корень (src/bob/app.py)"
     severity: error
     forbid_import: {from: "src/bob/memory/*", to: "bob/app"}
+  - name: memory-no-runtime-root
+    description: "memory: модуль не импортит композиционный корень (bob.runtime.*)"
+    severity: error
+    forbid_import: {from: "src/bob/memory/*", to: "bob/runtime*"}
   - name: memory-boundary-no-capabilities-usecases
     description: "memory: capabilities не импортит usecases напрямую (только через фасад/порты)"
     severity: error
@@ -436,6 +452,10 @@ rules:
     description: "personality: модуль не импортит композиционный корень (src/bob/app.py)"
     severity: error
     forbid_import: {from: "src/bob/personality/*", to: "bob/app"}
+  - name: personality-no-runtime-root
+    description: "personality: модуль не импортит композиционный корень (bob.runtime.*)"
+    severity: error
+    forbid_import: {from: "src/bob/personality/*", to: "bob/runtime*"}
   - name: personality-boundary-no-capabilities-usecases
     description: "personality: capabilities не импортит usecases напрямую (только через фасад/порты)"
     severity: error
@@ -514,6 +534,10 @@ rules:
     description: "proactivity: модуль не импортит композиционный корень (src/bob/app.py)"
     severity: error
     forbid_import: {from: "src/bob/proactivity/*", to: "bob/app"}
+  - name: proactivity-no-runtime-root
+    description: "proactivity: модуль не импортит композиционный корень (bob.runtime.*)"
+    severity: error
+    forbid_import: {from: "src/bob/proactivity/*", to: "bob/runtime*"}
   - name: proactivity-boundary-no-capabilities-usecases
     description: "proactivity: capabilities не импортит usecases напрямую (только через фасад/порты)"
     severity: error
@@ -592,6 +616,10 @@ rules:
     description: "social: модуль не импортит композиционный корень (src/bob/app.py)"
     severity: error
     forbid_import: {from: "src/bob/social/*", to: "bob/app"}
+  - name: social-no-runtime-root
+    description: "social: модуль не импортит композиционный корень (bob.runtime.*)"
+    severity: error
+    forbid_import: {from: "src/bob/social/*", to: "bob/runtime*"}
   - name: social-boundary-no-capabilities-usecases
     description: "social: capabilities не импортит usecases напрямую (только через фасад/порты)"
     severity: error
@@ -676,6 +704,11 @@ rules:
         # this single util remains uncovered. The rule STAYS error so any NEW
         # shadow module still fails.
         - "src/bob/application/reliability.py"  # BOB-065: single util, place in Phase 3
+        # BOB-062.7a: `app.py` is now an 82-line re-export SHIM (composition
+        # surface, zero own symbols) — the real composition root moved to the
+        # `runtime` node (src/bob/runtime/). Exempt like an __init__ re-export
+        # façade; the shim only re-exports from `bob.runtime` + the domain adapters.
+        - "src/bob/app.py"  # BOB-062.7a: thin re-export shim (root moved to runtime/)
 
   # ── Anti-monster (ratchet: warn now → error after Фаза 3 decomposition) ─────
   - name: no-monster-modules

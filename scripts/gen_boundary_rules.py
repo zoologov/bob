@@ -127,6 +127,20 @@ def render(modules: list[tuple[str, str]]) -> str:
             f"src/bob/{ref}/*",
             "bob/app",
         )
+        # BOB-062.7a: the composition root moved app.py → the `bob/runtime`
+        # package (composition/main/clock/config/wiring), so the app.py-shim ban
+        # above no longer covers the real root. This companion rule forbids the
+        # module from reaching the moved root directly. `bob/runtime*` catches both
+        # the package (`bob.runtime`) and its submodules (`bob.runtime.composition`,
+        # …); it does NOT collide with `bob.application.runtime` (that path is
+        # `bob/application/runtime`, a different prefix). runtime → all modules stays
+        # legal (composition root by definition) — no rule sources from runtime.
+        lines += _rule(
+            f"{ref}-no-runtime-root",
+            f"{ref}: модуль не импортит композиционный корень (bob.runtime.*)",
+            f"src/bob/{ref}/*",
+            "bob/runtime*",
+        )
         # Inward boundary: every OTHER business module + the pure ``domain`` layer,
         # listed explicitly (killing the char-class correlation and the c/c
         # collision). Coordination layers (application/infrastructure/runtime) are
