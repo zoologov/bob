@@ -35,6 +35,7 @@ if TYPE_CHECKING:
 _CHAT = 555
 _THREAD = 7
 _OTHER_THREAD = 9
+_OWNER_ID = 200
 _GUEST_ID = 300
 _SINCE = datetime(2026, 6, 24, 12, 0, 0, tzinfo=UTC)
 
@@ -61,6 +62,63 @@ async def test_save_then_load_round_trips_bob_floor(repo: SqliteMemoryRepo) -> N
     await store.save(_CHAT, _THREAD, floor)
 
     assert await store.load(_CHAT, _THREAD) == floor
+
+
+async def test_save_then_load_round_trips_participants(repo: SqliteMemoryRepo) -> None:
+    # Floor-по-говорящему (BOB-066 .1): the participants set survives the round-trip.
+    store = SqliteConversationFloorStore(repo)
+    floor = ConversationFloor(
+        holder=FloorHolder.BOB,
+        holder_id=None,
+        since=_SINCE,
+        idle_streak=0,
+        participants=(_OWNER_ID, _GUEST_ID),
+    )
+
+    await store.save(_CHAT, _THREAD, floor)
+
+    loaded = await store.load(_CHAT, _THREAD)
+    assert loaded == floor
+    assert loaded.participants == (_OWNER_ID, _GUEST_ID)
+
+
+async def test_empty_participants_round_trip_as_legacy(repo: SqliteMemoryRepo) -> None:
+    # An empty set stores NULL and loads back as () — the legacy mode, no backfill.
+    store = SqliteConversationFloorStore(repo)
+    floor = ConversationFloor(
+        holder=FloorHolder.BOB, holder_id=None, since=_SINCE, idle_streak=0
+    )
+
+    await store.save(_CHAT, _THREAD, floor)
+
+    loaded = await store.load(_CHAT, _THREAD)
+    assert loaded.participants == ()
+    # NULL is what a legacy row (written before the column existed) also carries.
+    async with repo.connection.execute(
+        "SELECT participants FROM conversation_floor WHERE chat_id = ?", (_CHAT,)
+    ) as cursor:
+        row = await cursor.fetchone()
+    assert row is not None
+    assert row[0] is None
+
+
+async def test_legacy_null_participants_row_loads_as_empty(
+    repo: SqliteMemoryRepo,
+) -> None:
+    # 🔴 A pre-BOB-066 row (no participants written) reads back as () = legacy mode, so
+    # old SQLite rows stay valid without a data backfill.
+    await repo.connection.execute(
+        "INSERT INTO conversation_floor "
+        "(chat_id, thread_id, holder, holder_id, since, idle_streak) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        (_CHAT, _THREAD, FloorHolder.BOB.value, None, _SINCE.isoformat(), 0),
+    )
+    await repo.connection.commit()
+
+    loaded = await SqliteConversationFloorStore(repo).load(_CHAT, _THREAD)
+
+    assert loaded.holder is FloorHolder.BOB
+    assert loaded.participants == ()
 
 
 async def test_save_then_load_round_trips_other_floor(repo: SqliteMemoryRepo) -> None:

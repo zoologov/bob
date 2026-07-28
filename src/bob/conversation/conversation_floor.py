@@ -20,14 +20,25 @@ ambient-логику BOB-023 (Боб не встревает в чужой ди�
 ``now`` (часы живут в application). Персист floor — за портом ``ConversationFloorStore``;
 интеграция в ход — в ``handle_message`` (отдельный беад).
 
+Floor-по-говорящему (BOB-066 .1): у живого floor=БОБ есть набор ``participants`` — id
+тех, чьи безметочные реплики Боб держит как обращённые к нему (кто реально в нити с
+Бобом). **Аддитивно**: дефолт ``()`` = legacy-режим — пустой набор поднимает AMBIENT от
+ЛЮБОГО участника (ровно поведение BOB-025 до этого среза), поэтому старые
+``ConversationFloor(...)`` и строки SQLite остаются валидны. Прямое обращение и ответ
+Боба доливают говорящего в набор (dedup, потолок), поворот к другому / распад — сбрасывают
+его. Так безметочная реплика УЧАСТНИКА нити продолжает диалог, а реплика ПОСТОРОННЕГО не
+перехватывается Бобом ошибочно.
+
 * :class:`FloorHolder` — BOB / OTHER / IDLE.
 * :class:`ConversationFloor` — frozen-снимок: держатель, id человека при OTHER, когда
-  держателя в последний раз подтвердили (``since``) и серия безметочных реплик без
-  участия Боба (``idle_streak``).
+  держателя в последний раз подтвердили (``since``), серия безметочных реплик без участия
+  Боба (``idle_streak``) и ``participants`` — набор говорящих живой нити (пусто = legacy).
 * :class:`FloorConfig` — тюнинг: ``timeout_seconds`` (тайм-аут floor) и
   ``reset_after_silent`` (распад после стольких безметочных реплик подряд).
 * :func:`advance_floor` — чистый переход floor по одному ходу.
-* :func:`resolve_addressivity` — поднимает AMBIENT→DIRECTED_TO_BOB, пока floor=БОБ жив.
+* :func:`resolve_addressivity` — поднимает AMBIENT→DIRECTED_TO_BOB, пока floor=БОБ жив И
+  говорящий — участник нити (или набор пуст = legacy).
+* :func:`is_floor_participant` — держит ли Боб живой floor, в котором говорящий признан.
 * :func:`idle_floor` — фабрика дефолтного IDLE-floor.
 """
 
@@ -49,6 +60,7 @@ __all__ = [
     "FloorHolder",
     "advance_floor",
     "idle_floor",
+    "is_floor_participant",
     "resolve_addressivity",
 ]
 
@@ -59,6 +71,11 @@ _DEFAULT_TIMEOUT_SECONDS = 300
 # Дефолтный распад по молчанию: после стольких безметочных реплик подряд, на которые
 # Боб промолчал, floor распадается в IDLE (> 1, чтобы одна реплика не снимала floor).
 _DEFAULT_RESET_AFTER_SILENT = 2
+
+# Потолок набора участников живой нити: тред с Бобом реально держит немного говорящих;
+# на переполнении самый старый вытесняется (окно последних активных), чтобы набор не рос
+# без предела при долгой групповой нити.
+_MAX_PARTICIPANTS = 8
 
 
 class FloorHolder(Enum):
@@ -84,13 +101,20 @@ class ConversationFloor:
     ``holder`` — кто держит floor; ``holder_id`` — id человека при ``OTHER`` (иначе
     ``None``); ``since`` — когда держателя в последний раз подтвердили (для тайм-аута;
     ``None`` при ``IDLE``); ``idle_streak`` — сколько безметочных реплик подряд прошло
-    БЕЗ участия Боба (для распада по молчанию).
+    БЕЗ участия Боба (для распада по молчанию); ``participants`` — id говорящих живой
+    нити при ``holder=BOB`` (чьи безметочные реплики читаются как обращённые к Бобу).
+
+    ``participants`` **аддитивен** и по умолчанию пуст (``()``): пустой набор = legacy —
+    поднимает AMBIENT от любого участника (ровно поведение до BOB-066 .1), так что старые
+    конструкции и строки SQLite остаются валидны. Не пуст — поднимается только реплика
+    признанного говорящего (или с неизвестным ``sender_id``, fail-safe).
     """
 
     holder: FloorHolder
     holder_id: int | None
     since: datetime | None
     idle_streak: int
+    participants: tuple[int, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -130,6 +154,68 @@ def _is_live_bob_floor(
     return now - floor.since <= timeout
 
 
+def _sender_recognized(floor: ConversationFloor, sender_id: int | None) -> bool:
+    """Признан ли ``sender_id`` говорящим живой нити Боба (floor-по-говорящему).
+
+    Три случая читают безметочную реплику как продолжение нити:
+    * набор ``participants`` пуст — **legacy**: любой участник (поведение до BOB-066 .1);
+    * ``sender_id`` неизвестен (``None``) — **fail-safe**: не глушим Боба на «тихом» ходу;
+    * ``sender_id`` уже в наборе — говорящий реально в нити с Бобом.
+    Иначе (посторонний при непустом наборе) — не признан: Боб не перехватывает чужое.
+    """
+    if not floor.participants:
+        return True
+    if sender_id is None:
+        return True
+    return sender_id in floor.participants
+
+
+def is_floor_participant(
+    floor: ConversationFloor,
+    sender_id: int | None,
+    *,
+    now: datetime,
+    config: FloorConfig,
+) -> bool:
+    """Держит ли Боб ЖИВОЙ floor, в котором ``sender_id`` признан говорящим (BOB-066 .1).
+
+    Чистый предикат «эта реплика — часть живой нити Боба с этим говорящим»: floor=БОБ,
+    не истёк по тайм-ауту И говорящий признан (:func:`_sender_recognized`). На нём стоит и
+    подъём адресности (:func:`resolve_addressivity`), и хинт ``floor_participant`` для
+    рефлексивного read.
+    """
+    return _is_live_bob_floor(floor, now=now, config=config) and _sender_recognized(
+        floor, sender_id
+    )
+
+
+def _with_participant(
+    participants: tuple[int, ...], sender_id: int | None
+) -> tuple[int, ...]:
+    """Долить говорящего в набор нити — dedup + потолок (окно последних активных).
+
+    ``None`` (неизвестный говорящий) и уже присутствующий id не меняют набор. На
+    переполнении вытесняется самый старый (срез последних ``_MAX_PARTICIPANTS``), чтобы
+    долгая групповая нить не растила набор без предела.
+    """
+    if sender_id is None or sender_id in participants:
+        return participants
+    return (*participants, sender_id)[-_MAX_PARTICIPANTS:]
+
+
+def _bob_floor(
+    participants: tuple[int, ...], sender_id: int | None, *, now: datetime
+) -> ConversationFloor:
+    """Свежий floor=БОБ (since=now, streak=0) с говорящим, долитым в набор нити."""
+    return ConversationFloor(
+        holder=FloorHolder.BOB,
+        holder_id=None,
+        since=now,
+        idle_streak=0,
+        participants=_with_participant(participants, sender_id),
+    )
+
+
 def advance_floor(
     floor: ConversationFloor,
     *,
@@ -152,22 +238,17 @@ def advance_floor(
        * ``DIRECTED_TO_OTHER`` → ``OTHER(holder_id=directed_to_id, since=now,
          streak=0)`` — явный поворот к другому, Боб отступает.
        * ``AMBIENT`` → если floor=БОБ и жив (``now - since <= timeout``), реплика в
-         нить держит БОБА (``since=now``), но молчание Боба растит ``idle_streak``; при
-         ``idle_streak >= reset_after_silent`` floor распадается в ``IDLE``. Если floor
-         НЕ у Боба или истёк — ``IDLE`` (Боб не встревает).
+         нить держит БОБА (``since=now``, набор нити сохраняется), но молчание Боба растит
+         ``idle_streak``; при ``idle_streak >= reset_after_silent`` floor распадается в
+         ``IDLE``. Если floor НЕ у Боба или истёк — ``IDLE`` (Боб не встревает).
 
-    ``sender_id`` принимается для будущей гранулярности (кто говорил) и единообразия
-    вызова; сейчас на переход не влияет.
+    **Floor-по-говорящему (BOB-066 .1):** на ветках БОБА (ответ Боба / прямое обращение)
+    ``sender_id`` доливается в ``participants`` (dedup + потолок) — говорящий признаётся
+    участником нити. Поворот к другому (``DIRECTED_TO_OTHER``) и любой распад в ``IDLE``
+    **сбрасывают** набор (свежий пустой ``()`` = legacy для следующей нити).
     """
-    del sender_id  # принимается для единообразия вызова; на переход пока не влияет
-    if bob_replied:
-        return ConversationFloor(
-            holder=FloorHolder.BOB, holder_id=None, since=now, idle_streak=0
-        )
-    if addressivity is Addressivity.DIRECTED_TO_BOB:
-        return ConversationFloor(
-            holder=FloorHolder.BOB, holder_id=None, since=now, idle_streak=0
-        )
+    if bob_replied or addressivity is Addressivity.DIRECTED_TO_BOB:
+        return _bob_floor(floor.participants, sender_id, now=now)
     if addressivity is Addressivity.DIRECTED_TO_OTHER:
         return ConversationFloor(
             holder=FloorHolder.OTHER,
@@ -197,6 +278,7 @@ def _advance_ambient(
         holder_id=None,
         since=now,
         idle_streak=next_streak,
+        participants=floor.participants,  # набор нити переживает тихий ход
     )
 
 
@@ -204,20 +286,22 @@ def resolve_addressivity(
     per_message: Addressivity,
     floor: ConversationFloor,
     *,
+    sender_id: int | None,
     now: datetime,
     config: FloorConfig,
 ) -> Addressivity:
-    """Поднять эффективную адресность по непрерывности floor — чисто (BOB-025).
+    """Поднять эффективную адресность по непрерывности floor — чисто (BOB-025/066 .1).
 
-    Если поштучная адресность ``AMBIENT`` И floor держит Боб И floor жив (не истёк по
-    тайм-ауту) → **``DIRECTED_TO_BOB``** (безметочная реплика в живой нити Боба читается
-    как обращённая к нему — непрерывность). Иначе ``per_message`` возвращается как есть:
-    прямое обращение и явный поворот к другому проходят без изменений, а ``AMBIENT`` при
-    чужом/распавшемся floor остаётся ``AMBIENT`` (Боб не перехватывает чужое — цель
-    BOB-023 цела).
+    Если поштучная адресность ``AMBIENT`` И floor держит живой Боб И **говорящий признан
+    участником нити** (:func:`is_floor_participant` — набор пуст=legacy / ``sender_id``
+    неизвестен / ``sender_id`` в наборе) → **``DIRECTED_TO_BOB``** (безметочная реплика
+    участника живой нити Боба читается как обращённая к нему — непрерывность). Иначе
+    ``per_message`` как есть: прямое обращение и поворот к другому проходят без изменений,
+    ``AMBIENT`` при чужом/распавшемся floor ИЛИ **от постороннего** (не в наборе) остаётся
+    ``AMBIENT`` (Боб не перехватывает чужое — цель BOB-023 цела).
     """
-    if per_message is Addressivity.AMBIENT and _is_live_bob_floor(
-        floor, now=now, config=config
+    if per_message is Addressivity.AMBIENT and is_floor_participant(
+        floor, sender_id, now=now, config=config
     ):
         return Addressivity.DIRECTED_TO_BOB
     return per_message

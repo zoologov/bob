@@ -136,11 +136,14 @@ async def test_floor_manager_is_inert_when_disabled() -> None:
         clock=_FrozenClock(),
     )
 
-    effective = await manager.resolve_effective(
-        chat_id=1, per_message=Addressivity.AMBIENT
+    resolution = await manager.resolve_effective(
+        chat_id=1, per_message=Addressivity.AMBIENT, sender_id=2
     )
 
-    assert effective is Addressivity.AMBIENT
+    # Inert path (floor disabled): effective unchanged, no holder, not a participant.
+    assert resolution.effective is Addressivity.AMBIENT
+    assert resolution.holder is None
+    assert resolution.participant is False
     # No store wired → advance simply returns without raising.
     await manager.advance_after_turn(
         chat_id=1,

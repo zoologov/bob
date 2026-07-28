@@ -68,6 +68,7 @@ class SqliteConnection:
             await self._load_vec_extension()
         await self._conn.executescript(_load_schema())
         await self._migrate_pursuit_stopped()
+        await self._migrate_conversation_floor_participants()
         await self._conn.commit()
         logger.info("SqliteConnection initialised at %s", self._db_path)
 
@@ -115,6 +116,32 @@ class SqliteConnection:
         :meth:`_migrate_pursuit_stopped`).
         """
         async with self._db().execute("PRAGMA table_info(proactivity_state)") as cursor:
+            rows = await cursor.fetchall()
+        return {str(row[1]) for row in rows}
+
+    async def _migrate_conversation_floor_participants(self) -> None:
+        """Add ``conversation_floor.participants`` to a pre-existing DB (BOB-066 .1).
+
+        Floor-по-говорящему: the CSV of ids whose ambient replies Bob holds as his own
+        (who is really in the exchange). ``CREATE TABLE IF NOT EXISTS`` never alters an
+        already-present table, so a DB written before this column existed would lack it.
+        This guarded ``ALTER`` adds it only when missing — additive and non-destructive: a
+        legacy row takes ``NULL``, which the store reads back as the empty ``()`` = legacy
+        mode (any participant continues, exactly the pre-BOB-066 floor). A clean no-op once
+        present. Kept in the kernel (the schema/migration owner) beside
+        :meth:`_migrate_pursuit_stopped`.
+        """
+        if "participants" in await self._conversation_floor_columns():
+            return
+        await self._db().execute(
+            "ALTER TABLE conversation_floor ADD COLUMN participants TEXT"
+        )
+
+    async def _conversation_floor_columns(self) -> set[str]:
+        """Names of the columns currently on ``conversation_floor`` (BOB-066 .1)."""
+        async with self._db().execute(
+            "PRAGMA table_info(conversation_floor)"
+        ) as cursor:
             rows = await cursor.fetchall()
         return {str(row[1]) for row in rows}
 

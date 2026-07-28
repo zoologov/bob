@@ -44,6 +44,7 @@ if TYPE_CHECKING:
     from bob.application.runtime.events import MessageReceived
     from bob.application.usecases.handle_message import BobUserIdSource, EpisodeReader
     from bob.conversation.addressivity import AddressivityThresholds
+    from bob.conversation.conversation_floor import FloorHolder
     from bob.conversation.usecases.floor_manager import FloorManager
 
 logger = logging.getLogger(__name__)
@@ -69,16 +70,19 @@ class _AddressivityDecision:
 
 @dataclass(frozen=True, slots=True)
 class _AddressivitySignals:
-    """This turn's structural addressivity signals (perception, BOB-023/025/049).
+    """This turn's structural addressivity signals (perception, BOB-023/025/049/066).
 
     The raw, grounded read of WHO the message is for: ``per_message`` is the
     per-message classification; ``effective`` is it raised by the conversation floor
     (continuity); ``others_present`` whether the thread has a third participant;
     ``floor_engaged`` whether the floor actually raised an ambient message to Bob;
-    ``reply_to_bob`` whether the inbound replies to Bob's own message; and
+    ``reply_to_bob`` whether the inbound replies to Bob's own message;
     ``directed_to_id`` the person a ``DIRECTED_TO_OTHER`` turn turned to (for the
-    floor pass), else ``None``. These are INPUTS — the legacy policy decides the
-    outcome on ``effective`` (BOB-023/025), the BOB-049 judge weighs them by meaning.
+    floor pass), else ``None``; ``floor_holder`` who currently holds the conversation
+    floor (``None`` when the floor is inert); and ``floor_participant`` whether THIS
+    sender belongs to Bob's live exchange (floor-по-говорящему, BOB-066 .1). These are
+    INPUTS — the legacy policy decides the outcome on ``effective`` (BOB-023/025), the
+    BOB-049 judge (and the future reflective read) weigh them by meaning.
     """
 
     per_message: Addressivity
@@ -87,6 +91,8 @@ class _AddressivitySignals:
     floor_engaged: bool
     reply_to_bob: bool
     directed_to_id: int | None
+    floor_holder: FloorHolder | None
+    floor_participant: bool
 
 
 class AddressivityPerceiver:
@@ -166,7 +172,10 @@ class AddressivityPerceiver:
             bob_user_id=bob_id,
             others_present=present,
         )
-        effective = await self._floor.resolve_effective(event.chat_id, per_message)
+        resolution = await self._floor.resolve_effective(
+            event.chat_id, per_message, sender_id=event.sender_id
+        )
+        effective = resolution.effective
         floor_engaged = (
             effective is Addressivity.DIRECTED_TO_BOB
             and per_message is not Addressivity.DIRECTED_TO_BOB
@@ -184,6 +193,8 @@ class AddressivityPerceiver:
             floor_engaged=floor_engaged,
             reply_to_bob=reply_to_bob,
             directed_to_id=directed_to_id,
+            floor_holder=resolution.holder,
+            floor_participant=resolution.participant,
         )
 
     async def _others_present(self, event: MessageReceived) -> bool:
