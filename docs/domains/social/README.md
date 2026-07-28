@@ -90,6 +90,7 @@ src/bob/social/
     first_impression_sources.py —              — FirstImpressionTracker: live-шов первого впечатления
     relationship_sources.py —                  — RelationshipTracker: live-шов отношения (current/record_interaction)
     sulk_sources.py       —                    — SulkTracker: live-шов обиды (current/observe)
+    social_context.py     —                    — SocialContext: per-person чтение хода (собеседник/впечатление/отношение/обида/стойка/тон), коллаборатор handle_message (BOB-062.6b)
     run_genesis.py        —                    — RunGenesis: первое пробуждение, генерация уникальной личности
   adapters/           # layer=infrastructure
     allowlist_store.py     —                   — KvAllowlistStore (allowlist в kv-таблице)
@@ -177,6 +178,14 @@ owner допущен только внутри разрешённого чата
 — тонкие live-шовы, держащие `HandleMessage` чистым от store/clock-плумбинга: `current`
 / `prior_impression` читают состояние для compose-пути, `note_first_contact` /
 `record_interaction` / `observe` фолдят сигналы хода и персистят.
+
+`SocialContext` (`usecases/social_context.py`, коллаборатор `handle_message` — BOB-062.6b, #9)
+— per-person социальное чтение хода поверх этих live-швов, собирается в `HandleMessage.__init__`.
+Владеет всей per-person перцепцией и эволюцией одного хода: `perceive_interlocutor`,
+`recall_prior_impression`, `record_first_impression`, `load_relationship` /
+`record_relationship`, `load_sulk` / `observe_sulk`, а также `decide_stance` /
+`relationship_tone` — ПУБЛИЧНЫЕ (их зовёт compose-путь `VoiceComposer` через инъектированный
+stance-порт, так что personality не импортирует social).
 
 `RunGenesis` (`usecases/run_genesis.py`) — одноразовое первое пробуждение (PRD US-1, US-4).
 На первом запуске (нет `SOUL.md`): грузит `bob-soul/`-шаблоны («геном» — архетип, пулы

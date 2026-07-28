@@ -105,7 +105,9 @@ src/bob/
   application/       # GUPPI: use-cases + оркестрация. Зависит от domain через порты.
     runtime/         # AgentRuntime (жизненный цикл), AsyncEventBus, события, periodic, retry
     router/          # LLMRouter: классификация задачи → Tier + правило редакции
-    usecases/        # HandleMessage, RunGenesis, UpdateMoodFromText, heartbeat-тики,
+    usecases/        # HandleMessage (тонкий оркестратор + коллабораторы EssentialRunner/
+                     #   PreComposeGate; прочие — по вертикалям, срез .6b), RunGenesis,
+                     #   UpdateMoodFromText, heartbeat-тики,
                      #   ApplyReflection + HeuristicReflectionParser (само-эволюция),
                      #   EvolveFascination, EvolvePhantoms (эмоциональная глубина),
                      #   ReappraiseReflection (реаппрайзал, BOB-033)
@@ -398,6 +400,41 @@ reply-на-Боба не срабатывает, но @mention по `username` �
 Когда пользователь пишет в Telegram, Боб проживает один ход. Поток собирается в
 `HandleMessage`, подписанном на событие `MessageReceived` в `AsyncEventBus`.
 
+> **Тонкий оркестратор + коллабораторы (BOB-062.6b, #9).** `handle_message.py` больше не
+> God-use-case: `HandleMessage.handle()` — тонкий оркестратор, который проводит ход по
+> фазам **perceive → who → gate → compose+guard → post-effects**, делегируя каждую
+> ~14 когезивным коллабораторам, разложенным по чистым модулям. `HandleMessage.__init__`
+> остаётся композиционным корнем: собирает коллабораторов из уже инъектированных швов
+> (`_build`-хелпер не менялся, поэтому существующие тесты хода валидны). Карта
+> коллаборатор → модуль:
+>
+> | Коллаборатор | Модуль | Роль |
+> |---|---|---|
+> | `MoodPerceiver` | `personality/usecases/mood_perceiver.py` | обновить настроение из входящего + план выражения (BOB-018) |
+> | `GroundedAddons` | `personality/usecases/grounded_addons.py` | заземлённые добавки (рефлексия/колбэк/фасцинация), decorative |
+> | `VoiceComposer` | `personality/usecases/voice_composer.py` | голос + генерация ответа |
+> | `SocialContext` | `social/usecases/social_context.py` | per-person чтение: отправитель, первое впечатление, отношение, обида, стойка, тон |
+> | `AddressivityPerceiver` | `conversation/usecases/addressivity_perceiver.py` | восприятие адресности + брать ли ход |
+> | `EngagementModel` | `conversation/usecases/engagement_model.py` | аппетит + verbosity + after-turn feedback |
+> | `RecallAssembler` | `conversation/usecases/recall_assembler.py` | воспроизведение треда + absence/acknowledgment |
+> | `FloorManager` | `conversation/usecases/floor_manager.py` | resolve + advance разговорной реплики (floor) |
+> | `VerifyStep` | `conversation/usecases/verify_step.py` | предответная эпистемическая проверка → per-turn note |
+> | `TurnGate` | `conversation/usecases/turn_gate.py` | гейт хода: reply/react/silent (тонкий координатор) |
+> | `AntiRepeatGuard` | `conversation/usecases/anti_repeat_guard.py` | анти-повтор/тик + кольцо закрывающих |
+> | `EssentialRunner` | `application/usecases/essential_runner.py` | ретрай существенных LLM-шагов + честный GUPPI-нотис |
+> | `PreComposeGate` | `application/usecases/precompose_gate.py` | coding-intent + permission гейты, что могут забрать ход |
+> | `DiagramSender` | `capabilities/usecases/diagram_sender.py` | авто-рендер inline-mermaid + отправка диаграмм |
+>
+> 🔴 **Цикл compose↔guard замкнут колбэком по значению, а не импортом.** `AntiRepeatGuard`
+> (conversation) принимает `VoiceComposer.compose` (personality) как `compose`-callback, так
+> что регенерация повтора вызывает композицию БЕЗ импорта `conversation → personality`. 🔴
+> **Turn-local state — через аргументы, никогда не атрибут** коллаборатора (класс — shared
+> singleton): `verify_note`, `closer_nudge`, `recalled`, `is_guest`, `reply`, `chat_id`,
+> announcer прокидываются параметрами и через тот же колбэк, поэтому не протекают между
+> ходами и пользователями. Остаток `handle_message.py` (~1634 строки) — это легитимная
+> композиция (`__init__` composition-root + injection-Protocol'ы коллабораторов) и тонкие
+> делегаторы; она **мигрирует в runtime в срезе .7**.
+
 1. **Приём (мульти-бот роутер + единый гейт авторизации).** `MultiBotGateway`
    (инфраструктура, на aiogram) одним проходом поллит обоих ботов, дедуплицирует
    кросс-бот по `(chat_id, message_id)`, затем центральный роутер проверяет
@@ -436,14 +473,14 @@ reply-на-Боба не срабатывает, но @mention по `username` �
    `is_owner → reply`, решение держится для **любого** собеседника (authz ортогонально —
    гостевые ограничения на пути `REPLY` неизменны). На `REPLY` гейт возвращает
    `_ReplyGate` и ход идёт в компоновку (плюс уже воспроизведённая нить — не читается
-   дважды); `REACT` и `IGNORE` полностью обрабатываются здесь (`_act_non_reply`,
-   см. шаг 4) и гейт возвращает `None`. Без провязанного судьи ИЛИ если отправитель не
+   дважды); `REACT` и `IGNORE` полностью обрабатываются внутри `TurnGate`
+   (см. шаг 4) и гейт возвращает `None`. Без провязанного судьи ИЛИ если отправитель не
    воспринят, гейт откатывается на **легаси-лестницу** BOB-023/025: `classify_addressivity`
    → `decide_response` (`ENGAGE` / `REACT` / `SILENT`) + форменный гейт `REACT_ONLY`
    (BOB-018) — ровно как раньше.
 4. **Decide (план выражения + recall + история + личность).** Сюда ход доходит уже
    как `REPLY` (гейт шага 3 пропустил его на компоновку; ветки `REACT` / `IGNORE`
-   завершены внутри гейта — `_act_non_reply` ставит выбранный по смыслу эмодзи или
+   завершены внутри `TurnGate` — он ставит выбранный по смыслу эмодзи или
    молчит и 🔴 в обеих ветках персистит ход, чтобы нить собеседника не рвалась,
    BOB-045). Сначала считается чистый **план выражения** (BOB-018, `decide_expression`
    по свежему настроению + сигналам хода + seeded-RNG): он выбирает редкие
@@ -759,7 +796,7 @@ typing-индикатор + Rich Messages. Адаптер остаётся чи�
 - **`application/usecases/handle_message.py`.** Гость определяется как
   `interlocutor.trust is Trust.GUEST`. Этот флаг теперь гейтит **только привилегии**:
   - **НЕТ tool-loop / capability** — компоновка остаётся на простом роутере
-    (`_compose_reply` не запускает `ToolLoop` при `is_guest`), гость не может
+    (`VoiceComposer.compose` не запускает `ToolLoop` при `is_guest`), гость не может
     дёрнуть ни одну возможность;
   - **НЕТ owner-внутрянки** — grounded-добавки внутренней жизни owner
     (`leak_inner_life` / колбэк / fascination) на гостевом ходу пропускаются: они
@@ -818,7 +855,7 @@ recall, per-person история и нормальный голос — **ес�
 `SenderPerception`, опциональный шов — без него ход ведёт себя как раньше) →
 `who_is_writing_directive` в промпт → определение `is_guest` по `trust` →
 гейт привилегий по `is_guest` (без tool-loop и без owner-внутрянки в
-`_compose_reply`) поверх **единой** памяти: per-person история по `sender_id` и
+`VoiceComposer.compose`) поверх **единой** памяти: per-person история по `sender_id` и
 единый recall для всех (BOB-051, см. ниже) → извлечение фактов для любого
 участника → запись/чтение first-impression →
 `recalled_impression_directive` при наличии прежней заметки.
@@ -939,8 +976,9 @@ tool-loop, что у авторизованного хода (GUPPI может �
 `needs_permission=False`, ход просто падает в обычный ответ), `SqlitePermissionRequestStore`,
 двухканальный `_PermissionNotifier` (owner-нотис в **топик Боба**, ack просящему в групповой
 чат) и `PermissionExecutor` над `PrivilegedRequestFulfiller`, `_PermissionRequesterChannel`
-(ответ в групповой чат) и реальным `Authorizer`. В `HandleMessage._maybe_permission`
-(перед обычной компоновкой): authz-факты берутся из воспринятого `Interlocutor`
+(ответ в групповой чат) и реальным `Authorizer`. В `PreComposeGate.maybe_permission`
+(`application/usecases/precompose_gate.py`, коллаборатор `handle()`, перед обычной
+компоновкой): authz-факты берутся из воспринятого `Interlocutor`
 (OWNER → owner, TRUSTED/KNOWN → авторизован, GUEST → не авторизован); сперва
 `maybe_decide` для owner, затем `maybe_request`; без `sender_id` запрос не заводится, а
 ветка owner-решения сработать не может — неопознанный ход никогда не авто-апрувится. Не
@@ -1046,7 +1084,8 @@ capabilities, ноль owner-внутрянки, отказ owner-команда
   (строку не добавлять), если подсказка выключена (`threshold_hours <= 0`), разрыв не
   превышает порог, или разрыв непозитивен (рассинхрон часов / первый контакт). Без
   I/O.
-- **Интеграция.** `HandleMessage._absence_for` сначала фильтрует общий тред до ходов
+- **Интеграция.** `RecallAssembler.absence_for` (`conversation/usecases/recall_assembler.py`,
+  коллаборатор `handle()`) сначала фильтрует общий тред до ходов
   ТЕКУЩЕГО автора (`_history_for_author` по `sender_id`, BOB-058 — чужой свежий ход не
   сбрасывает паузу этого человека), берёт timestamp самого свежего его хода
   (`_last_seen_at`, без лишнего запроса) и зовёт `absence_hint`; результат — одна строка
@@ -1262,25 +1301,29 @@ floor) становятся **входами**, которые судья взв
 
 ### Ветвление в `handle_message`
 
-`HandleMessage._gate_turn` — гейт хода (см. «Поток обработки», шаг 3). С провязанным
-`decide_response` и воспринятым отправителем `_judge_turn` собирает контекст (включая
-нить именно этого собеседника, 🔴 scoped по `sender_id`, чтобы гость видел только свою),
-зовёт судью и по `intent` ветвит:
+`TurnGate.gate` (`conversation/usecases/turn_gate.py`) — гейт хода (см. «Поток обработки»,
+шаг 3), тонкий координатор над `AddressivityPerceiver` + `FloorManager` + `EssentialRunner`
++ инъектированным судьёй `decide_response`. С провязанным судьёй и воспринятым отправителем
+он собирает контекст (включая **общий недавний тред топика**, BOB-058), зовёт судью и по
+`intent` ветвит:
 
-- **`REPLY`** → `_ReplyGate` → обычная компоновка и отправка (гостевой путь BOB-019 цел;
-  уже воспроизведённая нить прокидывается в compose, чтобы не читать дважды).
-- **`REACT`** → `_act_non_reply` → `_react_with_emoji` ставит выбранный **по смыслу**
-  эмодзи на сообщение (заменяет таблицу mood→эмодзи BOB-018 как источник; валидация
-  против набора Telegram; без реактора — чистый no-op, решение всё равно персистится).
+- **`REPLY`** → `_ReplyGate` → `handle()` идёт в компоновку и отправку (гостевой путь BOB-019
+  цел; уже воспроизведённая нить прокидывается в compose, чтобы не читать дважды).
+- **`REACT`** → ставит выбранный **по смыслу** эмодзи на сообщение через инъектированный
+  реактор (заменяет таблицу mood→эмодзи BOB-018 как источник; валидация против набора
+  Telegram; без реактора — чистый no-op, решение всё равно персистится).
 - **`IGNORE`** → Боб молчит.
 
 `REACT` и `IGNORE` завершаются внутри гейта (возврат `None`): 🔴 персистят ход (`(реакция:
-<emoji>)` / `(промолчал)`, BOB-045), двигают floor с `bob_replied=False` и ставят
-owner-activity маркер. `_OUTCOME_FOR_INTENT` маппит intent в косметический
-`ResponseOutcome` для floor. Genuine `REACT` / `IGNORE` — это **успех**, а не сбой (без
-ретрая и нотиса). Непровязанный судья ИЛИ невоспринятый отправитель → легаси-путь
+<emoji>)` / `(промолчал)`, BOB-045) через инъектированный persist-колбэк, двигают floor с
+`bob_replied=False` и ставят owner-activity маркер (тоже колбэк — гейт не держит политики
+персиста). Внутренний intent→floor-outcome маппинг (`_OUTCOME_FOR_INTENT`) и non-reply
+persist-маркер живут теперь при `TurnGate`. Genuine `REACT` / `IGNORE` — это **успех**, а не
+сбой (без ретрая и нотиса). Непровязанный судья ИЛИ невоспринятый отправитель → легаси-путь
 BOB-023/025 + `REACT_ONLY` BOB-018 (обратная совместимость; провязка в `app.py`:
-`decide_response=DecideResponse(judge=LlmResponseJudge(router=router))`).
+`decide_response=DecideResponse(judge=LlmResponseJudge(router=router))`). На счастливом пути
+(`REPLY`, ход дошёл до ответа) floor двигает уже `handle()` через
+`TurnGate.advance_floor_after_turn(..., bob_replied=True)`.
 
 ## Полный Боб или честный GUPPI-нотис (BOB-049 .3)
 
@@ -1299,22 +1342,24 @@ BOB-023/025 + `REACT_ONLY` BOB-018 (обратная совместимость;
   `runtime/retry.retry_with_backoff`: тот ретраит только транзиентные фолты фоновых
   тиков; здесь для user-facing хода ретраю подлежит **любой** сбой существенного шага
   (таймаут, обрыв связи ИЛИ непарсимый ответ модели).
-- **`HandleMessage._run_essential(operation, *, step)`** оборачивает существенный шаг:
-  `call_with_retry` (умолчания `_DEFAULT_ESSENTIAL_ATTEMPTS=3` всего попыток,
-  `_DEFAULT_ESSENTIAL_BACKOFF_SECONDS=0.5`, тюнятся через `reliability.*`); при стойком
-  сбое — `_EssentialStepError(step)`. Оба существенных шага проходят через него: суждение
-  (`_judge_turn`) и генерация (`_compose_reply` / `_reply_with_tools` / `router.run`).
-- **Обработка сбоя.** `_handle_essential_failure` 🔴 **не** шлёт деградированный ответ:
+- **`EssentialRunner.run(operation, *, step)`** (`application/usecases/essential_runner.py`)
+  оборачивает существенный шаг: `call_with_retry` (умолчания `_DEFAULT_ESSENTIAL_ATTEMPTS=3`
+  всего попыток, `_DEFAULT_ESSENTIAL_BACKOFF_SECONDS=0.5`, тюнятся через `reliability.*`); при
+  стойком сбое — `_EssentialStepError(step)`. Оба существенных шага проходят через него:
+  суждение (внутри `TurnGate`) и генерация ответа (внутри `VoiceComposer` — оба держат
+  `EssentialRunner` как инъектированный шов).
+- **Обработка сбоя.** `EssentialRunner.handle_failure` 🔴 **не** шлёт деградированный ответ:
   персистит ход пользователя (`_OUTAGE_MARKER` `(нет ответа: проблемы со связью)` — так
-  сообщение не теряется) и зовёт `_notify_outage`. Шов `OutageNotifier` (порт) реализует
-  `_GuppiOutageNotifier` (`app.py`): шлёт фиксированный `GUPPI_OUTAGE_TEXT` `⚠️ Проблемы
-  со связью — Боб временно недоступен` ботом Боба в его топик. Третье-личный системный
-  голос читается как **GUPPI** сообщает о проблеме, а не Боб грубит. Непровязанный нотифер
-  → ход всё равно завершается чисто (без видимого нотиса). Best-effort: сбой самой
-  отправки нотиса логируется и проглатывается.
-- **Опциональные флейворы.** `_safe_addon(addon, *, name)` оборачивает каждую
-  grounded-добавку: при сбое она логируется и опускается (возврат `""`), а ядро ответа
-  «полного Боба» всё равно уходит — флаки-добавка **никогда** не триггерит outage-нотис.
+  сообщение не теряется, через инъектированный persist-колбэк) и зовёт `notify_outage`. Шов
+  `OutageNotifier` (порт) реализует `_GuppiOutageNotifier` (`app.py`): шлёт фиксированный
+  `GUPPI_OUTAGE_TEXT` `⚠️ Проблемы со связью — Боб временно недоступен` ботом Боба в его
+  топик. Третье-личный системный голос читается как **GUPPI** сообщает о проблеме, а не Боб
+  грубит. Непровязанный нотифер → ход всё равно завершается чисто (без видимого нотиса).
+  Best-effort: сбой самой отправки нотиса логируется и проглатывается.
+- **Опциональные флейворы.** `GroundedAddons.safe(addon, *, name)`
+  (`personality/usecases/grounded_addons.py`) оборачивает каждую grounded-добавку: при сбое
+  она логируется и опускается (возврат `""`), а ядро ответа «полного Боба» всё равно уходит —
+  флаки-добавка **никогда** не триггерит outage-нотис.
 
 ## Восприятие реакций на сообщения Боба (BOB-050)
 
@@ -1425,7 +1470,7 @@ Telegram не шлёт реакции в наборе апдейтов по ум
   превращает `NotableReaction` в **одну** лёгкую compose-подсказку (кто, эмодзи, краткий
   отрывок того, что Боб сказал), оформленную как **опциональную** («если к месту, не
   обязательно») — реплай-тир вплетает её сам или пропускает, никогда не зачитывает скрипт.
-- **`HandleMessage._acknowledgment_for(interlocutor)`** — низкочастотная per-person логика
+- **`RecallAssembler.acknowledgment_for(interlocutor)`** — низкочастотная per-person логика
   в compose: подсказка всплывает, только если хранилище провязано, на записи есть notable
   реакция, её реактор — **именно этот** собеседник (🔴 per-person/authz BOB-019: реакция
   гостя не всплывёт owner-у и наоборот; у анонимной реакции нет «кого» отмечать) и сидовый
@@ -1649,10 +1694,12 @@ Tier 1); иначе ход идёт прежним plain-путём роутер
   тоже глотается). `announce(name, arguments)` говорит **только** для `web_search` — тянет `query`
   из аргументов как topic (или generic «поиск в интернете», если query нет); прочие (быстрые)
   навыки — тишина. `announce_verify(topic)` — тот же движок, `sender_name` из ctor.
-- **Провязка (`handle_message.py`).** ОБА per-turn анонсера строятся с `line_generator` +
-  `sender_name` (из `interlocutor.display_name`): `_reply_with_tools` при заданном `chat_id` строит
-  анонсер для tool-loop и передаёт его в `ToolLoop(announcer=…)`; `_send_verify_interim` строит
-  анонсер перед прямым `provider.search`. При `chat_id is None` (tool-loop) — `announcer=None`.
+- **Провязка (коллабораторы `handle()`).** ОБА per-turn анонсера строятся общей
+  инъектированной фабрикой (`announcer_factory`) с `line_generator` + `sender_name` (из
+  `interlocutor.display_name`): `VoiceComposer` при заданном `chat_id` строит анонсер для
+  tool-loop и передаёт его в `ToolLoop(announcer=…)`; `VerifyStep` строит анонсер
+  (`VerifyInterimAnnouncer`) перед прямым `provider.search`. При `chat_id is None` (tool-loop)
+  — `announcer=None`.
   `ToolLoop._run_tool` зовёт `announce(call.name, call.arguments)` **перед** `registry.dispatch`.
 - **🔴 Инварианты.** Анонс **декоративен на двух швах**: `_announce_live` глотает свои ошибки
   (стиль BOB-050 `_safe_addon` — логирует и роняет), а `ToolLoop._run_tool` дополнительно обёрнут
@@ -2051,7 +2098,8 @@ owner включает осознанно, как goals/self_improvement, вед
   состояния) или апрув **строго из `PLAN_READY`**; без сессии — классифицированный запрос
   работы запускает `start` (план без правок). Возвращает «съел ли ход» — `False` оставляет
   ход обычному чат-пути.
-- **Провязка `_maybe_route_coding`** (`application/usecases/handle_message.py`) — `is_owner`
+- **Провязка `PreComposeGate.maybe_route_coding`** (`application/usecases/precompose_gate.py`,
+  коллаборатор `handle()`) — `is_owner`
   выводится из перцепции собеседника (только `InterlocutorKind.OWNER`); при срабатывании
   `handle` возвращается до compose. Сборка — `_build_coding_router(router, coder)` в
   `app.py`, **только** при `coder.enabled` (иначе шов инертен — каждое сообщение идёт
@@ -2200,7 +2248,8 @@ gracefully; при полном отсутствии материала возв
   нет `chat_id` (он живёт per-turn в `HandleMessage`), поэтому навык **сам фото не
   шлёт**: он `push`-ит структурный `DiagramResult` (PNG + подпись) в per-turn
   `DiagramSink` (порт; in-memory реализация `CollectingDiagramSink` в навыке) и
-  возвращает текст. После tool-loop `HandleMessage._send_pending_diagrams`
+  возвращает текст. После tool-loop `DiagramSender.send_pending`
+  (`capabilities/usecases/diagram_sender.py`, коллаборатор `handle()` — BOB-062.6b)
   `drain`-ит шов (очищая его — никакая диаграмма не течёт в следующий ход) и шлёт
   каждое фото через `gateway.send_photo(chat_id=…, photo=…, caption=…)` в `chat_id`
   этого хода, **перед** текстовым ответом (картинка идёт первой). Отправка
@@ -2232,7 +2281,7 @@ fenced-блоке ` ```mermaid `, и картинка не уходит. BOB-037
   текста (схлопывая осиротевший пробельный прогон до одного абзацного разрыва), причём
   `only` оставляет **нерендеренные** блоки как текст; `normalize_mermaid(source)` даёт
   канонический ключ исходника для дедупа. Экспортированы из пакета `bob.domain.diagrams`.
-- **Авто-рендер (`HandleMessage._autorender_inline_mermaid`).** После того как ответ
+- **Авто-рендер (`DiagramSender.autorender_inline_mermaid`).** После того как ответ
   собран (и пройдены гарды анти-повтора и длины), reply-путь сканирует текст
   `extract_mermaid_blocks`. Каждый блок, который tool ещё не отрендерил в этот ход
   (дедуп по `normalize_mermaid` против `DiagramSink.pending()`), рендерится через тот же
@@ -2250,7 +2299,8 @@ fenced-блоке ` ```mermaid `, и картинка не уходит. BOB-037
   1x; `-b white` — белый фон страницы, чтобы диаграмма читалась на тёмной теме Telegram
   (прозрачный по умолчанию «исчезает»). Оба значения конфигурируемы (`diagrams.scale` /
   `diagrams.background`); конструктор валидирует `scale > 0`.
-- **Отправка как документ (читаемо).** `HandleMessage._send_one_diagram` выбирает режим
+- **Отправка как документ (читаемо).** `DiagramSender` (метод `send_pending` через
+  внутренний `_send_one_diagram`) выбирает режим
   по `diagrams.send_as`: `document` (по умолчанию) шлёт PNG через
   `gateway.send_document(chat_id=…, document=…, caption=…)` — **без пережатия**, в полном
   разрешении (тап → панорама/зум реальных пикселей); `photo` оставляет старый
@@ -2313,18 +2363,20 @@ Tier-0 судья решает, зависит ли хороший ответ о
   проверку с безопасным дефолтом (искажённый *ответ* — не ошибка, для него разбор
   консервативно возвращает `needs_check=False`).
 
-### Verify-шаг (`application/usecases/handle_message.py`)
+### Verify-шаг (`conversation/usecases/verify_step.py`)
 
-`_verify_note` — заметка эпистемической проверки на ход, или `""`:
+`VerifyStep.note` — заметка эпистемической проверки на ход, или `""` (коллаборатор
+`handle()` — BOB-062.6b; `handle()` зовёт его ровно раз и хранит результат как per-turn
+local):
 
 - Не проведена (нет судьи ИЛИ провайдера — `verify.enabled` выключен) → `""` мгновенно,
   ноль вызовов и латентности (US-2 «не зануда» по умолчанию).
 - Консервативный судья оценивает `VolatilityContext`; сбой судьи ловится и трактуется как
   «не проверять» (`""`) — ход не блокируется флаки-судьёй. `not needs_check` → `""`.
-- При `needs_check` перед поиском шлётся живая адресная интерим-реплика
-  (`_send_verify_interim` → `GatewayProgressAnnouncer.announce_verify(topic)`, `sender_name` из
-  ctor, живой генератор → тишина при сбое; см. BOB-060 выше), затем `_verify_search_note` делает
-  **один** поиск.
+- При `needs_check` перед поиском шлётся живая адресная интерим-реплика (per-turn анонсер
+  `VerifyInterimAnnouncer.announce_verify(topic)`, построенный из `chat_id` хода через
+  инъектированную фабрику; `sender_name` из ctor, живой генератор → тишина при сбое; см.
+  BOB-060 выше), затем `VerifyStep` делает **один** поиск.
 - 🔴 **Прямой `provider.search(query)`, НЕ `registry.dispatch` / tool-loop** — поэтому это
   **не** per-sender гейт BOB-052, а внутренняя публичная проверка: никто не просил
   инструмент, наружу идёт только ПУБЛИЧНАЯ веб-информация (никогда owner/приватные данные).
@@ -2340,21 +2392,23 @@ Tier-0 судья решает, зависит ли хороший ответ о
   цел — **без** выдачи устаревших цифр за точные и без выдумки). Заметка вклеивается в
   контекст генерации (факты + тон). Живой интерим-анонс перед поиском (`interim_line.py`)
   обобщён на **оба** пути — «сверка факта» и tool-loop «поиск по запросу» (BOB-060 .2).
-- **Проводка.** Инъекция `verify_judge`/`verify_provider`/`verify_timeout_seconds` в
-  `HandleMessage`; в `app.py` строятся **только** под `verify.enabled` (дефолт `True`) —
+- **Проводка.** Инъекция `verify_judge`/`verify_provider`/`verify_timeout_seconds` +
+  announcer-фабрики в `VerifyStep` (собирается в `HandleMessage.__init__`); в `app.py` швы
+  строятся **только** под `verify.enabled` (дефолт `True`) —
   `LlmVolatilityJudge(router)` + провайдер из секции `search` (тот же Qwen web_search).
   Конфиг `verify.{enabled, timeout_seconds}` (`config/loader.py`; `timeout_seconds` дефолт
   `75`, короче глубокого `search`-таймаута). Выключено → оба `None`, шов полностью инертен.
 
 ### 🔴 Один поиск на ход (BOB-057 .5, US-3 «не петля»)
 
-Verify считается **ровно один раз** в `handle()` как **per-turn local** `verify_note` и
-прокидывается параметром в `_compose_reply` **и** в `_guard_against_verbatim_repeat`.
-Анти-повтор регенерация (BOB-032) **переиспользует** ту же заметку, а не перезапускает шаг:
-если `verify_note is not None` — `_verify_note` повторно не зовётся. Так «один поиск»
-становится следствием реальной структуры — `judge.assess`, `provider.search` и живая
-интерим-реплика срабатывают максимум по разу, даже на ходе, который одновременно волатилен
-И задел тик самоповтора. Это **локальная** переменная (не атрибут `HandleMessage`), потому
+Verify считается **ровно один раз** в `handle()` как **per-turn local** `verify_note`
+(`VerifyStep.note`) и прокидывается параметром в `VoiceComposer.compose` **и** через тот же
+compose-callback в `AntiRepeatGuard.guard`. Анти-повтор регенерация (BOB-032)
+**переиспользует** ту же заметку, а не перезапускает шаг: заметка вычислена ровно раз и течёт
+аргументом. Так «один поиск» становится следствием реальной структуры — `judge.assess`,
+`provider.search` и живая интерим-реплика срабатывают максимум по разу, даже на ходе, который
+одновременно волатилен И задел тик самоповтора. Это **локальная** переменная (не атрибут
+`HandleMessage` и не атрибут `VerifyStep`), потому
 что use case — общий синглтон: instance-флаг протёк бы заметкой и состоянием «уже искал»
 между ходами и параллельными пользователями. Гарантия хода: 1× судья, 1× поиск, 1× интерим.
 
@@ -2883,7 +2937,8 @@ few-shot (см. «Краткость по запросу»). Голосовая 
    «Голос персоны»).
 4. Ответ генерируется как раньше (тиринг/voice/язык/Negotiation — без изменений).
 5. **Анти-повтор-страж (BOB-022 → окно BOB-026 → recall-aware BOB-032 → фраза-тик
-   BOB-036, защита в глубину).** Сразу после генерации `_guard_against_verbatim_repeat` сверяет свежий
+   BOB-036, защита в глубину).** Сразу после генерации `AntiRepeatGuard.guard`
+   (`conversation/usecases/anti_repeat_guard.py`, коллаборатор `handle()`) сверяет свежий
    ответ с **объединением двух источников**: окном последних N ответов Боба из истории
    (`_recent_bob_replies` достаёт `bob:`-половины последних N эпизодов) **и репликами
    Боба, всплывшими в recalled-памяти** (`recalled_bob_replies` достаёт `bob:`-половину
@@ -2922,7 +2977,7 @@ few-shot (см. «Краткость по запросу»). Голосовая 
    не накручивает счётчик). Так фраза, рекуррентная **через окно**, — тик, а одноразовое
    переиспользование длинной фразы (совпадение с единственной прошлой репликой) или короткая
    закрывашка (ниже `tic_min_words`, «Работаем»/«Ок») — нет. Провязка в
-   `_guard_against_verbatim_repeat`: на каждой итерации цикла кандидат проверяется по
+   `AntiRepeatGuard.guard`: на каждой итерации цикла кандидат проверяется по
    `is_bob_repeat` (полный повтор) **ИЛИ** `is_phrase_tic`; срабатывание любого запускает **тот
    же** recall-aware attractor-break (общий бюджет `_MAX_REGENERATIONS=2`). Это структурный
    детектор, **не** скриптовая директива «не говори X». Пороги — те же frozen `RepeatThresholds`:
@@ -2950,12 +3005,12 @@ few-shot (см. «Краткость по запросу»). Голосовая 
 
    **Провязка (`handle_message.py`).** После каждой реплики `_log_closer` дописывает её
    закрывашку (`closer_text`) в кольцо. Перед генерацией `_closer_anti_tic` считает мотив
-   **один раз за ход**: `_detect_closer_tic` собирает closer-ы персиста
+   **один раз за ход** (`AntiRepeatGuard.closer_anti_tic`): собирает closer-ы персиста
    (`recent(tic_lookback)`) **∪** окна и прогоняет свежайший через `is_recurring_closer_tic`.
    При срабатывании — (а) мотив **стрипается** с recalled-эталонов Боба (тик не подаётся
    обратно как few-shot) и (б) возвращается мягкий нудж `_CLOSER_TIC_NUDGE` («заверши
-   по-другому, своими словами, не меняя смысла»), прокинутый через `_compose_reply` в контекст
-   генерации и переживающий регенерацию. 🔴 **Всё декоративно и консервативно:** непровязанный
+   по-другому, своими словами, не меняя смысла») как per-turn `closer_nudge`, прокинутый
+   аргументом в `VoiceComposer.compose` в контекст генерации и переживающий регенерацию. 🔴 **Всё декоративно и консервативно:** непровязанный
    лог, сбой чтения или **отсутствие тика** возвращают контекст **байт-в-байт** без изменений —
    нудж толкает к разнообразию, не запрещает; сбой персиста глотается и **не роняет** уже
    готовый ход. Пороги — те же `RepeatThresholds` (`repeat.tic_lookback`,

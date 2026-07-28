@@ -71,8 +71,17 @@ src/bob/conversation/
   response_choice.py  # layer=domain          — ResponseIntent/ResponseChoice/ResponseContext + порт ResponseJudge (BOB-049)
   response_judgment.py# layer=domain          — чистый Tier-0 wire-протокол судьи ответа (prompt/parser/emoji-валидатор)
   volatility_judgment.py# layer=domain        — VolatilityVerdict/Context + порт VolatilityJudge + prompt/parser (BOB-057 .1)
+  reply_context.py    # layer=domain          — _assemble_shareable_context: сборка reply-shaping контекста хода (free-функция → хелпер, BOB-062.6b)
+  thread.py           # layer=domain          — проекция персиста в сигналы хода: _render_thread/_user_turns/_history_for_author/_recent_bob_replies/_strip_recalled_closer (BOB-062.6b)
   usecases/           # layer=application
     decide_response.py       —                — DecideResponse: собрать контекст и спросить судью по смыслу (BOB-049)
+    turn_gate.py             —                — TurnGate: гейт хода reply/react/silent (тонкий координатор, BOB-062.6b)
+    addressivity_perceiver.py —               — AddressivityPerceiver: восприятие адресности + брать ли ход (BOB-023/025)
+    floor_manager.py         —                — FloorManager: resolve + advance разговорной реплики (floor, BOB-025)
+    engagement_model.py      —                — EngagementModel: аппетит + verbosity + after-turn feedback (BOB-014/024)
+    recall_assembler.py      —                — RecallAssembler: воспроизведение треда + absence/acknowledgment (BOB-044/045/050)
+    verify_step.py           —                — VerifyStep: предответная эпистемическая проверка → per-turn note (BOB-057)
+    anti_repeat_guard.py     —                — AntiRepeatGuard: анти-повтор/тик + кольцо закрывающих (BOB-022/061)
   adapters/           # layer=infrastructure
     response_judge.py        —                — LlmResponseJudge (Tier-0 реализация ResponseJudge)
     volatility_judge.py      —                — LlmVolatilityJudge (Tier-0 реализация VolatilityJudge)
@@ -144,6 +153,33 @@ BOB-022 — точный матч после нормализации, конс�
 структурные hints, mood-тон) в `ResponseContext` и делегирует единственное семантическое
 решение инъектированному `ResponseJudge`; своей политики не держит.
 
+**Коллабораторы хода (BOB-062.6b, #9).** Декомпозиция God-use-case `handle_message` вынесла
+разговорную логику хода в когезивные method-object'ы этой вертикали, собираемые в
+`HandleMessage.__init__` из уже инъектированных швов:
+- `AddressivityPerceiver` (`addressivity_perceiver.py`) — восприятие адресности + решение,
+  берёт ли Боб ход (`decide` / `signals`, поверх `FloorManager` для BOB-025 continuity-raise).
+- `FloorManager` (`floor_manager.py`) — resolve + advance разговорной реплики
+  (`resolve_effective` / `advance_after_turn`), на примитивных id (без inward-зависимости на
+  application-событие).
+- `EngagementModel` (`engagement_model.py`) — аппетит + verbosity + after-turn feedback
+  (`topic_interest` / `decide_engagement` / `decide_verbosity` / `apply_feedback` /
+  `guard_reply_length`); возвращает personality-VO.
+- `RecallAssembler` (`recall_assembler.py`) — воспроизведение общего треда + лёгкая
+  absence/acknowledgment-текстура (`replay_recent_thread` / `absence_for` /
+  `acknowledgment_for`; 🔴 `acknowledgment_for` читает notable-reaction маркер ДО seeded-броска,
+  consume-once).
+- `VerifyStep` (`verify_step.py`) — предответная эпистемическая проверка (`note`), возвращает
+  turn-local заметку; per-turn интерим-анонсер строится из `chat_id` хода через инъектированную
+  фабрику.
+- `TurnGate` (`turn_gate.py`) — тонкий координатор гейта хода (reply/react/silent) над
+  `AddressivityPerceiver` + `FloorManager` + судьёй + `EssentialRunner`; persist / owner-activity
+  прокинуты колбэками (гейт не держит политики персиста).
+- `AntiRepeatGuard` (`anti_repeat_guard.py`) — регенерация повтора/тика (`guard`) + кольцо
+  закрывающих (`log_closer` / `closer_anti_tic`). 🔴 Принимает `VoiceComposer.compose` как
+  `compose`-callback (по значению, не импорт — цикл compose↔guard замкнут БЕЗ
+  `conversation → personality` импорта); `verify_note` / `closer_nudge` текут turn-local
+  аргументами через тот же колбэк.
+
 `LlmResponseJudge` / `LlmVolatilityJudge` / `LlmInterimLineGenerator` (`adapters/`) — Tier-0
 реализации портов (билдер промпта + router + парсер). `SqliteConversationFloorStore` — per-thread
 floor (UPSERT — floor продвигается каждый ход); `SqliteCloserLog` — ограниченное кольцо
@@ -213,12 +249,15 @@ ConversationFloorStore` работает как раньше.
   `conversation.is_user_repeat`/`is_bob_repeat`/`is_recurring_closer_tic`,
   `response_choice.ResponseChoice`/`ResponseJudge`, `volatility_judgment.VolatilityJudge`,
   `interim_line.build_interim_line_user_prompt`.
-- Use-case: `usecases.DecideResponse`.
+- Use-case: `usecases.DecideResponse`; коллабораторы хода `usecases.{TurnGate,
+  AddressivityPerceiver, FloorManager, EngagementModel, RecallAssembler, VerifyStep,
+  AntiRepeatGuard}` (BOB-062.6b).
 - Адаптеры: `LlmResponseJudge`, `LlmVolatilityJudge`, `LlmInterimLineGenerator`,
   `SqliteConversationFloorStore`, `SqliteCloserLog`.
 
 Композиция (wiring floor/судей/interim в ход `handle_message`, инъекция портов) — в
-композиционном корне `app.py` (интеграция методов в `handle_message` — срез .6b). Долговечная
+композиционном корне `app.py`; коллабораторы хода собираются в `HandleMessage.__init__` из
+инъектированных швов (интеграция методов в `handle_message` завершена — срез .6b). Долговечная
 запись в SQLite — через kernel `SqliteMemoryRepo` (`infrastructure/persistence/`, до среза .7).
 
 ## Тесты

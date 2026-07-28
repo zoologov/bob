@@ -76,6 +76,7 @@ src/bob/capabilities/
     web_search.py     #                        — заземлённый веб-поиск (BOB-053)
     read_url.py       #                        — чтение одной ссылки за SSRF-щитом (BOB-054)
     render_diagram.py #                        — mermaid→PNG в чат + CollectingDiagramSink (BOB-035)
+    diagram_sender.py #                        — DiagramSender: авто-рендер inline-mermaid + drain sink → отправка (коллаборатор handle_message, BOB-062.6b)
   adapters/           # layer=infrastructure
     web/
       http_url_reader.py — HttpUrlReader: aiohttp GET за 🔴 SSRF-щитом + html.parser-извлечение
@@ -150,6 +151,14 @@ allowlist = автономно ничего не запускается (кон�
   короткого TEXT-подтверждения (модель байты не видит). Рендерит ТОЛЬКО свой INPUT
   (личных данных не читает). На сбое рендера — честное «renderer unavailable», ход не
   падает.
+- **Отправка диаграмм хода (BOB-062.6b, #9).** `DiagramSender` (`usecases/diagram_sender.py`)
+  — коллаборатор `handle_message`, собираемый в `HandleMessage.__init__`. После генерации
+  ответа `autorender_inline_mermaid` рендерит ` ```mermaid `-блоки, что модель написала
+  ТЕКСТОМ (дедуп против sink, стрип обработанных блоков из видимого текста), а `send_pending`
+  `drain`-ит per-turn `DiagramSink` и постит каждый PNG как фото/документ через транспортный
+  шов `DiagramGateway` в `chat_id` хода, перед текстом. 🔴 Общий инстанс `diagram_sink`
+  инъектируется И в `DiagramSender`, И в registry-навык `render_diagram` — push/drain на одном
+  объекте.
 
 ### Адаптеры (infrastructure)
 

@@ -91,6 +91,9 @@ src/bob/personality/
     evolve_fascination.py    —                — EvolveFascination: редкий заземлённый сдвиг увлечённости
     evolve_phantoms.py       —                — EvolvePhantoms: редкий заземлённый сдвиг фантом-предпочтений
     fascination_sources.py   —                — Repo/StoreFascination: live-швы заземления и чтения увлечённости
+    mood_perceiver.py        —                — MoodPerceiver: обновить настроение из входящего + план выражения (коллаборатор handle_message, BOB-062.6b)
+    grounded_addons.py       —                — GroundedAddons: заземлённые добавки (рефлексия/колбэк/фасцинация), decorative
+    voice_composer.py        —                — VoiceComposer: голос + генерация ответа хода
   adapters/           # layer=infrastructure
     reaction_judge.py        —                — LlmReactionJudge (Tier-0 реализация ReactionJudge)
     fascination_store.py     —                — SqliteFascinationStore (per-persona увлечённость)
@@ -178,6 +181,21 @@ baseline, потом ложится bounded-дельта — тот же пут�
 остаётся честно грустной). `EvolveFascination` / `EvolvePhantoms` — редкие заземлённые шаги
 на reflect-тике (идемпотентны в периоде). `RepoFascinationGrounding` / `StoreFascinationReader`
 (`fascination_sources.py`) — live-швы заземления и чтения.
+
+**Коллабораторы хода (BOB-062.6b, #9).** Декомпозиция `handle_message` вынесла «кто есть Боб»
+— его голос — в method-object'ы personality, собираемые в `HandleMessage.__init__`:
+- `MoodPerceiver` (`mood_perceiver.py`) — обновить настроение из входящего + план выражения
+  (`perceive` / `plan_expression`; мутабельный per-boot `PersonalityState` передаётся ПО ВЫЗОВУ,
+  никогда не захватывается).
+- `GroundedAddons` (`grounded_addons.py`) — свернуть РЕАЛЬНУЮ рефлексию/колбэк/фасцинацию в
+  контекст (`with_grounded_addons`); `safe` оборачивает каждую добавку — anti-confabulation +
+  decorative (упавшая добавка падает в `""`, никогда не триггерит outage).
+- `VoiceComposer` (`voice_composer.py`) — форма голоса + генерация ответа (`compose`). 🔴
+  Дотягивается до КАЖДОЙ другой вертикали ТОЛЬКО через инъектированные порты/значения
+  (context-assembler и recall/verify-порты conversation, stance-порт social, plain-reply +
+  essential-генераторы application, tool-loop/announcer-фабрики capabilities) — personality не
+  импортирует conversation/social/capabilities. Отдаёт `compose` как callback в
+  `AntiRepeatGuard` (замыкает цикл compose↔guard по значению).
 
 ### Адаптеры (infrastructure)
 

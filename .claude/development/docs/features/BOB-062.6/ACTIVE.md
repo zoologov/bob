@@ -47,10 +47,10 @@
 | Беад | Волна | Статус |
 |------|-------|--------|
 | `bob-8r4.6.7` | 0 — free-функции → conversation-хелперы | ○ ready |
-| `bob-8r4.6.8` | 1 — листовые (Diagram/Essential/Floor/Verify/PreCompose) | ● blocked |
-| `bob-8r4.6.9` | 2 — средние (Addressivity/Engagement/Mood/Social/Recall) | ● blocked |
-| `bob-8r4.6.10` | 🔴 3 ЯДРО — VoiceComposer + AntiRepeatGuard (callback) | ● blocked |
-| `bob-8r4.6.11` | 4 — TurnGate + тонкий handle() | ● blocked |
+| `bob-8r4.6.8` | 1 — листовые (Diagram/Essential/Floor/Verify/PreCompose) | ✅ done (5 коллабораторов, handle_message 3226→2852, pytest 3291) |
+| `bob-8r4.6.9` | 2 — средние (Addressivity/Engagement/Mood/Social/Recall) | ✅ done (5 коллабораторов, handle_message 2852→2465, pytest 3297) |
+| `bob-8r4.6.10` | 🔴 3 ЯДРО — VoiceComposer + AntiRepeatGuard (callback) | ✅ done (GroundedAddons+VoiceComposer→personality, AntiRepeatGuard→conversation; compose↔guard callback; handle_message 2465→1874; pytest 3299) |
+| `bob-8r4.6.11` | 4 — TurnGate + тонкий handle() | ✅ done (TurnGate→conversation; gate/judge/act_non_reply/react; floor-advance на ВСЕХ ветках; handle() тонкий оркестратор; handle_message 1874→1634; pytest 3299) |
 | `bob-8r4.6.12` | test — все инварианты + _build не менялся | ● blocked |
 | `bob-8r4.6.13` | review — когезия + turn-local + тонкий handle() | ● blocked |
 | `bob-8r4.6.14` | tech-writer — доки + #9 + Gate | ● blocked |
