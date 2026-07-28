@@ -25,20 +25,12 @@ import pytest
 from bob.application.router.llm_router import LLMRouter
 from bob.application.runtime.events import MessageReceived
 from bob.application.usecases.handle_message import (
-    _CLOSER_TIC_NUDGE,
-    _VERIFY_GROUNDED_NOTE,
-    _VERIFY_HEDGE_NOTE,
-    DiagramSendMode,
     EngagementState,
     HandleMessage,
     OwnerActivityRecorder,
-    PermissionFlowLike,
     PersonalityState,
-    _history_for_author,
     _recalled_bob_replies,
     _recalled_without_copied_exemplars,
-    _recent_bob_replies,
-    _user_turns,
 )
 from bob.capabilities.adapters.diagrams.mmdc_renderer import DiagramRenderError
 from bob.capabilities.usecases.registry import CapabilityRegistry
@@ -64,7 +56,17 @@ from bob.conversation.response_choice import (
     ResponseContext,
     ResponseIntent,
 )
+from bob.conversation.thread import (
+    _history_for_author,
+    _recent_bob_replies,
+    _user_turns,
+)
+from bob.conversation.usecases.anti_repeat_guard import _CLOSER_TIC_NUDGE
 from bob.conversation.usecases.decide_response import DecideResponse
+from bob.conversation.usecases.verify_step import (
+    _VERIFY_GROUNDED_NOTE,
+    _VERIFY_HEDGE_NOTE,
+)
 from bob.conversation.volatility_judgment import (
     VolatilityContext,
     VolatilityVerdict,
@@ -103,6 +105,8 @@ if TYPE_CHECKING:
 
     from aiogram.types import BufferedInputFile
 
+    from bob.application.usecases.precompose_gate import PermissionFlowLike
+    from bob.capabilities.usecases.diagram_sender import DiagramSendMode
     from bob.domain.ports import (
         DiagramSink,
         LLMMessage,
