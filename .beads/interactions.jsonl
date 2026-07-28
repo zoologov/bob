@@ -732,3 +732,4 @@
 {"id":"int-b4f8c4c8","kind":"field_change","created_at":"2026-07-28T18:35:18.978983Z","actor":"v.zoologov","issue_id":"bob-8r4.8.5","extra":{"field":"status","new_value":"closed","old_value":"in_progress","reason":"Closed"}}
 {"id":"int-249b6b18","kind":"field_change","created_at":"2026-07-28T18:36:54.044762Z","actor":"v.zoologov","issue_id":"bob-8r4.8.7","extra":{"field":"status","new_value":"in_progress","old_value":"open"}}
 {"id":"int-3f3d45f9","kind":"field_change","created_at":"2026-07-28T18:40:48.452682Z","actor":"v.zoologov","issue_id":"bob-8r4.8.7","extra":{"field":"status","new_value":"closed","old_value":"in_progress","reason":"Closed"}}
+{"id":"int-3ff8903c","kind":"field_change","created_at":"2026-07-28T21:33:22.156064Z","actor":"v.zoologov","issue_id":"bob-vol.1.1","extra":{"field":"status","new_value":"in_progress","old_value":"open"}}

@@ -45,3 +45,12 @@ Cohesion. 🔴 DoD: full-reindex + full-mypy + `beadloom ci`.
 - 2026-07-29: PRD/RFC/CONTEXT/PLAN Approved; методология DDD/TDD/BDD/Cohesion/Mutation зафиксирована
   стоячей (CLAUDE.md §0.2 + 4 роль-агента); эпик `bob-vol` + 11 срезов + Срез-0 роли созданы, DAG
   связан. Старт Среза 0.
+- 2026-07-29: `bob-vol.1.1` dev — harness готов и ЗЕЛЁН по всем своим гейтам (pytest 3318, ruff,
+  mypy full, reindex --full + lint --strict 0, sync-check/doctor). Добавлены pytest-bdd+mutmut;
+  tests/acceptance/{features,steps}/ + fake_gateway (FakeGateway граница + run_turn) + conftest;
+  первый .feature `direct_address` GREEN; [tool.mutmut] прицельно на чистый domain; scripts/mutation.sh
+  + dev-docs/MUTATION.md. Baseline sulk = 80% (56/70) → цель test-волны .1.2.
+  🔴 БЛОКЕР (НЕ этот беад): `beadloom ci` красен ТОЛЬКО на config-check — 4 дрейф-адаптера
+  `.claude/agents/*.md` из epic-setup коммита 94244e3 (методология BDD/Mutation вписана руками, а
+  composer beadloom её не знает; `--fix` СТИРАЕТ методологию). Решение — за координатором (принять
+  дрейф ИЛИ upstream quality-overlay в beadloom). Роль-адаптеры оставлены как задумано эпиком.

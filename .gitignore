@@ -89,3 +89,6 @@ first_dialogue.txt
 # Live-test dialogue dumps (local only, BOB-063)
 dialog.txt
 test.txt
+# Mutation testing sandbox (BOB-066 Срез 0): mutmut copies src into mutants/ per run
+mutants/
+.mutmut-cache
