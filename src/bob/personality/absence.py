@@ -17,7 +17,7 @@ way a person would feel it — hours, "вчера", or "несколько дн�
 delta. It is a HINT for the compose prompt, never a directive Bob must utter.
 
 Pure and deterministic by construction: it takes ``now`` (from the injected
-:class:`~bob.domain.ports.Clock`) and the last-seen timestamp, does no I/O, and is
+:class:`~bob.kernel.ports.Clock`) and the last-seen timestamp, does no I/O, and is
 safe under clock skew (a non-positive gap never hints).
 """
 

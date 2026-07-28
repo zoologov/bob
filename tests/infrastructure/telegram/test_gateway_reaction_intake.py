@@ -31,8 +31,8 @@ from bob.infrastructure.telegram.gateway import TelegramGateway
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from bob.domain.ports import DomainEvent
     from bob.infrastructure.telegram.gateway import MessageLike, UpdateLike
+    from bob.kernel.ports import DomainEvent
 
 
 # --- Reaction-update fakes ----------------------------------------------------

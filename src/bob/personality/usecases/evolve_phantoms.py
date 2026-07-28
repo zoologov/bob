@@ -49,7 +49,7 @@ if TYPE_CHECKING:
     from random import Random
 
     from bob.application.usecases.handle_message import PersonalityState
-    from bob.domain.ports import JsonValue
+    from bob.kernel.ports import JsonValue
     from bob.personality.usecases.evolve_fascination import FascinationGrounding
 
 logger = logging.getLogger(__name__)

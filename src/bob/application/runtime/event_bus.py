@@ -9,7 +9,7 @@
 
 Decouples event producers (e.g. the Telegram gateway) from consumers (use-cases)
 so the GUPPI runtime fans events out concurrently. Implements
-:class:`bob.domain.ports.EventBus`.
+:class:`bob.kernel.ports.EventBus`.
 """
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ from collections import defaultdict
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from bob.domain.ports import DomainEvent, EventHandler
+    from bob.kernel.ports import DomainEvent, EventHandler
 
 logger = logging.getLogger(__name__)
 

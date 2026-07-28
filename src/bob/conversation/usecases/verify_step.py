@@ -36,8 +36,8 @@ from bob.conversation.volatility_judgment import VolatilityContext
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
 
+    from bob.capabilities.ports import WebSearchProvider
     from bob.conversation.volatility_judgment import VolatilityJudge, VolatilityVerdict
-    from bob.domain.ports import WebSearchProvider
     from bob.social.interlocutor import Interlocutor
 
 logger = logging.getLogger(__name__)

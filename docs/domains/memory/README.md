@@ -229,9 +229,8 @@ OpenAI-совместимой `/v1/chat/completions`, сортирует по у
 - `Recalled` = `Mapping[str, object]` — один recalled-элемент (контент + score).
 
 Фасад `src/bob/memory/__init__.py` re-export'ит `EpisodicEvent`, `SemanticFact`.
-Порты `memory` также re-export'ятся из `bob.domain.ports`, поэтому
-`from bob.domain.ports import MemoryRepo` работает как раньше (шим для ~15
-потребителей).
+Канонический импорт портов — `from bob.memory.ports import MemoryRepo`; транзитный
+ports-шим `bob.domain.ports` удалён (BOB-062.8), ~15 потребителей переведены на канон.
 
 Ключевые точки входа:
 - `usecases/extract_facts.py`: `ExtractFacts.run(...)` — извлечь факты из обмена.

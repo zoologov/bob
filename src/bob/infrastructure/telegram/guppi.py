@@ -44,8 +44,8 @@ from bob.proactivity.self_improvement import (
 if TYPE_CHECKING:
     from datetime import datetime
 
-    from bob.domain.ports import Clock
     from bob.infrastructure.telegram.gateway import AuthorizerLike, BotLike
+    from bob.kernel.ports import Clock
     from bob.proactivity.goals.graph import GoalGraph
     from bob.proactivity.self_improvement import ImprovementRule
     from bob.proactivity.state import ProactivityState
@@ -174,7 +174,7 @@ _DURATION_UNITS = {"h": 3600, "m": 60, "s": 1}
 class ProactivityStoreLike(Protocol):
     """The proactivity-store surface the owner /quiet, /wake commands need.
 
-    A superset of the domain :class:`~bob.domain.ports.ProactivityStore` port: the
+    A superset of the domain :class:`~bob.proactivity.ports.ProactivityStore` port: the
     owner commands also toggle the infrastructure-level timed-mute expiry, so the
     store must expose ``set_mute_until`` (the live :class:`SqliteProactivityStore`
     does). Kept structural so a fake satisfies it in tests.
@@ -191,7 +191,7 @@ class GoalStoreLike(Protocol):
     The read side (``load`` → a :class:`GoalGraph`) backs ``/goals`` and resolves a
     goal for an action; ``update_goal_state`` performs the owner state move
     (approve / pause / resume / cancel), each gated upstream by ``can_transition``.
-    A structural subset of :class:`~bob.domain.ports.GoalStore` so a fake satisfies it.
+    A structural subset of :class:`~bob.proactivity.ports.GoalStore` so a fake satisfies it.
     """
 
     async def load(self, persona_id: str) -> GoalGraph: ...
@@ -230,7 +230,7 @@ class RuleStoreLike(Protocol):
     / pause / resume / remove), each gated upstream by ``rule_can_transition``. ONLY the
     owner can call this path (the command guard), and the move never grants a permission
     or a tool — it merely flips the rule's :class:`RuleState`. A structural subset of
-    :class:`~bob.domain.ports.SelfImprovementStore` so a fake satisfies it in tests.
+    :class:`~bob.proactivity.ports.SelfImprovementStore` so a fake satisfies it in tests.
     """
 
     async def load(self, persona_id: str) -> tuple[ImprovementRule, ...]: ...

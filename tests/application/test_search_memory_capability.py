@@ -21,15 +21,17 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from bob.capabilities.ports import ToolCall, ToolCallResult
 from bob.capabilities.usecases.registry import CapabilityRegistry
 from bob.capabilities.usecases.search_memory import make_search_memory_capability
 from bob.capabilities.usecases.tool_loop import ToolLoop
-from bob.domain.ports import ToolCall, ToolCallResult
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from bob.domain.ports import LLMMessage, Recalled, ToolDefinition
+    from bob.capabilities.ports import ToolDefinition
+    from bob.kernel.ports import LLMMessage
+    from bob.memory.ports import Recalled
 
 
 class FakeRecall:

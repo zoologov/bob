@@ -16,7 +16,7 @@ gateway gate. This module is the decision rule, with no transport or SQL:
   chat (chat-scope binds even the owner, so a leaked token in a foreign chat is
   dead); any other user must be on the allowlist AND inside an allowed chat.
 * ``authorize`` / ``deauthorize`` — mutate the runtime allowlist and persist it
-  through the injected :class:`bob.domain.ports.AllowlistStore` so ``/authorize``
+  through the injected :class:`bob.social.ports.AllowlistStore` so ``/authorize``
   survives a restart.
 
 The configured ``owner_id`` / ``allowed_chat_ids`` are immutable for the process;
@@ -31,7 +31,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
-    from bob.domain.ports import AllowlistStore
+    from bob.social.ports import AllowlistStore
 
 
 class Authorizer:

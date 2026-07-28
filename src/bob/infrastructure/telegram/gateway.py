@@ -60,7 +60,7 @@ from bob.infrastructure.telegram.rich import (
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 
-    from bob.domain.ports import EventBus
+    from bob.kernel.ports import EventBus
 
 logger = logging.getLogger(__name__)
 

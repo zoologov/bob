@@ -36,8 +36,9 @@ if TYPE_CHECKING:
     from random import Random
 
     from bob.application.usecases.handle_message import CurrentFascinationReader
-    from bob.domain.ports import MemoryRecall, ReflectionReader
+    from bob.memory.ports import MemoryRecall
     from bob.personality.expression import ExpressionPlan
+    from bob.personality.ports import ReflectionReader
 
 logger = logging.getLogger(__name__)
 

@@ -8,7 +8,7 @@
 
 """Fts5MemoryRecall — keyword relevance retrieval over the whole archive.
 
-Realises :class:`bob.domain.ports.MemoryRecall` in P0 using SQLite's FTS5
+Realises :class:`bob.memory.ports.MemoryRecall` in P0 using SQLite's FTS5
 ``MATCH`` with BM25 ranking. Recall spans both distilled semantic facts *and*
 the raw episodic conversation archive (Fix A): an old turn that was never
 fact-extracted is still surfaced, so Bob can recall something said many turns
@@ -28,8 +28,8 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from bob.domain.ports import Recalled
     from bob.memory.adapters.sqlite_memory_repo import SqliteMemoryRepo
+    from bob.memory.ports import Recalled
 
 # FTS5 tokens: keep word characters, drop operator punctuation entirely.
 _TOKEN_RE = re.compile(r"\w+", re.UNICODE)

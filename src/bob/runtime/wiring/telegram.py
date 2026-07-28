@@ -30,8 +30,8 @@ if TYPE_CHECKING:
 
     from bob.application.runtime import AsyncEventBus
     from bob.coding.usecases.coding_assistant import CodingAssistant
-    from bob.domain.ports import Clock
     from bob.infrastructure.telegram.gateway import BobMessageFilter, BotLike
+    from bob.kernel.ports import Clock
     from bob.proactivity.adapters import (
         SqliteGoalStore,
         SqliteProactivityStore,

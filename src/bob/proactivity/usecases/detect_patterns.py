@@ -10,7 +10,7 @@
 
 Две части, обе чисто-оркестрационные (домен остаётся I/O-free):
 
-* :class:`LlmPatternDetector` реализует порт :class:`bob.domain.ports.PatternDetector`:
+* :class:`LlmPatternDetector` реализует порт :class:`bob.proactivity.ports.PatternDetector`:
   просит LLM (``TaskType.DETECT_PATTERNS``) по срезу :class:`ImprovementSignals`
   сформулировать человечные правила-кандидаты и парсит СТРОГИЙ JSON так же
   устойчиво, как извлечение фактов / планировщик (markdown-fence / преамбула / мусор
@@ -52,7 +52,8 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from bob.application.router.llm_router import LLMRouter
-    from bob.domain.ports import Clock, PatternDetector
+    from bob.kernel.ports import Clock
+    from bob.proactivity.ports import PatternDetector
     from bob.proactivity.self_improvement import RuleState as _RuleStateT
 
 logger = logging.getLogger(__name__)

@@ -32,8 +32,9 @@ from bob.application.router.llm_router import LLMRequest, TaskType
 from bob.capabilities.usecases.tool_loop import ToolLoop
 
 if TYPE_CHECKING:
+    from bob.capabilities.ports import ToolCallingProvider
     from bob.capabilities.usecases.registry import CapabilityRegistry
-    from bob.domain.ports import LLMMessage, ToolCallingProvider
+    from bob.kernel.ports import LLMMessage
 
 
 class _Router(Protocol):

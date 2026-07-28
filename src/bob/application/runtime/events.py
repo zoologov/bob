@@ -13,7 +13,7 @@ Telegram gateway (infrastructure) translates an inbound update into a
 The event is an application concern — transport-agnostic data a use-case needs
 to react — not an infrastructure detail, so it lives with the runtime that owns
 the bus. :class:`MessageReceived` exposes a stable ``name`` so it satisfies the
-:class:`bob.domain.ports.DomainEvent` contract for bus routing.
+:class:`bob.kernel.ports.DomainEvent` contract for bus routing.
 """
 
 from __future__ import annotations

@@ -46,7 +46,7 @@ from bob.proactivity.usecases.pursue_goals import PursueGoalsTick
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Mapping
 
-    from bob.domain.ports import Permission
+    from bob.capabilities.ports import Permission
 
 PERSONA = "bob"
 CHAT_ID = 42

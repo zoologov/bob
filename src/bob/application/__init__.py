@@ -6,6 +6,6 @@
 
 """Application layer — GUPPI use-cases and orchestration.
 
-Depends on :mod:`bob.domain` (through its port protocols); it never imports
+Depends on the domain modules (through their port protocols); it never imports
 ``bob.infrastructure``. Concrete adapters are bound to ports in ``bob.app``.
 """

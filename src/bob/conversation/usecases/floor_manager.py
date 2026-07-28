@@ -40,7 +40,8 @@ from bob.conversation.conversation_floor import (
 
 if TYPE_CHECKING:
     from bob.conversation.addressivity import Addressivity
-    from bob.domain.ports import Clock, ConversationFloorStore
+    from bob.conversation.ports import ConversationFloorStore
+    from bob.kernel.ports import Clock
 
 logger = logging.getLogger(__name__)
 

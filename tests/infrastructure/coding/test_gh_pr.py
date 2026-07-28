@@ -21,7 +21,7 @@ import pytest
 
 import bob.coding.adapters.gh_pr as gh_pr_module
 from bob.coding.adapters.gh_pr import GhPullRequestOpener, PullRequestError
-from bob.domain.ports import PullRequestOpener
+from bob.coding.ports import PullRequestOpener
 
 _URL = "https://github.com/owner/repo/pull/42"
 

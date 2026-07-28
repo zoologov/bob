@@ -26,7 +26,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
-    from bob.domain.ports import Capability, Permission, RepoIntrospector
+    from bob.capabilities.ports import Capability, Permission, RepoIntrospector
 
 # JSON-Schema advertised to the model so it knows the single ``query`` argument.
 _INPUT_SCHEMA: Mapping[str, object] = {

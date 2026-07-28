@@ -20,8 +20,7 @@ conversation-floor & closer-log stores).
 
 This vertical depends on :mod:`bob.personality` one-directionally (a turn asks the
 character *how* to speak); personality never imports conversation. The package facade
-re-exports only the stable *ports*; ``bob.domain.ports`` re-exports these same names
-for backward compatibility (a thin shim).
+re-exports only the stable *ports*.
 """
 
 from __future__ import annotations

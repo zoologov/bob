@@ -8,7 +8,7 @@
 
 """KvAllowlistStore — durable authorization allowlist over the generic kv table.
 
-Realises :class:`bob.domain.ports.AllowlistStore` by persisting the set of
+Realises :class:`bob.social.ports.AllowlistStore` by persisting the set of
 allowlisted user ids as a JSON array under a single key in the existing ``kv``
 table (:meth:`SqliteMemoryRepo.kv_get` / :meth:`~SqliteMemoryRepo.kv_set`). This
 keeps all SQL in the repo (parameterised) and lets ``/authorize`` survive a

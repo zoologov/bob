@@ -15,7 +15,7 @@ PURE, side-effect-free helpers the application uses to fix that: find the fenced
 mermaid blocks in a reply, strip them out (the rendered image replaces them), and
 normalise a source for dedup against a tool-rendered diagram. It has no I/O and no
 rendering — the application composes these with a
-:class:`~bob.domain.ports.DiagramRenderer`.
+:class:`~bob.capabilities.ports.DiagramRenderer`.
 """
 
 from bob.capabilities.diagrams.mermaid_blocks import (

@@ -12,7 +12,7 @@ Hooked onto the heartbeat reflect tick (a slow cadence), this lets Bob's current
 fascination *evolve over time* — never randomly. Each run:
 
 1. **Load + age.** Read the persisted :class:`Fascination` and decay it against the
-   injected :class:`~bob.domain.ports.Clock` (intensity wanes with age).
+   injected :class:`~bob.kernel.ports.Clock` (intensity wanes with age).
 2. **Decide a shift.** A shift happens only when there is no current fascination,
    or the current one has decayed past its floor (:meth:`Fascination.has_faded`).
    A still-alive passion is left untouched — so the step is naturally **idempotent**
@@ -25,7 +25,7 @@ fascination *evolve over time* — never randomly. Each run:
    the same grounding material. With NO grounding material at all, the step is a
    clean no-op (Bob simply has no fascination yet).
 4. **Persist** the fresh fascination (full initial intensity, ``created_at`` = now)
-   via the :class:`~bob.domain.ports.FascinationStore`.
+   via the :class:`~bob.personality.ports.FascinationStore`.
 
 Everything is injected — store, router, the grounding seam, clock, and the initial
 intensity — so the step holds no globals and is deterministic in tests on fakes.
@@ -43,7 +43,8 @@ from bob.personality.language import DEFAULT_LANGUAGE, language_directive
 if TYPE_CHECKING:
     from datetime import datetime
 
-    from bob.domain.ports import Clock, FascinationStore
+    from bob.kernel.ports import Clock
+    from bob.personality.ports import FascinationStore
 
 logger = logging.getLogger(__name__)
 
@@ -81,7 +82,7 @@ class FascinationGrounding(Protocol):
     """The grounding seam: Bob's real inner-life sources for a fascination pick.
 
     Two REAL, persisted sources (never random): his most recent reflection text
-    (the same :class:`~bob.domain.ports.ReflectionReader` seam the leak path uses,
+    (the same :class:`~bob.personality.ports.ReflectionReader` seam the leak path uses,
     ``None`` when there is none) and his strongest taste topics (the names of the
     axes he holds with real conviction). A fascination is derived from these, so it
     is always rooted in something Bob actually thinks or cares about.

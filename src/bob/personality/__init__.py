@@ -19,8 +19,7 @@ perception); and the ``adapters`` half (the Tier-0 reaction judge + the SQLite /
 fascination & notable-reaction stores).
 
 The package facade re-exports only the stable *ports* — the personality contract the
-outer layers (and ``bob.conversation``) depend on. ``bob.domain.ports`` re-exports
-these same names for backward compatibility (a thin shim).
+outer layers (and ``bob.conversation``) depend on.
 """
 
 from __future__ import annotations

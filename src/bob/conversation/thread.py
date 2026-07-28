@@ -38,7 +38,7 @@ from bob.conversation.conversation import strip_recurring_closer
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
-    from bob.domain.ports import Recalled
+    from bob.memory.ports import Recalled
     from bob.social.interlocutor import Interlocutor
 
 

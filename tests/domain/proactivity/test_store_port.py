@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from bob.domain.ports import ProactivityStore
+from bob.proactivity.ports import ProactivityStore
 from bob.proactivity.social_energy import SocialEnergy
 from bob.proactivity.state import ProactivityState
 

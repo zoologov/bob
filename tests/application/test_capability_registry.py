@@ -21,7 +21,7 @@ from bob.capabilities.usecases.registry import CapabilityRegistry, UnknownCapabi
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
-    from bob.domain.ports import Permission
+    from bob.capabilities.ports import Permission
 
 
 class FakeCapability:

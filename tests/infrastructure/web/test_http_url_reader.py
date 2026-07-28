@@ -27,7 +27,7 @@ from bob.capabilities.adapters.web.http_url_reader import (
     _extract_text,
     _stream_body,
 )
-from bob.domain.ports import UrlReader, WebPage
+from bob.capabilities.ports import UrlReader, WebPage
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Mapping, Sequence

@@ -51,8 +51,8 @@ if TYPE_CHECKING:
     from bob.conversation.usecases.decide_response import DecideResponse
     from bob.conversation.usecases.floor_manager import FloorManager
     from bob.conversation.usecases.recall_assembler import RecallAssembler
-    from bob.domain.ports import MessageReactor
     from bob.personality.expression import ExpressionPlan
+    from bob.personality.ports import MessageReactor
     from bob.personality.soul import SOUL
     from bob.proactivity.self_improvement import RuleModulators
     from bob.social.interlocutor import Interlocutor

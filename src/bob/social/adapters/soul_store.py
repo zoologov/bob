@@ -24,7 +24,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from bob.domain.ports import JsonValue
+    from bob.kernel.ports import JsonValue
 
 logger = logging.getLogger(__name__)
 

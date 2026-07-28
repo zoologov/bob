@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING
 from bob.capabilities.adapters.web.http_url_reader import HttpUrlReader
 
 if TYPE_CHECKING:
-    from bob.domain.ports import UrlReader
+    from bob.capabilities.ports import UrlReader
 
 _DEFAULT_TIMEOUT_SECONDS = 15.0
 _DEFAULT_MAX_BYTES = 2_000_000

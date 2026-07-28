@@ -14,7 +14,7 @@ import pytest
 
 from bob.capabilities.adapters.web.factory import build_url_reader
 from bob.capabilities.adapters.web.http_url_reader import HttpUrlReader
-from bob.domain.ports import UrlReader
+from bob.capabilities.ports import UrlReader
 
 
 def test_builds_reader_from_read_url_section() -> None:

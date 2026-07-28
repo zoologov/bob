@@ -8,7 +8,7 @@
 
 """KvNotableReactionStore — the light being-received note adapter (BOB-050).
 
-Realises :class:`bob.domain.ports.NotableReactionStore` over the generic ``kv`` table
+Realises :class:`bob.personality.ports.NotableReactionStore` over the generic ``kv`` table
 (no new schema/migration): a single JSON row under one key holding the MOST RECENT
 :class:`~bob.personality.reaction_effect.NotableReaction`. Deliberately tiny —
 the rare-aloud hint (BOB-050 .3) only ever needs the latest moment Bob was received,

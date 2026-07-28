@@ -17,7 +17,7 @@ the first time. It is built from THREE public sources, in order:
 1. the project conventions essentials (stack + DDD/Clean layering + dependency
    direction) — a static, public constant (CLAUDE.md §0.1);
 2. the convention docs (``docs/architecture.md`` summary) read through the read-only
-   :class:`~bob.domain.ports.RepoIntrospector` port;
+   :class:`~bob.capabilities.ports.RepoIntrospector` port;
 3. the task-area rationale via :meth:`RepoIntrospector.architecture_context` (the
    ``inspect_architecture`` seam — beadloom ctx/graph/search behind the .1 port).
 

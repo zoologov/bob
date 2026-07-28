@@ -17,7 +17,7 @@ reservoir (the "you came back" bump), yielding a natural cooldown after a reply.
 
 The rest of the per-persona state is preserved verbatim: the owner's ``/quiet``
 mute (``proactivity_enabled``) survives an incoming message, and ``last_spoke_at``
-is untouched. Time is injected via :class:`~bob.domain.ports.Clock`; the use-case
+is untouched. Time is injected via :class:`~bob.kernel.ports.Clock`; the use-case
 holds no globals and is deterministic in tests.
 """
 
@@ -27,7 +27,8 @@ from dataclasses import replace
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from bob.domain.ports import Clock, ProactivityStore
+    from bob.kernel.ports import Clock
+    from bob.proactivity.ports import ProactivityStore
 
 
 class RecordOwnerActivity:

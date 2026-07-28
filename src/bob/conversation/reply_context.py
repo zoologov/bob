@@ -31,7 +31,7 @@ from bob.personality.taste import Verdict
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
-    from bob.domain.ports import Recalled
+    from bob.memory.ports import Recalled
     from bob.personality.soul import SOUL
 
 # Effective-verdict modulation (BOB-020) needs the sign of Bob's liking to lean a

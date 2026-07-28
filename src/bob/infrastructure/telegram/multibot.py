@@ -77,7 +77,6 @@ from bob.infrastructure.telegram.guppi import GuppiHandler
 if TYPE_CHECKING:
     from contextlib import AbstractAsyncContextManager
 
-    from bob.domain.ports import Clock, EventBus
     from bob.infrastructure.telegram.gateway import MessageLike
     from bob.infrastructure.telegram.guppi import (
         CodingAssistantLike,
@@ -86,6 +85,7 @@ if TYPE_CHECKING:
         PursuitStoreLike,
         RuleStoreLike,
     )
+    from bob.kernel.ports import Clock, EventBus
     from bob.proactivity.usecases.plan_goal import PlanGoal
 
 logger = logging.getLogger(__name__)

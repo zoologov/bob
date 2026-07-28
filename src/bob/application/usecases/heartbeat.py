@@ -45,7 +45,7 @@ if TYPE_CHECKING:
 
     from bob.application.router.llm_router import LLMRouter
     from bob.application.usecases.handle_message import PersonalityState
-    from bob.domain.ports import Clock, JsonValue
+    from bob.kernel.ports import Clock, JsonValue
     from bob.personality.taste import TasteEngine
     from bob.personality.usecases.apply_reflection import ApplyReflection
     from bob.personality.usecases.reappraise_reflection import ReappraisalOutcome

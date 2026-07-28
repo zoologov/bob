@@ -238,7 +238,6 @@ fnmatch по первому символу их физически не разл
 `llm.factory → capabilities.adapters` (`QwenWebSearchProvider`, RUNTIME cross-infra,
 legalized), `coding.usecases → capabilities` (`PrivacyGuard`, TC, перенос
 существующего ref), `capabilities → memory` (`MemoryRecall`),
-`domain/ports/__init__ → capabilities.ports` (шим re-export 18 портов),
 `handle_message` / `privileged_fulfiller → capabilities.usecases` (координация).
 
 ## API
@@ -268,8 +267,8 @@ legalized), `coding.usecases → capabilities` (`PrivacyGuard`, TC, перено
   `Permission` (`Literal["safe", "confirm"]`).
 
 Фасад `src/bob/capabilities/__init__.py` re-export'ит стабильные порты + value-объекты.
-Те же 18 имён re-export'ятся из `bob.domain.ports` (тонкий шим, BOB-062.4), поэтому
-`from bob.domain.ports import Capability` работает как раньше.
+Канонический импорт портов — `from bob.capabilities.ports import Capability`; транзитный
+ports-шим `bob.domain.ports` удалён (BOB-062.8), все импортёры переведены на канон.
 
 Ключевые точки входа:
 - Шов: `usecases.registry` (`CapabilityRegistry`, `SafeCapabilityDispatcher`,

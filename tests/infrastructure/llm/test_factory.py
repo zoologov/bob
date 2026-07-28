@@ -8,9 +8,9 @@ from __future__ import annotations
 
 import pytest
 
-from bob.domain.ports import LLMProvider
 from bob.infrastructure.llm.factory import build_tier_providers
 from bob.infrastructure.llm.openai_compat import OpenAICompatProvider
+from bob.kernel.ports import LLMProvider
 
 
 def test_builds_both_tiers_from_config() -> None:

@@ -10,7 +10,7 @@
 
 Pure domain value objects with no I/O. The persistence adapter translates these
 to and from SQLite rows; the domain never sees a database. Timestamps are
-timezone-aware (sourced from the injected :class:`~bob.domain.ports.Clock`), and
+timezone-aware (sourced from the injected :class:`~bob.kernel.ports.Clock`), and
 confidence is a ``[0, 1]`` probability — both invariants are enforced at
 construction so an invalid record can never exist in memory.
 """

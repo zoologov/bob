@@ -8,7 +8,7 @@
 
 """HttpUrlReader — read a concrete web page over aiohttp behind a 🔴 SSRF guard.
 
-Realises :class:`bob.domain.ports.UrlReader` (BOB-054). Because Bob himself fetches an
+Realises :class:`bob.capabilities.ports.UrlReader` (BOB-054). Because Bob himself fetches an
 attacker-influenced URL, SSRF is the primary risk; every request runs the guard BEFORE
 a socket is opened and re-runs it on every redirect hop. Order of operations:
 
@@ -53,7 +53,7 @@ if TYPE_CHECKING:
 
 # Re-exported (imported above) so adapters and infra tests keep importing the read
 # failure contract from this module; the canonical definitions live in the domain
-# (``bob.domain.ports``) so the application can catch them without importing infra.
+# (``bob.capabilities.ports``) so the application can catch them without importing infra.
 __all__ = ["HttpUrlReader", "SsrfBlockedError", "UrlReadError"]
 
 _ALLOWED_SCHEMES = frozenset({"http", "https"})

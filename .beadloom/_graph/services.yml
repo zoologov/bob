@@ -42,11 +42,18 @@ nodes:
       - services/runtime.md
 
   # ── Layer: Domain ───────────────────────────────────────────────────────────
+  # BOB-062.8: the layer-first `src/bob/domain/` folder was removed (its only
+  # remaining content, the ports re-export shim, was deleted). This node stays the
+  # domain-LAYER umbrella (expressed by the `layer-domain` tag); its part_of
+  # children are the seven module-vertical bounded contexts plus the shared
+  # `kernel`. Its `source:` now anchors on `src/bob/kernel/` (the shared kernel);
+  # kernel files resolve to the deeper `kernel` feature node via their
+  # `# beadloom:feature=kernel` annotation.
   - ref_id: bob-domain
     kind: domain
-    source: src/bob/domain/
+    source: src/bob/kernel/
     tags: [layer-domain]
-    summary: 'Pure domain core: personality (Mood, TasteEngine, Negotiation, SOUL), memory entities, and port protocols (LLMProvider, ToolCallingProvider, Capability, AllowlistStore). No I/O, no LLM, no transport.'
+    summary: 'Domain layer umbrella: the seven module-vertical bounded contexts (personality, conversation, memory, proactivity, coding, capabilities, social) plus the shared `kernel` (infra-neutral cross-module contracts). Pure logic + Protocol definitions; no I/O, no LLM, no transport.'
     docs:
       - domains/domain/README.md
 
@@ -68,12 +75,19 @@ nodes:
     docs:
       - domains/infrastructure/README.md
 
-  # ── Domain submodules (kind: feature, part_of bob-domain) ───────────────────
-  - ref_id: ports
+  # ── Shared kernel (kind: feature, part_of bob-domain) ───────────────────────
+  # BOB-062.8: the transitive `domain/ports/` re-export shim was deleted and the 7
+  # infra-neutral kernel contracts (Clock/EventBus/EventHandler/DomainEvent/
+  # LLMProvider/LLMMessage/JsonValue) moved to `src/bob/kernel/` — a classical DDD
+  # SHARED KERNEL: cross-module contracts every vertical may import (inward-safe, no
+  # cycles); the kernel imports from no module. The per-module ports (`<module>/
+  # ports.py`) resolve to their own module-vertical nodes. With this move the last
+  # layer-first `src/bob/domain/` folder is gone.
+  - ref_id: kernel
     kind: feature
-    source: src/bob/domain/ports/
+    source: src/bob/kernel/
     tags: [layer-domain]
-    summary: 'Domain ports — the port protocols the outer layers implement (LLMProvider, ToolCallingProvider, Capability, AllowlistStore, conversation/memory/social/coding/proactivity/kernel seams). Pure Protocol definitions; no I/O.'
+    summary: 'Shared kernel — the infra-neutral contracts every vertical module rests on: the runtime seams (Clock, EventBus, EventHandler, DomainEvent, LLMProvider) and the shared value objects (LLMMessage, JsonValue). Pure Protocol/type definitions; no I/O. Every module may import from here; the kernel imports from no module.'
 
   - ref_id: personality
     kind: feature
@@ -287,7 +301,7 @@ edges:
     kind: part_of
 
   # ── Domain submodules part_of the domain layer ──────────────────────────────
-  - src: ports
+  - src: kernel
     dst: bob-domain
     kind: part_of
   - src: personality

@@ -28,8 +28,8 @@ if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Mapping, Sequence
     from pathlib import Path
 
-    from bob.domain.ports import LLMProvider
     from bob.infrastructure.telegram.gateway import UpdateLike
+    from bob.kernel.ports import LLMProvider
 
 
 class _Provider:

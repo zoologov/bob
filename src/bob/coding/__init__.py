@@ -15,7 +15,7 @@ BOB-015): сессия (:class:`CodingSession`) как immutable value-object, �
 :func:`narrate` (stream-json событие Claude Code → русская нарратив-строка / шум →
 ``None``) и :func:`worktree_branch` (безопасное имя ветки ``bob/<slug>``).
 
-Персист — за портом :class:`bob.domain.ports.CodingSessionStore` (адаптер
+Персист — за портом :class:`bob.coding.ports.CodingSessionStore` (адаптер
 ``SqliteCodingSessionStore`` в infrastructure); раннер/worktree/PR (.2) и use-case
 ``CodingAssistant`` (.3) строятся поверх. Боб НИКОГДА не мержит — машина
 останавливается на ``PR_OPEN``, мерж делает owner вне Боба.

@@ -58,12 +58,7 @@ if TYPE_CHECKING:
     from contextlib import AbstractAsyncContextManager
     from datetime import datetime
 
-    from bob.domain.ports import (
-        ClaudeCodeRunner,
-        CodingSessionStore,
-        PullRequestOpener,
-        Worktree,
-    )
+    from bob.coding.ports import ClaudeCodeRunner, CodingSessionStore, PullRequestOpener, Worktree
 
 logger = logging.getLogger(__name__)
 

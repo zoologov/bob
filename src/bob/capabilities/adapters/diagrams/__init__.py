@@ -8,7 +8,7 @@
 
 """Local diagram rendering adapters (BOB-035).
 
-Realises the :class:`~bob.domain.ports.DiagramRenderer` port LOCALLY — mermaid
+Realises the :class:`~bob.capabilities.ports.DiagramRenderer` port LOCALLY — mermaid
 source never leaves the machine. The first adapter shells the local mermaid-cli
 (``mmdc``) via ``create_subprocess_exec`` (never a shell).
 """

@@ -8,7 +8,7 @@
 
 """SqliteProactivityStore — the per-persona proactivity state adapter.
 
-Realises :class:`bob.domain.ports.ProactivityStore` over the ``proactivity_state``
+Realises :class:`bob.proactivity.ports.ProactivityStore` over the ``proactivity_state``
 table: one row per ``persona_id`` so Bobiverse replicas each keep their own
 reservoir, markers, and owner-mute flag. The domain
 :class:`~bob.proactivity.state.ProactivityState` is mapped to and from a

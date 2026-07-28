@@ -52,7 +52,7 @@ from bob.social.usecases.permission_execution import PermissionDecision
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Sequence
 
-    from bob.domain.ports import Clock
+    from bob.kernel.ports import Clock
     from bob.social.permission.privilege import PrivilegeJudge
 
 logger = logging.getLogger(__name__)

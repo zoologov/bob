@@ -15,14 +15,15 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from bob.capabilities.ports import ToolCall, ToolCallResult
 from bob.capabilities.usecases.registry import CapabilityRegistry
 from bob.capabilities.usecases.tool_loop import ToolLoop
-from bob.domain.ports import ToolCall, ToolCallResult
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
-    from bob.domain.ports import LLMMessage, Permission, ToolDefinition
+    from bob.capabilities.ports import Permission, ToolDefinition
+    from bob.kernel.ports import LLMMessage
 
 
 class FakeCapability:

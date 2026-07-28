@@ -11,7 +11,7 @@
 Owns one responsibility: keeping the ``memory_vec`` vec0 virtual table in step
 with the memory archive. It loads the loadable ``sqlite-vec`` extension onto the
 (aiosqlite) connection, embeds text through the injected
-:class:`~bob.domain.ports.Embedder` (BGE-M3, 1024-dim — never Ollama directly),
+:class:`~bob.memory.ports.Embedder` (BGE-M3, 1024-dim — never Ollama directly),
 and inserts the dense vectors keyed back to their source row by ``(source,
 src_id)``. Two write paths feed it: an idempotent **backfill** of pre-existing
 facts/episodes on :meth:`backfill`, and **on-write** embedding of a freshly
@@ -37,7 +37,7 @@ if TYPE_CHECKING:
 
     import aiosqlite
 
-    from bob.domain.ports import Embedder
+    from bob.memory.ports import Embedder
 
 logger = logging.getLogger(__name__)
 

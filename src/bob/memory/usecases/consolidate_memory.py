@@ -43,7 +43,7 @@ if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
     from datetime import datetime
 
-    from bob.domain.ports import Clock
+    from bob.kernel.ports import Clock
 
 logger = logging.getLogger(__name__)
 

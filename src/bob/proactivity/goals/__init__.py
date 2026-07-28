@@ -17,7 +17,7 @@
 Authz-before-autonomy зашит структурно: к авто-продвижению допущены только цели в
 ``APPROVED`` / ``ACTIVE``, а внешне-агентные задачи (``needs_external_agency``)
 исключены из авто-готовых и лишь помечаются для предложения owner. Персист — за
-портом :class:`bob.domain.ports.GoalStore` (адаптер ``SqliteGoalStore`` в
+портом :class:`bob.proactivity.ports.GoalStore` (адаптер ``SqliteGoalStore`` в
 infrastructure); Planner (.2) и самонаправленный тик (.3) строятся поверх.
 """
 

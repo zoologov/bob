@@ -23,8 +23,8 @@ from collections.abc import Mapping
 import pytest
 
 from bob.capabilities.adapters.web import SsrfBlockedError, UrlReadError
+from bob.capabilities.ports import WebPage
 from bob.capabilities.usecases.read_url import make_read_url_capability
-from bob.domain.ports import WebPage
 
 
 class _FakeUrlReader:

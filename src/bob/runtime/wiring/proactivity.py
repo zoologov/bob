@@ -47,9 +47,10 @@ if TYPE_CHECKING:
         ReflectTick,
     )
     from bob.conversation.conversation import RepeatThresholds
-    from bob.domain.ports import Clock, MemoryRecall
     from bob.infrastructure.telegram.multibot import MultiBotGateway
+    from bob.kernel.ports import Clock
     from bob.memory.adapters import SqliteMemoryRepo
+    from bob.memory.ports import MemoryRecall
     from bob.personality.usecases.fascination_sources import StoreFascinationReader
     from bob.proactivity.adapters import SqliteProactivityStore
     from bob.proactivity.usecases import ProactiveTick

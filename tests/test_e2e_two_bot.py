@@ -40,7 +40,7 @@ if TYPE_CHECKING:
 
     from aiogram.types import InputRichMessage
 
-    from bob.domain.ports import LLMProvider
+    from bob.kernel.ports import LLMProvider
 
 _CHAT_ID = -1004372947307
 _BOB_TOPIC_ID = 32

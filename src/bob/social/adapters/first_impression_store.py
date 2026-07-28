@@ -8,7 +8,7 @@
 
 """SqliteFirstImpressionStore — the per-sender first-impression adapter (BOB-019).
 
-Realises :class:`bob.domain.ports.FirstImpressionStore` over the ``first_impression``
+Realises :class:`bob.social.ports.FirstImpressionStore` over the ``first_impression``
 table: one row per ``sender_id`` so Bob keeps a LIGHT first read on each person he
 meets. The domain :class:`~bob.social.first_impression.FirstImpression`
 is mapped to and from a row here (``first_seen_at`` as ISO-8601 text) so the domain

@@ -51,10 +51,12 @@ if TYPE_CHECKING:
 
     from bob.application.runtime.events import BobMessageReaction
     from bob.application.usecases.handle_message import PersonalityState
-    from bob.domain.ports import Clock, NotableReactionStore, RelationshipStore
+    from bob.kernel.ports import Clock
     from bob.personality.disposition import Disposition
+    from bob.personality.ports import NotableReactionStore
     from bob.personality.reaction_meaning import ReactionJudge, ReactionMeaning
     from bob.social.interlocutor import Interlocutor
+    from bob.social.ports import RelationshipStore
 
 logger = logging.getLogger(__name__)
 

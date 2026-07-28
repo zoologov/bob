@@ -6,7 +6,7 @@
 
 """OpenAICompatProvider — OpenAI-compatible chat completions over aiohttp.
 
-Implements :class:`bob.domain.ports.LLMProvider` against any endpoint that
+Implements :class:`bob.kernel.ports.LLMProvider` against any endpoint that
 speaks the OpenAI ``/chat/completions`` shape — used for both Tier 0 (a local
 mlx-lm server, no auth) and Tier 1 (the Qwen API, bearer-token auth). The same
 adapter serves both tiers; flipping local <-> API is a config change, not a
@@ -30,10 +30,11 @@ from typing import TYPE_CHECKING
 
 import aiohttp
 
-from bob.domain.ports import ToolCall, ToolCallResult
+from bob.capabilities.ports import ToolCall, ToolCallResult
 
 if TYPE_CHECKING:
-    from bob.domain.ports import LLMMessage, ToolDefinition
+    from bob.capabilities.ports import ToolDefinition
+    from bob.kernel.ports import LLMMessage
 
 logger = logging.getLogger(__name__)
 
@@ -58,7 +59,7 @@ _NO_THINKING_DIRECTIVE: dict[str, object] = {
 class OpenAICompatProvider:
     """OpenAI-compatible completion provider (Tier 0 local / Tier 1 API).
 
-    Realises :class:`bob.domain.ports.LLMProvider`. One instance targets one
+    Realises :class:`bob.kernel.ports.LLMProvider`. One instance targets one
     ``base_url`` + ``model``; build via :func:`bob.infrastructure.llm.factory`.
     """
 

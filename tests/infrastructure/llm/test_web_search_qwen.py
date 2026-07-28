@@ -24,7 +24,7 @@ import pytest
 from aiohttp import web
 
 from bob.capabilities.adapters.web_search_qwen import QwenWebSearchProvider
-from bob.domain.ports import WebSearchProvider, WebSource
+from bob.capabilities.ports import WebSearchProvider, WebSource
 
 _RESPONSES_PATH = "/v1/responses"
 

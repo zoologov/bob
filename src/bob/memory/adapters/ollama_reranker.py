@@ -8,7 +8,7 @@
 
 """OllamaReranker — a LOCAL relevance reranker realised as an Ollama-as-scorer.
 
-Realises :class:`bob.domain.ports.Reranker`: an ADDITIVE quality boost that
+Realises :class:`bob.memory.ports.Reranker`: an ADDITIVE quality boost that
 re-orders the hybrid recall's wide top-``K`` pool by a sharper relevance
 judgement and trims it to a tight top-``N``. Like embeddings, it runs locally —
 memory content never leaves the machine (privacy, see BOB-011 CONTEXT).
@@ -43,7 +43,7 @@ from bob.application.runtime.retry import retry_with_backoff
 
 if TYPE_CHECKING:
     from bob.application.runtime.retry import Sleep
-    from bob.domain.ports import Recalled
+    from bob.memory.ports import Recalled
 
 logger = logging.getLogger(__name__)
 
@@ -72,7 +72,7 @@ _SYSTEM_PROMPT = (
 
 
 class OllamaReranker:
-    """Local Ollama-as-scorer :class:`bob.domain.ports.Reranker` (top-K -> top-N).
+    """Local Ollama-as-scorer :class:`bob.memory.ports.Reranker` (top-K -> top-N).
 
     One instance targets one ``base_url`` + ``model`` and trims to ``top_n``; build
     it from the ``reranker`` config section via

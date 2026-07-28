@@ -8,7 +8,7 @@
 
 """GitWorktree — isolated git worktree for a gated coding session (BOB-039 .2).
 
-The infrastructure adapter realising :class:`bob.domain.ports.Worktree`. It runs git
+The infrastructure adapter realising :class:`bob.coding.ports.Worktree`. It runs git
 as FIXED-form, shell-free invocations (no metacharacter injection):
 
 * :meth:`create` → ``git worktree add <path> -b <branch>`` on a NEW branch, returning

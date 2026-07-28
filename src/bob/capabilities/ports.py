@@ -14,7 +14,7 @@ the read-only repo introspector (BOB-017). These are *interfaces only*: structur
 :class:`typing.Protocol` definitions with no implementations; adapters in
 ``bob.infrastructure`` realise them. The tool-loop value objects (:class:`ToolCall`,
 :class:`ToolCallResult`, …) live here beside the ports that carry them; the only
-cross-bucket dependency is :data:`~bob.domain.ports.kernel.LLMMessage`.
+cross-bucket dependency is :data:`~bob.kernel.ports.LLMMessage`.
 """
 
 from __future__ import annotations
@@ -24,7 +24,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Literal, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
-    from bob.domain.ports.kernel import LLMMessage
+    from bob.kernel.ports import LLMMessage
 
 # An OpenAI-shaped tool definition (``{"type": "function", "function": {...}}``),
 # as emitted by the CapabilityRegistry manifest and sent to the LLM as ``tools``.
@@ -205,7 +205,7 @@ class Capability(Protocol):
 class ToolCallingProvider(Protocol):
     """An LLM provider that can be handed ``tools`` and return ``tool_calls``.
 
-    The tool-aware sibling of :class:`~bob.domain.ports.kernel.LLMProvider`: given the
+    The tool-aware sibling of :class:`~bob.kernel.ports.LLMProvider`: given the
     conversation and a manifest of tool definitions, it returns a
     :class:`ToolCallResult` (final text, or the tool calls the model requested).
     Adapters realise this over a native OpenAI ``tools`` round-trip or a prompt-protocol

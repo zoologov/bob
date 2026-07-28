@@ -17,8 +17,7 @@ announcer), and the ``adapters`` half (HTTP url-reader + SSRF guard, mermaid
 renderer, beadloom/git introspector, Qwen web-search transport).
 
 The package facade re-exports only the stable *ports* — the tool-seam contract the
-outer layers depend on. ``bob.domain.ports`` re-exports these same names for
-backward compatibility (a thin shim, BOB-062.4).
+outer layers depend on.
 """
 
 from __future__ import annotations

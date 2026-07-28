@@ -17,8 +17,7 @@ reactor perception, the privilege flow + execution, the first-impression / relat
 kv-backed identity stores + the Tier-0 privilege judge).
 
 The package facade re-exports only the stable *ports* — the social contract the outer
-layers depend on. ``bob.domain.ports`` re-exports these same names for backward
-compatibility (a thin shim).
+layers depend on.
 """
 
 from __future__ import annotations

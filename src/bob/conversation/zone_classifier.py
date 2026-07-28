@@ -8,7 +8,7 @@
 
 """TasteZoneClassifier — deterministic negotiation-zone heuristic (no LLM, no I/O).
 
-The default realisation of the :class:`~bob.domain.ports.ZoneClassifier` port.
+The default realisation of the :class:`~bob.conversation.ports.ZoneClassifier` port.
 A topic Bob holds a strong taste on (an extreme verdict backed by conviction)
 maps to ``BOB_PERSONAL`` — his territory of opinions, where he may push back.
 Explicit user-logistics markers (schedule/time/volume — "когда", "во сколько",

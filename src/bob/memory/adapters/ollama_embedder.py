@@ -8,7 +8,7 @@
 
 """OllamaEmbedder — local dense embeddings over a LOCAL Ollama server.
 
-Realises :class:`bob.domain.ports.Embedder` against Ollama's embeddings API,
+Realises :class:`bob.memory.ports.Embedder` against Ollama's embeddings API,
 default model ``bge-m3`` (dense, 1024-dim, multilingual/Russian). Embeddings stay
 on the machine — memory content never leaves it (privacy, see BOB-011 CONTEXT).
 
@@ -50,7 +50,7 @@ _DEFAULT_TIMEOUT_SECONDS = 120.0
 
 
 class OllamaEmbedder:
-    """Local Ollama-backed :class:`bob.domain.ports.Embedder` (BGE-M3, 1024-dim).
+    """Local Ollama-backed :class:`bob.memory.ports.Embedder` (BGE-M3, 1024-dim).
 
     One instance targets one ``base_url`` + ``model`` + ``dim``; build it from the
     ``embeddings`` config section via :func:`build_embedder`.

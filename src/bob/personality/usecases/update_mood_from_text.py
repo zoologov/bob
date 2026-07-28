@@ -46,7 +46,7 @@ from bob.personality.mood import Mood, MoodDelta
 
 if TYPE_CHECKING:
     from bob.application.router.llm_router import LLMRouter
-    from bob.domain.ports import Clock
+    from bob.kernel.ports import Clock
     from bob.personality.disposition import Disposition
 
 logger = logging.getLogger(__name__)

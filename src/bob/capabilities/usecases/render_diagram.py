@@ -10,14 +10,14 @@
 
 The skill that lets Bob draw: it takes a single ``mermaid`` string (the diagram
 source Bob or the user wrote), renders it to a PNG LOCALLY via the injected
-:class:`~bob.domain.ports.DiagramRenderer` (no external service — privacy), and hands
+:class:`~bob.capabilities.ports.DiagramRenderer` (no external service — privacy), and hands
 the result to the reply path to send as a Telegram photo.
 
 **The photo-send seam.** A capability normally returns TEXT to the tool-loop, but the
 PNG must reach the CURRENT chat — whose ``chat_id`` lives per-turn in
 ``HandleMessage``, not in the global registry. So the capability does NOT send the
-photo itself: it pushes a structured :class:`~bob.domain.ports.DiagramResult` (PNG +
-caption) into a per-turn :class:`~bob.domain.ports.DiagramSink` and returns a short
+photo itself: it pushes a structured :class:`~bob.capabilities.ports.DiagramResult` (PNG +
+caption) into a per-turn :class:`~bob.capabilities.ports.DiagramSink` and returns a short
 TEXT confirmation. After the tool-loop, the reply path (which holds the ``chat_id``
 and the gateway) drains the sink and sends each diagram as a photo. This keeps the
 chat_id strictly per-turn and the send a transport concern — DDD layering intact (the
@@ -40,7 +40,7 @@ from bob.capabilities.ports import DiagramRenderError, DiagramResult
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
-    from bob.domain.ports import Capability, DiagramRenderer, DiagramSink, Permission
+    from bob.capabilities.ports import Capability, DiagramRenderer, DiagramSink, Permission
 
 logger = logging.getLogger(__name__)
 
@@ -76,7 +76,7 @@ _RENDERER_UNAVAILABLE = (
 
 
 class CollectingDiagramSink:
-    """An in-memory per-turn :class:`~bob.domain.ports.DiagramSink` (push then drain).
+    """An in-memory per-turn :class:`~bob.capabilities.ports.DiagramSink` (push then drain).
 
     The simplest correct collector: the capability :meth:`push`es each rendered
     diagram; the reply path :meth:`drain`s them all (returning them and clearing the

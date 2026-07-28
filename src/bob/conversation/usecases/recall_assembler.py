@@ -40,7 +40,8 @@ if TYPE_CHECKING:
     from random import Random
 
     from bob.application.usecases.handle_message import EpisodeReader
-    from bob.domain.ports import Clock, NotableReactionStore
+    from bob.kernel.ports import Clock
+    from bob.personality.ports import NotableReactionStore
     from bob.social.interlocutor import Interlocutor
 
 

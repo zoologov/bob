@@ -22,20 +22,23 @@ Deterministic on a fake port + an injected sleep — no network, no disk, no del
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from typing import TYPE_CHECKING
 
 import pytest
 
-from bob.capabilities.usecases.registry import CapabilityRegistry
-from bob.capabilities.usecases.tool_loop import ToolLoop
-from bob.capabilities.usecases.web_search import make_web_search_capability
-from bob.domain.ports import (
-    LLMMessage,
+from bob.capabilities.ports import (
     ToolCall,
     ToolCallResult,
     ToolDefinition,
     WebSearchResult,
     WebSource,
 )
+from bob.capabilities.usecases.registry import CapabilityRegistry
+from bob.capabilities.usecases.tool_loop import ToolLoop
+from bob.capabilities.usecases.web_search import make_web_search_capability
+
+if TYPE_CHECKING:
+    from bob.kernel.ports import LLMMessage
 
 
 class _FakeWebSearchProvider:

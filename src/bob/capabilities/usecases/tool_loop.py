@@ -11,7 +11,7 @@
 GUPPI's tool-use loop, the act side of the capability seam. Given a seeded
 conversation and the registry manifest, it:
 
-1. asks the :class:`~bob.domain.ports.ToolCallingProvider` to complete the turn,
+1. asks the :class:`~bob.capabilities.ports.ToolCallingProvider` to complete the turn,
    offering the registered capabilities as ``tools``;
 2. if the model requested tool calls, **dispatches** each through the registry
    (GUPPI executes), appends the assistant turn and a ``tool`` result message,
@@ -34,9 +34,10 @@ from bob.capabilities.usecases.registry import UnknownCapabilityError
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
+    from bob.capabilities.ports import ToolCall, ToolCallingProvider
     from bob.capabilities.usecases.progress_announcer import ProgressAnnouncer
     from bob.capabilities.usecases.registry import CapabilityRegistry
-    from bob.domain.ports import LLMMessage, ToolCall, ToolCallingProvider
+    from bob.kernel.ports import LLMMessage
 
 logger = logging.getLogger(__name__)
 

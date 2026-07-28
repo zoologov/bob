@@ -14,7 +14,7 @@
 параметром ``at`` в мутаторы, так домен детерминирован и тестируем без
 ``datetime.now``. Мутаторы (``with_state`` / ``with_plan`` / ``with_worktree`` /
 ``with_pr_url``) возвращают новый объект и обновляют ``updated_at``; персист — за
-портом :class:`bob.domain.ports.CodingSessionStore`.
+портом :class:`bob.coding.ports.CodingSessionStore`.
 """
 
 from __future__ import annotations

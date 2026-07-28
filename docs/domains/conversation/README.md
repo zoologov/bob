@@ -40,9 +40,9 @@ module), сгенерированные `scripts/gen_boundary_rules.py`.
    решение о ходе (как ответить / нужна ли проверка), поэтому conversation, а не personality.
    Их model-facing половины (prompt/parser) — чистые, тестируемы без модели; Tier-0-адаптеры —
    в `adapters/`.
-4. **`domain/ports/` держит тонкий re-export-шим** conversation-портов
-   (`ConversationFloorStore` / `CloserLog` / `ZoneClassifier`), так что
-   `from bob.domain.ports import ConversationFloorStore` работает как раньше.
+4. **Порты живут в `conversation/ports.py`** (`ConversationFloorStore` / `CloserLog` /
+   `ZoneClassifier`); канонический импорт — `from bob.conversation.ports import
+   ConversationFloorStore` (транзитный ports-шим `bob.domain.ports` удалён, BOB-062.8).
 
 ## 🔴 Мультиперсональность: floor и адресность за многолюдный тред
 
@@ -238,9 +238,9 @@ floor (UPSERT — floor продвигается каждый ход); `SqliteCl
   `TasteZoneClassifier`, позже Tier-0 LLM без изменения потребителей). Возвращает
   personality-`NegotiationZone` — ребро `conversation → personality`.
 
-Фасад `src/bob/conversation/__init__.py` — вход в модуль. Порты conversation также
-re-export'ятся из `bob.domain.ports` (тонкий шим), поэтому `from bob.domain.ports import
-ConversationFloorStore` работает как раньше.
+Фасад `src/bob/conversation/__init__.py` — вход в модуль. Канонический импорт портов —
+`from bob.conversation.ports import ConversationFloorStore` (транзитный ports-шим
+`bob.domain.ports` удалён, BOB-062.8).
 
 Ключевые точки входа:
 - Домен: `addressivity.classify_addressivity`, `conversation_floor.advance_floor`/

@@ -12,7 +12,7 @@ Builds on the pure :mod:`bob.proactivity` drive-model: the
 :class:`ProactivityEngine` decides cheaply (urge → seeded sample → governance
 veto, no LLM) and, only on a genuine fire, runs a Tier-0 gate, composes via the
 router, and posts into Bob's topic through the gateway — spending energy and
-stamping ``last_spoke_at`` via the :class:`~bob.domain.ports.ProactivityStore`
+stamping ``last_spoke_at`` via the :class:`~bob.proactivity.ports.ProactivityStore`
 port. :class:`ProactiveTick` runs the engine on the heartbeat cadence. Time, the
 RNG seed, and every port are injected, so the layer holds no globals and is
 deterministic in tests.

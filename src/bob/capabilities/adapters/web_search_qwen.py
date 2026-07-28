@@ -8,7 +8,7 @@
 
 """QwenWebSearchProvider — web search over the Qwen MaaS **Responses API** (streamed).
 
-Realises :class:`bob.domain.ports.WebSearchProvider` against the Qwen MaaS
+Realises :class:`bob.capabilities.ports.WebSearchProvider` against the Qwen MaaS
 ``/responses`` endpoint — NOT ``/chat/completions``. Verify .1 (BOB-053) proved
 this is the only path that returns clickable sources on the workspace ``sk`` key:
 chat/completions and legacy-native text-generation return a grounded answer but no

@@ -16,7 +16,7 @@ decision — as structured JSON items ``{"category": ..., "content": ...}``.
 
 Each item becomes a :class:`~bob.memory.entities.SemanticFact` and is
 written through the :class:`FactWriter` seam (the SQLite repo, whose FTS5 trigger
-indexes the content) so a later turn's :class:`~bob.domain.ports.MemoryRecall`
+indexes the content) so a later turn's :class:`~bob.memory.ports.MemoryRecall`
 can surface it back into the reply context. Obvious repeats are de-duplicated.
 
 It is **best-effort**: episodic conversation already carries the turn, so a model
@@ -38,7 +38,7 @@ from bob.memory.entities import SemanticFact
 
 if TYPE_CHECKING:
     from bob.application.router.llm_router import LLMRouter
-    from bob.domain.ports import Clock
+    from bob.kernel.ports import Clock
 
 logger = logging.getLogger(__name__)
 

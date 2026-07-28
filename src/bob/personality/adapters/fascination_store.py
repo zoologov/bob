@@ -8,7 +8,7 @@
 
 """SqliteFascinationStore — the per-persona current-fascination adapter.
 
-Realises :class:`bob.domain.ports.FascinationStore` over the ``fascination_state``
+Realises :class:`bob.personality.ports.FascinationStore` over the ``fascination_state``
 table: one row per ``persona_id`` so Bobiverse replicas each keep their own
 current passion. The domain :class:`~bob.personality.fascination.Fascination`
 is mapped to and from a row here (intensity as a REAL, ``created_at`` as ISO-8601

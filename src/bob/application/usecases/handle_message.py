@@ -142,30 +142,25 @@ if TYPE_CHECKING:
     from bob.application.reliability import Sleep
     from bob.application.router.llm_router import LLMRouter
     from bob.application.runtime.events import MessageReceived
+    from bob.capabilities.ports import (
+        DiagramRenderer,
+        DiagramSink,
+        ToolCallingProvider,
+        WebSearchProvider,
+    )
     from bob.capabilities.usecases.progress_announcer import (
         InterimLineGenerator,
         ProgressAnnouncer,
     )
+    from bob.conversation.ports import CloserLog, ConversationFloorStore, ZoneClassifier
     from bob.conversation.usecases.decide_response import DecideResponse
     from bob.conversation.volatility_judgment import VolatilityJudge
-    from bob.domain.ports import (
-        Clock,
-        CloserLog,
-        ConversationFloorStore,
-        DiagramRenderer,
-        DiagramSink,
-        MemoryRecall,
-        MessageReactor,
-        NotableReactionStore,
-        Recalled,
-        ReflectionReader,
-        ToolCallingProvider,
-        WebSearchProvider,
-        ZoneClassifier,
-    )
+    from bob.kernel.ports import Clock
+    from bob.memory.ports import MemoryRecall, Recalled
     from bob.memory.usecases.extract_facts import ExtractFacts
     from bob.personality.fascination import Fascination
     from bob.personality.mood import Mood
+    from bob.personality.ports import MessageReactor, NotableReactionStore, ReflectionReader
     from bob.personality.soul import SOUL
     from bob.personality.usecases.update_mood_from_text import UpdateMoodFromText
     from bob.proactivity.self_improvement import ImprovementRule
@@ -319,7 +314,7 @@ class CurrentFascinationReader(Protocol):
     turn the compose path folds the topic in so Bob can drop it à propos — but only a
     REAL, persisted passion that has not yet faded. ``None`` means Bob has no current
     fascination, so the mention no-ops (never a fabricated interest). The concrete
-    adapter loads the :class:`~bob.domain.ports.FascinationStore`, ages the stored
+    adapter loads the :class:`~bob.personality.ports.FascinationStore`, ages the stored
     passion against the clock, and drops a faded one.
     """
 
@@ -826,7 +821,7 @@ class HandleMessage:
         )
         # The diagram photo-send seam (BOB-035): the ``render_diagram`` capability —
         # dispatched deep inside the global registry's tool-loop, with no chat_id —
-        # pushes each rendered :class:`~bob.domain.ports.DiagramResult` (PNG + caption)
+        # pushes each rendered :class:`~bob.capabilities.ports.DiagramResult` (PNG + caption)
         # into this per-turn sink. After the tool-loop the reply path drains it and
         # sends each as a Telegram photo into THIS turn's chat (the chat_id stays
         # per-turn, the send a gateway concern). Unwired (the default) Bob has no

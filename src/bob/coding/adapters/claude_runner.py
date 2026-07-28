@@ -8,7 +8,7 @@
 
 """SubprocessClaudeRunner — run the local ``claude`` CLI and stream its events.
 
-The infrastructure adapter realising :class:`bob.domain.ports.ClaudeCodeRunner`
+The infrastructure adapter realising :class:`bob.coding.ports.ClaudeCodeRunner`
 (BOB-039 .2). It runs ``claude`` headless via ``asyncio.create_subprocess_exec``
 (NEVER a shell — the prompt is a single discrete argv item, never interpolated):
 

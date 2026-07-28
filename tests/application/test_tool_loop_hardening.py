@@ -15,14 +15,15 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from bob.capabilities.ports import ToolCall, ToolCallResult
 from bob.capabilities.usecases.registry import CapabilityRegistry
 from bob.capabilities.usecases.tool_loop import ToolLoop
-from bob.domain.ports import ToolCall, ToolCallResult
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
-    from bob.domain.ports import LLMMessage, Permission, ToolDefinition
+    from bob.capabilities.ports import Permission, ToolDefinition
+    from bob.kernel.ports import LLMMessage
 
 
 class _Capability:

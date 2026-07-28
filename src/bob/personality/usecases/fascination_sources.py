@@ -14,15 +14,15 @@ path pure of storage/state plumbing:
 * :class:`RepoFascinationGrounding` realises
   :class:`~bob.personality.usecases.evolve_fascination.FascinationGrounding`: Bob's
   REAL grounding material for a fascination pick — his most recent reflection (via
-  the :class:`~bob.domain.ports.ReflectionReader` seam) and the topics he holds
+  the :class:`~bob.personality.ports.ReflectionReader` seam) and the topics he holds
   strongest opinions on (read off the live :class:`PersonalityState` soul's taste
   axes, by conviction * liking strength). Nothing here is random.
 
 * :class:`StoreFascinationReader` realises the reply/proactive compose's
   current-fascination read seam: it loads the persisted
   :class:`~bob.personality.fascination.Fascination` from the
-  :class:`~bob.domain.ports.FascinationStore`, **ages** it against the injected
-  :class:`~bob.domain.ports.Clock`, and returns it only while it is still alive —
+  :class:`~bob.personality.ports.FascinationStore`, **ages** it against the injected
+  :class:`~bob.kernel.ports.Clock`, and returns it only while it is still alive —
   a faded passion reads as ``None`` so the surface path no-ops.
 """
 
@@ -32,8 +32,9 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from bob.application.usecases.handle_message import PersonalityState
-    from bob.domain.ports import Clock, FascinationStore, ReflectionReader
+    from bob.kernel.ports import Clock
     from bob.personality.fascination import Fascination
+    from bob.personality.ports import FascinationStore, ReflectionReader
 
 # A taste axis counts as a "strong opinion" — eligible grounding for a fascination —
 # only when Bob both likes/dislikes it enough AND holds it with real conviction.
