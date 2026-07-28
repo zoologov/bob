@@ -17,10 +17,10 @@ from typing import TYPE_CHECKING
 import pytest
 
 from bob.application.router.llm_router import LLMRouter, TaskType
-from bob.domain.personality.addressivity import Addressivity
-from bob.domain.personality.response_choice import ResponseContext, ResponseIntent
-from bob.domain.personality.response_judgment import ResponseJudgeParseError
-from bob.infrastructure.llm.response_judge import LlmResponseJudge
+from bob.conversation.adapters.response_judge import LlmResponseJudge
+from bob.conversation.addressivity import Addressivity
+from bob.conversation.response_choice import ResponseContext, ResponseIntent
+from bob.conversation.response_judgment import ResponseJudgeParseError
 from bob.social.interlocutor import (
     Interlocutor,
     InterlocutorKind,

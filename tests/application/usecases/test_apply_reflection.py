@@ -13,13 +13,13 @@ over the domain; the parser is faked.
 
 from __future__ import annotations
 
-from bob.application.usecases.apply_reflection import (
+from bob.personality.mood import Mood, MoodDelta
+from bob.personality.soul import SOUL
+from bob.personality.taste import TasteAxis, TasteEngine
+from bob.personality.usecases.apply_reflection import (
     ApplyReflection,
     ReflectionSignal,
 )
-from bob.domain.personality.mood import Mood, MoodDelta
-from bob.domain.personality.soul import SOUL
-from bob.domain.personality.taste import TasteAxis, TasteEngine
 
 
 class FakeParser:

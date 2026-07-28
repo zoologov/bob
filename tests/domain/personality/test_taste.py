@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import pytest
 
-from bob.domain.personality.taste import TasteAxis, TasteEngine, Verdict
+from bob.personality.taste import TasteAxis, TasteEngine, Verdict
 
 
 def test_taste_axis_holds_its_fields() -> None:

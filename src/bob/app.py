@@ -51,14 +51,6 @@ from bob.application.runtime import (
     RetryPolicy,
     periodic,
 )
-from bob.application.usecases.apply_reflection import ApplyReflection
-from bob.application.usecases.decide_response import DecideResponse
-from bob.application.usecases.evolve_fascination import EvolveFascination
-from bob.application.usecases.evolve_phantoms import EvolvePhantoms
-from bob.application.usecases.fascination_sources import (
-    RepoFascinationGrounding,
-    StoreFascinationReader,
-)
 from bob.application.usecases.handle_message import (
     DiagramSendMode,
     EngagementState,
@@ -72,9 +64,6 @@ from bob.application.usecases.heartbeat import (
 )
 from bob.application.usecases.perceive_reaction import PerceiveReaction
 from bob.application.usecases.privileged_fulfiller import PrivilegedRequestFulfiller
-from bob.application.usecases.reappraise_reflection import ReappraiseReflection
-from bob.application.usecases.reflection_parser import HeuristicReflectionParser
-from bob.application.usecases.update_mood_from_text import UpdateMoodFromText
 from bob.capabilities.adapters.diagrams import SubprocessMmdcRenderer
 from bob.capabilities.adapters.introspection.subprocess_introspector import (
     SubprocessRepoIntrospector,
@@ -108,33 +97,21 @@ from bob.coding.usecases.classify_coding_intent import ClassifyCodingIntent
 from bob.coding.usecases.coding_assistant import CodingAssistant
 from bob.coding.usecases.coding_context import make_coding_context
 from bob.coding.usecases.coding_intent_router import CodingIntentRouter
-from bob.domain.personality.addressivity import AddressivityThresholds
-from bob.domain.personality.brevity import BrevityThresholds
-from bob.domain.personality.conversation import RepeatThresholds
-from bob.domain.personality.conversation_floor import FloorConfig
-from bob.domain.personality.disposition import DEFAULT_DISPOSITION, Disposition
-from bob.domain.personality.engagement import EngagementThresholds, FatigueRates
-from bob.domain.personality.expression import ExpressionFreqs
-from bob.domain.personality.language import DEFAULT_LANGUAGE
-from bob.domain.personality.mood import Mood
-from bob.domain.personality.negotiation import Negotiation
-from bob.domain.personality.phantom_evolution import CHANGE_RATE as _PHANTOM_RATE
-from bob.domain.personality.phantom_evolution import MAX_PHANTOMS as _PHANTOM_MAX
-from bob.domain.personality.soul import SOUL
-from bob.domain.personality.taste import TasteAxis, TasteEngine
-from bob.domain.personality.taste_evolution import ALPHA as _EVOLUTION_ALPHA
-from bob.domain.personality.taste_evolution import BETA as _EVOLUTION_BETA
-from bob.domain.personality.voice import OffDayThresholds
-from bob.domain.personality.zone_classifier import TasteZoneClassifier
+from bob.conversation.adapters.interim_line import LlmInterimLineGenerator
+from bob.conversation.adapters.response_judge import LlmResponseJudge
+from bob.conversation.adapters.volatility_judge import LlmVolatilityJudge
+from bob.conversation.addressivity import AddressivityThresholds
+from bob.conversation.brevity import BrevityThresholds
+from bob.conversation.conversation import RepeatThresholds
+from bob.conversation.conversation_floor import FloorConfig
+from bob.conversation.engagement import EngagementThresholds, FatigueRates
+from bob.conversation.usecases.decide_response import DecideResponse
+from bob.conversation.zone_classifier import TasteZoneClassifier
 from bob.infrastructure.config import ConfigLoader
 from bob.infrastructure.llm import (
     build_tier_providers,
     build_web_search_provider,
 )
-from bob.infrastructure.llm.interim_line import LlmInterimLineGenerator
-from bob.infrastructure.llm.reaction_judge import LlmReactionJudge
-from bob.infrastructure.llm.response_judge import LlmResponseJudge
-from bob.infrastructure.llm.volatility_judge import LlmVolatilityJudge
 from bob.infrastructure.persistence import (
     KvAllowlistStore,
     KvNotableReactionStore,
@@ -168,6 +145,29 @@ from bob.memory.adapters import (
 from bob.memory.usecases.consolidate_memory import ConsolidateMemory
 from bob.memory.usecases.dedup_facts import DedupFacts
 from bob.memory.usecases.extract_facts import ExtractFacts
+from bob.personality.adapters.reaction_judge import LlmReactionJudge
+from bob.personality.disposition import DEFAULT_DISPOSITION, Disposition
+from bob.personality.expression import ExpressionFreqs
+from bob.personality.language import DEFAULT_LANGUAGE
+from bob.personality.mood import Mood
+from bob.personality.negotiation import Negotiation
+from bob.personality.phantom_evolution import CHANGE_RATE as _PHANTOM_RATE
+from bob.personality.phantom_evolution import MAX_PHANTOMS as _PHANTOM_MAX
+from bob.personality.soul import SOUL
+from bob.personality.taste import TasteAxis, TasteEngine
+from bob.personality.taste_evolution import ALPHA as _EVOLUTION_ALPHA
+from bob.personality.taste_evolution import BETA as _EVOLUTION_BETA
+from bob.personality.usecases.apply_reflection import ApplyReflection
+from bob.personality.usecases.evolve_fascination import EvolveFascination
+from bob.personality.usecases.evolve_phantoms import EvolvePhantoms
+from bob.personality.usecases.fascination_sources import (
+    RepoFascinationGrounding,
+    StoreFascinationReader,
+)
+from bob.personality.usecases.reappraise_reflection import ReappraiseReflection
+from bob.personality.usecases.reflection_parser import HeuristicReflectionParser
+from bob.personality.usecases.update_mood_from_text import UpdateMoodFromText
+from bob.personality.voice import OffDayThresholds
 from bob.proactivity.adapters import (
     RepoProactivitySources,
     SqliteGoalStore,

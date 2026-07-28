@@ -15,8 +15,8 @@ import logging
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from bob.domain.personality.reaction_effect import NotableReaction
-from bob.infrastructure.persistence.notable_reaction_store import KvNotableReactionStore
+from bob.personality.adapters.notable_reaction_store import KvNotableReactionStore
+from bob.personality.reaction_effect import NotableReaction
 
 if TYPE_CHECKING:
     import pytest

@@ -46,7 +46,11 @@ from bob.coding.ports import (
     PullRequestOpener,
     Worktree,
 )
-from bob.domain.ports.conversation import CloserLog, ConversationFloorStore
+from bob.conversation.ports import (
+    CloserLog,
+    ConversationFloorStore,
+    ZoneClassifier,
+)
 from bob.domain.ports.kernel import (
     Clock,
     DomainEvent,
@@ -56,19 +60,18 @@ from bob.domain.ports.kernel import (
     LLMMessage,
     LLMProvider,
 )
-from bob.domain.ports.personality import (
-    FascinationStore,
-    MessageReactor,
-    NotableReactionStore,
-    ReflectionReader,
-    ZoneClassifier,
-)
 from bob.memory.ports import (
     Embedder,
     MemoryRecall,
     MemoryRepo,
     Recalled,
     Reranker,
+)
+from bob.personality.ports import (
+    FascinationStore,
+    MessageReactor,
+    NotableReactionStore,
+    ReflectionReader,
 )
 from bob.proactivity.ports import (
     GoalStore,

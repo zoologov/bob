@@ -18,15 +18,17 @@ from __future__ import annotations
 
 from random import Random
 
-from bob.domain.personality.expression import (
+from bob.personality.expression import (
+    EngagementLevel,
     ExpressionFreqs,
     ExpressionMode,
     ExpressionPlan,
     ExpressionSignals,
     FormHint,
+    Verbosity,
     decide_expression,
 )
-from bob.domain.personality.mood import Mood
+from bob.personality.mood import Mood
 
 
 def _calm() -> Mood:
@@ -256,3 +258,31 @@ def test_mention_frequency_rejects_out_of_range_values() -> None:
         except ValueError:
             continue
         raise AssertionError(f"frequency {bad} should have been rejected")
+
+
+# --- expression vocabulary: Verbosity + EngagementLevel (BOB-062.6a) ----------
+# The two enums are facets of HOW Bob expresses himself, so they live in the
+# expression vocabulary beside ExpressionMode/FormHint. The conversation logic
+# (brevity/engagement) DEPENDS ON them — the correct personality-inward direction.
+# These pins are behaviour-preserving: the members, order, and .value strings are
+# identical to their pre-move definitions, so Bob's tone is byte-identical.
+
+
+def test_verbosity_members_and_values_are_preserved() -> None:
+    assert [level.value for level in Verbosity] == ["terse", "normal", "expansive"]
+    assert Verbosity.TERSE.value == "terse"
+    assert Verbosity.NORMAL.value == "normal"
+    assert Verbosity.EXPANSIVE.value == "expansive"
+
+
+def test_engagement_level_members_and_values_are_preserved() -> None:
+    assert [level.value for level in EngagementLevel] == [
+        "full",
+        "playful",
+        "terse",
+        "decline",
+    ]
+    assert EngagementLevel.FULL.value == "full"
+    assert EngagementLevel.PLAYFUL.value == "playful"
+    assert EngagementLevel.TERSE.value == "terse"
+    assert EngagementLevel.DECLINE.value == "decline"

@@ -11,13 +11,13 @@ the outcome is deterministic, and the assembled context is what the judge sees.
 
 from __future__ import annotations
 
-from bob.application.usecases.decide_response import DecideResponse
-from bob.domain.personality.addressivity import Addressivity
-from bob.domain.personality.response_choice import (
+from bob.conversation.addressivity import Addressivity
+from bob.conversation.response_choice import (
     ResponseChoice,
     ResponseContext,
     ResponseIntent,
 )
+from bob.conversation.usecases.decide_response import DecideResponse
 from bob.social.interlocutor import (
     Interlocutor,
     InterlocutorKind,

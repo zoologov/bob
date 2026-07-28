@@ -42,16 +42,16 @@ from bob.application.usecases.heartbeat import (
     _MONOLOGUE_VALENCE_BAND,
     ReflectTick,
 )
-from bob.application.usecases.reappraise_reflection import ReappraiseReflection
-from bob.application.usecases.update_mood_from_text import (
+from bob.conversation.conversation import recalled_excluding_reflections
+from bob.personality.disposition import Disposition
+from bob.personality.mood import Mood
+from bob.personality.soul import SOUL
+from bob.personality.taste import TasteEngine
+from bob.personality.usecases.reappraise_reflection import ReappraiseReflection
+from bob.personality.usecases.update_mood_from_text import (
     TextSignals,
     UpdateMoodFromText,
 )
-from bob.domain.personality.conversation import recalled_excluding_reflections
-from bob.domain.personality.disposition import Disposition
-from bob.domain.personality.mood import Mood
-from bob.domain.personality.soul import SOUL
-from bob.domain.personality.taste import TasteEngine
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Mapping, Sequence

@@ -17,9 +17,9 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from bob.domain.personality.fascination import Fascination
-from bob.infrastructure.persistence.fascination_store import SqliteFascinationStore
 from bob.infrastructure.persistence.sqlite_repo import SqliteMemoryRepo
+from bob.personality.adapters.fascination_store import SqliteFascinationStore
+from bob.personality.fascination import Fascination
 
 if TYPE_CHECKING:
     from pathlib import Path

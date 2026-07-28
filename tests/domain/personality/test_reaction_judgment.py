@@ -15,13 +15,13 @@ from __future__ import annotations
 
 import pytest
 
-from bob.domain.personality.reaction_judgment import (
+from bob.personality.reaction_judgment import (
     REACTION_JUDGE_SYSTEM_PROMPT,
     ReactionJudgeParseError,
     build_reaction_user_prompt,
     parse_reaction_meaning,
 )
-from bob.domain.personality.reaction_meaning import ReactionContext
+from bob.personality.reaction_meaning import ReactionContext
 from bob.social.interlocutor import (
     Interlocutor,
     InterlocutorKind,

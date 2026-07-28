@@ -30,19 +30,19 @@ import pytest
 from bob.application.runtime.events import BobMessageReaction
 from bob.application.usecases.handle_message import PersonalityState
 from bob.application.usecases.perceive_reaction import PerceiveReaction
-from bob.domain.personality.disposition import DEFAULT_DISPOSITION
-from bob.domain.personality.mood import Mood, MoodDelta
-from bob.domain.personality.reaction_meaning import ReactionMeaning
-from bob.domain.personality.soul import SOUL
-from bob.domain.personality.taste import TasteEngine
+from bob.personality.disposition import DEFAULT_DISPOSITION
+from bob.personality.mood import Mood, MoodDelta
+from bob.personality.reaction_meaning import ReactionMeaning
+from bob.personality.soul import SOUL
+from bob.personality.taste import TasteEngine
 from bob.social.interlocutor import Interlocutor, InterlocutorKind, Trust
 from bob.social.relationship import Relationship
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
-    from bob.domain.personality.reaction_effect import NotableReaction
-    from bob.domain.personality.reaction_meaning import ReactionContext
+    from bob.personality.reaction_effect import NotableReaction
+    from bob.personality.reaction_meaning import ReactionContext
 
 _BOB_MESSAGE_ID = 555
 _REACTOR_ID = 42

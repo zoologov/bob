@@ -13,8 +13,8 @@ never trips the "reaction not allowed" / premium-custom-emoji limits.
 
 from __future__ import annotations
 
-from bob.domain.personality.mood import Mood
-from bob.domain.personality.reaction import (
+from bob.personality.mood import Mood
+from bob.personality.reaction import (
     STANDARD_REACTION_EMOJI,
     reaction_emoji_for,
 )

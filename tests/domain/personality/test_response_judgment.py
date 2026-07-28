@@ -14,12 +14,12 @@ from __future__ import annotations
 
 import pytest
 
-from bob.domain.personality.addressivity import Addressivity
-from bob.domain.personality.response_choice import (
+from bob.conversation.addressivity import Addressivity
+from bob.conversation.response_choice import (
     ResponseContext,
     ResponseIntent,
 )
-from bob.domain.personality.response_judgment import (
+from bob.conversation.response_judgment import (
     DEFAULT_WARM_EMOJI,
     RESPONSE_JUDGE_SYSTEM_PROMPT,
     ResponseJudgeParseError,

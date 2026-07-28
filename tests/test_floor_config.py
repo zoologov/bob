@@ -17,7 +17,7 @@ from __future__ import annotations
 import pytest
 
 from bob.app import _build_floor_config, _build_floor_enabled
-from bob.domain.personality.conversation_floor import FloorConfig
+from bob.conversation.conversation_floor import FloorConfig
 
 
 def test_floor_enabled_defaults_true_when_section_absent() -> None:

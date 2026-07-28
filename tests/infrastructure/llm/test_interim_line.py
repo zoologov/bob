@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from bob.application.router.llm_router import LLMRouter, TaskType
-from bob.infrastructure.llm.interim_line import LlmInterimLineGenerator
+from bob.conversation.adapters.interim_line import LlmInterimLineGenerator
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Mapping, Sequence

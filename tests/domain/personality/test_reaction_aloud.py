@@ -13,8 +13,8 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from bob.domain.personality.reaction_aloud import acknowledgment_hint
-from bob.domain.personality.reaction_effect import NotableReaction
+from bob.personality.reaction_aloud import acknowledgment_hint
+from bob.personality.reaction_effect import NotableReaction
 
 
 def _note() -> NotableReaction:

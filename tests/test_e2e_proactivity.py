@@ -30,8 +30,8 @@ from typing import TYPE_CHECKING
 import pytest
 
 from bob.app import Application, build_application
-from bob.domain.personality.mood import Mood
 from bob.infrastructure.persistence import SoulStore
+from bob.personality.mood import Mood
 from bob.proactivity.adapters import SqliteProactivityStore
 from bob.proactivity.decision import ProactiveDecider
 from bob.proactivity.governance import Governance, ProactiveHistory

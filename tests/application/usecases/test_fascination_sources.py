@@ -15,15 +15,15 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
-from bob.application.usecases.fascination_sources import (
+from bob.application.usecases.handle_message import PersonalityState
+from bob.personality.fascination import Fascination
+from bob.personality.mood import Mood
+from bob.personality.soul import SOUL
+from bob.personality.taste import TasteAxis, TasteEngine
+from bob.personality.usecases.fascination_sources import (
     RepoFascinationGrounding,
     StoreFascinationReader,
 )
-from bob.application.usecases.handle_message import PersonalityState
-from bob.domain.personality.fascination import Fascination
-from bob.domain.personality.mood import Mood
-from bob.domain.personality.soul import SOUL
-from bob.domain.personality.taste import TasteAxis, TasteEngine
 
 _PERSONA = "bob"
 _T0 = datetime(2026, 6, 20, 10, 0, tzinfo=UTC)

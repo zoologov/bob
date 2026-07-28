@@ -18,9 +18,8 @@ from random import Random
 
 import pytest
 
-from bob.domain.personality.engagement import (
+from bob.conversation.engagement import (
     ConversationalFatigue,
-    EngagementLevel,
     EngagementThresholds,
     FatigueRates,
     appetite_of,
@@ -28,8 +27,9 @@ from bob.domain.personality.engagement import (
     engagement_mood_lift,
     topic_interest,
 )
-from bob.domain.personality.mood import Mood
-from bob.domain.personality.taste import Verdict
+from bob.personality.expression import EngagementLevel
+from bob.personality.mood import Mood
+from bob.personality.taste import Verdict
 from bob.social.relationship import Relationship
 
 _GOOD_MOOD = Mood(valence=0.6, arousal=0.4, openness=0.4)

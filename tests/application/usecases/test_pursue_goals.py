@@ -32,9 +32,9 @@ from bob.capabilities.usecases.registry import (
     CapabilityRegistry,
     SafeCapabilityDispatcher,
 )
-from bob.domain.personality.mood import Mood
-from bob.domain.personality.soul import SOUL
-from bob.domain.personality.taste import TasteEngine
+from bob.personality.mood import Mood
+from bob.personality.soul import SOUL
+from bob.personality.taste import TasteEngine
 from bob.proactivity.goals.entities import Goal, GoalOrigin, Task
 from bob.proactivity.goals.graph import GoalGraph
 from bob.proactivity.goals.state import GoalState, TaskState

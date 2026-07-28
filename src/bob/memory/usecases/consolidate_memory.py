@@ -37,7 +37,7 @@ from datetime import timedelta
 from typing import TYPE_CHECKING, Protocol
 
 from bob.application.router.llm_router import LLMRequest, TaskType
-from bob.domain.personality.language import DEFAULT_LANGUAGE, language_directive
+from bob.personality.language import DEFAULT_LANGUAGE, language_directive
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence

@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import pytest
 
-from bob.domain.personality.volatility_judgment import (
+from bob.conversation.volatility_judgment import (
     VOLATILITY_JUDGE_SYSTEM_PROMPT,
     VolatilityContext,
     VolatilityJudgeParseError,

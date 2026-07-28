@@ -9,7 +9,7 @@ from __future__ import annotations
 import random
 from datetime import UTC, datetime, timedelta
 
-from bob.domain.personality.mood import Mood
+from bob.personality.mood import Mood
 from bob.proactivity.decision import ProactiveDecider, urge_to_probability
 from bob.proactivity.governance import Governance, ProactiveHistory
 

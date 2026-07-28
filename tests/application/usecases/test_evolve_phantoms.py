@@ -16,11 +16,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from random import Random
 
-from bob.application.usecases.evolve_phantoms import EvolvePhantoms
 from bob.application.usecases.handle_message import PersonalityState
-from bob.domain.personality.mood import Mood
-from bob.domain.personality.soul import SOUL
-from bob.domain.personality.taste import TasteEngine
+from bob.personality.mood import Mood
+from bob.personality.soul import SOUL
+from bob.personality.taste import TasteEngine
+from bob.personality.usecases.evolve_phantoms import EvolvePhantoms
 
 
 def _soul(phantoms: tuple[str, ...]) -> SOUL:

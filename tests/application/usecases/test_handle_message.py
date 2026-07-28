@@ -24,7 +24,6 @@ import pytest
 
 from bob.application.router.llm_router import LLMRouter
 from bob.application.runtime.events import MessageReceived
-from bob.application.usecases.decide_response import DecideResponse
 from bob.application.usecases.handle_message import (
     _CLOSER_TIC_NUDGE,
     _VERIFY_GROUNDED_NOTE,
@@ -41,49 +40,50 @@ from bob.application.usecases.handle_message import (
     _recent_bob_replies,
     _user_turns,
 )
-from bob.application.usecases.update_mood_from_text import UpdateMoodFromText
 from bob.capabilities.adapters.diagrams.mmdc_renderer import DiagramRenderError
 from bob.capabilities.usecases.registry import CapabilityRegistry
 from bob.capabilities.usecases.render_diagram import (
     CollectingDiagramSink,
     make_render_diagram_capability,
 )
-from bob.domain.personality.addressivity import AddressivityThresholds
-from bob.domain.personality.conversation import RepeatThresholds
-from bob.domain.personality.conversation_floor import (
+from bob.conversation.addressivity import AddressivityThresholds
+from bob.conversation.conversation import RepeatThresholds
+from bob.conversation.conversation_floor import (
     ConversationFloor,
     FloorConfig,
     FloorHolder,
     idle_floor,
 )
-from bob.domain.personality.engagement import (
+from bob.conversation.engagement import (
     ConversationalFatigue,
     EngagementThresholds,
     FatigueRates,
 )
-from bob.domain.personality.expression import ExpressionFreqs
-from bob.domain.personality.fascination import Fascination
-from bob.domain.personality.mood import Mood
-from bob.domain.personality.negotiation import NegotiationZone, Stance
-from bob.domain.personality.reaction import (
-    STANDARD_REACTION_EMOJI,
-    reaction_emoji_for,
-)
-from bob.domain.personality.reaction_effect import NotableReaction
-from bob.domain.personality.response_choice import (
+from bob.conversation.response_choice import (
     ResponseChoice,
     ResponseContext,
     ResponseIntent,
 )
-from bob.domain.personality.soul import SOUL
-from bob.domain.personality.taste import TasteAxis, TasteEngine, Verdict
-from bob.domain.personality.volatility_judgment import (
+from bob.conversation.usecases.decide_response import DecideResponse
+from bob.conversation.volatility_judgment import (
     VolatilityContext,
     VolatilityVerdict,
 )
 from bob.domain.ports import ToolCall, ToolCallResult, WebSearchResult
 from bob.infrastructure.telegram.gateway import TelegramGateway
 from bob.memory.usecases.extract_facts import ExtractFacts
+from bob.personality.expression import ExpressionFreqs
+from bob.personality.fascination import Fascination
+from bob.personality.mood import Mood
+from bob.personality.negotiation import NegotiationZone, Stance
+from bob.personality.reaction import (
+    STANDARD_REACTION_EMOJI,
+    reaction_emoji_for,
+)
+from bob.personality.reaction_effect import NotableReaction
+from bob.personality.soul import SOUL
+from bob.personality.taste import TasteAxis, TasteEngine, Verdict
+from bob.personality.usecases.update_mood_from_text import UpdateMoodFromText
 from bob.proactivity.self_improvement import (
     ImprovementRule,
     Lever,

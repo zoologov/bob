@@ -12,9 +12,9 @@ implementation; the port stays abstract (swappable for a Tier-0 LLM later).
 
 from __future__ import annotations
 
-from bob.domain.personality.negotiation import NegotiationZone
-from bob.domain.personality.taste import Verdict
-from bob.domain.personality.zone_classifier import TasteZoneClassifier
+from bob.conversation.zone_classifier import TasteZoneClassifier
+from bob.personality.negotiation import NegotiationZone
+from bob.personality.taste import Verdict
 
 
 def test_strong_taste_topic_is_bob_personal() -> None:

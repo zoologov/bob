@@ -17,10 +17,9 @@ from __future__ import annotations
 
 import pytest
 
-from bob.domain.personality.brevity import Verbosity
-from bob.domain.personality.engagement import EngagementLevel
-from bob.domain.personality.mood import Mood
-from bob.domain.personality.voice import (
+from bob.personality.expression import EngagementLevel, Verbosity
+from bob.personality.mood import Mood
+from bob.personality.voice import (
     OffDayThresholds,
     RelationshipToneThresholds,
     anti_bait_directive,

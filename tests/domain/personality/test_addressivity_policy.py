@@ -12,7 +12,7 @@ SILENT/REACT, изредка втягивает легче.
 
 from __future__ import annotations
 
-from bob.domain.personality.addressivity import (
+from bob.conversation.addressivity import (
     Addressivity,
     AddressivityThresholds,
     ResponseOutcome,

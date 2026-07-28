@@ -4,7 +4,7 @@
 
 """Tests for the long-gap absence hint (BOB-045 .3).
 
-:func:`~bob.domain.personality.absence.absence_hint` is the pure, deterministic
+:func:`~bob.personality.absence.absence_hint` is the pure, deterministic
 domain helper behind the "haven't seen you in a while" texture: given the timestamp
 of a person's LAST prior turn and ``now`` (+ a threshold), it returns either nothing
 or a SHORT neutral note bucketing the gap humanly (hours / "вчера" / "несколько
@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
-from bob.domain.personality.absence import absence_hint
+from bob.personality.absence import absence_hint
 
 _NOW = datetime(2026, 6, 27, 12, 0, tzinfo=UTC)
 

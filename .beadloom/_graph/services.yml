@@ -68,9 +68,48 @@ nodes:
 
   - ref_id: personality
     kind: feature
-    source: src/bob/domain/personality/
-    tags: [layer-domain]
-    summary: 'Personality core — Mood five-axis affect, TasteEngine, Negotiation, SOUL/disposition value objects driving Bob''s tone.'
+    source: src/bob/personality/
+    # BOB-062.6a: domain-first VERTICAL module — spans domain+application+infra
+    # INSIDE one bounded context, so it is NOT a horizontal layer. Tag is the
+    # non-layer `module-vertical` (like `memory` / `proactivity` / `coding` /
+    # `capabilities` / `social`) so the tag-based `architecture-layers` rule
+    # silently skips its edges; the module's INTERNAL layering and its OUTER
+    # boundary are enforced by the path-glob `forbid_import` rules in
+    # .beadloom/_graph/rules.yml (§ vertical modules; the personality/conversation
+    # rules land in BOB-062.6a .3). Consolidates the former `personality`
+    # (domain/personality) layer node — «who Bob is» (mood, taste, disposition,
+    # fascination, negotiation, expression, voice, reaction-meaning, reflection).
+    # `negotiation` + `reaction_judgment` live here (character stance / emotional
+    # response). The Verbosity/EngagementLevel expression vocabulary moved in from
+    # conversation (.1) so `voice` no longer reaches out — personality is the
+    # stable kernel and NEVER imports conversation. `domain/ports/` keeps a thin
+    # re-export shim for the personality ports.
+    tags: [module-vertical]
+    summary: 'Personality module («who Bob is») — the full character vertical in one place: `ports.py` + pure domain (Mood five-axis affect, TasteEngine + evolution, disposition, fascination + phantoms, language/profanity, expression incl. verbosity/engagement vocabulary, voice, the reaction family, negotiation stance, reflection, absence), `usecases/` (update mood from text, apply/reappraise/parse reflection, evolve fascination/phantoms), and `adapters/` (Tier-0 reaction judge + SQLite/kv fascination & notable-reaction stores). Domain-first slice BOB-062.6a. (Being-received reaction perception is a cross-domain use-case over mood + relationship, so it lives in `application/usecases/perceive_reaction`, not here.)'
+    docs:
+      - domains/personality/README.md
+
+  - ref_id: conversation
+    kind: feature
+    source: src/bob/conversation/
+    # BOB-062.6a: domain-first VERTICAL module — spans domain+application+infra
+    # INSIDE one bounded context, so it is NOT a horizontal layer. Tag is the
+    # non-layer `module-vertical` (like `personality` / `social`) so the tag-based
+    # `architecture-layers` rule silently skips its edges; the module's INTERNAL
+    # layering and its OUTER boundary are enforced by the path-glob `forbid_import`
+    # rules in .beadloom/_graph/rules.yml (§ vertical modules; the rules land in
+    # BOB-062.6a .3). New «how a turn is conducted» context split out of
+    # domain/personality: addressivity, conversation floor & continuity, brevity &
+    # engagement (returning personality expression VOs), the zone classifier (+ the
+    # ZoneClassifier port, moved here from personality ports), interim lines,
+    # response choice, and the response/volatility judgments. Depends on
+    # `personality` ONE-DIRECTIONALLY (a turn asks the character how to speak); the
+    # `voice↔brevity/engagement` cycle was broken in .1 by moving the expression
+    # vocabulary into personality. `domain/ports/` keeps a thin re-export shim.
+    tags: [module-vertical]
+    summary: 'Conversation module («how a turn is conducted») — the full turn-conduct vertical in one place: `ports.py` (conversation-floor store, closer log, ZoneClassifier) + pure domain (addressivity, conversation + floor continuity, brevity, engagement, zone classifier, interim line, response choice, response/volatility judgments), `usecases/` (decide_response), and `adapters/` (Tier-0 response/volatility/interim judges + SQLite conversation-floor & closer-log stores). Depends on personality one-directionally. Domain-first slice BOB-062.6a.'
+    docs:
+      - domains/conversation/README.md
 
   - ref_id: memory
     kind: feature
@@ -241,6 +280,9 @@ edges:
     dst: bob-domain
     kind: part_of
   - src: personality
+    dst: bob-domain
+    kind: part_of
+  - src: conversation
     dst: bob-domain
     kind: part_of
   - src: memory

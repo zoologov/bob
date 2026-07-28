@@ -34,9 +34,9 @@ from typing import TYPE_CHECKING
 from bob.social.relationship import Relationship, apply_interaction
 
 if TYPE_CHECKING:
-    from bob.domain.personality.mood import Mood
-    from bob.domain.personality.negotiation import Stance
     from bob.domain.ports import RelationshipStore
+    from bob.personality.mood import Mood
+    from bob.personality.negotiation import Stance
     from bob.social.interlocutor import Interlocutor
     from bob.social.relationship import RelationshipDeltas
 

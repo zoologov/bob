@@ -13,7 +13,7 @@ tidy line (first line, unquoted, bounded) — no preamble, no multi-line ramble.
 
 from __future__ import annotations
 
-from bob.domain.personality.interim_line import (
+from bob.conversation.interim_line import (
     INTERIM_LINE_SYSTEM_PROMPT,
     build_interim_line_user_prompt,
     clean_interim_line,

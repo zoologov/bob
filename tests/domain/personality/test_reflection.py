@@ -15,8 +15,8 @@ from __future__ import annotations
 
 from random import Random
 
-from bob.domain.personality.disposition import Disposition
-from bob.domain.personality.reflection import (
+from bob.personality.disposition import Disposition
+from bob.personality.reflection import (
     GENERIC_MONOLOGUE_PROMPT,
     GENERIC_REFLECT_PROMPT,
     LIVING_REFLECTION_EXAMPLES,
