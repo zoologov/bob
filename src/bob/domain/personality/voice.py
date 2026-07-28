@@ -34,11 +34,10 @@ from typing import TYPE_CHECKING
 
 from bob.domain.personality.brevity import Verbosity
 from bob.domain.personality.engagement import EngagementLevel
-from bob.domain.personality.interlocutor import InterlocutorKind
 
 if TYPE_CHECKING:
-    from bob.domain.personality.interlocutor import Interlocutor
     from bob.domain.personality.mood import Mood
+    from bob.social.interlocutor import Interlocutor
 
 # Written as Bob's voice, not a checklist: how he lands a message. The few-shot
 # lines (in « ») end on substance — no trailing question, no ☕ — because the
@@ -212,11 +211,16 @@ _OFFDAY_TONE = (
 # never a rule to recite. It is perception only — it changes HOW Bob sounds, not
 # WHICH pipeline runs (the guest-restricted path is a later bead).
 # Cyrillic look-alikes are intentional in these Russian literals.
-_KIND_LABEL: dict[InterlocutorKind, str] = {
-    InterlocutorKind.OWNER: "твой владелец",
-    InterlocutorKind.KNOWN: "твой знакомый",
-    InterlocutorKind.GUEST: "незнакомец",
-    InterlocutorKind.BOT: "другой бот",
+# Keyed by the ALREADY-COMPUTED interlocutor-kind value (the ``InterlocutorKind``
+# enum's ``.value`` string), NOT the enum member itself: voice belongs to
+# personality and must not import the social ``InterlocutorKind`` at runtime, so the
+# social→personality edge stays one-directional (BOB-062.5). Behaviour is unchanged —
+# the caller classified the interlocutor upstream; here we only read its kind value.
+_KIND_LABEL: dict[str, str] = {
+    "owner": "твой владелец",
+    "known": "твой знакомый",
+    "guest": "незнакомец",
+    "bot": "другой бот",
 }
 
 
@@ -230,7 +234,7 @@ def who_is_writing_directive(interlocutor: Interlocutor) -> str:
     with), not a config switch; it shapes the voice only and never decides which
     pipeline runs. Pure and deterministic: same interlocutor → same line.
     """
-    label = _KIND_LABEL[interlocutor.kind]
+    label = _KIND_LABEL[interlocutor.kind.value]
     # Russian persona line (project language); Cyrillic look-alikes intentional.
     return (
         f"Сейчас тебе пишет: {interlocutor.display_name} ({label}). "
@@ -485,7 +489,7 @@ def sulk_directive(*, intensity: float) -> str:
     personality reset (он всё ещё он, anti-Exodus) and NEVER gratuitously rude. The
     application appends it on TOP of the mood/relationship tone only while обида is
     active. Pure and argument-shaped (the intensity is the live signal the caller
-    passes from :class:`~bob.domain.personality.sulk.SulkState`); the prose pins the
+    passes from :class:`~bob.social.sulk.SulkState`); the prose pins the
     cold, reserved, not-rude, not-a-reset character, not exact wording.
     """
     _ = intensity  # the live signal that gates this line; the cold tone is uniform.

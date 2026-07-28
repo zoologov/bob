@@ -15,11 +15,6 @@ from __future__ import annotations
 import pytest
 
 from bob.domain.personality.addressivity import Addressivity
-from bob.domain.personality.interlocutor import (
-    Interlocutor,
-    InterlocutorKind,
-    Trust,
-)
 from bob.domain.personality.response_choice import (
     ResponseContext,
     ResponseIntent,
@@ -31,6 +26,11 @@ from bob.domain.personality.response_judgment import (
     build_judgment_user_prompt,
     parse_response_choice,
     validate_reaction_emoji,
+)
+from bob.social.interlocutor import (
+    Interlocutor,
+    InterlocutorKind,
+    Trust,
 )
 
 

@@ -40,7 +40,6 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol, cast
 
-from bob.application.authz import Authorizer, ReactorPerception, SenderPerception
 from bob.application.router import LLMRouter
 from bob.application.runtime import (
     BOB_MESSAGE_REACTION,
@@ -60,7 +59,6 @@ from bob.application.usecases.fascination_sources import (
     RepoFascinationGrounding,
     StoreFascinationReader,
 )
-from bob.application.usecases.first_impression_sources import FirstImpressionTracker
 from bob.application.usecases.handle_message import (
     DiagramSendMode,
     EngagementState,
@@ -73,14 +71,9 @@ from bob.application.usecases.heartbeat import (
     ReflectTick,
 )
 from bob.application.usecases.perceive_reaction import PerceiveReaction
-from bob.application.usecases.permission_execution import PermissionExecutor
-from bob.application.usecases.permission_flow import PermissionFlow
 from bob.application.usecases.privileged_fulfiller import PrivilegedRequestFulfiller
 from bob.application.usecases.reappraise_reflection import ReappraiseReflection
 from bob.application.usecases.reflection_parser import HeuristicReflectionParser
-from bob.application.usecases.relationship_sources import RelationshipTracker
-from bob.application.usecases.run_genesis import RunGenesis
-from bob.application.usecases.sulk_sources import SulkRecoveryStep, SulkTracker
 from bob.application.usecases.update_mood_from_text import UpdateMoodFromText
 from bob.capabilities.adapters.diagrams import SubprocessMmdcRenderer
 from bob.capabilities.adapters.introspection.subprocess_introspector import (
@@ -115,7 +108,6 @@ from bob.coding.usecases.classify_coding_intent import ClassifyCodingIntent
 from bob.coding.usecases.coding_assistant import CodingAssistant
 from bob.coding.usecases.coding_context import make_coding_context
 from bob.coding.usecases.coding_intent_router import CodingIntentRouter
-from bob.domain.permission.privilege import PrivilegeContext, PrivilegeNeed
 from bob.domain.personality.addressivity import AddressivityThresholds
 from bob.domain.personality.brevity import BrevityThresholds
 from bob.domain.personality.conversation import RepeatThresholds
@@ -140,7 +132,6 @@ from bob.infrastructure.llm import (
     build_web_search_provider,
 )
 from bob.infrastructure.llm.interim_line import LlmInterimLineGenerator
-from bob.infrastructure.llm.privilege_judge import LlmPrivilegeJudge
 from bob.infrastructure.llm.reaction_judge import LlmReactionJudge
 from bob.infrastructure.llm.response_judge import LlmResponseJudge
 from bob.infrastructure.llm.volatility_judge import LlmVolatilityJudge
@@ -155,9 +146,6 @@ from bob.infrastructure.persistence import (
     SqliteMemoryRepo,
     SqliteRelationshipStore,
     SqliteSulkStore,
-)
-from bob.infrastructure.persistence.permission_request_store import (
-    SqlitePermissionRequestStore,
 )
 from bob.infrastructure.telegram.gateway import (
     ALLOWED_UPDATES,
@@ -198,13 +186,24 @@ from bob.proactivity.usecases.detect_patterns import DetectPatterns, LlmPatternD
 from bob.proactivity.usecases.plan_goal import LlmPlanner, PlanGoal
 from bob.proactivity.usecases.pursue_goals import PursueGoalsTick
 from bob.proactivity.usecases.self_improvement_sources import ActiveRulesReader
+from bob.social.adapters.permission_request_store import (
+    SqlitePermissionRequestStore,
+)
+from bob.social.adapters.privilege_judge import LlmPrivilegeJudge
+from bob.social.permission.privilege import PrivilegeContext, PrivilegeNeed
+from bob.social.usecases import Authorizer, ReactorPerception, SenderPerception
+from bob.social.usecases.first_impression_sources import FirstImpressionTracker
+from bob.social.usecases.permission_execution import PermissionExecutor
+from bob.social.usecases.permission_flow import PermissionFlow
+from bob.social.usecases.relationship_sources import RelationshipTracker
+from bob.social.usecases.run_genesis import RunGenesis
+from bob.social.usecases.sulk_sources import SulkRecoveryStep, SulkTracker
 
 if TYPE_CHECKING:
     from aiogram.types import BufferedInputFile, InputRichMessage, ReactionTypeEmoji
 
     from bob.application.runtime.agent import BackgroundTask
     from bob.application.usecases.handle_message import ReplyGateway
-    from bob.application.usecases.run_genesis import GenesisResult
     from bob.coding.adapters.indicator import (
         EditableStatusBot,
         TypingActionBot,
@@ -225,6 +224,7 @@ if TYPE_CHECKING:
         MessageLike,
         UpdateLike,
     )
+    from bob.social.usecases.run_genesis import GenesisResult
 
 logger = logging.getLogger(__name__)
 

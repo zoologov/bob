@@ -24,21 +24,21 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from bob.application.usecases.permission_execution import (
+from bob.social.permission.privilege import PrivilegeContext, PrivilegeNeed
+from bob.social.permission.state import PermissionState
+from bob.social.usecases.permission_execution import (
     PermissionDecision,
     PermissionExecutor,
 )
-from bob.application.usecases.permission_flow import (
+from bob.social.usecases.permission_flow import (
     PermissionExecutorLike,
     PermissionFlow,
 )
-from bob.domain.permission.privilege import PrivilegeContext, PrivilegeNeed
-from bob.domain.permission.state import PermissionState
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from bob.domain.permission.entities import PermissionRequest
+    from bob.social.permission.entities import PermissionRequest
 
 _OWNER = 1
 _GUEST = 7

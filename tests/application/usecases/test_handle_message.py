@@ -63,11 +63,6 @@ from bob.domain.personality.engagement import (
 )
 from bob.domain.personality.expression import ExpressionFreqs
 from bob.domain.personality.fascination import Fascination
-from bob.domain.personality.interlocutor import (
-    Interlocutor,
-    InterlocutorKind,
-    Trust,
-)
 from bob.domain.personality.mood import Mood
 from bob.domain.personality.negotiation import NegotiationZone, Stance
 from bob.domain.personality.reaction import (
@@ -75,14 +70,12 @@ from bob.domain.personality.reaction import (
     reaction_emoji_for,
 )
 from bob.domain.personality.reaction_effect import NotableReaction
-from bob.domain.personality.relationship import Relationship
 from bob.domain.personality.response_choice import (
     ResponseChoice,
     ResponseContext,
     ResponseIntent,
 )
 from bob.domain.personality.soul import SOUL
-from bob.domain.personality.sulk import SulkState
 from bob.domain.personality.taste import TasteAxis, TasteEngine, Verdict
 from bob.domain.personality.volatility_judgment import (
     VolatilityContext,
@@ -97,6 +90,13 @@ from bob.proactivity.self_improvement import (
     RuleOrigin,
     RuleState,
 )
+from bob.social.interlocutor import (
+    Interlocutor,
+    InterlocutorKind,
+    Trust,
+)
+from bob.social.relationship import Relationship
+from bob.social.sulk import SulkState
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Callable, Mapping, Sequence

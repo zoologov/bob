@@ -156,6 +156,14 @@ rules:
     description: "capabilities: proactivity не импортит adapters напрямую (только через фасад/порты)"
     severity: error
     forbid_import: {from: "src/bob/proactivity/*", to: "bob/capabilities/adapters/*"}
+  - name: capabilities-boundary-no-social-usecases
+    description: "capabilities: social не импортит usecases напрямую (только через фасад/порты)"
+    severity: error
+    forbid_import: {from: "src/bob/social/*", to: "bob/capabilities/usecases/*"}
+  - name: capabilities-boundary-no-social-adapters
+    description: "capabilities: social не импортит adapters напрямую (только через фасад/порты)"
+    severity: error
+    forbid_import: {from: "src/bob/social/*", to: "bob/capabilities/adapters/*"}
 
   # ── coding VERTICAL module (generated) ──
   - name: coding-usecases-no-adapters
@@ -210,6 +218,14 @@ rules:
     description: "coding: proactivity не импортит adapters напрямую (только через фасад/порты)"
     severity: error
     forbid_import: {from: "src/bob/proactivity/*", to: "bob/coding/adapters/*"}
+  - name: coding-boundary-no-social-usecases
+    description: "coding: social не импортит usecases напрямую (только через фасад/порты)"
+    severity: error
+    forbid_import: {from: "src/bob/social/*", to: "bob/coding/usecases/*"}
+  - name: coding-boundary-no-social-adapters
+    description: "coding: social не импортит adapters напрямую (только через фасад/порты)"
+    severity: error
+    forbid_import: {from: "src/bob/social/*", to: "bob/coding/adapters/*"}
 
   # ── memory VERTICAL module (generated) ──
   - name: memory-usecases-no-adapters
@@ -264,6 +280,14 @@ rules:
     description: "memory: proactivity не импортит adapters напрямую (только через фасад/порты)"
     severity: error
     forbid_import: {from: "src/bob/proactivity/*", to: "bob/memory/adapters/*"}
+  - name: memory-boundary-no-social-usecases
+    description: "memory: social не импортит usecases напрямую (только через фасад/порты)"
+    severity: error
+    forbid_import: {from: "src/bob/social/*", to: "bob/memory/usecases/*"}
+  - name: memory-boundary-no-social-adapters
+    description: "memory: social не импортит adapters напрямую (только через фасад/порты)"
+    severity: error
+    forbid_import: {from: "src/bob/social/*", to: "bob/memory/adapters/*"}
 
   # ── proactivity VERTICAL module (generated) ──
   - name: proactivity-usecases-no-adapters
@@ -318,6 +342,76 @@ rules:
     description: "proactivity: memory не импортит adapters напрямую (только через фасад/порты)"
     severity: error
     forbid_import: {from: "src/bob/memory/*", to: "bob/proactivity/adapters/*"}
+  - name: proactivity-boundary-no-social-usecases
+    description: "proactivity: social не импортит usecases напрямую (только через фасад/порты)"
+    severity: error
+    forbid_import: {from: "src/bob/social/*", to: "bob/proactivity/usecases/*"}
+  - name: proactivity-boundary-no-social-adapters
+    description: "proactivity: social не импортит adapters напрямую (только через фасад/порты)"
+    severity: error
+    forbid_import: {from: "src/bob/social/*", to: "bob/proactivity/adapters/*"}
+
+  # ── social VERTICAL module (generated) ──
+  - name: social-usecases-no-adapters
+    description: "social: usecases не импортят adapters (порты; adapters — на композиции)"
+    severity: error
+    forbid_import: {from: "src/bob/social/usecases/*", to: "bob/social/adapters/*"}
+  - name: social-internals-no-usecases
+    description: "social: доменная логика/адаптеры не импортят usecases (usecases — на композиции)"
+    severity: error
+    forbid_import: {from: "src/bob/social/[!u]*", to: "bob/social/usecases/*"}
+  - name: social-internals-no-adapters
+    description: "social: доменная логика не импортит adapters (adapters — на композиции)"
+    severity: error
+    forbid_import: {from: "src/bob/social/[!au]*", to: "bob/social/adapters/*"}
+  - name: social-usecases-no-infra
+    description: "social: usecases не импортят чужой infrastructure (только через порты)"
+    severity: error
+    forbid_import: {from: "src/bob/social/usecases/*", to: "bob/infrastructure/*"}
+  - name: social-no-composition-root
+    description: "social: модуль не импортит композиционный корень (src/bob/app.py)"
+    severity: error
+    forbid_import: {from: "src/bob/social/*", to: "bob/app"}
+  - name: social-boundary-no-capabilities-usecases
+    description: "social: capabilities не импортит usecases напрямую (только через фасад/порты)"
+    severity: error
+    forbid_import: {from: "src/bob/capabilities/*", to: "bob/social/usecases/*"}
+  - name: social-boundary-no-capabilities-adapters
+    description: "social: capabilities не импортит adapters напрямую (только через фасад/порты)"
+    severity: error
+    forbid_import: {from: "src/bob/capabilities/*", to: "bob/social/adapters/*"}
+  - name: social-boundary-no-coding-usecases
+    description: "social: coding не импортит usecases напрямую (только через фасад/порты)"
+    severity: error
+    forbid_import: {from: "src/bob/coding/*", to: "bob/social/usecases/*"}
+  - name: social-boundary-no-coding-adapters
+    description: "social: coding не импортит adapters напрямую (только через фасад/порты)"
+    severity: error
+    forbid_import: {from: "src/bob/coding/*", to: "bob/social/adapters/*"}
+  - name: social-boundary-no-domain-usecases
+    description: "social: domain не импортит usecases напрямую (только через фасад/порты)"
+    severity: error
+    forbid_import: {from: "src/bob/domain/*", to: "bob/social/usecases/*"}
+  - name: social-boundary-no-domain-adapters
+    description: "social: domain не импортит adapters напрямую (только через фасад/порты)"
+    severity: error
+    forbid_import: {from: "src/bob/domain/*", to: "bob/social/adapters/*"}
+  - name: social-boundary-no-memory-usecases
+    description: "social: memory не импортит usecases напрямую (только через фасад/порты)"
+    severity: error
+    forbid_import: {from: "src/bob/memory/*", to: "bob/social/usecases/*"}
+  - name: social-boundary-no-memory-adapters
+    description: "social: memory не импортит adapters напрямую (только через фасад/порты)"
+    severity: error
+    forbid_import: {from: "src/bob/memory/*", to: "bob/social/adapters/*"}
+  - name: social-boundary-no-proactivity-usecases
+    description: "social: proactivity не импортит usecases напрямую (только через фасад/порты)"
+    severity: error
+    forbid_import: {from: "src/bob/proactivity/*", to: "bob/social/usecases/*"}
+  - name: social-boundary-no-proactivity-adapters
+    description: "social: proactivity не импортит adapters напрямую (только через фасад/порты)"
+    severity: error
+    forbid_import: {from: "src/bob/proactivity/*", to: "bob/social/adapters/*"}
   # END generated boundary rules
 
   # ── Graph-edge backstop: domain layer must not depend on a service ──────────
@@ -515,6 +609,49 @@ rules:
 #
 # If any GROUP-A TYPE_CHECKING item ever becomes a RUNTIME import it will surface
 # (edge / import scan) and must be re-evaluated — do not pre-emptively suppress.
+
+# ── BOB-062.5: cross-boundary refs for the `social` module ────────────────────
+# The domain-first move of social (slice .1 edge-inventory) surfaced these
+# cross-boundary references. The generated `social-*` boundary rules above now
+# ENFORCE the module seam (explicit-path; 5 verticals: coding/memory/proactivity/
+# capabilities/social). All are legal by design (not real violations); documented
+# here so a later reviewer sees the reasoning and no rule is added that would mask
+# a real break. None currently produces a lint finding (see rationale per item):
+#
+#   OUTBOUND (social → outside):
+#   1. usecases/run_genesis + adapters/privilege_judge → application/router.
+#      llm_router (LLMRequest/TaskType/LLMRouter). RUNTIME app→app dependency on
+#      the SHARED LLM router (same status as the coding/proactivity/capabilities
+#      llm_router refs). Targets `bob/application/*`, never `bob/infrastructure/*`,
+#      so `social-usecases-no-infra` stays clean and `social-no-composition-root`
+#      (exact `bob/app`) does not match. Genesis + privilege-judge legitimately
+#      call the shared router. Legal.
+#   2. usecases/*_sources → domain/personality.{mood,negotiation} — TYPE_CHECKING
+#      only (relationship_sources: Mood/Stance). ABSENT from `code_imports`, so no
+#      `forbid_import` match and no depends_on edge. Compile-time type refs on the
+#      PUBLIC personality domain surface. Legal.
+#   3. relationship.py → domain/personality.negotiation.Stance. RUNTIME import of
+#      the negotiation `Stance` value object — relationships are coloured by Bob's
+#      bargaining style. `negotiation` is personality's PUBLIC domain surface (root
+#      module, NOT usecases/adapters), and social→personality is ONE-WAY (the
+#      personality→social cycle was broken in .1: `voice.py` uses `kind.value`, no
+#      runtime `InterlocutorKind` import). No forbid targets a domain→domain public
+#      ref; no cycle. Legal.
+#
+#   INBOUND (outside → social):
+#   4. domain/ports/__init__ → social.ports (social-port shim re-export). A
+#      domain→module public-surface import (mirrors domain.ports→memory/proactivity/
+#      capabilities.ports); ports are the module's declared inward seam — no forbid
+#      targets it. Unlike capabilities (B4), this shim's return leg NEVER closes a
+#      cycle: social's own modules import `bob.domain.ports` types TYPE_CHECKING-only
+#      (matching memory/proactivity/coding), so there is no runtime social→ports
+#      edge. (The lone runtime exception was `adapters/soul_store` re-exporting the
+#      kernel `JsonValue` alias — dead re-export, no consumers — guarded under
+#      TYPE_CHECKING in .2 to keep the module cycle-clean, exactly as .1 broke the
+#      personality↔social cycle in `voice.py`.)
+#
+# If any TYPE_CHECKING item ever becomes a RUNTIME import it will surface (edge /
+# import scan) and must be re-evaluated — do not pre-emptively suppress.
 
 # ── 🔴 BOUNDARY-RULE GENERATOR — IMPLEMENTED in BOB-062.4 (.1) ─────────────────
 # STATUS: the proposal below is now BUILT — `scripts/gen_boundary_rules.py` emits

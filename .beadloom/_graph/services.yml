@@ -146,11 +146,31 @@ nodes:
     docs:
       - domains/capabilities/README.md
 
-  - ref_id: permission
+  - ref_id: social
     kind: feature
-    source: src/bob/domain/permission/
-    tags: [layer-domain]
-    summary: 'Permission domain — permission-request/grant entities and access value objects (authz-before-autonomy).'
+    source: src/bob/social/
+    # BOB-062.5: domain-first VERTICAL module — spans domain+application+infra
+    # INSIDE one bounded context, so it is NOT a horizontal layer. Tag is the
+    # non-layer `module-vertical` (like `memory` / `proactivity` / `coding` /
+    # `capabilities`) so the tag-based `architecture-layers` rule silently skips
+    # its edges; the module's INTERNAL layering and its OUTER boundary are
+    # enforced by the path-glob `forbid_import` rules in
+    # .beadloom/_graph/rules.yml (§ vertical modules, extended in .5). Consolidates
+    # the former `permission` domain + `authz` application node + the
+    # `domain/personality/{interlocutor,first_impression,relationship,sulk}` value
+    # objects + `usecases/{permission_*,*_sources,run_genesis}` + persistence
+    # social stores + `llm/privilege_judge` + `ports/social` — social identity,
+    # relationships, permission and genesis are ONE «Bob distinguishes people»
+    # capability. The personality↔social cycle is broken in code (.1): `voice.py`
+    # no longer imports `InterlocutorKind` at runtime (uses `kind.value`); social
+    # depends on personality one-way (`relationship → negotiation.Stance`).
+    # `domain/ports/` keeps a thin re-export shim for the social ports. The durable
+    # social stores consume the shared persistence kernel via the
+    # `SqliteMemoryRepo.connection()` seam (kernel stays put until BOB-062.7).
+    tags: [module-vertical]
+    docs:
+      - domains/social/README.md
+    summary: 'Social module («Bob distinguishes people») — the full vertical capability in one place: `ports.py` + pure domain (interlocutor identity, first-impression, relationship, sulk) + `permission/` value objects, `usecases/` (authorizer/sender+reactor perception, permission flow/execution, first-impression/relationship/sulk sources, run-genesis), and `adapters/` (first-impression/relationship/sulk/allowlist/permission-request/soul stores + privilege-judge). Domain-first slice BOB-062.5.'
 
   # ── Application submodules (kind: feature, part_of bob-application) ──────────
   - ref_id: usecases
@@ -158,12 +178,6 @@ nodes:
     source: src/bob/application/usecases/
     tags: [layer-application]
     summary: 'Use-cases — HandleMessage, RunGenesis, UpdateMoodFromText, goal/memory/reflection flows orchestrating domain + ports.'
-
-  - ref_id: authz
-    kind: feature
-    source: src/bob/application/authz/
-    tags: [layer-application]
-    summary: 'Authorization policy — Authorizer access decisions plus sender/reactor social perception (social identity ≠ authz).'
 
   - ref_id: router
     kind: feature
@@ -241,15 +255,12 @@ edges:
   - src: capabilities
     dst: bob-domain
     kind: part_of
-  - src: permission
+  - src: social
     dst: bob-domain
     kind: part_of
 
   # ── Application submodules part_of the application layer ─────────────────────
   - src: usecases
-    dst: bob-application
-    kind: part_of
-  - src: authz
     dst: bob-application
     kind: part_of
   - src: router

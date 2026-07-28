@@ -16,7 +16,7 @@ import pytest
 
 from bob.domain.personality.mood import Mood
 from bob.domain.personality.negotiation import Stance
-from bob.domain.personality.relationship import (
+from bob.social.relationship import (
     Relationship,
     RelationshipDeltas,
     apply_interaction,

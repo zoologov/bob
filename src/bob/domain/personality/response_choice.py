@@ -37,7 +37,7 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     from bob.domain.personality.addressivity import Addressivity
-    from bob.domain.personality.interlocutor import Interlocutor
+    from bob.social.interlocutor import Interlocutor
 
 __all__ = [
     "ResponseChoice",

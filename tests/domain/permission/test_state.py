@@ -10,7 +10,7 @@
 
 from __future__ import annotations
 
-from bob.domain.permission.state import PermissionState
+from bob.social.permission.state import PermissionState
 
 
 def test_state_string_values() -> None:

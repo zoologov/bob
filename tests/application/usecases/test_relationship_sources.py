@@ -14,11 +14,11 @@ is pure-domain, the store round-trips per ``sender_id``.
 
 from __future__ import annotations
 
-from bob.application.usecases.relationship_sources import RelationshipTracker
-from bob.domain.personality.interlocutor import Interlocutor, InterlocutorKind, Trust
 from bob.domain.personality.mood import Mood
 from bob.domain.personality.negotiation import Stance
-from bob.domain.personality.relationship import Relationship
+from bob.social.interlocutor import Interlocutor, InterlocutorKind, Trust
+from bob.social.relationship import Relationship
+from bob.social.usecases.relationship_sources import RelationshipTracker
 
 _GUEST_ID = 4242
 _OWNER_ID = 1

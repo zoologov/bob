@@ -16,11 +16,11 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from bob.application.usecases.first_impression_sources import FirstImpressionTracker
-from bob.domain.personality.interlocutor import Interlocutor, InterlocutorKind, Trust
+from bob.social.interlocutor import Interlocutor, InterlocutorKind, Trust
+from bob.social.usecases.first_impression_sources import FirstImpressionTracker
 
 if TYPE_CHECKING:
-    from bob.domain.personality.first_impression import FirstImpression
+    from bob.social.first_impression import FirstImpression
 
 _NOW = datetime(2026, 6, 22, 9, 0, tzinfo=UTC)
 _GUEST_ID = 4242

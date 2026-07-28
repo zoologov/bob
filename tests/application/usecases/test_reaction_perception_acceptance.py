@@ -31,12 +31,12 @@ from bob.application.runtime.events import BobMessageReaction
 from bob.application.usecases.handle_message import PersonalityState
 from bob.application.usecases.perceive_reaction import PerceiveReaction
 from bob.domain.personality.disposition import DEFAULT_DISPOSITION
-from bob.domain.personality.interlocutor import Interlocutor, InterlocutorKind, Trust
 from bob.domain.personality.mood import Mood, MoodDelta
 from bob.domain.personality.reaction_meaning import ReactionMeaning
-from bob.domain.personality.relationship import Relationship
 from bob.domain.personality.soul import SOUL
 from bob.domain.personality.taste import TasteEngine
+from bob.social.interlocutor import Interlocutor, InterlocutorKind, Trust
+from bob.social.relationship import Relationship
 
 if TYPE_CHECKING:
     from collections.abc import Mapping

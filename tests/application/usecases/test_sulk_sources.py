@@ -15,8 +15,8 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
-from bob.application.usecases.sulk_sources import SulkRecoveryStep, SulkTracker
-from bob.domain.personality.sulk import SulkConfig, SulkState
+from bob.social.sulk import SulkConfig, SulkState
+from bob.social.usecases.sulk_sources import SulkRecoveryStep, SulkTracker
 
 _PERSONA = "bob"
 _NOW = datetime(2026, 6, 20, 14, 0, tzinfo=UTC)

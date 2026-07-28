@@ -14,9 +14,9 @@ SQL, no transport.
 
 from __future__ import annotations
 
-from bob.application.authz import Authorizer, SenderPerception
 from bob.application.runtime.events import MessageReceived
-from bob.domain.personality.interlocutor import InterlocutorKind, Trust
+from bob.social.interlocutor import InterlocutorKind, Trust
+from bob.social.usecases import Authorizer, SenderPerception
 
 _OWNER = 1
 _CHAT = 100

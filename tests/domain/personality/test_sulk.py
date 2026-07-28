@@ -18,7 +18,7 @@ from datetime import UTC, datetime
 
 import pytest
 
-from bob.domain.personality.sulk import (
+from bob.social.sulk import (
     SulkConfig,
     SulkState,
     observe_relationship,

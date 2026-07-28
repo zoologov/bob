@@ -41,8 +41,8 @@ if TYPE_CHECKING:
     from random import Random
 
     from bob.domain.personality.mood import Mood
-    from bob.domain.personality.relationship import Relationship
     from bob.domain.personality.taste import Verdict
+    from bob.social.relationship import Relationship
 
 __all__ = [
     "ConversationalFatigue",

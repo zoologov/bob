@@ -18,10 +18,10 @@ from typing import TYPE_CHECKING
 import pytest
 
 from bob.app import build_application
-from bob.application.authz import Authorizer
 from bob.application.runtime.events import MESSAGE_RECEIVED, MessageReceived
 from bob.infrastructure.persistence import KvAllowlistStore, SoulStore, SqliteMemoryRepo
 from bob.infrastructure.telegram.multibot import BotIdentity
+from bob.social.usecases import Authorizer
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Mapping, Sequence

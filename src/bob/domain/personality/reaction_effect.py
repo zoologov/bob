@@ -33,7 +33,7 @@ if TYPE_CHECKING:
 
     from bob.domain.personality.mood import Mood
     from bob.domain.personality.reaction_meaning import ReactionMeaning
-    from bob.domain.personality.relationship import Relationship
+    from bob.social.relationship import Relationship
 
 __all__ = [
     "NotableReaction",

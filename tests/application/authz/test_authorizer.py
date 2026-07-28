@@ -11,7 +11,7 @@ user must be allowlisted AND the chat must be in the allowed chat set) are teste
 
 from __future__ import annotations
 
-from bob.application.authz import Authorizer
+from bob.social.usecases import Authorizer
 
 _OWNER = 1
 _CHAT = 100

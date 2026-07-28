@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import pytest
 
-from bob.application.usecases.run_genesis import GenesisError, _parse_personality
+from bob.social.usecases.run_genesis import GenesisError, _parse_personality
 
 
 def test_parse_personality_rejects_non_json() -> None:
