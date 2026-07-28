@@ -274,8 +274,8 @@ def build_application(
     :class:`~bob.infrastructure.telegram.multibot.MultiBotGateway` — Bob scoped to
     his topic thread, GUPPI to General — and one Dispatcher polls both.
 
-    **Hybrid memory (BOB-011):** a local :class:`~bob.domain.ports.Embedder`
-    (BGE-M3/Ollama) and an optional :class:`~bob.domain.ports.Reranker` are built
+    **Hybrid memory (BOB-011):** a local :class:`~bob.memory.ports.Embedder`
+    (BGE-M3/Ollama) and an optional :class:`~bob.memory.ports.Reranker` are built
     from config (``embeddings.*`` / ``reranker.*``). The live recall is the
     :class:`~bob.memory.adapters.HybridMemoryRecall` (FTS5 + sqlite-vec
     KNN fused by RRF, optionally reranked) — a drop-in for the keyword-only recall,

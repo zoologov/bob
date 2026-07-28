@@ -10,7 +10,7 @@
 
 Две части, обе чисто-оркестрационные (домен остаётся I/O-free):
 
-* :class:`LlmPlanner` реализует порт :class:`bob.domain.ports.Planner`: просит
+* :class:`LlmPlanner` реализует порт :class:`bob.proactivity.ports.Planner`: просит
   reasoning-модель (Tier 1, ``TaskType.PLAN_GOAL``) разбить APPROVED-цель на
   атомарные задачи и парсит СТРОГИЙ JSON так же устойчиво, как извлечение фактов
   (markdown-fence / преамбула / мусор по краям терпятся). Каждый элемент несёт

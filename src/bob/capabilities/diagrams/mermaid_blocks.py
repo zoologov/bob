@@ -22,7 +22,7 @@ string helpers behind that:
   be deduped against the SAME diagram the tool already rendered this turn.
 
 No I/O, no rendering — the application layer composes these with a
-:class:`~bob.domain.ports.DiagramRenderer`.
+:class:`~bob.capabilities.ports.DiagramRenderer`.
 """
 
 from __future__ import annotations

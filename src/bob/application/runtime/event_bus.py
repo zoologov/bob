@@ -9,7 +9,7 @@
 
 Decouples event producers (e.g. the Telegram gateway) from consumers (use-cases)
 so the GUPPI runtime fans events out concurrently. Implements
-:class:`bob.domain.ports.EventBus`.
+:class:`bob.kernel.ports.EventBus`.
 """
 
 from __future__ import annotations

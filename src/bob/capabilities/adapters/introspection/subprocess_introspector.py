@@ -8,7 +8,7 @@
 
 """SubprocessRepoIntrospector — read-only self-introspection over the local repo.
 
-Realises :class:`bob.domain.ports.RepoIntrospector` (BOB-017 Phase A). Two seams:
+Realises :class:`bob.capabilities.ports.RepoIntrospector` (BOB-017 Phase A). Two seams:
 
 * **CLI introspection** — ``beadloom`` (``ctx`` / ``graph`` / ``why`` / ``search``)
   and ``bd`` (``ready`` / ``show`` / ``list``) run via

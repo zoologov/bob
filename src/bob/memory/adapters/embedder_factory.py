@@ -6,7 +6,7 @@
 # beadloom:feature=memory
 # beadloom:layer=infrastructure
 
-"""Factory building the :class:`bob.domain.ports.Embedder` from configuration.
+"""Factory building the :class:`bob.memory.ports.Embedder` from configuration.
 
 Reads the ``embeddings`` section of the merged config (defaults -> YAML -> env,
 see :mod:`bob.infrastructure.config.loader`) and constructs an

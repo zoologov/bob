@@ -6,7 +6,7 @@
 # beadloom:feature=memory
 # beadloom:layer=infrastructure
 
-"""Factory building the optional :class:`bob.domain.ports.Reranker` from config.
+"""Factory building the optional :class:`bob.memory.ports.Reranker` from config.
 
 Reads the ``reranker`` section of the merged config (defaults -> YAML -> env, see
 :mod:`bob.infrastructure.config.loader`) and constructs an

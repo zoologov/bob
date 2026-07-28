@@ -146,7 +146,7 @@ class SafeDispatcher(Protocol):
 class EpisodeWriter(Protocol):
     """Persistence seam: append the autonomous advance to episodic memory.
 
-    A subset of :class:`~bob.domain.ports.MemoryRepo`: each advance is logged so it
+    A subset of :class:`~bob.memory.ports.MemoryRepo`: each advance is logged so it
     enters recall + recent-history (Bob can reference / explain what he did) and
     backs the per-window rate-limit count.
     """
@@ -157,7 +157,7 @@ class EpisodeWriter(Protocol):
 class GoalStoreLike(Protocol):
     """The GoalStore surface the tick needs: load + atomic state moves.
 
-    A subset of :class:`~bob.domain.ports.GoalStore`: the tick reads the graph and
+    A subset of :class:`~bob.proactivity.ports.GoalStore`: the tick reads the graph and
     atomically advances exactly one safe task (and, on completion, its goal). It
     never creates goals/tasks here — it only moves an ALREADY-APPROVED goal forward,
     keeping the authz-before-autonomy machine honest.

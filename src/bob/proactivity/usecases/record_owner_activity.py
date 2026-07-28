@@ -17,7 +17,7 @@ reservoir (the "you came back" bump), yielding a natural cooldown after a reply.
 
 The rest of the per-persona state is preserved verbatim: the owner's ``/quiet``
 mute (``proactivity_enabled``) survives an incoming message, and ``last_spoke_at``
-is untouched. Time is injected via :class:`~bob.domain.ports.Clock`; the use-case
+is untouched. Time is injected via :class:`~bob.kernel.ports.Clock`; the use-case
 holds no globals and is deterministic in tests.
 """
 

@@ -12,7 +12,7 @@ GUPPI's index of what Bob can do. It is deliberately the *seam*, not the plugin
 machinery (sandboxing / discovery / self-creation come later behind this same
 contract):
 
-* :meth:`register` — add a :class:`~bob.domain.ports.Capability` (unique name).
+* :meth:`register` — add a :class:`~bob.capabilities.ports.Capability` (unique name).
 * :meth:`manifest` — render the registered capabilities as OpenAI ``tools``
   definitions to hand the LLM, so the model can request them.
 * :meth:`dispatch` — run a named capability against decoded arguments. This is

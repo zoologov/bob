@@ -8,7 +8,7 @@
 
 """SqliteCodingSessionStore — durable store for gated coding sessions (BOB-039 .1).
 
-Realises :class:`bob.domain.ports.CodingSessionStore` over the ``coding_session``
+Realises :class:`bob.coding.ports.CodingSessionStore` over the ``coding_session``
 table: one row per session ``id``. The domain
 :class:`~bob.coding.entities.CodingSession` (its
 :class:`~bob.coding.state.CodingSessionState`, branch, worktree path, plan and

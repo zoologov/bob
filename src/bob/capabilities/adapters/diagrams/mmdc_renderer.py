@@ -8,7 +8,7 @@
 
 """SubprocessMmdcRenderer — render mermaid to a LOCAL PNG via mermaid-cli (BOB-035).
 
-The infrastructure adapter realising :class:`~bob.domain.ports.DiagramRenderer`. It
+The infrastructure adapter realising :class:`~bob.capabilities.ports.DiagramRenderer`. It
 runs the local mermaid-cli (``mmdc``) and does NO network I/O — the diagram source
 never leaves the machine (privacy). One render:
 

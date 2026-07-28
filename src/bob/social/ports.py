@@ -15,7 +15,7 @@ personality ports in BOB-062.5), and the semantic privilege seam
 (:class:`PrivilegeJudge`, re-exported from :mod:`bob.social.permission.privilege`).
 These are *interfaces only*: structural :class:`typing.Protocol` definitions with no
 implementations; the SQLite / file-backed adapters live in ``bob.social.adapters``.
-:class:`SoulStore` carries :data:`~bob.domain.ports.kernel.JsonValue` — its only
+:class:`SoulStore` carries :data:`~bob.kernel.ports.JsonValue` — its only
 cross-bucket dependency.
 """
 

@@ -16,7 +16,7 @@ Each run:
 1. **Select ACTIVE facts** — every fact not already merged (``superseded_by IS
    NULL``), capped by a config batch. Already-superseded facts are excluded, so a
    re-run with nothing new to merge is a clean no-op (idempotent).
-2. **Embed locally** — one batch through the injected :class:`~bob.domain.ports.Embedder`
+2. **Embed locally** — one batch through the injected :class:`~bob.memory.ports.Embedder`
    (privacy: memory content never leaves the machine; in tests a fake).
 3. **Cluster by cosine** — single-linkage clustering of facts whose pairwise cosine
    similarity is **at or above a CONSERVATIVE threshold** (``memory.dedup.threshold``,

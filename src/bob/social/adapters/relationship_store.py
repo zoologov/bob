@@ -8,7 +8,7 @@
 
 """SqliteRelationshipStore — the per-sender relationship adapter (BOB-014).
 
-Realises :class:`bob.domain.ports.RelationshipStore` over the ``person_relationship``
+Realises :class:`bob.social.ports.RelationshipStore` over the ``person_relationship``
 table (named to avoid the legacy single-row ``relationship`` owner-blob): one row per
 ``sender_id`` so Bob keeps a quality of relationship with each
 person he talks to. The domain

@@ -64,7 +64,7 @@ def _build_registry(
     """Build the capability registry GUPPI advertises and dispatches + the diagram sink.
 
     Always registers the two memory capabilities over the live hybrid
-    :class:`~bob.domain.ports.MemoryRecall`: ``recall_memory`` (the thin auto-recall
+    :class:`~bob.memory.ports.MemoryRecall`: ``recall_memory`` (the thin auto-recall
     wrapper) and ``search_memory`` (BOB-011 — the agentic skill Bob chooses to
     invoke through the tool-loop). When ``introspection.enabled`` (BOB-017 Phase A,
     default on) the four read-only self-introspection skills

@@ -24,7 +24,7 @@ The :class:`~bob.proactivity.usecases.engine.ProactivityEngine` needs two cheap
   ceiling governance checks). Counted with parameterised SQL over the timestamp
   column — never an f-string.
 
-Time is injected via :class:`~bob.domain.ports.Clock` so the salience decay is
+Time is injected via :class:`~bob.kernel.ports.Clock` so the salience decay is
 deterministic in tests. The engine stays pure of storage; this adapter is the only
 place these signals touch SQLite.
 """
@@ -79,7 +79,7 @@ class _SystemClock:
 class RepoProactivitySources:
     """Back the engine's reflection-salience + proactive-window seams off SQLite.
 
-    Also realises :class:`~bob.domain.ports.ReflectionReader` (BOB-018): the same
+    Also realises :class:`~bob.personality.ports.ReflectionReader` (BOB-018): the same
     reflection rows that drive proactivity salience supply the most-recent REAL
     reflection text the reactive reply path leaks into Bob's voice when the
     expression plan sets ``leak_inner_life`` (no reflection → ``None`` → no-op).
@@ -133,7 +133,7 @@ class RepoProactivitySources:
     async def latest_reflection_text(self) -> str | None:
         """Return the most recent REAL reflection's text, or ``None`` if there is none.
 
-        Realises :class:`~bob.domain.ports.ReflectionReader` (the BOB-018 leak seam):
+        Realises :class:`~bob.personality.ports.ReflectionReader` (the BOB-018 leak seam):
         reads the newest ``episodic_log`` row whose ``event_type`` is a real
         inner-life kind (``reflection`` / ``inner_monologue``, written grounded and
         in the persona language by BOB-012). ``None`` means there is nothing real to

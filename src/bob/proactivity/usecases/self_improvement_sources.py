@@ -9,7 +9,7 @@
 """ActiveRulesReader — application-адаптер чтения APPROVED-правил для применения (BOB-028 .3).
 
 Реализует ``SelfImprovementReader`` (read seam :class:`HandleMessage`): грузит
-персистнутые правила из :class:`~bob.domain.ports.SelfImprovementStore` и возвращает
+персистнутые правила из :class:`~bob.proactivity.ports.SelfImprovementStore` и возвращает
 ТОЛЬКО ``active_rules`` (APPROVED) — applied-сторона никогда не видит PROPOSED/PAUSED/
 REJECTED/REMOVED (authz-before-autonomy держится здесь, ещё до доменного
 ``build_modulators``, который перефильтрует повторно). Без I/O в домене: вся работа со

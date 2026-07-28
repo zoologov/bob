@@ -8,7 +8,7 @@
 
 """GhPullRequestOpener — open a PR for a coding session's branch (BOB-039 .2).
 
-The infrastructure adapter realising :class:`bob.domain.ports.PullRequestOpener`. It
+The infrastructure adapter realising :class:`bob.coding.ports.PullRequestOpener`. It
 runs, as a FIXED-form shell-free invocation (the title/body are discrete argv items,
 never interpolated into a shell):
 

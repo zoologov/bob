@@ -10,7 +10,7 @@
 
 This is the thin skill that lets GUPPI delegate a memory search to Bob's archive
 recall. It exercises the capability seam end to end without any new I/O: it holds
-only the injected :class:`~bob.domain.ports.MemoryRecall` port and renders its
+only the injected :class:`~bob.memory.ports.MemoryRecall` port and renders its
 hits as a compact result. The agentic, vector-backed ``search_memory`` is a later
 epic; this is the keyword-archive wrapper that proves the tool-loop.
 

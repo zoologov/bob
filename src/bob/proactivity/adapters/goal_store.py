@@ -8,7 +8,7 @@
 
 """SqliteGoalStore — the per-persona goal-graph adapter (Goal Engine, BOB-015).
 
-Realises :class:`bob.domain.ports.GoalStore` over the ``goal`` and ``task`` tables:
+Realises :class:`bob.proactivity.ports.GoalStore` over the ``goal`` and ``task`` tables:
 one row per ``(persona_id, id)`` so Bobiverse replicas each keep their own goals
 between sessions. The domain :class:`~bob.proactivity.goals.graph.GoalGraph` (its
 :class:`~bob.proactivity.goals.entities.Goal` / :class:`~bob.proactivity.goals.entities.Task`

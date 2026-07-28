@@ -8,7 +8,7 @@
 
 """SqliteCloserLog — the cross-session closer ring adapter (BOB-061 .1).
 
-Realises :class:`bob.domain.ports.CloserLog` over the ``closer_log`` table: a bounded,
+Realises :class:`bob.conversation.ports.CloserLog` over the ``closer_log`` table: a bounded,
 LOCAL ring of Bob's recent reply CLOSERS. It closes gap 1 (cross-session sparsity) — a
 signature closer-tic that recurs ONCE PER SESSION over days is invisible to the live
 session window (0-1 occurrences, below the tic bar), so it slips through. Persisting the

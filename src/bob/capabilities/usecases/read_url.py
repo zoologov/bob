@@ -11,9 +11,9 @@
 The twin of ``web_search`` (BOB-053): where ``web_search`` searches the web by
 topic, this skill opens ONE concrete URL the conversation already carries and
 reads it. It delegates a ``url`` to the injected
-:class:`~bob.domain.ports.UrlReader` (an SSRF-guarded ``aiohttp`` fetch + stdlib
+:class:`~bob.capabilities.ports.UrlReader` (an SSRF-guarded ``aiohttp`` fetch + stdlib
 ``html.parser`` extraction behind the .1 port), which returns a
-:class:`~bob.domain.ports.WebPage` already truncated to its char limit, and
+:class:`~bob.capabilities.ports.WebPage` already truncated to its char limit, and
 projects it COMPACTLY (``url`` + ``title`` + ``excerpt``) into the tool-loop — Bob
 synthesises the final reply in his own voice. It is read-only
 (``permission="safe"``); the privilege gate is by sender (authz/BOB-052), NOT

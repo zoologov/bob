@@ -21,7 +21,7 @@ uses to turn raw ``git log`` text into the "why" trail:
   that explains the decision.
 
 Both are pure functions: no subprocess, no disk — the git read itself lives behind
-the :class:`~bob.domain.ports.RepoIntrospector` port in infrastructure.
+the :class:`~bob.capabilities.ports.RepoIntrospector` port in infrastructure.
 """
 
 from __future__ import annotations

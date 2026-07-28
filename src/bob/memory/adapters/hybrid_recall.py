@@ -8,14 +8,14 @@
 
 """HybridMemoryRecall — semantic + keyword recall fused with Reciprocal Rank Fusion.
 
-Realises :class:`bob.domain.ports.MemoryRecall` as a drop-in replacement for the
+Realises :class:`bob.memory.ports.MemoryRecall` as a drop-in replacement for the
 keyword-only :class:`Fts5MemoryRecall`: consumers (``handle_message`` /
 ``recall_memory``) keep talking to ``recall(query, k) -> [Recalled]`` and never
 learn the retrieval grew a semantic half. Internally it runs two candidate
 searches over the same archive and fuses them:
 
 * **Semantic** — embed the query through the injected
-  :class:`~bob.domain.ports.Embedder` and run a sqlite-vec KNN over ``memory_vec``
+  :class:`~bob.memory.ports.Embedder` and run a sqlite-vec KNN over ``memory_vec``
   (finds memory by *meaning*, even with zero shared keywords).
 * **Keyword** — FTS5 BM25 over the semantic + episodic indexes (reuses
   :class:`Fts5MemoryRecall`).
@@ -29,7 +29,7 @@ higher fused score than one seen in only one — the point of rank fusion.
 degrades to pure FTS5 keyword search — Bob never "loses his memory", he just
 loses the semantic half. The failure is logged, not propagated.
 
-**Reranker (additive boost, BEAD-04):** an optional :class:`~bob.domain.ports.Reranker`
+**Reranker (additive boost, BEAD-04):** an optional :class:`~bob.memory.ports.Reranker`
 collaborator re-scores the wide fused top-``K`` pool and trims it to a tight
 top-``N`` (a sharper relevance judgement layered on top of RRF). It is strictly
 additive: with no reranker wired — or one that is disabled / unavailable — recall

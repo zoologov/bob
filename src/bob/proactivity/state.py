@@ -8,7 +8,7 @@
 
 """ProactivityState — the per-persona proactivity state the engine persists.
 
-A plain value object the :class:`bob.domain.ports.ProactivityStore` round-trips
+A plain value object the :class:`bob.proactivity.ports.ProactivityStore` round-trips
 to durable storage: the current :class:`SocialEnergy` reservoir, when Bob last
 spoke proactively, when the owner last wrote, and whether proactivity is enabled
 (the owner's ``/quiet`` / ``/wake`` flag). No behaviour, no I/O — just the fields

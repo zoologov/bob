@@ -8,7 +8,7 @@
 
 """Introspection infrastructure — the subprocess adapter for Bob's self-view.
 
-Realises :class:`bob.domain.ports.RepoIntrospector` over local ``beadloom`` / ``bd``
+Realises :class:`bob.capabilities.ports.RepoIntrospector` over local ``beadloom`` / ``bd``
 (a fixed allowlist of read subcommands, via ``create_subprocess_exec`` — never a
 shell) and guard-checked file reads. This is the only place the privacy invariant
 is enforced at the I/O boundary.

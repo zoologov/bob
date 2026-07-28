@@ -8,7 +8,7 @@
 
 """SqliteSelfImprovementStore — the per-persona self-improvement-rule adapter (BOB-028 .1).
 
-Realises :class:`bob.domain.ports.SelfImprovementStore` over the ``improvement_rule``
+Realises :class:`bob.proactivity.ports.SelfImprovementStore` over the ``improvement_rule``
 table: one row per ``(persona_id, id)`` so Bobiverse replicas each keep their own
 curated rules between sessions. The domain
 :class:`~bob.proactivity.self_improvement.ImprovementRule` value object (its

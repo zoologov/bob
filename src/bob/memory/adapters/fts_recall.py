@@ -8,7 +8,7 @@
 
 """Fts5MemoryRecall — keyword relevance retrieval over the whole archive.
 
-Realises :class:`bob.domain.ports.MemoryRecall` in P0 using SQLite's FTS5
+Realises :class:`bob.memory.ports.MemoryRecall` in P0 using SQLite's FTS5
 ``MATCH`` with BM25 ranking. Recall spans both distilled semantic facts *and*
 the raw episodic conversation archive (Fix A): an old turn that was never
 fact-extracted is still surfaced, so Bob can recall something said many turns

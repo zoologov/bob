@@ -18,7 +18,7 @@ plumbing for Bob's LIGHT per-person first impression:
 * :meth:`FirstImpressionTracker.note_first_contact` records a fresh, grounded note
   on FIRST contact (the impression is formed once; a known sender is left untouched
   by the store's DO-NOTHING save), stamping ``first_seen_at`` from the injected
-  :class:`~bob.domain.ports.Clock`.
+  :class:`~bob.kernel.ports.Clock`.
 
 It is grounded: the note is derived by the pure
 :func:`~bob.social.first_impression.impression_note_for` from who Bob can

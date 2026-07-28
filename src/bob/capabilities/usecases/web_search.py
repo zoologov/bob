@@ -9,7 +9,7 @@
 """``web_search`` — the grounded web-search capability (BOB-053 .2 + .3).
 
 The thin skill that lets GUPPI search the web for Bob: it delegates a ``query``
-to the injected :class:`~bob.domain.ports.WebSearchProvider` (Qwen-native over
+to the injected :class:`~bob.capabilities.ports.WebSearchProvider` (Qwen-native over
 the Responses API behind the .1 port) and projects the grounded ``answer`` plus
 its ``sources`` (title + url) COMPACTLY into the tool-loop — Bob synthesises the
 final reply in his own voice with links. It is read-only

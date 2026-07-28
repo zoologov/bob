@@ -8,7 +8,7 @@
 
 """Web-page reading infrastructure (BOB-054).
 
-The ``read_url`` skill's outward edge: an :class:`bob.domain.ports.UrlReader` that
+The ``read_url`` skill's outward edge: an :class:`bob.capabilities.ports.UrlReader` that
 fetches a concrete URL over ``aiohttp`` behind a 🔴 SSRF guard and extracts readable
 text with the stdlib ``html.parser``. Kept apart from ``infrastructure/llm`` — reading
 a page is not an LLM call.

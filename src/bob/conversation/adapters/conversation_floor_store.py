@@ -8,7 +8,7 @@
 
 """SqliteConversationFloorStore — the per-thread conversation-floor adapter (BOB-025).
 
-Realises :class:`bob.domain.ports.ConversationFloorStore` over the
+Realises :class:`bob.conversation.ports.ConversationFloorStore` over the
 ``conversation_floor`` table: one row per ``(chat_id, thread_id)`` so Bob keeps,
 per running exchange, who currently holds the "talking turn". The domain
 :class:`~bob.conversation.conversation_floor.ConversationFloor` is mapped to and

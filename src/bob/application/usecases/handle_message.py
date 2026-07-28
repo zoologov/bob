@@ -314,7 +314,7 @@ class CurrentFascinationReader(Protocol):
     turn the compose path folds the topic in so Bob can drop it à propos — but only a
     REAL, persisted passion that has not yet faded. ``None`` means Bob has no current
     fascination, so the mention no-ops (never a fabricated interest). The concrete
-    adapter loads the :class:`~bob.domain.ports.FascinationStore`, ages the stored
+    adapter loads the :class:`~bob.personality.ports.FascinationStore`, ages the stored
     passion against the clock, and drops a faded one.
     """
 
@@ -821,7 +821,7 @@ class HandleMessage:
         )
         # The diagram photo-send seam (BOB-035): the ``render_diagram`` capability —
         # dispatched deep inside the global registry's tool-loop, with no chat_id —
-        # pushes each rendered :class:`~bob.domain.ports.DiagramResult` (PNG + caption)
+        # pushes each rendered :class:`~bob.capabilities.ports.DiagramResult` (PNG + caption)
         # into this per-turn sink. After the tool-loop the reply path drains it and
         # sends each as a Telegram photo into THIS turn's chat (the chat_id stays
         # per-turn, the send a gateway concern). Unwired (the default) Bob has no

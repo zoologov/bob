@@ -8,7 +8,7 @@
 
 """SqliteSulkStore — the per-persona обида state adapter (BOB-014 .2b).
 
-Realises :class:`bob.domain.ports.SulkStore` over the ``sulk_state`` table: one row
+Realises :class:`bob.social.ports.SulkStore` over the ``sulk_state`` table: one row
 per ``persona_id`` so Bobiverse replicas each keep their own обида. The domain
 :class:`~bob.social.sulk.SulkState` (the active flag, the decaying
 intensity, the low/hostile streak, the entry stamp, and the one-shot ``announced``

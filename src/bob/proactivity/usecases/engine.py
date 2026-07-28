@@ -14,10 +14,10 @@ speak, spends an LLM call to compose and post a message into Bob's topic. The
 flow, cheapest-first (so most ticks do nothing and make ZERO LLM calls):
 
 1. **Load** the per-persona :class:`ProactivityState` via the
-   :class:`~bob.domain.ports.ProactivityStore` port (energy, last-spoke /
+   :class:`~bob.proactivity.ports.ProactivityStore` port (energy, last-spoke /
    last-user markers, the ``/quiet`` enabled flag).
 2. **Recover** the :class:`SocialEnergy` reservoir over the silence since the
-   owner last wrote, using the injected :class:`~bob.domain.ports.Clock`.
+   owner last wrote, using the injected :class:`~bob.kernel.ports.Clock`.
 3. **Decide** — :class:`~bob.proactivity.decision.ProactiveDecider`
    scores the urge from the current mood (Higher Mind), the silence, the salience
    of the most recent reflection, and the local time of day, maps it to a fire
@@ -28,7 +28,7 @@ flow, cheapest-first (so most ticks do nothing and make ZERO LLM calls):
    something worth saying right now, and what is the seed?". It leans to skip; a
    ``SKIP`` ends the tick with one cheap call and no message.
 5. **Compose + post** — on a non-skip seed, first recall relevant REAL memory via
-   :class:`~bob.domain.ports.MemoryRecall` and hand it to the compose prompt so Bob
+   :class:`~bob.memory.ports.MemoryRecall` and hand it to the compose prompt so Bob
    grounds the message in something that actually happened (never confabulates a
    shared moment), pinning the persona language (BOB-012). Compose via the router
    (reply-tier selection: usually the fast model, the quality model for something
@@ -125,7 +125,7 @@ _MAX_REGENERATIONS = 2
 class ProactivityStoreLike(Protocol):
     """The proactivity-store surface the engine needs on a tick.
 
-    A superset of the domain :class:`~bob.domain.ports.ProactivityStore` port: on
+    A superset of the domain :class:`~bob.proactivity.ports.ProactivityStore` port: on
     top of the value-object round-trip the engine also reads and clears the
     infrastructure-level timed-mute expiry (``/quiet 2h``), so the store must
     expose ``get_mute_until`` / ``set_mute_until`` (the live
@@ -171,7 +171,7 @@ class ProactiveWindowCounter(Protocol):
 class EpisodeWriter(Protocol):
     """Persistence seam: append the posted proactive message to episodic memory.
 
-    A subset of :class:`~bob.domain.ports.MemoryRepo`: the engine only needs to
+    A subset of :class:`~bob.memory.ports.MemoryRepo`: the engine only needs to
     save an episode, so a proactive message enters recall + recent-history exactly
     like a reactive turn and Bob can reference or explain it later (BOB-012).
     """
