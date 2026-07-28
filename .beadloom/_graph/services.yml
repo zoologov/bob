@@ -86,6 +86,8 @@ nodes:
     # re-export shim for the personality ports.
     tags: [module-vertical]
     summary: 'Personality module («who Bob is») — the full character vertical in one place: `ports.py` + pure domain (Mood five-axis affect, TasteEngine + evolution, disposition, fascination + phantoms, language/profanity, expression incl. verbosity/engagement vocabulary, voice, the reaction family, negotiation stance, reflection, absence), `usecases/` (update mood from text, apply/reappraise/parse reflection, evolve fascination/phantoms), and `adapters/` (Tier-0 reaction judge + SQLite/kv fascination & notable-reaction stores). Domain-first slice BOB-062.6a. (Being-received reaction perception is a cross-domain use-case over mood + relationship, so it lives in `application/usecases/perceive_reaction`, not here.)'
+    docs:
+      - domains/personality/README.md
 
   - ref_id: conversation
     kind: feature
@@ -106,6 +108,8 @@ nodes:
     # vocabulary into personality. `domain/ports/` keeps a thin re-export shim.
     tags: [module-vertical]
     summary: 'Conversation module («how a turn is conducted») — the full turn-conduct vertical in one place: `ports.py` (conversation-floor store, closer log, ZoneClassifier) + pure domain (addressivity, conversation + floor continuity, brevity, engagement, zone classifier, interim line, response choice, response/volatility judgments), `usecases/` (decide_response), and `adapters/` (Tier-0 response/volatility/interim judges + SQLite conversation-floor & closer-log stores). Depends on personality one-directionally. Domain-first slice BOB-062.6a.'
+    docs:
+      - domains/conversation/README.md
 
   - ref_id: memory
     kind: feature

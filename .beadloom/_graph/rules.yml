@@ -889,6 +889,68 @@ rules:
 # If any TYPE_CHECKING item ever becomes a RUNTIME import it will surface (edge /
 # import scan) and must be re-evaluated — do not pre-emptively suppress.
 
+# ── BOB-062.6a: legalized cross-module refs for `personality` + `conversation` ─
+# The domain-first split of `domain/personality/` into TWO clean bounded-contexts
+# — `personality` («who Bob is», the stable kernel) + `conversation` («how a turn
+# is conducted») — broke the `voice ↔ brevity/engagement` cycle by moving the
+# Verbosity/EngagementLevel expression VOCABULARY into `personality/expression.py`
+# (.1, behavior-preserving: definitions + import paths only). The generated
+# `personality-*` / `conversation-*` boundary rules above ENFORCE both seams
+# (explicit-path; 7 verticals now: coding/memory/proactivity/capabilities/social/
+# personality/conversation). The legalized cross-module refs below are all legal by
+# design (not real violations); documented here so a reviewer sees the reasoning and
+# no rule is added that would mask a real break. None currently produces a finding:
+#
+#   1. conversation → personality (ONE-DIRECTIONAL). RUNTIME imports of personality's
+#      PUBLIC domain surface — `brevity`/`engagement` return `expression.Verbosity`/
+#      `EngagementLevel`, `zone_classifier`/`ports.ZoneClassifier` read
+#      `negotiation.{NegotiationZone,…}` + `taste.Verdict`, judges/voice read `Mood`/
+#      `FormHint`. All target `bob/personality/{expression,negotiation,taste,mood,…}`
+#      (root domain files), NEVER `personality/usecases|adapters` (the only paths the
+#      conversation-boundary globs forbid). personality NEVER imports conversation, so
+#      there is no cycle (`no-dependency-cycles` green — the old voice↔brevity/
+#      engagement loop is gone). Legal: the turn asks the character how to speak.
+#
+#   2. application/usecases/perceive_reaction → personality + social. RUNTIME imports
+#      of `personality.{mood.MoodDelta,reaction_effect,reaction_meaning}` +
+#      `social.relationship.Relationship` (TYPE_CHECKING: disposition, interlocutor,
+#      reaction_judge/meaning). Being-received reaction perception is a CROSS-DOMAIN
+#      use-case over mood + relationship, so it stays in the `application` coordination
+#      layer (like `handle_message`), OUTSIDE both verticals — the inward-boundary
+#      model excludes `application` by design, and it targets each module's PUBLIC
+#      domain surface, so neither module's boundary globs bite. Legal.
+#
+#   3. handle_message / heartbeat / proactivity.engine → conversation. RUNTIME imports
+#      of conversation's PUBLIC domain surface — `conversation.conversation.{RepeatThresholds,
+#      is_bob_repeat,is_user_repeat,…}` (anti-tic predicates). `handle_message` +
+#      `heartbeat` are `application` coordinators; `proactivity.engine` reads the
+#      anti-repeat predicate from its own vertical. All target `bob/conversation/
+#      conversation` (a root domain file), NEVER `conversation/usecases|adapters`, so
+#      the conversation-boundary globs (which forbid only usecases/adapters from
+#      outside) do NOT bite. Legal — coordinators/siblings read a shared domain surface.
+#
+#   4. social.relationship → personality.negotiation.Stance. RUNTIME import (carried
+#      over from the BOB-062.5 social block item 3): relationships are coloured by
+#      Bob's bargaining style. `negotiation` is personality's PUBLIC domain surface
+#      (root module, NOT usecases/adapters), social→personality is ONE-WAY, no cycle.
+#      Legal — re-affirmed here now that `personality` is its own explicit-path vertical.
+#
+#   5. domain/ports/__init__ → personality.ports (MessageReactor/ReflectionReader/
+#      Fascination/NotableReaction shim) + conversation.ports (ConversationFloorStore/
+#      CloserLog/ZoneClassifier shim). domain→module public-surface re-exports (mirror
+#      domain.ports→memory/social/proactivity/capabilities.ports); ports are each
+#      module's declared inward seam — no forbid targets them. Neither shim's return
+#      leg closes a cycle: personality imports NOTHING from conversation, and
+#      conversation imports `bob.personality.*` domain types directly (not via the
+#      ports shim), so there is no runtime conversation→ports or personality→ports edge.
+#
+#   NOTE (slice .6b): `handle_message.py` is NOT yet decomposed — only its import paths
+#   were retargeted to `bob.personality.*` / `bob.conversation.*` in .6a. The God
+#   use-case split (#9) lands in .6b with its own BRIEF.
+#
+# If any TYPE_CHECKING item ever becomes a RUNTIME import it will surface (edge /
+# import scan) and must be re-evaluated — do not pre-emptively suppress.
+
 # ── 🔴 BOUNDARY-RULE GENERATOR — IMPLEMENTED in BOB-062.4 (.1) ─────────────────
 # STATUS: the proposal below is now BUILT — `scripts/gen_boundary_rules.py` emits
 # the explicit-path boundary rules into the `# BEGIN/END generated boundary rules`

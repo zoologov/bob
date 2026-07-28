@@ -45,10 +45,15 @@ P0 — Telegram-транспорт на aiogram (typing-индикатор + Ric
 ```
 src/bob/
   domain/            # ЧИСТО: без I/O, LLM и Telegram. Только логика и модели.
-    personality/     # Mood, Disposition (черта-аттрактор), TasteEngine, Negotiation,
-                     #   SOUL, TasteZoneClassifier, taste_evolution, voice (тон по mood),
-                     #   mood_taste, fascination, phantom_evolution, expression, reaction,
-                     #   conversation (контейнмент рефлексий), язык персоны
+                     #   личность (Mood, Disposition, TasteEngine, Negotiation, SOUL,
+                     #   voice, mood_taste, fascination, phantom_evolution, expression,
+                     #   семейство reaction, reflection, absence + порты/use-case'ы/
+                     #   адаптеры) переехала в вертикальный модуль `src/bob/personality/`
+                     #   (BOB-062.6a), а ведение хода (addressivity, conversation_floor,
+                     #   brevity, engagement, zone_classifier, судьи response/volatility,
+                     #   interim, анти-тик conversation) — в `src/bob/conversation/`
+                     #   (BOB-062.6a); прежний `domain/personality/` расформирован;
+                     #   `from bob.domain.ports import MessageReactor` работает как раньше
                      #   память (EpisodicEvent, SemanticFact + порты/логика/адаптеры)
                      #   переехала в вертикальный модуль `src/bob/memory/` (BOB-062.2);
                      #   `from bob.domain.ports import MemoryRepo` работает как раньше
@@ -77,12 +82,16 @@ src/bob/
                      #     SelfImprovementStore, PatternDetector) переехали в
                      #     `proactivity/ports.py` (вертикальный модуль, BOB-062.3);
                      #     `ports/__init__.py` их re-export'ит
-                     #   conversation.py — ConversationFloorStore, CloserLog
-                     #   personality.py  — ZoneClassifier (Negotiation-врезка, BOB-013),
-                     #                     MessageReactor, ReflectionReader,
-                     #                     FascinationStore, NotableReactionStore
-                     #                     (SulkStore/FirstImpressionStore/RelationshipStore
-                     #                     переехали в `social/ports.py`, BOB-062.5)
+                     #   conversation-порты (ConversationFloorStore, CloserLog,
+                     #     ZoneClassifier) переехали в `conversation/ports.py`
+                     #     (вертикальный модуль, BOB-062.6a); `ports/__init__.py` их
+                     #     re-export'ит (тонкий шим)
+                     #   personality-порты (MessageReactor, ReflectionReader,
+                     #     FascinationStore, NotableReactionStore) переехали в
+                     #     `personality/ports.py` (вертикальный модуль, BOB-062.6a);
+                     #     `ports/__init__.py` их re-export'ит (ZoneClassifier — теперь
+                     #     conversation-порт, решение хода; Sulk/First/Relationship —
+                     #     `social/ports.py`, BOB-062.5)
                      #   capability-порты (Capability, ToolCallingProvider,
                      #     RepoIntrospector, DiagramRenderer/Sink/Result, WebSearchProvider,
                      #     UrlReader + value-object'ы) переехали в `capabilities/ports.py`
@@ -197,6 +206,37 @@ src/bob/
                      #   (вариант C). Границы — explicit-path forbid_import-правилами,
                      #   СГЕНЕРИРОВАННЫМИ scripts/gen_boundary_rules.py. См. SPEC:
                      #   docs/domains/social/README.md
+  personality/       # 🔴 ВЕРТИКАЛЬНЫЙ модуль «кто Боб есть» (BOB-062.6a): стабильное
+                     #   ядро характера в одном месте. Раскладка:
+                     #     ports.py + чистый домен (mood, disposition, taste(+evolution),
+                     #       mood_taste, negotiation, fascination, phantom_evolution,
+                     #       expression(+🔴 Verbosity/EngagementLevel), voice, language,
+                     #       profanity, семейство reaction*, reflection, soul, absence)
+                     #       — layer=domain;
+                     #     usecases/ (UpdateMoodFromText, ApplyReflection, Reappraise-
+                     #       Reflection, HeuristicReflectionParser, Evolve Fascination/
+                     #       Phantoms, fascination_sources) — layer=application;
+                     #     adapters/ (LlmReactionJudge, Sqlite Fascination/Kv Notable-
+                     #       Reaction-Store) — layer=infrastructure.
+                     #   🔴 стабильное ядро: 0 runtime-зависимостей на conversation/
+                     #   social; Verbosity/EngagementLevel — вокабуляр выражения здесь
+                     #   (цикл voice↔brevity/engagement разорван, .1); perceive_reaction
+                     #   ОСТАЁТСЯ в application (cross-domain). См. SPEC:
+                     #   docs/domains/personality/README.md
+  conversation/      # 🔴 ВЕРТИКАЛЬНЫЙ модуль «как ведётся ход» (BOB-062.6a): ведение
+                     #   разговора в одном месте. Раскладка:
+                     #     ports.py (ConversationFloorStore, CloserLog, ZoneClassifier)
+                     #       + чистый домен (addressivity, conversation_floor, brevity,
+                     #       engagement, zone_classifier, анти-тик conversation, судьи
+                     #       response/volatility, interim_line) — layer=domain;
+                     #     usecases/ (DecideResponse) — layer=application;
+                     #     adapters/ (Llm Response/Volatility/InterimLine, Sqlite
+                     #       Conversation-Floor/Closer-Log-Store) — layer=infrastructure.
+                     #   🔴 conversation→personality однонаправленно (читает personality-
+                     #   VO, brevity/engagement возвращают Verbosity/EngagementLevel);
+                     #   zone_classifier здесь (классификатор хода). Интеграция методов в
+                     #   handle_message — срез .6b. См. SPEC:
+                     #   docs/domains/conversation/README.md
   app.py             # composition root: собирает порты и адаптеры, запускает рантайм
 ```
 
@@ -207,8 +247,9 @@ src/bob/
 приложение и домен, поэтому use-cases ни прямо, ни косвенно не зависят от
 инфраструктуры.
 
-Границы вертикальных модулей (`coding` / `memory` / `proactivity` / `capabilities`)
-держат `forbid_import`-правила в `.beadloom/_graph/rules.yml`. Их **генерирует**
+Границы вертикальных модулей (`coding` / `memory` / `proactivity` / `capabilities` /
+`social` / `personality` / `conversation`) держат `forbid_import`-правила в
+`.beadloom/_graph/rules.yml`. Их **генерирует**
 `scripts/gen_boundary_rules.py` из `module-vertical`-узлов графа в marker-регион
 `# BEGIN/END generated boundary rules` (рукописные rationale-блоки вне маркеров не
 трогает); режим `--check` — CI-gate идемпотентности. Правила на **explicit paths**
