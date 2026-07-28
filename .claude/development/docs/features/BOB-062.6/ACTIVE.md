@@ -39,3 +39,21 @@
 
 - 2026-07-28: под-эпик оформлен (.6a+.6b); BRIEF Approved; 6 роль-беадов .6a; ветка `features/BOB-062.6a`.
   Старт Волны 0 (.1 изолированный разрыв цикла).
+
+---
+
+## .6b — декомпозиция handle_message #9 (branch `features/BOB-062.6b`)
+
+| Беад | Волна | Статус |
+|------|-------|--------|
+| `bob-8r4.6.7` | 0 — free-функции → conversation-хелперы | ○ ready |
+| `bob-8r4.6.8` | 1 — листовые (Diagram/Essential/Floor/Verify/PreCompose) | ● blocked |
+| `bob-8r4.6.9` | 2 — средние (Addressivity/Engagement/Mood/Social/Recall) | ● blocked |
+| `bob-8r4.6.10` | 🔴 3 ЯДРО — VoiceComposer + AntiRepeatGuard (callback) | ● blocked |
+| `bob-8r4.6.11` | 4 — TurnGate + тонкий handle() | ● blocked |
+| `bob-8r4.6.12` | test — все инварианты + _build не менялся | ● blocked |
+| `bob-8r4.6.13` | review — когезия + turn-local + тонкий handle() | ● blocked |
+| `bob-8r4.6.14` | tech-writer — доки + #9 + Gate | ● blocked |
+
+🔴 Behavior-preserving method-object; НЕ менять `_build` (360 тестов); turn-local через аргументы;
+seeded-RNG порядок; каждая волна — коммит, зелёные тесты между.

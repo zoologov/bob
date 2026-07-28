@@ -86,3 +86,15 @@ class SOUL:
         :meth:`Mood.update`. The original is untouched.
         """
         return replace(self, mood_baseline=self.mood_baseline.update(delta))
+
+
+def _mood_state(soul: SOUL) -> dict[str, object]:
+    """Serialise the soul's mood vector into a persistable state blob."""
+    mood = soul.mood
+    return {
+        "valence": mood.valence,
+        "arousal": mood.arousal,
+        "openness": mood.openness,
+        "social": mood.social,
+        "stability": mood.stability,
+    }

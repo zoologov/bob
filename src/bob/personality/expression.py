@@ -259,3 +259,28 @@ def _is_substantive(text: str) -> bool:
     """A real inbound wanting an answer: long enough, or carrying a question."""
     stripped = text.strip()
     return len(stripped) >= _SUBSTANTIVE_INBOUND_CHARS or "?" in stripped
+
+
+# The verbosity ladder, low → high, for the self-improvement LENGTH tilt (BOB-028 .3).
+# A LENGTH rule shifts the BOB-024 verbosity by ``step`` (only ever -1 → shorter),
+# clipped at the ends — a soft bias on TOP of the decision, never a base override.
+_VERBOSITY_LADDER: tuple[Verbosity, ...] = (
+    Verbosity.TERSE,
+    Verbosity.NORMAL,
+    Verbosity.EXPANSIVE,
+)
+
+
+def _shift_verbosity(verbosity: Verbosity, step: int) -> Verbosity:
+    """Shift ``verbosity`` by ``step`` steps on the ladder, clipped at the ends (BOB-028).
+
+    The LENGTH self-improvement tilt: ``step`` is the modulator's ``length_step`` (0 →
+    unchanged, -1 → one step shorter). A no-op for ``step == 0`` (the default / disabled
+    path), and clipped at TERSE/EXPANSIVE so a tilt never wraps the ladder — наклон, не
+    перехват.
+    """
+    if step == 0:
+        return verbosity
+    index = _VERBOSITY_LADDER.index(verbosity)
+    clamped = max(0, min(len(_VERBOSITY_LADDER) - 1, index + step))
+    return _VERBOSITY_LADDER[clamped]

@@ -21,6 +21,8 @@ from __future__ import annotations
 
 from enum import Enum
 
+from bob.personality.taste import Verdict
+
 # Conviction is a [0, 1] strength of how firmly Bob holds a position.
 _MIN_CONVICTION = 0.0
 _MAX_CONVICTION = 1.0
@@ -74,3 +76,40 @@ class Negotiation:
             return Stance.CONCEDE
         threshold = _PUSHBACK_THRESHOLD[zone]
         return Stance.PROPOSE_ALTERNATIVE if conviction >= threshold else Stance.AGREE
+
+
+def _clamp_conviction(value: float) -> float:
+    """Saturate ``value`` into the conviction bounds Negotiation requires."""
+    return max(_MIN_CONVICTION, min(_MAX_CONVICTION, value))
+
+
+# Stance→prompt directive (BOB-013 Phase 1): the negotiation stance augments —
+# never replaces — the warm base tone, so Bob stays warm without being a yes-man.
+# These are a pure mapping; no extra LLM call. A stance with no directive (none
+# below) leaves the prompt exactly as it was before BOB-013.
+_STANCE_DIRECTIVE: dict[Stance, str] = {
+    # Russian persona directives (project language); Cyrillic look-alikes are
+    # intentional, so the ambiguous-character lint is silenced for these literals.
+    Stance.CONCEDE: "Стойка: это территория пользователя — спокойно прими его выбор.",  # noqa: RUF001
+    Stance.AGREE: "Стойка: у тебя нет сильной позиции — поддержи, без навязывания.",  # noqa: RUF001
+    Stance.PROPOSE_ALTERNATIVE: (
+        "Стойка: у тебя есть своё мнение и убеждённость — аргументируй и предложи "  # noqa: RUF001
+        "своё, уважительно, без агрессии и без капитуляции."
+    ),
+}
+
+
+def _stance_directive(
+    stance: Stance, *, verdict: Verdict, zone: NegotiationZone
+) -> str:
+    """Map a stance to its prompt directive, gated to a real negotiation signal.
+
+    The directive is emitted only when there is something to negotiate: Bob holds
+    an opinion on the topic (a non-NEUTRAL verdict) or the matter is explicitly
+    the user's domain (a logistics signal). A neutral, jointly-owned topic carries
+    no directive, so that path behaves exactly as it did before BOB-013.
+    """
+    has_signal = verdict is not Verdict.NEUTRAL or zone is NegotiationZone.USER_DOMAIN
+    if not has_signal:
+        return ""
+    return _STANCE_DIRECTIVE.get(stance, "")

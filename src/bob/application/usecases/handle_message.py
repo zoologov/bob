@@ -40,7 +40,6 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime
 from typing import TYPE_CHECKING, Literal, Protocol
 
 from bob.application.reliability import call_with_retry
@@ -97,7 +96,18 @@ from bob.conversation.engagement import (
     engagement_mood_lift,
     topic_interest,
 )
+from bob.conversation.reply_context import _assemble_shareable_context
 from bob.conversation.response_choice import ResponseIntent
+from bob.conversation.thread import (
+    _author_key,
+    _history_for_author,
+    _last_seen_at,
+    _reaction_marker,
+    _recent_bob_replies,
+    _render_thread,
+    _strip_recalled_closer,
+    _user_turns,
+)
 from bob.conversation.volatility_judgment import VolatilityContext
 from bob.conversation.zone_classifier import TasteZoneClassifier
 from bob.domain.ports import DiagramRenderError, DiagramResult
@@ -110,19 +120,21 @@ from bob.personality.expression import (
     ExpressionPlan,
     ExpressionSignals,
     Verbosity,
+    _shift_verbosity,
     decide_expression,
 )
 from bob.personality.mood import MoodDelta
-from bob.personality.mood_taste import experiment_bias, modulate
 from bob.personality.negotiation import (
     Negotiation,
     NegotiationZone,
     Stance,
+    _clamp_conviction,
+    _stance_directive,
 )
 from bob.personality.profanity import is_directed_hostility
 from bob.personality.reaction import reaction_emoji_for
 from bob.personality.reaction_aloud import acknowledgment_hint
-from bob.personality.taste import Verdict
+from bob.personality.soul import _mood_state
 from bob.personality.usecases.update_mood_from_text import TextSignals
 from bob.personality.voice import (
     OffDayThresholds,
@@ -142,13 +154,19 @@ from bob.personality.voice import (
     variable_form_directive,
     who_is_writing_directive,
 )
-from bob.proactivity.self_improvement import RuleModulators, build_modulators
+from bob.proactivity.self_improvement import (
+    RuleModulators,
+    _clamp_unit,
+    _validated_magnitude,
+    build_modulators,
+)
 from bob.social.interlocutor import InterlocutorKind, Trust
 from bob.social.relationship import compromise_bias
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Mapping, Sequence
     from contextlib import AbstractAsyncContextManager
+    from datetime import datetime
     from random import Random
 
     from bob.application.reliability import Sleep
@@ -181,6 +199,7 @@ if TYPE_CHECKING:
     from bob.personality.fascination import Fascination
     from bob.personality.mood import Mood
     from bob.personality.soul import SOUL
+    from bob.personality.taste import Verdict
     from bob.personality.usecases.update_mood_from_text import UpdateMoodFromText
     from bob.proactivity.self_improvement import ImprovementRule
     from bob.social.interlocutor import Interlocutor
@@ -280,11 +299,6 @@ _DEFAULT_SURFACE_OLD_FREQ = 0.15
 _MIN_FREQ = 0.0
 _MAX_FREQ = 1.0
 
-# Conviction is a [0, 1] strength; the relationship compromise-bias nudge must keep
-# the effective conviction it feeds Negotiation inside those bounds.
-_MIN_CONVICTION = 0.0
-_MAX_CONVICTION = 1.0
-
 # Default number of recent conversation turns to replay into the reply context
 # (BOB-044). Widened from the old hardcoded 6 — a 6-turn window was too tight to
 # hold a thread (an earlier topic fell out before Bob could come back to it), losing
@@ -383,22 +397,6 @@ _CAPABILITY_PREFACE = (
     "Эти возможности GUPPI исполняет для тебя; вызови одну, когда она помогает "
     "ответить:"
 )
-
-# Stance→prompt directive (BOB-013 Phase 1): the negotiation stance augments —
-# never replaces — the warm base tone, so Bob stays warm without being a yes-man.
-# These are a pure mapping; no extra LLM call. A stance with no directive (none
-# below) leaves the prompt exactly as it was before BOB-013.
-_STANCE_DIRECTIVE: dict[Stance, str] = {
-    # Russian persona directives (project language); Cyrillic look-alikes are
-    # intentional, so the ambiguous-character lint is silenced for these literals.
-    Stance.CONCEDE: "Стойка: это территория пользователя — спокойно прими его выбор.",  # noqa: RUF001
-    Stance.AGREE: "Стойка: у тебя нет сильной позиции — поддержи, без навязывания.",  # noqa: RUF001
-    Stance.PROPOSE_ALTERNATIVE: (
-        "Стойка: у тебя есть своё мнение и убеждённость — аргументируй и предложи "  # noqa: RUF001
-        "своё, уважительно, без агрессии и без капитуляции."
-    ),
-}
-
 
 class ReplyGateway(Protocol):
     """The Telegram seam HandleMessage needs (BOB-009).
@@ -3209,11 +3207,6 @@ _SILENT_MARKER = "(промолчал)"
 _OUTAGE_MARKER = "(нет ответа: проблемы со связью)"  # noqa: RUF001
 
 
-def _reaction_marker(emoji: str) -> str:
-    """Bob's persisted half for a REACT turn: the meaning-chosen emoji (BOB-049)."""
-    return f"(реакция: {emoji})"
-
-
 # Map the judge's intent to the legacy outcome the conversation floor advances on
 # (BOB-049): the floor reads per_message + bob_replied, so this is the cosmetic
 # outcome label only — REPLY engages, REACT like-reacts, IGNORE stays silent.
@@ -3224,217 +3217,6 @@ _OUTCOME_FOR_INTENT: dict[ResponseIntent, ResponseOutcome] = {
 }
 
 
-def _render_thread(history: Sequence[Mapping[str, object]]) -> str:
-    """Render the shared recent thread into the judge's recent-thread snippet (BOB-049).
-
-    Joins each replayed episode's ``content`` (stored as ``"<name>: <text>\\nbob:
-    <reply>"``) oldest-first; an empty history yields ``""`` (the judge reads it as a
-    fresh thread). No I/O — a pure projection of the already-replayed history (BOB-058 .1:
-    the shared group thread, author-labeled).
-    """
-    return "\n".join(
-        str(item.get("content", "")) for item in history if item.get("content")
-    )
-
-
-# The verbosity ladder, low → high, for the self-improvement LENGTH tilt (BOB-028 .3).
-# A LENGTH rule shifts the BOB-024 verbosity by ``step`` (only ever -1 → shorter),
-# clipped at the ends — a soft bias on TOP of the decision, never a base override.
-_VERBOSITY_LADDER: tuple[Verbosity, ...] = (
-    Verbosity.TERSE,
-    Verbosity.NORMAL,
-    Verbosity.EXPANSIVE,
-)
-
-
-def _shift_verbosity(verbosity: Verbosity, step: int) -> Verbosity:
-    """Shift ``verbosity`` by ``step`` steps on the ladder, clipped at the ends (BOB-028).
-
-    The LENGTH self-improvement tilt: ``step`` is the modulator's ``length_step`` (0 →
-    unchanged, -1 → one step shorter). A no-op for ``step == 0`` (the default / disabled
-    path), and clipped at TERSE/EXPANSIVE so a tilt never wraps the ladder — наклон, не
-    перехват.
-    """
-    if step == 0:
-        return verbosity
-    index = _VERBOSITY_LADDER.index(verbosity)
-    clamped = max(0, min(len(_VERBOSITY_LADDER) - 1, index + step))
-    return _VERBOSITY_LADDER[clamped]
-
-
-def _validated_magnitude(value: float) -> float:
-    """Validate the self-improvement soft-tilt ceiling lies in [0, 1] (BOB-028 .3)."""
-    if not _MIN_FREQ <= value <= _MAX_FREQ:
-        msg = (
-            f"self_improvement_max_magnitude must be within "
-            f"[{_MIN_FREQ}, {_MAX_FREQ}], got {value}"
-        )
-        raise ValueError(msg)
-    return value
-
-
-def _clamp_unit(value: float) -> float:
-    """Saturate ``value`` into the closed unit interval (a bounded interest/bias)."""
-    return max(_MIN_FREQ, min(_MAX_FREQ, value))
-
-
-def _clamp_conviction(value: float) -> float:
-    """Saturate ``value`` into the conviction bounds Negotiation requires."""
-    return max(_MIN_CONVICTION, min(_MAX_CONVICTION, value))
-
-
-def _stance_directive(
-    stance: Stance, *, verdict: Verdict, zone: NegotiationZone
-) -> str:
-    """Map a stance to its prompt directive, gated to a real negotiation signal.
-
-    The directive is emitted only when there is something to negotiate: Bob holds
-    an opinion on the topic (a non-NEUTRAL verdict) or the matter is explicitly
-    the user's domain (a logistics signal). A neutral, jointly-owned topic carries
-    no directive, so that path behaves exactly as it did before BOB-013.
-    """
-    has_signal = verdict is not Verdict.NEUTRAL or zone is NegotiationZone.USER_DOMAIN
-    if not has_signal:
-        return ""
-    return _STANCE_DIRECTIVE.get(stance, "")
-
-
-# Effective-verdict modulation (BOB-020) needs the sign of Bob's liking to lean a
-# NEUTRAL verdict the right way; the stored axis value is private to TasteEngine, so
-# we read the sign off the verdict itself (positive verdicts → +1, negative → -1,
-# NEUTRAL → 0 so an unknown topic stays a clean identity under any mood).
-_POSITIVE_VERDICTS = frozenset({Verdict.LOVE, Verdict.LIKE})
-_NEGATIVE_VERDICTS = frozenset({Verdict.DISLIKE, Verdict.HATE})
-
-
-def _verdict_sign(verdict: Verdict) -> float:
-    """+1.0 for a positive verdict, -1.0 for a negative one, 0.0 for NEUTRAL."""
-    if verdict in _POSITIVE_VERDICTS:
-        return 1.0
-    if verdict in _NEGATIVE_VERDICTS:
-        return -1.0
-    return 0.0
-
-
-def _assemble_shareable_context(
-    soul: SOUL,
-    topic: str,
-    recalled: Sequence[Recalled],
-    history: Sequence[Mapping[str, object]],
-    *,
-    absence: str | None = None,
-) -> str:
-    """Compose Bob's reply-shaping context (Variant 2: MAY reach Tier 1).
-
-    Carries recent conversation history, identity, mood tone, the taste verdict
-    on the topic, phantom preferences, and recalled memories — all material that
-    shapes Bob's reply and returns to the same user, so the reply tier sees it
-    (this is what lets Bob remember a name said one message ago). Genuinely
-    internal material is NOT assembled here; it belongs in ``private_context``.
-
-    The taste verdict injected is the EFFECTIVE one (BOB-020): Bob's current mood
-    temporarily colours it via :func:`modulate` — a flat day reads it stricter, a
-    bright day softer — and an experiment-readiness hint from the same mood rides
-    along. This is temporary modulation only; the stored taste axes are untouched.
-
-    When ``absence`` is given (BOB-045 .3) — the person's per-person thread has been
-    idle past the configured threshold — ONE light ``Absence:`` line is appended so the
-    reply tier can acknowledge the pause naturally. It is a hint, not a directive; with
-    no/short gap (or the hint disabled) ``absence`` is ``None`` and no line is added.
-    """
-    stored = soul.taste.score(topic)
-    effective = modulate(stored, _verdict_sign(stored), soul.mood)
-    lines = [
-        f"Identity: {soul.identity}",
-        f"Mood tone: {soul.mood.tone()}",
-        f"Taste verdict on '{topic}': {effective.value}",
-        f"Experiment readiness: {experiment_bias(soul.mood):.2f}",
-    ]
-    if soul.phantom_prefs:
-        lines.append("Phantom preferences: " + ", ".join(soul.phantom_prefs))
-    turns = [str(item.get("content", "")) for item in history if item.get("content")]
-    if turns:
-        lines.append("Recent conversation:\n" + "\n".join(turns))
-    if absence:
-        lines.append(f"Absence: {absence}")
-    memories = [str(item.get("content", "")) for item in recalled]
-    if memories:
-        lines.append("Recalled memories: " + " | ".join(memories))
-    return "\n".join(lines)
-
-
-def _last_seen_at(history: Sequence[Mapping[str, object]]) -> datetime | None:
-    """Return the timestamp of the person's MOST RECENT prior turn, or ``None`` (BOB-045 .3).
-
-    The replayed per-person ``history`` is oldest-first, so the freshest prior turn is
-    the last one carrying a parseable ``ts`` (the ISO-8601 string the episode store
-    persists, or a ``datetime`` if already typed). Scans back to front and returns the
-    first such timestamp; an empty history (first contact) or rows with no/garbled ``ts``
-    yield ``None``, so the absence hint simply does not fire — never a crash. No I/O.
-    """
-    for item in reversed(list(history)):
-        ts = item.get("ts")
-        if isinstance(ts, datetime):
-            return ts
-        if isinstance(ts, str):
-            try:
-                return datetime.fromisoformat(ts)
-            except ValueError:
-                continue
-    return None
-
-
-# Marker prefixing Bob's turn inside a persisted episode's ``content`` (see
-# :meth:`HandleMessage._persist`, which writes "<sender>: <text>\nbob: <reply>").
-_BOB_TURN_MARKER = "\nbob: "
-
-
-def _recent_bob_replies(
-    history: Sequence[Mapping[str, object]], *, limit: int
-) -> tuple[str, ...]:
-    """Return Bob's last ``limit`` reply texts (freshest first) from history (BOB-026 .1).
-
-    Episodes are stored as ``"<sender>: <text>\\nbob: <reply>"`` (see
-    :meth:`HandleMessage._persist`); this scans the most-recent episodes back to
-    front and recovers the ``bob:`` half of each so the anti-repeat guard can compare
-    the fresh reply against a WINDOW of Bob's own recent replies — not just the last —
-    catching a repeat "через ход". No Bob turn on record yields an empty tuple.
-    """
-    replies: list[str] = []
-    for item in reversed(list(history)):
-        if len(replies) >= limit:
-            break
-        content = item.get("content")
-        if not isinstance(content, str):
-            continue
-        marker = content.rfind(_BOB_TURN_MARKER)
-        if marker != -1:
-            replies.append(content[marker + len(_BOB_TURN_MARKER) :])
-    return tuple(replies)
-
-
-def _strip_recalled_closer(item: Recalled, closer: str) -> Recalled:
-    """Return ``item`` with the recurring ``closer`` stripped off its content (BOB-061 .2).
-
-    On a detected closer-tic, the recalled exemplar's whole-turn content (
-    ``"<sender>: <text>\\nbob: <reply>"``) may END with the tic motif — feeding it back as
-    few-shot would reinforce the very ending the nudge is trying to break. This excises the
-    trailing motif sentence via :func:`strip_recurring_closer` (the SAME deterministic strip
-    the anti-repeat guard uses) and returns a shallow copy carrying the tidied content. When
-    the content does not end with the motif (nothing to strip) or is not a string, the
-    original ``item`` is returned untouched — the fact body is always preserved.
-    """
-    content = item.get("content")
-    if not isinstance(content, str):
-        return item
-    stripped = strip_recurring_closer(content, closer)
-    if stripped == content:
-        return item
-    updated = dict(item)
-    updated["content"] = stripped
-    return updated
-
-
 # BOB-032 .2: the recall-aware anti-repeat helpers were lifted to the domain
 # (``conversation.py``) so the reactive turn AND the proactive engine share ONE
 # implementation instead of duplicating the predicate. These module-level aliases
@@ -3442,83 +3224,3 @@ def _strip_recalled_closer(item: Recalled, closer: str) -> Recalled:
 _recalled_bob_reply = recalled_bob_reply
 _recalled_bob_replies = recalled_bob_replies
 _recalled_without_copied_exemplars = recalled_without_copied_exemplars
-
-
-# Separator between a turn's sender label and the user's message text inside a
-# persisted episode's ``content`` ("<sender>: <text>\nbob: <reply>"); the user half
-# is what sits between this and ``_BOB_TURN_MARKER`` (see :meth:`HandleMessage._persist`).
-_SENDER_TEXT_SEPARATOR = ": "
-
-
-def _author_key(interlocutor: Interlocutor | None) -> int | None:
-    """The CURRENT author's ``sender_id`` signal key, or ``None`` when unresolved (BOB-058 .3).
-
-    Per-person signals (absence, anti-repeat) over the SHARED thread key on the ROBUST
-    ``sender_id`` — the same identity the per-person stores (relationship BOB-014,
-    first-impression BOB-019) already use — NOT the parsed ``"<name>:"`` label. The label
-    is brittle as a signal key: homonymous members cross-attribute, a display name with a
-    ``": "`` or a rename between turns silently drops the signal. ``None`` — no perception
-    seam, no interlocutor, or an unresolved ``sender_id`` — means "do not filter": the
-    signal falls back to the whole window, exactly as before perception was wired.
-    """
-    return interlocutor.sender_id if interlocutor is not None else None
-
-
-def _history_for_author(
-    history: Sequence[Mapping[str, object]], sender_id: int | None
-) -> list[Mapping[str, object]]:
-    """Filter the shared thread to the episodes authored by ``sender_id`` (BOB-058 .3).
-
-    Keeps ordering (oldest-first) so the per-person signals — absence last-seen,
-    anti-repeat turns — see only the CURRENT author's own turns even though ``history``
-    now interleaves the whole group. Episodes are attributed by their persisted
-    ``sender_id`` (robust to homonyms / renames / a ``": "`` in the display name — the
-    human-readable ``"<name>:"`` label is only for rendering the thread, never the signal
-    key). ``sender_id is None`` (unresolved identity) means "do not filter" → the full
-    window is returned (the pre-BOB-058 degraded behaviour).
-    """
-    if sender_id is None:
-        return list(history)
-    return [item for item in history if item.get("sender_id") == sender_id]
-
-
-def _user_turns(
-    history: Sequence[Mapping[str, object]], sender_id: int | None = None
-) -> list[str]:
-    """Recover the USER half of each replayed episode (BOB-022 repeat detection).
-
-    Episodes are stored as ``"<name>: <text>\\nbob: <reply>"`` (see
-    :meth:`HandleMessage._persist`); this extracts the ``<text>`` between the first
-    ``"<name>: "`` and the ``"\\nbob: "`` marker for each episode so the user-repeat
-    predicate compares the current message ONLY against prior USER turns — never against
-    Bob's own replies. 🔴 BOB-058 .3: over the now-SHARED thread, ``sender_id`` (when given)
-    restricts the turns to the CURRENT author's episodes BY ID, so a DIFFERENT member's
-    similar line is not mistaken for this person repeating themselves. Episodes without
-    the expected shape are skipped.
-    """
-    turns: list[str] = []
-    for item in _history_for_author(history, sender_id):
-        content = item.get("content")
-        if not isinstance(content, str):
-            continue
-        marker = content.find(_BOB_TURN_MARKER)
-        head = content[:marker] if marker != -1 else content
-        sep = head.find(_SENDER_TEXT_SEPARATOR)
-        if sep == -1:
-            continue
-        user_text = head[sep + len(_SENDER_TEXT_SEPARATOR) :]
-        if user_text:
-            turns.append(user_text)
-    return turns
-
-
-def _mood_state(soul: SOUL) -> dict[str, object]:
-    """Serialise the soul's mood vector into a persistable state blob."""
-    mood = soul.mood
-    return {
-        "valence": mood.valence,
-        "arousal": mood.arousal,
-        "openness": mood.openness,
-        "social": mood.social,
-        "stability": mood.stability,
-    }
