@@ -4388,6 +4388,65 @@ async def test_strip_fallback_preserves_a_multi_sentence_substantive_reply() -> 
     assert bot.final_text == "Первая часть готова. Вторая часть тоже готова."
 
 
+# --- BOB-062.6b wave-3 SAFETY NET: «единственная регенерация turn-local» --------
+# Explicit regression tests pinning the anti-repeat + verify invariants EXACTLY as they
+# behave today, added BEFORE the wave-3 core decomposition (VoiceComposer / GroundedAddons
+# / AntiRepeatGuard) as a behaviour-preserving safety net (review .5 recommendation). They
+# lock in: (a) exactly ONE extra generation at byte-identity; (b) the once-per-turn verify
+# note is REUSED across that regeneration (not recomputed); (c) the strip-fallback never
+# ships an empty string when the whole reply IS the recurring closer.
+
+
+async def test_single_turn_local_regeneration_reuses_the_verify_note() -> None:
+    # 🔴 Safety net for the compose↔guard callback loop (wave-3): a byte-identical first
+    # draft forces EXACTLY ONE regeneration, and the verify step (judge → search) computed
+    # ONCE for the turn is threaded — as a turn-LOCAL, never an instance attribute — into
+    # BOTH the first composition and the single regeneration. One judgment, one search, the
+    # grounded note in every payload; no re-judge / re-search on the retry.
+    judge = _FakeVolatilityJudge(verdict=_NEEDS_CHECK)
+    provider = _FakeWebSearchProvider(result=WebSearchResult(answer="16%"))
+    handler, bot, _repo, tier1 = _build(
+        reply="unused",
+        tier1_replies=[_REPEATED_REPLY, "А вот теперь совсем другой ответ."],
+        history=[{"content": _PRIOR_DUP_TURN, "event_type": "message"}],
+        verify_judge=judge,
+        verify_provider=provider,
+    )
+
+    await handler.handle(_message("объясни подробно ещё раз то же самое"))
+
+    # Exactly one extra generation at byte-identity, and the retry is committed.
+    assert len(tier1.payloads) == 2, "one — and only one — regeneration at byte-identity"
+    assert bot.final_text == "А вот теперь совсем другой ответ."
+    # The turn-local verify note is computed once and reused across the regeneration.
+    assert len(judge.calls) == 1, "judge.assess once per turn (reused, not recomputed)"
+    assert provider.queries == [_VOLATILE_QUERY], "exactly ONE search across the regen"
+    payload_texts = [
+        "\n".join(m["content"] for m in payload) for payload in tier1.payloads
+    ]
+    assert all("СВЕЖАЯ ПРОВЕРКА (веб): 16%" in text for text in payload_texts), (
+        "the once-computed verify note is threaded into every regeneration (reused)"
+    )
+
+
+async def test_strip_fallback_never_ships_an_empty_reply() -> None:
+    # 🔴 Safety net: when the ENTIRE final draft is nothing but the recurring closer,
+    # stripping it would leave an empty string — so the guard keeps the last draft rather
+    # than ship nothing. Every regeneration re-copies the bare tic, so after the bound the
+    # strip-fallback fires and the (non-empty) last draft is committed unchanged.
+    handler, bot, _repo, tier1 = _build(
+        reply="unused",
+        tier1_replies=[_REAL_TIC] * 4,
+        history=_scattered_tic_history(),
+    )
+
+    await handler.handle(_message("сделай, пожалуйста, ещё и бэкап подробно"))
+
+    assert len(tier1.payloads) == 3, "initial + 2 bounded retries, then the strip-fallback"
+    assert bot.final_text == _REAL_TIC, "a bare recurring closer is kept, never emptied"
+    assert bot.final_text.strip(), "the guard never ships an empty string"
+
+
 async def test_recurring_reflection_phrase_is_not_treated_as_a_tic() -> None:
     # BOB-033 x BOB-036 regression: a private reflection that recurs in the recall store
     # is EXCLUDED from the recall pool BEFORE the guard runs, so even a repeating inner-
