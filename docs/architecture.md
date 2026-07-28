@@ -40,7 +40,7 @@ P0 — Telegram-транспорт на aiogram (typing-индикатор + Ric
 Зависимости направлены только внутрь: `infrastructure → application → domain`.
 Домен не импортирует ничего наружу, приложение зависит от домена через
 порты-протоколы и не импортирует инфраструктуру, композиция живёт только в
-`app.py`.
+пакете `runtime/` (composition root; `app.py` — тонкий re-export shim над ним).
 
 ```
 src/bob/
@@ -239,7 +239,17 @@ src/bob/
                      #   zone_classifier здесь (классификатор хода). Интеграция методов в
                      #   handle_message — срез .6b. См. SPEC:
                      #   docs/domains/conversation/README.md
-  app.py             # composition root: собирает порты и адаптеры, запускает рантайм
+  runtime/           # composition root + entrypoint (BOB-062.7a; переехало из app.py):
+                     #   composition.py (build_application + Application), main.py (main/
+                     #   entrypoint), clock.py (SystemClock), config.py (ридеры + _REPO_ROOT),
+                     #   wiring/ (_build_* фабрики по домам). Единственный слой, зовущий все
+                     #   слои и все модули; модули НЕ импортят runtime.
+                     #   🔴 Отличать от application/runtime/ (async-примитивы, НЕ composition root).
+                     #   Инлайн-адаптеры вернулись в свои дома: infrastructure/telegram/
+                     #   (aiogram_adapter, outage_notifier), social/adapters/ (permission-каналы,
+                     #   privilege-judge, soul_loader), coding/adapters/ (owner_notifier).
+                     #   См. SPEC: docs/services/runtime.md
+  app.py             # тонкий re-export shim над runtime (launcher ./bob + тесты держатся)
 ```
 
 Граница слоёв — не только соглашение: тест `tests/application/test_layering.py`
@@ -260,7 +270,7 @@ src/bob/
 символу). На каждый модуль генерируются `usecases-no-adapters`,
 `internals-no-usecases`, `internals-no-adapters`, `usecases-no-infra`,
 `no-composition-root` + inward-границы от чужих бизнес-модулей; координационные слои
-(`application` / `infrastructure` / `runtime` / `app.py`) из inward-модели исключены
+(`application` / `infrastructure` / `runtime`-пакет composition root) из inward-модели исключены
 намеренно — они по определению собирают и зовут usecases/adapters модулей.
 
 ## Мульти-бот gateway и GUPPI-идентичность (BOB-003)
@@ -4035,7 +4045,9 @@ off-day-тона `emotion.offday.{valence,arousal}`, стартовую инте
 (safe-allowlist автономного пути, пустой по умолчанию) и `pursuit_stopped`
 (дефолт kill-switch); см. «Автономность».
 
-`app.py` — единственный модуль, которому разрешено зависеть сразу от всех слоёв.
+Пакет `runtime/` (composition root; вход через `build_application` в
+`runtime/composition.py`, `app.py` — тонкий shim) — единственный слой, которому
+разрешено зависеть сразу от всех слоёв и всех модулей.
 Он строит реальные адаптеры, собирает политику приложения, подписывает
 `HandleMessage` на шину, регистрирует **один** poll-таск (он гонит обоих ботов
 через `MultiBotGateway`) и **четыре** heartbeat-тика (inner-monologue, mood-drift,
@@ -4086,7 +4098,9 @@ safe_capabilities`, ту же `Governance`, kill-switch из `SqliteProactivityS
 rate-limit `goals.max_tasks_per_window` и планируется на собственном (редком)
 каденсе `goals.tick_seconds`. Реальный aiogram `Bot` каждого бота строится из его
 env-токена (`_build_real_bot`) и адаптируется к протоколу `BotLike`
-(`_AiogramBotAdapter`). Провайдеры и оба бота — инъецируемые швы (`bob_bot`,
+(`_AiogramBotAdapter`) — оба вернулись в дом `infrastructure/telegram/
+aiogram_adapter.py` (BOB-062.7a), composition root зовёт их через фабрики
+`runtime/wiring/`. Провайдеры и оба бота — инъецируемые швы (`bob_bot`,
 `guppi_bot`), поэтому весь граф прогоняется end-to-end на фейках без сети.
 
 ### Операционная заметка: прод-запуск двух ботов

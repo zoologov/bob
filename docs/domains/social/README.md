@@ -100,6 +100,8 @@ src/bob/social/
     sulk_store.py          —                   — SqliteSulkStore (одна строка на persona_id)
     permission_request_store.py —              — SqlitePermissionRequestStore (pending-запросы)
     privilege_judge.py     —                   — LlmPrivilegeJudge (Tier-0 реализация PrivilegeJudge)
+    permission_channels.py —                   — транспортные края гейта привилегий (BOB-052): _PermissionRequesterChannel / _PermissionNotifier + _SafeDefaultPrivilegeJudge (safe-default обёртка судьи)
+    soul_loader.py         —                   — _load_soul/_default_soul: сборка in-memory SOUL из персиста data/soul/ (переехало из app.py, BOB-062.7a)
 ```
 
 **Остаётся в persistence-kernel (вариант C, до .7):** конкретная запись social-сторов
@@ -209,6 +211,15 @@ legacy single-row `relationship` owner-blob). `SqliteSulkStore` — одна с�
 `LlmPrivilegeJudge` (`adapters/privilege_judge.py`) — Tier-0 реализация `PrivilegeJudge`:
 чистый билдер промпта + router-вызов на локальной модели + чистый парсер → `PrivilegeNeed`;
 ошибки НЕ глотает (`PrivilegeJudgeParseError` / ошибка router'а всплывают).
+
+`permission_channels.py` (`adapters/permission_channels.py`, инлайн-адаптеры гейта
+привилегий BOB-052, вернувшиеся из `app.py` в BOB-062.7a) — транспортные края:
+`_PermissionRequesterChannel` шлёт fulfilment/decline запрашивающему через бота Боба;
+`_PermissionNotifier` кладёт owner-запрос «разрешить?» в топик Боба, а ack — запрашивающему;
+`_SafeDefaultPrivilegeJudge` оборачивает Tier-0 судью так, что сбой суждения/парсинга даёт
+безопасный не-привилегированный дефолт и не рвёт ход. `soul_loader.py`
+(`adapters/soul_loader.py`) — `_load_soul` собирает in-memory `SOUL` из персиста
+`data/soul/` (`SoulStore`), `_default_soul` даёт нейтральную стартовую soul до Genesis.
 
 ## Инварианты
 

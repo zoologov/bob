@@ -41,6 +41,7 @@ src/bob/coding/
     gh_pr.py            — GhPullRequestOpener (gh pr create; НИКОГДА merge)
     session_store.py    — SqliteCodingSessionStore (персист сессий через рестарт)
     indicator.py        — TypingKeepalive + StatusPanel (индикаторы работы в топике Боба)
+    owner_notifier.py   — _CodingOwnerNotifier (нотификатор owner'а; переехал из app.py, BOB-062.7a)
     _branch.py, _exec.py — внутренние shell-free хелперы адаптеров
 ```
 
