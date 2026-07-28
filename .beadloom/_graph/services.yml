@@ -24,11 +24,20 @@ nodes:
       - architecture.md
 
   # ── Runtime composition root ────────────────────────────────────────────────
+  # BOB-062.7a: the composition root physically moved from the single `app.py`
+  # (2819 lines) into the `src/bob/runtime/` PACKAGE (composition.py + main.py +
+  # clock.py + config.py + wiring/*). `source:` now covers the package so all 14
+  # runtime modules resolve here (module-coverage). `app.py` shrank to an 82-line
+  # re-export SHIM — it falls through to the `bob` root node (src/bob/). This is
+  # the composition-root/entrypoint LAYER (tag `layer-runtime`), NOT a business
+  # module-vertical, so it may legitimately import EVERY layer + every module. 🔴
+  # Distinct from `bob.application.runtime` (async primitives — the `runtime-app`
+  # node, src/bob/application/runtime/); the two never resolve to each other.
   - ref_id: runtime
     kind: service
-    source: src/bob/app.py
+    source: src/bob/runtime/
     tags: [layer-runtime]
-    summary: 'Composition root (`app.py`) — the only module allowed to wire all layers at once: loads layered config, builds infrastructure adapters, composes application policy + use-cases, subscribes handlers to the EventBus, registers ticks + Telegram polling, runs Genesis once, and starts the process.'
+    summary: 'Composition root (`src/bob/runtime/` package + the thin `app.py` shim) — the only layer allowed to wire all layers + all vertical modules at once: `config.py` loads layered config (incl. `_REPO_ROOT`), `wiring/*` build infrastructure adapters + compose application policy/use-cases per bounded context, `composition.py` (`build_application` + `Application`) subscribes handlers to the EventBus and registers ticks + Telegram polling, `clock.py` provides `SystemClock`, and `main.py` runs Genesis once and starts the process.'
     docs:
       - services/runtime.md
 

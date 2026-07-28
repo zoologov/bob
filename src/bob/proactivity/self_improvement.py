@@ -272,9 +272,8 @@ def clamp_magnitude(value: float, *, cap: float) -> float:
     return max(0.0, min(value, cap))
 
 
-# The soft-tilt bounds read as a probability in the closed unit interval: the
-# configured ceiling (``max_magnitude``) and the tilted addressivity bias both live
-# in ``[0, 1]``.
+# The soft-tilt ceiling reads as a probability in the closed unit interval: the
+# configured ``max_magnitude`` lives in ``[0, 1]``.
 _MIN_FREQ = 0.0
 _MAX_FREQ = 1.0
 
@@ -288,11 +287,6 @@ def _validated_magnitude(value: float) -> float:
         )
         raise ValueError(msg)
     return value
-
-
-def _clamp_unit(value: float) -> float:
-    """Saturate ``value`` into the closed unit interval (a bounded interest/bias)."""
-    return max(_MIN_FREQ, min(_MAX_FREQ, value))
 
 
 # --- Мягкое применение: сборка модуляторов из active_rules (BOB-028 .3) -------
