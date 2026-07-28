@@ -17,7 +17,7 @@ from bob.domain.personality.reaction_effect import (
     nudge_relationship_warmth,
 )
 from bob.domain.personality.reaction_meaning import ReactionMeaning
-from bob.domain.personality.relationship import Relationship
+from bob.social.relationship import Relationship
 
 
 def _meaning(*, valence: float, warmth_nudge: float) -> ReactionMeaning:

@@ -305,7 +305,7 @@ class MultiBotGateway:
         """GUPPI's handler (or ``None`` if GUPPI is not registered) — for composition.
 
         Exposed so the composition root can hand GUPPI to the обида seam as the
-        one-shot :class:`~bob.application.usecases.sulk_sources.SulkAnnouncer`
+        one-shot :class:`~bob.social.usecases.sulk_sources.SulkAnnouncer`
         (GUPPI posts "Боб обижен …" on a fresh sulk entry, BOB-014 .2b). Read-only.
         """
         return self._guppi

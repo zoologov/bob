@@ -17,7 +17,7 @@ dispatches its two BEAD-02 drop-hooks here:
   for the allowed group's Bob topic, so a stranger DM never triggers a reject.)
 * :meth:`GuppiHandler.handle_general_command` — an owner-only command in General:
   ``/authorize <id>`` / ``/deauthorize <id>`` mutate the allowlist through the
-  shared :class:`~bob.application.authz.Authorizer` (no duplicated authz),
+  shared :class:`~bob.social.usecases.Authorizer` (no duplicated authz),
   ``/status`` answers a short whoami line, and — when a proactivity store is wired
   in — ``/quiet`` (optionally ``/quiet 2h`` for a timed mute) / ``/wake`` toggle
   Bob's per-persona proactivity flag (and its timed-mute expiry). A command from
@@ -291,7 +291,7 @@ class GuppiHandler:
     async def announce_sulk(self) -> None:
         """Post the one-shot обида announcement into General (BOB-014 .2b).
 
-        Realises :class:`~bob.application.usecases.sulk_sources.SulkAnnouncer`: on a
+        Realises :class:`~bob.social.usecases.sulk_sources.SulkAnnouncer`: on a
         fresh sulk entry GUPPI — the внеличностный systemic voice, never Bob himself —
         tells the owner Bob is hurt and not in the mood to talk. Posted into the General
         chat (where the owner sees GUPPI's system messages), exactly once per entry (the

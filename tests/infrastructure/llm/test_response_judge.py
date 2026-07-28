@@ -18,14 +18,14 @@ import pytest
 
 from bob.application.router.llm_router import LLMRouter, TaskType
 from bob.domain.personality.addressivity import Addressivity
-from bob.domain.personality.interlocutor import (
+from bob.domain.personality.response_choice import ResponseContext, ResponseIntent
+from bob.domain.personality.response_judgment import ResponseJudgeParseError
+from bob.infrastructure.llm.response_judge import LlmResponseJudge
+from bob.social.interlocutor import (
     Interlocutor,
     InterlocutorKind,
     Trust,
 )
-from bob.domain.personality.response_choice import ResponseContext, ResponseIntent
-from bob.domain.personality.response_judgment import ResponseJudgeParseError
-from bob.infrastructure.llm.response_judge import LlmResponseJudge
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Mapping, Sequence

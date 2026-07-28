@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import pytest
 
-from bob.domain.permission.intent import is_authorize, is_deny, is_grant
+from bob.social.permission.intent import is_authorize, is_deny, is_grant
 
 
 @pytest.mark.parametrize(

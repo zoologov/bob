@@ -7,7 +7,7 @@
 
 """PrivilegedRequestFulfiller — run ONE request with the privilege (BOB-052 .3).
 
-The concrete :class:`~bob.application.usecases.permission_execution.PrivilegedFulfiller`:
+The concrete :class:`~bob.social.usecases.permission_execution.PrivilegedFulfiller`:
 once the owner has APPROVED (or AUTHORIZEd) a pending request, this re-runs the stored
 ``request_text`` AS IF the requester were authorized — but ONLY for THIS request (a
 one-shot elevated context built fresh per call):
@@ -21,7 +21,7 @@ one-shot elevated context built fresh per call):
 🔴 The elevation is scoped to the ONE ``request_text`` handed in: this object holds NO
 durable state and is invoked once per approved request, so the privilege can never carry
 to the requester's other/future messages. The durable path is the explicit AUTHORIZE,
-which is the :class:`~bob.application.authz.Authorizer` grant — a different seam.
+which is the :class:`~bob.social.usecases.Authorizer` grant — a different seam.
 """
 
 from __future__ import annotations

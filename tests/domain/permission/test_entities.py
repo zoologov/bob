@@ -15,8 +15,8 @@ from datetime import UTC, datetime
 
 import pytest
 
-from bob.domain.permission.entities import PermissionRequest
-from bob.domain.permission.state import PermissionState
+from bob.social.permission.entities import PermissionRequest
+from bob.social.permission.state import PermissionState
 
 _T0 = datetime(2026, 6, 30, 12, 0, tzinfo=UTC)
 

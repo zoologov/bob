@@ -19,9 +19,9 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from bob.domain.personality.sulk import SulkState
 from bob.infrastructure.persistence.sqlite_repo import SqliteMemoryRepo
-from bob.infrastructure.persistence.sulk_store import SqliteSulkStore
+from bob.social.adapters.sulk_store import SqliteSulkStore
+from bob.social.sulk import SulkState
 
 if TYPE_CHECKING:
     from pathlib import Path

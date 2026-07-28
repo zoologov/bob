@@ -18,9 +18,9 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from bob.domain.personality.relationship import Relationship
-from bob.infrastructure.persistence.relationship_store import SqliteRelationshipStore
 from bob.infrastructure.persistence.sqlite_repo import SqliteMemoryRepo
+from bob.social.adapters.relationship_store import SqliteRelationshipStore
+from bob.social.relationship import Relationship
 
 if TYPE_CHECKING:
     from pathlib import Path

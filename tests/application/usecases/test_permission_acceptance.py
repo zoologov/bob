@@ -30,18 +30,18 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from bob.application.usecases.permission_execution import PermissionExecutor
-from bob.application.usecases.permission_flow import PermissionFlow
 from bob.application.usecases.privileged_fulfiller import PrivilegedRequestFulfiller
 from bob.capabilities.usecases.registry import CapabilityRegistry
-from bob.domain.permission.privilege import PrivilegeContext, PrivilegeNeed
-from bob.domain.permission.state import PermissionState
+from bob.social.permission.privilege import PrivilegeContext, PrivilegeNeed
+from bob.social.permission.state import PermissionState
+from bob.social.usecases.permission_execution import PermissionExecutor
+from bob.social.usecases.permission_flow import PermissionFlow
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
     from bob.application.router.llm_router import LLMRequest
-    from bob.domain.permission.entities import PermissionRequest
+    from bob.social.permission.entities import PermissionRequest
 
 _OWNER = 1
 _NORMAN = 7

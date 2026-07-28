@@ -215,7 +215,7 @@ class FactDeduper(Protocol):
 class SulkRecoverer(Protocol):
     """The narrow seam the reflect tick drives to recover Bob's обида (BOB-014 .2b).
 
-    Realised by :class:`~bob.application.usecases.sulk_sources.SulkRecoveryStep`: a
+    Realised by :class:`~bob.social.usecases.sulk_sources.SulkRecoveryStep`: a
     step that decays обида by the REAL elapsed time since the last tick — the GUARANTEED
     exit, since time alone always brings Bob back (no permanent lock-out). Driven on the
     same slow cadence as the other reflect-tick steps. Idempotent and a no-op when Bob

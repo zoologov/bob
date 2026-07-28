@@ -108,7 +108,7 @@ class OwnerNotifier(Protocol):
 class OwnerCheck(Protocol):
     """Узкий порт authz: только owner управляет coding-сессией (defense-in-depth).
 
-    Реализуется :class:`~bob.application.authz.Authorizer` (его ``is_owner``). Гейт
+    Реализуется :class:`~bob.social.usecases.Authorizer` (его ``is_owner``). Гейт
     дублируется на уровне GUPPI (команда от не-owner туда не доходит), но use-case
     проверяет owner на КАЖДОМ методе сам — никакой сессии/исполнения для чужого.
     """

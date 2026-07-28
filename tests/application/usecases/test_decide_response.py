@@ -13,15 +13,15 @@ from __future__ import annotations
 
 from bob.application.usecases.decide_response import DecideResponse
 from bob.domain.personality.addressivity import Addressivity
-from bob.domain.personality.interlocutor import (
-    Interlocutor,
-    InterlocutorKind,
-    Trust,
-)
 from bob.domain.personality.response_choice import (
     ResponseChoice,
     ResponseContext,
     ResponseIntent,
+)
+from bob.social.interlocutor import (
+    Interlocutor,
+    InterlocutorKind,
+    Trust,
 )
 
 

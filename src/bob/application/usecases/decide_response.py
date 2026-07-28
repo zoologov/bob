@@ -26,11 +26,11 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from bob.domain.personality.addressivity import Addressivity
-    from bob.domain.personality.interlocutor import Interlocutor
     from bob.domain.personality.response_choice import (
         ResponseChoice,
         ResponseJudge,
     )
+    from bob.social.interlocutor import Interlocutor
 
 from bob.domain.personality.response_choice import ResponseContext
 

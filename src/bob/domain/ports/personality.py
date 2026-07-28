@@ -6,12 +6,13 @@
 
 """Personality ports — the durable stores + seams behind Bob's character.
 
-Per-persona / per-sender stores for fascination, first impressions, relationships,
-notable reactions, and обида (sulk), plus the react-only seam
-(:class:`MessageReactor`), the leak-inner-life reader (:class:`ReflectionReader`),
-and the negotiation-zone classifier (:class:`ZoneClassifier`). These are
-*interfaces only*: structural :class:`typing.Protocol` definitions with no
-implementations; the SQLite-backed adapters live in ``bob.infrastructure``.
+The per-persona fascination store and the light notable-reaction store, plus the
+react-only seam (:class:`MessageReactor`), the leak-inner-life reader
+(:class:`ReflectionReader`), and the negotiation-zone classifier
+(:class:`ZoneClassifier`). These are *interfaces only*: structural
+:class:`typing.Protocol` definitions with no implementations; the SQLite-backed
+adapters live in ``bob.infrastructure``. The social identity stores (first
+impression / relationship / sulk) moved to :mod:`bob.social.ports` (BOB-062.5).
 """
 
 from __future__ import annotations
@@ -20,11 +21,8 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     from bob.domain.personality.fascination import Fascination
-    from bob.domain.personality.first_impression import FirstImpression
     from bob.domain.personality.negotiation import NegotiationZone
     from bob.domain.personality.reaction_effect import NotableReaction
-    from bob.domain.personality.relationship import Relationship
-    from bob.domain.personality.sulk import SulkState
     from bob.domain.personality.taste import Verdict
 
 
@@ -88,55 +86,6 @@ class FascinationStore(Protocol):
 
 
 @runtime_checkable
-class FirstImpressionStore(Protocol):
-    """Durable per-sender store for Bob's LIGHT first impression (BOB-019).
-
-    Round-trips the :class:`bob.domain.personality.first_impression.FirstImpression`
-    Bob forms on first contact with a person — who (``sender_id``), when he first met
-    them, and a short impression note — so a returning sender is *recognised*
-    ("кажется, мы уже сталкивались"). Keyed by ``sender_id`` it covers owner / known /
-    guest / bot alike; this is per-PERSON data (about them), NOT owner-private memory,
-    so it is allowed even for a guest. ``load`` returns ``None`` for an unseen sender;
-    ``save`` records once and never overwrites a known sender (the impression is formed
-    on first contact). The deliberately minimal foundation for multi-party BOB-014, not
-    that engine. The concrete SQLite-backed adapter lives in ``bob.infrastructure``.
-    """
-
-    async def load(self, sender_id: int) -> FirstImpression | None:
-        """Return ``sender_id``'s first impression, or ``None`` if there is none."""
-        ...
-
-    async def save(self, impression: FirstImpression) -> None:
-        """Record ``impression`` once — a known sender is never overwritten."""
-        ...
-
-
-@runtime_checkable
-class RelationshipStore(Protocol):
-    """Durable per-sender store for Bob's relationship quality (BOB-014).
-
-    Round-trips the :class:`bob.domain.personality.relationship.Relationship` Bob has
-    with each person — the four bounded axes (trust / respect / warmth /
-    compatibility) — so a relationship accrued over many turns survives a restart and
-    keeps shaping his tone + willingness to compromise. Keyed by ``sender_id`` it
-    covers owner / known / guest / bot alike; this is per-PERSON data (about THEM),
-    NOT owner-private memory, so it is allowed even for a guest. ``load`` returns
-    ``None`` for an unknown sender (Bob has formed no read on them yet). Unlike the
-    formed-once :class:`FirstImpressionStore`, ``save`` UPSERTs — a relationship
-    evolves, so each turn re-saves the newer state. The concrete SQLite-backed adapter
-    lives in ``bob.infrastructure``.
-    """
-
-    async def load(self, sender_id: int) -> Relationship | None:
-        """Return ``sender_id``'s relationship, or ``None`` if there is none yet."""
-        ...
-
-    async def save(self, relationship: Relationship) -> None:
-        """Persist ``relationship`` (UPSERT — an evolving relationship is updated)."""
-        ...
-
-
-@runtime_checkable
 class NotableReactionStore(Protocol):
     """Light durable store for the most recent "being-received" reaction (BOB-050).
 
@@ -159,29 +108,6 @@ class NotableReactionStore(Protocol):
 
     async def clear(self) -> None:
         """Consume the recorded reaction so the rare-aloud hint surfaces it at most once."""
-        ...
-
-
-@runtime_checkable
-class SulkStore(Protocol):
-    """Durable per-persona store for Bob's обида state (BOB-014 .2b).
-
-    Round-trips the :class:`bob.domain.personality.sulk.SulkState` Bob carries — the
-    active flag, the decaying intensity, the low/hostile streak, the entry stamp, and
-    the one-shot ``announced`` flag — so an обида (and its recovery progress) survives
-    a restart. State is per ``persona_id`` so Bobiverse replicas each keep their own.
-    ``load`` returns the fresh, not-sulking default for an unseen persona, so the
-    application always has something to read. Crucially this carries NO memory and NO
-    soul (anti-Exodus) — only the affect state. The concrete SQLite-backed adapter
-    lives in ``bob.infrastructure.persistence``.
-    """
-
-    async def load(self, persona_id: str) -> SulkState:
-        """Return the persisted обида state for ``persona_id`` (fresh if unseen)."""
-        ...
-
-    async def save(self, persona_id: str, state: SulkState) -> None:
-        """Persist ``state`` for ``persona_id`` (replacing any prior обида state)."""
         ...
 
 

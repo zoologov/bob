@@ -17,12 +17,12 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from bob.domain.permission.entities import PermissionRequest
-from bob.domain.permission.state import PermissionState
-from bob.infrastructure.persistence.permission_request_store import (
+from bob.infrastructure.persistence.sqlite_repo import SqliteMemoryRepo
+from bob.social.adapters.permission_request_store import (
     SqlitePermissionRequestStore,
 )
-from bob.infrastructure.persistence.sqlite_repo import SqliteMemoryRepo
+from bob.social.permission.entities import PermissionRequest
+from bob.social.permission.state import PermissionState
 
 if TYPE_CHECKING:
     from pathlib import Path

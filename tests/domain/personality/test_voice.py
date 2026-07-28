@@ -19,11 +19,6 @@ import pytest
 
 from bob.domain.personality.brevity import Verbosity
 from bob.domain.personality.engagement import EngagementLevel
-from bob.domain.personality.interlocutor import (
-    Interlocutor,
-    InterlocutorKind,
-    Trust,
-)
 from bob.domain.personality.mood import Mood
 from bob.domain.personality.voice import (
     OffDayThresholds,
@@ -43,6 +38,11 @@ from bob.domain.personality.voice import (
     user_repeat_directive,
     variable_form_directive,
     who_is_writing_directive,
+)
+from bob.social.interlocutor import (
+    Interlocutor,
+    InterlocutorKind,
+    Trust,
 )
 
 

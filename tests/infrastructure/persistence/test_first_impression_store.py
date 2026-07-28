@@ -19,11 +19,11 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from bob.domain.personality.first_impression import FirstImpression
-from bob.infrastructure.persistence.first_impression_store import (
+from bob.infrastructure.persistence.sqlite_repo import SqliteMemoryRepo
+from bob.social.adapters.first_impression_store import (
     SqliteFirstImpressionStore,
 )
-from bob.infrastructure.persistence.sqlite_repo import SqliteMemoryRepo
+from bob.social.first_impression import FirstImpression
 
 if TYPE_CHECKING:
     from pathlib import Path

@@ -26,12 +26,12 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from bob.application.usecases.permission_execution import (
+from bob.social.permission.entities import PermissionRequest
+from bob.social.permission.state import PermissionState
+from bob.social.usecases.permission_execution import (
     PermissionDecision,
     PermissionExecutor,
 )
-from bob.domain.permission.entities import PermissionRequest
-from bob.domain.permission.state import PermissionState
 
 _GUEST = 7
 _AT = datetime(2026, 6, 30, 12, 0, tzinfo=UTC)

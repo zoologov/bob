@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from bob.infrastructure.persistence.soul_store import SoulStore
+from bob.social.adapters.soul_store import SoulStore
 
 if TYPE_CHECKING:
     from pathlib import Path

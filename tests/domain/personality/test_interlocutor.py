@@ -15,7 +15,7 @@ display name is carried through unchanged.
 
 from __future__ import annotations
 
-from bob.domain.personality.interlocutor import (
+from bob.social.interlocutor import (
     Interlocutor,
     InterlocutorKind,
     Trust,

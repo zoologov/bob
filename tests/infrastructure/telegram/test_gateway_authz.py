@@ -18,10 +18,10 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from bob.application.authz import Authorizer
 from bob.application.runtime.event_bus import AsyncEventBus
 from bob.application.runtime.events import MESSAGE_RECEIVED, MessageReceived
 from bob.infrastructure.telegram.gateway import TelegramGateway
+from bob.social.usecases import Authorizer
 
 if TYPE_CHECKING:
     from collections.abc import Sequence

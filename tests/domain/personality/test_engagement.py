@@ -29,8 +29,8 @@ from bob.domain.personality.engagement import (
     topic_interest,
 )
 from bob.domain.personality.mood import Mood
-from bob.domain.personality.relationship import Relationship
 from bob.domain.personality.taste import Verdict
+from bob.social.relationship import Relationship
 
 _GOOD_MOOD = Mood(valence=0.6, arousal=0.4, openness=0.4)
 _BAD_MOOD = Mood(valence=-0.6, arousal=-0.1)

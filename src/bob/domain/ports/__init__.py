@@ -58,15 +58,11 @@ from bob.domain.ports.kernel import (
 )
 from bob.domain.ports.personality import (
     FascinationStore,
-    FirstImpressionStore,
     MessageReactor,
     NotableReactionStore,
     ReflectionReader,
-    RelationshipStore,
-    SulkStore,
     ZoneClassifier,
 )
-from bob.domain.ports.social import AllowlistStore, SoulStore
 from bob.memory.ports import (
     Embedder,
     MemoryRecall,
@@ -80,6 +76,13 @@ from bob.proactivity.ports import (
     Planner,
     ProactivityStore,
     SelfImprovementStore,
+)
+from bob.social.ports import (
+    AllowlistStore,
+    FirstImpressionStore,
+    RelationshipStore,
+    SoulStore,
+    SulkStore,
 )
 
 __all__ = [

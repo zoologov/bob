@@ -21,8 +21,8 @@ from typing import TYPE_CHECKING
 import pytest
 
 from bob.application.router.llm_router import LLMRouter
-from bob.application.usecases.run_genesis import RunGenesis
-from bob.infrastructure.persistence.soul_store import SoulStore
+from bob.social.adapters.soul_store import SoulStore
+from bob.social.usecases.run_genesis import RunGenesis
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Mapping, Sequence

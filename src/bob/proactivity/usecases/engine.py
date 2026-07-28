@@ -148,7 +148,7 @@ class ReflectionSalienceSource(Protocol):
 class SulkSource(Protocol):
     """Read seam: whether Bob is обижен right now (the proactivity sulk veto, BOB-014).
 
-    Realised by :class:`~bob.application.usecases.sulk_sources.SulkTracker`: while Bob
+    Realised by :class:`~bob.social.usecases.sulk_sources.SulkTracker`: while Bob
     is обижен он не пишет первым, so the engine folds ``active`` into the governance
     veto. It lifts on its own as обида recovers (guaranteed exit). Optional: unwired,
     the veto is simply off and proactivity behaves exactly as before.

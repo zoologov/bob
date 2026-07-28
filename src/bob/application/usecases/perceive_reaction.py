@@ -43,7 +43,7 @@ from bob.domain.personality.reaction_effect import (
     nudge_relationship_warmth,
 )
 from bob.domain.personality.reaction_meaning import ReactionContext
-from bob.domain.personality.relationship import Relationship
+from bob.social.relationship import Relationship
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -51,9 +51,9 @@ if TYPE_CHECKING:
     from bob.application.runtime.events import BobMessageReaction
     from bob.application.usecases.handle_message import PersonalityState
     from bob.domain.personality.disposition import Disposition
-    from bob.domain.personality.interlocutor import Interlocutor
     from bob.domain.personality.reaction_meaning import ReactionJudge, ReactionMeaning
     from bob.domain.ports import Clock, NotableReactionStore, RelationshipStore
+    from bob.social.interlocutor import Interlocutor
 
 logger = logging.getLogger(__name__)
 

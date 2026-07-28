@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import pytest
 
-from bob.domain.permission.privilege import (
+from bob.social.permission.privilege import (
     PRIVILEGE_JUDGE_SYSTEM_PROMPT,
     PrivilegeContext,
     PrivilegeJudgeParseError,

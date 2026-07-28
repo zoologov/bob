@@ -108,7 +108,6 @@ from bob.domain.personality.expression import (
     ExpressionSignals,
     decide_expression,
 )
-from bob.domain.personality.interlocutor import InterlocutorKind, Trust
 from bob.domain.personality.mood import MoodDelta
 from bob.domain.personality.mood_taste import experiment_bias, modulate
 from bob.domain.personality.negotiation import (
@@ -119,7 +118,6 @@ from bob.domain.personality.negotiation import (
 from bob.domain.personality.profanity import is_directed_hostility
 from bob.domain.personality.reaction import reaction_emoji_for
 from bob.domain.personality.reaction_aloud import acknowledgment_hint
-from bob.domain.personality.relationship import compromise_bias
 from bob.domain.personality.response_choice import ResponseIntent
 from bob.domain.personality.taste import Verdict
 from bob.domain.personality.voice import (
@@ -145,6 +143,8 @@ from bob.domain.personality.zone_classifier import TasteZoneClassifier
 from bob.domain.ports import DiagramRenderError, DiagramResult
 from bob.memory.entities import EpisodicEvent
 from bob.proactivity.self_improvement import RuleModulators, build_modulators
+from bob.social.interlocutor import InterlocutorKind, Trust
+from bob.social.relationship import compromise_bias
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Mapping, Sequence
@@ -158,12 +158,9 @@ if TYPE_CHECKING:
     from bob.application.usecases.update_mood_from_text import UpdateMoodFromText
     from bob.capabilities.usecases.progress_announcer import InterimLineGenerator
     from bob.domain.personality.fascination import Fascination
-    from bob.domain.personality.interlocutor import Interlocutor
     from bob.domain.personality.mood import Mood
-    from bob.domain.personality.relationship import Relationship
     from bob.domain.personality.response_choice import ResponseChoice
     from bob.domain.personality.soul import SOUL
-    from bob.domain.personality.sulk import SulkState
     from bob.domain.personality.volatility_judgment import (
         VolatilityJudge,
         VolatilityVerdict,
@@ -186,6 +183,9 @@ if TYPE_CHECKING:
     )
     from bob.memory.usecases.extract_facts import ExtractFacts
     from bob.proactivity.self_improvement import ImprovementRule
+    from bob.social.interlocutor import Interlocutor
+    from bob.social.relationship import Relationship
+    from bob.social.sulk import SulkState
 
 logger = logging.getLogger(__name__)
 
@@ -465,10 +465,10 @@ class InterlocutorResolver(Protocol):
     """Perception seam: WHO is writing this turn (BOB-019).
 
     Resolves the inbound :class:`MessageReceived` into an
-    :class:`~bob.domain.personality.interlocutor.Interlocutor` — the sender's
+    :class:`~bob.social.interlocutor.Interlocutor` — the sender's
     social identity (owner / known / guest / bot + trust) — so the compose path can
     fold WHO is on the other side into Bob's voice. The concrete adapter derives it
-    from the :class:`~bob.application.authz.Authorizer` (``is_owner`` +
+    from the :class:`~bob.social.usecases.Authorizer` (``is_owner`` +
     ``is_authorized``) already known for the turn. Optional and additive: unwired
     (the default) the perception line is simply absent and the turn behaves exactly
     as before — it never changes which pipeline runs (the guest-restricted path is
@@ -487,7 +487,7 @@ class FirstImpressionReader(Protocol):
     видел; впечатление было такое-то"; :meth:`note_first_contact` records a fresh,
     grounded note on FIRST contact (formed once — a known sender is left untouched).
     The concrete adapter
-    (:class:`~bob.application.usecases.first_impression_sources.FirstImpressionTracker`)
+    (:class:`~bob.social.usecases.first_impression_sources.FirstImpressionTracker`)
     keys on ``sender_id`` and stamps the clock. Optional and additive: unwired (the
     default) Bob simply never recalls a first impression and the turn is unchanged.
 
@@ -506,13 +506,13 @@ class RelationshipReader(Protocol):
 
     The compose path uses this to let Bob's accrued relationship with WHO is writing
     shape THIS turn: :meth:`current` returns the stored
-    :class:`~bob.domain.personality.relationship.Relationship` (an unknown sender →
+    :class:`~bob.social.relationship.Relationship` (an unknown sender →
     ``None``) so the prompt can warm/cool his tone (by ``warmth``) and the negotiation
     can nudge his willingness to compromise (by ``warmth`` + ``compatibility``);
     :meth:`record_interaction` updates + persists the relationship AFTER the turn from
     the negotiation ``stance``, Bob's ``mood``, and a ``sentiment`` scalar (the pure
-    :func:`~bob.domain.personality.relationship.apply_interaction`). The concrete
-    adapter (:class:`~bob.application.usecases.relationship_sources.RelationshipTracker`)
+    :func:`~bob.social.relationship.apply_interaction`). The concrete
+    adapter (:class:`~bob.social.usecases.relationship_sources.RelationshipTracker`)
     keys on ``sender_id``. Optional and additive: unwired (the default) the tone/
     willingness are unchanged and no relationship is recorded.
 
@@ -537,14 +537,14 @@ class SulkReader(Protocol):
 
     The compose path uses this to go COLD while Bob is hurt and to let обида take hold
     or warm up over the live message path: :meth:`current` returns the persisted
-    :class:`~bob.domain.personality.sulk.SulkState` so the prompt appends the cold
+    :class:`~bob.social.sulk.SulkState` so the prompt appends the cold
     :func:`~bob.domain.personality.voice.sulk_directive` while ``active``;
     :meth:`observe` folds ONE owner turn's signals (the relationship ``owner_warmth``,
     a ``hostile`` directed-hostility flag, and a ``warmth_delta``) into обида AFTER the
     turn — a sustained critical owner-drop OR sustained directed hostility enters обида
     (announced once via GUPPI), while a warm turn accelerates recovery if already hurt.
     The concrete adapter
-    (:class:`~bob.application.usecases.sulk_sources.SulkTracker`) is per-PERSONA and
+    (:class:`~bob.social.usecases.sulk_sources.SulkTracker`) is per-PERSONA and
     persists. Optional and additive: unwired (the default) Bob never sulks and the turn
     behaves exactly as before. обида carries NO memory and NO soul (anti-Exodus).
     """
@@ -627,7 +627,7 @@ class NaturalCodingRouter(Protocol):
 class PermissionFlowLike(Protocol):
     """The permission-flow seam HandleMessage delegates privilege gating to (BOB-052 .2).
 
-    Realised by :class:`~bob.application.usecases.permission_flow.PermissionFlow`. On a
+    Realised by :class:`~bob.social.usecases.permission_flow.PermissionFlow`. On a
     turn it owns two decisions, each returning whether it CONSUMED the turn (so
     HandleMessage short-circuits the normal compose): ``maybe_decide`` records the
     OWNER's verdict on an active pending request (grant / deny / authorize), and
@@ -1685,7 +1685,7 @@ class HandleMessage:
         Returns whether the natural-language coding path CONSUMED the turn (so the
         caller short-circuits the normal compose). Inert when no router is wired (the
         default / ``coder.enabled`` false). Owner is derived from the perceived
-        interlocutor — only an :class:`~bob.domain.personality.interlocutor.InterlocutorKind.OWNER`
+        interlocutor — only an :class:`~bob.social.interlocutor.InterlocutorKind.OWNER`
         sender is ever owner here, so with no perception seam (or a guest/known sender)
         the message is never routed (``is_owner`` false) and the router itself re-checks;
         the gated use-case re-checks the owner again (defense-in-depth).
@@ -1740,7 +1740,7 @@ class HandleMessage:
         """Perceive WHO is writing this turn, or ``None`` (no seam wired) (BOB-019).
 
         Asks the wired perception seam to resolve the inbound into an
-        :class:`~bob.domain.personality.interlocutor.Interlocutor` (owner / known /
+        :class:`~bob.social.interlocutor.Interlocutor` (owner / known /
         guest / bot). Unwired (the default) returns ``None`` so the compose path
         adds no who-is-writing line and the turn behaves exactly as before.
         """
@@ -1807,7 +1807,7 @@ class HandleMessage:
         same relationship-nudged conviction the prompt used), his current mood, and the
         turn's sentiment (read off the mood valence — the mood already reflects the
         perceived sentiment of the message) evolve the relationship via the pure
-        :func:`~bob.domain.personality.relationship.apply_interaction`. A flaky store
+        :func:`~bob.social.relationship.apply_interaction`. A flaky store
         can never break a turn that has already replied.
         """
         if self._relationship is None or interlocutor is None:
@@ -1829,7 +1829,7 @@ class HandleMessage:
 
         With no sulk seam wired returns ``None`` so the compose path adds no cold-tone
         line and the turn behaves exactly as before. Otherwise returns the persisted
-        :class:`~bob.domain.personality.sulk.SulkState` so the prompt can go cold while
+        :class:`~bob.social.sulk.SulkState` so the prompt can go cold while
         Bob is hurt. обида carries NO memory and NO soul — only the affect state.
         """
         if self._sulk is None:
@@ -1892,7 +1892,7 @@ class HandleMessage:
         Classifies the zone owning ``text`` from the taste verdict + conviction, then
         maps zone + an EFFECTIVE conviction to a :class:`Stance`. The effective
         conviction is the raw conviction lowered by the relationship's
-        :func:`~bob.domain.personality.relationship.compromise_bias` — a close person
+        :func:`~bob.social.relationship.compromise_bias` — a close person
         (high warmth + compatibility) tips a borderline stance from holding ground
         toward agreeing (more willing to compromise), clamped to ``[0, 1]``. Returns
         the stance plus the verdict + zone so the prompt's stance-directive gate can

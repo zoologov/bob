@@ -115,7 +115,7 @@ ignore = [
 # The обида/sulk module (BOB-014 .2b) carries Russian persona/affect terms in its
 # docstring + comments ("обида", "отходит", "тёплые сообщения") whose Cyrillic
 # look-alikes are intentional — RUF002/RUF003 do not apply to these.
-"src/bob/domain/personality/sulk.py" = ["RUF002", "RUF003"]
+"src/bob/social/sulk.py" = ["RUF002", "RUF003"]
 # The addressivity module (BOB-023) carries Russian persona/policy terms in its
 # docstring + comments ("обращение", "вклиниться", "в воздух") and short Russian
 # name-address literals whose Cyrillic look-alikes are intentional (the heuristic
@@ -166,12 +166,12 @@ ignore = [
 # The permission domain + judge + store (BOB-052 .1) carries Russian persona/policy
 # docstrings, comments and grant/deny/authorize keyword literals whose Cyrillic
 # look-alikes are intentional — RUF001/RUF002/RUF003 here.
-"src/bob/domain/permission/__init__.py" = ["RUF001", "RUF002", "RUF003"]
-"src/bob/domain/permission/state.py" = ["RUF001", "RUF002", "RUF003"]
-"src/bob/domain/permission/entities.py" = ["RUF001", "RUF002", "RUF003"]
-"src/bob/domain/permission/privilege.py" = ["RUF001", "RUF002", "RUF003"]
-"src/bob/domain/permission/intent.py" = ["RUF001", "RUF002", "RUF003"]
-"src/bob/infrastructure/llm/privilege_judge.py" = ["RUF001", "RUF002", "RUF003"]
+"src/bob/social/permission/__init__.py" = ["RUF001", "RUF002", "RUF003"]
+"src/bob/social/permission/state.py" = ["RUF001", "RUF002", "RUF003"]
+"src/bob/social/permission/entities.py" = ["RUF001", "RUF002", "RUF003"]
+"src/bob/social/permission/privilege.py" = ["RUF001", "RUF002", "RUF003"]
+"src/bob/social/permission/intent.py" = ["RUF001", "RUF002", "RUF003"]
+"src/bob/social/adapters/privilege_judge.py" = ["RUF001", "RUF002", "RUF003"]
 # The volatility judge (BOB-057 .1): its conservative Russian prompt + docstrings
 # carry Cyrillic look-alikes that are intentional — RUF001/RUF002/RUF003 here.
 "src/bob/domain/personality/volatility_judgment.py" = ["RUF001", "RUF002", "RUF003"]
@@ -179,7 +179,7 @@ ignore = [
 # examples carry intentional Cyrillic look-alikes — RUF001/RUF002/RUF003 here.
 "src/bob/domain/personality/interim_line.py" = ["RUF001", "RUF002", "RUF003"]
 "src/bob/infrastructure/llm/interim_line.py" = ["RUF001", "RUF002", "RUF003"]
-"src/bob/infrastructure/persistence/permission_request_store.py" = [
+"src/bob/social/adapters/permission_request_store.py" = [
     "RUF001",
     "RUF002",
     "RUF003",
@@ -187,11 +187,11 @@ ignore = [
 # The permission flow + its app wiring (BOB-052 .2) carry Russian persona/policy
 # docstrings, comments and the owner-notice/requester-ack literals whose Cyrillic
 # look-alikes are intentional — RUF001/RUF002/RUF003 here.
-"src/bob/application/usecases/permission_flow.py" = ["RUF001", "RUF002", "RUF003"]
+"src/bob/social/usecases/permission_flow.py" = ["RUF001", "RUF002", "RUF003"]
 # The permission EXECUTION (BOB-052 .3): the executor's decline line + the elevated
 # fulfilment prompt carry Russian persona literals whose Cyrillic look-alikes are
 # intentional — RUF001/RUF002/RUF003 here.
-"src/bob/application/usecases/permission_execution.py" = ["RUF001", "RUF002", "RUF003"]
+"src/bob/social/usecases/permission_execution.py" = ["RUF001", "RUF002", "RUF003"]
 "src/bob/application/usecases/privileged_fulfiller.py" = ["RUF001", "RUF002", "RUF003"]
 # The coding work-indicator adapters (BOB-046 .2): Russian docstrings whose Cyrillic
 # look-alikes are intentional — RUF001/RUF002/RUF003 do not apply to these.

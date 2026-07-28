@@ -39,7 +39,7 @@ from bob.domain.personality.reflection import (
 )
 from bob.domain.personality.soul import SOUL
 from bob.domain.personality.taste import TasteAxis, TasteEngine
-from bob.infrastructure.persistence.soul_store import SoulStore
+from bob.social.adapters.soul_store import SoulStore
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Mapping, Sequence

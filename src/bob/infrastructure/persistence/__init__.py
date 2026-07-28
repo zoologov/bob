@@ -17,20 +17,22 @@ a later slice.
 
 from __future__ import annotations
 
-from bob.infrastructure.persistence.allowlist_store import KvAllowlistStore
 from bob.infrastructure.persistence.closer_log_store import SqliteCloserLog
 from bob.infrastructure.persistence.conversation_floor_store import (
     SqliteConversationFloorStore,
 )
 from bob.infrastructure.persistence.fascination_store import SqliteFascinationStore
-from bob.infrastructure.persistence.first_impression_store import (
-    SqliteFirstImpressionStore,
-)
 from bob.infrastructure.persistence.notable_reaction_store import KvNotableReactionStore
-from bob.infrastructure.persistence.relationship_store import SqliteRelationshipStore
-from bob.infrastructure.persistence.soul_store import SoulStore
 from bob.infrastructure.persistence.sqlite_repo import SqliteMemoryRepo
-from bob.infrastructure.persistence.sulk_store import SqliteSulkStore
+
+# Social identity stores (first-impression / relationship / sulk / allowlist / soul)
+# moved to ``bob.social.adapters`` (BOB-062.5); re-exported here so the persistence
+# facade keeps resolving them unchanged.
+from bob.social.adapters.allowlist_store import KvAllowlistStore
+from bob.social.adapters.first_impression_store import SqliteFirstImpressionStore
+from bob.social.adapters.relationship_store import SqliteRelationshipStore
+from bob.social.adapters.soul_store import SoulStore
+from bob.social.adapters.sulk_store import SqliteSulkStore
 
 __all__ = [
     "KvAllowlistStore",

@@ -15,7 +15,7 @@ the seam through which it is made.
 
 * :class:`ReactionContext` — the immutable INPUT: the emoji(s) involved, whether
   the reaction was ADDED or REMOVED, the TEXT of Bob's message it landed on, the
-  reactor as social context (:class:`~bob.domain.personality.interlocutor.Interlocutor`
+  reactor as social context (:class:`~bob.social.interlocutor.Interlocutor`
   + their current warmth with Bob), and a light thread snippet. Everything the judge
   weighs by meaning — the emoji is a signal, never a lookup key.
 * :class:`ReactionMeaning` — the immutable OUTCOME: a short ``interpretation`` (for
@@ -33,8 +33,8 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
-    from bob.domain.personality.interlocutor import Interlocutor
     from bob.domain.personality.mood import MoodDelta
+    from bob.social.interlocutor import Interlocutor
 
 __all__ = [
     "ReactionContext",

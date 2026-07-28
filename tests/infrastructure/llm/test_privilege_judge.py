@@ -17,11 +17,11 @@ from typing import TYPE_CHECKING
 import pytest
 
 from bob.application.router.llm_router import LLMRouter, TaskType
-from bob.domain.permission.privilege import (
+from bob.social.adapters.privilege_judge import LlmPrivilegeJudge
+from bob.social.permission.privilege import (
     PrivilegeContext,
     PrivilegeJudgeParseError,
 )
-from bob.infrastructure.llm.privilege_judge import LlmPrivilegeJudge
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Mapping, Sequence
