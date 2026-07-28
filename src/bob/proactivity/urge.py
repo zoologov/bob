@@ -29,7 +29,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from bob.domain.personality.mood import Mood
+    from bob.personality.mood import Mood
 
 # Input bounds.
 _MIN_SALIENCE = 0.0

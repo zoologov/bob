@@ -10,7 +10,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from bob.domain.personality.fascination import (
+from bob.personality.fascination import (
     DECAY_FLOOR,
     MAX_INTENSITY,
     MIN_INTENSITY,

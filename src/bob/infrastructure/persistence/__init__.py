@@ -17,13 +17,13 @@ a later slice.
 
 from __future__ import annotations
 
-from bob.infrastructure.persistence.closer_log_store import SqliteCloserLog
-from bob.infrastructure.persistence.conversation_floor_store import (
+from bob.conversation.adapters.closer_log_store import SqliteCloserLog
+from bob.conversation.adapters.conversation_floor_store import (
     SqliteConversationFloorStore,
 )
-from bob.infrastructure.persistence.fascination_store import SqliteFascinationStore
-from bob.infrastructure.persistence.notable_reaction_store import KvNotableReactionStore
 from bob.infrastructure.persistence.sqlite_repo import SqliteMemoryRepo
+from bob.personality.adapters.fascination_store import SqliteFascinationStore
+from bob.personality.adapters.notable_reaction_store import KvNotableReactionStore
 
 # Social identity stores (first-impression / relationship / sulk / allowlist / soul)
 # moved to ``bob.social.adapters`` (BOB-062.5); re-exported here so the persistence

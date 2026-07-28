@@ -12,7 +12,7 @@ heuristic over the text, deterministic and unit-testable.
 
 from __future__ import annotations
 
-from bob.domain.personality.profanity import is_directed_hostility
+from bob.personality.profanity import is_directed_hostility
 
 
 def test_plain_message_is_not_hostile() -> None:

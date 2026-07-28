@@ -17,8 +17,8 @@ from typing import TYPE_CHECKING
 import pytest
 
 from bob.application.router.llm_router import LLMRouter, TaskType
-from bob.domain.personality.volatility_judgment import VolatilityContext
-from bob.infrastructure.llm.volatility_judge import LlmVolatilityJudge
+from bob.conversation.adapters.volatility_judge import LlmVolatilityJudge
+from bob.conversation.volatility_judgment import VolatilityContext
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Mapping, Sequence

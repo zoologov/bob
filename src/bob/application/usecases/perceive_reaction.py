@@ -4,13 +4,14 @@
 
 # beadloom:domain=bob
 # beadloom:feature=usecases
+# beadloom:layer=application
 
 """PerceiveReaction — Bob feels a reaction on one of his own messages (BOB-050).
 
 The application heart of the feature: it subscribes to the
 :class:`~bob.application.runtime.events.BobMessageReaction` event, looks up what Bob
 SAID (by ``bob_message_id``), asks the injected
-:class:`~bob.domain.personality.reaction_meaning.ReactionJudge` what the reaction
+:class:`~bob.personality.reaction_meaning.ReactionJudge` what the reaction
 MEANS on that message from that person, and lets the meaning change him — bounded,
 along the BOB-033 social-contagion path:
 
@@ -36,13 +37,13 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Protocol
 
-from bob.domain.personality.mood import MoodDelta
-from bob.domain.personality.reaction_effect import (
+from bob.personality.mood import MoodDelta
+from bob.personality.reaction_effect import (
     NotableReaction,
     apply_reaction_to_mood,
     nudge_relationship_warmth,
 )
-from bob.domain.personality.reaction_meaning import ReactionContext
+from bob.personality.reaction_meaning import ReactionContext
 from bob.social.relationship import Relationship
 
 if TYPE_CHECKING:
@@ -50,9 +51,9 @@ if TYPE_CHECKING:
 
     from bob.application.runtime.events import BobMessageReaction
     from bob.application.usecases.handle_message import PersonalityState
-    from bob.domain.personality.disposition import Disposition
-    from bob.domain.personality.reaction_meaning import ReactionJudge, ReactionMeaning
     from bob.domain.ports import Clock, NotableReactionStore, RelationshipStore
+    from bob.personality.disposition import Disposition
+    from bob.personality.reaction_meaning import ReactionJudge, ReactionMeaning
     from bob.social.interlocutor import Interlocutor
 
 logger = logging.getLogger(__name__)

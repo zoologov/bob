@@ -100,18 +100,18 @@ ignore = [
 # "living Bob" private thoughts ("Поймал себя на том…", "Сегодня тише, чем хотелось бы…")
 # whose Cyrillic look-alikes are intentional (the Tier-0 model reads them natively) —
 # RUF001/RUF002/RUF003 do not apply to these literals.
-"src/bob/domain/personality/reflection.py" = ["RUF001", "RUF002", "RUF003"]
+"src/bob/personality/reflection.py" = ["RUF001", "RUF002", "RUF003"]
 # The reappraisal module (BOB-033 .2) carries Russian persona/policy docstrings + comments
 # whose Cyrillic look-alikes are intentional — RUF001/RUF002/RUF003 do not apply to these.
-"src/bob/application/usecases/reappraise_reflection.py" = ["RUF001", "RUF002", "RUF003"]
+"src/bob/personality/usecases/reappraise_reflection.py" = ["RUF001", "RUF002", "RUF003"]
 # The persona voice module (BOB-016) is, by nature, multi-line Russian prose
 # whose Cyrillic look-alikes are intentional (the model reads the directives
 # natively); RUF001's ambiguous-character lint does not apply to these literals.
-"src/bob/domain/personality/voice.py" = ["RUF001", "RUF002", "RUF003"]
+"src/bob/personality/voice.py" = ["RUF001", "RUF002", "RUF003"]
 # The engagement-appetite module (BOB-014 .2a) carries Russian persona/affect terms in
 # its docstring + comments ("наскучило", "какие-попало", "ни о чём") whose Cyrillic
 # look-alikes are intentional — RUF002/RUF003 do not apply to these.
-"src/bob/domain/personality/engagement.py" = ["RUF002", "RUF003"]
+"src/bob/conversation/engagement.py" = ["RUF002", "RUF003"]
 # The обида/sulk module (BOB-014 .2b) carries Russian persona/affect terms in its
 # docstring + comments ("обида", "отходит", "тёплые сообщения") whose Cyrillic
 # look-alikes are intentional — RUF002/RUF003 do not apply to these.
@@ -120,24 +120,24 @@ ignore = [
 # docstring + comments ("обращение", "вклиниться", "в воздух") and short Russian
 # name-address literals whose Cyrillic look-alikes are intentional (the heuristic
 # matches real Russian text) — RUF001/RUF002/RUF003 do not apply to these.
-"src/bob/domain/personality/addressivity.py" = ["RUF001", "RUF002", "RUF003"]
+"src/bob/conversation/addressivity.py" = ["RUF001", "RUF002", "RUF003"]
 # The profanity-perception module (BOB-014 .2b) carries short Russian мат/insult
 # literals + comments whose Cyrillic look-alikes are intentional (the heuristic matches
 # real Russian text) — RUF001/RUF002/RUF003 do not apply to these.
-"src/bob/domain/personality/profanity.py" = ["RUF001", "RUF002", "RUF003"]
+"src/bob/personality/profanity.py" = ["RUF001", "RUF002", "RUF003"]
 # The brevity module (BOB-024) carries Russian answer-demand keyword literals
 # ("почему", "расскажи", "ты тут") + persona/policy comments whose Cyrillic
 # look-alikes are intentional (the heuristic matches real Russian text) —
 # RUF001/RUF002/RUF003 do not apply to these.
-"src/bob/domain/personality/brevity.py" = ["RUF001", "RUF002", "RUF003"]
+"src/bob/conversation/brevity.py" = ["RUF001", "RUF002", "RUF003"]
 # The conversation module (BOB-022 + BOB-026 .1) carries Russian persona/policy
 # docstrings + comments ("повтор через ход", "анти-ложно-срабатывание") whose
 # Cyrillic look-alikes are intentional — RUF001/RUF002/RUF003 do not apply to these.
-"src/bob/domain/personality/conversation.py" = ["RUF001", "RUF002", "RUF003"]
+"src/bob/conversation/conversation.py" = ["RUF001", "RUF002", "RUF003"]
 # The conversation-floor module (BOB-025) carries Russian persona/policy docstrings +
 # comments ("у микрофона", "разговорной реплики", "распад") whose Cyrillic look-alikes
 # are intentional — RUF001/RUF002/RUF003 do not apply to these.
-"src/bob/domain/personality/conversation_floor.py" = ["RUF001", "RUF002", "RUF003"]
+"src/bob/conversation/conversation_floor.py" = ["RUF001", "RUF002", "RUF003"]
 # The Goal Engine (BOB-015) carries Russian persona/policy docstrings + blocked-reason
 # literals ("требует внешней агентности", "ждёт незавершённых задач") whose Cyrillic
 # look-alikes are intentional — RUF001/RUF002/RUF003 do not apply to these.
@@ -174,11 +174,11 @@ ignore = [
 "src/bob/social/adapters/privilege_judge.py" = ["RUF001", "RUF002", "RUF003"]
 # The volatility judge (BOB-057 .1): its conservative Russian prompt + docstrings
 # carry Cyrillic look-alikes that are intentional — RUF001/RUF002/RUF003 here.
-"src/bob/domain/personality/volatility_judgment.py" = ["RUF001", "RUF002", "RUF003"]
+"src/bob/conversation/volatility_judgment.py" = ["RUF001", "RUF002", "RUF003"]
 # The interim-line seam (BOB-057 .3): its Russian persona prompt + one-liner
 # examples carry intentional Cyrillic look-alikes — RUF001/RUF002/RUF003 here.
-"src/bob/domain/personality/interim_line.py" = ["RUF001", "RUF002", "RUF003"]
-"src/bob/infrastructure/llm/interim_line.py" = ["RUF001", "RUF002", "RUF003"]
+"src/bob/conversation/interim_line.py" = ["RUF001", "RUF002", "RUF003"]
+"src/bob/conversation/adapters/interim_line.py" = ["RUF001", "RUF002", "RUF003"]
 "src/bob/social/adapters/permission_request_store.py" = [
     "RUF001",
     "RUF002",

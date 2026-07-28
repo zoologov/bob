@@ -18,7 +18,7 @@ from itertools import pairwise
 
 import pytest
 
-from bob.domain.personality.mood import Mood
+from bob.personality.mood import Mood
 from bob.proactivity.urge import UrgeModel
 
 # A neutral fixed point: every axis below varies against this baseline so only the

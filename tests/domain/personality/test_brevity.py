@@ -14,14 +14,14 @@ from random import Random
 
 import pytest
 
-from bob.domain.personality.brevity import (
+from bob.conversation.brevity import (
     AnswerDemand,
     BrevityThresholds,
     clamp_reply,
     classify_answer_demand,
     decide_verbosity,
 )
-from bob.domain.personality.expression import FormHint, Verbosity
+from bob.personality.expression import FormHint, Verbosity
 
 # --- classify_answer_demand --------------------------------------------------
 

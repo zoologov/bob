@@ -13,8 +13,8 @@ from __future__ import annotations
 
 import pytest
 
-from bob.domain.personality.taste import TasteAxis
-from bob.domain.personality.taste_evolution import ALPHA, BETA, reinforce
+from bob.personality.taste import TasteAxis
+from bob.personality.taste_evolution import ALPHA, BETA, reinforce
 
 
 def test_positive_nudge_raises_value_and_conviction() -> None:

@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from random import Random
 
-from bob.domain.personality.phantom_evolution import (
+from bob.personality.phantom_evolution import (
     PhantomSignals,
     evolve_phantoms,
 )

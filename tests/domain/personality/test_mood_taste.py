@@ -15,9 +15,9 @@ this is not self-evolution / BOB-013), it is **bounded**, and it is
 
 from __future__ import annotations
 
-from bob.domain.personality.mood import Mood
-from bob.domain.personality.mood_taste import experiment_bias, modulate
-from bob.domain.personality.taste import Verdict
+from bob.personality.mood import Mood
+from bob.personality.mood_taste import experiment_bias, modulate
+from bob.personality.taste import Verdict
 
 # A clearly bright/open mood and a clearly flat/low mood for the band tests.
 _BRIGHT = Mood(valence=0.7, arousal=0.4, openness=0.6)

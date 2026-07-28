@@ -29,26 +29,26 @@ import logging
 from typing import TYPE_CHECKING, Protocol
 
 from bob.application.router.llm_router import LLMRequest, TaskType
-from bob.domain.personality.conversation import RepeatThresholds, is_bob_repeat
-from bob.domain.personality.language import DEFAULT_LANGUAGE, language_directive
-from bob.domain.personality.mood import MoodDelta
-from bob.domain.personality.reflection import (
+from bob.conversation.conversation import RepeatThresholds, is_bob_repeat
+from bob.memory.entities import EpisodicEvent
+from bob.personality.language import DEFAULT_LANGUAGE, language_directive
+from bob.personality.mood import MoodDelta
+from bob.personality.reflection import (
     build_monologue_prompt,
     build_reflection_prompt,
     select_reflection_angle,
 )
-from bob.memory.entities import EpisodicEvent
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
     from random import Random
 
     from bob.application.router.llm_router import LLMRouter
-    from bob.application.usecases.apply_reflection import ApplyReflection
     from bob.application.usecases.handle_message import PersonalityState
-    from bob.application.usecases.reappraise_reflection import ReappraisalOutcome
-    from bob.domain.personality.taste import TasteEngine
     from bob.domain.ports import Clock, JsonValue
+    from bob.personality.taste import TasteEngine
+    from bob.personality.usecases.apply_reflection import ApplyReflection
+    from bob.personality.usecases.reappraise_reflection import ReappraisalOutcome
 
 logger = logging.getLogger(__name__)
 
@@ -137,7 +137,7 @@ class ReflectionContext(Protocol):
 class Reappraiser(Protocol):
     """The narrow seam the reflect tick drives to reappraise a dark thought (BOB-033 .2).
 
-    Realised by :class:`~bob.application.usecases.reappraise_reflection.ReappraiseReflection`:
+    Realised by :class:`~bob.personality.usecases.reappraise_reflection.ReappraiseReflection`:
     after a reflection is generated it classifies the thought's sentiment (Tier 0) and,
     only for a NEGATIVE one, with a seeded-RNG probability drawn from Bob's disposition,
     runs a Tier-1 beat that reframes it constructively and returns a positive valence
@@ -154,7 +154,7 @@ class Reappraiser(Protocol):
 class FascinationEvolver(Protocol):
     """The narrow seam the reflect tick drives to evolve Bob's fascination (BOB-020).
 
-    Realised by :class:`~bob.application.usecases.evolve_fascination.EvolveFascination`:
+    Realised by :class:`~bob.personality.usecases.evolve_fascination.EvolveFascination`:
     a rare, grounded, idempotent step that — only when the current passion has spent
     itself — picks a fresh one from Bob's real inner life. Driven AFTER the reflection
     is logged so that fresh reflection is available as grounding. Optional: unwired,
@@ -169,7 +169,7 @@ class FascinationEvolver(Protocol):
 class PhantomEvolver(Protocol):
     """The narrow seam the reflect tick drives to evolve Bob's phantom prefs (BOB-020).
 
-    Realised by :class:`~bob.application.usecases.evolve_phantoms.EvolvePhantoms`: a
+    Realised by :class:`~bob.personality.usecases.evolve_phantoms.EvolvePhantoms`: a
     rare, grounded, slow, idempotent step that lets Bob's phantom preferences shift
     over time — a fresh symphony emerges from a real strong taste/reflection, an old
     one fades. Driven AFTER the reflection is logged so that fresh reflection is

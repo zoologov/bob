@@ -14,8 +14,8 @@ is pure-domain, the store round-trips per ``sender_id``.
 
 from __future__ import annotations
 
-from bob.domain.personality.mood import Mood
-from bob.domain.personality.negotiation import Stance
+from bob.personality.mood import Mood
+from bob.personality.negotiation import Stance
 from bob.social.interlocutor import Interlocutor, InterlocutorKind, Trust
 from bob.social.relationship import Relationship
 from bob.social.usecases.relationship_sources import RelationshipTracker

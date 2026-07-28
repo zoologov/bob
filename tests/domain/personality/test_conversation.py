@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import pytest
 
-from bob.domain.personality.conversation import (
+from bob.conversation.conversation import (
     RepeatThresholds,
     closer_text,
     is_bob_repeat,

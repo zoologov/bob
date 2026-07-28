@@ -16,7 +16,7 @@ from __future__ import annotations
 import pytest
 
 from bob.app import _build_repeat_thresholds
-from bob.domain.personality.conversation import RepeatThresholds
+from bob.conversation.conversation import RepeatThresholds
 
 
 def test_repeat_config_absent_section_yields_conservative_defaults() -> None:

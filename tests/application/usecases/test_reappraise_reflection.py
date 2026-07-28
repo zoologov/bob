@@ -24,11 +24,11 @@ from bob.application.router.llm_router import (
     LLMRouter,
     TaskType,
 )
-from bob.application.usecases.reappraise_reflection import (
+from bob.personality.disposition import Disposition
+from bob.personality.usecases.reappraise_reflection import (
     REAPPRAISAL_VALENCE_STEP,
     ReappraiseReflection,
 )
-from bob.domain.personality.disposition import Disposition
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Mapping, Sequence

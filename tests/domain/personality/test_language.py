@@ -14,7 +14,7 @@ safe fallback for an unknown code) on the pure helper.
 
 from __future__ import annotations
 
-from bob.domain.personality.language import DEFAULT_LANGUAGE, language_directive
+from bob.personality.language import DEFAULT_LANGUAGE, language_directive
 
 
 def test_default_language_is_russian() -> None:

@@ -52,15 +52,15 @@ from typing import TYPE_CHECKING, Protocol
 
 from bob.application.router.llm_router import LLMRequest, TaskType
 from bob.application.router.reply_tier_selector import select_reply_tier
-from bob.domain.personality.conversation import (
+from bob.conversation.conversation import (
     RepeatThresholds,
     is_bob_repeat,
     recalled_bob_replies,
     recalled_without_copied_exemplars,
 )
-from bob.domain.personality.language import DEFAULT_LANGUAGE, language_directive
-from bob.domain.personality.voice import anti_bait_directive
 from bob.memory.entities import EpisodicEvent
+from bob.personality.language import DEFAULT_LANGUAGE, language_directive
+from bob.personality.voice import anti_bait_directive
 from bob.proactivity.governance import ProactiveHistory
 from bob.proactivity.state import ProactivityState
 
@@ -75,8 +75,8 @@ if TYPE_CHECKING:
         PersonalityState,
         ReplyGateway,
     )
-    from bob.domain.personality.mood import Mood
     from bob.domain.ports import Clock, MemoryRecall, Recalled
+    from bob.personality.mood import Mood
     from bob.proactivity.decision import ProactiveDecider
     from bob.proactivity.social_energy import SocialEnergy
 

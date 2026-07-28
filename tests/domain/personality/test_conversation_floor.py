@@ -19,8 +19,8 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from bob.domain.personality.addressivity import Addressivity
-from bob.domain.personality.conversation_floor import (
+from bob.conversation.addressivity import Addressivity
+from bob.conversation.conversation_floor import (
     ConversationFloor,
     FloorConfig,
     FloorHolder,

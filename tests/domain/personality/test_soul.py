@@ -8,9 +8,9 @@ from __future__ import annotations
 
 import pytest
 
-from bob.domain.personality.mood import Mood, MoodDelta
-from bob.domain.personality.soul import SOUL
-from bob.domain.personality.taste import TasteAxis, TasteEngine, Verdict
+from bob.personality.mood import Mood, MoodDelta
+from bob.personality.soul import SOUL
+from bob.personality.taste import TasteAxis, TasteEngine, Verdict
 
 
 def _soul() -> SOUL:

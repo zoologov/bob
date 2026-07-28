@@ -13,7 +13,7 @@
 
 from __future__ import annotations
 
-from bob.domain.personality.addressivity import (
+from bob.conversation.addressivity import (
     Addressivity,
     classify_addressivity,
     others_present,

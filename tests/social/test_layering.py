@@ -106,7 +106,7 @@ def test_social_depends_on_personality_one_way_only() -> None:
     relationship_src = (_MODULE_ROOT / "relationship.py").read_text(
         encoding="utf-8"
     )
-    assert "from bob.domain.personality.negotiation import Stance" in (
+    assert "from bob.personality.negotiation import Stance" in (
         relationship_src
     ), (
         "social.relationship must keep its one-way runtime edge to "

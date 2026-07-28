@@ -27,8 +27,8 @@ from bob.proactivity.urge import UrgeModel
 if TYPE_CHECKING:
     from random import Random
 
-    from bob.domain.personality.mood import Mood
     from bob.domain.ports import Clock
+    from bob.personality.mood import Mood
     from bob.proactivity.governance import Governance, ProactiveHistory
 
 # Logistic mapping urge → p(speak). The midpoint sits at this urge (where p=0.5)

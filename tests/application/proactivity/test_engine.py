@@ -23,10 +23,10 @@ from typing import TYPE_CHECKING
 
 from bob.application.router.llm_router import LLMRouter
 from bob.application.usecases.handle_message import PersonalityState
-from bob.domain.personality.conversation import RepeatThresholds
-from bob.domain.personality.mood import Mood
-from bob.domain.personality.soul import SOUL
-from bob.domain.personality.taste import TasteEngine
+from bob.conversation.conversation import RepeatThresholds
+from bob.personality.mood import Mood
+from bob.personality.soul import SOUL
+from bob.personality.taste import TasteEngine
 from bob.proactivity.decision import ProactiveDecider
 from bob.proactivity.governance import (
     Governance,
@@ -463,7 +463,7 @@ class _FakeFascinationReader:
 async def test_proactive_compose_folds_in_the_current_fascination() -> None:
     # BOB-020 wave 2: when Bob has a live fascination, its topic reaches the proactive
     # compose prompt so an unprompted reach-out can land on what he is into right now.
-    from bob.domain.personality.fascination import Fascination  # noqa: PLC0415
+    from bob.personality.fascination import Fascination  # noqa: PLC0415
 
     moment = _evening()
     seed = _seed_that_fires(moment, _HIGH_MOOD)

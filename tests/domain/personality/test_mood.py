@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import pytest
 
-from bob.domain.personality.mood import Mood, MoodDelta
+from bob.personality.mood import Mood, MoodDelta
 
 
 def test_mood_holds_its_five_axes() -> None:

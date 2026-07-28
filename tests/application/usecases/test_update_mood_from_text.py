@@ -17,12 +17,12 @@ from typing import TYPE_CHECKING
 import pytest
 
 from bob.application.router.llm_router import LLMRouter
-from bob.application.usecases.update_mood_from_text import (
+from bob.personality.disposition import Disposition
+from bob.personality.mood import Mood
+from bob.personality.usecases.update_mood_from_text import (
     TextSignals,
     UpdateMoodFromText,
 )
-from bob.domain.personality.disposition import Disposition
-from bob.domain.personality.mood import Mood
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Mapping, Sequence

@@ -19,11 +19,11 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from bob.application.usecases.evolve_fascination import (
+from bob.personality.fascination import Fascination
+from bob.personality.usecases.evolve_fascination import (
     EvolveFascination,
     FascinationGrounding,
 )
-from bob.domain.personality.fascination import Fascination
 
 if TYPE_CHECKING:
     from bob.application.router.llm_router import LLMRequest

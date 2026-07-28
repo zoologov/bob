@@ -22,7 +22,7 @@ exit). Crucially, обида touches NO memory and NO soul — Bob "отходи
   in between resets the streak, so intermittent dips never accrete into обида.
 * **Cold-but-still-Bob while sulking.** The state carries an ``intensity`` (0..1) that
   the voice/governance read; the tone goes quieter and curt (see
-  :func:`~bob.domain.personality.voice.sulk_directive`), never a personality reset.
+  :func:`~bob.personality.voice.sulk_directive`), never a personality reset.
 * **A GUARANTEED exit.** :func:`recover` decays ``intensity`` purely by elapsed time
   (so Bob always отходит even with zero warmth — no permanent lock-out), and тёплые
   сообщения (a positive ``warmth_delta``) accelerate the decay. Below ``exit_intensity``

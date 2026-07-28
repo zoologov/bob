@@ -17,9 +17,9 @@ from typing import TYPE_CHECKING
 import pytest
 
 from bob.application.router.llm_router import LLMRouter, TaskType
-from bob.domain.personality.reaction_judgment import ReactionJudgeParseError
-from bob.domain.personality.reaction_meaning import ReactionContext
-from bob.infrastructure.llm.reaction_judge import LlmReactionJudge
+from bob.personality.adapters.reaction_judge import LlmReactionJudge
+from bob.personality.reaction_judgment import ReactionJudgeParseError
+from bob.personality.reaction_meaning import ReactionContext
 from bob.social.interlocutor import (
     Interlocutor,
     InterlocutorKind,

@@ -20,7 +20,6 @@ import pytest
 
 from bob.app import _load_soul
 from bob.application.router.llm_router import LLMRouter
-from bob.application.usecases.apply_reflection import ApplyReflection, ReflectionSignal
 from bob.application.usecases.handle_message import PersonalityState
 from bob.application.usecases.heartbeat import (
     _MONOLOGUE_VALENCE_BAND,
@@ -29,16 +28,17 @@ from bob.application.usecases.heartbeat import (
     ReflectTick,
     _bounded_valence_delta,
 )
-from bob.application.usecases.reappraise_reflection import ReappraisalOutcome
-from bob.domain.personality.disposition import Disposition
-from bob.domain.personality.mood import Mood
-from bob.domain.personality.reflection import (
+from bob.personality.disposition import Disposition
+from bob.personality.mood import Mood
+from bob.personality.reflection import (
     LIVING_REFLECTION_EXAMPLES,
     REFLECTION_ANGLES,
     select_reflection_angle,
 )
-from bob.domain.personality.soul import SOUL
-from bob.domain.personality.taste import TasteAxis, TasteEngine
+from bob.personality.soul import SOUL
+from bob.personality.taste import TasteAxis, TasteEngine
+from bob.personality.usecases.apply_reflection import ApplyReflection, ReflectionSignal
+from bob.personality.usecases.reappraise_reflection import ReappraisalOutcome
 from bob.social.adapters.soul_store import SoulStore
 
 if TYPE_CHECKING:

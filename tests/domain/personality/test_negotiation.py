@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import pytest
 
-from bob.domain.personality.negotiation import (
+from bob.personality.negotiation import (
     Negotiation,
     NegotiationZone,
     Stance,

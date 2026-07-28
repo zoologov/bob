@@ -35,13 +35,13 @@ from bob.app import (
     main,
 )
 from bob.application.runtime import RuntimeState
-from bob.application.usecases.evolve_phantoms import EvolvePhantoms
 from bob.application.usecases.handle_message import PersonalityState
-from bob.domain.personality.disposition import DEFAULT_DISPOSITION
-from bob.domain.personality.mood import Mood
-from bob.domain.personality.soul import SOUL
-from bob.domain.personality.taste import TasteEngine
 from bob.infrastructure.persistence import SoulStore
+from bob.personality.disposition import DEFAULT_DISPOSITION
+from bob.personality.mood import Mood
+from bob.personality.soul import SOUL
+from bob.personality.taste import TasteEngine
+from bob.personality.usecases.evolve_phantoms import EvolvePhantoms
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Callable, Coroutine, Mapping, Sequence

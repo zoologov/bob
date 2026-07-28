@@ -32,10 +32,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from bob.domain.personality.negotiation import Stance
+from bob.personality.negotiation import Stance
 
 if TYPE_CHECKING:
-    from bob.domain.personality.mood import Mood
+    from bob.personality.mood import Mood
 
 __all__ = [
     "Relationship",
@@ -206,7 +206,7 @@ def compromise_bias(rel: Relationship | None) -> float:
 
     A close relationship (high ``warmth`` + ``compatibility``) makes Bob MORE willing
     to meet the person halfway, so the application subtracts this bias from the
-    conviction it feeds :class:`~bob.domain.personality.negotiation.Negotiation` — a
+    conviction it feeds :class:`~bob.personality.negotiation.Negotiation` — a
     close person tips a borderline stance from holding ground toward agreeing. The
     bias is small and bounded (it nudges, never overrides a strong conviction), zero
     for a neutral or negative relationship (coldness does not make Bob more stubborn;

@@ -46,7 +46,6 @@ from typing import TYPE_CHECKING, Literal, Protocol
 from bob.application.reliability import call_with_retry
 from bob.application.router.llm_router import LLMRequest, TaskType
 from bob.application.router.reply_tier_selector import select_reply_tier
-from bob.application.usecases.update_mood_from_text import TextSignals
 from bob.capabilities.diagrams import (
     extract_mermaid_blocks,
     normalize_mermaid,
@@ -55,8 +54,7 @@ from bob.capabilities.diagrams import (
 from bob.capabilities.usecases.progress_announcer import GatewayProgressAnnouncer
 from bob.capabilities.usecases.registry import CapabilityRegistry
 from bob.capabilities.usecases.tool_loop import ToolLoop
-from bob.domain.personality.absence import absence_hint
-from bob.domain.personality.addressivity import (
+from bob.conversation.addressivity import (
     Addressivity,
     AddressivityThresholds,
     ResponseOutcome,
@@ -64,14 +62,14 @@ from bob.domain.personality.addressivity import (
     decide_response,
     others_present,
 )
-from bob.domain.personality.brevity import (
+from bob.conversation.brevity import (
     AnswerDemand,
     BrevityThresholds,
     clamp_reply,
     classify_answer_demand,
     decide_verbosity,
 )
-from bob.domain.personality.conversation import (
+from bob.conversation.conversation import (
     RepeatThresholds,
     closer_text,
     is_bob_repeat,
@@ -85,12 +83,12 @@ from bob.domain.personality.conversation import (
     recurring_closer,
     strip_recurring_closer,
 )
-from bob.domain.personality.conversation_floor import (
+from bob.conversation.conversation_floor import (
     FloorConfig,
     advance_floor,
     resolve_addressivity,
 )
-from bob.domain.personality.engagement import (
+from bob.conversation.engagement import (
     ConversationalFatigue,
     EngagementThresholds,
     FatigueRates,
@@ -99,7 +97,13 @@ from bob.domain.personality.engagement import (
     engagement_mood_lift,
     topic_interest,
 )
-from bob.domain.personality.expression import (
+from bob.conversation.response_choice import ResponseIntent
+from bob.conversation.volatility_judgment import VolatilityContext
+from bob.conversation.zone_classifier import TasteZoneClassifier
+from bob.domain.ports import DiagramRenderError, DiagramResult
+from bob.memory.entities import EpisodicEvent
+from bob.personality.absence import absence_hint
+from bob.personality.expression import (
     EngagementLevel,
     ExpressionFreqs,
     ExpressionMode,
@@ -108,19 +112,19 @@ from bob.domain.personality.expression import (
     Verbosity,
     decide_expression,
 )
-from bob.domain.personality.mood import MoodDelta
-from bob.domain.personality.mood_taste import experiment_bias, modulate
-from bob.domain.personality.negotiation import (
+from bob.personality.mood import MoodDelta
+from bob.personality.mood_taste import experiment_bias, modulate
+from bob.personality.negotiation import (
     Negotiation,
     NegotiationZone,
     Stance,
 )
-from bob.domain.personality.profanity import is_directed_hostility
-from bob.domain.personality.reaction import reaction_emoji_for
-from bob.domain.personality.reaction_aloud import acknowledgment_hint
-from bob.domain.personality.response_choice import ResponseIntent
-from bob.domain.personality.taste import Verdict
-from bob.domain.personality.voice import (
+from bob.personality.profanity import is_directed_hostility
+from bob.personality.reaction import reaction_emoji_for
+from bob.personality.reaction_aloud import acknowledgment_hint
+from bob.personality.taste import Verdict
+from bob.personality.usecases.update_mood_from_text import TextSignals
+from bob.personality.voice import (
     OffDayThresholds,
     RelationshipToneThresholds,
     anti_bait_directive,
@@ -138,10 +142,6 @@ from bob.domain.personality.voice import (
     variable_form_directive,
     who_is_writing_directive,
 )
-from bob.domain.personality.volatility_judgment import VolatilityContext
-from bob.domain.personality.zone_classifier import TasteZoneClassifier
-from bob.domain.ports import DiagramRenderError, DiagramResult
-from bob.memory.entities import EpisodicEvent
 from bob.proactivity.self_improvement import RuleModulators, build_modulators
 from bob.social.interlocutor import InterlocutorKind, Trust
 from bob.social.relationship import compromise_bias
@@ -154,14 +154,10 @@ if TYPE_CHECKING:
     from bob.application.reliability import Sleep
     from bob.application.router.llm_router import LLMRouter
     from bob.application.runtime.events import MessageReceived
-    from bob.application.usecases.decide_response import DecideResponse
-    from bob.application.usecases.update_mood_from_text import UpdateMoodFromText
     from bob.capabilities.usecases.progress_announcer import InterimLineGenerator
-    from bob.domain.personality.fascination import Fascination
-    from bob.domain.personality.mood import Mood
-    from bob.domain.personality.response_choice import ResponseChoice
-    from bob.domain.personality.soul import SOUL
-    from bob.domain.personality.volatility_judgment import (
+    from bob.conversation.response_choice import ResponseChoice
+    from bob.conversation.usecases.decide_response import DecideResponse
+    from bob.conversation.volatility_judgment import (
         VolatilityJudge,
         VolatilityVerdict,
     )
@@ -182,6 +178,10 @@ if TYPE_CHECKING:
         ZoneClassifier,
     )
     from bob.memory.usecases.extract_facts import ExtractFacts
+    from bob.personality.fascination import Fascination
+    from bob.personality.mood import Mood
+    from bob.personality.soul import SOUL
+    from bob.personality.usecases.update_mood_from_text import UpdateMoodFromText
     from bob.proactivity.self_improvement import ImprovementRule
     from bob.social.interlocutor import Interlocutor
     from bob.social.relationship import Relationship
@@ -215,7 +215,7 @@ _RECALL_K = 5
 # The SOFT anti-tic nudge (BOB-061 .2 — the «провязка»). When Bob's recent closers
 # (the cross-session persist ring UNION the live session window) cluster into ONE
 # recurring motif — a genuine closer-tic caught by
-# :func:`~bob.domain.personality.conversation.is_recurring_closer_tic` at the CONSERVATIVE
+# :func:`~bob.conversation.conversation.is_recurring_closer_tic` at the CONSERVATIVE
 # ``motif_similarity_threshold`` — this ONE line folds into the generation context. 🔴 It
 # is a NUDGE toward variety, never a ban / forbidden-phrase list / topic restriction: Bob
 # is asked to END DIFFERENTLY, in his own words, WITHOUT changing the meaning — so liveness
@@ -448,7 +448,7 @@ class EpisodeReader(Protocol):
 class CurrentFascinationReader(Protocol):
     """Read seam: Bob's CURRENT fascination, aged and still-alive (BOB-020 wave 2).
 
-    On a :data:`~bob.domain.personality.expression.ExpressionPlan.mention_fascination`
+    On a :data:`~bob.personality.expression.ExpressionPlan.mention_fascination`
     turn the compose path folds the topic in so Bob can drop it à propos — but only a
     REAL, persisted passion that has not yet faded. ``None`` means Bob has no current
     fascination, so the mention no-ops (never a fabricated interest). The concrete
@@ -538,7 +538,7 @@ class SulkReader(Protocol):
     The compose path uses this to go COLD while Bob is hurt and to let обида take hold
     or warm up over the live message path: :meth:`current` returns the persisted
     :class:`~bob.social.sulk.SulkState` so the prompt appends the cold
-    :func:`~bob.domain.personality.voice.sulk_directive` while ``active``;
+    :func:`~bob.personality.voice.sulk_directive` while ``active``;
     :meth:`observe` folds ONE owner turn's signals (the relationship ``owner_warmth``,
     a ``hostile`` directed-hostility flag, and a ``warmth_delta``) into обида AFTER the
     turn — a sustained critical owner-drop OR sustained directed hostility enters обида
@@ -1844,7 +1844,7 @@ class HandleMessage:
         Owner-only (обида v1 is tied to the OWNER relationship that leads proactivity).
         The "low" signal is BOTH the owner relationship warmth (a critically cold
         relationship) AND a DIRECTED hostility flag from
-        :func:`~bob.domain.personality.profanity.is_directed_hostility` — so it reacts to
+        :func:`~bob.personality.profanity.is_directed_hostility` — so it reacts to
         sustained directed hostility, NOT to casual мат (which is never flagged hostile).
         A warm turn (positive ``warmth_delta``, read off the turn's mood valence)
         accelerates recovery if already hurt. Best-effort: a flaky store can never break
@@ -1964,8 +1964,8 @@ class HandleMessage:
         Decays the per-boot fatigue holder by the REAL elapsed time since the last turn
         (so appetite recovers between turns — the recovery guarantee), stores the decayed
         value back, then maps mood x ``interest`` x fatigue x ``relationship`` to an
-        :class:`~bob.domain.personality.engagement.EngagementLevel` via the pure
-        :func:`~bob.domain.personality.engagement.decide_engagement` (seeded by the same
+        :class:`~bob.conversation.engagement.EngagementLevel` via the pure
+        :func:`~bob.conversation.engagement.decide_engagement` (seeded by the same
         injected RNG, so the whole turn stays reproducible).
         """
         now = self._clock.now()
@@ -1991,7 +1991,7 @@ class HandleMessage:
 
         Two loops close the appetite model: (1) an interesting, well-engaged exchange
         (FULL/PLAYFUL on an interesting topic) lifts Bob's mood valence a touch — a small
-        bounded :class:`~bob.domain.personality.mood.MoodDelta` returned on a fresh soul
+        bounded :class:`~bob.personality.mood.MoodDelta` returned on a fresh soul
         snapshot, stored on :class:`PersonalityState`; (2) the fatigue holder is updated
         with the turn outcome — an aimless turn tires Bob, an interesting one eases him —
         and ``last_turn_at`` is stamped so the next turn decays the elapsed gap. Returns
@@ -2024,10 +2024,10 @@ class HandleMessage:
         """Decide how SHORT Bob answers this turn — pure, deterministic by seed (BOB-024).
 
         Folds the already-computed turn signals into the pure
-        :func:`~bob.domain.personality.brevity.decide_verbosity`: the message's
+        :func:`~bob.conversation.brevity.decide_verbosity`: the message's
         answer-``demand`` is the base; topic ``interest`` can rarely upgrade it (seeded);
         a low ``mood_valence`` / thin appetite (the :class:`EngagementLevel` mapped to a
-        [0, 1] appetite via :func:`~bob.domain.personality.engagement.appetite_of`) pull
+        [0, 1] appetite via :func:`~bob.conversation.engagement.appetite_of`) pull
         it down; the BOB-018 ``form_hint`` is a mood length lean (now an INPUT, not a
         rival directive); and a HIGH-demand owner is never clipped below NORMAL. The
         seeded ``roll`` is one draw off the same injected RNG, so the whole turn stays
@@ -2054,7 +2054,7 @@ class HandleMessage:
         The OPTIONAL safety net behind the brevity bayes: only when the guard is enabled
         AND the message wanted a short answer (``demand`` LOW) does an over-long reply get
         trimmed to its first finished thought via
-        :func:`~bob.domain.personality.brevity.clamp_reply` (no regeneration, never a
+        :func:`~bob.conversation.brevity.clamp_reply` (no regeneration, never a
         mid-word cut). Disabled (the default) or a non-LOW demand leaves the reply exactly
         as composed — the bayes is the mechanism, this is only a backstop.
         """
@@ -2073,7 +2073,7 @@ class HandleMessage:
         when the conversation floor is wired AND enabled — RAISES that per-message
         classification to the EFFECTIVE addressivity: an ``AMBIENT`` message in a thread
         where Bob holds a live floor reads as ``DIRECTED_TO_BOB`` (continuity, BOB-025).
-        The policy (:func:`~bob.domain.personality.addressivity.decide_response`) runs on
+        The policy (:func:`~bob.conversation.addressivity.decide_response`) runs on
         the EFFECTIVE addressivity, so a barge/react/silent decision honours continuity.
         One seeded RNG draw (the same injected RNG, so the turn stays reproducible)
         resolves the rare barge-in / like-react branches. The RAW per-message

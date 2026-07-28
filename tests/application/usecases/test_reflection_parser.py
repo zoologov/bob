@@ -13,7 +13,7 @@ markers (ru/en) since Bob's persona language is Russian.
 
 from __future__ import annotations
 
-from bob.application.usecases.reflection_parser import HeuristicReflectionParser
+from bob.personality.usecases.reflection_parser import HeuristicReflectionParser
 
 _TOPICS = ("jazz", "coffee", "тишина")
 

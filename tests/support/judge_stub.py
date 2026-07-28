@@ -5,7 +5,7 @@
 """Judge-stub helpers for the live-app e2e/acceptance fakes (BOB-049).
 
 The LIVE pipeline now makes one Tier-0 response-judgment call per turn
-(:class:`~bob.infrastructure.llm.response_judge.LlmResponseJudge`) before composing,
+(:class:`~bob.conversation.adapters.response_judge.LlmResponseJudge`) before composing,
 deciding REPLY / REACT / IGNORE by meaning. The end-to-end fakes drive a single
 fixed/scripted provider per tier, so without modelling the judgment the extra call
 would (a) fail to parse into an intent and break the turn, or (b) shift a scripted

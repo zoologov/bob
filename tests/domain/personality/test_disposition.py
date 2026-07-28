@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import pytest
 
-from bob.domain.personality.disposition import DEFAULT_DISPOSITION, Disposition
+from bob.personality.disposition import DEFAULT_DISPOSITION, Disposition
 
 
 @pytest.mark.parametrize(

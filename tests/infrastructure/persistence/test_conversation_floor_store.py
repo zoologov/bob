@@ -19,13 +19,13 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from bob.domain.personality.conversation_floor import (
+from bob.conversation.adapters.conversation_floor_store import (
+    SqliteConversationFloorStore,
+)
+from bob.conversation.conversation_floor import (
     ConversationFloor,
     FloorHolder,
     idle_floor,
-)
-from bob.infrastructure.persistence.conversation_floor_store import (
-    SqliteConversationFloorStore,
 )
 from bob.infrastructure.persistence.sqlite_repo import SqliteMemoryRepo
 

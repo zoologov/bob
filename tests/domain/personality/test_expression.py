@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from random import Random
 
-from bob.domain.personality.expression import (
+from bob.personality.expression import (
     EngagementLevel,
     ExpressionFreqs,
     ExpressionMode,
@@ -28,7 +28,7 @@ from bob.domain.personality.expression import (
     Verbosity,
     decide_expression,
 )
-from bob.domain.personality.mood import Mood
+from bob.personality.mood import Mood
 
 
 def _calm() -> Mood:
