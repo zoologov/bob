@@ -17,7 +17,7 @@ from collections.abc import Mapping
 
 import pytest
 
-from bob.application.capabilities.inspect_architecture import (
+from bob.capabilities.usecases.inspect_architecture import (
     make_inspect_architecture_capability,
 )
 

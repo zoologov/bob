@@ -43,18 +43,18 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import TYPE_CHECKING, Literal, Protocol
 
-from bob.application.capabilities.progress_announcer import GatewayProgressAnnouncer
-from bob.application.capabilities.registry import CapabilityRegistry
-from bob.application.capabilities.tool_loop import ToolLoop
 from bob.application.reliability import call_with_retry
 from bob.application.router.llm_router import LLMRequest, TaskType
 from bob.application.router.reply_tier_selector import select_reply_tier
 from bob.application.usecases.update_mood_from_text import TextSignals
-from bob.domain.diagrams import (
+from bob.capabilities.diagrams import (
     extract_mermaid_blocks,
     normalize_mermaid,
     strip_mermaid_blocks,
 )
+from bob.capabilities.usecases.progress_announcer import GatewayProgressAnnouncer
+from bob.capabilities.usecases.registry import CapabilityRegistry
+from bob.capabilities.usecases.tool_loop import ToolLoop
 from bob.domain.personality.absence import absence_hint
 from bob.domain.personality.addressivity import (
     Addressivity,
@@ -151,12 +151,12 @@ if TYPE_CHECKING:
     from contextlib import AbstractAsyncContextManager
     from random import Random
 
-    from bob.application.capabilities.progress_announcer import InterimLineGenerator
     from bob.application.reliability import Sleep
     from bob.application.router.llm_router import LLMRouter
     from bob.application.runtime.events import MessageReceived
     from bob.application.usecases.decide_response import DecideResponse
     from bob.application.usecases.update_mood_from_text import UpdateMoodFromText
+    from bob.capabilities.usecases.progress_announcer import InterimLineGenerator
     from bob.domain.personality.fascination import Fascination
     from bob.domain.personality.interlocutor import Interlocutor
     from bob.domain.personality.mood import Mood

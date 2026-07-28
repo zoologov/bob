@@ -16,7 +16,7 @@ from collections.abc import Mapping
 
 import pytest
 
-from bob.application.capabilities.list_work import make_list_work_capability
+from bob.capabilities.usecases.list_work import make_list_work_capability
 
 from .fakes import FakeRepoIntrospector
 

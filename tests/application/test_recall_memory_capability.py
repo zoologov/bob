@@ -19,9 +19,9 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from bob.application.capabilities.recall_memory import make_recall_memory_capability
-from bob.application.capabilities.registry import CapabilityRegistry
-from bob.application.capabilities.tool_loop import ToolLoop
+from bob.capabilities.usecases.recall_memory import make_recall_memory_capability
+from bob.capabilities.usecases.registry import CapabilityRegistry
+from bob.capabilities.usecases.tool_loop import ToolLoop
 from bob.domain.ports import ToolCall, ToolCallResult
 
 if TYPE_CHECKING:

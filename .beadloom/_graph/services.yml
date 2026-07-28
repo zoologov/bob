@@ -126,17 +126,25 @@ nodes:
     docs:
       - domains/coding/README.md
 
-  - ref_id: diagrams-domain
+  - ref_id: capabilities
     kind: feature
-    source: src/bob/domain/diagrams/
-    tags: [layer-domain]
-    summary: 'Diagrams domain (domain half) — diagram request/spec value objects. Paired with the `diagrams-infra` renderer adapter.'
-
-  - ref_id: introspection-domain
-    kind: feature
-    source: src/bob/domain/introspection/
-    tags: [layer-domain]
-    summary: 'Introspection domain (domain half) — architecture self-inspection entities. Paired with the `introspection-infra` adapter.'
+    source: src/bob/capabilities/
+    # BOB-062.4: domain-first VERTICAL module — spans domain+application+infra
+    # INSIDE one bounded context, so it is NOT a horizontal layer. Tag is the
+    # non-layer `module-vertical` (like `memory` / `proactivity` / `coding`) so
+    # the tag-based `architecture-layers` rule silently skips its edges; the
+    # module's INTERNAL layering and its OUTER boundary are enforced by the
+    # path-glob `forbid_import` rules in .beadloom/_graph/rules.yml (§ vertical
+    # modules; the capabilities rules land in BOB-062.4 .3). Consolidates the
+    # former `diagrams-domain` + `introspection-domain` + `capabilities-app` +
+    # `web` + `diagrams-infra` + `introspection-infra` nodes (plus the
+    # `web_search_qwen` transport moved out of `llm`) — the GUPPI tool seam and
+    # its grounded skills are ONE «Bob's tools» capability. `domain/ports/`
+    # keeps a thin re-export shim for the 18 capability ports.
+    tags: [module-vertical]
+    summary: 'Capabilities module («Bob''s tools») — the full vertical GUPPI tool seam in one place: `ports.py` (Capability contract + tool/web/diagram/introspection ports) + pure `diagrams`/`introspection` value objects, `usecases/` (CapabilityRegistry + ToolLoop and the skills: recall/search memory, read code/url, web search, render diagram, inspect architecture, progress announcer), and `adapters/` (aiohttp URL reader behind an SSRF guard, mermaid renderer, beadloom/git introspector, Qwen web-search transport). Domain-first slice BOB-062.4.'
+    docs:
+      - domains/capabilities/README.md
 
   - ref_id: permission
     kind: feature
@@ -157,12 +165,6 @@ nodes:
     tags: [layer-application]
     summary: 'Authorization policy — Authorizer access decisions plus sender/reactor social perception (social identity ≠ authz).'
 
-  - ref_id: capabilities-app
-    kind: feature
-    source: src/bob/application/capabilities/
-    tags: [layer-application]
-    summary: 'Capability seam (application half) — CapabilityRegistry + ToolLoop and the individual capabilities (recall/search memory, read code/url, web search, render diagram, inspect architecture, progress announcer).'
-
   - ref_id: router
     kind: feature
     source: src/bob/application/router/
@@ -182,12 +184,6 @@ nodes:
     tags: [layer-infra]
     summary: 'LLM adapter — OpenAI-compatible provider for Tier 0/1 completion + tool-calling (Ollama/Qwen backend).'
 
-  - ref_id: web
-    kind: component
-    source: src/bob/infrastructure/web/
-    tags: [layer-infra]
-    summary: 'Web adapter — URL fetch/read and web-search transport backing the read_url / web_search capabilities.'
-
   - ref_id: telegram
     kind: component
     source: src/bob/infrastructure/telegram/
@@ -205,18 +201,6 @@ nodes:
     source: src/bob/infrastructure/config/
     tags: [layer-infra]
     summary: 'Config adapter — two-bot layered config loader (env + files) for the running process.'
-
-  - ref_id: diagrams-infra
-    kind: component
-    source: src/bob/infrastructure/diagrams/
-    tags: [layer-infra]
-    summary: 'Diagrams adapter (infrastructure half) — diagram rendering backend. Paired with the `diagrams-domain` value objects.'
-
-  - ref_id: introspection-infra
-    kind: component
-    source: src/bob/infrastructure/introspection/
-    tags: [layer-infra]
-    summary: 'Introspection adapter (infrastructure half) — beadloom/architecture read backend. Paired with the `introspection-domain` entities.'
 
 edges:
   # ── Root service self-reference (satisfies service-needs-parent convention) ─
@@ -254,10 +238,7 @@ edges:
   - src: coding
     dst: bob-domain
     kind: part_of
-  - src: diagrams-domain
-    dst: bob-domain
-    kind: part_of
-  - src: introspection-domain
+  - src: capabilities
     dst: bob-domain
     kind: part_of
   - src: permission
@@ -271,9 +252,6 @@ edges:
   - src: authz
     dst: bob-application
     kind: part_of
-  - src: capabilities-app
-    dst: bob-application
-    kind: part_of
   - src: router
     dst: bob-application
     kind: part_of
@@ -285,9 +263,6 @@ edges:
   - src: llm
     dst: bob-infrastructure
     kind: part_of
-  - src: web
-    dst: bob-infrastructure
-    kind: part_of
   - src: telegram
     dst: bob-infrastructure
     kind: part_of
@@ -295,12 +270,6 @@ edges:
     dst: bob-infrastructure
     kind: part_of
   - src: config
-    dst: bob-infrastructure
-    kind: part_of
-  - src: diagrams-infra
-    dst: bob-infrastructure
-    kind: part_of
-  - src: introspection-infra
     dst: bob-infrastructure
     kind: part_of
 

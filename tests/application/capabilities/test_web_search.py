@@ -25,9 +25,9 @@ from collections.abc import Mapping, Sequence
 
 import pytest
 
-from bob.application.capabilities.registry import CapabilityRegistry
-from bob.application.capabilities.tool_loop import ToolLoop
-from bob.application.capabilities.web_search import make_web_search_capability
+from bob.capabilities.usecases.registry import CapabilityRegistry
+from bob.capabilities.usecases.tool_loop import ToolLoop
+from bob.capabilities.usecases.web_search import make_web_search_capability
 from bob.domain.ports import (
     LLMMessage,
     ToolCall,

@@ -14,8 +14,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from bob.application.capabilities.registry import CapabilityRegistry
 from bob.application.usecases.privileged_fulfiller import PrivilegedRequestFulfiller
+from bob.capabilities.usecases.registry import CapabilityRegistry
 from bob.domain.ports import ToolCallResult
 
 if TYPE_CHECKING:

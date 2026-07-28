@@ -19,11 +19,11 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from bob.domain.introspection.privacy_guard import PrivacyGuard
-from bob.infrastructure.introspection.subprocess_introspector import (
+from bob.capabilities.adapters.introspection.subprocess_introspector import (
     DisallowedCommandError,
     SubprocessRepoIntrospector,
 )
+from bob.capabilities.introspection.privacy_guard import PrivacyGuard
 
 if TYPE_CHECKING:
     from pathlib import Path

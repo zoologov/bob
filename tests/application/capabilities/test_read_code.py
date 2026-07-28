@@ -18,8 +18,8 @@ from collections.abc import Mapping
 
 import pytest
 
-from bob.application.capabilities.read_code import make_read_code_capability
-from bob.infrastructure.introspection.subprocess_introspector import DeniedPathError
+from bob.capabilities.adapters.introspection.subprocess_introspector import DeniedPathError
+from bob.capabilities.usecases.read_code import make_read_code_capability
 
 from .fakes import FakeRepoIntrospector
 

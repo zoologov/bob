@@ -25,10 +25,10 @@ from pathlib import Path
 
 import pytest
 
-from bob.domain.introspection.privacy_guard import PrivacyGuard
-from bob.infrastructure.introspection.subprocess_introspector import (
+from bob.capabilities.adapters.introspection.subprocess_introspector import (
     SubprocessRepoIntrospector,
 )
+from bob.capabilities.introspection.privacy_guard import PrivacyGuard
 
 pytestmark = pytest.mark.integration
 

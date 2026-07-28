@@ -45,8 +45,6 @@ P0 — Telegram-транспорт на aiogram (typing-индикатор + Ric
 ```
 src/bob/
   domain/            # ЧИСТО: без I/O, LLM и Telegram. Только логика и модели.
-    introspection/   # PrivacyGuard — чистый приват-инвариант самоинтроспекции (BOB-017);
-                     #   code_history: чистые парсеры git↔беады↔фича-доки (BOB-038)
     personality/     # Mood, Disposition (черта-аттрактор), TasteEngine, Negotiation,
                      #   SOUL, TasteZoneClassifier, taste_evolution, voice (тон по mood),
                      #   mood_taste, fascination, phantom_evolution, expression, reaction,
@@ -54,8 +52,9 @@ src/bob/
                      #   память (EpisodicEvent, SemanticFact + порты/логика/адаптеры)
                      #   переехала в вертикальный модуль `src/bob/memory/` (BOB-062.2);
                      #   `from bob.domain.ports import MemoryRepo` работает как раньше
-    diagrams/        # mermaid_blocks: extract/strip/normalize fenced ```mermaid
-                     #   (чистый разбор inline-mermaid из текста ответа, BOB-037)
+                     #   самоинтроспекция (PrivacyGuard, code_history) и разбор
+                     #   inline-mermaid (mermaid_blocks) переехали в вертикальный
+                     #   модуль `src/bob/capabilities/` (BOB-062.4)
                      #   проактивность (UrgeModel, SocialEnergy, Governance,
                      #   ProactiveDecider, ProactivityState + goals + self_improvement,
                      #   порты/логика/адаптеры) переехала в вертикальный модуль
@@ -80,11 +79,12 @@ src/bob/
                      #                     MessageReactor, ReflectionReader, SulkStore,
                      #                     FascinationStore, FirstImpressionStore,
                      #                     NotableReactionStore, RelationshipStore
-                     #   capabilities.py — Capability, ToolCallingProvider,
-                     #                     RepoIntrospector (самоинтроспекция, BOB-017),
-                     #                     DiagramRenderer + DiagramSink + DiagramResult (BOB-035),
-                     #                     WebSearchProvider + WebSearchResult + WebSource (BOB-053),
-                     #                     UrlReader + WebPage + UrlReadError/SsrfBlockedError (BOB-054)
+                     #   capability-порты (Capability, ToolCallingProvider,
+                     #     RepoIntrospector, DiagramRenderer/Sink/Result, WebSearchProvider,
+                     #     UrlReader + value-object'ы) переехали в `capabilities/ports.py`
+                     #     (вертикальный модуль, BOB-062.4); `ports/__init__.py` их
+                     #     re-export'ит (шим 18 портов), `from bob.domain.ports import
+                     #     Capability` работает как раньше
                      #   coding-порты (ClaudeCodeRunner, Worktree, CodingSessionStore,
                      #     PullRequestOpener) переехали в `coding/ports.py` (вертикальный
                      #     модуль, BOB-062.1); `ports/__init__.py` их re-export'ит, так что
@@ -101,12 +101,11 @@ src/bob/
                      #   announce-rules, self_improvement_sources) переехали в
                      #   `proactivity/usecases/` (вертикальный модуль, BOB-062.3)
     authz/           # Authorizer: политика owner/allowlist/chat-scope
-    capabilities/    # CapabilityRegistry, ToolLoop, recall_memory, search_memory,
-                     #   inspect_architecture, read_code, list_work (самоинтроспекция, BOB-017),
-                     #   code_rationale (код↔«почему»: git↔беады↔фича-доки↔граф, BOB-038),
-                     #   render_diagram (mermaid→PNG в чат, BOB-035),
-                     #   web_search (заземлённый веб-поиск, BOB-053),
-                     #   read_url (чтение конкретной ссылки за SSRF-щитом, BOB-054)
+                     #   capability-use-case'ы (CapabilityRegistry, ToolLoop, навыки
+                     #   recall/search_memory, inspect_architecture, read_code, list_work,
+                     #   code_rationale, render_diagram, web_search, read_url,
+                     #   progress_announcer) переехали в `capabilities/usecases/`
+                     #   (вертикальный модуль, BOB-062.4)
   infrastructure/    # Адаптеры портов (наружу).
     telegram/        # MultiBotGateway: BotRegistry (Боб+GUPPI), кросс-бот дедуп,
                      #   центральный роутер по содержимому; GuppiHandler (reject +
@@ -114,11 +113,15 @@ src/bob/
                      #   long-polling + authz-гейт, typing-индикатор + rich-финал
                      #   (Вариант A), Rich Messages, thread-reply; rich.py: markdown↔RichMessage
     llm/             # OpenAICompatProvider (Tier 0/1, + tool-calling) + фабрика;
-                     #   QwenWebSearchProvider (web_search через Responses API, BOB-053);
+                     #   QwenWebSearchProvider (web_search) переехал в
+                     #   `capabilities/adapters/web_search_qwen.py` (BOB-062.4);
                      #   OllamaEmbedder/OllamaReranker + их фабрики переехали в
                      #   `memory/adapters/` (вертикальный модуль, BOB-062.2)
-    web/             # HttpUrlReader: aiohttp GET за 🔴 SSRF-щитом + извлечение текста
-                     #   через stdlib html.parser; build_url_reader (read_url, BOB-054)
+                     #   web-читатель (HttpUrlReader за 🔴 SSRF-щитом), локальный
+                     #   mermaid-рендерер (SubprocessMmdcRenderer) и read-only
+                     #   интроспектор (SubprocessRepoIntrospector) переехали в
+                     #   `capabilities/adapters/{web,diagrams,introspection}/`
+                     #   (вертикальный модуль, BOB-062.4)
     persistence/     # 🔴 shared kernel персистентности (до BOB-062.7): SqliteMemoryRepo
                      #   + schema.sql + MemoryVectorStore (sqlite-vec) остаются здесь,
                      #   кормят ~13 чужих сторов через .connection()-шов;
@@ -126,12 +129,6 @@ src/bob/
                      #   + RepoProactivitySources + SqliteFascinationStore (BOB-020).
                      #   recall-адаптеры (Fts5MemoryRecall + HybridMemoryRecall, RRF)
                      #   переехали в `memory/adapters/` (вертикальный модуль, BOB-062.2)
-    introspection/   # SubprocessRepoIntrospector: read-only beadloom/bd/git log через
-                     #   create_subprocess_exec (фикс-allowlist + git фикс-формы, не shell)
-                     #   + guarded read_file (BOB-017, BOB-038)
-    diagrams/        # SubprocessMmdcRenderer: mermaid→PNG локально через mmdc
-                     #   (create_subprocess_exec, не shell, таймаут, graceful;
-                     #    -s 3 -b white для чёткости, BOB-037) (BOB-035)
     config/          # ConfigLoader (defaults → YAML → env)
   coding/            # 🔴 ВЕРТИКАЛЬНЫЙ модуль «Боб пишет код» (BOB-062.1): вся способность
                      #   в одном месте, а не размазана по слоям. Внутренняя раскладка:
@@ -155,6 +152,21 @@ src/bob/
                      #   ОСТАЁТСЯ в infrastructure/persistence/ до BOB-062.7 (вариант C);
                      #   разрешённое ребро kernel→bob.memory.entities помечено TODO-.7.
                      #   См. SPEC: docs/domains/memory/README.md
+  capabilities/      # 🔴 ВЕРТИКАЛЬНЫЙ модуль «инструменты Боба» (BOB-062.4): весь
+                     #   capability-шов в одном месте, а не размазан по слоям. Раскладка:
+                     #     ports.py + чистые diagrams/ (mermaid_blocks) +
+                     #       introspection/ (PrivacyGuard, code_history) — layer=domain;
+                     #     usecases/ (CapabilityRegistry, ToolLoop, progress_announcer +
+                     #       навыки recall/search_memory, read_code/url, web_search,
+                     #       render_diagram, inspect_architecture, list_work,
+                     #       code_rationale) — layer=application;
+                     #     adapters/{web,diagrams,introspection} + web_search_qwen.py —
+                     #       layer=infrastructure.
+                     #   18 портов re-export'ятся из bob.domain.ports (шим).
+                     #   Граница «снаружи — только через ports/фасад» держится
+                     #   explicit-path forbid_import-правилами, СГЕНЕРИРОВАННЫМИ
+                     #   scripts/gen_boundary_rules.py. См. SPEC:
+                     #   docs/domains/capabilities/README.md
   app.py             # composition root: собирает порты и адаптеры, запускает рантайм
 ```
 
@@ -164,6 +176,19 @@ src/bob/
 `MessageReceived` и порт `SoulStore` принадлежат слоям, которыми владеет
 приложение и домен, поэтому use-cases ни прямо, ни косвенно не зависят от
 инфраструктуры.
+
+Границы вертикальных модулей (`coding` / `memory` / `proactivity` / `capabilities`)
+держат `forbid_import`-правила в `.beadloom/_graph/rules.yml`. Их **генерирует**
+`scripts/gen_boundary_rules.py` из `module-vertical`-узлов графа в marker-регион
+`# BEGIN/END generated boundary rules` (рукописные rationale-блоки вне маркеров не
+трогает); режим `--check` — CI-gate идемпотентности. Правила на **explicit paths**
+(`src/bob/<module>/…`), а не char-class'ы: прежняя схема `src/bob/[adimp]*` не
+различала `capabilities` и `coding` (оба на `c`, fnmatch ключуется по первому
+символу). На каждый модуль генерируются `usecases-no-adapters`,
+`internals-no-usecases`, `internals-no-adapters`, `usecases-no-infra`,
+`no-composition-root` + inward-границы от чужих бизнес-модулей; координационные слои
+(`application` / `infrastructure` / `runtime` / `app.py`) из inward-модели исключены
+намеренно — они по определению собирают и зовут usecases/adapters модулей.
 
 ## Мульти-бот gateway и GUPPI-идентичность (BOB-003)
 

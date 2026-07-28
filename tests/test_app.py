@@ -11,16 +11,16 @@ from typing import TYPE_CHECKING
 import pytest
 
 from bob.app import SystemClock, build_application
-from bob.application.capabilities import (
-    CapabilityNotAllowedError,
-    SafeCapabilityDispatcher,
-)
 from bob.application.runtime import AgentRuntime, AsyncEventBus, RuntimeState
 from bob.application.usecases.handle_message import HandleMessage
 from bob.application.usecases.heartbeat import (
     InnerMonologueTick,
     MoodDriftTick,
     ReflectTick,
+)
+from bob.capabilities.usecases import (
+    CapabilityNotAllowedError,
+    SafeCapabilityDispatcher,
 )
 from bob.infrastructure.persistence import SoulStore
 

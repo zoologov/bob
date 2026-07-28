@@ -22,7 +22,7 @@ the first time. It is built from THREE public sources, in order:
    ``inspect_architecture`` seam — beadloom ctx/graph/search behind the .1 port).
 
 🔴 Privacy (BOB-034): every doc path is checked against the pure
-:class:`~bob.domain.introspection.privacy_guard.PrivacyGuard` BEFORE it is read — a
+:class:`~bob.capabilities.introspection.privacy_guard.PrivacyGuard` BEFORE it is read — a
 denied path (``data/soul`` / ``bob.db`` / ``.env`` / ``config``) is skipped, never
 read, never in the preamble — and the assembled text is run through
 :meth:`PrivacyGuard.sanitize` as a defence-in-depth backstop. Only public
@@ -49,8 +49,8 @@ from typing import TYPE_CHECKING, Protocol
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
+    from bob.capabilities.introspection.privacy_guard import PrivacyGuard
     from bob.coding.usecases.coding_assistant import CodingContext
-    from bob.domain.introspection.privacy_guard import PrivacyGuard
 
 __all__ = ["PREAMBLE_MAX_CHARS", "make_coding_context"]
 

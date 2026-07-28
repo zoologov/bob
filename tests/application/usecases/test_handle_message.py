@@ -22,11 +22,6 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from bob.application.capabilities.registry import CapabilityRegistry
-from bob.application.capabilities.render_diagram import (
-    CollectingDiagramSink,
-    make_render_diagram_capability,
-)
 from bob.application.router.llm_router import LLMRouter
 from bob.application.runtime.events import MessageReceived
 from bob.application.usecases.decide_response import DecideResponse
@@ -47,6 +42,12 @@ from bob.application.usecases.handle_message import (
     _user_turns,
 )
 from bob.application.usecases.update_mood_from_text import UpdateMoodFromText
+from bob.capabilities.adapters.diagrams.mmdc_renderer import DiagramRenderError
+from bob.capabilities.usecases.registry import CapabilityRegistry
+from bob.capabilities.usecases.render_diagram import (
+    CollectingDiagramSink,
+    make_render_diagram_capability,
+)
 from bob.domain.personality.addressivity import AddressivityThresholds
 from bob.domain.personality.conversation import RepeatThresholds
 from bob.domain.personality.conversation_floor import (
@@ -88,7 +89,6 @@ from bob.domain.personality.volatility_judgment import (
     VolatilityVerdict,
 )
 from bob.domain.ports import ToolCall, ToolCallResult, WebSearchResult
-from bob.infrastructure.diagrams.mmdc_renderer import DiagramRenderError
 from bob.infrastructure.telegram.gateway import TelegramGateway
 from bob.memory.usecases.extract_facts import ExtractFacts
 from bob.proactivity.self_improvement import (
