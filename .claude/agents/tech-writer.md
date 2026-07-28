@@ -60,8 +60,6 @@ Return ONLY: `"BEAD-XX: updated <ref_ids>, stale N→M."` Detail → bead commen
 
 Docs mirror the DDD graph: one README per **domain**, one SPEC per **feature/component**. A doc's `# beadloom:` ref ties it to its node, so `sync-check` can tell when the domain/feature's symbols drifted from its prose. When a new domain/feature node appears, add its doc; when a module moves layer, move/retitle its doc to match.
 
-**BDD `.feature` = living behavior documentation.** For behavior-bearing features, the Gherkin scenarios under `tests/acceptance/features/` ARE the human-readable behavior contract. Reference them from the feature SPEC (link the `.feature` for the observable-behavior section) instead of paraphrasing — the executable spec is the source of truth. Do NOT edit `.feature`/step files (they are the **test** role's under `tests/`); you edit ONLY `docs/`.
-
 <!-- overlay:python — Python doc-format reference + sync commands. -->
 ## STACK (Python)
 

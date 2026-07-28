@@ -26,16 +26,12 @@ REPEAT   → next case
 ```
 Never write production code without a failing test first. Write only enough test to fail, only enough code to pass, and refactor only on green.
 
-### BDD acceptance + Mutation (test-strength — peer to TDD)
-- **BDD (acceptance, outside-in):** behavior-bearing beads carry Gherkin `.feature` scenarios (`pytest-bdd`) that pin observable behavior *through the boundary* (fake gateway/CLI), derived from the epic's PRD scenario catalog + invariants. The **test** role authors them; you write code that makes them expressible and green. They are living documentation — keep the behavior observable, not coupled to internals.
-- **Mutation (test-strength on pure domain cores):** the deterministic domain logic you write (verdicts, policies, thresholds) must **survive mutation** (`mutmut`) — write assertion-tight tests that KILL mutants (flipped comparisons, off-by-one, swapped constants), not just execute the line. Scope: pure cores only — NOT adapters / IO / async / LLM. A padded score is a lie; kill the mutant or triage a genuinely-equivalent one explicitly.
-
 ### Architecture discipline (discover, don't assume)
 - The project follows a **declared architecture** (DDD layers, FSD slices, …). Discover it from the graph (`beadloom graph` / `ctx`), not from memory or hardcoded paths.
 - Respect **dependency direction + boundaries** for that methodology. Place new code in the layer that owns the responsibility; if unsure, run `beadloom why`/`ctx` to find the right home.
 - Boundaries are machine-enforced (`beadloom lint --strict`). A new module that isn't a classified node with a doc trips coverage-lint (error). Fix every violation before completing the bead — do not ship across a red boundary.
 
-### Cohesion-driven design (first-class — peer to DDD / TDD / BDD / trunk-based)
+### Cohesion-driven design (first-class — peer to DDD / TDD / trunk-based)
 Every module, class, and function carries **one responsibility you can name in a phrase**. This is non-negotiable, in both directions:
 - **No monster modules.** A file that mixes several responsibilities (types + policy + I/O + orchestration) or has grown past readability is split BY RESPONSIBILITY into cohesive units. Huge files are a defect regardless of what any metric says.
 - **No over-splitting.** Cohesion is the driver, **not** line count. Do not shatter code into shrapnel — tiny files, indirection for its own sake, or a flow you must chase across a dozen modules is equally a defect.

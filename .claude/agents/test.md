@@ -39,18 +39,6 @@ One behavior per test; a clear Arrange / Act / Assert shape; a name that states 
 ### Coverage
 - Target **>= 80%** on the changed code (statements + branches). Coverage is a floor, not a goal — cover the edge cases above, not just the happy path.
 
-### BDD acceptance (pytest-bdd + Gherkin) — outside-in
-Behavior-bearing beads get executable `.feature` specs — the acceptance layer AND human-readable living documentation (a non-coder must be able to read the behavior):
-- Write scenarios **Given / When / Then** from the epic's PRD scenario catalog + its invariants; one scenario = **one observable behavior through the boundary** (fake gateway/CLI), never an internal call.
-- Steps bind Gherkin to fixtures; assert on what a participant would observe (a reply / a reaction / silence / an honest outage notice), **never private state**.
-- `.feature` files live in `tests/acceptance/features/`, step defs in `tests/acceptance/steps/`.
-
-### Mutation testing (mutmut) — test-strength on pure domain cores
-Coverage proves execution; mutation proves your tests BITE:
-- Run `mutmut` on the pure **domain core** the bead touches (deterministic verdicts/policies/thresholds). NOT adapters / LLM / async / gateway (slow, non-deterministic, uninformative).
-- Target **mutation-score >= 85%**. A surviving mutant = a real gap: add the assertion that kills it. Triage genuinely-**equivalent** mutants explicitly (document the ignore) — **never pad the score**.
-- Deliberate **per-bead** run, **NOT** in pre-commit (cost).
-
 ### Validation, checkpoint, completion
 1. Tests pass + coverage >= 80%.
 2. Architecture/doc validation green (`beadloom reindex` → `beadloom sync-check` → `beadloom lint --strict`).
@@ -78,9 +66,6 @@ uv run pytest                                                   # all tests
 uv run pytest --cov=src --cov-report=term-missing               # with coverage
 uv run pytest --cov=src --cov-fail-under=80                     # enforce the floor
 uv run pytest tests/test_graph_loader.py -v                     # single file, verbose
-uv run pytest tests/acceptance/                                 # BDD acceptance (pytest-bdd .feature)
-uv run mutmut run --paths-to-mutate src/bob/<domain-core>       # mutation gate (pure domain only)
-uv run mutmut results                                           # surviving mutants to kill/triage
 ```
 
 ### Python patterns

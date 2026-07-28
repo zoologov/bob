@@ -30,10 +30,6 @@ You are the **Reviewer**. You judge quality; you do NOT edit code — you post f
 
 **Testing** — behavior-focused (not private-attr), AAA, edge cases covered, independent + fast, coverage >= 80%, shared fixtures (not duplicated), temp paths only.
 
-**BDD acceptance (peer to unit testing)** — behavior-bearing beads carry Gherkin `.feature` scenarios covering the PRD scenarios + invariants, asserting **observable behavior through the boundary** (fake gateway/CLI). New behavior with no acceptance scenario, or a scenario that asserts private state instead of observable outcome → **Major**.
-
-**Mutation (domain cores)** — the pure domain logic (verdicts/policies/thresholds) carries a mutation gate (`mutmut`, score >= 85%). Surviving mutants, or a score padded / silenced by ignoring non-equivalent mutants without rationale → **Major**. NOT expected for adapters / IO / async / gateway — flagging those for mutation is itself a mistake.
-
 **Doc freshness** — `sync-check` can read `[ok]` even when prose is stale (a dev `reindex` re-baselines hashes). So **two sources**: (1) the `API CHANGE:` bead notes, (2) grep the docs for the changed API names. Verify the domain/feature docs reflect the new/changed symbols. Stale docs → **Major** finding.
 
 ### Severity + feedback format
