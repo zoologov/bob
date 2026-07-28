@@ -30,20 +30,41 @@ of an inward application dependency.
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from bob.conversation.conversation_floor import (
     FloorConfig,
     advance_floor,
+    is_floor_participant,
     resolve_addressivity,
 )
 
 if TYPE_CHECKING:
     from bob.conversation.addressivity import Addressivity
+    from bob.conversation.conversation_floor import FloorHolder
     from bob.conversation.ports import ConversationFloorStore
     from bob.kernel.ports import Clock
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True, slots=True)
+class FloorResolution:
+    """The conversation floor's read of one inbound turn (BOB-025/066 .1).
+
+    ``effective`` is the per-message addressivity RAISED by the floor (an ambient turn
+    from a recognised participant of a live Bob-floor reads as ``DIRECTED_TO_BOB``).
+    ``holder`` is who currently holds the floor (``None`` when the floor is unwired /
+    disabled — the seam is inert). ``participant`` is whether THIS sender belongs to Bob's
+    live exchange (floor-по-говорящему) — a hint the future reflective read weighs, never
+    a decider. On the inert path ``effective == per_message``, ``holder is None`` and
+    ``participant is False`` (exactly BOB-023 behaviour).
+    """
+
+    effective: Addressivity
+    holder: FloorHolder | None
+    participant: bool
 
 
 class FloorManager:
@@ -63,30 +84,49 @@ class FloorManager:
         self._clock = clock
 
     async def resolve_effective(
-        self, chat_id: int, per_message: Addressivity
-    ) -> Addressivity:
-        """Raise per-message addressivity by the conversation floor (BOB-025).
+        self, chat_id: int, per_message: Addressivity, *, sender_id: int | None
+    ) -> FloorResolution:
+        """Read the conversation floor for one inbound turn (BOB-025/066 .1).
 
-        With the floor wired AND enabled, an ``AMBIENT`` message in a thread where Bob
-        holds a live floor is raised to ``DIRECTED_TO_BOB`` (continuity); the floor is
-        loaded for ``(chat_id, thread_id)``. Floor unwired or disabled → the per-message
-        classification is returned unchanged (BOB-023 behaviour). Best-effort: a flaky
-        floor store can never break a turn — on a load/resolve failure Bob falls back to
-        the per-message BOB-023 classification (a hiccup must never mute him), mirroring
-        the advance side.
+        With the floor wired AND enabled, an ``AMBIENT`` message from a RECOGNISED
+        participant of a thread where Bob holds a live floor is raised to
+        ``DIRECTED_TO_BOB`` (continuity, floor-по-говорящему): an unlabeled reply from
+        someone already in Bob's exchange continues it, while a stranger's ambient stays
+        ambient (Bob does not wrongly take it). The floor is loaded for
+        ``(chat_id, thread_id)``; the result also carries the current ``holder`` and
+        whether this ``sender_id`` is a participant (hints for the reflective read). Floor
+        unwired or disabled → an inert resolution (``effective == per_message``, no holder,
+        not a participant — BOB-023 behaviour). Best-effort: a flaky floor store can never
+        break a turn — on a load/resolve failure Bob falls back to the per-message BOB-023
+        classification (a hiccup must never mute him), mirroring the advance side.
         """
         if self._floor_store is None or not self._floor_enabled:
-            return per_message
+            return FloorResolution(
+                effective=per_message, holder=None, participant=False
+            )
         try:
+            now = self._clock.now()
             floor = await self._floor_store.load(chat_id, self._thread_id())
-            return resolve_addressivity(
-                per_message, floor, now=self._clock.now(), config=self._floor_config
+            effective = resolve_addressivity(
+                per_message,
+                floor,
+                sender_id=sender_id,
+                now=now,
+                config=self._floor_config,
+            )
+            participant = is_floor_participant(
+                floor, sender_id, now=now, config=self._floor_config
+            )
+            return FloorResolution(
+                effective=effective, holder=floor.holder, participant=participant
             )
         except Exception:
             logger.exception(
                 "resolving the conversation floor failed; using per-message addressivity"
             )
-            return per_message
+            return FloorResolution(
+                effective=per_message, holder=None, participant=False
+            )
 
     async def advance_after_turn(
         self,

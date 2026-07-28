@@ -291,7 +291,14 @@ generic key/value-стором (`kv_set`/`kv_get`) и выставляет жи�
 модулей + memory-репозиторий. Как schema/migration-owner kernel держит и
 proactivity-специфичную миграцию `_migrate_pursuit_stopped` (помечена
 `# BOB-062: proactivity-specific, future relocation` — оставлена в kernel'е, потому
-что он применяет весь `schema.sql`; будущий срез может унести её в proactivity).
+что он применяет весь `schema.sql`; будущий срез может унести её в proactivity). Рядом
+живёт guarded-миграция `_migrate_conversation_floor_participants` (BOB-066 .1):
+`CREATE TABLE IF NOT EXISTS` не трогает уже существующую таблицу, поэтому база,
+записанная до появления столбца `conversation_floor.participants`, получает его
+одноразовым `ALTER TABLE ... ADD COLUMN participants TEXT` под стражей `PRAGMA
+table_info` (идемпотентный no-op, когда столбец уже есть). Аддитивно и без потери
+данных: legacy-строка берёт `NULL`, который стор читает как пустой `()` = legacy-режим
+floor (любой участник продолжает нить, ровно поведение до BOB-066 — бэкфилл не нужен).
 
 Модульно-специфичный SQL живёт **в самих сторах** (каждый параметризован, `?`, без
 f-strings): memory-репозиторий (`bob.memory.adapters.SqliteMemoryRepo`) маппит

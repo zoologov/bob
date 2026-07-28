@@ -810,6 +810,10 @@ ignore = [
     "RUF002",
     "RUF003",
 ]
+# The floor-по-говорящему acceptance harness + steps (BOB-066 .1) carry Russian scripted
+# replies + scenario prose whose Cyrillic look-alikes are intentional (→ RUF001/2/3).
+"tests/acceptance/floor_harness.py" = ["RUF001", "RUF002", "RUF003"]
+"tests/acceptance/steps/test_floor_by_speaker.py" = ["RUF001", "RUF002", "RUF003"]
 # Proactivity tests seed `random.Random` for deterministic stochastic-sampling
 # assertions; the non-crypto PRNG is the point here, so S311 does not apply.
 "tests/domain/proactivity/*.py" = ["S101", "ARG001", "PLR2004", "S311"]
@@ -869,5 +873,48 @@ markers = [
 
 [dependency-groups]
 dev = [
+    "mutmut>=3.2",
+    "pytest-bdd>=8.1",
     "pytest-timeout>=2.4.0",
+]
+
+# --- Mutation testing (BOB-066 Срез 0) ---
+# Mutation is a DELIBERATE, per-slice run on the touched PURE DOMAIN core — NOT a
+# pre-commit/pre-push hook (too slow; see scripts/mutation.sh + dev-docs/MUTATION.md).
+# Convention: mutation-score ≥85% on the affected domain module; equivalent mutants are
+# triaged explicitly (never pad the number). Target = deterministic verdict/policy/threshold
+# logic ONLY. Adapters / ports / LLM / async / gateway / infrastructure are OUT of scope
+# (slow, non-deterministic, uninformative) — kept out by scanning only the business-domain
+# packages below and denying their impure sub-trees.
+[tool.mutmut]
+# Scan the pure business-domain packages (technical layers — application/infrastructure/
+# runtime/kernel — are excluded by simply not being listed). Per-slice runs narrow to a
+# single module via a mutant-name filter (e.g. `scripts/mutation.sh bob.social.sulk`).
+source_paths = [
+    "src/bob/conversation",
+    "src/bob/social",
+    "src/bob/personality",
+    "src/bob/memory",
+    "src/bob/proactivity",
+    "src/bob/coding",
+    "src/bob/capabilities",
+]
+# Deny the impure sub-trees inside those packages: adapters (I/O), ports (protocols),
+# and package __init__ re-exports carry no deterministic verdict logic to mutate.
+do_not_mutate = [
+    "*/adapters/*",
+    "*/ports.py",
+    "*/__init__.py",
+]
+# Mutation measures the strength of the pure-domain UNIT tests (tests/domain/) — fast and
+# deterministic — NOT the slow async e2e/integration suite. Selecting them here keeps the
+# one-time coverage-stats phase cheap so a per-slice run stays quick.
+pytest_add_cli_args_test_selection = ["tests/domain"]
+# The kernel (ports/protocols the domain tests import) is NOT mutated but IS imported by
+# tests/domain — copy it + the package root verbatim into the mutants sandbox so the
+# (non-mutated) tests still collect and run.
+also_copy = [
+    "src/bob/__init__.py",
+    "src/bob/py.typed",
+    "src/bob/kernel",
 ]

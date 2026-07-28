@@ -83,7 +83,8 @@ class _FakeBot:
         return self.updates_batches.pop(0)
 
     async def send_message(
-        self, *, chat_id: int, text: str, message_thread_id: int | None = None
+        self, *, chat_id: int, text: str, message_thread_id: int | None = None,
+        reply_parameters: object = None,
     ) -> MessageLike:
         raise NotImplementedError  # pragma: no cover
 
@@ -93,7 +94,8 @@ class _FakeBot:
         return True
 
     async def send_rich_message(
-        self, *, chat_id: int, rich_message: object, message_thread_id: int | None = None
+        self, *, chat_id: int, rich_message: object, message_thread_id: int | None = None,
+        reply_parameters: object = None,
     ) -> MessageLike:
         raise NotImplementedError  # pragma: no cover
 

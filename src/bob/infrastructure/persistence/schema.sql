@@ -217,6 +217,7 @@ CREATE TABLE IF NOT EXISTS conversation_floor (
     holder_id   INTEGER,                      -- OTHER person's id (nullable)
     since        TEXT,                         -- ISO-8601 holder-confirmed stamp (nullable)
     idle_streak INTEGER NOT NULL DEFAULT 0,   -- silent-ambient run toward decay
+    participants TEXT,                         -- CSV of live-thread speaker ids (NULL = legacy/empty)
     PRIMARY KEY (chat_id, thread_id)
 );
 

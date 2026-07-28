@@ -575,10 +575,18 @@ class _ReplyGateway:
         return self._gateway.typing_indicator(chat_id=chat_id)
 
     async def reply(
-        self, *, chat_id: int, markdown: str, thinking: str | None = None
+        self,
+        *,
+        chat_id: int,
+        markdown: str,
+        thinking: str | None = None,
+        reply_to_message_id: int | None = None,
     ) -> int | None:
         return await self._gateway.reply(
-            chat_id=chat_id, markdown=markdown, thinking=thinking
+            chat_id=chat_id,
+            markdown=markdown,
+            thinking=thinking,
+            reply_to_message_id=reply_to_message_id,
         )
 
     async def send_photo(

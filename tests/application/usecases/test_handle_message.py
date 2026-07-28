@@ -300,7 +300,8 @@ class FakeBot:
         return []
 
     async def send_message(
-        self, *, chat_id: int, text: str, message_thread_id: int | None = None  # noqa: ARG002
+        self, *, chat_id: int, text: str, message_thread_id: int | None = None,  # noqa: ARG002
+        reply_parameters: object = None,  # noqa: ARG002
     ) -> FakeMessage:
         self.sent.append((chat_id, text))
         return FakeMessage(message_id=777)
@@ -327,7 +328,8 @@ class FakeBot:
         *,
         chat_id: int,
         rich_message: object,
-        message_thread_id: int | None = None,  # noqa: ARG002
+        message_thread_id: int | None = None,# noqa: ARG002
+        reply_parameters: object = None,  # noqa: ARG002
     ) -> FakeMessage:
         markdown = getattr(rich_message, "markdown", "")
         self.sent.append((chat_id, markdown))

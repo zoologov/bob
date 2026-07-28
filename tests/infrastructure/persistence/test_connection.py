@@ -214,6 +214,48 @@ async def test_pursuit_stopped_migration_adds_column_to_a_legacy_db(
     await kernel.close()
 
 
+async def test_floor_participants_migration_adds_column_to_a_legacy_db(
+    tmp_path: Path,
+) -> None:
+    # Arrange: a legacy DB whose conversation_floor predates the participants column
+    # (BOB-066 .1, floor-по-говорящему). CREATE TABLE IF NOT EXISTS never alters an
+    # existing table, so the kernel's guarded ALTER is what must add the column — and
+    # the pre-existing row must survive (its participants read back as NULL = legacy).
+    db_path = tmp_path / "legacy.db"
+    async with aiosqlite.connect(db_path) as raw:
+        await raw.execute(
+            "CREATE TABLE conversation_floor ("
+            "  chat_id INTEGER NOT NULL,"
+            "  thread_id INTEGER NOT NULL,"
+            "  holder TEXT NOT NULL,"
+            "  holder_id INTEGER,"
+            "  since TEXT,"
+            "  idle_streak INTEGER NOT NULL DEFAULT 0,"
+            "  PRIMARY KEY (chat_id, thread_id)"
+            ")"
+        )
+        await raw.execute(
+            "INSERT INTO conversation_floor "
+            "(chat_id, thread_id, holder, holder_id, since, idle_streak) "
+            "VALUES (42, -1, 'bob', NULL, '2026-06-24T12:00:00+00:00', 0)"
+        )
+        await raw.commit()
+
+    # Act: the kernel opens the pre-existing DB and runs its guarded migration.
+    kernel = SqliteConnection(db_path)
+    await kernel.initialize()
+
+    # Assert: the column now exists AND the pre-existing row took NULL (= legacy /
+    # empty participants) — additive, non-destructive.
+    async with kernel.connection.execute(
+        "SELECT participants FROM conversation_floor WHERE chat_id = 42"
+    ) as cursor:
+        row = await cursor.fetchone()
+    assert row is not None
+    assert row[0] is None
+    await kernel.close()
+
+
 # --- THE SEAM: one shared kernel feeds many per-module stores -------------------
 
 

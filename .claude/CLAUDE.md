@@ -124,6 +124,39 @@ bd close <bead-id> --suggest-next
 
 ---
 
+## 0.2 Engineering Paradigms (standing methodology)
+
+> **Applies to ALL work, not one epic.** Path values (owner): maximum quality, honesty, control,
+> style, maintainability, extensibility, stability. These paradigms are peers — none optional.
+
+**Quality pyramid (outside-in acceptance over inside-out units):**
+
+```
+BDD acceptance (pytest-bdd + Gherkin .feature) — observable behavior as executable,
+                                                 human-readable contracts (living documentation)
+Mutation gate  (mutmut, targeted)             — measures TEST STRENGTH on pure domain cores
+TDD unit                                      — pure cores, deterministic (test-first)
+DDD boundaries + Cohesion                     — structure: bounded contexts, one nameable responsibility
+```
+
+**Enforced by the role subagents** (`.claude/agents/`):
+- **dev** — TDD (test-first) · DDD placement · Cohesion (name the one responsibility) · writes code that survives mutation + makes behavior expressible as `.feature`.
+- **test** — TDD unit · **BDD** `.feature` for behavior-bearing work · **mutation** gate on the touched domain core.
+- **review** — DDD boundaries · Cohesion (both directions) · BDD-coverage of new behavior · mutation-score.
+- **tech-writer** — `.feature` scenarios are living behavior docs (referenced from domain docs).
+
+**🔴 Honest scoping (sustainable — not a rule we silently break):**
+- **BDD `.feature`** — for behavior-bearing work (features/epics/bugfixes with observable behavior);
+  pure mechanical chores may skip. Scenarios derive from the PRD scenario catalog + invariants;
+  assert observable behavior through the boundary (fake gateway/CLI), never private state.
+  Live in `tests/acceptance/{features,steps}/`.
+- **Mutation** — ONLY pure **domain cores** (deterministic verdicts/policies/thresholds); NOT
+  adapters/LLM/async/gateway (slow, non-deterministic, uninformative). Deliberate **per-slice** run,
+  **NOT** in pre-commit (cost). Score **≥85%** + explicit equivalent-mutant triage (never pad).
+- Harness is repo-wide once bootstrapped (established in BOB-066 Срез 0: `pytest-bdd` + `mutmut`).
+
+---
+
 ## 1. Skills — Dynamic Loading
 
 **Slash skills (main loop):**

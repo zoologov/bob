@@ -93,7 +93,8 @@ class _FakeAiogramBot:
         return self.updates
 
     async def send_message(
-        self, *, chat_id: int, text: str, message_thread_id: int | None = None
+        self, *, chat_id: int, text: str, message_thread_id: int | None = None,
+        reply_parameters: object = None,  # noqa: ARG002
     ) -> str:
         self.calls.append(
             _Call(
@@ -130,7 +131,8 @@ class _FakeAiogramBot:
         return True
 
     async def send_rich_message(
-        self, *, chat_id: int, rich_message: object, message_thread_id: int | None = None
+        self, *, chat_id: int, rich_message: object, message_thread_id: int | None = None,
+        reply_parameters: object = None,  # noqa: ARG002
     ) -> str:
         self.calls.append(
             _Call(

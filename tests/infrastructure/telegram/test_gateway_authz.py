@@ -100,7 +100,8 @@ class _FakeBot:
         *,
         chat_id: int,
         text: str,
-        message_thread_id: int | None = None,  # noqa: ARG002
+        message_thread_id: int | None = None,# noqa: ARG002
+        reply_parameters: object = None,  # noqa: ARG002
     ) -> _FakeMessage:
         self.sends.append(_SendCall(chat_id=chat_id, text=text))
         return _FakeMessage(message_id=1, text=text)
@@ -130,7 +131,8 @@ class _FakeBot:
         *,
         chat_id: int,  # noqa: ARG002
         rich_message: InputRichMessage,
-        message_thread_id: int | None = None,  # noqa: ARG002
+        message_thread_id: int | None = None,# noqa: ARG002
+        reply_parameters: object = None,  # noqa: ARG002
     ) -> _FakeMessage:
         return _FakeMessage(message_id=1, text=rich_message.markdown)
 

@@ -135,7 +135,12 @@ class _CapturingGateway:
         yield
 
     async def reply(
-        self, *, chat_id: int, markdown: str, thinking: str | None = None
+        self,
+        *,
+        chat_id: int,
+        markdown: str,
+        thinking: str | None = None,
+        reply_to_message_id: int | None = None,
     ) -> None:
         self.messages.append(markdown)
 

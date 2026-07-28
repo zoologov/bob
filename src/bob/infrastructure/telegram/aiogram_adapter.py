@@ -27,7 +27,12 @@ from bob.infrastructure.telegram.gateway import ALLOWED_UPDATES
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
-    from aiogram.types import BufferedInputFile, InputRichMessage, ReactionTypeEmoji
+    from aiogram.types import (
+        BufferedInputFile,
+        InputRichMessage,
+        ReactionTypeEmoji,
+        ReplyParameters,
+    )
 
     from bob.infrastructure.telegram.gateway import (
         BotLike,
@@ -121,10 +126,18 @@ class _AiogramBotAdapter:
         return [_to_update_view(update) for update in updates]
 
     async def send_message(
-        self, *, chat_id: int, text: str, message_thread_id: int | None = None
+        self,
+        *,
+        chat_id: int,
+        text: str,
+        message_thread_id: int | None = None,
+        reply_parameters: ReplyParameters | None = None,
     ) -> MessageLike:
         return await self._bot.send_message(  # type: ignore[attr-defined,no-any-return]
-            chat_id=chat_id, text=text, message_thread_id=message_thread_id
+            chat_id=chat_id,
+            text=text,
+            message_thread_id=message_thread_id,
+            reply_parameters=reply_parameters,
         )
 
     async def send_chat_action(
@@ -140,11 +153,13 @@ class _AiogramBotAdapter:
         chat_id: int,
         rich_message: InputRichMessage,
         message_thread_id: int | None = None,
+        reply_parameters: ReplyParameters | None = None,
     ) -> MessageLike:
         return await self._bot.send_rich_message(  # type: ignore[attr-defined,no-any-return]
             chat_id=chat_id,
             rich_message=rich_message,
             message_thread_id=message_thread_id,
+            reply_parameters=reply_parameters,
         )
 
     async def edit_message_text(
