@@ -40,15 +40,24 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Literal, Protocol
+from typing import TYPE_CHECKING, Protocol
 
-from bob.application.reliability import call_with_retry
 from bob.application.router.llm_router import LLMRequest, TaskType
 from bob.application.router.reply_tier_selector import select_reply_tier
-from bob.capabilities.diagrams import (
-    extract_mermaid_blocks,
-    normalize_mermaid,
-    strip_mermaid_blocks,
+from bob.application.usecases.essential_runner import (
+    EssentialRunner,
+    OutageNotifier,
+    _EssentialStepError,
+)
+from bob.application.usecases.precompose_gate import (
+    NaturalCodingRouter,
+    PermissionFlowLike,
+    PreComposeGate,
+)
+from bob.capabilities.usecases.diagram_sender import (
+    _DEFAULT_DIAGRAM_SEND_AS,
+    DiagramSender,
+    DiagramSendMode,
 )
 from bob.capabilities.usecases.progress_announcer import GatewayProgressAnnouncer
 from bob.capabilities.usecases.registry import CapabilityRegistry
@@ -82,11 +91,7 @@ from bob.conversation.conversation import (
     recurring_closer,
     strip_recurring_closer,
 )
-from bob.conversation.conversation_floor import (
-    FloorConfig,
-    advance_floor,
-    resolve_addressivity,
-)
+from bob.conversation.conversation_floor import FloorConfig
 from bob.conversation.engagement import (
     ConversationalFatigue,
     EngagementThresholds,
@@ -108,9 +113,13 @@ from bob.conversation.thread import (
     _strip_recalled_closer,
     _user_turns,
 )
-from bob.conversation.volatility_judgment import VolatilityContext
+from bob.conversation.usecases.floor_manager import FloorManager
+from bob.conversation.usecases.verify_step import (
+    _VERIFY_GROUNDED_NOTE,  # noqa: F401  # re-exported for tests (moved to VerifyStep)
+    _VERIFY_HEDGE_NOTE,  # noqa: F401  # re-exported for tests (moved to VerifyStep)
+    VerifyStep,
+)
 from bob.conversation.zone_classifier import TasteZoneClassifier
-from bob.domain.ports import DiagramRenderError, DiagramResult
 from bob.memory.entities import EpisodicEvent
 from bob.personality.absence import absence_hint
 from bob.personality.expression import (
@@ -164,7 +173,7 @@ from bob.social.interlocutor import InterlocutorKind, Trust
 from bob.social.relationship import compromise_bias
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable, Mapping, Sequence
+    from collections.abc import Awaitable, Mapping, Sequence
     from contextlib import AbstractAsyncContextManager
     from datetime import datetime
     from random import Random
@@ -175,10 +184,7 @@ if TYPE_CHECKING:
     from bob.capabilities.usecases.progress_announcer import InterimLineGenerator
     from bob.conversation.response_choice import ResponseChoice
     from bob.conversation.usecases.decide_response import DecideResponse
-    from bob.conversation.volatility_judgment import (
-        VolatilityJudge,
-        VolatilityVerdict,
-    )
+    from bob.conversation.volatility_judgment import VolatilityJudge
     from bob.domain.ports import (
         Clock,
         CloserLog,
@@ -217,16 +223,9 @@ logger = logging.getLogger(__name__)
 _DEFAULT_ESSENTIAL_ATTEMPTS = 3
 _DEFAULT_ESSENTIAL_BACKOFF_SECONDS = 0.5
 
-# How a rendered diagram is sent (BOB-037 C). ``document`` posts the PNG as an
-# UNCOMPRESSED file (full resolution, tap → real pixels) — the product default, since
-# Telegram ``send_photo`` recompresses to JPEG and caps the long side (~1280px), which
-# makes a dense diagram unreadable. ``photo`` keeps the inline-preview photo.
-type DiagramSendMode = Literal["document", "photo"]
-_DEFAULT_DIAGRAM_SEND_AS: DiagramSendMode = "document"
-
-# The short caption sent alongside an auto-rendered inline diagram (BOB-037 A): Bob's
-# in-character Russian line, mirroring the render_diagram tool's caption.
-_INLINE_DIAGRAM_CAPTION = "Вот диаграмма."
+# ``DiagramSendMode`` / ``_DEFAULT_DIAGRAM_SEND_AS`` (how a rendered diagram is sent) and
+# the inline caption now live with :class:`DiagramSender` (capabilities); imported above
+# and re-exported here for the constructor default + app.py / tests.
 
 # How many memories to recall when assembling the reply context.
 _RECALL_K = 5
@@ -255,29 +254,8 @@ _CLOSER_TIC_NUDGE = (
 # the turn is never blocked or broken.
 _DEFAULT_VERIFY_TIMEOUT_SECONDS = 75.0
 
-# The web finding is trimmed before it enters the generation context (it only needs to
-# ground the answer, not dump the whole search payload into the prompt).
-_VERIFY_ANSWER_MAX_CHARS = 800
-
-# The GROUNDED note (US-1/US-4 + BOB-060 .2 register-nudge): the fresh finding + an
-# explicit steer to present it IN BOB'S OWN VOICE, reacting to it — NOT as a generic
-# agent report («выполнен поиск, найдено N…»). The tone adapts through generation,
-# unprogrammed; the note only nudges the register, never the search mechanism.
-_VERIFY_GROUNDED_NOTE = (
-    "СВЕЖАЯ ПРОВЕРКА (веб): {answer}. Ты сходил и глянул это в сети — отреагируй "
-    "по-своему, как БОБ, со своим отношением и тоном, если картина изменилась; "  # noqa: RUF001
-    "НЕ отчётом («выполнен поиск, найдено…»), не сухой сводкой."  # noqa: RUF001
-)
-
-# The HEDGE note (US-6 + BOB-060 .2): on a failed/timed-out/empty verify Bob makes an
-# HONEST epistemic caveat — 🔴 never a confident STALE number dressed as fact, never a
-# fabrication (BOB-053 invariant). The register-nudge steers a LIVE, in-voice caveat
-# (not a robotic «поиск не удался»), without weakening the anti-confabulation intent.
-_VERIFY_HEDGE_NOTE = (
-    "Свериться со свежими данными по {topic} не вышло — скажи это честно и живо, "  # noqa: RUF001
-    "своими словами (не сухим «поиск не удался»); не выдавай устаревшие цифры за "
-    "точные и ничего не выдумывай."
-)
+# The trimmed-answer cap + the GROUNDED / HEDGE register-nudge notes now live with
+# :class:`VerifyStep` (conversation); the two notes are re-exported above for tests.
 
 # Max attractor-breaking regenerations the anti-repeat guard may draw before keeping the
 # last draft (BOB-032 .1, R2). Each retry strips the recalled exemplar(s) the candidate
@@ -606,79 +584,10 @@ class BobUserIdSource(Protocol):
     def __call__(self) -> int | None: ...
 
 
-class NaturalCodingRouter(Protocol):
-    """The natural-language coding-intent seam HandleMessage delegates to (BOB-041 .2).
-
-    Realised by
-    :class:`~bob.coding.usecases.coding_intent_router.CodingIntentRouter`: given an
-    owner message in Bob's topic it decides WHEN to drive the gated coding session
-    (plan / approve / stop) and returns whether it CONSUMED the turn (so HandleMessage
-    short-circuits the normal compose). Owner-only and gate-bound live in the router +
-    the use-case + the domain machine, never here. Unwired (the default) OR ``coder.enabled``
-    false → no router is injected, so the natural-language path is inert and every
-    message takes the normal chat flow exactly as before.
-    """
-
-    async def route(self, *, text: str, sender: int | None, is_owner: bool) -> bool: ...
-
-
-class PermissionFlowLike(Protocol):
-    """The permission-flow seam HandleMessage delegates privilege gating to (BOB-052 .2).
-
-    Realised by :class:`~bob.social.usecases.permission_flow.PermissionFlow`. On a
-    turn it owns two decisions, each returning whether it CONSUMED the turn (so
-    HandleMessage short-circuits the normal compose): ``maybe_decide`` records the
-    OWNER's verdict on an active pending request (grant / deny / authorize), and
-    ``maybe_request`` opens a pending request + asks the owner when a NON-authorized
-    member asks for something privileged. 🔴 Owner-only decision and the
-    non-authorized-only request gate live INSIDE the flow; HandleMessage only passes the
-    perceived authz facts. Unwired (the default) the seam is inert and every message
-    takes the normal chat flow exactly as before.
-    """
-
-    async def maybe_decide(self, *, text: str, is_owner: bool) -> bool: ...
-
-    async def maybe_request(
-        self,
-        *,
-        text: str,
-        requester_id: int,
-        requester_name: str,
-        is_owner: bool,
-        is_authorized: bool,
-        recent_thread: str = "",
-    ) -> bool: ...
-
-
-class OutageNotifier(Protocol):
-    """GUPPI's honest-outage seam (BOB-049 .3 — «полный Боб или GUPPI-нотис»).
-
-    When an ESSENTIAL turn step (the semantic judgment or the reply generation) keeps
-    failing after the bounded retries, Bob — the mind — is unavailable. Rather than ship a
-    degraded half-answer («уверенный бред», the antipattern), GUPPI (the infrastructure
-    subsystem) honestly reports the outage into Bob's topic via this seam. Optional: with
-    no notifier wired the turn still ends cleanly — the user's turn is persisted and NO
-    degraded reply is produced — just without a visible notice. The concrete adapter sends
-    a fixed system line through Bob's bot into his topic; the third-person text reads as
-    GUPPI reporting, not Bob being rude.
-    """
-
-    async def notify_outage(self) -> None:
-        """Post GUPPI's honest "Bob temporarily unavailable" connectivity notice."""
-        ...
-
-
-class _EssentialStepError(Exception):
-    """An ESSENTIAL turn step failed after the bounded retries (BOB-049 .3).
-
-    Raised by the retry-wrapped essential calls (the semantic judgment, the reply
-    generation) so the turn falls back to the honest GUPPI outage notice instead of a
-    degraded reply. Carries the step label for the log only — never shown to the user.
-    """
-
-    def __init__(self, step: str) -> None:
-        super().__init__(step)
-        self.step = step
+# ``NaturalCodingRouter`` / ``PermissionFlowLike`` (the pre-compose consumption seams)
+# now live with :class:`PreComposeGate` (application); ``OutageNotifier`` and
+# ``_EssentialStepError`` with :class:`EssentialRunner`. All are imported above so the
+# constructor annotations + the except clauses + app.py / tests resolve as before.
 
 
 @dataclass
@@ -1182,60 +1091,91 @@ class HandleMessage:
         # never blocks the search or breaks the turn.
         self._interim_line_generator = interim_line_generator
 
-    async def _run_essential[T](
-        self, operation: Callable[[], Awaitable[T]], *, step: str
-    ) -> T:
-        """Run an ESSENTIAL LLM step with bounded retry (BOB-049 .3).
-
-        The semantic judgment and the reply generation are the steps whose persistent
-        failure must NOT yield a degraded reply. Each is retried up to
-        ``essential_attempts`` times with the injected backoff sleep; if every attempt
-        raises, the last error is wrapped in :class:`_EssentialStepError` so the turn
-        falls back to the honest GUPPI outage notice. OPTIONAL add-ons are never routed
-        through here — they drop silently at their own call sites.
-        """
-        try:
-            return await call_with_retry(
-                operation,
-                attempts=self._essential_attempts,
-                backoff_seconds=self._essential_backoff_seconds,
-                sleep=self._retry_sleep,
-            )
-        except Exception as exc:
-            raise _EssentialStepError(step) from exc
-
-    async def _notify_outage(self) -> None:
-        """Emit GUPPI's honest outage notice into Bob's topic, best-effort (BOB-049 .3).
-
-        Unwired notifier → a clean no-op (the turn already ended with no degraded reply).
-        A flaky send is logged and swallowed so the failure handling itself can never
-        raise on top of the original essential failure.
-        """
-        if self._outage_notifier is None:
-            return
-        try:
-            await self._outage_notifier.notify_outage()
-        except Exception:
-            logger.exception("sending the GUPPI outage notice failed (ignored)")
-
-    async def _handle_essential_failure(
-        self, event: MessageReceived, soul: SOUL, exc: _EssentialStepError
-    ) -> None:
-        """End a turn whose ESSENTIAL step failed: persist + GUPPI notice (BOB-049 .3).
-
-        🔴 «Полный Боб или честный GUPPI-нотис»: NO degraded reply is produced. The user's
-        turn is persisted (so the message is not lost — consistent with .2) and GUPPI
-        honestly reports the outage into Bob's topic. The same path runs for a guest turn
-        (only the episodic record is written — no owner facts, no reply — so nothing leaks).
-        """
-        logger.warning(
-            "essential turn step (%s) failed after %d attempts; "
-            "emitting GUPPI outage notice (no degraded reply)",
-            exc.step,
-            self._essential_attempts,
+        # ── Wave-1 leaf collaborators (BOB-062.6b): each a cohesive method-object built
+        # HERE from the already-injected seam — behaviour-preserving (the `handle()` flow
+        # calls them exactly where the inlined methods used to run). ──
+        # DiagramSender (capabilities): auto-render inline mermaid + drain the per-turn
+        # sink. 🔴 The SAME shared sink instance is passed (never a new one) so the
+        # render_diagram capability's push and this sender's drain act on one object.
+        self._diagrams = DiagramSender(
+            gateway=self._gateway,
+            diagram_sink=self._diagram_sink,
+            diagram_renderer=self._diagram_renderer,
+            diagram_send_as=self._diagram_send_as,
         )
-        await self._persist(event, _OUTAGE_MARKER, soul)
-        await self._notify_outage()
+        # EssentialRunner (application): retry the two ESSENTIAL LLM steps, then fall back
+        # to the honest GUPPI outage notice — persisting the user's turn via this
+        # use-case's own persist step (injected as a callback, no persistence knowledge
+        # leaks into the runner).
+        self._essential = EssentialRunner(
+            attempts=self._essential_attempts,
+            backoff_seconds=self._essential_backoff_seconds,
+            retry_sleep=self._retry_sleep,
+            outage_notifier=self._outage_notifier,
+            persist=self._persist,
+        )
+        # FloorManager (conversation): resolve + advance the conversation floor. Takes
+        # primitive ids (never the application event), so the conversation vertical stays
+        # free of an inward application dependency.
+        self._floor = FloorManager(
+            floor_store=self._floor_store,
+            floor_config=self._floor_config,
+            floor_enabled=self._floor_enabled,
+            clock=self._clock,
+        )
+        # VerifyStep (conversation): the pre-answer epistemic verify, returning a per-turn
+        # LOCAL note. The per-turn interim announcer is built from the turn's chat_id via
+        # this injected factory (the concrete GatewayProgressAnnouncer lives in
+        # capabilities; composing it here keeps VerifyStep off that import).
+        self._verify = VerifyStep(
+            verify_judge=self._verify_judge,
+            verify_provider=self._verify_provider,
+            verify_timeout_seconds=self._verify_timeout_seconds,
+            announcer_factory=self._make_verify_announcer,
+        )
+        # PreComposeGate (application, cross-domain): the coding-intent + permission gates
+        # that may CONSUME a turn before the normal compose.
+        self._precompose = PreComposeGate(
+            coding_router=self._coding_router,
+            permission_flow=self._permission_flow,
+        )
+
+    def _make_verify_announcer(
+        self, *, chat_id: int, sender_name: str
+    ) -> GatewayProgressAnnouncer:
+        """Build the per-turn, chat-bound interim announcer for the verify search.
+
+        The factory VerifyStep calls with the turn's ``chat_id`` + perceived
+        ``sender_name`` — composing the capabilities announcer over this use-case's reply
+        gateway + live interim generator, so VerifyStep (conversation) never imports it.
+        """
+        return GatewayProgressAnnouncer(
+            chat_id=chat_id,
+            gateway=self._gateway,
+            line_generator=self._interim_line_generator,
+            sender_name=sender_name,
+        )
+
+    async def _advance_floor_after_turn(
+        self,
+        event: MessageReceived,
+        decision: _AddressivityDecision,
+        *,
+        bob_replied: bool,
+    ) -> None:
+        """Advance the conversation floor after a turn (BOB-025) via :class:`FloorManager`.
+
+        A thin translation from this turn's application event + decision to the
+        collaborator's primitive call — kept as one DRY point because the advance fires on
+        ALL branches (SILENT / REACT / react-only / happy-path).
+        """
+        await self._floor.advance_after_turn(
+            chat_id=event.chat_id,
+            sender_id=event.sender_id,
+            per_message=decision.per_message,
+            directed_to_id=decision.directed_to_id,
+            bob_replied=bob_replied,
+        )
 
     async def _load_modulators(self) -> RuleModulators:
         """Build this turn's soft modulators from Bob's APPROVED rules (BOB-028 .3).
@@ -1266,7 +1206,7 @@ class HandleMessage:
         # use-case owns its own owner messaging). 🔴 The router is owner-only and cannot
         # bypass the plan gate; a non-owner / non-coding message returns here unconsumed
         # and falls through to the normal chat path exactly as before.
-        if await self._maybe_route_coding(event, interlocutor):
+        if await self._precompose.maybe_route_coding(event, interlocutor):
             return
         # Privilege gating (BOB-052 .2): BEFORE composing a normal reply, route the turn
         # through the permission flow. On the OWNER's turn it records a decision on an
@@ -1276,7 +1216,7 @@ class HandleMessage:
         # AUTHORIZED member is never gated). When it consumes the turn the message was a
         # privilege decision/request, so the normal perceive→decide→act flow is skipped.
         # Unwired (the default) this is inert and the turn falls through exactly as before.
-        if await self._maybe_permission(event, interlocutor):
+        if await self._precompose.maybe_permission(event, interlocutor):
             return
         # Recall Bob's LIGHT prior first impression of this sender (BOB-019 bob-apv.3):
         # a returning person → his stored note, so the compose prompt can recall him
@@ -1337,7 +1277,7 @@ class HandleMessage:
                 event, soul, interlocutor, plan, interest, modulators
             )
         except _EssentialStepError as exc:
-            await self._handle_essential_failure(event, soul, exc)
+            await self._essential.handle_failure(event, soul, exc)
             return
         if gate is None:
             return
@@ -1417,7 +1357,7 @@ class HandleMessage:
                 # local (never a HandleMessage attribute) because the use case is a shared
                 # singleton — an instance flag would leak the note / «already searched» state
                 # across turns and concurrent users. ``""`` when the judge says «no check».
-                verify_note = await self._verify_note(
+                verify_note = await self._verify.note(
                     event.text,
                     history,
                     interlocutor=interlocutor,
@@ -1476,7 +1416,7 @@ class HandleMessage:
                     closer_nudge=closer_nudge,
                 )
         except _EssentialStepError as exc:
-            await self._handle_essential_failure(event, soul, exc)
+            await self._essential.handle_failure(event, soul, exc)
             return
         # Optional brevity length guard (BOB-024): a conservative safety net behind
         # the bayes — when enabled AND the message wanted a short answer (LOW demand),
@@ -1488,13 +1428,13 @@ class HandleMessage:
         # sink, and STRIP the fence from the visible reply (the image replaces it). This
         # makes diagrams reliable whether or not the model called the render_diagram
         # tool. A render failure leaves the block as text (graceful); unwired → no-op.
-        reply = await self._autorender_inline_mermaid(reply)
+        reply = await self._diagrams.autorender_inline_mermaid(reply)
         # Send any diagrams the render_diagram capability queued this turn (BOB-035):
         # the tool-loop (inside _compose_reply) pushed each rendered PNG into the
         # per-turn sink; here — where the chat_id and the gateway live — they are
         # drained and posted as Telegram photos BEFORE the text confirmation, so the
         # image leads. Best-effort and gated on a wired sink (no diagram skill → no-op).
-        await self._send_pending_diagrams(event.chat_id)
+        await self._diagrams.send_pending(event.chat_id)
         # Capture the Telegram message_id of Bob's outgoing reply (BOB-050) so the
         # episode records which message was Bob's — a later reaction on it can then be
         # linked back to what Bob said. ``None`` if nothing was sent (degraded path).
@@ -1562,90 +1502,6 @@ class HandleMessage:
             chat_id=event.chat_id, message_id=event.message_id, emoji=emoji
         )
 
-    async def _autorender_inline_mermaid(self, reply: str) -> str:
-        """Render fenced ```mermaid blocks in ``reply`` and strip them (BOB-037 A).
-
-        The reliability fix: the model usually writes the mermaid as a fenced block in
-        its TEXT reply instead of calling the render_diagram tool. Each fenced block is
-        rendered via the wired renderer and queued to the same per-turn sink, and the
-        fence is stripped from the visible reply (the image replaces it). A block whose
-        source the render_diagram tool ALREADY rendered this turn is skipped (dedup by
-        normalised source) so the same diagram is never sent twice. A
-        :class:`DiagramRenderError` leaves that block AS text (graceful — no crash);
-        unwired renderer / no sink / no fenced block → the reply is returned unchanged.
-        """
-        if self._diagram_renderer is None or self._diagram_sink is None:
-            return reply
-        blocks = extract_mermaid_blocks(reply)
-        if not blocks:
-            return reply
-        # Sources the render_diagram TOOL already queued this turn — dedup keys so the
-        # same diagram is never rendered/sent twice. They count as "handled" (stripped).
-        handled = {
-            normalize_mermaid(result.source)
-            for result in self._diagram_sink.pending()
-        }
-        for source in blocks:
-            key = normalize_mermaid(source)
-            if key in handled:
-                continue  # the tool already queued it; just strip the echoed fence
-            if await self._render_inline_block(source):
-                handled.add(key)
-        # Strip ONLY the blocks that were rendered or deduped; a block whose render
-        # failed stays as text so Bob still answers (graceful).
-        return strip_mermaid_blocks(reply, only=handled)
-
-    async def _render_inline_block(self, source: str) -> bool:
-        """Render one inline mermaid ``source`` and queue it; ``False`` on failure (BOB-037).
-
-        Renders via the wired renderer and pushes a :class:`DiagramResult` (carrying the
-        source for dedup) onto the per-turn sink. A :class:`DiagramRenderError` (mmdc
-        missing / malformed) is logged and swallowed and returns ``False`` so the caller
-        leaves the fence as text.
-        """
-        assert self._diagram_renderer is not None  # guarded by the caller
-        assert self._diagram_sink is not None  # guarded by the caller
-        try:
-            png = await self._diagram_renderer.render(source)
-        except DiagramRenderError as exc:
-            logger.info("inline mermaid render failed (graceful): %s", exc)
-            return False
-        self._diagram_sink.push(
-            DiagramResult(png=png, caption=_INLINE_DIAGRAM_CAPTION, source=source)
-        )
-        return True
-
-    async def _send_pending_diagrams(self, chat_id: int) -> None:
-        """Post the diagrams queued this turn (BOB-035 + BOB-037 C).
-
-        Drains the per-turn :class:`~bob.domain.ports.DiagramSink` (cleared so the
-        next turn starts empty) and sends each rendered PNG into ``chat_id`` via the
-        gateway — keeping the chat_id strictly per-turn and the send a transport
-        concern. The send MODE is config-driven (BOB-037 C): ``document`` posts the PNG
-        UNCOMPRESSED (full resolution, the readable default), ``photo`` the inline-
-        preview photo. No sink wired (the default) or an empty sink → a clean no-op.
-        Best-effort: a flaky send is logged and swallowed so it can never break a turn
-        whose text reply still lands.
-        """
-        if self._diagram_sink is None:
-            return
-        for diagram in self._diagram_sink.drain():
-            try:
-                await self._send_one_diagram(chat_id, diagram)
-            except Exception:
-                logger.exception("sending a diagram failed (ignored)")
-
-    async def _send_one_diagram(self, chat_id: int, diagram: DiagramResult) -> None:
-        """Send one drained diagram via the configured mode (document / photo)."""
-        if self._diagram_send_as == "photo":
-            await self._gateway.send_photo(
-                chat_id=chat_id, photo=diagram.png, caption=diagram.caption
-            )
-            return
-        await self._gateway.send_document(
-            chat_id=chat_id, document=diagram.png, caption=diagram.caption
-        )
-
     async def _record_owner_activity(self) -> None:
         """Notify proactivity the owner just wrote (best-effort, optional seam).
 
@@ -1674,63 +1530,6 @@ class HandleMessage:
         soul = self._state.soul.with_mood(new_mood)
         self._state.soul = soul
         return soul
-
-    async def _maybe_route_coding(
-        self, event: MessageReceived, interlocutor: Interlocutor | None
-    ) -> bool:
-        """Route an owner coding-intent message into the gated session (BOB-041 .2).
-
-        Returns whether the natural-language coding path CONSUMED the turn (so the
-        caller short-circuits the normal compose). Inert when no router is wired (the
-        default / ``coder.enabled`` false). Owner is derived from the perceived
-        interlocutor — only an :class:`~bob.social.interlocutor.InterlocutorKind.OWNER`
-        sender is ever owner here, so with no perception seam (or a guest/known sender)
-        the message is never routed (``is_owner`` false) and the router itself re-checks;
-        the gated use-case re-checks the owner again (defense-in-depth).
-        """
-        if self._coding_router is None:
-            return False
-        is_owner = (
-            interlocutor is not None and interlocutor.kind is InterlocutorKind.OWNER
-        )
-        return await self._coding_router.route(
-            text=event.text, sender=event.sender_id, is_owner=is_owner
-        )
-
-    async def _maybe_permission(
-        self, event: MessageReceived, interlocutor: Interlocutor | None
-    ) -> bool:
-        """Route the turn through the permission flow; return whether it consumed it.
-
-        Inert when no flow is wired (the default). The authz facts are derived from the
-        perceived interlocutor: OWNER → owner; a TRUSTED non-owner (KNOWN) → authorized;
-        a GUEST → non-authorized. 🔴 On the OWNER's turn the flow may record a decision
-        on an active pending; on a NON-authorized member's turn it may open a privileged
-        request and ask the owner. The flow itself enforces owner-only decision and the
-        non-authorized-only request gate — an AUTHORIZED member is never gated. With no
-        perceived interlocutor (no perception seam) the message is treated as
-        non-owner/non-authorized only for the request path, and the owner-decision path
-        cannot fire — so an unidentified turn is never auto-approved.
-        """
-        if self._permission_flow is None:
-            return False
-        is_owner = (
-            interlocutor is not None and interlocutor.kind is InterlocutorKind.OWNER
-        )
-        is_authorized = interlocutor is not None and interlocutor.trust is Trust.TRUSTED
-        if is_owner and await self._permission_flow.maybe_decide(
-            text=event.text, is_owner=True
-        ):
-            return True
-        if event.sender_id is None:
-            return False
-        return await self._permission_flow.maybe_request(
-            text=event.text,
-            requester_id=event.sender_id,
-            requester_name=event.sender_name or "",
-            is_owner=is_owner,
-            is_authorized=is_authorized,
-        )
 
     async def _perceive_interlocutor(
         self, event: MessageReceived
@@ -2119,7 +1918,7 @@ class HandleMessage:
             bob_user_id=bob_id,
             others_present=present,
         )
-        effective = await self._resolve_effective_addressivity(event, per_message)
+        effective = await self._floor.resolve_effective(event.chat_id, per_message)
         floor_engaged = (
             effective is Addressivity.DIRECTED_TO_BOB
             and per_message is not Addressivity.DIRECTED_TO_BOB
@@ -2215,7 +2014,7 @@ class HandleMessage:
         # _EssentialStepError so the turn falls back to the honest GUPPI outage notice
         # rather than a guessed default. A SUCCESSFUL REACT/IGNORE is a genuine choice,
         # not a failure (no retry, no notice).
-        choice = await self._run_essential(
+        choice = await self._essential.run(
             lambda: decide_response.decide(
                 text=event.text,
                 interlocutor=interlocutor,
@@ -2276,80 +2075,6 @@ class HandleMessage:
         await self._reactor.react(
             chat_id=event.chat_id, message_id=event.message_id, emoji=emoji
         )
-
-    async def _resolve_effective_addressivity(
-        self, event: MessageReceived, per_message: Addressivity
-    ) -> Addressivity:
-        """Raise per-message addressivity by the conversation floor (BOB-025).
-
-        With the floor wired AND enabled, an ``AMBIENT`` message in a thread where Bob
-        holds a live floor is raised to ``DIRECTED_TO_BOB`` (continuity); the floor is
-        loaded for ``(chat_id, thread_id)``. Floor unwired or disabled → the per-message
-        classification is returned unchanged (BOB-023 behaviour). Best-effort: a flaky
-        floor store can never break a turn — on a load/resolve failure Bob falls back to
-        the per-message BOB-023 classification (a hiccup must never mute him), mirroring
-        the advance side.
-        """
-        if self._floor_store is None or not self._floor_enabled:
-            return per_message
-        try:
-            floor = await self._floor_store.load(
-                event.chat_id, self._floor_thread_id(event)
-            )
-            return resolve_addressivity(
-                per_message, floor, now=self._clock.now(), config=self._floor_config
-            )
-        except Exception:
-            logger.exception(
-                "resolving the conversation floor failed; using per-message addressivity"
-            )
-            return per_message
-
-    async def _advance_floor_after_turn(
-        self,
-        event: MessageReceived,
-        decision: _AddressivityDecision,
-        *,
-        bob_replied: bool,
-    ) -> None:
-        """Advance + persist the conversation floor after a turn (BOB-025).
-
-        Reloads the floor for the thread, advances it on the RAW per-message addressivity
-        (the floor reflects the real signal) plus whether Bob actually replied
-        (``bob_replied`` sticks the floor to him on an ENGAGE turn; a SILENT/REACT turn
-        passes ``False`` so idle_streak / decay are counted), then UPSERTs it. No-op when
-        the floor is unwired or disabled (BOB-023 behaviour). Best-effort: a flaky floor
-        store can never break a turn that has already acted.
-        """
-        if self._floor_store is None or not self._floor_enabled:
-            return
-        thread_id = self._floor_thread_id(event)
-        try:
-            floor = await self._floor_store.load(event.chat_id, thread_id)
-            new_floor = advance_floor(
-                floor,
-                addressivity=decision.per_message,
-                sender_id=event.sender_id,
-                directed_to_id=decision.directed_to_id,
-                bob_replied=bob_replied,
-                now=self._clock.now(),
-                config=self._floor_config,
-            )
-            await self._floor_store.save(event.chat_id, thread_id, new_floor)
-        except Exception:
-            logger.exception("advancing the conversation floor failed (ignored)")
-
-    @staticmethod
-    def _floor_thread_id(event: MessageReceived) -> int | None:
-        """The thread key for the conversation floor (BOB-025).
-
-        The floor is a property of one running exchange (Bob's forum topic). The
-        application event does not yet carry a forum ``thread_id``, so the floor is
-        keyed by ``chat_id`` alone for now (``None`` = main chat / no topic — the store's
-        sentinel). Kept as a seam so a real per-topic key threads through later.
-        """
-        del event  # no forum thread id on the event yet; keyed by chat for now
-        return None
 
     def _bob_user_id(self) -> int | None:
         """Bob's own bot ``user_id`` (resolved at startup), or ``None`` (BOB-023).
@@ -2534,7 +2259,7 @@ class HandleMessage:
         # a shared singleton, so an instance flag would leak the note (and the «already
         # searched» state) across turns/users.
         if verify_note is None:
-            verify_note = await self._verify_note(
+            verify_note = await self._verify.note(
                 text, history, interlocutor=interlocutor, chat_id=chat_id
             )
         if verify_note:
@@ -2568,7 +2293,7 @@ class HandleMessage:
             tool_sender_name = (
                 interlocutor.display_name if interlocutor is not None else ""
             )
-            return await self._run_essential(
+            return await self._essential.run(
                 lambda: self._reply_with_tools(
                     provider,
                     system_prompt,
@@ -2594,7 +2319,7 @@ class HandleMessage:
             private_context=None,
             tier_override=tier,
         )
-        return await self._run_essential(
+        return await self._essential.run(
             lambda: self._router.run(request), step="reply generation"
         )
 
@@ -2873,102 +2598,6 @@ class HandleMessage:
             logger.exception("optional grounded add-on %r failed (dropped)", name)
             return ""
 
-    async def _verify_note(
-        self,
-        text: str,
-        history: Sequence[Mapping[str, object]],
-        *,
-        interlocutor: Interlocutor | None = None,
-        chat_id: int | None = None,
-    ) -> str:
-        """The pre-answer epistemic-verify note for this turn, or ``""`` (BOB-057 .2).
-
-        The whole step is DECORATIVE and DIRECT:
-
-        * Unwired (no judge OR no provider — ``verify.enabled`` off) → ``""`` immediately,
-          zero judge/search calls, zero added latency (US-2 «не зануда» by default).
-        * A CONSERVATIVE Tier-0 :class:`VolatilityJudge` decides whether the answer hinges
-          on a FRESH volatile fact. A judge failure is caught and treated as «no check»
-          (``""``) — the turn is never blocked by a flaky judge.
-        * On ``needs_check`` Bob runs ONE search via :meth:`_verify_search_note`.
-
-        🔴 The search is DIRECT (``provider.search``), NOT ``registry.dispatch`` /
-        the tool-loop — so it is NOT the BOB-052 per-sender privilege gate. This is an
-        internal public-verify (nobody asked for a tool; only PUBLIC web info is exposed,
-        never owner/private data), so it works for owner and guest alike without weakening
-        BOB-051/052 on user-facing tool requests.
-        """
-        judge = self._verify_judge
-        provider = self._verify_provider
-        if judge is None or provider is None:
-            return ""
-        try:
-            verdict = await judge.assess(
-                VolatilityContext(text=text, recent_thread=_render_thread(history))
-            )
-        except Exception:
-            # Decorative: a judge failure degrades to «no check» (normal answer), never
-            # blocks or breaks the turn.
-            logger.exception("volatility judge failed (verify skipped)")
-            return ""
-        if not verdict.needs_check:
-            return ""
-        # BOB-057 .3 (US-3b): before the search, Bob sends a LIVE, ADDRESSED interim line
-        # naming WHAT he checks and WHO he's talking to («Леш, гляну свежие ставки,
-        # секунду 🙂»). Decorative (live gen → silence) and does
-        # NOT block the search below.
-        await self._send_verify_interim(verdict, interlocutor, chat_id)
-        return await self._verify_search_note(provider, verdict)
-
-    async def _send_verify_interim(
-        self,
-        verdict: VolatilityVerdict,
-        interlocutor: Interlocutor | None,
-        chat_id: int | None,
-    ) -> None:
-        """Send the live addressed interim line for the verify search (BOB-057 US-3b).
-
-        Reuses the :class:`GatewayProgressAnnouncer` in its BOB-060 live-only mode so
-        the decorative chain (live Tier-0 gen → silence) lives
-        in one place. No ``chat_id`` (an unaddressed path) → no interim. The sender's
-        perceived ``display_name`` addresses the line; an unknown sender → topic-only.
-        """
-        if chat_id is None:
-            return
-        sender_name = interlocutor.display_name if interlocutor is not None else ""
-        announcer = GatewayProgressAnnouncer(
-            chat_id=chat_id,
-            gateway=self._gateway,
-            line_generator=self._interim_line_generator,
-            sender_name=sender_name,
-        )
-        await announcer.announce_verify(topic=verdict.topic)
-
-    async def _verify_search_note(
-        self, provider: WebSearchProvider, verdict: VolatilityVerdict
-    ) -> str:
-        """Run ONE direct, short-timeout web_search and return the grounded/hedge note.
-
-        On success with a non-empty answer → a GROUNDED note (the trimmed finding + a nudge
-        to react in Bob's own voice/tone). On failure / timeout / empty → an HONEST hedge
-        note (US-6: never a confident stale number as fact, never a fabrication). The
-        provider call is bounded by ``verify.timeout_seconds`` so a slow search cannot
-        stall the turn (US-3 «не 5 минут»).
-        """
-        try:
-            # ``asyncio.wait_for`` raises ``TimeoutError`` past the deadline; a slow/failing
-            # provider raises its own error — both are caught below as one honest hedge.
-            result = await asyncio.wait_for(
-                provider.search(verdict.query), timeout=self._verify_timeout_seconds
-            )
-        except Exception:
-            logger.exception("verify web_search failed (hedge)")
-            return _VERIFY_HEDGE_NOTE.format(topic=verdict.topic)
-        answer = result.answer.strip()[:_VERIFY_ANSWER_MAX_CHARS]
-        if not answer:
-            return _VERIFY_HEDGE_NOTE.format(topic=verdict.topic)
-        return _VERIFY_GROUNDED_NOTE.format(answer=answer)
-
     async def _leak_inner_life(self, plan: ExpressionPlan) -> str:
         """The leak line for this turn, or ``""`` (no flag / no reader / no reflection)."""
         if not plan.leak_inner_life or self._reflection is None:
@@ -3201,10 +2830,7 @@ class HandleMessage:
 # Russian persona voice (project language); Cyrillic look-alikes are intentional.
 _SILENT_MARKER = "(промолчал)"
 
-# Bob's persisted half when an ESSENTIAL step failed after retries (BOB-049 .3): the
-# user's turn is saved (so the message is not lost) with this marker — no degraded reply
-# was produced; GUPPI reported the outage separately. Russian persona voice.
-_OUTAGE_MARKER = "(нет ответа: проблемы со связью)"  # noqa: RUF001
+# (The outage marker for a failed ESSENTIAL step now lives with :class:`EssentialRunner`.)
 
 
 # Map the judge's intent to the legacy outcome the conversation floor advances on
