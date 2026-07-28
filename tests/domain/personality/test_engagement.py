@@ -20,7 +20,6 @@ import pytest
 
 from bob.domain.personality.engagement import (
     ConversationalFatigue,
-    EngagementLevel,
     EngagementThresholds,
     FatigueRates,
     appetite_of,
@@ -28,6 +27,7 @@ from bob.domain.personality.engagement import (
     engagement_mood_lift,
     topic_interest,
 )
+from bob.domain.personality.expression import EngagementLevel
 from bob.domain.personality.mood import Mood
 from bob.domain.personality.taste import Verdict
 from bob.social.relationship import Relationship

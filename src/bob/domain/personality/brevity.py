@@ -29,12 +29,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 
-from bob.domain.personality.expression import FormHint
+from bob.domain.personality.expression import FormHint, Verbosity
 
 __all__ = [
     "AnswerDemand",
     "BrevityThresholds",
-    "Verbosity",
     "clamp_reply",
     "classify_answer_demand",
     "decide_verbosity",
@@ -126,19 +125,6 @@ class AnswerDemand(Enum):
     LOW = "low"
     MEDIUM = "medium"
     HIGH = "high"
-
-
-class Verbosity(Enum):
-    """Финальная развёрнутость хода — сколько Боб напишет (решение, не сигнал).
-
-    * :data:`TERSE` — одной фразой, без преамбул/списков.
-    * :data:`NORMAL` — нейтральная длина.
-    * :data:`EXPANSIVE` — можно развернуться.
-    """
-
-    TERSE = "terse"
-    NORMAL = "normal"
-    EXPANSIVE = "expansive"
 
 
 # Порядок ступеней снизу вверх — для апгрейда/даун-шифта с клиппингом по краям.

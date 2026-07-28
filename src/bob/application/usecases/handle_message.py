@@ -67,7 +67,6 @@ from bob.domain.personality.addressivity import (
 from bob.domain.personality.brevity import (
     AnswerDemand,
     BrevityThresholds,
-    Verbosity,
     clamp_reply,
     classify_answer_demand,
     decide_verbosity,
@@ -93,7 +92,6 @@ from bob.domain.personality.conversation_floor import (
 )
 from bob.domain.personality.engagement import (
     ConversationalFatigue,
-    EngagementLevel,
     EngagementThresholds,
     FatigueRates,
     appetite_of,
@@ -102,10 +100,12 @@ from bob.domain.personality.engagement import (
     topic_interest,
 )
 from bob.domain.personality.expression import (
+    EngagementLevel,
     ExpressionFreqs,
     ExpressionMode,
     ExpressionPlan,
     ExpressionSignals,
+    Verbosity,
     decide_expression,
 )
 from bob.domain.personality.mood import MoodDelta

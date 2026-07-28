@@ -17,12 +17,11 @@ import pytest
 from bob.domain.personality.brevity import (
     AnswerDemand,
     BrevityThresholds,
-    Verbosity,
     clamp_reply,
     classify_answer_demand,
     decide_verbosity,
 )
-from bob.domain.personality.expression import FormHint
+from bob.domain.personality.expression import FormHint, Verbosity
 
 # --- classify_answer_demand --------------------------------------------------
 

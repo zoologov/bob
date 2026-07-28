@@ -34,8 +34,9 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from enum import Enum
 from typing import TYPE_CHECKING
+
+from bob.domain.personality.expression import EngagementLevel
 
 if TYPE_CHECKING:
     from random import Random
@@ -46,7 +47,6 @@ if TYPE_CHECKING:
 
 __all__ = [
     "ConversationalFatigue",
-    "EngagementLevel",
     "EngagementThresholds",
     "FatigueRates",
     "appetite_of",
@@ -58,22 +58,6 @@ __all__ = [
 # Interest + fatigue are bounded scalars in the closed unit interval [0, 1].
 _MIN_LEVEL = 0.0
 _MAX_LEVEL = 1.0
-
-
-class EngagementLevel(Enum):
-    """How much appetite Bob has to converse THIS turn, strongest to weakest.
-
-    * :data:`FULL` — fully engaged: a real, substantive exchange.
-    * :data:`PLAYFUL` — engaged AND in the mood to banter / подурачиться / play along.
-    * :data:`TERSE` — engaging only minimally; interest is thinning.
-    * :data:`DECLINE` — winding the chatter down softly ("что-то заболтались") — never
-      a refusal of the person, just no appetite for THIS aimless thread right now.
-    """
-
-    FULL = "full"
-    PLAYFUL = "playful"
-    TERSE = "terse"
-    DECLINE = "decline"
 
 
 # How the discrete appetite LEVEL reads as a [0, 1] scalar (BOB-024). The brevity

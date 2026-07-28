@@ -90,6 +90,45 @@ class FormHint(Enum):
     EXPANSIVE = "expansive"
 
 
+class Verbosity(Enum):
+    """Финальная развёрнутость хода — сколько Боб напишет (решение, не сигнал).
+
+    Грань выразительного вокабуляра — насколько развёрнуто характер выражается на
+    этом ходе. Живёт в :mod:`expression` подле :class:`FormHint`/:class:`ExpressionMode`;
+    вычисляющая логика (:func:`~bob.domain.personality.brevity.decide_verbosity`)
+    зависит от этого enum — правильное направление conversation→personality.
+
+    * :data:`TERSE` — одной фразой, без преамбул/списков.
+    * :data:`NORMAL` — нейтральная длина.
+    * :data:`EXPANSIVE` — можно развернуться.
+    """
+
+    TERSE = "terse"
+    NORMAL = "normal"
+    EXPANSIVE = "expansive"
+
+
+class EngagementLevel(Enum):
+    """How much appetite Bob has to converse THIS turn, strongest to weakest.
+
+    A facet of Bob's expressive vocabulary: HOW engaged the character is on this
+    turn. It lives in :mod:`expression` beside :class:`Verbosity`/:class:`FormHint`;
+    the deciding logic (:func:`~bob.domain.personality.engagement.decide_engagement`)
+    DEPENDS ON this enum — the personality-inward direction (conversation→personality).
+
+    * :data:`FULL` — fully engaged: a real, substantive exchange.
+    * :data:`PLAYFUL` — engaged AND in the mood to banter / подурачиться / play along.
+    * :data:`TERSE` — engaging only minimally; interest is thinning.
+    * :data:`DECLINE` — winding the chatter down softly ("что-то заболтались") — never
+      a refusal of the person, just no appetite for THIS aimless thread right now.
+    """
+
+    FULL = "full"
+    PLAYFUL = "playful"
+    TERSE = "terse"
+    DECLINE = "decline"
+
+
 @dataclass(frozen=True, slots=True)
 class ExpressionSignals:
     """The per-turn signals the decider reads beyond mood (pure inputs).

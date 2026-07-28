@@ -32,8 +32,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from bob.domain.personality.brevity import Verbosity
-from bob.domain.personality.engagement import EngagementLevel
+from bob.domain.personality.expression import EngagementLevel, Verbosity
 
 if TYPE_CHECKING:
     from bob.domain.personality.mood import Mood
