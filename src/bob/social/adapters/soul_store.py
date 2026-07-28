@@ -21,14 +21,14 @@ import json
 import logging
 from typing import TYPE_CHECKING
 
-from bob.domain.ports import JsonValue
-
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from bob.domain.ports import JsonValue
+
 logger = logging.getLogger(__name__)
 
-__all__ = ["JsonValue", "SoulStore"]
+__all__ = ["SoulStore"]
 
 _SOUL_FILE = "SOUL.md"
 _GENESIS_LOG_FILE = "genesis_log.md"
