@@ -38,3 +38,19 @@
 ## Прогресс
 
 - 2026-07-28: под-эпик .7a+.7b; BRIEF Approved (.7a); 5 роль-беадов; ветка `features/BOB-062.7`. Старт Волны 0.
+
+---
+
+## .7b — kernel-split (branch `features/BOB-062.7b`, долг варианта C с .2)
+
+| Беад | Роль | Статус |
+|------|------|--------|
+| `bob-8r4.7.7` | dev — расщепить SqliteMemoryRepo (connection-kernel ↔ MemoryRepo) | ○ ready |
+| `bob-8r4.7.8` | dev — правила + убрать kernel→memory ребро | ● blocked |
+| `bob-8r4.7.9` | test — persistence-инварианты + full-reindex + mypy полный | ● blocked |
+| `bob-8r4.7.10` | review — расщепление чисто + 13 сторов не тронуты | ● blocked |
+| `bob-8r4.7.11` | tech-writer — SPEC + закрыть #10 + Gate | ● blocked |
+
+🔴 connection-kernel → infrastructure/persistence/connection.py; memory-часть → memory/adapters;
+vector→memory; 13 сторов КОД НЕ МЕНЯТЬ (структурный .connection seam); schema.sql единым;
+boot-order kernel первым; убрать kernel→memory.entities ребро. DoD: reindex --full + mypy полный.

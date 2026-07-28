@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING
 import aiosqlite
 import pytest
 
-from bob.infrastructure.persistence.vector_store import MemoryVectorStore
+from bob.memory.adapters.vector_store import MemoryVectorStore
 
 if TYPE_CHECKING:
     from collections.abc import Sequence

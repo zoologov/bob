@@ -78,7 +78,7 @@ class _Router(Protocol):
 class ConsolidationStore(Protocol):
     """The persistence seam ConsolidateMemory drives (BOB-021).
 
-    Realised by :class:`~bob.infrastructure.persistence.sqlite_repo.SqliteMemoryRepo`:
+    Realised by :class:`~bob.memory.adapters.sqlite_memory_repo.SqliteMemoryRepo`:
     select OLD un-consolidated non-digest episodes, write a digest episode (embedded on
     write), and flag the sources — non-destructively.
     """

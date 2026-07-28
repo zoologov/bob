@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from bob.infrastructure.persistence.sqlite_repo import SqliteMemoryRepo
+from bob.memory.adapters.sqlite_memory_repo import SqliteMemoryRepo
 from bob.proactivity.adapters.self_improvement_store import (
     SqliteSelfImprovementStore,
 )

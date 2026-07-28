@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from bob.conversation.adapters.closer_log_store import SqliteCloserLog
-from bob.infrastructure.persistence.sqlite_repo import SqliteMemoryRepo
+from bob.memory.adapters.sqlite_memory_repo import SqliteMemoryRepo
 
 if TYPE_CHECKING:
     from pathlib import Path

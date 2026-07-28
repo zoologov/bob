@@ -36,7 +36,7 @@ if TYPE_CHECKING:
 
     from bob.application.router import LLMRouter
     from bob.domain.ports import Clock, Embedder, Reranker
-    from bob.infrastructure.persistence import SqliteMemoryRepo
+    from bob.memory.adapters import SqliteMemoryRepo
 
 logger = logging.getLogger(__name__)
 

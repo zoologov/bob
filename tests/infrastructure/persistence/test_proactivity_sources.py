@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from bob.infrastructure.persistence import SqliteMemoryRepo
+from bob.memory.adapters import SqliteMemoryRepo
 from bob.proactivity.adapters.proactivity_sources import RepoProactivitySources
 
 if TYPE_CHECKING:

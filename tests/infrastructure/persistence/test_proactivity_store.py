@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from bob.infrastructure.persistence.sqlite_repo import SqliteMemoryRepo
+from bob.memory.adapters.sqlite_memory_repo import SqliteMemoryRepo
 from bob.proactivity.adapters.proactivity_store import SqliteProactivityStore
 from bob.proactivity.social_energy import SocialEnergy
 from bob.proactivity.state import ProactivityState

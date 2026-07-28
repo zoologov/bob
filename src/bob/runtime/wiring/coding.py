@@ -46,7 +46,7 @@ if TYPE_CHECKING:
     from bob.application.router import LLMRouter
     from bob.coding.adapters.indicator import EditableStatusBot, TypingActionBot
     from bob.domain.ports import Clock
-    from bob.infrastructure.persistence import SqliteMemoryRepo
+    from bob.infrastructure.persistence import SqliteConnection
     from bob.infrastructure.telegram.gateway import BotLike
     from bob.social.usecases import Authorizer
 
@@ -72,7 +72,7 @@ def _build_coding_router(
 def _build_coding_assistant(
     config: Mapping[str, object],
     *,
-    repo: SqliteMemoryRepo,
+    repo: SqliteConnection,
     authorizer: Authorizer,
     notifier_bot: BotLike,
     chat_id: int,

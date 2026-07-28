@@ -48,8 +48,8 @@ if TYPE_CHECKING:
     )
     from bob.conversation.conversation import RepeatThresholds
     from bob.domain.ports import Clock, MemoryRecall
-    from bob.infrastructure.persistence import SqliteMemoryRepo
     from bob.infrastructure.telegram.multibot import MultiBotGateway
+    from bob.memory.adapters import SqliteMemoryRepo
     from bob.personality.usecases.fascination_sources import StoreFascinationReader
     from bob.proactivity.adapters import SqliteProactivityStore
     from bob.proactivity.usecases import ProactiveTick

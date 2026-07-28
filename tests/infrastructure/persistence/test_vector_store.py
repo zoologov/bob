@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from bob.infrastructure.persistence.sqlite_repo import SqliteMemoryRepo
+from bob.memory.adapters.sqlite_memory_repo import SqliteMemoryRepo
 from bob.memory.entities import EpisodicEvent, SemanticFact
 from tests.support.fake_embedder import FakeEmbedder
 

@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from bob.infrastructure.persistence.sqlite_repo import SqliteMemoryRepo
+from bob.memory.adapters.sqlite_memory_repo import SqliteMemoryRepo
 from bob.social.adapters.relationship_store import SqliteRelationshipStore
 from bob.social.relationship import Relationship
 

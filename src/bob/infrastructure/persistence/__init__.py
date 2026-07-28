@@ -4,15 +4,16 @@
 
 # beadloom:domain=bob
 
-"""Persistence adapters — the shared SQLite store kernel and SoulStore.
+"""Persistence adapters — the shared SQLite connection/schema kernel and SoulStore.
 
-Realises the domain's storage port (:class:`bob.domain.ports.MemoryRepo` via
-``SqliteMemoryRepo``) plus every module's durable store over one connection
-seam. All SQL and filesystem I/O for Bob's durable state live here; the schema
-is bundled as ``schema.sql``. Memory recall + local embeddings moved to
-``bob.memory.adapters`` (BOB-062.2); the proactivity/goal/self-improvement stores
-moved to ``bob.proactivity.adapters`` (BOB-062.3); the store kernel splits out in
-a later slice.
+Home of :class:`~bob.infrastructure.persistence.connection.SqliteConnection` — the
+pure-I/O connection/schema kernel (WAL, sqlite-vec load, ``schema.sql``, kv) that
+every durable store reads through its ``connection`` seam — plus the filesystem
+:class:`SoulStore`. The memory realisation over this kernel
+(:class:`bob.memory.adapters.SqliteMemoryRepo`) moved to ``bob.memory.adapters``
+(BOB-062.7b); memory recall + local embeddings moved there earlier (BOB-062.2);
+the proactivity/goal/self-improvement stores moved to ``bob.proactivity.adapters``
+(BOB-062.3). The schema is bundled here as ``schema.sql``.
 """
 
 from __future__ import annotations
@@ -21,7 +22,7 @@ from bob.conversation.adapters.closer_log_store import SqliteCloserLog
 from bob.conversation.adapters.conversation_floor_store import (
     SqliteConversationFloorStore,
 )
-from bob.infrastructure.persistence.sqlite_repo import SqliteMemoryRepo
+from bob.infrastructure.persistence.connection import SqliteConnection
 from bob.personality.adapters.fascination_store import SqliteFascinationStore
 from bob.personality.adapters.notable_reaction_store import KvNotableReactionStore
 
@@ -39,10 +40,10 @@ __all__ = [
     "KvNotableReactionStore",
     "SoulStore",
     "SqliteCloserLog",
+    "SqliteConnection",
     "SqliteConversationFloorStore",
     "SqliteFascinationStore",
     "SqliteFirstImpressionStore",
-    "SqliteMemoryRepo",
     "SqliteRelationshipStore",
     "SqliteSulkStore",
 ]

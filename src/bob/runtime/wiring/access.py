@@ -23,11 +23,11 @@ if TYPE_CHECKING:
     from collections.abc import Mapping
 
     from bob.domain.ports import LLMProvider, ToolCallingProvider
-    from bob.infrastructure.persistence import SqliteMemoryRepo
+    from bob.infrastructure.persistence import SqliteConnection
 
 
 def _build_authorizer(
-    config: Mapping[str, object], *, repo: SqliteMemoryRepo
+    config: Mapping[str, object], *, repo: SqliteConnection
 ) -> Authorizer:
     """Build the access-policy Authorizer from config over the SQLite allowlist.
 

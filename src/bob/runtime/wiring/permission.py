@@ -31,7 +31,7 @@ if TYPE_CHECKING:
     from bob.application.router import LLMRouter
     from bob.capabilities.usecases import CapabilityRegistry
     from bob.domain.ports import Clock, ToolCallingProvider
-    from bob.infrastructure.persistence import SqliteMemoryRepo
+    from bob.infrastructure.persistence import SqliteConnection
     from bob.infrastructure.telegram.gateway import BotLike
     from bob.social.usecases import Authorizer
 
@@ -39,7 +39,7 @@ if TYPE_CHECKING:
 def _build_permission_flow(
     *,
     router: LLMRouter,
-    repo: SqliteMemoryRepo,
+    repo: SqliteConnection,
     bot: BotLike,
     chat_id: int,
     topic_id: int | None,

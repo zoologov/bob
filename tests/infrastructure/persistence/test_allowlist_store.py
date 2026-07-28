@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from bob.infrastructure.persistence.sqlite_repo import SqliteMemoryRepo
+from bob.memory.adapters.sqlite_memory_repo import SqliteMemoryRepo
 from bob.social.adapters.allowlist_store import KvAllowlistStore
 
 if TYPE_CHECKING:

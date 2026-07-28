@@ -58,7 +58,7 @@ _DEFAULT_BATCH_SIZE = 200
 class DedupStore(Protocol):
     """The persistence seam DedupFacts drives (BOB-021).
 
-    Realised by :class:`~bob.infrastructure.persistence.sqlite_repo.SqliteMemoryRepo`:
+    Realised by :class:`~bob.memory.adapters.sqlite_memory_repo.SqliteMemoryRepo`:
     select ACTIVE (un-superseded) facts and flag near-duplicates as superseded into a
     canonical fact — non-destructively (the rows stay, with provenance).
     """
