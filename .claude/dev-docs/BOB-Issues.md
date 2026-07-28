@@ -6,7 +6,7 @@
 > Потенциальные проблемы и улучшения, собираемые в процессе разработки (по образцу
 > beadloom `BDL-UX-Issues.md`). Фиксируем находки — фиксим планово.
 >
-> **Total:** 32 · **Open:** 19 · **Closed:** 13 (Фаза 1: #6, #19–24, #29 · Фаза 2: #7, #8 · Фаза 3: #11–#13) · 🟡 **#16 частично** (capabilities-вертикаль отгружена BOB-062.4; personality-slimming остаётся) · #31/#32 групповая нагрузка (2026-07-28)
+> **Total:** 32 · **Open:** 18 · **Closed:** 14 (Фаза 1: #6, #19–24, #29 · Фаза 2: #7, #8 · Фаза 3: #11–#14) · 🟡 **#16 частично** (capabilities-вертикаль отгружена BOB-062.4; personality-slimming остаётся) · #31/#32 групповая нагрузка (2026-07-28)
 > 2026-07-02 (комплексный аудит, 5 субагентов read-only): заведён лог. Открыты #1–#30
 > из аудита организации/DDD/доков/гигиены. Источник: сессия аудита `13b1e49b`.
 
@@ -22,7 +22,7 @@
 |---|---|---|---|---|
 | **1. Быстрые победы** (параллельно, независимы) | гигиена + README ×2 | #19–24, #29, #6, #20 | chore ×2 | ✅ done (BOB-063 PR#76 + BOB-064) |
 | **2. Фундамент** | split `ports.py` (+re-export shim) · beadloom-правило слоёв | #7, #8 | feature | ✅ done (BOB-065: пакет `domain/ports/` + shim · 11 AaC-правил слоёв · граф 28 нод) |
-| **3. Эпик BOB-062 «Domain-first + доки»** — per-module вертикали: `coding→memory→proactivity→social→conversation→personality/capabilities→runtime/application`; каждая несёт свои `beadloom:`-тэги + граф-ноды + SPEC/DOC | #1–6, #9–18, #30 | epic | ◐ в работе (срезы 1–3/8 ✅: #11 coding · #12 memory · #13 proactivity) |
+| **3. Эпик BOB-062 «Domain-first + доки»** — per-module вертикали: `coding→memory→proactivity→social→conversation→personality/capabilities→runtime/application`; каждая несёт свои `beadloom:`-тэги + граф-ноды + SPEC/DOC | #1–6, #9–18, #30 | epic | ◐ в работе (срезы 1–5/8 ✅: #11 coding · #12 memory · #13 proactivity · #16 capabilities (частично) · #14 social) |
 | — монстры внутри ф.3 | `handle_message`(3523,#9)→растворить в conversation/personality/memory/social/application; `app.py`(2815,#10)→runtime | #9, #10 | — | ○ |
 | — после реорга | включить правило слоёв (#8) как «зубы»; удалить `ports.py`-шим (#18) | #8, #18 | — | ○ |
 
@@ -82,8 +82,8 @@
 ### #10 [2026-07-02] [HIGH] Декомпозиция `app.py` (2815 стр, God composition-root)
 **Area:** architecture · **Issue:** wiring + 8 инлайн-адаптеров + God-`build_application` (~700 стр) + entrypoint в одном файле. **Expected:** `runtime/{main,composition,config}.py`; инлайн-адаптеры → `infrastructure/telegram|llm/`; per-domain билдеры. 🔴 риски: boot-order, shared-instance инварианты (diagram_sink/notable_reaction), feature-flag «off→None→inert», `_REPO_ROOT` при переносе. Порядок AR-1→8 (аудит ③).
 
-### #14 [2026-07-02] [MEDIUM] Вертикаль **social** → `social/` (identity/first-impression/relationships + authz + permission)
-**Area:** architecture · **Issue:** соц-логика расколота (domain/permission + application/authz + usecases/permission_*). **Depends:** #7.
+### #14 [2026-07-02] [MEDIUM] ✅ ЗАКРЫТ Вертикаль **social** → `social/` (identity/first-impression/relationships + authz + permission)
+**Area:** architecture · **Issue:** соц-логика расколота (domain/permission + application/authz + usecases/permission_*). **Depends:** #7. · **Статус:** ✅ **отгружено BOB-062.5** (срез 5/8): вертикаль `src/bob/social/` собрана (identity `interlocutor`/`first_impression`/`relationship`/`sulk` + `permission/` + `usecases/` authz/perception/permission-flow/`run_genesis` + `adapters/` сторы+`privilege_judge`). 🔴 **Разорваны 2 цикла — образцово для .6:** `personality↔social` (`interlocutor` переехал из personality; `voice.py` читает `kind.value`, не импортит `InterlocutorKind`) и `social↔ports` (тонкий re-export-шим). `social→personality` однонаправленно (`relationship→negotiation.Stance`); `privileged_fulfiller` остался в `application` (cross-domain оркестратор); kernel — вариант C до .7. SPEC: `docs/domains/social/README.md`. Тот же приём разрыва цикла применить к `personality↔conversation` в .6.
 
 ### #15 [2026-07-02] [MEDIUM] Вертикаль **conversation** → `conversation/` (floor/адресность/brevity/судьи/анти-тик/interim)
 **Area:** architecture · **Issue:** hotspot импортов (personality↔conversation). **Depends:** #7, частично #9 (куски handle_message).

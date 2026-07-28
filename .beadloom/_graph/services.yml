@@ -168,6 +168,8 @@ nodes:
     # social stores consume the shared persistence kernel via the
     # `SqliteMemoryRepo.connection()` seam (kernel stays put until BOB-062.7).
     tags: [module-vertical]
+    docs:
+      - domains/social/README.md
     summary: 'Social module («Bob distinguishes people») — the full vertical capability in one place: `ports.py` + pure domain (interlocutor identity, first-impression, relationship, sulk) + `permission/` value objects, `usecases/` (authorizer/sender+reactor perception, permission flow/execution, first-impression/relationship/sulk sources, run-genesis), and `adapters/` (first-impression/relationship/sulk/allowlist/permission-request/soul stores + privilege-judge). Domain-first slice BOB-062.5.'
 
   # ── Application submodules (kind: feature, part_of bob-application) ──────────

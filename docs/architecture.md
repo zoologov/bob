@@ -69,16 +69,20 @@ src/bob/
                      #   memory-порты (MemoryRepo, MemoryRecall, Recalled, Embedder,
                      #     Reranker) переехали в `memory/ports.py` (вертикальный модуль,
                      #     BOB-062.2); `ports/__init__.py` их re-export'ит
-                     #   social.py       — SoulStore, AllowlistStore
+                     #   social-порты (SoulStore, AllowlistStore, FirstImpressionStore,
+                     #     RelationshipStore, SulkStore, PrivilegeJudge) переехали в
+                     #     `social/ports.py` (вертикальный модуль, BOB-062.5);
+                     #     `ports/__init__.py` их re-export'ит (тонкий шим)
                      #   proactivity-порты (ProactivityStore, GoalStore, Planner,
                      #     SelfImprovementStore, PatternDetector) переехали в
                      #     `proactivity/ports.py` (вертикальный модуль, BOB-062.3);
                      #     `ports/__init__.py` их re-export'ит
                      #   conversation.py — ConversationFloorStore, CloserLog
                      #   personality.py  — ZoneClassifier (Negotiation-врезка, BOB-013),
-                     #                     MessageReactor, ReflectionReader, SulkStore,
-                     #                     FascinationStore, FirstImpressionStore,
-                     #                     NotableReactionStore, RelationshipStore
+                     #                     MessageReactor, ReflectionReader,
+                     #                     FascinationStore, NotableReactionStore
+                     #                     (SulkStore/FirstImpressionStore/RelationshipStore
+                     #                     переехали в `social/ports.py`, BOB-062.5)
                      #   capability-порты (Capability, ToolCallingProvider,
                      #     RepoIntrospector, DiagramRenderer/Sink/Result, WebSearchProvider,
                      #     UrlReader + value-object'ы) переехали в `capabilities/ports.py`
@@ -100,7 +104,11 @@ src/bob/
                      #   RecordOwnerActivity, plan/pursue goals, detect-patterns/
                      #   announce-rules, self_improvement_sources) переехали в
                      #   `proactivity/usecases/` (вертикальный модуль, BOB-062.3)
-    authz/           # Authorizer: политика owner/allowlist/chat-scope
+                     #   social-use-case'ы (Authorizer, SenderPerception/
+                     #   ReactorPerception, PermissionFlow/PermissionExecutor,
+                     #   First/Relationship/Sulk-Tracker, RunGenesis) переехали в
+                     #   `social/usecases/` (вертикальный модуль, BOB-062.5);
+                     #   privileged_fulfiller ОСТАЁТСЯ здесь (cross-domain оркестратор)
                      #   capability-use-case'ы (CapabilityRegistry, ToolLoop, навыки
                      #   recall/search_memory, inspect_architecture, read_code, list_work,
                      #   code_rationale, render_diagram, web_search, read_url,
@@ -125,10 +133,14 @@ src/bob/
     persistence/     # 🔴 shared kernel персистентности (до BOB-062.7): SqliteMemoryRepo
                      #   + schema.sql + MemoryVectorStore (sqlite-vec) остаются здесь,
                      #   кормят ~13 чужих сторов через .connection()-шов;
-                     #   + KvAllowlistStore + SoulStore + SqliteProactivityStore
-                     #   + RepoProactivitySources + SqliteFascinationStore (BOB-020).
+                     #   + SqliteProactivityStore + RepoProactivitySources
+                     #   + SqliteFascinationStore (BOB-020).
                      #   recall-адаптеры (Fts5MemoryRecall + HybridMemoryRecall, RRF)
-                     #   переехали в `memory/adapters/` (вертикальный модуль, BOB-062.2)
+                     #   переехали в `memory/adapters/` (вертикальный модуль, BOB-062.2);
+                     #   social-адаптеры (KvAllowlistStore, SoulStore, Sqlite First/
+                     #   Relationship/Sulk/PermissionRequest-Store, LlmPrivilegeJudge из
+                     #   llm/) переехали в `social/adapters/` (вертикальный модуль,
+                     #   BOB-062.5); запись всё ещё идёт через kernel .connection()-шов
     config/          # ConfigLoader (defaults → YAML → env)
   coding/            # 🔴 ВЕРТИКАЛЬНЫЙ модуль «Боб пишет код» (BOB-062.1): вся способность
                      #   в одном месте, а не размазана по слоям. Внутренняя раскладка:
@@ -167,6 +179,24 @@ src/bob/
                      #   explicit-path forbid_import-правилами, СГЕНЕРИРОВАННЫМИ
                      #   scripts/gen_boundary_rules.py. См. SPEC:
                      #   docs/domains/capabilities/README.md
+  social/            # 🔴 ВЕРТИКАЛЬНЫЙ модуль «Боб различает людей» (BOB-062.5): социальная
+                     #   идентичность + авторизация + genesis в одном месте. Раскладка:
+                     #     ports.py + чистый домен (interlocutor, first_impression,
+                     #       relationship, sulk) + permission/ (entities, intent, privilege,
+                     #       state) — layer=domain;
+                     #     usecases/ (Authorizer, sender/reactor_perception, permission_flow/
+                     #       execution, first_impression/relationship/sulk_sources,
+                     #       run_genesis) — layer=application;
+                     #     adapters/ (allowlist/soul/first_impression/relationship/sulk/
+                     #       permission_request-store, privilege_judge) — layer=infrastructure.
+                     #   🔴 interlocutor переехал из personality (цикл personality↔social
+                     #   разорван: voice.py читает kind.value, не импортит InterlocutorKind);
+                     #   social→personality однонаправленно (relationship→negotiation.Stance).
+                     #   privileged_fulfiller ОСТАЁТСЯ в application (cross-domain оркестратор).
+                     #   🔴 kernel персистентности ОСТАЁТСЯ в persistence/ до BOB-062.7
+                     #   (вариант C). Границы — explicit-path forbid_import-правилами,
+                     #   СГЕНЕРИРОВАННЫМИ scripts/gen_boundary_rules.py. См. SPEC:
+                     #   docs/domains/social/README.md
   app.py             # composition root: собирает порты и адаптеры, запускает рантайм
 ```
 
@@ -613,7 +643,7 @@ typing-индикатор + Rich Messages. Адаптер остаётся чи�
 ## Авторизация (owner + allowlist + chat-scope)
 
 Боб приватен: до любой автономности и расширения доступ закрыт. Политика — чистый
-`Authorizer` (`application/authz`) поверх порта `AllowlistStore`, а применяется она
+`Authorizer` (`social/usecases`) поверх порта `AllowlistStore`, а применяется она
 **единым гейтом в центральном роутере** — единственной точкой проверки, без обхода
 и fail-closed. В мульти-бот сборке (BOB-003) этот `Authorizer` общий: его читает
 гейт топика Боба и владеет им идентичность GUPPI (reject + owner-команды), без
@@ -649,7 +679,7 @@ typing-индикатор + Rich Messages. Адаптер остаётся чи�
 
 ### Восприятие отправителя (кто пишет)
 
-- **`domain/personality/interlocutor.py`** (чистый домен) — модель собеседника.
+- **`social/interlocutor.py`** (чистый домен) — модель собеседника.
   `Interlocutor(sender_id, display_name, kind, trust)` — неизменяемый value
   object. `InterlocutorKind ∈ {OWNER, KNOWN, GUEST, BOT}` (бот — отдельный вид,
   фундамент под будущий BobNet), `Trust ∈ {TRUSTED, GUEST}` (ортогонально виду).
@@ -658,7 +688,7 @@ typing-индикатор + Rich Messages. Адаптер остаётся чи�
   KNOWN/TRUSTED, неавторизованный человек → GUEST/GUEST; бот всегда `kind=BOT`, но
   его trust всё равно следует авторизации. Без I/O, детерминированно, покрывает и
   людей, и ботов (готовность к bot-to-bot без реального транспорта в домене).
-- **`application/authz/sender_perception.py`** — шов проводки `SenderPerception`:
+- **`social/usecases/sender_perception.py`** — шов проводки `SenderPerception`:
   составляет неизменный `Authorizer` с чистым `classify`, превращая
   `MessageReceived` в `Interlocutor`. `is_owner` — по идентичности (не chat-scoped,
   поэтому Боб узнаёт владельца где угодно), `is_authorized` — полная chat-scoped
@@ -724,11 +754,11 @@ recall, per-person история и нормальный голос — **ес�
 намеренно минимальный фундамент под полный multi-party RelationshipTracker
 (BOB-014), а не он сам.
 
-- **`domain/personality/first_impression.py`** (чистый) — `FirstImpression(
+- **`social/first_impression.py`** (чистый) — `FirstImpression(
   sender_id, first_seen_at, note)` (value object; пустая заметка запрещена) и
   чистая `impression_note_for(interlocutor) -> str` — детерминированный лёгкий
   «вайб» по виду собеседника + имени, без выдуманных фактов.
-- **`infrastructure/persistence/first_impression_store.py`** —
+- **`social/adapters/first_impression_store.py`** —
   `SqliteFirstImpressionStore` за порт `FirstImpressionStore` поверх таблицы
   `first_impression` (одна строка на `sender_id`). `save` —
   `INSERT … ON CONFLICT(sender_id) DO NOTHING` (**insert-once**): первое
@@ -766,7 +796,7 @@ owner-гейтом. Раньше гость на такой запрос упи�
 болтовня и общее знание остаются публичны). Связано с BOB-051 (что публично) и
 BOB-019 (durable-промоушен через `Authorizer`).
 
-### Домен (`domain/permission/`, чистый)
+### Домен (`social/permission/`, чистый)
 
 - **`privilege.py`** — шов семантического суждения о привилегии. `PrivilegeNeed(
   needs_permission, kind, what)` — immutable исход: гейт `needs_permission`, при
@@ -799,18 +829,18 @@ BOB-019 (durable-промоушен через `Authorizer`).
 
 ### Инфраструктура
 
-- **`infrastructure/llm/privilege_judge.py`** — `LlmPrivilegeJudge` (Tier-0): тонкая
+- **`social/adapters/privilege_judge.py`** — `LlmPrivilegeJudge` (Tier-0): тонкая
   реализация порта `PrivilegeJudge` одним дешёвым локальным вызовом (роутер с новым
   `TaskType.PRIVILEGE_JUDGE` → локальный тир). Всё shaping решения — чистый домен; **не
   глушит** сбои: ошибка модели/парсинга пропагается.
-- **`infrastructure/persistence/permission_request_store.py`** —
+- **`social/adapters/permission_request_store.py`** —
   `SqlitePermissionRequestStore` за таблицей `permission_request` (одна строка на `id`).
   `ensure_schema` — идемпотентная PRAGMA-безопасная миграция (`CREATE TABLE / INDEX IF
   NOT EXISTS`, аддитивно), также входит в общий `schema.sql`. `save` — UPSERT на `id`;
   `active` / `active_for(requester_id)` — ещё-PENDING запросы (старейший первым);
   `set_state` — переход строки. Весь SQL параметризован (`?`).
 
-### Флоу (`application/usecases/permission_flow.py`)
+### Флоу (`social/usecases/permission_flow.py`)
 
 `PermissionFlow` — политика **КОГДА** (не КАК): детект привилегии, нотис owner, запись
 решения. Всё инжектится (judge / store / notifier / clock / id-factory / executor),
@@ -835,7 +865,7 @@ BOB-019 (durable-промоушен через `Authorizer`).
   шов нотиса; `PermissionRequestStoreLike` / `PermissionExecutorLike` — порты стора и
   исполнителя.
 
-### Исполнение (`application/usecases/permission_execution.py` + `privileged_fulfiller.py`)
+### Исполнение (`social/usecases/permission_execution.py` + `application/usecases/privileged_fulfiller.py`)
 
 `PermissionExecutor` — половина **КАК**: после записи решения (`maybe_decide` передаёт
 запрос + `PermissionDecision`) исполняет вердикт.
@@ -1337,7 +1367,7 @@ Telegram не шлёт реакции в наборе апдейтов по ум
   общий `NotableReactionStore`. **Анонимная** реакция (нет `reactor_sender_id`) → только
   лёгкий фиксированный лифт настроения, без памяти и отношения (нет «кто»). Метод `perceive`
   🔴 обёрнут try/except: любой сбой логируется и опускается.
-- **`application/authz/reactor_perception.py`** — `ReactorPerception`, реакция-двойник
+- **`social/usecases/reactor_perception.py`** — `ReactorPerception`, реакция-двойник
   `SenderPerception`: композирует неизменный `Authorizer` с чистой `classify`, превращая
   id+имя реактора в `Interlocutor` (owner / known / guest + trust). Это **восприятие**, не
   гейт: читает `is_owner` (по личности) и `is_authorized` (chat-scoped), но решения о доступе
@@ -3089,7 +3119,7 @@ guardrails, что BOB-013/020 — границы, плавный дрейф, и
 
 ### (1) RelationshipTracker — качество отношений (per-person)
 
-Чистый домен `domain/personality/relationship.py`. `Relationship(sender_id, trust,
+Чистый домен `social/relationship.py`. `Relationship(sender_id, trust,
 respect, warmth, compatibility)` — четыре оси, каждая в `[-1, 1]`, старт `0`
 (нейтрально, человек, на которого Боб ещё не составил мнение):
 
@@ -3123,7 +3153,7 @@ mood-тона — выше тёплого бэнда голос теплее и 
 `current(sender_id)` загружает отношение (или `None` для незнакомца),
 `record_interaction(...)` **после хода** прогоняет `apply_interaction` и UPSERT-ит
 результат, так отношение накапливается за много ходов. Персист —
-`infrastructure/persistence/relationship_store.py::SqliteRelationshipStore`,
+`social/adapters/relationship_store.py::SqliteRelationshipStore`,
 таблица `person_relationship`, per-sender (по образцу `first_impression`).
 
 ### (2) Аппетит к разговору (.2a)
@@ -3173,7 +3203,7 @@ TERSE/DECLINE); (4) интересная тема перебивает плох�
 
 ### (3) Обида / охлаждение (Sulk, .2b)
 
-Чистый домен `domain/personality/sulk.py` — дно оси вовлечённости, «аффект со
+Чистый домен `social/sulk.py` — дно оси вовлечённости, «аффект со
 ставками». `SulkState(active, intensity, low_streak, since, announced)` несёт
 **никакой памяти и никакой души** (anti-Exodus). Две чистые функции:
 
@@ -3223,7 +3253,7 @@ TERSE/DECLINE); (4) интересная тема перебивает плох�
 **Application-шов и персист:** `usecases/sulk_sources.py` — `SulkTracker` (грузит/
 обновляет `SulkState`, на входе зовёт `SulkAnnouncer`), `SulkRecoveryStep`
 (reflect-тик), `SulkAnnouncer` (GUPPI). Персист —
-`infrastructure/persistence/sulk_store.py::SqliteSulkStore`, таблица `sulk_state`
+`social/adapters/sulk_store.py::SqliteSulkStore`, таблица `sulk_state`
 (per-persona, как proactivity-состояние).
 
 ### Где это в потоке хода и тика
