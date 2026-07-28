@@ -193,7 +193,7 @@ rules:
   - name: coding-internals-no-usecases
     description: "coding: доменная логика/адаптеры не импортят usecases (usecases — на композиции)"
     severity: error
-    forbid_import: {from: "src/bob/coding/*", to: "bob/coding/usecases/*"}
+    forbid_import: {from: "src/bob/coding/[!u]*", to: "bob/coding/usecases/*"}
   - name: coding-internals-no-adapters
     description: "coding: доменная логика не импортит adapters (adapters — на композиции)"
     severity: error
@@ -275,7 +275,7 @@ rules:
   - name: conversation-internals-no-usecases
     description: "conversation: доменная логика/адаптеры не импортят usecases (usecases — на композиции)"
     severity: error
-    forbid_import: {from: "src/bob/conversation/*", to: "bob/conversation/usecases/*"}
+    forbid_import: {from: "src/bob/conversation/[!u]*", to: "bob/conversation/usecases/*"}
   - name: conversation-internals-no-adapters
     description: "conversation: доменная логика не импортит adapters (adapters — на композиции)"
     severity: error

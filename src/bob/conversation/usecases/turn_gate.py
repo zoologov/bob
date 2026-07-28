@@ -41,7 +41,6 @@ from bob.conversation.thread import _reaction_marker, _render_thread
 from bob.conversation.usecases.addressivity_perceiver import _AddressivityDecision
 from bob.personality.expression import ExpressionMode
 from bob.personality.reaction import reaction_emoji_for
-from bob.proactivity.self_improvement import _clamp_unit
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Mapping, Sequence
@@ -130,6 +129,17 @@ _OUTCOME_FOR_INTENT: dict[ResponseIntent, ResponseOutcome] = {
     ResponseIntent.REACT: ResponseOutcome.REACT,
     ResponseIntent.IGNORE: ResponseOutcome.SILENT,
 }
+
+# The tilted addressivity interest reads as a probability in the closed unit interval:
+# the policy interest plus the self-improvement ADDRESSIVITY_BIAS nudge both live in
+# ``[0, 1]``.
+_MIN_INTEREST = 0.0
+_MAX_INTEREST = 1.0
+
+
+def _clamp_unit(value: float) -> float:
+    """Saturate ``value`` into the closed unit interval (a bounded interest/bias)."""
+    return max(_MIN_INTEREST, min(_MAX_INTEREST, value))
 
 
 class TurnGate:

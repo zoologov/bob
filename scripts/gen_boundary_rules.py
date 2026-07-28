@@ -60,22 +60,6 @@ def load_modules() -> list[tuple[str, str]]:
     return sorted(modules)
 
 
-def usecases_reexports(source_dir: str) -> bool:
-    """True iff ``<module>/usecases/__init__.py`` re-exports (has import statements).
-
-    Drives the ``internals-no-usecases`` source glob: a façade ``__init__`` means
-    LEGAL usecase↔usecase sibling re-exports, so the ``usecases/`` dir must be
-    excluded from the source via ``[!u]*``; an inert ``__init__`` allows a plain ``*``.
-    """
-    init = REPO_ROOT / source_dir / "usecases" / "__init__.py"
-    if not init.exists():
-        return False
-    return any(
-        line.lstrip().startswith(("from ", "import "))
-        for line in init.read_text(encoding="utf-8").splitlines()
-    )
-
-
 def _rule(name: str, description: str, from_glob: str, to_glob: str) -> list[str]:
     """Render one ``forbid_import`` rule as YAML list-item lines."""
     return [
@@ -90,10 +74,17 @@ def render(modules: list[tuple[str, str]]) -> str:
     """Render the full generated-region body (between, not including, the markers)."""
     all_sources = sorted({ref for ref, _ in modules} | set(INWARD_LAYER_SOURCES))
     lines: list[str] = []
-    for ref, source in modules:
-        internals_src = (
-            f"src/bob/{ref}/[!u]*" if usecases_reexports(source) else f"src/bob/{ref}/*"
-        )
+    for ref, _source in modules:
+        # ``internals-no-usecases`` guards the module's DOMAIN + ADAPTERS (its non-
+        # usecases internals) against reaching INTO usecases — the dependency direction
+        # is usecases → domain, never the reverse. The ``usecases/`` dir itself must
+        # therefore ALWAYS be excluded from the source (``[!u]*``): a usecase importing a
+        # SIBLING usecase is a legal in-layer collaboration (e.g. ``turn_gate`` sharing a
+        # decision type with ``addressivity_perceiver``), NOT a violation of THIS rule.
+        # (fnmatch keys off the first char after the prefix, so ``[!u]*`` drops
+        # ``usecases/…`` — and any other u-prefixed internal, the same imprecision every
+        # module already accepts.)
+        internals_src = f"src/bob/{ref}/[!u]*"
         lines.append("")
         lines.append(f"  # ── {ref} VERTICAL module (generated) ──")
         # Internal layering.
