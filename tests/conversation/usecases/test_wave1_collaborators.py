@@ -23,7 +23,12 @@ from bob.application.usecases.essential_runner import (
 from bob.capabilities.ports import DiagramResult, WebSearchResult
 from bob.capabilities.usecases.diagram_sender import DiagramSender
 from bob.conversation.addressivity import Addressivity
-from bob.conversation.conversation_floor import FloorConfig
+from bob.conversation.conversation_floor import (
+    ConversationFloor,
+    FloorConfig,
+    FloorHolder,
+    idle_floor,
+)
 from bob.conversation.usecases.floor_manager import FloorManager
 from bob.conversation.usecases.verify_step import (
     _VERIFY_GROUNDED_NOTE,
@@ -152,6 +157,143 @@ async def test_floor_manager_is_inert_when_disabled() -> None:
         directed_to_id=None,
         bob_replied=True,
     )
+
+
+# --- FloorManager WIRED resolve: floor-по-говорящему at the application seam --------
+#
+# The pure guard is pinned in test_conversation_floor.py and the e2e reply/silence in
+# floor_by_speaker.feature; these pin the WIRED collaborator itself — that resolve_effective
+# loads the floor and returns the NEW FloorResolution.holder / .participant hints correctly
+# (BOB-066 .1), and that a flaky store can never mute Bob (best-effort fallback).
+
+_MANAGER_CHAT = 1
+_PARTICIPANT_ID = 200
+_OUTSIDER_ID = 400
+
+
+class _StubFloorStore:
+    """A ConversationFloorStore stub serving one preset floor (save is a no-op)."""
+
+    def __init__(self, floor: ConversationFloor) -> None:
+        self._floor = floor
+        self.saved: list[ConversationFloor] = []
+
+    async def load(self, chat_id: int, thread_id: int | None) -> ConversationFloor:
+        del chat_id, thread_id
+        return self._floor
+
+    async def save(
+        self, chat_id: int, thread_id: int | None, floor: ConversationFloor
+    ) -> None:
+        del chat_id, thread_id
+        self.saved.append(floor)
+
+
+class _ExplodingFloorStore:
+    """A ConversationFloorStore whose load/save always raise (a flaky store)."""
+
+    async def load(self, chat_id: int, thread_id: int | None) -> ConversationFloor:
+        del chat_id, thread_id
+        raise RuntimeError("floor store is down")
+
+    async def save(
+        self, chat_id: int, thread_id: int | None, floor: ConversationFloor
+    ) -> None:
+        del chat_id, thread_id, floor
+        raise RuntimeError("floor store is down")
+
+
+def _live_bob_floor(*participants: int) -> ConversationFloor:
+    # A live Bob floor stamped at the frozen clock's now, so it has not timed out.
+    return ConversationFloor(
+        holder=FloorHolder.BOB,
+        holder_id=None,
+        since=datetime(2026, 7, 28, tzinfo=UTC),
+        idle_streak=0,
+        participants=tuple(participants),
+    )
+
+
+def _wired_manager(store: object) -> FloorManager:
+    return FloorManager(
+        floor_store=store,  # type: ignore[arg-type]
+        floor_config=FloorConfig(),
+        floor_enabled=True,
+        clock=_FrozenClock(),
+    )
+
+
+async def test_wired_resolve_lifts_and_flags_a_recognised_participant() -> None:
+    # 🔴 An unlabeled turn from someone already in Bob's live thread CONTINUES: raised to
+    # DIRECTED_TO_BOB, carrying the holder + participant hints for the reflective read.
+    manager = _wired_manager(_StubFloorStore(_live_bob_floor(_PARTICIPANT_ID)))
+
+    resolution = await manager.resolve_effective(
+        _MANAGER_CHAT, Addressivity.AMBIENT, sender_id=_PARTICIPANT_ID
+    )
+
+    assert resolution.effective is Addressivity.DIRECTED_TO_BOB
+    assert resolution.holder is FloorHolder.BOB
+    assert resolution.participant is True
+
+
+async def test_wired_resolve_leaves_an_outsider_ambient_but_reports_the_holder() -> None:
+    # 🔴 The core new guard at the seam: an outsider's unlabeled turn is NOT raised
+    # (participant False) even though Bob holds the floor — Bob does not wrongly take it.
+    manager = _wired_manager(_StubFloorStore(_live_bob_floor(_PARTICIPANT_ID)))
+
+    resolution = await manager.resolve_effective(
+        _MANAGER_CHAT, Addressivity.AMBIENT, sender_id=_OUTSIDER_ID
+    )
+
+    assert resolution.effective is Addressivity.AMBIENT
+    assert resolution.holder is FloorHolder.BOB  # the holder hint is still reported
+    assert resolution.participant is False
+
+
+async def test_wired_resolve_falls_back_when_the_store_is_flaky() -> None:
+    # Best-effort: a load failure must never mute Bob — fall back to the per-message
+    # classification with no holder / not a participant (mirrors the advance side).
+    manager = _wired_manager(_ExplodingFloorStore())
+
+    resolution = await manager.resolve_effective(
+        _MANAGER_CHAT, Addressivity.DIRECTED_TO_BOB, sender_id=_PARTICIPANT_ID
+    )
+
+    assert resolution.effective is Addressivity.DIRECTED_TO_BOB
+    assert resolution.holder is None
+    assert resolution.participant is False
+
+
+async def test_wired_advance_persists_the_speaker_into_participants() -> None:
+    # advance_after_turn on a wired store UPSERTs the advanced floor: a direct address
+    # joins the speaker to the thread (floor-по-говорящему), observed via the saved floor.
+    store = _StubFloorStore(idle_floor())
+    manager = _wired_manager(store)
+
+    await manager.advance_after_turn(
+        chat_id=_MANAGER_CHAT,
+        sender_id=_PARTICIPANT_ID,
+        per_message=Addressivity.DIRECTED_TO_BOB,
+        directed_to_id=None,
+        bob_replied=False,
+    )
+
+    assert len(store.saved) == 1
+    assert store.saved[0].participants == (_PARTICIPANT_ID,)
+
+
+async def test_wired_advance_swallows_a_flaky_store() -> None:
+    # A store that raises on save can never break a turn that has already acted.
+    manager = _wired_manager(_ExplodingFloorStore())
+
+    await manager.advance_after_turn(
+        chat_id=_MANAGER_CHAT,
+        sender_id=_PARTICIPANT_ID,
+        per_message=Addressivity.DIRECTED_TO_BOB,
+        directed_to_id=None,
+        bob_replied=True,
+    )  # no exception propagates
 
 
 class _FakeJudge:
