@@ -54,3 +54,12 @@ Cohesion. 🔴 DoD: full-reindex + full-mypy + `beadloom ci`.
   `.claude/agents/*.md` из epic-setup коммита 94244e3 (методология BDD/Mutation вписана руками, а
   composer beadloom её не знает; `--fix` СТИРАЕТ методологию). Решение — за координатором (принять
   дрейф ИЛИ upstream quality-overlay в beadloom). Роль-адаптеры оставлены как задумано эпиком.
+- 2026-07-29: **Срез 0 + Фаза 1 ЗАВЕРШЕНЫ и СМЕРЖЕНЫ в main (PR #89, 3b440de).** Блокер config-check
+  РЕШЁН: методология-якорь = CLAUDE.md §0.2, адаптеры в канон, enforcement через CONTEXT + инъекцию
+  в промпты; BDL-UX #139 (обезличенно). Фаза 1: 1.1 reply-to (OutgoingTarget, mutation 100%) + 1.2
+  floor-по-говорящему (participants legacy-safe, mutation 103/103). pytest 3366, mypy full, beadloom
+  ci green. Методом: dev→test→review→tw по слайсу, per-фаза PR (merge-commit).
+  🔴 УРОКИ: параллельные dev на общем worktree → впредь ПОСЛЕДОВАТЕЛЬНО; `bd merge-slot` баглив (обход:
+  git add по путям).
+- 2026-07-29: **Старт Фазы 2 (сердце).** Слайс 2.1 intake-развязка + TurnScope (bob-vol.4.1..4.4) —
+  критический/тяжёлый, веду сфокусированно. Далее 2.2 рефлексивный read+INV-1 → 2.4 → 2.5/2.6.
