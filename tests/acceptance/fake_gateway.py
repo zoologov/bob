@@ -63,21 +63,29 @@ class FakeGateway:
     sent: list[tuple[int, str]] = field(default_factory=list)
     reactions: list[tuple[int, int]] = field(default_factory=list)
     typings: int = 0
+    # BOB-066 Срез 1.1: the message_id each reply QUOTED (a Telegram reply-to), or
+    # ``None`` for an un-quoted topic-only send — one entry per ``sent`` reply, so a
+    # scenario can witness "Bob quoted the addressed message" through the boundary.
+    reply_targets: list[int | None] = field(default_factory=list)
 
     async def get_updates(self, *, offset: int, timeout: int) -> Sequence[UpdateLike]:  # noqa: ARG002
         return []
 
     async def send_message(
-        self, *, chat_id: int, text: str, message_thread_id: int | None = None  # noqa: ARG002
+        self, *, chat_id: int, text: str, message_thread_id: int | None = None,  # noqa: ARG002
+        reply_parameters: object = None,
     ) -> _FakeMessage:
         self.sent.append((chat_id, text))
+        self.reply_targets.append(_reply_to_id(reply_parameters))
         return _FakeMessage(message_id=1)
 
     async def send_rich_message(
-        self, *, chat_id: int, rich_message: object, message_thread_id: int | None = None  # noqa: ARG002
+        self, *, chat_id: int, rich_message: object, message_thread_id: int | None = None,  # noqa: ARG002
+        reply_parameters: object = None,
     ) -> _FakeMessage:
         # BOB-008: the committed reply lands via the rich channel.
         self.sent.append((chat_id, getattr(rich_message, "markdown", "")))
+        self.reply_targets.append(_reply_to_id(reply_parameters))
         return _FakeMessage(message_id=1)
 
     async def set_message_reaction(
@@ -119,6 +127,17 @@ class FakeGateway:
     def last_reply(self) -> str:
         """The text of Bob's most recent reply (empty when he stayed silent)."""
         return self.sent[-1][1] if self.sent else ""
+
+    @property
+    def last_reply_quoted(self) -> int | None:
+        """The message_id Bob's most recent reply QUOTED, or ``None`` if un-quoted (BOB-066 .1)."""
+        return self.reply_targets[-1] if self.reply_targets else None
+
+
+def _reply_to_id(reply_parameters: object) -> int | None:
+    """The quoted message_id carried by an aiogram ``ReplyParameters`` (or ``None``)."""
+    message_id = getattr(reply_parameters, "message_id", None)
+    return message_id if isinstance(message_id, int) else None
 
 
 class _ScriptedProvider:
@@ -192,6 +211,59 @@ async def run_turn(tmp_path: Path, *, text: str, reply: str) -> FakeGateway:
                 update_id=1,
                 chat_id=CHAT_ID,
                 message_id=7,
+                text=text,
+                sender_id=OWNER_ID,
+                sender_name="Vladimir",
+            )
+        )
+    finally:
+        await app.shutdown()
+    return gateway
+
+
+# A second participant in Bob's topic (BOB-066 Срез 1.1): a distinct sender whose
+# earlier turn puts a THIRD voice in the thread, so the next turn reads as multi-party.
+NORMAN_ID = 6
+_OWNER_MESSAGE_ID = 7
+
+
+async def run_group_turn(tmp_path: Path, *, text: str, reply: str) -> FakeGateway:
+    """Boot the full graph and drive a MULTI-PARTY turn end-to-end (BOB-066 Срез 1.1).
+
+    A prior direct turn from another participant (Norman) lands first — so when the
+    owner then addresses Bob, the recent thread already carries a third voice and the
+    turn reads as multi-party (``others_present``). Returns the :class:`FakeGateway`
+    so a scenario can witness that Bob's reply QUOTES the owner's message
+    (``reply_targets``), the observable multi-party behaviour. The owner message keeps
+    the same id (:data:`_OWNER_MESSAGE_ID`) the 1:1 driver uses, so the two scenarios
+    differ ONLY in whether a third participant is present.
+    """
+    _seed_soul(tmp_path)
+    gateway = FakeGateway()
+    providers: dict[int, LLMProvider] = {
+        0: _ScriptedProvider(reply="positive"),
+        1: _ScriptedProvider(reply=reply),
+    }
+    app = build_application(
+        config=_config(tmp_path), providers=providers, bob_bot=gateway, guppi_bot=gateway
+    )
+    await app.startup()
+    try:
+        await app.event_bus.publish(
+            MessageReceived(
+                update_id=1,
+                chat_id=CHAT_ID,
+                message_id=3,
+                text="Bob, привет от Нормана",
+                sender_id=NORMAN_ID,
+                sender_name="Norman",
+            )
+        )
+        await app.event_bus.publish(
+            MessageReceived(
+                update_id=2,
+                chat_id=CHAT_ID,
+                message_id=_OWNER_MESSAGE_ID,
                 text=text,
                 sender_id=OWNER_ID,
                 sender_name="Vladimir",

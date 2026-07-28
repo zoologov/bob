@@ -161,7 +161,12 @@ class _RecordingGateway:
         self.calls: list[Mapping[str, object]] = []
 
     async def reply(
-        self, *, chat_id: int, markdown: str, thinking: str | None = None  # noqa: ARG002
+        self,
+        *,
+        chat_id: int,
+        markdown: str,
+        thinking: str | None = None,  # noqa: ARG002
+        reply_to_message_id: int | None = None,  # noqa: ARG002
     ) -> int | None:
         self._order.append("announce")
         self.calls.append({"chat_id": chat_id, "markdown": markdown})

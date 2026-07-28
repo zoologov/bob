@@ -139,7 +139,8 @@ class _FakeBot:
         return self.updates_batches.pop(0)
 
     async def send_message(
-        self, *, chat_id: int, text: str, message_thread_id: int | None = None
+        self, *, chat_id: int, text: str, message_thread_id: int | None = None,
+        reply_parameters: object = None,  # noqa: ARG002
     ) -> _FakeMessage:
         self.sends.append(
             _SendCall(chat_id=chat_id, text=text, message_thread_id=message_thread_id)
@@ -171,6 +172,7 @@ class _FakeBot:
         chat_id: int,
         rich_message: InputRichMessage,
         message_thread_id: int | None = None,
+        reply_parameters: object = None,  # noqa: ARG002
     ) -> _FakeMessage:
         self.rich_sends.append(
             _SendCall(

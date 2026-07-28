@@ -36,7 +36,7 @@ from bob.infrastructure.telegram.gateway import (
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Sequence
 
-    from aiogram.types import InputRichMessage
+    from aiogram.types import InputRichMessage, ReplyParameters
 
     from bob.kernel import ports
 
@@ -110,6 +110,7 @@ class _SendCall:
     chat_id: int
     text: str
     message_thread_id: int | None
+    reply_parameters: ReplyParameters | None = None
 
 
 @dataclass
@@ -124,6 +125,7 @@ class _RichCall:
     chat_id: int
     markdown: str | None
     message_thread_id: int | None
+    reply_parameters: ReplyParameters | None = None
 
 
 @dataclass
@@ -172,10 +174,20 @@ class _FakeBot:
         return self.updates_batches.pop(0)
 
     async def send_message(
-        self, *, chat_id: int, text: str, message_thread_id: int | None = None
+        self,
+        *,
+        chat_id: int,
+        text: str,
+        message_thread_id: int | None = None,
+        reply_parameters: ReplyParameters | None = None,
     ) -> _FakeMessage:
         self.sends.append(
-            _SendCall(chat_id=chat_id, text=text, message_thread_id=message_thread_id)
+            _SendCall(
+                chat_id=chat_id,
+                text=text,
+                message_thread_id=message_thread_id,
+                reply_parameters=reply_parameters,
+            )
         )
         msg = _FakeMessage(message_id=self.next_message_id, text=text)
         self.next_message_id += 1
@@ -210,6 +222,7 @@ class _FakeBot:
         chat_id: int,
         rich_message: InputRichMessage,
         message_thread_id: int | None = None,
+        reply_parameters: ReplyParameters | None = None,
     ) -> _FakeMessage:
         if self.rich_send_raises:
             raise TelegramBadRequest(
@@ -221,6 +234,7 @@ class _FakeBot:
                 chat_id=chat_id,
                 markdown=rich_message.markdown,
                 message_thread_id=message_thread_id,
+                reply_parameters=reply_parameters,
             )
         )
         msg = _FakeMessage(message_id=self.next_message_id, text=rich_message.markdown)
@@ -809,6 +823,53 @@ async def test_reply_returns_first_chunk_id_on_plain_fallback() -> None:
 
     # The first plain chunk's id (the message a reaction would land on).
     assert message_id == 900
+
+
+# --- BOB-066 Срез 1.1: reply-to (quote the addressed message on the rich final) --
+
+
+@pytest.mark.asyncio
+async def test_reply_quotes_the_addressed_message_when_reply_to_given() -> None:
+    # BOB-066 .1: in a busy thread the rich final QUOTES the message it answers, so
+    # it is unambiguous which message Bob replied to (aiogram ReplyParameters).
+    bot = _FakeBot()
+    gateway = _make_gateway(bot)
+
+    await gateway.reply(chat_id=7, markdown="see above", reply_to_message_id=321)
+
+    assert len(bot.rich_sends) == 1
+    params = bot.rich_sends[0].reply_parameters
+    assert params is not None
+    assert params.message_id == 321
+
+
+@pytest.mark.asyncio
+async def test_reply_without_reply_to_sends_unquoted_as_before() -> None:
+    # 🔴 Regression: the default (``None``) preserves today's behaviour exactly —
+    # a topic-only send with NO reply_parameters attached.
+    bot = _FakeBot()
+    gateway = _make_gateway(bot)
+
+    await gateway.reply(chat_id=7, markdown="just talking")
+
+    assert len(bot.rich_sends) == 1
+    assert bot.rich_sends[0].reply_parameters is None
+
+
+@pytest.mark.asyncio
+async def test_reply_to_threads_through_plain_fallback() -> None:
+    # The quote survives the rich→plain degrade, so a busy-thread reply stays a real
+    # reply even when the rich channel fails.
+    bot = _FakeBot(rich_send_raises=True)
+    gateway = _make_gateway(bot)
+
+    await gateway.reply(chat_id=7, markdown="see above", reply_to_message_id=321)
+
+    assert bot.rich_sends == []
+    assert len(bot.sends) == 1
+    params = bot.sends[0].reply_parameters
+    assert params is not None
+    assert params.message_id == 321
 
 
 # --- BOB-035: send_photo (render_diagram PNG into the chat) --------------------

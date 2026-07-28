@@ -62,7 +62,11 @@ from bob.capabilities.usecases.diagram_sender import (
 from bob.capabilities.usecases.progress_announcer import GatewayProgressAnnouncer
 from bob.capabilities.usecases.registry import CapabilityRegistry
 from bob.capabilities.usecases.tool_loop import ToolLoop
-from bob.conversation.addressivity import AddressivityThresholds
+from bob.conversation.addressivity import (
+    Addressivity,
+    AddressivityThresholds,
+    others_present,
+)
 from bob.conversation.brevity import (
     AnswerDemand,
     BrevityThresholds,
@@ -82,6 +86,7 @@ from bob.conversation.engagement import (
     EngagementThresholds,
     FatigueRates,
 )
+from bob.conversation.outgoing_target import OutgoingTarget, resolve_outgoing_target
 from bob.conversation.reply_context import _assemble_shareable_context
 from bob.conversation.thread import (
     _author_key,
@@ -153,6 +158,7 @@ if TYPE_CHECKING:
         ProgressAnnouncer,
     )
     from bob.conversation.ports import CloserLog, ConversationFloorStore, ZoneClassifier
+    from bob.conversation.usecases.addressivity_perceiver import _AddressivityDecision
     from bob.conversation.usecases.decide_response import DecideResponse
     from bob.conversation.volatility_judgment import VolatilityJudge
     from bob.kernel.ports import Clock
@@ -275,7 +281,12 @@ class ReplyGateway(Protocol):
     ) -> AbstractAsyncContextManager[None]: ...
 
     async def reply(
-        self, *, chat_id: int, markdown: str, thinking: str | None = None
+        self,
+        *,
+        chat_id: int,
+        markdown: str,
+        thinking: str | None = None,
+        reply_to_message_id: int | None = None,
     ) -> int | None: ...
 
     async def send_photo(
@@ -1404,11 +1415,19 @@ class HandleMessage:
         # drained and posted as Telegram photos BEFORE the text confirmation, so the
         # image leads. Best-effort and gated on a wired sink (no diagram skill → no-op).
         await self._diagrams.send_pending(event.chat_id)
+        # Decide WHERE this reply lands (BOB-066 Срез 1.1): in a busy multi-party thread
+        # Bob QUOTES the message he answers (a Telegram reply-to) so it is unambiguous
+        # which turn he replied to; in a focal 1:1 he sends to the topic un-quoted, exactly
+        # as before. A pure conversation-domain core holds the verdict — this collaborator
+        # only gathers the turn's structural signals and hands it the primitives.
+        target = self._resolve_outgoing_target(event, decision, history)
         # Capture the Telegram message_id of Bob's outgoing reply (BOB-050) so the
         # episode records which message was Bob's — a later reaction on it can then be
         # linked back to what Bob said. ``None`` if nothing was sent (degraded path).
         bob_message_id = await self._gateway.reply(
-            chat_id=event.chat_id, markdown=reply
+            chat_id=event.chat_id,
+            markdown=reply,
+            reply_to_message_id=target.reply_to_message_id,
         )
         # Advance the conversation floor AFTER Bob actually replied (BOB-025): an ENGAGE
         # turn that reached the reply sticks the floor to Bob (``bob_replied=True``), so
@@ -1458,6 +1477,41 @@ class HandleMessage:
         # — run() never raises, so a flaky local model can never break a turn that already
         # replied.
         await self._extract_facts.run(user_message=event.text, reply=reply)
+
+    def _resolve_outgoing_target(
+        self,
+        event: MessageReceived,
+        decision: _AddressivityDecision,
+        history: Sequence[Mapping[str, object]],
+    ) -> OutgoingTarget:
+        """Gather this turn's signals and let the pure core decide the reply target (BOB-066 .1).
+
+        A thin collaborator (keeps ``handle`` from fattening): it reads the two
+        structural signals the :func:`resolve_outgoing_target` policy needs —
+        ``others_present`` (is a third participant in the recent thread? the SAME
+        grounded heuristic the addressivity perceiver uses, reused over the already-
+        replayed shared history) and ``focal_1to1`` (a directly-addressed turn in a
+        thread with no third participant) — and hands it the primitives. The verdict
+        (quote vs topic-only) and the addressee live in the domain, not here.
+
+        🔴 For this first slice ``focal_1to1`` is subsumed by ``others_present`` (a
+        1:1 has no others → never quotes anyway); it is kept as a distinct named
+        signal so a later slice's reflective addressee (Пласт 2) can make it
+        independently load-bearing without touching the policy signature.
+        """
+        present = others_present(
+            (str(item.get("content", "")) for item in history),
+            current_sender_name=event.sender_name,
+        )
+        focal_1to1 = (
+            not present and decision.per_message is Addressivity.DIRECTED_TO_BOB
+        )
+        return resolve_outgoing_target(
+            message_id=event.message_id,
+            addressee_id=event.sender_id,
+            others_present=present,
+            focal_1to1=focal_1to1,
+        )
 
     async def _record_owner_activity(self) -> None:
         """Notify proactivity the owner just wrote (best-effort, optional seam).

@@ -154,7 +154,12 @@ class CapturingGateway:
         return _Indicator()
 
     async def reply(
-        self, *, chat_id: int, markdown: str, thinking: str | None = None  # noqa: ARG002
+        self,
+        *,
+        chat_id: int,  # noqa: ARG002
+        markdown: str,
+        thinking: str | None = None,  # noqa: ARG002
+        reply_to_message_id: int | None = None,  # noqa: ARG002
     ) -> None:
         self.replies.append(markdown)
 

@@ -99,7 +99,12 @@ class FakeGateway:
         self._raises = raises
 
     async def reply(
-        self, *, chat_id: int, markdown: str, thinking: str | None = None
+        self,
+        *,
+        chat_id: int,
+        markdown: str,
+        thinking: str | None = None,
+        reply_to_message_id: int | None = None,  # noqa: ARG002
     ) -> int | None:
         self.calls.append({"chat_id": chat_id, "markdown": markdown, "thinking": thinking})
         if self._raises:

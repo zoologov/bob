@@ -49,7 +49,12 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol
 
 from aiogram.exceptions import AiogramError
-from aiogram.types import BufferedInputFile, InputRichMessage, ReactionTypeEmoji
+from aiogram.types import (
+    BufferedInputFile,
+    InputRichMessage,
+    ReactionTypeEmoji,
+    ReplyParameters,
+)
 
 from bob.application.runtime.events import BobMessageReaction, MessageReceived
 from bob.infrastructure.telegram.rich import (
@@ -262,7 +267,12 @@ class BotLike(Protocol):
     ) -> Sequence[UpdateLike]: ...
 
     async def send_message(
-        self, *, chat_id: int, text: str, message_thread_id: int | None = None
+        self,
+        *,
+        chat_id: int,
+        text: str,
+        message_thread_id: int | None = None,
+        reply_parameters: ReplyParameters | None = None,
     ) -> MessageLike: ...
 
     async def send_chat_action(
@@ -275,6 +285,7 @@ class BotLike(Protocol):
         chat_id: int,
         rich_message: InputRichMessage,
         message_thread_id: int | None = None,
+        reply_parameters: ReplyParameters | None = None,
     ) -> MessageLike: ...
 
     async def send_photo(
@@ -677,7 +688,12 @@ class TelegramGateway:
     # --- Rich reply -----------------------------------------------------------
 
     async def reply(
-        self, *, chat_id: int, markdown: str, thinking: str | None = None
+        self,
+        *,
+        chat_id: int,
+        markdown: str,
+        thinking: str | None = None,
+        reply_to_message_id: int | None = None,
     ) -> int | None:
         """Send Bob's ``markdown`` reply as a native rich message.
 
@@ -688,6 +704,12 @@ class TelegramGateway:
         — the user always gets the text, never an error. An empty reply with no
         thinking sends nothing.
 
+        When ``reply_to_message_id`` is given (BOB-066 Срез 1.1) the reply QUOTES
+        that message (an aiogram ``ReplyParameters``) so a busy multi-party thread
+        shows which message Bob answered; the quote survives the rich→plain degrade.
+        ``None`` (the default) keeps today's un-quoted, topic-only send exactly —
+        zero regression for a 1:1.
+
         Returns the Telegram ``message_id`` of the sent message (the first chunk
         when the plain fallback splits a long reply), so the caller can record which
         message was Bob's reply (BOB-050) and later link a reaction back to it.
@@ -695,13 +717,18 @@ class TelegramGateway:
         """
         if not markdown.strip() and not (thinking and thinking.strip()):
             return None
-        message_id = await self._send_rich_final(chat_id, markdown, thinking)
+        reply_to = _reply_parameters(reply_to_message_id)
+        message_id = await self._send_rich_final(chat_id, markdown, thinking, reply_to)
         if message_id is not None:
             return message_id
-        return await self._send_plain(chat_id, markdown)
+        return await self._send_plain(chat_id, markdown, reply_to)
 
     async def _send_rich_final(
-        self, chat_id: int, markdown: str, thinking: str | None
+        self,
+        chat_id: int,
+        markdown: str,
+        thinking: str | None,
+        reply_to: ReplyParameters | None,
     ) -> int | None:
         """Send the rich final into the thread; return its ``message_id`` (``None`` on failure)."""
         rich_markdown = self._render(markdown, thinking)
@@ -710,6 +737,7 @@ class TelegramGateway:
                 chat_id=chat_id,
                 rich_message=InputRichMessage(markdown=rich_markdown),
                 message_thread_id=self._reply_thread_id,
+                reply_parameters=reply_to,
             )
         except (AiogramError, ValueError) as exc:
             logger.warning("rich final failed; falling back to plain: %s", exc)
@@ -720,14 +748,21 @@ class TelegramGateway:
         message = self._converter.convert(markdown, thinking=thinking)
         return self._serializer.to_markdown(message)
 
-    async def _send_plain(self, chat_id: int, text: str) -> int | None:
-        """Send ``text`` as plain message(s); return the first chunk's ``message_id``."""
+    async def _send_plain(
+        self, chat_id: int, text: str, reply_to: ReplyParameters | None = None
+    ) -> int | None:
+        """Send ``text`` as plain message(s); return the first chunk's ``message_id``.
+
+        A ``reply_to`` quote (BOB-066 Срез 1.1) is attached to the FIRST chunk only —
+        a split long reply quotes the addressed message once, not on every chunk.
+        """
         first_message_id: int | None = None
         for chunk in _split_for_length(text):
             sent = await self._bot.send_message(
                 chat_id=chat_id,
                 text=chunk,
                 message_thread_id=self._reply_thread_id,
+                reply_parameters=reply_to if first_message_id is None else None,
             )
             if first_message_id is None:
                 first_message_id = sent.message_id
@@ -992,6 +1027,18 @@ def _parse_user_id(argument: str) -> int | None:
     if not cleaned.lstrip("-").isdigit():
         return None
     return int(cleaned)
+
+
+def _reply_parameters(reply_to_message_id: int | None) -> ReplyParameters | None:
+    """Build the aiogram quote for ``reply_to_message_id`` (BOB-066 Срез 1.1).
+
+    ``None`` yields ``None`` — the un-quoted, topic-only send that is Bob's whole
+    behaviour in a 1:1; a real id yields a ``ReplyParameters`` that quotes exactly
+    that message so a busy multi-party thread shows which message Bob answered.
+    """
+    if reply_to_message_id is None:
+        return None
+    return ReplyParameters(message_id=reply_to_message_id)
 
 
 def _split_for_length(text: str) -> list[str]:

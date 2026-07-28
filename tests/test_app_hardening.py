@@ -76,7 +76,8 @@ class _Bot:
         return []
 
     async def send_message(
-        self, *, chat_id: int, text: str, message_thread_id: int | None = None  # noqa: ARG002
+        self, *, chat_id: int, text: str, message_thread_id: int | None = None,  # noqa: ARG002
+        reply_parameters: object = None,  # noqa: ARG002
     ) -> _Msg:
         return _Msg()
 
@@ -105,7 +106,8 @@ class _Bot:
         *,
         chat_id: int,  # noqa: ARG002
         rich_message: object,  # noqa: ARG002
-        message_thread_id: int | None = None,  # noqa: ARG002
+        message_thread_id: int | None = None,# noqa: ARG002
+        reply_parameters: object = None,  # noqa: ARG002
     ) -> _Msg:
         return _Msg()
 
@@ -268,7 +270,8 @@ async def test_aiogram_adapter_delegates_every_call() -> None:
             ]
 
         async def send_message(
-            self, *, chat_id: int, text: str, message_thread_id: int | None = None  # noqa: ARG002
+            self, *, chat_id: int, text: str, message_thread_id: int | None = None,  # noqa: ARG002
+            reply_parameters: object = None,  # noqa: ARG002
         ) -> str:
             self.calls.append(("send_message", {"chat_id": chat_id, "text": text}))
             return "sent"
