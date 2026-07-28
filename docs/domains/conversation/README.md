@@ -9,8 +9,9 @@
 (`EngagementLevel` + затухающая усталость), *судьи хода* (семантический ResponseJudge «как
 ответить», VolatilityJudge «нужна ли свежая проверка перед ответом»), *живая interim-строка*
 на время проверки и *анти-тик* защита (повтор owner'а / повтор Боба / фраза-тик / повторяющийся
-закрывающий мотив). Это модуль о том, **как ведётся ход** — он спрашивает у характера, *как
-сказать*, но сам решает *если/насколько* и *в какой форме* Боб вступает.
+закрывающий мотив) и *цель ответа на выходе* (`OutgoingTarget` — цитировать ли reply-to и кого
+адресовать). Это модуль о том, **как ведётся ход** — он спрашивает у характера, *как сказать*, но
+сам решает *если/насколько*, *в какой форме* и *куда* Боб вступает.
 
 Это шестой **вертикальный** модуль domain-first раскладки (BOB-062.6a, срез 6/8 эпика
 BOB-062), выделенный из `domain/personality/` рядом с `personality`: «как ведётся ход» собран
@@ -73,6 +74,7 @@ src/bob/conversation/
   volatility_judgment.py# layer=domain        — VolatilityVerdict/Context + порт VolatilityJudge + prompt/parser (BOB-057 .1)
   reply_context.py    # layer=domain          — _assemble_shareable_context: сборка reply-shaping контекста хода (free-функция → хелпер, BOB-062.6b)
   thread.py           # layer=domain          — проекция персиста в сигналы хода: _render_thread/_user_turns/_history_for_author/_recent_bob_replies/_strip_recalled_closer (BOB-062.6b)
+  outgoing_target.py  # layer=domain          — OutgoingTarget VO + resolve_outgoing_target: КУДА ложится ответ (цитата reply-to + адресат), BOB-066 Срез 1.1
   usecases/           # layer=application
     decide_response.py       —                — DecideResponse: собрать контекст и спросить судью по смыслу (BOB-049)
     turn_gate.py             —                — TurnGate: гейт хода reply/react/silent (тонкий координатор, BOB-062.6b)
@@ -146,6 +148,41 @@ BOB-022 — точный матч после нормализации, конс�
 `is_recurring_closer_tic` (повторяющийся закрывающий мотив, в т.ч. кросс-сессионно через
 `CloserLog`-кольцо, BOB-061).
 
+### Цель ответа на выходе — reply-to (BOB-066 Срез 1.1)
+
+`OutgoingTarget` / `resolve_outgoing_target` (`outgoing_target.py`) — чистое доменное ядро
+решения, **куда** ложится ответ Боба в этом ходе: цитирует ли он сообщение, на которое отвечает
+(Telegram reply-to), и кого адресует. Решение детерминировано, без LLM и без транспорта.
+
+`OutgoingTarget` — маленький frozen-VO с двумя полями: `reply_to_message_id` (id сообщения,
+которое ответ ЦИТИРУЕТ, либо `None` — сегодняшняя отправка в топик без цитаты) и `addressee_id`
+(`sender_id` того, кому Боб отвечает, для будущего использования floor/адресацией, либо `None`).
+Голый дефолт — легаси-отправка без цитаты и без адресата, поэтому неустановленная цель
+поведения не меняет.
+
+`resolve_outgoing_target` выводит цель из структурных сигналов хода: ответ цитирует адресованное
+`message_id` ровно тогда, когда рядом есть третий участник (`others_present`) И ход НЕ является
+запертым фокальным 1:1 (`focal_1to1`); иначе он уходит без цитаты (`None`). В многолюдном треде
+цитата снимает неоднозначность, за каким сообщением идёт ответ Боба; в 1:1 цитата не нужна.
+`addressee_id` пробрасывается без изменений — он называет, кому Боб отвечает, независимо от того,
+цитирует ли ответ этого человека визуально.
+
+**Проводка.** `HandleMessage._resolve_outgoing_target` — тонкий коллаборатор (не толстит
+`handle`): он читает два сигнала (`others_present` — та же заземлённая эвристика «третий участник
+в недавнем треде», что использует addressivity-perceiver, поверх уже воспроизведённого общего
+треда; `focal_1to1` — прямо-адресованный ход в треде без третьего) и отдаёт примитивы ядру, затем
+пробрасывает `target.reply_to_message_id` в шлюз. Цитирование — транспортный концерн выхода,
+которым владеет use-case, вынесенный из домена *того, что* Боб говорит: `VoiceComposer` цель не
+видит. 🔴 В этом первом срезе `focal_1to1` поглощён `others_present` (1:1 не имеет others → и так
+не цитирует), но сохранён как отдельный именованный сигнал, чтобы поздний рефлексивный адресат
+(Пласт 2) сделал его самостоятельно значащим без изменения сигнатуры политики.
+
+Шлюз ответа получил аддитивный параметр `reply_to_message_id` (по умолчанию `None` = сегодняшнее
+поведение, без регресса): `ReplyGateway.reply` / `BotLike.send_message` / `send_rich_message` /
+`TelegramGateway.reply` пробрасывают его в aiogram `ReplyParameters(message_id=…)`. Продакшн-адаптеры
+(`aiogram`-шлюз, `multibot._ReplyGateway`) обновлены пробросом без изменения текущего поведения при
+`None`.
+
 ### Use-case и адаптеры
 
 `DecideResponse` (`usecases/decide_response.py`) — тонкий application-use-case над судьёй
@@ -208,6 +245,10 @@ floor (UPSERT — floor продвигается каждый ход); `SqliteCl
 - **Судьи по смыслу, безопасный дефолт.** Структурные сигналы — входы, не override-правила;
   VolatilityJudge при неоднозначности дефолтит `needs_check=False` (US-2 «не зануда»); парсеры
   бросают на мусоре, а не молча дефолтят некорректно.
+- **Цель ответа аддитивна и детерминирована.** `resolve_outgoing_target` чист и тотален (одни и
+  те же сигналы → одна и та же цель); голый `OutgoingTarget` и `reply_to_message_id=None` на всех
+  путях шлюза = сегодняшняя отправка в топик без цитаты (нулевой регресс). Цитата появляется ровно
+  при третьем участнике и НЕ в фокальном 1:1.
 
 ### Границы модуля (AaC)
 
@@ -248,7 +289,8 @@ floor (UPSERT — floor продвигается каждый ход); `SqliteCl
   (→ `EngagementLevel`) + `ConversationalFatigue`, `zone_classifier.TasteZoneClassifier`,
   `conversation.is_user_repeat`/`is_bob_repeat`/`is_recurring_closer_tic`,
   `response_choice.ResponseChoice`/`ResponseJudge`, `volatility_judgment.VolatilityJudge`,
-  `interim_line.build_interim_line_user_prompt`.
+  `interim_line.build_interim_line_user_prompt`,
+  `outgoing_target.resolve_outgoing_target` (→ `OutgoingTarget` c `reply_to_message_id`/`addressee_id`).
 - Use-case: `usecases.DecideResponse`; коллабораторы хода `usecases.{TurnGate,
   AddressivityPerceiver, FloorManager, EngagementModel, RecallAssembler, VerifyStep,
   AntiRepeatGuard}` (BOB-062.6b).
@@ -267,8 +309,12 @@ floor (UPSERT — floor продвигается каждый ход); `SqliteCl
 - Домен: `tests/domain/personality/test_addressivity.py`, `test_addressivity_policy.py`,
   `test_conversation_floor.py`, `test_brevity.py`, `test_engagement.py`,
   `test_zone_classifier.py`, `test_conversation.py`, `test_response_judgment.py`,
-  `test_volatility_judgment.py`, `test_interim_line.py`.
+  `test_volatility_judgment.py`, `test_interim_line.py`;
+  `tests/domain/conversation/test_outgoing_target.py` (truth-table reply-to + mutation-покрытие).
 - Use-case: `tests/application/usecases/test_decide_response.py`.
+- Приёмочный BDD reply-to: `tests/acceptance/features/reply_to.feature` +
+  `tests/acceptance/steps/test_reply_to.py` (цитирует при 3+ участниках, не цитирует в 1:1 через
+  FakeGateway).
 - Адаптеры: `tests/infrastructure/llm/test_response_judge.py`, `test_volatility_judge.py`,
   `test_interim_line.py`; `tests/infrastructure/persistence/test_conversation_floor_store.py`,
   `test_closer_log_store.py`.
