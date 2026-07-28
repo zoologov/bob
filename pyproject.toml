@@ -254,8 +254,9 @@ ignore = [
 ]
 # build_application is the composition ROOT: it wires every adapter/use-case/tick in
 # one place by design (a single readable assembly), so the per-function statement
-# ceiling does not apply to it — splitting it would only scatter the wiring.
-"src/bob/app.py" = ["PLR0915"]
+# ceiling does not apply to it — splitting it would only scatter the wiring. It lives
+# in bob.runtime.composition since BOB-062.7a (bob.app is now a thin re-export shim).
+"src/bob/runtime/composition.py" = ["PLR0915"]
 # GUPPI's owner commands (BOB-003 + BOB-015 .2) carry Russian command usage/reply
 # literals whose Cyrillic look-alikes are intentional — RUF001/RUF002/RUF003 here.
 "src/bob/infrastructure/telegram/guppi.py" = ["RUF001", "RUF002", "RUF003"]

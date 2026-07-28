@@ -151,7 +151,9 @@ def test_enabling_coder_never_injects_a_capability_into_safe_allowlist() -> None
 def test_coding_assistant_is_not_referenced_by_the_registry_builder() -> None:
     # Structural guard: the capability-registry builder never touches the coding
     # assistant (it is wired separately, off the autonomous path).
-    registry_src = (_repo_root() / "src/bob/app.py").read_text(encoding="utf-8")
+    registry_src = (
+        _repo_root() / "src/bob/runtime/wiring/capabilities.py"
+    ).read_text(encoding="utf-8")
     builder = registry_src.split("def _build_registry")[1].split("\ndef ")[0]
     assert "coding_assistant" not in builder
     assert "CodingAssistant" not in builder

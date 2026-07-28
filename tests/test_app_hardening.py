@@ -20,7 +20,8 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-import bob.app as app_module
+import bob.runtime.composition as composition_module
+import bob.runtime.main as main_module
 from bob.app import (
     Application,
     SystemClock,
@@ -201,7 +202,7 @@ def test_build_application_builds_real_bots_when_none_injected(
         built_tokens.append(bot_section.get("token"))
         return _Bot()
 
-    monkeypatch.setattr(app_module, "_build_real_bot", fake_build_real_bot)
+    monkeypatch.setattr(composition_module, "_build_real_bot", fake_build_real_bot)
 
     # Act: omit both bot seams -> the real-bot path runs for each.
     app = build_application(
@@ -371,7 +372,7 @@ def test_main_builds_and_runs_until_stopped(
     # Arrange: pre-seed a SOUL so startup's Genesis is a no-op; stub the
     # real-bot factory + asyncio.run so main() drives _run without a network.
     SoulStore(tmp_path / "soul").write_soul("# SOUL\n\nBob.\n")
-    monkeypatch.setattr(app_module, "_build_real_bot", lambda _section, _identity: _Bot())
+    monkeypatch.setattr(composition_module, "_build_real_bot", lambda _section, _identity: _Bot())
 
     ran: dict[str, object] = {}
 
@@ -380,12 +381,12 @@ def test_main_builds_and_runs_until_stopped(
         ran["coro"] = type(coro).__name__
         coro.close()
 
-    monkeypatch.setattr("bob.app.asyncio.run", fake_asyncio_run)
+    monkeypatch.setattr("bob.runtime.main.asyncio.run", fake_asyncio_run)
 
     # build_application uses real config loader by default; inject config via env-free
     # path by patching build_application to use our fakes.
     monkeypatch.setattr(
-        app_module,
+        main_module,
         "build_application",
         lambda **_kw: _app(tmp_path),
     )
@@ -408,7 +409,7 @@ async def test_run_executes_full_lifecycle(tmp_path: Path) -> None:
         await app.runtime.stop()
 
     stopper = asyncio.create_task(stop_soon())
-    await app_module._run(app)
+    await main_module._run(app)
     await stopper
 
     # Assert: the runtime came back to a stopped state and the db closed.

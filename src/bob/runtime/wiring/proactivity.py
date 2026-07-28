@@ -1,0 +1,172 @@
+# Copyright (c) 2026 Vladimir Zoologov
+# SPDX-License-Identifier: BUSL-1.1
+# See the LICENSE file in the project root for full license information.
+
+# beadloom:domain=bob
+
+"""Composition-root proactivity wiring — the proactivity engine + background-task schedule.
+
+Assembles the per-persona :class:`ProactivityEngine` (pure drive-model + governance over a
+seeded RNG, wired to the store / router / Bob's gateway / the read-seams) and the supervised
+background tasks (one poll drives both bots; the heartbeat ticks + the optional pursuit tick,
+each wrapped in the shared retry policy). Part of the ``bob.runtime`` composition root
+(BOB-062.7a).
+"""
+
+from __future__ import annotations
+
+import random
+from typing import TYPE_CHECKING
+
+from bob.application.runtime import periodic
+from bob.personality.language import DEFAULT_LANGUAGE
+from bob.proactivity.adapters import RepoProactivitySources
+from bob.proactivity.decision import ProactiveDecider
+from bob.proactivity.governance import Governance
+from bob.proactivity.usecases import ProactivityEngine
+from bob.runtime.config import (
+    _BOB_PERSONA,
+    _DEFAULT_HEARTBEAT_SECONDS,
+    _MOOD_DRIFT_SECONDS,
+    _PROACTIVE_TICK_MULTIPLIER,
+    _TICK_RETRY_POLICY,
+    _int,
+    _section,
+)
+from bob.runtime.wiring.parameters import _build_pursuit_tick_seconds, _resolve_seed
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
+
+    from bob.application.router import LLMRouter
+    from bob.application.runtime.agent import BackgroundTask
+    from bob.application.usecases.handle_message import PersonalityState, ReplyGateway
+    from bob.application.usecases.heartbeat import (
+        InnerMonologueTick,
+        MoodDriftTick,
+        ReflectTick,
+    )
+    from bob.conversation.conversation import RepeatThresholds
+    from bob.domain.ports import Clock, MemoryRecall
+    from bob.infrastructure.persistence import SqliteMemoryRepo
+    from bob.infrastructure.telegram.multibot import MultiBotGateway
+    from bob.personality.usecases.fascination_sources import StoreFascinationReader
+    from bob.proactivity.adapters import SqliteProactivityStore
+    from bob.proactivity.usecases import ProactiveTick
+    from bob.proactivity.usecases.pursue_goals import PursueGoalsTick
+    from bob.social.usecases.sulk_sources import SulkTracker
+
+
+def _build_proactivity_engine(
+    config: Mapping[str, object],
+    *,
+    store: SqliteProactivityStore,
+    router: LLMRouter,
+    gateway: ReplyGateway,
+    personality: PersonalityState,
+    repo: SqliteMemoryRepo,
+    recall: MemoryRecall,
+    clock: Clock,
+    seed: int | None,
+    language: str = DEFAULT_LANGUAGE,
+    fascination: StoreFascinationReader | None = None,
+    sulk: SulkTracker | None = None,
+    repeat_thresholds: RepeatThresholds | None = None,
+) -> ProactivityEngine:
+    """Assemble the per-persona proactivity engine (drive-model → message).
+
+    Wires the pure :class:`ProactiveDecider` (urge model + :class:`Governance`
+    ceilings over the injected clock and a **seeded** RNG) to the live store, the
+    LLM router (Tier-0 gate + composed reply), Bob's reply gateway (posts into his
+    topic), and the live reflection-salience / proactive-window read-seams over the
+    episodic log. The seed is injectable/deterministic: an explicit ``seed`` wins,
+    else config (``runtime.proactivity_seed``) or the ``BOB_PROACTIVITY_SEED`` env,
+    else a fresh per-process seed — so tests pin the stochastic draw exactly.
+    """
+    telegram = _section(config, "telegram")
+    sources = RepoProactivitySources(repo, clock=clock)
+    decider = ProactiveDecider(clock=clock, governance=Governance())
+    return ProactivityEngine(
+        persona_id=_BOB_PERSONA,
+        chat_id=_int(telegram, "chat_id", 0),
+        store=store,
+        decider=decider,
+        router=router,
+        gateway=gateway,
+        personality=personality,
+        reflection=sources,
+        window=sources,
+        recall=recall,
+        repo=repo,
+        clock=clock,
+        # The drive-model's stochastic draw is deterministic-by-seed, NOT
+        # cryptographic: a seeded PRNG is exactly what makes the proactive decision
+        # reproducible in tests.
+        rng=random.Random(_resolve_seed(config, seed)),  # noqa: S311
+        language=language,
+        fascination=fascination,
+        # The sulk veto (BOB-014 .2b): while обижен Bob does not write first.
+        sulk=sulk,
+        # Recall-aware anti-repeat on the proactive path (BOB-032 .2, R4).
+        repeat_thresholds=repeat_thresholds,
+    )
+
+
+def _background_tasks(
+    config: Mapping[str, object],
+    *,
+    multibot: MultiBotGateway,
+    inner_monologue_tick: InnerMonologueTick,
+    mood_drift_tick: MoodDriftTick,
+    reflect_tick: ReflectTick,
+    proactive_tick: ProactiveTick,
+    pursue_goals_tick: PursueGoalsTick | None = None,
+) -> list[BackgroundTask]:
+    """Build the supervised background tasks: polling + the heartbeat ticks.
+
+    One poll task drives BOTH bots (Bob + GUPPI) through the multi-bot gateway. The
+    proactivity tick runs on the heartbeat cadence like its siblings and is wrapped
+    in the same :data:`_TICK_RETRY_POLICY` so a transient LLM/network blip on a
+    firing tick is retried before isolation — it is cheap by construction (most
+    ticks make ZERO LLM calls). The self-directed goal-pursuit tick (BOB-015 .3) is
+    scheduled ONLY when wired (``goals.pursuit_enabled``), on its own (rare) cadence
+    ``goals.tick_seconds``; unwired (the default) the schedule is exactly as before.
+    """
+    runtime = _section(config, "runtime")
+    heartbeat = float(_int(runtime, "heartbeat_seconds", _DEFAULT_HEARTBEAT_SECONDS))
+
+    async def poll() -> None:
+        await multibot.poll_once()
+
+    tasks: list[BackgroundTask] = [
+        periodic(poll, interval_seconds=0.0),
+        periodic(
+            inner_monologue_tick.run,
+            interval_seconds=heartbeat,
+            retry=_TICK_RETRY_POLICY,
+        ),
+        periodic(
+            mood_drift_tick.run,
+            interval_seconds=_MOOD_DRIFT_SECONDS,
+            retry=_TICK_RETRY_POLICY,
+        ),
+        periodic(
+            reflect_tick.run,
+            interval_seconds=heartbeat * 10,
+            retry=_TICK_RETRY_POLICY,
+        ),
+        periodic(
+            proactive_tick.run,
+            interval_seconds=heartbeat * _PROACTIVE_TICK_MULTIPLIER,
+            retry=_TICK_RETRY_POLICY,
+        ),
+    ]
+    if pursue_goals_tick is not None:
+        tasks.append(
+            periodic(
+                pursue_goals_tick.run,
+                interval_seconds=_build_pursuit_tick_seconds(config),
+                retry=_TICK_RETRY_POLICY,
+            )
+        )
+    return tasks
