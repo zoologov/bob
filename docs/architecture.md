@@ -141,17 +141,18 @@ src/bob/
                      #   интроспектор (SubprocessRepoIntrospector) переехали в
                      #   `capabilities/adapters/{web,diagrams,introspection}/`
                      #   (вертикальный модуль, BOB-062.4)
-    persistence/     # 🔴 shared kernel персистентности (до BOB-062.7): SqliteMemoryRepo
-                     #   + schema.sql + MemoryVectorStore (sqlite-vec) остаются здесь,
-                     #   кормят ~13 чужих сторов через .connection()-шов;
-                     #   + SqliteProactivityStore + RepoProactivitySources
-                     #   + SqliteFascinationStore (BOB-020).
-                     #   recall-адаптеры (Fts5MemoryRecall + HybridMemoryRecall, RRF)
-                     #   переехали в `memory/adapters/` (вертикальный модуль, BOB-062.2);
-                     #   social-адаптеры (KvAllowlistStore, SoulStore, Sqlite First/
-                     #   Relationship/Sulk/PermissionRequest-Store, LlmPrivilegeJudge из
-                     #   llm/) переехали в `social/adapters/` (вертикальный модуль,
-                     #   BOB-062.5); запись всё ещё идёт через kernel .connection()-шов
+    persistence/     # connection-kernel персистентности (BOB-062.7b): connection.py
+                     #   (SqliteConnection — чистое I/O: WAL/foreign_keys/sqlite-vec/
+                     #   executescript(schema.sql)/миграции/kv) + единая schema.sql.
+                     #   Выставляет .connection-шов, которым кормятся все ~13 сторов
+                     #   всех модулей + memory-репозиторий. Facade (__init__.py) очищен:
+                     #   экспортит ТОЛЬКО SqliteConnection (был стейл god-facade).
+                     #   memory-репозиторий (SqliteMemoryRepo) + MemoryVectorStore +
+                     #   recall-адаптеры (Fts5/HybridMemoryRecall) уехали в
+                     #   `memory/adapters/` (BOB-062.7b/.2); social-сторы (KvAllowlist/
+                     #   SoulStore, First/Relationship/Sulk/PermissionRequest-Store) — в
+                     #   `social/adapters/` (.5); proactivity-сторы — в
+                     #   `proactivity/adapters/` (.3). Все читают kernel через .connection
     config/          # ConfigLoader (defaults → YAML → env)
   coding/            # 🔴 ВЕРТИКАЛЬНЫЙ модуль «Боб пишет код» (BOB-062.1): вся способность
                      #   в одном месте, а не размазана по слоям. Внутренняя раскладка:
@@ -169,11 +170,13 @@ src/bob/
                      #     ports.py + entities (EpisodicEvent, SemanticFact) — layer=domain;
                      #     usecases/ (extract_facts, consolidate_memory, dedup_facts)
                      #       — layer=application;
-                     #     adapters/ (fts_recall, hybrid_recall, ollama_embedder,
-                     #       ollama_reranker + фабрики) — layer=infrastructure.
-                     #   🔴 kernel персистентности (SqliteMemoryRepo + schema + vector_store)
-                     #   ОСТАЁТСЯ в infrastructure/persistence/ до BOB-062.7 (вариант C);
-                     #   разрешённое ребро kernel→bob.memory.entities помечено TODO-.7.
+                     #     adapters/ (sqlite_memory_repo, vector_store, fts_recall,
+                     #       hybrid_recall, ollama_embedder, ollama_reranker + фабрики)
+                     #       — layer=infrastructure.
+                     #   🔴 kernel-split завершён (BOB-062.7b, долг варианта C закрыт):
+                     #   SqliteMemoryRepo + MemoryVectorStore уехали в memory/adapters/,
+                     #   читают connection-kernel (infrastructure/persistence/connection.py)
+                     #   через .connection-шов; ребро kernel→bob.memory.entities устранено.
                      #   См. SPEC: docs/domains/memory/README.md
   capabilities/      # 🔴 ВЕРТИКАЛЬНЫЙ модуль «инструменты Боба» (BOB-062.4): весь
                      #   capability-шов в одном месте, а не размазан по слоям. Раскладка:
@@ -204,8 +207,9 @@ src/bob/
                      #   разорван: voice.py читает kind.value, не импортит InterlocutorKind);
                      #   social→personality однонаправленно (relationship→negotiation.Stance).
                      #   privileged_fulfiller ОСТАЁТСЯ в application (cross-domain оркестратор).
-                     #   🔴 kernel персистентности ОСТАЁТСЯ в persistence/ до BOB-062.7
-                     #   (вариант C). Границы — explicit-path forbid_import-правилами,
+                     #   connection-kernel персистентности расщеплён в BOB-062.7b (долг
+                     #   варианта C закрыт); social-сторы читают его .connection-шов.
+                     #   Границы — explicit-path forbid_import-правилами,
                      #   СГЕНЕРИРОВАННЫМИ scripts/gen_boundary_rules.py. См. SPEC:
                      #   docs/domains/social/README.md
   personality/       # 🔴 ВЕРТИКАЛЬНЫЙ модуль «кто Боб есть» (BOB-062.6a): стабильное
