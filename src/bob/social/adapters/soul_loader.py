@@ -8,7 +8,7 @@
 
 """Soul loader — rebuild the in-memory :class:`SOUL` from the persisted soul artifacts.
 
-Reads the JSON profiles the :class:`~bob.infrastructure.persistence.SoulStore` writes
+Reads the JSON profiles the :class:`~bob.social.adapters.soul_store.SoulStore` writes
 (mood / taste / phantom prefs / disposition) into the live :class:`SOUL`, falling back to
 a neutral canon default per missing field so a fresh install (before Genesis has fully
 written them) and an install predating a later profile Just Work. Extracted verbatim from
@@ -27,7 +27,7 @@ from bob.personality.soul import SOUL
 from bob.personality.taste import TasteAxis, TasteEngine
 
 if TYPE_CHECKING:
-    from bob.infrastructure.persistence import SoulStore
+    from bob.social.adapters.soul_store import SoulStore
 
 
 def _load_soul(soul_store: SoulStore) -> SOUL:

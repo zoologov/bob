@@ -15,8 +15,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, cast
 
-from bob.infrastructure.persistence import KvAllowlistStore
 from bob.runtime.config import _REPLY_TIER, _int, _int_list, _section
+from bob.social.adapters.allowlist_store import KvAllowlistStore
 from bob.social.usecases import Authorizer
 
 if TYPE_CHECKING:

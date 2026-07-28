@@ -27,10 +27,11 @@ from typing import TYPE_CHECKING
 import pytest
 
 from bob.app import Application, build_application
-from bob.infrastructure.persistence import KvAllowlistStore, SoulStore
 from bob.infrastructure.telegram.guppi import GUPPI_REJECT_TEXT
 from bob.infrastructure.telegram.multibot import BotIdentity
 from bob.memory.adapters import SqliteMemoryRepo
+from bob.social.adapters.allowlist_store import KvAllowlistStore
+from bob.social.adapters.soul_store import SoulStore
 from tests.support.judge_stub import JUDGE_REPLY, is_judge_request
 
 if TYPE_CHECKING:

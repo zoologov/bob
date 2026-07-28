@@ -22,7 +22,7 @@ from bob.capabilities.usecases import (
     CapabilityNotAllowedError,
     SafeCapabilityDispatcher,
 )
-from bob.infrastructure.persistence import SoulStore
+from bob.social.adapters.soul_store import SoulStore
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Mapping, Sequence

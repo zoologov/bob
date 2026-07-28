@@ -59,6 +59,10 @@ from bob.application.usecases.heartbeat import (
     ReflectTick,
 )
 from bob.application.usecases.perceive_reaction import PerceiveReaction
+from bob.conversation.adapters.closer_log_store import SqliteCloserLog
+from bob.conversation.adapters.conversation_floor_store import (
+    SqliteConversationFloorStore,
+)
 from bob.conversation.adapters.interim_line import LlmInterimLineGenerator
 from bob.conversation.adapters.response_judge import LlmResponseJudge
 from bob.conversation.adapters.volatility_judge import LlmVolatilityJudge
@@ -69,17 +73,7 @@ from bob.infrastructure.llm import (
     build_tier_providers,
     build_web_search_provider,
 )
-from bob.infrastructure.persistence import (
-    KvNotableReactionStore,
-    SoulStore,
-    SqliteCloserLog,
-    SqliteConnection,
-    SqliteConversationFloorStore,
-    SqliteFascinationStore,
-    SqliteFirstImpressionStore,
-    SqliteRelationshipStore,
-    SqliteSulkStore,
-)
+from bob.infrastructure.persistence import SqliteConnection
 from bob.infrastructure.telegram.aiogram_adapter import (
     _BobReactionFilter,
     _build_real_bot,
@@ -88,6 +82,8 @@ from bob.infrastructure.telegram.multibot import BotIdentity
 from bob.infrastructure.telegram.outage_notifier import _GuppiOutageNotifier
 from bob.memory.adapters import HybridMemoryRecall, SqliteMemoryRepo
 from bob.memory.usecases.extract_facts import ExtractFacts
+from bob.personality.adapters.fascination_store import SqliteFascinationStore
+from bob.personality.adapters.notable_reaction_store import KvNotableReactionStore
 from bob.personality.adapters.reaction_judge import LlmReactionJudge
 from bob.personality.language import DEFAULT_LANGUAGE
 from bob.personality.negotiation import Negotiation
@@ -164,11 +160,15 @@ from bob.runtime.wiring import (
     _phantom_evolution_params,
     _resolve_seed,
 )
+from bob.social.adapters.first_impression_store import SqliteFirstImpressionStore
+from bob.social.adapters.relationship_store import SqliteRelationshipStore
 from bob.social.adapters.soul_loader import (
     _default_soul,
     _disposition_from,
     _load_soul,
 )
+from bob.social.adapters.soul_store import SoulStore
+from bob.social.adapters.sulk_store import SqliteSulkStore
 from bob.social.usecases import ReactorPerception, SenderPerception
 from bob.social.usecases.first_impression_sources import FirstImpressionTracker
 from bob.social.usecases.relationship_sources import RelationshipTracker

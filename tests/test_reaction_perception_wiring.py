@@ -29,7 +29,7 @@ from typing import TYPE_CHECKING, cast
 
 from bob.app import Application, build_application
 from bob.application.runtime.events import BobMessageReaction
-from bob.infrastructure.persistence import KvNotableReactionStore
+from bob.personality.adapters.notable_reaction_store import KvNotableReactionStore
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Mapping, Sequence

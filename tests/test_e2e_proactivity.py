@@ -30,13 +30,13 @@ from typing import TYPE_CHECKING
 import pytest
 
 from bob.app import Application, build_application
-from bob.infrastructure.persistence import SoulStore
 from bob.personality.mood import Mood
 from bob.proactivity.adapters import SqliteProactivityStore
 from bob.proactivity.decision import ProactiveDecider
 from bob.proactivity.governance import Governance, ProactiveHistory
 from bob.proactivity.social_energy import SocialEnergy
 from bob.proactivity.state import ProactivityState
+from bob.social.adapters.soul_store import SoulStore
 from tests.support.judge_stub import JUDGE_REPLY, is_judge_request
 
 if TYPE_CHECKING:
