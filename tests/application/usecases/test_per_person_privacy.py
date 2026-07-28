@@ -22,7 +22,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from bob.application.usecases.handle_message import _last_seen_at
+from bob.conversation.thread import _last_seen_at
 
 # --- _last_seen_at: freshest prior-turn timestamp (BOB-045 .3) ----------------
 

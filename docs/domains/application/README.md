@@ -45,9 +45,20 @@ LLM-роутера. Зависит от домена через порты-пр�
 - **usecases/decide_response.py** — `DecideResponse`, тонкий use-case над швом
   семантического суждения (BOB-049): собирает `ResponseContext` из частей хода и
   делегирует решение REPLY/REACT/IGNORE инъецированному `ResponseJudge`.
-- **usecases/handle_message.py** — `HandleMessage`, полный поток
-  сообщение → ответ → персист → запоминание; `PersonalityState`,
-  `EpisodeReader` (шов чтения недавней истории).
+- **usecases/handle_message.py** — `HandleMessage`, **тонкий оркестратор** хода
+  сообщение → ответ → персист → запоминание (BOB-062.6b, #9): `handle()` проводит фазы
+  perceive → who → gate → compose+guard → post-effects, делегируя ~14 когезивным
+  коллабораторам, разложенным по вертикалям (personality/conversation/social/capabilities); двое
+  живут в этом слое — `EssentialRunner` и `PreComposeGate` (ниже). `__init__` — композиционный
+  корень, собирающий коллабораторов из инъектированных швов (`PersonalityState`, `EpisodeReader`
+  — шов чтения недавней истории); проводка мигрирует в runtime в срезе .7.
+- **usecases/essential_runner.py** — `EssentialRunner`, ретрай существенных LLM-шагов
+  (суждение/генерация) с ограниченным backoff, затем честный GUPPI-outage-нотис вместо
+  деградированного ответа (`run`/`handle_failure`/`notify_outage`, BOB-049 .3); persist —
+  инъектированный колбэк.
+- **usecases/precompose_gate.py** — `PreComposeGate`, cross-domain гейты перед обычной
+  компоновкой, что могут ЗАБРАТЬ ход: `maybe_route_coding` (NL-coding-intent для owner, BOB-041)
+  и `maybe_permission` (privilege-flow, BOB-052).
 - **usecases/update_mood_from_text.py** — `UpdateMoodFromText`, шаг perceive:
   сигналы текста → `MoodDelta`.
 - **usecases/extract_facts.py** — `ExtractFacts`, шаг remember на Tier 0: дистилляция
@@ -335,13 +346,24 @@ Tier 1); иначе ход идёт прежним plain-путём роутер
   `search_memory`: `query` + опциональный `k`, клампится в `[1, 50]`).
 
 Модуль `src/bob/application/usecases/handle_message.py`:
-- `HandleMessage` — `async handle(event)`; `PersonalityState`, `EpisodeReader`,
-  опциональные `registry` и `tool_provider` (включают capability tool-loop).
+- `HandleMessage` — `async handle(event)` (тонкий оркестратор, BOB-062.6b); `PersonalityState`,
+  `EpisodeReader`, опциональные `registry` и `tool_provider` (включают capability tool-loop).
+  `__init__` собирает ~14 коллабораторов из инъектированных швов.
 - Отказоустойчивость (BOB-049 .3): essential-шаги (суждение + генерация ответа)
   обёрнуты `call_with_retry`; при стойком сбое — `OutageNotifier.notify_outage()`
   (GUPPI-нотис в топик Боба), ход пользователя персистится, деградированный ответ
   НЕ отправляется. Швы: `outage_notifier`, `retry_sleep`, `essential_attempts`,
   `essential_backoff_seconds`.
+
+Модуль `src/bob/application/usecases/essential_runner.py`:
+- `EssentialRunner` — `async run(operation, *, step)` (ограниченный ретрай существенного шага),
+  `async handle_failure(event, soul, exc)` (персист хода + GUPPI-нотис), `notify_outage`. Порт
+  `OutageNotifier`; исключение `_EssentialStepError`.
+
+Модуль `src/bob/application/usecases/precompose_gate.py`:
+- `PreComposeGate` — `async maybe_route_coding(event, interlocutor)` / `async
+  maybe_permission(event, interlocutor)` → `bool` (съел ли ход). Швы `NaturalCodingRouter`,
+  `PermissionFlowLike`.
 
 Модуль `src/bob/application/usecases/update_mood_from_text.py`:
 - `UpdateMoodFromText` — `async run(mood, signals)` → `Mood`; `TextSignals`.

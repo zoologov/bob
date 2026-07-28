@@ -681,6 +681,16 @@ ignore = [
     "RUF003",
     "SLF001",
 ]
+# Wave-2 collaborator unit tests (BOB-062.6b) seed `random.Random` for the seeded-draw
+# ordering assertions (non-crypto PRNG is the point → S311) and read a collaborator's
+# private `_bob_user_id` to pin the unwired-id degrade (→ SLF001).
+"tests/conversation/usecases/test_wave2_collaborators.py" = [
+    "S101",
+    "ARG001",
+    "PLR2004",
+    "S311",
+    "SLF001",
+]
 # The GUPPI-outage-notice topic test (BOB-049 .3) has a Russian module docstring whose
 # Cyrillic look-alikes are intentional (RUF002), accesses the private app adapter (SLF001).
 "tests/test_outage_notifier_topic.py" = [

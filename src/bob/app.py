@@ -52,7 +52,6 @@ from bob.application.runtime import (
     periodic,
 )
 from bob.application.usecases.handle_message import (
-    DiagramSendMode,
     EngagementState,
     HandleMessage,
     PersonalityState,
@@ -204,6 +203,7 @@ if TYPE_CHECKING:
 
     from bob.application.runtime.agent import BackgroundTask
     from bob.application.usecases.handle_message import ReplyGateway
+    from bob.capabilities.usecases.diagram_sender import DiagramSendMode
     from bob.coding.adapters.indicator import (
         EditableStatusBot,
         TypingActionBot,
