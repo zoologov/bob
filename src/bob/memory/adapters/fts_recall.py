@@ -29,7 +29,7 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from bob.domain.ports import Recalled
-    from bob.infrastructure.persistence.sqlite_repo import SqliteMemoryRepo
+    from bob.memory.adapters.sqlite_memory_repo import SqliteMemoryRepo
 
 # FTS5 tokens: keep word characters, drop operator punctuation entirely.
 _TOKEN_RE = re.compile(r"\w+", re.UNICODE)

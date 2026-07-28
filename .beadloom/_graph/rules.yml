@@ -718,30 +718,45 @@ rules:
       for: {kind: feature}
       max_symbols: 200
 
-# ── BOB-062.2: the temporary kernel → memory edge (allowed until slice .7) ────
-# The memory domain-first move left exactly ONE deliberately-allowed backward
-# reference (kernel → memory), documented here so a reviewer sees the reasoning
-# and no rule is added that would mask a real break:
+# ── BOB-062.7b: the kernel → memory edge is GONE (SqliteMemoryRepo split) ─────
+# HISTORY (.2→.7b): the memory domain-first move (.2) left exactly ONE
+# deliberately-allowed backward reference — the shared persistence kernel
+# `sqlite_repo.py` type-referenced `bob.memory.entities` (EpisodicEvent,
+# SemanticFact, TYPE_CHECKING-only) because `SqliteMemoryRepo` still lived inside
+# that shared kernel. Owner decision (variant C, 2026-07-23) deferred the split to
+# BOB-062.7. That split has now LANDED (.7):
 #
-#   bob.infrastructure.persistence.sqlite_repo → bob.memory.entities
-#     (TYPE_CHECKING-only: EpisodicEvent, SemanticFact)
-#   # BOB-062.2: kernel→memory, temporary until slice .7 (SqliteMemoryRepo split)
+#   • connection-kernel  → src/bob/infrastructure/persistence/connection.py
+#       (`SqliteConnection`: open/WAL/foreign_keys/sqlite-vec load/schema.sql/kv/
+#        close — pure I/O, NO memory logic, NO domain entities).
+#   • memory realisation → src/bob/memory/adapters/sqlite_memory_repo.py
+#       (`SqliteMemoryRepo`: episodic/semantic/consolidation/dedup/vector; owns
+#        EpisodicEvent/SemanticFact INTERNALLY now).
 #
-# `SqliteMemoryRepo` is genuinely a MEMORY adapter, but it still lives inside the
-# SHARED persistence kernel (one sqlite_repo.py + schema.sql feeding 13 other
-# stores through the `.connection()` seam). Owner decision (variant C, 2026-07-23):
-# memory takes its business logic NOW; the store kernel splits out in BOB-062.7,
-# where `SqliteMemoryRepo` separates into a connection-kernel and a `MemoryRepo`
-# implementation and this edge disappears.
+# So the old `kernel → memory.entities` edge no longer exists — the kernel carries
+# no memory types at all (verified: `grep memory connection.py` = docstrings only,
+# no import). NO allow-rule / note is needed for it any more.
 #
-# Why it needs NO allow-rule and produces NO finding (not suppressed — genuinely
-# clean): (a) the import is TYPE_CHECKING-only, so it is ABSENT from `code_imports`
-# — no `forbid_import` match, and no `depends_on` edge, hence no cycle with the
-# memory→kernel type-refs (hybrid_recall/fts_recall → SqliteMemoryRepo); and
-# (b) it targets `entities`, memory's PUBLIC domain surface — NOT `usecases/` or
-# `adapters/`, which the boundary globs above are the only memory paths they
-# forbid. If it ever becomes a RUNTIME import it will surface (import scan / edge)
-# and must be re-evaluated at .7 — do NOT pre-emptively suppress it.
+# The two remaining, LEGAL persistence edges after the split (documented so a
+# reviewer sees the reasoning and no rule masks a real break):
+#
+#   1. bob.memory.adapters.sqlite_memory_repo → bob.infrastructure.persistence.connection
+#      RUNTIME import of `SqliteConnection`. This is a memory ADAPTER reaching
+#      OUTWARD to the shared infra kernel — the correct direction (adapter → infra),
+#      NOT a backward kernel→memory edge. No cycle: the kernel imports nothing back.
+#
+#   2. the 13 per-module durable stores  → the `SqliteConnection` seam
+#      NO import edge at all — the connection is INJECTED at composition (each store
+#      types against a structural `connection` Protocol / accepts the kernel in its
+#      ctor). 0 import-rules needed; 0 findings.
+#
+# The persistence facade (`infrastructure/persistence/__init__.py`) now re-exports
+# ONLY `SqliteConnection` (.7b): the stale re-exports of stores that had migrated
+# to social/personality/conversation/proactivity adapters (.2–.6) were removed,
+# which also broke the latent `social ↔ persistence` facade cycle (persistence
+# re-exported `social.adapters.*` while `social/adapters/soul_loader` imported
+# `SoulStore` back through the facade). Every importer was repointed to the
+# owning-module canon path.
 
 # ── BOB-062.1: 3 legalized cross-boundary refs for the `coding` module ────────
 # The domain-first move surfaced three cross-boundary references. All THREE are

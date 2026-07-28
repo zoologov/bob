@@ -62,7 +62,7 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from bob.domain.ports import Embedder, Recalled, Reranker
-    from bob.infrastructure.persistence.sqlite_repo import SqliteMemoryRepo
+    from bob.memory.adapters.sqlite_memory_repo import SqliteMemoryRepo
 
 logger = logging.getLogger(__name__)
 

@@ -6,16 +6,16 @@
 # beadloom:feature=memory
 # beadloom:layer=infrastructure
 
-"""Memory infrastructure adapters — recall and local embeddings.
+"""Memory infrastructure adapters — persistence, recall, and local embeddings.
 
-Realise the memory module's outward ports (:mod:`bob.memory.ports`): relevance
-recall (:class:`Fts5MemoryRecall` P0 keyword; :class:`HybridMemoryRecall` FTS5 +
+Realise the memory module's outward ports (:mod:`bob.memory.ports`): the durable
+episode/fact/state store (:class:`SqliteMemoryRepo` over the shared
+:class:`~bob.infrastructure.persistence.connection.SqliteConnection` kernel + the
+sqlite-vec :class:`MemoryVectorStore`), relevance recall
+(:class:`Fts5MemoryRecall` P0 keyword; :class:`HybridMemoryRecall` FTS5 +
 sqlite-vec with an optional reranker) and the local, provider-agnostic semantic
 seams (:class:`OllamaEmbedder` + :func:`build_embedder`; :class:`OllamaReranker`
 + :func:`build_reranker`). All memory content stays on the machine.
-
-The durable episode/fact store (``SqliteMemoryRepo``) is a shared persistence
-kernel and stays in ``bob.infrastructure.persistence`` until the runtime slice.
 """
 
 from __future__ import annotations
@@ -26,12 +26,16 @@ from bob.memory.adapters.hybrid_recall import HybridMemoryRecall
 from bob.memory.adapters.ollama_embedder import OllamaEmbedder
 from bob.memory.adapters.ollama_reranker import OllamaReranker
 from bob.memory.adapters.reranker_factory import build_reranker
+from bob.memory.adapters.sqlite_memory_repo import SqliteMemoryRepo
+from bob.memory.adapters.vector_store import MemoryVectorStore
 
 __all__ = [
     "Fts5MemoryRecall",
     "HybridMemoryRecall",
+    "MemoryVectorStore",
     "OllamaEmbedder",
     "OllamaReranker",
+    "SqliteMemoryRepo",
     "build_embedder",
     "build_reranker",
 ]

@@ -59,6 +59,10 @@ from bob.application.usecases.heartbeat import (
     ReflectTick,
 )
 from bob.application.usecases.perceive_reaction import PerceiveReaction
+from bob.conversation.adapters.closer_log_store import SqliteCloserLog
+from bob.conversation.adapters.conversation_floor_store import (
+    SqliteConversationFloorStore,
+)
 from bob.conversation.adapters.interim_line import LlmInterimLineGenerator
 from bob.conversation.adapters.response_judge import LlmResponseJudge
 from bob.conversation.adapters.volatility_judge import LlmVolatilityJudge
@@ -69,25 +73,17 @@ from bob.infrastructure.llm import (
     build_tier_providers,
     build_web_search_provider,
 )
-from bob.infrastructure.persistence import (
-    KvNotableReactionStore,
-    SoulStore,
-    SqliteCloserLog,
-    SqliteConversationFloorStore,
-    SqliteFascinationStore,
-    SqliteFirstImpressionStore,
-    SqliteMemoryRepo,
-    SqliteRelationshipStore,
-    SqliteSulkStore,
-)
+from bob.infrastructure.persistence import SqliteConnection
 from bob.infrastructure.telegram.aiogram_adapter import (
     _BobReactionFilter,
     _build_real_bot,
 )
 from bob.infrastructure.telegram.multibot import BotIdentity
 from bob.infrastructure.telegram.outage_notifier import _GuppiOutageNotifier
-from bob.memory.adapters import HybridMemoryRecall
+from bob.memory.adapters import HybridMemoryRecall, SqliteMemoryRepo
 from bob.memory.usecases.extract_facts import ExtractFacts
+from bob.personality.adapters.fascination_store import SqliteFascinationStore
+from bob.personality.adapters.notable_reaction_store import KvNotableReactionStore
 from bob.personality.adapters.reaction_judge import LlmReactionJudge
 from bob.personality.language import DEFAULT_LANGUAGE
 from bob.personality.negotiation import Negotiation
@@ -164,11 +160,15 @@ from bob.runtime.wiring import (
     _phantom_evolution_params,
     _resolve_seed,
 )
+from bob.social.adapters.first_impression_store import SqliteFirstImpressionStore
+from bob.social.adapters.relationship_store import SqliteRelationshipStore
 from bob.social.adapters.soul_loader import (
     _default_soul,
     _disposition_from,
     _load_soul,
 )
+from bob.social.adapters.soul_store import SoulStore
+from bob.social.adapters.sulk_store import SqliteSulkStore
 from bob.social.usecases import ReactorPerception, SenderPerception
 from bob.social.usecases.first_impression_sources import FirstImpressionTracker
 from bob.social.usecases.relationship_sources import RelationshipTracker
@@ -208,6 +208,7 @@ class Application:
     config: Mapping[str, object]
     runtime: AgentRuntime
     event_bus: AsyncEventBus
+    connection: SqliteConnection
     memory_repo: SqliteMemoryRepo
     soul_store: SoulStore
     genesis: RunGenesis
@@ -236,7 +237,12 @@ class Application:
         Idempotent Genesis: the first boot generates the soul (Tier 1) and writes
         ``data/soul/``; every later boot loads the existing soul untouched. The
         loaded soul becomes the live :class:`PersonalityState`.
+
+        Boot-order (BOB-062.7b): the shared connection/schema kernel comes up FIRST
+        (opening the WAL connection every store reads through), THEN the memory
+        adapter runs its migrations + vector backfill over it.
         """
+        await self.connection.initialize()
         await self.memory_repo.initialize()
         result = await self.genesis.run()
         self.personality.soul = _load_soul(self.soul_store)
@@ -248,7 +254,7 @@ class Application:
     async def shutdown(self) -> None:
         """Stop the runtime and close persistence (idempotent)."""
         await self.runtime.stop()
-        await self.memory_repo.close()
+        await self.connection.close()
 
 
 def build_application(
@@ -306,13 +312,20 @@ def build_application(
     resolved_embedder = embedder if embedder is not None else _build_embedder(merged)
     resolved_reranker = reranker if reranker is not None else _build_reranker(merged)
 
+    # Shared connection/schema kernel (BOB-062.7b): the pure-I/O foundation created
+    # FIRST — it opens the WAL connection, loads sqlite-vec and applies ``schema.sql``
+    # — and injected into the memory adapter AND every module store below, so they all
+    # read the SAME connection through its ``connection`` seam. Created here (not
+    # opened yet); ``startup()`` initialises it before the memory adapter.
+    connection = SqliteConnection(_db_path(merged))
+
     # The embedder is wired into the repo so the sqlite-vec table is backfilled with
     # existing memory on startup (initialize) and new facts/episodes are embedded on
     # write — a no-op when there is no embedder (keyword-only). ``name_to_sender_id``
     # seeds the BOB-045 best-effort backfill of legacy NULL-sender episodes (owner
     # display name -> owner_id); empty when no owner_name is configured (a no-op).
     memory_repo = SqliteMemoryRepo(
-        _db_path(merged),
+        connection,
         embedder=resolved_embedder,
         name_to_sender_id=_backfill_name_map(merged),
     )
@@ -345,12 +358,12 @@ def build_application(
         disposition=_disposition_from(soul_store.read_json("disposition")),
     )
     extract_facts = ExtractFacts(router=router, repo=memory_repo, clock=resolved_clock)
-    authorizer = _build_authorizer(merged, repo=memory_repo)
+    authorizer = _build_authorizer(merged, repo=connection)
 
     # Proactivity (BOB-010 Ф1): the per-persona store backs both the engine and
     # GUPPI's /quiet,/wake; RecordOwnerActivity folds each owner message into the
     # drive-state. The store/clock are handed to GUPPI through the gateway.
-    proactivity_store = SqliteProactivityStore(memory_repo)
+    proactivity_store = SqliteProactivityStore(connection)
     record_owner_activity = RecordOwnerActivity(
         store=proactivity_store, clock=resolved_clock, persona_id=_BOB_PERSONA
     )
@@ -359,7 +372,7 @@ def build_application(
     # step (on the reflect tick) and the compose-surfacing reader. The reader loads
     # + ages the stored passion and drops a faded one, so a spent fascination never
     # surfaces and the reply/proactive compose no-ops until evolution grounds a fresh one.
-    fascination_store = SqliteFascinationStore(memory_repo)
+    fascination_store = SqliteFascinationStore(connection)
     fascination_reader = StoreFascinationReader(
         persona_id=_BOB_PERSONA, store=fascination_store, clock=resolved_clock
     )
@@ -369,7 +382,7 @@ def build_application(
     # records a fresh, grounded note on first contact. Keyed by sender_id (owner /
     # known / guest / bot alike); per-PERSON data (about them), not owner memory, so it
     # is safe even on a guest turn. The minimal foundation for multi-party BOB-014.
-    first_impression_store = SqliteFirstImpressionStore(memory_repo)
+    first_impression_store = SqliteFirstImpressionStore(connection)
     first_impression_tracker = FirstImpressionTracker(
         store=first_impression_store, clock=resolved_clock
     )
@@ -377,25 +390,25 @@ def build_application(
     # / warmth / compatibility) accrued over turns — it warms/cools Bob's tone and
     # nudges his willingness to compromise with a close person, then is updated after
     # each turn. Keyed by sender_id; per-PERSON data (about them), not owner memory.
-    relationship_store = SqliteRelationshipStore(memory_repo)
+    relationship_store = SqliteRelationshipStore(connection)
     relationship_tracker = RelationshipTracker(store=relationship_store)
     # Conversation-floor store (BOB-025): the per-thread "talking turn" — who currently
     # holds the floor in Bob's topic — so an ambient message in a thread where Bob holds
     # a live floor reads as DIRECTED_TO_BOB (continuity). Wired into HandleMessage only
     # when addressivity.floor.enabled is true; disabled → exactly BOB-023.
     floor_enabled = _build_floor_enabled(merged)
-    floor_store = SqliteConversationFloorStore(memory_repo) if floor_enabled else None
+    floor_store = SqliteConversationFloorStore(connection) if floor_enabled else None
     # Sulk/обида store (BOB-014 .2b): the per-persona affect state — entered on a
     # SUSTAINED critical owner-drop / directed hostility, decaying to a GUARANTEED exit.
     # Carries NO memory and NO soul (anti-Exodus). The tracker is built AFTER multibot
     # so GUPPI can be its one-shot announcer.
-    sulk_store = SqliteSulkStore(memory_repo)
+    sulk_store = SqliteSulkStore(connection)
 
     # Goal Engine (BOB-015): the per-persona goal store backs the Planner-driven
     # plan_goal use-case (double approval) and GUPPI's owner goal-commands. The
     # kill-switch (`/goals stop`) persists on the proactivity store, which the
     # self-directed tick (.3) will read. No tick is wired here — that is .3's job.
-    goal_store, plan_goal = _build_goal_engine(merged, router=router, repo=memory_repo)
+    goal_store, plan_goal = _build_goal_engine(merged, router=router, repo=connection)
 
     # Self-improvement (BOB-028): the master switch (``self_improvement.enabled``, OFF by
     # default) gates the WHOLE feature. Off → ``rule_store`` is None, so GUPPI has no /rules
@@ -404,7 +417,7 @@ def build_application(
     # here (before multibot) because GUPPI needs it; the apply reader + reflect-tick seams,
     # which need Bob's gateway, are assembled just after multibot.
     si_enabled = _build_self_improvement_enabled(merged)
-    rule_store = SqliteSelfImprovementStore(memory_repo) if si_enabled else None
+    rule_store = SqliteSelfImprovementStore(connection) if si_enabled else None
 
     # Resolve BOTH admin bots once so the multibot registry AND the coding-session
     # owner-notifier share the SAME instances. GUPPI is the silent under-the-hood
@@ -431,7 +444,7 @@ def build_application(
     # Off → None, and ``/code`` answers a clear "disabled" reply (the section always exists).
     coding_assistant = _build_coding_assistant(
         merged,
-        repo=memory_repo,
+        repo=connection,
         authorizer=authorizer,
         notifier_bot=resolved_bob_bot,
         chat_id=_int(telegram_section, "chat_id", 0),
@@ -486,7 +499,7 @@ def build_application(
     # acknowledgment hint (.3) in HandleMessage READS + consumes it. They MUST share one
     # instance, otherwise a written reaction is invisible to the hint and Bob can never
     # mention being received. Built once and injected into both.
-    notable_reaction_store = KvNotableReactionStore(memory_repo)
+    notable_reaction_store = KvNotableReactionStore(connection)
 
     # Pre-answer epistemic verify (BOB-057 .2): built ONLY when ``verify.enabled`` — the
     # Tier-0 volatility judge + the SAME Qwen web_search provider are wired into
@@ -511,7 +524,7 @@ def build_application(
     # appended; before generation the persisted closers + the live window feed the anti-tic
     # detector so a once-per-session ending recurring over days is finally caught. Low-risk
     # local memory — always wired; the seam is decorative (a failure never breaks a turn).
-    closer_log = SqliteCloserLog(memory_repo)
+    closer_log = SqliteCloserLog(connection)
 
     handle_message = HandleMessage(
         router=router,
@@ -687,7 +700,7 @@ def build_application(
         # store/judge) → None → the seam is inert and the turn behaves exactly as before.
         permission_flow=_build_permission_flow(
             router=router,
-            repo=memory_repo,
+            repo=connection,
             bot=resolved_bob_bot,
             chat_id=_int(telegram_section, "chat_id", 0),
             topic_id=_int(_section(telegram_section, "bob"), "topic_id", 0),
@@ -933,6 +946,7 @@ def build_application(
         config=merged,
         runtime=runtime,
         event_bus=event_bus,
+        connection=connection,
         memory_repo=memory_repo,
         soul_store=soul_store,
         genesis=genesis,

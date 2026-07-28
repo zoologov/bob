@@ -18,8 +18,8 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from bob.application.router.llm_router import LLMRouter
-from bob.infrastructure.persistence.sqlite_repo import SqliteMemoryRepo
 from bob.memory.adapters.fts_recall import Fts5MemoryRecall
+from bob.memory.adapters.sqlite_memory_repo import SqliteMemoryRepo
 from bob.memory.usecases.extract_facts import ExtractFacts
 
 if TYPE_CHECKING:

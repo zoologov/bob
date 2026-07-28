@@ -120,7 +120,7 @@ class EpisodeWriter(Protocol):
 class ReflectionContext(Protocol):
     """The narrow READ seam that grounds + de-duplicates reflections (BOB-026 .2).
 
-    Realised structurally by :class:`~bob.infrastructure.persistence.sqlite_repo.SqliteMemoryRepo`
+    Realised structurally by :class:`~bob.memory.adapters.sqlite_memory_repo.SqliteMemoryRepo`
     (which already exposes ``recent_episodes``). It serves Bob's most-recent episodes
     (oldest-first) so the reflect tick can (1) GROUND a fresh reflection in what is
     happening now instead of a static template, and (2) compare the fresh thought

@@ -40,21 +40,23 @@ LLM-провайдер, SQLite-хранилище с FTS5, файловый `Sou
   деградацией.
 - **llm/reranker_factory.py** — `build_reranker()`, сборка `OllamaReranker` из
   секции `reranker` (или `None`, когда реранк выключен).
-- **persistence/sqlite_repo.py** — `SqliteMemoryRepo`, единственный дом SQL.
-- **persistence/fts_recall.py** — `Fts5MemoryRecall`, keyword-recall через FTS5.
-- **persistence/vector_store.py** — `MemoryVectorStore`, sqlite-vec сторона памяти
-  (vec0-таблица `memory_vec`, бэкфилл + on-write эмбеддинг + KNN-чтение).
-- **persistence/hybrid_recall.py** — `HybridMemoryRecall`, гибридный recall за
-  портом `MemoryRecall` (FTS5 BM25 + sqlite-vec KNN → RRF, опц. реранкер).
-- **persistence/allowlist_store.py** — `KvAllowlistStore`, долговечный
-  authz-allowlist поверх таблицы `kv`.
-- **persistence/soul_store.py** — `SoulStore`, файловые артефакты `data/soul/`.
-- **persistence/proactivity_store.py** — `SqliteProactivityStore`, per-persona
-  состояние drive-движка над таблицей `proactivity_state` (+ тайм-мьют `mute_until`).
-- **persistence/proactivity_sources.py** — `RepoProactivitySources`, дешёвые
-  read-seams движка (салиентность рефлексии + счётчик проактивов) над `episodic_log`.
-- **persistence/schema.sql** — схема SQLite (таблицы + FTS5 + триггеры).
+- **persistence/connection.py** — `SqliteConnection`, connection/schema-kernel: чистое
+  I/O (open/WAL/foreign_keys, загрузка sqlite-vec, идемпотентный
+  `executescript(schema.sql)`, общий kv-стор, `.connection`-шов). Кормит все 13
+  долговечных сторов всех модулей + memory-репозиторий (BOB-062.7b).
+- **persistence/schema.sql** — единая схема SQLite (таблицы + FTS5-триггеры +
+  `memory_vec` vec0), применяется одним `executescript`.
+- **persistence/__init__.py** — фасад, экспортит **только** `SqliteConnection`;
+  прежние god-facade re-export'ы убраны (сторы импортятся из своих модулей).
 - **config/loader.py** — `ConfigLoader`, слоистая конфигурация.
+
+Долговечные сторы **переехали в свои bounded-context'ы**: memory-репозиторий и
+вектор-/recall-адаптеры → `bob.memory.adapters` (`SqliteMemoryRepo`,
+`MemoryVectorStore`, `Fts5MemoryRecall`, `HybridMemoryRecall`; BOB-062.7b/.2);
+proactivity-/goal-/self-improvement-сторы → `bob.proactivity.adapters` (.3);
+personality-/social-/conversation-/coding-сторы → соответствующие `adapters`-пакеты
+(.4-.6). Каждый читает connection-kernel через инъецированный `.connection`-шов, а
+`KvAllowlistStore`/`SoulStore` — authz/soul-адаптеры соответствующих модулей.
 
 ### Telegram-gateway (aiogram)
 
@@ -275,60 +277,42 @@ keyword — Боб «не теряет память», теряет лишь с�
 реранкера (или при выключенном/недоступном) гибридный порядок возвращается как есть —
 реранк никогда не ухудшает извлечение.
 
-### Хранилище (SQLite + FTS5)
+### Connection-kernel (SQLite + FTS5)
 
-`SqliteMemoryRepo` реализует `MemoryRepo` и является единственным домом SQL.
-Схема (`schema.sql`) применяется идемпотентно на `initialize()`, соединение
-работает в режиме WAL, каждый оператор параметризован (`?`) — никаких f-strings.
-Доменные сущности (`EpisodicEvent`, `SemanticFact`) маппятся в строки и обратно
-здесь, чтобы домен оставался без I/O. С опциональным `embedder` (BOB-011)
-репозиторий владеет `MemoryVectorStore`: `initialize()` грузит расширение
-sqlite-vec перед применением схемы и бэкфилит существующий архив в `memory_vec`, а
-запись факта/эпизода эмбеддит строку on-write; `vector_knn(vector, k)` обслуживает
-семантическую сторону гибрид-recall. Без эмбеддера всё это no-op (keyword-only).
+`SqliteConnection` (`persistence/connection.py`) — общий connection/schema-kernel
+персистентности (BOB-062.7b). Это чистое I/O, не композиция: `initialize()`
+открывает соединение в режиме WAL, включает `foreign_keys`, грузит расширение
+sqlite-vec **до** применения схемы (vec0-таблица `memory_vec` — часть `schema.sql`)
+и один раз идемпотентно применяет **единую** `schema.sql` через `executescript`
+(таблицы + FTS5-триггеры + `memory_vec` связаны одним ordering'ом). Kernel владеет
+generic key/value-стором (`kv_set`/`kv_get`) и выставляет живое соединение через
+**`.connection`-шов** (`@property`), которым кормятся все 13 долговечных сторов всех
+модулей + memory-репозиторий. Как schema/migration-owner kernel держит и
+proactivity-специфичную миграцию `_migrate_pursuit_stopped` (помечена
+`# BOB-062: proactivity-specific, future relocation` — оставлена в kernel'е, потому
+что он применяет весь `schema.sql`; будущий срез может унести её в proactivity).
 
-`Fts5MemoryRecall` реализует `MemoryRecall` через FTS5 `MATCH` с ранжированием
-BM25. Recall охватывает оба индекса — распознанные факты (`semantic_fts`) и весь
-архив переписки (`episodic_fts`): даже не извлечённый в факт ход остаётся
-доступным, так что Боб вспоминает сказанное много ходов назад. Совпадения из обоих
-индексов сливаются, дедуплицируются по содержимому, ранжируются по BM25 и
-обрезаются до `k` лучших; каждый элемент несёт тег источника (`semantic` /
-`episodic`). Порт — шов для будущего вектора: домен видит только
-`recall(query, k) → [Recalled]` и не знает про keyword. Сырой пользовательский
-текст санитизируется в безопасное FTS5-выражение (OR кавыченных терминов), так
-что операторные символы не вызывают синтаксической ошибки и не инжектятся.
+Модульно-специфичный SQL живёт **в самих сторах** (каждый параметризован, `?`, без
+f-strings): memory-репозиторий (`bob.memory.adapters.SqliteMemoryRepo`) маппит
+`EpisodicEvent`/`SemanticFact` в строки, держит memory-миграции и FTS5-бэкфилл; его
+recall-/вектор-адаптеры (`Fts5MemoryRecall`, `HybridMemoryRecall`,
+`MemoryVectorStore`) — тоже в модуле `memory` (см. `domains/memory/README.md`).
+Kernel сам по себе не зависит ни от одного бизнес-контекста.
 
-Индекс `episodic_fts` синхронизируется триггерами, а `SqliteMemoryRepo.initialize()`
-ещё и идемпотентно его перестраивает (команда FTS5 `rebuild`), подхватывая ходы,
-записанные до появления индекса.
+`KvAllowlistStore` (`bob.social.adapters`) реализует порт `AllowlistStore`, персистя
+множество allowlisted `user_id` как JSON-массив под единым ключом `authz.allowlist` в
+таблице `kv` connection-kernel'а (через его `kv_get`/`kv_set`). SQL параметризован, а
+`/authorize` переживает рестарт: свежий процесс читает тот же ключ и видит те же
+гранты. Декодирование защищено по форме (не-список или не-int элементы игнорируются).
 
-`KvAllowlistStore` реализует порт `AllowlistStore`, персистя множество
-allowlisted `user_id` как JSON-массив под единым ключом `authz.allowlist` в
-существующей таблице `kv` (`kv_get`/`kv_set` репозитория). Весь SQL остаётся в
-`SqliteMemoryRepo` (параметризован), а `/authorize` переживает рестарт: свежий
-процесс читает тот же ключ и видит те же гранты. Декодирование защищено по форме
-(не-список или не-int элементы игнорируются).
-
-`SoulStore` — файловый reader/writer артефактов `data/soul/`: `SOUL.md`,
-JSON-профили (`taste_profile`, `mood`, `phantom_prefs`) и append-only
+`SoulStore` (`bob.social.adapters`) — файловый reader/writer артефактов `data/soul/`:
+`SOUL.md`, JSON-профили (`taste_profile`, `mood`, `phantom_prefs`) и append-only
 `genesis_log.md`. Каталог создаётся по требованию.
 
-`SqliteProactivityStore` реализует порт `ProactivityStore` над таблицей
-`proactivity_state` — одна строка на `persona_id`, так что реплики Bobiverse держат
-свои резервуар, маркеры и owner-флаг. Доменный `ProactivityState` маппится в строку
-и обратно (энергия — REAL, маркеры — nullable ISO-8601, флаг — 0/1). Поверх порта
-адаптер несёт инфраструктурный тайм-мьют `mute_until` (выставляется `/quiet 2h`): он
-**не** часть доменного value-объекта, живёт только в строке и читается/пишется через
-`get_mute_until`/`set_mute_until`. `save` апсертит только доменные колонки, не трогая
-`mute_until`, поэтому запись состояния не сбрасывает срочный мьют. Весь SQL
-параметризован (`?`).
-
-`RepoProactivitySources` даёт движку два дешёвых (без LLM) сигнала прямо с живого
-`episodic_log`: `latest_salience()` — салиентность последней рефлексии (свежий
-`reflection`-эпизод даёт около `1.0`, линейно затухая к `0.0` за 6 ч; нет рефлексий
-— `0.0`) и `proactive_count_in_window(*, now)` — число `proactive`-эпизодов за окно
-суток до `now` (потолок анти-спама). Время инъектируется через `Clock` (фолбэк —
-системные UTC-часы), поэтому затухание детерминировано в тестах; SQL параметризован.
+Проактивные сторы (`SqliteProactivityStore` над `proactivity_state`,
+`RepoProactivitySources` над `episodic_log`) переехали в `bob.proactivity.adapters`
+(BOB-062.3) и описаны в `domains/proactivity/README.md`; они, как и все прочие сторы,
+читают connection-kernel через его `.connection`-шов.
 
 ### Конфигурация
 
@@ -362,7 +346,10 @@ non-secret и может прийти из YAML.
 - Изоляция ботов: сбой поллинга одного бота не роняет другого.
 - GUPPI шлёт ответы только своим ботом; reject виден только в разрешённой группе
   (DM незнакомца его не триггерит); owner-команды — только для owner в General.
-- Весь SQL живёт в `SqliteMemoryRepo` и параметризован (`?`).
+- Connection-kernel (`SqliteConnection`) — единственный владелец соединения/схемы:
+  один WAL-коннекшн, единая `schema.sql` одним `executescript`, общий `.connection`-шов
+  и kv-стор кормят все сторы; сам kernel не зависит ни от одного бизнес-контекста.
+- Весь SQL параметризован (`?`, без f-strings) и живёт в сторе-владельце данных.
 - Пользовательский текст для FTS5 санитизируется (без инъекций/синтаксических ошибок).
 - Контент памяти не уходит наружу: эмбеддинги и реранкинг считаются локально
   (Ollama на машине), вектора — в той же локальной SQLite (`memory_vec`).
@@ -435,25 +422,16 @@ non-secret и может прийти из YAML.
 Модуль `src/bob/infrastructure/llm/factory.py`:
 - `build_tier_providers(config)` → `dict[int, LLMProvider]`.
 
-Модуль `src/bob/infrastructure/persistence/sqlite_repo.py`:
-- `SqliteMemoryRepo(db_path, *, embedder=None)` — `initialize()`, `close()`,
-  `save_episode()`, `load_episodes(*, limit)`, `recent_episodes(k)`, `save_fact()`,
-  `set_mood(state, *, at)`, `get_mood()`, `set_taste_axis(...)`,
-  `set_relationship()`, `kv_set()/kv_get()`, `async vector_knn(vector, *, k)`.
+Модуль `src/bob/infrastructure/persistence/connection.py`:
+- `SqliteConnection(db_path)` — `async initialize()` (open+WAL+foreign_keys, загрузка
+  sqlite-vec, `executescript(schema.sql)`, миграции), `async close()`,
+  `async journal_mode()`, `async kv_set(key, value)/kv_get(key)`, свойства
+  `db_path` и `connection` (`.connection`-шов — живое `aiosqlite`-соединение,
+  которым кормятся все сторы).
 
-Модуль `src/bob/infrastructure/persistence/fts_recall.py`:
-- `Fts5MemoryRecall(repo)` — `async recall(query, *, k)` → `Sequence[Recalled]`
-  (поиск по `semantic_fts` + `episodic_fts`, слияние, дедуп, ранжирование BM25).
-
-Модуль `src/bob/infrastructure/persistence/vector_store.py`:
-- `MemoryVectorStore(conn, embedder)` — `async load_extension()`, `async backfill()`,
-  `async embed_row(source, src_id, content)`, `async knn(vector, k)` →
-  `list[dict]`, `async count(source=None)`.
-
-Модуль `src/bob/infrastructure/persistence/hybrid_recall.py`:
-- `HybridMemoryRecall(repo, embedder, *, reranker=None)` —
-  `async recall(query, *, k)` → `Sequence[Recalled]` (FTS5 BM25 + sqlite-vec KNN →
-  RRF k0=60, фоллбэк на keyword, опц. реранк top-K → top-N).
+Memory-репозиторий (`SqliteMemoryRepo`), вектор-стор (`MemoryVectorStore`) и
+recall-адаптеры (`Fts5MemoryRecall`, `HybridMemoryRecall`) уехали в
+`bob.memory.adapters` — их API см. в `domains/memory/README.md`.
 
 Модуль `src/bob/infrastructure/llm/ollama_embedder.py`:
 - `OllamaEmbedder(*, base_url, model, dim, timeout_seconds=120.0, sleep=None)` —
@@ -470,22 +448,16 @@ non-secret и может прийти из YAML.
 - `build_reranker(config)` → `OllamaReranker | None` (из секции `reranker`;
   `None`, когда реранк выключен/отсутствует).
 
-Модуль `src/bob/infrastructure/persistence/allowlist_store.py`:
+Модуль `src/bob/social/adapters/allowlist_store.py`:
 - `KvAllowlistStore(kv)` — `async load()` → `set[int]`, `async add(user_id)`,
-  `async remove(user_id)`.
+  `async remove(user_id)` (kv-стор connection-kernel'а).
 
-Модуль `src/bob/infrastructure/persistence/soul_store.py`:
+Модуль `src/bob/social/adapters/soul_store.py`:
 - `SoulStore(soul_dir)` — `soul_exists()`, `read_soul()`, `write_soul()`,
   `read_json()/write_json()`, `append_genesis_log()/read_genesis_log()`.
 
-Модуль `src/bob/infrastructure/persistence/proactivity_store.py`:
-- `SqliteProactivityStore(repo)` — `async load(persona_id)` → `ProactivityState`,
-  `async save(persona_id, state)`, `async get_mute_until(persona_id)` → `datetime | None`,
-  `async set_mute_until(persona_id, until)`.
-
-Модуль `src/bob/infrastructure/persistence/proactivity_sources.py`:
-- `RepoProactivitySources(repo, *, clock=None)` — `async latest_salience()` → `float`,
-  `async proactive_count_in_window(*, now)` → `int`.
+Проактивные сторы (`SqliteProactivityStore`, `RepoProactivitySources`) — в
+`bob.proactivity.adapters`, их API см. в `domains/proactivity/README.md`.
 
 Модуль `src/bob/infrastructure/config/loader.py`:
 - `ConfigLoader(*, yaml_path, env=None)` — `load()` → `Config`; `DEFAULT_CONFIG`
@@ -512,6 +484,7 @@ non-secret и может прийти из YAML.
 `tests/infrastructure/llm/test_ollama_reranker.py`,
 `tests/infrastructure/llm/test_ollama_reranker_hardening.py`,
 `tests/infrastructure/llm/test_reranker_factory.py`,
+`tests/infrastructure/persistence/test_connection.py`,
 `tests/infrastructure/persistence/test_sqlite_repo.py`,
 `tests/infrastructure/persistence/test_fts_recall.py`,
 `tests/infrastructure/persistence/test_vector_store.py`,

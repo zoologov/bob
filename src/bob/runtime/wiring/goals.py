@@ -39,7 +39,8 @@ if TYPE_CHECKING:
     from bob.application.usecases.handle_message import PersonalityState, ReplyGateway
     from bob.capabilities.usecases import CapabilityRegistry
     from bob.domain.ports import Clock
-    from bob.infrastructure.persistence import SqliteMemoryRepo
+    from bob.infrastructure.persistence import SqliteConnection
+    from bob.memory.adapters import SqliteMemoryRepo
     from bob.proactivity.adapters import SqliteProactivityStore
 
 
@@ -47,7 +48,7 @@ def _build_goal_engine(
     config: Mapping[str, object],
     *,
     router: LLMRouter,
-    repo: SqliteMemoryRepo,
+    repo: SqliteConnection,
 ) -> tuple[SqliteGoalStore, PlanGoal]:
     """Assemble the Goal Engine store + plan use-case (BOB-015 .2).
 

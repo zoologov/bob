@@ -15,19 +15,19 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, cast
 
-from bob.infrastructure.persistence import KvAllowlistStore
 from bob.runtime.config import _REPLY_TIER, _int, _int_list, _section
+from bob.social.adapters.allowlist_store import KvAllowlistStore
 from bob.social.usecases import Authorizer
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
     from bob.domain.ports import LLMProvider, ToolCallingProvider
-    from bob.infrastructure.persistence import SqliteMemoryRepo
+    from bob.infrastructure.persistence import SqliteConnection
 
 
 def _build_authorizer(
-    config: Mapping[str, object], *, repo: SqliteMemoryRepo
+    config: Mapping[str, object], *, repo: SqliteConnection
 ) -> Authorizer:
     """Build the access-policy Authorizer from config over the SQLite allowlist.
 

@@ -27,7 +27,7 @@ from bob.conversation.conversation_floor import (
     FloorHolder,
     idle_floor,
 )
-from bob.infrastructure.persistence.sqlite_repo import SqliteMemoryRepo
+from bob.memory.adapters.sqlite_memory_repo import SqliteMemoryRepo
 
 if TYPE_CHECKING:
     from pathlib import Path

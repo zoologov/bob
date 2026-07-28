@@ -43,12 +43,14 @@ relationship,sulk}` + `application/authz/` + `application/usecases/{permission_*
    application-оркестрация, как `handle_message`, а не social-домен. Держим его вне
    vertical'а, чтобы не заводить первый vertical↔vertical runtime-стык; social лишь
    инжектит его как порт `PrivilegedFulfiller` в `PermissionExecutor`.
-4. **kernel персистентности не трогаем (вариант C, до среза .7).** Долговечные
-   social-сторы (first_impression / relationship / sulk / permission_request) пишут
-   через `SqliteMemoryRepo.connection()`-шов общего kernel'а; allowlist — через
-   `kv`-таблицу; soul_store — файловый (`data/soul/`). Обратного ребра `kernel → social`
-   нет (legacy single-row `relationship`-blob в `sqlite_repo` — ДРУГОЙ концепт, не
-   per-person `person_relationship`). schema-таблицы остаются в kernel до .7.
+4. **Долговечные сторы читают connection-kernel.** social-сторы (first_impression /
+   relationship / sulk / permission_request) пишут через `.connection`-шов общего
+   `SqliteConnection` (`infrastructure/persistence/connection.py`); allowlist — через
+   его `kv`-таблицу; soul_store — файловый (`data/soul/`). Обратного ребра
+   `kernel → social` нет. schema-таблицы (`first_impression`, `person_relationship`,
+   `sulk_state`, `permission_request`, `kv`) живут в единой `schema.sql` kernel'а.
+   С расщеплением kernel'а в BOB-062.7b долг варианта C закрыт (connection-kernel ↔
+   memory-репозиторий разведены; сторы читают чистый `.connection`-шов).
 5. **`domain/ports/` держит тонкий re-export-шим** social-портов (Allowlist / Soul /
    First / Relationship / Sulk / PrivilegeJudge), так что `from bob.domain.ports import
    AllowlistStore` работает как раньше для внешних потребителей.
@@ -104,9 +106,10 @@ src/bob/social/
     soul_loader.py         —                   — _load_soul/_default_soul: сборка in-memory SOUL из персиста data/soul/ (переехало из app.py, BOB-062.7a)
 ```
 
-**Остаётся в persistence-kernel (вариант C, до .7):** конкретная запись social-сторов
-идёт через `SqliteMemoryRepo.connection()`; schema-таблицы (`first_impression`,
-`person_relationship`, `sulk_state`, `permission_request`, `kv`) живут в общем kernel'е.
+**Connection-kernel (общий):** конкретная запись social-сторов идёт через
+`.connection`-шов `SqliteConnection` (`infrastructure/persistence/connection.py`);
+schema-таблицы (`first_impression`, `person_relationship`, `sulk_state`,
+`permission_request`, `kv`) живут в единой `schema.sql` kernel'а.
 
 **ОСТАЁТСЯ вне social:** `privileged_fulfiller.py` (application-оркестратор, решение 3);
 `ports/personality.py` (MessageReactor / ReflectionReader / Fascination / ZoneClassifier
@@ -294,8 +297,9 @@ legacy single-row `relationship` owner-blob). `SqliteSulkStore` — одна с�
   `LlmPrivilegeJudge`.
 
 Композиция (wiring authz/permission/genesis, инъекция `PrivilegedFulfiller`, навешивание
-recovery-тика обиды) — в композиционном корне `app.py`. Долговечная запись в SQLite идёт
-через kernel `SqliteMemoryRepo` (`infrastructure/persistence/`, до среза .7).
+recovery-тика обиды) — в композиционном корне (`runtime/`). Долговечная запись в SQLite
+идёт через `.connection`-шов connection-kernel'а `SqliteConnection`
+(`infrastructure/persistence/connection.py`).
 
 ## Тесты
 

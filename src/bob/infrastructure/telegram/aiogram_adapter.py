@@ -29,13 +29,13 @@ if TYPE_CHECKING:
 
     from aiogram.types import BufferedInputFile, InputRichMessage, ReactionTypeEmoji
 
-    from bob.infrastructure.persistence import SqliteMemoryRepo
     from bob.infrastructure.telegram.gateway import (
         BotLike,
         BotUserLike,
         MessageLike,
         UpdateLike,
     )
+    from bob.memory.adapters import SqliteMemoryRepo
 
 
 class _BobReactionFilter:

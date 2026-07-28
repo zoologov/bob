@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from bob.infrastructure.persistence.sqlite_repo import SqliteMemoryRepo
+from bob.memory.adapters.sqlite_memory_repo import SqliteMemoryRepo
 from bob.social.adapters.sulk_store import SqliteSulkStore
 from bob.social.sulk import SulkState
 

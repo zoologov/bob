@@ -3,42 +3,46 @@
 # See the LICENSE file in the project root for full license information.
 
 # beadloom:domain=bob
+# beadloom:feature=memory
+# beadloom:layer=infrastructure
 
-"""SqliteMemoryRepo — the durable SQLite-backed store for Bob's memory & state.
+"""SqliteMemoryRepo — the SQLite-backed adapter for Bob's memory & state.
 
-Realises :class:`bob.domain.ports.MemoryRepo` and is the single home for SQL in
-the codebase. The schema (``schema.sql``) is applied idempotently on
-:meth:`initialize`, the connection runs in WAL mode for concurrent reads, and
-every statement is parameterised (``?``) — never an f-string. Domain entities
-(:class:`~bob.memory.entities.EpisodicEvent` /
+Realises :class:`bob.memory.ports.MemoryRepo`: episodic + semantic memory,
+consolidation/dedup, the sqlite-vec vector side, and the mood/taste/relationship
+state. Domain entities (:class:`~bob.memory.entities.EpisodicEvent` /
 :class:`~bob.memory.entities.SemanticFact`) are mapped to and from rows here so
-the domain stays I/O-free.
+the domain stays I/O-free, and every statement is parameterised (``?``) — never an
+f-string.
 
-This store is the memory adapter that temporarily lives in the shared
-persistence kernel until the runtime slice (BOB-062.7) splits the connection
-kernel from the ``MemoryRepo`` realisation. Its single reach into the memory
-module — importing the entities above — is the deliberately-allowed
-``kernel → bob.memory.entities`` edge (TODO-.7), marked in the boundary rules.
+It does NOT own the connection: the shared
+:class:`~bob.infrastructure.persistence.connection.SqliteConnection` kernel opens
+the WAL connection, loads sqlite-vec, and applies ``schema.sql``; this adapter
+holds a reference to that kernel and works through its ``connection`` seam. A
+``Path`` may be passed instead of a kernel (it then owns a private kernel over that
+path) so a standalone memory store can be constructed directly. The memory-shaped
+migrations/backfills (episodic/semantic) live here; the proactivity migration stays
+in the kernel (its schema owner).
 """
 
 from __future__ import annotations
 
 import json
 import logging
-from importlib import resources
 from typing import TYPE_CHECKING
 
-import aiosqlite
-
-from bob.infrastructure.persistence.vector_store import MemoryVectorStore
+from bob.infrastructure.persistence.connection import SqliteConnection
+from bob.memory.adapters.vector_store import MemoryVectorStore
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
     from datetime import datetime
     from pathlib import Path
 
+    import aiosqlite
+
     from bob.domain.ports import Embedder
-    from bob.infrastructure.persistence.vector_store import VectorSource
+    from bob.memory.adapters.vector_store import VectorSource
     from bob.memory.entities import EpisodicEvent, SemanticFact
 
 logger = logging.getLogger(__name__)
@@ -46,7 +50,6 @@ logger = logging.getLogger(__name__)
 # A JSON-serialisable state blob (mood / relationship).
 type StateBlob = Mapping[str, object]
 
-_SCHEMA_RESOURCE = "schema.sql"
 _MOOD_ROW_ID = 1
 _RELATIONSHIP_ROW_ID = 1
 
@@ -56,47 +59,47 @@ class SqliteMemoryRepo:
 
     def __init__(
         self,
-        db_path: Path,
+        connection: SqliteConnection | Path,
         *,
         embedder: Embedder | None = None,
         name_to_sender_id: Mapping[str, int] | None = None,
     ) -> None:
-        self._db_path = db_path
+        # The shared connection/schema kernel. A ``Path`` is wrapped in a private
+        # kernel so a memory store can still be built standalone (tests, tooling);
+        # the runtime injects the SAME kernel here and into the 13 module stores.
+        self._connection = (
+            connection
+            if isinstance(connection, SqliteConnection)
+            else SqliteConnection(connection)
+        )
         self._embedder = embedder
         # Best-effort backfill map (BOB-045): a content name-prefix -> known sender
         # id (owner display name -> owner_id, allowlisted names -> their ids). Empty
         # when no identity is wired, in which case the backfill is a graceful no-op.
         self._name_to_sender_id = dict(name_to_sender_id or {})
-        self._conn: aiosqlite.Connection | None = None
         self._vectors: MemoryVectorStore | None = None
 
     async def initialize(self) -> None:
-        """Open the connection (WAL), apply the schema, and embed the archive.
+        """Ensure the connection is up, run memory migrations, embed the archive.
 
-        Idempotent. The sqlite-vec extension is loaded onto the connection before
-        the schema runs (the ``memory_vec`` vec0 table needs it), then existing
-        facts/episodes are backfilled into the vector store via the injected
-        embedder (a no-op when none is wired).
+        Idempotent. The shared kernel is initialised first (opening the WAL
+        connection, loading sqlite-vec, applying ``schema.sql``); then the
+        memory-shaped migrations run, the FTS index + legacy sender ids are
+        backfilled, and existing facts/episodes are embedded into the vector store
+        via the injected embedder (a no-op when none is wired).
         """
-        if self._conn is None:
-            self._db_path.parent.mkdir(parents=True, exist_ok=True)
-            self._conn = await aiosqlite.connect(self._db_path)
-            self._conn.row_factory = aiosqlite.Row
-            await self._conn.execute("PRAGMA journal_mode=WAL")
-            await self._conn.execute("PRAGMA foreign_keys=ON")
-            self._vectors = MemoryVectorStore(self._conn, self._embedder)
-            await self._vectors.load_extension()
-        await self._conn.executescript(_load_schema())
+        await self._connection.initialize()
+        if self._vectors is None:
+            self._vectors = MemoryVectorStore(self._connection.connection, self._embedder)
         await self._migrate_episodic_consolidated()
         await self._migrate_episodic_sender_id()
         await self._migrate_episodic_bob_message_id()
         await self._migrate_semantic_superseded_by()
-        await self._migrate_pursuit_stopped()
         await self._backfill_episodic_fts()
         await self._backfill_episodic_sender_id()
-        await self._conn.commit()
+        await self._db().commit()
         await self._vector_store().backfill()
-        logger.info("SqliteMemoryRepo initialised at %s", self._db_path)
+        logger.info("SqliteMemoryRepo initialised at %s", self._connection.db_path)
 
     async def _migrate_episodic_consolidated(self) -> None:
         """Add ``episodic_log.consolidated`` to a pre-existing DB (idempotent, BOB-021).
@@ -211,28 +214,6 @@ class SqliteMemoryRepo:
             rows = await cursor.fetchall()
         return {str(row[1]) for row in rows}
 
-    async def _migrate_pursuit_stopped(self) -> None:
-        """Add ``proactivity_state.pursuit_stopped`` to a pre-existing DB (BOB-015 .2).
-
-        The goal-pursuit kill-switch flag (``/goals stop``). ``CREATE TABLE IF NOT
-        EXISTS`` never alters an already-present table, so a DB written before this
-        column existed would lack it. This guarded ``ALTER`` adds it only when
-        missing — additive and non-destructive: existing rows take the column
-        default (0, i.e. pursuit NOT stopped). A clean no-op once present.
-        """
-        if "pursuit_stopped" in await self._proactivity_columns():
-            return
-        await self._db().execute(
-            "ALTER TABLE proactivity_state "
-            "ADD COLUMN pursuit_stopped INTEGER NOT NULL DEFAULT 0"
-        )
-
-    async def _proactivity_columns(self) -> set[str]:
-        """Names of the columns currently on ``proactivity_state``."""
-        async with self._db().execute("PRAGMA table_info(proactivity_state)") as cursor:
-            rows = await cursor.fetchall()
-        return {str(row[1]) for row in rows}
-
     async def _backfill_episodic_fts(self) -> None:
         """Reindex the whole episodic archive into ``episodic_fts`` (idempotent).
 
@@ -247,15 +228,11 @@ class SqliteMemoryRepo:
 
     async def close(self) -> None:
         """Close the underlying connection (idempotent)."""
-        if self._conn is not None:
-            await self._conn.close()
-            self._conn = None
+        await self._connection.close()
 
     async def journal_mode(self) -> str:
         """Return the active SQLite journal mode (expected ``wal``)."""
-        async with self._db().execute("PRAGMA journal_mode") as cursor:
-            row = await cursor.fetchone()
-        return "" if row is None else str(row[0])
+        return await self._connection.journal_mode()
 
     # --- Episodic memory ------------------------------------------------------
 
@@ -565,19 +542,12 @@ class SqliteMemoryRepo:
     # --- Key/value ------------------------------------------------------------
 
     async def kv_set(self, key: str, value: str) -> None:
-        """Set ``key`` to ``value`` in the generic key/value store."""
-        await self._db().execute(
-            "INSERT INTO kv (key, value) VALUES (?, ?) "
-            "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-            (key, value),
-        )
-        await self._db().commit()
+        """Set ``key`` to ``value`` in the generic key/value store (kernel seam)."""
+        await self._connection.kv_set(key, value)
 
     async def kv_get(self, key: str) -> str | None:
-        """Return the value for ``key``, or ``None`` if absent."""
-        async with self._db().execute("SELECT value FROM kv WHERE key = ?", (key,)) as cursor:
-            row = await cursor.fetchone()
-        return None if row is None else str(row[0])
+        """Return the value for ``key``, or ``None`` if absent (kernel seam)."""
+        return await self._connection.kv_get(key)
 
     # --- Vector store ---------------------------------------------------------
 
@@ -612,19 +582,12 @@ class SqliteMemoryRepo:
     # --- Internals ------------------------------------------------------------
 
     def _db(self) -> aiosqlite.Connection:
-        if self._conn is None:
-            raise RuntimeError("SqliteMemoryRepo used before initialize()")
-        return self._conn
+        return self._connection.connection
 
     @property
     def connection(self) -> aiosqlite.Connection:
         """The live connection (for collaborators such as the recall adapter)."""
-        return self._db()
-
-
-def _load_schema() -> str:
-    """Read the bundled ``schema.sql`` from the package."""
-    return resources.files(__package__).joinpath(_SCHEMA_RESOURCE).read_text(encoding="utf-8")
+        return self._connection.connection
 
 
 def _name_prefix(content: str) -> str:

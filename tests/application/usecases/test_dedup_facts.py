@@ -244,7 +244,7 @@ def test_build_dedup_facts_is_config_gated_and_needs_an_embedder(tmp_path: Path)
     # The app builder returns None unless memory.dedup.enabled AND an embedder is wired
     # (off by default like consolidation; keyword-only memory cannot compute cosine).
     from bob.app import _build_dedup_facts  # noqa: PLC0415
-    from bob.infrastructure.persistence.sqlite_repo import SqliteMemoryRepo  # noqa: PLC0415
+    from bob.memory.adapters.sqlite_memory_repo import SqliteMemoryRepo  # noqa: PLC0415
 
     embedder = StubEmbedder({})
     clock = FakeClock(_NOW)

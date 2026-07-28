@@ -129,9 +129,11 @@ nodes:
     # `architecture-layers` rule silently skips its edges; the module's INTERNAL
     # layering and its OUTER boundary are enforced by the path-glob `forbid_import`
     # rules in .beadloom/_graph/rules.yml (§ vertical modules, added in .2).
-    # NB: the durable episode/fact store (`SqliteMemoryRepo`) stays in the shared
-    # persistence kernel until BOB-062.7; its lone reach into `bob.memory.entities`
-    # is the deliberately-allowed `kernel → memory` edge (marked in .2).
+    # NB: the durable episode/fact store (`SqliteMemoryRepo`) now lives HERE in
+    # `memory/adapters/sqlite_memory_repo.py` (BOB-062.7b split); it reads the shared
+    # `SqliteConnection` kernel OUTWARD (adapter → infrastructure/persistence), and
+    # owns EpisodicEvent/SemanticFact internally — the old `kernel → memory` edge is
+    # gone (see the note block in rules.yml).
     tags: [module-vertical]
     summary: 'Memory module («Bob remembers») — the full vertical capability in one place: `ports.py` + pure `entities`, `usecases/` (extract facts, consolidate, dedup), and `adapters/` (FTS5/hybrid recall + local Ollama embedder/reranker). Domain-first slice BOB-062.2.'
     docs:
@@ -150,8 +152,8 @@ nodes:
     # nodes: drive-model, goals, and self-improvement are ONE «Bob's background
     # life» capability. `self_improvement.py` moved in from `personality`
     # (metacognition over behaviour, BOB-028, not a personality trait). The 4
-    # durable stores consume the shared persistence kernel via the
-    # `SqliteMemoryRepo.connection()` seam (kernel stays put until BOB-062.7).
+    # durable stores consume the shared persistence kernel via the injected
+    # `SqliteConnection` seam (the connection-kernel split out in BOB-062.7b).
     tags: [module-vertical]
     summary: 'Proactivity module («Bob''s background life») — the full vertical capability in one place: `ports.py` + pure domain (drive-model urge/governance/social-energy, goals graph, self-improvement rules), `usecases/` (engine/tick, plan/pursue goals, detect-patterns/announce-rules), and `adapters/` (proactivity/goal/self-improvement stores + live read-seams). Domain-first slice BOB-062.3.'
     docs:
@@ -213,8 +215,8 @@ nodes:
     # no longer imports `InterlocutorKind` at runtime (uses `kind.value`); social
     # depends on personality one-way (`relationship → negotiation.Stance`).
     # `domain/ports/` keeps a thin re-export shim for the social ports. The durable
-    # social stores consume the shared persistence kernel via the
-    # `SqliteMemoryRepo.connection()` seam (kernel stays put until BOB-062.7).
+    # social stores consume the shared persistence kernel via the injected
+    # `SqliteConnection` seam (the connection-kernel split out in BOB-062.7b).
     tags: [module-vertical]
     docs:
       - domains/social/README.md
@@ -256,7 +258,7 @@ nodes:
     kind: component
     source: src/bob/infrastructure/persistence/
     tags: [layer-infra]
-    summary: 'Persistence adapter — SQLite+FTS5 repository, KvAllowlistStore and SoulStore backing memory recall and stores.'
+    summary: 'Persistence kernel — the shared `SqliteConnection` (open/WAL/foreign_keys/sqlite-vec load/`schema.sql`/kv/close) that the memory adapter and the 13 per-module durable stores read through the injected `connection` seam. Pure I/O: carries no memory/business logic — those realisations live in their owning modules'' `adapters/` (BOB-062.2–.7b).'
 
   - ref_id: config
     kind: component

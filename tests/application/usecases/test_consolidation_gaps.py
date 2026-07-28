@@ -133,7 +133,7 @@ class _ConsolidationStoreSpy:
 def test_build_consolidate_memory_is_off_by_default(tmp_path: Path) -> None:
     # The reflect tick must get NO consolidator unless deliberately switched on, so
     # an upgrade is inert until the owner enables it (conservative-by-default).
-    from bob.infrastructure.persistence.sqlite_repo import SqliteMemoryRepo  # noqa: PLC0415
+    from bob.memory.adapters.sqlite_memory_repo import SqliteMemoryRepo  # noqa: PLC0415
 
     store = SqliteMemoryRepo(tmp_path / "bob.db")
     router = LLMRouter(providers={0: _LocalOnlyProvider()})
@@ -150,7 +150,7 @@ def test_build_consolidate_memory_when_enabled_uses_config_guardrails(
 ) -> None:
     # Enabled -> a ConsolidateMemory carrying the configured age/batch guardrails
     # (so the conservative thresholds are owner-tunable, not hard-coded).
-    from bob.infrastructure.persistence.sqlite_repo import SqliteMemoryRepo  # noqa: PLC0415
+    from bob.memory.adapters.sqlite_memory_repo import SqliteMemoryRepo  # noqa: PLC0415
 
     store = SqliteMemoryRepo(tmp_path / "bob.db")
     router = LLMRouter(providers={0: _LocalOnlyProvider()})
@@ -184,7 +184,7 @@ def test_build_surface_old_freq_reads_a_config_override() -> None:
 def test_build_dedup_facts_off_by_default_and_when_no_embedder(tmp_path: Path) -> None:
     # Dedup is off by default AND a no-op without an embedder (keyword-only memory
     # cannot compute cosine) — the two guardrails that keep the step inert.
-    from bob.infrastructure.persistence.sqlite_repo import SqliteMemoryRepo  # noqa: PLC0415
+    from bob.memory.adapters.sqlite_memory_repo import SqliteMemoryRepo  # noqa: PLC0415
 
     store = SqliteMemoryRepo(tmp_path / "bob.db")
     embedder = _LocalOnlyEmbedder({})

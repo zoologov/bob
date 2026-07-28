@@ -19,8 +19,10 @@ import pytest
 
 from bob.app import build_application
 from bob.application.runtime.events import MESSAGE_RECEIVED, MessageReceived
-from bob.infrastructure.persistence import KvAllowlistStore, SoulStore, SqliteMemoryRepo
 from bob.infrastructure.telegram.multibot import BotIdentity
+from bob.memory.adapters import SqliteMemoryRepo
+from bob.social.adapters.allowlist_store import KvAllowlistStore
+from bob.social.adapters.soul_store import SoulStore
 from bob.social.usecases import Authorizer
 
 if TYPE_CHECKING:

@@ -18,22 +18,27 @@ bounded-context, поэтому в графе он несёт не-слойны�
 `architecture-layers` его рёбра пропускает), а внутреннюю и внешнюю дисциплину
 держат path-glob `forbid_import`-правила в `.beadloom/_graph/rules.yml`.
 
-## 🔴 Отсрочка kernel персистентности (вариант C, до среза .7)
+## Kernel персистентности расщеплён (BOB-062.7b — долг варианта C закрыт)
 
-Долговечный стор эпизодов и фактов (`SqliteMemoryRepo`, `schema.sql`,
-`vector_store.py`) — это **общий kernel персистентности**, кормящий через
-`.connection()`-шов не только память, но и десяток с лишним чужих сторов. Поэтому по решению
-owner'а (вариант C) при переезде он **остаётся в
-`infrastructure/persistence/`** до среза BOB-062.7 (консолидация инфра-kernel'а),
-где `SqliteMemoryRepo` расщепится на connection-kernel и собственно
-MemoryRepo-реализацию. Модуль `memory` забрал только свою бизнес-логику
-(порты/сущности/use-case'ы) и recall-/embedding-адаптеры; конкретная запись в
-SQLite по-прежнему идёт через kernel.
+В срезе .2 долговечный стор эпизодов и фактов оставили в
+`infrastructure/persistence/` как «общий kernel персистентности» (вариант C),
+потому что он совмещал две роли: connection/schema-kernel (кормит через
+`.connection`-шов не только память, но и 13 чужих сторов) и собственно
+memory-реализацию. Срез **BOB-062.7b** это расщепил, закрыв долг варианта C:
 
-Единственное следствие — намеренно разрешённое обратное ребро
-`kernel → bob.memory.entities`: `sqlite_repo` импортит `EpisodicEvent` /
-`SemanticFact`, чтобы маппить их в строки и обратно. Это узаконенный (не
-нарушение) `kernel → memory`-импорт, помеченный с TODO-.7 в правилах границ.
+- **connection-kernel → `infrastructure/persistence/connection.py`**
+  (`SqliteConnection`): чистое I/O — open/WAL/foreign_keys, загрузка sqlite-vec,
+  идемпотентный `executescript(schema.sql)`, общий kv-стор и `.connection`-шов.
+  Он остаётся в инфраструктуре (это не композиция) и кормит все сторы всех модулей.
+- **memory-реализация → `memory/adapters/sqlite_memory_repo.py`**
+  (`SqliteMemoryRepo`, реализует `memory.ports.MemoryRepo`) плюс
+  `memory/adapters/vector_store.py` (`MemoryVectorStore`) — уехали в модуль
+  `memory`. Репозиторий читает kernel структурно через его `.connection`-шов.
+
+Обратное ребро `kernel → bob.memory.entities` **устранено**: маппинг
+`EpisodicEvent` / `SemanticFact` в строки теперь живёт внутри
+`memory/adapters/`, поэтому импорт memory-сущностей замкнут в самом модуле, а
+kernel не зависит ни от какого бизнес-контекста.
 
 ## Спецификация
 
@@ -49,6 +54,8 @@ src/bob/memory/
     consolidate_memory.py  — ConsolidateMemory (редкий дайджест старых эпизодов, BOB-021)
     dedup_facts.py         — DedupFacts (редкий консервативный merge дубль-фактов, BOB-021)
   adapters/       # layer=infrastructure
+    sqlite_memory_repo.py  — SqliteMemoryRepo (MemoryRepo: episodic/semantic/vector/mood/taste)
+    vector_store.py        — MemoryVectorStore (sqlite-vec vec0-таблица memory_vec)
     fts_recall.py          — Fts5MemoryRecall (P0 keyword-recall, BM25)
     hybrid_recall.py       — HybridMemoryRecall (semantic + keyword, RRF, + reranker)
     embedder_factory.py    — build_embedder (из config['embeddings'])
@@ -57,10 +64,11 @@ src/bob/memory/
     ollama_reranker.py     — OllamaReranker (локальный reranker как Ollama-scorer)
 ```
 
-**Остаётся в `infrastructure/persistence/` (shared kernel до .7):**
-`sqlite_repo.py` (`SqliteMemoryRepo`), `schema.sql`, `vector_store.py`
-(тесно связан с `sqlite_repo` через connection) плюс прочие чужие сторы,
-кормящиеся из того же kernel'а.
+**Connection-kernel (общий, в инфраструктуре):**
+`infrastructure/persistence/connection.py` (`SqliteConnection`) + `schema.sql`.
+`SqliteMemoryRepo` и все прочие сторы читают его через инъецированный
+`.connection`-шов — memory-модуль владеет своей записью в SQLite, но не открывает
+соединение сам.
 
 ### Сущности (чистый домен)
 
@@ -104,6 +112,25 @@ near-дубликатов фактов (BOB-021). Отбирает ACTIVE фак
 исключаются из recall), off-by-default (нулевой батч отключает шаг).
 
 ### Адаптеры (infrastructure)
+
+`SqliteMemoryRepo` (`adapters/sqlite_memory_repo.py`) — memory-реализация порта
+`MemoryRepo` над connection-kernel'ом (BOB-062.7b). Держит весь memory-SQL и маппит
+доменные сущности в строки и обратно: эпизодический архив
+(`save_episode`/`save_episode_entity`/`load_episodes`/`recent_episodes`/
+`recent_episodes_for`/`episode_by_bob_message_id`), семантические факты и дедуп
+(`save_fact`/`load_facts`/`select_active_facts`/`supersede_facts`), консолидация
+(`select_consolidatable_episodes`/`save_digest`/`mark_consolidated`), векторная
+сторона (`vector_count`/`vector_knn` + on-write эмбеддинг), а также mood/taste
+(`set_mood`/`get_mood`/`mood_history`/`set_taste_axis`/`load_taste_axes`). Соединение
+не открывает — читает kernel через `.connection`-шов; memory-специфичные миграции
+(`_migrate_episodic_*`, `_migrate_semantic_superseded_by`) и FTS5-бэкфилл живут в его
+`initialize()`. С опциональным `embedder` владеет `MemoryVectorStore`.
+
+`MemoryVectorStore` (`adapters/vector_store.py`) — sqlite-vec сторона памяти:
+vec0-таблица `memory_vec` (`float[1024]`) в синхроне с архивом. `load_extension()`
+грузит sqlite-vec на соединение (capability соединения), `backfill`/`embed_row`
+питают стор (идемпотентно, best-effort — недоступный эмбеддер пропускается, не роняя
+запись), `knn(vector, k)` обслуживает семантическую сторону гибрид-recall.
 
 `Fts5MemoryRecall` (`adapters/fts_recall.py`) — P0 keyword-recall через SQLite FTS5
 `MATCH` с BM25. Покрывает **и** семантические факты, **и** сырой эпизодический
@@ -176,8 +203,10 @@ OpenAI-совместимой `/v1/chat/completions`, сортирует по у
 - доменная логика/адаптеры не импортят `usecases/`;
 - снаружи к `memory` — только через фасад/порты (не `usecases/`/`adapters/` напрямую);
 - модуль не импортит композиционный корень (`app.py`);
-- обратное ребро `kernel → bob.memory.entities` (`sqlite_repo` маппит сущности в
-  строки) помечено как временно разрешённое с TODO-.7 (до расщепления kernel'а).
+- `memory/adapters/` читает connection-kernel наружу (`adapter →
+  infrastructure/persistence`), а не наоборот — прежнее обратное ребро
+  `kernel → bob.memory.entities` устранено в BOB-062.7b (маппинг сущностей замкнут
+  внутри `memory/adapters/`).
 
 Внутренний layer-guard модуля (`tests/memory/test_layering.py`) проверяет, что
 `memory.usecases` не тянут `adapters/`, а домен — `usecases/` (эти узлы ушли
@@ -189,7 +218,8 @@ OpenAI-совместимой `/v1/chat/completions`, сортирует по у
 
 Модуль `src/bob/memory/ports.py` (порты-протоколы, только интерфейсы):
 - `MemoryRepo` — долговечный стор эпизодов/фактов (`save_episode`, `save_fact`,
-  `load_episodes`, `recent_episodes`). Реализация — kernel `SqliteMemoryRepo`.
+  `load_episodes`, `recent_episodes`). Реализация —
+  `memory.adapters.SqliteMemoryRepo` над connection-kernel'ом.
 - `MemoryRecall` — relevance-retrieval (`recall(query, *, k, surface_old=False)`
   → `Sequence[Recalled]`); P0 — FTS5, шов для векторов.
 - `Embedder` — `embed(texts)` → `list[list[float]]` (по одному dense-вектору на
@@ -207,13 +237,15 @@ OpenAI-совместимой `/v1/chat/completions`, сортирует по у
 - `usecases/extract_facts.py`: `ExtractFacts.run(...)` — извлечь факты из обмена.
 - `usecases/consolidate_memory.py`: `ConsolidateMemory` — дайджест старых эпизодов.
 - `usecases/dedup_facts.py`: `DedupFacts` — merge near-дубликатов фактов.
-- `adapters/`: `Fts5MemoryRecall`, `HybridMemoryRecall`, `OllamaEmbedder`,
-  `OllamaReranker`, фабрики `build_embedder` / `build_reranker`.
+- `adapters/`: `SqliteMemoryRepo`, `MemoryVectorStore`, `Fts5MemoryRecall`,
+  `HybridMemoryRecall`, `OllamaEmbedder`, `OllamaReranker`, фабрики
+  `build_embedder` / `build_reranker`.
 
-Композиция (сборка recall'а, эмбеддера, reranker'а и навешивание
-extract/consolidate/dedup на heartbeat) — в композиционном корне `app.py`.
-Долговечная запись в SQLite идёт через kernel `SqliteMemoryRepo`
-(`infrastructure/persistence/`, до среза .7).
+Композиция (создание connection-kernel'а, сборка `SqliteMemoryRepo` над ним, recall'а,
+эмбеддера, reranker'а и навешивание extract/consolidate/dedup на heartbeat) — в
+композиционном корне (`runtime/`). Долговечная запись в SQLite идёт через
+`memory.adapters.SqliteMemoryRepo`, читающий общий `SqliteConnection`
+(`infrastructure/persistence/connection.py`) через его `.connection`-шов.
 
 ## Тесты
 
@@ -223,11 +255,13 @@ extract/consolidate/dedup на heartbeat) — в композиционном к
 - Use-case'ы: `tests/application/usecases/test_extract_facts.py`,
   `test_consolidate_memory.py`, `test_consolidation_gaps.py`,
   `test_dedup_facts.py`.
-- Recall-/embedding-адаптеры (тесты остались при kernel'е — плюс варианта C):
-  `tests/infrastructure/persistence/test_fts_recall.py`,
+- Persistence-/recall-/embedding-адаптеры (файлы тестов остались под
+  `tests/infrastructure/persistence/`): `test_sqlite_repo.py`,
+  `test_vector_store.py`, `test_fts_recall.py`,
   `test_hybrid_recall.py`, `test_recall_excludes_superseded.py`,
   `test_sender_attribution.py`, `test_consolidation_repo.py`,
-  `test_dedup_repo.py`; `tests/infrastructure/llm/test_ollama_embedder.py`,
+  `test_dedup_repo.py`; connection-kernel — `test_connection.py`;
+  `tests/infrastructure/llm/test_ollama_embedder.py`,
   `test_embedder_factory.py`, `test_ollama_reranker.py`,
   `test_reranker_factory.py` (+ `*_hardening.py`).
 - Layer-guard модуля: `tests/memory/test_layering.py`.

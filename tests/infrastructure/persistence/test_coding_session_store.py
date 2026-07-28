@@ -21,7 +21,7 @@ from bob.coding.adapters.session_store import (
 )
 from bob.coding.entities import CodingSession
 from bob.coding.state import CodingSessionState
-from bob.infrastructure.persistence.sqlite_repo import SqliteMemoryRepo
+from bob.memory.adapters.sqlite_memory_repo import SqliteMemoryRepo
 
 if TYPE_CHECKING:
     from pathlib import Path
