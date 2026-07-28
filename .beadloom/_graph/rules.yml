@@ -67,16 +67,13 @@ rules:
   # NO `src/` prefix. `*` in fnmatch spans `/`. BOB-062.1 fix: the `to:` globs
   # below previously read `src/bob/...` and therefore NEVER matched (dead rules);
   # corrected to the prefix-less `bob/...` form so they actually bite.
-  - name: domain-imports-nothing-outward
-    description: "Домен не импортит application"
-    severity: error
-    forbid_import: {from: "src/bob/domain/**", to: "bob/application/**"}
-
-  - name: domain-no-infra
-    description: "Домен не импортит infrastructure"
-    severity: error
-    forbid_import: {from: "src/bob/domain/**", to: "bob/infrastructure/**"}
-
+  #
+  # BOB-062.8: the two former `domain-*` rules (`domain-imports-nothing-outward`,
+  # `domain-no-infra`) referenced `src/bob/domain/**`, which was deleted when the
+  # layer-first `src/bob/domain/` package was fully dissolved into the vertical
+  # modules and the shared `src/bob/kernel/`. Their intent (inward-only imports)
+  # is now covered by the per-module `*-internals-no-adapters` / `module-boundary`
+  # generated rules plus the `kernel-no-*` guards below, so they were removed.
   - name: application-no-infra
     description: "Application не импортит infrastructure (только через порты домена)"
     severity: error

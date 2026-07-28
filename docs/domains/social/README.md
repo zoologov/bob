@@ -51,9 +51,9 @@ relationship,sulk}` + `application/authz/` + `application/usecases/{permission_*
    `sulk_state`, `permission_request`, `kv`) живут в единой `schema.sql` kernel'а.
    С расщеплением kernel'а в BOB-062.7b долг варианта C закрыт (connection-kernel ↔
    memory-репозиторий разведены; сторы читают чистый `.connection`-шов).
-5. **`domain/ports/` держит тонкий re-export-шим** social-портов (Allowlist / Soul /
-   First / Relationship / Sulk / PrivilegeJudge), так что `from bob.domain.ports import
-   AllowlistStore` работает как раньше для внешних потребителей.
+5. **Порты живут в `social/ports.py`** (Allowlist / Soul / First / Relationship / Sulk /
+   PrivilegeJudge); канонический импорт — `from bob.social.ports import AllowlistStore`
+   (транзитный ports-шим `bob.domain.ports` удалён, BOB-062.8).
 
 ## 🔴 Мультиперсональность: cross-sender контекст здоров
 
@@ -280,9 +280,9 @@ legacy single-row `relationship` owner-blob). `SqliteSulkStore` — одна с�
 - `PrivilegeJudge` — семантический шов оценки привилегии (re-export из
   `permission/privilege.py`).
 
-Фасад `src/bob/social/__init__.py` — вход в модуль. Порты social также re-export'ятся
-из `bob.domain.ports` (тонкий шим), поэтому `from bob.domain.ports import AllowlistStore`
-работает как раньше.
+Фасад `src/bob/social/__init__.py` — вход в модуль. Канонический импорт портов —
+`from bob.social.ports import AllowlistStore` (транзитный ports-шим `bob.domain.ports`
+удалён, BOB-062.8).
 
 Ключевые точки входа:
 - Домен: `interlocutor.classify`, `first_impression.impression_note_for`,

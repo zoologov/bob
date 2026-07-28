@@ -139,8 +139,8 @@ infrastructure/telegram/gateway` (TYPE_CHECKING-only). Если любая ст�
 
 Фасад `src/bob/coding/__init__.py` re-export'ит: `CodingSession`, `CodingSessionState`,
 `can_transition`, `can_start`, `can_approve_plan`, `can_stop`, `is_terminal`, `narrate`,
-`worktree_branch`. Порты `coding` также re-export'ятся из `bob.domain.ports`, поэтому
-`from bob.domain.ports import ClaudeCodeRunner` работает как раньше.
+`worktree_branch`. Канонический импорт портов — `from bob.coding.ports import
+ClaudeCodeRunner`; транзитный ports-шим `bob.domain.ports` удалён (BOB-062.8).
 
 Ключевые точки входа:
 - `state.py`: `can_transition(frm, to)`, `can_approve_plan(state)`, `can_stop(state)`,

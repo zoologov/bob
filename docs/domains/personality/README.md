@@ -51,9 +51,10 @@ module), сгенерированные `scripts/gen_boundary_rules.py`.
    реактора), поэтому это application-оркестрация, как `handle_message`, а не personality-
    домен. Модуль лишь предоставляет чистое ядро (`reaction_effect`, `reaction_meaning`) и
    Tier-0 адаптер `LlmReactionJudge`; сам сшивающий use-case держится вне вертикали.
-5. **`domain/ports/` держит тонкий re-export-шим** personality-портов (`MessageReactor` /
-   `ReflectionReader` / `FascinationStore` / `NotableReactionStore`), так что
-   `from bob.domain.ports import MessageReactor` работает как раньше.
+5. **Порты живут в `personality/ports.py`** (`MessageReactor` / `ReflectionReader` /
+   `FascinationStore` / `NotableReactionStore`); канонический импорт —
+   `from bob.personality.ports import MessageReactor` (транзитный ports-шим
+   `bob.domain.ports` удалён, BOB-062.8).
 
 ## Спецификация
 
@@ -259,9 +260,9 @@ kv-таблице (`record`/`latest`/`clear` — hint всплывает не б
 - `NotableReactionStore` — лёгкий стор последней «меня получили»-реакции. Реализация —
   `KvNotableReactionStore`.
 
-Фасад `src/bob/personality/__init__.py` — вход в модуль. Порты personality также
-re-export'ятся из `bob.domain.ports` (тонкий шим), поэтому `from bob.domain.ports import
-MessageReactor` работает как раньше.
+Фасад `src/bob/personality/__init__.py` — вход в модуль. Канонический импорт портов —
+`from bob.personality.ports import MessageReactor` (транзитный ports-шим
+`bob.domain.ports` удалён, BOB-062.8).
 
 Ключевые точки входа:
 - Домен: `mood.Mood`/`MoodDelta`, `disposition.Disposition`, `taste.TasteEngine`/`Verdict`,

@@ -50,7 +50,7 @@
 
 Направление ребра — наружу: `proactivity → infra kernel` (адаптеры зависят от
 kernel'а). Обратной зависимости `kernel → proactivity` НЕТ — `sqlite_repo` не
-импортирует эти сторы, а `proactivity_sources` тянет из `bob.domain.ports` только
+импортирует эти сторы, а `proactivity_sources` тянет из `bob.kernel.ports` только
 `Clock` (тип). Единственное разрешённое исходящее рантайм-ребро в чужой домен —
 `proactivity → memory.entities` (движок читает `episodic_log` через recall-сейм);
 `entities` это публичная поверхность memory, ребро помечено в правилах границ.
@@ -282,7 +282,6 @@ count** (сколько проактивных эпизодов в анти-сп
 - `guppi → proactivity.goals.state` / `.self_improvement` / `.state` (UI-рендер
   `/quiet` / `/wake` над доменным состоянием);
 - `guppi` и `multibot → proactivity.usecases.plan_goal.PlanGoal` (тип);
-- `domain/ports/__init__ → proactivity.ports` (шим re-export 5 портов);
 - `proactivity → memory.entities` (движок читает `episodic_log`);
 - kernel → proactivity ребра НЕТ (проверено).
 
@@ -305,10 +304,9 @@ count** (сколько проактивных эпизодов в анти-сп
 
 Фасад `src/bob/proactivity/__init__.py` re-export'ит drive-core: `UrgeModel`,
 `Governance`, `GovernanceConfig`, `ProactiveHistory`, `ProactiveDecider`,
-`urge_to_probability`, `SocialEnergy`, `ProactivityState`. Порты `proactivity`
-также re-export'ятся из `bob.domain.ports`, поэтому
-`from bob.domain.ports import ProactivityStore` работает как раньше (шим для
-потребителей).
+`urge_to_probability`, `SocialEnergy`, `ProactivityState`. Канонический импорт портов —
+`from bob.proactivity.ports import ProactivityStore`; транзитный ports-шим
+`bob.domain.ports` удалён (BOB-062.8).
 
 Ключевые точки входа:
 - Drive-core: `urge.UrgeModel`, `governance.Governance`, `social_energy.SocialEnergy`,
