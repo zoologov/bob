@@ -43,7 +43,7 @@ from bob.application.runtime.retry import retry_with_backoff
 
 if TYPE_CHECKING:
     from bob.application.runtime.retry import Sleep
-    from bob.domain.ports import Recalled
+    from bob.memory.ports import Recalled
 
 logger = logging.getLogger(__name__)
 

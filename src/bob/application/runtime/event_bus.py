@@ -20,7 +20,7 @@ from collections import defaultdict
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from bob.domain.ports import DomainEvent, EventHandler
+    from bob.kernel.ports import DomainEvent, EventHandler
 
 logger = logging.getLogger(__name__)
 

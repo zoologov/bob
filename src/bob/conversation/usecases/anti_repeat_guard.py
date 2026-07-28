@@ -54,7 +54,8 @@ if TYPE_CHECKING:
 
     from bob.application.usecases.handle_message import EpisodeReader
     from bob.conversation.conversation import RepeatThresholds
-    from bob.domain.ports import CloserLog, Recalled
+    from bob.conversation.ports import CloserLog
+    from bob.memory.ports import Recalled
     from bob.personality.expression import ExpressionPlan
     from bob.personality.soul import SOUL
     from bob.proactivity.self_improvement import RuleModulators

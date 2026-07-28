@@ -14,9 +14,9 @@ from __future__ import annotations
 
 import pytest
 
-from bob.domain.ports import Reranker
 from bob.memory.adapters.ollama_reranker import OllamaReranker
 from bob.memory.adapters.reranker_factory import build_reranker
+from bob.memory.ports import Reranker
 
 
 def _section(**overrides: object) -> dict[str, object]:

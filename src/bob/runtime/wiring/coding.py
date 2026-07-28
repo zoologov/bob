@@ -45,9 +45,9 @@ if TYPE_CHECKING:
 
     from bob.application.router import LLMRouter
     from bob.coding.adapters.indicator import EditableStatusBot, TypingActionBot
-    from bob.domain.ports import Clock
     from bob.infrastructure.persistence import SqliteConnection
     from bob.infrastructure.telegram.gateway import BotLike
+    from bob.kernel.ports import Clock
     from bob.social.usecases import Authorizer
 
 

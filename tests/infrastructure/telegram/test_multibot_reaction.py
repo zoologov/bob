@@ -31,8 +31,8 @@ from bob.infrastructure.telegram.multibot import (
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from bob.domain import ports
     from bob.infrastructure.telegram.gateway import MessageLike
+    from bob.kernel import ports
 
 _CHAT_ID = -1004372947307
 _BOB_TOPIC_ID = 32

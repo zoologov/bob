@@ -15,14 +15,15 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from bob.application.usecases.privileged_fulfiller import PrivilegedRequestFulfiller
+from bob.capabilities.ports import ToolCallResult
 from bob.capabilities.usecases.registry import CapabilityRegistry
-from bob.domain.ports import ToolCallResult
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
     from bob.application.router.llm_router import LLMRequest
-    from bob.domain.ports import LLMMessage, Permission, ToolDefinition
+    from bob.capabilities.ports import Permission, ToolDefinition
+    from bob.kernel.ports import LLMMessage
 
 
 class _FakeRouter:

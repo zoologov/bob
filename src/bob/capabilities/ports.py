@@ -24,7 +24,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Literal, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
-    from bob.domain.ports.kernel import LLMMessage
+    from bob.kernel.ports import LLMMessage
 
 # An OpenAI-shaped tool definition (``{"type": "function", "function": {...}}``),
 # as emitted by the CapabilityRegistry manifest and sent to the LLM as ``tools``.

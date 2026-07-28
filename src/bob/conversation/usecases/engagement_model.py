@@ -51,7 +51,7 @@ if TYPE_CHECKING:
     )
     from bob.conversation.brevity import BrevityThresholds
     from bob.conversation.engagement import EngagementThresholds, FatigueRates
-    from bob.domain.ports import Clock
+    from bob.kernel.ports import Clock
     from bob.personality.expression import EngagementLevel, ExpressionPlan, Verbosity
     from bob.personality.soul import SOUL
     from bob.social.relationship import Relationship

@@ -37,7 +37,7 @@ from typing import TYPE_CHECKING, Protocol
 if TYPE_CHECKING:
     import aiosqlite
 
-    from bob.domain.ports import Clock
+    from bob.kernel.ports import Clock
 
 # A reflection at most this fresh scores full salience; older ones decay linearly
 # to zero by this horizon. Tuned so a thought from the last reflect tick is vivid.

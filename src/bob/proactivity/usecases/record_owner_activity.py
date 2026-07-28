@@ -27,7 +27,8 @@ from dataclasses import replace
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from bob.domain.ports import Clock, ProactivityStore
+    from bob.kernel.ports import Clock
+    from bob.proactivity.ports import ProactivityStore
 
 
 class RecordOwnerActivity:

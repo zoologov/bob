@@ -44,8 +44,8 @@ from bob.proactivity.self_improvement import (
 if TYPE_CHECKING:
     from datetime import datetime
 
-    from bob.domain.ports import Clock
     from bob.infrastructure.telegram.gateway import AuthorizerLike, BotLike
+    from bob.kernel.ports import Clock
     from bob.proactivity.goals.graph import GoalGraph
     from bob.proactivity.self_improvement import ImprovementRule
     from bob.proactivity.state import ProactivityState

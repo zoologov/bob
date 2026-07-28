@@ -37,8 +37,9 @@ from bob.social.first_impression import (
 )
 
 if TYPE_CHECKING:
-    from bob.domain.ports import Clock, FirstImpressionStore
+    from bob.kernel.ports import Clock
     from bob.social.interlocutor import Interlocutor
+    from bob.social.ports import FirstImpressionStore
 
 
 class FirstImpressionTracker:

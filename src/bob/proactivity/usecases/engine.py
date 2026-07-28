@@ -75,7 +75,8 @@ if TYPE_CHECKING:
         PersonalityState,
         ReplyGateway,
     )
-    from bob.domain.ports import Clock, MemoryRecall, Recalled
+    from bob.kernel.ports import Clock
+    from bob.memory.ports import MemoryRecall, Recalled
     from bob.personality.mood import Mood
     from bob.proactivity.decision import ProactiveDecider
     from bob.proactivity.social_energy import SocialEnergy

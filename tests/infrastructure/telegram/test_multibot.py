@@ -46,7 +46,7 @@ if TYPE_CHECKING:
 
     from aiogram.types import InputRichMessage
 
-    from bob.domain import ports
+    from bob.kernel import ports
 
 # Target ids from the epic (CONTEXT.md): the group, Bob's topic, the owner.
 _CHAT_ID = -1004372947307

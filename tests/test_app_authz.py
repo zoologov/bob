@@ -29,8 +29,8 @@ if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Mapping, Sequence
     from pathlib import Path
 
-    from bob.domain import ports
     from bob.infrastructure.telegram.gateway import UpdateLike
+    from bob.kernel import ports
 
 _OWNER = 1
 _CHAT = 100

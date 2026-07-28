@@ -63,7 +63,9 @@ from bob.personality.voice import (
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Mapping, Sequence
 
-    from bob.domain.ports import LLMMessage, Recalled, ToolCallingProvider
+    from bob.capabilities.ports import ToolCallingProvider
+    from bob.kernel.ports import LLMMessage
+    from bob.memory.ports import Recalled
     from bob.personality.expression import ExpressionPlan
     from bob.personality.negotiation import NegotiationZone, Stance
     from bob.personality.soul import SOUL

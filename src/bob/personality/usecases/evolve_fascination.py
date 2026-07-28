@@ -43,7 +43,8 @@ from bob.personality.language import DEFAULT_LANGUAGE, language_directive
 if TYPE_CHECKING:
     from datetime import datetime
 
-    from bob.domain.ports import Clock, FascinationStore
+    from bob.kernel.ports import Clock
+    from bob.personality.ports import FascinationStore
 
 logger = logging.getLogger(__name__)
 

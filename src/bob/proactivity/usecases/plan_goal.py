@@ -43,9 +43,9 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from bob.application.router.llm_router import LLMRouter
-    from bob.domain.ports import Planner
     from bob.proactivity.goals.entities import Goal
     from bob.proactivity.goals.graph import GoalGraph
+    from bob.proactivity.ports import Planner
 
 logger = logging.getLogger(__name__)
 

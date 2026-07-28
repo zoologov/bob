@@ -28,8 +28,8 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from bob.domain.ports import Recalled
     from bob.memory.adapters.sqlite_memory_repo import SqliteMemoryRepo
+    from bob.memory.ports import Recalled
 
 # FTS5 tokens: keep word characters, drop operator punctuation entirely.
 _TOKEN_RE = re.compile(r"\w+", re.UNICODE)

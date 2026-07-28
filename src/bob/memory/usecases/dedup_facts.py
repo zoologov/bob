@@ -42,7 +42,8 @@ from typing import TYPE_CHECKING, Protocol
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
-    from bob.domain.ports import Clock, Embedder
+    from bob.kernel.ports import Clock
+    from bob.memory.ports import Embedder
 
 logger = logging.getLogger(__name__)
 

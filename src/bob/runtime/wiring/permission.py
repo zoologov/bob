@@ -29,10 +29,11 @@ from bob.social.usecases.permission_flow import PermissionFlow
 
 if TYPE_CHECKING:
     from bob.application.router import LLMRouter
+    from bob.capabilities.ports import ToolCallingProvider
     from bob.capabilities.usecases import CapabilityRegistry
-    from bob.domain.ports import Clock, ToolCallingProvider
     from bob.infrastructure.persistence import SqliteConnection
     from bob.infrastructure.telegram.gateway import BotLike
+    from bob.kernel.ports import Clock
     from bob.social.usecases import Authorizer
 
 

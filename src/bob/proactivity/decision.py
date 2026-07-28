@@ -27,7 +27,7 @@ from bob.proactivity.urge import UrgeModel
 if TYPE_CHECKING:
     from random import Random
 
-    from bob.domain.ports import Clock
+    from bob.kernel.ports import Clock
     from bob.personality.mood import Mood
     from bob.proactivity.governance import Governance, ProactiveHistory
 

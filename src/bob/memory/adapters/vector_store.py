@@ -37,7 +37,7 @@ if TYPE_CHECKING:
 
     import aiosqlite
 
-    from bob.domain.ports import Embedder
+    from bob.memory.ports import Embedder
 
 logger = logging.getLogger(__name__)
 

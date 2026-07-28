@@ -142,30 +142,25 @@ if TYPE_CHECKING:
     from bob.application.reliability import Sleep
     from bob.application.router.llm_router import LLMRouter
     from bob.application.runtime.events import MessageReceived
+    from bob.capabilities.ports import (
+        DiagramRenderer,
+        DiagramSink,
+        ToolCallingProvider,
+        WebSearchProvider,
+    )
     from bob.capabilities.usecases.progress_announcer import (
         InterimLineGenerator,
         ProgressAnnouncer,
     )
+    from bob.conversation.ports import CloserLog, ConversationFloorStore, ZoneClassifier
     from bob.conversation.usecases.decide_response import DecideResponse
     from bob.conversation.volatility_judgment import VolatilityJudge
-    from bob.domain.ports import (
-        Clock,
-        CloserLog,
-        ConversationFloorStore,
-        DiagramRenderer,
-        DiagramSink,
-        MemoryRecall,
-        MessageReactor,
-        NotableReactionStore,
-        Recalled,
-        ReflectionReader,
-        ToolCallingProvider,
-        WebSearchProvider,
-        ZoneClassifier,
-    )
+    from bob.kernel.ports import Clock
+    from bob.memory.ports import MemoryRecall, Recalled
     from bob.memory.usecases.extract_facts import ExtractFacts
     from bob.personality.fascination import Fascination
     from bob.personality.mood import Mood
+    from bob.personality.ports import MessageReactor, NotableReactionStore, ReflectionReader
     from bob.personality.soul import SOUL
     from bob.personality.usecases.update_mood_from_text import UpdateMoodFromText
     from bob.proactivity.self_improvement import ImprovementRule

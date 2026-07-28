@@ -40,7 +40,8 @@ from bob.social.sulk import observe_relationship, recover
 if TYPE_CHECKING:
     from datetime import datetime
 
-    from bob.domain.ports import Clock, SulkStore
+    from bob.kernel.ports import Clock
+    from bob.social.ports import SulkStore
     from bob.social.sulk import SulkConfig, SulkState
 
 logger = logging.getLogger(__name__)

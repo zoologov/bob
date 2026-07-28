@@ -32,7 +32,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from collections.abc import Iterable, Sequence
 
-    from bob.domain.ports import Recalled
+    from bob.memory.ports import Recalled
 
 # Дефолтный порог сходства для near-repeat ответа Боба (BOB-026 .1). Консервативно
 # высокий: ловит дословные и near-дословные повторы (мелкие правки одной фразы), но

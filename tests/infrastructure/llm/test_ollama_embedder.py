@@ -21,8 +21,8 @@ from collections.abc import Awaitable, Callable
 import pytest
 from aiohttp import web
 
-from bob.domain.ports import Embedder
 from bob.memory.adapters.ollama_embedder import OllamaEmbedder
+from bob.memory.ports import Embedder
 
 _BATCH_PATH = "/api/embed"
 _LEGACY_PATH = "/api/embeddings"

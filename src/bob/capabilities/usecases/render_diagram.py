@@ -40,7 +40,7 @@ from bob.capabilities.ports import DiagramRenderError, DiagramResult
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
-    from bob.domain.ports import Capability, DiagramRenderer, DiagramSink, Permission
+    from bob.capabilities.ports import Capability, DiagramRenderer, DiagramSink, Permission
 
 logger = logging.getLogger(__name__)
 

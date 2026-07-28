@@ -35,8 +35,8 @@ if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Mapping, Sequence
     from pathlib import Path
 
-    from bob.domain.ports import LLMProvider
     from bob.infrastructure.telegram.gateway import BotLike, UpdateLike
+    from bob.kernel.ports import LLMProvider
 
 # A stable fragment of REACTION_JUDGE_SYSTEM_PROMPT — present only on the reaction
 # judgment call, so the fake provider can tell it from any other tier-0 request.

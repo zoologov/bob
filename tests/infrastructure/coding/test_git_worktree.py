@@ -22,7 +22,7 @@ from pathlib import Path
 import pytest
 
 from bob.coding.adapters.git_worktree import GitWorktree, WorktreeError
-from bob.domain.ports import Worktree
+from bob.coding.ports import Worktree
 
 
 class _FakeCommand:

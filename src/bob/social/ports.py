@@ -26,7 +26,7 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 from bob.social.permission.privilege import PrivilegeJudge
 
 if TYPE_CHECKING:
-    from bob.domain.ports.kernel import JsonValue
+    from bob.kernel.ports import JsonValue
     from bob.social.first_impression import FirstImpression
     from bob.social.relationship import Relationship
     from bob.social.sulk import SulkState

@@ -28,7 +28,8 @@ from bob.capabilities.adapters.web_search_qwen import QwenWebSearchProvider
 from bob.infrastructure.llm.openai_compat import OpenAICompatProvider
 
 if TYPE_CHECKING:
-    from bob.domain.ports import LLMProvider, WebSearchProvider
+    from bob.capabilities.ports import WebSearchProvider
+    from bob.kernel.ports import LLMProvider
 
 _TIER_LOCAL = 0
 _TIER_API = 1

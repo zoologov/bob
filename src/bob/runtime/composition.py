@@ -180,16 +180,10 @@ if TYPE_CHECKING:
 
     from bob.capabilities.usecases import CapabilityRegistry
     from bob.coding.usecases.coding_assistant import CodingAssistant
-    from bob.domain.ports import (
-        Clock,
-        DomainEvent,
-        Embedder,
-        EventHandler,
-        LLMProvider,
-        Reranker,
-    )
     from bob.infrastructure.telegram.gateway import BotLike
     from bob.infrastructure.telegram.multibot import MultiBotGateway
+    from bob.kernel.ports import Clock, DomainEvent, EventHandler, LLMProvider
+    from bob.memory.ports import Embedder, Reranker
     from bob.proactivity.usecases import ProactivityEngine
     from bob.proactivity.usecases.pursue_goals import PursueGoalsTick
     from bob.social.usecases import Authorizer

@@ -28,7 +28,7 @@ from typing import TYPE_CHECKING
 
 from bob.app import build_application
 from bob.application.runtime.events import MessageReceived
-from bob.domain.ports import ToolCall, ToolCallResult
+from bob.capabilities.ports import ToolCall, ToolCallResult
 from bob.memory.adapters import HybridMemoryRecall
 from bob.memory.entities import SemanticFact
 from bob.social.adapters.soul_store import SoulStore
@@ -38,8 +38,10 @@ if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Sequence
     from pathlib import Path
 
-    from bob.domain.ports import LLMProvider, Recalled, ToolDefinition
+    from bob.capabilities.ports import ToolDefinition
     from bob.infrastructure.telegram.gateway import UpdateLike
+    from bob.kernel.ports import LLMProvider
+    from bob.memory.ports import Recalled
 
 _OWNER = 1
 _CHAT = 100

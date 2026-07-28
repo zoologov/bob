@@ -30,8 +30,8 @@ if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Mapping, Sequence
     from pathlib import Path
 
-    from bob.domain.ports import LLMProvider
     from bob.infrastructure.telegram.gateway import UpdateLike
+    from bob.kernel.ports import LLMProvider
 
 _TIER1_REPLY = "Hey, good to hear from you!"
 _RECALL_FACT = "user adores deep-space probes"

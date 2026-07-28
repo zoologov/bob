@@ -43,7 +43,8 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from bob.application.router.llm_router import LLMRouter
-    from bob.domain.ports import Clock, JsonValue, SoulStore
+    from bob.kernel.ports import Clock, JsonValue
+    from bob.social.ports import SoulStore
 
 logger = logging.getLogger(__name__)
 

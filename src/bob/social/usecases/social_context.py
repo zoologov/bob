@@ -43,7 +43,8 @@ if TYPE_CHECKING:
         RelationshipReader,
         SulkReader,
     )
-    from bob.domain.ports import Clock, ZoneClassifier
+    from bob.conversation.ports import ZoneClassifier
+    from bob.kernel.ports import Clock
     from bob.personality.negotiation import Negotiation, NegotiationZone, Stance
     from bob.personality.soul import SOUL
     from bob.personality.taste import Verdict

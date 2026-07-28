@@ -38,7 +38,7 @@ from bob.memory.entities import SemanticFact
 
 if TYPE_CHECKING:
     from bob.application.router.llm_router import LLMRouter
-    from bob.domain.ports import Clock
+    from bob.kernel.ports import Clock
 
 logger = logging.getLogger(__name__)
 

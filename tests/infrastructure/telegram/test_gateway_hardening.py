@@ -34,7 +34,7 @@ if TYPE_CHECKING:
 
     from aiogram.types import InputRichMessage
 
-    from bob.domain import ports
+    from bob.kernel import ports
 
 _OWNER = 1
 _CHAT = 100

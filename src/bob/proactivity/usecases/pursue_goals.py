@@ -62,7 +62,7 @@ if TYPE_CHECKING:
     from random import Random
 
     from bob.application.usecases.handle_message import PersonalityState, ReplyGateway
-    from bob.domain.ports import Clock
+    from bob.kernel.ports import Clock
     from bob.proactivity.goals.entities import Goal, Task
     from bob.proactivity.goals.graph import GoalGraph
     from bob.proactivity.governance import Governance

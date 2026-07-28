@@ -31,7 +31,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
-    from bob.domain.ports import AllowlistStore
+    from bob.social.ports import AllowlistStore
 
 
 class Authorizer:

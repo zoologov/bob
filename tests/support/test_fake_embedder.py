@@ -10,7 +10,7 @@ import math
 
 import pytest
 
-from bob.domain.ports import Embedder
+from bob.memory.ports import Embedder
 from tests.support.fake_embedder import FakeEmbedder
 
 

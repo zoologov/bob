@@ -38,7 +38,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
-    from bob.domain.ports import LLMMessage, LLMProvider
+    from bob.kernel.ports import LLMMessage, LLMProvider
 
 logger = logging.getLogger(__name__)
 

@@ -25,7 +25,8 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
-    from bob.domain.ports import Capability, MemoryRecall, Permission
+    from bob.capabilities.ports import Capability, Permission
+    from bob.memory.ports import MemoryRecall
 
 # Default number of memories to retrieve per recall — enough to ground an answer
 # without flooding the model's context with marginal hits.

@@ -34,9 +34,10 @@ from bob.capabilities.usecases.registry import UnknownCapabilityError
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
+    from bob.capabilities.ports import ToolCall, ToolCallingProvider
     from bob.capabilities.usecases.progress_announcer import ProgressAnnouncer
     from bob.capabilities.usecases.registry import CapabilityRegistry
-    from bob.domain.ports import LLMMessage, ToolCall, ToolCallingProvider
+    from bob.kernel.ports import LLMMessage
 
 logger = logging.getLogger(__name__)
 

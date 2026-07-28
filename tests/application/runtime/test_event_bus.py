@@ -11,7 +11,7 @@ from dataclasses import dataclass
 import pytest
 
 from bob.application.runtime.event_bus import AsyncEventBus
-from bob.domain import ports
+from bob.kernel import ports
 
 
 @dataclass(frozen=True)

@@ -21,11 +21,11 @@ from collections.abc import Mapping
 import pytest
 
 from bob.capabilities.adapters.diagrams.mmdc_renderer import DiagramRenderError
+from bob.capabilities.ports import DiagramResult
 from bob.capabilities.usecases.render_diagram import (
     CollectingDiagramSink,
     make_render_diagram_capability,
 )
-from bob.domain.ports import DiagramResult
 
 _PNG = b"\x89PNG\r\n\x1a\nfake-bytes"
 

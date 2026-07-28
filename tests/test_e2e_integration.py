@@ -30,7 +30,7 @@ import aiohttp
 
 from bob.app import build_application
 from bob.application.runtime.events import MessageReceived
-from bob.domain.ports import ToolCall, ToolCallResult
+from bob.capabilities.ports import ToolCall, ToolCallResult
 from bob.infrastructure.telegram.guppi import GUPPI_REJECT_TEXT
 from bob.infrastructure.telegram.multibot import BotIdentity
 from bob.memory.entities import SemanticFact
@@ -41,8 +41,9 @@ if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Callable, Sequence
     from pathlib import Path
 
-    from bob.domain.ports import LLMProvider, ToolDefinition
+    from bob.capabilities.ports import ToolDefinition
     from bob.infrastructure.telegram.gateway import UpdateLike
+    from bob.kernel.ports import LLMProvider
 
 _OWNER = 1
 _CHAT = 100

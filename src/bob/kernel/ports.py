@@ -3,16 +3,18 @@
 # See the LICENSE file in the project root for full license information.
 
 # beadloom:domain=bob
+# beadloom:feature=kernel
+# beadloom:layer=domain
 
-"""Kernel ports — infra-neutral runtime seams the whole domain rests on.
+"""Kernel ports — infra-neutral runtime seams the whole system rests on.
 
 Time, the event bus, plain LLM completion, and the shared value objects
 (:data:`LLMMessage`, :data:`JsonValue`) carried across every other port bucket.
 These are *interfaces only*: structural :class:`typing.Protocol` definitions with
-no implementations. Kernel is deliberately dependency-free of the other buckets —
-``capabilities`` and ``social`` import *from here* (never the reverse). It lives in
-``domain`` for now (infra-neutral, legal in the hexagon); Phase 3 relocates it to a
-``runtime/`` package.
+no implementations. The kernel is deliberately dependency-free of the modules —
+every module (``capabilities`` / ``social`` / …) imports *from here*, never the
+reverse. It lives in ``bob.kernel`` as a shared kernel: infra-neutral cross-module
+contracts, legal for any module to import, with no cycles.
 """
 
 from __future__ import annotations

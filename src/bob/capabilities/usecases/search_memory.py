@@ -30,7 +30,8 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
-    from bob.domain.ports import Capability, MemoryRecall, Permission
+    from bob.capabilities.ports import Capability, Permission
+    from bob.memory.ports import MemoryRecall
 
 # Default number of memories to pull back per agentic search — a touch wider than
 # auto-recall, since an explicit search is meant to dig, without flooding context.

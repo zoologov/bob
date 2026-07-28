@@ -33,6 +33,7 @@ from bob.application.usecases.handle_message import (
     _recalled_without_copied_exemplars,
 )
 from bob.capabilities.adapters.diagrams.mmdc_renderer import DiagramRenderError
+from bob.capabilities.ports import ToolCall, ToolCallResult, WebSearchResult
 from bob.capabilities.usecases.registry import CapabilityRegistry
 from bob.capabilities.usecases.render_diagram import (
     CollectingDiagramSink,
@@ -71,7 +72,6 @@ from bob.conversation.volatility_judgment import (
     VolatilityContext,
     VolatilityVerdict,
 )
-from bob.domain.ports import ToolCall, ToolCallResult, WebSearchResult
 from bob.infrastructure.telegram.gateway import TelegramGateway
 from bob.memory.usecases.extract_facts import ExtractFacts
 from bob.personality.expression import ExpressionFreqs
@@ -106,18 +106,12 @@ if TYPE_CHECKING:
     from aiogram.types import BufferedInputFile
 
     from bob.application.usecases.precompose_gate import PermissionFlowLike
+    from bob.capabilities.ports import DiagramSink, Permission, ToolCallingProvider, ToolDefinition
     from bob.capabilities.usecases.diagram_sender import DiagramSendMode
-    from bob.domain.ports import (
-        DiagramSink,
-        LLMMessage,
-        LLMProvider,
-        Permission,
-        Recalled,
-        ToolCallingProvider,
-        ToolDefinition,
-        ZoneClassifier,
-    )
+    from bob.conversation.ports import ZoneClassifier
     from bob.infrastructure.telegram.gateway import UpdateLike
+    from bob.kernel.ports import LLMMessage, LLMProvider
+    from bob.memory.ports import Recalled
 
 _PHANTOM_PREF = "phantom-coffee-craving"  # shareable taste material (shapes the reply)
 _RECALL_MEMORY = "the user said earlier they enjoy pour-over"  # shareable recalled memory

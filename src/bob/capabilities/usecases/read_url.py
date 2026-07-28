@@ -50,7 +50,7 @@ if TYPE_CHECKING:
     from collections.abc import Mapping
 
     from bob.application.reliability import Sleep
-    from bob.domain.ports import Capability, Permission, UrlReader, WebPage
+    from bob.capabilities.ports import Capability, Permission, UrlReader, WebPage
 
 logger = logging.getLogger(__name__)
 

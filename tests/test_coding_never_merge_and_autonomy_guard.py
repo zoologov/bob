@@ -27,8 +27,8 @@ import pytest
 import bob.coding.adapters.gh_pr as gh_mod
 import bob.coding.usecases.coding_assistant as ca_mod
 from bob.app import _build_safe_capabilities
+from bob.coding import ports
 from bob.coding.adapters.gh_pr import GhPullRequestOpener
-from bob.domain import ports
 from bob.infrastructure.config.loader import DEFAULT_CONFIG
 
 # Source files that make up the BOB-039 coding feature.

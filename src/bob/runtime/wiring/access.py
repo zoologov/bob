@@ -22,8 +22,9 @@ from bob.social.usecases import Authorizer
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
-    from bob.domain.ports import LLMProvider, ToolCallingProvider
+    from bob.capabilities.ports import ToolCallingProvider
     from bob.infrastructure.persistence import SqliteConnection
+    from bob.kernel.ports import LLMProvider
 
 
 def _build_authorizer(
