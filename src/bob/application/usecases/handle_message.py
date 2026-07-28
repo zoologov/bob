@@ -62,10 +62,7 @@ from bob.capabilities.usecases.diagram_sender import (
 from bob.capabilities.usecases.progress_announcer import GatewayProgressAnnouncer
 from bob.capabilities.usecases.registry import CapabilityRegistry
 from bob.capabilities.usecases.tool_loop import ToolLoop
-from bob.conversation.addressivity import (
-    AddressivityThresholds,
-    ResponseOutcome,
-)
+from bob.conversation.addressivity import AddressivityThresholds
 from bob.conversation.brevity import (
     AnswerDemand,
     BrevityThresholds,
@@ -86,21 +83,14 @@ from bob.conversation.engagement import (
     FatigueRates,
 )
 from bob.conversation.reply_context import _assemble_shareable_context
-from bob.conversation.response_choice import ResponseIntent
 from bob.conversation.thread import (
     _author_key,
     _history_for_author,  # noqa: F401  # re-exported for tests (used by RecallAssembler)
     _last_seen_at,  # noqa: F401  # re-exported for tests (used by RecallAssembler)
-    _reaction_marker,
     _recent_bob_replies,  # noqa: F401  # re-exported for tests (used by AntiRepeatGuard)
-    _render_thread,
     _user_turns,
 )
-from bob.conversation.usecases.addressivity_perceiver import (
-    AddressivityPerceiver,
-    _AddressivityDecision,  # re-exported (moved to AddressivityPerceiver)
-    _AddressivitySignals,  # re-exported (moved to AddressivityPerceiver)
-)
+from bob.conversation.usecases.addressivity_perceiver import AddressivityPerceiver
 from bob.conversation.usecases.anti_repeat_guard import (
     _CLOSER_TIC_NUDGE,  # noqa: F401  # re-exported for tests (moved to AntiRepeatGuard)
     AntiRepeatGuard,
@@ -108,6 +98,7 @@ from bob.conversation.usecases.anti_repeat_guard import (
 from bob.conversation.usecases.engagement_model import EngagementModel
 from bob.conversation.usecases.floor_manager import FloorManager
 from bob.conversation.usecases.recall_assembler import RecallAssembler
+from bob.conversation.usecases.turn_gate import TurnGate
 from bob.conversation.usecases.verify_step import (
     _VERIFY_GROUNDED_NOTE,  # noqa: F401  # re-exported for tests (moved to VerifyStep)
     _VERIFY_HEDGE_NOTE,  # noqa: F401  # re-exported for tests (moved to VerifyStep)
@@ -118,17 +109,14 @@ from bob.memory.entities import EpisodicEvent
 from bob.personality.expression import (
     EngagementLevel,
     ExpressionFreqs,
-    ExpressionMode,
     ExpressionPlan,
     Verbosity,
     _shift_verbosity,
 )
 from bob.personality.negotiation import (
     Negotiation,
-    NegotiationZone,
     Stance,
 )
-from bob.personality.reaction import reaction_emoji_for
 from bob.personality.soul import _mood_state
 from bob.personality.usecases.grounded_addons import GroundedAddons
 from bob.personality.usecases.mood_perceiver import MoodPerceiver
@@ -139,7 +127,6 @@ from bob.personality.voice import (
 )
 from bob.proactivity.self_improvement import (
     RuleModulators,
-    _clamp_unit,
     _validated_magnitude,
     build_modulators,
 )
@@ -159,7 +146,6 @@ if TYPE_CHECKING:
         InterimLineGenerator,
         ProgressAnnouncer,
     )
-    from bob.conversation.response_choice import ResponseChoice
     from bob.conversation.usecases.decide_response import DecideResponse
     from bob.conversation.volatility_judgment import VolatilityJudge
     from bob.domain.ports import (
@@ -181,7 +167,6 @@ if TYPE_CHECKING:
     from bob.personality.fascination import Fascination
     from bob.personality.mood import Mood
     from bob.personality.soul import SOUL
-    from bob.personality.taste import Verdict
     from bob.personality.usecases.update_mood_from_text import UpdateMoodFromText
     from bob.proactivity.self_improvement import ImprovementRule
     from bob.social.interlocutor import Interlocutor
@@ -524,34 +509,9 @@ class EngagementState:
     last_turn_at: datetime | None = None
 
 
-@dataclass(frozen=True, slots=True)
-class _JudgedTurn:
-    """The semantic judge's outcome for one turn + the pieces the flow reuses (BOB-049).
-
-    ``choice`` is the judge's :class:`ResponseChoice` (REPLY / REACT / IGNORE +
-    emoji); ``floor`` carries the RAW per-message addressivity the conversation floor
-    advances on after the turn; ``history`` is the CURRENT person's per-person thread
-    already replayed for the judgment, threaded into the REPLY compose path so it is
-    not re-read.
-    """
-
-    choice: ResponseChoice
-    floor: _AddressivityDecision
-    history: Sequence[Mapping[str, object]]
-
-
-@dataclass(frozen=True, slots=True)
-class _ReplyGate:
-    """A turn that PASSED the response gate as a REPLY (BOB-049): compose+send next.
-
-    ``decision`` is the floor signal the turn advances on after Bob replies;
-    ``history`` is the CURRENT person's per-person thread already replayed for the
-    judgment (the judge REPLY path), threaded into compose so it is not re-read —
-    ``None`` on the legacy path, where compose replays it itself.
-    """
-
-    decision: _AddressivityDecision
-    history: Sequence[Mapping[str, object]] | None
+# The per-turn response-gate value objects (``_JudgedTurn`` / ``_ReplyGate``) + the
+# ``_SILENT_MARKER`` / ``_OUTCOME_FOR_INTENT`` now live with :class:`TurnGate`
+# (conversation); the gate returns a ``_ReplyGate`` the happy-path below composes on.
 
 
 class HandleMessage:
@@ -1123,6 +1083,24 @@ class HandleMessage:
             compose=self._voice.compose,
         )
 
+        # ── Wave-4 orchestration collaborator (BOB-062.6b): the response gate — decide
+        # WHETHER/HOW Bob takes this turn (reply / react / silent). A THIN coordinator over
+        # the already-built wave-1/2 collaborators (AddressivityPerceiver + FloorManager +
+        # EssentialRunner + the injected semantic judge), plus two callbacks back into this
+        # use-case (persist the user's turn + stamp owner activity) so the conversation gate
+        # stores no persistence policy. 🔴 The floor advance lives inside the gate for every
+        # NON-reply branch; the happy-path reply advances it in `handle()` (bob_replied=True).
+        self._turn_gate = TurnGate(
+            decide_response=self._decide_response,
+            addressivity=self._addressivity,
+            floor=self._floor,
+            essential=self._essential,
+            assembler=self._assembler,
+            reactor=self._reactor,
+            persist=self._persist,
+            record_owner_activity=self._record_owner_activity,
+        )
+
     async def _plain_reply(self, system_prompt: str, text: str, context: str) -> str:
         """Generate a reply on the plain reply tier (BOB-006), no capability tool-loop.
 
@@ -1169,27 +1147,6 @@ class HandleMessage:
             gateway=self._gateway,
             line_generator=self._interim_line_generator,
             sender_name=sender_name,
-        )
-
-    async def _advance_floor_after_turn(
-        self,
-        event: MessageReceived,
-        decision: _AddressivityDecision,
-        *,
-        bob_replied: bool,
-    ) -> None:
-        """Advance the conversation floor after a turn (BOB-025) via :class:`FloorManager`.
-
-        A thin translation from this turn's application event + decision to the
-        collaborator's primitive call — kept as one DRY point because the advance fires on
-        ALL branches (SILENT / REACT / react-only / happy-path).
-        """
-        await self._floor.advance_after_turn(
-            chat_id=event.chat_id,
-            sender_id=event.sender_id,
-            per_message=decision.per_message,
-            directed_to_id=decision.directed_to_id,
-            bob_replied=bob_replied,
         )
 
     async def _load_modulators(self) -> RuleModulators:
@@ -1288,7 +1245,7 @@ class HandleMessage:
         # — NOT a guessed default. A genuine REACT/IGNORE is a SUCCESS (not a failure): it is
         # handled inside the gate and returns ``None`` with no notice.
         try:
-            gate = await self._gate_turn(
+            gate = await self._turn_gate.gate(
                 event, soul, interlocutor, plan, interest, modulators
             )
         except _EssentialStepError as exc:
@@ -1463,7 +1420,9 @@ class HandleMessage:
         # the next ambient message in the thread is read as continuity. Pass the RAW
         # per-message addressivity — the floor reflects the real signal, while
         # ``bob_replied`` separately records that Bob held the turn.
-        await self._advance_floor_after_turn(event, decision, bob_replied=True)
+        await self._turn_gate.advance_floor_after_turn(
+            event, decision, bob_replied=True
+        )
         # Run the engagement feedback loops (BOB-014 .2a) BEFORE persisting the mood,
         # so the mood snapshot reflects this turn: an interesting, well-engaged exchange
         # lifts Bob's mood a touch; an aimless turn tires him. The fatigue holder's
@@ -1504,20 +1463,6 @@ class HandleMessage:
         # — run() never raises, so a flaky local model can never break a turn that already
         # replied.
         await self._extract_facts.run(user_message=event.text, reply=reply)
-
-    async def _react_only(self, event: MessageReceived, soul: SOUL) -> None:
-        """Set a native mood emoji reaction on the inbound (BOB-018 react-only).
-
-        Picks a standard-reaction emoji from Bob's current mood and asks the wired
-        reactor to set it on the user's message. The reaction is best-effort (the
-        adapter degrades to a brief ack and never raises), so this never breaks the
-        turn. Called only when a reactor is wired and the plan picked REACT_ONLY.
-        """
-        assert self._reactor is not None  # guarded by the caller
-        emoji = reaction_emoji_for(soul.mood)
-        await self._reactor.react(
-            chat_id=event.chat_id, message_id=event.message_id, emoji=emoji
-        )
 
     async def _record_owner_activity(self) -> None:
         """Notify proactivity the owner just wrote (best-effort, optional seam).
@@ -1581,16 +1526,6 @@ class HandleMessage:
         """Delegate to :meth:`SocialContext.observe_sulk` (wave 2)."""
         await self._social.observe_sulk(interlocutor, soul, text)
 
-    def _decide_stance(
-        self, soul: SOUL, text: str, relationship: Relationship | None
-    ) -> tuple[Stance, Verdict, NegotiationZone]:
-        """Delegate to :meth:`SocialContext.decide_stance` (wave 2; shared with compose)."""
-        return self._social.decide_stance(soul, text, relationship)
-
-    def _relationship_tone(self, relationship: Relationship | None) -> str:
-        """Delegate to :meth:`SocialContext.relationship_tone` (wave 2)."""
-        return self._social.relationship_tone(relationship)
-
     async def _topic_interest(self, soul: SOUL, text: str) -> float:
         """Delegate to :meth:`EngagementModel.topic_interest` (wave 2)."""
         return await self._engagement.topic_interest(soul, text)
@@ -1636,173 +1571,11 @@ class HandleMessage:
         """Delegate to :meth:`EngagementModel.guard_reply_length` (wave 2)."""
         return self._engagement.guard_reply_length(reply, demand)
 
-    async def _decide_addressivity(
-        self, event: MessageReceived, interest: float
-    ) -> _AddressivityDecision:
-        """Delegate to :meth:`AddressivityPerceiver.decide` (wave 2)."""
-        return await self._addressivity.decide(event, interest)
-
-    async def _addressivity_signals(
-        self, event: MessageReceived
-    ) -> _AddressivitySignals:
-        """Delegate to :meth:`AddressivityPerceiver.signals` (wave 2)."""
-        return await self._addressivity.signals(event)
-
-    async def _gate_turn(
-        self,
-        event: MessageReceived,
-        soul: SOUL,
-        interlocutor: Interlocutor | None,
-        plan: ExpressionPlan,
-        interest: float,
-        modulators: RuleModulators,
-    ) -> _ReplyGate | None:
-        """Decide whether/how Bob takes this turn (BOB-049 judge, or legacy fallback).
-
-        With the semantic judge wired (the LIVE path) Bob UNDERSTANDS the message and
-        chooses REPLY / REACT / IGNORE — the structural signals are INPUTS he weighs, not
-        deciders, and the decision holds for ANY interlocutor (authz orthogonal). A
-        non-REPLY (REACT / IGNORE) is fully handled here — it persists the user's turn (so
-        a follow-up keeps the per-person thread, BOB-045) and advances the floor — and
-        returns ``None`` so the caller stops. A REPLY returns a :class:`_ReplyGate` so the
-        caller composes+sends (guest restrictions intact). Unwired (the default) OR no
-        sender perceived → the legacy addressivity ladder (BOB-023/025) + the BOB-018
-        REACT_ONLY form gate run exactly as before (their silent/react early-outs return
-        ``None`` WITHOUT persisting, as today).
-        """
-        if self._decide_response is not None and interlocutor is not None:
-            judged = await self._judge_turn(event, soul, interlocutor)
-            if judged.choice.intent is not ResponseIntent.REPLY:
-                await self._act_non_reply(event, soul, judged.choice, judged.floor)
-                return None
-            return _ReplyGate(decision=judged.floor, history=judged.history)
-        # Legacy addressivity path (BOB-023/025). ADDRESSIVITY self-improvement tilt
-        # (BOB-028 .3): an APPROVED ADDRESSIVITY_BIAS rule softly RAISES the effective
-        # interest the policy reads — a bounded nudge (clamped to [0, 1]) on TOP of the
-        # decision, never a base override and never able to silence Bob. No rule → unchanged.
-        addressivity_interest = _clamp_unit(interest + modulators.addressivity_bias)
-        decision = await self._decide_addressivity(event, addressivity_interest)
-        if decision.outcome is ResponseOutcome.SILENT:
-            await self._advance_floor_after_turn(event, decision, bob_replied=False)
-            return None
-        if decision.outcome is ResponseOutcome.REACT and self._reactor is not None:
-            await self._react_only(event, soul)
-            await self._record_owner_activity()
-            await self._advance_floor_after_turn(event, decision, bob_replied=False)
-            return None
-        # React-only (BOB-018): when a reactor is wired and the plan picks REACT_ONLY, Bob
-        # acknowledges with a native mood emoji INSTEAD of composing a reply — no LLM call,
-        # no rich final, no episode (there is no reply text). It is still real engagement,
-        # so the owner-activity marker fires. Unwired, the plan falls back to a full reply.
-        if plan.mode is ExpressionMode.REACT_ONLY and self._reactor is not None:
-            await self._react_only(event, soul)
-            await self._record_owner_activity()
-            await self._advance_floor_after_turn(event, decision, bob_replied=False)
-            return None
-        return _ReplyGate(decision=decision, history=None)
-
-    async def _judge_turn(
-        self, event: MessageReceived, soul: SOUL, interlocutor: Interlocutor
-    ) -> _JudgedTurn:
-        """Ask the semantic judge how Bob takes this turn (BOB-049, the LIVE path).
-
-        Assembles the turn's context — the message, the sender as social context, the
-        SHARED recent thread of the whole topic (BOB-058 .1: all participants, author-
-        labeled, so Bob holds the multi-party thread), the structural HINTS and the mood
-        tone — and delegates
-        the single semantic decision to the injected :class:`DecideResponse`. The judge
-        raises on failure (the fault-tolerant path is BOB-049 .3); here we assume success.
-        Returns the choice plus the floor signal (RAW per-message addressivity) and the
-        already-replayed history so a REPLY does not re-read it.
-        """
-        assert self._decide_response is not None  # guarded by the caller
-        decide_response = self._decide_response
-        signals = await self._addressivity_signals(event)
-        history = await self._replay_recent_thread(interlocutor)
-        # ESSENTIAL step (BOB-049 .3): the semantic judgment is retry-wrapped — a flaky
-        # judge call retries with backoff, then (if still failing) raises
-        # _EssentialStepError so the turn falls back to the honest GUPPI outage notice
-        # rather than a guessed default. A SUCCESSFUL REACT/IGNORE is a genuine choice,
-        # not a failure (no retry, no notice).
-        choice = await self._essential.run(
-            lambda: decide_response.decide(
-                text=event.text,
-                interlocutor=interlocutor,
-                recent_thread=_render_thread(history),
-                mentions_bob=event.mentions_bob,
-                reply_to_bob=signals.reply_to_bob,
-                addressivity=signals.per_message,
-                others_present=signals.others_present,
-                floor_engaged=signals.floor_engaged,
-                mood_tone=soul.mood.tone(),
-            ),
-            step="response judgment",
-        )
-        floor = _AddressivityDecision(
-            outcome=_OUTCOME_FOR_INTENT[choice.intent],
-            per_message=signals.per_message,
-            directed_to_id=signals.directed_to_id,
-        )
-        return _JudgedTurn(choice=choice, floor=floor, history=history)
-
-    async def _act_non_reply(
-        self,
-        event: MessageReceived,
-        soul: SOUL,
-        choice: ResponseChoice,
-        decision: _AddressivityDecision,
-    ) -> None:
-        """Carry out a REACT or IGNORE turn: persist the user's turn + advance (BOB-049).
-
-        🔴 The user's turn is persisted in BOTH branches so a follow-up always has the
-        prior turn in the per-person thread (BOB-045): REACT records ``bob: (реакция:
-        <emoji>)`` and sets the meaning-chosen emoji on the inbound, IGNORE records
-        ``bob: (промолчал)``. Only the episodic conversation record is written — never an
-        owner FACT (no fact extraction here), so a guest turn never enters owner memory
-        (BOB-019). The floor advances with ``bob_replied=False`` and the owner-activity
-        marker fires (the owner did interact this turn). No reply text → no typing
-        indicator / router call.
-        """
-        if choice.intent is ResponseIntent.REACT:
-            emoji = choice.emoji or reaction_emoji_for(soul.mood)
-            await self._react_with_emoji(event, emoji)
-            await self._persist(event, _reaction_marker(emoji), soul)
-        else:
-            await self._persist(event, _SILENT_MARKER, soul)
-        await self._advance_floor_after_turn(event, decision, bob_replied=False)
-        await self._record_owner_activity()
-
-    async def _react_with_emoji(self, event: MessageReceived, emoji: str) -> None:
-        """Set the meaning-chosen emoji reaction on the inbound, best-effort (BOB-049).
-
-        The judge picked the emoji BY MEANING (replacing the BOB-018 mood→emoji table as
-        the source). When a reactor is wired it is set on the user's message; unwired the
-        decision still stands (the turn persists as a reaction) but no native reaction is
-        sent — a clean no-op, so the path stays backward-compatible.
-        """
-        if self._reactor is None:
-            return
-        await self._reactor.react(
-            chat_id=event.chat_id, message_id=event.message_id, emoji=emoji
-        )
-
     async def _replay_recent_thread(
         self, interlocutor: Interlocutor | None
     ) -> Sequence[Mapping[str, object]]:
         """Delegate to :meth:`RecallAssembler.replay_recent_thread` (wave 2)."""
         return await self._assembler.replay_recent_thread(interlocutor)
-
-    def _absence_for(
-        self,
-        history: Sequence[Mapping[str, object]],
-        interlocutor: Interlocutor | None,
-    ) -> str | None:
-        """Delegate to :meth:`RecallAssembler.absence_for` (wave 2)."""
-        return self._assembler.absence_for(history, interlocutor)
-
-    async def _acknowledgment_for(self, interlocutor: Interlocutor | None) -> str:
-        """Delegate to :meth:`RecallAssembler.acknowledgment_for` (wave 2)."""
-        return await self._assembler.acknowledgment_for(interlocutor)
 
     def _plan_expression(self, event: MessageReceived, soul: SOUL) -> ExpressionPlan:
         """Delegate to :meth:`MoodPerceiver.plan_expression` (wave 2)."""
@@ -1847,22 +1620,9 @@ class HandleMessage:
         await self._repo.set_mood(_mood_state(soul), at=now)
 
 
-# Bob's persisted half of a non-reply turn (BOB-049), so a follow-up keeps the
-# per-person thread (BOB-045): IGNORE writes "(промолчал)", REACT "(реакция: <emoji>)".
-# Russian persona voice (project language); Cyrillic look-alikes are intentional.
-_SILENT_MARKER = "(промолчал)"
-
-# (The outage marker for a failed ESSENTIAL step now lives with :class:`EssentialRunner`.)
-
-
-# Map the judge's intent to the legacy outcome the conversation floor advances on
-# (BOB-049): the floor reads per_message + bob_replied, so this is the cosmetic
-# outcome label only — REPLY engages, REACT like-reacts, IGNORE stays silent.
-_OUTCOME_FOR_INTENT: dict[ResponseIntent, ResponseOutcome] = {
-    ResponseIntent.REPLY: ResponseOutcome.ENGAGE,
-    ResponseIntent.REACT: ResponseOutcome.REACT,
-    ResponseIntent.IGNORE: ResponseOutcome.SILENT,
-}
+# The non-reply persist marker (``_SILENT_MARKER``), the outage marker, and the judge
+# intent→floor-outcome map (``_OUTCOME_FOR_INTENT``) now live with the collaborators that
+# own them — :class:`TurnGate` (conversation) and :class:`EssentialRunner` (application).
 
 
 # BOB-032 .2: the recall-aware anti-repeat helpers were lifted to the domain
