@@ -48,11 +48,16 @@ module), сгенерированные `scripts/gen_boundary_rules.py`.
 ## 🔴 Мультиперсональность: floor и адресность за многолюдный тред
 
 Модуль ведёт ход в группе здорово: `addressivity` покрывает DIRECTED_TO_BOB / DIRECTED_TO_OTHER
-/ AMBIENT, а `conversation_floor` поднимает безметочную AMBIENT-реплику ЛЮБОГО участника до
-DIRECTED_TO_BOB, пока floor держит Боб, — owner и гость говорят с ним без метки в каждом
-сообщении, но Боб не встревает в чужой диалог (явный поворот к другому / распад снимают floor).
-После BOB-058 групповой тред — **общий**, а судьи хода читают его целиком: per-person атрибуция
-сосуществует с цельным тредом, а не рвёт диалог на изолированные «Боб ↔ каждый».
+/ AMBIENT, а `conversation_floor` поднимает безметочную AMBIENT-реплику до DIRECTED_TO_BOB, пока
+floor держит Боб. **Floor-по-говорящему (BOB-066 .1):** у живого floor=БОБ есть набор
+`participants` — id тех, чьи безметочные реплики Боб держит как обращённые к нему (кто реально в
+нити с Бобом). Так безметочная реплика УЧАСТНИКА нити продолжает диалог, а реплика ПОСТОРОННЕГО в
+многолюдном треде НЕ перехватывается Бобом ошибочно. Набор **аддитивен** и по умолчанию пуст
+(`()` = legacy): пустой набор поднимает AMBIENT от любого участника — ровно поведение BOB-025 до
+этого среза (1:1 owner↔Боб не меняется). Явный поворот к другому / распад снимают floor и
+сбрасывают набор. После BOB-058 групповой тред — **общий**, а судьи хода читают его целиком:
+per-person атрибуция сосуществует с цельным тредом, а не рвёт диалог на изолированные «Боб ↔
+каждый».
 
 ## Спецификация
 
@@ -63,7 +68,7 @@ src/bob/conversation/
   ports.py            # layer=domain          — conversation-порты (ConversationFloorStore/CloserLog/ZoneClassifier)
   __init__.py         # layer=domain          — фасад модуля
   addressivity.py     # layer=domain          — Addressivity + classify_addressivity/others_present + decide_response (if/else-лестница, BOB-023)
-  conversation_floor.py# layer=domain         — FloorHolder/ConversationFloor/FloorConfig, advance_floor, resolve_addressivity (BOB-025)
+  conversation_floor.py# layer=domain         — FloorHolder/ConversationFloor(+participants)/FloorConfig, advance_floor, resolve_addressivity, is_floor_participant (BOB-025/066 .1)
   brevity.py          # layer=domain          — AnswerDemand + BrevityThresholds + decide_verbosity → personality Verbosity, clamp_reply (BOB-024)
   engagement.py       # layer=domain          — decide_engagement → personality EngagementLevel + ConversationalFatigue (затухающий резервуар, BOB-014)
   zone_classifier.py  # layer=domain          — TasteZoneClassifier: дефолт ZoneClassifier (taste/логистика-эвристика)
@@ -105,10 +110,16 @@ gateway'ем (reply-to / @mention / текст) — без I/O и рандома
 `ResponseJudge`, BOB-049).
 
 `ConversationFloor` (`conversation_floor.py`) — трекер разговорной реплики: кто «у микрофона»
-(`FloorHolder` BOB/OTHER/IDLE), когда держателя последний раз подтвердили (`since`) и серия
-безметочных реплик без Боба (`idle_streak`). `advance_floor` — чистый переход floor по ходу;
-`resolve_addressivity` поднимает AMBIENT→DIRECTED_TO_BOB, пока floor=БОБ жив; `FloorConfig`
-тюнит `timeout_seconds` + `reset_after_silent`. Модуль детерминирован по инъектированному `now`.
+(`FloorHolder` BOB/OTHER/IDLE), когда держателя последний раз подтвердили (`since`), серия
+безметочных реплик без Боба (`idle_streak`) и `participants` — набор id говорящих живой нити при
+`holder=BOB` (BOB-066 .1). `advance_floor` — чистый переход floor по ходу; на ветках БОБА (ответ
+Боба / прямое обращение) `sender_id` доливается в `participants` (dedup + потолок 8), поворот к
+другому и распад в IDLE — сбрасывают набор. `resolve_addressivity` поднимает
+AMBIENT→DIRECTED_TO_BOB, пока floor=БОБ жив **И говорящий признан участником нити** (набор
+пуст=legacy / `sender_id` неизвестен fail-safe / `sender_id` в наборе); посторонний при непустом
+наборе остаётся AMBIENT. `is_floor_participant` — тот же чистый предикат «эта реплика — часть
+живой нити Боба с этим говорящим» (на нём же стоит подъём). `FloorConfig` тюнит `timeout_seconds`
++ `reset_after_silent`. Модуль детерминирован по инъектированному `now`.
 
 ### Краткость и вовлечённость (возвращают personality-VO)
 
@@ -195,9 +206,14 @@ BOB-022 — точный матч после нормализации, конс�
 `HandleMessage.__init__` из уже инъектированных швов:
 - `AddressivityPerceiver` (`addressivity_perceiver.py`) — восприятие адресности + решение,
   берёт ли Боб ход (`decide` / `signals`, поверх `FloorManager` для BOB-025 continuity-raise).
+  `_AddressivitySignals` несёт `floor_holder` (кто держит floor, `None` на инертном шве) и
+  `floor_participant` (в нити ли этот говорящий) — хинты для рефлексивного read (BOB-066 .1).
 - `FloorManager` (`floor_manager.py`) — resolve + advance разговорной реплики
   (`resolve_effective` / `advance_after_turn`), на примитивных id (без inward-зависимости на
-  application-событие).
+  application-событие). `resolve_effective(chat_id, per_message, *, sender_id)` возвращает
+  `FloorResolution` (`effective` адресность, поднятая по floor + текущий `holder` + `participant`
+  — признан ли говорящий); инертный шов (стор не проведён / floor выключен) отдаёт
+  `effective == per_message`, `holder is None`, `participant is False` (поведение BOB-023).
 - `EngagementModel` (`engagement_model.py`) — аппетит + verbosity + after-turn feedback
   (`topic_interest` / `decide_engagement` / `decide_verbosity` / `apply_feedback` /
   `guard_reply_length`); возвращает personality-VO.
@@ -237,6 +253,12 @@ floor (UPSERT — floor продвигается каждый ход); `SqliteCl
 - **Floor продвигается и распадается корректно.** AMBIENT→DIRECTED_TO_BOB только пока floor=БОБ
   жив; явный поворот к другому / тайм-аут / серия безметочных без Боба снимают floor, возвращая
   осторожную ambient-логику BOB-023; floor — свойство ТРЕДА (chat_id + thread_id), не человека.
+- **Floor-по-говорящему аддитивен и legacy-безопасен.** Пустой набор `participants` (`()`,
+  дефолт VO + `NULL` в SQLite) = legacy raise-any — 1:1 owner↔Боб сохраняет поведение BOB-025 без
+  регресса; непустой набор поднимает безметочную реплику только признанного говорящего (или с
+  неизвестным `sender_id`, fail-safe), а посторонний остаётся AMBIENT (Боб не перехватывает
+  чужое). Набор dedup'ится, ограничен потолком 8 (вытесняется старейший) и сбрасывается при
+  повороте к другому / распаде.
 - **Адресность — perception, не решение.** `classify_addressivity` чист и детерминирован; над
   ним политика отклика (судья), сам детектор доступ/отклик не решает.
 - **Анти-тик консервативен.** `is_user_repeat` — только точный матч после нормализации (Боб не
@@ -285,7 +307,8 @@ floor (UPSERT — floor продвигается каждый ход); `SqliteCl
 
 Ключевые точки входа:
 - Домен: `addressivity.classify_addressivity`, `conversation_floor.advance_floor`/
-  `resolve_addressivity`, `brevity.decide_verbosity` (→ `Verbosity`), `engagement.decide_engagement`
+  `resolve_addressivity`/`is_floor_participant` (→ `ConversationFloor` c `participants`),
+  `brevity.decide_verbosity` (→ `Verbosity`), `engagement.decide_engagement`
   (→ `EngagementLevel`) + `ConversationalFatigue`, `zone_classifier.TasteZoneClassifier`,
   `conversation.is_user_repeat`/`is_bob_repeat`/`is_recurring_closer_tic`,
   `response_choice.ResponseChoice`/`ResponseJudge`, `volatility_judgment.VolatilityJudge`,
@@ -293,7 +316,8 @@ floor (UPSERT — floor продвигается каждый ход); `SqliteCl
   `outgoing_target.resolve_outgoing_target` (→ `OutgoingTarget` c `reply_to_message_id`/`addressee_id`).
 - Use-case: `usecases.DecideResponse`; коллабораторы хода `usecases.{TurnGate,
   AddressivityPerceiver, FloorManager, EngagementModel, RecallAssembler, VerifyStep,
-  AntiRepeatGuard}` (BOB-062.6b).
+  AntiRepeatGuard}` (BOB-062.6b); `FloorManager.resolve_effective` → `FloorResolution`
+  (`effective`/`holder`/`participant`, BOB-066 .1).
 - Адаптеры: `LlmResponseJudge`, `LlmVolatilityJudge`, `LlmInterimLineGenerator`,
   `SqliteConversationFloorStore`, `SqliteCloserLog`.
 
@@ -315,6 +339,9 @@ floor (UPSERT — floor продвигается каждый ход); `SqliteCl
 - Приёмочный BDD reply-to: `tests/acceptance/features/reply_to.feature` +
   `tests/acceptance/steps/test_reply_to.py` (цитирует при 3+ участниках, не цитирует в 1:1 через
   FakeGateway).
+- Приёмочный BDD floor-по-говорящему: `tests/acceptance/features/floor_by_speaker.feature` +
+  `tests/acceptance/steps/test_floor_by_speaker.py` (реплика участника нити продолжает диалог,
+  реплика постороннего не перехватывается — через FakeGateway).
 - Адаптеры: `tests/infrastructure/llm/test_response_judge.py`, `test_volatility_judge.py`,
   `test_interim_line.py`; `tests/infrastructure/persistence/test_conversation_floor_store.py`,
   `test_closer_log_store.py`.
