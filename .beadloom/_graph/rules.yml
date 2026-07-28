@@ -646,6 +646,48 @@ rules:
     description: "social: proactivity не импортит adapters напрямую (только через фасад/порты)"
     severity: error
     forbid_import: {from: "src/bob/proactivity/*", to: "bob/social/adapters/*"}
+
+  # ── kernel SHARED KERNEL (generated) — pure inward-safe leaf ──
+  - name: kernel-no-application
+    description: "kernel — чистый leaf: не импортит application (только stdlib/typing)"
+    severity: error
+    forbid_import: {from: "src/bob/kernel/*", to: "bob/application/*"}
+  - name: kernel-no-capabilities
+    description: "kernel — чистый leaf: не импортит capabilities (только stdlib/typing)"
+    severity: error
+    forbid_import: {from: "src/bob/kernel/*", to: "bob/capabilities/*"}
+  - name: kernel-no-coding
+    description: "kernel — чистый leaf: не импортит coding (только stdlib/typing)"
+    severity: error
+    forbid_import: {from: "src/bob/kernel/*", to: "bob/coding/*"}
+  - name: kernel-no-conversation
+    description: "kernel — чистый leaf: не импортит conversation (только stdlib/typing)"
+    severity: error
+    forbid_import: {from: "src/bob/kernel/*", to: "bob/conversation/*"}
+  - name: kernel-no-infrastructure
+    description: "kernel — чистый leaf: не импортит infrastructure (только stdlib/typing)"
+    severity: error
+    forbid_import: {from: "src/bob/kernel/*", to: "bob/infrastructure/*"}
+  - name: kernel-no-memory
+    description: "kernel — чистый leaf: не импортит memory (только stdlib/typing)"
+    severity: error
+    forbid_import: {from: "src/bob/kernel/*", to: "bob/memory/*"}
+  - name: kernel-no-personality
+    description: "kernel — чистый leaf: не импортит personality (только stdlib/typing)"
+    severity: error
+    forbid_import: {from: "src/bob/kernel/*", to: "bob/personality/*"}
+  - name: kernel-no-proactivity
+    description: "kernel — чистый leaf: не импортит proactivity (только stdlib/typing)"
+    severity: error
+    forbid_import: {from: "src/bob/kernel/*", to: "bob/proactivity/*"}
+  - name: kernel-no-runtime
+    description: "kernel — чистый leaf: не импортит runtime (только stdlib/typing)"
+    severity: error
+    forbid_import: {from: "src/bob/kernel/*", to: "bob/runtime/*"}
+  - name: kernel-no-social
+    description: "kernel — чистый leaf: не импортит social (только stdlib/typing)"
+    severity: error
+    forbid_import: {from: "src/bob/kernel/*", to: "bob/social/*"}
   # END generated boundary rules
 
   # ── Graph-edge backstop: domain layer must not depend on a service ──────────

@@ -72,6 +72,23 @@ END_MARKER = "  # END generated boundary rules"
 # / the composition root.
 INWARD_LAYER_SOURCES: tuple[str, ...] = ()
 
+# Shared-kernel isolation (BOB-062.8 .6). ``src/bob/kernel/`` is the inward-safe
+# leaf every vertical module rests on — the 7 cross-module contracts (Clock /
+# EventBus / EventHandler / DomainEvent / LLMProvider / LLMMessage / JsonValue).
+# ``module → kernel`` is LEGAL (every module imports these contracts); the reverse
+# ``kernel → module`` must NEVER happen — the kernel pulls NOTHING from ``bob.*``
+# (stdlib / typing only). That property held only BY CONSTRUCTION: a stray
+# ``from bob.memory.ports import MemoryRepo`` in ``kernel/ports.py`` did NOT trip a
+# rule (caught only indirectly by ``no-dependency-cycles``, and only if the module
+# imported the kernel BACK). We close that latent hole with explicit
+# ``kernel-no-<target>`` ``forbid_import`` rules for EVERY non-kernel destination:
+# the 7 business modules (from the ``module-vertical`` set) plus the three
+# non-module coordination/horizontal layers below (which are NOT tagged
+# ``module-vertical`` and so are listed explicitly). Note the ban is one-directional
+# — kernel is a SOURCE here, never a target — so ``module → kernel`` stays legal.
+KERNEL_REF = "kernel"
+KERNEL_FORBIDDEN_LAYERS: tuple[str, ...] = ("application", "infrastructure", "runtime")
+
 
 def load_modules() -> list[tuple[str, str]]:
     """Return sorted ``(ref_id, source_dir)`` pairs for every module-vertical node."""
@@ -263,8 +280,28 @@ def render(modules: list[tuple[str, str]]) -> str:
                 f"src/bob/{src}/*",
                 f"bob/{ref}/adapters/*",
             )
+    lines += _render_kernel_rules(modules)
     lines.append("")
     return "\n".join(lines)
+
+
+def _render_kernel_rules(modules: list[tuple[str, str]]) -> list[str]:
+    """Render the ``kernel-no-<target>`` block — the shared kernel as a pure leaf.
+
+    The kernel must import from NO ``bob.*`` destination: every business module
+    (from the ``module-vertical`` set) plus the three non-module coordination
+    layers. Sources ONLY from ``src/bob/kernel/`` — ``module → kernel`` stays legal.
+    """
+    targets = sorted({ref for ref, _ in modules} | set(KERNEL_FORBIDDEN_LAYERS))
+    lines = ["", f"  # ── {KERNEL_REF} SHARED KERNEL (generated) — pure inward-safe leaf ──"]
+    for target in targets:
+        lines += _rule(
+            f"{KERNEL_REF}-no-{target}",
+            f"kernel — чистый leaf: не импортит {target} (только stdlib/typing)",
+            f"src/bob/{KERNEL_REF}/*",
+            f"bob/{target}/*",
+        )
+    return lines
 
 
 def splice(original: str, body: str) -> str:
