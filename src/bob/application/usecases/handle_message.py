@@ -63,19 +63,13 @@ from bob.capabilities.usecases.progress_announcer import GatewayProgressAnnounce
 from bob.capabilities.usecases.registry import CapabilityRegistry
 from bob.capabilities.usecases.tool_loop import ToolLoop
 from bob.conversation.addressivity import (
-    Addressivity,
     AddressivityThresholds,
     ResponseOutcome,
-    classify_addressivity,
-    decide_response,
-    others_present,
 )
 from bob.conversation.brevity import (
     AnswerDemand,
     BrevityThresholds,
-    clamp_reply,
     classify_answer_demand,
-    decide_verbosity,
 )
 from bob.conversation.conversation import (
     RepeatThresholds,
@@ -96,24 +90,27 @@ from bob.conversation.engagement import (
     ConversationalFatigue,
     EngagementThresholds,
     FatigueRates,
-    appetite_of,
-    decide_engagement,
-    engagement_mood_lift,
-    topic_interest,
 )
 from bob.conversation.reply_context import _assemble_shareable_context
 from bob.conversation.response_choice import ResponseIntent
 from bob.conversation.thread import (
     _author_key,
-    _history_for_author,
-    _last_seen_at,
+    _history_for_author,  # noqa: F401  # re-exported for tests (used by RecallAssembler)
+    _last_seen_at,  # noqa: F401  # re-exported for tests (used by RecallAssembler)
     _reaction_marker,
     _recent_bob_replies,
     _render_thread,
     _strip_recalled_closer,
     _user_turns,
 )
+from bob.conversation.usecases.addressivity_perceiver import (
+    AddressivityPerceiver,
+    _AddressivityDecision,  # re-exported (moved to AddressivityPerceiver)
+    _AddressivitySignals,  # re-exported (moved to AddressivityPerceiver)
+)
+from bob.conversation.usecases.engagement_model import EngagementModel
 from bob.conversation.usecases.floor_manager import FloorManager
+from bob.conversation.usecases.recall_assembler import RecallAssembler
 from bob.conversation.usecases.verify_step import (
     _VERIFY_GROUNDED_NOTE,  # noqa: F401  # re-exported for tests (moved to VerifyStep)
     _VERIFY_HEDGE_NOTE,  # noqa: F401  # re-exported for tests (moved to VerifyStep)
@@ -121,30 +118,23 @@ from bob.conversation.usecases.verify_step import (
 )
 from bob.conversation.zone_classifier import TasteZoneClassifier
 from bob.memory.entities import EpisodicEvent
-from bob.personality.absence import absence_hint
 from bob.personality.expression import (
     EngagementLevel,
     ExpressionFreqs,
     ExpressionMode,
     ExpressionPlan,
-    ExpressionSignals,
     Verbosity,
     _shift_verbosity,
-    decide_expression,
 )
-from bob.personality.mood import MoodDelta
 from bob.personality.negotiation import (
     Negotiation,
     NegotiationZone,
     Stance,
-    _clamp_conviction,
     _stance_directive,
 )
-from bob.personality.profanity import is_directed_hostility
 from bob.personality.reaction import reaction_emoji_for
-from bob.personality.reaction_aloud import acknowledgment_hint
 from bob.personality.soul import _mood_state
-from bob.personality.usecases.update_mood_from_text import TextSignals
+from bob.personality.usecases.mood_perceiver import MoodPerceiver
 from bob.personality.voice import (
     OffDayThresholds,
     RelationshipToneThresholds,
@@ -156,7 +146,6 @@ from bob.personality.voice import (
     improvement_directive,
     profanity_stance,
     recalled_impression_directive,
-    relationship_tone_directive,
     sulk_directive,
     tone_directive,
     user_repeat_directive,
@@ -170,7 +159,7 @@ from bob.proactivity.self_improvement import (
     build_modulators,
 )
 from bob.social.interlocutor import InterlocutorKind, Trust
-from bob.social.relationship import compromise_bias
+from bob.social.usecases.social_context import SocialContext
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Mapping, Sequence
@@ -616,46 +605,6 @@ class EngagementState:
 
     fatigue: ConversationalFatigue = field(default_factory=ConversationalFatigue)
     last_turn_at: datetime | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class _AddressivityDecision:
-    """The addressivity gate's result for one turn (BOB-023 + BOB-025 floor).
-
-    ``outcome`` is the policy decision (ENGAGE / REACT / SILENT) taken on the
-    EFFECTIVE addressivity (per-message raised by the conversation floor when Bob
-    holds a live floor). ``per_message`` is the RAW per-message classification — it
-    is what ``advance_floor`` reads after the turn (the floor reflects the real
-    signals; whether Bob actually replied is tracked separately). ``directed_to_id``
-    is the person the turn turned to on a ``DIRECTED_TO_OTHER`` per-message (so the
-    floor can pass to them), else ``None``.
-    """
-
-    outcome: ResponseOutcome
-    per_message: Addressivity
-    directed_to_id: int | None
-
-
-@dataclass(frozen=True, slots=True)
-class _AddressivitySignals:
-    """This turn's structural addressivity signals (perception, BOB-023/025/049).
-
-    The raw, grounded read of WHO the message is for: ``per_message`` is the
-    per-message classification; ``effective`` is it raised by the conversation floor
-    (continuity); ``others_present`` whether the thread has a third participant;
-    ``floor_engaged`` whether the floor actually raised an ambient message to Bob;
-    ``reply_to_bob`` whether the inbound replies to Bob's own message; and
-    ``directed_to_id`` the person a ``DIRECTED_TO_OTHER`` turn turned to (for the
-    floor pass), else ``None``. These are INPUTS — the legacy policy decides the
-    outcome on ``effective`` (BOB-023/025), the BOB-049 judge weighs them by meaning.
-    """
-
-    per_message: Addressivity
-    effective: Addressivity
-    others_present: bool
-    floor_engaged: bool
-    reply_to_bob: bool
-    directed_to_id: int | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -1140,6 +1089,75 @@ class HandleMessage:
             permission_flow=self._permission_flow,
         )
 
+        # ── Wave-2 mid-tier collaborators (BOB-062.6b): each a cohesive method-object
+        # built HERE from the already-injected seam — behaviour-preserving (HandleMessage
+        # keeps thin delegators so every call site — handle() + the judge/compose helpers —
+        # runs them exactly where the inlined methods used to). 🔴 The SAME injected
+        # ``self._rng`` is passed to each, so the per-turn seeded-draw order (plan →
+        # engagement → verbosity → addressivity → surface/ack) is unchanged. ──
+        # AddressivityPerceiver (conversation): perceive WHO a message is for + decide
+        # whether Bob takes the turn. Depends on the wave-1 FloorManager (injected) for the
+        # BOB-025 continuity raise.
+        self._addressivity = AddressivityPerceiver(
+            floor=self._floor,
+            episodes=self._episodes,
+            recent_turns=self._recent_turns,
+            bob_user_id_source=self._bob_user_id_source,
+            addressivity_thresholds=self._addressivity_thresholds,
+            rng=self._rng,
+        )
+        # MoodPerceiver (personality): update the mood from the inbound + plan the BOB-018
+        # expression. The mutable per-boot PersonalityState is passed PER CALL (never
+        # captured) so it always reads/writes THIS use-case's current holder.
+        self._mood = MoodPerceiver(
+            update_mood=self._update_mood,
+            expression_freqs=self._expression_freqs,
+            rng=self._rng,
+        )
+        # EngagementModel (conversation): decide Bob's appetite LEVEL + reply verbosity +
+        # the after-turn feedback loops. It lives in conversation (brevity / engagement) and
+        # imports its result value-objects back from personality (the legal one-way edge).
+        # 🔴 The SHARED per-boot PersonalityState (mood) + EngagementState (fatigue) are
+        # passed PER CALL (never captured), so the mood lift + fatigue decay accrue on this
+        # use-case's current holders exactly as before.
+        self._engagement = EngagementModel(
+            engagement_thresholds=self._engagement_thresholds,
+            fatigue_rates=self._fatigue_rates,
+            engagement_mood_lift=self._engagement_mood_lift,
+            fascination=self._fascination,
+            brevity_thresholds=self._brevity_thresholds,
+            length_guard_enabled=self._length_guard_enabled,
+            length_guard_max_chars=self._length_guard_max_chars,
+            clock=self._clock,
+            rng=self._rng,
+        )
+        # SocialContext (social): Bob's per-person read — WHO is writing, first impression,
+        # relationship, обида, negotiation stance, relationship-tone. decide_stance is
+        # PUBLIC (shared with the wave-3 compose path).
+        self._social = SocialContext(
+            perceive_sender=self._perceive_sender,
+            first_impression=self._first_impression,
+            relationship=self._relationship,
+            relationship_tone_thresholds=self._relationship_tone_thresholds,
+            sulk=self._sulk,
+            negotiation=self._negotiation,
+            zone_classifier=self._zone_classifier,
+            clock=self._clock,
+        )
+        # RecallAssembler (conversation): replay the shared recent thread + add the light
+        # absence / being-received acknowledgment texture. 🔴 acknowledgment_for reads the
+        # notable-reaction marker BEFORE the seeded roll (consume-once; an unlucky turn
+        # spends no draw and leaves the marker).
+        self._assembler = RecallAssembler(
+            episodes=self._episodes,
+            recent_turns=self._recent_turns,
+            absence_hint_hours=self._absence_hint_hours,
+            notable_reaction=self._notable_reaction,
+            acknowledge_reaction_freq=self._acknowledge_reaction_freq,
+            clock=self._clock,
+            rng=self._rng,
+        )
+
     def _make_verify_announcer(
         self, *, chat_id: int, sender_name: str
     ) -> GatewayProgressAnnouncer:
@@ -1517,78 +1535,32 @@ class HandleMessage:
             logger.exception("recording owner activity failed (ignored)")
 
     async def _perceive(self, event: MessageReceived) -> SOUL:
-        """Update mood from the message text and store the new soul snapshot.
-
-        Passes the soul's mood baseline as the social co-regulation ``target``
-        (BOB-033 .3): a warm incoming message tugs mood a proportional fraction back
-        toward this baseline, so connection genuinely displaces accumulated low.
-        """
-        signals = TextSignals(text=event.text, message_count=_SINGLE_MESSAGE, present=True)
-        new_mood = await self._update_mood.run(
-            self._state.soul.mood, signals, target=self._state.soul.mood_baseline
-        )
-        soul = self._state.soul.with_mood(new_mood)
-        self._state.soul = soul
-        return soul
+        """Delegate to :meth:`MoodPerceiver.perceive` (BOB-062.6b wave 2)."""
+        return await self._mood.perceive(event, self._state)
 
     async def _perceive_interlocutor(
         self, event: MessageReceived
     ) -> Interlocutor | None:
-        """Perceive WHO is writing this turn, or ``None`` (no seam wired) (BOB-019).
-
-        Asks the wired perception seam to resolve the inbound into an
-        :class:`~bob.social.interlocutor.Interlocutor` (owner / known /
-        guest / bot). Unwired (the default) returns ``None`` so the compose path
-        adds no who-is-writing line and the turn behaves exactly as before.
-        """
-        if self._perceive_sender is None:
-            return None
-        return await self._perceive_sender.resolve(event)
+        """Delegate to :meth:`SocialContext.perceive_interlocutor` (wave 2)."""
+        return await self._social.perceive_interlocutor(event)
 
     async def _recall_prior_impression(
         self, interlocutor: Interlocutor | None
     ) -> str | None:
-        """Recall Bob's LIGHT prior first-impression note for this sender (BOB-019).
-
-        Asks the wired first-impression seam for the stored note of a returning
-        sender; a new sender (or no seam / no perceived interlocutor) yields ``None``
-        so the compose path adds no recall line. Per-PERSON data, so it is recalled
-        even on a guest turn (a guest's own impression is about the guest).
-        """
-        if self._first_impression is None or interlocutor is None:
-            return None
-        return await self._first_impression.prior_impression(interlocutor)
+        """Delegate to :meth:`SocialContext.recall_prior_impression` (wave 2)."""
+        return await self._social.recall_prior_impression(interlocutor)
 
     async def _record_first_impression(
         self, interlocutor: Interlocutor | None
     ) -> None:
-        """Record Bob's LIGHT first impression of this sender on first contact (BOB-019).
-
-        Best-effort and optional: with no seam wired (or no perceived interlocutor)
-        this is a no-op. The grounded note is formed once (the store records once), so
-        a returning sender is never overwritten. A flaky store can never break a turn
-        that has already replied.
-        """
-        if self._first_impression is None or interlocutor is None:
-            return
-        try:
-            await self._first_impression.note_first_contact(interlocutor)
-        except Exception:
-            logger.exception("recording first impression failed (ignored)")
+        """Delegate to :meth:`SocialContext.record_first_impression` (wave 2)."""
+        await self._social.record_first_impression(interlocutor)
 
     async def _load_relationship(
         self, interlocutor: Interlocutor | None
     ) -> Relationship | None:
-        """Load Bob's accrued relationship with this sender, or ``None`` (BOB-014).
-
-        Asks the wired relationship seam for the stored relationship of a known
-        sender; a new sender (or no seam / no perceived interlocutor) yields ``None``
-        so the turn behaves as a neutral one (no tone/willingness colour). Per-PERSON
-        data, so it is loaded even on a guest turn (about the guest).
-        """
-        if self._relationship is None or interlocutor is None:
-            return None
-        return await self._relationship.current(interlocutor)
+        """Delegate to :meth:`SocialContext.load_relationship` (wave 2)."""
+        return await self._social.load_relationship(interlocutor)
 
     async def _record_relationship(
         self,
@@ -1597,217 +1569,48 @@ class HandleMessage:
         text: str,
         relationship: Relationship | None,
     ) -> None:
-        """Evolve + persist Bob's relationship with this sender after the turn (BOB-014).
-
-        Best-effort and optional: with no seam wired (or no perceived interlocutor)
-        this is a no-op. The negotiation stance Bob took THIS turn (decided over the
-        same relationship-nudged conviction the prompt used), his current mood, and the
-        turn's sentiment (read off the mood valence — the mood already reflects the
-        perceived sentiment of the message) evolve the relationship via the pure
-        :func:`~bob.social.relationship.apply_interaction`. A flaky store
-        can never break a turn that has already replied.
-        """
-        if self._relationship is None or interlocutor is None:
-            return
-        # Sentiment of the turn: the mood valence already folds in the message's
-        # perceived sentiment (UpdateMoodFromText nudges valence by it), so it is the
-        # grounded affective signal here — no second classification round-trip.
-        sentiment = soul.mood.valence
-        stance, _verdict, _zone = self._decide_stance(soul, text, relationship)
-        try:
-            await self._relationship.record_interaction(
-                interlocutor, stance=stance, mood=soul.mood, sentiment=sentiment
-            )
-        except Exception:
-            logger.exception("recording relationship failed (ignored)")
+        """Delegate to :meth:`SocialContext.record_relationship` (wave 2)."""
+        await self._social.record_relationship(interlocutor, soul, text, relationship)
 
     async def _load_sulk(self) -> SulkState | None:
-        """Load Bob's обида state for this turn, or ``None`` (BOB-014 .2b).
-
-        With no sulk seam wired returns ``None`` so the compose path adds no cold-tone
-        line and the turn behaves exactly as before. Otherwise returns the persisted
-        :class:`~bob.social.sulk.SulkState` so the prompt can go cold while
-        Bob is hurt. обида carries NO memory and NO soul — only the affect state.
-        """
-        if self._sulk is None:
-            return None
-        return await self._sulk.current()
+        """Delegate to :meth:`SocialContext.load_sulk` (wave 2)."""
+        return await self._social.load_sulk()
 
     async def _observe_sulk(
         self, interlocutor: Interlocutor | None, soul: SOUL, text: str
     ) -> None:
-        """Fold this OWNER turn into Bob's обида state after the turn (BOB-014 .2b).
-
-        Owner-only (обида v1 is tied to the OWNER relationship that leads proactivity).
-        The "low" signal is BOTH the owner relationship warmth (a critically cold
-        relationship) AND a DIRECTED hostility flag from
-        :func:`~bob.personality.profanity.is_directed_hostility` — so it reacts to
-        sustained directed hostility, NOT to casual мат (which is never flagged hostile).
-        A warm turn (positive ``warmth_delta``, read off the turn's mood valence)
-        accelerates recovery if already hurt. Best-effort: a flaky store can never break
-        a turn that already replied.
-        """
-        if self._sulk is None or interlocutor is None:
-            return
-        if interlocutor.kind is not InterlocutorKind.OWNER:
-            return
-        # The owner relationship warmth this turn (the relationship was just re-recorded
-        # for the owner); a not-yet-formed relationship reads as neutral 0.
-        owner_warmth = await self._owner_warmth(interlocutor)
-        hostile = is_directed_hostility(text)
-        # A warm message has positive sentiment; the mood valence folds in the perceived
-        # sentiment of the turn (UpdateMoodFromText nudged it), so it is the grounded
-        # "how warm was this turn" signal that accelerates отход while sulking.
-        warmth_delta = soul.mood.valence
-        try:
-            await self._sulk.observe(
-                owner_warmth=owner_warmth,
-                hostile=hostile,
-                warmth_delta=warmth_delta,
-                now=self._clock.now(),
-            )
-        except Exception:
-            logger.exception("observing sulk failed (ignored)")
-
-    async def _owner_warmth(self, interlocutor: Interlocutor) -> float:
-        """The owner relationship warmth for the обида signal, or neutral 0 (BOB-014).
-
-        Reads the freshly-updated relationship for the owner (re-recorded earlier this
-        turn) off the relationship seam; a not-yet-formed relationship (or no seam)
-        reads as neutral ``0.0`` so a fresh Bob never sulks from a blank read.
-        """
-        if self._relationship is None:
-            return 0.0
-        rel = await self._relationship.current(interlocutor)
-        return rel.warmth if rel is not None else 0.0
+        """Delegate to :meth:`SocialContext.observe_sulk` (wave 2)."""
+        await self._social.observe_sulk(interlocutor, soul, text)
 
     def _decide_stance(
         self, soul: SOUL, text: str, relationship: Relationship | None
     ) -> tuple[Stance, Verdict, NegotiationZone]:
-        """Decide Bob's negotiation stance for the turn (BOB-013 + BOB-014).
-
-        Classifies the zone owning ``text`` from the taste verdict + conviction, then
-        maps zone + an EFFECTIVE conviction to a :class:`Stance`. The effective
-        conviction is the raw conviction lowered by the relationship's
-        :func:`~bob.social.relationship.compromise_bias` — a close person
-        (high warmth + compatibility) tips a borderline stance from holding ground
-        toward agreeing (more willing to compromise), clamped to ``[0, 1]``. Returns
-        the stance plus the verdict + zone so the prompt's stance-directive gate can
-        reuse them. Pure-ish: no I/O, deterministic for a given soul/text/relationship.
-        """
-        verdict = soul.taste.score(text)
-        conviction = soul.taste.conviction_for(text)
-        zone = self._zone_classifier.classify(
-            text, taste_verdict=verdict, conviction=conviction
-        )
-        effective = _clamp_conviction(conviction - compromise_bias(relationship))
-        stance = self._negotiation.decide(zone, conviction=effective)
-        return stance, verdict, zone
+        """Delegate to :meth:`SocialContext.decide_stance` (wave 2; shared with compose)."""
+        return self._social.decide_stance(soul, text, relationship)
 
     def _relationship_tone(self, relationship: Relationship | None) -> str:
-        """The relationship-warmth tone line for this turn, or ``""`` (BOB-014).
-
-        No relationship on record (a new person) or a neutral warmth → no line, so the
-        turn keeps the base mood tone. A close relationship reads warmer, a distant one
-        more reserved (never rude — relational hostility is the sulk, .2). The warm/
-        cool bands are config-tunable via ``relationship_tone_thresholds``.
-        """
-        if relationship is None:
-            return ""
-        return relationship_tone_directive(
-            relationship.warmth, thresholds=self._relationship_tone_thresholds
-        )
+        """Delegate to :meth:`SocialContext.relationship_tone` (wave 2)."""
+        return self._social.relationship_tone(relationship)
 
     async def _topic_interest(self, soul: SOUL, text: str) -> float:
-        """Return how INTERESTING the inbound topic is to Bob, a [0, 1] scalar (BOB-014).
-
-        Derived from his deterministic taste verdict + conviction on ``text`` (a strong
-        love/hate is engaging, a NEUTRAL/unknown topic is "какие-попало" — low) and
-        lifted when the topic MATCHES his current, non-faded fascination (the strongest
-        pull — it clears the bar even on a bad day). The fascination match reuses the
-        wired :class:`CurrentFascinationReader`; with no reader / no current passion the
-        match is simply ``False``, so the interest is taste-only (behaviour as before).
-        """
-        verdict = soul.taste.score(text)
-        conviction = soul.taste.conviction_for(text)
-        match = await self._fascination_matches(text)
-        return topic_interest(verdict, conviction, fascination_match=match)
-
-    async def _fascination_matches(self, text: str) -> bool:
-        """Whether the inbound topic is the thing Bob is currently fascinated by (BOB-014).
-
-        Loads Bob's current, non-faded passion off the wired reader and checks whether
-        its topic is mentioned in ``text`` (a light, case-insensitive substring match).
-        No reader / no current fascination → ``False`` (a clean no-op). Best-effort —
-        the appetite decision must never break on a flaky read, so a failure reads as no
-        match rather than raising.
-        """
-        if self._fascination is None:
-            return False
-        try:
-            fascination = await self._fascination.current_fascination()
-        except Exception:
-            logger.exception("reading current fascination for engagement failed (ignored)")
-            return False
-        if fascination is None:
-            return False
-        return fascination.topic.strip().casefold() in text.casefold()
+        """Delegate to :meth:`EngagementModel.topic_interest` (wave 2)."""
+        return await self._engagement.topic_interest(soul, text)
 
     def _decide_engagement(
         self, soul: SOUL, interest: float, relationship: Relationship | None
     ) -> EngagementLevel:
-        """Decide Bob's appetite LEVEL for this turn, decaying fatigue first (BOB-014 .2a).
-
-        Decays the per-boot fatigue holder by the REAL elapsed time since the last turn
-        (so appetite recovers between turns — the recovery guarantee), stores the decayed
-        value back, then maps mood x ``interest`` x fatigue x ``relationship`` to an
-        :class:`~bob.conversation.engagement.EngagementLevel` via the pure
-        :func:`~bob.conversation.engagement.decide_engagement` (seeded by the same
-        injected RNG, so the whole turn stays reproducible).
-        """
-        now = self._clock.now()
-        state = self._engagement_state
-        if state.last_turn_at is not None:
-            elapsed = max(0.0, (now - state.last_turn_at).total_seconds())
-            state.fatigue = state.fatigue.decayed(
-                elapsed_seconds=elapsed, rates=self._fatigue_rates
-            )
-        return decide_engagement(
-            mood=soul.mood,
-            topic_interest=interest,
-            fatigue=state.fatigue,
-            relationship=relationship,
-            rng=self._rng,
-            thresholds=self._engagement_thresholds,
+        """Delegate to :meth:`EngagementModel.decide_engagement` (wave 2)."""
+        return self._engagement.decide_engagement(
+            soul, interest, relationship, self._engagement_state
         )
 
     def _apply_engagement_feedback(
         self, soul: SOUL, level: EngagementLevel, interest: float
     ) -> SOUL:
-        """Run the after-turn engagement feedback loops (BOB-014 .2a) and stamp the clock.
-
-        Two loops close the appetite model: (1) an interesting, well-engaged exchange
-        (FULL/PLAYFUL on an interesting topic) lifts Bob's mood valence a touch — a small
-        bounded :class:`~bob.personality.mood.MoodDelta` returned on a fresh soul
-        snapshot, stored on :class:`PersonalityState`; (2) the fatigue holder is updated
-        with the turn outcome — an aimless turn tires Bob, an interesting one eases him —
-        and ``last_turn_at`` is stamped so the next turn decays the elapsed gap. Returns
-        the (possibly mood-lifted) soul so the caller persists the post-feedback mood.
-        (Fascination grounding toward a well-going topic stays with the reflect-tick
-        evolution path that already owns it — this loop only lifts mood + eases fatigue.)
-        """
-        interesting = interest >= self._engagement_thresholds.interesting
-        lift = engagement_mood_lift(
-            level, interesting=interesting, lift=self._engagement_mood_lift
+        """Delegate to :meth:`EngagementModel.apply_feedback` (wave 2)."""
+        return self._engagement.apply_feedback(
+            soul, level, interest, self._state, self._engagement_state
         )
-        if lift > 0.0:
-            soul = soul.with_mood(soul.mood.update(MoodDelta(valence=lift)))
-            self._state.soul = soul
-        self._engagement_state.fatigue = self._engagement_state.fatigue.after_turn(
-            interesting=interesting, rates=self._fatigue_rates
-        )
-        self._engagement_state.last_turn_at = self._clock.now()
-        return soul
 
     def _decide_verbosity(
         self,
@@ -1818,125 +1621,33 @@ class HandleMessage:
         plan: ExpressionPlan,
         interlocutor: Interlocutor | None,
     ) -> Verbosity:
-        """Decide how SHORT Bob answers this turn — pure, deterministic by seed (BOB-024).
+        """Delegate to :meth:`EngagementModel.decide_verbosity` (wave 2).
 
-        Folds the already-computed turn signals into the pure
-        :func:`~bob.conversation.brevity.decide_verbosity`: the message's
-        answer-``demand`` is the base; topic ``interest`` can rarely upgrade it (seeded);
-        a low ``mood_valence`` / thin appetite (the :class:`EngagementLevel` mapped to a
-        [0, 1] appetite via :func:`~bob.conversation.engagement.appetite_of`) pull
-        it down; the BOB-018 ``form_hint`` is a mood length lean (now an INPUT, not a
-        rival directive); and a HIGH-demand owner is never clipped below NORMAL. The
-        seeded ``roll`` is one draw off the same injected RNG, so the whole turn stays
-        reproducible. ``is_owner`` keys off the perceived interlocutor (BOB-019).
+        Resolves the turn-local ``is_owner`` flag here (from the perceived interlocutor)
+        so the conversation vertical need not read the social identity type.
         """
         is_owner = (
             interlocutor is not None and interlocutor.kind is InterlocutorKind.OWNER
         )
-        roll = self._rng.random()
-        return decide_verbosity(
-            demand=demand,
-            interest=interest,
-            mood_valence=soul.mood.valence,
-            engagement=appetite_of(engagement),
-            form_hint=plan.form_hint,
-            roll=roll,
-            is_owner=is_owner,
-            thresholds=self._brevity_thresholds,
+        return self._engagement.decide_verbosity(
+            soul, demand, interest, engagement, plan, is_owner=is_owner
         )
 
     def _guard_reply_length(self, reply: str, demand: AnswerDemand) -> str:
-        """Lightly clamp an over-long reply to a simple question (BOB-024 length guard).
-
-        The OPTIONAL safety net behind the brevity bayes: only when the guard is enabled
-        AND the message wanted a short answer (``demand`` LOW) does an over-long reply get
-        trimmed to its first finished thought via
-        :func:`~bob.conversation.brevity.clamp_reply` (no regeneration, never a
-        mid-word cut). Disabled (the default) or a non-LOW demand leaves the reply exactly
-        as composed — the bayes is the mechanism, this is only a backstop.
-        """
-        if not self._length_guard_enabled or demand is not AnswerDemand.LOW:
-            return reply
-        return clamp_reply(reply, max_chars=self._length_guard_max_chars)
+        """Delegate to :meth:`EngagementModel.guard_reply_length` (wave 2)."""
+        return self._engagement.guard_reply_length(reply, demand)
 
     async def _decide_addressivity(
         self, event: MessageReceived, interest: float
     ) -> _AddressivityDecision:
-        """Decide whether/how Bob takes THIS turn by addressivity (BOB-023 + BOB-025).
-
-        Classifies who the message is for from the gateway's signals (``mentions_bob``,
-        ``reply_to_sender_id`` against Bob's own resolved id, an "Боб, …" name-address
-        in the text), reads whether the recent thread has other participants, then —
-        when the conversation floor is wired AND enabled — RAISES that per-message
-        classification to the EFFECTIVE addressivity: an ``AMBIENT`` message in a thread
-        where Bob holds a live floor reads as ``DIRECTED_TO_BOB`` (continuity, BOB-025).
-        The policy (:func:`~bob.conversation.addressivity.decide_response`) runs on
-        the EFFECTIVE addressivity, so a barge/react/silent decision honours continuity.
-        One seeded RNG draw (the same injected RNG, so the turn stays reproducible)
-        resolves the rare barge-in / like-react branches. The RAW per-message
-        classification is returned alongside the outcome so the floor can advance on the
-        real signal after the turn. Floor unwired / disabled → effective == per-message,
-        so behaviour is exactly BOB-023.
-        """
-        signals = await self._addressivity_signals(event)
-        roll = self._rng.random()
-        outcome = decide_response(
-            signals.effective,
-            interest=interest,
-            others_present=signals.others_present,
-            roll=roll,
-            thresholds=self._addressivity_thresholds,
-        )
-        return _AddressivityDecision(
-            outcome=outcome,
-            per_message=signals.per_message,
-            directed_to_id=signals.directed_to_id,
-        )
+        """Delegate to :meth:`AddressivityPerceiver.decide` (wave 2)."""
+        return await self._addressivity.decide(event, interest)
 
     async def _addressivity_signals(
         self, event: MessageReceived
     ) -> _AddressivitySignals:
-        """Compute this turn's structural addressivity signals (BOB-023/025/049).
-
-        The shared perception both the legacy policy and the BOB-049 judge read:
-        classify who the message is for from the gateway's signals (``mentions_bob``,
-        ``reply_to_sender_id`` against Bob's own resolved id, an "Боб, …" name-address),
-        read whether the recent thread has other participants, then raise the per-message
-        classification to the EFFECTIVE addressivity by the conversation floor (BOB-025 —
-        an ambient message in a thread where Bob holds a live floor reads as continuity).
-        ``floor_engaged`` records when that raise actually fired (Bob holds the floor);
-        ``reply_to_bob`` whether the inbound replies to Bob; ``directed_to_id`` the person
-        a ``DIRECTED_TO_OTHER`` turn turned to. These are INPUTS only — the policy decides
-        on ``effective``, the judge weighs them by meaning; neither overrides the other.
-        """
-        present = await self._others_present(event)
-        bob_id = self._bob_user_id()
-        per_message = classify_addressivity(
-            text=event.text,
-            mentions_bob=event.mentions_bob,
-            reply_to_sender_id=event.reply_to_sender_id,
-            bob_user_id=bob_id,
-            others_present=present,
-        )
-        effective = await self._floor.resolve_effective(event.chat_id, per_message)
-        floor_engaged = (
-            effective is Addressivity.DIRECTED_TO_BOB
-            and per_message is not Addressivity.DIRECTED_TO_BOB
-        )
-        reply_to_bob = bob_id is not None and event.reply_to_sender_id == bob_id
-        directed_to_id = (
-            event.reply_to_sender_id
-            if per_message is Addressivity.DIRECTED_TO_OTHER
-            else None
-        )
-        return _AddressivitySignals(
-            per_message=per_message,
-            effective=effective,
-            others_present=present,
-            floor_engaged=floor_engaged,
-            reply_to_bob=reply_to_bob,
-            directed_to_id=directed_to_id,
-        )
+        """Delegate to :meth:`AddressivityPerceiver.signals` (wave 2)."""
+        return await self._addressivity.signals(event)
 
     async def _gate_turn(
         self,
@@ -2076,125 +1787,27 @@ class HandleMessage:
             chat_id=event.chat_id, message_id=event.message_id, emoji=emoji
         )
 
-    def _bob_user_id(self) -> int | None:
-        """Bob's own bot ``user_id`` (resolved at startup), or ``None`` (BOB-023).
-
-        Read lazily through the injected seam so the synchronous use-case need not
-        know Bob's id at construction; ``None`` (unwired / not yet resolved / the GUPPI
-        gateway) degrades gracefully — reply-to-Bob cannot fire, @mention still does.
-        """
-        if self._bob_user_id_source is None:
-            return None
-        return self._bob_user_id_source()
-
     async def _replay_recent_thread(
         self, interlocutor: Interlocutor | None
     ) -> Sequence[Mapping[str, object]]:
-        """Replay the SHARED recent thread of the whole topic (BOB-058 .1).
-
-        The conversation context for judgment + reply is the group's recent thread —
-        the last ``recent_turns`` episodes across ALL participants (``recent_episodes``),
-        already author-labeled ``"<name>: …\\nbob: …"``. So Bob hears the whole room and
-        holds the multi-party thread: when Vladimir asks Bob to answer Lyosha, Alexey's
-        film message is right there in the context (US-1/2/3) instead of hidden behind a
-        per-person replay. Memory is unified for the closed group (BOB-051), so the shared
-        read is safe — it is ordinary topic traffic, not owner-private material.
-
-        Scope hook (BOB-058 .1): a PUBLIC group reads the shared thread. A future
-        PRIVATE/DM scope would read the CURRENT interlocutor's per-person slice
-        (``recent_episodes_for(interlocutor.sender_id, …)``) instead — only the public
-        group exists today, so the per-person branch is intentionally NOT wired here. The
-        ``interlocutor`` argument is retained as the seam that a private scope would key on.
-        """
-        del interlocutor  # public group → shared thread (see the scope hook above)
-        return await self._episodes.recent_episodes(self._recent_turns)
+        """Delegate to :meth:`RecallAssembler.replay_recent_thread` (wave 2)."""
+        return await self._assembler.replay_recent_thread(interlocutor)
 
     def _absence_for(
         self,
         history: Sequence[Mapping[str, object]],
         interlocutor: Interlocutor | None,
     ) -> str | None:
-        """A light long-gap absence hint for the CURRENT person, or ``None`` (BOB-045 .3).
-
-        🔴 Per-person over the SHARED thread (BOB-058 .3): ``history`` is now the whole
-        group's recent thread, so the last-seen must be filtered to the CURRENT author's
-        own turns (by ``sender_id``, robust to homonyms / renames — the ``"<name>:"`` label
-        stays only for rendering) before reading the freshest timestamp — a DIFFERENT member
-        speaking recently must never reset THIS person's gap. Via the pure :func:`absence_hint`
-        domain helper the
-        gap to ``self._clock.now()`` becomes a SHORT neutral note Bob can fold in to notice
-        the pause humanly. Returns ``None`` — add no line, unchanged behaviour — when the
-        current author has no turn in the shared window (graceful, exactly like an empty
-        history today), on an unparseable timestamp, a gap under the configured threshold,
-        or the hint disabled (``absence_hint_hours == 0``). Deterministic given the clock.
-        """
-        mine = _history_for_author(history, _author_key(interlocutor))
-        last_seen = _last_seen_at(mine)
-        if last_seen is None:
-            return None
-        return absence_hint(
-            last_seen, self._clock.now(), threshold_hours=self._absence_hint_hours
-        )
+        """Delegate to :meth:`RecallAssembler.absence_for` (wave 2)."""
+        return self._assembler.absence_for(history, interlocutor)
 
     async def _acknowledgment_for(self, interlocutor: Interlocutor | None) -> str:
-        """A RARE being-received acknowledgment hint for THIS person, or "" (BOB-050 .3).
-
-        When someone reacted warmly to one of Bob's recent messages, Bob may — at the
-        small seeded ``acknowledge_reaction_freq`` — fold ONE light HINT into the compose
-        context so he can naturally mention being received (he weaves it himself; never a
-        scripted phrase). Returns ``""`` — add no line, behave as before — unless ALL hold:
-        a store is wired, a notable reaction is on record, its reactor is THIS interlocutor
-        (per-person / BOB-019 authz: a guest's reaction never surfaces to the owner and
-        vice-versa; an anonymous reaction has no person to acknowledge), and the seeded roll
-        lands inside the low frequency. The marker is read BEFORE the roll, so an unlucky
-        turn spends no draw and LEAVES the marker for a later turn; on a lucky turn it is
-        CLEARED (consumed) so Bob acknowledges the moment at most once — never needy. The
-        whole call is wrapped by :meth:`_safe_addon` at the call site, so a store failure is
-        dropped silently (decorative, never an outage notice).
-        """
-        if self._notable_reaction is None or interlocutor is None:
-            return ""
-        note = await self._notable_reaction.latest()
-        if note is None or note.sender_id is None:
-            return ""
-        if note.sender_id != interlocutor.sender_id:
-            return ""
-        if self._rng.random() >= self._acknowledge_reaction_freq:
-            return ""
-        await self._notable_reaction.clear()
-        return acknowledgment_hint(note)
-
-    async def _others_present(self, event: MessageReceived) -> bool:
-        """Whether the recent thread has senders OTHER than the current one (BOB-023).
-
-        A light, grounded heuristic over the replayed recent episodes (stored as
-        ``"<sender>: <text>\\nbob: <reply>"``): in a 1:1 owner↔Bob thread every label
-        matches the current sender → ``False`` (Bob's space, he engages on ambient); a
-        third participant appears → ``True`` (mostly stay quiet / like-react on ambient).
-        Best-effort: a flaky history read degrades to ``False`` (treat as 1:1 — never
-        wrongly silences Bob in his own space).
-        """
-        try:
-            history = await self._episodes.recent_episodes(self._recent_turns)
-        except Exception:
-            logger.exception("reading history for addressivity failed (ignored)")
-            return False
-        lines = [
-            str(item.get("content", "")) for item in history if item.get("content")
-        ]
-        return others_present(lines, current_sender_name=event.sender_name)
+        """Delegate to :meth:`RecallAssembler.acknowledgment_for` (wave 2)."""
+        return await self._assembler.acknowledgment_for(interlocutor)
 
     def _plan_expression(self, event: MessageReceived, soul: SOUL) -> ExpressionPlan:
-        """Decide this turn's expression plan — pure, deterministic by seed (BOB-018).
-
-        Reads the freshly-updated mood + the inbound's shape, draws from the
-        injected seeded RNG, and returns the plan: mode, the rare add-on flags
-        (carried for later beads), and the soft form hint applied to the prompt.
-        """
-        signals = ExpressionSignals(inbound_text=event.text)
-        return decide_expression(
-            soul.mood, signals, rng=self._rng, freqs=self._expression_freqs
-        )
+        """Delegate to :meth:`MoodPerceiver.plan_expression` (wave 2)."""
+        return self._mood.plan_expression(event, soul)
 
     async def _compose_reply(
         self,
