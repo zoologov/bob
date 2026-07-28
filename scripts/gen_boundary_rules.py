@@ -15,6 +15,19 @@ isolated a module with a single-char class such as ``src/bob/[adimp]*`` — but
 tell them apart (fnmatch keys off the first letter). Explicit ``src/bob/<module>/``
 sources dodge that collision entirely.
 
+The same explicit-path discipline now extends to the per-module INTERNAL layering
+rules (``internals-no-adapters`` / ``internals-no-usecases``). Those used a negated
+char-class (``src/bob/<ref>/[!au]*`` / ``[!u]*``) to drop the ``adapters/`` +
+``usecases/`` subtrees from the source — but fnmatch keys off the FIRST char, so the
+class silently swallowed every ROOT file that happened to start with the same
+letter (``conversation/addressivity.py``, ``personality/absence.py``,
+``proactivity/urge.py`` — a/u root files that could then import their own adapters
+UNDETECTED). We keep the char-class as an efficient base for the many entries that
+do NOT collide, but every top-level entry whose first char is swallowed yet is NOT
+the intentionally-dropped subtree is re-added as an EXPLICIT full-path source, and a
+per-run coverage assertion (``_assert_internals_covered``) fails the build if any
+root file is left uncovered — closing the a/u hole for good (BOB-062.8 .2).
+
 Rendering is deterministic (modules + sources sorted by ref_id), so the write is
 idempotent and ``--check`` (CI gate) can verify the region is in sync. Hand-authored
 rationale/note blocks live OUTSIDE the markers and are never touched.
@@ -23,6 +36,7 @@ rationale/note blocks live OUTSIDE the markers and are never touched.
 from __future__ import annotations
 
 import argparse
+import fnmatch
 import sys
 from pathlib import Path
 
@@ -36,18 +50,27 @@ RULES_YML = GRAPH_DIR / "rules.yml"
 BEGIN_MARKER = "  # BEGIN generated boundary rules"
 END_MARKER = "  # END generated boundary rules"
 
-# Inward-boundary layer sources — horizontal layers that must NOT reach into a
-# module's usecases/adapters (only its public façade/ports). This is deliberately
-# just ``domain``: the domain is PURE — it may never import a module's use-cases or
-# adapters. The coordination layers (``application`` / ``infrastructure`` /
-# ``runtime`` / the composition root) are EXCLUDED on purpose: by definition they
-# assemble and invoke modules' use-cases and adapters (cross-domain orchestration
-# such as ``handle_message`` / ``privileged_fulfiller``; the infra composition of
-# providers/factories). The inward boundary isolates BUSINESS modules from each
-# other, not the coordinators that legitimately wire them together. Per-module
-# internal layering (``usecases-no-infra`` / ``no-composition-root`` below) still
-# keeps each module from reaching OUT to infra / the composition root.
-INWARD_LAYER_SOURCES = ("domain",)
+# Inward-boundary layer sources — horizontal layers (OUTSIDE any vertical module)
+# that must NOT reach into a module's usecases/adapters (only its public façade/
+# ports). This is now EMPTY: the only member used to be the pure ``domain`` layer
+# (``src/bob/domain/``), but BOB-062.8 .1 DELETED that last layer-first folder — its
+# sole remaining content, the ports re-export shim, was removed and the 7 shared
+# contracts moved to the ``src/bob/kernel/`` SHARED KERNEL. The kernel is
+# deliberately NOT listed here: it imports from NO module (inward-safe by
+# construction — modules → kernel is legal, kernel ↛ modules holds because the
+# kernel pulls nothing), and it carries the plain ``feature`` kind (no
+# ``module-vertical`` tag), so it is neither an isolation source nor an isolation
+# target — no boundary rule forbids importing INTO it. The coordination layers
+# (``application`` / ``infrastructure`` / ``runtime`` / the composition root) were
+# always excluded on purpose: by definition they assemble and invoke modules'
+# use-cases and adapters (cross-domain orchestration such as ``handle_message`` /
+# ``privileged_fulfiller``; the infra composition of providers/factories). The
+# inward boundary isolates BUSINESS modules from each other, not the coordinators
+# that legitimately wire them together, and not the shared kernel every module
+# rests on. Per-module internal layering (``usecases-no-infra`` /
+# ``no-composition-root`` below) still keeps each module from reaching OUT to infra
+# / the composition root.
+INWARD_LAYER_SOURCES: tuple[str, ...] = ()
 
 
 def load_modules() -> list[tuple[str, str]]:
@@ -58,6 +81,61 @@ def load_modules() -> list[tuple[str, str]]:
         if "module-vertical" in node.get("tags", []):
             modules.append((node["ref_id"], node["source"].rstrip("/")))
     return sorted(modules)
+
+
+def _module_entries(source_dir: str) -> list[Path]:
+    """Return the module's top-level entries (files + dirs), ``__pycache__`` aside."""
+    root = REPO_ROOT / source_dir
+    return sorted(p for p in root.iterdir() if p.name != "__pycache__")
+
+
+def _internals_from_globs(
+    ref: str, source_dir: str, swallowed_chars: str, drop_dirs: frozenset[str]
+) -> tuple[str, list[tuple[str, str]]]:
+    """Compute the source globs for an ``internals-*`` rule (explicit-path hardened).
+
+    ``[!<swallowed_chars>]*`` is kept as an efficient BASE that drops the intended
+    ``drop_dirs`` subtrees (they start with a swallowed char). But fnmatch keys off
+    the first char, so the base ALSO swallows any root file / non-dropped subdir on
+    a swallowed char. Each such entry is re-added as an EXPLICIT full path so no
+    module internal escapes the rule.
+
+    Returns ``(base_glob, [(suffix, patch_glob), ...])`` — base first, patches
+    sorted by entry name; ``suffix`` disambiguates the emitted rule name.
+    """
+    base = f"src/bob/{ref}/[!{swallowed_chars}]*"
+    patches: list[tuple[str, str]] = []
+    for entry in _module_entries(source_dir):
+        if entry.name in drop_dirs:
+            continue
+        if entry.name[0] not in swallowed_chars:
+            continue  # already covered by the base char-class
+        if entry.is_dir():
+            patches.append((entry.name, f"src/bob/{ref}/{entry.name}/*"))
+        elif entry.suffix == ".py":
+            patches.append((entry.stem, f"src/bob/{ref}/{entry.name}"))
+    return base, patches
+
+
+def _assert_internals_covered(
+    ref: str, source_dir: str, drop_dirs: frozenset[str], from_globs: list[str]
+) -> None:
+    """Fail the build if any module internal (root file / non-dropped subdir) is
+    NOT matched by at least one emitted ``from`` glob — the a/u char-class hole."""
+    for entry in _module_entries(source_dir):
+        if entry.name in drop_dirs:
+            continue
+        if entry.is_dir():
+            rep = f"src/bob/{ref}/{entry.name}/probe.py"
+        elif entry.suffix == ".py":
+            rep = f"src/bob/{ref}/{entry.name}"
+        else:
+            continue
+        if not any(fnmatch.fnmatch(rep, g) for g in from_globs):
+            raise SystemExit(
+                f"gen_boundary_rules: internals rule for module '{ref}' does NOT "
+                f"cover '{rep}' — char-class hole (regenerate the source globs)."
+            )
 
 
 def _rule(name: str, description: str, from_glob: str, to_glob: str) -> list[str]:
@@ -74,17 +152,7 @@ def render(modules: list[tuple[str, str]]) -> str:
     """Render the full generated-region body (between, not including, the markers)."""
     all_sources = sorted({ref for ref, _ in modules} | set(INWARD_LAYER_SOURCES))
     lines: list[str] = []
-    for ref, _source in modules:
-        # ``internals-no-usecases`` guards the module's DOMAIN + ADAPTERS (its non-
-        # usecases internals) against reaching INTO usecases — the dependency direction
-        # is usecases → domain, never the reverse. The ``usecases/`` dir itself must
-        # therefore ALWAYS be excluded from the source (``[!u]*``): a usecase importing a
-        # SIBLING usecase is a legal in-layer collaboration (e.g. ``turn_gate`` sharing a
-        # decision type with ``addressivity_perceiver``), NOT a violation of THIS rule.
-        # (fnmatch keys off the first char after the prefix, so ``[!u]*`` drops
-        # ``usecases/…`` — and any other u-prefixed internal, the same imprecision every
-        # module already accepts.)
-        internals_src = f"src/bob/{ref}/[!u]*"
+    for ref, source in modules:
         lines.append("")
         lines.append(f"  # ── {ref} VERTICAL module (generated) ──")
         # Internal layering.
@@ -94,17 +162,61 @@ def render(modules: list[tuple[str, str]]) -> str:
             f"src/bob/{ref}/usecases/*",
             f"bob/{ref}/adapters/*",
         )
+        # ``internals-no-usecases`` guards the module's DOMAIN + ADAPTERS (its non-
+        # usecases internals) against reaching INTO usecases — the dependency
+        # direction is usecases → domain, never the reverse. The ``usecases/`` dir
+        # itself is dropped from the source (a usecase importing a SIBLING usecase is
+        # a legal in-layer collaboration, NOT a violation of THIS rule). The base
+        # ``[!u]*`` drops it efficiently; every OTHER u-prefixed root file (e.g.
+        # ``proactivity/urge.py``) is re-added EXPLICITLY so the char-class no longer
+        # swallows it (the a/u hole closed in BOB-062.8 .2).
+        nou_base, nou_patches = _internals_from_globs(
+            ref, source, swallowed_chars="u", drop_dirs=frozenset({"usecases"})
+        )
         lines += _rule(
             f"{ref}-internals-no-usecases",
             f"{ref}: доменная логика/адаптеры не импортят usecases (usecases — на композиции)",
-            internals_src,
+            nou_base,
             f"bob/{ref}/usecases/*",
+        )
+        for suffix, patch in nou_patches:
+            lines += _rule(
+                f"{ref}-internals-no-usecases-{suffix}",
+                f"{ref}: root-файл {suffix} не импортит usecases (a/u-hole patch)",
+                patch,
+                f"bob/{ref}/usecases/*",
+            )
+        _assert_internals_covered(
+            ref, source, frozenset({"usecases"}), [nou_base, *(p for _, p in nou_patches)]
+        )
+        # ``internals-no-adapters`` guards the module's pure domain from importing
+        # its own adapters (adapters are wired at composition). The ``adapters/``
+        # subtree is dropped (an adapter importing a SIBLING adapter is legal intra-
+        # layer composition); ``usecases/`` is also dropped here (usecases→adapters is
+        # covered by ``usecases-no-adapters`` above). The base ``[!au]*`` drops both
+        # efficiently; every OTHER a/u root file (``conversation/addressivity.py``,
+        # ``personality/absence.py``, ``proactivity/urge.py``) is re-added EXPLICITLY.
+        noa_base, noa_patches = _internals_from_globs(
+            ref, source, swallowed_chars="au", drop_dirs=frozenset({"adapters", "usecases"})
         )
         lines += _rule(
             f"{ref}-internals-no-adapters",
             f"{ref}: доменная логика не импортит adapters (adapters — на композиции)",
-            f"src/bob/{ref}/[!au]*",
+            noa_base,
             f"bob/{ref}/adapters/*",
+        )
+        for suffix, patch in noa_patches:
+            lines += _rule(
+                f"{ref}-internals-no-adapters-{suffix}",
+                f"{ref}: root-файл {suffix} не импортит adapters (a/u-hole patch)",
+                patch,
+                f"bob/{ref}/adapters/*",
+            )
+        _assert_internals_covered(
+            ref,
+            source,
+            frozenset({"adapters", "usecases"}),
+            [noa_base, *(p for _, p in noa_patches)],
         )
         lines += _rule(
             f"{ref}-usecases-no-infra",

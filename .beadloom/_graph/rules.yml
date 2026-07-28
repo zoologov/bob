@@ -7,9 +7,12 @@
 # layer-domain). Clean-Architecture direction: imports point INWARD —
 # runtime → infrastructure → application → domain; domain depends on nobody.
 #
-# Severity ratchet (RFC Часть C): error where the code is already clean;
-# no-monster-modules stays warn until Фаза 3 (BOB-062) decomposes the known big
-# modules (handle_message / app.py / gateway, tracked #9/#10/#25).
+# Severity ratchet (RFC Часть C): error where the code is already clean. As of
+# BOB-062.8 .2 the ratchet is FULLY CLOSED — Фаза 3 (BOB-062) decomposed the known
+# big modules (handle_message split in .6b, app.py → an 82-line runtime shim in
+# .7a), so `no-monster-modules` is now `error` too (0 feature nodes over budget at
+# flip time). gateway.py remains a `component` (outside the feature-scoped check),
+# tracked separately under #25.
 version: 3
 
 rules:
@@ -93,13 +96,20 @@ rules:
   # a single-char class (`src/bob/[adimp]*`) keys off the FIRST letter, so it could not
   # isolate two modules that share it — `capabilities` (c…) vs `coding` (c…). Explicit
   # paths dodge that collision. Per module M the generator emits: usecases-no-adapters,
-  # internals-no-usecases (`[!u]*` iff M/usecases/__init__ re-exports), internals-no-
-  # adapters (`[!au]*`; root files on a/u are accepted-gap import-leaves, e.g.
-  # proactivity/urge.py), usecases-no-infra, no-composition-root, and one inward
-  # boundary rule per OTHER top-level tree (each other module + application/domain/
-  # infrastructure) → usecases and → adapters. The legalized cross-boundary refs are
-  # documented in the hand-authored note blocks at the END of this file (kernel→memory,
-  # coding, proactivity) — those stay OUTSIDE the generated region.
+  # internals-no-usecases (base `[!u]*` + an EXPLICIT `-<file>` patch rule for every
+  # u-prefixed root file, e.g. `proactivity/urge.py`), internals-no-adapters (base
+  # `[!au]*` + explicit `-<file>` patches for a/u root files: addressivity/absence/
+  # urge), usecases-no-infra, no-composition-root, no-runtime-root, and one inward
+  # boundary rule per OTHER module-vertical → usecases and → adapters. 🔴 BOB-062.8 .2
+  # CLOSED the char-class a/u hole: the base `[!au]*`/`[!u]*` still efficiently drops
+  # the adapters/usecases subtrees, but every root file the class would silently
+  # swallow (first char a/u) is re-added by an explicit-path patch rule, and the
+  # generator asserts per-run that every module internal is covered — no root file can
+  # import its own adapters/usecases undetected any more. The pure `domain` layer is
+  # NO LONGER an inward source (its folder was deleted in .8 .1; the shared `kernel`
+  # imports nothing, so it is neither an isolation source nor target). The legalized
+  # cross-boundary refs are documented in the hand-authored note blocks at the END of
+  # this file — those stay OUTSIDE the generated region.
 
   # BEGIN generated boundary rules
 
@@ -144,14 +154,6 @@ rules:
     description: "capabilities: conversation не импортит adapters напрямую (только через фасад/порты)"
     severity: error
     forbid_import: {from: "src/bob/conversation/*", to: "bob/capabilities/adapters/*"}
-  - name: capabilities-boundary-no-domain-usecases
-    description: "capabilities: domain не импортит usecases напрямую (только через фасад/порты)"
-    severity: error
-    forbid_import: {from: "src/bob/domain/*", to: "bob/capabilities/usecases/*"}
-  - name: capabilities-boundary-no-domain-adapters
-    description: "capabilities: domain не импортит adapters напрямую (только через фасад/порты)"
-    severity: error
-    forbid_import: {from: "src/bob/domain/*", to: "bob/capabilities/adapters/*"}
   - name: capabilities-boundary-no-memory-usecases
     description: "capabilities: memory не импортит usecases напрямую (только через фасад/порты)"
     severity: error
@@ -226,14 +228,6 @@ rules:
     description: "coding: conversation не импортит adapters напрямую (только через фасад/порты)"
     severity: error
     forbid_import: {from: "src/bob/conversation/*", to: "bob/coding/adapters/*"}
-  - name: coding-boundary-no-domain-usecases
-    description: "coding: domain не импортит usecases напрямую (только через фасад/порты)"
-    severity: error
-    forbid_import: {from: "src/bob/domain/*", to: "bob/coding/usecases/*"}
-  - name: coding-boundary-no-domain-adapters
-    description: "coding: domain не импортит adapters напрямую (только через фасад/порты)"
-    severity: error
-    forbid_import: {from: "src/bob/domain/*", to: "bob/coding/adapters/*"}
   - name: coding-boundary-no-memory-usecases
     description: "coding: memory не импортит usecases напрямую (только через фасад/порты)"
     severity: error
@@ -280,6 +274,10 @@ rules:
     description: "conversation: доменная логика не импортит adapters (adapters — на композиции)"
     severity: error
     forbid_import: {from: "src/bob/conversation/[!au]*", to: "bob/conversation/adapters/*"}
+  - name: conversation-internals-no-adapters-addressivity
+    description: "conversation: root-файл addressivity не импортит adapters (a/u-hole patch)"
+    severity: error
+    forbid_import: {from: "src/bob/conversation/addressivity.py", to: "bob/conversation/adapters/*"}
   - name: conversation-usecases-no-infra
     description: "conversation: usecases не импортят чужой infrastructure (только через порты)"
     severity: error
@@ -308,14 +306,6 @@ rules:
     description: "conversation: coding не импортит adapters напрямую (только через фасад/порты)"
     severity: error
     forbid_import: {from: "src/bob/coding/*", to: "bob/conversation/adapters/*"}
-  - name: conversation-boundary-no-domain-usecases
-    description: "conversation: domain не импортит usecases напрямую (только через фасад/порты)"
-    severity: error
-    forbid_import: {from: "src/bob/domain/*", to: "bob/conversation/usecases/*"}
-  - name: conversation-boundary-no-domain-adapters
-    description: "conversation: domain не импортит adapters напрямую (только через фасад/порты)"
-    severity: error
-    forbid_import: {from: "src/bob/domain/*", to: "bob/conversation/adapters/*"}
   - name: conversation-boundary-no-memory-usecases
     description: "conversation: memory не импортит usecases напрямую (только через фасад/порты)"
     severity: error
@@ -398,14 +388,6 @@ rules:
     description: "memory: conversation не импортит adapters напрямую (только через фасад/порты)"
     severity: error
     forbid_import: {from: "src/bob/conversation/*", to: "bob/memory/adapters/*"}
-  - name: memory-boundary-no-domain-usecases
-    description: "memory: domain не импортит usecases напрямую (только через фасад/порты)"
-    severity: error
-    forbid_import: {from: "src/bob/domain/*", to: "bob/memory/usecases/*"}
-  - name: memory-boundary-no-domain-adapters
-    description: "memory: domain не импортит adapters напрямую (только через фасад/порты)"
-    severity: error
-    forbid_import: {from: "src/bob/domain/*", to: "bob/memory/adapters/*"}
   - name: memory-boundary-no-personality-usecases
     description: "memory: personality не импортит usecases напрямую (только через фасад/порты)"
     severity: error
@@ -444,6 +426,10 @@ rules:
     description: "personality: доменная логика не импортит adapters (adapters — на композиции)"
     severity: error
     forbid_import: {from: "src/bob/personality/[!au]*", to: "bob/personality/adapters/*"}
+  - name: personality-internals-no-adapters-absence
+    description: "personality: root-файл absence не импортит adapters (a/u-hole patch)"
+    severity: error
+    forbid_import: {from: "src/bob/personality/absence.py", to: "bob/personality/adapters/*"}
   - name: personality-usecases-no-infra
     description: "personality: usecases не импортят чужой infrastructure (только через порты)"
     severity: error
@@ -480,14 +466,6 @@ rules:
     description: "personality: conversation не импортит adapters напрямую (только через фасад/порты)"
     severity: error
     forbid_import: {from: "src/bob/conversation/*", to: "bob/personality/adapters/*"}
-  - name: personality-boundary-no-domain-usecases
-    description: "personality: domain не импортит usecases напрямую (только через фасад/порты)"
-    severity: error
-    forbid_import: {from: "src/bob/domain/*", to: "bob/personality/usecases/*"}
-  - name: personality-boundary-no-domain-adapters
-    description: "personality: domain не импортит adapters напрямую (только через фасад/порты)"
-    severity: error
-    forbid_import: {from: "src/bob/domain/*", to: "bob/personality/adapters/*"}
   - name: personality-boundary-no-memory-usecases
     description: "personality: memory не импортит usecases напрямую (только через фасад/порты)"
     severity: error
@@ -522,10 +500,18 @@ rules:
     description: "proactivity: доменная логика/адаптеры не импортят usecases (usecases — на композиции)"
     severity: error
     forbid_import: {from: "src/bob/proactivity/[!u]*", to: "bob/proactivity/usecases/*"}
+  - name: proactivity-internals-no-usecases-urge
+    description: "proactivity: root-файл urge не импортит usecases (a/u-hole patch)"
+    severity: error
+    forbid_import: {from: "src/bob/proactivity/urge.py", to: "bob/proactivity/usecases/*"}
   - name: proactivity-internals-no-adapters
     description: "proactivity: доменная логика не импортит adapters (adapters — на композиции)"
     severity: error
     forbid_import: {from: "src/bob/proactivity/[!au]*", to: "bob/proactivity/adapters/*"}
+  - name: proactivity-internals-no-adapters-urge
+    description: "proactivity: root-файл urge не импортит adapters (a/u-hole patch)"
+    severity: error
+    forbid_import: {from: "src/bob/proactivity/urge.py", to: "bob/proactivity/adapters/*"}
   - name: proactivity-usecases-no-infra
     description: "proactivity: usecases не импортят чужой infrastructure (только через порты)"
     severity: error
@@ -562,14 +548,6 @@ rules:
     description: "proactivity: conversation не импортит adapters напрямую (только через фасад/порты)"
     severity: error
     forbid_import: {from: "src/bob/conversation/*", to: "bob/proactivity/adapters/*"}
-  - name: proactivity-boundary-no-domain-usecases
-    description: "proactivity: domain не импортит usecases напрямую (только через фасад/порты)"
-    severity: error
-    forbid_import: {from: "src/bob/domain/*", to: "bob/proactivity/usecases/*"}
-  - name: proactivity-boundary-no-domain-adapters
-    description: "proactivity: domain не импортит adapters напрямую (только через фасад/порты)"
-    severity: error
-    forbid_import: {from: "src/bob/domain/*", to: "bob/proactivity/adapters/*"}
   - name: proactivity-boundary-no-memory-usecases
     description: "proactivity: memory не импортит usecases напрямую (только через фасад/порты)"
     severity: error
@@ -644,14 +622,6 @@ rules:
     description: "social: conversation не импортит adapters напрямую (только через фасад/порты)"
     severity: error
     forbid_import: {from: "src/bob/conversation/*", to: "bob/social/adapters/*"}
-  - name: social-boundary-no-domain-usecases
-    description: "social: domain не импортит usecases напрямую (только через фасад/порты)"
-    severity: error
-    forbid_import: {from: "src/bob/domain/*", to: "bob/social/usecases/*"}
-  - name: social-boundary-no-domain-adapters
-    description: "social: domain не импортит adapters напрямую (только через фасад/порты)"
-    severity: error
-    forbid_import: {from: "src/bob/domain/*", to: "bob/social/adapters/*"}
   - name: social-boundary-no-memory-usecases
     description: "social: memory не импортит usecases напрямую (только через фасад/порты)"
     severity: error
@@ -710,10 +680,15 @@ rules:
         # façade; the shim only re-exports from `bob.runtime` + the domain adapters.
         - "src/bob/app.py"  # BOB-062.7a: thin re-export shim (root moved to runtime/)
 
-  # ── Anti-monster (ratchet: warn now → error after Фаза 3 decomposition) ─────
+  # ── Anti-monster (ratchet: Фаза 3 закрыта, зубы поставлены — теперь error) ───
+  # BOB-062.8 .2: Фаза 3 (BOB-062) decomposition has LANDED — handle_message is
+  # split (.6b), app.py is an 82-line shim (root moved to runtime/, .7a). No feature
+  # node exceeds max_symbols (0 warnings at flip time), so the ratchet closes:
+  # severity is now `error`. (gateway.py is a `component`, not a `feature`, so it is
+  # outside this feature-scoped check — tracked separately under #25.)
   - name: no-monster-modules
     description: "Модуль-слой/фича не должен пухнуть (handle_message/app.py/gateway — #9/#10/#25)"
-    severity: warn
+    severity: error
     check:
       for: {kind: feature}
       max_symbols: 200
