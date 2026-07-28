@@ -872,6 +872,24 @@ async def test_reply_to_threads_through_plain_fallback() -> None:
     assert params.message_id == 321
 
 
+@pytest.mark.asyncio
+async def test_reply_to_quotes_only_the_first_chunk_of_a_split_plain_reply() -> None:
+    # A long reply that ALSO quotes degrades to a SPLIT plain send: the quote attaches
+    # to the FIRST chunk only (that is the message the reply answers) — the tail chunks
+    # are continuations and must NOT each re-quote the addressed message.
+    bot = _FakeBot(rich_send_raises=True)
+    gateway = _make_gateway(bot)
+    long_text = "x" * (PLAIN_TEXT_LIMIT + 50)
+
+    await gateway.reply(chat_id=7, markdown=long_text, reply_to_message_id=321)
+
+    assert len(bot.sends) == 2
+    first_params = bot.sends[0].reply_parameters
+    assert first_params is not None
+    assert first_params.message_id == 321
+    assert bot.sends[1].reply_parameters is None
+
+
 # --- BOB-035: send_photo (render_diagram PNG into the chat) --------------------
 
 
