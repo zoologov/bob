@@ -64,6 +64,19 @@ async def test_under_fair_share_barges_at_base_probability() -> None:
     assert admitted is True
 
 
+async def test_draw_equal_to_effective_probability_is_refused() -> None:
+    # Arrange: under fair share ⇒ multiplier 1.0, so the effective p(barge) == base.
+    gate = _gate(OutgoingActivity(bob_sent=1, total_seen=10, distinct_senders=3))
+
+    # Act: the draw lands EXACTLY on the effective probability.
+    admitted = await gate.admits_barge(
+        chat_id=1, focused=False, base_probability=0.8, draw=0.8
+    )
+
+    # Assert: the admit test is a strict `draw < p` — the boundary does not barge.
+    assert admitted is False
+
+
 async def test_ceiling_is_probabilistic_not_a_hard_mute() -> None:
     # Arrange: total dominance on an ambient message.
     gate = _gate(OutgoingActivity(bob_sent=10, total_seen=10, distinct_senders=3))

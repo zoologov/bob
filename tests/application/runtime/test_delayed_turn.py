@@ -80,6 +80,26 @@ async def test_urgent_reply_sleeps_less_than_a_calm_one() -> None:
     assert urgent_clock.slept[0] < calm_clock.slept[0]
 
 
+async def test_generation_exactly_at_the_floor_adds_no_sleep() -> None:
+    # Arrange: generation "takes" EXACTLY the human floor for its own reply.
+    clock = _FakeClock()
+    turn = _delayed_turn(clock)
+    reply = "ровно по полу"
+    exact_floor = NaturalDelayPolicy().floor_seconds(
+        char_len=len(reply), complexity=0.0, urgency=0.0
+    )
+
+    async def generate() -> str:
+        clock.t += exact_floor
+        return reply
+
+    # Act
+    await turn.deliver(generate, complexity=0.0, urgency=0.0)
+
+    # Assert: remaining == 0 is a strict `> 0.0` top-up ⇒ no zero-length sleep.
+    assert clock.slept == []
+
+
 async def test_returns_exactly_the_generated_reply() -> None:
     # Arrange
     clock = _FakeClock()
