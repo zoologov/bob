@@ -53,7 +53,9 @@ src/bob/
                      #   bounded-context'ов): usecases/ (HandleMessage-оркестратор +
                      #   EssentialRunner/PreComposeGate/privileged_fulfiller/perceive_reaction),
                      #   router/ (LLMRouter: задача → Tier + правило редакции),
-                     #   runtime/ (async-примитивы: AgentRuntime, AsyncEventBus, periodic, retry).
+                     #   runtime/ (async-примитивы: AgentRuntime, AsyncEventBus, periodic, retry +
+                     #   intake/ — concurrency-шов между поллером и Бобом: ChatDispatcher/
+                     #   ChatInbox/TurnScope, BOB-066).
   infrastructure/    # Адаптеры общих компонентов: telegram/ (MultiBotGateway + GUPPI +
                      #   aiogram), llm/ (OpenAICompatProvider + фабрика),
                      #   persistence/ (connection-kernel SqliteConnection + schema.sql),
@@ -91,11 +93,12 @@ usecases/adapters модулей.
 | Модуль | Слой / вид | Что делает | SPEC |
 |---|---|---|---|
 | **coding** | вертикальный (business) | «Боб пишет код» — гейтованный автономный кодинг через `claude` CLI, план→апрув→worktree→PR | [`domains/coding/README.md`](domains/coding/README.md) |
-| **memory** | вертикальный (business) | «Боб помнит» — эпизоды + семантические факты, гибридный recall (FTS5 + sqlite-vec → RRF) | [`domains/memory/README.md`](domains/memory/README.md) |
-| **personality** | вертикальный (business) | «кто Боб есть» — mood/disposition/taste/negotiation/voice/reflection/soul | [`domains/personality/README.md`](domains/personality/README.md) |
-| **conversation** | вертикальный (business) | «как ведётся ход» — адресность, conversational floor, brevity, engagement, судьи отклика | [`domains/conversation/README.md`](domains/conversation/README.md) |
-| **social** | вертикальный (business) | «Боб различает людей» — идентичность, первое впечатление, отношения, авторизация, permission, genesis | [`domains/social/README.md`](domains/social/README.md) |
+| **memory** | вертикальный (business) | «Боб помнит» — эпизоды + семантические факты, гибридный recall (FTS5 + sqlite-vec → RRF), scope-провенанс `visibility` (`NULL`=public, BOB-066) | [`domains/memory/README.md`](domains/memory/README.md) |
+| **personality** | вертикальный (business) | «кто Боб есть» — mood/disposition/taste/negotiation/voice/reflection/soul; второй слой `room_tone` (настроение комнаты красит голос и аппетит поверх личного mood, BOB-066) | [`domains/personality/README.md`](domains/personality/README.md) |
+| **conversation** | вертикальный (business) | «как ведётся ход» — адресность, conversational floor, brevity, engagement, судьи отклика, рефлексивное «чтение комнаты» (двускоростное внимание, за флагом `presence.reflective`) | [`domains/conversation/README.md`](domains/conversation/README.md) |
+| **social** | вертикальный (business) | «Боб различает людей» — идентичность, первое впечатление, отношения, per-person обида/охлаждение (таблица `person_sulk`, адресный холод), такт разглашения (`disclosure` — гость не видит owner_private инициативно), кредит доверия (`endorsement`/`endorsed_seed` — owner ручается за новичка), авторизация, permission, genesis | [`domains/social/README.md`](domains/social/README.md) |
 | **proactivity** | вертикальный (business) | «фоновая жизнь Боба» — drive-движок, свои цели (Goal Engine), само-улучшение | [`domains/proactivity/README.md`](domains/proactivity/README.md) |
+| **presence** | вертикальный (business) | «живой ритм Боба» — доля эфира (soft-ceiling с focus-bypass), естественная задержка ответа, бюджет реакций; инертен за флагом `presence.rhythm` | [`domains/presence/README.md`](domains/presence/README.md) |
 | **capabilities** | вертикальный (business) | «инструменты Боба» — registry + tool-loop + навыки (recall, web_search, read_url, диаграммы, интроспекция) | [`domains/capabilities/README.md`](domains/capabilities/README.md) |
 | **application** | координационный слой | тонкие кросс-доменные оркестраторы (HandleMessage), LLM-роутер, async-примитивы рантайма | [`domains/application/README.md`](domains/application/README.md) |
 | **infrastructure** | координационный слой | адаптеры: Telegram (aiogram + мульти-бот), LLM-провайдеры, SQLite-connection-kernel, конфигурация | [`domains/infrastructure/README.md`](domains/infrastructure/README.md) |
@@ -116,6 +119,7 @@ graph TD
         memory["memory"]
         social["social"]
         proactivity["proactivity"]
+        presence["presence"]
         capabilities["capabilities"]
         coding["coding"]
     end
@@ -156,11 +160,13 @@ graph TD
 ## Сквозной поток: обработка сообщения (perceive → decide → act → persist)
 
 Когда пользователь пишет в Telegram, Боб проживает один ход. Поток собирается в
-`HandleMessage` (`application/usecases/handle_message.py`), подписанном на событие
-`MessageReceived` в `AsyncEventBus`.
+`HandleMessage` (`application/usecases/handle_message.py`). Подписчик `MessageReceived` в
+`AsyncEventBus` — уже не сам `HandleMessage`, а быстрый `ChatDispatcher.submit`
+(intake-развязка, BOB-066 Срез 2.1, см. ниже); per-`chat_id` воркер зовёт
+`HandleMessage.handle(event, scope)` с per-turn `TurnScope`.
 
 `handle_message.py` — **тонкий оркестратор, а не God-use-case** (BOB-062.6b, #9):
-`HandleMessage.handle()` проводит ход по фазам **perceive → who → gate →
+`HandleMessage.handle(event, scope=None)` проводит ход по фазам **perceive → who → gate →
 compose+guard → post-effects**, делегируя каждую ~14 когезивным коллабораторам,
 разложенным по чистым модулям. `HandleMessage.__init__` остаётся композиционным
 корнем (собирает коллабораторов из инъектированных швов). Карта
@@ -177,7 +183,8 @@ compose+guard → post-effects**, делегируя каждую ~14 когез
 | `RecallAssembler` | `conversation/usecases/recall_assembler.py` | воспроизведение треда + absence/acknowledgment |
 | `FloorManager` | `conversation/usecases/floor_manager.py` | resolve + advance разговорной реплики (floor) |
 | `VerifyStep` | `conversation/usecases/verify_step.py` | предответная эпистемическая проверка → per-turn note |
-| `TurnGate` | `conversation/usecases/turn_gate.py` | гейт хода: reply/react/silent (тонкий координатор) |
+| `TurnGate` | `conversation/usecases/turn_gate.py` | гейт хода: reply/react/silent + фокус/периферия-развилка (BOB-066 Срез 2.2, INV-1) |
+| `ReadTheRoom` | `conversation/usecases/read_the_room.py` | рефлексивное «чтение комнаты» на периферийном ходе (BOB-066 Срез 2.2, за флагом `presence.reflective`) |
 | `AntiRepeatGuard` | `conversation/usecases/anti_repeat_guard.py` | анти-повтор/тик + кольцо закрывающих |
 | `EssentialRunner` | `application/usecases/essential_runner.py` | ретрай существенных LLM-шагов + честный GUPPI-нотис |
 | `PreComposeGate` | `application/usecases/precompose_gate.py` | coding-intent + permission гейты, что могут забрать ход |
@@ -189,7 +196,13 @@ compose+guard → post-effects**, делегируя каждую ~14 когез
 `conversation → personality`. 🔴 **Turn-local state — через аргументы, никогда не
 атрибут** коллаборатора (класс — shared singleton): `verify_note`, `closer_nudge`,
 `recalled`, `is_guest`, `reply`, `chat_id`, announcer прокидываются параметрами и
-через тот же callback, поэтому не протекают между ходами и пользователями.
+через тот же callback, поэтому не протекают между ходами и пользователями. 🔴 Сюда же
+относится **seeded-rng хода**: `handle(event, scope)` берёт `scope.rng` (per-turn поток,
+засеянный координатами `(base, chat_id, message_id)`) и прокидывает его во ВСЕ
+seeded-draw-сайты хода (plan → engagement → verbosity → addressivity → surface/ack →
+compose/guard), так что конкурентные чаты никогда не делят поток розыгрышей (INV-4). При
+прямом вызове без scope — откат на инъектированный per-boot rng (legacy-поведение
+идентично).
 
 Фазы хода:
 
@@ -200,7 +213,11 @@ compose+guard → post-effects**, делегируя каждую ~14 когез
    из неразрешённого чата в пайплайн не попадает. В топике Боба ход публикуется и
    для авторизованного, и для гостя (BOB-019, ограниченный гостевой режим);
    owner-команда в General уходит GUPPI. Текстовый апдейт нормализуется в
-   `MessageReceived` и публикуется в `AsyncEventBus`. → см.
+   `MessageReceived` и публикуется в `AsyncEventBus`. **Подписчик события — быстрый,
+   неблокирующий `ChatDispatcher.submit`** (intake-развязка, BOB-066 Срез 2.1): он
+   буферизует сообщение и мгновенно возвращается, поэтому поллер Telegram больше НЕ ждёт
+   генерацию Боба; per-`chat_id` воркер за швом дренирует буфер и зовёт `HandleMessage`
+   последовательно (см. «Intake-развязка» ниже). → см.
    [social](domains/social/README.md), [infrastructure](domains/infrastructure/README.md).
 2. **Perceive (обновление настроения, Tier 0).** `UpdateMoodFromText`
    (personality) читает сигналы — сентимент (Tier 0, локально), частоту, время
@@ -219,7 +236,10 @@ compose+guard → post-effects**, делегируя каждую ~14 когез
    ход, BOB-045). План выражения (BOB-018, seeded-RNG) выбирает grounded-добавки;
    воспроизводится общий тред топика (BOB-058), извлекаются факты (`MemoryRecall`,
    FTS5, единый recall на группу, BOB-051), собирается контекст ответа (идентичность,
-   тон, вердикт `TasteEngine`, фантомы, факты). Negotiation-врезка (BOB-013) даёт
+   тон, вердикт `TasteEngine`, фантомы, факты). Recall фильтруется тактом разглашения
+   (`_recall_surfaceable` → `filter_surfaceable`, BOB-066): гостю не всплывает
+   `owner_private`-память ни на FTS5-, ни на векторном пути; для owner/known-peer
+   (TRUSTED) — no-op, recall байт-в-байт. Negotiation-врезка (BOB-013) даёт
    директиву стойки; краткость (BOB-024) выбирает `Verbosity`. → см.
    [memory](domains/memory/README.md), [personality](domains/personality/README.md),
    [conversation](domains/conversation/README.md).
@@ -238,13 +258,66 @@ compose+guard → post-effects**, делегируя каждую ~14 когез
    на plain. → см. [infrastructure](domains/infrastructure/README.md).
 7. **Persist.** Ход сохраняется как эпизод в `episodic_log` (атрибутирован
    `sender_id`, BOB-045), снапшот настроения — в `mood_state`/`mood_history`.
-   Персист идёт во **всех** ветках (`REPLY`/`REACT`/`IGNORE`/сбой). Извлечение
+   Персист идёт во **всех** ветках (`REPLY`/`REACT`/`IGNORE`/сбой). Новые эпизоды и
+   факты штампуются scope-провенансом `visibility` (`_turn_visibility`: owner-DM →
+   `owner_private`, чужой ход → `public`, BOB-066; `NULL`=public для legacy). Извлечение
    фактов (`extract_facts`) — для любого участника закрытой группы (BOB-051). → см.
    [memory](domains/memory/README.md).
 
 Параллельно идёт лёгкий **heartbeat** — фоновые asyncio-задачи рантайма, каждая
 изолирована: ошибка в одном тике не роняет остальные, транзиентный сбой ретраится
 с backoff. Подробнее о сборке и запуске — [`services/runtime.md`](services/runtime.md).
+
+## Intake-развязка: поллер ⇄ Боб (BOB-066 Срез 2.1)
+
+Раньше поллер Telegram `await`-ил всю генерацию ответа прямо в своём цикле, поэтому
+следующий `get_updates` не срабатывал, пока Боб «думал». Пакет
+`application/runtime/intake/` разрывает этот шов, оставляя `AsyncEventBus`, gateway и
+`poll_once` нетронутыми — быстрым стал только обработчик за швом. Подписчик
+`MESSAGE_RECEIVED` теперь `ChatDispatcher.submit` (нормализовать → буфер → вернуться); за
+ним один воркер на `chat_id` дренирует буфер чата и зовёт `HandleMessage.handle`
+последовательно.
+
+Модули пакета:
+
+- **decisions.py** — чистое детерминированное ядро решений: `should_debounce`
+  (замкнуть окно тишины в ноль при фокусе/закрытии), `batch_grew` (продолжать ли ждать
+  всплеск), `derive_turn_seed` (сид турна из `(base, chat_id, message_id)`). Mutation-tested.
+- **scope.py** — `TurnScope` (frozen-dataclass: `chat_id` / `message_id` / собственный
+  `Random`) + фабрика `new_turn_scope`; изолированный per-turn контекст, прокинутый через ход.
+- **inbox.py** — `ChatInbox`: per-`chat_id` буфер с debounce-окном. `offer` неблокирующий
+  (append + wake); `drain_batch` ждёт короткое окно тишины «пусть допишут» и отдаёт
+  осевший всплеск; снапшот+очистка синхронны (без `await` внутри), поэтому конкурентный
+  `offer` не теряется. `peek_since` — недренажный снапшот для будущего catch-up (Фаза 3).
+- **dispatcher.py** — `ChatDispatcher`: быстрый `submit` + по одному воркер-таску на
+  `chat_id`. Каждое сообщение обрабатывается под свежим `TurnScope`; `wait_for_idle` — шов
+  синхронизации для тестов (прод не зовёт); `aclose` — graceful-дренаж.
+- **focus.py** — `make_focus_predicate` / `message_is_focused`: переиспользует ТОТ ЖЕ
+  чистый детектор `classify_addressivity` (`DIRECTED_TO_BOB`), что и гейт адресности (DRY),
+  так что «фокус» = @mention Боба / reply-на-Боба / «Боб, …». `bob_user_id` резолвится лениво.
+
+Композиционный корень (`runtime/composition.py`) меняет подписчика с
+`_as_handler(handle_message)` на `_as_dispatch_handler(intake_dispatcher)`; `Application`
+получает поле `intake_dispatcher`, а `Application.shutdown` дренирует его дренажом
+(`runtime.stop()` → `intake_dispatcher.aclose()` → `connection.close()`), поэтому корректная
+остановка досдаёт буферизованные ответы и никогда не пишет сквозь закрытое соединение.
+Окно debounce конфигурируется в `dialogue.intake_debounce_ms` (по умолчанию 0 — одиночные
+ходы без задержки; богатое окно «пусть допишут» — opt-in для Фазы 3).
+
+Инварианты развязки:
+
+- 🔴 **INV-5 (сериализация/порядок).** Один воркер владеет инбоксом чата, поэтому сообщения
+  чата обрабатываются строго в порядке прихода (floor / mood / отношения продвигаются по
+  порядку). Параллелизм — только МЕЖДУ чатами (разные воркеры); глобального лока нет, поэтому
+  воркер может ждать только свой инбокс и не может задедлочить другой.
+- 🔴 **INV-4 (turn-local изоляция).** Каждое сообщение обрабатывается под свежим `TurnScope`,
+  чей `rng` засеян `(base, chat_id, message_id)` и прокинут в КАЖДЫЙ seeded-draw хода
+  (включая регенерацию anti-repeat), поэтому конкурентные чаты не делят поток розыгрышей, а
+  ход воспроизводим независимо от порядка диспетчеризации.
+- 🔴 **INV-1/10 (фокус минует debounce).** Сообщение, прямо адресованное Бобу, замыкает
+  окно тишины в ноль и флашится на уровне ВСЕГО батча (фокусное сообщение флашит растущий
+  ambient-всплеск разом), поэтому фокус-сигнал никогда не теряется и не задерживается
+  батчингом.
 
 ## Конфигурация, запуск и тесты
 

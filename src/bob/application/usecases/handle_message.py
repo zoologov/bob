@@ -135,6 +135,7 @@ from bob.proactivity.self_improvement import (
     _validated_magnitude,
     build_modulators,
 )
+from bob.social.disclosure import filter_surfaceable, visibility_for_scope
 from bob.social.interlocutor import InterlocutorKind, Trust
 from bob.social.usecases.social_context import SocialContext
 
@@ -147,6 +148,7 @@ if TYPE_CHECKING:
     from bob.application.reliability import Sleep
     from bob.application.router.llm_router import LLMRouter
     from bob.application.runtime.events import MessageReceived
+    from bob.application.runtime.intake.scope import TurnScope
     from bob.capabilities.ports import (
         DiagramRenderer,
         DiagramSink,
@@ -160,6 +162,7 @@ if TYPE_CHECKING:
     from bob.conversation.ports import CloserLog, ConversationFloorStore, ZoneClassifier
     from bob.conversation.usecases.addressivity_perceiver import _AddressivityDecision
     from bob.conversation.usecases.decide_response import DecideResponse
+    from bob.conversation.usecases.read_the_room import ReadTheRoom
     from bob.conversation.volatility_judgment import VolatilityJudge
     from bob.kernel.ports import Clock
     from bob.memory.ports import MemoryRecall, Recalled
@@ -406,28 +409,30 @@ class RelationshipReader(Protocol):
 
 
 class SulkReader(Protocol):
-    """Sulk seam: load Bob's обида state + fold an owner turn into it (BOB-014 .2b).
+    """Sulk seam: load Bob's per-person обида + fold a turn into it (BOB-066 2.5).
 
-    The compose path uses this to go COLD while Bob is hurt and to let обида take hold
-    or warm up over the live message path: :meth:`current` returns the persisted
-    :class:`~bob.social.sulk.SulkState` so the prompt appends the cold
-    :func:`~bob.personality.voice.sulk_directive` while ``active``;
-    :meth:`observe` folds ONE owner turn's signals (the relationship ``owner_warmth``,
-    a ``hostile`` directed-hostility flag, and a ``warmth_delta``) into обида AFTER the
-    turn — a sustained critical owner-drop OR sustained directed hostility enters обида
-    (announced once via GUPPI), while a warm turn accelerates recovery if already hurt.
-    The concrete adapter
-    (:class:`~bob.social.usecases.sulk_sources.SulkTracker`) is per-PERSONA and
-    persists. Optional and additive: unwired (the default) Bob never sulks and the turn
+    The compose path uses this to go COLD while Bob is hurt at the CURRENT interlocutor
+    and to let обида take hold or warm up over the live message path: :meth:`current_for`
+    returns the persisted :class:`~bob.social.sulk.SulkState` for ONE ``sender_id`` so the
+    prompt appends the cold :func:`~bob.personality.voice.sulk_directive` while ``active``
+    — an обида toward another participant never chills THIS reply (addressed cooling);
+    :meth:`observe` folds ONE person's turn signals (their relationship ``person_warmth``,
+    a ``hostile`` directed-hostility flag, and a ``warmth_delta``) into their обида AFTER
+    the turn — a sustained critical warmth-drop OR sustained directed hostility enters
+    обида (announced once via GUPPI in an owner-DM, silent in a group), while a warm turn
+    accelerates recovery if already hurt. The concrete adapter
+    (:class:`~bob.social.usecases.sulk_sources.SulkTracker`) is per-``(persona, sender)``
+    and persists. Optional and additive: unwired (the default) Bob never sulks and the turn
     behaves exactly as before. обида carries NO memory and NO soul (anti-Exodus).
     """
 
-    async def current(self) -> SulkState: ...
+    async def current_for(self, sender_id: int) -> SulkState: ...
 
     async def observe(
         self,
         *,
-        owner_warmth: float,
+        sender_id: int,
+        person_warmth: float,
         hostile: bool,
         warmth_delta: float,
         now: datetime,
@@ -586,6 +591,7 @@ class HandleMessage:
         verify_timeout_seconds: float = _DEFAULT_VERIFY_TIMEOUT_SECONDS,
         interim_line_generator: InterimLineGenerator | None = None,
         closer_log: CloserLog | None = None,
+        read_the_room: ReadTheRoom | None = None,
     ) -> None:
         self._router = router
         self._gateway = gateway
@@ -882,6 +888,13 @@ class HandleMessage:
         # sender perceived → Bob falls back to the legacy addressivity path, so existing
         # constructions/tests behave exactly as before.
         self._decide_response = decide_response
+        # Reflective «read the room» seam (BOB-066 Срез 2.2): when wired AND a sender is
+        # perceived, the turn gate takes the focus/periphery fork ДО the BOB-049 judge — a
+        # raw direct address short-circuits to a deterministic reply (INV-1), everything
+        # ambient goes through one rich Tier-1 reflective read + a pure verdict. Unwired
+        # (the default → off in composition unless ``presence.reflective``) the gate falls
+        # back to the BOB-049 judge / legacy paths, so behaviour is exactly as before.
+        self._read_the_room = read_the_room
         # Reliability seam (BOB-049 .3 — «полный Боб или честный GUPPI-нотис»): the two
         # ESSENTIAL LLM steps (the semantic judgment + the reply generation) are retried a
         # bounded number of times with a short backoff before Bob falls back to the honest
@@ -1105,6 +1118,7 @@ class HandleMessage:
             reactor=self._reactor,
             persist=self._persist,
             record_owner_activity=self._record_owner_activity,
+            read_the_room=self._read_the_room,
         )
 
     async def _plain_reply(self, system_prompt: str, text: str, context: str) -> str:
@@ -1169,8 +1183,22 @@ class HandleMessage:
             rules, max_magnitude=self._self_improvement_max_magnitude
         )
 
-    async def handle(self, event: MessageReceived) -> None:
-        """Process one received message end to end (the EventBus subscriber)."""
+    async def handle(
+        self, event: MessageReceived, scope: TurnScope | None = None
+    ) -> None:
+        """Process one received message end to end (the intake worker's per-turn call).
+
+        🔴 BOB-066 Срез 2.1 (intake-развязка): the bus subscriber is now the fast
+        :class:`~bob.application.runtime.intake.dispatcher.ChatDispatcher.submit`; a per-chat
+        worker calls this with the turn's :class:`~bob.application.runtime.intake.scope.
+        TurnScope`, whose ``rng`` is seeded per ``(base, chat_id, message_id)``. That
+        per-turn rng is threaded through every seeded draw of the turn (plan → engagement →
+        verbosity → addressivity → surface/ack) so concurrent chats never share a draw
+        stream and a turn is reproducible independent of dispatch timing (INV-4). Called
+        directly without a scope (a unit test) it falls back to the injected per-boot rng, so
+        behaviour is byte-identical to before the развязка.
+        """
+        rng = scope.rng if scope is not None else self._rng
         soul = await self._perceive(event)
         # Perceive WHO is writing (BOB-019): owner / known / guest / bot. Resolved
         # once per turn so the same identity threads through every (re)compose; None
@@ -1207,10 +1235,11 @@ class HandleMessage:
         # (warmth + compatibility) are coloured for THEM this turn; a new person →
         # None (a neutral turn). Per-PERSON data, so it is loaded even on a guest turn.
         relationship = await self._load_relationship(interlocutor)
-        # Load Bob's обида state (BOB-014 .2b): while active, the reactive tone goes
-        # COLD (a quieter, curt sulk_directive) — composed over mood/relationship tone.
-        # None when no seam is wired / not hurt, so the turn behaves exactly as before.
-        sulk = await self._load_sulk()
+        # Load Bob's обида state for THIS interlocutor (BOB-066 2.5): while active, the
+        # reactive tone goes COLD (a quieter, curt sulk_directive) — composed over mood/
+        # relationship tone. Addressed: an обида toward another participant never chills
+        # this reply. None when no seam is wired / not hurt, so the turn behaves as before.
+        sulk = await self._load_sulk(interlocutor)
         # Build this turn's self-improvement modulators (BOB-028 .3): the soft, bounded
         # tilts Bob's OWNER-APPROVED rules apply — voice (tone/humor), length, proactivity
         # and addressivity biases — each into ITS OWN point below. Unwired / disabled → a
@@ -1219,14 +1248,14 @@ class HandleMessage:
         # Plan how Bob expresses this turn (BOB-018): pure, deterministic by seed.
         # Computed up front so the mode steers the reply path and the form hint
         # shapes the prompt; the rare flags ride along for later beads.
-        plan = self._plan_expression(event, soul)
+        plan = self._plan_expression(event, soul, rng=rng)
         # Decide Bob's APPETITE to converse this turn (BOB-014 .2a): a LEVEL from mood x
         # topic interest x conversational fatigue x relationship. Computed up front so the
         # level appends a voice directive to the prompt and the topic interest feeds the
         # after-turn feedback (mood lift + fatigue update). The fatigue is decayed by the
         # real elapsed time since the last turn first, so appetite always recovers.
         interest = await self._topic_interest(soul, event.text)
-        level = self._decide_engagement(soul, interest, relationship)
+        level = self._decide_engagement(soul, interest, relationship, rng=rng)
         # Addressivity gate (BOB-023): decide WHO this message is for and whether to
         # take the turn at all, BEFORE composing anything. A message clearly FOR Bob
         # always engages; one aimed at another participant is left alone (SILENT) unless
@@ -1252,7 +1281,7 @@ class HandleMessage:
         # handled inside the gate and returns ``None`` with no notice.
         try:
             gate = await self._turn_gate.gate(
-                event, soul, interlocutor, plan, interest, modulators
+                event, soul, interlocutor, plan, interest, modulators, rng=rng
             )
         except _EssentialStepError as exc:
             await self._essential.handle_failure(event, soul, exc)
@@ -1261,6 +1290,10 @@ class HandleMessage:
             return
         decision = gate.decision
         prefetched_history = gate.history
+        # 🔴 BOB-066 Срез 2.2 (C11): a reflective read that set ``wants_web`` rides the gate
+        # as ``force_web`` → force the EXISTING verify pass below (skip its volatility judge).
+        # Every non-reflective path leaves this ``False``, so the judge decides as before.
+        force_web = gate.force_web
         # Decide how SHORT Bob answers this ENGAGE turn (BOB-024): answer-demand of the
         # message x interest x mood/appetite x the BOB-018 form_hint → a Verbosity, the
         # single final length directive + (on a terse turn) the short-answer few-shot.
@@ -1269,7 +1302,9 @@ class HandleMessage:
         # own roll stays unperturbed. The LOW answer-demand is reused by the optional
         # length guard after generation.
         demand = classify_answer_demand(text=event.text)
-        verbosity = self._decide_verbosity(soul, demand, interest, level, plan, interlocutor)
+        verbosity = self._decide_verbosity(
+            soul, demand, interest, level, plan, interlocutor, rng=rng
+        )
         # LENGTH self-improvement tilt (BOB-028 .3): an APPROVED LENGTH rule nudges the
         # decided verbosity ONE step shorter (clipped at TERSE) — a soft bias on TOP of
         # the BOB-024 decision, never a base override (наклон, не перехват). No such rule
@@ -1297,9 +1332,10 @@ class HandleMessage:
         # Recall is UNIFIED (BOB-051): Bob's full knowledge surfaces for owner and member
         # alike — no per-person scoping. Continuity (WHO Bob talked to) lives in the
         # per-person history thread (below), not in a knowledge restriction.
-        recalled: Sequence[Recalled] = recalled_excluding_reflections(
-            await self._recall.recall(event.text, k=_RECALL_K)
-        )
+        # 🔴 Такт разглашения (BOB-066 2.6, INV-7): on TOP of reflection-containment, drop
+        # owner-PRIVATE memories that may not surface INITIATIVELY to THIS interlocutor —
+        # byte-identical for a TRUSTED owner/peer, only a GUEST has owner_private withheld.
+        recalled: Sequence[Recalled] = await self._recall_surfaceable(event, interlocutor)
         # On the judge REPLY path the shared recent thread was already replayed for the
         # judgment (BOB-049); reuse it so it is not read twice. Otherwise (legacy path)
         # replay it now — the SHARED group thread (BOB-058 .1), all participants labeled.
@@ -1340,6 +1376,7 @@ class HandleMessage:
                     history,
                     interlocutor=interlocutor,
                     chat_id=event.chat_id,
+                    forced=force_web,
                 )
                 # Anti-tic «провязка» (BOB-061 .2): BEFORE generation, detect whether Bob's
                 # recent closers (persist ring + live window) cluster into ONE recurring
@@ -1370,6 +1407,7 @@ class HandleMessage:
                     chat_id=event.chat_id,
                     verify_note=verify_note,
                     closer_nudge=closer_nudge,
+                    rng=rng,
                 )
                 # Anti-repeat guard (BOB-022, defense in depth): if the fresh reply is
                 # byte-identical (after strip) to Bob's most-recent prior reply, regenerate
@@ -1394,6 +1432,7 @@ class HandleMessage:
                     modulators=modulators,
                     verify_note=verify_note,
                     closer_nudge=closer_nudge,
+                    rng=rng,
                 )
         except _EssentialStepError as exc:
             await self._essential.handle_failure(event, soul, exc)
@@ -1444,7 +1483,16 @@ class HandleMessage:
         # updated with the turn outcome. (The fascination-grounding nudge toward a
         # well-going topic is left to the reflect-tick evolution path it already owns.)
         soul = self._apply_engagement_feedback(soul, level, interest)
-        await self._persist(event, reply, soul, bob_message_id=bob_message_id)
+        # 🔴 Такт разглашения (BOB-066 2.6): the episode + any distilled facts are stamped
+        # with this turn's scope-provenance (``_turn_visibility``) so a guest never has
+        # owner-private memory initiatively surfaced. Owner recall stays byte-identical.
+        await self._persist(
+            event,
+            reply,
+            soul,
+            bob_message_id=bob_message_id,
+            visibility=self._turn_visibility(interlocutor),
+        )
         # Log Bob's closer to the cross-session ring (BOB-061 .2): only a GENUINE reply
         # feeds the anti-tic memory (the silent/react/outage markers persist through their
         # own paths and are never logged). 🔴 Decorative — a failed append is swallowed so
@@ -1476,7 +1524,11 @@ class HandleMessage:
         # recall can surface them — for ANY group member, not just the owner. Best-effort
         # — run() never raises, so a flaky local model can never break a turn that already
         # replied.
-        await self._extract_facts.run(user_message=event.text, reply=reply)
+        await self._extract_facts.run(
+            user_message=event.text,
+            reply=reply,
+            visibility=self._turn_visibility(interlocutor),
+        )
 
     def _resolve_outgoing_target(
         self,
@@ -1565,9 +1617,13 @@ class HandleMessage:
         """Delegate to :meth:`SocialContext.record_relationship` (wave 2)."""
         await self._social.record_relationship(interlocutor, soul, text, relationship)
 
-    async def _load_sulk(self) -> SulkState | None:
-        """Delegate to :meth:`SocialContext.load_sulk` (wave 2)."""
-        return await self._social.load_sulk()
+    async def _load_sulk(self, interlocutor: Interlocutor | None) -> SulkState | None:
+        """Delegate to :meth:`SocialContext.load_sulk` for the CURRENT interlocutor.
+
+        🔴 Addressed cooling (BOB-066 2.5): the cold tone is read for THIS interlocutor's
+        обида only, so a sulk toward another participant never chills this reply.
+        """
+        return await self._social.load_sulk(interlocutor)
 
     async def _observe_sulk(
         self, interlocutor: Interlocutor | None, soul: SOUL, text: str
@@ -1580,11 +1636,16 @@ class HandleMessage:
         return await self._engagement.topic_interest(soul, text)
 
     def _decide_engagement(
-        self, soul: SOUL, interest: float, relationship: Relationship | None
+        self,
+        soul: SOUL,
+        interest: float,
+        relationship: Relationship | None,
+        *,
+        rng: Random,
     ) -> EngagementLevel:
         """Delegate to :meth:`EngagementModel.decide_engagement` (wave 2)."""
         return self._engagement.decide_engagement(
-            soul, interest, relationship, self._engagement_state
+            soul, interest, relationship, self._engagement_state, rng=rng
         )
 
     def _apply_engagement_feedback(
@@ -1603,6 +1664,8 @@ class HandleMessage:
         engagement: EngagementLevel,
         plan: ExpressionPlan,
         interlocutor: Interlocutor | None,
+        *,
+        rng: Random,
     ) -> Verbosity:
         """Delegate to :meth:`EngagementModel.decide_verbosity` (wave 2).
 
@@ -1613,7 +1676,7 @@ class HandleMessage:
             interlocutor is not None and interlocutor.kind is InterlocutorKind.OWNER
         )
         return self._engagement.decide_verbosity(
-            soul, demand, interest, engagement, plan, is_owner=is_owner
+            soul, demand, interest, engagement, plan, is_owner=is_owner, rng=rng
         )
 
     def _guard_reply_length(self, reply: str, demand: AnswerDemand) -> str:
@@ -1626,9 +1689,43 @@ class HandleMessage:
         """Delegate to :meth:`RecallAssembler.replay_recent_thread` (wave 2)."""
         return await self._assembler.replay_recent_thread(interlocutor)
 
-    def _plan_expression(self, event: MessageReceived, soul: SOUL) -> ExpressionPlan:
+    def _turn_visibility(self, interlocutor: Interlocutor | None) -> str:
+        """Classify the scope-provenance a turn's memory is written with (BOB-066 2.6).
+
+        An OWNER-DM turn is ``owner_private`` (his private world); a non-owner author's
+        turn is ``public`` (their own shared contribution, not the owner's private data);
+        an unidentified turn is conservatively ``owner_private`` (INV-8 — doubt withholds).
+        ``NULL``-legacy stays public — this only tags NEW rows, and the guest-facing effect
+        is latent (owner recall byte-identical, INV-7). Pure and deterministic.
+        """
+        return visibility_for_scope(is_group=_turn_is_shared_scope(interlocutor))
+
+    async def _recall_surfaceable(
+        self, event: MessageReceived, interlocutor: Interlocutor | None
+    ) -> Sequence[Recalled]:
+        """Recall for the reply, minus reflections AND owner-private-withheld memory.
+
+        Two containment layers on the reply-recall pool: reflection episodes are dropped
+        (BOB-033 .3 — inner life colours tone via MOOD, never parroted TEXT), and такт
+        разглашения (BOB-066 2.6) drops any ``owner_private`` memory that may not surface
+        INITIATIVELY to THIS interlocutor. For the owner / a known peer (TRUSTED) the
+        second filter is a no-op — recall is byte-identical (INV-7); only a GUEST has
+        owner_private provenance withheld (latent until a guest is live). A missing
+        perception seam defaults to TRUSTED, so an unidentified turn is never over-filtered.
+        """
+        recall_trust = interlocutor.trust if interlocutor is not None else Trust.TRUSTED
+        return filter_surfaceable(
+            recalled_excluding_reflections(
+                await self._recall.recall(event.text, k=_RECALL_K)
+            ),
+            recall_trust,
+        )
+
+    def _plan_expression(
+        self, event: MessageReceived, soul: SOUL, *, rng: Random
+    ) -> ExpressionPlan:
         """Delegate to :meth:`MoodPerceiver.plan_expression` (wave 2)."""
-        return self._mood.plan_expression(event, soul)
+        return self._mood.plan_expression(event, soul, rng=rng)
 
     async def _persist(
         self,
@@ -1637,13 +1734,16 @@ class HandleMessage:
         soul: SOUL,
         *,
         bob_message_id: int | None = None,
+        visibility: str | None = None,
     ) -> None:
         """Save the turn as an episode and snapshot the updated mood.
 
         ``bob_message_id`` is the Telegram message_id of Bob's outgoing reply this
         turn (BOB-050), recorded on the episode so a later reaction on that message
         can be linked back to what Bob said. ``None`` for a turn where Bob sent no
-        message (a silent/degraded turn).
+        message (a silent/degraded turn). ``visibility`` (BOB-066 2.6) is the turn's
+        scope-provenance; ``None`` writes NULL (= public), so a caller that does not
+        classify scope persists surfaceable memory exactly as before.
         """
         now = self._clock.now()
         episode = EpisodicEvent(
@@ -1654,6 +1754,7 @@ class HandleMessage:
             tags=("telegram",),
             sender_id=event.sender_id,
             bob_message_id=bob_message_id,
+            visibility=visibility,
         )
         await self._repo.save_episode(
             {
@@ -1664,6 +1765,7 @@ class HandleMessage:
                 "tags": ",".join(episode.tags),
                 "sender_id": episode.sender_id,
                 "bob_message_id": episode.bob_message_id,
+                "visibility": episode.visibility,
             }
         )
         await self._repo.set_mood(_mood_state(soul), at=now)
@@ -1680,4 +1782,18 @@ class HandleMessage:
 # preserve the original import paths used within this module (and its tests).
 _recalled_bob_reply = recalled_bob_reply
 _recalled_bob_replies = recalled_bob_replies
+
+
+def _turn_is_shared_scope(interlocutor: Interlocutor | None) -> bool | None:
+    """Classify a turn's scope for такт разглашения (BOB-066 2.6) — pure.
+
+    Feeds :func:`~bob.social.disclosure.visibility_for_scope`. A NON-owner author's turn
+    is a SHARED surface (``True`` → ``public``): it is that person's own contribution, not
+    the owner's private data. The OWNER's own turn is his private DM world (``False`` →
+    ``owner_private``). An unidentified turn (no perception seam) is UNCERTAIN (``None`` →
+    ``owner_private``, the conservative fail-safe, INV-8 — doubt withholds). Deterministic.
+    """
+    if interlocutor is None:
+        return None
+    return interlocutor.kind is not InterlocutorKind.OWNER
 _recalled_without_copied_exemplars = recalled_without_copied_exemplars

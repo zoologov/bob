@@ -75,12 +75,20 @@ src/bob/memory/
 `EpisodicEvent` (`entities.py`) — одно событие на ленте (сообщение, тик, действие):
 `ts`, `event_type`, `content`, опциональный `mood_snapshot`, свободные `tags`,
 `sender_id` (атрибуция реплики собеседнику — per-person память BOB-045; `None`
-для тика/дайджеста/legacy-строки) и `bob_message_id` (Telegram message_id
-собственного ответа Боба, BOB-050, чтобы позднюю реакцию связать со сказанным).
-`SemanticFact` — дистиллированный долговечный факт: `ts`, `category`, `content`,
-`confidence` в `[0, 1]`. Оба — `frozen, slots` value-object'ы без I/O; инварианты
-(timezone-aware `ts`, `confidence ∈ [0, 1]`) проверяются в `__post_init__`, так что
-невалидная запись не может существовать в памяти.
+для тика/дайджеста/legacy-строки), `bob_message_id` (Telegram message_id
+собственного ответа Боба, BOB-050, чтобы позднюю реакцию связать со сказанным) и
+`visibility` (scope-провенанс хода — BOB-066 2.6 такт разглашения: `'public'` /
+`'owner_private'`, либо `None` = public). `SemanticFact` — дистиллированный
+долговечный факт: `ts`, `category`, `content`, `confidence` в `[0, 1]` и такой же
+`visibility` (провенанс исходного хода). Оба — `frozen, slots` value-object'ы без
+I/O; инварианты (timezone-aware `ts`, `confidence ∈ [0, 1]`) проверяются в
+`__post_init__`, так что невалидная запись не может существовать в памяти.
+
+`visibility` — провенанс, а не гейт: память **несёт** его вниз до слоя, который
+фильтрует (такт разглашения в `social`/`application`, см. инвариант ниже); сама
+`memory` его лишь пишет и протаскивает через recall. `None` = public держит
+BOB-051 единую память и все legacy-строки нетронутыми, а owner recall остаётся
+байт-в-байт (INV-7).
 
 ### Use-case'ы (application)
 
@@ -90,8 +98,9 @@ src/bob/memory/
 собеседнике (имя, предпочтение, человек, решение) как JSON-массив. Каждый пункт
 становится `SemanticFact` (confidence 0.7 — дистиллированный, но модельный) и
 пишется через шов `FactWriter` (kernel-репозиторий, чей FTS5-триггер индексирует
-контент). Best-effort: провайдер, вернувший прозу вместо JSON, или ошибка не ломают
-ход диалога.
+контент). Опциональный параметр `visibility` (BOB-066 2.6) штампует scope-провенанс
+исходного хода на каждый извлечённый факт (`None` = public, дефолт). Best-effort:
+провайдер, вернувший прозу вместо JSON, или ошибка не ломают ход диалога.
 
 `ConsolidateMemory` (`usecases/consolidate_memory.py`) — редкий недеструктивный
 дайджест (BOB-021), навешенный на медленный reflect-тик heartbeat. Отбирает батч
@@ -123,20 +132,28 @@ near-дубликатов фактов (BOB-021). Отбирает ACTIVE фак
 сторона (`vector_count`/`vector_knn` + on-write эмбеддинг), а также mood/taste
 (`set_mood`/`get_mood`/`mood_history`/`set_taste_axis`/`load_taste_axes`). Соединение
 не открывает — читает kernel через `.connection`-шов; memory-специфичные миграции
-(`_migrate_episodic_*`, `_migrate_semantic_superseded_by`) и FTS5-бэкфилл живут в его
-`initialize()`. С опциональным `embedder` владеет `MemoryVectorStore`.
+(`_migrate_episodic_*`, `_migrate_semantic_superseded_by`, guarded-additive
+`_migrate_episodic_visibility` / `_migrate_semantic_visibility` — nullable-колонка
+`visibility` с `NULL`-дефолтом, идемпотентно, не трогает существующую базу) и
+FTS5-бэкфилл живут в его `initialize()`. `save_episode`/`save_fact` персистят
+`visibility` параметризованно (`?`), а recall-SELECT'ы несут его дальше (см. ниже).
+С опциональным `embedder` владеет `MemoryVectorStore`.
 
 `MemoryVectorStore` (`adapters/vector_store.py`) — sqlite-vec сторона памяти:
 vec0-таблица `memory_vec` (`float[1024]`) в синхроне с архивом. `load_extension()`
 грузит sqlite-vec на соединение (capability соединения), `backfill`/`embed_row`
 питают стор (идемпотентно, best-effort — недоступный эмбеддер пропускается, не роняя
-запись), `knn(vector, k)` обслуживает семантическую сторону гибрид-recall.
+запись), `knn(vector, k)` обслуживает семантическую сторону гибрид-recall. KNN-SELECT
+несёт `visibility` каждой строки-источника (BOB-066 2.6), так что провенанс доживает
+до фильтра такта разглашения и на векторном пути, а не только на FTS5.
 
 `Fts5MemoryRecall` (`adapters/fts_recall.py`) — P0 keyword-recall через SQLite FTS5
 `MATCH` с BM25. Покрывает **и** семантические факты, **и** сырой эпизодический
 архив (Fix A): старая реплика, из которой факт не извлекали, всё равно всплывает.
 Сырой пользовательский текст санитизируется в безопасный FTS5-запрос, так что
 операторные символы не вызовут синтаксическую ошибку и не пройдут инъекцией.
+Recall-SELECT'ы (и по фактам, и по эпизодам) несут `visibility` каждого хита
+(BOB-066 2.6), чтобы провенанс дожил до фильтра такта разглашения выше.
 
 `HybridMemoryRecall` (`adapters/hybrid_recall.py`) — drop-in замена keyword-only
 recall'а: consumers (`handle_message` / `recall_memory`) по-прежнему видят
@@ -190,6 +207,13 @@ OpenAI-совместимой `/v1/chat/completions`, сортирует по у
   повторно (идемпотентно).
 - **Sender-атрибуция:** `EpisodicEvent.sender_id` привязывает реплику к
   собеседнику (per-person память BOB-045); `None` — для тика/дайджеста/legacy.
+- **Visibility-провенанс (`NULL` = public, BOB-066 2.6):** `visibility` — nullable
+  additive-колонка на `episodic_log` и `semantic_memory`; `NULL` читается как public,
+  так что BOB-051 единая память и все pre-migration-строки остаются surfaceable, а
+  owner recall — байт-в-байт (INV-7). Память лишь **пишет** провенанс (по scope хода)
+  и **протаскивает** его через оба recall-пути (FTS5 + векторный KNN); собственно
+  фильтрацию initiative-surfacing делает такт разглашения в `social`/`application` —
+  memory не гейтит.
 - **Приватность (локальность):** эмбеддинги и reranking считаются на LOCAL
   Ollama — содержимое памяти никогда не покидает машину.
 - **Инварианты сущностей:** `ts` всегда timezone-aware, `confidence ∈ [0, 1]` —
@@ -259,7 +283,11 @@ ports-шим `bob.domain.ports` удалён (BOB-062.8), ~15 потребите
   `test_vector_store.py`, `test_fts_recall.py`,
   `test_hybrid_recall.py`, `test_recall_excludes_superseded.py`,
   `test_sender_attribution.py`, `test_consolidation_repo.py`,
-  `test_dedup_repo.py`; connection-kernel — `test_connection.py`;
+  `test_dedup_repo.py`; visibility-провенанс (BOB-066 2.6) —
+  `test_visibility_provenance.py` (запись+миграция `NULL`=public) и
+  `test_visibility_recall_seam.py` (реальный sqlite-vec KNN несёт `visibility`:
+  owner_private роняется гостю, byte-identical для TRUSTED, `NULL`=public);
+  connection-kernel — `test_connection.py`;
   `tests/infrastructure/llm/test_ollama_embedder.py`,
   `test_embedder_factory.py`, `test_ollama_reranker.py`,
   `test_reranker_factory.py` (+ `*_hardening.py`).

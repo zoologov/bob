@@ -1,56 +1,34 @@
 <!-- Copyright (c) 2026 Vladimir Zoologov. All Rights Reserved.
      SPDX-License-Identifier: BUSL-1.1 -->
 
-# ACTIVE: BOB-066 — «Человеческое групповое присутствие»
+# ACTIVE: bob-vol.9.1 — Срез 2.6-dev (такт разглашения + кредит доверия)
 
-> **Status:** In Progress
-> **Updated:** 2026-07-29
-> **Эпик-беад:** `bob-vol` · **Ветка:** `features/BOB-066`
+## Фокус
+Пласт 4 RFC: такт разглашения (visibility-провенанс + may_surface + tactful_withhold)
++ кредит доверия (endorsement seed). INV-7: owner recall byte-identical; гость-фильтр латентен.
 
----
-
-## Беады (эпик `bob-vol`)
-
-| Срез | Беад | Тема | Статус |
-|------|------|------|--------|
-| **0** | `bob-vol.1` | Инструментарий качества (pytest-bdd + mutmut + scaffold) | ○ ready (роли .1.1–.1.4) |
-| 1.1 | `bob-vol.2` | Reply-to на выходе | ● blocked (S0) |
-| 1.2 | `bob-vol.3` | Floor-по-говорящему | ● blocked (S0) |
-| 2.1 | `bob-vol.4` | Intake-развязка + TurnScope | ● blocked (S0) |
-| 2.2 | `bob-vol.5` | Рефлексивный read-the-room + split + INV-1 + web-лаз | ● blocked (S0,1.1,1.2,2.1) |
-| 2.3 | `bob-vol.6` | Ритм-слой presence/ + доля эфира | ● blocked (S0,2.1) |
-| 2.4 | `bob-vol.7` | RoomMood-в-тоне + салиенс/бюджет | ● blocked (2.2,2.3) |
-| 2.5 | `bob-vol.8` | Per-person обида/охлаждение | ● blocked (S0) |
-| 2.6 | `bob-vol.9` | Такт разглашения + кредит доверия | ● blocked (S0) |
-| 3.1 | `bob-vol.10` | Staleness/merge-gate | ● blocked (2.1,2.3) |
-| 3.2 | `bob-vol.11` | Backlog catch-up + бэкпрешер | ● blocked (2.1,2.2,3.1) |
-
-**Критический путь:** `S0 → 1.2 → 2.1 → 2.2 → 2.4 → 3.2`.
-
-## Срез 0 — роль-беады (текущий фокус)
-
-| Беад | Роль | Статус |
-|------|------|--------|
-| `bob-vol.1.1` | dev — harness (pytest-bdd+mutmut+scaffold) | ○ ready |
-| `bob-vol.1.2` | test — harness зелёный + порог | ● blocked (.1.1) |
-| `bob-vol.1.3` | review — метод BDD+mutation | ● blocked (.1.2) |
-| `bob-vol.1.4` | tech-writer — dev-доки | ● blocked (.1.3) |
-
-## Пирамида качества (CONTEXT §Парадигмы)
-
-BDD acceptance (pytest-bdd+Gherkin) · Mutation (mutmut, прицельно domain, ≥85%) · TDD unit · DDD +
-Cohesion. 🔴 DoD: full-reindex + full-mypy + `beadloom ci`.
+## План (TDD)
+- [ ] social/disclosure.py — may_surface(visibility, trust) + visibility_for_scope(is_group) [mutation]
+- [ ] social/endorsement.py — detected_endorsement(owner_text) + owner_endorsed_sender [mutation on detected]
+- [ ] relationship.endorsed_seed(rel|None, sender_id) [mutation]
+- [ ] voice.tactful_withhold_directive()
+- [ ] visibility migration (schema.sql + guarded ALTER, NULL=public)
+- [ ] write-side visibility (save_episode/save_fact + _persist + extract_facts)
+- [ ] recall filter (may_surface в handle; visibility через fts_recall + vector_store)
+- [ ] endorsement seed interception (guarded: rel None + guest + owner endorsement)
+- [ ] BDD .feature (owner_private не всплывает гостю; public всем; tactful vs dry; endorsed warm start)
+- [ ] mutation ≥85% на 3 ядрах
 
 ## Прогресс
-- 2026-07-29: PRD/RFC/CONTEXT/PLAN Approved; методология DDD/TDD/BDD/Cohesion/Mutation зафиксирована
-  стоячей (CLAUDE.md §0.2 + 4 роль-агента); эпик `bob-vol` + 11 срезов + Срез-0 роли созданы, DAG
-  связан. Старт Среза 0.
-- 2026-07-29: `bob-vol.1.1` dev — harness готов и ЗЕЛЁН по всем своим гейтам (pytest 3318, ruff,
-  mypy full, reindex --full + lint --strict 0, sync-check/doctor). Добавлены pytest-bdd+mutmut;
-  tests/acceptance/{features,steps}/ + fake_gateway (FakeGateway граница + run_turn) + conftest;
-  первый .feature `direct_address` GREEN; [tool.mutmut] прицельно на чистый domain; scripts/mutation.sh
-  + dev-docs/MUTATION.md. Baseline sulk = 80% (56/70) → цель test-волны .1.2.
-  🔴 БЛОКЕР (НЕ этот беад): `beadloom ci` красен ТОЛЬКО на config-check — 4 дрейф-адаптера
-  `.claude/agents/*.md` из epic-setup коммита 94244e3 (методология BDD/Mutation вписана руками, а
-  composer beadloom её не знает; `--fix` СТИРАЕТ методологию). Решение — за координатором (принять
-  дрейф ИЛИ upstream quality-overlay в beadloom). Роль-адаптеры оставлены как задумано эпиком.
+ГОТОВО (dev): все пункты плана реализованы, TDD+BDD+mutation зелёные.
+- Чистые ядра (100% cov, mutation): may_surface (1 эквив-мутант), detected_endorsement (0),
+  endorsed_seed (0). owner_endorsed_sender: killed 6, 5/8 эквивалентны (maxsplit ≠ [0]).
+- Миграция visibility (schema + guarded ALTER, NULL=public), write-side, recall-фильтр
+  (owner TRUSTED байт-в-байт), visibility через fts_recall+vector_store.
+- BDD: 7 сценариев disclosure_tact.feature зелёные.
+- Gate: pytest 3702✓ · mypy full 0 · ruff ✓ · reindex --full + lint --strict EXIT 0.
+- sync-check exit 2 (домен-READMEs stale) → ВОЛНА tech-writer (по DoD).
+
+## DEFERRED (live-wiring, латентно — гости не live; сообщено)
+- endorsement-seed перехват в handle: нужен owner_id на seam load_relationship — отложено.
+- tactful_withhold в guest-compose: нужен guest owner_data seam — отложено (директива готова).

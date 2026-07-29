@@ -5301,7 +5301,13 @@ async def test_guest_turn_extracts_facts_into_shared_memory() -> None:
         def __init__(self) -> None:
             self.calls = 0
 
-        async def run(self, *, user_message: str, reply: str) -> None:  # noqa: ARG002
+        async def run(
+            self,
+            *,
+            user_message: str,  # noqa: ARG002
+            reply: str,  # noqa: ARG002
+            visibility: str | None = None,  # noqa: ARG002
+        ) -> None:
             self.calls += 1
 
     extract = _RecordingExtractFacts()
@@ -6000,26 +6006,30 @@ class _FakeSulk:
     """In-memory SulkReader fake: a fixed current state + capture of observations.
 
     ``current`` is the обида state returned for the turn (the cold-tone source);
-    ``observations`` captures every (owner_warmth, hostile, warmth_delta) folded in
-    after a turn so a test can assert the обида signal reacts to the right thing.
+    ``observations`` captures every (sender_id, person_warmth, hostile, warmth_delta)
+    folded in after a turn so a test can assert the обида signal reacts to the right thing;
+    ``loaded_for`` captures the sender_id the addressed cold tone was read for.
     """
 
     def __init__(self, *, current: SulkState | None = None) -> None:
         self._current = current if current is not None else SulkState()
-        self.observations: list[tuple[float, bool, float]] = []
+        self.observations: list[tuple[int, float, bool, float]] = []
+        self.loaded_for: list[int] = []
 
-    async def current(self) -> SulkState:
+    async def current_for(self, sender_id: int) -> SulkState:
+        self.loaded_for.append(sender_id)
         return self._current
 
     async def observe(
         self,
         *,
-        owner_warmth: float,
+        sender_id: int,
+        person_warmth: float,
         hostile: bool,
         warmth_delta: float,
         now: datetime,  # noqa: ARG002 - part of the seam contract, unused by the fake
     ) -> SulkState:
-        self.observations.append((owner_warmth, hostile, warmth_delta))
+        self.observations.append((sender_id, person_warmth, hostile, warmth_delta))
         return self._current
 
 
@@ -6058,8 +6068,23 @@ async def test_not_sulking_leaves_the_tone_normal() -> None:
     assert "тепл" in folded  # the warm tone band still present
 
 
+async def test_addressed_cold_reads_the_current_interlocutors_sulk() -> None:
+    # 🔴 Addressed cooling: the compose path reads the обида keyed to the CURRENT
+    # interlocutor's sender_id (not a hardcoded owner) — so an обида toward another
+    # participant can never chill THIS reply. The tone read is per-relationship.
+    sulk = _FakeSulk(current=SulkState(active=True, intensity=0.8, since=_moment()))
+    handler, _bot, _repo, _tier1 = _build(
+        reply="hi", perceive_sender=_guest_resolver(), sulk=sulk
+    )
+
+    await handler.handle(_message("расскажи подробно про космос"))
+
+    # The cold tone was loaded FOR this sender (99), never for a global/owner key.
+    assert sulk.loaded_for == [99]
+
+
 async def test_owner_turn_feeds_the_sulk_signal() -> None:
-    # An OWNER turn folds (owner_warmth, hostile, warmth_delta) into обида after.
+    # A turn folds (sender_id, person_warmth, hostile, warmth_delta) into обида after.
     rel = _FakeRelationship(current=Relationship(sender_id=99, warmth=-0.6))
     sulk = _FakeSulk()
     handler, _bot, _repo, _tier1 = _build(
@@ -6069,8 +6094,9 @@ async def test_owner_turn_feeds_the_sulk_signal() -> None:
     await handler.handle(_message("расскажи подробно про космос"))
 
     assert len(sulk.observations) == 1
-    owner_warmth, _hostile, _delta = sulk.observations[0]
-    assert owner_warmth == -0.6  # the owner relationship warmth fed the signal
+    sender_id, person_warmth, _hostile, _delta = sulk.observations[0]
+    assert sender_id == 99  # keyed per person (the owner's sender_id here)
+    assert person_warmth == -0.6  # the relationship warmth fed the signal
 
 
 async def test_directed_insult_flags_hostility_to_the_sulk_signal() -> None:
@@ -6082,7 +6108,7 @@ async def test_directed_insult_flags_hostility_to_the_sulk_signal() -> None:
 
     await handler.handle(_message("ты тупой идиот"))
 
-    assert sulk.observations[0][1] is True  # hostile flag set
+    assert sulk.observations[0][2] is True  # hostile flag set
 
 
 async def test_casual_mat_is_not_flagged_hostile_to_the_sulk_signal() -> None:
@@ -6095,11 +6121,12 @@ async def test_casual_mat_is_not_flagged_hostile_to_the_sulk_signal() -> None:
 
     await handler.handle(_message("блин, ну охренеть как круто получилось!"))
 
-    assert sulk.observations[0][1] is False  # casual мат is not hostile
+    assert sulk.observations[0][2] is False  # casual мат is not hostile
 
 
-async def test_guest_turn_does_not_feed_the_sulk_signal() -> None:
-    # обида v1 is tied to the OWNER relationship — a guest turn never feeds it.
+async def test_guest_turn_feeds_its_own_per_person_sulk_signal() -> None:
+    # BOB-066 2.5: the owner-gate is gone — a guest turn folds into the GUEST's own
+    # per-(persona, sender) обида (keyed by their sender_id), never the owner's.
     sulk = _FakeSulk()
     handler, _bot, _repo, _tier1 = _build(
         reply="hi", perceive_sender=_guest_resolver(), sulk=sulk
@@ -6107,7 +6134,9 @@ async def test_guest_turn_does_not_feed_the_sulk_signal() -> None:
 
     await handler.handle(_message("ты тупой идиот"))
 
-    assert sulk.observations == []  # owner-only
+    assert len(sulk.observations) == 1
+    assert sulk.observations[0][0] == 99  # keyed by the guest's sender_id
+    assert sulk.observations[0][2] is True  # directed hostility flagged
 
 
 async def test_no_sulk_seam_leaves_the_turn_unchanged() -> None:
@@ -6118,6 +6147,44 @@ async def test_no_sulk_seam_leaves_the_turn_unchanged() -> None:
 
     folded = tier1.all_text.casefold()
     assert "сейчас ты обижен" not in folded
+
+
+class _RaisingSulk:
+    """A SulkReader whose observe() always raises (a flaky per-person обида store).
+
+    ``current_for`` reads the not-sulking default (so the compose path is unchanged);
+    ``observe`` raises to prove folding the turn's обида signal is best-effort.
+    """
+
+    async def current_for(self, sender_id: int) -> SulkState:  # noqa: ARG002
+        return SulkState()
+
+    async def observe(
+        self,
+        *,
+        sender_id: int,  # noqa: ARG002
+        person_warmth: float,  # noqa: ARG002
+        hostile: bool,  # noqa: ARG002
+        warmth_delta: float,  # noqa: ARG002
+        now: datetime,  # noqa: ARG002
+    ) -> SulkState:
+        raise RuntimeError("person-sulk store unavailable")
+
+
+async def test_sulk_observe_failure_never_breaks_the_turn() -> None:
+    # NO REGRESSION (resilience): a flaky per-person обида store that raises while folding
+    # the turn's signal must NOT break a turn that already replied — the reply lands and
+    # the episode persists (best-effort observe, anti-Exodus never risks the conversation).
+    handler, bot, repo, _tier1 = _build(
+        reply="всё в порядке",
+        perceive_sender=_owner_resolver(),
+        sulk=_RaisingSulk(),  # type: ignore[arg-type]
+    )
+
+    await handler.handle(_message("расскажи подробно, как у тебя дела"))
+
+    assert bot.final_text == "всё в порядке"
+    assert len(repo.episodes) == 1
 
 
 # --- BOB-023: addressivity policy (engage / react / silent) ------------------

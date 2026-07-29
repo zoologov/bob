@@ -6,7 +6,8 @@
 Социальная идентичность Боба как единая вертикаль: он *воспринимает*, кто на другом
 конце хода (owner, известный друг, гость, другой бот), формирует лёгкое первое
 впечатление на каждого нового, ведёт отношение по каждому человеку, умеет по-настоящему
-обидеться (обида как характер, а не книжный Exodus-reset), гейтит привилегии через
+обидеться на **конкретного** человека (обида как характер, а не книжный Exodus-reset;
+охлаждение к одному участнику не студит тон к остальным), гейтит привилегии через
 двойной permission-flow с решением owner'а, авторизует по allowlist в рамках
 разрешённых чатов и один раз при рождении генерирует уникальную личность (genesis
 SOUL). Всё это живёт *над* неизменной политикой доступа: identity ≠ authz — Боб
@@ -48,7 +49,8 @@ relationship,sulk}` + `application/authz/` + `application/usecases/{permission_*
    `SqliteConnection` (`infrastructure/persistence/connection.py`); allowlist — через
    его `kv`-таблицу; soul_store — файловый (`data/soul/`). Обратного ребра
    `kernel → social` нет. schema-таблицы (`first_impression`, `person_relationship`,
-   `sulk_state`, `permission_request`, `kv`) живут в единой `schema.sql` kernel'а.
+   `sulk_state`, `person_sulk`, `permission_request`, `kv`) живут в единой `schema.sql`
+   kernel'а.
    С расщеплением kernel'а в BOB-062.7b долг варианта C закрыт (connection-kernel ↔
    memory-репозиторий разведены; сторы читают чистый `.connection`-шов).
 5. **Порты живут в `social/ports.py`** (Allowlist / Soul / First / Relationship / Sulk /
@@ -77,7 +79,9 @@ src/bob/social/
   interlocutor.py     # layer=domain          — Interlocutor + classify (owner/known/guest/bot + trust), BOB-019
   first_impression.py # layer=domain          — FirstImpression + impression_note_for (лёгкая заметка на нового), BOB-019
   relationship.py     # layer=domain          — Relationship (4 оси) + apply_interaction (шаг за ход), BOB-014
-  sulk.py             # layer=domain          — SulkState + observe_relationship/recover (обида, анти-Exodus), BOB-014.2b
+  sulk.py             # layer=domain          — SulkState + observe_relationship/recover (обида на person, person-agnostic, анти-Exodus), BOB-014.2b/BOB-066.2.5
+  disclosure.py       # layer=domain          — такт разглашения: may_surface/visibility_for_scope/filter_surfaceable (initiative-surfacing фильтр provenance), BOB-066.2.6
+  endorsement.py      # layer=domain          — кредит доверия: detected_endorsement/owner_endorsed_sender (owner ручается за новичка), BOB-066.2.6
   permission/         # layer=domain
     entities.py       #                        — PermissionRequest (immutable pending-запрос), BOB-052.1
     intent.py         #                        — is_deny/is_grant/is_authorize (NL-предикаты решения owner'а)
@@ -91,7 +95,7 @@ src/bob/social/
     permission_execution.py —                  — PermissionExecutor: исполнить решение owner'а (HOW: grant/authorize/deny)
     first_impression_sources.py —              — FirstImpressionTracker: live-шов первого впечатления
     relationship_sources.py —                  — RelationshipTracker: live-шов отношения (current/record_interaction)
-    sulk_sources.py       —                    — SulkTracker: live-шов обиды (current/observe)
+    sulk_sources.py       —                    — SulkTracker: per-person live-шов обиды (current_for/observe(sender_id)/active_targets/recover) + GroupSilentAnnouncer (scope-aware announce), BOB-066.2.5
     social_context.py     —                    — SocialContext: per-person чтение хода (собеседник/впечатление/отношение/обида/стойка/тон), коллаборатор handle_message (BOB-062.6b)
     run_genesis.py        —                    — RunGenesis: первое пробуждение, генерация уникальной личности
   adapters/           # layer=infrastructure
@@ -99,7 +103,8 @@ src/bob/social/
     soul_store.py          —                   — SoulStore (файловый reader/writer data/soul/)
     first_impression_store.py —                — SqliteFirstImpressionStore (INSERT … ON CONFLICT DO NOTHING)
     relationship_store.py  —                   — SqliteRelationshipStore (UPSERT в person_relationship)
-    sulk_store.py          —                   — SqliteSulkStore (одна строка на persona_id)
+    sulk_store.py          —                   — SqliteSulkStore (legacy per-persona sulk_state — источник owner-backfill)
+    person_sulk_store.py   —                   — SqlitePersonSulkStore (per-(persona,sender) UPSERT в person_sulk + backfill_owner), BOB-066.2.5
     permission_request_store.py —              — SqlitePermissionRequestStore (pending-запросы)
     privilege_judge.py     —                   — LlmPrivilegeJudge (Tier-0 реализация PrivilegeJudge)
     permission_channels.py —                   — транспортные края гейта привилегий (BOB-052): _PermissionRequesterChannel / _PermissionNotifier + _SafeDefaultPrivilegeJudge (safe-default обёртка судьи)
@@ -108,8 +113,11 @@ src/bob/social/
 
 **Connection-kernel (общий):** конкретная запись social-сторов идёт через
 `.connection`-шов `SqliteConnection` (`infrastructure/persistence/connection.py`);
-schema-таблицы (`first_impression`, `person_relationship`, `sulk_state`,
-`permission_request`, `kv`) живут в единой `schema.sql` kernel'а.
+schema-таблицы (`first_impression`, `person_relationship`, `sulk_state`, `person_sulk`,
+`permission_request`, `kv`) живут в единой `schema.sql` kernel'а. Таблица `person_sulk`
+(PK `(persona_id, sender_id)`) добавлена в BOB-066.2.5 как guarded-миграция
+(`CREATE TABLE IF NOT EXISTS` — не трогает существующую базу); legacy `sulk_state`
+остаётся источником одноразового owner-backfill.
 
 **ОСТАЁТСЯ вне social:** `privileged_fulfiller.py` (application-оркестратор, решение 3);
 `ports/personality.py` (MessageReactor / ReflectionReader / Fascination / ZoneClassifier
@@ -134,14 +142,78 @@ WHEN (`first_seen_at`), одна строка `note`. `impression_note_for` — 
 шаг обновления от сигналов ОДНОГО хода (`stance`, `Mood`, `sentiment`) малыми bounded-
 дельтами; сначала применяется мягкий дрейф к нейтральному `0`, так что отношение без
 поддержки расслабляется обратно и никогда не убегает в закреплённый экстремум.
+`endorsed_seed(rel, sender_id)` (BOB-066.2.6, кредит доверия) — тёплый старт по
+поручительству owner'а: ТОЛЬКО на первом контакте (`rel is None`) вернуть скромно
+тёплую связь (`warmth 0.3` / `trust 0.2`, respect/compatibility нейтральны);
+уже-сформированное отношение возвращается НЕИЗМЕНным (тот же объект), так что seed
+никогда не переписывает накопленную историю, а обычный дрейф растворяет его, если
+поведение новичка не подтвердит — head-start, не постоянная инфляция.
 
 `SulkState` (`sulk.py`) — обида/охлаждение, дно оси вовлечённости. Вход требует ПОРОГА И
 поддержания: одно плохое сообщение или бытовой мат не заводят обиду — только устойчиво
-критически низкое warmth owner'а ИЛИ устойчивая DIRECTED-враждебность за прогон
+критически низкое warmth **этого человека** ИЛИ устойчивая DIRECTED-враждебность за прогон
 `sustain_count` наблюдений (`observe_relationship`); здоровый ход между сбрасывает
-streak. Обида несёт затухающую `intensity`, тон становится тише и суше (не reset личности),
-и НЕ трогает ни память, ни soul — Боб «отходит», а не «уходит». `recover` — гарантированный
-выход (тёплые ходы owner'а ускоряют выздоровление).
+streak. Домен теперь **person-agnostic** (BOB-066.2.5): `observe_relationship` берёт
+`person_warmth` вместо `owner_warmth`, тот же порог/поддержание/затухание обслуживает и
+owner'а, и любого гостя — обида ключуется по `(persona, sender)` уровнем выше. Обида несёт
+затухающую `intensity`, тон становится тише и суше (не reset личности), и НЕ трогает ни
+память, ни soul — Боб «отходит», а не «уходит». `recover` — ГАРАНТИРОВАННЫЙ выход одним
+лишь временем (даже при нулевом warmth блокировки навсегда нет; тёплые ходы ускоряют
+выздоровление).
+
+### Такт разглашения (`disclosure.py`, BOB-066.2.6)
+
+Такт разглашения — **отдельная** забота от гейта привилегий (BOB-052): гейт решает,
+что человек может *попросить* Боба сделать или раскрыть; такт решает, что Боб
+*инициативно выкладывает* из собственной памяти в ответ. Две оси ортогональны — гость
+ведёт совершенно обычный разговор (память публична, BOB-051), но Боб не должен по своей
+воле выложить ему приватное owner'а. Чистое детерминированное ядро (без I/O):
+
+- `may_surface(visibility, trust)` — предикат, который recall-конвейер спрашивает на
+  каждую память. TRUSTED-собеседник (owner или известный peer) видит ВСЁ, поэтому
+  owner-facing recall байт-в-байт (INV-7); гостю удерживается только `owner_private`, а
+  `public` — и, защитно, legacy-`NULL` или неизвестный тег — всплывает (`NULL` = public
+  держит BOB-051 нетронутой, неизвестный тег никогда молча не прячет публичную память).
+  Сверка `owner_private` регистронезависима.
+- `visibility_for_scope(is_group=)` — консервативный write-side классификатор: групповой
+  ход — `public` (общая память комнаты), owner-DM ИЛИ *неопределённый* scope —
+  `owner_private` (fail-safe, INV-8: сомнение удерживает, а не течёт).
+- `filter_surfaceable(recalled, trust)` — recall-фильтр (зеркалит
+  `conversation.recalled_excluding_reflections`): роняет `owner_private`-хиты, читая
+  поле `visibility` каждого элемента. Для TRUSTED результат байт-в-байт равен входу
+  (order-preserving, INV-7); гостю удерживается только `owner_private`.
+
+Врезано live в `handle_message._recall_surfaceable` ПОВЕРХ unified recall (обоих путей —
+FTS5 И векторного KNN, оба несут `visibility`), а write-side `_turn_visibility` штампует
+провенанс на новые эпизоды и факты. Тон отказа гейта на голосовом слое —
+`personality.voice.tactful_withhold_directive` (тёплая, не холодная стена). Фильтр латентен,
+пока гость реально не в чате: owner (TRUSTED) всегда видит всё.
+
+### Кредит доверия (`endorsement.py`, BOB-066.2.6)
+
+Когда owner представляет или ручается за новичка («это мой друг Норман, ему можно
+доверять»), Боб встречает того тёплым стартом, а не как чистого незнакомца — кредит
+доверия, который owner выдаёт от его имени. Это *seed*, не постоянный грант: обычный
+дрейф-к-нейтральному растворит его, если поведение человека не подтвердит. Чистое ядро:
+
+- `detected_endorsement(owner_text)` — лёгкая эвристика (в духе
+  `personality.profanity.is_directed_hostility`): срабатывает, когда текст читается как
+  owner ПОРУЧИТЕЛЬСТВО — представление («познакомься, это мой друг») или вотум доверия
+  («ему можно доверять», «я за него ручаюсь», «он свой»). Намеренно консервативна:
+  нейтральное упоминание человека — не endorsement.
+- `owner_endorsed_sender(owner_texts, sender_name=)` — сужает сигнал до ОДНОГО человека:
+  endorsement среди недавних ходов owner'а, который НАЗЫВАЕТ этого отправителя (хватает
+  имени, регистронезависимо). Тёплое слово о Лёше никогда не warm-start'ит Нормана.
+
+Сам кредит применяется в `relationship.endorsed_seed` (см. ниже) и только на первом
+контакте — этот модуль лишь ВОСПРИНИМАЕТ endorsement.
+
+> **DEFERRED live-wiring (BOB-066.2.6, латентно — гости ещё не live).** Ядра и директивы
+> готовы и покрыты тестами, но два стыка врезки — follow-up: (1) перехват endorsement-seed
+> в `load_relationship`-шов (нужен `owner_id` на этом seam, чтобы `endorsed_seed` встал в
+> перцепцию отношения); (2) `tactful_withhold_directive` в guest owner_data compose-seam.
+> Recall-фильтр такта разглашения и write-side `visibility` **уже live** — латентен только
+> guest-специфичный код, поскольку гость сейчас не в чате (owner всегда TRUSTED).
 
 ### Permission-домен (BOB-052.1)
 
@@ -182,13 +254,25 @@ owner допущен только внутри разрешённого чата
 `FirstImpressionTracker` / `RelationshipTracker` / `SulkTracker` (`usecases/*_sources.py`)
 — тонкие live-шовы, держащие `HandleMessage` чистым от store/clock-плумбинга: `current`
 / `prior_impression` читают состояние для compose-пути, `note_first_contact` /
-`record_interaction` / `observe` фолдят сигналы хода и персистят.
+`record_interaction` фолдят сигналы хода и персистят. `SulkTracker` — **per-person**
+(BOB-066.2.5): `current_for(sender_id)` грузит обиду к ОДНОМУ собеседнику для compose-пути
+(обида на Лёшу не студит ответ Владимиру), `observe(sender_id=, person_warmth=, …)` фолдит
+ход этого человека в его обиду и на свежем ВХОДЕ анонсирует её ровно раз через announcer,
+`active_targets()` перечисляет тех, на кого Боб сейчас обижен, а `recover` итерирует
+только активные обиды на reflect-тике (гарантированный выход временем). `current_active()`
+читает обиду именно OWNER'а — это veto проактивности (Боб не пишет первым, пока обижен на
+своего человека). Owner-гейт снят: любой участник ведёт свою обиду; owner — просто один
+`sender_id`. `GroupSilentAnnouncer` — scope-aware null-object announcer: в owner-DM свежий
+вход даёт системную строку GUPPI, в группе внеличностная строка была бы резкой, поэтому
+вход МОЛЧАЛИВ (охлаждение читается через адресный тон к участнику, не broadcast'ом);
+application инжектит его для group-scoped `observe`.
 
 `SocialContext` (`usecases/social_context.py`, коллаборатор `handle_message` — BOB-062.6b, #9)
 — per-person социальное чтение хода поверх этих live-швов, собирается в `HandleMessage.__init__`.
 Владеет всей per-person перцепцией и эволюцией одного хода: `perceive_interlocutor`,
 `recall_prior_impression`, `record_first_impression`, `load_relationship` /
-`record_relationship`, `load_sulk` / `observe_sulk`, а также `decide_stance` /
+`record_relationship`, `load_sulk` / `observe_sulk` (оба теперь берут `interlocutor` и
+адресуют обиду по `interlocutor.sender_id` — адресный холод), а также `decide_stance` /
 `relationship_tone` — ПУБЛИЧНЫЕ (их зовёт compose-путь `VoiceComposer` через инъектированный
 stance-порт, так что personality не импортирует social).
 
@@ -209,7 +293,15 @@ append-only `genesis_log.md`; каталог создаётся по требо�
 — `INSERT … ON CONFLICT DO NOTHING` (впечатление формируется ОДИН раз).
 `SqliteRelationshipStore` — UPSERT в `person_relationship` (имя выбрано, чтобы не путать с
 legacy single-row `relationship` owner-blob). `SqliteSulkStore` — одна строка на
-`persona_id` (у каждой Bobiverse-реплики своя обида; unseen → свежий не-обиженный дефолт).
+`persona_id` (legacy per-persona обида, BOB-014.2b; сохранён как источник owner-backfill).
+`SqlitePersonSulkStore` (`adapters/person_sulk_store.py`, BOB-066.2.5) — per-`(persona,
+sender)` обида в таблице `person_sulk`: `load` (unseen пара → свежий не-обиженный дефолт),
+`save` — `INSERT … ON CONFLICT(persona_id, sender_id) DO UPDATE` (обида эволюционирует),
+`active_sulks` перечисляет активные строки для recovery-тика. `backfill_owner` копирует
+legacy-строку `sulk_state` в `person_sulk` ОДИН раз (existence-guarded, идемпотентно, не
+воскрешает уже отошедшую обиду; no-op при отсутствии legacy-строки или неконфигурированном
+owner id), так что обиженный на середине owner переносится **байт-в-байт**. Весь SQL
+параметризован (`?`), НЕ трогает ни память, ни soul (анти-Exodus, отдельная таблица).
 `SqlitePermissionRequestStore` — pending-запросы (idempotent `ensure_schema`).
 `LlmPrivilegeJudge` (`adapters/privilege_judge.py`) — Tier-0 реализация `PrivilegeJudge`:
 чистый билдер промпта + router-вызов на локальной модели + чистый парсер → `PrivilegeNeed`;
@@ -238,13 +330,32 @@ legacy single-row `relationship` owner-blob). `SqliteSulkStore` — одна с�
 - **Отношение аккретится и не убегает.** `apply_interaction` применяет мягкий дрейф к
   нейтральному `0` первым, дельты bounded, оси в `[-1, 1]`; отношение без поддержки
   релаксирует к нейтральному, никогда не пиннится в экстремум (BOB-014).
-- **Обида — анти-Exodus, гарантированный выход.** Вход требует порога И поддержания (не
-  одно сообщение / не мат); обида не трогает ни память, ни soul; `recover` даёт
-  гарантированный выход, тёплые ходы owner'а его ускоряют (BOB-014.2b).
+- **Обида — per-person, анти-Exodus, гарантированный выход (INV-6).** Вход требует порога
+  И поддержания (не одно сообщение / не бытовой мат); обида ключуется по `(persona, sender)`
+  в ОТДЕЛЬНОЙ таблице `person_sulk` — не трогает ни память, ни soul. Адресный холод: обида
+  на одного участника оставляет тон к остальным тёплым (`current_for(sender_id)` изолирован
+  per-sender). `recover` даёт ГАРАНТИРОВАННЫЙ выход одним лишь временем (даже при нулевом
+  warmth — блокировки навсегда нет), тёплые ходы ускоряют выздоровление. Owner-путь
+  **байт-в-байт** идентичен legacy: owner — единственный live-sender, тот же
+  порог/затухание/анонс, а `backfill_owner` переносит обиду на середине через upgrade
+  (BOB-014.2b, BOB-066.2.5).
 - **Привилегия — двойной гейт.** Не-авторизованный участник с привилегированным запросом
   не исполняется сразу: `PrivilegeJudge` (семантика) → owner решает (`PermissionFlow`) →
   исполнение (`PermissionExecutor`). GRANT — one-shot elevation по сохранённому
   `request_text`, без утечки на другие сообщения; DENY — безопасный дефолт (BOB-052).
+- **Такт разглашения — ортогонален гейту, owner байт-в-байт (INV-7, BOB-066.2.6).**
+  `may_surface`/`filter_surfaceable` фильтруют ИНИЦИАТИВНОЕ всплытие памяти (не запросы —
+  их держит `PrivilegeGate`); для TRUSTED (owner/known peer) — no-op, recall байт-в-байт,
+  гостю удерживается только `owner_private` на ОБОИХ recall-путях (FTS5 + векторный KNN,
+  оба несут `visibility`). Write-side `visibility_for_scope` fail-safe: неопределённый
+  scope → `owner_private` (INV-8, сомнение удерживает); `NULL` = public держит BOB-051
+  память нетронутой. `tactful_withhold_directive` — только ГОЛОС отказа гейта, не подмена
+  гейта.
+- **Кредит доверия — только seed на первом контакте (BOB-066.2.6).** `endorsed_seed`
+  warm-start'ит ТОЛЬКО новичка (`rel is None`); сформированная связь неизменна. Seed
+  скромный и растворяется обычным дрейфом-к-нейтральному, если поведение не подтвердит —
+  head-start, не постоянный грант. `detected_endorsement`/`owner_endorsed_sender`
+  консервативны (нужно поручительство И имя отправителя, иначе `False`).
 - **Genesis — one-shot.** Уникальная личность генерируется ровно раз на первом boot'е
   (нет `SOUL.md`), затем только читается.
 - **Мультиперсональность.** per-person атрибуция (`sender_id`/`persona_id`) сосуществует
@@ -277,6 +388,8 @@ legacy single-row `relationship` owner-blob). `SqliteSulkStore` — одна с�
   cross-bucket зависимость).
 - `FirstImpressionStore` / `RelationshipStore` / `SulkStore` — per-sender / per-persona
   сторы (переехали сюда из personality-портов в .5).
+- `PersonSulkStore` — per-`(persona, sender)` стор обиды (`load`/`save`/`active_sulks`),
+  обобщение `SulkStore` по `sender_id` (BOB-066.2.5). Реализация — `SqlitePersonSulkStore`.
 - `PrivilegeJudge` — семантический шов оценки привилегии (re-export из
   `permission/privilege.py`).
 
@@ -286,15 +399,18 @@ legacy single-row `relationship` owner-blob). `SqliteSulkStore` — одна с�
 
 Ключевые точки входа:
 - Домен: `interlocutor.classify`, `first_impression.impression_note_for`,
-  `relationship.apply_interaction`, `sulk.observe_relationship`/`recover`.
+  `relationship.apply_interaction`/`endorsed_seed`, `sulk.observe_relationship`/`recover`,
+  `disclosure.may_surface`/`visibility_for_scope`/`filter_surfaceable`
+  (+ `VISIBILITY_PUBLIC`/`VISIBILITY_OWNER_PRIVATE`),
+  `endorsement.detected_endorsement`/`owner_endorsed_sender`.
 - Permission: `permission.privilege.PrivilegeJudge`, `permission.entities.PermissionRequest`,
   `permission.intent.is_deny`/`is_grant`/`is_authorize`, `permission.state.PermissionState`.
 - Use-case'ы: `usecases.Authorizer`, `SenderPerception`/`ReactorPerception`,
   `PermissionFlow`/`PermissionExecutor`, `FirstImpressionTracker`/`RelationshipTracker`/
   `SulkTracker`, `RunGenesis`.
 - Адаптеры: `KvAllowlistStore`, `SoulStore`, `SqliteFirstImpressionStore`,
-  `SqliteRelationshipStore`, `SqliteSulkStore`, `SqlitePermissionRequestStore`,
-  `LlmPrivilegeJudge`.
+  `SqliteRelationshipStore`, `SqliteSulkStore`, `SqlitePersonSulkStore`,
+  `SqlitePermissionRequestStore`, `LlmPrivilegeJudge`.
 
 Композиция (wiring authz/permission/genesis, инъекция `PrivilegedFulfiller`, навешивание
 recovery-тика обиды) — в композиционном корне (`runtime/`). Долговечная запись в SQLite
@@ -319,6 +435,22 @@ recovery-тика обиды) — в композиционном корне (`r
 - Genesis: `tests/application/usecases/test_run_genesis.py`,
   `test_run_genesis_hardening.py`.
 - Адаптеры: `tests/infrastructure/persistence/test_first_impression_store.py`,
-  `test_relationship_store.py`, `test_sulk_store.py`,
+  `test_relationship_store.py`, `test_sulk_store.py`, `test_person_sulk_store.py`
+  (per-person UPSERT + owner-backfill идемпотентность/не-воскрешение),
   `test_permission_request_store.py`; `tests/infrastructure/llm/test_privilege_judge.py`.
+- Per-person обида (BOB-066.2.5): `tests/application/usecases/test_sulk_sources.py`
+  (SulkTracker per-sender, изоляция per-(persona,sender), GroupSilentAnnouncer);
+  BDD-сценарии `tests/acceptance/features/person_sulk.feature` +
+  `tests/acceptance/steps/test_person_sulk.py` (адресный холод, бытовой мат ≠ hostile,
+  гарантированный выход временем).
+- Такт разглашения и кредит доверия (BOB-066.2.6): чистые ядра —
+  `tests/domain/personality/test_disclosure.py` (`may_surface`/`filter_surfaceable`/
+  `visibility_for_scope`: TRUSTED/GUEST × public/private/`NULL`/unknown, регистр, scope,
+  порядок), `test_endorsement.py` (поручительство + сужение по имени),
+  `test_relationship.py` (`endorsed_seed`: seed на первом контакте, no-op на
+  сформированной связи), `test_voice.py` (`tactful_withhold_directive`); врезка recall —
+  `tests/application/usecases/test_handle_message.py` +
+  `tests/application/usecases/test_turn_visibility.py`; BDD —
+  `tests/acceptance/features/disclosure_tact.feature` +
+  `tests/acceptance/steps/test_disclosure_tact.py` (7 сценариев).
 - Layer-guard модуля: `tests/social/test_layering.py`.

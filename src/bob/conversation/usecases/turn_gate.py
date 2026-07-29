@@ -32,11 +32,13 @@ policy (via the shared :class:`AddressivityPerceiver`), so the per-turn draw ord
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol
 
-from bob.conversation.addressivity import ResponseOutcome
+from bob.conversation.addressivity import Addressivity, ResponseOutcome
 from bob.conversation.response_choice import ResponseIntent
+from bob.conversation.room_verdict import VerdictKind, decide_from_reading
 from bob.conversation.thread import _reaction_marker, _render_thread
 from bob.conversation.usecases.addressivity_perceiver import _AddressivityDecision
 from bob.personality.expression import ExpressionMode
@@ -44,18 +46,27 @@ from bob.personality.reaction import reaction_emoji_for
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Mapping, Sequence
+    from random import Random
 
     from bob.application.runtime.events import MessageReceived
+    from bob.conversation.conversation_floor import FloorHolder
     from bob.conversation.response_choice import ResponseChoice
-    from bob.conversation.usecases.addressivity_perceiver import AddressivityPerceiver
+    from bob.conversation.room_reading import RoomReading
+    from bob.conversation.usecases.addressivity_perceiver import (
+        AddressivityPerceiver,
+        _AddressivitySignals,
+    )
     from bob.conversation.usecases.decide_response import DecideResponse
     from bob.conversation.usecases.floor_manager import FloorManager
+    from bob.conversation.usecases.read_the_room import ReadTheRoom
     from bob.conversation.usecases.recall_assembler import RecallAssembler
     from bob.personality.expression import ExpressionPlan
     from bob.personality.ports import MessageReactor
     from bob.personality.soul import SOUL
     from bob.proactivity.self_improvement import RuleModulators
     from bob.social.interlocutor import Interlocutor
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -81,11 +92,15 @@ class _ReplyGate:
     ``decision`` is the floor signal the turn advances on after Bob replies;
     ``history`` is the CURRENT person's per-person thread already replayed for the
     judgment (the judge REPLY path), threaded into compose so it is not re-read —
-    ``None`` on the legacy path, where compose replays it itself.
+    ``None`` on the legacy path, where compose replays it itself. ``force_web`` is the
+    reflective autonomous-lookup flag (BOB-066 Срез 2.2, C11): when a periphery read set
+    ``wants_web`` it rides here so the caller FORCES the existing verify pass — ``False``
+    on every other path (focus / judge / legacy), where the verify judge decides.
     """
 
     decision: _AddressivityDecision
     history: Sequence[Mapping[str, object]] | None
+    force_web: bool = False
 
 
 class _EssentialRunner(Protocol):
@@ -142,6 +157,16 @@ def _clamp_unit(value: float) -> float:
     return max(_MIN_INTEREST, min(_MAX_INTEREST, value))
 
 
+def _floor_holder_label(holder: FloorHolder | None) -> str:
+    """Render the floor holder as a compact label for the reflective prompt (BOB-066 2.2).
+
+    ``None`` (the floor is inert / unresolved) → ``"none"``; otherwise the holder enum's
+    value (``"bob"`` / ``"other"`` / ``"idle"``) — a plain string hint the reflection
+    weighs, never a rule.
+    """
+    return holder.value if holder is not None else "none"
+
+
 class TurnGate:
     """Decide whether/how Bob takes this turn: reply, react, or stay silent (BOB-049)."""
 
@@ -156,6 +181,7 @@ class TurnGate:
         reactor: MessageReactor | None,
         persist: _Persist,
         record_owner_activity: _OwnerActivity,
+        read_the_room: ReadTheRoom | None = None,
     ) -> None:
         self._decide_response = decide_response
         self._addressivity = addressivity
@@ -165,8 +191,9 @@ class TurnGate:
         self._reactor = reactor
         self._persist = persist
         self._record_owner_activity = record_owner_activity
+        self._read_the_room = read_the_room
 
-    async def gate(
+    async def gate(  # noqa: PLR0911 — a flat three-path dispatch (reflective / judge / legacy), one early-out per branch, no logic to extract
         self,
         event: MessageReceived,
         soul: SOUL,
@@ -174,6 +201,8 @@ class TurnGate:
         plan: ExpressionPlan,
         interest: float,
         modulators: RuleModulators,
+        *,
+        rng: Random | None = None,
     ) -> _ReplyGate | None:
         """Decide whether/how Bob takes this turn (BOB-049 judge, or legacy fallback).
 
@@ -188,6 +217,14 @@ class TurnGate:
         REACT_ONLY form gate run exactly as before (their silent/react early-outs return
         ``None`` WITHOUT persisting, as today).
         """
+        # 🔴 BOB-066 Срез 2.2: the reflective «два-скорости-внимания» split sits at the
+        # VERY TOP, ДО судьи — when the reflective reader is wired AND a sender is
+        # perceived, Bob takes the focus/periphery fork (INV-1 lives here). Unwired (the
+        # default) OR no sender → the BOB-049 judge / legacy paths run exactly as before.
+        if self._read_the_room is not None and interlocutor is not None:
+            return await self._reflective_gate(
+                event, soul, interlocutor, interest, rng=rng
+            )
         if self._decide_response is not None and interlocutor is not None:
             judged = await self._judge(event, soul, interlocutor)
             if judged.choice.intent is not ResponseIntent.REPLY:
@@ -199,7 +236,11 @@ class TurnGate:
         # interest the policy reads — a bounded nudge (clamped to [0, 1]) on TOP of the
         # decision, never a base override and never able to silence Bob. No rule → unchanged.
         addressivity_interest = _clamp_unit(interest + modulators.addressivity_bias)
-        decision = await self._addressivity.decide(event, addressivity_interest)
+        # 🔴 BOB-066 Срез 2.1: thread the turn-local ``TurnScope.rng`` into the legacy
+        # addressivity draw (INV-4 — concurrent chats never share a draw stream).
+        decision = await self._addressivity.decide(
+            event, addressivity_interest, rng=rng
+        )
         if decision.outcome is ResponseOutcome.SILENT:
             await self.advance_floor_after_turn(event, decision, bob_replied=False)
             return None
@@ -218,6 +259,137 @@ class TurnGate:
             await self.advance_floor_after_turn(event, decision, bob_replied=False)
             return None
         return _ReplyGate(decision=decision, history=None)
+
+    async def _reflective_gate(
+        self,
+        event: MessageReceived,
+        soul: SOUL,
+        interlocutor: Interlocutor,
+        interest: float,
+        *,
+        rng: Random | None,
+    ) -> _ReplyGate | None:
+        """The «два-скорости-внимания» fork (BOB-066 Срез 2.2 Пласт 1).
+
+        🔴 FOCUS (INV-1): a RAW ``DIRECTED_TO_BOB`` (mention / reply-to-Bob / «Боб,») short-
+        circuits to a DETERMINISTIC :class:`_ReplyGate` — bypassing the reflective read, the
+        RNG and the share-of-voice ceiling. Direct address is answered OR (on a downstream
+        generation failure) becomes an honest GUPPI notice, NEVER silence. ``rng`` is
+        accepted for signature parity but deliberately UNUSED here — the focal path takes no
+        random draw (that IS the invariant).
+
+        PERIPHERY (ambient / directed-to-other, INCLUDING floor-continuity as a strong prior
+        the reflection may override): one rich reflective read → the pure
+        :func:`~bob.conversation.room_verdict.decide_from_reading` verdict. A read FAILURE
+        safe-defaults to a silent IGNORE (advance the floor, NO GUPPI notice — this is not
+        the focal guarantee), never Bob acting from a guessed read.
+        """
+        del rng  # focal path is RNG-free (INV-1/INV-4); periphery verdict is deterministic
+        signals = await self._addressivity.signals(event)
+        if signals.per_message is Addressivity.DIRECTED_TO_BOB:
+            return _ReplyGate(
+                decision=self._floor_signal(signals, ResponseOutcome.ENGAGE),
+                history=None,
+            )
+        reading = await self._read_room(event, soul, interlocutor, signals, interest)
+        if reading is None:
+            await self.advance_floor_after_turn(
+                event,
+                self._floor_signal(signals, ResponseOutcome.SILENT),
+                bob_replied=False,
+            )
+            return None
+        return await self._act_reflective(event, soul, reading, signals)
+
+    async def _read_room(
+        self,
+        event: MessageReceived,
+        soul: SOUL,
+        interlocutor: Interlocutor,
+        signals: _AddressivitySignals,
+        interest: float,
+    ) -> RoomReading | None:
+        """Run the periphery reflective read, or ``None`` on any failure (safe IGNORE).
+
+        Assembles the SHARED author-labelled thread (BOB-058) + the structural / floor
+        hints + Bob's topic interest into the read context and delegates to the injected
+        :class:`ReadTheRoom`. 🔴 The reader RAISES on a model/parse failure; here that is
+        caught and mapped to ``None`` so the periphery turn stays silent (INV-2 — a
+        peripheral reflection failure is a tidy skip, not a GUPPI notice).
+        """
+        assert self._read_the_room is not None  # guarded by the caller
+        history = await self._assembler.replay_recent_thread(interlocutor)
+        try:
+            return await self._read_the_room.read(
+                text=event.text,
+                interlocutor=interlocutor,
+                recent_thread=_render_thread(history),
+                mood_tone=soul.mood.tone(),
+                addressivity=signals.per_message,
+                mentions_bob=event.mentions_bob,
+                reply_to_bob=signals.reply_to_bob,
+                others_present=signals.others_present,
+                floor_engaged=signals.floor_engaged,
+                floor_holder=_floor_holder_label(signals.floor_holder),
+                floor_participant=signals.floor_participant,
+                interest=interest,
+            )
+        except Exception:
+            logger.exception("reflective read failed (periphery → silent ignore)")
+            return None
+
+    async def _act_reflective(
+        self,
+        event: MessageReceived,
+        soul: SOUL,
+        reading: RoomReading,
+        signals: _AddressivitySignals,
+    ) -> _ReplyGate | None:
+        """Carry out the pure reflective verdict for a periphery turn (BOB-066 Срез 2.2).
+
+        REPLY / INITIATE → a :class:`_ReplyGate` (compose+send; ``force_web`` rides the
+        gate so the caller forces the existing verify pass on ``wants_web``, C11). REACT →
+        set the meaning-chosen emoji + advance the floor. IGNORE / SELF_CHECK / a
+        below-salience read → stay silent + advance the floor. Every non-reply advances the
+        floor with ``bob_replied=False``; unlike a focal turn there is no owner-activity
+        stamp (a periphery reaction is not necessarily the owner interacting).
+        """
+        verdict = decide_from_reading(reading)
+        if verdict.kind is VerdictKind.REPLY:
+            return _ReplyGate(
+                decision=self._floor_signal(signals, ResponseOutcome.ENGAGE),
+                history=None,
+                force_web=verdict.force_web,
+            )
+        if verdict.kind is VerdictKind.REACT:
+            emoji = verdict.emoji or reaction_emoji_for(soul.mood)
+            await self._react_with_emoji(event, emoji)
+            await self.advance_floor_after_turn(
+                event,
+                self._floor_signal(signals, ResponseOutcome.REACT),
+                bob_replied=False,
+            )
+            return None
+        await self.advance_floor_after_turn(
+            event, self._floor_signal(signals, ResponseOutcome.SILENT), bob_replied=False
+        )
+        return None
+
+    def _floor_signal(
+        self, signals: _AddressivitySignals, outcome: ResponseOutcome
+    ) -> _AddressivityDecision:
+        """Build the floor-advance signal for a reflective turn from the raw signals.
+
+        The conversation floor advances on the RAW ``per_message`` + ``directed_to_id``
+        (whether Bob actually replied is tracked separately by ``bob_replied``); the
+        ``outcome`` is the cosmetic label only, so this is a thin, DRY translation shared by
+        the focus and periphery branches.
+        """
+        return _AddressivityDecision(
+            outcome=outcome,
+            per_message=signals.per_message,
+            directed_to_id=signals.directed_to_id,
+        )
 
     async def _judge(
         self, event: MessageReceived, soul: SOUL, interlocutor: Interlocutor

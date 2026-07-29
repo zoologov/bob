@@ -34,6 +34,7 @@ if TYPE_CHECKING:
 __all__ = [
     "AllowlistStore",
     "FirstImpressionStore",
+    "PersonSulkStore",
     "PrivilegeJudge",
     "RelationshipStore",
     "SoulStore",
@@ -161,4 +162,34 @@ class SulkStore(Protocol):
 
     async def save(self, persona_id: str, state: SulkState) -> None:
         """Persist ``state`` for ``persona_id`` (replacing any prior обида state)."""
+        ...
+
+
+@runtime_checkable
+class PersonSulkStore(Protocol):
+    """Durable per-(persona, sender) store for Bob's обида at ONE person (BOB-066 2.5).
+
+    Generalises :class:`SulkStore` by ``sender_id`` so Bob can cool toward a single
+    participant of a multi-party thread without touching his tone toward anyone else —
+    a per-``(persona_id, sender_id)`` :class:`~bob.social.sulk.SulkState` carrying the
+    same active flag / decaying intensity / low-hostile streak / entry stamp / one-shot
+    ``announced`` flag. Keyed by ``sender_id`` it is participant-agnostic (ready for a
+    future Bob-to-Bob thread). ``load`` returns the fresh, not-sulking default for an
+    unseen (persona, sender), so the application always has something to read; ``save``
+    UPSERTs (обида evolves — entered, decays, exits). ``active_sulks`` lists the sender
+    ids Bob is CURRENTLY обижен at (so the recovery tick iterates only the active ones).
+    Carries NO memory and NO soul (anti-Exodus, a SEPARATE table). The concrete
+    SQLite-backed adapter lives in ``bob.social.adapters``.
+    """
+
+    async def load(self, persona_id: str, sender_id: int) -> SulkState:
+        """Return the обида state for ``(persona_id, sender_id)`` (fresh if unseen)."""
+        ...
+
+    async def save(self, persona_id: str, sender_id: int, state: SulkState) -> None:
+        """Persist ``state`` for ``(persona_id, sender_id)`` (UPSERT — обида evolves)."""
+        ...
+
+    async def active_sulks(self, persona_id: str) -> list[int]:
+        """Return the sender ids ``persona_id`` is CURRENTLY обижен at (active rows)."""
         ...

@@ -27,7 +27,14 @@ CREATE TABLE IF NOT EXISTS episodic_log (
     -- what Bob said. Nullable -- ticks/digests/legacy rows and turns where Bob did
     -- not send a message have none. Additive for fresh DBs; a guarded ALTER in
     -- initialize() migrates pre-existing DBs (defaults to NULL).
-    bob_message_id INTEGER
+    bob_message_id INTEGER,
+    -- BOB-066 2.6 такт разглашения: the scope-provenance of this turn — 'public'
+    -- (group/shared, surfaces to anyone) or 'owner_private' (an owner-DM/uncertain turn,
+    -- withheld from initiative-surfacing to a GUEST by may_surface). Nullable, and
+    -- 🔴 NULL reads as PUBLIC so BOB-051 unified memory + every legacy row stay intact
+    -- and owner recall is byte-identical (INV-7). Additive for fresh DBs; a guarded ALTER
+    -- in initialize() migrates pre-existing DBs (defaults to NULL = public).
+    visibility    TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_episodic_ts ON episodic_log (ts DESC);
@@ -72,7 +79,14 @@ CREATE TABLE IF NOT EXISTS semantic_memory (
     -- id), only excluded from recall so the duplicate never resurfaces. Additive
     -- for fresh DBs; a guarded ALTER in initialize() migrates pre-existing DBs
     -- (defaults to NULL, i.e. an active, un-superseded fact).
-    superseded_by INTEGER
+    superseded_by INTEGER,
+    -- BOB-066 2.6 такт разглашения: scope-provenance of the fact — 'public' (shared,
+    -- surfaces to anyone) or 'owner_private' (distilled from an owner-DM/uncertain turn,
+    -- withheld from initiative-surfacing to a GUEST by may_surface). Nullable, and
+    -- 🔴 NULL reads as PUBLIC so BOB-051 unified memory + every legacy fact stay intact
+    -- and owner recall is byte-identical (INV-7). Additive for fresh DBs; a guarded ALTER
+    -- in initialize() migrates pre-existing DBs (defaults to NULL = public).
+    visibility TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_semantic_ts ON semantic_memory (ts DESC);
@@ -234,6 +248,28 @@ CREATE TABLE IF NOT EXISTS sulk_state (
     low_streak INTEGER NOT NULL DEFAULT 0,  -- consecutive low/hostile observations
     since      TEXT,                        -- ISO-8601 entry stamp (nullable)
     announced  INTEGER NOT NULL DEFAULT 0   -- 0/1 one-shot GUPPI-announce flag
+);
+
+-- Per-person обида/sulk state (BOB-066 Срез 2.5): the per-(persona, sender) hurt
+-- affect — Bob can cool toward ONE participant of a multi-party thread without it
+-- touching his tone toward anyone else. Same threshold + sustain + GUARANTEED time-decay
+-- exit as the per-persona `sulk_state`, generalised by `sender_id` (the participant-
+-- agnostic key, ready for a future Bob-to-Bob thread). PRIMARY KEY (persona_id,
+-- sender_id): one row per person Bob has ever sulked at; an unseen (persona, sender) has
+-- no row (the store returns the not-sulking default). Carries NO memory and NO soul —
+-- only the affect state (anti-Exodus, a SEPARATE table). The owner's existing `sulk_state`
+-- row is backfilled here once (SqlitePersonSulkStore.backfill_owner) so a mid-обида owner
+-- keeps his state byte-identical across the upgrade. `since` is a nullable ISO-8601 entry
+-- stamp; `announced` is the one-shot GUPPI-announce flag (owner-DM only — silent in group).
+CREATE TABLE IF NOT EXISTS person_sulk (
+    persona_id TEXT    NOT NULL,
+    sender_id  INTEGER NOT NULL,
+    active     INTEGER NOT NULL DEFAULT 0,  -- 0/1 whether Bob is обижен at this person
+    intensity  REAL    NOT NULL DEFAULT 0,  -- [0,1] how hurt, decaying to exit
+    low_streak INTEGER NOT NULL DEFAULT 0,  -- consecutive low/hostile observations
+    since      TEXT,                        -- ISO-8601 entry stamp (nullable)
+    announced  INTEGER NOT NULL DEFAULT 0,  -- 0/1 one-shot GUPPI-announce flag
+    PRIMARY KEY (persona_id, sender_id)
 );
 
 -- Goal Engine (BOB-015): Bob's goals + their tasks, per persona, so he keeps his

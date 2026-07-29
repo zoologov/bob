@@ -21,7 +21,7 @@ use-case'ы каждого bounded-context, подписывает обрабо�
 
 ```
 src/bob/runtime/
-  __init__.py       # фасад: re-export SystemClock, Application, build_application, _as_handler
+  __init__.py       # фасад: re-export SystemClock, Application, build_application, _as_dispatch_handler
   composition.py    # build_application() + Application (сама сборка графа — composition root)
   main.py           # main()/_run()/_configure_logging + __main__ (process entrypoint)
   clock.py          # SystemClock + _async_sleep/_monotonic (инжектируемые сеймы времени)
@@ -54,12 +54,14 @@ embedder, reranker, clock, proactivity_seed) -> Application` — единств�
 
 `Application` — `frozen`-датакласс-результат сборки: держит `runtime`,
 `event_bus`, `memory_repo`, `soul_store`, `genesis`, `personality`,
-`handle_message`, `multibot`, `authorizer`, `registry`, тики
+`handle_message`, `intake_dispatcher`, `multibot`, `authorizer`, `registry`, тики
 (`inner_monologue_tick`/`mood_drift_tick`/`reflect_tick`/`proactive_tick`) и
 опциональные `pursue_goals_tick`/`coding_assistant` (только когда флаг включён).
 `startup()` инициализирует персистентность, прогоняет идемпотентный Genesis,
-загружает soul и резолвит идентичности ботов; `shutdown()` останавливает runtime
-и закрывает персистентность.
+загружает soul и резолвит идентичности ботов; `shutdown()` останавливает runtime,
+**дренирует intake-диспетчер** (`intake_dispatcher.aclose()` — досдаёт буферизованные
+ответы) и закрывает персистентность — именно в этом порядке, чтобы не писать сквозь
+закрытое соединение.
 
 ### Entrypoint (`main.py`)
 
@@ -135,7 +137,9 @@ path-ридеры (`_db_path`, `_soul_dir`, `_templates_dir`, `_backfill_name_ma
 - `Application` — датакласс-результат сборки; `async startup() -> GenesisResult`, `async shutdown() -> None`.
 - `SystemClock` — реальный UTC-источник времени (`now() -> datetime`).
 - `main(*, config_path=None) -> None` (`src/bob/runtime/main.py`) — process entrypoint.
-- `_as_handler` / `_as_reaction_handler` — обёртки use-case → `EventHandler`.
+- `_as_dispatch_handler` / `_as_reaction_handler` — обёртки под `EventHandler`:
+  `_as_dispatch_handler` адаптирует `ChatDispatcher.submit` (быстрый неблокирующий подписчик
+  `MESSAGE_RECEIVED`, intake-развязка BOB-066), `_as_reaction_handler` — реакцию.
 - `wiring/*` — внутренние `_build_*` фабрики (не публичный контракт; ре-экспортятся для тестов через `app.py`-shim).
 
 ## Тестирование

@@ -51,6 +51,7 @@ from bob.personality.expression import EngagementLevel, Verbosity
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
+    from random import Random
 
     from bob.application.usecases.handle_message import EpisodeReader
     from bob.conversation.conversation import RepeatThresholds
@@ -110,6 +111,7 @@ class _Compose(Protocol):
         chat_id: int | None = ...,
         verify_note: str | None = ...,
         closer_nudge: str = ...,
+        rng: Random | None = ...,
     ) -> str: ...
 
 
@@ -149,6 +151,7 @@ class AntiRepeatGuard:
         modulators: RuleModulators | None = None,
         verify_note: str | None = None,
         closer_nudge: str = "",
+        rng: Random | None = None,
     ) -> str:
         """Recompose if ``reply`` (near-)repeats a recent OR recalled Bob reply (BOB-032 .1).
 
@@ -232,6 +235,10 @@ class AntiRepeatGuard:
                 modulators=modulators,
                 verify_note=verify_note,
                 closer_nudge=closer_nudge,
+                # 🔴 BOB-066 Срез 2.1: thread the turn-local ``TurnScope.rng`` verbatim into
+                # every regeneration too, so a re-composed draft draws from the SAME per-turn
+                # stream (INV-4) — never the shared per-boot rng of a concurrent chat.
+                rng=rng,
             )
         # BOB-043: regeneration could not shake the tic. If the final draft STILL ends with a
         # closer that RECURS across the wide window, deterministically STRIP that trailing

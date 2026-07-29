@@ -44,7 +44,10 @@ class EpisodicEvent:
     (BOB-045 per-person memory) — ``None`` for a turn with no sender (a tick, a
     digest, a legacy row). ``bob_message_id`` is the Telegram message_id of Bob's
     own outgoing reply for this turn (BOB-050), so a later reaction can be linked
-    back to what Bob said; ``None`` when Bob sent no message.
+    back to what Bob said; ``None`` when Bob sent no message. ``visibility`` is the
+    turn's scope-provenance (BOB-066 2.6 такт разглашения): ``'public'`` /
+    ``'owner_private'``, or ``None`` (= public, so legacy rows and unclassified turns
+    stay surfaceable to anyone and owner recall is byte-identical, INV-7).
     """
 
     ts: datetime
@@ -54,6 +57,7 @@ class EpisodicEvent:
     tags: tuple[str, ...] = field(default_factory=tuple)
     sender_id: int | None = None
     bob_message_id: int | None = None
+    visibility: str | None = None
 
     def __post_init__(self) -> None:
         _require_aware(self.ts)
@@ -64,13 +68,17 @@ class SemanticFact:
     """A distilled, durable fact Bob believes (a preference, a relationship cue).
 
     Unlike an episode (a timestamped event), a fact is knowledge with a
-    ``confidence`` in ``[0, 1]`` and a ``category`` for grouping.
+    ``confidence`` in ``[0, 1]`` and a ``category`` for grouping. ``visibility`` is the
+    scope-provenance of the source turn (BOB-066 2.6): ``'public'`` / ``'owner_private'``,
+    or ``None`` (= public, so legacy facts stay surfaceable and owner recall is
+    byte-identical, INV-7).
     """
 
     ts: datetime
     category: str
     content: str
     confidence: float = 1.0
+    visibility: str | None = None
 
     def __post_init__(self) -> None:
         _require_aware(self.ts)

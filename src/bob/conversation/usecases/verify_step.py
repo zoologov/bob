@@ -31,13 +31,13 @@ import logging
 from typing import TYPE_CHECKING, Protocol
 
 from bob.conversation.thread import _render_thread
-from bob.conversation.volatility_judgment import VolatilityContext
+from bob.conversation.volatility_judgment import VolatilityContext, VolatilityVerdict
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping, Sequence
 
     from bob.capabilities.ports import WebSearchProvider
-    from bob.conversation.volatility_judgment import VolatilityJudge, VolatilityVerdict
+    from bob.conversation.volatility_judgment import VolatilityJudge
     from bob.social.interlocutor import Interlocutor
 
 logger = logging.getLogger(__name__)
@@ -45,6 +45,11 @@ logger = logging.getLogger(__name__)
 # The web finding is trimmed before it enters the generation context (it only needs to
 # ground the answer, not dump the whole search payload into the prompt).
 _VERIFY_ANSWER_MAX_CHARS = 800
+
+# A FORCED verify (BOB-066 Срез 2.2, C11): a reflective read set ``wants_web`` — Bob
+# already decided to go look, so the volatility judge is skipped and the turn's own text
+# is the search query/topic. The short topic keeps the interim line readable.
+_FORCED_TOPIC_MAX_CHARS = 60
 
 # The GROUNDED note (US-1/US-4 + BOB-060 .2 register-nudge): the fresh finding + an
 # explicit steer to present it IN BOB'S OWN VOICE, reacting to it — NOT as a generic
@@ -103,17 +108,24 @@ class VerifyStep:
         *,
         interlocutor: Interlocutor | None = None,
         chat_id: int | None = None,
+        forced: bool = False,
     ) -> str:
         """The pre-answer epistemic-verify note for this turn, or ``""`` (BOB-057 .2).
 
         The whole step is DECORATIVE and DIRECT:
 
-        * Unwired (no judge OR no provider — ``verify.enabled`` off) → ``""`` immediately,
-          zero judge/search calls, zero added latency (US-2 «не зануда» by default).
+        * Unwired (no provider — ``verify.enabled`` off) → ``""`` immediately, zero
+          judge/search calls, zero added latency (US-2 «не зануда» by default).
         * A CONSERVATIVE Tier-0 :class:`VolatilityJudge` decides whether the answer hinges
           on a FRESH volatile fact. A judge failure is caught and treated as «no check»
           (``""``) — the turn is never blocked by a flaky judge.
         * On ``needs_check`` Bob runs ONE search via :meth:`_search_note`.
+
+        🔴 BOB-066 Срез 2.2 (C11): ``forced=True`` — a reflective read set ``wants_web``, so
+        Bob ALREADY decided to go look. The volatility judge is SKIPPED (no second opinion)
+        and the turn's own text drives ONE search on the SAME direct path — reusing the
+        existing verify/web seam rather than building a new one. A missing provider still
+        short-circuits to ``""`` (no web capability wired).
 
         🔴 The search is DIRECT (``provider.search``), NOT ``registry.dispatch`` /
         the tool-loop — so it is NOT the BOB-052 per-sender privilege gate. This is an
@@ -121,20 +133,11 @@ class VerifyStep:
         never owner/private data), so it works for owner and guest alike without weakening
         BOB-051/052 on user-facing tool requests.
         """
-        judge = self._verify_judge
         provider = self._verify_provider
-        if judge is None or provider is None:
+        if provider is None:
             return ""
-        try:
-            verdict = await judge.assess(
-                VolatilityContext(text=text, recent_thread=_render_thread(history))
-            )
-        except Exception:
-            # Decorative: a judge failure degrades to «no check» (normal answer), never
-            # blocks or breaks the turn.
-            logger.exception("volatility judge failed (verify skipped)")
-            return ""
-        if not verdict.needs_check:
+        verdict = await self._verdict(text, history, forced=forced)
+        if verdict is None or not verdict.needs_check:
             return ""
         # BOB-057 .3 (US-3b): before the search, Bob sends a LIVE, ADDRESSED interim line
         # naming WHAT he checks and WHO he's talking to («Леш, гляну свежие ставки,
@@ -142,6 +145,37 @@ class VerifyStep:
         # NOT block the search below.
         await self._send_interim(verdict, interlocutor, chat_id)
         return await self._search_note(provider, verdict)
+
+    async def _verdict(
+        self,
+        text: str,
+        history: Sequence[Mapping[str, object]],
+        *,
+        forced: bool,
+    ) -> VolatilityVerdict | None:
+        """The volatility verdict for this turn — forced (skip the judge) or judged.
+
+        ``forced`` (BOB-066 C11 — a reflective ``wants_web``): Bob already chose to look, so
+        build an affirmative verdict straight from the turn text (query = text; a short
+        topic for the interim line) with NO judge call. Otherwise a CONSERVATIVE Tier-0
+        :class:`VolatilityJudge` decides; an unwired or flaky judge degrades to ``None``
+        («no check») — the turn is never blocked.
+        """
+        if forced:
+            topic = text.strip()[:_FORCED_TOPIC_MAX_CHARS]
+            return VolatilityVerdict(needs_check=True, query=text, topic=topic)
+        judge = self._verify_judge
+        if judge is None:
+            return None
+        try:
+            return await judge.assess(
+                VolatilityContext(text=text, recent_thread=_render_thread(history))
+            )
+        except Exception:
+            # Decorative: a judge failure degrades to «no check» (normal answer), never
+            # blocks or breaks the turn.
+            logger.exception("volatility judge failed (verify skipped)")
+            return None
 
     async def _send_interim(
         self,

@@ -21,6 +21,7 @@ from bob.social.relationship import (
     RelationshipDeltas,
     apply_interaction,
     compromise_bias,
+    endorsed_seed,
 )
 
 _SENDER = 7777
@@ -177,3 +178,41 @@ def test_custom_deltas_scale_the_step() -> None:
     )
 
     assert big_after.warmth > small_after.warmth
+
+
+# --- endorsed_seed — кредит доверия по рекомендации owner (BOB-066 2.6) -----------
+
+
+def test_endorsed_seed_warm_starts_a_first_contact() -> None:
+    # rel is None (first contact) → a warm start instead of neutral 0.
+    seeded = endorsed_seed(None, _SENDER)
+
+    assert seeded.sender_id == _SENDER
+    assert seeded.warmth > 0.0
+    assert seeded.trust > 0.0
+
+
+def test_endorsed_seed_stays_within_bounds_and_is_not_maxed() -> None:
+    # A credit, not a pinned extreme — drift-to-neutral must be able to dissolve it.
+    seeded = endorsed_seed(None, _SENDER)
+
+    assert 0.0 < seeded.warmth < 1.0
+    assert 0.0 < seeded.trust < 1.0
+
+
+def test_endorsed_seed_leaves_an_existing_relationship_untouched() -> None:
+    # Only on first contact — an already-formed read is never overwritten by a seed.
+    existing = Relationship(sender_id=_SENDER, warmth=-0.5, trust=-0.3)
+
+    assert endorsed_seed(existing, _SENDER) is existing
+
+
+def test_endorsed_seed_dissolves_toward_neutral_without_confirmation() -> None:
+    # Drift-to-neutral relaxes the credit if behaviour doesn't confirm it.
+    seeded = endorsed_seed(None, _SENDER)
+
+    after = apply_interaction(
+        seeded, stance=Stance.PROPOSE_ALTERNATIVE, mood=_NEUTRAL_MOOD, sentiment=0.0
+    )
+
+    assert after.warmth < seeded.warmth

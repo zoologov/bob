@@ -84,6 +84,7 @@ src/bob/personality/
   reflection.py       # layer=domain          — build_reflection_prompt: заземлённый внутренний монолог (анти-«застрявшая пластинка»)
   soul.py             # layer=domain          — SOUL: иммутабельный снимок персистентной личности (with_*)
   absence.py          # layer=domain          — absence_hint: текстура длинной паузы («давно не виделись»)
+  room_tone.py        # layer=domain          — 🔴 ВТОРОЙ СЛОЙ: room_tone_directive/room_engagement_bias — настроение комнаты (по значению, float) красит голос и аппетит поверх личного mood, БЕЗ его мутации (BOB-066)
   usecases/           # layer=application
     update_mood_from_text.py —                — UpdateMoodFromText: сигналы текста → MoodDelta (шаг perceive)
     apply_reflection.py      —                — ApplyReflection: рефлексия → само-эволюция вкуса (relevance-гейт)
@@ -153,7 +154,11 @@ THE анти-runaway-гардрейл. `mood_taste.modulate` — mood време
 `Verbosity`), `engagement_directive(level)`, `sulk_directive`, `relationship_tone_directive`,
 `who_is_writing_directive` / `stranger_directive` (читают уже-вычисленный `kind.value`
 собеседника — БЕЗ runtime-импорта `InterlocutorKind`), `profanity_stance`,
-`user_repeat_directive`, `improvement_directive`. `language.py` — `language_directive`
+`user_repeat_directive`, `improvement_directive`, `tactful_withhold_directive`
+(BOB-066.2.6 — тёплый отказ такта разглашения: гейт привилегий по-прежнему НЕ раскрывает
+приватные данные owner'а гостю, а эта строка лишь заменяет сухую стену на человечное «это
+лучше у него самого спросить», не роняя ни детали, ни намёка; чистая, application
+дописывает её ТОЛЬКО на guest owner_data-запрос). `language.py` — `language_directive`
 (персона говорит на своём языке). `reflection.py` — `build_reflection_prompt`: вплетает
 свежий контекст (недавние эпизоды + текущий тон) в промпт заземлённого монолога, лечит
 «застрявшую пластинку»; без свежего контекста возвращает generic-промпт дословно.
@@ -170,6 +175,40 @@ baseline, потом ложится bounded-дельта — тот же пут�
 `worth_acknowledging`). `reaction_aloud.acknowledgment_hint` — редкий hint упомянуть это
 вслух; `reaction.reaction_emoji_for(mood)` — picker emoji из стандартного набора.
 
+### Настроение комнаты — второй слой тона (BOB-066, Пласт 4)
+
+`room_tone.py` — чистый детерминированный **второй слой**, зеркало `mood_taste.modulate`:
+поверх личного настроения и тона отношений Боба общая атмосфера *комнаты* красит, насколько
+игриво он звучит и насколько охотно вступает — **без мутации личного `Mood`** (тот не является
+входом по построению). Модуль потребляет настроение комнаты **по значению**, как обычные
+`float` (`room_valence` / `room_polarization`), которые application извлекает из `RoomReading`
+слоя `conversation` и передаёт напрямую — поэтому `personality` НЕ импортит `conversation`
+(нет цикла; тот же паттерн, что `voice._KIND_LABEL` по `kind.value`).
+
+- `room_tone_directive(room_valence, room_polarization, *, thresholds=None)` — голосовая
+  строка настроения комнаты на этот ход. Тяжёлая (`room_valence` на/ниже пола `heavy_valence`,
+  по умолчанию −0.35) ИЛИ поляризованная (`room_polarization` на/выше потолка `polarized`, 0.5)
+  комната гасит игривость — реплика «считай обстановку, сбавь трёп»; тёплая неполяризованная
+  (`room_valence` на/выше `warm_valence`, 0.35) разрешает лёгкий тон; ровная середина не
+  добавляет ничего (`""`, дефолтный путь неизменен). Поляризация ПЕРЕКРЫВАЕТ тепло — накалённый
+  спор не праздник, какой бы ни была средняя валентность. Полосы настраиваются через
+  `RoomToneThresholds` (frozen+slots, `heavy_valence`/`warm_valence`/`polarized`) из
+  конфигурации `presence.room_tone.*`.
+- `room_engagement_bias(room_valence, disposition)` — знаковый сдвиг порога вовлечённости Боба.
+  Тёплая комната поднимает аппетит вступить (положительный сдвиг), тяжёлая — гасит
+  (отрицательный), ровная не двигает ничего. Величины ПЕРЕИСПОЛЬЗУЮТ асимметрию соц. контагиона
+  диспозиции: тёплая масштабируется на `Disposition.positive_lift_scale()`, холодная — на
+  строго меньший `negative_dip_scale()`, поэтому равные по силе тёплая и холодная комнаты НЕ
+  взаимогасятся — тепло двигает Боба сильнее холода, тот же структурный анти-депрессант.
+
+Обе — module-level функции (детерминированы, без I/O, без `Mood`), поэтому unit- и
+mutation-тестируемы, а личное настроение не тронуто по построению.
+
+🔴 **ОТЛОЖЕНО (не отгружено в срезе 2.4):** воркерное потребление салиенса + top-k
+action-budget (несколько входящих → один ответ + отбор реакций) — асинхронная оркестрация за
+presence-флагом (OFF по умолчанию, консистентно срезам 2.2/2.3). `room_tone` — чистый слой; его
+проводка в конвейер хода придёт отдельным wiring-беадом.
+
 ### Use-case'ы (application)
 
 `UpdateMoodFromText` (`usecases/update_mood_from_text.py`) — шаг perceive: читает четыре
@@ -184,14 +223,19 @@ baseline, потом ложится bounded-дельта — тот же пут�
 (`fascination_sources.py`) — live-швы заземления и чтения.
 
 **Коллабораторы хода (BOB-062.6b, #9).** Декомпозиция `handle_message` вынесла «кто есть Боб»
-— его голос — в method-object'ы personality, собираемые в `HandleMessage.__init__`:
+— его голос — в method-object'ы personality, собираемые в `HandleMessage.__init__`. Seeded-draw
+методы принимают опциональный турновый `rng`: при прямом unit-вызове без него — откат на
+инъектированный per-boot `self._rng` (legacy-поведение байт-идентично).
 - `MoodPerceiver` (`mood_perceiver.py`) — обновить настроение из входящего + план выражения
-  (`perceive` / `plan_expression`; мутабельный per-boot `PersonalityState` передаётся ПО ВЫЗОВУ,
-  никогда не захватывается).
+  (`perceive` / `plan_expression(event, soul, *, rng=None)`; мутабельный per-boot
+  `PersonalityState` передаётся ПО ВЫЗОВУ, никогда не захватывается). Seeded-план выражения
+  засевается турновым `rng` из `TurnScope` (BOB-066 Срез 2.1, INV-4).
 - `GroundedAddons` (`grounded_addons.py`) — свернуть РЕАЛЬНУЮ рефлексию/колбэк/фасцинацию в
-  контекст (`with_grounded_addons`); `safe` оборачивает каждую добавку — anti-confabulation +
-  decorative (упавшая добавка падает в `""`, никогда не триггерит outage).
-- `VoiceComposer` (`voice_composer.py`) — форма голоса + генерация ответа (`compose`). 🔴
+  контекст (`with_grounded_addons(context, text, plan, *, rng=None)`); `safe` оборачивает каждую
+  добавку — anti-confabulation + decorative (упавшая добавка падает в `""`, никогда не триггерит
+  outage). Розыгрыш «surface old» тянет из турнового `rng` (INV-4).
+- `VoiceComposer` (`voice_composer.py`) — форма голоса + генерация ответа (`compose(..., *,
+  rng=None)`, прокидывает турновый `rng` в grounded-добавки). 🔴
   Дотягивается до КАЖДОЙ другой вертикали ТОЛЬКО через инъектированные порты/значения
   (context-assembler и recall/verify-порты conversation, stance-порт social, plain-reply +
   essential-генераторы application, tool-loop/announcer-фабрики capabilities) — personality не
@@ -231,6 +275,11 @@ kv-таблице (`record`/`latest`/`clear` — hint всплывает не б
   персистентной рефлексии (никакой фабрикации — `None` = leak no-op).
 - **Реаппрайзал вероятностен и никогда не механичен.** Гейт из seeded-RNG против
   `reappraisal_probability`; на промахе мысль остаётся честно грустной, Tier-1-вызова нет.
+- **Настроение комнаты — второй слой, не мутатор.** `room_tone` берёт настроение комнаты по
+  значению (`float`), личный `Mood` не является входом — мутация невозможна структурно.
+  Поляризация перекрывает тепло; ровная комната — чистая identity (`""` / 0.0). Асимметрия
+  вовлечённости переиспользует `Disposition.positive_lift_scale`/`negative_dip_scale`, а не
+  хардкодит коэффициенты, поэтому тёплая комната поднимает сильнее, чем холодная роняет.
 
 ### Границы модуля (AaC)
 
@@ -269,8 +318,10 @@ kv-таблице (`record`/`latest`/`clear` — hint всплывает не б
   `taste_evolution.reinforce`, `mood_taste.modulate`, `negotiation.Negotiation`/`Stance`,
   `fascination.Fascination`, `phantom_evolution.evolve_phantoms`, `expression.decide_expression`
   (+ `Verbosity`/`EngagementLevel`/`ExpressionMode`/`FormHint`), `voice.tone_directive`/
-  `brevity_directive`/`engagement_directive`, `reaction_meaning.ReactionMeaning`,
-  `reaction_effect.apply_reaction_to_mood`, `reflection.build_reflection_prompt`, `soul.SOUL`.
+  `brevity_directive`/`engagement_directive`/`tactful_withhold_directive`,
+  `reaction_meaning.ReactionMeaning`,
+  `reaction_effect.apply_reaction_to_mood`, `reflection.build_reflection_prompt`, `soul.SOUL`,
+  `room_tone.room_tone_directive`/`room_engagement_bias` (+ `RoomToneThresholds`).
 - Use-case'ы: `usecases.UpdateMoodFromText`, `ApplyReflection`, `ReappraiseReflection`,
   `EvolveFascination`, `EvolvePhantoms`, `HeuristicReflectionParser`.
 - Адаптеры: `LlmReactionJudge`, `SqliteFascinationStore`, `KvNotableReactionStore`.
@@ -289,7 +340,10 @@ use-case в `application/usecases/`, вне вертикали. Долговеч
   `test_fascination.py`, `test_phantom_evolution.py`, `test_expression.py`, `test_voice.py`,
   `test_language.py`, `test_profanity.py`, `test_reaction.py`, `test_reaction_meaning.py`,
   `test_reaction_judgment.py`, `test_reaction_effect.py`, `test_reaction_aloud.py`,
-  `test_reflection.py`, `test_soul.py`, `test_absence.py`.
+  `test_reflection.py`, `test_soul.py`, `test_absence.py`, `test_room_tone.py`.
+- BDD-приёмка второго слоя: `tests/acceptance/features/room_tone.feature` +
+  `tests/acceptance/steps/test_room_tone.py` (тяжёлая/поляризованная комната гасит игривость,
+  личный mood не тронут).
 - Use-case'ы: `tests/application/usecases/test_update_mood_from_text.py`,
   `test_apply_reflection.py`, `test_reappraise_reflection.py`, `test_reflection_parser.py`,
   `test_evolve_fascination.py`, `test_evolve_phantoms.py`, `test_fascination_sources.py`.

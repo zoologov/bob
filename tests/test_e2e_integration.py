@@ -365,8 +365,9 @@ async def test_e2e_authorized_message_yields_reply(tmp_path: Path) -> None:
     )
     await app.startup()
 
-    # Act
+    # Act (intake-развязка BOB-066 2.1: publish enqueues → await the worker).
     await app.event_bus.publish(_message())
+    await app.intake_dispatcher.wait_for_idle()
 
     # Assert: the reply reached the user (plain commit) and the turn persisted.
     assert bot.final_text == _PLAIN_REPLY
@@ -395,6 +396,7 @@ async def test_e2e_tool_loop_calls_recall_memory(tmp_path: Path) -> None:
 
     # Act: drive a real turn; the model asks for recall_memory, GUPPI executes it.
     await app.event_bus.publish(_message())
+    await app.intake_dispatcher.wait_for_idle()
 
     # Assert: the tool-loop ran, the capability result fed back, and the reply
     # quotes the recalled fact.

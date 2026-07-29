@@ -46,6 +46,53 @@ async def test_recall_finds_keyword_match(populated: SqliteMemoryRepo) -> None:
     await populated.close()
 
 
+async def test_recall_carries_semantic_visibility(tmp_path: Path) -> None:
+    # BOB-066 2.6: the recall item carries the fact's visibility provenance so the
+    # application filter (may_surface) can withhold owner_private memory from a guest.
+    repo = SqliteMemoryRepo(tmp_path / "bob.db")
+    await repo.initialize()
+    await repo.save_fact(
+        SemanticFact(
+            ts=_ts(), category="pref", content="bob loves jazz", visibility="owner_private"
+        )
+    )
+    recall = Fts5MemoryRecall(repo)
+
+    results = await recall.recall("jazz", k=5)
+
+    assert any(r.get("visibility") == "owner_private" for r in results)
+    await repo.close()
+
+
+async def test_recall_carries_episodic_visibility(tmp_path: Path) -> None:
+    repo = SqliteMemoryRepo(tmp_path / "bob.db")
+    await repo.initialize()
+    await repo.save_episode(
+        {
+            "ts": _ts().isoformat(),
+            "event_type": "message",
+            "content": "vova: секрет владельца\nbob: ага",
+            "visibility": "owner_private",
+        }
+    )
+    recall = Fts5MemoryRecall(repo)
+
+    results = await recall.recall("секрет", k=5)
+
+    assert any(r.get("visibility") == "owner_private" for r in results)
+    await repo.close()
+
+
+async def test_legacy_row_recall_visibility_is_none_public(populated: SqliteMemoryRepo) -> None:
+    # A fact saved without visibility (NULL) surfaces with visibility None (= public).
+    recall = Fts5MemoryRecall(populated)
+
+    results = await recall.recall("jazz", k=5)
+
+    assert all(r.get("visibility") is None for r in results)
+    await populated.close()
+
+
 async def test_recall_respects_k_limit(populated: SqliteMemoryRepo) -> None:
     # Arrange: "bob" matches two facts.
     recall = Fts5MemoryRecall(populated)

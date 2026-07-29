@@ -127,26 +127,28 @@ class SulkState:
 def observe_relationship(
     state: SulkState,
     *,
-    owner_warmth: float,
+    person_warmth: float,
     hostile: bool,
     now: datetime,
     config: SulkConfig | None = None,
 ) -> SulkState:
-    """Fold one OWNER turn into обида state — pure threshold + sustaining (BOB-014 .2b).
+    """Fold one PERSON's turn into обида state — pure threshold + sustaining (BOB-014 .2b).
 
-    A turn is a "low" observation when the owner warmth is at/below ``critical_warmth``
+    A turn is a "low" observation when the person warmth is at/below ``critical_warmth``
     OR the turn carried DIRECTED ``hostile`` ity (so обида reacts to sustained directed
     hostility, not to a low number alone, and never to casual мат — that is not flagged
     hostile by the perception layer). A low observation extends ``low_streak``; a
     healthy turn RESETS it (intermittent dips never accrete). Once the streak reaches
     ``sustain_count`` Bob ENTERS обида at ``enter_intensity`` and stamps ``since``.
 
-    Idempotent once sulking: a further low observation does not re-stamp the entry nor
-    inflate intensity past the cap (recovery, not observation, lowers intensity). Pure
-    and deterministic: same inputs → same state.
+    Person-agnostic (BOB-066 Срез 2.5): the signal is one person's relationship warmth
+    keyed by ``sender_id`` upstream, so the same threshold/sustain/decay logic serves the
+    owner AND any guest (a per-``(persona, sender)`` обида). Idempotent once sulking: a
+    further low observation does not re-stamp the entry nor inflate intensity past the cap
+    (recovery, not observation, lowers intensity). Pure: same inputs → same state.
     """
     cfg = config if config is not None else SulkConfig()
-    is_low = owner_warmth <= cfg.critical_warmth or hostile
+    is_low = person_warmth <= cfg.critical_warmth or hostile
     if not is_low:
         # A healthy turn breaks the run — обида never builds from intermittent dips.
         # An ACTIVE обида is left to the recovery path; only the streak is reset.

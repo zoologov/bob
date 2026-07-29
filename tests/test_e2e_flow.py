@@ -212,8 +212,10 @@ async def test_e2e_message_to_reply_and_persist(tmp_path: Path) -> None:
         SemanticFact(ts=datetime.now(tz=UTC), category="personal", content=_RECALL_FACT)
     )
 
-    # Act: drive a real MessageReceived through the real EventBus.
+    # Act: drive a real MessageReceived through the real EventBus. Intake-развязка
+    # (BOB-066 Срез 2.1): publish only enqueues, so wait for the per-chat worker to finish.
     await app.event_bus.publish(_message())
+    await app.intake_dispatcher.wait_for_idle()
 
     # Assert: the reply was streamed back, and the turn was persisted.
     assert bot.final_text == _TIER1_REPLY
@@ -251,6 +253,7 @@ async def test_e2e_private_context_redacted_but_memory_shared(tmp_path: Path) ->
             sender_id=5,
         )
     )
+    await app.intake_dispatcher.wait_for_idle()
 
     # Assert: the shareable recalled memory reached the Tier 1 reply (Bob remembers),
     # while a router-level private_context would not have (see router unit tests).

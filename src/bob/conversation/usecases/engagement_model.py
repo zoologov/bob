@@ -126,6 +126,8 @@ class EngagementModel:
         interest: float,
         relationship: Relationship | None,
         engagement_state: EngagementState,
+        *,
+        rng: Random | None = None,
     ) -> EngagementLevel:
         """Decide Bob's appetite LEVEL for this turn, decaying fatigue first (BOB-014 .2a).
 
@@ -148,7 +150,9 @@ class EngagementModel:
             topic_interest=interest,
             fatigue=engagement_state.fatigue,
             relationship=relationship,
-            rng=self._rng,
+            # 🔴 BOB-066 Срез 2.1: the caller threads the turn-local ``TurnScope.rng`` so
+            # concurrent chats never share a draw stream (INV-4); omitted → the injected rng.
+            rng=rng if rng is not None else self._rng,
             thresholds=self._engagement_thresholds,
         )
 
@@ -195,6 +199,7 @@ class EngagementModel:
         plan: ExpressionPlan,
         *,
         is_owner: bool,
+        rng: Random | None = None,
     ) -> Verbosity:
         """Decide how SHORT Bob answers this turn — pure, deterministic by seed (BOB-024).
 
@@ -210,7 +215,8 @@ class EngagementModel:
         interlocutor (BOB-019) — resolved by the caller so this vertical need not read the
         social identity type.
         """
-        roll = self._rng.random()
+        # 🔴 BOB-066 Срез 2.1: turn-local ``TurnScope.rng`` (INV-4); omitted → injected rng.
+        roll = (rng if rng is not None else self._rng).random()
         return decide_verbosity(
             demand=demand,
             interest=interest,

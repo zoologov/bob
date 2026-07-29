@@ -24,7 +24,7 @@ from __future__ import annotations
 from bob.runtime.clock import SystemClock
 from bob.runtime.composition import (
     Application,
-    _as_handler,
+    _as_dispatch_handler,
     _as_reaction_handler,
     build_application,
 )
@@ -37,7 +37,7 @@ from bob.runtime.composition import (
 __all__ = [
     "Application",
     "SystemClock",
-    "_as_handler",
+    "_as_dispatch_handler",
     "_as_reaction_handler",
     "build_application",
 ]

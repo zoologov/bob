@@ -68,18 +68,24 @@ class ExtractFacts:
         self._repo = repo
         self._clock = clock
 
-    async def run(self, *, user_message: str, reply: str | None = None) -> None:
+    async def run(
+        self, *, user_message: str, reply: str | None = None, visibility: str | None = None
+    ) -> None:
         """Extract and persist durable facts from the latest exchange.
 
         Never raises: extraction is an enrichment on top of the already-persisted
         episode, so a provider error or malformed output is logged and dropped.
+        ``visibility`` (BOB-066 2.6) is the scope-provenance stamped on each distilled
+        fact — ``'owner_private'`` for a fact drawn from an owner-DM turn, ``'public'``
+        for a shared turn; ``None`` (the default) writes NULL (= public), so an
+        un-classified caller persists surfaceable facts exactly as before.
         """
         try:
             raw = await self._extract(user_message, reply)
         except Exception:
             logger.exception("Tier 0 fact extraction failed; skipping (best-effort)")
             return
-        await self._persist(_parse_facts(raw))
+        await self._persist(_parse_facts(raw), visibility)
 
     async def _extract(self, user_message: str, reply: str | None) -> str:
         """Ask the Tier 0 provider for the structured fact payload."""
@@ -92,8 +98,10 @@ class ExtractFacts:
         )
         return await self._router.run(request)
 
-    async def _persist(self, items: list[tuple[str, str]]) -> None:
-        """Persist each de-duplicated fact as a SemanticFact."""
+    async def _persist(
+        self, items: list[tuple[str, str]], visibility: str | None
+    ) -> None:
+        """Persist each de-duplicated fact as a SemanticFact (stamped with visibility)."""
         seen: set[str] = set()
         now = self._clock.now()
         for category, content in items:
@@ -107,6 +115,7 @@ class ExtractFacts:
                     category=category,
                     content=content.strip(),
                     confidence=_EXTRACTED_CONFIDENCE,
+                    visibility=visibility,
                 )
             )
 

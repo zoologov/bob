@@ -33,6 +33,7 @@ from bob.personality.voice import (
     relationship_tone_directive,
     stranger_directive,
     sulk_directive,
+    tactful_withhold_directive,
     tone_directive,
     user_repeat_directive,
     variable_form_directive,
@@ -422,6 +423,25 @@ def test_stranger_directive_forbids_revealing_owner_private_info() -> None:
 
 def test_stranger_directive_is_voice_not_a_rule_list() -> None:
     directive = stranger_directive()
+    assert "•" not in directive
+    assert "- " not in directive
+
+
+def test_tactful_withhold_directive_points_to_the_owner_warmly() -> None:
+    # BOB-066 2.6: a warm "это лучше у него спросить" on an owner_data request from a
+    # guest — the tactful voice of the refusal, pointing them at the owner himself.
+    folded = tactful_withhold_directive().casefold()
+    assert "владел" in folded  # points at the owner
+
+
+def test_tactful_withhold_directive_is_warm_not_a_dry_wall() -> None:
+    # It must read as tact, not the dry stranger-wall: explicitly not rude/cold.
+    folded = tactful_withhold_directive().casefold()
+    assert "груб" in folded  # names the anti-goal (без грубости / не грубо)
+
+
+def test_tactful_withhold_directive_is_voice_not_a_rule_list() -> None:
+    directive = tactful_withhold_directive()
     assert "•" not in directive
     assert "- " not in directive
 

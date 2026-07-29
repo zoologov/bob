@@ -116,7 +116,7 @@ class AddressivityPerceiver:
         self._rng = rng
 
     async def decide(
-        self, event: MessageReceived, interest: float
+        self, event: MessageReceived, interest: float, *, rng: Random | None = None
     ) -> _AddressivityDecision:
         """Decide whether/how Bob takes THIS turn by addressivity (BOB-023 + BOB-025).
 
@@ -135,7 +135,9 @@ class AddressivityPerceiver:
         so behaviour is exactly BOB-023.
         """
         signals = await self.signals(event)
-        roll = self._rng.random()
+        # 🔴 BOB-066 Срез 2.1: the caller threads the turn-local ``TurnScope.rng`` so
+        # concurrent chats never share a draw stream (INV-4); omitted → the injected rng.
+        roll = (rng if rng is not None else self._rng).random()
         outcome = decide_response(
             signals.effective,
             interest=interest,

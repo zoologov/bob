@@ -127,6 +127,9 @@ async def run_floor_turns(
                     sender_name=speaker.sender_name,
                 )
             )
+            # Intake-развязка (BOB-066 Срез 2.1): publish now only ENQUEUES; wait for the
+            # per-chat worker to finish this turn before reading whether Bob replied.
+            await app.intake_dispatcher.wait_for_idle()
             replied.append(len(gateway.sent) > before)
     finally:
         await app.shutdown()

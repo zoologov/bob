@@ -88,7 +88,7 @@ class GroundedAddons:
         self._rng = rng
 
     async def with_grounded_addons(
-        self, context: str, text: str, plan: ExpressionPlan
+        self, context: str, text: str, plan: ExpressionPlan, *, rng: Random | None = None
     ) -> str:
         """Fold the plan's grounded add-ons into the compose context (BOB-018 w3).
 
@@ -107,7 +107,7 @@ class GroundedAddons:
         # it is not an essential step.
         additions = [
             await self.safe(self._leak_inner_life(plan), name="inner-life leak"),
-            await self.safe(self._callback(plan, text), name="memory callback"),
+            await self.safe(self._callback(plan, text, rng=rng), name="memory callback"),
             await self.safe(
                 self._mention_fascination(plan), name="fascination mention"
             ),
@@ -138,7 +138,9 @@ class GroundedAddons:
             return ""
         return f"{_LEAK_PREFACE} {reflection}"
 
-    async def _callback(self, plan: ExpressionPlan, text: str) -> str:
+    async def _callback(
+        self, plan: ExpressionPlan, text: str, *, rng: Random | None = None
+    ) -> str:
         """The callback line for this turn, or ``""`` (no flag / weak-or-empty recall).
 
         Reuses the hybrid recall (BOB-011) on the current topic; a real past moment
@@ -153,7 +155,7 @@ class GroundedAddons:
         """
         if not plan.callback:
             return ""
-        surface_old = self._draw_surface_old()
+        surface_old = self._draw_surface_old(rng)
         recalled = await self._recall.recall(
             text, k=_CALLBACK_RECALL_K, surface_old=surface_old
         )
@@ -165,17 +167,18 @@ class GroundedAddons:
             return ""
         return f"{_CALLBACK_PREFACE} {moment}"
 
-    def _draw_surface_old(self) -> bool:
+    def _draw_surface_old(self, rng: Random | None = None) -> bool:
         """Fire the rare surface_old draw for this callback (BOB-021, seeded RNG).
 
         A hard off at frequency ``0`` (the default path never asks for the old blend);
         otherwise an occasional ``True`` so a callback reaches an old-but-relevant deep
-        cut on a small fraction of callbacks. Uses the same injected seeded RNG as the
-        expression plan, so the whole turn stays reproducible under a fixed seed.
+        cut on a small fraction of callbacks. 🔴 BOB-066 Срез 2.1: uses the per-turn
+        ``TurnScope.rng`` threaded by the caller (INV-4 — concurrent chats never share a
+        draw stream); omitted (a direct unit call) it falls back to the injected rng.
         """
         if self._surface_old_freq <= _MIN_FREQ:
             return False
-        return self._rng.random() < self._surface_old_freq
+        return (rng if rng is not None else self._rng).random() < self._surface_old_freq
 
     async def _mention_fascination(self, plan: ExpressionPlan) -> str:
         """The fascination line for this turn, or ``""`` (no flag / no reader / none).

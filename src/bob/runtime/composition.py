@@ -48,6 +48,7 @@ from bob.application.runtime import (
     BobMessageReaction,
     MessageReceived,
 )
+from bob.application.runtime.intake import ChatDispatcher, make_focus_predicate
 from bob.application.usecases.handle_message import (
     EngagementState,
     HandleMessage,
@@ -65,8 +66,10 @@ from bob.conversation.adapters.conversation_floor_store import (
 )
 from bob.conversation.adapters.interim_line import LlmInterimLineGenerator
 from bob.conversation.adapters.response_judge import LlmResponseJudge
+from bob.conversation.adapters.room_reader import LlmRoomReader
 from bob.conversation.adapters.volatility_judge import LlmVolatilityJudge
 from bob.conversation.usecases.decide_response import DecideResponse
+from bob.conversation.usecases.read_the_room import ReadTheRoom
 from bob.conversation.zone_classifier import TasteZoneClassifier
 from bob.infrastructure.config import ConfigLoader
 from bob.infrastructure.llm import (
@@ -161,6 +164,7 @@ from bob.runtime.wiring import (
     _resolve_seed,
 )
 from bob.social.adapters.first_impression_store import SqliteFirstImpressionStore
+from bob.social.adapters.person_sulk_store import SqlitePersonSulkStore
 from bob.social.adapters.relationship_store import SqliteRelationshipStore
 from bob.social.adapters.soul_loader import (
     _default_soul,
@@ -168,7 +172,6 @@ from bob.social.adapters.soul_loader import (
     _load_soul,
 )
 from bob.social.adapters.soul_store import SoulStore
-from bob.social.adapters.sulk_store import SqliteSulkStore
 from bob.social.usecases import ReactorPerception, SenderPerception
 from bob.social.usecases.first_impression_sources import FirstImpressionTracker
 from bob.social.usecases.relationship_sources import RelationshipTracker
@@ -190,6 +193,12 @@ if TYPE_CHECKING:
     from bob.social.usecases.run_genesis import GenesisResult
 
 
+# Debounce window is configured in milliseconds (``dialogue.intake_debounce_ms``) but the
+# inbox sleeps in seconds — the default 0 keeps single turns latency-free (a richer
+# «пусть допишут» window is opt-in, and fully exploited by the Фаза-3 catch-up slices).
+_MILLIS_PER_SECOND = 1000.0
+
+
 @dataclass
 class Application:
     """The assembled, runnable GUPPI process and its wired collaborators.
@@ -208,6 +217,10 @@ class Application:
     genesis: RunGenesis
     personality: PersonalityState
     handle_message: HandleMessage
+    # Intake-развязка (BOB-066 Срез 2.1): the per-chat dispatcher behind the MESSAGE_RECEIVED
+    # subscriber. ``shutdown`` drains it (awaits the in-flight workers) so a graceful stop
+    # still delivers the buffered replies.
+    intake_dispatcher: ChatDispatcher
     multibot: MultiBotGateway
     authorizer: Authorizer
     registry: CapabilityRegistry
@@ -217,6 +230,10 @@ class Application:
     proactivity_store: SqliteProactivityStore
     proactivity_engine: ProactivityEngine
     proactive_tick: ProactiveTick
+    # Per-(persona, sender) обида store (BOB-066 2.5): exposed so ``startup`` can run the
+    # one-time, idempotent backfill of the owner's legacy ``sulk_state`` row (byte-identical
+    # upgrade) once the schema is applied.
+    person_sulk_store: SqlitePersonSulkStore
     # Self-directed goal-pursuit tick (BOB-015 .3): wired only when
     # ``goals.pursuit_enabled`` is on (conservative default off → runtime as before).
     pursue_goals_tick: PursueGoalsTick | None = None
@@ -238,6 +255,14 @@ class Application:
         """
         await self.connection.initialize()
         await self.memory_repo.initialize()
+        # Per-person обида backfill (BOB-066 2.5): copy the owner's legacy per-persona
+        # ``sulk_state`` row into ``person_sulk`` under his ``sender_id`` ONCE, so a
+        # mid-обида owner keeps his exact state across the upgrade (byte-identical).
+        # Idempotent + existence-guarded (never resurrects a stale обида); a no-op with
+        # no owner id configured / no legacy row.
+        await self.person_sulk_store.backfill_owner(
+            _BOB_PERSONA, _int(_section(self.config, "telegram"), "owner_id", 0)
+        )
         result = await self.genesis.run()
         self.personality.soul = _load_soul(self.soul_store)
         # Resolve Bob's own bot identity (id + @username) so the addressivity scan
@@ -246,8 +271,14 @@ class Application:
         return result
 
     async def shutdown(self) -> None:
-        """Stop the runtime and close persistence (idempotent)."""
+        """Stop the runtime, drain the intake workers, then close persistence (idempotent).
+
+        The intake dispatcher is drained BEFORE the connection closes: any message still
+        buffered / in flight is handled to completion (its reply delivered) so a graceful
+        stop never drops an in-progress turn or writes through a closed connection.
+        """
         await self.runtime.stop()
+        await self.intake_dispatcher.aclose()
         await self.connection.close()
 
 
@@ -392,11 +423,11 @@ def build_application(
     # when addressivity.floor.enabled is true; disabled → exactly BOB-023.
     floor_enabled = _build_floor_enabled(merged)
     floor_store = SqliteConversationFloorStore(connection) if floor_enabled else None
-    # Sulk/обида store (BOB-014 .2b): the per-persona affect state — entered on a
-    # SUSTAINED critical owner-drop / directed hostility, decaying to a GUARANTEED exit.
-    # Carries NO memory and NO soul (anti-Exodus). The tracker is built AFTER multibot
-    # so GUPPI can be its one-shot announcer.
-    sulk_store = SqliteSulkStore(connection)
+    # Sulk/обида store (BOB-066 2.5): the per-(persona, sender) affect state — entered on
+    # a SUSTAINED critical warmth-drop / directed hostility toward ONE person, decaying to
+    # a GUARANTEED exit. Carries NO memory and NO soul (anti-Exodus, a separate table). The
+    # tracker is built AFTER multibot so GUPPI can be its one-shot announcer.
+    person_sulk_store = SqlitePersonSulkStore(connection)
 
     # Goal Engine (BOB-015): the per-persona goal store backs the Planner-driven
     # plan_goal use-case (double approval) and GUPPI's owner goal-commands. The
@@ -463,13 +494,16 @@ def build_application(
         coding_assistant=coding_assistant,
         bob_reaction_filter=_BobReactionFilter(memory_repo),
     )
-    # обида seam (BOB-014 .2b): GUPPI announces a fresh sulk entry once ("Боб обижен …")
-    # — the внеличностный systemic voice. The tracker loads/evolves/recovers обида and
-    # is read by HandleMessage (cold tone + owner-turn observation), the reflect tick
-    # (guaranteed time-decay recovery), and the proactivity engine (the sulk veto).
+    # обида seam (BOB-066 2.5): GUPPI announces a fresh owner-DM sulk entry once ("Боб
+    # обижен …") — the внеличностный systemic voice (a group entry is silent). The tracker
+    # loads/evolves/recovers обида per-(persona, sender) and is read by HandleMessage
+    # (addressed cold tone + per-person observation), the reflect tick (guaranteed
+    # time-decay recovery of each active sulk), and the proactivity engine (the owner sulk
+    # veto — hence ``owner_sender_id``).
     sulk_tracker = SulkTracker(
-        store=sulk_store,
+        store=person_sulk_store,
         persona_id=_BOB_PERSONA,
+        owner_sender_id=_int(telegram_section, "owner_id", 0) or None,
         announcer=multibot.guppi,
     )
 
@@ -519,6 +553,18 @@ def build_application(
     # detector so a once-per-session ending recurring over days is finally caught. Low-risk
     # local memory — always wired; the seam is decorative (a failure never breaks a turn).
     closer_log = SqliteCloserLog(connection)
+
+    # Reflective «read the room» (BOB-066 Срез 2.2): the rich Tier-1 reflective pass that
+    # makes Bob a living, equal group participant — a focus/periphery split with the
+    # deterministic INV-1 focal guarantee. Built ONLY when ``presence.reflective`` — the
+    # whole «человеческое групповое присутствие» epic ships as ONE piece (owner blocker), so
+    # it stays OFF by default and the turn gate keeps the BOB-049 judge behaviour until the
+    # epic is complete. On → the LlmRoomReader (ROOM_READ, Tier 1) drives HandleMessage.
+    presence_section = _section(merged, "presence")
+    reflective_enabled = _flag(presence_section, "reflective")
+    read_the_room = (
+        ReadTheRoom(reader=LlmRoomReader(router=router)) if reflective_enabled else None
+    )
 
     handle_message = HandleMessage(
         router=router,
@@ -729,6 +775,7 @@ def build_application(
         # web_search provider (both None unless verify.enabled). On a volatile-fact turn Bob
         # makes ONE DIRECT search and folds the finding (or an honest hedge) into the reply
         # — internal public-verify, NOT routed through the registry/BOB-052 gate.
+        read_the_room=read_the_room,
         verify_judge=verify_judge,
         verify_provider=verify_provider,
         interim_line_generator=interim_line_generator,
@@ -739,7 +786,24 @@ def build_application(
         # (never a ban). Decorative: a log failure / no tic → the turn is unchanged.
         closer_log=closer_log,
     )
-    event_bus.subscribe(MESSAGE_RECEIVED, _as_handler(handle_message))
+    # Intake-развязка (BOB-066 Срез 2.1): the MESSAGE_RECEIVED subscriber is now the fast,
+    # non-blocking ChatDispatcher.submit (normalise → buffer → return), so the Telegram
+    # poller no longer blocks on Bob's generation. Behind the seam a per-chat_id worker
+    # drains that chat's inbox and calls HandleMessage.handle sequentially (INV-5), each
+    # message under its own TurnScope (rng seeded per chat_id/message_id → INV-4). 🔴 A
+    # focused message (direct address to Bob) flushes the debounce at once so it is never
+    # dropped/delayed by batching (INV-1/10). AsyncEventBus / gateway / poll_once are
+    # unchanged — only the handler behind the seam became fast.
+    intake_dispatcher = ChatDispatcher(
+        handle=handle_message.handle,
+        base_seed=_resolve_seed(merged, proactivity_seed),
+        is_focused=make_focus_predicate(multibot.bob_user_id),
+        quiet_window=float(
+            _int(_section(merged, "dialogue"), "intake_debounce_ms", 0)
+        )
+        / _MILLIS_PER_SECOND,
+    )
+    event_bus.subscribe(MESSAGE_RECEIVED, _as_dispatch_handler(intake_dispatcher))
 
     # Reaction perception (BOB-050 .2): a reaction on one of Bob's OWN messages is felt
     # — it moves mood (BOB-033 band), warmth toward the reactor (BOB-014), a per-person
@@ -946,6 +1010,7 @@ def build_application(
         genesis=genesis,
         personality=personality,
         handle_message=handle_message,
+        intake_dispatcher=intake_dispatcher,
         multibot=multibot,
         authorizer=authorizer,
         registry=registry,
@@ -955,17 +1020,22 @@ def build_application(
         proactivity_store=proactivity_store,
         proactivity_engine=proactivity_engine,
         proactive_tick=proactive_tick,
+        person_sulk_store=person_sulk_store,
         pursue_goals_tick=pursue_goals_tick,
         coding_assistant=coding_assistant,
     )
 
 
-def _as_handler(handle_message: HandleMessage) -> EventHandler:
-    """Adapt :meth:`HandleMessage.handle` to the EventBus handler signature."""
+def _as_dispatch_handler(dispatcher: ChatDispatcher) -> EventHandler:
+    """Adapt :meth:`ChatDispatcher.submit` to the EventBus handler signature (BOB-066 2.1).
+
+    The MESSAGE_RECEIVED subscriber: it hands the message to the per-chat dispatcher and
+    returns at once (submit is non-blocking) so the poller never waits on Bob's generation.
+    """
 
     async def handler(event: DomainEvent) -> None:
         if isinstance(event, MessageReceived):
-            await handle_message.handle(event)
+            dispatcher.submit(event)
 
     return handler
 
