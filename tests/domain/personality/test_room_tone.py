@@ -28,6 +28,8 @@ is never mutated (these take floats, not a ``Mood``, by construction).
 
 from __future__ import annotations
 
+import pytest
+
 from bob.personality.disposition import Disposition
 from bob.personality.room_tone import (
     RoomToneThresholds,
@@ -117,6 +119,15 @@ def test_directive_is_deterministic() -> None:
     )
 
 
+def test_room_both_heavy_and_polarized_still_suppresses() -> None:
+    # When BOTH OR-conditions are true (a heavy AND split room), the suppression line
+    # still wins — the same "read the room" directive, never doubled or dropped.
+    both = room_tone_directive(_HEAVY_VALENCE, _TENSE_POLARIZATION)
+    heavy_only = room_tone_directive(_HEAVY_VALENCE, _CALM_POLARIZATION)
+    assert both != ""
+    assert both == heavy_only
+
+
 def test_custom_thresholds_are_honoured() -> None:
     # Tighter bands move the boundary: a -0.2 room is neutral by default but heavy
     # under a lenient -0.1 floor.
@@ -168,3 +179,25 @@ def test_bias_scales_with_valence_magnitude() -> None:
 
 def test_bias_is_deterministic() -> None:
     assert room_engagement_bias(0.5, _DISPOSITION) == room_engagement_bias(0.5, _DISPOSITION)
+
+
+@pytest.mark.parametrize(
+    "disposition",
+    [
+        Disposition(optimism=0.0, resilience=0.0),  # worst case: min lift, max dip
+        Disposition(optimism=0.0, resilience=1.0),
+        Disposition(optimism=1.0, resilience=0.0),
+        Disposition(optimism=1.0, resilience=1.0),
+        Disposition(optimism=0.8, resilience=0.7),  # canon
+    ],
+)
+def test_bias_asymmetry_holds_for_every_disposition(disposition: Disposition) -> None:
+    # The load-bearing claim is that room_engagement_bias REUSES the disposition
+    # anti-depressant asymmetry — not that it merely coincides with it for canon. For
+    # EVERY temperament (including the worst case, min-lift/max-dip), an equally-strong
+    # warm and cold room must not cancel: the warm lift is strictly larger in magnitude.
+    magnitude = 0.6
+    lift = room_engagement_bias(magnitude, disposition)
+    dip = room_engagement_bias(-magnitude, disposition)
+    assert lift > 0.0 > dip
+    assert lift > -dip
