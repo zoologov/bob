@@ -101,7 +101,13 @@ from bob.social.relationship import Relationship
 from bob.social.sulk import SulkState
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator, Callable, Mapping, Sequence
+    from collections.abc import (
+        AsyncIterator,
+        Awaitable,
+        Callable,
+        Mapping,
+        Sequence,
+    )
 
     from aiogram.types import BufferedInputFile
 
@@ -664,6 +670,7 @@ def _build(
     verify_timeout_seconds: float = 75.0,
     interim_line_generator: _FakeInterimLineGenerator | None = None,
     closer_log: _FakeCloserLog | None = None,
+    reply_delay: object | None = None,
 ) -> tuple[HandleMessage, FakeBot, FakeRepo, CapturingProvider]:
     tier0 = CapturingProvider(reply="positive", replies=tier0_replies)
     tier1 = CapturingProvider(reply=reply, replies=tier1_replies)
@@ -740,6 +747,7 @@ def _build(
         verify_timeout_seconds=verify_timeout_seconds,
         interim_line_generator=interim_line_generator,
         closer_log=closer_log,
+        reply_delay=reply_delay,  # type: ignore[arg-type]  # test double
     )
     return handler, bot, repo, tier1
 
@@ -849,6 +857,50 @@ async def test_handle_sends_reply_back_to_telegram() -> None:
     assert bot.sent
     assert bot.sent[-1][0] == 555
     assert bot.final_text == "Coffee is the best."
+
+
+class _RecordingReplyDelay:
+    """A DelayedTurn double: runs the real generation, records the delay knobs (BOB-066 W)."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[float, float]] = []
+
+    async def deliver(
+        self,
+        generate: Callable[[], Awaitable[str]],
+        *,
+        complexity: float,
+        urgency: float,
+    ) -> str:
+        self.calls.append((complexity, urgency))
+        return await generate()
+
+
+async def test_wired_reply_delay_wraps_the_generation() -> None:
+    # 🔴 BOB-066 Срез W (INV-9): when the natural-delay coordinator is wired, the reply
+    # generation runs THROUGH it (noticed → typing → floor → reply), and the final reply is
+    # still exactly what was generated — the delay only tops elapsed time up to a human floor.
+    delay = _RecordingReplyDelay()
+    handler, bot, _repo, _tier1 = _build(
+        reply="Кофе — это жизнь.", reply_delay=delay
+    )
+
+    # "расскажи подробно" → a HIGH answer-demand, so urgency is maximal (a demanded answer
+    # comes promptly), and the reply still lands unchanged through the coordinator.
+    await handler.handle(_message())
+
+    assert bot.final_text == "Кофе — это жизнь."
+    assert len(delay.calls) == 1
+    complexity, urgency = delay.calls[0]
+    assert urgency == 1.0  # HIGH demand
+    assert 0.0 <= complexity <= 1.0
+
+
+async def test_unwired_reply_delay_is_byte_identical() -> None:
+    # Flag OFF (no coordinator) → generation runs directly, reply unchanged.
+    handler, bot, _repo, _tier1 = _build(reply="Кофе — это жизнь.")
+    await handler.handle(_message())
+    assert bot.final_text == "Кофе — это жизнь."
 
 
 async def test_handle_shows_typing_during_generation_then_one_final() -> None:

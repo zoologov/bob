@@ -162,6 +162,7 @@ from bob.runtime.wiring import (
     _fascination_initial_intensity,
     _phantom_evolution_params,
     _resolve_seed,
+    build_rhythm_wiring,
 )
 from bob.social.adapters.first_impression_store import SqliteFirstImpressionStore
 from bob.social.adapters.person_sulk_store import SqlitePersonSulkStore
@@ -566,6 +567,13 @@ def build_application(
         ReadTheRoom(reader=LlmRoomReader(router=router)) if reflective_enabled else None
     )
 
+    # Ритм-слой присутствия (BOB-066 Срез W): the share-of-voice ceiling + natural-delay floor,
+    # built ONLY when ``presence.rhythm`` (OFF by default → all seams None → byte-identical). The
+    # SAME gate goes to the reactive ambient-barge ceiling AND the proactive throttle so they
+    # damp over one per-chat window; the store reads Bob's airtime off the episodic log the reply
+    # path already writes (no extra write). Ships inert until the epic is complete (owner blocker).
+    rhythm = build_rhythm_wiring(merged, activity_provider=memory_repo)
+
     handle_message = HandleMessage(
         router=router,
         gateway=multibot.reply_gateway(BotIdentity.BOB),
@@ -776,6 +784,11 @@ def build_application(
         # makes ONE DIRECT search and folds the finding (or an honest hedge) into the reply
         # — internal public-verify, NOT routed through the registry/BOB-052 gate.
         read_the_room=read_the_room,
+        # Ритм-слой consumption (BOB-066 Срез W): the ambient-barge ceiling is threaded to the
+        # TurnGate (focus bypasses it — INV-1) and the natural-delay coordinator wraps the reply
+        # generation (INV-9). Both None unless ``presence.rhythm`` → byte-identical when off.
+        barge_ceiling=rhythm.barge_ceiling,
+        reply_delay=rhythm.reply_delay,
         verify_judge=verify_judge,
         verify_provider=verify_provider,
         interim_line_generator=interim_line_generator,
@@ -966,6 +979,9 @@ def build_application(
         # the proactive compose grounds on recalled whole-turn memories, so it gets the
         # same window / similarity bar to keep Bob from copying his OWN recalled past reply.
         repeat_thresholds=_build_repeat_thresholds(merged),
+        # Ритм-слой throttle (BOB-066 Срез W): the SAME share-of-voice gate the reactive ceiling
+        # uses, so a proactive tick sees a reply Bob just sent and throttles. None when off.
+        share_ceiling=rhythm.share_ceiling,
     )
     proactive_tick = ProactiveTick(engine=proactivity_engine)
 

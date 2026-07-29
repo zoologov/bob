@@ -27,11 +27,14 @@ class ScenarioContext:
     """The mutable slate a scenario's Given/When/Then steps share.
 
     ``tmp_path`` — the isolated on-disk SQLite/soul root for this scenario;
-    ``gateway`` — the fake outgoing boundary, populated once the turn is driven.
+    ``gateway`` — the fake outgoing boundary, populated once the turn is driven;
+    ``rhythm_enabled`` — whether the presence rhythm layer is wired for this scenario
+    (BOB-066 Срез W), so a shared When step can drive the wired vs inert path.
     """
 
     tmp_path: Path
     gateway: FakeGateway = field(default_factory=FakeGateway)
+    rhythm_enabled: bool = True
 
 
 @pytest.fixture

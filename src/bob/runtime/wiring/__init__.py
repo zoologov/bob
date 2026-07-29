@@ -64,6 +64,7 @@ from bob.runtime.wiring.proactivity import (
     _background_tasks,
     _build_proactivity_engine,
 )
+from bob.runtime.wiring.rhythm import RhythmWiring, build_rhythm_wiring
 from bob.runtime.wiring.self_improvement import (
     _build_self_improvement,
     _SelfImprovement,
@@ -71,6 +72,7 @@ from bob.runtime.wiring.self_improvement import (
 from bob.runtime.wiring.telegram import _build_multibot
 
 __all__ = [
+    "RhythmWiring",
     "_SelfImprovement",
     "_as_tool_provider",
     "_background_tasks",
@@ -117,4 +119,5 @@ __all__ = [
     "_fascination_initial_intensity",
     "_phantom_evolution_params",
     "_resolve_seed",
+    "build_rhythm_wiring",
 ]

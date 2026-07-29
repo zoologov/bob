@@ -54,6 +54,7 @@ if TYPE_CHECKING:
     from bob.personality.usecases.fascination_sources import StoreFascinationReader
     from bob.proactivity.adapters import SqliteProactivityStore
     from bob.proactivity.usecases import ProactiveTick
+    from bob.proactivity.usecases.engine import ShareCeiling
     from bob.proactivity.usecases.pursue_goals import PursueGoalsTick
     from bob.social.usecases.sulk_sources import SulkTracker
 
@@ -73,6 +74,7 @@ def _build_proactivity_engine(
     fascination: StoreFascinationReader | None = None,
     sulk: SulkTracker | None = None,
     repeat_thresholds: RepeatThresholds | None = None,
+    share_ceiling: ShareCeiling | None = None,
 ) -> ProactivityEngine:
     """Assemble the per-persona proactivity engine (drive-model → message).
 
@@ -110,6 +112,9 @@ def _build_proactivity_engine(
         sulk=sulk,
         # Recall-aware anti-repeat on the proactive path (BOB-032 .2, R4).
         repeat_thresholds=repeat_thresholds,
+        # Share-of-voice throttle (BOB-066 Срез W): the proactive tick defers when Bob has just
+        # hogged the room. None (``presence.rhythm`` off) → no throttle, byte-identical.
+        share_ceiling=share_ceiling,
     )
 
 

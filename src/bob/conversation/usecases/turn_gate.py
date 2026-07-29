@@ -130,6 +130,23 @@ class _OwnerActivity(Protocol):
     async def __call__(self) -> None: ...
 
 
+class _BargeCeiling(Protocol):
+    """The share-of-voice ceiling seam on an ambient barge (BOB-066 Срез W, Пласт 3).
+
+    Realised by :class:`~bob.application.runtime.share_of_voice_gate.ShareOfVoiceGate`.
+    Given the turn's ``chat_id``, whether Bob was ``focused`` (directly addressed), the
+    caller's un-ceiled ``base_probability`` of barging in, and a turn-local ``draw``,
+    returns whether Bob may barge into this ambient turn. 🔴 Only the AMBIENT (periphery)
+    barge is gated — a focused turn short-circuits ABOVE the gate and is never consulted
+    (INV-1). ``None`` (unwired — the ``presence.rhythm`` flag off) leaves the periphery
+    REPLY un-throttled, byte-identical to before the rhythm layer.
+    """
+
+    async def admits_barge(
+        self, *, chat_id: int, focused: bool, base_probability: float, draw: float
+    ) -> bool: ...
+
+
 # Bob's persisted half of a non-reply turn (BOB-049), so a follow-up keeps the
 # per-person thread (BOB-045): IGNORE writes "(промолчал)", REACT "(реакция: <emoji>)".
 # Russian persona voice (project language); Cyrillic look-alikes are intentional.
@@ -182,6 +199,7 @@ class TurnGate:
         persist: _Persist,
         record_owner_activity: _OwnerActivity,
         read_the_room: ReadTheRoom | None = None,
+        barge_ceiling: _BargeCeiling | None = None,
     ) -> None:
         self._decide_response = decide_response
         self._addressivity = addressivity
@@ -192,6 +210,7 @@ class TurnGate:
         self._persist = persist
         self._record_owner_activity = record_owner_activity
         self._read_the_room = read_the_room
+        self._barge_ceiling = barge_ceiling
 
     async def gate(  # noqa: PLR0911 — a flat three-path dispatch (reflective / judge / legacy), one early-out per branch, no logic to extract
         self,
@@ -283,8 +302,12 @@ class TurnGate:
         :func:`~bob.conversation.room_verdict.decide_from_reading` verdict. A read FAILURE
         safe-defaults to a silent IGNORE (advance the floor, NO GUPPI notice — this is not
         the focal guarantee), never Bob acting from a guessed read.
+
+        🔴 The FOCAL path is RNG-free (INV-1/INV-4): it returns ABOVE the reflective read and
+        the share-of-voice ceiling, so ``rng`` is drawn ONLY on the periphery, and ONLY when
+        the ambient-barge ceiling is wired (``presence.rhythm``) — otherwise no draw is taken
+        and behaviour is byte-identical.
         """
-        del rng  # focal path is RNG-free (INV-1/INV-4); periphery verdict is deterministic
         signals = await self._addressivity.signals(event)
         if signals.per_message is Addressivity.DIRECTED_TO_BOB:
             return _ReplyGate(
@@ -299,7 +322,7 @@ class TurnGate:
                 bob_replied=False,
             )
             return None
-        return await self._act_reflective(event, soul, reading, signals)
+        return await self._act_reflective(event, soul, reading, signals, rng=rng)
 
     async def _read_room(
         self,
@@ -344,18 +367,28 @@ class TurnGate:
         soul: SOUL,
         reading: RoomReading,
         signals: _AddressivitySignals,
+        *,
+        rng: Random | None,
     ) -> _ReplyGate | None:
         """Carry out the pure reflective verdict for a periphery turn (BOB-066 Срез 2.2).
 
         REPLY / INITIATE → a :class:`_ReplyGate` (compose+send; ``force_web`` rides the
-        gate so the caller forces the existing verify pass on ``wants_web``, C11). REACT →
-        set the meaning-chosen emoji + advance the floor. IGNORE / SELF_CHECK / a
+        gate so the caller forces the existing verify pass on ``wants_web``, C11) — UNLESS
+        the share-of-voice ceiling damps this ambient barge to silence (BOB-066 Срез W).
+        REACT → set the meaning-chosen emoji + advance the floor. IGNORE / SELF_CHECK / a
         below-salience read → stay silent + advance the floor. Every non-reply advances the
         floor with ``bob_replied=False``; unlike a focal turn there is no owner-activity
         stamp (a periphery reaction is not necessarily the owner interacting).
         """
         verdict = decide_from_reading(reading)
         if verdict.kind is VerdictKind.REPLY:
+            if not await self._admits_ambient_barge(event, reading, rng):
+                await self.advance_floor_after_turn(
+                    event,
+                    self._floor_signal(signals, ResponseOutcome.SILENT),
+                    bob_replied=False,
+                )
+                return None
             return _ReplyGate(
                 decision=self._floor_signal(signals, ResponseOutcome.ENGAGE),
                 history=None,
@@ -374,6 +407,27 @@ class TurnGate:
             event, self._floor_signal(signals, ResponseOutcome.SILENT), bob_replied=False
         )
         return None
+
+    async def _admits_ambient_barge(
+        self, event: MessageReceived, reading: RoomReading, rng: Random | None
+    ) -> bool:
+        """Whether the share-of-voice ceiling admits THIS ambient barge (BOB-066 Срез W).
+
+        Consulted ONLY on a periphery REPLY verdict (a focal turn never reaches here — INV-1
+        short-circuits above). Unwired ceiling OR no turn-local ``rng`` → always ``True`` and
+        NO draw is taken, so the periphery stays byte-identical to before the rhythm layer.
+        When wired, the reading's ``salience`` is the un-ceiled base p(barge); the gate scales
+        it by Bob's per-chat share of voice and compares it to the turn-local draw (``focused``
+        is ``False`` — this branch is ambient by construction).
+        """
+        if self._barge_ceiling is None or rng is None:
+            return True
+        return await self._barge_ceiling.admits_barge(
+            chat_id=event.chat_id,
+            focused=False,
+            base_probability=reading.salience,
+            draw=rng.random(),
+        )
 
     def _floor_signal(
         self, signals: _AddressivitySignals, outcome: ResponseOutcome

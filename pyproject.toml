@@ -686,7 +686,7 @@ ignore = [
 "tests/domain/conversation/test_room_reading_wire.py" = ["S101", "ARG001", "PLR2004", "RUF001", "RUF002", "RUF003"]
 "tests/domain/conversation/test_room_verdict.py" = ["S101", "ARG001", "PLR2004", "RUF001", "RUF002", "RUF003"]
 "tests/conversation/usecases/test_read_the_room.py" = ["S101", "ARG001", "ARG002", "PLR2004", "RUF001", "RUF002", "RUF003"]
-"tests/conversation/usecases/test_turn_gate_reflective.py" = ["S101", "ARG001", "ARG002", "PLR2004", "SLF001", "RUF001", "RUF002", "RUF003"]
+"tests/conversation/usecases/test_turn_gate_reflective.py" = ["S101", "ARG001", "ARG002", "PLR2004", "S311", "SLF001", "RUF001", "RUF002", "RUF003"]
 "tests/conversation/usecases/test_verify_step_forced.py" = ["S101", "ARG001", "ARG002", "PLR2004", "RUF001", "RUF002", "RUF003"]
 # INV-1 matrix + reflective edge tests (BOB-066 Срез 2.2 test wave): use unused fake-port
 # args + reference the private gate types + Russian literals — S101/ARG/SLF001/RUF do not apply.
@@ -900,6 +900,9 @@ ignore = [
 # fixed fakes (ARG002) and the steps assert through the boundary (S101).
 "tests/acceptance/presence_harness.py" = ["RUF001", "RUF002", "RUF003", "ARG002"]
 "tests/acceptance/steps/test_presence_rhythm.py" = ["S101", "RUF001", "RUF002", "RUF003"]
+# The rhythm-wiring acceptance steps (BOB-066 Срез W) carry Russian scenario prose whose
+# Cyrillic look-alikes are intentional (→ RUF001/2/3) and assert through the boundary (S101).
+"tests/acceptance/steps/test_presence_rhythm_wiring.py" = ["S101", "RUF001", "RUF002", "RUF003"]
 # The per-person обида acceptance steps (BOB-066 .2.5) carry Russian scenario prose whose
 # Cyrillic look-alikes are intentional (→ RUF001/2/3) and assert through the boundary (S101).
 "tests/acceptance/steps/test_person_sulk.py" = ["S101", "RUF001", "RUF002", "RUF003"]
@@ -1006,6 +1009,11 @@ source_paths = [
     # verdict logic mutation exists to measure — so it is scanned here, while the async
     # orchestration around it (inbox/dispatcher/scope/focus) is denied below.
     "src/bob/application/runtime/intake",
+    # BOB-066 Срез W: the reply-delay input map (``reply_delay_inputs``) is a pure,
+    # module-level wiring decision (answer-demand + interest → the natural-delay knobs) —
+    # exactly the deterministic threshold logic mutation measures. Listed as a single file
+    # (the rest of application/usecases is impure orchestration, out of scope).
+    "src/bob/application/usecases/reply_rhythm.py",
 ]
 # Deny the impure sub-trees inside those packages: adapters (I/O), ports (protocols),
 # and package __init__ re-exports carry no deterministic verdict logic to mutate.
@@ -1023,7 +1031,13 @@ do_not_mutate = [
 # Mutation measures the strength of the pure-domain UNIT tests (tests/domain/) — fast and
 # deterministic — NOT the slow async e2e/integration suite. Selecting them here keeps the
 # one-time coverage-stats phase cheap so a per-slice run stays quick.
-pytest_add_cli_args_test_selection = ["tests/domain"]
+pytest_add_cli_args_test_selection = [
+    "tests/domain",
+    # BOB-066 Срез W: the pure reply-delay input map lives in application/usecases (its unit
+    # test is fast + deterministic), so it is selected alongside the domain suite to measure
+    # the mutants of ``reply_delay_inputs``.
+    "tests/application/usecases/test_reply_rhythm.py",
+]
 # The kernel (ports/protocols the domain tests import) is NOT mutated but IS imported by
 # tests/domain — copy it + the package root verbatim into the mutants sandbox so the
 # (non-mutated) tests still collect and run.

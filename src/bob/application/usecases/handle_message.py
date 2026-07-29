@@ -54,6 +54,7 @@ from bob.application.usecases.precompose_gate import (
     PermissionFlowLike,
     PreComposeGate,
 )
+from bob.application.usecases.reply_rhythm import reply_delay_inputs
 from bob.capabilities.usecases.diagram_sender import (
     _DEFAULT_DIAGRAM_SEND_AS,
     DiagramSender,
@@ -140,7 +141,7 @@ from bob.social.interlocutor import InterlocutorKind, Trust
 from bob.social.usecases.social_context import SocialContext
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping, Sequence
+    from collections.abc import Awaitable, Callable, Mapping, Sequence
     from contextlib import AbstractAsyncContextManager
     from datetime import datetime
     from random import Random
@@ -492,6 +493,39 @@ class BobUserIdSource(Protocol):
 # constructor annotations + the except clauses + app.py / tests resolve as before.
 
 
+class BargeCeiling(Protocol):
+    """The share-of-voice ceiling on an ambient barge (BOB-066 Срез W, Пласт 3).
+
+    Threaded straight through to the :class:`~bob.conversation.usecases.turn_gate.TurnGate`
+    (which owns the focus/periphery split), so only the AMBIENT barge is damped and a focused
+    turn bypasses it (INV-1). Realised by
+    :class:`~bob.application.runtime.share_of_voice_gate.ShareOfVoiceGate`; unwired
+    (``presence.rhythm`` off) → no throttle.
+    """
+
+    async def admits_barge(
+        self, *, chat_id: int, focused: bool, base_probability: float, draw: float
+    ) -> bool: ...
+
+
+class ReplyDelay(Protocol):
+    """The natural-delay coordinator over the reply generation (BOB-066 Срез W, INV-9).
+
+    Runs the generation and tops the elapsed time up to a human floor
+    (``await max(natural_floor, real_generation)``), so Bob never answers inhumanly fast.
+    Realised by :class:`~bob.application.runtime.delayed_turn.DelayedTurn`; unwired
+    (``presence.rhythm`` off) the generation runs directly, byte-identical.
+    """
+
+    async def deliver(
+        self,
+        generate: Callable[[], Awaitable[str]],
+        *,
+        complexity: float,
+        urgency: float,
+    ) -> str: ...
+
+
 @dataclass
 class PersonalityState:
     """Mutable in-memory holder for Bob's current soul snapshot across turns.
@@ -592,6 +626,8 @@ class HandleMessage:
         interim_line_generator: InterimLineGenerator | None = None,
         closer_log: CloserLog | None = None,
         read_the_room: ReadTheRoom | None = None,
+        barge_ceiling: BargeCeiling | None = None,
+        reply_delay: ReplyDelay | None = None,
     ) -> None:
         self._router = router
         self._gateway = gateway
@@ -895,6 +931,15 @@ class HandleMessage:
         # (the default → off in composition unless ``presence.reflective``) the gate falls
         # back to the BOB-049 judge / legacy paths, so behaviour is exactly as before.
         self._read_the_room = read_the_room
+        # Ambient-barge ceiling seam (BOB-066 Срез W, Пласт 3): threaded into the TurnGate so a
+        # periphery REPLY verdict is damped by Bob's per-chat share of voice — a focused turn
+        # bypasses it (INV-1). Unwired (``presence.rhythm`` off) → no throttle, byte-identical.
+        self._barge_ceiling = barge_ceiling
+        # Natural-delay seam (BOB-066 Срез W, Пласт 3, INV-9): when wired, the reply generation
+        # runs inside the DelayedTurn coordinator (noticed → typing → ``await max(natural_floor,
+        # real_generation)`` → reply), so Bob never answers inhumanly fast. Unwired → the
+        # generation runs directly, byte-identical to before the rhythm layer.
+        self._reply_delay = reply_delay
         # Reliability seam (BOB-049 .3 — «полный Боб или честный GUPPI-нотис»): the two
         # ESSENTIAL LLM steps (the semantic judgment + the reply generation) are retried a
         # bounded number of times with a short backoff before Bob falls back to the honest
@@ -1119,6 +1164,7 @@ class HandleMessage:
             persist=self._persist,
             record_owner_activity=self._record_owner_activity,
             read_the_room=self._read_the_room,
+            barge_ceiling=self._barge_ceiling,
         )
 
     async def _plain_reply(self, system_prompt: str, text: str, context: str) -> str:
@@ -1360,80 +1406,82 @@ class HandleMessage:
         # inside _compose_reply). If it still fails after the retries, end the turn with the
         # honest GUPPI outage notice instead of a degraded half-answer — the user's turn is
         # persisted and NO Bob reply ships.
+        # The compose+guard generation as ONE cohesive closure so the natural-delay
+        # coordinator (BOB-066 Срез W, INV-9) can wrap it: it runs the generation and tops the
+        # elapsed time up to the human floor (``await max(natural_floor, real_generation)``), so
+        # Bob never answers inhumanly fast. Unwired (``presence.rhythm`` off) it is called
+        # directly, byte-identical. The verify note / anti-tic recalled + nudge stay per-turn
+        # locals INSIDE the closure so «один поиск» + the tic strip fire exactly once.
+        async def _generate() -> str:
+            # 🔴 BOB-057 .5 (US-3 «один поиск, не петля»): compute the epistemic-verify step
+            # (judge → interim → search → grounded/hedge note) EXACTLY ONCE per turn as a
+            # PER-TURN LOCAL, then thread the SAME note into the first composition AND every
+            # anti-repeat regeneration. ``""`` when the judge says «no check».
+            verify_note = await self._verify.note(
+                event.text,
+                history,
+                interlocutor=interlocutor,
+                chat_id=event.chat_id,
+                forced=force_web,
+            )
+            # Anti-tic «провязка» (BOB-061 .2): BEFORE generation, detect whether Bob's recent
+            # closers cluster into ONE recurring motif; when they do, STRIP it off the recalled
+            # exemplars + fold a SOFT «заверши по-другому» nudge into the context. 🔴 Fully
+            # decorative: no tic → ``recalled`` unchanged and the nudge is "".
+            tic_recalled, closer_nudge = await self._guard.closer_anti_tic(
+                recalled, history
+            )
+            reply = await self._voice.compose(
+                event.text,
+                soul,
+                tic_recalled,
+                history,
+                plan,
+                user_repeated=user_repeated,
+                interlocutor=interlocutor,
+                is_guest=is_guest,
+                prior_impression=prior_impression,
+                relationship=relationship,
+                engagement=level,
+                sulk=sulk,
+                verbosity=verbosity,
+                modulators=modulators,
+                chat_id=event.chat_id,
+                verify_note=verify_note,
+                closer_nudge=closer_nudge,
+                rng=rng,
+            )
+            # Anti-repeat guard (BOB-022, defense in depth): a byte-identical repeat of Bob's
+            # most-recent prior reply regenerates ONCE (stochastic sampling differs), then is
+            # kept (no infinite loop).
+            return await self._guard.guard(
+                reply,
+                event.text,
+                soul,
+                tic_recalled,
+                history,
+                plan,
+                user_repeated,
+                interlocutor,
+                is_guest=is_guest,
+                prior_impression=prior_impression,
+                relationship=relationship,
+                engagement=level,
+                sulk=sulk,
+                verbosity=verbosity,
+                modulators=modulators,
+                verify_note=verify_note,
+                closer_nudge=closer_nudge,
+                rng=rng,
+            )
+
+        # Run the generation under the typing keepalive (+ the natural-delay floor when wired).
+        # 🔴 BOB-049 .3: a still-failing ESSENTIAL generation ends the turn with the honest GUPPI
+        # outage notice instead of a degraded half-answer.
         try:
-            async with self._gateway.typing_indicator(chat_id=event.chat_id):
-                # 🔴 BOB-057 .5 (US-3 «один поиск, не петля»): compute the epistemic-verify
-                # step (judge → interim → search → grounded/hedge note) EXACTLY ONCE per turn
-                # as a PER-TURN LOCAL, then thread the SAME note into the first composition
-                # AND every anti-repeat regeneration. This makes «один поиск» a consequence of
-                # real structure — judge.assess / provider.search / the interim line each fire
-                # at most once, even on a turn that is both volatile AND trips the tic. It is a
-                # local (never a HandleMessage attribute) because the use case is a shared
-                # singleton — an instance flag would leak the note / «already searched» state
-                # across turns and concurrent users. ``""`` when the judge says «no check».
-                verify_note = await self._verify.note(
-                    event.text,
-                    history,
-                    interlocutor=interlocutor,
-                    chat_id=event.chat_id,
-                    forced=force_web,
-                )
-                # Anti-tic «провязка» (BOB-061 .2): BEFORE generation, detect whether Bob's
-                # recent closers (persist ring + live window) cluster into ONE recurring
-                # motif. When they do, (a) STRIP that motif off the recalled Bob-reply
-                # exemplars so the tic is not fed back as few-shot, and (b) fold a SOFT
-                # nudge («заверши по-другому») into the generation context — carried through
-                # the first composition AND every anti-repeat regeneration this turn. 🔴
-                # Fully decorative: on no tic (or an unwired/failing log) ``recalled`` is
-                # unchanged and the nudge is "" — zero change to the reply (US-4 liveness).
-                recalled, closer_nudge = await self._guard.closer_anti_tic(
-                    recalled, history
-                )
-                reply = await self._voice.compose(
-                    event.text,
-                    soul,
-                    recalled,
-                    history,
-                    plan,
-                    user_repeated=user_repeated,
-                    interlocutor=interlocutor,
-                    is_guest=is_guest,
-                    prior_impression=prior_impression,
-                    relationship=relationship,
-                    engagement=level,
-                    sulk=sulk,
-                    verbosity=verbosity,
-                    modulators=modulators,
-                    chat_id=event.chat_id,
-                    verify_note=verify_note,
-                    closer_nudge=closer_nudge,
-                    rng=rng,
-                )
-                # Anti-repeat guard (BOB-022, defense in depth): if the fresh reply is
-                # byte-identical (after strip) to Bob's most-recent prior reply, regenerate
-                # ONCE — with sampling now stochastic the retry differs. At most one extra
-                # generation, only on an exact duplicate; if the retry is still identical it
-                # is kept (no infinite loop).
-                reply = await self._guard.guard(
-                    reply,
-                    event.text,
-                    soul,
-                    recalled,
-                    history,
-                    plan,
-                    user_repeated,
-                    interlocutor,
-                    is_guest=is_guest,
-                    prior_impression=prior_impression,
-                    relationship=relationship,
-                    engagement=level,
-                    sulk=sulk,
-                    verbosity=verbosity,
-                    modulators=modulators,
-                    verify_note=verify_note,
-                    closer_nudge=closer_nudge,
-                    rng=rng,
-                )
+            reply = await self._run_generation(
+                _generate, chat_id=event.chat_id, demand=demand, interest=interest
+            )
         except _EssentialStepError as exc:
             await self._essential.handle_failure(event, soul, exc)
             return
@@ -1630,6 +1678,30 @@ class HandleMessage:
     ) -> None:
         """Delegate to :meth:`SocialContext.observe_sulk` (wave 2)."""
         await self._social.observe_sulk(interlocutor, soul, text)
+
+    async def _run_generation(
+        self,
+        generate: Callable[[], Awaitable[str]],
+        *,
+        chat_id: int,
+        demand: AnswerDemand,
+        interest: float,
+    ) -> str:
+        """Run the reply generation under the typing keepalive + the human delay floor.
+
+        The generation runs inside the "Bob is typing…" keepalive so it stays visible for the
+        whole real wait (BOB-009). When the natural-delay coordinator is wired (BOB-066 Срез W,
+        INV-9) the generation runs THROUGH it — noticed → typing → ``await max(natural_floor,
+        real_generation)`` → reply — with urgency/complexity read from the answer-demand + topic
+        interest, so Bob never answers inhumanly fast. Unwired it runs directly, byte-identical.
+        """
+        async with self._gateway.typing_indicator(chat_id=chat_id):
+            if self._reply_delay is None:
+                return await generate()
+            complexity, urgency = reply_delay_inputs(demand, interest)
+            return await self._reply_delay.deliver(
+                generate, complexity=complexity, urgency=urgency
+            )
 
     async def _topic_interest(self, soul: SOUL, text: str) -> float:
         """Delegate to :meth:`EngagementModel.topic_interest` (wave 2)."""

@@ -247,6 +247,7 @@ def _engine(
     fascination: object | None = None,
     sulk: object | None = None,
     repeat_thresholds: RepeatThresholds | None = None,
+    share_ceiling: object | None = None,
 ) -> ProactivityEngine:
     return ProactivityEngine(
         persona_id=_PERSONA,
@@ -271,7 +272,23 @@ def _engine(
         repeat_thresholds=(
             repeat_thresholds if repeat_thresholds is not None else RepeatThresholds()
         ),
+        share_ceiling=share_ceiling,  # type: ignore[arg-type]  # test double
     )
+
+
+class _FakeShareCeiling:
+    """A share-of-voice ceiling stub for the proactive throttle: fixed verdict + record."""
+
+    def __init__(self, *, admits: bool) -> None:
+        self._admits = admits
+        self.calls: list[tuple[int, bool, float]] = []
+
+    async def admits_barge(
+        self, *, chat_id: int, focused: bool, base_probability: float, draw: float
+    ) -> bool:
+        del draw  # the stub is deterministic; the real gate compares it to the damping
+        self.calls.append((chat_id, focused, base_probability))
+        return self._admits
 
 
 # An open, aroused, social mood at an evening peak hour maximises the urge so the
@@ -331,6 +348,61 @@ async def test_fire_runs_gate_compose_and_posts() -> None:
     assert gateway.replies == ["Hey, how did the launch go today?"]
     assert gateway.typing_opened == 1
     assert sum(p.calls for p in providers) >= 2  # gate + compose
+
+
+async def test_share_ceiling_throttles_a_firing_tick_with_zero_llm_calls() -> None:
+    # 🔴 BOB-066 Срез W (Пласт 3): when Bob has just hogged the room's airtime the share-of-
+    # voice ceiling throttles the proactive barge — the drive-model would fire, but the tick
+    # stays silent and makes ZERO LLM calls (the throttle sits BEFORE the Tier-0 gate).
+    moment = _evening()
+    seed = _seed_that_fires(moment, _HIGH_MOOD)
+    store = FakeStore(_state(energy=1.0))
+    router, providers = _router(gate_reply="SAY: x", compose_reply="A thought.")
+    gateway = CapturingGateway()
+    ceiling = _FakeShareCeiling(admits=False)
+    engine = _engine(
+        store=store,
+        router=router,
+        gateway=gateway,
+        state_holder=PersonalityState(soul=_soul(_HIGH_MOOD)),
+        moment=moment,
+        seed=seed,
+        salience=0.9,
+        share_ceiling=ceiling,
+    )
+
+    spoke = await engine.tick()
+
+    assert spoke is False
+    assert gateway.replies == []
+    assert sum(p.calls for p in providers) == 0
+    # The ceiling was consulted un-focused for Bob's chat (proactive is an ambient barge).
+    assert ceiling.calls == [(_CHAT_ID, False, 1.0)]
+
+
+async def test_share_ceiling_admitting_lets_a_firing_tick_speak() -> None:
+    moment = _evening()
+    seed = _seed_that_fires(moment, _HIGH_MOOD)
+    store = FakeStore(_state(energy=1.0))
+    router, _ = _router(gate_reply="SAY: x", compose_reply="A thought to share.")
+    gateway = CapturingGateway()
+    ceiling = _FakeShareCeiling(admits=True)
+    engine = _engine(
+        store=store,
+        router=router,
+        gateway=gateway,
+        state_holder=PersonalityState(soul=_soul(_HIGH_MOOD)),
+        moment=moment,
+        seed=seed,
+        salience=0.9,
+        share_ceiling=ceiling,
+    )
+
+    spoke = await engine.tick()
+
+    assert spoke is True
+    assert gateway.replies == ["A thought to share."]
+    assert len(ceiling.calls) == 1
 
 
 async def test_gate_and_compose_prompts_carry_the_russian_directive() -> None:

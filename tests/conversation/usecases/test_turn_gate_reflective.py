@@ -17,6 +17,7 @@
 
 from __future__ import annotations
 
+from random import Random
 from typing import TYPE_CHECKING
 
 import pytest
@@ -124,6 +125,20 @@ class _Essential:
         raise AssertionError("reflective path does not use the essential runner")
 
 
+class _FakeCeiling:
+    """A share-of-voice ceiling stub: records each consult, returns a fixed verdict."""
+
+    def __init__(self, *, admits: bool) -> None:
+        self._admits = admits
+        self.calls: list[tuple[int, bool, float, float]] = []
+
+    async def admits_barge(
+        self, *, chat_id: int, focused: bool, base_probability: float, draw: float
+    ) -> bool:
+        self.calls.append((chat_id, focused, base_probability, draw))
+        return self._admits
+
+
 # --- builders -----------------------------------------------------------------
 
 
@@ -174,6 +189,7 @@ def _interlocutor() -> Interlocutor:
 def _gate(
     *, signals: _AddressivitySignals, reader: RoomReader, floor: _RecordingFloor,
     reactor: _RecordingReactor,
+    barge_ceiling: _FakeCeiling | None = None,
 ) -> TurnGate:
     # The nominal collaborators (perceiver / floor / assembler) are concrete classes, so
     # the structural test doubles are injected via a justified arg-type ignore; the reader
@@ -188,6 +204,7 @@ def _gate(
         persist=_boom_persist,
         record_owner_activity=_noop_owner_activity,
         read_the_room=ReadTheRoom(reader=reader),
+        barge_ceiling=barge_ceiling,
     )
 
 
@@ -205,9 +222,9 @@ _EVENT = MessageReceived(
 )
 
 
-async def _run(gate: TurnGate) -> _ReplyGate | None:
+async def _run(gate: TurnGate, *, rng: Random | None = None) -> _ReplyGate | None:
     return await gate.gate(
-        _EVENT, _soul(), _interlocutor(), _PLAN, 0.5, RuleModulators()
+        _EVENT, _soul(), _interlocutor(), _PLAN, 0.5, RuleModulators(), rng=rng
     )
 
 
@@ -290,6 +307,84 @@ async def test_ambient_react_sets_the_emoji_and_advances_the_floor() -> None:
     assert await _run(gate) is None
     assert reactor.reactions == [(42, 7, "🔥")]
     assert floor.advances == [(Addressivity.AMBIENT, False)]
+
+
+# --- ambient-barge ceiling (BOB-066 Срез W) ----------------------------------
+
+
+@pytest.mark.asyncio
+async def test_ambient_reply_is_dropped_to_silence_when_the_ceiling_denies() -> None:
+    # 🔴 Пласт 3: when the share-of-voice ceiling denies the ambient barge, a periphery
+    # REPLY verdict is dropped to a silent IGNORE (advance the floor, no reply, no react).
+    floor, reactor = _RecordingFloor(), _RecordingReactor()
+    ceiling = _FakeCeiling(admits=False)
+    gate = _gate(
+        signals=_signals(Addressivity.AMBIENT),
+        reader=_ScriptedReader(_reading(intent=ReflectiveIntent.REPLY, salience=0.9)),
+        floor=floor,
+        reactor=reactor,
+        barge_ceiling=ceiling,
+    )
+    assert await _run(gate, rng=Random(0)) is None
+    assert floor.advances == [(Addressivity.AMBIENT, False)]
+    assert reactor.reactions == []
+    # The ceiling was consulted un-focused with the reading's salience as the base p(barge).
+    assert len(ceiling.calls) == 1
+    chat_id, focused, base_probability, _draw = ceiling.calls[0]
+    assert chat_id == 42
+    assert focused is False
+    assert base_probability == pytest.approx(0.9)
+
+
+@pytest.mark.asyncio
+async def test_ambient_reply_passes_when_the_ceiling_admits() -> None:
+    floor, reactor = _RecordingFloor(), _RecordingReactor()
+    ceiling = _FakeCeiling(admits=True)
+    gate = _gate(
+        signals=_signals(Addressivity.AMBIENT),
+        reader=_ScriptedReader(_reading(intent=ReflectiveIntent.REPLY, salience=0.9)),
+        floor=floor,
+        reactor=reactor,
+        barge_ceiling=ceiling,
+    )
+    assert isinstance(await _run(gate, rng=Random(0)), _ReplyGate)
+    assert len(ceiling.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_focus_bypasses_the_ceiling_entirely() -> None:
+    # 🔴 INV-1: a direct address short-circuits ABOVE the ceiling — even a denying ceiling
+    # never throttles focus, and it is never even consulted (no draw taken).
+    floor, reactor = _RecordingFloor(), _RecordingReactor()
+    ceiling = _FakeCeiling(admits=False)
+    gate = _gate(
+        signals=_signals(Addressivity.DIRECTED_TO_BOB),
+        reader=_NeverReader(),
+        floor=floor,
+        reactor=reactor,
+        barge_ceiling=ceiling,
+    )
+    assert isinstance(await _run(gate, rng=Random(0)), _ReplyGate)
+    assert ceiling.calls == []
+
+
+@pytest.mark.asyncio
+async def test_ambient_react_never_consults_the_ceiling() -> None:
+    # The ceiling gates only the barge (REPLY); a REACT verdict is un-throttled.
+    floor, reactor = _RecordingFloor(), _RecordingReactor()
+    ceiling = _FakeCeiling(admits=False)
+    gate = _gate(
+        signals=_signals(Addressivity.AMBIENT),
+        reader=_ScriptedReader(
+            _reading(intent=ReflectiveIntent.REACT, salience=0.9, emoji="🔥")
+        ),
+        floor=floor,
+        reactor=reactor,
+        barge_ceiling=ceiling,
+    )
+    assert await _run(gate, rng=Random(0)) is None
+    assert reactor.reactions == [(42, 7, "🔥")]
+    assert ceiling.calls == []
 
 
 @pytest.mark.asyncio
