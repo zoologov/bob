@@ -66,8 +66,10 @@ from bob.conversation.adapters.conversation_floor_store import (
 )
 from bob.conversation.adapters.interim_line import LlmInterimLineGenerator
 from bob.conversation.adapters.response_judge import LlmResponseJudge
+from bob.conversation.adapters.room_reader import LlmRoomReader
 from bob.conversation.adapters.volatility_judge import LlmVolatilityJudge
 from bob.conversation.usecases.decide_response import DecideResponse
+from bob.conversation.usecases.read_the_room import ReadTheRoom
 from bob.conversation.zone_classifier import TasteZoneClassifier
 from bob.infrastructure.config import ConfigLoader
 from bob.infrastructure.llm import (
@@ -537,6 +539,18 @@ def build_application(
     # local memory — always wired; the seam is decorative (a failure never breaks a turn).
     closer_log = SqliteCloserLog(connection)
 
+    # Reflective «read the room» (BOB-066 Срез 2.2): the rich Tier-1 reflective pass that
+    # makes Bob a living, equal group participant — a focus/periphery split with the
+    # deterministic INV-1 focal guarantee. Built ONLY when ``presence.reflective`` — the
+    # whole «человеческое групповое присутствие» epic ships as ONE piece (owner blocker), so
+    # it stays OFF by default and the turn gate keeps the BOB-049 judge behaviour until the
+    # epic is complete. On → the LlmRoomReader (ROOM_READ, Tier 1) drives HandleMessage.
+    presence_section = _section(merged, "presence")
+    reflective_enabled = _flag(presence_section, "reflective")
+    read_the_room = (
+        ReadTheRoom(reader=LlmRoomReader(router=router)) if reflective_enabled else None
+    )
+
     handle_message = HandleMessage(
         router=router,
         gateway=multibot.reply_gateway(BotIdentity.BOB),
@@ -746,6 +760,7 @@ def build_application(
         # web_search provider (both None unless verify.enabled). On a volatile-fact turn Bob
         # makes ONE DIRECT search and folds the finding (or an honest hedge) into the reply
         # — internal public-verify, NOT routed through the registry/BOB-052 gate.
+        read_the_room=read_the_room,
         verify_judge=verify_judge,
         verify_provider=verify_provider,
         interim_line_generator=interim_line_generator,

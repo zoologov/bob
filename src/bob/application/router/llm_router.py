@@ -63,6 +63,7 @@ class TaskType(Enum):
     PRIVILEGE_JUDGE = "privilege_judge"
     VOLATILITY_JUDGE = "volatility_judge"
     INTERIM_LINE = "interim_line"
+    ROOM_READ = "room_read"
 
 
 # Task -> preferred tier. Quality-critical, user-facing work goes to Tier 1
@@ -99,6 +100,11 @@ _PREFERRED_TIER: dict[TaskType, int] = {
     # Interim line (BOB-057 .3) is a cheap one-liner in Bob's voice before the verify
     # search — a fast, latency-tolerant local gen (the search wait dwarfs it), Tier 0.
     TaskType.INTERIM_LINE: _TIER_LOCAL,
+    # Reflective «read the room» (BOB-066 Срез 2.2) is the rich semantic pass on a
+    # PERIPHERY turn — situation / room-mood / intent / salience / wants_web. It is the
+    # heart of Bob's living group presence, so it runs on Tier 1 for real understanding
+    # («не жалеть LLM», PRINCIPLE-1 liveness > economy) — unlike the cheap Tier-0 judge.
+    TaskType.ROOM_READ: _TIER_API,
 }
 
 

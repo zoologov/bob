@@ -179,6 +179,11 @@ ignore = [
 # examples carry intentional Cyrillic look-alikes — RUF001/RUF002/RUF003 here.
 "src/bob/conversation/interim_line.py" = ["RUF001", "RUF002", "RUF003"]
 "src/bob/conversation/adapters/interim_line.py" = ["RUF001", "RUF002", "RUF003"]
+# The reflective «read the room» seam (BOB-066 Срез 2.2): its Russian persona prompt +
+# docstrings carry intentional Cyrillic look-alikes — RUF001/RUF002/RUF003 here.
+"src/bob/conversation/room_reading.py" = ["RUF001", "RUF002", "RUF003"]
+"src/bob/conversation/room_reading_wire.py" = ["RUF001", "RUF002", "RUF003"]
+"src/bob/conversation/room_verdict.py" = ["RUF001", "RUF002", "RUF003"]
 "src/bob/social/adapters/permission_request_store.py" = [
     "RUF001",
     "RUF002",
@@ -615,6 +620,17 @@ ignore = [
 "tests/application/authz/test_reactor_perception.py" = ["S101", "ARG001", "ARG002", "PLR2004", "RUF001", "RUF002", "RUF003"]
 "tests/test_reaction_perception_wiring.py" = ["S101", "ARG001", "ARG002", "PLR2004", "RUF001", "RUF002", "RUF003"]
 "tests/infrastructure/persistence/test_notable_reaction_store.py" = ["S101", "ARG001", "PLR2004", "RUF001", "RUF002", "RUF003"]
+# Reflective read tests (BOB-066 Срез 2.2) carry Russian situation/reason/thread literals
+# whose Cyrillic look-alikes are intentional — RUF001/RUF002/RUF003 do not apply.
+"tests/domain/conversation/test_room_reading.py" = ["S101", "ARG001", "PLR2004", "RUF001", "RUF002", "RUF003"]
+"tests/domain/conversation/test_room_reading_wire.py" = ["S101", "ARG001", "PLR2004", "RUF001", "RUF002", "RUF003"]
+"tests/domain/conversation/test_room_verdict.py" = ["S101", "ARG001", "PLR2004", "RUF001", "RUF002", "RUF003"]
+"tests/conversation/usecases/test_read_the_room.py" = ["S101", "ARG001", "ARG002", "PLR2004", "RUF001", "RUF002", "RUF003"]
+"tests/conversation/usecases/test_turn_gate_reflective.py" = ["S101", "ARG001", "ARG002", "PLR2004", "SLF001", "RUF001", "RUF002", "RUF003"]
+"tests/conversation/usecases/test_verify_step_forced.py" = ["S101", "ARG001", "ARG002", "PLR2004", "RUF001", "RUF002", "RUF003"]
+"tests/infrastructure/llm/test_room_reader.py" = ["S101", "ARG001", "ARG002", "PLR2004", "RUF001", "RUF002", "RUF003"]
+"tests/acceptance/steps/test_read_the_room.py" = ["S101", "ARG001", "ARG002", "PLR2004", "RUF001", "RUF002", "RUF003"]
+"tests/acceptance/reflective_harness.py" = ["S101", "ARG001", "ARG002", "PLR2004", "SLF001", "RUF001", "RUF002", "RUF003"]
 "tests/infrastructure/persistence/test_coding_session_store.py" = [
     "S101",
     "ARG001",

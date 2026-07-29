@@ -161,6 +161,7 @@ if TYPE_CHECKING:
     from bob.conversation.ports import CloserLog, ConversationFloorStore, ZoneClassifier
     from bob.conversation.usecases.addressivity_perceiver import _AddressivityDecision
     from bob.conversation.usecases.decide_response import DecideResponse
+    from bob.conversation.usecases.read_the_room import ReadTheRoom
     from bob.conversation.volatility_judgment import VolatilityJudge
     from bob.kernel.ports import Clock
     from bob.memory.ports import MemoryRecall, Recalled
@@ -587,6 +588,7 @@ class HandleMessage:
         verify_timeout_seconds: float = _DEFAULT_VERIFY_TIMEOUT_SECONDS,
         interim_line_generator: InterimLineGenerator | None = None,
         closer_log: CloserLog | None = None,
+        read_the_room: ReadTheRoom | None = None,
     ) -> None:
         self._router = router
         self._gateway = gateway
@@ -883,6 +885,13 @@ class HandleMessage:
         # sender perceived → Bob falls back to the legacy addressivity path, so existing
         # constructions/tests behave exactly as before.
         self._decide_response = decide_response
+        # Reflective «read the room» seam (BOB-066 Срез 2.2): when wired AND a sender is
+        # perceived, the turn gate takes the focus/periphery fork ДО the BOB-049 judge — a
+        # raw direct address short-circuits to a deterministic reply (INV-1), everything
+        # ambient goes through one rich Tier-1 reflective read + a pure verdict. Unwired
+        # (the default → off in composition unless ``presence.reflective``) the gate falls
+        # back to the BOB-049 judge / legacy paths, so behaviour is exactly as before.
+        self._read_the_room = read_the_room
         # Reliability seam (BOB-049 .3 — «полный Боб или честный GUPPI-нотис»): the two
         # ESSENTIAL LLM steps (the semantic judgment + the reply generation) are retried a
         # bounded number of times with a short backoff before Bob falls back to the honest
@@ -1106,6 +1115,7 @@ class HandleMessage:
             reactor=self._reactor,
             persist=self._persist,
             record_owner_activity=self._record_owner_activity,
+            read_the_room=self._read_the_room,
         )
 
     async def _plain_reply(self, system_prompt: str, text: str, context: str) -> str:
@@ -1276,6 +1286,10 @@ class HandleMessage:
             return
         decision = gate.decision
         prefetched_history = gate.history
+        # 🔴 BOB-066 Срез 2.2 (C11): a reflective read that set ``wants_web`` rides the gate
+        # as ``force_web`` → force the EXISTING verify pass below (skip its volatility judge).
+        # Every non-reflective path leaves this ``False``, so the judge decides as before.
+        force_web = gate.force_web
         # Decide how SHORT Bob answers this ENGAGE turn (BOB-024): answer-demand of the
         # message x interest x mood/appetite x the BOB-018 form_hint → a Verbosity, the
         # single final length directive + (on a terse turn) the short-answer few-shot.
@@ -1357,6 +1371,7 @@ class HandleMessage:
                     history,
                     interlocutor=interlocutor,
                     chat_id=event.chat_id,
+                    forced=force_web,
                 )
                 # Anti-tic «провязка» (BOB-061 .2): BEFORE generation, detect whether Bob's
                 # recent closers (persist ring + live window) cluster into ONE recurring
