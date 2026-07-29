@@ -74,3 +74,20 @@ Cohesion. 🔴 DoD: full-reindex + full-mypy + `beadloom ci`.
   единственный красный = 216 stale doc (signatures changed) → tech-writer-волна (sync-update +
   setup-rules --refresh). Существующие e2e/acceptance обновлены (publish→enqueue + wait_for_idle).
   Далее: 4.2 test (гонки/сериализация/turn-scope) → 4.3 review → 4.4 tech-writer (закрывает Gate).
+- 2026-07-29: **`bob-vol.8.1` dev — per-person обида/охлаждение ОТГРУЖЕНА** (features/BOB-066 @ 99afd8f).
+  Обобщение owner-only sulk → per-(persona, sender): `person_sulk` таблица (PK persona+sender) +
+  `PersonSulkStore` порт (load/save/active_sulks) + `SqlitePersonSulkStore` (UPSERT + backfill_owner
+  идемпотентно/existence-guarded, не воскрешает). `SulkTracker` per-person: `current_for(sender_id)`/
+  `observe(sender_id,person_warmth)`/`active_targets`/`recover`-iterate-active/`current_active`(owner-
+  veto) + `GroupSilentAnnouncer` (тихо в группе, `observe(announcer=)`-override). Снят owner-gate в
+  `social_context`; 🔴 addressed cold — `sulk_directive` только для текущего собеседника
+  (`current_for(interlocutor.sender_id)`). Domain `sulk.py`: `owner_warmth`→`person_warmth` (логика
+  та же). 🔴 OWNER byte-identical (owner=единственный live sender→те же пороги/decay/announce; backfill
+  хранит mid-обиду). Guest-sulk + silent-group ЛАТЕНТНЫ (группы не live). INV-6 (порог+sustain+гарант.
+  time-decay, анти-Exodus, directed≠casual, healthy resets). 19 domain + 15 tracker + 8 adapter unit,
+  handle_message guest-тест инвертирован (теперь кормит per-person), BDD `person_sulk.feature` (адресный
+  холод/бытовой мат/decay-exit) 4 сценария, mutation `bob.social.sulk` 146/147 = 99.3% (1 equivalent
+  triaged: mutmut_29 drops `announced=False`, дефолт уже False). pytest 3645, mypy full 0, ruff 0,
+  reindex --full + lint --strict 0 (нет цикла personality↔social — директивы argument-shaped), doctor
+  PASS. 🔴 beadloom ci красный = stale doc (social README/architecture) → tech-writer-волна. Далее:
+  8.2 test (инварианты) → 8.3 review → 8.4 tech-writer (закрывает Gate).
