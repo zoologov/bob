@@ -29,12 +29,16 @@ class ScenarioContext:
     ``tmp_path`` — the isolated on-disk SQLite/soul root for this scenario;
     ``gateway`` — the fake outgoing boundary, populated once the turn is driven;
     ``rhythm_enabled`` — whether the presence rhythm layer is wired for this scenario
-    (BOB-066 Срез W), so a shared When step can drive the wired vs inert path.
+    (BOB-066 Срез W), so a shared When step can drive the wired vs inert path;
+    ``room_mood_enabled`` / ``tone_line_folded`` — whether the room-mood seam is wired
+    (BOB-066 Срез W.2) and whether the heavy-room tone line was folded into Bob's voice.
     """
 
     tmp_path: Path
     gateway: FakeGateway = field(default_factory=FakeGateway)
     rhythm_enabled: bool = True
+    room_mood_enabled: bool = True
+    tone_line_folded: bool = False
 
 
 @pytest.fixture

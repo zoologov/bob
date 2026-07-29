@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from bob.application.runtime.events import MessageReceived
-from bob.conversation.addressivity import Addressivity
+from bob.conversation.addressivity import Addressivity, ResponseOutcome
 from bob.conversation.conversation_floor import FloorHolder
 from bob.conversation.room_reading import (
     ReflectiveIntent,
@@ -222,9 +222,21 @@ _EVENT = MessageReceived(
 )
 
 
-async def _run(gate: TurnGate, *, rng: Random | None = None) -> _ReplyGate | None:
+async def _run(
+    gate: TurnGate,
+    *,
+    rng: Random | None = None,
+    series_ceiling: ResponseOutcome = ResponseOutcome.ENGAGE,
+) -> _ReplyGate | None:
     return await gate.gate(
-        _EVENT, _soul(), _interlocutor(), _PLAN, 0.5, RuleModulators(), rng=rng
+        _EVENT,
+        _soul(),
+        _interlocutor(),
+        _PLAN,
+        0.5,
+        RuleModulators(),
+        rng=rng,
+        series_ceiling=series_ceiling,
     )
 
 
@@ -385,6 +397,75 @@ async def test_ambient_react_never_consults_the_ceiling() -> None:
     assert await _run(gate, rng=Random(0)) is None
     assert reactor.reactions == [(42, 7, "🔥")]
     assert ceiling.calls == []
+
+
+# --- series budget ceiling (batch top-k, BOB-066 Срез W.2) -------------------
+
+
+@pytest.mark.asyncio
+async def test_series_silent_ceiling_drops_an_ambient_reply_to_silence() -> None:
+    # 🔴 Пласт 3: when the batch top-k plan marked THIS message SILENT (the burst already spent
+    # its reply + like), a periphery REPLY verdict stays quiet (advance the floor, no reply).
+    floor, reactor = _RecordingFloor(), _RecordingReactor()
+    gate = _gate(
+        signals=_signals(Addressivity.AMBIENT),
+        reader=_ScriptedReader(_reading(intent=ReflectiveIntent.REPLY, salience=0.9)),
+        floor=floor,
+        reactor=reactor,
+    )
+    result = await _run(gate, rng=Random(0), series_ceiling=ResponseOutcome.SILENT)
+    assert result is None
+    assert reactor.reactions == []
+    assert floor.advances == [(Addressivity.AMBIENT, False)]
+
+
+@pytest.mark.asyncio
+async def test_series_react_ceiling_downgrades_an_ambient_reply_to_a_like() -> None:
+    # A message the plan marked REACT downgrades a REPLY verdict to a like — a REPLY reading
+    # carries no chosen emoji, so the like falls back to a mood emoji (still a real like).
+    floor, reactor = _RecordingFloor(), _RecordingReactor()
+    gate = _gate(
+        signals=_signals(Addressivity.AMBIENT),
+        reader=_ScriptedReader(_reading(intent=ReflectiveIntent.REPLY, salience=0.9)),
+        floor=floor,
+        reactor=reactor,
+    )
+    result = await _run(gate, rng=Random(0), series_ceiling=ResponseOutcome.REACT)
+    assert result is None
+    assert len(reactor.reactions) == 1
+    chat_id, message_id, emoji = reactor.reactions[0]
+    assert (chat_id, message_id) == (42, 7)
+    assert emoji  # a real like was set (the mood emoji)
+    assert floor.advances == [(Addressivity.AMBIENT, False)]
+
+
+@pytest.mark.asyncio
+async def test_series_engage_ceiling_leaves_the_reply_intact() -> None:
+    # ENGAGE (the default / one addressed reply) is no cap — the ambient REPLY still replies.
+    floor, reactor = _RecordingFloor(), _RecordingReactor()
+    gate = _gate(
+        signals=_signals(Addressivity.AMBIENT),
+        reader=_ScriptedReader(_reading(intent=ReflectiveIntent.REPLY, salience=0.9)),
+        floor=floor,
+        reactor=reactor,
+    )
+    result = await _run(gate, rng=Random(0), series_ceiling=ResponseOutcome.ENGAGE)
+    assert isinstance(result, _ReplyGate)
+
+
+@pytest.mark.asyncio
+async def test_focus_is_never_capped_by_the_series_ceiling() -> None:
+    # 🔴 INV-1: a direct address is answered ABOVE the budget — even a SILENT ceiling cannot
+    # drop it (the focal short-circuit returns before the ceiling is ever consulted).
+    floor, reactor = _RecordingFloor(), _RecordingReactor()
+    gate = _gate(
+        signals=_signals(Addressivity.DIRECTED_TO_BOB),
+        reader=_NeverReader(),
+        floor=floor,
+        reactor=reactor,
+    )
+    result = await _run(gate, rng=Random(0), series_ceiling=ResponseOutcome.SILENT)
+    assert isinstance(result, _ReplyGate)
 
 
 @pytest.mark.asyncio

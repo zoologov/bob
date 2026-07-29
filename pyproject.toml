@@ -903,6 +903,13 @@ ignore = [
 # The rhythm-wiring acceptance steps (BOB-066 Срез W) carry Russian scenario prose whose
 # Cyrillic look-alikes are intentional (→ RUF001/2/3) and assert through the boundary (S101).
 "tests/acceptance/steps/test_presence_rhythm_wiring.py" = ["S101", "RUF001", "RUF002", "RUF003"]
+# The room-mood-wiring acceptance steps (BOB-066 Срез W.2) carry Russian scenario prose whose
+# Cyrillic look-alikes are intentional (→ RUF001/2/3) and assert through the boundary (S101).
+"tests/acceptance/steps/test_room_mood_wiring.py" = ["S101", "RUF001", "RUF002", "RUF003"]
+# The series-budget-wiring acceptance steps + harness (BOB-066 Срез W.2) carry Russian scenario
+# prose whose Cyrillic look-alikes are intentional (→ RUF001/2/3) and assert via the boundary.
+"tests/acceptance/steps/test_series_budget_wiring.py" = ["S101", "RUF001", "RUF002", "RUF003"]
+"tests/acceptance/series_budget_harness.py" = ["RUF001", "RUF002", "RUF003"]
 # The per-person обида acceptance steps (BOB-066 .2.5) carry Russian scenario prose whose
 # Cyrillic look-alikes are intentional (→ RUF001/2/3) and assert through the boundary (S101).
 "tests/acceptance/steps/test_person_sulk.py" = ["S101", "RUF001", "RUF002", "RUF003"]

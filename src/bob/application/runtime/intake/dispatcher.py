@@ -33,9 +33,11 @@ from typing import TYPE_CHECKING
 
 from bob.application.runtime.intake.inbox import ChatInbox
 from bob.application.runtime.intake.scope import new_turn_scope
+from bob.conversation.addressivity import ResponseOutcome
+from bob.presence.series_salience import SeriesAction, plan_series_actions
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable
+    from collections.abc import Awaitable, Callable, Sequence
 
     from bob.application.runtime.events import MessageReceived
     from bob.application.runtime.intake.scope import TurnScope
@@ -45,6 +47,17 @@ if TYPE_CHECKING:
     type _Focused = Callable[[MessageReceived], bool]
 
 logger = logging.getLogger(__name__)
+
+# The default per-series reaction budget: one gentle like per settled burst — a bot that likes
+# every message in a run reads as scripted. Tunable via ``presence.series_budget.max_reactions``.
+_DEFAULT_MAX_REACTIONS = 1
+
+# Map the pure batch-plan verdict to the outcome ceiling the handler caps the ambient turn by.
+_CEILING_FOR_ACTION: dict[SeriesAction, ResponseOutcome] = {
+    SeriesAction.REPLY: ResponseOutcome.ENGAGE,
+    SeriesAction.REACT: ResponseOutcome.REACT,
+    SeriesAction.SILENT: ResponseOutcome.SILENT,
+}
 
 
 class ChatDispatcher:
@@ -58,12 +71,19 @@ class ChatDispatcher:
         is_focused: _Focused,
         quiet_window: float = 0.0,
         sleep: _Sleep = asyncio.sleep,
+        series_budget_enabled: bool = False,
+        series_max_reactions: int = _DEFAULT_MAX_REACTIONS,
     ) -> None:
         self._handle = handle
         self._base_seed = base_seed
         self._is_focused = is_focused
         self._quiet_window = quiet_window
         self._sleep = sleep
+        # 🔴 BOB-066 Срез W.2 (batch top-k): when enabled, a settled burst is planned so it
+        # collapses to ONE addressed reply + a budget-capped like (never N replies). Off (the
+        # default) → every message keeps the ENGAGE ceiling → byte-identical to before.
+        self._series_budget_enabled = series_budget_enabled
+        self._series_max_reactions = series_max_reactions
         self._inboxes: dict[int, ChatInbox] = {}
         self._workers: dict[int, asyncio.Task[None]] = {}
         self._closing = False
@@ -118,15 +138,47 @@ class ChatDispatcher:
             # blocks the drain until a message arrives), so it is the worker's exit signal.
             if not batch:
                 return
-            for message in batch:
-                await self._handle_one(chat_id, message)
+            # 🔴 BOB-066 Срез W.2 (batch top-k): plan the settled burst so several inbound
+            # collapse to ONE addressed reply + a budget-capped like — a focus message is always
+            # a reply (INV-1). Off → every message keeps the ENGAGE ceiling (byte-identical).
+            ceilings = self._plan_ceilings(batch)
+            for message, ceiling in zip(batch, ceilings, strict=True):
+                await self._handle_one(chat_id, message, ceiling)
 
-    async def _handle_one(self, chat_id: int, message: MessageReceived) -> None:
-        """Run the real handler for one message under a fresh turn scope, isolating faults."""
+    def _plan_ceilings(
+        self, batch: Sequence[MessageReceived]
+    ) -> tuple[ResponseOutcome, ...]:
+        """Assign each batched message its outcome ceiling from the pure series-salience plan.
+
+        Off (the default) → every message is uncapped (``ENGAGE``), so the worker is
+        byte-identical to before the budget. On → the pure
+        :func:`~bob.presence.series_salience.plan_series_actions` decides one reply + a
+        budget-capped like over the burst's FOCUS flags (a focus message is never dropped).
+        """
+        if not self._series_budget_enabled:
+            return tuple(ResponseOutcome.ENGAGE for _ in batch)
+        plan = plan_series_actions(
+            [self._is_focused(message) for message in batch],
+            max_reactions=self._series_max_reactions,
+        )
+        return tuple(_CEILING_FOR_ACTION[action] for action in plan)
+
+    async def _handle_one(
+        self,
+        chat_id: int,
+        message: MessageReceived,
+        ceiling: ResponseOutcome = ResponseOutcome.ENGAGE,
+    ) -> None:
+        """Run the real handler for one message under a fresh turn scope, isolating faults.
+
+        The batch top-k ``ceiling`` (BOB-066 Срез W.2) rides on the :class:`TurnScope` so the
+        handler seam signature is untouched; ``ENGAGE`` (the default) is no cap.
+        """
         scope = new_turn_scope(
             base_seed=self._base_seed,
             chat_id=message.chat_id,
             message_id=message.message_id,
+            series_ceiling=ceiling,
         )
         try:
             await self._handle(message, scope)

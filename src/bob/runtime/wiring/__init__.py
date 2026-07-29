@@ -65,6 +65,7 @@ from bob.runtime.wiring.proactivity import (
     _build_proactivity_engine,
 )
 from bob.runtime.wiring.rhythm import RhythmWiring, build_rhythm_wiring
+from bob.runtime.wiring.room_mood import build_room_mood_modulator
 from bob.runtime.wiring.self_improvement import (
     _build_self_improvement,
     _SelfImprovement,
@@ -120,4 +121,5 @@ __all__ = [
     "_phantom_evolution_params",
     "_resolve_seed",
     "build_rhythm_wiring",
+    "build_room_mood_modulator",
 ]

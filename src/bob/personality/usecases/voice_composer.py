@@ -256,6 +256,7 @@ class VoiceComposer:
         chat_id: int | None = None,
         verify_note: str | None = None,
         closer_nudge: str = "",
+        room_tone: str = "",
         rng: Random | None = None,
     ) -> str:
         """Compose a full reply, folding the decided verbosity into the prompt.
@@ -326,6 +327,7 @@ class VoiceComposer:
             sulk=sulk,
             verbosity=verbosity,
             modulators=modulators,
+            room_tone=room_tone,
         )
         provider = self._tool_provider
         # ESSENTIAL step (BOB-049 .3): the reply generation is retry-wrapped — a flaky
@@ -371,6 +373,7 @@ class VoiceComposer:
         sulk: SulkState | None = None,
         verbosity: Verbosity = Verbosity.NORMAL,
         modulators: RuleModulators | None = None,
+        room_tone: str = "",
     ) -> str:
         """Augment the base prompt with the mood tone, stance, and brevity directives.
 
@@ -433,6 +436,13 @@ class VoiceComposer:
             improvement_directive(
                 modulators.voice_adjustments if modulators is not None else ()
             ),
+            # BOB-066 Срез W.2 (Пласт 4): the ROOM's mood — a SECOND layer on TOP of Bob's
+            # personal mood/relationship tone. A heavy/tense room eases the banter, a warm one
+            # lightens it. Computed BY VALUE from the reflective read in the application layer
+            # (personality never imports conversation) and passed in as a turn-local string;
+            # ``""`` (a neutral room OR the flag off) adds nothing, so the default path is
+            # unchanged and Bob's personal Mood is never touched.
+            room_tone,
         ]
         suffix = "".join(f"\n{d}" for d in directives if d)
         return f"{_SYSTEM_PROMPT}{suffix}"

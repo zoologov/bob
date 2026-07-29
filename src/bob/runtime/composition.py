@@ -163,6 +163,7 @@ from bob.runtime.wiring import (
     _phantom_evolution_params,
     _resolve_seed,
     build_rhythm_wiring,
+    build_room_mood_modulator,
 )
 from bob.social.adapters.first_impression_store import SqliteFirstImpressionStore
 from bob.social.adapters.person_sulk_store import SqlitePersonSulkStore
@@ -378,10 +379,14 @@ def build_application(
     # contagion (a warm message lifts more than a cold one dips) and the proportional
     # pull-toward-baseline that displaces accumulated low. Loaded off the same soul
     # artifact as the reappraisal seam; canon-optimist fallback when absent.
+    # Bob's disposition (canon-optimist fallback when absent) drives the social co-regulation
+    # AND — behind ``presence.room_mood`` — the warm-room-lifts-more-than-cold engagement
+    # asymmetry; loaded once here and shared by every seam that reuses it.
+    disposition = _disposition_from(soul_store.read_json("disposition"))
     update_mood = UpdateMoodFromText(
         router=router,
         clock=resolved_clock,
-        disposition=_disposition_from(soul_store.read_json("disposition")),
+        disposition=disposition,
     )
     extract_facts = ExtractFacts(router=router, repo=memory_repo, clock=resolved_clock)
     authorizer = _build_authorizer(merged, repo=connection)
@@ -573,6 +578,12 @@ def build_application(
     # damp over one per-chat window; the store reads Bob's airtime off the episodic log the reply
     # path already writes (no extra write). Ships inert until the epic is complete (owner blocker).
     rhythm = build_rhythm_wiring(merged, activity_provider=memory_repo)
+
+    # RoomMood-в-тоне (BOB-066 Срез W.2, Пласт 4): built ONLY when ``presence.room_mood`` (OFF by
+    # default → None → byte-identical). On a reflective periphery REPLY the room's atmosphere
+    # colours Bob's tone + appetite BY VALUE (personality never imports conversation); his
+    # personal Mood is never mutated (a SECOND layer). Ships inert until the epic is complete.
+    room_mood_modulator = build_room_mood_modulator(merged, disposition=disposition)
 
     handle_message = HandleMessage(
         router=router,
@@ -789,6 +800,9 @@ def build_application(
         # generation (INV-9). Both None unless ``presence.rhythm`` → byte-identical when off.
         barge_ceiling=rhythm.barge_ceiling,
         reply_delay=rhythm.reply_delay,
+        # RoomMood-в-тоне consumption (BOB-066 Срез W.2): the reflective room mood colours Bob's
+        # tone + appetite BY VALUE. None unless ``presence.room_mood`` → byte-identical when off.
+        room_mood_modulator=room_mood_modulator,
         verify_judge=verify_judge,
         verify_provider=verify_provider,
         interim_line_generator=interim_line_generator,
@@ -807,6 +821,11 @@ def build_application(
     # focused message (direct address to Bob) flushes the debounce at once so it is never
     # dropped/delayed by batching (INV-1/10). AsyncEventBus / gateway / poll_once are
     # unchanged — only the handler behind the seam became fast.
+    # Batch top-k action budget (BOB-066 Срез W.2, Пласт 3): behind ``presence.series_budget``
+    # (OFF by default → every message uncapped → byte-identical), a settled burst collapses to
+    # ONE addressed reply + a budget-capped like (``max_reactions``, default 1) instead of N
+    # replies; a focus message is always answered (INV-1). Ships inert until the epic completes.
+    series_budget = _section(_section(merged, "presence"), "series_budget")
     intake_dispatcher = ChatDispatcher(
         handle=handle_message.handle,
         base_seed=_resolve_seed(merged, proactivity_seed),
@@ -815,6 +834,8 @@ def build_application(
             _int(_section(merged, "dialogue"), "intake_debounce_ms", 0)
         )
         / _MILLIS_PER_SECOND,
+        series_budget_enabled=_flag(series_budget, "enabled"),
+        series_max_reactions=_int(series_budget, "max_reactions", 1),
     )
     event_bus.subscribe(MESSAGE_RECEIVED, _as_dispatch_handler(intake_dispatcher))
 

@@ -111,6 +111,7 @@ class _Compose(Protocol):
         chat_id: int | None = ...,
         verify_note: str | None = ...,
         closer_nudge: str = ...,
+        room_tone: str = ...,
         rng: Random | None = ...,
     ) -> str: ...
 
@@ -151,6 +152,7 @@ class AntiRepeatGuard:
         modulators: RuleModulators | None = None,
         verify_note: str | None = None,
         closer_nudge: str = "",
+        room_tone: str = "",
         rng: Random | None = None,
     ) -> str:
         """Recompose if ``reply`` (near-)repeats a recent OR recalled Bob reply (BOB-032 .1).
@@ -235,6 +237,9 @@ class AntiRepeatGuard:
                 modulators=modulators,
                 verify_note=verify_note,
                 closer_nudge=closer_nudge,
+                # 🔴 BOB-066 Срез W.2: the room-mood tone line is turn-CONSTANT, so it threads
+                # verbatim into every regeneration (a re-composed draft keeps reading the room).
+                room_tone=room_tone,
                 # 🔴 BOB-066 Срез 2.1: thread the turn-local ``TurnScope.rng`` verbatim into
                 # every regeneration too, so a re-composed draft draws from the SAME per-turn
                 # stream (INV-4) — never the shared per-boot rng of a concurrent chat.

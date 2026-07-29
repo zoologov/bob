@@ -183,6 +183,7 @@ def decide_engagement(
     topic_interest: float,
     fatigue: ConversationalFatigue,
     relationship: Relationship | None = None,
+    threshold_shift: float = 0.0,
     rng: Random,
     thresholds: EngagementThresholds | None = None,
 ) -> EngagementLevel:
@@ -206,9 +207,12 @@ def decide_engagement(
     Closeness (``relationship`` warmth + compatibility) shifts the interest bar a
     little: a close person lowers it (Bob plays along more readily), a cratered/hostile
     relationship RAISES it (BOB-014 .2b guest-disengage — Bob winds down with a person
-    he has soured on, recovering as the relationship does). One RNG draw resolves the
-    PLAYFUL boundary; it is ALWAYS taken so the stream position stays stable whatever
-    branch runs, keeping the turn reproducible under a fixed seed.
+    he has soured on, recovering as the relationship does). ``threshold_shift`` (BOB-066
+    Срез W.2) is the room-mood analogue passed BY VALUE — a warm room lifts appetite
+    (positive → lowers the bar), a heavy/tense one dampens it (negative → raises it); the
+    ``0.0`` default is a clean identity. One RNG draw resolves the PLAYFUL boundary; it is
+    ALWAYS taken so the stream position stays stable whatever branch runs, keeping the turn
+    reproducible under a fixed seed.
     """
     bands = thresholds if thresholds is not None else EngagementThresholds()
     # The PLAYFUL draw is taken unconditionally up front so a fixed seed yields the
@@ -216,7 +220,10 @@ def decide_engagement(
     playful_roll = rng.random()
 
     interest = _clamp(topic_interest)
-    bar = _clamp(bands.interesting - _relationship_bar_shift(relationship))
+    # The relationship shift + the room-mood ``threshold_shift`` (BOB-066 Срез W.2, passed BY
+    # VALUE from personality.room_engagement_bias — a warm room lifts appetite, a heavy/tense
+    # one dampens it) both LOWER the interest bar when positive; ``0.0`` is the default identity.
+    bar = _clamp(bands.interesting - _relationship_bar_shift(relationship) - threshold_shift)
     interesting = interest >= bar
     bored = fatigue.level >= bands.high_fatigue
     low_mood = mood.valence <= bands.low_mood

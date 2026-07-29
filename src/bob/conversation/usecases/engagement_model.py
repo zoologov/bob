@@ -156,6 +156,38 @@ class EngagementModel:
             thresholds=self._engagement_thresholds,
         )
 
+    def reengage_for_room(
+        self,
+        soul: SOUL,
+        interest: float,
+        relationship: Relationship | None,
+        engagement_state: EngagementState,
+        *,
+        threshold_shift: float,
+        rng: Random | None = None,
+    ) -> EngagementLevel:
+        """Re-map the appetite level with a room-mood ``threshold_shift`` (BOB-066 Срез W.2).
+
+        The room-mood analogue of :meth:`decide_engagement`, called on the reflective
+        periphery-reply path ONLY (a warm room lifts Bob's appetite, a heavy/tense one
+        dampens it — the shift comes BY VALUE from
+        :func:`~bob.personality.room_tone.room_engagement_bias`). It re-runs the pure
+        :func:`~bob.conversation.engagement.decide_engagement` over the ALREADY-decayed
+        ``engagement_state.fatigue`` — it does NOT decay again (the base decision already
+        did, this turn), so fatigue is never double-decayed. One extra seeded draw resolves
+        the PLAYFUL boundary; it is taken only on this room-mood path (the base OFF path is
+        untouched — byte-identical).
+        """
+        return decide_engagement(
+            mood=soul.mood,
+            topic_interest=interest,
+            fatigue=engagement_state.fatigue,
+            relationship=relationship,
+            threshold_shift=threshold_shift,
+            rng=rng if rng is not None else self._rng,
+            thresholds=self._engagement_thresholds,
+        )
+
     def apply_feedback(
         self,
         soul: SOUL,

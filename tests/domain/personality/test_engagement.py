@@ -223,6 +223,65 @@ def test_cratered_relationship_raises_the_bar_guest_disengage() -> None:
     assert cratered_level in (EngagementLevel.TERSE, EngagementLevel.DECLINE)
 
 
+# --- room threshold_shift (BOB-066 Срез W.2 — room-mood → engagement) ------
+
+
+def test_warm_room_shift_lowers_the_interest_bar() -> None:
+    # A positive ``threshold_shift`` (a warm room lifts Bob's appetite) shaves the bar so a
+    # borderline topic a flat room gets TERSE on engages FULLY — the room-mood analogue of a
+    # close relationship. The shift is a plain float passed BY VALUE (no personality import).
+    borderline = EngagementThresholds().interesting - 0.1
+
+    flat = decide_engagement(
+        mood=_NEUTRAL_MOOD, topic_interest=borderline, fatigue=_FRESH, rng=_rng()
+    )
+    warm_room = decide_engagement(
+        mood=_NEUTRAL_MOOD,
+        topic_interest=borderline,
+        fatigue=_FRESH,
+        threshold_shift=0.2,
+        rng=_rng(),
+    )
+
+    assert flat is EngagementLevel.TERSE
+    assert warm_room is EngagementLevel.FULL
+
+
+def test_heavy_room_shift_raises_the_interest_bar() -> None:
+    # A negative ``threshold_shift`` (a heavy/tense room dampens appetite) raises the bar so a
+    # borderline topic a flat room stays present on is wound down.
+    borderline = EngagementThresholds().interesting + 0.05
+
+    flat = decide_engagement(
+        mood=_NEUTRAL_MOOD, topic_interest=borderline, fatigue=_FRESH, rng=_rng()
+    )
+    heavy_room = decide_engagement(
+        mood=_NEUTRAL_MOOD,
+        topic_interest=borderline,
+        fatigue=_FRESH,
+        threshold_shift=-0.2,
+        rng=_rng(),
+    )
+
+    assert flat in (EngagementLevel.FULL, EngagementLevel.PLAYFUL)
+    assert heavy_room in (EngagementLevel.TERSE, EngagementLevel.DECLINE)
+
+
+def test_no_shift_is_identical_to_default() -> None:
+    without = decide_engagement(
+        mood=_NEUTRAL_MOOD, topic_interest=0.55, fatigue=_FRESH, rng=_rng(7)
+    )
+    with_zero = decide_engagement(
+        mood=_NEUTRAL_MOOD,
+        topic_interest=0.55,
+        fatigue=_FRESH,
+        threshold_shift=0.0,
+        rng=_rng(7),
+    )
+
+    assert without is with_zero
+
+
 # --- determinism ------------------------------------------------------------
 
 

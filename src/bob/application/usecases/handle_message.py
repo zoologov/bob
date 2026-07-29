@@ -66,6 +66,7 @@ from bob.capabilities.usecases.tool_loop import ToolLoop
 from bob.conversation.addressivity import (
     Addressivity,
     AddressivityThresholds,
+    ResponseOutcome,
     others_present,
 )
 from bob.conversation.brevity import (
@@ -150,6 +151,7 @@ if TYPE_CHECKING:
     from bob.application.router.llm_router import LLMRouter
     from bob.application.runtime.events import MessageReceived
     from bob.application.runtime.intake.scope import TurnScope
+    from bob.application.usecases.room_mood_modulator import RoomMoodModulator
     from bob.capabilities.ports import (
         DiagramRenderer,
         DiagramSink,
@@ -161,6 +163,7 @@ if TYPE_CHECKING:
         ProgressAnnouncer,
     )
     from bob.conversation.ports import CloserLog, ConversationFloorStore, ZoneClassifier
+    from bob.conversation.room_reading import RoomMood
     from bob.conversation.usecases.addressivity_perceiver import _AddressivityDecision
     from bob.conversation.usecases.decide_response import DecideResponse
     from bob.conversation.usecases.read_the_room import ReadTheRoom
@@ -628,6 +631,7 @@ class HandleMessage:
         read_the_room: ReadTheRoom | None = None,
         barge_ceiling: BargeCeiling | None = None,
         reply_delay: ReplyDelay | None = None,
+        room_mood_modulator: RoomMoodModulator | None = None,
     ) -> None:
         self._router = router
         self._gateway = gateway
@@ -940,6 +944,13 @@ class HandleMessage:
         # real_generation)`` → reply), so Bob never answers inhumanly fast. Unwired → the
         # generation runs directly, byte-identical to before the rhythm layer.
         self._reply_delay = reply_delay
+        # RoomMood-в-тоне seam (BOB-066 Срез W.2, Пласт 4): when wired (behind
+        # ``presence.room_mood.enabled``), a reflective periphery-reply surfaces the room's
+        # atmosphere and this modulator maps it — BY VALUE — to a tone line (eases banter in a
+        # heavy/tense room) + a signed engagement-threshold shift (a warm room lifts appetite).
+        # Bob's personal Mood is never mutated (a SECOND layer). Unwired (the default) → None →
+        # the room never colours the turn, byte-identical.
+        self._room_mood_modulator = room_mood_modulator
         # Reliability seam (BOB-049 .3 — «полный Боб или честный GUPPI-нотис»): the two
         # ESSENTIAL LLM steps (the semantic judgment + the reply generation) are retried a
         # bounded number of times with a short backoff before Bob falls back to the honest
@@ -1234,6 +1245,12 @@ class HandleMessage:
     ) -> None:
         """Process one received message end to end (the intake worker's per-turn call).
 
+        🔴 BOB-066 Срез W.2 (batch top-k): the turn's ``scope.series_ceiling`` CAPS this
+        message's ambient outcome when several inbound settle in one intake window — the intake
+        worker plans the burst (one addressed reply + a budget-capped like, never N replies) and
+        stamps each message's ceiling on its scope. ``ENGAGE`` (the default / a single-message
+        window / a focus message) is no cap. A direct address is answered ABOVE it (INV-1).
+
         🔴 BOB-066 Срез 2.1 (intake-развязка): the bus subscriber is now the fast
         :class:`~bob.application.runtime.intake.dispatcher.ChatDispatcher.submit`; a per-chat
         worker calls this with the turn's :class:`~bob.application.runtime.intake.scope.
@@ -1244,7 +1261,14 @@ class HandleMessage:
         directly without a scope (a unit test) it falls back to the injected per-boot rng, so
         behaviour is byte-identical to before the развязка.
         """
-        rng = scope.rng if scope is not None else self._rng
+        # The turn-local rng + the batch top-k outcome ceiling (BOB-066 Срез W.2) both ride on
+        # the scope; driven directly (a unit test) they fall back to the per-boot rng + an
+        # uncapped ENGAGE, so behaviour is byte-identical to before the развязка.
+        rng, series_ceiling = (
+            (scope.rng, scope.series_ceiling)
+            if scope is not None
+            else (self._rng, ResponseOutcome.ENGAGE)
+        )
         soul = await self._perceive(event)
         # Perceive WHO is writing (BOB-019): owner / known / guest / bot. Resolved
         # once per turn so the same identity threads through every (re)compose; None
@@ -1327,7 +1351,14 @@ class HandleMessage:
         # handled inside the gate and returns ``None`` with no notice.
         try:
             gate = await self._turn_gate.gate(
-                event, soul, interlocutor, plan, interest, modulators, rng=rng
+                event,
+                soul,
+                interlocutor,
+                plan,
+                interest,
+                modulators,
+                rng=rng,
+                series_ceiling=series_ceiling,
             )
         except _EssentialStepError as exc:
             await self._essential.handle_failure(event, soul, exc)
@@ -1340,6 +1371,14 @@ class HandleMessage:
         # as ``force_web`` → force the EXISTING verify pass below (skip its volatility judge).
         # Every non-reflective path leaves this ``False``, so the judge decides as before.
         force_web = gate.force_web
+        # 🔴 RoomMood-в-тоне (BOB-066 Срез W.2, Пласт 4): a reflective periphery REPLY surfaces
+        # the room's atmosphere on the gate. The wired modulator maps it — BY VALUE — to a tone
+        # line (folded into the compose stack) + a re-mapped appetite ``level`` for this turn.
+        # Extracted into a helper so ``handle()`` stays lean (cohesion-guard). Unwired / no
+        # room_mood → ``""`` + the base level unchanged, byte-identical.
+        room_tone, level = self._apply_room_mood(
+            gate.room_mood, soul, interest, relationship, level, rng=rng
+        )
         # Decide how SHORT Bob answers this ENGAGE turn (BOB-024): answer-demand of the
         # message x interest x mood/appetite x the BOB-018 form_hint → a Verbosity, the
         # single final length directive + (on a terse turn) the short-answer few-shot.
@@ -1348,14 +1387,12 @@ class HandleMessage:
         # own roll stays unperturbed. The LOW answer-demand is reused by the optional
         # length guard after generation.
         demand = classify_answer_demand(text=event.text)
-        verbosity = self._decide_verbosity(
-            soul, demand, interest, level, plan, interlocutor, rng=rng
+        # The single final length authority: the BOB-024 verbosity decision PLUS the BOB-028 .3
+        # LENGTH self-improvement tilt (an APPROVED rule nudges it one step shorter, clipped at
+        # TERSE — наклон, не перехват). Folded into one helper so ``handle()`` stays lean.
+        verbosity = self._decide_final_verbosity(
+            soul, demand, interest, level, plan, interlocutor, modulators, rng=rng
         )
-        # LENGTH self-improvement tilt (BOB-028 .3): an APPROVED LENGTH rule nudges the
-        # decided verbosity ONE step shorter (clipped at TERSE) — a soft bias on TOP of
-        # the BOB-024 decision, never a base override (наклон, не перехват). No such rule
-        # (the default) → length_step 0 → verbosity unchanged.
-        verbosity = _shift_verbosity(verbosity, modulators.length_step)
         # Memory/privilege split (BOB-051 — the closed-group security model).
         # The Bobiverse group is a CLOSED, invite-only, moderated space, so Bob's
         # MEMORY is UNIFIED for every member: recall, per-person history and voice no
@@ -1449,6 +1486,7 @@ class HandleMessage:
                 chat_id=event.chat_id,
                 verify_note=verify_note,
                 closer_nudge=closer_nudge,
+                room_tone=room_tone,
                 rng=rng,
             )
             # Anti-repeat guard (BOB-022, defense in depth): a byte-identical repeat of Bob's
@@ -1472,6 +1510,7 @@ class HandleMessage:
                 modulators=modulators,
                 verify_note=verify_note,
                 closer_nudge=closer_nudge,
+                room_tone=room_tone,
                 rng=rng,
             )
 
@@ -1720,6 +1759,42 @@ class HandleMessage:
             soul, interest, relationship, self._engagement_state, rng=rng
         )
 
+    def _apply_room_mood(
+        self,
+        room_mood: RoomMood | None,
+        soul: SOUL,
+        interest: float,
+        relationship: Relationship | None,
+        level: EngagementLevel,
+        *,
+        rng: Random,
+    ) -> tuple[str, EngagementLevel]:
+        """Colour this turn's tone + appetite by the room's mood (BOB-066 Срез W.2, Пласт 4).
+
+        🔴 A reflective periphery REPLY surfaces the room's atmosphere. When the modulator is
+        wired AND a ``room_mood`` is present, its primitives (valence/polarization) are passed
+        BY VALUE — personality never imports conversation — to the pure room-tone decisions: a
+        tone line (a heavy/tense room eases the banter) folded into the compose stack, and a
+        re-mapped appetite ``level`` (a warm room lifts Bob, a heavy one dampens him) via the
+        engagement threshold shift. Bob's personal :class:`~bob.personality.mood.Mood` is NEVER
+        mutated (a SECOND layer). Unwired / no room mood (focus / judge / legacy / flag off) →
+        the base ``level`` and an empty tone line, so the turn is byte-identical.
+        """
+        if self._room_mood_modulator is None or room_mood is None:
+            return "", level
+        room_tone = self._room_mood_modulator.tone_line(
+            room_mood.valence, room_mood.polarization
+        )
+        level = self._engagement.reengage_for_room(
+            soul,
+            interest,
+            relationship,
+            self._engagement_state,
+            threshold_shift=self._room_mood_modulator.engagement_shift(room_mood.valence),
+            rng=rng,
+        )
+        return room_tone, level
+
     def _apply_engagement_feedback(
         self, soul: SOUL, level: EngagementLevel, interest: float
     ) -> SOUL:
@@ -1750,6 +1825,29 @@ class HandleMessage:
         return self._engagement.decide_verbosity(
             soul, demand, interest, engagement, plan, is_owner=is_owner, rng=rng
         )
+
+    def _decide_final_verbosity(
+        self,
+        soul: SOUL,
+        demand: AnswerDemand,
+        interest: float,
+        engagement: EngagementLevel,
+        plan: ExpressionPlan,
+        interlocutor: Interlocutor | None,
+        modulators: RuleModulators,
+        *,
+        rng: Random,
+    ) -> Verbosity:
+        """The single final length authority for the turn (BOB-024 + BOB-028 .3 LENGTH tilt).
+
+        The BOB-024 :meth:`_decide_verbosity` decision plus the self-improvement LENGTH tilt: an
+        APPROVED rule nudges it ONE step shorter (clipped at TERSE — наклон, не перехват; no rule
+        → ``length_step`` 0 → unchanged). Kept together so ``handle()`` reads one length step.
+        """
+        verbosity = self._decide_verbosity(
+            soul, demand, interest, engagement, plan, interlocutor, rng=rng
+        )
+        return _shift_verbosity(verbosity, modulators.length_step)
 
     def _guard_reply_length(self, reply: str, demand: AnswerDemand) -> str:
         """Delegate to :meth:`EngagementModel.guard_reply_length` (wave 2)."""
