@@ -62,6 +62,7 @@ from bob.personality.voice import (
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Mapping, Sequence
+    from random import Random
 
     from bob.capabilities.ports import ToolCallingProvider
     from bob.kernel.ports import LLMMessage
@@ -255,6 +256,7 @@ class VoiceComposer:
         chat_id: int | None = None,
         verify_note: str | None = None,
         closer_nudge: str = "",
+        rng: Random | None = None,
     ) -> str:
         """Compose a full reply, folding the decided verbosity into the prompt.
 
@@ -284,7 +286,9 @@ class VoiceComposer:
         if not is_guest:
             # Grounded add-ons surface Bob's PRIVATE inner life / shared past —
             # withheld from a stranger (audience redaction).
-            context = await self._addons.with_grounded_addons(context, text, plan)
+            # 🔴 BOB-066 Срез 2.1: thread the turn-local ``TurnScope.rng`` into the seeded
+            # surface_old draw (INV-4 — concurrent chats never share a draw stream).
+            context = await self._addons.with_grounded_addons(context, text, plan, rng=rng)
         # Pre-answer epistemic verify (BOB-057 .2): a conservative Tier-0 judge decides if
         # the answer hinges on a FRESH volatile fact; if so Bob does ONE DIRECT web_search
         # (ungated internal public-verify) and this grounded/hedge note folds into the SAME

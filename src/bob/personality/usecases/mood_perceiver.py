@@ -77,14 +77,21 @@ class MoodPerceiver:
         state.soul = soul
         return soul
 
-    def plan_expression(self, event: MessageReceived, soul: SOUL) -> ExpressionPlan:
+    def plan_expression(
+        self, event: MessageReceived, soul: SOUL, *, rng: Random | None = None
+    ) -> ExpressionPlan:
         """Decide this turn's expression plan — pure, deterministic by seed (BOB-018).
 
-        Reads the freshly-updated mood + the inbound's shape, draws from the
-        injected seeded RNG, and returns the plan: mode, the rare add-on flags
-        (carried for later beads), and the soft form hint applied to the prompt.
+        Reads the freshly-updated mood + the inbound's shape, draws from the per-turn
+        seeded RNG, and returns the plan: mode, the rare add-on flags (carried for later
+        beads), and the soft form hint applied to the prompt. 🔴 BOB-066 Срез 2.1: the
+        caller threads the turn-local ``TurnScope.rng`` so concurrent chats never share a
+        draw stream (INV-4); omitted (a direct unit call) it falls back to the injected rng.
         """
         signals = ExpressionSignals(inbound_text=event.text)
         return decide_expression(
-            soul.mood, signals, rng=self._rng, freqs=self._expression_freqs
+            soul.mood,
+            signals,
+            rng=rng if rng is not None else self._rng,
+            freqs=self._expression_freqs,
         )

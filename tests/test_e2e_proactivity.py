@@ -434,6 +434,10 @@ async def test_owner_message_records_activity_and_restores_energy(
     ]
     try:
         published = await app.multibot.poll_once()
+        # Intake-развязка (BOB-066 Срез 2.1): poll_once now only ENQUEUES the turn (the
+        # decoupling that stops the poller blocking on generation); wait for the per-chat
+        # worker to record the owner activity before reading the proactivity state.
+        await app.intake_dispatcher.wait_for_idle()
         state = await app.proactivity_store.load(_PERSONA)
     finally:
         await app.shutdown()

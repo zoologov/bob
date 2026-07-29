@@ -147,6 +147,7 @@ if TYPE_CHECKING:
     from bob.application.reliability import Sleep
     from bob.application.router.llm_router import LLMRouter
     from bob.application.runtime.events import MessageReceived
+    from bob.application.runtime.intake.scope import TurnScope
     from bob.capabilities.ports import (
         DiagramRenderer,
         DiagramSink,
@@ -1169,8 +1170,22 @@ class HandleMessage:
             rules, max_magnitude=self._self_improvement_max_magnitude
         )
 
-    async def handle(self, event: MessageReceived) -> None:
-        """Process one received message end to end (the EventBus subscriber)."""
+    async def handle(
+        self, event: MessageReceived, scope: TurnScope | None = None
+    ) -> None:
+        """Process one received message end to end (the intake worker's per-turn call).
+
+        🔴 BOB-066 Срез 2.1 (intake-развязка): the bus subscriber is now the fast
+        :class:`~bob.application.runtime.intake.dispatcher.ChatDispatcher.submit`; a per-chat
+        worker calls this with the turn's :class:`~bob.application.runtime.intake.scope.
+        TurnScope`, whose ``rng`` is seeded per ``(base, chat_id, message_id)``. That
+        per-turn rng is threaded through every seeded draw of the turn (plan → engagement →
+        verbosity → addressivity → surface/ack) so concurrent chats never share a draw
+        stream and a turn is reproducible independent of dispatch timing (INV-4). Called
+        directly without a scope (a unit test) it falls back to the injected per-boot rng, so
+        behaviour is byte-identical to before the развязка.
+        """
+        rng = scope.rng if scope is not None else self._rng
         soul = await self._perceive(event)
         # Perceive WHO is writing (BOB-019): owner / known / guest / bot. Resolved
         # once per turn so the same identity threads through every (re)compose; None
@@ -1219,14 +1234,14 @@ class HandleMessage:
         # Plan how Bob expresses this turn (BOB-018): pure, deterministic by seed.
         # Computed up front so the mode steers the reply path and the form hint
         # shapes the prompt; the rare flags ride along for later beads.
-        plan = self._plan_expression(event, soul)
+        plan = self._plan_expression(event, soul, rng=rng)
         # Decide Bob's APPETITE to converse this turn (BOB-014 .2a): a LEVEL from mood x
         # topic interest x conversational fatigue x relationship. Computed up front so the
         # level appends a voice directive to the prompt and the topic interest feeds the
         # after-turn feedback (mood lift + fatigue update). The fatigue is decayed by the
         # real elapsed time since the last turn first, so appetite always recovers.
         interest = await self._topic_interest(soul, event.text)
-        level = self._decide_engagement(soul, interest, relationship)
+        level = self._decide_engagement(soul, interest, relationship, rng=rng)
         # Addressivity gate (BOB-023): decide WHO this message is for and whether to
         # take the turn at all, BEFORE composing anything. A message clearly FOR Bob
         # always engages; one aimed at another participant is left alone (SILENT) unless
@@ -1252,7 +1267,7 @@ class HandleMessage:
         # handled inside the gate and returns ``None`` with no notice.
         try:
             gate = await self._turn_gate.gate(
-                event, soul, interlocutor, plan, interest, modulators
+                event, soul, interlocutor, plan, interest, modulators, rng=rng
             )
         except _EssentialStepError as exc:
             await self._essential.handle_failure(event, soul, exc)
@@ -1269,7 +1284,9 @@ class HandleMessage:
         # own roll stays unperturbed. The LOW answer-demand is reused by the optional
         # length guard after generation.
         demand = classify_answer_demand(text=event.text)
-        verbosity = self._decide_verbosity(soul, demand, interest, level, plan, interlocutor)
+        verbosity = self._decide_verbosity(
+            soul, demand, interest, level, plan, interlocutor, rng=rng
+        )
         # LENGTH self-improvement tilt (BOB-028 .3): an APPROVED LENGTH rule nudges the
         # decided verbosity ONE step shorter (clipped at TERSE) — a soft bias on TOP of
         # the BOB-024 decision, never a base override (наклон, не перехват). No such rule
@@ -1370,6 +1387,7 @@ class HandleMessage:
                     chat_id=event.chat_id,
                     verify_note=verify_note,
                     closer_nudge=closer_nudge,
+                    rng=rng,
                 )
                 # Anti-repeat guard (BOB-022, defense in depth): if the fresh reply is
                 # byte-identical (after strip) to Bob's most-recent prior reply, regenerate
@@ -1394,6 +1412,7 @@ class HandleMessage:
                     modulators=modulators,
                     verify_note=verify_note,
                     closer_nudge=closer_nudge,
+                    rng=rng,
                 )
         except _EssentialStepError as exc:
             await self._essential.handle_failure(event, soul, exc)
@@ -1580,11 +1599,16 @@ class HandleMessage:
         return await self._engagement.topic_interest(soul, text)
 
     def _decide_engagement(
-        self, soul: SOUL, interest: float, relationship: Relationship | None
+        self,
+        soul: SOUL,
+        interest: float,
+        relationship: Relationship | None,
+        *,
+        rng: Random,
     ) -> EngagementLevel:
         """Delegate to :meth:`EngagementModel.decide_engagement` (wave 2)."""
         return self._engagement.decide_engagement(
-            soul, interest, relationship, self._engagement_state
+            soul, interest, relationship, self._engagement_state, rng=rng
         )
 
     def _apply_engagement_feedback(
@@ -1603,6 +1627,8 @@ class HandleMessage:
         engagement: EngagementLevel,
         plan: ExpressionPlan,
         interlocutor: Interlocutor | None,
+        *,
+        rng: Random,
     ) -> Verbosity:
         """Delegate to :meth:`EngagementModel.decide_verbosity` (wave 2).
 
@@ -1613,7 +1639,7 @@ class HandleMessage:
             interlocutor is not None and interlocutor.kind is InterlocutorKind.OWNER
         )
         return self._engagement.decide_verbosity(
-            soul, demand, interest, engagement, plan, is_owner=is_owner
+            soul, demand, interest, engagement, plan, is_owner=is_owner, rng=rng
         )
 
     def _guard_reply_length(self, reply: str, demand: AnswerDemand) -> str:
@@ -1626,9 +1652,11 @@ class HandleMessage:
         """Delegate to :meth:`RecallAssembler.replay_recent_thread` (wave 2)."""
         return await self._assembler.replay_recent_thread(interlocutor)
 
-    def _plan_expression(self, event: MessageReceived, soul: SOUL) -> ExpressionPlan:
+    def _plan_expression(
+        self, event: MessageReceived, soul: SOUL, *, rng: Random
+    ) -> ExpressionPlan:
         """Delegate to :meth:`MoodPerceiver.plan_expression` (wave 2)."""
-        return self._mood.plan_expression(event, soul)
+        return self._mood.plan_expression(event, soul, rng=rng)
 
     async def _persist(
         self,

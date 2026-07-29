@@ -334,6 +334,7 @@ async def test_old_fact_from_many_turns_ago_is_recalled_and_reaches_tier1(
     await app.event_bus.publish(
         _message("объясни подробно, как меня зовут?", update_id=99)
     )
+    await app.intake_dispatcher.wait_for_idle()
 
     # Assert: recall surfaced the OLD episodic turn (proving whole-archive search),
     # and it reached the Tier 1 reply context — Bob remembers across the whole convo.
@@ -407,10 +408,12 @@ async def test_fenced_json_extraction_lands_fact_and_is_recalled(tmp_path: Path)
     # Act: a turn that triggers extraction, then a later turn whose keywords
     # ("name") match the stored fact content so semantic recall fires.
     await app.event_bus.publish(_message(_OLD_FACT_TEXT, update_id=1, message_id=1))
+    await app.intake_dispatcher.wait_for_idle()
     tier1_before = len(tier1.payloads)
     await app.event_bus.publish(
         _message("объясни подробно, как меня зовут?", update_id=2, message_id=2)
     )
+    await app.intake_dispatcher.wait_for_idle()
 
     # Assert: the fenced fact was parsed into semantic memory and recalled into reply.
     facts = await app.memory_repo.load_facts(limit=10)
@@ -440,6 +443,7 @@ async def test_prose_wrapped_json_extraction_lands_fact(tmp_path: Path) -> None:
 
     # Act
     await app.event_bus.publish(_message(_OLD_FACT_TEXT))
+    await app.intake_dispatcher.wait_for_idle()
 
     # Assert: the embedded fact was extracted despite the prose wrapping.
     facts = await app.memory_repo.load_facts(limit=10)
@@ -466,6 +470,7 @@ async def test_reasoning_tier1_reply_is_used_with_no_spurious_fallback(
 
     # Act: a complex message escalates the reply to the Tier 1 reasoning model.
     await app.event_bus.publish(_message("расскажи подробно про зонды"))
+    await app.intake_dispatcher.wait_for_idle()
 
     # Assert: the streamed reply is the Tier 1 reasoning output, not the Tier 0
     # fallback marker — Tier 1 was used and did NOT spuriously fall back.
@@ -489,6 +494,7 @@ async def test_reasoning_tier1_null_content_degrades_gracefully(tmp_path: Path) 
 
     # Act
     await app.event_bus.publish(_message("anything new?"))
+    await app.intake_dispatcher.wait_for_idle()
 
     # Assert: no crash; the turn still persisted an episode and snapshotted mood.
     episodes = await app.memory_repo.load_episodes(limit=10)
@@ -570,6 +576,7 @@ async def test_extracted_fact_survives_restart_and_is_recalled(tmp_path: Path) -
     )
     await first.startup()
     await first.event_bus.publish(_message(_OLD_FACT_TEXT))
+    await first.intake_dispatcher.wait_for_idle()
     assert any(
         _FACT_CONTENT in str(f["content"]) for f in await first.memory_repo.load_facts(limit=10)
     )

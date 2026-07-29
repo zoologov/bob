@@ -48,6 +48,7 @@ from bob.application.runtime import (
     BobMessageReaction,
     MessageReceived,
 )
+from bob.application.runtime.intake import ChatDispatcher, make_focus_predicate
 from bob.application.usecases.handle_message import (
     EngagementState,
     HandleMessage,
@@ -190,6 +191,12 @@ if TYPE_CHECKING:
     from bob.social.usecases.run_genesis import GenesisResult
 
 
+# Debounce window is configured in milliseconds (``dialogue.intake_debounce_ms``) but the
+# inbox sleeps in seconds — the default 0 keeps single turns latency-free (a richer
+# «пусть допишут» window is opt-in, and fully exploited by the Фаза-3 catch-up slices).
+_MILLIS_PER_SECOND = 1000.0
+
+
 @dataclass
 class Application:
     """The assembled, runnable GUPPI process and its wired collaborators.
@@ -208,6 +215,10 @@ class Application:
     genesis: RunGenesis
     personality: PersonalityState
     handle_message: HandleMessage
+    # Intake-развязка (BOB-066 Срез 2.1): the per-chat dispatcher behind the MESSAGE_RECEIVED
+    # subscriber. ``shutdown`` drains it (awaits the in-flight workers) so a graceful stop
+    # still delivers the buffered replies.
+    intake_dispatcher: ChatDispatcher
     multibot: MultiBotGateway
     authorizer: Authorizer
     registry: CapabilityRegistry
@@ -246,8 +257,14 @@ class Application:
         return result
 
     async def shutdown(self) -> None:
-        """Stop the runtime and close persistence (idempotent)."""
+        """Stop the runtime, drain the intake workers, then close persistence (idempotent).
+
+        The intake dispatcher is drained BEFORE the connection closes: any message still
+        buffered / in flight is handled to completion (its reply delivered) so a graceful
+        stop never drops an in-progress turn or writes through a closed connection.
+        """
         await self.runtime.stop()
+        await self.intake_dispatcher.aclose()
         await self.connection.close()
 
 
@@ -739,7 +756,24 @@ def build_application(
         # (never a ban). Decorative: a log failure / no tic → the turn is unchanged.
         closer_log=closer_log,
     )
-    event_bus.subscribe(MESSAGE_RECEIVED, _as_handler(handle_message))
+    # Intake-развязка (BOB-066 Срез 2.1): the MESSAGE_RECEIVED subscriber is now the fast,
+    # non-blocking ChatDispatcher.submit (normalise → buffer → return), so the Telegram
+    # poller no longer blocks on Bob's generation. Behind the seam a per-chat_id worker
+    # drains that chat's inbox and calls HandleMessage.handle sequentially (INV-5), each
+    # message under its own TurnScope (rng seeded per chat_id/message_id → INV-4). 🔴 A
+    # focused message (direct address to Bob) flushes the debounce at once so it is never
+    # dropped/delayed by batching (INV-1/10). AsyncEventBus / gateway / poll_once are
+    # unchanged — only the handler behind the seam became fast.
+    intake_dispatcher = ChatDispatcher(
+        handle=handle_message.handle,
+        base_seed=_resolve_seed(merged, proactivity_seed),
+        is_focused=make_focus_predicate(multibot.bob_user_id),
+        quiet_window=float(
+            _int(_section(merged, "dialogue"), "intake_debounce_ms", 0)
+        )
+        / _MILLIS_PER_SECOND,
+    )
+    event_bus.subscribe(MESSAGE_RECEIVED, _as_dispatch_handler(intake_dispatcher))
 
     # Reaction perception (BOB-050 .2): a reaction on one of Bob's OWN messages is felt
     # — it moves mood (BOB-033 band), warmth toward the reactor (BOB-014), a per-person
@@ -946,6 +980,7 @@ def build_application(
         genesis=genesis,
         personality=personality,
         handle_message=handle_message,
+        intake_dispatcher=intake_dispatcher,
         multibot=multibot,
         authorizer=authorizer,
         registry=registry,
@@ -960,12 +995,16 @@ def build_application(
     )
 
 
-def _as_handler(handle_message: HandleMessage) -> EventHandler:
-    """Adapt :meth:`HandleMessage.handle` to the EventBus handler signature."""
+def _as_dispatch_handler(dispatcher: ChatDispatcher) -> EventHandler:
+    """Adapt :meth:`ChatDispatcher.submit` to the EventBus handler signature (BOB-066 2.1).
+
+    The MESSAGE_RECEIVED subscriber: it hands the message to the per-chat dispatcher and
+    returns at once (submit is non-blocking) so the poller never waits on Bob's generation.
+    """
 
     async def handler(event: DomainEvent) -> None:
         if isinstance(event, MessageReceived):
-            await handle_message.handle(event)
+            dispatcher.submit(event)
 
     return handler
 

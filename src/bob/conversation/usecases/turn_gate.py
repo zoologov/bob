@@ -44,6 +44,7 @@ from bob.personality.reaction import reaction_emoji_for
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Mapping, Sequence
+    from random import Random
 
     from bob.application.runtime.events import MessageReceived
     from bob.conversation.response_choice import ResponseChoice
@@ -174,6 +175,8 @@ class TurnGate:
         plan: ExpressionPlan,
         interest: float,
         modulators: RuleModulators,
+        *,
+        rng: Random | None = None,
     ) -> _ReplyGate | None:
         """Decide whether/how Bob takes this turn (BOB-049 judge, or legacy fallback).
 
@@ -199,7 +202,11 @@ class TurnGate:
         # interest the policy reads — a bounded nudge (clamped to [0, 1]) on TOP of the
         # decision, never a base override and never able to silence Bob. No rule → unchanged.
         addressivity_interest = _clamp_unit(interest + modulators.addressivity_bias)
-        decision = await self._addressivity.decide(event, addressivity_interest)
+        # 🔴 BOB-066 Срез 2.1: thread the turn-local ``TurnScope.rng`` into the legacy
+        # addressivity draw (INV-4 — concurrent chats never share a draw stream).
+        decision = await self._addressivity.decide(
+            event, addressivity_interest, rng=rng
+        )
         if decision.outcome is ResponseOutcome.SILENT:
             await self.advance_floor_after_turn(event, decision, bob_replied=False)
             return None

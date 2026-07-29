@@ -898,6 +898,11 @@ source_paths = [
     "src/bob/proactivity",
     "src/bob/coding",
     "src/bob/capabilities",
+    # BOB-066 Срез 2.1: the intake-развязка lives in application/runtime, but its
+    # debounce/scope DECISION core (``decisions.py``) is exactly the pure, deterministic
+    # verdict logic mutation exists to measure — so it is scanned here, while the async
+    # orchestration around it (inbox/dispatcher/scope/focus) is denied below.
+    "src/bob/application/runtime/intake",
 ]
 # Deny the impure sub-trees inside those packages: adapters (I/O), ports (protocols),
 # and package __init__ re-exports carry no deterministic verdict logic to mutate.
@@ -905,6 +910,12 @@ do_not_mutate = [
     "*/adapters/*",
     "*/ports.py",
     "*/__init__.py",
+    # Intake (BOB-066 2.1): only the pure ``decisions.py`` carries deterministic verdict
+    # logic; the async orchestration (buffer/worker/scope/focus) is impure → out of scope.
+    "*/intake/inbox.py",
+    "*/intake/dispatcher.py",
+    "*/intake/scope.py",
+    "*/intake/focus.py",
 ]
 # Mutation measures the strength of the pure-domain UNIT tests (tests/domain/) — fast and
 # deterministic — NOT the slow async e2e/integration suite. Selecting them here keeps the
