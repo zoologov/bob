@@ -103,6 +103,32 @@ async def test_extracts_and_persists_a_durable_fact() -> None:
     assert writer.facts[0].ts == _moment()
 
 
+async def test_visibility_is_stamped_on_the_persisted_fact() -> None:
+    # BOB-066 2.6: a fact distilled from an owner-DM turn carries owner_private
+    # provenance so it is later withheld from initiative-surfacing to a guest.
+    extractor, writer, _tier0 = _build(
+        reply='[{"category": "user", "content": "name is Vova"}]'
+    )
+
+    await extractor.run(
+        user_message="my name is Vova", reply="ok", visibility="owner_private"
+    )
+
+    assert len(writer.facts) == 1
+    assert writer.facts[0].visibility == "owner_private"
+
+
+async def test_visibility_defaults_to_none_public() -> None:
+    # An un-classified caller writes NULL (= public) — surfaceable exactly as before.
+    extractor, writer, _tier0 = _build(
+        reply='[{"category": "user", "content": "name is Vova"}]'
+    )
+
+    await extractor.run(user_message="my name is Vova", reply="ok")
+
+    assert writer.facts[0].visibility is None
+
+
 async def test_extraction_runs_on_tier0() -> None:
     # Arrange
     extractor, _writer, tier0 = _build(reply="[]")

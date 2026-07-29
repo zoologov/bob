@@ -128,6 +128,14 @@ ignore = [
 # literals + comments whose Cyrillic look-alikes are intentional (the heuristic matches
 # real Russian text) — RUF001/RUF002/RUF003 do not apply to these.
 "src/bob/personality/profanity.py" = ["RUF001", "RUF002", "RUF003"]
+# The disclosure-tact module (BOB-066 2.6) carries Russian persona/policy docstrings +
+# comments (такт разглашения / owner_private) whose Cyrillic look-alikes are intentional —
+# RUF001/RUF002/RUF003 do not apply to these.
+"src/bob/social/disclosure.py" = ["RUF001", "RUF002", "RUF003"]
+# The endorsement-perception module (BOB-066 2.6) carries short Russian vouch/introduction
+# literals + comments whose Cyrillic look-alikes are intentional (the heuristic matches
+# real Russian text) — RUF001/RUF002/RUF003 do not apply to these.
+"src/bob/social/endorsement.py" = ["RUF001", "RUF002", "RUF003"]
 # The brevity module (BOB-024) carries Russian answer-demand keyword literals
 # ("почему", "расскажи", "ты тут") + persona/policy comments whose Cyrillic
 # look-alikes are intentional (the heuristic matches real Russian text) —
@@ -289,6 +297,46 @@ ignore = [
 # The conversation tests (BOB-022 + BOB-026 .1) assert on Russian reply/decline
 # literals whose Cyrillic look-alikes are intentional (→ RUF001/RUF002/RUF003).
 "tests/domain/personality/test_conversation.py" = [
+    "S101",
+    "ARG001",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+# The endorsement tests (BOB-066 2.6) assert on Russian vouch/introduction literals
+# whose Cyrillic look-alikes are intentional (→ RUF001/RUF002/RUF003).
+"tests/domain/personality/test_endorsement.py" = [
+    "S101",
+    "ARG001",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+# The такт-разглашения + кредит-доверия acceptance steps (BOB-066 2.6) assert on Russian
+# persona/memory literals whose Cyrillic look-alikes are intentional (→ RUF001/2/3).
+"tests/acceptance/steps/test_disclosure_tact.py" = [
+    "S101",
+    "ARG001",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+# The visibility-provenance persistence tests (BOB-066 2.6) carry Russian episode content
+# literals whose Cyrillic look-alikes are intentional (→ RUF001/RUF002/RUF003).
+"tests/infrastructure/persistence/test_visibility_provenance.py" = [
+    "S101",
+    "ARG001",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+# The FTS-recall tests (BOB-066 2.6 added a Russian owner_private episode) carry Russian
+# content literals whose Cyrillic look-alikes are intentional (→ RUF001/RUF002/RUF003).
+"tests/infrastructure/persistence/test_fts_recall.py" = [
     "S101",
     "ARG001",
     "PLR2004",

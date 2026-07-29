@@ -5301,7 +5301,13 @@ async def test_guest_turn_extracts_facts_into_shared_memory() -> None:
         def __init__(self) -> None:
             self.calls = 0
 
-        async def run(self, *, user_message: str, reply: str) -> None:  # noqa: ARG002
+        async def run(
+            self,
+            *,
+            user_message: str,  # noqa: ARG002
+            reply: str,  # noqa: ARG002
+            visibility: str | None = None,  # noqa: ARG002
+        ) -> None:
             self.calls += 1
 
     extract = _RecordingExtractFacts()

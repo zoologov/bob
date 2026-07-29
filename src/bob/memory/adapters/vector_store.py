@@ -214,7 +214,8 @@ class MemoryVectorStore:
         source row's ``content``, merges the two lists and returns the globally
         nearest ``k`` by vector distance (ascending). Each item carries its
         ``content``, ``source`` tag, the source row's ``category``, its ``ts``
-        (ISO-8601 string — the age signal BOB-021's surface_old leans on) and the
+        (ISO-8601 string — the age signal BOB-021's surface_old leans on), its
+        ``visibility`` (BOB-066 2.6 scope-provenance the recall filter reads) and the
         raw ``distance``. Empty when ``k <= 0`` (no neighbours requested).
         """
         if k <= 0:
@@ -249,7 +250,7 @@ class MemoryVectorStore:
         sql = (
             "SELECT t.content AS content, "  # noqa: S608 — literals are internal, not user input
             f"t.{category_col} AS category, t.ts AS ts, ? AS source, "
-            "v.distance AS distance "
+            "t.visibility AS visibility, v.distance AS distance "
             f"FROM memory_vec v JOIN {table} t ON t.id = v.src_id "
             f"WHERE v.source = ? AND v.embedding MATCH ? AND k = ?{extra_clause} "
             "ORDER BY v.distance"

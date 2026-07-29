@@ -42,6 +42,7 @@ __all__ = [
     "RelationshipDeltas",
     "apply_interaction",
     "compromise_bias",
+    "endorsed_seed",
 ]
 
 # Each relationship axis is bounded to the closed interval [-1, 1].
@@ -219,6 +220,33 @@ def compromise_bias(rel: Relationship | None) -> float:
     if closeness <= 0.0:
         return 0.0
     return _MAX_COMPROMISE_BIAS * closeness
+
+
+# Warm-start credit an owner endorsement extends to a newcomer (BOB-066 2.6). Modest and
+# well below a pinned extreme — a HEAD START, not a granted bond: the person begins warmer
+# and a touch more trusted than a blank stranger, but the ordinary drift-to-neutral in
+# ``apply_interaction`` dissolves the credit within a handful of turns unless their own
+# behaviour confirms it. Trust is seeded a touch below warmth (trust is earned more slowly
+# than warmth even when vouched for). Respect/compatibility start neutral — those are read
+# from how the person actually engages, not lent by a third party.
+_SEED_WARMTH = 0.3
+_SEED_TRUST = 0.2
+
+
+def endorsed_seed(rel: Relationship | None, sender_id: int) -> Relationship:
+    """Warm-start a first-contact relationship on an owner endorsement (BOB-066 2.6) — pure.
+
+    When Bob meets a newcomer the owner has vouched for, he begins warmer than neutral —
+    a credit of trust the owner extends on their behalf. Applies ONLY on a first contact
+    (``rel is None``): an already-formed relationship carries Bob's own read and is
+    returned UNCHANGED (the same object), so a seed never overwrites accrued history. The
+    seed is modest (``warmth`` ``0.3`` / ``trust`` ``0.2``, respect/compatibility neutral)
+    and well within bounds, so the ordinary drift-to-neutral dissolves it if the person's
+    behaviour doesn't confirm it. Deterministic: same inputs → same seed.
+    """
+    if rel is not None:
+        return rel
+    return Relationship(sender_id=sender_id, warmth=_SEED_WARMTH, trust=_SEED_TRUST)
 
 
 # A neutral (zero-affect) turn still earns a touch of respect for engaging at all,

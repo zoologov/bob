@@ -135,6 +135,7 @@ from bob.proactivity.self_improvement import (
     _validated_magnitude,
     build_modulators,
 )
+from bob.social.disclosure import filter_surfaceable, visibility_for_scope
 from bob.social.interlocutor import InterlocutorKind, Trust
 from bob.social.usecases.social_context import SocialContext
 
@@ -1331,9 +1332,10 @@ class HandleMessage:
         # Recall is UNIFIED (BOB-051): Bob's full knowledge surfaces for owner and member
         # alike — no per-person scoping. Continuity (WHO Bob talked to) lives in the
         # per-person history thread (below), not in a knowledge restriction.
-        recalled: Sequence[Recalled] = recalled_excluding_reflections(
-            await self._recall.recall(event.text, k=_RECALL_K)
-        )
+        # 🔴 Такт разглашения (BOB-066 2.6, INV-7): on TOP of reflection-containment, drop
+        # owner-PRIVATE memories that may not surface INITIATIVELY to THIS interlocutor —
+        # byte-identical for a TRUSTED owner/peer, only a GUEST has owner_private withheld.
+        recalled: Sequence[Recalled] = await self._recall_surfaceable(event, interlocutor)
         # On the judge REPLY path the shared recent thread was already replayed for the
         # judgment (BOB-049); reuse it so it is not read twice. Otherwise (legacy path)
         # replay it now — the SHARED group thread (BOB-058 .1), all participants labeled.
@@ -1481,7 +1483,16 @@ class HandleMessage:
         # updated with the turn outcome. (The fascination-grounding nudge toward a
         # well-going topic is left to the reflect-tick evolution path it already owns.)
         soul = self._apply_engagement_feedback(soul, level, interest)
-        await self._persist(event, reply, soul, bob_message_id=bob_message_id)
+        # 🔴 Такт разглашения (BOB-066 2.6): the episode + any distilled facts are stamped
+        # with this turn's scope-provenance (``_turn_visibility``) so a guest never has
+        # owner-private memory initiatively surfaced. Owner recall stays byte-identical.
+        await self._persist(
+            event,
+            reply,
+            soul,
+            bob_message_id=bob_message_id,
+            visibility=self._turn_visibility(interlocutor),
+        )
         # Log Bob's closer to the cross-session ring (BOB-061 .2): only a GENUINE reply
         # feeds the anti-tic memory (the silent/react/outage markers persist through their
         # own paths and are never logged). 🔴 Decorative — a failed append is swallowed so
@@ -1513,7 +1524,11 @@ class HandleMessage:
         # recall can surface them — for ANY group member, not just the owner. Best-effort
         # — run() never raises, so a flaky local model can never break a turn that already
         # replied.
-        await self._extract_facts.run(user_message=event.text, reply=reply)
+        await self._extract_facts.run(
+            user_message=event.text,
+            reply=reply,
+            visibility=self._turn_visibility(interlocutor),
+        )
 
     def _resolve_outgoing_target(
         self,
@@ -1674,6 +1689,38 @@ class HandleMessage:
         """Delegate to :meth:`RecallAssembler.replay_recent_thread` (wave 2)."""
         return await self._assembler.replay_recent_thread(interlocutor)
 
+    def _turn_visibility(self, interlocutor: Interlocutor | None) -> str:
+        """Classify the scope-provenance a turn's memory is written with (BOB-066 2.6).
+
+        An OWNER-DM turn is ``owner_private`` (his private world); a non-owner author's
+        turn is ``public`` (their own shared contribution, not the owner's private data);
+        an unidentified turn is conservatively ``owner_private`` (INV-8 — doubt withholds).
+        ``NULL``-legacy stays public — this only tags NEW rows, and the guest-facing effect
+        is latent (owner recall byte-identical, INV-7). Pure and deterministic.
+        """
+        return visibility_for_scope(is_group=_turn_is_shared_scope(interlocutor))
+
+    async def _recall_surfaceable(
+        self, event: MessageReceived, interlocutor: Interlocutor | None
+    ) -> Sequence[Recalled]:
+        """Recall for the reply, minus reflections AND owner-private-withheld memory.
+
+        Two containment layers on the reply-recall pool: reflection episodes are dropped
+        (BOB-033 .3 — inner life colours tone via MOOD, never parroted TEXT), and такт
+        разглашения (BOB-066 2.6) drops any ``owner_private`` memory that may not surface
+        INITIATIVELY to THIS interlocutor. For the owner / a known peer (TRUSTED) the
+        second filter is a no-op — recall is byte-identical (INV-7); only a GUEST has
+        owner_private provenance withheld (latent until a guest is live). A missing
+        perception seam defaults to TRUSTED, so an unidentified turn is never over-filtered.
+        """
+        recall_trust = interlocutor.trust if interlocutor is not None else Trust.TRUSTED
+        return filter_surfaceable(
+            recalled_excluding_reflections(
+                await self._recall.recall(event.text, k=_RECALL_K)
+            ),
+            recall_trust,
+        )
+
     def _plan_expression(
         self, event: MessageReceived, soul: SOUL, *, rng: Random
     ) -> ExpressionPlan:
@@ -1687,13 +1734,16 @@ class HandleMessage:
         soul: SOUL,
         *,
         bob_message_id: int | None = None,
+        visibility: str | None = None,
     ) -> None:
         """Save the turn as an episode and snapshot the updated mood.
 
         ``bob_message_id`` is the Telegram message_id of Bob's outgoing reply this
         turn (BOB-050), recorded on the episode so a later reaction on that message
         can be linked back to what Bob said. ``None`` for a turn where Bob sent no
-        message (a silent/degraded turn).
+        message (a silent/degraded turn). ``visibility`` (BOB-066 2.6) is the turn's
+        scope-provenance; ``None`` writes NULL (= public), so a caller that does not
+        classify scope persists surfaceable memory exactly as before.
         """
         now = self._clock.now()
         episode = EpisodicEvent(
@@ -1704,6 +1754,7 @@ class HandleMessage:
             tags=("telegram",),
             sender_id=event.sender_id,
             bob_message_id=bob_message_id,
+            visibility=visibility,
         )
         await self._repo.save_episode(
             {
@@ -1714,6 +1765,7 @@ class HandleMessage:
                 "tags": ",".join(episode.tags),
                 "sender_id": episode.sender_id,
                 "bob_message_id": episode.bob_message_id,
+                "visibility": episode.visibility,
             }
         )
         await self._repo.set_mood(_mood_state(soul), at=now)
@@ -1730,4 +1782,18 @@ class HandleMessage:
 # preserve the original import paths used within this module (and its tests).
 _recalled_bob_reply = recalled_bob_reply
 _recalled_bob_replies = recalled_bob_replies
+
+
+def _turn_is_shared_scope(interlocutor: Interlocutor | None) -> bool | None:
+    """Classify a turn's scope for такт разглашения (BOB-066 2.6) — pure.
+
+    Feeds :func:`~bob.social.disclosure.visibility_for_scope`. A NON-owner author's turn
+    is a SHARED surface (``True`` → ``public``): it is that person's own contribution, not
+    the owner's private data. The OWNER's own turn is his private DM world (``False`` →
+    ``owner_private``). An unidentified turn (no perception seam) is UNCERTAIN (``None`` →
+    ``owner_private``, the conservative fail-safe, INV-8 — doubt withholds). Deterministic.
+    """
+    if interlocutor is None:
+        return None
+    return interlocutor.kind is not InterlocutorKind.OWNER
 _recalled_without_copied_exemplars = recalled_without_copied_exemplars

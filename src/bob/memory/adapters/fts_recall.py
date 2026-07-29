@@ -72,7 +72,7 @@ class Fts5MemoryRecall:
         async with self._repo.connection.execute(
             "SELECT sm.content AS content, sm.category AS category, "
             "bm25(semantic_fts) AS score, 'semantic' AS source, "
-            "NULL AS sender_id "
+            "NULL AS sender_id, sm.visibility AS visibility "
             "FROM semantic_fts "
             "JOIN semantic_memory sm ON sm.id = semantic_fts.rowid "
             "WHERE semantic_fts MATCH ? AND sm.superseded_by IS NULL "
@@ -87,7 +87,7 @@ class Fts5MemoryRecall:
         async with self._repo.connection.execute(
             "SELECT el.content AS content, el.event_type AS category, "
             "bm25(episodic_fts) AS score, 'episodic' AS source, "
-            "el.sender_id AS sender_id "
+            "el.sender_id AS sender_id, el.visibility AS visibility "
             "FROM episodic_fts "
             "JOIN episodic_log el ON el.id = episodic_fts.rowid "
             "WHERE episodic_fts MATCH ? "

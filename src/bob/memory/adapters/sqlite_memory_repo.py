@@ -94,7 +94,9 @@ class SqliteMemoryRepo:
         await self._migrate_episodic_consolidated()
         await self._migrate_episodic_sender_id()
         await self._migrate_episodic_bob_message_id()
+        await self._migrate_episodic_visibility()
         await self._migrate_semantic_superseded_by()
+        await self._migrate_semantic_visibility()
         await self._backfill_episodic_fts()
         await self._backfill_episodic_sender_id()
         await self._db().commit()
@@ -155,6 +157,30 @@ class SqliteMemoryRepo:
             "CREATE INDEX IF NOT EXISTS idx_episodic_bob_message_id "
             "ON episodic_log (bob_message_id)"
         )
+
+    async def _migrate_episodic_visibility(self) -> None:
+        """Add ``episodic_log.visibility`` to a pre-existing DB (idempotent, BOB-066 2.6).
+
+        ``CREATE TABLE IF NOT EXISTS`` never alters an already-present table, so a DB
+        written before this column existed would lack it. This guarded ``ALTER`` adds it
+        only when missing — additive and non-destructive: existing rows take the column
+        default (NULL, which :func:`~bob.social.disclosure.may_surface` reads as PUBLIC,
+        so BOB-051 unified memory and every legacy turn stay surfaceable and owner recall
+        is byte-identical, INV-7). Skipped when already present, so re-running
+        ``initialize()`` is a clean no-op.
+        """
+        if "visibility" not in await self._episodic_columns():
+            await self._db().execute("ALTER TABLE episodic_log ADD COLUMN visibility TEXT")
+
+    async def _migrate_semantic_visibility(self) -> None:
+        """Add ``semantic_memory.visibility`` to a pre-existing DB (idempotent, BOB-066 2.6).
+
+        Mirror of :meth:`_migrate_episodic_visibility` for distilled facts: a guarded,
+        additive ``ALTER`` whose NULL default reads as PUBLIC (BOB-051 intact, owner recall
+        byte-identical). A clean no-op once the column is present.
+        """
+        if "visibility" not in await self._semantic_columns():
+            await self._db().execute("ALTER TABLE semantic_memory ADD COLUMN visibility TEXT")
 
     async def _backfill_episodic_sender_id(self) -> None:
         """Best-effort, idempotent backfill of ``sender_id`` for legacy NULL rows (BOB-045).
@@ -237,11 +263,18 @@ class SqliteMemoryRepo:
     # --- Episodic memory ------------------------------------------------------
 
     async def save_episode(self, episode: Mapping[str, object]) -> None:
-        """Append one episodic event (raw mapping form); embed it on write."""
+        """Append one episodic event (raw mapping form); embed it on write.
+
+        An optional ``visibility`` key carries the turn's scope-provenance (BOB-066 2.6):
+        ``'public'`` / ``'owner_private'``, or omitted → NULL (= public), so a caller that
+        does not classify scope (ticks/digests/tests) writes surfaceable memory exactly as
+        before.
+        """
         cursor = await self._db().execute(
             "INSERT INTO episodic_log "
-            "(ts, event_type, content, mood_snapshot, tags, sender_id, bob_message_id) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            "(ts, event_type, content, mood_snapshot, tags, sender_id, bob_message_id, "
+            "visibility) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 episode["ts"],
                 episode["event_type"],
@@ -250,6 +283,7 @@ class SqliteMemoryRepo:
                 episode.get("tags", ""),
                 episode.get("sender_id"),
                 episode.get("bob_message_id"),
+                episode.get("visibility"),
             ),
         )
         await self._db().commit()
@@ -266,6 +300,7 @@ class SqliteMemoryRepo:
                 "tags": ",".join(event.tags),
                 "sender_id": event.sender_id,
                 "bob_message_id": event.bob_message_id,
+                "visibility": event.visibility,
             }
         )
 
@@ -440,10 +475,22 @@ class SqliteMemoryRepo:
     # --- Semantic memory ------------------------------------------------------
 
     async def save_fact(self, fact: SemanticFact) -> None:
-        """Persist a semantic fact (FTS via trigger); embed it on write."""
+        """Persist a semantic fact (FTS via trigger); embed it on write.
+
+        ``fact.visibility`` (BOB-066 2.6) is persisted as the fact's scope-provenance;
+        ``None`` writes NULL (= public), so an un-classified fact stays surfaceable to
+        anyone exactly as before.
+        """
         cursor = await self._db().execute(
-            "INSERT INTO semantic_memory (ts, category, content, confidence) VALUES (?, ?, ?, ?)",
-            (fact.ts.isoformat(), fact.category, fact.content, fact.confidence),
+            "INSERT INTO semantic_memory (ts, category, content, confidence, visibility) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (
+                fact.ts.isoformat(),
+                fact.category,
+                fact.content,
+                fact.confidence,
+                fact.visibility,
+            ),
         )
         await self._db().commit()
         await self._embed_on_write(cursor.lastrowid, "semantic", fact.content)

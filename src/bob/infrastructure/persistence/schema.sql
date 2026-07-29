@@ -27,7 +27,14 @@ CREATE TABLE IF NOT EXISTS episodic_log (
     -- what Bob said. Nullable -- ticks/digests/legacy rows and turns where Bob did
     -- not send a message have none. Additive for fresh DBs; a guarded ALTER in
     -- initialize() migrates pre-existing DBs (defaults to NULL).
-    bob_message_id INTEGER
+    bob_message_id INTEGER,
+    -- BOB-066 2.6 такт разглашения: the scope-provenance of this turn — 'public'
+    -- (group/shared, surfaces to anyone) or 'owner_private' (an owner-DM/uncertain turn,
+    -- withheld from initiative-surfacing to a GUEST by may_surface). Nullable, and
+    -- 🔴 NULL reads as PUBLIC so BOB-051 unified memory + every legacy row stay intact
+    -- and owner recall is byte-identical (INV-7). Additive for fresh DBs; a guarded ALTER
+    -- in initialize() migrates pre-existing DBs (defaults to NULL = public).
+    visibility    TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_episodic_ts ON episodic_log (ts DESC);
@@ -72,7 +79,14 @@ CREATE TABLE IF NOT EXISTS semantic_memory (
     -- id), only excluded from recall so the duplicate never resurfaces. Additive
     -- for fresh DBs; a guarded ALTER in initialize() migrates pre-existing DBs
     -- (defaults to NULL, i.e. an active, un-superseded fact).
-    superseded_by INTEGER
+    superseded_by INTEGER,
+    -- BOB-066 2.6 такт разглашения: scope-provenance of the fact — 'public' (shared,
+    -- surfaces to anyone) or 'owner_private' (distilled from an owner-DM/uncertain turn,
+    -- withheld from initiative-surfacing to a GUEST by may_surface). Nullable, and
+    -- 🔴 NULL reads as PUBLIC so BOB-051 unified memory + every legacy fact stay intact
+    -- and owner recall is byte-identical (INV-7). Additive for fresh DBs; a guarded ALTER
+    -- in initialize() migrates pre-existing DBs (defaults to NULL = public).
+    visibility TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_semantic_ts ON semantic_memory (ts DESC);

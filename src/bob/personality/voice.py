@@ -276,6 +276,35 @@ def stranger_directive() -> str:
     return _STRANGER
 
 
+# Tactful-withhold directive (BOB-066 2.6, Пласт 4): when a guest asks for the owner's
+# private data, the privilege gate is UNCHANGED — Bob still won't disclose it. What
+# changes is only the VOICE of that refusal: instead of the dry stranger-wall he answers
+# warmly, like a considerate person who simply feels this is the owner's to share —
+# "это лучше у него самого спросить" — and points them at the owner without coldness. It
+# is orthogonal to the gate (the application still redacts); this is the human way to say
+# no. Cyrillic look-alikes are intentional in these Russian literals.
+_TACTFUL_WITHHOLD = (
+    "Тебя спрашивают о личном твоего владельца — это не твоё, чтобы разглашать. "
+    "Откажи тепло и по-человечески, без сухой стены: мягко дай понять, что такое "
+    "лучше спросить у него самого, и, если уместно, предложи передать или что он "
+    "сам ответит. Не выдавай ни деталей, ни намёков — но и не грубо, не холодно, "
+    "как тактичный человек, а не автоответчик с запретом."
+)
+
+
+def tactful_withhold_directive() -> str:
+    """Return the warm-refusal voice line for a guest owner_data request (BOB-066 2.6).
+
+    Такт разглашения at the VOICE layer: the privilege gate itself is unchanged (the
+    application still refuses to disclose the owner's private data to a guest) — this only
+    replaces the dry stranger-wall with a warm, human "это лучше у него самого спросить",
+    pointing the guest at the owner without coldness and without leaking a detail or a
+    hint. Pure, argument-free, appended by the application ONLY on a guest ``owner_data``
+    request. Deterministic: same call → same line.
+    """
+    return _TACTFUL_WITHHOLD
+
+
 # Recalled-impression directive (BOB-019 bob-apv.3): when someone Bob has met before
 # writes again, his LIGHT first-impression note (formed on first contact, kept per
 # sender) is folded in so he recalls them wryly — "кажется, мы уже сталкивались" —
