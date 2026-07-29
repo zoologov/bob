@@ -162,8 +162,11 @@ from bob.runtime.wiring import (
     _fascination_initial_intensity,
     _phantom_evolution_params,
     _resolve_seed,
+    build_catch_up_reentry,
     build_rhythm_wiring,
     build_room_mood_modulator,
+    build_staleness_reassessor,
+    staleness_enabled,
 )
 from bob.social.adapters.first_impression_store import SqliteFirstImpressionStore
 from bob.social.adapters.person_sulk_store import SqlitePersonSulkStore
@@ -585,6 +588,13 @@ def build_application(
     # personal Mood is never mutated (a SECOND layer). Ships inert until the epic is complete.
     room_mood_modulator = build_room_mood_modulator(merged, disposition=disposition)
 
+    # Staleness врезка (BOB-066 Срез W.3, Пласт 3): built ONLY when ``presence.staleness`` (OFF by
+    # default → None → byte-identical). On, just before sending Bob rereads what landed during
+    # generation (the turn-local ``peek_arrivals``) via the Tier-0 LlmStalenessJudge over the pure
+    # gate and drops a now-redundant draft to a like (a fresh direct question is never dropped —
+    # INV-1). Ships inert until the epic is complete (owner blocker).
+    staleness_reassessor = build_staleness_reassessor(merged, router=router)
+
     handle_message = HandleMessage(
         router=router,
         gateway=multibot.reply_gateway(BotIdentity.BOB),
@@ -803,6 +813,10 @@ def build_application(
         # RoomMood-в-тоне consumption (BOB-066 Срез W.2): the reflective room mood colours Bob's
         # tone + appetite BY VALUE. None unless ``presence.room_mood`` → byte-identical when off.
         room_mood_modulator=room_mood_modulator,
+        # Staleness врезка consumption (BOB-066 Срез W.3): rereads what landed during generation
+        # and drops a now-redundant draft to a like. None unless ``presence.staleness`` →
+        # byte-identical when off.
+        staleness_reassessor=staleness_reassessor,
         verify_judge=verify_judge,
         verify_provider=verify_provider,
         interim_line_generator=interim_line_generator,
@@ -836,6 +850,18 @@ def build_application(
         / _MILLIS_PER_SECOND,
         series_budget_enabled=_flag(series_budget, "enabled"),
         series_max_reactions=_int(series_budget, "max_reactions", 1),
+        # Staleness врезка (BOB-066 Срез W.3): when enabled, the worker binds each turn's
+        # ``peek_arrivals`` (a non-draining peek of what piled up in this chat during
+        # generation) onto its scope so the врезка can reread before sending. Off → never
+        # bound → byte-identical.
+        staleness_enabled=staleness_enabled(merged),
+        # Catch-up re-entry (BOB-066 Срез W.3): when enabled, a drained batch that follows an
+        # away period is run as ONE catch-up pass (focal + budget ambient answered, the rest
+        # skimmed) instead of replaying each message. None unless ``presence.catchup`` →
+        # byte-identical when off.
+        catch_up_reentry=build_catch_up_reentry(
+            merged, clock=resolved_clock, bob_user_id_source=multibot.bob_user_id
+        ),
     )
     event_bus.subscribe(MESSAGE_RECEIVED, _as_dispatch_handler(intake_dispatcher))
 

@@ -124,6 +124,7 @@ from bob.personality.negotiation import (
     Negotiation,
     Stance,
 )
+from bob.personality.reaction import reaction_emoji_for
 from bob.personality.soul import _mood_state
 from bob.personality.usecases.grounded_addons import GroundedAddons
 from bob.personality.usecases.mood_perceiver import MoodPerceiver
@@ -132,6 +133,7 @@ from bob.personality.voice import (
     OffDayThresholds,
     RelationshipToneThresholds,
 )
+from bob.presence.staleness import StalenessOutcome
 from bob.proactivity.self_improvement import (
     RuleModulators,
     _validated_magnitude,
@@ -151,6 +153,7 @@ if TYPE_CHECKING:
     from bob.application.router.llm_router import LLMRouter
     from bob.application.runtime.events import MessageReceived
     from bob.application.runtime.intake.scope import TurnScope
+    from bob.application.runtime.staleness_reassessor import StalenessReassessor
     from bob.application.usecases.room_mood_modulator import RoomMoodModulator
     from bob.capabilities.ports import (
         DiagramRenderer,
@@ -632,6 +635,7 @@ class HandleMessage:
         barge_ceiling: BargeCeiling | None = None,
         reply_delay: ReplyDelay | None = None,
         room_mood_modulator: RoomMoodModulator | None = None,
+        staleness_reassessor: StalenessReassessor | None = None,
     ) -> None:
         self._router = router
         self._gateway = gateway
@@ -951,6 +955,15 @@ class HandleMessage:
         # Bob's personal Mood is never mutated (a SECOND layer). Unwired (the default) → None →
         # the room never colours the turn, byte-identical.
         self._room_mood_modulator = room_mood_modulator
+        # Staleness врезка (BOB-066 Срез W.3, Пласт 3): when wired (behind
+        # ``presence.staleness.enabled``), just BEFORE sending Bob rereads what landed in this
+        # chat WHILE he was drafting (the turn-local ``scope.peek_arrivals``) and — if the
+        # drafted reply is now redundant (someone else answered / the topic closed) AND no fresh
+        # DIRECT question is riding on top — drops it to a like instead of firing a stale line.
+        # 🔴 INV-1: a fresh direct question is NEVER dropped (the pure gate merges it). Unwired
+        # (the default) / no reactor / nothing landed → None-path → the reply path is
+        # byte-identical.
+        self._staleness = staleness_reassessor
         # Reliability seam (BOB-049 .3 — «полный Боб или честный GUPPI-нотис»): the two
         # ESSENTIAL LLM steps (the semantic judgment + the reply generation) are retried a
         # bounded number of times with a short backoff before Bob falls back to the honest
@@ -1541,20 +1554,18 @@ class HandleMessage:
         # drained and posted as Telegram photos BEFORE the text confirmation, so the
         # image leads. Best-effort and gated on a wired sink (no diagram skill → no-op).
         await self._diagrams.send_pending(event.chat_id)
-        # Decide WHERE this reply lands (BOB-066 Срез 1.1): in a busy multi-party thread
-        # Bob QUOTES the message he answers (a Telegram reply-to) so it is unambiguous
-        # which turn he replied to; in a focal 1:1 he sends to the topic un-quoted, exactly
-        # as before. A pure conversation-domain core holds the verdict — this collaborator
-        # only gathers the turn's structural signals and hands it the primitives.
-        target = self._resolve_outgoing_target(event, decision, history)
-        # Capture the Telegram message_id of Bob's outgoing reply (BOB-050) so the
-        # episode records which message was Bob's — a later reaction on it can then be
-        # linked back to what Bob said. ``None`` if nothing was sent (degraded path).
-        bob_message_id = await self._gateway.reply(
-            chat_id=event.chat_id,
-            markdown=reply,
-            reply_to_message_id=target.reply_to_message_id,
-        )
+        # 🔴 Staleness врезка (BOB-066 Срез W.3): just before sending, reread what landed while
+        # Bob was drafting. If the reply is now redundant (answered by someone else / topic
+        # closed) with NO fresh direct question on top, he drops it to a like instead of firing
+        # a stale line and ends the turn. A fresh direct question is never dropped (INV-1), and
+        # unwired / nothing-landed / no reactor → this returns False → the reply is sent as
+        # before (byte-identical). Extracted so ``handle()`` stays lean (cohesion-guard).
+        if await self._drop_to_like_if_stale(event, reply, decision, soul, scope):
+            return
+        # Send the reply where it belongs and capture Bob's outgoing message_id (BOB-050) so the
+        # episode records which message was Bob's — a later reaction on it can then be linked back
+        # to what Bob said. ``None`` if nothing was sent (degraded path).
+        bob_message_id = await self._send_reply(event, reply, decision, history)
         # Advance the conversation floor AFTER Bob actually replied (BOB-025): an ENGAGE
         # turn that reached the reply sticks the floor to Bob (``bob_replied=True``), so
         # the next ambient message in the thread is read as continuity. Pass the RAW
@@ -1794,6 +1805,85 @@ class HandleMessage:
             rng=rng,
         )
         return room_tone, level
+
+    async def _drop_to_like_if_stale(
+        self,
+        event: MessageReceived,
+        reply: str,
+        decision: _AddressivityDecision,
+        soul: SOUL,
+        scope: TurnScope | None,
+    ) -> bool:
+        """Reassess the drafted ``reply`` against what landed during generation (BOB-066 W.3).
+
+        The staleness врезка, just before sending: reads the turn-local ``scope.peek_arrivals``
+        (a non-draining peek of what piled up in this chat WHILE Bob was drafting) and runs the
+        :class:`~bob.application.runtime.staleness_reassessor.StalenessReassessor` over it. On a
+        :data:`~bob.presence.staleness.StalenessOutcome.DROP_TO_LIKE` verdict — the reply is now
+        redundant (someone else answered / the topic closed) and NO fresh direct question rides
+        on top — Bob sets a like on the triggering message instead of firing the stale line and
+        the turn ends as a non-reply (the floor advances with ``bob_replied=False``); returns
+        ``True`` so ``handle()`` skips the send. Every other outcome (SEND / REWRITE / MERGE),
+        and any inert precondition (unwired reassessor / no scope / nothing landed / no reactor /
+        unknown Bob id), returns ``False`` — the reply is sent unchanged, byte-identical.
+
+        🔴 INV-1: a fresh direct question is never dropped — the pure gate merges it, so this
+        only ever suppresses a genuinely redundant line and never silences a question to Bob.
+        """
+        if (
+            self._staleness is None
+            or scope is None
+            or scope.peek_arrivals is None
+            or self._reactor is None
+        ):
+            return False
+        newly_arrived = scope.peek_arrivals()
+        if not newly_arrived:
+            return False
+        bob_user_id = (
+            self._bob_user_id_source() if self._bob_user_id_source is not None else None
+        )
+        if bob_user_id is None:
+            return False
+        outcome = await self._staleness.reassess(
+            drafted=reply,
+            newly_arrived=newly_arrived,
+            draft_author_sender_id=event.sender_id,
+            bob_user_id=bob_user_id,
+        )
+        if outcome is not StalenessOutcome.DROP_TO_LIKE:
+            return False
+        await self._reactor.react(
+            chat_id=event.chat_id,
+            message_id=event.message_id,
+            emoji=reaction_emoji_for(soul.mood),
+        )
+        await self._turn_gate.advance_floor_after_turn(
+            event, decision, bob_replied=False
+        )
+        return True
+
+    async def _send_reply(
+        self,
+        event: MessageReceived,
+        reply: str,
+        decision: _AddressivityDecision,
+        history: Sequence[Mapping[str, object]],
+    ) -> int | None:
+        """Resolve WHERE the reply lands and send it, returning Bob's outgoing message_id.
+
+        Decides the outgoing target (BOB-066 Срез 1.1): in a busy multi-party thread Bob QUOTES
+        the message he answers (a Telegram reply-to) so it is unambiguous which turn he replied
+        to; in a focal 1:1 he sends to the topic un-quoted, exactly as before. A pure
+        conversation-domain core holds the verdict — this collaborator only gathers the turn's
+        structural signals and hands it the primitives.
+        """
+        target = self._resolve_outgoing_target(event, decision, history)
+        return await self._gateway.reply(
+            chat_id=event.chat_id,
+            markdown=reply,
+            reply_to_message_id=target.reply_to_message_id,
+        )
 
     def _apply_engagement_feedback(
         self, soul: SOUL, level: EngagementLevel, interest: float

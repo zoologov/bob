@@ -121,18 +121,22 @@ def decide_staleness(reading: StalenessReading) -> StalenessOutcome:
 
     Precedence is deliberate and mutation-pinned:
 
-    1. **Redundant** (``answered_by_other`` or ``topic_closed``) → :data:`DROP_TO_LIKE`.
-       A moot draft is dropped to a reaction before anything else is considered — there
-       is no point rewriting or merging a reply the room no longer needs.
-    2. **Fresh direct question** (``new_direct_question``) → :data:`MERGE`. One reply
-       covers both the original and the new question (dedup) — merging beats rewriting.
+    1. 🔴🔴 **Fresh direct question** (``new_direct_question``) → :data:`MERGE`. This is
+       checked FIRST so that a message carrying a fresh DIRECT question (a focal signal) is
+       NEVER dropped to a like — even when the original point was answered by someone else or
+       the topic closed. It reconciles INV-1 (the focal guarantee) with the redundancy drop:
+       one reply covers both the original and the new question (dedup), so the new question is
+       always answered, never silenced to a reaction.
+    2. **Redundant** (``answered_by_other`` or ``topic_closed``) → :data:`DROP_TO_LIKE`.
+       With no fresh direct question in play, a moot draft is dropped to a reaction — there is
+       no point rewriting a reply the room no longer needs.
     3. **Same-author clarification** (``same_author_clarified``) → :data:`REWRITE`.
     4. Otherwise → :data:`SEND` (the draft is still fresh).
     """
-    if reading.answered_by_other or reading.topic_closed:
-        return StalenessOutcome.DROP_TO_LIKE
     if reading.new_direct_question:
         return StalenessOutcome.MERGE
+    if reading.answered_by_other or reading.topic_closed:
+        return StalenessOutcome.DROP_TO_LIKE
     if reading.same_author_clarified:
         return StalenessOutcome.REWRITE
     return StalenessOutcome.SEND

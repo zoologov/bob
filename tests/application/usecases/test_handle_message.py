@@ -24,6 +24,8 @@ import pytest
 
 from bob.application.router.llm_router import LLMRouter
 from bob.application.runtime.events import MessageReceived
+from bob.application.runtime.intake.scope import TurnScope, new_turn_scope
+from bob.application.runtime.staleness_reassessor import StalenessReassessor
 from bob.application.usecases.handle_message import (
     EngagementState,
     HandleMessage,
@@ -86,6 +88,7 @@ from bob.personality.reaction_effect import NotableReaction
 from bob.personality.soul import SOUL
 from bob.personality.taste import TasteAxis, TasteEngine, Verdict
 from bob.personality.usecases.update_mood_from_text import UpdateMoodFromText
+from bob.presence.staleness import StalenessContext, StalenessGate, StalenessReading
 from bob.proactivity.self_improvement import (
     ImprovementRule,
     Lever,
@@ -671,6 +674,7 @@ def _build(
     interim_line_generator: _FakeInterimLineGenerator | None = None,
     closer_log: _FakeCloserLog | None = None,
     reply_delay: object | None = None,
+    staleness_reassessor: StalenessReassessor | None = None,
 ) -> tuple[HandleMessage, FakeBot, FakeRepo, CapturingProvider]:
     tier0 = CapturingProvider(reply="positive", replies=tier0_replies)
     tier1 = CapturingProvider(reply=reply, replies=tier1_replies)
@@ -748,6 +752,7 @@ def _build(
         interim_line_generator=interim_line_generator,
         closer_log=closer_log,
         reply_delay=reply_delay,  # type: ignore[arg-type]  # test double
+        staleness_reassessor=staleness_reassessor,
     )
     return handler, bot, repo, tier1
 
@@ -8785,3 +8790,115 @@ async def test_verify_interim_not_sent_on_no_check_path() -> None:
 
     assert generator.calls == [], "no live gen on a non-volatile turn"
     assert bot.sent == [(555, "hi")], "only the final answer, no interim line"
+
+
+# ── Staleness врезка (BOB-066 Срез W.3) ───────────────────────────────────────────
+
+
+def _staleness_arrival(update_id: int, *, sender_id: int) -> MessageReceived:
+    """One message that landed while Bob was drafting (peeked, non-draining)."""
+    return MessageReceived(
+        update_id=update_id,
+        chat_id=555,
+        message_id=update_id,
+        text="что-то пришло за время генерации",
+        sender_id=sender_id,
+    )
+
+
+def _staleness_reassessor(
+    *,
+    answered_by_other: bool = False,
+    topic_closed: bool = False,
+    same_author_clarified: bool = False,
+    new_direct_question: bool = False,
+) -> StalenessReassessor:
+    """The real reassessor over a scripted judge read (mirrors the acceptance harness)."""
+
+    class _ScriptedJudge:
+        async def assess(self, ctx: StalenessContext) -> StalenessReading:  # noqa: ARG002
+            return StalenessReading(
+                answered_by_other=answered_by_other,
+                topic_closed=topic_closed,
+                same_author_clarified=same_author_clarified,
+                new_direct_question=new_direct_question,
+                reason="scripted",
+            )
+
+    return StalenessReassessor(_ScriptedJudge(), StalenessGate())
+
+
+def _scope_with_arrivals(*arrivals: MessageReceived) -> TurnScope:
+    """A TurnScope whose ``peek_arrivals`` returns a fixed burst (what landed mid-draft)."""
+    return new_turn_scope(
+        base_seed=0,
+        chat_id=555,
+        message_id=10,
+        peek_arrivals=lambda: tuple(arrivals),
+    )
+
+
+async def test_stale_reply_drops_to_like_when_answered_during_generation() -> None:
+    # Arrange: while Bob drafted, someone else answered the point → the judge reads it as
+    # answered-by-other, so the reassessor decides DROP_TO_LIKE.
+    reactor = _RecordingReactor()
+    handler, bot, _repo, _tier1 = _build(
+        reply="кофе лучше всего утром",
+        reactor=reactor,
+        staleness_reassessor=_staleness_reassessor(answered_by_other=True),
+        bob_user_id_source=lambda: 100,
+    )
+
+    # Act: an arrival piled up behind the current turn during generation.
+    await handler.handle(
+        _message(), _scope_with_arrivals(_staleness_arrival(2, sender_id=9))
+    )
+
+    # Assert: Bob liked the triggering message instead of firing the stale line.
+    assert reactor.calls, "expected a like on the redundant draft"
+    assert reactor.calls[-1][0] == 555
+    assert reactor.calls[-1][1] == 10
+    assert not bot.sent, "the stale reply must NOT be sent"
+
+
+async def test_fresh_direct_question_is_never_dropped_to_like() -> None:
+    # 🔴🔴 INV-1: even though the original point was answered by someone else, a FRESH DIRECT
+    # question landed on top — it must be answered (MERGE), never silenced to a reaction.
+    reactor = _RecordingReactor()
+    handler, bot, _repo, _tier1 = _build(
+        reply="кофе лучше всего утром",
+        reactor=reactor,
+        staleness_reassessor=_staleness_reassessor(
+            answered_by_other=True, new_direct_question=True
+        ),
+        bob_user_id_source=lambda: 100,
+    )
+
+    # Act
+    await handler.handle(
+        _message(), _scope_with_arrivals(_staleness_arrival(2, sender_id=9))
+    )
+
+    # Assert: Bob still speaks (the fresh direct question is never dropped to a like).
+    assert bot.sent, "a fresh direct question must be answered, not dropped"
+    assert reactor.calls == [], "no drop-to-like when a direct question is in play"
+
+
+async def test_staleness_verbatim_send_when_nothing_arrived() -> None:
+    # Arrange: the reassessor is wired but NOTHING landed during generation → the врезка is a
+    # no-op and the reply is sent verbatim (even a stale-looking scripted judge is never
+    # consulted because the peek is empty).
+    reactor = _RecordingReactor()
+    handler, bot, _repo, _tier1 = _build(
+        reply="кофе лучше всего утром",
+        reactor=reactor,
+        staleness_reassessor=_staleness_reassessor(answered_by_other=True),
+        bob_user_id_source=lambda: 100,
+    )
+
+    # Act: a scope whose peek returns an empty burst.
+    await handler.handle(_message(), _scope_with_arrivals())
+
+    # Assert: the reply is sent as before; no like.
+    assert bot.sent, "nothing landed → the draft is still fresh → send it"
+    assert reactor.calls == []

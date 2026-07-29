@@ -186,6 +186,9 @@ ignore = [
 # The volatility judge (BOB-057 .1): its conservative Russian prompt + docstrings
 # carry Cyrillic look-alikes that are intentional — RUF001/RUF002/RUF003 here.
 "src/bob/conversation/volatility_judgment.py" = ["RUF001", "RUF002", "RUF003"]
+# The staleness judge (BOB-066 Срез W.3): its Russian reassess prompt + docstrings
+# carry intentional Cyrillic look-alikes — RUF001/RUF002/RUF003 here.
+"src/bob/presence/staleness_judgment.py" = ["RUF001", "RUF002", "RUF003"]
 # The interim-line seam (BOB-057 .3): its Russian persona prompt + one-liner
 # examples carry intentional Cyrillic look-alikes — RUF001/RUF002/RUF003 here.
 "src/bob/conversation/interim_line.py" = ["RUF001", "RUF002", "RUF003"]
@@ -923,6 +926,15 @@ ignore = [
 # through the boundary (S101).
 "tests/acceptance/catchup_harness.py" = ["RUF001", "RUF002", "RUF003"]
 "tests/acceptance/steps/test_backlog_catchup.py" = ["S101", "RUF001", "RUF002", "RUF003"]
+# The staleness врезка + catch-up re-entry WIRING harnesses + steps (BOB-066 Срез W.3) carry
+# Russian scenario prose whose Cyrillic look-alikes are intentional (→ RUF001/2/3); the harnesses
+# reuse the unit builder + a scripted handler (ARG002) and the steps assert via the boundary (S101).
+"tests/domain/presence/test_staleness_judgment.py" = ["RUF001", "RUF002", "RUF003"]
+"tests/infrastructure/llm/test_staleness_judge.py" = ["RUF001", "RUF002", "RUF003"]
+"tests/acceptance/staleness_wiring_harness.py" = ["RUF001", "RUF002", "RUF003"]
+"tests/acceptance/steps/test_staleness_wiring.py" = ["S101", "RUF001", "RUF002", "RUF003"]
+"tests/acceptance/catchup_reentry_wiring_harness.py" = ["RUF001", "RUF002", "RUF003", "ARG002"]
+"tests/acceptance/steps/test_catchup_reentry_wiring.py" = ["S101", "RUF001", "RUF002", "RUF003"]
 # Proactivity tests seed `random.Random` for deterministic stochastic-sampling
 # assertions; the non-crypto PRNG is the point here, so S311 does not apply.
 "tests/domain/proactivity/*.py" = ["S101", "ARG001", "PLR2004", "S311"]
@@ -1052,4 +1064,12 @@ also_copy = [
     "src/bob/__init__.py",
     "src/bob/py.typed",
     "src/bob/kernel",
+    # BOB-066 Срез W.3: the (copied-but-denied) intake dispatcher now imports the catch-up
+    # re-entry collaborator (impure orchestration, out of mutation scope) — copy it verbatim so
+    # the mutants sandbox still imports the intake package.
+    "src/bob/application/runtime/catch_up_reentry.py",
+    # BOB-066 Срез W.3: the (copied-but-denied) presence adapters package now re-exports the
+    # LLM staleness judge, which imports the router (kernel-only deps) — copy it verbatim so the
+    # mutants sandbox still imports the presence package.
+    "src/bob/application/router",
 ]
