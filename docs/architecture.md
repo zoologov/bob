@@ -98,6 +98,7 @@ usecases/adapters модулей.
 | **conversation** | вертикальный (business) | «как ведётся ход» — адресность, conversational floor, brevity, engagement, судьи отклика, рефлексивное «чтение комнаты» (двускоростное внимание, за флагом `presence.reflective`) | [`domains/conversation/README.md`](domains/conversation/README.md) |
 | **social** | вертикальный (business) | «Боб различает людей» — идентичность, первое впечатление, отношения, авторизация, permission, genesis | [`domains/social/README.md`](domains/social/README.md) |
 | **proactivity** | вертикальный (business) | «фоновая жизнь Боба» — drive-движок, свои цели (Goal Engine), само-улучшение | [`domains/proactivity/README.md`](domains/proactivity/README.md) |
+| **presence** | вертикальный (business) | «живой ритм Боба» — доля эфира (soft-ceiling с focus-bypass), естественная задержка ответа, бюджет реакций; инертен за флагом `presence.rhythm` | [`domains/presence/README.md`](domains/presence/README.md) |
 | **capabilities** | вертикальный (business) | «инструменты Боба» — registry + tool-loop + навыки (recall, web_search, read_url, диаграммы, интроспекция) | [`domains/capabilities/README.md`](domains/capabilities/README.md) |
 | **application** | координационный слой | тонкие кросс-доменные оркестраторы (HandleMessage), LLM-роутер, async-примитивы рантайма | [`domains/application/README.md`](domains/application/README.md) |
 | **infrastructure** | координационный слой | адаптеры: Telegram (aiogram + мульти-бот), LLM-провайдеры, SQLite-connection-kernel, конфигурация | [`domains/infrastructure/README.md`](domains/infrastructure/README.md) |
@@ -118,6 +119,7 @@ graph TD
         memory["memory"]
         social["social"]
         proactivity["proactivity"]
+        presence["presence"]
         capabilities["capabilities"]
         coding["coding"]
     end
