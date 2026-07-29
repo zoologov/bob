@@ -32,14 +32,26 @@ domain + adapters **внутри** одного контекста, поэтом
 проактив-тик может домножать своё окно на ту же долю голоса, чтобы не заговорить
 поверх только что отправленной реплики.
 
-## 🔴 Провязка за флагом `presence.rhythm` (OFF по умолчанию)
+## 🔴 Провязка за флагами `presence.*` (OFF по умолчанию)
 
 Эпик BOB-066 — блокер owner'а: команда в группу добавляется, только когда всё
-готово ЦЕЛИКОМ. Поэтому вся **поведение-меняющая** провязка ритм-слоя идёт за
-фичефлагом `presence.rhythm`, выключенным по умолчанию (консистентно с
-`presence.reflective` из среза 2.2). Пока флаг выключен, чистые политики инертны —
-продакшн-тайминг и частота неизменны. Политики импортируемы и покрыты тестами,
-готовы к включению в срезе провязки.
+готово ЦЕЛИКОМ. Поэтому вся **поведение-меняющая** провязка presence-слоя идёт за
+нестед-фичефлагами `presence.<section>.enabled`, выключенными по умолчанию
+(консистентно с `presence.reflective` из среза 2.2). Срез W провязал потребление
+всех механизмов в горячий путь через коллабораторов — но builder'ы
+(`runtime/wiring/*.py`) возвращают `None`/inert-bundle, пока флаг выключен, поэтому
+продакшн-путь ответа байт-в-байт равен пред-BOB-066:
+
+- `presence.rhythm.enabled` — soft-ceiling доли эфира (`ShareOfVoiceGate` →
+  `barge_ceiling`/`share_ceiling`) + человеческий пол задержки (`DelayedTurn`, INV-9);
+- `presence.staleness.enabled` — врезка переоценки черновика перед отправкой
+  (`StalenessReassessor`);
+- `presence.catchup.enabled` — догоняющий проход в per-chat воркере (`CatchUpReentry`);
+- `presence.series_budget.enabled` — batch top-k бюджет действий (`plan_series_actions`).
+
+Полный список флагов эпика (включая `presence.room_mood` / `presence.endorsement` /
+`presence.tact` из соседних доменов) с точными путями, формами и knobs — в разделе
+«Активация» [`architecture.md`](../../architecture.md#активация-человеческого-группового-присутствия-bob-066).
 
 ## Спецификация
 
@@ -61,15 +73,21 @@ src/bob/presence/
   staleness.py            StalenessGate + чистое ядро decide_staleness — переоценка
                           черновика реплики под сместившимся контекстом
                           (SEND / REWRITE / DROP_TO_LIKE / MERGE)
-  catchup.py              score / rank / select_catchup + фасад BacklogScorer —
-                          банд-скоринг бэклога (direct > reply-thread > ambient) и
-                          ОДИН догоняющий проход под top-k бюджетом; VO BacklogMessage
-                          и CatchUpPlan
+  staleness_judgment.py   промпт + парсер судьи устаревания (STALENESS_JUDGE_SYSTEM_PROMPT,
+                          build_staleness_user_prompt, parse_staleness_reading; fail-safe)
+  catchup.py              score / rank / select_catchup + is_reentry + фасад BacklogScorer —
+                          банд-скоринг бэклога (direct > reply-thread > ambient), гейт паузы
+                          отсутствия и ОДИН догоняющий проход под top-k бюджетом; VO
+                          BacklogMessage и CatchUpPlan
+  series_salience.py      plan_series_actions — batch top-k бюджет действий (фокус → REPLY
+                          всегда INV-1, один ambient-ответ + budget-capped реакции)
   ports.py                OutgoingActivityStore (Protocol) — сейм чтения окна;
                           StalenessJudge (Protocol) — семантический сейм: судья
                           вербализует, как сместился контекст
   adapters/
     outgoing_activity_store.py  EpisodicOutgoingActivityStore над episodic_log
+    staleness_judge.py          LlmStalenessJudge — Tier-0 судья устаревания
+                                (TaskType.STALENESS_JUDGE)
 ```
 
 Application-коллабораторы ритма живут под `src/bob/application/runtime/`
@@ -138,9 +156,11 @@ max(пол, генерация) → reply»), `ShareOfVoiceGate` (потолок
 `conversation.room_verdict.decide_from_reading`. Без I/O, без часов, без rng:
 вердикт пиннится юнит-тестами и закалён мутационным тестированием (100%).
 
-**Порядок предпочтения (mutation-pinned):** избыточность вперёд всего —
-`answered_by_other | topic_closed → DROP_TO_LIKE`; затем `new_direct_question →
-MERGE`; затем `same_author_clarified → REWRITE`; иначе `SEND`. Фасад
+**Порядок предпочтения (mutation-pinned, INV-1 примирён в Срезе W.3):** свежий прямой
+вопрос вперёд всего — `new_direct_question → MERGE` (проверяется ПЕРВЫМ, поэтому прямой
+вопрос НИКОГДА не роняется в реакцию); затем избыточность
+`answered_by_other | topic_closed → DROP_TO_LIKE`; затем `same_author_clarified →
+REWRITE`; иначе `SEND`. Фасад
 `StalenessGate.reassess` оборачивает ядро двумя структурными рельсами без вызова
 судьи: пустая пачка → `SEND`, отсутствие `reading` (судья недоступен/упал) → `SEND`
 fail-safe (см. INV-11).
@@ -154,15 +174,18 @@ fail-safe (см. INV-11).
 user-id Боба и кому он пишет ответ, поэтому доменный `staleness.py` свободен от
 импорта `MessageReceived`.
 
-**Провязка отложена (гейт инертен).** Горячая врезка в `handle_message` и флаг
-`presence.staleness` в композиционном корне отложены (как в срезах 2.3/2.4), чтобы
-не тащить 1600-строчный `handle_message` под Cohesion-guard. Пока не провязано,
-продакшн-путь ответа неизменен по построению. 🔴 **При будущей врезке:** порядок
-предпочтения ставит избыточность выше `MERGE`, поэтому контракт `StalenessJudge`
-должен трактовать `answered_by_other` и `new_direct_question` как
-взаимоисключающие (или гарантировать, что свежий прямой вопрос никогда не
-сбрасывается до реакции) — свежий прямой вопрос обязан слиться в ответ, а не
-потеряться (дух INV-1 «никогда не терять реплику»).
+**Провязка live за флагом `presence.staleness.enabled` (BOB-066 Срез W.3).** Горячая
+врезка `handle_message._drop_to_like_if_stale` теперь вшита: перед `gateway.reply`
+`StalenessReassessor` перечитывает `scope.peek_arrivals` (turn-local снимок буфера),
+зовёт судью и на `DROP_TO_LIKE` роняет черновик в реакцию + пол-нереплай; иначе
+(`MERGE`/`SEND`/`REWRITE`) — отправка. Флаг `presence.staleness.enabled` OFF по
+умолчанию → `staleness_reassessor` не строится, `peek_arrivals` не биндится, путь
+байт-в-байт. Живой Tier-0 судья — `presence/adapters/staleness_judge.py`
+(`LlmStalenessJudge`, `TaskType.STALENESS_JUDGE`).
+🔴 **INV-1 примирён на уровне ядра:** `decide_staleness` теперь проверяет
+`new_direct_question` ПЕРВЫМ (до `answered_by_other`/`topic_closed`), поэтому свежий
+прямой вопрос → `MERGE`, а не `DROP_TO_LIKE` — никогда не сбрасывается до реакции (дух
+INV-1 «никогда не терять реплику»). Порядок предпочтения обновлён (см. ниже).
 
 ### Догоняющий проход по бэклогу (Пласт 3 §Догоняющий)
 
@@ -210,11 +233,14 @@ user-id Боба и кому он пишет ответ, поэтому доме
 `ChatInbox.peek_since` (буфер приёма из среза 2.1), большим окном, второй буфер не
 строится.
 
-**Провязка отложена (проход инертен).** Живая re-entry-врезка (провязка в per-chat
-воркер после отсутствия) и её флаг ОТЛОЖЕНЫ — как гейт устаревания среза 3.1,
-догоняющий проход отгружен инертным, чтобы не тащить intake-воркер/`handle_message`
-под Cohesion-guard. `catchup.py` и `catch_up.py` не импортируются продакшн-кодом →
-поведение по построению неизменно, врезку берёт будущий срез/тик.
+**Провязка live за флагом `presence.catchup.enabled` (BOB-066 Срез W.3).** Живая
+re-entry-врезка вшита в per-chat воркер `ChatDispatcher`: коллаборатор `CatchUpReentry`
+(`application/runtime/catch_up_reentry.py`) через чистый гейт-гэп `presence.catchup.is_reentry`
+проверяет паузу отсутствия (`absence_hours`, по умолчанию 4.0), и на входе после
+отсутствия делает ОДИН проход `select_catchup` над батчем (фокус + бюджет отвечены,
+ambient просмотрен и осел без idle-утечки), возвращая `CatchUpSelection`. Флаг
+`presence.catchup.enabled` OFF по умолчанию → `catch_up_reentry` не строится, воркер как
+раньше. Knobs — `presence.catchup.{absence_hours,budget}` (по умолчанию 4.0 ч / 3).
 
 ### P0-упрощение адаптера (честно)
 

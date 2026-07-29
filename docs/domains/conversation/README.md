@@ -231,7 +231,8 @@ BOB-022 — точный матч после нормализации, конс�
    `floor_holder`/`floor_participant` из Среза 1.2) и `interest` по значению — каждое поле сигнал,
    ни одно не override. `ReflectiveIntent` — REPLY/REACT/IGNORE/INITIATE/SELF_CHECK.
    🔴 `RoomMood` (PLAYFUL/WARM/NEUTRAL/SOMBRE/TENSE/HEATED) несёт `valence`/`polarization` как
-   plain-float свойства, которые Срез 2.4 потребит ПО ЗНАЧЕНИЮ в тон — без импорта conversation в
+   plain-float свойства, которые Срез W.2 потребляет ПО ЗНАЧЕНИЮ в тон (surfaced на `_ReplyGate`,
+   `RoomMoodModulator` за `presence.room_mood.enabled`) — без импорта conversation в
    personality (ребро остаётся однонаправленным). `RoomReader` — инъектируемый порт
    `read(ctx) -> RoomReading`.
 2. **Wire-протокол (`room_reading_wire.py`).** Model-facing половина, чистая (без I/O и RNG):
@@ -258,9 +259,18 @@ BOB-022 — точный матч после нормализации, конс�
 **Проводка в гейте.** `TurnGate.__init__` получил `read_the_room: ReadTheRoom | None = None`; при
 проводке и распознанном отправителе `gate()` уходит в `_reflective_gate` (фокус/периферия), иначе —
 байт-идентично судья BOB-049 или легаси. `_ReplyGate` получил `force_web: bool = False` (`True`
-только когда периферийный read выставил `wants_web`). Периферийное чтение собирается в `_read_room`
-(общий тред + структурные/floor-хинты + interest), сбой ловится в `except Exception` → молчаливый
-IGNORE.
+только когда периферийный read выставил `wants_web`) и `room_mood` (surfaced на периферийном REPLY,
+чтобы `RoomMoodModulator` потребил его по значению в тон, Срез W.2). Периферийное чтение собирается
+в `_read_room` (общий тред + структурные/floor-хинты + interest), сбой ловится в `except Exception`
+→ молчаливый IGNORE.
+
+**Ритм-потолки и бюджет серии (Срез W).** `gate()` / `_reflective_gate` / `_act_reflective`
+получили `series_ceiling` (по умолчанию `ENGAGE`) — потолок из batch top-k плана
+(`plan_series_actions`, за `presence.series_budget.enabled`), который режет ambient-REPLY
+рефлексивного пути, НО никогда не трогает фокус (INV-1: `DIRECTED_TO_BOB` короткозамыкает в
+`_ReplyGate` выше и `series_ceiling`, и `barge_ceiling`). `barge_ceiling` (за `presence.rhythm.enabled`)
+домножает вероятность ambient-барджа на долю эфира на периферийном REPLY; на фокус-пути потолок НЕ
+консультируется, RNG не берётся (INV-4).
 
 **`wants_web` (C11) переиспользует `VerifyStep`.** `VerifyStep.note(..., forced=False)` получил флаг
 `forced`: когда рефлексивный read выбрал сходить проверить, судья волатильности ПРОПУСКАЕТСЯ (Боб уже

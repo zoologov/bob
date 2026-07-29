@@ -182,6 +182,13 @@ Tier-0 gate «есть ли что сказать?» (склонен к SKIP) �
 (`usecases/tick.py`) — heartbeat-сиблинг reflect-тиков, гонит движок на ~30s
 кадэнсе (дёшево, LLM только на редком fire).
 
+🔴 **Share-of-voice throttle (BOB-066 Срез W.1).** `ProactivityEngine.__init__` получил
+`share_ceiling` (опц., за флагом `presence.rhythm.enabled`, OFF по умолчанию → `None`):
+проактивный бардж домножается на ту же долю эфира, что и реактивный (ОДИН
+`ShareOfVoiceGate` на per-chat окно). Throttle стоит ДО Tier-0 gate, поэтому
+задавленный порыв тратит НОЛЬ LLM-вызовов. `share_ceiling=None` → бардж свободен
+(`_admits_proactive_barge` → True), поведение байт-в-байт.
+
 `RecordOwnerActivity` (`usecases/record_owner_activity.py`) — сворачивает входящее
 owner-сообщение в состояние проактивности: штампует `last_user_msg_at` (взводит
 owner-cooldown вето) и частично восстанавливает `SocialEnergy`. `/quiet`-mute и
