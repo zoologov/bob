@@ -212,6 +212,26 @@ async def test_current_active_reads_the_owner_veto() -> None:
     assert await tracker.current_active() is True
 
 
+async def test_current_active_is_inert_without_an_owner_id() -> None:
+    # The proactivity owner-sulk veto reads not-sulking when no owner id is wired — a
+    # missing owner id leaves the veto inert (it never guesses a sender), even while Bob
+    # is обижен at a guest.
+    store = _FakePersonSulkStore()
+    tracker = _tracker(store, owner_sender_id=None)
+
+    for _ in range(3):
+        await tracker.observe(
+            sender_id=_ALESHA,
+            person_warmth=_LOW_WARMTH,
+            hostile=False,
+            warmth_delta=0.0,
+            now=_NOW,
+        )
+
+    assert (await tracker.current_for(_ALESHA)).active is True  # обижен at the guest
+    assert await tracker.current_active() is False  # yet the owner veto stays inert
+
+
 async def test_warm_turn_accelerates_recovery_while_sulking() -> None:
     store = _FakePersonSulkStore()
     store.states[(_PERSONA, _ALESHA)] = SulkState(

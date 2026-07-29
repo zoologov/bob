@@ -133,3 +133,36 @@ async def test_backfill_owner_no_legacy_row_is_a_noop(repo: SqliteMemoryRepo) ->
 
     assert await store.load(_PERSONA, _OWNER) == SulkState()
     assert await store.active_sulks(_PERSONA) == []
+
+
+async def test_backfill_owner_unconfigured_owner_is_a_noop(
+    repo: SqliteMemoryRepo,
+) -> None:
+    # Migration guard: an UNCONFIGURED owner (sender id 0) never backfills, even with a
+    # live legacy обида — the copy is skipped rather than writing a row under the zero id.
+    legacy = SqliteSulkStore(repo)
+    await legacy.save(_PERSONA, SulkState(active=True, intensity=0.9, since=_SINCE))
+    store = SqlitePersonSulkStore(repo)
+
+    await store.backfill_owner(_PERSONA, 0)
+
+    assert await store.load(_PERSONA, 0) == SulkState()
+    assert await store.active_sulks(_PERSONA) == []
+
+
+async def test_person_sulk_write_never_touches_the_legacy_sulk_state(
+    repo: SqliteMemoryRepo,
+) -> None:
+    # Anti-Exodus, SEPARATE table: a per-person обида lives in `person_sulk`, so saving one
+    # leaves the legacy per-persona `sulk_state` row completely untouched (memory/soul/owner
+    # v1 state are never mutated by a guest's cooling).
+    legacy = SqliteSulkStore(repo)
+    owner_v1 = SulkState(active=True, intensity=0.5, low_streak=2, since=_SINCE)
+    await legacy.save(_PERSONA, owner_v1)
+    store = SqlitePersonSulkStore(repo)
+
+    await store.save(_PERSONA, _ALESHA, SulkState(active=True, intensity=0.7, since=_SINCE))
+
+    # The guest's обида is recorded, and the legacy table is byte-identical (untouched).
+    assert (await store.load(_PERSONA, _ALESHA)).active is True
+    assert await legacy.load(_PERSONA) == owner_v1

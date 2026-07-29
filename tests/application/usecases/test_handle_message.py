@@ -6062,6 +6062,21 @@ async def test_not_sulking_leaves_the_tone_normal() -> None:
     assert "тепл" in folded  # the warm tone band still present
 
 
+async def test_addressed_cold_reads_the_current_interlocutors_sulk() -> None:
+    # 🔴 Addressed cooling: the compose path reads the обида keyed to the CURRENT
+    # interlocutor's sender_id (not a hardcoded owner) — so an обида toward another
+    # participant can never chill THIS reply. The tone read is per-relationship.
+    sulk = _FakeSulk(current=SulkState(active=True, intensity=0.8, since=_moment()))
+    handler, _bot, _repo, _tier1 = _build(
+        reply="hi", perceive_sender=_guest_resolver(), sulk=sulk
+    )
+
+    await handler.handle(_message("расскажи подробно про космос"))
+
+    # The cold tone was loaded FOR this sender (99), never for a global/owner key.
+    assert sulk.loaded_for == [99]
+
+
 async def test_owner_turn_feeds_the_sulk_signal() -> None:
     # A turn folds (sender_id, person_warmth, hostile, warmth_delta) into обида after.
     rel = _FakeRelationship(current=Relationship(sender_id=99, warmth=-0.6))
@@ -6126,6 +6141,44 @@ async def test_no_sulk_seam_leaves_the_turn_unchanged() -> None:
 
     folded = tier1.all_text.casefold()
     assert "сейчас ты обижен" not in folded
+
+
+class _RaisingSulk:
+    """A SulkReader whose observe() always raises (a flaky per-person обида store).
+
+    ``current_for`` reads the not-sulking default (so the compose path is unchanged);
+    ``observe`` raises to prove folding the turn's обида signal is best-effort.
+    """
+
+    async def current_for(self, sender_id: int) -> SulkState:  # noqa: ARG002
+        return SulkState()
+
+    async def observe(
+        self,
+        *,
+        sender_id: int,  # noqa: ARG002
+        person_warmth: float,  # noqa: ARG002
+        hostile: bool,  # noqa: ARG002
+        warmth_delta: float,  # noqa: ARG002
+        now: datetime,  # noqa: ARG002
+    ) -> SulkState:
+        raise RuntimeError("person-sulk store unavailable")
+
+
+async def test_sulk_observe_failure_never_breaks_the_turn() -> None:
+    # NO REGRESSION (resilience): a flaky per-person обида store that raises while folding
+    # the turn's signal must NOT break a turn that already replied — the reply lands and
+    # the episode persists (best-effort observe, anti-Exodus never risks the conversation).
+    handler, bot, repo, _tier1 = _build(
+        reply="всё в порядке",
+        perceive_sender=_owner_resolver(),
+        sulk=_RaisingSulk(),  # type: ignore[arg-type]
+    )
+
+    await handler.handle(_message("расскажи подробно, как у тебя дела"))
+
+    assert bot.final_text == "всё в порядке"
+    assert len(repo.episodes) == 1
 
 
 # --- BOB-023: addressivity policy (engage / react / silent) ------------------
