@@ -22,6 +22,10 @@ LLM-роутера. Зависит от домена через порты-пр�
   детерминизма); `RetryPolicy` — политика backoff для ретрая транзиентных сбоев тика.
 - **runtime/retry.py** — `retry_with_backoff()`, ограниченный экспоненциальный
   backoff на транзиентных сбоях; `is_transient()` классифицирует транзиент/перманент.
+- **runtime/intake/** — concurrency-развязка между поллером и Бобом (BOB-066 Срез 2.1):
+  `ChatDispatcher` (быстрый неблокирующий `submit` + по воркеру на `chat_id`),
+  `ChatInbox` (per-chat буфер + debounce, фокус минует окно), `TurnScope` (per-turn
+  rng-изоляция) и `make_focus_predicate`. Подробнее — раздел «Intake-развязка» ниже.
 - **authz/authorizer.py** — `Authorizer`, чистая политика доступа
   owner/allowlist/chat-scope поверх порта `AllowlistStore`.
 - **capabilities/registry.py** — `CapabilityRegistry`, индекс навыков GUPPI
@@ -46,9 +50,11 @@ LLM-роутера. Зависит от домена через порты-пр�
   семантического суждения (BOB-049): собирает `ResponseContext` из частей хода и
   делегирует решение REPLY/REACT/IGNORE инъецированному `ResponseJudge`.
 - **usecases/handle_message.py** — `HandleMessage`, **тонкий оркестратор** хода
-  сообщение → ответ → персист → запоминание (BOB-062.6b, #9): `handle()` проводит фазы
-  perceive → who → gate → compose+guard → post-effects, делегируя ~14 когезивным
-  коллабораторам, разложенным по вертикалям (personality/conversation/social/capabilities); двое
+  сообщение → ответ → персист → запоминание (BOB-062.6b, #9): `handle(event, scope=None)`
+  проводит фазы perceive → who → gate → compose+guard → post-effects, делегируя ~14 когезивным
+  коллабораторам, разложенным по вертикалям (personality/conversation/social/capabilities). Под
+  intake-развязкой (BOB-066) воркер зовёт его с per-turn `TurnScope`, чей `rng` прокидывается во
+  все seeded-draw хода (INV-4); без scope — откат на per-boot rng (legacy идентично). Двое
   живут в этом слое — `EssentialRunner` и `PreComposeGate` (ниже). `__init__` — композиционный
   корень, собирающий коллабораторов из инъектированных швов (`PersonalityState`, `EpisodeReader`
   — шов чтения недавней истории); проводка мигрирует в runtime в срезе .7.
@@ -85,6 +91,33 @@ callable-фабриками корутин, так что рантайм про�
 потребителей (use-cases): обработчики одного события исполняются конкурентно, а
 упавший обработчик логируется и изолируется, чтобы не «заморить» соседей и не
 уронить публикатора.
+
+### Intake-развязка: поллер ⇄ Боб (BOB-066 Срез 2.1)
+
+Раньше поллер Telegram `await`-ил всю генерацию ответа прямо в цикле, поэтому следующий
+`get_updates` не срабатывал, пока Боб «думал». Пакет `runtime/intake/` разрывает шов,
+оставляя `AsyncEventBus` / gateway / `poll_once` нетронутыми — быстрым стал только
+обработчик за швом. Подписчик `MESSAGE_RECEIVED` — теперь `ChatDispatcher.submit`
+(нормализовать → буфер → вернуться); за швом один воркер-таск на `chat_id` дренирует
+`ChatInbox` этого чата и зовёт `HandleMessage.handle` последовательно.
+
+- **`ChatDispatcher`** — быстрый `submit` (буфер + гарантия воркера, мгновенный возврат) +
+  по воркеру на `chat_id`. Каждое сообщение обрабатывается под свежим `TurnScope`; ошибка
+  обработчика ловится (воркер не умирает посреди потока). `aclose` закрывает все инбоксы и
+  дожидается воркеров.
+- **`ChatInbox`** — per-chat буфер с debounce-окном «пусть допишут». `drain_batch` ждёт окно
+  тишины и отдаёт осевший всплеск; снапшот+очистка синхронны, поэтому конкурентный `offer` не
+  теряется. Фокусное сообщение или закрытие замыкают окно в ноль.
+- **`TurnScope`** — изолированный per-turn контекст: `Random`, засеянный
+  `(base_seed, chat_id, message_id)`, прокинутый во все seeded-draw хода.
+- **`make_focus_predicate`** — «фокус» = `classify_addressivity` → `DIRECTED_TO_BOB`
+  (переиспользует детектор адресности, DRY); `bob_user_id` резолвится лениво на старте.
+
+Проводка: `runtime/composition.py` меняет подписчика `_as_handler(handle_message)` →
+`_as_dispatch_handler(intake_dispatcher)`; `Application.intake_dispatcher` дренируется в
+`Application.shutdown` ПЕРЕД закрытием соединения (`runtime.stop()` → `aclose()` →
+`connection.close()`), поэтому корректная остановка досдаёт буферизованные ответы. Окно —
+`dialogue.intake_debounce_ms` (по умолчанию 0, latency-free).
 
 ### Роутер LLM и селективная редакция приватности
 
@@ -132,7 +165,8 @@ over-aggressive редакция (когда на Tier 1 не доходила �
 
 ### Use-cases (поток, память и Genesis)
 
-`HandleMessage` (подписан на `MessageReceived`) проводит один ход
+`HandleMessage` (за швом `ChatDispatcher`, который подписан на `MessageReceived`)
+проводит один ход
 perceive → decide → act → persist → remember: обновляет настроение через
 `UpdateMoodFromText`, воспроизводит недавнюю историю диалога
 (`recent_episodes(k)` через шов `EpisodeReader`), делает recall памяти
@@ -277,6 +311,13 @@ Tier 1); иначе ход идёт прежним plain-путём роутер
 - Время берётся только из инъецированного `Clock`.
 - Ошибка одного heartbeat-тика изолируется и не роняет остальные; транзиентный
   сбой ретраится с backoff, перманентный пробрасывается сразу.
+- Intake-развязка (BOB-066): подписчик `MESSAGE_RECEIVED` неблокирующий (`submit`
+  возвращается сразу — поллер не ждёт генерацию). **INV-5**: один воркер на `chat_id` →
+  сообщения чата обрабатываются в порядке прихода; параллелизм только между чатами, без
+  глобального лока (deadlock-free). **INV-4**: свежий `TurnScope.rng` на сообщение засеян
+  `(base, chat_id, message_id)` → конкурентные чаты не делят поток розыгрышей, ход
+  воспроизводим. **INV-1/10**: фокусное сообщение минует debounce (флаш на уровне батча,
+  никогда не теряется). `shutdown` дренирует диспетчер до закрытия соединения.
 - Genesis идемпотентен по on-disk флагу `SOUL.md`.
 - Доступ закрыт по политике owner/allowlist/chat-scope (fail-closed): chat-scope
   связывает даже owner; решение читает динамический allowlist на каждом вызове.
@@ -321,6 +362,19 @@ Tier 1); иначе ход идёт прежним plain-путём роутер
 - `retry_with_backoff(operation, *, max_attempts, base_delay_seconds, max_delay_seconds, sleep)` → `T`.
 - `is_transient(error)` → `bool`.
 
+Пакет `src/bob/application/runtime/intake/` (BOB-066 Срез 2.1):
+- `ChatDispatcher(*, handle, base_seed, is_focused, quiet_window=0.0, sleep=asyncio.sleep)` —
+  `submit(message)` (быстро, неблокирующе), `async wait_for_idle()`, `async aclose()`.
+- `ChatInbox(*, quiet_window, is_focused, sleep=asyncio.sleep)` — `offer(message)`,
+  `async drain_batch()` → `list[MessageReceived]`, `close()`, `peek_since(after_update_id)`,
+  свойства `empty` / `closing`.
+- `TurnScope(chat_id, message_id, rng)` (frozen); `new_turn_scope(*, base_seed, chat_id,
+  message_id)` → `TurnScope`.
+- `make_focus_predicate(bob_user_id_source)` → `Callable[[MessageReceived], bool]`;
+  `message_is_focused(message, *, bob_user_id)` → `bool`.
+- `decisions.should_debounce(*, closing, has_focus)` / `batch_grew(*, before, after)` /
+  `derive_turn_seed(*, base_seed, chat_id, message_id)` — чистое детерминированное ядро.
+
 Модуль `src/bob/application/reliability.py` (BOB-049 .3):
 - `call_with_retry(operation, *, attempts, backoff_seconds, sleep)` → `T` — ограниченный
   ретрай ЛЮБОГО сбоя essential-шага (не только transient), затем повторный raise.
@@ -346,7 +400,9 @@ Tier 1); иначе ход идёт прежним plain-путём роутер
   `search_memory`: `query` + опциональный `k`, клампится в `[1, 50]`).
 
 Модуль `src/bob/application/usecases/handle_message.py`:
-- `HandleMessage` — `async handle(event)` (тонкий оркестратор, BOB-062.6b); `PersonalityState`,
+- `HandleMessage` — `async handle(event, scope: TurnScope | None = None)` (тонкий оркестратор,
+  BOB-062.6b; `scope.rng` прокидывается во все seeded-draw хода, BOB-066 INV-4; без scope —
+  откат на per-boot rng); `PersonalityState`,
   `EpisodeReader`, опциональные `registry` и `tool_provider` (включают capability tool-loop).
   `__init__` собирает ~14 коллабораторов из инъектированных швов.
 - Отказоустойчивость (BOB-049 .3): essential-шаги (суждение + генерация ответа)

@@ -203,9 +203,18 @@ BOB-022 — точный матч после нормализации, конс�
 
 **Коллабораторы хода (BOB-062.6b, #9).** Декомпозиция God-use-case `handle_message` вынесла
 разговорную логику хода в когезивные method-object'ы этой вертикали, собираемые в
-`HandleMessage.__init__` из уже инъектированных швов:
+`HandleMessage.__init__` из уже инъектированных швов. 🔴 **Seeded-розыгрыши хода берут rng из
+per-turn `TurnScope` (BOB-066 Срез 2.1, INV-4).** Под intake-развязкой разные чаты идут на
+разных воркер-тасках параллельно, поэтому оркестратор прокидывает в каждый seeded-draw-сайт
+турна опциональный `rng` (`decide` / `decide_engagement` / `decide_verbosity` / `gate` /
+`guard`) — розыгрыш засеян координатами `(base, chat_id, message_id)`, так что конкурентные
+чаты никогда не делят один поток розыгрышей, а ход воспроизводим независимо от порядка
+диспетчеризации. Параметр опционален: при прямом unit-вызове без `rng` коллаборатор
+откатывается на инъектированный per-boot rng (`self._rng`), поэтому legacy-поведение
+байт-идентично.
 - `AddressivityPerceiver` (`addressivity_perceiver.py`) — восприятие адресности + решение,
-  берёт ли Боб ход (`decide` / `signals`, поверх `FloorManager` для BOB-025 continuity-raise).
+  берёт ли Боб ход (`decide(event, interest, *, rng=None)` / `signals`, поверх `FloorManager`
+  для BOB-025 continuity-raise; legacy-лестница засевается турновым `rng`).
   `_AddressivitySignals` несёт `floor_holder` (кто держит floor, `None` на инертном шве) и
   `floor_participant` (в нити ли этот говорящий) — хинты для рефлексивного read (BOB-066 .1).
 - `FloorManager` (`floor_manager.py`) — resolve + advance разговорной реплики
@@ -216,7 +225,8 @@ BOB-022 — точный матч после нормализации, конс�
   `effective == per_message`, `holder is None`, `participant is False` (поведение BOB-023).
 - `EngagementModel` (`engagement_model.py`) — аппетит + verbosity + after-turn feedback
   (`topic_interest` / `decide_engagement` / `decide_verbosity` / `apply_feedback` /
-  `guard_reply_length`); возвращает personality-VO.
+  `guard_reply_length`); возвращает personality-VO. `decide_engagement` и `decide_verbosity`
+  принимают опциональный турновый `rng` (граница FULL/PLAYFUL и брезгливый бросок verbosity).
 - `RecallAssembler` (`recall_assembler.py`) — воспроизведение общего треда + лёгкая
   absence/acknowledgment-текстура (`replay_recent_thread` / `absence_for` /
   `acknowledgment_for`; 🔴 `acknowledgment_for` читает notable-reaction маркер ДО seeded-броска,
@@ -226,12 +236,14 @@ BOB-022 — точный матч после нормализации, конс�
   фабрику.
 - `TurnGate` (`turn_gate.py`) — тонкий координатор гейта хода (reply/react/silent) над
   `AddressivityPerceiver` + `FloorManager` + судьёй + `EssentialRunner`; persist / owner-activity
-  прокинуты колбэками (гейт не держит политики персиста).
+  прокинуты колбэками (гейт не держит политики персиста). `gate(..., *, rng=None)` прокидывает
+  турновый `rng` в legacy-розыгрыш адресности.
 - `AntiRepeatGuard` (`anti_repeat_guard.py`) — регенерация повтора/тика (`guard`) + кольцо
   закрывающих (`log_closer` / `closer_anti_tic`). 🔴 Принимает `VoiceComposer.compose` как
   `compose`-callback (по значению, не импорт — цикл compose↔guard замкнут БЕЗ
   `conversation → personality` импорта); `verify_note` / `closer_nudge` текут turn-local
-  аргументами через тот же колбэк.
+  аргументами через тот же колбэк. `guard(..., *, rng=None)` прокидывает турновый `rng`
+  в КАЖДУЮ регенерацию, поэтому пере-компоновка тянет из ТОГО ЖЕ per-turn потока (INV-4).
 
 `LlmResponseJudge` / `LlmVolatilityJudge` / `LlmInterimLineGenerator` (`adapters/`) — Tier-0
 реализации портов (билдер промпта + router + парсер). `SqliteConversationFloorStore` — per-thread
@@ -249,7 +261,9 @@ floor (UPSERT — floor продвигается каждый ход); `SqliteCl
   внутри; `clamp_reply` держит жёсткий предел длины; HIGH-demand owner защищён от обрубка.
 - **Вовлечённость восстанавливается.** `ConversationalFatigue` ограничена и затухает —
   бесцельная болтовня заводит Боба, но никогда не запирает навсегда; `decide_engagement`
-  детерминирован по seeded-RNG.
+  детерминирован по seeded-RNG — под intake-развязкой это per-turn `TurnScope.rng`
+  (координаты `(base, chat_id, message_id)`), поэтому конкурентные чаты не делят поток
+  розыгрышей (INV-4).
 - **Floor продвигается и распадается корректно.** AMBIENT→DIRECTED_TO_BOB только пока floor=БОБ
   жив; явный поворот к другому / тайм-аут / серия безметочных без Боба снимают floor, возвращая
   осторожную ambient-логику BOB-023; floor — свойство ТРЕДА (chat_id + thread_id), не человека.

@@ -184,14 +184,19 @@ baseline, потом ложится bounded-дельта — тот же пут�
 (`fascination_sources.py`) — live-швы заземления и чтения.
 
 **Коллабораторы хода (BOB-062.6b, #9).** Декомпозиция `handle_message` вынесла «кто есть Боб»
-— его голос — в method-object'ы personality, собираемые в `HandleMessage.__init__`:
+— его голос — в method-object'ы personality, собираемые в `HandleMessage.__init__`. Seeded-draw
+методы принимают опциональный турновый `rng`: при прямом unit-вызове без него — откат на
+инъектированный per-boot `self._rng` (legacy-поведение байт-идентично).
 - `MoodPerceiver` (`mood_perceiver.py`) — обновить настроение из входящего + план выражения
-  (`perceive` / `plan_expression`; мутабельный per-boot `PersonalityState` передаётся ПО ВЫЗОВУ,
-  никогда не захватывается).
+  (`perceive` / `plan_expression(event, soul, *, rng=None)`; мутабельный per-boot
+  `PersonalityState` передаётся ПО ВЫЗОВУ, никогда не захватывается). Seeded-план выражения
+  засевается турновым `rng` из `TurnScope` (BOB-066 Срез 2.1, INV-4).
 - `GroundedAddons` (`grounded_addons.py`) — свернуть РЕАЛЬНУЮ рефлексию/колбэк/фасцинацию в
-  контекст (`with_grounded_addons`); `safe` оборачивает каждую добавку — anti-confabulation +
-  decorative (упавшая добавка падает в `""`, никогда не триггерит outage).
-- `VoiceComposer` (`voice_composer.py`) — форма голоса + генерация ответа (`compose`). 🔴
+  контекст (`with_grounded_addons(context, text, plan, *, rng=None)`); `safe` оборачивает каждую
+  добавку — anti-confabulation + decorative (упавшая добавка падает в `""`, никогда не триггерит
+  outage). Розыгрыш «surface old» тянет из турнового `rng` (INV-4).
+- `VoiceComposer` (`voice_composer.py`) — форма голоса + генерация ответа (`compose(..., *,
+  rng=None)`, прокидывает турновый `rng` в grounded-добавки). 🔴
   Дотягивается до КАЖДОЙ другой вертикали ТОЛЬКО через инъектированные порты/значения
   (context-assembler и recall/verify-порты conversation, stance-порт social, plain-reply +
   essential-генераторы application, tool-loop/announcer-фабрики capabilities) — personality не
