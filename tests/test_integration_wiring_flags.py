@@ -158,8 +158,10 @@ class TestOnStackStillStaysSilentOnAmbient:
     def test_ambient_barge_is_throttled_when_bob_hogged_the_room(
         self, tmp_path: Path
     ) -> None:
-        # Arrange / Act — an ambient periphery turn (no direct address); the reflective read WOULD
-        # barge (REPLY) but Bob hogged the airtime, so the share-of-voice ceiling silences him.
+        # Arrange / Act — a MULTI-PARTY ambient periphery turn (others present, no direct address,
+        # not floor-continued); the reflective read WOULD barge (REPLY) but Bob hogged the airtime,
+        # so the share-of-voice ceiling silences him. (A 1:1 own-space ambient would be answered —
+        # the ceiling is a busy-GROUP mechanism, so this scenario needs a genuine group.)
         gateway = asyncio.run(
             run_wiring_turn(
                 tmp_path,
@@ -168,13 +170,16 @@ class TestOnStackStillStaysSilentOnAmbient:
                 flags_on=True,
                 reading=REPLY_READING,
                 hog_airtime=True,
+                others_present=True,
             )
         )
-        # Assert — Bob stayed out of the exchange he had no business hijacking.
+        # Assert — Bob stayed out of the group exchange he had no business hijacking.
         assert not gateway.replied, "Боб влез в ambient, перебрав долю эфира"
 
     def test_ambient_low_salience_read_stays_silent(self, tmp_path: Path) -> None:
-        # Arrange / Act — ambient chatter the reflective judge reads as IGNORE.
+        # Arrange / Act — MULTI-PARTY ambient chatter (others present, not floor-continued) the
+        # reflective judge reads as IGNORE. (A 1:1 own-space ambient would be answered; the
+        # discretionary IGNORE is for a genuine group aside.)
         gateway = asyncio.run(
             run_wiring_turn(
                 tmp_path,
@@ -182,6 +187,7 @@ class TestOnStackStillStaysSilentOnAmbient:
                 mentions_bob=False,
                 flags_on=True,
                 reading=IGNORE_READING,
+                others_present=True,
             )
         )
         # Assert
@@ -195,6 +201,30 @@ class TestOnStackStillStaysSilentOnAmbient:
         # nudge, not a hard drop — Bob still engages, just once).
         assert observations.reply_count <= 1, "пачка не свернулась в один ответ"
         assert observations.like_count <= 1, "бюджет реакций превышен"
+
+
+class TestFullStackAnswersOwnSpaceAmbient:
+    """🔴 Live regression (owner+Bob validation): with the FULL presence stack ON, an OWNER 1:1
+    ambient — a plain follow-up in Bob's OWN space (no direct address, no other participant) — is
+    ANSWERED, never silently swallowed. It belongs to the legacy deterministic ENGAGE set the
+    reflective focus check must honour; the ceiling / IGNORE are busy-GROUP mechanisms only."""
+
+    def test_owner_1to1_ambient_is_answered_with_full_stack(self, tmp_path: Path) -> None:
+        # Arrange / Act — a plain OWNER ambient (mentions_bob=False, others_present=False) with the
+        # full stack ON and a reader scripted to IGNORE. A 1:1 own-space ambient is answered
+        # deterministically (the fix), so the IGNORE reading must NOT silence Bob.
+        gateway = asyncio.run(
+            run_wiring_turn(
+                tmp_path,
+                text="Поход отлично, прокатился по Беларуси 750км на велосипеде",
+                mentions_bob=False,
+                flags_on=True,
+                reading=IGNORE_READING,
+                others_present=False,
+            )
+        )
+        # Assert — the exact live bug was Bob staying silent here; he must answer his own space.
+        assert gateway.replied, "Боб проглотил обычный ответ в своём 1:1 (регресс)"
 
 
 class TestFlagsOffAreByteIdentical:

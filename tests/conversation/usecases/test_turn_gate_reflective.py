@@ -34,7 +34,7 @@ from bob.conversation.room_reading import (
 )
 from bob.conversation.usecases.addressivity_perceiver import _AddressivitySignals
 from bob.conversation.usecases.read_the_room import ReadTheRoom
-from bob.conversation.usecases.turn_gate import TurnGate, _ReplyGate
+from bob.conversation.usecases.turn_gate import TurnGate, _directed_engage, _ReplyGate
 from bob.personality.expression import ExpressionMode, ExpressionPlan, FormHint
 from bob.personality.mood import Mood
 from bob.personality.soul import SOUL
@@ -482,3 +482,111 @@ async def test_periphery_read_failure_safe_defaults_to_silent_ignore() -> None:
     assert await _run(gate) is None
     assert floor.advances == [(Addressivity.AMBIENT, False)]
     assert reactor.reactions == []
+
+
+# --- FLOOR-CONTINUITY / OWN-SPACE (BOB-066 fix: the legacy ENGAGE set) ---------
+# 🔴 Live regression (owner+Bob validation): a plain follow-up the floor raised to
+# DIRECTED_TO_BOB, and an ambient in Bob's own 1:1 space, were silenced because the reflective
+# focus check read only the RAW ``per_message``. They belong to the legacy deterministic ENGAGE
+# set (``decide_response`` on ``effective``) — so the reflective gate must answer them too.
+
+
+def _floor_continuity_signals() -> _AddressivitySignals:
+    """A plain follow-up (RAW ``per_message`` AMBIENT) the floor RAISED to DIRECTED_TO_BOB —
+    Bob holds a live floor with this sender — even with other participants present."""
+    return _AddressivitySignals(
+        per_message=Addressivity.AMBIENT,
+        effective=Addressivity.DIRECTED_TO_BOB,
+        others_present=True,
+        floor_engaged=True,
+        reply_to_bob=False,
+        directed_to_id=None,
+        floor_holder=FloorHolder.BOB,
+        floor_participant=True,
+    )
+
+
+def _own_space_ambient_signals() -> _AddressivitySignals:
+    """An ambient message in Bob's OWN 1:1 space (no other participant)."""
+    return _AddressivitySignals(
+        per_message=Addressivity.AMBIENT,
+        effective=Addressivity.AMBIENT,
+        others_present=False,
+        floor_engaged=False,
+        reply_to_bob=False,
+        directed_to_id=None,
+        floor_holder=None,
+        floor_participant=False,
+    )
+
+
+@pytest.mark.asyncio
+async def test_floor_continuity_replies_bypassing_the_read() -> None:
+    # A follow-up the floor raised to DIRECTED_TO_BOB is answered deterministically — the reader
+    # is _NeverReader, so a periphery read would fail the test. This is the "answer a plain
+    # follow-up to my question" behaviour the raw-only focus check silenced.
+    floor, reactor = _RecordingFloor(), _RecordingReactor()
+    gate = _gate(
+        signals=_floor_continuity_signals(),
+        reader=_NeverReader(),
+        floor=floor,
+        reactor=reactor,
+    )
+    assert isinstance(await _run(gate), _ReplyGate)
+
+
+@pytest.mark.asyncio
+async def test_floor_continuity_replies_even_when_a_reader_would_ignore() -> None:
+    # The directed-engage short-circuit sits ABOVE the reflective read, so even a reader scripted
+    # to IGNORE cannot silence a floor-continued follow-up.
+    floor, reactor = _RecordingFloor(), _RecordingReactor()
+    gate = _gate(
+        signals=_floor_continuity_signals(),
+        reader=_ScriptedReader(_reading(intent=ReflectiveIntent.IGNORE, salience=0.0)),
+        floor=floor,
+        reactor=reactor,
+    )
+    assert isinstance(await _run(gate), _ReplyGate)
+
+
+@pytest.mark.asyncio
+async def test_own_space_ambient_replies_bypassing_the_read() -> None:
+    # An ambient in Bob's OWN 1:1 space is his to take (the legacy policy ENGAGEs it), so the
+    # reflective gate answers it too — _NeverReader proves the short-circuit.
+    floor, reactor = _RecordingFloor(), _RecordingReactor()
+    gate = _gate(
+        signals=_own_space_ambient_signals(),
+        reader=_NeverReader(),
+        floor=floor,
+        reactor=reactor,
+    )
+    assert isinstance(await _run(gate), _ReplyGate)
+
+
+@pytest.mark.parametrize(
+    ("effective", "others_present", "expected"),
+    [
+        (Addressivity.DIRECTED_TO_BOB, True, True),  # directed (raw or floor-raised) → engage
+        (Addressivity.DIRECTED_TO_BOB, False, True),
+        (Addressivity.AMBIENT, False, True),  # 1:1 own space → engage
+        (Addressivity.AMBIENT, True, False),  # genuine multi-party ambient → reflective read
+        (Addressivity.DIRECTED_TO_OTHER, False, False),  # directed elsewhere → reflective read
+        (Addressivity.DIRECTED_TO_OTHER, True, False),
+    ],
+)
+def test_directed_engage_matches_the_legacy_engage_set(
+    effective: Addressivity, others_present: bool, expected: bool
+) -> None:
+    # The pure predicate mirrors ``decide_response``'s deterministic ENGAGE set on ``effective``:
+    # directed-to-Bob (always) + 1:1 own-space ambient; everything else → the reflective read.
+    signals = _AddressivitySignals(
+        per_message=effective,
+        effective=effective,
+        others_present=others_present,
+        floor_engaged=False,
+        reply_to_bob=False,
+        directed_to_id=None,
+        floor_holder=None,
+        floor_participant=False,
+    )
+    assert _directed_engage(signals) is expected

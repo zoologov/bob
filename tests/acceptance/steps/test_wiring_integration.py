@@ -48,6 +48,7 @@ class _WiringState:
     flags_on: bool = True
     hog_airtime: bool = False
     sulk: bool = False
+    others_present: bool = False
     reading: str = IGNORE_READING
     gateway: FakeGateway | None = None
 
@@ -67,9 +68,15 @@ def all_flags_off(tmp_path: Path) -> _WiringState:
     target_fixture="wiring_state",
 )
 def all_flags_on_and_hogged(tmp_path: Path) -> _WiringState:
-    # A REPLY reading so a silence can only be the ceiling, never the reflective verdict.
+    # A REPLY reading so a silence can only be the ceiling, never the reflective verdict. Others
+    # are present (a genuine GROUP): the ceiling / ambient discretion is a busy-group mechanism —
+    # a 1:1 own-space ambient is answered, so hogging can only throttle a multi-party aside.
     return _WiringState(
-        tmp_path=tmp_path, flags_on=True, hog_airtime=True, reading=REPLY_READING
+        tmp_path=tmp_path,
+        flags_on=True,
+        hog_airtime=True,
+        others_present=True,
+        reading=REPLY_READING,
     )
 
 
@@ -91,6 +98,7 @@ def _drive(state: _WiringState, *, text: str, mentions_bob: bool) -> None:
             reading=state.reading,
             hog_airtime=state.hog_airtime,
             sulk=state.sulk,
+            others_present=state.others_present,
         )
     )
 
