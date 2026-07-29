@@ -46,12 +46,20 @@ def participant_addresses_bob(scenario_context: ScenarioContext, text: str) -> N
     )
 
 
-@when(parsers.parse('участник роняет реплику в воздух: "{text}"'))
+@when(
+    parsers.parse(
+        'в группе, где есть другие участники, кто-то роняет реплику в воздух: "{text}"'
+    )
+)
 def participant_speaks_to_the_air(scenario_context: ScenarioContext, text: str) -> None:
-    """Drive an AMBIENT periphery turn (mentions_bob=False) end-to-end."""
+    """Drive an AMBIENT periphery turn (mentions_bob=False, others present) end-to-end."""
     scenario_context.gateway = asyncio.run(
         run_reflective_turn(
-            scenario_context.tmp_path, text=text, mentions_bob=False, reply=_SCRIPTED_REPLY
+            scenario_context.tmp_path,
+            text=text,
+            mentions_bob=False,
+            reply=_SCRIPTED_REPLY,
+            others_present=True,
         )
     )
 

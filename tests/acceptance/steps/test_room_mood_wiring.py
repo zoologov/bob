@@ -42,9 +42,9 @@ def room_mood_off(scenario_context: ScenarioContext) -> None:
     assert not scenario_context.gateway.replied
 
 
-@when(parsers.parse('участник роняет тяжёлую реплику в воздух: "{text}"'))
+@when(parsers.parse('в живой группе участник роняет тяжёлую реплику в воздух: "{text}"'))
 def participant_drops_a_heavy_line(scenario_context: ScenarioContext, text: str) -> None:
-    """Drive an AMBIENT periphery turn with the room-mood seam on/off."""
+    """Drive a multi-party AMBIENT periphery turn with the room-mood seam on/off."""
     outcome = asyncio.run(
         run_heavy_room_turn(
             scenario_context.tmp_path,

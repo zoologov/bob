@@ -53,6 +53,12 @@ _REPLY_READING = (
 # How many prior Bob-sent turns to seed so Bob's share of voice is ~1.0 (he hogged the room).
 _HOGGED_TURNS = 12
 
+# A non-owner, non-Bob participant. Seeding one prior turn from them makes the recent thread
+# MULTI-PARTY (``others_present`` True), so an ambient there is a genuine group aside — the
+# realm of the share-of-voice ceiling. An OWNER 1:1 ambient (no such seed) is Bob's own space
+# and is answered deterministically (the legacy ENGAGE set), never reaching the ceiling.
+_OTHER_ID = 602046171
+
 
 class _ReplyRoomProvider:
     """Answers the reflective read with a high-salience REPLY, every other call with the reply."""
@@ -97,8 +103,24 @@ async def _seed_hogged_airtime(app: Application) -> None:
     await connection.commit()
 
 
+async def _seed_other_participant(app: Application) -> None:
+    """Seed a prior message from ANOTHER participant so the recent thread reads as multi-party."""
+    connection = app.connection.connection
+    await connection.execute(
+        "INSERT INTO episodic_log (ts, event_type, content, sender_id, bob_message_id) "
+        "VALUES (?, ?, ?, ?, ?)",
+        ("2026-07-29T10:30:00+00:00", "message", "Алексей: всем привет", _OTHER_ID, None),
+    )
+    await connection.commit()
+
+
 async def _run(
-    tmp_path: Path, *, text: str, mentions_bob: bool, rhythm_enabled: bool
+    tmp_path: Path,
+    *,
+    text: str,
+    mentions_bob: bool,
+    rhythm_enabled: bool,
+    others_present: bool = False,
 ) -> FakeGateway:
     _seed_soul(tmp_path)
     gateway = FakeGateway()
@@ -112,6 +134,8 @@ async def _run(
     )
     await app.startup()
     try:
+        if others_present:
+            await _seed_other_participant(app)
         await _seed_hogged_airtime(app)
         await app.event_bus.publish(
             MessageReceived(
@@ -130,8 +154,10 @@ async def _run(
 
 
 async def run_wired_ambient_turn(tmp_path: Path, *, text: str) -> FakeGateway:
-    """Rhythm ON: an ambient barge while Bob has hogged the room → throttled to silence."""
-    return await _run(tmp_path, text=text, mentions_bob=False, rhythm_enabled=True)
+    """Rhythm ON: a busy-group ambient barge while Bob has hogged the room → throttled silent."""
+    return await _run(
+        tmp_path, text=text, mentions_bob=False, rhythm_enabled=True, others_present=True
+    )
 
 
 async def run_wired_focus_turn(tmp_path: Path, *, text: str) -> FakeGateway:
@@ -140,5 +166,7 @@ async def run_wired_focus_turn(tmp_path: Path, *, text: str) -> FakeGateway:
 
 
 async def run_unwired_ambient_turn(tmp_path: Path, *, text: str) -> FakeGateway:
-    """Rhythm OFF: the SAME hogged-airtime ambient turn still replies (byte-identical)."""
-    return await _run(tmp_path, text=text, mentions_bob=False, rhythm_enabled=False)
+    """Rhythm OFF: the SAME busy-group ambient turn still replies (byte-identical)."""
+    return await _run(
+        tmp_path, text=text, mentions_bob=False, rhythm_enabled=False, others_present=True
+    )
