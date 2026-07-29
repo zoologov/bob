@@ -25,6 +25,7 @@ from bob.personality.voice import (
     anti_bait_directive,
     brevity_directive,
     brevity_few_shot,
+    disclosure_refusal_directive,
     engagement_directive,
     guppi_canon,
     improvement_directive,
@@ -444,6 +445,28 @@ def test_tactful_withhold_directive_is_voice_not_a_rule_list() -> None:
     directive = tactful_withhold_directive()
     assert "•" not in directive
     assert "- " not in directive
+
+
+# --- disclosure_refusal_directive: the wired gate (такт разглашения, BOB-066 W.4) ---
+
+
+def test_disclosure_refusal_folds_the_tactful_line_for_a_guest_owner_data_request() -> None:
+    directive = disclosure_refusal_directive(is_guest=True, needs_owner_data=True)
+    assert directive == tactful_withhold_directive()
+
+
+def test_disclosure_refusal_is_empty_when_the_request_is_not_owner_data() -> None:
+    # A guest asking anything non-private composes exactly as before (no withhold line).
+    assert disclosure_refusal_directive(is_guest=True, needs_owner_data=False) == ""
+
+
+def test_disclosure_refusal_is_empty_for_a_non_guest() -> None:
+    # An owner / known peer asking about owner data is never walled — byte-identical.
+    assert disclosure_refusal_directive(is_guest=False, needs_owner_data=True) == ""
+
+
+def test_disclosure_refusal_is_empty_for_a_non_guest_non_owner_data_turn() -> None:
+    assert disclosure_refusal_directive(is_guest=False, needs_owner_data=False) == ""
 
 
 def test_recalled_impression_directive_carries_the_prior_note() -> None:

@@ -26,6 +26,8 @@ from bob.application.router.llm_router import LLMRouter
 from bob.application.runtime.events import MessageReceived
 from bob.application.runtime.intake.scope import TurnScope, new_turn_scope
 from bob.application.runtime.staleness_reassessor import StalenessReassessor
+from bob.application.usecases.disclosure_guard import DisclosureGuard
+from bob.application.usecases.endorsement_seeder import EndorsementSeeder
 from bob.application.usecases.handle_message import (
     EngagementState,
     HandleMessage,
@@ -100,6 +102,7 @@ from bob.social.interlocutor import (
     InterlocutorKind,
     Trust,
 )
+from bob.social.permission.privilege import PrivilegeContext, PrivilegeNeed
 from bob.social.relationship import Relationship
 from bob.social.sulk import SulkState
 
@@ -675,6 +678,8 @@ def _build(
     closer_log: _FakeCloserLog | None = None,
     reply_delay: object | None = None,
     staleness_reassessor: StalenessReassessor | None = None,
+    endorsement_seeder: EndorsementSeeder | None = None,
+    disclosure_guard: DisclosureGuard | None = None,
 ) -> tuple[HandleMessage, FakeBot, FakeRepo, CapturingProvider]:
     tier0 = CapturingProvider(reply="positive", replies=tier0_replies)
     tier1 = CapturingProvider(reply=reply, replies=tier1_replies)
@@ -753,6 +758,8 @@ def _build(
         closer_log=closer_log,
         reply_delay=reply_delay,  # type: ignore[arg-type]  # test double
         staleness_reassessor=staleness_reassessor,
+        endorsement_seeder=endorsement_seeder,
+        disclosure_guard=disclosure_guard,
     )
     return handler, bot, repo, tier1
 
@@ -8902,3 +8909,173 @@ async def test_staleness_verbatim_send_when_nothing_arrived() -> None:
     # Assert: the reply is sent as before; no like.
     assert bot.sent, "nothing landed → the draft is still fresh → send it"
     assert reactor.calls == []
+
+
+# --- BOB-066 Срез W.4: EQ live-врезка wiring (endorsement + tactful withhold) -----
+
+
+def _soul_with_faintly_borderline_opinion(topic: str) -> SOUL:
+    # Like _soul_with_borderline_opinion but with a conviction FAINTLY above the 0.5
+    # pushback threshold — low enough that the MODEST endorsement seed (warmth 0.3 →
+    # compromise-bias ≈0.03) tips the borderline stance from holding ground to agree.
+    baseline = Mood(valence=0.1, social=0.2)
+    taste = TasteEngine(axes=(TasteAxis(name=topic, value=-0.6, conviction=0.51),))
+    return SOUL(
+        identity="I am the Bob from the book.",
+        mood=baseline,
+        mood_baseline=baseline,
+        taste=taste,
+        phantom_prefs=(_PHANTOM_PREF,),
+    )
+
+
+def _owner_endorsement_turn(name: str) -> Mapping[str, object]:
+    # An OWNER turn (sender_id = _OWNER_SENDER_ID) that vouches for `name` by name.
+    return {
+        "content": (
+            f"Vova: познакомься, это {name}, ему можно доверять\nbob: понял, привет"
+        ),
+        "event_type": "message",
+        "sender_id": _OWNER_SENDER_ID,
+        "ts": _moment().isoformat(),
+    }
+
+
+async def test_endorsement_warm_starts_a_vouched_first_contact_guest() -> None:
+    # Кредит доверия wired: a first-contact GUEST the owner vouched for by name starts warm
+    # enough to tip a faintly-borderline stance from holding ground to agree (he meets the
+    # endorsed newcomer more readily) — the observable effect of the seed through compose.
+    topic = "объясни подробно почему минимализм лучше всего"
+    resolver = _FakeInterlocutorResolver(
+        _interlocutor(
+            name="Норман", kind=InterlocutorKind.GUEST, trust=Trust.GUEST, sender_id=2
+        )
+    )
+    handler, _bot, _repo, tier1 = _build(
+        reply="hi",
+        soul=_soul_with_faintly_borderline_opinion(topic),
+        zone_classifier=_StubZoneClassifier(NegotiationZone.BOB_PERSONAL),
+        perceive_sender=resolver,
+        relationship=_FakeRelationship(current=None),  # genuine first contact
+        history=[_owner_endorsement_turn("Норман")],
+        endorsement_seeder=EndorsementSeeder(owner_id=_OWNER_SENDER_ID),
+    )
+
+    await handler.handle(_message(topic))
+
+    # The warm start tipped the borderline stance to agree — an endorsed guest is met warmer.
+    assert _AGREE_DIRECTIVE in tier1.all_text
+    assert _PROPOSE_DIRECTIVE not in tier1.all_text
+
+
+async def test_endorsement_seeder_off_is_byte_identical() -> None:
+    # Flag OFF (no seeder): the SAME endorsed first-contact guest is met at the neutral base,
+    # so the faintly-borderline stance holds — byte-identical to the pre-W.4 path.
+    topic = "объясни подробно почему минимализм лучше всего"
+    resolver = _FakeInterlocutorResolver(
+        _interlocutor(
+            name="Норман", kind=InterlocutorKind.GUEST, trust=Trust.GUEST, sender_id=2
+        )
+    )
+    handler, _bot, _repo, tier1 = _build(
+        reply="hi",
+        soul=_soul_with_faintly_borderline_opinion(topic),
+        zone_classifier=_StubZoneClassifier(NegotiationZone.BOB_PERSONAL),
+        perceive_sender=resolver,
+        relationship=_FakeRelationship(current=None),
+        history=[_owner_endorsement_turn("Норман")],
+        # endorsement_seeder omitted → None → neutral first contact.
+    )
+
+    await handler.handle(_message(topic))
+
+    assert _PROPOSE_DIRECTIVE in tier1.all_text
+    assert _AGREE_DIRECTIVE not in tier1.all_text
+
+
+async def test_no_endorsement_keeps_the_guest_neutral_even_when_wired() -> None:
+    # The seeder is wired but the shared thread carries NO owner vouch for this guest → the
+    # neutral first-contact path is kept (the credit is only for a vouched-for newcomer).
+    topic = "объясни подробно почему минимализм лучше всего"
+    resolver = _FakeInterlocutorResolver(
+        _interlocutor(
+            name="Норман", kind=InterlocutorKind.GUEST, trust=Trust.GUEST, sender_id=2
+        )
+    )
+    handler, _bot, _repo, tier1 = _build(
+        reply="hi",
+        soul=_soul_with_faintly_borderline_opinion(topic),
+        zone_classifier=_StubZoneClassifier(NegotiationZone.BOB_PERSONAL),
+        perceive_sender=resolver,
+        relationship=_FakeRelationship(current=None),
+        history=[_person_turn_at(sender_id=_OWNER_SENDER_ID, hours_ago=1, name="Vova")],
+        endorsement_seeder=EndorsementSeeder(owner_id=_OWNER_SENDER_ID),
+    )
+
+    await handler.handle(_message(topic))
+
+    assert _PROPOSE_DIRECTIVE in tier1.all_text
+
+
+class _ScriptedPrivilegeJudge:
+    """A PrivilegeJudge fake returning a fixed need for the tactful-withhold wiring test."""
+
+    def __init__(self, need: PrivilegeNeed) -> None:
+        self._need = need
+
+    async def assess(self, ctx: PrivilegeContext) -> PrivilegeNeed:  # noqa: ARG002
+        return self._need
+
+
+# A stable fragment of personality.voice._TACTFUL_WITHHOLD (the warm refusal VOICE).
+_TACTFUL_FRAGMENT = "спросить у него самого"
+
+
+async def test_tactful_withhold_folds_into_a_guest_owner_data_turn() -> None:
+    # Такт разглашения wired: a GUEST owner_data request folds the warm withhold VOICE into
+    # compose instead of the dry stranger-wall — the privilege GATE is unchanged.
+    guard = DisclosureGuard(
+        judge=_ScriptedPrivilegeJudge(
+            PrivilegeNeed(needs_permission=True, kind="owner_data", what="адрес владельца")
+        )
+    )
+    handler, _bot, _repo, tier1 = _build(
+        reply="hi",
+        perceive_sender=_guest_resolver(),
+        disclosure_guard=guard,
+    )
+
+    await handler.handle(_message("расскажи подробно, какой домашний адрес у Вовы и где он живёт"))
+
+    assert _TACTFUL_FRAGMENT in tier1.all_text.casefold()
+
+
+async def test_tactful_withhold_off_is_byte_identical() -> None:
+    # Flag OFF (no guard): the same guest owner_data turn composes with NO withhold line.
+    handler, _bot, _repo, tier1 = _build(
+        reply="hi",
+        perceive_sender=_guest_resolver(),
+        # disclosure_guard omitted → None.
+    )
+
+    await handler.handle(_message("расскажи подробно, какой домашний адрес у Вовы и где он живёт"))
+
+    assert _TACTFUL_FRAGMENT not in tier1.all_text.casefold()
+
+
+async def test_tactful_withhold_skips_a_non_owner_data_guest_turn() -> None:
+    # A guest asking something non-private is judged NOT owner_data → no withhold line.
+    guard = DisclosureGuard(
+        judge=_ScriptedPrivilegeJudge(
+            PrivilegeNeed(needs_permission=False, kind="", what="")
+        )
+    )
+    handler, _bot, _repo, tier1 = _build(
+        reply="hi",
+        perceive_sender=_guest_resolver(),
+        disclosure_guard=guard,
+    )
+
+    await handler.handle(_message("расскажи подробно, как у тебя сегодня идут дела и настроение"))
+
+    assert _TACTFUL_FRAGMENT not in tier1.all_text.casefold()

@@ -163,6 +163,8 @@ from bob.runtime.wiring import (
     _phantom_evolution_params,
     _resolve_seed,
     build_catch_up_reentry,
+    build_disclosure_guard,
+    build_endorsement_seeder,
     build_rhythm_wiring,
     build_room_mood_modulator,
     build_staleness_reassessor,
@@ -595,6 +597,16 @@ def build_application(
     # INV-1). Ships inert until the epic is complete (owner blocker).
     staleness_reassessor = build_staleness_reassessor(merged, router=router)
 
+    # EQ live-врезка (BOB-066 Срез W.4, Пласт 4): both built ONLY when their nested flag is on
+    # (OFF by default → None → byte-identical). ``endorsement`` warm-starts a first-contact
+    # guest the owner vouched for by name in the shared thread (кредит доверия); ``tact`` swaps
+    # the dry stranger-wall for a warm withhold VOICE on a guest owner_data request (the
+    # privilege gate is unchanged). Ship inert until the epic is complete (owner blocker).
+    endorsement_seeder = build_endorsement_seeder(
+        merged, owner_id=_int(telegram_section, "owner_id", 0) or None
+    )
+    disclosure_guard = build_disclosure_guard(merged, router=router)
+
     handle_message = HandleMessage(
         router=router,
         gateway=multibot.reply_gateway(BotIdentity.BOB),
@@ -812,6 +824,8 @@ def build_application(
         reply_delay=rhythm.reply_delay,
         # RoomMood-в-тоне consumption (BOB-066 Срез W.2): the reflective room mood colours Bob's
         # tone + appetite BY VALUE. None unless ``presence.room_mood`` → byte-identical when off.
+        endorsement_seeder=endorsement_seeder,
+        disclosure_guard=disclosure_guard,
         room_mood_modulator=room_mood_modulator,
         # Staleness врезка consumption (BOB-066 Срез W.3): rereads what landed during generation
         # and drops a now-redundant draft to a like. None unless ``presence.staleness`` →

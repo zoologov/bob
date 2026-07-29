@@ -154,6 +154,8 @@ if TYPE_CHECKING:
     from bob.application.runtime.events import MessageReceived
     from bob.application.runtime.intake.scope import TurnScope
     from bob.application.runtime.staleness_reassessor import StalenessReassessor
+    from bob.application.usecases.disclosure_guard import DisclosureGuard
+    from bob.application.usecases.endorsement_seeder import EndorsementSeeder
     from bob.application.usecases.room_mood_modulator import RoomMoodModulator
     from bob.capabilities.ports import (
         DiagramRenderer,
@@ -636,6 +638,8 @@ class HandleMessage:
         reply_delay: ReplyDelay | None = None,
         room_mood_modulator: RoomMoodModulator | None = None,
         staleness_reassessor: StalenessReassessor | None = None,
+        endorsement_seeder: EndorsementSeeder | None = None,
+        disclosure_guard: DisclosureGuard | None = None,
     ) -> None:
         self._router = router
         self._gateway = gateway
@@ -964,6 +968,18 @@ class HandleMessage:
         # (the default) / no reactor / nothing landed → None-path → the reply path is
         # byte-identical.
         self._staleness = staleness_reassessor
+        # EQ live-врезка (BOB-066 Срез W.4, Пласт 4). Both ship inert until the epic is complete:
+        #   * ``endorsement_seeder`` (behind ``presence.endorsement.enabled``): on the FIRST
+        #     contact of a GUEST the owner vouched for by name in the shared thread, Bob meets
+        #     them warm (a credit of trust that drift-to-neutral dissolves if unconfirmed)
+        #     instead of a blank neutral read. Unwired (the default) → None → the neutral
+        #     first-contact path, byte-identical.
+        #   * ``disclosure_guard`` (behind ``presence.tact.enabled``): a GUEST ``owner_data``
+        #     request gets the warm :func:`tactful_withhold_directive` instead of the dry
+        #     stranger-wall — 🔴 the privilege GATE is unchanged, only the refusal VOICE.
+        #     Unwired (the default) → None → no withhold line, byte-identical.
+        self._endorsement_seeder = endorsement_seeder
+        self._disclosure_guard = disclosure_guard
         # Reliability seam (BOB-049 .3 — «полный Боб или честный GUPPI-нотис»): the two
         # ESSENTIAL LLM steps (the semantic judgment + the reply generation) are retried a
         # bounded number of times with a short backoff before Bob falls back to the honest
@@ -1418,8 +1434,8 @@ class HandleMessage:
         #   * is refused owner commands/data (/code, /goals, config) by authz.
         # What it NO LONGER gates: recall (unified — Bob's full knowledge for anyone),
         # history (per-person thread by sender_id), voice (normal, not wary) and fact
-        # extraction (every member's turn feeds the shared/public group memory).
-        is_guest = interlocutor is not None and interlocutor.trust is Trust.GUEST
+        # extraction (every member's turn feeds the shared/public group memory). ``is_guest`` is
+        # resolved with the EQ live-врезки below (guest-ness gates both), then used at compose.
         # Reflection containment (BOB-033 .3): the reply-recall pool excludes private
         # reflection episodes so Bob's inner monologue never becomes a copyable exemplar
         # in a user-facing reply — the inner life colours tone via MOOD, not by parroting
@@ -1439,6 +1455,23 @@ class HandleMessage:
             prefetched_history
             if prefetched_history is not None
             else await self._replay_recent_thread(interlocutor)
+        )
+        # 🔴 Кредит доверия (BOB-066 Срез W.4, Пласт 4): on the FIRST contact of a GUEST the
+        # owner vouched for BY NAME in the shared thread, meet them WARM (a credit of trust
+        # the owner extends on their behalf) instead of a blank neutral read. The seed is
+        # turn-local and colours THIS turn's voice/stance; drift-to-neutral dissolves it if
+        # the guest's own behaviour doesn't confirm it. Unwired (``presence.endorsement`` off)
+        # → the relationship is unchanged, byte-identical. Needs the SHARED thread (the owner's
+        # own turns), so it runs here, after the thread is available.
+        # 🔴 EQ live-врезка (BOB-066 Срез W.4, Пласт 4): the two latent Пласт-4 seams for this
+        # turn, prepared in ONE cohesive step so handle() stays lean. (1) Кредит доверия — a
+        # first-contact GUEST the owner vouched for by name starts WARM instead of neutral;
+        # (2) такт разглашения — a GUEST owner_data request yields a warm withhold VOICE (turn-
+        # constant, threaded through compose + every regeneration) instead of the dry stranger-
+        # wall (the privilege GATE is unchanged). Both are OFF by default → the relationship is
+        # unchanged and the directive is "", so the turn is byte-identical.
+        relationship, withhold_directive, is_guest = await self._prepare_eq_live(
+            event, interlocutor, relationship, history
         )
         # User-repeat detection (BOB-022): does THIS author repeat (near-)verbatim what
         # THEY already said in the recent window? Pure, no-LLM, conservative (exact after
@@ -1500,6 +1533,7 @@ class HandleMessage:
                 verify_note=verify_note,
                 closer_nudge=closer_nudge,
                 room_tone=room_tone,
+                withhold_directive=withhold_directive,
                 rng=rng,
             )
             # Anti-repeat guard (BOB-022, defense in depth): a byte-identical repeat of Bob's
@@ -1524,6 +1558,7 @@ class HandleMessage:
                 verify_note=verify_note,
                 closer_nudge=closer_nudge,
                 room_tone=room_tone,
+                withhold_directive=withhold_directive,
                 rng=rng,
             )
 
@@ -1704,6 +1739,49 @@ class HandleMessage:
     ) -> Relationship | None:
         """Delegate to :meth:`SocialContext.load_relationship` (wave 2)."""
         return await self._social.load_relationship(interlocutor)
+
+    async def _prepare_eq_live(
+        self,
+        event: MessageReceived,
+        interlocutor: Interlocutor | None,
+        relationship: Relationship | None,
+        history: Sequence[Mapping[str, object]],
+    ) -> tuple[Relationship | None, str, bool]:
+        """Prepare the two latent Пласт-4 EQ live-врезки for this turn (BOB-066 W.4).
+
+        Returns ``(relationship, withhold_directive, is_guest)`` — the (possibly warm-seeded)
+        relationship, the guest owner_data withhold VOICE, and this turn's PRIVILEGE guest flag
+        (BOB-051: memory/voice are unified for the closed group, so ``is_guest`` survives ONLY
+        as the authz flag) — resolved together because guest-ness is the gating fact for BOTH
+        seams. handle() then applies all three in one cohesive step. Each врезка is inert unless
+        its seam is wired:
+
+        * **Кредит доверия** — the wired
+          :class:`~bob.application.usecases.endorsement_seeder.EndorsementSeeder` warm-starts a
+          FIRST-contact GUEST the owner vouched for BY NAME in the shared ``history`` (the warm
+          :func:`~bob.social.relationship.endorsed_seed`); unwired (``presence.endorsement`` off)
+          → ``relationship`` unchanged.
+        * **Такт разглашения** — the wired
+          :class:`~bob.application.usecases.disclosure_guard.DisclosureGuard` judges (via the
+          permission-flow's privilege judge) whether a GUEST turn is an ``owner_data`` disclosure
+          request and, if so, returns the warm
+          :func:`~bob.personality.voice.tactful_withhold_directive` to fold into compose — 🔴 the
+          privilege GATE is unchanged, only the refusal VOICE; unwired (``presence.tact`` off) →
+          ``""``.
+
+        Both defaults (unchanged relationship + ``""``) keep the turn byte-identical.
+        """
+        is_guest = interlocutor is not None and interlocutor.trust is Trust.GUEST
+        if self._endorsement_seeder is not None:
+            relationship = self._endorsement_seeder.seed(
+                interlocutor, relationship, history
+            )
+        withhold_directive = ""
+        if self._disclosure_guard is not None:
+            withhold_directive = await self._disclosure_guard.withhold_directive(
+                text=event.text, is_guest=is_guest
+            )
+        return relationship, withhold_directive, is_guest
 
     async def _record_relationship(
         self,

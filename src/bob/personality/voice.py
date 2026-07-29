@@ -305,6 +305,22 @@ def tactful_withhold_directive() -> str:
     return _TACTFUL_WITHHOLD
 
 
+def disclosure_refusal_directive(*, is_guest: bool, needs_owner_data: bool) -> str:
+    """Return the warm withhold voice for a guest owner_data request, else ``""`` (BOB-066 W.4).
+
+    The pure gate that wires такт разглашения into the compose seam: the warm
+    :func:`tactful_withhold_directive` is folded in ONLY when the sender is a GUEST AND the
+    turn is judged an ``owner_data`` disclosure request — otherwise no line, so an owner /
+    known peer, or a guest asking anything non-private, composes exactly as before. 🔴 The
+    privilege GATE itself is unchanged (the application still refuses to disclose); this only
+    swaps the dry stranger-wall for the human "это лучше у него спросить". Pure and
+    deterministic: same inputs → same verdict.
+    """
+    if is_guest and needs_owner_data:
+        return tactful_withhold_directive()
+    return ""
+
+
 # Recalled-impression directive (BOB-019 bob-apv.3): when someone Bob has met before
 # writes again, his LIGHT first-impression note (formed on first contact, kept per
 # sender) is folded in so he recalls them wryly — "кажется, мы уже сталкивались" —

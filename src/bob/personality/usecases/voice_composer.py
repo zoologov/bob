@@ -257,6 +257,7 @@ class VoiceComposer:
         verify_note: str | None = None,
         closer_nudge: str = "",
         room_tone: str = "",
+        withhold_directive: str = "",
         rng: Random | None = None,
     ) -> str:
         """Compose a full reply, folding the decided verbosity into the prompt.
@@ -328,6 +329,7 @@ class VoiceComposer:
             verbosity=verbosity,
             modulators=modulators,
             room_tone=room_tone,
+            withhold_directive=withhold_directive,
         )
         provider = self._tool_provider
         # ESSENTIAL step (BOB-049 .3): the reply generation is retry-wrapped — a flaky
@@ -374,6 +376,7 @@ class VoiceComposer:
         verbosity: Verbosity = Verbosity.NORMAL,
         modulators: RuleModulators | None = None,
         room_tone: str = "",
+        withhold_directive: str = "",
     ) -> str:
         """Augment the base prompt with the mood tone, stance, and brevity directives.
 
@@ -443,6 +446,13 @@ class VoiceComposer:
             # ``""`` (a neutral room OR the flag off) adds nothing, so the default path is
             # unchanged and Bob's personal Mood is never touched.
             room_tone,
+            # BOB-066 Срез W.4 (Пласт 4): такт разглашения at the VOICE layer — on a GUEST
+            # ``owner_data`` request the warm withhold line ("это лучше у него спросить")
+            # replaces the dry stranger-wall. Computed in the application (the privilege judge
+            # decides owner_data; the gate itself is unchanged) and passed in as a turn-local
+            # string; ``""`` (any non-guest / non-owner_data turn OR the flag off) adds nothing,
+            # so the default path is byte-identical.
+            withhold_directive,
         ]
         suffix = "".join(f"\n{d}" for d in directives if d)
         return f"{_SYSTEM_PROMPT}{suffix}"

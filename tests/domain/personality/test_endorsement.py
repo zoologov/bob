@@ -15,7 +15,12 @@ by requiring the endorsement to name them, so a warm word about Лёша never w
 
 from __future__ import annotations
 
-from bob.social.endorsement import detected_endorsement, owner_endorsed_sender
+from bob.social.endorsement import (
+    detected_endorsement,
+    endorsement_seed,
+    owner_endorsed_sender,
+)
+from bob.social.relationship import Relationship
 
 
 def test_plain_message_is_not_an_endorsement() -> None:
@@ -84,3 +89,63 @@ def test_owner_endorsed_sender_uses_the_first_name_of_a_multiword_name() -> None
     # load-bearing.
     owner_texts = ["познакомься, это иван, ему можно доверять"]
     assert owner_endorsed_sender(owner_texts, sender_name="иван петрович сидоров") is True
+
+
+# --- endorsement_seed: the wired decision (кредит доверия, BOB-066 W.4) --------
+
+
+def test_endorsement_seed_warm_starts_a_named_first_contact() -> None:
+    owner_texts = ["познакомься, это Норман, ему можно доверять"]
+    seeded = endorsement_seed(
+        None, sender_id=42, sender_name="Норман", owner_texts=owner_texts
+    )
+    assert seeded is not None
+    assert seeded.sender_id == 42
+    assert seeded.warmth > 0.0
+    assert seeded.trust > 0.0
+
+
+def test_endorsement_seed_keeps_neutral_without_an_endorsement() -> None:
+    # A neutral owner turn naming the sender is not a vouch → no seed (stays None).
+    owner_texts = ["Норман, ты придёшь на встречу?"]
+    assert (
+        endorsement_seed(None, sender_id=42, sender_name="Норман", owner_texts=owner_texts)
+        is None
+    )
+
+
+def test_endorsement_seed_does_not_overwrite_an_existing_relationship() -> None:
+    # Not a first contact: Bob's own accrued read is returned UNCHANGED (same object).
+    existing = Relationship(sender_id=42, warmth=-0.5)
+    owner_texts = ["познакомься, это Норман, ему можно доверять"]
+    assert (
+        endorsement_seed(
+            existing, sender_id=42, sender_name="Норман", owner_texts=owner_texts
+        )
+        is existing
+    )
+
+
+def test_endorsement_seed_keeps_neutral_when_the_vouch_names_someone_else() -> None:
+    # A warm word about Лёша must never warm-start Норман.
+    owner_texts = ["Лёша — отличный человек, ему можно доверять"]
+    assert (
+        endorsement_seed(None, sender_id=42, sender_name="Норман", owner_texts=owner_texts)
+        is None
+    )
+
+
+def test_endorsement_seed_keeps_neutral_without_a_sender_id() -> None:
+    # No concrete person to attribute the credit to → conservative, no seed.
+    owner_texts = ["познакомься, это Норман, ему можно доверять"]
+    assert (
+        endorsement_seed(None, sender_id=None, sender_name="Норман", owner_texts=owner_texts)
+        is None
+    )
+
+
+def test_endorsement_seed_keeps_neutral_on_empty_history() -> None:
+    assert (
+        endorsement_seed(None, sender_id=42, sender_name="Норман", owner_texts=[])
+        is None
+    )
