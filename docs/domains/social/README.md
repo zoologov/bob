@@ -80,6 +80,8 @@ src/bob/social/
   first_impression.py # layer=domain          — FirstImpression + impression_note_for (лёгкая заметка на нового), BOB-019
   relationship.py     # layer=domain          — Relationship (4 оси) + apply_interaction (шаг за ход), BOB-014
   sulk.py             # layer=domain          — SulkState + observe_relationship/recover (обида на person, person-agnostic, анти-Exodus), BOB-014.2b/BOB-066.2.5
+  disclosure.py       # layer=domain          — такт разглашения: may_surface/visibility_for_scope/filter_surfaceable (initiative-surfacing фильтр provenance), BOB-066.2.6
+  endorsement.py      # layer=domain          — кредит доверия: detected_endorsement/owner_endorsed_sender (owner ручается за новичка), BOB-066.2.6
   permission/         # layer=domain
     entities.py       #                        — PermissionRequest (immutable pending-запрос), BOB-052.1
     intent.py         #                        — is_deny/is_grant/is_authorize (NL-предикаты решения owner'а)
@@ -140,6 +142,12 @@ WHEN (`first_seen_at`), одна строка `note`. `impression_note_for` — 
 шаг обновления от сигналов ОДНОГО хода (`stance`, `Mood`, `sentiment`) малыми bounded-
 дельтами; сначала применяется мягкий дрейф к нейтральному `0`, так что отношение без
 поддержки расслабляется обратно и никогда не убегает в закреплённый экстремум.
+`endorsed_seed(rel, sender_id)` (BOB-066.2.6, кредит доверия) — тёплый старт по
+поручительству owner'а: ТОЛЬКО на первом контакте (`rel is None`) вернуть скромно
+тёплую связь (`warmth 0.3` / `trust 0.2`, respect/compatibility нейтральны);
+уже-сформированное отношение возвращается НЕИЗМЕНным (тот же объект), так что seed
+никогда не переписывает накопленную историю, а обычный дрейф растворяет его, если
+поведение новичка не подтвердит — head-start, не постоянная инфляция.
 
 `SulkState` (`sulk.py`) — обида/охлаждение, дно оси вовлечённости. Вход требует ПОРОГА И
 поддержания: одно плохое сообщение или бытовой мат не заводят обиду — только устойчиво
@@ -152,6 +160,60 @@ owner'а, и любого гостя — обида ключуется по `(pe
 память, ни soul — Боб «отходит», а не «уходит». `recover` — ГАРАНТИРОВАННЫЙ выход одним
 лишь временем (даже при нулевом warmth блокировки навсегда нет; тёплые ходы ускоряют
 выздоровление).
+
+### Такт разглашения (`disclosure.py`, BOB-066.2.6)
+
+Такт разглашения — **отдельная** забота от гейта привилегий (BOB-052): гейт решает,
+что человек может *попросить* Боба сделать или раскрыть; такт решает, что Боб
+*инициативно выкладывает* из собственной памяти в ответ. Две оси ортогональны — гость
+ведёт совершенно обычный разговор (память публична, BOB-051), но Боб не должен по своей
+воле выложить ему приватное owner'а. Чистое детерминированное ядро (без I/O):
+
+- `may_surface(visibility, trust)` — предикат, который recall-конвейер спрашивает на
+  каждую память. TRUSTED-собеседник (owner или известный peer) видит ВСЁ, поэтому
+  owner-facing recall байт-в-байт (INV-7); гостю удерживается только `owner_private`, а
+  `public` — и, защитно, legacy-`NULL` или неизвестный тег — всплывает (`NULL` = public
+  держит BOB-051 нетронутой, неизвестный тег никогда молча не прячет публичную память).
+  Сверка `owner_private` регистронезависима.
+- `visibility_for_scope(is_group=)` — консервативный write-side классификатор: групповой
+  ход — `public` (общая память комнаты), owner-DM ИЛИ *неопределённый* scope —
+  `owner_private` (fail-safe, INV-8: сомнение удерживает, а не течёт).
+- `filter_surfaceable(recalled, trust)` — recall-фильтр (зеркалит
+  `conversation.recalled_excluding_reflections`): роняет `owner_private`-хиты, читая
+  поле `visibility` каждого элемента. Для TRUSTED результат байт-в-байт равен входу
+  (order-preserving, INV-7); гостю удерживается только `owner_private`.
+
+Врезано live в `handle_message._recall_surfaceable` ПОВЕРХ unified recall (обоих путей —
+FTS5 И векторного KNN, оба несут `visibility`), а write-side `_turn_visibility` штампует
+провенанс на новые эпизоды и факты. Тон отказа гейта на голосовом слое —
+`personality.voice.tactful_withhold_directive` (тёплая, не холодная стена). Фильтр латентен,
+пока гость реально не в чате: owner (TRUSTED) всегда видит всё.
+
+### Кредит доверия (`endorsement.py`, BOB-066.2.6)
+
+Когда owner представляет или ручается за новичка («это мой друг Норман, ему можно
+доверять»), Боб встречает того тёплым стартом, а не как чистого незнакомца — кредит
+доверия, который owner выдаёт от его имени. Это *seed*, не постоянный грант: обычный
+дрейф-к-нейтральному растворит его, если поведение человека не подтвердит. Чистое ядро:
+
+- `detected_endorsement(owner_text)` — лёгкая эвристика (в духе
+  `personality.profanity.is_directed_hostility`): срабатывает, когда текст читается как
+  owner ПОРУЧИТЕЛЬСТВО — представление («познакомься, это мой друг») или вотум доверия
+  («ему можно доверять», «я за него ручаюсь», «он свой»). Намеренно консервативна:
+  нейтральное упоминание человека — не endorsement.
+- `owner_endorsed_sender(owner_texts, sender_name=)` — сужает сигнал до ОДНОГО человека:
+  endorsement среди недавних ходов owner'а, который НАЗЫВАЕТ этого отправителя (хватает
+  имени, регистронезависимо). Тёплое слово о Лёше никогда не warm-start'ит Нормана.
+
+Сам кредит применяется в `relationship.endorsed_seed` (см. ниже) и только на первом
+контакте — этот модуль лишь ВОСПРИНИМАЕТ endorsement.
+
+> **DEFERRED live-wiring (BOB-066.2.6, латентно — гости ещё не live).** Ядра и директивы
+> готовы и покрыты тестами, но два стыка врезки — follow-up: (1) перехват endorsement-seed
+> в `load_relationship`-шов (нужен `owner_id` на этом seam, чтобы `endorsed_seed` встал в
+> перцепцию отношения); (2) `tactful_withhold_directive` в guest owner_data compose-seam.
+> Recall-фильтр такта разглашения и write-side `visibility` **уже live** — латентен только
+> guest-специфичный код, поскольку гость сейчас не в чате (owner всегда TRUSTED).
 
 ### Permission-домен (BOB-052.1)
 
@@ -281,6 +343,19 @@ owner id), так что обиженный на середине owner пере
   не исполняется сразу: `PrivilegeJudge` (семантика) → owner решает (`PermissionFlow`) →
   исполнение (`PermissionExecutor`). GRANT — one-shot elevation по сохранённому
   `request_text`, без утечки на другие сообщения; DENY — безопасный дефолт (BOB-052).
+- **Такт разглашения — ортогонален гейту, owner байт-в-байт (INV-7, BOB-066.2.6).**
+  `may_surface`/`filter_surfaceable` фильтруют ИНИЦИАТИВНОЕ всплытие памяти (не запросы —
+  их держит `PrivilegeGate`); для TRUSTED (owner/known peer) — no-op, recall байт-в-байт,
+  гостю удерживается только `owner_private` на ОБОИХ recall-путях (FTS5 + векторный KNN,
+  оба несут `visibility`). Write-side `visibility_for_scope` fail-safe: неопределённый
+  scope → `owner_private` (INV-8, сомнение удерживает); `NULL` = public держит BOB-051
+  память нетронутой. `tactful_withhold_directive` — только ГОЛОС отказа гейта, не подмена
+  гейта.
+- **Кредит доверия — только seed на первом контакте (BOB-066.2.6).** `endorsed_seed`
+  warm-start'ит ТОЛЬКО новичка (`rel is None`); сформированная связь неизменна. Seed
+  скромный и растворяется обычным дрейфом-к-нейтральному, если поведение не подтвердит —
+  head-start, не постоянный грант. `detected_endorsement`/`owner_endorsed_sender`
+  консервативны (нужно поручительство И имя отправителя, иначе `False`).
 - **Genesis — one-shot.** Уникальная личность генерируется ровно раз на первом boot'е
   (нет `SOUL.md`), затем только читается.
 - **Мультиперсональность.** per-person атрибуция (`sender_id`/`persona_id`) сосуществует
@@ -324,7 +399,10 @@ owner id), так что обиженный на середине owner пере
 
 Ключевые точки входа:
 - Домен: `interlocutor.classify`, `first_impression.impression_note_for`,
-  `relationship.apply_interaction`, `sulk.observe_relationship`/`recover`.
+  `relationship.apply_interaction`/`endorsed_seed`, `sulk.observe_relationship`/`recover`,
+  `disclosure.may_surface`/`visibility_for_scope`/`filter_surfaceable`
+  (+ `VISIBILITY_PUBLIC`/`VISIBILITY_OWNER_PRIVATE`),
+  `endorsement.detected_endorsement`/`owner_endorsed_sender`.
 - Permission: `permission.privilege.PrivilegeJudge`, `permission.entities.PermissionRequest`,
   `permission.intent.is_deny`/`is_grant`/`is_authorize`, `permission.state.PermissionState`.
 - Use-case'ы: `usecases.Authorizer`, `SenderPerception`/`ReactorPerception`,
@@ -365,4 +443,14 @@ recovery-тика обиды) — в композиционном корне (`r
   BDD-сценарии `tests/acceptance/features/person_sulk.feature` +
   `tests/acceptance/steps/test_person_sulk.py` (адресный холод, бытовой мат ≠ hostile,
   гарантированный выход временем).
+- Такт разглашения и кредит доверия (BOB-066.2.6): чистые ядра —
+  `tests/domain/personality/test_disclosure.py` (`may_surface`/`filter_surfaceable`/
+  `visibility_for_scope`: TRUSTED/GUEST × public/private/`NULL`/unknown, регистр, scope,
+  порядок), `test_endorsement.py` (поручительство + сужение по имени),
+  `test_relationship.py` (`endorsed_seed`: seed на первом контакте, no-op на
+  сформированной связи), `test_voice.py` (`tactful_withhold_directive`); врезка recall —
+  `tests/application/usecases/test_handle_message.py` +
+  `tests/application/usecases/test_turn_visibility.py`; BDD —
+  `tests/acceptance/features/disclosure_tact.feature` +
+  `tests/acceptance/steps/test_disclosure_tact.py` (7 сценариев).
 - Layer-guard модуля: `tests/social/test_layering.py`.

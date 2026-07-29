@@ -154,7 +154,11 @@ THE анти-runaway-гардрейл. `mood_taste.modulate` — mood време
 `Verbosity`), `engagement_directive(level)`, `sulk_directive`, `relationship_tone_directive`,
 `who_is_writing_directive` / `stranger_directive` (читают уже-вычисленный `kind.value`
 собеседника — БЕЗ runtime-импорта `InterlocutorKind`), `profanity_stance`,
-`user_repeat_directive`, `improvement_directive`. `language.py` — `language_directive`
+`user_repeat_directive`, `improvement_directive`, `tactful_withhold_directive`
+(BOB-066.2.6 — тёплый отказ такта разглашения: гейт привилегий по-прежнему НЕ раскрывает
+приватные данные owner'а гостю, а эта строка лишь заменяет сухую стену на человечное «это
+лучше у него самого спросить», не роняя ни детали, ни намёка; чистая, application
+дописывает её ТОЛЬКО на guest owner_data-запрос). `language.py` — `language_directive`
 (персона говорит на своём языке). `reflection.py` — `build_reflection_prompt`: вплетает
 свежий контекст (недавние эпизоды + текущий тон) в промпт заземлённого монолога, лечит
 «застрявшую пластинку»; без свежего контекста возвращает generic-промпт дословно.
@@ -314,7 +318,8 @@ kv-таблице (`record`/`latest`/`clear` — hint всплывает не б
   `taste_evolution.reinforce`, `mood_taste.modulate`, `negotiation.Negotiation`/`Stance`,
   `fascination.Fascination`, `phantom_evolution.evolve_phantoms`, `expression.decide_expression`
   (+ `Verbosity`/`EngagementLevel`/`ExpressionMode`/`FormHint`), `voice.tone_directive`/
-  `brevity_directive`/`engagement_directive`, `reaction_meaning.ReactionMeaning`,
+  `brevity_directive`/`engagement_directive`/`tactful_withhold_directive`,
+  `reaction_meaning.ReactionMeaning`,
   `reaction_effect.apply_reaction_to_mood`, `reflection.build_reflection_prompt`, `soul.SOUL`,
   `room_tone.room_tone_directive`/`room_engagement_bias` (+ `RoomToneThresholds`).
 - Use-case'ы: `usecases.UpdateMoodFromText`, `ApplyReflection`, `ReappraiseReflection`,

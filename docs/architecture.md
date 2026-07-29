@@ -93,10 +93,10 @@ usecases/adapters модулей.
 | Модуль | Слой / вид | Что делает | SPEC |
 |---|---|---|---|
 | **coding** | вертикальный (business) | «Боб пишет код» — гейтованный автономный кодинг через `claude` CLI, план→апрув→worktree→PR | [`domains/coding/README.md`](domains/coding/README.md) |
-| **memory** | вертикальный (business) | «Боб помнит» — эпизоды + семантические факты, гибридный recall (FTS5 + sqlite-vec → RRF) | [`domains/memory/README.md`](domains/memory/README.md) |
+| **memory** | вертикальный (business) | «Боб помнит» — эпизоды + семантические факты, гибридный recall (FTS5 + sqlite-vec → RRF), scope-провенанс `visibility` (`NULL`=public, BOB-066) | [`domains/memory/README.md`](domains/memory/README.md) |
 | **personality** | вертикальный (business) | «кто Боб есть» — mood/disposition/taste/negotiation/voice/reflection/soul; второй слой `room_tone` (настроение комнаты красит голос и аппетит поверх личного mood, BOB-066) | [`domains/personality/README.md`](domains/personality/README.md) |
 | **conversation** | вертикальный (business) | «как ведётся ход» — адресность, conversational floor, brevity, engagement, судьи отклика, рефлексивное «чтение комнаты» (двускоростное внимание, за флагом `presence.reflective`) | [`domains/conversation/README.md`](domains/conversation/README.md) |
-| **social** | вертикальный (business) | «Боб различает людей» — идентичность, первое впечатление, отношения, per-person обида/охлаждение (таблица `person_sulk`, адресный холод), авторизация, permission, genesis | [`domains/social/README.md`](domains/social/README.md) |
+| **social** | вертикальный (business) | «Боб различает людей» — идентичность, первое впечатление, отношения, per-person обида/охлаждение (таблица `person_sulk`, адресный холод), такт разглашения (`disclosure` — гость не видит owner_private инициативно), кредит доверия (`endorsement`/`endorsed_seed` — owner ручается за новичка), авторизация, permission, genesis | [`domains/social/README.md`](domains/social/README.md) |
 | **proactivity** | вертикальный (business) | «фоновая жизнь Боба» — drive-движок, свои цели (Goal Engine), само-улучшение | [`domains/proactivity/README.md`](domains/proactivity/README.md) |
 | **presence** | вертикальный (business) | «живой ритм Боба» — доля эфира (soft-ceiling с focus-bypass), естественная задержка ответа, бюджет реакций; инертен за флагом `presence.rhythm` | [`domains/presence/README.md`](domains/presence/README.md) |
 | **capabilities** | вертикальный (business) | «инструменты Боба» — registry + tool-loop + навыки (recall, web_search, read_url, диаграммы, интроспекция) | [`domains/capabilities/README.md`](domains/capabilities/README.md) |
@@ -236,7 +236,10 @@ compose/guard), так что конкурентные чаты никогда �
    ход, BOB-045). План выражения (BOB-018, seeded-RNG) выбирает grounded-добавки;
    воспроизводится общий тред топика (BOB-058), извлекаются факты (`MemoryRecall`,
    FTS5, единый recall на группу, BOB-051), собирается контекст ответа (идентичность,
-   тон, вердикт `TasteEngine`, фантомы, факты). Negotiation-врезка (BOB-013) даёт
+   тон, вердикт `TasteEngine`, фантомы, факты). Recall фильтруется тактом разглашения
+   (`_recall_surfaceable` → `filter_surfaceable`, BOB-066): гостю не всплывает
+   `owner_private`-память ни на FTS5-, ни на векторном пути; для owner/known-peer
+   (TRUSTED) — no-op, recall байт-в-байт. Negotiation-врезка (BOB-013) даёт
    директиву стойки; краткость (BOB-024) выбирает `Verbosity`. → см.
    [memory](domains/memory/README.md), [personality](domains/personality/README.md),
    [conversation](domains/conversation/README.md).
@@ -255,7 +258,9 @@ compose/guard), так что конкурентные чаты никогда �
    на plain. → см. [infrastructure](domains/infrastructure/README.md).
 7. **Persist.** Ход сохраняется как эпизод в `episodic_log` (атрибутирован
    `sender_id`, BOB-045), снапшот настроения — в `mood_state`/`mood_history`.
-   Персист идёт во **всех** ветках (`REPLY`/`REACT`/`IGNORE`/сбой). Извлечение
+   Персист идёт во **всех** ветках (`REPLY`/`REACT`/`IGNORE`/сбой). Новые эпизоды и
+   факты штампуются scope-провенансом `visibility` (`_turn_visibility`: owner-DM →
+   `owner_private`, чужой ход → `public`, BOB-066; `NULL`=public для legacy). Извлечение
    фактов (`extract_facts`) — для любого участника закрытой группы (BOB-051). → см.
    [memory](domains/memory/README.md).
 
