@@ -108,6 +108,9 @@ ignore = [
 # whose Cyrillic look-alikes are intentional (the model reads the directives
 # natively); RUF001's ambiguous-character lint does not apply to these literals.
 "src/bob/personality/voice.py" = ["RUF001", "RUF002", "RUF003"]
+# The room-tone module (BOB-066 Пласт 4) carries multi-line Russian persona voice lines
+# whose Cyrillic look-alikes are intentional — RUF001/RUF002/RUF003 do not apply.
+"src/bob/personality/room_tone.py" = ["RUF001", "RUF002", "RUF003"]
 # The engagement-appetite module (BOB-014 .2a) carries Russian persona/affect terms in
 # its docstring + comments ("наскучило", "какие-попало", "ни о чём") whose Cyrillic
 # look-alikes are intentional — RUF002/RUF003 do not apply to these.
@@ -268,6 +271,15 @@ ignore = [
 # The voice tests (BOB-016/BOB-020) assert on multi-line Russian persona/tone
 # literals whose Cyrillic look-alikes are intentional (→ RUF001/RUF003).
 "tests/domain/personality/test_voice.py" = [
+    "S101",
+    "ARG001",
+    "PLR2004",
+    "RUF001",
+    "RUF003",
+]
+# The room-tone tests (BOB-066 Пласт 4) assert on Russian persona voice lines whose
+# Cyrillic look-alikes are intentional (→ RUF001/RUF003).
+"tests/domain/personality/test_room_tone.py" = [
     "S101",
     "ARG001",
     "PLR2004",
