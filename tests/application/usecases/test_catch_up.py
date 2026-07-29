@@ -191,6 +191,45 @@ def test_long_gap_yields_absence_tone() -> None:
     assert outcome.absence_tone == "последний разговор был несколько дней назад"
 
 
+def test_hours_gap_yields_hours_bucket_absence_tone() -> None:
+    # A gap within a day surfaces as an hours-count re-entry note, folded through CatchUp
+    # (not just the multi-day bucket) — verifying the bucket routing end-to-end.
+    catch_up = CatchUp(enabled=True, absence_threshold_hours=6.0)
+    last_seen = _NOW - timedelta(hours=20)
+    backlog = (_backlog(addressed_to_bob=True),)
+
+    outcome = catch_up.plan(backlog=backlog, now=_NOW, last_seen=last_seen, budget=3)
+
+    assert outcome.absence_tone == "последний разговор был около 20 часов назад"
+
+
+def test_yesterday_gap_yields_yesterday_bucket_absence_tone() -> None:
+    # A gap between one and two days surfaces as the «вчера» bucket through CatchUp.
+    catch_up = CatchUp(enabled=True, absence_threshold_hours=6.0)
+    last_seen = _NOW - timedelta(hours=30)
+    backlog = (_backlog(addressed_to_bob=True),)
+
+    outcome = catch_up.plan(backlog=backlog, now=_NOW, last_seen=last_seen, budget=3)
+
+    assert outcome.absence_tone == "последний разговор был вчера"
+
+
+def test_absence_tone_rides_alongside_the_catch_up_plan() -> None:
+    # A long gap folds the re-entry tone in WITHOUT disturbing the one-pass plan — Bob
+    # still answers the focal message and the tone is the compose-prompt texture beside it.
+    catch_up = CatchUp(enabled=True, absence_threshold_hours=6.0)
+    last_seen = _NOW - timedelta(days=3)
+    direct = _backlog(addressed_to_bob=True, text="direct")
+    ambient = _backlog(text="ambient")
+
+    outcome = catch_up.plan(
+        backlog=(direct, ambient), now=_NOW, last_seen=last_seen, budget=1
+    )
+
+    assert [m.text for m in outcome.plan.to_answer] == ["direct"]
+    assert outcome.absence_tone == "последний разговор был несколько дней назад"
+
+
 def test_short_gap_yields_no_absence_tone() -> None:
     catch_up = CatchUp(enabled=True, absence_threshold_hours=6.0)
     last_seen = _NOW - timedelta(hours=1)

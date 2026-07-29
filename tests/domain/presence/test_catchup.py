@@ -277,6 +277,74 @@ def test_empty_backlog_yields_empty_plan() -> None:
     assert plan == CatchUpPlan(to_answer=(), collapsed=())
 
 
+# ── select_catchup: ONE pass — the plan partitions the backlog exactly once ───────
+
+
+def test_plan_partitions_the_backlog_no_message_lost_or_duplicated() -> None:
+    # 🔴 ONE pass over the window, NOT one reply per message: every backlogged message
+    # lands in EXACTLY ONE of to_answer / collapsed — none is dropped, none is answered
+    # twice, none is fabricated. (Identity-checked so equal-valued messages still count.)
+    direct = _msg(addressed_to_bob=True, text="direct")
+    reply = _msg(reply_to_bob_thread=True, text="reply")
+    ambient = tuple(_msg(text=f"ambient-{i}", age_hours=float(i)) for i in range(5))
+    backlog = (direct, reply, *ambient)
+
+    plan = select_catchup(backlog, now=_NOW, budget=2)
+
+    answered_ids = [id(m) for m in plan.to_answer]
+    collapsed_ids = [id(m) for m in plan.collapsed]
+    # Disjoint: nothing is both answered and collapsed.
+    assert set(answered_ids).isdisjoint(collapsed_ids)
+    # Covering + no duplication: the two buckets together are the input, once each.
+    assert sorted(answered_ids + collapsed_ids) == sorted(id(m) for m in backlog)
+    assert len(plan.to_answer) + len(plan.collapsed) == len(backlog)
+
+
+def test_single_direct_is_never_lost_amid_a_flood_of_ambient() -> None:
+    # 🔴 INV-1/INV-10 stress: one direct address DROWNING in a large ambient flood with
+    # the tightest budget still surfaces — answered, and never in collapsed. This is the
+    # focal-never-lost guarantee at scale (many ambient, not just past-budget directs).
+    direct = _msg(addressed_to_bob=True, text="direct")
+    flood = tuple(_msg(text=f"ambient-{i}", age_hours=float(i)) for i in range(50))
+
+    plan = select_catchup((*flood, direct), now=_NOW, budget=1)
+
+    assert direct in plan.to_answer
+    assert direct not in plan.collapsed
+    # The budget is spent by the focal, so no ambient rides along — all 50 collapse.
+    assert len(plan.collapsed) == 50
+    assert all(not m.addressed_to_bob for m in plan.collapsed)
+
+
+# ── select_catchup: backpressure priority — reply-thread outranks ambient ─────────
+
+
+def test_reply_thread_takes_the_scarce_slot_over_fresher_ambient() -> None:
+    # Backpressure priority direct > reply-thread > ambient: with one non-focal slot to
+    # spare, a reply in Bob's thread is kept over a FRESHER ambient — only peripheral
+    # ambient collapses, never the thread continuation.
+    direct = _msg(addressed_to_bob=True, text="direct")
+    reply_stale = _msg(reply_to_bob_thread=True, text="reply", age_hours=10.0)
+    ambient_fresh = _msg(text="ambient", age_hours=0.0)
+
+    plan = select_catchup((direct, ambient_fresh, reply_stale), now=_NOW, budget=2)
+
+    # Focal answered; the single peripheral slot goes to the reply-thread, not ambient.
+    assert [m.text for m in plan.to_answer] == ["direct", "reply"]
+    assert [m.text for m in plan.collapsed] == ["ambient"]
+
+
+def test_reply_thread_beats_ambient_when_only_one_non_focal_survives() -> None:
+    # No focal at all, budget one: the reply-thread band wins the lone slot over ambient.
+    reply = _msg(reply_to_bob_thread=True, text="reply")
+    ambient = _msg(text="ambient")
+
+    plan = select_catchup((ambient, reply), now=_NOW, budget=1)
+
+    assert [m.text for m in plan.to_answer] == ["reply"]
+    assert [m.text for m in plan.collapsed] == ["ambient"]
+
+
 # ── BacklogScorer facade ─────────────────────────────────────────────────────────
 
 
