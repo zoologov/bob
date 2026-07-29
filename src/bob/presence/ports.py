@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     from bob.presence.outgoing_activity import OutgoingActivity
+    from bob.presence.staleness import StalenessContext, StalenessReading
 
 
 @runtime_checkable
@@ -36,4 +37,24 @@ class OutgoingActivityStore(Protocol):
 
     async def load(self, chat_id: int) -> OutgoingActivity:
         """Return Bob's current rolling activity window for ``chat_id``."""
+        ...
+
+
+@runtime_checkable
+class StalenessJudge(Protocol):
+    """Semantic seam: verbalise how the context shifted under a drafted reply.
+
+    Reads the :class:`~bob.presence.staleness.StalenessContext` (the drafted reply plus
+    what landed while Bob composed it) and returns a
+    :class:`~bob.presence.staleness.StalenessReading` — whether the point was answered by
+    someone else, the topic closed, the asker clarified, or a fresh direct question
+    arrived. The pure :func:`~bob.presence.staleness.decide_staleness` core maps that read
+    to the outcome (``LLM verbalises → core decides``). A Tier-0/1 LLM realisation lives in
+    infrastructure; tests inject a deterministic fake with no I/O. The cheap "nothing
+    landed" case never reaches the judge — :class:`~bob.presence.staleness.StalenessGate`
+    short-circuits it structurally.
+    """
+
+    async def assess(self, ctx: StalenessContext) -> StalenessReading:
+        """Return the judge's read of how ``ctx`` shifted under the drafted reply."""
         ...

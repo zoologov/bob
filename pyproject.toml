@@ -903,6 +903,16 @@ ignore = [
 # The per-person обида acceptance steps (BOB-066 .2.5) carry Russian scenario prose whose
 # Cyrillic look-alikes are intentional (→ RUF001/2/3) and assert through the boundary (S101).
 "tests/acceptance/steps/test_person_sulk.py" = ["S101", "RUF001", "RUF002", "RUF003"]
+# The staleness/merge-gate acceptance harness + steps (BOB-066 .3.1) carry Russian scenario
+# prose whose Cyrillic look-alikes are intentional (→ RUF001/2/3); the harness serves a
+# scripted fake judge (ARG002) and the steps assert through the boundary (S101).
+"tests/acceptance/staleness_harness.py" = ["RUF001", "RUF002", "RUF003", "ARG002"]
+"tests/acceptance/steps/test_staleness_merge_gate.py" = ["S101", "RUF001", "RUF002", "RUF003"]
+# The backlog catch-up acceptance harness + steps (BOB-066 .3.2) carry Russian scenario
+# prose whose Cyrillic look-alikes are intentional (→ RUF001/2/3); the steps assert
+# through the boundary (S101).
+"tests/acceptance/catchup_harness.py" = ["RUF001", "RUF002", "RUF003"]
+"tests/acceptance/steps/test_backlog_catchup.py" = ["S101", "RUF001", "RUF002", "RUF003"]
 # Proactivity tests seed `random.Random` for deterministic stochastic-sampling
 # assertions; the non-crypto PRNG is the point here, so S311 does not apply.
 "tests/domain/proactivity/*.py" = ["S101", "ARG001", "PLR2004", "S311"]

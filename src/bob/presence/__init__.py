@@ -25,11 +25,27 @@ from bob.presence.outgoing_activity import OutgoingActivity
 from bob.presence.reaction_budget import ReactionBudget
 from bob.presence.rhythm_config import RhythmConfig
 from bob.presence.share_of_voice import ShareOfVoicePolicy
+from bob.presence.staleness import (
+    ArrivedMessage,
+    StalenessContext,
+    StalenessGate,
+    StalenessOutcome,
+    StalenessReading,
+    decide_staleness,
+    nothing_arrived,
+)
 
 __all__ = [
+    "ArrivedMessage",
     "NaturalDelayPolicy",
     "OutgoingActivity",
     "ReactionBudget",
     "RhythmConfig",
     "ShareOfVoicePolicy",
+    "StalenessContext",
+    "StalenessGate",
+    "StalenessOutcome",
+    "StalenessReading",
+    "decide_staleness",
+    "nothing_arrived",
 ]
