@@ -157,3 +157,48 @@ async def test_reply_to_someone_else_is_not_reply_to_bob() -> None:
     arrived = judge.seen.newly_arrived[0]
     assert arrived.reply_to_bob is False
     assert arrived.from_draft_author is False
+
+
+async def test_anonymous_arrival_is_not_the_draft_author() -> None:
+    # Arrange: a sender-less arrival (channel post / anonymous admin) lands while the
+    # draft is also being written to no attributable author — both ids are None.
+    judge = _FakeJudge(_reading())
+    reassessor = _reassessor(judge)
+
+    # Act
+    await reassessor.reassess(
+        drafted="черновик",
+        newly_arrived=(_message(update_id=5, sender_id=None),),
+        draft_author_sender_id=None,
+        bob_user_id=_BOB_USER_ID,
+    )
+
+    # Assert: absence never counts as identity — None is not "the same author" as None,
+    # so a nameless message is not mistaken for the asker clarifying.
+    assert judge.seen is not None
+    assert judge.seen.newly_arrived[0].from_draft_author is False
+
+
+async def test_peek_burst_maps_every_arrival_in_order() -> None:
+    # Arrange: three messages landed during generation — a non-draining peek_since burst
+    # handed in whole. The judge must read the full shift, not just the first arrival.
+    judge = _FakeJudge(_reading())
+    reassessor = _reassessor(judge)
+    burst = (
+        _message(update_id=5, sender_id=_AUTHOR_ID, text="первое"),
+        _message(update_id=6, sender_id=9, text="второе"),
+        _message(update_id=7, sender_id=_AUTHOR_ID, text="третье"),
+    )
+
+    # Act
+    await reassessor.reassess(
+        drafted="черновик",
+        newly_arrived=burst,
+        draft_author_sender_id=_AUTHOR_ID,
+        bob_user_id=_BOB_USER_ID,
+    )
+
+    # Assert: every peeked message reaches the judge, in arrival order, text intact.
+    assert judge.seen is not None
+    assert [a.text for a in judge.seen.newly_arrived] == ["первое", "второе", "третье"]
+    assert [a.from_draft_author for a in judge.seen.newly_arrived] == [True, False, True]
