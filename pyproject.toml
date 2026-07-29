@@ -628,6 +628,11 @@ ignore = [
 "tests/conversation/usecases/test_read_the_room.py" = ["S101", "ARG001", "ARG002", "PLR2004", "RUF001", "RUF002", "RUF003"]
 "tests/conversation/usecases/test_turn_gate_reflective.py" = ["S101", "ARG001", "ARG002", "PLR2004", "SLF001", "RUF001", "RUF002", "RUF003"]
 "tests/conversation/usecases/test_verify_step_forced.py" = ["S101", "ARG001", "ARG002", "PLR2004", "RUF001", "RUF002", "RUF003"]
+# INV-1 matrix + reflective edge tests (BOB-066 Срез 2.2 test wave): use unused fake-port
+# args + reference the private gate types + Russian literals — S101/ARG/SLF001/RUF do not apply.
+"tests/conversation/usecases/test_turn_gate_inv1_matrix.py" = ["S101", "ARG001", "ARG002", "PLR2004", "SLF001", "RUF001", "RUF002", "RUF003"]
+"tests/domain/conversation/test_room_verdict_determinism.py" = ["S101", "ARG001", "PLR2004", "RUF001", "RUF002", "RUF003"]
+"tests/conversation/usecases/test_verify_step_forced_hedge.py" = ["S101", "ARG001", "ARG002", "PLR2004", "RUF001", "RUF002", "RUF003"]
 "tests/infrastructure/llm/test_room_reader.py" = ["S101", "ARG001", "ARG002", "PLR2004", "RUF001", "RUF002", "RUF003"]
 "tests/acceptance/steps/test_read_the_room.py" = ["S101", "ARG001", "ARG002", "PLR2004", "RUF001", "RUF002", "RUF003"]
 "tests/acceptance/reflective_harness.py" = ["S101", "ARG001", "ARG002", "PLR2004", "SLF001", "RUF001", "RUF002", "RUF003"]
