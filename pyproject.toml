@@ -835,6 +835,11 @@ ignore = [
 # replies + scenario prose whose Cyrillic look-alikes are intentional (→ RUF001/2/3).
 "tests/acceptance/floor_harness.py" = ["RUF001", "RUF002", "RUF003"]
 "tests/acceptance/steps/test_floor_by_speaker.py" = ["RUF001", "RUF002", "RUF003"]
+# The presence-rhythm acceptance harness + steps (BOB-066 .2.3) carry Russian scenario
+# prose whose Cyrillic look-alikes are intentional (→ RUF001/2/3); the harness serves
+# fixed fakes (ARG002) and the steps assert through the boundary (S101).
+"tests/acceptance/presence_harness.py" = ["RUF001", "RUF002", "RUF003", "ARG002"]
+"tests/acceptance/steps/test_presence_rhythm.py" = ["S101", "RUF001", "RUF002", "RUF003"]
 # Proactivity tests seed `random.Random` for deterministic stochastic-sampling
 # assertions; the non-crypto PRNG is the point here, so S311 does not apply.
 "tests/domain/proactivity/*.py" = ["S101", "ARG001", "PLR2004", "S311"]
@@ -919,6 +924,10 @@ source_paths = [
     "src/bob/proactivity",
     "src/bob/coding",
     "src/bob/capabilities",
+    # BOB-066 Срез 2.3: the presence ритм-слой is pure domain — its policies
+    # (share_of_voice / natural_delay / reaction_budget) are exactly the deterministic
+    # threshold logic mutation measures. The episodic adapter is denied below.
+    "src/bob/presence",
     # BOB-066 Срез 2.1: the intake-развязка lives in application/runtime, but its
     # debounce/scope DECISION core (``decisions.py``) is exactly the pure, deterministic
     # verdict logic mutation exists to measure — so it is scanned here, while the async

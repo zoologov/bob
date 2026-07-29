@@ -167,6 +167,14 @@ rules:
     description: "capabilities: personality не импортит adapters напрямую (только через фасад/порты)"
     severity: error
     forbid_import: {from: "src/bob/personality/*", to: "bob/capabilities/adapters/*"}
+  - name: capabilities-boundary-no-presence-usecases
+    description: "capabilities: presence не импортит usecases напрямую (только через фасад/порты)"
+    severity: error
+    forbid_import: {from: "src/bob/presence/*", to: "bob/capabilities/usecases/*"}
+  - name: capabilities-boundary-no-presence-adapters
+    description: "capabilities: presence не импортит adapters напрямую (только через фасад/порты)"
+    severity: error
+    forbid_import: {from: "src/bob/presence/*", to: "bob/capabilities/adapters/*"}
   - name: capabilities-boundary-no-proactivity-usecases
     description: "capabilities: proactivity не импортит usecases напрямую (только через фасад/порты)"
     severity: error
@@ -241,6 +249,14 @@ rules:
     description: "coding: personality не импортит adapters напрямую (только через фасад/порты)"
     severity: error
     forbid_import: {from: "src/bob/personality/*", to: "bob/coding/adapters/*"}
+  - name: coding-boundary-no-presence-usecases
+    description: "coding: presence не импортит usecases напрямую (только через фасад/порты)"
+    severity: error
+    forbid_import: {from: "src/bob/presence/*", to: "bob/coding/usecases/*"}
+  - name: coding-boundary-no-presence-adapters
+    description: "coding: presence не импортит adapters напрямую (только через фасад/порты)"
+    severity: error
+    forbid_import: {from: "src/bob/presence/*", to: "bob/coding/adapters/*"}
   - name: coding-boundary-no-proactivity-usecases
     description: "coding: proactivity не импортит usecases напрямую (только через фасад/порты)"
     severity: error
@@ -319,6 +335,14 @@ rules:
     description: "conversation: personality не импортит adapters напрямую (только через фасад/порты)"
     severity: error
     forbid_import: {from: "src/bob/personality/*", to: "bob/conversation/adapters/*"}
+  - name: conversation-boundary-no-presence-usecases
+    description: "conversation: presence не импортит usecases напрямую (только через фасад/порты)"
+    severity: error
+    forbid_import: {from: "src/bob/presence/*", to: "bob/conversation/usecases/*"}
+  - name: conversation-boundary-no-presence-adapters
+    description: "conversation: presence не импортит adapters напрямую (только через фасад/порты)"
+    severity: error
+    forbid_import: {from: "src/bob/presence/*", to: "bob/conversation/adapters/*"}
   - name: conversation-boundary-no-proactivity-usecases
     description: "conversation: proactivity не импортит usecases напрямую (только через фасад/порты)"
     severity: error
@@ -393,6 +417,14 @@ rules:
     description: "memory: personality не импортит adapters напрямую (только через фасад/порты)"
     severity: error
     forbid_import: {from: "src/bob/personality/*", to: "bob/memory/adapters/*"}
+  - name: memory-boundary-no-presence-usecases
+    description: "memory: presence не импортит usecases напрямую (только через фасад/порты)"
+    severity: error
+    forbid_import: {from: "src/bob/presence/*", to: "bob/memory/usecases/*"}
+  - name: memory-boundary-no-presence-adapters
+    description: "memory: presence не импортит adapters напрямую (только через фасад/порты)"
+    severity: error
+    forbid_import: {from: "src/bob/presence/*", to: "bob/memory/adapters/*"}
   - name: memory-boundary-no-proactivity-usecases
     description: "memory: proactivity не импортит usecases напрямую (только через фасад/порты)"
     severity: error
@@ -471,6 +503,14 @@ rules:
     description: "personality: memory не импортит adapters напрямую (только через фасад/порты)"
     severity: error
     forbid_import: {from: "src/bob/memory/*", to: "bob/personality/adapters/*"}
+  - name: personality-boundary-no-presence-usecases
+    description: "personality: presence не импортит usecases напрямую (только через фасад/порты)"
+    severity: error
+    forbid_import: {from: "src/bob/presence/*", to: "bob/personality/usecases/*"}
+  - name: personality-boundary-no-presence-adapters
+    description: "personality: presence не импортит adapters напрямую (только через фасад/порты)"
+    severity: error
+    forbid_import: {from: "src/bob/presence/*", to: "bob/personality/adapters/*"}
   - name: personality-boundary-no-proactivity-usecases
     description: "personality: proactivity не импортит usecases напрямую (только через фасад/порты)"
     severity: error
@@ -487,6 +527,88 @@ rules:
     description: "personality: social не импортит adapters напрямую (только через фасад/порты)"
     severity: error
     forbid_import: {from: "src/bob/social/*", to: "bob/personality/adapters/*"}
+
+  # ── presence VERTICAL module (generated) ──
+  - name: presence-usecases-no-adapters
+    description: "presence: usecases не импортят adapters (порты; adapters — на композиции)"
+    severity: error
+    forbid_import: {from: "src/bob/presence/usecases/*", to: "bob/presence/adapters/*"}
+  - name: presence-internals-no-usecases
+    description: "presence: доменная логика/адаптеры не импортят usecases (usecases — на композиции)"
+    severity: error
+    forbid_import: {from: "src/bob/presence/[!u]*", to: "bob/presence/usecases/*"}
+  - name: presence-internals-no-adapters
+    description: "presence: доменная логика не импортит adapters (adapters — на композиции)"
+    severity: error
+    forbid_import: {from: "src/bob/presence/[!au]*", to: "bob/presence/adapters/*"}
+  - name: presence-usecases-no-infra
+    description: "presence: usecases не импортят чужой infrastructure (только через порты)"
+    severity: error
+    forbid_import: {from: "src/bob/presence/usecases/*", to: "bob/infrastructure/*"}
+  - name: presence-no-composition-root
+    description: "presence: модуль не импортит композиционный корень (src/bob/app.py)"
+    severity: error
+    forbid_import: {from: "src/bob/presence/*", to: "bob/app"}
+  - name: presence-no-runtime-root
+    description: "presence: модуль не импортит композиционный корень (bob.runtime.*)"
+    severity: error
+    forbid_import: {from: "src/bob/presence/*", to: "bob/runtime*"}
+  - name: presence-boundary-no-capabilities-usecases
+    description: "presence: capabilities не импортит usecases напрямую (только через фасад/порты)"
+    severity: error
+    forbid_import: {from: "src/bob/capabilities/*", to: "bob/presence/usecases/*"}
+  - name: presence-boundary-no-capabilities-adapters
+    description: "presence: capabilities не импортит adapters напрямую (только через фасад/порты)"
+    severity: error
+    forbid_import: {from: "src/bob/capabilities/*", to: "bob/presence/adapters/*"}
+  - name: presence-boundary-no-coding-usecases
+    description: "presence: coding не импортит usecases напрямую (только через фасад/порты)"
+    severity: error
+    forbid_import: {from: "src/bob/coding/*", to: "bob/presence/usecases/*"}
+  - name: presence-boundary-no-coding-adapters
+    description: "presence: coding не импортит adapters напрямую (только через фасад/порты)"
+    severity: error
+    forbid_import: {from: "src/bob/coding/*", to: "bob/presence/adapters/*"}
+  - name: presence-boundary-no-conversation-usecases
+    description: "presence: conversation не импортит usecases напрямую (только через фасад/порты)"
+    severity: error
+    forbid_import: {from: "src/bob/conversation/*", to: "bob/presence/usecases/*"}
+  - name: presence-boundary-no-conversation-adapters
+    description: "presence: conversation не импортит adapters напрямую (только через фасад/порты)"
+    severity: error
+    forbid_import: {from: "src/bob/conversation/*", to: "bob/presence/adapters/*"}
+  - name: presence-boundary-no-memory-usecases
+    description: "presence: memory не импортит usecases напрямую (только через фасад/порты)"
+    severity: error
+    forbid_import: {from: "src/bob/memory/*", to: "bob/presence/usecases/*"}
+  - name: presence-boundary-no-memory-adapters
+    description: "presence: memory не импортит adapters напрямую (только через фасад/порты)"
+    severity: error
+    forbid_import: {from: "src/bob/memory/*", to: "bob/presence/adapters/*"}
+  - name: presence-boundary-no-personality-usecases
+    description: "presence: personality не импортит usecases напрямую (только через фасад/порты)"
+    severity: error
+    forbid_import: {from: "src/bob/personality/*", to: "bob/presence/usecases/*"}
+  - name: presence-boundary-no-personality-adapters
+    description: "presence: personality не импортит adapters напрямую (только через фасад/порты)"
+    severity: error
+    forbid_import: {from: "src/bob/personality/*", to: "bob/presence/adapters/*"}
+  - name: presence-boundary-no-proactivity-usecases
+    description: "presence: proactivity не импортит usecases напрямую (только через фасад/порты)"
+    severity: error
+    forbid_import: {from: "src/bob/proactivity/*", to: "bob/presence/usecases/*"}
+  - name: presence-boundary-no-proactivity-adapters
+    description: "presence: proactivity не импортит adapters напрямую (только через фасад/порты)"
+    severity: error
+    forbid_import: {from: "src/bob/proactivity/*", to: "bob/presence/adapters/*"}
+  - name: presence-boundary-no-social-usecases
+    description: "presence: social не импортит usecases напрямую (только через фасад/порты)"
+    severity: error
+    forbid_import: {from: "src/bob/social/*", to: "bob/presence/usecases/*"}
+  - name: presence-boundary-no-social-adapters
+    description: "presence: social не импортит adapters напрямую (только через фасад/порты)"
+    severity: error
+    forbid_import: {from: "src/bob/social/*", to: "bob/presence/adapters/*"}
 
   # ── proactivity VERTICAL module (generated) ──
   - name: proactivity-usecases-no-adapters
@@ -561,6 +683,14 @@ rules:
     description: "proactivity: personality не импортит adapters напрямую (только через фасад/порты)"
     severity: error
     forbid_import: {from: "src/bob/personality/*", to: "bob/proactivity/adapters/*"}
+  - name: proactivity-boundary-no-presence-usecases
+    description: "proactivity: presence не импортит usecases напрямую (только через фасад/порты)"
+    severity: error
+    forbid_import: {from: "src/bob/presence/*", to: "bob/proactivity/usecases/*"}
+  - name: proactivity-boundary-no-presence-adapters
+    description: "proactivity: presence не импортит adapters напрямую (только через фасад/порты)"
+    severity: error
+    forbid_import: {from: "src/bob/presence/*", to: "bob/proactivity/adapters/*"}
   - name: proactivity-boundary-no-social-usecases
     description: "proactivity: social не импортит usecases напрямую (только через фасад/порты)"
     severity: error
@@ -635,6 +765,14 @@ rules:
     description: "social: personality не импортит adapters напрямую (только через фасад/порты)"
     severity: error
     forbid_import: {from: "src/bob/personality/*", to: "bob/social/adapters/*"}
+  - name: social-boundary-no-presence-usecases
+    description: "social: presence не импортит usecases напрямую (только через фасад/порты)"
+    severity: error
+    forbid_import: {from: "src/bob/presence/*", to: "bob/social/usecases/*"}
+  - name: social-boundary-no-presence-adapters
+    description: "social: presence не импортит adapters напрямую (только через фасад/порты)"
+    severity: error
+    forbid_import: {from: "src/bob/presence/*", to: "bob/social/adapters/*"}
   - name: social-boundary-no-proactivity-usecases
     description: "social: proactivity не импортит usecases напрямую (только через фасад/порты)"
     severity: error
@@ -673,6 +811,10 @@ rules:
     description: "kernel — чистый leaf: не импортит personality (только stdlib/typing)"
     severity: error
     forbid_import: {from: "src/bob/kernel/*", to: "bob/personality/*"}
+  - name: kernel-no-presence
+    description: "kernel — чистый leaf: не импортит presence (только stdlib/typing)"
+    severity: error
+    forbid_import: {from: "src/bob/kernel/*", to: "bob/presence/*"}
   - name: kernel-no-proactivity
     description: "kernel — чистый leaf: не импортит proactivity (только stdlib/typing)"
     severity: error

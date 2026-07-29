@@ -236,6 +236,26 @@ nodes:
       - domains/social/README.md
     summary: 'Social module («Bob distinguishes people») — the full vertical capability in one place: `ports.py` + pure domain (interlocutor identity, first-impression, relationship, sulk) + `permission/` value objects, `usecases/` (authorizer/sender+reactor perception, permission flow/execution, first-impression/relationship/sulk sources, run-genesis), and `adapters/` (first-impression/relationship/sulk/allowlist/permission-request/soul stores + privilege-judge). Domain-first slice BOB-062.5.'
 
+  - ref_id: presence
+    kind: feature
+    source: src/bob/presence/
+    # BOB-066 Срез 2.3: domain-first VERTICAL module — the ритм-слой of «человеческое
+    # групповое присутствие». Like the other module-vertical bounded contexts it spans
+    # domain+adapters INSIDE one context, so it is NOT a horizontal layer. Tag is the
+    # non-layer `module-vertical` (like `proactivity` / `social`) so the tag-based
+    # `architecture-layers` rule skips its edges; its INTERNAL layering + OUTER boundary
+    # are enforced by the path-glob `forbid_import` rules generated into
+    # .beadloom/_graph/rules.yml by scripts/gen_boundary_rules.py. Deliberately a
+    # SEPARATE bounded context (not folded into proactivity): share-of-voice / natural
+    # delay / reaction budget are about the RHYTHM of a live participant, a distinct
+    # responsibility from the drive engine. Pure domain (no I/O, now/rng injected); the
+    # one adapter reads Bob's airtime off the shared episodic log. Its application
+    # collaborators (DelayedTurn, ShareOfVoiceGate) live under `application/runtime/`.
+    tags: [module-vertical]
+    summary: 'Presence module («Bob''s living rhythm») — the ритм-слой of human group presence: `ports.py` + pure domain (OutgoingActivity rolling window, ShareOfVoicePolicy soft ambient ceiling with focus-bypass, NaturalDelayPolicy human reply floor, ReactionBudget gentle like budget, RhythmConfig tunables) + `adapters/` (episodic-log OutgoingActivityStore). Domain-first slice BOB-066.2.3; inert behind the `presence.rhythm` flag until the epic ships.'
+    docs:
+      - domains/presence/README.md
+
   # ── Application submodules (kind: feature, part_of bob-application) ──────────
   - ref_id: usecases
     kind: feature
@@ -323,6 +343,9 @@ edges:
     dst: bob-domain
     kind: part_of
   - src: social
+    dst: bob-domain
+    kind: part_of
+  - src: presence
     dst: bob-domain
     kind: part_of
 
