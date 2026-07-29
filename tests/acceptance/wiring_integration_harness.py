@@ -145,6 +145,24 @@ async def _seed_active_sulk(app: Application, *, sender_id: int) -> None:
     await connection.commit()
 
 
+# A non-owner, non-Bob participant. Seeding one prior turn from them makes the recent thread
+# MULTI-PARTY (``others_present`` True), so an ambient there is a genuine group aside — the
+# realm of the share-of-voice ceiling + the low-salience IGNORE. An OWNER 1:1 ambient (no such
+# seed → ``others_present`` False) is Bob's own space and is answered (the legacy ENGAGE set).
+_OTHER_ID = 602046171
+
+
+async def _seed_other_participant(app: Application) -> None:
+    """Seed a prior message from ANOTHER participant so the recent thread reads as multi-party."""
+    connection = app.connection.connection
+    await connection.execute(
+        "INSERT INTO episodic_log (ts, event_type, content, sender_id, bob_message_id) "
+        "VALUES (?, ?, ?, ?, ?)",
+        ("2026-07-29T10:30:00+00:00", "message", "Алексей: всем привет", _OTHER_ID, None),
+    )
+    await connection.commit()
+
+
 async def run_wiring_turn(
     tmp_path: Path,
     *,
@@ -154,6 +172,7 @@ async def run_wiring_turn(
     reading: str = IGNORE_READING,
     hog_airtime: bool = False,
     sulk: bool = False,
+    others_present: bool = False,
     reply: str = "Обожаю зонды — давай расскажу.",
 ) -> FakeGateway:
     """Boot the FULL graph (presence all-on / all-off) and drive ONE turn end-to-end.
@@ -175,6 +194,8 @@ async def run_wiring_turn(
     )
     await app.startup()
     try:
+        if others_present:
+            await _seed_other_participant(app)
         if hog_airtime:
             await _seed_hogged_airtime(app)
         if sulk:

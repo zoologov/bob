@@ -47,9 +47,9 @@ def rhythm_off_and_bob_hogged(scenario_context: ScenarioContext) -> None:
     assert not scenario_context.gateway.replied
 
 
-@when(parsers.parse('участник роняет реплику в воздух: "{text}"'))
+@when(parsers.parse('в живой группе участник роняет реплику в воздух: "{text}"'))
 def participant_speaks_to_the_air(scenario_context: ScenarioContext, text: str) -> None:
-    """Drive an AMBIENT periphery turn (mentions_bob=False) with rhythm on/off."""
+    """Drive a multi-party AMBIENT periphery turn (mentions_bob=False) with rhythm on/off."""
     runner = (
         run_wired_ambient_turn
         if scenario_context.rhythm_enabled

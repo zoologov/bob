@@ -69,6 +69,23 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _directed_engage(signals: _AddressivitySignals) -> bool:
+    """Would the LEGACY addressivity policy answer this turn deterministically? (BOB-066 fix).
+
+    Mirrors the ENGAGE set of :func:`~bob.conversation.addressivity.decide_response` read on the
+    EFFECTIVE addressivity: a turn directed AT Bob — a RAW «Боб,»/@mention/reply-to-Bob OR a
+    FLOOR-CONTINUITY raise (Bob holds a live floor with this sender, so ``effective`` is
+    ``DIRECTED_TO_BOB``) — is always answered; and an ``AMBIENT`` message in Bob's OWN 1:1 space
+    (no other participant) is his to take. Everything else — a genuine MULTI-PARTY ambient or a
+    directed-to-another turn — is left to the reflective read (discretionary). This is the
+    deterministic-reply set the reflective focus check must honour so a plain follow-up to Bob's
+    question / a message in his own space is never silently dropped.
+    """
+    return signals.effective is Addressivity.DIRECTED_TO_BOB or (
+        signals.effective is Addressivity.AMBIENT and not signals.others_present
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class _JudgedTurn:
     """The semantic judge's outcome for one turn + the pieces the flow reuses (BOB-049).
@@ -316,9 +333,16 @@ class TurnGate:
         and behaviour is byte-identical.
         """
         signals = await self._addressivity.signals(event)
-        if signals.per_message is Addressivity.DIRECTED_TO_BOB:
-            # 🔴 INV-1: a direct address is answered ABOVE the series budget — the ceiling is
-            # NEVER consulted on the focal path, so a batch top-k can never drop a focus signal.
+        if _directed_engage(signals):
+            # 🔴 INV-1 (raw direct address) + the legacy ENGAGE set (BOB-066 fix): a turn the
+            # legacy addressivity policy answers deterministically — a RAW «Боб,»/@mention/
+            # reply-to-Bob, a FLOOR-CONTINUITY turn (``effective`` raised to DIRECTED_TO_BOB
+            # because Bob holds a live floor with this sender), OR a 1:1/own-space ambient (no
+            # other participant) — is answered ABOVE the reflective read, the RNG and the
+            # series/share-of-voice ceilings, so it is NEVER silently dropped. Only a genuine
+            # MULTI-PARTY ambient / directed-to-other falls through to the reflective read below.
+            # Restores the pre-activation "answer a plain follow-up to my question / in my own
+            # space" the raw-only focus check regressed (found in live owner+Bob validation).
             return _ReplyGate(
                 decision=self._floor_signal(signals, ResponseOutcome.ENGAGE),
                 history=None,

@@ -39,9 +39,17 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from bob.kernel.ports import LLMProvider
+    from bob.runtime import Application
 
 # A stable fragment of ROOM_READ_SYSTEM_PROMPT — present only on the reflective read call.
 _ROOM_READ_MARKER = "читаешь комнату"
+
+# A non-owner, non-Bob participant. Seeding one prior turn from them makes the recent thread
+# MULTI-PARTY (``others_present`` True), so the heavy-room ambient is a genuine group aside —
+# the realm of the periphery reflective read that folds the room-mood tone line into the voice.
+# An OWNER 1:1 ambient (no such seed) is Bob's own space, answered deterministically, and never
+# reaches that read.
+_OTHER_ID = 602046171
 
 # A high-salience REPLY reading of a HEAVY, heated room: on the periphery Bob WOULD barge in
 # (so a reply is composed) AND the room reads heavy/tense → the tone line should fold in.
@@ -94,10 +102,22 @@ def _config_for(tmp_path: Path, *, room_mood_enabled: bool) -> dict[str, object]
     return config
 
 
+async def _seed_other_participant(app: Application) -> None:
+    """Seed a prior message from ANOTHER participant so the recent thread reads as multi-party."""
+    connection = app.connection.connection
+    await connection.execute(
+        "INSERT INTO episodic_log (ts, event_type, content, sender_id, bob_message_id) "
+        "VALUES (?, ?, ?, ?, ?)",
+        ("2026-07-29T10:30:00+00:00", "message", "Алексей: всем привет", _OTHER_ID, None),
+    )
+    await connection.commit()
+
+
 async def run_heavy_room_turn(
     tmp_path: Path, *, text: str, room_mood_enabled: bool
 ) -> RoomMoodOutcome:
-    """Boot the graph (reflective ON, room-mood ON/OFF) and drive one AMBIENT heavy-room turn."""
+    """Boot the graph (reflective ON, room-mood ON/OFF) and drive one multi-party AMBIENT
+    heavy-room turn (another participant seeded so the periphery reflective read runs)."""
     _seed_soul(tmp_path)
     gateway = FakeGateway()
     provider = _CapturingProvider(reply="Понимаю, давай по делу.")
@@ -110,6 +130,7 @@ async def run_heavy_room_turn(
     )
     await app.startup()
     try:
+        await _seed_other_participant(app)
         await app.event_bus.publish(
             MessageReceived(
                 update_id=1,
