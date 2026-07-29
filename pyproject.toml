@@ -373,6 +373,33 @@ ignore = [
     "RUF002",
     "RUF003",
 ]
+# The whole-stack wiring INTEGRATION harness + tests + steps (BOB-066 W.5) carry Russian
+# scenario/assertion literals + docstrings whose Cyrillic look-alikes and math/dash glyphs are
+# intentional (→ RUF001/RUF002/RUF003).
+"tests/acceptance/wiring_integration_harness.py" = [
+    "S101",
+    "ARG001",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+"tests/test_integration_wiring_flags.py" = [
+    "S101",
+    "ARG001",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+"tests/acceptance/steps/test_wiring_integration.py" = [
+    "S101",
+    "ARG001",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
 "tests/**/*.py" = ["S101", "ARG001", "PLR2004"]
 # The Planner + plan_goal use-case tests (BOB-015 .2) and GUPPI goal-command tests
 # assert on Russian goal/plan/command literals whose Cyrillic look-alikes are
