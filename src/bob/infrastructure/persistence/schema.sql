@@ -236,6 +236,28 @@ CREATE TABLE IF NOT EXISTS sulk_state (
     announced  INTEGER NOT NULL DEFAULT 0   -- 0/1 one-shot GUPPI-announce flag
 );
 
+-- Per-person обида/sulk state (BOB-066 Срез 2.5): the per-(persona, sender) hurt
+-- affect — Bob can cool toward ONE participant of a multi-party thread without it
+-- touching his tone toward anyone else. Same threshold + sustain + GUARANTEED time-decay
+-- exit as the per-persona `sulk_state`, generalised by `sender_id` (the participant-
+-- agnostic key, ready for a future Bob-to-Bob thread). PRIMARY KEY (persona_id,
+-- sender_id): one row per person Bob has ever sulked at; an unseen (persona, sender) has
+-- no row (the store returns the not-sulking default). Carries NO memory and NO soul —
+-- only the affect state (anti-Exodus, a SEPARATE table). The owner's existing `sulk_state`
+-- row is backfilled here once (SqlitePersonSulkStore.backfill_owner) so a mid-обида owner
+-- keeps his state byte-identical across the upgrade. `since` is a nullable ISO-8601 entry
+-- stamp; `announced` is the one-shot GUPPI-announce flag (owner-DM only — silent in group).
+CREATE TABLE IF NOT EXISTS person_sulk (
+    persona_id TEXT    NOT NULL,
+    sender_id  INTEGER NOT NULL,
+    active     INTEGER NOT NULL DEFAULT 0,  -- 0/1 whether Bob is обижен at this person
+    intensity  REAL    NOT NULL DEFAULT 0,  -- [0,1] how hurt, decaying to exit
+    low_streak INTEGER NOT NULL DEFAULT 0,  -- consecutive low/hostile observations
+    since      TEXT,                        -- ISO-8601 entry stamp (nullable)
+    announced  INTEGER NOT NULL DEFAULT 0,  -- 0/1 one-shot GUPPI-announce flag
+    PRIMARY KEY (persona_id, sender_id)
+);
+
 -- Goal Engine (BOB-015): Bob's goals + their tasks, per persona, so he keeps his
 -- goals between sessions (autonomy stage B). One `goal` row per (persona_id, id);
 -- `state`/`origin` are the string GoalState/GoalOrigin enum values. Round-tripped by

@@ -408,28 +408,30 @@ class RelationshipReader(Protocol):
 
 
 class SulkReader(Protocol):
-    """Sulk seam: load Bob's обида state + fold an owner turn into it (BOB-014 .2b).
+    """Sulk seam: load Bob's per-person обида + fold a turn into it (BOB-066 2.5).
 
-    The compose path uses this to go COLD while Bob is hurt and to let обида take hold
-    or warm up over the live message path: :meth:`current` returns the persisted
-    :class:`~bob.social.sulk.SulkState` so the prompt appends the cold
-    :func:`~bob.personality.voice.sulk_directive` while ``active``;
-    :meth:`observe` folds ONE owner turn's signals (the relationship ``owner_warmth``,
-    a ``hostile`` directed-hostility flag, and a ``warmth_delta``) into обида AFTER the
-    turn — a sustained critical owner-drop OR sustained directed hostility enters обида
-    (announced once via GUPPI), while a warm turn accelerates recovery if already hurt.
-    The concrete adapter
-    (:class:`~bob.social.usecases.sulk_sources.SulkTracker`) is per-PERSONA and
-    persists. Optional and additive: unwired (the default) Bob never sulks and the turn
+    The compose path uses this to go COLD while Bob is hurt at the CURRENT interlocutor
+    and to let обида take hold or warm up over the live message path: :meth:`current_for`
+    returns the persisted :class:`~bob.social.sulk.SulkState` for ONE ``sender_id`` so the
+    prompt appends the cold :func:`~bob.personality.voice.sulk_directive` while ``active``
+    — an обида toward another participant never chills THIS reply (addressed cooling);
+    :meth:`observe` folds ONE person's turn signals (their relationship ``person_warmth``,
+    a ``hostile`` directed-hostility flag, and a ``warmth_delta``) into their обида AFTER
+    the turn — a sustained critical warmth-drop OR sustained directed hostility enters
+    обида (announced once via GUPPI in an owner-DM, silent in a group), while a warm turn
+    accelerates recovery if already hurt. The concrete adapter
+    (:class:`~bob.social.usecases.sulk_sources.SulkTracker`) is per-``(persona, sender)``
+    and persists. Optional and additive: unwired (the default) Bob never sulks and the turn
     behaves exactly as before. обида carries NO memory and NO soul (anti-Exodus).
     """
 
-    async def current(self) -> SulkState: ...
+    async def current_for(self, sender_id: int) -> SulkState: ...
 
     async def observe(
         self,
         *,
-        owner_warmth: float,
+        sender_id: int,
+        person_warmth: float,
         hostile: bool,
         warmth_delta: float,
         now: datetime,
@@ -1232,10 +1234,11 @@ class HandleMessage:
         # (warmth + compatibility) are coloured for THEM this turn; a new person →
         # None (a neutral turn). Per-PERSON data, so it is loaded even on a guest turn.
         relationship = await self._load_relationship(interlocutor)
-        # Load Bob's обида state (BOB-014 .2b): while active, the reactive tone goes
-        # COLD (a quieter, curt sulk_directive) — composed over mood/relationship tone.
-        # None when no seam is wired / not hurt, so the turn behaves exactly as before.
-        sulk = await self._load_sulk()
+        # Load Bob's обида state for THIS interlocutor (BOB-066 2.5): while active, the
+        # reactive tone goes COLD (a quieter, curt sulk_directive) — composed over mood/
+        # relationship tone. Addressed: an обида toward another participant never chills
+        # this reply. None when no seam is wired / not hurt, so the turn behaves as before.
+        sulk = await self._load_sulk(interlocutor)
         # Build this turn's self-improvement modulators (BOB-028 .3): the soft, bounded
         # tilts Bob's OWNER-APPROVED rules apply — voice (tone/humor), length, proactivity
         # and addressivity biases — each into ITS OWN point below. Unwired / disabled → a
@@ -1599,9 +1602,13 @@ class HandleMessage:
         """Delegate to :meth:`SocialContext.record_relationship` (wave 2)."""
         await self._social.record_relationship(interlocutor, soul, text, relationship)
 
-    async def _load_sulk(self) -> SulkState | None:
-        """Delegate to :meth:`SocialContext.load_sulk` (wave 2)."""
-        return await self._social.load_sulk()
+    async def _load_sulk(self, interlocutor: Interlocutor | None) -> SulkState | None:
+        """Delegate to :meth:`SocialContext.load_sulk` for the CURRENT interlocutor.
+
+        🔴 Addressed cooling (BOB-066 2.5): the cold tone is read for THIS interlocutor's
+        обида only, so a sulk toward another participant never chills this reply.
+        """
+        return await self._social.load_sulk(interlocutor)
 
     async def _observe_sulk(
         self, interlocutor: Interlocutor | None, soul: SOUL, text: str

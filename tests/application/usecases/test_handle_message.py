@@ -6000,26 +6000,30 @@ class _FakeSulk:
     """In-memory SulkReader fake: a fixed current state + capture of observations.
 
     ``current`` is the обида state returned for the turn (the cold-tone source);
-    ``observations`` captures every (owner_warmth, hostile, warmth_delta) folded in
-    after a turn so a test can assert the обида signal reacts to the right thing.
+    ``observations`` captures every (sender_id, person_warmth, hostile, warmth_delta)
+    folded in after a turn so a test can assert the обида signal reacts to the right thing;
+    ``loaded_for`` captures the sender_id the addressed cold tone was read for.
     """
 
     def __init__(self, *, current: SulkState | None = None) -> None:
         self._current = current if current is not None else SulkState()
-        self.observations: list[tuple[float, bool, float]] = []
+        self.observations: list[tuple[int, float, bool, float]] = []
+        self.loaded_for: list[int] = []
 
-    async def current(self) -> SulkState:
+    async def current_for(self, sender_id: int) -> SulkState:
+        self.loaded_for.append(sender_id)
         return self._current
 
     async def observe(
         self,
         *,
-        owner_warmth: float,
+        sender_id: int,
+        person_warmth: float,
         hostile: bool,
         warmth_delta: float,
         now: datetime,  # noqa: ARG002 - part of the seam contract, unused by the fake
     ) -> SulkState:
-        self.observations.append((owner_warmth, hostile, warmth_delta))
+        self.observations.append((sender_id, person_warmth, hostile, warmth_delta))
         return self._current
 
 
@@ -6059,7 +6063,7 @@ async def test_not_sulking_leaves_the_tone_normal() -> None:
 
 
 async def test_owner_turn_feeds_the_sulk_signal() -> None:
-    # An OWNER turn folds (owner_warmth, hostile, warmth_delta) into обида after.
+    # A turn folds (sender_id, person_warmth, hostile, warmth_delta) into обида after.
     rel = _FakeRelationship(current=Relationship(sender_id=99, warmth=-0.6))
     sulk = _FakeSulk()
     handler, _bot, _repo, _tier1 = _build(
@@ -6069,8 +6073,9 @@ async def test_owner_turn_feeds_the_sulk_signal() -> None:
     await handler.handle(_message("расскажи подробно про космос"))
 
     assert len(sulk.observations) == 1
-    owner_warmth, _hostile, _delta = sulk.observations[0]
-    assert owner_warmth == -0.6  # the owner relationship warmth fed the signal
+    sender_id, person_warmth, _hostile, _delta = sulk.observations[0]
+    assert sender_id == 99  # keyed per person (the owner's sender_id here)
+    assert person_warmth == -0.6  # the relationship warmth fed the signal
 
 
 async def test_directed_insult_flags_hostility_to_the_sulk_signal() -> None:
@@ -6082,7 +6087,7 @@ async def test_directed_insult_flags_hostility_to_the_sulk_signal() -> None:
 
     await handler.handle(_message("ты тупой идиот"))
 
-    assert sulk.observations[0][1] is True  # hostile flag set
+    assert sulk.observations[0][2] is True  # hostile flag set
 
 
 async def test_casual_mat_is_not_flagged_hostile_to_the_sulk_signal() -> None:
@@ -6095,11 +6100,12 @@ async def test_casual_mat_is_not_flagged_hostile_to_the_sulk_signal() -> None:
 
     await handler.handle(_message("блин, ну охренеть как круто получилось!"))
 
-    assert sulk.observations[0][1] is False  # casual мат is not hostile
+    assert sulk.observations[0][2] is False  # casual мат is not hostile
 
 
-async def test_guest_turn_does_not_feed_the_sulk_signal() -> None:
-    # обида v1 is tied to the OWNER relationship — a guest turn never feeds it.
+async def test_guest_turn_feeds_its_own_per_person_sulk_signal() -> None:
+    # BOB-066 2.5: the owner-gate is gone — a guest turn folds into the GUEST's own
+    # per-(persona, sender) обида (keyed by their sender_id), never the owner's.
     sulk = _FakeSulk()
     handler, _bot, _repo, _tier1 = _build(
         reply="hi", perceive_sender=_guest_resolver(), sulk=sulk
@@ -6107,7 +6113,9 @@ async def test_guest_turn_does_not_feed_the_sulk_signal() -> None:
 
     await handler.handle(_message("ты тупой идиот"))
 
-    assert sulk.observations == []  # owner-only
+    assert len(sulk.observations) == 1
+    assert sulk.observations[0][0] == 99  # keyed by the guest's sender_id
+    assert sulk.observations[0][2] is True  # directed hostility flagged
 
 
 async def test_no_sulk_seam_leaves_the_turn_unchanged() -> None:

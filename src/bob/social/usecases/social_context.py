@@ -32,7 +32,6 @@ from typing import TYPE_CHECKING
 from bob.personality.negotiation import _clamp_conviction
 from bob.personality.profanity import is_directed_hostility
 from bob.personality.voice import relationship_tone_directive
-from bob.social.interlocutor import InterlocutorKind
 from bob.social.relationship import compromise_bias
 
 if TYPE_CHECKING:
@@ -170,39 +169,39 @@ class SocialContext:
         except Exception:
             logger.exception("recording relationship failed (ignored)")
 
-    async def load_sulk(self) -> SulkState | None:
-        """Load Bob's обида state for this turn, or ``None`` (BOB-014 .2b).
+    async def load_sulk(self, interlocutor: Interlocutor | None) -> SulkState | None:
+        """Load Bob's обида state toward THIS interlocutor, or ``None`` (BOB-066 2.5).
 
-        With no sulk seam wired returns ``None`` so the compose path adds no cold-tone
-        line and the turn behaves exactly as before. Otherwise returns the persisted
-        :class:`~bob.social.sulk.SulkState` so the prompt can go cold while
-        Bob is hurt. обида carries NO memory and NO soul — only the affect state.
+        With no sulk seam wired (or no perceived interlocutor) returns ``None`` so the
+        compose path adds no cold-tone line and the turn behaves exactly as before.
+        Otherwise returns the persisted :class:`~bob.social.sulk.SulkState` for this
+        sender so the prompt can go cold while Bob is hurt AT THEM — an обида toward
+        another participant never chills this reply (🔴 addressed cooling). обида carries
+        NO memory and NO soul — only the affect state.
         """
-        if self._sulk is None:
+        if self._sulk is None or interlocutor is None or interlocutor.sender_id is None:
             return None
-        return await self._sulk.current()
+        return await self._sulk.current_for(interlocutor.sender_id)
 
     async def observe_sulk(
         self, interlocutor: Interlocutor | None, soul: SOUL, text: str
     ) -> None:
-        """Fold this OWNER turn into Bob's обида state after the turn (BOB-014 .2b).
+        """Fold this person's turn into Bob's обида toward them (BOB-066 2.5).
 
-        Owner-only (обида v1 is tied to the OWNER relationship that leads proactivity).
-        The "low" signal is BOTH the owner relationship warmth (a critically cold
-        relationship) AND a DIRECTED hostility flag from
+        Per-person (the owner-gate is gone — Bob can cool toward ANY participant, keyed by
+        ``sender_id``). The "low" signal is BOTH this person's relationship warmth (a
+        critically cold relationship) AND a DIRECTED hostility flag from
         :func:`~bob.personality.profanity.is_directed_hostility` — so it reacts to
         sustained directed hostility, NOT to casual мат (which is never flagged hostile).
         A warm turn (positive ``warmth_delta``, read off the turn's mood valence)
         accelerates recovery if already hurt. Best-effort: a flaky store can never break
         a turn that already replied.
         """
-        if self._sulk is None or interlocutor is None:
+        if self._sulk is None or interlocutor is None or interlocutor.sender_id is None:
             return
-        if interlocutor.kind is not InterlocutorKind.OWNER:
-            return
-        # The owner relationship warmth this turn (the relationship was just re-recorded
-        # for the owner); a not-yet-formed relationship reads as neutral 0.
-        owner_warmth = await self._owner_warmth(interlocutor)
+        # This person's relationship warmth this turn (just re-recorded for them); a
+        # not-yet-formed relationship reads as neutral 0 (a fresh Bob never sulks blank).
+        person_warmth = await self._person_warmth(interlocutor)
         hostile = is_directed_hostility(text)
         # A warm message has positive sentiment; the mood valence folds in the perceived
         # sentiment of the turn (UpdateMoodFromText nudged it), so it is the grounded
@@ -210,7 +209,8 @@ class SocialContext:
         warmth_delta = soul.mood.valence
         try:
             await self._sulk.observe(
-                owner_warmth=owner_warmth,
+                sender_id=interlocutor.sender_id,
+                person_warmth=person_warmth,
                 hostile=hostile,
                 warmth_delta=warmth_delta,
                 now=self._clock.now(),
@@ -218,10 +218,10 @@ class SocialContext:
         except Exception:
             logger.exception("observing sulk failed (ignored)")
 
-    async def _owner_warmth(self, interlocutor: Interlocutor) -> float:
-        """The owner relationship warmth for the обида signal, or neutral 0 (BOB-014).
+    async def _person_warmth(self, interlocutor: Interlocutor) -> float:
+        """This person's relationship warmth for the обида signal, or neutral 0 (BOB-066).
 
-        Reads the freshly-updated relationship for the owner (re-recorded earlier this
+        Reads the freshly-updated relationship for this sender (re-recorded earlier this
         turn) off the relationship seam; a not-yet-formed relationship (or no seam)
         reads as neutral ``0.0`` so a fresh Bob never sulks from a blank read.
         """

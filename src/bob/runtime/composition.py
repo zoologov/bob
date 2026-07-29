@@ -164,6 +164,7 @@ from bob.runtime.wiring import (
     _resolve_seed,
 )
 from bob.social.adapters.first_impression_store import SqliteFirstImpressionStore
+from bob.social.adapters.person_sulk_store import SqlitePersonSulkStore
 from bob.social.adapters.relationship_store import SqliteRelationshipStore
 from bob.social.adapters.soul_loader import (
     _default_soul,
@@ -171,7 +172,6 @@ from bob.social.adapters.soul_loader import (
     _load_soul,
 )
 from bob.social.adapters.soul_store import SoulStore
-from bob.social.adapters.sulk_store import SqliteSulkStore
 from bob.social.usecases import ReactorPerception, SenderPerception
 from bob.social.usecases.first_impression_sources import FirstImpressionTracker
 from bob.social.usecases.relationship_sources import RelationshipTracker
@@ -230,6 +230,10 @@ class Application:
     proactivity_store: SqliteProactivityStore
     proactivity_engine: ProactivityEngine
     proactive_tick: ProactiveTick
+    # Per-(persona, sender) обида store (BOB-066 2.5): exposed so ``startup`` can run the
+    # one-time, idempotent backfill of the owner's legacy ``sulk_state`` row (byte-identical
+    # upgrade) once the schema is applied.
+    person_sulk_store: SqlitePersonSulkStore
     # Self-directed goal-pursuit tick (BOB-015 .3): wired only when
     # ``goals.pursuit_enabled`` is on (conservative default off → runtime as before).
     pursue_goals_tick: PursueGoalsTick | None = None
@@ -251,6 +255,14 @@ class Application:
         """
         await self.connection.initialize()
         await self.memory_repo.initialize()
+        # Per-person обида backfill (BOB-066 2.5): copy the owner's legacy per-persona
+        # ``sulk_state`` row into ``person_sulk`` under his ``sender_id`` ONCE, so a
+        # mid-обида owner keeps his exact state across the upgrade (byte-identical).
+        # Idempotent + existence-guarded (never resurrects a stale обида); a no-op with
+        # no owner id configured / no legacy row.
+        await self.person_sulk_store.backfill_owner(
+            _BOB_PERSONA, _int(_section(self.config, "telegram"), "owner_id", 0)
+        )
         result = await self.genesis.run()
         self.personality.soul = _load_soul(self.soul_store)
         # Resolve Bob's own bot identity (id + @username) so the addressivity scan
@@ -411,11 +423,11 @@ def build_application(
     # when addressivity.floor.enabled is true; disabled → exactly BOB-023.
     floor_enabled = _build_floor_enabled(merged)
     floor_store = SqliteConversationFloorStore(connection) if floor_enabled else None
-    # Sulk/обида store (BOB-014 .2b): the per-persona affect state — entered on a
-    # SUSTAINED critical owner-drop / directed hostility, decaying to a GUARANTEED exit.
-    # Carries NO memory and NO soul (anti-Exodus). The tracker is built AFTER multibot
-    # so GUPPI can be its one-shot announcer.
-    sulk_store = SqliteSulkStore(connection)
+    # Sulk/обида store (BOB-066 2.5): the per-(persona, sender) affect state — entered on
+    # a SUSTAINED critical warmth-drop / directed hostility toward ONE person, decaying to
+    # a GUARANTEED exit. Carries NO memory and NO soul (anti-Exodus, a separate table). The
+    # tracker is built AFTER multibot so GUPPI can be its one-shot announcer.
+    person_sulk_store = SqlitePersonSulkStore(connection)
 
     # Goal Engine (BOB-015): the per-persona goal store backs the Planner-driven
     # plan_goal use-case (double approval) and GUPPI's owner goal-commands. The
@@ -482,13 +494,16 @@ def build_application(
         coding_assistant=coding_assistant,
         bob_reaction_filter=_BobReactionFilter(memory_repo),
     )
-    # обида seam (BOB-014 .2b): GUPPI announces a fresh sulk entry once ("Боб обижен …")
-    # — the внеличностный systemic voice. The tracker loads/evolves/recovers обида and
-    # is read by HandleMessage (cold tone + owner-turn observation), the reflect tick
-    # (guaranteed time-decay recovery), and the proactivity engine (the sulk veto).
+    # обида seam (BOB-066 2.5): GUPPI announces a fresh owner-DM sulk entry once ("Боб
+    # обижен …") — the внеличностный systemic voice (a group entry is silent). The tracker
+    # loads/evolves/recovers обида per-(persona, sender) and is read by HandleMessage
+    # (addressed cold tone + per-person observation), the reflect tick (guaranteed
+    # time-decay recovery of each active sulk), and the proactivity engine (the owner sulk
+    # veto — hence ``owner_sender_id``).
     sulk_tracker = SulkTracker(
-        store=sulk_store,
+        store=person_sulk_store,
         persona_id=_BOB_PERSONA,
+        owner_sender_id=_int(telegram_section, "owner_id", 0) or None,
         announcer=multibot.guppi,
     )
 
@@ -1005,6 +1020,7 @@ def build_application(
         proactivity_store=proactivity_store,
         proactivity_engine=proactivity_engine,
         proactive_tick=proactive_tick,
+        person_sulk_store=person_sulk_store,
         pursue_goals_tick=pursue_goals_tick,
         coding_assistant=coding_assistant,
     )
