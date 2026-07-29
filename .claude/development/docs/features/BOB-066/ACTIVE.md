@@ -63,3 +63,14 @@ Cohesion. 🔴 DoD: full-reindex + full-mypy + `beadloom ci`.
   git add по путям).
 - 2026-07-29: **Старт Фазы 2 (сердце).** Слайс 2.1 intake-развязка + TurnScope (bob-vol.4.1..4.4) —
   критический/тяжёлый, веду сфокусированно. Далее 2.2 рефлексивный read+INV-1 → 2.4 → 2.5/2.6.
+- 2026-07-29: **`bob-vol.4.1` dev — intake-развязка ОТГРУЖЕНА** (features/BOB-066 @ f29d7b1).
+  application/runtime/intake/{decisions,scope,inbox,dispatcher,focus}: подписчик MESSAGE_RECEIVED →
+  ChatDispatcher.submit (не-блок), per-chat воркер сериализует чат (INV-5), TurnScope rng-изоляция
+  (INV-4), фокус минует debounce (INV-1/10). rng проброшен во все seeded-draw коллабораторы
+  (plan/engagement/verbosity/addressivity/gate/compose/guard) через optional-param fallback →
+  поведение single-turn идентично. Application.intake_dispatcher + shutdown-дренаж; poll/gateway/
+  event_bus не тронуты. 34 unit + BDD intake_burst.feature + mutation 4/4 (100%) на decisions.
+  pytest 3399, mypy full 0, ruff 0, reindex --full + lint --strict 0, doctor PASS. 🔴 beadloom ci:
+  единственный красный = 216 stale doc (signatures changed) → tech-writer-волна (sync-update +
+  setup-rules --refresh). Существующие e2e/acceptance обновлены (publish→enqueue + wait_for_idle).
+  Далее: 4.2 test (гонки/сериализация/turn-scope) → 4.3 review → 4.4 tech-writer (закрывает Gate).
