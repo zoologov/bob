@@ -9,9 +9,11 @@
 (`EngagementLevel` + затухающая усталость), *судьи хода* (семантический ResponseJudge «как
 ответить», VolatilityJudge «нужна ли свежая проверка перед ответом»), *живая interim-строка*
 на время проверки и *анти-тик* защита (повтор owner'а / повтор Боба / фраза-тик / повторяющийся
-закрывающий мотив) и *цель ответа на выходе* (`OutgoingTarget` — цитировать ли reply-to и кого
-адресовать). Это модуль о том, **как ведётся ход** — он спрашивает у характера, *как сказать*, но
-сам решает *если/насколько*, *в какой форме* и *куда* Боб вступает.
+закрывающий мотив), *цель ответа на выходе* (`OutgoingTarget` — цитировать ли reply-to и кого
+адресовать) и *рефлексивное «чтение комнаты»* (двускоростное внимание: фокус-путь для прямого
+обращения против периферийного `ReadTheRoom` — «как живой равный участник группы»). Это модуль о
+том, **как ведётся ход** — он спрашивает у характера, *как сказать*, но сам решает
+*если/насколько*, *в какой форме* и *куда* Боб вступает.
 
 Это шестой **вертикальный** модуль domain-first раскладки (BOB-062.6a, срез 6/8 эпика
 BOB-062), выделенный из `domain/personality/` рядом с `personality`: «как ведётся ход» собран
@@ -80,9 +82,13 @@ src/bob/conversation/
   reply_context.py    # layer=domain          — _assemble_shareable_context: сборка reply-shaping контекста хода (free-функция → хелпер, BOB-062.6b)
   thread.py           # layer=domain          — проекция персиста в сигналы хода: _render_thread/_user_turns/_history_for_author/_recent_bob_replies/_strip_recalled_closer (BOB-062.6b)
   outgoing_target.py  # layer=domain          — OutgoingTarget VO + resolve_outgoing_target: КУДА ложится ответ (цитата reply-to + адресат), BOB-066 Срез 1.1
+  room_reading.py     # layer=domain          — RoomMood/ReflectiveIntent/RoomReading(+Context) VO + порт RoomReader: форма ОДНОГО рефлексивного «чтения комнаты» (BOB-066 Срез 2.2)
+  room_reading_wire.py# layer=domain          — чистый Tier-1 wire-протокол «чтения комнаты» (ROOM_READ_SYSTEM_PROMPT/build_room_prompt/parse_room_reading, бросает RoomReadingParseError)
+  room_verdict.py     # layer=domain          — VerdictKind/ReflectiveVerdict + decide_from_reading + SALIENCE_THRESHOLD: чистое ядро вердикта (LLM вербализует → ядро решает)
   usecases/           # layer=application
     decide_response.py       —                — DecideResponse: собрать контекст и спросить судью по смыслу (BOB-049)
-    turn_gate.py             —                — TurnGate: гейт хода reply/react/silent (тонкий координатор, BOB-062.6b)
+    read_the_room.py         —                — ReadTheRoom: собрать периферийный контекст и спросить рефлексивного читателя (BOB-066 Срез 2.2)
+    turn_gate.py             —                — TurnGate: гейт хода reply/react/silent + фокус/периферия-развилка (тонкий координатор, BOB-062.6b/066 Срез 2.2)
     addressivity_perceiver.py —               — AddressivityPerceiver: восприятие адресности + брать ли ход (BOB-023/025)
     floor_manager.py         —                — FloorManager: resolve + advance разговорной реплики (floor, BOB-025)
     engagement_model.py      —                — EngagementModel: аппетит + verbosity + after-turn feedback (BOB-014/024)
@@ -90,6 +96,7 @@ src/bob/conversation/
     verify_step.py           —                — VerifyStep: предответная эпистемическая проверка → per-turn note (BOB-057)
     anti_repeat_guard.py     —                — AntiRepeatGuard: анти-повтор/тик + кольцо закрывающих (BOB-022/061)
   adapters/           # layer=infrastructure
+    room_reader.py           —                — LlmRoomReader (Tier-1 реализация RoomReader: богатый рефлексивный read, ROOM_READ)
     response_judge.py        —                — LlmResponseJudge (Tier-0 реализация ResponseJudge)
     volatility_judge.py      —                — LlmVolatilityJudge (Tier-0 реализация VolatilityJudge)
     interim_line.py          —                — LlmInterimLineGenerator (живая interim-строка)
@@ -194,6 +201,86 @@ BOB-022 — точный матч после нормализации, конс�
 (`aiogram`-шлюз, `multibot._ReplyGateway`) обновлены пробросом без изменения текущего поведения при
 `None`.
 
+### Рефлексивное «чтение комнаты» — двускоростное внимание (BOB-066 Срез 2.2)
+
+Пласт 1 эпика «человеческое групповое присутствие»: в многолюдном треде Боб — живой равный
+участник, а не коммутатор и не скрипт-бот. Развилка **двух скоростей внимания** сидит в самом
+верху `TurnGate.gate()`, ДО судьи BOB-049, и работает, только когда рефлексивный читатель проведён
+(флаг ниже) И отправитель распознан.
+
+- 🔴 **Фокус-путь (INV-1).** Сырое `DIRECTED_TO_BOB` (упоминание / reply на Боба / «Боб, …»)
+  замыкается на ДЕТЕРМИНИРОВАННЫЙ `_ReplyGate` — минуя рефлексивный read, RNG и потолок доли
+  голоса. Прямое обращение получает ответ ЛИБО (при сбое генерации ниже по потоку) честную
+  GUPPI-заметку, но НИКОГДА не молчание. Путь читает `signals()` (сырое восприятие), а не
+  `decide()` (несущий RNG/политику); `rng` принят только ради паритета сигнатуры и намеренно НЕ
+  используется (это и есть инвариант).
+- **Периферия (ambient / directed-to-other, включая floor-continuity как сильный приор, который
+  рефлексия может переопределить).** Одно богатое рефлексивное чтение → чистый вердикт. Боб
+  «читает комнату», как человек: понимает ситуацию, кто с кем говорит, настроение комнаты и — как
+  ЛИЧНОСТЬ — стоит ли вмешиваться. Сбой чтения безопасно дефолтит в молчаливый IGNORE (floor
+  продвигается, БЕЗ GUPPI-заметки — это не фокальная гарантия).
+
+**Пять компонентов, зеркалящих судью BOB-049 один-в-один:**
+
+1. **VO + порт (`room_reading.py`).** `RoomReading` — неизменяемый ИТОГ одного чтения: `situation`
+   (короткая фраза, что происходит), `pairings` (кто-с-кем, author-labelled), `room_mood`,
+   `intent`, `addressee_id`, `salience` («стоит ли влезть»), опциональный `emoji`, `wants_web` и
+   внутренний `reason` (только логи). `RoomReadingContext` — неизменяемый ВХОД: сообщение,
+   отправитель как соц. контекст, общий author-labelled тред (BOB-058), mood-тон, структурные +
+   floor-хинты (`addressivity`/`mentions_bob`/`reply_to_bob`/`others_present`/`floor_engaged` +
+   `floor_holder`/`floor_participant` из Среза 1.2) и `interest` по значению — каждое поле сигнал,
+   ни одно не override. `ReflectiveIntent` — REPLY/REACT/IGNORE/INITIATE/SELF_CHECK.
+   🔴 `RoomMood` (PLAYFUL/WARM/NEUTRAL/SOMBRE/TENSE/HEATED) несёт `valence`/`polarization` как
+   plain-float свойства, которые Срез 2.4 потребит ПО ЗНАЧЕНИЮ в тон — без импорта conversation в
+   personality (ребро остаётся однонаправленным). `RoomReader` — инъектируемый порт
+   `read(ctx) -> RoomReading`.
+2. **Wire-протокол (`room_reading_wire.py`).** Model-facing половина, чистая (без I/O и RNG):
+   `build_room_prompt` сворачивает контекст в Tier-1 user-prompt, `ROOM_READ_SYSTEM_PROMPT` задаёт
+   задачу и размеченный контракт. 🔴 `parse_room_reading` БРОСАЕТ `RoomReadingParseError` на мусоре
+   (отсутствующий/битый `intent` или `salience`) вместо молчаливого дефолта; мягкие поля деградируют
+   мягко (`mood`→NEUTRAL, `addressee`→None, `wants_web`→False). `salience` парсится знаковым
+   float-regex и клампится в `[0, 1]` (отрицательное → 0, не читается как модуль).
+3. **Use-case (`usecases/read_the_room.py`).** `ReadTheRoom` — тонкий application-use-case над
+   портом, зеркало `DecideResponse`: собирает куски периферийного хода в `RoomReadingContext` и
+   делегирует единственное богатое чтение инъектированному `RoomReader`; своей политики не держит.
+4. **Tier-1 адаптер (`adapters/room_reader.py`).** `LlmRoomReader` — тонкая оболочка: чистый билдер
+   промпта → router на Tier-1 модели (задача `ROOM_READ` — «не жалеть LLM» на рефлексии) → чистый
+   парсер. НЕ глотает сбои: `RoomReadingParseError` или ошибка модели/роутера ПРОБРАСЫВАЮТСЯ, чтобы
+   периферийный гейт безопасно ушёл в молчаливый IGNORE.
+5. **Чистое ядро вердикта (`room_verdict.py`).** 🔴 Несущий инвариант всего среза: *LLM ВЕРБАЛИЗУЕТ
+   чтение, а это чистое ядро РЕШАЕТ вердикт* — детерминированное отображение без I/O и RNG (как
+   `addressivity.decide_response` на легаси-пути). `decide_from_reading` читает ТОЛЬКО reading (все
+   сигналы уже свёрнуты в него; параметр `signals` намеренно опущен — иначе цикл domain→application):
+   `salience < SALIENCE_THRESHOLD` (0.35) → IGNORE, что бы ни сказал intent; иначе REACT→REACT(+emoji),
+   IGNORE/SELF_CHECK→IGNORE, REPLY/INITIATE→REPLY. `wants_web` едет на REPLY-вердикте как `force_web`,
+   `addressee_id` — для floor-пасса / reply-to.
+
+**Проводка в гейте.** `TurnGate.__init__` получил `read_the_room: ReadTheRoom | None = None`; при
+проводке и распознанном отправителе `gate()` уходит в `_reflective_gate` (фокус/периферия), иначе —
+байт-идентично судья BOB-049 или легаси. `_ReplyGate` получил `force_web: bool = False` (`True`
+только когда периферийный read выставил `wants_web`). Периферийное чтение собирается в `_read_room`
+(общий тред + структурные/floor-хинты + interest), сбой ловится в `except Exception` → молчаливый
+IGNORE.
+
+**`wants_web` (C11) переиспользует `VerifyStep`.** `VerifyStep.note(..., forced=False)` получил флаг
+`forced`: когда рефлексивный read выбрал сходить проверить, судья волатильности ПРОПУСКАЕТСЯ (Боб уже
+решил), и текст хода гонит ОДИН поиск по ТОМУ ЖЕ существующему verify/web-шву (`_verdict` строит
+утвердительный `VolatilityVerdict` прямо из текста). Никакого нового веб-шва; отсутствие провайдера
+по-прежнему коротит в `""`. `HandleMessage` читает `gate.force_web` и прокидывает `forced=force_web`
+в `self._verify.note(...)`.
+
+**🔴 Флаг `presence.reflective` (по умолчанию OFF).** Рефлексивный читатель собирается в
+`runtime/composition.py` только при `presence.reflective` — весь эпик «человеческое групповое
+присутствие» отгружается ОДНИМ куском (блокер владельца), поэтому продакшн остаётся на судье BOB-049,
+пока эпик не готов целиком, а сама развилка test-driven. OFF → `read_the_room=None` → рефлексивная
+ветка `TurnGate` пропускается (гард `read_the_room is not None`), поведение байт-идентично.
+`TaskType.ROOM_READ` добавлен в `llm_router` (Tier-1).
+
+*Заметка на будущее (не dead-code, forward-scaffolding):* `RoomReading.addressee_id` /
+`ReflectiveVerdict.addressee_id` парсятся и несутся, но `_act_reflective` пока их не использует
+(floor-сигнал ответа берёт сырой `signals.directed_to_id`); reply-to-нить прокладывается в позднем
+срезе.
+
 ### Use-case и адаптеры
 
 `DecideResponse` (`usecases/decide_response.py`) — тонкий application-use-case над судьёй
@@ -233,11 +320,20 @@ per-turn `TurnScope` (BOB-066 Срез 2.1, INV-4).** Под intake-развяз
   consume-once).
 - `VerifyStep` (`verify_step.py`) — предответная эпистемическая проверка (`note`), возвращает
   turn-local заметку; per-turn интерим-анонсер строится из `chat_id` хода через инъектированную
-  фабрику.
+  фабрику. `note(..., *, forced=False)`: `forced=True` (рефлексивный `wants_web`, C11) пропускает
+  судью волатильности и гонит ОДИН поиск по тому же verify/web-шву.
+- `ReadTheRoom` (`read_the_room.py`) — тонкий application-use-case над портом `RoomReader`
+  (BOB-066 Срез 2.2): собирает периферийный контекст (сообщение + отправитель + общий тред + mood-тон
+  + структурные/floor-хинты + interest) в `RoomReadingContext` и делегирует одно богатое чтение;
+  вердикт решается чисто ниже (`decide_from_reading`). Инъектируется в `TurnGate` (и оттуда в
+  `HandleMessage`) через `read_the_room` kwarg; `None` = легаси-поведение (судья BOB-049).
 - `TurnGate` (`turn_gate.py`) — тонкий координатор гейта хода (reply/react/silent) над
   `AddressivityPerceiver` + `FloorManager` + судьёй + `EssentialRunner`; persist / owner-activity
   прокинуты колбэками (гейт не держит политики персиста). `gate(..., *, rng=None)` прокидывает
-  турновый `rng` в legacy-розыгрыш адресности.
+  турновый `rng` в legacy-розыгрыш адресности. 🔴 `read_the_room: ReadTheRoom | None = None` (BOB-066
+  Срез 2.2): когда читатель проведён И отправитель распознан, в самом верху `gate()` включается
+  фокус/периферия-развилка (`_reflective_gate` → `_read_room` → `_act_reflective`); иначе — судья
+  BOB-049 / легаси байт-идентично. `_ReplyGate.force_web` несёт рефлексивный `wants_web` в caller.
 - `AntiRepeatGuard` (`anti_repeat_guard.py`) — регенерация повтора/тика (`guard`) + кольцо
   закрывающих (`log_closer` / `closer_anti_tic`). 🔴 Принимает `VoiceComposer.compose` как
   `compose`-callback (по значению, не импорт — цикл compose↔guard замкнут БЕЗ
@@ -246,7 +342,10 @@ per-turn `TurnScope` (BOB-066 Срез 2.1, INV-4).** Под intake-развяз
   в КАЖДУЮ регенерацию, поэтому пере-компоновка тянет из ТОГО ЖЕ per-turn потока (INV-4).
 
 `LlmResponseJudge` / `LlmVolatilityJudge` / `LlmInterimLineGenerator` (`adapters/`) — Tier-0
-реализации портов (билдер промпта + router + парсер). `SqliteConversationFloorStore` — per-thread
+реализации портов (билдер промпта + router + парсер). `LlmRoomReader` (`adapters/room_reader.py`) —
+Tier-1 реализация `RoomReader`: тот же тонкий шов (билдер + router на `ROOM_READ` + парсер), но
+пробрасывает сбои наверх для безопасного молчаливого IGNORE периферийного гейта.
+`SqliteConversationFloorStore` — per-thread
 floor (UPSERT — floor продвигается каждый ход); `SqliteCloserLog` — ограниченное кольцо
 нормализованных закрывающих Боба, переживающее рестарты (закрывает кросс-сессионную разреженность
 тика). Запись идёт через `SqliteMemoryRepo.connection()`-шов общего kernel'а (до среза .7).
@@ -285,6 +384,24 @@ floor (UPSERT — floor продвигается каждый ход); `SqliteCl
   те же сигналы → одна и та же цель); голый `OutgoingTarget` и `reply_to_message_id=None` на всех
   путях шлюза = сегодняшняя отправка в топик без цитаты (нулевой регресс). Цитата появляется ровно
   при третьем участнике и НЕ в фокальном 1:1.
+- 🔴 **INV-1: прямое обращение → ответ-или-заметка, никогда молчание.** Сырое `DIRECTED_TO_BOB`
+  на фокус-пути `TurnGate` замыкается на детерминированный `_ReplyGate` ДО рефлексивного read, RNG и
+  потолка доли голоса — ни одно условие не может замолчать фокальную ветку; сбой генерации ниже по
+  потоку становится честной GUPPI-заметкой, а не тишиной. Фокус-путь не берёт ни одного розыгрыша
+  (`rng` намеренно не используется).
+- 🔴 **Двуклассовое расщепление сбоя.** Периферийный сбой чтения (`RoomReadingParseError` /
+  ошибка модели) ловится → молчаливый IGNORE + продвижение floor, БЕЗ GUPPI-заметки (INV-2 —
+  периферийная рефлексия падает тихо). Фокальный сбой генерации → GUPPI-заметка. `parse_room_reading`
+  всегда БРОСАЕТ на мусоре (`intent`/`salience`), `LlmRoomReader` пробрасывает — половины никогда не
+  дефолтят молча.
+- 🔴 **LLM вербализует, ядро решает.** `decide_from_reading` чист, детерминирован и читает ТОЛЬКО
+  `RoomReading`: `salience < SALIENCE_THRESHOLD` → IGNORE вне зависимости от intent; ниже порога Боб
+  не влезает в комнату, к которой в этот ход не относится. `RoomMood.valence`/`polarization` —
+  plain-float, потребляются Срезом 2.4 по значению (ребро `conversation → personality` остаётся
+  однонаправленным).
+- **Рефлексивная развилка за флагом, OFF = без изменений.** `presence.reflective` (по умолчанию
+  OFF) → `read_the_room=None` → рефлексивная ветка `TurnGate` пропускается, судья BOB-049 работает
+  байт-идентично; эпик отгружается целиком.
 
 ### Границы модуля (AaC)
 
@@ -327,13 +444,17 @@ floor (UPSERT — floor продвигается каждый ход); `SqliteCl
   `conversation.is_user_repeat`/`is_bob_repeat`/`is_recurring_closer_tic`,
   `response_choice.ResponseChoice`/`ResponseJudge`, `volatility_judgment.VolatilityJudge`,
   `interim_line.build_interim_line_user_prompt`,
-  `outgoing_target.resolve_outgoing_target` (→ `OutgoingTarget` c `reply_to_message_id`/`addressee_id`).
+  `outgoing_target.resolve_outgoing_target` (→ `OutgoingTarget` c `reply_to_message_id`/`addressee_id`),
+  `room_reading.{RoomReading,RoomReadingContext,RoomMood,ReflectiveIntent,RoomReader}`,
+  `room_reading_wire.{build_room_prompt,parse_room_reading,ROOM_READ_SYSTEM_PROMPT,RoomReadingParseError}`,
+  `room_verdict.decide_from_reading` (→ `ReflectiveVerdict` c `force_web`/`addressee_id`) + `SALIENCE_THRESHOLD` (BOB-066 Срез 2.2).
 - Use-case: `usecases.DecideResponse`; коллабораторы хода `usecases.{TurnGate,
   AddressivityPerceiver, FloorManager, EngagementModel, RecallAssembler, VerifyStep,
-  AntiRepeatGuard}` (BOB-062.6b); `FloorManager.resolve_effective` → `FloorResolution`
-  (`effective`/`holder`/`participant`, BOB-066 .1).
-- Адаптеры: `LlmResponseJudge`, `LlmVolatilityJudge`, `LlmInterimLineGenerator`,
-  `SqliteConversationFloorStore`, `SqliteCloserLog`.
+  AntiRepeatGuard, ReadTheRoom}` (BOB-062.6b / BOB-066 Срез 2.2); `FloorManager.resolve_effective`
+  → `FloorResolution` (`effective`/`holder`/`participant`, BOB-066 .1); `VerifyStep.note(forced=)`
+  (C11); `TurnGate(read_the_room=)` — фокус/периферия-развилка.
+- Адаптеры: `LlmResponseJudge`, `LlmVolatilityJudge`, `LlmInterimLineGenerator`, `LlmRoomReader`
+  (Tier-1 `RoomReader`, задача `ROOM_READ`), `SqliteConversationFloorStore`, `SqliteCloserLog`.
 
 Композиция (wiring floor/судей/interim в ход `handle_message`, инъекция портов) — в
 композиционном корне `app.py`; коллабораторы хода собираются в `HandleMessage.__init__` из
@@ -348,8 +469,17 @@ floor (UPSERT — floor продвигается каждый ход); `SqliteCl
   `test_conversation_floor.py`, `test_brevity.py`, `test_engagement.py`,
   `test_zone_classifier.py`, `test_conversation.py`, `test_response_judgment.py`,
   `test_volatility_judgment.py`, `test_interim_line.py`;
-  `tests/domain/conversation/test_outgoing_target.py` (truth-table reply-to + mutation-покрытие).
-- Use-case: `tests/application/usecases/test_decide_response.py`.
+  `tests/domain/conversation/test_outgoing_target.py` (truth-table reply-to + mutation-покрытие);
+  `tests/domain/conversation/test_room_reading.py`, `test_room_reading_wire.py`, `test_room_verdict.py`,
+  `test_room_verdict_determinism.py` (рефлексивные VO / wire-парсер / чистый вердикт, mutation-ready).
+- Use-case: `tests/application/usecases/test_decide_response.py`;
+  `tests/conversation/usecases/test_read_the_room.py`, `test_turn_gate_reflective.py`,
+  `test_turn_gate_inv1_matrix.py` (INV-1 матрица: прямое обращение всегда отвечено), `test_turn_gate_clamp.py`,
+  `test_verify_step_forced.py`, `test_verify_step_forced_hedge.py` (C11 `forced=`).
+- Адаптер рефлексивного чтения: `tests/infrastructure/llm/test_room_reader.py`.
+- Приёмочный BDD «чтение комнаты»: `tests/acceptance/features/read_the_room.feature` +
+  `tests/acceptance/steps/test_read_the_room.py` (INV-1 фокус всегда отвечен даже когда судья
+  игнорит; ambient низкой salience → молчание).
 - Приёмочный BDD reply-to: `tests/acceptance/features/reply_to.feature` +
   `tests/acceptance/steps/test_reply_to.py` (цитирует при 3+ участниках, не цитирует в 1:1 через
   FakeGateway).
