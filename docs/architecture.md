@@ -98,7 +98,7 @@ usecases/adapters модулей.
 | **conversation** | вертикальный (business) | «как ведётся ход» — адресность, conversational floor, brevity, engagement, судьи отклика, рефлексивное «чтение комнаты» (двускоростное внимание, за флагом `presence.reflective`) | [`domains/conversation/README.md`](domains/conversation/README.md) |
 | **social** | вертикальный (business) | «Боб различает людей» — идентичность, первое впечатление, отношения, per-person обида/охлаждение (таблица `person_sulk`, адресный холод), такт разглашения (`disclosure` — гость не видит owner_private инициативно), кредит доверия (`endorsement`/`endorsed_seed` — owner ручается за новичка), авторизация, permission, genesis | [`domains/social/README.md`](domains/social/README.md) |
 | **proactivity** | вертикальный (business) | «фоновая жизнь Боба» — drive-движок, свои цели (Goal Engine), само-улучшение | [`domains/proactivity/README.md`](domains/proactivity/README.md) |
-| **presence** | вертикальный (business) | «живой ритм Боба» — доля эфира (soft-ceiling с focus-bypass), естественная задержка ответа, бюджет реакций; инертен за флагом `presence.rhythm` | [`domains/presence/README.md`](domains/presence/README.md) |
+| **presence** | вертикальный (business) | «живой ритм Боба» — доля эфира (soft-ceiling с focus-bypass), естественная задержка ответа, бюджет реакций, гейт устаревания черновика (`StalenessGate`: SEND/REWRITE/DROP_TO_LIKE/MERGE, B2=B7); инертен за флагами `presence.rhythm` / `presence.staleness` | [`domains/presence/README.md`](domains/presence/README.md) |
 | **capabilities** | вертикальный (business) | «инструменты Боба» — registry + tool-loop + навыки (recall, web_search, read_url, диаграммы, интроспекция) | [`domains/capabilities/README.md`](domains/capabilities/README.md) |
 | **application** | координационный слой | тонкие кросс-доменные оркестраторы (HandleMessage), LLM-роутер, async-примитивы рантайма | [`domains/application/README.md`](domains/application/README.md) |
 | **infrastructure** | координационный слой | адаптеры: Telegram (aiogram + мульти-бот), LLM-провайдеры, SQLite-connection-kernel, конфигурация | [`domains/infrastructure/README.md`](domains/infrastructure/README.md) |
@@ -189,6 +189,7 @@ compose+guard → post-effects**, делегируя каждую ~14 когез
 | `EssentialRunner` | `application/usecases/essential_runner.py` | ретрай существенных LLM-шагов + честный GUPPI-нотис |
 | `PreComposeGate` | `application/usecases/precompose_gate.py` | coding-intent + permission гейты, что могут забрать ход |
 | `DiagramSender` | `capabilities/usecases/diagram_sender.py` | авто-рендер inline-mermaid + отправка диаграмм |
+| `StalenessReassessor` | `application/runtime/staleness_reassessor.py` | переоценка черновика под сместившимся контекстом (BOB-066 Срез 3.1): `peek_since`-пачка → `StalenessGate` → SEND/REWRITE/DROP_TO_LIKE/MERGE; инертен (врезка отложена) |
 
 🔴 **Цикл compose↔guard замкнут колбэком по значению, а не импортом.**
 `AntiRepeatGuard` (conversation) принимает `VoiceComposer.compose` (personality)
