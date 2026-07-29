@@ -11,5 +11,6 @@
 from __future__ import annotations
 
 from bob.presence.adapters.outgoing_activity_store import EpisodicOutgoingActivityStore
+from bob.presence.adapters.staleness_judge import LlmStalenessJudge
 
-__all__ = ["EpisodicOutgoingActivityStore"]
+__all__ = ["EpisodicOutgoingActivityStore", "LlmStalenessJudge"]

@@ -64,6 +64,7 @@ class TaskType(Enum):
     VOLATILITY_JUDGE = "volatility_judge"
     INTERIM_LINE = "interim_line"
     ROOM_READ = "room_read"
+    STALENESS_JUDGE = "staleness_judge"
 
 
 # Task -> preferred tier. Quality-critical, user-facing work goes to Tier 1
@@ -105,6 +106,9 @@ _PREFERRED_TIER: dict[TaskType, int] = {
     # heart of Bob's living group presence, so it runs on Tier 1 for real understanding
     # («не жалеть LLM», PRINCIPLE-1 liveness > economy) — unlike the cheap Tier-0 judge.
     TaskType.ROOM_READ: _TIER_API,
+    # Staleness judgment (BOB-066 Срез W.3) reads how the room shifted under a drafted reply
+    # while Bob was composing — a cheap per-turn classifier over a short burst, Tier 0.
+    TaskType.STALENESS_JUDGE: _TIER_LOCAL,
 }
 
 

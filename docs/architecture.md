@@ -98,7 +98,7 @@ usecases/adapters модулей.
 | **conversation** | вертикальный (business) | «как ведётся ход» — адресность, conversational floor, brevity, engagement, судьи отклика, рефлексивное «чтение комнаты» (двускоростное внимание, за флагом `presence.reflective`) | [`domains/conversation/README.md`](domains/conversation/README.md) |
 | **social** | вертикальный (business) | «Боб различает людей» — идентичность, первое впечатление, отношения, per-person обида/охлаждение (таблица `person_sulk`, адресный холод), такт разглашения (`disclosure` — гость не видит owner_private инициативно), кредит доверия (`endorsement`/`endorsed_seed` — owner ручается за новичка), авторизация, permission, genesis | [`domains/social/README.md`](domains/social/README.md) |
 | **proactivity** | вертикальный (business) | «фоновая жизнь Боба» — drive-движок, свои цели (Goal Engine), само-улучшение | [`domains/proactivity/README.md`](domains/proactivity/README.md) |
-| **presence** | вертикальный (business) | «живой ритм Боба» — доля эфира (soft-ceiling с focus-bypass), естественная задержка ответа, бюджет реакций, гейт устаревания черновика (`StalenessGate`: SEND/REWRITE/DROP_TO_LIKE/MERGE, B2=B7), догоняющий проход по бэклогу (`select_catchup`: банд-скоринг direct>reply-thread>ambient, фокус небюджетно гарантирован, INV-10); инертен за флагами `presence.rhythm` / `presence.staleness` | [`domains/presence/README.md`](domains/presence/README.md) |
+| **presence** | вертикальный (business) | «живой ритм Боба» — доля эфира (soft-ceiling с focus-bypass), естественная задержка ответа, бюджет реакций, гейт устаревания черновика (`StalenessGate`: SEND/REWRITE/DROP_TO_LIKE/MERGE, B2=B7), догоняющий проход по бэклогу (`select_catchup`: банд-скоринг direct>reply-thread>ambient, фокус небюджетно гарантирован, INV-10); потребление вшито в горячий путь через коллабораторов за флагами `presence.rhythm` / `presence.staleness` / `presence.catchup` / `presence.series_budget` (все OFF по умолчанию → продакшн байт-в-байт) | [`domains/presence/README.md`](domains/presence/README.md) |
 | **capabilities** | вертикальный (business) | «инструменты Боба» — registry + tool-loop + навыки (recall, web_search, read_url, диаграммы, интроспекция) | [`domains/capabilities/README.md`](domains/capabilities/README.md) |
 | **application** | координационный слой | тонкие кросс-доменные оркестраторы (HandleMessage), LLM-роутер, async-примитивы рантайма | [`domains/application/README.md`](domains/application/README.md) |
 | **infrastructure** | координационный слой | адаптеры: Telegram (aiogram + мульти-бот), LLM-провайдеры, SQLite-connection-kernel, конфигурация | [`domains/infrastructure/README.md`](domains/infrastructure/README.md) |
@@ -189,8 +189,11 @@ compose+guard → post-effects**, делегируя каждую ~14 когез
 | `EssentialRunner` | `application/usecases/essential_runner.py` | ретрай существенных LLM-шагов + честный GUPPI-нотис |
 | `PreComposeGate` | `application/usecases/precompose_gate.py` | coding-intent + permission гейты, что могут забрать ход |
 | `DiagramSender` | `capabilities/usecases/diagram_sender.py` | авто-рендер inline-mermaid + отправка диаграмм |
-| `StalenessReassessor` | `application/runtime/staleness_reassessor.py` | переоценка черновика под сместившимся контекстом (BOB-066 Срез 3.1): `peek_since`-пачка → `StalenessGate` → SEND/REWRITE/DROP_TO_LIKE/MERGE; инертен (врезка отложена) |
-| `CatchUp` | `application/usecases/catch_up.py` | один догоняющий проход по бэклогу отсутствия (BOB-066 Срез 3.2): `peek_since`-снимок → `select_catchup` под бюджетом (фокус небюджетно гарантирован, INV-10) + тон входа `absence_hint`; за флагом OFF, врезка отложена |
+| `StalenessReassessor` | `application/runtime/staleness_reassessor.py` | переоценка черновика под сместившимся контекстом (BOB-066 Срез 3.1): `scope.peek_arrivals`-пачка → `StalenessGate` → SEND/REWRITE/DROP_TO_LIKE/MERGE; врезан в `handle` (`_drop_to_like_if_stale`) за флагом `presence.staleness.enabled` (OFF → врезка не строится) |
+| `CatchUp` / `CatchUpReentry` | `application/usecases/catch_up.py`, `application/runtime/catch_up_reentry.py` | один догоняющий проход по бэклогу отсутствия (BOB-066 Срез 3.2): `peek_since`-снимок → `select_catchup` под бюджетом (фокус небюджетно гарантирован, INV-10) + тон входа `absence_hint`; врезан в per-chat воркер `ChatDispatcher` за флагом `presence.catchup.enabled` (OFF → как раньше) |
+| `EndorsementSeeder` | `application/usecases/endorsement_seeder.py` | кредит доверия (BOB-066 W.4): после реплея истории пере-биндит отношение тёплым `endorsed_seed`, если owner ручался за новичка в общем треде; врезан в `_prepare_eq_live` за флагом `presence.endorsement.enabled` (OFF → отношение без изменений) |
+| `DisclosureGuard` | `application/usecases/disclosure_guard.py` | такт разглашения (BOB-066 W.4): переиспользует порт `PrivilegeJudge`, гостю на `owner_data`-запрос выдаёт `tactful_withhold_directive` (тёплый отказ) в compose+guard; врезан в `_prepare_eq_live` за флагом `presence.tact.enabled` (OFF → `withhold_directive` пуст) |
+| `RoomMoodModulator` | `application/usecases/room_mood_modulator.py` | настроение комнаты в тоне (BOB-066 W.2): из рефлексивного `RoomReading` (surfaced на `_ReplyGate`) по значению даёт `room_tone` голосу и re-map порога аппетита; врезан в `_apply_room_mood` за флагом `presence.room_mood.enabled` (OFF → тон пуст, уровень как был) |
 
 🔴 **Цикл compose↔guard замкнут колбэком по значению, а не импортом.**
 `AntiRepeatGuard` (conversation) принимает `VoiceComposer.compose` (personality)
@@ -320,6 +323,46 @@ compose/guard), так что конкурентные чаты никогда �
   окно тишины в ноль и флашится на уровне ВСЕГО батча (фокусное сообщение флашит растущий
   ambient-всплеск разом), поэтому фокус-сигнал никогда не теряется и не задерживается
   батчингом.
+
+## Активация «человеческого группового присутствия» (BOB-066)
+
+🔴 Весь слой группового присутствия отгружен **инертным за фичефлагами**: каждый
+механизм собран, покрыт тестами и врезан в горячий путь через коллаборатора, но его
+builder возвращает `None`/inert-bundle, пока флаг не включён. **Все флаги OFF по
+умолчанию**, поэтому продакшн-путь ответа байт-в-байт равен пред-BOB-066 (это блокер
+owner'а: команда добавляется в группу только когда весь эпик готов ЦЕЛИКОМ). Флаги
+читаются в композиционном корне (`runtime/composition.py`) + builder'ах
+`runtime/wiring/*.py`; отсутствующий ключ = выключено (`_flag` → `False`).
+
+Owner включает поведение группового присутствия, добавив в конфиг (`config/bob.yaml`)
+секцию `presence` и выставив нужные флаги `true` — для живой валидации ДО добавления
+команды. Точные пути и формы:
+
+| Флаг (точный путь) | Форма | Что включает |
+|---|---|---|
+| `presence.reflective` | 🔴 **голый bool** (НЕ `.enabled`) | рефлексивный «read-the-room» split — двускоростное внимание; строит `ReadTheRoom` и даёт `RoomReading` на периферийном ходе (BOB-066 Срез 2.2) |
+| `presence.rhythm.enabled` | нест. `<section>.enabled` | ритм-слой: soft-ceiling доли эфира (barge/share) + человеческий пол задержки (`DelayedTurn`, INV-9); knobs `presence.rhythm.{share_min_multiplier,share_steepness,delay_base_seconds,delay_seconds_per_char,delay_complexity_seconds,delay_max_seconds,delay_urgency_relief,reaction_min_gap_seconds,reaction_quality_threshold,window_size}` (`window_size` по умолчанию 20) |
+| `presence.room_mood.enabled` | нест. `<section>.enabled` | настроение комнаты красит тон голоса + re-map порога аппетита по значению из `RoomReading`; knobs `presence.room_mood.{heavy_valence,warm_valence,polarized}` |
+| `presence.series_budget.enabled` | нест. `<section>.enabled` | batch top-k бюджет действий (один адресный ответ + ≤ N лайков на всплеск); knob `presence.series_budget.max_reactions` (по умолчанию 1) |
+| `presence.staleness.enabled` | нест. `<section>.enabled` | врезка переоценки черновика перед отправкой (`StalenessGate`: SEND/REWRITE/DROP_TO_LIKE/MERGE) над `scope.peek_arrivals` |
+| `presence.catchup.enabled` | нест. `<section>.enabled` | догоняющий проход по бэклогу отсутствия в per-chat воркере; knobs `presence.catchup.{absence_hours,budget}` (по умолчанию 4.0 ч / 3) |
+| `presence.endorsement.enabled` | нест. `<section>.enabled` | кредит доверия — warm-start новичка, за которого owner поручился в общем треде (требует `telegram.owner_id`) |
+| `presence.tact.enabled` | нест. `<section>.enabled` | такт разглашения — тёплый отказ гостю на инициативный `owner_data`-запрос (голос, не гейт привилегий) |
+
+🔴 **Несогласованность формы (осознанная, на заметку owner'у).** Мастер-гейт эпика
+`presence.reflective` — **голый bool** прямо под `presence`
+(`_flag(presence_section, "reflective")`), тогда как семь W-флагов следуют нестед-конвенции
+`presence.<section>.enabled` (им нужны sub-knobs, а `_flag` не берёт dict). Ревью среза W
+рекомендует выровнять на `presence.reflective.enabled` для единообразного «флипа эпика»;
+пока — форма разная, и owner должен помнить: `reflective` пишется без `.enabled`.
+
+🔴 **Зависимость.** `presence.room_mood.enabled` даёт эффект только при включённом
+`presence.reflective`: тон комнаты берётся из `RoomReading`, который рождается лишь на
+рефлексивном (периферийном) ходе. Без `reflective` `RoomReading` нет → модулятор
+работает над пустым чтением. Для полного «живого Боба в группе» owner включает флаги
+разом (интеграционный харнесс `tests/acceptance/wiring_integration_harness.py` гоняет
+все восемь ON вместе и подтверждает INV-1: прямое обращение к Бобу отвечается даже при
+рефлексивном IGNORE / исчерпанном потолке / активной обиде).
 
 ## Конфигурация, запуск и тесты
 

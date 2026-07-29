@@ -51,7 +51,7 @@ if TYPE_CHECKING:
     from bob.application.runtime.events import MessageReceived
     from bob.conversation.conversation_floor import FloorHolder
     from bob.conversation.response_choice import ResponseChoice
-    from bob.conversation.room_reading import RoomReading
+    from bob.conversation.room_reading import RoomMood, RoomReading
     from bob.conversation.usecases.addressivity_perceiver import (
         AddressivityPerceiver,
         _AddressivitySignals,
@@ -96,11 +96,16 @@ class _ReplyGate:
     reflective autonomous-lookup flag (BOB-066 Срез 2.2, C11): when a periphery read set
     ``wants_web`` it rides here so the caller FORCES the existing verify pass — ``False``
     on every other path (focus / judge / legacy), where the verify judge decides.
+    ``room_mood`` is the reflective read's room atmosphere (BOB-066 Срез W.2, Пласт 4): it
+    rides ONLY on a PERIPHERY reflective REPLY so the caller can colour Bob's tone + appetite
+    by the room BY VALUE — ``None`` on every other path (focus / judge / legacy has no read),
+    so those turns are byte-identical.
     """
 
     decision: _AddressivityDecision
     history: Sequence[Mapping[str, object]] | None
     force_web: bool = False
+    room_mood: RoomMood | None = None
 
 
 class _EssentialRunner(Protocol):
@@ -128,6 +133,23 @@ class _OwnerActivity(Protocol):
     """The owner-activity seam: stamp that the owner interacted this turn (best-effort)."""
 
     async def __call__(self) -> None: ...
+
+
+class _BargeCeiling(Protocol):
+    """The share-of-voice ceiling seam on an ambient barge (BOB-066 Срез W, Пласт 3).
+
+    Realised by :class:`~bob.application.runtime.share_of_voice_gate.ShareOfVoiceGate`.
+    Given the turn's ``chat_id``, whether Bob was ``focused`` (directly addressed), the
+    caller's un-ceiled ``base_probability`` of barging in, and a turn-local ``draw``,
+    returns whether Bob may barge into this ambient turn. 🔴 Only the AMBIENT (periphery)
+    barge is gated — a focused turn short-circuits ABOVE the gate and is never consulted
+    (INV-1). ``None`` (unwired — the ``presence.rhythm`` flag off) leaves the periphery
+    REPLY un-throttled, byte-identical to before the rhythm layer.
+    """
+
+    async def admits_barge(
+        self, *, chat_id: int, focused: bool, base_probability: float, draw: float
+    ) -> bool: ...
 
 
 # Bob's persisted half of a non-reply turn (BOB-049), so a follow-up keeps the
@@ -182,6 +204,7 @@ class TurnGate:
         persist: _Persist,
         record_owner_activity: _OwnerActivity,
         read_the_room: ReadTheRoom | None = None,
+        barge_ceiling: _BargeCeiling | None = None,
     ) -> None:
         self._decide_response = decide_response
         self._addressivity = addressivity
@@ -192,6 +215,7 @@ class TurnGate:
         self._persist = persist
         self._record_owner_activity = record_owner_activity
         self._read_the_room = read_the_room
+        self._barge_ceiling = barge_ceiling
 
     async def gate(  # noqa: PLR0911 — a flat three-path dispatch (reflective / judge / legacy), one early-out per branch, no logic to extract
         self,
@@ -203,6 +227,7 @@ class TurnGate:
         modulators: RuleModulators,
         *,
         rng: Random | None = None,
+        series_ceiling: ResponseOutcome = ResponseOutcome.ENGAGE,
     ) -> _ReplyGate | None:
         """Decide whether/how Bob takes this turn (BOB-049 judge, or legacy fallback).
 
@@ -223,7 +248,7 @@ class TurnGate:
         # default) OR no sender → the BOB-049 judge / legacy paths run exactly as before.
         if self._read_the_room is not None and interlocutor is not None:
             return await self._reflective_gate(
-                event, soul, interlocutor, interest, rng=rng
+                event, soul, interlocutor, interest, rng=rng, series_ceiling=series_ceiling
             )
         if self._decide_response is not None and interlocutor is not None:
             judged = await self._judge(event, soul, interlocutor)
@@ -268,6 +293,7 @@ class TurnGate:
         interest: float,
         *,
         rng: Random | None,
+        series_ceiling: ResponseOutcome = ResponseOutcome.ENGAGE,
     ) -> _ReplyGate | None:
         """The «два-скорости-внимания» fork (BOB-066 Срез 2.2 Пласт 1).
 
@@ -283,10 +309,16 @@ class TurnGate:
         :func:`~bob.conversation.room_verdict.decide_from_reading` verdict. A read FAILURE
         safe-defaults to a silent IGNORE (advance the floor, NO GUPPI notice — this is not
         the focal guarantee), never Bob acting from a guessed read.
+
+        🔴 The FOCAL path is RNG-free (INV-1/INV-4): it returns ABOVE the reflective read and
+        the share-of-voice ceiling, so ``rng`` is drawn ONLY on the periphery, and ONLY when
+        the ambient-barge ceiling is wired (``presence.rhythm``) — otherwise no draw is taken
+        and behaviour is byte-identical.
         """
-        del rng  # focal path is RNG-free (INV-1/INV-4); periphery verdict is deterministic
         signals = await self._addressivity.signals(event)
         if signals.per_message is Addressivity.DIRECTED_TO_BOB:
+            # 🔴 INV-1: a direct address is answered ABOVE the series budget — the ceiling is
+            # NEVER consulted on the focal path, so a batch top-k can never drop a focus signal.
             return _ReplyGate(
                 decision=self._floor_signal(signals, ResponseOutcome.ENGAGE),
                 history=None,
@@ -299,7 +331,9 @@ class TurnGate:
                 bob_replied=False,
             )
             return None
-        return await self._act_reflective(event, soul, reading, signals)
+        return await self._act_reflective(
+            event, soul, reading, signals, rng=rng, series_ceiling=series_ceiling
+        )
 
     async def _read_room(
         self,
@@ -344,36 +378,115 @@ class TurnGate:
         soul: SOUL,
         reading: RoomReading,
         signals: _AddressivitySignals,
+        *,
+        rng: Random | None,
+        series_ceiling: ResponseOutcome = ResponseOutcome.ENGAGE,
     ) -> _ReplyGate | None:
         """Carry out the pure reflective verdict for a periphery turn (BOB-066 Срез 2.2).
 
         REPLY / INITIATE → a :class:`_ReplyGate` (compose+send; ``force_web`` rides the
-        gate so the caller forces the existing verify pass on ``wants_web``, C11). REACT →
-        set the meaning-chosen emoji + advance the floor. IGNORE / SELF_CHECK / a
+        gate so the caller forces the existing verify pass on ``wants_web``, C11) — UNLESS
+        the share-of-voice ceiling damps this ambient barge to silence (BOB-066 Срез W).
+        REACT → set the meaning-chosen emoji + advance the floor. IGNORE / SELF_CHECK / a
         below-salience read → stay silent + advance the floor. Every non-reply advances the
         floor with ``bob_replied=False``; unlike a focal turn there is no owner-activity
         stamp (a periphery reaction is not necessarily the owner interacting).
+
+        🔴 BOB-066 Срез W.2 (batch top-k): the ``series_ceiling`` CAPS the ambient outcome —
+        when several inbound settle in one intake window, only one reply + one like land, so a
+        message the series budget marked REACT downgrades a REPLY verdict to a like, and a
+        SILENT ceiling stays quiet. ``ENGAGE`` (the default / a single-message window) is no
+        cap. The focal path never reaches here (INV-1 short-circuits above), so a direct
+        address is never dropped by the budget.
         """
         verdict = decide_from_reading(reading)
         if verdict.kind is VerdictKind.REPLY:
-            return _ReplyGate(
-                decision=self._floor_signal(signals, ResponseOutcome.ENGAGE),
-                history=None,
-                force_web=verdict.force_web,
+            return await self._act_reply_verdict(
+                event, soul, reading, signals, rng=rng, series_ceiling=series_ceiling
             )
-        if verdict.kind is VerdictKind.REACT:
-            emoji = verdict.emoji or reaction_emoji_for(soul.mood)
-            await self._react_with_emoji(event, emoji)
-            await self.advance_floor_after_turn(
-                event,
-                self._floor_signal(signals, ResponseOutcome.REACT),
-                bob_replied=False,
-            )
+        # A REACT verdict sets the meaning-chosen emoji — UNLESS the series budget exhausted this
+        # message to SILENT. IGNORE / SELF_CHECK / a SILENT-capped REACT stay silent.
+        if verdict.kind is VerdictKind.REACT and series_ceiling is not ResponseOutcome.SILENT:
+            await self._react_turn(event, soul, signals, verdict.emoji)
             return None
+        await self._advance_silent(event, signals)
+        return None
+
+    async def _act_reply_verdict(
+        self,
+        event: MessageReceived,
+        soul: SOUL,
+        reading: RoomReading,
+        signals: _AddressivitySignals,
+        *,
+        rng: Random | None,
+        series_ceiling: ResponseOutcome,
+    ) -> _ReplyGate | None:
+        """Carry out a periphery REPLY verdict under the rhythm + series ceilings (W / W.2).
+
+        🔴 The two ceilings CAP the ambient barge, in order: the batch top-k ``series_ceiling``
+        (SILENT → stay quiet; REACT → downgrade to a like — a REPLY reading has no chosen emoji,
+        so a mood emoji stands in), then the share-of-voice ceiling (a hogged-airtime barge is
+        damped to silence). Passing both → a :class:`_ReplyGate` that surfaces the room mood so
+        the caller colours Bob's tone + appetite by the room (BOB-066 Срез W.2, Пласт 4).
+        """
+        if series_ceiling is ResponseOutcome.SILENT:
+            await self._advance_silent(event, signals)
+            return None
+        if series_ceiling is ResponseOutcome.REACT:
+            await self._react_turn(event, soul, signals, reading.emoji)
+            return None
+        if not await self._admits_ambient_barge(event, reading, rng):
+            await self._advance_silent(event, signals)
+            return None
+        return _ReplyGate(
+            decision=self._floor_signal(signals, ResponseOutcome.ENGAGE),
+            history=None,
+            force_web=decide_from_reading(reading).force_web,
+            room_mood=reading.room_mood,
+        )
+
+    async def _react_turn(
+        self,
+        event: MessageReceived,
+        soul: SOUL,
+        signals: _AddressivitySignals,
+        emoji: str | None,
+    ) -> None:
+        """Set a like (the chosen ``emoji`` or a mood emoji) + advance the floor (react)."""
+        await self._react_with_emoji(event, emoji or reaction_emoji_for(soul.mood))
+        await self.advance_floor_after_turn(
+            event, self._floor_signal(signals, ResponseOutcome.REACT), bob_replied=False
+        )
+
+    async def _advance_silent(
+        self, event: MessageReceived, signals: _AddressivitySignals
+    ) -> None:
+        """Advance the conversation floor for a silent periphery turn (bob_replied=False)."""
         await self.advance_floor_after_turn(
             event, self._floor_signal(signals, ResponseOutcome.SILENT), bob_replied=False
         )
-        return None
+
+    async def _admits_ambient_barge(
+        self, event: MessageReceived, reading: RoomReading, rng: Random | None
+    ) -> bool:
+        """Whether the share-of-voice ceiling admits THIS ambient barge (BOB-066 Срез W).
+
+        Consulted ONLY on a periphery REPLY verdict (a focal turn never reaches here — INV-1
+        short-circuits above). Unwired ceiling OR no turn-local ``rng`` → always ``True`` and
+        NO draw is taken, so the periphery stays byte-identical to before the rhythm layer.
+        When wired, the reading's ``salience`` is the un-ceiled base p(barge); the gate scales
+        it by Bob's per-chat share of voice and compares it to the turn-local draw (``focused``
+        is ``False`` — this branch is ambient by construction).
+        """
+        if self._barge_ceiling is None or rng is None:
+            return True
+        return await self._barge_ceiling.admits_barge(
+            chat_id=event.chat_id,
+            focused=False,
+            base_probability=reading.salience,
+            draw=rng.random(),
+        )
 
     def _floor_signal(
         self, signals: _AddressivitySignals, outcome: ResponseOutcome

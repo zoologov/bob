@@ -164,6 +164,36 @@ def test_decide_engagement_decays_the_passed_fatigue_holder() -> None:
     assert engagement_state.fatigue.level < 0.95  # decayed on the passed holder
 
 
+def test_reengage_for_room_does_not_decay_fatigue_again() -> None:
+    # 🔴 BOB-066 Срез W.2: the room-mood re-map re-runs the pure appetite decision over the
+    # ALREADY-decayed fatigue, so it NEVER decays a second time (no double-decay bug).
+    model = _engagement_model()
+    engagement_state = EngagementState(fatigue=ConversationalFatigue(0.4))
+
+    model.reengage_for_room(
+        _soul(0.1), 0.5, None, engagement_state, threshold_shift=0.3,
+    )
+
+    assert engagement_state.fatigue.level == 0.4  # untouched by the re-map
+
+
+def test_reengage_for_room_positive_shift_lifts_appetite() -> None:
+    # A warm-room positive shift lowers the interest bar so a borderline topic that reads TERSE
+    # at the base engages FULLY — the room-mood analogue of a close relationship.
+    model = _engagement_model()
+    borderline = EngagementThresholds().interesting - 0.1
+
+    base = model.reengage_for_room(
+        _soul(0.0), borderline, None, EngagementState(), threshold_shift=0.0,
+    )
+    warm = model.reengage_for_room(
+        _soul(0.0), borderline, None, EngagementState(), threshold_shift=0.3,
+    )
+
+    assert base is EngagementLevel.TERSE
+    assert warm in (EngagementLevel.FULL, EngagementLevel.PLAYFUL)
+
+
 @pytest.mark.asyncio
 async def test_acknowledgment_spends_no_draw_without_a_marker() -> None:
     # 🔴 Ordering invariant: with no notable reaction on record, NO seeded draw is spent,

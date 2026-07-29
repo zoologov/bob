@@ -54,6 +54,7 @@ from bob.application.usecases.precompose_gate import (
     PermissionFlowLike,
     PreComposeGate,
 )
+from bob.application.usecases.reply_rhythm import reply_delay_inputs
 from bob.capabilities.usecases.diagram_sender import (
     _DEFAULT_DIAGRAM_SEND_AS,
     DiagramSender,
@@ -65,6 +66,7 @@ from bob.capabilities.usecases.tool_loop import ToolLoop
 from bob.conversation.addressivity import (
     Addressivity,
     AddressivityThresholds,
+    ResponseOutcome,
     others_present,
 )
 from bob.conversation.brevity import (
@@ -122,6 +124,7 @@ from bob.personality.negotiation import (
     Negotiation,
     Stance,
 )
+from bob.personality.reaction import reaction_emoji_for
 from bob.personality.soul import _mood_state
 from bob.personality.usecases.grounded_addons import GroundedAddons
 from bob.personality.usecases.mood_perceiver import MoodPerceiver
@@ -130,6 +133,7 @@ from bob.personality.voice import (
     OffDayThresholds,
     RelationshipToneThresholds,
 )
+from bob.presence.staleness import StalenessOutcome
 from bob.proactivity.self_improvement import (
     RuleModulators,
     _validated_magnitude,
@@ -140,7 +144,7 @@ from bob.social.interlocutor import InterlocutorKind, Trust
 from bob.social.usecases.social_context import SocialContext
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping, Sequence
+    from collections.abc import Awaitable, Callable, Mapping, Sequence
     from contextlib import AbstractAsyncContextManager
     from datetime import datetime
     from random import Random
@@ -149,6 +153,10 @@ if TYPE_CHECKING:
     from bob.application.router.llm_router import LLMRouter
     from bob.application.runtime.events import MessageReceived
     from bob.application.runtime.intake.scope import TurnScope
+    from bob.application.runtime.staleness_reassessor import StalenessReassessor
+    from bob.application.usecases.disclosure_guard import DisclosureGuard
+    from bob.application.usecases.endorsement_seeder import EndorsementSeeder
+    from bob.application.usecases.room_mood_modulator import RoomMoodModulator
     from bob.capabilities.ports import (
         DiagramRenderer,
         DiagramSink,
@@ -160,6 +168,7 @@ if TYPE_CHECKING:
         ProgressAnnouncer,
     )
     from bob.conversation.ports import CloserLog, ConversationFloorStore, ZoneClassifier
+    from bob.conversation.room_reading import RoomMood
     from bob.conversation.usecases.addressivity_perceiver import _AddressivityDecision
     from bob.conversation.usecases.decide_response import DecideResponse
     from bob.conversation.usecases.read_the_room import ReadTheRoom
@@ -492,6 +501,39 @@ class BobUserIdSource(Protocol):
 # constructor annotations + the except clauses + app.py / tests resolve as before.
 
 
+class BargeCeiling(Protocol):
+    """The share-of-voice ceiling on an ambient barge (BOB-066 Срез W, Пласт 3).
+
+    Threaded straight through to the :class:`~bob.conversation.usecases.turn_gate.TurnGate`
+    (which owns the focus/periphery split), so only the AMBIENT barge is damped and a focused
+    turn bypasses it (INV-1). Realised by
+    :class:`~bob.application.runtime.share_of_voice_gate.ShareOfVoiceGate`; unwired
+    (``presence.rhythm`` off) → no throttle.
+    """
+
+    async def admits_barge(
+        self, *, chat_id: int, focused: bool, base_probability: float, draw: float
+    ) -> bool: ...
+
+
+class ReplyDelay(Protocol):
+    """The natural-delay coordinator over the reply generation (BOB-066 Срез W, INV-9).
+
+    Runs the generation and tops the elapsed time up to a human floor
+    (``await max(natural_floor, real_generation)``), so Bob never answers inhumanly fast.
+    Realised by :class:`~bob.application.runtime.delayed_turn.DelayedTurn`; unwired
+    (``presence.rhythm`` off) the generation runs directly, byte-identical.
+    """
+
+    async def deliver(
+        self,
+        generate: Callable[[], Awaitable[str]],
+        *,
+        complexity: float,
+        urgency: float,
+    ) -> str: ...
+
+
 @dataclass
 class PersonalityState:
     """Mutable in-memory holder for Bob's current soul snapshot across turns.
@@ -592,6 +634,12 @@ class HandleMessage:
         interim_line_generator: InterimLineGenerator | None = None,
         closer_log: CloserLog | None = None,
         read_the_room: ReadTheRoom | None = None,
+        barge_ceiling: BargeCeiling | None = None,
+        reply_delay: ReplyDelay | None = None,
+        room_mood_modulator: RoomMoodModulator | None = None,
+        staleness_reassessor: StalenessReassessor | None = None,
+        endorsement_seeder: EndorsementSeeder | None = None,
+        disclosure_guard: DisclosureGuard | None = None,
     ) -> None:
         self._router = router
         self._gateway = gateway
@@ -895,6 +943,43 @@ class HandleMessage:
         # (the default → off in composition unless ``presence.reflective``) the gate falls
         # back to the BOB-049 judge / legacy paths, so behaviour is exactly as before.
         self._read_the_room = read_the_room
+        # Ambient-barge ceiling seam (BOB-066 Срез W, Пласт 3): threaded into the TurnGate so a
+        # periphery REPLY verdict is damped by Bob's per-chat share of voice — a focused turn
+        # bypasses it (INV-1). Unwired (``presence.rhythm`` off) → no throttle, byte-identical.
+        self._barge_ceiling = barge_ceiling
+        # Natural-delay seam (BOB-066 Срез W, Пласт 3, INV-9): when wired, the reply generation
+        # runs inside the DelayedTurn coordinator (noticed → typing → ``await max(natural_floor,
+        # real_generation)`` → reply), so Bob never answers inhumanly fast. Unwired → the
+        # generation runs directly, byte-identical to before the rhythm layer.
+        self._reply_delay = reply_delay
+        # RoomMood-в-тоне seam (BOB-066 Срез W.2, Пласт 4): when wired (behind
+        # ``presence.room_mood.enabled``), a reflective periphery-reply surfaces the room's
+        # atmosphere and this modulator maps it — BY VALUE — to a tone line (eases banter in a
+        # heavy/tense room) + a signed engagement-threshold shift (a warm room lifts appetite).
+        # Bob's personal Mood is never mutated (a SECOND layer). Unwired (the default) → None →
+        # the room never colours the turn, byte-identical.
+        self._room_mood_modulator = room_mood_modulator
+        # Staleness врезка (BOB-066 Срез W.3, Пласт 3): when wired (behind
+        # ``presence.staleness.enabled``), just BEFORE sending Bob rereads what landed in this
+        # chat WHILE he was drafting (the turn-local ``scope.peek_arrivals``) and — if the
+        # drafted reply is now redundant (someone else answered / the topic closed) AND no fresh
+        # DIRECT question is riding on top — drops it to a like instead of firing a stale line.
+        # 🔴 INV-1: a fresh direct question is NEVER dropped (the pure gate merges it). Unwired
+        # (the default) / no reactor / nothing landed → None-path → the reply path is
+        # byte-identical.
+        self._staleness = staleness_reassessor
+        # EQ live-врезка (BOB-066 Срез W.4, Пласт 4). Both ship inert until the epic is complete:
+        #   * ``endorsement_seeder`` (behind ``presence.endorsement.enabled``): on the FIRST
+        #     contact of a GUEST the owner vouched for by name in the shared thread, Bob meets
+        #     them warm (a credit of trust that drift-to-neutral dissolves if unconfirmed)
+        #     instead of a blank neutral read. Unwired (the default) → None → the neutral
+        #     first-contact path, byte-identical.
+        #   * ``disclosure_guard`` (behind ``presence.tact.enabled``): a GUEST ``owner_data``
+        #     request gets the warm :func:`tactful_withhold_directive` instead of the dry
+        #     stranger-wall — 🔴 the privilege GATE is unchanged, only the refusal VOICE.
+        #     Unwired (the default) → None → no withhold line, byte-identical.
+        self._endorsement_seeder = endorsement_seeder
+        self._disclosure_guard = disclosure_guard
         # Reliability seam (BOB-049 .3 — «полный Боб или честный GUPPI-нотис»): the two
         # ESSENTIAL LLM steps (the semantic judgment + the reply generation) are retried a
         # bounded number of times with a short backoff before Bob falls back to the honest
@@ -1119,6 +1204,7 @@ class HandleMessage:
             persist=self._persist,
             record_owner_activity=self._record_owner_activity,
             read_the_room=self._read_the_room,
+            barge_ceiling=self._barge_ceiling,
         )
 
     async def _plain_reply(self, system_prompt: str, text: str, context: str) -> str:
@@ -1188,6 +1274,12 @@ class HandleMessage:
     ) -> None:
         """Process one received message end to end (the intake worker's per-turn call).
 
+        🔴 BOB-066 Срез W.2 (batch top-k): the turn's ``scope.series_ceiling`` CAPS this
+        message's ambient outcome when several inbound settle in one intake window — the intake
+        worker plans the burst (one addressed reply + a budget-capped like, never N replies) and
+        stamps each message's ceiling on its scope. ``ENGAGE`` (the default / a single-message
+        window / a focus message) is no cap. A direct address is answered ABOVE it (INV-1).
+
         🔴 BOB-066 Срез 2.1 (intake-развязка): the bus subscriber is now the fast
         :class:`~bob.application.runtime.intake.dispatcher.ChatDispatcher.submit`; a per-chat
         worker calls this with the turn's :class:`~bob.application.runtime.intake.scope.
@@ -1198,7 +1290,14 @@ class HandleMessage:
         directly without a scope (a unit test) it falls back to the injected per-boot rng, so
         behaviour is byte-identical to before the развязка.
         """
-        rng = scope.rng if scope is not None else self._rng
+        # The turn-local rng + the batch top-k outcome ceiling (BOB-066 Срез W.2) both ride on
+        # the scope; driven directly (a unit test) they fall back to the per-boot rng + an
+        # uncapped ENGAGE, so behaviour is byte-identical to before the развязка.
+        rng, series_ceiling = (
+            (scope.rng, scope.series_ceiling)
+            if scope is not None
+            else (self._rng, ResponseOutcome.ENGAGE)
+        )
         soul = await self._perceive(event)
         # Perceive WHO is writing (BOB-019): owner / known / guest / bot. Resolved
         # once per turn so the same identity threads through every (re)compose; None
@@ -1281,7 +1380,14 @@ class HandleMessage:
         # handled inside the gate and returns ``None`` with no notice.
         try:
             gate = await self._turn_gate.gate(
-                event, soul, interlocutor, plan, interest, modulators, rng=rng
+                event,
+                soul,
+                interlocutor,
+                plan,
+                interest,
+                modulators,
+                rng=rng,
+                series_ceiling=series_ceiling,
             )
         except _EssentialStepError as exc:
             await self._essential.handle_failure(event, soul, exc)
@@ -1294,6 +1400,14 @@ class HandleMessage:
         # as ``force_web`` → force the EXISTING verify pass below (skip its volatility judge).
         # Every non-reflective path leaves this ``False``, so the judge decides as before.
         force_web = gate.force_web
+        # 🔴 RoomMood-в-тоне (BOB-066 Срез W.2, Пласт 4): a reflective periphery REPLY surfaces
+        # the room's atmosphere on the gate. The wired modulator maps it — BY VALUE — to a tone
+        # line (folded into the compose stack) + a re-mapped appetite ``level`` for this turn.
+        # Extracted into a helper so ``handle()`` stays lean (cohesion-guard). Unwired / no
+        # room_mood → ``""`` + the base level unchanged, byte-identical.
+        room_tone, level = self._apply_room_mood(
+            gate.room_mood, soul, interest, relationship, level, rng=rng
+        )
         # Decide how SHORT Bob answers this ENGAGE turn (BOB-024): answer-demand of the
         # message x interest x mood/appetite x the BOB-018 form_hint → a Verbosity, the
         # single final length directive + (on a terse turn) the short-answer few-shot.
@@ -1302,14 +1416,12 @@ class HandleMessage:
         # own roll stays unperturbed. The LOW answer-demand is reused by the optional
         # length guard after generation.
         demand = classify_answer_demand(text=event.text)
-        verbosity = self._decide_verbosity(
-            soul, demand, interest, level, plan, interlocutor, rng=rng
+        # The single final length authority: the BOB-024 verbosity decision PLUS the BOB-028 .3
+        # LENGTH self-improvement tilt (an APPROVED rule nudges it one step shorter, clipped at
+        # TERSE — наклон, не перехват). Folded into one helper so ``handle()`` stays lean.
+        verbosity = self._decide_final_verbosity(
+            soul, demand, interest, level, plan, interlocutor, modulators, rng=rng
         )
-        # LENGTH self-improvement tilt (BOB-028 .3): an APPROVED LENGTH rule nudges the
-        # decided verbosity ONE step shorter (clipped at TERSE) — a soft bias on TOP of
-        # the BOB-024 decision, never a base override (наклон, не перехват). No such rule
-        # (the default) → length_step 0 → verbosity unchanged.
-        verbosity = _shift_verbosity(verbosity, modulators.length_step)
         # Memory/privilege split (BOB-051 — the closed-group security model).
         # The Bobiverse group is a CLOSED, invite-only, moderated space, so Bob's
         # MEMORY is UNIFIED for every member: recall, per-person history and voice no
@@ -1322,8 +1434,8 @@ class HandleMessage:
         #   * is refused owner commands/data (/code, /goals, config) by authz.
         # What it NO LONGER gates: recall (unified — Bob's full knowledge for anyone),
         # history (per-person thread by sender_id), voice (normal, not wary) and fact
-        # extraction (every member's turn feeds the shared/public group memory).
-        is_guest = interlocutor is not None and interlocutor.trust is Trust.GUEST
+        # extraction (every member's turn feeds the shared/public group memory). ``is_guest`` is
+        # resolved with the EQ live-врезки below (guest-ness gates both), then used at compose.
         # Reflection containment (BOB-033 .3): the reply-recall pool excludes private
         # reflection episodes so Bob's inner monologue never becomes a copyable exemplar
         # in a user-facing reply — the inner life colours tone via MOOD, not by parroting
@@ -1344,6 +1456,23 @@ class HandleMessage:
             if prefetched_history is not None
             else await self._replay_recent_thread(interlocutor)
         )
+        # 🔴 Кредит доверия (BOB-066 Срез W.4, Пласт 4): on the FIRST contact of a GUEST the
+        # owner vouched for BY NAME in the shared thread, meet them WARM (a credit of trust
+        # the owner extends on their behalf) instead of a blank neutral read. The seed is
+        # turn-local and colours THIS turn's voice/stance; drift-to-neutral dissolves it if
+        # the guest's own behaviour doesn't confirm it. Unwired (``presence.endorsement`` off)
+        # → the relationship is unchanged, byte-identical. Needs the SHARED thread (the owner's
+        # own turns), so it runs here, after the thread is available.
+        # 🔴 EQ live-врезка (BOB-066 Срез W.4, Пласт 4): the two latent Пласт-4 seams for this
+        # turn, prepared in ONE cohesive step so handle() stays lean. (1) Кредит доверия — a
+        # first-contact GUEST the owner vouched for by name starts WARM instead of neutral;
+        # (2) такт разглашения — a GUEST owner_data request yields a warm withhold VOICE (turn-
+        # constant, threaded through compose + every regeneration) instead of the dry stranger-
+        # wall (the privilege GATE is unchanged). Both are OFF by default → the relationship is
+        # unchanged and the directive is "", so the turn is byte-identical.
+        relationship, withhold_directive, is_guest = await self._prepare_eq_live(
+            event, interlocutor, relationship, history
+        )
         # User-repeat detection (BOB-022): does THIS author repeat (near-)verbatim what
         # THEY already said in the recent window? Pure, no-LLM, conservative (exact after
         # normalise). 🔴 BOB-058 .3: the thread is now shared, so the user turns are
@@ -1360,80 +1489,86 @@ class HandleMessage:
         # inside _compose_reply). If it still fails after the retries, end the turn with the
         # honest GUPPI outage notice instead of a degraded half-answer — the user's turn is
         # persisted and NO Bob reply ships.
+        # The compose+guard generation as ONE cohesive closure so the natural-delay
+        # coordinator (BOB-066 Срез W, INV-9) can wrap it: it runs the generation and tops the
+        # elapsed time up to the human floor (``await max(natural_floor, real_generation)``), so
+        # Bob never answers inhumanly fast. Unwired (``presence.rhythm`` off) it is called
+        # directly, byte-identical. The verify note / anti-tic recalled + nudge stay per-turn
+        # locals INSIDE the closure so «один поиск» + the tic strip fire exactly once.
+        async def _generate() -> str:
+            # 🔴 BOB-057 .5 (US-3 «один поиск, не петля»): compute the epistemic-verify step
+            # (judge → interim → search → grounded/hedge note) EXACTLY ONCE per turn as a
+            # PER-TURN LOCAL, then thread the SAME note into the first composition AND every
+            # anti-repeat regeneration. ``""`` when the judge says «no check».
+            verify_note = await self._verify.note(
+                event.text,
+                history,
+                interlocutor=interlocutor,
+                chat_id=event.chat_id,
+                forced=force_web,
+            )
+            # Anti-tic «провязка» (BOB-061 .2): BEFORE generation, detect whether Bob's recent
+            # closers cluster into ONE recurring motif; when they do, STRIP it off the recalled
+            # exemplars + fold a SOFT «заверши по-другому» nudge into the context. 🔴 Fully
+            # decorative: no tic → ``recalled`` unchanged and the nudge is "".
+            tic_recalled, closer_nudge = await self._guard.closer_anti_tic(
+                recalled, history
+            )
+            reply = await self._voice.compose(
+                event.text,
+                soul,
+                tic_recalled,
+                history,
+                plan,
+                user_repeated=user_repeated,
+                interlocutor=interlocutor,
+                is_guest=is_guest,
+                prior_impression=prior_impression,
+                relationship=relationship,
+                engagement=level,
+                sulk=sulk,
+                verbosity=verbosity,
+                modulators=modulators,
+                chat_id=event.chat_id,
+                verify_note=verify_note,
+                closer_nudge=closer_nudge,
+                room_tone=room_tone,
+                withhold_directive=withhold_directive,
+                rng=rng,
+            )
+            # Anti-repeat guard (BOB-022, defense in depth): a byte-identical repeat of Bob's
+            # most-recent prior reply regenerates ONCE (stochastic sampling differs), then is
+            # kept (no infinite loop).
+            return await self._guard.guard(
+                reply,
+                event.text,
+                soul,
+                tic_recalled,
+                history,
+                plan,
+                user_repeated,
+                interlocutor,
+                is_guest=is_guest,
+                prior_impression=prior_impression,
+                relationship=relationship,
+                engagement=level,
+                sulk=sulk,
+                verbosity=verbosity,
+                modulators=modulators,
+                verify_note=verify_note,
+                closer_nudge=closer_nudge,
+                room_tone=room_tone,
+                withhold_directive=withhold_directive,
+                rng=rng,
+            )
+
+        # Run the generation under the typing keepalive (+ the natural-delay floor when wired).
+        # 🔴 BOB-049 .3: a still-failing ESSENTIAL generation ends the turn with the honest GUPPI
+        # outage notice instead of a degraded half-answer.
         try:
-            async with self._gateway.typing_indicator(chat_id=event.chat_id):
-                # 🔴 BOB-057 .5 (US-3 «один поиск, не петля»): compute the epistemic-verify
-                # step (judge → interim → search → grounded/hedge note) EXACTLY ONCE per turn
-                # as a PER-TURN LOCAL, then thread the SAME note into the first composition
-                # AND every anti-repeat regeneration. This makes «один поиск» a consequence of
-                # real structure — judge.assess / provider.search / the interim line each fire
-                # at most once, even on a turn that is both volatile AND trips the tic. It is a
-                # local (never a HandleMessage attribute) because the use case is a shared
-                # singleton — an instance flag would leak the note / «already searched» state
-                # across turns and concurrent users. ``""`` when the judge says «no check».
-                verify_note = await self._verify.note(
-                    event.text,
-                    history,
-                    interlocutor=interlocutor,
-                    chat_id=event.chat_id,
-                    forced=force_web,
-                )
-                # Anti-tic «провязка» (BOB-061 .2): BEFORE generation, detect whether Bob's
-                # recent closers (persist ring + live window) cluster into ONE recurring
-                # motif. When they do, (a) STRIP that motif off the recalled Bob-reply
-                # exemplars so the tic is not fed back as few-shot, and (b) fold a SOFT
-                # nudge («заверши по-другому») into the generation context — carried through
-                # the first composition AND every anti-repeat regeneration this turn. 🔴
-                # Fully decorative: on no tic (or an unwired/failing log) ``recalled`` is
-                # unchanged and the nudge is "" — zero change to the reply (US-4 liveness).
-                recalled, closer_nudge = await self._guard.closer_anti_tic(
-                    recalled, history
-                )
-                reply = await self._voice.compose(
-                    event.text,
-                    soul,
-                    recalled,
-                    history,
-                    plan,
-                    user_repeated=user_repeated,
-                    interlocutor=interlocutor,
-                    is_guest=is_guest,
-                    prior_impression=prior_impression,
-                    relationship=relationship,
-                    engagement=level,
-                    sulk=sulk,
-                    verbosity=verbosity,
-                    modulators=modulators,
-                    chat_id=event.chat_id,
-                    verify_note=verify_note,
-                    closer_nudge=closer_nudge,
-                    rng=rng,
-                )
-                # Anti-repeat guard (BOB-022, defense in depth): if the fresh reply is
-                # byte-identical (after strip) to Bob's most-recent prior reply, regenerate
-                # ONCE — with sampling now stochastic the retry differs. At most one extra
-                # generation, only on an exact duplicate; if the retry is still identical it
-                # is kept (no infinite loop).
-                reply = await self._guard.guard(
-                    reply,
-                    event.text,
-                    soul,
-                    recalled,
-                    history,
-                    plan,
-                    user_repeated,
-                    interlocutor,
-                    is_guest=is_guest,
-                    prior_impression=prior_impression,
-                    relationship=relationship,
-                    engagement=level,
-                    sulk=sulk,
-                    verbosity=verbosity,
-                    modulators=modulators,
-                    verify_note=verify_note,
-                    closer_nudge=closer_nudge,
-                    rng=rng,
-                )
+            reply = await self._run_generation(
+                _generate, chat_id=event.chat_id, demand=demand, interest=interest
+            )
         except _EssentialStepError as exc:
             await self._essential.handle_failure(event, soul, exc)
             return
@@ -1454,20 +1589,18 @@ class HandleMessage:
         # drained and posted as Telegram photos BEFORE the text confirmation, so the
         # image leads. Best-effort and gated on a wired sink (no diagram skill → no-op).
         await self._diagrams.send_pending(event.chat_id)
-        # Decide WHERE this reply lands (BOB-066 Срез 1.1): in a busy multi-party thread
-        # Bob QUOTES the message he answers (a Telegram reply-to) so it is unambiguous
-        # which turn he replied to; in a focal 1:1 he sends to the topic un-quoted, exactly
-        # as before. A pure conversation-domain core holds the verdict — this collaborator
-        # only gathers the turn's structural signals and hands it the primitives.
-        target = self._resolve_outgoing_target(event, decision, history)
-        # Capture the Telegram message_id of Bob's outgoing reply (BOB-050) so the
-        # episode records which message was Bob's — a later reaction on it can then be
-        # linked back to what Bob said. ``None`` if nothing was sent (degraded path).
-        bob_message_id = await self._gateway.reply(
-            chat_id=event.chat_id,
-            markdown=reply,
-            reply_to_message_id=target.reply_to_message_id,
-        )
+        # 🔴 Staleness врезка (BOB-066 Срез W.3): just before sending, reread what landed while
+        # Bob was drafting. If the reply is now redundant (answered by someone else / topic
+        # closed) with NO fresh direct question on top, he drops it to a like instead of firing
+        # a stale line and ends the turn. A fresh direct question is never dropped (INV-1), and
+        # unwired / nothing-landed / no reactor → this returns False → the reply is sent as
+        # before (byte-identical). Extracted so ``handle()`` stays lean (cohesion-guard).
+        if await self._drop_to_like_if_stale(event, reply, decision, soul, scope):
+            return
+        # Send the reply where it belongs and capture Bob's outgoing message_id (BOB-050) so the
+        # episode records which message was Bob's — a later reaction on it can then be linked back
+        # to what Bob said. ``None`` if nothing was sent (degraded path).
+        bob_message_id = await self._send_reply(event, reply, decision, history)
         # Advance the conversation floor AFTER Bob actually replied (BOB-025): an ENGAGE
         # turn that reached the reply sticks the floor to Bob (``bob_replied=True``), so
         # the next ambient message in the thread is read as continuity. Pass the RAW
@@ -1607,6 +1740,49 @@ class HandleMessage:
         """Delegate to :meth:`SocialContext.load_relationship` (wave 2)."""
         return await self._social.load_relationship(interlocutor)
 
+    async def _prepare_eq_live(
+        self,
+        event: MessageReceived,
+        interlocutor: Interlocutor | None,
+        relationship: Relationship | None,
+        history: Sequence[Mapping[str, object]],
+    ) -> tuple[Relationship | None, str, bool]:
+        """Prepare the two latent Пласт-4 EQ live-врезки for this turn (BOB-066 W.4).
+
+        Returns ``(relationship, withhold_directive, is_guest)`` — the (possibly warm-seeded)
+        relationship, the guest owner_data withhold VOICE, and this turn's PRIVILEGE guest flag
+        (BOB-051: memory/voice are unified for the closed group, so ``is_guest`` survives ONLY
+        as the authz flag) — resolved together because guest-ness is the gating fact for BOTH
+        seams. handle() then applies all three in one cohesive step. Each врезка is inert unless
+        its seam is wired:
+
+        * **Кредит доверия** — the wired
+          :class:`~bob.application.usecases.endorsement_seeder.EndorsementSeeder` warm-starts a
+          FIRST-contact GUEST the owner vouched for BY NAME in the shared ``history`` (the warm
+          :func:`~bob.social.relationship.endorsed_seed`); unwired (``presence.endorsement`` off)
+          → ``relationship`` unchanged.
+        * **Такт разглашения** — the wired
+          :class:`~bob.application.usecases.disclosure_guard.DisclosureGuard` judges (via the
+          permission-flow's privilege judge) whether a GUEST turn is an ``owner_data`` disclosure
+          request and, if so, returns the warm
+          :func:`~bob.personality.voice.tactful_withhold_directive` to fold into compose — 🔴 the
+          privilege GATE is unchanged, only the refusal VOICE; unwired (``presence.tact`` off) →
+          ``""``.
+
+        Both defaults (unchanged relationship + ``""``) keep the turn byte-identical.
+        """
+        is_guest = interlocutor is not None and interlocutor.trust is Trust.GUEST
+        if self._endorsement_seeder is not None:
+            relationship = self._endorsement_seeder.seed(
+                interlocutor, relationship, history
+            )
+        withhold_directive = ""
+        if self._disclosure_guard is not None:
+            withhold_directive = await self._disclosure_guard.withhold_directive(
+                text=event.text, is_guest=is_guest
+            )
+        return relationship, withhold_directive, is_guest
+
     async def _record_relationship(
         self,
         interlocutor: Interlocutor | None,
@@ -1631,6 +1807,30 @@ class HandleMessage:
         """Delegate to :meth:`SocialContext.observe_sulk` (wave 2)."""
         await self._social.observe_sulk(interlocutor, soul, text)
 
+    async def _run_generation(
+        self,
+        generate: Callable[[], Awaitable[str]],
+        *,
+        chat_id: int,
+        demand: AnswerDemand,
+        interest: float,
+    ) -> str:
+        """Run the reply generation under the typing keepalive + the human delay floor.
+
+        The generation runs inside the "Bob is typing…" keepalive so it stays visible for the
+        whole real wait (BOB-009). When the natural-delay coordinator is wired (BOB-066 Срез W,
+        INV-9) the generation runs THROUGH it — noticed → typing → ``await max(natural_floor,
+        real_generation)`` → reply — with urgency/complexity read from the answer-demand + topic
+        interest, so Bob never answers inhumanly fast. Unwired it runs directly, byte-identical.
+        """
+        async with self._gateway.typing_indicator(chat_id=chat_id):
+            if self._reply_delay is None:
+                return await generate()
+            complexity, urgency = reply_delay_inputs(demand, interest)
+            return await self._reply_delay.deliver(
+                generate, complexity=complexity, urgency=urgency
+            )
+
     async def _topic_interest(self, soul: SOUL, text: str) -> float:
         """Delegate to :meth:`EngagementModel.topic_interest` (wave 2)."""
         return await self._engagement.topic_interest(soul, text)
@@ -1646,6 +1846,121 @@ class HandleMessage:
         """Delegate to :meth:`EngagementModel.decide_engagement` (wave 2)."""
         return self._engagement.decide_engagement(
             soul, interest, relationship, self._engagement_state, rng=rng
+        )
+
+    def _apply_room_mood(
+        self,
+        room_mood: RoomMood | None,
+        soul: SOUL,
+        interest: float,
+        relationship: Relationship | None,
+        level: EngagementLevel,
+        *,
+        rng: Random,
+    ) -> tuple[str, EngagementLevel]:
+        """Colour this turn's tone + appetite by the room's mood (BOB-066 Срез W.2, Пласт 4).
+
+        🔴 A reflective periphery REPLY surfaces the room's atmosphere. When the modulator is
+        wired AND a ``room_mood`` is present, its primitives (valence/polarization) are passed
+        BY VALUE — personality never imports conversation — to the pure room-tone decisions: a
+        tone line (a heavy/tense room eases the banter) folded into the compose stack, and a
+        re-mapped appetite ``level`` (a warm room lifts Bob, a heavy one dampens him) via the
+        engagement threshold shift. Bob's personal :class:`~bob.personality.mood.Mood` is NEVER
+        mutated (a SECOND layer). Unwired / no room mood (focus / judge / legacy / flag off) →
+        the base ``level`` and an empty tone line, so the turn is byte-identical.
+        """
+        if self._room_mood_modulator is None or room_mood is None:
+            return "", level
+        room_tone = self._room_mood_modulator.tone_line(
+            room_mood.valence, room_mood.polarization
+        )
+        level = self._engagement.reengage_for_room(
+            soul,
+            interest,
+            relationship,
+            self._engagement_state,
+            threshold_shift=self._room_mood_modulator.engagement_shift(room_mood.valence),
+            rng=rng,
+        )
+        return room_tone, level
+
+    async def _drop_to_like_if_stale(
+        self,
+        event: MessageReceived,
+        reply: str,
+        decision: _AddressivityDecision,
+        soul: SOUL,
+        scope: TurnScope | None,
+    ) -> bool:
+        """Reassess the drafted ``reply`` against what landed during generation (BOB-066 W.3).
+
+        The staleness врезка, just before sending: reads the turn-local ``scope.peek_arrivals``
+        (a non-draining peek of what piled up in this chat WHILE Bob was drafting) and runs the
+        :class:`~bob.application.runtime.staleness_reassessor.StalenessReassessor` over it. On a
+        :data:`~bob.presence.staleness.StalenessOutcome.DROP_TO_LIKE` verdict — the reply is now
+        redundant (someone else answered / the topic closed) and NO fresh direct question rides
+        on top — Bob sets a like on the triggering message instead of firing the stale line and
+        the turn ends as a non-reply (the floor advances with ``bob_replied=False``); returns
+        ``True`` so ``handle()`` skips the send. Every other outcome (SEND / REWRITE / MERGE),
+        and any inert precondition (unwired reassessor / no scope / nothing landed / no reactor /
+        unknown Bob id), returns ``False`` — the reply is sent unchanged, byte-identical.
+
+        🔴 INV-1: a fresh direct question is never dropped — the pure gate merges it, so this
+        only ever suppresses a genuinely redundant line and never silences a question to Bob.
+        """
+        if (
+            self._staleness is None
+            or scope is None
+            or scope.peek_arrivals is None
+            or self._reactor is None
+        ):
+            return False
+        newly_arrived = scope.peek_arrivals()
+        if not newly_arrived:
+            return False
+        bob_user_id = (
+            self._bob_user_id_source() if self._bob_user_id_source is not None else None
+        )
+        if bob_user_id is None:
+            return False
+        outcome = await self._staleness.reassess(
+            drafted=reply,
+            newly_arrived=newly_arrived,
+            draft_author_sender_id=event.sender_id,
+            bob_user_id=bob_user_id,
+        )
+        if outcome is not StalenessOutcome.DROP_TO_LIKE:
+            return False
+        await self._reactor.react(
+            chat_id=event.chat_id,
+            message_id=event.message_id,
+            emoji=reaction_emoji_for(soul.mood),
+        )
+        await self._turn_gate.advance_floor_after_turn(
+            event, decision, bob_replied=False
+        )
+        return True
+
+    async def _send_reply(
+        self,
+        event: MessageReceived,
+        reply: str,
+        decision: _AddressivityDecision,
+        history: Sequence[Mapping[str, object]],
+    ) -> int | None:
+        """Resolve WHERE the reply lands and send it, returning Bob's outgoing message_id.
+
+        Decides the outgoing target (BOB-066 Срез 1.1): in a busy multi-party thread Bob QUOTES
+        the message he answers (a Telegram reply-to) so it is unambiguous which turn he replied
+        to; in a focal 1:1 he sends to the topic un-quoted, exactly as before. A pure
+        conversation-domain core holds the verdict — this collaborator only gathers the turn's
+        structural signals and hands it the primitives.
+        """
+        target = self._resolve_outgoing_target(event, decision, history)
+        return await self._gateway.reply(
+            chat_id=event.chat_id,
+            markdown=reply,
+            reply_to_message_id=target.reply_to_message_id,
         )
 
     def _apply_engagement_feedback(
@@ -1678,6 +1993,29 @@ class HandleMessage:
         return self._engagement.decide_verbosity(
             soul, demand, interest, engagement, plan, is_owner=is_owner, rng=rng
         )
+
+    def _decide_final_verbosity(
+        self,
+        soul: SOUL,
+        demand: AnswerDemand,
+        interest: float,
+        engagement: EngagementLevel,
+        plan: ExpressionPlan,
+        interlocutor: Interlocutor | None,
+        modulators: RuleModulators,
+        *,
+        rng: Random,
+    ) -> Verbosity:
+        """The single final length authority for the turn (BOB-024 + BOB-028 .3 LENGTH tilt).
+
+        The BOB-024 :meth:`_decide_verbosity` decision plus the self-improvement LENGTH tilt: an
+        APPROVED rule nudges it ONE step shorter (clipped at TERSE — наклон, не перехват; no rule
+        → ``length_step`` 0 → unchanged). Kept together so ``handle()`` reads one length step.
+        """
+        verbosity = self._decide_verbosity(
+            soul, demand, interest, engagement, plan, interlocutor, rng=rng
+        )
+        return _shift_verbosity(verbosity, modulators.length_step)
 
     def _guard_reply_length(self, reply: str, demand: AnswerDemand) -> str:
         """Delegate to :meth:`EngagementModel.guard_reply_length` (wave 2)."""

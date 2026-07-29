@@ -22,7 +22,10 @@ from bob.runtime.wiring.capabilities import (
     _build_introspector,
     _build_registry,
 )
+from bob.runtime.wiring.catchup import build_catch_up_reentry
 from bob.runtime.wiring.coding import _build_coding_assistant, _build_coding_router
+from bob.runtime.wiring.disclosure import build_disclosure_guard
+from bob.runtime.wiring.endorsement import build_endorsement_seeder
 from bob.runtime.wiring.goals import _build_goal_engine, _build_pursue_goals_tick
 from bob.runtime.wiring.memory import (
     _build_consolidate_memory,
@@ -64,13 +67,20 @@ from bob.runtime.wiring.proactivity import (
     _background_tasks,
     _build_proactivity_engine,
 )
+from bob.runtime.wiring.rhythm import RhythmWiring, build_rhythm_wiring
+from bob.runtime.wiring.room_mood import build_room_mood_modulator
 from bob.runtime.wiring.self_improvement import (
     _build_self_improvement,
     _SelfImprovement,
 )
+from bob.runtime.wiring.staleness import (
+    build_staleness_reassessor,
+    staleness_enabled,
+)
 from bob.runtime.wiring.telegram import _build_multibot
 
 __all__ = [
+    "RhythmWiring",
     "_SelfImprovement",
     "_as_tool_provider",
     "_background_tasks",
@@ -117,4 +127,11 @@ __all__ = [
     "_fascination_initial_intensity",
     "_phantom_evolution_params",
     "_resolve_seed",
+    "build_catch_up_reentry",
+    "build_disclosure_guard",
+    "build_endorsement_seeder",
+    "build_rhythm_wiring",
+    "build_room_mood_modulator",
+    "build_staleness_reassessor",
+    "staleness_enabled",
 ]

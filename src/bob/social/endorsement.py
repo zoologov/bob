@@ -32,10 +32,14 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from bob.social.relationship import endorsed_seed
+
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-__all__ = ["detected_endorsement", "owner_endorsed_sender"]
+    from bob.social.relationship import Relationship
+
+__all__ = ["detected_endorsement", "endorsement_seed", "owner_endorsed_sender"]
 
 # Vouch markers — the "I stand behind this person" half of an endorsement. Any one is
 # enough on its own (a trust vouch is an endorsement even without an introduction).
@@ -105,3 +109,31 @@ def owner_endorsed_sender(owner_texts: Sequence[str], *, sender_name: str) -> bo
         detected_endorsement(text) and first_name in text.casefold()
         for text in owner_texts
     )
+
+
+def endorsement_seed(
+    relationship: Relationship | None,
+    *,
+    sender_id: int | None,
+    sender_name: str,
+    owner_texts: Sequence[str],
+) -> Relationship | None:
+    """Warm-start a first-contact person the owner vouched for by name, else keep — pure.
+
+    The single decision that ties the endorsement *perception* to the relationship *credit*
+    (BOB-066 2.6, wired in Срез W.4). Returns a warm :func:`endorsed_seed` ONLY when ALL hold:
+
+    * ``relationship is None`` — a genuine FIRST contact (an already-formed relationship
+      carries Bob's own read and is returned UNCHANGED — a seed never overwrites history);
+    * ``sender_id is not None`` — there is a concrete person to attribute the credit to;
+    * :func:`owner_endorsed_sender` — an owner turn among ``owner_texts`` vouches for this
+      sender BY NAME (so a warm word about one member never warm-starts another).
+
+    Otherwise the input ``relationship`` is returned verbatim, so the caller keeps the
+    ordinary neutral first-contact path. Pure and deterministic: same inputs → same seed.
+    """
+    if relationship is not None or sender_id is None:
+        return relationship
+    if not owner_endorsed_sender(owner_texts, sender_name=sender_name):
+        return relationship
+    return endorsed_seed(None, sender_id)

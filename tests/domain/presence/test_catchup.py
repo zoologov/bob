@@ -24,12 +24,45 @@ from bob.presence.catchup import (
     BacklogMessage,
     BacklogScorer,
     CatchUpPlan,
+    is_reentry,
     rank,
     score,
     select_catchup,
 )
 
 _NOW = datetime(2026, 7, 29, 12, 0, 0, tzinfo=UTC)
+
+
+# ── is_reentry: the pure «Bob was away» gate ──────────────────────────────────────
+
+
+def test_is_reentry_true_after_a_long_gap() -> None:
+    # A gap at or beyond the threshold reads as a re-entry (Bob was away).
+    last = _NOW - timedelta(hours=5)
+    assert is_reentry(last, _NOW, threshold_hours=4.0) is True
+
+
+def test_is_reentry_false_within_the_threshold() -> None:
+    # A short gap is normal back-and-forth, not a re-entry.
+    last = _NOW - timedelta(hours=1)
+    assert is_reentry(last, _NOW, threshold_hours=4.0) is False
+
+
+def test_is_reentry_true_exactly_at_the_threshold() -> None:
+    # The boundary is inclusive: exactly the threshold counts as away.
+    last = _NOW - timedelta(hours=4)
+    assert is_reentry(last, _NOW, threshold_hours=4.0) is True
+
+
+def test_is_reentry_false_without_a_last_seen() -> None:
+    # No prior activity (first-ever batch) is not a re-entry — there is nothing to catch up on.
+    assert is_reentry(None, _NOW, threshold_hours=4.0) is False
+
+
+def test_is_reentry_false_on_clock_skew() -> None:
+    # A last-seen AFTER now (clock skew) is a non-positive gap → never a re-entry.
+    last = _NOW + timedelta(hours=2)
+    assert is_reentry(last, _NOW, threshold_hours=4.0) is False
 
 
 def _msg(

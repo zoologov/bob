@@ -204,10 +204,16 @@ baseline, потом ложится bounded-дельта — тот же пут�
 Обе — module-level функции (детерминированы, без I/O, без `Mood`), поэтому unit- и
 mutation-тестируемы, а личное настроение не тронуто по построению.
 
-🔴 **ОТЛОЖЕНО (не отгружено в срезе 2.4):** воркерное потребление салиенса + top-k
-action-budget (несколько входящих → один ответ + отбор реакций) — асинхронная оркестрация за
-presence-флагом (OFF по умолчанию, консистентно срезам 2.2/2.3). `room_tone` — чистый слой; его
-проводка в конвейер хода придёт отдельным wiring-беадом.
+🔴 **LIVE-провязка (BOB-066 Срез W.2):** `room_tone` теперь потребляется в конвейере хода
+за флагом `presence.room_mood.enabled` (OFF по умолчанию → тон пуст, аппетит как был). Из
+рефлексивного `RoomReading` (surfaced на `_ReplyGate` при `presence.reflective`) коллаборатор
+`RoomMoodModulator` (`application/usecases/room_mood_modulator.py`) по значению даёт
+`room_tone_directive` в compose-стек (`VoiceComposer.compose` + `AntiRepeatGuard.guard`,
+turn-local) и `room_engagement_bias` re-map порога аппетита (без двойного fatigue-decay).
+🔴 Зависимость: без `presence.reflective` `RoomReading` не рождается, поэтому модулятор
+работает над пустым чтением. Личное настроение (`Mood`) не тронуто по построению. Отдельно
+воркерный top-k action-budget (несколько входящих → один ответ + отбор реакций) провязан в
+intake-воркер за `presence.series_budget.enabled` (см. `conversation`/`presence`).
 
 ### Use-case'ы (application)
 

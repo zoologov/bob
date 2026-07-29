@@ -162,6 +162,13 @@ from bob.runtime.wiring import (
     _fascination_initial_intensity,
     _phantom_evolution_params,
     _resolve_seed,
+    build_catch_up_reentry,
+    build_disclosure_guard,
+    build_endorsement_seeder,
+    build_rhythm_wiring,
+    build_room_mood_modulator,
+    build_staleness_reassessor,
+    staleness_enabled,
 )
 from bob.social.adapters.first_impression_store import SqliteFirstImpressionStore
 from bob.social.adapters.person_sulk_store import SqlitePersonSulkStore
@@ -377,10 +384,14 @@ def build_application(
     # contagion (a warm message lifts more than a cold one dips) and the proportional
     # pull-toward-baseline that displaces accumulated low. Loaded off the same soul
     # artifact as the reappraisal seam; canon-optimist fallback when absent.
+    # Bob's disposition (canon-optimist fallback when absent) drives the social co-regulation
+    # AND — behind ``presence.room_mood`` — the warm-room-lifts-more-than-cold engagement
+    # asymmetry; loaded once here and shared by every seam that reuses it.
+    disposition = _disposition_from(soul_store.read_json("disposition"))
     update_mood = UpdateMoodFromText(
         router=router,
         clock=resolved_clock,
-        disposition=_disposition_from(soul_store.read_json("disposition")),
+        disposition=disposition,
     )
     extract_facts = ExtractFacts(router=router, repo=memory_repo, clock=resolved_clock)
     authorizer = _build_authorizer(merged, repo=connection)
@@ -565,6 +576,36 @@ def build_application(
     read_the_room = (
         ReadTheRoom(reader=LlmRoomReader(router=router)) if reflective_enabled else None
     )
+
+    # Ритм-слой присутствия (BOB-066 Срез W): the share-of-voice ceiling + natural-delay floor,
+    # built ONLY when ``presence.rhythm`` (OFF by default → all seams None → byte-identical). The
+    # SAME gate goes to the reactive ambient-barge ceiling AND the proactive throttle so they
+    # damp over one per-chat window; the store reads Bob's airtime off the episodic log the reply
+    # path already writes (no extra write). Ships inert until the epic is complete (owner blocker).
+    rhythm = build_rhythm_wiring(merged, activity_provider=memory_repo)
+
+    # RoomMood-в-тоне (BOB-066 Срез W.2, Пласт 4): built ONLY when ``presence.room_mood`` (OFF by
+    # default → None → byte-identical). On a reflective periphery REPLY the room's atmosphere
+    # colours Bob's tone + appetite BY VALUE (personality never imports conversation); his
+    # personal Mood is never mutated (a SECOND layer). Ships inert until the epic is complete.
+    room_mood_modulator = build_room_mood_modulator(merged, disposition=disposition)
+
+    # Staleness врезка (BOB-066 Срез W.3, Пласт 3): built ONLY when ``presence.staleness`` (OFF by
+    # default → None → byte-identical). On, just before sending Bob rereads what landed during
+    # generation (the turn-local ``peek_arrivals``) via the Tier-0 LlmStalenessJudge over the pure
+    # gate and drops a now-redundant draft to a like (a fresh direct question is never dropped —
+    # INV-1). Ships inert until the epic is complete (owner blocker).
+    staleness_reassessor = build_staleness_reassessor(merged, router=router)
+
+    # EQ live-врезка (BOB-066 Срез W.4, Пласт 4): both built ONLY when their nested flag is on
+    # (OFF by default → None → byte-identical). ``endorsement`` warm-starts a first-contact
+    # guest the owner vouched for by name in the shared thread (кредит доверия); ``tact`` swaps
+    # the dry stranger-wall for a warm withhold VOICE on a guest owner_data request (the
+    # privilege gate is unchanged). Ship inert until the epic is complete (owner blocker).
+    endorsement_seeder = build_endorsement_seeder(
+        merged, owner_id=_int(telegram_section, "owner_id", 0) or None
+    )
+    disclosure_guard = build_disclosure_guard(merged, router=router)
 
     handle_message = HandleMessage(
         router=router,
@@ -776,6 +817,20 @@ def build_application(
         # makes ONE DIRECT search and folds the finding (or an honest hedge) into the reply
         # — internal public-verify, NOT routed through the registry/BOB-052 gate.
         read_the_room=read_the_room,
+        # Ритм-слой consumption (BOB-066 Срез W): the ambient-barge ceiling is threaded to the
+        # TurnGate (focus bypasses it — INV-1) and the natural-delay coordinator wraps the reply
+        # generation (INV-9). Both None unless ``presence.rhythm`` → byte-identical when off.
+        barge_ceiling=rhythm.barge_ceiling,
+        reply_delay=rhythm.reply_delay,
+        # RoomMood-в-тоне consumption (BOB-066 Срез W.2): the reflective room mood colours Bob's
+        # tone + appetite BY VALUE. None unless ``presence.room_mood`` → byte-identical when off.
+        endorsement_seeder=endorsement_seeder,
+        disclosure_guard=disclosure_guard,
+        room_mood_modulator=room_mood_modulator,
+        # Staleness врезка consumption (BOB-066 Срез W.3): rereads what landed during generation
+        # and drops a now-redundant draft to a like. None unless ``presence.staleness`` →
+        # byte-identical when off.
+        staleness_reassessor=staleness_reassessor,
         verify_judge=verify_judge,
         verify_provider=verify_provider,
         interim_line_generator=interim_line_generator,
@@ -794,6 +849,11 @@ def build_application(
     # focused message (direct address to Bob) flushes the debounce at once so it is never
     # dropped/delayed by batching (INV-1/10). AsyncEventBus / gateway / poll_once are
     # unchanged — only the handler behind the seam became fast.
+    # Batch top-k action budget (BOB-066 Срез W.2, Пласт 3): behind ``presence.series_budget``
+    # (OFF by default → every message uncapped → byte-identical), a settled burst collapses to
+    # ONE addressed reply + a budget-capped like (``max_reactions``, default 1) instead of N
+    # replies; a focus message is always answered (INV-1). Ships inert until the epic completes.
+    series_budget = _section(_section(merged, "presence"), "series_budget")
     intake_dispatcher = ChatDispatcher(
         handle=handle_message.handle,
         base_seed=_resolve_seed(merged, proactivity_seed),
@@ -802,6 +862,20 @@ def build_application(
             _int(_section(merged, "dialogue"), "intake_debounce_ms", 0)
         )
         / _MILLIS_PER_SECOND,
+        series_budget_enabled=_flag(series_budget, "enabled"),
+        series_max_reactions=_int(series_budget, "max_reactions", 1),
+        # Staleness врезка (BOB-066 Срез W.3): when enabled, the worker binds each turn's
+        # ``peek_arrivals`` (a non-draining peek of what piled up in this chat during
+        # generation) onto its scope so the врезка can reread before sending. Off → never
+        # bound → byte-identical.
+        staleness_enabled=staleness_enabled(merged),
+        # Catch-up re-entry (BOB-066 Срез W.3): when enabled, a drained batch that follows an
+        # away period is run as ONE catch-up pass (focal + budget ambient answered, the rest
+        # skimmed) instead of replaying each message. None unless ``presence.catchup`` →
+        # byte-identical when off.
+        catch_up_reentry=build_catch_up_reentry(
+            merged, clock=resolved_clock, bob_user_id_source=multibot.bob_user_id
+        ),
     )
     event_bus.subscribe(MESSAGE_RECEIVED, _as_dispatch_handler(intake_dispatcher))
 
@@ -966,6 +1040,9 @@ def build_application(
         # the proactive compose grounds on recalled whole-turn memories, so it gets the
         # same window / similarity bar to keep Bob from copying his OWN recalled past reply.
         repeat_thresholds=_build_repeat_thresholds(merged),
+        # Ритм-слой throttle (BOB-066 Срез W): the SAME share-of-voice gate the reactive ceiling
+        # uses, so a proactive tick sees a reply Bob just sent and throttles. None when off.
+        share_ceiling=rhythm.share_ceiling,
     )
     proactive_tick = ProactiveTick(engine=proactivity_engine)
 

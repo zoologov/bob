@@ -24,6 +24,10 @@ import pytest
 
 from bob.application.router.llm_router import LLMRouter
 from bob.application.runtime.events import MessageReceived
+from bob.application.runtime.intake.scope import TurnScope, new_turn_scope
+from bob.application.runtime.staleness_reassessor import StalenessReassessor
+from bob.application.usecases.disclosure_guard import DisclosureGuard
+from bob.application.usecases.endorsement_seeder import EndorsementSeeder
 from bob.application.usecases.handle_message import (
     EngagementState,
     HandleMessage,
@@ -86,6 +90,7 @@ from bob.personality.reaction_effect import NotableReaction
 from bob.personality.soul import SOUL
 from bob.personality.taste import TasteAxis, TasteEngine, Verdict
 from bob.personality.usecases.update_mood_from_text import UpdateMoodFromText
+from bob.presence.staleness import StalenessContext, StalenessGate, StalenessReading
 from bob.proactivity.self_improvement import (
     ImprovementRule,
     Lever,
@@ -97,11 +102,18 @@ from bob.social.interlocutor import (
     InterlocutorKind,
     Trust,
 )
+from bob.social.permission.privilege import PrivilegeContext, PrivilegeNeed
 from bob.social.relationship import Relationship
 from bob.social.sulk import SulkState
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator, Callable, Mapping, Sequence
+    from collections.abc import (
+        AsyncIterator,
+        Awaitable,
+        Callable,
+        Mapping,
+        Sequence,
+    )
 
     from aiogram.types import BufferedInputFile
 
@@ -664,6 +676,10 @@ def _build(
     verify_timeout_seconds: float = 75.0,
     interim_line_generator: _FakeInterimLineGenerator | None = None,
     closer_log: _FakeCloserLog | None = None,
+    reply_delay: object | None = None,
+    staleness_reassessor: StalenessReassessor | None = None,
+    endorsement_seeder: EndorsementSeeder | None = None,
+    disclosure_guard: DisclosureGuard | None = None,
 ) -> tuple[HandleMessage, FakeBot, FakeRepo, CapturingProvider]:
     tier0 = CapturingProvider(reply="positive", replies=tier0_replies)
     tier1 = CapturingProvider(reply=reply, replies=tier1_replies)
@@ -740,6 +756,10 @@ def _build(
         verify_timeout_seconds=verify_timeout_seconds,
         interim_line_generator=interim_line_generator,
         closer_log=closer_log,
+        reply_delay=reply_delay,  # type: ignore[arg-type]  # test double
+        staleness_reassessor=staleness_reassessor,
+        endorsement_seeder=endorsement_seeder,
+        disclosure_guard=disclosure_guard,
     )
     return handler, bot, repo, tier1
 
@@ -849,6 +869,50 @@ async def test_handle_sends_reply_back_to_telegram() -> None:
     assert bot.sent
     assert bot.sent[-1][0] == 555
     assert bot.final_text == "Coffee is the best."
+
+
+class _RecordingReplyDelay:
+    """A DelayedTurn double: runs the real generation, records the delay knobs (BOB-066 W)."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[float, float]] = []
+
+    async def deliver(
+        self,
+        generate: Callable[[], Awaitable[str]],
+        *,
+        complexity: float,
+        urgency: float,
+    ) -> str:
+        self.calls.append((complexity, urgency))
+        return await generate()
+
+
+async def test_wired_reply_delay_wraps_the_generation() -> None:
+    # 🔴 BOB-066 Срез W (INV-9): when the natural-delay coordinator is wired, the reply
+    # generation runs THROUGH it (noticed → typing → floor → reply), and the final reply is
+    # still exactly what was generated — the delay only tops elapsed time up to a human floor.
+    delay = _RecordingReplyDelay()
+    handler, bot, _repo, _tier1 = _build(
+        reply="Кофе — это жизнь.", reply_delay=delay
+    )
+
+    # "расскажи подробно" → a HIGH answer-demand, so urgency is maximal (a demanded answer
+    # comes promptly), and the reply still lands unchanged through the coordinator.
+    await handler.handle(_message())
+
+    assert bot.final_text == "Кофе — это жизнь."
+    assert len(delay.calls) == 1
+    complexity, urgency = delay.calls[0]
+    assert urgency == 1.0  # HIGH demand
+    assert 0.0 <= complexity <= 1.0
+
+
+async def test_unwired_reply_delay_is_byte_identical() -> None:
+    # Flag OFF (no coordinator) → generation runs directly, reply unchanged.
+    handler, bot, _repo, _tier1 = _build(reply="Кофе — это жизнь.")
+    await handler.handle(_message())
+    assert bot.final_text == "Кофе — это жизнь."
 
 
 async def test_handle_shows_typing_during_generation_then_one_final() -> None:
@@ -8733,3 +8797,285 @@ async def test_verify_interim_not_sent_on_no_check_path() -> None:
 
     assert generator.calls == [], "no live gen on a non-volatile turn"
     assert bot.sent == [(555, "hi")], "only the final answer, no interim line"
+
+
+# ── Staleness врезка (BOB-066 Срез W.3) ───────────────────────────────────────────
+
+
+def _staleness_arrival(update_id: int, *, sender_id: int) -> MessageReceived:
+    """One message that landed while Bob was drafting (peeked, non-draining)."""
+    return MessageReceived(
+        update_id=update_id,
+        chat_id=555,
+        message_id=update_id,
+        text="что-то пришло за время генерации",
+        sender_id=sender_id,
+    )
+
+
+def _staleness_reassessor(
+    *,
+    answered_by_other: bool = False,
+    topic_closed: bool = False,
+    same_author_clarified: bool = False,
+    new_direct_question: bool = False,
+) -> StalenessReassessor:
+    """The real reassessor over a scripted judge read (mirrors the acceptance harness)."""
+
+    class _ScriptedJudge:
+        async def assess(self, ctx: StalenessContext) -> StalenessReading:  # noqa: ARG002
+            return StalenessReading(
+                answered_by_other=answered_by_other,
+                topic_closed=topic_closed,
+                same_author_clarified=same_author_clarified,
+                new_direct_question=new_direct_question,
+                reason="scripted",
+            )
+
+    return StalenessReassessor(_ScriptedJudge(), StalenessGate())
+
+
+def _scope_with_arrivals(*arrivals: MessageReceived) -> TurnScope:
+    """A TurnScope whose ``peek_arrivals`` returns a fixed burst (what landed mid-draft)."""
+    return new_turn_scope(
+        base_seed=0,
+        chat_id=555,
+        message_id=10,
+        peek_arrivals=lambda: tuple(arrivals),
+    )
+
+
+async def test_stale_reply_drops_to_like_when_answered_during_generation() -> None:
+    # Arrange: while Bob drafted, someone else answered the point → the judge reads it as
+    # answered-by-other, so the reassessor decides DROP_TO_LIKE.
+    reactor = _RecordingReactor()
+    handler, bot, _repo, _tier1 = _build(
+        reply="кофе лучше всего утром",
+        reactor=reactor,
+        staleness_reassessor=_staleness_reassessor(answered_by_other=True),
+        bob_user_id_source=lambda: 100,
+    )
+
+    # Act: an arrival piled up behind the current turn during generation.
+    await handler.handle(
+        _message(), _scope_with_arrivals(_staleness_arrival(2, sender_id=9))
+    )
+
+    # Assert: Bob liked the triggering message instead of firing the stale line.
+    assert reactor.calls, "expected a like on the redundant draft"
+    assert reactor.calls[-1][0] == 555
+    assert reactor.calls[-1][1] == 10
+    assert not bot.sent, "the stale reply must NOT be sent"
+
+
+async def test_fresh_direct_question_is_never_dropped_to_like() -> None:
+    # 🔴🔴 INV-1: even though the original point was answered by someone else, a FRESH DIRECT
+    # question landed on top — it must be answered (MERGE), never silenced to a reaction.
+    reactor = _RecordingReactor()
+    handler, bot, _repo, _tier1 = _build(
+        reply="кофе лучше всего утром",
+        reactor=reactor,
+        staleness_reassessor=_staleness_reassessor(
+            answered_by_other=True, new_direct_question=True
+        ),
+        bob_user_id_source=lambda: 100,
+    )
+
+    # Act
+    await handler.handle(
+        _message(), _scope_with_arrivals(_staleness_arrival(2, sender_id=9))
+    )
+
+    # Assert: Bob still speaks (the fresh direct question is never dropped to a like).
+    assert bot.sent, "a fresh direct question must be answered, not dropped"
+    assert reactor.calls == [], "no drop-to-like when a direct question is in play"
+
+
+async def test_staleness_verbatim_send_when_nothing_arrived() -> None:
+    # Arrange: the reassessor is wired but NOTHING landed during generation → the врезка is a
+    # no-op and the reply is sent verbatim (even a stale-looking scripted judge is never
+    # consulted because the peek is empty).
+    reactor = _RecordingReactor()
+    handler, bot, _repo, _tier1 = _build(
+        reply="кофе лучше всего утром",
+        reactor=reactor,
+        staleness_reassessor=_staleness_reassessor(answered_by_other=True),
+        bob_user_id_source=lambda: 100,
+    )
+
+    # Act: a scope whose peek returns an empty burst.
+    await handler.handle(_message(), _scope_with_arrivals())
+
+    # Assert: the reply is sent as before; no like.
+    assert bot.sent, "nothing landed → the draft is still fresh → send it"
+    assert reactor.calls == []
+
+
+# --- BOB-066 Срез W.4: EQ live-врезка wiring (endorsement + tactful withhold) -----
+
+
+def _soul_with_faintly_borderline_opinion(topic: str) -> SOUL:
+    # Like _soul_with_borderline_opinion but with a conviction FAINTLY above the 0.5
+    # pushback threshold — low enough that the MODEST endorsement seed (warmth 0.3 →
+    # compromise-bias ≈0.03) tips the borderline stance from holding ground to agree.
+    baseline = Mood(valence=0.1, social=0.2)
+    taste = TasteEngine(axes=(TasteAxis(name=topic, value=-0.6, conviction=0.51),))
+    return SOUL(
+        identity="I am the Bob from the book.",
+        mood=baseline,
+        mood_baseline=baseline,
+        taste=taste,
+        phantom_prefs=(_PHANTOM_PREF,),
+    )
+
+
+def _owner_endorsement_turn(name: str) -> Mapping[str, object]:
+    # An OWNER turn (sender_id = _OWNER_SENDER_ID) that vouches for `name` by name.
+    return {
+        "content": (
+            f"Vova: познакомься, это {name}, ему можно доверять\nbob: понял, привет"
+        ),
+        "event_type": "message",
+        "sender_id": _OWNER_SENDER_ID,
+        "ts": _moment().isoformat(),
+    }
+
+
+async def test_endorsement_warm_starts_a_vouched_first_contact_guest() -> None:
+    # Кредит доверия wired: a first-contact GUEST the owner vouched for by name starts warm
+    # enough to tip a faintly-borderline stance from holding ground to agree (he meets the
+    # endorsed newcomer more readily) — the observable effect of the seed through compose.
+    topic = "объясни подробно почему минимализм лучше всего"
+    resolver = _FakeInterlocutorResolver(
+        _interlocutor(
+            name="Норман", kind=InterlocutorKind.GUEST, trust=Trust.GUEST, sender_id=2
+        )
+    )
+    handler, _bot, _repo, tier1 = _build(
+        reply="hi",
+        soul=_soul_with_faintly_borderline_opinion(topic),
+        zone_classifier=_StubZoneClassifier(NegotiationZone.BOB_PERSONAL),
+        perceive_sender=resolver,
+        relationship=_FakeRelationship(current=None),  # genuine first contact
+        history=[_owner_endorsement_turn("Норман")],
+        endorsement_seeder=EndorsementSeeder(owner_id=_OWNER_SENDER_ID),
+    )
+
+    await handler.handle(_message(topic))
+
+    # The warm start tipped the borderline stance to agree — an endorsed guest is met warmer.
+    assert _AGREE_DIRECTIVE in tier1.all_text
+    assert _PROPOSE_DIRECTIVE not in tier1.all_text
+
+
+async def test_endorsement_seeder_off_is_byte_identical() -> None:
+    # Flag OFF (no seeder): the SAME endorsed first-contact guest is met at the neutral base,
+    # so the faintly-borderline stance holds — byte-identical to the pre-W.4 path.
+    topic = "объясни подробно почему минимализм лучше всего"
+    resolver = _FakeInterlocutorResolver(
+        _interlocutor(
+            name="Норман", kind=InterlocutorKind.GUEST, trust=Trust.GUEST, sender_id=2
+        )
+    )
+    handler, _bot, _repo, tier1 = _build(
+        reply="hi",
+        soul=_soul_with_faintly_borderline_opinion(topic),
+        zone_classifier=_StubZoneClassifier(NegotiationZone.BOB_PERSONAL),
+        perceive_sender=resolver,
+        relationship=_FakeRelationship(current=None),
+        history=[_owner_endorsement_turn("Норман")],
+        # endorsement_seeder omitted → None → neutral first contact.
+    )
+
+    await handler.handle(_message(topic))
+
+    assert _PROPOSE_DIRECTIVE in tier1.all_text
+    assert _AGREE_DIRECTIVE not in tier1.all_text
+
+
+async def test_no_endorsement_keeps_the_guest_neutral_even_when_wired() -> None:
+    # The seeder is wired but the shared thread carries NO owner vouch for this guest → the
+    # neutral first-contact path is kept (the credit is only for a vouched-for newcomer).
+    topic = "объясни подробно почему минимализм лучше всего"
+    resolver = _FakeInterlocutorResolver(
+        _interlocutor(
+            name="Норман", kind=InterlocutorKind.GUEST, trust=Trust.GUEST, sender_id=2
+        )
+    )
+    handler, _bot, _repo, tier1 = _build(
+        reply="hi",
+        soul=_soul_with_faintly_borderline_opinion(topic),
+        zone_classifier=_StubZoneClassifier(NegotiationZone.BOB_PERSONAL),
+        perceive_sender=resolver,
+        relationship=_FakeRelationship(current=None),
+        history=[_person_turn_at(sender_id=_OWNER_SENDER_ID, hours_ago=1, name="Vova")],
+        endorsement_seeder=EndorsementSeeder(owner_id=_OWNER_SENDER_ID),
+    )
+
+    await handler.handle(_message(topic))
+
+    assert _PROPOSE_DIRECTIVE in tier1.all_text
+
+
+class _ScriptedPrivilegeJudge:
+    """A PrivilegeJudge fake returning a fixed need for the tactful-withhold wiring test."""
+
+    def __init__(self, need: PrivilegeNeed) -> None:
+        self._need = need
+
+    async def assess(self, ctx: PrivilegeContext) -> PrivilegeNeed:  # noqa: ARG002
+        return self._need
+
+
+# A stable fragment of personality.voice._TACTFUL_WITHHOLD (the warm refusal VOICE).
+_TACTFUL_FRAGMENT = "спросить у него самого"
+
+
+async def test_tactful_withhold_folds_into_a_guest_owner_data_turn() -> None:
+    # Такт разглашения wired: a GUEST owner_data request folds the warm withhold VOICE into
+    # compose instead of the dry stranger-wall — the privilege GATE is unchanged.
+    guard = DisclosureGuard(
+        judge=_ScriptedPrivilegeJudge(
+            PrivilegeNeed(needs_permission=True, kind="owner_data", what="адрес владельца")
+        )
+    )
+    handler, _bot, _repo, tier1 = _build(
+        reply="hi",
+        perceive_sender=_guest_resolver(),
+        disclosure_guard=guard,
+    )
+
+    await handler.handle(_message("расскажи подробно, какой домашний адрес у Вовы и где он живёт"))
+
+    assert _TACTFUL_FRAGMENT in tier1.all_text.casefold()
+
+
+async def test_tactful_withhold_off_is_byte_identical() -> None:
+    # Flag OFF (no guard): the same guest owner_data turn composes with NO withhold line.
+    handler, _bot, _repo, tier1 = _build(
+        reply="hi",
+        perceive_sender=_guest_resolver(),
+        # disclosure_guard omitted → None.
+    )
+
+    await handler.handle(_message("расскажи подробно, какой домашний адрес у Вовы и где он живёт"))
+
+    assert _TACTFUL_FRAGMENT not in tier1.all_text.casefold()
+
+
+async def test_tactful_withhold_skips_a_non_owner_data_guest_turn() -> None:
+    # A guest asking something non-private is judged NOT owner_data → no withhold line.
+    guard = DisclosureGuard(
+        judge=_ScriptedPrivilegeJudge(
+            PrivilegeNeed(needs_permission=False, kind="", what="")
+        )
+    )
+    handler, _bot, _repo, tier1 = _build(
+        reply="hi",
+        perceive_sender=_guest_resolver(),
+        disclosure_guard=guard,
+    )
+
+    await handler.handle(_message("расскажи подробно, как у тебя сегодня идут дела и настроение"))
+
+    assert _TACTFUL_FRAGMENT not in tier1.all_text.casefold()

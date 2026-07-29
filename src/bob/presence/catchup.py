@@ -45,6 +45,7 @@ __all__ = [
     "BacklogMessage",
     "BacklogScorer",
     "CatchUpPlan",
+    "is_reentry",
     "rank",
     "score",
     "select_catchup",
@@ -131,6 +132,24 @@ def _recency(at: datetime, now: datetime) -> float:
     if age_hours <= 0.0:
         return 1.0
     return 1.0 / (1.0 + age_hours)
+
+
+def is_reentry(
+    last_seen: datetime | None, now: datetime, *, threshold_hours: float
+) -> bool:
+    """Return whether Bob is RE-ENTERING this chat after an away period — pure, deterministic.
+
+    A re-entry is what turns «reply to each backlogged message» into «one catch-up pass»: it is
+    ``True`` only when Bob has a prior activity mark (``last_seen``) AND the gap to ``now`` is at
+    or beyond ``threshold_hours`` (the boundary is inclusive). A missing ``last_seen`` (the
+    first-ever batch — nothing to catch up on) and a non-positive gap (clock skew — ``last_seen``
+    at/after ``now``) both read as «not a re-entry», so catch-up never fires on normal
+    back-and-forth or a skewed clock. No I/O — pinned by unit tests and mutation.
+    """
+    if last_seen is None:
+        return False
+    gap_hours = (now - last_seen).total_seconds() / _SECONDS_PER_HOUR
+    return gap_hours >= threshold_hours
 
 
 def score(msg: BacklogMessage, *, now: datetime) -> float:

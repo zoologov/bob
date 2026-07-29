@@ -136,6 +136,12 @@ ignore = [
 # literals + comments whose Cyrillic look-alikes are intentional (the heuristic matches
 # real Russian text) — RUF001/RUF002/RUF003 do not apply to these.
 "src/bob/social/endorsement.py" = ["RUF001", "RUF002", "RUF003"]
+# The disclosure guard (BOB-066 W.4) carries a Russian такт-разглашения docstring whose
+# Cyrillic look-alikes are intentional — RUF001/RUF002/RUF003 do not apply to these.
+"src/bob/application/usecases/disclosure_guard.py" = ["RUF001", "RUF002", "RUF003"]
+# The voice-composer use-case (BOB-016+) carries Russian persona/policy comments whose
+# Cyrillic look-alikes are intentional — RUF001/RUF002/RUF003 do not apply to these.
+"src/bob/personality/usecases/voice_composer.py" = ["RUF001", "RUF002", "RUF003"]
 # The brevity module (BOB-024) carries Russian answer-demand keyword literals
 # ("почему", "расскажи", "ты тут") + persona/policy comments whose Cyrillic
 # look-alikes are intentional (the heuristic matches real Russian text) —
@@ -186,6 +192,9 @@ ignore = [
 # The volatility judge (BOB-057 .1): its conservative Russian prompt + docstrings
 # carry Cyrillic look-alikes that are intentional — RUF001/RUF002/RUF003 here.
 "src/bob/conversation/volatility_judgment.py" = ["RUF001", "RUF002", "RUF003"]
+# The staleness judge (BOB-066 Срез W.3): its Russian reassess prompt + docstrings
+# carry intentional Cyrillic look-alikes — RUF001/RUF002/RUF003 here.
+"src/bob/presence/staleness_judgment.py" = ["RUF001", "RUF002", "RUF003"]
 # The interim-line seam (BOB-057 .3): its Russian persona prompt + one-liner
 # examples carry intentional Cyrillic look-alikes — RUF001/RUF002/RUF003 here.
 "src/bob/conversation/interim_line.py" = ["RUF001", "RUF002", "RUF003"]
@@ -324,6 +333,26 @@ ignore = [
     "RUF002",
     "RUF003",
 ]
+# The EQ live-врезка WIRING steps (BOB-066 W.4) drive the endorsement/disclosure builders on
+# Russian vouch/owner_data literals whose Cyrillic look-alikes are intentional (→ RUF001/2/3).
+"tests/acceptance/steps/test_eq_live_wiring.py" = [
+    "S101",
+    "ARG001",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+# The disclosure-guard tests (BOB-066 W.4) assert on Russian owner_data request literals whose
+# Cyrillic look-alikes are intentional (→ RUF001/2/3).
+"tests/application/usecases/test_disclosure_guard.py" = [
+    "S101",
+    "ARG001",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
 # The visibility-provenance persistence tests (BOB-066 2.6) carry Russian episode content
 # literals whose Cyrillic look-alikes are intentional (→ RUF001/RUF002/RUF003).
 "tests/infrastructure/persistence/test_visibility_provenance.py" = [
@@ -337,6 +366,33 @@ ignore = [
 # The FTS-recall tests (BOB-066 2.6 added a Russian owner_private episode) carry Russian
 # content literals whose Cyrillic look-alikes are intentional (→ RUF001/RUF002/RUF003).
 "tests/infrastructure/persistence/test_fts_recall.py" = [
+    "S101",
+    "ARG001",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+# The whole-stack wiring INTEGRATION harness + tests + steps (BOB-066 W.5) carry Russian
+# scenario/assertion literals + docstrings whose Cyrillic look-alikes and math/dash glyphs are
+# intentional (→ RUF001/RUF002/RUF003).
+"tests/acceptance/wiring_integration_harness.py" = [
+    "S101",
+    "ARG001",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+"tests/test_integration_wiring_flags.py" = [
+    "S101",
+    "ARG001",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+"tests/acceptance/steps/test_wiring_integration.py" = [
     "S101",
     "ARG001",
     "PLR2004",
@@ -686,7 +742,7 @@ ignore = [
 "tests/domain/conversation/test_room_reading_wire.py" = ["S101", "ARG001", "PLR2004", "RUF001", "RUF002", "RUF003"]
 "tests/domain/conversation/test_room_verdict.py" = ["S101", "ARG001", "PLR2004", "RUF001", "RUF002", "RUF003"]
 "tests/conversation/usecases/test_read_the_room.py" = ["S101", "ARG001", "ARG002", "PLR2004", "RUF001", "RUF002", "RUF003"]
-"tests/conversation/usecases/test_turn_gate_reflective.py" = ["S101", "ARG001", "ARG002", "PLR2004", "SLF001", "RUF001", "RUF002", "RUF003"]
+"tests/conversation/usecases/test_turn_gate_reflective.py" = ["S101", "ARG001", "ARG002", "PLR2004", "S311", "SLF001", "RUF001", "RUF002", "RUF003"]
 "tests/conversation/usecases/test_verify_step_forced.py" = ["S101", "ARG001", "ARG002", "PLR2004", "RUF001", "RUF002", "RUF003"]
 # INV-1 matrix + reflective edge tests (BOB-066 Срез 2.2 test wave): use unused fake-port
 # args + reference the private gate types + Russian literals — S101/ARG/SLF001/RUF do not apply.
@@ -900,6 +956,16 @@ ignore = [
 # fixed fakes (ARG002) and the steps assert through the boundary (S101).
 "tests/acceptance/presence_harness.py" = ["RUF001", "RUF002", "RUF003", "ARG002"]
 "tests/acceptance/steps/test_presence_rhythm.py" = ["S101", "RUF001", "RUF002", "RUF003"]
+# The rhythm-wiring acceptance steps (BOB-066 Срез W) carry Russian scenario prose whose
+# Cyrillic look-alikes are intentional (→ RUF001/2/3) and assert through the boundary (S101).
+"tests/acceptance/steps/test_presence_rhythm_wiring.py" = ["S101", "RUF001", "RUF002", "RUF003"]
+# The room-mood-wiring acceptance steps (BOB-066 Срез W.2) carry Russian scenario prose whose
+# Cyrillic look-alikes are intentional (→ RUF001/2/3) and assert through the boundary (S101).
+"tests/acceptance/steps/test_room_mood_wiring.py" = ["S101", "RUF001", "RUF002", "RUF003"]
+# The series-budget-wiring acceptance steps + harness (BOB-066 Срез W.2) carry Russian scenario
+# prose whose Cyrillic look-alikes are intentional (→ RUF001/2/3) and assert via the boundary.
+"tests/acceptance/steps/test_series_budget_wiring.py" = ["S101", "RUF001", "RUF002", "RUF003"]
+"tests/acceptance/series_budget_harness.py" = ["RUF001", "RUF002", "RUF003"]
 # The per-person обида acceptance steps (BOB-066 .2.5) carry Russian scenario prose whose
 # Cyrillic look-alikes are intentional (→ RUF001/2/3) and assert through the boundary (S101).
 "tests/acceptance/steps/test_person_sulk.py" = ["S101", "RUF001", "RUF002", "RUF003"]
@@ -913,6 +979,15 @@ ignore = [
 # through the boundary (S101).
 "tests/acceptance/catchup_harness.py" = ["RUF001", "RUF002", "RUF003"]
 "tests/acceptance/steps/test_backlog_catchup.py" = ["S101", "RUF001", "RUF002", "RUF003"]
+# The staleness врезка + catch-up re-entry WIRING harnesses + steps (BOB-066 Срез W.3) carry
+# Russian scenario prose whose Cyrillic look-alikes are intentional (→ RUF001/2/3); the harnesses
+# reuse the unit builder + a scripted handler (ARG002) and the steps assert via the boundary (S101).
+"tests/domain/presence/test_staleness_judgment.py" = ["RUF001", "RUF002", "RUF003"]
+"tests/infrastructure/llm/test_staleness_judge.py" = ["RUF001", "RUF002", "RUF003"]
+"tests/acceptance/staleness_wiring_harness.py" = ["RUF001", "RUF002", "RUF003"]
+"tests/acceptance/steps/test_staleness_wiring.py" = ["S101", "RUF001", "RUF002", "RUF003"]
+"tests/acceptance/catchup_reentry_wiring_harness.py" = ["RUF001", "RUF002", "RUF003", "ARG002"]
+"tests/acceptance/steps/test_catchup_reentry_wiring.py" = ["S101", "RUF001", "RUF002", "RUF003"]
 # Proactivity tests seed `random.Random` for deterministic stochastic-sampling
 # assertions; the non-crypto PRNG is the point here, so S311 does not apply.
 "tests/domain/proactivity/*.py" = ["S101", "ARG001", "PLR2004", "S311"]
@@ -1006,6 +1081,11 @@ source_paths = [
     # verdict logic mutation exists to measure — so it is scanned here, while the async
     # orchestration around it (inbox/dispatcher/scope/focus) is denied below.
     "src/bob/application/runtime/intake",
+    # BOB-066 Срез W: the reply-delay input map (``reply_delay_inputs``) is a pure,
+    # module-level wiring decision (answer-demand + interest → the natural-delay knobs) —
+    # exactly the deterministic threshold logic mutation measures. Listed as a single file
+    # (the rest of application/usecases is impure orchestration, out of scope).
+    "src/bob/application/usecases/reply_rhythm.py",
 ]
 # Deny the impure sub-trees inside those packages: adapters (I/O), ports (protocols),
 # and package __init__ re-exports carry no deterministic verdict logic to mutate.
@@ -1023,7 +1103,13 @@ do_not_mutate = [
 # Mutation measures the strength of the pure-domain UNIT tests (tests/domain/) — fast and
 # deterministic — NOT the slow async e2e/integration suite. Selecting them here keeps the
 # one-time coverage-stats phase cheap so a per-slice run stays quick.
-pytest_add_cli_args_test_selection = ["tests/domain"]
+pytest_add_cli_args_test_selection = [
+    "tests/domain",
+    # BOB-066 Срез W: the pure reply-delay input map lives in application/usecases (its unit
+    # test is fast + deterministic), so it is selected alongside the domain suite to measure
+    # the mutants of ``reply_delay_inputs``.
+    "tests/application/usecases/test_reply_rhythm.py",
+]
 # The kernel (ports/protocols the domain tests import) is NOT mutated but IS imported by
 # tests/domain — copy it + the package root verbatim into the mutants sandbox so the
 # (non-mutated) tests still collect and run.
@@ -1031,4 +1117,12 @@ also_copy = [
     "src/bob/__init__.py",
     "src/bob/py.typed",
     "src/bob/kernel",
+    # BOB-066 Срез W.3: the (copied-but-denied) intake dispatcher now imports the catch-up
+    # re-entry collaborator (impure orchestration, out of mutation scope) — copy it verbatim so
+    # the mutants sandbox still imports the intake package.
+    "src/bob/application/runtime/catch_up_reentry.py",
+    # BOB-066 Срез W.3: the (copied-but-denied) presence adapters package now re-exports the
+    # LLM staleness judge, which imports the router (kernel-only deps) — copy it verbatim so the
+    # mutants sandbox still imports the presence package.
+    "src/bob/application/router",
 ]

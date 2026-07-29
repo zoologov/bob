@@ -17,12 +17,13 @@
 
 from __future__ import annotations
 
+from random import Random
 from typing import TYPE_CHECKING
 
 import pytest
 
 from bob.application.runtime.events import MessageReceived
-from bob.conversation.addressivity import Addressivity
+from bob.conversation.addressivity import Addressivity, ResponseOutcome
 from bob.conversation.conversation_floor import FloorHolder
 from bob.conversation.room_reading import (
     ReflectiveIntent,
@@ -124,6 +125,20 @@ class _Essential:
         raise AssertionError("reflective path does not use the essential runner")
 
 
+class _FakeCeiling:
+    """A share-of-voice ceiling stub: records each consult, returns a fixed verdict."""
+
+    def __init__(self, *, admits: bool) -> None:
+        self._admits = admits
+        self.calls: list[tuple[int, bool, float, float]] = []
+
+    async def admits_barge(
+        self, *, chat_id: int, focused: bool, base_probability: float, draw: float
+    ) -> bool:
+        self.calls.append((chat_id, focused, base_probability, draw))
+        return self._admits
+
+
 # --- builders -----------------------------------------------------------------
 
 
@@ -174,6 +189,7 @@ def _interlocutor() -> Interlocutor:
 def _gate(
     *, signals: _AddressivitySignals, reader: RoomReader, floor: _RecordingFloor,
     reactor: _RecordingReactor,
+    barge_ceiling: _FakeCeiling | None = None,
 ) -> TurnGate:
     # The nominal collaborators (perceiver / floor / assembler) are concrete classes, so
     # the structural test doubles are injected via a justified arg-type ignore; the reader
@@ -188,6 +204,7 @@ def _gate(
         persist=_boom_persist,
         record_owner_activity=_noop_owner_activity,
         read_the_room=ReadTheRoom(reader=reader),
+        barge_ceiling=barge_ceiling,
     )
 
 
@@ -205,9 +222,21 @@ _EVENT = MessageReceived(
 )
 
 
-async def _run(gate: TurnGate) -> _ReplyGate | None:
+async def _run(
+    gate: TurnGate,
+    *,
+    rng: Random | None = None,
+    series_ceiling: ResponseOutcome = ResponseOutcome.ENGAGE,
+) -> _ReplyGate | None:
     return await gate.gate(
-        _EVENT, _soul(), _interlocutor(), _PLAN, 0.5, RuleModulators()
+        _EVENT,
+        _soul(),
+        _interlocutor(),
+        _PLAN,
+        0.5,
+        RuleModulators(),
+        rng=rng,
+        series_ceiling=series_ceiling,
     )
 
 
@@ -290,6 +319,153 @@ async def test_ambient_react_sets_the_emoji_and_advances_the_floor() -> None:
     assert await _run(gate) is None
     assert reactor.reactions == [(42, 7, "🔥")]
     assert floor.advances == [(Addressivity.AMBIENT, False)]
+
+
+# --- ambient-barge ceiling (BOB-066 Срез W) ----------------------------------
+
+
+@pytest.mark.asyncio
+async def test_ambient_reply_is_dropped_to_silence_when_the_ceiling_denies() -> None:
+    # 🔴 Пласт 3: when the share-of-voice ceiling denies the ambient barge, a periphery
+    # REPLY verdict is dropped to a silent IGNORE (advance the floor, no reply, no react).
+    floor, reactor = _RecordingFloor(), _RecordingReactor()
+    ceiling = _FakeCeiling(admits=False)
+    gate = _gate(
+        signals=_signals(Addressivity.AMBIENT),
+        reader=_ScriptedReader(_reading(intent=ReflectiveIntent.REPLY, salience=0.9)),
+        floor=floor,
+        reactor=reactor,
+        barge_ceiling=ceiling,
+    )
+    assert await _run(gate, rng=Random(0)) is None
+    assert floor.advances == [(Addressivity.AMBIENT, False)]
+    assert reactor.reactions == []
+    # The ceiling was consulted un-focused with the reading's salience as the base p(barge).
+    assert len(ceiling.calls) == 1
+    chat_id, focused, base_probability, _draw = ceiling.calls[0]
+    assert chat_id == 42
+    assert focused is False
+    assert base_probability == pytest.approx(0.9)
+
+
+@pytest.mark.asyncio
+async def test_ambient_reply_passes_when_the_ceiling_admits() -> None:
+    floor, reactor = _RecordingFloor(), _RecordingReactor()
+    ceiling = _FakeCeiling(admits=True)
+    gate = _gate(
+        signals=_signals(Addressivity.AMBIENT),
+        reader=_ScriptedReader(_reading(intent=ReflectiveIntent.REPLY, salience=0.9)),
+        floor=floor,
+        reactor=reactor,
+        barge_ceiling=ceiling,
+    )
+    assert isinstance(await _run(gate, rng=Random(0)), _ReplyGate)
+    assert len(ceiling.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_focus_bypasses_the_ceiling_entirely() -> None:
+    # 🔴 INV-1: a direct address short-circuits ABOVE the ceiling — even a denying ceiling
+    # never throttles focus, and it is never even consulted (no draw taken).
+    floor, reactor = _RecordingFloor(), _RecordingReactor()
+    ceiling = _FakeCeiling(admits=False)
+    gate = _gate(
+        signals=_signals(Addressivity.DIRECTED_TO_BOB),
+        reader=_NeverReader(),
+        floor=floor,
+        reactor=reactor,
+        barge_ceiling=ceiling,
+    )
+    assert isinstance(await _run(gate, rng=Random(0)), _ReplyGate)
+    assert ceiling.calls == []
+
+
+@pytest.mark.asyncio
+async def test_ambient_react_never_consults_the_ceiling() -> None:
+    # The ceiling gates only the barge (REPLY); a REACT verdict is un-throttled.
+    floor, reactor = _RecordingFloor(), _RecordingReactor()
+    ceiling = _FakeCeiling(admits=False)
+    gate = _gate(
+        signals=_signals(Addressivity.AMBIENT),
+        reader=_ScriptedReader(
+            _reading(intent=ReflectiveIntent.REACT, salience=0.9, emoji="🔥")
+        ),
+        floor=floor,
+        reactor=reactor,
+        barge_ceiling=ceiling,
+    )
+    assert await _run(gate, rng=Random(0)) is None
+    assert reactor.reactions == [(42, 7, "🔥")]
+    assert ceiling.calls == []
+
+
+# --- series budget ceiling (batch top-k, BOB-066 Срез W.2) -------------------
+
+
+@pytest.mark.asyncio
+async def test_series_silent_ceiling_drops_an_ambient_reply_to_silence() -> None:
+    # 🔴 Пласт 3: when the batch top-k plan marked THIS message SILENT (the burst already spent
+    # its reply + like), a periphery REPLY verdict stays quiet (advance the floor, no reply).
+    floor, reactor = _RecordingFloor(), _RecordingReactor()
+    gate = _gate(
+        signals=_signals(Addressivity.AMBIENT),
+        reader=_ScriptedReader(_reading(intent=ReflectiveIntent.REPLY, salience=0.9)),
+        floor=floor,
+        reactor=reactor,
+    )
+    result = await _run(gate, rng=Random(0), series_ceiling=ResponseOutcome.SILENT)
+    assert result is None
+    assert reactor.reactions == []
+    assert floor.advances == [(Addressivity.AMBIENT, False)]
+
+
+@pytest.mark.asyncio
+async def test_series_react_ceiling_downgrades_an_ambient_reply_to_a_like() -> None:
+    # A message the plan marked REACT downgrades a REPLY verdict to a like — a REPLY reading
+    # carries no chosen emoji, so the like falls back to a mood emoji (still a real like).
+    floor, reactor = _RecordingFloor(), _RecordingReactor()
+    gate = _gate(
+        signals=_signals(Addressivity.AMBIENT),
+        reader=_ScriptedReader(_reading(intent=ReflectiveIntent.REPLY, salience=0.9)),
+        floor=floor,
+        reactor=reactor,
+    )
+    result = await _run(gate, rng=Random(0), series_ceiling=ResponseOutcome.REACT)
+    assert result is None
+    assert len(reactor.reactions) == 1
+    chat_id, message_id, emoji = reactor.reactions[0]
+    assert (chat_id, message_id) == (42, 7)
+    assert emoji  # a real like was set (the mood emoji)
+    assert floor.advances == [(Addressivity.AMBIENT, False)]
+
+
+@pytest.mark.asyncio
+async def test_series_engage_ceiling_leaves_the_reply_intact() -> None:
+    # ENGAGE (the default / one addressed reply) is no cap — the ambient REPLY still replies.
+    floor, reactor = _RecordingFloor(), _RecordingReactor()
+    gate = _gate(
+        signals=_signals(Addressivity.AMBIENT),
+        reader=_ScriptedReader(_reading(intent=ReflectiveIntent.REPLY, salience=0.9)),
+        floor=floor,
+        reactor=reactor,
+    )
+    result = await _run(gate, rng=Random(0), series_ceiling=ResponseOutcome.ENGAGE)
+    assert isinstance(result, _ReplyGate)
+
+
+@pytest.mark.asyncio
+async def test_focus_is_never_capped_by_the_series_ceiling() -> None:
+    # 🔴 INV-1: a direct address is answered ABOVE the budget — even a SILENT ceiling cannot
+    # drop it (the focal short-circuit returns before the ceiling is ever consulted).
+    floor, reactor = _RecordingFloor(), _RecordingReactor()
+    gate = _gate(
+        signals=_signals(Addressivity.DIRECTED_TO_BOB),
+        reader=_NeverReader(),
+        floor=floor,
+        reactor=reactor,
+    )
+    result = await _run(gate, rng=Random(0), series_ceiling=ResponseOutcome.SILENT)
+    assert isinstance(result, _ReplyGate)
 
 
 @pytest.mark.asyncio

@@ -96,12 +96,22 @@ def test_same_author_clarification_rewrites() -> None:
     assert decide_staleness(reading) is StalenessOutcome.REWRITE
 
 
-def test_drop_precedes_merge() -> None:
-    # Arrange: the point is moot (topic closed) AND a new question arrived.
+def test_fresh_question_beats_drop() -> None:
+    # Arrange: the point is moot (topic closed) AND a fresh direct question arrived.
     reading = _reading(topic_closed=True, new_direct_question=True)
 
-    # Act / Assert: a moot draft is dropped before any merge is considered.
-    assert decide_staleness(reading) is StalenessOutcome.DROP_TO_LIKE
+    # Act / Assert: 🔴 INV-1 — a message carrying a fresh DIRECT question is NEVER dropped to
+    # a like; the new question overrides the redundancy → MERGE (fold both into one reply).
+    assert decide_staleness(reading) is StalenessOutcome.MERGE
+
+
+def test_fresh_direct_question_never_dropped_even_when_answered() -> None:
+    # Arrange: someone else answered the original point AND a fresh direct question landed.
+    reading = _reading(answered_by_other=True, new_direct_question=True)
+
+    # Act / Assert: 🔴🔴 INV-1 reconciliation — the focal signal bypasses the staleness DROP.
+    # A fresh direct question is answered (MERGE), never silenced to a reaction.
+    assert decide_staleness(reading) is StalenessOutcome.MERGE
 
 
 def test_answered_by_other_precedes_rewrite() -> None:

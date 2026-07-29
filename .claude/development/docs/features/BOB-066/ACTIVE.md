@@ -1,34 +1,28 @@
 <!-- Copyright (c) 2026 Vladimir Zoologov. All Rights Reserved.
      SPDX-License-Identifier: BUSL-1.1 -->
 
-# ACTIVE: bob-vol.9.1 — Срез 2.6-dev (такт разглашения + кредит доверия)
+# ACTIVE: BOB-066 — между срезами
 
-## Фокус
-Пласт 4 RFC: такт разглашения (visibility-провенанс + may_surface + tactful_withhold)
-+ кредит доверия (endorsement seed). INV-7: owner recall byte-identical; гость-фильтр латентен.
+## Последний завершённый срез
+**W.4-dev (bob-vol.12.4) — ЗАКРЫТ.** EQ live-врезка (Пласт 4), обе за нестед-флагами, OFF=byte-identical:
+- **Кредит доверия** (`presence.endorsement.enabled`): `endorsement_seed` (pure, social/endorsement.py) +
+  `EndorsementSeeder` (application) источает owner-turns из shared-thread по `owner_id`; врезка в handle()
+  после replay истории re-bind `relationship` тёплым seed на ПЕРВОМ контакте гостя, за которого владелец
+  поручился по имени. Turn-local (latent, не персист).
+- **Такт разглашения** (`presence.tact.enabled`): `disclosure_refusal_directive` (pure, voice.py) +
+  `DisclosureGuard` переиспользует PrivilegeJudge port; `withhold_directive` threaded в compose+guard
+  (turn-constant, как room_tone). 🔴 Privilege GATE не тронут — только ГОЛОС отказа.
+- Cohesion: `_prepare_eq_live` собирает обе врезки + is_guest в ОДИН statement → handle() остался 50
+  стейтментов (PLR0915 без noqa). Нет нового цикла (argument-shaped, lint --strict EXIT 0).
+- Тесты +39 (unit/collaborator/wiring/handle-integration/BDD `eq_live_wiring.feature`). Мутация:
+  endorsement_seed 27/27, disclosure_refusal 2/2 = 100%. 3914 зелёных, cov 99%, mypy FULL 0, ruff 0.
+- NOTE: `owner_endorsed_sender` substring-match (slice-2.6 review flag) НЕ трогал — pre-existing + latent;
+  2 выживших мутанта на нём — ЭКВИВАЛЕНТНЫЕ (split maxsplit инвариантен к `[0]`).
+- architecture.md + domains/{social,personality}/README.md doc-stale → tech-writer волна.
 
-## План (TDD)
-- [ ] social/disclosure.py — may_surface(visibility, trust) + visibility_for_scope(is_group) [mutation]
-- [ ] social/endorsement.py — detected_endorsement(owner_text) + owner_endorsed_sender [mutation on detected]
-- [ ] relationship.endorsed_seed(rel|None, sender_id) [mutation]
-- [ ] voice.tactful_withhold_directive()
-- [ ] visibility migration (schema.sql + guarded ALTER, NULL=public)
-- [ ] write-side visibility (save_episode/save_fact + _persist + extract_facts)
-- [ ] recall filter (may_surface в handle; visibility через fts_recall + vector_store)
-- [ ] endorsement seed interception (guarded: rel None + guest + owner endorsement)
-- [ ] BDD .feature (owner_private не всплывает гостю; public всем; tactful vs dry; endorsed warm start)
-- [ ] mutation ≥85% на 3 ядрах
+## Следующий фокус
+**W-test (bob-vol.12.5)** — интеграция + INV под флагами ON — разблокирован.
 
-## Прогресс
-ГОТОВО (dev): все пункты плана реализованы, TDD+BDD+mutation зелёные.
-- Чистые ядра (100% cov, mutation): may_surface (1 эквив-мутант), detected_endorsement (0),
-  endorsed_seed (0). owner_endorsed_sender: killed 6, 5/8 эквивалентны (maxsplit ≠ [0]).
-- Миграция visibility (schema + guarded ALTER, NULL=public), write-side, recall-фильтр
-  (owner TRUSTED байт-в-байт), visibility через fts_recall+vector_store.
-- BDD: 7 сценариев disclosure_tact.feature зелёные.
-- Gate: pytest 3702✓ · mypy full 0 · ruff ✓ · reindex --full + lint --strict EXIT 0.
-- sync-check exit 2 (домен-READMEs stale) → ВОЛНА tech-writer (по DoD).
-
-## DEFERRED (live-wiring, латентно — гости не live; сообщено)
-- endorsement-seed перехват в handle: нужен owner_id на seam load_relationship — отложено.
-- tactful_withhold в guest-compose: нужен guest owner_data seam — отложено (директива готова).
+## Инварианты-напоминание
+INV-1 фокус минует любой потолок/бюджет (never dropped). Флаги OFF = byte-identical. INV-7 приватность
+скоупа (privilege GATE цел, меняется только VOICE).

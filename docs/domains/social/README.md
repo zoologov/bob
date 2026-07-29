@@ -208,12 +208,23 @@ FTS5 И векторного KNN, оба несут `visibility`), а write-side
 Сам кредит применяется в `relationship.endorsed_seed` (см. ниже) и только на первом
 контакте — этот модуль лишь ВОСПРИНИМАЕТ endorsement.
 
-> **DEFERRED live-wiring (BOB-066.2.6, латентно — гости ещё не live).** Ядра и директивы
-> готовы и покрыты тестами, но два стыка врезки — follow-up: (1) перехват endorsement-seed
-> в `load_relationship`-шов (нужен `owner_id` на этом seam, чтобы `endorsed_seed` встал в
-> перцепцию отношения); (2) `tactful_withhold_directive` в guest owner_data compose-seam.
-> Recall-фильтр такта разглашения и write-side `visibility` **уже live** — латентен только
-> guest-специфичный код, поскольку гость сейчас не в чате (owner всегда TRUSTED).
+> **Live-wiring (BOB-066 Срез W.4) — за флагами, латентно, пока гости не live.** Оба
+> стыка врезки провязаны:
+> - **кредит доверия** за флагом `presence.endorsement.enabled` — коллаборатор
+>   `EndorsementSeeder` (`application/usecases/endorsement_seeder.py`) фильтрует owner-ходы
+>   из общего треда по `owner_id` через чистую `endorsement_seed()` и после реплея истории
+>   пере-биндит отношение `endorsed_seed`-ом (turn-local seed, врезка в
+>   `handle_message._prepare_eq_live`);
+> - **такт разглашения** за флагом `presence.tact.enabled` — коллаборатор `DisclosureGuard`
+>   (`application/usecases/disclosure_guard.py`) переиспользует порт `PrivilegeJudge` и на
+>   гостевой `owner_data`-запрос выдаёт `tactful_withhold_directive`, threaded в compose+guard
+>   (turn-constant, как `room_tone`).
+>
+> Оба флага OFF по умолчанию → builder возвращает `None`, врезка не строится, путь
+> байт-в-байт (`_prepare_eq_live`: seeder None → relationship без изменений, guard None →
+> `withhold_directive` пуст). 🔴 Привилегия-ГЕЙТ не тронут — DisclosureGuard красит только
+> ГОЛОС отказа. Recall-фильтр такта разглашения и write-side `visibility` **уже были live**
+> (BOB-066.2.6). Весь код латентен, пока гость реально не в чате (owner всегда TRUSTED).
 
 ### Permission-домен (BOB-052.1)
 

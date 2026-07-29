@@ -179,6 +179,22 @@ class EpisodeWriter(Protocol):
     async def save_episode(self, episode: Mapping[str, object]) -> None: ...
 
 
+class ShareCeiling(Protocol):
+    """Read seam: the share-of-voice ceiling on a proactive barge (BOB-066 Срез W).
+
+    Realised by :class:`~bob.application.runtime.share_of_voice_gate.ShareOfVoiceGate` — the
+    SAME per-chat window the reactive gate uses, so a proactive tick sees a reply Bob just
+    sent and throttles itself (RFC Пласт 3: «проактив видит только что отправленную реплику и
+    тормозит»). A proactive reach-out is an ambient (un-addressed) barge, so ``focused`` is
+    always ``False`` here. Unwired (``presence.rhythm`` off) → no throttle, no draw, behaviour
+    byte-identical.
+    """
+
+    async def admits_barge(
+        self, *, chat_id: int, focused: bool, base_probability: float, draw: float
+    ) -> bool: ...
+
+
 class ProactivityEngine:
     """Drive-model → proactive message: decide cheaply, speak (and pay) rarely."""
 
@@ -202,6 +218,7 @@ class ProactivityEngine:
         fascination: CurrentFascinationReader | None = None,
         sulk: SulkSource | None = None,
         repeat_thresholds: RepeatThresholds | None = None,
+        share_ceiling: ShareCeiling | None = None,
     ) -> None:
         self._persona_id = persona_id
         self._chat_id = chat_id
@@ -236,6 +253,11 @@ class ProactivityEngine:
         self._repeat_thresholds = (
             repeat_thresholds if repeat_thresholds is not None else RepeatThresholds()
         )
+        # The share-of-voice ceiling (BOB-066 Срез W): when wired, a firing tick is throttled
+        # by how much of the room's airtime Bob has just taken — the SAME per-chat window the
+        # reactive gate uses, so proactive and reactive damp each other. Sits BEFORE the Tier-0
+        # gate so a throttled tick still costs zero LLM calls. Unwired → no throttle, no draw.
+        self._share_ceiling = share_ceiling
 
     async def tick(self) -> bool:
         """Run one proactive tick; return whether Bob spoke.
@@ -251,6 +273,17 @@ class ProactivityEngine:
         energy = self._recovered_energy(state, now)
 
         if not await self._should_speak(state, energy, now):
+            return False
+
+        # Share-of-voice throttle (BOB-066 Срез W): even a firing drive-model defers when Bob
+        # has just hogged the room — the ceiling scales the barge by his per-chat share and
+        # samples the turn-local rng. Consulted only AFTER the pure drive decision and BEFORE
+        # the Tier-0 gate, so a throttled tick makes zero LLM calls. Unwired → never defers.
+        if not await self._admits_proactive_barge():
+            logger.debug(
+                "proactive tick throttled by share of voice for persona %s",
+                self._persona_id,
+            )
             return False
 
         seed = await self._gate()
@@ -274,6 +307,23 @@ class ProactivityEngine:
         await self._record_spoke(state, energy, now)
         await self._remember(message, now)
         return True
+
+    async def _admits_proactive_barge(self) -> bool:
+        """Whether the share-of-voice ceiling admits this proactive barge (BOB-066 Срез W).
+
+        Unwired ceiling → always ``True`` with NO draw taken (byte-identical). When wired, a
+        proactive reach-out is an ambient (un-addressed) barge, so ``focused`` is ``False`` and
+        the un-ceiled base p(barge) is ``1.0`` — the drive-model already decided to fire, and
+        the ceiling only scales that by Bob's per-chat share, sampling the engine's seeded rng.
+        """
+        if self._share_ceiling is None:
+            return True
+        return await self._share_ceiling.admits_barge(
+            chat_id=self._chat_id,
+            focused=False,
+            base_probability=1.0,
+            draw=self._rng.random(),
+        )
 
     def _recovered_energy(self, state: ProactivityState, now: datetime) -> SocialEnergy:
         """Recover the reservoir over the silence since the owner last wrote."""
