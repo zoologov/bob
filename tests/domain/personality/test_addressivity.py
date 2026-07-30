@@ -411,6 +411,49 @@ def test_name_with_trailing_dot_without_left_comma_is_ambient() -> None:
         assert result is Addressivity.AMBIENT, text
 
 
+def test_dot_vocative_directed_matrix_edges() -> None:
+    # 🔴 BOB-071 Seam A доукрепление (mutation): точка-справа = вокатив при ЛЮБОМ
+    # запятой-контексте слева, независимо от пробелов/регистра/языка/продолжения после точки.
+    directed = (
+        "Ну что, Боб.",  # запятая слева, точка справа
+        "…, Боб. Как дела?",  # точка + продолжение текста (не только живой кейс)
+        "Привет,Боб.",  # БЕЗ пробела после запятой — запятая всё равно вплотную
+        "так, скажи, Боб.",  # несколько запятых — берётся ближайшая слева
+        "Привет, БОБ.",  # верхний регистр имени
+        "Hi, bob.",  # латиница + запятая
+    )
+    for text in directed:
+        result = classify_addressivity(
+            text=text,
+            mentions_bob=False,
+            reply_to_sender_id=None,
+            bob_user_id=_BOB_ID,
+            others_present=True,
+        )
+        assert result is Addressivity.DIRECTED_TO_BOB, text
+
+
+def test_dot_predicate_ambient_matrix_edges() -> None:
+    # 🔴 BOB-071 Seam A guard (mutation): точка-справа БЕЗ запятой-слева = сказуемое/3-е лицо
+    # → AMBIENT. Пробел-слово слева, двоеточие слева, латиница — ничто, КРОМЕ запятой, не
+    # легитимирует точку. Так узкий comma-guard не расползается на другие сепараторы.
+    ambient = (
+        "Знакомьтесь Боб.",  # императив + пробел слева
+        "А вот и Боб.",  # презентатив, пробел слева
+        "Это bob.",  # латиница, 3-е лицо без запятой
+        "Слушай: Боб.",  # двоеточие слева — НЕ запятая → точка не считается вокативом
+    )
+    for text in ambient:
+        result = classify_addressivity(
+            text=text,
+            mentions_bob=False,
+            reply_to_sender_id=None,
+            bob_user_id=_BOB_ID,
+            others_present=True,
+        )
+        assert result is Addressivity.AMBIENT, text
+
+
 def test_reply_to_bob_needs_resolved_identity() -> None:
     # Реплай на сообщение с тем же id, что у «Боба», но identity не резолвнута
     # (bob_user_id=None) → не можем утверждать, что это Боб → DIRECTED_TO_OTHER.

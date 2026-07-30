@@ -980,6 +980,11 @@ ignore = [
 # replies + scenario prose whose Cyrillic look-alikes are intentional (→ RUF001/2/3).
 "tests/acceptance/floor_harness.py" = ["RUF001", "RUF002", "RUF003"]
 "tests/acceptance/steps/test_floor_by_speaker.py" = ["RUF001", "RUF002", "RUF003"]
+# The guest-engage acceptance harness + steps (BOB-071) carry Russian scripted replies +
+# scenario prose whose Cyrillic look-alikes are intentional (→ RUF001/2/3); the harness uses
+# unused fake-port args (ARG002) and the steps assert through the boundary (S101).
+"tests/acceptance/guest_engage_harness.py" = ["RUF001", "RUF002", "RUF003", "ARG002"]
+"tests/acceptance/steps/test_guest_engage.py" = ["S101", "RUF001", "RUF002", "RUF003"]
 # The presence-rhythm acceptance harness + steps (BOB-066 .2.3) carry Russian scenario
 # prose whose Cyrillic look-alikes are intentional (→ RUF001/2/3); the harness serves
 # fixed fakes (ARG002) and the steps assert through the boundary (S101).
