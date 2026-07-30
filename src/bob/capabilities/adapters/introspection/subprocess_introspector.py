@@ -466,12 +466,16 @@ class SubprocessRepoIntrospector:
     def _iter_find_matches(self, repo_root: Path, pattern: str) -> Iterator[Path]:
         """Yield repo-relative match paths for ``pattern``, skipping ``.git`` + escapes.
 
-        A defensive wrapper over ``rglob``: filesystem errors mid-walk stop iteration
-        rather than crash the turn; ``.git`` entries and outward symlinks are dropped.
+        A defensive wrapper over ``rglob``: filesystem errors mid-walk, or an
+        absolute / unsupported glob (``rglob`` raises :class:`NotImplementedError`
+        for a non-relative pattern, :class:`ValueError` for an empty one), stop
+        iteration and yield NOTHING — an honest-empty result (INV-N5), like a
+        non-existent file, never an opaque tool-failure. ``.git`` entries and outward
+        symlinks are dropped.
         """
         try:
             candidates = list(repo_root.rglob(pattern))
-        except OSError:
+        except (OSError, NotImplementedError, ValueError):
             return
         for candidate in candidates:
             try:

@@ -61,63 +61,88 @@ _SECRET_PATTERNS: tuple[re.Pattern[str], ...] = (
 )
 
 
+# --- pure module-level core ---------------------------------------------------
+# The security-critical logic lives in module-level functions (not dataclass
+# methods) SO IT IS MUTATION-TESTABLE: mutmut 3.x mutates module-level functions
+# but not methods of a slots/frozen dataclass, so keeping the verdict here lets the
+# mutation gate actually bite on the containment + redaction invariants (the same
+# reason ``social.sulk`` exposes module-level policy functions). :class:`PrivacyGuard`
+# delegates to these, so its public API is unchanged and behaviour is byte-identical.
+
+
+def _resolve(path: Path) -> Path:
+    """Collapse ``..`` segments purely (no disk / symlink resolution).
+
+    ``.`` (current-dir) segments never reach here — ``Path`` normalises them away at
+    construction, so ``path.parts`` only ever carries real names and ``..``. Only the
+    upward-climb (``..``) needs collapsing, which pathlib does NOT do (it must not,
+    across symlinks) — so this pops it purely, without touching disk.
+    """
+    # ``os.path``-free, no I/O: rebuild the path from its parts.
+    anchor = path.anchor
+    parts: list[str] = []
+    for part in path.parts:
+        if part == anchor:
+            continue
+        if part == "..":
+            if parts:
+                parts.pop()
+            continue
+        parts.append(part)
+    return Path(anchor).joinpath(*parts)
+
+
+def _allows_path(repo_root: Path, path: Path) -> bool:
+    """Whether ``path`` may be read under the full-repo containment invariant.
+
+    ``path`` is resolved against ``repo_root`` (``..`` segments collapsed, no disk
+    access) and accepted whenever it resolves UNDER (or equal to) the repo root —
+    the whole working tree is readable (BOB-067). The ONLY denial is an escape past
+    the repo boundary: a ``..`` traversal that climbs out, or an absolute path
+    outside the repo, for which ``relative_to`` raises and the read is refused by
+    construction.
+    """
+    root = _resolve(repo_root)
+    target = _resolve(path if path.is_absolute() else repo_root / path)
+
+    try:
+        target.relative_to(root)
+    except ValueError:
+        # Escapes the repo entirely (e.g. ``../../etc/passwd`` or /etc/passwd).
+        return False
+    return True
+
+
+def _sanitize(text: str) -> str:
+    """Redact anything secret-shaped from tool ``text`` before it is returned.
+
+    A defence-in-depth backstop on top of :func:`_allows_path`: even output from an
+    allowed path (or a CLI) is scrubbed of env assignments and api-key-like tokens so
+    a stray secret can never leave the machine. Ordinary code/text is returned
+    unchanged.
+    """
+    out = text
+    for pattern in _SECRET_PATTERNS:
+        out = pattern.sub(_REDACTION, out)
+    return out
+
+
 @dataclass(frozen=True, slots=True)
 class PrivacyGuard:
     """Pure, frozen policy deciding readable paths and redacting secret output.
 
-    Construct with the absolute ``repo_root``; both predicates are deterministic
-    and side-effect free.
+    Construct with the absolute ``repo_root``; both predicates are deterministic and
+    side-effect free. The methods DELEGATE to the module-level :func:`_allows_path` /
+    :func:`_sanitize` so the security core stays mutation-testable while the public
+    ``PrivacyGuard`` API is unchanged.
     """
 
     repo_root: Path
 
     def allows_path(self, path: Path) -> bool:
-        """Whether ``path`` may be read under the full-repo containment invariant.
-
-        ``path`` is resolved against the repo root (``..`` segments collapsed, no
-        disk access) and accepted whenever it resolves UNDER (or equal to) the repo
-        root — the whole working tree is readable (BOB-067). The ONLY denial is an
-        escape past the repo boundary: a ``..`` traversal that climbs out, or an
-        absolute path outside the repo, for which ``relative_to`` raises and the read
-        is refused by construction.
-        """
-        root = self._resolve(self.repo_root)
-        target = self._resolve(path if path.is_absolute() else self.repo_root / path)
-
-        try:
-            target.relative_to(root)
-        except ValueError:
-            # Escapes the repo entirely (e.g. ``../../etc/passwd`` or /etc/passwd).
-            return False
-        return True
+        """Whether ``path`` may be read (delegates to :func:`_allows_path`)."""
+        return _allows_path(self.repo_root, path)
 
     def sanitize(self, text: str) -> str:
-        """Redact anything secret-shaped from tool ``text`` before it is returned.
-
-        A defence-in-depth backstop on top of :meth:`allows_path`: even output from
-        an allowed path (or a CLI) is scrubbed of env assignments and api-key-like
-        tokens so a stray secret can never leave the machine. Ordinary code/text is
-        returned unchanged.
-        """
-        out = text
-        for pattern in _SECRET_PATTERNS:
-            out = pattern.sub(_REDACTION, out)
-        return out
-
-    @staticmethod
-    def _resolve(path: Path) -> Path:
-        """Collapse ``..``/``.`` segments purely (no disk / symlink resolution)."""
-        # ``os.path``-free, no I/O: rebuild the path from its parts.
-        anchor = path.anchor
-        parts: list[str] = []
-        for part in path.parts:
-            if part == anchor:
-                continue
-            if part == "..":
-                if parts:
-                    parts.pop()
-                continue
-            if part == ".":
-                continue
-            parts.append(part)
-        return Path(anchor).joinpath(*parts)
+        """Redact secret-shaped values from ``text`` (delegates to :func:`_sanitize`)."""
+        return _sanitize(text)

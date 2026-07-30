@@ -888,6 +888,19 @@ async def test_find_file_skips_match_outside_repo_root(
 
 
 @pytest.mark.asyncio
+async def test_find_file_absolute_pattern_is_honest_empty(tmp_path: Path) -> None:
+    # An absolute / unsupported glob (``rglob`` raises NotImplementedError for a
+    # non-relative pattern) is an INV-N5 honest-empty result — like a non-existent
+    # file — NOT an opaque tool-failure exception bubbling up.
+    (tmp_path / "src").mkdir()
+    intro = _make(tmp_path, _FakeRunner())
+
+    out = await intro.find_file("/etc/*")
+
+    assert "no files" in out.lower()
+
+
+@pytest.mark.asyncio
 async def test_find_file_degrades_to_empty_on_walk_oserror(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
