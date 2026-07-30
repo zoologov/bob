@@ -849,3 +849,6 @@
 {"id":"int-fbbc785d","kind":"field_change","created_at":"2026-07-30T07:30:43.910268Z","actor":"v.zoologov","issue_id":"bob-e69.4","extra":{"field":"status","new_value":"closed","old_value":"in_progress","reason":"Closed"}}
 {"id":"int-d1ac4c1b","kind":"field_change","created_at":"2026-07-30T07:30:49.882496Z","actor":"v.zoologov","issue_id":"bob-e69.6","extra":{"field":"status","new_value":"in_progress","old_value":"open"}}
 {"id":"int-38cb18bd","kind":"field_change","created_at":"2026-07-30T07:39:47.03188Z","actor":"v.zoologov","issue_id":"bob-e69.6","extra":{"field":"status","new_value":"closed","old_value":"in_progress","reason":"Closed"}}
+{"id":"int-f8ca42a5","kind":"field_change","created_at":"2026-07-30T07:48:10.703473Z","actor":"v.zoologov","issue_id":"bob-e69","extra":{"field":"status","new_value":"closed","old_value":"open","reason":"BOB-069 отгружен в main (PR #96): адресность мид-вокатив + tool-loop no-leak. pytest 4048, ci GREEN, живой смоук OK."}}
+{"id":"int-4a5e7742","kind":"field_change","created_at":"2026-07-30T08:10:00.096115Z","actor":"v.zoologov","issue_id":"bob-d60","extra":{"field":"status","new_value":"open","old_value":"deferred"}}
+{"id":"int-9904a0be","kind":"field_change","created_at":"2026-07-30T08:10:27.376849Z","actor":"v.zoologov","issue_id":"bob-d60.1","extra":{"field":"status","new_value":"in_progress","old_value":"open"}}
