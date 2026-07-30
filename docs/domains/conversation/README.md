@@ -69,7 +69,7 @@ per-person атрибуция сосуществует с цельным тре�
 src/bob/conversation/
   ports.py            # layer=domain          — conversation-порты (ConversationFloorStore/CloserLog/ZoneClassifier)
   __init__.py         # layer=domain          — фасад модуля
-  addressivity.py     # layer=domain          — Addressivity + classify_addressivity/others_present + decide_response (if/else-лестница, BOB-023); вокатив «Боб» в любой позиции реплики (BOB-069)
+  addressivity.py     # layer=domain          — Addressivity + classify_addressivity/others_present + decide_response (if/else-лестница, BOB-023); вокатив «Боб» в любой позиции реплики (BOB-069) + вокатив-с-точкой при запятой-обращении слева (BOB-071)
   conversation_floor.py# layer=domain         — FloorHolder/ConversationFloor(+participants)/FloorConfig, advance_floor, resolve_addressivity, is_floor_participant (BOB-025/066 .1)
   brevity.py          # layer=domain          — AnswerDemand + BrevityThresholds + decide_verbosity → personality Verbosity, clamp_reply (BOB-024)
   engagement.py       # layer=domain          — decide_engagement → personality EngagementLevel + ConversationalFatigue (затухающий резервуар, BOB-014)
@@ -88,7 +88,7 @@ src/bob/conversation/
   usecases/           # layer=application
     decide_response.py       —                — DecideResponse: собрать контекст и спросить судью по смыслу (BOB-049)
     read_the_room.py         —                — ReadTheRoom: собрать периферийный контекст и спросить рефлексивного читателя (BOB-066 Срез 2.2)
-    turn_gate.py             —                — TurnGate: гейт хода reply/react/silent + фокус/периферия-развилка (тонкий координатор, BOB-062.6b/066 Срез 2.2)
+    turn_gate.py             —                — TurnGate: гейт хода reply/react/silent + фокус/периферия-развилка (тонкий координатор, BOB-062.6b/066 Срез 2.2); non-reply-ветки персистят вход симметрично judge (BOB-071)
     addressivity_perceiver.py —               — AddressivityPerceiver: восприятие адресности + брать ли ход (BOB-023/025)
     floor_manager.py         —                — FloorManager: resolve + advance разговорной реплики (floor, BOB-025)
     engagement_model.py      —                — EngagementModel: аппетит + verbosity + after-turn feedback (BOB-014/024)
@@ -129,6 +129,21 @@ address-контексте слева (трейлинг-вокатив «…, Б
 молодец» (справа пробел + слово) и одинокое «Боб» — AMBIENT, а не обращение. Хелперы
 `_is_vocative_at` / `_has_left_word_boundary` / `_has_left_address_context` — module-level и
 чистые; публичная сигнатура `classify_addressivity` не менялась.
+
+🔴 **Вокатив-с-точкой при запятой-обращении слева (BOB-071 Seam A).** Точка `.` вплотную за
+именем — терминатор-обращения ОСОБОГО рода: в отличие от `,` / `:` / `!` / `?`, она частотна и
+в сказуемом/3-м лице («Это Боб.», «Меня зовут Боб.»), поэтому одна лишь точка справа вокатива
+не даёт. Точка засчитывается окликом ТОЛЬКО при реальном address-сепараторе — запятой-обращении
+вплотную слева (`_has_left_comma_context`, игнорирует пробелы между запятой и именем): «Привет,
+Боб.» → DIRECTED_TO_BOB (запятая слева = оклик), а «Это Боб.» / «Меня зовут Боб.» → AMBIENT
+(слева слово-сказуемое, а не запятая). Так чинится живой баг, где участнику группы, написавшему
+«Привет, Боб. Тебя починили?», Боб молча не отвечал (раньше AMBIENT → тишина гостю), без ложных
+срабатываний на сказуемое. Матрица BOB-069 (`,` / `:` / `!` / `?` / трейлинг / падежи / тире)
+цела; хелпер `_has_left_comma_context` — module-level и чистый, сигнатура `classify_addressivity`
+не менялась. **Известное ограничение:** перечисление, оканчивающееся на «…, Боб.» (например
+«Пришли Аня, Петя, Боб.»), ложно читается как обращение — запятая слева легитимирует точку. Это
+редкий доброкачественный случай, оставленный сознательно по принципу «лучше ответить, чем ложно
+промолчать» (симметрично трейлинг-вокативу «…, Боб» без точки).
 
 `ConversationFloor` (`conversation_floor.py`) — трекер разговорной реплики: кто «у микрофона»
 (`FloorHolder` BOB/OTHER/IDLE), когда держателя последний раз подтвердили (`since`), серия
@@ -370,7 +385,14 @@ per-turn `TurnScope` (BOB-066 Срез 2.1, INV-4).** Под intake-развяз
   развилка `_reflective_gate` — чистый `_directed_engage(signals)` отбирает детерминированный ход
   (сырое `DIRECTED_TO_BOB` / floor-continuity / 1:1-ambient → `_ReplyGate`), остальное уходит в
   периферийное `_read_room` → `_act_reflective`; иначе — судья BOB-049 / легаси байт-идентично.
-  `_ReplyGate.force_web` несёт рефлексивный `wants_web` в caller.
+  `_ReplyGate.force_web` несёт рефлексивный `wants_web` в caller. 🔴 **Персист рефлексивного
+  non-reply (BOB-071 Seam B):** осознанные рефлексивные ветки без ответа `_advance_silent`
+  (IGNORE → `(промолчал)`) и `_react_turn` (REACT → `(реакция: <emoji>)`) теперь персистят
+  входящее сообщение в `episodic_log` симметрично judge-пути `_act_non_reply` — включая сбой
+  чтения комнаты (`reading is None` уходит в `_advance_silent`, а не в голое продвижение floor).
+  Так реплика участника группы попадает в тред даже при сознательном рефлексивном IGNORE/REACT
+  («читаю комнату, но помню разговор»), и тред не рвётся. В отличие от judge-пути owner-activity
+  здесь НЕ штампуется — периферийное чтение не обязательно означает взаимодействие owner'а.
 - `AntiRepeatGuard` (`anti_repeat_guard.py`) — регенерация повтора/тика (`guard`) + кольцо
   закрывающих (`log_closer` / `closer_anti_tic`). 🔴 Принимает `VoiceComposer.compose` как
   `compose`-callback (по значению, не импорт — цикл compose↔guard замкнут БЕЗ
@@ -413,7 +435,10 @@ floor (UPSERT — floor продвигается каждый ход); `SqliteCl
   ним политика отклика (судья), сам детектор доступ/отклик не решает. Вокатив «Боб» ловится в
   любой позиции реплики только при границе слова слева И терминаторе-обращения (`,`/`:`/`!`/`?`)
   либо трейлинг-контексте справа — тире-композит и падежи остаются AMBIENT (консервативно,
-  без ложных срабатываний, BOB-069).
+  без ложных срабатываний, BOB-069). Точка `.` справа даёт вокатив ТОЛЬКО при запятой-обращении
+  вплотную слева (`_has_left_comma_context`): «Привет, Боб.» → обращение, «Это Боб.» → AMBIENT
+  (BOB-071); сознательное известное ограничение — перечисление «…, Петя, Боб.» ложно-положительно
+  (редкий доброкачественный случай, «лучше ответить, чем ложно промолчать»).
 - **Анти-тик консервативен.** `is_user_repeat` — только точный матч после нормализации (Боб не
   обвиняет owner'а зря); `is_bob_repeat` проверяет всё окно (повтор «через ход» не проскакивает);
   `CloserLog` ловит мотив, рассеянный по сессиям.
@@ -445,6 +470,13 @@ floor (UPSERT — floor продвигается каждый ход); `SqliteCl
 - **Рефлексивная развилка за флагом, OFF = без изменений.** `presence.reflective` (по умолчанию
   OFF) → `read_the_room=None` → рефлексивная ветка `TurnGate` пропускается, судья BOB-049 работает
   байт-идентично; эпик отгружается целиком.
+- 🔴 **Non-reply-ход персистит вход, тред цел (BOB-071 Seam B).** Все ветки без ответного текста —
+  judge-путь `_act_non_reply` и рефлексивные `_advance_silent` / `_react_turn` (в т.ч. сбой чтения
+  комнаты) — персистят входящее сообщение в `episodic_log` (`(промолчал)` / `(реакция: <emoji>)`),
+  поэтому осознанный IGNORE/REACT участнику группы не рвёт нить. Двойного персиста нет: reply-путь
+  персистит downstream, non-reply — в гейте, взаимоисключимо. Пишется только эпизодическая запись,
+  без owner-факта (гость не попадает в память owner'а, BOB-019); на рефлексивном пути, в отличие
+  от judge, owner-activity НЕ штампуется.
 
 ### Границы модуля (AaC)
 

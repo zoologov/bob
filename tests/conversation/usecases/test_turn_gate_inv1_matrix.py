@@ -151,10 +151,22 @@ class _BoomRandom:
         raise AssertionError("the focal path must take NO random draw (INV-1/INV-4)")
 
 
-async def _boom_persist(
-    event: MessageReceived, reply: str, soul: SOUL, *, bob_message_id: int | None = None
-) -> None:
-    raise AssertionError("a focal turn must not persist inside the gate")
+class _RecordingPersist:
+    """Records persists of the user's turn — a FOCUS turn records NONE (persist rides the
+    caller's compose path); a reflective PERIPHERY non-reply persists here (BOB-071 Seam B)."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[int, str]] = []
+
+    async def __call__(
+        self,
+        event: MessageReceived,
+        reply: str,
+        soul: SOUL,
+        *,
+        bob_message_id: int | None = None,
+    ) -> None:
+        self.calls.append((event.message_id, reply))
 
 
 async def _noop_owner_activity() -> None:
@@ -216,6 +228,7 @@ def _gate(
     reader: RoomReader,
     floor: _RecordingFloor,
     reactor: _RecordingReactor,
+    persist: _RecordingPersist | None = None,
 ) -> TurnGate:
     return TurnGate(
         decide_response=None,
@@ -224,7 +237,7 @@ def _gate(
         essential=_Essential(),
         assembler=_EmptyAssembler(),  # type: ignore[arg-type]  # test double
         reactor=reactor,
-        persist=_boom_persist,
+        persist=persist or _RecordingPersist(),
         record_owner_activity=_noop_owner_activity,
         read_the_room=ReadTheRoom(reader=reader),
     )
@@ -343,7 +356,7 @@ async def test_inv1_direct_address_is_always_answered(
     # NO random draw. The reflective read is bypassed, so even an IGNORE/raising reader
     # cannot silence the focus.
     spec = _CONDITIONS[condition]
-    floor, reactor = _RecordingFloor(), _RecordingReactor()
+    floor, reactor, persist = _RecordingFloor(), _RecordingReactor(), _RecordingPersist()
     signals = _focus_signals(
         trigger=trigger,
         floor_holder=spec["floor_holder"],  # type: ignore[arg-type]
@@ -355,6 +368,7 @@ async def test_inv1_direct_address_is_always_answered(
         reader=spec["reader"],  # type: ignore[arg-type]
         floor=floor,
         reactor=reactor,
+        persist=persist,
     )
     result = await gate.gate(
         _event(),
@@ -371,9 +385,11 @@ async def test_inv1_direct_address_is_always_answered(
     assert result.force_web is False
     assert result.history is None
     # The focal reply advances the floor in the CALLER (bob_replied=True), so the gate
-    # itself neither advances the floor nor sets a reaction on a focus turn.
+    # itself neither advances the floor nor sets a reaction on a focus turn — and does NOT
+    # persist here (the compose path persists the focal turn; BOB-071 Seam B is periphery-only).
     assert floor.advances == []
     assert reactor.reactions == []
+    assert persist.calls == []
 
 
 # --- the two-class failure split: focus → reply, periphery → silence ----------
@@ -386,6 +402,7 @@ async def test_same_raising_reader_silences_periphery_but_never_focus() -> None:
     # no reply, no reaction) — a peripheral reflection failure is a tidy skip, not a
     # silenced direct address.
     focus_floor, focus_reactor = _RecordingFloor(), _RecordingReactor()
+    focus_persist = _RecordingPersist()
     focus_gate = _gate(
         signals=_focus_signals(
             trigger="@mention",
@@ -396,12 +413,14 @@ async def test_same_raising_reader_silences_periphery_but_never_focus() -> None:
         reader=_RaisingReader(),
         floor=focus_floor,
         reactor=focus_reactor,
+        persist=focus_persist,
     )
     focus_result = await focus_gate.gate(
         _event(), _soul(), _interlocutor(), _PLAN, 0.5, RuleModulators(),
         rng=_BoomRandom(),  # type: ignore[arg-type]
     )
     assert isinstance(focus_result, _ReplyGate)
+    assert focus_persist.calls == []  # focus does not persist in the gate
 
     ambient = _AddressivitySignals(
         per_message=Addressivity.AMBIENT,
@@ -414,11 +433,13 @@ async def test_same_raising_reader_silences_periphery_but_never_focus() -> None:
         floor_participant=True,
     )
     peri_floor, peri_reactor = _RecordingFloor(), _RecordingReactor()
+    peri_persist = _RecordingPersist()
     peri_gate = _gate(
         signals=ambient,
         reader=_RaisingReader(),
         floor=peri_floor,
         reactor=peri_reactor,
+        persist=peri_persist,
     )
     peri_result = await peri_gate.gate(
         _event(text="сегодня дождь весь день"),
@@ -431,6 +452,8 @@ async def test_same_raising_reader_silences_periphery_but_never_focus() -> None:
     assert peri_result is None
     assert peri_floor.advances == [(Addressivity.AMBIENT, False)]
     assert peri_reactor.reactions == []
+    # 🔴 BOB-071 Seam B: the periphery safe-IGNORE persists the incoming turn (thread intact).
+    assert len(peri_persist.calls) == 1
 
 
 # --- periphery C11: a reflective wants_web rides the reply as force_web --------
