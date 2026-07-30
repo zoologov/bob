@@ -242,16 +242,56 @@ def test_name_only_bob_without_separator_is_ambient() -> None:
     assert result is Addressivity.AMBIENT
 
 
-def test_name_address_inside_text_is_not_directed() -> None:
-    # Имя НЕ в начале реплики не считается обращением («…, Боб» в конце) → AMBIENT.
-    result = classify_addressivity(
-        text="привет, Боб",
-        mentions_bob=False,
-        reply_to_sender_id=None,
-        bob_user_id=_BOB_ID,
-        others_present=False,
+def test_mid_vocative_is_directed_to_bob() -> None:
+    # BOB-069.A: вокатив «Боб» в ЛЮБОЙ позиции — обращение. Левая граница слова
+    # (разделитель/пробел) + терминатор-обращения (разделитель/«!»/«?»/конец строки
+    # при контексте слева) сразу за именем.
+    engaging = (
+        "Боб, ты тут?",  # старт + запятая
+        "Кстати, Боб, расскажи",  # середина, запятая справа
+        "…, Боб?",  # трейлинг-вокатив + «?»
+        "эй Боб!",  # пробел слева + «!»
+        "боб:",  # старт + двоеточие
+        "ну что, Боб",  # трейлинг-вокатив, конец строки, контекст слева
+        "привет, Боб",  # трейлинг-вокатив в конце
+        "Боб!",  # имя + «!»
+        "Боб?",  # имя + «?»
+        "скажи, БОБ, как дела",  # верхний регистр в середине
+        "hey Bob, listen",  # латиница в середине
+        "так, Боб, и ещё, Боб, вот",  # несколько запятых-вокативов
     )
-    assert result is Addressivity.AMBIENT
+    for text in engaging:
+        result = classify_addressivity(
+            text=text,
+            mentions_bob=False,
+            reply_to_sender_id=None,
+            bob_user_id=_BOB_ID,
+            others_present=False,
+        )
+        assert result is Addressivity.DIRECTED_TO_BOB, text
+
+
+def test_name_mentioned_not_vocative_is_ambient() -> None:
+    # 🔴 Guard: имя присутствует, но это НЕ оклик (падеж / имя-подлежащее /
+    # середина слова) → остаётся AMBIENT, а не ложное срабатывание.
+    ambient = (
+        "Боб молодец",  # за именем пробел+слово, а не терминатор
+        "расскажу Бобу про X",  # дательный падеж
+        "думаю про Боба",  # винительный падеж
+        "поговорил с Бобом",  # творительный падеж
+        "Бобслей — это спорт",  # имя-подслово в начале
+        "работает робобот",  # «боб» внутри слова
+        "это пробоб какой-то",  # буква слева от «боб»
+    )
+    for text in ambient:
+        result = classify_addressivity(
+            text=text,
+            mentions_bob=False,
+            reply_to_sender_id=None,
+            bob_user_id=_BOB_ID,
+            others_present=False,
+        )
+        assert result is Addressivity.AMBIENT, text
 
 
 def test_reply_to_bob_needs_resolved_identity() -> None:
