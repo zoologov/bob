@@ -294,6 +294,76 @@ def test_name_mentioned_not_vocative_is_ambient() -> None:
         assert result is Addressivity.AMBIENT, text
 
 
+def test_first_vocative_wins_over_a_later_non_vocative_occurrence() -> None:
+    # 🔴 BOB-069.A доукрепление (mutation): сканирование идёт СЛЕВА-направо и берёт
+    # ПЕРВОЕ вхождение-вокатив. «Боб, а вот бобслей» — первое «Боб,» это оклик, а
+    # последнее «боб» (в «бобслей») — нет. Детектор обязан поймать первое, а не
+    # смотреть только на последнее вхождение имени.
+    result = classify_addressivity(
+        text="Боб, а вот бобслей — тема",
+        mentions_bob=False,
+        reply_to_sender_id=None,
+        bob_user_id=_BOB_ID,
+        others_present=False,
+    )
+    assert result is Addressivity.DIRECTED_TO_BOB
+
+
+def test_middle_vocative_between_non_vocative_occurrences_is_directed() -> None:
+    # 🔴 BOB-069.A доукрепление (mutation): вокатив в СЕРЕДИНЕ между двумя
+    # не-вокативами — «бобром, Боб, бобслей». Первое «боб» (бобром) и последнее «боб»
+    # (бобслей) — не оклик, но среднее «Боб,» — да. Перебор не должен перепрыгивать
+    # средние вхождения.
+    result = classify_addressivity(
+        text="бобром, Боб, бобслей",
+        mentions_bob=False,
+        reply_to_sender_id=None,
+        bob_user_id=_BOB_ID,
+        others_present=False,
+    )
+    assert result is Addressivity.DIRECTED_TO_BOB
+
+
+def test_trailing_vocative_with_single_separator_prefix_is_directed() -> None:
+    # 🔴 BOB-069.A доукрепление (mutation, граница start==1): имя в самом конце строки
+    # с ЕДИНСТВЕННЫМ контекст-символом слева (разделитель-обращение вплотную) читается
+    # как трейлинг-вокатив. Одного левого контекст-символа достаточно (start > 0).
+    result = classify_addressivity(
+        text=",Боб",
+        mentions_bob=False,
+        reply_to_sender_id=None,
+        bob_user_id=_BOB_ID,
+        others_present=False,
+    )
+    assert result is Addressivity.DIRECTED_TO_BOB
+
+
+def test_lone_bob_with_leading_whitespace_currently_engages() -> None:
+    # 🔴 ФИКСАЦИЯ ТЕКУЩЕГО ПОВЕДЕНИЯ + флаг ревью (BOB-069.4): «Боб» без разделителей,
+    # но с ВЕДУЩИМ пробелом (« Боб») сейчас → DIRECTED_TO_BOB, тогда как голое «Боб»
+    # (без пробела) → AMBIENT. Асимметрия: casefold НЕ делает lstrip, поэтому ведущий
+    # пробел даёт start>0 и одинокое имя проходит как трейлинг-вокатив. Спорно —
+    # семантически « Боб» это то же одинокое имя. Тест ПИНит текущее поведение dev'а;
+    # если ревью решит, что одинокое имя (с пробелом или без) должно быть AMBIENT —
+    # менять код, а не этот тест молча.
+    engages = classify_addressivity(
+        text="   Боб",
+        mentions_bob=False,
+        reply_to_sender_id=None,
+        bob_user_id=_BOB_ID,
+        others_present=False,
+    )
+    bare = classify_addressivity(
+        text="Боб",
+        mentions_bob=False,
+        reply_to_sender_id=None,
+        bob_user_id=_BOB_ID,
+        others_present=False,
+    )
+    assert engages is Addressivity.DIRECTED_TO_BOB
+    assert bare is Addressivity.AMBIENT
+
+
 def test_reply_to_bob_needs_resolved_identity() -> None:
     # Реплай на сообщение с тем же id, что у «Боба», но identity не резолвнута
     # (bob_user_id=None) → не можем утверждать, что это Боб → DIRECTED_TO_OTHER.
