@@ -34,7 +34,7 @@ from bob.capabilities.ports import ToolCall, ToolCallResult
 
 if TYPE_CHECKING:
     from bob.capabilities.ports import ToolDefinition
-    from bob.kernel.ports import LLMMessage
+    from bob.kernel.ports import LLMMessage, ToolLoopMessage
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +46,15 @@ _SSE_DONE_SENTINEL = "[DONE]"
 # tools, we instruct the model to emit a tool-call as a JSON object of this shape
 # and parse it tolerantly from the reply text (reasoning-model wrapping tolerated).
 _FALLBACK_TOOL_KEY = "tool_call"
+
+# Textual tool-call forms a model may EMIT instead of a native ``tool_calls`` array
+# (BOB-069 defence-in-depth). ``_TOOL_CALLS_ECHO_PREFIX`` is the seam's own rendered
+# form a model can echo back verbatim (``[tool_calls] read_code({...})``); the hermes
+# tags are what a Qwen instruct-model may wrap a call in with thinking disabled. Both
+# are recovered as tool calls rather than leaked as the final reply text.
+_TOOL_CALLS_ECHO_PREFIX = "[tool_calls] "
+_HERMES_OPEN = "<tool_call>"
+_HERMES_CLOSE = "</tool_call>"
 
 # qwen3 "no thinking" directive for OpenAI-compatible endpoints. Both keys are
 # sent so the call works whether the upstream reads it from ``extra_body`` (the
@@ -108,7 +117,7 @@ class OpenAICompatProvider:
 
     async def complete_with_tools(
         self,
-        messages: Sequence[LLMMessage],
+        messages: Sequence[ToolLoopMessage],
         *,
         tools: Sequence[ToolDefinition],
     ) -> ToolCallResult:
@@ -210,7 +219,20 @@ def _extract_tool_call_result(body: Mapping[str, object]) -> ToolCallResult:
     fallback = _fallback_tool_call(text)
     if fallback is not None:
         return ToolCallResult(text="", tool_calls=(fallback,))
-    return ToolCallResult(text=text, tool_calls=())
+    return ToolCallResult(text=_sanitize_tool_call_leak(text), tool_calls=())
+
+
+def _sanitize_tool_call_leak(text: str) -> str:
+    """Blank a reply that still carries a raw ``[tool_calls] `` string (the invariant).
+
+    Defence-in-depth for BOB-069: a reply beginning with the seam's tool-call marker
+    is a leaked tool intent the parsers could not recover into a call — it must NEVER
+    reach the chat as Bob's answer. Degrade to ``""`` (an honest empty turn) rather
+    than surface raw tool syntax to the user.
+    """
+    if text.lstrip().startswith(_TOOL_CALLS_ECHO_PREFIX):
+        return ""
+    return text
 
 
 def _message_object(body: Mapping[str, object]) -> Mapping[str, object]:
@@ -271,11 +293,79 @@ def _decode_arguments(raw: object) -> dict[str, object]:
 
 
 def _fallback_tool_call(text: str) -> ToolCall | None:
-    """Recover a prompt-protocol JSON tool-call from reply text, or ``None``.
+    """Recover a textual tool-call from reply text, or ``None``.
 
-    The fallback contract is a JSON object ``{"tool_call": {"name": ...,
-    "arguments": {...}}}`` which a model may wrap in reasoning prose or a markdown
-    code fence; the first balanced JSON object is scanned out and inspected.
+    Tolerates the three forms a non-native-tools model may emit instead of an OpenAI
+    ``tool_calls`` array, in order of specificity: a hermes ``<tool_call>{…}</tool_call>``
+    wrapper, the seam's own echoed ``[tool_calls] name({…})`` string (BOB-069), and the
+    prompt-protocol ``{"tool_call": {"name": …, "arguments": {…}}}`` JSON object (which a
+    model may wrap in reasoning prose or a markdown code fence).
+    """
+    return _hermes_tool_call(text) or _echoed_tool_call(text) or _json_protocol_tool_call(text)
+
+
+def _hermes_tool_call(text: str) -> ToolCall | None:
+    """Recover a call from a hermes ``<tool_call>{"name",…,"arguments":{…}}</tool_call>``."""
+    start = text.find(_HERMES_OPEN)
+    if start == -1:
+        return None
+    inner_start = start + len(_HERMES_OPEN)
+    end = text.find(_HERMES_CLOSE, inner_start)
+    inner = text[inner_start:end] if end != -1 else text[inner_start:]
+    obj = _first_json_object(inner)
+    if obj is None:
+        return None
+    try:
+        decoded = json.loads(obj)
+    except (json.JSONDecodeError, ValueError):
+        return None
+    if not isinstance(decoded, dict):
+        return None
+    name = decoded.get("name")
+    if not isinstance(name, str) or not name:
+        return None
+    arguments = decoded.get("arguments")
+    return ToolCall(
+        id="hermes_0",
+        name=name,
+        arguments=dict(arguments) if isinstance(arguments, dict) else {},
+    )
+
+
+def _echoed_tool_call(text: str) -> ToolCall | None:
+    """Recover a call the model echoed as ``[tool_calls] name({…})`` (BOB-069).
+
+    Reads the capability name up to the first ``(`` after the marker and the first
+    balanced JSON object as its arguments; the first call is enough to re-enter the
+    loop. Returns ``None`` when the marker is absent or the name is empty.
+    """
+    marker = text.find(_TOOL_CALLS_ECHO_PREFIX)
+    if marker == -1:
+        return None
+    rest = text[marker + len(_TOOL_CALLS_ECHO_PREFIX) :]
+    paren = rest.find("(")
+    if paren == -1:
+        return None
+    name = rest[:paren].strip()
+    if not name:
+        return None
+    obj = _first_json_object(rest[paren + 1 :])
+    arguments: dict[str, object] = {}
+    if obj is not None:
+        try:
+            decoded = json.loads(obj)
+        except (json.JSONDecodeError, ValueError):
+            decoded = None
+        if isinstance(decoded, dict):
+            arguments = dict(decoded)
+    return ToolCall(id="echo_0", name=name, arguments=arguments)
+
+
+def _json_protocol_tool_call(text: str) -> ToolCall | None:
+    """Recover the prompt-protocol ``{"tool_call": {"name", "arguments"}}`` JSON object.
+
+    The first balanced JSON object is scanned out and inspected; reasoning prose or a
+    markdown code fence around it is tolerated.
     """
     obj = _first_json_object(text)
     if obj is None:

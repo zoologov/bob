@@ -1013,6 +1013,11 @@ ignore = [
 # The FakeEmbedder seeds `random.Random` from a text hash to produce stable
 # pseudo-vectors for tests; the non-crypto PRNG is the point, so S311 does not apply.
 "tests/support/*.py" = ["S101", "ARG001", "PLR2004", "S311"]
+# The tool-loop + OpenAI-compat parser tests (BOB-069) carry Russian comments describing
+# the live tool-call-leak bug whose Cyrillic look-alikes are intentional — RUF001/RUF002/
+# RUF003 do not apply; they also assert on magic literals + private helpers.
+"tests/application/test_tool_loop.py" = ["S101", "ARG001", "PLR2004", "RUF001", "RUF002", "RUF003"]
+"tests/infrastructure/llm/test_openai_compat_parsers.py" = ["S101", "ARG001", "PLR2004", "RUF001", "RUF002", "RUF003"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["bob"]

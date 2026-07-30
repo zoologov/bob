@@ -28,6 +28,13 @@ from typing import Protocol, runtime_checkable
 # A chat-style message for the LLM provider (OpenAI-compatible: role + content).
 type LLMMessage = Mapping[str, str]
 
+# A tool-loop chat message: like :data:`LLMMessage`, but a value may be a STRUCTURAL
+# ``tool_calls`` array — the assistant's native tool-call turn (a list of
+# ``{"id","type","function":{…}}`` objects) — so values are typed ``object`` not
+# ``str`` (BOB-069). Only the tool-loop re-ask carries this richer shape; plain
+# completion stays string-only, so the wider type does not leak into every message.
+type ToolLoopMessage = Mapping[str, object]
+
 # A JSON-decodable soul-artifact value (object/array/scalar) carried by SoulStore.
 type JsonValue = dict[str, object] | list[object] | str | int | float | bool | None
 

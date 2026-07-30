@@ -17,7 +17,9 @@ import pytest
 from bob.infrastructure.llm.openai_compat import (
     _extract_message_content,
     _extract_tool_call_result,
+    _fallback_tool_call,
     _parse_sse_token,
+    _sanitize_tool_call_leak,
 )
 
 # --- _extract_message_content (non-stream body) -------------------------------
@@ -166,6 +168,89 @@ def test_extract_tool_call_result_ignores_plain_prose_without_tool_call() -> Non
     # Assert: treated as a final answer, no spurious tool call.
     assert result.tool_calls == ()
     assert result.text == "I think {coffee} is nice."
+
+
+# --- defence-in-depth: textual tool-call forms + no-leak invariant (BOB-069 B) --
+# 🔴 Живой баг: Qwen эхом отдавал сырой «[tool_calls] read_code({...})» текстом.
+# Страховка распознаёт текстовую/hermes-форму как tool_calls, а хвост-инвариант
+# гарантирует, что reply, начинающийся с «[tool_calls] », НИКОГДА не течёт наружу.
+
+
+def test_extract_tool_call_result_recovers_echoed_tool_calls_string() -> None:
+    # Arrange: модель ЭХОМ вернула сырой ход текстом (нет native tool_calls).
+    content = '[tool_calls] read_code({"query": "tests/acceptance/features/x.feature"})'
+    body = {"choices": [{"message": {"content": content}}]}
+
+    # Act
+    result = _extract_tool_call_result(body)
+
+    # Assert: распознано как вызов, а НЕ отдано текстом.
+    assert result.text == ""
+    assert len(result.tool_calls) == 1
+    call = result.tool_calls[0]
+    assert call.name == "read_code"
+    assert call.arguments == {"query": "tests/acceptance/features/x.feature"}
+
+
+def test_extract_tool_call_result_recovers_hermes_wrapped_tool_call() -> None:
+    # Arrange: hermes-обёртка, которую Qwen может отдать при thinking-off.
+    content = (
+        '<tool_call>\n{"name": "read_code", "arguments": {"query": "a.feature"}}\n</tool_call>'
+    )
+    body = {"choices": [{"message": {"content": content}}]}
+
+    # Act
+    result = _extract_tool_call_result(body)
+
+    # Assert
+    assert result.text == ""
+    assert len(result.tool_calls) == 1
+    call = result.tool_calls[0]
+    assert call.name == "read_code"
+    assert call.arguments == {"query": "a.feature"}
+
+
+def test_extract_tool_call_result_never_leaks_unparseable_tool_calls_string() -> None:
+    # 🔴 Жёсткий инвариант: даже неразборный «[tool_calls] …» НЕ уходит текстом.
+    content = "[tool_calls] "  # обрублено, вызов не восстановить
+    body = {"choices": [{"message": {"content": content}}]}
+
+    # Act
+    result = _extract_tool_call_result(body)
+
+    # Assert: санитизировано в пустой текст, не утечка.
+    assert result.tool_calls == ()
+    assert not result.text.startswith("[tool_calls]")
+
+
+def test_sanitize_tool_call_leak_passes_ordinary_text_through_unchanged() -> None:
+    # 🔴 Инвариант-негатив: санитайзер не трогает НОРМАЛЬНЫЙ ответ — режет только
+    # утечку сырого маркера, иначе он бы глотал легитимные реплики.
+    text = "Вот что я нашёл в файле: BDD — это про наблюдаемое поведение."
+    assert _sanitize_tool_call_leak(text) == text
+
+
+def test_sanitize_tool_call_leak_blanks_marker_even_with_leading_whitespace() -> None:
+    # 🔴 Инвариант: маркер с ведущими пробелами/переводами строк всё равно утечка —
+    # lstrip перед проверкой, наружу уходит пустой ход, а не сырой «[tool_calls] ».
+    assert _sanitize_tool_call_leak("  \n[tool_calls] read_code(") == ""
+
+
+def test_extract_tool_call_result_sanitizes_whitespace_prefixed_leak() -> None:
+    # 🔴 Сквозь весь парсер: эхо с ведущими пробелами и без восстановимого вызова
+    # (обрублено) не течёт наружу текстом — ни один путь не отдаёт «[tool_calls] ».
+    body = {"choices": [{"message": {"content": "   [tool_calls] "}}]}
+
+    result = _extract_tool_call_result(body)
+
+    assert result.tool_calls == ()
+    assert not result.text.lstrip().startswith("[tool_calls]")
+
+
+def test_fallback_tool_call_returns_none_for_plain_prose() -> None:
+    # 🔴 Прямой контракт страховки: обычная проза без tool-call форм → None (не
+    # выдумывает вызов), чтобы текст ушёл как финальный ответ.
+    assert _fallback_tool_call("просто расскажи про зонды, без инструментов") is None
 
 
 def test_extract_tool_call_result_tolerates_malformed_native_arguments() -> None:

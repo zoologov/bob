@@ -204,10 +204,9 @@ def test_others_present_false_without_current_name_when_history_is_unlabelled() 
     assert others_present(history, current_sender_name=None) is False
 
 
-def test_name_address_with_colon_or_dash_is_directed_to_bob() -> None:
-    # Разделитель-обращение может быть не только запятой: двоеточие/тире/длинное тире
-    # сразу за именем тоже читаются как обращение («Боб: …» / «Боб-…» / «Боб—…»).
-    for text in ("Боб: слушай", "Боб-привет", "Bob: hey", "боб—ну что"):
+def test_name_address_with_colon_is_directed_to_bob() -> None:
+    # Двоеточие сразу за именем читается как обращение («Боб: …»).
+    for text in ("Боб: слушай", "Bob: hey", "боб:"):
         result = classify_addressivity(
             text=text,
             mentions_bob=False,
@@ -216,6 +215,23 @@ def test_name_address_with_colon_or_dash_is_directed_to_bob() -> None:
             others_present=False,
         )
         assert result is Addressivity.DIRECTED_TO_BOB, text
+
+
+def test_name_with_immediate_dash_is_ambient_not_directed() -> None:
+    # 🔴 BOB-069.6 (fix major): тире/длинное тире ВПЛОТНУЮ за именем — это 3-е лицо
+    # или композит («Боб-строитель», «боб-конструктор», «Боб—робот» = «Bob is a
+    # robot»), а НЕ обращение. Настоящий оклик через тире идёт С ПРОБЕЛОМ («эй Боб -
+    # ты тут?»), где справа от имени пробел, а не тире вплотную. Значит тире-вплотную
+    # даёт ТОЛЬКО ложь → убрано из терминаторов-обращения.
+    for text in ("Боб-строитель", "боб-конструктор", "Боб—робот", "Bob-builder"):
+        result = classify_addressivity(
+            text=text,
+            mentions_bob=False,
+            reply_to_sender_id=None,
+            bob_user_id=_BOB_ID,
+            others_present=False,
+        )
+        assert result is Addressivity.AMBIENT, text
 
 
 def test_name_address_with_leading_whitespace_is_directed_to_bob() -> None:
@@ -242,16 +258,117 @@ def test_name_only_bob_without_separator_is_ambient() -> None:
     assert result is Addressivity.AMBIENT
 
 
-def test_name_address_inside_text_is_not_directed() -> None:
-    # Имя НЕ в начале реплики не считается обращением («…, Боб» в конце) → AMBIENT.
+def test_mid_vocative_is_directed_to_bob() -> None:
+    # BOB-069.A: вокатив «Боб» в ЛЮБОЙ позиции — обращение. Левая граница слова
+    # (разделитель/пробел) + терминатор-обращения (разделитель/«!»/«?»/конец строки
+    # при контексте слева) сразу за именем.
+    engaging = (
+        "Боб, ты тут?",  # старт + запятая
+        "Кстати, Боб, расскажи",  # середина, запятая справа
+        "…, Боб?",  # трейлинг-вокатив + «?»
+        "эй Боб!",  # пробел слева + «!»
+        "боб:",  # старт + двоеточие
+        "ну что, Боб",  # трейлинг-вокатив, конец строки, контекст слева
+        "привет, Боб",  # трейлинг-вокатив в конце
+        "Боб!",  # имя + «!»
+        "Боб?",  # имя + «?»
+        "скажи, БОБ, как дела",  # верхний регистр в середине
+        "hey Bob, listen",  # латиница в середине
+        "так, Боб, и ещё, Боб, вот",  # несколько запятых-вокативов
+    )
+    for text in engaging:
+        result = classify_addressivity(
+            text=text,
+            mentions_bob=False,
+            reply_to_sender_id=None,
+            bob_user_id=_BOB_ID,
+            others_present=False,
+        )
+        assert result is Addressivity.DIRECTED_TO_BOB, text
+
+
+def test_name_mentioned_not_vocative_is_ambient() -> None:
+    # 🔴 Guard: имя присутствует, но это НЕ оклик (падеж / имя-подлежащее /
+    # середина слова) → остаётся AMBIENT, а не ложное срабатывание.
+    ambient = (
+        "Боб молодец",  # за именем пробел+слово, а не терминатор
+        "расскажу Бобу про X",  # дательный падеж
+        "думаю про Боба",  # винительный падеж
+        "поговорил с Бобом",  # творительный падеж
+        "Бобслей — это спорт",  # имя-подслово в начале
+        "работает робобот",  # «боб» внутри слова
+        "это пробоб какой-то",  # буква слева от «боб»
+    )
+    for text in ambient:
+        result = classify_addressivity(
+            text=text,
+            mentions_bob=False,
+            reply_to_sender_id=None,
+            bob_user_id=_BOB_ID,
+            others_present=False,
+        )
+        assert result is Addressivity.AMBIENT, text
+
+
+def test_first_vocative_wins_over_a_later_non_vocative_occurrence() -> None:
+    # 🔴 BOB-069.A доукрепление (mutation): сканирование идёт СЛЕВА-направо и берёт
+    # ПЕРВОЕ вхождение-вокатив. «Боб, а вот бобслей» — первое «Боб,» это оклик, а
+    # последнее «боб» (в «бобслей») — нет. Детектор обязан поймать первое, а не
+    # смотреть только на последнее вхождение имени.
     result = classify_addressivity(
-        text="привет, Боб",
+        text="Боб, а вот бобслей — тема",
         mentions_bob=False,
         reply_to_sender_id=None,
         bob_user_id=_BOB_ID,
         others_present=False,
     )
-    assert result is Addressivity.AMBIENT
+    assert result is Addressivity.DIRECTED_TO_BOB
+
+
+def test_middle_vocative_between_non_vocative_occurrences_is_directed() -> None:
+    # 🔴 BOB-069.A доукрепление (mutation): вокатив в СЕРЕДИНЕ между двумя
+    # не-вокативами — «бобром, Боб, бобслей». Первое «боб» (бобром) и последнее «боб»
+    # (бобслей) — не оклик, но среднее «Боб,» — да. Перебор не должен перепрыгивать
+    # средние вхождения.
+    result = classify_addressivity(
+        text="бобром, Боб, бобслей",
+        mentions_bob=False,
+        reply_to_sender_id=None,
+        bob_user_id=_BOB_ID,
+        others_present=False,
+    )
+    assert result is Addressivity.DIRECTED_TO_BOB
+
+
+def test_trailing_vocative_with_single_separator_prefix_is_directed() -> None:
+    # 🔴 BOB-069.A доукрепление (mutation, граница start==1): имя в самом конце строки
+    # с ЕДИНСТВЕННЫМ контекст-символом слева (разделитель-обращение вплотную) читается
+    # как трейлинг-вокатив. Одного левого контекст-символа достаточно (start > 0).
+    result = classify_addressivity(
+        text=",Боб",
+        mentions_bob=False,
+        reply_to_sender_id=None,
+        bob_user_id=_BOB_ID,
+        others_present=False,
+    )
+    assert result is Addressivity.DIRECTED_TO_BOB
+
+
+def test_lone_bob_with_or_without_leading_whitespace_is_ambient() -> None:
+    # 🔴 BOB-069.6 (fix minor, был флаг ревью .4): голое имя — с ВЕДУЩИМ пробелом
+    # (« Боб») или без («Боб») — одинаково AMBIENT. Ведущий пробел даёт start>0, но
+    # слева НЕТ реального address-контекста (только whitespace), поэтому это не
+    # трейлинг-вокатив «…, Боб», а то же самое одинокое имя. Асимметрия «start>0»
+    # устранена: EOL-вокатив требует непробельный контекст слева.
+    for text in ("   Боб", "Боб"):
+        result = classify_addressivity(
+            text=text,
+            mentions_bob=False,
+            reply_to_sender_id=None,
+            bob_user_id=_BOB_ID,
+            others_present=False,
+        )
+        assert result is Addressivity.AMBIENT, text
 
 
 def test_reply_to_bob_needs_resolved_identity() -> None:

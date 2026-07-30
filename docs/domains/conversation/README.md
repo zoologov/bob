@@ -69,7 +69,7 @@ per-person атрибуция сосуществует с цельным тре�
 src/bob/conversation/
   ports.py            # layer=domain          — conversation-порты (ConversationFloorStore/CloserLog/ZoneClassifier)
   __init__.py         # layer=domain          — фасад модуля
-  addressivity.py     # layer=domain          — Addressivity + classify_addressivity/others_present + decide_response (if/else-лестница, BOB-023)
+  addressivity.py     # layer=domain          — Addressivity + classify_addressivity/others_present + decide_response (if/else-лестница, BOB-023); вокатив «Боб» в любой позиции реплики (BOB-069)
   conversation_floor.py# layer=domain         — FloorHolder/ConversationFloor(+participants)/FloorConfig, advance_floor, resolve_addressivity, is_floor_participant (BOB-025/066 .1)
   brevity.py          # layer=domain          — AnswerDemand + BrevityThresholds + decide_verbosity → personality Verbosity, clamp_reply (BOB-024)
   engagement.py       # layer=domain          — decide_engagement → personality EngagementLevel + ConversationalFatigue (затухающий резервуар, BOB-014)
@@ -115,6 +115,20 @@ src/bob/conversation/
 gateway'ем (reply-to / @mention / текст) — без I/O и рандома. `others_present` — эвристика
 «тред не 1:1». `decide_response` — исходная if/else-лестница отклика (её заменяет семантический
 `ResponseJudge`, BOB-049).
+
+🔴 **Вокатив-обращение по имени в любой позиции (BOB-069).** `_is_name_address_to_bob`
+распознаёт оклик по имени «Боб»/«bob» (регистронезависимо) не только в начале реплики, но и
+в СЕРЕДИНЕ — «Кстати, Боб, расскажи», «эй Боб!». Вхождение считается вокативом, когда
+выполнены оба условия: слева от имени — граница слова (начало строки / пробел / разделитель,
+проверяет `_has_left_word_boundary`), а справа ВПЛОТНУЮ — терминатор-обращения из
+`_ADDRESS_TERMINATORS` (`,` / `:` / `!` / `?`), ЛИБО конец строки при непробельном
+address-контексте слева (трейлинг-вокатив «…, Боб», проверяет `_has_left_address_context`).
+Тире `-` / `—` вплотную за именем НАМЕРЕННО не терминатор: «Боб-строитель» / «Боб—робот» —
+композит/3-е лицо, остаётся AMBIENT; настоящий оклик через тире идёт с пробелом («эй Боб -
+ты тут?»). Guard против падежей и 3-го лица сохранён: «Бобу» / «Боба» (справа буква), «Боб
+молодец» (справа пробел + слово) и одинокое «Боб» — AMBIENT, а не обращение. Хелперы
+`_is_vocative_at` / `_has_left_word_boundary` / `_has_left_address_context` — module-level и
+чистые; публичная сигнатура `classify_addressivity` не менялась.
 
 `ConversationFloor` (`conversation_floor.py`) — трекер разговорной реплики: кто «у микрофона»
 (`FloorHolder` BOB/OTHER/IDLE), когда держателя последний раз подтвердили (`since`), серия
@@ -396,7 +410,10 @@ floor (UPSERT — floor продвигается каждый ход); `SqliteCl
   чужое). Набор dedup'ится, ограничен потолком 8 (вытесняется старейший) и сбрасывается при
   повороте к другому / распаде.
 - **Адресность — perception, не решение.** `classify_addressivity` чист и детерминирован; над
-  ним политика отклика (судья), сам детектор доступ/отклик не решает.
+  ним политика отклика (судья), сам детектор доступ/отклик не решает. Вокатив «Боб» ловится в
+  любой позиции реплики только при границе слова слева И терминаторе-обращения (`,`/`:`/`!`/`?`)
+  либо трейлинг-контексте справа — тире-композит и падежи остаются AMBIENT (консервативно,
+  без ложных срабатываний, BOB-069).
 - **Анти-тик консервативен.** `is_user_repeat` — только точный матч после нормализации (Боб не
   обвиняет owner'а зря); `is_bob_repeat` проверяет всё окно (повтор «через ход» не проскакивает);
   `CloserLog` ловит мотив, рассеянный по сессиям.

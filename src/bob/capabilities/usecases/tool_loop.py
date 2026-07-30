@@ -37,7 +37,7 @@ if TYPE_CHECKING:
     from bob.capabilities.ports import ToolCall, ToolCallingProvider
     from bob.capabilities.usecases.progress_announcer import ProgressAnnouncer
     from bob.capabilities.usecases.registry import CapabilityRegistry
-    from bob.kernel.ports import LLMMessage
+    from bob.kernel.ports import ToolLoopMessage
 
 logger = logging.getLogger(__name__)
 
@@ -64,10 +64,10 @@ class ToolLoop:
         self._max_turns = max_turns
         self._announcer = announcer
 
-    async def run(self, messages: Sequence[LLMMessage]) -> str:
+    async def run(self, messages: Sequence[ToolLoopMessage]) -> str:
         """Complete ``messages`` through the tool-loop and return the final text."""
         tools = self._registry.manifest()
-        conversation: list[LLMMessage] = list(messages)
+        conversation: list[ToolLoopMessage] = list(messages)
         for _ in range(self._max_turns):
             result = await self._provider.complete_with_tools(conversation, tools=tools)
             if not result.tool_calls:
@@ -78,7 +78,7 @@ class ToolLoop:
         logger.warning("Tool loop hit the turn cap (%d) without a final answer", self._max_turns)
         return ""
 
-    async def _run_tool(self, call: ToolCall) -> LLMMessage:
+    async def _run_tool(self, call: ToolCall) -> ToolLoopMessage:
         """Dispatch one tool call (GUPPI executes) and render its ``tool`` message."""
         # Interim "searching…" line (BOB-055): before a SLOW capability runs, let the
         # announcer say a live word in Bob's voice so the owner is not left in silence.
@@ -107,14 +107,34 @@ class ToolLoop:
         }
 
 
-def _assistant_turn(tool_calls: Sequence[ToolCall]) -> LLMMessage:
-    """Render the assistant turn that requested ``tool_calls`` (OpenAI shape).
+def _assistant_turn(tool_calls: Sequence[ToolCall]) -> ToolLoopMessage:
+    """Render the assistant turn that requested ``tool_calls`` (OpenAI-native shape).
 
-    The content is serialised so the seam carries the assistant's tool intent in
-    the conversation even on providers that echo it back as plain text.
+    Carries the tool intent in the STRUCTURAL ``tool_calls`` array the OpenAI schema
+    defines — NOT as a ``[tool_calls] …`` string smuggled into ``content`` (BOB-069).
+    The old string form left the re-ask malformed (an assistant turn with no
+    ``tool_calls``, a ``tool`` result referencing an ``id`` absent from the history),
+    so Qwen echoed the string back verbatim and it leaked into the chat. Here each
+    call becomes ``{"id","type":"function","function":{"name","arguments"}}`` with
+    ``arguments`` a JSON STRING (as OpenAI expects) and ``id`` matching the
+    ``tool_call_id`` :meth:`ToolLoop._run_tool` puts on the result — so the model
+    binds each ``tool`` result to its call and drives on to a final text answer.
     """
-    rendered = ", ".join(f"{call.name}({json.dumps(dict(call.arguments))})" for call in tool_calls)
-    return {"role": "assistant", "content": f"[tool_calls] {rendered}"}
+    return {
+        "role": "assistant",
+        "content": "",
+        "tool_calls": [
+            {
+                "id": call.id,
+                "type": "function",
+                "function": {
+                    "name": call.name,
+                    "arguments": json.dumps(dict(call.arguments)),
+                },
+            }
+            for call in tool_calls
+        ],
+    }
 
 
 def _render_result(result: object) -> str:

@@ -122,7 +122,7 @@ if TYPE_CHECKING:
     from bob.capabilities.usecases.diagram_sender import DiagramSendMode
     from bob.conversation.ports import ZoneClassifier
     from bob.infrastructure.telegram.gateway import UpdateLike
-    from bob.kernel.ports import LLMMessage, LLMProvider
+    from bob.kernel.ports import LLMProvider, ToolLoopMessage
     from bob.memory.ports import Recalled
 
 _PHANTOM_PREF = "phantom-coffee-craving"  # shareable taste material (shapes the reply)
@@ -2195,12 +2195,12 @@ class ScriptedToolProvider:
 
     def __init__(self) -> None:
         self.tools_seen: list[Sequence[ToolDefinition]] = []
-        self.turns: list[list[dict[str, str]]] = []
+        self.turns: list[list[dict[str, object]]] = []
         self._call = 0
 
     async def complete_with_tools(
         self,
-        messages: Sequence[LLMMessage],
+        messages: Sequence[ToolLoopMessage],
         *,
         tools: Sequence[ToolDefinition],
     ) -> ToolCallResult:
@@ -2214,7 +2214,7 @@ class ScriptedToolProvider:
 
     @property
     def all_text(self) -> str:
-        return "\n".join(m["content"] for turn in self.turns for m in turn)
+        return "\n".join(str(m.get("content", "")) for turn in self.turns for m in turn)
 
 
 def _registry_with_recall() -> tuple[CapabilityRegistry, FakeCapability]:
@@ -2274,7 +2274,7 @@ class _DiagramToolProvider:
 
     async def complete_with_tools(
         self,
-        messages: Sequence[LLMMessage],  # noqa: ARG002
+        messages: Sequence[ToolLoopMessage],  # noqa: ARG002
         *,
         tools: Sequence[ToolDefinition],  # noqa: ARG002
     ) -> ToolCallResult:
@@ -2577,7 +2577,7 @@ async def test_inline_mermaid_is_deduped_against_a_tool_rendered_diagram() -> No
 
         async def complete_with_tools(
             self,
-            messages: Sequence[LLMMessage],  # noqa: ARG002
+            messages: Sequence[ToolLoopMessage],  # noqa: ARG002
             *,
             tools: Sequence[ToolDefinition],  # noqa: ARG002
         ) -> ToolCallResult:
@@ -2825,7 +2825,7 @@ async def test_inline_mermaid_dedup_is_whitespace_insensitive() -> None:
 
         async def complete_with_tools(
             self,
-            messages: Sequence[LLMMessage],  # noqa: ARG002
+            messages: Sequence[ToolLoopMessage],  # noqa: ARG002
             *,
             tools: Sequence[ToolDefinition],  # noqa: ARG002
         ) -> ToolCallResult:
