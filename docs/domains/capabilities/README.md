@@ -7,8 +7,8 @@
 `Capability` и его порты (tool-calling-провайдер + web / diagram / introspection
 сеймы) в `ports.py`, чистые value-object'ы `diagrams` / `introspection`, половина
 `usecases/` (шов `CapabilityRegistry` + `ToolLoop` и сами навыки — recall/search
-памяти, read code/url, web-поиск, render diagram, inspect architecture, list work,
-code rationale, progress announcer) и половина `adapters/` (aiohttp url-reader за
+памяти, read code/url, навигация по репозиторию (list_dir / find_file), web-поиск,
+render diagram, inspect architecture, list work, code rationale, progress announcer) и половина `adapters/` (aiohttp url-reader за
 SSRF-щитом, локальный mermaid-рендерер, beadloom/bd/git-интроспектор, Qwen web-search
 транспорт). GUPPI — исполнитель шва: модель просит инструмент, GUPPI его запускает.
 
@@ -61,7 +61,7 @@ src/bob/capabilities/
   diagrams/           # layer=domain            (чистый разбор inline-mermaid, BOB-037)
     mermaid_blocks.py #                        — extract / strip / normalize fenced ```mermaid
   introspection/      # layer=domain            (чистые инварианты самоинтроспекции)
-    privacy_guard.py  #                        — PrivacyGuard: приват-инвариант ALLOWED_ROOTS (BOB-017)
+    privacy_guard.py  #                        — PrivacyGuard: приват-инвариант полного-репо доступа (BOB-017→BOB-067); чистое ядро _allows_path/_sanitize/_resolve вынесено на уровень модуля (mutation-testable)
     code_history.py   #                        — чистые парсеры git↔беады↔фича-доки (BOB-038)
   usecases/           # layer=application
     registry.py       #                        — CapabilityRegistry + SafeCapabilityDispatcher
@@ -69,7 +69,9 @@ src/bob/capabilities/
     progress_announcer.py — GatewayProgressAnnouncer + InterimLineGenerator (🔴 → .6)
     recall_memory.py  #                        — авто-recall над MemoryRecall (тонкий)
     search_memory.py  #                        — агентный поиск памяти над MemoryRecall
-    read_code.py      #                        — чтение своего кода (путь → read_file, иначе search)
+    read_code.py      #                        — чтение любого файла репо (путь → read_file, иначе search)
+    list_dir.py       #                        — перечень записей директории репо (BOB-067, read-only, не рекурсивно)
+    find_file.py      #                        — поиск файлов по имени/glob по всему дереву (BOB-067, .git-skip, кап)
     inspect_architecture.py — граф-контекст через RepoIntrospector (beadloom ctx/graph/why)
     list_work.py      #                        — свой трекер через RepoIntrospector (bd ready/show)
     code_rationale.py #                        — код↔«почему»: git↔беады↔фича-доки↔граф (BOB-038)
@@ -126,13 +128,19 @@ allowlist = автономно ничего не запускается (кон�
   искать в своём архиве, гоняет гибридный recall, модель может тюнить `k`
   (бессмысленные значения клампятся к безопасному дефолту). Оба держат только порт
   `MemoryRecall`, своего I/O нет.
-- **Самоинтроспекция (BOB-017/038).** `inspect_architecture` (граф-контекст через
-  `RepoIntrospector.architecture_context`), `read_code` (один `query`: путь →
-  `read_file`, иначе → `search_code`), `list_work` (`RepoIntrospector.list_tasks` —
-  `bd show`/`bd ready`), `code_rationale` (код↔«почему»: `code_history` →
-  `parse_bead_refs` → фича-доки PRD/RFC/BRIEF + bracketing-коммиты + граф в один
-  компактный ответ; при отсутствии decision-ключа — честное «история не
-  зафиксирована», не выдумка). Все четыре — фабрики `make_*_capability(introspector)`,
+- **Самоинтроспекция и навигация по репозиторию (BOB-017/038/067).**
+  `inspect_architecture` (граф-контекст через `RepoIntrospector.architecture_context`),
+  `read_code` (один `query`: путь → `read_file` теперь по ЛЮБОМУ файлу репо, иначе →
+  `search_code`), `list_work` (`RepoIntrospector.list_tasks` — `bd show`/`bd ready`),
+  `code_rationale` (код↔«почему»: `code_history` → `parse_bead_refs` → фича-доки
+  PRD/RFC/BRIEF + bracketing-коммиты + граф в один компактный ответ; при отсутствии
+  decision-ключа — честное «история не зафиксирована», не выдумка). BOB-067 добавил два
+  навигационных навыка: `list_dir` (`RepoIntrospector.list_dir` — перечень записей одной
+  директории репо: имя + вид `file`/`dir` + размер, не рекурсивно) и `find_file`
+  (`RepoIntrospector.find_file` — поиск файлов по имени/glob по всему дереву, `.git`
+  пропускается, результат капается). Оба императивно требуют от Боба ВЫЗВАТЬ инструмент и
+  доложить РЕАЛЬНЫЙ листинг/совпадения (INV-N1), а на пустом выводе дают честное
+  «не нашёл», а не выдумку. Все шесть — фабрики `make_*_capability(introspector)`,
   `permission="safe"`, только-разговор (не в автономном allowlist). Приват-инвариант
   живёт ВНУТРИ порта, не у вызывателя.
 - **Web (BOB-053/054).** `web_search` — заземлённый веб-поиск над `WebSearchProvider`:
@@ -188,13 +196,30 @@ read-only подкоманд (не shell); `read_file` спрашивает `Pri
   на link-local `169.254/16`, IPv6 `fc00::/7` / `fe80::/10`); guard прогоняется до
   коннекта И на каждом redirect. Блок → `SsrfBlockedError` (отдельный тип: не
   retry'ится, честно отказывается).
-- **🔴 PrivacyGuard `ALLOWED_ROOTS`.** Самоинтроспекция читает ТОЛЬКО из
-  read-only корней (`src`, `tests`, `docs`, `.claude/dev-docs`,
-  `.claude/development/docs`); всё прочее — SOUL (`data/soul/**`), память
-  (`data/bob.db*`), секреты (`.env*`), `config/**`, остальной `.claude/` и любой
-  выход за корень через `..` — DENY. Guard — чистый доменный объект (без I/O/LLM/промпта),
-  его нельзя обойти тем, что скажет модель; путь резолвится до матчинга по
-  сегмент-префиксу. Вывод санитайзится (секрет-паттерны → `[REDACTED]`).
+- **🔴 PrivacyGuard — полный доступ ко всему репозиторию (BOB-067).** Осознанный выбор
+  владельца: Боб — равный инженер, работающий по ВСЕМУ репо, а не по узкому whitelist'у.
+  `allows_path` РАЗРЕШАЕТ любой путь, который резолвится ПОД корнем репо (всё рабочее
+  дерево: `src`, `tests`, `docs`, `.beadloom/`, `config/`, `data/`, сам корень, любой
+  исходник/тест/документ). Отказ ТОЛЬКО на ВЫХОД за границу репо: путь, который уходит
+  вверх через `..` за корень, либо абсолютный путь вне репо (симлинк наружу тоже) —
+  `relative_to` бросает, чтение отклоняется по конструкции. `ALLOWED_ROOTS=(".",)` —
+  единственная граница есть сам корень репо, адаптер сверяет по ней симлинк-контейнмент.
+  Guard — чистый доменный объект (без I/O/LLM/промпта), его нельзя обойти тем, что скажет
+  модель; путь резолвится (`..` схлопывается, без обращения к диску) до проверки
+  контейнмента. Чистое ядро вынесено на уровень модуля (`_allows_path` / `_sanitize` /
+  `_resolve`), методы делегируют — так security-инвариант остаётся mutation-testable,
+  а публичный API `PrivacyGuard` неизменен.
+- **🔴 `sanitize` — секрет-backstop (INV-N4).** Полный доступ на ЧТЕНИЕ не означает утечку
+  литеральных секретов: `sanitize` сохранён как defence-in-depth и вычищает
+  секрет-подобные значения (`sk-`-токены, `KEY=value` env-присваивания, `api-key`/`token`/
+  `secret`/`password`-литералы) → `[REDACTED]` из любого возвращаемого текста, даже с
+  разрешённого пути или из CLI. Литеральная строка секрета не покидает машину.
+- **🔴 Узкий doc-фильтр coder-преамбулы (`coding_context`).** Расширенный full-repo guard
+  НЕ протекает во внешнюю coder-преамбулу: `coding/usecases/coding_context._is_safe_doc_path`
+  — своя, НАМЕРЕННО более узкая политика курации (сегмент-префикс по `src` / `tests` /
+  `docs` / `.claude/dev-docs` / `.claude/development/docs`). Personal-data документ
+  (SOUL / `bob.db` / `.env` / `config` / настройки `.claude`) не проходит и не попадёт во
+  внешний coder-контекст, хотя в чате его прочитать теперь можно.
 - **tool-loop.** Порядок tool_calls сохраняется; неизвестный/упавший навык не валит
   ход (ошибка → tool-результат); число ходов capается (`max_turns`).
 - **announce live-only (BOB-060).** Interim-строка генерируется ЖИВО на Tier-0
@@ -254,9 +279,11 @@ legalized), `coding.usecases → capabilities` (`PrivacyGuard`, TC, перено
   на сбое). Реализация — `QwenWebSearchProvider`.
 - `UrlReader` (Protocol) — `async read(url)` → `WebPage` (raise/`SsrfBlockedError` на
   блоке). Реализация — `HttpUrlReader`.
-- `RepoIntrospector` (Protocol) — read-only самоинтроспекция:
+- `RepoIntrospector` (Protocol) — read-only самоинтроспекция и навигация:
   `architecture_context`, `search_code`, `read_file(path, *, max_lines)`,
-  `list_tasks`, `code_history`. Реализация — `SubprocessRepoIntrospector`.
+  `list_dir(path)` (записи одной директории, не рекурсивно), `find_file(pattern)`
+  (пути по glob по всему дереву, `.git`-skip + кап), `list_tasks`, `code_history`.
+  Реализация — `SubprocessRepoIntrospector`.
 - `DiagramRenderer` (Protocol) — `async render(mermaid_source)` → `bytes`
   (`DiagramRenderError` на сбое). Реализация — `SubprocessMmdcRenderer`.
 - `DiagramSink` (Protocol) — `push` / `pending` / `drain`. Реализация —
@@ -278,6 +305,7 @@ ports-шим `bob.domain.ports` удалён (BOB-062.8), все импортё�
 - Навыки-фабрики: `usecases.recall_memory.make_recall_memory_capability`,
   `search_memory.make_search_memory_capability`,
   `read_code.make_read_code_capability`,
+  `list_dir.make_list_dir_capability`, `find_file.make_find_file_capability`,
   `inspect_architecture.make_inspect_architecture_capability`,
   `list_work.make_list_work_capability`,
   `code_rationale.make_code_rationale_capability`,
@@ -285,7 +313,8 @@ ports-шим `bob.domain.ports` удалён (BOB-062.8), все импортё�
   `render_diagram.make_render_diagram_capability` (+ `CollectingDiagramSink`).
 - Чистый домен: `diagrams.mermaid_blocks` (`extract_mermaid_blocks`,
   `strip_mermaid_blocks`, `normalize_mermaid`), `introspection.privacy_guard`
-  (`PrivacyGuard`, `ALLOWED_ROOTS`), `introspection.code_history`
+  (`PrivacyGuard` + module-level `_allows_path` / `_sanitize` / `_resolve`,
+  `ALLOWED_ROOTS`), `introspection.code_history`
   (`parse_bead_refs`, `commits_mentioning`, `feature_doc_dir`).
 - Адаптеры: `adapters.web` (`HttpUrlReader`, `build_url_reader`),
   `adapters.diagrams.mmdc_renderer.SubprocessMmdcRenderer`,
@@ -303,8 +332,9 @@ ports-шим `bob.domain.ports` удалён (BOB-062.8), все импортё�
   `tests/application/capabilities/test_progress_announcer.py`.
 - Навыки памяти: `tests/application/test_recall_memory_capability.py`,
   `test_search_memory_capability.py`.
-- Самоинтроспекция: `tests/application/capabilities/` (`test_inspect_architecture.py`,
-  `test_read_code.py`, `test_list_work.py`, `test_code_rationale.py`,
+- Самоинтроспекция и навигация: `tests/application/capabilities/`
+  (`test_inspect_architecture.py`, `test_read_code.py`, `test_list_dir.py`,
+  `test_find_file.py`, `test_list_work.py`, `test_code_rationale.py`,
   `test_code_rationale_acceptance.py`).
 - Web: `tests/application/capabilities/test_web_search.py`, `test_read_url.py`;
   `tests/test_app_web_search.py`, `test_app_read_url.py`,
