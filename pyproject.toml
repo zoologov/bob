@@ -348,6 +348,16 @@ ignore = [
     "RUF002",
     "RUF003",
 ]
+# The repo-navigation acceptance steps (BOB-067) bind Russian .feature step text whose
+# Cyrillic look-alikes are intentional (→ RUF001/2/3).
+"tests/acceptance/steps/test_repo_navigation.py" = [
+    "S101",
+    "ARG001",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
 # The disclosure-guard tests (BOB-066 W.4) assert on Russian owner_data request literals whose
 # Cyrillic look-alikes are intentional (→ RUF001/2/3).
 "tests/application/usecases/test_disclosure_guard.py" = [

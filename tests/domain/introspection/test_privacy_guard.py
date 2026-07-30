@@ -22,6 +22,8 @@ import pytest
 from bob.capabilities.introspection.privacy_guard import PrivacyGuard
 
 REPO_ROOT = Path("/home/bob/repo")
+# The marker sanitize leaves in place of a scrubbed secret (mirrors the module const).
+_REDACTION_MARK = "[REDACTED]"
 
 
 @pytest.fixture
@@ -187,6 +189,44 @@ def test_sanitize_redacts_api_key_like_tokens(guard: PrivacyGuard) -> None:
     out = guard.sanitize(text)
     assert "sk-1234567890ABCDEFmoresecretvalue" not in out
     assert "REDACTED" in out
+
+
+@pytest.mark.parametrize(
+    ("secret", "sensitive"),
+    [
+        ("api_key: sk-abcdefgh12345", "sk-abcdefgh12345"),
+        ("API_KEY = deadbeefcafef00d", "deadbeefcafef00d"),
+        ("api-key=deadbeefcafef00d", "deadbeefcafef00d"),
+        ("token=eyJhbGciOiJ.payload", "eyJhbGciOiJ.payload"),
+        ("secret: hunter2hunter2", "hunter2hunter2"),
+        ("password = correcthorse", "correcthorse"),
+        ("TOKEN: bearer-xyz-1234", "bearer-xyz-1234"),  # case-insensitive keyword
+    ],
+)
+def test_sanitize_redacts_each_secret_keyword_variant(
+    guard: PrivacyGuard, secret: str, sensitive: str
+) -> None:
+    # INV-N4 backstop: every secret-keyword form (api_key/token/secret/password, with
+    # ``:`` or ``=``, any case) has its VALUE scrubbed — the literal never leaves.
+    out = guard.sanitize(f"prefix {secret} suffix")
+    assert sensitive not in out
+    assert _REDACTION_MARK in out
+
+
+def test_sanitize_redacts_sk_token_mid_prose(guard: PrivacyGuard) -> None:
+    # A bare ``sk-`` opaque token is scrubbed even without a keyword label.
+    out = guard.sanitize("here is a key sk-ABCDEF1234567890abcdef in the log")
+    assert "sk-ABCDEF1234567890abcdef" not in out
+    assert _REDACTION_MARK in out
+
+
+def test_sanitize_leaves_ordinary_prose_with_short_words_untouched(
+    guard: PrivacyGuard,
+) -> None:
+    # No over-redaction: prose that merely mentions the word "token" without a
+    # ``key: value`` shape is returned unchanged (guards the pattern's precision).
+    text = "the auth token is rotated weekly by the ops runbook"
+    assert guard.sanitize(text) == text
 
 
 def test_sanitize_leaves_ordinary_text_untouched(guard: PrivacyGuard) -> None:

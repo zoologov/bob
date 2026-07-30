@@ -16,9 +16,15 @@ tmp repo layout.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
+
+if TYPE_CHECKING:
+    import os
+    from collections.abc import Iterator
 
 from bob.capabilities.adapters.introspection.subprocess_introspector import (
     _FIND_FILE_MAX_RESULTS,
@@ -781,6 +787,123 @@ async def test_find_file_skips_symlink_escaping_repo(tmp_path: Path) -> None:
     out = await intro.find_file("*.py")
 
     assert out.splitlines() == ["src/real.py"]
+
+
+# --- list_dir / find_file honest degradation (INV-N5, defensive edges) --------
+
+
+@pytest.mark.asyncio
+async def test_list_dir_refuses_symlinked_dir_escaping_repo(tmp_path: Path) -> None:
+    # 🔴 A directory symlink under the repo pointing OUTSIDE (an absolute system path)
+    # passes the name-based guard but is caught by the realpath containment check —
+    # refused with no listing, never leaking the outside directory's contents.
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "escape").symlink_to("/etc")
+    intro = _make(tmp_path, _FakeRunner())
+
+    with pytest.raises(DeniedPathError):
+        await intro.list_dir("src/escape")
+
+
+@pytest.mark.asyncio
+async def test_list_dir_surfaces_generic_oserror_as_honest_message(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A generic OSError while scanning (e.g. a permission error) degrades to an honest
+    # "could not list" — never a traceback, never a fabricated listing.
+    (tmp_path / "src").mkdir()
+    intro = _make(tmp_path, _FakeRunner())
+
+    def _boom(_path: object) -> object:
+        raise PermissionError("permission denied")
+
+    monkeypatch.setattr(
+        "bob.capabilities.adapters.introspection.subprocess_introspector.os.scandir",
+        _boom,
+    )
+
+    out = await intro.list_dir("src")
+
+    assert "could not list" in out.lower()
+
+
+class _StatBoomEntry:
+    """A fake file DirEntry whose stat raises — to drive the size-0 degradation path."""
+
+    def __init__(self, name: str) -> None:
+        self.name = name
+
+    def is_dir(self, *, follow_symlinks: bool = True) -> bool:  # noqa: ARG002
+        return False
+
+    def stat(self, *, follow_symlinks: bool = True) -> os.stat_result:  # noqa: ARG002
+        raise OSError("stat failed")
+
+
+@pytest.mark.asyncio
+async def test_list_dir_degrades_size_on_stat_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A file entry whose stat raises OSError renders with size 0 rather than crashing
+    # the whole listing (the entry is still reported honestly).
+    (tmp_path / "src").mkdir()
+    intro = _make(tmp_path, _FakeRunner())
+
+    @contextlib.contextmanager
+    def _fake_scandir(_path: object) -> Iterator[list[_StatBoomEntry]]:
+        yield [_StatBoomEntry("app.py")]
+
+    monkeypatch.setattr(
+        "bob.capabilities.adapters.introspection.subprocess_introspector.os.scandir",
+        _fake_scandir,
+    )
+
+    out = await intro.list_dir("src")
+
+    assert "app.py\tfile\t0" in out
+
+
+@pytest.mark.asyncio
+async def test_find_file_skips_match_outside_repo_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Defensive: if the walk ever yields a path that is NOT relative to the repo root,
+    # it is dropped (never reported as an in-repo match) instead of crashing on the
+    # ``relative_to`` ValueError.
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "real.py").write_text("x", encoding="utf-8")
+    intro = _make(tmp_path, _FakeRunner())
+
+    outside = Path("/somewhere/else/stray.py")
+
+    def _rglob_with_stray(self: Path, pattern: str) -> list[Path]:
+        return [outside, self / "src" / "real.py"]
+
+    monkeypatch.setattr(Path, "rglob", _rglob_with_stray)
+
+    out = await intro.find_file("*.py")
+
+    assert out.splitlines() == ["src/real.py"]
+    assert "stray.py" not in out
+
+
+@pytest.mark.asyncio
+async def test_find_file_degrades_to_empty_on_walk_oserror(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A filesystem error mid-walk (rglob raising OSError) stops the search cleanly and
+    # reports an honest empty result rather than crashing the turn.
+    (tmp_path / "src").mkdir()
+    intro = _make(tmp_path, _FakeRunner())
+
+    def _boom(_self: object, _pattern: object) -> object:
+        raise OSError("walk exploded")
+
+    monkeypatch.setattr(Path, "rglob", _boom)
+
+    out = await intro.find_file("*.py")
+
+    assert "no files" in out.lower()
 
 
 # --- default exec runner (real subprocess, no shell) --------------------------

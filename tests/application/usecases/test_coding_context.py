@@ -26,6 +26,7 @@ from bob.coding.state import CodingSessionState, is_terminal
 from bob.coding.usecases.coding_assistant import CodingAssistant
 from bob.coding.usecases.coding_context import (
     PREAMBLE_MAX_CHARS,
+    _is_safe_doc_path,
     make_coding_context,
 )
 
@@ -274,6 +275,73 @@ async def test_preamble_degrades_when_sources_fail() -> None:
     # A failing doc-read / graph-query never crashes — the conventions block still stands.
     assert "DDD" in preamble
     assert "read exploded" not in preamble
+
+
+# --- Safe-doc curation policy (BOB-067: narrower than the full-repo guard) ----
+# The introspection PrivacyGuard allows the WHOLE repo for in-chat reads; coding's
+# OWN policy is deliberately narrower so no personal-data doc reaches the EXTERNAL
+# coder preamble. These pin that boundary directly on the pure policy function.
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "src/bob/app.py",
+        "src",  # the bare safe root itself
+        "tests/domain/test_x.py",
+        "docs/architecture.md",
+        ".claude/dev-docs/VISION.md",
+        ".claude/development/docs/features/BOB-067/PRD.md",
+    ],
+)
+def test_is_safe_doc_path_allows_public_roots(path: str) -> None:
+    assert _is_safe_doc_path(path) is True
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "data/soul/SOUL.md",  # personal data — must NEVER reach the coder
+        "data/bob.db",
+        "config/bob.yaml",
+        ".env",
+        ".env.local",
+        ".claude/settings.local.json",  # .claude settings ≠ .claude/dev-docs
+        ".claude/CLAUDE.md",
+        ".beadloom/_graph/nodes.yml",
+        "pyproject.toml",  # a repo-root file is not a curated doc root
+        "srcfoo/x.py",  # 🔴 lookalike sibling must not sneak past the segment prefix
+        "docsx/y.md",  # 🔴 lookalike sibling of docs/
+        "",  # empty path resolves to no parts → unsafe
+    ],
+)
+def test_is_safe_doc_path_rejects_private_and_lookalike_roots(path: str) -> None:
+    assert _is_safe_doc_path(path) is False
+
+
+@pytest.mark.asyncio
+async def test_preamble_omits_config_and_dot_claude_settings_even_when_guard_allows() -> (
+    None
+):
+    # 🔴 BOB-067: the widened guard would READ these in chat, but coding's narrower
+    # curation keeps config/ and .claude settings out of the external coder preamble.
+    introspector = _FakeIntrospector(
+        files={
+            "config/bob.yaml": "TELEGRAM_TOKEN=leak",
+            ".claude/settings.local.json": '{"secret": "x"}',
+        }
+    )
+    builder = make_coding_context(
+        introspector,
+        PrivacyGuard(repo_root=Path("/repo")),
+        doc_paths=("config/bob.yaml", ".claude/settings.local.json"),
+    )
+
+    preamble = await builder.preamble("любая задача")
+
+    assert "TELEGRAM_TOKEN" not in preamble
+    assert "settings.local.json" not in preamble
+    assert introspector.reads == []  # narrower policy skips the read entirely
 
 
 # --- Wiring into CodingAssistant --------------------------------------------
