@@ -23,7 +23,7 @@ if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
     from bob.capabilities.ports import Permission, ToolDefinition
-    from bob.kernel.ports import LLMMessage
+    from bob.kernel.ports import ToolLoopMessage
 
 
 class _Capability:
@@ -51,12 +51,12 @@ class _ScriptedProvider:
 
     def __init__(self, results: Sequence[ToolCallResult]) -> None:
         self._results = list(results)
-        self.turns: list[list[dict[str, str]]] = []
+        self.turns: list[list[dict[str, object]]] = []
         self._call = 0
 
     async def complete_with_tools(
         self,
-        messages: Sequence[LLMMessage],
+        messages: Sequence[ToolLoopMessage],
         *,
         tools: Sequence[ToolDefinition],  # noqa: ARG002
     ) -> ToolCallResult:
@@ -67,7 +67,7 @@ class _ScriptedProvider:
 
     @property
     def all_text(self) -> str:
-        return "\n".join(m["content"] for turn in self.turns for m in turn)
+        return "\n".join(str(m.get("content", "")) for turn in self.turns for m in turn)
 
 
 def _registry(cap: _Capability) -> CapabilityRegistry:
@@ -76,7 +76,7 @@ def _registry(cap: _Capability) -> CapabilityRegistry:
     return registry
 
 
-def _seed() -> list[LLMMessage]:
+def _seed() -> list[ToolLoopMessage]:
     return [{"role": "user", "content": "recall something"}]
 
 
@@ -124,7 +124,7 @@ async def test_non_serialisable_capability_result_renders_via_str() -> None:
     tool_turn = provider.turns[-1]
     tool_messages = [m for m in tool_turn if m.get("role") == "tool"]
     assert tool_messages
-    assert "unjsonable" in tool_messages[-1]["content"]
+    assert "unjsonable" in str(tool_messages[-1]["content"])
     assert answer == "done"
 
 
@@ -146,4 +146,4 @@ async def test_mapping_result_is_rendered_as_json() -> None:
 
     # Assert: the tool message carries JSON (keys quoted), proving json.dumps ran.
     tool_messages = [m for m in provider.turns[-1] if m.get("role") == "tool"]
-    assert '"hits"' in tool_messages[-1]["content"]
+    assert '"hits"' in str(tool_messages[-1]["content"])

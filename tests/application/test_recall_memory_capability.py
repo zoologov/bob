@@ -28,7 +28,7 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from bob.capabilities.ports import ToolDefinition
-    from bob.kernel.ports import LLMMessage
+    from bob.kernel.ports import ToolLoopMessage
     from bob.memory.ports import Recalled
 
 
@@ -52,12 +52,12 @@ class ScriptedToolProvider:
 
     def __init__(self, results: Sequence[ToolCallResult]) -> None:
         self._results = list(results)
-        self.turns: list[list[dict[str, str]]] = []
+        self.turns: list[list[dict[str, object]]] = []
         self._call = 0
 
     async def complete_with_tools(
         self,
-        messages: Sequence[LLMMessage],
+        messages: Sequence[ToolLoopMessage],
         *,
         tools: Sequence[ToolDefinition],  # noqa: ARG002
     ) -> ToolCallResult:
@@ -68,7 +68,7 @@ class ScriptedToolProvider:
 
     @property
     def all_text(self) -> str:
-        return "\n".join(m["content"] for turn in self.turns for m in turn)
+        return "\n".join(str(m.get("content", "")) for turn in self.turns for m in turn)
 
 
 def test_capability_advertises_the_recall_memory_contract() -> None:

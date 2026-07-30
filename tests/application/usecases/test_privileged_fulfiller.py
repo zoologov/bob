@@ -23,7 +23,7 @@ if TYPE_CHECKING:
 
     from bob.application.router.llm_router import LLMRequest
     from bob.capabilities.ports import Permission, ToolDefinition
-    from bob.kernel.ports import LLMMessage
+    from bob.kernel.ports import ToolLoopMessage
 
 
 class _FakeRouter:
@@ -43,10 +43,10 @@ class _FakeToolProvider:
 
     def __init__(self, *, reply: str = "Вот задачи через GUPPI") -> None:
         self._reply = reply
-        self.seen: list[list[LLMMessage]] = []
+        self.seen: list[list[ToolLoopMessage]] = []
 
     async def complete_with_tools(
-        self, messages: Sequence[LLMMessage], *, tools: Sequence[ToolDefinition]
+        self, messages: Sequence[ToolLoopMessage], *, tools: Sequence[ToolDefinition]
     ) -> ToolCallResult:
         del tools
         self.seen.append(list(messages))
@@ -104,4 +104,4 @@ async def test_tool_loop_fulfilment_when_provider_and_registry_wired() -> None:
     # The request_text was the user turn handed to the elevated tool-loop.
     assert len(provider.seen) == 1
     user_turns = [m for m in provider.seen[0] if m["role"] == "user"]
-    assert any("построй диаграмму" in m["content"] for m in user_turns)
+    assert any("построй диаграмму" in str(m["content"]) for m in user_turns)

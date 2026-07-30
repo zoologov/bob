@@ -38,7 +38,7 @@ from bob.capabilities.usecases.tool_loop import ToolLoop
 from bob.capabilities.usecases.web_search import make_web_search_capability
 
 if TYPE_CHECKING:
-    from bob.kernel.ports import LLMMessage
+    from bob.kernel.ports import ToolLoopMessage
 
 
 class _FakeWebSearchProvider:
@@ -100,12 +100,12 @@ class _ScriptedToolProvider:
 
     def __init__(self, results: Sequence[ToolCallResult]) -> None:
         self._results = list(results)
-        self.turns: list[list[dict[str, str]]] = []
+        self.turns: list[list[dict[str, object]]] = []
         self._call = 0
 
     async def complete_with_tools(
         self,
-        messages: Sequence[LLMMessage],
+        messages: Sequence[ToolLoopMessage],
         *,
         tools: Sequence[ToolDefinition],  # noqa: ARG002
     ) -> ToolCallResult:
@@ -116,7 +116,7 @@ class _ScriptedToolProvider:
 
     @property
     def all_text(self) -> str:
-        return "\n".join(m["content"] for turn in self.turns for m in turn)
+        return "\n".join(str(m.get("content", "")) for turn in self.turns for m in turn)
 
 
 def test_capability_advertises_the_web_search_contract() -> None:

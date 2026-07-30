@@ -168,6 +168,61 @@ def test_extract_tool_call_result_ignores_plain_prose_without_tool_call() -> Non
     assert result.text == "I think {coffee} is nice."
 
 
+# --- defence-in-depth: textual tool-call forms + no-leak invariant (BOB-069 B) --
+# 🔴 Живой баг: Qwen эхом отдавал сырой «[tool_calls] read_code({...})» текстом.
+# Страховка распознаёт текстовую/hermes-форму как tool_calls, а хвост-инвариант
+# гарантирует, что reply, начинающийся с «[tool_calls] », НИКОГДА не течёт наружу.
+
+
+def test_extract_tool_call_result_recovers_echoed_tool_calls_string() -> None:
+    # Arrange: модель ЭХОМ вернула сырой ход текстом (нет native tool_calls).
+    content = '[tool_calls] read_code({"query": "tests/acceptance/features/x.feature"})'
+    body = {"choices": [{"message": {"content": content}}]}
+
+    # Act
+    result = _extract_tool_call_result(body)
+
+    # Assert: распознано как вызов, а НЕ отдано текстом.
+    assert result.text == ""
+    assert len(result.tool_calls) == 1
+    call = result.tool_calls[0]
+    assert call.name == "read_code"
+    assert call.arguments == {"query": "tests/acceptance/features/x.feature"}
+
+
+def test_extract_tool_call_result_recovers_hermes_wrapped_tool_call() -> None:
+    # Arrange: hermes-обёртка, которую Qwen может отдать при thinking-off.
+    content = (
+        "<tool_call>\n"
+        '{"name": "read_code", "arguments": {"query": "a.feature"}}\n'
+        "</tool_call>"
+    )
+    body = {"choices": [{"message": {"content": content}}]}
+
+    # Act
+    result = _extract_tool_call_result(body)
+
+    # Assert
+    assert result.text == ""
+    assert len(result.tool_calls) == 1
+    call = result.tool_calls[0]
+    assert call.name == "read_code"
+    assert call.arguments == {"query": "a.feature"}
+
+
+def test_extract_tool_call_result_never_leaks_unparseable_tool_calls_string() -> None:
+    # 🔴 Жёсткий инвариант: даже неразборный «[tool_calls] …» НЕ уходит текстом.
+    content = "[tool_calls] "  # обрублено, вызов не восстановить
+    body = {"choices": [{"message": {"content": content}}]}
+
+    # Act
+    result = _extract_tool_call_result(body)
+
+    # Assert: санитизировано в пустой текст, не утечка.
+    assert result.tool_calls == ()
+    assert not result.text.startswith("[tool_calls]")
+
+
 def test_extract_tool_call_result_tolerates_malformed_native_arguments() -> None:
     # Arrange: native tool_call whose arguments are not valid JSON.
     body = {

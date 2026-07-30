@@ -35,7 +35,7 @@ if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Sequence
 
     from bob.capabilities.ports import ToolDefinition
-    from bob.kernel.ports import LLMMessage
+    from bob.kernel.ports import ToolLoopMessage
 
 _RESPONSES_PATH = "/v1/responses"
 
@@ -195,7 +195,7 @@ class _ScriptedToolProvider:
 
     async def complete_with_tools(
         self,
-        messages: Sequence[LLMMessage],  # noqa: ARG002
+        messages: Sequence[ToolLoopMessage],  # noqa: ARG002
         *,
         tools: Sequence[ToolDefinition],  # noqa: ARG002
     ) -> ToolCallResult:

@@ -11,19 +11,20 @@ a ``tool`` message, and re-asks — stopping on a final text answer or a turn ca
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+import json
+from typing import TYPE_CHECKING, Any
 
 import pytest
 
 from bob.capabilities.ports import ToolCall, ToolCallResult
 from bob.capabilities.usecases.registry import CapabilityRegistry
-from bob.capabilities.usecases.tool_loop import ToolLoop
+from bob.capabilities.usecases.tool_loop import ToolLoop, _assistant_turn
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
     from bob.capabilities.ports import Permission, ToolDefinition
-    from bob.kernel.ports import LLMMessage
+    from bob.kernel.ports import ToolLoopMessage
 
 
 class FakeCapability:
@@ -46,12 +47,12 @@ class ScriptedProvider:
 
     def __init__(self, results: Sequence[ToolCallResult]) -> None:
         self._results = list(results)
-        self.turns: list[list[dict[str, str]]] = []
+        self.turns: list[list[dict[str, object]]] = []
         self._call = 0
 
     async def complete_with_tools(
         self,
-        messages: Sequence[LLMMessage],
+        messages: Sequence[ToolLoopMessage],
         *,
         tools: Sequence[ToolDefinition],  # noqa: ARG002
     ) -> ToolCallResult:
@@ -62,7 +63,7 @@ class ScriptedProvider:
 
     @property
     def all_text(self) -> str:
-        return "\n".join(m["content"] for turn in self.turns for m in turn)
+        return "\n".join(str(m.get("content", "")) for turn in self.turns for m in turn)
 
 
 def _registry(cap: FakeCapability) -> CapabilityRegistry:
@@ -71,7 +72,7 @@ def _registry(cap: FakeCapability) -> CapabilityRegistry:
     return registry
 
 
-def _seed() -> list[LLMMessage]:
+def _seed() -> list[ToolLoopMessage]:
     return [{"role": "user", "content": "what's my name?"}]
 
 
@@ -265,6 +266,89 @@ async def test_announcer_fires_once_per_call_in_order_for_multiple_tool_calls() 
     assert announcer.announced == ["recall_memory", "recall_memory"]
     assert order == ["announce", "dispatch", "announce", "dispatch"]
     assert answer == "done"
+
+
+# --- _assistant_turn — structural OpenAI tool_calls shape (BOB-069 B) ---------
+# 🔴 Регресс живого бага: раньше _assistant_turn зашивал tool-интент СТРОКОЙ в
+# content (f"[tool_calls] {rendered}"), из-за чего re-ask был малформ по OpenAI,
+# Qwen эхом повторял строку и она утекала в чат. Теперь ход СТРУКТУРНЫЙ.
+
+
+def _tool_calls_of(turn: ToolLoopMessage) -> list[Any]:
+    """Narrow the ``tool_calls`` value (typed ``object`` on ToolLoopMessage) to a list."""
+    calls = turn["tool_calls"]
+    assert isinstance(calls, list)
+    return calls
+
+
+def test_assistant_turn_is_structural_openai_tool_calls() -> None:
+    # Arrange: один запрошенный tool-call.
+    call = ToolCall(id="call_7", name="read_code", arguments={"query": "x.feature"})
+
+    # Act
+    turn = _assistant_turn((call,))
+
+    # Assert: OpenAI-структурный ход — tool_calls-массив, а НЕ content-строка.
+    assert turn["role"] == "assistant"
+    assert not str(turn.get("content", "")).startswith("[tool_calls]")
+    tool_calls = _tool_calls_of(turn)
+    assert len(tool_calls) == 1
+    entry = tool_calls[0]
+    assert entry["type"] == "function"
+    assert entry["function"]["name"] == "read_code"
+
+
+def test_assistant_turn_arguments_is_json_string_not_dict() -> None:
+    # 🔴 OpenAI ждёт arguments как JSON-СТРОКУ, не dict.
+    call = ToolCall(id="c1", name="read_code", arguments={"query": "a/b.feature"})
+
+    entry = _tool_calls_of(_assistant_turn((call,)))[0]
+
+    arguments = entry["function"]["arguments"]
+    assert isinstance(arguments, str)
+    assert json.loads(arguments) == {"query": "a/b.feature"}
+
+
+def test_assistant_turn_id_matches_the_tool_result_id() -> None:
+    # 🔴 id ассистент-хода обязан совпасть с tool_call_id результата (_run_tool
+    # кладёт call.id) — иначе модель не свяжет tool-результат с вызовом.
+    call = ToolCall(id="the-id", name="read_code", arguments={})
+
+    entry = _tool_calls_of(_assistant_turn((call,)))[0]
+
+    assert entry["id"] == call.id
+
+
+def test_assistant_turn_renders_every_call_in_order() -> None:
+    calls = (
+        ToolCall(id="a", name="read_code", arguments={"q": "1"}),
+        ToolCall(id="b", name="list_dir", arguments={"path": "."}),
+    )
+
+    tool_calls = _tool_calls_of(_assistant_turn(calls))
+
+    assert [c["id"] for c in tool_calls] == ["a", "b"]
+    assert [c["function"]["name"] for c in tool_calls] == ["read_code", "list_dir"]
+
+
+async def test_assistant_turn_never_leaks_tool_calls_string_into_conversation() -> None:
+    # Инвариант через петлю: после дубль-хода ни одно сообщение в истории,
+    # переданной модели, не начинается с сырого «[tool_calls] ».
+    cap = FakeCapability(result="ok")
+    call = ToolCall(id="c1", name="recall_memory", arguments={"q": "x"})
+    provider = ScriptedProvider(
+        [
+            ToolCallResult(text="", tool_calls=(call,)),
+            ToolCallResult(text="done", tool_calls=()),
+        ]
+    )
+    loop = ToolLoop(provider=provider, registry=_registry(cap))
+
+    await loop.run(_seed())
+
+    for turn in provider.turns:
+        for message in turn:
+            assert not str(message.get("content", "")).startswith("[tool_calls]")
 
 
 async def test_announcer_none_behaves_as_before() -> None:
