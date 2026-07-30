@@ -204,10 +204,9 @@ def test_others_present_false_without_current_name_when_history_is_unlabelled() 
     assert others_present(history, current_sender_name=None) is False
 
 
-def test_name_address_with_colon_or_dash_is_directed_to_bob() -> None:
-    # Разделитель-обращение может быть не только запятой: двоеточие/тире/длинное тире
-    # сразу за именем тоже читаются как обращение («Боб: …» / «Боб-…» / «Боб—…»).
-    for text in ("Боб: слушай", "Боб-привет", "Bob: hey", "боб—ну что"):
+def test_name_address_with_colon_is_directed_to_bob() -> None:
+    # Двоеточие сразу за именем читается как обращение («Боб: …»).
+    for text in ("Боб: слушай", "Bob: hey", "боб:"):
         result = classify_addressivity(
             text=text,
             mentions_bob=False,
@@ -216,6 +215,23 @@ def test_name_address_with_colon_or_dash_is_directed_to_bob() -> None:
             others_present=False,
         )
         assert result is Addressivity.DIRECTED_TO_BOB, text
+
+
+def test_name_with_immediate_dash_is_ambient_not_directed() -> None:
+    # 🔴 BOB-069.6 (fix major): тире/длинное тире ВПЛОТНУЮ за именем — это 3-е лицо
+    # или композит («Боб-строитель», «боб-конструктор», «Боб—робот» = «Bob is a
+    # robot»), а НЕ обращение. Настоящий оклик через тире идёт С ПРОБЕЛОМ («эй Боб -
+    # ты тут?»), где справа от имени пробел, а не тире вплотную. Значит тире-вплотную
+    # даёт ТОЛЬКО ложь → убрано из терминаторов-обращения.
+    for text in ("Боб-строитель", "боб-конструктор", "Боб—робот", "Bob-builder"):
+        result = classify_addressivity(
+            text=text,
+            mentions_bob=False,
+            reply_to_sender_id=None,
+            bob_user_id=_BOB_ID,
+            others_present=False,
+        )
+        assert result is Addressivity.AMBIENT, text
 
 
 def test_name_address_with_leading_whitespace_is_directed_to_bob() -> None:
@@ -338,30 +354,21 @@ def test_trailing_vocative_with_single_separator_prefix_is_directed() -> None:
     assert result is Addressivity.DIRECTED_TO_BOB
 
 
-def test_lone_bob_with_leading_whitespace_currently_engages() -> None:
-    # 🔴 ФИКСАЦИЯ ТЕКУЩЕГО ПОВЕДЕНИЯ + флаг ревью (BOB-069.4): «Боб» без разделителей,
-    # но с ВЕДУЩИМ пробелом (« Боб») сейчас → DIRECTED_TO_BOB, тогда как голое «Боб»
-    # (без пробела) → AMBIENT. Асимметрия: casefold НЕ делает lstrip, поэтому ведущий
-    # пробел даёт start>0 и одинокое имя проходит как трейлинг-вокатив. Спорно —
-    # семантически « Боб» это то же одинокое имя. Тест ПИНит текущее поведение dev'а;
-    # если ревью решит, что одинокое имя (с пробелом или без) должно быть AMBIENT —
-    # менять код, а не этот тест молча.
-    engages = classify_addressivity(
-        text="   Боб",
-        mentions_bob=False,
-        reply_to_sender_id=None,
-        bob_user_id=_BOB_ID,
-        others_present=False,
-    )
-    bare = classify_addressivity(
-        text="Боб",
-        mentions_bob=False,
-        reply_to_sender_id=None,
-        bob_user_id=_BOB_ID,
-        others_present=False,
-    )
-    assert engages is Addressivity.DIRECTED_TO_BOB
-    assert bare is Addressivity.AMBIENT
+def test_lone_bob_with_or_without_leading_whitespace_is_ambient() -> None:
+    # 🔴 BOB-069.6 (fix minor, был флаг ревью .4): голое имя — с ВЕДУЩИМ пробелом
+    # (« Боб») или без («Боб») — одинаково AMBIENT. Ведущий пробел даёт start>0, но
+    # слева НЕТ реального address-контекста (только whitespace), поэтому это не
+    # трейлинг-вокатив «…, Боб», а то же самое одинокое имя. Асимметрия «start>0»
+    # устранена: EOL-вокатив требует непробельный контекст слева.
+    for text in ("   Боб", "Боб"):
+        result = classify_addressivity(
+            text=text,
+            mentions_bob=False,
+            reply_to_sender_id=None,
+            bob_user_id=_BOB_ID,
+            others_present=False,
+        )
+        assert result is Addressivity.AMBIENT, text
 
 
 def test_reply_to_bob_needs_resolved_identity() -> None:
