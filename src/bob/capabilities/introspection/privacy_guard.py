@@ -51,13 +51,45 @@ ALLOWED_ROOTS: tuple[str, ...] = (".",)
 # What the redaction marker leaves behind in sanitized output.
 _REDACTION = "[REDACTED]"
 
-# Secret-shaped patterns scrubbed from any tool output before it can be returned:
-# - KEY=value env assignments (uppercase env-style key with a non-trivial value),
-# - api-key-ish tokens (``sk-``-prefixed or long opaque secret values).
-_SECRET_PATTERNS: tuple[re.Pattern[str], ...] = (
-    re.compile(r"(?m)^[A-Z][A-Z0-9_]*\s*=\s*\S+\s*$"),
-    re.compile(r"sk-[A-Za-z0-9_-]{8,}"),
-    re.compile(r"(?i)\b(?:api[_-]?key|token|secret|password)\b\s*[:=]\s*\S+"),
+# Secret-shaped substitutions scrubbed from any tool output before it can be returned.
+# Each entry is ``(pattern, replacement)``: patterns with a capture group keep the KEY
+# readable (``FOO_TOKEN=[REDACTED]``) and redact only the value; value-shape patterns
+# replace the whole match. BOB-067.6 hotfix — the previous patterns MISSED the real
+# ``.env`` format the live smoke leaked (INV-N4 hole):
+#
+# 1. **Sensitive-key assignment.** A key whose name CONTAINS (case-insensitively, with
+#    NO word boundary so ``__TOKEN`` / ``_API_KEY`` match) any of
+#    token|key|secret|password|api|credential|auth, followed by ``:``/``=`` and an inline
+#    value, has that value redacted — regardless of leading indentation (the old ``^``
+#    anchor broke on indented ``read_file`` output). The value is required to be a
+#    non-space token on the SAME line (``[ \t]*`` not ``\s*``) so ``for key in d:`` and
+#    ``if token in seen_tokens:\n …`` are NOT touched.
+# 2. **Generic uppercase env assignment** (prior behaviour, anchor loosened to tolerate
+#    indentation) — an ``ALL_CAPS = value`` line has its value redacted.
+# 3. **``sk-`` value shape WITH dots/underscores** — the Qwen-key format
+#    ``sk-xx.yyyy.zzzz`` (the old ``[A-Za-z0-9_-]`` class stopped at the first ``.``).
+# 4. **Telegram bot-token value shape** ``<digits>:<long-base64>`` — redacted by shape
+#    even when it appears without a key label.
+#
+# Over-redaction is deliberately bounded to secret-NAMED assignments + secret value
+# shapes; ordinary code that merely mentions key/token/secret is left untouched. A
+# sensitive-named key that IS assigned an inline value is redacted even if the value
+# looks ordinary — a SECURITY-FIRST tradeoff (under-redaction leaks a live credential
+# to the external LLM; over-redacting a rare code line is cosmetic).
+_SECRET_SUBSTITUTIONS: tuple[tuple[re.Pattern[str], str], ...] = (
+    (
+        re.compile(
+            r"(\S*(?i:token|key|secret|password|api|credential|auth)\S*"
+            r"[ \t]*[:=][ \t]*)\S+"
+        ),
+        r"\1" + _REDACTION,
+    ),
+    (
+        re.compile(r"(?m)^([ \t]*[A-Z][A-Z0-9_]*[ \t]*=[ \t]*)\S+"),
+        r"\1" + _REDACTION,
+    ),
+    (re.compile(r"sk-[A-Za-z0-9_.-]{8,}"), _REDACTION),
+    (re.compile(r"\b\d{6,12}:[A-Za-z0-9_-]{30,}\b"), _REDACTION),
 )
 
 
@@ -122,8 +154,8 @@ def _sanitize(text: str) -> str:
     unchanged.
     """
     out = text
-    for pattern in _SECRET_PATTERNS:
-        out = pattern.sub(_REDACTION, out)
+    for pattern, replacement in _SECRET_SUBSTITUTIONS:
+        out = pattern.sub(replacement, out)
     return out
 
 

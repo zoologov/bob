@@ -229,6 +229,104 @@ def test_sanitize_leaves_ordinary_prose_with_short_words_untouched(
     assert guard.sanitize(text) == text
 
 
+# --- sanitize: the real .env shapes (BOB-067.6 hotfix — INV-N4 hole) ----------
+# The live smoke found sanitize MISSING on the concrete ``.env`` format returned by
+# ``read_file`` (leading indentation, dotted ``sk-`` keys, ``__TOKEN``/``_API_KEY``
+# names without a word boundary). Fixtures are REAL-SHAPE but SYNTHETIC — never a
+# real credential. Each shape's secret VALUE must become ``[REDACTED]`` while the key
+# stays readable.
+
+# Synthetic .env line: an indented, double-underscore telegram-token assignment.
+_ENV_TELEGRAM = "  ACME_TELEGRAM__TOKEN=1234567890:AAFakeFakeFakeFakeFakeFakeFakeFakeFak"
+# Synthetic .env line: an indented Qwen/LLM key whose value carries dots (dotted sk-).
+_ENV_LLM_KEY = "  ACME_LLM__API_KEY=sk-zz.AAAA.bbbb.CcccDdddEeeeFfffGgggHhhhIiiiJjjj"
+
+
+@pytest.mark.parametrize(
+    ("line", "sensitive"),
+    [
+        # 1. indented sensitive-key assignment + ``__TOKEN`` (no word boundary).
+        (_ENV_TELEGRAM, "1234567890:AAFakeFakeFakeFakeFakeFakeFakeFakeFak"),
+        # 2. indented dotted ``sk-`` value under ``_API_KEY``.
+        (_ENV_LLM_KEY, "sk-zz.AAAA.bbbb.CcccDdddEeeeFfffGgggHhhhIiiiJjjj"),
+        # 3. lowercase indented sensitive key.
+        ("    my_secret = topsecretvalue123", "topsecretvalue123"),
+        # 4. ``credential`` / ``auth`` in the key name.
+        ("  DB_CREDENTIAL=p4ssw0rd-in-the-clear", "p4ssw0rd-in-the-clear"),
+        ("  X_AUTH_HEADER=Bearer-abc123def456", "Bearer-abc123def456"),
+    ],
+)
+def test_sanitize_redacts_indented_env_secret_shapes(
+    guard: PrivacyGuard, line: str, sensitive: str
+) -> None:
+    # The exact shapes the live smoke leaked: indented, underscore-embedded key names.
+    out = guard.sanitize(f"contents of .env:\n{line}\ndone")
+    assert sensitive not in out
+    assert _REDACTION_MARK in out
+    # The key label survives — only the value is scrubbed.
+    assert "TOKEN" in out or "KEY" in out or "SECRET" in out or "secret" in out or (
+        "CREDENTIAL" in out or "AUTH" in out
+    )
+
+
+def test_sanitize_redacts_dotted_sk_token_by_value_shape(guard: PrivacyGuard) -> None:
+    # The dotted ``sk-`` shape is scrubbed even WITHOUT a key label (value-shape rule).
+    synthetic = "sk-zz.AAAA.bbbb.CcccDdddEeeeFfffGgggHhhhIiiiJjjj"
+    out = guard.sanitize(f"leaked token is {synthetic} somewhere")
+    assert synthetic not in out
+    assert _REDACTION_MARK in out
+
+
+def test_sanitize_redacts_bare_telegram_token_shape(guard: PrivacyGuard) -> None:
+    # A ``digits:base64`` telegram bot-token shape is scrubbed even without any key.
+    synthetic = "1234567890:AAFakeFakeFakeFakeFakeFakeFakeFakeFak"
+    out = guard.sanitize(f"the value {synthetic} appeared in the log")
+    assert synthetic not in out
+    assert _REDACTION_MARK in out
+
+
+def test_sanitize_scrubs_full_env_dump_no_secret_survives(guard: PrivacyGuard) -> None:
+    # A whole synthetic .env dump: NO literal secret value survives the backstop.
+    dump = (
+        "reading .env\n"
+        f"{_ENV_TELEGRAM}\n"
+        f"{_ENV_LLM_KEY}\n"
+        "  ACME_ENV=production\n"
+    )
+    out = guard.sanitize(dump)
+    assert "1234567890:AAFakeFakeFakeFakeFakeFakeFakeFakeFak" not in out
+    assert "sk-zz.AAAA.bbbb.CcccDdddEeeeFfffGgggHhhhIiiiJjjj" not in out
+    assert _REDACTION_MARK in out
+
+
+# --- sanitize: over-redaction guard (ordinary code/prose must survive) --------
+
+
+@pytest.mark.parametrize(
+    "ordinary",
+    [
+        "count = 5",  # non-sensitive lowercase key
+        'name = "bob"',  # non-sensitive lowercase key
+        "for key in d:\n    print(key)",  # ``key`` used, no ``[:=]``+value
+        "if token in seen_tokens:\n    continue",  # ``:`` at EOL, value on next line
+        "| key | value |\n|-----|-------|\n| a | 1 |",  # markdown table, no assignment
+        "def get_api_key(self) -> str:\n    return self._key",  # identifier only
+        "the api key rotation policy is documented in the runbook",  # prose
+    ],
+)
+def test_sanitize_does_not_over_redact_ordinary_code(
+    guard: PrivacyGuard, ordinary: str
+) -> None:
+    # BALANCE: only a secret-NAMED key followed by ``[:=]`` + a non-space same-line
+    # value (or a secret value-shape) is masked — code that merely USES the words
+    # key/token/secret without assigning them a value is left completely untouched.
+    # (SECURITY-FIRST tradeoff, documented in the module: a sensitive-named key that
+    # IS assigned an inline value — e.g. ``password = correcthorse`` — is redacted even
+    # if the value looks ordinary; under-redacting a real secret is the catastrophic
+    # failure, over-redacting a rare code line is cosmetic.)
+    assert guard.sanitize(ordinary) == ordinary
+
+
 def test_sanitize_leaves_ordinary_text_untouched(guard: PrivacyGuard) -> None:
     text = "def handle_message(self) -> None:\n    return None\n"
     assert guard.sanitize(text) == text
