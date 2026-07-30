@@ -16,11 +16,18 @@ tmp repo layout.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 
+if TYPE_CHECKING:
+    import os
+    from collections.abc import Iterator
+
 from bob.capabilities.adapters.introspection.subprocess_introspector import (
+    _FIND_FILE_MAX_RESULTS,
     DeniedPathError,
     DisallowedCommandError,
     SubprocessRepoIntrospector,
@@ -426,57 +433,59 @@ async def test_read_file_reads_feature_spec_under_development_docs(
 
 
 @pytest.mark.asyncio
-async def test_read_file_refuses_settings_under_dot_claude(tmp_path: Path) -> None:
-    # BOB-034: opening dev-docs must NOT open the rest of .claude/ — settings stay denied.
+async def test_read_file_reads_settings_under_dot_claude(tmp_path: Path) -> None:
+    # BOB-067: full-repo access — the rest of .claude/ (settings etc.) is readable now.
     settings = tmp_path / ".claude" / "settings.local.json"
     settings.parent.mkdir(parents=True)
-    settings.write_text('{"secret": "x"}', encoding="utf-8")
+    settings.write_text('{"editor": "vim"}', encoding="utf-8")
     intro = _make(tmp_path, _FakeRunner())
 
-    with pytest.raises(DeniedPathError):
-        await intro.read_file(".claude/settings.local.json", max_lines=10)
+    out = await intro.read_file(".claude/settings.local.json", max_lines=10)
+
+    assert "editor" in out
 
 
 @pytest.mark.asyncio
-async def test_read_file_refuses_symlink_under_dev_docs_into_denied(
+async def test_read_file_reads_data_soul_under_full_repo(
     tmp_path: Path,
 ) -> None:
-    # 🔴 The symlink containment re-check must hold for the new multi-segment roots:
-    # a link planted under .claude/dev-docs pointing at SOUL must NOT leak its content.
+    # BOB-067: full-repo access — data/soul is readable now (owner's deliberate
+    # choice). Secret *values* are still redacted by ``sanitize`` (see below).
     soul = tmp_path / "data" / "soul" / "SOUL.md"
     soul.parent.mkdir(parents=True)
-    soul.write_text("DEEP_PRIVATE_SOUL_CONTENT", encoding="utf-8")
-    dev_docs = tmp_path / ".claude" / "dev-docs"
-    dev_docs.mkdir(parents=True)
-    (dev_docs / "leak.md").symlink_to(soul)
+    soul.write_text("# SOUL\nordinary prose\n", encoding="utf-8")
     intro = _make(tmp_path, _FakeRunner())
 
-    with pytest.raises(DeniedPathError):
-        await intro.read_file(".claude/dev-docs/leak.md", max_lines=100)
+    out = await intro.read_file("data/soul/SOUL.md", max_lines=100)
+
+    assert "ordinary prose" in out
 
 
 @pytest.mark.asyncio
-async def test_read_file_refuses_guarded_path_without_touching_disk(
-    tmp_path: Path,
-) -> None:
-    # Lay down a real secret file so we can prove it is never opened.
-    soul = tmp_path / "data" / "soul" / "SOUL.md"
-    soul.parent.mkdir(parents=True)
-    soul.write_text("DEEP_PRIVATE_SOUL_CONTENT", encoding="utf-8")
+async def test_read_file_reads_beadloom_graph_store(tmp_path: Path) -> None:
+    # 🔴 The live-bug motivator: navigating .beadloom/ must now succeed, not confabulate.
+    node = tmp_path / ".beadloom" / "_graph" / "nodes.yml"
+    node.parent.mkdir(parents=True)
+    node.write_text("nodes:\n  - id: bob\n", encoding="utf-8")
     intro = _make(tmp_path, _FakeRunner())
 
-    with pytest.raises(DeniedPathError):
-        await intro.read_file("data/soul/SOUL.md", max_lines=100)
+    out = await intro.read_file(".beadloom/_graph/nodes.yml", max_lines=100)
+
+    assert "bob" in out
 
 
 @pytest.mark.asyncio
-async def test_read_file_refuses_env_without_reading(tmp_path: Path) -> None:
+async def test_read_file_redacts_env_secret_value(tmp_path: Path) -> None:
+    # BOB-067: the .env file is readable now, but the secret VALUE is redacted on
+    # output by ``sanitize`` — full-repo read is not a secret leak (INV-N4).
     env = tmp_path / ".env"
     env.write_text("TELEGRAM_TOKEN=should-never-leak", encoding="utf-8")
     intro = _make(tmp_path, _FakeRunner())
 
-    with pytest.raises(DeniedPathError):
-        await intro.read_file(".env", max_lines=100)
+    out = await intro.read_file(".env", max_lines=100)
+
+    assert "should-never-leak" not in out
+    assert "REDACTED" in out
 
 
 @pytest.mark.asyncio
@@ -512,44 +521,31 @@ async def test_read_file_on_directory_returns_refusal(tmp_path: Path) -> None:
     assert "not found" in out.lower()
 
 
-# --- 🔴 US-6 privacy invariant: symlink / absolute-path bypass attempts --------
+# --- 🔴 privacy invariant: only an escape PAST the repo is refused (BOB-067) ----
 
 
 @pytest.mark.asyncio
-async def test_read_file_refuses_symlink_escaping_allowed_root_into_denied(
+async def test_read_file_reads_symlink_staying_within_repo(
     tmp_path: Path,
 ) -> None:
-    # 🔴 US-6: the pure name-based guard cannot see where a symlink points, so the
-    # infra adapter re-checks the symlink-resolved REAL path before opening. A link
-    # planted UNDER an allowed root but pointing at SOUL must NOT leak its content.
+    # BOB-067: a symlink whose REAL path stays inside the repo reads normally — even
+    # a link from src into data/soul, since the whole repo is readable now.
     soul = tmp_path / "data" / "soul" / "SOUL.md"
     soul.parent.mkdir(parents=True)
-    soul.write_text("DEEP_PRIVATE_SOUL_CONTENT", encoding="utf-8")
+    soul.write_text("# SOUL\nordinary prose\n", encoding="utf-8")
     (tmp_path / "src").mkdir()
     (tmp_path / "src" / "leak.md").symlink_to(soul)
     intro = _make(tmp_path, _FakeRunner())
 
-    with pytest.raises(DeniedPathError):
-        await intro.read_file("src/leak.md", max_lines=100)
+    out = await intro.read_file("src/leak.md", max_lines=100)
 
-
-@pytest.mark.asyncio
-async def test_read_file_refuses_symlink_to_env_secret(tmp_path: Path) -> None:
-    # 🔴 US-6: same defence for a symlink aimed at the secrets file.
-    env = tmp_path / ".env"
-    env.write_text("TELEGRAM_TOKEN=should-never-leak", encoding="utf-8")
-    (tmp_path / "src").mkdir()
-    (tmp_path / "src" / "env_link").symlink_to(env)
-    intro = _make(tmp_path, _FakeRunner())
-
-    with pytest.raises(DeniedPathError):
-        await intro.read_file("src/env_link", max_lines=100)
+    assert "ordinary prose" in out
 
 
 @pytest.mark.asyncio
 async def test_read_file_refuses_symlink_escaping_repo_entirely(tmp_path: Path) -> None:
-    # 🔴 US-6: a link under src pointing OUTSIDE the repo (an absolute system path) is
-    # refused — the real path lands in no allowed root.
+    # 🔴 The one surviving symlink denial: a link under src pointing OUTSIDE the repo
+    # (an absolute system path) is refused — the real path escapes the repo boundary.
     (tmp_path / "src").mkdir()
     (tmp_path / "src" / "etc_link").symlink_to("/etc/hosts")
     intro = _make(tmp_path, _FakeRunner())
@@ -563,7 +559,7 @@ async def test_read_file_allows_symlink_staying_within_allowed_root(
     tmp_path: Path,
 ) -> None:
     # The symlink defence is precise, not blanket: a link that resolves to a path
-    # still INSIDE an allowed root reads normally (no false denial).
+    # still INSIDE the repo reads normally (no false denial).
     pkg = tmp_path / "src" / "pkg"
     pkg.mkdir(parents=True)
     (pkg / "m.py").write_text("module_code = 1\n", encoding="utf-8")
@@ -586,18 +582,20 @@ async def test_read_file_refuses_absolute_path_outside_repo(tmp_path: Path) -> N
 
 
 @pytest.mark.asyncio
-async def test_read_file_refuses_dotdot_traversal_into_denied_root(
+async def test_read_file_reads_dotdot_path_resolving_within_repo(
     tmp_path: Path,
 ) -> None:
-    # 🔴 US-6: a ``..`` path that climbs out of src into config is denied (the guard
-    # collapses ``..`` purely and sees it leave the allowed root).
+    # BOB-067: a ``..`` path that dips out of src but resolves back UNDER the repo
+    # (config/) is now readable — containment is by resolved location, not spelling.
+    (tmp_path / "src").mkdir()  # must exist so the OS can resolve ``src/..``
     cfg = tmp_path / "config"
     cfg.mkdir()
-    (cfg / "bob.yaml").write_text("secret: value", encoding="utf-8")
+    (cfg / "bob.yaml").write_text("timeout: 30\n", encoding="utf-8")
     intro = _make(tmp_path, _FakeRunner())
 
-    with pytest.raises(DeniedPathError):
-        await intro.read_file("src/../config/bob.yaml", max_lines=10)
+    out = await intro.read_file("src/../config/bob.yaml", max_lines=10)
+
+    assert "timeout" in out
 
 
 @pytest.mark.asyncio
@@ -619,6 +617,306 @@ async def test_read_file_surfaces_oserror_as_honest_refusal(
     out = await intro.read_file("src/locked.py", max_lines=10)
 
     assert "could not read" in out.lower()
+
+
+# --- list_dir (BOB-067 repo navigation) ---------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_list_dir_lists_entries_with_kind_and_size(tmp_path: Path) -> None:
+    pkg = tmp_path / "src" / "bob"
+    pkg.mkdir(parents=True)
+    (pkg / "app.py").write_text("x = 1\n", encoding="utf-8")
+    (pkg / "sub").mkdir()
+    intro = _make(tmp_path, _FakeRunner())
+
+    out = await intro.list_dir("src/bob")
+
+    lines = out.splitlines()
+    assert lines == ["app.py\tfile\t6", "sub/\tdir"]  # sorted; dir has no size
+
+
+@pytest.mark.asyncio
+async def test_list_dir_lists_beadloom_dir(tmp_path: Path) -> None:
+    # 🔴 The live bug: listing .beadloom/ must return the REAL entries now.
+    graph = tmp_path / ".beadloom" / "_graph"
+    graph.mkdir(parents=True)
+    (graph / "nodes.yml").write_text("nodes: []\n", encoding="utf-8")
+    intro = _make(tmp_path, _FakeRunner())
+
+    out = await intro.list_dir(".beadloom")
+
+    assert "_graph/\tdir" in out
+
+
+@pytest.mark.asyncio
+async def test_list_dir_empty_directory_is_honest(tmp_path: Path) -> None:
+    (tmp_path / "src").mkdir()
+    intro = _make(tmp_path, _FakeRunner())
+
+    out = await intro.list_dir("src")
+
+    assert "empty" in out.lower()
+
+
+@pytest.mark.asyncio
+async def test_list_dir_missing_path_is_honest_not_fabricated(tmp_path: Path) -> None:
+    intro = _make(tmp_path, _FakeRunner())
+
+    out = await intro.list_dir("does/not/exist")
+
+    assert "not a directory" in out.lower()
+
+
+@pytest.mark.asyncio
+async def test_list_dir_on_a_file_is_honest(tmp_path: Path) -> None:
+    src = tmp_path / "src" / "app.py"
+    src.parent.mkdir(parents=True)
+    src.write_text("x = 1\n", encoding="utf-8")
+    intro = _make(tmp_path, _FakeRunner())
+
+    out = await intro.list_dir("src/app.py")
+
+    assert "not a directory" in out.lower()
+
+
+@pytest.mark.asyncio
+async def test_list_dir_refuses_escape_past_repo(tmp_path: Path) -> None:
+    intro = _make(tmp_path, _FakeRunner())
+
+    with pytest.raises(DeniedPathError):
+        await intro.list_dir("../../etc")
+
+
+@pytest.mark.asyncio
+async def test_list_dir_sanitizes_entry_names(tmp_path: Path) -> None:
+    # A secret-shaped filename is redacted on output like any other tool text.
+    d = tmp_path / "src"
+    d.mkdir()
+    (d / "sk-abcdef0123456789secret.txt").write_text("x", encoding="utf-8")
+    intro = _make(tmp_path, _FakeRunner())
+
+    out = await intro.list_dir("src")
+
+    assert "sk-abcdef0123456789secret" not in out
+    assert "REDACTED" in out
+
+
+# --- find_file (BOB-067 repo navigation) --------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_find_file_matches_by_glob_across_tree(tmp_path: Path) -> None:
+    (tmp_path / "src" / "bob").mkdir(parents=True)
+    (tmp_path / "src" / "bob" / "app.py").write_text("x", encoding="utf-8")
+    (tmp_path / "src" / "bob" / "cli.py").write_text("x", encoding="utf-8")
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "readme.md").write_text("x", encoding="utf-8")
+    intro = _make(tmp_path, _FakeRunner())
+
+    out = await intro.find_file("*.py")
+
+    assert out.splitlines() == ["src/bob/app.py", "src/bob/cli.py"]
+
+
+@pytest.mark.asyncio
+async def test_find_file_matches_exact_name(tmp_path: Path) -> None:
+    (tmp_path / ".beadloom" / "_graph").mkdir(parents=True)
+    (tmp_path / ".beadloom" / "_graph" / "nodes.yml").write_text("x", encoding="utf-8")
+    intro = _make(tmp_path, _FakeRunner())
+
+    out = await intro.find_file("nodes.yml")
+
+    assert out.splitlines() == [".beadloom/_graph/nodes.yml"]
+
+
+@pytest.mark.asyncio
+async def test_find_file_skips_dot_git(tmp_path: Path) -> None:
+    (tmp_path / ".git").mkdir()
+    (tmp_path / ".git" / "config").write_text("x", encoding="utf-8")
+    (tmp_path / "config").write_text("real", encoding="utf-8")
+    intro = _make(tmp_path, _FakeRunner())
+
+    out = await intro.find_file("config")
+
+    assert out.splitlines() == ["config"]  # the .git/config match is skipped
+
+
+@pytest.mark.asyncio
+async def test_find_file_empty_result_is_honest(tmp_path: Path) -> None:
+    (tmp_path / "src").mkdir()
+    intro = _make(tmp_path, _FakeRunner())
+
+    out = await intro.find_file("*.rs")
+
+    assert "no files" in out.lower()
+
+
+@pytest.mark.asyncio
+async def test_find_file_empty_pattern_is_honest(tmp_path: Path) -> None:
+    intro = _make(tmp_path, _FakeRunner())
+
+    out = await intro.find_file("   ")
+
+    assert "no files" in out.lower()
+
+
+@pytest.mark.asyncio
+async def test_find_file_caps_results_with_truncation_note(tmp_path: Path) -> None:
+    d = tmp_path / "src"
+    d.mkdir()
+    for i in range(_FIND_FILE_MAX_RESULTS + 5):
+        (d / f"m{i:04d}.py").write_text("x", encoding="utf-8")
+    intro = _make(tmp_path, _FakeRunner())
+
+    out = await intro.find_file("*.py")
+
+    content_lines = [ln for ln in out.splitlines() if ln.endswith(".py")]
+    assert len(content_lines) == _FIND_FILE_MAX_RESULTS
+    assert "truncated" in out.lower()
+
+
+@pytest.mark.asyncio
+async def test_find_file_skips_symlink_escaping_repo(tmp_path: Path) -> None:
+    (tmp_path / "src").mkdir()
+    # A symlink whose real path escapes the repo is not reported as an in-repo match.
+    (tmp_path / "src" / "outside.py").symlink_to("/etc/hosts")
+    (tmp_path / "src" / "real.py").write_text("x", encoding="utf-8")
+    intro = _make(tmp_path, _FakeRunner())
+
+    out = await intro.find_file("*.py")
+
+    assert out.splitlines() == ["src/real.py"]
+
+
+# --- list_dir / find_file honest degradation (INV-N5, defensive edges) --------
+
+
+@pytest.mark.asyncio
+async def test_list_dir_refuses_symlinked_dir_escaping_repo(tmp_path: Path) -> None:
+    # 🔴 A directory symlink under the repo pointing OUTSIDE (an absolute system path)
+    # passes the name-based guard but is caught by the realpath containment check —
+    # refused with no listing, never leaking the outside directory's contents.
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "escape").symlink_to("/etc")
+    intro = _make(tmp_path, _FakeRunner())
+
+    with pytest.raises(DeniedPathError):
+        await intro.list_dir("src/escape")
+
+
+@pytest.mark.asyncio
+async def test_list_dir_surfaces_generic_oserror_as_honest_message(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A generic OSError while scanning (e.g. a permission error) degrades to an honest
+    # "could not list" — never a traceback, never a fabricated listing.
+    (tmp_path / "src").mkdir()
+    intro = _make(tmp_path, _FakeRunner())
+
+    def _boom(_path: object) -> object:
+        raise PermissionError("permission denied")
+
+    monkeypatch.setattr(
+        "bob.capabilities.adapters.introspection.subprocess_introspector.os.scandir",
+        _boom,
+    )
+
+    out = await intro.list_dir("src")
+
+    assert "could not list" in out.lower()
+
+
+class _StatBoomEntry:
+    """A fake file DirEntry whose stat raises — to drive the size-0 degradation path."""
+
+    def __init__(self, name: str) -> None:
+        self.name = name
+
+    def is_dir(self, *, follow_symlinks: bool = True) -> bool:  # noqa: ARG002
+        return False
+
+    def stat(self, *, follow_symlinks: bool = True) -> os.stat_result:  # noqa: ARG002
+        raise OSError("stat failed")
+
+
+@pytest.mark.asyncio
+async def test_list_dir_degrades_size_on_stat_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A file entry whose stat raises OSError renders with size 0 rather than crashing
+    # the whole listing (the entry is still reported honestly).
+    (tmp_path / "src").mkdir()
+    intro = _make(tmp_path, _FakeRunner())
+
+    @contextlib.contextmanager
+    def _fake_scandir(_path: object) -> Iterator[list[_StatBoomEntry]]:
+        yield [_StatBoomEntry("app.py")]
+
+    monkeypatch.setattr(
+        "bob.capabilities.adapters.introspection.subprocess_introspector.os.scandir",
+        _fake_scandir,
+    )
+
+    out = await intro.list_dir("src")
+
+    assert "app.py\tfile\t0" in out
+
+
+@pytest.mark.asyncio
+async def test_find_file_skips_match_outside_repo_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Defensive: if the walk ever yields a path that is NOT relative to the repo root,
+    # it is dropped (never reported as an in-repo match) instead of crashing on the
+    # ``relative_to`` ValueError.
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "real.py").write_text("x", encoding="utf-8")
+    intro = _make(tmp_path, _FakeRunner())
+
+    outside = Path("/somewhere/else/stray.py")
+
+    def _rglob_with_stray(self: Path, pattern: str) -> list[Path]:
+        return [outside, self / "src" / "real.py"]
+
+    monkeypatch.setattr(Path, "rglob", _rglob_with_stray)
+
+    out = await intro.find_file("*.py")
+
+    assert out.splitlines() == ["src/real.py"]
+    assert "stray.py" not in out
+
+
+@pytest.mark.asyncio
+async def test_find_file_absolute_pattern_is_honest_empty(tmp_path: Path) -> None:
+    # An absolute / unsupported glob (``rglob`` raises NotImplementedError for a
+    # non-relative pattern) is an INV-N5 honest-empty result — like a non-existent
+    # file — NOT an opaque tool-failure exception bubbling up.
+    (tmp_path / "src").mkdir()
+    intro = _make(tmp_path, _FakeRunner())
+
+    out = await intro.find_file("/etc/*")
+
+    assert "no files" in out.lower()
+
+
+@pytest.mark.asyncio
+async def test_find_file_degrades_to_empty_on_walk_oserror(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A filesystem error mid-walk (rglob raising OSError) stops the search cleanly and
+    # reports an honest empty result rather than crashing the turn.
+    (tmp_path / "src").mkdir()
+    intro = _make(tmp_path, _FakeRunner())
+
+    def _boom(_self: object, _pattern: object) -> object:
+        raise OSError("walk exploded")
+
+    monkeypatch.setattr(Path, "rglob", _boom)
+
+    out = await intro.find_file("*.py")
+
+    assert "no files" in out.lower()
 
 
 # --- default exec runner (real subprocess, no shell) --------------------------

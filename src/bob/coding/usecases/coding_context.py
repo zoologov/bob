@@ -21,12 +21,17 @@ the first time. It is built from THREE public sources, in order:
 3. the task-area rationale via :meth:`RepoIntrospector.architecture_context` (the
    ``inspect_architecture`` seam — beadloom ctx/graph/search behind the .1 port).
 
-🔴 Privacy (BOB-034): every doc path is checked against the pure
-:class:`~bob.capabilities.introspection.privacy_guard.PrivacyGuard` BEFORE it is read — a
-denied path (``data/soul`` / ``bob.db`` / ``.env`` / ``config``) is skipped, never
-read, never in the preamble — and the assembled text is run through
-:meth:`PrivacyGuard.sanitize` as a defence-in-depth backstop. Only public
-architecture/convention material can reach the prompt.
+🔴 Privacy (BOB-034 / BOB-067): every doc path is checked BEFORE it is read against
+two policies — the pure
+:class:`~bob.capabilities.introspection.privacy_guard.PrivacyGuard` rejects a path
+escaping the repo, and coding's OWN narrower safe-doc policy
+(:func:`_is_safe_doc_path`) rejects a personal-data doc (``data/soul`` / ``bob.db`` /
+``.env`` / ``config`` / ``.claude`` settings). Since BOB-067 the introspection guard
+allows the WHOLE repo for in-chat reads, so this narrower curation is what keeps
+private material out of the EXTERNAL coder preamble — a denied path is skipped, never
+read — and the assembled text is still run through :meth:`PrivacyGuard.sanitize` as a
+defence-in-depth backstop. Only public architecture/convention material reaches the
+prompt.
 
 🔴 Bounded: each source is char-capped and the whole preamble is truncated to
 :data:`PREAMBLE_MAX_CHARS`, so the prompt is never flooded.
@@ -76,9 +81,39 @@ _CONVENTIONS = (
     "Стиль — TDD, детерминированные тесты (порты инъектируются), без print/bare except."
 )
 
-# The convention docs read for the structural picture — only PUBLIC, guard-allowed
-# trees (``docs/`` is an ALLOWED_ROOT); each is guard-checked again before reading.
+# The convention docs read for the structural picture — only PUBLIC source/doc
+# trees; each is re-checked against the safe-doc policy below before reading.
 _CONVENTION_DOCS: tuple[str, ...] = ("docs/architecture.md",)
+
+# Repo-relative roots whose docs are safe to embed in an EXTERNAL coder preamble
+# (public source/test/doc trees + the curation-vision + feature specs). This is
+# coding's OWN curation policy, DELIBERATELY NARROWER than the introspection
+# :class:`PrivacyGuard`, which since BOB-067 allows the WHOLE repo for in-chat reads.
+# The coder preamble must never carry personal-data docs (SOUL / ``bob.db`` / ``.env``
+# / ``config`` / ``.claude`` settings), so ONLY these roots pass — matched by full
+# path-segment prefix so a lookalike sibling (``srcfoo``) never sneaks in.
+_SAFE_DOC_ROOT_SEGMENTS: tuple[tuple[str, ...], ...] = (
+    ("src",),
+    ("tests",),
+    ("docs",),
+    (".claude", "dev-docs"),
+    (".claude", "development", "docs"),
+)
+
+
+def _is_safe_doc_path(path: str) -> bool:
+    """Whether ``path`` sits under a root safe to ship to the external coder.
+
+    A pure segment-prefix test against :data:`_SAFE_DOC_ROOT_SEGMENTS`: a personal-data
+    doc (SOUL / ``bob.db`` / ``.env`` / ``config`` / ``.claude`` settings) matches no
+    safe root and is excluded, so it can never reach the coder preamble even though the
+    widened full-repo guard would allow reading it in chat.
+    """
+    parts = Path(path).parts
+    return any(
+        len(parts) >= len(root) and parts[: len(root)] == root
+        for root in _SAFE_DOC_ROOT_SEGMENTS
+    )
 
 # Persona-facing framing so claude reads the block as project context, not the task.
 _HEADER = (
@@ -146,13 +181,16 @@ class _CodingContextBuilder:
         return _truncate(framed, self.max_chars)
 
     async def _doc_section(self, path: str) -> str:
-        """Render one convention doc — ONLY if the privacy guard allows the path.
+        """Render one convention doc — ONLY a safe, in-repo doc is read.
 
-        🔴 The guard check happens BEFORE any read: a denied path (SOUL / DB / ``.env``
-        / config) is skipped and never even requested, so private material can never
-        reach the preamble.
+        🔴 Two checks happen BEFORE any read: the guard rejects a path escaping the
+        repo, and the coding-specific safe-doc policy rejects a personal-data doc
+        (SOUL / ``bob.db`` / ``.env`` / config / ``.claude`` settings). Since BOB-067
+        the introspection guard allows the whole repo for in-chat reads, so this
+        NARROWER curation policy is what keeps private material out of the EXTERNAL
+        coder preamble — a denied doc is never even requested.
         """
-        if not self.guard.allows_path(Path(path)):
+        if not self.guard.allows_path(Path(path)) or not _is_safe_doc_path(path):
             return ""
         text = await self._safe_read(path)
         if not text:

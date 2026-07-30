@@ -151,7 +151,10 @@ ClaudeCodeRunner`; транзитный ports-шим `bob.domain.ports` удал
 - `usecases/coding_assistant.py`: `CodingAssistant` — `start`/`approve_plan`/`stop`/`status`.
 - `usecases/coding_intent_router.py`: `CodingIntentRouter.route(text, sender, is_owner)`.
 - `usecases/classify_coding_intent.py`: `ClassifyCodingIntent.is_coding_request(text)`.
-- `usecases/coding_context.py`: `make_coding_context(...)` — bounded, privacy-safe преамбула.
+- `usecases/coding_context.py`: `make_coding_context(...)` — bounded, privacy-safe преамбула;
+  собственный узкий `_is_safe_doc_path` (сегмент-префикс `src`/`tests`/`docs`/`.claude/dev-docs`/
+  `.claude/development/docs`) НЕ пускает personal-data доки (SOUL/`bob.db`/`.env`/`config`) во
+  внешнюю coder-преамбулу, хотя расширенный full-repo `PrivacyGuard` (BOB-067) в чате их читает.
 - `adapters/`: `SubprocessClaudeRunner`, `GitWorktree`, `GhPullRequestOpener`,
   `SqliteCodingSessionStore`, `TypingKeepalive`, `StatusPanel`.
 

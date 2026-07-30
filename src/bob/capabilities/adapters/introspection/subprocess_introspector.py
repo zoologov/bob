@@ -46,7 +46,16 @@ from typing import TYPE_CHECKING, Protocol
 from bob.capabilities.introspection.privacy_guard import ALLOWED_ROOTS
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
+
     from bob.capabilities.introspection.privacy_guard import PrivacyGuard
+
+# Repo-navigation bounds (BOB-067). ``.git`` is skipped when walking the tree —
+# pure practicality (a huge binary store that would flood a match list), not a
+# privacy concern. ``find_file`` caps its result list so a broad glob never floods
+# the model, with an honest truncation note appended.
+_GIT_DIR = ".git"
+_FIND_FILE_MAX_RESULTS = 200
 
 # Fixed allowlist of read-only subcommands, keyed by binary. NOTHING else runs.
 _BEADLOOM_SUBCOMMANDS: frozenset[str] = frozenset({"ctx", "graph", "why", "search"})
@@ -252,6 +261,23 @@ def _is_allowed_git_path_form(args: tuple[str, ...]) -> bool:
     return False
 
 
+def _format_dir_entry(entry: os.DirEntry[str]) -> str:
+    """Render one directory entry as ``name<TAB>kind[<TAB>size]`` for ``list_dir``.
+
+    A directory is shown as ``name/<TAB>dir``; a file as ``name<TAB>file<TAB>size``
+    (bytes). Symlinks are classified by their own type (``follow_symlinks=False``) so
+    a listing never chases a link, and a stat failure degrades to a zero size rather
+    than crashing the listing.
+    """
+    if entry.is_dir(follow_symlinks=False):
+        return f"{entry.name}/\tdir"
+    try:
+        size = entry.stat(follow_symlinks=False).st_size
+    except OSError:
+        size = 0
+    return f"{entry.name}\tfile\t{size}"
+
+
 class SubprocessRepoIntrospector:
     """Read-only RepoIntrospector over local ``beadloom`` / ``bd`` + guarded files."""
 
@@ -380,14 +406,97 @@ class SubprocessRepoIntrospector:
         capped = "\n".join(raw.splitlines()[:max_lines])
         return self._guard.sanitize(self._truncate(capped))
 
+    async def list_dir(self, path: str) -> str:
+        """Return the entries of directory ``path`` — guard-checked, NON-recursive.
+
+        The privacy guard is consulted first: a path escaping the repo raises
+        :class:`DeniedPathError` with NO disk access. A missing path or a non-directory
+        yields an honest message (never a fabricated listing). Otherwise each immediate
+        child is rendered as ``name<TAB>kind[<TAB>size]``, sorted by name for
+        determinism, then run through the sanitiser and char cap.
+        """
+        candidate = Path(path)
+        if not self._guard.allows_path(candidate):
+            raise DeniedPathError(f"listing {path!r} is denied by the privacy guard")
+        target = candidate if candidate.is_absolute() else self._guard.repo_root / path
+        if not self._real_path_is_allowed(target):
+            raise DeniedPathError(
+                f"listing {path!r} is denied by the privacy guard (resolves outside "
+                "the repo)"
+            )
+        try:
+            with os.scandir(target) as scan:
+                entries = sorted(scan, key=lambda entry: entry.name)
+        except (FileNotFoundError, NotADirectoryError):
+            return f"Not a directory: {path}"
+        except OSError as exc:
+            return f"Could not list {path}: {exc}"
+
+        if not entries:
+            return f"Directory is empty: {path}"
+        listing = "\n".join(_format_dir_entry(entry) for entry in entries)
+        return self._guard.sanitize(self._truncate(listing))
+
+    async def find_file(self, pattern: str) -> str:
+        """Return repo-relative paths matching glob ``pattern`` across the repo tree.
+
+        Walks the repo tree from the root (``rglob``), keeping paths whose name/glob
+        matches ``pattern``. ``.git/`` and any entry whose real path escapes the repo
+        (an outward symlink) are skipped; matches are sorted and capped at
+        :data:`_FIND_FILE_MAX_RESULTS` with an honest truncation note. An empty result
+        is reported honestly. Output is sanitised and char-capped.
+        """
+        token = pattern.strip()
+        if not token:
+            return "No files matching an empty pattern."
+        repo_root = self._guard.repo_root
+        matches = sorted(str(rel) for rel in self._iter_find_matches(repo_root, token))
+        if not matches:
+            return f"No files matching {pattern!r} found in the repo."
+        truncated = len(matches) > _FIND_FILE_MAX_RESULTS
+        shown = matches[:_FIND_FILE_MAX_RESULTS]
+        body = "\n".join(shown)
+        if truncated:
+            body += (
+                f"\n…[truncated: showing {_FIND_FILE_MAX_RESULTS} of "
+                f"{len(matches)} matches]"
+            )
+        return self._guard.sanitize(self._truncate(body))
+
+    def _iter_find_matches(self, repo_root: Path, pattern: str) -> Iterator[Path]:
+        """Yield repo-relative match paths for ``pattern``, skipping ``.git`` + escapes.
+
+        A defensive wrapper over ``rglob``: filesystem errors mid-walk, or an
+        absolute / unsupported glob (``rglob`` raises :class:`NotImplementedError`
+        for a non-relative pattern, :class:`ValueError` for an empty one), stop
+        iteration and yield NOTHING — an honest-empty result (INV-N5), like a
+        non-existent file, never an opaque tool-failure. ``.git`` entries and outward
+        symlinks are dropped.
+        """
+        try:
+            candidates = list(repo_root.rglob(pattern))
+        except (OSError, NotImplementedError, ValueError):
+            return
+        for candidate in candidates:
+            try:
+                rel = candidate.relative_to(repo_root)
+            except ValueError:
+                continue
+            if _GIT_DIR in rel.parts:
+                continue
+            if not self._real_path_is_allowed(candidate):
+                continue
+            yield rel
+
     def _real_path_is_allowed(self, target: Path) -> bool:
-        """Whether ``target``'s symlink-resolved real path stays inside an allowed root.
+        """Whether ``target``'s symlink-resolved real path stays inside the repo.
 
         Computes containment on realpaths consistently (both the candidate and the
-        allowed roots are run through :func:`os.path.realpath`) so a symlinked repo
-        root is not a false denial, while a symlink that escapes an allowed root into a
-        denied tree (SOUL / ``bob.db`` / ``.env`` / ``config``) is caught here — the
-        defence the pure name-based guard structurally cannot provide.
+        repo-root anchor are run through :func:`os.path.realpath`) so a symlinked repo
+        root is not a false denial, while a symlink that escapes the repo entirely (an
+        absolute system path) is caught here — the defence the pure name-based guard
+        structurally cannot provide. Under the BOB-067 full-repo invariant the anchor
+        is the repo root itself (:data:`ALLOWED_ROOTS` = ``(".",)``).
         """
         real_target = Path(os.path.realpath(target))
         repo_root = self._guard.repo_root

@@ -286,16 +286,19 @@ async def test_skill_only_reads_feature_doc_paths_via_the_real_guard(
 
 
 @pytest.mark.parametrize("denied", _DENIED_PATHS)
-def test_live_guard_denies_personal_paths_even_if_asked(
+def test_live_guard_allows_in_repo_paths_but_skill_confines_itself(
     tmp_path: Path, denied: str
 ) -> None:
-    # The privacy guard the skill's introspector is built on denies SOUL / bob.db /
-    # .env / config by construction — so the rationale source can never reach them.
+    # BOB-067: the guard now allows ANY in-repo path (full-repo access) — SOUL /
+    # bob.db / .env / config included; secret VALUES are handled by ``sanitize`` on
+    # output. The code_rationale skill nonetheless never reaches them: its confinement
+    # is by its own PRD/RFC/BRIEF doc-shape selection (asserted above), not the guard.
     guard = PrivacyGuard(tmp_path)
 
-    assert guard.allows_path(Path(denied)) is False
-    # The feature-doc root the skill DOES use is, by contrast, allowed.
+    assert guard.allows_path(Path(denied)) is True
     assert guard.allows_path(Path(f"{_FEATURE_DOCS_BASE}/BOB-025/PRD.md")) is True
+    # The one thing the guard still forbids is an escape past the repo boundary.
+    assert guard.allows_path(Path("../../etc/passwd")) is False
 
 
 async def test_introspector_refuses_a_non_log_git_form_at_this_layer(

@@ -304,6 +304,70 @@ async def test_safe_dispatcher_default_allowlist_refuses_introspection_caps(
             await dispatcher.dispatch(name, {"ref": "bob", "query": "bob"})
 
 
+# --- BOB-067: the repo-navigation skills ride the same seam --------------------
+
+
+_NAVIGATION_CAPS = {"list_dir", "find_file"}
+
+
+def test_navigation_capabilities_advertised_when_introspection_enabled(
+    tmp_path: Path,
+) -> None:
+    # BOB-067: list_dir + find_file register behind the SAME introspection.enabled
+    # flag (no new switch) so Bob can navigate his whole repo.
+    config = _config(tmp_path)
+    config["introspection"] = {"enabled": True}
+    app = build_application(
+        config=config,
+        providers=_providers(),
+        bob_bot=_Bot(),
+        guppi_bot=_Bot(),
+    )
+
+    names = _registered_names(app)
+    assert names >= _NAVIGATION_CAPS
+    described = app.registry.describe()
+    for name in _NAVIGATION_CAPS:
+        assert name in described
+
+
+def test_navigation_capabilities_absent_when_introspection_disabled(
+    tmp_path: Path,
+) -> None:
+    # BOB-067: same switch as the other introspection skills — off means unregistered.
+    config = _config(tmp_path)
+    config["introspection"] = {"enabled": False}
+    app = build_application(
+        config=config,
+        providers=_providers(),
+        bob_bot=_Bot(),
+        guppi_bot=_Bot(),
+    )
+
+    assert _registered_names(app).isdisjoint(_NAVIGATION_CAPS)
+
+
+@pytest.mark.asyncio
+async def test_navigation_capabilities_not_on_autonomous_safe_allowlist(
+    tmp_path: Path,
+) -> None:
+    # BOB-067: the navigation skills stay conversation-only — never auto-dispatchable.
+    config = _config(tmp_path)
+    config["introspection"] = {"enabled": True}
+    app = build_application(
+        config=config,
+        providers=_providers(),
+        bob_bot=_Bot(),
+        guppi_bot=_Bot(),
+    )
+
+    dispatcher = SafeCapabilityDispatcher(app.registry, allowlist=())
+    for name in _NAVIGATION_CAPS:
+        assert dispatcher.allows(name) is False
+        with pytest.raises(CapabilityNotAllowedError):
+            await dispatcher.dispatch(name, {"path": "src", "pattern": "*.py"})
+
+
 # --- BOB-038: the code_rationale ("почему") skill rides the same seam ----------
 
 

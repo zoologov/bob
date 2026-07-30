@@ -28,7 +28,9 @@ from bob.capabilities.usecases import (
     CapabilityRegistry,
     CollectingDiagramSink,
     make_code_rationale_capability,
+    make_find_file_capability,
     make_inspect_architecture_capability,
+    make_list_dir_capability,
     make_list_work_capability,
     make_read_code_capability,
     make_read_url_capability,
@@ -67,10 +69,11 @@ def _build_registry(
     :class:`~bob.memory.ports.MemoryRecall`: ``recall_memory`` (the thin auto-recall
     wrapper) and ``search_memory`` (BOB-011 — the agentic skill Bob chooses to
     invoke through the tool-loop). When ``introspection.enabled`` (BOB-017 Phase A,
-    default on) the four read-only self-introspection skills
-    (``inspect_architecture`` / ``read_code`` / ``list_work`` / ``code_rationale``,
-    the last linking code↔decisions per BOB-038) are ALSO registered,
-    over a :class:`SubprocessRepoIntrospector` guarded by the pure
+    default on) the read-only self-introspection skills
+    (``inspect_architecture`` / ``read_code`` / ``list_dir`` / ``find_file`` /
+    ``list_work`` / ``code_rationale`` — the last linking code↔decisions per BOB-038,
+    ``list_dir`` + ``find_file`` letting Bob navigate the WHOLE repo per BOB-067) are
+    ALSO registered, over a :class:`SubprocessRepoIntrospector` guarded by the pure
     :class:`PrivacyGuard` — so Bob can answer about his own world. When
     ``diagrams.enabled`` (BOB-035, default on — safe + local) the ``render_diagram``
     skill is registered over a LOCAL :class:`SubprocessMmdcRenderer`, sharing the
@@ -96,6 +99,8 @@ def _build_registry(
         )
         registry.register(make_inspect_architecture_capability(introspector))
         registry.register(make_read_code_capability(introspector, read_max_lines=read_max_lines))
+        registry.register(make_list_dir_capability(introspector))
+        registry.register(make_find_file_capability(introspector))
         registry.register(make_list_work_capability(introspector))
         registry.register(make_code_rationale_capability(introspector))
     diagram_renderer: SubprocessMmdcRenderer | None = None

@@ -13,9 +13,11 @@ from __future__ import annotations
 from bob.capabilities.usecases.code_rationale import (
     make_code_rationale_capability,
 )
+from bob.capabilities.usecases.find_file import make_find_file_capability
 from bob.capabilities.usecases.inspect_architecture import (
     make_inspect_architecture_capability,
 )
+from bob.capabilities.usecases.list_dir import make_list_dir_capability
 from bob.capabilities.usecases.list_work import make_list_work_capability
 from bob.capabilities.usecases.read_code import make_read_code_capability
 from bob.capabilities.usecases.read_url import make_read_url_capability
@@ -42,7 +44,9 @@ __all__ = [
     "ToolLoop",
     "UnknownCapabilityError",
     "make_code_rationale_capability",
+    "make_find_file_capability",
     "make_inspect_architecture_capability",
+    "make_list_dir_capability",
     "make_list_work_capability",
     "make_read_code_capability",
     "make_read_url_capability",
