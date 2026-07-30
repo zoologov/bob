@@ -24,6 +24,7 @@
 from __future__ import annotations
 
 import logging
+from collections import Counter
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
@@ -146,6 +147,24 @@ class _FakeBot:
         message_thread_id: int | None = None,
     ) -> bool:  # pragma: no cover - not exercised here
         raise NotImplementedError
+
+
+@dataclass
+class _ExplodingBot(_FakeBot):
+    """A bot whose ``get_updates`` always raises a given transport error.
+
+    Used to assert the poll loop isolates the whole family of transient transport
+    exceptions (``OSError`` / ``TimeoutError`` / ``RuntimeError`` and aiogram's
+    ``TelegramNetworkError``), not just the one hard-coded in :class:`_FakeBot`.
+    """
+
+    exc: BaseException = field(default_factory=lambda: OSError("boom"))
+
+    async def get_updates(
+        self, *, offset: int, timeout: int
+    ) -> Sequence[_FakeUpdate]:
+        self.get_updates_calls.append(offset)
+        raise self.exc
 
 
 def _registry(bob: _FakeBot, guppi: _FakeBot | None = None) -> BotRegistry:
@@ -345,3 +364,202 @@ async def test_successful_batch_advances_offset_past_last_in_order() -> None:
     assert published == 3
     assert stub.calls == [3, 4, 5]
     assert gateway._offsets[BotIdentity.BOB] == 6
+
+
+# --- INV-e (доп.): обработанные ДО сбоя не переобрабатываются на переприсылке ---
+
+
+@pytest.mark.asyncio
+async def test_updates_before_failure_are_not_reprocessed_on_redelivery() -> None:
+    # Arrange: батч [10, 11, 12]; 11 падает транзиентно (успех на 2-й встрече).
+    # 10 и 12 — успешные публикации. После сбоя 11 батч встаёт, offset=11.
+    bob = _FakeBot(
+        updates_batches=[[_FakeUpdate(10), _FakeUpdate(11), _FakeUpdate(12)]]
+    )
+    gateway = _gateway(_registry(bob))
+    stub = _RouteStub(fail_once_ids={11}, publish_ids={10, 12})
+    gateway.route = stub  # type: ignore[method-assign]
+
+    # Act: тик 1 обрабатывает 10, спотыкается на 11; тик 2 переприсылает [11, 12].
+    await gateway.poll_once()
+    bob.updates_batches = [[_FakeUpdate(11), _FakeUpdate(12)]]
+    await gateway.poll_once()
+
+    # Assert: каждый update_id прошёл через route РОВНО раз — offset за 10 не дал
+    # переобработать его на переприсылке (порядок сохранён, дублей нет).
+    assert Counter(stub.calls) == Counter({10: 1, 11: 2, 12: 1})
+    # 11 встречался дважды (сбой + успешная переприсылка), 10/12 — по разу.
+    assert gateway._offsets[BotIdentity.BOB] == 13
+
+
+# --- Изоляция между ботами: сбой route одного не задевает другой ---------------
+
+
+@pytest.mark.asyncio
+async def test_route_failure_on_one_bot_does_not_block_the_other() -> None:
+    # Arrange: у BOB апдейт 1 падает в route(); у GUPPI апдейт 7 проходит.
+    bob = _FakeBot(updates_batches=[[_FakeUpdate(1)]])
+    guppi = _FakeBot(updates_batches=[[_FakeUpdate(7)]])
+    gateway = _gateway(_registry(bob, guppi))
+    stub = _RouteStub(fail_once_ids={1}, publish_ids={7})
+    gateway.route = stub  # type: ignore[method-assign]
+
+    # Act
+    published = await gateway.poll_once()
+
+    # Assert: сбой BOB (offset не двинут) изолирован; GUPPI обработан штатно.
+    assert published == 1
+    assert gateway._offsets[BotIdentity.BOB] == 0
+    assert gateway._offsets[BotIdentity.GUPPI] == 8
+
+
+@pytest.mark.asyncio
+async def test_poison_counter_is_per_bot_not_shared() -> None:
+    # Arrange: у ОБОИХ ботов один и тот же update_id=5 стабильно падает в route().
+    # Если бы счётчик неудач был глобальным (по update_id без identity), суммарные
+    # попытки достигли бы cap вдвое быстрее и апдейт пропустился бы преждевременно.
+    bob = _FakeBot()
+    guppi = _FakeBot()
+    gateway = _gateway(_registry(bob, guppi))
+    stub = _RouteStub(fail_ids={5})
+    gateway.route = stub  # type: ignore[method-assign]
+
+    # Act: три тика — каждый бот встречает 5 трижды (per-bot счётчик = 3 ≤ cap).
+    for _ in range(3):
+        bob.updates_batches = [[_FakeUpdate(5)]]
+        guppi.updates_batches = [[_FakeUpdate(5)]]
+        await gateway.poll_once()
+
+    # Assert: НИ ОДИН бот ещё не пропустил 5 — счётчики независимы (не сложились).
+    assert gateway._offsets[BotIdentity.BOB] == 0
+    assert gateway._offsets[BotIdentity.GUPPI] == 0
+
+    # Четвёртая встреча у каждого превышает cap → пропуск per-bot, независимо.
+    bob.updates_batches = [[_FakeUpdate(5)]]
+    guppi.updates_batches = [[_FakeUpdate(5)]]
+    await gateway.poll_once()
+    assert gateway._offsets[BotIdentity.BOB] == 6
+    assert gateway._offsets[BotIdentity.GUPPI] == 6
+
+
+@pytest.mark.asyncio
+async def test_poison_skip_frees_failure_memory() -> None:
+    # Arrange: апдейт 5 стабильно падает — счётчик неудач копится в памяти воркера.
+    bob = _FakeBot()
+    gateway = _gateway(_registry(bob))
+    stub = _RouteStub(fail_ids={5})
+    gateway.route = stub  # type: ignore[method-assign]
+
+    # Act: 4 тика — на 4-м cap превышен → апдейт пропущен.
+    for _ in range(4):
+        bob.updates_batches = [[_FakeUpdate(5)]]
+        await gateway.poll_once()
+
+    # Assert: после пропуска запись per-update удалена — память не растёт бесконечно
+    # (держит только текущий залипший апдейт, в норме пусто).
+    assert gateway._offsets[BotIdentity.BOB] == 6
+    assert gateway._route_failures[BotIdentity.BOB] == {}
+
+
+# --- INV-d: приём восстанавливается после серии транзиентов, таск жив ----------
+
+
+@pytest.mark.asyncio
+async def test_intake_recovers_after_transient_network_error() -> None:
+    # Arrange: тик 1 — get_updates рвётся (TelegramNetworkError); тик 2 — сеть жива.
+    bob = _FakeBot(raise_network_error=True)
+    gateway = _gateway(_registry(bob))
+    stub = _RouteStub(publish_ids={1})
+    gateway.route = stub  # type: ignore[method-assign]
+
+    # Act: тик 1 — сбой изолирован; тик 2 — сеть восстановилась, батч [1].
+    first = await gateway.poll_once()
+    bob.raise_network_error = False
+    bob.updates_batches = [[_FakeUpdate(1)]]
+    second = await gateway.poll_once()
+
+    # Assert: тик 1 не потерял offset и не бросил; тик 2 принял апдейт (таск жив).
+    assert first == 0
+    assert second == 1
+    assert gateway._offsets[BotIdentity.BOB] == 2
+
+
+@pytest.mark.parametrize(
+    "exc",
+    [
+        OSError("connection reset"),
+        TimeoutError("read timed out"),
+        RuntimeError("event loop hiccup"),
+        TelegramNetworkError(method=GetUpdates(), message="ServerDisconnectedError"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_get_updates_transient_exceptions_are_isolated(
+    exc: BaseException,
+) -> None:
+    # Arrange: get_updates бросает разные транзиентные ошибки транспорта.
+    bob = _ExplodingBot(exc=exc)
+    gateway = _gateway(_registry(bob))
+    gateway._offsets[BotIdentity.BOB] = 17
+
+    # Act: тик не должен пробросить наружу ни один из этих типов.
+    published = await gateway.poll_once()
+
+    # Assert: изолирован — вернул 0, offset нетронут (ретрай на следующем тике).
+    assert published == 0
+    assert gateway._offsets[BotIdentity.BOB] == 17
+
+
+# --- Edge: пустой батч / дубль update_id / монотонность offset -----------------
+
+
+@pytest.mark.asyncio
+async def test_empty_batch_leaves_offset_untouched_and_publishes_zero() -> None:
+    # Arrange: get_updates отдаёт пустой батч (штатный тайм-аут long-poll).
+    bob = _FakeBot(updates_batches=[[]])
+    gateway = _gateway(_registry(bob))
+    gateway._offsets[BotIdentity.BOB] = 9
+    stub = _RouteStub()
+    gateway.route = stub  # type: ignore[method-assign]
+
+    # Act
+    published = await gateway.poll_once()
+
+    # Assert: ничего не опубликовано, offset не тронут, route не звался.
+    assert published == 0
+    assert gateway._offsets[BotIdentity.BOB] == 9
+    assert stub.calls == []
+
+
+@pytest.mark.asyncio
+async def test_duplicate_update_id_in_one_batch_keeps_offset_monotonic() -> None:
+    # Arrange: один и тот же update_id=5 дважды в одном ответе (дефензивно).
+    bob = _FakeBot(updates_batches=[[_FakeUpdate(5), _FakeUpdate(5)]])
+    gateway = _gateway(_registry(bob))
+    stub = _RouteStub(publish_ids={5})
+    gateway.route = stub  # type: ignore[method-assign]
+
+    # Act
+    published = await gateway.poll_once()
+
+    # Assert: offset за 5 (max, не 7), оба прошли через route — offset монотонен.
+    assert published == 2
+    assert stub.calls == [5, 5]
+    assert gateway._offsets[BotIdentity.BOB] == 6
+
+
+@pytest.mark.asyncio
+async def test_offset_never_decreases_on_out_of_order_update_ids() -> None:
+    # Arrange: батч с убывающим update_id [10, 3] (оба успешны).
+    bob = _FakeBot(updates_batches=[[_FakeUpdate(10), _FakeUpdate(3)]])
+    gateway = _gateway(_registry(bob))
+    stub = _RouteStub(publish_ids={10, 3})
+    gateway.route = stub  # type: ignore[method-assign]
+
+    # Act
+    published = await gateway.poll_once()
+
+    # Assert: offset = max(..) за наибольшим (11), меньший 3 его не откатил.
+    assert published == 2
+    assert stub.calls == [10, 3]
+    assert gateway._offsets[BotIdentity.BOB] == 11
