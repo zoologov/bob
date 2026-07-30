@@ -22,7 +22,13 @@
 Инфра-нейтральные контракты, которые нужны нескольким модулям сразу:
 
 - `LLMProvider` — `async complete(messages, *, stream)` → `str | AsyncIterator[str]`.
-- `LLMMessage`, `JsonValue` — общие value-типы обмена с моделью.
+- `LLMMessage`, `JsonValue` — общие value-типы обмена с моделью. `LLMMessage`
+  (`Mapping[str, str]`) — обычная чат-реплика role+content. `ToolLoopMessage`
+  (`Mapping[str, object]`, BOB-069) — реплика петли инструментов: как `LLMMessage`,
+  но значение может быть структурным массивом `tool_calls` (нативный tool-call-ход
+  ассистента — список объектов `{"id","type","function":{…}}`), поэтому значения
+  типизированы `object`, а не `str`. Более широкий тип несёт ТОЛЬКО переспрос петли
+  инструментов; обычное завершение остаётся строковым.
 - `Clock` — `now()` → `datetime` (инъекция времени; запрет `datetime.now()` в домене).
 - `EventBus` — `publish(event)`, `subscribe(event_name, handler)`; `EventHandler`.
 - `DomainEvent` — маркер с `name` для маршрутизации на шине.

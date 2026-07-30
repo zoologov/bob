@@ -121,6 +121,19 @@ allowlist = автономно ничего не запускается (кон�
 **медленным** навыком опционально зовёт `ProgressAnnouncer` (interim-строка); любая
 ошибка анонсера глотается — декоративная строка не может задержать/сломать dispatch.
 
+🔴 **Структурный ассистент-ход, без утечки `[tool_calls]` (BOB-069).** `_assistant_turn`
+собирает интент модели в НАТИВНЫЙ массив `tool_calls` схемы OpenAI, а не в текстовую строку
+`[tool_calls] …`, засунутую в `content`. Каждый вызов становится
+`{"id","type":"function","function":{"name","arguments"}}`, где `arguments` — JSON-СТРОКА (как
+ждёт OpenAI), а `id` совпадает с `tool_call_id`, который `_run_tool` кладёт на результат — так
+модель связывает каждый `tool`-результат со своим вызовом и доходит до финального текста.
+Прежняя строковая форма оставляла переспрос кривым (ассистент-ход без `tool_calls`,
+`tool`-результат ссылается на `id`, которого нет в истории), из-за чего Qwen эхом возвращал
+строку и она текла в чат. Реплики петли типизированы `ToolLoopMessage` (значение может быть
+массивом `tool_calls`, см. `kernel/ports.py`); инвариант «reply с `[tool_calls] ` НИКОГДА не
+течёт в чат» держит инфра-парсер `infrastructure/llm/openai_compat.py` (распознаёт hermes
+`<tool_call>{…}` и эхо-форму).
+
 ### Навыки (application)
 
 - **Память.** `recall_memory` — тонкий авто-recall (GUPPI молча заземляет ответ) над
@@ -230,6 +243,12 @@ read-only подкоманд (не shell); `read_file` спрашивает `Pri
   внешний coder-контекст, хотя в чате его прочитать теперь можно.
 - **tool-loop.** Порядок tool_calls сохраняется; неизвестный/упавший навык не валит
   ход (ошибка → tool-результат); число ходов capается (`max_turns`).
+- **🔴 Петля инструментов смыкается в текст, `[tool_calls]` не течёт в чат (BOB-069).**
+  Ассистент-ход собирается как СТРУКТУРНЫЙ `tool_calls`-массив OpenAI (`id`==`tool_call_id`,
+  `arguments` — JSON-строка), а не текстовая строка `[tool_calls] …` в `content` — переспрос
+  корректен, модель доходит до финального текста, а не эхо-строки. Инфра-парсер держит инвариант
+  «reply с `[tool_calls] ` НИКОГДА не попадает в чат» (распознаёт hermes `<tool_call>{…}` и
+  эхо-форму).
 - **announce live-only (BOB-060).** Interim-строка генерируется ЖИВО на Tier-0
   `InterimLineGenerator`; при сбое/пустой строке/без генератора анонсер **молчит** —
   НИКОГДА не скриптовая фраза. Говорит только для `web_search` (по имени навыка),
@@ -282,7 +301,9 @@ legalized), `coding.usecases → capabilities` (`PrivacyGuard`, TC, перено
 - `Capability` (Protocol) — стабильный контракт навыка: `name`, `description`,
   `input_schema`, `permission`, `async execute(args)`.
 - `ToolCallingProvider` (Protocol) — `async complete_with_tools(messages, *, tools)`
-  → `ToolCallResult`. Реализация — инфра OpenAI-совместимый провайдер.
+  → `ToolCallResult`; `messages` — `Sequence[ToolLoopMessage]` (BOB-069: реплика может нести
+  структурный `tool_calls`-массив ассистента, см. `kernel/ports.py`). Реализация — инфра
+  OpenAI-совместимый провайдер.
 - `WebSearchProvider` (Protocol) — `async search(query)` → `WebSearchResult` (raise
   на сбое). Реализация — `QwenWebSearchProvider`.
 - `UrlReader` (Protocol) — `async read(url)` → `WebPage` (raise/`SsrfBlockedError` на
