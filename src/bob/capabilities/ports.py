@@ -303,6 +303,28 @@ class RepoIntrospector(Protocol):
         """
         ...
 
+    async def list_dir(self, path: str) -> str:
+        """Return the entries of directory ``path`` — guard-checked, NON-recursive.
+
+        Lists the immediate children of the repo-relative (or in-repo absolute)
+        directory ``path`` with each entry's name, kind (``file``/``dir``) and size,
+        sorted for determinism. A path escaping the repo is refused (never listed);
+        a missing path or a non-directory yields an honest message rather than a
+        fabricated listing. Output is sanitised before return.
+        """
+        ...
+
+    async def find_file(self, pattern: str) -> str:
+        """Return repo-relative paths matching glob ``pattern`` across the repo tree.
+
+        Walks the repo tree from the root and returns the paths whose name/glob
+        matches ``pattern`` (e.g. ``*.py`` or ``nodes.yml``), one per line, capped at
+        a fixed maximum with an honest truncation note. ``.git/`` and symlinks that
+        escape the repo are skipped; an empty result is reported honestly. Output is
+        sanitised before return.
+        """
+        ...
+
     async def list_tasks(self, query: str) -> str:
         """Return tracker state for ``query`` (``bd`` ready/show/list, read-only).
 

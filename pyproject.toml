@@ -96,6 +96,11 @@ ignore = [
 # interim lines ("секунду, гляну в сети…") + persona docstrings whose Cyrillic
 # look-alikes are intentional — RUF001/RUF002/RUF003 do not apply to these literals.
 "src/bob/capabilities/usecases/progress_announcer.py" = ["RUF001", "RUF002", "RUF003"]
+# The repo-navigation skills (BOB-067) carry Russian honest empty/not-found notices
+# ("Не удалось перечислить…", "Не нашёл файлов…") whose Cyrillic look-alikes are
+# intentional (Qwen reads them natively) — RUF001/RUF002/RUF003 do not apply.
+"src/bob/capabilities/usecases/list_dir.py" = ["RUF001", "RUF002", "RUF003"]
+"src/bob/capabilities/usecases/find_file.py" = ["RUF001", "RUF002", "RUF003"]
 # The reflection module (BOB-026 .2 + BOB-033 .2) carries a few-shot PALETTE of Russian
 # "living Bob" private thoughts ("Поймал себя на том…", "Сегодня тише, чем хотелось бы…")
 # whose Cyrillic look-alikes are intentional (the Tier-0 model reads them natively) —

@@ -24,6 +24,8 @@ class FakeRepoIntrospector:
         file_text: str = "",
         tasks: str = "",
         history: str = "",
+        listing: str = "",
+        found: str = "",
         files_by_path: dict[str, str] | None = None,
         tasks_by_query: dict[str, str] | None = None,
         raise_on_read: bool = False,
@@ -34,6 +36,8 @@ class FakeRepoIntrospector:
         self._file_text = file_text
         self._tasks = tasks
         self._history = history
+        self._listing = listing
+        self._found = found
         # Per-path / per-query scripting for the code_rationale tests: a path absent
         # from ``files_by_path`` returns "" (a missing doc → skipped), so the fake can
         # model "PRD present, RFC/BRIEF absent" without disk.
@@ -46,6 +50,8 @@ class FakeRepoIntrospector:
         self.read_calls: list[tuple[str, int]] = []
         self.task_calls: list[str] = []
         self.history_calls: list[str] = []
+        self.list_dir_calls: list[str] = []
+        self.find_file_calls: list[str] = []
 
     async def architecture_context(self, ref: str) -> str:
         self.architecture_calls.append(ref)
@@ -74,3 +80,11 @@ class FakeRepoIntrospector:
     async def code_history(self, path: str) -> str:
         self.history_calls.append(path)
         return self._history
+
+    async def list_dir(self, path: str) -> str:
+        self.list_dir_calls.append(path)
+        return self._listing
+
+    async def find_file(self, pattern: str) -> str:
+        self.find_file_calls.append(pattern)
+        return self._found
