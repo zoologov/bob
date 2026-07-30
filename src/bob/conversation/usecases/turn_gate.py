@@ -349,11 +349,9 @@ class TurnGate:
             )
         reading = await self._read_room(event, soul, interlocutor, signals, interest)
         if reading is None:
-            await self.advance_floor_after_turn(
-                event,
-                self._floor_signal(signals, ResponseOutcome.SILENT),
-                bob_replied=False,
-            )
+            # 🔴 BOB-071 Seam B: a safe silent IGNORE on a read failure still persists the
+            # incoming turn (via _advance_silent) so the thread stays intact.
+            await self._advance_silent(event, soul, signals)
             return None
         return await self._act_reflective(
             event, soul, reading, signals, rng=rng, series_ceiling=series_ceiling
@@ -433,7 +431,7 @@ class TurnGate:
         if verdict.kind is VerdictKind.REACT and series_ceiling is not ResponseOutcome.SILENT:
             await self._react_turn(event, soul, signals, verdict.emoji)
             return None
-        await self._advance_silent(event, signals)
+        await self._advance_silent(event, soul, signals)
         return None
 
     async def _act_reply_verdict(
@@ -455,13 +453,13 @@ class TurnGate:
         the caller colours Bob's tone + appetite by the room (BOB-066 Срез W.2, Пласт 4).
         """
         if series_ceiling is ResponseOutcome.SILENT:
-            await self._advance_silent(event, signals)
+            await self._advance_silent(event, soul, signals)
             return None
         if series_ceiling is ResponseOutcome.REACT:
             await self._react_turn(event, soul, signals, reading.emoji)
             return None
         if not await self._admits_ambient_barge(event, reading, rng):
-            await self._advance_silent(event, signals)
+            await self._advance_silent(event, soul, signals)
             return None
         return _ReplyGate(
             decision=self._floor_signal(signals, ResponseOutcome.ENGAGE),
@@ -477,16 +475,31 @@ class TurnGate:
         signals: _AddressivitySignals,
         emoji: str | None,
     ) -> None:
-        """Set a like (the chosen ``emoji`` or a mood emoji) + advance the floor (react)."""
-        await self._react_with_emoji(event, emoji or reaction_emoji_for(soul.mood))
+        """Set a like (chosen or mood emoji), persist the user's turn, advance the floor (react).
+
+        🔴 BOB-071 Seam B: the user's turn is persisted (``(реакция: <emoji>)``) exactly like
+        the judge-path :meth:`_act_non_reply` on REACT, so a reflective REACT keeps the thread
+        intact in ``episodic_log`` instead of silently dropping the incoming message.
+        """
+        used_emoji = emoji or reaction_emoji_for(soul.mood)
+        await self._react_with_emoji(event, used_emoji)
+        await self._persist(event, _reaction_marker(used_emoji), soul)
         await self.advance_floor_after_turn(
             event, self._floor_signal(signals, ResponseOutcome.REACT), bob_replied=False
         )
 
     async def _advance_silent(
-        self, event: MessageReceived, signals: _AddressivitySignals
+        self, event: MessageReceived, soul: SOUL, signals: _AddressivitySignals
     ) -> None:
-        """Advance the conversation floor for a silent periphery turn (bob_replied=False)."""
+        """Persist the user's silent turn + advance the floor (bob_replied=False).
+
+        🔴 BOB-071 Seam B: a reflective IGNORE persists the incoming message (``(промолчал)``)
+        exactly like the judge-path :meth:`_act_non_reply` on IGNORE — «читаю комнату, но помню
+        разговор». Without it a genuinely-ambient participant turn never entered ``episodic_log``
+        and the thread broke. Unlike the judge path there is NO owner-activity stamp: a periphery
+        read is not necessarily the owner interacting.
+        """
+        await self._persist(event, _SILENT_MARKER, soul)
         await self.advance_floor_after_turn(
             event, self._floor_signal(signals, ResponseOutcome.SILENT), bob_replied=False
         )

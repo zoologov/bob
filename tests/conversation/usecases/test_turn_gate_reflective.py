@@ -110,10 +110,21 @@ class _NeverReader:
         raise AssertionError("focus turn must NOT run the reflective read")
 
 
-async def _boom_persist(
-    event: MessageReceived, reply: str, soul: SOUL, *, bob_message_id: int | None = None
-) -> None:
-    raise AssertionError("reflective periphery/focus must not persist here")
+class _RecordingPersist:
+    """Records every persist of the user's turn (BOB-071 Seam B: reflective non-reply persists)."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[int, str]] = []
+
+    async def __call__(
+        self,
+        event: MessageReceived,
+        reply: str,
+        soul: SOUL,
+        *,
+        bob_message_id: int | None = None,
+    ) -> None:
+        self.calls.append((event.message_id, reply))
 
 
 async def _noop_owner_activity() -> None:
@@ -190,6 +201,7 @@ def _gate(
     *, signals: _AddressivitySignals, reader: RoomReader, floor: _RecordingFloor,
     reactor: _RecordingReactor,
     barge_ceiling: _FakeCeiling | None = None,
+    persist: _RecordingPersist | None = None,
 ) -> TurnGate:
     # The nominal collaborators (perceiver / floor / assembler) are concrete classes, so
     # the structural test doubles are injected via a justified arg-type ignore; the reader
@@ -201,7 +213,7 @@ def _gate(
         essential=_Essential(),
         assembler=_EmptyAssembler(),  # type: ignore[arg-type]  # test double
         reactor=reactor,
-        persist=_boom_persist,
+        persist=persist or _RecordingPersist(),
         record_owner_activity=_noop_owner_activity,
         read_the_room=ReadTheRoom(reader=reader),
         barge_ceiling=barge_ceiling,
@@ -561,6 +573,100 @@ async def test_own_space_ambient_replies_bypassing_the_read() -> None:
         reactor=reactor,
     )
     assert isinstance(await _run(gate), _ReplyGate)
+
+
+# --- BOB-071 Seam B: the reflective non-reply path persists the user's turn --------
+# 🔴 Живой баг (Лилия): рефлексивный IGNORE/REACT участника не персистил входящее → «нет в
+# episodic_log», тред рвётся. Симметрия с judge-`_act_non_reply`: и SILENT, и REACT пишут
+# входящее (промолчал / реакция-эмодзи), reply-путь НЕ персистит здесь (это делает compose).
+
+
+@pytest.mark.asyncio
+async def test_reflective_silent_persists_the_incoming_turn() -> None:
+    # 🔴 Seam B: осознанный периферийный IGNORE участника всё равно ПЕРСИСТИТ входящее
+    # (маркер «промолчал»), чтобы тред не рвался — как judge-путь на IGNORE.
+    floor, reactor, persist = _RecordingFloor(), _RecordingReactor(), _RecordingPersist()
+    gate = _gate(
+        signals=_signals(Addressivity.AMBIENT),
+        reader=_ScriptedReader(_reading(intent=ReflectiveIntent.REPLY, salience=0.1)),
+        floor=floor,
+        reactor=reactor,
+        persist=persist,
+    )
+    assert await _run(gate) is None
+    assert len(persist.calls) == 1
+    message_id, reply = persist.calls[0]
+    assert message_id == 7
+    assert reply  # непустой маркер молчания записан на входящее
+
+
+@pytest.mark.asyncio
+async def test_reflective_react_persists_the_incoming_turn() -> None:
+    # 🔴 Seam B: периферийный REACT участника ПЕРСИСТИТ входящее (маркер реакции) — как
+    # judge-путь на REACT — в дополнение к нативной реакции.
+    floor, reactor, persist = _RecordingFloor(), _RecordingReactor(), _RecordingPersist()
+    gate = _gate(
+        signals=_signals(Addressivity.AMBIENT),
+        reader=_ScriptedReader(
+            _reading(intent=ReflectiveIntent.REACT, salience=0.9, emoji="🔥")
+        ),
+        floor=floor,
+        reactor=reactor,
+        persist=persist,
+    )
+    assert await _run(gate) is None
+    assert reactor.reactions == [(42, 7, "🔥")]
+    assert len(persist.calls) == 1
+    message_id, reply = persist.calls[0]
+    assert message_id == 7
+    assert reply  # непустой маркер реакции записан на входящее
+
+
+@pytest.mark.asyncio
+async def test_reflective_read_failure_persists_the_incoming_turn() -> None:
+    # 🔴 Seam B: безопасный IGNORE при провале рефлексии тоже персистит входящее — тред цел
+    # даже когда read упал (это тот же silent-путь).
+    floor, reactor, persist = _RecordingFloor(), _RecordingReactor(), _RecordingPersist()
+    gate = _gate(
+        signals=_signals(Addressivity.AMBIENT),
+        reader=_ScriptedReader(None),  # raises inside read
+        floor=floor,
+        reactor=reactor,
+        persist=persist,
+    )
+    assert await _run(gate) is None
+    assert len(persist.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_reflective_reply_does_not_persist_here() -> None:
+    # 🔴 Seam B симметрия: reply-путь НЕ персистит в гейте (это делает compose дальше) — нет
+    # двойного персиста. Фокусный direct-address возвращает _ReplyGate без персиста здесь.
+    floor, reactor, persist = _RecordingFloor(), _RecordingReactor(), _RecordingPersist()
+    gate = _gate(
+        signals=_signals(Addressivity.DIRECTED_TO_BOB),
+        reader=_NeverReader(),
+        floor=floor,
+        reactor=reactor,
+        persist=persist,
+    )
+    assert isinstance(await _run(gate), _ReplyGate)
+    assert persist.calls == []
+
+
+@pytest.mark.asyncio
+async def test_reflective_ambient_reply_does_not_persist_here() -> None:
+    # Периферийный REPLY-вердикт тоже возвращает _ReplyGate без персиста в гейте.
+    floor, reactor, persist = _RecordingFloor(), _RecordingReactor(), _RecordingPersist()
+    gate = _gate(
+        signals=_signals(Addressivity.AMBIENT),
+        reader=_ScriptedReader(_reading(intent=ReflectiveIntent.REPLY, salience=0.9)),
+        floor=floor,
+        reactor=reactor,
+        persist=persist,
+    )
+    assert isinstance(await _run(gate), _ReplyGate)
+    assert persist.calls == []
 
 
 @pytest.mark.parametrize(
