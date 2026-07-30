@@ -106,6 +106,12 @@ _DEFAULT_TYPING_INTERVAL = 4.0
 _DEFAULT_IDENTITY_RETRY_ATTEMPTS = 3
 _DEFAULT_IDENTITY_RETRY_BACKOFF_SECONDS = 1.0
 
+# Poison-cap for the poll loop (BOB-070). An update whose ``route()`` keeps
+# raising is re-attempted at most this many times (Telegram redelivers every
+# update ≥ the offset, so a non-advanced offset means a redelivery) and is then
+# skipped LOUDLY so a single wedged update cannot stall intake forever.
+_MAX_ROUTE_ATTEMPTS = 3
+
 
 def _zero_clock() -> float:
     return 0.0
@@ -290,6 +296,13 @@ class MultiBotGateway:
         # update streams; we process each (chat_id, message_id) exactly once.
         self._seen_messages: set[tuple[int, int]] = set()
         self._offsets: dict[BotIdentity, int] = dict.fromkeys(self._inner, 0)
+        # Poison-cap (BOB-070): per-bot, per-``update_id`` count of consecutive
+        # ``route()`` failures. It grows on a failed route, and is cleared on a
+        # success OR after the update is skipped past the cap — so it holds only
+        # the currently-wedged update (normally empty), never unbounded memory.
+        self._route_failures: dict[BotIdentity, dict[int, int]] = {
+            identity: {} for identity in self._inner
+        }
         # GUPPI's gatekeeper identity (the visible reject + owner commands). Built
         # only when GUPPI is registered AND an authorizer is wired; otherwise the
         # GUPPI hooks fall back to silent drops (backward-compatible).
@@ -395,21 +408,75 @@ class MultiBotGateway:
         return published
 
     async def _poll_bot(self, registration: BotRegistration) -> int:
-        """Poll one bot, isolating its failures from the rest."""
+        """Poll one bot, isolating its failures from the rest.
+
+        Приём не теряет сообщения на транзиентных обрывах Telegram (BOB-070):
+
+        * **offset — ПОСЛЕ обработки (INV-a).** Сдвигаем ``self._offsets[identity]``
+          за апдейт только когда ``route()`` вернулся без исключения. Если
+          ``route()`` бросил — offset не двигаем, и Telegram переприсылает апдейт
+          (at-least-once) на следующем тике.
+        * **батч встаёт на первом сбое (INV-e).** offset монотонный, а Telegram
+          переприсылает ВСЁ, что ≥ offset. Значит после сбоя апдейта N нельзя
+          обрабатывать N+1 (иначе offset уехал бы за N и N потерян навсегда) —
+          прерываем батч на N. Порядок и at-least-once сохранены: остаток придёт
+          следующим тиком уже с N во главе.
+        * **poison-cap (INV-b).** Апдейт, стабильно падающий в ``route()``, не
+          зацикливает приём: считаем неудачи per-``update_id``; после
+          ``_MAX_ROUTE_ATTEMPTS`` попыток ГРОМКО логируем и ПРОПУСКАЕМ его
+          (сдвигаем offset за него, сбрасываем счётчик). Успех тоже сбрасывает
+          счётчик — транзиент не «докапливается» до cap.
+        * **изоляция сети (INV-c/d).** ``get_updates`` может бросить
+          ``TelegramNetworkError`` (обёртка ``ServerDisconnectedError`` на
+          рутинном обрыве long-poll) наравне с OSError/RuntimeError/TimeoutError —
+          ловим, логируем, ``return 0``; offset не тронут, тик и таск живы,
+          другие боты не задеты.
+        """
         identity = registration.identity
         try:
             updates = await registration.bot.get_updates(
                 offset=self._offsets[identity], timeout=self._poll_timeout
             )
-        except (OSError, RuntimeError, TimeoutError) as exc:
+        except (OSError, RuntimeError, TimeoutError, TelegramNetworkError) as exc:
             logger.warning("bot %s poll failed (isolated): %s", identity.value, exc)
             return 0
         published = 0
+        failures = self._route_failures[identity]
         for update in updates:
+            try:
+                routed = await self.route(update, identity)
+            except Exception as exc:
+                # INV-d: ловим broadly — любой транзиент из route() не должен
+                # ронять poll-таск (CancelledError — BaseException, не задет).
+                attempts = failures[update.update_id] = (
+                    failures.get(update.update_id, 0) + 1
+                )
+                if attempts > _MAX_ROUTE_ATTEMPTS:
+                    # poison: стабильно падает → ГРОМКО логируем и ПРОПУСКАЕМ,
+                    # сдвигая offset за него, чтобы не зациклить приём.
+                    logger.error(
+                        "bot %s update %d poisoned (route failed %d×) — skipping "
+                        "to avoid a poll loop: %s",
+                        identity.value, update.update_id, attempts, exc,
+                    )
+                    del failures[update.update_id]
+                    self._offsets[identity] = max(
+                        self._offsets[identity], update.update_id + 1
+                    )
+                    continue
+                # Транзиент: offset НЕ двигаем → Telegram переприсылает; батч
+                # останавливаем здесь, чтобы не увести offset за непринятый апдейт.
+                logger.warning(
+                    "bot %s update %d route failed (attempt %d, will redeliver): %s",
+                    identity.value, update.update_id, attempts, exc,
+                )
+                break
+            # Durably принят: сбрасываем poison-счётчик и двигаем offset за него.
+            failures.pop(update.update_id, None)
             self._offsets[identity] = max(
                 self._offsets[identity], update.update_id + 1
             )
-            if await self.route(update, identity):
+            if routed:
                 published += 1
         return published
 

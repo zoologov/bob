@@ -290,6 +290,10 @@ ignore = [
 # GUPPI's owner commands (BOB-003 + BOB-015 .2) carry Russian command usage/reply
 # literals whose Cyrillic look-alikes are intentional — RUF001/RUF002/RUF003 here.
 "src/bob/infrastructure/telegram/guppi.py" = ["RUF001", "RUF002", "RUF003"]
+# The multi-bot poll loop (BOB-070) carries Russian resilience-policy docstrings +
+# comments (offset-после-обработки / poison-cap / изоляция сети) whose Cyrillic
+# look-alikes are intentional — RUF001/RUF002/RUF003 do not apply to these.
+"src/bob/infrastructure/telegram/multibot.py" = ["RUF001", "RUF002", "RUF003"]
 # The voice tests (BOB-016/BOB-020) assert on multi-line Russian persona/tone
 # literals whose Cyrillic look-alikes are intentional (→ RUF001/RUF003).
 "tests/domain/personality/test_voice.py" = [
@@ -423,6 +427,16 @@ ignore = [
     "S101",
     "ARG001",
     "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+"tests/infrastructure/telegram/test_multibot_poll_resilience.py" = [
+    "S101",
+    "ARG001",
+    "ARG002",
+    "PLR2004",
+    "SLF001",
     "RUF001",
     "RUF002",
     "RUF003",
