@@ -4,18 +4,14 @@ name: Deploy VitePress site to GitHub Pages
 # graph node + the full multi-layer architecture landing) as a GitHub project
 # page at https://zoologov.github.io/bob/ (base: '/bob/').
 #
-# Beadloom produces, VitePress renders: this workflow REGENERATES the content
-# tree from the graph each run (`beadloom docs site`) so the published site never
-# drifts from the code — then VitePress builds the static dist. Only the site
-# scaffold (theme + config.mjs + public/bob-architecture.html) is committed.
+# The content tree is generated locally from the graph (`beadloom docs site`)
+# and COMMITTED under site/; this workflow only builds the VitePress static dist
+# and deploys it. Refresh content locally when the graph changes.
 
 on:
   push:
     branches: [main]
     paths:
-      - "src/**"
-      - "docs/**"
-      - ".beadloom/**"
       - "site/**"
       - ".github/workflows/deploy-site.yml"
   workflow_dispatch:
@@ -38,18 +34,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v6
-
-      - name: Set up Python
-        run: uv python install 3.12
-
-      - name: Reindex the graph (beadloom via uvx, pinned)
-        run: uvx --from "beadloom==1.7.0" beadloom reindex
-
-      - name: Generate the site content tree from the graph
-        run: uvx --from "beadloom==1.7.0" beadloom docs site --out site
 
       - name: Set up Node
         uses: actions/setup-node@v5

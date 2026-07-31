@@ -1,0 +1,20 @@
+---
+title: Documentation
+---
+
+# Documentation
+
+The project's validated documentation, published as-is with a per-doc `doc_sync` freshness badge (same source as `sync-check`). Use the Documentation menu on the left to browse the full tree; the sections below describe what each area covers.
+
+## Domains
+
+Domains documentation covers Application, Capabilities, Coding, Conversation, Domain, Infrastructure, Memory, Personality, Presence, Proactivity, Social.
+
+## Services
+
+Services documentation covers Runtime.
+
+## General
+
+General documentation covers Architecture, Getting Started.
+

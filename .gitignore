@@ -93,17 +93,10 @@ test.txt
 mutants/
 .mutmut-cache
 
-# VitePress site (BOB-arch): committed scaffold renders the generated content
-# tree from `beadloom docs site` (regenerated in CI). Generated content + build
-# output + node deps are NOT committed.
+# VitePress site (BOB-arch): only build output + node deps are ignored. The
+# generated content tree (`beadloom docs site`) IS committed — CI just builds
+# VitePress (beadloom reindex-in-CI hits an FK issue on a clean runner). Refresh
+# locally with `beadloom docs site --out site` when the graph changes.
 site/.vitepress/dist/
 site/.vitepress/cache/
 site/node_modules/
-site/*.md
-site/.vitepress/config.generated.mjs
-site/docs/
-site/domains/
-site/features/
-site/services/
-site/other/
-site/public/*.data.json
