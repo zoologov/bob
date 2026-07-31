@@ -117,21 +117,47 @@ class TestGenderReadAccumulation:
     def test_fresh_read_is_unknown(self) -> None:
         assert GenderRead().resolve() is Gender.UNKNOWN
 
-    def test_one_clean_feminine_message_resolves_fem(self) -> None:
+    def test_one_clean_feminine_message_only_leans_not_commits(self) -> None:
+        # 🔴 BOB-078.8: ОДИН само-сигнал только НАКЛОНЯЕТ (lean), но НЕ коммитит род —
+        # наружу всё ещё UNKNOWN. Так ведущий родовой глагол в одном сообщении не
+        # переворачивает пол за один ход (инвариант PRD).
         read = GenderRead().observe("Пошла учить Python")
+        assert read.resolve() is Gender.UNKNOWN
+
+    def test_two_clean_feminine_messages_commit_fem(self) -> None:
+        # Второй согласный само-сигнал добирает порог → коммит FEM.
+        read = GenderRead().observe("Пошла учить Python").observe("Я разобралась с багом")
         assert read.resolve() is Gender.FEM
 
-    def test_one_clean_masculine_message_resolves_masc(self) -> None:
+    def test_one_clean_masculine_message_only_leans_not_commits(self) -> None:
         read = GenderRead().observe("я сделал ревью")
+        assert read.resolve() is Gender.UNKNOWN
+
+    def test_two_clean_masculine_messages_commit_masc(self) -> None:
+        read = GenderRead().observe("я сделал ревью").observe("я разобрался сам")
         assert read.resolve() is Gender.MASC
+
+    def test_leading_verb_with_noun_subject_does_not_commit(self) -> None:
+        # 🔴 BOB-078.8 (ядро фикса): сообщение, НАЧИНАЮЩЕЕся с родового глагола при
+        # подлежащем-существительном («Была ошибка в коде», «Сделана миграция»), даёт лишь
+        # lean — за ОДИН ход род НЕ коммитится (ложный FEM недопустим). Только повторный
+        # согласный сигнал добрал бы порог.
+        read = GenderRead().observe("Была ошибка в коде")
+        assert read.resolve() is Gender.UNKNOWN
 
     def test_third_person_quote_does_not_move_the_read(self) -> None:
         # A lone 3rd-person/quoted gendered verb must not force a gender.
         read = GenderRead().observe("пошёл он в магазин")
         assert read.resolve() is Gender.UNKNOWN
 
-    def test_neutral_message_keeps_prior_read(self) -> None:
-        read = GenderRead().observe("Пошла учить Python").observe("окей, спасибо")
+    def test_neutral_message_keeps_prior_committed_read(self) -> None:
+        # Два согласных сигнала коммитят FEM; последующая нейтральная реплика не сбивает.
+        read = (
+            GenderRead()
+            .observe("Пошла учить Python")
+            .observe("Я разобралась с багом")
+            .observe("окей, спасибо")
+        )
         assert read.resolve() is Gender.FEM
 
     def test_conflicting_signals_net_back_to_unknown(self) -> None:
@@ -148,14 +174,16 @@ class TestGenderReadAccumulation:
     def test_lily_real_session_accumulates_to_fem(self) -> None:
         # 🔴 Живой кейс Лили целиком (мотив эпика): её реальная сессия — приветствие с
         # родовым глаголом во втором предложении (сам по себе не читается), комплимент «Ты
-        # классный!» (нейтрален по роду) и чистая само-презентация «Пошла учить Python». По
-        # СУММЕ ходов накопленный род resolve'ится в FEM — Боб обращается к ней в женском
-        # роде, хотя ни имя, ни отдельная приветственная строка этого не дали.
+        # классный!» (нейтрален по роду) и ДВЕ чистые само-презентации («Пошла учить Python»,
+        # «Я разобралась с багом»). По СУММЕ ходов накопленный род (≥2 согласных сигнала,
+        # BOB-078.8) resolve'ится в FEM — Боб обращается к ней в женском роде, хотя ни имя,
+        # ни отдельная приветственная строка этого не дали.
         read = GenderRead()
         for line in (
             "Привет, Боб. Пролистала чат, тут много интересного",
             "Ты классный!",
             "Пошла учить Python",
+            "Я разобралась с багом",
         ):
             read = read.observe(line)
         assert read.resolve() is Gender.FEM

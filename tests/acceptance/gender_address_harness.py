@@ -10,7 +10,8 @@ guessed from her name. The live bug was the reverse: Bob addressed Лиля in t
 («он») though her speech was feminine («Пошла учить Python»).
 
 The observable boundary here is the COMPOSE prompt the graph hands the Tier-1 model: once
-Лиля self-presents feminine on a directed turn, perception accrues her gender, and the
+Лиля self-presents feminine on ≥2 directed turns (BOB-078.8 — a single leading verb only
+leans, it does not commit), perception accrues her gender past the threshold, and the
 ``who_is_writing_directive`` folds «обращайся … в женском роде» INTO that prompt. A capturing
 provider records the composed prompt so a scenario asserts the feminine instruction reached
 the model — never the detector's private state. The neutral control (no self-presentation,

@@ -82,10 +82,12 @@ _MIN_MASC_VERB_LEN = 4
 _VOWELS = frozenset("аеёиоуыэюя")
 
 # Accumulation (mirrors a relationship axis): each committed self-signal nudges the
-# lean by one STEP; a lean at or beyond ±THRESHOLD commits to a gender. STEP == THRESHOLD
-# so ONE clean self-presented verb already resolves (the live scenario), while a
-# contradicting later signal can net the lean back below threshold → UNKNOWN again.
-_LEAN_STEP = 0.6
+# lean by one STEP; a lean at or beyond ±THRESHOLD commits to a gender. THRESHOLD is TWO
+# steps, so a gender commits only after ≥2 CONSISTENT self-signals (BOB-078.8): ONE
+# leading gendered verb — «Была ошибка в коде», «Сделана миграция», where the subject is
+# a noun, not the speaker — merely leans and reads UNKNOWN, never a false FEM/MASC in one
+# turn. A contradicting later signal nets the lean back below threshold → UNKNOWN again.
+_LEAN_STEP = 0.3
 _LEAN_THRESHOLD = 0.6
 _LEAN_MIN = -1.0
 _LEAN_MAX = 1.0
@@ -178,8 +180,12 @@ class GenderRead:
     masculine, ``0`` is a blank read. It accrues over turns like a relationship axis —
     :meth:`observe` nudges it by each message's committed self-signal, contradictory
     signals net out, and :meth:`resolve` commits to a gender only once ``|lean|`` clears
-    the threshold. So a single quoted/3rd-person verb (no signal) never moves it, and a
-    weak or conflicted history stays UNKNOWN (Bob forces no gender).
+    the threshold. The threshold is TWO steps (BOB-078.8), so a gender commits only after
+    ≥2 CONSISTENT self-signals: a single lone self-signal — including a leading gendered
+    verb whose real subject is a noun («Была ошибка в коде») — only leans and still reads
+    UNKNOWN, so one turn never flips the gender falsely. A quoted/3rd-person verb (no
+    signal) never moves it, and a weak or conflicted history stays UNKNOWN (Bob forces no
+    gender).
     """
 
     lean: float = 0.0
@@ -188,8 +194,9 @@ class GenderRead:
         """Return a new read with ``text``'s self-signal folded in (pure).
 
         A feminine self-signal nudges the lean up one step, a masculine one down; an
-        UNKNOWN message leaves the lean unchanged. The lean is clamped to ``[-1, 1]`` so
-        repeated evidence saturates rather than running away.
+        UNKNOWN message leaves the lean unchanged. One step alone stays below the
+        two-step threshold, so a single self-signal only leans (BOB-078.8). The lean is
+        clamped to ``[-1, 1]`` so repeated evidence saturates rather than running away.
         """
         signal = detect_self_gender(text)
         if signal is Gender.FEM:
