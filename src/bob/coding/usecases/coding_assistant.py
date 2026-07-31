@@ -80,6 +80,12 @@ _DEFAULT_EXECUTE_MODE = "acceptEdits"
 # Plan mode is fixed: a plan with NO edits — the unbypassable plan gate.
 _PLAN_MODE = "plan"
 
+# 🔴 SAFETY (BOB-076): the ceiling on per-event PROGRESS narrations sent to the owner in
+# one execute run. A run touching many files once flooded the chat with a line per edit;
+# past this cap Bob sends ONE "…продолжаю" notice and goes quiet on progress until the
+# final result event (which is ALWAYS sent — the cap only throttles interim progress).
+_MAX_NARRATION = 12
+
 # Owner-facing messages live in Bob's voice (BOB-041 .3): the gate/framing lines are
 # built by :mod:`~bob.coding.session_voice` (Bob speaks, GUPPI executes) and the
 # per-event narrative is GUPPI-attributed by :func:`~bob.coding.narrate.narrate` —
@@ -389,10 +395,19 @@ class CodingAssistant:
         return _clean_plan(parts)
 
     async def _narrate_run(self, session: CodingSession, path: str) -> None:
-        """Run execute-mode, sending each non-noise narrate line to the owner."""
+        """Run execute-mode, narrating each non-noise event — capped against flooding.
+
+        🔴 SAFETY (BOB-076): interim PROGRESS narration is capped at ``_MAX_NARRATION``
+        lines per run. Once the cap is hit Bob sends ONE "…продолжаю" notice and stays
+        quiet on progress. The FINAL ``result`` event is ALWAYS sent (session outcome /
+        error must reach the owner), so the cap only throttles the per-file flood, never
+        the result. A plain counter — it does not touch the stop/cancel break.
+        """
         prompt = _with_preamble(
             await self._preamble(session.task), _execute_prompt(session.task)
         )
+        progress = 0
+        capped = False
         async with aclosing(
             _closeable(self._runner.run(path, prompt, mode=self._execute_mode))
         ) as stream:
@@ -400,8 +415,19 @@ class CodingAssistant:
                 if session.id in self._cancelled:
                     break
                 line = narrate(event)
-                if line is not None:
+                if line is None:
+                    continue
+                if _is_result_event(event):  # the final outcome ALWAYS reaches the owner
                     await self._notifier.send(line)
+                    continue
+                if capped:  # past the cap: swallow interim progress until the result
+                    continue
+                if progress >= _MAX_NARRATION:  # cap hit: one notice, then go quiet
+                    await self._notifier.send(session_voice.narration_capped())
+                    capped = True
+                    continue
+                await self._notifier.send(line)
+                progress += 1
 
     async def _preamble(self, task: str) -> str:
         """Build the architectural-context preamble for ``task`` (BOB-046 .3).
@@ -476,6 +502,11 @@ def _closeable(
     the wider ``AsyncIterator`` type, so this documented cast restores the ``aclose`` view.
     """
     return cast("AsyncGenerator[Mapping[str, object], None]", stream)
+
+
+def _is_result_event(event: Mapping[str, object]) -> bool:
+    """Whether ``event`` is the run's final ``result`` (its narration is never capped)."""
+    return str(event.get("type", "")) == "result"
 
 
 @contextlib.asynccontextmanager

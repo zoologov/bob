@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from bob.coding.state import CodingSessionState, is_terminal
-from bob.coding.usecases.coding_assistant import CodingAssistant
+from bob.coding.usecases.coding_assistant import _MAX_NARRATION, CodingAssistant
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Callable, Mapping
@@ -271,6 +271,67 @@ async def test_full_happy_path_approve_executes_narrates_and_opens_pr_no_merge()
     assert not hasattr(rig.pr_opener, "merge")
     # The PR url was reported to the owner.
     assert any(rig.pr_opener.url in text for text in rig.notifier.sent)
+
+
+def _many_edit_events(n: int) -> list[Mapping[str, object]]:
+    """``n`` progress edit-events (each narrates «правлю …») + a final success result."""
+    edits: list[Mapping[str, object]] = [
+        {
+            "type": "assistant",
+            "message": {
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "name": "Edit",
+                        "input": {"file_path": f"file_{i}.py"},
+                    }
+                ]
+            },
+        }
+        for i in range(n)
+    ]
+    return [*edits, {"type": "result", "subtype": "success"}]
+
+
+@pytest.mark.asyncio
+async def test_narrate_flood_is_capped_but_final_result_always_reaches() -> None:
+    # 🔴 BOB-076: a run touching many files must NOT flood the chat with a line per
+    # edit. After _MAX_NARRATION progress lines Bob sends ONE "…продолжаю" notice and
+    # goes quiet on progress, but the FINAL result event always reaches the owner.
+    runner = _FakeRunner(
+        events={**_plan_events(), "acceptEdits": _many_edit_events(_MAX_NARRATION + 20)}
+    )
+    rig = _build(runner=runner)
+    await rig.assistant.start("Большая правка", _OWNER_ID)
+    rig.notifier.sent.clear()
+
+    outcome = await rig.assistant.approve_plan(_OWNER_ID)
+
+    assert outcome.ok is True
+    progress = [t for t in rig.notifier.sent if "правлю" in t]
+    # At most _MAX_NARRATION per-event progress lines survive the cap — no per-file flood.
+    assert len(progress) <= _MAX_NARRATION
+    # Exactly ONE "продолжаю" cap notice was sent (not one per suppressed event).
+    assert sum(1 for t in rig.notifier.sent if "продолжаю" in t.casefold()) == 1
+    # The final outcome (PR url) still reached the owner despite the cap.
+    assert any(rig.pr_opener.url in t for t in rig.notifier.sent)
+
+
+@pytest.mark.asyncio
+async def test_narrate_below_cap_is_not_throttled() -> None:
+    # Under the cap every progress line flows as before — no notice, no suppression.
+    runner = _FakeRunner(
+        events={**_plan_events(), "acceptEdits": _many_edit_events(_MAX_NARRATION - 2)}
+    )
+    rig = _build(runner=runner)
+    await rig.assistant.start("Правка", _OWNER_ID)
+    rig.notifier.sent.clear()
+
+    await rig.assistant.approve_plan(_OWNER_ID)
+
+    progress = [t for t in rig.notifier.sent if "правлю" in t]
+    assert len(progress) == _MAX_NARRATION - 2
+    assert not any("продолжаю" in t.casefold() for t in rig.notifier.sent)
 
 
 @pytest.mark.asyncio

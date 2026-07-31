@@ -67,10 +67,22 @@ class CodingIntentRouter:
     """Route one natural-language owner message into the gated coding session."""
 
     def __init__(
-        self, *, coder: GatedCoder, classifier: CodingIntentClassifierLike
+        self,
+        *,
+        coder: GatedCoder,
+        classifier: CodingIntentClassifierLike,
+        nl_autostart: bool = False,
     ) -> None:
         self._coder = coder
         self._classifier = classifier
+        # 🔴 SAFETY (BOB-076): auto-starting a session from a FRESH natural-language
+        # message is gated behind this flag, default OFF. The cheap Tier-0 classifier
+        # mis-labels a casual owner reply as a coding request → a runaway coder launch
+        # from ordinary chat. OFF → a fresh message is left to the chat path (no
+        # classifier call, no ``start``); the coder starts ONLY via an explicit /code.
+        # The kill-switch (stop) and plan-approve stay ON regardless — they act on an
+        # ALREADY-live session the owner started deliberately, so they are safe.
+        self._nl_autostart = nl_autostart
 
     async def route(self, *, text: str, sender: int | None, is_owner: bool) -> bool:
         """Maybe route ``text`` into the gated session; return whether it was consumed.
@@ -106,7 +118,17 @@ class CodingIntentRouter:
         return False
 
     async def _route_fresh(self, text: str, sender: int | None) -> bool:
-        """No live session: a classified dev-work request PLANS; chat is left alone."""
+        """No live session: a classified dev-work request PLANS; chat is left alone.
+
+        🔴 SAFETY (BOB-076): auto-start is gated behind ``nl_autostart`` (default OFF).
+        When OFF the router does NOT even consult the classifier — a fresh message can
+        never launch a session from chat; it is left to the normal chat path (``False``),
+        and the coder starts only via an explicit ``/code`` command. When ON, a
+        classified dev-work request PLANS via ``start`` as before (still just a plan —
+        the unbypassable gate stops there until an explicit approve).
+        """
+        if not self._nl_autostart:
+            return False
         if await self._classifier.is_coding_request(text):
             await self._coder.start(text, sender)
             return True

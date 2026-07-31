@@ -63,8 +63,14 @@ class _FakeClassifier:
         return self._coding
 
 
-def _router(coder: _FakeCoder, *, coding: bool) -> CodingIntentRouter:
-    return CodingIntentRouter(coder=coder, classifier=_FakeClassifier(coding=coding))
+def _router(
+    coder: _FakeCoder, *, coding: bool, nl_autostart: bool = True
+) -> CodingIntentRouter:
+    return CodingIntentRouter(
+        coder=coder,
+        classifier=_FakeClassifier(coding=coding),
+        nl_autostart=nl_autostart,
+    )
 
 
 # --- intent → start --------------------------------------------------------------
@@ -90,6 +96,62 @@ async def test_owner_chat_does_not_start_a_session() -> None:
 
     assert consumed is False
     assert coder.started == []
+
+
+# --- NL auto-start gate (BOB-076): default OFF prevents chat-driven runaway ---------
+
+
+async def test_nl_autostart_off_does_not_start_even_a_coding_request() -> None:
+    # 🔴 BOB-076: with the flag OFF (default) a fresh coding-intent message NEVER
+    # auto-starts a session — a cheap misclassified casual reply cannot launch the
+    # coder from chat. The router leaves the message to the normal chat path (False)
+    # and never even consults the classifier or touches the coder.
+    coder = _FakeCoder(state=None)
+    classifier = _FakeClassifier(coding=True)
+    router = CodingIntentRouter(
+        coder=coder, classifier=classifier, nl_autostart=False
+    )
+
+    consumed = await router.route(text="создай файл X", sender=_OWNER, is_owner=True)
+
+    assert consumed is False
+    assert coder.started == []
+    assert classifier.seen == []  # classifier not even consulted when auto-start is off
+
+
+async def test_nl_autostart_defaults_to_off() -> None:
+    # The default construction (no explicit flag) must be OFF — the safe default.
+    coder = _FakeCoder(state=None)
+    router = CodingIntentRouter(coder=coder, classifier=_FakeClassifier(coding=True))
+
+    consumed = await router.route(text="создай файл X", sender=_OWNER, is_owner=True)
+
+    assert consumed is False
+    assert coder.started == []
+
+
+async def test_nl_autostart_off_still_stops_a_live_session() -> None:
+    # 🔴 The kill-switch is INDEPENDENT of the auto-start gate: a stop always works,
+    # so the owner can always halt a running session by natural language.
+    coder = _FakeCoder(state=CodingSessionState.EXECUTING)
+    router = _router(coder, coding=False, nl_autostart=False)
+
+    consumed = await router.route(text="стоп", sender=_OWNER, is_owner=True)
+
+    assert consumed is True
+    assert coder.stopped == [_OWNER]
+
+
+async def test_nl_autostart_off_still_approves_a_plan_ready_session() -> None:
+    # 🔴 Approve-from-PLAN_READY is INDEPENDENT of the auto-start gate: once a plan is
+    # waiting (started via explicit /code), a natural "давай" still approves it.
+    coder = _FakeCoder(state=CodingSessionState.PLAN_READY)
+    router = _router(coder, coding=False, nl_autostart=False)
+
+    consumed = await router.route(text="давай", sender=_OWNER, is_owner=True)
+
+    assert consumed is True
+    assert coder.approved == [_OWNER]
 
 
 # --- owner-only (authz) ----------------------------------------------------------
