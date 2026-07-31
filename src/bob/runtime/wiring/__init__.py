@@ -77,6 +77,7 @@ from bob.runtime.wiring.staleness import (
     build_staleness_reassessor,
     staleness_enabled,
 )
+from bob.runtime.wiring.stream_read import build_batch_room_reader
 from bob.runtime.wiring.telegram import _build_multibot
 
 __all__ = [
@@ -127,6 +128,7 @@ __all__ = [
     "_fascination_initial_intensity",
     "_phantom_evolution_params",
     "_resolve_seed",
+    "build_batch_room_reader",
     "build_catch_up_reentry",
     "build_disclosure_guard",
     "build_endorsement_seeder",

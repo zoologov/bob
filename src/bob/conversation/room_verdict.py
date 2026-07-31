@@ -33,13 +33,18 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import StrEnum
+from typing import TYPE_CHECKING
 
 from bob.conversation.room_reading import ReflectiveIntent, RoomReading
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 __all__ = [
     "SALIENCE_THRESHOLD",
     "ReflectiveVerdict",
     "VerdictKind",
+    "decide_batch",
     "decide_from_reading",
 ]
 
@@ -109,3 +114,17 @@ def decide_from_reading(reading: RoomReading) -> ReflectiveVerdict:
         force_web=reading.wants_web,
         addressee_id=reading.addressee_id,
     )
+
+
+def decide_batch(readings: Sequence[RoomReading]) -> list[ReflectiveVerdict]:
+    """Project each per-message reading of an ambient batch to its verdict (pure).
+
+    The holistic stream-read (BOB-072) already made the SEMANTIC choice — for every message
+    of the batch it verbalised a :class:`RoomReading` (reply / react / ignore, salience,
+    emoji, addressee, wants_web). This core lifts :func:`decide_from_reading` over the whole
+    batch, applying the SAME deterministic policy (salience floor first, then intent map) to
+    each reading in arrival order — semantics live in the read, POLICY is this pure
+    projection. An empty batch yields an empty plan. No I/O, no RNG (the mutation-tested
+    core, mirroring the single-message path one-for-one).
+    """
+    return [decide_from_reading(reading) for reading in readings]

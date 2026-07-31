@@ -13,6 +13,7 @@ shapes Bob's reply and returns to that same user) IS allowed to.
 
 from __future__ import annotations
 
+import asyncio
 from typing import TYPE_CHECKING
 
 import pytest
@@ -268,6 +269,92 @@ async def test_override_to_tier1_still_falls_back_to_tier0_on_error() -> None:
     result = await router.run(request)
 
     # Assert
+    assert result == "fallback"
+    assert len(tier1.calls) == 1
+    assert len(tier0.calls) == 1
+
+
+class _ConcurrencyProbe:
+    """Fake provider that records the PEAK number of overlapping in-flight completions.
+
+    Each ``complete`` marks itself in-flight, yields the loop enough times for every
+    concurrently-launched call to pile up, then returns — so ``peak`` reflects how many
+    calls the router allowed to overlap (the Tier-1 rate-cap ceiling under test).
+    """
+
+    def __init__(self, *, reply: str = "ok") -> None:
+        self.reply = reply
+        self._in_flight = 0
+        self.peak = 0
+
+    async def complete(
+        self,
+        messages: Sequence[Mapping[str, str]],  # noqa: ARG002 — protocol signature
+        *,
+        stream: bool = False,  # noqa: ARG002 — protocol signature
+    ) -> str:
+        self._in_flight += 1
+        self.peak = max(self.peak, self._in_flight)
+        for _ in range(8):
+            await asyncio.sleep(0)
+        self._in_flight -= 1
+        return self.reply
+
+
+def _reply_request() -> LLMRequest:
+    return LLMRequest(
+        task_type=TaskType.REPLY_TO_USER,  # Tier 1 by default
+        messages=[{"role": "user", "content": "hi"}],
+    )
+
+
+async def test_tier1_calls_are_capped_at_the_configured_concurrency() -> None:
+    # 🔴 Rate-cap: with a ceiling of 2, no more than 2 Tier-1 completions overlap even when
+    # six replies are launched at once (invisible insurance against 429/degradation).
+    tier1 = _ConcurrencyProbe()
+    router = LLMRouter(
+        providers={0: CapturingProvider(), 1: tier1}, tier1_max_concurrency=2
+    )
+
+    await asyncio.gather(*(router.run(_reply_request()) for _ in range(6)))
+
+    assert tier1.peak == 2
+
+
+async def test_absent_cap_leaves_tier1_unbounded() -> None:
+    # 🔴 Byte-identical default: no config → no ceiling → all six calls overlap (current behavior).
+    tier1 = _ConcurrencyProbe()
+    router = LLMRouter(providers={0: CapturingProvider(), 1: tier1})
+
+    await asyncio.gather(*(router.run(_reply_request()) for _ in range(6)))
+
+    assert tier1.peak == 6
+
+
+async def test_tier0_work_is_not_gated_by_the_tier1_cap() -> None:
+    # The cap only serializes Tier-1: a cheap Tier-0 classifier is never throttled by it.
+    tier0 = _ConcurrencyProbe()
+    router = LLMRouter(
+        providers={0: tier0, 1: CapturingProvider()}, tier1_max_concurrency=1
+    )
+    sentiment = LLMRequest(
+        task_type=TaskType.SENTIMENT,  # Tier 0 by default
+        messages=[{"role": "user", "content": "hi"}],
+    )
+
+    await asyncio.gather(*(router.run(sentiment) for _ in range(4)))
+
+    assert tier0.peak == 4
+
+
+async def test_capped_tier1_failure_still_falls_back_to_tier0() -> None:
+    # 🔴 The cap must not break fallback: a Tier-1 error under the cap still degrades to Tier 0.
+    tier0 = CapturingProvider(reply="fallback")
+    tier1 = CapturingProvider(fail=True)
+    router = LLMRouter(providers={0: tier0, 1: tier1}, tier1_max_concurrency=1)
+
+    result = await router.run(_reply_request())
+
     assert result == "fallback"
     assert len(tier1.calls) == 1
     assert len(tier0.calls) == 1

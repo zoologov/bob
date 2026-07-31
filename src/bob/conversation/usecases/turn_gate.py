@@ -245,6 +245,7 @@ class TurnGate:
         *,
         rng: Random | None = None,
         series_ceiling: ResponseOutcome = ResponseOutcome.ENGAGE,
+        ambient_reading: RoomReading | None = None,
     ) -> _ReplyGate | None:
         """Decide whether/how Bob takes this turn (BOB-049 judge, or legacy fallback).
 
@@ -263,9 +264,22 @@ class TurnGate:
         # VERY TOP, ДО судьи — when the reflective reader is wired AND a sender is
         # perceived, Bob takes the focus/periphery fork (INV-1 lives here). Unwired (the
         # default) OR no sender → the BOB-049 judge / legacy paths run exactly as before.
-        if self._read_the_room is not None and interlocutor is not None:
+        # 🔴 BOB-072: a PRE-COMPUTED ``ambient_reading`` (the intake worker's holistic batch
+        # stream-read) also takes the reflective fork — even when the per-message reflective
+        # reader is unwired — so the batch verdict is applied through the SAME apply path
+        # (focal short-circuit + persist/floor for all, INV-1/INV-S2).
+        take_reflective = interlocutor is not None and (
+            self._read_the_room is not None or ambient_reading is not None
+        )
+        if take_reflective and interlocutor is not None:
             return await self._reflective_gate(
-                event, soul, interlocutor, interest, rng=rng, series_ceiling=series_ceiling
+                event,
+                soul,
+                interlocutor,
+                interest,
+                rng=rng,
+                series_ceiling=series_ceiling,
+                ambient_reading=ambient_reading,
             )
         if self._decide_response is not None and interlocutor is not None:
             judged = await self._judge(event, soul, interlocutor)
@@ -311,6 +325,7 @@ class TurnGate:
         *,
         rng: Random | None,
         series_ceiling: ResponseOutcome = ResponseOutcome.ENGAGE,
+        ambient_reading: RoomReading | None = None,
     ) -> _ReplyGate | None:
         """The «два-скорости-внимания» fork (BOB-066 Срез 2.2 Пласт 1).
 
@@ -347,7 +362,15 @@ class TurnGate:
                 decision=self._floor_signal(signals, ResponseOutcome.ENGAGE),
                 history=None,
             )
-        reading = await self._read_room(event, soul, interlocutor, signals, interest)
+        # 🔴 BOB-072: when the intake worker supplied a pre-computed reading (the holistic batch
+        # stream-read over the whole ambient burst), apply it DIRECTLY — no per-message read.
+        # The safe all-IGNORE fallback the batch reader returns on failure lands here too, so a
+        # garbled/absent batch read still persists the incoming (Seam B) via _advance_silent.
+        reading = (
+            ambient_reading
+            if ambient_reading is not None
+            else await self._read_room(event, soul, interlocutor, signals, interest)
+        )
         if reading is None:
             # 🔴 BOB-071 Seam B: a safe silent IGNORE on a read failure still persists the
             # incoming turn (via _advance_silent) so the thread stays intact.

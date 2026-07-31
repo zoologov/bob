@@ -33,6 +33,12 @@ llm:
   # enable_thinking=false). Cheaper + faster, and avoids the empty-content case
   # where a reasoning model spends its whole budget on reasoning_content.
   disable_thinking: true
+  # Tier-1 rate-cap (BOB-072). A ceiling on CONCURRENT Tier-1 (Qwen API) completions —
+  # invisible insurance against 429/degradation when bursts across chats (incl. the
+  # holistic batch ROOM_READ behind presence.stream_read) hit Tier 1 at once. It only
+  # SERIALIZES calls; it never touches the routing decision or the payload, and the
+  # Tier 1 → Tier 0 fallback runs OUTSIDE the cap. Absent / 0 → no cap → byte-identical.
+  # tier1_max_concurrency: 4
 
 embeddings:
   # Local semantic-memory embeddings (BOB-011). Runs against a LOCAL Ollama server
@@ -60,6 +66,24 @@ telegram:
   #                            # BOB_TELEGRAM__ALLOWED_CHAT_IDS (e.g. "111,222").
   # Runtime allowlist grows via the owner command "/authorize <user_id>" and is
   # persisted in SQLite (kv), so grants survive a restart.
+
+dialogue:
+  # Intake coalescing window (BOB-072). When the holistic stream-read is on
+  # (presence.stream_read), a chat's ambient burst is held this long — «пусть
+  # допишут» — so Bob reads the whole settled burst at once instead of reacting
+  # per message. A direct address (@Боб / reply-to-Bob / «Боб, …») ALWAYS flushes
+  # the window immediately (INV-1). Ignored while presence.stream_read is off
+  # (window 0 → byte-identical to the per-message path).
+  intake_debounce_ms: 600
+
+presence:
+  # Holistic stream-read (BOB-072) master switch. OFF by default — the whole
+  # «человеческое групповое присутствие» epic ships as one piece. On → a settled
+  # ambient burst is read in ONE Tier-1 «read the room» pass and Bob decides, by
+  # meaning, what each message deserves (a word / a like / silence); every ambient
+  # message is still remembered (persist + floor). A direct address is answered
+  # deterministically, above and outside the batch read (INV-1).
+  stream_read: false
 
 persistence:
   db_path: data/bob.db         # SQLite (WAL) — episodic/semantic memory + state

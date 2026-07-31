@@ -82,9 +82,9 @@ src/bob/conversation/
   reply_context.py    # layer=domain          — _assemble_shareable_context: сборка reply-shaping контекста хода (free-функция → хелпер, BOB-062.6b)
   thread.py           # layer=domain          — проекция персиста в сигналы хода: _render_thread/_user_turns/_history_for_author/_recent_bob_replies/_strip_recalled_closer (BOB-062.6b)
   outgoing_target.py  # layer=domain          — OutgoingTarget VO + resolve_outgoing_target: КУДА ложится ответ (цитата reply-to + адресат), BOB-066 Срез 1.1
-  room_reading.py     # layer=domain          — RoomMood/ReflectiveIntent/RoomReading(+Context) VO + порт RoomReader: форма ОДНОГО рефлексивного «чтения комнаты» (BOB-066 Срез 2.2)
-  room_reading_wire.py# layer=domain          — чистый Tier-1 wire-протокол «чтения комнаты» (ROOM_READ_SYSTEM_PROMPT/build_room_prompt/parse_room_reading, бросает RoomReadingParseError)
-  room_verdict.py     # layer=domain          — VerdictKind/ReflectiveVerdict + decide_from_reading + SALIENCE_THRESHOLD: чистое ядро вердикта (LLM вербализует → ядро решает)
+  room_reading.py     # layer=domain          — RoomMood/ReflectiveIntent/RoomReading(+Context) VO + порт RoomReader: форма ОДНОГО рефлексивного «чтения комнаты» (BOB-066 Срез 2.2); + пачечный шов BatchAmbientMessage/BatchRoomReadingContext/BatchRoomReading + порт BatchRoomReader (BOB-072)
+  room_reading_wire.py# layer=domain          — чистый Tier-1 wire-протокол «чтения комнаты» (ROOM_READ_SYSTEM_PROMPT/build_room_prompt/parse_room_reading, бросает RoomReadingParseError); + пачечный BATCH_ROOM_READ_SYSTEM_PROMPT/build_batch_room_prompt/parse_batch_reading (garbage→all-IGNORE, толерантен, BOB-072)
+  room_verdict.py     # layer=domain          — VerdictKind/ReflectiveVerdict + decide_from_reading + SALIENCE_THRESHOLD: чистое ядро вердикта (LLM вербализует → ядро решает); + decide_batch: проекция read→verdict по всей пачке (BOB-072)
   usecases/           # layer=application
     decide_response.py       —                — DecideResponse: собрать контекст и спросить судью по смыслу (BOB-049)
     read_the_room.py         —                — ReadTheRoom: собрать периферийный контекст и спросить рефлексивного читателя (BOB-066 Срез 2.2)
@@ -96,7 +96,7 @@ src/bob/conversation/
     verify_step.py           —                — VerifyStep: предответная эпистемическая проверка → per-turn note (BOB-057)
     anti_repeat_guard.py     —                — AntiRepeatGuard: анти-повтор/тик + кольцо закрывающих (BOB-022/061)
   adapters/           # layer=infrastructure
-    room_reader.py           —                — LlmRoomReader (Tier-1 реализация RoomReader: богатый рефлексивный read, ROOM_READ)
+    room_reader.py           —                — LlmRoomReader (Tier-1 реализация RoomReader: богатый рефлексивный read, ROOM_READ) + LlmBatchRoomReader (пачечный stream-read, толерантный all-IGNORE, BOB-072)
     response_judge.py        —                — LlmResponseJudge (Tier-0 реализация ResponseJudge)
     volatility_judge.py      —                — LlmVolatilityJudge (Tier-0 реализация VolatilityJudge)
     interim_line.py          —                — LlmInterimLineGenerator (живая interim-строка)
@@ -330,6 +330,43 @@ REPLY; на детерминированном пути потолок НЕ ко
 `ReflectiveVerdict.addressee_id` парсятся и несутся, но `_act_reflective` пока их не использует
 (floor-сигнал ответа берёт сырой `signals.directed_to_id`); reply-to-нить прокладывается в позднем
 срезе.
+
+### Холистический stream-read пачки (BOB-072, за `presence.stream_read`, OFF)
+
+Второй, ПАЧЕЧНЫЙ шов рядом с per-message-чтением («компонент рядом»): вместо одного Tier-1 read
+на КАЖДОЕ ambient-сообщение (скриптованный top-k) Боб читает ЦЕЛУЮ осевшую вспышку ambient-болтовни
+разом и решает — по смыслу, как человек, догоняющий групповой чат, — что каждое сообщение
+заслуживает (слово, лайк или молчание). 🔴 Никакой скриптованности: промпт не просит «ответь на
+первое/самое салиентное», а просит понять, что именно ТРЕБУЕТ реакции. 🔴 Focal-развилка (прямое
+обращение) детерминирована и отделяется ДО этого шва (INV-1) — здесь всё ambient.
+
+1. **VO + порт (`room_reading.py`).** `BatchAmbientMessage` — одно атрибутированное ambient-сообщение
+   (`sender_id`/`sender_name`/`text`/`ts` + per-message floor/interest-хинты). `BatchRoomReadingContext`
+   — вход: вспышка в порядке прибытия + общий author-labelled тред (read-only) + mood-тон +
+   `others_present`. `BatchRoomReading` — итог: по ОДНОМУ `RoomReading` на сообщение В ТОМ ЖЕ ПОРЯДКЕ
+   + `room_mood` по всей вспышке + `reason` (логи). Порт `BatchRoomReader.read(batch_ctx) ->
+   BatchRoomReading` — инъектируемый, участник-агностичный (готов к репликам-Бобам).
+2. **Wire (`room_reading_wire.py`).** `build_batch_room_prompt` сворачивает атрибутированный поток в
+   пронумерованный Tier-1 промпт; `BATCH_ROOM_READ_SYSTEM_PROMPT` задаёт «прочитай ВЕСЬ поток и реши по
+   каждому». 🔴 В ОТЛИЧИЕ от `parse_room_reading`, `parse_batch_reading(raw, count)` ТОЛЕРАНТЕН: битый
+   или отсутствующий блок деградирует в безопасный молчаливый IGNORE ДЛЯ ТОГО сообщения, а целиком
+   нечитаемый ответ — в all-IGNORE нужной длины (Боб никогда не действует по угаданному пачечному read;
+   план всегда ровно `count` чтений). Блоки разделяются строкой `---`; per-блок парсинг переиспользует
+   `parse_room_reading`.
+3. **Чистое ядро (`room_verdict.py`).** `decide_batch(readings)` поднимает `decide_from_reading` над
+   всей пачкой: ТА ЖЕ детерминированная политика (порог `SALIENCE_THRESHOLD` сначала, затем
+   intent-маппинг) к каждому чтению в порядке прибытия. Семантика — в read, ПОЛИТИКА — чистая проекция;
+   пустая пачка → пустой план. Mutation-цель (как per-message путь один-в-один).
+4. **Tier-1 адаптер (`adapters/room_reader.py`).** `LlmBatchRoomReader` — тонкая оболочка над одним
+   `ROOM_READ`-вызовом (liveness > экономия): пустая вспышка коротит без вызова модели; ответ парсится
+   толерантно (garbage → безопасный all-IGNORE), а ошибка модели/роутера ПРОБРАСЫВАЕТСЯ для
+   application-фолбэка (бид .2).
+
+**🔴 Флаг `presence.stream_read` (bare bool, по умолчанию OFF).** Собирается в
+`runtime/wiring/stream_read.py` (`build_batch_room_reader` — ЕДИНСТВЕННОЕ место чтения флага):
+OFF → `None` (hot-path байт-идентичен, per-message top-k), ON → `LlmBatchRoomReader`. Врезка в
+`_handle_batch`, что ПОТРЕБЛЯЕТ компонент, — отдельный бид .2; здесь компонент лишь появляется за
+флагом.
 
 ### Use-case и адаптеры
 

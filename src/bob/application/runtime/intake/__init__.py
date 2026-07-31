@@ -29,11 +29,17 @@ from __future__ import annotations
 from bob.application.runtime.intake.dispatcher import ChatDispatcher
 from bob.application.runtime.intake.focus import make_focus_predicate
 from bob.application.runtime.intake.inbox import ChatInbox
+from bob.application.runtime.intake.room_stream_reader import (
+    AmbientBatchReader,
+    RoomStreamReader,
+)
 from bob.application.runtime.intake.scope import TurnScope, new_turn_scope
 
 __all__ = [
+    "AmbientBatchReader",
     "ChatDispatcher",
     "ChatInbox",
+    "RoomStreamReader",
     "TurnScope",
     "make_focus_predicate",
     "new_turn_scope",

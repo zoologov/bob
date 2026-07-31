@@ -30,6 +30,7 @@ that lives behind the injected :class:`LLMProvider` adapters.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from dataclasses import dataclass, field
 from enum import Enum
@@ -144,10 +145,24 @@ class LLMRequest:
 class LLMRouter:
     """Route a task to a tier, redacting private context before Tier 1, with fallback."""
 
-    def __init__(self, *, providers: Mapping[int, LLMProvider]) -> None:
+    def __init__(
+        self,
+        *,
+        providers: Mapping[int, LLMProvider],
+        tier1_max_concurrency: int | None = None,
+    ) -> None:
         if _TIER_LOCAL not in providers:
             raise ValueError("LLMRouter requires a Tier 0 (local) provider")
         self._providers = dict(providers)
+        # 🔴 Tier-1 rate-cap (BOB-072): a ceiling on CONCURRENT Tier-1 (Qwen API) completions —
+        # invisible insurance against 429/degradation when bursts across chats (incl. batch
+        # ROOM_READ) hit Tier 1 at once. It only SERIALIZES calls; it never touches the routing
+        # decision or the payload. ``None``/``<= 0`` (the default) → no gate → byte-identical.
+        self._tier1_gate = (
+            asyncio.Semaphore(tier1_max_concurrency)
+            if tier1_max_concurrency is not None and tier1_max_concurrency > 0
+            else None
+        )
 
     async def run(self, request: LLMRequest) -> str:
         """Complete ``request`` on its preferred tier, falling back to Tier 0 on error.
@@ -156,11 +171,15 @@ class LLMRouter:
         ``shareable_context`` (private context is stripped); a local-only Tier 0
         request carries both. That same built payload is what a Tier 1 -> Tier 0
         fallback sends — the private-context redaction is preserved end to end.
+
+        A Tier-1 attempt is throttled by the optional concurrency gate (BOB-072); the
+        Tier-0 fallback runs OUTSIDE the gate so a failing Tier-1 call never holds a
+        Tier-1 slot while its local fallback completes.
         """
         preferred = self._destination_tier(request)
         messages = self._build_messages(request)
         try:
-            return await self._complete(preferred, messages)
+            return await self._complete_gated(preferred, messages)
         except Exception:
             if preferred == _TIER_LOCAL:
                 logger.exception("Tier 0 completion failed with no fallback")
@@ -170,6 +189,17 @@ class LLMRouter:
                 request.task_type.value,
             )
         return await self._complete(_TIER_LOCAL, messages)
+
+    async def _complete_gated(self, tier: int, messages: Sequence[LLMMessage]) -> str:
+        """Complete on ``tier``, holding the Tier-1 concurrency gate when it applies.
+
+        Only a Tier-1 attempt with a configured gate is throttled; every other call (Tier 0,
+        or Tier 1 with no cap) runs ungated — byte-identical to the pre-cap path.
+        """
+        if tier != _TIER_API or self._tier1_gate is None:
+            return await self._complete(tier, messages)
+        async with self._tier1_gate:
+            return await self._complete(tier, messages)
 
     def _destination_tier(self, request: LLMRequest) -> int:
         """The tier to attempt first: the caller's override if wired, else the task default.

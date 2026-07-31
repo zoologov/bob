@@ -48,7 +48,11 @@ from bob.application.runtime import (
     BobMessageReaction,
     MessageReceived,
 )
-from bob.application.runtime.intake import ChatDispatcher, make_focus_predicate
+from bob.application.runtime.intake import (
+    ChatDispatcher,
+    RoomStreamReader,
+    make_focus_predicate,
+)
 from bob.application.usecases.handle_message import (
     EngagementState,
     HandleMessage,
@@ -162,6 +166,7 @@ from bob.runtime.wiring import (
     _fascination_initial_intensity,
     _phantom_evolution_params,
     _resolve_seed,
+    build_batch_room_reader,
     build_catch_up_reentry,
     build_disclosure_guard,
     build_endorsement_seeder,
@@ -334,7 +339,13 @@ def build_application(
     del clock  # use resolved_clock everywhere below (narrowed, never None)
     event_bus = AsyncEventBus()
     tier_providers = providers if providers is not None else build_tier_providers(merged)
-    router = LLMRouter(providers=tier_providers)
+    # Tier-1 rate-cap (BOB-072): a ceiling on concurrent Tier-1 (Qwen API) calls, invisible
+    # insurance against 429/degradation under bursts across chats. ``llm.tier1_max_concurrency``
+    # absent / 0 → no cap → byte-identical; a positive value serializes Tier-1 to that ceiling.
+    router = LLMRouter(
+        providers=tier_providers,
+        tier1_max_concurrency=_int(_section(merged, "llm"), "tier1_max_concurrency", 0),
+    )
 
     # Hybrid memory (BOB-011): the embedder + optional reranker are injectable
     # seams; when omitted they are built from config. Building them never touches
@@ -854,14 +865,34 @@ def build_application(
     # ONE addressed reply + a budget-capped like (``max_reactions``, default 1) instead of N
     # replies; a focus message is always answered (INV-1). Ships inert until the epic completes.
     series_budget = _section(_section(merged, "presence"), "series_budget")
+    # Holistic stream-read (BOB-072): behind ``presence.stream_read`` (OFF by default → None →
+    # byte-identical), a settled ambient burst is read ONCE (semantic per-message choice) instead
+    # of the scripted top-k, and each message persists + floor-advances (INV-S2). Built from the
+    # Tier-1 batch reader over the shared router; Bob's live tone feeds the read by value. The
+    # coalescing debounce window is enabled ONLY with the flag (OFF → window 0 → byte-identical).
+    batch_room_reader = build_batch_room_reader(merged, router=router)
+    # 🔴 The mood tone is read through a late-binding lambda, NOT a bound method: ``personality``
+    # is a mutable holder whose ``soul`` snapshot is REPLACED each turn (mood evolves), so the
+    # read must resolve the CURRENT soul at read time — a bound ``personality.soul.mood.tone``
+    # would freeze the boot soul.
+    ambient_batch = (
+        RoomStreamReader(
+            reader=batch_room_reader,
+            mood_tone=lambda: personality.soul.mood.tone(),  # noqa: PLW0108 — late binding of the evolving soul snapshot
+        )
+        if batch_room_reader is not None
+        else None
+    )
+    intake_debounce_ms = (
+        _int(_section(merged, "dialogue"), "intake_debounce_ms", 0)
+        if ambient_batch is not None
+        else 0
+    )
     intake_dispatcher = ChatDispatcher(
         handle=handle_message.handle,
         base_seed=_resolve_seed(merged, proactivity_seed),
         is_focused=make_focus_predicate(multibot.bob_user_id),
-        quiet_window=float(
-            _int(_section(merged, "dialogue"), "intake_debounce_ms", 0)
-        )
-        / _MILLIS_PER_SECOND,
+        quiet_window=float(intake_debounce_ms) / _MILLIS_PER_SECOND,
         series_budget_enabled=_flag(series_budget, "enabled"),
         series_max_reactions=_int(series_budget, "max_reactions", 1),
         # Staleness врезка (BOB-066 Срез W.3): when enabled, the worker binds each turn's
@@ -876,6 +907,16 @@ def build_application(
         catch_up_reentry=build_catch_up_reentry(
             merged, clock=resolved_clock, bob_user_id_source=multibot.bob_user_id
         ),
+        # Holistic stream-read (BOB-072): the ambient-batch reader (built above behind
+        # ``presence.stream_read``). None (the default) → the per-message top-k path →
+        # byte-identical; wired → a settled burst is split focal/ambient and the ambient part
+        # read at once, each message applied by its per-message reading (persist + floor for all).
+        ambient_batch=ambient_batch,
+        # Queue-level stale-coalesce (BOB-072): staying-in-the-present at the QUEUE level — a line
+        # the same identified sender reformulated in the next slot is dropped from the read (still
+        # persisted, INV-S2), so Bob answers the latest form (INV-S3). Rides the SAME stream-read
+        # flag: on only when the batch reader is wired → byte-identical when off.
+        stale_coalesce_enabled=ambient_batch is not None,
     )
     event_bus.subscribe(MESSAGE_RECEIVED, _as_dispatch_handler(intake_dispatcher))
 

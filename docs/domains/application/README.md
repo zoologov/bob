@@ -25,7 +25,10 @@ LLM-роутера. Зависит от домена через порты-пр�
 - **runtime/intake/** — concurrency-развязка между поллером и Бобом (BOB-066 Срез 2.1):
   `ChatDispatcher` (быстрый неблокирующий `submit` + по воркеру на `chat_id`),
   `ChatInbox` (per-chat буфер + debounce, фокус минует окно), `TurnScope` (per-turn
-  rng-изоляция) и `make_focus_predicate`. Подробнее — раздел «Intake-развязка» ниже.
+  rng-изоляция) и `make_focus_predicate`. `RoomStreamReader` + `AmbientBatchReader`
+  (`runtime/intake/room_stream_reader.py`, BOB-072) — холистическое чтение осевшей
+  ambient-пачки одним batch-read'ом за флагом `presence.stream_read`. Подробнее — раздел
+  «Intake-развязка» ниже.
 - **authz/authorizer.py** — `Authorizer`, чистая политика доступа
   owner/allowlist/chat-scope поверх порта `AllowlistStore`.
 - **capabilities/registry.py** — `CapabilityRegistry`, индекс навыков GUPPI
@@ -38,7 +41,9 @@ LLM-роутера. Зависит от домена через порты-пр�
   навык `search_memory`: Боб сам ищет по всему архиву через гибрид-recall (BOB-011).
 - **router/llm_router.py** — `LLMRouter`, классификация задачи, селективная
   редакция приватности и fallback тиров; `LLMRequest` (с двумя каналами
-  контекста — `shareable_context` и `private_context`), `TaskType`.
+  контекста — `shareable_context` и `private_context`), `TaskType`. Опциональный
+  Tier-1 rate-cap `tier1_max_concurrency` (BOB-072): семафор на число ОДНОВРЕМЕННЫХ
+  Tier-1-вызовов; `None`/`<= 0` (по умолчанию) → без гейта, байт-в-байт.
 - **reliability.py** — `call_with_retry`, ограниченный async-ретрай ЛЮБОГО сбоя
   essential-шага (с инъектируемым sleep) для принципа «полный Боб или честный
   GUPPI-нотис» (BOB-049 .3). Отличается от `runtime/retry.retry_with_backoff`
@@ -117,7 +122,34 @@ callable-фабриками корутин, так что рантайм про�
 `_as_dispatch_handler(intake_dispatcher)`; `Application.intake_dispatcher` дренируется в
 `Application.shutdown` ПЕРЕД закрытием соединения (`runtime.stop()` → `aclose()` →
 `connection.close()`), поэтому корректная остановка досдаёт буферизованные ответы. Окно —
-`dialogue.intake_debounce_ms` (по умолчанию 0, latency-free).
+`dialogue.intake_debounce_ms` (по умолчанию 0, latency-free). При `presence.stream_read`
+(BOB-072) окно активируется (коалесинг вспышки в один холистический read); фокус минует окно
+всегда (INV-1).
+
+#### Холистический stream-read вспышки (BOB-072, за `presence.stream_read`, OFF)
+
+Вместо скриптованного top-k (один Tier-1 read на КАЖДОЕ ambient-сообщение) осевшую вспышку
+воркер читает по-человечески — целиком и разом. `ChatDispatcher._handle_stream_read`
+SPLIT'ит батч на focal и ambient:
+
+- **focal** (прямое обращение, `is_focused`) отвечается детерминированно как сейчас, НАД и
+  ВНЕ batch-read (никакая batch-читка не штампуется → срабатывает focal-короткое замыкание
+  гейта), INV-1;
+- весь **ambient**-остаток идёт в ОДИН `RoomStreamReader.read` (порт `AmbientBatchReader`,
+  `room_stream_reader.py`): вспышка сворачивается в `BatchRoomReadingContext`, инъектированный
+  `BatchRoomReader` зовётся один раз и возвращает по одному `RoomReading` на сообщение В
+  ПОРЯДКЕ прибытия. Каждое читаемое per-message `ambient_reading` едет на `TurnScope`, и
+  `TurnGate` применяет предвычисленный вердикт (минуя per-message read) — reply/react/persist
+  + floor для ВСЕХ ambient-сообщений, включая молчаливый IGNORE (INV-S2, тред цел).
+
+🔴 Читалка НИКОГДА не бросает: сбой деградирует в безопасный all-IGNORE-план нужной длины
+(`SILENT_IGNORE_READING`), поэтому воркер всё равно персистит каждое ambient-сообщение —
+Боб не действует по угаданному read'у.
+
+Перед чтением `_coalesce_mask` прореживает ambient очередным стейл-коалесингом (`presence`,
+`coalesce_stale`, за тем же флагом + `stale_coalesce_enabled`): переформулировку того же
+опознанного отправителя в следующем слоте выкидывает из read'а (штампуя `SILENT_IGNORE_READING`),
+но всё равно персистит (INV-S2/INV-S3). OFF → каждое ambient-сообщение читается, байт-в-байт.
 
 ### Роутер LLM и селективная редакция приватности
 
@@ -127,6 +159,14 @@ Tier 1 API). Для каждого запроса он: **классифицир
 `INNER_MONOLOGUE`, `REFLECT`, `EXTRACT_FACTS` → Tier 0); **селективно
 редактирует** перед любым вызовом Tier 1; **откатывается** Tier 1 → Tier 0 при
 сбое предпочтительного тира.
+
+🔴 **Tier-1 rate-cap (BOB-072).** Опциональный `tier1_max_concurrency` вешает потолок
+на число ОДНОВРЕМЕННЫХ Tier-1-вызовов (`asyncio.Semaphore`) — незаметная страховка от
+429/деградации, когда вспышки по чатам (включая batch `ROOM_READ`) бьют в Tier 1 разом.
+Он только СЕРИАЛИЗУЕТ вызовы: не трогает решение о маршрутизации и payload. Fallback
+Tier 1 → Tier 0 выполняется ВНЕ гейта, поэтому упавший Tier-1-вызов не держит слот, пока
+доигрывает локальный откат. `None`/`<= 0` (по умолчанию) → гейта нет → байт-в-байт.
+Конфиг — `llm.tier1_max_concurrency`.
 
 Селективная редакция (Вариант 2) делит контекст запроса на два канала по
 политике назначения. `shareable_context` — история диалога, вспомненная память,

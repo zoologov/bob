@@ -47,6 +47,10 @@ if TYPE_CHECKING:
     from bob.social.interlocutor import Interlocutor
 
 __all__ = [
+    "BatchAmbientMessage",
+    "BatchRoomReader",
+    "BatchRoomReading",
+    "BatchRoomReadingContext",
     "ReflectiveIntent",
     "RoomMood",
     "RoomReader",
@@ -190,4 +194,83 @@ class RoomReader(Protocol):
 
     async def read(self, ctx: RoomReadingContext) -> RoomReading:
         """Weigh ``ctx`` and return the chosen :class:`RoomReading`."""
+        ...
+
+
+# --- Batch «read the stream» seam (BOB-072) --------------------------------------------
+#
+# The holistic stream-read: instead of one Tier-1 read PER ambient message (scripted top-k),
+# Bob reads a WHOLE settled burst of ambient chatter at once and decides — by meaning, like a
+# person catching up on a group — what each message deserves (a word, a like, or silence). The
+# value types below carry the batch INPUT (an attributed stream + shared context) and the batch
+# OUTCOME (one per-message :class:`RoomReading`). They reuse the single-read value vocabulary
+# one-for-one; the pure projection to verdicts lives in
+# :func:`~bob.conversation.room_verdict.decide_batch`. 🔴 The focal (directed-at-Bob) split is
+# deterministic and happens BEFORE this seam (INV-1) — every message here is ambient.
+
+
+@dataclass(frozen=True, slots=True)
+class BatchAmbientMessage:
+    """One attributed ambient message in a stream-read batch (BOB-072).
+
+    Carries the attribution a person reads a group by — WHO said it (``sender_id`` +
+    ``sender_name``), WHAT (``text``), and WHEN (``ts``, a monotonic arrival stamp used only
+    for ordering) — plus the per-message floor/interest HINTS the read weighs (``floor_holder``
+    — who holds the live floor, ``floor_participant`` — whether this sender is in Bob's live
+    exchange, ``interest`` — how interesting the topic is to Bob, by value). Participant-agnostic
+    (a replica-Bob is just another author). Every field is a signal, none forces the outcome.
+    """
+
+    sender_id: int
+    sender_name: str
+    text: str
+    ts: float
+    floor_holder: str
+    floor_participant: bool
+    interest: float
+
+
+@dataclass(frozen=True, slots=True)
+class BatchRoomReadingContext:
+    """The immutable input to one holistic stream-read (BOB-072).
+
+    ``messages`` is the attributed ambient burst IN ARRIVAL ORDER; ``recent_thread`` is the
+    SHARED author-labelled thread the burst lands into (read-only context, BOB-058);
+    ``mood_tone`` is Bob's current tone descriptor; ``others_present`` says the room is
+    multi-party. The read weighs the whole stream at once — none of these forces a verdict.
+    """
+
+    messages: tuple[BatchAmbientMessage, ...]
+    recent_thread: str
+    mood_tone: str
+    others_present: bool
+
+
+@dataclass(frozen=True, slots=True)
+class BatchRoomReading:
+    """The immutable outcome of one holistic stream-read (BOB-072).
+
+    ``readings`` holds ONE :class:`RoomReading` per input message, IN THE SAME ORDER — each is
+    the per-message decision (reply / react / ignore, salience, emoji, addressee, wants_web).
+    ``room_mood`` is the atmosphere Bob read across the whole burst; ``reason`` is a short "why"
+    for logs (internal, never surfaced). The pure
+    :func:`~bob.conversation.room_verdict.decide_batch` projects ``readings`` to verdicts.
+    """
+
+    readings: tuple[RoomReading, ...]
+    room_mood: RoomMood
+    reason: str
+
+
+@runtime_checkable
+class BatchRoomReader(Protocol):
+    """The seam: read a whole ambient burst, by meaning, into a :class:`BatchRoomReading`.
+
+    Injectable so the read is deterministic in tests (a fake returns a scripted batch) and
+    swappable in tier (a rich Tier-1 realisation lives in infrastructure) without touching any
+    consumer — mirroring :class:`RoomReader` for the batch path.
+    """
+
+    async def read(self, batch_ctx: BatchRoomReadingContext) -> BatchRoomReading:
+        """Weigh the whole ``batch_ctx`` stream and return the per-message reading."""
         ...
