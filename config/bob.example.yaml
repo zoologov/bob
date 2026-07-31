@@ -33,6 +33,12 @@ llm:
   # enable_thinking=false). Cheaper + faster, and avoids the empty-content case
   # where a reasoning model spends its whole budget on reasoning_content.
   disable_thinking: true
+  # Tier-1 rate-cap (BOB-072). A ceiling on CONCURRENT Tier-1 (Qwen API) completions —
+  # invisible insurance against 429/degradation when bursts across chats (incl. the
+  # holistic batch ROOM_READ behind presence.stream_read) hit Tier 1 at once. It only
+  # SERIALIZES calls; it never touches the routing decision or the payload, and the
+  # Tier 1 → Tier 0 fallback runs OUTSIDE the cap. Absent / 0 → no cap → byte-identical.
+  # tier1_max_concurrency: 4
 
 embeddings:
   # Local semantic-memory embeddings (BOB-011). Runs against a LOCAL Ollama server

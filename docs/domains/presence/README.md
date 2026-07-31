@@ -47,7 +47,10 @@ domain + adapters **внутри** одного контекста, поэтом
 - `presence.staleness.enabled` — врезка переоценки черновика перед отправкой
   (`StalenessReassessor`);
 - `presence.catchup.enabled` — догоняющий проход в per-chat воркере (`CatchUpReentry`);
-- `presence.series_budget.enabled` — batch top-k бюджет действий (`plan_series_actions`).
+- `presence.series_budget.enabled` — batch top-k бюджет действий (`plan_series_actions`);
+- `presence.stream_read` — 🔴 голый bool (НЕ `.enabled`): холистический stream-read
+  ambient-пачки (BOB-072) вместо скриптованного top-k; включает окно коалесинга
+  `dialogue.intake_debounce_ms` и очередный `coalesce_stale`.
 
 Полный список флагов эпика (включая `presence.room_mood` / `presence.endorsement` /
 `presence.tact` из соседних доменов) с точными путями, формами и knobs — в разделе
@@ -72,7 +75,10 @@ src/bob/presence/
   rhythm_config.py        RhythmConfig — тюнинг-пороги всех трёх политик
   staleness.py            StalenessGate + чистое ядро decide_staleness — переоценка
                           черновика реплики под сместившимся контекстом
-                          (SEND / REWRITE / DROP_TO_LIKE / MERGE)
+                          (SEND / REWRITE / DROP_TO_LIKE / MERGE);
+                          + QueuedAmbient VO + coalesce_stale — очередный
+                          стейл-коалесинг ambient-пачки ДО холистического
+                          stream-read (BOB-072, за presence.stream_read)
   staleness_judgment.py   промпт + парсер судьи устаревания (STALENESS_JUDGE_SYSTEM_PROMPT,
                           build_staleness_user_prompt, parse_staleness_reading; fail-safe)
   catchup.py              score / rank / select_catchup + is_reentry + фасад BacklogScorer —
@@ -186,6 +192,31 @@ user-id Боба и кому он пишет ответ, поэтому доме
 `new_direct_question` ПЕРВЫМ (до `answered_by_other`/`topic_closed`), поэтому свежий
 прямой вопрос → `MERGE`, а не `DROP_TO_LIKE` — никогда не сбрасывается до реакции (дух
 INV-1 «никогда не терять реплику»). Порядок предпочтения обновлён (см. ниже).
+
+### Очередный стейл-коалесинг ambient-пачки (BOB-072, за `presence.stream_read`, OFF)
+
+Перед холистическим stream-read'ом (`conversation`, чтение всей осевшей вспышки одним
+Tier-1 read) осевшую ambient-пачку прореживает второе чистое ядро — `coalesce_stale`
+(`staleness.py`). Это «оставайся в настоящем» (INV-S3) на уровне ОЧЕРЕДИ, до чтения:
+сообщение считается перекрытым, ТОЛЬКО если ТОТ ЖЕ опознанный отправитель говорит снова
+в самом следующем слоте вспышки (переспрос/переформулировка, которую поток уже обогнал),
+поэтому Боб отвечает на последнюю форму, а не на устаревшую. Правило сознательно
+консервативно (liveness > экономия):
+
+- **`QueuedAmbient`** — одно буферизованное ambient-сообщение в примитивах-значениях
+  (`sender_id`, `is_focal`), переносится ПО ЗНАЧЕНИЮ, чтобы домен presence не тянул
+  импорты application/транспорта.
+- **`coalesce_stale(batch) -> tuple[bool, ...]`** — на каждое сообщение решает KEEP
+  (`True`) или «перекрыто» (`False`), детерминированно и с mutation-пиннингом.
+- 🔴 **Focal никогда не перекрывается** (`is_focal` → всегда KEEP) — примиряет отсев с
+  INV-1: прямое обращение — гарантия. Ambient-пачка приходит сюда уже без focal (он
+  отделён выше по потоку); флаг — оборонительный рельс, чтобы ядро не уронило focal.
+- **Неопознанный** отправитель (`sender_id is None`) не коалесится (две анонимные строки
+  не доказуемо «тот же отправитель»); сообщение с **другим отправителем между** повторами
+  того же — KEEP (тема могла разветвиться).
+
+Перекрытое сообщение выпадает ТОЛЬКО из чтения — вызывающая сторона всё равно персистит
+его и двигает floor (INV-S2): тред цел, Боб просто не отвечает на устаревшую форму.
 
 ### Догоняющий проход по бэклогу (Пласт 3 §Догоняющий)
 
