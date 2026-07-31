@@ -33,9 +33,11 @@ from typing import TYPE_CHECKING
 
 from bob.application.runtime.catch_up_reentry import CatchUpSelection
 from bob.application.runtime.intake.inbox import ChatInbox
+from bob.application.runtime.intake.room_stream_reader import SILENT_IGNORE_READING
 from bob.application.runtime.intake.scope import new_turn_scope
 from bob.conversation.addressivity import ResponseOutcome
 from bob.presence.series_salience import SeriesAction, plan_series_actions
+from bob.presence.staleness import QueuedAmbient, coalesce_stale
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Sequence
@@ -81,6 +83,7 @@ class ChatDispatcher:
         staleness_enabled: bool = False,
         catch_up_reentry: CatchUpReentry | None = None,
         ambient_batch: AmbientBatchReader | None = None,
+        stale_coalesce_enabled: bool = False,
     ) -> None:
         self._handle = handle
         self._base_seed = base_seed
@@ -107,6 +110,12 @@ class ChatDispatcher:
         # WHOLE ambient part read at ONCE and each message applied by its per-message reading.
         # None (the default) → the current per-message top-k path → byte-identical.
         self._ambient_batch = ambient_batch
+        # 🔴 BOB-072 (queue-level stale-coalesce): when wired (with the stream-read flag), a
+        # settled ambient burst is trimmed BEFORE the read — a message the SAME identified sender
+        # reformulated in the very next slot is dropped from the read (still persisted, INV-S2) so
+        # Bob stays in the present (INV-S3). Off (the default) → every ambient message is read →
+        # byte-identical to the plain stream-read path.
+        self._stale_coalesce_enabled = stale_coalesce_enabled
         self._inboxes: dict[int, ChatInbox] = {}
         self._workers: dict[int, asyncio.Task[None]] = {}
         self._closing = False
@@ -205,6 +214,11 @@ class ChatDispatcher:
         ambient message is handled with its per-message reading riding the scope — so the gate
         persists + floor-advances EVERY ambient message including a silent IGNORE (INV-S2). The
         read never raises (a failure degrades to a safe all-IGNORE plan of the right length).
+
+        🔴 Queue-level stale-coalesce (BOB-072): when enabled, a message the stream already
+        overtook (the same identified sender reformulated in the next slot) is dropped from the
+        read and stamped a silent IGNORE — still persisted (INV-S2), just never replied to
+        (INV-S3). Off → every ambient message is read (byte-identical).
         """
         assert self._ambient_batch is not None  # guarded by the caller
         focal = [message for message in batch if self._is_focused(message)]
@@ -213,8 +227,11 @@ class ChatDispatcher:
             await self._handle_one(chat_id, message, ResponseOutcome.ENGAGE, inbox=inbox)
         if not ambient:
             return
-        readings = await self._ambient_batch.read(ambient)
-        for message, reading in zip(ambient, readings, strict=True):
+        keep_mask = self._coalesce_mask(ambient)
+        kept = [message for message, keep in zip(ambient, keep_mask, strict=True) if keep]
+        fresh = iter(await self._ambient_batch.read(kept))
+        for message, keep in zip(ambient, keep_mask, strict=True):
+            reading = next(fresh) if keep else SILENT_IGNORE_READING
             await self._handle_one(
                 chat_id,
                 message,
@@ -222,6 +239,21 @@ class ChatDispatcher:
                 inbox=inbox,
                 ambient_reading=reading,
             )
+
+    def _coalesce_mask(
+        self, ambient: Sequence[MessageReceived]
+    ) -> tuple[bool, ...]:
+        """Per ambient message, whether to KEEP it for the read (superseded → dropped).
+
+        Off (the default) → every message is kept (``True``) so the read sees the whole burst
+        (byte-identical). On → the pure :func:`~bob.presence.staleness.coalesce_stale` drops a
+        line the same identified sender reformulated in the next slot (INV-S3); focal never
+        enters here (split off above), and a dropped message is still persisted (INV-S2).
+        """
+        if not self._stale_coalesce_enabled:
+            return tuple(True for _ in ambient)
+        queued = [QueuedAmbient(sender_id=message.sender_id) for message in ambient]
+        return coalesce_stale(queued)
 
     def _reentry_selection(
         self, chat_id: int, batch: Sequence[MessageReceived]

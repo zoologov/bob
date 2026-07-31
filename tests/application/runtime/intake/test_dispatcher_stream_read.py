@@ -33,13 +33,15 @@ if TYPE_CHECKING:
     from bob.application.runtime.intake.scope import TurnScope
 
 
-def _msg(message_id: int, *, mentions_bob: bool = False) -> MessageReceived:
+def _msg(
+    message_id: int, *, mentions_bob: bool = False, sender_id: int | None = None
+) -> MessageReceived:
     return MessageReceived(
         update_id=message_id,
         chat_id=7,
         message_id=message_id,
         text=f"m{message_id}",
-        sender_id=message_id,
+        sender_id=message_id if sender_id is None else sender_id,
         sender_name=f"u{message_id}",
         mentions_bob=mentions_bob,
     )
@@ -78,6 +80,7 @@ async def _drive(
     *,
     ambient_reader: _FakeAmbientReader | None,
     messages: list[MessageReceived],
+    stale_coalesce: bool = False,
 ) -> list[tuple[int, RoomReading | None]]:
     """Return each handled (message_id, scope.ambient_reading) in handling order."""
     seen: list[tuple[int, RoomReading | None]] = []
@@ -90,6 +93,7 @@ async def _drive(
         base_seed=1,
         is_focused=_focus_on_mention,
         ambient_batch=ambient_reader,
+        stale_coalesce_enabled=stale_coalesce,
     )
     for message in messages:
         dispatcher.submit(message)
@@ -152,6 +156,47 @@ async def test_on_with_an_all_focal_burst_never_reads() -> None:
 
     assert reader.bursts == []  # no ambient → no read
     assert all(reading is None for _, reading in seen)
+
+
+@pytest.mark.asyncio
+async def test_stale_coalesce_drops_superseded_from_read_but_still_persists_it() -> None:
+    # 🔴 INV-S3 + INV-S2: the same sender reformulated right after (m1, m2 both from sender 9),
+    # so only the LATEST (m2) reaches the read; the superseded m1 carries a silent-IGNORE
+    # reading but is STILL handled (persist + floor for all).
+    reader = _FakeAmbientReader()
+    seen = await _drive(
+        ambient_reader=reader,
+        messages=[_msg(1, sender_id=9), _msg(2, sender_id=9), _msg(3, sender_id=4)],
+        stale_coalesce=True,
+    )
+
+    # The overtaken m1 never went into the read; m2 (latest from 9) and m3 did.
+    assert reader.bursts == [[2, 3]]
+    by_id = dict(seen)
+    # Every message is still handled — persist/floor for all (pending reaches zero).
+    assert sorted(message_id for message_id, _ in seen) == [1, 2, 3]
+    # The superseded m1 carries a silent IGNORE reading (Bob does not reply to the stale line).
+    assert by_id[1] is not None
+    assert by_id[1].intent is ReflectiveIntent.IGNORE
+    # m2/m3 carry their live per-message readings from the batch.
+    assert by_id[2] is not None
+    assert by_id[2].intent is ReflectiveIntent.REPLY
+    assert by_id[3] is not None
+    assert by_id[3].intent is ReflectiveIntent.REPLY
+
+
+@pytest.mark.asyncio
+async def test_stale_coalesce_off_keeps_every_ambient_in_the_read() -> None:
+    # 🔴 Regression pin: without the flag the врезка is byte-identical — no message is dropped.
+    reader = _FakeAmbientReader()
+    seen = await _drive(
+        ambient_reader=reader,
+        messages=[_msg(1, sender_id=9), _msg(2, sender_id=9)],
+        stale_coalesce=False,
+    )
+
+    assert reader.bursts == [[1, 2]]
+    assert all(reading is not None for _, reading in seen)
 
 
 @pytest.mark.asyncio

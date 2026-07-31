@@ -339,7 +339,13 @@ def build_application(
     del clock  # use resolved_clock everywhere below (narrowed, never None)
     event_bus = AsyncEventBus()
     tier_providers = providers if providers is not None else build_tier_providers(merged)
-    router = LLMRouter(providers=tier_providers)
+    # Tier-1 rate-cap (BOB-072): a ceiling on concurrent Tier-1 (Qwen API) calls, invisible
+    # insurance against 429/degradation under bursts across chats. ``llm.tier1_max_concurrency``
+    # absent / 0 → no cap → byte-identical; a positive value serializes Tier-1 to that ceiling.
+    router = LLMRouter(
+        providers=tier_providers,
+        tier1_max_concurrency=_int(_section(merged, "llm"), "tier1_max_concurrency", 0),
+    )
 
     # Hybrid memory (BOB-011): the embedder + optional reranker are injectable
     # seams; when omitted they are built from config. Building them never touches
@@ -906,6 +912,11 @@ def build_application(
         # byte-identical; wired → a settled burst is split focal/ambient and the ambient part
         # read at once, each message applied by its per-message reading (persist + floor for all).
         ambient_batch=ambient_batch,
+        # Queue-level stale-coalesce (BOB-072): staying-in-the-present at the QUEUE level — a line
+        # the same identified sender reformulated in the next slot is dropped from the read (still
+        # persisted, INV-S2), so Bob answers the latest form (INV-S3). Rides the SAME stream-read
+        # flag: on only when the batch reader is wired → byte-identical when off.
+        stale_coalesce_enabled=ambient_batch is not None,
     )
     event_bus.subscribe(MESSAGE_RECEIVED, _as_dispatch_handler(intake_dispatcher))
 

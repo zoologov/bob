@@ -40,16 +40,69 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import StrEnum
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 __all__ = [
     "ArrivedMessage",
+    "QueuedAmbient",
     "StalenessContext",
     "StalenessGate",
     "StalenessOutcome",
     "StalenessReading",
+    "coalesce_stale",
     "decide_staleness",
     "nothing_arrived",
 ]
+
+
+@dataclass(frozen=True, slots=True)
+class QueuedAmbient:
+    """One buffered ambient message, as value primitives, for queue-level coalescing.
+
+    Carried BY VALUE (not the runtime ``MessageReceived``) so the presence domain stays free
+    of application/transport imports. ``sender_id`` attributes the line (``None`` when the
+    sender is not identifiable); ``is_focal`` marks a direct address to Bob — never dropped
+    (INV-1). Ambient bursts reach :func:`coalesce_stale` with ``is_focal`` False (the focal
+    part is split off upstream); the flag is a defensive rail so the core never drops a focal.
+    """
+
+    sender_id: int | None
+    is_focal: bool = False
+
+
+def coalesce_stale(batch: Sequence[QueuedAmbient]) -> tuple[bool, ...]:
+    """Per ambient message, whether to KEEP it for the read (``True``) or treat it as
+    superseded (``False``) — pure, deterministic, mutation-pinned.
+
+    Staying-in-the-present (INV-S3) at the QUEUE level, before the holistic stream-read: a
+    message is superseded ONLY when the SAME identified sender speaks again in the very next
+    slot of the burst — a re-ask / reformulation the stream has already overtaken, so Bob
+    answers the latest form, not the stale one. The rule is deliberately conservative
+    (liveness > economy):
+
+    * 🔴 **Focal is never superseded** (``is_focal`` → always kept), reconciling the drop with
+      INV-1 — a direct address is a guarantee.
+    * An **unidentified** sender (``sender_id`` is ``None``) is never coalesced — two anonymous
+      lines are not provably the "same sender".
+    * A message with **another sender interposed** before the same sender speaks again is KEPT
+      (the topic may have branched — do not cut live context).
+
+    A superseded message is only dropped from the READ; the caller still persists and
+    floor-advances it (INV-S2) — the thread stays intact, Bob just does not reply to it.
+    """
+    keep: list[bool] = []
+    last = len(batch) - 1
+    for index, message in enumerate(batch):
+        if message.is_focal or message.sender_id is None or index == last:
+            keep.append(True)
+            continue
+        nxt = batch[index + 1]
+        superseded = not nxt.is_focal and nxt.sender_id == message.sender_id
+        keep.append(not superseded)
+    return tuple(keep)
 
 
 class StalenessOutcome(StrEnum):

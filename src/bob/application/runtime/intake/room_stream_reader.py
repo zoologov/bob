@@ -46,7 +46,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["AmbientBatchReader", "RoomStreamReader"]
+__all__ = ["SILENT_IGNORE_READING", "AmbientBatchReader", "RoomStreamReader"]
 
 # Neutral per-message floor / interest hints for the batch read (BOB-072 .2): the batch context
 # carries WHO/WHAT/WHEN (attribution the read reasons by) with neutral floor/interest signals —
@@ -58,8 +58,9 @@ _NEUTRAL_FLOOR_PARTICIPANT = False
 _NEUTRAL_INTEREST = 0.5
 
 # The safe silent reading an ambient message degrades to when the whole batch read fails — the
-# intake worker still persists it (Seam B), never Bob acting on a guess.
-_SILENT_IGNORE = RoomReading(
+# intake worker still persists it (Seam B), never Bob acting on a guess. The SAME reading stamps a
+# queue-level superseded message (BOB-072 stale-coalesce): dropped from the read, still persisted.
+SILENT_IGNORE_READING = RoomReading(
     situation="",
     pairings=(),
     room_mood=RoomMood.NEUTRAL,
@@ -109,7 +110,7 @@ class RoomStreamReader:
             logger.exception("batch stream-read failed (ambient burst → all-IGNORE)")
             plan = []
         if len(plan) < count:
-            plan.extend(_SILENT_IGNORE for _ in range(count - len(plan)))
+            plan.extend(SILENT_IGNORE_READING for _ in range(count - len(plan)))
         return plan[:count]
 
     def _batch_context(self, messages: Sequence[MessageReceived]) -> BatchRoomReadingContext:
