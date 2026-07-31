@@ -202,7 +202,13 @@ def _rig(*, coding: bool) -> _Rig:
         id_factory=_ids(),
     )
     classifier = _FakeClassifier(coding=coding)
-    router = CodingIntentRouter(coder=assistant, classifier=classifier)
+    # These acceptance scenarios document the gated NL flow WITH auto-start enabled
+    # (nl_autostart=True); the plan gate / owner-only / never-main invariants they assert
+    # hold for that configuration. The safe DEFAULT (nl_autostart OFF → a fresh chat never
+    # starts a session) is covered directly in the router unit tests (BOB-076).
+    router = CodingIntentRouter(
+        coder=assistant, classifier=classifier, nl_autostart=True
+    )
     return _Rig(router, assistant, runner, worktree, store, pr_opener, notifier, classifier)
 
 

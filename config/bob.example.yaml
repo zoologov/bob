@@ -91,3 +91,16 @@ persistence:
 
 genesis:
   templates_dir: bob-soul      # personality "genome" templates (repo-root default)
+
+# «Bob runs Claude Code» (BOB-039) — the gated coding assistant. Owner-only, the
+# UNBYPASSABLE plan gate + kill-switch; Bob works in an ISOLATED git worktree and NEVER
+# merges / pushes main. Default off (the most powerful capability).
+coder:
+  enabled: false               # /code <task> | approve | stop | status (owner-only)
+  permission_mode: acceptEdits # claude mode on execution (inside the isolated worktree)
+  timeout: 600                 # per-run ceiling, seconds
+  # 🔴 SAFETY (BOB-076): auto-START a session from NATURAL chat (no explicit /code)?
+  # Default OFF. A cheap Tier-0 misclassification of a casual owner reply once launched
+  # a runaway coder from ordinary chat. OFF → the coder starts ONLY via an explicit
+  # /code; natural approve/stop of an already-live session stay ON regardless.
+  nl_autostart: false

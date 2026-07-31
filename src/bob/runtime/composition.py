@@ -780,7 +780,9 @@ def build_application(
         # intact; the router only chooses WHEN to call start/approve_plan/stop). Off
         # (coder.enabled false → coding_assistant None) → the NL path is inert and the
         # `/code` command in General is unaffected.
-        coding_router=_build_coding_router(router=router, coder=coding_assistant),
+        coding_router=_build_coding_router(
+            merged, router=router, coder=coding_assistant
+        ),
         # Privilege gating (BOB-052 .2): a privilege — running a tool, revealing Bob's
         # inner life, disclosing owner data — is OWNER-GATED even though memory is public
         # in the closed group (BOB-051). When a NON-authorized member asks for something

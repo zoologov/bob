@@ -52,7 +52,10 @@ if TYPE_CHECKING:
 
 
 def _build_coding_router(
-    *, router: LLMRouter, coder: CodingAssistant | None
+    config: Mapping[str, object],
+    *,
+    router: LLMRouter,
+    coder: CodingAssistant | None,
 ) -> CodingIntentRouter | None:
     """Assemble the natural-language coding-intent router, or ``None`` when off (BOB-041 .2).
 
@@ -61,11 +64,19 @@ def _build_coding_router(
     :class:`CodingAssistant` the ``/code`` command drives, so an owner message in Bob's
     topic can plan / approve / stop a session naturally. Off (coder disabled → ``coder``
     is ``None``) → ``None``, and HandleMessage's natural-language path stays inert.
+
+    🔴 SAFETY (BOB-076): auto-starting a FRESH session from natural chat is gated behind
+    ``coder.nl_autostart`` (default OFF). A cheap Tier-0 misclassification of a casual
+    owner reply once launched a runaway coder from ordinary chat, so by default the
+    router only drives approve/stop of an ALREADY-live session and a fresh session starts
+    ONLY via an explicit ``/code`` command. Flip the flag on to opt back into NL start.
     """
     if coder is None:
         return None
     return CodingIntentRouter(
-        coder=coder, classifier=ClassifyCodingIntent(router=router)
+        coder=coder,
+        classifier=ClassifyCodingIntent(router=router),
+        nl_autostart=_flag(_section(config, "coder"), "nl_autostart"),
     )
 
 
