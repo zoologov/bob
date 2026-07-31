@@ -107,7 +107,7 @@ GUPPI orchestration: AgentRuntime + AsyncEventBus, LLMRouter (tier routing + pri
 C4Container
     System_Boundary(bob_application_boundary, "bob-application") {
         Component(router, "Router", "", "LLMRouter — Tier 0/1 model routing with privacy redaction before any model call.")
-        Component(runtime_app, "Runtime App", "", "Application runtime — AgentRuntime, AsyncEventBus, events, and resilient heartbeat ticks (retry/backoff). Distinct from the `runtime` composition root.")
+        Component(runtime_app, "Runtime App", "", "Application runtime — AgentRuntime, AsyncEventBus, events, and resilient heartbeat ticks (retry/backoff). Distinct from the 'runtime' composition root.")
         Component(usecases, "Usecases", "", "Use-cases — HandleMessage, RunGenesis, UpdateMoodFromText, goal/memory/reflection flows orchestrating domain + ports.")
     }
     Rel(usecases, router, "depends_on")

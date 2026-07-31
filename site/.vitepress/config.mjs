@@ -38,6 +38,12 @@ export default withMermaid({
   // orphaned sidebar links tolerated.
   srcExclude: ["docs/**"],
   ignoreDeadLinks: true,
+  // vitepress-plugin-mermaid: keep mermaid + its ESM deps bundled for the client
+  // so the C4/flowchart diagrams render in the browser under the /bob/ base.
+  vite: {
+    optimizeDeps: { include: ["mermaid"] },
+    ssr: { noExternal: ["vitepress-plugin-mermaid", "mermaid"] },
+  },
   themeConfig: {
     nav: [...nav, archLink],
     sidebar,
