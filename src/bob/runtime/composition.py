@@ -377,10 +377,9 @@ def build_application(
 
     # Autobiography recorder (BOB-079): behind ``memory.autobiography`` (OFF by default →
     # NoOp → zero writes, byte-identical behaviour). Constructed here over the shared
-    # ``memory_repo`` as the SEAM later beads consume — coding-lifecycle (.2) and the
-    # tool-loop (.3) inject it. Underscore-prefixed: intentionally not yet threaded into
-    # either consumer in this bead (drop the prefix when wired).
-    _self_action_recorder = build_self_action_recorder(
+    # ``memory_repo`` as the SEAM consumers inject — coding-lifecycle (.2, wired below) and
+    # the tool-loop (.3) record first-person ``self_action`` episodes through it.
+    self_action_recorder = build_self_action_recorder(
         merged, store=memory_repo, clock=resolved_clock
     )
 
@@ -510,6 +509,7 @@ def build_application(
         # replies thread back into that same topic, not General (BOB-042 Fix B).
         topic_id=_int(_section(telegram_section, "bob"), "topic_id", 0),
         clock=resolved_clock,
+        recorder=self_action_recorder,
     )
 
     multibot = _build_multibot(
