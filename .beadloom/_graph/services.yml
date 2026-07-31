@@ -88,6 +88,8 @@ nodes:
     source: src/bob/kernel/
     tags: [layer-domain]
     summary: 'Shared kernel — the infra-neutral contracts every vertical module rests on: the runtime seams (Clock, EventBus, EventHandler, DomainEvent, LLMProvider) and the shared value objects (LLMMessage, JsonValue). Pure Protocol/type definitions; no I/O. Every module may import from here; the kernel imports from no module.'
+    docs:
+      - domains/domain/features/kernel/SPEC.md
 
   - ref_id: personality
     kind: feature
@@ -262,18 +264,24 @@ nodes:
     source: src/bob/application/usecases/
     tags: [layer-application]
     summary: 'Use-cases — HandleMessage, RunGenesis, UpdateMoodFromText, goal/memory/reflection flows orchestrating domain + ports.'
+    docs:
+      - domains/application/features/usecases/SPEC.md
 
   - ref_id: router
     kind: feature
     source: src/bob/application/router/
     tags: [layer-application]
     summary: 'LLMRouter — Tier 0/1 model routing with privacy redaction before any model call.'
+    docs:
+      - domains/application/features/router/SPEC.md
 
   - ref_id: runtime-app
     kind: feature
     source: src/bob/application/runtime/
     tags: [layer-application]
     summary: 'Application runtime — AgentRuntime, AsyncEventBus, events, and resilient heartbeat ticks (retry/backoff). Distinct from the `runtime` composition root.'
+    docs:
+      - domains/application/features/runtime-app/SPEC.md
 
   # ── Infrastructure submodules (kind: component, part_of bob-infrastructure) ──
   - ref_id: llm
@@ -281,24 +289,32 @@ nodes:
     source: src/bob/infrastructure/llm/
     tags: [layer-infra]
     summary: 'LLM adapter — OpenAI-compatible provider for Tier 0/1 completion + tool-calling (Ollama/Qwen backend).'
+    docs:
+      - domains/infrastructure/features/llm/SPEC.md
 
   - ref_id: telegram
     kind: component
     source: src/bob/infrastructure/telegram/
     tags: [layer-infra]
     summary: 'Telegram adapter — aiogram gateway (long-polling, authz gate, native draft streaming, Rich Messages, topic-thread reply pinning), MultiBotGateway (BotRegistry + cross-bot dedup + identity/scope router) and the GuppiHandler gatekeeper.'
+    docs:
+      - domains/infrastructure/features/telegram/SPEC.md
 
   - ref_id: persistence
     kind: component
     source: src/bob/infrastructure/persistence/
     tags: [layer-infra]
     summary: 'Persistence kernel — the shared `SqliteConnection` (open/WAL/foreign_keys/sqlite-vec load/`schema.sql`/kv/close) that the memory adapter and the 13 per-module durable stores read through the injected `connection` seam. Pure I/O: carries no memory/business logic — those realisations live in their owning modules'' `adapters/` (BOB-062.2–.7b).'
+    docs:
+      - domains/infrastructure/features/persistence/SPEC.md
 
   - ref_id: config
     kind: component
     source: src/bob/infrastructure/config/
     tags: [layer-infra]
     summary: 'Config adapter — two-bot layered config loader (env + files) for the running process.'
+    docs:
+      - domains/infrastructure/features/config/SPEC.md
 
 edges:
   # ── Root service self-reference (satisfies service-needs-parent convention) ─
