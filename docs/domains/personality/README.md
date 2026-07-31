@@ -247,6 +247,13 @@ intake-воркер за `presence.series_budget.enabled` (см. `conversation`/
   essential-генераторы application, tool-loop/announcer-фабрики capabilities) — personality не
   импортирует conversation/social/capabilities. Отдаёт `compose` как callback в
   `AntiRepeatGuard` (замыкает цикл compose↔guard по значению).
+  🔴 **Анти-нарратив преамбула манифеста (BOB-074, recall-poisoning).** Перед описанием
+  навыков (`registry.describe()`) `compose` ставит `_CAPABILITY_PREFACE` — императивное
+  анти-few-shot правило: возможности исполняет GUPPI, и если для ответа нужен инструмент, Боб
+  ВЫЗЫВАЕТ его (tool call) и даёт РЕАЛЬНЫЙ результат. НИКОГДА не описывает, что GUPPI «пошёл/
+  заглянет/ищет/перебирает» — нарратив о намерении без реального результата запрещён. Правило
+  противодействует мимикрии, которой прошлые нарратив-ответы Боба в истории учат Qwen; на
+  выходе его дублирует консервативный backstop tool-loop (см. `capabilities`).
 
 ### Адаптеры (infrastructure)
 
