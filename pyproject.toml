@@ -1033,6 +1033,18 @@ ignore = [
 # carry Russian scenario prose whose Cyrillic look-alikes are intentional (→ RUF001/2/3); they
 # assert through the outgoing boundary (S101).
 "tests/acceptance/steps/test_participant_engagement.py" = ["S101", "RUF001", "RUF002", "RUF003"]
+# The gender-of-address acceptance harness + steps (BOB-078 A) drive the real graph and carry
+# Russian scenario prose + persona-clause markers whose Cyrillic look-alikes are intentional
+# (→ RUF001/2/3); the harness serves a fixed fake provider (ARG002) and the steps assert
+# through the compose-prompt boundary (S101).
+"tests/acceptance/gender_address_harness.py" = ["RUF001", "RUF002", "RUF003", "ARG002"]
+"tests/acceptance/steps/test_gender_address.py" = ["S101", "RUF001", "RUF002", "RUF003"]
+# The intake-resilience acceptance harness + steps (BOB-078 D) drive the real store + gate and
+# carry Russian scenario prose whose Cyrillic look-alikes are intentional (→ RUF001/2/3); the
+# harness has an unused fake-router arg (ARG002) and the steps deliberately catch a broad
+# Exception (BLE001) to witness that no failure escapes (S101 for boundary asserts).
+"tests/acceptance/intake_resilience_harness.py" = ["RUF001", "RUF002", "RUF003", "ARG002"]
+"tests/acceptance/steps/test_intake_resilience.py" = ["S101", "RUF001", "RUF002", "RUF003", "BLE001"]
 # The presence-rhythm acceptance harness + steps (BOB-066 .2.3) carry Russian scenario
 # prose whose Cyrillic look-alikes are intentional (→ RUF001/2/3); the harness serves
 # fixed fakes (ARG002) and the steps assert through the boundary (S101).
