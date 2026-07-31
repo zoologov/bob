@@ -92,3 +92,18 @@ test.txt
 # Mutation testing sandbox (BOB-066 Срез 0): mutmut copies src into mutants/ per run
 mutants/
 .mutmut-cache
+
+# VitePress site (BOB-arch): committed scaffold renders the generated content
+# tree from `beadloom docs site` (regenerated in CI). Generated content + build
+# output + node deps are NOT committed.
+site/.vitepress/dist/
+site/.vitepress/cache/
+site/node_modules/
+site/*.md
+site/.vitepress/config.generated.mjs
+site/docs/
+site/domains/
+site/features/
+site/services/
+site/other/
+site/public/*.data.json

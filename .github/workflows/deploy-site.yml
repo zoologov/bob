@@ -1,0 +1,84 @@
+name: Deploy VitePress site to GitHub Pages
+
+# Publishes Bob's living documentation (architecture overview + one page per
+# graph node + the full multi-layer architecture landing) as a GitHub project
+# page at https://zoologov.github.io/bob/ (base: '/bob/').
+#
+# Beadloom produces, VitePress renders: this workflow REGENERATES the content
+# tree from the graph each run (`beadloom docs site`) so the published site never
+# drifts from the code — then VitePress builds the static dist. Only the site
+# scaffold (theme + config.mjs + public/bob-architecture.html) is committed.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "src/**"
+      - "docs/**"
+      - ".beadloom/**"
+      - "site/**"
+      - ".github/workflows/deploy-site.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# GitHub Pages actions still ship Node20 entrypoints; opt the workflow into Node24.
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Reindex the graph (beadloom via uvx, pinned)
+        run: uvx --from "beadloom==1.7.0" beadloom reindex
+
+      - name: Generate the site content tree from the graph
+        run: uvx --from "beadloom==1.7.0" beadloom docs site --out site
+
+      - name: Set up Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+
+      - name: Install site dependencies
+        run: npm ci
+        working-directory: site
+
+      - name: Build the VitePress site
+        run: npm run docs:build
+        working-directory: site
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site/.vitepress/dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

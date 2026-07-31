@@ -1,0 +1,562 @@
+<title>Bob — Полная архитектура</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root{
+    --ground:#f5f6f8; --surface:#ffffff; --surface-2:#eef0f4;
+    --ink:#1a212e; --muted:#5a6675; --faint:#8a94a3; --hair:#dde1e8;
+    --amber:#c77d1e; --cyan:#0f8ea0; --violet:#7c53c4; --green:#2f9d6b;
+    --console:#10151d; --console-ink:#e6ecf4;
+    --mono:ui-monospace,"SF Mono","JetBrains Mono",Menlo,Consolas,monospace;
+    --sans:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    --wrap:1120px;
+  }
+  @media (prefers-color-scheme:dark){
+    :root{
+      --ground:#0c0f15; --surface:#141a24; --surface-2:#1b232f;
+      --ink:#e7ecf3; --muted:#9aa6b6; --faint:#6b7686; --hair:#232c3a;
+      --amber:#e8a24c; --cyan:#46bfd0; --violet:#b487e6; --green:#5bbd8a;
+    }
+  }
+  :root[data-theme="light"]{
+    --ground:#f5f6f8; --surface:#ffffff; --surface-2:#eef0f4;
+    --ink:#1a212e; --muted:#5a6675; --faint:#8a94a3; --hair:#dde1e8;
+    --amber:#c77d1e; --cyan:#0f8ea0; --violet:#7c53c4; --green:#2f9d6b;
+  }
+  :root[data-theme="dark"]{
+    --ground:#0c0f15; --surface:#141a24; --surface-2:#1b232f;
+    --ink:#e7ecf3; --muted:#9aa6b6; --faint:#6b7686; --hair:#232c3a;
+    --amber:#e8a24c; --cyan:#46bfd0; --violet:#b487e6; --green:#5bbd8a;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--ground);color:var(--ink);font-family:var(--sans);
+    line-height:1.6;-webkit-font-smoothing:antialiased;font-size:16px}
+  .wrap{max-width:var(--wrap);margin:0 auto;padding:0 24px}
+  a{color:var(--cyan)}
+  .eyebrow{font-family:var(--mono);font-size:11.5px;letter-spacing:.18em;text-transform:uppercase;
+    color:var(--faint);font-weight:600}
+  h1,h2,h3{text-wrap:balance;line-height:1.15;margin:0}
+  h2{font-size:clamp(24px,3.6vw,34px);font-weight:750;letter-spacing:-.01em}
+  h3{font-size:18px;font-weight:700}
+
+  header{border-bottom:1px solid var(--hair);background:
+    radial-gradient(120% 140% at 85% -10%, color-mix(in srgb,var(--cyan) 10%,transparent), transparent 60%),
+    radial-gradient(90% 120% at 5% -20%, color-mix(in srgb,var(--amber) 12%,transparent), transparent 55%)}
+  .hero{padding:60px 0 40px}
+  .hero .eyebrow{color:var(--amber)}
+  .hero h1{font-size:clamp(34px,6vw,60px);font-weight:800;letter-spacing:-.025em;margin:14px 0 0}
+  .hero .sub{font-size:clamp(16px,2vw,20px);color:var(--muted);max-width:60ch;margin:16px 0 0}
+  .chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:26px}
+  .chip{font-family:var(--mono);font-size:12px;padding:5px 10px;border:1px solid var(--hair);
+    border-radius:999px;color:var(--muted);background:var(--surface)}
+  .chip b{color:var(--ink);font-weight:600}
+
+  nav.toc{position:sticky;top:0;z-index:20;background:color-mix(in srgb,var(--ground) 88%,transparent);
+    backdrop-filter:blur(10px);border-bottom:1px solid var(--hair);}
+  nav.toc .row{display:flex;gap:2px;overflow-x:auto;padding:10px 0;scrollbar-width:none}
+  nav.toc .row::-webkit-scrollbar{display:none}
+  nav.toc a{font-family:var(--mono);font-size:12px;letter-spacing:.03em;text-decoration:none;
+    color:var(--muted);padding:6px 12px;border-radius:7px;white-space:nowrap}
+  nav.toc a:hover{color:var(--ink);background:var(--surface-2)}
+
+  section{padding:48px 0;border-bottom:1px solid var(--hair)}
+  .sec-head{display:flex;flex-direction:column;gap:10px;margin-bottom:26px}
+  .sec-head .lead{color:var(--muted);max-width:72ch;margin:6px 0 0}
+  .layer-no{font-family:var(--mono);color:var(--amber);font-size:12px;letter-spacing:.16em}
+
+  /* console panel for diagrams */
+  .panel{position:relative;background:var(--console);border:1px solid #26313f;border-radius:14px;
+    padding:22px 20px;overflow:auto;cursor:zoom-in;
+    box-shadow:0 1px 0 rgba(255,255,255,.03) inset,0 12px 30px -18px rgba(0,0,0,.6)}
+  .panel::before{content:"● ● ●";display:block;font-size:9px;letter-spacing:.3em;color:#3a4756;margin:-4px 0 14px}
+  .panel .zoomhint{position:absolute;top:16px;right:18px;font-family:var(--mono);font-size:10.5px;
+    letter-spacing:.06em;color:#5b6b82;pointer-events:none}
+  .panel .mermaid{display:flex;justify-content:center;min-width:min-content}
+  .panel .mermaid svg{height:auto} /* natural size — NOT shrunk to fit */
+  .cap{font-family:var(--mono);font-size:11.5px;color:var(--faint);margin-top:12px;letter-spacing:.02em;line-height:1.7}
+  .cap b{color:var(--muted);font-weight:600}
+
+  .grid{display:grid;gap:16px;margin-top:24px}
+  .g2{grid-template-columns:repeat(2,1fr)} .g3{grid-template-columns:repeat(3,1fr)}
+  @media(max-width:820px){.g2,.g3{grid-template-columns:1fr}}
+  .card{background:var(--surface);border:1px solid var(--hair);border-radius:12px;padding:18px 18px}
+  .card h3{font-size:15px;display:flex;align-items:center;gap:8px}
+  .card p{margin:8px 0 0;font-size:14px;color:var(--muted)}
+  .card .mono{font-family:var(--mono);font-size:12px;color:var(--cyan)}
+  .dot{width:9px;height:9px;border-radius:50%;flex:none}
+  .d-amber{background:var(--amber)} .d-cyan{background:var(--cyan)} .d-violet{background:var(--violet)}
+  .d-green{background:var(--green)} .d-slate{background:#8fa3bf}
+
+  .tbl-wrap{overflow-x:auto;margin-top:22px;border:1px solid var(--hair);border-radius:12px}
+  table{border-collapse:collapse;width:100%;font-size:14px;min-width:560px}
+  th,td{text-align:left;padding:12px 16px;border-bottom:1px solid var(--hair);vertical-align:top}
+  th{font-family:var(--mono);font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--faint);font-weight:600}
+  tr:last-child td{border-bottom:none}
+  td b{font-weight:650}
+  td .mono{font-family:var(--mono);font-size:12.5px;color:var(--cyan)}
+  .k{font-family:var(--mono);font-size:11px;color:var(--faint);text-transform:uppercase;letter-spacing:.1em}
+  .tag{font-family:var(--mono);font-size:10.5px;padding:2px 7px;border-radius:5px;letter-spacing:.05em;white-space:nowrap}
+  .t-live{background:var(--console);color:#5bbd8a;border:1px solid rgba(91,189,138,.45)}
+  .t-dorm{background:var(--console);color:#e8a24c;border:1px solid rgba(232,162,76,.45)}
+
+  .legend{display:flex;flex-wrap:wrap;gap:16px;margin-top:16px;font-family:var(--mono);font-size:12px;color:var(--muted)}
+  .legend span{display:inline-flex;align-items:center;gap:7px}
+
+  /* lightbox zoom */
+  .zoom[hidden]{display:none}
+  .zoom{position:fixed;inset:0;z-index:100;background:rgba(6,9,13,.94);display:flex;flex-direction:column}
+  .zoom-bar{display:flex;gap:8px;justify-content:flex-end;align-items:center;padding:12px 16px;flex:none;
+    border-bottom:1px solid #26313f}
+  .zoom-bar .zt{margin-right:auto;font-family:var(--mono);font-size:11.5px;color:#7d8ba0;letter-spacing:.08em}
+  .zoom-bar button{font-family:var(--mono);font-size:13px;min-width:40px;height:34px;padding:0 12px;
+    background:#1a2230;color:#e6ecf4;border:1px solid #33404f;border-radius:8px;cursor:pointer}
+  .zoom-bar button:hover{background:#232e3e;border-color:#46bfd0}
+  .zoom-bar button:focus-visible{outline:2px solid #46bfd0;outline-offset:2px}
+  .zoom-stage{flex:1;overflow:auto;padding:24px}
+  .zoom-inner{transform-origin:top left;display:inline-block;transition:transform .08s linear}
+  @media(prefers-reduced-motion:reduce){.zoom-inner{transition:none}}
+  .zoom-inner svg{display:block}
+
+  footer{padding:44px 0 70px}
+  footer .note{color:var(--muted);max-width:70ch}
+  .kbd{font-family:var(--mono);font-size:12px;background:var(--surface-2);border:1px solid var(--hair);
+    padding:1px 6px;border-radius:5px;color:var(--ink)}
+  @media(prefers-reduced-motion:no-preference){html{scroll-behavior:smooth}}
+</style>
+
+<header>
+  <div class="wrap hero">
+    <div class="eyebrow">Автономный компаньон · вдохновлён «We Are Legion (We Are Bob)»</div>
+    <h1>Архитектура Боба</h1>
+    <p class="sub">От кремния до души: единая схема живого Telegram-компаньона — железо, память, два
+      яруса LLM, DDD-код и весь Higher Mind, что делает Боба Бобом, а не скрипт-ботом.</p>
+    <div class="chips">
+      <span class="chip"><b>Bob</b> v0.1.0</span>
+      <span class="chip">Python <b>3.12</b> · asyncio</span>
+      <span class="chip">Mac mini <b>M4</b> · 24/7</span>
+      <span class="chip">Telegram · <b>aiogram</b></span>
+      <span class="chip">Qwen MaaS · <b>tier0/tier1</b></span>
+      <span class="chip">SQLite + <b>FTS5</b></span>
+      <span class="chip">DDD · <b>Clean Arch</b></span>
+    </div>
+  </div>
+</header>
+
+<nav class="toc"><div class="wrap"><div class="row">
+  <a href="#stack">00 · Стек</a>
+  <a href="#flow">01 · Поток сообщения</a>
+  <a href="#llm">02 · LLM-ярусы</a>
+  <a href="#code">03 · Код · DDD</a>
+  <a href="#soul">04 · Душа</a>
+  <a href="#features">05 · Возможности</a>
+  <a href="#future">06 · Bobiverse</a>
+</div></div></nav>
+
+<main class="wrap">
+
+  <!-- 00 STACK -->
+  <section id="stack">
+    <div class="sec-head">
+      <span class="layer-no">LAYER 00 · SILICON → SOUL</span>
+      <h2>Стек: от железа до души</h2>
+      <p class="lead">Один процесс на Mac mini держит «тело» (Telegram) и «память» (SQLite) локально;
+        «мозг» (Qwen) живёт в облаке. Над инфраструктурой — DDD-код, а на самом верху — Higher Mind,
+        ради которого всё и построено.</p>
+    </div>
+    <div class="panel"><span class="zoomhint">🔍 клик — увеличить</span><pre class="mermaid">
+%%{init:{'theme':'base','themeVariables':{'fontFamily':'ui-monospace,Menlo,monospace','fontSize':'16px','primaryColor':'#1a2230','primaryTextColor':'#e6ecf4','primaryBorderColor':'#3a4658','lineColor':'#57697f'}}}%%
+flowchart BT
+  classDef hw fill:#2a2114,stroke:#e8a24c,color:#f4e7d4,stroke-width:1.4px
+  classDef tech fill:#0f2429,stroke:#46bfd0,color:#d8f0f4,stroke-width:1.4px
+  classDef code fill:#18202c,stroke:#8fa3bf,color:#e6ecf4,stroke-width:1.4px
+  classDef soul fill:#211a2e,stroke:#b487e6,color:#efe2f5,stroke-width:1.4px
+
+  HW["🖥️ Mac mini M4 · 24/7"]:::hw
+  RT["🐍 Python 3.12 · asyncio"]:::code
+  DB["🗄️ SQLite + FTS5"]:::tech
+  TG["✈️ Telegram · aiogram"]:::tech
+  LLMC["🧠 Qwen MaaS · облако"]:::tech
+  CODE["🏛️ DDD-код"]:::code
+  SOUL["✨ Higher Mind · Душа"]:::soul
+
+  HW --> RT
+  RT --> DB
+  RT --> TG
+  RT --> LLMC
+  RT --> CODE
+  DB --> CODE
+  TG --> CODE
+  LLMC --> CODE
+  CODE --> SOUL
+    </pre></div>
+    <p class="cap">
+      <b>Mac mini M4</b> — хост процесса и локальных данных, 24/7 · <b>Python/asyncio</b> —
+      AgentRuntime, heartbeat 30с, 5 фоновых задач · <b>SQLite+FTS5</b> — эпизодическая, семантическая
+      память и состояние · <b>Telegram/aiogram</b> — «тело», 2 бота: Bob + GUPPI · <b>Qwen MaaS</b> —
+      «мозг» в облаке · <b>DDD-код → Higher Mind</b> — личность, эмоции, проактивность, самосознание.
+    </p>
+    <div class="legend">
+      <span><i class="dot d-amber"></i>железо / хост</span>
+      <span><i class="dot d-cyan"></i>инфраструктура · транспорт · LLM</span>
+      <span><i class="dot d-slate"></i>рантайм · код</span>
+      <span><i class="dot d-violet"></i>душа</span>
+    </div>
+  </section>
+
+  <!-- 01 FLOW -->
+  <section id="flow">
+    <div class="sec-head">
+      <span class="layer-no">LAYER 01 · HOT PATH</span>
+      <h2>Как сообщение становится ответом</h2>
+      <p class="lead">Путь одного апдейта: приём без потерь → маршрутизация двух ботов (authz только на
+        инструменты/приватное) → развязка интейка и коалесинг вспышки → «два скорости внимания»:
+        прямое обращение отвечает <b>всегда</b>, поток болтовни Боб читает целиком и
+        <b>семантически</b> выбирает, на что реагировать.</p>
+    </div>
+    <div class="panel"><span class="zoomhint">🔍 клик — увеличить</span><pre class="mermaid">
+%%{init:{'theme':'base','themeVariables':{'fontFamily':'ui-monospace,Menlo,monospace','fontSize':'15px','primaryColor':'#18202c','primaryTextColor':'#e6ecf4','primaryBorderColor':'#3a4658','lineColor':'#57697f'}}}%%
+flowchart TB
+  classDef io fill:#0f2429,stroke:#46bfd0,color:#d8f0f4
+  classDef core fill:#18202c,stroke:#8fa3bf,color:#e6ecf4
+  classDef gate fill:#2a2114,stroke:#e8a24c,color:#f4e7d4
+  classDef brain fill:#211a2e,stroke:#b487e6,color:#efe2f5
+
+  TG["✈️ Telegram · poll"]:::io
+  POLL["Приём без потерь"]:::io
+  ROUTE["Маршрут 2 ботов"]:::io
+  INTAKE["Интейк + коалесинг"]:::core
+  GATE{"TurnGate"}:::gate
+  FOCAL["Прямое обращение"]:::gate
+  STREAM["Ambient-поток"]:::gate
+  HM["HandleMessage"]:::core
+  VC["VoiceComposer + tool-loop"]:::core
+  LLM["🧠 Qwen · tier1"]:::brain
+  OUT["Ответ + reply-to + лайк"]:::io
+  MEM["Персист + floor"]:::core
+
+  TG --> POLL --> ROUTE --> INTAKE --> GATE
+  GATE -->|прямое| FOCAL --> HM
+  GATE -->|поток| STREAM --> HM
+  HM --> VC --> LLM --> OUT
+  HM --> MEM
+  VC -.инструмент.-> LLM
+  OUT -.-> TG
+    </pre></div>
+    <p class="cap">
+      <b>Приём</b> — offset после обработки, poison-cap, изоляция сети (BOB-070) · <b>Маршрут</b> —
+      Bob-топик / GUPPI-General, authz гейтит только инструменты и приватное · <b>Интейк</b> —
+      ChatDispatcher · ChatInbox · per-chat воркер · <b>Прямое</b> — «Боб,…»/@/reply → гарантия
+      ответа (INV-1) · <b>Поток</b> — один холистический read → семантический выбор 0..N (BOB-072).
+    </p>
+    <p class="cap">Параллельно: heartbeat-тик (30с) питает проактивность, внутренний монолог,
+      консолидацию памяти и рефлексию — Боб «живёт» и между сообщениями.</p>
+  </section>
+
+  <!-- 02 LLM -->
+  <section id="llm">
+    <div class="sec-head">
+      <span class="layer-no">LAYER 02 · COGNITION</span>
+      <h2>LLM-ярусы: дёшево думать, дорого говорить</h2>
+      <p class="lead">Два яруса Qwen через OpenAI-совместимый шлюз. Дешёвый tier0 крутит фоновую
+        когнитивную рутину; дорогой tier1 отвечает пользователю, гоняет tool-loop и читает комнату.
+        Принцип владельца: <b>живость &gt; экономия</b> — рефлексивное суждение не удешевляется.</p>
+    </div>
+    <div class="tbl-wrap"><table>
+      <thead><tr><th>Ярус</th><th>Модель</th><th>Что делает</th><th>Свойства</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><b>tier0</b><br><span class="k">дёшево · часто</span></td>
+          <td><span class="mono">qwen3.6-flash</span></td>
+          <td>внутренний монолог · сентимент · классификация · judge-гейты · staleness · извлечение фактов</td>
+          <td>быстрый, фоновый; крутится на каждом тике и почти на каждом сообщении</td>
+        </tr>
+        <tr>
+          <td><b>tier1</b><br><span class="k">качество</span></td>
+          <td><span class="mono">qwen3.7-plus</span></td>
+          <td>ответы пользователю · tool-loop · рефлексивный read-the-room · self-improvement детектор</td>
+          <td>reasoning; timeout 180с; rate-cap 4 конкурентных (BOB-072); disable_thinking</td>
+        </tr>
+        <tr>
+          <td><b>router</b><br><span class="k">оркестр</span></td>
+          <td><span class="mono">LLMRouter</span></td>
+          <td>выбор яруса · фолбэк · семафор rate-cap · санитизация вывода</td>
+          <td>Qwen MaaS · <span class="mono">token-plan…maas.aliyuncs.com</span></td>
+        </tr>
+      </tbody>
+    </table></div>
+    <p class="cap">Исток дизайна — локальный Ollama (Qwen 7B/0.5B); прод переехал на Qwen MaaS (облако).
+      Ключи только в ENV, не в конфиге.</p>
+  </section>
+
+  <!-- 03 CODE -->
+  <section id="code">
+    <div class="sec-head">
+      <span class="layer-no">LAYER 03 · SCREAMING ARCHITECTURE</span>
+      <h2>Код: DDD-домены и зависимости</h2>
+      <p class="lead">Domain-first реорг (эпик BOB-062): чистые доменные вертикали не знают об I/O;
+        приложение оркестрирует; инфраструктура реализует порты; связывание — только в composition root
+        <span class="kbd">runtime/</span>. Направление зависимостей строго внутрь.</p>
+    </div>
+    <div class="panel"><span class="zoomhint">🔍 клик — увеличить</span><pre class="mermaid">
+%%{init:{'theme':'base','themeVariables':{'fontFamily':'ui-monospace,Menlo,monospace','fontSize':'15px','primaryColor':'#18202c','primaryTextColor':'#e6ecf4','primaryBorderColor':'#3a4658','lineColor':'#57697f','clusterBkg':'#11161f','clusterBorder':'#2a3646'}}}%%
+flowchart TB
+  classDef dom fill:#211a2e,stroke:#b487e6,color:#efe2f5
+  classDef app fill:#18202c,stroke:#8fa3bf,color:#e6ecf4
+  classDef inf fill:#0f2429,stroke:#46bfd0,color:#d8f0f4
+
+  subgraph INFRA["INFRASTRUCTURE · адаптеры портов"]
+    direction LR
+    LLMI["llm"]:::inf
+    TGI["telegram"]:::inf
+    DBI["persistence"]:::inf
+    CFG["config"]:::inf
+  end
+  subgraph APP["APPLICATION · оркестрация"]
+    direction LR
+    UC["usecases"]:::app
+    RTR["router"]:::app
+    RAPP["runtime-app"]:::app
+  end
+  subgraph DOMAIN["DOMAIN · чистое ядро (без I/O)"]
+    direction LR
+    KER["kernel"]:::dom
+    PERS["personality"]:::dom
+    CONV["conversation"]:::dom
+    MEMD["memory"]:::dom
+    PROA["proactivity"]:::dom
+    SOC["social"]:::dom
+    PRES["presence"]:::dom
+    CAP["capabilities"]:::dom
+    COD["coding"]:::dom
+  end
+  INFRA --> APP
+  APP --> DOMAIN
+  INFRA --> DOMAIN
+    </pre></div>
+    <p class="cap">
+      <b>domain</b> (чистое ядро): kernel · personality · conversation · memory · proactivity · social ·
+      presence · capabilities · coding · <b>application</b>: usecases (HandleMessage) · router (LLM-ярусы) ·
+      runtime-app (intake · heartbeat) · <b>infrastructure</b>: llm · telegram · persistence · config.
+      21 узел графа · 100% покрыты SPEC-документацией (beadloom).
+    </p>
+    <div class="legend">
+      <span><i class="dot d-violet"></i>domain — чистое ядро</span>
+      <span><i class="dot d-slate"></i>application — оркестрация</span>
+      <span><i class="dot d-cyan"></i>infrastructure — адаптеры</span>
+    </div>
+  </section>
+
+  <!-- 04 SOUL -->
+  <section id="soul">
+    <div class="sec-head">
+      <span class="layer-no">LAYER 04 · HIGHER MIND</span>
+      <h2>Душа: что делает Боба живым</h2>
+      <p class="lead">Личность — не маска поверх ответа, а источник каждого поведения. Настроение,
+        вкусы, эмоции в две стороны, память сквозь рестарты, внутренняя жизнь и самосознание «того
+        самого Боба из книги». Север — <b>функциональные корреляты сознания</b>: не заявлять
+        сентиентность, а максимизировать её убедительные признаки.</p>
+    </div>
+    <div class="panel"><span class="zoomhint">🔍 клик — увеличить</span><pre class="mermaid">
+%%{init:{'theme':'base','themeVariables':{'fontFamily':'ui-monospace,Menlo,monospace','fontSize':'15px','primaryColor':'#211a2e','primaryTextColor':'#efe2f5','primaryBorderColor':'#5a4a72','lineColor':'#6b5a86','clusterBkg':'#191320','clusterBorder':'#3a2f4d'}}}%%
+flowchart TB
+  classDef gen fill:#2a2114,stroke:#e8a24c,color:#f4e7d4
+  classDef emo fill:#211a2e,stroke:#b487e6,color:#efe2f5
+  classDef mem fill:#0f2429,stroke:#46bfd0,color:#d8f0f4
+  classDef self fill:#1c2233,stroke:#8fa3bf,color:#e6ecf4
+
+  GEN["✨ Genesis · SOUL"]:::gen
+  subgraph EMO["Эмоциональное ядро"]
+    direction LR
+    DISP["Диспозиция"]:::emo
+    MOOD["Настроение"]:::emo
+    TASTE["Вкусы · fascination"]:::emo
+    NEG["Переговоры"]:::emo
+    REG["Саморегуляция"]:::emo
+  end
+  subgraph INNER["Внутренняя жизнь"]
+    direction LR
+    MONO["Внутренний монолог"]:::self
+    REFL["Рефлексия"]:::self
+    SELF["Самосознание"]:::self
+    META["Метакогниция"]:::self
+  end
+  subgraph REL["Социальное «я»"]
+    direction LR
+    ID["Идентичность собеседника"]:::self
+    RELN["Отношения · обида"]:::emo
+  end
+  subgraph MEMB["Память сквозь рестарты"]
+    direction LR
+    EPI["Эпизодическая"]:::mem
+    SEM["Семантическая · FTS5"]:::mem
+    CONS["Консолидация · дедуп"]:::mem
+  end
+  subgraph DRIVE["Инициатива"]
+    direction LR
+    PRO["Проактивность"]:::gen
+    GOAL["Цели · дремлет"]:::gen
+    IMP["Self-improvement"]:::gen
+  end
+  GEN --> EMO
+  EMO --> INNER
+  EMO --> REL
+  INNER --> MEMB
+  REL --> MEMB
+  MEMB --> DRIVE
+    </pre></div>
+    <p class="cap">
+      <b>Genesis</b> — пробуждение из <span style="color:var(--cyan)">bob-soul/</span>, пишет SOUL.md ·
+      <b>Эмоц-ядро</b> — канон-оптимизм, реаппрайзал, соц-контагий, контейнмент рефлексий (BOB-033) ·
+      <b>Идентичность собеседника</b> — owner · known · guest · bot (social ≠ authz) ·
+      <b>Отношения</b> — близость со временем, обида (sulk), мат · <b>Цели · дремлет</b> —
+      Goal Engine отгружен, но выключен · <b>Self-improvement</b> — propose → approve.
+    </p>
+    <div class="legend">
+      <span><i class="dot d-amber"></i>Genesis · инициатива</span>
+      <span><i class="dot d-violet"></i>эмоции · отношения</span>
+      <span><i class="dot d-cyan"></i>память</span>
+      <span><i class="dot d-slate"></i>внутренняя жизнь · «я»</span>
+    </div>
+  </section>
+
+  <!-- 05 FEATURES -->
+  <section id="features">
+    <div class="sec-head">
+      <span class="layer-no">LAYER 05 · CAPABILITIES</span>
+      <h2>Тонкие возможности</h2>
+      <p class="lead">Всё, что Боб умеет наблюдаемо — от человечного присутствия в группе до реальной
+        работы с репозиторием. <span class="tag t-live">live</span> активно в проде ·
+        <span class="tag t-dorm">dormant</span> готово, но выключено.</p>
+    </div>
+    <div class="grid g3">
+      <div class="card"><h3><i class="dot d-violet"></i>Групповое присутствие</h3>
+        <p>Два скорости внимания, floor-по-говорящему, «read the room», room-mood в тон, догоняющий
+        проход, кредит доверия, тактичный отказ. <span class="tag t-live">live · BOB-066</span></p></div>
+      <div class="card"><h3><i class="dot d-violet"></i>Человечное чтение потока</h3>
+        <p>Читает вспышку сообщений целиком и семантически выбирает, на что ответить/лайкнуть — не
+        скрипт-формула. <span class="tag t-live">live · BOB-072</span></p></div>
+      <div class="card"><h3><i class="dot d-violet"></i>Адресность и такт</h3>
+        <p>Вокатив «Боб» в любой позиции; краткость; непрерывность диалога; участник группы всегда
+        получает соц-ответ. <span class="tag t-live">live · 069/071</span></p></div>
+      <div class="card"><h3><i class="dot d-cyan"></i>Память и recall</h3>
+        <p>Эпизод + семантика (FTS5), консолидация, дедуп, всплытие старого, cross-sender recall,
+        атрибуция по <span class="mono">sender_id</span>. <span class="tag t-live">live</span></p></div>
+      <div class="card"><h3><i class="dot d-amber"></i>Навигация по репозиторию</h3>
+        <p><span class="mono">list_dir · find_file · read_code</span> по всему репо; PrivacyGuard
+        маскирует секреты в облако. <span class="tag t-live">live · BOB-067</span></p></div>
+      <div class="card"><h3><i class="dot d-amber"></i>Боб-кодер</h3>
+        <p><span class="mono">/code</span> → изолированный git-worktree → ветка + PR. Двойной гейт:
+        апрув плана + мерж. <span class="tag t-live">live · BOB-039</span></p></div>
+      <div class="card"><h3><i class="dot d-cyan"></i>Веб-исследование</h3>
+        <p>Поиск в интернете + чтение URL (Tavily / Qwen web-search) за SSRF-гардом.
+        <span class="tag t-live">live · BOB-056</span></p></div>
+      <div class="card"><h3><i class="dot d-cyan"></i>Диаграммы</h3>
+        <p>Рендер mermaid → локальный PNG прямо в Telegram; инспекция собственной архитектуры.
+        <span class="tag t-live">live · BOB-035/038</span></p></div>
+      <div class="card"><h3><i class="dot d-amber"></i>Автономность</h3>
+        <p>Goal Engine + планировщик (самонаправленность) — <span class="tag t-dorm">dormant</span> ·
+        Self-improvement propose→approve <span class="tag t-live">live</span></p></div>
+      <div class="card"><h3><i class="dot d-slate"></i>Надёжность приёма</h3>
+        <p>Поллинг не теряет сообщения на обрывах Telegram: offset после обработки, poison-cap,
+        изоляция сети. <span class="tag t-live">live · BOB-070</span></p></div>
+      <div class="card"><h3><i class="dot d-slate"></i>Инструменты без нарратива</h3>
+        <p>Промпт-hardening + tool-loop backstop против recall-poisoning — Боб реально вызывает
+        инструмент, а не рассказывает о нём. <span class="tag t-live">live · BOB-074</span></p></div>
+      <div class="card"><h3><i class="dot d-green"></i>GUPPI — привратник</h3>
+        <p>Детерминированный не-LLM control plane: Telegram-шлюз, authz-команды, роутинг, lifecycle.
+        <span class="tag t-live">live · BOB-003</span></p></div>
+    </div>
+  </section>
+
+  <!-- 06 FUTURE -->
+  <section id="future">
+    <div class="sec-head">
+      <span class="layer-no">LAYER 06 · HORIZON</span>
+      <h2>Bobiverse: направление на будущее</h2>
+      <p class="lead">Субстрат уже участник-агностичен. Впереди — форки самого Боба.</p>
+    </div>
+    <div class="grid g3">
+      <div class="card"><h3><i class="dot d-violet"></i>Реплики</h3>
+        <p>Билл, Бендер, Райкер, Марвин… — форки SOUL Боба со своим system-prompt и специализацией,
+        каждый в своей теме Telegram, с мини-Genesis при спавне.</p></div>
+      <div class="card"><h3><i class="dot d-green"></i>GUPPI как control plane</h3>
+        <p>Детерминированный бэкенд для реестра реплик, локов и lifecycle всего роя.</p></div>
+      <div class="card"><h3><i class="dot d-cyan"></i>BobNet · мооты</h3>
+        <p>Боб-к-Бобу диалог в топике группы: реплики совещаются между собой (loop-breaker — впереди).</p></div>
+    </div>
+  </section>
+
+</main>
+
+<footer class="wrap">
+  <p class="eyebrow" style="color:var(--amber)">Три слоя Боба</p>
+  <p class="note" style="margin-top:10px"><b>Душа</b> (Higher Mind) — активна, ядро и главный
+    дифференциатор · <b>Тело</b> (интерфейс) — переехало на Telegram · <b>Железо</b> (камера/планшет/VR) —
+    заморожено. При развороте выжили два лучших слоя из трёх: душа платформонезависима.</p>
+  <p class="note" style="margin-top:14px;color:var(--faint);font-family:var(--mono);font-size:12px">
+    Источники: beadloom-граф (21 узел) · docs/architecture.md · VISION.md · конфиг прод-стека.
+    Клик по любой схеме — полноэкранный зум с панорамированием. Тема — светлая/тёмная.
+  </p>
+</footer>
+
+<!-- lightbox -->
+<div class="zoom" id="zoom" hidden>
+  <div class="zoom-bar">
+    <span class="zt">Схема — зум и панорамирование</span>
+    <button type="button" data-z="out" aria-label="Уменьшить">−</button>
+    <button type="button" data-z="in" aria-label="Увеличить">+</button>
+    <button type="button" data-z="reset">100%</button>
+    <button type="button" data-z="close" aria-label="Закрыть">✕ закрыть</button>
+  </div>
+  <div class="zoom-stage"><div class="zoom-inner" id="zoomInner"></div></div>
+</div>
+
+<script>
+  // active toc
+  (function(){
+    var links=[].slice.call(document.querySelectorAll('nav.toc a'));
+    var secs=links.map(function(a){return document.querySelector(a.getAttribute('href'))});
+    function onScroll(){
+      var y=window.scrollY+120,cur=0;
+      secs.forEach(function(s,i){ if(s&&s.offsetTop<=y) cur=i; });
+      links.forEach(function(a,i){ a.style.color=(i===cur)?'var(--ink)':''; a.style.background=(i===cur)?'var(--surface-2)':''; });
+    }
+    window.addEventListener('scroll',onScroll,{passive:true}); onScroll();
+  })();
+
+  // lightbox zoom for diagrams
+  (function(){
+    var zoom=document.getElementById('zoom'), inner=document.getElementById('zoomInner'), scale=1;
+    function apply(){ inner.style.transform='scale('+scale.toFixed(3)+')'; }
+    function open(svg){
+      inner.innerHTML=svg;
+      // fit width to stage on open
+      var stage=zoom.querySelector('.zoom-stage');
+      scale=1; apply();
+      var el=inner.querySelector('svg');
+      if(el){ var w=el.getBoundingClientRect().width||el.viewBox.baseVal.width||600;
+        var avail=stage.clientWidth-48; if(w>0) scale=Math.max(0.5,Math.min(2.2, avail/w)); apply(); }
+      zoom.hidden=false; document.body.style.overflow='hidden';
+    }
+    function close(){ zoom.hidden=true; document.body.style.overflow=''; inner.innerHTML=''; }
+    document.querySelectorAll('.panel').forEach(function(p){
+      p.addEventListener('click',function(){ var s=p.querySelector('svg'); if(s) open(s.outerHTML); });
+    });
+    zoom.querySelectorAll('[data-z]').forEach(function(b){
+      b.addEventListener('click',function(e){ e.stopPropagation();
+        var z=b.getAttribute('data-z');
+        if(z==='in') scale=Math.min(scale*1.3,8);
+        else if(z==='out') scale=Math.max(scale/1.3,0.3);
+        else if(z==='reset') scale=1;
+        else return close();
+        apply();
+      });
+    });
+    zoom.addEventListener('click',function(e){ if(e.target===zoom||e.target.classList.contains('zoom-stage')) close(); });
+    document.addEventListener('keydown',function(e){
+      if(zoom.hidden) return;
+      if(e.key==='Escape') close();
+      else if(e.key==='+'||e.key==='=') { scale=Math.min(scale*1.3,8); apply(); }
+      else if(e.key==='-') { scale=Math.max(scale/1.3,0.3); apply(); }
+    });
+  })();
+</script>
