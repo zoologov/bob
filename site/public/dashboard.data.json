@@ -1,0 +1,185 @@
+{
+  "ai_techwriter": {
+    "cost_estimate": {
+      "is_estimate": true,
+      "label": "est. @ $0.4/1M tokens",
+      "rate_usd_per_1m": 0.4,
+      "usd": 0.0
+    },
+    "runs": [],
+    "totals": {
+      "docs_refreshed": 0,
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "runs": 0
+    }
+  },
+  "alerts": [],
+  "debt": {
+    "categories": [
+      {
+        "details": {
+          "errors": 0,
+          "warnings": 0
+        },
+        "name": "rule_violations",
+        "score": 0.0
+      },
+      {
+        "details": {
+          "stale": 0,
+          "undocumented": 0,
+          "untracked": 8
+        },
+        "name": "doc_gaps",
+        "score": 4.0
+      },
+      {
+        "details": {
+          "dormant": 1,
+          "high_fan_out": 2,
+          "oversized": 0
+        },
+        "name": "complexity",
+        "score": 2.5
+      },
+      {
+        "details": {
+          "untested": 0
+        },
+        "name": "test_gaps",
+        "score": 0.0
+      }
+    ],
+    "debt_score": 6.5,
+    "severity": "low",
+    "top_offenders": [
+      {
+        "reasons": [
+          "high_fan_out"
+        ],
+        "ref_id": "runtime",
+        "score": 1.0
+      },
+      {
+        "reasons": [
+          "high_fan_out"
+        ],
+        "ref_id": "usecases",
+        "score": 1.0
+      },
+      {
+        "reasons": [
+          "dormant"
+        ],
+        "ref_id": "kernel",
+        "score": 0.5
+      }
+    ],
+    "trend": null
+  },
+  "docs": {
+    "coverage_pct": 100.0,
+    "documented": 21,
+    "fresh": 466,
+    "freshness_pct": 100.0,
+    "nodes": 21,
+    "stale": 0,
+    "tracked_pairs": 466
+  },
+  "doctor": {
+    "by_severity": {
+      "ok": 11,
+      "warning": 2
+    },
+    "errors": 0,
+    "passed": true,
+    "total": 13,
+    "warnings": 2
+  },
+  "federated": null,
+  "lint": {
+    "by_severity": {
+      "error": 0,
+      "warn": 0
+    },
+    "errors": 0,
+    "violations": 0,
+    "warnings": 0
+  },
+  "recommendations": [
+    {
+      "kind": "debt",
+      "link": "/dashboard#kernel",
+      "message": "debt score 0.5: dormant",
+      "severity": "warn",
+      "target": "kernel"
+    },
+    {
+      "kind": "debt",
+      "link": "/dashboard#runtime",
+      "message": "debt score 1.0: high_fan_out",
+      "severity": "warn",
+      "target": "runtime"
+    },
+    {
+      "kind": "debt",
+      "link": "/dashboard#usecases",
+      "message": "debt score 1.0: high_fan_out",
+      "severity": "warn",
+      "target": "usecases"
+    }
+  ],
+  "status_cards": [
+    {
+      "detail": "0 errors, 0 warnings",
+      "group": "lint",
+      "label": "Lint",
+      "status": "ok",
+      "value": "0"
+    },
+    {
+      "detail": "low",
+      "group": "debt",
+      "label": "Debt",
+      "status": "ok",
+      "value": "6.5 / 100"
+    },
+    {
+      "detail": "0 stale of 466 tracked",
+      "group": "docs",
+      "label": "Docs",
+      "status": "ok",
+      "value": "100.0% covered"
+    },
+    {
+      "detail": "0 errors, 2 warnings",
+      "group": "doctor",
+      "label": "Doctor",
+      "status": "warn",
+      "value": "PASS"
+    }
+  ],
+  "trends": [
+    {
+      "coverage_pct": 100.0,
+      "debt_score": 6.5,
+      "edges": 92,
+      "lint_violations": 0,
+      "nodes": 21,
+      "symbols": 1117,
+      "sync_pct": 100.0,
+      "ts": "2026-07-31T12:21:52.143792+00:00"
+    },
+    {
+      "coverage_pct": 100.0,
+      "debt_score": 6.5,
+      "edges": 92,
+      "lint_violations": 0,
+      "nodes": 21,
+      "symbols": 1117,
+      "sync_pct": 100.0,
+      "ts": "2026-07-31T12:29:55.604139+00:00"
+    }
+  ]
+}
