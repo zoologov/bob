@@ -377,6 +377,24 @@ ignore = [
     "RUF002",
     "RUF003",
 ]
+# The anti-repeat self-dup acceptance steps + harness (BOB-078 C) bind Russian .feature step
+# text + a seeded Russian poison reply whose Cyrillic look-alikes are intentional (→ RUF001/2/3).
+"tests/acceptance/steps/test_anti_repeat_self_dup.py" = [
+    "S101",
+    "ARG001",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+"tests/acceptance/anti_repeat_harness.py" = [
+    "S101",
+    "ARG001",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
 # The disclosure-guard tests (BOB-066 W.4) assert on Russian owner_data request literals whose
 # Cyrillic look-alikes are intentional (→ RUF001/2/3).
 "tests/application/usecases/test_disclosure_guard.py" = [

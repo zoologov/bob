@@ -39,6 +39,7 @@ from typing import TYPE_CHECKING, Protocol
 from bob.conversation.conversation import (
     closer_text,
     is_bob_repeat,
+    is_content_self_dup,
     is_phrase_tic,
     is_recurring_closer_tic,
     recalled_bob_replies,
@@ -80,6 +81,18 @@ _MAX_REGENERATIONS = 2
 _CLOSER_TIC_NUDGE = (
     "Эту концовку/оборот ты в последнее время повторяешь часто — заверши ПО-ДРУГОМУ, "
     "своими словами (не меняя смысла)."
+)
+
+# The anti-few-shot nudge for a verbatim self-dup (BOB-078 C — recall poisoning). When a
+# fresh draft near-copies one of Bob's recent OWN replies from the WIDE window, plain
+# re-rolling can reproduce the same few-shot echo, so this ONE line folds into the
+# regeneration context to steer him OFF the copied reply. 🔴 A NUDGE toward variety, not a
+# ban: he is asked to say it AFRESH in his own words (same meaning) — liveness intact. It is
+# threaded ONLY on a genuinely detected content-ful self-dup; otherwise the context is
+# unchanged.
+_SELF_DUP_NUDGE = (
+    "Ты почти дословно повторяешь свою недавнюю реплику — НЕ копируй её, скажи это заново "  # noqa: RUF001
+    "своими словами (смысл тот же)."
 )
 
 
@@ -177,6 +190,15 @@ class AntiRepeatGuard:
         BOB-036 .1 also guards the PHRASE level: a signature CLOSER recurring across the
         recent window runs the SAME regeneration path. BOB-043 adds the WIDE closer-lookback
         + a deterministic final strip (never to an empty reply).
+
+        BOB-078 C closes the recall-poisoning hole on the group / stream-read path: the
+        full-reply check above sees only the NARROW shared-thread window (``recent`` +
+        recalled), which the group's ambient traffic (BOB-058 + BOB-072) floods — so a
+        vivid reply Bob copies verbatim ~2 min later scrolls out of view. A CONTENT-FUL
+        near-verbatim self-dup is now ALSO checked against the WIDE own-reply window (the
+        same one the tic scan reads) and runs the SAME regeneration path, threading an
+        anti-few-shot «say it afresh» nudge; a legit SHORT repeat («да»/«ок») stays below
+        ``dup_min_words`` and is never suppressed.
         """
         threshold = self._repeat_thresholds.similarity_threshold
         tic_min_words = self._repeat_thresholds.tic_min_words
@@ -209,8 +231,32 @@ class AntiRepeatGuard:
                 min_words=tic_min_words,
                 min_occurrences=tic_min_occurrences,
             )
-            if not (full_repeat or phrase_tic or wide_tic):
+            # 🔴 BOB-078 C (recall poisoning on the group/stream-read path): the FULL-reply
+            # repeat check above compares only against the narrow shared-thread window
+            # (``recent`` + recalled). On the group path (BOB-058 + BOB-072) that window is
+            # flooded by OTHER participants' ambient turns, so Bob's own vivid reply scrolls
+            # out of the narrow ``window`` of Bob replies — and a verbatim self-dup ~2 min
+            # later slips through (the live «Паша, ну ты и циник…» twice). ADD the same
+            # near-verbatim check against the WIDE own-reply window already fetched for the
+            # tic scan — but ONLY for content-ful replies (``dup_min_words``), so a legit
+            # short repeat («да»/«ок») is never suppressed.
+            wide_dup = is_content_self_dup(
+                current,
+                wide_replies,
+                threshold=threshold,
+                min_words=self._repeat_thresholds.dup_min_words,
+            )
+            if not (full_repeat or phrase_tic or wide_tic or wide_dup):
                 return current
+            # A content-ful self-dup echoes a reply from the WIDE own-reply window (history),
+            # not necessarily from ``recalled`` — so stripping recalled exemplars alone may
+            # not shake it. Fold the anti-few-shot nudge into the regeneration context (union
+            # with any closer nudge) to steer the re-roll OFF the copied reply.
+            regen_nudge = (
+                f"{closer_nudge}\n{_SELF_DUP_NUDGE}".strip()
+                if wide_dup
+                else closer_nudge
+            )
             # Break the attractor: strip the recalled reply exemplar(s) the candidate
             # copied so the next draft no longer sees the text it was echoing.
             current_recalled = recalled_without_copied_exemplars(
@@ -238,7 +284,7 @@ class AntiRepeatGuard:
                 verbosity=verbosity,
                 modulators=modulators,
                 verify_note=verify_note,
-                closer_nudge=closer_nudge,
+                closer_nudge=regen_nudge,
                 # 🔴 BOB-066 Срез W.2: the room-mood tone line is turn-CONSTANT, so it threads
                 # verbatim into every regeneration (a re-composed draft keeps reading the room).
                 room_tone=room_tone,

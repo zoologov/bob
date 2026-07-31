@@ -68,6 +68,16 @@ _DEFAULT_TIC_LOOKBACK = 20
 
 _MIN_TIC_LOOKBACK = 1
 
+# Default minimum reply length (in words) for the WIDE own-reply self-dup guard
+# (BOB-078 C). The recall-poisoning bug is Bob copying a CONTENT-FUL past reply
+# verbatim; a short reply ("да"/"ок"/"привет"/an emoji) repeating is legitimate, not a
+# poisoned dup. A content-ful line is >= 4 words, so 2-3 word pleasantries ("доброе
+# утро") are never suppressed while the long copied reply is caught.
+# Overridable from config (``repeat.dup_min_words``).
+_DEFAULT_DUP_MIN_WORDS = 4
+
+_MIN_DUP_MIN_WORDS = 1
+
 # Conservative near-verbatim threshold for CLOSER-MOTIF clustering (BOB-061 .1). The
 # closer-motif twin of ``similarity_threshold``: it reuses the SAME SequenceMatcher
 # ratio, but calibrated for SHORT closer phrases. A closer is a few words, so a
@@ -102,6 +112,10 @@ class RepeatThresholds:
       калиброванный под КОРОТКИЕ closer-фразы. Реюзит тот же SequenceMatcher-ratio, но
       ловит лексические варианты одного мотива («мне/ему так спокойнее»), не сцепляя
       разные по сути концовки (US-4).
+    * ``dup_min_words`` — минимальная длина (в словах) реплики для guard'а дословного
+      само-дубля по ШИРОКОМУ окну своих ответов (BOB-078 C): reply короче порога
+      («да»/«ок»/«привет»/эмодзи) НИКОГДА не подавляется — короткий повтор легитимен,
+      давится только содержательный скопированный ответ (recall poisoning).
 
     Дефолты консервативны.
     """
@@ -112,6 +126,7 @@ class RepeatThresholds:
     tic_min_occurrences: int = _DEFAULT_TIC_MIN_OCCURRENCES
     tic_lookback: int = _DEFAULT_TIC_LOOKBACK
     motif_similarity_threshold: float = _DEFAULT_MOTIF_SIMILARITY_THRESHOLD
+    dup_min_words: int = _DEFAULT_DUP_MIN_WORDS
 
     def __post_init__(self) -> None:
         if self.window < _MIN_REPEAT_WINDOW:
@@ -149,6 +164,11 @@ class RepeatThresholds:
                 f"repeat threshold 'motif_similarity_threshold' must be within "
                 f"[{_MIN_REPEAT_THRESHOLD}, {_MAX_REPEAT_THRESHOLD}], "
                 f"got {self.motif_similarity_threshold}"
+            )
+        if self.dup_min_words < _MIN_DUP_MIN_WORDS:
+            raise ValueError(
+                f"repeat threshold 'dup_min_words' must be >= {_MIN_DUP_MIN_WORDS}, "
+                f"got {self.dup_min_words}"
             )
 
 
@@ -209,6 +229,36 @@ def is_bob_repeat(
         if ratio >= threshold:
             return True
     return False
+
+
+def is_content_self_dup(
+    candidate: str,
+    recent_bob_replies: Iterable[str],
+    *,
+    threshold: float = _DEFAULT_BOB_REPEAT_THRESHOLD,
+    min_words: int = _DEFAULT_DUP_MIN_WORDS,
+) -> bool:
+    """True iff a CONTENT-FUL ``candidate`` (near-)repeats one of Bob's replies (BOB-078 C).
+
+    The recall-poisoning twin of :func:`is_bob_repeat` for the WIDE own-reply window.
+    The live bug: Bob copied a vivid past reply to Пашa verbatim ~2 min later. The
+    narrow :func:`is_bob_repeat` compares only against Bob's replies WITHIN the shared
+    group-thread replay window (``recent_turns`` episodes), which on the group /
+    stream-read path (BOB-058 + BOB-072) is FLOODED by other participants' ambient
+    turns — so his own prior reply scrolls out of view before the guard sees it. This
+    predicate is meant to run against a WIDE window of Bob's OWN recent replies instead.
+
+    🔴 It is gated on ``min_words`` so a legitimate SHORT repeat — «да» / «ок» / «привет»
+    / a bare emoji, or a 2-3 word pleasantry like «доброе утро» — is NEVER suppressed:
+    only a content-ful reply (>= ``min_words`` words after normalisation) is a dup
+    candidate. Below the bar → not a dup, regardless of an exact match. The near-verbatim
+    comparison itself REUSES :func:`is_bob_repeat` (same strip / casefold / collapse +
+    :class:`difflib.SequenceMatcher` ratio at ``threshold``), so the two guards share one
+    normalisation and one conservative bar — no second notion of "same reply".
+    """
+    if len(_normalise(candidate).split()) < min_words:
+        return False
+    return is_bob_repeat(candidate, recent_bob_replies, threshold=threshold)
 
 
 # Sentence/clause boundaries used to split a reply into candidate "notable" phrases

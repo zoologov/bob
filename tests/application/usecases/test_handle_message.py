@@ -4065,6 +4065,9 @@ async def test_window_of_one_misses_the_repeat_through_a_turn() -> None:
     # Proof the WINDOW is the fix: with window=1 (the old behaviour — compare only the
     # last reply) the same repeat "через ход" is NOT caught — the older identical
     # decline is outside the one-reply window, so no regeneration fires.
+    # 🔴 ``tic_lookback=1`` narrows the BOB-078 C wide own-reply net to the same single
+    # reply, so THIS test isolates the BOB-026 narrow-window boundary; the wide net's own
+    # catch (a content-ful dup past the narrow window) is pinned by its own tests above.
     handler, bot, _repo, tier1 = _build(
         reply="unused",
         tier1_replies=[_OLDER_DECLINE, "Ладно, давай попробую описать словами."],
@@ -4072,13 +4075,80 @@ async def test_window_of_one_misses_the_repeat_through_a_turn() -> None:
             {"content": _WEDGED_TURN, "event_type": "message"},
             {"content": _INTERVENING_TURN, "event_type": "message"},
         ],
-        repeat_thresholds=RepeatThresholds(window=1),
+        repeat_thresholds=RepeatThresholds(window=1, tic_lookback=1),
     )
 
     await handler.handle(_message("слушай, а нарисуй мне всё-таки таблицу подробно ещё раз"))
 
     assert len(tier1.payloads) == 1
     assert bot.final_text == _OLDER_DECLINE
+
+
+# --- BOB-078 C: verbatim self-dup over the WIDE own-reply window ---------------
+#
+# The live recall-poisoning bug: Bob copied a vivid reply to Пашa verbatim ~2 min later,
+# with OTHER replies wedged between. The narrow guard (is_bob_repeat over the shared
+# group-thread replay window) missed it — on the group / stream-read path (BOB-058 +
+# BOB-072) that window is flooded by other participants' ambient turns, so his own prior
+# reply scrolled past the narrow ``window`` of Bob replies. The WIDE own-reply guard reads
+# Bob's last ``tic_lookback`` replies and catches a content-ful self-dup there.
+_POISON_REPLY = (
+    "Паша, ну ты и циник. Интернет — свалка мусора, а не библиотека, если так смотреть."
+)
+
+
+def _distinct_bob_turns(n: int) -> list[Mapping[str, object]]:
+    # ``n`` intervening turns whose Bob replies are all distinct + content-ful, so the
+    # poison reply sits OUTSIDE the narrow ``window`` (=5) of Bob replies but INSIDE the
+    # wide ``tic_lookback`` (=20) window.
+    return [
+        {
+            "content": f"Ada: вопрос {i}\nbob: Отдельный содержательный ответ номер {i} про дела.",
+            "event_type": "message",
+        }
+        for i in range(n)
+    ]
+
+
+async def test_self_dup_outside_narrow_window_is_caught_via_wide_window() -> None:
+    # 🔴 BOB-078 C: the poison reply is the 7th-most-recent Bob reply — beyond the narrow
+    # window=5 — so is_bob_repeat misses it, exactly as in the live group bug. The WIDE
+    # own-reply guard reads Bob's last ~20 replies, sees the verbatim self-dup, and
+    # regenerates once → the committed reply is the fresh (non-dup) draft.
+    history: list[Mapping[str, object]] = [
+        {"content": f"Pasha: инет — помойка\nbob: {_POISON_REPLY}", "event_type": "message"},
+        *_distinct_bob_turns(6),
+    ]
+    handler, bot, _repo, tier1 = _build(
+        reply="unused",
+        tier1_replies=[_POISON_REPLY, "Да ладно, там и полезное есть — смотря как искать."],
+        history=history,
+    )
+
+    await handler.handle(_message("Боб, а инет — это вообще помойка или нет, подробно"))
+
+    assert len(tier1.payloads) == 2
+    assert bot.final_text == "Да ладно, там и полезное есть — смотря как искать."
+
+
+async def test_short_self_repeat_is_not_suppressed_by_the_wide_guard() -> None:
+    # 🔴 BOB-078 C guardrail: a legit SHORT repeat ("да") sitting in the wide window is
+    # BELOW dup_min_words → the wide guard NEVER suppresses it. The prior "да" is kept
+    # outside the narrow window too (so is_bob_repeat does not fire either), isolating the
+    # wide guard: no regeneration, the short reply ships as-is.
+    history: list[Mapping[str, object]] = [
+        {"content": "Pasha: согласен?\nbob: да", "event_type": "message"},
+        *_distinct_bob_turns(6),
+    ]
+    handler, bot, _repo, tier1 = _build(
+        reply="да",
+        history=history,
+    )
+
+    await handler.handle(_message("Боб, а инет — это вообще помойка или нет, подробно"))
+
+    assert len(tier1.payloads) == 1
+    assert bot.final_text == "да"
 
 
 # --- BOB-036 .1: phrase-tic guard (a recurring signature CLOSER) ---------------
@@ -4176,6 +4246,9 @@ async def test_repeat_just_outside_the_window_is_not_caught() -> None:
     # companion through-a-turn test (window default 5) proves an in-window repeat is
     # caught. Together they pin the window as a real, bounded cutoff.
     older_reply = "Древний ответ, который выпал за пределы окна сравнения."
+    # 🔴 ``tic_lookback=2`` narrows the BOB-078 C wide own-reply net to the same two
+    # freshest replies, so this test isolates the BOB-026 narrow-window boundary; the wide
+    # net's own catch (a content-ful dup past the narrow window) is pinned separately above.
     handler, bot, _repo, tier1 = _build(
         reply=older_reply,
         history=[
@@ -4183,7 +4256,7 @@ async def test_repeat_just_outside_the_window_is_not_caught() -> None:
             {"content": "Ada: два\nbob: Второй ответ.", "event_type": "message"},
             {"content": "Ada: три\nbob: Третий ответ.", "event_type": "message"},
         ],
-        repeat_thresholds=RepeatThresholds(window=2),
+        repeat_thresholds=RepeatThresholds(window=2, tic_lookback=2),
     )
 
     await handler.handle(_message("слушай, а нарисуй мне всё-таки таблицу подробно ещё раз"))
