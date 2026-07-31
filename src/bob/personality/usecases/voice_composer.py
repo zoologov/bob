@@ -92,11 +92,15 @@ _SYSTEM_PROMPT = (
 )
 
 # Preface for the capability manifest in Bob's prompt: GUPPI is Bob's executor subsystem
-# (canon already in the base persona above), so this just frames the manifest as the skills
-# GUPPI runs for Bob.
+# (canon already in the base persona above). 🔴 BOB-074: hardened into an IMPERATIVE
+# anti-few-shot rule to beat recall-poisoning — past «GUPPI пошёл… ждём отчёт» turns in
+# history make Qwen mimic the narration instead of emitting a tool_call. So this keeps the
+# «GUPPI executes for you» spirit but FORBIDS narrating intent and DEMANDS a real call.
 _CAPABILITY_PREFACE = (
-    "Эти возможности GUPPI исполняет для тебя; вызови одну, когда она помогает "
-    "ответить:"
+    "Эти возможности GUPPI исполняет для тебя. Если для ответа нужен инструмент — "
+    "ВЫЗОВИ его (tool call) и дай РЕАЛЬНЫЙ результат/содержимое.\n"
+    "🔴 НИКОГДА не описывай, что GUPPI «пошёл/заглянет/ищет/перебирает» — это НЕ "
+    "ответ и НЕ действие. Нарратив о намерении без реального результата запрещён."
 )
 
 
