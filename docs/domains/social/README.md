@@ -76,7 +76,8 @@ read на каждого. При этом (аудит команды 2026-07-28)
 src/bob/social/
   ports.py            # layer=domain          — social-порты (Allowlist/Soul/First/Relationship/Sulk/PrivilegeJudge)
   __init__.py         # layer=domain          — фасад модуля
-  interlocutor.py     # layer=domain          — Interlocutor + classify (owner/known/guest/bot + trust), BOB-019
+  interlocutor.py     # layer=domain          — Interlocutor (+ gender) + classify (owner/known/guest/bot + trust), BOB-019/BOB-078 A
+  gender.py           # layer=domain          — Gender/GenderRead + detect_self_gender: грамматический род по САМО-презентации (не по имени), накопление ≥2 сигналов, BOB-078 A
   first_impression.py # layer=domain          — FirstImpression + impression_note_for (лёгкая заметка на нового), BOB-019
   relationship.py     # layer=domain          — Relationship (4 оси) + apply_interaction (шаг за ход), BOB-014
   sulk.py             # layer=domain          — SulkState + observe_relationship/recover (обида на person, person-agnostic, анти-Exodus), BOB-014.2b/BOB-066.2.5
@@ -117,7 +118,11 @@ schema-таблицы (`first_impression`, `person_relationship`, `sulk_state`, 
 `permission_request`, `kv`) живут в единой `schema.sql` kernel'а. Таблица `person_sulk`
 (PK `(persona_id, sender_id)`) добавлена в BOB-066.2.5 как guarded-миграция
 (`CREATE TABLE IF NOT EXISTS` — не трогает существующую базу); legacy `sulk_state`
-остаётся источником одноразового owner-backfill.
+остаётся источником одноразового owner-backfill. Колонка `person_relationship.gender`
+(REAL, nullable, само-идентифицированный род-lean, BOB-078 A) добавлена guarded-ALTER'ом
+`SqliteConnection._migrate_person_relationship_gender` (`CREATE TABLE IF NOT EXISTS` не
+трогает уже существующую таблицу, поэтому колонку добавляет `ALTER` только когда её нет —
+аддитивно и неразрушающе; legacy-строка берёт NULL = UNKNOWN).
 
 **ОСТАЁТСЯ вне social:** `privileged_fulfiller.py` (application-оркестратор, решение 3);
 `ports/personality.py` (MessageReactor / ReflectionReader / Fascination / ZoneClassifier
@@ -126,10 +131,34 @@ schema-таблицы (`first_impression`, `person_relationship`, `sulk_state`, 
 ### Идентичность и восприятие (чистый домен)
 
 `Interlocutor` (`interlocutor.py`) — frozen value-object: id + display-name собеседника,
-`InterlocutorKind` (OWNER / KNOWN / GUEST / BOT) и `Trust` (TRUSTED / GUEST). `classify` —
-чистая функция: выводит идентичность из уже известных за ход authz-фактов (`is_owner` /
-`is_authorized`) и Telegram-флага `is_bot`. Транспорта не касается, покрывает и людей, и
-ботов; сам по себе НЕ меняет доступ — это восприятие поверх неизменной политики.
+`InterlocutorKind` (OWNER / KNOWN / GUEST / BOT), `Trust` (TRUSTED / GUEST) и `gender`
+(`Gender`, по умолчанию `UNKNOWN` — нейтрально, BOB-078 A). `classify` — чистая функция:
+выводит идентичность из уже известных за ход authz-фактов (`is_owner` / `is_authorized`) и
+Telegram-флага `is_bot`, а `gender` пробрасывает как уже-вычисленное значение. Транспорта не
+касается, покрывает и людей, и ботов; сам по себе НЕ меняет доступ — это восприятие поверх
+неизменной политики.
+
+### Грамматический род по само-идентификации (`gender.py`, BOB-078 A)
+
+Живой баг: Боб обращался к женщине в мужском роде («он»), хотя её собственная речь была
+женской («Пошл**а** учить Python»). 🔴 Принцип owner'а: **никогда не угадывать род по имени**
+(«Саша»/«Женя» ненадёжны), только по **само-презентации** — как человек грамматически
+помечает СЕБЯ в собственных словах. Чистое детерминированное ядро без I/O и без LLM (русское
+прошедшее время несёт род окончанием глагола, разбирается правилом):
+
+- `detect_self_gender(text)` → `Gender` (FEM / MASC / UNKNOWN) по ОДНОМУ сообщению.
+  Единственный сигнал — само-презентация от 1-го лица: родовой глагол прошедшего времени о
+  себе («пошла»/«сделал», в начале реплики как опущенное «я» ЛИБО сразу за «я») или явный
+  маркер «я сама»/«я сам». Глагол, отданный 2-му/3-му лицу («пошёл **он**»), противоречивая
+  пара в одном сообщении или имя — НЕ сигнал (UNKNOWN).
+- `GenderRead` — накопительная frozen-ось уверенности: знаковый `lean` в `[-1, 1]` (`> 0`
+  женский, `< 0` мужской). `observe(text)` толкает lean на один шаг по зафиксированному
+  сигналу сообщения, противоречия взаимно гасятся, а `resolve()` коммитит род ТОЛЬКО когда
+  `|lean|` перешагнул порог. Порог — **два шага** (BOB-078.8), поэтому род коммитится лишь
+  после **≥2 согласных сигналов**: один ведущий родовой глагол, чей реальный субъект — не
+  говорящий, а существительное («Была ошибка в коде»), лишь наклоняет и читается UNKNOWN —
+  один глагол НЕ переворачивает род ложно. Слабая или противоречивая история остаётся UNKNOWN
+  (Боб не навязывает рода).
 
 `FirstImpression` (`first_impression.py`) — лёгкая заметка на человека: WHO (`sender_id`),
 WHEN (`first_seen_at`), одна строка `note`. `impression_note_for` — дешёвая чистая
@@ -249,7 +278,14 @@ owner допущен только внутри разрешённого чата
 `SenderPerception` / `ReactorPerception` (`usecases/`) — шов, где `Authorizer` компонуется
 с чистым `classify`: входящее `MessageReceived` (или реактор на сообщение Боба) становится
 `Interlocutor`, который `HandleMessage` вплетает в голос. Это восприятие, НЕ гейт: читает
-`is_owner`/`is_authorized`, но НЕ меняет решение о доступе.
+`is_owner`/`is_authorized`, но НЕ меняет решение о доступе. Когда проведён опциональный
+`gender_store` (шов `GenderMemory`, BOB-078 A), `resolve` сперва вкладывает текст хода в
+само-презентацию отправителя (`observe_gender`) и читает обратно накопленный `Gender`
+(`load_gender`) — так Боб обращается в верном грамматическом роде (UNKNOWN → нейтрально,
+никогда не по имени); без шва или без keyable `sender_id` — UNKNOWN, ход байт-идентичен.
+`perceive_kind(event)` — лёгкий брат `resolve` для холистического stream-read (BOB-078 B):
+та же authz-классификация до `InterlocutorKind`, но БЕЗ накопления рода (само-презентация уже
+свёрнута на основном handle-пути — повторное наблюдение здесь двоило бы счёт).
 
 `PermissionFlow` (`usecases/permission_flow.py`) — политика .2 над .1-доменом: владеет
 КОГДА, не КАК. `maybe_request` для хода не-авторизованного участника спрашивает
@@ -303,7 +339,11 @@ personality.
 append-only `genesis_log.md`; каталог создаётся по требованию). `SqliteFirstImpressionStore`
 — `INSERT … ON CONFLICT DO NOTHING` (впечатление формируется ОДИН раз).
 `SqliteRelationshipStore` — UPSERT в `person_relationship` (имя выбрано, чтобы не путать с
-legacy single-row `relationship` owner-blob). `SqliteSulkStore` — одна строка на
+legacy single-row `relationship` owner-blob). BOB-078 A добавил per-person грамматический
+род: `observe_gender(sender_id, text)` вкладывает само-презентацию хода через чистый
+`GenderRead` и UPSERT'ит ТОЛЬКО колонку `gender` (четыре оси отношения нетронуты —
+несформированное отношение сохраняет нейтральные дефолты), `load_gender(sender_id)` читает
+накопленный lean и резолвит его в `Gender` (NULL / неизвестный отправитель → UNKNOWN). `SqliteSulkStore` — одна строка на
 `persona_id` (legacy per-persona обида, BOB-014.2b; сохранён как источник owner-backfill).
 `SqlitePersonSulkStore` (`adapters/person_sulk_store.py`, BOB-066.2.5) — per-`(persona,
 sender)` обида в таблице `person_sulk`: `load` (unseen пара → свежий не-обиженный дефолт),
@@ -367,6 +407,13 @@ owner id), так что обиженный на середине owner пере
   скромный и растворяется обычным дрейфом-к-нейтральному, если поведение не подтвердит —
   head-start, не постоянный грант. `detected_endorsement`/`owner_endorsed_sender`
   консервативны (нужно поручительство И имя отправителя, иначе `False`).
+- **Род — только по само-идентификации, накопление ≥2, никогда по имени (BOB-078 A).**
+  `detect_self_gender` читает FEM/MASC лишь из само-презентации 1-го лица (родовой глагол о
+  себе / «я сам»/«я сама»); имя и глагол 3-го лица — не сигнал. `GenderRead.resolve` коммитит
+  род только когда `|lean|` перешагнул порог в ДВА шага, поэтому один сигнал не переворачивает
+  род — нужно ≥2 согласных наблюдения; противоречия гасятся, слабая история остаётся UNKNOWN.
+  UNKNOWN → нейтрально (Боб не навязывает рода). Род per-person (колонка `gender`), не трогает
+  четыре оси отношения; без проведённого шва каждый отправитель читается UNKNOWN.
 - **Genesis — one-shot.** Уникальная личность генерируется ровно раз на первом boot'е
   (нет `SOUL.md`), затем только читается.
 - **Мультиперсональность.** per-person атрибуция (`sender_id`/`persona_id`) сосуществует
@@ -409,7 +456,9 @@ owner id), так что обиженный на середине owner пере
 удалён, BOB-062.8).
 
 Ключевые точки входа:
-- Домен: `interlocutor.classify`, `first_impression.impression_note_for`,
+- Домен: `interlocutor.classify` (+ `Interlocutor.gender`),
+  `gender.detect_self_gender`/`GenderRead.observe`/`resolve` (+ `Gender`),
+  `first_impression.impression_note_for`,
   `relationship.apply_interaction`/`endorsed_seed`, `sulk.observe_relationship`/`recover`,
   `disclosure.may_surface`/`visibility_for_scope`/`filter_surfaceable`
   (+ `VISIBILITY_PUBLIC`/`VISIBILITY_OWNER_PRIVATE`),
@@ -434,6 +483,9 @@ recovery-тика обиды) — в композиционном корне (`r
 
 - Домен: `tests/domain/personality/test_interlocutor.py`,
   `test_first_impression.py`, `test_relationship.py`, `test_sulk.py`;
+  `test_gender.py` (BOB-078 A: `detect_self_gender` — 1-е лицо vs 3-е лицо vs имя,
+  `GenderRead` — накопление ≥2 сигналов до коммита, противоречия гасятся, порог),
+  `test_voice.py` (родовая клауза `who_is_writing_directive`: FEM/MASC/UNKNOWN);
   `tests/domain/permission/test_privilege.py`.
 - Восприятие/authz: `tests/application/authz/test_authorizer.py`,
   `test_sender_perception.py`, `test_reactor_perception.py`;
@@ -446,7 +498,9 @@ recovery-тика обиды) — в композиционном корне (`r
 - Genesis: `tests/application/usecases/test_run_genesis.py`,
   `test_run_genesis_hardening.py`.
 - Адаптеры: `tests/infrastructure/persistence/test_first_impression_store.py`,
-  `test_relationship_store.py`, `test_sulk_store.py`, `test_person_sulk_store.py`
+  `test_relationship_store.py` (в т.ч. `load_gender`/`observe_gender` — накопление,
+  изоляция от четырёх осей, legacy-NULL → UNKNOWN),
+  `test_sulk_store.py`, `test_person_sulk_store.py`
   (per-person UPSERT + owner-backfill идемпотентность/не-воскрешение),
   `test_permission_request_store.py`; `tests/infrastructure/llm/test_privilege_judge.py`.
 - Per-person обида (BOB-066.2.5): `tests/application/usecases/test_sulk_sources.py`

@@ -153,7 +153,9 @@ THE анти-runaway-гардрейл. `mood_taste.modulate` — mood време
 источник тона), `brevity_directive(verbosity)` / `brevity_few_shot` (длина хода из решённой
 `Verbosity`), `engagement_directive(level)`, `sulk_directive`, `relationship_tone_directive`,
 `who_is_writing_directive` / `stranger_directive` (читают уже-вычисленный `kind.value`
-собеседника — БЕЗ runtime-импорта `InterlocutorKind`), `profanity_stance`,
+собеседника — БЕЗ runtime-импорта `InterlocutorKind`; `who_is_writing_directive` также
+доклеивает родовую клаузу по уже-вычисленному `gender.value` — «обращайся в женском/мужском
+роде», UNKNOWN → ничего, BOB-078 A, тоже без импорта social `Gender`), `profanity_stance`,
 `user_repeat_directive`, `improvement_directive`, `tactful_withhold_directive`
 (BOB-066.2.6 — тёплый отказ такта разглашения: гейт привилегий по-прежнему НЕ раскрывает
 приватные данные owner'а гостю, а эта строка лишь заменяет сухую стену на человечное «это

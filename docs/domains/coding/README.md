@@ -86,7 +86,12 @@ CANCELLED / FAILED ← из любого нетерминального
 в нём физически отсутствуют. `GhPullRequestOpener` строит единственную форму
 `gh pr create --base main --head <branch>` (discrete argv, без shell) — merge-метода в
 порте нет. `SqliteCodingSessionStore` round-trip'ит `CodingSession` (двойной гейт
-честен и через границу процесса).
+честен и через границу процесса). 🔴 **Резилентность `active()` (BOB-078 D):**
+`active()` дёргается coding-router'ом на КАЖДОМ входящем сообщении, поэтому ОДНА битая строка
+(`state` вне `CodingSessionState` → `ValueError`, битая дата) не должна ронять весь список —
+иначе роутер бросает на каждом сообщении и Боб глохнет. `_try_row_to_session` оборачивает
+`_row_to_session`: неразбираемую строку логирует и ПРОПУСКАЕТ (`ValueError`/`TypeError`),
+валидные сессии возвращаются как обычно.
 
 ## Инварианты
 
@@ -110,6 +115,11 @@ CANCELLED / FAILED ← из любого нетерминального
   флаге assistant не подключён и шов инертен.
 - **Shell-free:** все внешние вызовы (`claude`, `git`, `gh`) идут через
   `create_subprocess_exec` дискретными argv, без интерполяции метасимволов.
+- **Резилентность приёма (BOB-078 D):** `active()` пропускает битую строку `coding_session`
+  (`_try_row_to_session` глотает `ValueError`/`TypeError` и логирует), а не роняет весь список —
+  одна порченая сессия не оглушает Боба на каждом входящем сообщении. Парный гейт на стороне
+  application (`PreComposeGate.maybe_route_coding`) глотает любую ошибку роутера → chat-путь
+  продолжается.
 
 ### Границы модуля (AaC)
 
@@ -172,4 +182,5 @@ worktree-изоляция и containment, allowlist режимов раннер�
 классификатора намерения и предикатов апрува/стопа, автономный guard (coding вне
 `goals.safe_capabilities`). См. `tests/` (переехавшие coding-тесты, включая строковые
 литералы путей в `test_coding_never_merge_and_autonomy_guard.py`, обновлены под
-`src/bob/coding/`).
+`src/bob/coding/`). Резилентность `active()` — `tests/infrastructure/persistence/test_coding_session_store.py`
+(битая строка пропускается, список не падает, BOB-078 D).
