@@ -69,12 +69,12 @@ per-person атрибуция сосуществует с цельным тре�
 src/bob/conversation/
   ports.py            # layer=domain          — conversation-порты (ConversationFloorStore/CloserLog/ZoneClassifier)
   __init__.py         # layer=domain          — фасад модуля
-  addressivity.py     # layer=domain          — Addressivity + classify_addressivity/others_present + decide_response (if/else-лестница, BOB-023); вокатив «Боб» в любой позиции реплики (BOB-069) + вокатив-с-точкой при запятой-обращении слева (BOB-071)
+  addressivity.py     # layer=domain          — Addressivity + classify_addressivity/others_present + decide_response (if/else-лестница, BOB-023); вокатив «Боб» в любой позиции реплики (BOB-069) + вокатив-с-точкой при запятой-обращении слева (BOB-071) + прямое «ты» к Бобу → DIRECTED_TO_BOB, guard кросс-тока (BOB-078 B)
   conversation_floor.py# layer=domain         — FloorHolder/ConversationFloor(+participants)/FloorConfig, advance_floor, resolve_addressivity, is_floor_participant (BOB-025/066 .1)
   brevity.py          # layer=domain          — AnswerDemand + BrevityThresholds + decide_verbosity → personality Verbosity, clamp_reply (BOB-024)
   engagement.py       # layer=domain          — decide_engagement → personality EngagementLevel + ConversationalFatigue (затухающий резервуар, BOB-014)
   zone_classifier.py  # layer=domain          — TasteZoneClassifier: дефолт ZoneClassifier (taste/логистика-эвристика)
-  conversation.py     # layer=domain          — анти-тик предикаты: is_user_repeat/is_bob_repeat/is_phrase_tic/recurring-closer (BOB-022/026/061)
+  conversation.py     # layer=domain          — анти-тик предикаты: is_user_repeat/is_bob_repeat/is_phrase_tic/recurring-closer (BOB-022/026/061) + is_content_self_dup (дословный само-дубль по широкому окну, gated dup_min_words, BOB-078 C)
   interim_line.py     # layer=domain          — чистый prompt+cleaner живой interim-строки (BOB-057 .3)
   response_choice.py  # layer=domain          — ResponseIntent/ResponseChoice/ResponseContext + порт ResponseJudge (BOB-049)
   response_judgment.py# layer=domain          — чистый Tier-0 wire-протокол судьи ответа (prompt/parser/emoji-валидатор)
@@ -82,7 +82,7 @@ src/bob/conversation/
   reply_context.py    # layer=domain          — _assemble_shareable_context: сборка reply-shaping контекста хода (free-функция → хелпер, BOB-062.6b)
   thread.py           # layer=domain          — проекция персиста в сигналы хода: _render_thread/_user_turns/_history_for_author/_recent_bob_replies/_strip_recalled_closer (BOB-062.6b)
   outgoing_target.py  # layer=domain          — OutgoingTarget VO + resolve_outgoing_target: КУДА ложится ответ (цитата reply-to + адресат), BOB-066 Срез 1.1
-  room_reading.py     # layer=domain          — RoomMood/ReflectiveIntent/RoomReading(+Context) VO + порт RoomReader: форма ОДНОГО рефлексивного «чтения комнаты» (BOB-066 Срез 2.2); + пачечный шов BatchAmbientMessage/BatchRoomReadingContext/BatchRoomReading + порт BatchRoomReader (BOB-072)
+  room_reading.py     # layer=domain          — RoomMood/ReflectiveIntent/RoomReading(+Context) VO + порт RoomReader: форма ОДНОГО рефлексивного «чтения комнаты» (BOB-066 Срез 2.2); + пачечный шов BatchAmbientMessage(+kind)/BatchRoomReadingContext/BatchRoomReading + порт BatchRoomReader (BOB-072/BOB-078 B)
   room_reading_wire.py# layer=domain          — чистый Tier-1 wire-протокол «чтения комнаты» (ROOM_READ_SYSTEM_PROMPT/build_room_prompt/parse_room_reading, бросает RoomReadingParseError); + пачечный BATCH_ROOM_READ_SYSTEM_PROMPT/build_batch_room_prompt/parse_batch_reading (garbage→all-IGNORE, толерантен, BOB-072)
   room_verdict.py     # layer=domain          — VerdictKind/ReflectiveVerdict + decide_from_reading + SALIENCE_THRESHOLD: чистое ядро вердикта (LLM вербализует → ядро решает); + decide_batch: проекция read→verdict по всей пачке (BOB-072)
   usecases/           # layer=application
@@ -145,6 +145,17 @@ address-контексте слева (трейлинг-вокатив «…, Б
 редкий доброкачественный случай, оставленный сознательно по принципу «лучше ответить, чем ложно
 промолчать» (симметрично трейлинг-вокативу «…, Боб» без точки).
 
+🔴 **Прямое «ты» к Бобу → DIRECTED_TO_BOB (BOB-078 B).** Соц-значимую реплику участника —
+комплимент или прямое обращение на «ты» («Ты классный», «тебя починили») — Боб не игнорирует.
+После веток вокатива Боба и reply-на-другого `classify_addressivity` поднимает адресность до
+DIRECTED_TO_BOB, когда в тексте есть отдельно стоящее ЛИЧНОЕ местоимение 2-го лица
+(`_SECOND_PERSON_RE`: ты/тебя/тебе/тобой/тобою, границы слова обязательны — «стыд»/«был» не
+считаются) И НЕТ вокатива-обращения к ДРУГОМУ по имени (`_addresses_other_by_name`: слово ≥2
+букв вплотную перед `,`/`:`, не имя Боба). Так «Ты классный» (к Бобу) поднимается, а «Паша, ты
+циник» (к третьему) остаётся не-к-Бобу — Боб не влезает в чужой кросс-ток. Притяжательные
+(«твой код») намеренно не входят (чаще про вещь, не оклик); хелперы module-level и чистые,
+сигнатура `classify_addressivity` не менялась.
+
 `ConversationFloor` (`conversation_floor.py`) — трекер разговорной реплики: кто «у микрофона»
 (`FloorHolder` BOB/OTHER/IDLE), когда держателя последний раз подтвердили (`since`), серия
 безметочных реплик без Боба (`idle_streak`) и `participants` — набор id говорящих живой нити при
@@ -193,7 +204,16 @@ Tier-0 судья решает, зависит ли хороший ответ о
 BOB-022 — точный матч после нормализации, консервативно), `is_bob_repeat` (Боб эхом повторяет
 свой недавний ответ по всему окну, BOB-026), `is_phrase_tic` (фраза-тик), `recurring_closer` /
 `is_recurring_closer_tic` (повторяющийся закрывающий мотив, в т.ч. кросс-сессионно через
-`CloserLog`-кольцо, BOB-061).
+`CloserLog`-кольцо, BOB-061). 🔴 `is_content_self_dup` (BOB-078 C) — recall-poisoning-близнец
+`is_bob_repeat` для ШИРОКОГО окна своих ответов: узкий `is_bob_repeat` сравнивает лишь с
+ответами Боба ВНУТРИ окна воспроизведённого общего треда, которое на групповом / stream-read
+пути (BOB-058 + BOB-072) затоплено ambient-репликами других — и собственный прошлый ответ
+уплывает из вида до проверки. Предикат gated по `min_words` (`dup_min_words`): короткий повтор
+(«да»/«ок»/«привет»/эмодзи или 2-3-словная любезность «доброе утро») НИКОГДА не подавляется,
+давится только содержательная (≥ `min_words` слов) near-verbatim реплика. Само near-verbatim
+сравнение ПЕРЕИСПОЛЬЗУЕТ `is_bob_repeat` (та же нормализация + `SequenceMatcher`-ratio на
+пороге) — одна нормализация и один консервативный барьер на оба guard'а. `RepeatThresholds`
+получил поле `dup_min_words` (дефолт 4, из `repeat.dup_min_words`).
 
 ### Цель ответа на выходе — reply-to (BOB-066 Срез 1.1)
 
@@ -341,18 +361,27 @@ REPLY; на детерминированном пути потолок НЕ ко
 обращение) детерминирована и отделяется ДО этого шва (INV-1) — здесь всё ambient.
 
 1. **VO + порт (`room_reading.py`).** `BatchAmbientMessage` — одно атрибутированное ambient-сообщение
-   (`sender_id`/`sender_name`/`text`/`ts` + per-message floor/interest-хинты). `BatchRoomReadingContext`
-   — вход: вспышка в порядке прибытия + общий author-labelled тред (read-only) + mood-тон +
-   `others_present`. `BatchRoomReading` — итог: по ОДНОМУ `RoomReading` на сообщение В ТОМ ЖЕ ПОРЯДКЕ
-   + `room_mood` по всей вспышке + `reason` (логи). Порт `BatchRoomReader.read(batch_ctx) ->
-   BatchRoomReading` — инъектируемый, участник-агностичный (готов к репликам-Бобам).
+   (`sender_id`/`sender_name`/`text`/`ts` + per-message floor/interest-хинты + `kind`).
+   🔴 `kind` — соц-`InterlocutorKind` автора (BOB-078 B): тёплый ответ ГОСТЯ/новичка читается как
+   соц-значимый, а не как низко-салиентная болтовня (живой баг «Лиля»); `None` при нераспознанном
+   отправителе (baseline, без маркера). `BatchRoomReadingContext` — вход: вспышка в порядке прибытия +
+   общий author-labelled тред (read-only) + mood-тон + `others_present`. `BatchRoomReading` — итог: по
+   ОДНОМУ `RoomReading` на сообщение В ТОМ ЖЕ ПОРЯДКЕ + `room_mood` по всей вспышке + `reason` (логи).
+   Порт `BatchRoomReader.read(batch_ctx) -> BatchRoomReading` — инъектируемый, участник-агностичный
+   (готов к репликам-Бобам).
 2. **Wire (`room_reading_wire.py`).** `build_batch_room_prompt` сворачивает атрибутированный поток в
-   пронумерованный Tier-1 промпт; `BATCH_ROOM_READ_SYSTEM_PROMPT` задаёт «прочитай ВЕСЬ поток и реши по
-   каждому». 🔴 В ОТЛИЧИЕ от `parse_room_reading`, `parse_batch_reading(raw, count)` ТОЛЕРАНТЕН: битый
-   или отсутствующий блок деградирует в безопасный молчаливый IGNORE ДЛЯ ТОГО сообщения, а целиком
-   нечитаемый ответ — в all-IGNORE нужной длины (Боб никогда не действует по угаданному пачечному read;
-   план всегда ровно `count` чтений). Блоки разделяются строкой `---`; per-блок парсинг переиспользует
-   `parse_room_reading`.
+   пронумерованный Tier-1 промпт; рядом с автором доклеивается соц-маркер `_kind_marker` (BOB-078 B):
+   аутсайдер-kind (гость / бот) выносится строкой «гость»/«бот», чтобы read взвесил тёплый ответ от
+   него как соц-значимый; инсайдер (owner/known) или нераспознанный kind — без маркера. Маркер keyed по
+   строковому VALUE enum'а, поэтому conversation-сторона НЕ импортит social в runtime (ребро остаётся
+   однонаправленным TYPE_CHECKING). `BATCH_ROOM_READ_SYSTEM_PROMPT` задаёт «прочитай ВЕСЬ поток и реши по
+   каждому» и несёт правило: соц-значимую реплику УЧАСТНИКА (комплимент, знакомство новичка/гостя, прямое
+   «ты» к Бобу) не игнорировать — по-человечески отозваться словами; в ЧУЖОЙ кросс-ток (двое говорят
+   между собой, «ты» адресовано третьему) не влезать. 🔴 В ОТЛИЧИЕ от `parse_room_reading`,
+   `parse_batch_reading(raw, count)` ТОЛЕРАНТЕН: битый или отсутствующий блок деградирует в безопасный
+   молчаливый IGNORE ДЛЯ ТОГО сообщения, а целиком нечитаемый ответ — в all-IGNORE нужной длины (Боб
+   никогда не действует по угаданному пачечному read; план всегда ровно `count` чтений). Блоки
+   разделяются строкой `---`; per-блок парсинг переиспользует `parse_room_reading`.
 3. **Чистое ядро (`room_verdict.py`).** `decide_batch(readings)` поднимает `decide_from_reading` над
    всей пачкой: ТА ЖЕ детерминированная политика (порог `SALIENCE_THRESHOLD` сначала, затем
    intent-маппинг) к каждому чтению в порядке прибытия. Семантика — в read, ПОЛИТИКА — чистая проекция;
@@ -431,7 +460,16 @@ per-turn `TurnScope` (BOB-066 Срез 2.1, INV-4).** Под intake-развяз
   («читаю комнату, но помню разговор»), и тред не рвётся. В отличие от judge-пути owner-activity
   здесь НЕ штампуется — периферийное чтение не обязательно означает взаимодействие owner'а.
 - `AntiRepeatGuard` (`anti_repeat_guard.py`) — регенерация повтора/тика (`guard`) + кольцо
-  закрывающих (`log_closer` / `closer_anti_tic`). 🔴 Принимает `VoiceComposer.compose` как
+  закрывающих (`log_closer` / `closer_anti_tic`). 🔴 **Анти-само-дубль по широкому окну
+  (BOB-078 C).** Full-reply-проверка `is_bob_repeat` видит лишь узкое окно общего треда
+  (`recent` + recalled), затопленное на групповом пути ambient-репликами других — поэтому
+  собственный яркий ответ, скопированный Бобом дословно ~2 мин спустя (живой баг «Паша, ну ты
+  и циник…» дважды), проскакивает. `guard` теперь ДОПОЛНИТЕЛЬНО прогоняет `is_content_self_dup`
+  против ШИРОКОГО окна своих ответов (того же, что читает tic-скан), но ТОЛЬКО для содержательных
+  реплик (`dup_min_words`), и при срабатывании гонит ТУ ЖЕ регенерацию, вплетая анти-few-shot
+  nudge `_SELF_DUP_NUDGE` («скажи заново своими словами, смысл тот же») — толчок к разнообразию,
+  не бан; легитимный короткий повтор («да»/«ок») ниже порога и не подавляется. Принимает
+  `VoiceComposer.compose` как
   `compose`-callback (по значению, не импорт — цикл compose↔guard замкнут БЕЗ
   `conversation → personality` импорта); `verify_note` / `closer_nudge` текут turn-local
   аргументами через тот же колбэк. `guard(..., *, rng=None)` прокидывает турновый `rng`
@@ -475,10 +513,17 @@ floor (UPSERT — floor продвигается каждый ход); `SqliteCl
   без ложных срабатываний, BOB-069). Точка `.` справа даёт вокатив ТОЛЬКО при запятой-обращении
   вплотную слева (`_has_left_comma_context`): «Привет, Боб.» → обращение, «Это Боб.» → AMBIENT
   (BOB-071); сознательное известное ограничение — перечисление «…, Петя, Боб.» ложно-положительно
-  (редкий доброкачественный случай, «лучше ответить, чем ложно промолчать»).
+  (редкий доброкачественный случай, «лучше ответить, чем ложно промолчать»). Прямое «ты» к Бобу
+  («Ты классный») поднимает адресность до DIRECTED_TO_BOB ТОЛЬКО при личном местоимении 2-го лица
+  И отсутствии вокатива к другому по имени — «Паша, ты циник» (к третьему) остаётся не-к-Бобу,
+  Боб не влезает в чужой кросс-ток (BOB-078 B).
 - **Анти-тик консервативен.** `is_user_repeat` — только точный матч после нормализации (Боб не
   обвиняет owner'а зря); `is_bob_repeat` проверяет всё окно (повтор «через ход» не проскакивает);
-  `CloserLog` ловит мотив, рассеянный по сессиям.
+  `CloserLog` ловит мотив, рассеянный по сессиям. `is_content_self_dup` (BOB-078 C) закрывает
+  recall-poisoning-дыру на групповом / stream-read пути — near-verbatim само-дубль ловится и по
+  ШИРОКОМУ окну своих ответов, но только для содержательных реплик (`dup_min_words`); короткий
+  легитимный повтор («да»/«ок») никогда не подавляется. Guard переиспользует нормализацию и барьер
+  `is_bob_repeat` — второго понятия «тот же ответ» нет.
 - **Судьи по смыслу, безопасный дефолт.** Структурные сигналы — входы, не override-правила;
   VolatilityJudge при неоднозначности дефолтит `needs_check=False` (US-2 «не зануда»); парсеры
   бросают на мусоре, а не молча дефолтят некорректно.
@@ -553,7 +598,7 @@ floor (UPSERT — floor продвигается каждый ход); `SqliteCl
   `resolve_addressivity`/`is_floor_participant` (→ `ConversationFloor` c `participants`),
   `brevity.decide_verbosity` (→ `Verbosity`), `engagement.decide_engagement`
   (→ `EngagementLevel`) + `ConversationalFatigue`, `zone_classifier.TasteZoneClassifier`,
-  `conversation.is_user_repeat`/`is_bob_repeat`/`is_recurring_closer_tic`,
+  `conversation.is_user_repeat`/`is_bob_repeat`/`is_content_self_dup`/`is_recurring_closer_tic`,
   `response_choice.ResponseChoice`/`ResponseJudge`, `volatility_judgment.VolatilityJudge`,
   `interim_line.build_interim_line_user_prompt`,
   `outgoing_target.resolve_outgoing_target` (→ `OutgoingTarget` c `reply_to_message_id`/`addressee_id`),
@@ -577,13 +622,16 @@ floor (UPSERT — floor продвигается каждый ход); `SqliteCl
 
 Тесты покрывают инварианты и поведение (identical после переезда):
 
-- Домен: `tests/domain/personality/test_addressivity.py`, `test_addressivity_policy.py`,
+- Домен: `tests/domain/personality/test_addressivity.py` (в т.ч. «ты»-directed → DIRECTED_TO_BOB
+  + guard кросс-тока, BOB-078 B), `test_addressivity_policy.py`,
   `test_conversation_floor.py`, `test_brevity.py`, `test_engagement.py`,
-  `test_zone_classifier.py`, `test_conversation.py`, `test_response_judgment.py`,
+  `test_zone_classifier.py`, `test_conversation.py` (в т.ч. `is_content_self_dup`: содержательный
+  дубль ловится, короткий повтор нет, BOB-078 C), `test_response_judgment.py`,
   `test_volatility_judgment.py`, `test_interim_line.py`;
   `tests/domain/conversation/test_outgoing_target.py` (truth-table reply-to + mutation-покрытие);
   `tests/domain/conversation/test_room_reading.py`, `test_room_reading_wire.py`, `test_room_verdict.py`,
-  `test_room_verdict_determinism.py` (рефлексивные VO / wire-парсер / чистый вердикт, mutation-ready).
+  `test_room_verdict_determinism.py` (рефлексивные VO / wire-парсер / чистый вердикт, mutation-ready);
+  `test_room_reading_wire_batch.py` (соц-маркер kind гостя/бота в batch-промпте, BOB-078 B).
 - Use-case: `tests/application/usecases/test_decide_response.py`;
   `tests/conversation/usecases/test_read_the_room.py`, `test_turn_gate_reflective.py`,
   `test_turn_gate_inv1_matrix.py` (INV-1 матрица: прямое обращение всегда отвечено), `test_turn_gate_clamp.py`,
@@ -598,6 +646,12 @@ floor (UPSERT — floor продвигается каждый ход); `SqliteCl
 - Приёмочный BDD floor-по-говорящему: `tests/acceptance/features/floor_by_speaker.feature` +
   `tests/acceptance/steps/test_floor_by_speaker.py` (реплика участника нити продолжает диалог,
   реплика постороннего не перехватывается — через FakeGateway).
+- Приёмочный BDD engagement участника (BOB-078 B): `tests/acceptance/features/participant_engagement.feature`
+  + `tests/acceptance/steps/test_participant_engagement.py` (комплимент/«ты» участника не игнорится,
+  чужой кросс-ток — без вмешательства).
+- Приёмочный BDD анти-само-дубль (BOB-078 C): `tests/acceptance/features/anti_repeat_self_dup.feature`
+  + `tests/acceptance/steps/test_anti_repeat_self_dup.py` (дословный дубль по широкому окну
+  регенерируется, короткий повтор проходит).
 - Адаптеры: `tests/infrastructure/llm/test_response_judge.py`, `test_volatility_judge.py`,
   `test_interim_line.py`; `tests/infrastructure/persistence/test_conversation_floor_store.py`,
   `test_closer_log_store.py`.

@@ -22,9 +22,11 @@ from bob.conversation.room_reading import (
     RoomMood,
 )
 from bob.conversation.room_reading_wire import (
+    BATCH_ROOM_READ_SYSTEM_PROMPT,
     build_batch_room_prompt,
     parse_batch_reading,
 )
+from bob.social.interlocutor import InterlocutorKind
 
 
 def _msg(
@@ -33,6 +35,7 @@ def _msg(
     sender_name: str,
     text: str,
     ts: float = 0.0,
+    kind: InterlocutorKind | None = None,
 ) -> BatchAmbientMessage:
     return BatchAmbientMessage(
         sender_id=sender_id,
@@ -42,6 +45,7 @@ def _msg(
         floor_holder="other",
         floor_participant=True,
         interest=0.4,
+        kind=kind,
     )
 
 
@@ -75,6 +79,50 @@ def test_prompt_carries_the_shared_thread_and_tone() -> None:
     prompt = build_batch_room_prompt(_ctx(_msg(sender_id=6, sender_name="N", text="hi")))
     assert "Norman: привет" in prompt
     assert "ровный" in prompt
+
+
+def test_prompt_marks_a_guest_author_so_a_warm_reply_reads_as_salient() -> None:
+    # 🔴 BOB-078 B: батч-read должен ЗНАТЬ, что автор — гость/новичок, иначе тёплая реплика
+    # («Ты классный») читается как низкая salience → IGNORE (живой баг Лилии). Рядом с автором
+    # проступает маркер «гость».
+    prompt = build_batch_room_prompt(
+        _ctx(
+            _msg(
+                sender_id=8080,
+                sender_name="Лиля",
+                text="Ты классный",
+                kind=InterlocutorKind.GUEST,
+            )
+        )
+    )
+    assert "Лиля" in prompt
+    assert "гость" in prompt
+
+
+def test_prompt_omits_a_kind_marker_for_an_insider_or_unknown_kind() -> None:
+    # Владелец/знакомый/неизвестный kind — без пометки (baseline): маркер только для аутсайдера.
+    for kind in (None, InterlocutorKind.OWNER, InterlocutorKind.KNOWN):
+        prompt = build_batch_room_prompt(
+            _ctx(_msg(sender_id=6, sender_name="Norman", text="hi", kind=kind))
+        )
+        assert "гость" not in prompt
+        assert "бот" not in prompt
+
+
+def test_prompt_marks_a_bot_author() -> None:
+    prompt = build_batch_room_prompt(
+        _ctx(_msg(sender_id=9, sender_name="Guppi", text="ok", kind=InterlocutorKind.BOT))
+    )
+    assert "бот" in prompt
+
+
+def test_batch_read_prompt_states_the_participant_engagement_rule() -> None:
+    # 🔴 BOB-078 B: соц-значимую реплику участника (комплимент/знакомство/«ты» к Бобу) не
+    # игнорировать; в чужой кросс-ток («ты» к третьему) — не влезать. Правило живёт в промпте.
+    assert "комплимент" in BATCH_ROOM_READ_SYSTEM_PROMPT
+    assert "кросс-ток" in BATCH_ROOM_READ_SYSTEM_PROMPT
+    # Существующий баланс сохранён.
+    assert "Не отвечай на всё" in BATCH_ROOM_READ_SYSTEM_PROMPT
 
 
 # --- parse_batch_reading: valid ---------------------------------------------------------

@@ -28,6 +28,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Protocol
 
+from bob.social.gender import Gender, GenderRead
 from bob.social.relationship import Relationship
 
 if TYPE_CHECKING:
@@ -90,6 +91,48 @@ class SqliteRelationshipStore:
             ),
         )
         await self._db().commit()
+
+    async def load_gender(self, sender_id: int) -> Gender:
+        """Return the self-identified :class:`Gender` for ``sender_id`` (BOB-078 A).
+
+        Reads the persisted gender lean and resolves it (a lean past the threshold →
+        FEM / MASC). An unknown sender, or a legacy row whose ``gender`` is ``NULL``,
+        reads as :attr:`Gender.UNKNOWN` — Bob then addresses them neutrally, forcing
+        no grammatical gender. 🔴 The lean is only ever accrued from a person's own
+        self-presentation (see :meth:`observe_gender`), never from their name.
+        """
+        return GenderRead(await self._load_gender_lean(sender_id)).resolve()
+
+    async def observe_gender(self, sender_id: int, text: str) -> None:
+        """Fold ``text``'s self-presentation into ``sender_id``'s gender lean (BOB-078 A).
+
+        Reads the current lean, accrues this message's committed self-signal via the
+        pure :class:`~bob.social.gender.GenderRead` (a gendered 1st-person verb / an
+        explicit «я сам»/«я сама» nudges it; a name or a 3rd-person verb does not), and
+        UPSERTs it back — persisting ONLY the ``gender`` column so the four relationship
+        axes are untouched (a not-yet-formed relationship keeps its neutral defaults).
+        Keyed by ``sender_id``, per-PERSON data (about them), safe on a guest turn.
+        """
+        lean = GenderRead(await self._load_gender_lean(sender_id)).observe(text).lean
+        await self._db().execute(
+            "INSERT INTO person_relationship "
+            "(sender_id, trust, respect, warmth, compatibility, gender) "
+            "VALUES (?, 0.0, 0.0, 0.0, 0.0, ?) "
+            "ON CONFLICT(sender_id) DO UPDATE SET gender = excluded.gender",
+            (sender_id, lean),
+        )
+        await self._db().commit()
+
+    async def _load_gender_lean(self, sender_id: int) -> float:
+        """The raw stored gender lean for ``sender_id`` (``0.0`` when absent/NULL)."""
+        async with self._db().execute(
+            "SELECT gender FROM person_relationship WHERE sender_id = ?",
+            (sender_id,),
+        ) as cursor:
+            row = await cursor.fetchone()
+        if row is None or row[0] is None:
+            return 0.0
+        return float(row[0])
 
     def _db(self) -> aiosqlite.Connection:
         return self._repo.connection

@@ -266,7 +266,10 @@ def _build_repeat_thresholds(config: Mapping[str, object]) -> RepeatThresholds:
     tic the narrow per-turn view misses is still caught). BOB-061 .1 adds
     ``motif_similarity_threshold`` (the CONSERVATIVE near-verbatim bar for clustering
     closer MOTIF variants, so «мне/ему так спокойнее» count as one motif without sticking
-    distinct closers together). Each falls back to the conservative dataclass default.
+    distinct closers together). BOB-078 C adds ``dup_min_words`` (the minimum reply length
+    for the WIDE own-reply self-dup guard, so a legit SHORT repeat «да»/«ок» is never
+    suppressed while a content-ful copied reply is). Each falls back to the conservative
+    dataclass default.
     """
     section = _section(config, "repeat")
     defaults = RepeatThresholds()
@@ -283,6 +286,7 @@ def _build_repeat_thresholds(config: Mapping[str, object]) -> RepeatThresholds:
         motif_similarity_threshold=_float_or(
             section, "motif_similarity_threshold", defaults.motif_similarity_threshold
         ),
+        dup_min_words=_int(section, "dup_min_words", defaults.dup_min_words),
     )
 
 

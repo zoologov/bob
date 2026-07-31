@@ -26,6 +26,7 @@ path exactly as before.
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING, Protocol
 
 from bob.social.interlocutor import InterlocutorKind, Trust
@@ -33,6 +34,8 @@ from bob.social.interlocutor import InterlocutorKind, Trust
 if TYPE_CHECKING:
     from bob.application.runtime.events import MessageReceived
     from bob.social.interlocutor import Interlocutor
+
+logger = logging.getLogger(__name__)
 
 
 class NaturalCodingRouter(Protocol):
@@ -109,9 +112,20 @@ class PreComposeGate:
         is_owner = (
             interlocutor is not None and interlocutor.kind is InterlocutorKind.OWNER
         )
-        return await self._coding_router.route(
-            text=event.text, sender=event.sender_id, is_owner=is_owner
-        )
+        try:
+            return await self._coding_router.route(
+                text=event.text, sender=event.sender_id, is_owner=is_owner
+            )
+        except Exception:
+            # 🔴 Резилентность приёма (BOB-078 D): coding-router дёргается на каждом
+            # сообщении (session_store.active() и подобное). Любая ошибка роутера
+            # (напр. битая строка в coding_session) не должна крашить приём — иначе
+            # intake-воркер роняет сообщение и Боб глохнет. Логируем и трактуем как
+            # «нет активной сессии / не coding» → ход продолжается обычным chat-путём.
+            logger.exception(
+                "coding-router упал на приёме — продолжаю chat-путём (сообщение не coding)"
+            )
+            return False
 
     async def maybe_permission(
         self, event: MessageReceived, interlocutor: Interlocutor | None

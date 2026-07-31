@@ -671,7 +671,12 @@ def build_application(
         # known / guest — off the shared Authorizer and folds it into his voice
         # ("сейчас пишет: …"). Additive only: it shapes HOW Bob sounds, never which
         # pipeline runs (the guest-restricted path is a later bead).
-        perceive_sender=SenderPerception(authorizer=authorizer),
+        # Gender seam (BOB-078 A): Bob reads a person's grammatical gender from THEIR
+        # own self-presentation (never their name), accrued per sender on the same
+        # relationship store, and addresses them accordingly (UNKNOWN → neutral).
+        perceive_sender=SenderPerception(
+            authorizer=authorizer, gender_store=relationship_store
+        ),
         # First-impression seam (BOB-019 bob-apv.3): Bob forms + remembers a LIGHT
         # per-person first impression keyed by sender — a returning person's prior
         # note is recalled into the prompt ("кажется, мы уже сталкивались"), a new
@@ -877,10 +882,15 @@ def build_application(
     # is a mutable holder whose ``soul`` snapshot is REPLACED each turn (mood evolves), so the
     # read must resolve the CURRENT soul at read time — a bound ``personality.soul.mood.tone``
     # would freeze the boot soul.
+    # Kind-perception for the stream-read (BOB-078 B): a light SenderPerception (authz-only, NO
+    # gender store → no double-accrual) resolves each ambient author's social kind, so the batch
+    # read knows a warm reply is from a GUEST/newcomer and doesn't misread it as low-salience.
+    stream_kind_perception = SenderPerception(authorizer=authorizer)
     ambient_batch = (
         RoomStreamReader(
             reader=batch_room_reader,
             mood_tone=lambda: personality.soul.mood.tone(),  # noqa: PLW0108 — late binding of the evolving soul snapshot
+            perceive_kind=stream_kind_perception.perceive_kind,
         )
         if batch_room_reader is not None
         else None

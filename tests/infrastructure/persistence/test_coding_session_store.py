@@ -103,6 +103,25 @@ async def test_active_returns_only_non_terminal(repo: SqliteMemoryRepo) -> None:
     assert tuple(sorted(s.id for s in active)) == ("a", "e")
 
 
+async def test_active_skips_unparseable_row(repo: SqliteMemoryRepo) -> None:
+    # 🔴 Резилентность (BOB-078 D): одна битая строка в coding_session (напр. state в
+    # верхнем регистре 'CANCELLED' — не валидный enum, валиден 'cancelled') НЕ должна
+    # ронять весь active() — битую пропускаем (лог), валидные возвращаем. Иначе
+    # coding-router бросает на КАЖДОМ сообщении и Боб глохнет на owner.
+    store = SqliteCodingSessionStore(repo)
+    await store.save(_session("good", state=CodingSessionState.EXECUTING))
+    await repo.connection.execute(
+        "INSERT INTO coding_session (id, task, state, branch, created_at, updated_at, "
+        "worktree_path, plan, pr_url) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        ("bad", "t", "CANCELLED", "b", _T0.isoformat(), _T1.isoformat(), None, None, None),
+    )
+    await repo.connection.commit()
+
+    active = await store.active()
+
+    assert tuple(s.id for s in active) == ("good",)
+
+
 async def test_survives_restart(tmp_path: Path) -> None:
     db = tmp_path / "bob.db"
     session = _session(

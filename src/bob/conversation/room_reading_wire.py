@@ -27,6 +27,7 @@ without a model and the infrastructure adapter stays a thin shell — mirroring
 from __future__ import annotations
 
 import re
+from typing import TYPE_CHECKING
 
 from bob.conversation.response_judgment import (
     DEFAULT_WARM_EMOJI,
@@ -40,6 +41,9 @@ from bob.conversation.room_reading import (
     RoomReading,
     RoomReadingContext,
 )
+
+if TYPE_CHECKING:
+    from bob.social.interlocutor import InterlocutorKind
 
 __all__ = [
     "BATCH_ROOM_READ_SYSTEM_PROMPT",
@@ -313,6 +317,10 @@ BATCH_ROOM_READ_SYSTEM_PROMPT = (
     "подряд и не молчи из вежливости — пойми, что именно ТРЕБУЕТ твоей реакции, а что нет. "
     "Структурные подсказки (кто держит нить, интерес к теме) — это СИГНАЛЫ, которые ты "
     "взвешиваешь, НЕ правила.\n"
+    "Соц-значимую реплику УЧАСТНИКА не игнорируй: комплимент тебе, знакомство новичка или "
+    "гостя, прямое обращение к тебе на «ты» («ты классный», «тебя починили») — на такое "
+    "по-человечески отзовись словами. Но в ЧУЖОЙ кросс-ток (двое говорят между собой, «ты» "
+    "адресовано третьему, а не тебе) не влезай.\n"
     "Для КАЖДОГО сообщения выбери РОВНО одно intent:\n"
     "- reply: сказать словами;\n"
     "- react: поставить один эмодзи вместо слов;\n"
@@ -364,11 +372,37 @@ def build_batch_room_prompt(batch_ctx: BatchRoomReadingContext) -> str:
     ]
     for index, message in enumerate(batch_ctx.messages, start=1):
         floor = f"{message.floor_holder}/{_yes_no(message.floor_participant)}"
-        lines.append(
-            f"[{index}] {message.sender_name} (id {message.sender_id}, "
-            f"floor={floor}, interest={message.interest:.2f}): {message.text}"
-        )
+        attrs = [
+            attr
+            for attr in (
+                _kind_marker(message.kind),
+                f"id {message.sender_id}",
+                f"floor={floor}",
+                f"interest={message.interest:.2f}",
+            )
+            if attr
+        ]
+        lines.append(f"[{index}] {message.sender_name} ({', '.join(attrs)}): {message.text}")
     return "\n".join(lines)
+
+
+# Social-kind markers folded beside an ambient author (BOB-078 B): an OUTSIDER kind (a GUEST /
+# newcomer or another BOT) is surfaced so the read weighs a warm reply from them as socially
+# salient, not low-salience chatter; an insider (OWNER / KNOWN) or an unperceived kind carries no
+# marker (baseline). Keyed by the enum's stable string VALUE (not the enum type) so this
+# conversation-side wire needs no runtime import of the social package — keeping the boundary a
+# one-way, TYPE_CHECKING-only edge (no conversation↔social import cycle).
+_KIND_MARKERS: dict[str, str] = {
+    "guest": "гость",
+    "bot": "бот",
+}
+
+
+def _kind_marker(kind: InterlocutorKind | None) -> str:
+    """Short social-kind marker for an ambient author, or «» for an insider/unknown kind."""
+    if kind is None:
+        return ""
+    return _KIND_MARKERS.get(kind.value, "")
 
 
 def parse_batch_reading(raw: str, message_count: int) -> BatchRoomReading:

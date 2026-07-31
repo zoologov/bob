@@ -49,7 +49,9 @@ async-примитивы приложения, а не корень сборки
   - `scope.py` — `TurnScope`, изолированный per-turn контекст (координаты хода + собственный
     seeded rng, INV-4); `new_turn_scope`.
   - `room_stream_reader.py` — `RoomStreamReader` + `AmbientBatchReader`: осевший ambient-burst
-    → одно per-message-чтение (BOB-072).
+    → одно per-message-чтение (BOB-072). Опциональный шов `perceive_kind` (BOB-078 B) размечает
+    каждое сообщение соц-`InterlocutorKind` автора, чтобы read взвесил тёплый ответ гостя/новичка
+    как салиентный; без шва `kind=None` (baseline байт-идентичен).
 
 ## Инварианты
 

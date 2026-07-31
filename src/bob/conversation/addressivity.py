@@ -23,6 +23,7 @@ gateway'ем (reply-to / @mention / текст) — без I/O, без ранд�
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING
@@ -73,6 +74,22 @@ _BOB_TURN_PREFIX = "bob"
 # Разделитель между меткой отправителя и текстом в истории ("<sender>: <text>…").
 _SENDER_LABEL_SEPARATOR = ": "
 
+# 🔴 BOB-078 B: 2-е лицо, адресованное Бобу («Ты классный», «тебя починили»), поднимает
+# адресность до DIRECTED_TO_BOB — соц-значимую реплику участника (комплимент/прямое «ты»)
+# Боб не игнорирует. Только ЛИЧНЫЕ формы местоимения 2-го лица (ты/тебя/тебе/тобой/тобою):
+# они несут прямое обращение к собеседнику. Притяжательные (твой/твоя…) намеренно НЕ входят —
+# они чаще про вещь («твой код»), а не оклик. Границы слова обязательны: «стыд»/«тыква»/«был»
+# — не местоимение. Регистр снимается casefold перед матчем.
+_SECOND_PERSON_RE = re.compile(r"(?<!\w)(?:ты|тебя|тебе|тобой|тобою)(?!\w)")
+
+# Вокатив-обращение к ДРУГОМУ по имени («Паша, …» / «Лиля: …») — слово (≥2 букв) с левой
+# границей слова, ВПЛОТНУЮ за которым запятая или двоеточие (сильные address-терминаторы).
+# «!»/«?» намеренно не входят (оклики-восклицания «Ура!»/«Что?» — не вокатив другого). Если
+# такое обращение адресовано НЕ Бобу, «ты» в реплике трактуется как обращённое к тому другому,
+# и Боб НЕ влезает (guard «не баржить»). Ведущий discourse-оборот («Слушай,») тоже сюда попадёт —
+# консервативно (лучше не влезть, engagement подстрахован batch-правилом про гостя/новичка).
+_OTHER_VOCATIVE_RE = re.compile(r"(?<!\w)([^\W\d_]{2,})[,:]")
+
 
 class Addressivity(Enum):
     """Кому адресовано сообщение в треде (perception, не решение).
@@ -122,6 +139,9 @@ def classify_addressivity(
     if reply_to_sender_id is not None:
         # Reply на чужое сообщение (не Боба — иначе ветка выше уже сработала).
         return Addressivity.DIRECTED_TO_OTHER
+    if _is_second_person_address_to_bob(text):
+        # 🔴 BOB-078 B: прямое «ты» к Бобу без другого адресата → к Бобу (не игнор).
+        return Addressivity.DIRECTED_TO_BOB
     return Addressivity.AMBIENT
 
 
@@ -187,6 +207,37 @@ def _is_vocative_at(lowered: str, start: int, name_len: int, length: int) -> boo
 def _has_left_word_boundary(lowered: str, start: int) -> bool:
     """Есть ли слева от имени граница слова (начало строки / не буква-цифра)."""
     return start == 0 or not lowered[start - 1].isalnum()
+
+
+def _is_second_person_address_to_bob(text: str | None) -> bool:
+    """Прямое ли это 2-е лицо, адресованное Бобу (BOB-078 B), — чисто и детерминированно.
+
+    Реплика читается как обращённая к Бобу, если в ней есть отдельно стоящее личное
+    местоимение 2-го лица (:data:`_SECOND_PERSON_RE`: ты/тебя/тебе/тобой/тобою) И в тексте
+    НЕТ вокатива-обращения к ДРУГОМУ по имени (:func:`_addresses_other_by_name`). Так «Ты
+    классный» (к Бобу) поднимается до DIRECTED_TO_BOB, а «Паша, ты циник» (к третьему)
+    остаётся не-к-Бобу — Боб не влезает в чужой кросс-ток. Вызывается ПОСЛЕ вокатива Боба и
+    reply-на-другого, поэтому эти сильные сигналы уже разобраны выше.
+    """
+    if not text:
+        return False
+    lowered = text.casefold()
+    if not _SECOND_PERSON_RE.search(lowered):
+        return False
+    return not _addresses_other_by_name(lowered)
+
+
+def _addresses_other_by_name(lowered: str) -> bool:
+    """Есть ли в тексте вокатив-обращение по имени к НЕ-Бобу («Паша, …»), casefolded.
+
+    Скан по :data:`_OTHER_VOCATIVE_RE` (слово ≥2 букв + вплотную запятая/двоеточие): любое
+    такое обращение к слову, которое НЕ является именем Боба, читается как адресат-другой —
+    тогда «ты» в реплике принадлежит ему, и Боб не влезает. Вокатив самого Боба сюда не
+    относится (его уже поймала ветка :func:`_is_name_address_to_bob` выше).
+    """
+    return any(
+        match.group(1) not in _BOB_NAMES for match in _OTHER_VOCATIVE_RE.finditer(lowered)
+    )
 
 
 def _has_left_address_context(lowered: str, start: int) -> bool:

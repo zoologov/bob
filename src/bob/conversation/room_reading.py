@@ -44,7 +44,7 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     from bob.conversation.addressivity import Addressivity
-    from bob.social.interlocutor import Interlocutor
+    from bob.social.interlocutor import Interlocutor, InterlocutorKind
 
 __all__ = [
     "BatchAmbientMessage",
@@ -214,11 +214,15 @@ class BatchAmbientMessage:
     """One attributed ambient message in a stream-read batch (BOB-072).
 
     Carries the attribution a person reads a group by — WHO said it (``sender_id`` +
-    ``sender_name``), WHAT (``text``), and WHEN (``ts``, a monotonic arrival stamp used only
-    for ordering) — plus the per-message floor/interest HINTS the read weighs (``floor_holder``
-    — who holds the live floor, ``floor_participant`` — whether this sender is in Bob's live
-    exchange, ``interest`` — how interesting the topic is to Bob, by value). Participant-agnostic
-    (a replica-Bob is just another author). Every field is a signal, none forces the outcome.
+    ``sender_name`` + ``kind``), WHAT (``text``), and WHEN (``ts``, a monotonic arrival stamp
+    used only for ordering) — plus the per-message floor/interest HINTS the read weighs
+    (``floor_holder`` — who holds the live floor, ``floor_participant`` — whether this sender is
+    in Bob's live exchange, ``interest`` — how interesting the topic is to Bob, by value).
+    ``kind`` is the sender's social :class:`~bob.social.interlocutor.InterlocutorKind` (BOB-078 B)
+    — so a warm reply from a GUEST/newcomer reads as socially salient instead of low-salience
+    chatter (the live «Лиля» bug); ``None`` when unperceived (baseline, no marker). Participant-
+    agnostic (a replica-Bob is just another author). Every field is a signal, none forces the
+    outcome.
     """
 
     sender_id: int
@@ -228,6 +232,7 @@ class BatchAmbientMessage:
     floor_holder: str
     floor_participant: bool
     interest: float
+    kind: InterlocutorKind | None = None
 
 
 @dataclass(frozen=True, slots=True)

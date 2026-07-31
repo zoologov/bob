@@ -20,6 +20,7 @@ import pytest
 
 from bob.memory.adapters.sqlite_memory_repo import SqliteMemoryRepo
 from bob.social.adapters.relationship_store import SqliteRelationshipStore
+from bob.social.gender import Gender
 from bob.social.relationship import Relationship
 
 if TYPE_CHECKING:
@@ -74,6 +75,101 @@ async def test_is_per_sender_isolated(repo: SqliteMemoryRepo) -> None:
 
     assert await store.load(_SENDER) == owner
     assert await store.load(_OTHER_SENDER) is None
+
+
+async def test_gender_defaults_unknown_for_unknown_sender(
+    repo: SqliteMemoryRepo,
+) -> None:
+    store = SqliteRelationshipStore(repo)
+
+    assert await store.load_gender(_SENDER) is Gender.UNKNOWN
+
+
+async def test_observe_gender_reads_feminine_self_presentation(
+    repo: SqliteMemoryRepo,
+) -> None:
+    store = SqliteRelationshipStore(repo)
+
+    # BOB-078.8: коммит рода требует ≥2 согласных само-сигналов (один лишь наклоняет).
+    await store.observe_gender(_SENDER, "Пошла учить Python")
+    await store.observe_gender(_SENDER, "Я разобралась потом")
+
+    assert await store.load_gender(_SENDER) is Gender.FEM
+
+
+async def test_single_self_signal_does_not_commit_gender(
+    repo: SqliteMemoryRepo,
+) -> None:
+    # 🔴 BOB-078.8: ОДИН родовой сигнал только наклоняет lean — наружу ещё UNKNOWN
+    # (ведущий глагол вроде «Была ошибка…» не переворачивает пол за один ход).
+    store = SqliteRelationshipStore(repo)
+
+    await store.observe_gender(_SENDER, "Была ошибка в коде")
+
+    assert await store.load_gender(_SENDER) is Gender.UNKNOWN
+
+
+async def test_observe_gender_never_infers_from_a_name(
+    repo: SqliteMemoryRepo,
+) -> None:
+    store = SqliteRelationshipStore(repo)
+
+    await store.observe_gender(_SENDER, "Меня зовут Лиля")
+
+    assert await store.load_gender(_SENDER) is Gender.UNKNOWN
+
+
+async def test_observe_gender_accumulates_across_turns(
+    repo: SqliteMemoryRepo,
+) -> None:
+    store = SqliteRelationshipStore(repo)
+
+    await store.observe_gender(_SENDER, "Пролистала чат")
+    await store.observe_gender(_SENDER, "и я сделала всё сама")
+
+    assert await store.load_gender(_SENDER) is Gender.FEM
+
+
+async def test_observe_gender_leaves_relationship_axes_untouched(
+    repo: SqliteMemoryRepo,
+) -> None:
+    store = SqliteRelationshipStore(repo)
+    rel = Relationship(sender_id=_SENDER, warmth=0.7, trust=0.3)
+    await store.save(rel)
+
+    await store.observe_gender(_SENDER, "я сделал")
+    await store.observe_gender(_SENDER, "я разобрался сам")
+
+    assert await store.load(_SENDER) == rel
+    assert await store.load_gender(_SENDER) is Gender.MASC
+
+
+async def test_gender_is_per_sender_isolated(repo: SqliteMemoryRepo) -> None:
+    store = SqliteRelationshipStore(repo)
+
+    await store.observe_gender(_SENDER, "Пошла спать")
+    await store.observe_gender(_SENDER, "я убрала всё")
+
+    assert await store.load_gender(_SENDER) is Gender.FEM
+    assert await store.load_gender(_OTHER_SENDER) is Gender.UNKNOWN
+
+
+async def test_gender_survives_restart(tmp_path: Path) -> None:
+    db = tmp_path / "bob.db"
+
+    first = SqliteMemoryRepo(db)
+    await first.initialize()
+    first_store = SqliteRelationshipStore(first)
+    await first_store.observe_gender(_SENDER, "Пошла учить Python")
+    await first_store.observe_gender(_SENDER, "Я разобралась потом")
+    await first.close()
+
+    second = SqliteMemoryRepo(db)
+    await second.initialize()
+    loaded = await SqliteRelationshipStore(second).load_gender(_SENDER)
+    await second.close()
+
+    assert loaded is Gender.FEM
 
 
 async def test_survives_restart(tmp_path: Path) -> None:

@@ -36,7 +36,10 @@ Use-case'ы приложения: оркестрация доменной лог
 - **precompose_gate.py** — `PreComposeGate`, cross-domain гейты перед обычной
   компоновкой, что могут ЗАБРАТЬ ход: `maybe_route_coding` (NL-coding-intent для owner
   через шов `NaturalCodingRouter`, BOB-041) и `maybe_permission` (privilege-flow через
-  `PermissionFlowLike`, BOB-052).
+  `PermissionFlowLike`, BOB-052). 🔴 Резилентность приёма (BOB-078 D): `maybe_route_coding`
+  дёргает роутер на КАЖДОМ сообщении (`session_store.active()` и подобное), поэтому любую
+  ошибку роутера он глотает, логирует и трактует как «не coding» (`False`) — одна битая
+  coding-сессия не роняет intake-воркер, ход продолжается обычным chat-путём.
 - **privileged_fulfiller.py** — `PrivilegedRequestFulfiller`, исполнение ОДНОГО
   одобренного запроса с привилегией через tool-loop или обычный роутер (`fulfil`, BOB-052 .3).
 - **perceive_reaction.py** — `PerceiveReaction`, Боб чувствует реакцию на одно из своих
@@ -61,6 +64,8 @@ Use-case'ы приложения: оркестрация доменной лог
   не отдаёт деградированный полу-ответ.
 - `HandleMessage.handle` — тонкий оркестратор: логика живёт в коллабораторах, не в нём;
   под intake-развязкой (BOB-066) `TurnScope.rng` прокидывается во все seeded-draw хода.
+- `PreComposeGate.maybe_route_coding` не пробрасывает ошибку роутера: одна битая coding-сессия
+  не крашит приём — сбой глотается, ход идёт chat-путём (резилентность, BOB-078 D).
 
 ## API
 

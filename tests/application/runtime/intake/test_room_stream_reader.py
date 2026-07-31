@@ -26,6 +26,7 @@ from bob.conversation.room_reading import (
     RoomMood,
     RoomReading,
 )
+from bob.social.interlocutor import InterlocutorKind
 
 
 def _msg(
@@ -93,6 +94,34 @@ async def test_folds_the_burst_into_an_attributed_context() -> None:
     ]
     # Arrival order is stamped monotonically so the read can reason about sequence.
     assert ctx.messages[0].ts < ctx.messages[1].ts
+
+
+@pytest.mark.asyncio
+async def test_folds_the_perceived_kind_into_each_batch_message() -> None:
+    # 🔴 BOB-078 B: with a kind resolver wired, every ambient message carries its author's
+    # social kind so the read weighs a guest's warm reply as salient (не игнорит гостя).
+    reader = _RecordingReader((_reading(ReflectiveIntent.IGNORE, 0.0),) * 2)
+
+    async def perceive_kind(message: MessageReceived) -> InterlocutorKind:
+        return InterlocutorKind.GUEST if message.sender_id == 8 else InterlocutorKind.OWNER
+
+    stream = RoomStreamReader(
+        reader=reader, mood_tone=lambda: "t", perceive_kind=perceive_kind
+    )
+    await stream.read([_msg(1, sender_id=5), _msg(2, sender_id=8)])
+
+    kinds = [m.kind for m in reader.contexts[0].messages]
+    assert kinds == [InterlocutorKind.OWNER, InterlocutorKind.GUEST]
+
+
+@pytest.mark.asyncio
+async def test_kind_is_none_without_a_resolver() -> None:
+    # Unwired (baseline) → kind None, byte-identical to before (no marker rendered).
+    reader = _RecordingReader((_reading(ReflectiveIntent.IGNORE, 0.0),))
+    stream = RoomStreamReader(reader=reader, mood_tone=lambda: "t")
+    await stream.read([_msg(1)])
+
+    assert reader.contexts[0].messages[0].kind is None
 
 
 @pytest.mark.asyncio

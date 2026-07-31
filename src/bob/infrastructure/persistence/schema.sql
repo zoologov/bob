@@ -206,12 +206,17 @@ CREATE TABLE IF NOT EXISTS first_impression (
 -- per-PERSON data (about THEM), not owner-private memory — allowed even for a guest.
 -- NB: named `person_relationship`, NOT `relationship` — the latter is the legacy
 -- single-row owner-relationship JSON blob above (sqlite_repo), a different concept.
+-- `gender` (BOB-078 A) is the self-identified grammatical-gender lean in [-1, 1]
+-- (>0 feminine, <0 masculine, NULL/0 unknown), read ONLY from a person's own
+-- self-presentation (never their name). Nullable with no default so a legacy row
+-- reads as unknown; a guarded ALTER (SqliteConnection) backfills a pre-existing DB.
 CREATE TABLE IF NOT EXISTS person_relationship (
     sender_id     INTEGER PRIMARY KEY,
     trust         REAL NOT NULL,
     respect       REAL NOT NULL,
     warmth        REAL NOT NULL,
-    compatibility REAL NOT NULL
+    compatibility REAL NOT NULL,
+    gender        REAL
 );
 
 -- Conversation floor (BOB-025): who currently holds the "talking turn" in a thread,

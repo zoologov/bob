@@ -18,6 +18,7 @@ from bob.conversation.conversation import (
     RepeatThresholds,
     closer_text,
     is_bob_repeat,
+    is_content_self_dup,
     is_phrase_tic,
     is_recurring_closer_tic,
     is_same_closer_motif,
@@ -175,6 +176,82 @@ def test_repeat_thresholds_tic_lookback_default_is_wide() -> None:
     # ~21%-prevalence scattered tic recurs enough times to clear min_occurrences.
     thresholds = RepeatThresholds()
     assert thresholds.tic_lookback >= 20  # pins the wide default (>> narrow ~6)
+
+
+# --- BOB-078 C: verbatim self-dup over the WIDE own-reply window ----------------
+#
+# The narrow shared-thread window (is_bob_repeat over ``recent_turns`` episodes) is
+# FLOODED by other participants' ambient traffic on the group/stream-read path, so a
+# content-ful reply Bob copies verbatim ~2 min later scrolls out of view. ``is_content_self_dup``
+# compares against the WIDE own-reply window — but ONLY for content-ful replies, so
+# legit SHORT repeats ("да"/"ок"/"привет") are never suppressed.
+
+_DUP_REPLY = "Паша, ну ты и циник. Интернет — свалка мусора, а не библиотека, если так смотреть."
+
+
+def test_content_self_dup_verbatim_is_caught() -> None:
+    assert is_content_self_dup(_DUP_REPLY, ["привет", "другое", _DUP_REPLY]) is True
+
+
+def test_content_self_dup_short_legit_repeat_is_not_suppressed() -> None:
+    # 🔴 A legit short repeat ("да"/"ок"/"привет") is BELOW dup_min_words → never a dup,
+    # even when byte-identical to a recent reply.
+    for short in ("да", "ок", "привет", "👍"):
+        assert is_content_self_dup(short, [short, "что-то ещё"]) is False
+
+
+def test_content_self_dup_near_verbatim_minor_edit_is_caught() -> None:
+    prior = _DUP_REPLY
+    almost = "Паша, ну ты и циник. Интернет — свалка мусора, а не библиотека, если так посмотреть."
+    assert is_content_self_dup(almost, [prior]) is True
+
+
+def test_content_self_dup_genuinely_different_content_is_not_caught() -> None:
+    prior = _DUP_REPLY
+    other = "Слушай, а по делу: у Qwen контекст короткий, давай сузим запрос до сути."
+    assert is_content_self_dup(other, [prior]) is False
+
+
+def test_content_self_dup_empty_candidate_is_never_a_dup() -> None:
+    assert is_content_self_dup("", [_DUP_REPLY]) is False
+
+
+def test_content_self_dup_two_word_pleasantry_repeat_is_not_suppressed() -> None:
+    # A short content-less pleasantry ("доброе утро", 2 words) is below the default
+    # dup_min_words bar — repeating it is legit, not a poisoned self-dup.
+    assert is_content_self_dup("доброе утро", ["доброе утро"]) is False
+
+
+def test_content_self_dup_no_prior_replies_is_not_a_dup() -> None:
+    assert is_content_self_dup(_DUP_REPLY, []) is False
+
+
+def test_content_self_dup_threshold_is_honoured() -> None:
+    # The near-verbatim bar is threaded through to is_bob_repeat: a moderately-similar
+    # pair below the default 0.9 is NOT a dup, but a lowered threshold catches it.
+    prior = "Сегодня настроение серое, тянет помолчать немного и ни с кем не общаться совсем."
+    candidate = "Сегодня настроение серое, хочется побыть в тишине и никого не трогать сейчас."
+    assert is_content_self_dup(candidate, [prior]) is False
+    assert is_content_self_dup(candidate, [prior], threshold=0.5) is True
+
+
+def test_content_self_dup_min_words_is_configurable() -> None:
+    # A 3-word content-ful line becomes a dup only when the bar is lowered to cover it.
+    three = "нет, не буду"
+    assert is_content_self_dup(three, [three], min_words=3) is True
+    assert is_content_self_dup(three, [three], min_words=4) is False
+
+
+def test_repeat_thresholds_dup_min_words_default_skips_short_replies() -> None:
+    # BOB-078 C: the self-dup bar defaults to a content-ful length (>= 4 words) so
+    # short pleasantries ("да"/"ок"/"доброе утро") are never suppressed.
+    thresholds = RepeatThresholds()
+    assert thresholds.dup_min_words >= 4
+
+
+def test_repeat_thresholds_rejects_dup_min_words_below_one() -> None:
+    with pytest.raises(ValueError, match="dup_min_words"):
+        RepeatThresholds(dup_min_words=0)
 
 
 # --- Phrase-tic detector (BOB-036 .1) -----------------------------------------

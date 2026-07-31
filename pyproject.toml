@@ -377,6 +377,24 @@ ignore = [
     "RUF002",
     "RUF003",
 ]
+# The anti-repeat self-dup acceptance steps + harness (BOB-078 C) bind Russian .feature step
+# text + a seeded Russian poison reply whose Cyrillic look-alikes are intentional (→ RUF001/2/3).
+"tests/acceptance/steps/test_anti_repeat_self_dup.py" = [
+    "S101",
+    "ARG001",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+"tests/acceptance/anti_repeat_harness.py" = [
+    "S101",
+    "ARG001",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
 # The disclosure-guard tests (BOB-066 W.4) assert on Russian owner_data request literals whose
 # Cyrillic look-alikes are intentional (→ RUF001/2/3).
 "tests/application/usecases/test_disclosure_guard.py" = [
@@ -784,6 +802,7 @@ ignore = [
 # whose Cyrillic look-alikes are intentional — RUF001/RUF002/RUF003 do not apply.
 "tests/domain/conversation/test_room_reading.py" = ["S101", "ARG001", "PLR2004", "RUF001", "RUF002", "RUF003"]
 "tests/domain/conversation/test_room_reading_wire.py" = ["S101", "ARG001", "PLR2004", "RUF001", "RUF002", "RUF003"]
+"tests/domain/conversation/test_room_reading_wire_batch.py" = ["S101", "ARG001", "PLR2004", "RUF001", "RUF002", "RUF003"]
 "tests/domain/conversation/test_room_verdict.py" = ["S101", "ARG001", "PLR2004", "RUF001", "RUF002", "RUF003"]
 "tests/conversation/usecases/test_read_the_room.py" = ["S101", "ARG001", "ARG002", "PLR2004", "RUF001", "RUF002", "RUF003"]
 "tests/conversation/usecases/test_turn_gate_reflective.py" = ["S101", "ARG001", "ARG002", "PLR2004", "S311", "SLF001", "RUF001", "RUF002", "RUF003"]
@@ -1010,6 +1029,22 @@ ignore = [
 # unused fake-port args (ARG002) and the steps assert through the boundary (S101).
 "tests/acceptance/guest_engage_harness.py" = ["RUF001", "RUF002", "RUF003", "ARG002"]
 "tests/acceptance/steps/test_guest_engage.py" = ["S101", "RUF001", "RUF002", "RUF003"]
+# The participant-engagement acceptance steps (BOB-078 B) reuse the guest-engage harness and
+# carry Russian scenario prose whose Cyrillic look-alikes are intentional (→ RUF001/2/3); they
+# assert through the outgoing boundary (S101).
+"tests/acceptance/steps/test_participant_engagement.py" = ["S101", "RUF001", "RUF002", "RUF003"]
+# The gender-of-address acceptance harness + steps (BOB-078 A) drive the real graph and carry
+# Russian scenario prose + persona-clause markers whose Cyrillic look-alikes are intentional
+# (→ RUF001/2/3); the harness serves a fixed fake provider (ARG002) and the steps assert
+# through the compose-prompt boundary (S101).
+"tests/acceptance/gender_address_harness.py" = ["RUF001", "RUF002", "RUF003", "ARG002"]
+"tests/acceptance/steps/test_gender_address.py" = ["S101", "RUF001", "RUF002", "RUF003"]
+# The intake-resilience acceptance harness + steps (BOB-078 D) drive the real store + gate and
+# carry Russian scenario prose whose Cyrillic look-alikes are intentional (→ RUF001/2/3); the
+# harness has an unused fake-router arg (ARG002) and the steps deliberately catch a broad
+# Exception (BLE001) to witness that no failure escapes (S101 for boundary asserts).
+"tests/acceptance/intake_resilience_harness.py" = ["RUF001", "RUF002", "RUF003", "ARG002"]
+"tests/acceptance/steps/test_intake_resilience.py" = ["S101", "RUF001", "RUF002", "RUF003", "BLE001"]
 # The presence-rhythm acceptance harness + steps (BOB-066 .2.3) carry Russian scenario
 # prose whose Cyrillic look-alikes are intentional (→ RUF001/2/3); the harness serves
 # fixed fakes (ARG002) and the steps assert through the boundary (S101).
@@ -1066,6 +1101,11 @@ ignore = [
 # they also assert on magic literals + a private predicate helper.
 "tests/application/test_tool_loop_narration_backstop.py" = ["S101", "ARG001", "PLR2004", "RUF001", "RUF002", "RUF003"]
 "tests/infrastructure/llm/test_openai_compat_parsers.py" = ["S101", "ARG001", "PLR2004", "RUF001", "RUF002", "RUF003"]
+# The self-identification gender detector (BOB-078 A) matches real Russian text — its
+# grammatical markers/pronouns ("я", "сама", "он", "-ла"/"-л" endings) and persona
+# docstrings carry intentional Cyrillic look-alikes; RUF001/RUF002/RUF003 do not apply.
+"src/bob/social/gender.py" = ["RUF001", "RUF002", "RUF003"]
+"tests/domain/personality/test_gender.py" = ["S101", "RUF001", "RUF002", "RUF003"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["bob"]

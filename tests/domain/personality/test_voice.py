@@ -40,6 +40,7 @@ from bob.personality.voice import (
     variable_form_directive,
     who_is_writing_directive,
 )
+from bob.social.gender import Gender
 from bob.social.interlocutor import (
     Interlocutor,
     InterlocutorKind,
@@ -391,6 +392,45 @@ def test_who_is_writing_directive_marks_a_bot() -> None:
     folded = who_is_writing_directive(who).casefold()
     assert "peerbot" in folded
     assert "бот" in folded
+
+
+def test_who_is_writing_directive_addresses_a_feminine_interlocutor_in_fem() -> None:
+    # BOB-078 A: gender read from self-presentation folds into how Bob addresses her.
+    who = Interlocutor(
+        sender_id=5,
+        display_name="Лиля",
+        kind=InterlocutorKind.GUEST,
+        trust=Trust.GUEST,
+        gender=Gender.FEM,
+    )
+    folded = who_is_writing_directive(who).casefold()
+    assert "женск" in folded  # обращайся в женском роде
+
+
+def test_who_is_writing_directive_addresses_a_masculine_interlocutor_in_masc() -> None:
+    who = Interlocutor(
+        sender_id=6,
+        display_name="Паша",
+        kind=InterlocutorKind.KNOWN,
+        trust=Trust.TRUSTED,
+        gender=Gender.MASC,
+    )
+    folded = who_is_writing_directive(who).casefold()
+    assert "мужск" in folded  # обращайся в мужском роде
+
+
+def test_who_is_writing_directive_forces_no_gender_when_unknown() -> None:
+    # 🔴 UNKNOWN → neutral: Bob forces neither gender (no name-based guessing).
+    who = Interlocutor(
+        sender_id=7,
+        display_name="Саша",
+        kind=InterlocutorKind.GUEST,
+        trust=Trust.GUEST,
+        gender=Gender.UNKNOWN,
+    )
+    folded = who_is_writing_directive(who).casefold()
+    assert "женск" not in folded
+    assert "мужск" not in folded
 
 
 def test_who_is_writing_directive_is_voice_not_a_rule_list() -> None:
