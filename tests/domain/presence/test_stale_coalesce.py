@@ -63,3 +63,30 @@ def test_focal_is_never_superseded() -> None:
 def test_unidentified_sender_is_never_coalesced() -> None:
     # Two anonymous messages are NOT the "same sender" — cannot attribute, so keep both.
     assert coalesce_stale([_q(None), _q(None)]) == (True, True)
+
+
+def test_two_senders_each_reformulating_supersede_independently() -> None:
+    # 🔴 Multiple senders in one burst: A re-asks (A,A) and then B re-asks (B,B). Each sender's
+    # earlier line is superseded by ITS OWN next line — the coalescing is per-sender-adjacency,
+    # not a global "keep the last" — so only each sender's latest survives into the read.
+    assert coalesce_stale([_q(1), _q(1), _q(2), _q(2)]) == (False, True, False, True)
+
+
+def test_a_reformulation_wrapped_around_another_sender_keeps_the_earlier() -> None:
+    # A speaks, B interposes, A speaks again: A's first line is KEPT (B branched the topic —
+    # not provably overtaken), and B's single line stands. Conservative INV-S3 across senders.
+    assert coalesce_stale([_q(1), _q(2), _q(1)]) == (True, True, True)
+
+
+def test_prior_line_before_a_focal_from_the_same_sender_is_kept() -> None:
+    # 🔴 The dual of «focal is never superseded»: when the NEXT slot is a focal from the same
+    # sender, the earlier ambient line is NOT dropped — a message is only superseded by a
+    # non-focal same-sender follow-up (the `not nxt.is_focal` guard), so the focal never
+    # silently swallows the line before it.
+    assert coalesce_stale([_q(3), _q(3, is_focal=True)]) == (True, True)
+
+
+def test_unidentified_then_identified_same_position_is_not_treated_as_same_sender() -> None:
+    # An anonymous line followed by an identified one is never coalesced — None is not a
+    # provable «same sender» as any id, so both are kept (no false supersede on missing id).
+    assert coalesce_stale([_q(None), _q(5)]) == (True, True)

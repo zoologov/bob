@@ -98,3 +98,49 @@ def test_reply_message_carries_web_and_addressee() -> None:
 def test_plan_length_matches_the_batch() -> None:
     readings = [_reading(intent=ReflectiveIntent.IGNORE, salience=0.5)] * 4
     assert len(decide_batch(readings)) == 4
+
+
+def test_initiate_message_collapses_to_a_reply_in_the_batch() -> None:
+    # 🔴 The full intent map must hold per-message: a reactive INITIATE (someone said
+    # something Bob wants to pick up) is a barge-in REPLY, exactly as the single path decides.
+    (verdict,) = decide_batch([
+        _reading(intent=ReflectiveIntent.INITIATE, salience=0.8),
+    ])
+    assert verdict.kind is VerdictKind.REPLY
+
+
+def test_self_check_message_stays_silent_in_the_batch() -> None:
+    # SELF_CHECK is inward — no outward act in a reactive turn — so it reads as silence even
+    # above the salience floor (the batch must not turn an inward read into a reply/react).
+    (verdict,) = decide_batch([
+        _reading(intent=ReflectiveIntent.SELF_CHECK, salience=0.9),
+    ])
+    assert verdict.kind is VerdictKind.IGNORE
+
+
+def test_message_at_the_salience_threshold_still_engages() -> None:
+    # 🔴 Boundary (`<` is strict): a read AT the floor is NOT silenced — it engages. Pins the
+    # off-by-one at the «стоит ли влезть» bar in the batch projection.
+    (verdict,) = decide_batch([
+        _reading(intent=ReflectiveIntent.REPLY, salience=SALIENCE_THRESHOLD),
+    ])
+    assert verdict.kind is VerdictKind.REPLY
+
+
+def test_mixed_batch_projects_reply_on_one_and_silence_on_the_rest_in_order() -> None:
+    # 🔴 INV-S2 shape at the policy layer: a burst where only ONE message is worth a word
+    # projects a REPLY for it and IGNORE for the others, each in arrival order — the plan is a
+    # faithful per-message projection (never a single collapsed verdict for the whole burst).
+    readings = [
+        _reading(intent=ReflectiveIntent.IGNORE, salience=0.9),
+        _reading(intent=ReflectiveIntent.REPLY, salience=0.9, addressee_id=42),
+        _reading(intent=ReflectiveIntent.IGNORE, salience=0.9),
+    ]
+    plan = decide_batch(readings)
+    assert [verdict.kind for verdict in plan] == [
+        VerdictKind.IGNORE,
+        VerdictKind.REPLY,
+        VerdictKind.IGNORE,
+    ]
+    # The single meaningful message keeps its addressee (reply-to routing survives the batch).
+    assert plan[1].addressee_id == 42

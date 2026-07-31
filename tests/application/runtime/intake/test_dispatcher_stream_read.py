@@ -24,12 +24,20 @@ import pytest
 
 from bob.application.runtime.events import MessageReceived
 from bob.application.runtime.intake.dispatcher import ChatDispatcher
+from bob.application.runtime.intake.room_stream_reader import RoomStreamReader
 from bob.conversation.addressivity import ResponseOutcome
-from bob.conversation.room_reading import ReflectiveIntent, RoomMood, RoomReading
+from bob.conversation.room_reading import (
+    BatchRoomReading,
+    BatchRoomReadingContext,
+    ReflectiveIntent,
+    RoomMood,
+    RoomReading,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
+    from bob.application.runtime.intake.room_stream_reader import AmbientBatchReader
     from bob.application.runtime.intake.scope import TurnScope
 
 
@@ -78,7 +86,7 @@ class _FakeAmbientReader:
 
 async def _drive(
     *,
-    ambient_reader: _FakeAmbientReader | None,
+    ambient_reader: AmbientBatchReader | None,
     messages: list[MessageReceived],
     stale_coalesce: bool = False,
 ) -> list[tuple[int, RoomReading | None]]:
@@ -197,6 +205,88 @@ async def test_stale_coalesce_off_keeps_every_ambient_in_the_read() -> None:
 
     assert reader.bursts == [[1, 2]]
     assert all(reading is not None for _, reading in seen)
+
+
+def _reading_with(message_id: int, intent: ReflectiveIntent) -> RoomReading:
+    return RoomReading(
+        situation=f"r{message_id}",
+        pairings=(),
+        room_mood=RoomMood.WARM,
+        intent=intent,
+        addressee_id=None,
+        salience=0.9,
+        emoji=None,
+        wants_web=False,
+        reason="r",
+    )
+
+
+class _MixedReader:
+    """Returns a scripted per-message intent (reply on one, ignore on the rest)."""
+
+    def __init__(self, intents: dict[int, ReflectiveIntent]) -> None:
+        self._intents = intents
+
+    async def read(self, messages: Sequence[MessageReceived]) -> Sequence[RoomReading]:
+        return [
+            _reading_with(m.message_id, self._intents[m.message_id]) for m in messages
+        ]
+
+
+class _ExplodingBatchReader:
+    """A BatchRoomReader that always fails — stands in for a down Tier-1/Qwen router."""
+
+    async def read(self, batch_ctx: BatchRoomReadingContext) -> BatchRoomReading:
+        raise RuntimeError("qwen down")
+
+
+@pytest.mark.asyncio
+async def test_mixed_batch_persists_every_ambient_in_arrival_order() -> None:
+    # 🔴 INV-S2 (BOB-071 regression): the batch read replies to ONE message, ignores the rest —
+    # yet ALL are handled (persist + floor for each), IN ARRIVAL ORDER, including the ignored
+    # ones. Bob reads the room and picks by meaning, but the thread stays whole.
+    reader = _MixedReader({
+        1: ReflectiveIntent.IGNORE,
+        2: ReflectiveIntent.REPLY,
+        3: ReflectiveIntent.IGNORE,
+    })
+    seen = await _drive(ambient_reader=reader, messages=[_msg(1), _msg(2), _msg(3)])
+
+    # Every ambient message reached the handler (persist/floor for all), in arrival order.
+    assert [message_id for message_id, _ in seen] == [1, 2, 3]
+    by_id = dict(seen)
+    assert by_id[1] is not None
+    assert by_id[1].intent is ReflectiveIntent.IGNORE  # read, но промолчал — всё равно персист
+    assert by_id[2] is not None
+    assert by_id[2].intent is ReflectiveIntent.REPLY
+    assert by_id[3] is not None
+    assert by_id[3].intent is ReflectiveIntent.IGNORE
+
+
+@pytest.mark.asyncio
+async def test_batch_read_failure_persists_all_ambient_and_leaves_focal_answered() -> None:
+    # 🔴 Fallback end-to-end: a down Tier-1 router (exploding batch reader) degrades — via the
+    # REAL RoomStreamReader — to a safe all-IGNORE plan, so EVERY ambient message is still
+    # persisted (INV-S2), and the focal message is answered deterministically ABOVE the batch
+    # (INV-1, never touched by the failure).
+    stream_reader = RoomStreamReader(
+        reader=_ExplodingBatchReader(), mood_tone=lambda: "ровный"
+    )
+    seen = await _drive(
+        ambient_reader=stream_reader,
+        messages=[_msg(1), _msg(2, mentions_bob=True), _msg(3)],
+    )
+
+    by_id = dict(seen)
+    # All three handled (persist/floor for all → pending reaches zero).
+    assert sorted(message_id for message_id, _ in seen) == [1, 2, 3]
+    # Focal (2) took the deterministic path — no batch reading (INV-1).
+    assert by_id[2] is None
+    # Ambient 1 and 3 degraded to a safe silent IGNORE — read, но не отвечено.
+    assert by_id[1] is not None
+    assert by_id[1].intent is ReflectiveIntent.IGNORE
+    assert by_id[3] is not None
+    assert by_id[3].intent is ReflectiveIntent.IGNORE
 
 
 @pytest.mark.asyncio

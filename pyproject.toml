@@ -781,6 +781,11 @@ ignore = [
 # do not apply. Assertions go through the seam (S101).
 "tests/conversation/usecases/test_turn_gate_ambient_reading.py" = ["S101", "ARG001", "ARG002", "PLR2004", "SLF001", "RUF001", "RUF002", "RUF003"]
 "tests/application/runtime/intake/test_room_stream_reader.py" = ["S101", "ARG001", "ARG002", "PLR2004", "RUF001", "RUF002", "RUF003"]
+# BOB-072 holistic stream-read tests: test doubles ignore ctx args (ARG002) + carry Russian
+# scenario/comment literals whose Cyrillic look-alikes are intentional (RUF).
+"tests/application/runtime/intake/test_dispatcher_stream_read.py" = ["S101", "ARG002", "RUF001", "RUF002", "RUF003"]
+"tests/acceptance/stream_read_harness.py" = ["RUF001", "RUF002", "RUF003", "ARG002"]
+"tests/acceptance/steps/test_stream_read.py" = ["S101", "RUF001", "RUF002", "RUF003"]
 "tests/domain/conversation/test_room_verdict_determinism.py" = ["S101", "ARG001", "PLR2004", "RUF001", "RUF002", "RUF003"]
 "tests/conversation/usecases/test_verify_step_forced_hedge.py" = ["S101", "ARG001", "ARG002", "PLR2004", "RUF001", "RUF002", "RUF003"]
 "tests/infrastructure/llm/test_room_reader.py" = ["S101", "ARG001", "ARG002", "PLR2004", "RUF001", "RUF002", "RUF003"]
