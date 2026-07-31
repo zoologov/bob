@@ -45,6 +45,52 @@ logger = logging.getLogger(__name__)
 # low enough that a model stuck requesting tools cannot loop forever.
 _DEFAULT_MAX_TURNS = 6
 
+# BOB-074 anti-narration backstop. A GUPPI mention TOGETHER with one of these
+# intent-narration markers signals Bob narrated GUPPI's INTENT ("пошёл… заглянет…
+# ищет… ждём отчёт") instead of returning a real tool result — the recall-poisoning
+# few-shot signature. Kept deliberately NARROW: a miss only costs the pre-BOB-074
+# behavior, a false hit wastes one Qwen call, so the predicate stays conservative.
+_GUPPI_TOKENS = ("guppi", "гаппи", "гуппи")
+_INTENT_MARKERS = (
+    "пошёл",
+    "пошел",
+    "пошла",
+    "заглян",
+    "перебир",
+    "ищет",
+    "ищу",
+    "сейчас посмотр",
+    "сейчас гляну",
+    "загружа",
+    "ждём отчёт",
+    "ждем отчет",
+)
+
+# The hard nudge injected for the ONE backstop retry: re-ask the model to emit a
+# real tool call instead of narrating GUPPI's intent.
+_NARRATION_NUDGE: ToolLoopMessage = {
+    "role": "system",
+    "content": (
+        "Не описывай намерение GUPPI. Вызови нужный инструмент СЕЙЧАС (tool call) "
+        "и верни реальный результат."
+    ),
+}
+
+
+def _looks_like_tool_narration(text: str) -> bool:
+    """True when ``text`` narrates GUPPI's tool INTENT instead of a real result.
+
+    Conservative pure predicate (BOB-074): requires BOTH a GUPPI mention AND an
+    intent-narration marker, so an ordinary reply (no GUPPI) or a GUPPI mention
+    carrying a real result never trips it. It exists only to let the tool-loop
+    re-ask ONCE for a real tool call; a miss is never worse than the pre-BOB-074
+    behavior, a false hit only wastes one retry — hence the narrow signature.
+    """
+    lowered = text.lower()
+    if not any(token in lowered for token in _GUPPI_TOKENS):
+        return False
+    return any(marker in lowered for marker in _INTENT_MARKERS)
+
 
 class ToolLoop:
     """Run the model<->capability tool-use loop to a final text answer."""
@@ -68,9 +114,25 @@ class ToolLoop:
         """Complete ``messages`` through the tool-loop and return the final text."""
         tools = self._registry.manifest()
         conversation: list[ToolLoopMessage] = list(messages)
-        for _ in range(self._max_turns):
+        retried = False
+        for turn_index in range(self._max_turns):
             result = await self._provider.complete_with_tools(conversation, tools=tools)
             if not result.tool_calls:
+                # BOB-074 backstop: a no-tool-call turn that merely NARRATES GUPPI's
+                # intent (recall-poisoning few-shot mimicry) is not a real answer. Re-ask
+                # ONCE with a hard nudge to emit a real tool call — bounded by ``retried``
+                # so a stubborn narration cannot loop, and never on the LAST turn (that
+                # would drop below the pre-backstop return). If the re-ask still narrates
+                # (or answers plainly) that text is returned — never worse than before.
+                is_last_turn = turn_index == self._max_turns - 1
+                if (
+                    not retried
+                    and not is_last_turn
+                    and _looks_like_tool_narration(result.text)
+                ):
+                    retried = True
+                    conversation.append(_NARRATION_NUDGE)
+                    continue
                 return result.text
             conversation.append(_assistant_turn(result.tool_calls))
             for call in result.tool_calls:

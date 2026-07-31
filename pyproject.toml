@@ -101,6 +101,10 @@ ignore = [
 # intentional (Qwen reads them natively) — RUF001/RUF002/RUF003 do not apply.
 "src/bob/capabilities/usecases/list_dir.py" = ["RUF001", "RUF002", "RUF003"]
 "src/bob/capabilities/usecases/find_file.py" = ["RUF001", "RUF002", "RUF003"]
+# The tool-loop's anti-narration backstop (BOB-074) carries the Russian nudge + intent
+# markers ("пошёл/заглянет/ищет…") whose Cyrillic look-alikes are intentional (Qwen reads
+# them natively; they must literally match Bob's narration) — RUF001/RUF002/RUF003 do not apply.
+"src/bob/capabilities/usecases/tool_loop.py" = ["RUF001", "RUF002", "RUF003"]
 # The reflection module (BOB-026 .2 + BOB-033 .2) carries a few-shot PALETTE of Russian
 # "living Bob" private thoughts ("Поймал себя на том…", "Сегодня тише, чем хотелось бы…")
 # whose Cyrillic look-alikes are intentional (the Tier-0 model reads them natively) —
@@ -355,6 +359,17 @@ ignore = [
 # The repo-navigation acceptance steps (BOB-067) bind Russian .feature step text whose
 # Cyrillic look-alikes are intentional (→ RUF001/2/3).
 "tests/acceptance/steps/test_repo_navigation.py" = [
+    "S101",
+    "ARG001",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+# The anti-narration backstop acceptance steps (BOB-074) bind Russian .feature step text +
+# assert messages that mix «GUPPI» with Russian prose, whose Cyrillic look-alikes are
+# intentional (→ RUF001/2/3).
+"tests/acceptance/steps/test_tool_narration_backstop.py" = [
     "S101",
     "ARG001",
     "PLR2004",
@@ -1046,6 +1061,10 @@ ignore = [
 # the live tool-call-leak bug whose Cyrillic look-alikes are intentional — RUF001/RUF002/
 # RUF003 do not apply; they also assert on magic literals + private helpers.
 "tests/application/test_tool_loop.py" = ["S101", "ARG001", "PLR2004", "RUF001", "RUF002", "RUF003"]
+# The anti-narration backstop tests (BOB-074) carry Russian narration fixtures + nudge
+# assertions whose Cyrillic look-alikes are intentional — RUF001/RUF002/RUF003 do not apply;
+# they also assert on magic literals + a private predicate helper.
+"tests/application/test_tool_loop_narration_backstop.py" = ["S101", "ARG001", "PLR2004", "RUF001", "RUF002", "RUF003"]
 "tests/infrastructure/llm/test_openai_compat_parsers.py" = ["S101", "ARG001", "PLR2004", "RUF001", "RUF002", "RUF003"]
 
 [tool.ruff.lint.isort]
@@ -1158,6 +1177,10 @@ pytest_add_cli_args_test_selection = [
     # test is fast + deterministic), so it is selected alongside the domain suite to measure
     # the mutants of ``reply_delay_inputs``.
     "tests/application/usecases/test_reply_rhythm.py",
+    # BOB-074: the anti-narration predicate (``_looks_like_tool_narration``) is a pure,
+    # deterministic core in capabilities/usecases/tool_loop.py; its fast unit test lives in
+    # tests/application, so it is selected here to measure that predicate's mutants.
+    "tests/application/test_tool_loop_narration_backstop.py",
 ]
 # The kernel (ports/protocols the domain tests import) is NOT mutated but IS imported by
 # tests/domain — copy it + the package root verbatim into the mutants sandbox so the
@@ -1174,4 +1197,9 @@ also_copy = [
     # LLM staleness judge, which imports the router (kernel-only deps) — copy it verbatim so the
     # mutants sandbox still imports the presence package.
     "src/bob/application/router",
+    # BOB-074: the (scanned) capabilities/usecases package root eagerly imports the web
+    # skills, which import ``call_with_retry`` from application.reliability (a stdlib-only
+    # leaf) — copy it verbatim so the mutants sandbox can import the capabilities package
+    # when measuring the anti-narration predicate's mutants.
+    "src/bob/application/reliability.py",
 ]
