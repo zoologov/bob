@@ -155,3 +155,33 @@ async def test_resolve_skips_gender_when_sender_has_no_id() -> None:
 
     assert gender_store.observed == []
     assert who.gender is Gender.UNKNOWN
+
+
+# --- perceive_kind (BOB-078 B: kind for the stream-read, no gender side-effect) ---------
+
+
+async def test_perceive_kind_returns_the_social_kind_only() -> None:
+    perception = _perception(allowlist={7})
+    assert (
+        await perception.perceive_kind(_event(sender_id=_OWNER))
+        is InterlocutorKind.OWNER
+    )
+    assert await perception.perceive_kind(_event(sender_id=7)) is InterlocutorKind.KNOWN
+    assert await perception.perceive_kind(_event(sender_id=999)) is InterlocutorKind.GUEST
+
+
+async def test_perceive_kind_does_not_accrue_gender() -> None:
+    # 🔴 The stream-read only needs the KIND; it must NOT re-observe self-presentation
+    # (gender is already accrued on the main handle path — no double-count).
+    gender_store = _FakeGenderStore()
+    authorizer = Authorizer(
+        owner_id=_OWNER, allowed_chat_ids=[_CHAT], store=_FakeAllowlistStore()
+    )
+    perception = SenderPerception(authorizer=authorizer, gender_store=gender_store)
+
+    kind = await perception.perceive_kind(
+        _event(sender_id=5, name="Лиля")
+    )
+
+    assert kind is InterlocutorKind.GUEST
+    assert gender_store.observed == []

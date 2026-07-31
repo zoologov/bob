@@ -454,6 +454,102 @@ def test_dot_predicate_ambient_matrix_edges() -> None:
         assert result is Addressivity.AMBIENT, text
 
 
+# --- BOB-078 B: «ты»-обращение к Бобу → directed-ish -------------------------
+
+
+def test_second_person_praise_to_bob_is_directed_to_bob() -> None:
+    # 🔴 BOB-078 B (живой баг Лилии): «Ты классный» — прямое 2-е лицо к Бобу без
+    # другого адресата (не reply, нет вокатива другого) читается как обращённое к
+    # Бобу → DIRECTED_TO_BOB. Раньше AMBIENT → в группе рефлексивный IGNORE → молчание.
+    for text in (
+        "Ты классный",
+        "ты классный!",
+        "Ты стал совсем другим",
+        "тебя починили?",
+        "как тебе такое",
+        "я с тобой согласна",
+    ):
+        result = classify_addressivity(
+            text=text,
+            mentions_bob=False,
+            reply_to_sender_id=None,
+            bob_user_id=_BOB_ID,
+            others_present=True,
+        )
+        assert result is Addressivity.DIRECTED_TO_BOB, text
+
+
+def test_second_person_to_a_third_by_name_stays_not_directed() -> None:
+    # 🔴 BOB-078 B guard «не баржить»: 2-е лицо, но адресовано ДРУГОМУ по имени
+    # (вокатив другого) — Боб НЕ влезает. «Паша, ты циник» — это к Паше, не к Бобу.
+    for text in (
+        "Паша, ты циник",
+        "Лиля, ты where пропала",
+        "Слушай, ты был прав",  # ведущий discourse-вокатив — консервативно НЕ влезаем
+    ):
+        result = classify_addressivity(
+            text=text,
+            mentions_bob=False,
+            reply_to_sender_id=None,
+            bob_user_id=_BOB_ID,
+            others_present=True,
+        )
+        assert result is not Addressivity.DIRECTED_TO_BOB, text
+
+
+def test_second_person_in_reply_to_other_stays_directed_to_other() -> None:
+    # 🔴 BOB-078 B guard: «ты» в реплае на ДРУГОГО — это кросс-ток двоих, Боб не лезет.
+    result = classify_addressivity(
+        text="ты классный",
+        mentions_bob=False,
+        reply_to_sender_id=_OTHER_ID,
+        bob_user_id=_BOB_ID,
+        others_present=True,
+    )
+    assert result is Addressivity.DIRECTED_TO_OTHER
+
+
+def test_second_person_with_bob_vocative_is_directed_to_bob() -> None:
+    # Вокатив Боба + «ты» — очевидно к Бобу (ветка вокатива ловит раньше «ты»-ветки).
+    result = classify_addressivity(
+        text="Боб, ты классный",
+        mentions_bob=False,
+        reply_to_sender_id=None,
+        bob_user_id=_BOB_ID,
+        others_present=True,
+    )
+    assert result is Addressivity.DIRECTED_TO_BOB
+
+
+def test_no_second_person_no_other_addressee_stays_ambient() -> None:
+    # Без 2-го лица и без обращения — по-прежнему AMBIENT (не любая тёплая реплика).
+    result = classify_addressivity(
+        text="какой же классный день",
+        mentions_bob=False,
+        reply_to_sender_id=None,
+        bob_user_id=_BOB_ID,
+        others_present=True,
+    )
+    assert result is Addressivity.AMBIENT
+
+
+def test_second_person_substring_word_does_not_trigger_directed() -> None:
+    # 🔴 Guard (mutation): «ты» ВНУТРИ слова — не 2-е лицо. «стыд»/«тыква»/«был»
+    # не должны поднимать адресность; нужна граница слова у местоимения.
+    for text in (
+        "это просто стыд и позор",
+        "тыква на грядке поспела",
+    ):
+        result = classify_addressivity(
+            text=text,
+            mentions_bob=False,
+            reply_to_sender_id=None,
+            bob_user_id=_BOB_ID,
+            others_present=True,
+        )
+        assert result is Addressivity.AMBIENT, text
+
+
 def test_reply_to_bob_needs_resolved_identity() -> None:
     # Реплай на сообщение с тем же id, что у «Боба», но identity не резолвнута
     # (bob_user_id=None) → не можем утверждать, что это Боб → DIRECTED_TO_OTHER.

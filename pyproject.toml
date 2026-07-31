@@ -784,6 +784,7 @@ ignore = [
 # whose Cyrillic look-alikes are intentional — RUF001/RUF002/RUF003 do not apply.
 "tests/domain/conversation/test_room_reading.py" = ["S101", "ARG001", "PLR2004", "RUF001", "RUF002", "RUF003"]
 "tests/domain/conversation/test_room_reading_wire.py" = ["S101", "ARG001", "PLR2004", "RUF001", "RUF002", "RUF003"]
+"tests/domain/conversation/test_room_reading_wire_batch.py" = ["S101", "ARG001", "PLR2004", "RUF001", "RUF002", "RUF003"]
 "tests/domain/conversation/test_room_verdict.py" = ["S101", "ARG001", "PLR2004", "RUF001", "RUF002", "RUF003"]
 "tests/conversation/usecases/test_read_the_room.py" = ["S101", "ARG001", "ARG002", "PLR2004", "RUF001", "RUF002", "RUF003"]
 "tests/conversation/usecases/test_turn_gate_reflective.py" = ["S101", "ARG001", "ARG002", "PLR2004", "S311", "SLF001", "RUF001", "RUF002", "RUF003"]
@@ -1010,6 +1011,10 @@ ignore = [
 # unused fake-port args (ARG002) and the steps assert through the boundary (S101).
 "tests/acceptance/guest_engage_harness.py" = ["RUF001", "RUF002", "RUF003", "ARG002"]
 "tests/acceptance/steps/test_guest_engage.py" = ["S101", "RUF001", "RUF002", "RUF003"]
+# The participant-engagement acceptance steps (BOB-078 B) reuse the guest-engage harness and
+# carry Russian scenario prose whose Cyrillic look-alikes are intentional (→ RUF001/2/3); they
+# assert through the outgoing boundary (S101).
+"tests/acceptance/steps/test_participant_engagement.py" = ["S101", "RUF001", "RUF002", "RUF003"]
 # The presence-rhythm acceptance harness + steps (BOB-066 .2.3) carry Russian scenario
 # prose whose Cyrillic look-alikes are intentional (→ RUF001/2/3); the harness serves
 # fixed fakes (ARG002) and the steps assert through the boundary (S101).

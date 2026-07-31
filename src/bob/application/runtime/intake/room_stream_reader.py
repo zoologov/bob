@@ -37,12 +37,14 @@ from bob.conversation.room_reading import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Sequence
+    from collections.abc import Awaitable, Callable, Sequence
 
     from bob.application.runtime.events import MessageReceived
     from bob.conversation.room_reading import BatchRoomReader
+    from bob.social.interlocutor import InterlocutorKind
 
     type _MoodTone = Callable[[], str]
+    type _PerceiveKind = Callable[[MessageReceived], Awaitable[InterlocutorKind]]
 
 logger = logging.getLogger(__name__)
 
@@ -88,9 +90,16 @@ class AmbientBatchReader(Protocol):
 class RoomStreamReader:
     """Read a whole settled ambient burst into one per-message reading (BOB-072)."""
 
-    def __init__(self, *, reader: BatchRoomReader, mood_tone: _MoodTone) -> None:
+    def __init__(
+        self,
+        *,
+        reader: BatchRoomReader,
+        mood_tone: _MoodTone,
+        perceive_kind: _PerceiveKind | None = None,
+    ) -> None:
         self._reader = reader
         self._mood_tone = mood_tone
+        self._perceive_kind = perceive_kind
 
     async def read(self, messages: Sequence[MessageReceived]) -> Sequence[RoomReading]:
         """Fold ``messages`` into one batch read → exactly one reading per message (in order).
@@ -104,7 +113,8 @@ class RoomStreamReader:
         if count == 0:
             return ()
         try:
-            reading = await self._reader.read(self._batch_context(messages))
+            batch_ctx = await self._batch_context(messages)
+            reading = await self._reader.read(batch_ctx)
             plan = list(reading.readings)
         except Exception:
             logger.exception("batch stream-read failed (ambient burst → all-IGNORE)")
@@ -113,19 +123,29 @@ class RoomStreamReader:
             plan.extend(SILENT_IGNORE_READING for _ in range(count - len(plan)))
         return plan[:count]
 
-    def _batch_context(self, messages: Sequence[MessageReceived]) -> BatchRoomReadingContext:
-        """Fold the attributed burst + Bob's tone into the batch read context (BOB-072)."""
+    async def _batch_context(
+        self, messages: Sequence[MessageReceived]
+    ) -> BatchRoomReadingContext:
+        """Fold the attributed burst (+ each author's social kind) + Bob's tone into the read.
+
+        Each message carries its perceived :class:`InterlocutorKind` (BOB-078 B) when a kind
+        resolver is wired — so the read weighs a GUEST/newcomer's warm reply as salient, not
+        low-salience chatter; unwired, ``kind`` stays ``None`` (byte-identical baseline).
+        """
         ambient = tuple(
-            BatchAmbientMessage(
-                sender_id=message.sender_id or 0,
-                sender_name=message.sender_name or str(message.sender_id or "?"),
-                text=message.text,
-                ts=float(index),
-                floor_holder=_NEUTRAL_FLOOR_HOLDER,
-                floor_participant=_NEUTRAL_FLOOR_PARTICIPANT,
-                interest=_NEUTRAL_INTEREST,
-            )
-            for index, message in enumerate(messages)
+            [
+                BatchAmbientMessage(
+                    sender_id=message.sender_id or 0,
+                    sender_name=message.sender_name or str(message.sender_id or "?"),
+                    text=message.text,
+                    ts=float(index),
+                    floor_holder=_NEUTRAL_FLOOR_HOLDER,
+                    floor_participant=_NEUTRAL_FLOOR_PARTICIPANT,
+                    interest=_NEUTRAL_INTEREST,
+                    kind=await self._kind_of(message),
+                )
+                for index, message in enumerate(messages)
+            ]
         )
         return BatchRoomReadingContext(
             messages=ambient,
@@ -133,3 +153,9 @@ class RoomStreamReader:
             mood_tone=self._mood_tone(),
             others_present=True,
         )
+
+    async def _kind_of(self, message: MessageReceived) -> InterlocutorKind | None:
+        """Perceive the sender's social kind (``None`` when no resolver is wired)."""
+        if self._perceive_kind is None:
+            return None
+        return await self._perceive_kind(message)

@@ -33,6 +33,7 @@ from bob.social.interlocutor import Interlocutor, classify
 
 if TYPE_CHECKING:
     from bob.application.runtime.events import MessageReceived
+    from bob.social.interlocutor import InterlocutorKind
     from bob.social.usecases.authorizer import Authorizer
 
 
@@ -84,6 +85,25 @@ class SenderPerception:
             is_authorized=is_authorized,
             gender=gender,
         )
+
+    async def perceive_kind(self, event: MessageReceived) -> InterlocutorKind:
+        """Perceive only the sender's social :class:`InterlocutorKind` (BOB-078 B).
+
+        A lighter sibling of :meth:`resolve` for the holistic stream-read: it runs the SAME
+        authz classification (owner / known / guest) but deliberately does NOT accrue gender —
+        self-presentation is already folded on the main handle path, so re-observing it here
+        would double-count. Pure perception, no access decision changed.
+        """
+        is_owner = self._authorizer.is_owner(event.sender_id)
+        is_authorized = await self._authorizer.is_authorized(
+            user_id=event.sender_id, chat_id=event.chat_id
+        )
+        return classify(
+            sender_id=event.sender_id,
+            sender_name=event.sender_name,
+            is_owner=is_owner,
+            is_authorized=is_authorized,
+        ).kind
 
     async def _perceive_gender(self, event: MessageReceived) -> Gender:
         """Accrue this turn's self-presentation and read back the sender's gender.

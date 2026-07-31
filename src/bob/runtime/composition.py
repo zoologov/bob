@@ -882,10 +882,15 @@ def build_application(
     # is a mutable holder whose ``soul`` snapshot is REPLACED each turn (mood evolves), so the
     # read must resolve the CURRENT soul at read time — a bound ``personality.soul.mood.tone``
     # would freeze the boot soul.
+    # Kind-perception for the stream-read (BOB-078 B): a light SenderPerception (authz-only, NO
+    # gender store → no double-accrual) resolves each ambient author's social kind, so the batch
+    # read knows a warm reply is from a GUEST/newcomer and doesn't misread it as low-salience.
+    stream_kind_perception = SenderPerception(authorizer=authorizer)
     ambient_batch = (
         RoomStreamReader(
             reader=batch_room_reader,
             mood_tone=lambda: personality.soul.mood.tone(),  # noqa: PLW0108 — late binding of the evolving soul snapshot
+            perceive_kind=stream_kind_perception.perceive_kind,
         )
         if batch_room_reader is not None
         else None
