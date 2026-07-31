@@ -776,6 +776,11 @@ ignore = [
 # INV-1 matrix + reflective edge tests (BOB-066 Срез 2.2 test wave): use unused fake-port
 # args + reference the private gate types + Russian literals — S101/ARG/SLF001/RUF do not apply.
 "tests/conversation/usecases/test_turn_gate_inv1_matrix.py" = ["S101", "ARG001", "ARG002", "PLR2004", "SLF001", "RUF001", "RUF002", "RUF003"]
+# Holistic stream-read врезка (BOB-072): the gate + intake tests use unused fake-port args
+# (ARG002), reference the private gate/signal types (SLF001) + Russian literals (RUF) — those
+# do not apply. Assertions go through the seam (S101).
+"tests/conversation/usecases/test_turn_gate_ambient_reading.py" = ["S101", "ARG001", "ARG002", "PLR2004", "SLF001", "RUF001", "RUF002", "RUF003"]
+"tests/application/runtime/intake/test_room_stream_reader.py" = ["S101", "ARG001", "ARG002", "PLR2004", "RUF001", "RUF002", "RUF003"]
 "tests/domain/conversation/test_room_verdict_determinism.py" = ["S101", "ARG001", "PLR2004", "RUF001", "RUF002", "RUF003"]
 "tests/conversation/usecases/test_verify_step_forced_hedge.py" = ["S101", "ARG001", "ARG002", "PLR2004", "RUF001", "RUF002", "RUF003"]
 "tests/infrastructure/llm/test_room_reader.py" = ["S101", "ARG001", "ARG002", "PLR2004", "RUF001", "RUF002", "RUF003"]

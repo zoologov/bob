@@ -42,7 +42,9 @@ if TYPE_CHECKING:
 
     from bob.application.runtime.catch_up_reentry import CatchUpReentry
     from bob.application.runtime.events import MessageReceived
+    from bob.application.runtime.intake.room_stream_reader import AmbientBatchReader
     from bob.application.runtime.intake.scope import TurnScope
+    from bob.conversation.room_reading import RoomReading
 
     type _Handle = Callable[[MessageReceived, TurnScope], Awaitable[None]]
     type _Sleep = Callable[[float], Awaitable[None]]
@@ -78,6 +80,7 @@ class ChatDispatcher:
         series_max_reactions: int = _DEFAULT_MAX_REACTIONS,
         staleness_enabled: bool = False,
         catch_up_reentry: CatchUpReentry | None = None,
+        ambient_batch: AmbientBatchReader | None = None,
     ) -> None:
         self._handle = handle
         self._base_seed = base_seed
@@ -99,6 +102,11 @@ class ChatDispatcher:
         # default) → every message keeps the ENGAGE ceiling → byte-identical to before.
         self._series_budget_enabled = series_budget_enabled
         self._series_max_reactions = series_max_reactions
+        # 🔴 BOB-072 (holistic stream-read): when wired (``presence.stream_read``), a settled
+        # burst is SPLIT — focal (direct address) handled deterministically as now (INV-1), the
+        # WHOLE ambient part read at ONCE and each message applied by its per-message reading.
+        # None (the default) → the current per-message top-k path → byte-identical.
+        self._ambient_batch = ambient_batch
         self._inboxes: dict[int, ChatInbox] = {}
         self._workers: dict[int, asyncio.Task[None]] = {}
         self._closing = False
@@ -178,9 +186,42 @@ class ChatDispatcher:
                     chat_id, message, ResponseOutcome.ENGAGE, inbox=inbox
                 )
             return
+        if self._ambient_batch is not None:
+            await self._handle_stream_read(chat_id, selection.to_handle, inbox)
+            return
         ceilings = self._plan_ceilings(selection.to_handle)
         for message, ceiling in zip(selection.to_handle, ceilings, strict=True):
             await self._handle_one(chat_id, message, ceiling, inbox=inbox)
+
+    async def _handle_stream_read(
+        self, chat_id: int, batch: Sequence[MessageReceived], inbox: ChatInbox
+    ) -> None:
+        """Split a settled burst into focal + ambient and apply the holistic read (BOB-072).
+
+        🔴 INV-1: focal (a direct address — ``is_focused``) is answered deterministically as
+        now, ABOVE and OUTSIDE the batch read (no batch reading stamped → the gate's focal
+        short-circuit fires). The WHOLE ambient part goes through ONE holistic «read the stream»
+        (:class:`~bob.application.runtime.intake.room_stream_reader.AmbientBatchReader`), and each
+        ambient message is handled with its per-message reading riding the scope — so the gate
+        persists + floor-advances EVERY ambient message including a silent IGNORE (INV-S2). The
+        read never raises (a failure degrades to a safe all-IGNORE plan of the right length).
+        """
+        assert self._ambient_batch is not None  # guarded by the caller
+        focal = [message for message in batch if self._is_focused(message)]
+        ambient = [message for message in batch if not self._is_focused(message)]
+        for message in focal:
+            await self._handle_one(chat_id, message, ResponseOutcome.ENGAGE, inbox=inbox)
+        if not ambient:
+            return
+        readings = await self._ambient_batch.read(ambient)
+        for message, reading in zip(ambient, readings, strict=True):
+            await self._handle_one(
+                chat_id,
+                message,
+                ResponseOutcome.ENGAGE,
+                inbox=inbox,
+                ambient_reading=reading,
+            )
 
     def _reentry_selection(
         self, chat_id: int, batch: Sequence[MessageReceived]
@@ -230,6 +271,7 @@ class ChatDispatcher:
         ceiling: ResponseOutcome = ResponseOutcome.ENGAGE,
         *,
         inbox: ChatInbox | None = None,
+        ambient_reading: RoomReading | None = None,
     ) -> None:
         """Run the real handler for one message under a fresh turn scope, isolating faults.
 
@@ -237,7 +279,10 @@ class ChatDispatcher:
         handler seam signature is untouched; ``ENGAGE`` (the default) is no cap. When the
         staleness врезка is enabled (BOB-066 Срез W.3), the turn's non-draining
         ``peek_arrivals`` — bound to this message's ``update_id`` — also rides on the scope so
-        the handler can reread what landed during generation before sending.
+        the handler can reread what landed during generation before sending. The holistic
+        stream-read's per-message ``ambient_reading`` (BOB-072) likewise rides the scope so the
+        gate applies the pre-computed verdict; ``None`` (a focal message / the flag off) means
+        the normal per-message path.
         """
         scope = new_turn_scope(
             base_seed=self._base_seed,
@@ -245,6 +290,7 @@ class ChatDispatcher:
             message_id=message.message_id,
             series_ceiling=ceiling,
             peek_arrivals=self._peek_arrivals_for(message, inbox),
+            ambient_reading=ambient_reading,
         )
         try:
             await self._handle(message, scope)

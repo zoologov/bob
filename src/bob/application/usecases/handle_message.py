@@ -1293,10 +1293,15 @@ class HandleMessage:
         # The turn-local rng + the batch top-k outcome ceiling (BOB-066 Срез W.2) both ride on
         # the scope; driven directly (a unit test) they fall back to the per-boot rng + an
         # uncapped ENGAGE, so behaviour is byte-identical to before the развязка.
-        rng, series_ceiling = (
-            (scope.rng, scope.series_ceiling)
+        # 🔴 BOB-072: the holistic batch stream-read's pre-computed per-message reading rides on
+        # the scope alongside the rng + ceiling. When set (the intake worker read the whole
+        # ambient burst at once), the turn gate applies it directly instead of running a
+        # per-message reflective read; ``None`` (a focal message / a unit-test drive / the flag
+        # off) keeps the normal per-message path.
+        rng, series_ceiling, ambient_reading = (
+            (scope.rng, scope.series_ceiling, scope.ambient_reading)
             if scope is not None
-            else (self._rng, ResponseOutcome.ENGAGE)
+            else (self._rng, ResponseOutcome.ENGAGE, None)
         )
         soul = await self._perceive(event)
         # Perceive WHO is writing (BOB-019): owner / known / guest / bot. Resolved
@@ -1388,6 +1393,7 @@ class HandleMessage:
                 modulators,
                 rng=rng,
                 series_ceiling=series_ceiling,
+                ambient_reading=ambient_reading,
             )
         except _EssentialStepError as exc:
             await self._essential.handle_failure(event, soul, exc)

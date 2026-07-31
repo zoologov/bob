@@ -185,7 +185,8 @@ compose+guard → post-effects**, делегируя каждую ~14 когез
 | `VerifyStep` | `conversation/usecases/verify_step.py` | предответная эпистемическая проверка → per-turn note |
 | `TurnGate` | `conversation/usecases/turn_gate.py` | гейт хода: reply/react/silent + фокус/периферия-развилка (BOB-066 Срез 2.2, INV-1) |
 | `ReadTheRoom` | `conversation/usecases/read_the_room.py` | рефлексивное «чтение комнаты» на периферийном ходе (BOB-066 Срез 2.2, за флагом `presence.reflective`) |
-| `BatchRoomReader` / `decide_batch` | `conversation/room_reading.py`, `conversation/room_verdict.py`, `conversation/adapters/room_reader.py` | холистический stream-read ПАЧКИ ambient (BOB-072): один Tier-1 read по всей осевшей вспышке → `BatchRoomReading` (per-message reply/react/ignore, толерантный all-IGNORE) → чистое `decide_batch` (проекция read→verdict). Компонент за флагом `presence.stream_read` (`runtime/wiring/stream_read.py`, bare bool, OFF); врезка в `_handle_batch` — бид .2 |
+| `BatchRoomReader` / `decide_batch` | `conversation/room_reading.py`, `conversation/room_verdict.py`, `conversation/adapters/room_reader.py` | холистический stream-read ПАЧКИ ambient (BOB-072): один Tier-1 read по всей осевшей вспышке → `BatchRoomReading` (per-message reply/react/ignore, толерантный all-IGNORE) → чистое `decide_batch` (проекция read→verdict). Компонент за флагом `presence.stream_read` (`runtime/wiring/stream_read.py`, bare bool, OFF) |
+| `RoomStreamReader` (врезка) | `application/runtime/intake/room_stream_reader.py`, `application/runtime/intake/dispatcher.py`, `conversation/usecases/turn_gate.py` | врезка stream-read в `_handle_batch` (BOB-072 бид .2): осевшая пачка SPLIT на focal (прямое обращение → детерминированно как сейчас, INV-1) и ambient (весь остаток → ОДИН `RoomStreamReader.read` → per-message `RoomReading` едет на `TurnScope.ambient_reading`); `TurnGate` применяет её напрямую (минуя per-message read) — reply/react по решению + персист/floor для ВСЕХ включая IGNORE (INV-S2, Seam B). Fallback all-IGNORE. Заменяет скриптованный top-k, когда флаг ON; OFF → прежний путь |
 | `AntiRepeatGuard` | `conversation/usecases/anti_repeat_guard.py` | анти-повтор/тик + кольцо закрывающих |
 | `EssentialRunner` | `application/usecases/essential_runner.py` | ретрай существенных LLM-шагов + честный GUPPI-нотис |
 | `PreComposeGate` | `application/usecases/precompose_gate.py` | coding-intent + permission гейты, что могут забрать ход |
@@ -311,7 +312,9 @@ compose/guard), так что конкурентные чаты никогда �
 (`runtime.stop()` → `intake_dispatcher.aclose()` → `connection.close()`), поэтому корректная
 остановка досдаёт буферизованные ответы и никогда не пишет сквозь закрытое соединение.
 Окно debounce конфигурируется в `dialogue.intake_debounce_ms` (по умолчанию 0 — одиночные
-ходы без задержки; богатое окно «пусть допишут» — opt-in для Фазы 3).
+ходы без задержки; богатое окно «пусть допишут» — opt-in). При `presence.stream_read` (BOB-072)
+окно активируется (коалесинг вспышки в ОДИН холистический read; фокус всегда минует окно, INV-1);
+при OFF окно = 0 → продакшн байт-в-байт.
 
 Инварианты развязки:
 
@@ -348,6 +351,7 @@ Owner включает поведение группового присутст�
 | `presence.rhythm.enabled` | нест. `<section>.enabled` | ритм-слой: soft-ceiling доли эфира (barge/share) + человеческий пол задержки (`DelayedTurn`, INV-9); knobs `presence.rhythm.{share_min_multiplier,share_steepness,delay_base_seconds,delay_seconds_per_char,delay_complexity_seconds,delay_max_seconds,delay_urgency_relief,reaction_min_gap_seconds,reaction_quality_threshold,window_size}` (`window_size` по умолчанию 20) |
 | `presence.room_mood.enabled` | нест. `<section>.enabled` | настроение комнаты красит тон голоса + re-map порога аппетита по значению из `RoomReading`; knobs `presence.room_mood.{heavy_valence,warm_valence,polarized}` |
 | `presence.series_budget.enabled` | нест. `<section>.enabled` | batch top-k бюджет действий (один адресный ответ + ≤ N лайков на всплеск); knob `presence.series_budget.max_reactions` (по умолчанию 1) |
+| `presence.stream_read` | 🔴 **голый bool** (НЕ `.enabled`) | холистический stream-read (BOB-072): осевшая ambient-пачка читается ОДНИМ Tier-1 read (`RoomStreamReader` → `TurnGate.ambient_reading`) вместо скриптованного top-k; персист/floor для ВСЕХ (INV-S2); focal минует batch (INV-1). Включает окно коалесинга `dialogue.intake_debounce_ms` |
 | `presence.staleness.enabled` | нест. `<section>.enabled` | врезка переоценки черновика перед отправкой (`StalenessGate`: SEND/REWRITE/DROP_TO_LIKE/MERGE) над `scope.peek_arrivals` |
 | `presence.catchup.enabled` | нест. `<section>.enabled` | догоняющий проход по бэклогу отсутствия в per-chat воркере; knobs `presence.catchup.{absence_hours,budget}` (по умолчанию 4.0 ч / 3) |
 | `presence.endorsement.enabled` | нест. `<section>.enabled` | кредит доверия — warm-start новичка, за которого owner поручился в общем треде (требует `telegram.owner_id`) |
