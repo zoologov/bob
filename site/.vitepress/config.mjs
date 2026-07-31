@@ -24,7 +24,7 @@ try {
 
 // The full multi-layer architecture landing (mermaid + click-zoom) shipped as a
 // self-contained HTML asset in public/ — linked from the top nav.
-const archLink = { text: "Схема архитектуры", link: "/bob-architecture.html", target: "_self" };
+const archLink = { text: "Схема архитектуры", link: "https://zoologov.github.io/bob/bob-architecture.html", target: "_self" };
 
 export default withMermaid({
   title: "Bob",
@@ -32,11 +32,9 @@ export default withMermaid({
     "Автономный Telegram-компаньон со своей личностью: живая документация — архитектура, домены и весь Higher Mind.",
   base: "/bob/",
   lastUpdated: false,
-  // The raw dev-docs mirror (docs/**) is Bob's Markdown, not written for Vue's
-  // template compiler — bare `<` in prose trips it. The showcase value is the
-  // per-node architecture pages + the landing, so the mirror is excluded and any
-  // orphaned sidebar links tolerated.
-  srcExclude: ["docs/**"],
+  // Bare `<` in Bob's raw Markdown (docs/ mirror) reads as an unclosed HTML tag
+  // and trips Vue's template compiler — sanitize-content.py escapes those before
+  // the build, so the whole docs tree ships (no 404 on sidebar links).
   ignoreDeadLinks: true,
   // vitepress-plugin-mermaid: keep mermaid + its ESM deps bundled for the client
   // so the C4/flowchart diagrams render in the browser under the /bob/ base.

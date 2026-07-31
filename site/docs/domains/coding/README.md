@@ -1,12 +1,12 @@
-<!-- beadloom:badge-start -->
+&lt;!-- beadloom:badge-start -->
 > ✅ **fresh**
 > 
 > last synced 2026-07-31T12:12:20.297951+00:00 · coverage 100% (`coding`)
 > 
 > _Validation by Beadloom `doc_sync` — same source as `sync-check`._
-<!-- beadloom:badge-end -->
+&lt;!-- beadloom:badge-end -->
 
-<!-- Copyright (c) 2026 Vladimir Zoologov. All Rights Reserved.
+&lt;!-- Copyright (c) 2026 Vladimir Zoologov. All Rights Reserved.
      SPDX-License-Identifier: BUSL-1.1 -->
 
 # Модуль coding — «Боб пишет код»
@@ -137,7 +137,7 @@ infrastructure/telegram/gateway` (TYPE_CHECKING-only). Если любая ст�
 
 ## API
 
-<!-- beadloom:track=src/bob/coding/ports.py -->
+&lt;!-- beadloom:track=src/bob/coding/ports.py -->
 
 Модуль `src/bob/coding/ports.py` (порты-протоколы, только интерфейсы):
 - `ClaudeCodeRunner` — шов headless-раннера Claude Code.

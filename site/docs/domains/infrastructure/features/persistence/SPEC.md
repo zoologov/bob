@@ -1,10 +1,10 @@
-<!-- beadloom:badge-start -->
+&lt;!-- beadloom:badge-start -->
 > 📘 **reference** — overview/guide, not tied to a code symbol
 > 
 > _Validation by Beadloom `doc_sync` — same source as `sync-check`._
-<!-- beadloom:badge-end -->
+&lt;!-- beadloom:badge-end -->
 
-<!-- Copyright (c) 2026 Vladimir Zoologov. All Rights Reserved.
+&lt;!-- Copyright (c) 2026 Vladimir Zoologov. All Rights Reserved.
      SPDX-License-Identifier: BUSL-1.1 -->
 
 # persistence — общее ядро SQLite-соединения
@@ -49,4 +49,4 @@ durable-стора по инъецированному сейму `connection`. 
 этот сейм, покрываются собственными тестами в `tests/infrastructure/persistence/`
 (например `test_goal_store.py`, `test_relationship_store.py`, `test_fascination_store.py`).
 
-<!-- beadloom:track=src/bob/infrastructure/persistence/connection.py -->
+&lt;!-- beadloom:track=src/bob/infrastructure/persistence/connection.py -->

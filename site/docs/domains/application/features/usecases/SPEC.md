@@ -1,12 +1,12 @@
-<!-- beadloom:badge-start -->
+&lt;!-- beadloom:badge-start -->
 > ✅ **fresh**
 > 
 > last synced 2026-07-31T12:12:20.297951+00:00 · coverage 73% (`usecases`)
 > 
 > _Validation by Beadloom `doc_sync` — same source as `sync-check`._
-<!-- beadloom:badge-end -->
+&lt;!-- beadloom:badge-end -->
 
-<!-- Copyright (c) 2026 Vladimir Zoologov. All Rights Reserved.
+&lt;!-- Copyright (c) 2026 Vladimir Zoologov. All Rights Reserved.
      SPDX-License-Identifier: BUSL-1.1 -->
 
 # usecases — оркестрация домена GUPPI
@@ -89,14 +89,14 @@ Use-case'ы приложения: оркестрация доменной лог
 `test_catch_up.py`, `test_room_mood_modulator.py`, `test_disclosure_guard.py`,
 `test_endorsement_seeder.py`, `test_reply_rhythm.py`.
 
-<!-- beadloom:track=src/bob/application/usecases/handle_message.py -->
-<!-- beadloom:track=src/bob/application/usecases/heartbeat.py -->
-<!-- beadloom:track=src/bob/application/usecases/essential_runner.py -->
-<!-- beadloom:track=src/bob/application/usecases/precompose_gate.py -->
-<!-- beadloom:track=src/bob/application/usecases/privileged_fulfiller.py -->
-<!-- beadloom:track=src/bob/application/usecases/perceive_reaction.py -->
-<!-- beadloom:track=src/bob/application/usecases/catch_up.py -->
-<!-- beadloom:track=src/bob/application/usecases/room_mood_modulator.py -->
-<!-- beadloom:track=src/bob/application/usecases/disclosure_guard.py -->
-<!-- beadloom:track=src/bob/application/usecases/endorsement_seeder.py -->
-<!-- beadloom:track=src/bob/application/usecases/reply_rhythm.py -->
+&lt;!-- beadloom:track=src/bob/application/usecases/handle_message.py -->
+&lt;!-- beadloom:track=src/bob/application/usecases/heartbeat.py -->
+&lt;!-- beadloom:track=src/bob/application/usecases/essential_runner.py -->
+&lt;!-- beadloom:track=src/bob/application/usecases/precompose_gate.py -->
+&lt;!-- beadloom:track=src/bob/application/usecases/privileged_fulfiller.py -->
+&lt;!-- beadloom:track=src/bob/application/usecases/perceive_reaction.py -->
+&lt;!-- beadloom:track=src/bob/application/usecases/catch_up.py -->
+&lt;!-- beadloom:track=src/bob/application/usecases/room_mood_modulator.py -->
+&lt;!-- beadloom:track=src/bob/application/usecases/disclosure_guard.py -->
+&lt;!-- beadloom:track=src/bob/application/usecases/endorsement_seeder.py -->
+&lt;!-- beadloom:track=src/bob/application/usecases/reply_rhythm.py -->

@@ -1,10 +1,10 @@
-<!-- beadloom:badge-start -->
+&lt;!-- beadloom:badge-start -->
 > 📘 **reference** — overview/guide, not tied to a code symbol
 > 
 > _Validation by Beadloom `doc_sync` — same source as `sync-check`._
-<!-- beadloom:badge-end -->
+&lt;!-- beadloom:badge-end -->
 
-<!-- Copyright (c) 2026 Vladimir Zoologov. All Rights Reserved.
+&lt;!-- Copyright (c) 2026 Vladimir Zoologov. All Rights Reserved.
      SPDX-License-Identifier: BUSL-1.1 -->
 
 # Слой application — GUPPI (рантайм, use-cases, роутер)
@@ -56,7 +56,7 @@ LLM-роутера. Зависит от домена через порты-пр�
   (тот ретраит только transient): для пользовательского хода любой сбой
   суждения/генерации → ретрай, затем честный GUPPI-нотис, а не деградированный
   полу-ответ.
-  <!-- beadloom:track=src/bob/application/reliability.py -->
+  &lt;!-- beadloom:track=src/bob/application/reliability.py -->
 - **usecases/decide_response.py** — `DecideResponse`, тонкий use-case над швом
   семантического суждения (BOB-049): собирает `ResponseContext` из частей хода и
   делегирует решение REPLY/REACT/IGNORE инъецированному `ResponseJudge`.

@@ -1,12 +1,12 @@
-<!-- beadloom:badge-start -->
+&lt;!-- beadloom:badge-start -->
 > ✅ **fresh**
 > 
 > last synced 2026-07-31T12:12:20.297951+00:00 · coverage 100% (`conversation`)
 > 
 > _Validation by Beadloom `doc_sync` — same source as `sync-check`._
-<!-- beadloom:badge-end -->
+&lt;!-- beadloom:badge-end -->
 
-<!-- Copyright (c) 2026 Vladimir Zoologov. All Rights Reserved.
+&lt;!-- Copyright (c) 2026 Vladimir Zoologov. All Rights Reserved.
      SPDX-License-Identifier: BUSL-1.1 -->
 
 # Модуль conversation — «как ведётся ход»
@@ -540,7 +540,7 @@ floor (UPSERT — floor продвигается каждый ход); `SqliteCl
 
 ## API
 
-<!-- beadloom:track=src/bob/conversation/ports.py -->
+&lt;!-- beadloom:track=src/bob/conversation/ports.py -->
 
 Модуль `src/bob/conversation/ports.py` (порты-протоколы, только интерфейсы):
 - `ConversationFloorStore` — долговечный per-thread стор разговорной реплики (BOB-025;

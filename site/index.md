@@ -8,7 +8,7 @@ hero:
   actions:
     - theme: brand
       text: Полная схема архитектуры
-      link: /bob-architecture.html
+      link: https://zoologov.github.io/bob/bob-architecture.html
     - theme: alt
       text: Обзор архитектуры
       link: /architecture
@@ -19,7 +19,7 @@ hero:
 features:
   - title: 🛰️ Полная схема
     details: Многослойная архитектура от Mac mini M4 и Qwen-ярусов до DDD-кода, души и всех возможностей — mermaid-диаграммы с клик-зумом.
-    link: /bob-architecture.html
+    link: https://zoologov.github.io/bob/bob-architecture.html
   - title: 🏛️ Домены и узлы
     details: Одна страница на каждый узел графа — сводка, символы, связи и встроенная C4-диаграмма. 21 узел, 100% покрытие.
     link: /architecture
