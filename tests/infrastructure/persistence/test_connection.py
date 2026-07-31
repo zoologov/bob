@@ -87,6 +87,50 @@ async def test_initialize_applies_schema_and_is_idempotent(tmp_path: Path) -> No
     await kernel.close()
 
 
+async def _person_relationship_columns(kernel: SqliteConnection) -> set[str]:
+    async with kernel.connection.execute(
+        "PRAGMA table_info(person_relationship)"
+    ) as cursor:
+        rows = await cursor.fetchall()
+    return {str(row[1]) for row in rows}
+
+
+async def test_person_relationship_gender_column_exists_on_a_fresh_db(
+    kernel: SqliteConnection,
+) -> None:
+    # BOB-078 A: the self-identified gender lean is stored on person_relationship.
+    assert "gender" in await _person_relationship_columns(kernel)
+    await kernel.close()
+
+
+async def test_person_relationship_gender_migration_is_idempotent_on_legacy_db(
+    tmp_path: Path,
+) -> None:
+    # Arrange: a legacy DB whose person_relationship predates the gender column.
+    db_path = tmp_path / "bob.db"
+    legacy = await aiosqlite.connect(db_path)
+    await legacy.execute(
+        "CREATE TABLE person_relationship ("
+        "sender_id INTEGER PRIMARY KEY, trust REAL NOT NULL, respect REAL NOT NULL, "
+        "warmth REAL NOT NULL, compatibility REAL NOT NULL)"
+    )
+    await legacy.commit()
+    await legacy.close()
+
+    # Act: initialize twice — the guarded ALTER adds the column and re-runs cleanly.
+    kernel = SqliteConnection(db_path)
+    await kernel.initialize()
+    await kernel.initialize()
+
+    # Assert: the column is present exactly once and legacy rows still round-trip.
+    assert "gender" in await _person_relationship_columns(kernel)
+    await SqliteRelationshipStore(kernel).save(
+        Relationship(sender_id=7, warmth=0.2)
+    )
+    assert (await SqliteRelationshipStore(kernel).load(7)) is not None
+    await kernel.close()
+
+
 # --- Use-before-initialize guardrails -------------------------------------------
 
 

@@ -69,6 +69,7 @@ class SqliteConnection:
         await self._conn.executescript(_load_schema())
         await self._migrate_pursuit_stopped()
         await self._migrate_conversation_floor_participants()
+        await self._migrate_person_relationship_gender()
         await self._conn.commit()
         logger.info("SqliteConnection initialised at %s", self._db_path)
 
@@ -141,6 +142,31 @@ class SqliteConnection:
         """Names of the columns currently on ``conversation_floor`` (BOB-066 .1)."""
         async with self._db().execute(
             "PRAGMA table_info(conversation_floor)"
+        ) as cursor:
+            rows = await cursor.fetchall()
+        return {str(row[1]) for row in rows}
+
+    async def _migrate_person_relationship_gender(self) -> None:
+        """Add ``person_relationship.gender`` to a pre-existing DB (BOB-078 A).
+
+        The self-identified grammatical-gender lean (a REAL in ``[-1, 1]`` read only
+        from a person's own self-presentation). ``CREATE TABLE IF NOT EXISTS`` never
+        alters an already-present table, so a DB written before this column existed
+        would lack it. This guarded ``ALTER`` adds it only when missing — additive and
+        non-destructive: a legacy row takes ``NULL``, which the store reads back as
+        ``Gender.UNKNOWN`` (Bob forces no gender). A clean no-op once present. Kept in
+        the kernel (the schema/migration owner) beside the other guarded ALTERs.
+        """
+        if "gender" in await self._person_relationship_columns():
+            return
+        await self._db().execute(
+            "ALTER TABLE person_relationship ADD COLUMN gender REAL"
+        )
+
+    async def _person_relationship_columns(self) -> set[str]:
+        """Names of the columns currently on ``person_relationship`` (BOB-078 A)."""
+        async with self._db().execute(
+            "PRAGMA table_info(person_relationship)"
         ) as cursor:
             rows = await cursor.fetchall()
         return {str(row[1]) for row in rows}

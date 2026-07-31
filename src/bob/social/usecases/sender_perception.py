@@ -26,8 +26,9 @@ a transport supplies it.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
 
+from bob.social.gender import Gender
 from bob.social.interlocutor import Interlocutor, classify
 
 if TYPE_CHECKING:
@@ -35,27 +36,62 @@ if TYPE_CHECKING:
     from bob.social.usecases.authorizer import Authorizer
 
 
+class GenderMemory(Protocol):
+    """Seam: accrue + read a sender's self-identified gender (BOB-078 A).
+
+    :meth:`observe_gender` folds this turn's text into the sender's accrued
+    self-presentation; :meth:`load_gender` reads the resolved :class:`Gender`
+    (UNKNOWN until a self-signal clears the threshold). Realised by
+    :class:`~bob.social.adapters.relationship_store.SqliteRelationshipStore`.
+    Optional and additive — unwired, every sender reads UNKNOWN and the turn is
+    unchanged.
+    """
+
+    async def observe_gender(self, sender_id: int, text: str) -> None: ...
+
+    async def load_gender(self, sender_id: int) -> Gender: ...
+
+
 class SenderPerception:
     """Resolve a received message into an :class:`Interlocutor` via the Authorizer."""
 
-    def __init__(self, *, authorizer: Authorizer) -> None:
+    def __init__(
+        self, *, authorizer: Authorizer, gender_store: GenderMemory | None = None
+    ) -> None:
         self._authorizer = authorizer
+        self._gender_store = gender_store
 
     async def resolve(self, event: MessageReceived) -> Interlocutor:
-        """Perceive WHO sent ``event`` — owner / known / guest (+ trust).
+        """Perceive WHO sent ``event`` — owner / known / guest (+ trust + gender).
 
         Owner recognition is identity-only (not chat-scoped), so Bob knows his
         owner even outside an allowed chat; ``is_authorized`` runs the full
-        chat-scoped policy for everyone else. Pure perception — no access decision
-        is made or changed here.
+        chat-scoped policy for everyone else. When a gender seam is wired (BOB-078 A),
+        this turn's text is first folded into the sender's self-presentation and their
+        resolved :class:`Gender` is read back so Bob addresses them in the right
+        grammatical gender (UNKNOWN → neutral, never guessed from a name). Pure
+        perception — no access decision is made or changed here.
         """
         is_owner = self._authorizer.is_owner(event.sender_id)
         is_authorized = await self._authorizer.is_authorized(
             user_id=event.sender_id, chat_id=event.chat_id
         )
+        gender = await self._perceive_gender(event)
         return classify(
             sender_id=event.sender_id,
             sender_name=event.sender_name,
             is_owner=is_owner,
             is_authorized=is_authorized,
+            gender=gender,
         )
+
+    async def _perceive_gender(self, event: MessageReceived) -> Gender:
+        """Accrue this turn's self-presentation and read back the sender's gender.
+
+        A no-op (UNKNOWN) with no gender seam wired or no keyable ``sender_id`` —
+        gender is per-PERSON, so it needs an id to accrue against.
+        """
+        if self._gender_store is None or event.sender_id is None:
+            return Gender.UNKNOWN
+        await self._gender_store.observe_gender(event.sender_id, event.text)
+        return await self._gender_store.load_gender(event.sender_id)

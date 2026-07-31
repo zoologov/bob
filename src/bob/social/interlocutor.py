@@ -31,6 +31,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 
+from bob.social.gender import Gender
+
 __all__ = ["Interlocutor", "InterlocutorKind", "Trust", "classify"]
 
 # Stable label used when the transport hands us no display name, so a perceived
@@ -67,12 +69,19 @@ class Trust(Enum):
 
 @dataclass(frozen=True, slots=True)
 class Interlocutor:
-    """The perceived social identity of the sender of one turn (immutable)."""
+    """The perceived social identity of the sender of one turn (immutable).
+
+    ``gender`` is the interlocutor's grammatical gender as read from THEIR own
+    self-presentation (BOB-078 A) — never from their name. It defaults to
+    :attr:`Gender.UNKNOWN` (neutral: Bob forces no grammatical gender) so an
+    unperceived or newly-met sender is unchanged.
+    """
 
     sender_id: int | None
     display_name: str
     kind: InterlocutorKind
     trust: Trust
+    gender: Gender = Gender.UNKNOWN
 
 
 def classify(
@@ -82,6 +91,7 @@ def classify(
     is_owner: bool,
     is_authorized: bool,
     is_bot: bool = False,
+    gender: Gender = Gender.UNKNOWN,
 ) -> Interlocutor:
     """Derive the :class:`Interlocutor` from the turn's authz facts (pure).
 
@@ -105,4 +115,5 @@ def classify(
         display_name=sender_name or _UNKNOWN_NAME,
         kind=kind,
         trust=trust,
+        gender=gender,
     )

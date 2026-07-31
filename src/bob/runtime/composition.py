@@ -671,7 +671,12 @@ def build_application(
         # known / guest — off the shared Authorizer and folds it into his voice
         # ("сейчас пишет: …"). Additive only: it shapes HOW Bob sounds, never which
         # pipeline runs (the guest-restricted path is a later bead).
-        perceive_sender=SenderPerception(authorizer=authorizer),
+        # Gender seam (BOB-078 A): Bob reads a person's grammatical gender from THEIR
+        # own self-presentation (never their name), accrued per sender on the same
+        # relationship store, and addresses them accordingly (UNKNOWN → neutral).
+        perceive_sender=SenderPerception(
+            authorizer=authorizer, gender_store=relationship_store
+        ),
         # First-impression seam (BOB-019 bob-apv.3): Bob forms + remembers a LIGHT
         # per-person first impression keyed by sender — a returning person's prior
         # note is recalled into the prompt ("кажется, мы уже сталкивались"), a new

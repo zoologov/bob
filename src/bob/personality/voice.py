@@ -223,23 +223,41 @@ _KIND_LABEL: dict[str, str] = {
     "bot": "другой бот",
 }
 
+# Grammatical-gender clause (BOB-078 A): when the interlocutor's gender is read from
+# THEIR own self-presentation (never their name), Bob addresses them in that gender;
+# an UNKNOWN read forces nothing (neutral). Keyed by the ALREADY-COMPUTED gender value
+# (the social ``Gender`` enum's ``.value`` string), NOT the enum member — voice belongs
+# to personality and must not import the social ``Gender`` at runtime, keeping the
+# social→personality edge one-directional (mirrors ``_KIND_LABEL``, BOB-062.5).
+# Cyrillic look-alikes are intentional in these Russian literals.
+_GENDER_CLAUSE: dict[str, str] = {
+    "fem": " Обращайся к собеседнику в женском роде.",
+    "masc": " Обращайся к собеседнику в мужском роде.",
+    "unknown": "",
+}
+
 
 def who_is_writing_directive(interlocutor: Interlocutor) -> str:
-    """Return the who-is-writing voice line for this turn's sender (BOB-019).
+    """Return the who-is-writing voice line for this turn's sender (BOB-019 / BOB-078 A).
 
     Folds WHO Bob is talking to into the prompt as social context — the display
     name plus a short Russian kind-label (owner / known / stranger / bot) — so Bob
     recognises the owner AS the owner, greets a known friend, and clocks a stranger
-    or a bot. Written as character (a person naturally senses who he is speaking
-    with), not a config switch; it shapes the voice only and never decides which
-    pipeline runs. Pure and deterministic: same interlocutor → same line.
+    or a bot. When the sender's grammatical gender has been read from THEIR own
+    self-presentation (BOB-078 A — never their name), a short clause tells Bob to
+    address them in that gender; an UNKNOWN gender forces nothing (neutral). Written
+    as character (a person naturally senses who he is speaking with), not a config
+    switch; it shapes the voice only and never decides which pipeline runs. Pure and
+    deterministic: same interlocutor → same line.
     """
     label = _KIND_LABEL[interlocutor.kind.value]
+    gender_clause = _GENDER_CLAUSE[interlocutor.gender.value]
     # Russian persona line (project language); Cyrillic look-alikes intentional.
     return (
         f"Сейчас тебе пишет: {interlocutor.display_name} ({label}). "
         "Держи в голове, кто перед тобой, и отвечай соответственно — "
         "как живой человек, который понимает, с кем говорит."
+        f"{gender_clause}"
     )
 
 

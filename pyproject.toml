@@ -1066,6 +1066,11 @@ ignore = [
 # they also assert on magic literals + a private predicate helper.
 "tests/application/test_tool_loop_narration_backstop.py" = ["S101", "ARG001", "PLR2004", "RUF001", "RUF002", "RUF003"]
 "tests/infrastructure/llm/test_openai_compat_parsers.py" = ["S101", "ARG001", "PLR2004", "RUF001", "RUF002", "RUF003"]
+# The self-identification gender detector (BOB-078 A) matches real Russian text — its
+# grammatical markers/pronouns ("я", "сама", "он", "-ла"/"-л" endings) and persona
+# docstrings carry intentional Cyrillic look-alikes; RUF001/RUF002/RUF003 do not apply.
+"src/bob/social/gender.py" = ["RUF001", "RUF002", "RUF003"]
+"tests/domain/personality/test_gender.py" = ["S101", "RUF001", "RUF002", "RUF003"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["bob"]
