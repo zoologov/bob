@@ -366,6 +366,17 @@ ignore = [
     "RUF002",
     "RUF003",
 ]
+# The anti-narration backstop acceptance steps (BOB-074) bind Russian .feature step text +
+# assert messages that mix «GUPPI» with Russian prose, whose Cyrillic look-alikes are
+# intentional (→ RUF001/2/3).
+"tests/acceptance/steps/test_tool_narration_backstop.py" = [
+    "S101",
+    "ARG001",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
 # The disclosure-guard tests (BOB-066 W.4) assert on Russian owner_data request literals whose
 # Cyrillic look-alikes are intentional (→ RUF001/2/3).
 "tests/application/usecases/test_disclosure_guard.py" = [
