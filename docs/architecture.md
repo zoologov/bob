@@ -185,6 +185,7 @@ compose+guard → post-effects**, делегируя каждую ~14 когез
 | `VerifyStep` | `conversation/usecases/verify_step.py` | предответная эпистемическая проверка → per-turn note |
 | `TurnGate` | `conversation/usecases/turn_gate.py` | гейт хода: reply/react/silent + фокус/периферия-развилка (BOB-066 Срез 2.2, INV-1) |
 | `ReadTheRoom` | `conversation/usecases/read_the_room.py` | рефлексивное «чтение комнаты» на периферийном ходе (BOB-066 Срез 2.2, за флагом `presence.reflective`) |
+| `BatchRoomReader` / `decide_batch` | `conversation/room_reading.py`, `conversation/room_verdict.py`, `conversation/adapters/room_reader.py` | холистический stream-read ПАЧКИ ambient (BOB-072): один Tier-1 read по всей осевшей вспышке → `BatchRoomReading` (per-message reply/react/ignore, толерантный all-IGNORE) → чистое `decide_batch` (проекция read→verdict). Компонент за флагом `presence.stream_read` (`runtime/wiring/stream_read.py`, bare bool, OFF); врезка в `_handle_batch` — бид .2 |
 | `AntiRepeatGuard` | `conversation/usecases/anti_repeat_guard.py` | анти-повтор/тик + кольцо закрывающих |
 | `EssentialRunner` | `application/usecases/essential_runner.py` | ретрай существенных LLM-шагов + честный GUPPI-нотис |
 | `PreComposeGate` | `application/usecases/precompose_gate.py` | coding-intent + permission гейты, что могут забрать ход |

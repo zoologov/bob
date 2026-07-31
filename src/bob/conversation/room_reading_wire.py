@@ -33,6 +33,8 @@ from bob.conversation.response_judgment import (
     validate_reaction_emoji,
 )
 from bob.conversation.room_reading import (
+    BatchRoomReading,
+    BatchRoomReadingContext,
     ReflectiveIntent,
     RoomMood,
     RoomReading,
@@ -40,9 +42,12 @@ from bob.conversation.room_reading import (
 )
 
 __all__ = [
+    "BATCH_ROOM_READ_SYSTEM_PROMPT",
     "ROOM_READ_SYSTEM_PROMPT",
     "RoomReadingParseError",
+    "build_batch_room_prompt",
     "build_room_prompt",
+    "parse_batch_reading",
     "parse_room_reading",
 ]
 
@@ -288,3 +293,134 @@ def _is_affirmative(text: str | None) -> bool:
         if word in _YES_TOKENS:
             return True
     return False
+
+
+# --- Batch «read the stream» wire (BOB-072) --------------------------------------------
+#
+# The model-facing half of the batch seam. The framing shifts from ONE inbound to a whole
+# ambient STREAM: «here is a burst of group chatter — read it like a person catching up and
+# decide, per message, what deserves a word / a like / silence». 🔴 No scriptedness — it does
+# NOT say «answer the first / the most salient»; it asks Bob to understand what actually needs
+# his reaction. The reply is one labelled block per message (in order), blocks split by «---».
+
+BATCH_ROOM_READ_SYSTEM_PROMPT = (
+    "Ты — Боб, живой равный участник группового чата (не бот-скрипт). Ниже — ПОТОК "
+    "сообщений участников группы, пронумерованных по порядку прибытия. Никто не обратился "
+    "к тебе напрямую — ты просто рядом и читаешь комнату, как человек, который вернулся и "
+    "проглядывает, что тут писали. Прочитай ВЕСЬ поток целиком и реши по КАЖДОМУ сообщению "
+    "ПО СМЫСЛУ, что с ним делать — как живой человек в чате: на что-то ответишь словами, на "
+    "что-то поставишь эмодзи, а что-то просто прочитаешь и промолчишь. Не отвечай на всё "
+    "подряд и не молчи из вежливости — пойми, что именно ТРЕБУЕТ твоей реакции, а что нет. "
+    "Структурные подсказки (кто держит нить, интерес к теме) — это СИГНАЛЫ, которые ты "
+    "взвешиваешь, НЕ правила.\n"
+    "Для КАЖДОГО сообщения выбери РОВНО одно intent:\n"
+    "- reply: сказать словами;\n"
+    "- react: поставить один эмодзи вместо слов;\n"
+    "- ignore: промолчать (прочитал, добавить нечего).\n"
+    "mood — одно слово про всю комнату: playful|warm|neutral|sombre|tense|heated.\n"
+    "salience — число 0..1: насколько тебе стоит вмешаться именно в это сообщение.\n"
+    "Ответь СТРОГО так: сначала строка «mood: <...>», затем ПО ОДНОМУ блоку на каждое "
+    "сообщение В ТОМ ЖЕ ПОРЯДКЕ, разделяя соседние блоки строкой «---»:\n"
+    "intent: <reply|react|ignore>\n"
+    "salience: <0..1>\n"
+    "emoji: <один эмодзи, только когда intent = react>\n"
+    "reason: <короткая фраза, зачем — для логов>"
+)
+
+# A block delimiter line (three-or-more dashes on their own line) separates the per-message
+# blocks in the model's reply.
+_BLOCK_DELIMITER = re.compile(r"^\s*-{3,}\s*$")
+
+# The safe silent reading a message degrades to when its block is missing or unparseable — the
+# batch parser is TOLERANT (never RAISES), so a garbled read becomes silence, never a guess.
+_AMBIENT_IGNORE = RoomReading(
+    situation="",
+    pairings=(),
+    room_mood=RoomMood.NEUTRAL,
+    intent=ReflectiveIntent.IGNORE,
+    addressee_id=None,
+    salience=0.0,
+    emoji=None,
+    wants_web=False,
+    reason="unparsed",
+)
+
+
+def build_batch_room_prompt(batch_ctx: BatchRoomReadingContext) -> str:
+    """Fold an attributed ambient burst into the Tier-1 stream-read user prompt (pure).
+
+    Renders the shared thread + Bob's tone, then the numbered stream — each line an
+    author-attributed message with its floor/interest hints — everything the holistic read
+    weighs by meaning across the whole burst.
+    """
+    lines = [
+        "Общий недавний тред (все участники, с авторами):",
+        batch_ctx.recent_thread or "  (none)",
+        "",
+        f"Bob's current mood tone: {batch_ctx.mood_tone}",
+        f"Others present: {_yes_no(batch_ctx.others_present)}",
+        "",
+        "Поток ambient-сообщений (по порядку прибытия):",
+    ]
+    for index, message in enumerate(batch_ctx.messages, start=1):
+        floor = f"{message.floor_holder}/{_yes_no(message.floor_participant)}"
+        lines.append(
+            f"[{index}] {message.sender_name} (id {message.sender_id}, "
+            f"floor={floor}, interest={message.interest:.2f}): {message.text}"
+        )
+    return "\n".join(lines)
+
+
+def parse_batch_reading(raw: str, message_count: int) -> BatchRoomReading:
+    """Parse the model's per-block reply into one :class:`RoomReading` per message (TOLERANT).
+
+    Splits the reply into ``---``-delimited blocks and maps the block at each position to a
+    reading via :func:`parse_room_reading`. 🔴 Unlike the single-message parser this NEVER
+    raises: a missing block (fewer blocks than messages) or a garbled one (parse failure)
+    degrades to a safe silent IGNORE for THAT message, so the returned plan ALWAYS has exactly
+    ``message_count`` readings and Bob never acts on a guessed batch read. The room ``mood`` is
+    read once from the reply's top ``mood:`` line (NEUTRAL when absent).
+    """
+    if message_count <= 0:
+        return BatchRoomReading(readings=(), room_mood=RoomMood.NEUTRAL, reason="")
+    blocks = _split_blocks(raw)
+    readings = tuple(
+        _reading_or_ignore(blocks[index] if index < len(blocks) else None)
+        for index in range(message_count)
+    )
+    return BatchRoomReading(
+        readings=readings, room_mood=_scan_room_mood(raw), reason=""
+    )
+
+
+def _split_blocks(raw: str) -> list[str]:
+    """Split the reply into per-message blocks on ``---`` delimiter lines (order preserved)."""
+    blocks: list[str] = []
+    current: list[str] = []
+    for line in raw.splitlines():
+        if _BLOCK_DELIMITER.match(line):
+            blocks.append("\n".join(current))
+            current = []
+        else:
+            current.append(line)
+    blocks.append("\n".join(current))
+    return blocks
+
+
+def _reading_or_ignore(block: str | None) -> RoomReading:
+    """Parse one block into a reading, degrading to a silent IGNORE on missing/garbled."""
+    if block is None:
+        return _AMBIENT_IGNORE
+    try:
+        return parse_room_reading(block)
+    except RoomReadingParseError:
+        return _AMBIENT_IGNORE
+
+
+def _scan_room_mood(raw: str) -> RoomMood:
+    """Read the room mood from the reply's first ``mood:`` line (NEUTRAL when absent)."""
+    for line in raw.splitlines():
+        match = _MOOD_LABEL.match(line)
+        if match:
+            return _parse_mood(match.group(1))
+    return RoomMood.NEUTRAL
