@@ -1,12 +1,12 @@
-<!-- beadloom:badge-start -->
+&lt;!-- beadloom:badge-start -->
 > ✅ **fresh**
 > 
 > last synced 2026-07-31T12:12:20.297951+00:00 · coverage 100% (`kernel`)
 > 
 > _Validation by Beadloom `doc_sync` — same source as `sync-check`._
-<!-- beadloom:badge-end -->
+&lt;!-- beadloom:badge-end -->
 
-<!-- Copyright (c) 2026 Vladimir Zoologov. All Rights Reserved.
+&lt;!-- Copyright (c) 2026 Vladimir Zoologov. All Rights Reserved.
      SPDX-License-Identifier: BUSL-1.1 -->
 
 # kernel — общее ядро контрактов
@@ -68,4 +68,4 @@ BOB-062.8 эти контракты лежали в снятом слое-first 
 `tests/application/runtime/test_event_bus.py` для `EventBus`, `tests/infrastructure/llm/`
 для `LLMProvider`) и structural-проверки инъекции в use-case-тестах.
 
-<!-- beadloom:track=src/bob/kernel/ports.py -->
+&lt;!-- beadloom:track=src/bob/kernel/ports.py -->

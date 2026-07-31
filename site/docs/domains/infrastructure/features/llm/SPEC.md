@@ -1,10 +1,10 @@
-<!-- beadloom:badge-start -->
+&lt;!-- beadloom:badge-start -->
 > 📘 **reference** — overview/guide, not tied to a code symbol
 > 
 > _Validation by Beadloom `doc_sync` — same source as `sync-check`._
-<!-- beadloom:badge-end -->
+&lt;!-- beadloom:badge-end -->
 
-<!-- Copyright (c) 2026 Vladimir Zoologov. All Rights Reserved.
+&lt;!-- Copyright (c) 2026 Vladimir Zoologov. All Rights Reserved.
      SPDX-License-Identifier: BUSL-1.1 -->
 
 # llm — адаптер LLM (OpenAI-совместимый провайдер)
@@ -52,5 +52,5 @@ tool-calling поверх aiohttp (backend — Ollama/Qwen). Узел `llm` (`pa
 `tests/infrastructure/llm/test_web_search_qwen.py`, и суждения на Tier 0
 (`test_response_judge.py`, `test_reaction_judge.py`, `test_room_reader.py`).
 
-<!-- beadloom:track=src/bob/infrastructure/llm/openai_compat.py -->
-<!-- beadloom:track=src/bob/infrastructure/llm/factory.py -->
+&lt;!-- beadloom:track=src/bob/infrastructure/llm/openai_compat.py -->
+&lt;!-- beadloom:track=src/bob/infrastructure/llm/factory.py -->

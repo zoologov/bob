@@ -1,12 +1,12 @@
-<!-- beadloom:badge-start -->
+&lt;!-- beadloom:badge-start -->
 > ✅ **fresh**
 > 
 > last synced 2026-07-31T12:12:20.297951+00:00 · coverage 100% (`runtime-app`)
 > 
 > _Validation by Beadloom `doc_sync` — same source as `sync-check`._
-<!-- beadloom:badge-end -->
+&lt;!-- beadloom:badge-end -->
 
-<!-- Copyright (c) 2026 Vladimir Zoologov. All Rights Reserved.
+&lt;!-- Copyright (c) 2026 Vladimir Zoologov. All Rights Reserved.
      SPDX-License-Identifier: BUSL-1.1 -->
 
 # runtime-app — рантайм приложения (asyncio-примитивы)
@@ -86,12 +86,12 @@ async-примитивы приложения, а не корень сборки
 `test_bob_message_reaction_event.py`, и `tests/application/runtime/intake/` (dispatcher,
 inbox, focus, scope, room_stream_reader).
 
-<!-- beadloom:track=src/bob/application/runtime/agent.py -->
-<!-- beadloom:track=src/bob/application/runtime/event_bus.py -->
-<!-- beadloom:track=src/bob/application/runtime/events.py -->
-<!-- beadloom:track=src/bob/application/runtime/heartbeat.py -->
-<!-- beadloom:track=src/bob/application/runtime/retry.py -->
-<!-- beadloom:track=src/bob/application/runtime/delayed_turn.py -->
-<!-- beadloom:track=src/bob/application/runtime/share_of_voice_gate.py -->
-<!-- beadloom:track=src/bob/application/runtime/catch_up_reentry.py -->
-<!-- beadloom:track=src/bob/application/runtime/staleness_reassessor.py -->
+&lt;!-- beadloom:track=src/bob/application/runtime/agent.py -->
+&lt;!-- beadloom:track=src/bob/application/runtime/event_bus.py -->
+&lt;!-- beadloom:track=src/bob/application/runtime/events.py -->
+&lt;!-- beadloom:track=src/bob/application/runtime/heartbeat.py -->
+&lt;!-- beadloom:track=src/bob/application/runtime/retry.py -->
+&lt;!-- beadloom:track=src/bob/application/runtime/delayed_turn.py -->
+&lt;!-- beadloom:track=src/bob/application/runtime/share_of_voice_gate.py -->
+&lt;!-- beadloom:track=src/bob/application/runtime/catch_up_reentry.py -->
+&lt;!-- beadloom:track=src/bob/application/runtime/staleness_reassessor.py -->

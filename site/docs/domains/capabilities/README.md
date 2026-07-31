@@ -1,12 +1,12 @@
-<!-- beadloom:badge-start -->
+&lt;!-- beadloom:badge-start -->
 > ✅ **fresh**
 > 
 > last synced 2026-07-31T12:12:20.297951+00:00 · coverage 100% (`capabilities`)
 > 
 > _Validation by Beadloom `doc_sync` — same source as `sync-check`._
-<!-- beadloom:badge-end -->
+&lt;!-- beadloom:badge-end -->
 
-<!-- Copyright (c) 2026 Vladimir Zoologov. All Rights Reserved.
+&lt;!-- Copyright (c) 2026 Vladimir Zoologov. All Rights Reserved.
      SPDX-License-Identifier: BUSL-1.1 -->
 
 # Модуль capabilities — «инструменты Боба»
@@ -329,7 +329,7 @@ legalized), `coding.usecases → capabilities` (`PrivacyGuard`, TC, перено
 
 ## API
 
-<!-- beadloom:track=src/bob/capabilities/ports.py -->
+&lt;!-- beadloom:track=src/bob/capabilities/ports.py -->
 
 Модуль `src/bob/capabilities/ports.py` (порты-протоколы + value-object'ы шва, 18
 публичных символов):

@@ -1,12 +1,12 @@
-<!-- beadloom:badge-start -->
+&lt;!-- beadloom:badge-start -->
 > ✅ **fresh**
 > 
 > last synced 2026-07-31T12:12:20.297951+00:00 · coverage 100% (`router`)
 > 
 > _Validation by Beadloom `doc_sync` — same source as `sync-check`._
-<!-- beadloom:badge-end -->
+&lt;!-- beadloom:badge-end -->
 
-<!-- Copyright (c) 2026 Vladimir Zoologov. All Rights Reserved.
+&lt;!-- Copyright (c) 2026 Vladimir Zoologov. All Rights Reserved.
      SPDX-License-Identifier: BUSL-1.1 -->
 
 # router — маршрутизация тиров LLM с редакцией приватности
@@ -54,5 +54,5 @@ source `src/bob/application/router/`) — единственная точка, �
 `tests/application/router/test_llm_router_hardening.py`,
 `tests/application/router/test_reply_tier_selector.py`.
 
-<!-- beadloom:track=src/bob/application/router/llm_router.py -->
-<!-- beadloom:track=src/bob/application/router/reply_tier_selector.py -->
+&lt;!-- beadloom:track=src/bob/application/router/llm_router.py -->
+&lt;!-- beadloom:track=src/bob/application/router/reply_tier_selector.py -->

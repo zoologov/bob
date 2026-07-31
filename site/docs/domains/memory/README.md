@@ -1,12 +1,12 @@
-<!-- beadloom:badge-start -->
+&lt;!-- beadloom:badge-start -->
 > ✅ **fresh**
 > 
 > last synced 2026-07-31T12:12:20.297951+00:00 · coverage 100% (`memory`)
 > 
 > _Validation by Beadloom `doc_sync` — same source as `sync-check`._
-<!-- beadloom:badge-end -->
+&lt;!-- beadloom:badge-end -->
 
-<!-- Copyright (c) 2026 Vladimir Zoologov. All Rights Reserved.
+&lt;!-- Copyright (c) 2026 Vladimir Zoologov. All Rights Reserved.
      SPDX-License-Identifier: BUSL-1.1 -->
 
 # Модуль memory — «Боб помнит»
@@ -246,7 +246,7 @@ OpenAI-совместимой `/v1/chat/completions`, сортирует по у
 
 ## API
 
-<!-- beadloom:track=src/bob/memory/ports.py -->
+&lt;!-- beadloom:track=src/bob/memory/ports.py -->
 
 Модуль `src/bob/memory/ports.py` (порты-протоколы, только интерфейсы):
 - `MemoryRepo` — долговечный стор эпизодов/фактов (`save_episode`, `save_fact`,

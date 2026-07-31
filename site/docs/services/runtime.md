@@ -1,10 +1,10 @@
-<!-- beadloom:badge-start -->
+&lt;!-- beadloom:badge-start -->
 > 📘 **reference** — overview/guide, not tied to a code symbol
 > 
 > _Validation by Beadloom `doc_sync` — same source as `sync-check`._
-<!-- beadloom:badge-end -->
+&lt;!-- beadloom:badge-end -->
 
-<!-- Copyright (c) 2026 Vladimir Zoologov. All Rights Reserved.
+&lt;!-- Copyright (c) 2026 Vladimir Zoologov. All Rights Reserved.
      SPDX-License-Identifier: BUSL-1.1 -->
 
 # runtime — composition root + entrypoint
@@ -155,9 +155,9 @@ path-ридеры (`_db_path`, `_soul_dir`, `_templates_dir`, `_backfill_name_ma
 целится в новый дом entrypoint, а не в shim). Инвариант `_REPO_ROOT` закреплён
 unit-тестом `tests/test_runtime_repo_root.py`.
 
-<!-- beadloom:track=src/bob/runtime/composition.py -->
-<!-- beadloom:track=src/bob/runtime/main.py -->
-<!-- beadloom:track=src/bob/runtime/clock.py -->
-<!-- beadloom:track=src/bob/runtime/config.py -->
+&lt;!-- beadloom:track=src/bob/runtime/composition.py -->
+&lt;!-- beadloom:track=src/bob/runtime/main.py -->
+&lt;!-- beadloom:track=src/bob/runtime/clock.py -->
+&lt;!-- beadloom:track=src/bob/runtime/config.py -->
 
-<!-- enrich with: beadloom docs polish -->
+&lt;!-- enrich with: beadloom docs polish -->

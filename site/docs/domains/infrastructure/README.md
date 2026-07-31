@@ -1,10 +1,10 @@
-<!-- beadloom:badge-start -->
+&lt;!-- beadloom:badge-start -->
 > 📘 **reference** — overview/guide, not tied to a code symbol
 > 
 > _Validation by Beadloom `doc_sync` — same source as `sync-check`._
-<!-- beadloom:badge-end -->
+&lt;!-- beadloom:badge-end -->
 
-<!-- Copyright (c) 2026 Vladimir Zoologov. All Rights Reserved.
+&lt;!-- Copyright (c) 2026 Vladimir Zoologov. All Rights Reserved.
      SPDX-License-Identifier: BUSL-1.1 -->
 
 # Слой infrastructure — адаптеры портов

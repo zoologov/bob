@@ -1,12 +1,12 @@
-<!-- beadloom:badge-start -->
+&lt;!-- beadloom:badge-start -->
 > ✅ **fresh**
 > 
 > last synced 2026-07-31T12:12:20.297951+00:00 · coverage 0% (`bob`)
 > 
 > _Validation by Beadloom `doc_sync` — same source as `sync-check`._
-<!-- beadloom:badge-end -->
+&lt;!-- beadloom:badge-end -->
 
-<!-- Copyright (c) 2026 Vladimir Zoologov. All Rights Reserved.
+&lt;!-- Copyright (c) 2026 Vladimir Zoologov. All Rights Reserved.
      SPDX-License-Identifier: BUSL-1.1 -->
 
 # Архитектура Боба
@@ -134,7 +134,7 @@ graph TD
     subgraph app["application (координация)"]
         usecases["usecases"]
         router["router"]
-        runtime_app["runtime-app<br/>(async-примитивы)"]
+        runtime_app["runtime-app‹br/›(async-примитивы)"]
     end
     subgraph infra["infrastructure (адаптеры)"]
         llm["llm"]
@@ -142,27 +142,27 @@ graph TD
         persistence["persistence"]
         config["config"]
     end
-    kernel["kernel<br/>(shared kernel)"]
-    runtime["runtime<br/>(composition root)"]
+    kernel["kernel‹br/›(shared kernel)"]
+    runtime["runtime‹br/›(composition root)"]
 
-    conversation --> personality
-    social --> personality
-    proactivity --> personality
-    proactivity --> conversation
-    proactivity --> memory
-    memory --> persistence
-    coding --> router
-    coding --> telegram
-    social --> telegram
-    llm --> capabilities
-    usecases --> capabilities
-    usecases --> conversation
-    business --> router
-    business -.->|контракты| kernel
-    app -.->|контракты| kernel
-    runtime --> business
-    runtime --> app
-    runtime --> infra
+    conversation --› personality
+    social --› personality
+    proactivity --› personality
+    proactivity --› conversation
+    proactivity --› memory
+    memory --› persistence
+    coding --› router
+    coding --› telegram
+    social --› telegram
+    llm --› capabilities
+    usecases --› capabilities
+    usecases --› conversation
+    business --› router
+    business -.-›|контракты| kernel
+    app -.-›|контракты| kernel
+    runtime --› business
+    runtime --› app
+    runtime --› infra
 ```
 
 ## Сквозной поток: обработка сообщения (perceive → decide → act → persist)
@@ -398,7 +398,7 @@ Owner включает поведение группового присутст�
   шаги проверяют его строго через границу `FakeGateway` (отправленные реплики,
   реакции, typing-индикаторы), не касаясь приватного состояния. Мутационное
   тестирование запускается адресно, по срезу, через `scripts/mutation.sh
-  <module>` (mutmut мутирует только чистые доменные пакеты — технические слои
+  &lt;module>` (mutmut мутирует только чистые доменные пакеты — технические слои
   и adapters/ports/`__init__` исключены; конвенция — ≥85% убитых мутантов на
   чистом домене с явной разметкой эквивалентных мутантов). Мутация в хуки и CI
   **не** входит — это осознанный ручной шаг. Порядок запуска, конфигурация и

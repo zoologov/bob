@@ -1,10 +1,10 @@
-<!-- beadloom:badge-start -->
+&lt;!-- beadloom:badge-start -->
 > 📘 **reference** — overview/guide, not tied to a code symbol
 > 
 > _Validation by Beadloom `doc_sync` — same source as `sync-check`._
-<!-- beadloom:badge-end -->
+&lt;!-- beadloom:badge-end -->
 
-<!-- Copyright (c) 2026 Vladimir Zoologov. All Rights Reserved.
+&lt;!-- Copyright (c) 2026 Vladimir Zoologov. All Rights Reserved.
      SPDX-License-Identifier: BUSL-1.1 -->
 
 # telegram — транспортный адаптер (aiogram)
@@ -80,9 +80,9 @@ draft-стриминг и Rich Messages, пиннинг ответа в topic-th
 `test_multibot_content_routing.py`, `test_multibot_guppi.py`, `test_rich.py`,
 `test_rich_markdown_sender.py`, `test_coding_indicator.py`.
 
-<!-- beadloom:track=src/bob/infrastructure/telegram/gateway.py -->
-<!-- beadloom:track=src/bob/infrastructure/telegram/aiogram_adapter.py -->
-<!-- beadloom:track=src/bob/infrastructure/telegram/multibot.py -->
-<!-- beadloom:track=src/bob/infrastructure/telegram/guppi.py -->
-<!-- beadloom:track=src/bob/infrastructure/telegram/rich.py -->
-<!-- beadloom:track=src/bob/infrastructure/telegram/outage_notifier.py -->
+&lt;!-- beadloom:track=src/bob/infrastructure/telegram/gateway.py -->
+&lt;!-- beadloom:track=src/bob/infrastructure/telegram/aiogram_adapter.py -->
+&lt;!-- beadloom:track=src/bob/infrastructure/telegram/multibot.py -->
+&lt;!-- beadloom:track=src/bob/infrastructure/telegram/guppi.py -->
+&lt;!-- beadloom:track=src/bob/infrastructure/telegram/rich.py -->
+&lt;!-- beadloom:track=src/bob/infrastructure/telegram/outage_notifier.py -->

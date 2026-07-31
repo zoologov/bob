@@ -1,12 +1,12 @@
-<!-- beadloom:badge-start -->
+&lt;!-- beadloom:badge-start -->
 > ✅ **fresh**
 > 
 > last synced 2026-07-31T12:12:20.297951+00:00 · coverage 100% (`personality`)
 > 
 > _Validation by Beadloom `doc_sync` — same source as `sync-check`._
-<!-- beadloom:badge-end -->
+&lt;!-- beadloom:badge-end -->
 
-<!-- Copyright (c) 2026 Vladimir Zoologov. All Rights Reserved.
+&lt;!-- Copyright (c) 2026 Vladimir Zoologov. All Rights Reserved.
      SPDX-License-Identifier: BUSL-1.1 -->
 
 # Модуль personality — «кто Боб есть»
@@ -318,7 +318,7 @@ kv-таблице (`record`/`latest`/`clear` — hint всплывает не б
 
 ## API
 
-<!-- beadloom:track=src/bob/personality/ports.py -->
+&lt;!-- beadloom:track=src/bob/personality/ports.py -->
 
 Модуль `src/bob/personality/ports.py` (порты-протоколы, только интерфейсы):
 - `MessageReactor` — react-only шов: поставить нативную emoji-реакцию на сообщение
