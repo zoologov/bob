@@ -64,7 +64,7 @@ C4Container
     System_Boundary(bob_infrastructure_boundary, "bob-infrastructure") {
         Component(config, "Config", "", "Config adapter — two-bot layered config loader (env + files) for the running process.")
         Component(llm, "Llm", "", "LLM adapter — OpenAI-compatible provider for Tier 0/1 completion + tool-calling (Ollama/Qwen backend).")
-        Component(persistence, "Persistence", "", "Persistence kernel — the shared `SqliteConnection` (open/WAL/foreign_keys/sqlite-vec load/`schema.sql`/kv/close) that the memory adapter and the 13 per-module durable stores read through the injected `connection` seam. Pure I/O: carries no memory/business logic — those realisations live in their owning modules' `adapters/` (BOB-062.2–.7b).")
+        Component(persistence, "Persistence", "", "Persistence kernel — the shared 'SqliteConnection' (open/WAL/foreign_keys/sqlite-vec load/'schema.sql'/kv/close) that the memory adapter and the 13 per-module durable stores read through the injected 'connection' seam. Pure I/O: carries no memory/business logic — those realisations live in their owning modules' 'adapters/' (BOB-062.2–.7b).")
         Component(telegram, "Telegram", "", "Telegram adapter — aiogram gateway (long-polling, authz gate, native draft streaming, Rich Messages, topic-thread reply pinning), MultiBotGateway (BotRegistry + cross-bot dedup + identity/scope router) and the GuppiHandler gatekeeper.")
     }
 ```
