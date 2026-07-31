@@ -26,13 +26,19 @@ from bob.memory.adapters.hybrid_recall import HybridMemoryRecall
 from bob.memory.adapters.ollama_embedder import OllamaEmbedder
 from bob.memory.adapters.ollama_reranker import OllamaReranker
 from bob.memory.adapters.reranker_factory import build_reranker
+from bob.memory.adapters.self_action_recorder import (
+    MemoryBackedSelfActionRecorder,
+    NoOpSelfActionRecorder,
+)
 from bob.memory.adapters.sqlite_memory_repo import SqliteMemoryRepo
 from bob.memory.adapters.vector_store import MemoryVectorStore
 
 __all__ = [
     "Fts5MemoryRecall",
     "HybridMemoryRecall",
+    "MemoryBackedSelfActionRecorder",
     "MemoryVectorStore",
+    "NoOpSelfActionRecorder",
     "OllamaEmbedder",
     "OllamaReranker",
     "SqliteMemoryRepo",

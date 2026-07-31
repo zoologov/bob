@@ -1106,6 +1106,15 @@ ignore = [
 # docstrings carry intentional Cyrillic look-alikes; RUF001/RUF002/RUF003 do not apply.
 "src/bob/social/gender.py" = ["RUF001", "RUF002", "RUF003"]
 "tests/domain/personality/test_gender.py" = ["S101", "RUF001", "RUF002", "RUF003"]
+# The self-action autobiography core + port + adapter + wiring (BOB-079.1) carry Russian
+# first-person renderings ("я взялся за…", "я залип…") + persona/policy docstrings whose
+# Cyrillic look-alikes are intentional — RUF001/RUF002/RUF003 do not apply to these.
+"src/bob/memory/self_action.py" = ["RUF001", "RUF002", "RUF003"]
+"src/bob/memory/ports.py" = ["RUF001", "RUF002", "RUF003"]
+"src/bob/memory/adapters/self_action_recorder.py" = ["RUF001", "RUF002", "RUF003"]
+"src/bob/runtime/wiring/self_action.py" = ["RUF001", "RUF002", "RUF003"]
+"tests/domain/memory/test_self_action.py" = ["S101", "ARG001", "PLR2004", "RUF001", "RUF002", "RUF003"]
+"tests/domain/memory/test_self_action_recorder.py" = ["S101", "ARG001", "PLR2004", "RUF001", "RUF002", "RUF003"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["bob"]

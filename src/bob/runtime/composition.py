@@ -172,6 +172,7 @@ from bob.runtime.wiring import (
     build_endorsement_seeder,
     build_rhythm_wiring,
     build_room_mood_modulator,
+    build_self_action_recorder,
     build_staleness_reassessor,
     staleness_enabled,
 )
@@ -373,6 +374,16 @@ def build_application(
         name_to_sender_id=_backfill_name_map(merged),
     )
     recall = HybridMemoryRecall(memory_repo, resolved_embedder, reranker=resolved_reranker)
+
+    # Autobiography recorder (BOB-079): behind ``memory.autobiography`` (OFF by default →
+    # NoOp → zero writes, byte-identical behaviour). Constructed here over the shared
+    # ``memory_repo`` as the SEAM later beads consume — coding-lifecycle (.2) and the
+    # tool-loop (.3) inject it. Underscore-prefixed: intentionally not yet threaded into
+    # either consumer in this bead (drop the prefix when wired).
+    _self_action_recorder = build_self_action_recorder(
+        merged, store=memory_repo, clock=resolved_clock
+    )
+
     soul_store = SoulStore(_soul_dir(merged))
 
     # Capability seam (BEAD-05/06): advertise recall_memory + the agentic

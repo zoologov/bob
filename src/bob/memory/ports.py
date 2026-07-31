@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     from bob.memory.entities import SemanticFact
+    from bob.memory.self_action import SelfAction
 
 # A single recalled memory item (content + relevance score), returned by recall.
 type Recalled = Mapping[str, object]
@@ -68,6 +69,29 @@ class MemoryRecall(Protocol):
         drop-in, unchanged contract — and an implementation with no age signal
         (keyword-only) treats it as a graceful no-op.
         """
+        ...
+
+
+@runtime_checkable
+class SelfActionRecorder(Protocol):
+    """Узкий порт записи самодействия Боба в автобиографию (BOB-079).
+
+    Намеренно НЕ весь :class:`MemoryRepo`: coding-сессия и tool-loop получают ровно
+    одну способность — «записать поступок» — а не полный доступ к памяти. Реализация
+    рендерит :class:`~bob.memory.self_action.SelfAction` от первого лица и оседает
+    эпизодом ``self_action``; no-op-реализация решает выключенный флаг
+    ``memory.autobiography`` (запись отсутствует, поведение как раньше). Best-effort у
+    вызывающего: провал записи не должен ронять coding/приём (урок Part D BOB-078).
+    """
+
+    async def record(
+        self,
+        action: SelfAction,
+        *,
+        sender_id: int | None = None,
+        visibility: str | None = None,
+    ) -> None:
+        """Записать один поступок Боба (или тихо ничего — no-op при OFF-флаге)."""
         ...
 
 
