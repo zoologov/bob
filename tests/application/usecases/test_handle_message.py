@@ -1048,6 +1048,42 @@ async def test_reflection_episode_is_excluded_from_the_reply_recall_pool() -> No
     assert fact_text in folded  # the fact still grounds the reply
 
 
+async def test_self_action_recall_folds_the_ownership_directive_into_the_prompt() -> None:
+    # BOB-079.4 (INV-1/2/3): when recall surfaces one of Bob's OWN past deeds
+    # (event_type ``self_action``), the light ownership directive is folded into the
+    # system prompt so he speaks of it in the first person, owns a slip, and never
+    # confabulates. The deed itself also grounds the reply (shareable autobiography).
+    deed_text = "я залип на задаче «X» — флудил правками, пришлось себя осадить"
+    recall = FakeRecall(
+        hits=[{"content": deed_text, "category": "self_action", "source": "episodic"}]
+    )
+    handler, _bot, _repo, tier1 = _build(reply="hi", recall=recall)
+
+    await handler.handle(_message("объясни подробно, что у тебя было с кодером"))
+
+    folded = tier1.all_text.casefold()
+    assert deed_text in tier1.all_text  # the deed grounds the reply
+    assert "от первого лица" in folded  # the ownership directive is present
+    assert "не выдумывай" in folded  # the no-confabulation backstop is present
+
+
+async def test_ownership_directive_absent_when_no_self_action_recalled() -> None:
+    # No self_action among recalled memories -> no ownership directive (default path
+    # unchanged): the backstop is folded ONLY when Bob's own deed is actually recalled.
+    fact_text = "Ada предпочитает чай"
+    recall = FakeRecall(
+        hits=[{"content": fact_text, "category": "preference", "source": "semantic"}]
+    )
+    handler, _bot, _repo, tier1 = _build(reply="hi", recall=recall)
+
+    await handler.handle(_message("объясни подробно, что ты думаешь"))
+
+    folded = tier1.all_text.casefold()
+    assert fact_text in tier1.all_text  # the fact still grounds the reply
+    assert "от первого лица" not in folded
+    assert "не выдумывай" not in folded
+
+
 async def test_leak_inner_life_still_surfaces_a_reflection_despite_containment() -> None:
     # The deliberate leak path (BOB-018) is UNTOUCHED by .3 containment: it reaches the
     # latest reflection through its own reader, not the (now reflection-free) recall pool.
