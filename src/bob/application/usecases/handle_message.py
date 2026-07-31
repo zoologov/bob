@@ -174,7 +174,7 @@ if TYPE_CHECKING:
     from bob.conversation.usecases.read_the_room import ReadTheRoom
     from bob.conversation.volatility_judgment import VolatilityJudge
     from bob.kernel.ports import Clock
-    from bob.memory.ports import MemoryRecall, Recalled
+    from bob.memory.ports import MemoryRecall, Recalled, SelfActionRecorder
     from bob.memory.usecases.extract_facts import ExtractFacts
     from bob.personality.fascination import Fascination
     from bob.personality.mood import Mood
@@ -640,6 +640,7 @@ class HandleMessage:
         staleness_reassessor: StalenessReassessor | None = None,
         endorsement_seeder: EndorsementSeeder | None = None,
         disclosure_guard: DisclosureGuard | None = None,
+        self_action_recorder: SelfActionRecorder | None = None,
     ) -> None:
         self._router = router
         self._gateway = gateway
@@ -860,6 +861,10 @@ class HandleMessage:
         # the anti-tic nudge is inert and the turn behaves exactly as before; a read/append
         # failure is swallowed so the persist can never break a turn.
         self._closer_log = closer_log
+        # Autobiography recorder (BOB-079.3): injected into the per-turn ToolLoop by
+        # ``_make_tool_loop`` so Bob records that HE used tools (coalesced, first-person).
+        # Unwired / the OFF-flag NoOp → zero writes, byte-identical behaviour.
+        self._self_action_recorder = self_action_recorder
         # The conversation-floor seam (BOB-025): over the per-message addressivity
         # (BOB-023) lives a tracker of who currently holds the "talking turn" in a
         # thread. When wired AND enabled, an AMBIENT message in a thread where Bob holds
@@ -1236,8 +1241,18 @@ class HandleMessage:
         The factory :class:`VoiceComposer` calls to drive a tool reply — composing the
         :class:`ToolLoop` over this use-case's capability registry + the per-turn announcer,
         so VoiceComposer (personality) never imports the capabilities use-cases.
+
+        The autobiography recorder (BOB-079.3) rides along so the loop records that Bob USED
+        tools (coalesced, first-person) — a NoOp / unwired recorder writes nothing. Sender /
+        visibility are not in this factory's scope, so recording is attributed sender-less
+        (owner-context self-action), which the recorder tolerates.
         """
-        return ToolLoop(provider=provider, registry=self._registry, announcer=announcer)
+        return ToolLoop(
+            provider=provider,
+            registry=self._registry,
+            announcer=announcer,
+            recorder=self._self_action_recorder,
+        )
 
     def _make_verify_announcer(
         self, *, chat_id: int, sender_name: str

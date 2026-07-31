@@ -869,6 +869,10 @@ def build_application(
         # (persist + window) and fold a SOFT «заверши по-другому» nudge into the context
         # (never a ban). Decorative: a log failure / no tic → the turn is unchanged.
         closer_log=closer_log,
+        # Autobiography recorder (BOB-079.3): the per-turn tool-loop records that Bob USED
+        # tools (coalesced first-person ``self_action``). Behind ``memory.autobiography``
+        # (OFF by default → NoOp → zero writes, byte-identical behaviour).
+        self_action_recorder=self_action_recorder,
     )
     # Intake-развязка (BOB-066 Срез 2.1): the MESSAGE_RECEIVED subscriber is now the fast,
     # non-blocking ChatDispatcher.submit (normalise → buffer → return), so the Telegram
