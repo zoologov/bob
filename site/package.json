@@ -1,5 +1,5 @@
 {
-  "name": "beadloom-site",
+  "name": "bob-site",
   "version": "1.0.0",
   "private": true,
   "description": "VitePress scaffold that renders the tree produced by `beadloom docs site`.",

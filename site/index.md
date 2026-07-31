@@ -1,26 +1,15 @@
 ---
-layout: home
-
-hero:
-  name: "Bob"
-  text: "Автономный Telegram-компаньон"
-  tagline: "Живая документация: архитектура, домены и весь Higher Mind, что делает Боба Бобом, а не скрипт-ботом."
-  actions:
-    - theme: brand
-      text: Схема архитектуры
-      link: /bob-architecture.html
-    - theme: alt
-      text: Обзор архитектуры
-      link: /architecture
-
-features:
-  - title: Полная схема
-    details: Многослойная архитектура от Mac mini M4 и Qwen-ярусов до DDD-кода, души и всех возможностей — с mermaid-диаграммами и клик-зумом.
-    link: /bob-architecture.html
-  - title: Домены и узлы
-    details: Одна страница на каждый узел графа — сводка, символы, связи и встроенная C4/mermaid-диаграмма. 21 узел, 100% покрытие.
-    link: /architecture
-  - title: Higher Mind
-    details: Личность, эмоции, память сквозь рестарты, проактивность и самосознание «того самого Боба из книги».
-    link: /features/personality
+layout: page
+title: Bob — архитектура
+head:
+  - - meta
+    - http-equiv: refresh
+      content: "0; url=/bob/bob-architecture.html"
 ---
+
+<div style="max-width:640px;margin:15vh auto;padding:0 24px;text-align:center;font-family:system-ui,sans-serif">
+  <p style="font-size:20px;font-weight:700;margin:0 0 8px">Bob — полная архитектура</p>
+  <p style="color:#888;margin:0 0 20px">Открываю схему…</p>
+  <p><a href="/bob/bob-architecture.html">Открыть схему архитектуры →</a></p>
+  <p style="margin-top:8px"><a href="/bob/architecture">Обзор архитектуры и документация по узлам →</a></p>
+</div>

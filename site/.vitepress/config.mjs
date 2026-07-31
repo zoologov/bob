@@ -32,6 +32,12 @@ export default withMermaid({
     "Автономный Telegram-компаньон со своей личностью: живая документация — архитектура, домены и весь Higher Mind.",
   base: "/bob/",
   lastUpdated: false,
+  // The raw dev-docs mirror (docs/**) is Bob's Markdown, not written for Vue's
+  // template compiler — bare `<` in prose trips it. The showcase value is the
+  // per-node architecture pages + the landing, so the mirror is excluded and any
+  // orphaned sidebar links tolerated.
+  srcExclude: ["docs/**"],
+  ignoreDeadLinks: true,
   themeConfig: {
     nav: [...nav, archLink],
     sidebar,
