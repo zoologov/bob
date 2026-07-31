@@ -21,6 +21,7 @@ returns ``None`` for an unknown id, and ``active`` lists the non-terminal sessio
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime
 from typing import TYPE_CHECKING, Protocol
 
@@ -29,6 +30,8 @@ from bob.coding.state import CodingSessionState, is_terminal
 
 if TYPE_CHECKING:
     import aiosqlite
+
+logger = logging.getLogger(__name__)
 
 
 class _ConnectionProvider(Protocol):
@@ -98,12 +101,32 @@ class SqliteCodingSessionStore:
             rows = await cursor.fetchall()
         return tuple(
             session
-            for session in (_row_to_session(row) for row in rows)
-            if not is_terminal(session.state)
+            for session in (_try_row_to_session(row) for row in rows)
+            if session is not None and not is_terminal(session.state)
         )
 
     def _db(self) -> aiosqlite.Connection:
         return self._repo.connection
+
+
+def _try_row_to_session(row: aiosqlite.Row) -> CodingSession | None:
+    """Map a row to its :class:`CodingSession`, or ``None`` if it cannot be parsed.
+
+    🔴 Резилентность (BOB-078 D): ``active()`` дёргается coding-router'ом на КАЖДОМ
+    входящем сообщении. ОДНА битая строка (напр. ``state`` вне ``CodingSessionState`` →
+    ``ValueError``, или битая дата) НЕ должна ронять весь список — иначе роутер бросает на
+    каждом сообщении и Боб глохнет. Битую строку логируем и ПРОПУСКАЕМ; валидные сессии
+    возвращаются как обычно.
+    """
+    try:
+        return _row_to_session(row)
+    except (ValueError, TypeError):
+        logger.exception(
+            "coding_session: пропускаю неразбираемую строку id=%r state=%r",
+            row[0],
+            row[2],
+        )
+        return None
 
 
 def _row_to_session(row: aiosqlite.Row) -> CodingSession:

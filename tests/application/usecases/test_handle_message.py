@@ -117,7 +117,10 @@ if TYPE_CHECKING:
 
     from aiogram.types import BufferedInputFile
 
-    from bob.application.usecases.precompose_gate import PermissionFlowLike
+    from bob.application.usecases.precompose_gate import (
+        NaturalCodingRouter,
+        PermissionFlowLike,
+    )
     from bob.capabilities.ports import DiagramSink, Permission, ToolCallingProvider, ToolDefinition
     from bob.capabilities.usecases.diagram_sender import DiagramSendMode
     from bob.conversation.ports import ZoneClassifier
@@ -662,7 +665,7 @@ def _build(
     diagram_renderer: object | None = None,
     diagram_send_as: DiagramSendMode = "photo",
     photo_send_raises: bool = False,
-    coding_router: _FakeCodingRouter | None = None,
+    coding_router: NaturalCodingRouter | None = None,
     permission_flow: PermissionFlowLike | None = None,
     decide_response: DecideResponse | None = None,
     outage_notifier: _FakeOutageNotifier | None = None,
@@ -7468,6 +7471,30 @@ async def test_no_coding_router_leaves_the_natural_language_path_inert() -> None
     await handler.handle(_message("Боб, поправь баг в Z"))
 
     assert bot.final_text != ""  # normal chat reply committed (NL path inert)
+
+
+class _RaisingCodingRouter:
+    """Fake coding router that always raises (напр. битая строка в coding_session)."""
+
+    async def route(
+        self, *, text: str, sender: int | None, is_owner: bool  # noqa: ARG002
+    ) -> bool:
+        raise ValueError("'CANCELLED' is not a valid CodingSessionState")
+
+
+async def test_coding_router_failure_does_not_crash_intake() -> None:
+    # 🔴 Резилентность приёма (BOB-078 D): coding-router дёргается на КАЖДОМ owner-
+    # сообщении; ЛЮБАЯ его ошибка (напр. битый state в coding_session → ValueError) НЕ
+    # должна крашить приём. Ход продолжается обычным chat-путём — Боб всё равно отвечает.
+    handler, bot, _repo, _tier1 = _build(
+        reply="всё равно отвечаю",
+        perceive_sender=_owner_resolver(),
+        coding_router=_RaisingCodingRouter(),
+    )
+
+    await handler.handle(_message("Боб, поправь баг в Z"))
+
+    assert bot.final_text != ""  # приём выжил: chat-путь отработал, Боб ответил
 
 
 # --- BOB-049: semantic response judge wired into handle_message --------------
