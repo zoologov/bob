@@ -332,6 +332,132 @@ async def test_open_again_after_stop_is_allowed() -> None:
     await rig.manager.stop(_OWNER_ID)
 
 
+# --- open failure: worktree is cleaned up, no leaked session -----------------
+
+
+@dataclass
+class _ExplodingRunner(_FakeInteractiveRunner):
+    """A runner whose spawn (``open``) fails — the manager must not leak a worktree."""
+
+    async def open(self, workdir: str, *, mode: str) -> None:  # noqa: ARG002
+        raise RuntimeError("claude failed to spawn")
+
+
+@pytest.mark.asyncio
+async def test_open_spawn_failure_cleans_worktree_and_leaves_no_session() -> None:
+    # 🔴 A spawn/mode fault must tear the isolated worktree back down (no orphaned
+    # worktree, no live session) — the owner sees a failure, the seam stays clean.
+    runner = _ExplodingRunner()
+    rig = _build(runner=runner)
+
+    outcome = await rig.manager.open("задача", _OWNER_ID)
+
+    assert outcome.ok is False
+    assert outcome.session is None
+    assert rig.manager.active() is False
+    # The worktree that was created for the (failed) spawn is removed again.
+    assert rig.worktree.created == ["bob/task"]
+    assert rig.worktree.removed == ["/wt/task"]
+    assert rig.store.sessions == {}  # nothing persisted
+
+
+# --- stop is best-effort: a close / cleanup fault never masks the outcome -----
+
+
+@dataclass
+class _CloseFailsRunner(_FakeInteractiveRunner):
+    """A runner whose ``close`` raises — ``stop`` must still finish terminally."""
+
+    async def close(self) -> None:
+        self.close_calls += 1
+        self._closed.set()
+        raise RuntimeError("terminate exploded")
+
+
+@pytest.mark.asyncio
+async def test_stop_survives_a_runner_close_fault_and_stays_terminal() -> None:
+    runner = _CloseFailsRunner()
+    rig = _build(runner=runner)
+    opened = await rig.manager.open("задача", _OWNER_ID)
+    assert opened.session is not None
+
+    outcome = await rig.manager.stop(_OWNER_ID)
+
+    # Best-effort: the close fault is swallowed; the session still ends CANCELLED,
+    # the worktree is still torn down, and no live session lingers (INV-4 backstop).
+    assert outcome.ok is True
+    assert rig.manager.active() is False
+    assert rig.worktree.removed == ["/wt/task"]
+    saved = rig.store.sessions[opened.session.id]
+    assert saved.state is CodingSessionState.CANCELLED
+
+
+@dataclass
+class _RemoveFailsWorktree(_FakeWorktree):
+    """A worktree whose ``remove`` raises — cleanup must not mask the stop outcome."""
+
+    async def remove(self, path: str) -> None:
+        self.removed.append(path)
+        raise RuntimeError("worktree removal failed")
+
+
+@pytest.mark.asyncio
+async def test_stop_survives_a_worktree_cleanup_fault_and_stays_terminal() -> None:
+    worktree = _RemoveFailsWorktree()
+    rig = _build(worktree=worktree)
+    opened = await rig.manager.open("задача", _OWNER_ID)
+    assert opened.session is not None
+
+    outcome = await rig.manager.stop(_OWNER_ID)
+
+    assert outcome.ok is True
+    assert rig.manager.active() is False
+    assert worktree.removed == ["/wt/task"]  # remove was attempted
+    saved = rig.store.sessions[opened.session.id]
+    assert saved.state is CodingSessionState.CANCELLED
+
+
+# --- output-stream fault is isolated (never crashes the manager) -------------
+
+
+class _ExplodingStreamer:
+    """A live streamer whose ``stream`` raises — the pump must isolate the fault."""
+
+    async def stream(
+        self,
+        events: AsyncIterator[Mapping[str, object]],  # noqa: ARG002
+        *,
+        is_cancelled: Callable[[], bool],  # noqa: ARG002
+    ) -> None:
+        raise RuntimeError("output stream exploded")
+
+
+@pytest.mark.asyncio
+async def test_output_stream_fault_does_not_crash_the_manager() -> None:
+    # An output-stream fault is fault-isolated inside the background pump: the session
+    # still opens and can be stopped cleanly (the manager never crashes).
+    runner = _FakeInteractiveRunner()
+    worktree = _FakeWorktree()
+    store = _FakeStore()
+    manager = InteractiveSessionManager(
+        runner_factory=lambda: runner,
+        worktree=worktree,
+        store=store,
+        streamer_factory=_ExplodingStreamer,
+        owner=_FakeOwner(),
+        clock=_FakeClock(),
+        id_factory=_ids(),
+        permission_mode="acceptEdits",
+    )
+
+    opened = await manager.open("задача", _OWNER_ID)
+    outcome = await manager.stop(_OWNER_ID)
+
+    assert opened.ok is True
+    assert outcome.ok is True
+    assert manager.active() is False
+
+
 # --- 🔴 never a PR / merge / push --------------------------------------------
 
 

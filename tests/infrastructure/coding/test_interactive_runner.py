@@ -86,6 +86,16 @@ def test_encode_user_message_round_trips_unicode() -> None:
     assert _content_text(encode_user_message(text)) == text
 
 
+def test_encode_user_message_keeps_unicode_raw_not_ascii_escaped() -> None:
+    # ``ensure_ascii=False`` is a real contract: the stream-json frame carries the raw
+    # UTF-8 text, NOT ``\uXXXX`` escapes — so the line is compact and human-readable in the
+    # owner's terminal. (Pins the encoder against an ``ensure_ascii=True``/default mutant.)
+    line = encode_user_message("Привет")
+
+    assert "Привет" in line
+    assert "\\u" not in line
+
+
 def test_encode_user_message_handles_empty_text() -> None:
     assert _content_text(encode_user_message("")) == ""
 
@@ -274,6 +284,14 @@ async def test_feed_before_open_does_not_crash() -> None:
     runner = InteractiveClaudeRunner(spawner=_FakeSpawner(_FakeProcess()))
 
     await runner.feed("no process yet")  # best-effort no-op, never raises
+
+
+async def test_events_before_open_yields_nothing() -> None:
+    # No process spawned yet — the event stream is empty rather than crashing on a
+    # ``None`` process (mirror of the feed/close before-open guards).
+    runner = InteractiveClaudeRunner(spawner=_FakeSpawner(_FakeProcess(["ignored\n"])))
+
+    assert await _collect(runner.events()) == []
 
 
 def test_interactive_runner_satisfies_the_port() -> None:

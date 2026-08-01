@@ -909,6 +909,11 @@ ignore = [
 "tests/application/usecases/test_interactive_session.py" = ["S101", "ARG001", "PLR2004", "RUF001", "RUF002", "RUF003"]
 "tests/application/usecases/test_interactive_intake.py" = ["S101", "ARG001", "PLR2004", "RUF001", "RUF002", "RUF003"]
 "tests/domain/coding/test_interactive_intent.py" = ["S101", "ARG001", "PLR2004", "RUF001", "RUF002", "RUF003"]
+# Interactive-terminal acceptance harness + steps (BOB-083 .5) bind Russian .feature step text
+# and drive Russian task/reply/mode literals through the real stack — their Cyrillic
+# look-alikes are intentional (→ RUF001/2/3); ARG002 covers the fake process/bot boundary args.
+"tests/acceptance/interactive_terminal_harness.py" = ["S101", "ARG001", "ARG002", "PLR2004", "RUF001", "RUF002", "RUF003"]
+"tests/acceptance/steps/test_interactive_terminal.py" = ["S101", "ARG001", "PLR2004", "PT018", "RUF001", "RUF002", "RUF003"]
 # Reaction-perception tests (BOB-050) carry Russian reaction-meaning literals ("его тронуло",
 # "зашло") whose Cyrillic look-alikes are intentional — RUF001/RUF002/RUF003 do not apply.
 "tests/domain/personality/test_reaction_judgment.py" = ["S101", "ARG001", "PLR2004", "RUF001", "RUF002", "RUF003"]
