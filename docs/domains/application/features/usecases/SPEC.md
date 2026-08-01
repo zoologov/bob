@@ -51,6 +51,9 @@ Use-case'ы приложения: оркестрация доменной лог
   аппетит Боба: `tone_line` + `engagement_shift` (BOB-066 Срез W.2).
 - **disclosure_guard.py** — `DisclosureGuard`, тёплый ГОЛОС отказа гостю в owner_data
   (`withhold_directive`, BOB-066 Срез W.4).
+- **disclosure_consent_gate.py** — owner-consent гейт (BOB-082): судит консервативным Tier-0,
+  разрешил ли owner В ЭТОТ ход раскрыть приватное в группе (`owner_consented`); только owner+
+  группа, неуверенность→нет. За флагом `coder.dev_dm`; best-effort (ошибка → нет согласия).
 - **endorsement_seeder.py** — `EndorsementSeeder`, тёплый старт гостю, за которого
   поручился owner (`seed`, BOB-066 Срез W.4).
 - **reply_rhythm.py** — `reply_delay_inputs`, чистая карта из спроса-на-ответ и интереса
@@ -95,5 +98,6 @@ Use-case'ы приложения: оркестрация доменной лог
 <!-- beadloom:track=src/bob/application/usecases/catch_up.py -->
 <!-- beadloom:track=src/bob/application/usecases/room_mood_modulator.py -->
 <!-- beadloom:track=src/bob/application/usecases/disclosure_guard.py -->
+<!-- beadloom:track=src/bob/application/usecases/disclosure_consent_gate.py -->
 <!-- beadloom:track=src/bob/application/usecases/endorsement_seeder.py -->
 <!-- beadloom:track=src/bob/application/usecases/reply_rhythm.py -->
