@@ -354,6 +354,7 @@ class TelegramGateway:
         sleep: Sleep,
         authorizer: AuthorizerLike | None = None,
         reply_thread_id: int | None = None,
+        dm_chat_id: int | None = None,
         bob_identity: BotIdentitySignals | None = None,
         bob_reaction_filter: BobMessageFilter | None = None,
     ) -> None:
@@ -378,6 +379,12 @@ class TelegramGateway:
         # is pinned to this topic thread so Bob's replies land in his topic;
         # ``None`` keeps the legacy un-threaded behaviour (single-bot / General).
         self._reply_thread_id = reply_thread_id
+        # The owner's 1:1 DM chat id (BOB-083.1), if configured: a reply in that
+        # chat must be UN-threaded (``message_thread_id=None``) — a private chat has
+        # no forum topics, so Bob's pinned group thread would misdirect (or be
+        # rejected by) the DM. ``None`` disables DM-awareness, so every reply keeps
+        # the pinned ``reply_thread_id`` (the group path stays byte-identical).
+        self._dm_chat_id = dm_chat_id
         self._offset = 0
         self._seen_update_ids: set[int] = set()
         self._converter = MarkdownToRichMessage()
@@ -587,7 +594,7 @@ class TelegramGateway:
             await self._bot.send_message(
                 chat_id=chat_id,
                 text="Usage: /authorize <user_id>",
-                message_thread_id=self._reply_thread_id,
+                message_thread_id=self._thread_for(chat_id),
             )
             return
         if grant:
@@ -595,14 +602,14 @@ class TelegramGateway:
             await self._bot.send_message(
                 chat_id=chat_id,
                 text=f"Authorized user {target}.",
-                message_thread_id=self._reply_thread_id,
+                message_thread_id=self._thread_for(chat_id),
             )
         else:
             await self._authorizer.deauthorize(target)
             await self._bot.send_message(
                 chat_id=chat_id,
                 text=f"Deauthorized user {target}.",
-                message_thread_id=self._reply_thread_id,
+                message_thread_id=self._thread_for(chat_id),
             )
 
     def _to_message_received(self, update: UpdateLike) -> MessageReceived | None:
@@ -641,6 +648,19 @@ class TelegramGateway:
             if _entity_mentions_bob(entity, text=text, identity=identity):
                 return True
         return False
+
+    def _thread_for(self, chat_id: int) -> int | None:
+        """The reply thread for ``chat_id`` — ``None`` in the owner's DM (BOB-083.1).
+
+        Bob's group replies pin to his topic thread; a reply in the owner's 1:1 DM
+        (``chat_id == dm_chat_id``) must be un-threaded (``message_thread_id=None``),
+        since a private chat has no forum topics. For every other chat this returns
+        the pinned ``reply_thread_id`` unchanged, so the group path is byte-identical
+        (and with no DM configured every reply keeps the pinned thread).
+        """
+        if self._dm_chat_id is not None and chat_id == self._dm_chat_id:
+            return None
+        return self._reply_thread_id
 
     # --- Reply (typing keepalive + one rich final) ----------------------------
 
@@ -681,7 +701,7 @@ class TelegramGateway:
             await self._bot.send_chat_action(
                 chat_id=chat_id,
                 action=_TYPING_ACTION,
-                message_thread_id=self._reply_thread_id,
+                message_thread_id=self._thread_for(chat_id),
             )
         except (AiogramError, ValueError) as exc:
             logger.info("typing action failed (ignored): %s", exc)
@@ -739,7 +759,7 @@ class TelegramGateway:
             sent = await self._bot.send_rich_message(
                 chat_id=chat_id,
                 rich_message=InputRichMessage(markdown=rich_markdown),
-                message_thread_id=self._reply_thread_id,
+                message_thread_id=self._thread_for(chat_id),
                 reply_parameters=reply_to,
             )
         except (AiogramError, ValueError) as exc:
@@ -764,7 +784,7 @@ class TelegramGateway:
             sent = await self._bot.send_message(
                 chat_id=chat_id,
                 text=chunk,
-                message_thread_id=self._reply_thread_id,
+                message_thread_id=self._thread_for(chat_id),
                 reply_parameters=reply_to if first_message_id is None else None,
             )
             if first_message_id is None:
@@ -788,7 +808,7 @@ class TelegramGateway:
                 chat_id=chat_id,
                 message_id=message_id,
                 reaction=[ReactionTypeEmoji(emoji=emoji)],
-                message_thread_id=self._reply_thread_id,
+                message_thread_id=self._thread_for(chat_id),
             )
         except (AiogramError, ValueError) as exc:
             logger.warning(
@@ -815,7 +835,7 @@ class TelegramGateway:
                 chat_id=chat_id,
                 photo=BufferedInputFile(photo, filename=_DIAGRAM_FILENAME),
                 caption=caption,
-                message_thread_id=self._reply_thread_id,
+                message_thread_id=self._thread_for(chat_id),
             )
         except (AiogramError, ValueError) as exc:
             logger.warning("sending a diagram photo failed (ignored): %s", exc)
@@ -839,7 +859,7 @@ class TelegramGateway:
                 chat_id=chat_id,
                 document=BufferedInputFile(document, filename=_DIAGRAM_FILENAME),
                 caption=caption,
-                message_thread_id=self._reply_thread_id,
+                message_thread_id=self._thread_for(chat_id),
             )
         except (AiogramError, ValueError) as exc:
             logger.warning("sending a diagram document failed (ignored): %s", exc)
