@@ -52,11 +52,18 @@ _NOTE_BY_KIND: dict[InterlocutorKind, str] = {
 
 @dataclass(frozen=True, slots=True)
 class FirstImpression:
-    """How Bob first clocked one person: who, when, and a short impression note."""
+    """How Bob first clocked one person: who, when, a short note, and their name.
+
+    ``display_name`` (BOB-080) is the person's name kept as a first-class field so a
+    roster can NAME people who are not the current writer. It is nullable: a legacy row
+    written before the column existed carries ``None``, and the name is then parsed
+    back out of the ``"{name} — …"`` note as a fallback.
+    """
 
     sender_id: int
     first_seen_at: datetime
     note: str
+    display_name: str | None = None
 
     def __post_init__(self) -> None:
         if not self.note.strip():

@@ -70,6 +70,7 @@ class SqliteConnection:
         await self._migrate_pursuit_stopped()
         await self._migrate_conversation_floor_participants()
         await self._migrate_person_relationship_gender()
+        await self._migrate_first_impression_display_name()
         await self._conn.commit()
         logger.info("SqliteConnection initialised at %s", self._db_path)
 
@@ -167,6 +168,31 @@ class SqliteConnection:
         """Names of the columns currently on ``person_relationship`` (BOB-078 A)."""
         async with self._db().execute(
             "PRAGMA table_info(person_relationship)"
+        ) as cursor:
+            rows = await cursor.fetchall()
+        return {str(row[1]) for row in rows}
+
+    async def _migrate_first_impression_display_name(self) -> None:
+        """Add ``first_impression.display_name`` to a pre-existing DB (BOB-080).
+
+        The person's name kept as a first-class field so a roster can NAME people who
+        are not the current writer. ``CREATE TABLE IF NOT EXISTS`` never alters an
+        already-present table, so a DB written before this column existed would lack it.
+        This guarded ``ALTER`` adds it only when missing — additive and non-destructive:
+        a legacy row takes ``NULL``, from which the domain parses the name out of the
+        ``"{name} — …"`` note as a fallback. A clean no-op once present. Kept in the
+        kernel (the schema/migration owner) beside the other guarded ALTERs.
+        """
+        if "display_name" in await self._first_impression_columns():
+            return
+        await self._db().execute(
+            "ALTER TABLE first_impression ADD COLUMN display_name TEXT"
+        )
+
+    async def _first_impression_columns(self) -> set[str]:
+        """Names of the columns currently on ``first_impression`` (BOB-080)."""
+        async with self._db().execute(
+            "PRAGMA table_info(first_impression)"
         ) as cursor:
             rows = await cursor.fetchall()
         return {str(row[1]) for row in rows}

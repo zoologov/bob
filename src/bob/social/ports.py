@@ -112,6 +112,14 @@ class FirstImpressionStore(Protocol):
         """Return ``sender_id``'s first impression, or ``None`` if there is none."""
         ...
 
+    async def recent(self, *, limit: int) -> list[FirstImpression]:
+        """Return the ``limit`` most-recently-met impressions, newest first (BOB-080).
+
+        The recency read (``ORDER BY first_seen_at DESC``) a roster uses to recall who
+        lately turned up — unlike the per-sender point look-up :meth:`load`.
+        """
+        ...
+
     async def save(self, impression: FirstImpression) -> None:
         """Record ``impression`` once — a known sender is never overwritten."""
         ...
