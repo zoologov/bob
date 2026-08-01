@@ -184,6 +184,7 @@ if TYPE_CHECKING:
     from bob.proactivity.self_improvement import ImprovementRule
     from bob.social.interlocutor import Interlocutor
     from bob.social.relationship import Relationship
+    from bob.social.roster import RosterMember
     from bob.social.sulk import SulkState
 
 logger = logging.getLogger(__name__)
@@ -384,6 +385,25 @@ class FirstImpressionReader(Protocol):
     async def prior_impression(self, interlocutor: Interlocutor) -> str | None: ...
 
     async def note_first_contact(self, interlocutor: Interlocutor) -> None: ...
+
+
+class RosterRecaller(Protocol):
+    """Roster seam: recall who lately turned up in the room (BOB-080).
+
+    The compose path uses this to let Bob NAME the room's recent joiners himself when
+    the talk turns to who is around: :meth:`recent_roster` reads the recency of the
+    accumulated first impressions and returns the roster of recent members — but ONLY
+    while a fresh newcomer is present (the ambient window, INV-4) and ONLY to an
+    OWNER / KNOWN ``viewer`` (privacy; a guest gets no rundown). The concrete adapter
+    (:class:`~bob.social.usecases.roster_recall.RosterRecall`) is best-effort — a flaky
+    read yields an empty roster and never breaks the turn. Optional and additive: unwired
+    (the default / the ``social.roster`` flag off) Bob simply recalls no roster and the
+    turn is byte-identical.
+    """
+
+    async def recent_roster(
+        self, now: datetime, *, viewer: Interlocutor | None
+    ) -> tuple[RosterMember, ...]: ...
 
 
 class RelationshipReader(Protocol):
@@ -596,6 +616,7 @@ class HandleMessage:
         surface_old_freq: float = _DEFAULT_SURFACE_OLD_FREQ,
         perceive_sender: InterlocutorResolver | None = None,
         first_impression: FirstImpressionReader | None = None,
+        roster: RosterRecaller | None = None,
         relationship: RelationshipReader | None = None,
         relationship_tone_thresholds: RelationshipToneThresholds | None = None,
         sulk: SulkReader | None = None,
@@ -736,6 +757,13 @@ class HandleMessage:
         # never recalls a first impression and the turn behaves exactly as before.
         # This is the minimal foundation for multi-party BOB-014, not that engine.
         self._first_impression = first_impression
+        # The roster seam (BOB-080): when wired (the ``social.roster`` flag on), Bob
+        # recalls WHO lately turned up in the room and can NAME them himself when the
+        # talk turns to who is around. The seam owns the ambient window (only while a
+        # fresh newcomer is present, INV-4) + the privacy gate (OWNER / KNOWN viewer)
+        # + best-effort resilience. Unwired (the default) Bob recalls no roster and the
+        # turn is byte-identical.
+        self._roster = roster
         # The relationship seam (BOB-014): when wired, Bob's accrued per-person
         # relationship quality shapes THIS turn — high warmth → a warmer voice
         # directive, low warmth → cooler (composes over mood/voice, never rude here;
@@ -1123,6 +1151,7 @@ class HandleMessage:
         self._social = SocialContext(
             perceive_sender=self._perceive_sender,
             first_impression=self._first_impression,
+            roster=self._roster,
             relationship=self._relationship,
             relationship_tone_thresholds=self._relationship_tone_thresholds,
             sulk=self._sulk,
@@ -1284,7 +1313,7 @@ class HandleMessage:
             rules, max_magnitude=self._self_improvement_max_magnitude
         )
 
-    async def handle(
+    async def handle(  # noqa: PLR0915 — a flat per-turn orchestration: one statement per social/compose seam (BOB-080 added the roster recall), no branching to extract.
         self, event: MessageReceived, scope: TurnScope | None = None
     ) -> None:
         """Process one received message end to end (the intake worker's per-turn call).
@@ -1349,6 +1378,13 @@ class HandleMessage:
         # (about THEM), so it is recalled even on a guest turn (a guest's own first
         # impression is about the guest, never an owner-memory leak).
         prior_impression = await self._recall_prior_impression(interlocutor)
+        # Recall the roster of who lately turned up in the room (BOB-080): the recent
+        # joiners so the compose prompt can let Bob NAME them himself when the talk turns
+        # to who is around. Empty unless the ambient window has a fresh newcomer (INV-4)
+        # and the viewer is OWNER / KNOWN (privacy) — the seam owns both gates + is
+        # best-effort. Unwired (the ``social.roster`` flag off) → empty, so the compose
+        # path adds no roster line and the turn is byte-identical.
+        roster = await self._recall_roster(interlocutor)
         # Load Bob's accrued relationship with this sender (BOB-014): a known person →
         # his stored relationship, so his tone (warmth) and willingness to compromise
         # (warmth + compatibility) are coloured for THEM this turn; a new person →
@@ -1545,6 +1581,7 @@ class HandleMessage:
                 interlocutor=interlocutor,
                 is_guest=is_guest,
                 prior_impression=prior_impression,
+                roster=roster,
                 relationship=relationship,
                 engagement=level,
                 sulk=sulk,
@@ -1571,6 +1608,7 @@ class HandleMessage:
                 interlocutor,
                 is_guest=is_guest,
                 prior_impression=prior_impression,
+                roster=roster,
                 relationship=relationship,
                 engagement=level,
                 sulk=sulk,
@@ -1748,6 +1786,12 @@ class HandleMessage:
     ) -> str | None:
         """Delegate to :meth:`SocialContext.recall_prior_impression` (wave 2)."""
         return await self._social.recall_prior_impression(interlocutor)
+
+    async def _recall_roster(
+        self, interlocutor: Interlocutor | None
+    ) -> tuple[RosterMember, ...]:
+        """Delegate to :meth:`SocialContext.recall_roster` (BOB-080)."""
+        return await self._social.recall_roster(interlocutor)
 
     async def _record_first_impression(
         self, interlocutor: Interlocutor | None

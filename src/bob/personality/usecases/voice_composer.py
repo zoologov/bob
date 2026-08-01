@@ -55,6 +55,7 @@ from bob.personality.voice import (
     recall_has_self_action,
     recalled_impression_directive,
     recalled_self_action_directive,
+    roster_directive,
     sulk_directive,
     tone_directive,
     user_repeat_directive,
@@ -78,6 +79,7 @@ if TYPE_CHECKING:
     from bob.proactivity.self_improvement import RuleModulators
     from bob.social.interlocutor import Interlocutor
     from bob.social.relationship import Relationship
+    from bob.social.roster import RosterMember
     from bob.social.sulk import SulkState
 
 # The base persona (assembled once at import), then the voice concerns Bob's persona leans on
@@ -254,6 +256,7 @@ class VoiceComposer:
         interlocutor: Interlocutor | None = None,
         is_guest: bool = False,
         prior_impression: str | None = None,
+        roster: Sequence[RosterMember] = (),
         relationship: Relationship | None = None,
         engagement: EngagementLevel = EngagementLevel.FULL,
         sulk: SulkState | None = None,
@@ -329,6 +332,7 @@ class VoiceComposer:
             user_repeated=user_repeated,
             interlocutor=interlocutor,
             prior_impression=prior_impression,
+            roster=roster,
             relationship=relationship,
             engagement=engagement,
             sulk=sulk,
@@ -382,6 +386,7 @@ class VoiceComposer:
         user_repeated: bool = False,
         interlocutor: Interlocutor | None = None,
         prior_impression: str | None = None,
+        roster: Sequence[RosterMember] = (),
         relationship: Relationship | None = None,
         engagement: EngagementLevel = EngagementLevel.FULL,
         sulk: SulkState | None = None,
@@ -444,6 +449,13 @@ class VoiceComposer:
             recalled_impression_directive(prior_impression)
             if prior_impression
             else "",
+            # BOB-080: the MULTI-person roster — who lately turned up in the room — so Bob
+            # can NAME the recent joiners himself when the talk turns to who is around.
+            # Surfaced by the ambient window (only while a fresh newcomer is present) and
+            # only to an OWNER / KNOWN viewer (the social usecase owns both gates); framed
+            # BY OCCASION, never a flood (INV-4). Empty roster → no line (the default path
+            # is byte-identical).
+            roster_directive(roster) if roster else "",
             # BOB-079.4: when recall surfaced one of Bob's OWN past deeds (a
             # ``self_action`` episode), a LIGHT ownership backstop folds in — speak of
             # it in the first person, honestly own a slip, never confabulate (INV-1/2/3).

@@ -40,6 +40,7 @@ if TYPE_CHECKING:
         FirstImpressionReader,
         InterlocutorResolver,
         RelationshipReader,
+        RosterRecaller,
         SulkReader,
     )
     from bob.conversation.ports import ZoneClassifier
@@ -50,6 +51,7 @@ if TYPE_CHECKING:
     from bob.personality.voice import RelationshipToneThresholds
     from bob.social.interlocutor import Interlocutor
     from bob.social.relationship import Relationship
+    from bob.social.roster import RosterMember
     from bob.social.sulk import SulkState
 
 logger = logging.getLogger(__name__)
@@ -63,6 +65,7 @@ class SocialContext:
         *,
         perceive_sender: InterlocutorResolver | None,
         first_impression: FirstImpressionReader | None,
+        roster: RosterRecaller | None,
         relationship: RelationshipReader | None,
         relationship_tone_thresholds: RelationshipToneThresholds | None,
         sulk: SulkReader | None,
@@ -72,6 +75,7 @@ class SocialContext:
     ) -> None:
         self._perceive_sender = perceive_sender
         self._first_impression = first_impression
+        self._roster = roster
         self._relationship = relationship
         self._relationship_tone_thresholds = relationship_tone_thresholds
         self._sulk = sulk
@@ -106,6 +110,22 @@ class SocialContext:
         if self._first_impression is None or interlocutor is None:
             return None
         return await self._first_impression.prior_impression(interlocutor)
+
+    async def recall_roster(
+        self, interlocutor: Interlocutor | None
+    ) -> tuple[RosterMember, ...]:
+        """Recall the roster of who lately turned up in the room, or empty (BOB-080).
+
+        Asks the wired roster seam for the recent joiners so the compose path can let
+        Bob NAME them himself when the talk turns to who is around. The seam owns the
+        ambient window (only while a fresh newcomer is present, INV-4) and the privacy
+        gate (only an OWNER / KNOWN viewer). With no seam wired (the ``social.roster``
+        flag off) or no perceived interlocutor this yields an EMPTY roster, so the
+        compose path adds no roster line and the turn is byte-identical.
+        """
+        if self._roster is None:
+            return ()
+        return await self._roster.recent_roster(self._clock.now(), viewer=interlocutor)
 
     async def record_first_impression(
         self, interlocutor: Interlocutor | None

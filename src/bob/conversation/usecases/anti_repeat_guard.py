@@ -63,6 +63,7 @@ if TYPE_CHECKING:
     from bob.proactivity.self_improvement import RuleModulators
     from bob.social.interlocutor import Interlocutor
     from bob.social.relationship import Relationship
+    from bob.social.roster import RosterMember
     from bob.social.sulk import SulkState
 
 logger = logging.getLogger(__name__)
@@ -116,6 +117,7 @@ class _Compose(Protocol):
         interlocutor: Interlocutor | None = ...,
         is_guest: bool = ...,
         prior_impression: str | None = ...,
+        roster: Sequence[RosterMember] = ...,
         relationship: Relationship | None = ...,
         engagement: EngagementLevel = ...,
         sulk: SulkState | None = ...,
@@ -159,6 +161,7 @@ class AntiRepeatGuard:
         *,
         is_guest: bool = False,
         prior_impression: str | None = None,
+        roster: Sequence[RosterMember] = (),
         relationship: Relationship | None = None,
         engagement: EngagementLevel = EngagementLevel.FULL,
         sulk: SulkState | None = None,
@@ -278,6 +281,10 @@ class AntiRepeatGuard:
                 interlocutor=interlocutor,
                 is_guest=is_guest,
                 prior_impression=prior_impression,
+                # 🔴 BOB-080: the roster is turn-CONSTANT (the ambient window + privacy
+                # verdict do not change on regeneration), so it threads verbatim into
+                # every re-composed draft.
+                roster=roster,
                 relationship=relationship,
                 engagement=engagement,
                 sulk=sulk,

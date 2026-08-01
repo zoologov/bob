@@ -40,6 +40,7 @@ if TYPE_CHECKING:
 
     from bob.personality.mood import Mood
     from bob.social.interlocutor import Interlocutor
+    from bob.social.roster import RosterMember
 
 # Written as Bob's voice, not a checklist: how he lands a message. The few-shot
 # lines (in « ») end on substance — no trailing question, no ☕ — because the
@@ -372,6 +373,46 @@ def recalled_impression_directive(note: str) -> str:
     impression exists for this sender.
     """
     return f"{_RECALLED_IMPRESSION_PREFIX}{note}{_RECALLED_IMPRESSION_SUFFIX}"
+
+
+# Roster directive (BOB-080): the MULTI-person «состав комнаты» line — unlike the
+# single-writer who-is-writing / recalled-impression lines, it names the people who
+# LATELY turned up in the room so Bob can call them out HIMSELF, by name, when the
+# talk turns to who is around. Written as voice (a person keeps recent faces «in his
+# head» a few days), grounded strictly in the real roster passed in (never invented),
+# and framed BY OCCASION (INV-4): name them when it fits, never drag them in unprompted.
+# The application folds it in only when the roster is non-empty (the ambient window has
+# fresh joiners). Cyrillic look-alikes are intentional in these Russian literals.
+_ROSTER_PREFIX = "Недавно к вам в чат зашли: "
+_ROSTER_SUFFIX = (
+    # Cyrillic look-alikes intentional in this Russian literal.
+    ". Ты с ними уже знаком(а) — если речь зайдёт о людях или о составе, называй их "
+    "сам, по имени; без повода в разговор их не притягивай."
+)
+
+
+def roster_directive(roster: Sequence[RosterMember]) -> str:
+    """Return the multi-person roster voice line for who lately joined (BOB-080).
+
+    Folds the NAMES of the people who recently turned up in the room into the prompt
+    so Bob can recall the room's composition and call them out himself, by name, when
+    the talk turns to who is around — instead of asking the model to guess. Written as
+    character (a person holds recent faces in mind a few days) and framed BY OCCASION
+    (INV-4): name them when it fits, never drag them in unprompted. Grounded strictly in
+    the real ``roster`` (no invented people).
+
+    HONESTY (BOB-080.6): the roster ``build`` returns a MIX — fresh newcomers AND
+    old-timers still within the recency limit — but only the ``is_newcomer`` members may
+    be named under the "недавно зашли" framing; announcing an old acquaintance as just
+    arrived would be factually false. So the line names ONLY newcomers; if none remain
+    (defensive — the ambient window opens only on a newcomer), the render is ``""``. An
+    EMPTY roster likewise yields ``""`` (no line), so the default path is byte-identical.
+    Pure and deterministic: the same roster always yields the same line.
+    """
+    names = ", ".join(member.name for member in roster if member.is_newcomer)
+    if not names:
+        return ""
+    return f"{_ROSTER_PREFIX}{names}{_ROSTER_SUFFIX}"
 
 
 # Recalled-self-action ownership directive (BOB-079.4): when recall surfaces one of

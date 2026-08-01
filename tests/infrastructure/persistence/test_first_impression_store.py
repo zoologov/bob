@@ -14,7 +14,7 @@ per-PERSON data (about them), not owner-private memory.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
 import pytest
@@ -81,6 +81,68 @@ async def test_is_per_sender_isolated(repo: SqliteMemoryRepo) -> None:
 
     assert await store.load(_SENDER) == one
     assert await store.load(_OTHER_SENDER) is None
+
+
+async def test_display_name_round_trips(repo: SqliteMemoryRepo) -> None:
+    store = SqliteFirstImpressionStore(repo)
+    impression = FirstImpression(
+        sender_id=_SENDER,
+        first_seen_at=_SEEN,
+        note="Лиля — кто-то из знакомых",
+        display_name="Лиля",
+    )
+
+    await store.save(impression)
+
+    assert await store.load(_SENDER) == impression
+
+
+async def test_legacy_row_without_display_name_loads_none(repo: SqliteMemoryRepo) -> None:
+    # A row written straight to the table (pre-BOB-080) has NULL display_name.
+    await repo.connection.execute(
+        "INSERT INTO first_impression (sender_id, first_seen_at, note) VALUES (?, ?, ?)",
+        (_SENDER, _SEEN.isoformat(), "Паша — уже виделись"),
+    )
+    await repo.connection.commit()
+
+    loaded = await SqliteFirstImpressionStore(repo).load(_SENDER)
+
+    assert loaded is not None
+    assert loaded.display_name is None
+
+
+async def test_recent_returns_impressions_newest_first(repo: SqliteMemoryRepo) -> None:
+    store = SqliteFirstImpressionStore(repo)
+    older = FirstImpression(sender_id=1, first_seen_at=_SEEN, note="раньше")
+    newer = FirstImpression(sender_id=2, first_seen_at=_LATER, note="позже")
+    await store.save(older)
+    await store.save(newer)
+
+    recent = await store.recent(limit=10)
+
+    assert [i.sender_id for i in recent] == [2, 1]
+
+
+async def test_recent_caps_at_limit(repo: SqliteMemoryRepo) -> None:
+    store = SqliteFirstImpressionStore(repo)
+    base = datetime(2026, 6, 1, tzinfo=UTC)
+    for i in range(5):
+        await store.save(
+            FirstImpression(
+                sender_id=i,
+                first_seen_at=base + timedelta(days=i),
+                note=f"встреча {i}",
+            )
+        )
+
+    recent = await store.recent(limit=2)
+
+    # The two most-recent first-seen instants (i=4, i=3), newest first.
+    assert [i.sender_id for i in recent] == [4, 3]
+
+
+async def test_recent_empty_when_no_impressions(repo: SqliteMemoryRepo) -> None:
+    assert await SqliteFirstImpressionStore(repo).recent(limit=6) == []
 
 
 async def test_survives_restart(tmp_path: Path) -> None:

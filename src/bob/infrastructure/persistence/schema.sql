@@ -192,10 +192,15 @@ CREATE TABLE IF NOT EXISTS fascination_state (
 -- the note), so a returning sender is recognised ("кажется, мы уже сталкивались").
 -- This is per-PERSON data (about THEM), not owner-private memory — allowed even for
 -- a guest. The deliberately minimal foundation for multi-party BOB-014, not it.
+-- `display_name` (BOB-080) is the person's name kept as a first-class field so a
+-- roster can NAME people who are not the current writer. Nullable with no default so a
+-- legacy row reads as NULL (the name is then parsed from the "{name} — …" note); a
+-- guarded ALTER (SqliteConnection) backfills a pre-existing DB.
 CREATE TABLE IF NOT EXISTS first_impression (
     sender_id     INTEGER PRIMARY KEY,
     first_seen_at TEXT NOT NULL,  -- ISO-8601, timezone-aware (when Bob first met them)
-    note          TEXT NOT NULL   -- a short, grounded one-line impression
+    note          TEXT NOT NULL,  -- a short, grounded one-line impression
+    display_name  TEXT            -- the person's name (nullable; legacy rows parse note)
 );
 
 -- Per-sender relationship quality (BOB-014): how Bob STANDS with each person, on

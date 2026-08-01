@@ -49,37 +49,62 @@ class SqliteFirstImpressionStore:
     async def load(self, sender_id: int) -> FirstImpression | None:
         """Return the persisted first impression for ``sender_id``, or ``None``."""
         async with self._db().execute(
-            "SELECT sender_id, first_seen_at, note "
+            "SELECT sender_id, first_seen_at, note, display_name "
             "FROM first_impression WHERE sender_id = ?",
             (sender_id,),
         ) as cursor:
             row = await cursor.fetchone()
         if row is None:
             return None
-        return FirstImpression(
-            sender_id=int(row[0]),
-            first_seen_at=datetime.fromisoformat(str(row[1])),
-            note=str(row[2]),
-        )
+        return _row_to_impression(row)
+
+    async def recent(self, *, limit: int) -> list[FirstImpression]:
+        """Return the ``limit`` most-recently-met impressions (newest first).
+
+        The FIRST recency query over ``first_impression`` — ``ORDER BY first_seen_at
+        DESC`` rather than the per-sender point look-up ``load`` does — so a roster can
+        recall who lately turned up in the room (BOB-080). All SQL is parameterised.
+        """
+        async with self._db().execute(
+            "SELECT sender_id, first_seen_at, note, display_name "
+            "FROM first_impression ORDER BY first_seen_at DESC LIMIT ?",
+            (limit,),
+        ) as cursor:
+            rows = await cursor.fetchall()
+        return [_row_to_impression(row) for row in rows]
 
     async def save(self, impression: FirstImpression) -> None:
         """Persist ``impression`` once — a known sender is never overwritten.
 
         ``INSERT … ON CONFLICT(sender_id) DO NOTHING``: the impression is formed on
         first contact and kept as-is, so a returning sender's original first-seen
-        instant and note survive (that is what lets Bob recognise them later).
+        instant, note and display name survive (that is what lets Bob recognise them
+        later).
         """
         await self._db().execute(
-            "INSERT INTO first_impression (sender_id, first_seen_at, note) "
-            "VALUES (?, ?, ?) "
+            "INSERT INTO first_impression "
+            "(sender_id, first_seen_at, note, display_name) "
+            "VALUES (?, ?, ?, ?) "
             "ON CONFLICT(sender_id) DO NOTHING",
             (
                 impression.sender_id,
                 impression.first_seen_at.isoformat(),
                 impression.note,
+                impression.display_name,
             ),
         )
         await self._db().commit()
 
     def _db(self) -> aiosqlite.Connection:
         return self._repo.connection
+
+
+def _row_to_impression(row: aiosqlite.Row) -> FirstImpression:
+    """Map a ``first_impression`` row to the domain VO (NULL display_name → ``None``)."""
+    display_name = row[3]
+    return FirstImpression(
+        sender_id=int(row[0]),
+        first_seen_at=datetime.fromisoformat(str(row[1])),
+        note=str(row[2]),
+        display_name=None if display_name is None else str(display_name),
+    )

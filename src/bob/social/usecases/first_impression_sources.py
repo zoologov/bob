@@ -76,5 +76,6 @@ class FirstImpressionTracker:
             sender_id=interlocutor.sender_id,
             first_seen_at=self._clock.now(),
             note=impression_note_for(interlocutor),
+            display_name=interlocutor.display_name,
         )
         await self._store.save(impression)

@@ -24,3 +24,9 @@
 
 ## Прогресс
 - 2026-08-01: PRD/RFC/CONTEXT/PLAN approved; беады созданы (parent bob-h10); ветка features/BOB-079.
+- 2026-08-01: ✅ ЗАВЕРШЁН. Все 7 беадов закрыты. PR #111 смержен в main (51e7960). pytest 4360,
+  mutation 100% на self_action.py, review OK, beadloom ci PASS. Флаг memory.autobiography=true в
+  running-config; Боб перезапущен (pid 90062), recorder резолвится в MemoryBacked (ACTIVE). Boot —
+  один транзиентный DNS-блип к облачному Tier-1 (Aliyun), retry подхватил; к фиче не относится.
+  Приёмка self_action-цепи (write→recall→voice) доказана BDD-прогоном; в живом чате накопится по мере
+  действий Боба.
