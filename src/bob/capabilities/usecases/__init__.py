@@ -18,10 +18,12 @@ from bob.capabilities.usecases.inspect_architecture import (
     make_inspect_architecture_capability,
 )
 from bob.capabilities.usecases.list_dir import make_list_dir_capability
+from bob.capabilities.usecases.list_tasks import make_list_tasks_capability
 from bob.capabilities.usecases.list_work import make_list_work_capability
 from bob.capabilities.usecases.read_code import make_read_code_capability
 from bob.capabilities.usecases.read_url import make_read_url_capability
 from bob.capabilities.usecases.recall_memory import make_recall_memory_capability
+from bob.capabilities.usecases.recent_commits import make_recent_commits_capability
 from bob.capabilities.usecases.registry import (
     CapabilityNotAllowedError,
     CapabilityRegistry,
@@ -33,6 +35,8 @@ from bob.capabilities.usecases.render_diagram import (
     make_render_diagram_capability,
 )
 from bob.capabilities.usecases.search_memory import make_search_memory_capability
+from bob.capabilities.usecases.show_task import make_show_task_capability
+from bob.capabilities.usecases.task_comments import make_task_comments_capability
 from bob.capabilities.usecases.tool_loop import ToolLoop
 from bob.capabilities.usecases.web_search import make_web_search_capability
 
@@ -47,11 +51,15 @@ __all__ = [
     "make_find_file_capability",
     "make_inspect_architecture_capability",
     "make_list_dir_capability",
+    "make_list_tasks_capability",
     "make_list_work_capability",
     "make_read_code_capability",
     "make_read_url_capability",
     "make_recall_memory_capability",
+    "make_recent_commits_capability",
     "make_render_diagram_capability",
     "make_search_memory_capability",
+    "make_show_task_capability",
+    "make_task_comments_capability",
     "make_web_search_capability",
 ]

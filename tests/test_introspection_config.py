@@ -32,3 +32,11 @@ def test_introspection_carries_the_capability_knobs() -> None:
     assert section["read_max_lines"] == 200
     assert section["beadloom_bin"] == "beadloom"
     assert section["bd_bin"] == "bd"
+
+
+def test_dev_tools_sub_flag_defaults_off() -> None:
+    # BOB-081: the read-only dev-introspection tools (git history + tracker reads) are
+    # gated by a SUB-flag that defaults OFF — they ship as one gated piece.
+    section = _config()["introspection"]
+    assert isinstance(section, dict)
+    assert section["dev_tools"] is False
