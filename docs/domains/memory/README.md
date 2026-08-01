@@ -49,6 +49,7 @@ src/bob/memory/
   ports.py        # layer=domain          — порты-протоколы способности
   __init__.py     # layer=domain          — фасад (re-export EpisodicEvent, SemanticFact)
   entities.py     # layer=domain          — EpisodicEvent, SemanticFact (immutable value-objects)
+  self_action.py  # layer=domain          — SelfActionKind, SelfAction, describe_self_action (автобиография, BOB-079)
   usecases/       # layer=application
     extract_facts.py       — ExtractFacts (Tier 0 «запомнить»: реплика → факты)
     consolidate_memory.py  — ConsolidateMemory (редкий дайджест старых эпизодов, BOB-021)
@@ -62,6 +63,7 @@ src/bob/memory/
     ollama_embedder.py     — OllamaEmbedder (локальные dense-эмбеддинги, bge-m3 1024-dim)
     reranker_factory.py    — build_reranker (из config['reranker'], опционально → None)
     ollama_reranker.py     — OllamaReranker (локальный reranker как Ollama-scorer)
+    self_action_recorder.py — MemoryBacked/NoOp SelfActionRecorder (автобиография, BOB-079)
 ```
 
 **Connection-kernel (общий, в инфраструктуре):**
@@ -89,6 +91,20 @@ I/O; инварианты (timezone-aware `ts`, `confidence ∈ [0, 1]`) про�
 `memory` его лишь пишет и протаскивает через recall. `None` = public держит
 BOB-051 единую память и все legacy-строки нетронутыми, а owner recall остаётся
 байт-в-байт (INV-7).
+
+**Автобиография — самодействия от первого лица (BOB-079).** До BOB-079 лента
+несла *слова* Боба (`event_type='message'`) и *чувства* (`'reflection'`), но не
+*поступки*: у Боба не было следа собственных действий, поэтому свой же runaway-
+инцидент он присвоить не мог. `self_action.py` (чистый домен, I/O-free) вводит
+`SelfActionKind` (`StrEnum`: `coding_started/finished/aborted/failed/runaway`,
+`tool_use`, `tool_failure`), value-object `SelfAction` (`kind`, опц. `target`/
+`detail`) и детерминированный рендер `describe_self_action → RenderedSelfAction`
+(`content` **всегда от первого лица** — «я …», `tags`, флаг `is_anomaly` для
+failed/runaway/tool_failure). Рендер — mutation-ядро (100%). Действие оседает как
+`EpisodicEvent(event_type='self_action')`, поэтому recall и такт разглашения
+работают без спец-путей (это делимая автобиография, а не приватная рефлексия — из
+recall не вырезается). Запись включает флаг `memory.autobiography` (default OFF →
+no-op recorder, нулевое изменение поведения).
 
 ### Use-case'ы (application)
 
@@ -216,6 +232,12 @@ OpenAI-совместимой `/v1/chat/completions`, сортирует по у
   memory не гейтит.
 - **Приватность (локальность):** эмбеддинги и reranking считаются на LOCAL
   Ollama — содержимое памяти никогда не покидает машину.
+- **Автобиография от первого лица (BOB-079):** `describe_self_action` формулирует
+  всякое самодействие от первого лица («я …»), помечая сбои (`is_anomaly`).
+  Присвоение гейтится **реально записанным** эпизодом `self_action` — без записи
+  Боб не выдумывает поступок (без конфабуляции); свои действия (`self_action`) не
+  смешиваются с внешними (`message`/`reaction_received`). Запись — best-effort и за
+  флагом `memory.autobiography`: сбой записи не роняет ни coding-путь, ни приём.
 - **Инварианты сущностей:** `ts` всегда timezone-aware, `confidence ∈ [0, 1]` —
   проверяются в `__post_init__`, невалидная запись не может существовать.
 
@@ -251,6 +273,11 @@ OpenAI-совместимой `/v1/chat/completions`, сортирует по у
 - `Reranker` — `rerank(query, candidates)` → `list[Recalled]` (пере-упорядочивание
   по релевантности, опциональный trim до top-`N`; аддитивно, деградирует мягко).
 - `Recalled` = `Mapping[str, object]` — один recalled-элемент (контент + score).
+- `SelfActionRecorder` (BOB-079) — узкий порт записи самодействия (`record(action,
+  *, sender_id, visibility)`); НЕ расширяет `MemoryRepo` (умышленно узкий).
+  Реализации — `memory.adapters.self_action_recorder` (memory-backed → пишет
+  `EpisodicEvent(event_type='self_action')` через `save_episode_entity`; и no-op
+  для флага OFF).
 
 Фасад `src/bob/memory/__init__.py` re-export'ит `EpisodicEvent`, `SemanticFact`.
 Канонический импорт портов — `from bob.memory.ports import MemoryRepo`; транзитный
@@ -262,7 +289,9 @@ ports-шим `bob.domain.ports` удалён (BOB-062.8), ~15 потребите
 - `usecases/dedup_facts.py`: `DedupFacts` — merge near-дубликатов фактов.
 - `adapters/`: `SqliteMemoryRepo`, `MemoryVectorStore`, `Fts5MemoryRecall`,
   `HybridMemoryRecall`, `OllamaEmbedder`, `OllamaReranker`, фабрики
-  `build_embedder` / `build_reranker`.
+  `build_embedder` / `build_reranker`; `self_action_recorder` (BOB-079).
+- `self_action.py` (чистый домен): `SelfActionKind`, `SelfAction`,
+  `describe_self_action` — рендер самодействия от первого лица (BOB-079).
 
 Композиция (создание connection-kernel'а, сборка `SqliteMemoryRepo` над ним, recall'а,
 эмбеддера, reranker'а и навешивание extract/consolidate/dedup на heartbeat) — в
