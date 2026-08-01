@@ -50,6 +50,40 @@ class ClaudeCodeRunner(Protocol):
 
 
 @runtime_checkable
+class InteractiveRunner(Protocol):
+    """Drive a PERSISTENT bidirectional ``claude`` session (BOB-083 .2).
+
+    Distinct from the one-shot :class:`ClaudeCodeRunner`: instead of a single
+    ``claude -p <prompt>`` run that ends at EOF, this seam holds a long-lived
+    ``claude -p --input-format stream-json`` process with an OPEN stdin, so the
+    owner can steer it in real time. :meth:`open` spawns the process (validated
+    ``mode``); :meth:`feed` writes one owner text turn as a stream-json ``user``
+    frame to stdin; :meth:`events` async-iterates the live stdout NDJSON; and
+    :meth:`close` terminates (then kills after a grace) + reaps — idempotent and
+    best-effort. The live realisation (``InteractiveClaudeRunner``) runs
+    ``create_subprocess_exec`` WITHOUT a shell; a fake bidirectional process
+    substitutes in tests. This is a pure transport adapter — no session / worktree
+    / state logic (that is the interactive-session manager, BOB-083 .3).
+    """
+
+    async def open(self, workdir: str, *, mode: str) -> None:
+        """Spawn the persistent ``claude`` process in ``workdir`` under ``mode``."""
+        ...
+
+    async def feed(self, text: str) -> None:
+        """Send ``text`` to the live process as one stream-json ``user`` frame."""
+        ...
+
+    def events(self) -> AsyncIterator[Mapping[str, object]]:
+        """Async-iterate the process's stdout stream-json events until it exits."""
+        ...
+
+    async def close(self) -> None:
+        """Terminate (then kill after a grace) + reap the process (idempotent)."""
+        ...
+
+
+@runtime_checkable
 class Worktree(Protocol):
     """Create / remove an isolated git worktree for a coding session (BOB-039 .2).
 

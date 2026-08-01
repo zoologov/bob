@@ -520,6 +520,15 @@ ignore = [
     "RUF002",
     "RUF003",
 ]
+# Interactive-runner tests (BOB-083.2): the fake bidirectional process mirrors the
+# InteractiveProcess protocol, so its `wait(*, timeout=...)` keeps the unused `timeout`
+# keyword to match the signature the runner calls (→ ARG002).
+"tests/infrastructure/coding/test_interactive_runner.py" = [
+    "S101",
+    "ARG001",
+    "ARG002",
+    "PLR2004",
+]
 "tests/infrastructure/telegram/test_multibot_poll_resilience.py" = [
     "S101",
     "ARG001",
