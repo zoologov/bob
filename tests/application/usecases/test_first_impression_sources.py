@@ -65,6 +65,10 @@ class _FakeStore:
     async def save(self, impression: FirstImpression) -> None:
         self.rows.setdefault(impression.sender_id, impression)
 
+    async def recent(self, *, limit: int) -> list[FirstImpression]:
+        rows = sorted(self.rows.values(), key=lambda i: i.first_seen_at, reverse=True)
+        return rows[:limit]
+
 
 def _tracker(store: _FakeStore) -> FirstImpressionTracker:
     return FirstImpressionTracker(store=store, clock=_FixedClock(_NOW))

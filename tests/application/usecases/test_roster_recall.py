@@ -177,7 +177,7 @@ async def test_bob_id_source_omitted_excludes_only_the_owner() -> None:
         ]
     )
     recall = RosterRecall(
-        store=store,  # type: ignore[arg-type]
+        store=store,
         newcomer_days=7.0,
         limit=6,
         owner_id=_OWNER_ID,
@@ -196,7 +196,7 @@ async def test_bob_id_source_returning_none_excludes_only_the_owner() -> None:
         [_impression(_BOB_ID, "Боб", days_ago=1.0), _impression(50, "Паша", days_ago=1.0)]
     )
     recall = RosterRecall(
-        store=store,  # type: ignore[arg-type]
+        store=store,
         newcomer_days=7.0,
         limit=6,
         owner_id=_OWNER_ID,
