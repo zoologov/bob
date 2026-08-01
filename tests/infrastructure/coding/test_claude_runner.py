@@ -16,13 +16,17 @@ handed, and signals when its generator was closed (the early-break cleanup path)
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+import asyncio
+import logging
+from typing import TYPE_CHECKING, cast
 
 import pytest
 
 from bob.coding.adapters.claude_runner import (
+    _STREAM_LIMIT,
     ClaudeRunError,
     SubprocessClaudeRunner,
+    _ExecStreamRunner,
 )
 from bob.coding.ports import ClaudeCodeRunner
 
@@ -178,3 +182,81 @@ async def test_run_passes_the_configured_timeout() -> None:
 
 def test_claude_runner_satisfies_the_runner_port() -> None:
     assert isinstance(SubprocessClaudeRunner(), ClaudeCodeRunner)
+
+
+# --------------------------------------------------------------------------- #
+# The real exec transport: 64 KiB StreamReader limit (BOB-084 .1)
+# --------------------------------------------------------------------------- #
+
+
+class _RaisingStdout:
+    """A stdout whose ``readline`` raises the overlong-line ``ValueError``.
+
+    asyncio surfaces a ``StreamReader`` ``LimitOverrunError`` ("Separator is found, but
+    chunk is longer than limit") as a ``ValueError`` — the exact crash a claude line past
+    the buffer limit produces, which the fake scripted-line runner cannot reproduce.
+    """
+
+    async def readline(self) -> bytes:
+        raise ValueError("Separator is found, but chunk is longer than limit")
+
+
+class _FakeExecProc:
+    """Minimal stand-in for ``asyncio.subprocess.Process`` with a raising stdout."""
+
+    def __init__(self, stdout: _RaisingStdout) -> None:
+        self.stdout = stdout
+        self.stderr = None
+        self.returncode: int | None = 0  # already exited -> kill is skipped
+
+    def kill(self) -> None: ...
+
+    async def wait(self) -> int:
+        return 0
+
+
+def _as_process(fake: _FakeExecProc) -> asyncio.subprocess.Process:
+    return cast("asyncio.subprocess.Process", fake)
+
+
+async def test_exec_stream_runner_ends_gracefully_on_an_overlong_line(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    async def fake_exec(
+        *argv: str, **kwargs: object
+    ) -> asyncio.subprocess.Process:
+        return _as_process(_FakeExecProc(_RaisingStdout()))
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(asyncio, "create_subprocess_exec", fake_exec)
+        with caplog.at_level(logging.WARNING):
+            lines = [
+                line
+                async for line in _ExecStreamRunner()(
+                    ["claude"], cwd="/w", timeout=5.0
+                )
+            ]
+
+    # The overlong-line ValueError ends the stream instead of crashing the read loop.
+    assert lines == []
+    assert any(record.levelno == logging.WARNING for record in caplog.records)
+
+
+async def test_exec_stream_runner_passes_the_stream_limit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    async def fake_exec(
+        *argv: str, **kwargs: object
+    ) -> asyncio.subprocess.Process:
+        captured.update(kwargs)
+        return _as_process(_FakeExecProc(_RaisingStdout()))
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+
+    async for _ in _ExecStreamRunner()(["claude"], cwd="/w", timeout=5.0):
+        pass
+
+    assert captured["limit"] == _STREAM_LIMIT
+    assert _STREAM_LIMIT == 16 * 1024 * 1024

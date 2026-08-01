@@ -18,15 +18,19 @@ input line that claude's ``--input-format stream-json`` accepts.
 
 from __future__ import annotations
 
+import asyncio
 import json
-from typing import TYPE_CHECKING
+import logging
+from typing import TYPE_CHECKING, cast
 
 import pytest
 
-from bob.coding.adapters.claude_runner import ClaudeRunError
+from bob.coding.adapters.claude_runner import _STREAM_LIMIT, ClaudeRunError
 from bob.coding.adapters.interactive_runner import (
     InteractiveClaudeRunner,
     InteractiveRunError,
+    _ExecInteractiveProcess,
+    _ExecInteractiveSpawner,
     encode_user_message,
 )
 from bob.coding.ports import InteractiveRunner
@@ -296,3 +300,68 @@ async def test_events_before_open_yields_nothing() -> None:
 
 def test_interactive_runner_satisfies_the_port() -> None:
     assert isinstance(InteractiveClaudeRunner(), InteractiveRunner)
+
+
+# --------------------------------------------------------------------------- #
+# The real exec transport: 64 KiB StreamReader limit (BOB-084 .1)
+# --------------------------------------------------------------------------- #
+
+
+class _RaisingStdout:
+    """A stdout whose ``readline`` raises the overlong-line ``ValueError``.
+
+    asyncio converts a ``StreamReader`` ``LimitOverrunError`` ("Separator is found, but
+    chunk is longer than limit") into a ``ValueError`` — the exact crash a claude line
+    past the buffer limit produces. This models the REAL transport failure the fake
+    scripted-line process cannot reproduce.
+    """
+
+    async def readline(self) -> bytes:
+        raise ValueError("Separator is found, but chunk is longer than limit")
+
+
+class _FakeExecProc:
+    """Minimal stand-in for ``asyncio.subprocess.Process`` with a raising stdout."""
+
+    def __init__(self, stdout: _RaisingStdout) -> None:
+        self.stdout = stdout
+        self.stdin = None
+        self.returncode: int | None = None
+
+
+def _as_process(fake: _FakeExecProc) -> asyncio.subprocess.Process:
+    # The adapter only touches ``.stdout`` here; cast so mypy accepts the minimal fake.
+    return cast("asyncio.subprocess.Process", fake)
+
+
+async def test_read_lines_ends_gracefully_on_an_overlong_line(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    proc = _ExecInteractiveProcess(_as_process(_FakeExecProc(_RaisingStdout())))
+
+    with caplog.at_level(logging.WARNING):
+        lines = [line async for line in proc.read_lines()]
+
+    # No unhandled ValueError propagates to the pump; the stream ends as if at EOF.
+    assert lines == []
+    assert any(record.levelno == logging.WARNING for record in caplog.records)
+
+
+async def test_spawner_passes_the_stream_limit_to_create_subprocess_exec(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    async def fake_exec(
+        *argv: str, **kwargs: object
+    ) -> asyncio.subprocess.Process:
+        captured.update(kwargs)
+        return _as_process(_FakeExecProc(_RaisingStdout()))
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+
+    await _ExecInteractiveSpawner()(["claude", "-p"], cwd="/w")
+
+    # The raised buffer limit is what keeps a >64 KiB claude line from crashing readline.
+    assert captured["limit"] == _STREAM_LIMIT
+    assert _STREAM_LIMIT == 16 * 1024 * 1024

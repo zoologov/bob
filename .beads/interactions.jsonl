@@ -958,3 +958,10 @@
 {"id":"int-be533700","kind":"field_change","created_at":"2026-08-01T12:53:44.060333Z","actor":"v.zoologov","issue_id":"bob-443.7","extra":{"field":"status","new_value":"in_progress","old_value":"open"}}
 {"id":"int-d9ce6993","kind":"field_change","created_at":"2026-08-01T12:56:40.783546Z","actor":"v.zoologov","issue_id":"bob-443.7","extra":{"field":"status","new_value":"closed","old_value":"in_progress","reason":"Closed"}}
 {"id":"int-6c494107","kind":"field_change","created_at":"2026-08-01T12:56:41.690234Z","actor":"v.zoologov","issue_id":"bob-443","extra":{"field":"status","new_value":"closed","old_value":"open","reason":"Closed"}}
+{"id":"int-66002862","kind":"field_change","created_at":"2026-08-01T22:21:45.700124Z","actor":"v.zoologov","issue_id":"bob-a2c.1","extra":{"field":"status","new_value":"in_progress","old_value":"open"}}
+{"id":"int-48772bcf","kind":"field_change","created_at":"2026-08-01T22:26:53.422777Z","actor":"v.zoologov","issue_id":"bob-a2c.1","extra":{"field":"status","new_value":"closed","old_value":"in_progress","reason":"Closed"}}
+{"id":"int-39d8a3ba","kind":"field_change","created_at":"2026-08-01T22:26:56.057652Z","actor":"v.zoologov","issue_id":"bob-a2c.2","extra":{"field":"status","new_value":"in_progress","old_value":"open"}}
+{"id":"int-be242588","kind":"field_change","created_at":"2026-08-01T22:31:52.697621Z","actor":"v.zoologov","issue_id":"bob-a2c.2","extra":{"field":"status","new_value":"closed","old_value":"in_progress","reason":"Closed"}}
+{"id":"int-74a245e7","kind":"field_change","created_at":"2026-08-01T22:31:55.334339Z","actor":"v.zoologov","issue_id":"bob-a2c.3","extra":{"field":"status","new_value":"in_progress","old_value":"open"}}
+{"id":"int-8fc310c9","kind":"field_change","created_at":"2026-08-01T22:35:10.866375Z","actor":"v.zoologov","issue_id":"bob-a2c.3","extra":{"field":"status","new_value":"closed","old_value":"in_progress","reason":"Closed"}}
+{"id":"int-7c62b76c","kind":"field_change","created_at":"2026-08-01T22:36:27.817608Z","actor":"v.zoologov","issue_id":"bob-a2c","extra":{"field":"status","new_value":"closed","old_value":"open","reason":"Closed"}}
