@@ -22,8 +22,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from bob.application.usecases.disclosure_consent_gate import DisclosureConsentGate
 from bob.application.usecases.disclosure_guard import DisclosureGuard
 from bob.runtime.config import _flag, _section
+from bob.social.adapters.disclosure_consent_judge import LlmDisclosureConsentJudge
 from bob.social.adapters.permission_channels import _SafeDefaultPrivilegeJudge
 from bob.social.adapters.privilege_judge import LlmPrivilegeJudge
 
@@ -53,3 +55,21 @@ def build_disclosure_guard(
         judge=_SafeDefaultPrivilegeJudge(LlmPrivilegeJudge(router=router)),
         capability_hints=capability_hints,
     )
+
+
+def build_disclosure_consent_gate(
+    config: Mapping[str, object], *, router: LLMRouter
+) -> DisclosureConsentGate | None:
+    """Assemble the owner-consent disclosure gate, or ``None`` when ``coder.dev_dm`` is off.
+
+    Off (the default) → ``None`` so ``HandleMessage`` leaves the group audience-guard inert
+    and recall stays byte-identical (owner-in-group surfaces his own owner_private via
+    TRUSTED exactly as before). On → the :class:`DisclosureConsentGate` over the Tier-0
+    :class:`LlmDisclosureConsentJudge`, so the owner can — by explicit consent in a group —
+    authorise Bob to voice previously-private content into the room for that one turn
+    (privacy by default, not a prison). Behind the same ``coder.dev_dm`` flag as the dev
+    channel (BOB-082.3): the dev-DM world and its consent override ship as one piece.
+    """
+    if not _flag(_section(config, "coder"), "dev_dm"):
+        return None
+    return DisclosureConsentGate(judge=LlmDisclosureConsentJudge(router=router))

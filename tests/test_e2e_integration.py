@@ -232,8 +232,9 @@ def _rich_markdown(rich_message: object) -> str:
 
 
 class _Chat:
-    def __init__(self, chat_id: int) -> None:
+    def __init__(self, chat_id: int, chat_type: str = "supergroup") -> None:
         self.id = chat_id
+        self.type = chat_type
 
 
 class _User:

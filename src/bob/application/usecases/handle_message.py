@@ -154,6 +154,7 @@ if TYPE_CHECKING:
     from bob.application.runtime.events import MessageReceived
     from bob.application.runtime.intake.scope import TurnScope
     from bob.application.runtime.staleness_reassessor import StalenessReassessor
+    from bob.application.usecases.disclosure_consent_gate import DisclosureConsentGate
     from bob.application.usecases.disclosure_guard import DisclosureGuard
     from bob.application.usecases.endorsement_seeder import EndorsementSeeder
     from bob.application.usecases.room_mood_modulator import RoomMoodModulator
@@ -661,6 +662,7 @@ class HandleMessage:
         staleness_reassessor: StalenessReassessor | None = None,
         endorsement_seeder: EndorsementSeeder | None = None,
         disclosure_guard: DisclosureGuard | None = None,
+        disclosure_consent: DisclosureConsentGate | None = None,
         self_action_recorder: SelfActionRecorder | None = None,
     ) -> None:
         self._router = router
@@ -1013,6 +1015,14 @@ class HandleMessage:
         #     Unwired (the default) → None → no withhold line, byte-identical.
         self._endorsement_seeder = endorsement_seeder
         self._disclosure_guard = disclosure_guard
+        # Owner-consent disclosure override (BOB-082 .4): приватность по умолчанию — не
+        # тюрьма. In a GROUP the owner's private (DM-world) memory is guarded from the room
+        # (surfaced as if facing a GUEST — scope BY WHERE, mirroring .1's write side), UNLESS
+        # the owner explicitly consents THIS turn (a per-turn recall-time lift, never a stored
+        # reclassification). This gate BEING WIRED is the feature switch: unwired (the default)
+        # → the group-guard is off and recall is byte-identical (owner-in-group surfaces his
+        # own owner_private via TRUSTED exactly as before).
+        self._disclosure_consent = disclosure_consent
         # Reliability seam (BOB-049 .3 — «полный Боб или честный GUPPI-нотис»): the two
         # ESSENTIAL LLM steps (the semantic judgment + the reply generation) are retried a
         # bounded number of times with a short backoff before Bob falls back to the honest
@@ -1683,7 +1693,7 @@ class HandleMessage:
             reply,
             soul,
             bob_message_id=bob_message_id,
-            visibility=self._turn_visibility(interlocutor),
+            visibility=self._turn_visibility(is_group=event.is_group),
         )
         # Log Bob's closer to the cross-session ring (BOB-061 .2): only a GENUINE reply
         # feeds the anti-tic memory (the silent/react/outage markers persist through their
@@ -1719,7 +1729,7 @@ class HandleMessage:
         await self._extract_facts.run(
             user_message=event.text,
             reply=reply,
-            visibility=self._turn_visibility(interlocutor),
+            visibility=self._turn_visibility(is_group=event.is_group),
         )
 
     def _resolve_outgoing_target(
@@ -2092,16 +2102,17 @@ class HandleMessage:
         """Delegate to :meth:`RecallAssembler.replay_recent_thread` (wave 2)."""
         return await self._assembler.replay_recent_thread(interlocutor)
 
-    def _turn_visibility(self, interlocutor: Interlocutor | None) -> str:
-        """Classify the scope-provenance a turn's memory is written with (BOB-066 2.6).
+    def _turn_visibility(self, *, is_group: bool) -> str:
+        """Classify the scope-provenance a turn's memory is written with (BOB-082 .1).
 
-        An OWNER-DM turn is ``owner_private`` (his private world); a non-owner author's
-        turn is ``public`` (their own shared contribution, not the owner's private data);
-        an unidentified turn is conservatively ``owner_private`` (INV-8 — doubt withholds).
-        ``NULL``-legacy stays public — this only tags NEW rows, and the guest-facing effect
-        is latent (owner recall byte-identical, INV-7). Pure and deterministic.
+        Keyed on the CHANNEL (WHERE it was said), not on WHO spoke: a GROUP/supergroup turn
+        is ``public`` shared memory (everyone in the room is party to it — INCLUDING the
+        owner speaking in the group, fixing the earlier by-WHO mis-stamp), while the owner's
+        1:1 DM turn is ``owner_private``. ``NULL``-legacy stays public — this only tags NEW
+        rows, and the guest-facing effect is latent (owner recall byte-identical, INV-7).
+        Pure and deterministic.
         """
-        return visibility_for_scope(is_group=_turn_is_shared_scope(interlocutor))
+        return visibility_for_scope(is_group=_turn_is_shared_scope(is_group=is_group))
 
     async def _recall_surfaceable(
         self, event: MessageReceived, interlocutor: Interlocutor | None
@@ -2111,18 +2122,48 @@ class HandleMessage:
         Two containment layers on the reply-recall pool: reflection episodes are dropped
         (BOB-033 .3 — inner life colours tone via MOOD, never parroted TEXT), and такт
         разглашения (BOB-066 2.6) drops any ``owner_private`` memory that may not surface
-        INITIATIVELY to THIS interlocutor. For the owner / a known peer (TRUSTED) the
-        second filter is a no-op — recall is byte-identical (INV-7); only a GUEST has
-        owner_private provenance withheld (latent until a guest is live). A missing
-        perception seam defaults to TRUSTED, so an unidentified turn is never over-filtered.
+        INITIATIVELY to THIS audience. For the owner / a known peer (TRUSTED) the second
+        filter is a no-op — recall is byte-identical (INV-7); only a GUEST has owner_private
+        provenance withheld. A missing perception seam defaults to TRUSTED, so an
+        unidentified turn is never over-filtered.
+
+        When the owner-consent capability is wired (BOB-082 .4), a GROUP turn is additionally
+        treated as a mixed audience: the surface is guarded as if facing a GUEST (scope BY
+        WHERE — everyone in the room is party to the reply, mirroring .1's write side), so the
+        owner's private (DM-world) memory is NOT voiced to the room UNLESS the owner
+        explicitly consents THIS turn — a per-turn lift, never a stored reclassification.
         """
         recall_trust = interlocutor.trust if interlocutor is not None else Trust.TRUSTED
+        surface_trust, owner_consented = await self._surface_audience(event, interlocutor)
         return filter_surfaceable(
             recalled_excluding_reflections(
                 await self._recall.recall(event.text, k=_RECALL_K)
             ),
-            recall_trust,
+            surface_trust if surface_trust is not None else recall_trust,
+            owner_consented=owner_consented,
         )
+
+    async def _surface_audience(
+        self, event: MessageReceived, interlocutor: Interlocutor | None
+    ) -> tuple[Trust | None, bool]:
+        """Resolve the surface guard for this turn — the group audience + owner consent.
+
+        Returns ``(surface_trust, owner_consented)``. When the consent capability is UNWIRED
+        (the default) the guard is inert: ``(None, False)`` → the caller keeps the plain
+        interlocutor trust and recall is byte-identical. When wired, a GROUP turn guards the
+        owner's private world as a GUEST audience and consults the owner-consent gate (only
+        an OWNER turn is ever judged); a DM turn stays the owner's private space (``None`` →
+        plain trust, no override). Best-effort — the gate swallows any detector failure.
+        """
+        if self._disclosure_consent is None or not event.is_group:
+            return None, False
+        is_owner = (
+            interlocutor is not None and interlocutor.kind is InterlocutorKind.OWNER
+        )
+        owner_consented = await self._disclosure_consent.owner_consents(
+            text=event.text, is_group=True, is_owner=is_owner
+        )
+        return Trust.GUEST, owner_consented
 
     def _plan_expression(
         self, event: MessageReceived, soul: SOUL, *, rng: Random
@@ -2187,16 +2228,15 @@ _recalled_bob_reply = recalled_bob_reply
 _recalled_bob_replies = recalled_bob_replies
 
 
-def _turn_is_shared_scope(interlocutor: Interlocutor | None) -> bool | None:
-    """Classify a turn's scope for такт разглашения (BOB-066 2.6) — pure.
+def _turn_is_shared_scope(*, is_group: bool) -> bool:
+    """Classify a turn's scope for такт разглашения BY WHERE it was said (BOB-082 .1) — pure.
 
-    Feeds :func:`~bob.social.disclosure.visibility_for_scope`. A NON-owner author's turn
-    is a SHARED surface (``True`` → ``public``): it is that person's own contribution, not
-    the owner's private data. The OWNER's own turn is his private DM world (``False`` →
-    ``owner_private``). An unidentified turn (no perception seam) is UNCERTAIN (``None`` →
-    ``owner_private``, the conservative fail-safe, INV-8 — doubt withholds). Deterministic.
+    Feeds :func:`~bob.social.disclosure.visibility_for_scope`. The scope is decided by the
+    CHANNEL, not by who spoke: a GROUP/supergroup turn is a SHARED surface (``True`` →
+    ``public``) — everyone in the room is party to it, INCLUDING the owner speaking there
+    (this fixes the earlier by-WHO logic that mis-stamped the owner's group turns
+    ``owner_private``). The owner's 1:1 DM turn (``is_group=False``) is his private world
+    (``False`` → ``owner_private``). Deterministic: same input → same verdict.
     """
-    if interlocutor is None:
-        return None
-    return interlocutor.kind is not InterlocutorKind.OWNER
+    return is_group
 _recalled_without_copied_exemplars = recalled_without_copied_exemplars

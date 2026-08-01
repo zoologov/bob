@@ -24,7 +24,10 @@ from bob.runtime.wiring.capabilities import (
 )
 from bob.runtime.wiring.catchup import build_catch_up_reentry
 from bob.runtime.wiring.coding import _build_coding_assistant, _build_coding_router
-from bob.runtime.wiring.disclosure import build_disclosure_guard
+from bob.runtime.wiring.disclosure import (
+    build_disclosure_consent_gate,
+    build_disclosure_guard,
+)
 from bob.runtime.wiring.endorsement import build_endorsement_seeder
 from bob.runtime.wiring.goals import _build_goal_engine, _build_pursue_goals_tick
 from bob.runtime.wiring.memory import (
@@ -133,6 +136,7 @@ __all__ = [
     "_resolve_seed",
     "build_batch_room_reader",
     "build_catch_up_reentry",
+    "build_disclosure_consent_gate",
     "build_disclosure_guard",
     "build_endorsement_seeder",
     "build_rhythm_wiring",

@@ -168,6 +168,7 @@ from bob.runtime.wiring import (
     _resolve_seed,
     build_batch_room_reader,
     build_catch_up_reentry,
+    build_disclosure_consent_gate,
     build_disclosure_guard,
     build_endorsement_seeder,
     build_rhythm_wiring,
@@ -510,6 +511,9 @@ def build_application(
         # The owner gives Bob the task in HIS topic (BOB-041 NL path), so coding-session
         # replies thread back into that same topic, not General (BOB-042 Fix B).
         topic_id=_int(_section(telegram_section, "bob"), "topic_id", 0),
+        # Owner id → default target of the dev-channel live-stream (BOB-082.3) when
+        # ``coder.dev_dm`` is on and no explicit ``coder.dev_dm_chat_id`` is set.
+        owner_id=_int(telegram_section, "owner_id", 0),
         clock=resolved_clock,
         recorder=self_action_recorder,
     )
@@ -650,6 +654,11 @@ def build_application(
         merged, owner_id=_int(telegram_section, "owner_id", 0) or None
     )
     disclosure_guard = build_disclosure_guard(merged, router=router)
+    # Owner-consent disclosure override (BOB-082 .4): behind ``coder.dev_dm`` (default off →
+    # None → the group audience-guard is inert and recall is byte-identical). On → the owner
+    # can, by explicit consent in a group, authorise voicing previously-private content into
+    # the room for that one turn (privacy by default, not a prison).
+    disclosure_consent = build_disclosure_consent_gate(merged, router=router)
 
     handle_message = HandleMessage(
         router=router,
@@ -880,6 +889,7 @@ def build_application(
         # tone + appetite BY VALUE. None unless ``presence.room_mood`` → byte-identical when off.
         endorsement_seeder=endorsement_seeder,
         disclosure_guard=disclosure_guard,
+        disclosure_consent=disclosure_consent,
         room_mood_modulator=room_mood_modulator,
         # Staleness врезка consumption (BOB-066 Срез W.3): rereads what landed during generation
         # and drops a now-redundant draft to a like. None unless ``presence.staleness`` →

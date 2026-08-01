@@ -27,7 +27,8 @@ src/bob/coding/
   state.py            # layer=domain   — машина состояний + чистые предикаты переходов
   entities.py         # layer=domain   — CodingSession (immutable value-object)
   naming.py           # layer=domain   — worktree_branch: безопасное имя ветки bob/<slug>
-  narrate.py          # layer=domain   — stream-json событие Claude Code → нарратив-строка / None
+  narrate.py          # layer=domain   — stream-json событие Claude Code → нарратив-строка / None (сжато, для группы)
+  stream_render.py    # layer=domain   — render_stream_event: сырое событие → live-строка (полный стрим в личку, BOB-082)
   intent.py           # layer=domain   — is_approval / is_stop (чистые предикаты NL-команд)
   session_voice.py    # layer=domain   — детерминированные шаблоны реплик в персоне Боба
   usecases/           # layer=application
@@ -42,6 +43,7 @@ src/bob/coding/
     session_store.py    — SqliteCodingSessionStore (персист сессий через рестарт)
     indicator.py        — TypingKeepalive + StatusPanel (индикаторы работы в топике Боба)
     owner_notifier.py   — _CodingOwnerNotifier (нотификатор owner'а; переехал из app.py, BOB-062.7a)
+    live_stream.py      — _DmLiveStreamer (полный лайв-стрим сырых событий в личку owner'а, BOB-082)
     _branch.py, _exec.py — внутренние shell-free хелперы адаптеров
 ```
 
@@ -75,6 +77,16 @@ CANCELLED / FAILED ← из любого нетерминального
 словами в топике) маршрутизируется `CodingIntentRouter` поверх Tier-0
 `ClassifyCodingIntent`; NL-путь **не обходит ни одного гейта** — лишь выбирает, *когда*
 звать `start`/`approve_plan`/`stop`.
+
+🔴 **Dev-канал: лайв-стрим в личку (BOB-082, T3.C, за флагом `coder.dev_dm`).** По умолчанию
+поток claude сжимается `narrate` в ~12 строк и льётся в **групповой топик** (кап
+`_MAX_NARRATION`, чтобы не флудить группу, BOB-076). При `coder.dev_dm` ON поток вместо этого
+идёт **полным лайв-стримом** в **личку** owner'а: `render_stream_event` (сырые события, не
+lossy `narrate`) → `_DmLiveStreamer` (адаптер в DM `chat_id`, progressive `edit_message_text`
+через `StatusPanel`, **без капа** — флуд в приватной личке уместен); группа получает лишь
+короткий указатель `session_voice.dev_pointer()`. Маршрутизация — на **wiring** (порт
+`LiveRunStreamer` держит use-case transport-free); стрим **односторонний** (без stdin —
+двойной гейт и worktree-изоляция не ослаблены); OFF → поведение байт-в-байт как раньше.
 
 ### Адаптеры (infrastructure)
 

@@ -28,6 +28,7 @@ __all__ = [
     "accepted",
     "busy",
     "cannot_approve",
+    "dev_pointer",
     "failed",
     "narration_capped",
     "no_changes",
@@ -79,6 +80,11 @@ _NARRATION_CAPPED = (
     "Продолжаю; покажу результат, как закончит."
 )
 
+# Указатель dev-канала (BOB-082.3): при флаге ``coder.dev_dm`` живой firehose идёт в
+# ЛИЧКУ owner'а, а групповой топик получает ОДНУ короткую строку (INV-5: группа не
+# флудится) — «детали в личке».
+_DEV_POINTER = "Работаю над кодом — детали в личке."
+
 # Операционные отказы/статус — короткие реплики Боба (не на «горячем» пути канона).
 _BUSY = "Я уже в работе над сессией — сначала закроем её («стоп» / /code stop)."
 _CANNOT_APPROVE = (
@@ -128,6 +134,11 @@ def pr(url: str) -> str:
 def no_changes() -> str:
     """Реплика «нет правок»: GUPPI ничего не изменил — честно, PR не открываем."""
     return _NO_CHANGES
+
+
+def dev_pointer() -> str:
+    """Указатель для группы (BOB-082.3): живой стрим — в личке, тут одна строка (INV-5)."""
+    return _DEV_POINTER
 
 
 def failed(detail: str) -> str:

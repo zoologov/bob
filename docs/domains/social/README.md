@@ -235,11 +235,25 @@ OFF → ростер пуст (ноль изменений поведения).
   Сверка `owner_private` регистронезависима.
 - `visibility_for_scope(is_group=)` — консервативный write-side классификатор: групповой
   ход — `public` (общая память комнаты), owner-DM ИЛИ *неопределённый* scope —
-  `owner_private` (fail-safe, INV-8: сомнение удерживает, а не течёт).
-- `filter_surfaceable(recalled, trust)` — recall-фильтр (зеркалит
+  `owner_private` (fail-safe, INV-8: сомнение удерживает, а не течёт). 🔴 **Scope по
+  МЕСТУ, не по КТО (BOB-082):** `is_group` теперь берётся из **канала** (сигнал
+  `MessageReceived.is_group`, gateway из `chat.type`), а не из `interlocutor.kind` — так
+  ход owner'а **в группе** корректно `public` (раньше ошибочно `owner_private`), а его
+  **личка** — `owner_private`.
+- `filter_surfaceable(recalled, trust, *, owner_consented=False)` — recall-фильтр (зеркалит
   `conversation.recalled_excluding_reflections`): роняет `owner_private`-хиты, читая
   поле `visibility` каждого элемента. Для TRUSTED результат байт-в-байт равен входу
   (order-preserving, INV-7); гостю удерживается только `owner_private`.
+- 🔴 **Раскрытие по согласию owner'а (BOB-082, за флагом `coder.dev_dm`).** Память
+  **сквозная** (в личке и группе — один архив, без chat_id-сило), но в **группе** приватный
+  DM-мир owner'а по умолчанию охраняется от комнаты (даже когда говорит сам owner — там
+  Лиля/Паша). Снимается **только** при явном согласии owner'а В ЭТОТ ход: `owner_consented`
+  → `may_surface`/`filter_surfaceable` пропускают `owner_private` для этого surface
+  (recall-time, **без мутации** хранимого `visibility` — раскрытие разовое, не
+  переклассификация). Согласие судит консервативный Tier-0 (`disclosure_consent.py` +
+  `application/usecases/disclosure_consent_gate.py`): только owner-ход в группе, неуверенность/
+  ошибка → нет согласия (biased-to-privacy). Человечно: приватность по умолчанию, но owner
+  может сказать «расскажи ребятам» — и Боб раскроет.
 
 Врезано live в `handle_message._recall_surfaceable` ПОВЕРХ unified recall (обоих путей —
 FTS5 И векторного KNN, оба несут `visibility`), а write-side `_turn_visibility` штампует

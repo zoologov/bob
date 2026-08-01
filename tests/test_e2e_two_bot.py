@@ -86,6 +86,7 @@ class _FakeUser:
 @dataclass
 class _FakeChat:
     id: int
+    type: str = "supergroup"
 
 
 @dataclass

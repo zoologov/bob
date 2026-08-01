@@ -227,6 +227,7 @@ async def test_aiogram_adapter_delegates_every_call() -> None:
     @dataclass(frozen=True)
     class _AiogramChat:
         id: int
+        type: str = "supergroup"
 
     @dataclass(frozen=True)
     class _AiogramUser:

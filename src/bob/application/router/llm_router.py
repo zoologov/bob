@@ -66,6 +66,7 @@ class TaskType(Enum):
     INTERIM_LINE = "interim_line"
     ROOM_READ = "room_read"
     STALENESS_JUDGE = "staleness_judge"
+    DISCLOSURE_CONSENT = "disclosure_consent"
 
 
 # Task -> preferred tier. Quality-critical, user-facing work goes to Tier 1
@@ -110,6 +111,9 @@ _PREFERRED_TIER: dict[TaskType, int] = {
     # Staleness judgment (BOB-066 Срез W.3) reads how the room shifted under a drafted reply
     # while Bob was composing — a cheap per-turn classifier over a short burst, Tier 0.
     TaskType.STALENESS_JUDGE: _TIER_LOCAL,
+    # Disclosure-consent judgment (BOB-082 .4) reads whether the OWNER authorised voicing
+    # previously-private content into the group — privacy-sensitive, so it stays local (Tier 0).
+    TaskType.DISCLOSURE_CONSENT: _TIER_LOCAL,
 }
 
 

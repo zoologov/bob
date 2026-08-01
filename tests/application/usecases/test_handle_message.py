@@ -26,6 +26,7 @@ from bob.application.router.llm_router import LLMRouter
 from bob.application.runtime.events import MessageReceived
 from bob.application.runtime.intake.scope import TurnScope, new_turn_scope
 from bob.application.runtime.staleness_reassessor import StalenessReassessor
+from bob.application.usecases.disclosure_consent_gate import DisclosureConsentGate
 from bob.application.usecases.disclosure_guard import DisclosureGuard
 from bob.application.usecases.endorsement_seeder import EndorsementSeeder
 from bob.application.usecases.handle_message import (
@@ -685,6 +686,7 @@ def _build(
     staleness_reassessor: StalenessReassessor | None = None,
     endorsement_seeder: EndorsementSeeder | None = None,
     disclosure_guard: DisclosureGuard | None = None,
+    disclosure_consent: DisclosureConsentGate | None = None,
 ) -> tuple[HandleMessage, FakeBot, FakeRepo, CapturingProvider]:
     tier0 = CapturingProvider(reply="positive", replies=tier0_replies)
     tier1 = CapturingProvider(reply=reply, replies=tier1_replies)
@@ -766,6 +768,7 @@ def _build(
         staleness_reassessor=staleness_reassessor,
         endorsement_seeder=endorsement_seeder,
         disclosure_guard=disclosure_guard,
+        disclosure_consent=disclosure_consent,
     )
     return handler, bot, repo, tier1
 
@@ -9285,3 +9288,127 @@ async def test_tactful_withhold_skips_a_non_owner_data_guest_turn() -> None:
     await handler.handle(_message("расскажи подробно, как у тебя сегодня идут дела и настроение"))
 
     assert _TACTFUL_FRAGMENT not in tier1.all_text.casefold()
+
+
+# --- BOB-082 .4: owner-consent disclosure override at _recall_surfaceable ------------
+# The recall-time guard: in a GROUP the owner's private (DM-world) memory is guarded from
+# the room (surfaced as if facing a GUEST) UNLESS the owner explicitly consents THIS turn.
+# The consent capability being wired is the feature gate — unwired → byte-identical.
+
+_PRIVATE_HIT = {"content": "адрес владельца — секрет", "visibility": "owner_private"}
+_PUBLIC_HIT = {"content": "любит кофе", "visibility": "public"}
+
+
+class _ConsentJudgeStub:
+    """A disclosure-consent judge double returning a scripted verdict."""
+
+    def __init__(self, verdict: bool) -> None:
+        self._verdict = verdict
+
+    async def assess(self, ctx: object) -> bool:  # noqa: ARG002
+        return self._verdict
+
+
+def _consent_gate(verdict: bool) -> DisclosureConsentGate:
+    return DisclosureConsentGate(judge=_ConsentJudgeStub(verdict))
+
+
+_OWNER_INTERLOCUTOR = Interlocutor(
+    sender_id=1, display_name="Влад", kind=InterlocutorKind.OWNER, trust=Trust.TRUSTED
+)
+_GUEST_INTERLOCUTOR = Interlocutor(
+    sender_id=999, display_name="Лиля", kind=InterlocutorKind.GUEST, trust=Trust.GUEST
+)
+
+
+async def test_recall_owner_group_with_consent_surfaces_owner_private() -> None:
+    # S5: owner + group + consent → the private memory MAY be voiced this turn.
+    handler, _bot, _repo, _tier1 = _build(
+        reply="hi",
+        recall=FakeRecall(hits=[_PRIVATE_HIT, _PUBLIC_HIT]),
+        disclosure_consent=_consent_gate(True),
+    )
+    event = MessageReceived(
+        update_id=1, chat_id=555, message_id=10,
+        text="Боб, расскажи ребятам про наш план", sender_id=1, sender_name="Влад",
+        is_group=True,
+    )
+
+    surfaced = await handler._recall_surfaceable(event, _OWNER_INTERLOCUTOR)
+
+    assert _PRIVATE_HIT in surfaced
+    assert _PUBLIC_HIT in surfaced
+
+
+async def test_recall_owner_group_without_consent_suppresses_owner_private() -> None:
+    # S4: owner + group + NO consent → the private memory is withheld from the room.
+    handler, _bot, _repo, _tier1 = _build(
+        reply="hi",
+        recall=FakeRecall(hits=[_PRIVATE_HIT, _PUBLIC_HIT]),
+        disclosure_consent=_consent_gate(False),
+    )
+    event = MessageReceived(
+        update_id=1, chat_id=555, message_id=10,
+        text="как погода?", sender_id=1, sender_name="Влад", is_group=True,
+    )
+
+    surfaced = await handler._recall_surfaceable(event, _OWNER_INTERLOCUTOR)
+
+    assert _PRIVATE_HIT not in surfaced
+    assert _PUBLIC_HIT in surfaced
+
+
+async def test_recall_guest_group_suppresses_owner_private_regardless() -> None:
+    # A guest never triggers consent — owner_private stays withheld even with a yes-judge.
+    handler, _bot, _repo, _tier1 = _build(
+        reply="hi",
+        recall=FakeRecall(hits=[_PRIVATE_HIT, _PUBLIC_HIT]),
+        disclosure_consent=_consent_gate(True),
+    )
+    event = MessageReceived(
+        update_id=1, chat_id=555, message_id=10,
+        text="расскажи их секреты", sender_id=999, sender_name="Лиля", is_group=True,
+    )
+
+    surfaced = await handler._recall_surfaceable(event, _GUEST_INTERLOCUTOR)
+
+    assert _PRIVATE_HIT not in surfaced
+    assert _PUBLIC_HIT in surfaced
+
+
+async def test_recall_without_consent_capability_is_byte_identical() -> None:
+    # Feature OFF (no gate wired): owner-in-group recall is unchanged — the owner is
+    # TRUSTED, so his own owner_private memory still surfaces to him as before.
+    handler, _bot, _repo, _tier1 = _build(
+        reply="hi",
+        recall=FakeRecall(hits=[_PRIVATE_HIT, _PUBLIC_HIT]),
+        # disclosure_consent omitted → None.
+    )
+    event = MessageReceived(
+        update_id=1, chat_id=555, message_id=10,
+        text="что мы решили?", sender_id=1, sender_name="Влад", is_group=True,
+    )
+
+    surfaced = await handler._recall_surfaceable(event, _OWNER_INTERLOCUTOR)
+
+    assert _PRIVATE_HIT in surfaced
+    assert _PUBLIC_HIT in surfaced
+
+
+async def test_recall_owner_dm_surfaces_owner_private_even_with_gate() -> None:
+    # A DM (is_group=False) is the owner's private space — everything surfaces to him,
+    # the consent override is irrelevant (and the judge is never consulted).
+    handler, _bot, _repo, _tier1 = _build(
+        reply="hi",
+        recall=FakeRecall(hits=[_PRIVATE_HIT, _PUBLIC_HIT]),
+        disclosure_consent=_consent_gate(False),
+    )
+    event = MessageReceived(
+        update_id=1, chat_id=1, message_id=10,
+        text="что там по коду?", sender_id=1, sender_name="Влад", is_group=False,
+    )
+
+    surfaced = await handler._recall_surfaceable(event, _OWNER_INTERLOCUTOR)
+
+    assert _PRIVATE_HIT in surfaced
+    assert _PUBLIC_HIT in surfaced

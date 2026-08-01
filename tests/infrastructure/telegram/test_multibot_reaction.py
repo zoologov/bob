@@ -46,6 +46,7 @@ class _FakeEmoji:
 @dataclass
 class _FakeChat:
     id: int
+    type: str = "supergroup"
 
 
 @dataclass

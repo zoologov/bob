@@ -31,6 +31,7 @@ from bob.infrastructure.telegram.gateway import (
     PLAIN_TEXT_LIMIT,
     BotIdentitySignals,
     TelegramGateway,
+    _chat_type_is_group,
 )
 
 if TYPE_CHECKING:
@@ -71,6 +72,7 @@ class _FakeUser:
 @dataclass
 class _FakeChat:
     id: int
+    type: str = "supergroup"
 
 
 @dataclass
@@ -85,6 +87,7 @@ def _update(
     update_id: int,
     *,
     chat_id: int = 100,
+    chat_type: str = "supergroup",
     text: str | None = "hello",
     message_id: int = 1,
     user: _FakeUser | None = None,
@@ -100,7 +103,7 @@ def _update(
             reply_to_message=reply_to_message,
             entities=entities,
         ),
-        effective_chat=_FakeChat(id=chat_id),
+        effective_chat=_FakeChat(id=chat_id, type=chat_type),
         effective_user=user,
     )
 
@@ -405,6 +408,62 @@ async def test_intake_carries_sender_metadata() -> None:
 
     assert received[0].sender_id == 99
     assert received[0].sender_name == "Alice"
+
+
+# --- Channel signal (BOB-082 .1): chat.type → is_group ------------------------
+
+
+@pytest.mark.parametrize(
+    ("chat_type", "expected"),
+    [
+        ("private", False),
+        ("group", True),
+        ("supergroup", True),
+        ("channel", False),
+        ("", False),
+        ("Group", False),  # case-sensitive: Telegram sends lowercase; unknown → safe False
+    ],
+)
+def test_chat_type_is_group_maps_channel_to_shared_scope(
+    chat_type: str, expected: bool
+) -> None:
+    # Only "group"/"supergroup" are a shared room; private/channel/unknown fall to the
+    # conservative False so a turn's memory is never accidentally stamped public.
+    assert _chat_type_is_group(chat_type) is expected
+
+
+@pytest.mark.asyncio
+async def test_intake_marks_a_group_chat_as_is_group() -> None:
+    bus = AsyncEventBus()
+    received: list[MessageReceived] = []
+
+    async def handler(event: ports.DomainEvent) -> None:
+        assert isinstance(event, MessageReceived)
+        received.append(event)
+
+    bus.subscribe(MESSAGE_RECEIVED, handler)
+    gateway = _make_gateway(_FakeBot(), bus=bus)
+
+    await gateway.intake(_update(10, chat_type="supergroup"))
+
+    assert received[0].is_group is True
+
+
+@pytest.mark.asyncio
+async def test_intake_marks_a_private_dm_as_not_is_group() -> None:
+    bus = AsyncEventBus()
+    received: list[MessageReceived] = []
+
+    async def handler(event: ports.DomainEvent) -> None:
+        assert isinstance(event, MessageReceived)
+        received.append(event)
+
+    bus.subscribe(MESSAGE_RECEIVED, handler)
+    gateway = _make_gateway(_FakeBot(), bus=bus)
+
+    await gateway.intake(_update(10, chat_type="private"))
+
+    assert received[0].is_group is False
 
 
 # --- Addressivity signals (BOB-023) -------------------------------------------
