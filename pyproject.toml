@@ -361,6 +361,10 @@ ignore = [
 # text whose Cyrillic look-alikes are intentional (→ RUF001/2/3).
 "tests/domain/social/test_disclosure_consent.py" = ["RUF001", "RUF002", "RUF003"]
 "tests/application/usecases/test_disclosure_consent_gate.py" = ["RUF001", "RUF002", "RUF003"]
+# The dev-channel + cross-channel-memory acceptance steps (BOB-082 .5) bind Russian .feature
+# step text mixing Latin dev terms (owner / Tier-0 / firehose) with Cyrillic prose whose
+# look-alikes are intentional (→ RUF001/2/3).
+"tests/acceptance/steps/test_dev_channel_privacy.py" = ["RUF001", "RUF002", "RUF003"]
 # The EQ live-врезка WIRING steps (BOB-066 W.4) drive the endorsement/disclosure builders on
 # Russian vouch/owner_data literals whose Cyrillic look-alikes are intentional (→ RUF001/2/3).
 "tests/acceptance/steps/test_eq_live_wiring.py" = [

@@ -63,6 +63,24 @@ def test_label_is_case_and_whitespace_tolerant() -> None:
     assert parse_disclosure_consent("  CONSENT :  Yes  ") is True
 
 
+def test_yes_token_with_trailing_punctuation_is_consent() -> None:
+    # The token trim strips punctuation (not only whitespace): "yes!" → "yes" → consent.
+    assert parse_disclosure_consent("consent: yes!") is True
+    assert parse_disclosure_consent("consent: да.") is True
+
+
+def test_filler_word_before_a_yes_token_still_consents() -> None:
+    # The scan skips a non-yes/non-no filler token and keeps looking — a later clear yes
+    # still resolves to consent (the no-branch must not short-circuit on the filler).
+    assert parse_disclosure_consent("consent: hmm yes") is True
+    assert parse_disclosure_consent("consent: ну, да") is True
+
+
+def test_filler_word_before_a_no_token_is_not_consent() -> None:
+    # Symmetrically, a clear no after filler stays a conservative NO.
+    assert parse_disclosure_consent("consent: ну, нет") is False
+
+
 def test_reads_the_labelled_line_among_prose() -> None:
     raw = "Thinking about it...\nconsent: yes\nbecause the owner said so"
     assert parse_disclosure_consent(raw) is True

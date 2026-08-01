@@ -196,6 +196,20 @@ def test_result_error_renders_error() -> None:
     line = render_stream_event(event)
     assert line is not None
     assert line.startswith("ошибка:")
+    # The ``result`` detail (preferred over ``subtype``) reaches the owner verbatim.
+    assert "too many turns" in line
+
+
+def test_result_bare_success_is_done() -> None:
+    # No is_error and no subtype → the success default → «готово» (not an error).
+    assert render_stream_event({"type": "result"}) == "готово"
+
+
+def test_result_error_subtype_without_is_error_flag_is_error() -> None:
+    # A non-"success" subtype alone (is_error absent) still routes to the error line, and
+    # the subtype is the fallback detail when no ``result`` text is present.
+    line = render_stream_event({"type": "result", "subtype": "error_max_turns"})
+    assert line == "ошибка: error_max_turns"
 
 
 def test_result_error_without_detail_is_bare_error() -> None:
@@ -225,3 +239,102 @@ def test_system_event_is_noise() -> None:
 def test_unknown_event_is_noise() -> None:
     assert render_stream_event({"type": "whatever"}) is None
     assert render_stream_event({}) is None
+
+
+# --- Missing-key / boundary edges (mutation gap-fill, BOB-082.5) ---------------
+# Each pins a default/fallback/boundary the happy-path tests left latent, so a mutant
+# that swaps the default value or the boundary operator is caught.
+
+
+def test_flattened_tool_result_event_is_supported() -> None:
+    # The uplifted ``type=tool_result`` form (not nested in a user event) renders too.
+    assert render_stream_event({"type": "tool_result", "content": "7 passed"}) == "тесты прошли"
+
+
+def test_flattened_tool_use_without_name_is_noise() -> None:
+    # A flattened tool_use lacking a name is noise (not the literal "None").
+    assert render_stream_event({"type": "tool_use", "input": {}}) is None
+
+
+def test_nested_tool_use_block_without_name_is_noise() -> None:
+    assert render_stream_event(_assistant({"type": "tool_use", "input": {}})) is None
+
+
+def test_nested_text_block_without_text_is_noise() -> None:
+    assert render_stream_event(_assistant({"type": "text"})) is None
+
+
+def test_multiple_tool_results_in_one_user_event_are_newline_joined() -> None:
+    event = _user_tool_result(content="boom", is_error=True)
+    event["message"] = {
+        "content": [
+            {"type": "tool_result", "content": "boom", "is_error": True},
+            {"type": "tool_result", "content": "3 passed", "is_error": False},
+        ]
+    }
+    line = render_stream_event(event)
+    assert line is not None
+    assert line == "ошибка: boom\nтесты прошли"
+
+
+def test_bash_without_command_is_noise() -> None:
+    assert render_stream_event(_assistant(_tool_use("Bash", {}))) is None
+
+
+def test_grep_without_pattern_renders_empty_query() -> None:
+    assert render_stream_event(_assistant(_tool_use("Grep", {}))) == "ищу «»"
+
+
+def test_glob_without_pattern_renders_empty_query() -> None:
+    assert render_stream_event(_assistant(_tool_use("Glob", {}))) == "ищу файлы «»"
+
+
+def test_edit_without_file_path_falls_back_to_placeholder() -> None:
+    # Empty path → the «файл» placeholder (not the raw default sentinel).
+    assert render_stream_event(_assistant(_tool_use("Edit", {}))) == "правлю `файл`"
+
+
+def test_edit_windows_path_is_normalised_to_basename() -> None:
+    # Backslashes are normalised to slashes before taking the basename.
+    event = _assistant(_tool_use("Edit", {"file_path": "dir\\sub\\file.py"}))
+    assert render_stream_event(event) == "правлю `file.py`"
+
+
+def test_edit_bare_filename_without_directory_is_the_basename() -> None:
+    assert render_stream_event(_assistant(_tool_use("Edit", {"file_path": "solo.py"}))) == (
+        "правлю `solo.py`"
+    )
+
+
+def test_top_level_error_reads_the_error_key_when_no_message() -> None:
+    line = render_stream_event({"type": "error", "error": "kaboom"})
+    assert line == "ошибка: kaboom"
+
+
+def test_error_detail_whitespace_is_collapsed_to_single_spaces() -> None:
+    line = render_stream_event({"type": "error", "message": "line one\n\n line two"})
+    assert line == "ошибка: line one line two"
+
+
+def test_assistant_text_at_exact_limit_is_not_truncated() -> None:
+    # Boundary: length == limit keeps the text verbatim (no ellipsis) — pins the ``<=``.
+    text = "x" * 200
+    rendered = render_stream_event(_assistant(_text(text)))
+    assert rendered == text
+    assert "…" not in (rendered or "")
+
+
+def test_error_tool_result_without_text_has_no_detail() -> None:
+    # A block-list content with no text → an empty detail → bare «ошибка» (not "None").
+    event = _user_tool_result(content=[{"type": "text"}], is_error=True)
+    assert render_stream_event(event) == "ошибка"
+
+
+def test_error_tool_result_joins_multiple_text_blocks_with_a_space() -> None:
+    event = _user_tool_result(content=[{"text": "foo"}, {"text": "bar"}], is_error=True)
+    assert render_stream_event(event) == "ошибка: foo bar"
+
+
+def test_error_tool_result_non_text_content_has_no_detail() -> None:
+    event = _user_tool_result(content=123, is_error=True)
+    assert render_stream_event(event) == "ошибка"
