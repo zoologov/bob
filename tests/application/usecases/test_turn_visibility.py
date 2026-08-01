@@ -2,88 +2,85 @@
 # SPDX-License-Identifier: BUSL-1.1
 # See the LICENSE file in the project root for full license information.
 
-"""Gap-fill: the write-side scope-provenance classifier of такт разглашения (BOB-066 2.6).
+"""Write-side scope-provenance classifier — scope BY WHERE it was said (BOB-082 .1).
 
 :func:`~bob.application.usecases.handle_message._turn_is_shared_scope` is the pure
-application-layer decision that decides, per turn, whether the memory Bob writes is a
-SHARED (public) surface or the owner's PRIVATE world — it feeds
+application-layer decision that names, per turn, whether the memory Bob writes is a
+SHARED (public) surface or the owner's PRIVATE world. Since BOB-082 .1 it keys on the
+CHANNEL signal (``is_group``) — WHERE the turn was said — not on WHO spoke: a group turn
+is shared/``public`` (including the owner speaking there, which the earlier by-WHO logic
+wrongly stamped ``owner_private``); the owner's 1:1 DM is ``owner_private``. It feeds
 :func:`~bob.social.disclosure.visibility_for_scope` to stamp every new episode/fact.
-It is load-bearing for INV-7 (an owner-DM turn must be tagged ``owner_private`` so it
-never later surfaces to a guest) and INV-8 (an UNIDENTIFIED turn is conservatively
-withheld). These behaviour tests pin the full classification the recall filter later
-relies on; they are pure (no store, no LLM).
+These behaviour tests pin the full classification the recall filter later relies on;
+they are pure (no store, no LLM).
 """
 
 from __future__ import annotations
-
-import pytest
 
 from bob.application.usecases.handle_message import _turn_is_shared_scope
 from bob.social.disclosure import (
     VISIBILITY_OWNER_PRIVATE,
     VISIBILITY_PUBLIC,
+    filter_surfaceable,
     visibility_for_scope,
 )
-from bob.social.interlocutor import Interlocutor, InterlocutorKind, Trust
+from bob.social.interlocutor import Trust
+
+# --- The channel → shared-scope classifier ------------------------------------------
 
 
-def _interlocutor(kind: InterlocutorKind, trust: Trust) -> Interlocutor:
-    return Interlocutor(sender_id=1, display_name="X", kind=kind, trust=trust)
+def test_group_turn_is_a_shared_scope() -> None:
+    # A group/supergroup channel is a SHARED surface (True → public downstream).
+    assert _turn_is_shared_scope(is_group=True) is True
 
 
-def test_owner_turn_is_not_a_shared_scope() -> None:
-    # An owner-DM turn is his private world (False → owner_private downstream).
-    owner = _interlocutor(InterlocutorKind.OWNER, Trust.TRUSTED)
-
-    assert _turn_is_shared_scope(owner) is False
+def test_dm_turn_is_not_a_shared_scope() -> None:
+    # The owner's 1:1 DM is his private world (False → owner_private downstream).
+    assert _turn_is_shared_scope(is_group=False) is False
 
 
-@pytest.mark.parametrize(
-    ("kind", "trust"),
-    [
-        (InterlocutorKind.GUEST, Trust.GUEST),
-        (InterlocutorKind.KNOWN, Trust.TRUSTED),
-        (InterlocutorKind.BOT, Trust.GUEST),
-    ],
-)
-def test_non_owner_turn_is_a_shared_scope(
-    kind: InterlocutorKind, trust: Trust
-) -> None:
-    # Any non-owner author's turn is that person's OWN shared contribution (True →
-    # public) — never the owner's private data, so BOB-051 unified memory stays intact.
-    assert _turn_is_shared_scope(_interlocutor(kind, trust)) is True
-
-
-def test_unidentified_turn_is_uncertain_scope() -> None:
-    # No perception seam → UNCERTAIN (None), which visibility_for_scope treats as the
-    # conservative owner_private fail-safe (INV-8: doubt withholds, never leaks).
-    assert _turn_is_shared_scope(None) is None
-
-
-# --- End-to-end write-side provenance (classifier → visibility tag) ----------------
+# --- End-to-end write-side provenance (classifier → visibility tag) -----------------
 # The pair that stamps every new row: _turn_is_shared_scope feeds visibility_for_scope.
 
 
-def test_owner_turn_is_stamped_owner_private() -> None:
-    owner = _interlocutor(InterlocutorKind.OWNER, Trust.TRUSTED)
+def test_group_turn_is_stamped_public() -> None:
+    visibility = visibility_for_scope(is_group=_turn_is_shared_scope(is_group=True))
 
-    visibility = visibility_for_scope(is_group=_turn_is_shared_scope(owner))
-
-    assert visibility == VISIBILITY_OWNER_PRIVATE
-
-
-def test_guest_turn_is_stamped_public() -> None:
-    guest = _interlocutor(InterlocutorKind.GUEST, Trust.GUEST)
-
-    visibility = visibility_for_scope(is_group=_turn_is_shared_scope(guest))
-
-    # A guest's OWN turn is public shared memory (BOB-051) — the guest-facing withholding
-    # is only ever about the OWNER's private data, never a guest's own contribution.
     assert visibility == VISIBILITY_PUBLIC
 
 
-def test_unidentified_turn_is_stamped_owner_private_by_the_fail_safe() -> None:
-    # INV-8: an uncertain scope is written owner_private, never public by accident.
-    visibility = visibility_for_scope(is_group=_turn_is_shared_scope(None))
+def test_dm_turn_is_stamped_owner_private() -> None:
+    visibility = visibility_for_scope(is_group=_turn_is_shared_scope(is_group=False))
 
     assert visibility == VISIBILITY_OWNER_PRIVATE
+
+
+def test_owner_in_group_is_stamped_public_the_fix() -> None:
+    # 🔴 BOB-082 .1 correctness fix: the owner speaking in the GROUP is a shared turn
+    # (public), NOT owner_private. Scope is decided BY WHERE (the group channel), so the
+    # owner's identity no longer forces owner_private for a turn he says in the room.
+    visibility = visibility_for_scope(is_group=_turn_is_shared_scope(is_group=True))
+
+    assert visibility == VISIBILITY_PUBLIC
+
+
+def test_guest_in_group_is_stamped_public_as_before() -> None:
+    # A guest/known peer in the group stays public shared memory (BOB-051) — unchanged.
+    visibility = visibility_for_scope(is_group=_turn_is_shared_scope(is_group=True))
+
+    assert visibility == VISIBILITY_PUBLIC
+
+
+# --- Regression: the recall FILTER is unchanged (owner surface intact, INV-7) --------
+# This bead only changes how a turn's OWN visibility is STAMPED (write side), never the
+# read-side filter. The owner is TRUSTED, so owner_private memory still surfaces to him.
+
+
+def test_owner_still_surfaces_owner_private_memory_to_themselves() -> None:
+    private_item = {"content": "адрес владельца", "visibility": VISIBILITY_OWNER_PRIVATE}
+
+    kept = filter_surfaceable([private_item], Trust.TRUSTED)
+
+    # INV-7: the filter is untouched — a TRUSTED interlocutor (the owner) sees everything,
+    # so his own owner_private memory is never withheld from him.
+    assert kept == (private_item,)

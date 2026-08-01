@@ -22,3 +22,9 @@ close/git commit) недоступны.
 
 ## Прогресс
 - 2026-08-01: PRD/RFC/CONTEXT/PLAN approved; беады созданы (parent bob-0gj); ветка features/BOB-081.
+- 2026-08-01: ✅ ЗАВЕРШЁН. Все беады закрыты. PR #113 смержен (89b6096). pytest 4550, mutation 100% на
+  dev_query, security-review OK (ни одной выразимой записи/инъекции/утечки/гостевого доступа), beadloom
+  ci PASS, mypy src+tests clean. Флаги introspection.enabled+dev_tools=true; Боб перезапущен (pid 58466).
+  🔴 ЖИВОЙ СМОУК на реальном репо: S1 recent_commits→реальные коммиты; S2 tasks_by_status(closed)→реальные
+  беады; S3 task_comments→реальные чекпоинты; НЕГАТИВ: инъекция show_task('--upload-pack=x')→ValueError
+  refused. S1/S2/S3 + read-only доказаны end-to-end.

@@ -1683,7 +1683,7 @@ class HandleMessage:
             reply,
             soul,
             bob_message_id=bob_message_id,
-            visibility=self._turn_visibility(interlocutor),
+            visibility=self._turn_visibility(is_group=event.is_group),
         )
         # Log Bob's closer to the cross-session ring (BOB-061 .2): only a GENUINE reply
         # feeds the anti-tic memory (the silent/react/outage markers persist through their
@@ -1719,7 +1719,7 @@ class HandleMessage:
         await self._extract_facts.run(
             user_message=event.text,
             reply=reply,
-            visibility=self._turn_visibility(interlocutor),
+            visibility=self._turn_visibility(is_group=event.is_group),
         )
 
     def _resolve_outgoing_target(
@@ -2092,16 +2092,17 @@ class HandleMessage:
         """Delegate to :meth:`RecallAssembler.replay_recent_thread` (wave 2)."""
         return await self._assembler.replay_recent_thread(interlocutor)
 
-    def _turn_visibility(self, interlocutor: Interlocutor | None) -> str:
-        """Classify the scope-provenance a turn's memory is written with (BOB-066 2.6).
+    def _turn_visibility(self, *, is_group: bool) -> str:
+        """Classify the scope-provenance a turn's memory is written with (BOB-082 .1).
 
-        An OWNER-DM turn is ``owner_private`` (his private world); a non-owner author's
-        turn is ``public`` (their own shared contribution, not the owner's private data);
-        an unidentified turn is conservatively ``owner_private`` (INV-8 — doubt withholds).
-        ``NULL``-legacy stays public — this only tags NEW rows, and the guest-facing effect
-        is latent (owner recall byte-identical, INV-7). Pure and deterministic.
+        Keyed on the CHANNEL (WHERE it was said), not on WHO spoke: a GROUP/supergroup turn
+        is ``public`` shared memory (everyone in the room is party to it — INCLUDING the
+        owner speaking in the group, fixing the earlier by-WHO mis-stamp), while the owner's
+        1:1 DM turn is ``owner_private``. ``NULL``-legacy stays public — this only tags NEW
+        rows, and the guest-facing effect is latent (owner recall byte-identical, INV-7).
+        Pure and deterministic.
         """
-        return visibility_for_scope(is_group=_turn_is_shared_scope(interlocutor))
+        return visibility_for_scope(is_group=_turn_is_shared_scope(is_group=is_group))
 
     async def _recall_surfaceable(
         self, event: MessageReceived, interlocutor: Interlocutor | None
@@ -2187,16 +2188,15 @@ _recalled_bob_reply = recalled_bob_reply
 _recalled_bob_replies = recalled_bob_replies
 
 
-def _turn_is_shared_scope(interlocutor: Interlocutor | None) -> bool | None:
-    """Classify a turn's scope for такт разглашения (BOB-066 2.6) — pure.
+def _turn_is_shared_scope(*, is_group: bool) -> bool:
+    """Classify a turn's scope for такт разглашения BY WHERE it was said (BOB-082 .1) — pure.
 
-    Feeds :func:`~bob.social.disclosure.visibility_for_scope`. A NON-owner author's turn
-    is a SHARED surface (``True`` → ``public``): it is that person's own contribution, not
-    the owner's private data. The OWNER's own turn is his private DM world (``False`` →
-    ``owner_private``). An unidentified turn (no perception seam) is UNCERTAIN (``None`` →
-    ``owner_private``, the conservative fail-safe, INV-8 — doubt withholds). Deterministic.
+    Feeds :func:`~bob.social.disclosure.visibility_for_scope`. The scope is decided by the
+    CHANNEL, not by who spoke: a GROUP/supergroup turn is a SHARED surface (``True`` →
+    ``public``) — everyone in the room is party to it, INCLUDING the owner speaking there
+    (this fixes the earlier by-WHO logic that mis-stamped the owner's group turns
+    ``owner_private``). The owner's 1:1 DM turn (``is_group=False``) is his private world
+    (``False`` → ``owner_private``). Deterministic: same input → same verdict.
     """
-    if interlocutor is None:
-        return None
-    return interlocutor.kind is not InterlocutorKind.OWNER
+    return is_group
 _recalled_without_copied_exemplars = recalled_without_copied_exemplars

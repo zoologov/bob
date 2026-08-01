@@ -46,7 +46,7 @@ import asyncio
 import contextlib
 import logging
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Final, Protocol
 
 from aiogram.exceptions import AiogramError
 from aiogram.types import (
@@ -188,6 +188,8 @@ class MessageLike(Protocol):
 class _ChatLike(Protocol):
     @property
     def id(self) -> int: ...
+    @property
+    def type(self) -> str: ...
 
 
 class MessageReactionUpdatedLike(Protocol):
@@ -618,6 +620,7 @@ class TelegramGateway:
             sender_name=user.full_name if user is not None else None,
             reply_to_sender_id=_reply_to_sender_id(message),
             mentions_bob=self._mentions_bob(message),
+            is_group=_chat_type_is_group(chat.type),
         )
 
     def _mentions_bob(self, message: MessageLike) -> bool:
@@ -919,6 +922,26 @@ class RichMarkdownSender:
             await self._bot.send_message(
                 chat_id=chat_id, text=chunk, message_thread_id=message_thread_id
             )
+
+
+# The Telegram ``chat.type`` values that denote a SHARED, multi-party room (BOB-082 .1).
+# A ``private`` DM, a broadcast ``channel``, or any unrecognised value is NOT a group —
+# the conservative, privacy-safe default (an unknown scope is treated as the owner's
+# non-shared 1:1, so a turn is never accidentally stamped ``public``).
+_GROUP_CHAT_TYPES: Final = frozenset({"group", "supergroup"})
+
+
+def _chat_type_is_group(chat_type: str) -> bool:
+    """Whether a Telegram ``chat.type`` denotes a shared group room (pure, BOB-082 .1).
+
+    Maps aiogram's ``chat.type`` ("private" / "group" / "supergroup" / "channel") to the
+    channel signal the scope-by-WHERE decision needs: only "group"/"supergroup" are a
+    shared multi-party scope (``True``). "private" (the owner's 1:1 DM), "channel", and any
+    UNKNOWN value fall to the conservative ``False`` — an unrecognised type is never treated
+    as a shared room, so it can never accidentally make a turn's memory ``public``.
+    Deterministic: same input → same verdict.
+    """
+    return chat_type in _GROUP_CHAT_TYPES
 
 
 def _reply_to_sender_id(message: MessageLike) -> int | None:

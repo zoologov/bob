@@ -65,6 +65,7 @@ class _ChatView:
     """An :class:`UpdateLike` chat view over an aiogram ``Update``."""
 
     id: int
+    type: str
 
 
 @dataclass(frozen=True)
@@ -229,7 +230,9 @@ def _to_update_view(update: object) -> _UpdateView:
     return _UpdateView(
         update_id=update.update_id,  # type: ignore[attr-defined]
         message=message,
-        effective_chat=_ChatView(id=chat.id) if chat is not None else None,
+        effective_chat=(
+            _ChatView(id=chat.id, type=chat.type) if chat is not None else None
+        ),
         effective_user=(
             _UserView(id=user.id, full_name=user.full_name) if user is not None else None
         ),

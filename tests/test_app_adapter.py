@@ -36,6 +36,7 @@ _THREAD_ID = 32
 @dataclass
 class _AioChat:
     id: int
+    type: str = "supergroup"
 
 
 @dataclass

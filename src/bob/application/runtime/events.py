@@ -50,6 +50,16 @@ class MessageReceived:
     gateway from the inbound update and default to absence (``None`` / ``False``)
     so the event stays backward-compatible — a later use-case (the addressivity
     detector + policy) decides what to do with them.
+
+    ``is_group`` is the **channel signal** (BOB-082 .1): whether this message
+    arrived in a shared group/supergroup (``True``) as opposed to the owner's 1:1
+    DM (``False``). The Telegram gateway derives it from ``chat.type``; downstream
+    it decides a turn's scope-provenance BY WHERE it was said (a group turn is
+    shared/``public``; a DM turn is the owner's ``owner_private`` world) rather than
+    by who spoke. It defaults to ``True`` because every existing (non-DM) construction
+    is the shared companion group — the DM path sets it to ``False`` explicitly — and
+    because in production the gateway always sets it from the real ``chat.type``, so
+    the default only ever affects synthetic (group) events, never a live turn.
     """
 
     update_id: int
@@ -60,6 +70,7 @@ class MessageReceived:
     sender_name: str | None = None
     reply_to_sender_id: int | None = None
     mentions_bob: bool = False
+    is_group: bool = True
 
     @property
     def name(self) -> str:
