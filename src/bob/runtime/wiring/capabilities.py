@@ -31,12 +31,16 @@ from bob.capabilities.usecases import (
     make_find_file_capability,
     make_inspect_architecture_capability,
     make_list_dir_capability,
+    make_list_tasks_capability,
     make_list_work_capability,
     make_read_code_capability,
     make_read_url_capability,
     make_recall_memory_capability,
+    make_recent_commits_capability,
     make_render_diagram_capability,
     make_search_memory_capability,
+    make_show_task_capability,
+    make_task_comments_capability,
     make_web_search_capability,
 )
 from bob.infrastructure.llm import build_web_search_provider
@@ -52,7 +56,10 @@ from bob.runtime.config import (
     _section,
     _str,
 )
-from bob.runtime.wiring.parameters import _build_introspection_enabled
+from bob.runtime.wiring.parameters import (
+    _build_dev_tools_enabled,
+    _build_introspection_enabled,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -103,6 +110,16 @@ def _build_registry(
         registry.register(make_find_file_capability(introspector))
         registry.register(make_list_work_capability(introspector))
         registry.register(make_code_rationale_capability(introspector))
+        # BOB-081: the read-only dev-introspection tools (git history + tracker
+        # read) ride the SAME introspector but behind a SUB-flag, default OFF — the
+        # git-history + tracker read tools ship as one gated piece. ``list_tasks``
+        # (by-status view) coexists with ``list_work`` (free-text query / ready
+        # queue): distinct entry points, not a duplicate.
+        if _build_dev_tools_enabled(config):
+            registry.register(make_recent_commits_capability(introspector))
+            registry.register(make_list_tasks_capability(introspector))
+            registry.register(make_show_task_capability(introspector))
+            registry.register(make_task_comments_capability(introspector))
     diagram_renderer: SubprocessMmdcRenderer | None = None
     if _flag(_section(config, "diagrams"), "enabled"):
         diagram_renderer = _build_diagram_renderer(config)

@@ -92,6 +92,17 @@ persistence:
 genesis:
   templates_dir: bob-soul      # personality "genome" templates (repo-root default)
 
+# Self-introspection — «Боб знает свой мир» (BOB-017 / BOB-067 / BOB-081). Read-only,
+# privacy-guarded (only src/tests/docs visible; SOUL/bob.db/.env/config DENIED) and
+# conversation-only (never on the autonomous allowlist). ``enabled`` defaults TRUE.
+introspection:
+  enabled: true
+  # 🔴 BOB-081 SUB-flag, default OFF. The read-only DEV tools — recent_commits (git
+  # history), list_tasks / show_task / task_comments (tracker reads via ``bd``). OFF →
+  # Bob never sees them (zero behaviour change). Flip to true after review + a negative
+  # smoke (no secrets in git/bd output; no write-form is expressible).
+  dev_tools: false
+
 # «Bob runs Claude Code» (BOB-039) — the gated coding assistant. Owner-only, the
 # UNBYPASSABLE plan gate + kill-switch; Bob works in an ISOLATED git worktree and NEVER
 # merges / pushes main. Default off (the most powerful capability).

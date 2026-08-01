@@ -43,6 +43,11 @@ import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
 
+from bob.capabilities.introspection.dev_query import (
+    clamp_commit_count,
+    normalize_status,
+    validate_bead_id,
+)
 from bob.capabilities.introspection.privacy_guard import ALLOWED_ROOTS
 
 if TYPE_CHECKING:
@@ -59,7 +64,7 @@ _FIND_FILE_MAX_RESULTS = 200
 
 # Fixed allowlist of read-only subcommands, keyed by binary. NOTHING else runs.
 _BEADLOOM_SUBCOMMANDS: frozenset[str] = frozenset({"ctx", "graph", "why", "search"})
-_BD_SUBCOMMANDS: frozenset[str] = frozenset({"ready", "show", "list"})
+_BD_SUBCOMMANDS: frozenset[str] = frozenset({"ready", "show", "list", "comments"})
 # git is allowed ONLY as ``git log`` in the fixed forms validated below — never
 # ``show`` / ``diff`` / ``blame`` / ``cat-file`` / a write subcommand.
 _GIT_SUBCOMMANDS: frozenset[str] = frozenset({"log"})
@@ -94,10 +99,13 @@ _GIT_MAX_LOG_COUNT = 1000
 # Default commit count for a path history (the bounded ``-n`` slot).
 _DEFAULT_HISTORY_COUNT = 50
 
-# Exact argv lengths of the three permitted ``git log`` forms (after the subcommand):
-# ``--grep=<key> --oneline`` (2), ``--oneline -- <path>`` (3), and the bounded
-# ``--oneline -n <N> -- <path>`` (5). Named so the shape checks carry no magic value.
+# Exact argv lengths of the permitted ``git log`` forms (after the subcommand):
+# ``--grep=<key> --oneline`` (2), the repo-wide ``--oneline -n <N>`` (3),
+# ``--oneline -- <path>`` (3), and the bounded ``--oneline -n <N> -- <path>`` (5).
+# Named so the shape checks carry no magic value. The two length-3 forms are
+# disambiguated by their middle token (``-n`` for repo-wide vs. ``--`` for a path).
 _GIT_GREP_FORM_LEN = 2
+_GIT_REPO_WIDE_FORM_LEN = 3
 _GIT_PATH_FORM_LEN = 3
 _GIT_BOUNDED_PATH_FORM_LEN = 5
 
@@ -239,6 +247,19 @@ def _is_allowed_git_grep_form(args: tuple[str, ...]) -> bool:
     return _is_bead_key(args[0][len(prefix) :])
 
 
+def _is_allowed_git_repo_wide_form(args: tuple[str, ...]) -> bool:
+    """Whether ``args`` is the repo-wide ``--oneline -n <N>`` fixed form (BOB-081).
+
+    A bounded recent-commits listing with NO path and NO ``--grep``: the count slot
+    is validated as a positive bounded integer. Distinguished from the path form of
+    the same length by the ``-n`` middle token (vs. ``--``).
+    """
+    if len(args) != _GIT_REPO_WIDE_FORM_LEN:
+        return False
+    oneline, dash_n, count = args
+    return oneline == "--oneline" and dash_n == "-n" and _is_valid_log_count(count)
+
+
 def _is_allowed_git_path_form(args: tuple[str, ...]) -> bool:
     """Whether ``args`` is an ``--oneline [-n N] -- <path>`` fixed form.
 
@@ -370,6 +391,47 @@ class SubprocessRepoIntrospector:
             )
         count = str(self._history_max_commits)
         return await self._run("git", "log", "--oneline", "-n", count, "--", token)
+
+    async def recent_commits(self, count: int) -> str:
+        """Return the last ``count`` commits repo-wide (``git log --oneline -n <N>``).
+
+        ``count`` is clamped into ``[1, 50]`` by :func:`clamp_commit_count` before it
+        reaches git, so the history is always bounded. No path, no ``--grep`` — a
+        plain recent-commits view; the argv is the fixed repo-wide ``log`` form and
+        the output is sanitised/truncated by :meth:`_run`.
+        """
+        bounded = str(clamp_commit_count(count))
+        return await self._run("git", "log", "--oneline", "-n", bounded)
+
+    async def task_comments(self, bead_id: str) -> str:
+        """Return the tracker comments/checkpoints for ``bead_id`` (``bd comments``).
+
+        ``bead_id`` is passed through :func:`validate_bead_id` first, so a flag or an
+        injection-shaped value raises :class:`ValueError` and never reaches the
+        subprocess. Read-only: ``bd comments`` lists a task's history, never writes.
+        """
+        return await self._run("bd", "comments", validate_bead_id(bead_id))
+
+    async def show_task(self, bead_id: str) -> str:
+        """Return the details of ``bead_id`` (``bd show <id>``, read-only).
+
+        ``bead_id`` is validated by :func:`validate_bead_id` before exec (an id-shaped
+        token only), so a flag/injection value is refused with :class:`ValueError`.
+        """
+        return await self._run("bd", "show", validate_bead_id(bead_id))
+
+    async def tasks_by_status(self, status: str | None) -> str:
+        """List tracker tasks, optionally filtered by ``status`` (``bd list``).
+
+        ``status`` is mapped to the stored-status enum by :func:`normalize_status`
+        (English enum or a Russian synonym); an unknown or ``None`` status yields the
+        unfiltered ``bd list`` (never a guessed filter). The resulting ``--status``
+        value is always an allowlisted enum, so the read-only form invariant holds.
+        """
+        normalized = normalize_status(status)
+        if normalized is None:
+            return await self._run("bd", "list")
+        return await self._run("bd", "list", "--status", normalized)
 
     async def read_file(self, path: str, *, max_lines: int) -> str:
         """Return up to ``max_lines`` of ``path`` — guard-checked BEFORE opening.
@@ -559,15 +621,20 @@ class SubprocessRepoIntrospector:
         """Refuse any git invocation outside the fixed read-only ``log`` forms.
 
         Only ``git log`` with an exact allowlisted shape — ``--grep=<bead-key>
-        --oneline`` or ``--oneline [-n <N>] -- <path>`` — passes; every other
-        subcommand or arg shape (an extra flag, a path-injection, a non-key grep
-        value) is refused before execution.
+        --oneline``, the repo-wide ``--oneline -n <N>``, or
+        ``--oneline [-n <N>] -- <path>`` — passes; every other subcommand or arg
+        shape (an extra flag, a path-injection, a non-key grep value) is refused
+        before execution.
         """
         if subcommand != "log":
             raise DisallowedCommandError(
                 f"git {subcommand!r} is not a read-only allowlisted subcommand"
             )
-        if _is_allowed_git_grep_form(args) or _is_allowed_git_path_form(args):
+        if (
+            _is_allowed_git_grep_form(args)
+            or _is_allowed_git_repo_wide_form(args)
+            or _is_allowed_git_path_form(args)
+        ):
             return
         raise DisallowedCommandError(
             f"git log arguments {args!r} are not an allowlisted read-only form"

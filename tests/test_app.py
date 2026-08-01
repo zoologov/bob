@@ -428,6 +428,85 @@ def test_code_rationale_not_on_autonomous_safe_allowlist(tmp_path: Path) -> None
     assert "code_rationale" not in safe
 
 
+# --- BOB-081: the dev-introspection tools ride the introspection seam behind a sub-flag
+
+
+_DEV_TOOLS_CAPS = {"recent_commits", "list_tasks", "show_task", "task_comments"}
+
+
+def test_dev_tools_advertised_when_sub_flag_on(tmp_path: Path) -> None:
+    # BOB-081: with introspection on AND the dev_tools sub-flag on, the four read-only
+    # git/tracker tools are registered (advertised + described) so Bob can inspect his
+    # own history/backlog by the turn.
+    config = _config(tmp_path)
+    config["introspection"] = {"enabled": True, "dev_tools": True}
+    app = build_application(
+        config=config,
+        providers=_providers(),
+        bob_bot=_Bot(),
+        guppi_bot=_Bot(),
+    )
+
+    names = _registered_names(app)
+    assert names >= _DEV_TOOLS_CAPS
+    described = app.registry.describe()
+    for name in _DEV_TOOLS_CAPS:
+        assert name in described
+
+
+def test_dev_tools_absent_when_sub_flag_off(tmp_path: Path) -> None:
+    # BOB-081: default — introspection on but dev_tools OFF → none of the four are
+    # registered (Bob does not see them, zero behaviour change). The base introspection
+    # skills stay registered (the sub-flag gates only the dev tools).
+    config = _config(tmp_path)
+    config["introspection"] = {"enabled": True}
+    app = build_application(
+        config=config,
+        providers=_providers(),
+        bob_bot=_Bot(),
+        guppi_bot=_Bot(),
+    )
+
+    names = _registered_names(app)
+    assert _DEV_TOOLS_CAPS.isdisjoint(names)
+    # list_work (the free-text tracker query) is untouched — it is NOT a dev tool.
+    assert "list_work" in names
+
+
+def test_dev_tools_absent_when_master_off_even_if_sub_flag_on(tmp_path: Path) -> None:
+    # BOB-081: the sub-flag is nested under introspection.enabled — with the master OFF,
+    # the dev tools are unregistered regardless of dev_tools.
+    config = _config(tmp_path)
+    config["introspection"] = {"enabled": False, "dev_tools": True}
+    app = build_application(
+        config=config,
+        providers=_providers(),
+        bob_bot=_Bot(),
+        guppi_bot=_Bot(),
+    )
+
+    assert _registered_names(app).isdisjoint(_DEV_TOOLS_CAPS)
+
+
+async def test_dev_tools_not_on_autonomous_safe_allowlist(tmp_path: Path) -> None:
+    # BOB-081 stage boundary: the dev tools stay conversation-only — never
+    # auto-dispatchable through the default (empty) autonomous allowlist.
+    config = _config(tmp_path)
+    config["introspection"] = {"enabled": True, "dev_tools": True}
+    app = build_application(
+        config=config,
+        providers=_providers(),
+        bob_bot=_Bot(),
+        guppi_bot=_Bot(),
+    )
+
+    dispatcher = SafeCapabilityDispatcher(app.registry, allowlist=())
+    for name in _DEV_TOOLS_CAPS:
+        assert dispatcher.allows(name) is False
+        with pytest.raises(CapabilityNotAllowedError):
+            await dispatcher.dispatch(name, {"id": "bob-0gj", "count": 3, "status": "open"})
+
+
 async def test_safe_dispatcher_default_allowlist_refuses_code_rationale(
     tmp_path: Path,
 ) -> None:

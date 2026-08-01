@@ -305,9 +305,13 @@ DEFAULT_CONFIG: Config = {
     # defaults TRUE (read-only, owner-only chat): on → the three skills are advertised.
     # ``max_output_chars`` caps each tool's output, ``read_max_lines`` caps a file read,
     # and ``beadloom_bin`` / ``bd_bin`` name the local read-only CLIs the subprocess
-    # adapter runs against its fixed allowlist (never a shell).
+    # adapter runs against its fixed allowlist (never a shell). ``dev_tools`` (BOB-081)
+    # is a SUB-flag, default FALSE: the read-only dev-introspection tools (``recent_commits``
+    # git history + ``list_tasks`` / ``show_task`` / ``task_comments`` tracker reads) are
+    # registered ONLY when it is on — off → Bob never sees them (zero behaviour change).
     "introspection": {
         "enabled": True,
+        "dev_tools": False,
         "max_output_chars": 20000,
         "read_max_lines": 200,
         "beadloom_bin": "beadloom",

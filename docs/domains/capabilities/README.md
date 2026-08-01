@@ -63,6 +63,7 @@ src/bob/capabilities/
   introspection/      # layer=domain            (чистые инварианты самоинтроспекции)
     privacy_guard.py  #                        — PrivacyGuard: приват-инвариант полного-репо доступа (BOB-017→BOB-067); чистое ядро _allows_path/_sanitize/_resolve вынесено на уровень модуля (mutation-testable)
     code_history.py   #                        — чистые парсеры git↔беады↔фича-доки (BOB-038)
+    dev_query.py      #                        — чистая валидация dev-интроспекции: clamp_commit_count/validate_bead_id(инъекция-гард)/normalize_status (BOB-081, mutation-ядро)
   usecases/           # layer=application
     registry.py       #                        — CapabilityRegistry + SafeCapabilityDispatcher
     tool_loop.py      #                        — ToolLoop: model↔tools раунд-трип до финала
@@ -75,6 +76,10 @@ src/bob/capabilities/
     inspect_architecture.py — граф-контекст через RepoIntrospector (beadloom ctx/graph/why)
     list_work.py      #                        — свой трекер через RepoIntrospector (bd ready/show)
     code_rationale.py #                        — код↔«почему»: git↔беады↔фича-доки↔граф (BOB-038)
+    recent_commits.py #                        — git log -n N repo-wide (BOB-081, read-only, за флагом dev_tools)
+    list_tasks.py     #                        — bd list по статусу (BOB-081, read-only)
+    show_task.py      #                        — bd show <id> детали (BOB-081, read-only)
+    task_comments.py  #                        — bd comments <id> (BOB-081, read-only)
     web_search.py     #                        — заземлённый веб-поиск (BOB-053)
     read_url.py       #                        — чтение одной ссылки за SSRF-щитом (BOB-054)
     render_diagram.py #                        — mermaid→PNG в чат + CollectingDiagramSink (BOB-035)
@@ -176,6 +181,22 @@ allowlist = автономно ничего не запускается (кон�
   «не нашёл», а не выдумку. Все шесть — фабрики `make_*_capability(introspector)`,
   `permission="safe"`, только-разговор (не в автономном allowlist). Приват-инвариант
   живёт ВНУТРИ порта, не у вызывателя.
+- **Dev-интроспекция: git-история + трекер (BOB-081, read-only).** Живой баг: Боб упирался
+  в стену на «глянь последние коммиты / посмотри закрытые задачи / историю git» — не мог
+  заземлить разговор о работе. Четыре разговорных навыка над тем же `RepoIntrospector`:
+  `recent_commits` (`git log --oneline -n N`, repo-wide — раньше `git log` требовал `--grep`/
+  `-- path`), `list_tasks` (`bd list --status <enum>` — задачи по статусу; сосед `list_work` —
+  свободный запрос/ready-очередь), `show_task` (`bd show <id>` — детали), `task_comments`
+  (`bd comments <id>` — комментарии/чекпоинты, новая read-подкоманда). 🔴 **Строго read-only:**
+  git-allowlist остаётся `{log}` (fixed-forms; `show`/`diff`/`commit`/`push` невыразимы),
+  bd-allowlist `{ready,show,list,comments}` — все мутирующие подкоманды (`bd create/update/
+  close`, singular `bd comment`, `git commit/push/checkout`) отклоняются. Валидация значений —
+  чистое ядро `capabilities/introspection/dev_query.py` (`clamp_commit_count` [1,50];
+  `validate_bead_id` — только форма bead-key, инъекция-гард против `--flag`/`;`/`../`;
+  `normalize_status` — allowlist + RU-синонимы). subprocess — `exec` (не shell); санитайз
+  секретов наследуется от `_run` (INV-3); авторизация — существующий `is_guest`-гейт (гость
+  инструментов не получает). За под-флагом `introspection.dev_tools` (default OFF → навыки не
+  регистрируются). Пусто/битый id → честный ответ, не выдумка/не краш.
 - **Web (BOB-053/054).** `web_search` — заземлённый веб-поиск над `WebSearchProvider`:
   проецирует `answer` + `sources` компактно в tool-loop, Боб синтезирует финал своим
   голосом со ссылками. `read_url` — близнец: открывает ОДНУ конкретную ссылку через

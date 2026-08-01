@@ -936,3 +936,180 @@ async def test_default_exec_runner_times_out() -> None:
     out = await runner(["sleep", "5"], timeout=0.1)
 
     assert "timed out" in out.lower()
+
+
+# --- BOB-081.1: dev-introspection read-only forms -----------------------------
+
+
+@pytest.mark.asyncio
+async def test_recent_commits_runs_repo_wide_git_log(tmp_path: Path) -> None:
+    runner = _FakeRunner("abc123 [BOB-081] feat: x")
+    intro = _make(tmp_path, runner)
+
+    await intro.recent_commits(5)
+
+    assert runner.calls == [["git", "log", "--oneline", "-n", "5"]]
+
+
+@pytest.mark.asyncio
+async def test_recent_commits_clamps_count(tmp_path: Path) -> None:
+    runner = _FakeRunner()
+    intro = _make(tmp_path, runner)
+
+    await intro.recent_commits(9999)  # above the [1,50] cap
+
+    assert runner.calls == [["git", "log", "--oneline", "-n", "50"]]
+
+
+@pytest.mark.asyncio
+async def test_recent_commits_clamps_non_positive_count(tmp_path: Path) -> None:
+    runner = _FakeRunner()
+    intro = _make(tmp_path, runner)
+
+    await intro.recent_commits(0)
+
+    assert runner.calls == [["git", "log", "--oneline", "-n", "1"]]
+
+
+@pytest.mark.asyncio
+async def test_task_comments_runs_bd_comments(tmp_path: Path) -> None:
+    runner = _FakeRunner("CHECKPOINT: ...")
+    intro = _make(tmp_path, runner)
+
+    await intro.task_comments("BOB-076")
+
+    assert runner.calls == [["bd", "comments", "BOB-076"]]
+
+
+@pytest.mark.asyncio
+async def test_task_comments_accepts_node_id(tmp_path: Path) -> None:
+    runner = _FakeRunner()
+    intro = _make(tmp_path, runner)
+
+    await intro.task_comments("bob-0gj.1")
+
+    assert runner.calls == [["bd", "comments", "bob-0gj.1"]]
+
+
+@pytest.mark.asyncio
+async def test_task_comments_rejects_injection(tmp_path: Path) -> None:
+    runner = _FakeRunner()
+    intro = _make(tmp_path, runner)
+
+    with pytest.raises(ValueError, match="bead"):
+        await intro.task_comments("BOB-076; rm -rf /")
+
+    assert runner.calls == []
+
+
+@pytest.mark.asyncio
+async def test_show_task_runs_bd_show(tmp_path: Path) -> None:
+    runner = _FakeRunner("bead-detail")
+    intro = _make(tmp_path, runner)
+
+    await intro.show_task("BOB-081")
+
+    assert runner.calls == [["bd", "show", "BOB-081"]]
+
+
+@pytest.mark.asyncio
+async def test_show_task_rejects_flag_injection(tmp_path: Path) -> None:
+    runner = _FakeRunner()
+    intro = _make(tmp_path, runner)
+
+    with pytest.raises(ValueError, match="bead"):
+        await intro.show_task("--exec=rm -rf /")
+
+    assert runner.calls == []
+
+
+@pytest.mark.asyncio
+async def test_tasks_by_status_maps_enum(tmp_path: Path) -> None:
+    runner = _FakeRunner("closed-beads")
+    intro = _make(tmp_path, runner)
+
+    await intro.tasks_by_status("closed")
+
+    assert runner.calls == [["bd", "list", "--status", "closed"]]
+
+
+@pytest.mark.asyncio
+async def test_tasks_by_status_maps_russian_synonym(tmp_path: Path) -> None:
+    runner = _FakeRunner()
+    intro = _make(tmp_path, runner)
+
+    await intro.tasks_by_status("в работе")
+
+    assert runner.calls == [["bd", "list", "--status", "in_progress"]]
+
+
+@pytest.mark.asyncio
+async def test_tasks_by_status_none_lists_unfiltered(tmp_path: Path) -> None:
+    runner = _FakeRunner()
+    intro = _make(tmp_path, runner)
+
+    await intro.tasks_by_status(None)
+
+    assert runner.calls == [["bd", "list"]]
+
+
+@pytest.mark.asyncio
+async def test_tasks_by_status_unknown_lists_unfiltered(tmp_path: Path) -> None:
+    runner = _FakeRunner()
+    intro = _make(tmp_path, runner)
+
+    await intro.tasks_by_status("nonsense")
+
+    assert runner.calls == [["bd", "list"]]
+
+
+@pytest.mark.asyncio
+async def test_dev_forms_output_is_sanitized(tmp_path: Path) -> None:
+    runner = _FakeRunner("TELEGRAM_TOKEN=123:abcDEF\ncommit body")
+    intro = _make(tmp_path, runner)
+
+    out = await intro.recent_commits(10)
+
+    assert "123:abcDEF" not in out
+    assert "REDACTED" in out
+
+
+# --- BOB-081.1: write subcommands / forms remain non-expressible ---------------
+
+
+@pytest.mark.asyncio
+async def test_git_write_subcommand_is_refused(tmp_path: Path) -> None:
+    runner = _FakeRunner()
+    intro = _make(tmp_path, runner)
+
+    for sub in ("commit", "push", "checkout", "show", "diff", "blame"):
+        with pytest.raises(DisallowedCommandError):
+            await intro._run("git", sub)
+
+    assert runner.calls == []
+
+
+@pytest.mark.asyncio
+async def test_bd_write_subcommand_is_refused(tmp_path: Path) -> None:
+    runner = _FakeRunner()
+    intro = _make(tmp_path, runner)
+
+    for sub in ("close", "create", "update", "delete"):
+        with pytest.raises(DisallowedCommandError):
+            await intro._run("bd", sub, "BOB-076")
+
+    assert runner.calls == []
+
+
+@pytest.mark.asyncio
+async def test_repo_wide_git_log_rejects_extra_flags(tmp_path: Path) -> None:
+    runner = _FakeRunner()
+    intro = _make(tmp_path, runner)
+
+    # A repo-wide log must be EXACTLY ``--oneline -n <N>``: no --grep, no bad count.
+    with pytest.raises(DisallowedCommandError):
+        await intro._run("git", "log", "--oneline", "-n", "5", "--all")
+    with pytest.raises(DisallowedCommandError):
+        await intro._run("git", "log", "--oneline", "-n", "notanumber")
+
+    assert runner.calls == []

@@ -465,6 +465,19 @@ def _build_introspection_enabled(config: Mapping[str, object]) -> bool:
     return _flag(_section(config, "introspection"), "enabled")
 
 
+def _build_dev_tools_enabled(config: Mapping[str, object]) -> bool:
+    """Whether the dev-introspection tools are wired (``introspection.dev_tools``).
+
+    Default OFF (BOB-081 — the git-history + tracker read tools ship as one gated
+    piece): off → the four ``recent_commits`` / ``list_tasks`` / ``show_task`` /
+    ``task_comments`` skills are NOT registered (Bob never sees them, zero behaviour
+    change); on → they are advertised alongside the other introspection skills. It is
+    a SUB-flag under the (default-ON) ``introspection.enabled`` master. Tolerates an
+    env-string boolean.
+    """
+    return _flag(_section(config, "introspection"), "dev_tools")
+
+
 def _diagram_send_as(config: Mapping[str, object]) -> DiagramSendMode:
     """Resolve the diagram send mode from ``diagrams.send_as`` (BOB-037 C).
 

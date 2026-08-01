@@ -21,3 +21,8 @@
 
 ## Прогресс
 - 2026-08-01: PRD/RFC/CONTEXT/PLAN approved; беады созданы (parent bob-dct); ветка features/BOB-080.
+- 2026-08-01: ✅ ЗАВЕРШЁН. Все беады закрыты (+ fix-цикл .6/.7 по review-Major). PR #112 смержен (52cc10e).
+  pytest 4414, mutation 94.9% на roster.py, review OK (после fix), beadloom ci PASS, mypy src+tests clean.
+  Флаг social.roster=true; Боб перезапущен (pid 22455). 🔴 ЖИВОЙ СМОУК на реальных данных: viewer=owner →
+  ростер поднял Лилю+Павла (newcomer, 0д), Алексея/Norman (31/38д) — не как новых; директива назвала
+  ТОЛЬКО новичков (fix подтверждён), имена через note-parse fallback. S1/S2 доказаны end-to-end.
