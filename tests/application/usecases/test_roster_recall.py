@@ -44,6 +44,12 @@ _GUEST = Interlocutor(
     kind=InterlocutorKind.GUEST,
     trust=Trust.GUEST,
 )
+_BOT = Interlocutor(
+    sender_id=777,
+    display_name="ботяра",
+    kind=InterlocutorKind.BOT,
+    trust=Trust.GUEST,
+)
 
 
 def _impression(sender_id: int, name: str, *, days_ago: float) -> FirstImpression:
@@ -150,3 +156,62 @@ async def test_no_viewer_returns_empty() -> None:
     roster = await _recall(store).recent_roster(_NOW, viewer=None)
 
     assert roster == ()
+
+
+async def test_bot_viewer_gets_no_roster() -> None:
+    # PRIVACY: a bot is not one of {OWNER, KNOWN} → no rundown, store never read.
+    store = _FakeRecencyStore([_impression(50, "Паша", days_ago=1.0)])
+    roster = await _recall(store).recent_roster(_NOW, viewer=_BOT)
+
+    assert roster == ()
+    assert store.calls == []
+
+
+async def test_bob_id_source_omitted_excludes_only_the_owner() -> None:
+    # With no bob_id_source wired, only the owner is kept off the roster (no id for Bob).
+    store = _FakeRecencyStore(
+        [
+            _impression(_OWNER_ID, "Влад", days_ago=1.0),
+            _impression(_BOB_ID, "Боб", days_ago=1.0),
+            _impression(50, "Паша", days_ago=1.0),
+        ]
+    )
+    recall = RosterRecall(
+        store=store,  # type: ignore[arg-type]
+        newcomer_days=7.0,
+        limit=6,
+        owner_id=_OWNER_ID,
+        bob_id_source=None,
+    )
+
+    roster = await recall.recent_roster(_NOW, viewer=_OWNER)
+
+    # Owner excluded; Bob's own id is present (no source to resolve+exclude it).
+    assert {m.sender_id for m in roster} == {_BOB_ID, 50}
+
+
+async def test_bob_id_source_returning_none_excludes_only_the_owner() -> None:
+    # A source that yields None (Bob's id not resolved yet) excludes only the owner.
+    store = _FakeRecencyStore(
+        [_impression(_BOB_ID, "Боб", days_ago=1.0), _impression(50, "Паша", days_ago=1.0)]
+    )
+    recall = RosterRecall(
+        store=store,  # type: ignore[arg-type]
+        newcomer_days=7.0,
+        limit=6,
+        owner_id=_OWNER_ID,
+        bob_id_source=lambda: None,
+    )
+
+    roster = await recall.recent_roster(_NOW, viewer=_OWNER)
+
+    assert {m.sender_id for m in roster} == {_BOB_ID, 50}
+
+
+async def test_limit_is_passed_through_to_the_store_read() -> None:
+    # The configured cap flows into the recency read (the store is asked for `limit`).
+    store = _FakeRecencyStore([_impression(50, "Паша", days_ago=1.0)])
+
+    await _recall(store, limit=3).recent_roster(_NOW, viewer=_OWNER)
+
+    assert store.calls == [3]

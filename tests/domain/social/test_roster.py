@@ -72,6 +72,21 @@ def test_is_newcomer_handles_naive_first_seen_as_utc() -> None:
     assert is_newcomer(naive, _NOW, newcomer_days=_NEWCOMER_DAYS) is True
 
 
+def test_is_newcomer_future_first_seen_counts_as_newcomer() -> None:
+    # A first_seen slightly in the FUTURE (clock skew) → a negative age, comfortably
+    # within the window → still a newcomer (the subtraction never trips on the edge).
+    seen = _NOW + timedelta(hours=1)
+
+    assert is_newcomer(seen, _NOW, newcomer_days=_NEWCOMER_DAYS) is True
+
+
+def test_is_newcomer_zero_window_only_the_same_instant() -> None:
+    # newcomer_days=0 (limit value): only someone met at THIS instant is still "new";
+    # a second earlier already falls outside the (inclusive) zero window.
+    assert is_newcomer(_NOW, _NOW, newcomer_days=0.0) is True
+    assert is_newcomer(_NOW - timedelta(seconds=1), _NOW, newcomer_days=0.0) is False
+
+
 # --- build_roster --------------------------------------------------------------
 
 
@@ -187,6 +202,62 @@ def test_build_roster_name_parsed_from_note_when_display_name_absent() -> None:
     )
 
     assert roster[0].name == "Паша"
+
+
+def test_build_roster_name_from_note_takes_all_before_first_separator() -> None:
+    # Legacy row, a MULTI-WORD name and MULTIPLE " — " separators in the note: the name
+    # is everything before the FIRST separator — not the first whitespace token, and not
+    # everything before the LAST one. (Pins split-on-separator + maxsplit=1 semantics.)
+    impressions = [
+        _impression(1, days_ago=1, note="Анна Каренина — коллега — давно виделись"),
+    ]
+
+    roster = build_roster(
+        impressions,
+        _NOW,
+        newcomer_days=_NEWCOMER_DAYS,
+        exclude_ids=frozenset(),
+        limit=6,
+    )
+
+    assert roster[0].name == "Анна Каренина"
+
+
+def test_build_roster_empty_display_name_falls_back_to_note_parse() -> None:
+    # An empty (falsy) display_name is not a usable name → the note-head fallback runs,
+    # exactly as it does for a NULL legacy row.
+    impressions = [
+        _impression(1, days_ago=1, note="Паша — уже виделись.", display_name=""),
+    ]
+
+    roster = build_roster(
+        impressions,
+        _NOW,
+        newcomer_days=_NEWCOMER_DAYS,
+        exclude_ids=frozenset(),
+        limit=6,
+    )
+
+    assert roster[0].name == "Паша"
+
+
+def test_build_roster_excludes_all_ids_in_the_set() -> None:
+    # exclude_ids drops EVERY listed id (owner AND Bob himself), not just one.
+    impressions = [
+        _impression(1, days_ago=1, display_name="Лиля"),
+        _impression(2, days_ago=1, display_name="Владелец"),
+        _impression(3, days_ago=1, display_name="Боб"),
+    ]
+
+    roster = build_roster(
+        impressions,
+        _NOW,
+        newcomer_days=_NEWCOMER_DAYS,
+        exclude_ids=frozenset({2, 3}),
+        limit=6,
+    )
+
+    assert [m.sender_id for m in roster] == [1]
 
 
 def test_build_roster_returns_roster_members() -> None:
