@@ -146,10 +146,21 @@ def names_absent_from_incoming(roster_context: _RosterContext) -> None:
 
 @then("Боб держит новичком только Лилю, а Norman и Алексея — как старожилов")
 def only_lilya_is_a_newcomer(roster_context: _RosterContext) -> None:
-    newcomers = set(roster_context.outcome.newcomers)
+    outcome = roster_context.outcome
+    newcomers = set(outcome.newcomers)
     assert "Лиля" in newcomers, f"Лиля не отмечена новичком: {newcomers}"
     assert "Norman" not in newcomers, "Norman ошибочно отмечен новичком (старожил)"
     assert "Алексей" not in newcomers, "Алексей ошибочно отмечен новичком (старожил)"
+    # BOB-080.6 honesty: the OBSERVABLE «недавно зашли» line names only the fresh
+    # newcomer — старожилов НЕ подаёт как только что зашедших (иначе Боб их так и
+    # отрапортует в промпте).
+    assert "Лиля" in outcome.directive, f"Лиля не названа: {outcome.directive!r}"
+    assert "Norman" not in outcome.directive, (
+        f"старожил Norman подан как «недавно зашёл»: {outcome.directive!r}"
+    )
+    assert "Алексей" not in outcome.directive, (
+        f"старожил Алексей подан как «недавно зашёл»: {outcome.directive!r}"
+    )
 
 
 @then("владельца в ростере нет, а Лиля названа в строке")

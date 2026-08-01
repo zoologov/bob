@@ -399,13 +399,19 @@ def roster_directive(roster: Sequence[RosterMember]) -> str:
     the talk turns to who is around — instead of asking the model to guess. Written as
     character (a person holds recent faces in mind a few days) and framed BY OCCASION
     (INV-4): name them when it fits, never drag them in unprompted. Grounded strictly in
-    the real ``roster`` (no invented people). An EMPTY roster yields ``""`` (no fresh
-    joiners → no line), so the default path is byte-identical. Pure and deterministic:
-    the same roster always yields the same line.
+    the real ``roster`` (no invented people).
+
+    HONESTY (BOB-080.6): the roster ``build`` returns a MIX — fresh newcomers AND
+    old-timers still within the recency limit — but only the ``is_newcomer`` members may
+    be named under the "недавно зашли" framing; announcing an old acquaintance as just
+    arrived would be factually false. So the line names ONLY newcomers; if none remain
+    (defensive — the ambient window opens only on a newcomer), the render is ``""``. An
+    EMPTY roster likewise yields ``""`` (no line), so the default path is byte-identical.
+    Pure and deterministic: the same roster always yields the same line.
     """
-    if not roster:
+    names = ", ".join(member.name for member in roster if member.is_newcomer)
+    if not names:
         return ""
-    names = ", ".join(member.name for member in roster)
     return f"{_ROSTER_PREFIX}{names}{_ROSTER_SUFFIX}"
 
 

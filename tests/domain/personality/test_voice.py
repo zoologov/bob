@@ -576,6 +576,43 @@ def test_roster_directive_is_voice_not_a_rule_list() -> None:
     assert "- " not in line
 
 
+def test_roster_directive_names_only_newcomers_under_joined_framing() -> None:
+    # BOB-080.6 honesty (S2): under the "недавно зашли" framing name ONLY the
+    # fresh newcomers — an old acquaintance within the limit must NOT be announced
+    # as if he just turned up.
+    line = roster_directive(
+        (
+            _roster_member("Лиля", is_newcomer=True),
+            _roster_member("Norman", is_newcomer=False),
+            _roster_member("Алексей", is_newcomer=False),
+        )
+    )
+    assert "Лиля" in line
+    assert "Norman" not in line, f"старожил подан как только что зашедший: {line!r}"
+    assert "Алексей" not in line, f"старожил подан как только что зашедший: {line!r}"
+
+
+def test_roster_directive_names_all_when_all_are_newcomers() -> None:
+    # An all-newcomer roster names everyone (nothing is falsely dropped).
+    line = roster_directive(
+        (_roster_member("Лиля", is_newcomer=True), _roster_member("Паша", is_newcomer=True))
+    )
+    assert "Лиля" in line
+    assert "Паша" in line
+
+
+def test_roster_directive_empty_when_no_newcomers() -> None:
+    # Defensive: even if the roster carried only old-timers, an honest render frames
+    # nobody as "just joined" — the line is empty rather than mislabelling.
+    line = roster_directive(
+        (
+            _roster_member("Norman", is_newcomer=False),
+            _roster_member("Алексей", is_newcomer=False),
+        )
+    )
+    assert line == ""
+
+
 # --- BOB-079.4: recalled self_action ownership directive ----------------------
 #
 # When recall surfaces one of Bob's OWN past deeds (event_type/category
