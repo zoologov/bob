@@ -155,3 +155,45 @@ def test_states_are_string_valued_for_persistence() -> None:
     assert _S.PLAN_READY.value == "plan_ready"
     assert _S.EXECUTING.value == "executing"
     assert _S.PR_OPEN.value == "pr_open"
+
+
+# --- INTERACTIVE: живой двусторонний сеанс (BOB-083 .3) -----------------------
+
+
+def test_interactive_is_non_terminal_and_string_valued() -> None:
+    # INTERACTIVE — живое (нетерминальное) состояние: держит запущенный процесс
+    # claude, round-trip'ит через стор как TEXT.
+    assert _S.INTERACTIVE.value == "interactive"
+    assert is_terminal(_S.INTERACTIVE) is False
+
+
+def test_interactive_can_stop_direct_kill() -> None:
+    # 🔴 Kill-switch: интерактив-сессию можно остановить из живого состояния —
+    # прямой terminate процесса переводит её в терминал CANCELLED.
+    assert can_stop(_S.INTERACTIVE) is True
+    assert can_transition(_S.INTERACTIVE, _S.CANCELLED) is True
+    assert can_transition(_S.INTERACTIVE, _S.FAILED) is True
+
+
+def test_interactive_is_terminal_after_cancel() -> None:
+    # После stop сессия в CANCELLED — терминальна, исходящих переходов нет.
+    assert is_terminal(_S.CANCELLED) is True
+    assert can_transition(_S.CANCELLED, _S.INTERACTIVE) is False
+
+
+def test_interactive_does_not_open_a_path_to_executing() -> None:
+    # 🔴 Гейт плана непробиваем: INTERACTIVE не ведёт в EXECUTING (иначе живой
+    # сеанс обходил бы двойной гейт). EXECUTING по-прежнему ровно из PLAN_READY.
+    assert can_transition(_S.INTERACTIVE, _S.EXECUTING) is False
+    assert can_approve_plan(_S.INTERACTIVE) is False
+    reaching = [s for s in CodingSessionState if can_transition(s, _S.EXECUTING)]
+    assert reaching == [_S.PLAN_READY]
+
+
+def test_interactive_has_no_forward_progress_edges() -> None:
+    # Живой сеанс не «прогрессирует» по гейтед-пути — он завершается только через
+    # kill (CANCELLED) или честный провал (FAILED). В частности, не ведёт в PR_OPEN.
+    assert can_transition(_S.INTERACTIVE, _S.PR_OPEN) is False
+    assert can_transition(_S.INTERACTIVE, _S.PLANNING) is False
+    assert can_transition(_S.INTERACTIVE, _S.PLAN_READY) is False
+    assert can_start(_S.INTERACTIVE) is False
