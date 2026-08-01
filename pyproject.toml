@@ -180,6 +180,10 @@ ignore = [
 "src/bob/coding/state.py" = ["RUF001", "RUF002", "RUF003"]
 "src/bob/coding/entities.py" = ["RUF001", "RUF002", "RUF003"]
 "src/bob/coding/narrate.py" = ["RUF001", "RUF002", "RUF003"]
+# Full live-stream renderer + DM live-stream adapter (BOB-082.3): Russian live-line
+# templates + comments whose Cyrillic look-alikes are intentional — RUF001/RUF002/RUF003.
+"src/bob/coding/stream_render.py" = ["RUF001", "RUF002", "RUF003"]
+"src/bob/coding/adapters/live_stream.py" = ["RUF001", "RUF002", "RUF003"]
 "src/bob/coding/naming.py" = ["RUF001", "RUF002", "RUF003"]
 # Bob-voiced coding-session gate messages (BOB-041 .3): Russian persona templates +
 # comments whose Cyrillic look-alikes are intentional — RUF001/RUF002/RUF003 here.
@@ -525,6 +529,45 @@ ignore = [
     "S101",
     "ARG001",
     "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+# Dev-channel live-stream tests (BOB-082.3): Russian live-line/pointer literals + unused
+# fake-port args; S101/ARG/RUF001-003 do not apply to these test fakes.
+"tests/domain/coding/test_stream_render.py" = [
+    "S101",
+    "ARG001",
+    "ARG002",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+"tests/application/usecases/test_coding_dm_live_stream.py" = [
+    "S101",
+    "ARG001",
+    "ARG002",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+"tests/infrastructure/coding/test_dm_live_streamer.py" = [
+    "S101",
+    "ARG001",
+    "ARG002",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+"tests/runtime/wiring/test_coding_dev_dm.py" = [
+    "S101",
+    "ARG001",
+    "ARG002",
+    "PLR2004",
+    "SLF001",
     "RUF001",
     "RUF002",
     "RUF003",

@@ -510,6 +510,9 @@ def build_application(
         # The owner gives Bob the task in HIS topic (BOB-041 NL path), so coding-session
         # replies thread back into that same topic, not General (BOB-042 Fix B).
         topic_id=_int(_section(telegram_section, "bob"), "topic_id", 0),
+        # Owner id → default target of the dev-channel live-stream (BOB-082.3) when
+        # ``coder.dev_dm`` is on and no explicit ``coder.dev_dm_chat_id`` is set.
+        owner_id=_int(telegram_section, "owner_id", 0),
         clock=resolved_clock,
         recorder=self_action_recorder,
     )

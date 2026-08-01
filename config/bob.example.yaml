@@ -115,3 +115,10 @@ coder:
   # a runaway coder from ordinary chat. OFF → the coder starts ONLY via an explicit
   # /code; natural approve/stop of an already-live session stay ON regardless.
   nl_autostart: false
+  # Dev-channel LIVE-STREAM (BOB-082.3): stream the raw, UNCAPPED Claude Code events into
+  # the owner's PRIVATE DM (a live "terminal") instead of the capped group narration. The
+  # group topic then gets only a one-line pointer ("детали в личке") — the firehose never
+  # floods the group (INV-5). Default OFF → behaviour unchanged (capped narration to the
+  # group). dev_dm_chat_id defaults to telegram.owner_id (the owner's own 1:1 chat).
+  # dev_dm: false
+  # dev_dm_chat_id: 0

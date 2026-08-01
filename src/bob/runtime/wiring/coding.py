@@ -24,10 +24,11 @@ from bob.coding.adapters import (
     SubprocessClaudeRunner,
 )
 from bob.coding.adapters.indicator import StatusPanel, TypingKeepalive
+from bob.coding.adapters.live_stream import _DmLiveStreamer
 from bob.coding.adapters.owner_notifier import _CodingOwnerNotifier
 from bob.coding.adapters.session_store import SqliteCodingSessionStore
 from bob.coding.usecases.classify_coding_intent import ClassifyCodingIntent
-from bob.coding.usecases.coding_assistant import CodingAssistant
+from bob.coding.usecases.coding_assistant import CodingAssistant, LiveRunStreamer
 from bob.coding.usecases.coding_context import make_coding_context
 from bob.coding.usecases.coding_intent_router import CodingIntentRouter
 from bob.runtime.config import (
@@ -89,6 +90,7 @@ def _build_coding_assistant(
     notifier_bot: BotLike,
     chat_id: int,
     topic_id: int | None,
+    owner_id: int,
     clock: Clock,
     recorder: SelfActionRecorder,
 ) -> CodingAssistant | None:
@@ -145,5 +147,38 @@ def _build_coding_assistant(
             bot=cast("EditableStatusBot", notifier_bot),
             chat_id=chat_id,
             thread_id=topic_id,
+        ),
+        # Dev-channel live-stream (BOB-082.3): when ``coder.dev_dm`` is ON, the raw,
+        # UNCAPPED execute stream renders into the owner's private DM (the group topic gets
+        # only a one-line pointer, INV-5). OFF (default) → ``None`` and the run is narrated
+        # to the group capped exactly as before (zero behaviour change).
+        live_streamer=_build_dm_live_streamer(
+            coder, bot=notifier_bot, owner_id=owner_id
+        ),
+    )
+
+
+def _build_dm_live_streamer(
+    coder: Mapping[str, object],
+    *,
+    bot: BotLike,
+    owner_id: int,
+) -> LiveRunStreamer | None:
+    """Assemble the DM live-stream renderer, or ``None`` when the dev-channel is off (BOB-082.3).
+
+    Built ONLY when ``coder.dev_dm`` is on (conservative default off). It targets the
+    owner's private DM (``coder.dev_dm_chat_id``, default = ``owner_id``; a 1:1 chat, so
+    ``message_thread_id`` is ``None``) through the same BOB-bot :class:`_CodingOwnerNotifier`
+    used for the group — only the chat/thread differ — plus a rolling editable
+    :class:`StatusPanel` for the live "terminal" feel. Off (the default) → ``None`` and the
+    use-case narrates the run to the group capped, exactly as before.
+    """
+    if not _flag(coder, "dev_dm"):
+        return None
+    dm_chat_id = _int(coder, "dev_dm_chat_id", owner_id)
+    return _DmLiveStreamer(
+        notifier=_CodingOwnerNotifier(bot=bot, chat_id=dm_chat_id, topic_id=None),
+        panel=StatusPanel(
+            bot=cast("EditableStatusBot", bot), chat_id=dm_chat_id, thread_id=None
         ),
     )

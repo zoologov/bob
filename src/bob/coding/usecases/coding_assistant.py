@@ -69,6 +69,7 @@ __all__ = [
     "CodingAssistant",
     "CodingContext",
     "CodingOutcome",
+    "LiveRunStreamer",
     "OwnerCheck",
     "OwnerNotifier",
     "StatusPanel",
@@ -160,6 +161,31 @@ class StatusPanel(Protocol):
         ...
 
 
+class LiveRunStreamer(Protocol):
+    """Сейм ЛАЙВ-стрима сырых событий execute-прогона в dev-канал owner'а (BOB-082.3).
+
+    Когда завязан (флаг ``coder.dev_dm`` ON), use-case делегирует сюда ВЕСЬ поток
+    execute-событий: адаптер (:class:`~bob.coding.adapters.live_stream._DmLiveStreamer`)
+    рендерит каждое сырое событие через :func:`~bob.coding.stream_render.render_stream_event`
+    (не lossy ``narrate``) и льёт БЕЗ капа в ЛИЧКУ owner'а — прогрессивная «терминальная»
+    панель + отдельные сообщения. Групповой топик при этом получает только короткий
+    указатель (INV-5: firehose не флудит группу). Незавязан (``None``) → use-case идёт
+    прежним путём: капнутый групповой нарратив ``narrate`` (поведение без флага не меняется).
+
+    Порт transport-free: use-case не знает про DM chat_id / edit_message_text — только
+    вызывает :meth:`stream`; выбор цели/рендера делает композиция (wiring).
+    """
+
+    async def stream(
+        self,
+        events: AsyncIterator[Mapping[str, object]],
+        *,
+        is_cancelled: Callable[[], bool],
+    ) -> None:
+        """Пролить сырые события прогона в dev-канал (пока ``is_cancelled()`` ложно)."""
+        ...
+
+
 class CodingContext(Protocol):
     """Сейм лёгкого арх-контекст-префикса для claude-промпта (BOB-046 .3).
 
@@ -208,6 +234,7 @@ class CodingAssistant:
         status_panel: StatusPanel | None = None,
         context: CodingContext | None = None,
         recorder: SelfActionRecorder | None = None,
+        live_streamer: LiveRunStreamer | None = None,
     ) -> None:
         self._runner = runner
         self._worktree = worktree
@@ -231,6 +258,11 @@ class CodingAssistant:
         # privacy-safe project-context block to the claude prompt; unwired (``None``) →
         # the prompt is unchanged, so the flow never depends on the context being present.
         self._context = context
+        # DM live-stream (BOB-082.3): when wired (flag ``coder.dev_dm`` ON) the raw,
+        # UNCAPPED execute stream is rendered into the owner's private dev-channel and the
+        # group topic gets only a brief pointer (INV-5). Unwired (``None``, the default) →
+        # the run is narrated to the group capped exactly as before (zero behaviour change).
+        self._live_streamer = live_streamer
         # Per-session cancel flags: a concurrent ``stop`` adds the session id, and the
         # narrate loop breaks at the next event (closing the runner → killing the proc).
         self._cancelled: set[str] = set()
@@ -421,7 +453,51 @@ class CodingAssistant:
     async def _narrate_run(
         self, session: CodingSession, path: str, sender: int | None
     ) -> None:
-        """Run execute-mode, narrating each non-noise event — capped against flooding.
+        """Run execute-mode, streaming its events to the owner (DM live or capped group).
+
+        Two mutually-exclusive shapes, chosen by whether a live streamer is wired:
+
+        * **DM live-stream (BOB-082.3, flag ``coder.dev_dm`` ON):** the group topic gets
+          ONE brief pointer and the raw, UNCAPPED stream renders into the owner's private
+          dev-channel through the injected :class:`LiveRunStreamer` (INV-5: the firehose
+          never floods the group).
+        * **Capped group narration (default):** each non-noise event is narrated to the
+          group capped at ``_MAX_NARRATION`` — behaviour unchanged when the flag is off.
+        """
+        prompt = _with_preamble(
+            await self._preamble(session.task), _execute_prompt(session.task)
+        )
+        async with aclosing(
+            _closeable(self._runner.run(path, prompt, mode=self._execute_mode))
+        ) as stream:
+            if self._live_streamer is not None:
+                await self._stream_to_dev_channel(session, stream)
+            else:
+                await self._narrate_capped(session, stream, sender)
+
+    async def _stream_to_dev_channel(
+        self, session: CodingSession, stream: AsyncIterator[Mapping[str, object]]
+    ) -> None:
+        """Post a one-line group pointer, then hand the raw stream to the DM live-streamer.
+
+        The group topic sees ONLY the pointer (INV-5); the full, uncapped firehose renders
+        into the owner's private dev-channel via the wired :class:`LiveRunStreamer`. A
+        concurrent ``stop`` is honoured through the ``is_cancelled`` predicate the streamer
+        polls (it breaks → the runner is closed → the ``claude`` process is killed).
+        """
+        await self._notifier.send(session_voice.dev_pointer())
+        assert self._live_streamer is not None  # narrowed by the caller
+        await self._live_streamer.stream(
+            stream, is_cancelled=lambda: session.id in self._cancelled
+        )
+
+    async def _narrate_capped(
+        self,
+        session: CodingSession,
+        stream: AsyncIterator[Mapping[str, object]],
+        sender: int | None,
+    ) -> None:
+        """Narrate each non-noise event to the group, capped against flooding (BOB-076).
 
         🔴 SAFETY (BOB-076): interim PROGRESS narration is capped at ``_MAX_NARRATION``
         lines per run. Once the cap is hit Bob sends ONE "…продолжаю" notice and stays
@@ -429,36 +505,30 @@ class CodingAssistant:
         error must reach the owner), so the cap only throttles the per-file flood, never
         the result. A plain counter — it does not touch the stop/cancel break.
         """
-        prompt = _with_preamble(
-            await self._preamble(session.task), _execute_prompt(session.task)
-        )
         progress = 0
         capped = False
-        async with aclosing(
-            _closeable(self._runner.run(path, prompt, mode=self._execute_mode))
-        ) as stream:
-            async for event in stream:
-                if session.id in self._cancelled:
-                    break
-                line = narrate(event)
-                if line is None:
-                    continue
-                if _is_result_event(event):  # the final outcome ALWAYS reaches the owner
-                    await self._notifier.send(line)
-                    continue
-                if capped:  # past the cap: swallow interim progress until the result
-                    continue
-                if progress >= _MAX_NARRATION:  # cap hit: one notice, then go quiet
-                    await self._notifier.send(session_voice.narration_capped())
-                    # Autobiographical trace of the flood (BOB-076): recorded EXACTLY ONCE
-                    # per run — right here where the cap trips, not per narration line.
-                    await self._record(
-                        SelfAction(SelfActionKind.CODING_RUNAWAY, target=session.task), sender
-                    )
-                    capped = True
-                    continue
+        async for event in stream:
+            if session.id in self._cancelled:
+                break
+            line = narrate(event)
+            if line is None:
+                continue
+            if _is_result_event(event):  # the final outcome ALWAYS reaches the owner
                 await self._notifier.send(line)
-                progress += 1
+                continue
+            if capped:  # past the cap: swallow interim progress until the result
+                continue
+            if progress >= _MAX_NARRATION:  # cap hit: one notice, then go quiet
+                await self._notifier.send(session_voice.narration_capped())
+                # Autobiographical trace of the flood (BOB-076): recorded EXACTLY ONCE
+                # per run — right here where the cap trips, not per narration line.
+                await self._record(
+                    SelfAction(SelfActionKind.CODING_RUNAWAY, target=session.task), sender
+                )
+                capped = True
+                continue
+            await self._notifier.send(line)
+            progress += 1
 
     async def _preamble(self, task: str) -> str:
         """Build the architectural-context preamble for ``task`` (BOB-046 .3).
