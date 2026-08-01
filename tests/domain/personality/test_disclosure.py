@@ -104,3 +104,53 @@ def test_filter_surfaceable_keeps_legacy_and_public_for_a_guest() -> None:
 
 def test_filter_surfaceable_on_empty_is_empty() -> None:
     assert filter_surfaceable([], Trust.GUEST) == ()
+
+
+# --- owner_consented override — per-turn disclosure by owner consent (BOB-082 .4) ---
+# The owner, in a GROUP, may authorise Bob to voice a previously-private memory into the
+# room for THIS turn only. The override lifts the owner_private guard; default False =
+# today's behaviour, byte-identical (the two pure predicates keep their old 2-arg meaning).
+
+
+def test_owner_consent_lets_owner_private_surface_to_a_guest_audience() -> None:
+    # S5: the owner consented this turn — owner_private may surface to the group audience
+    # (guarded as a GUEST) for this one turn.
+    assert may_surface(VISIBILITY_OWNER_PRIVATE, Trust.GUEST, owner_consented=True) is True
+
+
+def test_without_owner_consent_owner_private_stays_withheld_from_a_guest() -> None:
+    # S4 default: no consent → the guard is unchanged (byte-identical to the 2-arg call).
+    assert may_surface(VISIBILITY_OWNER_PRIVATE, Trust.GUEST, owner_consented=False) is False
+    assert may_surface(VISIBILITY_OWNER_PRIVATE, Trust.GUEST) is False
+
+
+def test_owner_consent_default_is_false_and_byte_identical() -> None:
+    # The added keyword defaults to False, so every existing call is unchanged.
+    for visibility in (VISIBILITY_PUBLIC, VISIBILITY_OWNER_PRIVATE, None, "weird"):
+        for trust in (Trust.TRUSTED, Trust.GUEST):
+            assert may_surface(visibility, trust) == may_surface(
+                visibility, trust, owner_consented=False
+            )
+
+
+def test_owner_consent_does_not_change_public_or_trusted() -> None:
+    # The override only ever WIDENS: public still surfaces, a TRUSTED audience still sees all.
+    assert may_surface(VISIBILITY_PUBLIC, Trust.GUEST, owner_consented=True) is True
+    assert may_surface(VISIBILITY_OWNER_PRIVATE, Trust.TRUSTED, owner_consented=True) is True
+
+
+def test_filter_surfaceable_with_owner_consent_passes_owner_private_to_a_guest() -> None:
+    items = [_PRIVATE_ITEM, _PUBLIC_ITEM, _LEGACY_ITEM]
+
+    kept = filter_surfaceable(items, Trust.GUEST, owner_consented=True)
+
+    # With consent every item passes — the owner authorised voicing the private one.
+    assert kept == tuple(items)
+
+
+def test_filter_surfaceable_without_owner_consent_is_byte_identical() -> None:
+    items = [_PRIVATE_ITEM, _PUBLIC_ITEM, _LEGACY_ITEM]
+
+    assert filter_surfaceable(items, Trust.GUEST, owner_consented=False) == filter_surfaceable(
+        items, Trust.GUEST
+    )

@@ -168,6 +168,7 @@ from bob.runtime.wiring import (
     _resolve_seed,
     build_batch_room_reader,
     build_catch_up_reentry,
+    build_disclosure_consent_gate,
     build_disclosure_guard,
     build_endorsement_seeder,
     build_rhythm_wiring,
@@ -653,6 +654,11 @@ def build_application(
         merged, owner_id=_int(telegram_section, "owner_id", 0) or None
     )
     disclosure_guard = build_disclosure_guard(merged, router=router)
+    # Owner-consent disclosure override (BOB-082 .4): behind ``coder.dev_dm`` (default off →
+    # None → the group audience-guard is inert and recall is byte-identical). On → the owner
+    # can, by explicit consent in a group, authorise voicing previously-private content into
+    # the room for that one turn (privacy by default, not a prison).
+    disclosure_consent = build_disclosure_consent_gate(merged, router=router)
 
     handle_message = HandleMessage(
         router=router,
@@ -883,6 +889,7 @@ def build_application(
         # tone + appetite BY VALUE. None unless ``presence.room_mood`` → byte-identical when off.
         endorsement_seeder=endorsement_seeder,
         disclosure_guard=disclosure_guard,
+        disclosure_consent=disclosure_consent,
         room_mood_modulator=room_mood_modulator,
         # Staleness врезка consumption (BOB-066 Срез W.3): rereads what landed during generation
         # and drops a now-redundant draft to a like. None unless ``presence.staleness`` →

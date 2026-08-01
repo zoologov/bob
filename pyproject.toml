@@ -128,6 +128,13 @@ ignore = [
 # docstring + comments ("обида", "отходит", "тёплые сообщения") whose Cyrillic
 # look-alikes are intentional — RUF002/RUF003 do not apply to these.
 "src/bob/social/sulk.py" = ["RUF002", "RUF003"]
+# The disclosure-consent module (BOB-082 .4) carries a Russian model-facing prompt with
+# example consent asks ("расскажи ребятам…", "поделись с группой…") + Russian docstrings
+# whose Cyrillic look-alikes are intentional (Qwen reads them natively) — RUF001/2/3 do not apply.
+"src/bob/social/disclosure_consent.py" = ["RUF001", "RUF002", "RUF003"]
+# The disclosure-consent gate (BOB-082 .4) carries Russian policy docstrings whose Cyrillic
+# look-alikes are intentional — RUF001/RUF002/RUF003 do not apply to these literals.
+"src/bob/application/usecases/disclosure_consent_gate.py" = ["RUF001", "RUF002", "RUF003"]
 # The addressivity module (BOB-023) carries Russian persona/policy terms in its
 # docstring + comments ("обращение", "вклиниться", "в воздух") and short Russian
 # name-address literals whose Cyrillic look-alikes are intentional (the heuristic
@@ -350,6 +357,10 @@ ignore = [
     "RUF002",
     "RUF003",
 ]
+# The disclosure-consent tests (BOB-082 .4) assert on Russian consent asks + prompt example
+# text whose Cyrillic look-alikes are intentional (→ RUF001/2/3).
+"tests/domain/social/test_disclosure_consent.py" = ["RUF001", "RUF002", "RUF003"]
+"tests/application/usecases/test_disclosure_consent_gate.py" = ["RUF001", "RUF002", "RUF003"]
 # The EQ live-врезка WIRING steps (BOB-066 W.4) drive the endorsement/disclosure builders on
 # Russian vouch/owner_data literals whose Cyrillic look-alikes are intentional (→ RUF001/2/3).
 "tests/acceptance/steps/test_eq_live_wiring.py" = [

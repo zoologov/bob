@@ -9,7 +9,7 @@
 | 1 | bob-pdo.1 | dev — КАНАЛ+SCOPE (chat_type сигнал + scope по месту) | ⏳ ready |
 | 2 | bob-pdo.2 | dev — AUTHZ owner-DM | ⛔ blocked(.1) |
 | 3 | bob-pdo.3 | dev — ЛАЙВ-СТРИМ в личку + флаг | ✅ dev-done (in_progress, ждёт coordinator) |
-| 4 | bob-pdo.4 | dev — КОНСЕНТ-РАСКРЫТИЕ | ⛔ blocked(.3) |
+| 4 | bob-pdo.4 | dev — КОНСЕНТ-РАСКРЫТИЕ | ✅ dev-done (in_progress, ждёт coordinator) |
 | 5 | bob-pdo.5 | test — unit+BDD+mutation | ⛔ blocked(.4) |
 | 6 | bob-pdo.6 | review — SECURITY+PRIVACY | ⛔ blocked(.5) |
 | 7 | bob-pdo.7 | tech-writer — docs | ⛔ blocked(.6) |
@@ -24,3 +24,9 @@ dev-канал. 🔴 Feasibility: бот пишет в DM (owner нажал Star
 
 ## Прогресс
 - 2026-08-01: PRD/RFC/CONTEXT/PLAN approved; беады созданы (parent bob-pdo); ветка features/BOB-082.
+- 2026-08-01: .4 dev-done — owner-consent disclosure override. Чистое ядро may_surface/filter_surfaceable
+  +owner_consented (дефолт byte-identical); Tier-0 семант. консент-детектор (social/disclosure_consent +
+  adapter + TaskType DISCLOSURE_CONSENT local); DisclosureConsentGate (только OWNER+GROUP, best-effort→нет
+  согласия); _recall_surfaceable→_surface_audience (в группе surface как GUEST, лифт по консенту; DM/off →
+  byte-identical); wiring за coder.dev_dm (OFF→инертно). 24 теста, pytest 4641 green, ruff/mypy/lint --strict чисто.
+  Доки (SPEC/README/architecture) → tech-writer .7. Консервативно: неуверен/сбой/off → НЕ раскрывать.

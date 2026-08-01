@@ -52,7 +52,9 @@ VISIBILITY_PUBLIC = "public"
 VISIBILITY_OWNER_PRIVATE = "owner_private"
 
 
-def may_surface(visibility: str | None, trust: Trust) -> bool:
+def may_surface(
+    visibility: str | None, trust: Trust, *, owner_consented: bool = False
+) -> bool:
     """Whether a memory of this ``visibility`` may surface INITIATIVELY to ``trust`` — pure.
 
     A TRUSTED interlocutor (the owner or a known peer) always sees the memory, so
@@ -60,9 +62,16 @@ def may_surface(visibility: str | None, trust: Trust) -> bool:
     ``owner_private`` item is withheld; ``public`` — and, defensively, a legacy ``NULL``
     or any UNRECOGNISED value — surfaces (``NULL`` = public keeps BOB-051 memory intact,
     and an unknown tag is never allowed to silently hide public memory). The
-    ``owner_private`` match is case-insensitive. Deterministic: same inputs → same verdict.
+    ``owner_private`` match is case-insensitive.
+
+    ``owner_consented`` (BOB-082 .4) is the per-turn OWNER-consent override: when the owner
+    has, in THIS turn, authorised Bob to voice previously-private content into the room, an
+    ``owner_private`` item is permitted to pass even to a GUEST-guarded (group) audience —
+    a one-time disclosure, never a reclassification of the stored memory. It only ever
+    WIDENS (public and TRUSTED are unaffected); its default ``False`` keeps every existing
+    call byte-identical. Deterministic: same inputs → same verdict.
     """
-    if trust is Trust.TRUSTED:
+    if trust is Trust.TRUSTED or owner_consented:
         return True
     normalised = (visibility or "").strip().casefold()
     return normalised != VISIBILITY_OWNER_PRIVATE
@@ -80,7 +89,10 @@ def visibility_for_scope(*, is_group: bool | None) -> str:
 
 
 def filter_surfaceable(
-    recalled: Sequence[Mapping[str, object]], trust: Trust
+    recalled: Sequence[Mapping[str, object]],
+    trust: Trust,
+    *,
+    owner_consented: bool = False,
 ) -> tuple[Mapping[str, object], ...]:
     """Drop owner-private recalled memories that may not surface to ``trust`` — pure.
 
@@ -89,10 +101,17 @@ def filter_surfaceable(
     memory :func:`may_surface` allows for this interlocutor's ``trust``, reading each
     item's ``visibility`` field. For a TRUSTED interlocutor every item passes, so the
     result is byte-identical to the input (INV-7 — owner recall unchanged); for a GUEST
-    only ``owner_private`` items are withheld. Deterministic and order-preserving.
+    only ``owner_private`` items are withheld.
+
+    ``owner_consented`` (BOB-082 .4) threads the per-turn OWNER-consent override into the
+    filter: when ``True`` the withheld ``owner_private`` items are also let through for
+    THIS turn (a one-time disclosure the owner authorised). Default ``False`` = the
+    behaviour as before, byte-identical. Deterministic and order-preserving.
     """
     return tuple(
-        item for item in recalled if may_surface(_visibility_of(item), trust)
+        item
+        for item in recalled
+        if may_surface(_visibility_of(item), trust, owner_consented=owner_consented)
     )
 
 
