@@ -19,6 +19,18 @@ from bob.capabilities.introspection.code_history import (
     feature_doc_dir,
     parse_bead_refs,
 )
+from bob.capabilities.introspection.dev_query import (
+    clamp_commit_count,
+    normalize_status,
+    validate_bead_id,
+)
 from bob.capabilities.introspection.privacy_guard import PrivacyGuard
 
-__all__ = ["PrivacyGuard", "feature_doc_dir", "parse_bead_refs"]
+__all__ = [
+    "PrivacyGuard",
+    "clamp_commit_count",
+    "feature_doc_dir",
+    "normalize_status",
+    "parse_bead_refs",
+    "validate_bead_id",
+]

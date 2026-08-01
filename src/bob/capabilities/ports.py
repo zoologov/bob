@@ -347,6 +347,43 @@ class RepoIntrospector(Protocol):
         """
         ...
 
+    async def recent_commits(self, count: int) -> str:
+        """Return the last ``count`` commits repo-wide (read-only git log, BOB-081).
+
+        ``count`` is clamped into a bounded range by the implementation so history is
+        never unbounded; the git invocation is a FIXED ``log --oneline -n <N>`` form
+        with no path and no ``--grep``. Output is sanitised and truncated like the
+        other reads.
+        """
+        ...
+
+    async def task_comments(self, bead_id: str) -> str:
+        """Return the tracker comments/checkpoints for ``bead_id`` (``bd comments``).
+
+        The id is validated to a strict bead-key shape before it reaches the
+        subprocess — a flag or an injection-shaped value is refused (never executed).
+        Read-only: the implementation never writes to the tracker.
+        """
+        ...
+
+    async def show_task(self, bead_id: str) -> str:
+        """Return the details of ``bead_id`` (``bd show <id>``, read-only).
+
+        The id is validated to a strict bead-key shape before exec, so a
+        flag/injection value is refused (never executed).
+        """
+        ...
+
+    async def tasks_by_status(self, status: str | None) -> str:
+        """List tracker tasks, optionally filtered by ``status`` (``bd list``).
+
+        ``status`` is normalised to the stored-status enum (accepting a Russian
+        synonym); an unknown or ``None`` status yields the unfiltered list rather than
+        a guessed filter. The resulting ``--status`` value is always an allowlisted
+        enum. Read-only; output is sanitised and truncated.
+        """
+        ...
+
 
 @runtime_checkable
 class DiagramRenderer(Protocol):
