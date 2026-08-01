@@ -78,7 +78,8 @@ src/bob/social/
   __init__.py         # layer=domain          — фасад модуля
   interlocutor.py     # layer=domain          — Interlocutor (+ gender) + classify (owner/known/guest/bot + trust), BOB-019/BOB-078 A
   gender.py           # layer=domain          — Gender/GenderRead + detect_self_gender: грамматический род по САМО-презентации (не по имени), накопление ≥2 сигналов, BOB-078 A
-  first_impression.py # layer=domain          — FirstImpression + impression_note_for (лёгкая заметка на нового), BOB-019
+  first_impression.py # layer=domain          — FirstImpression (+ display_name) + impression_note_for (лёгкая заметка на нового), BOB-019/BOB-080
+  roster.py           # layer=domain          — RosterMember/is_newcomer/build_roster: ростер комнаты, новизна по времени (припоминание состава), BOB-080
   relationship.py     # layer=domain          — Relationship (4 оси) + apply_interaction (шаг за ход), BOB-014
   sulk.py             # layer=domain          — SulkState + observe_relationship/recover (обида на person, person-agnostic, анти-Exodus), BOB-014.2b/BOB-066.2.5
   disclosure.py       # layer=domain          — такт разглашения: may_surface/visibility_for_scope/filter_surfaceable (initiative-surfacing фильтр provenance), BOB-066.2.6
@@ -97,12 +98,13 @@ src/bob/social/
     first_impression_sources.py —              — FirstImpressionTracker: live-шов первого впечатления
     relationship_sources.py —                  — RelationshipTracker: live-шов отношения (current/record_interaction)
     sulk_sources.py       —                    — SulkTracker: per-person live-шов обиды (current_for/observe(sender_id)/active_targets/recover) + GroupSilentAnnouncer (scope-aware announce), BOB-066.2.5
-    social_context.py     —                    — SocialContext: per-person чтение хода (собеседник/впечатление/отношение/обида/стойка/тон), коллаборатор handle_message (BOB-062.6b)
+    social_context.py     —                    — SocialContext: per-person чтение хода (собеседник/впечатление/отношение/обида/стойка/тон/ростер), коллаборатор handle_message (BOB-062.6b/BOB-080)
+    roster_recall.py      —                    — RosterRecall: ambient-окно ростера (пусто без свежих новичков) + приватность OWNER/KNOWN + best-effort, BOB-080
     run_genesis.py        —                    — RunGenesis: первое пробуждение, генерация уникальной личности
   adapters/           # layer=infrastructure
     allowlist_store.py     —                   — KvAllowlistStore (allowlist в kv-таблице)
     soul_store.py          —                   — SoulStore (файловый reader/writer data/soul/)
-    first_impression_store.py —                — SqliteFirstImpressionStore (INSERT … ON CONFLICT DO NOTHING)
+    first_impression_store.py —                — SqliteFirstImpressionStore (INSERT … ON CONFLICT DO NOTHING; recent(limit) recency-запрос + display_name, BOB-080)
     relationship_store.py  —                   — SqliteRelationshipStore (UPSERT в person_relationship)
     sulk_store.py          —                   — SqliteSulkStore (legacy per-persona sulk_state — источник owner-backfill)
     person_sulk_store.py   —                   — SqlitePersonSulkStore (per-(persona,sender) UPSERT в person_sulk + backfill_owner), BOB-066.2.5
@@ -122,7 +124,9 @@ schema-таблицы (`first_impression`, `person_relationship`, `sulk_state`, 
 (REAL, nullable, само-идентифицированный род-lean, BOB-078 A) добавлена guarded-ALTER'ом
 `SqliteConnection._migrate_person_relationship_gender` (`CREATE TABLE IF NOT EXISTS` не
 трогает уже существующую таблицу, поэтому колонку добавляет `ALTER` только когда её нет —
-аддитивно и неразрушающе; legacy-строка берёт NULL = UNKNOWN).
+аддитивно и неразрушающе; legacy-строка берёт NULL = UNKNOWN). Колонка
+`first_impression.display_name` (nullable, имя участника для ростера, BOB-080) добавлена тем
+же guarded-ALTER-приёмом; legacy-строка (NULL) берёт имя парсингом из `note`.
 
 **ОСТАЁТСЯ вне social:** `privileged_fulfiller.py` (application-оркестратор, решение 3);
 `ports/personality.py` (MessageReactor / ReflectionReader / Fascination / ZoneClassifier
@@ -189,6 +193,31 @@ owner'а, и любого гостя — обида ключуется по `(pe
 память, ни soul — Боб «отходит», а не «уходит». `recover` — ГАРАНТИРОВАННЫЙ выход одним
 лишь временем (даже при нулевом warmth блокировки навсегда нет; тёплые ходы ускоряют
 выздоровление).
+
+### Ростер комнаты — припоминание состава (`roster.py`, BOB-080)
+
+Живой баг: на открытый вопрос «как тебе новые ребята в чате?» Боб молчал, пока имена не
+назвали вслух — recall у него чисто лексический (FTS по тексту хода), и «новые ребята» не
+матчило «Лиля»/«Паша», хотя оба уже лежали в `first_impression` с именем и `first_seen_at`.
+🔴 Корень: у Боба не было **ростера** — retrieval-пути «перечисли недавно встреченных» (все
+запросы к person-таблицам были точечные `WHERE sender_id=?`).
+
+`roster.py` (чистый домен, I/O-free) вводит `RosterMember` (`sender_id`, `name`,
+`first_seen_at`, `is_newcomer`), `is_newcomer(first_seen, now, newcomer_days)` — новизна
+**строго по времени** (не по authz-kind/трасту/имени, INV-3) — и `build_roster(...)`
+(исключает владельца/самого Боба, сортирует по `first_seen_at` DESC, кап `limit`, отмечает
+новичков; имя — из новой колонки `first_impression.display_name`, для legacy-строк парсится из
+`note`). Данные читает первый в коде **recency-запрос** `FirstImpressionStore.recent(limit)`
+(`ORDER BY first_seen_at DESC`).
+
+Surfacing — **ambient-осознание с окном**, НЕ keyword-детектор (north star: без скриптовости):
+usecase `RosterRecall.recent_roster(now, viewer)` отдаёт ростер, ТОЛЬКО пока есть хоть один
+свежий новичок (INV-4, не флуд) и ТОЛЬКО зрителю `OWNER`/`KNOWN` (гостю не выдаётся перечень
+всех), best-effort (ошибка чтения → пустой ростер, ход не падает). Мульти-персонная
+`roster_directive` (`personality/voice.py`) под рамкой «недавно зашли» называет **только**
+`is_newcomer`-участников (старожилы не мислейблятся) с указанием «называй по поводу, не
+притягивай». За флагом `social.roster` (+ `social.roster_newcomer_days`/`roster_limit`);
+OFF → ростер пуст (ноль изменений поведения).
 
 ### Такт разглашения (`disclosure.py`, BOB-066.2.6)
 
