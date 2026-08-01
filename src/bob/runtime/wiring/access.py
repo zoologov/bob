@@ -34,13 +34,17 @@ def _build_authorizer(
 
     ``owner_id`` and ``allowed_chat_ids`` come from the ``telegram`` config; the
     dynamic allowlist is persisted in the kv store so ``/authorize`` survives a
-    restart.
+    restart. ``owner_dm_chat_id`` authorizes the owner's own private DM and
+    defaults to ``owner_id`` (a 1:1 chat's id equals the user's id), so no config
+    change is needed.
     """
     telegram = _section(config, "telegram")
+    owner_id = _int(telegram, "owner_id", 0)
     return Authorizer(
-        owner_id=_int(telegram, "owner_id", 0),
+        owner_id=owner_id,
         allowed_chat_ids=_int_list(telegram, "allowed_chat_ids"),
         store=KvAllowlistStore(repo),
+        owner_dm_chat_id=_int(telegram, "owner_dm_chat_id", owner_id),
     )
 
 

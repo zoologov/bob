@@ -12,9 +12,11 @@ Bob is private: only the **owner** and **allowlisted** users, and only inside th
 **allowed chats**, may interact. Everyone else is silently ignored at the single
 gateway gate. This module is the decision rule, with no transport or SQL:
 
-* ``is_authorized(user_id, chat_id)`` — owner is allowed only inside an allowed
-  chat (chat-scope binds even the owner, so a leaked token in a foreign chat is
-  dead); any other user must be on the allowlist AND inside an allowed chat.
+* ``is_authorized(user_id, chat_id)`` — owner is allowed inside an allowed chat
+  (chat-scope binds even the owner, so a leaked token in a foreign chat is dead)
+  and, as an owner-only special case, inside their own private DM
+  (``chat_id == owner_dm_chat_id``, defaulting to ``owner_id``); any other user
+  must be on the allowlist AND inside an allowed chat.
 * ``authorize`` / ``deauthorize`` — mutate the runtime allowlist and persist it
   through the injected :class:`bob.social.ports.AllowlistStore` so ``/authorize``
   survives a restart.
@@ -43,9 +45,15 @@ class Authorizer:
         owner_id: int,
         allowed_chat_ids: Iterable[int],
         store: AllowlistStore,
+        owner_dm_chat_id: int | None = None,
     ) -> None:
         self._owner_id = owner_id
         self._allowed_chat_ids = frozenset(allowed_chat_ids)
+        # The owner's private 1:1 DM: its ``chat.id`` equals the owner's user id,
+        # so it defaults to ``owner_id`` and never needs configuring.
+        self._owner_dm_chat_id = (
+            owner_id if owner_dm_chat_id is None else owner_dm_chat_id
+        )
         self._store = store
 
     def is_owner(self, user_id: int | None) -> bool:
@@ -55,12 +63,22 @@ class Authorizer:
     async def is_authorized(self, *, user_id: int | None, chat_id: int) -> bool:
         """Decide whether ``user_id`` may interact from ``chat_id``.
 
-        Chat-scope is checked first: a message from a chat outside
+        The owner's own private DM is authorized as an owner-only special case:
+        a 1:1 chat has ``chat.id == the user's id``, so requiring BOTH
+        ``user_id == owner_id`` AND ``chat_id == owner_dm_chat_id`` admits only
+        the owner's own DM — a guest cannot forge it (their chat_id is their own
+        user id, not the owner's). This does NOT widen the group allowlist.
+
+        Otherwise chat-scope binds: a message from a chat outside
         ``allowed_chat_ids`` is rejected for everyone, owner included. Inside an
         allowed chat, the owner is always allowed; any other user must be on the
         persisted allowlist.
         """
-        if user_id is None or chat_id not in self._allowed_chat_ids:
+        if user_id is None:
+            return False
+        if user_id == self._owner_id and chat_id == self._owner_dm_chat_id:
+            return True
+        if chat_id not in self._allowed_chat_ids:
             return False
         if user_id == self._owner_id:
             return True
