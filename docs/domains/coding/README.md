@@ -30,14 +30,18 @@ src/bob/coding/
   narrate.py          # layer=domain   — stream-json событие Claude Code → нарратив-строка / None (сжато, для группы)
   stream_render.py    # layer=domain   — render_stream_event: сырое событие → live-строка (полный стрим в личку, BOB-082)
   intent.py           # layer=domain   — is_approval / is_stop (чистые предикаты NL-команд)
+  interactive_intent.py # layer=domain — parse_interactive_entry (/code -i)/is_interactive_exit (BOB-083, чистые предикаты)
   session_voice.py    # layer=domain   — детерминированные шаблоны реплик в персоне Боба
   usecases/           # layer=application
     coding_assistant.py       — CodingAssistant (оркестратор гейтед-сессии)
     coding_context.py         — make_coding_context (арх-преамбула в claude-промпт)
     classify_coding_intent.py — ClassifyCodingIntent (Tier-0 классификатор «это dev-запрос?»)
     coding_intent_router.py   — CodingIntentRouter (NL-маршрутизация к гейтед-сессии)
+    interactive_session.py    — InteractiveSession (менеджер живой интерактив-сессии, БЕЗ PR-opener, BOB-083)
+    interactive_intake.py     — InteractiveIntakeRouter (вход/steer→stdin/выход в личке, owner+DM, BOB-083)
   adapters/           # layer=infrastructure
-    claude_runner.py    — SubprocessClaudeRunner (headless claude через subprocess, без shell)
+    claude_runner.py    — SubprocessClaudeRunner (headless claude через subprocess, без shell; one-shot)
+    interactive_runner.py — InteractiveClaudeRunner (персистентный claude с ОТКРЫТЫМ stdin, двусторонний, BOB-083)
     git_worktree.py     — GitWorktree (изолированный worktree только на трекнутых файлах)
     gh_pr.py            — GhPullRequestOpener (gh pr create; НИКОГДА merge)
     session_store.py    — SqliteCodingSessionStore (персист сессий через рестарт)
@@ -87,6 +91,21 @@ lossy `narrate`) → `_DmLiveStreamer` (адаптер в DM `chat_id`, progress
 короткий указатель `session_voice.dev_pointer()`. Маршрутизация — на **wiring** (порт
 `LiveRunStreamer` держит use-case transport-free); стрим **односторонний** (без stdin —
 двойной гейт и worktree-изоляция не ослаблены); OFF → поведение байт-в-байт как раньше.
+
+🔴 **Интерактивный терминал: двусторонний (BOB-083, T3.C⁺, за флагом `coder.interactive`).**
+Надстройка над односторонним стримом: owner не только видит поток, но и **направляет claude в
+реальном времени**. `InteractiveClaudeRunner` (`adapters/interactive_runner.py`) держит
+**персистентный** процесс `claude -p --input-format stream-json --output-format stream-json` с
+**открытым stdin** (`open`/`feed`/`events`/`close`; kill — `terminate→grace→kill→reap`, идемпотентно);
+`encode_user_message` (чистое ядро) кодирует реплику owner'а в stream-json user-фрейм.
+`InteractiveSession` (`usecases/interactive_session.py`) — менеджер живой сессии: `open` (worktree +
+спавн + вывод в `_DmLiveStreamer`), `feed→stdin`, `stop→ПРЯМОЙ kill` + cleanup; **одна сессия за раз**.
+Вход `/code -i`/выход `stop` + steer-consume-гейт (`interactive_intake.py` → `handle_message`) —
+**owner-only, DM-only, за флагом**; режим не залипает (feed только пока сессия активна). 🔴 **Безопасность:**
+новое состояние `INTERACTIVE` имеет пустой `_PROGRESS` (никогда не доходит до `EXECUTING`); менеджер
+**структурно без PR-opener** — мерж/пуш в main НЕВОЗМОЖЕН; правки — в изолированном worktree `bob/<slug>`,
+в main только через существующий PR-гейт owner'а. Осознанное ослабление двойного гейта — ТОЛЬКО для
+правок-в-worktree под управлением owner'а.
 
 ### Адаптеры (infrastructure)
 
