@@ -857,6 +857,9 @@ ignore = [
 "tests/application/runtime/intake/test_dispatcher_stream_read.py" = ["S101", "ARG002", "RUF001", "RUF002", "RUF003"]
 "tests/acceptance/stream_read_harness.py" = ["RUF001", "RUF002", "RUF003", "ARG002"]
 "tests/acceptance/steps/test_stream_read.py" = ["S101", "RUF001", "RUF002", "RUF003"]
+# BOB-081.3: dev-introspection BDD steps — Russian Gherkin decorators + docstrings
+# (Cyrillic look-alikes are intentional) — RUF001/RUF002/RUF003 do not apply.
+"tests/acceptance/steps/test_dev_introspection.py" = ["S101", "RUF001", "RUF002", "RUF003"]
 "tests/domain/conversation/test_room_verdict_determinism.py" = ["S101", "ARG001", "PLR2004", "RUF001", "RUF002", "RUF003"]
 "tests/conversation/usecases/test_verify_step_forced_hedge.py" = ["S101", "ARG001", "ARG002", "PLR2004", "RUF001", "RUF002", "RUF003"]
 "tests/infrastructure/llm/test_room_reader.py" = ["S101", "ARG001", "ARG002", "PLR2004", "RUF001", "RUF002", "RUF003"]

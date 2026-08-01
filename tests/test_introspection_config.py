@@ -13,6 +13,7 @@ the whole knob set so the composition root reads it without re-introducing keys.
 from __future__ import annotations
 
 from bob.infrastructure.config.loader import ConfigLoader
+from bob.runtime.wiring.parameters import _build_dev_tools_enabled
 
 
 def _config() -> dict[str, object]:
@@ -40,3 +41,16 @@ def test_dev_tools_sub_flag_defaults_off() -> None:
     section = _config()["introspection"]
     assert isinstance(section, dict)
     assert section["dev_tools"] is False
+
+
+# --- 🔴 the registration gate helper (defense-in-depth, BOB-081.3) ------------
+
+
+def test_dev_tools_gate_off_by_default_and_on_config() -> None:
+    # The exact predicate the wiring uses to gate registering the 4 dev tools. OFF for
+    # a missing section, an empty section, or an explicit false; ON only for true —
+    # so a stray/absent flag can never accidentally expose the tools.
+    assert _build_dev_tools_enabled({}) is False
+    assert _build_dev_tools_enabled({"introspection": {}}) is False
+    assert _build_dev_tools_enabled({"introspection": {"dev_tools": False}}) is False
+    assert _build_dev_tools_enabled({"introspection": {"dev_tools": True}}) is True
