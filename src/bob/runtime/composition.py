@@ -172,6 +172,7 @@ from bob.runtime.wiring import (
     build_endorsement_seeder,
     build_rhythm_wiring,
     build_room_mood_modulator,
+    build_roster_config,
     build_self_action_recorder,
     build_staleness_reassessor,
     staleness_enabled,
@@ -188,6 +189,7 @@ from bob.social.adapters.soul_store import SoulStore
 from bob.social.usecases import ReactorPerception, SenderPerception
 from bob.social.usecases.first_impression_sources import FirstImpressionTracker
 from bob.social.usecases.relationship_sources import RelationshipTracker
+from bob.social.usecases.roster_recall import RosterRecall
 from bob.social.usecases.run_genesis import RunGenesis
 from bob.social.usecases.sulk_sources import SulkRecoveryStep, SulkTracker
 
@@ -539,6 +541,26 @@ def build_application(
         owner_sender_id=_int(telegram_section, "owner_id", 0) or None,
         announcer=multibot.guppi,
     )
+    # Roster seam (BOB-080): Bob recalls WHO lately turned up in the room and can NAME
+    # the recent joiners himself when the talk turns to who is around. Reads the recency
+    # of the accumulated first impressions (never writes); the ambient window (only while
+    # a fresh newcomer is present, INV-4) + the privacy gate (OWNER / KNOWN viewer) +
+    # best-effort resilience live in the use-case. Flag-gated: built ONLY when
+    # ``social.roster`` is on (off → None → the roster line is absent, byte-identical).
+    # The owner + Bob himself (lazily resolved off the multibot) are excluded — known,
+    # not newcomers.
+    roster_config = build_roster_config(merged)
+    roster_recall = (
+        RosterRecall(
+            store=first_impression_store,
+            newcomer_days=roster_config.newcomer_days,
+            limit=roster_config.limit,
+            owner_id=_int(telegram_section, "owner_id", 0),
+            bob_id_source=multibot.bob_user_id,
+        )
+        if roster_config.enabled
+        else None
+    )
 
     # Self-improvement apply + reflect-tick seams (BOB-028): assembled now that Bob's
     # gateway exists (the announcer voices a proposal into his topic). All pieces are None
@@ -694,6 +716,9 @@ def build_application(
         # person's grounded note is recorded after the turn. Per-PERSON data, safe even
         # for a guest (about the guest, never an owner-memory leak). Additive only.
         first_impression=first_impression_tracker,
+        # Roster seam (BOB-080): the recent-joiner roster Bob can NAME by the social
+        # occasion. None (the ``social.roster`` flag off) → no roster line, byte-identical.
+        roster=roster_recall,
         # Relationship seam (BOB-014): Bob's accrued per-person relationship colours
         # his tone (warmth) and willingness to compromise (warmth + compatibility) for
         # WHO is writing, then is updated after the turn from (stance, mood, sentiment)

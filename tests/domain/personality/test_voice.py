@@ -15,6 +15,8 @@ flavor — never a brittle full-string match (the prose is free to evolve).
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 import pytest
 
 from bob.personality.expression import EngagementLevel, Verbosity
@@ -34,6 +36,7 @@ from bob.personality.voice import (
     recalled_impression_directive,
     recalled_self_action_directive,
     relationship_tone_directive,
+    roster_directive,
     stranger_directive,
     sulk_directive,
     tactful_withhold_directive,
@@ -48,6 +51,7 @@ from bob.social.interlocutor import (
     InterlocutorKind,
     Trust,
 )
+from bob.social.roster import RosterMember
 
 
 def test_improvement_directive_empty_when_no_adjustments() -> None:
@@ -528,6 +532,46 @@ def test_recalled_impression_directive_signals_prior_contact() -> None:
 
 def test_recalled_impression_directive_is_voice_not_a_rule_list() -> None:
     line = recalled_impression_directive("впечатление")
+    assert "•" not in line
+    assert "- " not in line
+
+
+# --- BOB-080: multi-person roster directive -----------------------------------
+
+
+_ROSTER_NOW = datetime(2026, 8, 1, 9, 0, tzinfo=UTC)
+
+
+def _roster_member(name: str, *, is_newcomer: bool = True) -> RosterMember:
+    return RosterMember(
+        sender_id=abs(hash(name)) % 100_000,
+        name=name,
+        first_seen_at=_ROSTER_NOW,
+        is_newcomer=is_newcomer,
+    )
+
+
+def test_roster_directive_empty_roster_adds_no_line() -> None:
+    # BOB-080 INV-4: no recent joiners → no roster line (nothing to hold in mind).
+    assert roster_directive(()) == ""
+
+
+def test_roster_directive_names_the_recent_members() -> None:
+    # The recalled people are NAMED so Bob can call them out himself, by name.
+    line = roster_directive((_roster_member("Лиля"), _roster_member("Паша")))
+    assert "Лиля" in line
+    assert "Паша" in line
+
+
+def test_roster_directive_frames_naming_by_occasion_not_a_flood() -> None:
+    # INV-4 framing: name them BY the social occasion, never drag them in unprompted.
+    folded = roster_directive((_roster_member("Лиля"),)).casefold()
+    assert "по имени" in folded
+    assert "без повода" in folded
+
+
+def test_roster_directive_is_voice_not_a_rule_list() -> None:
+    line = roster_directive((_roster_member("Лиля"), _roster_member("Паша")))
     assert "•" not in line
     assert "- " not in line
 

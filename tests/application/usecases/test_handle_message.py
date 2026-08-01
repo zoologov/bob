@@ -104,6 +104,7 @@ from bob.social.interlocutor import (
 )
 from bob.social.permission.privilege import PrivilegeContext, PrivilegeNeed
 from bob.social.relationship import Relationship
+from bob.social.roster import RosterMember
 from bob.social.sulk import SulkState
 
 if TYPE_CHECKING:
@@ -641,6 +642,7 @@ def _build(
     surface_old_freq: float | None = None,
     perceive_sender: _FakeInterlocutorResolver | None = None,
     first_impression: _FakeFirstImpression | None = None,
+    roster: _FakeRoster | None = None,
     relationship: _FakeRelationship | None = None,
     sulk: _FakeSulk | None = None,
     engagement_state: EngagementState | None = None,
@@ -725,6 +727,7 @@ def _build(
         surface_old_freq=surface_old_freq if surface_old_freq is not None else 0.0,
         perceive_sender=perceive_sender,
         first_impression=first_impression,
+        roster=roster,
         relationship=relationship,
         sulk=sulk,
         engagement_state=engagement_state,
@@ -5604,6 +5607,73 @@ class _FakeFirstImpression:
 
     async def note_first_contact(self, interlocutor: Interlocutor) -> None:
         self.recorded.append(interlocutor)
+
+
+class _FakeRoster:
+    """In-memory RosterRecaller fake: returns a fixed roster + captures the viewers.
+
+    ``members`` is handed back verbatim for every viewer (the ambient window + privacy
+    gates live in the real RosterRecall use-case, tested directly); ``asked`` captures the
+    viewer each recall was asked for so a test can assert the seam was consulted.
+    """
+
+    def __init__(self, *, members: tuple[RosterMember, ...] = ()) -> None:
+        self._members = members
+        self.asked: list[object] = []
+
+    async def recent_roster(
+        self,
+        now: object,  # noqa: ARG002 — the fake ignores the clock instant
+        *,
+        viewer: object,
+    ) -> tuple[RosterMember, ...]:
+        self.asked.append(viewer)
+        return self._members
+
+
+def _roster_of(*names: str) -> tuple[RosterMember, ...]:
+    return tuple(
+        RosterMember(
+            sender_id=1000 + i,
+            name=name,
+            first_seen_at=_moment(),
+            is_newcomer=True,
+        )
+        for i, name in enumerate(names)
+    )
+
+
+async def test_roster_names_reach_the_prompt_when_recent_joiners_present() -> None:
+    # BOB-080: a non-empty roster (recent joiners) folds the recalled NAMES into the
+    # compose prompt so Bob can call them out himself when the talk turns to who's around.
+    resolver = _FakeInterlocutorResolver(
+        _interlocutor(name="Vova", kind=InterlocutorKind.OWNER)
+    )
+    roster = _FakeRoster(members=_roster_of("Лиля", "Паша"))
+    handler, _bot, _repo, tier1 = _build(
+        reply="ok", perceive_sender=resolver, roster=roster
+    )
+
+    await handler.handle(_message("расскажи подробно, кто у нас тут в чате появился"))
+
+    assert "Лиля" in tier1.all_text
+    assert "Паша" in tier1.all_text
+    assert roster.asked  # the roster seam was consulted for this turn
+
+
+async def test_empty_roster_adds_no_roster_line() -> None:
+    # No recent joiners → no roster line in the prompt (the default path is unchanged).
+    resolver = _FakeInterlocutorResolver(
+        _interlocutor(name="Vova", kind=InterlocutorKind.OWNER)
+    )
+    roster = _FakeRoster(members=())
+    handler, _bot, _repo, tier1 = _build(
+        reply="ok", perceive_sender=resolver, roster=roster
+    )
+
+    await handler.handle(_message("расскажи подробно, как у тебя дела сегодня"))
+
+    assert "Недавно к вам в чат зашли" not in tier1.all_text
 
 
 async def test_new_sender_first_contact_is_recorded_after_the_turn() -> None:
