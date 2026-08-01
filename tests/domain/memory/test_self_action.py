@@ -151,3 +151,107 @@ def test_tool_failure_without_detail() -> None:
         SelfAction(kind=SelfActionKind.TOOL_FAILURE, target="read_code")
     )
     assert rendered.content == "я попробовал read_code — не вышло"
+
+
+# --- Exact no-target phrasing for EVERY branch (mutation hardening) ------------
+# Each ``if target ... else`` arm hides a distinct RU literal; without an exact
+# assertion on the ELSE arm a mutmut mutation of that literal survives. These pin
+# the graceful target=None phrasing of every kind whose else-arm wasn't yet fixed.
+
+
+def test_coding_finished_without_target() -> None:
+    rendered = describe_self_action(SelfAction(kind=SelfActionKind.CODING_FINISHED))
+    assert rendered.content == "я доделал работу, открыл PR"
+
+
+def test_coding_aborted_without_target() -> None:
+    rendered = describe_self_action(SelfAction(kind=SelfActionKind.CODING_ABORTED))
+    assert rendered.content == "я прервал сессию — меня остановили"
+
+
+def test_coding_failed_without_target_without_detail() -> None:
+    rendered = describe_self_action(SelfAction(kind=SelfActionKind.CODING_FAILED))
+    assert rendered.content == "я не справился — сессия упала"
+
+
+def test_coding_failed_without_target_with_detail() -> None:
+    rendered = describe_self_action(
+        SelfAction(kind=SelfActionKind.CODING_FAILED, detail="таймаут")
+    )
+    assert rendered.content == "я не справился — сессия упала: таймаут"
+
+
+def test_coding_runaway_without_target() -> None:
+    rendered = describe_self_action(SelfAction(kind=SelfActionKind.CODING_RUNAWAY))
+    assert rendered.content == "я залип — флудил правками, пришлось себя осадить"
+    assert rendered.is_anomaly is True
+
+
+def test_tool_use_without_target() -> None:
+    rendered = describe_self_action(SelfAction(kind=SelfActionKind.TOOL_USE))
+    assert rendered.content == "я воспользовался инструментами"
+
+
+def test_tool_failure_without_target_without_detail() -> None:
+    rendered = describe_self_action(SelfAction(kind=SelfActionKind.TOOL_FAILURE))
+    assert rendered.content == "я попробовал воспользоваться инструментом — не вышло"
+
+
+def test_tool_failure_without_target_with_detail() -> None:
+    rendered = describe_self_action(
+        SelfAction(kind=SelfActionKind.TOOL_FAILURE, detail="нет сети")
+    )
+    assert rendered.content == "я попробовал воспользоваться инструментом — не вышло: нет сети"
+
+
+# --- Empty-string detail is treated as "no reason" (falsy) — boundary ---------
+# ``_detail_suffix`` guards on ``if detail``; an empty string must add NO suffix.
+# This pins the falsy boundary so a mutant flipping the guard to ``is not None``
+# (which would append ": ") is killed.
+
+
+def test_coding_failed_empty_detail_adds_no_suffix() -> None:
+    rendered = describe_self_action(
+        SelfAction(kind=SelfActionKind.CODING_FAILED, target="X", detail="")
+    )
+    assert rendered.content == "я не справился с «X» — сессия упала"
+
+
+def test_tool_failure_empty_detail_adds_no_suffix() -> None:
+    rendered = describe_self_action(
+        SelfAction(kind=SelfActionKind.TOOL_FAILURE, target="read_code", detail="")
+    )
+    assert rendered.content == "я попробовал read_code — не вышло"
+
+
+# --- Tool kinds carry the ``tools`` area tag, coding kinds the ``coding`` one --
+# ``_tags_for`` picks the area via ``_CODING_KINDS`` membership; pin BOTH literals
+# so a mutation of the area constant or the membership test is caught.
+
+
+def test_tool_kinds_carry_tools_area_tag() -> None:
+    for kind in (SelfActionKind.TOOL_USE, SelfActionKind.TOOL_FAILURE):
+        tags = describe_self_action(SelfAction(kind=kind, target="x")).tags
+        assert "tools" in tags
+        assert "coding" not in tags
+
+
+def test_coding_kinds_carry_coding_area_tag() -> None:
+    coding_kinds = [
+        SelfActionKind.CODING_STARTED,
+        SelfActionKind.CODING_FINISHED,
+        SelfActionKind.CODING_ABORTED,
+        SelfActionKind.CODING_FAILED,
+        SelfActionKind.CODING_RUNAWAY,
+    ]
+    for kind in coding_kinds:
+        tags = describe_self_action(SelfAction(kind=kind, target="x")).tags
+        assert "coding" in tags
+        assert "tools" not in tags
+
+
+def test_self_tag_leads_the_tag_tuple() -> None:
+    # The ``self`` tag is always first — it marks the memory as Bob's OWN deed.
+    for kind in SelfActionKind:
+        tags = describe_self_action(SelfAction(kind=kind, target="x")).tags
+        assert tags[0] == "self"

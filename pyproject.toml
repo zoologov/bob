@@ -395,6 +395,25 @@ ignore = [
     "RUF002",
     "RUF003",
 ]
+# The autobiographical-memory acceptance steps + harness (BOB-079) bind Russian .feature step
+# text + assert on Bob's first-person deed literals whose Cyrillic look-alikes are intentional
+# (→ RUF001/2/3).
+"tests/acceptance/steps/test_self_action_autobiography.py" = [
+    "S101",
+    "ARG001",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+"tests/acceptance/self_action_autobio_harness.py" = [
+    "S101",
+    "ARG001",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
 # The disclosure-guard tests (BOB-066 W.4) assert on Russian owner_data request literals whose
 # Cyrillic look-alikes are intentional (→ RUF001/2/3).
 "tests/application/usecases/test_disclosure_guard.py" = [
