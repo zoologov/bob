@@ -120,6 +120,7 @@ if TYPE_CHECKING:
     from aiogram.types import BufferedInputFile
 
     from bob.application.usecases.precompose_gate import (
+        InteractiveRouterLike,
         NaturalCodingRouter,
         PermissionFlowLike,
     )
@@ -670,6 +671,7 @@ def _build(
     photo_send_raises: bool = False,
     coding_router: NaturalCodingRouter | None = None,
     permission_flow: PermissionFlowLike | None = None,
+    interactive_router: InteractiveRouterLike | None = None,
     decide_response: DecideResponse | None = None,
     outage_notifier: _FakeOutageNotifier | None = None,
     retry_sleep: _RecordingSleep | None = None,
@@ -754,6 +756,7 @@ def _build(
         diagram_send_as=diagram_send_as,
         coding_router=coding_router,
         permission_flow=permission_flow,
+        interactive_router=interactive_router,
         decide_response=decide_response,
         outage_notifier=outage_notifier,
         retry_sleep=retry_sleep,
@@ -7580,6 +7583,107 @@ async def test_no_coding_router_leaves_the_natural_language_path_inert() -> None
     await handler.handle(_message("Боб, поправь баг в Z"))
 
     assert bot.final_text != ""  # normal chat reply committed (NL path inert)
+
+
+# --- BOB-083 .4: interactive-terminal intake gate (owner-only, DM-only) -----------
+
+
+class _FakeInteractiveRouter:
+    """Fake interactive-intake router: records the intake calls, consumes on demand.
+
+    ``consume`` is the verdict returned (whether the DM message drove the live session and
+    short-circuited the normal compose). ``calls`` records every ``(text, sender, is_owner,
+    is_group)`` so a test can assert exactly when HandleMessage delegated + with which
+    owner/channel signals (the owner-only + DM-only guard the router re-checks).
+    """
+
+    def __init__(self, *, consume: bool) -> None:
+        self._consume = consume
+        self.calls: list[tuple[str, int | None, bool, bool]] = []
+
+    async def route(
+        self, *, text: str, sender: int | None, is_owner: bool, is_group: bool
+    ) -> bool:
+        self.calls.append((text, sender, is_owner, is_group))
+        return self._consume
+
+
+def _dm_message(text: str) -> MessageReceived:
+    """An owner DM message (is_group=False) — the interactive terminal's only channel."""
+    return MessageReceived(
+        update_id=1,
+        chat_id=99,
+        message_id=10,
+        text=text,
+        sender_id=99,
+        sender_name="Vova",
+        is_group=False,
+    )
+
+
+async def test_owner_dm_interactive_message_is_routed_and_short_circuits_compose() -> None:
+    # An owner DM steered into the live session is consumed by the interactive router; the
+    # normal perceive→decide→act compose is skipped (no reply, no episode, no Tier-1 call).
+    router = _FakeInteractiveRouter(consume=True)
+    handler, bot, repo, tier1 = _build(
+        reply="should-not-be-sent",
+        perceive_sender=_owner_resolver(),
+        interactive_router=router,
+    )
+
+    await handler.handle(_dm_message("теперь добавь тест"))
+
+    assert router.calls == [("теперь добавь тест", 99, True, False)]  # owner + DM signals
+    assert bot.final_text == ""  # the normal reply path was short-circuited
+    assert repo.episodes == []  # no conversation episode for a steer/command turn
+    assert tier1.payloads == []  # no Tier 1 compose call
+
+
+async def test_owner_dm_falls_through_to_normal_bob_when_gate_inert() -> None:
+    # 🔴 Mode must not stick: with no active session the router does NOT consume, so the
+    # owner's DM returns to the normal Bob chat path and the reply is committed.
+    router = _FakeInteractiveRouter(consume=False)
+    handler, bot, _repo, _tier1 = _build(
+        reply="обычный ответ",
+        perceive_sender=_owner_resolver(),
+        interactive_router=router,
+    )
+
+    await handler.handle(_dm_message("привет, как дела"))
+
+    assert router.calls  # the router was consulted on the owner DM turn
+    assert router.calls[0][2] is True  # owner verdict passed through
+    assert router.calls[0][3] is False  # DM channel signal passed through
+    assert bot.final_text != ""  # returned to the normal chat path (a reply committed)
+
+
+async def test_group_message_passes_group_signal_to_interactive_router() -> None:
+    # DM-only: a GROUP message still consults the router but is told is_group=True, so the
+    # router refuses (never opens/feeds) and the turn falls through to the normal path.
+    router = _FakeInteractiveRouter(consume=False)
+    handler, bot, _repo, _tier1 = _build(
+        reply="ответ в группе",
+        perceive_sender=_owner_resolver(),
+        interactive_router=router,
+    )
+
+    await handler.handle(_message("/code -i почини баг"))  # _message → is_group default True
+
+    assert router.calls
+    assert router.calls[0][3] is True  # group channel signal → router refuses
+    assert bot.final_text != ""  # normal chat path ran
+
+
+async def test_no_interactive_router_leaves_the_intake_gate_inert() -> None:
+    # coder.interactive off → no router wired → the interactive intake gate is inert and
+    # the owner DM takes the normal chat flow exactly as before.
+    handler, bot, _repo, _tier1 = _build(
+        reply="как обычно", perceive_sender=_owner_resolver()
+    )
+
+    await handler.handle(_dm_message("/code -i почини баг"))
+
+    assert bot.final_text != ""  # normal chat reply committed (intake gate inert)
 
 
 class _RaisingCodingRouter:

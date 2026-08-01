@@ -279,6 +279,16 @@ ignore = [
 # owner-facing plan/PR/prompt literals whose Cyrillic look-alikes are intentional —
 # RUF001/RUF002/RUF003 do not apply.
 "src/bob/coding/usecases/coding_assistant.py" = ["RUF001", "RUF002", "RUF003"]
+# The interactive-session manager (BOB-083 .3) carries Russian persona/policy docstrings +
+# owner-facing status literals whose Cyrillic look-alikes are intentional — RUF001/2/3 here.
+"src/bob/coding/usecases/interactive_session.py" = ["RUF001", "RUF002", "RUF003"]
+# The interactive-intake router (BOB-083 .4) carries Russian persona/policy docstrings whose
+# Cyrillic look-alikes are intentional — RUF001/RUF002/RUF003 do not apply.
+"src/bob/coding/usecases/interactive_intake.py" = ["RUF001", "RUF002", "RUF003"]
+# The interactive-intent predicates (BOB-083 .4) carry Russian entry/exit command literals
+# ("стоп", "выход") + persona/policy docstrings whose Cyrillic look-alikes are intentional —
+# RUF001/RUF002/RUF003 do not apply.
+"src/bob/coding/interactive_intent.py" = ["RUF001", "RUF002", "RUF003"]
 # The coding arch-context builder (BOB-046 .3) carries Russian convention/preamble
 # literals + persona/policy docstrings whose Cyrillic look-alikes are intentional —
 # RUF001/RUF002/RUF003 do not apply.
@@ -519,6 +529,15 @@ ignore = [
     "RUF001",
     "RUF002",
     "RUF003",
+]
+# Interactive-runner tests (BOB-083.2): the fake bidirectional process mirrors the
+# InteractiveProcess protocol, so its `wait(*, timeout=...)` keeps the unused `timeout`
+# keyword to match the signature the runner calls (→ ARG002).
+"tests/infrastructure/coding/test_interactive_runner.py" = [
+    "S101",
+    "ARG001",
+    "ARG002",
+    "PLR2004",
 ]
 "tests/infrastructure/telegram/test_multibot_poll_resilience.py" = [
     "S101",
@@ -885,6 +904,16 @@ ignore = [
 "tests/domain/coding/test_naming.py" = ["S101", "ARG001", "PLR2004", "RUF001", "RUF002", "RUF003"]
 "tests/domain/coding/test_narrate.py" = ["S101", "ARG001", "PLR2004", "RUF001", "RUF002", "RUF003"]
 "tests/domain/coding/test_session_voice.py" = ["S101", "ARG001", "PLR2004", "RUF001", "RUF002", "RUF003"]
+# Interactive-session manager tests (BOB-083 .3) carry Russian task/reply literals whose
+# Cyrillic look-alikes are intentional — RUF001/RUF002/RUF003 do not apply.
+"tests/application/usecases/test_interactive_session.py" = ["S101", "ARG001", "PLR2004", "RUF001", "RUF002", "RUF003"]
+"tests/application/usecases/test_interactive_intake.py" = ["S101", "ARG001", "PLR2004", "RUF001", "RUF002", "RUF003"]
+"tests/domain/coding/test_interactive_intent.py" = ["S101", "ARG001", "PLR2004", "RUF001", "RUF002", "RUF003"]
+# Interactive-terminal acceptance harness + steps (BOB-083 .5) bind Russian .feature step text
+# and drive Russian task/reply/mode literals through the real stack — their Cyrillic
+# look-alikes are intentional (→ RUF001/2/3); ARG002 covers the fake process/bot boundary args.
+"tests/acceptance/interactive_terminal_harness.py" = ["S101", "ARG001", "ARG002", "PLR2004", "RUF001", "RUF002", "RUF003"]
+"tests/acceptance/steps/test_interactive_terminal.py" = ["S101", "ARG001", "PLR2004", "PT018", "RUF001", "RUF002", "RUF003"]
 # Reaction-perception tests (BOB-050) carry Russian reaction-meaning literals ("его тронуло",
 # "зашло") whose Cyrillic look-alikes are intentional — RUF001/RUF002/RUF003 do not apply.
 "tests/domain/personality/test_reaction_judgment.py" = ["S101", "ARG001", "PLR2004", "RUF001", "RUF002", "RUF003"]

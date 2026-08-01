@@ -50,6 +50,7 @@ from bob.application.usecases.essential_runner import (
     _EssentialStepError,
 )
 from bob.application.usecases.precompose_gate import (
+    InteractiveRouterLike,
     NaturalCodingRouter,
     PermissionFlowLike,
     PreComposeGate,
@@ -645,6 +646,7 @@ class HandleMessage:
         diagram_send_as: DiagramSendMode = _DEFAULT_DIAGRAM_SEND_AS,
         coding_router: NaturalCodingRouter | None = None,
         permission_flow: PermissionFlowLike | None = None,
+        interactive_router: InteractiveRouterLike | None = None,
         decide_response: DecideResponse | None = None,
         outage_notifier: OutageNotifier | None = None,
         retry_sleep: Sleep | None = None,
@@ -961,6 +963,14 @@ class HandleMessage:
         # AUTHORIZED member never enters it. Either consumes the turn (the normal compose
         # is skipped). Unwired (the default) the seam is inert and the turn is unchanged.
         self._permission_flow = permission_flow
+        # The interactive-terminal intake seam (BOB-083 .4): when wired
+        # (``coder.interactive`` on), an OWNER DM message may open / steer / stop a LIVE
+        # bidirectional claude session — the owner's plain DM replies go to the session's
+        # stdin while it is active, consuming the turn (no normal Bob reply). 🔴 owner-only
+        # + DM-only + strictly by the active session (the mode does not stick): a guest / a
+        # GROUP message / no live session all fall through to the normal chat path. Unwired
+        # (the default) the seam is inert and the turn behaves exactly as before.
+        self._interactive_router = interactive_router
         # The semantic response-judgment seam (BOB-049): when wired (the LIVE path),
         # Bob UNDERSTANDS each inbound in context and chooses — as a person — REPLY /
         # REACT / IGNORE, replacing the if/else addressivity ladder (BOB-023/025) and the
@@ -1111,6 +1121,7 @@ class HandleMessage:
         self._precompose = PreComposeGate(
             coding_router=self._coding_router,
             permission_flow=self._permission_flow,
+            interactive_router=self._interactive_router,
         )
 
         # ── Wave-2 mid-tier collaborators (BOB-062.6b): each a cohesive method-object
@@ -1323,7 +1334,7 @@ class HandleMessage:
             rules, max_magnitude=self._self_improvement_max_magnitude
         )
 
-    async def handle(  # noqa: PLR0915 — a flat per-turn orchestration: one statement per social/compose seam (BOB-080 added the roster recall), no branching to extract.
+    async def handle(  # noqa: PLR0915, PLR0911 — a flat per-turn orchestration: one statement per social/compose seam (BOB-080 added the roster recall; BOB-083 .4 added the interactive-intake consume-gate), each a short-circuit return, no branching to extract.
         self, event: MessageReceived, scope: TurnScope | None = None
     ) -> None:
         """Process one received message end to end (the intake worker's per-turn call).
@@ -1362,6 +1373,16 @@ class HandleMessage:
         # once per turn so the same identity threads through every (re)compose; None
         # when no perception seam is wired (additive, behaviour as before).
         interlocutor = await self._perceive_interlocutor(event)
+        # Interactive terminal intake (BOB-083 .4): for an OWNER DM message (and only when
+        # ``coder.interactive`` is wired), route the turn into the LIVE interactive claude
+        # session BEFORE composing a normal reply — an entry command opens it, an exit
+        # command stops it, and while it is active the owner's plain DM replies go to its
+        # stdin (steer). When it consumes the turn the message was an interactive command /
+        # a steer reply, so the normal compose is skipped. 🔴 owner-only + DM-only + strictly
+        # by the active session: a guest / a GROUP message / no live session all fall
+        # through here unconsumed to the normal chat path (the mode never sticks).
+        if await self._precompose.maybe_route_interactive(event, interlocutor):
+            return
         # Natural-language coding intent (BOB-041 .2): for an OWNER message in Bob's
         # topic (and only when the coder is wired/enabled), route a dev-work request
         # — or a natural approve/stop of a live session — into the gated CodingAssistant

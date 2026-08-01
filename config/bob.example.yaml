@@ -122,3 +122,11 @@ coder:
   # group). dev_dm_chat_id defaults to telegram.owner_id (the owner's own 1:1 chat).
   # dev_dm: false
   # dev_dm_chat_id: 0
+  # 🔴 INTERACTIVE terminal (BOB-083): a LIVE, bidirectional claude session in the owner's
+  # PRIVATE DM — `/code -i <task>` (or `/interactive <task>`) opens it, the owner's plain DM
+  # replies then go straight to claude's stdin (steer), and `stop` / `/exit` closes it. The
+  # most powerful coding surface, so it is owner-only + DM-only + flag-gated and physically
+  # cannot merge/push (edits stay in an isolated worktree; land via the normal PR gate,
+  # INV-2). Default OFF → the mode is entirely unavailable (no entry, the gate never fires).
+  # The DM target reuses dev_dm_chat_id (default telegram.owner_id).
+  # interactive: false

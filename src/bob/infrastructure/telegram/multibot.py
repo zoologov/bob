@@ -112,6 +112,11 @@ _DEFAULT_IDENTITY_RETRY_BACKOFF_SECONDS = 1.0
 # skipped LOUDLY so a single wedged update cannot stall intake forever.
 _MAX_ROUTE_ATTEMPTS = 3
 
+# Telegram's ``chat.type`` for a 1:1 direct message (BOB-083.1). The owner-DM route
+# fires only for a ``private`` chat, so a shared room at the same id can never be
+# mistaken for the owner's DM.
+_PRIVATE_CHAT_TYPE = "private"
+
 
 def _zero_clock() -> float:
     return 0.0
@@ -231,6 +236,7 @@ class MultiBotGateway:
         bus: EventBus,
         poll_timeout: int,
         authorizer: AuthorizerLike | None = None,
+        owner_dm_chat_id: int | None = None,
         proactivity_store: ProactivityStoreLike | None = None,
         proactivity_clock: Clock | None = None,
         goal_store: GoalStoreLike | None = None,
@@ -251,6 +257,13 @@ class MultiBotGateway:
         self._registry = registry
         self._bus = bus
         self._authorizer = authorizer
+        # The owner's 1:1 DM chat id (BOB-083.1), if configured. When set, an
+        # inbound message in that private chat FROM THE OWNER is routed onto Bob's
+        # pipeline (it matches neither Bob's group topic nor General, so it was
+        # dropped before); Bob's inner gateway is told the same id so his reply
+        # lands in the DM (un-threaded), not the group. ``None`` (not configured)
+        # keeps today's behaviour: the DM is dropped, the group path unchanged.
+        self._owner_dm_chat_id = owner_dm_chat_id
         # BOB-059: the get_me startup-retry seam. Defaults ride out a transient
         # Telegram blip with a real ``asyncio.sleep`` backoff; tests inject a fake
         # sleep + small attempts for deterministic, wait-free assertions.
@@ -286,6 +299,13 @@ class MultiBotGateway:
                 clock=reply_clock,
                 sleep=reply_sleep,
                 reply_thread_id=reg.scope.topic_id,
+                # Only Bob's inner gateway is DM-aware (BOB-083.1): a reply in the
+                # owner's DM must be un-threaded, not pinned to his group topic.
+                dm_chat_id=(
+                    owner_dm_chat_id
+                    if reg.identity is BotIdentity.BOB
+                    else None
+                ),
                 bob_reaction_filter=(
                     bob_reaction_filter
                     if reg.identity is BotIdentity.BOB
@@ -560,10 +580,40 @@ class MultiBotGateway:
             if await self._inner[BotIdentity.BOB].intake(update):
                 return _RouteOutcome.PUBLISHED
             return _RouteOutcome.HANDLED
+        # The OWNER's own private DM (BOB-083.1): route onto Bob's pipeline so the
+        # owner can talk to Bob 1:1 (this ALSO unblocks BOB-082 /code-from-DM). Only
+        # the owner's own DM — a guest/stranger DM (different chat_id or non-owner
+        # sender) falls through and is dropped exactly as before.
+        if self._is_owner_dm(update, chat_id):
+            if await self._inner[BotIdentity.BOB].intake(update):
+                return _RouteOutcome.PUBLISHED
+            return _RouteOutcome.HANDLED
         # Not Bob's topic: GUPPI may consume an owner command in General.
         if await self._maybe_guppi_command(update, chat_id):
             return _RouteOutcome.HANDLED
         return _RouteOutcome.UNROUTABLE
+
+    def _is_owner_dm(self, update: UpdateLike, chat_id: int) -> bool:
+        """Whether ``update`` is the OWNER's own private DM (BOB-083.1).
+
+        True only when the owner-DM is configured AND the message is in that exact
+        1:1 chat (``chat_id == owner_dm_chat_id``) AND the chat is ``private`` (a
+        shared group at the same id — impossible in practice, but guarded) AND the
+        sender is the owner. A stranger's DM (a different 1:1 ``chat_id``) or a
+        non-owner sender is NOT the owner's DM, so it is left to fall through to the
+        drop path — only the owner's own DM is newly routed. Needs the authorizer
+        (the owner-identity check); with none wired the DM stays dropped.
+        """
+        if self._owner_dm_chat_id is None or chat_id != self._owner_dm_chat_id:
+            return False
+        if self._authorizer is None:
+            return False
+        chat = update.effective_chat
+        if chat is None or chat.type != _PRIVATE_CHAT_TYPE:
+            return False
+        user = update.effective_user
+        user_id = user.id if user is not None else None
+        return self._authorizer.is_owner(user_id)
 
     async def _route_reaction(
         self, update: UpdateLike, identity: BotIdentity

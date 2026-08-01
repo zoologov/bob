@@ -67,6 +67,12 @@ def _build_multibot(
     """
     telegram = _section(config, "telegram")
     chat_id = _int(telegram, "chat_id", 0)
+    owner_id = _int(telegram, "owner_id", 0)
+    # The owner's 1:1 DM chat id (BOB-083.1). Defaults to ``owner_id`` (a 1:1 chat's
+    # id equals the user's id), matching the Authorizer's owner-DM authz (BOB-082).
+    # ``... or None`` disables DM routing when neither is configured (owner_id == 0),
+    # so behaviour is unchanged until an owner is set — group path untouched.
+    owner_dm_chat_id = _int(telegram, "owner_dm_chat_id", owner_id) or None
     bob_section = _section(telegram, "bob")
     registry = BotRegistry()
     registry.register(
@@ -88,6 +94,7 @@ def _build_multibot(
         bus=bus,
         poll_timeout=_int(telegram, "poll_timeout", _DEFAULT_POLL_TIMEOUT),
         authorizer=authorizer,
+        owner_dm_chat_id=owner_dm_chat_id,
         proactivity_store=proactivity_store,
         proactivity_clock=proactivity_clock,
         goal_store=goal_store,

@@ -48,6 +48,13 @@ class CodingSessionState(StrEnum):
     ТЕРМИНАЛ (PR открыт, работа Боба завершена; мерж делает owner асинхронно вне Боба,
     BOB-042). ``CANCELLED`` (kill-switch owner'а из любого нетерминального), ``FAILED``
     (честный провал/таймаут) и легаси-``DONE`` — тоже терминальные.
+
+    ``INTERACTIVE`` (BOB-083 .3) — живой двусторонний сеанс: менеджер держит запущенный
+    процесс ``claude`` с открытым stdin, owner направляет его в реальном времени. Это
+    ОТДЕЛЬНАЯ ветка жизненного цикла (не гейтед-путь план→исполнение): сессия сразу
+    заводится в ``INTERACTIVE`` и завершается ТОЛЬКО прямым kill (``CANCELLED``) или
+    честным провалом (``FAILED``). 🔴 Она НЕ ведёт в ``EXECUTING`` — гейт плана остаётся
+    непробиваемым (единственный путь в ``EXECUTING`` — из ``PLAN_READY``).
     """
 
     PROPOSED = "proposed"
@@ -55,6 +62,7 @@ class CodingSessionState(StrEnum):
     PLAN_READY = "plan_ready"
     EXECUTING = "executing"
     PR_OPEN = "pr_open"
+    INTERACTIVE = "interactive"
     DONE = "done"
     CANCELLED = "cancelled"
     FAILED = "failed"
@@ -76,11 +84,16 @@ _TERMINAL: frozenset[CodingSessionState] = frozenset(
 # Прогресс-путь (без CANCELLED/FAILED, которые разрешены из любого нетерминального).
 # 🔴 EXECUTING присутствует РОВНО в одном множестве — целей PLAN_READY: гейт плана
 # непробиваем. PR_OPEN — терминал (см. _TERMINAL), исходящих переходов у него нет.
+# INTERACTIVE (BOB-083 .3) — живой сеанс с ПУСТЫМ прогресс-множеством: он не ведёт
+# по гейтед-пути (в частности, НЕ в EXECUTING — гейт плана непробиваем), а завершается
+# только через kill/провал (CANCELLED/FAILED — они в _STOP_TARGETS, из любого
+# нетерминального). Явная пустая запись документирует «только выход через stop».
 _PROGRESS: dict[CodingSessionState, frozenset[CodingSessionState]] = {
     CodingSessionState.PROPOSED: frozenset({CodingSessionState.PLANNING}),
     CodingSessionState.PLANNING: frozenset({CodingSessionState.PLAN_READY}),
     CodingSessionState.PLAN_READY: frozenset({CodingSessionState.EXECUTING}),
     CodingSessionState.EXECUTING: frozenset({CodingSessionState.PR_OPEN}),
+    CodingSessionState.INTERACTIVE: frozenset(),
 }
 
 # Из любого нетерминального состояния owner может остановить (CANCELLED) или сессия

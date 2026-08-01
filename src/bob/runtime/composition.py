@@ -148,6 +148,8 @@ from bob.runtime.wiring import (
     _build_floor_config,
     _build_floor_enabled,
     _build_goal_engine,
+    _build_interactive_intake,
+    _build_interactive_session,
     _build_length_guard_enabled,
     _build_length_guard_max_chars,
     _build_multibot,
@@ -199,6 +201,7 @@ if TYPE_CHECKING:
 
     from bob.capabilities.usecases import CapabilityRegistry
     from bob.coding.usecases.coding_assistant import CodingAssistant
+    from bob.coding.usecases.interactive_session import InteractiveSessionManager
     from bob.infrastructure.telegram.gateway import BotLike
     from bob.infrastructure.telegram.multibot import MultiBotGateway
     from bob.kernel.ports import Clock, DomainEvent, EventHandler, LLMProvider
@@ -257,6 +260,10 @@ class Application:
     # (conservative default off → ``None``). Exposed so the entrypoint/tests can
     # inspect the bound owner-notifier without re-running the wiring.
     coding_assistant: CodingAssistant | None = None
+    # Interactive-session manager (BOB-083 .3): a live, bidirectional ``claude`` terminal
+    # in the owner's DM, wired only when ``coder.interactive`` is on (conservative default
+    # off → ``None``). The ``.4`` intake mode drives it; off → inert (never built).
+    interactive_session: InteractiveSessionManager | None = None
 
     async def startup(self) -> GenesisResult:
         """Initialise persistence, awaken Bob on first boot, load his soul.
@@ -516,6 +523,30 @@ def build_application(
         owner_id=_int(telegram_section, "owner_id", 0),
         clock=resolved_clock,
         recorder=self_action_recorder,
+    )
+
+    # Interactive-session manager (BOB-083 .3): a live, bidirectional ``claude`` terminal
+    # in the owner's DM. Built ONLY when ``coder.interactive`` is on (conservative default
+    # off → ``None``, the ``.4`` intake mode inert). It reuses the isolated worktree + the
+    # DM live-stream and physically cannot open a PR / push main (INV-2).
+    interactive_session = _build_interactive_session(
+        merged,
+        repo=connection,
+        authorizer=authorizer,
+        bot=resolved_bob_bot,
+        owner_id=_int(telegram_section, "owner_id", 0),
+        clock=resolved_clock,
+    )
+
+    # Interactive-terminal intake router (BOB-083 .4): the owner-DM consume-gate that opens
+    # / steers / stops the live session above. Built ONLY when the manager is wired
+    # (``coder.interactive`` on) → HandleMessage's interactive gate is otherwise inert (the
+    # mode is entirely unavailable). owner-only + DM-only live inside the router.
+    interactive_intake = _build_interactive_intake(
+        merged,
+        manager=interactive_session,
+        bot=resolved_bob_bot,
+        owner_id=_int(telegram_section, "owner_id", 0),
     )
 
     multibot = _build_multibot(
@@ -833,6 +864,10 @@ def build_application(
         coding_router=_build_coding_router(
             merged, router=router, coder=coding_assistant
         ),
+        # Interactive-terminal intake (BOB-083 .4): the owner-DM consume-gate for the live
+        # bidirectional claude session. When ``coder.interactive`` is on an owner DM opens /
+        # steers / stops the session; off → None → the gate is inert (mode unavailable).
+        interactive_router=interactive_intake,
         # Privilege gating (BOB-052 .2): a privilege — running a tool, revealing Bob's
         # inner life, disclosing owner data — is OWNER-GATED even though memory is public
         # in the closed group (BOB-051). When a NON-authorized member asks for something
@@ -1203,6 +1238,7 @@ def build_application(
         person_sulk_store=person_sulk_store,
         pursue_goals_tick=pursue_goals_tick,
         coding_assistant=coding_assistant,
+        interactive_session=interactive_session,
     )
 
 

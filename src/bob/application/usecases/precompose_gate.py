@@ -7,10 +7,12 @@
 
 """PreComposeGate — the cross-domain gates that may CONSUME a turn before compose.
 
-The two pre-compose consumption gates in one cohesive collaborator (extracted from
+The pre-compose consumption gates in one cohesive collaborator (extracted from
 ``HandleMessage`` in BOB-062.6b, wave 1, behavior-preserving). BEFORE composing a normal
 reply the turn is routed, in order, through:
 
+* :meth:`maybe_route_interactive` — an OWNER DM message driving a live interactive claude
+  session (open / steer / stop), owner-only + DM-only (BOB-083 .4);
 * :meth:`maybe_route_coding` — an OWNER coding-intent message in Bob's topic is routed
   into the gated CodingAssistant (BOB-041 .2); and
 * :meth:`maybe_permission` — the OWNER's verdict on a pending privilege request, or a
@@ -54,6 +56,26 @@ class NaturalCodingRouter(Protocol):
     async def route(self, *, text: str, sender: int | None, is_owner: bool) -> bool: ...
 
 
+class InteractiveRouterLike(Protocol):
+    """The interactive-terminal intake seam HandleMessage delegates to (BOB-083 .4).
+
+    Realised by
+    :class:`~bob.coding.usecases.interactive_intake.InteractiveIntakeRouter`: given an
+    owner DM message it may OPEN a live interactive claude session, FEED an owner reply to
+    its stdin (steer) or STOP it, returning whether it CONSUMED the turn (so HandleMessage
+    short-circuits the normal compose). 🔴 owner-only + DM-only: the seam is passed BOTH
+    ``is_owner`` (derived from the perceived interlocutor) and ``is_group`` (the channel
+    signal), and re-checks both inside — a guest or a GROUP message is never routed into
+    interactive, so the mode can only ever fire in the owner's DM. Unwired (the default /
+    ``coder.interactive`` false) → no router is injected, so the seam is inert and every
+    message takes the normal chat flow exactly as before.
+    """
+
+    async def route(
+        self, *, text: str, sender: int | None, is_owner: bool, is_group: bool
+    ) -> bool: ...
+
+
 class PermissionFlowLike(Protocol):
     """The permission-flow seam HandleMessage delegates privilege gating to (BOB-052 .2).
 
@@ -90,9 +112,48 @@ class PreComposeGate:
         *,
         coding_router: NaturalCodingRouter | None,
         permission_flow: PermissionFlowLike | None,
+        interactive_router: InteractiveRouterLike | None = None,
     ) -> None:
         self._coding_router = coding_router
         self._permission_flow = permission_flow
+        self._interactive_router = interactive_router
+
+    async def maybe_route_interactive(
+        self, event: MessageReceived, interlocutor: Interlocutor | None
+    ) -> bool:
+        """Route an owner DM message into the live interactive session (BOB-083 .4).
+
+        Returns whether the interactive intake CONSUMED the turn (so the caller
+        short-circuits the normal compose). Inert when no router is wired (the default /
+        ``coder.interactive`` false). 🔴 owner-only + DM-only: ``is_owner`` is derived from
+        the perceived interlocutor (only an
+        :class:`~bob.social.interlocutor.InterlocutorKind.OWNER` sender is owner here) and
+        ``is_group`` is threaded from the channel signal — the router re-checks both, so a
+        guest or a GROUP message is never routed into interactive and the mode fires ONLY
+        in the owner's DM. Resilient like the coding gate: any router fault is logged and
+        treated as "not consumed" so a live intake fault never crashes intake.
+        """
+        if self._interactive_router is None:
+            return False
+        is_owner = (
+            interlocutor is not None and interlocutor.kind is InterlocutorKind.OWNER
+        )
+        try:
+            return await self._interactive_router.route(
+                text=event.text,
+                sender=event.sender_id,
+                is_owner=is_owner,
+                is_group=event.is_group,
+            )
+        except Exception:
+            # 🔴 Резилентность приёма: интейк-роутер дёргается на каждом сообщении
+            # (manager.active() и подобное). Любая ошибка не должна крашить приём — иначе
+            # intake-воркер роняет сообщение и Боб глохнет. Логируем и трактуем как «режим
+            # не активен» → ход продолжается обычным chat-путём.
+            logger.exception(
+                "interactive-router упал на приёме — продолжаю chat-путём (не интерактив)"
+            )
+            return False
 
     async def maybe_route_coding(
         self, event: MessageReceived, interlocutor: Interlocutor | None

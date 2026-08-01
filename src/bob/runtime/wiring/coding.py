@@ -24,6 +24,7 @@ from bob.coding.adapters import (
     SubprocessClaudeRunner,
 )
 from bob.coding.adapters.indicator import StatusPanel, TypingKeepalive
+from bob.coding.adapters.interactive_runner import InteractiveClaudeRunner
 from bob.coding.adapters.live_stream import _DmLiveStreamer
 from bob.coding.adapters.owner_notifier import _CodingOwnerNotifier
 from bob.coding.adapters.session_store import SqliteCodingSessionStore
@@ -31,6 +32,8 @@ from bob.coding.usecases.classify_coding_intent import ClassifyCodingIntent
 from bob.coding.usecases.coding_assistant import CodingAssistant, LiveRunStreamer
 from bob.coding.usecases.coding_context import make_coding_context
 from bob.coding.usecases.coding_intent_router import CodingIntentRouter
+from bob.coding.usecases.interactive_intake import InteractiveIntakeRouter
+from bob.coding.usecases.interactive_session import InteractiveSessionManager
 from bob.runtime.config import (
     _CODING_TYPING_INTERVAL,
     _REPO_ROOT,
@@ -181,4 +184,76 @@ def _build_dm_live_streamer(
         panel=StatusPanel(
             bot=cast("EditableStatusBot", bot), chat_id=dm_chat_id, thread_id=None
         ),
+    )
+
+
+def _build_interactive_session(
+    config: Mapping[str, object],
+    *,
+    repo: SqliteConnection,
+    authorizer: Authorizer,
+    bot: BotLike,
+    owner_id: int,
+    clock: Clock,
+) -> InteractiveSessionManager | None:
+    """Assemble the interactive-session manager, or ``None`` when off (BOB-083 .3).
+
+    Built ONLY when ``coder.interactive`` is on (conservative default off): a live,
+    bidirectional ``claude`` terminal in the owner's DM is the most powerful capability
+    of the coding seam, so it stays unwired unless the owner switches it on (off → the
+    manager is not built and the ``.4`` intake mode is inert). It injects a FRESH
+    :class:`InteractiveClaudeRunner` per session (a factory), the SAME isolated
+    :class:`GitWorktree` (edits go to a ``bob/<slug>`` branch — NEVER main, INV-2) and
+    durable :class:`SqliteCodingSessionStore` the gated coder uses, the shared
+    :class:`Authorizer` as the owner gate, and a per-session :class:`_DmLiveStreamer`
+    (reuse of BOB-082) targeting the owner's private DM for the live output. 🔴 There is
+    DELIBERATELY no PR-opener here — the manager physically cannot merge/push; the owner
+    reviews the worktree branch and lands it through the existing BOB-039 gate.
+    """
+    coder = _section(config, "coder")
+    if not _flag(coder, "interactive"):
+        return None
+    dm_chat_id = _int(coder, "dev_dm_chat_id", owner_id)
+    claude_bin = _str(coder, "claude_bin", "claude")
+    return InteractiveSessionManager(
+        runner_factory=lambda: InteractiveClaudeRunner(claude_bin=claude_bin),
+        worktree=GitWorktree(_str(coder, "worktree_root", ".worktrees")),
+        store=SqliteCodingSessionStore(repo),
+        streamer_factory=lambda: _DmLiveStreamer(
+            notifier=_CodingOwnerNotifier(bot=bot, chat_id=dm_chat_id, topic_id=None),
+            panel=StatusPanel(
+                bot=cast("EditableStatusBot", bot), chat_id=dm_chat_id, thread_id=None
+            ),
+        ),
+        owner=authorizer,
+        clock=clock,
+        permission_mode=_str(coder, "permission_mode", "acceptEdits"),
+    )
+
+
+def _build_interactive_intake(
+    config: Mapping[str, object],
+    *,
+    manager: InteractiveSessionManager | None,
+    bot: BotLike,
+    owner_id: int,
+) -> InteractiveIntakeRouter | None:
+    """Assemble the interactive-terminal intake router, or ``None`` when off (BOB-083 .4).
+
+    Built ONLY when the interactive-session ``manager`` is wired (``coder.interactive``
+    on); off → ``None`` and HandleMessage's interactive intake gate stays inert (the mode
+    is entirely unavailable — no entry, the consume-gate never fires). It pairs the live
+    :class:`InteractiveSessionManager` with a DM-targeted :class:`_CodingOwnerNotifier`
+    (the owner's private 1:1 chat, ``message_thread_id`` ``None``) that carries the short
+    explicit mode lines Bob sends on open/stop (INV-5). 🔴 owner-only + DM-only live inside
+    the router (defense-in-depth over the manager's own owner gate); HandleMessage threads
+    the perceived owner verdict + the channel signal in.
+    """
+    if manager is None:
+        return None
+    coder = _section(config, "coder")
+    dm_chat_id = _int(coder, "dev_dm_chat_id", owner_id)
+    return InteractiveIntakeRouter(
+        manager=manager,
+        notifier=_CodingOwnerNotifier(bot=bot, chat_id=dm_chat_id, topic_id=None),
     )
