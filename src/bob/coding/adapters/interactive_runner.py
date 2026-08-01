@@ -37,10 +37,12 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import logging
 from typing import TYPE_CHECKING, Protocol
 
 from bob.coding.adapters.claude_runner import (
     _ALLOWED_MODES,
+    _STREAM_LIMIT,
     ClaudeRunError,
     _parse_event,
 )
@@ -53,6 +55,8 @@ __all__ = [
     "InteractiveRunError",
     "encode_user_message",
 ]
+
+logger = logging.getLogger(__name__)
 
 # Grace (seconds) between ``terminate()`` (SIGTERM) and the ``kill()`` (SIGKILL) fallback
 # on close: give ``claude`` a moment to exit cleanly before it is forced.
@@ -211,7 +215,18 @@ class _ExecInteractiveProcess:
         if stdout is None:
             return
         while True:
-            raw = await stdout.readline()
+            try:
+                raw = await stdout.readline()
+            except ValueError:
+                # A single line exceeded ``_STREAM_LIMIT`` (LimitOverrunError ->
+                # ValueError). The buffer cannot advance past it without re-raising
+                # forever, so end the stream gracefully (treat as EOF) rather than crash
+                # the output pump — return, do NOT ``continue``.
+                logger.warning(
+                    "claude stdout line exceeded the %d-byte stream limit; ending read",
+                    _STREAM_LIMIT,
+                )
+                return
             if not raw:
                 break
             yield raw.decode("utf-8", errors="replace")
@@ -249,5 +264,6 @@ class _ExecInteractiveSpawner:
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            limit=_STREAM_LIMIT,
         )
         return _ExecInteractiveProcess(proc)

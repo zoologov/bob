@@ -31,10 +31,20 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import logging
 from collections.abc import AsyncGenerator, AsyncIterator, Mapping
 from typing import Protocol
 
 __all__ = ["ClaudeRunError", "SubprocessClaudeRunner"]
+
+logger = logging.getLogger(__name__)
+
+# StreamReader buffer limit for the spawned ``claude`` process. asyncio's default is
+# 64 KiB, but ``claude --output-format stream-json`` routinely emits single lines far
+# larger (big tool results, file reads, long assistant messages); ``readline()`` on a
+# line past the limit raises ``LimitOverrunError`` — surfaced as ``ValueError`` — and
+# crashes the read loop. 16 MiB is generous headroom (real lines are well under 1 MiB).
+_STREAM_LIMIT = 16 * 1024 * 1024
 
 # The FIXED permission-mode allowlist. ``plan`` produces a plan with no edits (the plan
 # gate); ``acceptEdits`` applies changes inside the isolated worktree. Nothing else —
@@ -147,6 +157,7 @@ class _ExecStreamRunner:
             cwd=cwd,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            limit=_STREAM_LIMIT,
         )
         loop = asyncio.get_event_loop()
         deadline = loop.time() + timeout
@@ -161,6 +172,17 @@ class _ExecStreamRunner:
                 try:
                     raw = await asyncio.wait_for(stdout.readline(), timeout=remaining)
                 except TimeoutError:
+                    break
+                except ValueError:
+                    # A single line exceeded ``_STREAM_LIMIT`` (LimitOverrunError ->
+                    # ValueError). The buffer cannot advance past it without re-raising
+                    # forever, so end the stream gracefully (treat as EOF) rather than
+                    # crash the pump — do NOT ``continue``.
+                    logger.warning(
+                        "claude stdout line exceeded the %d-byte stream limit; "
+                        "ending read",
+                        _STREAM_LIMIT,
+                    )
                     break
                 if not raw:
                     break
