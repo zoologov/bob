@@ -148,6 +148,7 @@ from bob.runtime.wiring import (
     _build_floor_config,
     _build_floor_enabled,
     _build_goal_engine,
+    _build_interactive_intake,
     _build_interactive_session,
     _build_length_guard_enabled,
     _build_length_guard_max_chars,
@@ -537,6 +538,17 @@ def build_application(
         clock=resolved_clock,
     )
 
+    # Interactive-terminal intake router (BOB-083 .4): the owner-DM consume-gate that opens
+    # / steers / stops the live session above. Built ONLY when the manager is wired
+    # (``coder.interactive`` on) → HandleMessage's interactive gate is otherwise inert (the
+    # mode is entirely unavailable). owner-only + DM-only live inside the router.
+    interactive_intake = _build_interactive_intake(
+        merged,
+        manager=interactive_session,
+        bot=resolved_bob_bot,
+        owner_id=_int(telegram_section, "owner_id", 0),
+    )
+
     multibot = _build_multibot(
         merged,
         bus=event_bus,
@@ -852,6 +864,10 @@ def build_application(
         coding_router=_build_coding_router(
             merged, router=router, coder=coding_assistant
         ),
+        # Interactive-terminal intake (BOB-083 .4): the owner-DM consume-gate for the live
+        # bidirectional claude session. When ``coder.interactive`` is on an owner DM opens /
+        # steers / stops the session; off → None → the gate is inert (mode unavailable).
+        interactive_router=interactive_intake,
         # Privilege gating (BOB-052 .2): a privilege — running a tool, revealing Bob's
         # inner life, disclosing owner data — is OWNER-GATED even though memory is public
         # in the closed group (BOB-051). When a NON-authorized member asks for something

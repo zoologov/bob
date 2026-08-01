@@ -282,6 +282,13 @@ ignore = [
 # The interactive-session manager (BOB-083 .3) carries Russian persona/policy docstrings +
 # owner-facing status literals whose Cyrillic look-alikes are intentional — RUF001/2/3 here.
 "src/bob/coding/usecases/interactive_session.py" = ["RUF001", "RUF002", "RUF003"]
+# The interactive-intake router (BOB-083 .4) carries Russian persona/policy docstrings whose
+# Cyrillic look-alikes are intentional — RUF001/RUF002/RUF003 do not apply.
+"src/bob/coding/usecases/interactive_intake.py" = ["RUF001", "RUF002", "RUF003"]
+# The interactive-intent predicates (BOB-083 .4) carry Russian entry/exit command literals
+# ("стоп", "выход") + persona/policy docstrings whose Cyrillic look-alikes are intentional —
+# RUF001/RUF002/RUF003 do not apply.
+"src/bob/coding/interactive_intent.py" = ["RUF001", "RUF002", "RUF003"]
 # The coding arch-context builder (BOB-046 .3) carries Russian convention/preamble
 # literals + persona/policy docstrings whose Cyrillic look-alikes are intentional —
 # RUF001/RUF002/RUF003 do not apply.
@@ -900,6 +907,8 @@ ignore = [
 # Interactive-session manager tests (BOB-083 .3) carry Russian task/reply literals whose
 # Cyrillic look-alikes are intentional — RUF001/RUF002/RUF003 do not apply.
 "tests/application/usecases/test_interactive_session.py" = ["S101", "ARG001", "PLR2004", "RUF001", "RUF002", "RUF003"]
+"tests/application/usecases/test_interactive_intake.py" = ["S101", "ARG001", "PLR2004", "RUF001", "RUF002", "RUF003"]
+"tests/domain/coding/test_interactive_intent.py" = ["S101", "ARG001", "PLR2004", "RUF001", "RUF002", "RUF003"]
 # Reaction-perception tests (BOB-050) carry Russian reaction-meaning literals ("его тронуло",
 # "зашло") whose Cyrillic look-alikes are intentional — RUF001/RUF002/RUF003 do not apply.
 "tests/domain/personality/test_reaction_judgment.py" = ["S101", "ARG001", "PLR2004", "RUF001", "RUF002", "RUF003"]

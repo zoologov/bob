@@ -23,3 +23,13 @@ steer репликой + `stop`→kill+возврат к обычному Боб
 
 ## Прогресс
 - 2026-08-01: PRD/RFC/CONTEXT/PLAN approved; беады созданы (parent bob-443); ветка features/BOB-083.
+- 2026-08-01: .4 ИНТЕЙК-РЕЖИМ ГОТОВ (dev). Реализовано: (1) чистые предикаты
+  `src/bob/coding/interactive_intent.py` (parse_interactive_entry `/code -i`/`/interactive`;
+  is_interactive_exit — deliberate точное совпадение, не хайджек steer); (2)
+  `src/bob/coding/usecases/interactive_intake.py` InteractiveIntakeRouter — owner+DM+active-гейт,
+  open/feed/stop + mode-line notifier (INV-5); (3) PreComposeGate.maybe_route_interactive
+  (прокинут is_group, резилентность); (4) handle_message: гейт ПЕРЕД maybe_route_coding;
+  (5) wiring _build_interactive_intake + композиция → HandleMessage; (6) флаг coder.interactive
+  в bob.example.yaml. Тесты: 37 новых (домен 27 / роутер 8 / wiring 2) + 4 интеграционных в
+  test_handle_message. Полный прогон 4757 pass; ruff+mypy(src+tests) чисто; lint --strict 0 violations.
+  ⏭ .5 test: BDD S1/S2/S4/S5 + mutation ≥85% на interactive_intent предикатах.

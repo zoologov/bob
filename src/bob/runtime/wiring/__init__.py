@@ -26,6 +26,7 @@ from bob.runtime.wiring.catchup import build_catch_up_reentry
 from bob.runtime.wiring.coding import (
     _build_coding_assistant,
     _build_coding_router,
+    _build_interactive_intake,
     _build_interactive_session,
 )
 from bob.runtime.wiring.disclosure import (
@@ -113,6 +114,7 @@ __all__ = [
     "_build_floor_config",
     "_build_floor_enabled",
     "_build_goal_engine",
+    "_build_interactive_intake",
     "_build_interactive_session",
     "_build_introspection_enabled",
     "_build_introspector",

@@ -32,6 +32,7 @@ from bob.coding.usecases.classify_coding_intent import ClassifyCodingIntent
 from bob.coding.usecases.coding_assistant import CodingAssistant, LiveRunStreamer
 from bob.coding.usecases.coding_context import make_coding_context
 from bob.coding.usecases.coding_intent_router import CodingIntentRouter
+from bob.coding.usecases.interactive_intake import InteractiveIntakeRouter
 from bob.coding.usecases.interactive_session import InteractiveSessionManager
 from bob.runtime.config import (
     _CODING_TYPING_INTERVAL,
@@ -227,4 +228,32 @@ def _build_interactive_session(
         owner=authorizer,
         clock=clock,
         permission_mode=_str(coder, "permission_mode", "acceptEdits"),
+    )
+
+
+def _build_interactive_intake(
+    config: Mapping[str, object],
+    *,
+    manager: InteractiveSessionManager | None,
+    bot: BotLike,
+    owner_id: int,
+) -> InteractiveIntakeRouter | None:
+    """Assemble the interactive-terminal intake router, or ``None`` when off (BOB-083 .4).
+
+    Built ONLY when the interactive-session ``manager`` is wired (``coder.interactive``
+    on); off → ``None`` and HandleMessage's interactive intake gate stays inert (the mode
+    is entirely unavailable — no entry, the consume-gate never fires). It pairs the live
+    :class:`InteractiveSessionManager` with a DM-targeted :class:`_CodingOwnerNotifier`
+    (the owner's private 1:1 chat, ``message_thread_id`` ``None``) that carries the short
+    explicit mode lines Bob sends on open/stop (INV-5). 🔴 owner-only + DM-only live inside
+    the router (defense-in-depth over the manager's own owner gate); HandleMessage threads
+    the perceived owner verdict + the channel signal in.
+    """
+    if manager is None:
+        return None
+    coder = _section(config, "coder")
+    dm_chat_id = _int(coder, "dev_dm_chat_id", owner_id)
+    return InteractiveIntakeRouter(
+        manager=manager,
+        notifier=_CodingOwnerNotifier(bot=bot, chat_id=dm_chat_id, topic_id=None),
     )
