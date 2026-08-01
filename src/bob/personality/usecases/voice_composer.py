@@ -52,7 +52,9 @@ from bob.personality.voice import (
     guppi_canon,
     improvement_directive,
     profanity_stance,
+    recall_has_self_action,
     recalled_impression_directive,
+    recalled_self_action_directive,
     sulk_directive,
     tone_directive,
     user_repeat_directive,
@@ -334,6 +336,12 @@ class VoiceComposer:
             modulators=modulators,
             room_tone=room_tone,
             withhold_directive=withhold_directive,
+            # BOB-079.4: whether recall surfaced one of Bob's OWN past deeds — the
+            # signal folds the light ownership directive (first person, honest slip,
+            # no confabulation) into the prompt. Read here off the recalled set (whose
+            # ``category`` carries the episodic ``event_type``), the same set that
+            # grounds the reply, so the rendering itself is untouched.
+            recalled_self_action=recall_has_self_action(recalled),
         )
         provider = self._tool_provider
         # ESSENTIAL step (BOB-049 .3): the reply generation is retry-wrapped — a flaky
@@ -381,6 +389,7 @@ class VoiceComposer:
         modulators: RuleModulators | None = None,
         room_tone: str = "",
         withhold_directive: str = "",
+        recalled_self_action: bool = False,
     ) -> str:
         """Augment the base prompt with the mood tone, stance, and brevity directives.
 
@@ -435,6 +444,13 @@ class VoiceComposer:
             recalled_impression_directive(prior_impression)
             if prior_impression
             else "",
+            # BOB-079.4: when recall surfaced one of Bob's OWN past deeds (a
+            # ``self_action`` episode), a LIGHT ownership backstop folds in — speak of
+            # it in the first person, honestly own a slip, never confabulate (INV-1/2/3).
+            # The deed content is already first-person from the write side; this only
+            # guards the model against re-framing it in third person. No self_action
+            # recalled → no line (the default path is byte-identical).
+            recalled_self_action_directive() if recalled_self_action else "",
             # BOB-028 .3: Bob's OWNER-APPROVED TONE/HUMOR self-improvement rules fold
             # into ONE soft voice tilt on TOP of mood/relationship tone — a reminder he
             # gives himself, never a command or a reset (наклон, не перехват). No such

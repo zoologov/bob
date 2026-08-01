@@ -69,6 +69,7 @@ from bob.runtime.wiring.proactivity import (
 )
 from bob.runtime.wiring.rhythm import RhythmWiring, build_rhythm_wiring
 from bob.runtime.wiring.room_mood import build_room_mood_modulator
+from bob.runtime.wiring.self_action import build_self_action_recorder
 from bob.runtime.wiring.self_improvement import (
     _build_self_improvement,
     _SelfImprovement,
@@ -134,6 +135,7 @@ __all__ = [
     "build_endorsement_seeder",
     "build_rhythm_wiring",
     "build_room_mood_modulator",
+    "build_self_action_recorder",
     "build_staleness_reassessor",
     "staleness_enabled",
 ]

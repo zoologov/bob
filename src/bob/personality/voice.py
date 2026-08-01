@@ -36,6 +36,8 @@ from typing import TYPE_CHECKING
 from bob.personality.expression import EngagementLevel, Verbosity
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping, Sequence
+
     from bob.personality.mood import Mood
     from bob.social.interlocutor import Interlocutor
 
@@ -370,6 +372,55 @@ def recalled_impression_directive(note: str) -> str:
     impression exists for this sender.
     """
     return f"{_RECALLED_IMPRESSION_PREFIX}{note}{_RECALLED_IMPRESSION_SUFFIX}"
+
+
+# Recalled-self-action ownership directive (BOB-079.4): when recall surfaces one of
+# Bob's OWN past deeds — an episode whose category (= the episodic ``event_type``) is
+# ``self_action`` — this LIGHT voice line backstops INV-1/2/3. The content is already
+# first-person from the write side (``describe_self_action``); this is the guard
+# against the model re-framing it in third person or confabulating a deed. The
+# category literal MIRRORS ``bob.memory.self_action`` — kept as a documented mirror
+# (like ``_REFLECTION_KINDS``) so this pure domain helper imports nothing from memory.
+# Cyrillic look-alikes are intentional in these Russian literals.
+_SELF_ACTION_CATEGORY = "self_action"
+
+_RECALLED_SELF_ACTION_DIRECTIVE = (
+    # Cyrillic look-alikes intentional in these Russian literals.
+    "Среди припомненного есть твои собственные прошлые поступки. Говори о них "
+    "от первого лица — «я …», как о том, что делал сам. Если это был сбой или "
+    "промах — честно признай его, не приписывай своё действие внешним силам. "
+    "И не выдумывай поступков, которых нет в памяти: если не припоминаешь — так "
+    "и скажи."
+)
+
+
+def recall_has_self_action(recalled: Sequence[Mapping[str, object]]) -> bool:
+    """Whether the recalled set carries one of Bob's OWN past deeds (BOB-079.4) — pure.
+
+    True when any recalled memory's ``category`` (the episodic ``event_type``) is the
+    ``self_action`` kind — a first-person autobiographical deed, as opposed to a fact,
+    a message turn, or a private reflection. The match is case-insensitive; a memory
+    with no/other category never counts. Deterministic: same inputs → same verdict.
+    """
+    return any(_is_self_action(item) for item in recalled)
+
+
+def _is_self_action(item: Mapping[str, object]) -> bool:
+    """True when a recalled memory is one of Bob's own ``self_action`` deeds."""
+    category = item.get("category")
+    return isinstance(category, str) and category.casefold() == _SELF_ACTION_CATEGORY
+
+
+def recalled_self_action_directive() -> str:
+    """Return the ownership voice line for a recalled self_action deed (BOB-079.4).
+
+    A LIGHT backstop for INV-1/2/3: recalled self-actions are Bob's OWN deeds, so he
+    speaks of them in the first person («я …»), honestly owns a slip rather than
+    blaming external forces, and never confabulates a deed absent from memory. Pure
+    and argument-free — the content is already first-person from the write side; the
+    application folds this in only when :func:`recall_has_self_action` is true.
+    """
+    return _RECALLED_SELF_ACTION_DIRECTIVE
 
 
 # Relationship-tone bands (BOB-014). On TOP of the mood-conditioned tone, Bob's

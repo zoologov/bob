@@ -30,7 +30,9 @@ from bob.personality.voice import (
     guppi_canon,
     improvement_directive,
     profanity_stance,
+    recall_has_self_action,
     recalled_impression_directive,
+    recalled_self_action_directive,
     relationship_tone_directive,
     stranger_directive,
     sulk_directive,
@@ -526,6 +528,64 @@ def test_recalled_impression_directive_signals_prior_contact() -> None:
 
 def test_recalled_impression_directive_is_voice_not_a_rule_list() -> None:
     line = recalled_impression_directive("впечатление")
+    assert "•" not in line
+    assert "- " not in line
+
+
+# --- BOB-079.4: recalled self_action ownership directive ----------------------
+#
+# When recall surfaces one of Bob's OWN past deeds (event_type/category
+# ``self_action``), the light voice directive backstops INV-1/2/3: he speaks of it
+# in the first person as his own act, honestly owns a slip, does not blame external
+# forces, and never confabulates a deed absent from memory.
+
+
+def test_recall_has_self_action_true_when_a_self_action_is_present() -> None:
+    recalled = [
+        {"content": "Ada любит чай", "category": "preference"},
+        {"content": "я доделал «X», открыл PR", "category": "self_action"},
+    ]
+    assert recall_has_self_action(recalled) is True
+
+
+def test_recall_has_self_action_false_when_none_present() -> None:
+    recalled = [
+        {"content": "Ada любит чай", "category": "preference"},
+        {"content": "Ada: привет", "category": "message"},
+    ]
+    assert recall_has_self_action(recalled) is False
+
+
+def test_recall_has_self_action_is_case_insensitive_on_category() -> None:
+    recalled = [{"content": "я взялся за «X»", "category": "SELF_ACTION"}]
+    assert recall_has_self_action(recalled) is True
+
+
+def test_recall_has_self_action_empty_is_false() -> None:
+    assert recall_has_self_action([]) is False
+
+
+def test_recall_has_self_action_ignores_memory_with_no_category() -> None:
+    assert recall_has_self_action([{"content": "что-то"}]) is False
+
+
+def test_recalled_self_action_directive_asserts_first_person_ownership() -> None:
+    # INV-1/2: recalled self-actions are Bob's OWN deeds — spoken in the first person,
+    # a slip honestly owned, never attributed to external forces.
+    folded = recalled_self_action_directive().casefold()
+    assert "от первого лица" in folded
+    assert "призна" in folded  # честно признай (промах)
+    assert "внешним силам" in folded
+
+
+def test_recalled_self_action_directive_forbids_confabulation() -> None:
+    # INV-3: Bob must not invent a deed that is not in memory.
+    folded = recalled_self_action_directive().casefold()
+    assert "не выдумывай" in folded
+
+
+def test_recalled_self_action_directive_is_voice_not_a_rule_list() -> None:
+    line = recalled_self_action_directive()
     assert "•" not in line
     assert "- " not in line
 

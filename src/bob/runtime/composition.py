@@ -172,6 +172,7 @@ from bob.runtime.wiring import (
     build_endorsement_seeder,
     build_rhythm_wiring,
     build_room_mood_modulator,
+    build_self_action_recorder,
     build_staleness_reassessor,
     staleness_enabled,
 )
@@ -373,6 +374,15 @@ def build_application(
         name_to_sender_id=_backfill_name_map(merged),
     )
     recall = HybridMemoryRecall(memory_repo, resolved_embedder, reranker=resolved_reranker)
+
+    # Autobiography recorder (BOB-079): behind ``memory.autobiography`` (OFF by default →
+    # NoOp → zero writes, byte-identical behaviour). Constructed here over the shared
+    # ``memory_repo`` as the SEAM consumers inject — coding-lifecycle (.2, wired below) and
+    # the tool-loop (.3) record first-person ``self_action`` episodes through it.
+    self_action_recorder = build_self_action_recorder(
+        merged, store=memory_repo, clock=resolved_clock
+    )
+
     soul_store = SoulStore(_soul_dir(merged))
 
     # Capability seam (BEAD-05/06): advertise recall_memory + the agentic
@@ -499,6 +509,7 @@ def build_application(
         # replies thread back into that same topic, not General (BOB-042 Fix B).
         topic_id=_int(_section(telegram_section, "bob"), "topic_id", 0),
         clock=resolved_clock,
+        recorder=self_action_recorder,
     )
 
     multibot = _build_multibot(
@@ -858,6 +869,10 @@ def build_application(
         # (persist + window) and fold a SOFT «заверши по-другому» nudge into the context
         # (never a ban). Decorative: a log failure / no tic → the turn is unchanged.
         closer_log=closer_log,
+        # Autobiography recorder (BOB-079.3): the per-turn tool-loop records that Bob USED
+        # tools (coalesced first-person ``self_action``). Behind ``memory.autobiography``
+        # (OFF by default → NoOp → zero writes, byte-identical behaviour).
+        self_action_recorder=self_action_recorder,
     )
     # Intake-развязка (BOB-066 Срез 2.1): the MESSAGE_RECEIVED subscriber is now the fast,
     # non-blocking ChatDispatcher.submit (normalise → buffer → return), so the Telegram

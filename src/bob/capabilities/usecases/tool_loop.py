@@ -30,6 +30,7 @@ import logging
 from typing import TYPE_CHECKING
 
 from bob.capabilities.usecases.registry import UnknownCapabilityError
+from bob.memory.self_action import SelfAction, SelfActionKind
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -38,12 +39,17 @@ if TYPE_CHECKING:
     from bob.capabilities.usecases.progress_announcer import ProgressAnnouncer
     from bob.capabilities.usecases.registry import CapabilityRegistry
     from bob.kernel.ports import ToolLoopMessage
+    from bob.memory.ports import SelfActionRecorder
 
 logger = logging.getLogger(__name__)
 
 # Default ceiling on model turns in one loop: enough for a couple of tool hops,
 # low enough that a model stuck requesting tools cannot loop forever.
 _DEFAULT_MAX_TURNS = 6
+
+# Cap on a recorded failure ``detail`` — one short line, so a self-action episode
+# stays a terse first-person note, never a stack-trace dump in Bob's autobiography.
+_MAX_DETAIL_CHARS = 80
 
 # BOB-074 anti-narration backstop. A GUPPI mention TOGETHER with one of these
 # intent-narration markers signals Bob narrated GUPPI's INTENT ("пошёл… заглянет…
@@ -102,6 +108,9 @@ class ToolLoop:
         registry: CapabilityRegistry,
         max_turns: int = _DEFAULT_MAX_TURNS,
         announcer: ProgressAnnouncer | None = None,
+        recorder: SelfActionRecorder | None = None,
+        sender_id: int | None = None,
+        visibility: str | None = None,
     ) -> None:
         if max_turns <= 0:
             raise ValueError("max_turns must be positive")
@@ -109,11 +118,25 @@ class ToolLoop:
         self._registry = registry
         self._max_turns = max_turns
         self._announcer = announcer
+        # Autobiography seam (BOB-079.3): Bob records that HE used tools, first-person.
+        # ``None`` (the default, and the OFF-flag NoOp) → zero writes, behaviour as before.
+        self._recorder = recorder
+        self._sender_id = sender_id
+        self._visibility = visibility
 
     async def run(self, messages: Sequence[ToolLoopMessage]) -> str:
-        """Complete ``messages`` through the tool-loop and return the final text."""
+        """Complete ``messages`` through the tool-loop and return the final text.
+
+        Self-action recording (BOB-079.3) rides the loop COALESCED: the names of tools
+        SUCCESSFULLY dispatched across the whole run are collected (dedup, first-seen order)
+        and, at every exit, condensed into ONE ``TOOL_USE`` episode — one per turn max, so
+        Bob's autobiography never floods (lesson BOB-076). A tool that FAILS records its own
+        ``TOOL_FAILURE`` and is excluded from that summary; a run with no tool calls writes
+        nothing at all.
+        """
         tools = self._registry.manifest()
         conversation: list[ToolLoopMessage] = list(messages)
+        used_tools: list[str] = []
         retried = False
         for turn_index in range(self._max_turns):
             result = await self._provider.complete_with_tools(conversation, tools=tools)
@@ -133,15 +156,25 @@ class ToolLoop:
                     retried = True
                     conversation.append(_NARRATION_NUDGE)
                     continue
+                await self._record_tool_use(used_tools)
                 return result.text
             conversation.append(_assistant_turn(result.tool_calls))
             for call in result.tool_calls:
-                conversation.append(await self._run_tool(call))
+                message, succeeded = await self._run_tool(call)
+                conversation.append(message)
+                if succeeded and call.name not in used_tools:
+                    used_tools.append(call.name)
+        await self._record_tool_use(used_tools)
         logger.warning("Tool loop hit the turn cap (%d) without a final answer", self._max_turns)
         return ""
 
-    async def _run_tool(self, call: ToolCall) -> ToolLoopMessage:
-        """Dispatch one tool call (GUPPI executes) and render its ``tool`` message."""
+    async def _run_tool(self, call: ToolCall) -> tuple[ToolLoopMessage, bool]:
+        """Dispatch one tool call (GUPPI executes); return its ``tool`` message + success.
+
+        A dispatch failure is fed back to the model as the tool result (so it can recover)
+        AND recorded as a first-person ``TOOL_FAILURE`` self-action (BOB-079.3); the returned
+        flag lets :meth:`run` coalesce only the SUCCESSFUL names into one ``TOOL_USE``.
+        """
         # Interim "searching…" line (BOB-055): before a SLOW capability runs, let the
         # announcer say a live word in Bob's voice so the owner is not left in silence.
         # Decorative and by-name — the announcer stays silent for fast skills. The seam
@@ -152,21 +185,56 @@ class ToolLoop:
                 await self._announcer.announce(call.name, call.arguments)
             except Exception:  # decorative: an announcer fault must not touch the turn
                 logger.exception("progress announce failed for %s; ignoring", call.name)
+        succeeded = False
         try:
             result = await self._registry.dispatch(call.name, call.arguments)
         except UnknownCapabilityError:
             content = f"error: unknown capability '{call.name}'"
-        except Exception:  # a tool failure must not crash the turn
+            await self._record_failure(call.name, "неизвестный инструмент")
+        except Exception as exc:  # a tool failure must not crash the turn
             logger.exception("Capability %s failed during dispatch", call.name)
             content = f"error: capability '{call.name}' failed"
+            await self._record_failure(call.name, _short_detail(exc))
         else:
             content = _render_result(result)
-        return {
+            succeeded = True
+        message: ToolLoopMessage = {
             "role": "tool",
             "tool_call_id": call.id,
             "name": call.name,
             "content": content,
         }
+        return message, succeeded
+
+    async def _record_tool_use(self, names: Sequence[str]) -> None:
+        """Coalesce the SUCCESSFUL tool names into one ``TOOL_USE`` self-action (or none)."""
+        if not names:
+            return
+        await self._safe_record(
+            SelfAction(kind=SelfActionKind.TOOL_USE, target=", ".join(names))
+        )
+
+    async def _record_failure(self, name: str, detail: str) -> None:
+        """Record a first-person ``TOOL_FAILURE`` self-action for a failed dispatch."""
+        await self._safe_record(
+            SelfAction(kind=SelfActionKind.TOOL_FAILURE, target=name, detail=detail)
+        )
+
+    async def _safe_record(self, action: SelfAction) -> None:
+        """Write one self-action BEST-EFFORT — a recording fault never breaks the turn.
+
+        No recorder wired (the default / OFF-flag NoOp) → a silent no-op. Any failure of the
+        recorder is swallowed so autobiography can never break the tool loop or the reply
+        (lesson Part D BOB-078).
+        """
+        if self._recorder is None:
+            return
+        try:
+            await self._recorder.record(
+                action, sender_id=self._sender_id, visibility=self._visibility
+            )
+        except Exception:  # best-effort: a recording fault must not touch the turn
+            logger.exception("self-action recording failed for %s; ignoring", action.kind)
 
 
 def _assistant_turn(tool_calls: Sequence[ToolCall]) -> ToolLoopMessage:
@@ -197,6 +265,12 @@ def _assistant_turn(tool_calls: Sequence[ToolCall]) -> ToolLoopMessage:
             for call in tool_calls
         ],
     }
+
+
+def _short_detail(exc: Exception) -> str:
+    """A terse one-line reason for a ``TOOL_FAILURE`` note (first line, length-capped)."""
+    text = str(exc).strip() or exc.__class__.__name__
+    return text.splitlines()[0][:_MAX_DETAIL_CHARS]
 
 
 def _render_result(result: object) -> str:

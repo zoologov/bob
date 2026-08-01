@@ -53,12 +53,15 @@ from bob.coding.entities import CodingSession
 from bob.coding.naming import worktree_branch
 from bob.coding.narrate import narrate
 from bob.coding.state import CodingSessionState, can_approve_plan, is_terminal
+from bob.memory.self_action import SelfAction, SelfActionKind
+from bob.social.disclosure import VISIBILITY_OWNER_PRIVATE
 
 if TYPE_CHECKING:
     from contextlib import AbstractAsyncContextManager
     from datetime import datetime
 
     from bob.coding.ports import ClaudeCodeRunner, CodingSessionStore, PullRequestOpener, Worktree
+    from bob.memory.ports import SelfActionRecorder
 
 logger = logging.getLogger(__name__)
 
@@ -85,6 +88,10 @@ _PLAN_MODE = "plan"
 # past this cap Bob sends ONE "…продолжаю" notice and goes quiet on progress until the
 # final result event (which is ALWAYS sent — the cap only throttles interim progress).
 _MAX_NARRATION = 12
+
+# The reason recorded on the no-changes FAILED path (claude applied no edits, so Bob
+# pushes nothing and opens no PR) — the autobiographical detail for CODING_FAILED.
+_NO_CHANGES_DETAIL = "изменений не было"
 
 # Owner-facing messages live in Bob's voice (BOB-041 .3): the gate/framing lines are
 # built by :mod:`~bob.coding.session_voice` (Bob speaks, GUPPI executes) and the
@@ -200,6 +207,7 @@ class CodingAssistant:
         typing_keepalive: TypingKeepalive | None = None,
         status_panel: StatusPanel | None = None,
         context: CodingContext | None = None,
+        recorder: SelfActionRecorder | None = None,
     ) -> None:
         self._runner = runner
         self._worktree = worktree
@@ -210,6 +218,11 @@ class CodingAssistant:
         self._clock = clock
         self._id_factory = id_factory
         self._execute_mode = execute_mode
+        # Autobiography (BOB-079.2): first-person self-action episodes recorded at each
+        # lifecycle transition through the narrow ``SelfActionRecorder``. Unwired → a local
+        # null recorder (zero writes), so the gated flow is byte-identical when off, and the
+        # composition root's flag-gated NoOp/memory recorder decides whether it truly writes.
+        self._recorder: SelfActionRecorder = recorder or _NullSelfActionRecorder()
         # Work indicators (BOB-046 .2): both degrade to a no-op when unwired, so the gated
         # flow is unchanged and never depends on the indicator being present.
         self._typing: TypingKeepalive = typing_keepalive or _no_typing
@@ -258,11 +271,12 @@ class CodingAssistant:
                 plan = await self._run_plan(session, path)
         except Exception as exc:  # fault isolation: a runner fault is an honest FAILED
             logger.exception("coding: plan run failed for %s", session.id)
-            return await self._fail(session, exc, cleanup=True)
+            return await self._fail(session, exc, cleanup=True, sender=sender)
         session = session.with_plan(plan, at=self._clock.now()).with_state(
             CodingSessionState.PLAN_READY, at=self._clock.now()
         )
         await self._store.save(session)
+        await self._record(SelfAction(SelfActionKind.CODING_STARTED, target=task), sender)
         await self._panel.update(session_voice.panel_plan_ready())
         return await self._reply(True, session_voice.plan(plan), session=session)
 
@@ -285,10 +299,10 @@ class CodingAssistant:
         session = session.with_state(CodingSessionState.EXECUTING, at=self._clock.now())
         await self._store.save(session)
         try:
-            return await self._execute_and_open_pr(session, path)
+            return await self._execute_and_open_pr(session, path, sender)
         except Exception as exc:  # fault isolation: a runner/PR fault is an honest FAILED
             logger.exception("coding: execute run failed for %s", session.id)
-            return await self._fail(session, exc, cleanup=False)
+            return await self._fail(session, exc, cleanup=False, sender=sender)
         finally:
             # The worktree's job (running claude) is over on ANY exit of the run —
             # success (PR_OPEN, branch pushed), failure (FAILED) or a mid-run stop — so
@@ -306,6 +320,7 @@ class CodingAssistant:
         self._cancelled.add(session.id)
         session = session.with_state(CodingSessionState.CANCELLED, at=self._clock.now())
         await self._store.save(session)
+        await self._record(SelfAction(SelfActionKind.CODING_ABORTED, target=session.task), sender)
         await self._cleanup(session.worktree_path)
         await self._panel.update(session_voice.panel_stopped())
         return await self._reply(True, session_voice.stopped(), session=session)
@@ -335,7 +350,7 @@ class CodingAssistant:
     # --- Internal orchestration ----------------------------------------------
 
     async def _execute_and_open_pr(
-        self, session: CodingSession, path: str
+        self, session: CodingSession, path: str, sender: int | None
     ) -> CodingOutcome:
         """Run the approved plan (narrated), commit+push, open a PR, advance to ``PR_OPEN``.
 
@@ -348,7 +363,7 @@ class CodingAssistant:
         """
         await self._panel.update(session_voice.panel_executing())
         async with self._typing():  # "Bob is typing…" through the long execute wait
-            await self._narrate_run(session, path)
+            await self._narrate_run(session, path, sender)
         if session.id in self._cancelled:  # a stop landed mid-run — do not open a PR
             return CodingOutcome(ok=False, message=session_voice.stopped(), session=session)
         committed = await self._worktree.commit_and_push(
@@ -359,6 +374,14 @@ class CodingAssistant:
                 CodingSessionState.FAILED, at=self._clock.now()
             )
             await self._store.save(session)
+            await self._record(
+                SelfAction(
+                    SelfActionKind.CODING_FAILED,
+                    target=session.task,
+                    detail=_NO_CHANGES_DETAIL,
+                ),
+                sender,
+            )
             await self._panel.update(session_voice.panel_failed())
             return await self._reply(False, session_voice.no_changes(), session=session)
         pr_url = await self._pr_opener.open(
@@ -368,6 +391,7 @@ class CodingAssistant:
             CodingSessionState.PR_OPEN, at=self._clock.now()
         )
         await self._store.save(session)
+        await self._record(SelfAction(SelfActionKind.CODING_FINISHED, target=session.task), sender)
         await self._panel.update(session_voice.panel_pr())
         return await self._reply(True, session_voice.pr(pr_url), session=session)
 
@@ -394,7 +418,9 @@ class CodingAssistant:
                     parts.append(part)
         return _clean_plan(parts)
 
-    async def _narrate_run(self, session: CodingSession, path: str) -> None:
+    async def _narrate_run(
+        self, session: CodingSession, path: str, sender: int | None
+    ) -> None:
         """Run execute-mode, narrating each non-noise event — capped against flooding.
 
         🔴 SAFETY (BOB-076): interim PROGRESS narration is capped at ``_MAX_NARRATION``
@@ -424,6 +450,11 @@ class CodingAssistant:
                     continue
                 if progress >= _MAX_NARRATION:  # cap hit: one notice, then go quiet
                     await self._notifier.send(session_voice.narration_capped())
+                    # Autobiographical trace of the flood (BOB-076): recorded EXACTLY ONCE
+                    # per run — right here where the cap trips, not per narration line.
+                    await self._record(
+                        SelfAction(SelfActionKind.CODING_RUNAWAY, target=session.task), sender
+                    )
                     capped = True
                     continue
                 await self._notifier.send(line)
@@ -444,7 +475,7 @@ class CodingAssistant:
             return ""
 
     async def _fail(
-        self, session: CodingSession, exc: Exception, *, cleanup: bool
+        self, session: CodingSession, exc: Exception, *, cleanup: bool, sender: int | None
     ) -> CodingOutcome:
         """Move the session to ``FAILED`` with an honest report.
 
@@ -454,10 +485,29 @@ class CodingAssistant:
         """
         session = session.with_state(CodingSessionState.FAILED, at=self._clock.now())
         await self._store.save(session)
+        await self._record(
+            SelfAction(SelfActionKind.CODING_FAILED, target=session.task, detail=str(exc)),
+            sender,
+        )
         await self._panel.update(session_voice.panel_failed())
         if cleanup:
             await self._cleanup(session.worktree_path)
         return await self._reply(False, session_voice.failed(str(exc)), session=session)
+
+    async def _record(self, action: SelfAction, sender: int | None) -> None:
+        """Best-effort autobiography write — a recording fault NEVER breaks coding.
+
+        The self-action episode is a side channel: whether it lands or throws, the gated
+        coding path must complete/fail EXACTLY as before (lesson Part D BOB-078). The
+        visibility is owner-private — a coding session is an owner-only action, so its
+        trace must never surface initiatively to a guest.
+        """
+        try:
+            await self._recorder.record(
+                action, sender_id=sender, visibility=VISIBILITY_OWNER_PRIVATE
+            )
+        except Exception:  # a recorder fault must never crash the coding session
+            logger.exception("coding: self-action recording failed (%s)", action.kind)
 
     async def _cleanup(self, path: str | None) -> None:
         """Remove the worktree (idempotent best-effort; never leak, never crash a turn)."""
@@ -523,6 +573,23 @@ class _NullStatusPanel:
 
     async def update(self, text: str) -> None:
         """Drop the edit — nothing to edit when no panel was ever opened."""
+
+
+class _NullSelfActionRecorder:
+    """No-op recorder: autobiography unwired → no self-action episode (graceful degrade).
+
+    A local null object (like :class:`_NullStatusPanel`) so an unwired ``recorder`` needs
+    no branch at each call site and the application use-case never imports an infra adapter.
+    """
+
+    async def record(
+        self,
+        action: SelfAction,
+        *,
+        sender_id: int | None = None,
+        visibility: str | None = None,
+    ) -> None:
+        """Drop the write — autobiography is unwired (byte-identical behaviour)."""
 
 
 def _refused() -> CodingOutcome:

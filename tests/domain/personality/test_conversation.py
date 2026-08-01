@@ -726,6 +726,26 @@ def test_excluding_reflections_keeps_memory_with_no_category() -> None:
     assert recalled_excluding_reflections([no_cat]) == (no_cat,)
 
 
+# --- BOB-079.4: self_action is shareable autobiography, NOT a private reflection --
+#
+# A ``self_action`` episode (Bob's own past deed, first-person) must SURFACE in the
+# reply-recall pool — it is delimited autobiography, not inner-life reflection. The
+# reflection containment must drop reflections while keeping a self_action.
+
+_SELF_ACTION: dict[str, object] = {
+    "content": "я доделал «X», открыл PR",
+    "category": "self_action",
+    "source": "episodic",
+}
+
+
+def test_self_action_survives_reflection_containment_while_reflection_is_dropped() -> None:
+    # The reflection is contained; Bob's own deed is kept (shareable autobiography).
+    kept = recalled_excluding_reflections([_REFLECTION, _SELF_ACTION])
+    assert _REFLECTION not in kept
+    assert _SELF_ACTION in kept
+
+
 # --- BOB-061 .1: cross-session closer persist + near-verbatim motif detect ------
 #
 # Gap 2 (near-verbatim motif clustering): the signature closer recurs in lexical

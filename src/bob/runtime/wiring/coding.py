@@ -48,6 +48,7 @@ if TYPE_CHECKING:
     from bob.infrastructure.persistence import SqliteConnection
     from bob.infrastructure.telegram.gateway import BotLike
     from bob.kernel.ports import Clock
+    from bob.memory.ports import SelfActionRecorder
     from bob.social.usecases import Authorizer
 
 
@@ -89,6 +90,7 @@ def _build_coding_assistant(
     chat_id: int,
     topic_id: int | None,
     clock: Clock,
+    recorder: SelfActionRecorder,
 ) -> CodingAssistant | None:
     """Assemble the gated coding assistant, or ``None`` when off (BOB-039 .3).
 
@@ -103,12 +105,17 @@ def _build_coding_assistant(
     Bob speaks, GUPPI executes). The UNBYPASSABLE plan gate lives in the use-case + domain
     machine; this only wires it. The assistant is deliberately NOT added to
     ``goals.safe_capabilities`` (never autonomous).
+
+    The flag-gated ``recorder`` (BOB-079) is threaded in from the composition root so each
+    lifecycle transition records a first-person ``self_action`` episode; when
+    ``memory.autobiography`` is OFF it is the NoOp (zero writes, unchanged behaviour).
     """
     coder = _section(config, "coder")
     if not _flag(coder, "enabled"):
         return None
     timeout = float(_int(coder, "timeout", 600))
     return CodingAssistant(
+        recorder=recorder,
         context=make_coding_context(
             _build_introspector(config), PrivacyGuard(repo_root=_REPO_ROOT)
         ),
