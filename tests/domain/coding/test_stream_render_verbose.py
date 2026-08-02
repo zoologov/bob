@@ -16,7 +16,13 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from bob.coding.stream_render import chunk_for_telegram, render_stream_event
+import pytest
+
+from bob.coding.stream_render import (
+    _MAX_RESULT,
+    chunk_for_telegram,
+    render_stream_event,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -78,6 +84,39 @@ def test_group_tool_result_error_is_plain() -> None:
 def test_group_tool_result_success_is_noise() -> None:
     event = _user_tool_result(content="ok, file written")
     assert render_stream_event(event, verbose=False) is None
+
+
+# --- INV-4: verbose=False == default across EVERY event kind (no regression) --
+
+
+@pytest.mark.parametrize(
+    "event",
+    [
+        _assistant(_text("слово " * 200)),  # long assistant text (concise truncation)
+        _assistant(_tool_use("Edit", {"file_path": "src/bob/parser.py"})),  # edit
+        _assistant(_tool_use("Read", {"file_path": "src/bob/app.py"})),  # read
+        _assistant(_tool_use("Bash", {"command": "ls -la"})),  # bash command
+        _assistant(_tool_use("Bash", {"command": "pytest -q"})),  # test command
+        _assistant(_tool_use("Grep", {"pattern": "foo"})),  # grep
+        _assistant(_tool_use("Glob", {"pattern": "*.py"})),  # glob
+        _assistant(_tool_use("WeirdTool", {})),  # unknown tool → bare name
+        _user_tool_result(content="12 passed in 0.3s"),  # tests-passed success
+        _user_tool_result(content="Traceback: boom", is_error=True),  # error result
+        _user_tool_result(content="ok, wrote file"),  # noise success
+        {"type": "tool_use", "name": "Edit", "input": {"file_path": "x/y.py"}},  # flat
+        {"type": "tool_result", "content": "boom", "is_error": True},  # flat result
+        {"type": "result", "subtype": "success"},  # final ok
+        {"type": "result", "is_error": True, "result": "died"},  # final error
+        {"type": "error", "message": "subprocess died"},  # top-level error
+        {"type": "system", "subtype": "init"},  # pure noise
+    ],
+)
+def test_group_mode_is_byte_identical_to_default_for_every_event(
+    event: Mapping[str, object],
+) -> None:
+    # INV-4: the one-way group path (verbose=False, the default) must stay byte-for-byte
+    # what it was before BOB-085 — verbose is a strictly additive interactive-DM branch.
+    assert render_stream_event(event, verbose=False) == render_stream_event(event)
 
 
 # --- INV-1: verbose assistant-текст целиком (не огрызок) ----------------------
@@ -254,3 +293,123 @@ def test_chunk_over_limit_single_line_hard_splits() -> None:
 def test_chunk_exact_limit_stays_single() -> None:
     text = "z" * 4096
     assert chunk_for_telegram(text) == [text]
+
+
+# --- chunk_for_telegram: EXACT boundary output (mutation gap-fill) -------------
+# These pin the precise chunk list at small limits so off-by-one accounting
+# mutations (separator/reserve/current_len, and/or, >/>=) produce an observably
+# different split and die. Inputs carry spaces so a wrong `split()` (whitespace)
+# instead of `split("\n")` also diverges.
+
+
+def test_chunk_groups_lines_to_exact_boundary() -> None:
+    # Two 3-char lines fill limit=7 ("aXa"+"\n"+"bXb" == 7), the third overflows.
+    assert chunk_for_telegram("a a\nb b\nc c\nd d", limit=7) == ["a a\nb b", "c c\nd d"]
+
+
+def test_chunk_separator_is_counted_when_joining_lines() -> None:
+    # 4+1(sep)+4 == 9 > 8 → the second line must start a new chunk (kills a dropped
+    # or negated separator term).
+    assert chunk_for_telegram("aaaa\nbbbb", limit=8) == ["aaaa", "bbbb"]
+
+
+def test_chunk_keeps_lines_that_exactly_fill_the_limit_together() -> None:
+    # 4+1+3 == 8 == limit → stays together (`>` not `>=`); the 8-char line overflows.
+    assert chunk_for_telegram("aaaa\nbbb\nzzzzzzzz", limit=8) == ["aaaa\nbbb", "zzzzzzzz"]
+
+
+def test_chunk_over_limit_single_line_hard_split_is_exact() -> None:
+    # A lone 10-char line at limit=4 is hard-split into contiguous, non-overlapping,
+    # order-preserving 4-char pieces (kills range start/step/stop mutants).
+    assert chunk_for_telegram("0123456789", limit=4) == ["0123", "4567", "89"]
+
+
+def test_chunk_fenced_block_split_reopens_language_tag_exactly() -> None:
+    # A fenced ```py block that overflows closes ``` at each cut and REOPENS with the
+    # language tag, every chunk balanced markdown — pinned exactly so fence-reserve /
+    # reopen-opener mutants diverge.
+    text = "```py\nAAAA\nBBBB\n```"
+    assert chunk_for_telegram(text, limit=12) == [
+        "```py\n```",
+        "```py\nAAAA\n```",
+        "```py\nBBBB\n```",
+        "```py\n```",
+    ]
+
+
+def test_chunk_fence_reserve_accounts_for_the_closing_fence_exactly() -> None:
+    # Inside a fence the split must reserve exactly the closing "```" (len+1 for its own
+    # line), no more: an over-reservation would cut a line that in fact still fits.
+    assert chunk_for_telegram("```\nx\nx\n```", limit=9) == [
+        "```\nx\n```",
+        "```\nx\n```",
+        "```\n```",
+    ]
+
+
+def test_chunk_reopened_fence_line_uses_exactly_one_separator() -> None:
+    # After a fence cut the reopened opener + next line are joined by exactly one "\n";
+    # a miscounted separator would flush a line early.
+    assert chunk_for_telegram("```\nxxxx\nx\n```", limit=13) == [
+        "```\nxxxx\n```",
+        "```\nx\n```",
+    ]
+
+
+# --- verbose: EXACT tool-result cap boundary + flattened events ---------------
+
+
+def test_verbose_tool_result_at_exact_cap_has_no_truncation_marker() -> None:
+    # Content exactly _MAX_RESULT long is emitted whole (``<=`` boundary, no marker).
+    event = _user_tool_result(content="A" * _MAX_RESULT)
+    rendered = render_stream_event(event, verbose=True)
+    assert rendered == f"```\n{'A' * _MAX_RESULT}\n```"
+    assert "…(обрезано)" not in rendered
+
+
+def test_verbose_tool_result_one_over_cap_gets_marker() -> None:
+    event = _user_tool_result(content="A" * (_MAX_RESULT + 1))
+    rendered = render_stream_event(event, verbose=True)
+    assert rendered is not None
+    assert "…(обрезано)" in rendered
+
+
+def test_verbose_flattened_tool_use_is_rich() -> None:
+    # The flattened (type=tool_use) form must carry verbose through, not silently
+    # fall back to the concise group prefix.
+    event = {"type": "tool_use", "name": "Read", "input": {"file_path": "a/b.py"}}
+    assert render_stream_event(event, verbose=True) == "📄 читаю `b.py`"
+
+
+def test_verbose_flattened_tool_result_is_fenced() -> None:
+    event = {"type": "tool_result", "content": "файл ок"}
+    assert render_stream_event(event, verbose=True) == "```\nфайл ок\n```"
+
+
+def test_verbose_result_error_is_fenced_exactly() -> None:
+    event = {"type": "result", "is_error": True, "result": "boom"}
+    assert render_stream_event(event, verbose=True) == "ошибка:\n```\nboom\n```"
+
+
+def test_verbose_top_level_error_is_fenced_exactly() -> None:
+    event = {"type": "error", "message": "subprocess died"}
+    assert render_stream_event(event, verbose=True) == "ошибка:\n```\nsubprocess died\n```"
+
+
+def test_verbose_error_with_no_detail_is_bare_word() -> None:
+    # An error event with no message/result → the bare "ошибка" fallback (no fence, no
+    # detail) — pins the empty-detail branch label exactly.
+    assert render_stream_event({"type": "error"}, verbose=True) == "ошибка"
+    assert render_stream_event({"type": "result", "is_error": True}, verbose=True) == "ошибка"
+
+
+# --- verbose: collapse-prose keeps code verbatim, folds prose blanks (exact) ---
+
+
+def test_verbose_collapse_folds_prose_blanks_but_keeps_every_code_block() -> None:
+    # Two fenced blocks with prose around them: prose runs of 3+ blank lines fold to
+    # one, code (incl. trailing spaces "d  ") stays verbatim — pins the even/odd
+    # segment classification so index-parity mutants misclassify and die.
+    text = "A\n```\nc1\n```\nB\n```\nd  \n```\nC\n\n\n\nD"
+    event = _assistant(_text(text))
+    assert render_stream_event(event, verbose=True) == "A\n```\nc1\n```\nB\n```\nd  \n```\nC\n\nD"
