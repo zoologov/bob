@@ -19,7 +19,14 @@ Block grammar (line-oriented):
 * ``> ..``  blockquote           → :class:`RichBlockBlockQuotation`
 * ``- ..`` / ``1. ..`` list      → :class:`RichBlockList` of ``RichBlockListItem``
 * ``---`` / ``***`` rule         → :class:`RichBlockDivider`
+* ``| .. | .. |`` GFM table      → :class:`RichBlockTable` of ``RichBlockTableCell``
 * blank-line-separated text      → :class:`RichBlockParagraph`
+
+A GFM table is only recognised when it is *well formed*: a header row, a
+separator row (``|:--|:-:|--:|``) whose column count matches the header, and any
+number of data rows with that same column count. Anything malformed (missing
+separator, ragged columns, a lone ``|``) degrades to a plain paragraph — the
+recogniser never raises.
 
 Inline spans inside non-code text become typed ``RichText`` runs:
 
@@ -48,6 +55,8 @@ from aiogram.types import (
     RichBlockParagraph,
     RichBlockPreformatted,
     RichBlockSectionHeading,
+    RichBlockTable,
+    RichBlockTableCell,
     RichBlockThinking,
     RichMessage,
     RichTextBold,
@@ -73,6 +82,11 @@ _ORDERED_RE = re.compile(r"^(\d+)\.\s+(.*)$")
 _DIVIDER_RE = re.compile(r"^(?:-{3,}|\*{3,}|_{3,})$")
 _QUOTE_RE = re.compile(r"^>\s?(.*)$")
 
+# A GFM table separator cell: dashes with optional leading/trailing colons.
+_TABLE_SEPARATOR_CELL_RE = re.compile(r"^:?-+:?$")
+# Vertical alignment is not expressible in GFM — cells default to the middle.
+_TABLE_VALIGN = "middle"
+
 # Inline span markers, longest/most-specific first so e.g. ``**`` wins over ``*``.
 # Each entry: (compiled pattern, run builder). The first group is the inner text.
 _INLINE_SPECIALS = re.compile(r"\*\*|\*|`|~~|\|\||\$")
@@ -94,6 +108,85 @@ _MARKED_RUNS = (
 )
 # Runs whose inner ``text`` is recursed into when flattening to plain text.
 _WRAPPED_RUNS = (*_MARKED_RUNS, RichTextCode)
+
+# Serialize a column alignment back to its GFM separator cell.
+_TABLE_ALIGN_SEPARATORS = {"left": ":---", "center": ":--:", "right": "---:"}
+
+
+# --- GFM table recognition (pure, I/O-free — the mutation target) -------------
+
+
+def _split_table_row(line: str) -> list[str]:
+    """Split one ``| a | b |`` row into its trimmed cell strings.
+
+    Leading and trailing pipes are optional (GFM allows both). A cell is the text
+    between two pipes; surrounding whitespace is stripped.
+    """
+    stripped = line.strip()
+    if stripped.startswith("|"):
+        stripped = stripped[1:]
+    if stripped.endswith("|"):
+        stripped = stripped[:-1]
+    return [cell.strip() for cell in stripped.split("|")]
+
+
+def _cell_alignment(separator_cell: str) -> str:
+    """Map one separator cell (``:---`` / ``:--:`` / ``---:`` / ``---``) to align.
+
+    A leading colon means left, a trailing colon means right, both mean centre,
+    and a bare run of dashes defaults to left.
+    """
+    left = separator_cell.startswith(":")
+    right = separator_cell.endswith(":")
+    if left and right:
+        return "center"
+    if right:
+        return "right"
+    return "left"
+
+
+def _parse_separator_row(cells: list[str]) -> list[str] | None:
+    """Return the per-column alignments for a separator row, or ``None``.
+
+    Every cell must be a valid GFM separator (``:?-+:?``); otherwise the row is
+    not a separator and the caller must not treat the block as a table.
+    """
+    alignments: list[str] = []
+    for cell in cells:
+        if not _TABLE_SEPARATOR_CELL_RE.match(cell):
+            return None
+        alignments.append(_cell_alignment(cell))
+    return alignments
+
+
+def _recognize_table(
+    lines: list[str], start: int
+) -> tuple[list[str], list[list[str]], int] | None:
+    """Recognise a well-formed GFM table beginning at ``lines[start]``.
+
+    Returns ``(alignments, rows, next_index)`` where ``rows[0]`` is the header and
+    the remaining rows are data, or ``None`` when the lines do not form a valid
+    table (no separator, a column-count mismatch, or a ragged data row). Pure and
+    total — it never raises, so a malformed table simply degrades to a paragraph.
+    """
+    if start + 1 >= len(lines):
+        return None
+    header = _split_table_row(lines[start])
+    alignments = _parse_separator_row(_split_table_row(lines[start + 1]))
+    if alignments is None or len(alignments) != len(header):
+        return None
+    rows = [header]
+    index = start + 2
+    while index < len(lines):
+        stripped = lines[index].strip()
+        if not stripped or "|" not in stripped:
+            break
+        cells = _split_table_row(lines[index])
+        if len(cells) != len(header):
+            return None  # ragged row → not a well-formed table
+        rows.append(cells)
+        index += 1
+    return alignments, rows, index
 
 
 class MarkdownToRichMessage:
@@ -144,6 +237,11 @@ class MarkdownToRichMessage:
                 continue
             if _UNORDERED_RE.match(stripped) or _ORDERED_RE.match(stripped):
                 block, index = self._take_list(lines, index)
+                blocks.append(block)
+                continue
+            table = self._take_table(lines, index)
+            if table is not None:
+                block, index = table
                 blocks.append(block)
                 continue
             block, index = self._take_paragraph(lines, index)
@@ -204,6 +302,35 @@ class MarkdownToRichMessage:
         inner = RichBlockParagraph(text=self._inline(text))
         return RichBlockListItem(label="", blocks=[inner], value=value)
 
+    def _take_table(
+        self, lines: list[str], start: int
+    ) -> tuple[RichBlockTable, int] | None:
+        recognized = _recognize_table(lines, start)
+        if recognized is None:
+            return None
+        alignments, rows, index = recognized
+        header, *data = rows
+        cells = [
+            [self._table_cell(text, align, is_header=True)
+             for text, align in zip(header, alignments, strict=True)]
+        ]
+        cells.extend(
+            [self._table_cell(text, align, is_header=False)
+             for text, align in zip(row, alignments, strict=True)]
+            for row in data
+        )
+        return RichBlockTable(cells=cells), index
+
+    def _table_cell(
+        self, text: str, align: str, *, is_header: bool
+    ) -> RichBlockTableCell:
+        return RichBlockTableCell(
+            align=align,
+            valign=_TABLE_VALIGN,
+            text=self._inline(text),
+            is_header=True if is_header else None,
+        )
+
     def _take_paragraph(
         self, lines: list[str], start: int
     ) -> tuple[RichBlockParagraph, int]:
@@ -213,6 +340,8 @@ class MarkdownToRichMessage:
             stripped = lines[index].strip()
             if not stripped or self._is_block_start(stripped):
                 break
+            if index > start and _recognize_table(lines, index) is not None:
+                break  # a well-formed table starts here → end the paragraph
             parts.append(stripped)
             index += 1
         return RichBlockParagraph(text=self._inline(" ".join(parts))), index
@@ -309,6 +438,8 @@ class RichMessageSerializer:
             return self._quote(block)
         if isinstance(block, RichBlockList):
             return self._list(block)
+        if isinstance(block, RichBlockTable):
+            return self._table(block)
         return self._text_block(block)
 
     def _text_block(self, block: RichBlockUnion) -> str:
@@ -321,6 +452,26 @@ class RichMessageSerializer:
 
     def _list(self, block: RichBlockList) -> str:
         return "\n".join(self._list_item(item) for item in block.items)
+
+    def _table(self, block: RichBlockTable) -> str:
+        if not block.cells:
+            return ""
+        header, *data = block.cells
+        lines = [self._table_row(header)]
+        lines.append(self._table_separator(header))
+        lines.extend(self._table_row(row) for row in data)
+        return "\n".join(lines)
+
+    def _table_row(self, cells: list[RichBlockTableCell]) -> str:
+        return "| " + " | ".join(self._cell_text(cell) for cell in cells) + " |"
+
+    def _table_separator(self, header: list[RichBlockTableCell]) -> str:
+        return "| " + " | ".join(
+            _TABLE_ALIGN_SEPARATORS.get(cell.align, "---") for cell in header
+        ) + " |"
+
+    def _cell_text(self, cell: RichBlockTableCell) -> str:
+        return "" if cell.text is None else self._inline(cell.text)
 
     def _heading_or_code(
         self, block: RichBlockSectionHeading | RichBlockPreformatted

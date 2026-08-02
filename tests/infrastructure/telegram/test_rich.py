@@ -21,6 +21,7 @@ from aiogram.types import (
     RichBlockParagraph,
     RichBlockPreformatted,
     RichBlockSectionHeading,
+    RichBlockTable,
     RichBlockThinking,
     RichMessage,
     RichTextBold,
@@ -319,3 +320,143 @@ def test_serialize_strikethrough_spoiler_math() -> None:
     out = _serialize(_convert("~~x~~ ||y|| $z$"))
 
     assert out == "~~x~~ ||y|| $z$"
+
+
+# --- GFM tables ---------------------------------------------------------------
+
+
+def test_gfm_table_becomes_table_with_header_and_data_cells() -> None:
+    message = _convert("| H1 | H2 |\n|----|----|\n| a | b |")
+
+    block = message.blocks[0]
+    assert isinstance(block, RichBlockTable)
+    assert len(block.cells) == 2  # header row + one data row
+    header = block.cells[0]
+    assert all(cell.is_header for cell in header)
+    assert [cell.text for cell in header] == ["H1", "H2"]
+    data = block.cells[1]
+    assert not any(cell.is_header for cell in data)
+    assert [cell.text for cell in data] == ["a", "b"]
+
+
+def test_gfm_table_column_alignment_from_separator() -> None:
+    message = _convert("| L | C | R |\n|:---|:--:|---:|\n| a | b | c |")
+
+    block = message.blocks[0]
+    assert isinstance(block, RichBlockTable)
+    assert [cell.align for cell in block.cells[0]] == ["left", "center", "right"]
+    # Alignment applies to the data row too.
+    assert [cell.align for cell in block.cells[1]] == ["left", "center", "right"]
+
+
+def test_gfm_table_default_alignment_is_left() -> None:
+    message = _convert("| H |\n|---|\n| x |")
+
+    block = message.blocks[0]
+    assert isinstance(block, RichBlockTable)
+    assert block.cells[0][0].align == "left"
+
+
+def test_gfm_table_cell_valign_is_middle() -> None:
+    message = _convert("| H |\n|---|\n| x |")
+
+    block = message.blocks[0]
+    assert isinstance(block, RichBlockTable)
+    assert block.cells[0][0].valign == "middle"
+
+
+def test_gfm_table_cell_preserves_inline_formatting() -> None:
+    message = _convert("| Name | Note |\n|---|---|\n| **bob** | `code` |")
+
+    block = message.blocks[0]
+    assert isinstance(block, RichBlockTable)
+    bold_cell = block.cells[1][0]
+    assert isinstance(bold_cell.text, RichTextBold)
+    assert bold_cell.text.text == "bob"
+    code_cell = block.cells[1][1]
+    assert isinstance(code_cell.text, RichTextCode)
+    assert code_cell.text.text == "code"
+
+
+def test_gfm_table_header_only_no_data_rows_is_valid() -> None:
+    message = _convert("| H1 | H2 |\n|---|---|")
+
+    block = message.blocks[0]
+    assert isinstance(block, RichBlockTable)
+    assert len(block.cells) == 1  # just the header row
+
+
+def test_gfm_table_after_paragraph_text_is_recognized() -> None:
+    message = _convert("intro line\n| H1 | H2 |\n|---|---|\n| a | b |")
+
+    assert isinstance(message.blocks[0], RichBlockParagraph)
+    assert message.blocks[0].text == "intro line"
+    assert isinstance(message.blocks[1], RichBlockTable)
+
+
+# --- GFM tables: graceful degradation -----------------------------------------
+
+
+def test_malformed_table_missing_separator_degrades_to_paragraph() -> None:
+    blocks = _convert("| H1 | H2 |\n| a | b |").blocks
+
+    assert not any(isinstance(b, RichBlockTable) for b in blocks)
+    assert all(isinstance(b, RichBlockParagraph) for b in blocks)
+
+
+def test_ragged_table_columns_degrade_to_paragraph() -> None:
+    blocks = _convert("| H1 | H2 |\n|---|---|\n| only-one |").blocks
+
+    assert not any(isinstance(b, RichBlockTable) for b in blocks)
+
+
+def test_lone_pipe_line_degrades_and_does_not_crash() -> None:
+    blocks = _convert("|").blocks
+
+    assert not any(isinstance(b, RichBlockTable) for b in blocks)
+    assert isinstance(blocks[0], RichBlockParagraph)
+
+
+def test_spoiler_line_is_not_mistaken_for_a_table() -> None:
+    # ``||spoiler||`` contains pipes but is not a GFM table.
+    message = _convert("a ||secret|| b")
+
+    block = message.blocks[0]
+    assert isinstance(block, RichBlockParagraph)
+    assert not isinstance(block, RichBlockTable)
+
+
+# --- GFM tables: serialization round-trip -------------------------------------
+
+
+def test_serialize_gfm_table_round_trips() -> None:
+    out = _serialize(_convert("| H1 | H2 |\n|:---|---:|\n| a | b |"))
+
+    assert out == "| H1 | H2 |\n| :--- | ---: |\n| a | b |"
+
+
+def test_serialize_gfm_table_center_alignment() -> None:
+    out = _serialize(_convert("| H |\n|:--:|\n| x |"))
+
+    assert out == "| H |\n| :--: |\n| x |"
+
+
+# --- Regression: existing subset unchanged by table support -------------------
+
+
+def test_existing_subset_round_trips_byte_identical() -> None:
+    # Every pre-table block/inline kind must survive convert->serialize unchanged.
+    doc = (
+        "# Title\n\n"
+        "para with **bold** and *italic* and `code`\n\n"
+        "- one\n"
+        "- two\n\n"
+        "> quoted\n\n"
+        "```python\n"
+        "x = 1\n"
+        "```\n\n"
+        "---\n\n"
+        "~~x~~ ||y|| $z$"
+    )
+
+    assert _serialize(_convert(doc)) == doc
