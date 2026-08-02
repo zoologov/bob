@@ -34,7 +34,7 @@ import logging
 from collections import deque
 from typing import TYPE_CHECKING
 
-from bob.coding.stream_render import render_stream_event
+from bob.coding.stream_render import chunk_for_telegram, render_stream_event
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Callable, Mapping
@@ -56,11 +56,17 @@ class _DmLiveStreamer:
         notifier: OwnerNotifier,
         panel: StatusPanel | None = None,
         window: int = _ROLL_WINDOW,
+        verbose: bool = False,
     ) -> None:
         self._notifier = notifier
         self._panel = panel
         self._recent: deque[str] = deque(maxlen=window)
         self._opened = False
+        # verbose=True (interactive DM, BOB-085.2): render the FULL curated rich event
+        # (assistant text in full + markdown passthrough) and chunk an over-limit piece into
+        # ≤ Telegram-limit messages via ``chunk_for_telegram``. verbose=False (the group
+        # one-way dev-channel, BOB-082): concise lines sent as-is, byte-identical.
+        self._verbose = verbose
 
     async def stream(
         self,
@@ -72,11 +78,25 @@ class _DmLiveStreamer:
         async for event in events:
             if is_cancelled():  # a /code stop landed — break (runner closes → proc killed)
                 break
-            line = render_stream_event(event)
+            line = render_stream_event(event, verbose=self._verbose)
             if line is None:  # pure noise (system-init/heartbeat) — skip
                 continue
-            await self._notifier.send(line)
+            await self._emit(line)
             await self._roll(line)
+
+    async def _emit(self, line: str) -> None:
+        """Отправить строку в личку: verbose — чанками ≤ лимита; иначе как есть (INV-4).
+
+        В verbose курированный rich-рендер может превысить Telegram plain-лимит (длинный
+        assistant-ответ) — режем чистым :func:`chunk_for_telegram` (код-блоки не рвутся) и
+        шлём куски по порядку, чтобы ответ дошёл ЦЕЛИКОМ (INV-1). В концис-режиме
+        (груп-нарратив BOB-082) строка уходит одним сообщением байт-в-байт.
+        """
+        if not self._verbose:
+            await self._notifier.send(line)
+            return
+        for chunk in chunk_for_telegram(line):
+            await self._notifier.send(chunk)
 
     async def _roll(self, line: str) -> None:
         """Прокатить «терминальную» панель последними строками (best-effort, лениво откр.)."""

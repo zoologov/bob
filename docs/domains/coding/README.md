@@ -28,7 +28,7 @@ src/bob/coding/
   entities.py         # layer=domain   — CodingSession (immutable value-object)
   naming.py           # layer=domain   — worktree_branch: безопасное имя ветки bob/<slug>
   narrate.py          # layer=domain   — stream-json событие Claude Code → нарратив-строка / None (сжато, для группы)
-  stream_render.py    # layer=domain   — render_stream_event: сырое событие → live-строка (полный стрим в личку, BOB-082)
+  stream_render.py    # layer=domain   — render_stream_event(verbose): событие→строка; verbose=интерактив (полный текст+rich+chunk_for_telegram) vs груп (краткий кэп). BOB-082/085
   intent.py           # layer=domain   — is_approval / is_stop (чистые предикаты NL-команд)
   interactive_intent.py # layer=domain — parse_interactive_entry (/code -i)/is_interactive_exit (BOB-083, чистые предикаты)
   session_voice.py    # layer=domain   — детерминированные шаблоны реплик в персоне Боба
@@ -106,6 +106,14 @@ lossy `narrate`) → `_DmLiveStreamer` (адаптер в DM `chat_id`, progress
 **структурно без PR-opener** — мерж/пуш в main НЕВОЗМОЖЕН; правки — в изолированном worktree `bob/<slug>`,
 в main только через существующий PR-гейт owner'а. Осознанное ослабление двойного гейта — ТОЛЬКО для
 правок-в-worktree под управлением owner'а.
+
+**UX терминала: курированный полный вывод + rich (BOB-085).** `render_stream_event(event, verbose=)`
+двухрежимный: **интерактив-DM** (`verbose=True`, `_DmLiveStreamer(verbose=True)`) — ответы claude
+**целиком** (не 200-символьный огрызок), markdown claude как markdown (`send_rich_message` рендерит
+заголовки/списки/`код`), вызовы инструментов компактными rich-строками, tool-результаты щедро капнуты
+(`_MAX_RESULT`) в код-блоке; длинный вывод чанкится `chunk_for_telegram` (≤4096, не рвёт ``` — закрывает/
+переоткрывает fence на стыке). **Груп-нарратив** (BOB-082, `verbose=False`) сохраняет краткий кэп
+байт-в-байт. Закрывает BOB-Issues #35 (форматирование) + #36 (обрезка).
 
 ### Адаптеры (infrastructure)
 

@@ -16,6 +16,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, cast
 
+from bob.coding.adapters.live_stream import _DmLiveStreamer
 from bob.coding.usecases.interactive_session import InteractiveSessionManager
 from bob.runtime.wiring.coding import _build_interactive_session
 
@@ -75,3 +76,14 @@ def test_flag_on_builds_the_manager() -> None:
     assert isinstance(manager, InteractiveSessionManager)
     # Built idle: no live session until an owner opens one (the ``.4`` intake mode drives it).
     assert manager.active() is False
+
+
+def test_interactive_streamer_factory_builds_a_verbose_streamer() -> None:
+    # BOB-085.2: the interactive DM output renders VERBOSE (full text + rich + chunked),
+    # unlike the concise group one-way path — the factory bakes verbose=True in.
+    config = {"coder": {"interactive": True}}
+    manager = _build_interactive_session(config, **_deps())  # type: ignore[arg-type]
+    assert isinstance(manager, InteractiveSessionManager)
+    streamer = manager._streamer_factory()
+    assert isinstance(streamer, _DmLiveStreamer)
+    assert streamer._verbose is True
