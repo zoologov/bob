@@ -29,6 +29,7 @@ from bob.personality.voice import (
     brevity_few_shot,
     disclosure_refusal_directive,
     engagement_directive,
+    formatting_directive,
     guppi_canon,
     improvement_directive,
     profanity_stance,
@@ -829,3 +830,42 @@ def test_brevity_directive_and_few_shot_are_one_signal_per_verbosity() -> None:
     # TERSE: directive + few-shot pull the SAME way (short), never against each other.
     assert brevity_directive(Verbosity.TERSE) != ""
     assert brevity_few_shot(Verbosity.TERSE) != ""
+
+
+def test_brevity_expansive_licenses_structure_not_only_paragraphs() -> None:
+    # BOB-086.2: length and STRUCTURE are distinct axes. EXPANSIVE now licenses
+    # STRUCTURING substantive content (list / table / headings) rather than only
+    # permitting more paragraphs — so a structural answer is shaped, not a prose wall.
+    folded = brevity_directive(Verbosity.EXPANSIVE).casefold()
+    assert "список" in folded or "списком" in folded
+    assert "таблиц" in folded
+    # The "можно развернуться" unfurling spirit is preserved (regression guard).
+    assert "развернуться" in folded
+
+
+# --- formatting_directive (BOB-086.2) ----------------------------------------
+
+
+def test_formatting_directive_names_the_telegram_rich_palette() -> None:
+    # BOB-086.2: teach Bob that Telegram supports rich formatting — the palette must
+    # name lists, `код`/code-blocks, and TABLES (markdown `| … |` renders natively).
+    folded = formatting_directive().casefold()
+    assert "список" in folded or "списк" in folded  # lists (- / 1.)
+    assert "таблиц" in folded  # markdown tables render natively
+    assert "код" in folded  # `код`/code blocks + моно for paths/commands
+    assert "заголов" in folded  # headings
+
+
+def test_formatting_directive_judges_by_content_and_spares_casual() -> None:
+    # 🔴 INV-1: format for the READER, judged BY CONTENT — structural content gets a
+    # list / table / headings; ordinary chatter stays a short live line WITHOUT markup.
+    folded = formatting_directive().casefold()
+    assert "содержим" in folded  # judge by content
+    # casual conversation stays живой and unformatted (no format-for-format's-sake).
+    assert "жив" in folded  # живым коротким текстом
+    assert "не форматируй" in folded or "не ради" in folded
+
+
+def test_formatting_directive_is_voice_not_a_rule_list() -> None:
+    # Consistent with the other voice helpers: guidance prose, never a bulleted rulebook.
+    assert "•" not in formatting_directive()

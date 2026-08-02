@@ -575,7 +575,9 @@ _BREVITY_TERSE = (
 )
 _BREVITY_EXPANSIVE = (
     "Здесь можно развернуться — тема того стоит. Если есть что сказать, ответь "
-    "подробно, на несколько абзацев, не зажимай мысль в одну строку."
+    "подробно, не зажимай мысль в одну строку. И разворачивай не только в длину: "
+    "если содержимое структурное — перечни, шаги, сравнение, набор пунктов — оформи "
+    "его списком, таблицей или заголовками, а не сплошным полотном текста."
 )
 
 _BREVITY_DIRECTIVE: dict[Verbosity, str] = {
@@ -619,6 +621,47 @@ def brevity_few_shot(verbosity: Verbosity) -> str:
     short-answer shots). Pure and deterministic.
     """
     return _BREVITY_TERSE_FEW_SHOT if verbosity is Verbosity.TERSE else ""
+
+
+# Formatting directive (BOB-086.2). LENGTH (brevity) and STRUCTURE are distinct axes:
+# the brevity directives above decide HOW MUCH Bob writes, this one teaches him HOW TO
+# SHAPE substantive content for the reader. Telegram renders a rich subset (headings,
+# **bold**, `code`/code-blocks, lists, > quotes, and markdown `| … |` TABLES natively —
+# BOB-086.1's converter), so structural content (a bug list, steps, a comparison, options)
+# reads far better as a list / table / headings than as a prose wall. 🔴 INV-1: the call
+# is Bob's, BY CONTENT — structural → structure it; tabular rows → a table; key point →
+# **bold**; code/paths/commands → `моно`; but ordinary chatter stays a short live line
+# WITHOUT markup (никакого формата ради формата — north star: человечно, не канцелярски).
+# Written as voice, argument-free; the application folds it in only on a SUBSTANTIVE turn
+# (verbosity != TERSE), so a one-liner is never pushed toward a list. Cyrillic look-alikes
+# are intentional in these Russian literals.
+_FORMATTING = (
+    "Ты в Telegram — он умеет богатое оформление: заголовки, **жирный**, `код` и "
+    "```блоки кода```, списки (- или 1.), > цитаты и таблицы (markdown `| … |` "
+    "рендерится нативной таблицей). Форматируй под читателя, судя по содержимому: "
+    "структурное — перечни, шаги, сравнения, список багов, набор опций — оформляй "
+    "списком или заголовками; табличные данные (несколько строк с одинаковыми полями) "
+    "— markdown-таблицей; ключевое выделяй **жирным**; код, пути и команды — в `моно`. "
+    "Но обычный разговор и болтовню оставляй живым коротким текстом, без разметки. Не "
+    "форматируй ради формата — решай сам по содержанию ответа, чтобы было по-человечески, "
+    "а не канцелярски."
+)
+
+
+def formatting_directive() -> str:
+    """Return the read-for-the-reader formatting voice directive (BOB-086.2).
+
+    Teaches Bob that Telegram renders a rich subset (headings, **bold**, `code`/code
+    blocks, lists, > quotes, and markdown ``| … |`` TABLES natively — BOB-086.1) and,
+    crucially, to STRUCTURE substantive content BY CONTENT (INV-1): a list / headings for
+    structural material, a markdown table for tabular rows, **bold** for the key point,
+    ``моно`` for code/paths/commands — while ordinary chatter stays a short live line with
+    NO markup (never format for format's sake). Distinct from the brevity directives (which
+    govern LENGTH); the application folds this in only on a SUBSTANTIVE turn (verbosity !=
+    TERSE), so a one-liner is never pushed toward a list. Pure, argument-free; the prose
+    pins the palette + judge-by-content stance, not exact wording.
+    """
+    return _FORMATTING
 
 
 # Sulk directive (BOB-014 .2b). While Bob is обижен his reactive tone goes COLD —

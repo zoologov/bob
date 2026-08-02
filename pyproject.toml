@@ -1190,6 +1190,11 @@ ignore = [
 # prose whose Cyrillic look-alikes are intentional (→ RUF001/2/3) and assert via the boundary.
 "tests/acceptance/steps/test_series_budget_wiring.py" = ["S101", "RUF001", "RUF002", "RUF003"]
 "tests/acceptance/series_budget_harness.py" = ["RUF001", "RUF002", "RUF003"]
+# The formatting-for-the-reader acceptance steps + harness (BOB-086.3) carry Russian scenario
+# prose whose Cyrillic look-alikes are intentional (→ RUF001/2/3) and assert through the boundary
+# (S101 — the composed prompt + the real converter).
+"tests/acceptance/steps/test_formatting_for_reader.py" = ["S101", "RUF001", "RUF002", "RUF003"]
+"tests/acceptance/formatting_harness.py" = ["RUF001", "RUF002", "RUF003"]
 # The per-person обида acceptance steps (BOB-066 .2.5) carry Russian scenario prose whose
 # Cyrillic look-alikes are intentional (→ RUF001/2/3) and assert through the boundary (S101).
 "tests/acceptance/steps/test_person_sulk.py" = ["S101", "RUF001", "RUF002", "RUF003"]
@@ -1333,6 +1338,11 @@ source_paths = [
     # exactly the deterministic threshold logic mutation measures. Listed as a single file
     # (the rest of application/usecases is impure orchestration, out of scope).
     "src/bob/application/usecases/reply_rhythm.py",
+    # BOB-086.3: the GFM-table recogniser/parser in the rich-message converter is a PURE,
+    # I/O-free, deterministic core (recognise header/separator/rows, per-column alignment,
+    # degrade malformed → paragraph) — exactly the branch logic mutation measures. Listed as
+    # a single file (the surrounding aiogram-typed block/inline emission is a thin adapter).
+    "src/bob/infrastructure/telegram/rich.py",
 ]
 # Deny the impure sub-trees inside those packages: adapters (I/O), ports (protocols),
 # and package __init__ re-exports carry no deterministic verdict logic to mutate.
@@ -1360,6 +1370,11 @@ pytest_add_cli_args_test_selection = [
     # deterministic core in capabilities/usecases/tool_loop.py; its fast unit test lives in
     # tests/application, so it is selected here to measure that predicate's mutants.
     "tests/application/test_tool_loop_narration_backstop.py",
+    # BOB-086.3: the fast, deterministic unit tests for the GFM-table recogniser/parser in
+    # the rich-message converter — selected so a per-slice ``rich`` mutation run measures the
+    # table core's mutants (the converter is pure and side-effect free).
+    "tests/infrastructure/telegram/test_rich.py",
+    "tests/infrastructure/telegram/test_rich_hardening.py",
 ]
 # The kernel (ports/protocols the domain tests import) is NOT mutated but IS imported by
 # tests/domain — copy it + the package root verbatim into the mutants sandbox so the

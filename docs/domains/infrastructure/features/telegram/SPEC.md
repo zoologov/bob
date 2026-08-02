@@ -37,8 +37,10 @@ draft-стриминг и Rich Messages, пиннинг ответа в topic-th
   узких store-портов (`ProactivityStoreLike`, `GoalStoreLike`, `PursuitStoreLike`,
   `CodingAssistantLike`, `RuleStoreLike`).
 - **rich.py** — `MarkdownToRichMessage`, чистая конвертация markdown → дерево aiogram
-  `RichMessage` (`convert`); `RichMessageSerializer` — обратный рендер дерева в
-  rich-message markdown (`to_markdown`).
+  `RichMessage` (`convert`): заголовки/списки/цитаты/код/inline (bold/italic/`code`/spoiler)
+  **+ GFM-таблицы `| … |` → нативный `RichBlockTable`** (header `is_header`, выравнивание из
+  separator `:---:`, inline в ячейках; рваная/неполная → деградация в paragraph, BOB-086, Bot API 10.1);
+  `RichMessageSerializer` — обратный рендер дерева в rich-message markdown (`to_markdown`).
 - **outage_notifier.py** — `_GuppiOutageNotifier`, честная системная строка «Bob
   unavailable» в топик Боба при outage'е (`notify_outage`, BOB-049 .3).
 
