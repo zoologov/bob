@@ -43,6 +43,14 @@ def test_strips_leading_and_trailing_hyphens() -> None:
     assert branch == "bob/hello"
 
 
+def test_leading_junk_does_not_eat_into_the_length_budget() -> None:
+    # Ведущий мусор срезается ДО обрезки по длине, иначе он съедал бы часть бюджета в
+    # 40 символов и slug терял бы значащий хвост (а после второй обрезки становился бы
+    # короче на длину мусора).
+    branch = worktree_branch("### " + "a" * 45)
+    assert branch == "bob/" + "a" * 40
+
+
 def test_non_ascii_falls_back_to_non_empty_slug() -> None:
     branch = worktree_branch("починить парсер")
     slug = branch[len("bob/") :]

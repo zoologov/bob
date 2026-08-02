@@ -68,3 +68,32 @@
   общем потолке feature-узлов 200 → общий 200 сохранён с `exclude: [coding]`, для `coding` заведён
   ОТДЕЛЬНЫЙ явный бюджет 220 (узел не переклассифицирован; следующий по величине conversation = 178).
   Sync-check: пред-существующий доменный drift architecture.md по coding — на tw-волну.
+- 2026-08-03: Срез D test bob-abk.21 (D4: BDD интерактив-2 + mutation-гейт ядер) — DONE (in_progress,
+  ждёт координатора; не коммичу/не закрываю). BDD-слой живой документации поверх D1–D3, юниты НЕ дублирует:
+  новый харнесс `tests/acceptance/interactive_resume_harness.py` поднимает НАСТОЯЩИЙ стек
+  (InteractiveClaudeRunner над фейковым процессом → InteractiveSessionManager → InteractiveIntakeRouter)
+  и наблюдает только через границу — **argv + cwd**, отданные спавнеру (`--resume <id>` / `--permission-mode`
+  / `--add-dir` ровно так, как они легли бы в реальную командную строку), ensure-vs-create-vs-remove
+  рабочего дерева, что поглощено/пропущено обычному Бобу, что ушло в личку, что ушло в stdin claude,
+  и `pushes` (INV-2). `tests/acceptance/features/interactive_resume.feature` — 17 сценариев R1–R9
+  (# language: ru): подъём ИМЕННО прошлой сессии по сохранённому session-id в персистентном workspace ·
+  накопление работы между сеансами (дерево не удаляется, второй подъём реюзит его и продолжает цепочку
+  session-id) · bypassPermissions отвергнут/пропущен по `coder.allow_bypass` · `--add-dir` только при
+  заполненном `coder.extra_dirs` (флагоподобная запись не становится флагом) · owner-only + DM-only ·
+  обязательное подтверждение (голая команда/протухшее «да»/«да, но…»/посторонняя реплика не поднимают) ·
+  🔴 нет live-attach (при живой сессии отказ, команда не утекает в stdin; нетерминальная сессия не кандидат) ·
+  🔴 возобновлённая сессия не пушит/не мержит/не открывает PR · флаги OFF → argv свежей сессии байт-в-байт
+  равен базлайну BOB-083 и `/resume …` не поглощается.
+  Гейты: pytest 5288 (было 5270, +18) · ruff · mypy(src 327 + tests 486) · beadloom lint --strict 0 violations.
+  Mutation: sandbox_policy 21/21 (100%) · resume_policy 20/20 (100%) · interactive_intent 37/37 (100%) ·
+  naming 23/27 (85.2%, было 81.5% — добавлен честный тест «ведущий мусор не съедает бюджет длины»,
+  остаток 4 эквивалентных: регистр имени кодека ascii/ASCII ×2, `strip("XX-XX")` ×2 — символ 'X' невозможен
+  после `.lower()`). 🔴 Дыра гейта: `build_interactive_argv` + `extract_session_id` (D1 объявлял их
+  mutation-целями) лежат в `coding/adapters/interactive_runner.py`, а конвенция репо (`do_not_mutate =
+  ["*/adapters/*"]`) адаптеры не мутирует → штатный прогон даёт 0 мутантов. Измерил временным
+  override'ом (pyproject возвращён байт-в-байт): build_interactive_argv 12/12 (100%),
+  extract_session_id 18/18 (100%) — ядра сильные, но постоянного гейта у них НЕТ.
+  🔴 Найденная дыра поведения (не чинил — тест-роль): `session_voice.stopped()` говорит «рабочую копию
+  убрал» и для ВОЗОБНОВЛЁННОЙ (персистентной) сессии, у которой дерево сознательно НЕ удаляется —
+  Боб сообщает owner'у неправду о судьбе накопленной работы.
+  Sync-check: пред-существующий доменный drift architecture.md — на tw-волну.

@@ -672,6 +672,28 @@ ignore = [
     "RUF002",
     "RUF003",
 ]
+# Resume / persistent-workspace BDD (BOB-087.D4): the boundary harness + its Russian
+# Gherkin step text carry Cyrillic look-alikes intentionally (the .feature is living
+# documentation for the owner), and the fake process/port signatures keep arguments the
+# real protocols require but a fake never reads (→ ARG002).
+"tests/acceptance/interactive_resume_harness.py" = [
+    "S101",
+    "ARG001",
+    "ARG002",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+"tests/acceptance/steps/test_interactive_resume.py" = [
+    "S101",
+    "ARG001",
+    "ARG002",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
 # Firehose-via-GUPPI wiring tests (BOB-087.A1): assert which bot each notifier/streamer is
 # built over via private wiring attrs + Russian literals; S101/ARG/SLF/RUF001-003 do not apply.
 "tests/runtime/wiring/test_coding_stream_via_guppi.py" = [
