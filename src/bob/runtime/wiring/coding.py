@@ -263,6 +263,14 @@ def _build_interactive_session(
     per-session runner, so the owner can trade sandbox strictness for speed INSIDE the
     worktree. Inert by default → the spawn argv is byte-identical to BOB-083, and even
     switched on the manager still has no PR-opener (it cannot merge / push main).
+
+    🔴 Resume в долгоживущем workspace (BOB-087.D3): под флагом ``coder.resume`` (default
+    OFF) в менеджер инъектируются два узких порта: ``lookup`` (поиск сессий по ветке,
+    структурно тот же :class:`SqliteCodingSessionStore`) и ``workspace`` (персистентный
+    worktree, структурно тот же :class:`GitWorktree`). OFF → порты ``None``, resume-путь
+    не собран: команда не распознаётся интейком, персистентное дерево не создаётся,
+    поведение байт-в-байт как в BOB-083. Даже ON это не добавляет push/merge — main
+    по-прежнему только через PR.
     """
     coder = _section(config, "coder")
     if not _flag(coder, "interactive"):
@@ -275,14 +283,22 @@ def _build_interactive_session(
     allow_bypass = _flag(coder, "allow_bypass")
     extra_dirs = _str_list(coder, "extra_dirs")
     firehose_bot = stream_bot if _flag(coder, "stream_via_guppi") else bot
+    worktree = GitWorktree(_str(coder, "worktree_root", ".worktrees"))
+    store = SqliteCodingSessionStore(repo)
+    # 🔴 Resume seams (BOB-087.D3) — wired ONLY under ``coder.resume``. The same two
+    # adapters, seen through their narrow read/ensure ports; OFF → ``None`` → the whole
+    # resume path is structurally unavailable.
+    resume_on = _flag(coder, "resume")
     return InteractiveSessionManager(
         runner_factory=lambda: InteractiveClaudeRunner(
             claude_bin=claude_bin,
             allow_bypass=allow_bypass,
             extra_dirs=extra_dirs,
         ),
-        worktree=GitWorktree(_str(coder, "worktree_root", ".worktrees")),
-        store=SqliteCodingSessionStore(repo),
+        worktree=worktree,
+        store=store,
+        lookup=store if resume_on else None,
+        workspace=worktree if resume_on else None,
         # verbose=True (BOB-085.2): the INTERACTIVE DM output renders the FULL curated rich
         # event (assistant text in full + markdown passthrough) and chunks an over-limit
         # piece into ≤ Telegram-limit messages, so claude's answer arrives whole + formatted.
@@ -321,6 +337,11 @@ def _build_interactive_intake(
     explicit mode lines Bob sends on open/stop (INV-5). 🔴 owner-only + DM-only live inside
     the router (defense-in-depth over the manager's own owner gate); HandleMessage threads
     the perceived owner verdict + the channel signal in.
+
+    🔴 Resume (BOB-087.D3): the manager doubles as the router's ``resume`` seam ONLY under
+    ``coder.resume`` (default OFF). OFF → the router holds no resume reference at all, so
+    ``/resume …`` is not a command and the pending-answer path cannot fire — the turn goes
+    down the ordinary chat path exactly as in BOB-083.
     """
     if manager is None:
         return None
@@ -329,4 +350,5 @@ def _build_interactive_intake(
     return InteractiveIntakeRouter(
         manager=manager,
         notifier=_CodingOwnerNotifier(bot=bot, chat_id=dm_chat_id, topic_id=None),
+        resume=manager if _flag(coder, "resume") else None,
     )

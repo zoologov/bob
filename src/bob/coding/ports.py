@@ -10,7 +10,9 @@
 
 The headless ``claude`` runner (:class:`ClaudeCodeRunner`), the isolated worktree
 (:class:`Worktree`), the durable session store (:class:`CodingSessionStore`), and
-the PR opener (:class:`PullRequestOpener`). These are *interfaces only*: structural
+the PR opener (:class:`PullRequestOpener`), plus the two NARROW resume seams
+(:class:`ResumableSessionLookup`, :class:`PersistentWorkspace`, BOB-087.D3). These are
+*interfaces only*: structural
 :class:`typing.Protocol` definitions with no implementations; the shell-free
 subprocess / SQLite adapters live in ``bob.infrastructure``. There is DELIBERATELY
 no merge seam — Bob opens a PR and stops; the owner merges.
@@ -67,13 +69,22 @@ class InteractiveRunner(Protocol):
     / state logic (that is the interactive-session manager, BOB-083 .3).
     """
 
-    async def open(self, workdir: str, *, mode: str) -> None:
+    async def open(
+        self,
+        workdir: str,
+        *,
+        mode: str,
+        resume_session_id: str | None = None,
+        continue_session: bool = False,
+    ) -> None:
         """Spawn the persistent ``claude`` process in ``workdir`` under ``mode``.
 
-        The live realisation additionally accepts optional ``resume_session_id`` /
-        ``continue_session`` (BOB-087.D1) to resume a prior session — both default OFF,
-        so the default spawn stays a fresh session (BOB-083). They are extra optional
-        parameters on the adapter, so this port stays the stable minimal contract.
+        ``resume_session_id`` / ``continue_session`` (BOB-087.D1) opt into RESUMING a
+        prior session instead of starting a fresh one; both default OFF, so an unchanged
+        call site spawns exactly the BOB-083 fresh session. They live on the port (not
+        only on the adapter) since BOB-087.D3, because the interactive-session manager —
+        an application use-case that only ever sees this port — is what resumes a
+        long-lived workspace by the persisted claude session id.
         """
         ...
 
@@ -160,6 +171,45 @@ class CodingSessionStore(Protocol):
 
     async def active(self) -> tuple[CodingSession, ...]:
         """Return the non-terminal sessions (oldest first; empty when none in flight)."""
+        ...
+
+
+@runtime_checkable
+class ResumableSessionLookup(Protocol):
+    """Look up the sessions recorded on ONE branch (BOB-087.D3).
+
+    A deliberately NARROW read seam next to :class:`CodingSessionStore` (not folded into
+    it: the store's contract is the gated lifecycle, and every one of its fakes would
+    otherwise have to grow a method it never uses). It answers exactly one question — «что
+    вообще писалось по этой ветке» — and returns EVERY state, terminal included: WHICH of
+    them may be resumed is the pure domain policy's call
+    (:func:`bob.coding.resume_policy.select_resumable`), so the storage layer can never
+    drift from the «no live-attach» rule. Realised by ``SqliteCodingSessionStore``.
+    """
+
+    async def by_branch(self, branch: str) -> tuple[CodingSession, ...]:
+        """Return every recorded session on ``branch`` (empty when there is none)."""
+        ...
+
+
+@runtime_checkable
+class PersistentWorkspace(Protocol):
+    """Ensure a LONG-LIVED named worktree exists and return its path (BOB-087.D3).
+
+    The durable counterpart of :class:`Worktree`'s ephemeral ``create`` / ``remove``: a
+    ``bob/epic-<slug>`` workspace (:func:`bob.coding.naming.workspace_branch`) whose work
+    ACCUMULATES across sessions, so a resumed session lands back in the same tree. Kept as
+    its OWN one-method port (rather than a fourth method on :class:`Worktree`) so every
+    existing worktree fake stays valid and so a use-case that only needs to «ensure»
+    cannot even express a removal. :meth:`ensure` is idempotent — an already-registered
+    worktree is REUSED, never re-created and never removed. Realised by ``GitWorktree``.
+
+    🔴 Isolation is unchanged: a persistent worktree is still a worktree, never the main
+    tree — integration still goes through a PR.
+    """
+
+    async def ensure(self, branch: str) -> str:
+        """Return the path of the persistent worktree on ``branch``, creating it once."""
         ...
 
 

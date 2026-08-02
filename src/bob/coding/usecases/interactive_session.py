@@ -26,6 +26,25 @@ claude, owner направляет его в реальном времени». 
   (живого read-loop для выхода недостаточно) — процесс завершается напрямую. Идемпотентно.
 * :meth:`active` — есть ли живой сеанс (для интейк-гейта .4 и гварда «одна сессия»).
 
+Возобновление приостановленной работы (BOB-087.D3) — «поднять с телефона нашу
+эпик-сессию»: owner явной командой просит поднять ДОЛГОЖИВУЩИЙ workspace, и это
+ДВУХШАГОВЫЙ путь с подтверждением:
+
+* :meth:`propose_resume` — owner-only. Ничего не спавнит: находит кандидата (чистая
+  политика :func:`~bob.coding.resume_policy.select_resumable`) и возвращает ВОПРОС голосом
+  Боба, взводя ожидающее подтверждение (owner-скоуплено, с TTL).
+* :meth:`resolve_pending_resume` — разрешает висящий вопрос по следующему ходу owner'а:
+  «да» → :meth:`resume`, «нет» → отмена, ЛЮБОЕ другое сообщение (или протухший TTL) →
+  вопрос просто СНИМАЕТСЯ, ход идёт обычным путём. Вопрос никогда не залипает.
+* :meth:`resume` — поднимает ``claude --resume <id>`` в ПЕРСИСТЕНТНОМ worktree
+  (:class:`~bob.coding.ports.PersistentWorkspace`, реюз накопленного дерева) и заводит
+  НОВУЮ живую сессию поверх сохранённого ``claude_session_id``.
+
+🔴 Никакого live-attach: кандидатом может быть только ТЕРМИНАЛЬНАЯ сессия (гарантия
+политики), а при живой сессии возобновление отказывает — два водителя за одним процессом
+структурно невозможны. 🔴 Персистентный workspace НЕ удаляется: :meth:`stop` (и провал
+спавна) не трогают его дерево, иначе накопленная работа стёрлась бы.
+
 🔴 ОДНА сессия за раз: :meth:`open` при живой сессии отказывает. 🔴 Менеджер НЕ открывает
 PR / не пушит / не мержит — таких вызовов здесь просто нет; правки остаются в worktree,
 owner ревьюит и открывает/мержит PR через СУЩЕСТВУЮЩИЙ гейт BOB-039 (main неприкосновенен,
@@ -45,7 +64,9 @@ from typing import TYPE_CHECKING
 
 from bob.coding import session_voice
 from bob.coding.entities import CodingSession
-from bob.coding.naming import worktree_branch
+from bob.coding.interactive_intent import is_confirmation, is_rejection
+from bob.coding.naming import workspace_branch, worktree_branch
+from bob.coding.resume_policy import is_confirmation_fresh, select_resumable
 from bob.coding.state import CodingSessionState
 from bob.coding.usecases.coding_assistant import CodingOutcome, OwnerCheck
 
@@ -54,7 +75,13 @@ if TYPE_CHECKING:
     from datetime import datetime
     from typing import Protocol
 
-    from bob.coding.ports import CodingSessionStore, InteractiveRunner, Worktree
+    from bob.coding.ports import (
+        CodingSessionStore,
+        InteractiveRunner,
+        PersistentWorkspace,
+        ResumableSessionLookup,
+        Worktree,
+    )
     from bob.coding.usecases.coding_assistant import LiveRunStreamer
 
     class _Clock(Protocol):
@@ -72,13 +99,35 @@ __all__ = ["InteractiveSessionManager"]
 # переопределить через ``coder.permission_mode``; раннер валидирует против allowlist.
 _DEFAULT_INTERACTIVE_MODE = "acceptEdits"
 
+# Человеческая метка времени прошлой сессии в вопросе-подтверждении («…трогали 02.08 в
+# 10:00») — owner отвечает «да» с телефона и должен понимать, ЧТО именно поднимает.
+_WHEN_FORMAT = "%d.%m в %H:%M"
+
 
 @dataclass(slots=True)
 class _LiveSession:
-    """Держатель живого сеанса: персистнутая сессия + её запущенный раннер."""
+    """Держатель живого сеанса: персистнутая сессия, её раннер и судьба рабочего дерева.
+
+    ``persistent`` — 🔴 маркер «это ДОЛГОЖИВУЩИЙ workspace, его дерево не удалять»:
+    ``open`` заводит эфемерный посессионный worktree (убирается на ``stop``), ``resume``
+    работает в накопленном workspace, который переживает остановку. Маркер держится в
+    памяти рядом с живым сеансом, а не выводится из имени ветки (эфемерная задача,
+    названная «epic …», дала бы ту же форму ``bob/epic-…``) и не требует новой колонки в
+    БД: судьба дерева нужна ровно тому сеансу, который сейчас жив в этом процессе.
+    """
 
     session: CodingSession
     runner: InteractiveRunner
+    persistent: bool = False
+
+
+@dataclass(slots=True)
+class _PendingResume:
+    """Висящий вопрос «поднимаю?»: чей он, про какой workspace и когда задан."""
+
+    name: str
+    sender: int | None
+    requested_at: datetime
 
 
 class InteractiveSessionManager:
@@ -95,6 +144,8 @@ class InteractiveSessionManager:
         clock: _Clock,
         id_factory: Callable[[], str] = lambda: uuid.uuid4().hex,
         permission_mode: str = _DEFAULT_INTERACTIVE_MODE,
+        lookup: ResumableSessionLookup | None = None,
+        workspace: PersistentWorkspace | None = None,
     ) -> None:
         self._runner_factory = runner_factory
         self._worktree = worktree
@@ -104,6 +155,13 @@ class InteractiveSessionManager:
         self._clock = clock
         self._id_factory = id_factory
         self._permission_mode = permission_mode
+        # Resume seams (BOB-087.D3), both OPTIONAL and both ``None`` unless the owner
+        # switched ``coder.resume`` on: without them the resume path is structurally
+        # unavailable (nothing to look up, nowhere to land) and answers inertly.
+        self._lookup = lookup
+        self._workspace = workspace
+        # The single pending «поднимаю?» question (owner-scoped, TTL-bounded).
+        self._pending: _PendingResume | None = None
         # The single live session (``None`` when idle — the one-session guard reads this).
         self._live: _LiveSession | None = None
         # The background output-pump task streaming the runner's events to the DM.
@@ -147,9 +205,7 @@ class InteractiveSessionManager:
             updated_at=now,
             worktree_path=path,
         )
-        await self._store.save(session)
-        self._live = _LiveSession(session=session, runner=runner)
-        self._task = asyncio.create_task(self._pump(session.id, runner))
+        await self._go_live(session, runner, persistent=False)
         return CodingOutcome(
             ok=True, message=session_voice.interactive_opened(), session=session
         )
@@ -166,13 +222,135 @@ class InteractiveSessionManager:
             return
         await live.runner.feed(text)
 
+    async def propose_resume(self, name: str, sender: int | None) -> CodingOutcome:
+        """Owner-only: найти приостановленную сессию workspace ``name`` и ПЕРЕСПРОСИТЬ.
+
+        🔴 Ничего не поднимает: ни worktree, ни процесса, ни записи — только находит
+        кандидата и возвращает вопрос голосом Боба (с именем workspace и временем той
+        сессии), взводя ожидающее подтверждение. Поднимет уже :meth:`resume`, и только
+        после явного «да» (:meth:`resolve_pending_resume`).
+
+        Отказы: не-owner — тихо (``_refused``, ни поиска, ни вопроса); живая сессия — 🔴
+        отказ (одна сессия за раз, никакого live-attach); нет кандидата — честная реплика.
+        """
+        refusal = self._resume_refusal(sender)
+        if refusal is not None:
+            return refusal
+        branch = workspace_branch(name)
+        candidate = select_resumable(
+            await self._require_lookup().by_branch(branch), branch=branch
+        )
+        if candidate is None:
+            return CodingOutcome(
+                ok=False, message=session_voice.resume_nothing(name), session=None
+            )
+        self._pending = _PendingResume(
+            name=name, sender=sender, requested_at=self._clock.now()
+        )
+        return CodingOutcome(
+            ok=True,
+            message=session_voice.resume_confirm(
+                workspace=name, when=candidate.updated_at.strftime(_WHEN_FORMAT)
+            ),
+            session=candidate,
+        )
+
+    async def resolve_pending_resume(
+        self, text: str, sender: int | None
+    ) -> CodingOutcome | None:
+        """Разрешить висящий вопрос «поднимаю?» очередным ходом owner'а (BOB-087.D3).
+
+        ``None`` означает «ход резюме не касается — веди его обычным путём»: вопроса нет,
+        отвечает не тот, кто спрашивал, подтверждение протухло (см.
+        :func:`~bob.coding.resume_policy.is_confirmation_fresh`) или реплика не является
+        ни явным «да», ни явным «нет». 🔴 Вопрос при этом ВСЕГДА снимается — он не
+        залипает, поэтому «да», сказанное совсем по другому поводу, сессию не поднимет.
+
+        Явное «да» в окне TTL → :meth:`resume`; явное «нет» → короткая отмена.
+        """
+        pending = self._pending
+        if pending is None or not self._owner.is_owner(sender):
+            return None
+        if pending.sender != sender:
+            return None  # чужой ответ не снимает и не подтверждает owner-вопрос
+        self._pending = None
+        if not is_confirmation_fresh(
+            requested_at=pending.requested_at, now=self._clock.now()
+        ):
+            return None
+        if is_confirmation(text):
+            return await self.resume(pending.name, sender)
+        if is_rejection(text):
+            return CodingOutcome(
+                ok=True, message=session_voice.resume_cancelled(), session=None
+            )
+        return None
+
+    async def resume(self, name: str, sender: int | None) -> CodingOutcome:
+        """Owner-only: поднять приостановленную сессию workspace ``name`` (BOB-087.D3).
+
+        Находит кандидата (только ТЕРМИНАЛЬНОГО — никакого live-attach), обеспечивает
+        ПЕРСИСТЕНТНЫЙ worktree (:meth:`~bob.coding.ports.PersistentWorkspace.ensure` —
+        накопленное дерево реюзится, не пересоздаётся), спавнит раннер с
+        ``resume_session_id`` того кандидата и заводит фоновую перекачку вывода в личку,
+        как :meth:`open`.
+
+        Персистится НОВАЯ запись сессии (свой ``id``) с тем же ``claude_session_id``:
+        прошлая терминальная запись — исторический факт (её время/итог), переписывать его
+        нельзя, а цепочка «сессия за сессией» остаётся видимой в сторе.
+
+        🔴 Провал спавна НЕ удаляет workspace (в нём накопленная работа) — в отличие от
+        эфемерного worktree в :meth:`open`, здесь убирать нечего и незачем.
+        """
+        refusal = self._resume_refusal(sender)
+        if refusal is not None:
+            return refusal
+        branch = workspace_branch(name)
+        candidate = select_resumable(
+            await self._require_lookup().by_branch(branch), branch=branch
+        )
+        if candidate is None or candidate.claude_session_id is None:
+            return CodingOutcome(
+                ok=False, message=session_voice.resume_nothing(name), session=None
+            )
+        now = self._clock.now()
+        path = await self._require_workspace().ensure(branch)
+        try:
+            runner = self._runner_factory()
+            await runner.open(
+                path,
+                mode=self._permission_mode,
+                resume_session_id=candidate.claude_session_id,
+            )
+        except Exception:  # spawn/mode fault: 🔴 the persistent workspace is left intact
+            logger.exception("coding: interactive resume failed for workspace")
+            return CodingOutcome(
+                ok=False, message=session_voice.resume_failed(), session=None
+            )
+        session = CodingSession(
+            id=self._id_factory(),
+            task=candidate.task,
+            state=CodingSessionState.INTERACTIVE,
+            branch=branch,
+            created_at=now,
+            updated_at=now,
+            worktree_path=path,
+            claude_session_id=candidate.claude_session_id,
+        )
+        await self._go_live(session, runner, persistent=True)
+        return CodingOutcome(
+            ok=True, message=session_voice.resumed(name), session=session
+        )
+
     async def stop(self, sender: int | None) -> CodingOutcome:
         """Owner-only 🔴 ПРЯМОЙ kill: закрыть раннер, убрать worktree, ``→ CANCELLED``.
 
         Прямой ``runner.close()`` (terminate→kill) завершает ДОЛГОЖИВУЩИЙ процесс — это
-        не кооперативный break гейтед-кодера. Затем worktree убирается (реюз ``_cleanup``)
-        и сессия переводится в терминальное ``CANCELLED``. Идемпотентно/best-effort: без
-        живой сессии — честная заметка, без падения.
+        не кооперативный break гейтед-кодера. Затем эфемерный worktree убирается (реюз
+        ``_cleanup``) и сессия переводится в терминальное ``CANCELLED``. 🔴 У ВОЗОБНОВЛЁННОЙ
+        сессии рабочее дерево — долгоживущий workspace, и оно НЕ удаляется: там накоплена
+        работа, ради которой сессию и поднимали. Идемпотентно/best-effort: без живой
+        сессии — честная заметка, без падения.
         """
         if not self._owner.is_owner(sender):
             return _refused()
@@ -184,7 +362,8 @@ class InteractiveSessionManager:
         self._cancelled.add(live.session.id)
         await self._close_runner(live.runner)  # 🔴 direct terminate of the process
         await self._await_pump()
-        await self._cleanup(live.session.worktree_path)
+        if not live.persistent:  # 🔴 a persistent workspace keeps its accumulated work
+            await self._cleanup(live.session.worktree_path)
         now = self._clock.now()
         # BOB-087.D1: persist the claude session id captured off the init event so a
         # later /code (D3) can look it up for --resume. None when no init id was seen —
@@ -204,6 +383,53 @@ class InteractiveSessionManager:
         return self._live is not None
 
     # --- Internal orchestration ----------------------------------------------
+
+    async def _go_live(
+        self, session: CodingSession, runner: InteractiveRunner, *, persistent: bool
+    ) -> None:
+        """Персистнуть сессию, сделать её живой и завести перекачку вывода в личку.
+
+        Общий финал :meth:`open` и :meth:`resume`; ``persistent`` фиксирует судьбу
+        рабочего дерева (эфемерное убирается на ``stop``, workspace — нет).
+        """
+        await self._store.save(session)
+        self._live = _LiveSession(
+            session=session, runner=runner, persistent=persistent
+        )
+        self._task = asyncio.create_task(self._pump(session.id, runner))
+
+    def _resume_refusal(self, sender: int | None) -> CodingOutcome | None:
+        """Общий гейт resume-пути: ``None``, если можно продолжать, иначе отказ.
+
+        Три отказа подряд: не-owner (тихо), несобранный resume-путь (флаг ``coder.resume``
+        выключен → seams не инъектированы, путь инертен) и 🔴 живая сессия (одна за раз,
+        никакого live-attach).
+        """
+        if not self._owner.is_owner(sender):
+            return _refused()
+        if self._lookup is None or self._workspace is None:
+            return _refused()
+        if self._live is not None:
+            return CodingOutcome(
+                ok=False,
+                message=session_voice.interactive_busy(),
+                session=self._live.session,
+            )
+        return None
+
+    def _require_lookup(self) -> ResumableSessionLookup:
+        """Инъектированный поиск сессий (гейт ``_resume_refusal`` уже проверил наличие)."""
+        lookup = self._lookup
+        if lookup is None:  # pragma: no cover — _resume_refusal already returned
+            raise _NotWiredError
+        return lookup
+
+    def _require_workspace(self) -> PersistentWorkspace:
+        """Инъектированный персистентный workspace (наличие проверил ``_resume_refusal``)."""
+        workspace = self._workspace
+        if workspace is None:  # pragma: no cover — _resume_refusal already returned
+            raise _NotWiredError
+        return workspace
 
     async def _pump(self, session_id: str, runner: InteractiveRunner) -> None:
         """Перекачивать вывод раннера в DM owner'а, пока сеанс жив (fault-isolated).
@@ -244,6 +470,10 @@ class InteractiveSessionManager:
             await self._worktree.remove(path)
         except Exception:  # cleanup must never mask the real outcome
             logger.exception("coding: interactive worktree cleanup failed for %s", path)
+
+
+class _NotWiredError(RuntimeError):
+    """Resume-seam запросили при несобранном resume-пути (недостижимо: гейт впереди)."""
 
 
 def _refused() -> CodingOutcome:

@@ -43,3 +43,28 @@
   `_build_interactive_session`. OFF-путь доказан argv-равенством байт-в-байт + отказом `bypassPermissions`
   (ClaudeRunError, процесс не спавнится). +63 теста (pytest 5149), ruff/mypy(src+tests)/lint --strict зелёные.
   Sync-check: предсуществующий доменный drift (architecture.md по всему coding) — на tw-волну.
+- 2026-08-03: Срез D dev bob-abk.20 (D3: «поднять с телефона нашу эпик-сессию» — resume-by-session-id
+  из лички за флагом `coder.resume` OFF) — DONE (in_progress, ждёт координатора; не коммичу/не закрываю).
+  Поток: owner шлёт ЯВНУЮ команду `/resume <workspace>` (или `/code -r`) → Боб НИЧЕГО не спавнит, а
+  переспрашивает голосом Боба (называет workspace и когда та сессия была) → только явное «да» в окне
+  TTL 5 мин поднимает `claude --resume <id>` в ПЕРСИСТЕНТНОМ worktree (`GitWorktree.ensure`, D1).
+  Новое: `coding/resume_policy.py` — чистое ядро (select_resumable: та же ветка + непустой
+  claude_session_id + ТЕРМИНАЛЬНОЕ состояние через `state.is_terminal` → самая свежая по updated_at;
+  is_confirmation_fresh: двустороннее окно, часы назад = протухло); `interactive_intent`
+  +parse_interactive_resume (🔴 ТОЛЬКО слэш-команда, свободный NL не распознаётся — урок BOB-076)
+  +is_confirmation/is_rejection (точное совпадение всего сообщения); `session_voice` +5 реплик resume;
+  узкие порты `ResumableSessionLookup.by_branch` / `PersistentWorkspace.ensure` (CodingSessionStore и
+  Worktree НЕ трогал — фейки целы), `InteractiveRunner.open` получил опц. resume_session_id;
+  `SqliteCodingSessionStore.by_branch`; менеджер +propose_resume/resolve_pending_resume/resume;
+  интейк +опциональный ResumeSupportLike; конфиг `coder.resume=False` + wiring.
+  Три предохранителя под тестами: owner-only + подтверждение (команда сама не спавнит; «нет»/чужая
+  реплика/протухший TTL/чужой sender не поднимают) · нет live-attach (кандидат только терминальный +
+  отказ при живой сессии) · персистентный workspace НЕ удаляется на stop и на провале спавна
+  (эфемерный — удаляется, как раньше). OFF-путь доказан: при дефолтном конфиге `/resume …` не
+  поглощается роутером, ничего не спавнится, БД не трогается.
+  Гейты: pytest 5270 (было 5149, +121) · ruff · mypy(src 327 + tests 484) · lint --strict 0 violations.
+  Mutation: resume_policy 20/20 (100%), interactive_intent 37/37 (100%), выживших нет.
+  🔴 Рекалибровка (осознанная, задокументирована в rules.yml): `coding` вырос до 208 символов при
+  общем потолке feature-узлов 200 → общий 200 сохранён с `exclude: [coding]`, для `coding` заведён
+  ОТДЕЛЬНЫЙ явный бюджет 220 (узел не переклассифицирован; следующий по величине conversation = 178).
+  Sync-check: пред-существующий доменный drift architecture.md по coding — на tw-волну.

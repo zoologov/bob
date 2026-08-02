@@ -53,6 +53,15 @@ def test_coder_sandbox_relaxations_ship_inert() -> None:
     assert section["extra_dirs"] == []
 
 
+def test_coder_resume_defaults_off() -> None:
+    # Resuming a stopped session in a long-lived workspace (BOB-087.D3) ships INERT:
+    # OFF → the `/resume` command is not even recognised and no persistent worktree is
+    # ever ensured, so behaviour is byte-identical to BOB-083.
+    section = _config()["coder"]
+    assert isinstance(section, dict)
+    assert section["resume"] is False
+
+
 def test_coding_capability_is_never_on_the_autonomous_safe_allowlist() -> None:
     # The gated coding session is owner-driven, never autonomous: it must NOT leak into
     # ``goals.safe_capabilities`` (the self-directed tick's allowlist).

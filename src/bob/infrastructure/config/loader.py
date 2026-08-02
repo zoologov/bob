@@ -376,6 +376,17 @@ DEFAULT_CONFIG: Config = {
         # is still reached only through a PR + the unbypassable plan gate.
         "allow_bypass": False,
         "extra_dirs": [],
+        # 🔴 Возобновление приостановленной сессии в ДОЛГОЖИВУЩЕМ workspace (BOB-087.D3):
+        # owner из лички явной командой (``/resume <workspace>``) поднимает прошлую
+        # сессию через ``claude --resume <id>`` в персистентном worktree, где работа
+        # НАКАПЛИВАЕТСЯ между сеансами. Ship OFF: живой claude, приземляющийся в уже
+        # накопленное дерево, — самое мощное действие интерактива, и по уроку BOB-076
+        # такое включается сознательно. OFF → команда даже не распознаётся, персистентный
+        # worktree не создаётся, поведение байт-в-байт как в BOB-083. Предохранители на ON:
+        # owner-only + явное подтверждение в окне TTL; поднять можно ТОЛЬКО остановленную
+        # сессию (не live-attach); push/merge/PR здесь по-прежнему нет — main только через
+        # PR.
+        "resume": False,
     },
     # Web search — «Боб ищет в интернете» (BOB-053). The ``web_search`` skill (behind
     # the capability seam) makes ONE Qwen-native call over the MaaS **Responses API**

@@ -178,3 +178,168 @@ async def test_non_owner_never_feeds_active_session() -> None:
 
     assert consumed is False
     assert manager.fed == []
+
+
+# --- resume path (BOB-087.D3): OFF by default, two-step when wired ---------------
+
+
+class _FakeResume:
+    """Fake resume seam: records the proposal / the pending resolution the router drives."""
+
+    def __init__(self, *, settle: CodingOutcome | None = None) -> None:
+        self.proposed: list[tuple[str, int | None]] = []
+        self.resolved: list[tuple[str, int | None]] = []
+        self._settle = settle
+
+    async def propose_resume(self, name: str, sender: int | None) -> CodingOutcome:
+        self.proposed.append((name, sender))
+        return CodingOutcome(ok=True, message="поднимаю?", session=None)
+
+    async def resolve_pending_resume(
+        self, text: str, sender: int | None
+    ) -> CodingOutcome | None:
+        self.resolved.append((text, sender))
+        return self._settle
+
+
+def _resume_router(
+    manager: _FakeManager, resume: _FakeResume
+) -> tuple[InteractiveIntakeRouter, _FakeNotifier]:
+    notifier = _FakeNotifier()
+    router = InteractiveIntakeRouter(
+        manager=manager, notifier=notifier, resume=resume
+    )
+    return router, notifier
+
+
+async def test_resume_command_is_inert_when_the_flag_is_off() -> None:
+    # 🔴 OFF path (default): the router holds NO resume seam, so `/resume …` is not a
+    # command at all — the turn is not consumed and nothing is raised (byte-identical
+    # to BOB-083: with no live session a plain message goes to the normal Bob path).
+    manager = _FakeManager(active=False)
+    router, notifier = _router(manager)
+
+    consumed = await router.route(
+        text="/resume epic-bob-087", sender=_OWNER, is_owner=True, is_group=False
+    )
+
+    assert consumed is False
+    assert manager.opened == []
+    assert manager.fed == []
+    assert notifier.sent == []
+
+
+async def test_resume_command_with_a_live_session_is_only_steered_when_off() -> None:
+    # OFF + a live session: the text is just another steer reply (unchanged BOB-083).
+    manager = _FakeManager(active=True)
+    router, _notifier = _router(manager)
+
+    consumed = await router.route(
+        text="/resume epic-bob-087", sender=_OWNER, is_owner=True, is_group=False
+    )
+
+    assert consumed is True
+    assert manager.fed == ["/resume epic-bob-087"]
+
+
+async def test_owner_dm_resume_command_asks_for_confirmation() -> None:
+    manager = _FakeManager(active=False)
+    resume = _FakeResume()
+    router, notifier = _resume_router(manager, resume)
+
+    consumed = await router.route(
+        text="/resume epic-bob-087", sender=_OWNER, is_owner=True, is_group=False
+    )
+
+    assert consumed is True
+    assert resume.proposed == [("epic-bob-087", _OWNER)]
+    assert notifier.sent == ["поднимаю?"]
+    assert manager.opened == []  # 🔴 nothing is opened by the command itself
+
+
+async def test_resume_command_in_a_group_is_refused_dm_only() -> None:
+    manager = _FakeManager(active=False)
+    resume = _FakeResume()
+    router, notifier = _resume_router(manager, resume)
+
+    consumed = await router.route(
+        text="/resume epic-bob-087", sender=_OWNER, is_owner=True, is_group=True
+    )
+
+    assert consumed is False
+    assert resume.proposed == []
+    assert resume.resolved == []
+    assert notifier.sent == []
+
+
+async def test_resume_command_from_a_non_owner_is_refused() -> None:
+    manager = _FakeManager(active=False)
+    resume = _FakeResume()
+    router, notifier = _resume_router(manager, resume)
+
+    consumed = await router.route(
+        text="/resume epic-bob-087", sender=_GUEST, is_owner=False, is_group=False
+    )
+
+    assert consumed is False
+    assert resume.proposed == []
+    assert resume.resolved == []
+    assert notifier.sent == []
+
+
+async def test_a_settled_confirmation_is_emitted_and_consumes_the_turn() -> None:
+    manager = _FakeManager(active=False)
+    resume = _FakeResume(
+        settle=CodingOutcome(ok=True, message="поднял", session=None)
+    )
+    router, notifier = _resume_router(manager, resume)
+
+    consumed = await router.route(
+        text="да", sender=_OWNER, is_owner=True, is_group=False
+    )
+
+    assert consumed is True
+    assert resume.resolved == [("да", _OWNER)]
+    assert notifier.sent == ["поднял"]
+
+
+async def test_an_unsettled_turn_falls_through_to_the_normal_path() -> None:
+    # 🔴 The pending question must not swallow unrelated turns: when the resume seam
+    # does not settle the message, the router carries on exactly as before.
+    manager = _FakeManager(active=False)
+    resume = _FakeResume(settle=None)
+    router, notifier = _resume_router(manager, resume)
+
+    consumed = await router.route(
+        text="привет, как дела", sender=_OWNER, is_owner=True, is_group=False
+    )
+
+    assert consumed is False
+    assert resume.resolved == [("привет, как дела", _OWNER)]
+    assert notifier.sent == []
+
+
+async def test_an_unsettled_entry_command_still_opens_a_session() -> None:
+    manager = _FakeManager(active=False)
+    resume = _FakeResume(settle=None)
+    router, _notifier = _resume_router(manager, resume)
+
+    consumed = await router.route(
+        text="/code -i почини баг", sender=_OWNER, is_owner=True, is_group=False
+    )
+
+    assert consumed is True
+    assert manager.opened == [("почини баг", _OWNER)]
+
+
+async def test_a_live_session_steer_still_reaches_stdin_with_resume_wired() -> None:
+    manager = _FakeManager(active=True)
+    resume = _FakeResume(settle=None)
+    router, _notifier = _resume_router(manager, resume)
+
+    consumed = await router.route(
+        text="теперь добавь тест", sender=_OWNER, is_owner=True, is_group=False
+    )
+
+    assert consumed is True
+    assert manager.fed == ["теперь добавь тест"]

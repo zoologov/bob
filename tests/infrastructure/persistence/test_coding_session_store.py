@@ -162,3 +162,82 @@ async def test_survives_restart(tmp_path: Path) -> None:
     await second.close()
 
     assert loaded == session
+
+
+# --- by_branch: the narrow resumable-session lookup (BOB-087.D3) ---------------
+
+
+async def test_by_branch_returns_every_state_on_that_branch(repo: SqliteMemoryRepo) -> None:
+    # 🔴 Unlike ``active()``, the lookup filters by BRANCH ONLY and returns EVERY state
+    # (terminal included) — terminality is the pure domain policy's call
+    # (``select_resumable``), not the store's, so the two can never drift.
+    store = SqliteCodingSessionStore(repo)
+    await store.save(_session("live", state=CodingSessionState.INTERACTIVE))
+    await store.save(_session("done", state=CodingSessionState.CANCELLED))
+
+    found = await store.by_branch("bob/fix-parser")
+
+    assert {s.id for s in found} == {"live", "done"}
+
+
+async def test_by_branch_ignores_other_branches(repo: SqliteMemoryRepo) -> None:
+    store = SqliteCodingSessionStore(repo)
+    await store.save(_session("mine", state=CodingSessionState.CANCELLED))
+    other = CodingSession(
+        id="theirs",
+        task="другое",
+        state=CodingSessionState.CANCELLED,
+        branch="bob/epic-other",
+        created_at=_T0,
+        updated_at=_T1,
+    )
+    await store.save(other)
+
+    found = await store.by_branch("bob/fix-parser")
+
+    assert tuple(s.id for s in found) == ("mine",)
+
+
+async def test_by_branch_unknown_branch_is_empty(repo: SqliteMemoryRepo) -> None:
+    store = SqliteCodingSessionStore(repo)
+    await store.save(_session("mine", state=CodingSessionState.CANCELLED))
+
+    assert await store.by_branch("bob/epic-nope") == ()
+
+
+async def test_by_branch_round_trips_the_claude_session_id(repo: SqliteMemoryRepo) -> None:
+    store = SqliteCodingSessionStore(repo)
+    await store.save(
+        _session("s", state=CodingSessionState.CANCELLED, claude_session_id="claude-9")
+    )
+
+    found = await store.by_branch("bob/fix-parser")
+
+    assert [s.claude_session_id for s in found] == ["claude-9"]
+
+
+async def test_by_branch_skips_an_unparseable_row(repo: SqliteMemoryRepo) -> None:
+    # Same resilience as ``active()``: one corrupt row must not blow up the lookup that
+    # runs on an owner's /resume command.
+    store = SqliteCodingSessionStore(repo)
+    await store.save(_session("good", state=CodingSessionState.CANCELLED))
+    await repo.connection.execute(
+        "INSERT INTO coding_session (id, task, state, branch, created_at, updated_at, "
+        "worktree_path, plan, pr_url) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            "bad",
+            "t",
+            "CANCELLED",
+            "bob/fix-parser",
+            _T0.isoformat(),
+            _T1.isoformat(),
+            None,
+            None,
+            None,
+        ),
+    )
+    await repo.connection.commit()
+
+    found = await store.by_branch("bob/fix-parser")
+
+    assert tuple(s.id for s in found) == ("good",)

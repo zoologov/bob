@@ -54,7 +54,18 @@ class _FakeInteractiveRunner:
         self._closed = asyncio.Event()
         self.drained = asyncio.Event()  # set once every canned event has been yielded
 
-    async def open(self, workdir: str, *, mode: str) -> None:
+    async def open(
+        self,
+        workdir: str,
+        *,
+        mode: str,
+        resume_session_id: str | None = None,
+        continue_session: bool = False,
+    ) -> None:
+        # BOB-087.D3: the port carries the optional resume knobs; the FRESH ``open``
+        # path must never use them (asserted here — the default spawn is unchanged).
+        assert resume_session_id is None
+        assert continue_session is False
         self.opened.append((workdir, mode))
 
     async def feed(self, text: str) -> None:
@@ -367,7 +378,14 @@ async def test_open_again_after_stop_is_allowed() -> None:
 class _ExplodingRunner(_FakeInteractiveRunner):
     """A runner whose spawn (``open``) fails — the manager must not leak a worktree."""
 
-    async def open(self, workdir: str, *, mode: str) -> None:  # noqa: ARG002
+    async def open(
+        self,
+        workdir: str,  # noqa: ARG002
+        *,
+        mode: str,  # noqa: ARG002
+        resume_session_id: str | None = None,  # noqa: ARG002
+        continue_session: bool = False,  # noqa: ARG002
+    ) -> None:
         raise RuntimeError("claude failed to spawn")
 
 

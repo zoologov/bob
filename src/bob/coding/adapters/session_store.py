@@ -109,6 +109,31 @@ class SqliteCodingSessionStore:
             if session is not None and not is_terminal(session.state)
         )
 
+    async def by_branch(self, branch: str) -> tuple[CodingSession, ...]:
+        """Return every recorded session on ``branch`` (oldest first; empty when none).
+
+        Realises the narrow :class:`bob.coding.ports.ResumableSessionLookup` read seam
+        (BOB-087.D3). Unlike :meth:`active` it filters by BRANCH ONLY and keeps EVERY
+        state, terminal included — deciding which of them may be resumed is the pure
+        policy's job (:func:`bob.coding.resume_policy.select_resumable`), so the store
+        cannot drift from the «only a stopped session may be raised» rule. The branch is
+        bound as a parameter (``?``), never interpolated. One unparseable row is logged
+        and SKIPPED (same resilience as :meth:`active`): a corrupt record must not blow
+        up the owner's resume command.
+        """
+        async with self._db().execute(
+            "SELECT id, task, state, branch, created_at, updated_at, "
+            "worktree_path, plan, pr_url, claude_session_id "
+            "FROM coding_session WHERE branch = ? ORDER BY created_at, id",
+            (branch,),
+        ) as cursor:
+            rows = await cursor.fetchall()
+        return tuple(
+            session
+            for session in (_try_row_to_session(row) for row in rows)
+            if session is not None
+        )
+
     def _db(self) -> aiosqlite.Connection:
         return self._repo.connection
 

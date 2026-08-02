@@ -320,6 +320,10 @@ ignore = [
 # --add-dir sanitiser carries Russian policy docstrings/comments whose Cyrillic look-alikes
 # are intentional — RUF001/RUF002/RUF003 do not apply.
 "src/bob/coding/sandbox_policy.py" = ["RUF001", "RUF002", "RUF003"]
+# Resume policy (BOB-087.D3): the pure «what may be raised, and when» core carries Russian
+# policy docstrings/comments whose Cyrillic look-alikes are intentional —
+# RUF001/RUF002/RUF003 do not apply.
+"src/bob/coding/resume_policy.py" = ["RUF001", "RUF002", "RUF003"]
 # build_application is the composition ROOT: it wires every adapter/use-case/tick in
 # one place by design (a single readable assembly), so the per-function statement
 # ceiling does not apply to it — splitting it would only scatter the wiring. It lives
@@ -1028,6 +1032,12 @@ ignore = [
 "tests/application/usecases/test_interactive_session.py" = ["S101", "ARG001", "PLR2004", "RUF001", "RUF002", "RUF003"]
 "tests/application/usecases/test_interactive_intake.py" = ["S101", "ARG001", "PLR2004", "RUF001", "RUF002", "RUF003"]
 "tests/domain/coding/test_interactive_intent.py" = ["S101", "ARG001", "PLR2004", "RUF001", "RUF002", "RUF003"]
+# Resume tests (BOB-087.D3) carry Russian workspace/confirmation literals whose Cyrillic
+# look-alikes are intentional (→ RUF001/2/3); ARG002 covers the fake runner/manager boundary
+# args that a Protocol-shaped fake must accept but never uses.
+"tests/domain/coding/test_resume_policy.py" = ["S101", "ARG001", "PLR2004", "RUF001", "RUF002", "RUF003"]
+"tests/application/usecases/test_interactive_resume.py" = ["S101", "ARG001", "ARG002", "PLR2004", "RUF001", "RUF002", "RUF003"]
+"tests/runtime/wiring/test_coding_resume_wiring.py" = ["S101", "ARG001", "ARG002", "PLR2004", "RUF001", "RUF002", "RUF003"]
 # Interactive-terminal acceptance harness + steps (BOB-083 .5) bind Russian .feature step text
 # and drive Russian task/reply/mode literals through the real stack — their Cyrillic
 # look-alikes are intentional (→ RUF001/2/3); ARG002 covers the fake process/bot boundary args.
