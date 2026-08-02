@@ -35,6 +35,14 @@ def test_coder_carries_runtime_knobs() -> None:
     assert section["permission_mode"] == "acceptEdits"
 
 
+def test_coder_stream_via_guppi_defaults_off() -> None:
+    # Firehose-via-GUPPI (BOB-087.A1) ships inert: default OFF → the coder stream stays on
+    # Bob's bot exactly as before (byte-identical), Bob's voice always on Bob's bot.
+    section = _config()["coder"]
+    assert isinstance(section, dict)
+    assert section["stream_via_guppi"] is False
+
+
 def test_coding_capability_is_never_on_the_autonomous_safe_allowlist() -> None:
     # The gated coding session is owner-driven, never autonomous: it must NOT leak into
     # ``goals.safe_capabilities`` (the self-directed tick's allowlist).

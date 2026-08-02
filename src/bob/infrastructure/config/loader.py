@@ -358,6 +358,11 @@ DEFAULT_CONFIG: Config = {
         "worktree_root": ".worktrees",
         "timeout": 600,
         "permission_mode": "acceptEdits",
+        # Firehose channel (BOB-087.A1): route the mechanical coder/interactive stream AS
+        # GUPPI (through GUPPI's bot) instead of Bob's bot. Default OFF → the stream stays on
+        # Bob's bot exactly as today (byte-identical); Bob's own voice (gate lines) always
+        # stays on Bob's bot. ON requires the owner to have started GUPPI's bot for a DM target.
+        "stream_via_guppi": False,
     },
     # Web search — «Боб ищет в интернете» (BOB-053). The ``web_search`` skill (behind
     # the capability seam) makes ONE Qwen-native call over the MaaS **Responses API**
