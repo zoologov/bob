@@ -177,3 +177,37 @@
   sandbox_policy 21/21 (все 100%), naming 25/29 = 86.2% с 4 эквивалентными (кодек-имена
   регистронезависимы ×2; `strip("XX-XX")` == `strip("-")` для уже-lowercase slug ×2).
   Sync-check: пред-существующий доменный drift + новые символы среза — на tw-волну.
+- 2026-08-03: Срез D tech-writer bob-abk.23 (D6: доки интерактива-2) — DONE (in_progress, ждёт
+  координатора; не коммичу/не закрываю). Правил ТОЛЬКО документацию: `docs/domains/coding/README.md`
+  (основная работа) и одну строку таблицы модулей в `docs/architecture.md`.
+  **Что появилось в доке узла coding.** Раскладка модуля: новые доменные ядра `argv_policy.py`,
+  `sandbox_policy.py`, `resume_policy.py`; `naming` (эфемерная `bob/<slug>` + долгоживущая
+  `bob/epic-<slug>`, транслитерация кириллицы); четыре глагола `interactive_intent`; новый use-case
+  `recover_interactive_sessions.py`; `ensure` у `GitWorktree` и `by_branch` у стора; исправлено имя
+  класса — `InteractiveSessionManager` (в доке значился `InteractiveSession`).
+  Новый раздел «Интерактив-2: долгоживущее рабочее место и возобновление» — команды owner'а в личке
+  (`/workspace <name> [task]` / `/code -w`, `/resume <workspace>` / `/code -r`, «да»/«нет» целым
+  сообщением), двухшаговое подтверждение с TTL 5 минут, «поднять можно только остановленную сессию»
+  (нет live-attach), дерево переживает «стоп», персист `claude_session_id` с init-кадра, свип
+  осиротевших `INTERACTIVE`-строк на старте, реплики голоса, OFF-путь.
+  Новый раздел «Owner-ослабления песочницы» (`coder.allow_bypass` / `coder.extra_dirs`) + отдельный
+  абзац 🔴 «Чего на самом деле стоит `allow_bypass: true`»: linked worktree делит `.git`, refs,
+  remotes и credentials с основным репозиторием, `bypassPermissions` даёт неподнадзорное выполнение,
+  поэтому при ON неприкосновенность main держится на суждении owner'а, а не на структуре
+  (формулировка сверена с `loader.py` и докстрингами wiring, не смягчена).
+  Обновлены: абзац адаптеров (allowlist через политику, идемпотентный `ensure` с `Path.resolve()` и
+  чекаутом существующей ветки, guarded ALTER колонки `claude_session_id`), инварианты (+5: нет
+  live-attach, обязательное подтверждение, персистентный workspace не удаляется, санитайз
+  argv-значений, честная оговорка про INV-2 при `allow_bypass`), API (два новых порта, изменённый
+  `InteractiveRunner.open`, все новые публичные символы), тесты (три уровня, включая BDD R1–R10 и
+  real-git тест реюза), бюджет узла в rules.yml (213/220 + долг bob-6u2). Все флаги описаны как
+  выключенные по умолчанию.
+  Гейты: `beadloom reindex` ok · `beadloom lint --strict` 0 violations / 185 rules ·
+  `beadloom sync-check` 371 → 339 stale (ref `coding` 32 stale → 0 ok, ре-базлайн `sync-update coding`).
+  Осталось красным вне scope: `bob`/architecture.md 284 (пред-существующий репо-широкий дрейф),
+  `personality` 35, `memory` 20.
+  НЕ трогал (вне `docs/` — правлю только документацию): `site/` (генерируемая копия, уже отставала от
+  `docs/` с 2026-07-31 — регенерация `beadloom docs site` отдельным шагом), `.claude/dev-docs/MUTATION.md`
+  (туда просится `coding.argv_policy` в список mutation-целей), `config/bob.example.yaml` (в секции
+  `coder` закомментированы `dev_dm`/`interactive`, но новых ключей `resume` / `allow_bypass` /
+  `extra_dirs` там нет — стоит дописать вместе с их предохранителями).
