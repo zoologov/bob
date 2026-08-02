@@ -141,5 +141,68 @@ def test_top_level_error_event_captured() -> None:
     assert any("stream broke" in err for err in facts.errors)
 
 
+def test_successful_result_event_records_no_error() -> None:
+    # subtype == "success" is the non-error terminal: nothing broke, nothing recorded.
+    facts = _fold([{"type": "result", "subtype": "success", "result": "done"}])
+    assert facts.errors == ()
+    assert facts.is_empty() is True
+
+
+def test_result_event_defaults_to_success_when_subtype_absent() -> None:
+    # No subtype key ⇒ the "success" default applies ⇒ no error captured.
+    facts = _fold([{"type": "result", "result": "all good"}])
+    assert facts.errors == ()
+
+
+def test_result_event_flagged_is_error_captured_even_when_subtype_success() -> None:
+    # is_error is an INDEPENDENT trigger from subtype: an errored-but-"success" result counts.
+    facts = _fold(
+        [{"type": "result", "subtype": "success", "is_error": True, "result": "boom"}]
+    )
+    assert any("boom" in err for err in facts.errors)
+
+
+def test_result_event_falls_back_to_subtype_text_when_no_result_field() -> None:
+    # With no ``result`` field the error summary is drawn from ``subtype``.
+    facts = _fold([{"type": "result", "subtype": "timeout"}])
+    assert "timeout" in facts.errors
+
+
+def test_errored_result_with_no_summary_text_records_nothing() -> None:
+    # is_error fires but neither result nor subtype carry text ⇒ empty summary ⇒ no error row.
+    facts = _fold([{"type": "result", "is_error": True}])
+    assert facts.errors == ()
+
+
+def test_missing_file_path_adds_no_file() -> None:
+    # A file-tool call without a file_path names no file — nothing is recorded.
+    facts = _fold([{"type": "tool_use", "name": "Edit", "input": {}}])
+    assert facts.files == ()
+
+
+def test_windows_backslash_path_yields_basename() -> None:
+    facts = _fold([_edit("C:\\repo\\src\\bob\\mod.py")])
+    assert facts.files == ("mod.py",)
+
+
+def test_tool_result_list_content_is_joined_for_test_status() -> None:
+    # tool_result content may be a LIST of text blocks — they are joined before matching.
+    event = {
+        "type": "tool_result",
+        "content": [{"text": "collected 5 items"}, {"text": "5 passed in 0.1s"}],
+    }
+    assert _fold([event]).tests_passed is True
+
+
+def test_tool_result_list_content_error_joins_text_blocks_only() -> None:
+    # Blocks WITHOUT a "text" key contribute nothing; blocks are joined with a single space.
+    event = {
+        "type": "tool_result",
+        "is_error": True,
+        "content": [{"text": "disk"}, {"text": "full"}, {"note": "ignored"}],
+    }
+    assert _fold([event]).errors == ("disk full",)
+
+
 def test_work_outcome_values() -> None:
     assert {o.value for o in WorkOutcome} == {"finished", "failed", "aborted"}

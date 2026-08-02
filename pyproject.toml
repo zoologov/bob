@@ -421,6 +421,17 @@ ignore = [
     "RUF002",
     "RUF003",
 ]
+# The work-journal acceptance steps (BOB-087 Срез B) bind Russian .feature step text + assert
+# messages that mix «GUPPI»/«work»/«dev» with Russian prose, whose Cyrillic look-alikes are
+# intentional (→ RUF001/2/3).
+"tests/acceptance/steps/test_work_journal.py" = [
+    "S101",
+    "ARG001",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
 # The anti-repeat self-dup acceptance steps + harness (BOB-078 C) bind Russian .feature step
 # text + a seeded Russian poison reply whose Cyrillic look-alikes are intentional (→ RUF001/2/3).
 "tests/acceptance/steps/test_anti_repeat_self_dup.py" = [
