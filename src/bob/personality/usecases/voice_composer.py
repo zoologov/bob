@@ -49,6 +49,7 @@ from bob.personality.voice import (
     brevity_directive,
     brevity_few_shot,
     engagement_directive,
+    formatting_directive,
     guppi_canon,
     improvement_directive,
     profanity_stance,
@@ -437,6 +438,12 @@ class VoiceComposer:
             # NORMAL adds nothing; the few-shot is empty off a TERSE turn.
             brevity_directive(verbosity),
             brevity_few_shot(verbosity),
+            # BOB-086.2: teach Bob to STRUCTURE substantive content for the reader
+            # (lists / tables / headings — the rich Telegram subset), judged BY CONTENT.
+            # Distinct axis from brevity's LENGTH: folded in only on a SUBSTANTIVE turn
+            # (verbosity != TERSE) so a casual one-liner is never pushed toward a list —
+            # a TERSE turn stays a short, unformatted live line.
+            formatting_directive() if verbosity is not Verbosity.TERSE else "",
             user_repeat_directive() if user_repeated else "",
             # BOB-019: fold WHO is writing (owner / known / guest / bot) into the
             # voice as character — additive, no-op when no interlocutor perceived.

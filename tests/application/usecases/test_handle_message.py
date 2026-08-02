@@ -3188,6 +3188,39 @@ async def test_open_question_prompt_is_not_terse() -> None:
     assert "можно развернуться" in folded  # EXPANSIVE: unfurling is licensed
 
 
+# --- BOB-086.2: formatting directive gated by verbosity ----------------------
+
+
+async def test_substantive_turn_lands_the_formatting_directive() -> None:
+    # BOB-086.2: on a substantive (non-TERSE) turn the formatting directive reaches the
+    # prompt — Bob is taught to STRUCTURE structural content (lists / tables / headings)
+    # for the reader instead of writing a prose wall.
+    bright = _soul().with_mood(Mood(valence=0.6, arousal=0.7, openness=0.6, social=0.6))
+    handler, _bot, _repo, tier1 = _build(reply="long", soul=bright)
+
+    await handler.handle(
+        _message("расскажи подробно, как именно это работает и почему так вышло")
+    )
+
+    folded = tier1.all_text.casefold()
+    assert "форматируй под читателя" in folded  # the formatting directive landed
+
+
+async def test_terse_turn_does_not_impose_the_formatting_directive() -> None:
+    # BOB-086.2: a TERSE turn (short, low-appetite) must NOT be pushed toward structure —
+    # a one-liner needs no list/table, so the formatting directive is withheld on TERSE.
+    soul = _soul().with_mood(_WITHDRAWN_MOOD)
+    handler, _bot, _repo, tier1 = _build(
+        reply="ок", soul=soul, tier0_replies=["neutral"]
+    )
+
+    await handler.handle(_message(_TERSE_INBOUND))
+
+    folded = tier1.all_text.casefold()
+    assert "коротк" in folded  # the terse turn resolved (brevity directive present)
+    assert "форматируй под читателя" not in folded  # structure is NOT imposed on TERSE
+
+
 # --- BOB-024 US-5: HIGH-demand owner НЕ обрубается даже в плохом настроении ----
 
 
