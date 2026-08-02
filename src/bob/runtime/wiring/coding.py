@@ -219,11 +219,16 @@ def _build_interactive_session(
         runner_factory=lambda: InteractiveClaudeRunner(claude_bin=claude_bin),
         worktree=GitWorktree(_str(coder, "worktree_root", ".worktrees")),
         store=SqliteCodingSessionStore(repo),
+        # verbose=True (BOB-085.2): the INTERACTIVE DM output renders the FULL curated rich
+        # event (assistant text in full + markdown passthrough) and chunks an over-limit
+        # piece into ≤ Telegram-limit messages, so claude's answer arrives whole + formatted.
+        # The group one-way dev-channel path (`_build_dm_live_streamer`) stays concise.
         streamer_factory=lambda: _DmLiveStreamer(
             notifier=_CodingOwnerNotifier(bot=bot, chat_id=dm_chat_id, topic_id=None),
             panel=StatusPanel(
                 bot=cast("EditableStatusBot", bot), chat_id=dm_chat_id, thread_id=None
             ),
+            verbose=True,
         ),
         owner=authorizer,
         clock=clock,

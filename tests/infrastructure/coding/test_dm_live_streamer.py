@@ -60,6 +60,16 @@ def _edit(path: str) -> dict[str, object]:
     }
 
 
+def _assistant_text(text: str) -> dict[str, object]:
+    return {
+        "type": "assistant",
+        "message": {"content": [{"type": "text", "text": text}]},
+    }
+
+
+_TELEGRAM_LIMIT = 4096
+
+
 def _never_cancelled() -> bool:
     return False
 
@@ -135,6 +145,59 @@ async def test_rolling_panel_opens_then_updates_with_the_terminal_window() -> No
     assert panel.opened == ["правлю `a.py`"]
     assert panel.updated[-1].endswith("правлю `b.py`")
     assert "правлю `a.py`" in panel.updated[-1]
+
+
+# --- BOB-085.2: interactive DM output is verbose (full) + rich + chunked -------
+
+
+@pytest.mark.asyncio
+async def test_verbose_streamer_sends_a_long_answer_in_full_chunked_in_order() -> None:
+    # INV-1: a long claude answer arrives FULL (not the 200-char concise stub), split
+    # into ≤ Telegram-limit pieces sent in order — the interactive DM output path.
+    notifier = _SpyNotifier()
+    streamer = _DmLiveStreamer(notifier=notifier, verbose=True)
+
+    long_text = "\n".join(f"строка {i} " + "x" * 90 for i in range(120))
+    await streamer.stream(
+        _events([_assistant_text(long_text)]), is_cancelled=_never_cancelled
+    )
+
+    assert len(notifier.sent) > 1  # it was actually chunked
+    assert all(len(chunk) <= _TELEGRAM_LIMIT for chunk in notifier.sent)
+    # Nothing is lost: rejoining the ordered chunks reconstructs the whole answer.
+    assert "\n".join(notifier.sent) == long_text
+
+
+@pytest.mark.asyncio
+async def test_verbose_streamer_preserves_markdown_passthrough() -> None:
+    # INV-2: claude's markdown (fenced code block) is passed through verbatim so the rich
+    # sender renders it — not collapsed to a one-line concise stub.
+    notifier = _SpyNotifier()
+    streamer = _DmLiveStreamer(notifier=notifier, verbose=True)
+
+    markdown = "Вот фикс:\n\n```python\nprint('hi')\n```"
+    await streamer.stream(
+        _events([_assistant_text(markdown)]), is_cancelled=_never_cancelled
+    )
+
+    assert notifier.sent == [markdown]
+
+
+@pytest.mark.asyncio
+async def test_concise_streamer_still_truncates_assistant_text() -> None:
+    # INV-4: the default (group one-way) path is unchanged — assistant text stays capped
+    # to the concise _MAX_TEXT stub, one message, no chunking.
+    notifier = _SpyNotifier()
+    streamer = _DmLiveStreamer(notifier=notifier)  # verbose=False (default)
+
+    long_text = "слово " * 400
+    await streamer.stream(
+        _events([_assistant_text(long_text)]), is_cancelled=_never_cancelled
+    )
+
+    assert len(notifier.sent) == 1
+    assert notifier.sent[0].endswith("…")
+    assert len(notifier.sent[0]) <= 201  # _MAX_TEXT (200) + ellipsis
 
 
 @pytest.mark.asyncio

@@ -48,6 +48,15 @@ def test_flag_on_builds_the_streamer() -> None:
     assert isinstance(streamer, _DmLiveStreamer)
 
 
+def test_group_dev_dm_streamer_is_concise_not_verbose() -> None:
+    # INV-4 (BOB-085.2): the one-way group dev-channel path stays CONCISE (verbose=False,
+    # byte-identical) — only the interactive DM path renders verbose + chunked.
+    coder = {"dev_dm": True}
+    streamer = _build_dm_live_streamer(coder, bot=_bot(), owner_id=_OWNER_ID)
+    assert isinstance(streamer, _DmLiveStreamer)
+    assert streamer._verbose is False
+
+
 def test_flag_on_targets_the_owner_dm_by_default() -> None:
     coder = {"dev_dm": True}
     streamer = _build_dm_live_streamer(coder, bot=_bot(), owner_id=_OWNER_ID)
