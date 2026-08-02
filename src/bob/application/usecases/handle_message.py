@@ -114,6 +114,7 @@ from bob.conversation.usecases.verify_step import (
 )
 from bob.conversation.zone_classifier import TasteZoneClassifier
 from bob.memory.entities import EpisodicEvent
+from bob.memory.register_pipeline import pool_has_work, register_ranked
 from bob.personality.expression import (
     EngagementLevel,
     ExpressionFreqs,
@@ -178,6 +179,7 @@ if TYPE_CHECKING:
     from bob.kernel.ports import Clock
     from bob.memory.ports import MemoryRecall, Recalled, SelfActionRecorder
     from bob.memory.usecases.extract_facts import ExtractFacts
+    from bob.memory.usecases.resolve_register import RegisterResolver
     from bob.personality.fascination import Fascination
     from bob.personality.mood import Mood
     from bob.personality.ports import MessageReactor, NotableReactionStore, ReflectionReader
@@ -206,6 +208,12 @@ _DEFAULT_ESSENTIAL_BACKOFF_SECONDS = 0.5
 
 # How many memories to recall when assembling the reply context.
 _RECALL_K = 5
+
+# When register-recall is active (BOB-087.C2) recall OVER-FETCHES this deep so C1's CASUAL
+# down-weight has teeth: muted work episodes can be re-sorted BELOW non-work items drawn from
+# deeper in the pool, then the pool is truncated back to ``_RECALL_K``. Off (no resolver
+# wired) the plain ``_RECALL_K`` fetch is used and recall is byte-identical.
+_RECALL_OVERFETCH_K = 20
 
 # The SOFT anti-tic nudge ``_CLOSER_TIC_NUDGE`` + the ``_MAX_REGENERATIONS`` bound now live
 # with :class:`AntiRepeatGuard` (conversation); the nudge is re-exported above for tests.
@@ -666,6 +674,7 @@ class HandleMessage:
         disclosure_guard: DisclosureGuard | None = None,
         disclosure_consent: DisclosureConsentGate | None = None,
         self_action_recorder: SelfActionRecorder | None = None,
+        register_resolver: RegisterResolver | None = None,
     ) -> None:
         self._router = router
         self._gateway = gateway
@@ -897,6 +906,13 @@ class HandleMessage:
         # ``_make_tool_loop`` so Bob records that HE used tools (coalesced, first-person).
         # Unwired / the OFF-flag NoOp → zero writes, byte-identical behaviour.
         self._self_action_recorder = self_action_recorder
+        # Register-recall seam (BOB-087.C2): when wired, recall is register-aware — a CASUAL
+        # turn mutes Bob's own ``work`` dev episodes (over-fetch → C1 attenuate → re-sort →
+        # truncate, so muted work really drops out of the final slots), while a DEV turn (the
+        # dev-DM channel, or the Tier-0 «about dev work?» judge) keeps them at full weight.
+        # Unwired (the default) → recall takes the plain fetch and is byte-identical (C4 flips
+        # the ``memory.register_recall`` flag by wiring this resolver).
+        self._register_resolver = register_resolver
         # The conversation-floor seam (BOB-025): over the per-message addressivity
         # (BOB-023) lives a tracker of who currently holds the "talking turn" in a
         # thread. When wired AND enabled, an AMBIENT message in a thread where Bob holds
@@ -2156,13 +2172,38 @@ class HandleMessage:
         """
         recall_trust = interlocutor.trust if interlocutor is not None else Trust.TRUSTED
         surface_trust, owner_consented = await self._surface_audience(event, interlocutor)
-        return filter_surfaceable(
+        fetch_k = _RECALL_K if self._register_resolver is None else _RECALL_OVERFETCH_K
+        surfaceable = filter_surfaceable(
             recalled_excluding_reflections(
-                await self._recall.recall(event.text, k=_RECALL_K)
+                await self._recall.recall(event.text, k=fetch_k)
             ),
             surface_trust if surface_trust is not None else recall_trust,
             owner_consented=owner_consented,
         )
+        return await self._register_filtered(event, surfaceable)
+
+    async def _register_filtered(
+        self, event: MessageReceived, surfaceable: Sequence[Recalled]
+    ) -> Sequence[Recalled]:
+        """Third recall layer: register-aware down-weight (BOB-087.C2), the teeth.
+
+        Unwired (the default) this is the identity — recall byte-identical (the plain
+        ``_RECALL_K`` pool passes straight through). Wired: over the disclosure-filtered,
+        OVER-FETCHED pool it resolves the turn's :class:`~bob.memory.register.Register` (DEV
+        by the dev-DM signal or the Tier-0 «about dev work?» judge, else CASUAL — and the
+        judge is consulted ONLY when the pool actually holds work episodes, so a work-free
+        turn never burns Tier-0) and applies
+        :func:`~bob.memory.register_pipeline.register_ranked`: in CASUAL Bob's muted work
+        episodes are re-sorted below deeper non-work and truncated out; in DEV recall is the
+        best-first pool truncated to ``_RECALL_K`` (unchanged).
+        """
+        resolver = self._register_resolver
+        if resolver is None:
+            return surfaceable
+        register = await resolver.resolve(
+            event, pool_has_work=pool_has_work(surfaceable)
+        )
+        return register_ranked(surfaceable, register, display_k=_RECALL_K)
 
     async def _surface_audience(
         self, event: MessageReceived, interlocutor: Interlocutor | None

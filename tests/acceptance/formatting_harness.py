@@ -159,12 +159,16 @@ _PLAN = ExpressionPlan(
 )
 
 
-async def composed_prompt(verbosity: Verbosity) -> str:
+async def composed_prompt(
+    verbosity: Verbosity, *, recalled: Sequence[Recalled] = ()
+) -> str:
     """Compose ONE turn at ``verbosity`` and return the system prompt the model sees.
 
     Routes through the plain-reply tier (``tool_provider=None``) so the captured
     ``system_prompt`` is exactly the prompt production would hand the LLM — the
-    formatting gate (``verbosity is not TERSE``) is the real code under test.
+    formatting gate (``verbosity is not TERSE``) is the real code under test. An
+    optional ``recalled`` set feeds the recall-conditioned directives (e.g. the
+    work-provenance line) through the REAL composer.
     """
     capturing = _CapturingPlainReply()
     composer = VoiceComposer(
@@ -181,7 +185,6 @@ async def composed_prompt(verbosity: Verbosity) -> str:
         announcer_factory=lambda *, chat_id, sender_name: None,  # type: ignore[arg-type]  # noqa: ARG005
         tool_loop_factory=lambda provider, announcer: None,  # type: ignore[arg-type]  # noqa: ARG005
     )
-    recalled: Sequence[Recalled] = ()
     await composer.compose(
         "дай список багов из bob-issues с приоритетами",
         _soul(),

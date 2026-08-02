@@ -43,6 +43,18 @@
 ## Срез D — интерактив срез 2 (за флагом owner-only)
 - **resume/continue:** claude CLI умеет `-c/--continue`, `--resume`, `--from-pr`. Прокинуть в
   `interactive_runner.py` argv (сейчас каждый `/code -i` свежий). Хранить session-id (coding_session) для resume.
+- **🔴 Персистентный именованный worktree + resume-by-session-id (решение owner 2026-08-02):** вместо
+  только эфемерного `bob/<slug>` — поддержать ДОЛГОЖИВУЩИЙ именованный worktree («dev-workspace»,
+  напр. `bob/epic-<key>`), в котором копится работа между сессиями. Боб записывает session-id сессий,
+  что там шли (расширение автобиографии BOB-079 + dev-интроспекции BOB-081). Owner из Telegram →
+  «продолжи <workspace>» → Боб `claude --resume <id>` В ЭТОМ worktree. Даёт кейс «подними с телефона
+  нашу эпик-сессию и продолжи». Предохранители (все ОБЯЗАТЕЛЬНЫ): (1) **owner-only + явное
+  подтверждение** (мощное — только по явной команде, урок BOB-076); (2) resume — только
+  ПРИОСТАНОВЛЕННОЙ/завершённой сессии (не live-attach к активному инстансу → снимает гонку двух
+  водителей; один инстанс на id); (3) даже возобновлённая сессия **НЕ пушит/не мёржит main сама** —
+  интеграция ВСЕГДА через PR/подтверждение (main цел). Итог: auto-mode ускоряет работу ВНУТРИ
+  worktree, финальный гейт на main держится. НЕ входит в scope: live-attach к активному инстансу
+  (другой класс, чем resume — сознательно вне D).
 - **permission-mode config:** `_ALLOWED_MODES={plan,acceptEdits}` (`claude_runner.py:52`,
   `interactive_runner.py:44`) — добавить `bypassPermissions` **только** за явным флагом
   `coder.allow_bypass` (owner-only); иначе allowlist как есть. Comment «no bypassPermissions ever» —

@@ -75,6 +75,7 @@ from bob.runtime.wiring.proactivity import (
     _background_tasks,
     _build_proactivity_engine,
 )
+from bob.runtime.wiring.register_recall import build_register_resolver
 from bob.runtime.wiring.rhythm import RhythmWiring, build_rhythm_wiring
 from bob.runtime.wiring.room_mood import build_room_mood_modulator
 from bob.runtime.wiring.roster import RosterConfig, build_roster_config
@@ -147,6 +148,7 @@ __all__ = [
     "build_disclosure_consent_gate",
     "build_disclosure_guard",
     "build_endorsement_seeder",
+    "build_register_resolver",
     "build_rhythm_wiring",
     "build_room_mood_modulator",
     "build_roster_config",

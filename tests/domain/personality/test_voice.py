@@ -35,8 +35,10 @@ from bob.personality.voice import (
     operator_stance,
     profanity_stance,
     recall_has_self_action,
+    recall_has_work,
     recalled_impression_directive,
     recalled_self_action_directive,
+    recalled_work_directive,
     relationship_tone_directive,
     roster_directive,
     stranger_directive,
@@ -716,6 +718,86 @@ def test_recalled_self_action_directive_forbids_confabulation() -> None:
 
 def test_recalled_self_action_directive_is_voice_not_a_rule_list() -> None:
     line = recalled_self_action_directive()
+    assert "•" not in line
+    assert "- " not in line
+
+
+# --- BOB-087.C3: recalled work provenance directive (anti-confabulation) -------
+#
+# The mirror of the self_action directive for register-aware recall (slice C): when
+# recall surfaces one of Bob's OWN ``work`` dev episodes (his operator recollection of
+# directing GUPPI), a LIGHT voice line backstops against confabulation — he speaks of
+# it in the first person as his REAL work with GUPPI, honestly owns a failure, and never
+# invents details he does not remember. Independent of the self_action directive: work
+# episodes carry event_type ``work`` (not ``self_action``), so both may fire at once.
+
+
+def test_recall_has_work_true_on_work_category() -> None:
+    recalled = [
+        {"content": "Ada любит чай", "category": "preference"},
+        {"content": "я попросил GUPPI поднять лимит — позеленело", "category": "work"},
+    ]
+    assert recall_has_work(recalled) is True
+
+
+def test_recall_has_work_true_on_work_tag() -> None:
+    # A work episode is also recognised by its provenance TAG, not only category.
+    recalled = [{"content": "я правил runner", "tags": ["dev", "actor:bob"]}]
+    assert recall_has_work(recalled) is True
+
+
+def test_recall_has_work_false_on_self_action() -> None:
+    # Independence: a self_action deed is NOT a work episode (distinct event_type).
+    recalled = [{"content": "я доделал «X», открыл PR", "category": "self_action"}]
+    assert recall_has_work(recalled) is False
+
+
+def test_recall_has_work_false_on_casual_memory() -> None:
+    recalled = [
+        {"content": "Ada любит чай", "category": "preference"},
+        {"content": "Ada: привет", "category": "message"},
+    ]
+    assert recall_has_work(recalled) is False
+
+
+def test_recall_has_work_empty_is_false() -> None:
+    assert recall_has_work([]) is False
+
+
+def test_recall_has_work_ignores_memory_with_no_category_or_tags() -> None:
+    assert recall_has_work([{"content": "что-то"}]) is False
+
+
+def test_recall_has_work_is_case_insensitive_on_category() -> None:
+    assert recall_has_work([{"content": "я собрал", "category": "WORK"}]) is True
+
+
+def test_self_action_directive_signal_is_independent_of_work() -> None:
+    # A work episode does NOT trip the self_action signal (distinct event_type).
+    work = [{"content": "я попросил GUPPI", "category": "work"}]
+    assert recall_has_self_action(work) is False
+
+
+def test_recalled_work_directive_asserts_first_person_real_work_with_guppi() -> None:
+    # It IS Bob's REAL operator work with GUPPI — first person, his own doing.
+    folded = recalled_work_directive().casefold()
+    assert "от первого лица" in folded
+    assert "guppi" in folded
+
+
+def test_recalled_work_directive_owns_failures_honestly() -> None:
+    folded = recalled_work_directive().casefold()
+    assert "сбо" in folded  # честно про сбои
+
+
+def test_recalled_work_directive_forbids_confabulation() -> None:
+    # The direct attack on the owner's fear: no invented details from memory Bob lacks.
+    folded = recalled_work_directive().casefold()
+    assert "не выдумывай" in folded
+
+
+def test_recalled_work_directive_is_voice_not_a_rule_list() -> None:
+    line = recalled_work_directive()
     assert "•" not in line
     assert "- " not in line
 

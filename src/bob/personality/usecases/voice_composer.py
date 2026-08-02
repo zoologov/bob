@@ -55,8 +55,10 @@ from bob.personality.voice import (
     operator_stance,
     profanity_stance,
     recall_has_self_action,
+    recall_has_work,
     recalled_impression_directive,
     recalled_self_action_directive,
+    recalled_work_directive,
     roster_directive,
     sulk_directive,
     tone_directive,
@@ -356,6 +358,12 @@ class VoiceComposer:
             # ``category`` carries the episodic ``event_type``), the same set that
             # grounds the reply, so the rendering itself is untouched.
             recalled_self_action=recall_has_self_action(recalled),
+            # BOB-087.C3: whether register-aware recall surfaced one of Bob's OWN
+            # ``work`` dev episodes — folds the light anti-confabulation work directive
+            # (first person, REAL work with GUPPI, honest about slips, no invented
+            # detail). Independent of ``recalled_self_action``: a work episode carries
+            # event_type ``work``, not ``self_action``, so both signals may be true.
+            recalled_work=recall_has_work(recalled),
         )
         provider = self._tool_provider
         # ESSENTIAL step (BOB-049 .3): the reply generation is retry-wrapped — a flaky
@@ -405,6 +413,7 @@ class VoiceComposer:
         room_tone: str = "",
         withhold_directive: str = "",
         recalled_self_action: bool = False,
+        recalled_work: bool = False,
     ) -> str:
         """Augment the base prompt with the mood tone, stance, and brevity directives.
 
@@ -479,6 +488,13 @@ class VoiceComposer:
             # guards the model against re-framing it in third person. No self_action
             # recalled → no line (the default path is byte-identical).
             recalled_self_action_directive() if recalled_self_action else "",
+            # BOB-087.C3: when register-aware recall surfaced one of Bob's OWN ``work``
+            # dev episodes, a LIGHT anti-confabulation backstop folds in — it is his REAL
+            # operator work with GUPPI, spoken in the first person, failures owned
+            # honestly, never invented detail (the direct guard on blending работа with
+            # болтовня). Independent of the self_action line above (distinct event_type);
+            # no work recalled → no line (the default path is byte-identical).
+            recalled_work_directive() if recalled_work else "",
             # BOB-028 .3: Bob's OWNER-APPROVED TONE/HUMOR self-improvement rules fold
             # into ONE soft voice tilt on TOP of mood/relationship tone — a reminder he
             # gives himself, never a command or a reset (наклон, не перехват). No such

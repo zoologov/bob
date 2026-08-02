@@ -79,6 +79,7 @@ from bob.conversation.volatility_judgment import (
 )
 from bob.infrastructure.telegram.gateway import TelegramGateway
 from bob.memory.usecases.extract_facts import ExtractFacts
+from bob.memory.usecases.resolve_register import RegisterResolver
 from bob.personality.expression import ExpressionFreqs
 from bob.personality.fascination import Fascination
 from bob.personality.mood import Mood
@@ -689,6 +690,7 @@ def _build(
     endorsement_seeder: EndorsementSeeder | None = None,
     disclosure_guard: DisclosureGuard | None = None,
     disclosure_consent: DisclosureConsentGate | None = None,
+    register_resolver: RegisterResolver | None = None,
 ) -> tuple[HandleMessage, FakeBot, FakeRepo, CapturingProvider]:
     tier0 = CapturingProvider(reply="positive", replies=tier0_replies)
     tier1 = CapturingProvider(reply=reply, replies=tier1_replies)
@@ -772,6 +774,7 @@ def _build(
         endorsement_seeder=endorsement_seeder,
         disclosure_guard=disclosure_guard,
         disclosure_consent=disclosure_consent,
+        register_resolver=register_resolver,
     )
     return handler, bot, repo, tier1
 
@@ -9549,3 +9552,114 @@ async def test_recall_owner_dm_surfaces_owner_private_even_with_gate() -> None:
 
     assert _PRIVATE_HIT in surfaced
     assert _PUBLIC_HIT in surfaced
+
+
+# --- BOB-087.C2: register-aware recall wired into _recall_surfaceable -----------------
+# The THIRD recall layer (after reflection-drop + disclosure filter): in a CASUAL turn Bob's
+# own ``work`` dev episodes are muted and re-sorted OUT of the final slots (teeth via
+# over-fetch + re-sort); in a DEV turn (dev-DM signal or the Tier-0 judge) they keep full
+# weight. Unwired (no resolver) recall is byte-identical.
+
+
+class _CountingWorkTalk:
+    """A ClassifyWorkTalk double returning a scripted verdict and counting calls."""
+
+    def __init__(self, verdict: bool) -> None:
+        self._verdict = verdict
+        self.calls = 0
+
+    async def is_work_talk(self, text: str) -> bool:  # noqa: ARG002
+        self.calls += 1
+        return self._verdict
+
+
+def _work_hits(n: int) -> list[Recalled]:
+    return [{"content": f"work-{i}", "category": "work"} for i in range(n)]
+
+
+def _chat_hits(n: int) -> list[Recalled]:
+    return [{"content": f"chat-{i}", "category": "personal"} for i in range(n)]
+
+
+def _mixed_pool() -> list[Recalled]:
+    # Best-first: work episodes rank TOP, non-work below — the shape that only the
+    # over-fetch + re-sort teeth can correct in CASUAL.
+    return [*_work_hits(4), *_chat_hits(6)]
+
+
+def _casual_event() -> MessageReceived:
+    return MessageReceived(
+        update_id=1, chat_id=555, message_id=10,
+        text="как погода?", sender_id=1, sender_name="Влад", is_group=False,
+    )
+
+
+async def test_casual_turn_mutes_work_out_of_final_recall_slots() -> None:
+    classifier = _CountingWorkTalk(False)  # not about dev work → CASUAL
+    resolver = RegisterResolver(classify_work_talk=classifier, dev_dm_chat_id=42)
+    handler, _bot, _repo, _tier1 = _build(
+        reply="hi", recall=FakeRecall(hits=_mixed_pool()), register_resolver=resolver
+    )
+
+    surfaced = await handler._recall_surfaceable(_casual_event(), _OWNER_INTERLOCUTOR)
+
+    contents = [str(item["content"]) for item in surfaced]
+    assert len(contents) == 5  # truncated back to _RECALL_K
+    # Teeth: the six non-work items rise and fill every slot; muted work is pushed out.
+    assert all(c.startswith("chat-") for c in contents)
+    assert classifier.calls == 1  # pool had work → the Tier-0 judge WAS consulted
+
+
+async def test_dev_dm_turn_keeps_work_at_full_weight() -> None:
+    classifier = _CountingWorkTalk(False)
+    resolver = RegisterResolver(classify_work_talk=classifier, dev_dm_chat_id=555)
+    handler, _bot, _repo, _tier1 = _build(
+        reply="hi", recall=FakeRecall(hits=_mixed_pool()), register_resolver=resolver
+    )
+
+    surfaced = await handler._recall_surfaceable(_casual_event(), _OWNER_INTERLOCUTOR)
+
+    contents = [str(item["content"]) for item in surfaced]
+    # DEV: best-first pool truncated to _RECALL_K — the four top work episodes stay.
+    assert contents == ["work-0", "work-1", "work-2", "work-3", "chat-0"]
+    assert classifier.calls == 0  # deterministic dev signal → no Tier-0 burned
+
+
+async def test_work_free_pool_skips_the_tier0_classifier() -> None:
+    classifier = _CountingWorkTalk(True)  # would say DEV, but must never be asked
+    resolver = RegisterResolver(classify_work_talk=classifier, dev_dm_chat_id=42)
+    handler, _bot, _repo, _tier1 = _build(
+        reply="hi", recall=FakeRecall(hits=_chat_hits(7)), register_resolver=resolver
+    )
+
+    surfaced = await handler._recall_surfaceable(_casual_event(), _OWNER_INTERLOCUTOR)
+
+    assert [str(item["content"]) for item in surfaced] == [f"chat-{i}" for i in range(5)]
+    assert classifier.calls == 0  # no work to mute → the classifier is skipped
+
+
+async def test_work_talk_judge_lifts_a_plain_chat_to_dev_register() -> None:
+    classifier = _CountingWorkTalk(True)  # «как продвигается разработка?» → DEV
+    resolver = RegisterResolver(classify_work_talk=classifier, dev_dm_chat_id=42)
+    handler, _bot, _repo, _tier1 = _build(
+        reply="hi", recall=FakeRecall(hits=_mixed_pool()), register_resolver=resolver
+    )
+
+    surfaced = await handler._recall_surfaceable(_casual_event(), _OWNER_INTERLOCUTOR)
+
+    contents = [str(item["content"]) for item in surfaced]
+    assert contents == ["work-0", "work-1", "work-2", "work-3", "chat-0"]
+    assert classifier.calls == 1
+
+
+async def test_no_resolver_recall_is_byte_identical() -> None:
+    # OFF path (no resolver wired): recall is the plain _RECALL_K fetch, item objects
+    # untouched — the register layer is a pure identity.
+    pool = _mixed_pool()
+    handler, _bot, _repo, _tier1 = _build(reply="hi", recall=FakeRecall(hits=pool))
+
+    surfaced = await handler._recall_surfaceable(_casual_event(), _OWNER_INTERLOCUTOR)
+
+    # FakeRecall ignores k, so the whole pool passes through unchanged (same objects).
+    assert list(surfaced) == pool
+    assert surfaced[0] is pool[0]

@@ -173,6 +173,7 @@ from bob.runtime.wiring import (
     build_disclosure_consent_gate,
     build_disclosure_guard,
     build_endorsement_seeder,
+    build_register_resolver,
     build_rhythm_wiring,
     build_room_mood_modulator,
     build_roster_config,
@@ -400,6 +401,15 @@ def build_application(
     # 🔴 Stays OFF until slice C's register-aware recall lands (no casual-pollution window).
     work_journal_recorder = build_work_journal_recorder(
         merged, router=router, store=memory_repo, clock=resolved_clock
+    )
+
+    # Register-aware recall (BOB-087.C): behind ``memory.register_recall`` (OFF by default →
+    # None → recall byte-identical, over-fetch off, no register filter — INV-5). ON → a
+    # RegisterResolver over the Tier-0 work-talk classifier + the deterministic dev-DM signal
+    # (present only when a dev-DM channel is active), so casual turns mute distilled ``work``
+    # recollections while a dev turn surfaces them. Activated read+write WITH work_journal.
+    register_resolver = build_register_resolver(
+        merged, router=router, owner_id=_int(_section(merged, "telegram"), "owner_id", 0)
     )
 
     soul_store = SoulStore(_soul_dir(merged))
@@ -962,6 +972,10 @@ def build_application(
         # tools (coalesced first-person ``self_action``). Behind ``memory.autobiography``
         # (OFF by default → NoOp → zero writes, byte-identical behaviour).
         self_action_recorder=self_action_recorder,
+        # Register-aware recall (BOB-087.C): behind ``memory.register_recall`` (OFF by
+        # default → None → recall byte-identical, over-fetch off, INV-5). ON → the per-turn
+        # RegisterResolver mutes distilled ``work`` recollections on a casual turn.
+        register_resolver=register_resolver,
     )
     # Intake-развязка (BOB-066 Срез 2.1): the MESSAGE_RECEIVED subscriber is now the fast,
     # non-blocking ChatDispatcher.submit (normalise → buffer → return), so the Telegram
