@@ -50,6 +50,7 @@ src/bob/memory/
   __init__.py     # layer=domain          — фасад (re-export EpisodicEvent, SemanticFact)
   entities.py     # layer=domain          — EpisodicEvent, SemanticFact (immutable value-objects)
   self_action.py  # layer=domain          — SelfActionKind, SelfAction, describe_self_action (автобиография, BOB-079)
+  work_journal.py # layer=domain          — WorkEpisode + work_episode_event: дистиллированный dev-эпизод, event_type='work' (BOB-087.B1)
   usecases/       # layer=application
     extract_facts.py       — ExtractFacts (Tier 0 «запомнить»: реплика → факты)
     consolidate_memory.py  — ConsolidateMemory (редкий дайджест старых эпизодов, BOB-021)
@@ -105,6 +106,22 @@ failed/runaway/tool_failure). Рендер — mutation-ядро (100%). Дей�
 работают без спец-путей (это делимая автобиография, а не приватная рефлексия — из
 recall не вырезается). Запись включает флаг `memory.autobiography` (default OFF →
 no-op recorder, нулевое изменение поведения).
+
+**Рабочий журнал — дистиллированный dev-эпизод (BOB-087.B1).** `work_journal.py`
+(чистый домен, I/O-free) вводит `WorkEpisode` — детальную первого-лица «операторскую»
+вспоминку одной coding-сессии Боба («я попросил GUPPI починить X в файле Y; тесты Z
+падали; подняли лимит — позеленело»). `work_episode_event(episode, *, ts, sender_id,
+visibility)` осаждает её в `EpisodicEvent` на **отдельном** `event_type` `work`
+(константа `WORK_EVENT_TYPE`), а НЕ `self_action`: существующая self-action
+озвучка/recall (`recall_has_self_action`, ключ по `self_action`) остаётся байт-в-байт,
+а register-aware recall Среза C получает чистый шов по домену `work`. Провенанс (INV-3,
+разделение акторства): эпизод помечается тегами `work`/`dev` и маркером актора
+`actor:bob` — это операторская вспоминка Боба; атрибуция, где сделал GUPPI/тест, живёт
+В контенте от первого лица («я попросил GUPPI…, GUPPI сделал…»). `visibility`/`sender_id`
+пробрасываются вызывающим (coding-сессия owner-приватна — `VISIBILITY_OWNER_PRIVATE`).
+Сама дистилляция фактов сессии в эпизоды — на стороне `coding` (см. модуль coding,
+`work_journal_recorder` + `distill_work_journal`), за флагом `memory.work_journal`
+(default OFF → no-op recorder, память байт-в-байт).
 
 ### Use-case'ы (application)
 
@@ -238,6 +255,12 @@ OpenAI-совместимой `/v1/chat/completions`, сортирует по у
   Боб не выдумывает поступок (без конфабуляции); свои действия (`self_action`) не
   смешиваются с внешними (`message`/`reaction_received`). Запись — best-effort и за
   флагом `memory.autobiography`: сбой записи не роняет ни coding-путь, ни приём.
+- **Рабочий журнал — отдельный event_type (BOB-087.B1):** дистиллированный dev-эпизод
+  оседает как `EpisodicEvent(event_type='work')` (НЕ `self_action`), поэтому self-action
+  озвучка/recall остаётся байт-в-байт; провенанс — теги `work`/`dev` + `actor:bob` (это
+  операторская вспоминка Боба, атрибуция GUPPI/теста живёт в контенте от первого лица).
+  Осаждение — best-effort и за флагом `memory.work_journal` (default OFF → память
+  байт-в-байт как сегодня).
 - **Инварианты сущностей:** `ts` всегда timezone-aware, `confidence ∈ [0, 1]` —
   проверяются в `__post_init__`, невалидная запись не может существовать.
 
@@ -292,6 +315,8 @@ ports-шим `bob.domain.ports` удалён (BOB-062.8), ~15 потребите
   `build_embedder` / `build_reranker`; `self_action_recorder` (BOB-079).
 - `self_action.py` (чистый домен): `SelfActionKind`, `SelfAction`,
   `describe_self_action` — рендер самодействия от первого лица (BOB-079).
+- `work_journal.py` (чистый домен): `WorkEpisode`, `work_episode_event`,
+  `WORK_EVENT_TYPE` — дистиллированный dev-эпизод, event_type `work` (BOB-087.B1).
 
 Композиция (создание connection-kernel'а, сборка `SqliteMemoryRepo` над ним, recall'а,
 эмбеддера, reranker'а и навешивание extract/consolidate/dedup на heartbeat) — в

@@ -49,6 +49,7 @@ if TYPE_CHECKING:
 
     from bob.application.router import LLMRouter
     from bob.coding.adapters.indicator import EditableStatusBot, TypingActionBot
+    from bob.coding.usecases.coding_assistant import WorkJournalRecorder
     from bob.infrastructure.persistence import SqliteConnection
     from bob.infrastructure.telegram.gateway import BotLike
     from bob.kernel.ports import Clock
@@ -97,6 +98,7 @@ def _build_coding_assistant(
     owner_id: int,
     clock: Clock,
     recorder: SelfActionRecorder,
+    work_journal: WorkJournalRecorder,
 ) -> CodingAssistant | None:
     """Assemble the gated coding assistant, or ``None`` when off (BOB-039 .3).
 
@@ -134,6 +136,10 @@ def _build_coding_assistant(
     firehose_bot = stream_bot if stream_via_guppi else notifier_bot
     return CodingAssistant(
         recorder=recorder,
+        # Distilled work memory (BOB-087.B1): flag-gated (``memory.work_journal``, OFF → NoOp)
+        # recorder that distills the run's key facts into first-person operator episodes at
+        # session end. Threaded from the composition root, like ``recorder``.
+        work_journal=work_journal,
         context=make_coding_context(
             _build_introspector(config), PrivacyGuard(repo_root=_REPO_ROOT)
         ),

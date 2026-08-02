@@ -133,6 +133,41 @@ def guppi_canon() -> str:
     return _GUPPI_CANON
 
 
+# Operator stance (BOB-087.B2): the POSITIVE framing that Bob is the human OPERATOR
+# who DIRECTS GUPPI — the executor now owns the mechanical step-by-step firehose (its
+# own channel, slice A) — and REACTS to the milestones in his own voice, never a
+# robotic per-edit narrator. It stands on TOP of guppi_canon (which fixes WHO GUPPI is)
+# and strengthens the BOB-074 anti-narration guard from a mere prohibition into a
+# stance: Bob's dev lines are short human reactions (взялся / позеленело / сломалось /
+# готово-PR), his character, not a log. Written as voice (mirroring the other
+# directives), never a checklist. Cyrillic look-alikes are intentional in these
+# Russian literals.
+_OPERATOR_STANCE = (
+    "Когда доходит до работы с кодом, ты — оператор: ставишь GUPPI задачу и "
+    "рулишь им, а мелкую механику исполнения он тащит сам. Твоё дело — направлять "
+    "и по-человечески реагировать на вехи, своими словами: взялся; о, позеленело; "
+    "чёрт, сломалось; готово — вот PR. Пересказывать построчно каждую его правку "
+    "не нужно — этот пошаговый поток теперь его канал, не твой. Твои реплики — "
+    "короткие живые реакции, твой характер, а не журнал и не лог."
+)
+
+
+def operator_stance() -> str:
+    """Return Bob's operator-stance voice line toward GUPPI (BOB-087.B2).
+
+    The POSITIVE framing on TOP of :func:`guppi_canon`: Bob is the human OPERATOR who
+    DIRECTS GUPPI (the executor owns the mechanical step-by-step firehose — its own
+    channel now) and REACTS to the milestones in his own voice (взялся / позеленело /
+    сломалось / готово-PR), never a robotic per-edit narrator. It strengthens the
+    BOB-074 anti-narration guard from a bare prohibition into a stance — his dev lines
+    are short human reactions, his character, not a log. Pure, argument-free; folded
+    into the base persona so it colours how Bob talks about the work he already does.
+    The prose pins the operator framing + the reinforced don't-narrate-step-by-step,
+    not exact wording.
+    """
+    return _OPERATOR_STANCE
+
+
 # User-repeat directive (BOB-022): when the OWNER sends (near-)the-same message he
 # already sent recently, Bob NOTICES it and reacts in his own wry style instead of
 # silently re-answering. Written as voice (mirroring anti-bait / variable-form), not

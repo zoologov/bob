@@ -178,6 +178,7 @@ from bob.runtime.wiring import (
     build_roster_config,
     build_self_action_recorder,
     build_staleness_reassessor,
+    build_work_journal_recorder,
     staleness_enabled,
 )
 from bob.social.adapters.first_impression_store import SqliteFirstImpressionStore
@@ -393,6 +394,14 @@ def build_application(
         merged, store=memory_repo, clock=resolved_clock
     )
 
+    # Distilled work memory (BOB-087.B1): behind ``memory.work_journal`` (OFF by default →
+    # NoOp → zero writes, byte-identical). At a coding-session END it distills the run's key
+    # facts into a few first-person operator episodes (``work`` events) via a Tier-0 call.
+    # 🔴 Stays OFF until slice C's register-aware recall lands (no casual-pollution window).
+    work_journal_recorder = build_work_journal_recorder(
+        merged, router=router, store=memory_repo, clock=resolved_clock
+    )
+
     soul_store = SoulStore(_soul_dir(merged))
 
     # Capability seam (BEAD-05/06): advertise recall_memory + the agentic
@@ -527,6 +536,9 @@ def build_application(
         owner_id=_int(telegram_section, "owner_id", 0),
         clock=resolved_clock,
         recorder=self_action_recorder,
+        # Distilled work memory (BOB-087.B1): at session END the run's key facts are distilled
+        # into first-person operator episodes. Behind ``memory.work_journal`` (OFF → NoOp).
+        work_journal=work_journal_recorder,
     )
 
     # Interactive-session manager (BOB-083 .3): a live, bidirectional ``claude`` terminal

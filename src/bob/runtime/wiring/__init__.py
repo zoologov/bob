@@ -89,6 +89,7 @@ from bob.runtime.wiring.staleness import (
 )
 from bob.runtime.wiring.stream_read import build_batch_room_reader
 from bob.runtime.wiring.telegram import _build_multibot
+from bob.runtime.wiring.work_journal import build_work_journal_recorder
 
 __all__ = [
     "RhythmWiring",
@@ -151,5 +152,6 @@ __all__ = [
     "build_roster_config",
     "build_self_action_recorder",
     "build_staleness_reassessor",
+    "build_work_journal_recorder",
     "staleness_enabled",
 ]

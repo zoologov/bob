@@ -31,9 +31,12 @@ src/bob/coding/
   stream_render.py    # layer=domain   — render_stream_event(verbose): событие→строка; verbose=интерактив (полный текст+rich+chunk_for_telegram) vs груп (краткий кэп). BOB-082/085
   intent.py           # layer=domain   — is_approval / is_stop (чистые предикаты NL-команд)
   interactive_intent.py # layer=domain — parse_interactive_entry (/code -i)/is_interactive_exit (BOB-083, чистые предикаты)
-  session_voice.py    # layer=domain   — детерминированные шаблоны реплик в персоне Боба
+  session_voice.py    # layer=domain   — детерминированные шаблоны реплик в персоне Боба-оператора (человечные реакции взялся/готово-PR/провал/стоп, BOB-087.B2)
+  work_facts.py       # layer=domain   — WorkFactsAccumulator/SessionKeyFacts/WorkOutcome: сворачивает поток stream-json в ОГРАНИЧЕННЫЙ снимок ключевых фактов (BOB-087.B1)
   usecases/           # layer=application
     coding_assistant.py       — CodingAssistant (оркестратор гейтед-сессии)
+    distill_work_journal.py   — WorkJournalDistiller (порт) + Tier0-адаптер + parse_work_episodes: факты сессии → 1-3 операторских эпизода (BOB-087.B1)
+    work_journal_recorder.py  — Distilling/NoOp рекордеры рабочего журнала (флаг memory.work_journal, BOB-087.B1)
     coding_context.py         — make_coding_context (арх-преамбула в claude-промпт)
     classify_coding_intent.py — ClassifyCodingIntent (Tier-0 классификатор «это dev-запрос?»)
     coding_intent_router.py   — CodingIntentRouter (NL-маршрутизация к гейтед-сессии)
@@ -121,6 +124,45 @@ lossy `narrate`) → `_DmLiveStreamer` (адаптер в DM `chat_id`, progress
 (`_MAX_RESULT`) в код-блоке; длинный вывод чанкится `chunk_for_telegram` (≤4096, не рвёт ``` — закрывает/
 переоткрывает fence на стыке). **Груп-нарратив** (BOB-082, `verbose=False`) сохраняет краткий кэп
 байт-в-байт. Закрывает BOB-Issues #35 (форматирование) + #36 (обрезка).
+
+🔴 **Дистиллированная рабочая память (BOB-087.B1, флаг `memory.work_journal`, default OFF).**
+Чтобы Боб ПОМНИЛ, что делал в dev-сессии (первого-лица «операторские» воспоминания), но НЕ
+захлебнулся сырым логом (урок BOB-076 флуд), поток чистится в два шага — накопление ключевых
+фактов по ходу и дистилляция на конце.
+
+- **Накопление (чистое ядро).** `WorkFactsAccumulator` (`work_facts.py`, I/O-free,
+  детерминированно) сворачивает тот же поток stream-json событий, что уже порождает сессия, в
+  маленький **ОГРАНИЧЕННЫЙ** снимок `SessionKeyFacts`: тронутые файлы (базовые имена, дедуп, кэп
+  `_MAX_FILES=24`), прошли/упали ли тесты и короткие выжимки «что сломалось» (дедуп, обрезка,
+  кэп `_MAX_ERRORS=8`). Это ДИСТИЛЛЯТ существа сессии, а НЕ firehose: system-init, чистая проза
+  ассистента и неизвестные события — шум, игнорируются. `WorkOutcome` (`FINISHED`/`FAILED`/
+  `ABORTED`) задаёт рамку исхода. Границы намеренны — неограниченное накопление вернуло бы флуд.
+- **Дистилляция (Tier-0).** `WorkJournalDistiller` (порт, `usecases/distill_work_journal.py`) +
+  `Tier0WorkJournalDistiller` (адаптер) сводят факты + исход в **1-3 ДЕТАЛЬНЫХ первого-лица
+  операторских эпизода** («я попросил GUPPI починить краш стрима в `interactive_runner.py`; тесты
+  падали на >64 КБ; подняли лимит буфера — позеленело»): один дешёвый Tier-0 вызов
+  (`TaskType.WORK_JOURNAL`, локально — приватность dev-работы), зеркалит `ClassifyCodingIntent`.
+  Чистый строитель промпта + чистый парсер `parse_work_episodes` (mutation-цель, кэп
+  `_MAX_EPISODES=3`, снимает list-маркеры). Best-effort: сбой модели → ноль эпизодов, никогда не
+  бросает в сессию.
+- **Запись (веха, за флагом).** `DistillingWorkJournalRecorder` (`usecases/work_journal_recorder.py`)
+  связывает снимок → дистиллятор → стор: на **конце** сессии (НЕ per-event) сводит факты в эпизоды
+  и осаждает их через `work_episode_event` (эпизоды `work`, visibility owner-приватно). Любой сбой
+  дистилляции/записи проглатывается и логируется — рабочий журнал НИКОГДА не роняет coding/
+  interactive-сессию (урок Part D BOB-078); пустой снимок пропускается. `NoOpWorkJournalRecorder` —
+  реализация для выключенного флага `memory.work_journal`: ноль записей, память байт-в-байт.
+- **Шов в оркестраторе.** `CodingAssistant` держит узкий порт `WorkJournalRecorder` (default —
+  внутренний null-объект `_NullWorkJournalRecorder`, композиционный корень подставляет реальный
+  рекордер лишь при флаге ON). По ходу прогона сырой поток **tee**-ится через `_observe_facts` в
+  `WorkFactsAccumulator` ПЕРВЫМ (только ключевые факты, сырое не хранится; tee не меняет прогон), а
+  на терминале сессии (`FINISHED`/`FAILED`) вызывается `_journal` → `record_session`.
+
+🔴 **Голос оператора (BOB-087.B2).** `session_voice.py` — ЧИСТЫЕ детерминированные шаблоны реплик
+на гейтах сессии (`accepted`/`plan`/`pr`/`failed`/`no_changes`/`stopped` + панель-строки) в персоне
+**Боба-оператора**: Боб дирижирует от первого лица, GUPPI — сухой исполнитель, на которого Боб
+ссылается. Никакого LLM-вызова на сообщение (латентность/стоимость). Реплики — короткие живые
+человечные реакции («взялся», «готово — вот PR», «чёрт, сломалось»), не журнал. Парная директива
+персоны — `personality/voice.py::operator_stance()` (см. README домена personality).
 
 ### Адаптеры (infrastructure)
 

@@ -307,6 +307,15 @@ ignore = [
     "RUF002",
     "RUF003",
 ]
+# Distilled work memory (BOB-087.B1): the session key-fact accumulator, the work-episode
+# value, the Tier-0 distiller (Russian model-facing prompt + operator-episode examples) and
+# the work-journal recorder carry Russian persona/policy docstrings + literals whose Cyrillic
+# look-alikes are intentional (Qwen reads them natively) — RUF001/RUF002/RUF003 do not apply.
+"src/bob/coding/work_facts.py" = ["RUF001", "RUF002", "RUF003"]
+"src/bob/coding/usecases/distill_work_journal.py" = ["RUF001", "RUF002", "RUF003"]
+"src/bob/coding/usecases/work_journal_recorder.py" = ["RUF001", "RUF002", "RUF003"]
+"src/bob/memory/work_journal.py" = ["RUF001", "RUF002", "RUF003"]
+"src/bob/runtime/wiring/work_journal.py" = ["RUF001", "RUF002", "RUF003"]
 # build_application is the composition ROOT: it wires every adapter/use-case/tick in
 # one place by design (a single readable assembly), so the per-function statement
 # ceiling does not apply to it — splitting it would only scatter the wiring. It lives
@@ -319,6 +328,12 @@ ignore = [
 # comments (offset-после-обработки / poison-cap / изоляция сети) whose Cyrillic
 # look-alikes are intentional — RUF001/RUF002/RUF003 do not apply to these.
 "src/bob/infrastructure/telegram/multibot.py" = ["RUF001", "RUF002", "RUF003"]
+# Distilled work-memory tests (BOB-087.B1): the distiller test asserts on Russian
+# operator-episode literals (Cyrillic look-alikes intentional → RUF001/RUF003); the
+# CodingAssistant + wiring tests use fake ports whose unused signature args are inherent
+# to the port shape (→ ARG002).
+"tests/application/usecases/test_distill_work_journal.py" = ["RUF001", "RUF003"]
+"tests/application/usecases/test_coding_assistant_work_journal.py" = ["ARG002"]
 # The voice tests (BOB-016/BOB-020) assert on multi-line Russian persona/tone
 # literals whose Cyrillic look-alikes are intentional (→ RUF001/RUF003).
 "tests/domain/personality/test_voice.py" = [
@@ -399,6 +414,17 @@ ignore = [
 # assert messages that mix «GUPPI» with Russian prose, whose Cyrillic look-alikes are
 # intentional (→ RUF001/2/3).
 "tests/acceptance/steps/test_tool_narration_backstop.py" = [
+    "S101",
+    "ARG001",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+# The work-journal acceptance steps (BOB-087 Срез B) bind Russian .feature step text + assert
+# messages that mix «GUPPI»/«work»/«dev» with Russian prose, whose Cyrillic look-alikes are
+# intentional (→ RUF001/2/3).
+"tests/acceptance/steps/test_work_journal.py" = [
     "S101",
     "ARG001",
     "PLR2004",
