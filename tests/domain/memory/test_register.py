@@ -132,3 +132,35 @@ def test_work_item_without_score_gets_a_concrete_attenuated_score() -> None:
     recalled = ({"content": "я доделал X", "category": WORK_EVENT_TYPE},)
     (item,) = filter_by_register(recalled, Register.CASUAL)
     assert item["score"] == RECALL_WEIGHT_FULL * CASUAL_WORK_WEIGHT
+
+
+def test_casual_attenuates_a_tag_only_work_item_through_the_filter() -> None:
+    # A memory that is work ONLY by its provenance tag (non-work category) must still be
+    # muted through the pipeline: proves the filter reads the ``tags`` key, not just category.
+    recalled = (
+        {
+            "content": "я поднял лимит в раннере",
+            "category": "episodic",
+            "tags": ["dev", "actor:bob"],
+            "score": 1.0,
+        },
+    )
+    (item,) = filter_by_register(recalled, Register.CASUAL)
+    assert item["score"] == 1.0 * CASUAL_WORK_WEIGHT  # muted via the tag path, not category
+
+
+def test_casual_scales_the_actual_score_not_a_baseline() -> None:
+    # A non-unit score distinguishes reading the real ``score`` from a fixed baseline:
+    # 4.0 * 0.15 = 0.6 (had the score been ignored/baselined to 1.0 it would read 0.15).
+    recalled = (_work(4.0),)
+    (item,) = filter_by_register(recalled, Register.CASUAL)
+    assert item["score"] == 4.0 * CASUAL_WORK_WEIGHT
+    assert item["score"] != RECALL_WEIGHT_FULL * CASUAL_WORK_WEIGHT
+
+
+def test_casual_treats_a_bool_score_as_absent_not_numeric() -> None:
+    # A bool is never a real relevance score: it is baselined (→ 0.15), NOT coerced to a
+    # float (a mis-coerced ``False`` would collapse to 0.0 and silently drop the item).
+    recalled = ({"content": "я доделал X", "category": WORK_EVENT_TYPE, "score": False},)
+    (item,) = filter_by_register(recalled, Register.CASUAL)
+    assert item["score"] == RECALL_WEIGHT_FULL * CASUAL_WORK_WEIGHT

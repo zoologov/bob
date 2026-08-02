@@ -432,6 +432,23 @@ ignore = [
     "RUF002",
     "RUF003",
 ]
+# The register-recall acceptance steps + harness (BOB-087 Срез C) bind Russian .feature step
+# text + seeded Russian archive memories whose Cyrillic look-alikes are intentional (→ RUF001/2/3).
+"tests/acceptance/steps/test_register_recall.py" = [
+    "S101",
+    "ARG001",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+"tests/acceptance/register_recall_harness.py" = [
+    "S101",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
 # The anti-repeat self-dup acceptance steps + harness (BOB-078 C) bind Russian .feature step
 # text + a seeded Russian poison reply whose Cyrillic look-alikes are intentional (→ RUF001/2/3).
 "tests/acceptance/steps/test_anti_repeat_self_dup.py" = [
@@ -1450,6 +1467,10 @@ pytest_add_cli_args_test_selection = [
     # deterministic core in capabilities/usecases/tool_loop.py; its fast unit test lives in
     # tests/application, so it is selected here to measure that predicate's mutants.
     "tests/application/test_tool_loop_narration_backstop.py",
+    # BOB-087.C2: the register-recall verdict parser (``parse_work_talk_verdict``) is a pure,
+    # deterministic core in memory/usecases/classify_work_talk.py; its fast unit test lives in
+    # tests/application, so it is selected here to measure that parser's mutants.
+    "tests/application/usecases/test_classify_work_talk.py",
     # BOB-086.3: the fast, deterministic unit tests for the GFM-table recogniser/parser in
     # the rich-message converter — selected so a per-slice ``rich`` mutation run measures the
     # table core's mutants (the converter is pure and side-effect free).
