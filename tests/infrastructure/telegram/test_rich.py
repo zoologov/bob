@@ -460,3 +460,155 @@ def test_existing_subset_round_trips_byte_identical() -> None:
     )
 
     assert _serialize(_convert(doc)) == doc
+
+
+# --- GFM tables: alignment combinations (BOB-086.3 gap-fill) -------------------
+
+
+def test_gfm_table_all_four_alignment_forms_in_one_row() -> None:
+    # Every separator shape must map to its alignment: :--- left, :--: center,
+    # ---: right, --- (bare) defaults to left.
+    message = _convert("| a | b | c | d |\n|:---|:--:|---:|---|\n| 1 | 2 | 3 | 4 |")
+
+    block = message.blocks[0]
+    assert isinstance(block, RichBlockTable)
+    assert [cell.align for cell in block.cells[0]] == [
+        "left",
+        "center",
+        "right",
+        "left",
+    ]
+
+
+def test_gfm_table_center_separator_with_colons_both_ends() -> None:
+    # A long ``:---:`` (colon at BOTH ends) is centre, same as ``:--:``.
+    message = _convert("| H |\n|:---:|\n| x |")
+
+    block = message.blocks[0]
+    assert isinstance(block, RichBlockTable)
+    assert block.cells[0][0].align == "center"
+
+
+def test_gfm_table_single_dash_separator_is_valid() -> None:
+    # The minimal separator cell is a single ``-`` (``:?-+:?`` — one or more dashes).
+    message = _convert("| H |\n|-|\n| x |")
+
+    block = message.blocks[0]
+    assert isinstance(block, RichBlockTable)
+    assert block.cells[0][0].align == "left"
+
+
+# --- GFM tables: cell content edge cases --------------------------------------
+
+
+def test_gfm_table_empty_cell_yields_empty_inline_text() -> None:
+    message = _convert("| A | B |\n|---|---|\n| x |  |")
+
+    block = message.blocks[0]
+    assert isinstance(block, RichBlockTable)
+    empty_cell = block.cells[1][1]
+    assert empty_cell.text == ""  # a blank cell collapses to an empty inline run
+
+
+def test_gfm_table_cell_mixes_bold_and_code_runs() -> None:
+    message = _convert("| Field |\n|---|\n| set **x** to `1` |")
+
+    block = message.blocks[0]
+    assert isinstance(block, RichBlockTable)
+    runs = block.cells[1][0].text
+    assert isinstance(runs, list)  # plain + bold + plain + code + ...
+    assert any(isinstance(r, RichTextBold) for r in runs)
+    assert any(isinstance(r, RichTextCode) for r in runs)
+
+
+def test_gfm_table_without_outer_pipes_is_recognized() -> None:
+    # GFM allows omitting the leading/trailing pipe on every row.
+    message = _convert("H1 | H2\n---|---\na | b")
+
+    block = message.blocks[0]
+    assert isinstance(block, RichBlockTable)
+    assert [cell.text for cell in block.cells[0]] == ["H1", "H2"]
+    assert [cell.text for cell in block.cells[1]] == ["a", "b"]
+
+
+# --- GFM tables: adjacency to other blocks ------------------------------------
+
+
+def test_gfm_table_immediately_after_heading_is_recognized() -> None:
+    message = _convert("# Отчёт\n| H1 | H2 |\n|---|---|\n| a | b |")
+
+    assert isinstance(message.blocks[0], RichBlockSectionHeading)
+    assert isinstance(message.blocks[1], RichBlockTable)
+
+
+def test_gfm_table_followed_by_blank_line_then_paragraph() -> None:
+    message = _convert("| H |\n|---|\n| x |\n\nafter the table")
+
+    assert isinstance(message.blocks[0], RichBlockTable)
+    tail = message.blocks[1]
+    assert isinstance(tail, RichBlockParagraph)
+    assert tail.text == "after the table"
+
+
+def test_gfm_table_ends_at_a_non_pipe_line() -> None:
+    # A data-scan line with no pipe terminates the table; the rest is a paragraph.
+    message = _convert("| H |\n|---|\n| x |\nplain trailing prose")
+
+    assert isinstance(message.blocks[0], RichBlockTable)
+    assert len(message.blocks[0].cells) == 2  # header + one data row only
+    assert isinstance(message.blocks[1], RichBlockParagraph)
+
+
+# --- GFM tables: things that must NOT become a table --------------------------
+
+
+def test_standalone_spoiler_line_is_not_a_table() -> None:
+    # ``||spoiler||`` on its own line has pipes but no separator row → a paragraph
+    # carrying a spoiler run, never a table.
+    message = _convert("||секрет||")
+
+    block = message.blocks[0]
+    assert isinstance(block, RichBlockParagraph)
+    assert not isinstance(block, RichBlockTable)
+
+
+def test_header_row_as_last_line_has_no_separator_and_degrades() -> None:
+    # A lone ``| … |`` line with nothing after it cannot form a table.
+    message = _convert("| H1 | H2 |")
+
+    assert not any(isinstance(b, RichBlockTable) for b in message.blocks)
+    assert isinstance(message.blocks[0], RichBlockParagraph)
+
+
+def test_separator_column_count_mismatch_degrades_to_paragraph() -> None:
+    # Two header columns, three separator columns → not a well-formed table.
+    blocks = _convert("| H1 | H2 |\n|---|---|---|\n| a | b |").blocks
+
+    assert not any(isinstance(b, RichBlockTable) for b in blocks)
+
+
+def test_non_separator_second_line_degrades_to_paragraph() -> None:
+    # The second line has pipes but is prose, not a ``:?-+:?`` separator.
+    blocks = _convert("| H1 | H2 |\n| not | a separator |\n| a | b |").blocks
+
+    assert not any(isinstance(b, RichBlockTable) for b in blocks)
+
+
+# --- GFM tables: whitespace / line-ending variants ----------------------------
+
+
+def test_gfm_table_with_crlf_line_endings() -> None:
+    message = _convert("| H1 | H2 |\r\n|---|---|\r\n| a | b |\r\n")
+
+    block = message.blocks[0]
+    assert isinstance(block, RichBlockTable)
+    assert [cell.text for cell in block.cells[0]] == ["H1", "H2"]
+    assert [cell.text for cell in block.cells[1]] == ["a", "b"]
+
+
+def test_gfm_table_rows_with_surrounding_whitespace() -> None:
+    message = _convert("   | H1 | H2 |   \n  |---|---|  \n   | a | b |  ")
+
+    block = message.blocks[0]
+    assert isinstance(block, RichBlockTable)
+    assert [cell.text for cell in block.cells[1]] == ["a", "b"]
