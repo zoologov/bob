@@ -21,7 +21,16 @@ Use-case'ы приложения: оркестрация доменной лог
   (`ReplyGateway`, `EpisodeWriter`/`EpisodeReader`, `InterlocutorResolver`,
   `FirstImpressionReader`, `RelationshipReader`, `SulkReader`, `CurrentFascinationReader`,
   `SelfImprovementReader`, `OwnerActivityRecorder`, `BargeCeiling`, `ReplyDelay` …) и
-  in-memory-держатели `PersonalityState` / `EngagementState`.
+  in-memory-держатели `PersonalityState` / `EngagementState`. 🔴 Register-aware recall
+  (BOB-087.C2): `_recall_surfaceable` собирает recall в ТРИ слоя — (1) гибридный recall,
+  (2) фильтр такта разглашения (`filter_surfaceable`), (3) `_register_filtered` —
+  register-aware down-weight поверх over-fetched пула. Третий слой активен, только когда
+  инъецирован `register_resolver` (за флагом `memory.register_recall`, default OFF → резолвер
+  `None` → recall берёт плоский `_RECALL_K`-фетч и байт-в-байт). При активном резолвере
+  recall OVER-FETCH'ит (`_RECALL_OVERFETCH_K`), затем `RegisterResolver.resolve` определяет
+  DEV/CASUAL (Tier-0 судья зовётся лишь при `pool_has_work`), а `register_ranked` в CASUAL
+  пере-сортирует приглушённые `work`-эпизоды ниже глубинного не-work и подрезает до
+  `_RECALL_K`; в DEV — best-first пул, подрезанный до `_RECALL_K` (без изменений).
 - **heartbeat.py** — тики автономной внутренней жизни Боба между сообщениями:
   `InnerMonologueTick` (приватная мысль на Tier 0 → её сентимент кормит mood),
   `MoodDriftTick` (тянет mood к покойной базовой линии), `ReflectTick` (периодическая

@@ -165,7 +165,17 @@ THE анти-runaway-гардрейл. `mood_taste.modulate` — mood време
 который направляет GUPPI и по-человечески реагирует на вехи своими словами (взялся / позеленело
 / сломалось / готово-PR), а не построчный робот-нарратор; усиливает анти-нарратив-гейт BOB-074
 из голого запрета в позу — dev-реплики Боба короткие живые реакции, его характер, а не лог;
-чистая, вплетена в базовую персону). `language.py` — `language_directive`
+чистая, вплетена в базовую персону). `recall_has_work` / `recalled_work_directive`
+(BOB-087.C3 — провенанс-директива register-aware recall, зеркало self_action-строки: когда
+recall поднял ОДИН из СОБСТВЕННЫХ `work` dev-эпизодов Боба — его операторскую вспоминку, как
+он вёл GUPPI по коду — вплетается ЛЁГКИЙ анти-конфабуляционный бэкстоп: говори о ней от
+первого лица («я попросил GUPPI…»), честно про сбои и промахи, и НЕ выдумывай деталей — не
+смешивай работу с болтовнёй. `recall_has_work` — чистый предикат: True, если среди
+припомненного есть память с `category` `work` ИЛИ любым work-тегом (`work`/`dev`/`actor:bob`
+— документированное зеркало `memory.work_journal`, чтобы чистый personality-домен ничего не
+импортил из memory). Ортогональна self_action-строке: work-эпизод несёт event_type `work`,
+не `self_action`, поэтому обе могут сработать на одном ходу; нет work → строки нет,
+дефолтный путь байт-в-байт). `language.py` — `language_directive`
 (персона говорит на своём языке). `reflection.py` — `build_reflection_prompt`: вплетает
 свежий контекст (недавние эпизоды + текущий тон) в промпт заземлённого монолога, лечит
 «застрявшую пластинку»; без свежего контекста возвращает generic-промпт дословно.
@@ -338,7 +348,8 @@ kv-таблице (`record`/`latest`/`clear` — hint всплывает не б
   `taste_evolution.reinforce`, `mood_taste.modulate`, `negotiation.Negotiation`/`Stance`,
   `fascination.Fascination`, `phantom_evolution.evolve_phantoms`, `expression.decide_expression`
   (+ `Verbosity`/`EngagementLevel`/`ExpressionMode`/`FormHint`), `voice.tone_directive`/
-  `brevity_directive`/`engagement_directive`/`tactful_withhold_directive`,
+  `brevity_directive`/`engagement_directive`/`tactful_withhold_directive`/
+  `recall_has_work`/`recalled_work_directive` (BOB-087.C3),
   `reaction_meaning.ReactionMeaning`,
   `reaction_effect.apply_reaction_to_mood`, `reflection.build_reflection_prompt`, `soul.SOUL`,
   `room_tone.room_tone_directive`/`room_engagement_bias` (+ `RoomToneThresholds`).
