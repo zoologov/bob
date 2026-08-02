@@ -904,6 +904,9 @@ ignore = [
 "tests/domain/coding/test_naming.py" = ["S101", "ARG001", "PLR2004", "RUF001", "RUF002", "RUF003"]
 "tests/domain/coding/test_narrate.py" = ["S101", "ARG001", "PLR2004", "RUF001", "RUF002", "RUF003"]
 "tests/domain/coding/test_session_voice.py" = ["S101", "ARG001", "PLR2004", "RUF001", "RUF002", "RUF003"]
+# The verbose stream-render + chunk tests (BOB-085.1) assert on Russian rich-render literals +
+# carry Russian docstrings/comments whose Cyrillic look-alikes are intentional (→ RUF001/2/3).
+"tests/domain/coding/test_stream_render_verbose.py" = ["S101", "ARG001", "PLR2004", "RUF001", "RUF002", "RUF003"]
 # Interactive-session manager tests (BOB-083 .3) carry Russian task/reply literals whose
 # Cyrillic look-alikes are intentional — RUF001/RUF002/RUF003 do not apply.
 "tests/application/usecases/test_interactive_session.py" = ["S101", "ARG001", "PLR2004", "RUF001", "RUF002", "RUF003"]
