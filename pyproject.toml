@@ -606,6 +606,60 @@ ignore = [
     "RUF002",
     "RUF003",
 ]
+# Firehose-via-GUPPI wiring tests (BOB-087.A1): assert which bot each notifier/streamer is
+# built over via private wiring attrs + Russian literals; S101/ARG/SLF/RUF001-003 do not apply.
+"tests/runtime/wiring/test_coding_stream_via_guppi.py" = [
+    "S101",
+    "ARG001",
+    "ARG002",
+    "PLR2004",
+    "SLF001",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+# Firehose/Bob-voice channel-split tests (BOB-087.A1): Russian session literals + unused
+# fake-port args; S101/ARG/RUF001-003 do not apply to these test fakes.
+"tests/application/usecases/test_coding_stream_notifier_split.py" = [
+    "S101",
+    "ARG001",
+    "ARG002",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+# Channel-split gap-fill (BOB-087.A2): Russian session literals + unused fake-port args on the
+# stop/fail/no-changes/DM-pointer routing edges; S101/ARG/RUF001-003 do not apply to these fakes.
+"tests/application/usecases/test_coding_channel_split_gaps.py" = [
+    "S101",
+    "ARG001",
+    "ARG002",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+# GUPPI-channel BDD (BOB-087.A2): two-fake-bot boundary harness + steps carry Russian
+# session/Gherkin literals + unused fake-port args; S101/ARG/RUF001-003 do not apply.
+"tests/acceptance/guppi_channel_harness.py" = [
+    "S101",
+    "ARG001",
+    "ARG002",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+"tests/acceptance/steps/test_guppi_channel.py" = [
+    "S101",
+    "ARG001",
+    "ARG002",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
 # The coding arch-context tests (BOB-046 .3) assert on Russian preamble/convention
 # literals + use unused fake-port args; S101/ARG/RUF001-003 do not apply to these fakes.
 "tests/application/usecases/test_coding_context.py" = [

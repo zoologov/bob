@@ -514,6 +514,10 @@ def build_application(
         repo=connection,
         authorizer=authorizer,
         notifier_bot=resolved_bob_bot,
+        # Firehose bot (BOB-087.A1): the mechanical coder stream is sent AS GUPPI under
+        # ``coder.stream_via_guppi`` (default OFF → the wiring falls back to Bob's bot, so
+        # today's behaviour is byte-identical). Bob's voice stays on ``resolved_bob_bot``.
+        stream_bot=resolved_guppi_bot,
         chat_id=_int(telegram_section, "chat_id", 0),
         # The owner gives Bob the task in HIS topic (BOB-041 NL path), so coding-session
         # replies thread back into that same topic, not General (BOB-042 Fix B).
@@ -534,6 +538,9 @@ def build_application(
         repo=connection,
         authorizer=authorizer,
         bot=resolved_bob_bot,
+        # The interactive DM firehose follows ``coder.stream_via_guppi`` too (BOB-087.A1):
+        # GUPPI's bot when ON, Bob's bot (byte-identical) when OFF.
+        stream_bot=resolved_guppi_bot,
         owner_id=_int(telegram_section, "owner_id", 0),
         clock=resolved_clock,
     )

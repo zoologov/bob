@@ -235,12 +235,20 @@ class CodingAssistant:
         context: CodingContext | None = None,
         recorder: SelfActionRecorder | None = None,
         live_streamer: LiveRunStreamer | None = None,
+        stream_notifier: OwnerNotifier | None = None,
     ) -> None:
         self._runner = runner
         self._worktree = worktree
         self._store = store
         self._pr_opener = pr_opener
         self._notifier = notifier
+        # Firehose channel (BOB-087.A1): the mechanical per-event ``narrate`` stream is
+        # GUPPI's work (the dry executor), so the composition may route it through GUPPI'S
+        # bot (flag ``coder.stream_via_guppi`` ON) via a SEPARATE ``stream_notifier``, while
+        # Bob's voice (gate lines + the capped notice) stays on ``notifier`` (Bob's bot).
+        # Unwired (the default, flag OFF) → the firehose falls back to the SAME ``notifier``,
+        # so a single-channel session is byte-identical to before (zero regression).
+        self._stream_notifier: OwnerNotifier = stream_notifier or notifier
         self._owner = owner
         self._clock = clock
         self._id_factory = id_factory
@@ -504,6 +512,12 @@ class CodingAssistant:
         quiet on progress. The FINAL ``result`` event is ALWAYS sent (session outcome /
         error must reach the owner), so the cap only throttles the per-file flood, never
         the result. A plain counter — it does not touch the stop/cancel break.
+
+        🔴 Channel split (BOB-087.A1): the per-event ``narrate`` firehose (interim progress
+        + the final result narration) is GUPPI's mechanical work → it goes to the
+        ``_stream_notifier`` (GUPPI's bot when ``coder.stream_via_guppi`` is ON, else the
+        same Bob channel — byte-identical). The "продолжаю" cap notice is Bob's OWN voice →
+        it stays on ``_notifier`` (Bob's bot) regardless of the flag.
         """
         progress = 0
         capped = False
@@ -514,7 +528,7 @@ class CodingAssistant:
             if line is None:
                 continue
             if _is_result_event(event):  # the final outcome ALWAYS reaches the owner
-                await self._notifier.send(line)
+                await self._stream_notifier.send(line)
                 continue
             if capped:  # past the cap: swallow interim progress until the result
                 continue
@@ -527,7 +541,7 @@ class CodingAssistant:
                 )
                 capped = True
                 continue
-            await self._notifier.send(line)
+            await self._stream_notifier.send(line)
             progress += 1
 
     async def _preamble(self, task: str) -> str:

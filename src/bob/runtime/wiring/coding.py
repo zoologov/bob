@@ -91,6 +91,7 @@ def _build_coding_assistant(
     repo: SqliteConnection,
     authorizer: Authorizer,
     notifier_bot: BotLike,
+    stream_bot: BotLike,
     chat_id: int,
     topic_id: int | None,
     owner_id: int,
@@ -114,11 +115,23 @@ def _build_coding_assistant(
     The flag-gated ``recorder`` (BOB-079) is threaded in from the composition root so each
     lifecycle transition records a first-person ``self_action`` episode; when
     ``memory.autobiography`` is OFF it is the NoOp (zero writes, unchanged behaviour).
+
+    🔴 Firehose channel (BOB-087.A1): the mechanical per-event narration + the DM
+    live-stream are GUPPI's work (the dry executor), so under ``coder.stream_via_guppi``
+    (default OFF) they are routed AS GUPPI — the ``stream_notifier`` + the live-streamer are
+    built over ``stream_bot`` (GUPPI's bot). Bob's OWN voice (the ``session_voice`` gate
+    lines, the "продолжаю" cap notice, the typing/status indicators) stays on ``notifier_bot``
+    (Bob's bot). OFF → the firehose falls back to Bob's bot exactly as before (byte-identical:
+    ``stream_notifier`` is ``None`` and the live-streamer targets ``notifier_bot``).
     """
     coder = _section(config, "coder")
     if not _flag(coder, "enabled"):
         return None
     timeout = float(_int(coder, "timeout", 600))
+    # Firehose bot selection (BOB-087.A1): GUPPI's bot when the flag is ON, else Bob's bot
+    # (so the OFF path is byte-identical — the same single channel as today).
+    stream_via_guppi = _flag(coder, "stream_via_guppi")
+    firehose_bot = stream_bot if stream_via_guppi else notifier_bot
     return CodingAssistant(
         recorder=recorder,
         context=make_coding_context(
@@ -133,12 +146,20 @@ def _build_coding_assistant(
         notifier=_CodingOwnerNotifier(
             bot=notifier_bot, chat_id=chat_id, topic_id=topic_id
         ),
+        # The mechanical per-event narration firehose → GUPPI's bot when the flag is ON; OFF
+        # → ``None`` so the use-case falls back to the Bob ``notifier`` (byte-identical).
+        stream_notifier=(
+            _CodingOwnerNotifier(bot=firehose_bot, chat_id=chat_id, topic_id=topic_id)
+            if stream_via_guppi
+            else None
+        ),
         owner=authorizer,
         clock=clock,
         execute_mode=_str(coder, "permission_mode", "acceptEdits"),
         # Work indicator (BOB-046 .2): "Bob is typing…" through the silent claude waits
         # + one editable status panel, both into Bob's topic via Bob's bot. Both degrade
-        # to a no-op if the bot cannot send the action / edit the message.
+        # to a no-op if the bot cannot send the action / edit the message. These are Bob's
+        # own presence markers → they stay on Bob's bot regardless of the firehose flag.
         typing_keepalive=TypingKeepalive(
             bot=cast("TypingActionBot", notifier_bot),
             chat_id=chat_id,
@@ -154,9 +175,10 @@ def _build_coding_assistant(
         # Dev-channel live-stream (BOB-082.3): when ``coder.dev_dm`` is ON, the raw,
         # UNCAPPED execute stream renders into the owner's private DM (the group topic gets
         # only a one-line pointer, INV-5). OFF (default) → ``None`` and the run is narrated
-        # to the group capped exactly as before (zero behaviour change).
+        # to the group capped exactly as before (zero behaviour change). The raw stream is
+        # firehose → it follows ``firehose_bot`` (GUPPI when ``stream_via_guppi`` is ON).
         live_streamer=_build_dm_live_streamer(
-            coder, bot=notifier_bot, owner_id=owner_id
+            coder, bot=firehose_bot, owner_id=owner_id
         ),
     )
 
@@ -193,6 +215,7 @@ def _build_interactive_session(
     repo: SqliteConnection,
     authorizer: Authorizer,
     bot: BotLike,
+    stream_bot: BotLike,
     owner_id: int,
     clock: Clock,
 ) -> InteractiveSessionManager | None:
@@ -209,12 +232,19 @@ def _build_interactive_session(
     (reuse of BOB-082) targeting the owner's private DM for the live output. 🔴 There is
     DELIBERATELY no PR-opener here — the manager physically cannot merge/push; the owner
     reviews the worktree branch and lands it through the existing BOB-039 gate.
+
+    🔴 Firehose channel (BOB-087.A1): the interactive DM live-stream IS the mechanical
+    firehose, so under ``coder.stream_via_guppi`` (default OFF) it is rendered AS GUPPI —
+    the per-session streamer is built over ``stream_bot`` (GUPPI's bot). OFF → ``bot`` (Bob's
+    bot) exactly as before (byte-identical). The short Bob mode lines (open/stop) live in the
+    intake router (`_build_interactive_intake`) and stay on Bob's bot regardless.
     """
     coder = _section(config, "coder")
     if not _flag(coder, "interactive"):
         return None
     dm_chat_id = _int(coder, "dev_dm_chat_id", owner_id)
     claude_bin = _str(coder, "claude_bin", "claude")
+    firehose_bot = stream_bot if _flag(coder, "stream_via_guppi") else bot
     return InteractiveSessionManager(
         runner_factory=lambda: InteractiveClaudeRunner(claude_bin=claude_bin),
         worktree=GitWorktree(_str(coder, "worktree_root", ".worktrees")),
@@ -224,9 +254,13 @@ def _build_interactive_session(
         # piece into ≤ Telegram-limit messages, so claude's answer arrives whole + formatted.
         # The group one-way dev-channel path (`_build_dm_live_streamer`) stays concise.
         streamer_factory=lambda: _DmLiveStreamer(
-            notifier=_CodingOwnerNotifier(bot=bot, chat_id=dm_chat_id, topic_id=None),
+            notifier=_CodingOwnerNotifier(
+                bot=firehose_bot, chat_id=dm_chat_id, topic_id=None
+            ),
             panel=StatusPanel(
-                bot=cast("EditableStatusBot", bot), chat_id=dm_chat_id, thread_id=None
+                bot=cast("EditableStatusBot", firehose_bot),
+                chat_id=dm_chat_id,
+                thread_id=None,
             ),
             verbose=True,
         ),

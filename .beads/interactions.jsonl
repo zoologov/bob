@@ -987,3 +987,11 @@
 {"id":"int-8603d0f4","kind":"field_change","created_at":"2026-08-02T10:02:17.004524Z","actor":"v.zoologov","issue_id":"bob-u0t.5","extra":{"field":"status","new_value":"in_progress","old_value":"open"}}
 {"id":"int-d9e6ffdc","kind":"field_change","created_at":"2026-08-02T10:04:39.975069Z","actor":"v.zoologov","issue_id":"bob-u0t.5","extra":{"field":"status","new_value":"closed","old_value":"in_progress","reason":"Closed"}}
 {"id":"int-1dd17d89","kind":"field_change","created_at":"2026-08-02T10:04:40.871438Z","actor":"v.zoologov","issue_id":"bob-u0t","extra":{"field":"status","new_value":"closed","old_value":"open","reason":"Closed"}}
+{"id":"int-c2f55100","kind":"field_change","created_at":"2026-08-02T11:58:46.559406Z","actor":"v.zoologov","issue_id":"bob-abk.1","extra":{"field":"status","new_value":"in_progress","old_value":"open"}}
+{"id":"int-307ff9e6","kind":"field_change","created_at":"2026-08-02T12:21:25.693582Z","actor":"v.zoologov","issue_id":"bob-abk.1","extra":{"field":"status","new_value":"closed","old_value":"in_progress","reason":"Closed"}}
+{"id":"int-2cdd2af3","kind":"field_change","created_at":"2026-08-02T12:21:28.209168Z","actor":"v.zoologov","issue_id":"bob-abk.2","extra":{"field":"status","new_value":"in_progress","old_value":"open"}}
+{"id":"int-ee000d6b","kind":"field_change","created_at":"2026-08-02T12:37:00.675299Z","actor":"v.zoologov","issue_id":"bob-abk.2","extra":{"field":"status","new_value":"closed","old_value":"in_progress","reason":"Closed"}}
+{"id":"int-393da9db","kind":"field_change","created_at":"2026-08-02T12:37:03.174046Z","actor":"v.zoologov","issue_id":"bob-abk.3","extra":{"field":"status","new_value":"in_progress","old_value":"open"}}
+{"id":"int-fdabd5ff","kind":"field_change","created_at":"2026-08-02T12:42:46.735195Z","actor":"v.zoologov","issue_id":"bob-abk.3","extra":{"field":"status","new_value":"closed","old_value":"in_progress","reason":"Closed"}}
+{"id":"int-7bedc44a","kind":"field_change","created_at":"2026-08-02T12:42:47.686466Z","actor":"v.zoologov","issue_id":"bob-abk.4","extra":{"field":"status","new_value":"in_progress","old_value":"open"}}
+{"id":"int-93def2d2","kind":"field_change","created_at":"2026-08-02T12:46:01.132174Z","actor":"v.zoologov","issue_id":"bob-abk.4","extra":{"field":"status","new_value":"closed","old_value":"in_progress","reason":"Closed"}}

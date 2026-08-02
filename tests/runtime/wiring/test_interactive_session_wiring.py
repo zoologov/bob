@@ -56,6 +56,7 @@ def _deps() -> dict[str, object]:
         "repo": cast("SqliteConnection", _StubConnection()),
         "authorizer": cast("Authorizer", _StubAuthorizer()),
         "bot": _bot(),
+        "stream_bot": _bot(),
         "owner_id": _OWNER_ID,
         "clock": cast("Clock", _StubClock()),
     }

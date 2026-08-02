@@ -47,7 +47,7 @@ src/bob/coding/
     session_store.py    — SqliteCodingSessionStore (персист сессий через рестарт)
     indicator.py        — TypingKeepalive + StatusPanel (индикаторы работы в топике Боба)
     owner_notifier.py   — _CodingOwnerNotifier (нотификатор owner'а; переехал из app.py, BOB-062.7a)
-    live_stream.py      — _DmLiveStreamer (полный лайв-стрим сырых событий в личку owner'а, BOB-082)
+    live_stream.py      — _DmLiveStreamer (полный лайв-стрим сырых событий в личку owner'а, BOB-082; firehose ботом GUPPI при coder.stream_via_guppi, BOB-087.A)
     _branch.py, _exec.py — внутренние shell-free хелперы адаптеров
 ```
 
@@ -106,6 +106,13 @@ lossy `narrate`) → `_DmLiveStreamer` (адаптер в DM `chat_id`, progress
 **структурно без PR-opener** — мерж/пуш в main НЕВОЗМОЖЕН; правки — в изолированном worktree `bob/<slug>`,
 в main только через существующий PR-гейт owner'а. Осознанное ослабление двойного гейта — ТОЛЬКО для
 правок-в-worktree под управлением owner'а.
+
+🔴 **GUPPI-канал: firehose исполнителя (BOB-087.A, флаг `coder.stream_via_guppi`).** По канону GUPPI —
+детерминированный **исполнитель**, Боб — разум. При флаге ON механический **firehose** (per-event narrate +
+`_DmLiveStreamer` live-stream) уходит **ботом GUPPI**, а голос Боба (гейты `session_voice` «берусь/готово/
+провал», `dev_pointer`, `narration_capped`, typing/панель) — **всегда ботом Боба** (`stream_notifier`-порт в
+`CodingAssistant`). OFF (default) → всё ботом Боба, байт-в-байт. Отделяет механический поток от голоса Боба
+(канон + анти-recall-яд: firehose вне истории бота Боба).
 
 **UX терминала: курированный полный вывод + rich (BOB-085).** `render_stream_event(event, verbose=)`
 двухрежимный: **интерактив-DM** (`verbose=True`, `_DmLiveStreamer(verbose=True)`) — ответы claude
