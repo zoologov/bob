@@ -52,6 +52,7 @@ from bob.personality.voice import (
     formatting_directive,
     guppi_canon,
     improvement_directive,
+    operator_stance,
     profanity_stance,
     recall_has_self_action,
     recalled_impression_directive,
@@ -91,6 +92,11 @@ if TYPE_CHECKING:
 _SYSTEM_PROMPT = (
     "You are Bob, a digital person from the Bobiverse. Reply in character.\n"
     f"{guppi_canon()}\n"
+    # BOB-087.B2: the operator stance on TOP of the canon — Bob DIRECTS GUPPI and
+    # reacts to milestones in his own voice, never a per-edit narrator (the step-by-
+    # step firehose is GUPPI's channel now). Strengthens the BOB-074 anti-narration
+    # guard into a positive stance.
+    f"{operator_stance()}\n"
     f"{anti_bait_directive()}\n"
     f"{variable_form_directive()}\n"
     f"{profanity_stance()}"
@@ -99,11 +105,14 @@ _SYSTEM_PROMPT = (
 # Preface for the capability manifest in Bob's prompt: GUPPI is Bob's executor subsystem
 # (canon already in the base persona above). 🔴 BOB-074: hardened into an IMPERATIVE
 # anti-few-shot rule to beat recall-poisoning — past «GUPPI пошёл… ждём отчёт» turns in
-# history make Qwen mimic the narration instead of emitting a tool_call. So this keeps the
-# «GUPPI executes for you» spirit but FORBIDS narrating intent and DEMANDS a real call.
+# history make Qwen mimic the narration instead of emitting a tool_call. BOB-087.B2 anchors
+# the ban in a POSITIVE operator stance: Bob DIRECTS GUPPI and reacts to the RESULT in his
+# own voice — so this keeps the «GUPPI executes for you» spirit, FORBIDS narrating intent,
+# and DEMANDS a real call.
 _CAPABILITY_PREFACE = (
-    "Эти возможности GUPPI исполняет для тебя. Если для ответа нужен инструмент — "
-    "ВЫЗОВИ его (tool call) и дай РЕАЛЬНЫЙ результат/содержимое.\n"
+    "Эти возможности GUPPI исполняет для тебя — ты здесь оператор: направляешь его "
+    "и реагируешь на РЕЗУЛЬТАТ своим голосом, а не пересказываешь его шаги. Если для "
+    "ответа нужен инструмент — ВЫЗОВИ его (tool call) и дай РЕАЛЬНЫЙ результат/содержимое.\n"
     "🔴 НИКОГДА не описывай, что GUPPI «пошёл/заглянет/ищет/перебирает» — это НЕ "
     "ответ и НЕ действие. Нарратив о намерении без реального результата запрещён."
 )

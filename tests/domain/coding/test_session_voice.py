@@ -64,6 +64,14 @@ def test_failed_message_carries_the_detail() -> None:
     assert "claude timed out" in message
 
 
+def test_failed_message_reads_as_human_operator_reaction() -> None:
+    # BOB-087.B2: on a break Bob REACTS like himself («чёрт, сломалось»), not a dry
+    # "STATUS: FAILED" — the operator's human voice, still carrying the detail.
+    message = session_voice.failed("boom")
+    assert "boom" in message
+    assert "чёрт" in message.casefold()
+
+
 def test_stopped_message_is_bob_voiced_and_non_empty() -> None:
     message = session_voice.stopped()
     assert message
@@ -85,6 +93,20 @@ def test_status_line_carries_task_state_branch() -> None:
 
 def test_status_idle_is_non_empty() -> None:
     assert session_voice.status_idle()
+
+
+def test_gate_reactions_are_human_not_dry_status_labels() -> None:
+    # BOB-087.B2: the operator's gate lines read as human reactions in Bob's voice,
+    # never machine status labels ("STATUS: DONE") — north star: personality, not a log.
+    for message in (
+        session_voice.accepted(),
+        session_voice.pr("https://x/pr/1"),
+        session_voice.failed("d"),
+        session_voice.stopped(),
+    ):
+        lowered = message.casefold()
+        assert "status:" not in lowered
+        assert "status :" not in lowered
 
 
 def test_all_messages_are_render_safe_single_strings() -> None:
