@@ -183,6 +183,11 @@ def owner_opens_interactive(rtx: _Ctx) -> None:
     _run(rtx, [Turn(text=_ENTRY_COMMAND)])
 
 
+@when("owner открывает интерактив и завершает сеанс")
+def owner_opens_and_stops(rtx: _Ctx) -> None:
+    _run(rtx, [Turn(text=_ENTRY_COMMAND), Turn(text="stop")])
+
+
 @when("owner открывает интерактив и в живом сеансе просит поднять эпик")
 def owner_opens_then_asks_resume(rtx: _Ctx) -> None:
     _run(rtx, [Turn(text=_ENTRY_COMMAND), Turn(text=_RESUME_COMMAND)])
@@ -413,6 +418,40 @@ def edits_stay_in_the_workspace(rtx: _Ctx) -> None:
     assert rtx.obs.removed == [], "накопленное дерево удалили"
     assert rtx.obs.fed_texts == ["правь дальше"], (
         f"реплика не дошла до живого claude: {rtx.obs.fed_texts}"
+    )
+
+
+def _stop_line(ctx: _Ctx) -> str:
+    """Последняя строка режима в личке — та, которой Боб отчитался об остановке."""
+    assert ctx.obs.dm_lines, "Боб промолчал на остановке"
+    return ctx.obs.dm_lines[-1].casefold()
+
+
+@then("Боб на остановке не сказал, что убрал рабочую копию")
+def stop_line_does_not_claim_cleanup(rtx: _Ctx) -> None:
+    # 🔴 Честность голоса: дерево СОЗНАТЕЛЬНО сохранено (см. «дерево workspace не
+    # удалялось»), поэтому реплика не смеет утверждать обратное.
+    assert rtx.obs.removed == [], f"накопленное дерево удалили: {rtx.obs.removed}"
+    assert "убрал" not in _stop_line(rtx), (
+        f"Боб соврал про уборку сохранённой работы: {rtx.obs.dm_lines[-1]}"
+    )
+
+
+@then("Боб на остановке сказал, что работа осталась и её можно поднять снова")
+def stop_line_promises_the_work_survived(rtx: _Ctx) -> None:
+    line = _stop_line(rtx)
+    assert "остал" in line, f"реплика не говорит, что работа осталась: {line}"
+    assert "подним" in line or "поднять" in line, (
+        f"реплика не говорит, что сессию можно поднять снова: {line}"
+    )
+
+
+@then("Боб на остановке сказал, что рабочую копию убрал")
+def stop_line_reports_the_cleanup(rtx: _Ctx) -> None:
+    # Контраст: эфемерное дерево ДЕЙСТВИТЕЛЬНО убрано — и реплика об этом говорит.
+    assert rtx.obs.removed, "эфемерный worktree должен был убраться"
+    assert "убрал" in _stop_line(rtx), (
+        f"Боб умолчал про уборку эфемерной копии: {rtx.obs.dm_lines[-1]}"
     )
 
 

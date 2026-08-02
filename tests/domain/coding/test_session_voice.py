@@ -158,6 +158,27 @@ def test_resume_failed_is_honest_and_never_promises_cleanup() -> None:
     assert "убрал" not in line.casefold()
 
 
+def test_stopped_persistent_never_claims_the_work_was_cleaned_up() -> None:
+    # 🔴 BOB-087.D4b: остановка ВОЗОБНОВЛЁННОЙ сессии сохраняет накопленное дерево, поэтому
+    # реплика НЕ смеет говорить, что Боб убрал рабочую копию — это была бы ложь owner'у.
+    line = session_voice.stopped_persistent()
+    assert line.strip()
+    assert "убрал" not in line.casefold()
+
+
+def test_stopped_persistent_says_the_work_survived_and_can_be_raised_again() -> None:
+    # Owner должен из одной реплики понять: сеанс погашен, но работа на месте и её можно
+    # поднять снова — иначе честность вырождается в умолчание.
+    lowered = session_voice.stopped_persistent().casefold()
+    assert "остал" in lowered
+    assert "подним" in lowered or "поднять" in lowered
+
+
+def test_stopped_persistent_differs_from_the_ephemeral_stop() -> None:
+    # Две разные судьбы дерева — две разные реплики (эфемерная копия действительно убрана).
+    assert session_voice.stopped_persistent() != session_voice.stopped()
+
+
 def test_resume_lines_are_human_not_dry_status_labels() -> None:
     for message in (
         session_voice.resume_confirm(workspace="w", when="вчера"),
@@ -165,6 +186,7 @@ def test_resume_lines_are_human_not_dry_status_labels() -> None:
         session_voice.resume_cancelled(),
         session_voice.resumed("w"),
         session_voice.resume_failed(),
+        session_voice.stopped_persistent(),
     ):
         assert isinstance(message, str)
         assert message.strip()

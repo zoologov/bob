@@ -97,3 +97,30 @@
   убрал» и для ВОЗОБНОВЛЁННОЙ (персистентной) сессии, у которой дерево сознательно НЕ удаляется —
   Боб сообщает owner'у неправду о судьбе накопленной работы.
   Sync-check: пред-существующий доменный drift architecture.md — на tw-волну.
+- 2026-08-03: Срез D dev bob-abk.24 (D4b: честная реплика stop персистентной сессии + постоянный
+  mutation-гейт argv-ядер) — DONE (in_progress, ждёт координатора; не коммичу/не закрываю).
+  Закрыты обе находки BDD-волны D4.
+  **(1) Честность голоса.** `session_voice.stopped_persistent()` — новая парная реплика к `stopped()`:
+  «Окей, тормознул. GUPPI свернулся, но всё наработанное осталось на месте — скажешь поднять,
+  продолжим оттуда же.» Ни слова про уборку (её не было), ни обещания PR, ни пути на диске.
+  `InteractiveSessionManager.stop` выбирает реплику по `live.persistent` — голос идёт ЗА судьбой
+  дерева. Эфемерный путь не тронут (та же `stopped()`, старые тесты прошли без правок).
+  Тесты на НАБЛЮДАЕМОЕ (урок D3: юниты смотрели только `worktree.removed` и баг проглядели):
+  BDD-сценарии R8 «на остановке возобновлённой сессии Боб не врёт, что убрал работу» (реплика
+  в личке, а не внутреннее состояние) + контраст «на остановке эфемерной — по-прежнему говорит,
+  что убрал»; use-case тесты на `outcome.message`; 3 доменных теста реплики.
+  **(2) Постоянный mutation-гейт.** `build_interactive_argv` + `extract_session_id` (+ приватная
+  `_INTERACTIVE_FLAGS`) переехали из `coding/adapters/interactive_runner.py` в НОВЫЙ доменный
+  модуль `coding/argv_policy.py` («чем параметризуется живой claude и что берётся из init-кадра»);
+  адаптер импортирует их и больше не ре-экспортирует (в src на них никто, кроме него, не ссылался).
+  Юниты переехали в `tests/domain/coding/test_argv_policy.py` (mutmut меряет именно domain-юниты);
+  в инфра-тесте остался базлайн argv, отданный спавнеру. 🔴 Конфиг mutmut (`do_not_mutate`) НЕ
+  трогал — гейт появился за счёт переезда ядра из adapters, а не ослабления конвенции.
+  Гейты: pytest 5295 (было 5288, +7) · ruff · mypy (src 328 + tests 487) · beadloom lint --strict
+  0 violations (coding 209/220 символов: +1 `stopped_persistent`, переезд счётчик не менял) · reindex ok.
+  Mutation: `coding.argv_policy` 30/30 killed = 100% (build_interactive_argv 12/12,
+  extract_session_id 18/18), выживших нет — гейт теперь штатный (`./scripts/mutation.sh
+  coding.argv_policy`). ruff per-file-ignores: +2 записи RUF001-003 для русских докстрингов
+  нового модуля и его теста (конвенция репо).
+  Sync-check: пред-существующий доменный drift architecture.md + новый `coding/argv_policy.py`
+  в domains/coding/README.md — на tw-волну.

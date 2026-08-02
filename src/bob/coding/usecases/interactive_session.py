@@ -349,8 +349,10 @@ class InteractiveSessionManager:
         не кооперативный break гейтед-кодера. Затем эфемерный worktree убирается (реюз
         ``_cleanup``) и сессия переводится в терминальное ``CANCELLED``. 🔴 У ВОЗОБНОВЛЁННОЙ
         сессии рабочее дерево — долгоживущий workspace, и оно НЕ удаляется: там накоплена
-        работа, ради которой сессию и поднимали. Идемпотентно/best-effort: без живой
-        сессии — честная заметка, без падения.
+        работа, ради которой сессию и поднимали; прощальная реплика идёт ЗА судьбой дерева
+        (``stopped_persistent`` вместо ``stopped``), чтобы Боб не докладывал об уборке
+        того, что осталось на месте. Идемпотентно/best-effort: без живой сессии — честная
+        заметка, без падения.
         """
         if not self._owner.is_owner(sender):
             return _refused()
@@ -364,6 +366,13 @@ class InteractiveSessionManager:
         await self._await_pump()
         if not live.persistent:  # 🔴 a persistent workspace keeps its accumulated work
             await self._cleanup(live.session.worktree_path)
+        # 🔴 Голос идёт ЗА судьбой дерева (BOB-087.D4b): у персистентного workspace работа
+        # осталась, и реплика не смеет докладывать про уборку.
+        farewell = (
+            session_voice.stopped_persistent()
+            if live.persistent
+            else session_voice.stopped()
+        )
         now = self._clock.now()
         # BOB-087.D1: persist the claude session id captured off the init event so a
         # later /code (D3) can look it up for --resume. None when no init id was seen —
@@ -376,7 +385,7 @@ class InteractiveSessionManager:
         await self._store.save(session)
         self._cancelled.discard(session.id)
         self._task = None
-        return CodingOutcome(ok=True, message=session_voice.stopped(), session=session)
+        return CodingOutcome(ok=True, message=farewell, session=session)
 
     def active(self) -> bool:
         """Есть ли живой интерактивный сеанс (интейк-гейт .4 + гвард «одна сессия»)."""

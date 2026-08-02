@@ -14,6 +14,11 @@ the real ``claude``: the fake records fed bytes / terminate / kill and yields sc
 
 ``encode_user_message`` is the pure core (mutation target): text -> ONE stream-json ``user``
 input line that claude's ``--input-format stream-json`` accepts.
+
+The argv assembly + init-frame id reading moved to the DOMAIN policy
+:mod:`bob.coding.argv_policy` (BOB-087.D4b, so mutation covers them) — their unit tests
+live in ``tests/domain/coding/test_argv_policy.py``; what is asserted here is that the
+runner CARRIES those verdicts to the process boundary (the argv the spawner really saw).
 """
 
 from __future__ import annotations
@@ -31,9 +36,7 @@ from bob.coding.adapters.interactive_runner import (
     InteractiveRunError,
     _ExecInteractiveProcess,
     _ExecInteractiveSpawner,
-    build_interactive_argv,
     encode_user_message,
-    extract_session_id,
 )
 from bob.coding.ports import InteractiveRunner
 
@@ -107,10 +110,12 @@ def test_encode_user_message_handles_empty_text() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# build_interactive_argv — the pure argv core (mutation target, BOB-087.D1)
+# InteractiveClaudeRunner — over a FAKE bidirectional process
 # --------------------------------------------------------------------------- #
 
-_FRESH_ARGV = [
+#: 🔴 The BOB-083 spawn argv, byte-for-byte: with every relaxation off the runner must
+#: hand the spawner EXACTLY this token list (the policy's verdict, carried unchanged).
+_BASELINE_ARGV = [
     "claude",
     "-p",
     "--input-format",
@@ -121,163 +126,6 @@ _FRESH_ARGV = [
     "--permission-mode",
     "acceptEdits",
 ]
-
-
-def test_build_argv_fresh_is_the_baseline() -> None:
-    # OFF path: no resume, no continue → byte-identical to the pre-D1 inline argv.
-    assert build_interactive_argv("claude", mode="acceptEdits") == _FRESH_ARGV
-
-
-def test_build_argv_threads_the_claude_bin_and_mode() -> None:
-    argv = build_interactive_argv("my-claude", mode="plan")
-
-    assert argv[0] == "my-claude"
-    assert argv[-2:] == ["--permission-mode", "plan"]
-
-
-def test_build_argv_resume_by_id_appends_resume_flag() -> None:
-    argv = build_interactive_argv(
-        "claude", mode="acceptEdits", resume_session_id="sess-123"
-    )
-
-    # The fresh baseline is preserved, then ``--resume <id>`` is appended.
-    assert argv[: len(_FRESH_ARGV)] == _FRESH_ARGV
-    assert argv[len(_FRESH_ARGV) :] == ["--resume", "sess-123"]
-
-
-def test_build_argv_continue_appends_continue_flag() -> None:
-    argv = build_interactive_argv("claude", mode="acceptEdits", continue_session=True)
-
-    assert argv[: len(_FRESH_ARGV)] == _FRESH_ARGV
-    assert argv[len(_FRESH_ARGV) :] == ["--continue"]
-
-
-def test_build_argv_resume_by_id_takes_precedence_over_continue() -> None:
-    argv = build_interactive_argv(
-        "claude",
-        mode="acceptEdits",
-        resume_session_id="sess-9",
-        continue_session=True,
-    )
-
-    # A concrete session id is more specific than "continue the latest" — it wins,
-    # and ``--continue`` is NOT also emitted (never two resume strategies at once).
-    assert argv[len(_FRESH_ARGV) :] == ["--resume", "sess-9"]
-    assert "--continue" not in argv
-
-
-def test_build_argv_empty_resume_id_is_treated_as_no_resume() -> None:
-    # An empty id is not a real session — fall back to the fresh baseline (no --resume).
-    assert build_interactive_argv("claude", mode="plan", resume_session_id="") == [
-        "claude",
-        "-p",
-        "--input-format",
-        "stream-json",
-        "--output-format",
-        "stream-json",
-        "--verbose",
-        "--permission-mode",
-        "plan",
-    ]
-
-
-# --------------------------------------------------------------------------- #
-# build_interactive_argv — owner-only --add-dir relaxation (BOB-087.D2)
-# --------------------------------------------------------------------------- #
-
-
-def test_build_argv_without_extra_dirs_is_the_fresh_baseline() -> None:
-    # OFF path (BOB-087.D2): no extra dirs configured → nothing appended at all.
-    assert build_interactive_argv("claude", mode="acceptEdits", extra_dirs=()) == (
-        _FRESH_ARGV
-    )
-
-
-def test_build_argv_appends_add_dir_after_the_head() -> None:
-    argv = build_interactive_argv(
-        "claude", mode="acceptEdits", extra_dirs=["/srv/docs", "/srv/spec"]
-    )
-
-    assert argv == [
-        *_FRESH_ARGV,
-        "--add-dir",
-        "/srv/docs",
-        "--add-dir",
-        "/srv/spec",
-    ]
-
-
-def test_build_argv_appends_add_dir_after_the_resume_flag() -> None:
-    argv = build_interactive_argv(
-        "claude",
-        mode="acceptEdits",
-        resume_session_id="sess-3",
-        extra_dirs=["/srv/docs"],
-    )
-
-    # Documented order: resumption strategy first, then the --add-dir pairs.
-    assert argv == [*_FRESH_ARGV, "--resume", "sess-3", "--add-dir", "/srv/docs"]
-
-
-def test_build_argv_appends_add_dir_after_the_continue_flag() -> None:
-    argv = build_interactive_argv(
-        "claude", mode="acceptEdits", continue_session=True, extra_dirs=["/srv/docs"]
-    )
-
-    assert argv == [*_FRESH_ARGV, "--continue", "--add-dir", "/srv/docs"]
-
-
-def test_build_argv_sanitises_a_flag_shaped_extra_dir() -> None:
-    # 🔴 argv injection: a "--…" entry would land in an argv slot as a claude FLAG.
-    argv = build_interactive_argv(
-        "claude",
-        mode="acceptEdits",
-        extra_dirs=["--dangerously-skip-permissions", "", "/srv/docs"],
-    )
-
-    assert argv == [*_FRESH_ARGV, "--add-dir", "/srv/docs"]
-
-
-# --------------------------------------------------------------------------- #
-# extract_session_id — the pure init-event core (mutation target, BOB-087.D1)
-# --------------------------------------------------------------------------- #
-
-
-def test_extract_session_id_reads_the_init_event() -> None:
-    event = {"type": "system", "subtype": "init", "session_id": "sess-abc"}
-
-    assert extract_session_id(event) == "sess-abc"
-
-
-def test_extract_session_id_ignores_a_non_init_system_event() -> None:
-    assert extract_session_id(
-        {"type": "system", "subtype": "other", "session_id": "x"}
-    ) is None
-
-
-def test_extract_session_id_ignores_a_non_system_event() -> None:
-    assert extract_session_id({"type": "assistant", "session_id": "x"}) is None
-
-
-def test_extract_session_id_missing_field_is_none() -> None:
-    assert extract_session_id({"type": "system", "subtype": "init"}) is None
-
-
-def test_extract_session_id_non_str_field_is_none() -> None:
-    assert extract_session_id(
-        {"type": "system", "subtype": "init", "session_id": 123}
-    ) is None
-
-
-def test_extract_session_id_empty_str_is_none() -> None:
-    assert extract_session_id(
-        {"type": "system", "subtype": "init", "session_id": ""}
-    ) is None
-
-
-# --------------------------------------------------------------------------- #
-# InteractiveClaudeRunner — over a FAKE bidirectional process
-# --------------------------------------------------------------------------- #
 
 
 class _FakeProcess:
@@ -592,7 +440,7 @@ async def test_default_open_argv_is_byte_identical_to_the_pre_d2_baseline() -> N
 
     await runner.open("/w", mode="acceptEdits")
 
-    assert spawner.calls[0] == _FRESH_ARGV
+    assert spawner.calls[0] == _BASELINE_ARGV
 
 
 # --------------------------------------------------------------------------- #

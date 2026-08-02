@@ -24,6 +24,11 @@ stdout NDJSON line-by-line (each ``json.loads``-ed, garbage skipped); :meth:`clo
 terminates the process, kills it if it does not exit within a short grace, and reaps it —
 idempotent, best-effort, never raising, so no zombie is left behind.
 
+The spawn argv itself is NOT assembled here: it is the pure domain policy
+:func:`bob.coding.argv_policy.build_interactive_argv` (with
+:func:`~bob.coding.argv_policy.extract_session_id` reading the init frame's session id) —
+this adapter only carries those verdicts to the process boundary.
+
 ``mode`` is validated against the SAME allowlist policy as the one-shot runner
 (:mod:`bob.coding.sandbox_policy`), including the owner-only ``allow_bypass`` /
 ``extra_dirs`` relaxations (BOB-087.D2) — both OFF by default, so the spawn argv is
@@ -47,7 +52,8 @@ from bob.coding.adapters.claude_runner import (
     ClaudeRunError,
     _parse_event,
 )
-from bob.coding.sandbox_policy import extra_dir_argv, is_allowed_mode
+from bob.coding.argv_policy import build_interactive_argv, extract_session_id
+from bob.coding.sandbox_policy import is_allowed_mode
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Awaitable, Mapping, Sequence
@@ -55,75 +61,10 @@ if TYPE_CHECKING:
 __all__ = [
     "InteractiveClaudeRunner",
     "InteractiveRunError",
-    "build_interactive_argv",
     "encode_user_message",
-    "extract_session_id",
 ]
 
 logger = logging.getLogger(__name__)
-
-# The fixed head of the interactive spawn: a long-lived ``claude`` reading/writing
-# stream-json over an open stdin. Resume/continue flags (BOB-087.D1) are appended AFTER
-# this head, so the default (no resume) argv stays byte-identical to the pre-D1 form.
-_INTERACTIVE_FLAGS = (
-    "-p",
-    "--input-format",
-    "stream-json",
-    "--output-format",
-    "stream-json",
-    "--verbose",
-    "--permission-mode",
-)
-
-
-def build_interactive_argv(
-    claude_bin: str,
-    *,
-    mode: str,
-    resume_session_id: str | None = None,
-    continue_session: bool = False,
-    extra_dirs: Sequence[str] = (),
-) -> list[str]:
-    """Assemble the ``claude`` interactive argv — pure and deterministic (mutation target).
-
-    Three resumption strategies, in strict precedence (BOB-087.D1):
-
-    * a non-empty ``resume_session_id`` → append ``--resume <id>`` (resume THAT session);
-      it wins over ``continue_session`` — a concrete id is more specific than "the latest".
-    * else ``continue_session`` → append ``--continue`` (resume the latest session here);
-    * else neither → the FRESH baseline, byte-identical to the pre-D1 inline argv.
-
-    ``extra_dirs`` (BOB-087.D2, owner-only ``coder.extra_dirs``) appends the sanitised
-    ``--add-dir`` pairs LAST — after the resumption flag — so each relaxation is a pure
-    suffix and the ordering is stable whichever strategy is in play.
-
-    The default (no resume, no continue, no extra dirs) is the OFF path: nothing is
-    appended, so the live BOB-083 behaviour is unchanged until D3/flags opt in. An empty
-    ``resume_session_id`` is treated as "no session" (fall through to continue / fresh).
-    """
-    argv = [claude_bin, *_INTERACTIVE_FLAGS, mode]
-    if resume_session_id:
-        argv += ["--resume", resume_session_id]
-    elif continue_session:
-        argv += ["--continue"]
-    return argv + extra_dir_argv(extra_dirs)
-
-
-def extract_session_id(event: Mapping[str, object]) -> str | None:
-    """Return the claude session id from an ``init`` stream-json event (else ``None``).
-
-    Pure and I/O-free (a mutation target). ``claude --output-format stream-json`` emits a
-    ``{"type": "system", "subtype": "init", "session_id": "…", …}`` frame first; the id it
-    carries is what a later ``--resume`` needs. Only a genuine init event with a NON-EMPTY
-    string ``session_id`` yields the id — any other event, a missing field, or a non-string
-    value yields ``None`` (the transport never invents an id).
-    """
-    if event.get("type") != "system" or event.get("subtype") != "init":
-        return None
-    session_id = event.get("session_id")
-    if isinstance(session_id, str) and session_id:
-        return session_id
-    return None
 
 # Grace (seconds) between ``terminate()`` (SIGTERM) and the ``kill()`` (SIGKILL) fallback
 # on close: give ``claude`` a moment to exit cleanly before it is forced.

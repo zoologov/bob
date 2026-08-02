@@ -30,6 +30,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from bob.coding import session_voice
 from bob.coding.adapters.live_stream import _DmLiveStreamer
 from bob.coding.entities import CodingSession
 from bob.coding.resume_policy import CONFIRMATION_TTL
@@ -562,6 +563,32 @@ async def test_stopping_an_ephemeral_session_still_removes_its_worktree() -> Non
 
     assert rig.worktree.created == ["bob/fix-bug"]
     assert rig.worktree.removed == ["/wt/fix-bug"]
+
+
+@pytest.mark.asyncio
+async def test_stopping_a_resumed_session_tells_the_owner_the_work_survived() -> None:
+    # 🔴 BOB-087.D4b (честность голоса): дерево сохраняется — значит и РЕПЛИКА обязана
+    # говорить правду. Ассерт на то, что owner ПРОЧИТАЕТ (исходящий текст), а не на
+    # ``worktree.removed``: именно взгляд только на внутреннее состояние проглядел баг.
+    rig = _build(sessions=(_stopped_session(),))
+    await rig.manager.propose_resume(_WORKSPACE, _OWNER_ID)
+    await _confirm(rig)
+
+    outcome = await rig.manager.stop(_OWNER_ID)
+
+    assert outcome.message == session_voice.stopped_persistent()
+    assert "убрал" not in outcome.message.casefold()
+
+
+@pytest.mark.asyncio
+async def test_stopping_an_ephemeral_session_still_reports_the_cleanup() -> None:
+    # Эфемерный путь не меняется: копия действительно убрана — так Боб и говорит.
+    rig = _build()
+    await rig.manager.open("fix bug", _OWNER_ID)
+
+    outcome = await rig.manager.stop(_OWNER_ID)
+
+    assert outcome.message == session_voice.stopped()
 
 
 @pytest.mark.asyncio

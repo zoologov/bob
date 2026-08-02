@@ -324,6 +324,10 @@ ignore = [
 # policy docstrings/comments whose Cyrillic look-alikes are intentional —
 # RUF001/RUF002/RUF003 do not apply.
 "src/bob/coding/resume_policy.py" = ["RUF001", "RUF002", "RUF003"]
+# Argv policy (BOB-087.D1/D2, moved out of the adapter in D4b): the pure «how the live
+# claude is parameterised» core carries Russian policy docstrings/comments whose Cyrillic
+# look-alikes are intentional — RUF001/RUF002/RUF003 do not apply.
+"src/bob/coding/argv_policy.py" = ["RUF001", "RUF002", "RUF003"]
 # build_application is the composition ROOT: it wires every adapter/use-case/tick in
 # one place by design (a single readable assembly), so the per-function statement
 # ceiling does not apply to it — splitting it would only scatter the wiring. It lives
@@ -662,6 +666,9 @@ ignore = [
 # owner knobs through private wiring attrs over fake ports whose unused signature args are
 # inherent to the port shape (→ SLF001/ARG002).
 "tests/domain/coding/test_sandbox_policy.py" = ["RUF001", "RUF002", "RUF003"]
+# Argv-policy tests (BOB-087.D4b): the pure-core unit tests carry a Russian module
+# docstring (Cyrillic look-alikes intentional → RUF001-003).
+"tests/domain/coding/test_argv_policy.py" = ["RUF001", "RUF002", "RUF003"]
 "tests/runtime/wiring/test_coding_sandbox_relaxations.py" = [
     "S101",
     "ARG001",
