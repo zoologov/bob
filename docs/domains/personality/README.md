@@ -73,7 +73,7 @@ src/bob/personality/
   fascination.py      # layer=domain          — Fascination (topic/intensity/created_at), старение-полураспад, has_faded
   phantom_evolution.py# layer=domain          — evolve_phantoms: медленный дрейф фантомных предпочтений (заземлён)
   expression.py       # layer=domain          — ExpressionMode/FormHint + 🔴 Verbosity/EngagementLevel + decide_expression
-  voice.py            # layer=domain          — тон/директивы стиля (tone/brevity/engagement/sulk/relationship-tone)
+  voice.py            # layer=domain          — тон/директивы стиля (tone/brevity/engagement/sulk/relationship-tone + formatting_directive: форматируй под читателя по содержимому, BOB-086)
   language.py         # layer=domain          — language_directive (персона говорит на своём языке)
   profanity.py        # layer=domain          — is_directed_hostility: направленная враждебность vs бытовой мат
   reaction.py         # layer=domain          — reaction_emoji_for(mood): picker emoji из стандартного набора
