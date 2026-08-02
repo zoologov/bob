@@ -38,6 +38,7 @@ from __future__ import annotations
 from enum import Enum
 from typing import TYPE_CHECKING
 
+from bob.memory.work_journal import _WORK_TAGS as _WORK_TAG_SOURCE
 from bob.memory.work_journal import WORK_EVENT_TYPE
 
 if TYPE_CHECKING:
@@ -60,8 +61,9 @@ CASUAL_WORK_WEIGHT = 0.15
 
 # Recall-side recognition of the work provenance minted by ``work_journal`` (BOB-087.B1):
 # the ``work`` event_type OR any of its domain/provenance tags. A memory carrying any of
-# these is one of Bob's operator dev recollections.
-_WORK_TAGS = frozenset({"work", "dev", "actor:bob"})
+# these is one of Bob's operator dev recollections. Sourced from ``work_journal`` (the same
+# memory domain) so the write-side and read-side share ONE provenance definition — no drift.
+_WORK_TAGS = frozenset(_WORK_TAG_SOURCE)
 
 
 class Register(Enum):
