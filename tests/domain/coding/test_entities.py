@@ -45,6 +45,19 @@ def test_optional_fields_default_to_none() -> None:
     assert session.worktree_path is None
     assert session.plan is None
     assert session.pr_url is None
+    assert session.claude_session_id is None
+
+
+def test_with_claude_session_id_records_id() -> None:
+    session = _session()
+
+    resumable = session.with_claude_session_id("sess-abc", at=_T1)
+
+    # The claude-assigned id (BOB-087.D1) is kept so a later /code can --resume it.
+    assert resumable.claude_session_id == "sess-abc"
+    assert resumable.updated_at == _T1
+    assert resumable is not session
+    assert session.claude_session_id is None  # original untouched
 
 
 def test_with_state_returns_new_session_and_bumps_updated_at() -> None:

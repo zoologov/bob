@@ -355,7 +355,8 @@ CREATE TABLE IF NOT EXISTS coding_session (
     updated_at    TEXT NOT NULL,              -- ISO-8601, timezone-aware
     worktree_path TEXT,                       -- isolated worktree path (nullable)
     plan          TEXT,                       -- plan-mode plan text (nullable)
-    pr_url        TEXT                        -- opened PR url (nullable)
+    pr_url        TEXT,                       -- opened PR url (nullable)
+    claude_session_id TEXT                    -- claude session id for --resume (BOB-087.D1, nullable)
 );
 
 -- Permission requests (BOB-052): one `permission_request` row per pending «a

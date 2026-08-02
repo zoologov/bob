@@ -57,17 +57,24 @@ class InteractiveRunner(Protocol):
     ``claude -p <prompt>`` run that ends at EOF, this seam holds a long-lived
     ``claude -p --input-format stream-json`` process with an OPEN stdin, so the
     owner can steer it in real time. :meth:`open` spawns the process (validated
-    ``mode``); :meth:`feed` writes one owner text turn as a stream-json ``user``
-    frame to stdin; :meth:`events` async-iterates the live stdout NDJSON; and
-    :meth:`close` terminates (then kills after a grace) + reaps — idempotent and
-    best-effort. The live realisation (``InteractiveClaudeRunner``) runs
+    ``mode``; optional ``resume_session_id`` / ``continue_session`` resume a prior
+    session — both default OFF, BOB-087.D1); :meth:`feed` writes one owner text turn
+    as a stream-json ``user`` frame to stdin; :meth:`events` async-iterates the live
+    stdout NDJSON; and :meth:`close` terminates (then kills after a grace) + reaps —
+    idempotent and best-effort. The live realisation (``InteractiveClaudeRunner``) runs
     ``create_subprocess_exec`` WITHOUT a shell; a fake bidirectional process
     substitutes in tests. This is a pure transport adapter — no session / worktree
     / state logic (that is the interactive-session manager, BOB-083 .3).
     """
 
     async def open(self, workdir: str, *, mode: str) -> None:
-        """Spawn the persistent ``claude`` process in ``workdir`` under ``mode``."""
+        """Spawn the persistent ``claude`` process in ``workdir`` under ``mode``.
+
+        The live realisation additionally accepts optional ``resume_session_id`` /
+        ``continue_session`` (BOB-087.D1) to resume a prior session — both default OFF,
+        so the default spawn stays a fresh session (BOB-083). They are extra optional
+        parameters on the adapter, so this port stays the stable minimal contract.
+        """
         ...
 
     async def feed(self, text: str) -> None:
@@ -80,6 +87,15 @@ class InteractiveRunner(Protocol):
 
     async def close(self) -> None:
         """Terminate (then kill after a grace) + reap the process (idempotent)."""
+        ...
+
+    @property
+    def session_id(self) -> str | None:
+        """The claude session id from the init event, or ``None`` if not yet seen.
+
+        Captured off the stream so the manager can persist it for a later ``--resume``
+        (BOB-087.D1); the transport itself owns no session state.
+        """
         ...
 
 

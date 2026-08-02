@@ -44,6 +44,7 @@ def _session(
     worktree_path: str | None = None,
     plan: str | None = None,
     pr_url: str | None = None,
+    claude_session_id: str | None = None,
 ) -> CodingSession:
     return CodingSession(
         id=sid,
@@ -55,6 +56,7 @@ def _session(
         worktree_path=worktree_path,
         plan=plan,
         pr_url=pr_url,
+        claude_session_id=claude_session_id,
     )
 
 
@@ -70,12 +72,30 @@ async def test_save_round_trips_full_session(repo: SqliteMemoryRepo) -> None:
         worktree_path="/work/wt/cs1",
         plan="1. читаю 2. правлю",
         pr_url="https://github.com/o/r/pull/7",
+        claude_session_id="sess-abc",
     )
 
     await store.save(session)
     loaded = await store.get("cs1")
 
     assert loaded == session
+
+
+async def test_save_round_trips_claude_session_id(repo: SqliteMemoryRepo) -> None:
+    # BOB-087.D1: the claude session id survives the round-trip so a later /code can
+    # look it up for --resume. A session without one round-trips as None (byte-identical
+    # to a pre-D1 row).
+    store = SqliteCodingSessionStore(repo)
+    await store.save(_session("with", claude_session_id="sess-9"))
+    await store.save(_session("without"))
+
+    with_id = await store.get("with")
+    without_id = await store.get("without")
+
+    assert with_id is not None
+    assert with_id.claude_session_id == "sess-9"
+    assert without_id is not None
+    assert without_id.claude_session_id is None
 
 
 async def test_save_upserts_on_id(repo: SqliteMemoryRepo) -> None:

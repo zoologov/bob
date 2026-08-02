@@ -59,6 +59,20 @@ class _ScriptedCommand:
         return ""
 
 
+class _ListingCommand:
+    """A runner that returns a canned ``worktree list --porcelain`` listing."""
+
+    def __init__(self, *, listing: str) -> None:
+        self.calls: list[list[str]] = []
+        self._listing = listing
+
+    async def __call__(self, argv: list[str], *, timeout: float) -> str:  # noqa: ARG002
+        self.calls.append(list(argv))
+        if "list" in argv:
+            return self._listing
+        return ""
+
+
 async def test_create_builds_the_fixed_worktree_add_argv(tmp_path: Path) -> None:
     runner = _FakeCommand()
     wt = GitWorktree(tmp_path, runner=runner, git_bin="my-git")
@@ -158,6 +172,56 @@ async def test_create_then_remove_round_trips_under_root(tmp_path: Path) -> None
 
 def test_git_worktree_satisfies_the_worktree_port(tmp_path: Path) -> None:
     assert isinstance(GitWorktree(tmp_path), Worktree)
+
+
+# --- ensure (BOB-087.D1): idempotent PERSISTENT (long-lived, named) worktree ---
+
+
+async def test_ensure_creates_the_worktree_when_not_yet_registered(
+    tmp_path: Path,
+) -> None:
+    runner = _ListingCommand(listing="")  # no worktree registered yet
+    wt = GitWorktree(tmp_path, runner=runner, git_bin="my-git")
+
+    path = await wt.ensure("bob/epic-x")
+
+    assert Path(path).parent == tmp_path
+    # It lists first, then adds on a fresh branch.
+    assert runner.calls[0] == ["my-git", "worktree", "list", "--porcelain"]
+    assert runner.calls[1] == ["my-git", "worktree", "add", path, "-b", "bob/epic-x"]
+
+
+async def test_ensure_reuses_an_already_registered_worktree_without_adding(
+    tmp_path: Path,
+) -> None:
+    path = str(tmp_path / "epic-x")
+    listing = f"worktree {path}\nHEAD abc123\nbranch refs/heads/bob/epic-x\n"
+    runner = _ListingCommand(listing=listing)
+    wt = GitWorktree(tmp_path, runner=runner)
+
+    returned = await wt.ensure("bob/epic-x")
+
+    # Persistence: an existing long-lived worktree is REUSED — never re-added, never
+    # removed — so work accumulates across sessions.
+    assert returned == path
+    verbs = [argv[2] for argv in runner.calls]  # argv = [git, worktree, <verb>, ...]
+    assert verbs == ["list"]  # only listed; NO add, NO remove
+
+
+@pytest.mark.parametrize(
+    "branch",
+    ["main", "BOB/Caps", "bob/../etc", "bob/has space", "feature/x", "bob/"],
+)
+async def test_ensure_rejects_a_branch_outside_the_bob_slug_form(
+    tmp_path: Path, branch: str
+) -> None:
+    runner = _ListingCommand(listing="")
+    wt = GitWorktree(tmp_path, runner=runner)
+
+    with pytest.raises(WorktreeError):
+        await wt.ensure(branch)
+
+    assert runner.calls == []
 
 
 # --- commit_and_push (BOB-040 .1): deterministic commit+push of the feature branch ---

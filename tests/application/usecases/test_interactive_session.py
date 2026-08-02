@@ -48,6 +48,7 @@ class _FakeInteractiveRunner:
     fed: list[str] = field(default_factory=list)
     close_calls: int = 0
     streamed: list[Mapping[str, object]] = field(default_factory=list)
+    session_id: str | None = None  # BOB-087.D1: claude session id from the init event
 
     def __post_init__(self) -> None:
         self._closed = asyncio.Event()
@@ -272,6 +273,33 @@ async def test_stop_directly_kills_runner_cleans_worktree_and_is_terminal() -> N
     saved = rig.store.sessions[opened.session.id]
     assert saved.state is CodingSessionState.CANCELLED
     assert is_terminal(saved.state) is True
+
+
+@pytest.mark.asyncio
+async def test_stop_persists_the_runner_claude_session_id() -> None:
+    # BOB-087.D1: the claude session id the runner captured off the init event is saved
+    # onto the terminal session, so a later /code (D3) can look it up for --resume.
+    rig = _build(runner=_FakeInteractiveRunner(session_id="sess-77"))
+    opened = await rig.manager.open("задача", _OWNER_ID)
+    assert opened.session is not None
+
+    await rig.manager.stop(_OWNER_ID)
+
+    saved = rig.store.sessions[opened.session.id]
+    assert saved.claude_session_id == "sess-77"
+
+
+@pytest.mark.asyncio
+async def test_stop_without_a_captured_session_id_leaves_it_none() -> None:
+    # No init id captured → the field stays None (byte-identical to a pre-D1 session).
+    rig = _build()
+    opened = await rig.manager.open("задача", _OWNER_ID)
+    assert opened.session is not None
+
+    await rig.manager.stop(_OWNER_ID)
+
+    saved = rig.store.sessions[opened.session.id]
+    assert saved.claude_session_id is None
 
 
 @pytest.mark.asyncio

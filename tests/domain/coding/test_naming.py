@@ -11,7 +11,8 @@
 
 from __future__ import annotations
 
-from bob.coding.naming import worktree_branch
+from bob.coding.adapters._branch import is_safe_branch
+from bob.coding.naming import workspace_branch, worktree_branch
 
 _SAFE = set("abcdefghijklmnopqrstuvwxyz0123456789-/")
 
@@ -59,3 +60,35 @@ def test_length_is_bounded() -> None:
 def test_empty_task_yields_fallback() -> None:
     assert worktree_branch("") == "bob/task"
     assert worktree_branch("   ") == "bob/task"
+
+
+# --- workspace_branch: a long-lived NAMED workspace branch (BOB-087.D1) ---
+
+
+def test_workspace_branch_is_epic_namespaced() -> None:
+    assert workspace_branch("BOB-087") == "bob/epic-bob-087"
+
+
+def test_workspace_branch_is_a_safe_bob_slug_shape() -> None:
+    # It must pass the SAME infrastructure safety gate as an ephemeral session branch,
+    # so it can never smuggle a path segment / flag into a git argv slot.
+    assert is_safe_branch(workspace_branch("Some Epic Key"))
+
+
+def test_workspace_branch_has_no_path_injection() -> None:
+    branch = workspace_branch("../../etc/passwd  ; rm -rf")
+    assert set(branch) <= _SAFE
+    assert ".." not in branch
+
+
+def test_workspace_branch_is_distinct_from_an_ephemeral_session_branch() -> None:
+    # The persistent workspace lives in its OWN ``epic-`` namespace so it never
+    # collides with a per-task ephemeral ``bob/<slug>`` session branch.
+    key = "fix parser"
+    assert workspace_branch(key) != worktree_branch(key)
+
+
+def test_workspace_branch_non_ascii_falls_back_to_non_empty_slug() -> None:
+    branch = workspace_branch("эпик")
+    assert is_safe_branch(branch)
+    assert set(branch) <= _SAFE

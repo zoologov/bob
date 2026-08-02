@@ -31,7 +31,9 @@ from bob.coding.adapters.interactive_runner import (
     InteractiveRunError,
     _ExecInteractiveProcess,
     _ExecInteractiveSpawner,
+    build_interactive_argv,
     encode_user_message,
+    extract_session_id,
 )
 from bob.coding.ports import InteractiveRunner
 
@@ -102,6 +104,118 @@ def test_encode_user_message_keeps_unicode_raw_not_ascii_escaped() -> None:
 
 def test_encode_user_message_handles_empty_text() -> None:
     assert _content_text(encode_user_message("")) == ""
+
+
+# --------------------------------------------------------------------------- #
+# build_interactive_argv — the pure argv core (mutation target, BOB-087.D1)
+# --------------------------------------------------------------------------- #
+
+_FRESH_ARGV = [
+    "claude",
+    "-p",
+    "--input-format",
+    "stream-json",
+    "--output-format",
+    "stream-json",
+    "--verbose",
+    "--permission-mode",
+    "acceptEdits",
+]
+
+
+def test_build_argv_fresh_is_the_baseline() -> None:
+    # OFF path: no resume, no continue → byte-identical to the pre-D1 inline argv.
+    assert build_interactive_argv("claude", mode="acceptEdits") == _FRESH_ARGV
+
+
+def test_build_argv_threads_the_claude_bin_and_mode() -> None:
+    argv = build_interactive_argv("my-claude", mode="plan")
+
+    assert argv[0] == "my-claude"
+    assert argv[-2:] == ["--permission-mode", "plan"]
+
+
+def test_build_argv_resume_by_id_appends_resume_flag() -> None:
+    argv = build_interactive_argv(
+        "claude", mode="acceptEdits", resume_session_id="sess-123"
+    )
+
+    # The fresh baseline is preserved, then ``--resume <id>`` is appended.
+    assert argv[: len(_FRESH_ARGV)] == _FRESH_ARGV
+    assert argv[len(_FRESH_ARGV) :] == ["--resume", "sess-123"]
+
+
+def test_build_argv_continue_appends_continue_flag() -> None:
+    argv = build_interactive_argv("claude", mode="acceptEdits", continue_session=True)
+
+    assert argv[: len(_FRESH_ARGV)] == _FRESH_ARGV
+    assert argv[len(_FRESH_ARGV) :] == ["--continue"]
+
+
+def test_build_argv_resume_by_id_takes_precedence_over_continue() -> None:
+    argv = build_interactive_argv(
+        "claude",
+        mode="acceptEdits",
+        resume_session_id="sess-9",
+        continue_session=True,
+    )
+
+    # A concrete session id is more specific than "continue the latest" — it wins,
+    # and ``--continue`` is NOT also emitted (never two resume strategies at once).
+    assert argv[len(_FRESH_ARGV) :] == ["--resume", "sess-9"]
+    assert "--continue" not in argv
+
+
+def test_build_argv_empty_resume_id_is_treated_as_no_resume() -> None:
+    # An empty id is not a real session — fall back to the fresh baseline (no --resume).
+    assert build_interactive_argv("claude", mode="plan", resume_session_id="") == [
+        "claude",
+        "-p",
+        "--input-format",
+        "stream-json",
+        "--output-format",
+        "stream-json",
+        "--verbose",
+        "--permission-mode",
+        "plan",
+    ]
+
+
+# --------------------------------------------------------------------------- #
+# extract_session_id — the pure init-event core (mutation target, BOB-087.D1)
+# --------------------------------------------------------------------------- #
+
+
+def test_extract_session_id_reads_the_init_event() -> None:
+    event = {"type": "system", "subtype": "init", "session_id": "sess-abc"}
+
+    assert extract_session_id(event) == "sess-abc"
+
+
+def test_extract_session_id_ignores_a_non_init_system_event() -> None:
+    assert extract_session_id(
+        {"type": "system", "subtype": "other", "session_id": "x"}
+    ) is None
+
+
+def test_extract_session_id_ignores_a_non_system_event() -> None:
+    assert extract_session_id({"type": "assistant", "session_id": "x"}) is None
+
+
+def test_extract_session_id_missing_field_is_none() -> None:
+    assert extract_session_id({"type": "system", "subtype": "init"}) is None
+
+
+def test_extract_session_id_non_str_field_is_none() -> None:
+    assert extract_session_id(
+        {"type": "system", "subtype": "init", "session_id": 123}
+    ) is None
+
+
+def test_extract_session_id_empty_str_is_none() -> None:
+    assert extract_session_id(
+        {"type": "system", "subtype": "init", "session_id": ""}
+    ) is None
 
 
 # --------------------------------------------------------------------------- #
@@ -188,6 +302,36 @@ async def test_open_spawns_with_the_interactive_argv() -> None:
     assert spawner.seen_cwd == "/work/dir"
 
 
+async def test_open_default_omits_resume_and_continue() -> None:
+    # OFF path (BOB-087.D1): the default spawn carries NO --resume / --continue — the
+    # live behaviour stays exactly BOB-083 (a fresh session) until D3/flags opt in.
+    spawner = _FakeSpawner(_FakeProcess())
+    runner = InteractiveClaudeRunner(spawner=spawner)
+
+    await runner.open("/work/dir", mode="acceptEdits")
+
+    assert "--resume" not in spawner.calls[0]
+    assert "--continue" not in spawner.calls[0]
+
+
+async def test_open_resume_by_id_spawns_with_the_resume_argv() -> None:
+    spawner = _FakeSpawner(_FakeProcess())
+    runner = InteractiveClaudeRunner(spawner=spawner, claude_bin="c")
+
+    await runner.open("/w", mode="acceptEdits", resume_session_id="sess-7")
+
+    assert spawner.calls[0][-2:] == ["--resume", "sess-7"]
+
+
+async def test_open_continue_spawns_with_the_continue_argv() -> None:
+    spawner = _FakeSpawner(_FakeProcess())
+    runner = InteractiveClaudeRunner(spawner=spawner)
+
+    await runner.open("/w", mode="acceptEdits", continue_session=True)
+
+    assert spawner.calls[0][-1] == "--continue"
+
+
 @pytest.mark.parametrize("mode", ["bypassPermissions", "plan; rm -rf /", "", "PLAN"])
 async def test_open_rejects_a_mode_outside_the_allowlist(mode: str) -> None:
     spawner = _FakeSpawner(_FakeProcess())
@@ -238,6 +382,30 @@ async def test_events_yields_scripted_stream_json_lines() -> None:
     events = await _collect(runner.events())
 
     assert [event["type"] for event in events] == ["system", "assistant", "result"]
+
+
+async def test_session_id_is_none_until_the_init_event_streams() -> None:
+    proc = _FakeProcess(['{"type": "system", "subtype": "init", "session_id": "s-42"}\n'])
+    runner = InteractiveClaudeRunner(spawner=_FakeSpawner(proc))
+    await runner.open("/w", mode="plan")
+
+    assert runner.session_id is None  # not seen yet
+
+    await _collect(runner.events())
+
+    # The claude-assigned id is captured off the stream so the manager can persist it
+    # (BOB-087.D1) for a later --resume, without the transport owning session state.
+    assert runner.session_id == "s-42"
+
+
+async def test_session_id_stays_none_when_no_init_event_arrives() -> None:
+    proc = _FakeProcess(['{"type": "assistant", "n": 1}\n'])
+    runner = InteractiveClaudeRunner(spawner=_FakeSpawner(proc))
+    await runner.open("/w", mode="plan")
+
+    await _collect(runner.events())
+
+    assert runner.session_id is None
 
 
 async def test_close_terminates_and_is_idempotent() -> None:

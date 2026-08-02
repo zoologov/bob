@@ -53,10 +53,70 @@ if TYPE_CHECKING:
 __all__ = [
     "InteractiveClaudeRunner",
     "InteractiveRunError",
+    "build_interactive_argv",
     "encode_user_message",
+    "extract_session_id",
 ]
 
 logger = logging.getLogger(__name__)
+
+# The fixed head of the interactive spawn: a long-lived ``claude`` reading/writing
+# stream-json over an open stdin. Resume/continue flags (BOB-087.D1) are appended AFTER
+# this head, so the default (no resume) argv stays byte-identical to the pre-D1 form.
+_INTERACTIVE_FLAGS = (
+    "-p",
+    "--input-format",
+    "stream-json",
+    "--output-format",
+    "stream-json",
+    "--verbose",
+    "--permission-mode",
+)
+
+
+def build_interactive_argv(
+    claude_bin: str,
+    *,
+    mode: str,
+    resume_session_id: str | None = None,
+    continue_session: bool = False,
+) -> list[str]:
+    """Assemble the ``claude`` interactive argv — pure and deterministic (mutation target).
+
+    Three resumption strategies, in strict precedence (BOB-087.D1):
+
+    * a non-empty ``resume_session_id`` → append ``--resume <id>`` (resume THAT session);
+      it wins over ``continue_session`` — a concrete id is more specific than "the latest".
+    * else ``continue_session`` → append ``--continue`` (resume the latest session here);
+    * else neither → the FRESH baseline, byte-identical to the pre-D1 inline argv.
+
+    The default (no resume, no continue) is the OFF path: nothing is appended, so the
+    live BOB-083 behaviour is unchanged until D3/flags opt in. An empty ``resume_session_id``
+    is treated as "no session" (fall through to continue / fresh).
+    """
+    argv = [claude_bin, *_INTERACTIVE_FLAGS, mode]
+    if resume_session_id:
+        argv += ["--resume", resume_session_id]
+    elif continue_session:
+        argv += ["--continue"]
+    return argv
+
+
+def extract_session_id(event: Mapping[str, object]) -> str | None:
+    """Return the claude session id from an ``init`` stream-json event (else ``None``).
+
+    Pure and I/O-free (a mutation target). ``claude --output-format stream-json`` emits a
+    ``{"type": "system", "subtype": "init", "session_id": "…", …}`` frame first; the id it
+    carries is what a later ``--resume`` needs. Only a genuine init event with a NON-EMPTY
+    string ``session_id`` yields the id — any other event, a missing field, or a non-string
+    value yields ``None`` (the transport never invents an id).
+    """
+    if event.get("type") != "system" or event.get("subtype") != "init":
+        return None
+    session_id = event.get("session_id")
+    if isinstance(session_id, str) and session_id:
+        return session_id
+    return None
 
 # Grace (seconds) between ``terminate()`` (SIGTERM) and the ``kill()`` (SIGKILL) fallback
 # on close: give ``claude`` a moment to exit cleanly before it is forced.
@@ -141,26 +201,42 @@ class InteractiveClaudeRunner:
         self._claude_bin = claude_bin
         self._terminate_grace = terminate_grace
         self._proc: InteractiveProcess | None = None
+        # The claude-assigned session id, captured off the init event as it streams
+        # (BOB-087.D1). ``None`` until the init frame is seen; the manager persists it
+        # for a later ``--resume`` — the transport itself owns NO session state.
+        self._session_id: str | None = None
 
-    async def open(self, workdir: str, *, mode: str) -> None:
-        """Spawn the persistent ``claude`` process in ``workdir`` under ``mode``."""
+    @property
+    def session_id(self) -> str | None:
+        """The claude session id seen on the init event, or ``None`` if not yet seen."""
+        return self._session_id
+
+    async def open(
+        self,
+        workdir: str,
+        *,
+        mode: str,
+        resume_session_id: str | None = None,
+        continue_session: bool = False,
+    ) -> None:
+        """Spawn the persistent ``claude`` process in ``workdir`` under ``mode``.
+
+        ``resume_session_id`` / ``continue_session`` (BOB-087.D1) opt into resuming a
+        prior session; both default OFF, so the spawn is byte-identical to BOB-083 (a
+        fresh session) unless a caller explicitly resumes.
+        """
         if mode not in _ALLOWED_MODES:
             raise ClaudeRunError(
                 f"mode {mode!r} is not an allowlisted --permission-mode"
             )
         if self._proc is not None:
             raise InteractiveRunError("an interactive process is already open")
-        argv = [
+        argv = build_interactive_argv(
             self._claude_bin,
-            "-p",
-            "--input-format",
-            "stream-json",
-            "--output-format",
-            "stream-json",
-            "--verbose",
-            "--permission-mode",
-            mode,
-        ]
+            mode=mode,
+            resume_session_id=resume_session_id,
+            continue_session=continue_session,
+        )
         self._proc = await self._spawner(argv, cwd=workdir)
 
     async def feed(self, text: str) -> None:
@@ -182,6 +258,8 @@ class InteractiveClaudeRunner:
             event = _parse_event(line)
             if event is None:
                 continue
+            if self._session_id is None:
+                self._session_id = extract_session_id(event)
             yield event
 
     async def close(self) -> None:

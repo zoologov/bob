@@ -20,9 +20,13 @@ from __future__ import annotations
 
 import re
 
-__all__ = ["worktree_branch"]
+__all__ = ["workspace_branch", "worktree_branch"]
 
 _BRANCH_PREFIX = "bob"
+# Namespace-инфикс долгоживущего workspace (BOB-087.D1): персистентная ветка
+# ``bob/epic-<slug>`` живёт в своём пространстве и НИКОГДА не пересекается с эфемерной
+# посессионной ``bob/<slug>``.
+_WORKSPACE_INFIX = "epic"
 _FALLBACK_SLUG = "task"
 _SLUG_MAX_LEN = 40
 _NON_SLUG = re.compile(r"[^a-z0-9]+")
@@ -31,6 +35,18 @@ _NON_SLUG = re.compile(r"[^a-z0-9]+")
 def worktree_branch(task: str) -> str:
     """Вернуть безопасное имя ветки ``bob/<slug>`` для ``task`` (чистая функция)."""
     return f"{_BRANCH_PREFIX}/{_slugify(task)}"
+
+
+def workspace_branch(name: str) -> str:
+    """Вернуть имя ветки ДОЛГОЖИВУЩЕГО workspace ``bob/epic-<slug>`` (чистая функция).
+
+    BOB-087.D1: детерминированная политика «имя→ветка» для персистентного,
+    накапливающего работу между сессиями worktree. Тот же безопасный slug, что и у
+    эфемерной :func:`worktree_branch`, но в отдельном ``epic-`` namespace — так
+    долгоживущий workspace не сталкивается с посессионной веткой того же имени, а
+    результат остаётся валидной ``bob/<slug>``-формой (:func:`is_safe_branch`).
+    """
+    return f"{_BRANCH_PREFIX}/{_WORKSPACE_INFIX}-{_slugify(name)}"
 
 
 def _slugify(task: str) -> str:

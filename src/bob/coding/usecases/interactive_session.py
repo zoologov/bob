@@ -185,9 +185,15 @@ class InteractiveSessionManager:
         await self._close_runner(live.runner)  # 🔴 direct terminate of the process
         await self._await_pump()
         await self._cleanup(live.session.worktree_path)
-        session = live.session.with_state(
-            CodingSessionState.CANCELLED, at=self._clock.now()
-        )
+        now = self._clock.now()
+        # BOB-087.D1: persist the claude session id captured off the init event so a
+        # later /code (D3) can look it up for --resume. None when no init id was seen —
+        # the field then stays None (byte-identical to a pre-D1 session).
+        ended = live.session
+        claude_session_id = live.runner.session_id
+        if claude_session_id is not None:
+            ended = ended.with_claude_session_id(claude_session_id, at=now)
+        session = ended.with_state(CodingSessionState.CANCELLED, at=now)
         await self._store.save(session)
         self._cancelled.discard(session.id)
         self._task = None

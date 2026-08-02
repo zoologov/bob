@@ -36,8 +36,11 @@ class CodingSession:
     ``task`` — исходная формулировка owner'а. ``branch`` — безопасное имя ветки
     (``bob/<slug>``, см. :func:`bob.coding.naming.worktree_branch`).
     ``worktree_path`` появляется после создания изолированного worktree; ``plan`` —
-    после plan-mode прогона; ``pr_url`` — после открытия PR. ``created_at`` /
-    ``updated_at`` — timezone-aware метки (инжектятся, не берутся из часов домена).
+    после plan-mode прогона; ``pr_url`` — после открытия PR. ``claude_session_id``
+    (BOB-087.D1) — id сессии, который отдал ``claude`` в init-событии stream-json;
+    хранится, чтобы позже (D3) можно было возобновить сеанс через ``--resume`` (None,
+    пока сеанс не отдал id). ``created_at`` / ``updated_at`` — timezone-aware метки
+    (инжектятся, не берутся из часов домена).
     """
 
     id: str
@@ -49,6 +52,7 @@ class CodingSession:
     worktree_path: str | None = None
     plan: str | None = None
     pr_url: str | None = None
+    claude_session_id: str | None = None
 
     def with_state(
         self, state: CodingSessionState, *, at: datetime
@@ -67,3 +71,13 @@ class CodingSession:
     def with_pr_url(self, pr_url: str, *, at: datetime) -> CodingSession:
         """Вернуть копию с URL открытого PR и обновлённым ``updated_at``."""
         return replace(self, pr_url=pr_url, updated_at=at)
+
+    def with_claude_session_id(
+        self, claude_session_id: str, *, at: datetime
+    ) -> CodingSession:
+        """Вернуть копию с id claude-сессии (для ``--resume``) и обновлённым ``updated_at``.
+
+        BOB-087.D1: сохраняет session-id из init-события stream-json, чтобы позже сеанс
+        можно было возобновить по id.
+        """
+        return replace(self, claude_session_id=claude_session_id, updated_at=at)

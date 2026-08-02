@@ -71,6 +71,7 @@ class SqliteConnection:
         await self._migrate_conversation_floor_participants()
         await self._migrate_person_relationship_gender()
         await self._migrate_first_impression_display_name()
+        await self._migrate_coding_session_claude_session_id()
         await self._conn.commit()
         logger.info("SqliteConnection initialised at %s", self._db_path)
 
@@ -193,6 +194,30 @@ class SqliteConnection:
         """Names of the columns currently on ``first_impression`` (BOB-080)."""
         async with self._db().execute(
             "PRAGMA table_info(first_impression)"
+        ) as cursor:
+            rows = await cursor.fetchall()
+        return {str(row[1]) for row in rows}
+
+    async def _migrate_coding_session_claude_session_id(self) -> None:
+        """Add ``coding_session.claude_session_id`` to a pre-existing DB (BOB-087.D1).
+
+        The claude-assigned session id kept for a later ``--resume``. ``CREATE TABLE IF
+        NOT EXISTS`` never alters an already-present table, so a DB written before this
+        column existed would lack it. This guarded ``ALTER`` adds it only when missing —
+        additive and non-destructive: a legacy row takes ``NULL`` (no resumable id, the
+        pre-D1 fresh-session behaviour). A clean no-op once present. Kept in the kernel
+        (the schema/migration owner) beside the other guarded ALTERs.
+        """
+        if "claude_session_id" in await self._coding_session_columns():
+            return
+        await self._db().execute(
+            "ALTER TABLE coding_session ADD COLUMN claude_session_id TEXT"
+        )
+
+    async def _coding_session_columns(self) -> set[str]:
+        """Names of the columns currently on ``coding_session`` (BOB-087.D1)."""
+        async with self._db().execute(
+            "PRAGMA table_info(coding_session)"
         ) as cursor:
             rows = await cursor.fetchall()
         return {str(row[1]) for row in rows}

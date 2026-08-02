@@ -52,8 +52,8 @@ class SqliteCodingSessionStore:
         await self._db().execute(
             "INSERT INTO coding_session "
             "(id, task, state, branch, created_at, updated_at, "
-            "worktree_path, plan, pr_url) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) "
+            "worktree_path, plan, pr_url, claude_session_id) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
             "ON CONFLICT(id) DO UPDATE SET "
             "task = excluded.task, "
             "state = excluded.state, "
@@ -62,7 +62,8 @@ class SqliteCodingSessionStore:
             "updated_at = excluded.updated_at, "
             "worktree_path = excluded.worktree_path, "
             "plan = excluded.plan, "
-            "pr_url = excluded.pr_url",
+            "pr_url = excluded.pr_url, "
+            "claude_session_id = excluded.claude_session_id",
             (
                 session.id,
                 session.task,
@@ -73,6 +74,7 @@ class SqliteCodingSessionStore:
                 session.worktree_path,
                 session.plan,
                 session.pr_url,
+                session.claude_session_id,
             ),
         )
         await self._db().commit()
@@ -81,7 +83,8 @@ class SqliteCodingSessionStore:
         """Return the session with ``session_id``, or ``None`` if there is none."""
         async with self._db().execute(
             "SELECT id, task, state, branch, created_at, updated_at, "
-            "worktree_path, plan, pr_url FROM coding_session WHERE id = ?",
+            "worktree_path, plan, pr_url, claude_session_id "
+            "FROM coding_session WHERE id = ?",
             (session_id,),
         ) as cursor:
             row = await cursor.fetchone()
@@ -96,7 +99,8 @@ class SqliteCodingSessionStore:
         """
         async with self._db().execute(
             "SELECT id, task, state, branch, created_at, updated_at, "
-            "worktree_path, plan, pr_url FROM coding_session ORDER BY created_at, id",
+            "worktree_path, plan, pr_url, claude_session_id "
+            "FROM coding_session ORDER BY created_at, id",
         ) as cursor:
             rows = await cursor.fetchall()
         return tuple(
@@ -141,6 +145,7 @@ def _row_to_session(row: aiosqlite.Row) -> CodingSession:
         worktree_path=_opt_str(row[6]),
         plan=_opt_str(row[7]),
         pr_url=_opt_str(row[8]),
+        claude_session_id=_opt_str(row[9]),
     )
 
 

@@ -39,6 +39,22 @@ from bob.coding.adapters._exec import (
 
 __all__ = ["GitWorktree", "WorktreeError"]
 
+_WORKTREE_LINE_PREFIX = "worktree "
+
+
+def _registered_worktrees(porcelain: str) -> set[str]:
+    """Parse the paths out of ``git worktree list --porcelain`` (pure, mutation target).
+
+    Each worktree stanza opens with a ``worktree <abs-path>`` line; the set of those
+    paths is what :meth:`GitWorktree.ensure` checks to decide REUSE vs add. Non-worktree
+    lines (``HEAD``/``branch``/blank) are ignored.
+    """
+    return {
+        line[len(_WORKTREE_LINE_PREFIX) :].strip()
+        for line in porcelain.splitlines()
+        if line.startswith(_WORKTREE_LINE_PREFIX)
+    }
+
 
 class WorktreeError(Exception):
     """A worktree operation was refused (unsafe branch / path) or git failed."""
@@ -68,6 +84,43 @@ class GitWorktree:
             )
         slug = branch.split("/", 1)[1]
         path = self._worktree_root / slug
+        await self._runner(
+            [self._git_bin, "worktree", "add", str(path), "-b", branch],
+            timeout=self._timeout,
+        )
+        return str(path)
+
+    async def ensure(self, branch: str) -> str:
+        """Ensure a PERSISTENT (long-lived, named) worktree on ``branch`` exists; reuse it.
+
+        BOB-087.D1: a durable ``bob/epic-<slug>`` workspace (see
+        :func:`bob.coding.naming.workspace_branch`) whose work ACCUMULATES across
+        sessions — unlike :meth:`create`'s per-task ephemeral worktree. Idempotent and
+        fixed-form (shell-free):
+
+        * ``git worktree list --porcelain`` — if the target path is ALREADY registered,
+          return it as-is (REUSE — never re-added, and this adapter never removes it),
+          so a resumed session lands back in the same accumulated tree.
+        * otherwise ``git worktree add <path> -b <branch>`` on a fresh branch, exactly
+          like :meth:`create`.
+
+        The branch is validated to the ``bob/<slug>`` shape first (path-injection is
+        refused before git runs), and the path is always a child of ``worktree_root``.
+        🔴 Isolation is unchanged: a persistent worktree is still a worktree, NOT the
+        main tree — integration stays via a PR (main is never touched here).
+        """
+        if not is_safe_branch(branch):
+            raise WorktreeError(
+                f"branch {branch!r} is not a safe bob/<slug> coding branch"
+            )
+        slug = branch.split("/", 1)[1]
+        path = self._worktree_root / slug
+        listing = await self._runner(
+            [self._git_bin, "worktree", "list", "--porcelain"],
+            timeout=self._timeout,
+        )
+        if str(path) in _registered_worktrees(listing):
+            return str(path)
         await self._runner(
             [self._git_bin, "worktree", "add", str(path), "-b", branch],
             timeout=self._timeout,
