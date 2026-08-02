@@ -363,6 +363,19 @@ DEFAULT_CONFIG: Config = {
         # Bob's bot exactly as today (byte-identical); Bob's own voice (gate lines) always
         # stays on Bob's bot. ON requires the owner to have started GUPPI's bot for a DM target.
         "stream_via_guppi": False,
+        # 🔴 Owner-only sandbox relaxations (BOB-087.D2) — both ship INERT, and both make
+        # the isolated worktree less isolated, so the owner opts in deliberately (the
+        # BOB-076 lesson: a powerful capability is OFF by default).
+        # ``allow_bypass`` admits ``bypassPermissions`` into the runner's ``--permission-mode``
+        # allowlist (claude stops asking before each edit — fast, but no per-action gate);
+        # OFF → the allowlist is exactly {plan, acceptEdits}, the shipped guarantee.
+        # ``extra_dirs`` passes ``--add-dir`` paths to claude, i.e. directories OUTSIDE the
+        # worktree (and outside the tracked-files-only copy that keeps Bob's private data away
+        # from Claude Code); empty → nothing is passed and the argv is byte-identical.
+        # Both only speed up work INSIDE the worktree: neither adds a push/merge path — main
+        # is still reached only through a PR + the unbypassable plan gate.
+        "allow_bypass": False,
+        "extra_dirs": [],
     },
     # Web search — «Боб ищет в интернете» (BOB-053). The ``web_search`` skill (behind
     # the capability seam) makes ONE Qwen-native call over the MaaS **Responses API**

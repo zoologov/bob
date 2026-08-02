@@ -182,6 +182,63 @@ def test_build_argv_empty_resume_id_is_treated_as_no_resume() -> None:
 
 
 # --------------------------------------------------------------------------- #
+# build_interactive_argv — owner-only --add-dir relaxation (BOB-087.D2)
+# --------------------------------------------------------------------------- #
+
+
+def test_build_argv_without_extra_dirs_is_the_fresh_baseline() -> None:
+    # OFF path (BOB-087.D2): no extra dirs configured → nothing appended at all.
+    assert build_interactive_argv("claude", mode="acceptEdits", extra_dirs=()) == (
+        _FRESH_ARGV
+    )
+
+
+def test_build_argv_appends_add_dir_after_the_head() -> None:
+    argv = build_interactive_argv(
+        "claude", mode="acceptEdits", extra_dirs=["/srv/docs", "/srv/spec"]
+    )
+
+    assert argv == [
+        *_FRESH_ARGV,
+        "--add-dir",
+        "/srv/docs",
+        "--add-dir",
+        "/srv/spec",
+    ]
+
+
+def test_build_argv_appends_add_dir_after_the_resume_flag() -> None:
+    argv = build_interactive_argv(
+        "claude",
+        mode="acceptEdits",
+        resume_session_id="sess-3",
+        extra_dirs=["/srv/docs"],
+    )
+
+    # Documented order: resumption strategy first, then the --add-dir pairs.
+    assert argv == [*_FRESH_ARGV, "--resume", "sess-3", "--add-dir", "/srv/docs"]
+
+
+def test_build_argv_appends_add_dir_after_the_continue_flag() -> None:
+    argv = build_interactive_argv(
+        "claude", mode="acceptEdits", continue_session=True, extra_dirs=["/srv/docs"]
+    )
+
+    assert argv == [*_FRESH_ARGV, "--continue", "--add-dir", "/srv/docs"]
+
+
+def test_build_argv_sanitises_a_flag_shaped_extra_dir() -> None:
+    # 🔴 argv injection: a "--…" entry would land in an argv slot as a claude FLAG.
+    argv = build_interactive_argv(
+        "claude",
+        mode="acceptEdits",
+        extra_dirs=["--dangerously-skip-permissions", "", "/srv/docs"],
+    )
+
+    assert argv == [*_FRESH_ARGV, "--add-dir", "/srv/docs"]
+
+
+# --------------------------------------------------------------------------- #
 # extract_session_id — the pure init-event core (mutation target, BOB-087.D1)
 # --------------------------------------------------------------------------- #
 
@@ -468,6 +525,74 @@ async def test_events_before_open_yields_nothing() -> None:
 
 def test_interactive_runner_satisfies_the_port() -> None:
     assert isinstance(InteractiveClaudeRunner(), InteractiveRunner)
+
+
+# --------------------------------------------------------------------------- #
+# Owner-only sandbox relaxations: bypass mode + --add-dir (BOB-087.D2)
+# --------------------------------------------------------------------------- #
+
+
+async def test_default_open_refuses_the_bypass_mode() -> None:
+    # The «no bypassPermissions ever» guarantee holds unless the owner flag is set.
+    spawner = _FakeSpawner(_FakeProcess())
+    runner = InteractiveClaudeRunner(spawner=spawner)
+
+    with pytest.raises(ClaudeRunError):
+        await runner.open("/w", mode="bypassPermissions")
+
+    assert spawner.calls == []
+
+
+async def test_allow_bypass_lets_the_bypass_mode_through() -> None:
+    spawner = _FakeSpawner(_FakeProcess())
+    runner = InteractiveClaudeRunner(spawner=spawner, allow_bypass=True)
+
+    await runner.open("/w", mode="bypassPermissions")
+
+    assert spawner.calls[0][-2:] == ["--permission-mode", "bypassPermissions"]
+
+
+@pytest.mark.parametrize("mode", ["plan; rm -rf /", "", "PLAN", "yolo"])
+async def test_allow_bypass_still_refuses_any_other_mode(mode: str) -> None:
+    # The flag adds ONE mode — it does not open the allowlist.
+    spawner = _FakeSpawner(_FakeProcess())
+    runner = InteractiveClaudeRunner(spawner=spawner, allow_bypass=True)
+
+    with pytest.raises(ClaudeRunError):
+        await runner.open("/w", mode=mode)
+
+    assert spawner.calls == []
+
+
+async def test_open_spawns_with_the_configured_extra_dirs() -> None:
+    spawner = _FakeSpawner(_FakeProcess())
+    runner = InteractiveClaudeRunner(spawner=spawner, extra_dirs=["/srv/docs"])
+
+    await runner.open("/w", mode="acceptEdits")
+
+    assert spawner.calls[0][-2:] == ["--add-dir", "/srv/docs"]
+
+
+async def test_open_sanitises_a_flag_shaped_extra_dir() -> None:
+    spawner = _FakeSpawner(_FakeProcess())
+    runner = InteractiveClaudeRunner(
+        spawner=spawner, extra_dirs=["--dangerously-skip-permissions"]
+    )
+
+    await runner.open("/w", mode="acceptEdits")
+
+    assert "--add-dir" not in spawner.calls[0]
+    assert "--dangerously-skip-permissions" not in spawner.calls[0]
+
+
+async def test_default_open_argv_is_byte_identical_to_the_pre_d2_baseline() -> None:
+    # OFF path: neither relaxation configured → EXACTLY the BOB-083 spawn argv.
+    spawner = _FakeSpawner(_FakeProcess())
+    runner = InteractiveClaudeRunner(spawner=spawner)
+
+    await runner.open("/w", mode="acceptEdits")
+
+    assert spawner.calls[0] == _FRESH_ARGV
 
 
 # --------------------------------------------------------------------------- #

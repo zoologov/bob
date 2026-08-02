@@ -41,6 +41,7 @@ from bob.runtime.config import (
     _int,
     _section,
     _str,
+    _str_list,
 )
 from bob.runtime.wiring.capabilities import _build_introspector
 
@@ -125,6 +126,12 @@ def _build_coding_assistant(
     lines, the "продолжаю" cap notice, the typing/status indicators) stays on ``notifier_bot``
     (Bob's bot). OFF → the firehose falls back to Bob's bot exactly as before (byte-identical:
     ``stream_notifier`` is ``None`` and the live-streamer targets ``notifier_bot``).
+
+    🔴 Owner-only sandbox relaxations (BOB-087.D2): ``coder.allow_bypass`` (default OFF)
+    admits ``bypassPermissions`` into the runner's ``--permission-mode`` allowlist, and
+    ``coder.extra_dirs`` (default empty) passes ``--add-dir`` paths OUTSIDE the worktree.
+    Both are threaded into the runner here and are inert by default; neither adds a
+    push/merge path — main is still reached only through the PR + plan gate.
     """
     coder = _section(config, "coder")
     if not _flag(coder, "enabled"):
@@ -144,7 +151,13 @@ def _build_coding_assistant(
             _build_introspector(config), PrivacyGuard(repo_root=_REPO_ROOT)
         ),
         runner=SubprocessClaudeRunner(
-            claude_bin=_str(coder, "claude_bin", "claude"), timeout=timeout
+            claude_bin=_str(coder, "claude_bin", "claude"),
+            timeout=timeout,
+            # 🔴 Owner-only sandbox relaxations (BOB-087.D2), both inert by default:
+            # ``allow_bypass`` OFF keeps the allowlist at {plan, acceptEdits} and an empty
+            # ``extra_dirs`` appends no ``--add-dir`` — the argv stays byte-identical.
+            allow_bypass=_flag(coder, "allow_bypass"),
+            extra_dirs=_str_list(coder, "extra_dirs"),
         ),
         worktree=GitWorktree(_str(coder, "worktree_root", ".worktrees")),
         store=SqliteCodingSessionStore(repo),
@@ -244,15 +257,30 @@ def _build_interactive_session(
     the per-session streamer is built over ``stream_bot`` (GUPPI's bot). OFF → ``bot`` (Bob's
     bot) exactly as before (byte-identical). The short Bob mode lines (open/stop) live in the
     intake router (`_build_interactive_intake`) and stay on Bob's bot regardless.
+
+    🔴 Owner-only sandbox relaxations (BOB-087.D2): ``coder.allow_bypass`` (default OFF)
+    and ``coder.extra_dirs`` (default empty) are read once and baked into every
+    per-session runner, so the owner can trade sandbox strictness for speed INSIDE the
+    worktree. Inert by default → the spawn argv is byte-identical to BOB-083, and even
+    switched on the manager still has no PR-opener (it cannot merge / push main).
     """
     coder = _section(config, "coder")
     if not _flag(coder, "interactive"):
         return None
     dm_chat_id = _int(coder, "dev_dm_chat_id", owner_id)
     claude_bin = _str(coder, "claude_bin", "claude")
+    # 🔴 Owner-only sandbox relaxations (BOB-087.D2) — read ONCE here and baked into every
+    # per-session runner. Both inert by default (allowlist {plan, acceptEdits}, no
+    # ``--add-dir``), so an unconfigured interactive spawn is byte-identical to BOB-083.
+    allow_bypass = _flag(coder, "allow_bypass")
+    extra_dirs = _str_list(coder, "extra_dirs")
     firehose_bot = stream_bot if _flag(coder, "stream_via_guppi") else bot
     return InteractiveSessionManager(
-        runner_factory=lambda: InteractiveClaudeRunner(claude_bin=claude_bin),
+        runner_factory=lambda: InteractiveClaudeRunner(
+            claude_bin=claude_bin,
+            allow_bypass=allow_bypass,
+            extra_dirs=extra_dirs,
+        ),
         worktree=GitWorktree(_str(coder, "worktree_root", ".worktrees")),
         store=SqliteCodingSessionStore(repo),
         # verbose=True (BOB-085.2): the INTERACTIVE DM output renders the FULL curated rich

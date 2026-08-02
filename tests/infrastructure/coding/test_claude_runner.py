@@ -185,6 +185,102 @@ def test_claude_runner_satisfies_the_runner_port() -> None:
 
 
 # --------------------------------------------------------------------------- #
+# Owner-only sandbox relaxations: bypass mode + --add-dir (BOB-087.D2)
+# --------------------------------------------------------------------------- #
+
+_BASELINE_ARGV = [
+    "claude",
+    "-p",
+    "task",
+    "--output-format",
+    "stream-json",
+    "--verbose",
+    "--permission-mode",
+    "acceptEdits",
+]
+
+
+async def test_default_run_argv_is_byte_identical_to_the_pre_d2_baseline() -> None:
+    # OFF path: neither relaxation configured → the spawned argv is EXACTLY the shipped
+    # BOB-039 form (no --add-dir appended, nothing reordered).
+    runner = _FakeStream([])
+    claude = SubprocessClaudeRunner(runner=runner)
+
+    await _collect(claude.run("/w", "task", mode="acceptEdits"))
+
+    assert runner.calls[0] == _BASELINE_ARGV
+
+
+async def test_default_run_refuses_the_bypass_mode() -> None:
+    # The «no bypassPermissions ever» guarantee holds unless the owner flag is set.
+    runner = _FakeStream([])
+    claude = SubprocessClaudeRunner(runner=runner)
+
+    with pytest.raises(ClaudeRunError):
+        await _collect(claude.run("/w", "task", mode="bypassPermissions"))
+
+    assert runner.calls == []
+
+
+async def test_allow_bypass_lets_the_bypass_mode_through() -> None:
+    runner = _FakeStream([])
+    claude = SubprocessClaudeRunner(runner=runner, allow_bypass=True)
+
+    await _collect(claude.run("/w", "task", mode="bypassPermissions"))
+
+    assert runner.calls[0][-2:] == ["--permission-mode", "bypassPermissions"]
+
+
+@pytest.mark.parametrize("mode", ["plan; rm -rf /", "", "PLAN", "yolo"])
+async def test_allow_bypass_still_refuses_any_other_mode(mode: str) -> None:
+    # The flag adds ONE mode — it does not open the allowlist.
+    runner = _FakeStream([])
+    claude = SubprocessClaudeRunner(runner=runner, allow_bypass=True)
+
+    with pytest.raises(ClaudeRunError):
+        await _collect(claude.run("/w", "task", mode=mode))
+
+    assert runner.calls == []
+
+
+async def test_extra_dirs_are_appended_after_the_permission_mode() -> None:
+    runner = _FakeStream([])
+    claude = SubprocessClaudeRunner(runner=runner, extra_dirs=["/srv/docs", "/srv/spec"])
+
+    await _collect(claude.run("/w", "task", mode="acceptEdits"))
+
+    # Documented order: the fixed head first, then the --add-dir pairs.
+    assert runner.calls[0] == [
+        *_BASELINE_ARGV,
+        "--add-dir",
+        "/srv/docs",
+        "--add-dir",
+        "/srv/spec",
+    ]
+
+
+async def test_extra_dirs_are_sanitised_before_reaching_the_process() -> None:
+    # 🔴 A flag-shaped entry must never reach the argv slot (argv injection).
+    runner = _FakeStream([])
+    claude = SubprocessClaudeRunner(
+        runner=runner, extra_dirs=["--dangerously-skip-permissions", "  ", "/srv/docs"]
+    )
+
+    await _collect(claude.run("/w", "task", mode="acceptEdits"))
+
+    assert runner.calls[0] == [*_BASELINE_ARGV, "--add-dir", "/srv/docs"]
+
+
+async def test_empty_extra_dirs_change_nothing() -> None:
+    runner = _FakeStream([])
+    claude = SubprocessClaudeRunner(runner=runner, extra_dirs=[])
+
+    await _collect(claude.run("/w", "task", mode="acceptEdits"))
+
+    assert runner.calls[0] == _BASELINE_ARGV
+
+
+# --------------------------------------------------------------------------- #
 # The real exec transport: 64 KiB StreamReader limit (BOB-084 .1)
 # --------------------------------------------------------------------------- #
 

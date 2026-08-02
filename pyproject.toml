@@ -316,6 +316,10 @@ ignore = [
 "src/bob/coding/usecases/work_journal_recorder.py" = ["RUF001", "RUF002", "RUF003"]
 "src/bob/memory/work_journal.py" = ["RUF001", "RUF002", "RUF003"]
 "src/bob/runtime/wiring/work_journal.py" = ["RUF001", "RUF002", "RUF003"]
+# Owner-only sandbox-relaxation policy (BOB-087.D2): the pure permission-mode allowlist +
+# --add-dir sanitiser carries Russian policy docstrings/comments whose Cyrillic look-alikes
+# are intentional — RUF001/RUF002/RUF003 do not apply.
+"src/bob/coding/sandbox_policy.py" = ["RUF001", "RUF002", "RUF003"]
 # build_application is the composition ROOT: it wires every adapter/use-case/tick in
 # one place by design (a single readable assembly), so the per-function statement
 # ceiling does not apply to it — splitting it would only scatter the wiring. It lives
@@ -640,6 +644,21 @@ ignore = [
     "RUF003",
 ]
 "tests/runtime/wiring/test_coding_dev_dm.py" = [
+    "S101",
+    "ARG001",
+    "ARG002",
+    "PLR2004",
+    "SLF001",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+# Sandbox-relaxation tests (BOB-087.D2): the pure-core test asserts on Russian policy
+# comments (Cyrillic look-alikes intentional → RUF001-003); the wiring test asserts the two
+# owner knobs through private wiring attrs over fake ports whose unused signature args are
+# inherent to the port shape (→ SLF001/ARG002).
+"tests/domain/coding/test_sandbox_policy.py" = ["RUF001", "RUF002", "RUF003"]
+"tests/runtime/wiring/test_coding_sandbox_relaxations.py" = [
     "S101",
     "ARG001",
     "ARG002",

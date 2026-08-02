@@ -43,6 +43,16 @@ def test_coder_stream_via_guppi_defaults_off() -> None:
     assert section["stream_via_guppi"] is False
 
 
+def test_coder_sandbox_relaxations_ship_inert() -> None:
+    # Owner-only sandbox relaxations (BOB-087.D2) ship OFF/empty: the permission-mode
+    # allowlist stays {plan, acceptEdits} and no ``--add-dir`` widens the worktree
+    # isolation, so the default behaviour is byte-identical to the shipped runners.
+    section = _config()["coder"]
+    assert isinstance(section, dict)
+    assert section["allow_bypass"] is False
+    assert section["extra_dirs"] == []
+
+
 def test_coding_capability_is_never_on_the_autonomous_safe_allowlist() -> None:
     # The gated coding session is owner-driven, never autonomous: it must NOT leak into
     # ``goals.safe_capabilities`` (the self-directed tick's allowlist).
