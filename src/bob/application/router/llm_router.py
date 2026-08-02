@@ -68,6 +68,7 @@ class TaskType(Enum):
     STALENESS_JUDGE = "staleness_judge"
     DISCLOSURE_CONSENT = "disclosure_consent"
     WORK_JOURNAL = "work_journal"
+    WORK_TALK = "work_talk"
 
 
 # Task -> preferred tier. Quality-critical, user-facing work goes to Tier 1
@@ -119,6 +120,10 @@ _PREFERRED_TIER: dict[TaskType, int] = {
     # first-person operator episodes — privacy-sensitive (owner's repo work) + a background
     # side-channel, so it stays local (Tier 0), like the other cheap classifiers.
     TaskType.WORK_JOURNAL: _TIER_LOCAL,
+    # Work-talk classification (BOB-087.C2) is a cheap one-word work/chat call deciding
+    # whether a turn is ABOUT Bob's dev work (so his work memories lift to full recall) —
+    # privacy-sensitive (dev context) + per-inbound, so it stays local (Tier 0).
+    TaskType.WORK_TALK: _TIER_LOCAL,
 }
 
 
