@@ -629,6 +629,37 @@ ignore = [
     "RUF002",
     "RUF003",
 ]
+# Channel-split gap-fill (BOB-087.A2): Russian session literals + unused fake-port args on the
+# stop/fail/no-changes/DM-pointer routing edges; S101/ARG/RUF001-003 do not apply to these fakes.
+"tests/application/usecases/test_coding_channel_split_gaps.py" = [
+    "S101",
+    "ARG001",
+    "ARG002",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+# GUPPI-channel BDD (BOB-087.A2): two-fake-bot boundary harness + steps carry Russian
+# session/Gherkin literals + unused fake-port args; S101/ARG/RUF001-003 do not apply.
+"tests/acceptance/guppi_channel_harness.py" = [
+    "S101",
+    "ARG001",
+    "ARG002",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+"tests/acceptance/steps/test_guppi_channel.py" = [
+    "S101",
+    "ARG001",
+    "ARG002",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
 # The coding arch-context tests (BOB-046 .3) assert on Russian preamble/convention
 # literals + use unused fake-port args; S101/ARG/RUF001-003 do not apply to these fakes.
 "tests/application/usecases/test_coding_context.py" = [
