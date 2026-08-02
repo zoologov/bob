@@ -43,6 +43,7 @@ __all__ = [
     "allowed_modes",
     "extra_dir_argv",
     "is_allowed_mode",
+    "is_safe_argv_value",
 ]
 
 #: Базовый (всегда действующий) allowlist ``--permission-mode``.
@@ -89,15 +90,26 @@ def extra_dir_argv(dirs: Sequence[str], *, max_dirs: int = MAX_EXTRA_DIRS) -> li
         if len(seen) >= max_dirs:
             break
         candidate = raw.strip()
-        if not _is_usable_dir(candidate) or candidate in seen:
+        if not is_safe_argv_value(candidate) or candidate in seen:
             continue
         seen.add(candidate)
         fragment += [_ADD_DIR_FLAG, candidate]
     return fragment
 
 
-def _is_usable_dir(candidate: str) -> bool:
-    """Годится ли уже обрезанная запись как ЗНАЧЕНИЕ argv-слота ``--add-dir``."""
+def is_safe_argv_value(candidate: str) -> bool:
+    """Годится ли уже обрезанная строка как ЗНАЧЕНИЕ argv-слота (чистая функция).
+
+    Общий примитив всего argv-семейства: не пустая, не начинается с ``-`` и не содержит
+    NUL. Ведущий дефис — главное правило: строка вида ``--dangerously-skip-permissions``,
+    поставленная в слот значения, парсером опций читается не как значение, а как
+    ОТДЕЛЬНЫЙ ФЛАГ (argv-инъекция). NUL в argv невыразим.
+
+    Используется обоими местами, где в argv попадает строка из внешнего источника:
+    ``--add-dir`` (значение из конфига, :func:`extra_dir_argv`) и ``--resume`` (значение
+    из колонки БД, :func:`bob.coding.argv_policy.build_interactive_argv` — BOB-087.D5b:
+    у ``--resume`` этого guard'а не было, хотя слот ровно тот же).
+    """
     if not candidate:
         return False
     if candidate.startswith(_FLAG_PREFIX):

@@ -127,6 +127,15 @@ class _FakeWorktree:
 
 
 @dataclass
+class _EnsureFailsWorktree(_FakeWorktree):
+    """A workspace whose ``ensure`` raises — the git/workspace fault of B1 in the small."""
+
+    async def ensure(self, branch: str) -> str:
+        self.ensured.append(branch)
+        raise RuntimeError("fatal: a branch named 'bob/epic-bob-087' already exists")
+
+
+@dataclass
 class _FakeLookup:
     """Narrow resumable-session lookup: records the queried branch, returns canned rows."""
 
@@ -218,11 +227,12 @@ class _Rig:
 def _build(
     *,
     runner: _FakeInteractiveRunner | None = None,
+    worktree: _FakeWorktree | None = None,
     sessions: tuple[CodingSession, ...] = (),
     with_resume: bool = True,
 ) -> _Rig:
     runner = runner or _FakeInteractiveRunner()
-    worktree = _FakeWorktree()
+    worktree = worktree or _FakeWorktree()
     store = _FakeStore()
     notifier = _FakeNotifier()
     lookup = _FakeLookup(sessions=sessions)
@@ -264,7 +274,9 @@ async def test_propose_asks_for_confirmation_and_spawns_nothing() -> None:
     assert rig.manager.active() is False
     # The question names the workspace and when that session was (owner may be on a phone).
     assert _WORKSPACE in outcome.message
-    assert "10:00" in outcome.message  # updated_at was two hours before «now» (12:00)
+    # updated_at was two hours before «now» (12:00), and the zone is NAMED so the owner
+    # on a phone does not read a UTC timestamp as his local time (BOB-087.D5b, m4).
+    assert "10:00 UTC" in outcome.message
     assert "?" in outcome.message
     # It looked at the WORKSPACE branch, not an ephemeral per-task one.
     assert rig.lookup.queried == [_WORKSPACE_BRANCH]
@@ -322,6 +334,107 @@ async def test_propose_while_a_session_is_live_is_refused() -> None:
     assert await _confirm(rig) is None
 
     await rig.manager.stop(_OWNER_ID)
+
+
+# --- open_workspace: заводим ДОЛГОЖИВУЩЕЕ рабочее место (BOB-087.D5b, M3) ------
+
+
+@pytest.mark.asyncio
+async def test_open_workspace_lands_in_the_persistent_tree_without_resuming() -> None:
+    # 🔴 M3: раньше персистентный workspace было НЕЧЕМ завести — ``open`` всегда делал
+    # эфемерное дерево, удаляемое на ``stop``, поэтому ``/resume`` не находил кандидата
+    # никогда. Теперь есть явная команда: ensure (а не create) и СВЕЖИЙ claude (без
+    # --resume: поднимать пока нечего).
+    rig = _build()
+
+    outcome = await rig.manager.open_workspace(_WORKSPACE, "доделать срез D", _OWNER_ID)
+
+    assert outcome.ok is True
+    assert rig.worktree.ensured == [_WORKSPACE_BRANCH]
+    assert rig.worktree.created == []
+    assert rig.runner.opened == [("/wt/epic-bob-087", "acceptEdits", None)]
+    assert outcome.session is not None
+    saved = rig.store.sessions[outcome.session.id]
+    assert saved.state is CodingSessionState.INTERACTIVE
+    assert saved.branch == _WORKSPACE_BRANCH
+    assert saved.task == "доделать срез D"
+    assert _WORKSPACE in outcome.message  # реплика называет рабочее место
+
+    await rig.manager.stop(_OWNER_ID)
+
+
+@pytest.mark.asyncio
+async def test_stopping_a_workspace_session_keeps_the_tree_and_says_so() -> None:
+    # Судьба дерева и ГОЛОС идут вместе (урок D4b): workspace остаётся — Боб так и говорит.
+    rig = _build()
+    await rig.manager.open_workspace(_WORKSPACE, "доделать срез D", _OWNER_ID)
+
+    outcome = await rig.manager.stop(_OWNER_ID)
+
+    assert rig.worktree.removed == []
+    assert outcome.message == session_voice.stopped_persistent()
+
+
+@pytest.mark.asyncio
+async def test_open_workspace_from_a_non_owner_is_silently_refused() -> None:
+    rig = _build()
+
+    outcome = await rig.manager.open_workspace(_WORKSPACE, "что-нибудь", _STRANGER_ID)
+
+    assert outcome.ok is False
+    assert outcome.message == ""
+    assert rig.worktree.ensured == []
+    assert rig.runner.opened == []
+    assert rig.store.sessions == {}
+
+
+@pytest.mark.asyncio
+async def test_open_workspace_while_a_session_is_live_is_refused() -> None:
+    rig = _build()
+    await rig.manager.open("другая задача", _OWNER_ID)
+
+    outcome = await rig.manager.open_workspace(_WORKSPACE, "срез D", _OWNER_ID)
+
+    assert outcome.ok is False
+    assert outcome.message == session_voice.interactive_busy()
+    assert rig.worktree.ensured == []
+
+    await rig.manager.stop(_OWNER_ID)
+
+
+@pytest.mark.asyncio
+async def test_open_workspace_is_inert_when_the_seams_are_not_wired() -> None:
+    # Тот же флаг ``coder.resume``: OFF → рабочее место не завести (порт не инъектирован).
+    rig = _build(with_resume=False)
+
+    outcome = await rig.manager.open_workspace(_WORKSPACE, "срез D", _OWNER_ID)
+
+    assert outcome.ok is False
+    assert rig.worktree.ensured == []
+    assert rig.runner.opened == []
+
+
+@pytest.mark.asyncio
+async def test_open_workspace_answers_honestly_when_the_tree_cannot_be_prepared() -> None:
+    rig = _build(worktree=_EnsureFailsWorktree())
+
+    outcome = await rig.manager.open_workspace(_WORKSPACE, "срез D", _OWNER_ID)
+
+    assert outcome.ok is False
+    assert outcome.message  # owner ВСЕГДА получает ответ (B2)
+    assert "убрал" not in outcome.message.casefold()
+    assert rig.manager.active() is False
+    assert rig.store.sessions == {}
+
+
+@pytest.mark.asyncio
+async def test_a_workspace_session_never_pushes_or_opens_a_pr() -> None:
+    rig = _build()
+    await rig.manager.open_workspace(_WORKSPACE, "срез D", _OWNER_ID)
+    await rig.manager.feed("правь")
+    await rig.manager.stop(_OWNER_ID)
+
+    assert rig.worktree.pushes == []
 
 
 # --- confirmation raises the session ------------------------------------------
@@ -605,6 +718,26 @@ async def test_stop_persists_the_new_claude_session_id_of_a_resumed_session() ->
 
     assert outcome.session is not None
     assert rig.store.sessions[outcome.session.id].claude_session_id == "claude-next"
+
+
+@pytest.mark.asyncio
+async def test_a_failed_workspace_prepare_answers_honestly_instead_of_going_silent() -> None:
+    # 🔴 BOB-087.D5b (B2): подготовка рабочего места может упасть (git/worktree). Раньше
+    # исключение улетало из resume() наружу и глохло в PrecomposeGate → owner сказал «да»,
+    # а Боб просто поболтал обычным ходом. Ассерт на НАБЛЮДАЕМОЕ: owner получает честную
+    # реплику, сессия не заводится.
+    rig = _build(worktree=_EnsureFailsWorktree(), sessions=(_stopped_session(),))
+    await rig.manager.propose_resume(_WORKSPACE, _OWNER_ID)
+
+    outcome = await _confirm(rig)
+
+    assert outcome is not None  # ход ПОГЛОЩЁН: «да» не уходит обычным chat-путём
+    assert outcome.ok is False
+    assert outcome.message == session_voice.resume_failed()
+    assert rig.manager.active() is False
+    assert rig.store.sessions == {}
+    assert rig.runner.opened == []  # процесс не спавнился
+    assert rig.worktree.removed == []  # 🔴 накопленное дерево не трогаем и на провале
 
 
 @pytest.mark.asyncio

@@ -34,6 +34,7 @@ from bob.coding.usecases.coding_context import make_coding_context
 from bob.coding.usecases.coding_intent_router import CodingIntentRouter
 from bob.coding.usecases.interactive_intake import InteractiveIntakeRouter
 from bob.coding.usecases.interactive_session import InteractiveSessionManager
+from bob.coding.usecases.recover_interactive_sessions import RecoverInteractiveSessions
 from bob.runtime.config import (
     _CODING_TYPING_INTERVAL,
     _REPO_ROOT,
@@ -130,8 +131,12 @@ def _build_coding_assistant(
     🔴 Owner-only sandbox relaxations (BOB-087.D2): ``coder.allow_bypass`` (default OFF)
     admits ``bypassPermissions`` into the runner's ``--permission-mode`` allowlist, and
     ``coder.extra_dirs`` (default empty) passes ``--add-dir`` paths OUTSIDE the worktree.
-    Both are threaded into the runner here and are inert by default; neither adds a
-    push/merge path — main is still reached only through the PR + plan gate.
+    Both are threaded into the runner here and are inert by default. 🔴 Said honestly
+    (BOB-087.D5b): Bob's OWN code still has no push/merge path, but ``bypassPermissions``
+    hands claude an unsupervised shell in a worktree that SHARES the main repo's ``.git``
+    (refs, remotes, credentials), so with that flag on «main is reached only through a PR»
+    rests on the owner's judgement rather than on structure. OFF (the default) keeps the
+    per-action gate that actually makes it structural.
     """
     coder = _section(config, "coder")
     if not _flag(coder, "enabled"):
@@ -261,16 +266,21 @@ def _build_interactive_session(
     🔴 Owner-only sandbox relaxations (BOB-087.D2): ``coder.allow_bypass`` (default OFF)
     and ``coder.extra_dirs`` (default empty) are read once and baked into every
     per-session runner, so the owner can trade sandbox strictness for speed INSIDE the
-    worktree. Inert by default → the spawn argv is byte-identical to BOB-083, and even
-    switched on the manager still has no PR-opener (it cannot merge / push main).
+    worktree. Inert by default → the spawn argv is byte-identical to BOB-083. 🔴 Honestly
+    (BOB-087.D5b): the manager itself still has no PR-opener and cannot merge / push, and
+    that part IS structural. But a worktree is a LINKED checkout sharing the main repo's
+    ``.git`` — refs, remotes, credentials — so once ``allow_bypass`` gives claude an
+    unsupervised shell in it, the trunk is protected by the owner's judgement about what
+    he lets claude do, not by the absence of a code path in Bob.
 
-    🔴 Resume в долгоживущем workspace (BOB-087.D3): под флагом ``coder.resume`` (default
-    OFF) в менеджер инъектируются два узких порта: ``lookup`` (поиск сессий по ветке,
-    структурно тот же :class:`SqliteCodingSessionStore`) и ``workspace`` (персистентный
-    worktree, структурно тот же :class:`GitWorktree`). OFF → порты ``None``, resume-путь
-    не собран: команда не распознаётся интейком, персистентное дерево не создаётся,
-    поведение байт-в-байт как в BOB-083. Даже ON это не добавляет push/merge — main
-    по-прежнему только через PR.
+    🔴 Долгоживущее рабочее место + resume (BOB-087.D3, D5b): под флагом ``coder.resume``
+    (default OFF) в менеджер инъектируются два узких порта: ``lookup`` (поиск сессий по
+    ветке, структурно тот же :class:`SqliteCodingSessionStore`) и ``workspace``
+    (персистентный worktree, структурно тот же :class:`GitWorktree`). Они обслуживают ОБА
+    конца цикла: ``open_workspace`` (завести накапливающее дерево) и ``resume`` (поднять в
+    нём прошлую сессию). OFF → порты ``None``, путь не собран: ни ``/workspace``, ни
+    ``/resume`` не распознаются интейком, персистентное дерево не создаётся, поведение
+    байт-в-байт как в BOB-083.
     """
     coder = _section(config, "coder")
     if not _flag(coder, "interactive"):
@@ -320,6 +330,21 @@ def _build_interactive_session(
     )
 
 
+def _build_interactive_recovery(
+    *, repo: SqliteConnection, clock: Clock
+) -> RecoverInteractiveSessions:
+    """Assemble the boot-time sweep of orphaned live sessions (BOB-087.D5b).
+
+    Built UNCONDITIONALLY — and that is deliberate, not an oversight of the flag rule. An
+    ``INTERACTIVE`` row can only exist because a live terminal once ran, and the process
+    that could have closed it is gone by the time this runs; leaving it non-terminal
+    blocks the GATED coder («я уже в работе») even after the owner switches
+    ``coder.interactive`` back off. With no such row the sweep writes nothing at all, so
+    the flags-off path stays behaviourally identical.
+    """
+    return RecoverInteractiveSessions(store=SqliteCodingSessionStore(repo), clock=clock)
+
+
 def _build_interactive_intake(
     config: Mapping[str, object],
     *,
@@ -338,10 +363,11 @@ def _build_interactive_intake(
     the router (defense-in-depth over the manager's own owner gate); HandleMessage threads
     the perceived owner verdict + the channel signal in.
 
-    🔴 Resume (BOB-087.D3): the manager doubles as the router's ``resume`` seam ONLY under
-    ``coder.resume`` (default OFF). OFF → the router holds no resume reference at all, so
-    ``/resume …`` is not a command and the pending-answer path cannot fire — the turn goes
-    down the ordinary chat path exactly as in BOB-083.
+    🔴 Persistent workspace + resume (BOB-087.D3, D5b): the manager doubles as the router's
+    ``resume`` seam ONLY under ``coder.resume`` (default OFF). OFF → the router holds no
+    reference to it at all, so neither ``/workspace …`` nor ``/resume …`` is a command and
+    the pending-answer path cannot fire — the turn goes down the ordinary chat path exactly
+    as in BOB-083.
     """
     if manager is None:
         return None

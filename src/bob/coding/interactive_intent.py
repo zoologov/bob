@@ -30,6 +30,12 @@ BOB-087.D3 добавляет ТРОЙКУ возобновления — тот
   (``/code -r <workspace>`` / ``/resume <workspace>``).
 * :func:`is_confirmation` / :func:`is_rejection` — ответ owner'а на вопрос-подтверждение
   («да» / «нет»), ТОЧНЫМ совпадением всего сообщения.
+
+BOB-087.D5b добавляет ЧЕТВЁРТЫЙ глагол — :func:`parse_interactive_workspace`
+(``/code -w <workspace> [task]`` / ``/workspace <name> [task]``): команда ОТКРЫТИЯ сессии
+в долгоживущем workspace. Без неё такое дерево было нечем завести, и возобновлять было
+нечего. Все четыре глагола попарно НЕ пересекаются: ни одно сообщение не читается сразу
+двумя.
 """
 
 from __future__ import annotations
@@ -40,6 +46,7 @@ __all__ = [
     "is_rejection",
     "parse_interactive_entry",
     "parse_interactive_resume",
+    "parse_interactive_workspace",
 ]
 
 # The two DM entry commands. ``/code -i`` reuses the familiar coder verb with an
@@ -52,6 +59,11 @@ _INTERACTIVE_COMMAND = "/interactive"
 # <workspace>`` and the long form ``/resume <workspace>``.
 _RESUME_FLAG = "-r"
 _RESUME_COMMAND = "/resume"
+
+# The DM command that OPENS a session inside a long-lived workspace (BOB-087.D5b):
+# ``/code -w <workspace> [task]`` and the long form ``/workspace <name> [task]``.
+_WORKSPACE_FLAG = "-w"
+_WORKSPACE_COMMAND = "/workspace"
 
 # The whole-message exit commands (case-folded, whitespace-collapsed). A DELIBERATE exact
 # match — never a substring — so a steer reply mentioning a stop-word is not hijacked.
@@ -104,6 +116,33 @@ def parse_interactive_resume(text: str) -> str | None:
     return _parse_leading_command(
         text, long_command=_RESUME_COMMAND, code_flag=_RESUME_FLAG
     )
+
+
+def parse_interactive_workspace(text: str) -> tuple[str, str] | None:
+    """``(workspace, task)`` команды ОТКРЫТИЯ сессии в долгоживущем workspace, иначе ``None``.
+
+    Распознаёт ``/code -w <workspace> [task]`` и ``/workspace <name> [task]`` (команда и
+    флаг регистронезависимы). 🔴 BOB-087.D5b (M3): без этой команды долгоживущий workspace
+    было НЕЧЕМ завести — ``open`` всегда создаёт эфемерное посессионное дерево, которое на
+    ``stop`` удаляется, поэтому ``/resume`` не находил кандидата НИКОГДА, и фича замыкалась
+    сама на себя.
+
+    Имя workspace — ПЕРВЫЙ токен (ключ вроде ``BOB-087``): так у него нет двусмысленности с
+    необязательной задачей, идущей следом. Задача опущена → ею становится само имя
+    workspace (сессии всё равно нужна формулировка, и «BOB-087» — честная). Пустое имя
+    (``/workspace`` без аргумента) → ``None``; команда обязана ВЕСТИ сообщение.
+
+    Тот же предохранитель, что у :func:`parse_interactive_resume`: распознаётся ТОЛЬКО
+    явная слэш-команда — живой claude в накапливающем работу дереве не поднимается по
+    свободному тексту (урок BOB-076).
+    """
+    argument = _parse_leading_command(
+        text, long_command=_WORKSPACE_COMMAND, code_flag=_WORKSPACE_FLAG
+    )
+    if argument is None:
+        return None
+    name, _, task = argument.partition(" ")
+    return name, task.strip() or name
 
 
 def _parse_leading_command(

@@ -51,11 +51,37 @@ def test_leading_junk_does_not_eat_into_the_length_budget() -> None:
     assert branch == "bob/" + "a" * 40
 
 
-def test_non_ascii_falls_back_to_non_empty_slug() -> None:
+def test_cyrillic_is_transliterated_not_thrown_away() -> None:
+    # 🔴 BOB-087.D5b (M2): язык проекта — русский. Кириллица ОТБРАСЫВАЛАСЬ, поэтому любое
+    # русское имя схлопывалось в один и тот же fallback-slug.
     branch = worktree_branch("починить парсер")
-    slug = branch[len("bob/") :]
-    assert slug  # непустой
+
+    assert branch == "bob/pochinit-parser"
     assert set(branch) <= _SAFE
+
+
+def test_transliteration_covers_the_awkward_letters() -> None:
+    assert worktree_branch("ёжик щи юла яма ъ ь") == "bob/ezhik-schi-yula-yama"
+
+
+def test_mixed_latin_and_cyrillic_keeps_both() -> None:
+    assert worktree_branch("Fix парсер 2") == "bob/fix-parser-2"
+
+
+def test_a_script_we_do_not_transliterate_degrades_instead_of_crashing() -> None:
+    # Транслитерация покрывает кириллицу; всё ОСТАЛЬНОЕ не-ascii (CJK, эмодзи) обязано
+    # ТИХО отбрасываться. Это про устойчивость: имя ветки строится из свободного текста
+    # owner'а, и незнакомый символ не смеет уронить старт сессии исключением.
+    branch = worktree_branch("修复 парсер 🚀 now")
+
+    assert branch == "bob/parser-now"
+    assert set(branch) <= _SAFE
+
+
+def test_a_name_made_only_of_unsupported_script_falls_back() -> None:
+    branch = worktree_branch("修复")
+
+    assert branch == "bob/task"  # непустой fallback, а не пустая (невалидная) ветка
 
 
 def test_length_is_bounded() -> None:
@@ -96,7 +122,23 @@ def test_workspace_branch_is_distinct_from_an_ephemeral_session_branch() -> None
     assert workspace_branch(key) != worktree_branch(key)
 
 
-def test_workspace_branch_non_ascii_falls_back_to_non_empty_slug() -> None:
+def test_workspace_branch_transliterates_a_cyrillic_name() -> None:
     branch = workspace_branch("эпик")
+
+    assert branch == "bob/epic-epik"
     assert is_safe_branch(branch)
     assert set(branch) <= _SAFE
+
+
+def test_distinct_cyrillic_workspace_names_do_not_collide() -> None:
+    # 🔴 THE M2 failure: «эпик», «проект» и «Боб» схлопывались в ОДИН bob/epic-task, так
+    # что «/resume проект» поднимал бы чужую накопленную сессию, называя её «проект».
+    names = ("эпик", "проект", "Боб", "релиз")
+    branches = [workspace_branch(name) for name in names]
+
+    assert len(set(branches)) == len(names), branches
+    assert all(is_safe_branch(branch) for branch in branches)
+
+
+def test_workspace_branch_of_a_russian_issue_key_is_readable() -> None:
+    assert workspace_branch("БОБ-087") == "bob/epic-bob-087"

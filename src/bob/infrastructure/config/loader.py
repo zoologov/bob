@@ -372,20 +372,32 @@ DEFAULT_CONFIG: Config = {
         # ``extra_dirs`` passes ``--add-dir`` paths to claude, i.e. directories OUTSIDE the
         # worktree (and outside the tracked-files-only copy that keeps Bob's private data away
         # from Claude Code); empty → nothing is passed and the argv is byte-identical.
-        # Both only speed up work INSIDE the worktree: neither adds a push/merge path — main
-        # is still reached only through a PR + the unbypassable plan gate.
+        #
+        # 🔴 WHAT ``allow_bypass: true`` REALLY COSTS (be honest — BOB-087.D5b, M4). Bob's own
+        # code has no push / merge / PR path in the interactive seam, and that stays true. But
+        # ``bypassPermissions`` gives claude an UNSUPERVISED shell inside a LINKED worktree,
+        # and a linked worktree shares the main repo's ``.git``: the same objects, the same
+        # REFS, the same remotes and the same credentials. From there ``git push --force
+        # origin HEAD:main``, ``git branch -f main …`` or ``gh pr merge`` are all expressible.
+        # So with this flag ON, «main is untouchable» (INV-2) stops being a STRUCTURAL
+        # guarantee and becomes trust in the model plus the owner's judgement. With it OFF —
+        # the default — every write claude makes still passes a per-action gate, and that is
+        # what actually keeps the trunk safe.
         "allow_bypass": False,
         "extra_dirs": [],
-        # 🔴 Возобновление приостановленной сессии в ДОЛГОЖИВУЩЕМ workspace (BOB-087.D3):
-        # owner из лички явной командой (``/resume <workspace>``) поднимает прошлую
-        # сессию через ``claude --resume <id>`` в персистентном worktree, где работа
-        # НАКАПЛИВАЕТСЯ между сеансами. Ship OFF: живой claude, приземляющийся в уже
+        # 🔴 ДОЛГОЖИВУЩЕЕ рабочее место + возобновление сессии (BOB-087.D3, D5b): owner из
+        # лички явной командой ``/workspace <name> [task]`` (или ``/code -w``) заводит
+        # персистентный worktree, где работа НАКАПЛИВАЕТСЯ между сеансами; команда
+        # ``/resume <workspace>`` (``/code -r``) поднимает в нём прошлую сессию через
+        # ``claude --resume <id>``. Ship OFF: живой claude, приземляющийся в уже
         # накопленное дерево, — самое мощное действие интерактива, и по уроку BOB-076
-        # такое включается сознательно. OFF → команда даже не распознаётся, персистентный
-        # worktree не создаётся, поведение байт-в-байт как в BOB-083. Предохранители на ON:
-        # owner-only + явное подтверждение в окне TTL; поднять можно ТОЛЬКО остановленную
-        # сессию (не live-attach); push/merge/PR здесь по-прежнему нет — main только через
-        # PR.
+        # такое включается сознательно. OFF → ни одна из команд не распознаётся,
+        # персистентный worktree не создаётся, поведение байт-в-байт как в BOB-083.
+        # Предохранители на ON: owner-only + DM-only, для подъёма ещё и явное
+        # подтверждение в окне TTL; поднять можно ТОЛЬКО остановленную сессию (не
+        # live-attach); ни push, ни merge, ни PR тут не выразимы — main только через PR.
+        # Оговорка та же, что и для ``allow_bypass`` выше: структурной эта гарантия
+        # остаётся, пока сам claude работает под пер-действенным гейтом.
         "resume": False,
     },
     # Web search — «Боб ищет в интернете» (BOB-053). The ``web_search`` skill (behind

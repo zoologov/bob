@@ -29,6 +29,7 @@ from bob.coding.interactive_intent import (
     is_rejection,
     parse_interactive_entry,
     parse_interactive_resume,
+    parse_interactive_workspace,
 )
 
 # --- parse_interactive_entry -----------------------------------------------------
@@ -133,6 +134,58 @@ def test_resume_and_entry_commands_do_not_overlap() -> None:
     # vice versa (otherwise `/code -i` could silently raise an old session).
     assert parse_interactive_entry("/code -r epic-bob-087") is None
     assert parse_interactive_resume("/code -i почини баг") is None
+
+
+# --- parse_interactive_workspace (BOB-087.D5b, находка M3) -----------------------
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        # <name> — ПЕРВЫЙ токен (ключ вроде BOB-087), задача — необязательный остаток.
+        ("/workspace BOB-087 доделать срез D", ("BOB-087", "доделать срез D")),
+        ("/code -w BOB-087 доделать срез D", ("BOB-087", "доделать срез D")),
+        ("  /code -w   BOB-087   правим тесты  ", ("BOB-087", "правим тесты")),
+        ("/WORKSPACE BOB-087 Fix It", ("BOB-087", "Fix It")),  # команда case-insensitive
+        ("/CODE -W BOB-087 Fix It", ("BOB-087", "Fix It")),
+        # Без задачи имя workspace САМО становится задачей сессии.
+        ("/workspace BOB-087", ("BOB-087", "BOB-087")),
+        ("/code -w BOB-087   ", ("BOB-087", "BOB-087")),
+    ],
+)
+def test_workspace_command_parses_the_name_and_task(
+    text: str, expected: tuple[str, str]
+) -> None:
+    assert parse_interactive_workspace(text) == expected
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        # 🔴 Тот же урок BOB-076: только явная слэш-команда, никакого свободного языка.
+        "открой рабочее место по эпику",
+        "заведи workspace BOB-087",
+        "workspace BOB-087",  # без ведущего слэша — не команда
+        "/code -i BOB-087",  # это ВХОД в эфемерный интерактив, не workspace
+        "/resume BOB-087",  # это возобновление, не открытие
+        "/workspace",  # без имени
+        "/code -w",
+        "/code -w    ",
+        "just /workspace BOB-087",  # команда обязана ВЕСТИ сообщение
+        "",
+    ],
+)
+def test_non_workspace_text_returns_none(text: str) -> None:
+    assert parse_interactive_workspace(text) is None
+
+
+def test_workspace_command_does_not_overlap_the_entry_or_resume_verbs() -> None:
+    # Три глагола интерактива не спорят за одно сообщение: открыть эфемерную задачу,
+    # открыть долгоживущий workspace и поднять прошлую сессию — разные команды.
+    assert parse_interactive_entry("/workspace BOB-087") is None
+    assert parse_interactive_resume("/workspace BOB-087") is None
+    assert parse_interactive_workspace("/code -i почини баг") is None
+    assert parse_interactive_workspace("/code -r BOB-087") is None
 
 
 # --- is_confirmation / is_rejection (BOB-087.D3) ---------------------------------

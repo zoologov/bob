@@ -42,15 +42,20 @@ __all__ = ["GitWorktree", "WorktreeError"]
 _WORKTREE_LINE_PREFIX = "worktree "
 
 
-def _registered_worktrees(porcelain: str) -> set[str]:
-    """Parse the paths out of ``git worktree list --porcelain`` (pure, mutation target).
+def _registered_worktrees(porcelain: str) -> set[Path]:
+    """Parse the paths out of ``git worktree list --porcelain`` as RESOLVED paths.
 
     Each worktree stanza opens with a ``worktree <abs-path>`` line; the set of those
     paths is what :meth:`GitWorktree.ensure` checks to decide REUSE vs add. Non-worktree
     lines (``HEAD``/``branch``/blank) are ignored.
+
+    🔴 Paths are normalised with :meth:`Path.resolve` (BOB-087.D5b): porcelain always
+    prints ABSOLUTE, symlink-resolved paths, while ``coder.worktree_root`` is RELATIVE by
+    default (``.worktrees``). Comparing the two verbatim never matched, so the reuse
+    branch was dead in production; both sides are resolved before the comparison now.
     """
     return {
-        line[len(_WORKTREE_LINE_PREFIX) :].strip()
+        Path(line[len(_WORKTREE_LINE_PREFIX) :].strip()).resolve()
         for line in porcelain.splitlines()
         if line.startswith(_WORKTREE_LINE_PREFIX)
     }
@@ -101,8 +106,15 @@ class GitWorktree:
         * ``git worktree list --porcelain`` — if the target path is ALREADY registered,
           return it as-is (REUSE — never re-added, and this adapter never removes it),
           so a resumed session lands back in the same accumulated tree.
-        * otherwise ``git worktree add <path> -b <branch>`` on a fresh branch, exactly
-          like :meth:`create`.
+        * otherwise ``git worktree add <path> <branch>`` on the EXISTING branch, or
+          ``git worktree add <path> -b <branch>`` when the branch is new.
+
+        🔴 Both halves of the idempotency are load-bearing (BOB-087.D5b): the registered
+        path is compared on RESOLVED paths (porcelain prints absolute, symlink-resolved
+        paths; ``worktree_root`` is relative by default), and an already-existing branch
+        is CHECKED OUT rather than re-created — otherwise the second raise of the same
+        workspace died with «fatal: a branch named … already exists» and the promise
+        «work accumulates across sessions» was broken from the second session on.
 
         The branch is validated to the ``bob/<slug>`` shape first (path-injection is
         refused before git runs), and the path is always a child of ``worktree_root``.
@@ -114,18 +126,33 @@ class GitWorktree:
                 f"branch {branch!r} is not a safe bob/<slug> coding branch"
             )
         slug = branch.split("/", 1)[1]
-        path = self._worktree_root / slug
+        path = (self._worktree_root / slug).resolve()
         listing = await self._runner(
             [self._git_bin, "worktree", "list", "--porcelain"],
             timeout=self._timeout,
         )
-        if str(path) in _registered_worktrees(listing):
+        if path in _registered_worktrees(listing):
             return str(path)
-        await self._runner(
-            [self._git_bin, "worktree", "add", str(path), "-b", branch],
-            timeout=self._timeout,
-        )
+        add_argv = [self._git_bin, "worktree", "add", str(path)]
+        if await self._branch_exists(branch):
+            add_argv.append(branch)  # check the accumulated branch out — never ``-b``
+        else:
+            add_argv += ["-b", branch]
+        await self._runner(add_argv, timeout=self._timeout)
         return str(path)
+
+    async def _branch_exists(self, branch: str) -> bool:
+        """Whether ``branch`` already exists locally (``git branch --list <branch>``).
+
+        ``--list`` is chosen deliberately over ``rev-parse --verify``: it exits 0 whether
+        or not the branch is there (empty stdout = absent), so a plain «no such branch»
+        never surfaces as a :class:`CommandError` we would have to swallow — and a
+        swallowed error is exactly how a real git failure would get misread as «absent».
+        """
+        listed = await self._runner(
+            [self._git_bin, "branch", "--list", branch], timeout=self._timeout
+        )
+        return bool(listed.strip())
 
     async def commit_and_push(self, path: str, branch: str, message: str) -> bool:
         """Stage, commit and push the worktree's changes to its ``bob/<slug>`` branch.

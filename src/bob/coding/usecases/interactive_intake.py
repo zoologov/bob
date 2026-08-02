@@ -48,6 +48,7 @@ from bob.coding.interactive_intent import (
     is_interactive_exit,
     parse_interactive_entry,
     parse_interactive_resume,
+    parse_interactive_workspace,
 )
 
 if TYPE_CHECKING:
@@ -84,11 +85,16 @@ class ResumeSupportLike(Protocol):
     :class:`~bob.coding.usecases.interactive_session.InteractiveSessionManager`, вынесенное
     в ОТДЕЛЬНЫЙ опциональный seam нарочно: при выключенном флаге ``coder.resume``
     композиция просто не передаёт его, и роутер не может выразить возобновление вообще
-    (а старые фейки менеджера остаются валидны). ``propose_resume`` — переспросить по
-    явной команде (ничего не поднимает), ``resolve_pending_resume`` — разрешить висящий
-    вопрос очередным ходом (``None`` = ход резюме не касается, вести обычным путём).
+    (а старые фейки менеджера остаются валидны). ``open_workspace`` — ЗАВЕСТИ сеанс в
+    долгоживущем рабочем месте (BOB-087.D5b: без него накапливать было нечего и поднимать
+    тоже), ``propose_resume`` — переспросить по явной команде (ничего не поднимает),
+    ``resolve_pending_resume`` — разрешить висящий вопрос очередным ходом (``None`` = ход
+    резюме не касается, вести обычным путём).
     """
 
+    async def open_workspace(
+        self, name: str, task: str, sender: int | None
+    ) -> CodingOutcome: ...
     async def propose_resume(self, name: str, sender: int | None) -> CodingOutcome: ...
     async def resolve_pending_resume(
         self, text: str, sender: int | None
@@ -156,9 +162,11 @@ class InteractiveIntakeRouter:
 
         Порядок внутри пути: сначала ответ на висящий вопрос «поднимаю?» (поглощается
         только явное «да»/«нет» — всё прочее лишь СНИМАЕТ вопрос и идёт дальше), затем
-        ведущая команда ``/resume <workspace>``, которая только ПЕРЕСПРАШИВАЕТ. Resume-путь
-        и путь входа не пересекаются по командам, поэтому их порядок не важен. Без
-        собранного seam'а (флаг ``coder.resume`` выключен) путь целиком инертен.
+        ведущая команда ``/resume <workspace>``, которая только ПЕРЕСПРАШИВАЕТ, затем
+        ``/workspace <name> [task]``, которая ЗАВОДИТ сеанс в долгоживущем рабочем месте
+        (BOB-087.D5b). Все команды интерактива попарно не пересекаются, поэтому их порядок
+        между собой не важен. Без собранного seam'а (флаг ``coder.resume`` выключен) путь
+        целиком инертен — ни возобновить, ни завести workspace нельзя.
         """
         resume = self._resume
         if resume is None:
@@ -168,9 +176,14 @@ class InteractiveIntakeRouter:
             await self._emit(settled)
             return True
         workspace = parse_interactive_resume(text)
-        if workspace is None:
+        if workspace is not None:
+            await self._emit(await resume.propose_resume(workspace, sender))
+            return True
+        entry = parse_interactive_workspace(text)
+        if entry is None:
             return False
-        await self._emit(await resume.propose_resume(workspace, sender))
+        name, task = entry
+        await self._emit(await resume.open_workspace(name, task, sender))
         return True
 
     async def _emit(self, outcome: CodingOutcome) -> None:

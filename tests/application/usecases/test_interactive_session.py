@@ -25,6 +25,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from bob.coding import session_voice
 from bob.coding.adapters.live_stream import _DmLiveStreamer
 from bob.coding.state import CodingSessionState, is_terminal
 from bob.coding.usecases.interactive_session import InteractiveSessionManager
@@ -263,6 +264,75 @@ async def test_feed_without_active_session_is_a_noop() -> None:
     assert rig.runner.fed == []
 
 
+# --- claude session id: persisted the MOMENT it appears (BOB-087.D5b, M5) -----
+
+
+_INIT_EVENT: Mapping[str, object] = {
+    "type": "system",
+    "subtype": "init",
+    "session_id": "claude-live-1",
+}
+
+
+@pytest.mark.asyncio
+async def test_claude_session_id_is_persisted_as_soon_as_the_init_frame_arrives() -> None:
+    # 🔴 BOB-087.D5b (M5а): id сохранялся ТОЛЬКО в ``stop``. Рестарт/краш посреди живого
+    # сеанса — и id потерян навсегда, а «поднять с телефона» поднимает БОЛЕЕ СТАРУЮ нить
+    # поверх свежей работы. Ассерт БЕЗ вызова stop: строка в сторе уже несёт id.
+    runner = _FakeInteractiveRunner(canned=[_INIT_EVENT])
+    rig = _build(runner=runner)
+
+    opened = await rig.manager.open("задача", _OWNER_ID)
+    await runner.drained.wait()
+    for _ in range(10):
+        await asyncio.sleep(0)
+
+    assert opened.session is not None
+    saved = rig.store.sessions[opened.session.id]
+    assert saved.claude_session_id == "claude-live-1"
+    assert saved.state is CodingSessionState.INTERACTIVE  # сессия ещё живая
+
+    await rig.manager.stop(_OWNER_ID)
+
+
+@pytest.mark.asyncio
+async def test_a_stream_without_an_init_frame_persists_no_session_id() -> None:
+    # Id не выдумывается: без init-кадра колонка остаётся None (байт-в-байт до-D1).
+    runner = _FakeInteractiveRunner(
+        canned=[{"type": "result", "subtype": "success", "result": "готово"}]
+    )
+    rig = _build(runner=runner)
+
+    opened = await rig.manager.open("задача", _OWNER_ID)
+    await runner.drained.wait()
+    for _ in range(10):
+        await asyncio.sleep(0)
+
+    assert opened.session is not None
+    assert rig.store.sessions[opened.session.id].claude_session_id is None
+
+    await rig.manager.stop(_OWNER_ID)
+
+
+@pytest.mark.asyncio
+async def test_the_early_persisted_id_survives_a_stop_that_sees_no_runner_id() -> None:
+    # ``stop`` дописывает id раннера, если тот есть; уже сохранённый id при этом не
+    # затирается — цепочка «сессия за сессией» остаётся возобновляемой.
+    runner = _FakeInteractiveRunner(canned=[_INIT_EVENT])
+    rig = _build(runner=runner)
+    opened = await rig.manager.open("задача", _OWNER_ID)
+    await runner.drained.wait()
+    for _ in range(10):
+        await asyncio.sleep(0)
+
+    await rig.manager.stop(_OWNER_ID)
+
+    assert opened.session is not None
+    saved = rig.store.sessions[opened.session.id]
+    assert saved.claude_session_id == "claude-live-1"
+    assert saved.state is CodingSessionState.CANCELLED
+
+
 # --- stop: direct kill -------------------------------------------------------
 
 
@@ -278,7 +348,7 @@ async def test_stop_directly_kills_runner_cleans_worktree_and_is_terminal() -> N
     # 🔴 DIRECT kill: the persistent runner is closed (terminate → kill), not a break.
     assert rig.runner.close_calls == 1
     # worktree torn down (reuse of _cleanup); no live session remains.
-    assert rig.worktree.removed == ["/wt/task"]
+    assert rig.worktree.removed == ["/wt/zadacha"]
     assert rig.manager.active() is False
     # Terminal CANCELLED persisted.
     saved = rig.store.sessions[opened.session.id]
@@ -402,9 +472,37 @@ async def test_open_spawn_failure_cleans_worktree_and_leaves_no_session() -> Non
     assert outcome.session is None
     assert rig.manager.active() is False
     # The worktree that was created for the (failed) spawn is removed again.
-    assert rig.worktree.created == ["bob/task"]
-    assert rig.worktree.removed == ["/wt/task"]
+    assert rig.worktree.created == ["bob/zadacha"]
+    assert rig.worktree.removed == ["/wt/zadacha"]
     assert rig.store.sessions == {}  # nothing persisted
+
+
+@dataclass
+class _CreateFailsWorktree(_FakeWorktree):
+    """A worktree whose ``create`` raises — git can fail before anything is spawned."""
+
+    async def create(self, branch: str) -> str:
+        self.created.append(branch)
+        raise RuntimeError("fatal: could not create worktree")
+
+
+@pytest.mark.asyncio
+async def test_open_worktree_failure_answers_honestly_and_claims_no_cleanup() -> None:
+    # 🔴 BOB-087.D5b (B2): ``create`` жил ВНЕ try — его падение улетало из ``open`` наружу
+    # и глохло выше, owner не узнавал ничего. Теперь это честный отказ; и реплика НЕ врёт
+    # про уборку копии (убирать нечего — дерево не создалось).
+    rig = _build(worktree=_CreateFailsWorktree())
+
+    outcome = await rig.manager.open("задача", _OWNER_ID)
+
+    assert outcome.ok is False
+    assert outcome.session is None
+    assert outcome.message == session_voice.interactive_setup_failed()
+    assert "убрал" not in outcome.message.casefold()
+    assert rig.manager.active() is False
+    assert rig.worktree.removed == []  # нечего убирать — и Боб об уборке не заикается
+    assert rig.store.sessions == {}
+    assert rig.runner.opened == []
 
 
 # --- stop is best-effort: a close / cleanup fault never masks the outcome -----
@@ -433,7 +531,7 @@ async def test_stop_survives_a_runner_close_fault_and_stays_terminal() -> None:
     # the worktree is still torn down, and no live session lingers (INV-4 backstop).
     assert outcome.ok is True
     assert rig.manager.active() is False
-    assert rig.worktree.removed == ["/wt/task"]
+    assert rig.worktree.removed == ["/wt/zadacha"]
     saved = rig.store.sessions[opened.session.id]
     assert saved.state is CodingSessionState.CANCELLED
 
@@ -458,7 +556,7 @@ async def test_stop_survives_a_worktree_cleanup_fault_and_stays_terminal() -> No
 
     assert outcome.ok is True
     assert rig.manager.active() is False
-    assert worktree.removed == ["/wt/task"]  # remove was attempted
+    assert worktree.removed == ["/wt/zadacha"]  # remove was attempted
     saved = rig.store.sessions[opened.session.id]
     assert saved.state is CodingSessionState.CANCELLED
 

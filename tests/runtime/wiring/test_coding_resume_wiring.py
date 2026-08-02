@@ -74,7 +74,14 @@ class _RecordingManager:
         self.proposed: list[tuple[str, int | None]] = []
         self.resolved: list[tuple[str, int | None]] = []
         self.opened: list[tuple[str, int | None]] = []
+        self.workspaces: list[tuple[str, str, int | None]] = []
         self.fed: list[str] = []
+
+    async def open_workspace(
+        self, name: str, task: str, sender: int | None
+    ) -> CodingOutcome:
+        self.workspaces.append((name, task, sender))
+        return CodingOutcome(ok=True, message="открыл", session=None)
 
     def active(self) -> bool:
         return False
@@ -205,6 +212,33 @@ async def test_resume_flag_wires_the_pending_answer_path() -> None:
     )
 
     assert manager.resolved == [("да", _OWNER_ID)]
+
+
+async def test_default_wiring_does_not_consume_the_workspace_command() -> None:
+    # 🔴 BOB-087.D5b (M3): открытие ДОЛГОЖИВУЩЕГО рабочего места живёт под тем же флагом —
+    # OFF → команда не распознаётся, дерево не заводится, ход идёт обычным путём.
+    manager = _RecordingManager()
+    router = _intake({"coder": {"interactive": True}}, manager)
+
+    consumed = await router.route(  # type: ignore[attr-defined]
+        text="/workspace BOB-087 срез D", sender=_OWNER_ID, is_owner=True, is_group=False
+    )
+
+    assert consumed is False
+    assert manager.workspaces == []
+
+
+async def test_resume_flag_wires_the_workspace_open_command() -> None:
+    manager = _RecordingManager()
+    router = _intake({"coder": {"interactive": True, "resume": True}}, manager)
+
+    consumed = await router.route(  # type: ignore[attr-defined]
+        text="/workspace BOB-087 срез D", sender=_OWNER_ID, is_owner=True, is_group=False
+    )
+
+    assert consumed is True
+    assert manager.workspaces == [("BOB-087", "срез D", _OWNER_ID)]
+    assert manager.opened == []  # 🔴 не эфемерный путь
 
 
 def test_resume_flag_injects_the_lookup_and_persistent_workspace() -> None:

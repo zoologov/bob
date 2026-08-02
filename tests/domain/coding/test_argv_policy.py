@@ -15,6 +15,8 @@ domain-юниты, силу которых меряет ``./scripts/mutation.sh 
 
 from __future__ import annotations
 
+import pytest
+
 from bob.coding.argv_policy import build_interactive_argv, extract_session_id
 
 # --------------------------------------------------------------------------- #
@@ -90,6 +92,52 @@ def test_build_argv_empty_resume_id_is_treated_as_no_resume() -> None:
         "--permission-mode",
         "plan",
     ]
+
+
+# --------------------------------------------------------------------------- #
+# build_interactive_argv — санитайз resume-id (BOB-087.D5b, находка M1)
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize(
+    "junk_id",
+    [
+        "--dangerously-skip-permissions",  # 🔴 встал бы в argv-слот как ФЛАГ
+        "-p",
+        "  --add-dir  ",  # ведущий дефис виден только после strip
+        "   ",  # пробельный id — не сессия
+        "sess\x00-1",  # NUL в argv невыразим
+    ],
+)
+def test_build_argv_drops_an_unusable_resume_id(junk_id: str) -> None:
+    # 🔴 Источник id — колонка БД (файл на диске, правится руками). Флагоподобная строка
+    # не смеет занять argv-слот: commander-подобный парсер не съест токен на «-» как
+    # ЗНАЧЕНИЕ --resume, и он станет отдельным флагом. Мусорный id = «сессии нет».
+    argv = build_interactive_argv("claude", mode="acceptEdits", resume_session_id=junk_id)
+
+    assert argv == _FRESH_ARGV  # ровно базлайн: мусорный id ничего не приписал
+    assert "--resume" not in argv
+
+
+def test_build_argv_unusable_resume_id_falls_back_to_continue() -> None:
+    # Мусорный id читается ровно как пустой: проваливаемся в следующую стратегию.
+    argv = build_interactive_argv(
+        "claude",
+        mode="acceptEdits",
+        resume_session_id="--resume",
+        continue_session=True,
+    )
+
+    assert argv == [*_FRESH_ARGV, "--continue"]
+
+
+def test_build_argv_trims_a_padded_resume_id() -> None:
+    argv = build_interactive_argv(
+        "claude", mode="acceptEdits", resume_session_id="  sess-7\n"
+    )
+
+    # Окружающие пробелы/перевод строки в id — транспортный мусор, не часть сессии.
+    assert argv == [*_FRESH_ARGV, "--resume", "sess-7"]
 
 
 # --------------------------------------------------------------------------- #

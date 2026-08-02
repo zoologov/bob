@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: BUSL-1.1
 # See the LICENSE file in the project root for full license information.
 
-"""Step definitions for the resume / persistent-workspace scenarios (BOB-087.D R1–R9).
+"""Step definitions for the resume / persistent-workspace scenarios (BOB-087.D R1–R10).
 
 Binds ``interactive_resume.feature`` to the real interactive stack harness. The scenarios
 pin the OBSERVABLE, boundary-level behaviour of «поднять с телефона нашу эпик-сессию»:
@@ -19,7 +19,11 @@ pin the OBSERVABLE, boundary-level behaviour of «поднять с телефо
   leak into claude's stdin), and a non-terminal row is never a candidate;
 * R8 — 🔴 a resumed session NEVER pushes / merges / opens a PR (INV-2);
 * R9 — flags OFF → BOB-083 byte-for-byte: the command is not consumed and the fresh
-  spawn argv equals the pinned baseline.
+  spawn argv equals the pinned baseline;
+* R10 — 🔴 the FULL cycle from an empty slate (BOB-087.D5b): the owner OPENS a long-lived
+  workspace by an explicit command, works, stops (the tree survives), and a later resume
+  raises THAT very session. Before this there was no way to create such a workspace at
+  all, so «поднять сессию» could never find a candidate and the feature closed on itself.
 """
 
 from __future__ import annotations
@@ -50,6 +54,7 @@ from tests.acceptance.interactive_resume_harness import (
 scenarios("../features/interactive_resume.feature")
 
 _RESUME_COMMAND = f"/resume {WORKSPACE}"
+_WORKSPACE_COMMAND = f"/workspace {WORKSPACE} доделать срез D"
 _ENTRY_COMMAND = "/code -i fix the bug"
 _EXTRA_DIR = "/srv/shared"
 _FLAG_SHAPED_DIR = "--dangerously-skip-permissions"
@@ -132,6 +137,14 @@ def configured_extra_dirs() -> _Ctx:
     )
 
 
+@given("ни одной прошлой сессии не записано", target_fixture="rtx")
+def no_prior_session() -> _Ctx:
+    # 🔴 BOB-087.D5b (M3): чистый старт — долгоживущего рабочего места ЕЩЁ НЕТ, и завести
+    # его можно только явной командой. Раньше такого пути не было вовсе, поэтому
+    # «поднять сессию» не находило кандидата НИКОГДА.
+    return _Ctx(rig=build_rig())
+
+
 @given("флаг coder.resume выключен, а прошлая сессия эпика остановлена", target_fixture="rtx")
 def resume_flag_off() -> _Ctx:
     return _Ctx(rig=build_rig(sessions=(prior_session(),), resume=False))
@@ -181,6 +194,25 @@ def owner_resumes_steers_stops(rtx: _Ctx) -> None:
 @when("owner открывает интерактив")
 def owner_opens_interactive(rtx: _Ctx) -> None:
     _run(rtx, [Turn(text=_ENTRY_COMMAND)])
+
+
+@when("owner открывает рабочее место эпика")
+def owner_opens_the_workspace(rtx: _Ctx) -> None:
+    _run(rtx, [Turn(text=_WORKSPACE_COMMAND)])
+
+
+@when("owner открывает рабочее место эпика, работает, завершает сеанс и поднимает его")
+def owner_opens_workspace_works_stops_and_resumes(rtx: _Ctx) -> None:
+    _run(
+        rtx,
+        [
+            Turn(text=_WORKSPACE_COMMAND),
+            Turn(text="правь дальше"),
+            Turn(text="stop"),
+            Turn(text=_RESUME_COMMAND),
+            Turn(text="да"),
+        ],
+    )
 
 
 @when("owner открывает интерактив и завершает сеанс")
@@ -357,13 +389,15 @@ def no_turn_consumed(rtx: _Ctx) -> None:
     assert rtx.obs.dm_lines == [], "Боб не должен ничего отвечать по этому пути"
 
 
-@then("Боб переспросил про этот workspace, назвав время прошлой сессии")
+@then("Боб переспросил про этот workspace, назвав время прошлой сессии с зоной")
 def bob_asked_back(rtx: _Ctx) -> None:
     assert rtx.obs.consumed == [True]
     assert len(rtx.obs.dm_lines) == 1, f"ожидался ровно один вопрос: {rtx.obs.dm_lines}"
     question = rtx.obs.dm_lines[0]
     assert WORKSPACE in question, f"вопрос не называет workspace: {question}"
-    assert "10:00" in question, f"вопрос не называет время прошлой сессии: {question}"
+    assert "10:00 UTC" in question, (
+        f"вопрос не называет время прошлой сессии с зоной: {question}"
+    )
     assert "?" in question, f"это не вопрос: {question}"
 
 
@@ -452,6 +486,42 @@ def stop_line_reports_the_cleanup(rtx: _Ctx) -> None:
     assert rtx.obs.removed, "эфемерный worktree должен был убраться"
     assert "убрал" in _stop_line(rtx), (
         f"Боб умолчал про уборку эфемерной копии: {rtx.obs.dm_lines[-1]}"
+    )
+
+
+@then("оба сеанса шли в ОДНОМ долгоживущем дереве, и оно ни разу не удалялось")
+def both_sessions_shared_one_persistent_tree(rtx: _Ctx) -> None:
+    assert rtx.obs.ensured == [WORKSPACE_BRANCH, WORKSPACE_BRANCH], (
+        f"сеансы не приземлились в долгоживущее дерево: ensured={rtx.obs.ensured}"
+    )
+    assert rtx.obs.created == [], "эфемерный worktree тут не должен создаваться"
+    assert rtx.obs.cwds == [WORKSPACE_PATH, WORKSPACE_PATH], (
+        f"второй сеанс поднялся в другом дереве: {rtx.obs.cwds}"
+    )
+    assert rtx.obs.removed == [], f"накопленное дерево удалили: {rtx.obs.removed}"
+    assert rtx.obs.fed_texts == ["правь дальше"]
+
+
+@then("подъём продолжил ИМЕННО ту сессию, что открывали командой рабочего места")
+def resume_continued_that_very_session(rtx: _Ctx) -> None:
+    # 🔴 Полный цикл замкнулся: первый сеанс СВЕЖИЙ (поднимать было нечего), второй
+    # поднимает id, который claude назвал в ПЕРВОМ — цепочка началась с команды открытия.
+    assert rtx.obs.spawned == 2
+    assert "--resume" not in rtx.obs.argvs[0], (
+        f"открытие рабочего места не должно ничего возобновлять: {rtx.obs.argvs[0]}"
+    )
+    assert _pairs(rtx.obs.argvs[1], "--resume", live_claude_session_id(1)) == 1, (
+        f"подъём не продолжил ту самую сессию: {rtx.obs.argvs[1]}"
+    )
+
+
+@then("на открытии Боб честно предупредил, что рабочее место долгоживущее")
+def opening_line_warns_the_tree_is_long_lived(rtx: _Ctx) -> None:
+    assert rtx.obs.dm_lines, "Боб промолчал на открытии"
+    opening = rtx.obs.dm_lines[0].casefold()
+    assert WORKSPACE.casefold() in opening, f"реплика не называет рабочее место: {opening}"
+    assert "остан" in opening, (
+        f"owner не предупреждён, что наработанное остаётся: {rtx.obs.dm_lines[0]}"
     )
 
 

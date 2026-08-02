@@ -36,6 +36,10 @@ claude, owner направляет его в реальном времени». 
 * :meth:`resolve_pending_resume` — разрешает висящий вопрос по следующему ходу owner'а:
   «да» → :meth:`resume`, «нет» → отмена, ЛЮБОЕ другое сообщение (или протухший TTL) →
   вопрос просто СНИМАЕТСЯ, ход идёт обычным путём. Вопрос никогда не залипает.
+* :meth:`open_workspace` — owner-only НАЧАЛО этого цикла (BOB-087.D5b): явной командой
+  завести сеанс СРАЗУ в долгоживущем workspace, чтобы работе было где накапливаться.
+  Без него :meth:`open` всегда делал эфемерное дерево, удаляемое на ``stop``, и поднимать
+  потом было нечего — фича замыкалась сама на себя.
 * :meth:`resume` — поднимает ``claude --resume <id>`` в ПЕРСИСТЕНТНОМ worktree
   (:class:`~bob.coding.ports.PersistentWorkspace`, реюз накопленного дерева) и заводит
   НОВУЮ живую сессию поверх сохранённого ``claude_session_id``.
@@ -63,6 +67,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from bob.coding import session_voice
+from bob.coding.argv_policy import extract_session_id
 from bob.coding.entities import CodingSession
 from bob.coding.interactive_intent import is_confirmation, is_rejection
 from bob.coding.naming import workspace_branch, worktree_branch
@@ -71,7 +76,7 @@ from bob.coding.state import CodingSessionState
 from bob.coding.usecases.coding_assistant import CodingOutcome, OwnerCheck
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import AsyncIterator, Callable, Mapping
     from datetime import datetime
     from typing import Protocol
 
@@ -100,8 +105,11 @@ __all__ = ["InteractiveSessionManager"]
 _DEFAULT_INTERACTIVE_MODE = "acceptEdits"
 
 # Человеческая метка времени прошлой сессии в вопросе-подтверждении («…трогали 02.08 в
-# 10:00») — owner отвечает «да» с телефона и должен понимать, ЧТО именно поднимает.
-_WHEN_FORMAT = "%d.%m в %H:%M"
+# 10:00 UTC») — owner отвечает «да» с телефона и должен понимать, ЧТО именно поднимает.
+# 🔴 Зона В МЕТКЕ (BOB-087.D5b): время хранится в UTC, а owner прочёл бы его как местное
+# и мог подтвердить не ту сессию. ``%Z`` печатает зону, если она известна, и ничего — если
+# нет (тогда хвостовой пробел срезается), поэтому метка никогда не врёт о зоне.
+_WHEN_FORMAT = "%d.%m в %H:%M %Z"
 
 
 @dataclass(slots=True)
@@ -109,9 +117,10 @@ class _LiveSession:
     """Держатель живого сеанса: персистнутая сессия, её раннер и судьба рабочего дерева.
 
     ``persistent`` — 🔴 маркер «это ДОЛГОЖИВУЩИЙ workspace, его дерево не удалять»:
-    ``open`` заводит эфемерный посессионный worktree (убирается на ``stop``), ``resume``
-    работает в накопленном workspace, который переживает остановку. Маркер держится в
-    памяти рядом с живым сеансом, а не выводится из имени ветки (эфемерная задача,
+    ``open`` заводит эфемерный посессионный worktree (убирается на ``stop``), а
+    ``open_workspace`` / ``resume`` работают в накопленном workspace, который переживает
+    остановку. Маркер держится в памяти рядом с живым сеансом, а не выводится из имени
+    ветки (эфемерная задача,
     названная «epic …», дала бы ту же форму ``bob/epic-…``) и не требует новой колонки в
     БД: судьба дерева нужна ровно тому сеансу, который сейчас жив в этом процессе.
     """
@@ -186,7 +195,13 @@ class InteractiveSessionManager:
             )
         now = self._clock.now()
         branch = worktree_branch(task)
-        path = await self._worktree.create(branch)
+        try:
+            path = await self._worktree.create(branch)
+        except Exception:  # 🔴 git/worktree fault BEFORE the spawn: answer, never go mute
+            logger.exception("coding: interactive worktree create failed for task")
+            return CodingOutcome(
+                ok=False, message=session_voice.interactive_setup_failed(), session=None
+            )
         try:
             runner = self._runner_factory()
             await runner.open(path, mode=self._permission_mode)
@@ -222,6 +237,52 @@ class InteractiveSessionManager:
             return
         await live.runner.feed(text)
 
+    async def open_workspace(
+        self, name: str, task: str, sender: int | None
+    ) -> CodingOutcome:
+        """Owner-only: завести сеанс в ДОЛГОЖИВУЩЕМ workspace ``name`` (BOB-087.D5b).
+
+        🔴 Это недостающее НАЧАЛО цикла возобновления (находка M3): :meth:`open` всегда
+        создаёт ЭФЕМЕРНОЕ посессионное дерево, которое ``stop`` удаляет, поэтому
+        накапливать было нечего и :meth:`propose_resume` не находил кандидата НИКОГДА —
+        фича замыкалась сама на себя. Здесь работа сразу приземляется в накапливающее
+        дерево (:meth:`~bob.coding.ports.PersistentWorkspace.ensure` на ветке
+        :func:`~bob.coding.naming.workspace_branch`), которое переживает остановку.
+
+        Отличие от :meth:`resume`: ``claude`` спавнится СВЕЖИЙ (без ``--resume``) — поднимать
+        ещё нечего, id этой сессии сохранится по ходу и станет тем, что поднимут потом.
+        Гейты те же, что у resume-пути (:meth:`_resume_refusal`): owner-only, одна сессия
+        за раз, и весь путь собран только под флагом ``coder.resume``. Провал подготовки
+        рабочего места — честный отказ, а не молчание.
+        """
+        refusal = self._resume_refusal(sender)
+        if refusal is not None:
+            return refusal
+        now = self._clock.now()
+        branch = workspace_branch(name)
+        try:
+            path = await self._require_workspace().ensure(branch)
+            runner = self._runner_factory()
+            await runner.open(path, mode=self._permission_mode)
+        except Exception:  # 🔴 workspace/spawn fault: answer honestly, never go mute
+            logger.exception("coding: opening the persistent workspace failed")
+            return CodingOutcome(
+                ok=False, message=session_voice.resume_failed(), session=None
+            )
+        session = CodingSession(
+            id=self._id_factory(),
+            task=task,
+            state=CodingSessionState.INTERACTIVE,
+            branch=branch,
+            created_at=now,
+            updated_at=now,
+            worktree_path=path,
+        )
+        await self._go_live(session, runner, persistent=True)
+        return CodingOutcome(
+            ok=True, message=session_voice.workspace_opened(name), session=session
+        )
+
     async def propose_resume(self, name: str, sender: int | None) -> CodingOutcome:
         """Owner-only: найти приостановленную сессию workspace ``name`` и ПЕРЕСПРОСИТЬ.
 
@@ -250,7 +311,7 @@ class InteractiveSessionManager:
         return CodingOutcome(
             ok=True,
             message=session_voice.resume_confirm(
-                workspace=name, when=candidate.updated_at.strftime(_WHEN_FORMAT)
+                workspace=name, when=candidate.updated_at.strftime(_WHEN_FORMAT).strip()
             ),
             session=candidate,
         )
@@ -300,7 +361,10 @@ class InteractiveSessionManager:
         нельзя, а цепочка «сессия за сессией» остаётся видимой в сторе.
 
         🔴 Провал спавна НЕ удаляет workspace (в нём накопленная работа) — в отличие от
-        эфемерного worktree в :meth:`open`, здесь убирать нечего и незачем.
+        эфемерного worktree в :meth:`open`, здесь убирать нечего и незачем. 🔴 Провал
+        ПОДГОТОВКИ рабочего места (``ensure``) — такой же честный отказ, а не молчание
+        (BOB-087.D5b): исключение, улетевшее наружу, глохло выше по стеку, и owner,
+        сказавший «да», получал обычный разговорный ответ вместо правды о срыве.
         """
         refusal = self._resume_refusal(sender)
         if refusal is not None:
@@ -314,15 +378,15 @@ class InteractiveSessionManager:
                 ok=False, message=session_voice.resume_nothing(name), session=None
             )
         now = self._clock.now()
-        path = await self._require_workspace().ensure(branch)
         try:
+            path = await self._require_workspace().ensure(branch)
             runner = self._runner_factory()
             await runner.open(
                 path,
                 mode=self._permission_mode,
                 resume_session_id=candidate.claude_session_id,
             )
-        except Exception:  # spawn/mode fault: 🔴 the persistent workspace is left intact
+        except Exception:  # workspace/spawn fault: 🔴 the workspace itself is left intact
             logger.exception("coding: interactive resume failed for workspace")
             return CodingOutcome(
                 ok=False, message=session_voice.resume_failed(), session=None
@@ -374,9 +438,12 @@ class InteractiveSessionManager:
             else session_voice.stopped()
         )
         now = self._clock.now()
-        # BOB-087.D1: persist the claude session id captured off the init event so a
-        # later /code (D3) can look it up for --resume. None when no init id was seen —
-        # the field then stays None (byte-identical to a pre-D1 session).
+        # BOB-087.D1: persist the claude session id captured off the init event so a later
+        # /code (D3) can look it up for --resume. Since D5b this is only the BACKSTOP — the
+        # id is already written the moment the init frame arrives (:meth:`_capture_id`), so
+        # a crash mid-session no longer loses it; here it merely re-confirms it on the
+        # terminal row. None when no init id was seen — the field stays None (byte-identical
+        # to a pre-D1 session), and an id already persisted is kept.
         ended = live.session
         claude_session_id = live.runner.session_id
         if claude_session_id is not None:
@@ -446,15 +513,53 @@ class InteractiveSessionManager:
         Делегирует ВЕСЬ поток событий инъектированному :class:`LiveRunStreamer`
         (``_DmLiveStreamer`` реюз): каждое сырое stream-json событие рендерится и льётся
         в личку. ``is_cancelled`` (kill-switch ``stop``) обрывает поток; сбой стрима
-        изолирован — он не валит менеджер.
+        изолирован — он не валит менеджер. Поток проходит через :meth:`_capture_id`,
+        который по дороге забирает claude-session-id из init-кадра.
         """
         streamer = self._streamer_factory()
         try:
             await streamer.stream(
-                runner.events(), is_cancelled=lambda: session_id in self._cancelled
+                self._capture_id(session_id, runner.events()),
+                is_cancelled=lambda: session_id in self._cancelled,
             )
         except Exception:  # an output-stream fault must never crash the manager
             logger.exception("coding: interactive output stream failed for %s", session_id)
+
+    async def _capture_id(
+        self, session_id: str, events: AsyncIterator[Mapping[str, object]]
+    ) -> AsyncIterator[Mapping[str, object]]:
+        """Пропустить поток насквозь, ПЕРСИСТНУВ claude-session-id из init-кадра.
+
+        🔴 BOB-087.D5b (M5): id сохранялся только в :meth:`stop`, поэтому рестарт/краш
+        посреди живого сеанса терял его НАВСЕГДА — и «поднять с телефона» поднимало бы
+        более старую нить разговора поверх свежей работы в дереве. Теперь id уходит в стор
+        в тот момент, как ``claude`` его назвал (первый же ``init``-кадр), ещё до любого
+        стопа. Проходной трансформер, а не второй потребитель потока: событие идёт дальше
+        в стример НЕИЗМЕНЁННЫМ, поэтому рендер в личку байт-в-байт прежний.
+        """
+        captured = False
+        async for event in events:
+            if not captured:
+                claude_session_id = extract_session_id(event)
+                if claude_session_id is not None:
+                    captured = True
+                    await self._persist_claude_id(session_id, claude_session_id)
+            yield event
+
+    async def _persist_claude_id(self, session_id: str, claude_session_id: str) -> None:
+        """Записать id claude-сессии в живую строку (best-effort — поток не рушим)."""
+        live = self._live
+        if live is None or live.session.id != session_id:
+            return  # сеанс уже закрыт/подменён — дописывать нечего
+        try:
+            live.session = live.session.with_claude_session_id(
+                claude_session_id, at=self._clock.now()
+            )
+            await self._store.save(live.session)
+        except Exception:  # a persistence fault must never break the live stream
+            logger.exception(
+                "coding: persisting the claude session id failed for %s", session_id
+            )
 
     async def _close_runner(self, runner: InteractiveRunner) -> None:
         """Прямой kill раннера (best-effort — уже мёртвый процесс не должен падать)."""

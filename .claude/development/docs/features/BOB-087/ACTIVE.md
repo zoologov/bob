@@ -124,3 +124,56 @@
   нового модуля и его теста (конвенция репо).
   Sync-check: пред-существующий доменный drift architecture.md + новый `coding/argv_policy.py`
   в domains/coding/README.md — на tw-волну.
+- 2026-08-03: Срез D dev bob-abk.25 (D5b: фиксы SECURITY-review bob-abk.22 — 2 blocker + 5 major
+  + 4 минорных) — DONE (in_progress, ждёт координатора; не коммичу/не закрываю).
+  **B1 (blocker) — реюз персистентного worktree был мёртв в проде.** `GitWorktree.ensure` сравнивал
+  `str(worktree_root / slug)` (относительный `.worktrees` по умолчанию) с абсолютными путями из
+  `git worktree list --porcelain` → реюз не срабатывал никогда, второй подъём падал на
+  `fatal: a branch named … already exists`. Фикс: обе стороны через `Path.resolve()`; плюс при
+  СУЩЕСТВУЮЩЕЙ ветке `worktree add <path> <branch>` без `-b` (проверка `git branch --list` —
+  exit 0 в обоих случаях, никакого глотания CommandError). Доказательство — НОВЫЙ real-git файл
+  `tests/infrastructure/coding/test_git_worktree_persistent_real_git.py` (относительный корень +
+  `monkeypatch.chdir` в throwaway-репо): второй `ensure` реюзит дерево и наработанный файл цел;
+  дерево снесено + `worktree prune` → ветка чекаутится, не пересоздаётся. Проверено, что тесты
+  КУСАЮТ: против старого адаптера 3/3 падают. 🔴 Урок BOB-084 подтверждён снова: фейк моделировал
+  контракт, адаптер его не держал — для git/subprocess нужен тест на РЕАЛЬНОМ транспорте.
+  **B2 (blocker) — тихий провал.** `create` в `open()` и `ensure` в `resume()` жили ВНЕ `try`;
+  исключение улетало в `PrecomposeGate.maybe_route_interactive`, который глотает всё → owner
+  сказал «да», а Боб просто поболтал. Теперь оба внутри try: resume → `resume_failed()` (ход
+  ПОГЛОЩЁН), open → НОВАЯ реплика `session_voice.interactive_setup_failed()` («ничего не тронул» —
+  `interactive_failed` врала бы про уборку несозданной копии).
+  **M1** `sandbox_policy._is_usable_dir` → публичный `is_safe_argv_value` (общий примитив
+  argv-значения); `build_interactive_argv` санитайзит `resume_session_id` тем же предикатом:
+  пустой/пробельный/с ведущим `-`/с NUL = «сессии нет» (проваливаемся в continue/фреш), годный
+  идёт `.strip()`.
+  **M2** транслитерация кириллицы в `_slugify` (lower → translate → ascii-ignore): «эпик»→
+  `bob/epic-epik`, «проект»→`bob/epic-proekt` — больше не один `bob/epic-task`. Выбран транслит,
+  а не отказ: чинит РЕАЛЬНЫЙ сценарий (owner пишет по-русски) и не меняет контракт чистой функции.
+  Остаточный вырожденный случай (имя вообще без букв/цифр: `..`, `----`) по-прежнему fallback
+  `task` — задокументировано в модуле.
+  **M3** появился НЕДОСТАЮЩИЙ путь завести долгоживущее рабочее место: `/workspace <name> [task]`
+  (и `/code -w`) → `parse_interactive_workspace` (чистый распознаватель, только слэш-команда —
+  урок BOB-076) + `InteractiveSessionManager.open_workspace` (ensure на `workspace_branch`, СВЕЖИЙ
+  claude без `--resume`, `persistent=True`) + `open_workspace` в `ResumeSupportLike`/интейке. Под
+  тем же флагом `coder.resume` (OFF → команда не распознаётся). BDD R10 замыкает полный цикл:
+  завёл рабочее место → поработал → stop (дерево цело) → `/resume` поднял ИМЕННО ту сессию.
+  **M4** переписаны формулировки про `coder.allow_bypass` (loader.py + 2 докстринга wiring):
+  linked worktree делит `.git`/refs/remotes/креды с основным репо, а `bypassPermissions` даёт
+  неподнадзорный шелл → при ON INV-2 держится на суждении owner'а, а не на структуре.
+  **M5** (а) `claude_session_id` персистится в момент прихода init-кадра — проходной трансформер
+  `_capture_id` между `runner.events()` и стримером (событие идёт дальше НЕИЗМЕНЁННЫМ); `stop`
+  остался бэкстопом. (б) НОВЫЙ `coding/usecases/recover_interactive_sessions.py` — свип на старте
+  (`Application.startup`), РОВНО `INTERACTIVE` (гейтед `PLAN_READY`/`EXECUTING` переживают рестарт
+  намеренно), best-effort, идемпотентный; тесты и на фейке, и на РЕАЛЬНОМ SQLite.
+  Минорные: m2 (снята ложная заявка «pure, mutation target» у `_registered_worktrees` в adapters),
+  m3 (`.worktrees/` в `.gitignore`), m4 (зона в метке времени `resume_confirm` — «10:00 UTC»),
+  n3 (цифра «24 файла» в rules.yml → 35 + уточнение про «дробление узла счётчик СНИЖАЕТ»).
+  НЕ взяты: m1 (доки — волна tw bob-abk.23), m5 (расщепление менеджера — долг bob-6u2),
+  m6 (стиль сборки argv в claude_runner), n1/n2 (юникод-дефисы и регистр в дедупе `--add-dir`:
+  инъекции нет; n2 сломал бы корректность на case-sensitive FS), n4 (CSV-сплит env).
+  Гейты: pytest 5365 (было 5295, +70) · ruff · mypy (src 329 + tests 490) · beadloom lint --strict
+  0 violations (coding 213/220 — потолок НЕ поднимал) · reindex ok · diff --since main: no graph
+  changes. Mutation: argv_policy 34/34 · interactive_intent 50/50 · resume_policy 20/20 ·
+  sandbox_policy 21/21 (все 100%), naming 25/29 = 86.2% с 4 эквивалентными (кодек-имена
+  регистронезависимы ×2; `strip("XX-XX")` == `strip("-")` для уже-lowercase slug ×2).
+  Sync-check: пред-существующий доменный drift + новые символы среза — на tw-волну.

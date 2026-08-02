@@ -282,6 +282,13 @@ ignore = [
 # The interactive-session manager (BOB-083 .3) carries Russian persona/policy docstrings +
 # owner-facing status literals whose Cyrillic look-alikes are intentional — RUF001/2/3 here.
 "src/bob/coding/usecases/interactive_session.py" = ["RUF001", "RUF002", "RUF003"]
+# The boot-time sweep of orphaned live sessions (BOB-087.D5b) carries Russian policy
+# docstrings whose Cyrillic look-alikes are intentional — RUF001/RUF002/RUF003 do not apply.
+"src/bob/coding/usecases/recover_interactive_sessions.py" = [
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
 # The interactive-intake router (BOB-083 .4) carries Russian persona/policy docstrings whose
 # Cyrillic look-alikes are intentional — RUF001/RUF002/RUF003 do not apply.
 "src/bob/coding/usecases/interactive_intake.py" = ["RUF001", "RUF002", "RUF003"]
@@ -346,6 +353,27 @@ ignore = [
 # to the port shape (→ ARG002).
 "tests/application/usecases/test_distill_work_journal.py" = ["RUF001", "RUF003"]
 "tests/application/usecases/test_coding_assistant_work_journal.py" = ["ARG002"]
+# Security-review fixes of the interactive slice (BOB-087.D5b): the orphan-sweep tests and
+# the real-git persistent-workspace tests carry Russian rationale docstrings/comments whose
+# Cyrillic look-alikes are intentional (→ RUF001/RUF002/RUF003). The worktree unit tests
+# SHOUT the load-bearing word in a name (…_RELATIVE_root, …_EXISTING_branch) so a future
+# reader cannot miss which condition the regression is about (→ N802).
+"tests/application/usecases/test_recover_interactive_sessions.py" = [
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+"tests/runtime/wiring/test_interactive_recovery_wiring.py" = [
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+"tests/infrastructure/coding/test_git_worktree_persistent_real_git.py" = [
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+"tests/infrastructure/coding/test_git_worktree.py" = ["N802", "RUF001", "RUF002", "RUF003"]
 # The voice tests (BOB-016/BOB-020) assert on multi-line Russian persona/tone
 # literals whose Cyrillic look-alikes are intentional (→ RUF001/RUF003).
 "tests/domain/personality/test_voice.py" = [

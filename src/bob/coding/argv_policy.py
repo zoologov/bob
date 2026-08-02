@@ -30,7 +30,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from bob.coding.sandbox_policy import extra_dir_argv
+from bob.coding.sandbox_policy import extra_dir_argv, is_safe_argv_value
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -73,12 +73,20 @@ def build_interactive_argv(
     остаётся чистым суффиксом, а порядок стабилен при любой стратегии.
 
     Дефолт (без resume, без continue, без доп-директорий) — путь OFF: не приписывается
-    ничего, живое поведение BOB-083 не меняется, пока D3/флаги не включены. Пустой
-    ``resume_session_id`` считается «сессии нет» (проваливаемся в continue / фреш).
+    ничего, живое поведение BOB-083 не меняется, пока D3/флаги не включены.
+
+    🔴 ``resume_session_id`` САНИТАЙЗИТСЯ тем же примитивом argv-значения, что и
+    ``--add-dir`` (:func:`~bob.coding.sandbox_policy.is_safe_argv_value`, BOB-087.D5b):
+    id приходит из колонки ``coding_session.claude_session_id``, т.е. из файла на диске,
+    который правится и руками. Пустой / пробельный / с ведущим ``-`` / с NUL id считается
+    «сессии нет» — проваливаемся в continue/фреш, а не падаем и уж точно не отдаём
+    флагоподобную строку в argv-слот. Годный id идёт обрезанным (окружающие пробелы —
+    транспортный мусор, не часть сессии).
     """
     argv = [claude_bin, *_INTERACTIVE_FLAGS, mode]
-    if resume_session_id:
-        argv += ["--resume", resume_session_id]
+    resume_id = (resume_session_id or "").strip()
+    if is_safe_argv_value(resume_id):
+        argv += ["--resume", resume_id]
     elif continue_session:
         argv += ["--continue"]
     return argv + extra_dir_argv(extra_dirs)

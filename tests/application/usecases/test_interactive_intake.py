@@ -189,7 +189,14 @@ class _FakeResume:
     def __init__(self, *, settle: CodingOutcome | None = None) -> None:
         self.proposed: list[tuple[str, int | None]] = []
         self.resolved: list[tuple[str, int | None]] = []
+        self.workspaces: list[tuple[str, str, int | None]] = []
         self._settle = settle
+
+    async def open_workspace(
+        self, name: str, task: str, sender: int | None
+    ) -> CodingOutcome:
+        self.workspaces.append((name, task, sender))
+        return CodingOutcome(ok=True, message="открыл рабочее место", session=None)
 
     async def propose_resume(self, name: str, sender: int | None) -> CodingOutcome:
         self.proposed.append((name, sender))
@@ -284,6 +291,53 @@ async def test_resume_command_from_a_non_owner_is_refused() -> None:
     assert consumed is False
     assert resume.proposed == []
     assert resume.resolved == []
+    assert notifier.sent == []
+
+
+async def test_workspace_command_is_inert_when_the_flag_is_off() -> None:
+    # 🔴 Тот же флаг ``coder.resume``: OFF → seam'а нет, `/workspace …` не команда.
+    manager = _FakeManager(active=False)
+    router, notifier = _router(manager)
+
+    consumed = await router.route(
+        text="/workspace BOB-087 срез D", sender=_OWNER, is_owner=True, is_group=False
+    )
+
+    assert consumed is False
+    assert manager.opened == []
+    assert notifier.sent == []
+
+
+async def test_owner_dm_workspace_command_opens_the_persistent_workspace() -> None:
+    manager = _FakeManager(active=False)
+    resume = _FakeResume()
+    router, notifier = _resume_router(manager, resume)
+
+    consumed = await router.route(
+        text="/workspace BOB-087 срез D", sender=_OWNER, is_owner=True, is_group=False
+    )
+
+    assert consumed is True
+    assert resume.workspaces == [("BOB-087", "срез D", _OWNER)]
+    assert notifier.sent == ["открыл рабочее место"]
+    # 🔴 It went down the PERSISTENT path, not the ephemeral ``open``.
+    assert manager.opened == []
+
+
+async def test_workspace_command_in_a_group_or_from_a_guest_is_refused() -> None:
+    manager = _FakeManager(active=False)
+    resume = _FakeResume()
+    router, notifier = _resume_router(manager, resume)
+
+    in_group = await router.route(
+        text="/workspace BOB-087", sender=_OWNER, is_owner=True, is_group=True
+    )
+    from_guest = await router.route(
+        text="/workspace BOB-087", sender=_GUEST, is_owner=False, is_group=False
+    )
+
+    assert (in_group, from_guest) == (False, False)
+    assert resume.workspaces == []
     assert notifier.sent == []
 
 
