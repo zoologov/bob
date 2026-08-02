@@ -499,6 +499,69 @@ def recalled_self_action_directive() -> str:
     return _RECALLED_SELF_ACTION_DIRECTIVE
 
 
+# Recalled-WORK provenance directive (BOB-087.C3): the mirror of the self_action line
+# for register-aware recall (slice C). When recall surfaces one of Bob's OWN ``work``
+# dev episodes — his OPERATOR recollection of directing GUPPI — this LIGHT voice line
+# backstops against CONFABULATION: the direct attack on the fear that Bob blends
+# working-with-claude and chatting into invented detail. A work episode is recognised
+# by its ``category`` (the episodic ``event_type`` ``work``) OR any of its provenance
+# tags — a documented MIRROR of ``bob.memory.work_journal`` (``WORK_EVENT_TYPE`` +
+# ``_WORK_TAGS``), kept here so this pure personality-domain helper imports nothing from
+# the memory domain (identical to how ``_SELF_ACTION_CATEGORY`` mirrors
+# ``bob.memory.self_action``). Independent of the self_action directive — work episodes
+# carry ``work``, not ``self_action``, so both may fire on the same turn.
+# Cyrillic look-alikes are intentional in these Russian literals.
+_WORK_CATEGORY = "work"
+_WORK_TAGS = frozenset({"work", "dev", "actor:bob"})
+
+_RECALLED_WORK_DIRECTIVE = (
+    # Cyrillic look-alikes intentional in these Russian literals.
+    "Среди припомненного есть твоя РЕАЛЬНАЯ работа — как ты в роли оператора вёл GUPPI "
+    "по коду. Говори о ней от первого лица — «я попросил GUPPI…», как о том, что делал "
+    "сам, честно (в том числе про сбои и промахи — признай их, не сваливай на других). "
+    "И не выдумывай деталей, которых не помнишь: не смешивай работу с болтовнёй, не "
+    "сочиняй, что якобы сделал — если не припоминаешь подробностей, так и скажи."
+)
+
+
+def recall_has_work(recalled: Sequence[Mapping[str, object]]) -> bool:
+    """Whether the recalled set carries one of Bob's OWN ``work`` dev episodes (C3) — pure.
+
+    True when any recalled memory is a ``work`` episode — matched by its ``category``
+    (the episodic ``event_type``, case-insensitive) OR any of its work provenance tags.
+    A memory with no/other category and no work tag never counts; distinct from a
+    ``self_action`` deed, so this is orthogonal to :func:`recall_has_self_action`.
+    Deterministic: same inputs → same verdict.
+    """
+    return any(_is_work(item) for item in recalled)
+
+
+def _is_work(item: Mapping[str, object]) -> bool:
+    """True when a recalled memory is one of Bob's ``work`` dev episodes (category OR tag)."""
+    category = item.get("category")
+    if isinstance(category, str) and category.casefold() == _WORK_CATEGORY:
+        return True
+    tags = item.get("tags")
+    if isinstance(tags, (list, tuple)):
+        return any(
+            isinstance(tag, str) and tag.casefold() in _WORK_TAGS for tag in tags
+        )
+    return False
+
+
+def recalled_work_directive() -> str:
+    """Return the work-provenance voice line for a recalled ``work`` episode (C3).
+
+    A LIGHT anti-confabulation backstop: recalled work episodes are Bob's OWN REAL
+    operator work with GUPPI, so he speaks of them in the first person, honestly owns a
+    failure, and never invents details he does not remember — never blending работа and
+    болтовня into a fabricated deed. Pure and argument-free — the content is already
+    first-person from the write side; the application folds this in only when
+    :func:`recall_has_work` is true.
+    """
+    return _RECALLED_WORK_DIRECTIVE
+
+
 # Relationship-tone bands (BOB-014). On TOP of the mood-conditioned tone, Bob's
 # WARMTH toward the specific person colours how he sounds to THEM: someone he is
 # close to gets a warmer, more familiar voice; someone he is cool toward gets a more
