@@ -67,6 +67,7 @@ class TaskType(Enum):
     ROOM_READ = "room_read"
     STALENESS_JUDGE = "staleness_judge"
     DISCLOSURE_CONSENT = "disclosure_consent"
+    WORK_JOURNAL = "work_journal"
 
 
 # Task -> preferred tier. Quality-critical, user-facing work goes to Tier 1
@@ -114,6 +115,10 @@ _PREFERRED_TIER: dict[TaskType, int] = {
     # Disclosure-consent judgment (BOB-082 .4) reads whether the OWNER authorised voicing
     # previously-private content into the group — privacy-sensitive, so it stays local (Tier 0).
     TaskType.DISCLOSURE_CONSENT: _TIER_LOCAL,
+    # Work-journal distillation (BOB-087.B1) sweeps a coding session's key facts into a few
+    # first-person operator episodes — privacy-sensitive (owner's repo work) + a background
+    # side-channel, so it stays local (Tier 0), like the other cheap classifiers.
+    TaskType.WORK_JOURNAL: _TIER_LOCAL,
 }
 
 

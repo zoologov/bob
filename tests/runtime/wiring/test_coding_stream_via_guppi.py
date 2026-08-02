@@ -23,6 +23,7 @@ from bob.coding.adapters.owner_notifier import _CodingOwnerNotifier
 from bob.runtime.wiring.coding import _build_coding_assistant, _build_interactive_session
 
 if TYPE_CHECKING:
+    from bob.coding.usecases.coding_assistant import WorkJournalRecorder
     from bob.infrastructure.persistence import SqliteConnection
     from bob.infrastructure.telegram.gateway import BotLike
     from bob.kernel.ports import Clock
@@ -68,6 +69,18 @@ class _StubRecorder:
         return None
 
 
+class _StubWorkJournal:
+    async def record_session(
+        self,
+        task: str,
+        facts: object,
+        outcome: object,
+        *,
+        sender_id: int | None = None,
+    ) -> None:
+        return None
+
+
 def _bob() -> BotLike:
     return cast("BotLike", _BobBot())
 
@@ -87,6 +100,7 @@ def _assistant_deps(bob: BotLike, guppi: BotLike) -> dict[str, object]:
         "owner_id": _OWNER_ID,
         "clock": cast("Clock", _StubClock()),
         "recorder": cast("SelfActionRecorder", _StubRecorder()),
+        "work_journal": cast("WorkJournalRecorder", _StubWorkJournal()),
     }
 
 
