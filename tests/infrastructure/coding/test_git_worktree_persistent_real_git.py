@@ -97,17 +97,47 @@ async def test_second_ensure_reuses_the_workspace_and_keeps_the_accumulated_work
 async def test_ensure_recovers_when_the_tree_is_gone_but_the_branch_remains(
     repo: Path,
 ) -> None:
-    # The branch outlives its registration (a manually deleted tree + ``worktree prune``).
+    # 🔴 NO manual ``worktree prune`` here (BOB-087.D5c, N1): the owner deletes the tree
+    # from a phone-less shell — or never touches it at all — and the ONLY actor left is
+    # ``ensure``. Git keeps printing the dead registration (marked ``prunable``), so a
+    # parser that trusts the listing hands back a path that is not on disk.
     adapter = GitWorktree(_RELATIVE_ROOT, runner=ExecRunner())
     first = await adapter.ensure(_WORKSPACE_BRANCH)
     shutil.rmtree(first)
-    _git(repo, "worktree", "prune")
 
     revived = await adapter.ensure(_WORKSPACE_BRANCH)
 
     assert Path(revived).is_dir()
     head = _git(Path(revived), "rev-parse", "--abbrev-ref", "HEAD").strip()
     assert head == _WORKSPACE_BRANCH  # checked the EXISTING branch out, never re-created
+
+
+async def test_ensure_self_heals_after_git_clean_wiped_the_worktree_root(
+    repo: Path,
+) -> None:
+    # 🔴 The owner's realistic trigger (N1): ``.worktrees/`` is gitignored, so a housekeeping
+    # ``git clean -xdff`` wipes every persistent tree while git keeps the registration
+    # (plain ``-xdf`` prints «Skipping repository» and spares it — the second ``-f`` is what
+    # removes a linked worktree; a plain ``rm -rf .worktrees`` gets there just as well).
+    # Before the self-heal this killed the workspace FOREVER — ``ensure`` returned a
+    # non-existent cwd, claude could not spawn there, and the only cure was ``git worktree
+    # prune`` from a shell the owner does not have on a phone.
+    adapter = GitWorktree(_RELATIVE_ROOT, runner=ExecRunner())
+    first = await adapter.ensure(_WORKSPACE_BRANCH)
+    # Session one commits its work ON the workspace branch — that is what must come back.
+    (Path(first) / "накопленное.txt").write_text("работа\n", encoding="utf-8")
+    _git(Path(first), "add", ".")
+    _git(Path(first), "commit", "-m", "session one")
+
+    _git(repo, "clean", "-xdff")
+
+    revived = await adapter.ensure(_WORKSPACE_BRANCH)
+
+    assert Path(revived).is_dir()
+    assert (Path(revived) / "накопленное.txt").read_text(encoding="utf-8") == "работа\n"
+    # Exactly ONE registration survives — the dead one is gone, not duplicated.
+    listing = _git(repo, "worktree", "list", "--porcelain")
+    assert listing.count(str(Path(revived).resolve())) == 1
 
 
 async def test_ensure_creates_the_workspace_on_a_fresh_branch_the_first_time(

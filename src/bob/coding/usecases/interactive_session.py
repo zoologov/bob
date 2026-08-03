@@ -220,7 +220,10 @@ class InteractiveSessionManager:
             updated_at=now,
             worktree_path=path,
         )
-        await self._go_live(session, runner, persistent=False)
+        if not await self._go_live(session, runner, persistent=False):
+            return CodingOutcome(
+                ok=False, message=session_voice.interactive_failed(), session=None
+            )
         return CodingOutcome(
             ok=True, message=session_voice.interactive_opened(), session=session
         )
@@ -278,7 +281,10 @@ class InteractiveSessionManager:
             updated_at=now,
             worktree_path=path,
         )
-        await self._go_live(session, runner, persistent=True)
+        if not await self._go_live(session, runner, persistent=True):
+            return CodingOutcome(
+                ok=False, message=session_voice.resume_failed(), session=None
+            )
         return CodingOutcome(
             ok=True, message=session_voice.workspace_opened(name), session=session
         )
@@ -298,13 +304,10 @@ class InteractiveSessionManager:
         if refusal is not None:
             return refusal
         branch = workspace_branch(name)
-        candidate = select_resumable(
-            await self._require_lookup().by_branch(branch), branch=branch
-        )
-        if candidate is None:
-            return CodingOutcome(
-                ok=False, message=session_voice.resume_nothing(name), session=None
-            )
+        found = await self._resumable_or_refusal(name, branch)
+        if isinstance(found, CodingOutcome):
+            return found
+        candidate = found
         self._pending = _PendingResume(
             name=name, sender=sender, requested_at=self._clock.now()
         )
@@ -370,10 +373,11 @@ class InteractiveSessionManager:
         if refusal is not None:
             return refusal
         branch = workspace_branch(name)
-        candidate = select_resumable(
-            await self._require_lookup().by_branch(branch), branch=branch
-        )
-        if candidate is None or candidate.claude_session_id is None:
+        found = await self._resumable_or_refusal(name, branch)
+        if isinstance(found, CodingOutcome):
+            return found
+        candidate = found
+        if candidate.claude_session_id is None:
             return CodingOutcome(
                 ok=False, message=session_voice.resume_nothing(name), session=None
             )
@@ -401,7 +405,10 @@ class InteractiveSessionManager:
             worktree_path=path,
             claude_session_id=candidate.claude_session_id,
         )
-        await self._go_live(session, runner, persistent=True)
+        if not await self._go_live(session, runner, persistent=True):
+            return CodingOutcome(
+                ok=False, message=session_voice.resume_failed(), session=None
+            )
         return CodingOutcome(
             ok=True, message=session_voice.resumed(name), session=session
         )
@@ -449,7 +456,7 @@ class InteractiveSessionManager:
         if claude_session_id is not None:
             ended = ended.with_claude_session_id(claude_session_id, at=now)
         session = ended.with_state(CodingSessionState.CANCELLED, at=now)
-        await self._store.save(session)
+        await self._persist_terminal(session)
         self._cancelled.discard(session.id)
         self._task = None
         return CodingOutcome(ok=True, message=farewell, session=session)
@@ -462,17 +469,32 @@ class InteractiveSessionManager:
 
     async def _go_live(
         self, session: CodingSession, runner: InteractiveRunner, *, persistent: bool
-    ) -> None:
+    ) -> bool:
         """Персистнуть сессию, сделать её живой и завести перекачку вывода в личку.
 
-        Общий финал :meth:`open` и :meth:`resume`; ``persistent`` фиксирует судьбу
-        рабочего дерева (эфемерное убирается на ``stop``, workspace — нет).
+        Общий финал :meth:`open`, :meth:`open_workspace` и :meth:`resume`; ``persistent``
+        фиксирует судьбу рабочего дерева (эфемерное убирается на ``stop``, workspace — нет).
+
+        🔴 ``False`` = сессия НЕ поднялась (BOB-087.D5c, N2). Персист жил вне защиты, а
+        ``claude`` к этому моменту УЖЕ ЖИВЁТ: сбой стора улетал наружу, ``_live``/``_task``
+        не выставлялись — процесс оставался СИРОТОЙ (``stop`` его не видит, дерево занято),
+        и owner не получал ничего. Правило шва одно: любой сбой после спавна сворачивает
+        спавн (раннер закрывается, эфемерное дерево убирается — накопленный workspace нет)
+        и возвращает вызывающему честный отказ вместо молчания.
         """
-        await self._store.save(session)
+        try:
+            await self._store.save(session)
+        except Exception:
+            logger.exception("coding: persisting the interactive session failed")
+            await self._close_runner(runner)  # 🔴 никаких неостановимых сирот
+            if not persistent:
+                await self._cleanup(session.worktree_path)
+            return False
         self._live = _LiveSession(
             session=session, runner=runner, persistent=persistent
         )
         self._task = asyncio.create_task(self._pump(session.id, runner))
+        return True
 
     def _resume_refusal(self, sender: int | None) -> CodingOutcome | None:
         """Общий гейт resume-пути: ``None``, если можно продолжать, иначе отказ.
@@ -492,6 +514,31 @@ class InteractiveSessionManager:
                 session=self._live.session,
             )
         return None
+
+    async def _resumable_or_refusal(
+        self, name: str, branch: str
+    ) -> CodingSession | CodingOutcome:
+        """Найти терминального кандидата на подъём — либо вернуть ГОТОВЫЙ отказ.
+
+        Общий вход :meth:`propose_resume` и :meth:`resume`. Два разных «нет», и путать их
+        нельзя: 🔴 сбой стора (SQLite locked) — это ``resume_failed`` (BOB-087.D5c, N2:
+        запрос жил вне защиты, исключение глохло выше по стеку, и owner получал обычный
+        разговорный ход вместо правды), а пустой результат — ``resume_nothing``. Врать про
+        «нечего поднимать», когда стор просто не ответил, Боб не станет.
+        """
+        try:
+            rows = await self._require_lookup().by_branch(branch)
+        except Exception:
+            logger.exception("coding: the resumable-session lookup failed")
+            return CodingOutcome(
+                ok=False, message=session_voice.resume_failed(), session=None
+            )
+        candidate = select_resumable(rows, branch=branch)
+        if candidate is None:
+            return CodingOutcome(
+                ok=False, message=session_voice.resume_nothing(name), session=None
+            )
+        return candidate
 
     def _require_lookup(self) -> ResumableSessionLookup:
         """Инъектированный поиск сессий (гейт ``_resume_refusal`` уже проверил наличие)."""
@@ -559,6 +606,22 @@ class InteractiveSessionManager:
         except Exception:  # a persistence fault must never break the live stream
             logger.exception(
                 "coding: persisting the claude session id failed for %s", session_id
+            )
+
+    async def _persist_terminal(self, session: CodingSession) -> None:
+        """Записать терминальную строку сессии (best-effort — прощание не теряем).
+
+        🔴 BOB-087.D5c (N2): запись жила вне защиты, и сбой стора съедал прощальную
+        реплику ``stop`` — процесс УЖЕ убит и дерево УЖЕ убрано, а owner про это не
+        слышал. Осиротевшую ``INTERACTIVE``-строку подберёт стартовый свип (D5b), так
+        что цена сбоя — устаревшая строка, а не немой Боб.
+        """
+        try:
+            await self._store.save(session)
+        except Exception:  # a persistence fault must never eat the farewell
+            logger.exception(
+                "coding: persisting the terminal interactive session failed for %s",
+                session.id,
             )
 
     async def _close_runner(self, runner: InteractiveRunner) -> None:

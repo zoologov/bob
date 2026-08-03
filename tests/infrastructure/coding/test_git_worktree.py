@@ -204,16 +204,70 @@ async def test_ensure_creates_the_worktree_when_not_yet_registered(
     path = await wt.ensure("bob/epic-x")
 
     assert Path(path).parent == tmp_path
-    # It lists first, checks whether the branch already exists, then adds it fresh.
-    assert runner.calls[0] == ["my-git", "worktree", "list", "--porcelain"]
-    assert runner.calls[1] == ["my-git", "branch", "--list", "bob/epic-x"]
-    assert runner.calls[2] == ["my-git", "worktree", "add", path, "-b", "bob/epic-x"]
+    # It prunes dead registrations, lists, checks the branch, then adds it fresh.
+    assert runner.calls[0] == ["my-git", "worktree", "prune"]
+    assert runner.calls[1] == ["my-git", "worktree", "list", "--porcelain"]
+    assert runner.calls[2] == ["my-git", "branch", "--list", "bob/epic-x"]
+    assert runner.calls[3] == ["my-git", "worktree", "add", path, "-b", "bob/epic-x"]
+
+
+async def test_ensure_prunes_dead_registrations_before_reading_the_listing(
+    tmp_path: Path,
+) -> None:
+    # 🔴 BOB-087.D5c (N1): git keeps printing a worktree AFTER its directory is gone, so a
+    # listing read without pruning first names trees that do not exist — and the reuse
+    # branch then hands claude a dead cwd. ``worktree prune`` is fixed-form, shell-free and
+    # touches nothing that is alive, so ``ensure`` self-heals instead of needing a shell.
+    (tmp_path / "epic-x").mkdir()
+    runner = _ListingCommand(listing="")
+    wt = GitWorktree(tmp_path, runner=runner, git_bin="my-git")
+
+    await wt.ensure("bob/epic-x")
+
+    assert runner.calls[0] == ["my-git", "worktree", "prune"]  # BEFORE the listing
+    assert runner.calls[1][2] == "list"
+
+
+async def test_ensure_ignores_a_registration_marked_prunable(tmp_path: Path) -> None:
+    # 🔴 The dead registration git prints for a deleted tree (BOB-087.D5c, N1): the path is
+    # on disk here, so the ONLY thing that may keep it out of the reuse set is the marker.
+    # Belt-and-braces behind ``prune``: what prune cannot clear (a LOCKED worktree whose
+    # directory vanished) must fail loudly on ``add``, never come back as a live path.
+    path = str(tmp_path / "epic-x")
+    (tmp_path / "epic-x").mkdir()
+    listing = (
+        f"worktree {path}\nHEAD abc123\nbranch refs/heads/bob/epic-x\n"
+        "prunable gitdir file points to non-existent location\n"
+    )
+    runner = _BranchAwareCommand(listing=listing, existing_branches=("bob/epic-x",))
+    wt = GitWorktree(tmp_path, runner=runner)
+
+    await wt.ensure("bob/epic-x")
+
+    assert runner.calls[-1][2] == "add"  # NOT reused: git is asked to re-create the tree
+
+
+async def test_ensure_does_not_reuse_a_registration_whose_directory_is_gone(
+    tmp_path: Path,
+) -> None:
+    # The same rule for a stanza git does NOT mark prunable (a locked worktree survives
+    # ``prune``): a registered path that is not a directory is not a live worktree, and
+    # returning it would spawn claude in a cwd that does not exist.
+    path = str(tmp_path / "epic-x")  # never created on disk
+    listing = f"worktree {path}\nHEAD abc123\nbranch refs/heads/bob/epic-x\nlocked\n"
+    runner = _BranchAwareCommand(listing=listing, existing_branches=("bob/epic-x",))
+    wt = GitWorktree(tmp_path, runner=runner)
+
+    await wt.ensure("bob/epic-x")
+
+    assert runner.calls[-1][2] == "add"
 
 
 async def test_ensure_reuses_an_already_registered_worktree_without_adding(
     tmp_path: Path,
 ) -> None:
     path = str(tmp_path / "epic-x")
+    (tmp_path / "epic-x").mkdir()  # a LIVE worktree is on disk, not just registered
     listing = f"worktree {path}\nHEAD abc123\nbranch refs/heads/bob/epic-x\n"
     runner = _ListingCommand(listing=listing)
     wt = GitWorktree(tmp_path, runner=runner)
@@ -224,7 +278,7 @@ async def test_ensure_reuses_an_already_registered_worktree_without_adding(
     # removed — so work accumulates across sessions.
     assert returned == path
     verbs = [argv[2] for argv in runner.calls]  # argv = [git, worktree, <verb>, ...]
-    assert verbs == ["list"]  # only listed; NO add, NO remove
+    assert verbs == ["prune", "list"]  # only pruned + listed; NO add, NO remove
 
 
 async def test_ensure_reuses_a_registered_worktree_with_a_RELATIVE_root(
@@ -235,6 +289,7 @@ async def test_ensure_reuses_a_registered_worktree_with_a_RELATIVE_root(
     # Comparing the two verbatim never matched, so the reuse branch was dead and every
     # later ensure re-ran ``worktree add -b`` → «fatal: a branch already exists».
     monkeypatch.chdir(tmp_path)
+    (tmp_path / ".worktrees" / "epic-x").mkdir(parents=True)
     absolute = str((tmp_path / ".worktrees" / "epic-x").resolve())
     listing = f"worktree {absolute}\nHEAD abc123\nbranch refs/heads/bob/epic-x\n"
     runner = _ListingCommand(listing=listing)
@@ -244,7 +299,7 @@ async def test_ensure_reuses_a_registered_worktree_with_a_RELATIVE_root(
 
     assert returned == absolute
     verbs = [argv[2] for argv in runner.calls]
-    assert verbs == ["list"]  # REUSED: no add (and never a remove)
+    assert verbs == ["prune", "list"]  # REUSED: no add (and never a remove)
 
 
 async def test_ensure_reuses_a_worktree_listed_through_a_symlinked_root(
@@ -262,7 +317,7 @@ async def test_ensure_reuses_a_worktree_listed_through_a_symlinked_root(
 
     await wt.ensure("bob/epic-x")
 
-    assert [argv[2] for argv in runner.calls] == ["list"]
+    assert [argv[2] for argv in runner.calls] == ["prune", "list"]
 
 
 async def test_ensure_checks_out_an_EXISTING_branch_instead_of_recreating_it(

@@ -9,8 +9,18 @@ price of a weaker sandbox: ``allow_bypass`` admits ``--permission-mode bypassPer
 into the runner's allowlist, ``extra_dirs`` adds ``--add-dir`` paths OUTSIDE the worktree.
 Both ship inert (OFF / empty), and this builder pair is the ONE place they are read: the
 default wiring must reject a bypass mode and pass no ``--add-dir`` at all — byte-identical
-to the shipped runners. Neither knob adds any push / merge path: main is still reached only
-through a PR.
+to the shipped runners.
+
+🔴 What the knobs really cost, stated honestly (BOB-087.D5b M4 / D5c N4 — this docstring
+kept claiming the opposite): Bob's OWN code adds no push / merge / PR path in the
+interactive seam, and that stays true. But ``bypassPermissions`` hands claude an
+unsupervised shell inside a LINKED worktree, and a linked worktree shares the main repo's
+``.git`` — the same refs, remotes and credentials — so ``git push --force origin
+HEAD:main``, ``git branch -f main …`` and ``gh pr merge`` are all expressible from there.
+With ``allow_bypass: true`` «main is untouchable» stops being a STRUCTURAL guarantee and
+becomes the owner's judgement; with it OFF — the default asserted here — every write claude
+makes still passes a per-action gate. Same wording as the ``coder`` section of
+``infrastructure/config/loader.py`` and ``docs/domains/coding/README.md``; do not soften it.
 """
 
 from __future__ import annotations

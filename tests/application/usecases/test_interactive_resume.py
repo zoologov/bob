@@ -148,6 +148,15 @@ class _FakeLookup:
 
 
 @dataclass
+class _ExplodingLookup(_FakeLookup):
+    """A lookup whose query raises — SQLite can be locked when the owner asks."""
+
+    async def by_branch(self, branch: str) -> tuple[CodingSession, ...]:
+        self.queried.append(branch)
+        raise RuntimeError("database is locked")
+
+
+@dataclass
 class _FakeStore:
     sessions: dict[str, CodingSession] = field(default_factory=dict)
 
@@ -160,6 +169,14 @@ class _FakeStore:
     async def active(self) -> tuple[CodingSession, ...]:
         ordered = sorted(self.sessions.values(), key=lambda s: (s.created_at, s.id))
         return tuple(s for s in ordered if not is_terminal(s.state))
+
+
+@dataclass
+class _SaveFailsStore(_FakeStore):
+    """A store whose ``save`` raises — claude is ALREADY alive by the time it runs."""
+
+    async def save(self, session: CodingSession) -> None:
+        raise RuntimeError("database is locked")
 
 
 @dataclass
@@ -230,12 +247,14 @@ def _build(
     worktree: _FakeWorktree | None = None,
     sessions: tuple[CodingSession, ...] = (),
     with_resume: bool = True,
+    store: _FakeStore | None = None,
+    lookup: _FakeLookup | None = None,
 ) -> _Rig:
     runner = runner or _FakeInteractiveRunner()
     worktree = worktree or _FakeWorktree()
-    store = _FakeStore()
+    store = store or _FakeStore()
     notifier = _FakeNotifier()
-    lookup = _FakeLookup(sessions=sessions)
+    lookup = lookup or _FakeLookup(sessions=sessions)
     clock = _MovableClock()
     manager = InteractiveSessionManager(
         runner_factory=lambda: runner,
@@ -753,6 +772,70 @@ async def test_a_failed_resume_spawn_keeps_the_workspace_and_leaves_no_session()
     assert rig.worktree.removed == []  # 🔴 a failed spawn must NOT delete the work
     assert rig.manager.active() is False
     assert rig.store.sessions == {}
+
+
+@pytest.mark.asyncio
+async def test_a_store_fault_after_the_resume_spawn_kills_the_process() -> None:
+    # 🔴 BOB-087.D5c (N2): персист сессии жил ВНЕ try, а к этому моменту claude УЖЕ ЖИВЁТ.
+    # Сбой стора улетал наружу, ``_live``/``_task`` не выставлялись → процесс осиротел
+    # (``stop`` его не видит, дерево занято), и owner про это не узнавал ВООБЩЕ. Правило
+    # то же, что у остальных точек шва: любой сбой ПОСЛЕ спавна закрывает процесс и
+    # отвечает честно.
+    rig = _build(store=_SaveFailsStore(), sessions=(_stopped_session(),))
+    await rig.manager.propose_resume(_WORKSPACE, _OWNER_ID)
+
+    outcome = await _confirm(rig)
+
+    assert outcome is not None  # ход поглощён, «да» не уходит обычным chat-путём
+    assert outcome.ok is False
+    assert outcome.message == session_voice.resume_failed()
+    assert rig.manager.active() is False
+    assert rig.runner.close_calls == 1  # 🔴 спавн свёрнут — сироты нет
+    assert rig.worktree.removed == []  # 🔴 накопленное дерево не трогаем и здесь
+
+
+@pytest.mark.asyncio
+async def test_a_store_fault_after_opening_a_workspace_kills_the_process() -> None:
+    rig = _build(store=_SaveFailsStore())
+
+    outcome = await rig.manager.open_workspace(_WORKSPACE, "эпик", _OWNER_ID)
+
+    assert outcome.ok is False
+    assert outcome.message == session_voice.resume_failed()
+    assert rig.manager.active() is False
+    assert rig.runner.close_calls == 1
+    assert rig.worktree.removed == []
+
+
+@pytest.mark.asyncio
+async def test_a_lookup_fault_answers_honestly_instead_of_going_silent() -> None:
+    # 🔴 BOB-087.D5c (N2): поиск кандидата жил ВНЕ try — падение стора глохло выше по
+    # стеку, и Боб отвечал разговорным ходом вместо правды о срыве.
+    rig = _build(lookup=_ExplodingLookup())
+
+    outcome = await rig.manager.propose_resume(_WORKSPACE, _OWNER_ID)
+
+    assert outcome.ok is False
+    assert outcome.message == session_voice.resume_failed()
+    # 🔴 Отказ ≠ «нечего поднимать»: врать про пустой стор, когда он просто не ответил,
+    # нельзя.
+    assert outcome.message != session_voice.resume_nothing(_WORKSPACE)
+    assert rig.worktree.ensured == []
+    assert rig.runner.opened == []
+    # И висящего вопроса не остаётся — «да» потом ничего не поднимет.
+    assert await _confirm(rig) is None
+
+
+@pytest.mark.asyncio
+async def test_a_store_fault_on_the_direct_resume_lookup_is_an_honest_refusal() -> None:
+    rig = _build(lookup=_ExplodingLookup())
+
+    outcome = await rig.manager.resume(_WORKSPACE, _OWNER_ID)
+
+    assert outcome.ok is False
+    assert outcome.message == session_voice.resume_failed()
+    assert rig.worktree.ensured == []
+    assert rig.runner.opened == []
 
 
 # --- 🔴 never a PR / merge / push ---------------------------------------------

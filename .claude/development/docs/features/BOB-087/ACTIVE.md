@@ -211,3 +211,41 @@
   (туда просится `coding.argv_policy` в список mutation-целей), `config/bob.example.yaml` (в секции
   `coder` закомментированы `dev_dm`/`interactive`, но новых ключей `resume` / `allow_bypass` /
   `extra_dirs` там нет — стоит дописать вместе с их предохранителями).
+- 2026-08-03: Срез D dev bob-abk.26 (D5c: фиксы ПОВТОРНОГО security-прохода — N1 major + N2 + N4 +
+  довески вне `docs/`) — DONE (in_progress, ждёт координатора; не коммичу/не закрываю).
+  **N1 (блокер) — prunable-регистрация считалась живым деревом.** Диагноз подтверждён на настоящем git:
+  после `rm -rf .worktrees` (или `git clean -xdff` — плоский `-xdf` печатает «Skipping repository» и
+  дерево ЩАДИТ) porcelain продолжает печатать станзу с маркером `prunable`, а `worktree add` ещё и
+  отказывает: «fatal: <branch> is already used by worktree at <мёртвый путь>». Значит фильтрации парсера
+  НЕ достаточно. Фикс в `GitWorktree.ensure`: фиксированный shell-free `git worktree prune` ПЕРЕД
+  листингом (идемпотентно; трогает только бухгалтерию исчезнувших деревьев — ни живое дерево, ни ветку,
+  ни main) + парсер остаётся ЧИСТЫМ, но режет станзы с `prunable`, + реюз требует `path.is_dir()`
+  (locked-дерево с пропавшим каталогом prune не чистит → падаем громко на `add`, а не отдаём мёртвый
+  cwd). `create()` НЕ тронут — гейтед-путь байт-в-байт.
+  **N2 — осиротевший спавн при сбое стора.** `_go_live` теперь возвращает `bool`: сбой персиста ПОСЛЕ
+  спавна закрывает раннер (сироты нет), убирает ЭФЕМЕРНОЕ дерево (накопленный workspace — нет) и отдаёт
+  вызывающему честный отказ (`interactive_failed` / `resume_failed`) вместо молчания. Поиск кандидата
+  вынесен в `_resumable_or_refusal` (общий для `propose_resume` и `resume`): сбой стора = `resume_failed`,
+  пустой результат = `resume_nothing` — врать про «нечего поднимать», когда SQLite просто заблокирован,
+  Боб не станет. Терминальная запись `stop` — через `_persist_terminal` (best-effort: прощальная реплика
+  не теряется, осиротевшую строку подберёт стартовый свип D5b).
+  **N4** — докстринг `tests/runtime/wiring/test_coding_sandbox_relaxations.py` переписан по честной
+  формулировке M4 (linked worktree делит `.git`/refs/remotes/credentials; при `allow_bypass: true`
+  INV-2 — суждение owner'а, не структура).
+  **Довески (переданы tw-волной):** `config/bob.example.yaml` — добавлены закомментированные
+  `worktree_root` / `allow_bypass` / `extra_dirs` / `resume` с короткими честными комментариями и
+  дефолтами OFF/пусто (+ ссылка на оговорку про `allow_bypass` в абзаце `interactive`);
+  `.claude/dev-docs/MUTATION.md` — таблица «ядра под гейтом» (`coding.argv_policy`,
+  `coding.sandbox_policy`, `coding.resume_policy`, `coding.naming`, `coding.interactive_intent`,
+  `social.sulk`) + почему мутируется доменный модуль, а не адаптер.
+  Тесты (+10): real-git БЕЗ явного prune (из прежнего теста строка `worktree prune` УБРАНА) + новый
+  real-git `git clean -xdff` (закоммиченная работа возвращается, регистрация ровно одна); 4 юнита на
+  prune-перед-листингом / prunable-станзу / зарегистрированный-но-отсутствующий каталог / реюз живого;
+  4 юнита на N2 (open · open_workspace · resume · stop) + 2 на сбой lookup.
+  Гейты: `uv run pytest` 5375 passed (было 5365) · ruff clean · mypy --strict src 329 files clean ·
+  mypy tests 490 files clean · `beadloom lint --strict` 0 violations / 185 rules · `beadloom reindex` ok ·
+  узел `coding` 213/220 (потолок НЕ поднимал). Mutation: argv_policy 34/34 · interactive_intent 50/50 ·
+  resume_policy 20/20 · sandbox_policy 21/21 (100%), naming 25/29 = 86.2% — те же 4 эквивалентных
+  выживших (`_slugify` 11/15/23/26), просадки нет.
+  Sync-check: `coding` снова 2 stale (`git_worktree.py`, `interactive_session.py`, hash_changed) — код
+  среза изменился ПОСЛЕ tw-волны D6; `docs/` не трогал по границам беады, это вход следующей tw/re-baseline.

@@ -505,6 +505,40 @@ async def test_open_worktree_failure_answers_honestly_and_claims_no_cleanup() ->
     assert rig.runner.opened == []
 
 
+@dataclass
+class _SaveFailsStore(_FakeStore):
+    """A store whose ``save`` raises — the process is ALREADY spawned by then."""
+
+    failures: int = 1  # fail the first N saves, then behave (so ``stop`` can persist)
+
+    async def save(self, session: CodingSession) -> None:
+        if self.failures > 0:
+            self.failures -= 1
+            raise RuntimeError("database is locked")
+        await super().save(session)
+
+
+@pytest.mark.asyncio
+async def test_open_store_failure_kills_the_spawned_process_and_answers() -> None:
+    # 🔴 BOB-087.D5c (N2): the persist ran OUTSIDE the try, so a store fault escaped
+    # ``open`` AFTER claude was already alive — and since ``_live``/``_task`` were never
+    # set, that process was ORPHANED (``stop`` could not see it, the worktree stayed
+    # busy) while the owner heard nothing at all. Same rule as everywhere else in this
+    # seam: any fault after the spawn closes the process AND answers honestly.
+    runner = _FakeInteractiveRunner()
+    rig = _build(runner=runner, store=_SaveFailsStore())
+
+    outcome = await rig.manager.open("задача", _OWNER_ID)
+
+    assert outcome.ok is False
+    assert outcome.message == session_voice.interactive_failed()
+    assert outcome.session is None
+    assert rig.manager.active() is False
+    assert runner.close_calls == 1  # 🔴 the spawned process is killed, never orphaned
+    assert rig.worktree.removed == ["/wt/zadacha"]  # the ephemeral tree is torn down too
+    assert rig.store.sessions == {}
+
+
 # --- stop is best-effort: a close / cleanup fault never masks the outcome -----
 
 
@@ -559,6 +593,27 @@ async def test_stop_survives_a_worktree_cleanup_fault_and_stays_terminal() -> No
     assert worktree.removed == ["/wt/zadacha"]  # remove was attempted
     saved = rig.store.sessions[opened.session.id]
     assert saved.state is CodingSessionState.CANCELLED
+
+
+@pytest.mark.asyncio
+async def test_stop_survives_a_store_fault_and_still_says_goodbye() -> None:
+    # 🔴 BOB-087.D5c (N2): the terminal ``save`` also lived outside a try, so a store
+    # fault swallowed the farewell — the process WAS killed and the tree WAS removed, and
+    # the owner heard nothing about it. The row stays stale, but the D5b startup sweep
+    # recovers it; going mute is the one outcome we refuse.
+    store = _SaveFailsStore(failures=0)  # the opening save works…
+    rig = _build(store=store)
+    opened = await rig.manager.open("задача", _OWNER_ID)
+    assert opened.session is not None
+    store.failures = 1  # …only the TERMINAL save fails
+
+    outcome = await rig.manager.stop(_OWNER_ID)
+
+    assert outcome.ok is True
+    assert outcome.message == session_voice.stopped()
+    assert rig.manager.active() is False
+    assert rig.runner.close_calls == 1
+    assert rig.worktree.removed == ["/wt/zadacha"]
 
 
 # --- output-stream fault is isolated (never crashes the manager) -------------

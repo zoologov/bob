@@ -67,6 +67,21 @@ scripts/mutation.sh                        # вся чистая доменна�
 Аргумент — dotted-суффикс модуля; скрипт оборачивает его в glob и передаёт mutmut как
 фильтр имён мутантов, так что реально прогоняются только мутанты этого модуля.
 
+### Ядра, которые уже стоят под гейтом (гонять при касании)
+
+| Цель | Что за ядро |
+|------|-------------|
+| `coding.argv_policy` | `build_interactive_argv` / `extract_session_id` — чем параметризуется живой claude (BOB-087.D1/D4b) |
+| `coding.sandbox_policy` | `allowed_modes` / `is_allowed_mode` / `extra_dir_argv` / `is_safe_argv_value` — owner-ослабления изоляции (BOB-087.D2) |
+| `coding.resume_policy` | `select_resumable` / `is_confirmation_fresh` — что и когда можно поднять (BOB-087.D3) |
+| `coding.naming` | `worktree_branch` / `workspace_branch` — имя ветки из фразы owner'а (транслит) |
+| `coding.interactive_intent` | распознавание `/code -i` / `/workspace` / `/resume` / `stop` |
+| `social.sulk` | эталонный baseline Среза 0 (см. ниже) |
+
+🔴 Мутируется ДОМЕННЫЙ модуль, не адаптер: конвенция mutmut исключает `*/adapters/*`,
+поэтому argv живого раннера и вынесен в `coding/argv_policy.py` — иначе гейт был бы
+фиктивным (мутанты внутри адаптера просто не создаются).
+
 ### Порог и честность
 
 - **Порог: mutation-score ≥ 85%** на затронутом domain-модуле (или «0 выживших в
