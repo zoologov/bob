@@ -16,6 +16,8 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
+from bob.kernel import episode_types as kernel_episode_types
+from bob.memory import work_journal
 from bob.memory.work_journal import (
     WORK_EVENT_TYPE,
     WorkEpisode,
@@ -28,6 +30,17 @@ _NOW = datetime(2026, 8, 2, 12, 0, tzinfo=UTC)
 
 def test_work_event_type_is_distinct_from_self_action() -> None:
     assert WORK_EVENT_TYPE == "work"
+
+
+def test_work_event_type_is_the_shared_kernel_term_re_exported() -> None:
+    """Memory re-exports the KERNEL term — one shared word, no second copy (bob-abk.32).
+
+    The term is shared with ``conversation``/``personality``, so it lives in the kernel;
+    ``bob.memory.work_journal`` keeps it on its public surface for existing importers.
+    Should the two ever drift apart, this equality is what breaks.
+    """
+    assert work_journal.WORK_EVENT_TYPE == kernel_episode_types.WORK_EVENT_TYPE
+    assert "WORK_EVENT_TYPE" in work_journal.__all__
 
 
 def test_episode_maps_to_work_event_first_person_content() -> None:

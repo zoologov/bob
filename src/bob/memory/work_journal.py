@@ -16,6 +16,12 @@
 ``self_action``) остаётся байт-в-байт, а register-aware recall Среза C получает чистый
 шов по домену ``work``.
 
+Сам термин ``work`` (:data:`~bob.kernel.episode_types.WORK_EVENT_TYPE`) — ОБЩИЙ словарь
+трёх контекстов (memory пишет, conversation фильтрует нить, personality озвучивает), поэтому
+он живёт в ядре (``kernel``) и ре-экспортируется отсюда ради совместимости импортов
+(bob-abk.32: хранение термина в ``memory`` заставляло ``conversation`` импортировать соседний
+домен и замыкало цикл ``conversation → memory → runtime-app → conversation``).
+
 Провенанс (INV-3 чистота, разделение акторства): эпизод помечается тегами ``work``/``dev``
 и маркером актора ``actor:bob`` — это ОПЕРАТОРСКАЯ вспоминка Боба; где сделал GUPPI/тест,
 атрибуция живёт В контенте от первого лица («я попросил GUPPI…, GUPPI сделал…»).
@@ -26,6 +32,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from bob.kernel.episode_types import WORK_EVENT_TYPE
 from bob.memory.entities import EpisodicEvent
 
 if TYPE_CHECKING:
@@ -36,11 +43,6 @@ __all__ = [
     "WorkEpisode",
     "work_episode_event",
 ]
-
-# The episodic ``event_type`` for a distilled work episode — DISTINCT from ``self_action``
-# so the existing self-action voice/recall stays byte-identical and slice C's register-aware
-# recall keys on this domain marker.
-WORK_EVENT_TYPE = "work"
 
 # Domain tags (recall labels) + a provenance marker: the deed is Bob's OWN operator
 # recollection (``actor:bob``); GUPPI/tool/test attribution lives inside the content.

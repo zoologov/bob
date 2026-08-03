@@ -17,9 +17,11 @@
 
 ## Где живёт чистое ядро
 
-### Shared kernel — `src/bob/kernel/ports.py`
+### Shared kernel — `src/bob/kernel/`
 
-Инфра-нейтральные контракты, которые нужны нескольким модулям сразу:
+Инфра-нейтральные контракты и общий словарь, которые нужны нескольким модулям сразу.
+
+#### Контракты — `ports.py`
 
 - `LLMProvider` — `async complete(messages, *, stream)` → `str | AsyncIterator[str]`.
 - `LLMMessage`, `JsonValue` — общие value-типы обмена с моделью. `LLMMessage`
@@ -32,6 +34,17 @@
 - `Clock` — `now()` → `datetime` (инъекция времени; запрет `datetime.now()` в домене).
 - `EventBus` — `publish(event)`, `subscribe(event_name, handler)`; `EventHandler`.
 - `DomainEvent` — маркер с `name` для маршрутизации на шине.
+
+#### Общий словарь — `episode_types.py`
+
+Термины эпизодического лога (`event_type`), о которых договорились НЕСКОЛЬКО контекстов:
+
+- `WORK_EVENT_TYPE` (`"work"`) — дистиллированная операторская вспоминка dev-сессии
+  (BOB-087.B1). `memory` её пишет (`work_episode_event`) и ключует на ней
+  register-aware recall, `conversation` вычищает её из проигранной нити (C8),
+  `personality` озвучивает её провенанс. Слово общее → живёт в ядре;
+  `bob.memory.work_journal` ре-экспортирует его ради совместимости импортов.
+  Значения ПЕРСИСТЯТСЯ в эпизодическом логе — менять их значит переписывать историю.
 
 kernel — чистый inward-safe leaf: только stdlib/typing, любой модуль может его
 импортить, kernel не импортит модули (правила `kernel-no-*` в

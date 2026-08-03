@@ -24,7 +24,7 @@ from typing import TYPE_CHECKING
 
 from bob.conversation.thread import _thread_without_work_journal
 from bob.conversation.usecases.recall_assembler import RecallAssembler
-from bob.memory.work_journal import WORK_EVENT_TYPE
+from bob.kernel.episode_types import WORK_EVENT_TYPE
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence

@@ -36,7 +36,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING
 
 from bob.conversation.conversation import strip_recurring_closer
-from bob.memory.work_journal import WORK_EVENT_TYPE
+from bob.kernel.episode_types import WORK_EVENT_TYPE
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -56,7 +56,7 @@ def _thread_without_work_journal(
     """Drop Bob's distilled ``work`` journal entries from the replayed thread (BOB-087.C8).
 
     The recent thread is CONVERSATION — what was actually said in the room. A ``work``
-    episode (:data:`~bob.memory.work_journal.WORK_EVENT_TYPE`) is not a turn anybody spoke:
+    episode (:data:`~bob.kernel.episode_types.WORK_EVENT_TYPE`) is not a turn anybody spoke:
     it is the first-person operator journal Bob writes to himself when a coding session
     ends, sharing the same episodic log. Replayed as history it would enter EVERY chat's
     compose prompt with no relevance gate, no register and no provenance framing — the
