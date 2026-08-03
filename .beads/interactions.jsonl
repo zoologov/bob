@@ -1035,3 +1035,4 @@
 {"id":"int-13f2bd2f","kind":"field_change","created_at":"2026-08-02T23:30:04.917514Z","actor":"v.zoologov","issue_id":"bob-abk.23","extra":{"field":"status","new_value":"in_progress","old_value":"open"}}
 {"id":"int-8ccf6664","kind":"field_change","created_at":"2026-08-02T23:47:51.05718Z","actor":"v.zoologov","issue_id":"bob-abk.26","extra":{"field":"status","new_value":"in_progress","old_value":"open"}}
 {"id":"int-b3551125","kind":"field_change","created_at":"2026-08-03T00:11:45.143277Z","actor":"v.zoologov","issue_id":"bob-abk.26","extra":{"field":"status","new_value":"closed","old_value":"in_progress","reason":"Closed"}}
+{"id":"int-b0144aa3","kind":"field_change","created_at":"2026-08-03T00:33:04.428275Z","actor":"v.zoologov","issue_id":"bob-abk.22","extra":{"field":"status","new_value":"closed","old_value":"in_progress","reason":"Closed"}}
