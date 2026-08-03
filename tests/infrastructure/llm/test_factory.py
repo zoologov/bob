@@ -9,6 +9,7 @@ from __future__ import annotations
 import pytest
 
 from bob.infrastructure.llm.factory import build_tier_providers
+from bob.infrastructure.llm.fallback_provider import FallbackLLMProvider
 from bob.infrastructure.llm.openai_compat import OpenAICompatProvider
 from bob.kernel.ports import LLMProvider
 
@@ -223,3 +224,161 @@ def test_temperature_parses_from_env_string() -> None:
     tier1 = providers[1]
     assert isinstance(tier1, OpenAICompatProvider)
     assert tier1._temperature == 0.8
+
+
+# --- Tier-0 local fallback (BOB-087.E1) -------------------------------------------
+
+
+def _fallback_llm() -> dict[str, object]:
+    return {
+        **_full_llm(),
+        "timeout_seconds": 90,
+        "disable_thinking": True,
+        "tier0_temperature": 0.5,
+        "tier0_fallback": "ollama",
+        "tier0_fallback_base_url": "http://localhost:11434/v1",
+        "tier0_fallback_model": "qwen2.5:0.5b",
+    }
+
+
+def test_tier0_fallback_off_builds_exactly_todays_provider() -> None:
+    # The OFF default must be byte-identical to the pre-BOB-087.E1 wiring: not merely
+    # "an OpenAICompatProvider", but one whose every constructed attribute matches a
+    # directly-built provider — no wrapper, no drifted knob.
+    llm = {**_full_llm(), "timeout_seconds": 90, "disable_thinking": True}
+
+    # Act
+    providers = build_tier_providers({"llm": {**llm, "tier0_fallback": ""}})
+
+    # Assert
+    tier0 = providers[0]
+    assert type(tier0) is OpenAICompatProvider
+    assert tier0.__dict__ == _expected_tier0(llm).__dict__
+
+
+def test_tier0_fallback_absent_builds_exactly_todays_provider() -> None:
+    # Same proof for a config that never mentions the fallback key at all.
+    llm = _full_llm()
+
+    # Act
+    providers = build_tier_providers({"llm": llm})
+
+    # Assert
+    tier0 = providers[0]
+    assert type(tier0) is OpenAICompatProvider
+    assert tier0.__dict__ == _expected_tier0(llm).__dict__
+
+
+def _expected_tier0(llm: dict[str, object]) -> OpenAICompatProvider:
+    """The Tier-0 provider today's (pre-fallback) factory code builds."""
+    timeout = llm.get("timeout_seconds", 180)
+    assert isinstance(timeout, (int, float))
+    return OpenAICompatProvider(
+        base_url=str(llm["tier0_base_url"]),
+        model=str(llm["tier0_model"]),
+        api_key=None,
+        timeout_seconds=float(timeout),
+        disable_thinking=bool(llm.get("disable_thinking", False)),
+        temperature=None,
+    )
+
+
+def test_tier0_fallback_on_wraps_tier0_in_the_composite() -> None:
+    # Act
+    providers = build_tier_providers({"llm": _fallback_llm()})
+
+    # Assert: Tier 0 is now the composite, still an LLMProvider.
+    tier0 = providers[0]
+    assert isinstance(tier0, FallbackLLMProvider)
+    assert isinstance(tier0, LLMProvider)
+
+
+def test_tier0_fallback_on_keeps_the_cloud_provider_as_primary() -> None:
+    # The wrapped primary must be exactly the provider the OFF path would build.
+    llm = _fallback_llm()
+
+    # Act
+    tier0 = build_tier_providers({"llm": llm})[0]
+
+    # Assert
+    assert isinstance(tier0, FallbackLLMProvider)
+    primary = tier0._primary
+    assert isinstance(primary, OpenAICompatProvider)
+    assert primary._base_url == "http://localhost:8080/v1"
+    assert primary._model == "local"
+    assert primary._temperature == 0.5
+
+
+def test_local_fallback_points_at_the_configured_ollama_endpoint() -> None:
+    # Act
+    tier0 = build_tier_providers({"llm": _fallback_llm()})[0]
+
+    # Assert: keyless local endpoint, its own model.
+    assert isinstance(tier0, FallbackLLMProvider)
+    local = tier0._fallback
+    assert isinstance(local, OpenAICompatProvider)
+    assert local._base_url == "http://localhost:11434/v1"
+    assert local._model == "qwen2.5:0.5b"
+    assert local._api_key is None
+
+
+def test_local_fallback_inherits_the_tier0_call_knobs() -> None:
+    # The understudy must answer like Tier 0: same timeout, thinking policy and
+    # sampling temperature — otherwise the degraded mode behaves like a third tier.
+    tier0 = build_tier_providers({"llm": _fallback_llm()})[0]
+
+    # Assert
+    assert isinstance(tier0, FallbackLLMProvider)
+    local = tier0._fallback
+    assert isinstance(local, OpenAICompatProvider)
+    assert local._timeout.total == 90.0
+    assert local._disable_thinking is True
+    assert local._temperature == 0.5
+
+
+def test_tier0_fallback_leaves_tier1_untouched() -> None:
+    # Act
+    providers = build_tier_providers({"llm": _fallback_llm()})
+
+    # Assert: Tier 1 is the plain cloud provider — the fallback is a Tier-0 affair.
+    tier1 = providers[1]
+    assert type(tier1) is OpenAICompatProvider
+    assert tier1._base_url == "https://api.qwen.example/v1"
+
+
+@pytest.mark.parametrize("value", ["Ollama", " ollama ", "OLLAMA"])
+def test_tier0_fallback_value_is_case_and_space_tolerant(value: str) -> None:
+    # Env overlays arrive as raw strings; a stray case/space must not silently
+    # disable the emergency model.
+    tier0 = build_tier_providers({"llm": {**_fallback_llm(), "tier0_fallback": value}})[0]
+
+    # Assert
+    assert isinstance(tier0, FallbackLLMProvider)
+
+
+def test_unknown_fallback_kind_raises() -> None:
+    # A typo must fail loudly at composition, not silently leave Tier 0 unprotected.
+    config = {"llm": {**_fallback_llm(), "tier0_fallback": "llamacpp"}}
+
+    # Act / Assert
+    with pytest.raises(KeyError, match="tier0_fallback"):
+        build_tier_providers(config)
+
+
+def test_fallback_on_without_endpoint_raises() -> None:
+    # Enabled but unconfigured is a configuration error (mirrors the reranker rule).
+    llm = {**_fallback_llm()}
+    del llm["tier0_fallback_base_url"]
+
+    # Act / Assert
+    with pytest.raises(KeyError, match="tier0_fallback_base_url"):
+        build_tier_providers({"llm": llm})
+
+
+def test_fallback_on_without_model_raises() -> None:
+    llm = {**_fallback_llm()}
+    del llm["tier0_fallback_model"]
+
+    # Act / Assert
+    with pytest.raises(KeyError, match="tier0_fallback_model"):
+        build_tier_providers({"llm": llm})

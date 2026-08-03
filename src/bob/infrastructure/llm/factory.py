@@ -15,6 +15,12 @@ Reads the ``llm`` section of the merged config (defaults -> YAML -> env, see
 * Tier 1 — the Qwen API (bearer key from ``llm.tier1_api_key``, sourced from
   config/env; never inlined).
 
+When ``llm.tier0_fallback`` names a local backend (BOB-087.E1), Tier 0 is handed
+over wrapped in a :class:`~bob.infrastructure.llm.fallback_provider.FallbackLLMProvider`
+so a network outage of a *cloud* Tier 0 degrades to a local Ollama model instead of
+taking the classifiers/monologue/gates down. Empty (the default) → Tier 0 is the
+plain provider, exactly as before.
+
 The result maps tier index -> provider, ready for the
 :class:`bob.application.router.LLMRouter`.
 """
@@ -25,6 +31,7 @@ from collections.abc import Mapping
 from typing import TYPE_CHECKING
 
 from bob.capabilities.adapters.web_search_qwen import QwenWebSearchProvider
+from bob.infrastructure.llm.fallback_provider import FallbackLLMProvider
 from bob.infrastructure.llm.openai_compat import OpenAICompatProvider
 
 if TYPE_CHECKING:
@@ -40,6 +47,12 @@ _DEFAULT_TIMEOUT_SECONDS = 180.0
 
 # Default Qwen-native search model (verify .1: Responses API returns sources on it).
 _DEFAULT_SEARCH_MODEL = "qwen3.7-plus"
+
+# Local backends accepted by ``llm.tier0_fallback`` (BOB-087.E1). Ollama speaks the
+# OpenAI-compatible chat API, so the emergency provider is the same adapter pointed at
+# ``localhost``; an unrecognised value is a typo and must fail loudly rather than leave
+# Tier 0 quietly unprotected.
+_FALLBACK_BACKENDS = frozenset({"ollama"})
 
 
 def build_tier_providers(config: Mapping[str, object]) -> dict[int, LLMProvider]:
@@ -67,7 +80,48 @@ def build_tier_providers(config: Mapping[str, object]) -> dict[int, LLMProvider]
         disable_thinking=disable_thinking,
         temperature=_optional_float_or_none(llm, "tier1_temperature"),
     )
-    return {_TIER_LOCAL: tier0, _TIER_API: tier1}
+    local_fallback = _build_tier0_fallback(
+        llm,
+        timeout_seconds=timeout_seconds,
+        disable_thinking=disable_thinking,
+    )
+    if local_fallback is None:
+        return {_TIER_LOCAL: tier0, _TIER_API: tier1}
+    return {
+        _TIER_LOCAL: FallbackLLMProvider(primary=tier0, fallback=local_fallback),
+        _TIER_API: tier1,
+    }
+
+
+def _build_tier0_fallback(
+    llm: Mapping[str, object],
+    *,
+    timeout_seconds: float,
+    disable_thinking: bool,
+) -> OpenAICompatProvider | None:
+    """Build the local emergency Tier-0 provider, or ``None`` when it is off.
+
+    Off (``llm.tier0_fallback`` empty/absent — the default) is the supported normal
+    state, not an error: Tier 0 is then the plain cloud/local provider it has always
+    been. When on, the understudy inherits Tier 0's call knobs (timeout, thinking
+    policy, sampling temperature) so the degraded mode answers like Tier 0 rather
+    than like a third, differently-tuned tier, and stays keyless — it is local.
+    """
+    backend = (_optional_str(llm, "tier0_fallback") or "").strip().lower()
+    if not backend:
+        return None
+    if backend not in _FALLBACK_BACKENDS:
+        raise KeyError(
+            f"llm.tier0_fallback must be one of {sorted(_FALLBACK_BACKENDS)} (got {backend!r})"
+        )
+    return OpenAICompatProvider(
+        base_url=_require_str(llm, "tier0_fallback_base_url"),
+        model=_require_str(llm, "tier0_fallback_model"),
+        api_key=None,
+        timeout_seconds=timeout_seconds,
+        disable_thinking=disable_thinking,
+        temperature=_optional_float_or_none(llm, "tier0_temperature"),
+    )
 
 
 def build_web_search_provider(config: Mapping[str, object]) -> WebSearchProvider:

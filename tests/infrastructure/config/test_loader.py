@@ -203,6 +203,43 @@ def test_llm_temperature_overridable_via_env() -> None:
     assert llm["tier1_temperature"] == "0.9"
 
 
+def test_tier0_fallback_is_off_by_default() -> None:
+    # BOB-087.E1: the local emergency model is an OPT-IN degraded mode — a fresh
+    # config must build today's Tier 0 with no understudy attached.
+    loader = ConfigLoader(yaml_path=None, env={})
+
+    # Act
+    llm = loader.load()["llm"]
+
+    # Assert
+    assert llm["tier0_fallback"] == ""
+
+
+def test_tier0_fallback_endpoint_defaults_to_local_ollama() -> None:
+    # The endpoint/model are pre-filled so turning the fallback on is a one-key
+    # change; ``/v1`` is Ollama's OpenAI-compatible chat surface (unlike the bare
+    # ``embeddings``/``reranker`` base_urls, whose adapters append their own paths).
+    loader = ConfigLoader(yaml_path=None, env={})
+
+    # Act
+    llm = loader.load()["llm"]
+
+    # Assert
+    assert llm["tier0_fallback_base_url"] == "http://localhost:11434/v1"
+    assert llm["tier0_fallback_model"] == "qwen2.5:0.5b"
+
+
+def test_tier0_fallback_turned_on_via_env() -> None:
+    # Arrange: the owner enables the emergency model without touching YAML.
+    loader = ConfigLoader(yaml_path=None, env={"BOB_LLM__TIER0_FALLBACK": "ollama"})
+
+    # Act
+    llm = loader.load()["llm"]
+
+    # Assert
+    assert llm["tier0_fallback"] == "ollama"
+
+
 def test_embeddings_defaults_are_local_bge_m3_1024() -> None:
     # Arrange
     loader = ConfigLoader(yaml_path=None, env={})
