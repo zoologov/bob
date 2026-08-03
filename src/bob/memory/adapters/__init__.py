@@ -20,6 +20,7 @@ seams (:class:`OllamaEmbedder` + :func:`build_embedder`; :class:`OllamaReranker`
 
 from __future__ import annotations
 
+from bob.memory.adapters.casual_floor_recall import CasualFloorRecall
 from bob.memory.adapters.embedder_factory import build_embedder
 from bob.memory.adapters.fts_recall import Fts5MemoryRecall
 from bob.memory.adapters.hybrid_recall import HybridMemoryRecall
@@ -34,6 +35,7 @@ from bob.memory.adapters.sqlite_memory_repo import SqliteMemoryRepo
 from bob.memory.adapters.vector_store import MemoryVectorStore
 
 __all__ = [
+    "CasualFloorRecall",
     "Fts5MemoryRecall",
     "HybridMemoryRecall",
     "MemoryBackedSelfActionRecorder",

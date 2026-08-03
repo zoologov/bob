@@ -33,6 +33,7 @@ from typing import TYPE_CHECKING
 
 from bob.infrastructure.persistence.connection import SqliteConnection
 from bob.memory.adapters.vector_store import MemoryVectorStore
+from bob.memory.work_journal import WORK_EVENT_TYPE
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -381,7 +382,7 @@ class SqliteMemoryRepo:
     async def select_consolidatable_episodes(
         self, *, older_than: datetime, limit: int
     ) -> Sequence[Mapping[str, object]]:
-        """Return up to ``limit`` OLD, un-consolidated, non-digest episodes (oldest first).
+        """Return up to ``limit`` OLD, un-consolidated, ordinary episodes (oldest first).
 
         The eligibility predicate is the consolidation guardrail: only episodes
         older than ``older_than`` that are not yet folded into a digest
@@ -389,15 +390,21 @@ class SqliteMemoryRepo:
         (``event_type != 'digest'``) — so a digest is never re-digested and a
         re-run with nothing eligible is a clean no-op. Oldest first so the digest
         provenance reads as a contiguous time window.
+
+        🔴 Bob's distilled ``work`` journal is excluded too (BOB-087.C8): it is ALREADY a
+        distillation, and folding it into a digest would relabel it ``digest`` — the work
+        provenance the register-aware recall keys on would be laundered away, and the muted
+        dev memory would resurface in casual recall forever after. While the work journal is
+        off no such row exists, so eligibility is unchanged.
         """
         if limit <= 0:
             return []
         async with self._db().execute(
             "SELECT id, ts, event_type, content, mood_snapshot, tags "
             "FROM episodic_log "
-            "WHERE consolidated = 0 AND event_type != 'digest' AND ts < ? "
+            "WHERE consolidated = 0 AND event_type NOT IN ('digest', ?) AND ts < ? "
             "ORDER BY ts ASC, id ASC LIMIT ?",
-            (older_than.isoformat(), limit),
+            (WORK_EVENT_TYPE, older_than.isoformat(), limit),
         ) as cursor:
             rows = await cursor.fetchall()
         return [dict(row) for row in rows]

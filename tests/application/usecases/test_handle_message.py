@@ -78,6 +78,7 @@ from bob.conversation.volatility_judgment import (
     VolatilityVerdict,
 )
 from bob.infrastructure.telegram.gateway import TelegramGateway
+from bob.memory.adapters.casual_floor_recall import CasualFloorRecall
 from bob.memory.usecases.extract_facts import ExtractFacts
 from bob.memory.usecases.resolve_register import RegisterResolver
 from bob.personality.expression import ExpressionFreqs
@@ -130,7 +131,7 @@ if TYPE_CHECKING:
     from bob.conversation.ports import ZoneClassifier
     from bob.infrastructure.telegram.gateway import UpdateLike
     from bob.kernel.ports import LLMProvider, ToolLoopMessage
-    from bob.memory.ports import Recalled
+    from bob.memory.ports import MemoryRecall, Recalled
 
 _PHANTOM_PREF = "phantom-coffee-craving"  # shareable taste material (shapes the reply)
 _RECALL_MEMORY = "the user said earlier they enjoy pour-over"  # shareable recalled memory
@@ -691,6 +692,7 @@ def _build(
     disclosure_guard: DisclosureGuard | None = None,
     disclosure_consent: DisclosureConsentGate | None = None,
     register_resolver: RegisterResolver | None = None,
+    addon_recall: MemoryRecall | None = None,
 ) -> tuple[HandleMessage, FakeBot, FakeRepo, CapturingProvider]:
     tier0 = CapturingProvider(reply="positive", replies=tier0_replies)
     tier1 = CapturingProvider(reply=reply, replies=tier1_replies)
@@ -775,6 +777,7 @@ def _build(
         disclosure_guard=disclosure_guard,
         disclosure_consent=disclosure_consent,
         register_resolver=register_resolver,
+        addon_recall=addon_recall,
     )
     return handler, bot, repo, tier1
 
@@ -9663,3 +9666,49 @@ async def test_no_resolver_recall_is_byte_identical() -> None:
     # FakeRecall ignores k, so the whole pool passes through unchanged (same objects).
     assert list(surfaced) == pool
     assert surfaced[0] is pool[0]
+
+
+# --- BOB-087.C8: the grounded-addon callback door -------------------------------------
+# The register filter of Срез C guarded ONLY the primary reply-recall. The BOB-018 callback
+# holds its OWN recall port, so a muted work episode could still walk into the compose
+# prompt through it. Composition now hands that door the CASUAL-floor recall; unwired (the
+# default) it keeps drawing from the primary port — byte-identical.
+
+_WORK_MOMENT = "я попросил GUPPI поднять лимит буфера в раннере, тесты позеленели"
+
+
+async def test_callback_draws_from_the_wired_addon_recall() -> None:
+    # The grounded callback recalls through the injected secondary port, so the CASUAL
+    # floor placed there decides which moment can reach the compose prompt.
+    addon_recall = CasualFloorRecall(
+        FakeRecall(
+            hits=[
+                {"content": _WORK_MOMENT, "category": "work"},
+                {"content": _STRONG_MOMENT, "category": "episodic"},
+            ]
+        )
+    )
+    handler, _bot, _repo, tier1 = _build(
+        reply="hi",
+        expression_freqs=_CALLBACK_ON,
+        recall=FakeRecall(hits=_chat_hits(3)),
+        addon_recall=addon_recall,
+    )
+
+    await handler.handle(_message("расскажи подробно про Bobiverse и космос"))
+
+    assert _STRONG_MOMENT in tier1.all_text  # the ordinary shared moment surfaced
+    assert _WORK_MOMENT not in tier1.all_text  # Bob's dev war-story stayed muted
+
+
+async def test_callback_without_addon_recall_keeps_the_primary_port() -> None:
+    # OFF path (nothing wired): the callback recalls through the SAME port as the reply —
+    # exactly the pre-C8 behaviour, work episode and all.
+    primary = FakeRecall(hits=[{"content": _WORK_MOMENT, "category": "work"}])
+    handler, _bot, _repo, tier1 = _build(
+        reply="hi", expression_freqs=_CALLBACK_ON, recall=primary
+    )
+
+    await handler.handle(_message("расскажи подробно про Bobiverse и космос"))
+
+    assert _WORK_MOMENT in tier1.all_text

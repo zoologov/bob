@@ -21,12 +21,19 @@ the Tier-0 classifier alone (``dev_dm_chat_id=None``) rather than inventing a ne
 
 🔴 Flag stays OFF until the owner activates read+write together (with ``memory.work_journal``);
 there is no "writing-but-not-filtering" window that would leak work episodes into casual.
+
+:func:`build_secondary_recall` (BOB-087.C8) closes the OTHER doors recall reaches Bob's reply
+through — the grounded-addon callback, the two memory tool capabilities and the proactive
+seed. Behind the SAME flag: OFF → the recall port itself (identity — those doors stay
+byte-identical); ON → a :class:`~bob.memory.adapters.casual_floor_recall.CasualFloorRecall`
+holding them at the conservative CASUAL floor (work muted, never cut, zero Tier-0 calls).
 """
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from bob.memory.adapters.casual_floor_recall import CasualFloorRecall
 from bob.memory.usecases.classify_work_talk import ClassifyWorkTalk
 from bob.memory.usecases.resolve_register import RegisterResolver
 from bob.runtime.config import _flag, _int, _section
@@ -35,8 +42,9 @@ if TYPE_CHECKING:
     from collections.abc import Mapping
 
     from bob.application.router.llm_router import LLMRouter
+    from bob.memory.ports import MemoryRecall
 
-__all__ = ["build_register_resolver"]
+__all__ = ["build_register_resolver", "build_secondary_recall"]
 
 
 def build_register_resolver(
@@ -57,6 +65,22 @@ def build_register_resolver(
         classify_work_talk=ClassifyWorkTalk(router=router),
         dev_dm_chat_id=_resolve_dev_dm_chat_id(config, owner_id=owner_id),
     )
+
+
+def build_secondary_recall(
+    config: Mapping[str, object], *, recall: MemoryRecall
+) -> MemoryRecall:
+    """Wrap ``recall`` for Bob's SECONDARY recall doors, or hand it back untouched.
+
+    OFF (default) → the very same port object, so the grounded-addon callback, the
+    ``recall_memory`` / ``search_memory`` capabilities and the proactive seed draw exactly
+    what they draw today (INV-5). ON → a :class:`CasualFloorRecall`: those doors are held at
+    the conservative CASUAL floor, since a work episode reaching a reply through them would
+    arrive without the provenance directive the primary (register-resolved) path carries.
+    """
+    if not _flag(_section(config, "memory"), "register_recall"):
+        return recall
+    return CasualFloorRecall(recall)
 
 
 def _resolve_dev_dm_chat_id(

@@ -22,12 +22,14 @@ from bob.capabilities.usecases import (
     CapabilityNotAllowedError,
     SafeCapabilityDispatcher,
 )
+from bob.memory.adapters.casual_floor_recall import CasualFloorRecall
 from bob.social.adapters.soul_store import SoulStore
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Mapping, Sequence
     from pathlib import Path
 
+    from bob.app import Application
     from bob.infrastructure.telegram.gateway import UpdateLike
     from bob.kernel.ports import LLMProvider
 
@@ -582,3 +584,51 @@ def test_build_application_without_injected_bot_requires_token(
             bob_bot=bob_bot,
             guppi_bot=guppi_bot,
         )
+
+
+# --- BOB-087.C8: the CASUAL floor on Bob's SECONDARY recall doors ----------------------
+# Register-aware recall (Срез C) guarded only the primary reply-recall. Composition now
+# hands the OTHER doors — the grounded-addon callback, the two memory tool capabilities and
+# the proactive seed — a CASUAL-floor recall when ``memory.register_recall`` is on, and the
+# plain port when it is off (INV-5: every door byte-identical until the owner activates).
+
+
+def _capability_recall(app: Application, name: str) -> object:
+    """The recall port the registered memory capability was wired with."""
+    capability = app.registry._capabilities[name]
+    return getattr(capability, "_recall")  # noqa: B009 — the port is not on the Protocol
+
+
+def test_secondary_doors_are_plain_recall_while_the_flag_is_off(tmp_path: Path) -> None:
+    app = _app(tmp_path)
+
+    plain = app.handle_message._recall
+    assert app.handle_message._addon_recall is plain
+    assert _capability_recall(app, "recall_memory") is plain
+    assert _capability_recall(app, "search_memory") is plain
+    assert app.proactivity_engine._recall is plain
+
+
+def test_secondary_doors_take_the_casual_floor_when_the_flag_is_on(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    config["memory"] = {"register_recall": True}
+
+    app = build_application(
+        config=config,
+        providers=_providers(),
+        bob_bot=_Bot(),
+        guppi_bot=_Bot(),
+    )
+
+    plain = app.handle_message._recall
+    for door in (
+        app.handle_message._addon_recall,
+        _capability_recall(app, "recall_memory"),
+        _capability_recall(app, "search_memory"),
+        app.proactivity_engine._recall,
+    ):
+        assert isinstance(door, CasualFloorRecall)
+        assert door._inner is plain
+    # 🔴 The PRIMARY reply-recall is NOT floored: it resolves a real register per turn (a
+    # dev turn lifts work to full weight) — the floor is only for the doors that cannot.
+    assert not isinstance(plain, CasualFloorRecall)

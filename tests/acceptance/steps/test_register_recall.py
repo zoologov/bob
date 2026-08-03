@@ -31,6 +31,10 @@ from tests.acceptance.register_recall_harness import (
     RegisterOutcome,
     run_register_recall,
 )
+from tests.acceptance.secondary_recall_harness import (
+    SecondaryOutcome,
+    run_secondary_doors,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -85,6 +89,8 @@ class _RegisterContext:
     archive: tuple[Episode, ...] = _WORK_EPISODES + _CHAT_EPISODES
     register_recall_enabled: bool = True
     outcome: RegisterOutcome = field(default_factory=RegisterOutcome)
+    # BOB-087.C8: what the SECONDARY doors (tool / callback / thread replay) carried out.
+    secondary: SecondaryOutcome = field(default_factory=SecondaryOutcome)
 
 
 @pytest.fixture
@@ -266,3 +272,89 @@ def final_only_chat(register_context: _RegisterContext) -> None:
     assert outcome.final, "финальные слоты пусты"
     assert not outcome.work_surfaced
     assert all(cat != WORK_EVENT_TYPE for cat in outcome.final_categories)
+
+
+# --- BOB-087.C8: the SECONDARY recall doors (tool / callback / thread replay) -----------
+
+
+@given("в памяти Боба лежат только его work-эпизоды с GUPPI")
+def archive_has_only_work(register_context: _RegisterContext) -> None:
+    register_context.archive = _WORK_EPISODES
+
+
+@when("Боб casual-ходом лезет во вторичные двери памяти")
+def bob_uses_the_secondary_doors(register_context: _RegisterContext) -> None:
+    register_context.secondary = asyncio.run(
+        run_secondary_doors(
+            register_context.tmp_path,
+            archive=register_context.archive,
+            question=_CASUAL_QUESTION,
+            register_recall_enabled=register_context.register_recall_enabled,
+        )
+    )
+
+
+@then("инструмент памяти не возвращает ни одной рабочей детали")
+def tool_holds_no_work(register_context: _RegisterContext) -> None:
+    secondary = register_context.secondary
+    assert not secondary.work_in_tool, (
+        f"work утёк через инструмент памяти: {secondary.tool_results!r}"
+    )
+
+
+@then("инструмент памяти возвращает личную память")
+def tool_holds_personal_memory(register_context: _RegisterContext) -> None:
+    assert register_context.secondary.tool_results, "инструмент вернул пусто"
+
+
+@then("в compose-контекст не вплетается рабочий момент")
+def callback_holds_no_work(register_context: _RegisterContext) -> None:
+    secondary = register_context.secondary
+    assert not secondary.work_in_callback, (
+        f"work утёк через grounded-вспоминку: {secondary.callback_line!r}"
+    )
+
+
+@then("в compose-контекст вплетается реальный личный момент")
+def callback_holds_a_real_moment(register_context: _RegisterContext) -> None:
+    assert register_context.secondary.callback_line, "вспоминка пуста — момент не вплёлся"
+
+
+@then("в реплее недавней нити нет ни одной записи рабочего журнала")
+def thread_holds_no_work(register_context: _RegisterContext) -> None:
+    secondary = register_context.secondary
+    assert not secondary.work_in_thread, (
+        f"рабочий журнал подмешался в недавнюю нить: {secondary.replayed_thread!r}"
+    )
+
+
+@then("в реплее недавней нити есть обычные реплики")
+def thread_holds_ordinary_turns(register_context: _RegisterContext) -> None:
+    assert register_context.secondary.replayed_thread, "нить пуста — разговор потерян"
+
+
+@then("инструмент памяти всё же возвращает рабочую память")
+def tool_still_holds_work(register_context: _RegisterContext) -> None:
+    secondary = register_context.secondary
+    assert secondary.work_in_tool, (
+        "приглушение вырезало работу подчистую — Боб перестал быть сквозным"
+    )
+
+
+@then("инструмент памяти отдаёт ровно то же, что и обычный recall")
+def tool_is_byte_identical_when_off(register_context: _RegisterContext) -> None:
+    secondary = register_context.secondary
+    assert secondary.tool_results == secondary.plain_tool_results, (
+        f"OFF-инструмент не байт-в-байт: {secondary.tool_results!r} != "
+        f"{secondary.plain_tool_results!r}"
+    )
+    assert secondary.work_in_tool, "при выключенном флаге работа обязана всплывать как раньше"
+
+
+@then("grounded-вспоминка ровно та же, что и раньше")
+def callback_is_byte_identical_when_off(register_context: _RegisterContext) -> None:
+    secondary = register_context.secondary
+    assert secondary.callback_line == secondary.plain_callback_line, (
+        f"OFF-вспоминка не байт-в-байт: {secondary.callback_line!r} != "
+        f"{secondary.plain_callback_line!r}"
+    )
