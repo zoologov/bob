@@ -45,6 +45,7 @@ import asyncio
 import contextlib
 import json
 import logging
+import os
 from typing import TYPE_CHECKING, Protocol
 
 from bob.coding.adapters.claude_runner import (
@@ -53,6 +54,7 @@ from bob.coding.adapters.claude_runner import (
     _parse_event,
 )
 from bob.coding.argv_policy import build_interactive_argv, extract_session_id
+from bob.coding.push_guard import guarded_spawn_env
 from bob.coding.sandbox_policy import is_allowed_mode
 
 if TYPE_CHECKING:
@@ -147,7 +149,13 @@ class InteractiveClaudeRunner:
         allow_bypass: bool = False,
         extra_dirs: Sequence[str] = (),
     ) -> None:
-        self._spawner: InteractiveProcessSpawner = spawner or _ExecInteractiveSpawner()
+        # 🔴 Push guard (BOB-087.E): under the owner's ``allow_bypass`` the DEFAULT
+        # spawner carries a git config in its environment that makes every network push
+        # from the live terminal die on a non-existent remote helper. Only the default
+        # (real process) boundary is guarded — an injected fake spawns nothing.
+        self._spawner: InteractiveProcessSpawner = spawner or _ExecInteractiveSpawner(
+            guard_push=allow_bypass
+        )
         self._claude_bin = claude_bin
         self._terminate_grace = terminate_grace
         # Owner-only sandbox relaxations (BOB-087.D2), both inert by default: without
@@ -293,6 +301,13 @@ class _ExecInteractiveProcess:
 class _ExecInteractiveSpawner:
     """Default spawner: ``create_subprocess_exec`` with piped stdio, no shell."""
 
+    def __init__(self, *, guard_push: bool = False) -> None:
+        # ``None`` (the default) means «spawn without ``env=``» — the inherited
+        # environment, byte-identical to the pre-guard spawn. Under ``guard_push`` it is
+        # the inherited environment PLUS the push-blocking git config (see
+        # :mod:`bob.coding.push_guard`, incl. what that barrier honestly does NOT cover).
+        self._env = guarded_spawn_env(os.environ, active=guard_push)
+
     async def __call__(self, argv: list[str], *, cwd: str) -> InteractiveProcess:
         proc = await asyncio.create_subprocess_exec(
             *argv,
@@ -301,5 +316,6 @@ class _ExecInteractiveSpawner:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             limit=_STREAM_LIMIT,
+            env=self._env,
         )
         return _ExecInteractiveProcess(proc)

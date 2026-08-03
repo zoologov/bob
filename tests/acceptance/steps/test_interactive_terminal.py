@@ -16,7 +16,10 @@ scenarios pin the OBSERVABLE, boundary-level behaviour of the live DM terminal:
 * S4 — ``stop`` directly kills the process + tears the worktree down, and the NEXT plain
   reply flows to the normal Bob path (the mode does not stick);
 * S5 — a guest / a group message never opens or feeds; the flag OFF makes the mode
-  entirely unavailable; 🔴 the live session NEVER commits/pushes/opens a PR (INV-2).
+  entirely unavailable; 🔴 the live session NEVER commits/pushes/opens a PR (INV-2);
+* S6 — ``claude`` dies BY ITSELF (bob-kv4): Bob says so honestly (never passing the death
+  off as the owner's own «стоп»), the worktree is torn down and the next plain reply flows
+  to the normal Bob path — the mode does not stick to a dead process.
 """
 
 from __future__ import annotations
@@ -26,6 +29,7 @@ from dataclasses import dataclass, field
 
 from pytest_bdd import given, scenarios, then, when
 
+from bob.coding import session_voice
 from tests.acceptance.interactive_terminal_harness import (
     DmRouteObservations,
     InteractiveObservations,
@@ -34,6 +38,7 @@ from tests.acceptance.interactive_terminal_harness import (
     interactive_router_when_flag_off,
     owner_opens_feeds_stops,
     owner_opens_interactive,
+    owner_opens_then_claude_dies_then_talks,
     owner_opens_then_steers,
     owner_opens_then_stops_then_talks,
     owner_tries_to_open_in_group,
@@ -149,6 +154,11 @@ def drive_steer(itx: _Ctx) -> None:
     itx.obs = asyncio.run(run_interactive(owner_opens_then_steers()))
 
 
+@when("процесс claude завершается сам, а owner пишет обычное сообщение")
+def drive_death_then_talk(itx: _Ctx) -> None:
+    itx.obs = asyncio.run(run_interactive(owner_opens_then_claude_dies_then_talks()))
+
+
 @when("owner шлёт команду выхода, а затем обычное сообщение")
 def drive_stop_then_talk(itx: _Ctx) -> None:
     itx.obs = asyncio.run(run_interactive(owner_opens_then_stops_then_talks()))
@@ -222,6 +232,35 @@ def mode_does_not_stick(itx: _Ctx) -> None:
         f"режим залип после stop; consumed: {itx.obs.consumed}"
     )
     assert itx.obs.fed_texts == [], "после stop ничего не должно уходить в stdin"
+
+
+# --- S6 Then: claude кончился сам (bob-kv4) ---------------------------------------
+
+
+@then("Боб честно сообщает, что сеанс кончился сам, и не выдаёт это за команду «стоп»")
+def honest_death_notice(itx: _Ctx) -> None:
+    # 🔴 Owner узнаёт правду: сеанс кончился, и кончился НЕ по его команде. Молчание
+    # здесь и было багом (Боб нем до «стоп»), а прощание на «стоп» приписало бы owner'у
+    # действие, которого он не совершал.
+    assert session_voice.interactive_ended() in itx.obs.mode_lines, (
+        f"Боб не сказал, что сеанс кончился сам; строки: {itx.obs.mode_lines}"
+    )
+    assert session_voice.stopped() not in itx.obs.mode_lines
+
+
+@then("реплика после смерти процесса идёт обычным путём Боба, а не в интерактив")
+def turn_after_death_is_not_swallowed(itx: _Ctx) -> None:
+    # Вход поглощён, а следующая обычная реплика — НЕТ: интейк больше не глотает ходы.
+    assert itx.obs.consumed == [True, False], (
+        f"после смерти процесса режим залип; consumed: {itx.obs.consumed}"
+    )
+    assert itx.obs.fed_texts == [], "в мёртвый stdin ничего уходить не должно"
+
+
+@then("рабочая копия убрана, а живого сеанса больше нет")
+def death_cleans_up_and_ends(itx: _Ctx) -> None:
+    assert itx.obs.worktree_removed == ["/wt/fix-the-bug"], "worktree не убран после смерти"
+    assert itx.obs.active_after is False
 
 
 # --- S5 Then ---------------------------------------------------------------------

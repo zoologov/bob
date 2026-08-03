@@ -282,6 +282,10 @@ ignore = [
 # The interactive-session manager (BOB-083 .3) carries Russian persona/policy docstrings +
 # owner-facing status literals whose Cyrillic look-alikes are intentional — RUF001/2/3 here.
 "src/bob/coding/usecases/interactive_session.py" = ["RUF001", "RUF002", "RUF003"]
+# The coding composition wiring carries Russian rationale comments for the interactive
+# seams (resume + the «сеанс кончился сам» notifier, bob-kv4) whose Cyrillic look-alikes
+# are intentional — RUF001/RUF002/RUF003 do not apply.
+"src/bob/runtime/wiring/coding.py" = ["RUF001", "RUF002", "RUF003"]
 # The boot-time sweep of orphaned live sessions (BOB-087.D5b) carries Russian policy
 # docstrings whose Cyrillic look-alikes are intentional — RUF001/RUF002/RUF003 do not apply.
 "src/bob/coding/usecases/recover_interactive_sessions.py" = [
@@ -697,6 +701,29 @@ ignore = [
 # Argv-policy tests (BOB-087.D4b): the pure-core unit tests carry a Russian module
 # docstring (Cyrillic look-alikes intentional → RUF001-003).
 "tests/domain/coding/test_argv_policy.py" = ["RUF001", "RUF002", "RUF003"]
+# Push guard (BOB-087.E, bob-5ao): the pure core + its tests carry Russian docstrings /
+# comments stating honestly what the barrier does and does NOT close (Cyrillic
+# look-alikes intentional → RUF001-003). The real-git acceptance drives fixed-argv git
+# on a THROW-AWAY temp repo (→ S603/S607) and reads the runners' private spawn env to
+# prove the whole chain owner-flag → process environment (→ SLF001).
+"src/bob/coding/push_guard.py" = ["RUF001", "RUF002", "RUF003"]
+"tests/domain/coding/test_push_guard.py" = ["RUF001", "RUF002", "RUF003"]
+"tests/infrastructure/coding/test_push_guard_real_git.py" = [
+    "S101",
+    "S603",
+    "S607",
+    "SLF001",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+"tests/infrastructure/coding/test_claude_spawn_env.py" = [
+    "S101",
+    "SLF001",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
 "tests/runtime/wiring/test_coding_sandbox_relaxations.py" = [
     "S101",
     "ARG001",
@@ -1100,6 +1127,13 @@ ignore = [
 # look-alikes are intentional (→ RUF001/2/3); ARG002 covers the fake process/bot boundary args.
 "tests/acceptance/interactive_terminal_harness.py" = ["S101", "ARG001", "ARG002", "PLR2004", "RUF001", "RUF002", "RUF003"]
 "tests/acceptance/steps/test_interactive_terminal.py" = ["S101", "ARG001", "PLR2004", "PT018", "RUF001", "RUF002", "RUF003"]
+# Liveness tests of the live session (bob-kv4 «процесс умер сам» / bob-1qc «отмена посреди
+# спавна») carry Russian task/reply/rationale literals whose Cyrillic look-alikes are
+# intentional (→ RUF001/2/3); ARG002 covers the Protocol-shaped fake's boundary args.
+"tests/application/usecases/test_interactive_session_death.py" = ["S101", "ARG001", "ARG002", "PLR2004", "RUF001", "RUF002", "RUF003"]
+"tests/application/usecases/test_interactive_session_spawn_cancel.py" = ["S101", "ARG001", "ARG002", "PLR2004", "RUF001", "RUF002", "RUF003"]
+"tests/infrastructure/coding/test_interactive_session_death_real_subprocess.py" = ["S101", "ARG001", "ARG002", "PLR2004", "RUF001", "RUF002", "RUF003"]
+"tests/runtime/wiring/test_interactive_session_wiring.py" = ["S101", "ARG001", "PLR2004", "RUF001", "RUF002", "RUF003"]
 # Reaction-perception tests (BOB-050) carry Russian reaction-meaning literals ("его тронуло",
 # "зашло") whose Cyrillic look-alikes are intentional — RUF001/RUF002/RUF003 do not apply.
 "tests/domain/personality/test_reaction_judgment.py" = ["S101", "ARG001", "PLR2004", "RUF001", "RUF002", "RUF003"]
@@ -1526,6 +1560,12 @@ source_paths = [
     # degrade malformed → paragraph) — exactly the branch logic mutation measures. Listed as
     # a single file (the surrounding aiogram-typed block/inline emission is a thin adapter).
     "src/bob/infrastructure/telegram/rich.py",
+    # BOB-087.E1: the Tier-0 fallback VERDICT (``should_fall_back``) is a pure, I/O-free
+    # classification — transport/availability failure (fall back to the local model) vs.
+    # contract failure (surface it, never mask our own bug). Exactly the branch/threshold
+    # logic mutation measures. Listed as a single file (the composite provider around it
+    # is an async adapter, out of scope).
+    "src/bob/infrastructure/llm/fallback_policy.py",
 ]
 # Deny the impure sub-trees inside those packages: adapters (I/O), ports (protocols),
 # and package __init__ re-exports carry no deterministic verdict logic to mutate.
@@ -1562,6 +1602,9 @@ pytest_add_cli_args_test_selection = [
     # table core's mutants (the converter is pure and side-effect free).
     "tests/infrastructure/telegram/test_rich.py",
     "tests/infrastructure/telegram/test_rich_hardening.py",
+    # BOB-087.E1: the fast, deterministic unit tests for the Tier-0 fallback verdict —
+    # selected so a per-slice ``fallback_policy`` run measures that core's mutants.
+    "tests/infrastructure/llm/test_fallback_policy.py",
 ]
 # The kernel (ports/protocols the domain tests import) is NOT mutated but IS imported by
 # tests/domain — copy it + the package root verbatim into the mutants sandbox so the

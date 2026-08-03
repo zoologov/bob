@@ -17,6 +17,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, cast
 
 from bob.coding.adapters.live_stream import _DmLiveStreamer
+from bob.coding.adapters.owner_notifier import _CodingOwnerNotifier
 from bob.coding.usecases.interactive_session import InteractiveSessionManager
 from bob.runtime.wiring.coding import _build_interactive_session
 
@@ -88,3 +89,29 @@ def test_interactive_streamer_factory_builds_a_verbose_streamer() -> None:
     streamer = manager._streamer_factory()
     assert isinstance(streamer, _DmLiveStreamer)
     assert streamer._verbose is True
+
+
+def test_the_manager_can_tell_the_owner_the_session_ended_by_itself() -> None:
+    # 🔴 bob-kv4: смерть процесса — единственная реплика, которую менеджер шлёт по
+    # СОБСТВЕННОЙ инициативе (у неё нет хода-адресата). Без завязанного нотификатора
+    # сеанс завершался бы честно, но МОЛЧА — а именно немоту эта беада и закрывает.
+    config = {"coder": {"interactive": True}}
+    manager = _build_interactive_session(config, **_deps())  # type: ignore[arg-type]
+    assert isinstance(manager, InteractiveSessionManager)
+    assert isinstance(manager._notifier, _CodingOwnerNotifier)
+    # Личка owner'а: 1:1 чат, никакого группового топика (INV-5 — группа не флудится).
+    assert manager._notifier._chat_id == _OWNER_ID
+    assert manager._notifier._topic_id is None
+
+
+def test_the_ended_notice_stays_on_bobs_bot_even_when_the_firehose_is_guppis() -> None:
+    # BOB-087.A1: механический поток идёт ЗА GUPPI, но это реплика САМОГО Боба (его
+    # голос, session_voice) — она остаётся на ботe Боба, как строки режима интейка.
+    config = {"coder": {"interactive": True, "stream_via_guppi": True}}
+    deps = _deps()
+    bob_bot, guppi_bot = _bot(), _bot()
+    deps["bot"], deps["stream_bot"] = bob_bot, guppi_bot
+    manager = _build_interactive_session(config, **deps)  # type: ignore[arg-type]
+    assert isinstance(manager, InteractiveSessionManager)
+    assert isinstance(manager._notifier, _CodingOwnerNotifier)
+    assert manager._notifier._sender._bot is bob_bot

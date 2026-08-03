@@ -26,6 +26,18 @@ claude, owner направляет его в реальном времени». 
   (живого read-loop для выхода недостаточно) — процесс завершается напрямую. Идемпотентно.
 * :meth:`active` — есть ли живой сеанс (для интейк-гейта .4 и гварда «одна сессия»).
 
+🔴 Сеанс может кончиться и БЕЗ owner-команды (bob-kv4, долг BOB-083/084): ``claude``
+крашится, выходит сам или чтение его stdout обрывается. Раньше ``_pump`` при этом не
+трогал ``_live``: ``active()`` продолжал отдавать ``True``, реплики owner'а уходили в
+мёртвый stdin, а интейк ПОГЛОЩАЛ ходы — Боб в личке был нем до явного «стоп». Теперь
+конец потока событий завершает сеанс ТЕМ ЖЕ путём, что ``stop`` (:meth:`_finalize`:
+судьба дерева, терминальная строка, сохранённый ``claude_session_id``), и owner слышит
+ЧЕСТНУЮ реплику о том, что сеанс кончился сам (:func:`~bob.coding.session_voice.
+interactive_ended` — не прощание на его «стоп»: приписывать owner'у чужое действие
+нельзя). Идемпотентность структурная: забрать сеанс можно только через :meth:`_claim`,
+и это СИНХРОННЫЙ обмен — кто забрал первым, тот один и закрывает, поэтому гонка «процесс
+умер И owner жмёт стоп» не даёт ни двойного закрытия, ни двойной реплики.
+
 Возобновление приостановленной работы (BOB-087.D3) — «поднять с телефона нашу
 эпик-сессию»: owner явной командой просит поднять ДОЛГОЖИВУЩИЙ workspace, и это
 ДВУХШАГОВЫЙ путь с подтверждением:
@@ -92,7 +104,7 @@ if TYPE_CHECKING:
         ResumableSessionLookup,
         Worktree,
     )
-    from bob.coding.usecases.coding_assistant import LiveRunStreamer
+    from bob.coding.usecases.coding_assistant import LiveRunStreamer, OwnerNotifier
 
     class _Clock(Protocol):
         """Часы, которые нужны менеджеру (инъектируются для детерминизма тестов)."""
@@ -162,6 +174,7 @@ class InteractiveSessionManager:
         permission_mode: str = _DEFAULT_INTERACTIVE_MODE,
         lookup: ResumableSessionLookup | None = None,
         workspace: PersistentWorkspace | None = None,
+        notifier: OwnerNotifier | None = None,
     ) -> None:
         self._runner_factory = runner_factory
         self._worktree = worktree
@@ -176,6 +189,11 @@ class InteractiveSessionManager:
         # unavailable (nothing to look up, nowhere to land) and answers inertly.
         self._lookup = lookup
         self._workspace = workspace
+        # The owner's DM line for what the manager says on its OWN initiative (bob-kv4:
+        # «сеанс кончился сам»). Every OTHER reply travels back as a ``CodingOutcome`` to
+        # the turn that asked for it; this one has no turn to answer, so it needs its own
+        # way out. Optional: unwired → the session still ends honestly, just silently.
+        self._notifier = notifier
         # The single pending «поднимаю?» question (owner-scoped, TTL-bounded).
         self._pending: _PendingResume | None = None
         # The single live session (``None`` when idle — the one-session guard reads this).
@@ -192,7 +210,9 @@ class InteractiveSessionManager:
         Создаёт worktree на безопасной ветке ``bob/<slug>`` (никогда main), спавнит
         живой раннер в ``permission_mode``, персистит сессию в ``INTERACTIVE`` и заводит
         фоновую перекачку вывода в DM owner'а. 🔴 Одна сессия за раз: при живой сессии —
-        отказ. Не-owner получает тихий отказ (нет worktree, нет спавна).
+        отказ. Не-owner получает тихий отказ (нет worktree, нет спавна). 🔴 ОТМЕНА хода
+        прямо посреди спавна (bob-1qc) сворачивает его так же, как сбой: раннер закрыт,
+        эфемерное дерево убрано — и только потом отмена летит дальше.
         """
         if not self._owner.is_owner(sender):
             return _refused()
@@ -210,8 +230,10 @@ class InteractiveSessionManager:
                 ok=False, message=session_voice.interactive_setup_failed(), session=None
             )
         try:
-            runner = self._runner_factory()
-            await runner.open(path, mode=self._permission_mode)
+            runner = await self._spawn(path)
+        except asyncio.CancelledError:  # 🔴 отмена: дерево тоже не остаётся сиротой
+            await self._cleanup(path)
+            raise
         except Exception:  # spawn/mode fault: clean up the worktree, no live session
             logger.exception("coding: interactive open failed for task")
             await self._cleanup(path)
@@ -272,8 +294,7 @@ class InteractiveSessionManager:
         branch = workspace_branch(name)
         try:
             path = await self._require_workspace().ensure(branch)
-            runner = self._runner_factory()
-            await runner.open(path, mode=self._permission_mode)
+            runner = await self._spawn(path)
         except Exception:  # 🔴 workspace/spawn fault: answer honestly, never go mute
             logger.exception("coding: opening the persistent workspace failed")
             return CodingOutcome(
@@ -391,11 +412,8 @@ class InteractiveSessionManager:
         now = self._clock.now()
         try:
             path = await self._require_workspace().ensure(branch)
-            runner = self._runner_factory()
-            await runner.open(
-                path,
-                mode=self._permission_mode,
-                resume_session_id=candidate.claude_session_id,
+            runner = await self._spawn(
+                path, resume_session_id=candidate.claude_session_id
             )
         except Exception:  # workspace/spawn fault: 🔴 the workspace itself is left intact
             logger.exception("coding: interactive resume failed for workspace")
@@ -430,20 +448,20 @@ class InteractiveSessionManager:
         работа, ради которой сессию и поднимали; прощальная реплика идёт ЗА судьбой дерева
         (``stopped_persistent`` вместо ``stopped``), чтобы Боб не докладывал об уборке
         того, что осталось на месте. Идемпотентно/best-effort: без живой сессии — честная
-        заметка, без падения.
+        заметка, без падения. 🔴 Сеанс забирается через :meth:`_claim`, поэтому «процесс
+        умер И owner жмёт стоп» закрывает его РОВНО один раз (bob-kv4).
         """
         if not self._owner.is_owner(sender):
             return _refused()
-        live = self._live
+        # Take the live handle in ONE synchronous step (active() is false at once) — the
+        # pump cannot then end the same session behind our back — and signal the pump.
+        live = self._claim()
         if live is None:
             return CodingOutcome(ok=False, message=session_voice.no_session(), session=None)
-        # Drop the live handle up front (active() is false at once) and signal the pump.
-        self._live = None
         self._cancelled.add(live.session.id)
         await self._close_runner(live.runner)  # 🔴 direct terminate of the process
         await self._await_pump()
-        if not live.persistent:  # 🔴 a persistent workspace keeps its accumulated work
-            await self._cleanup(live.session.worktree_path)
+        session = await self._finalize(live)
         # 🔴 Голос идёт ЗА судьбой дерева (BOB-087.D4b): у персистентного workspace работа
         # осталась, и реплика не смеет докладывать про уборку.
         farewell = (
@@ -451,19 +469,6 @@ class InteractiveSessionManager:
             if live.persistent
             else session_voice.stopped()
         )
-        now = self._clock.now()
-        # BOB-087.D1: persist the claude session id captured off the init event so a later
-        # /code (D3) can look it up for --resume. Since D5b this is only the BACKSTOP — the
-        # id is already written the moment the init frame arrives (:meth:`_capture_id`), so
-        # a crash mid-session no longer loses it; here it merely re-confirms it on the
-        # terminal row. None when no init id was seen — the field stays None (byte-identical
-        # to a pre-D1 session), and an id already persisted is kept.
-        ended = live.session
-        claude_session_id = live.runner.session_id
-        if claude_session_id is not None:
-            ended = ended.with_claude_session_id(claude_session_id, at=now)
-        session = ended.with_state(CodingSessionState.CANCELLED, at=now)
-        await self._persist_terminal(session)
         self._cancelled.discard(session.id)
         self._task = None
         return CodingOutcome(ok=True, message=farewell, session=session)
@@ -502,6 +507,118 @@ class InteractiveSessionManager:
         )
         self._task = asyncio.create_task(self._pump(session.id, runner))
         return True
+
+    async def _spawn(
+        self, path: str, *, resume_session_id: str | None = None
+    ) -> InteractiveRunner:
+        """Спавнить живой раннер в ``path`` так, чтобы НЕДОСПАВНЕННЫЙ не остался сиротой.
+
+        Единственная точка спавна на все три входа (:meth:`open`, :meth:`open_workspace`,
+        :meth:`resume`). 🔴 bob-1qc (защита в глубину): свёртка живёт в ``finally``, а не
+        в ``except Exception``, потому что :class:`asyncio.CancelledError` — ``BaseException``
+        и мимо ``except Exception`` пролетает. Отмена хода прямо внутри ``runner.open``
+        (шатдаун, таймаут внешней задачи) раскручивала стек мимо всякой очистки, а
+        запущенный процесс оставался БЕЗ живой сессии — неостановимый сирота, которого
+        ``stop`` не видит. Теперь и сбой, и отмена закрывают раннер одним и тем же путём;
+        отмена после этого летит дальше нетронутой.
+        """
+        runner = self._runner_factory()
+        spawned = False
+        try:
+            await runner.open(
+                path, mode=self._permission_mode, resume_session_id=resume_session_id
+            )
+            spawned = True
+        finally:
+            if not spawned:
+                await self._close_runner(runner)
+        return runner
+
+    def _claim(self, session_id: str | None = None) -> _LiveSession | None:
+        """🔴 СИНХРОННО забрать живой сеанс — единственная точка выхода из ``_live``.
+
+        Идемпотентность закрытия держится именно здесь, и держится СТРУКТУРНО: проверка
+        и обнуление ``_live`` идут без единого ``await``, поэтому между ними не может
+        вклиниться ни ``stop``, ни фоновая перекачка. Кто забрал сеанс первым, тот один
+        его и закрывает; проигравший получает ``None`` и не делает НИЧЕГО — ни второго
+        ``close``, ни второй уборки дерева, ни второй прощальной реплики.
+
+        ``session_id`` (перекачка знает, ЗА КАКИМ сеансом пришла) сверяется с живым: если
+        сеанс уже сменился, старая перекачка не тронет чужой.
+        """
+        live = self._live
+        if live is None:
+            return None
+        if session_id is not None and live.session.id != session_id:
+            return None
+        self._live = None
+        return live
+
+    async def _finalize(self, live: _LiveSession) -> CodingSession:
+        """Довести ЗАБРАННЫЙ сеанс до терминального конца: дерево + строка в сторе.
+
+        Общий хвост обоих концов сеанса — явного :meth:`stop` и смерти процесса
+        (:meth:`_end_on_its_own`), нарочно ОДИН: судьба рабочего дерева и терминальная
+        запись не смеют разъезжаться по поводу окончания (bob-kv4). 🔴 Персистентный
+        workspace переживает конец сеанса (в нём накопленная работа), эфемерный —
+        убирается.
+
+        BOB-087.D1: id claude-сессии из init-события дописывается на терминальную строку,
+        чтобы позже её можно было поднять через ``--resume``. Начиная с D5b это лишь
+        БЭКСТОП — id уже сохранён в момент прихода init-кадра (:meth:`_capture_id`); здесь
+        он только подтверждается. Без увиденного init-id поле остаётся ``None``
+        (байт-в-байт до-D1), а уже сохранённый id не затирается.
+        """
+        if not live.persistent:  # 🔴 a persistent workspace keeps its accumulated work
+            await self._cleanup(live.session.worktree_path)
+        now = self._clock.now()
+        ended = live.session
+        claude_session_id = live.runner.session_id
+        if claude_session_id is not None:
+            ended = ended.with_claude_session_id(claude_session_id, at=now)
+        session = ended.with_state(CodingSessionState.CANCELLED, at=now)
+        await self._persist_terminal(session)
+        return session
+
+    async def _end_on_its_own(self, session_id: str) -> None:
+        """Завершить сеанс, который кончился САМ: процесс умер / поток событий иссяк.
+
+        🔴 bob-kv4 (долг BOB-083/084). Раньше конец потока не значил ничего: ``_live``
+        оставался выставленным, ``active()`` отдавал ``True``, реплики owner'а уходили в
+        мёртвый stdin, интейк ПОГЛОЩАЛ ходы — Боб в личке был нем до явного «стоп».
+        Теперь это такой же честный конец, как ``stop``: сеанс забирается (:meth:`_claim`),
+        мёртвый процесс всё равно пожимается (никаких зомби), дерево и терминальная строка
+        идут общим :meth:`_finalize`, и owner слышит правду.
+
+        Ничего не делает, если сеанс уже забрал ``stop`` (или он давно сменился) — это и
+        есть идемпотентность на гонке «умер И жмут стоп».
+        """
+        live = self._claim(session_id)
+        if live is None:
+            return
+        await self._close_runner(live.runner)  # пожать мёртвого ребёнка, без зомби
+        session = await self._finalize(live)
+        self._cancelled.discard(session.id)
+        # 🔴 Реплика идёт ЗА судьбой дерева и НЕ выдаёт смерть процесса за owner-«стоп».
+        await self._say(
+            session_voice.interactive_ended_persistent()
+            if live.persistent
+            else session_voice.interactive_ended()
+        )
+
+    async def _say(self, text: str) -> None:
+        """Сказать owner'у одну строку по СОБСТВЕННОЙ инициативе (best-effort).
+
+        Незавязанный нотификатор → молчание (сеанс всё равно завершён честно), сбой
+        отправки изолирован: транспорт не смеет отменить уже случившийся конец сеанса.
+        """
+        notifier = self._notifier
+        if notifier is None:
+            return
+        try:
+            await notifier.send(text)
+        except Exception:  # a transport fault must never break the ending itself
+            logger.exception("coding: telling the owner the session ended failed")
 
     def _resume_refusal(self, sender: int | None) -> CodingOutcome | None:
         """Общий гейт resume-пути: ``None``, если можно продолжать, иначе отказ.
@@ -569,6 +686,11 @@ class InteractiveSessionManager:
         в личку. ``is_cancelled`` (kill-switch ``stop``) обрывает поток; сбой стрима
         изолирован — он не валит менеджер. Поток проходит через :meth:`_capture_id`,
         который по дороге забирает claude-session-id из init-кадра.
+
+        🔴 Конец потока = конец сеанса (bob-kv4): дочитав до конца, перекачка ЗАВЕРШАЕТ
+        сеанс (:meth:`_end_on_its_own`) — процесс либо умер сам, либо его закрыл ``stop``
+        (тогда завершать уже нечего, сеанс забран). Молча вернуться, оставив ``_live``
+        выставленным, нельзя: это и был немой режим.
         """
         streamer = self._streamer_factory()
         try:
@@ -578,6 +700,8 @@ class InteractiveSessionManager:
             )
         except Exception:  # an output-stream fault must never crash the manager
             logger.exception("coding: interactive output stream failed for %s", session_id)
+            return
+        await self._end_on_its_own(session_id)
 
     async def _capture_id(
         self, session_id: str, events: AsyncIterator[Mapping[str, object]]

@@ -191,3 +191,43 @@ def test_resume_lines_are_human_not_dry_status_labels() -> None:
         assert isinstance(message, str)
         assert message.strip()
         assert "status:" not in message.casefold()
+
+
+# --- сеанс кончился САМ (bob-kv4): смерть процесса — не owner-«стоп» ------------
+
+
+def test_interactive_ended_never_passes_the_death_off_as_the_owners_stop() -> None:
+    # 🔴 bob-kv4: процесс умер САМ — приписывать это команде owner'а нельзя (чужое
+    # действие за его). Реплика обязана отличаться от прощания на явный «стоп».
+    assert session_voice.interactive_ended() != session_voice.stopped()
+    assert session_voice.interactive_ended_persistent() != session_voice.stopped_persistent()
+
+
+def test_interactive_ended_says_the_session_closed_by_itself() -> None:
+    # Owner должен понять из одной реплики: сеанс закрылся не по его команде.
+    lowered = session_voice.interactive_ended().casefold()
+    assert "сам" in lowered
+    assert "GUPPI" in session_voice.interactive_ended()
+
+
+def test_interactive_ended_reports_the_ephemeral_copy_was_cleaned_up() -> None:
+    # Эфемерное дерево действительно убрано — об этом честно сказано (как в ``stopped``).
+    assert "убрал" in session_voice.interactive_ended().casefold()
+
+
+def test_interactive_ended_persistent_never_claims_cleanup_and_invites_to_resume() -> None:
+    # 🔴 Долгоживущий workspace НЕ убирается — реплика про уборку молчит и зовёт поднять.
+    lowered = session_voice.interactive_ended_persistent().casefold()
+    assert "убрал" not in lowered
+    assert "остал" in lowered
+    assert "подним" in lowered or "поднять" in lowered
+
+
+def test_interactive_ended_lines_are_human_not_dry_status_labels() -> None:
+    for message in (
+        session_voice.interactive_ended(),
+        session_voice.interactive_ended_persistent(),
+    ):
+        assert isinstance(message, str)
+        assert message.strip()
+        assert "status:" not in message.casefold()

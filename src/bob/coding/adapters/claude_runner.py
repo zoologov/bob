@@ -38,9 +38,11 @@ import asyncio
 import contextlib
 import json
 import logging
+import os
 from collections.abc import AsyncGenerator, AsyncIterator, Mapping, Sequence
 from typing import Protocol
 
+from bob.coding.push_guard import guarded_spawn_env
 from bob.coding.sandbox_policy import extra_dir_argv, is_allowed_mode
 
 __all__ = ["ClaudeRunError", "SubprocessClaudeRunner"]
@@ -93,7 +95,13 @@ class SubprocessClaudeRunner:
         allow_bypass: bool = False,
         extra_dirs: Sequence[str] = (),
     ) -> None:
-        self._runner: StreamLineRunner = runner or _ExecStreamRunner()
+        # 🔴 Push guard (BOB-087.E): when the owner relaxes the sandbox the DEFAULT
+        # spawner carries a git config in its environment that makes every network push
+        # from the tree die on a non-existent remote helper. Only the default (real
+        # process) boundary is guarded — an injected fake spawns nothing.
+        self._runner: StreamLineRunner = runner or _ExecStreamRunner(
+            guard_push=allow_bypass
+        )
         self._claude_bin = claude_bin
         self._timeout = timeout
         self._max_events = max_events
@@ -163,6 +171,13 @@ def _parse_event(line: str) -> Mapping[str, object] | None:
 class _ExecStreamRunner:
     """Default runner: ``create_subprocess_exec``, read stdout line-by-line, no shell."""
 
+    def __init__(self, *, guard_push: bool = False) -> None:
+        # ``None`` (the default) means «spawn without ``env=``» — the inherited
+        # environment, byte-identical to the pre-guard spawn. Under ``guard_push`` it is
+        # the inherited environment PLUS the push-blocking git config (see
+        # :mod:`bob.coding.push_guard`, incl. what that barrier honestly does NOT cover).
+        self._env = guarded_spawn_env(os.environ, active=guard_push)
+
     async def __call__(
         self, argv: list[str], *, cwd: str, timeout: float
     ) -> AsyncIterator[str]:
@@ -172,6 +187,7 @@ class _ExecStreamRunner:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             limit=_STREAM_LIMIT,
+            env=self._env,
         )
         loop = asyncio.get_event_loop()
         deadline = loop.time() + timeout
