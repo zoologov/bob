@@ -15,11 +15,12 @@ Reads the ``llm`` section of the merged config (defaults -> YAML -> env, see
 * Tier 1 — the Qwen API (bearer key from ``llm.tier1_api_key``, sourced from
   config/env; never inlined).
 
-When ``llm.tier0_fallback`` names a local backend (BOB-087.E1), Tier 0 is handed
-over wrapped in a :class:`~bob.infrastructure.llm.fallback_provider.FallbackLLMProvider`
-so a network outage of a *cloud* Tier 0 degrades to a local Ollama model instead of
-taking the classifiers/monologue/gates down. Empty (the default) → Tier 0 is the
-plain provider, exactly as before.
+When ``llm.tier0_fallback`` names a local backend (BOB-087.E1), Tier 0 is handed over
+wrapped by :func:`~bob.infrastructure.llm.fallback_provider.build_fallback_provider` so
+a network outage of a *cloud* Tier 0 degrades to a local Ollama model instead of taking
+the classifiers/monologue/gates down. The builder — not this factory — decides which
+composite mirrors the wrapped tier's tool-calling capability (BOB-087.E1b). Empty (the
+default) → Tier 0 is the plain provider, exactly as before.
 
 The result maps tier index -> provider, ready for the
 :class:`bob.application.router.LLMRouter`.
@@ -31,7 +32,7 @@ from collections.abc import Mapping
 from typing import TYPE_CHECKING
 
 from bob.capabilities.adapters.web_search_qwen import QwenWebSearchProvider
-from bob.infrastructure.llm.fallback_provider import FallbackLLMProvider
+from bob.infrastructure.llm.fallback_provider import build_fallback_provider
 from bob.infrastructure.llm.openai_compat import OpenAICompatProvider
 
 if TYPE_CHECKING:
@@ -88,7 +89,7 @@ def build_tier_providers(config: Mapping[str, object]) -> dict[int, LLMProvider]
     if local_fallback is None:
         return {_TIER_LOCAL: tier0, _TIER_API: tier1}
     return {
-        _TIER_LOCAL: FallbackLLMProvider(primary=tier0, fallback=local_fallback),
+        _TIER_LOCAL: build_fallback_provider(primary=tier0, fallback=local_fallback),
         _TIER_API: tier1,
     }
 

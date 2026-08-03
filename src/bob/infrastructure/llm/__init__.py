@@ -16,12 +16,18 @@ from bob.infrastructure.llm.factory import (
     build_tier_providers,
     build_web_search_provider,
 )
-from bob.infrastructure.llm.fallback_provider import FallbackLLMProvider
+from bob.infrastructure.llm.fallback_provider import (
+    FallbackLLMProvider,
+    ToolCallingFallbackLLMProvider,
+    build_fallback_provider,
+)
 from bob.infrastructure.llm.openai_compat import OpenAICompatProvider
 
 __all__ = [
     "FallbackLLMProvider",
     "OpenAICompatProvider",
+    "ToolCallingFallbackLLMProvider",
+    "build_fallback_provider",
     "build_tier_providers",
     "build_web_search_provider",
 ]

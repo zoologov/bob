@@ -99,6 +99,69 @@ def test_rate_limited_status_falls_back() -> None:
     assert should_fall_back(_response_error(429)) is True
 
 
+# --- the thresholds themselves, pinned from BOTH sides ---------------------------
+#
+# 🔴 Mutation cannot do this job here (BOB-087.E2): mutmut mutates function BODIES, and
+# the substance of this policy lives in module-level constants — the 500 floor, the
+# {408, 429} set, the transport-type tuple. A mutant that shifts the floor to 501 or adds
+# 430 to the set is never even generated, so the reported score is stronger than the gate
+# it measures. These tests are that missing gate: every boundary is nailed from both
+# sides, so widening or narrowing a constant by one FAILS a test.
+
+
+@pytest.mark.parametrize(
+    ("status", "expected"),
+    [
+        (498, False),  # deep inside the client-error half
+        (499, False),  # the last status that is still OUR problem
+        (500, True),  # the floor itself
+        (501, True),  # just above it
+    ],
+)
+def test_server_error_floor_is_exactly_500(status: int, expected: bool) -> None:
+    assert should_fall_back(_response_error(status)) is expected
+
+
+@pytest.mark.parametrize(
+    ("status", "expected"),
+    [
+        (407, False),  # proxy auth required — a config defect of ours
+        (408, True),  # the endpoint gave up waiting
+        (409, False),  # conflict — a contract failure
+        (428, False),  # precondition required — a contract failure
+        (429, True),  # rate-limited: the cloud will not serve US right now
+        (430, False),  # unassigned — must not be swept in with 429
+    ],
+)
+def test_only_408_and_429_are_availability_statuses(status: int, expected: bool) -> None:
+    assert should_fall_back(_response_error(status)) is expected
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        pytest.param(socket.gaierror("name resolution failed"), id="OSError entry"),
+        pytest.param(aiohttp.ServerDisconnectedError(), id="ClientConnectionError entry"),
+        pytest.param(aiohttp.ClientPayloadError("truncated"), id="ClientPayloadError entry"),
+    ],
+)
+def test_each_transport_entry_is_load_bearing(error: BaseException) -> None:
+    # Each error here matches EXACTLY ONE entry of the transport tuple and nothing else
+    # (``socket.gaierror`` is only an OSError; ``ServerDisconnectedError`` and
+    # ``ClientPayloadError`` are aiohttp ClientErrors, NOT OSErrors) — so dropping any
+    # single entry from the tuple turns one of these red.
+    assert should_fall_back(error) is True
+
+
+def test_timeout_entry_is_documentation_not_behaviour() -> None:
+    # Honest note rather than a false sense of coverage: ``TimeoutError`` has been an
+    # ``OSError`` subclass since PEP 3151, so the explicit tuple entry changes nothing —
+    # removing it would keep every test green. It is kept for readability (a timeout is
+    # THE outage shape BOB-084 observed), and this test says so out loud.
+    assert issubclass(TimeoutError, OSError)
+    assert should_fall_back(TimeoutError()) is True
+
+
 # --- contract failures: OUR bug or a broken answer -> never mask with a fallback ---
 
 

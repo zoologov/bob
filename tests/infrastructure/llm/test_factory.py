@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import pytest
 
+from bob.capabilities.ports import ToolCallingProvider
 from bob.infrastructure.llm.factory import build_tier_providers
 from bob.infrastructure.llm.fallback_provider import FallbackLLMProvider
 from bob.infrastructure.llm.openai_compat import OpenAICompatProvider
@@ -334,6 +335,17 @@ def test_local_fallback_inherits_the_tier0_call_knobs() -> None:
     assert local._timeout.total == 90.0
     assert local._disable_thinking is True
     assert local._temperature == 0.5
+
+
+def test_wrapping_tier0_does_not_strip_its_tool_calling() -> None:
+    # BOB-087.E1b: OpenAICompatProvider realises ToolCallingProvider, and the tool seam
+    # probes for it with ``hasattr`` — a wrapper that dropped the method would put the
+    # tool loop to sleep SILENTLY. Wrapping must preserve the tier's capability.
+    tier0 = build_tier_providers({"llm": _fallback_llm()})[0]
+
+    # Assert
+    assert isinstance(tier0, FallbackLLMProvider)
+    assert isinstance(tier0, ToolCallingProvider)
 
 
 def test_tier0_fallback_leaves_tier1_untouched() -> None:

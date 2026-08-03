@@ -24,8 +24,11 @@ tool-calling поверх aiohttp (backend — Ollama/Qwen). Узел `llm` (`pa
   считать ли сбой поводом уйти на локальную модель. Транспорт/доступность (таймаут,
   обрыв соединения, 5xx, 408, 429) — да; контракт (прочие 4xx, битая форма ответа,
   `TypeError`, отмена) — нет, иначе фолбэк маскировал бы наши собственные баги.
-- **fallback_provider.py** (BOB-087.E1) — `FallbackLLMProvider`: композит
-  primary + локальный аварийный fallback, реализующий тот же порт `LLMProvider`.
+- **fallback_provider.py** (BOB-087.E1, .E1b) — композит primary + локальный аварийный
+  fallback, реализующий тот же порт `LLMProvider`: `FallbackLLMProvider` (только
+  `complete`) и `ToolCallingFallbackLLMProvider` (плюс `complete_with_tools` под той же
+  политикой). Какой из двух собрать — решает `build_fallback_provider(...)` по
+  способностям primary.
 - **__init__.py** — фасад пакета (OpenAI-совместимый провайдер + Tier 0/1 провайдеры).
 
 ## Инварианты
@@ -40,6 +43,12 @@ tool-calling поверх aiohttp (backend — Ollama/Qwen). Узел `llm` (`pa
   переключение логируется `WARNING` (тихая деградация недопустима).
 - `LLMRouter` о фолбэке не знает: политика живёт целиком в композите, поэтому
   маршрутизация тиров остаётся неизменной.
+- Обёртка не меняет способности завёрнутого тира (BOB-087.E1b): композит объявляет
+  `complete_with_tools` ровно тогда, когда его умеет primary — ни меньше (шов
+  tool-loop'а проверяет через `hasattr`, потеря была бы БЕЗМОЛВНОЙ), ни больше
+  (ложное объявление подсунуло бы шву провайдера, который не отработает).
+- Локальная модель подменяет tool-ход только если сама умеет tool-calling: ответ без
+  запрошенных инструментов — не «ухудшенный», а другой, и tool-loop этого не отличит.
 
 ## API
 
@@ -55,8 +64,13 @@ tool-calling поверх aiohttp (backend — Ollama/Qwen). Узел `llm` (`pa
 - `should_fall_back(error)` → вердикт «это транспортный сбой, уходим на локальную модель».
 
 Модуль `src/bob/infrastructure/llm/fallback_provider.py`:
+- `build_fallback_provider(primary=…, fallback=…)` → композит, зеркалящий способности
+  primary (единственный поддерживаемый способ сборки).
 - `FallbackLLMProvider(primary=…, fallback=…).complete(messages, *, stream=False)` →
   завершение на primary, при транспортном сбое — одна попытка на локальной модели.
+- `ToolCallingFallbackLLMProvider.complete_with_tools(messages, *, tools)` → tool-ход на
+  primary, при транспортном сбое — одна попытка на локальной модели (только если та сама
+  умеет tool-calling; иначе наружу уходит исходный сбой primary).
 
 Конфиг (`llm`): `tier0_fallback` (пусто = OFF; поддерживается `ollama`),
 `tier0_fallback_base_url` (`http://localhost:11434/v1`), `tier0_fallback_model`
