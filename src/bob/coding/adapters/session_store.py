@@ -52,8 +52,8 @@ class SqliteCodingSessionStore:
         await self._db().execute(
             "INSERT INTO coding_session "
             "(id, task, state, branch, created_at, updated_at, "
-            "worktree_path, plan, pr_url) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) "
+            "worktree_path, plan, pr_url, claude_session_id) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
             "ON CONFLICT(id) DO UPDATE SET "
             "task = excluded.task, "
             "state = excluded.state, "
@@ -62,7 +62,8 @@ class SqliteCodingSessionStore:
             "updated_at = excluded.updated_at, "
             "worktree_path = excluded.worktree_path, "
             "plan = excluded.plan, "
-            "pr_url = excluded.pr_url",
+            "pr_url = excluded.pr_url, "
+            "claude_session_id = excluded.claude_session_id",
             (
                 session.id,
                 session.task,
@@ -73,6 +74,7 @@ class SqliteCodingSessionStore:
                 session.worktree_path,
                 session.plan,
                 session.pr_url,
+                session.claude_session_id,
             ),
         )
         await self._db().commit()
@@ -81,7 +83,8 @@ class SqliteCodingSessionStore:
         """Return the session with ``session_id``, or ``None`` if there is none."""
         async with self._db().execute(
             "SELECT id, task, state, branch, created_at, updated_at, "
-            "worktree_path, plan, pr_url FROM coding_session WHERE id = ?",
+            "worktree_path, plan, pr_url, claude_session_id "
+            "FROM coding_session WHERE id = ?",
             (session_id,),
         ) as cursor:
             row = await cursor.fetchone()
@@ -96,13 +99,39 @@ class SqliteCodingSessionStore:
         """
         async with self._db().execute(
             "SELECT id, task, state, branch, created_at, updated_at, "
-            "worktree_path, plan, pr_url FROM coding_session ORDER BY created_at, id",
+            "worktree_path, plan, pr_url, claude_session_id "
+            "FROM coding_session ORDER BY created_at, id",
         ) as cursor:
             rows = await cursor.fetchall()
         return tuple(
             session
             for session in (_try_row_to_session(row) for row in rows)
             if session is not None and not is_terminal(session.state)
+        )
+
+    async def by_branch(self, branch: str) -> tuple[CodingSession, ...]:
+        """Return every recorded session on ``branch`` (oldest first; empty when none).
+
+        Realises the narrow :class:`bob.coding.ports.ResumableSessionLookup` read seam
+        (BOB-087.D3). Unlike :meth:`active` it filters by BRANCH ONLY and keeps EVERY
+        state, terminal included — deciding which of them may be resumed is the pure
+        policy's job (:func:`bob.coding.resume_policy.select_resumable`), so the store
+        cannot drift from the «only a stopped session may be raised» rule. The branch is
+        bound as a parameter (``?``), never interpolated. One unparseable row is logged
+        and SKIPPED (same resilience as :meth:`active`): a corrupt record must not blow
+        up the owner's resume command.
+        """
+        async with self._db().execute(
+            "SELECT id, task, state, branch, created_at, updated_at, "
+            "worktree_path, plan, pr_url, claude_session_id "
+            "FROM coding_session WHERE branch = ? ORDER BY created_at, id",
+            (branch,),
+        ) as cursor:
+            rows = await cursor.fetchall()
+        return tuple(
+            session
+            for session in (_try_row_to_session(row) for row in rows)
+            if session is not None
         )
 
     def _db(self) -> aiosqlite.Connection:
@@ -141,6 +170,7 @@ def _row_to_session(row: aiosqlite.Row) -> CodingSession:
         worktree_path=_opt_str(row[6]),
         plan=_opt_str(row[7]),
         pr_url=_opt_str(row[8]),
+        claude_session_id=_opt_str(row[9]),
     )
 
 

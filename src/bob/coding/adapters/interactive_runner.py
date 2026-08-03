@@ -24,9 +24,16 @@ stdout NDJSON line-by-line (each ``json.loads``-ed, garbage skipped); :meth:`clo
 terminates the process, kills it if it does not exit within a short grace, and reaps it —
 idempotent, best-effort, never raising, so no zombie is left behind.
 
-``mode`` is validated against the SAME fixed allowlist as the one-shot runner. The
-bidirectional subprocess boundary is injected (``spawner``) so tests drive the argv / stdin
-/ NDJSON / cleanup with a fake and never spawn the real ``claude``.
+The spawn argv itself is NOT assembled here: it is the pure domain policy
+:func:`bob.coding.argv_policy.build_interactive_argv` (with
+:func:`~bob.coding.argv_policy.extract_session_id` reading the init frame's session id) —
+this adapter only carries those verdicts to the process boundary.
+
+``mode`` is validated against the SAME allowlist policy as the one-shot runner
+(:mod:`bob.coding.sandbox_policy`), including the owner-only ``allow_bypass`` /
+``extra_dirs`` relaxations (BOB-087.D2) — both OFF by default, so the spawn argv is
+unchanged. The bidirectional subprocess boundary is injected (``spawner``) so tests drive
+the argv / stdin / NDJSON / cleanup with a fake and never spawn the real ``claude``.
 
 This is a pure transport adapter: NO session / state / worktree logic lives here (that is
 the interactive-session manager, BOB-083 .3).
@@ -41,14 +48,15 @@ import logging
 from typing import TYPE_CHECKING, Protocol
 
 from bob.coding.adapters.claude_runner import (
-    _ALLOWED_MODES,
     _STREAM_LIMIT,
     ClaudeRunError,
     _parse_event,
 )
+from bob.coding.argv_policy import build_interactive_argv, extract_session_id
+from bob.coding.sandbox_policy import is_allowed_mode
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator, Awaitable, Mapping
+    from collections.abc import AsyncIterator, Awaitable, Mapping, Sequence
 
 __all__ = [
     "InteractiveClaudeRunner",
@@ -136,31 +144,57 @@ class InteractiveClaudeRunner:
         spawner: InteractiveProcessSpawner | None = None,
         claude_bin: str = "claude",
         terminate_grace: float = _DEFAULT_TERMINATE_GRACE_S,
+        allow_bypass: bool = False,
+        extra_dirs: Sequence[str] = (),
     ) -> None:
         self._spawner: InteractiveProcessSpawner = spawner or _ExecInteractiveSpawner()
         self._claude_bin = claude_bin
         self._terminate_grace = terminate_grace
+        # Owner-only sandbox relaxations (BOB-087.D2), both inert by default: without
+        # ``allow_bypass`` the allowlist is exactly {plan, acceptEdits}, and an empty
+        # ``extra_dirs`` appends no ``--add-dir`` — the spawn stays the BOB-083 argv.
+        self._allow_bypass = allow_bypass
+        self._extra_dirs = tuple(extra_dirs)
         self._proc: InteractiveProcess | None = None
+        # The claude-assigned session id, captured off the init event as it streams
+        # (BOB-087.D1). ``None`` until the init frame is seen; the manager persists it
+        # for a later ``--resume`` — the transport itself owns NO session state.
+        self._session_id: str | None = None
 
-    async def open(self, workdir: str, *, mode: str) -> None:
-        """Spawn the persistent ``claude`` process in ``workdir`` under ``mode``."""
-        if mode not in _ALLOWED_MODES:
+    @property
+    def session_id(self) -> str | None:
+        """The claude session id seen on the init event, or ``None`` if not yet seen."""
+        return self._session_id
+
+    async def open(
+        self,
+        workdir: str,
+        *,
+        mode: str,
+        resume_session_id: str | None = None,
+        continue_session: bool = False,
+    ) -> None:
+        """Spawn the persistent ``claude`` process in ``workdir`` under ``mode``.
+
+        ``resume_session_id`` / ``continue_session`` (BOB-087.D1) opt into resuming a
+        prior session; both default OFF, so the spawn is byte-identical to BOB-083 (a
+        fresh session) unless a caller explicitly resumes. ``mode`` is checked against the
+        pure allowlist policy — ``bypassPermissions`` passes ONLY under the constructor's
+        owner flag ``allow_bypass`` (BOB-087.D2).
+        """
+        if not is_allowed_mode(mode, allow_bypass=self._allow_bypass):
             raise ClaudeRunError(
                 f"mode {mode!r} is not an allowlisted --permission-mode"
             )
         if self._proc is not None:
             raise InteractiveRunError("an interactive process is already open")
-        argv = [
+        argv = build_interactive_argv(
             self._claude_bin,
-            "-p",
-            "--input-format",
-            "stream-json",
-            "--output-format",
-            "stream-json",
-            "--verbose",
-            "--permission-mode",
-            mode,
-        ]
+            mode=mode,
+            resume_session_id=resume_session_id,
+            continue_session=continue_session,
+            extra_dirs=self._extra_dirs,
+        )
         self._proc = await self._spawner(argv, cwd=workdir)
 
     async def feed(self, text: str) -> None:
@@ -182,6 +216,8 @@ class InteractiveClaudeRunner:
             event = _parse_event(line)
             if event is None:
                 continue
+            if self._session_id is None:
+                self._session_id = extract_session_id(event)
             yield event
 
     async def close(self) -> None:

@@ -64,6 +64,14 @@ def test_failed_message_carries_the_detail() -> None:
     assert "claude timed out" in message
 
 
+def test_failed_message_reads_as_human_operator_reaction() -> None:
+    # BOB-087.B2: on a break Bob REACTS like himself («чёрт, сломалось»), not a dry
+    # "STATUS: FAILED" — the operator's human voice, still carrying the detail.
+    message = session_voice.failed("boom")
+    assert "boom" in message
+    assert "чёрт" in message.casefold()
+
+
 def test_stopped_message_is_bob_voiced_and_non_empty() -> None:
     message = session_voice.stopped()
     assert message
@@ -87,6 +95,20 @@ def test_status_idle_is_non_empty() -> None:
     assert session_voice.status_idle()
 
 
+def test_gate_reactions_are_human_not_dry_status_labels() -> None:
+    # BOB-087.B2: the operator's gate lines read as human reactions in Bob's voice,
+    # never machine status labels ("STATUS: DONE") — north star: personality, not a log.
+    for message in (
+        session_voice.accepted(),
+        session_voice.pr("https://x/pr/1"),
+        session_voice.failed("d"),
+        session_voice.stopped(),
+    ):
+        lowered = message.casefold()
+        assert "status:" not in lowered
+        assert "status :" not in lowered
+
+
 def test_all_messages_are_render_safe_single_strings() -> None:
     # No builder returns None / empty for its happy path — every one is a real string.
     for message in (
@@ -99,3 +121,73 @@ def test_all_messages_are_render_safe_single_strings() -> None:
     ):
         assert isinstance(message, str)
         assert message.strip()
+
+
+# --- resume flow (BOB-087.D3): Bob asks, then reports ---------------------------
+
+
+def test_resume_confirm_names_the_workspace_and_when_and_asks() -> None:
+    line = session_voice.resume_confirm(workspace="epic-bob-087", when="1 августа, 12:00")
+    # The owner must see WHICH workspace and WHEN that session was before saying «да».
+    assert "epic-bob-087" in line
+    assert "1 августа, 12:00" in line
+    # 🔴 It is a QUESTION, not an announcement — nothing is raised until the owner agrees.
+    assert "?" in line
+
+
+def test_resume_nothing_names_the_workspace_and_is_honest() -> None:
+    line = session_voice.resume_nothing("epic-bob-087")
+    assert "epic-bob-087" in line
+    assert line.strip()
+
+
+def test_resume_cancelled_is_short_and_non_empty() -> None:
+    assert session_voice.resume_cancelled().strip()
+
+
+def test_resumed_names_the_workspace() -> None:
+    line = session_voice.resumed("epic-bob-087")
+    assert "epic-bob-087" in line
+
+
+def test_resume_failed_is_honest_and_never_promises_cleanup() -> None:
+    # 🔴 The persistent workspace is NOT torn down on a failed resume — the accumulated
+    # work stays, so the line must not claim Bob removed the working copy.
+    line = session_voice.resume_failed()
+    assert line.strip()
+    assert "убрал" not in line.casefold()
+
+
+def test_stopped_persistent_never_claims_the_work_was_cleaned_up() -> None:
+    # 🔴 BOB-087.D4b: остановка ВОЗОБНОВЛЁННОЙ сессии сохраняет накопленное дерево, поэтому
+    # реплика НЕ смеет говорить, что Боб убрал рабочую копию — это была бы ложь owner'у.
+    line = session_voice.stopped_persistent()
+    assert line.strip()
+    assert "убрал" not in line.casefold()
+
+
+def test_stopped_persistent_says_the_work_survived_and_can_be_raised_again() -> None:
+    # Owner должен из одной реплики понять: сеанс погашен, но работа на месте и её можно
+    # поднять снова — иначе честность вырождается в умолчание.
+    lowered = session_voice.stopped_persistent().casefold()
+    assert "остал" in lowered
+    assert "подним" in lowered or "поднять" in lowered
+
+
+def test_stopped_persistent_differs_from_the_ephemeral_stop() -> None:
+    # Две разные судьбы дерева — две разные реплики (эфемерная копия действительно убрана).
+    assert session_voice.stopped_persistent() != session_voice.stopped()
+
+
+def test_resume_lines_are_human_not_dry_status_labels() -> None:
+    for message in (
+        session_voice.resume_confirm(workspace="w", when="вчера"),
+        session_voice.resume_nothing("w"),
+        session_voice.resume_cancelled(),
+        session_voice.resumed("w"),
+        session_voice.resume_failed(),
+        session_voice.stopped_persistent(),
+    ):
+        assert isinstance(message, str)
+        assert message.strip()
+        assert "status:" not in message.casefold()

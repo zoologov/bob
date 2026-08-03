@@ -233,6 +233,7 @@
 - **no-domain-depends-on-outer** (deny): Домен-слой не зависит от сервисов (runtime/bob), кроме part_of
 - **module-coverage** (unknown): Каждый src/bob модуль — трекнутый узел (feature/component/source) или exempt
 - **no-monster-modules** (cardinality): Модуль-слой/фича не должен пухнуть (handle_message/app.py/gateway — #9/#10/#25)
+- **no-monster-modules-coding** (cardinality): coding: отдельный явный бюджет крупного bounded context (BOB-087.D3)
 
 ## Custom
 

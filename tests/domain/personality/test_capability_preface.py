@@ -37,3 +37,12 @@ def test_preface_names_the_poisoning_intent_verbs_it_bans() -> None:
     assert "пошёл" in lowered
     assert "заглянет" in lowered
     assert "ищет" in lowered
+
+
+def test_preface_frames_bob_as_operator_directing_guppi() -> None:
+    # BOB-087.B2: the ban is now anchored in a POSITIVE operator stance — Bob DIRECTS
+    # GUPPI and reacts to the RESULT in his own voice, rather than only being told
+    # what not to do. The stance must not weaken the anti-narration guard above.
+    lowered = _CAPABILITY_PREFACE.lower()
+    assert "оператор" in lowered
+    assert "направля" in lowered

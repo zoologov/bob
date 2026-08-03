@@ -53,6 +53,7 @@ from bob.coding.entities import CodingSession
 from bob.coding.naming import worktree_branch
 from bob.coding.narrate import narrate
 from bob.coding.state import CodingSessionState, can_approve_plan, is_terminal
+from bob.coding.work_facts import WorkFactsAccumulator, WorkOutcome
 from bob.memory.self_action import SelfAction, SelfActionKind
 from bob.social.disclosure import VISIBILITY_OWNER_PRIVATE
 
@@ -61,6 +62,7 @@ if TYPE_CHECKING:
     from datetime import datetime
 
     from bob.coding.ports import ClaudeCodeRunner, CodingSessionStore, PullRequestOpener, Worktree
+    from bob.coding.work_facts import SessionKeyFacts
     from bob.memory.ports import SelfActionRecorder
 
 logger = logging.getLogger(__name__)
@@ -201,6 +203,29 @@ class CodingContext(Protocol):
         ...
 
 
+class WorkJournalRecorder(Protocol):
+    """Узкий порт дистиллированной рабочей памяти (BOB-087.B1).
+
+    На КОНЦЕ сессии (веха, НЕ per-firehose-event — урок BOB-076) use-case отдаёт сюда
+    накопленный снимок ключевых фактов + исход; реализация дистиллирует их в первого-лица
+    операторские эпизоды и осаждает эпизодами ``work`` (за флагом ``memory.work_journal``;
+    OFF → no-op, память байт-в-байт). Best-effort у вызывающего: сбой записи не роняет
+    coding-путь. Снимок собирает :class:`~bob.coding.work_facts.WorkFactsAccumulator`,
+    который use-case кормит сырым потоком событий по ходу прогона.
+    """
+
+    async def record_session(
+        self,
+        task: str,
+        facts: SessionKeyFacts,
+        outcome: WorkOutcome,
+        *,
+        sender_id: int | None = None,
+    ) -> None:
+        """Записать дистиллят сессии (или тихо ничего — no-op при OFF-флаге)."""
+        ...
+
+
 @dataclass(frozen=True, slots=True)
 class CodingOutcome:
     """Итог одной команды: успех/отказ, owner-сообщение и итоговая сессия.
@@ -234,6 +259,7 @@ class CodingAssistant:
         status_panel: StatusPanel | None = None,
         context: CodingContext | None = None,
         recorder: SelfActionRecorder | None = None,
+        work_journal: WorkJournalRecorder | None = None,
         live_streamer: LiveRunStreamer | None = None,
         stream_notifier: OwnerNotifier | None = None,
     ) -> None:
@@ -258,6 +284,12 @@ class CodingAssistant:
         # null recorder (zero writes), so the gated flow is byte-identical when off, and the
         # composition root's flag-gated NoOp/memory recorder decides whether it truly writes.
         self._recorder: SelfActionRecorder = recorder or _NullSelfActionRecorder()
+        # Distilled work memory (BOB-087.B1): at session END the accumulated key facts are
+        # distilled into a few first-person operator episodes through this narrow port. Unwired
+        # (the default) or flag OFF → a null/no-op recorder (zero writes), so the gated flow is
+        # byte-identical; the composition root's ``memory.work_journal`` flag decides whether it
+        # truly distills + writes. The accumulator itself runs regardless (I/O-free, harmless).
+        self._work_journal: WorkJournalRecorder = work_journal or _NullWorkJournalRecorder()
         # Work indicators (BOB-046 .2): both degrade to a no-op when unwired, so the gated
         # flow is unchanged and never depends on the indicator being present.
         self._typing: TypingKeepalive = typing_keepalive or _no_typing
@@ -401,9 +433,13 @@ class CodingAssistant:
         BEFORE opening the PR. If ``claude`` changed nothing, the push reports nothing to
         commit and the session FAILS honestly with no PR.
         """
+        # Work-journal accumulator (BOB-087.B1): a fresh bounded per-run collector fed the raw
+        # stream events by ``_narrate_run`` — the DISTILLED substance of the session (files /
+        # tests / what-broke), never the firehose. Journaled ONCE at the terminal below.
+        facts = WorkFactsAccumulator()
         await self._panel.update(session_voice.panel_executing())
         async with self._typing():  # "Bob is typing…" through the long execute wait
-            await self._narrate_run(session, path, sender)
+            await self._narrate_run(session, path, sender, facts)
         if session.id in self._cancelled:  # a stop landed mid-run — do not open a PR
             return CodingOutcome(ok=False, message=session_voice.stopped(), session=session)
         committed = await self._worktree.commit_and_push(
@@ -422,6 +458,7 @@ class CodingAssistant:
                 ),
                 sender,
             )
+            await self._journal(session.task, facts, WorkOutcome.FAILED, sender)
             await self._panel.update(session_voice.panel_failed())
             return await self._reply(False, session_voice.no_changes(), session=session)
         pr_url = await self._pr_opener.open(
@@ -432,6 +469,7 @@ class CodingAssistant:
         )
         await self._store.save(session)
         await self._record(SelfAction(SelfActionKind.CODING_FINISHED, target=session.task), sender)
+        await self._journal(session.task, facts, WorkOutcome.FINISHED, sender)
         await self._panel.update(session_voice.panel_pr())
         return await self._reply(True, session_voice.pr(pr_url), session=session)
 
@@ -459,7 +497,11 @@ class CodingAssistant:
         return _clean_plan(parts)
 
     async def _narrate_run(
-        self, session: CodingSession, path: str, sender: int | None
+        self,
+        session: CodingSession,
+        path: str,
+        sender: int | None,
+        facts: WorkFactsAccumulator,
     ) -> None:
         """Run execute-mode, streaming its events to the owner (DM live or capped group).
 
@@ -471,6 +513,10 @@ class CodingAssistant:
           never floods the group).
         * **Capped group narration (default):** each non-noise event is narrated to the
           group capped at ``_MAX_NARRATION`` — behaviour unchanged when the flag is off.
+
+        The raw stream is teed through :func:`_observe_facts` FIRST (BOB-087.B1): each event
+        feeds the bounded work-journal accumulator (key facts only, never stored raw) and is
+        yielded downstream UNCHANGED, so both narration shapes are byte-identical.
         """
         prompt = _with_preamble(
             await self._preamble(session.task), _execute_prompt(session.task)
@@ -478,10 +524,11 @@ class CodingAssistant:
         async with aclosing(
             _closeable(self._runner.run(path, prompt, mode=self._execute_mode))
         ) as stream:
+            observed = _observe_facts(stream, facts)
             if self._live_streamer is not None:
-                await self._stream_to_dev_channel(session, stream)
+                await self._stream_to_dev_channel(session, observed)
             else:
-                await self._narrate_capped(session, stream, sender)
+                await self._narrate_capped(session, observed, sender)
 
     async def _stream_to_dev_channel(
         self, session: CodingSession, stream: AsyncIterator[Mapping[str, object]]
@@ -593,6 +640,28 @@ class CodingAssistant:
         except Exception:  # a recorder fault must never crash the coding session
             logger.exception("coding: self-action recording failed (%s)", action.kind)
 
+    async def _journal(
+        self,
+        task: str,
+        facts: WorkFactsAccumulator,
+        outcome: WorkOutcome,
+        sender: int | None,
+    ) -> None:
+        """Best-effort distilled-work-memory write at session end — never breaks coding.
+
+        The distilled work journal (BOB-087.B1) is a background side channel behind
+        ``memory.work_journal`` (OFF by default → the null/no-op recorder writes nothing, so
+        this is byte-identical). Whether the distiller/store lands or throws, the gated coding
+        path must complete EXACTLY as before (lesson Part D BOB-078); the recorder is itself
+        best-effort, and this guard is the belt-and-braces backstop.
+        """
+        try:
+            await self._work_journal.record_session(
+                task, facts.snapshot(), outcome, sender_id=sender
+            )
+        except Exception:  # a journal fault must never crash the coding session
+            logger.exception("coding: work-journal recording failed (%s)", outcome)
+
     async def _cleanup(self, path: str | None) -> None:
         """Remove the worktree (idempotent best-effort; never leak, never crash a turn)."""
         if path is None:
@@ -674,6 +743,39 @@ class _NullSelfActionRecorder:
         visibility: str | None = None,
     ) -> None:
         """Drop the write — autobiography is unwired (byte-identical behaviour)."""
+
+
+class _NullWorkJournalRecorder:
+    """No-op work-journal recorder: unwired → no distilled work episode (graceful degrade).
+
+    A local null object (like :class:`_NullSelfActionRecorder`) so an unwired ``work_journal``
+    needs no branch at each call site and the application use-case never imports an adapter.
+    """
+
+    async def record_session(
+        self,
+        task: str,
+        facts: SessionKeyFacts,
+        outcome: WorkOutcome,
+        *,
+        sender_id: int | None = None,
+    ) -> None:
+        """Drop the write — the work journal is unwired (byte-identical behaviour)."""
+
+
+async def _observe_facts(
+    stream: AsyncIterator[Mapping[str, object]], facts: WorkFactsAccumulator
+) -> AsyncGenerator[Mapping[str, object], None]:
+    """Tee the raw run stream through the work-journal accumulator (BOB-087.B1).
+
+    Each event feeds the bounded accumulator (KEY facts only — files / tests / errors —
+    never the raw event) and is yielded downstream UNCHANGED, so the narration/live-stream
+    consumers see exactly the same sequence (byte-identical). Accumulation is I/O-free and
+    total (the accumulator swallows odd shapes), so this tee never alters the run.
+    """
+    async for event in stream:
+        facts.observe(event)
+        yield event
 
 
 def _refused() -> CodingOutcome:

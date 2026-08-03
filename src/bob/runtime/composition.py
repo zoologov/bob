@@ -149,6 +149,7 @@ from bob.runtime.wiring import (
     _build_floor_enabled,
     _build_goal_engine,
     _build_interactive_intake,
+    _build_interactive_recovery,
     _build_interactive_session,
     _build_length_guard_enabled,
     _build_length_guard_max_chars,
@@ -173,11 +174,13 @@ from bob.runtime.wiring import (
     build_disclosure_consent_gate,
     build_disclosure_guard,
     build_endorsement_seeder,
+    build_register_resolver,
     build_rhythm_wiring,
     build_room_mood_modulator,
     build_roster_config,
     build_self_action_recorder,
     build_staleness_reassessor,
+    build_work_journal_recorder,
     staleness_enabled,
 )
 from bob.social.adapters.first_impression_store import SqliteFirstImpressionStore
@@ -202,6 +205,9 @@ if TYPE_CHECKING:
     from bob.capabilities.usecases import CapabilityRegistry
     from bob.coding.usecases.coding_assistant import CodingAssistant
     from bob.coding.usecases.interactive_session import InteractiveSessionManager
+    from bob.coding.usecases.recover_interactive_sessions import (
+        RecoverInteractiveSessions,
+    )
     from bob.infrastructure.telegram.gateway import BotLike
     from bob.infrastructure.telegram.multibot import MultiBotGateway
     from bob.kernel.ports import Clock, DomainEvent, EventHandler, LLMProvider
@@ -264,6 +270,10 @@ class Application:
     # in the owner's DM, wired only when ``coder.interactive`` is on (conservative default
     # off → ``None``). The ``.4`` intake mode drives it; off → inert (never built).
     interactive_session: InteractiveSessionManager | None = None
+    # Boot-time sweep of orphaned live sessions (BOB-087.D5b): an ``INTERACTIVE`` row seen
+    # at startup belongs to a process that no longer exists, so it is closed. ``None`` only
+    # in hand-assembled test fixtures; ``startup`` then simply skips it.
+    interactive_recovery: RecoverInteractiveSessions | None = None
 
     async def startup(self) -> GenesisResult:
         """Initialise persistence, awaken Bob on first boot, load his soul.
@@ -286,6 +296,12 @@ class Application:
         await self.person_sulk_store.backfill_owner(
             _BOB_PERSONA, _int(_section(self.config, "telegram"), "owner_id", 0)
         )
+        # Orphaned live coding sessions (BOB-087.D5b): a row left in ``INTERACTIVE`` by a
+        # crash/redeploy is closed here — the process that held it is gone, and leaving it
+        # non-terminal would block the gated coder forever and shadow the freshest resume
+        # candidate. Best-effort inside; a no-op (zero writes) when there is no such row.
+        if self.interactive_recovery is not None:
+            await self.interactive_recovery.run()
         result = await self.genesis.run()
         self.personality.soul = _load_soul(self.soul_store)
         # Resolve Bob's own bot identity (id + @username) so the addressivity scan
@@ -391,6 +407,23 @@ def build_application(
     # the tool-loop (.3) record first-person ``self_action`` episodes through it.
     self_action_recorder = build_self_action_recorder(
         merged, store=memory_repo, clock=resolved_clock
+    )
+
+    # Distilled work memory (BOB-087.B1): behind ``memory.work_journal`` (OFF by default →
+    # NoOp → zero writes, byte-identical). At a coding-session END it distills the run's key
+    # facts into a few first-person operator episodes (``work`` events) via a Tier-0 call.
+    # 🔴 Stays OFF until slice C's register-aware recall lands (no casual-pollution window).
+    work_journal_recorder = build_work_journal_recorder(
+        merged, router=router, store=memory_repo, clock=resolved_clock
+    )
+
+    # Register-aware recall (BOB-087.C): behind ``memory.register_recall`` (OFF by default →
+    # None → recall byte-identical, over-fetch off, no register filter — INV-5). ON → a
+    # RegisterResolver over the Tier-0 work-talk classifier + the deterministic dev-DM signal
+    # (present only when a dev-DM channel is active), so casual turns mute distilled ``work``
+    # recollections while a dev turn surfaces them. Activated read+write WITH work_journal.
+    register_resolver = build_register_resolver(
+        merged, router=router, owner_id=_int(_section(merged, "telegram"), "owner_id", 0)
     )
 
     soul_store = SoulStore(_soul_dir(merged))
@@ -527,6 +560,9 @@ def build_application(
         owner_id=_int(telegram_section, "owner_id", 0),
         clock=resolved_clock,
         recorder=self_action_recorder,
+        # Distilled work memory (BOB-087.B1): at session END the run's key facts are distilled
+        # into first-person operator episodes. Behind ``memory.work_journal`` (OFF → NoOp).
+        work_journal=work_journal_recorder,
     )
 
     # Interactive-session manager (BOB-083 .3): a live, bidirectional ``claude`` terminal
@@ -543,6 +579,14 @@ def build_application(
         stream_bot=resolved_guppi_bot,
         owner_id=_int(telegram_section, "owner_id", 0),
         clock=resolved_clock,
+    )
+
+    # Boot-time recovery of orphaned live sessions (BOB-087.D5b). Built unconditionally
+    # (see the factory docstring): a row left in ``INTERACTIVE`` by a crash belongs to a
+    # dead process, and while it lives the gated coder answers «я уже в работе» to every
+    # new task. With no such row it writes nothing, so a flags-off boot is unchanged.
+    interactive_recovery = _build_interactive_recovery(
+        repo=connection, clock=resolved_clock
     )
 
     # Interactive-terminal intake router (BOB-083 .4): the owner-DM consume-gate that opens
@@ -950,6 +994,10 @@ def build_application(
         # tools (coalesced first-person ``self_action``). Behind ``memory.autobiography``
         # (OFF by default → NoOp → zero writes, byte-identical behaviour).
         self_action_recorder=self_action_recorder,
+        # Register-aware recall (BOB-087.C): behind ``memory.register_recall`` (OFF by
+        # default → None → recall byte-identical, over-fetch off, INV-5). ON → the per-turn
+        # RegisterResolver mutes distilled ``work`` recollections on a casual turn.
+        register_resolver=register_resolver,
     )
     # Intake-развязка (BOB-066 Срез 2.1): the MESSAGE_RECEIVED subscriber is now the fast,
     # non-blocking ChatDispatcher.submit (normalise → buffer → return), so the Telegram
@@ -1246,6 +1294,7 @@ def build_application(
         pursue_goals_tick=pursue_goals_tick,
         coding_assistant=coding_assistant,
         interactive_session=interactive_session,
+        interactive_recovery=interactive_recovery,
     )
 
 

@@ -50,10 +50,15 @@ src/bob/memory/
   __init__.py     # layer=domain          — фасад (re-export EpisodicEvent, SemanticFact)
   entities.py     # layer=domain          — EpisodicEvent, SemanticFact (immutable value-objects)
   self_action.py  # layer=domain          — SelfActionKind, SelfAction, describe_self_action (автобиография, BOB-079)
+  work_journal.py # layer=domain          — WorkEpisode + work_episode_event: дистиллированный dev-эпизод, event_type='work' (BOB-087.B1)
+  register.py     # layer=domain          — Register (DEV/CASUAL) + may_recall_in_register/filter_by_register: чистый down-weight work-эпизодов в CASUAL (BOB-087.C1)
+  register_pipeline.py # layer=domain     — register_ranked/pool_has_work: over-fetch → attenuate → re-sort → truncate («зубы» down-weight'а) + economy-gate (BOB-087.C2)
   usecases/       # layer=application
     extract_facts.py       — ExtractFacts (Tier 0 «запомнить»: реплика → факты)
     consolidate_memory.py  — ConsolidateMemory (редкий дайджест старых эпизодов, BOB-021)
     dedup_facts.py         — DedupFacts (редкий консервативный merge дубль-фактов, BOB-021)
+    classify_work_talk.py  — ClassifyWorkTalk (дешёвый Tier-0 «ход про dev-работу?», BOB-087.C2)
+    resolve_register.py    — RegisterResolver (per-turn DEV/CASUAL, BOB-087.C2)
   adapters/       # layer=infrastructure
     sqlite_memory_repo.py  — SqliteMemoryRepo (MemoryRepo: episodic/semantic/vector/mood/taste)
     vector_store.py        — MemoryVectorStore (sqlite-vec vec0-таблица memory_vec)
@@ -105,6 +110,75 @@ failed/runaway/tool_failure). Рендер — mutation-ядро (100%). Дей�
 работают без спец-путей (это делимая автобиография, а не приватная рефлексия — из
 recall не вырезается). Запись включает флаг `memory.autobiography` (default OFF →
 no-op recorder, нулевое изменение поведения).
+
+**Рабочий журнал — дистиллированный dev-эпизод (BOB-087.B1).** `work_journal.py`
+(чистый домен, I/O-free) вводит `WorkEpisode` — детальную первого-лица «операторскую»
+вспоминку одной coding-сессии Боба («я попросил GUPPI починить X в файле Y; тесты Z
+падали; подняли лимит — позеленело»). `work_episode_event(episode, *, ts, sender_id,
+visibility)` осаждает её в `EpisodicEvent` на **отдельном** `event_type` `work`
+(константа `WORK_EVENT_TYPE`), а НЕ `self_action`: существующая self-action
+озвучка/recall (`recall_has_self_action`, ключ по `self_action`) остаётся байт-в-байт,
+а register-aware recall Среза C получает чистый шов по домену `work`. Провенанс (INV-3,
+разделение акторства): эпизод помечается тегами `work`/`dev` и маркером актора
+`actor:bob` — это операторская вспоминка Боба; атрибуция, где сделал GUPPI/тест, живёт
+В контенте от первого лица («я попросил GUPPI…, GUPPI сделал…»). `visibility`/`sender_id`
+пробрасываются вызывающим (coding-сессия owner-приватна — `VISIBILITY_OWNER_PRIVATE`).
+Сама дистилляция фактов сессии в эпизоды — на стороне `coding` (см. модуль coding,
+`work_journal_recorder` + `distill_work_journal`), за флагом `memory.work_journal`
+(default OFF → no-op recorder, память байт-в-байт).
+
+**Register-aware recall — регистр разговора красит recall (BOB-087.C).** Register — это
+разговорный **режим** хода: Боб сейчас в роли разработчика (`DEV`) или просто болтает
+(`CASUAL`). Это ортогонально такту разглашения (`social.disclosure`): такт ключуется по
+тому, **кто слушает** (`Trust`), а register — по тому, **в каком режиме** идёт разговор.
+Живёт в домене memory, потому что работает чисто над припомненными элементами по
+провенансу `work`, отчеканенному рабочим журналом (B1).
+
+- **C1 — чистое ядро (`register.py`).** `Register` (`DEV`/`CASUAL`),
+  `may_recall_in_register(*, category, tags, register)` → вес и
+  `filter_by_register(recalled, register)` → атенюированный кортеж. В `CASUAL` work-эпизод
+  (узнаётся по `category` `work` ИЛИ любому work-тегу, источник — `work_journal._WORK_TAGS`
+  + `WORK_EVENT_TYPE`, одно определение провенанса на write- и read-стороне) получает малый
+  вес `CASUAL_WORK_WEIGHT` (0.15): его relevance-`score` умножается на этот вес, поэтому он
+  редко выигрывает слот, но **никогда не вырезается** (сквозной Боб — сильный матч всё ещё
+  может всплыть). В `DEV` — тождество, вход байт-в-байт (`RECALL_WEIGHT_FULL` = 1.0).
+  Не-work память всегда полный вес. Чисто и детерминированно (без I/O).
+- **C2 — «зубы» rank-пайплайна (`register_pipeline.py`).** Сама атенюация порядок-сохраняюща
+  и на display-k пуле выселить work-эпизод не может (нечего поднять снизу).
+  `register_ranked(pool, register, *, display_k)` кладёт зубы: над **over-fetched** пулом
+  (best-first) он штампует higher-is-better позиционную relevance из ранга recall'а (чтобы
+  down-weight не зависел от знака BM25-score), даёт C1 приглушить work-эпизоды, **пере-сортирует**
+  по relevance (убыв.) и подрезает до display-k. Так в CASUAL приглушённый work реально
+  выпадает из финальных слотов, а не-work поднимается из глубины пула — при этом сквозной
+  Боб держится: если не-work не хватает на слоты, сильнейший work всё же всплывает
+  (приглушённый, не вырезанный). В DEV — тождество-подрезка (объекты элементов не трогаются).
+  `pool_has_work(pool)` — Tier-0 economy-gate: есть ли в пуле хоть один work-эпизод, чтобы
+  резолвер пропустил классификатор, когда глушить нечего. Оба — mutation-ядро.
+- **C2 — резолвер (`resolve_register.py`).** `RegisterResolver.resolve(event, *,
+  pool_has_work)` — memory-зеркало `HandleMessage._surface_audience`: ход = `DEV`, если
+  сработал **детерминированный** сигнал (чат — dev-DM `coder.dev_dm_chat_id`, 1:1-канал
+  оператора) ИЛИ дешёвый Tier-0 `ClassifyWorkTalk` судит ход как про dev-работу (механизм
+  owner'а «прямой вопрос поднимает работу», живой в ЛЮБОМ чате); иначе `CASUAL`. Экономия:
+  классификатор зовётся, **только** когда пул реально держит work-эпизоды (`pool_has_work`)
+  — глушить нечего → не жжём локальный вызов.
+- **C2 — Tier-0 классификатор (`classify_work_talk.py`).** `ClassifyWorkTalk.is_work_talk(text)`
+  — один дешёвый локальный вызов (`TaskType.WORK_TALK`), возвращает одно слово, парсится
+  КОНСЕРВАТИВНО (`parse_work_talk_verdict`): только точный `work` считается, любое другое
+  слово / мусор / сбой модели → `chat` (`False`). Консерватизм — безопасный пол: ложный
+  негатив лишь оставляет casual-recall глушащим work (дефолт), никогда не озвучивает
+  приватный dev-контекст не тому.
+
+Провенанс: work-эпизоды, которые глушит register-фильтр, приходят из рабочего журнала
+(`work_journal`, event_type `work`) — те же теги `work`/`dev`/`actor:bob`.
+
+🔴 **Граница покрытия (известное ограничение, follow-up BOB-087 / bob-abk.17).**
+Register-фильтр покрывает **только первичный reply-recall** (`HandleMessage._recall_surfaceable`).
+МИМО фильтра идут: grounded-addons, tool-recall (`search_memory` / `recall_memory`) и
+проактивный seed — их work-эпизоды в CASUAL НЕ приглушаются. Пока флаг
+`memory.register_recall` OFF (дефолт) живой утечки нет (register-recall вообще не собран).
+Полное покрытие этих путей — **обязательная предпосылка активации флага** (follow-up
+bob-abk.17); активировать флаг до закрытия этой границы нельзя, иначе work-контекст
+просочится casual-путями в обход фильтра.
 
 ### Use-case'ы (application)
 
@@ -238,6 +312,21 @@ OpenAI-совместимой `/v1/chat/completions`, сортирует по у
   Боб не выдумывает поступок (без конфабуляции); свои действия (`self_action`) не
   смешиваются с внешними (`message`/`reaction_received`). Запись — best-effort и за
   флагом `memory.autobiography`: сбой записи не роняет ни coding-путь, ни приём.
+- **Рабочий журнал — отдельный event_type (BOB-087.B1):** дистиллированный dev-эпизод
+  оседает как `EpisodicEvent(event_type='work')` (НЕ `self_action`), поэтому self-action
+  озвучка/recall остаётся байт-в-байт; провенанс — теги `work`/`dev` + `actor:bob` (это
+  операторская вспоминка Боба, атрибуция GUPPI/теста живёт в контенте от первого лица).
+  Осаждение — best-effort и за флагом `memory.work_journal` (default OFF → память
+  байт-в-байт как сегодня).
+- **Register-aware recall — down-weight, не силос (BOB-087.C):** в `CASUAL` work-эпизод
+  лишь приглушается (`score × CASUAL_WORK_WEIGHT` = 0.15), но НИКОГДА не вырезается
+  (сквозной Боб — сильный матч всплывает приглушённым); в `DEV` recall байт-в-байт.
+  «Зубы» дают выселение (over-fetch → attenuate → re-sort → truncate), а `pool_has_work`
+  — economy-gate (нет work → не зовём Tier-0). Провенанс — теги `work`/`dev`/`actor:bob`
+  из рабочего журнала. За флагом `memory.register_recall` (default OFF → резолвер `None`
+  → recall байт-в-байт, over-fetch выключен, INV-5). Граница: покрыт только первичный
+  reply-recall; grounded-addons / tool-recall / проактивный seed идут мимо (follow-up
+  bob-abk.17, обязателен до активации флага).
 - **Инварианты сущностей:** `ts` всегда timezone-aware, `confidence ∈ [0, 1]` —
   проверяются в `__post_init__`, невалидная запись не может существовать.
 
@@ -292,6 +381,18 @@ ports-шим `bob.domain.ports` удалён (BOB-062.8), ~15 потребите
   `build_embedder` / `build_reranker`; `self_action_recorder` (BOB-079).
 - `self_action.py` (чистый домен): `SelfActionKind`, `SelfAction`,
   `describe_self_action` — рендер самодействия от первого лица (BOB-079).
+- `work_journal.py` (чистый домен): `WorkEpisode`, `work_episode_event`,
+  `WORK_EVENT_TYPE` — дистиллированный dev-эпизод, event_type `work` (BOB-087.B1).
+- `register.py` (чистый домен): `Register` (DEV/CASUAL), `may_recall_in_register`,
+  `filter_by_register`, `RECALL_WEIGHT_FULL`, `CASUAL_WORK_WEIGHT` — down-weight
+  work-эпизодов в CASUAL (BOB-087.C1).
+- `register_pipeline.py` (чистый домен): `register_ranked(pool, register, *, display_k)`,
+  `pool_has_work(pool)` — rank-пайплайн («зубы») + economy-gate (BOB-087.C2).
+- `usecases/resolve_register.py`: `RegisterResolver.resolve(event, *, pool_has_work)` —
+  per-turn DEV/CASUAL (детерминированный dev-DM сигнал + Tier-0 судья); `WorkTalkClassifier`
+  — Protocol-шов классификатора (BOB-087.C2).
+- `usecases/classify_work_talk.py`: `ClassifyWorkTalk.is_work_talk(text)`,
+  `parse_work_talk_verdict(label)` — дешёвый Tier-0 «ход про dev-работу?» (BOB-087.C2).
 
 Композиция (создание connection-kernel'а, сборка `SqliteMemoryRepo` над ним, recall'а,
 эмбеддера, reranker'а и навешивание extract/consolidate/dedup на heartbeat) — в

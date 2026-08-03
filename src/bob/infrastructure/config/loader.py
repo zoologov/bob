@@ -363,6 +363,42 @@ DEFAULT_CONFIG: Config = {
         # Bob's bot exactly as today (byte-identical); Bob's own voice (gate lines) always
         # stays on Bob's bot. ON requires the owner to have started GUPPI's bot for a DM target.
         "stream_via_guppi": False,
+        # 🔴 Owner-only sandbox relaxations (BOB-087.D2) — both ship INERT, and both make
+        # the isolated worktree less isolated, so the owner opts in deliberately (the
+        # BOB-076 lesson: a powerful capability is OFF by default).
+        # ``allow_bypass`` admits ``bypassPermissions`` into the runner's ``--permission-mode``
+        # allowlist (claude stops asking before each edit — fast, but no per-action gate);
+        # OFF → the allowlist is exactly {plan, acceptEdits}, the shipped guarantee.
+        # ``extra_dirs`` passes ``--add-dir`` paths to claude, i.e. directories OUTSIDE the
+        # worktree (and outside the tracked-files-only copy that keeps Bob's private data away
+        # from Claude Code); empty → nothing is passed and the argv is byte-identical.
+        #
+        # 🔴 WHAT ``allow_bypass: true`` REALLY COSTS (be honest — BOB-087.D5b, M4). Bob's own
+        # code has no push / merge / PR path in the interactive seam, and that stays true. But
+        # ``bypassPermissions`` gives claude an UNSUPERVISED shell inside a LINKED worktree,
+        # and a linked worktree shares the main repo's ``.git``: the same objects, the same
+        # REFS, the same remotes and the same credentials. From there ``git push --force
+        # origin HEAD:main``, ``git branch -f main …`` or ``gh pr merge`` are all expressible.
+        # So with this flag ON, «main is untouchable» (INV-2) stops being a STRUCTURAL
+        # guarantee and becomes trust in the model plus the owner's judgement. With it OFF —
+        # the default — every write claude makes still passes a per-action gate, and that is
+        # what actually keeps the trunk safe.
+        "allow_bypass": False,
+        "extra_dirs": [],
+        # 🔴 ДОЛГОЖИВУЩЕЕ рабочее место + возобновление сессии (BOB-087.D3, D5b): owner из
+        # лички явной командой ``/workspace <name> [task]`` (или ``/code -w``) заводит
+        # персистентный worktree, где работа НАКАПЛИВАЕТСЯ между сеансами; команда
+        # ``/resume <workspace>`` (``/code -r``) поднимает в нём прошлую сессию через
+        # ``claude --resume <id>``. Ship OFF: живой claude, приземляющийся в уже
+        # накопленное дерево, — самое мощное действие интерактива, и по уроку BOB-076
+        # такое включается сознательно. OFF → ни одна из команд не распознаётся,
+        # персистентный worktree не создаётся, поведение байт-в-байт как в BOB-083.
+        # Предохранители на ON: owner-only + DM-only, для подъёма ещё и явное
+        # подтверждение в окне TTL; поднять можно ТОЛЬКО остановленную сессию (не
+        # live-attach); ни push, ни merge, ни PR тут не выразимы — main только через PR.
+        # Оговорка та же, что и для ``allow_bypass`` выше: структурной эта гарантия
+        # остаётся, пока сам claude работает под пер-действенным гейтом.
+        "resume": False,
     },
     # Web search — «Боб ищет в интернете» (BOB-053). The ``web_search`` skill (behind
     # the capability seam) makes ONE Qwen-native call over the MaaS **Responses API**

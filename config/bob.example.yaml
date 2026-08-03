@@ -127,6 +127,33 @@ coder:
   # replies then go straight to claude's stdin (steer), and `stop` / `/exit` closes it. The
   # most powerful coding surface, so it is owner-only + DM-only + flag-gated and physically
   # cannot merge/push (edits stay in an isolated worktree; land via the normal PR gate,
-  # INV-2). Default OFF → the mode is entirely unavailable (no entry, the gate never fires).
+  # INV-2 — but read what allow_bypass below really costs). Default OFF → the mode is
+  # entirely unavailable (no entry, the gate never fires).
   # The DM target reuses dev_dm_chat_id (default telegram.owner_id).
   # interactive: false
+  # Where the isolated git worktrees are created (relative to the repo root). A fresh
+  # worktree holds only TRACKED files, so Bob's private data (data/soul/, bob.db*, .env*,
+  # config/*) never reaches Claude Code — that absence IS the isolation.
+  # worktree_root: .worktrees
+  # 🔴 SANDBOX RELAXATION (BOB-087.D2), owner-only, ships OFF. Admits
+  # `--permission-mode bypassPermissions` into the runner's allowlist: claude stops asking
+  # before each edit (fast) — and gets an UNSUPERVISED shell inside a LINKED worktree, which
+  # shares the main repo's .git: the same refs, remotes and credentials. From there
+  # `git push --force origin HEAD:main` / `gh pr merge` ARE expressible. Bob's own code adds
+  # no push/merge path, but with this flag ON «main is untouchable» stops being a STRUCTURAL
+  # guarantee and becomes your judgement. OFF → the allowlist is exactly {plan, acceptEdits}.
+  # allow_bypass: false
+  # 🔴 SANDBOX RELAXATION (BOB-087.D2), ships EMPTY. Extra `--add-dir` paths handed to
+  # claude, i.e. directories OUTSIDE the worktree (and outside the tracked-files-only copy
+  # that keeps Bob's private data away). Empty → no --add-dir at all, argv byte-identical.
+  # extra_dirs: []
+  # 🔴 LONG-LIVED workspace + session RESUME (BOB-087.D3), owner-only + DM-only, ships OFF.
+  # `/workspace <name> [task]` (or `/code -w`) opens a PERSISTENT worktree where work
+  # ACCUMULATES between sessions; `/resume <workspace>` (`/code -r`) raises the previous
+  # session there via `claude --resume <id>` — «pick our epic session up from the phone».
+  # Raising a live claude into an already-accumulated tree is the strongest interactive
+  # action, so (BOB-076 lesson) it is deliberate: raising also needs an explicit «да» inside
+  # a TTL window, and only a STOPPED session can be raised (never a live attach).
+  # OFF → neither command is recognised, no persistent worktree is created, behaviour is
+  # byte-identical to BOB-083.
+  # resume: false

@@ -25,6 +25,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from bob.coding import session_voice
 from bob.coding.adapters.live_stream import _DmLiveStreamer
 from bob.coding.state import CodingSessionState, is_terminal
 from bob.coding.usecases.interactive_session import InteractiveSessionManager
@@ -48,12 +49,24 @@ class _FakeInteractiveRunner:
     fed: list[str] = field(default_factory=list)
     close_calls: int = 0
     streamed: list[Mapping[str, object]] = field(default_factory=list)
+    session_id: str | None = None  # BOB-087.D1: claude session id from the init event
 
     def __post_init__(self) -> None:
         self._closed = asyncio.Event()
         self.drained = asyncio.Event()  # set once every canned event has been yielded
 
-    async def open(self, workdir: str, *, mode: str) -> None:
+    async def open(
+        self,
+        workdir: str,
+        *,
+        mode: str,
+        resume_session_id: str | None = None,
+        continue_session: bool = False,
+    ) -> None:
+        # BOB-087.D3: the port carries the optional resume knobs; the FRESH ``open``
+        # path must never use them (asserted here — the default spawn is unchanged).
+        assert resume_session_id is None
+        assert continue_session is False
         self.opened.append((workdir, mode))
 
     async def feed(self, text: str) -> None:
@@ -251,6 +264,75 @@ async def test_feed_without_active_session_is_a_noop() -> None:
     assert rig.runner.fed == []
 
 
+# --- claude session id: persisted the MOMENT it appears (BOB-087.D5b, M5) -----
+
+
+_INIT_EVENT: Mapping[str, object] = {
+    "type": "system",
+    "subtype": "init",
+    "session_id": "claude-live-1",
+}
+
+
+@pytest.mark.asyncio
+async def test_claude_session_id_is_persisted_as_soon_as_the_init_frame_arrives() -> None:
+    # 🔴 BOB-087.D5b (M5а): id сохранялся ТОЛЬКО в ``stop``. Рестарт/краш посреди живого
+    # сеанса — и id потерян навсегда, а «поднять с телефона» поднимает БОЛЕЕ СТАРУЮ нить
+    # поверх свежей работы. Ассерт БЕЗ вызова stop: строка в сторе уже несёт id.
+    runner = _FakeInteractiveRunner(canned=[_INIT_EVENT])
+    rig = _build(runner=runner)
+
+    opened = await rig.manager.open("задача", _OWNER_ID)
+    await runner.drained.wait()
+    for _ in range(10):
+        await asyncio.sleep(0)
+
+    assert opened.session is not None
+    saved = rig.store.sessions[opened.session.id]
+    assert saved.claude_session_id == "claude-live-1"
+    assert saved.state is CodingSessionState.INTERACTIVE  # сессия ещё живая
+
+    await rig.manager.stop(_OWNER_ID)
+
+
+@pytest.mark.asyncio
+async def test_a_stream_without_an_init_frame_persists_no_session_id() -> None:
+    # Id не выдумывается: без init-кадра колонка остаётся None (байт-в-байт до-D1).
+    runner = _FakeInteractiveRunner(
+        canned=[{"type": "result", "subtype": "success", "result": "готово"}]
+    )
+    rig = _build(runner=runner)
+
+    opened = await rig.manager.open("задача", _OWNER_ID)
+    await runner.drained.wait()
+    for _ in range(10):
+        await asyncio.sleep(0)
+
+    assert opened.session is not None
+    assert rig.store.sessions[opened.session.id].claude_session_id is None
+
+    await rig.manager.stop(_OWNER_ID)
+
+
+@pytest.mark.asyncio
+async def test_the_early_persisted_id_survives_a_stop_that_sees_no_runner_id() -> None:
+    # ``stop`` дописывает id раннера, если тот есть; уже сохранённый id при этом не
+    # затирается — цепочка «сессия за сессией» остаётся возобновляемой.
+    runner = _FakeInteractiveRunner(canned=[_INIT_EVENT])
+    rig = _build(runner=runner)
+    opened = await rig.manager.open("задача", _OWNER_ID)
+    await runner.drained.wait()
+    for _ in range(10):
+        await asyncio.sleep(0)
+
+    await rig.manager.stop(_OWNER_ID)
+
+    assert opened.session is not None
+    saved = rig.store.sessions[opened.session.id]
+    assert saved.claude_session_id == "claude-live-1"
+    assert saved.state is CodingSessionState.CANCELLED
+
+
 # --- stop: direct kill -------------------------------------------------------
 
 
@@ -266,12 +348,39 @@ async def test_stop_directly_kills_runner_cleans_worktree_and_is_terminal() -> N
     # 🔴 DIRECT kill: the persistent runner is closed (terminate → kill), not a break.
     assert rig.runner.close_calls == 1
     # worktree torn down (reuse of _cleanup); no live session remains.
-    assert rig.worktree.removed == ["/wt/task"]
+    assert rig.worktree.removed == ["/wt/zadacha"]
     assert rig.manager.active() is False
     # Terminal CANCELLED persisted.
     saved = rig.store.sessions[opened.session.id]
     assert saved.state is CodingSessionState.CANCELLED
     assert is_terminal(saved.state) is True
+
+
+@pytest.mark.asyncio
+async def test_stop_persists_the_runner_claude_session_id() -> None:
+    # BOB-087.D1: the claude session id the runner captured off the init event is saved
+    # onto the terminal session, so a later /code (D3) can look it up for --resume.
+    rig = _build(runner=_FakeInteractiveRunner(session_id="sess-77"))
+    opened = await rig.manager.open("задача", _OWNER_ID)
+    assert opened.session is not None
+
+    await rig.manager.stop(_OWNER_ID)
+
+    saved = rig.store.sessions[opened.session.id]
+    assert saved.claude_session_id == "sess-77"
+
+
+@pytest.mark.asyncio
+async def test_stop_without_a_captured_session_id_leaves_it_none() -> None:
+    # No init id captured → the field stays None (byte-identical to a pre-D1 session).
+    rig = _build()
+    opened = await rig.manager.open("задача", _OWNER_ID)
+    assert opened.session is not None
+
+    await rig.manager.stop(_OWNER_ID)
+
+    saved = rig.store.sessions[opened.session.id]
+    assert saved.claude_session_id is None
 
 
 @pytest.mark.asyncio
@@ -339,7 +448,14 @@ async def test_open_again_after_stop_is_allowed() -> None:
 class _ExplodingRunner(_FakeInteractiveRunner):
     """A runner whose spawn (``open``) fails — the manager must not leak a worktree."""
 
-    async def open(self, workdir: str, *, mode: str) -> None:  # noqa: ARG002
+    async def open(
+        self,
+        workdir: str,  # noqa: ARG002
+        *,
+        mode: str,  # noqa: ARG002
+        resume_session_id: str | None = None,  # noqa: ARG002
+        continue_session: bool = False,  # noqa: ARG002
+    ) -> None:
         raise RuntimeError("claude failed to spawn")
 
 
@@ -356,9 +472,71 @@ async def test_open_spawn_failure_cleans_worktree_and_leaves_no_session() -> Non
     assert outcome.session is None
     assert rig.manager.active() is False
     # The worktree that was created for the (failed) spawn is removed again.
-    assert rig.worktree.created == ["bob/task"]
-    assert rig.worktree.removed == ["/wt/task"]
+    assert rig.worktree.created == ["bob/zadacha"]
+    assert rig.worktree.removed == ["/wt/zadacha"]
     assert rig.store.sessions == {}  # nothing persisted
+
+
+@dataclass
+class _CreateFailsWorktree(_FakeWorktree):
+    """A worktree whose ``create`` raises — git can fail before anything is spawned."""
+
+    async def create(self, branch: str) -> str:
+        self.created.append(branch)
+        raise RuntimeError("fatal: could not create worktree")
+
+
+@pytest.mark.asyncio
+async def test_open_worktree_failure_answers_honestly_and_claims_no_cleanup() -> None:
+    # 🔴 BOB-087.D5b (B2): ``create`` жил ВНЕ try — его падение улетало из ``open`` наружу
+    # и глохло выше, owner не узнавал ничего. Теперь это честный отказ; и реплика НЕ врёт
+    # про уборку копии (убирать нечего — дерево не создалось).
+    rig = _build(worktree=_CreateFailsWorktree())
+
+    outcome = await rig.manager.open("задача", _OWNER_ID)
+
+    assert outcome.ok is False
+    assert outcome.session is None
+    assert outcome.message == session_voice.interactive_setup_failed()
+    assert "убрал" not in outcome.message.casefold()
+    assert rig.manager.active() is False
+    assert rig.worktree.removed == []  # нечего убирать — и Боб об уборке не заикается
+    assert rig.store.sessions == {}
+    assert rig.runner.opened == []
+
+
+@dataclass
+class _SaveFailsStore(_FakeStore):
+    """A store whose ``save`` raises — the process is ALREADY spawned by then."""
+
+    failures: int = 1  # fail the first N saves, then behave (so ``stop`` can persist)
+
+    async def save(self, session: CodingSession) -> None:
+        if self.failures > 0:
+            self.failures -= 1
+            raise RuntimeError("database is locked")
+        await super().save(session)
+
+
+@pytest.mark.asyncio
+async def test_open_store_failure_kills_the_spawned_process_and_answers() -> None:
+    # 🔴 BOB-087.D5c (N2): the persist ran OUTSIDE the try, so a store fault escaped
+    # ``open`` AFTER claude was already alive — and since ``_live``/``_task`` were never
+    # set, that process was ORPHANED (``stop`` could not see it, the worktree stayed
+    # busy) while the owner heard nothing at all. Same rule as everywhere else in this
+    # seam: any fault after the spawn closes the process AND answers honestly.
+    runner = _FakeInteractiveRunner()
+    rig = _build(runner=runner, store=_SaveFailsStore())
+
+    outcome = await rig.manager.open("задача", _OWNER_ID)
+
+    assert outcome.ok is False
+    assert outcome.message == session_voice.interactive_failed()
+    assert outcome.session is None
+    assert rig.manager.active() is False
+    assert runner.close_calls == 1  # 🔴 the spawned process is killed, never orphaned
+    assert rig.worktree.removed == ["/wt/zadacha"]  # the ephemeral tree is torn down too
+    assert rig.store.sessions == {}
 
 
 # --- stop is best-effort: a close / cleanup fault never masks the outcome -----
@@ -387,7 +565,7 @@ async def test_stop_survives_a_runner_close_fault_and_stays_terminal() -> None:
     # the worktree is still torn down, and no live session lingers (INV-4 backstop).
     assert outcome.ok is True
     assert rig.manager.active() is False
-    assert rig.worktree.removed == ["/wt/task"]
+    assert rig.worktree.removed == ["/wt/zadacha"]
     saved = rig.store.sessions[opened.session.id]
     assert saved.state is CodingSessionState.CANCELLED
 
@@ -412,9 +590,30 @@ async def test_stop_survives_a_worktree_cleanup_fault_and_stays_terminal() -> No
 
     assert outcome.ok is True
     assert rig.manager.active() is False
-    assert worktree.removed == ["/wt/task"]  # remove was attempted
+    assert worktree.removed == ["/wt/zadacha"]  # remove was attempted
     saved = rig.store.sessions[opened.session.id]
     assert saved.state is CodingSessionState.CANCELLED
+
+
+@pytest.mark.asyncio
+async def test_stop_survives_a_store_fault_and_still_says_goodbye() -> None:
+    # 🔴 BOB-087.D5c (N2): the terminal ``save`` also lived outside a try, so a store
+    # fault swallowed the farewell — the process WAS killed and the tree WAS removed, and
+    # the owner heard nothing about it. The row stays stale, but the D5b startup sweep
+    # recovers it; going mute is the one outcome we refuse.
+    store = _SaveFailsStore(failures=0)  # the opening save works…
+    rig = _build(store=store)
+    opened = await rig.manager.open("задача", _OWNER_ID)
+    assert opened.session is not None
+    store.failures = 1  # …only the TERMINAL save fails
+
+    outcome = await rig.manager.stop(_OWNER_ID)
+
+    assert outcome.ok is True
+    assert outcome.message == session_voice.stopped()
+    assert rig.manager.active() is False
+    assert rig.runner.close_calls == 1
+    assert rig.worktree.removed == ["/wt/zadacha"]
 
 
 # --- output-stream fault is isolated (never crashes the manager) -------------

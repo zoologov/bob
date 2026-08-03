@@ -133,6 +133,41 @@ def guppi_canon() -> str:
     return _GUPPI_CANON
 
 
+# Operator stance (BOB-087.B2): the POSITIVE framing that Bob is the human OPERATOR
+# who DIRECTS GUPPI — the executor now owns the mechanical step-by-step firehose (its
+# own channel, slice A) — and REACTS to the milestones in his own voice, never a
+# robotic per-edit narrator. It stands on TOP of guppi_canon (which fixes WHO GUPPI is)
+# and strengthens the BOB-074 anti-narration guard from a mere prohibition into a
+# stance: Bob's dev lines are short human reactions (взялся / позеленело / сломалось /
+# готово-PR), his character, not a log. Written as voice (mirroring the other
+# directives), never a checklist. Cyrillic look-alikes are intentional in these
+# Russian literals.
+_OPERATOR_STANCE = (
+    "Когда доходит до работы с кодом, ты — оператор: ставишь GUPPI задачу и "
+    "рулишь им, а мелкую механику исполнения он тащит сам. Твоё дело — направлять "
+    "и по-человечески реагировать на вехи, своими словами: взялся; о, позеленело; "
+    "чёрт, сломалось; готово — вот PR. Пересказывать построчно каждую его правку "
+    "не нужно — этот пошаговый поток теперь его канал, не твой. Твои реплики — "
+    "короткие живые реакции, твой характер, а не журнал и не лог."
+)
+
+
+def operator_stance() -> str:
+    """Return Bob's operator-stance voice line toward GUPPI (BOB-087.B2).
+
+    The POSITIVE framing on TOP of :func:`guppi_canon`: Bob is the human OPERATOR who
+    DIRECTS GUPPI (the executor owns the mechanical step-by-step firehose — its own
+    channel now) and REACTS to the milestones in his own voice (взялся / позеленело /
+    сломалось / готово-PR), never a robotic per-edit narrator. It strengthens the
+    BOB-074 anti-narration guard from a bare prohibition into a stance — his dev lines
+    are short human reactions, his character, not a log. Pure, argument-free; folded
+    into the base persona so it colours how Bob talks about the work he already does.
+    The prose pins the operator framing + the reinforced don't-narrate-step-by-step,
+    not exact wording.
+    """
+    return _OPERATOR_STANCE
+
+
 # User-repeat directive (BOB-022): when the OWNER sends (near-)the-same message he
 # already sent recently, Bob NOTICES it and reacts in his own wry style instead of
 # silently re-answering. Written as voice (mirroring anti-bait / variable-form), not
@@ -462,6 +497,69 @@ def recalled_self_action_directive() -> str:
     application folds this in only when :func:`recall_has_self_action` is true.
     """
     return _RECALLED_SELF_ACTION_DIRECTIVE
+
+
+# Recalled-WORK provenance directive (BOB-087.C3): the mirror of the self_action line
+# for register-aware recall (slice C). When recall surfaces one of Bob's OWN ``work``
+# dev episodes — his OPERATOR recollection of directing GUPPI — this LIGHT voice line
+# backstops against CONFABULATION: the direct attack on the fear that Bob blends
+# working-with-claude and chatting into invented detail. A work episode is recognised
+# by its ``category`` (the episodic ``event_type`` ``work``) OR any of its provenance
+# tags — a documented MIRROR of ``bob.memory.work_journal`` (``WORK_EVENT_TYPE`` +
+# ``_WORK_TAGS``), kept here so this pure personality-domain helper imports nothing from
+# the memory domain (identical to how ``_SELF_ACTION_CATEGORY`` mirrors
+# ``bob.memory.self_action``). Independent of the self_action directive — work episodes
+# carry ``work``, not ``self_action``, so both may fire on the same turn.
+# Cyrillic look-alikes are intentional in these Russian literals.
+_WORK_CATEGORY = "work"
+_WORK_TAGS = frozenset({"work", "dev", "actor:bob"})
+
+_RECALLED_WORK_DIRECTIVE = (
+    # Cyrillic look-alikes intentional in these Russian literals.
+    "Среди припомненного есть твоя РЕАЛЬНАЯ работа — как ты в роли оператора вёл GUPPI "
+    "по коду. Говори о ней от первого лица — «я попросил GUPPI…», как о том, что делал "
+    "сам, честно (в том числе про сбои и промахи — признай их, не сваливай на других). "
+    "И не выдумывай деталей, которых не помнишь: не смешивай работу с болтовнёй, не "
+    "сочиняй, что якобы сделал — если не припоминаешь подробностей, так и скажи."
+)
+
+
+def recall_has_work(recalled: Sequence[Mapping[str, object]]) -> bool:
+    """Whether the recalled set carries one of Bob's OWN ``work`` dev episodes (C3) — pure.
+
+    True when any recalled memory is a ``work`` episode — matched by its ``category``
+    (the episodic ``event_type``, case-insensitive) OR any of its work provenance tags.
+    A memory with no/other category and no work tag never counts; distinct from a
+    ``self_action`` deed, so this is orthogonal to :func:`recall_has_self_action`.
+    Deterministic: same inputs → same verdict.
+    """
+    return any(_is_work(item) for item in recalled)
+
+
+def _is_work(item: Mapping[str, object]) -> bool:
+    """True when a recalled memory is one of Bob's ``work`` dev episodes (category OR tag)."""
+    category = item.get("category")
+    if isinstance(category, str) and category.casefold() == _WORK_CATEGORY:
+        return True
+    tags = item.get("tags")
+    if isinstance(tags, (list, tuple)):
+        return any(
+            isinstance(tag, str) and tag.casefold() in _WORK_TAGS for tag in tags
+        )
+    return False
+
+
+def recalled_work_directive() -> str:
+    """Return the work-provenance voice line for a recalled ``work`` episode (C3).
+
+    A LIGHT anti-confabulation backstop: recalled work episodes are Bob's OWN REAL
+    operator work with GUPPI, so he speaks of them in the first person, honestly owns a
+    failure, and never invents details he does not remember — never blending работа and
+    болтовня into a fabricated deed. Pure and argument-free — the content is already
+    first-person from the write side; the application folds this in only when
+    :func:`recall_has_work` is true.
+    """
+    return _RECALLED_WORK_DIRECTIVE
 
 
 # Relationship-tone bands (BOB-014). On TOP of the mood-conditioned tone, Bob's

@@ -32,10 +32,13 @@ from bob.personality.voice import (
     formatting_directive,
     guppi_canon,
     improvement_directive,
+    operator_stance,
     profanity_stance,
     recall_has_self_action,
+    recall_has_work,
     recalled_impression_directive,
     recalled_self_action_directive,
+    recalled_work_directive,
     relationship_tone_directive,
     roster_directive,
     stranger_directive,
@@ -122,6 +125,47 @@ def test_guppi_canon_seeds_running_relationship_flavor() -> None:
     assert "кофе" in folded  # the "philosophical arguments over coffee" gag seed
 
 
+# --- BOB-087.B2: Bob's OPERATOR stance toward GUPPI ---------------------------
+# The positive framing that Bob is the human OPERATOR who DIRECTS GUPPI (the
+# executor takes the mechanical firehose) and REACTS to the milestones in his own
+# voice — never a robotic per-edit narrator. It strengthens the BOB-074 anti-
+# narration guard into a stance, so the contract pins presence of the operator
+# framing + the reinforced "don't narrate step-by-step", never exact wording.
+
+
+def test_operator_stance_frames_bob_as_director_of_guppi() -> None:
+    # Bob DIRECTS GUPPI — he is the operator, GUPPI the executor he steers.
+    folded = operator_stance().casefold()
+    assert "оператор" in folded
+    assert "guppi" in folded
+    assert "направля" in folded or "рул" in folded  # он направляет / рулит GUPPI
+
+
+def test_operator_stance_reinforces_no_step_by_step_narration() -> None:
+    # 🔴 BOB-074 guard, strengthened into a positive stance: Bob does NOT retell
+    # GUPPI's work line-by-line (that firehose is GUPPI's channel now); his lines
+    # are short human REACTIONS, not a log/journal.
+    folded = operator_stance().casefold()
+    assert "построчн" in folded or "пошагов" in folded
+    assert "реакци" in folded
+    assert "журнал" in folded or "лог" in folded
+
+
+def test_operator_stance_reacts_to_milestones_in_bobs_voice() -> None:
+    # The human milestone reactions (взялся / позеленело / сломалось / готово-PR)
+    # are seeded as FLAVOR — Bob reacts as himself, not a status printer.
+    folded = operator_stance().casefold()
+    assert "веха" in folded or "вех" in folded
+    assert "готов" in folded
+
+
+def test_operator_stance_is_voice_not_a_rule_list() -> None:
+    # Written as voice (mirroring the other directives), never a bullet checklist.
+    directive = operator_stance()
+    assert "•" not in directive
+    assert "- " not in directive
+
+
 def test_variable_form_directive_is_natural_voice_not_a_rule_list() -> None:
     # The variable-form directive (BOB-018) is written as voice — Bob's form and
     # length vary by mood, not one fixed frame — never a recitable rule list.
@@ -176,7 +220,12 @@ def test_variable_form_exemplars_do_not_seed_the_meme_closer() -> None:
 def test_no_voice_directive_pairs_the_signature_closer() -> None:
     # The specific tic is the PAIRED signature — «пусть остаётся как есть» AND «мне так
     # спокойнее» closing together. No injected voice directive may carry both.
-    for accessor in (anti_bait_directive, variable_form_directive, guppi_canon):
+    for accessor in (
+        anti_bait_directive,
+        variable_form_directive,
+        guppi_canon,
+        operator_stance,
+    ):
         folded = accessor().casefold()
         assert not (
             "пусть остаётся как есть" in folded and "мне так спокойнее" in folded
@@ -184,7 +233,8 @@ def test_no_voice_directive_pairs_the_signature_closer() -> None:
 
 
 @pytest.mark.parametrize(
-    "accessor", [anti_bait_directive, variable_form_directive, guppi_canon]
+    "accessor",
+    [anti_bait_directive, variable_form_directive, guppi_canon, operator_stance],
 )
 def test_no_injected_voice_directive_seeds_the_meme_closer(accessor: object) -> None:
     # 🔴 US-1/.7 HARDEN: the seed guard covers EVERY statically-injected voice directive —
@@ -668,6 +718,86 @@ def test_recalled_self_action_directive_forbids_confabulation() -> None:
 
 def test_recalled_self_action_directive_is_voice_not_a_rule_list() -> None:
     line = recalled_self_action_directive()
+    assert "•" not in line
+    assert "- " not in line
+
+
+# --- BOB-087.C3: recalled work provenance directive (anti-confabulation) -------
+#
+# The mirror of the self_action directive for register-aware recall (slice C): when
+# recall surfaces one of Bob's OWN ``work`` dev episodes (his operator recollection of
+# directing GUPPI), a LIGHT voice line backstops against confabulation — he speaks of
+# it in the first person as his REAL work with GUPPI, honestly owns a failure, and never
+# invents details he does not remember. Independent of the self_action directive: work
+# episodes carry event_type ``work`` (not ``self_action``), so both may fire at once.
+
+
+def test_recall_has_work_true_on_work_category() -> None:
+    recalled = [
+        {"content": "Ada любит чай", "category": "preference"},
+        {"content": "я попросил GUPPI поднять лимит — позеленело", "category": "work"},
+    ]
+    assert recall_has_work(recalled) is True
+
+
+def test_recall_has_work_true_on_work_tag() -> None:
+    # A work episode is also recognised by its provenance TAG, not only category.
+    recalled = [{"content": "я правил runner", "tags": ["dev", "actor:bob"]}]
+    assert recall_has_work(recalled) is True
+
+
+def test_recall_has_work_false_on_self_action() -> None:
+    # Independence: a self_action deed is NOT a work episode (distinct event_type).
+    recalled = [{"content": "я доделал «X», открыл PR", "category": "self_action"}]
+    assert recall_has_work(recalled) is False
+
+
+def test_recall_has_work_false_on_casual_memory() -> None:
+    recalled = [
+        {"content": "Ada любит чай", "category": "preference"},
+        {"content": "Ada: привет", "category": "message"},
+    ]
+    assert recall_has_work(recalled) is False
+
+
+def test_recall_has_work_empty_is_false() -> None:
+    assert recall_has_work([]) is False
+
+
+def test_recall_has_work_ignores_memory_with_no_category_or_tags() -> None:
+    assert recall_has_work([{"content": "что-то"}]) is False
+
+
+def test_recall_has_work_is_case_insensitive_on_category() -> None:
+    assert recall_has_work([{"content": "я собрал", "category": "WORK"}]) is True
+
+
+def test_self_action_directive_signal_is_independent_of_work() -> None:
+    # A work episode does NOT trip the self_action signal (distinct event_type).
+    work = [{"content": "я попросил GUPPI", "category": "work"}]
+    assert recall_has_self_action(work) is False
+
+
+def test_recalled_work_directive_asserts_first_person_real_work_with_guppi() -> None:
+    # It IS Bob's REAL operator work with GUPPI — first person, his own doing.
+    folded = recalled_work_directive().casefold()
+    assert "от первого лица" in folded
+    assert "guppi" in folded
+
+
+def test_recalled_work_directive_owns_failures_honestly() -> None:
+    folded = recalled_work_directive().casefold()
+    assert "сбо" in folded  # честно про сбои
+
+
+def test_recalled_work_directive_forbids_confabulation() -> None:
+    # The direct attack on the owner's fear: no invented details from memory Bob lacks.
+    folded = recalled_work_directive().casefold()
+    assert "не выдумывай" in folded
+
+
+def test_recalled_work_directive_is_voice_not_a_rule_list() -> None:
+    line = recalled_work_directive()
     assert "•" not in line
     assert "- " not in line
 

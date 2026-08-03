@@ -14,6 +14,11 @@ the real ``claude``: the fake records fed bytes / terminate / kill and yields sc
 
 ``encode_user_message`` is the pure core (mutation target): text -> ONE stream-json ``user``
 input line that claude's ``--input-format stream-json`` accepts.
+
+The argv assembly + init-frame id reading moved to the DOMAIN policy
+:mod:`bob.coding.argv_policy` (BOB-087.D4b, so mutation covers them) — their unit tests
+live in ``tests/domain/coding/test_argv_policy.py``; what is asserted here is that the
+runner CARRIES those verdicts to the process boundary (the argv the spawner really saw).
 """
 
 from __future__ import annotations
@@ -108,6 +113,20 @@ def test_encode_user_message_handles_empty_text() -> None:
 # InteractiveClaudeRunner — over a FAKE bidirectional process
 # --------------------------------------------------------------------------- #
 
+#: 🔴 The BOB-083 spawn argv, byte-for-byte: with every relaxation off the runner must
+#: hand the spawner EXACTLY this token list (the policy's verdict, carried unchanged).
+_BASELINE_ARGV = [
+    "claude",
+    "-p",
+    "--input-format",
+    "stream-json",
+    "--output-format",
+    "stream-json",
+    "--verbose",
+    "--permission-mode",
+    "acceptEdits",
+]
+
 
 class _FakeProcess:
     """A scripted bidirectional process: records fed bytes / terminate / kill."""
@@ -188,6 +207,36 @@ async def test_open_spawns_with_the_interactive_argv() -> None:
     assert spawner.seen_cwd == "/work/dir"
 
 
+async def test_open_default_omits_resume_and_continue() -> None:
+    # OFF path (BOB-087.D1): the default spawn carries NO --resume / --continue — the
+    # live behaviour stays exactly BOB-083 (a fresh session) until D3/flags opt in.
+    spawner = _FakeSpawner(_FakeProcess())
+    runner = InteractiveClaudeRunner(spawner=spawner)
+
+    await runner.open("/work/dir", mode="acceptEdits")
+
+    assert "--resume" not in spawner.calls[0]
+    assert "--continue" not in spawner.calls[0]
+
+
+async def test_open_resume_by_id_spawns_with_the_resume_argv() -> None:
+    spawner = _FakeSpawner(_FakeProcess())
+    runner = InteractiveClaudeRunner(spawner=spawner, claude_bin="c")
+
+    await runner.open("/w", mode="acceptEdits", resume_session_id="sess-7")
+
+    assert spawner.calls[0][-2:] == ["--resume", "sess-7"]
+
+
+async def test_open_continue_spawns_with_the_continue_argv() -> None:
+    spawner = _FakeSpawner(_FakeProcess())
+    runner = InteractiveClaudeRunner(spawner=spawner)
+
+    await runner.open("/w", mode="acceptEdits", continue_session=True)
+
+    assert spawner.calls[0][-1] == "--continue"
+
+
 @pytest.mark.parametrize("mode", ["bypassPermissions", "plan; rm -rf /", "", "PLAN"])
 async def test_open_rejects_a_mode_outside_the_allowlist(mode: str) -> None:
     spawner = _FakeSpawner(_FakeProcess())
@@ -238,6 +287,30 @@ async def test_events_yields_scripted_stream_json_lines() -> None:
     events = await _collect(runner.events())
 
     assert [event["type"] for event in events] == ["system", "assistant", "result"]
+
+
+async def test_session_id_is_none_until_the_init_event_streams() -> None:
+    proc = _FakeProcess(['{"type": "system", "subtype": "init", "session_id": "s-42"}\n'])
+    runner = InteractiveClaudeRunner(spawner=_FakeSpawner(proc))
+    await runner.open("/w", mode="plan")
+
+    assert runner.session_id is None  # not seen yet
+
+    await _collect(runner.events())
+
+    # The claude-assigned id is captured off the stream so the manager can persist it
+    # (BOB-087.D1) for a later --resume, without the transport owning session state.
+    assert runner.session_id == "s-42"
+
+
+async def test_session_id_stays_none_when_no_init_event_arrives() -> None:
+    proc = _FakeProcess(['{"type": "assistant", "n": 1}\n'])
+    runner = InteractiveClaudeRunner(spawner=_FakeSpawner(proc))
+    await runner.open("/w", mode="plan")
+
+    await _collect(runner.events())
+
+    assert runner.session_id is None
 
 
 async def test_close_terminates_and_is_idempotent() -> None:
@@ -300,6 +373,74 @@ async def test_events_before_open_yields_nothing() -> None:
 
 def test_interactive_runner_satisfies_the_port() -> None:
     assert isinstance(InteractiveClaudeRunner(), InteractiveRunner)
+
+
+# --------------------------------------------------------------------------- #
+# Owner-only sandbox relaxations: bypass mode + --add-dir (BOB-087.D2)
+# --------------------------------------------------------------------------- #
+
+
+async def test_default_open_refuses_the_bypass_mode() -> None:
+    # The «no bypassPermissions ever» guarantee holds unless the owner flag is set.
+    spawner = _FakeSpawner(_FakeProcess())
+    runner = InteractiveClaudeRunner(spawner=spawner)
+
+    with pytest.raises(ClaudeRunError):
+        await runner.open("/w", mode="bypassPermissions")
+
+    assert spawner.calls == []
+
+
+async def test_allow_bypass_lets_the_bypass_mode_through() -> None:
+    spawner = _FakeSpawner(_FakeProcess())
+    runner = InteractiveClaudeRunner(spawner=spawner, allow_bypass=True)
+
+    await runner.open("/w", mode="bypassPermissions")
+
+    assert spawner.calls[0][-2:] == ["--permission-mode", "bypassPermissions"]
+
+
+@pytest.mark.parametrize("mode", ["plan; rm -rf /", "", "PLAN", "yolo"])
+async def test_allow_bypass_still_refuses_any_other_mode(mode: str) -> None:
+    # The flag adds ONE mode — it does not open the allowlist.
+    spawner = _FakeSpawner(_FakeProcess())
+    runner = InteractiveClaudeRunner(spawner=spawner, allow_bypass=True)
+
+    with pytest.raises(ClaudeRunError):
+        await runner.open("/w", mode=mode)
+
+    assert spawner.calls == []
+
+
+async def test_open_spawns_with_the_configured_extra_dirs() -> None:
+    spawner = _FakeSpawner(_FakeProcess())
+    runner = InteractiveClaudeRunner(spawner=spawner, extra_dirs=["/srv/docs"])
+
+    await runner.open("/w", mode="acceptEdits")
+
+    assert spawner.calls[0][-2:] == ["--add-dir", "/srv/docs"]
+
+
+async def test_open_sanitises_a_flag_shaped_extra_dir() -> None:
+    spawner = _FakeSpawner(_FakeProcess())
+    runner = InteractiveClaudeRunner(
+        spawner=spawner, extra_dirs=["--dangerously-skip-permissions"]
+    )
+
+    await runner.open("/w", mode="acceptEdits")
+
+    assert "--add-dir" not in spawner.calls[0]
+    assert "--dangerously-skip-permissions" not in spawner.calls[0]
+
+
+async def test_default_open_argv_is_byte_identical_to_the_pre_d2_baseline() -> None:
+    # OFF path: neither relaxation configured → EXACTLY the BOB-083 spawn argv.
+    spawner = _FakeSpawner(_FakeProcess())
+    runner = InteractiveClaudeRunner(spawner=spawner)
+
+    await runner.open("/w", mode="acceptEdits")
+
+    assert spawner.calls[0] == _BASELINE_ARGV
 
 
 # --------------------------------------------------------------------------- #

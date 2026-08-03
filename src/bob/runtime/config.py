@@ -8,8 +8,8 @@
 
 The leaf of the ``bob.runtime`` composition root (BOB-062.7a): the ``_DEFAULT_*`` tunables,
 the process constants, the repo/data path resolvers and the small, permissive value-coercion
-readers (``_section`` / ``_str`` / ``_int`` / ``_int_list`` / ``_float`` / ``_float_or`` /
-``_flag``) that turn the layered YAML/env config into concrete values. It is
+readers (``_section`` / ``_str`` / ``_str_list`` / ``_int`` / ``_int_list`` / ``_float`` /
+``_float_or`` / ``_flag``) that turn the layered YAML/env config into concrete values. It is
 ``bob.runtime`` (the composition root / entrypoint) — NOT ``bob.application.runtime`` (the
 async AgentRuntime/EventBus primitives, which live on unchanged).
 """
@@ -210,6 +210,21 @@ def _int_list(section: Mapping[str, object], key: str) -> tuple[int, ...]:
         return tuple(int(part) for part in value.split(",") if part.strip())
     if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
         return tuple(int(item) for item in value if isinstance(item, int))
+    return ()
+
+
+def _str_list(section: Mapping[str, object], key: str) -> tuple[str, ...]:
+    """Read a list of strings from config (YAML list or a CSV env string).
+
+    The string twin of :func:`_int_list`: blank and non-string entries are dropped (a
+    malformed config degrades to a shorter list instead of crashing the composition
+    root), and each kept item is stripped of surrounding whitespace.
+    """
+    value = section.get(key)
+    if isinstance(value, str):
+        return tuple(part.strip() for part in value.split(",") if part.strip())
+    if isinstance(value, Sequence) and not isinstance(value, (str, bytes)):
+        return tuple(item.strip() for item in value if isinstance(item, str) and item.strip())
     return ()
 
 

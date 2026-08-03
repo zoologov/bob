@@ -14,9 +14,15 @@ The infrastructure adapter realising :class:`bob.coding.ports.ClaudeCodeRunner`
 
     claude -p <prompt> --output-format stream-json --verbose --permission-mode <mode>
 
-``mode`` is validated against a FIXED allowlist (``plan`` — a plan with NO edits, the
-plan gate; ``acceptEdits`` — apply changes inside the worktree); any other mode is
-refused before the process starts. Stdout is read as NDJSON line-by-line: each line is
+``mode`` is validated against the allowlist policy of the pure domain core
+(:mod:`bob.coding.sandbox_policy`): ``plan`` — a plan with NO edits, the plan gate;
+``acceptEdits`` — apply changes inside the worktree; and ONLY under the explicit owner
+flag ``allow_bypass`` (config ``coder.allow_bypass``, default OFF) also
+``bypassPermissions``. Any other mode is refused before the process starts. The same
+core sanitises the optional ``extra_dirs`` (config ``coder.extra_dirs``, default empty)
+into the ``--add-dir`` argv fragment appended AFTER the fixed head — both relaxations
+are inert by default, so the shipped argv is unchanged. Stdout is read as NDJSON
+line-by-line: each line is
 ``json.loads``-ed and the parsed object yielded as one event (an async generator).
 Partial / garbage / non-object lines are skipped (never crash); a per-stream timeout,
 a max-event count and a max-byte budget bound the run; and the underlying process is
@@ -32,8 +38,10 @@ import asyncio
 import contextlib
 import json
 import logging
-from collections.abc import AsyncGenerator, AsyncIterator, Mapping
+from collections.abc import AsyncGenerator, AsyncIterator, Mapping, Sequence
 from typing import Protocol
+
+from bob.coding.sandbox_policy import extra_dir_argv, is_allowed_mode
 
 __all__ = ["ClaudeRunError", "SubprocessClaudeRunner"]
 
@@ -45,11 +53,6 @@ logger = logging.getLogger(__name__)
 # line past the limit raises ``LimitOverrunError`` — surfaced as ``ValueError`` — and
 # crashes the read loop. 16 MiB is generous headroom (real lines are well under 1 MiB).
 _STREAM_LIMIT = 16 * 1024 * 1024
-
-# The FIXED permission-mode allowlist. ``plan`` produces a plan with no edits (the plan
-# gate); ``acceptEdits`` applies changes inside the isolated worktree. Nothing else —
-# in particular no ``bypassPermissions`` — is ever passed to ``claude``.
-_ALLOWED_MODES: frozenset[str] = frozenset({"plan", "acceptEdits"})
 
 # Default resource bounds (overridable via the constructor): a generous wall-clock
 # ceiling for a real coding run, a hard cap on the number of events, and a byte budget
@@ -87,21 +90,31 @@ class SubprocessClaudeRunner:
         timeout: float = _DEFAULT_TIMEOUT_S,
         max_events: int = _DEFAULT_MAX_EVENTS,
         max_bytes: int = _DEFAULT_MAX_BYTES,
+        allow_bypass: bool = False,
+        extra_dirs: Sequence[str] = (),
     ) -> None:
         self._runner: StreamLineRunner = runner or _ExecStreamRunner()
         self._claude_bin = claude_bin
         self._timeout = timeout
         self._max_events = max_events
         self._max_bytes = max_bytes
+        # Owner-only sandbox relaxations (BOB-087.D2), both inert by default: the bypass
+        # mode stays outside the allowlist and the (sanitised once, here) --add-dir
+        # fragment is empty, so the argv below is byte-identical to the shipped form.
+        self._allow_bypass = allow_bypass
+        self._extra_dir_argv = extra_dir_argv(extra_dirs)
 
     async def run(
         self, workdir: str, prompt: str, *, mode: str
     ) -> AsyncIterator[Mapping[str, object]]:
         """Run ``claude`` in ``workdir`` under ``mode``; yield stream-json events."""
-        if mode not in _ALLOWED_MODES:
+        if not is_allowed_mode(mode, allow_bypass=self._allow_bypass):
             raise ClaudeRunError(
                 f"mode {mode!r} is not an allowlisted --permission-mode"
             )
+        # Argv order (fixed): the binary, the prompt, the stream-json/verbose head, the
+        # ``--permission-mode <mode>`` pair, and LAST the optional ``--add-dir`` pairs —
+        # so an empty relaxation leaves the pre-D2 argv untouched.
         argv = [
             self._claude_bin,
             "-p",
@@ -111,6 +124,7 @@ class SubprocessClaudeRunner:
             "--verbose",
             "--permission-mode",
             mode,
+            *self._extra_dir_argv,
         ]
         stream = self._runner(argv, cwd=workdir, timeout=self._timeout)
         events = 0

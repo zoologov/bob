@@ -39,6 +39,41 @@ from bob.coding.adapters._exec import (
 
 __all__ = ["GitWorktree", "WorktreeError"]
 
+_WORKTREE_LINE_PREFIX = "worktree "
+_PRUNABLE_LINE_PREFIX = "prunable"
+
+
+def _registered_worktrees(porcelain: str) -> set[Path]:
+    """Parse the LIVE worktree paths out of ``git worktree list --porcelain`` (resolved).
+
+    Each worktree stanza opens with a ``worktree <abs-path>`` line and ends at the blank
+    line; the set of those paths is what :meth:`GitWorktree.ensure` checks to decide REUSE
+    vs add. Non-worktree lines (``HEAD``/``branch``) are ignored.
+
+    🔴 Paths are normalised with :meth:`Path.resolve` (BOB-087.D5b): porcelain always
+    prints ABSOLUTE, symlink-resolved paths, while ``coder.worktree_root`` is RELATIVE by
+    default (``.worktrees``). Comparing the two verbatim never matched, so the reuse
+    branch was dead in production; both sides are resolved before the comparison now.
+
+    🔴 A stanza carrying a ``prunable …`` marker is DROPPED (BOB-087.D5c): git keeps
+    printing a worktree after its directory is gone (``prunable gitdir file points to
+    non-existent location``), and :meth:`Path.resolve` on a non-existent path quietly
+    returns an absolute path — so the reuse branch matched a DEAD registration and handed
+    back a cwd that does not exist. Pure string work: whether the path is really on disk
+    is the caller's check.
+    """
+    live: set[Path] = set()
+    for stanza in porcelain.split("\n\n"):
+        lines = stanza.splitlines()
+        if any(line.startswith(_PRUNABLE_LINE_PREFIX) for line in lines):
+            continue  # a registration git itself calls dead — never a reuse candidate
+        live |= {
+            Path(line[len(_WORKTREE_LINE_PREFIX) :].strip()).resolve()
+            for line in lines
+            if line.startswith(_WORKTREE_LINE_PREFIX)
+        }
+    return live
+
 
 class WorktreeError(Exception):
     """A worktree operation was refused (unsafe branch / path) or git failed."""
@@ -73,6 +108,84 @@ class GitWorktree:
             timeout=self._timeout,
         )
         return str(path)
+
+    async def ensure(self, branch: str) -> str:
+        """Ensure a PERSISTENT (long-lived, named) worktree on ``branch`` exists; reuse it.
+
+        BOB-087.D1: a durable ``bob/epic-<slug>`` workspace (see
+        :func:`bob.coding.naming.workspace_branch`) whose work ACCUMULATES across
+        sessions — unlike :meth:`create`'s per-task ephemeral worktree. Idempotent and
+        fixed-form (shell-free):
+
+        * ``git worktree prune`` — drop the administrative entries of worktrees whose
+          directory is GONE (see below), so the listing describes reality.
+        * ``git worktree list --porcelain`` — if the target path is ALREADY registered
+          AND is on disk, return it as-is (REUSE — never re-added, and this adapter never
+          removes it), so a resumed session lands back in the same accumulated tree.
+        * otherwise ``git worktree add <path> <branch>`` on the EXISTING branch, or
+          ``git worktree add <path> -b <branch>`` when the branch is new.
+
+        🔴 All three halves of the idempotency are load-bearing (BOB-087.D5b/D5c): the
+        registered path is compared on RESOLVED paths (porcelain prints absolute,
+        symlink-resolved paths; ``worktree_root`` is relative by default), an
+        already-existing branch is CHECKED OUT rather than re-created — otherwise the
+        second raise of the same workspace died with «fatal: a branch named … already
+        exists» — and a DEAD registration is healed instead of trusted.
+
+        🔴 Why ``prune`` (a MUTATING call) and not parsing alone: once the tree is deleted
+        (``rm -rf .worktrees``, a housekeeping ``git clean -xdff`` — ``.worktrees/`` is
+        gitignored) git still prints the stanza, and it also refuses to re-add: «fatal:
+        <branch> is already used by worktree at <dead path>». Skipping the stale stanza is
+        therefore NOT enough — without prune the workspace stays dead forever and the only
+        cure is a shell the owner does not have on a phone. ``git worktree prune`` is
+        fixed-form, shell-free and idempotent; it removes ONLY bookkeeping for directories
+        that are already gone (it never touches a live tree, a branch, a commit or main).
+        The listing is still filtered (``prunable`` stanzas, and a path that is not on
+        disk) so that what prune cannot clear — a LOCKED worktree whose directory vanished
+        — fails loudly on ``add`` instead of coming back as a live path.
+        Scope is deliberate: :meth:`create` is untouched (its per-task tree is removed in a
+        ``finally`` and the gated flow stays byte-identical).
+
+        The branch is validated to the ``bob/<slug>`` shape first (path-injection is
+        refused before git runs), and the path is always a child of ``worktree_root``.
+        🔴 Isolation is unchanged: a persistent worktree is still a worktree, NOT the
+        main tree — integration stays via a PR (main is never touched here).
+        """
+        if not is_safe_branch(branch):
+            raise WorktreeError(
+                f"branch {branch!r} is not a safe bob/<slug> coding branch"
+            )
+        slug = branch.split("/", 1)[1]
+        path = (self._worktree_root / slug).resolve()
+        await self._runner(
+            [self._git_bin, "worktree", "prune"], timeout=self._timeout
+        )
+        listing = await self._runner(
+            [self._git_bin, "worktree", "list", "--porcelain"],
+            timeout=self._timeout,
+        )
+        if path in _registered_worktrees(listing) and path.is_dir():
+            return str(path)
+        add_argv = [self._git_bin, "worktree", "add", str(path)]
+        if await self._branch_exists(branch):
+            add_argv.append(branch)  # check the accumulated branch out — never ``-b``
+        else:
+            add_argv += ["-b", branch]
+        await self._runner(add_argv, timeout=self._timeout)
+        return str(path)
+
+    async def _branch_exists(self, branch: str) -> bool:
+        """Whether ``branch`` already exists locally (``git branch --list <branch>``).
+
+        ``--list`` is chosen deliberately over ``rev-parse --verify``: it exits 0 whether
+        or not the branch is there (empty stdout = absent), so a plain «no such branch»
+        never surfaces as a :class:`CommandError` we would have to swallow — and a
+        swallowed error is exactly how a real git failure would get misread as «absent».
+        """
+        listed = await self._runner(
+            [self._git_bin, "branch", "--list", branch], timeout=self._timeout
+        )
+        return bool(listed.strip())
 
     async def commit_and_push(self, path: str, branch: str, message: str) -> bool:
         """Stage, commit and push the worktree's changes to its ``bob/<slug>`` branch.

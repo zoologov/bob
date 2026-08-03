@@ -27,6 +27,7 @@ from bob.runtime.wiring.coding import (
     _build_coding_assistant,
     _build_coding_router,
     _build_interactive_intake,
+    _build_interactive_recovery,
     _build_interactive_session,
 )
 from bob.runtime.wiring.disclosure import (
@@ -75,6 +76,7 @@ from bob.runtime.wiring.proactivity import (
     _background_tasks,
     _build_proactivity_engine,
 )
+from bob.runtime.wiring.register_recall import build_register_resolver
 from bob.runtime.wiring.rhythm import RhythmWiring, build_rhythm_wiring
 from bob.runtime.wiring.room_mood import build_room_mood_modulator
 from bob.runtime.wiring.roster import RosterConfig, build_roster_config
@@ -89,6 +91,7 @@ from bob.runtime.wiring.staleness import (
 )
 from bob.runtime.wiring.stream_read import build_batch_room_reader
 from bob.runtime.wiring.telegram import _build_multibot
+from bob.runtime.wiring.work_journal import build_work_journal_recorder
 
 __all__ = [
     "RhythmWiring",
@@ -115,6 +118,7 @@ __all__ = [
     "_build_floor_enabled",
     "_build_goal_engine",
     "_build_interactive_intake",
+    "_build_interactive_recovery",
     "_build_interactive_session",
     "_build_introspection_enabled",
     "_build_introspector",
@@ -146,10 +150,12 @@ __all__ = [
     "build_disclosure_consent_gate",
     "build_disclosure_guard",
     "build_endorsement_seeder",
+    "build_register_resolver",
     "build_rhythm_wiring",
     "build_room_mood_modulator",
     "build_roster_config",
     "build_self_action_recorder",
     "build_staleness_reassessor",
+    "build_work_journal_recorder",
     "staleness_enabled",
 ]
