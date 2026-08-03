@@ -23,7 +23,8 @@
 реальной судьбе файлов (он не докладывает об уборке того, что осталось).
 
 ## Долги, заведённые срезом D
-`bob-6u2` (узел coding 213/220 + менеджер 658 строк → развести интерактив в свой feature-узел) ·
+`bob-6u2` ✅ ЗАКРЫТ в срезе E (интерактив разведён в узел `interactive`; coding 172, interactive 48,
+общий потолок 200 вернулся без исключений) ·
 `bob-5ao` (вернуть INV-2 структурность при allow_bypass) · долг `_pump` (после смерти claude Боб
 нем в личке до «стоп», предсуществующее BOB-083/084) · defense-in-depth CancelledError.
 
@@ -258,3 +259,44 @@
   выживших (`_slugify` 11/15/23/26), просадки нет.
   Sync-check: `coding` снова 2 stale (`git_worktree.py`, `interactive_session.py`, hash_changed) — код
   среза изменился ПОСЛЕ tw-волны D6; `docs/` не трогал по границам беады, это вход следующей tw/re-baseline.
+
+- 2026-08-03: **Срез E, dev `bob-6u2` — техдолг архитектуры: живой терминал разведён в свой узел.**
+  Узел `coding` был 216/220 (запас 4 символа). Эмпирически проверено, КАК beadloom считает размер:
+  `max_symbols` = `COUNT(*) FROM code_symbols WHERE file_path LIKE '<source>%'` (evaluators.py:645-651),
+  то есть по ПРЕФИКСУ и БЕЗ вычитания вложенных узлов → узел на подпапку внутри `src/bob/coding/` дал бы
+  двойной учёт и не снизил бы coding ни на символ. Поэтому новый узел — ПАКЕТ-СОСЕД `src/bob/interactive/`
+  (`intent` · `resume_policy` · `resume_negotiation` · `argv_policy` · `voice` · `entities(LiveSession)` ·
+  `usecases/{session,teardown,intake,recover_sessions}` · `adapters/runner`). В `coding` осталась ОБЩАЯ
+  поверхность сеанса (ports/entities/state/naming/sandbox_policy/push_guard/stream_json/stream_render +
+  адаптеры worktree/store/one-shot-runner/live_stream/indicator/gh_pr) и гейтед-кодер.
+  Чтобы ребро `interactive → coding` было честным (только КОРЕНЬ модуля; импорт в чужие
+  `usecases/`/`adapters/` запрещён генерируемыми правилами — и запрет реально сработал): `CodingOutcome`
+  → `coding/entities`, порты `OwnerCheck`/`OwnerNotifier`/`LiveRunStreamer` → `coding/ports`,
+  `parse_event`/`STREAM_LIMIT` → новый `coding/stream_json`, `ClaudeRunError` → `coding/sandbox_policy`
+  (к политике, которая отказывает). Всё с ре-экспортами — внешние пути импорта живы.
+  Из менеджера вынесены `ResumeNegotiation` (висящий вопрос: адресность + TTL + да/нет + снятие) и
+  `SessionTeardown` (kill раннера, судьба дерева, терминальная строка); `_claim` и `_live` ОСТАЛИСЬ на
+  месте — на их синхронном обмене держится идемпотентность гонки «процесс умер И owner жмёт стоп».
+  Менеджер 789 → 709 строк, 26 → 22 метода. Голос режима уехал в `interactive/voice.py` (13 реплик;
+  общие `stopped`/`no_session` ре-экспортируются из `coding/session_voice`).
+  Правило `no-monster-modules-coding` (бюджет 220) УДАЛЕНО, `exclude: [coding]` снят: оба узла проходят
+  ОБЩИЕ 200 — **coding 172, interactive 48**. Обоснование ребра — новый note-блок в `rules.yml`;
+  `interactive` добавлен в `mutmut.source_paths` (иначе гейт ядер `argv_policy`/`intent`/`resume_policy`
+  молча исчез бы вместе с переездом), таблица целей в MUTATION.md обновлена.
+  Доки: новый `docs/domains/interactive/README.md`, `docs/domains/coding/README.md` подрезан + абзац
+  «рекалибровка снята», `docs/architecture.md` (таблица модулей + mermaid + дерево), `.beadloom/AGENTS.md`
+  и auto-регион CLAUDE.md — `beadloom setup-rules --refresh`.
+  Гейты: `uv run pytest` **5549 passed** (база 5519 + 30 тестов ПАРАЛЛЕЛЬНОЙ волны E2 в
+  `tests/infrastructure/llm/*` и `tests/acceptance/*tier0_fallback*`; мой вклад в счётчик — 0, ни один
+  тест не исчез, ожидания не правились) · ruff clean · mypy --strict src 341 files · mypy tests 506 files ·
+  `beadloom reindex`/`sync-check` rc=0 (0 stale) · `doctor` — только предсуществующий warn про
+  package-drift (идентичен базовому).
+  🔴 **ЧУЖОЙ КРАСНЫЙ, не чинил (вне границ беады):** `beadloom lint --strict` падает на цикле
+  `memory:conversation` — `src/bob/conversation/thread.py:39` (`from bob.memory.work_journal import
+  WORK_EVENT_TYPE`, коммит 7f281d0 срез C8) замыкает `conversation → memory → runtime-app →
+  conversation`. Проверено на ЧИСТОЙ БД: main (bfba750) 0 violations, ветка на 47d8227 (до моей беады)
+  — тот же 1 violation. 🔴 Ловушка: инкрементальный `beadloom reindex` НЕ подхватывает новый импорт,
+  поэтому `prime`/`lint` на несвежей БД показывали 0 — воспроизводить только после
+  `rm .beadloom/beadloom.db`. Кандидаты фикса (решать волне C/владельцу memory): опустить
+  `WORK_EVENT_TYPE` в `kernel`, либо убрать `memory → application/runtime/retry` (перенести
+  `call_with_retry` в `kernel`).

@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, cast
 
 from bob.coding.adapters.live_stream import _DmLiveStreamer
 from bob.coding.adapters.owner_notifier import _CodingOwnerNotifier
-from bob.coding.usecases.interactive_session import InteractiveSessionManager
+from bob.interactive.usecases.session import InteractiveSessionManager
 from bob.runtime.wiring.coding import _build_interactive_session
 
 if TYPE_CHECKING:

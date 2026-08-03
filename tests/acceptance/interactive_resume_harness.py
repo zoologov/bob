@@ -42,12 +42,12 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
-from bob.coding.adapters.interactive_runner import InteractiveClaudeRunner
 from bob.coding.adapters.live_stream import _DmLiveStreamer
 from bob.coding.entities import CodingSession
 from bob.coding.state import CodingSessionState, is_terminal
-from bob.coding.usecases.interactive_intake import InteractiveIntakeRouter
-from bob.coding.usecases.interactive_session import InteractiveSessionManager
+from bob.interactive.adapters.runner import InteractiveClaudeRunner
+from bob.interactive.usecases.intake import InteractiveIntakeRouter
+from bob.interactive.usecases.session import InteractiveSessionManager
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Callable, Mapping, Sequence

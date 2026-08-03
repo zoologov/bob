@@ -30,10 +30,10 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from bob.coding import session_voice
 from bob.coding.adapters.live_stream import _DmLiveStreamer
 from bob.coding.state import CodingSessionState, is_terminal
-from bob.coding.usecases.interactive_session import InteractiveSessionManager
+from bob.interactive import voice as interactive_voice
+from bob.interactive.usecases.session import InteractiveSessionManager
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Callable, Mapping
@@ -289,8 +289,8 @@ async def test_process_death_tells_the_owner_honestly_and_not_as_his_own_stop() 
     await rig.manager.open("задача", _OWNER_ID)
     await _settle(lambda: bool(rig.voice.sent))
 
-    assert rig.voice.sent == [session_voice.interactive_ended()]
-    assert session_voice.stopped() not in rig.voice.sent
+    assert rig.voice.sent == [interactive_voice.interactive_ended()]
+    assert interactive_voice.stopped() not in rig.voice.sent
 
 
 @pytest.mark.asyncio
@@ -334,7 +334,7 @@ async def test_process_death_in_a_persistent_workspace_keeps_the_accumulated_tre
 
     assert opened.ok is True
     assert rig.worktree.removed == []  # работа осталась на месте
-    assert rig.voice.sent == [session_voice.interactive_ended_persistent()]
+    assert rig.voice.sent == [interactive_voice.interactive_ended_persistent()]
     assert opened.session is not None
     saved = rig.store.sessions[opened.session.id]
     assert is_terminal(saved.state) is True
@@ -355,10 +355,10 @@ async def test_an_explicit_stop_after_the_process_already_died_is_not_a_second_c
     outcome = await rig.manager.stop(_OWNER_ID)
 
     assert outcome.ok is False  # закрывать уже нечего — честная заметка
-    assert outcome.message == session_voice.no_session()
+    assert outcome.message == interactive_voice.no_session()
     assert rig.runner.close_calls == 1
     assert rig.worktree.removed == ["/wt/zadacha"]
-    assert rig.voice.sent == [session_voice.interactive_ended()]
+    assert rig.voice.sent == [interactive_voice.interactive_ended()]
     assert opened.session is not None
     terminal_saves = [
         state for sid, state in rig.store.saves if sid == opened.session.id and is_terminal(state)
@@ -378,7 +378,7 @@ async def test_an_explicit_stop_never_produces_a_second_death_notice() -> None:
     await _settle(lambda: True)
 
     assert outcome.ok is True
-    assert outcome.message == session_voice.stopped()
+    assert outcome.message == interactive_voice.stopped()
     assert rig.voice.sent == []  # 🔴 никакой второй реплики от фоновой перекачки
     assert rig.runner.close_calls == 1
     assert rig.worktree.removed == ["/wt/zadacha"]

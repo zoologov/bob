@@ -24,7 +24,6 @@ from bob.coding.adapters import (
     SubprocessClaudeRunner,
 )
 from bob.coding.adapters.indicator import StatusPanel, TypingKeepalive
-from bob.coding.adapters.interactive_runner import InteractiveClaudeRunner
 from bob.coding.adapters.live_stream import _DmLiveStreamer
 from bob.coding.adapters.owner_notifier import _CodingOwnerNotifier
 from bob.coding.adapters.session_store import SqliteCodingSessionStore
@@ -32,9 +31,10 @@ from bob.coding.usecases.classify_coding_intent import ClassifyCodingIntent
 from bob.coding.usecases.coding_assistant import CodingAssistant, LiveRunStreamer
 from bob.coding.usecases.coding_context import make_coding_context
 from bob.coding.usecases.coding_intent_router import CodingIntentRouter
-from bob.coding.usecases.interactive_intake import InteractiveIntakeRouter
-from bob.coding.usecases.interactive_session import InteractiveSessionManager
-from bob.coding.usecases.recover_interactive_sessions import RecoverInteractiveSessions
+from bob.interactive.adapters.runner import InteractiveClaudeRunner
+from bob.interactive.usecases.intake import InteractiveIntakeRouter
+from bob.interactive.usecases.recover_sessions import RecoverInteractiveSessions
+from bob.interactive.usecases.session import InteractiveSessionManager
 from bob.runtime.config import (
     _CODING_TYPING_INTERVAL,
     _REPO_ROOT,

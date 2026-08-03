@@ -205,12 +205,12 @@ if TYPE_CHECKING:
 
     from bob.capabilities.usecases import CapabilityRegistry
     from bob.coding.usecases.coding_assistant import CodingAssistant
-    from bob.coding.usecases.interactive_session import InteractiveSessionManager
-    from bob.coding.usecases.recover_interactive_sessions import (
-        RecoverInteractiveSessions,
-    )
     from bob.infrastructure.telegram.gateway import BotLike
     from bob.infrastructure.telegram.multibot import MultiBotGateway
+    from bob.interactive.usecases.recover_sessions import (
+        RecoverInteractiveSessions,
+    )
+    from bob.interactive.usecases.session import InteractiveSessionManager
     from bob.kernel.ports import Clock, DomainEvent, EventHandler, LLMProvider
     from bob.memory.ports import Embedder, Reranker
     from bob.proactivity.usecases import ProactivityEngine

@@ -19,11 +19,11 @@ import asyncio
 from typing import TYPE_CHECKING, Any
 
 from bob.coding.adapters.claude_runner import SubprocessClaudeRunner, _ExecStreamRunner
-from bob.coding.adapters.interactive_runner import (
+from bob.coding.push_guard import PUSH_GUARD_STUB_URL, PUSH_GUARD_URL_PREFIXES
+from bob.interactive.adapters.runner import (
     InteractiveClaudeRunner,
     _ExecInteractiveSpawner,
 )
-from bob.coding.push_guard import PUSH_GUARD_STUB_URL, PUSH_GUARD_URL_PREFIXES
 
 if TYPE_CHECKING:
     import pytest

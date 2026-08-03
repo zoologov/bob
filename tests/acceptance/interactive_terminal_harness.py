@@ -33,18 +33,18 @@ from typing import TYPE_CHECKING, cast
 
 from bob.application.runtime.event_bus import AsyncEventBus
 from bob.application.runtime.events import MESSAGE_RECEIVED, MessageReceived
-from bob.coding.adapters.interactive_runner import InteractiveClaudeRunner
 from bob.coding.adapters.live_stream import _DmLiveStreamer
 from bob.coding.state import CodingSessionState, is_terminal
 from bob.coding.usecases.coding_assistant import CodingOutcome
-from bob.coding.usecases.interactive_intake import InteractiveIntakeRouter
-from bob.coding.usecases.interactive_session import InteractiveSessionManager
 from bob.infrastructure.telegram.multibot import (
     BotIdentity,
     BotRegistry,
     BotScope,
     MultiBotGateway,
 )
+from bob.interactive.adapters.runner import InteractiveClaudeRunner
+from bob.interactive.usecases.intake import InteractiveIntakeRouter
+from bob.interactive.usecases.session import InteractiveSessionManager
 from bob.runtime.wiring.coding import _build_interactive_intake
 
 if TYPE_CHECKING:

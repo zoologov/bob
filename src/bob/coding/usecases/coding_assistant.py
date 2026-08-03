@@ -35,6 +35,15 @@ Worktree убирается в ``finally`` на любом завершении 
 провал → ``FAILED``, стоп → ``CANCELLED``), так что висящих worktree не остаётся.
 Всё инъектируется (порты + Clock + фабрика id), поэтому use-case детерминирован в
 тестах и не трогает ни настоящий ``claude``/``gh``/``git``, ни глобалы.
+
+🔴 BOB-087.E (bob-6u2): ``CodingOutcome`` и три ОБЩИХ порта (``OwnerNotifier`` /
+``OwnerCheck`` / ``LiveRunStreamer``) больше не объявлены здесь — они переехали на
+общую доменную поверхность модуля (:mod:`bob.coding.entities` / :mod:`bob.coding.ports`),
+потому что на них опирается и второй bounded context, живой терминал
+:mod:`bob.interactive` (отдельный узел графа), а зависеть от чужого use-case он не
+вправе. Здесь они РЕ-ЭКСПОРТИРУЮТСЯ: все существующие пути импорта живы, снаружи
+ничего не изменилось. Гейтед-ONLY сеймы (индикатор/панель/контекст-префикс/журнал
+работы) остались тут — их знает только этот оркестратор.
 """
 
 from __future__ import annotations
@@ -49,9 +58,10 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol, cast
 
 from bob.coding import session_voice
-from bob.coding.entities import CodingSession
+from bob.coding.entities import CodingOutcome, CodingSession
 from bob.coding.naming import worktree_branch
 from bob.coding.narrate import narrate
+from bob.coding.ports import LiveRunStreamer, OwnerCheck, OwnerNotifier
 from bob.coding.state import CodingSessionState, can_approve_plan, is_terminal
 from bob.coding.work_facts import WorkFactsAccumulator, WorkOutcome
 from bob.memory.self_action import SelfAction, SelfActionKind
@@ -103,32 +113,6 @@ _NO_CHANGES_DETAIL = "изменений не было"
 # is the domain's.
 
 
-class OwnerNotifier(Protocol):
-    """Узкий порт уведомления owner: послать одну строку в его чат (GUPPI-бот).
-
-    Реализуется в композиции адаптером над GUPPI-ботом (шлёт в General). Use-case
-    шлёт сюда план, нарратив-строки прогона, URL PR и короткие подтверждения —
-    единственный канал общения с owner, чтобы use-case не знал про chat_id/транспорт.
-    """
-
-    async def send(self, text: str) -> None:
-        """Послать ``text`` owner (best-effort, транспорт за адаптером)."""
-        ...
-
-
-class OwnerCheck(Protocol):
-    """Узкий порт authz: только owner управляет coding-сессией (defense-in-depth).
-
-    Реализуется :class:`~bob.social.usecases.Authorizer` (его ``is_owner``). Гейт
-    дублируется на уровне GUPPI (команда от не-owner туда не доходит), но use-case
-    проверяет owner на КАЖДОМ методе сам — никакой сессии/исполнения для чужого.
-    """
-
-    def is_owner(self, user_id: int | None) -> bool:
-        """Является ли ``user_id`` owner'ом (единственный, кто вправе командовать)."""
-        ...
-
-
 class TypingKeepalive(Protocol):
     """Сейм индикатора «Боб печатает…» на время долгих немых прогонов claude (BOB-046 .2).
 
@@ -160,31 +144,6 @@ class StatusPanel(Protocol):
 
     async def update(self, text: str) -> None:
         """Отредактировать то же сообщение под новую фазу (no-op, если нечего править)."""
-        ...
-
-
-class LiveRunStreamer(Protocol):
-    """Сейм ЛАЙВ-стрима сырых событий execute-прогона в dev-канал owner'а (BOB-082.3).
-
-    Когда завязан (флаг ``coder.dev_dm`` ON), use-case делегирует сюда ВЕСЬ поток
-    execute-событий: адаптер (:class:`~bob.coding.adapters.live_stream._DmLiveStreamer`)
-    рендерит каждое сырое событие через :func:`~bob.coding.stream_render.render_stream_event`
-    (не lossy ``narrate``) и льёт БЕЗ капа в ЛИЧКУ owner'а — прогрессивная «терминальная»
-    панель + отдельные сообщения. Групповой топик при этом получает только короткий
-    указатель (INV-5: firehose не флудит группу). Незавязан (``None``) → use-case идёт
-    прежним путём: капнутый групповой нарратив ``narrate`` (поведение без флага не меняется).
-
-    Порт transport-free: use-case не знает про DM chat_id / edit_message_text — только
-    вызывает :meth:`stream`; выбор цели/рендера делает композиция (wiring).
-    """
-
-    async def stream(
-        self,
-        events: AsyncIterator[Mapping[str, object]],
-        *,
-        is_cancelled: Callable[[], bool],
-    ) -> None:
-        """Пролить сырые события прогона в dev-канал (пока ``is_cancelled()`` ложно)."""
         ...
 
 
@@ -224,20 +183,6 @@ class WorkJournalRecorder(Protocol):
     ) -> None:
         """Записать дистиллят сессии (или тихо ничего — no-op при OFF-флаге)."""
         ...
-
-
-@dataclass(frozen=True, slots=True)
-class CodingOutcome:
-    """Итог одной команды: успех/отказ, owner-сообщение и итоговая сессия.
-
-    ``ok`` ложно при отказе authz / нелегальной команде / провале. ``message`` —
-    короткий owner-текст (уже отправлен через нотификатор, кроме «тихого» отказа
-    не-owner'у). ``session`` — итоговая сессия (``None``, если её нет/не создавалась).
-    """
-
-    ok: bool
-    message: str
-    session: CodingSession | None = None
 
 
 class CodingAssistant:

@@ -29,7 +29,7 @@ from dataclasses import dataclass, field
 
 from pytest_bdd import given, scenarios, then, when
 
-from bob.coding import session_voice
+from bob.interactive import voice as interactive_voice
 from tests.acceptance.interactive_terminal_harness import (
     DmRouteObservations,
     InteractiveObservations,
@@ -242,10 +242,10 @@ def honest_death_notice(itx: _Ctx) -> None:
     # 🔴 Owner узнаёт правду: сеанс кончился, и кончился НЕ по его команде. Молчание
     # здесь и было багом (Боб нем до «стоп»), а прощание на «стоп» приписало бы owner'у
     # действие, которого он не совершал.
-    assert session_voice.interactive_ended() in itx.obs.mode_lines, (
+    assert interactive_voice.interactive_ended() in itx.obs.mode_lines, (
         f"Боб не сказал, что сеанс кончился сам; строки: {itx.obs.mode_lines}"
     )
-    assert session_voice.stopped() not in itx.obs.mode_lines
+    assert interactive_voice.stopped() not in itx.obs.mode_lines
 
 
 @then("реплика после смерти процесса идёт обычным путём Боба, а не в интерактив")

@@ -4,7 +4,7 @@
 
 """Юнит-тесты argv-политики интерактивного claude (BOB-087.D1/D2, переезд D4b).
 
-Два чистых ядра :mod:`bob.coding.argv_policy` — сборка argv живого сеанса
+Два чистых ядра :mod:`bob.interactive.argv_policy` — сборка argv живого сеанса
 (:func:`build_interactive_argv`) и чтение session-id из init-события
 (:func:`extract_session_id`). Оба I/O-free и детерминированны, поэтому это ИМЕННО те
 domain-юниты, силу которых меряет ``./scripts/mutation.sh coding.argv_policy``: тесты
@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import pytest
 
-from bob.coding.argv_policy import build_interactive_argv, extract_session_id
+from bob.interactive.argv_policy import build_interactive_argv, extract_session_id
 
 # --------------------------------------------------------------------------- #
 # build_interactive_argv — сборка argv живого сеанса (BOB-087.D1)

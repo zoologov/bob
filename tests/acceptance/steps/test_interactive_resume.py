@@ -33,8 +33,8 @@ from datetime import timedelta
 
 from pytest_bdd import given, scenarios, then, when
 
-from bob.coding.resume_policy import CONFIRMATION_TTL
 from bob.coding.state import CodingSessionState
+from bob.interactive.resume_policy import CONFIRMATION_TTL
 from tests.acceptance.interactive_resume_harness import (
     BASELINE_ARGV,
     GUEST_ID,

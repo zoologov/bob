@@ -3,7 +3,7 @@
 # See the LICENSE file in the project root for full license information.
 
 # beadloom:domain=bob
-# beadloom:feature=coding
+# beadloom:feature=interactive
 # beadloom:layer=infrastructure
 
 """InteractiveClaudeRunner — a PERSISTENT bidirectional ``claude`` session (BOB-083 .2).
@@ -25,8 +25,8 @@ terminates the process, kills it if it does not exit within a short grace, and r
 idempotent, best-effort, never raising, so no zombie is left behind.
 
 The spawn argv itself is NOT assembled here: it is the pure domain policy
-:func:`bob.coding.argv_policy.build_interactive_argv` (with
-:func:`~bob.coding.argv_policy.extract_session_id` reading the init frame's session id) —
+:func:`bob.interactive.argv_policy.build_interactive_argv` (with
+:func:`~bob.interactive.argv_policy.extract_session_id` reading the init frame's session id) —
 this adapter only carries those verdicts to the process boundary.
 
 ``mode`` is validated against the SAME allowlist policy as the one-shot runner
@@ -48,14 +48,10 @@ import logging
 import os
 from typing import TYPE_CHECKING, Protocol
 
-from bob.coding.adapters.claude_runner import (
-    _STREAM_LIMIT,
-    ClaudeRunError,
-    _parse_event,
-)
-from bob.coding.argv_policy import build_interactive_argv, extract_session_id
 from bob.coding.push_guard import guarded_spawn_env
-from bob.coding.sandbox_policy import is_allowed_mode
+from bob.coding.sandbox_policy import ClaudeRunError, is_allowed_mode
+from bob.coding.stream_json import STREAM_LIMIT, parse_event
+from bob.interactive.argv_policy import build_interactive_argv, extract_session_id
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Awaitable, Mapping, Sequence
@@ -221,7 +217,7 @@ class InteractiveClaudeRunner:
         if proc is None:
             return
         async for line in proc.read_lines():
-            event = _parse_event(line)
+            event = parse_event(line)
             if event is None:
                 continue
             if self._session_id is None:
@@ -262,13 +258,13 @@ class _ExecInteractiveProcess:
             try:
                 raw = await stdout.readline()
             except ValueError:
-                # A single line exceeded ``_STREAM_LIMIT`` (LimitOverrunError ->
+                # A single line exceeded ``STREAM_LIMIT`` (LimitOverrunError ->
                 # ValueError). The buffer cannot advance past it without re-raising
                 # forever, so end the stream gracefully (treat as EOF) rather than crash
                 # the output pump — return, do NOT ``continue``.
                 logger.warning(
                     "claude stdout line exceeded the %d-byte stream limit; ending read",
-                    _STREAM_LIMIT,
+                    STREAM_LIMIT,
                 )
                 return
             if not raw:
@@ -315,7 +311,7 @@ class _ExecInteractiveSpawner:
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
-            limit=_STREAM_LIMIT,
+            limit=STREAM_LIMIT,
             env=self._env,
         )
         return _ExecInteractiveProcess(proc)

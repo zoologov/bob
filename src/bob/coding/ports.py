@@ -6,7 +6,7 @@
 # beadloom:feature=coding
 # beadloom:layer=domain
 
-"""Coding ports — the gated «Bob runs Claude Code» session seam (BOB-039/040).
+"""Coding ports — the «Bob runs Claude Code» session seam (BOB-039/040).
 
 The headless ``claude`` runner (:class:`ClaudeCodeRunner`), the isolated worktree
 (:class:`Worktree`), the durable session store (:class:`CodingSessionStore`), and
@@ -16,6 +16,16 @@ the PR opener (:class:`PullRequestOpener`), plus the two NARROW resume seams
 :class:`typing.Protocol` definitions with no implementations; the shell-free
 subprocess / SQLite adapters live in ``bob.infrastructure``. There is DELIBERATELY
 no merge seam — Bob opens a PR and stops; the owner merges.
+
+🔴 BOB-087.E (bob-6u2): three of these ports — :class:`OwnerNotifier`,
+:class:`OwnerCheck` and :class:`LiveRunStreamer` — used to live inside the gated
+use-case :mod:`bob.coding.usecases.coding_assistant`. They are the seams BOTH bounded
+contexts rest on (the gated coder AND the live terminal :mod:`bob.interactive`, split
+out into its own node), so their home is the shared port module, not one context's
+orchestrator: a module may depend on another module's PORTS, never on its use-cases.
+The gated-coder-only seams (typing indicator / status panel / prompt context / work
+journal) deliberately stayed with the use-case that alone knows them. The old import
+paths keep working — ``coding_assistant`` re-exports all three.
 """
 
 from __future__ import annotations
@@ -23,7 +33,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator, Mapping
+    from collections.abc import AsyncIterator, Callable, Mapping
 
     from bob.coding.entities import CodingSession
 
@@ -183,7 +193,7 @@ class ResumableSessionLookup(Protocol):
     otherwise have to grow a method it never uses). It answers exactly one question — «что
     вообще писалось по этой ветке» — and returns EVERY state, terminal included: WHICH of
     them may be resumed is the pure domain policy's call
-    (:func:`bob.coding.resume_policy.select_resumable`), so the storage layer can never
+    (:func:`bob.interactive.resume_policy.select_resumable`), so the storage layer can never
     drift from the «no live-attach» rule. Realised by ``SqliteCodingSessionStore``.
     """
 
@@ -227,4 +237,57 @@ class PullRequestOpener(Protocol):
 
     async def open(self, branch: str, title: str, body: str) -> str:
         """Open a PR for ``branch`` and return its url (NEVER merges — owner does)."""
+        ...
+
+
+class OwnerNotifier(Protocol):
+    """Узкий порт уведомления owner: послать одну строку в его чат (GUPPI-бот).
+
+    Реализуется в композиции адаптером над GUPPI-ботом (шлёт в General). Use-case
+    шлёт сюда план, нарратив-строки прогона, URL PR и короткие подтверждения —
+    единственный канал общения с owner, чтобы use-case не знал про chat_id/транспорт.
+    """
+
+    async def send(self, text: str) -> None:
+        """Послать ``text`` owner (best-effort, транспорт за адаптером)."""
+        ...
+
+
+class OwnerCheck(Protocol):
+    """Узкий порт authz: только owner управляет coding-сессией (defense-in-depth).
+
+    Реализуется :class:`~bob.social.usecases.Authorizer` (его ``is_owner``). Гейт
+    дублируется на уровне GUPPI (команда от не-owner туда не доходит), но use-case
+    проверяет owner на КАЖДОМ методе сам — никакой сессии/исполнения для чужого.
+    """
+
+    def is_owner(self, user_id: int | None) -> bool:
+        """Является ли ``user_id`` owner'ом (единственный, кто вправе командовать)."""
+        ...
+
+
+class LiveRunStreamer(Protocol):
+    """Сейм ЛАЙВ-стрима сырых событий прогона в dev-канал owner'а (BOB-082.3).
+
+    Когда завязан (флаг ``coder.dev_dm`` ON), use-case делегирует сюда ВЕСЬ поток
+    execute-событий: адаптер (:class:`~bob.coding.adapters.live_stream._DmLiveStreamer`)
+    рендерит каждое сырое событие через :func:`~bob.coding.stream_render.render_stream_event`
+    (не lossy ``narrate``) и льёт БЕЗ капа в ЛИЧКУ owner'а — прогрессивная «терминальная»
+    панель + отдельные сообщения. Групповой топик при этом получает только короткий
+    указатель (INV-5: firehose не флудит группу). Незавязан (``None``) → use-case идёт
+    прежним путём: капнутый групповой нарратив ``narrate`` (поведение без флага не меняется).
+    Живой интерактивный сеанс (:mod:`bob.interactive`) льёт через ЭТОТ ЖЕ порт — потому
+    он и общий.
+
+    Порт transport-free: use-case не знает про DM chat_id / edit_message_text — только
+    вызывает :meth:`stream`; выбор цели/рендера делает композиция (wiring).
+    """
+
+    async def stream(
+        self,
+        events: AsyncIterator[Mapping[str, object]],
+        *,
+        is_cancelled: Callable[[], bool],
+    ) -> None:
+        """Пролить сырые события прогона в dev-канал (пока ``is_cancelled()`` ложно)."""
         ...

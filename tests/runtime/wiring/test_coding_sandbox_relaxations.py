@@ -35,11 +35,11 @@ from bob.coding.adapters.claude_runner import (
     SubprocessClaudeRunner,
     _ExecStreamRunner,
 )
-from bob.coding.adapters.interactive_runner import (
+from bob.coding.push_guard import PUSH_GUARD_STUB_URL
+from bob.interactive.adapters.runner import (
     InteractiveClaudeRunner,
     _ExecInteractiveSpawner,
 )
-from bob.coding.push_guard import PUSH_GUARD_STUB_URL
 from bob.runtime.wiring.coding import _build_coding_assistant, _build_interactive_session
 
 if TYPE_CHECKING:

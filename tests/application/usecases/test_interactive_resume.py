@@ -30,12 +30,12 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from bob.coding import session_voice
 from bob.coding.adapters.live_stream import _DmLiveStreamer
 from bob.coding.entities import CodingSession
-from bob.coding.resume_policy import CONFIRMATION_TTL
 from bob.coding.state import CodingSessionState, is_terminal
-from bob.coding.usecases.interactive_session import InteractiveSessionManager
+from bob.interactive import voice as interactive_voice
+from bob.interactive.resume_policy import CONFIRMATION_TTL
+from bob.interactive.usecases.session import InteractiveSessionManager
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Callable, Mapping
@@ -391,7 +391,7 @@ async def test_stopping_a_workspace_session_keeps_the_tree_and_says_so() -> None
     outcome = await rig.manager.stop(_OWNER_ID)
 
     assert rig.worktree.removed == []
-    assert outcome.message == session_voice.stopped_persistent()
+    assert outcome.message == interactive_voice.stopped_persistent()
 
 
 @pytest.mark.asyncio
@@ -415,7 +415,7 @@ async def test_open_workspace_while_a_session_is_live_is_refused() -> None:
     outcome = await rig.manager.open_workspace(_WORKSPACE, "срез D", _OWNER_ID)
 
     assert outcome.ok is False
-    assert outcome.message == session_voice.interactive_busy()
+    assert outcome.message == interactive_voice.interactive_busy()
     assert rig.worktree.ensured == []
 
     await rig.manager.stop(_OWNER_ID)
@@ -708,7 +708,7 @@ async def test_stopping_a_resumed_session_tells_the_owner_the_work_survived() ->
 
     outcome = await rig.manager.stop(_OWNER_ID)
 
-    assert outcome.message == session_voice.stopped_persistent()
+    assert outcome.message == interactive_voice.stopped_persistent()
     assert "убрал" not in outcome.message.casefold()
 
 
@@ -720,7 +720,7 @@ async def test_stopping_an_ephemeral_session_still_reports_the_cleanup() -> None
 
     outcome = await rig.manager.stop(_OWNER_ID)
 
-    assert outcome.message == session_voice.stopped()
+    assert outcome.message == interactive_voice.stopped()
 
 
 @pytest.mark.asyncio
@@ -752,7 +752,7 @@ async def test_a_failed_workspace_prepare_answers_honestly_instead_of_going_sile
 
     assert outcome is not None  # ход ПОГЛОЩЁН: «да» не уходит обычным chat-путём
     assert outcome.ok is False
-    assert outcome.message == session_voice.resume_failed()
+    assert outcome.message == interactive_voice.resume_failed()
     assert rig.manager.active() is False
     assert rig.store.sessions == {}
     assert rig.runner.opened == []  # процесс не спавнился
@@ -788,7 +788,7 @@ async def test_a_store_fault_after_the_resume_spawn_kills_the_process() -> None:
 
     assert outcome is not None  # ход поглощён, «да» не уходит обычным chat-путём
     assert outcome.ok is False
-    assert outcome.message == session_voice.resume_failed()
+    assert outcome.message == interactive_voice.resume_failed()
     assert rig.manager.active() is False
     assert rig.runner.close_calls == 1  # 🔴 спавн свёрнут — сироты нет
     assert rig.worktree.removed == []  # 🔴 накопленное дерево не трогаем и здесь
@@ -801,7 +801,7 @@ async def test_a_store_fault_after_opening_a_workspace_kills_the_process() -> No
     outcome = await rig.manager.open_workspace(_WORKSPACE, "эпик", _OWNER_ID)
 
     assert outcome.ok is False
-    assert outcome.message == session_voice.resume_failed()
+    assert outcome.message == interactive_voice.resume_failed()
     assert rig.manager.active() is False
     assert rig.runner.close_calls == 1
     assert rig.worktree.removed == []
@@ -816,10 +816,10 @@ async def test_a_lookup_fault_answers_honestly_instead_of_going_silent() -> None
     outcome = await rig.manager.propose_resume(_WORKSPACE, _OWNER_ID)
 
     assert outcome.ok is False
-    assert outcome.message == session_voice.resume_failed()
+    assert outcome.message == interactive_voice.resume_failed()
     # 🔴 Отказ ≠ «нечего поднимать»: врать про пустой стор, когда он просто не ответил,
     # нельзя.
-    assert outcome.message != session_voice.resume_nothing(_WORKSPACE)
+    assert outcome.message != interactive_voice.resume_nothing(_WORKSPACE)
     assert rig.worktree.ensured == []
     assert rig.runner.opened == []
     # И висящего вопроса не остаётся — «да» потом ничего не поднимет.
@@ -833,7 +833,7 @@ async def test_a_store_fault_on_the_direct_resume_lookup_is_an_honest_refusal() 
     outcome = await rig.manager.resume(_WORKSPACE, _OWNER_ID)
 
     assert outcome.ok is False
-    assert outcome.message == session_voice.resume_failed()
+    assert outcome.message == interactive_voice.resume_failed()
     assert rig.worktree.ensured == []
     assert rig.runner.opened == []
 

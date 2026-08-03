@@ -25,10 +25,10 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from bob.coding import session_voice
 from bob.coding.adapters.live_stream import _DmLiveStreamer
 from bob.coding.state import CodingSessionState, is_terminal
-from bob.coding.usecases.interactive_session import InteractiveSessionManager
+from bob.interactive import voice as interactive_voice
+from bob.interactive.usecases.session import InteractiveSessionManager
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Callable, Mapping
@@ -497,7 +497,7 @@ async def test_open_worktree_failure_answers_honestly_and_claims_no_cleanup() ->
 
     assert outcome.ok is False
     assert outcome.session is None
-    assert outcome.message == session_voice.interactive_setup_failed()
+    assert outcome.message == interactive_voice.interactive_setup_failed()
     assert "убрал" not in outcome.message.casefold()
     assert rig.manager.active() is False
     assert rig.worktree.removed == []  # нечего убирать — и Боб об уборке не заикается
@@ -531,7 +531,7 @@ async def test_open_store_failure_kills_the_spawned_process_and_answers() -> Non
     outcome = await rig.manager.open("задача", _OWNER_ID)
 
     assert outcome.ok is False
-    assert outcome.message == session_voice.interactive_failed()
+    assert outcome.message == interactive_voice.interactive_failed()
     assert outcome.session is None
     assert rig.manager.active() is False
     assert runner.close_calls == 1  # 🔴 the spawned process is killed, never orphaned
@@ -610,7 +610,7 @@ async def test_stop_survives_a_store_fault_and_still_says_goodbye() -> None:
     outcome = await rig.manager.stop(_OWNER_ID)
 
     assert outcome.ok is True
-    assert outcome.message == session_voice.stopped()
+    assert outcome.message == interactive_voice.stopped()
     assert rig.manager.active() is False
     assert rig.runner.close_calls == 1
     assert rig.worktree.removed == ["/wt/zadacha"]

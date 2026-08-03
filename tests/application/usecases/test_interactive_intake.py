@@ -22,7 +22,7 @@ The router is the consume-gate + entry/exit command path for the interactive ter
 from __future__ import annotations
 
 from bob.coding.usecases.coding_assistant import CodingOutcome
-from bob.coding.usecases.interactive_intake import InteractiveIntakeRouter
+from bob.interactive.usecases.intake import InteractiveIntakeRouter
 
 _OWNER = 99
 _GUEST = 7

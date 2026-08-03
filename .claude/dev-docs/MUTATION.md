@@ -71,15 +71,16 @@ scripts/mutation.sh                        # вся чистая доменна�
 
 | Цель | Что за ядро |
 |------|-------------|
-| `coding.argv_policy` | `build_interactive_argv` / `extract_session_id` — чем параметризуется живой claude (BOB-087.D1/D4b) |
+| `interactive.argv_policy` | `build_interactive_argv` / `extract_session_id` — чем параметризуется живой claude (BOB-087.D1/D4b; переехал из `coding.` в E) |
 | `coding.sandbox_policy` | `allowed_modes` / `is_allowed_mode` / `extra_dir_argv` / `is_safe_argv_value` — owner-ослабления изоляции (BOB-087.D2) |
-| `coding.resume_policy` | `select_resumable` / `is_confirmation_fresh` — что и когда можно поднять (BOB-087.D3) |
+| `interactive.resume_policy` | `select_resumable` / `is_confirmation_fresh` — что и когда можно поднять (BOB-087.D3; переехал из `coding.` в E) |
 | `coding.naming` | `worktree_branch` / `workspace_branch` — имя ветки из фразы owner'а (транслит) |
-| `coding.interactive_intent` | распознавание `/code -i` / `/workspace` / `/resume` / `stop` |
+| `interactive.intent` | распознавание `/code -i` / `/workspace` / `/resume` / `stop` (бывший `coding.interactive_intent`) |
+| `interactive.resume_negotiation` | висящий вопрос «поднимаю?»: адресность, TTL, «да»/«нет», снятие (BOB-087.E) |
 | `social.sulk` | эталонный baseline Среза 0 (см. ниже) |
 
 🔴 Мутируется ДОМЕННЫЙ модуль, не адаптер: конвенция mutmut исключает `*/adapters/*`,
-поэтому argv живого раннера и вынесен в `coding/argv_policy.py` — иначе гейт был бы
+поэтому argv живого раннера и вынесен в `interactive/argv_policy.py` — иначе гейт был бы
 фиктивным (мутанты внутри адаптера просто не создаются).
 
 ### Порог и честность

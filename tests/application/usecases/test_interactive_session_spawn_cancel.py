@@ -28,7 +28,7 @@ import pytest
 from bob.coding.adapters.live_stream import _DmLiveStreamer
 from bob.coding.entities import CodingSession
 from bob.coding.state import CodingSessionState, is_terminal
-from bob.coding.usecases.interactive_session import InteractiveSessionManager
+from bob.interactive.usecases.session import InteractiveSessionManager
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Callable, Coroutine, Mapping

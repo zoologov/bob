@@ -151,6 +151,14 @@ rules:
     description: "capabilities: conversation не импортит adapters напрямую (только через фасад/порты)"
     severity: error
     forbid_import: {from: "src/bob/conversation/*", to: "bob/capabilities/adapters/*"}
+  - name: capabilities-boundary-no-interactive-usecases
+    description: "capabilities: interactive не импортит usecases напрямую (только через фасад/порты)"
+    severity: error
+    forbid_import: {from: "src/bob/interactive/*", to: "bob/capabilities/usecases/*"}
+  - name: capabilities-boundary-no-interactive-adapters
+    description: "capabilities: interactive не импортит adapters напрямую (только через фасад/порты)"
+    severity: error
+    forbid_import: {from: "src/bob/interactive/*", to: "bob/capabilities/adapters/*"}
   - name: capabilities-boundary-no-memory-usecases
     description: "capabilities: memory не импортит usecases напрямую (только через фасад/порты)"
     severity: error
@@ -233,6 +241,14 @@ rules:
     description: "coding: conversation не импортит adapters напрямую (только через фасад/порты)"
     severity: error
     forbid_import: {from: "src/bob/conversation/*", to: "bob/coding/adapters/*"}
+  - name: coding-boundary-no-interactive-usecases
+    description: "coding: interactive не импортит usecases напрямую (только через фасад/порты)"
+    severity: error
+    forbid_import: {from: "src/bob/interactive/*", to: "bob/coding/usecases/*"}
+  - name: coding-boundary-no-interactive-adapters
+    description: "coding: interactive не импортит adapters напрямую (только через фасад/порты)"
+    severity: error
+    forbid_import: {from: "src/bob/interactive/*", to: "bob/coding/adapters/*"}
   - name: coding-boundary-no-memory-usecases
     description: "coding: memory не импортит usecases напрямую (только через фасад/порты)"
     severity: error
@@ -319,6 +335,14 @@ rules:
     description: "conversation: coding не импортит adapters напрямую (только через фасад/порты)"
     severity: error
     forbid_import: {from: "src/bob/coding/*", to: "bob/conversation/adapters/*"}
+  - name: conversation-boundary-no-interactive-usecases
+    description: "conversation: interactive не импортит usecases напрямую (только через фасад/порты)"
+    severity: error
+    forbid_import: {from: "src/bob/interactive/*", to: "bob/conversation/usecases/*"}
+  - name: conversation-boundary-no-interactive-adapters
+    description: "conversation: interactive не импортит adapters напрямую (только через фасад/порты)"
+    severity: error
+    forbid_import: {from: "src/bob/interactive/*", to: "bob/conversation/adapters/*"}
   - name: conversation-boundary-no-memory-usecases
     description: "conversation: memory не импортит usecases напрямую (только через фасад/порты)"
     severity: error
@@ -359,6 +383,100 @@ rules:
     description: "conversation: social не импортит adapters напрямую (только через фасад/порты)"
     severity: error
     forbid_import: {from: "src/bob/social/*", to: "bob/conversation/adapters/*"}
+
+  # ── interactive VERTICAL module (generated) ──
+  - name: interactive-usecases-no-adapters
+    description: "interactive: usecases не импортят adapters (порты; adapters — на композиции)"
+    severity: error
+    forbid_import: {from: "src/bob/interactive/usecases/*", to: "bob/interactive/adapters/*"}
+  - name: interactive-internals-no-usecases
+    description: "interactive: доменная логика/адаптеры не импортят usecases (usecases — на композиции)"
+    severity: error
+    forbid_import: {from: "src/bob/interactive/[!u]*", to: "bob/interactive/usecases/*"}
+  - name: interactive-internals-no-adapters
+    description: "interactive: доменная логика не импортит adapters (adapters — на композиции)"
+    severity: error
+    forbid_import: {from: "src/bob/interactive/[!au]*", to: "bob/interactive/adapters/*"}
+  - name: interactive-internals-no-adapters-argv_policy
+    description: "interactive: root-файл argv_policy не импортит adapters (a/u-hole patch)"
+    severity: error
+    forbid_import: {from: "src/bob/interactive/argv_policy.py", to: "bob/interactive/adapters/*"}
+  - name: interactive-usecases-no-infra
+    description: "interactive: usecases не импортят чужой infrastructure (только через порты)"
+    severity: error
+    forbid_import: {from: "src/bob/interactive/usecases/*", to: "bob/infrastructure/*"}
+  - name: interactive-no-composition-root
+    description: "interactive: модуль не импортит композиционный корень (src/bob/app.py)"
+    severity: error
+    forbid_import: {from: "src/bob/interactive/*", to: "bob/app"}
+  - name: interactive-no-runtime-root
+    description: "interactive: модуль не импортит композиционный корень (bob.runtime.*)"
+    severity: error
+    forbid_import: {from: "src/bob/interactive/*", to: "bob/runtime*"}
+  - name: interactive-boundary-no-capabilities-usecases
+    description: "interactive: capabilities не импортит usecases напрямую (только через фасад/порты)"
+    severity: error
+    forbid_import: {from: "src/bob/capabilities/*", to: "bob/interactive/usecases/*"}
+  - name: interactive-boundary-no-capabilities-adapters
+    description: "interactive: capabilities не импортит adapters напрямую (только через фасад/порты)"
+    severity: error
+    forbid_import: {from: "src/bob/capabilities/*", to: "bob/interactive/adapters/*"}
+  - name: interactive-boundary-no-coding-usecases
+    description: "interactive: coding не импортит usecases напрямую (только через фасад/порты)"
+    severity: error
+    forbid_import: {from: "src/bob/coding/*", to: "bob/interactive/usecases/*"}
+  - name: interactive-boundary-no-coding-adapters
+    description: "interactive: coding не импортит adapters напрямую (только через фасад/порты)"
+    severity: error
+    forbid_import: {from: "src/bob/coding/*", to: "bob/interactive/adapters/*"}
+  - name: interactive-boundary-no-conversation-usecases
+    description: "interactive: conversation не импортит usecases напрямую (только через фасад/порты)"
+    severity: error
+    forbid_import: {from: "src/bob/conversation/*", to: "bob/interactive/usecases/*"}
+  - name: interactive-boundary-no-conversation-adapters
+    description: "interactive: conversation не импортит adapters напрямую (только через фасад/порты)"
+    severity: error
+    forbid_import: {from: "src/bob/conversation/*", to: "bob/interactive/adapters/*"}
+  - name: interactive-boundary-no-memory-usecases
+    description: "interactive: memory не импортит usecases напрямую (только через фасад/порты)"
+    severity: error
+    forbid_import: {from: "src/bob/memory/*", to: "bob/interactive/usecases/*"}
+  - name: interactive-boundary-no-memory-adapters
+    description: "interactive: memory не импортит adapters напрямую (только через фасад/порты)"
+    severity: error
+    forbid_import: {from: "src/bob/memory/*", to: "bob/interactive/adapters/*"}
+  - name: interactive-boundary-no-personality-usecases
+    description: "interactive: personality не импортит usecases напрямую (только через фасад/порты)"
+    severity: error
+    forbid_import: {from: "src/bob/personality/*", to: "bob/interactive/usecases/*"}
+  - name: interactive-boundary-no-personality-adapters
+    description: "interactive: personality не импортит adapters напрямую (только через фасад/порты)"
+    severity: error
+    forbid_import: {from: "src/bob/personality/*", to: "bob/interactive/adapters/*"}
+  - name: interactive-boundary-no-presence-usecases
+    description: "interactive: presence не импортит usecases напрямую (только через фасад/порты)"
+    severity: error
+    forbid_import: {from: "src/bob/presence/*", to: "bob/interactive/usecases/*"}
+  - name: interactive-boundary-no-presence-adapters
+    description: "interactive: presence не импортит adapters напрямую (только через фасад/порты)"
+    severity: error
+    forbid_import: {from: "src/bob/presence/*", to: "bob/interactive/adapters/*"}
+  - name: interactive-boundary-no-proactivity-usecases
+    description: "interactive: proactivity не импортит usecases напрямую (только через фасад/порты)"
+    severity: error
+    forbid_import: {from: "src/bob/proactivity/*", to: "bob/interactive/usecases/*"}
+  - name: interactive-boundary-no-proactivity-adapters
+    description: "interactive: proactivity не импортит adapters напрямую (только через фасад/порты)"
+    severity: error
+    forbid_import: {from: "src/bob/proactivity/*", to: "bob/interactive/adapters/*"}
+  - name: interactive-boundary-no-social-usecases
+    description: "interactive: social не импортит usecases напрямую (только через фасад/порты)"
+    severity: error
+    forbid_import: {from: "src/bob/social/*", to: "bob/interactive/usecases/*"}
+  - name: interactive-boundary-no-social-adapters
+    description: "interactive: social не импортит adapters напрямую (только через фасад/порты)"
+    severity: error
+    forbid_import: {from: "src/bob/social/*", to: "bob/interactive/adapters/*"}
 
   # ── memory VERTICAL module (generated) ──
   - name: memory-usecases-no-adapters
@@ -409,6 +527,14 @@ rules:
     description: "memory: conversation не импортит adapters напрямую (только через фасад/порты)"
     severity: error
     forbid_import: {from: "src/bob/conversation/*", to: "bob/memory/adapters/*"}
+  - name: memory-boundary-no-interactive-usecases
+    description: "memory: interactive не импортит usecases напрямую (только через фасад/порты)"
+    severity: error
+    forbid_import: {from: "src/bob/interactive/*", to: "bob/memory/usecases/*"}
+  - name: memory-boundary-no-interactive-adapters
+    description: "memory: interactive не импортит adapters напрямую (только через фасад/порты)"
+    severity: error
+    forbid_import: {from: "src/bob/interactive/*", to: "bob/memory/adapters/*"}
   - name: memory-boundary-no-personality-usecases
     description: "memory: personality не импортит usecases напрямую (только через фасад/порты)"
     severity: error
@@ -495,6 +621,14 @@ rules:
     description: "personality: conversation не импортит adapters напрямую (только через фасад/порты)"
     severity: error
     forbid_import: {from: "src/bob/conversation/*", to: "bob/personality/adapters/*"}
+  - name: personality-boundary-no-interactive-usecases
+    description: "personality: interactive не импортит usecases напрямую (только через фасад/порты)"
+    severity: error
+    forbid_import: {from: "src/bob/interactive/*", to: "bob/personality/usecases/*"}
+  - name: personality-boundary-no-interactive-adapters
+    description: "personality: interactive не импортит adapters напрямую (только через фасад/порты)"
+    severity: error
+    forbid_import: {from: "src/bob/interactive/*", to: "bob/personality/adapters/*"}
   - name: personality-boundary-no-memory-usecases
     description: "personality: memory не импортит usecases напрямую (только через фасад/порты)"
     severity: error
@@ -577,6 +711,14 @@ rules:
     description: "presence: conversation не импортит adapters напрямую (только через фасад/порты)"
     severity: error
     forbid_import: {from: "src/bob/conversation/*", to: "bob/presence/adapters/*"}
+  - name: presence-boundary-no-interactive-usecases
+    description: "presence: interactive не импортит usecases напрямую (только через фасад/порты)"
+    severity: error
+    forbid_import: {from: "src/bob/interactive/*", to: "bob/presence/usecases/*"}
+  - name: presence-boundary-no-interactive-adapters
+    description: "presence: interactive не импортит adapters напрямую (только через фасад/порты)"
+    severity: error
+    forbid_import: {from: "src/bob/interactive/*", to: "bob/presence/adapters/*"}
   - name: presence-boundary-no-memory-usecases
     description: "presence: memory не импортит usecases напрямую (только через фасад/порты)"
     severity: error
@@ -667,6 +809,14 @@ rules:
     description: "proactivity: conversation не импортит adapters напрямую (только через фасад/порты)"
     severity: error
     forbid_import: {from: "src/bob/conversation/*", to: "bob/proactivity/adapters/*"}
+  - name: proactivity-boundary-no-interactive-usecases
+    description: "proactivity: interactive не импортит usecases напрямую (только через фасад/порты)"
+    severity: error
+    forbid_import: {from: "src/bob/interactive/*", to: "bob/proactivity/usecases/*"}
+  - name: proactivity-boundary-no-interactive-adapters
+    description: "proactivity: interactive не импортит adapters напрямую (только через фасад/порты)"
+    severity: error
+    forbid_import: {from: "src/bob/interactive/*", to: "bob/proactivity/adapters/*"}
   - name: proactivity-boundary-no-memory-usecases
     description: "proactivity: memory не импортит usecases напрямую (только через фасад/порты)"
     severity: error
@@ -749,6 +899,14 @@ rules:
     description: "social: conversation не импортит adapters напрямую (только через фасад/порты)"
     severity: error
     forbid_import: {from: "src/bob/conversation/*", to: "bob/social/adapters/*"}
+  - name: social-boundary-no-interactive-usecases
+    description: "social: interactive не импортит usecases напрямую (только через фасад/порты)"
+    severity: error
+    forbid_import: {from: "src/bob/interactive/*", to: "bob/social/usecases/*"}
+  - name: social-boundary-no-interactive-adapters
+    description: "social: interactive не импортит adapters напрямую (только через фасад/порты)"
+    severity: error
+    forbid_import: {from: "src/bob/interactive/*", to: "bob/social/adapters/*"}
   - name: social-boundary-no-memory-usecases
     description: "social: memory не импортит usecases напрямую (только через фасад/порты)"
     severity: error
@@ -803,6 +961,10 @@ rules:
     description: "kernel — чистый leaf: не импортит infrastructure (только stdlib/typing)"
     severity: error
     forbid_import: {from: "src/bob/kernel/*", to: "bob/infrastructure/*"}
+  - name: kernel-no-interactive
+    description: "kernel — чистый leaf: не импортит interactive (только stdlib/typing)"
+    severity: error
+    forbid_import: {from: "src/bob/kernel/*", to: "bob/interactive/*"}
   - name: kernel-no-memory
     description: "kernel — чистый leaf: не импортит memory (только stdlib/typing)"
     severity: error
@@ -867,37 +1029,22 @@ rules:
   # node exceeds max_symbols (0 warnings at flip time), so the ratchet closes:
   # severity is now `error`. (gateway.py is a `component`, not a `feature`, so it is
   # outside this feature-scoped check — tracked separately under #25.)
+  #
+  # 🔴 BOB-087.E (bob-6u2) — РЕКАЛИБРОВКА СНЯТА, потолок снова ОДИН для всех. В срезе D3
+  # у `coding` был осознанно заведён отдельный бюджет 220 (узел дорос до 216 при общем
+  # 200) с явной пометкой «это отсрочка, а не решение: развести интерактивный терминал в
+  # собственный узел». Долг взят: живой терминал уехал в `interactive`
+  # (src/bob/interactive/ — ПАКЕТ-СОСЕД, потому что max_symbols считает по префиксу
+  # source и вложенный узел дал бы двойной учёт), голос режима — вместе с ним. Оба узла
+  # проходят ОБЩИЕ 200 без единого исключения: coding — 172, interactive — 48. Ни
+  # `exclude`, ни персонального бюджета в этом файле больше нет, и заводить их снова —
+  # значит расписываться в том, что граница проведена не там.
   - name: no-monster-modules
     description: "Модуль-слой/фича не должен пухнуть (handle_message/app.py/gateway — #9/#10/#25)"
     severity: error
     check:
-      for: {kind: feature, exclude: [coding]}
+      for: {kind: feature}
       max_symbols: 200
-
-  # BOB-087.D3 — ОСОЗНАННАЯ РЕКАЛИБРОВКА одного узла (не маскировка!). `coding` —
-  # самый большой bounded context: это ПОЛНАЯ вертикаль «Боб пишет код» (порты +
-  # чистые политики домена + use-cases + адаптеры claude/git/gh/стрим в Telegram),
-  # и она честно декомпозирована: 35 файлов, крупнейший — 34 символа, каждый со своей
-  # одной ответственностью (мониторов нет). Срез D3 добавил ~23 символа (resume-политика,
-  # reply-реплики, узкие порты, методы возобновления) и вывел узел на 208 при общем
-  # потолке 200; D5b (фиксы security-review) добавил ещё 4 — 213.
-  #
-  # 🔴 Почему рекалибровка, а не «спрятать»: узел НЕ переклассифицирован и не разбит
-  # фиктивно на два — он просто крупный по существу. Уточнение (D5b): дробление ФАЙЛОВ
-  # внутри домена счётчик действительно не снижает (символы остаются в том же узле), а
-  # вот разбиение УЗЛА снижает — и это и есть настоящий фикс, зафиксированный долгом
-  # bob-6u2; «делить бесполезно» здесь не утверждается. Поэтому общий потолок 200 остаётся
-  # зубастым для ВСЕХ прочих
-  # feature-узлов (следующий по величине — conversation, 178), а для `coding` заведён
-  # отдельный, ЯВНЫЙ бюджет с малым запасом: 220. Это по-прежнему СИГНАЛ, а не цель —
-  # ещё ~7 символов, и правило снова падает, требуя честного пере-скоупинга (например,
-  # выделения интерактивного терминала в собственный узел).
-  - name: no-monster-modules-coding
-    description: "coding: отдельный явный бюджет крупного bounded context (BOB-087.D3)"
-    severity: error
-    check:
-      for: {ref_id: coding}
-      max_symbols: 220
 
 # ── BOB-062.7b: the kernel → memory edge is GONE (SqliteMemoryRepo split) ─────
 # HISTORY (.2→.7b): the memory domain-first move (.2) left exactly ONE
@@ -965,6 +1112,51 @@ rules:
 #
 # If any of these ever becomes a RUNTIME import, it will surface (edge / import
 # scan) and must be re-evaluated — do not pre-emptively suppress.
+
+# ── BOB-087.E (bob-6u2): the DELIBERATE `interactive → coding` edge ───────────
+# Слайс E развёл ЖИВОЙ ИНТЕРАКТИВНЫЙ ТЕРМИНАЛ в собственный узел `interactive`
+# (src/bob/interactive/). Появилось одно новое межмодульное ребро — `interactive →
+# coding` — и оно РАЗРЕШЕНО СОЗНАТЕЛЬНО, вот на каком основании.
+#
+# ЧТО ИМЕННО импортируется (полный список, ничего сверх него): общая ДОМЕННАЯ
+# поверхность coding-сессии —
+#   • bob.coding.entities   — CodingSession (запись сессии) + CodingOutcome (итог хода);
+#   • bob.coding.ports      — Worktree / CodingSessionStore / InteractiveRunner /
+#                             PersistentWorkspace / ResumableSessionLookup /
+#                             OwnerCheck / OwnerNotifier / LiveRunStreamer;
+#   • bob.coding.state      — машина состояний сессии (INTERACTIVE/CANCELLED, is_terminal);
+#   • bob.coding.naming     — worktree_branch / workspace_branch (безопасные имена веток);
+#   • bob.coding.sandbox_policy — allowlist --permission-mode + ClaudeRunError;
+#   • bob.coding.push_guard — guarded_spawn_env (барьер сетевого push);
+#   • bob.coding.stream_json — parse_event / STREAM_LIMIT (формат потока claude);
+#   • bob.coding.session_voice — ровно две ОБЩИЕ реплики управления сессией
+#                             (`stopped`, `no_session`), ре-экспортируемые
+#                             bob.interactive.voice.
+#
+# ПОЧЕМУ это законно, а не «дырка для удобства»:
+#   1. Направление к ЯДРУ, а не к оркестратору. Импортируется только КОРЕНЬ модуля
+#      coding (домен + порты). Ни одного импорта из `coding/usecases/*` или
+#      `coding/adapters/*` — это ЗАПРЕЩЕНО генерируемыми правилами
+#      `coding-boundary-no-interactive-{usecases,adapters}`, и запрет реально бьёт:
+#      чтобы его соблюсти, в этом же срезе CodingOutcome переехал в `entities`, три
+#      общих порта — в `ports`, разбор stream-json — в `stream_json`, а ClaudeRunError —
+#      к политике, которая отказывает (`sandbox_policy`). То есть правило не обошли,
+#      а выполнили — ценой честного перемещения общих контрактов на общую поверхность.
+#   2. Ребро ОДНОСТОРОННЕЕ и таким останется структурно: `coding` не импортирует
+#      `interactive` НИГДЕ, а его usecases/adapters закрыты симметричными
+#      `interactive-boundary-no-coding-*`. Цикла нет (`no-dependency-cycles` — error).
+#   3. Альтернатива была бы ХУЖЕ. Дублировать CodingSession/состояния/имена веток в
+#      двух контекстах — значит завести ВТОРУЮ правду про одну и ту же строку в БД и
+#      одно и то же рабочее дерево (расхождение = потерянные сессии). Вынести всё
+#      общее в `kernel` тоже нельзя: kernel — инфра-нейтральные контракты ВСЕГО Боба,
+#      а это словарь ОДНОЙ предметной области («сессия claude в worktree»).
+#      Правильная фигура — общий bounded context (`coding`) и надстроенный над ним
+#      второй (`interactive`), а не третий «shared»-модуль-свалка.
+#
+# 🔴 Красная черта на будущее: если `interactive` когда-нибудь потянет что-то из
+# `coding/usecases` или `coding/adapters` — это НЕ повод расширить исключение, а
+# сигнал, что общий контракт снова оказался не на общей поверхности: его надо
+# опустить в `entities`/`ports`/политику, как сделано здесь.
 
 # ── BOB-062.3: legalized cross-boundary refs for the `proactivity` module ─────
 # The domain-first move surfaced these cross-boundary references (edge-inventory

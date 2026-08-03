@@ -3,7 +3,7 @@
 # See the LICENSE file in the project root for full license information.
 
 # beadloom:domain=bob
-# beadloom:feature=coding
+# beadloom:feature=interactive
 # beadloom:layer=domain
 
 """Argv-политика живого claude-сеанса — чистое доменное ядро (BOB-087.D1/D2, D4b).
@@ -21,7 +21,7 @@
   отсутствующее поле, не-строка и пустая строка дают ``None`` — id не выдумывается.
 
 I/O-free и детерминированно (mutation-цель). 🔴 Ядра живут в ДОМЕНЕ, а не рядом с
-транспортом (:mod:`bob.coding.adapters.interactive_runner`, который их вызывает), ровно
+транспортом (:mod:`bob.interactive.adapters.runner`, который их вызывает), ровно
 потому, что конвенция mutmut исключает ``*/adapters/*``: в домене у объявленных
 mutation-целей есть постоянный гейт, в адаптере его не было (BOB-087.D4b).
 """

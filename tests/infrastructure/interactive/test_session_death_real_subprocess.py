@@ -41,11 +41,11 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from bob.coding import session_voice
-from bob.coding.adapters.interactive_runner import InteractiveClaudeRunner
 from bob.coding.adapters.live_stream import _DmLiveStreamer
 from bob.coding.state import is_terminal
-from bob.coding.usecases.interactive_session import InteractiveSessionManager
+from bob.interactive import voice as interactive_voice
+from bob.interactive.adapters.runner import InteractiveClaudeRunner
+from bob.interactive.usecases.session import InteractiveSessionManager
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -194,7 +194,7 @@ async def test_a_real_claude_child_dying_ends_the_session_and_tells_the_owner(
     # swallowing every turn into a dead stdin.
     assert manager.active() is False
     # The owner HEARD it, and not as if he had asked for the stop himself.
-    assert voice.sent == [session_voice.interactive_ended()]
+    assert voice.sent == [interactive_voice.interactive_ended()]
     # Terminal row + the id captured off the REAL init frame (a later --resume needs it).
     saved = store.sessions[opened.session.id]
     assert is_terminal(saved.state) is True
@@ -227,6 +227,6 @@ async def test_an_explicit_stop_after_a_real_child_died_is_a_no_op(tmp_path: Pat
     outcome = await manager.stop(_OWNER_ID)
 
     assert outcome.ok is False
-    assert outcome.message == session_voice.no_session()
-    assert voice.sent == [session_voice.interactive_ended()]  # ровно одна реплика
+    assert outcome.message == interactive_voice.no_session()
+    assert voice.sent == [interactive_voice.interactive_ended()]  # ровно одна реплика
     assert worktree.removed == [str(workdir)]  # ровно одна уборка

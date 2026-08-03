@@ -281,25 +281,25 @@ ignore = [
 "src/bob/coding/usecases/coding_assistant.py" = ["RUF001", "RUF002", "RUF003"]
 # The interactive-session manager (BOB-083 .3) carries Russian persona/policy docstrings +
 # owner-facing status literals whose Cyrillic look-alikes are intentional — RUF001/2/3 here.
-"src/bob/coding/usecases/interactive_session.py" = ["RUF001", "RUF002", "RUF003"]
+"src/bob/interactive/usecases/session.py" = ["RUF001", "RUF002", "RUF003"]
 # The coding composition wiring carries Russian rationale comments for the interactive
 # seams (resume + the «сеанс кончился сам» notifier, bob-kv4) whose Cyrillic look-alikes
 # are intentional — RUF001/RUF002/RUF003 do not apply.
 "src/bob/runtime/wiring/coding.py" = ["RUF001", "RUF002", "RUF003"]
 # The boot-time sweep of orphaned live sessions (BOB-087.D5b) carries Russian policy
 # docstrings whose Cyrillic look-alikes are intentional — RUF001/RUF002/RUF003 do not apply.
-"src/bob/coding/usecases/recover_interactive_sessions.py" = [
+"src/bob/interactive/usecases/recover_sessions.py" = [
     "RUF001",
     "RUF002",
     "RUF003",
 ]
 # The interactive-intake router (BOB-083 .4) carries Russian persona/policy docstrings whose
 # Cyrillic look-alikes are intentional — RUF001/RUF002/RUF003 do not apply.
-"src/bob/coding/usecases/interactive_intake.py" = ["RUF001", "RUF002", "RUF003"]
+"src/bob/interactive/usecases/intake.py" = ["RUF001", "RUF002", "RUF003"]
 # The interactive-intent predicates (BOB-083 .4) carry Russian entry/exit command literals
 # ("стоп", "выход") + persona/policy docstrings whose Cyrillic look-alikes are intentional —
 # RUF001/RUF002/RUF003 do not apply.
-"src/bob/coding/interactive_intent.py" = ["RUF001", "RUF002", "RUF003"]
+"src/bob/interactive/intent.py" = ["RUF001", "RUF002", "RUF003"]
 # The coding arch-context builder (BOB-046 .3) carries Russian convention/preamble
 # literals + persona/policy docstrings whose Cyrillic look-alikes are intentional —
 # RUF001/RUF002/RUF003 do not apply.
@@ -334,11 +334,24 @@ ignore = [
 # Resume policy (BOB-087.D3): the pure «what may be raised, and when» core carries Russian
 # policy docstrings/comments whose Cyrillic look-alikes are intentional —
 # RUF001/RUF002/RUF003 do not apply.
-"src/bob/coding/resume_policy.py" = ["RUF001", "RUF002", "RUF003"]
+"src/bob/interactive/resume_policy.py" = ["RUF001", "RUF002", "RUF003"]
 # Argv policy (BOB-087.D1/D2, moved out of the adapter in D4b): the pure «how the live
 # claude is parameterised» core carries Russian policy docstrings/comments whose Cyrillic
 # look-alikes are intentional — RUF001/RUF002/RUF003 do not apply.
-"src/bob/coding/argv_policy.py" = ["RUF001", "RUF002", "RUF003"]
+"src/bob/interactive/argv_policy.py" = ["RUF001", "RUF002", "RUF003"]
+# BOB-087.E (bob-6u2) — живой терминал стал СВОИМ bounded context (src/bob/interactive/).
+# Пакет целиком несёт русские persona/policy докстринги + owner-facing реплики режима,
+# чьи кириллические look-alike интенциональны — RUF001/RUF002/RUF003 к ним не применяются.
+"src/bob/interactive/__init__.py" = ["RUF001", "RUF002", "RUF003"]
+"src/bob/interactive/entities.py" = ["RUF001", "RUF002", "RUF003"]
+"src/bob/interactive/voice.py" = ["RUF001", "RUF002", "RUF003"]
+"src/bob/interactive/resume_negotiation.py" = ["RUF001", "RUF002", "RUF003"]
+"src/bob/interactive/usecases/teardown.py" = ["RUF001", "RUF002", "RUF003"]
+"src/bob/interactive/adapters/runner.py" = ["RUF001", "RUF002", "RUF003"]
+# Общая доменная поверхность coding, принявшая переехавшие порты + примитив stream-json
+# (BOB-087.E): те же русские докстринги, те же интенциональные look-alike.
+"src/bob/coding/ports.py" = ["RUF001", "RUF002", "RUF003"]
+"src/bob/coding/stream_json.py" = ["RUF001", "RUF002", "RUF003"]
 # build_application is the composition ROOT: it wires every adapter/use-case/tick in
 # one place by design (a single readable assembly), so the per-function statement
 # ceiling does not apply to it — splitting it would only scatter the wiring. It lives
@@ -605,6 +618,25 @@ ignore = [
     "RUF002",
     "RUF003",
 ]
+# The Tier-0 fallback acceptance steps + harness (BOB-087.E2) bind Russian .feature step
+# text and stage Russian endpoint replies («Отвечаю с локальной модели.») whose Cyrillic
+# look-alikes are intentional (→ RUF001/2/3).
+"tests/acceptance/steps/test_tier0_fallback.py" = [
+    "S101",
+    "ARG001",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+"tests/acceptance/tier0_fallback_harness.py" = [
+    "S101",
+    "ARG001",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
 "tests/**/*.py" = ["S101", "ARG001", "PLR2004"]
 # The Planner + plan_goal use-case tests (BOB-015 .2) and GUPPI goal-command tests
 # assert on Russian goal/plan/command literals whose Cyrillic look-alikes are
@@ -620,7 +652,7 @@ ignore = [
 # Interactive-runner tests (BOB-083.2): the fake bidirectional process mirrors the
 # InteractiveProcess protocol, so its `wait(*, timeout=...)` keeps the unused `timeout`
 # keyword to match the signature the runner calls (→ ARG002).
-"tests/infrastructure/coding/test_interactive_runner.py" = [
+"tests/infrastructure/interactive/test_runner.py" = [
     "S101",
     "ARG001",
     "ARG002",
@@ -700,7 +732,7 @@ ignore = [
 "tests/domain/coding/test_sandbox_policy.py" = ["RUF001", "RUF002", "RUF003"]
 # Argv-policy tests (BOB-087.D4b): the pure-core unit tests carry a Russian module
 # docstring (Cyrillic look-alikes intentional → RUF001-003).
-"tests/domain/coding/test_argv_policy.py" = ["RUF001", "RUF002", "RUF003"]
+"tests/domain/interactive/test_argv_policy.py" = ["RUF001", "RUF002", "RUF003"]
 # Push guard (BOB-087.E, bob-5ao): the pure core + its tests carry Russian docstrings /
 # comments stating honestly what the barrier does and does NOT close (Cyrillic
 # look-alikes intentional → RUF001-003). The real-git acceptance drives fixed-argv git
@@ -1108,6 +1140,9 @@ ignore = [
 "tests/domain/coding/test_naming.py" = ["S101", "ARG001", "PLR2004", "RUF001", "RUF002", "RUF003"]
 "tests/domain/coding/test_narrate.py" = ["S101", "ARG001", "PLR2004", "RUF001", "RUF002", "RUF003"]
 "tests/domain/coding/test_session_voice.py" = ["S101", "ARG001", "PLR2004", "RUF001", "RUF002", "RUF003"]
+# Голос живого терминала (BOB-087.E, bob-6u2): реплики режима уехали в свой bounded
+# context вместе с тестами — те же русские литералы, те же интенциональные look-alike.
+"tests/domain/interactive/test_voice.py" = ["S101", "ARG001", "PLR2004", "RUF001", "RUF002", "RUF003"]
 # The verbose stream-render + chunk tests (BOB-085.1) assert on Russian rich-render literals +
 # carry Russian docstrings/comments whose Cyrillic look-alikes are intentional (→ RUF001/2/3).
 "tests/domain/coding/test_stream_render_verbose.py" = ["S101", "ARG001", "PLR2004", "RUF001", "RUF002", "RUF003"]
@@ -1115,11 +1150,11 @@ ignore = [
 # Cyrillic look-alikes are intentional — RUF001/RUF002/RUF003 do not apply.
 "tests/application/usecases/test_interactive_session.py" = ["S101", "ARG001", "PLR2004", "RUF001", "RUF002", "RUF003"]
 "tests/application/usecases/test_interactive_intake.py" = ["S101", "ARG001", "PLR2004", "RUF001", "RUF002", "RUF003"]
-"tests/domain/coding/test_interactive_intent.py" = ["S101", "ARG001", "PLR2004", "RUF001", "RUF002", "RUF003"]
+"tests/domain/interactive/test_intent.py" = ["S101", "ARG001", "PLR2004", "RUF001", "RUF002", "RUF003"]
 # Resume tests (BOB-087.D3) carry Russian workspace/confirmation literals whose Cyrillic
 # look-alikes are intentional (→ RUF001/2/3); ARG002 covers the fake runner/manager boundary
 # args that a Protocol-shaped fake must accept but never uses.
-"tests/domain/coding/test_resume_policy.py" = ["S101", "ARG001", "PLR2004", "RUF001", "RUF002", "RUF003"]
+"tests/domain/interactive/test_resume_policy.py" = ["S101", "ARG001", "PLR2004", "RUF001", "RUF002", "RUF003"]
 "tests/application/usecases/test_interactive_resume.py" = ["S101", "ARG001", "ARG002", "PLR2004", "RUF001", "RUF002", "RUF003"]
 "tests/runtime/wiring/test_coding_resume_wiring.py" = ["S101", "ARG001", "ARG002", "PLR2004", "RUF001", "RUF002", "RUF003"]
 # Interactive-terminal acceptance harness + steps (BOB-083 .5) bind Russian .feature step text
@@ -1132,7 +1167,7 @@ ignore = [
 # intentional (→ RUF001/2/3); ARG002 covers the Protocol-shaped fake's boundary args.
 "tests/application/usecases/test_interactive_session_death.py" = ["S101", "ARG001", "ARG002", "PLR2004", "RUF001", "RUF002", "RUF003"]
 "tests/application/usecases/test_interactive_session_spawn_cancel.py" = ["S101", "ARG001", "ARG002", "PLR2004", "RUF001", "RUF002", "RUF003"]
-"tests/infrastructure/coding/test_interactive_session_death_real_subprocess.py" = ["S101", "ARG001", "ARG002", "PLR2004", "RUF001", "RUF002", "RUF003"]
+"tests/infrastructure/interactive/test_session_death_real_subprocess.py" = ["S101", "ARG001", "ARG002", "PLR2004", "RUF001", "RUF002", "RUF003"]
 "tests/runtime/wiring/test_interactive_session_wiring.py" = ["S101", "ARG001", "PLR2004", "RUF001", "RUF002", "RUF003"]
 # Reaction-perception tests (BOB-050) carry Russian reaction-meaning literals ("его тронуло",
 # "зашло") whose Cyrillic look-alikes are intentional — RUF001/RUF002/RUF003 do not apply.
@@ -1540,6 +1575,11 @@ source_paths = [
     "src/bob/memory",
     "src/bob/proactivity",
     "src/bob/coding",
+    # BOB-087.E (bob-6u2): живой терминал стал своим bounded context, и его чистые ядра
+    # (argv_policy / intent / resume_policy / resume_negotiation) уехали вместе с ним —
+    # пакет обязан остаться под мутацией, иначе гейт этих ядер молча исчез бы вместе с
+    # переездом (ровно тот фиктивный гейт, против которого написан MUTATION.md).
+    "src/bob/interactive",
     "src/bob/capabilities",
     # BOB-066 Срез 2.3: the presence ритм-слой is pure domain — its policies
     # (share_of_voice / natural_delay / reaction_budget) are exactly the deterministic

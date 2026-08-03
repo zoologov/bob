@@ -27,9 +27,9 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from bob.coding.entities import CodingSession
-from bob.coding.resume_policy import select_resumable
 from bob.coding.state import CodingSessionState, is_terminal
-from bob.coding.usecases.recover_interactive_sessions import RecoverInteractiveSessions
+from bob.interactive.resume_policy import select_resumable
+from bob.interactive.usecases.recover_sessions import RecoverInteractiveSessions
 
 _NOW = datetime(2026, 8, 3, 12, 0, tzinfo=UTC)
 _BRANCH = "bob/epic-bob-087"

@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import pytest
 
-from bob.coding.interactive_intent import (
+from bob.interactive.intent import (
     is_confirmation,
     is_interactive_exit,
     is_rejection,

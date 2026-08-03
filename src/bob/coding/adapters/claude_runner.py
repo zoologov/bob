@@ -23,7 +23,8 @@ core sanitises the optional ``extra_dirs`` (config ``coder.extra_dirs``, default
 into the ``--add-dir`` argv fragment appended AFTER the fixed head — both relaxations
 are inert by default, so the shipped argv is unchanged. Stdout is read as NDJSON
 line-by-line: each line is
-``json.loads``-ed and the parsed object yielded as one event (an async generator).
+parsed by the shared :func:`bob.coding.stream_json.parse_event` and the parsed object
+yielded as one event (an async generator).
 Partial / garbage / non-object lines are skipped (never crash); a per-stream timeout,
 a max-event count and a max-byte budget bound the run; and the underlying process is
 killed + reaped on a timeout or an early break (no zombies).
@@ -36,25 +37,22 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import json
 import logging
 import os
 from collections.abc import AsyncGenerator, AsyncIterator, Mapping, Sequence
 from typing import Protocol
 
 from bob.coding.push_guard import guarded_spawn_env
-from bob.coding.sandbox_policy import extra_dir_argv, is_allowed_mode
+from bob.coding.sandbox_policy import (
+    ClaudeRunError,
+    extra_dir_argv,
+    is_allowed_mode,
+)
+from bob.coding.stream_json import STREAM_LIMIT, parse_event
 
 __all__ = ["ClaudeRunError", "SubprocessClaudeRunner"]
 
 logger = logging.getLogger(__name__)
-
-# StreamReader buffer limit for the spawned ``claude`` process. asyncio's default is
-# 64 KiB, but ``claude --output-format stream-json`` routinely emits single lines far
-# larger (big tool results, file reads, long assistant messages); ``readline()`` on a
-# line past the limit raises ``LimitOverrunError`` — surfaced as ``ValueError`` — and
-# crashes the read loop. 16 MiB is generous headroom (real lines are well under 1 MiB).
-_STREAM_LIMIT = 16 * 1024 * 1024
 
 # Default resource bounds (overridable via the constructor): a generous wall-clock
 # ceiling for a real coding run, a hard cap on the number of events, and a byte budget
@@ -62,10 +60,6 @@ _STREAM_LIMIT = 16 * 1024 * 1024
 _DEFAULT_TIMEOUT_S = 600.0
 _DEFAULT_MAX_EVENTS = 10_000
 _DEFAULT_MAX_BYTES = 10_000_000
-
-
-class ClaudeRunError(Exception):
-    """A claude run was refused (mode outside the allowlist) before it started."""
 
 
 class StreamLineRunner(Protocol):
@@ -142,7 +136,7 @@ class SubprocessClaudeRunner:
                 total_bytes += len(line)
                 if total_bytes > self._max_bytes or events >= self._max_events:
                     break
-                event = _parse_event(line)
+                event = parse_event(line)
                 if event is None:
                     continue
                 yield event
@@ -152,20 +146,6 @@ class SubprocessClaudeRunner:
             # process — so an early break (bound hit / caller stops) leaves no zombie.
             if isinstance(stream, AsyncGenerator):
                 await stream.aclose()
-
-
-def _parse_event(line: str) -> Mapping[str, object] | None:
-    """Parse one NDJSON line into an event mapping; tolerate blank/garbage lines."""
-    text = line.strip()
-    if not text:
-        return None
-    try:
-        decoded: object = json.loads(text)
-    except json.JSONDecodeError:
-        return None
-    if isinstance(decoded, Mapping):
-        return decoded
-    return None
 
 
 class _ExecStreamRunner:
@@ -186,7 +166,7 @@ class _ExecStreamRunner:
             cwd=cwd,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
-            limit=_STREAM_LIMIT,
+            limit=STREAM_LIMIT,
             env=self._env,
         )
         loop = asyncio.get_event_loop()
@@ -204,14 +184,14 @@ class _ExecStreamRunner:
                 except TimeoutError:
                     break
                 except ValueError:
-                    # A single line exceeded ``_STREAM_LIMIT`` (LimitOverrunError ->
+                    # A single line exceeded ``STREAM_LIMIT`` (LimitOverrunError ->
                     # ValueError). The buffer cannot advance past it without re-raising
                     # forever, so end the stream gracefully (treat as EOF) rather than
                     # crash the pump — do NOT ``continue``.
                     logger.warning(
                         "claude stdout line exceeded the %d-byte stream limit; "
                         "ending read",
-                        _STREAM_LIMIT,
+                        STREAM_LIMIT,
                     )
                     break
                 if not raw:

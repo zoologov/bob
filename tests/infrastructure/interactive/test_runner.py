@@ -16,7 +16,7 @@ the real ``claude``: the fake records fed bytes / terminate / kill and yields sc
 input line that claude's ``--input-format stream-json`` accepts.
 
 The argv assembly + init-frame id reading moved to the DOMAIN policy
-:mod:`bob.coding.argv_policy` (BOB-087.D4b, so mutation covers them) — their unit tests
+:mod:`bob.interactive.argv_policy` (BOB-087.D4b, so mutation covers them) — their unit tests
 live in ``tests/domain/coding/test_argv_policy.py``; what is asserted here is that the
 runner CARRIES those verdicts to the process boundary (the argv the spawner really saw).
 """
@@ -30,15 +30,16 @@ from typing import TYPE_CHECKING, cast
 
 import pytest
 
-from bob.coding.adapters.claude_runner import _STREAM_LIMIT, ClaudeRunError
-from bob.coding.adapters.interactive_runner import (
+from bob.coding.ports import InteractiveRunner
+from bob.coding.sandbox_policy import ClaudeRunError
+from bob.coding.stream_json import STREAM_LIMIT
+from bob.interactive.adapters.runner import (
     InteractiveClaudeRunner,
     InteractiveRunError,
     _ExecInteractiveProcess,
     _ExecInteractiveSpawner,
     encode_user_message,
 )
-from bob.coding.ports import InteractiveRunner
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Mapping
@@ -504,5 +505,5 @@ async def test_spawner_passes_the_stream_limit_to_create_subprocess_exec(
     await _ExecInteractiveSpawner()(["claude", "-p"], cwd="/w")
 
     # The raised buffer limit is what keeps a >64 KiB claude line from crashing readline.
-    assert captured["limit"] == _STREAM_LIMIT
-    assert _STREAM_LIMIT == 16 * 1024 * 1024
+    assert captured["limit"] == STREAM_LIMIT
+    assert STREAM_LIMIT == 16 * 1024 * 1024
