@@ -101,12 +101,14 @@ def test_rate_limited_status_falls_back() -> None:
 
 # --- the thresholds themselves, pinned from BOTH sides ---------------------------
 #
-# 🔴 Mutation cannot do this job here (BOB-087.E2): mutmut mutates function BODIES, and
-# the substance of this policy lives in module-level constants — the 500 floor, the
-# {408, 429} set, the transport-type tuple. A mutant that shifts the floor to 501 or adds
-# 430 to the set is never even generated, so the reported score is stronger than the gate
-# it measures. These tests are that missing gate: every boundary is nailed from both
-# sides, so widening or narrowing a constant by one FAILS a test.
+# 🔴 These tests ARE the mutation gate of this policy (BOB-087.E3). mutmut mutates function
+# BODIES only — while the 500 floor, the {408, 429} set and the transport roster lived in
+# module-level constants, not a single mutant on those VALUES was even generated (4 mutants
+# total, all on operators) and the reported 100% was stronger than the gate it measured.
+# The policy values now live inside the function bodies, so mutmut really does shift the
+# floor to 501, swap 408→409 / 429→430 and neutralise each transport shape one at a time —
+# and each of those mutants dies on a case below, because every boundary is nailed from
+# BOTH sides and every transport shape has a case that ONLY it can satisfy.
 
 
 @pytest.mark.parametrize(
@@ -146,18 +148,21 @@ def test_only_408_and_429_are_availability_statuses(status: int, expected: bool)
     ],
 )
 def test_each_transport_entry_is_load_bearing(error: BaseException) -> None:
-    # Each error here matches EXACTLY ONE entry of the transport tuple and nothing else
+    # Each error here matches EXACTLY ONE shape of the transport roster and nothing else
     # (``socket.gaierror`` is only an OSError; ``ServerDisconnectedError`` and
     # ``ClientPayloadError`` are aiohttp ClientErrors, NOT OSErrors) — so dropping any
-    # single entry from the tuple turns one of these red.
+    # single shape turns one of these red. This is what kills the mutants that neutralise
+    # the roster one predicate at a time.
     assert should_fall_back(error) is True
 
 
 def test_timeout_entry_is_documentation_not_behaviour() -> None:
     # Honest note rather than a false sense of coverage: ``TimeoutError`` has been an
-    # ``OSError`` subclass since PEP 3151, so the explicit tuple entry changes nothing —
-    # removing it would keep every test green. It is kept for readability (a timeout is
-    # THE outage shape BOB-084 observed), and this test says so out loud.
+    # ``OSError`` subclass since PEP 3151, so naming it alongside ``OSError`` changes
+    # nothing — removing the name would keep every test green. It is kept for readability
+    # (a timeout is THE outage shape BOB-084 observed), and it is deliberately named inside
+    # the SAME predicate as ``OSError`` so the gate never grows a knowingly-equivalent
+    # mutant for it. This test says all of that out loud.
     assert issubclass(TimeoutError, OSError)
     assert should_fall_back(TimeoutError()) is True
 

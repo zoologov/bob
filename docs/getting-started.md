@@ -79,11 +79,28 @@ BOB_LLM__TIER1_API_KEY=…    # ключ Qwen MaaS для Tier 1 (опц.)
   General — тред без `message_thread_id` (служебный, под GUPPI).
 - `llm.tier0_*` / `llm.tier1_*` — endpoints и модели тиров; `timeout_seconds`
   (180); `disable_thinking` (true); `tier0_temperature`/`tier1_temperature`.
+- `llm.tier0_fallback` (пусто = выключено) — аварийный локальный дублёр Tier 0 на
+  случай, когда облачный endpoint пропадает из сети. Режим включает значение `ollama` —
+  единственное поддерживаемое (`BOB_LLM__TIER0_FALLBACK=ollama` либо строка в
+  `config/bob.yaml`: у всех трёх ключей есть встроенные дефолты, в шаблоне
+  `bob.example.yaml` их нет). `llm.tier0_fallback_base_url`
+  (`http://localhost:11434/v1`) и `llm.tier0_fallback_model` (`qwen2.5:0.5b`) задают
+  дублёра. Подробности и границы режима — в
+  [`domains/infrastructure/features/llm/SPEC.md`](domains/infrastructure/features/llm/SPEC.md).
 - `runtime.language` (`ru`) — язык персоны для само-генерируемого текста.
 - `embeddings.*` / `reranker.*` — локальный стек памяти (base_url `localhost:11434`).
 - `goals.*` — автономность (по умолчанию `pursuit_enabled: false` → рантайм
   ровно прежний); `emotion.*` / `personality.evolution.*` — тюнинг эмоциональной
   глубины и темпа само-эволюции.
+
+🔴 **Аварийный фолбэк Tier 0 выключен намеренно, и включать его пока не следует.**
+Нулевой тир обслуживает не только служебные ходы: короткие разговорные реплики идут
+через него же. Поэтому при включённом `llm.tier0_fallback` и отвале облака ответ в чат
+сгенерирует локальная модель (по умолчанию `qwen2.5:0.5b`) — и ляжет в память как
+обычный голос Боба, продолжая влиять на тон уже после того, как облако вернулось.
+Решение по этому поведению владелец ещё не принял. Отдельно: дублёр наследует общий
+`timeout_seconds` (180 с), так что на отказе вида «облако молчит» ход может стоить два
+ожидания подряд.
 
 Полный список секций с комментариями — в `config/bob.example.yaml`.
 

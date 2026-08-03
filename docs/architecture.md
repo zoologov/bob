@@ -58,7 +58,8 @@ src/bob/
                      #   intake/ — concurrency-шов между поллером и Бобом: ChatDispatcher/
                      #   ChatInbox/TurnScope, BOB-066).
   infrastructure/    # Адаптеры общих компонентов: telegram/ (MultiBotGateway + GUPPI +
-                     #   aiogram), llm/ (OpenAICompatProvider + фабрика),
+                     #   aiogram), llm/ (OpenAICompatProvider + фабрика + аварийный
+                     #   фолбэк Tier 0 на локальную модель, по умолчанию выключен),
                      #   persistence/ (connection-kernel SqliteConnection + schema.sql),
                      #   config/ (ConfigLoader).
   runtime/           # composition root + entrypoint (единственный слой, зовущий все

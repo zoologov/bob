@@ -47,27 +47,23 @@ A meaningful refusal by the model, or an empty-but-valid reply, never raises at 
 it can never reach this policy — the fallback is for outages only.
 
 Pure and deterministic: no I/O, no clock, no state — just the verdict.
+
+🔴 Every value this policy is made of — the 500 floor, the ``{408, 429}`` availability
+set, the roster of transport exception types — lives INSIDE a function body on purpose
+(BOB-087.E3, bob-abk.33). Mutation testing mutates bodies, not module-level constants:
+hoisted into constants, these values were invisible to ``scripts/mutation.sh``, which
+found only operator mutants and reported a comfortable 100% for a gate that could not
+have noticed the floor moving to 400 or a transport type quietly dropping out. For the
+same reason each transport shape is its own named predicate rather than one merged
+``isinstance`` tuple: mutation refuses to look inside an ``isinstance`` call, but it
+does neutralise a predicate call. The prose above and the names below keep the policy
+self-documenting; keeping the values in the bodies keeps the gate real. Do not "tidy"
+them back into module-level constants or a single tuple.
 """
 
 from __future__ import annotations
 
 import aiohttp
-
-# HTTP statuses that mean "the endpoint cannot serve this request right now" rather
-# than "this request is wrong": 408 the endpoint timed out waiting, 429 rate-limited.
-_AVAILABILITY_STATUS_CODES = frozenset({408, 429})
-
-# Everything from 500 up is an upstream-side failure; 499 and below is the client
-# (us) being wrong — the boundary between "outage" and "our defect".
-_SERVER_ERROR_FLOOR = 500
-
-# Exception types that always mean the transport, not the contract, failed.
-_TRANSPORT_ERRORS: tuple[type[BaseException], ...] = (
-    TimeoutError,
-    OSError,
-    aiohttp.ClientConnectionError,
-    aiohttp.ClientPayloadError,
-)
 
 
 def should_fall_back(error: BaseException) -> bool:
@@ -79,9 +75,58 @@ def should_fall_back(error: BaseException) -> bool:
     """
     if isinstance(error, aiohttp.ClientResponseError):
         return _is_availability_status(error.status)
-    return isinstance(error, _TRANSPORT_ERRORS)
+    return _is_transport_failure(error)
 
 
 def _is_availability_status(status: int) -> bool:
-    """Does this HTTP status mean the upstream could not serve us (vs. we asked wrong)?"""
-    return status >= _SERVER_ERROR_FLOOR or status in _AVAILABILITY_STATUS_CODES
+    """Does this HTTP status mean the upstream could not serve us (vs. we asked wrong)?
+
+    Everything from **500** up is an upstream-side failure; **499** and below is the
+    client (us) being wrong — that is the boundary between "outage" and "our defect".
+    Two 4xx codes sit on the outage side anyway: **408** (the endpoint itself gave up
+    waiting) and **429** (rate-limited — the cloud will not serve *us* right now).
+    """
+    server_error_floor = 500  # 500+ — broken on their side; 499 and below — on ours
+    availability_4xx = {408, 429}  # the endpoint gave up waiting / rate-limited us
+    return status >= server_error_floor or status in availability_4xx
+
+
+def _is_transport_failure(error: BaseException) -> bool:
+    """Did the *channel* to the endpoint fail, rather than the exchange over it?
+
+    The roster of transport shapes IS the policy, so each shape is a named predicate
+    of its own rather than one merged ``isinstance`` tuple: that keeps the roster's
+    composition testable (mutation never reaches inside an ``isinstance`` call, but it
+    does neutralise each call below — so dropping a shape flips exactly one outage).
+    An error matching no shape is a contract failure and must surface.
+    """
+    return (
+        _is_timeout_or_socket_failure(error)
+        or _is_connection_failure(error)
+        or _is_truncated_body(error)
+    )
+
+
+def _is_timeout_or_socket_failure(error: BaseException) -> bool:
+    """The request never came back, or the socket/DNS layer refused to carry it.
+
+    ``TimeoutError`` has been an ``OSError`` since PEP 3151 (and is what
+    ``asyncio.TimeoutError`` aliases on 3.11+), so it is named here for readability,
+    not reach: a timeout is THE outage shape BOB-084 saw 77 times in a row.
+    """
+    return isinstance(error, TimeoutError | OSError)
+
+
+def _is_connection_failure(error: BaseException) -> bool:
+    """aiohttp could not establish or hold the connection.
+
+    Refused / reset / DNS (``ClientConnectorError``) and a ``ServerDisconnectedError``
+    mid-flight — the latter is NOT an ``OSError`` in aiohttp's hierarchy, which is why
+    this shape cannot be folded into the socket-level one above.
+    """
+    return isinstance(error, aiohttp.ClientConnectionError)
+
+
+def _is_truncated_body(error: BaseException) -> bool:
+    """The body was cut off mid-transfer — the transport died while answering."""
+    return isinstance(error, aiohttp.ClientPayloadError)
