@@ -23,7 +23,7 @@ from bob.infrastructure.llm.fallback_provider import (
     ToolCallingFallbackLLMProvider,
     build_fallback_provider,
 )
-from bob.kernel.ports import LLMProvider
+from bob.kernel.ports import LLMProvider, UnderstudyBackedProvider
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Sequence
@@ -294,6 +294,49 @@ def test_composite_over_a_tool_less_primary_does_not_advertise_tool_calling() ->
 
     assert not isinstance(composite, ToolCallingProvider)
     assert isinstance(composite, LLMProvider)
+
+
+def test_the_composite_advertises_that_it_is_understudy_backed() -> None:
+    # 🔴 BOB-087.E-M1: the composite's degradation is invisible by design, which is right
+    # for a служебный ход and wrong for a turn published AS BOB. Declaring the capability
+    # is what lets the router ask for the primary alone instead.
+    composite = build_fallback_provider(
+        primary=_RecordingProvider(), fallback=_RecordingProvider()
+    )
+
+    assert isinstance(composite, UnderstudyBackedProvider)
+
+
+def test_without_understudy_returns_the_bare_primary() -> None:
+    # The stripped provider IS the primary object — same endpoint, no stand-in behind it.
+    primary = _RecordingProvider(reply="tier0")
+    composite = build_fallback_provider(primary=primary, fallback=_RecordingProvider())
+
+    assert composite.without_understudy() is primary
+
+
+async def test_the_bare_primary_fails_instead_of_degrading() -> None:
+    # The whole purpose: an outage on the stripped provider SURFACES (so the router can
+    # escalate it upward) rather than being answered by the local stand-in.
+    understudy = _RecordingProvider(reply="0.5b")
+    composite = build_fallback_provider(
+        primary=_RecordingProvider(error=ConnectionError("cloud down")),
+        fallback=understudy,
+    )
+
+    with pytest.raises(ConnectionError):
+        await composite.without_understudy().complete(_MESSAGES)
+
+    assert understudy.calls == []
+
+
+def test_the_tool_calling_composite_is_understudy_backed_too() -> None:
+    # The capability must not be lost in the tool-calling variant (it inherits it).
+    primary = _RecordingToolProvider()
+    composite = build_fallback_provider(primary=primary, fallback=_RecordingToolProvider())
+
+    assert isinstance(composite, UnderstudyBackedProvider)
+    assert composite.without_understudy() is primary
 
 
 def test_tool_calling_composite_refuses_a_primary_that_cannot_call_tools() -> None:

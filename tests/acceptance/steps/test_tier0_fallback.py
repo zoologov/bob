@@ -32,8 +32,11 @@ from tests.acceptance.tier0_fallback_harness import (
     DISCONNECTS,
     HANGS,
     LOCAL_REPLY,
+    PRIVATE_CONTEXT,
     REFUSES,
     SERVER_ERROR,
+    SHAREABLE_CONTEXT,
+    TIER1_REPLY,
     UNREACHABLE,
     TurnOutcome,
     TurnRequest,
@@ -123,6 +126,18 @@ def tier1_server_error(fallback_context: _FallbackContext) -> None:
     fallback_context.request = replace(fallback_context.request, tier1=SERVER_ERROR)
 
 
+@given("у хода есть приватный контекст")
+def turn_carries_private_context(fallback_context: _FallbackContext) -> None:
+    # Both halves of the split (Variant 2): the shareable half MAY travel to the cloud, the
+    # private half never may. Staging both is what makes the privacy assertions meaningful
+    # — «не пересекло границу» proves nothing about a turn that carried nothing.
+    fallback_context.request = replace(
+        fallback_context.request,
+        shareable_context=SHAREABLE_CONTEXT,
+        private_context=PRIVATE_CONTEXT,
+    )
+
+
 # --- When: the turn -------------------------------------------------------------
 
 
@@ -139,6 +154,17 @@ def run_tier1_turn(fallback_context: _FallbackContext) -> None:
     fallback_context.outcome = asyncio.run(run_turn(fallback_context.request))
 
 
+@when("Бобу нужен Tier-0 для короткой реплики владельцу")
+def run_casual_reply_turn(fallback_context: _FallbackContext) -> None:
+    # 🔴 The turn the whole voice-integrity policy exists for: a REPLY_TO_USER that BOB-006
+    # hybrid tiering pinned to the fast Tier-0 model. It is Bob's own voice on the cheap
+    # tier — the one place an understudy could quietly ship a 0.5b answer as him.
+    fallback_context.request = replace(
+        fallback_context.request, task_type=TaskType.REPLY_TO_USER, tier_override=0
+    )
+    fallback_context.outcome = asyncio.run(run_turn(fallback_context.request))
+
+
 # --- Then: what crossed the boundary --------------------------------------------
 
 
@@ -150,6 +176,39 @@ def reply_is_local(fallback_context: _FallbackContext) -> None:
 @then("ответ получен от облачной модели")
 def reply_is_cloud(fallback_context: _FallbackContext) -> None:
     assert fallback_context.outcome.reply == CLOUD_REPLY
+
+
+@then("ответ получен от Tier-1")
+def reply_is_tier1(fallback_context: _FallbackContext) -> None:
+    # The escalation UP actually happened: the text is the quality tier's, not the
+    # understudy's and not the (dead) cloud Tier-0's.
+    assert fallback_context.outcome.reply == TIER1_REPLY
+
+
+@then("Tier-1 не получил ни одного запроса")
+def tier1_never_called(fallback_context: _FallbackContext) -> None:
+    assert fallback_context.outcome.tier1_calls == 0
+
+
+@then("приватная строка не пересекла границу к Tier-1")
+def private_context_never_reached_tier1(fallback_context: _FallbackContext) -> None:
+    # 🔴 Asserted on the RAW BODY Tier-1 actually received — the boundary itself, not the
+    # router's intention. Nothing internal may travel to the cloud along an outage path.
+    assert PRIVATE_CONTEXT not in fallback_context.outcome.tier1_payload
+
+
+@then("разделяемый контекст к Tier-1 дошёл")
+def shareable_context_reached_tier1(fallback_context: _FallbackContext) -> None:
+    # The counterweight to the assertion above: the escalated call is a REAL, useful call
+    # carrying the reply-shaping context — the payload was redacted, not emptied.
+    assert SHAREABLE_CONTEXT in fallback_context.outcome.tier1_payload
+
+
+@then("локальная модель приватную строку видела")
+def private_context_reached_the_local_model(fallback_context: _FallbackContext) -> None:
+    # Proves the turn genuinely carried the private half, so «Tier-1 не видел её» is a
+    # statement about the boundary and not about an empty context.
+    assert PRIVATE_CONTEXT in fallback_context.outcome.local_payload
 
 
 @then("наружу дошёл отказ модели дословно")

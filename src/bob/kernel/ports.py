@@ -93,3 +93,20 @@ class LLMProvider(Protocol):
     ) -> str | AsyncIterator[str]:
         """Complete a chat turn; yield tokens when ``stream`` is true."""
         ...
+
+
+@runtime_checkable
+class UnderstudyBackedProvider(Protocol):
+    """A provider that may quietly answer on a STAND-IN model when its endpoint is out.
+
+    The optional companion of :class:`LLMProvider` a *composite* provider advertises
+    (BOB-087.E-M1). Such a composite is invisible to its caller by design — it returns an
+    ordinary string — which is exactly right for a служебный ход and exactly wrong for a
+    turn that ships to a human AS BOB: a weak stand-in would be published in his voice.
+    Declaring the capability lets the caller ask two things it otherwise could not: whether
+    a stand-in exists at all, and — via :meth:`without_understudy` — for the primary alone.
+    """
+
+    def without_understudy(self) -> LLMProvider:
+        """The primary alone: same endpoint, but it FAILS instead of degrading."""
+        ...

@@ -74,6 +74,17 @@ class FallbackLLMProvider:
         self._primary = primary
         self._fallback = fallback
 
+    def without_understudy(self) -> LLMProvider:
+        """The primary alone — this composite minus its stand-in (BOB-087.E-M1).
+
+        Realises :class:`~bob.kernel.ports.UnderstudyBackedProvider`. The degradation is
+        invisible to the caller by design, which is right for a служебный ход and wrong for
+        a turn published in BOB'S OWN voice: the router asks for the bare primary there, so
+        an outage SURFACES (and is escalated upward) instead of being answered by a weak
+        stand-in. Nothing is unwrapped recursively — the composite is one level deep.
+        """
+        return self._primary
+
     async def complete(
         self,
         messages: Sequence[LLMMessage],

@@ -23,6 +23,13 @@ GUPPI's policy layer over the provider-agnostic :class:`LLMProvider` ports
    fallback (the redacted payload is what was built, so the fallback sees it too).
 3. **Falls back** Tier 1 -> Tier 0 if the preferred tier errors or is
    unavailable, so a flaky Qwen API never blocks a reply.
+4. **Protects Bob's voice** when Tier 0 is understudy-backed (BOB-087.E-M1). Tier 0 may be
+   composed with a local emergency stand-in (``llm.tier0_fallback``), which is right for a
+   служебный ход and wrong for a turn published AS BOB — the composite is invisible to its
+   caller, so a 0.5b answer would ship in his voice and settle into memory. Only the router
+   knows the task type, so the direction of the fallback is decided HERE, by the pure
+   :mod:`bob.application.router.voice_integrity` core: a user reply keeps the stand-in out
+   and escalates **UP** to Tier 1 (one hop, same redaction), or fails honestly.
 
 This module is pure application policy: it holds no transport/HTTP knowledge —
 that lives behind the injected :class:`LLMProvider` adapters.
@@ -35,6 +42,9 @@ import logging
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING
+
+from bob.application.router.voice_integrity import OutageVoice, who_may_answer_for_bob
+from bob.kernel.ports import UnderstudyBackedProvider
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -177,6 +187,14 @@ class LLMRouter:
             if tier1_max_concurrency is not None and tier1_max_concurrency > 0
             else None
         )
+        # 🔴 Is Tier 0 composed with a local emergency stand-in (``llm.tier0_fallback``,
+        # BOB-087.E1)? This — not a config read — is how the router learns the flag: the
+        # voice policy exists PRECISELY because a stand-in could answer in Bob's place, so
+        # with a plain Tier-0 provider (the default) every branch below is unreachable and
+        # the routing is byte-identical to the pre-flag one.
+        self._tier0_has_understudy = isinstance(
+            self._providers[_TIER_LOCAL], UnderstudyBackedProvider
+        )
 
     async def run(self, request: LLMRequest) -> str:
         """Complete ``request`` on its preferred tier, falling back to Tier 0 on error.
@@ -189,31 +207,71 @@ class LLMRouter:
         A Tier-1 attempt is throttled by the optional concurrency gate (BOB-072); the
         Tier-0 fallback runs OUTSIDE the gate so a failing Tier-1 call never holds a
         Tier-1 slot while its local fallback completes.
+
+        🔴 BOB-087.E-M1 — the fallback DIRECTION follows the kind of work. A turn that
+        ships AS BOB never touches the local stand-in (see :meth:`_provider_for`); when its
+        Tier-0 attempt dies it escalates **UP** to Tier 1 — ONE hop, carrying the very same
+        already-redacted payload, so the emergency path leaks nothing the normal Tier-1 path
+        would not. If that hop fails too, nobody answers for Bob: the error propagates and
+        the turn ends in the honest GUPPI outage notice (``EssentialRunner``). Every other
+        turn keeps the previous behaviour exactly.
         """
         preferred = self._destination_tier(request)
         messages = self._build_messages(request)
+        voice = self._who_may_answer(request)
         try:
-            return await self._complete_gated(preferred, messages)
+            return await self._complete_gated(preferred, messages, voice)
         except Exception:
-            if preferred == _TIER_LOCAL:
+            if preferred != _TIER_LOCAL:
+                logger.warning(
+                    "Tier 1 completion failed for %s; falling back to Tier 0",
+                    request.task_type.value,
+                )
+            elif voice is OutageVoice.CLOUD_TIER1:
+                logger.warning(
+                    "Tier 0 outage on %s; escalating UP to Tier 1 — Bob's own voice is "
+                    "never handed to the local understudy",
+                    request.task_type.value,
+                )
+                return await self._complete_gated(_TIER_API, messages, voice)
+            else:
                 logger.exception("Tier 0 completion failed with no fallback")
                 raise
-            logger.warning(
-                "Tier 1 completion failed for %s; falling back to Tier 0",
-                request.task_type.value,
-            )
-        return await self._complete(_TIER_LOCAL, messages)
+        return await self._complete(_TIER_LOCAL, messages, voice)
 
-    async def _complete_gated(self, tier: int, messages: Sequence[LLMMessage]) -> str:
+    def _who_may_answer(self, request: LLMRequest) -> OutageVoice:
+        """Ask the pure voice-integrity core who may answer if this turn's tier goes down.
+
+        Translates the router's knowledge into the core's plain facts: whether the task
+        ships AS BOB, whether a stand-in and a cloud tier are wired at all, and whether this
+        payload already went through the Tier-1 redaction (the same predicate
+        :meth:`_build_messages` redacts by — one source of truth, so an escalation can never
+        carry context the normal Tier-1 call would have stripped).
+
+        Only ``REPLY_TO_USER`` counts as Bob's voice: it is the one task whose text is
+        published to a human as Bob and persisted as his turn. The Tier-0 one-liners
+        (``INTERIM_LINE`` …) are decorative, unpersisted and drop silently on failure, so
+        the owner's decision deliberately leaves them on the служебный side.
+        """
+        return who_may_answer_for_bob(
+            speaks_in_bobs_voice=request.task_type is TaskType.REPLY_TO_USER,
+            understudy_wired=self._tier0_has_understudy,
+            cloud_tier_wired=_TIER_API in self._providers,
+            payload_redacted_for_cloud=self._redacts_private_context(request),
+        )
+
+    async def _complete_gated(
+        self, tier: int, messages: Sequence[LLMMessage], voice: OutageVoice
+    ) -> str:
         """Complete on ``tier``, holding the Tier-1 concurrency gate when it applies.
 
         Only a Tier-1 attempt with a configured gate is throttled; every other call (Tier 0,
         or Tier 1 with no cap) runs ungated — byte-identical to the pre-cap path.
         """
         if tier != _TIER_API or self._tier1_gate is None:
-            return await self._complete(tier, messages)
+            return await self._complete(tier, messages, voice)
         async with self._tier1_gate:
-            return await self._complete(tier, messages)
+            return await self._complete(tier, messages, voice)
 
     def _destination_tier(self, request: LLMRequest) -> int:
         """The tier to attempt first: the caller's override if wired, else the task default.
@@ -227,18 +285,29 @@ class LLMRouter:
         return _PREFERRED_TIER[request.task_type]
 
     @staticmethod
-    def _build_messages(request: LLMRequest) -> list[LLMMessage]:
+    def _redacts_private_context(request: LLMRequest) -> bool:
+        """Does this task's policy STRIP ``private_context`` from the built payload?
+
+        The redaction predicate itself (Variant 2): true for every task whose policy is
+        Tier 1, false for a local-only task, which keeps its private context. Named so both
+        readers of the fact — :meth:`_build_messages`, which performs the redaction, and
+        :meth:`_who_may_answer`, which may only escalate an already-redacted payload — rest
+        on ONE definition instead of two that could drift apart.
+        """
+        return _PREFERRED_TIER[request.task_type] != _TIER_LOCAL
+
+    @classmethod
+    def _build_messages(cls, request: LLMRequest) -> list[LLMMessage]:
         """Build the payload with selective redaction by destination tier.
 
         A local-only (Tier 0) request gets BOTH ``shareable_context`` and
         ``private_context``; a Tier 1-bound request gets ONLY
         ``shareable_context`` — ``private_context`` is never attached, so
         genuinely-internal material cannot reach Tier 1 (nor a Tier 1 -> Tier 0
-        fallback, since the payload is built once).
+        fallback, nor a Tier 0 -> Tier 1 escalation, since the payload is built once).
         """
-        stays_local = _PREFERRED_TIER[request.task_type] == _TIER_LOCAL
         parts = [request.shareable_context]
-        if stays_local:
+        if not cls._redacts_private_context(request):
             parts.append(request.private_context)
         context = "\n".join(part for part in parts if part)
         messages: list[LLMMessage] = list(request.messages)
@@ -247,8 +316,27 @@ class LLMRouter:
             return [context_message, *messages]
         return messages
 
-    async def _complete(self, tier: int, messages: Sequence[LLMMessage]) -> str:
+    def _provider_for(self, tier: int, voice: OutageVoice) -> LLMProvider:
+        """The provider to call — with the local stand-in taken OUT for Bob's own voice.
+
+        For a служебный ход (:attr:`OutageVoice.LOCAL_UNDERSTUDY`) the composite is used as
+        composed, so Срез E's insurance is untouched. For a turn published AS BOB the bare
+        primary is used instead: the stand-in must not answer through EITHER door — neither
+        the direct Tier-0 attempt nor the Tier 1 -> Tier 0 fallback — so what reaches the
+        user is Bob's own model or an honest outage. A provider with no stand-in (the flag
+        off, and every Tier-1 provider) is returned untouched.
+        """
         provider = self._providers[tier]
+        if voice is OutageVoice.LOCAL_UNDERSTUDY:
+            return provider
+        if isinstance(provider, UnderstudyBackedProvider):
+            return provider.without_understudy()
+        return provider
+
+    async def _complete(
+        self, tier: int, messages: Sequence[LLMMessage], voice: OutageVoice
+    ) -> str:
+        provider = self._provider_for(tier, voice)
         result = await provider.complete(messages, stream=False)
         if not isinstance(result, str):
             raise TypeError("non-stream completion must return str")

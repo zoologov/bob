@@ -77,6 +77,7 @@ from bob.conversation.volatility_judgment import (
     VolatilityContext,
     VolatilityVerdict,
 )
+from bob.infrastructure.llm.fallback_provider import build_fallback_provider
 from bob.infrastructure.telegram.gateway import TelegramGateway
 from bob.memory.adapters.casual_floor_recall import CasualFloorRecall
 from bob.memory.usecases.extract_facts import ExtractFacts
@@ -8093,6 +8094,54 @@ class _ReplyFailingProvider:
         return "positive"
 
 
+class _CloudOutageProvider:
+    """Every completion dies on the TRANSPORT — the cloud endpoint dropped off the network.
+
+    Models the real BOB-084/BOB-Issues #34 outage (117 «Tier 0 completion failed» in the
+    log): a ``ConnectionError`` is an ``OSError``, so the Tier-0 composite's policy
+    recognises it as an outage and reaches for the local understudy.
+    """
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def complete(
+        self,
+        messages: Sequence[Mapping[str, str]],  # noqa: ARG002 — part of the LLMProvider protocol
+        *,
+        stream: bool = False,  # noqa: ARG002 — part of the LLMProvider protocol
+    ) -> str:
+        self.calls += 1
+        msg = "cloud endpoint unreachable"
+        raise ConnectionError(msg)
+
+
+class _UnderstudyProvider:
+    """The local 0.5b stand-in: answers ANY payload, and records what it was asked (E-M1).
+
+    The point of the double is what it must NEVER be asked: a payload carrying Bob's reply
+    persona ("You are Bob"). A служебный classifier reaching it proves the understudy really
+    is wired and reachable in the same wiring — so ``voiced_a_reply`` staying false is a
+    verdict about the POLICY, not about a dead double.
+    """
+
+    def __init__(self) -> None:
+        self.payloads: list[str] = []
+
+    @property
+    def voiced_a_reply(self) -> bool:
+        return any("You are Bob" in payload for payload in self.payloads)
+
+    async def complete(
+        self,
+        messages: Sequence[Mapping[str, str]],
+        *,
+        stream: bool = False,  # noqa: ARG002 — part of the LLMProvider protocol
+    ) -> str:
+        self.payloads.append(" ".join(str(m.get("content", "")) for m in messages))
+        return "positive"
+
+
 class _RaisingReflectionReader:
     """A ReflectionReader double whose read RAISES — models a flaky OPTIONAL add-on."""
 
@@ -8179,6 +8228,40 @@ async def test_reply_generation_persistent_failure_emits_notice_and_no_reply() -
     assert sleep.delays == [_TEST_BACKOFF_SECONDS, _TEST_BACKOFF_SECONDS]  # retried (3 tries)
     assert notifier.notices == 1  # honest outage notice
     assert bot.sent == []  # no degraded half-answer
+    assert _bob_half(repo.episodes[0]["content"]) == "(нет ответа: проблемы со связью)"
+
+
+async def test_tier0_outage_never_ships_the_understudy_voice_to_the_chat() -> None:
+    # 🔴 BOB-087.E-M1, the whole point of the bead, end to end: the cloud Tier-0 endpoint is
+    # out and a local 0.5b understudy is wired (llm.tier0_fallback ON). A SHORT casual turn
+    # is exactly what BOB-006 tiering sends to Tier 0 — so this is the turn that used to be
+    # answered by the stand-in, published as Bob and persisted as his voice. With the cloud
+    # tier down too, the interlocutor must get the honest GUPPI outage notice instead.
+    decide, _fake = _judge(ResponseIntent.REPLY)
+    sleep = _RecordingSleep()
+    notifier = _FakeOutageNotifier()
+    understudy = _UnderstudyProvider()
+    handler, bot, repo, _tier1 = _build(
+        reply="unused",
+        perceive_sender=_owner_with_id(99),
+        decide_response=decide,
+        tier0_provider=build_fallback_provider(
+            primary=_CloudOutageProvider(), fallback=understudy
+        ),
+        tier1_provider=_CloudOutageProvider(),
+        essential_attempts=2,
+        retry_sleep=sleep,
+        outage_notifier=notifier,
+    )
+
+    await handler.handle(_message("привет"))  # short + casual → Tier 0 (BOB-006)
+
+    # The understudy IS live in this wiring (the служебные Tier-0 calls degraded onto it)…
+    assert understudy.payloads, "the understudy must be reachable for служебные ходы"
+    # …but it never spoke in Bob's voice, and no borrowed-voice reply reached the chat.
+    assert not understudy.voiced_a_reply
+    assert bot.sent == []
+    assert notifier.notices == 1  # the honest «проблемы со связью» notice
     assert _bob_half(repo.episodes[0]["content"]) == "(нет ответа: проблемы со связью)"
 
 

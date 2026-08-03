@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import logging
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Final
@@ -50,6 +51,14 @@ TIER1_REPLY: Final = "Отвечаю из Tier-1."
 # A MEANINGFUL refusal by the model: a perfectly successful call whose content happens to
 # be «нет». Never an outage — the fallback must not fire on it.
 CLOUD_REFUSAL: Final = "Извини, на такое я отвечать не буду."
+
+# 🔴 The two halves of the context split (Variant 2, VISION §7.1), staged as recognisable
+# strings so a scenario can assert — on the RAW HTTP BODY each endpoint received — which
+# half actually crossed which boundary. ``PRIVATE`` is genuinely-internal material a
+# Tier-0-policy task legitimately carries; it must never appear in a Tier-1 request, not
+# even along the emergency escalation path.
+PRIVATE_CONTEXT: Final = "ВНУТРЕННЕЕ: черновик внутреннего монолога, не для облака."
+SHAREABLE_CONTEXT: Final = "Из разговора: собеседника зовут Алиса."
 
 # The whole turn budget. Short so the «cloud never answers» outage is a real timeout that
 # costs a fraction of a second; the hanging endpoint sleeps just past it.
@@ -86,6 +95,11 @@ class TurnOutcome:
     warnings: tuple[str, ...] = ()
     #: ``llm.tier0_fallback`` as the real loader resolved it for this turn.
     configured_fallback: str = ""
+    #: The RAW request bodies each endpoint received, concatenated — the only honest way to
+    #: ask what material actually crossed a boundary (BOB-087.E-M1 privacy scenarios).
+    cloud_tier0_payload: str = ""
+    local_payload: str = ""
+    tier1_payload: str = ""
 
 
 class _Endpoint:
@@ -97,6 +111,8 @@ class _Endpoint:
         self._runner: web.AppRunner | None = None
         self.base_url = ""
         self.calls = 0
+        #: Raw request bodies, in arrival order — what this endpoint was actually sent.
+        self.bodies: list[str] = []
 
     async def start(self) -> None:
         """Bind on loopback; for ``UNREACHABLE``, bind then release so the port refuses."""
@@ -122,9 +138,29 @@ class _Endpoint:
 
     async def _handle(self, request: web.Request) -> web.StreamResponse:
         self.calls += 1
-        await request.read()
+        # Keep the body BEFORE reacting: even a hanging or disconnecting endpoint has
+        # already been told everything, so «what crossed the wire» stays observable.
+        self.bodies.append((await request.read()).decode("utf-8", errors="replace"))
         react = _REACTIONS.get(self._behaviour, _answer)
         return await react(request, self._reply)
+
+    @property
+    def payload(self) -> str:
+        """Everything this endpoint was ever sent, as a human would read it."""
+        return "\n".join(_readable(body) for body in self.bodies)
+
+
+def _readable(body: str) -> str:
+    """A captured request body with its JSON escaping undone.
+
+    aiohttp serialises ``json=`` with ``ensure_ascii=True``, so Cyrillic context arrives on
+    the wire as ``\\uXXXX``. Un-escaping it here keeps the assertions honest AND readable:
+    the scenario asks for the very string it staged, not for its transport encoding.
+    """
+    try:
+        return json.dumps(json.loads(body), ensure_ascii=False)
+    except ValueError:
+        return body
 
 
 async def _answer(_request: web.Request, reply: str) -> web.StreamResponse:
@@ -214,6 +250,12 @@ class TurnRequest:
     fallback_on: bool = True
     #: WORK_TALK is a Tier-0 classifier (BOB-087.C2) — the task shape the outage kills.
     task_type: TaskType = TaskType.WORK_TALK
+    #: The caller's tier choice for THIS turn (BOB-006 hybrid tiering: a short casual reply
+    #: to the user runs on the fast Tier-0 model). ``None`` → the task's own default.
+    tier_override: int | None = None
+    #: The two halves of the context split — staged only by the privacy scenarios.
+    shareable_context: str | None = None
+    private_context: str | None = None
     extra_env: Mapping[str, str] = field(default_factory=dict)
 
 
@@ -246,6 +288,9 @@ async def _drive(
     llm_request = LLMRequest(
         task_type=request.task_type,
         messages=[{"role": "user", "content": "Боб, чем ты сейчас занят?"}],
+        shareable_context=request.shareable_context,
+        private_context=request.private_context,
+        tier_override=request.tier_override,
     )
     with _collected_warnings() as collector:
         try:
@@ -258,6 +303,9 @@ async def _drive(
     outcome.cloud_tier0_calls = cloud.calls
     outcome.local_calls = local.calls
     outcome.tier1_calls = tier1.calls
+    outcome.cloud_tier0_payload = cloud.payload
+    outcome.local_payload = local.payload
+    outcome.tier1_payload = tier1.payload
     return outcome
 
 
