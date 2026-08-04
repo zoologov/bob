@@ -76,6 +76,20 @@ DEFAULT_CONFIG: Config = {
         # natural variation. The factory threads these into each provider.
         "tier0_temperature": 0.5,
         "tier1_temperature": 0.8,
+        # 🔴 EMERGENCY mode, not a second main model (BOB-087.E1, BOB-Issues #34).
+        # A CLOUD Tier 0 (Qwen/Aliyun) periodically drops off the network — BOB-084
+        # saw 77 outages in a row — and an outage takes the classifiers, the inner
+        # monologue and the coding gates with it. Naming a local backend here
+        # (``ollama`` — the only one supported) lets a Tier-0 TRANSPORT failure
+        # degrade to the local model below instead of failing the turn; contract
+        # failures (4xx, a broken response shape) still surface, so the fallback can
+        # never mask our own bugs. Empty (the default) = OFF: Tier 0 is built exactly
+        # as before. The ``/v1`` suffix is Ollama's OpenAI-compatible chat surface
+        # (the ``embeddings``/``reranker`` sections point at the bare host because
+        # their adapters append their own paths).
+        "tier0_fallback": "",
+        "tier0_fallback_base_url": "http://localhost:11434/v1",
+        "tier0_fallback_model": "qwen2.5:0.5b",
     },
     # Local semantic-memory embeddings (BOB-011). Provider-agnostic: a LOCAL
     # Ollama server (privacy — memory content never leaves the machine), default

@@ -33,18 +33,18 @@ from typing import TYPE_CHECKING, cast
 
 from bob.application.runtime.event_bus import AsyncEventBus
 from bob.application.runtime.events import MESSAGE_RECEIVED, MessageReceived
-from bob.coding.adapters.interactive_runner import InteractiveClaudeRunner
 from bob.coding.adapters.live_stream import _DmLiveStreamer
 from bob.coding.state import CodingSessionState, is_terminal
 from bob.coding.usecases.coding_assistant import CodingOutcome
-from bob.coding.usecases.interactive_intake import InteractiveIntakeRouter
-from bob.coding.usecases.interactive_session import InteractiveSessionManager
 from bob.infrastructure.telegram.multibot import (
     BotIdentity,
     BotRegistry,
     BotScope,
     MultiBotGateway,
 )
+from bob.interactive.adapters.runner import InteractiveClaudeRunner
+from bob.interactive.usecases.intake import InteractiveIntakeRouter
+from bob.interactive.usecases.session import InteractiveSessionManager
 from bob.runtime.wiring.coding import _build_interactive_intake
 
 if TYPE_CHECKING:
@@ -62,6 +62,10 @@ _NOW = datetime(2026, 8, 1, 12, 0, tzinfo=UTC)
 
 # A tiny canned claude output: one assistant line + a success result. Rendered by the
 # reused BOB-082 stream renderer into DM lines, so "output streams to the DM" is observable.
+# How many event-loop turns the harness gives the background pump to notice a death.
+# Every seam here is an immediate coroutine, so the budget is deliberately generous.
+_SETTLE_STEPS = 200
+
 _CANNED_OUTPUT: tuple[Mapping[str, object], ...] = (
     {"type": "assistant", "message": {"content": [{"type": "text", "text": "смотрю код"}]}},
     {"type": "result", "subtype": "success", "result": "готово"},
@@ -98,6 +102,15 @@ class _FakeProcess:
             yield line
         self.drained.set()
         await self._closed.wait()  # a real process keeps stdout open until it dies
+
+    def die(self) -> None:
+        """The process ends BY ITSELF (crash / its own exit): stdout EOFs, nobody killed it.
+
+        Distinct from ``terminate``/``kill`` on purpose — the death is not counted as a
+        kill, so a scenario can tell «claude кончился сам» from «Боб его прибил».
+        """
+        self._alive = False
+        self._closed.set()
 
     def terminate(self) -> None:
         self.terminated += 1
@@ -261,6 +274,10 @@ def _build_rig(*, canned: Sequence[Mapping[str, object]] = _CANNED_OUTPUT) -> _R
         clock=_FakeClock(),
         id_factory=_ids(),  # type: ignore[arg-type]
         permission_mode="acceptEdits",
+        # The same Bob-bot DM notifier the router uses for mode lines (as in the
+        # composition root): the ONE line the manager sends on its own initiative is
+        # «сеанс кончился сам» (bob-kv4), and it is Bob's own voice.
+        notifier=mode_notifier,
     )
     router = InteractiveIntakeRouter(manager=manager, notifier=mode_notifier)
     return _Rig(
@@ -276,6 +293,9 @@ class Turn:
     is_owner: bool = True
     is_group: bool = False
     sender: int | None = _OWNER_ID
+    #: The live ``claude`` process dies BY ITSELF just before this turn (bob-kv4) — the
+    #: owner then types into what used to be a live session.
+    after_claude_dies: bool = False
 
 
 async def _await_first_drain(rig: _Rig) -> None:
@@ -286,11 +306,30 @@ async def _await_first_drain(rig: _Rig) -> None:
             await asyncio.wait_for(rig.spawner.processes[0].drained.wait(), timeout=1.0)
 
 
+async def _let_claude_die(rig: _Rig) -> None:
+    """Kill the live process FROM THE OUTSIDE (it crashed) and let the manager notice.
+
+    bob-kv4: the stdout stream simply ends. Nobody called ``stop``, so everything the
+    owner then observes — the honest notice, the freed intake — comes from the manager's
+    own reaction to the death.
+    """
+    if not rig.spawner.processes:
+        return
+    rig.spawner.processes[-1].die()
+    for _ in range(_SETTLE_STEPS):
+        if not rig.manager.active():
+            return
+        await asyncio.sleep(0)
+    raise AssertionError("менеджер не заметил, что процесс claude кончился")
+
+
 async def run_interactive(turns: Sequence[Turn]) -> InteractiveObservations:
     """Drive ``turns`` through the real interactive stack; return the observations."""
     rig = _build_rig()
     obs = InteractiveObservations()
     for turn in turns:
+        if turn.after_claude_dies:
+            await _let_claude_die(rig)
         consumed = await rig.router.route(
             text=turn.text,
             sender=turn.sender,
@@ -344,6 +383,15 @@ def guest_tries_to_open() -> list[Turn]:
 
 def owner_tries_to_open_in_group() -> list[Turn]:
     return [Turn(text="/code -i почини баг", is_group=True)]
+
+
+def owner_opens_then_claude_dies_then_talks() -> list[Turn]:
+    # bob-kv4: процесс кончается САМ (никакого «стоп»), и следующая обычная реплика
+    # обязана пойти обычным путём Боба — режим не залипает на трупе.
+    return [
+        Turn(text="/code -i fix the bug"),
+        Turn(text="привет, как дела", after_claude_dies=True),
+    ]
 
 
 def owner_opens_feeds_stops() -> list[Turn]:

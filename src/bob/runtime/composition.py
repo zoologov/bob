@@ -178,6 +178,7 @@ from bob.runtime.wiring import (
     build_rhythm_wiring,
     build_room_mood_modulator,
     build_roster_config,
+    build_secondary_recall,
     build_self_action_recorder,
     build_staleness_reassessor,
     build_work_journal_recorder,
@@ -204,12 +205,12 @@ if TYPE_CHECKING:
 
     from bob.capabilities.usecases import CapabilityRegistry
     from bob.coding.usecases.coding_assistant import CodingAssistant
-    from bob.coding.usecases.interactive_session import InteractiveSessionManager
-    from bob.coding.usecases.recover_interactive_sessions import (
-        RecoverInteractiveSessions,
-    )
     from bob.infrastructure.telegram.gateway import BotLike
     from bob.infrastructure.telegram.multibot import MultiBotGateway
+    from bob.interactive.usecases.recover_sessions import (
+        RecoverInteractiveSessions,
+    )
+    from bob.interactive.usecases.session import InteractiveSessionManager
     from bob.kernel.ports import Clock, DomainEvent, EventHandler, LLMProvider
     from bob.memory.ports import Embedder, Reranker
     from bob.proactivity.usecases import ProactivityEngine
@@ -425,6 +426,13 @@ def build_application(
     register_resolver = build_register_resolver(
         merged, router=router, owner_id=_int(_section(merged, "telegram"), "owner_id", 0)
     )
+    # The SECONDARY recall doors (BOB-087.C8), behind the SAME flag: the grounded-addon
+    # callback, the ``recall_memory`` / ``search_memory`` capabilities and the proactive seed
+    # each hold their own recall port, so the per-turn register filter above never sees them.
+    # ON → they draw through the CASUAL floor (work muted, never cut, zero Tier-0 — a
+    # secondary surface carries no provenance directive, so it may not lift to DEV). OFF
+    # (default) → the very same ``recall`` object: every door byte-identical (INV-5).
+    secondary_recall = build_secondary_recall(merged, recall=recall)
 
     soul_store = SoulStore(_soul_dir(merged))
 
@@ -433,7 +441,9 @@ def build_application(
     # may call either, GUPPI executes it, the result loops back into the reply. The
     # tier-1 reply provider is the tool-calling provider; when it cannot do tools the
     # loop stays dormant and HandleMessage keeps the plain reply path.
-    registry, diagram_sink, diagram_renderer = _build_registry(merged, recall=recall)
+    registry, diagram_sink, diagram_renderer = _build_registry(
+        merged, recall=secondary_recall
+    )
     tool_provider = _as_tool_provider(tier_providers)
 
     genesis = RunGenesis(
@@ -998,6 +1008,9 @@ def build_application(
         # default → None → recall byte-identical, over-fetch off, INV-5). ON → the per-turn
         # RegisterResolver mutes distilled ``work`` recollections on a casual turn.
         register_resolver=register_resolver,
+        # The grounded-addon callback's OWN recall door (BOB-087.C8): the CASUAL-floor port
+        # when register-recall is on, the same plain ``recall`` when it is off (INV-5).
+        addon_recall=secondary_recall,
     )
     # Intake-развязка (BOB-066 Срез 2.1): the MESSAGE_RECEIVED subscriber is now the fast,
     # non-blocking ChatDispatcher.submit (normalise → buffer → return), so the Telegram
@@ -1223,7 +1236,7 @@ def build_application(
         gateway=multibot.reply_gateway(BotIdentity.BOB),
         personality=personality,
         repo=memory_repo,
-        recall=recall,
+        recall=secondary_recall,
         clock=resolved_clock,
         seed=proactivity_seed,
         language=language,

@@ -111,7 +111,7 @@ bd close <bead-id> --suggest-next
 - **Tests:** pytest + pytest-cov
 - **Linter/formatter:** ruff (lint + format)
 - **Type checking:** mypy --strict
-- **Architecture:** DDD packages -- `application/`, `capabilities/`, `coding/`, `conversation/`, `infrastructure/`, `kernel/`, `memory/`, `personality/`, `presence/`, `proactivity/`, `runtime/`, `social/`
+- **Architecture:** DDD packages -- `application/`, `capabilities/`, `coding/`, `conversation/`, `infrastructure/`, `interactive/`, `kernel/`, `memory/`, `personality/`, `presence/`, `proactivity/`, `runtime/`, `social/`
 - **Current version:** 2.1.0
 <!-- beadloom:auto-end -->
 

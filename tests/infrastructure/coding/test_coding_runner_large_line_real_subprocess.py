@@ -35,7 +35,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from bob.coding.adapters.claude_runner import SubprocessClaudeRunner
-from bob.coding.adapters.interactive_runner import InteractiveClaudeRunner
+from bob.interactive.adapters.runner import InteractiveClaudeRunner
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Mapping

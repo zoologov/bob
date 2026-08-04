@@ -23,12 +23,12 @@ from typing import TYPE_CHECKING, cast
 import pytest
 
 from bob.coding.adapters.claude_runner import (
-    _STREAM_LIMIT,
     ClaudeRunError,
     SubprocessClaudeRunner,
     _ExecStreamRunner,
 )
 from bob.coding.ports import ClaudeCodeRunner
+from bob.coding.stream_json import STREAM_LIMIT
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Mapping
@@ -354,5 +354,5 @@ async def test_exec_stream_runner_passes_the_stream_limit(
     async for _ in _ExecStreamRunner()(["claude"], cwd="/w", timeout=5.0):
         pass
 
-    assert captured["limit"] == _STREAM_LIMIT
-    assert _STREAM_LIMIT == 16 * 1024 * 1024
+    assert captured["limit"] == STREAM_LIMIT
+    assert STREAM_LIMIT == 16 * 1024 * 1024

@@ -3,7 +3,7 @@
 # See the LICENSE file in the project root for full license information.
 
 # beadloom:domain=bob
-# beadloom:feature=coding
+# beadloom:feature=interactive
 # beadloom:layer=application
 
 """RecoverInteractiveSessions — свип осиротевших живых сеансов на старте (BOB-087.D5b).
@@ -19,7 +19,7 @@ INTERACTIVE`) существует ровно столько, сколько ж�
 
 * :meth:`~bob.coding.ports.CodingSessionStore.active` вечно отдаёт такую строку как
   in-flight, и гейтед-кодер на любую новую задачу отвечает «я уже в работе»;
-* :func:`~bob.coding.resume_policy.select_resumable` её ПРОПУСКАЕТ (кандидат обязан быть
+* :func:`~bob.interactive.resume_policy.select_resumable` её ПРОПУСКАЕТ (кандидат обязан быть
   терминальным — правило «никакого live-attach»), поэтому «поднять с телефона» молча
   поднимало БОЛЕЕ СТАРУЮ нить разговора поверх свежей работы в дереве.
 

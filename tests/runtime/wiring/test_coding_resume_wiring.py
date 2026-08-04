@@ -28,9 +28,9 @@ from bob.runtime.wiring.coding import (
 )
 
 if TYPE_CHECKING:
-    from bob.coding.usecases.interactive_session import InteractiveSessionManager
     from bob.infrastructure.persistence import SqliteConnection
     from bob.infrastructure.telegram.gateway import BotLike
+    from bob.interactive.usecases.session import InteractiveSessionManager
     from bob.kernel.ports import Clock
     from bob.social.usecases import Authorizer
 

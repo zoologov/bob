@@ -76,7 +76,10 @@ from bob.runtime.wiring.proactivity import (
     _background_tasks,
     _build_proactivity_engine,
 )
-from bob.runtime.wiring.register_recall import build_register_resolver
+from bob.runtime.wiring.register_recall import (
+    build_register_resolver,
+    build_secondary_recall,
+)
 from bob.runtime.wiring.rhythm import RhythmWiring, build_rhythm_wiring
 from bob.runtime.wiring.room_mood import build_room_mood_modulator
 from bob.runtime.wiring.roster import RosterConfig, build_roster_config
@@ -154,6 +157,7 @@ __all__ = [
     "build_rhythm_wiring",
     "build_room_mood_modulator",
     "build_roster_config",
+    "build_secondary_recall",
     "build_self_action_recorder",
     "build_staleness_reassessor",
     "build_work_journal_recorder",

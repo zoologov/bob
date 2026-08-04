@@ -19,6 +19,7 @@ import aiosqlite
 import pytest
 
 from bob.memory.adapters.sqlite_memory_repo import SqliteMemoryRepo
+from bob.memory.work_journal import WORK_EVENT_TYPE
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -188,4 +189,29 @@ async def test_mark_consolidated_is_non_destructive(repo: SqliteMemoryRepo) -> N
 async def test_mark_consolidated_empty_is_a_noop(repo: SqliteMemoryRepo) -> None:
     # Act / Assert: marking nothing must not raise.
     await repo.mark_consolidated([])
+    await repo.close()
+
+
+async def test_select_consolidatable_excludes_the_work_journal(
+    repo: SqliteMemoryRepo,
+) -> None:
+    # BOB-087.C8 (provenance laundering): a distilled ``work`` episode folded into a digest
+    # would come back as an ordinary ``digest`` row — its work provenance gone, so the
+    # register filter goes blind and Bob's dev war-stories leak into casual recall forever.
+    # Already-distilled work memory is therefore never re-distilled.
+    await repo.save_episode(
+        {
+            "ts": _ts(day=1).isoformat(),
+            "event_type": WORK_EVENT_TYPE,
+            "content": "я попросил GUPPI поднять лимит буфера, тесты позеленели",
+            "tags": "work,dev,actor:bob",
+        }
+    )
+    await repo.save_episode(
+        {"ts": _ts(day=1).isoformat(), "event_type": "message", "content": "old chat"}
+    )
+
+    rows = await repo.select_consolidatable_episodes(older_than=_ts(day=15), limit=10)
+
+    assert [r["content"] for r in rows] == ["old chat"]
     await repo.close()

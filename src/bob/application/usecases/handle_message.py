@@ -675,6 +675,7 @@ class HandleMessage:
         disclosure_consent: DisclosureConsentGate | None = None,
         self_action_recorder: SelfActionRecorder | None = None,
         register_resolver: RegisterResolver | None = None,
+        addon_recall: MemoryRecall | None = None,
     ) -> None:
         self._router = router
         self._gateway = gateway
@@ -913,6 +914,13 @@ class HandleMessage:
         # Unwired (the default) → recall takes the plain fetch and is byte-identical (C4 flips
         # the ``memory.register_recall`` flag by wiring this resolver).
         self._register_resolver = register_resolver
+        # The SECONDARY recall door (BOB-087.C8): the BOB-018 grounded callback holds its own
+        # recall port, so it bypasses the per-turn register filter above. Composition hands it
+        # the CASUAL-floor recall when register-recall is on (work muted, never cut, and no
+        # Tier-0 call — a secondary surface carries no provenance directive, so it may not lift
+        # to DEV). Unwired (the default) it draws from the SAME port as the reply — the
+        # callback is byte-identical to before C8.
+        self._addon_recall = addon_recall if addon_recall is not None else recall
         # The conversation-floor seam (BOB-025): over the per-message addressivity
         # (BOB-023) lives a tracker of who currently holds the "talking turn" in a
         # thread. When wired AND enabled, an AMBIENT message in a thread where Bob holds
@@ -1224,7 +1232,7 @@ class HandleMessage:
         self._addons = GroundedAddons(
             reflection=self._reflection,
             fascination=self._fascination,
-            recall=self._recall,
+            recall=self._addon_recall,
             surface_old_freq=self._surface_old_freq,
             rng=self._rng,
         )

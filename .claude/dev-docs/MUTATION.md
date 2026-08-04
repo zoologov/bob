@@ -71,15 +71,16 @@ scripts/mutation.sh                        # вся чистая доменна�
 
 | Цель | Что за ядро |
 |------|-------------|
-| `coding.argv_policy` | `build_interactive_argv` / `extract_session_id` — чем параметризуется живой claude (BOB-087.D1/D4b) |
+| `interactive.argv_policy` | `build_interactive_argv` / `extract_session_id` — чем параметризуется живой claude (BOB-087.D1/D4b; переехал из `coding.` в E) |
 | `coding.sandbox_policy` | `allowed_modes` / `is_allowed_mode` / `extra_dir_argv` / `is_safe_argv_value` — owner-ослабления изоляции (BOB-087.D2) |
-| `coding.resume_policy` | `select_resumable` / `is_confirmation_fresh` — что и когда можно поднять (BOB-087.D3) |
+| `interactive.resume_policy` | `select_resumable` / `is_confirmation_fresh` — что и когда можно поднять (BOB-087.D3; переехал из `coding.` в E) |
 | `coding.naming` | `worktree_branch` / `workspace_branch` — имя ветки из фразы owner'а (транслит) |
-| `coding.interactive_intent` | распознавание `/code -i` / `/workspace` / `/resume` / `stop` |
+| `interactive.intent` | распознавание `/code -i` / `/workspace` / `/resume` / `stop` (бывший `coding.interactive_intent`) |
+| `interactive.resume_negotiation` | висящий вопрос «поднимаю?»: адресность, TTL, «да»/«нет», снятие (BOB-087.E) |
 | `social.sulk` | эталонный baseline Среза 0 (см. ниже) |
 
 🔴 Мутируется ДОМЕННЫЙ модуль, не адаптер: конвенция mutmut исключает `*/adapters/*`,
-поэтому argv живого раннера и вынесен в `coding/argv_policy.py` — иначе гейт был бы
+поэтому argv живого раннера и вынесен в `interactive/argv_policy.py` — иначе гейт был бы
 фиктивным (мутанты внутри адаптера просто не создаются).
 
 ### Порог и честность
@@ -89,6 +90,23 @@ scripts/mutation.sh                        # вся чистая доменна�
 - **Эквивалентные мутанты** (семантически неотличимые — напр. подмена константы, которую
   ни один контракт не фиксирует) — **явный триаж-игнор в комментарии беада**, НЕ подгонка
   цифры. Подогнанный балл = ложь: убей мутанта или честно задокументируй эквивалентность.
+
+🔴 **Смотри на ЧИСЛО мутантов, а не только на score** (урок BOB-087.E3, `bob-abk.33`).
+100% на четырёх мутантах — это не гейт, а фикция: если политика живёт там, куда mutmut не
+заглядывает, мутанты на её значениях просто не рождаются. Где mutmut **слеп**:
+
+- **модульные константы** — мутируются только тела функций, `_FLOOR = 500` наверху файла
+  неприкосновенен (сдвиг порога на 400 гейт не заметит);
+- **внутренности `isinstance(...)` и `len(...)`** — mutmut пропускает эти вызовы вместе со
+  всеми потомками (`NEVER_MUTATE_FUNCTION_CALLS`), так что состав кортежа
+  `isinstance(e, (A, B, C))` не мутируется вообще.
+
+Как писать чистое ядро, чтобы гейт был настоящим: **значения политики — в тело функции**
+(можно локальной именованной переменной: `server_error_floor = 500` и мутируется, и
+читается), а **набор/реестр** — не одним merged-`isinstance`, а по предикату на элемент
+(`_is_connection_failure(e) or …`): вызов предиката mutmut нейтрализует (`(None)`), и
+выпадение элемента становится видимым мутантом. Проверка честности после рефактора —
+рост числа мутантов, а не только цифра score (в `fallback_policy` 4 → 15).
 
 ### Эталонный baseline (Срез 0)
 

@@ -14,12 +14,12 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, cast
 
-from bob.coding.usecases.interactive_intake import InteractiveIntakeRouter
+from bob.interactive.usecases.intake import InteractiveIntakeRouter
 from bob.runtime.wiring.coding import _build_interactive_intake
 
 if TYPE_CHECKING:
-    from bob.coding.usecases.interactive_session import InteractiveSessionManager
     from bob.infrastructure.telegram.gateway import BotLike
+    from bob.interactive.usecases.session import InteractiveSessionManager
 
 _OWNER_ID = 27468732
 

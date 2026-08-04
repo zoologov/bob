@@ -3,7 +3,7 @@
 # See the LICENSE file in the project root for full license information.
 
 # beadloom:domain=bob
-# beadloom:feature=coding
+# beadloom:feature=interactive
 # beadloom:layer=domain
 
 """Чистые предикаты интейк-режима интерактивного терминала (BOB-083 .4).
@@ -191,7 +191,7 @@ def is_confirmation(text: str) -> bool:
     ``/confirm``). 🔴 Узость намеренна и является ПРЕДОХРАНИТЕЛЕМ: подтверждение поднимает
     живой claude в накопленном workspace, поэтому «да, но сначала покажи дифф» — НЕ «да».
     Любой другой ответ просто снимает висящий вопрос (см.
-    :meth:`~bob.coding.usecases.interactive_session.InteractiveSessionManager.
+    :meth:`~bob.interactive.usecases.session.InteractiveSessionManager.
     resolve_pending_resume`), а не запускает сессию.
     """
     return _normalize(text) in _CONFIRMATIONS

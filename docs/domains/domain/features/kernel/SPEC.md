@@ -4,9 +4,10 @@
 # kernel — общее ядро контрактов
 
 Инфра-нейтральные контракты, на которые опирается каждый вертикальный модуль:
-рантайм-сеймы (`Clock`, `EventBus`, `EventHandler`, `DomainEvent`, `LLMProvider`) и
-общие value-объекты (`LLMMessage`, `ToolLoopMessage`, `JsonValue`). Это *только
-интерфейсы* — структурные `typing.Protocol` без реализаций. Классический DDD shared
+рантайм-сеймы (`Clock`, `EventBus`, `EventHandler`, `DomainEvent`, `LLMProvider`),
+общие value-объекты (`LLMMessage`, `ToolLoopMessage`, `JsonValue`) и общий словарь
+терминов эпизодического лога (`WORK_EVENT_TYPE`). Это *только контракты и слова* —
+структурные `typing.Protocol` и константы, без реализаций. Классический DDD shared
 kernel: любой модуль (`capabilities` / `social` / `memory` / …) импортирует **отсюда**,
 но сам kernel не импортирует ни один модуль, поэтому циклов не возникает.
 
@@ -35,13 +36,24 @@ BOB-062.8 эти контракты лежали в снятом слое-first 
     tool-loop'а; обычное завершение остаётся string-only, и широкий тип не течёт всюду.
   - `JsonValue` — JSON-декодируемое значение soul-артефакта (объект/массив/скаляр),
     переносимое `SoulStore`.
+- **episode_types.py** — общий словарь `event_type` эпизодического лога: термины, которые
+  пишет один контекст, а читают другие.
+  - `WORK_EVENT_TYPE` (`"work"`) — дистиллированная первого-лица операторская вспоминка
+    dev-сессии (BOB-087.B1). `memory` её минтит (`work_episode_event`) и ключует на ней
+    register-aware recall, `conversation` вычищает её из проигранной нити (BOB-087.C8),
+    `personality` озвучивает её провенанс. Слово общее — поэтому оно тут: пока термин жил
+    в `memory`, `conversation` вынужден был импортировать соседний домен, и это замыкало
+    цикл `conversation → memory → runtime-app → conversation` (bob-abk.32).
+    `bob.memory.work_journal` ре-экспортирует термин ради совместимости импортов.
 - **__init__.py** — фасад пакета, реэкспортирующий контракты как shared kernel.
 
 ## Инварианты
 
 - Kernel не импортирует ни один вертикальный модуль (никаких циклов; граница-проверка
   в `.beadloom/_graph/rules.yml`).
-- Только Protocol/type-определения: ни I/O, ни LLM-вызовов, ни транспорта.
+- Только Protocol/type-определения и общий словарь: ни I/O, ни LLM-вызовов, ни транспорта.
+- Термины `episode_types` ПЕРСИСТЯТСЯ в эпизодическом логе — их значения стабильны
+  (смена значения = переписывание уже записанной истории).
 - `Clock`/`EventBus`/`LLMProvider` помечены `@runtime_checkable` для structural-проверок в тестах.
 
 ## API
@@ -54,10 +66,16 @@ BOB-062.8 эти контракты лежали в снятом слое-first 
 - `DomainEvent.name` → `str` — стабильное имя типа события.
 - Типы-алиасы: `LLMMessage`, `ToolLoopMessage`, `JsonValue`, `EventHandler`.
 
+Модуль `src/bob/kernel/episode_types.py`:
+- `WORK_EVENT_TYPE` → `str` — `event_type` дистиллированного рабочего эпизода (`"work"`).
+
 ## Тестирование
 
 Контракты покрываются косвенно — через тесты реализаций сеймов (например
 `tests/application/runtime/test_event_bus.py` для `EventBus`, `tests/infrastructure/llm/`
-для `LLMProvider`) и structural-проверки инъекции в use-case-тестах.
+для `LLMProvider`) и structural-проверки инъекции в use-case-тестах. Общий словарь
+покрыт напрямую: `tests/domain/kernel/test_episode_types.py` (стабильность термина `work`
+и его отличие от `self_action`) плюс проверка ре-экспорта в
+`tests/domain/memory/test_work_journal.py`.
 
 <!-- beadloom:track=src/bob/kernel/ports.py -->

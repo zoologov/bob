@@ -22,12 +22,12 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from bob.coding.entities import CodingSession
-from bob.coding.resume_policy import (
+from bob.coding.state import CodingSessionState
+from bob.interactive.resume_policy import (
     CONFIRMATION_TTL,
     is_confirmation_fresh,
     select_resumable,
 )
-from bob.coding.state import CodingSessionState
 
 _BRANCH = "bob/epic-bob-087"
 _OTHER_BRANCH = "bob/epic-other"

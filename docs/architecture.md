@@ -42,7 +42,8 @@ src/bob/
                      #   JsonValue, LLMMessage, LLMProvider. Чистый inward-safe leaf
                      #   (только stdlib/typing); любой модуль может импортить,
                      #   kernel НЕ импортит модули (правила kernel-no-*).
-  <module>/          # 7 ВЕРТИКАЛЬНЫХ бизнес-модулей (domain-first, BOB-062): coding,
+  <module>/          # 8 ВЕРТИКАЛЬНЫХ бизнес-модулей (domain-first, BOB-062): coding,
+                     #   interactive (живой терминал, отделён от coding в BOB-087.E),
                      #   memory, proactivity, capabilities, social, personality,
                      #   conversation. Каждый собирает СВОИ три слоя внутри одного
                      #   bounded-context — ports.py + логика (layer=domain), usecases/
@@ -57,7 +58,8 @@ src/bob/
                      #   intake/ — concurrency-шов между поллером и Бобом: ChatDispatcher/
                      #   ChatInbox/TurnScope, BOB-066).
   infrastructure/    # Адаптеры общих компонентов: telegram/ (MultiBotGateway + GUPPI +
-                     #   aiogram), llm/ (OpenAICompatProvider + фабрика),
+                     #   aiogram), llm/ (OpenAICompatProvider + фабрика + аварийный
+                     #   фолбэк Tier 0 на локальную модель, по умолчанию выключен),
                      #   persistence/ (connection-kernel SqliteConnection + schema.sql),
                      #   config/ (ConfigLoader).
   runtime/           # composition root + entrypoint (единственный слой, зовущий все
@@ -92,7 +94,8 @@ usecases/adapters модулей.
 
 | Модуль | Слой / вид | Что делает | SPEC |
 |---|---|---|---|
-| **coding** | вертикальный (business) | «Боб пишет код» — гейтованный автономный кодинг через `claude` CLI, план→апрув→worktree→PR; лайв-стрим в личку owner'а (dev-канал, `coder.dev_dm`, BOB-082); двусторонний интерактивный терминал (`coder.interactive`, BOB-083); долгоживущее рабочее место `/workspace` + возобновление сессии `/resume` с подтверждением (`coder.resume`, BOB-087.D) и owner-ослабления песочницы (`coder.allow_bypass` / `coder.extra_dirs`) — все три флага по умолчанию выключены | [`domains/coding/README.md`](domains/coding/README.md) |
+| **coding** | вертикальный (business) | «Боб пишет код» — ГЕЙТОВАННЫЙ автономный кодинг через `claude` CLI, план→апрув→worktree→PR; лайв-стрим в личку owner'а (dev-канал, `coder.dev_dm`, BOB-082); owner-ослабления песочницы (`coder.allow_bypass` / `coder.extra_dirs`, оба OFF) + push-барьер. Здесь же ОБЩАЯ поверхность coding-сессии, на которую опирается `interactive`: порты, `CodingSession`/`CodingOutcome`, машина состояний, имена веток, политика песочницы, `push_guard`, `stream_json` | [`domains/coding/README.md`](domains/coding/README.md) |
+| **interactive** | вертикальный (business) | «Боб держит живой терминал» — двусторонний сеанс `claude` с открытым stdin в личке owner'а (`coder.interactive`, BOB-083); долгоживущее рабочее место `/workspace` + возобновление `/resume` с подтверждением и TTL (`coder.resume`, BOB-087.D); одна сессия за раз, никакого live-attach, PR-открывашки нет вовсе. Отделён от `coding` в BOB-087.E; ребро `interactive → coding` одностороннее | [`domains/interactive/README.md`](domains/interactive/README.md) |
 | **memory** | вертикальный (business) | «Боб помнит» — эпизоды + семантические факты, гибридный recall (FTS5 + sqlite-vec → RRF), scope-провенанс `visibility` (`NULL`=public, BOB-066), автобиография `self_action` от первого лица (BOB-079) | [`domains/memory/README.md`](domains/memory/README.md) |
 | **personality** | вертикальный (business) | «кто Боб есть» — mood/disposition/taste/negotiation/voice/reflection/soul; второй слой `room_tone` (настроение комнаты красит голос и аппетит поверх личного mood, BOB-066) | [`domains/personality/README.md`](domains/personality/README.md) |
 | **conversation** | вертикальный (business) | «как ведётся ход» — адресность, conversational floor, brevity, engagement, судьи отклика, рефлексивное «чтение комнаты» (двускоростное внимание, за флагом `presence.reflective`) | [`domains/conversation/README.md`](domains/conversation/README.md) |
@@ -122,6 +125,7 @@ graph TD
         presence["presence"]
         capabilities["capabilities"]
         coding["coding"]
+        interactive["interactive"]
     end
     subgraph app["application (координация)"]
         usecases["usecases"]
@@ -145,6 +149,7 @@ graph TD
     memory --> persistence
     coding --> router
     coding --> telegram
+    interactive --> coding
     social --> telegram
     llm --> capabilities
     usecases --> capabilities

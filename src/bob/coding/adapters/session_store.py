@@ -115,7 +115,7 @@ class SqliteCodingSessionStore:
         Realises the narrow :class:`bob.coding.ports.ResumableSessionLookup` read seam
         (BOB-087.D3). Unlike :meth:`active` it filters by BRANCH ONLY and keeps EVERY
         state, terminal included — deciding which of them may be resumed is the pure
-        policy's job (:func:`bob.coding.resume_policy.select_resumable`), so the store
+        policy's job (:func:`bob.interactive.resume_policy.select_resumable`), so the store
         cannot drift from the «only a stopped session may be raised» rule. The branch is
         bound as a parameter (``?``), never interpolated. One unparseable row is logged
         and SKIPPED (same resilience as :meth:`active`): a corrupt record must not blow

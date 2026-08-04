@@ -6,15 +6,23 @@
 # beadloom:feature=coding
 # beadloom:layer=domain
 
-"""Доменный дата-класс coding-сессии — immutable value-object (BOB-039 .1).
+"""Доменные value-объекты coding-сессии — что за сессия и чем кончилась команда.
 
-``CodingSession`` — одна гейтед сессия «Боб запускает Claude Code»: задача owner'а,
+``CodingSession`` — одна сессия «Боб запускает Claude Code»: задача owner'а,
 её состояние (:class:`CodingSessionState`), изолированная ветка/worktree, собранный
 план и URL открытого PR. ``frozen, slots``: без I/O, без часов — час инжектится
 параметром ``at`` в мутаторы, так домен детерминирован и тестируем без
 ``datetime.now``. Мутаторы (``with_state`` / ``with_plan`` / ``with_worktree`` /
 ``with_pr_url``) возвращают новый объект и обновляют ``updated_at``; персист — за
 портом :class:`bob.coding.ports.CodingSessionStore`.
+
+``CodingOutcome`` — итог ОДНОЙ команды над сессией. 🔴 BOB-087.E (bob-6u2): раньше он
+жил внутри монолита :mod:`bob.coding.usecases.coding_assistant`, хотя это чистый
+value-object и ОБЩИЙ словарь двух bounded context'ов — гейтед-кодера и живого
+терминала (:mod:`bob.interactive`). Живой терминал теперь отдельный узел графа и
+обязан опираться на ОБЩУЮ доменную поверхность coding, а не на его use-case; поэтому
+дата-класс переехал сюда, к своему соседу ``CodingSession``. Старый путь импорта
+сохранён ре-экспортом в ``coding_assistant`` — снаружи ничего не изменилось.
 """
 
 from __future__ import annotations
@@ -26,7 +34,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from bob.coding.state import CodingSessionState
 
-__all__ = ["CodingSession"]
+__all__ = ["CodingOutcome", "CodingSession"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -81,3 +89,17 @@ class CodingSession:
         можно было возобновить по id.
         """
         return replace(self, claude_session_id=claude_session_id, updated_at=at)
+
+
+@dataclass(frozen=True, slots=True)
+class CodingOutcome:
+    """Итог одной команды: успех/отказ, owner-сообщение и итоговая сессия.
+
+    ``ok`` ложно при отказе authz / нелегальной команде / провале. ``message`` —
+    короткий owner-текст (уже отправлен через нотификатор, кроме «тихого» отказа
+    не-owner'у). ``session`` — итоговая сессия (``None``, если её нет/не создавалась).
+    """
+
+    ok: bool
+    message: str
+    session: CodingSession | None = None

@@ -30,8 +30,16 @@ from typing import TYPE_CHECKING, cast
 
 import pytest
 
-from bob.coding.adapters.claude_runner import ClaudeRunError, SubprocessClaudeRunner
-from bob.coding.adapters.interactive_runner import InteractiveClaudeRunner
+from bob.coding.adapters.claude_runner import (
+    ClaudeRunError,
+    SubprocessClaudeRunner,
+    _ExecStreamRunner,
+)
+from bob.coding.push_guard import PUSH_GUARD_STUB_URL
+from bob.interactive.adapters.runner import (
+    InteractiveClaudeRunner,
+    _ExecInteractiveSpawner,
+)
 from bob.runtime.wiring.coding import _build_coding_assistant, _build_interactive_session
 
 if TYPE_CHECKING:
@@ -237,3 +245,32 @@ def test_extra_dirs_accept_the_csv_env_form() -> None:
         "--add-dir",
         "/srv/spec",
     ]
+
+
+# --------------------------------------------------------------------------- #
+# 🔴 Push guard (BOB-087.E, bob-5ao) — доезжает ли owner-флаг до границы процесса
+# --------------------------------------------------------------------------- #
+
+
+def _spawn_envs(config: Mapping[str, object]) -> list[dict[str, str] | None]:
+    """The env both wired runners would hand their spawned ``claude`` process."""
+    one_shot = _one_shot_runner(config)._runner
+    interactive = _interactive_runner(config)._spawner
+    assert isinstance(one_shot, _ExecStreamRunner)
+    assert isinstance(interactive, _ExecInteractiveSpawner)
+    return [one_shot._env, interactive._env]
+
+
+def test_default_wiring_spawns_claude_without_any_env_override() -> None:
+    # OFF-путь: барьера нет вовсе → спавн без ``env=``, байт-в-байт как до BOB-087.E.
+    assert _spawn_envs({"coder": {"enabled": True, "interactive": True}}) == [None, None]
+
+
+def test_allow_bypass_puts_the_push_guard_into_both_spawns() -> None:
+    # ON-путь: то же самое ослабление, что впускает bypassPermissions, ставит и барьер.
+    config = {"coder": {"enabled": True, "interactive": True, "allow_bypass": True}}
+
+    for env in _spawn_envs(config):
+        assert env is not None
+        assert int(env["GIT_CONFIG_COUNT"]) >= 1
+        assert PUSH_GUARD_STUB_URL in env["GIT_CONFIG_KEY_0"]

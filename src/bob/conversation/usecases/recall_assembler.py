@@ -31,7 +31,12 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from bob.conversation.thread import _author_key, _history_for_author, _last_seen_at
+from bob.conversation.thread import (
+    _author_key,
+    _history_for_author,
+    _last_seen_at,
+    _thread_without_work_journal,
+)
 from bob.personality.absence import absence_hint
 from bob.personality.reaction_aloud import acknowledgment_hint
 
@@ -85,9 +90,17 @@ class RecallAssembler:
         (``recent_episodes_for(interlocutor.sender_id, …)``) instead — only the public
         group exists today, so the per-person branch is intentionally NOT wired here. The
         ``interlocutor`` argument is retained as the seam that a private scope would key on.
+
+        🔴 The thread is CONVERSATION (BOB-087.C8): Bob's distilled ``work`` journal entries
+        share the episodic log but are not turns anybody spoke, so they are left out of the
+        replay — otherwise they would enter every chat's compose prompt with no relevance
+        gate, no register and no provenance. His work returns through register-aware RECALL.
+        With the work journal off there is no such row and the replay is byte-identical.
         """
         del interlocutor  # public group → shared thread (see the scope hook above)
-        return await self._episodes.recent_episodes(self._recent_turns)
+        return _thread_without_work_journal(
+            await self._episodes.recent_episodes(self._recent_turns)
+        )
 
     def absence_for(
         self,

@@ -116,7 +116,9 @@ no-op recorder, нулевое изменение поведения).
 вспоминку одной coding-сессии Боба («я попросил GUPPI починить X в файле Y; тесты Z
 падали; подняли лимит — позеленело»). `work_episode_event(episode, *, ts, sender_id,
 visibility)` осаждает её в `EpisodicEvent` на **отдельном** `event_type` `work`
-(константа `WORK_EVENT_TYPE`), а НЕ `self_action`: существующая self-action
+(константа `WORK_EVENT_TYPE`, живёт в общем ядре `bob.kernel.episode_types` и
+ре-экспортируется отсюда — слово общее для memory/conversation/personality, bob-abk.32),
+а НЕ `self_action`: существующая self-action
 озвучка/recall (`recall_has_self_action`, ключ по `self_action`) остаётся байт-в-байт,
 а register-aware recall Среза C получает чистый шов по домену `work`. Провенанс (INV-3,
 разделение акторства): эпизод помечается тегами `work`/`dev` и маркером актора
@@ -382,7 +384,8 @@ ports-шим `bob.domain.ports` удалён (BOB-062.8), ~15 потребите
 - `self_action.py` (чистый домен): `SelfActionKind`, `SelfAction`,
   `describe_self_action` — рендер самодействия от первого лица (BOB-079).
 - `work_journal.py` (чистый домен): `WorkEpisode`, `work_episode_event`,
-  `WORK_EVENT_TYPE` — дистиллированный dev-эпизод, event_type `work` (BOB-087.B1).
+  `WORK_EVENT_TYPE` (ре-экспорт из `bob.kernel.episode_types` — общий словарь трёх
+  контекстов, bob-abk.32) — дистиллированный dev-эпизод, event_type `work` (BOB-087.B1).
 - `register.py` (чистый домен): `Register` (DEV/CASUAL), `may_recall_in_register`,
   `filter_by_register`, `RECALL_WEIGHT_FULL`, `CASUAL_WORK_WEIGHT` — down-weight
   work-эпизодов в CASUAL (BOB-087.C1).

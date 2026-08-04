@@ -60,7 +60,7 @@ class InteractiveRouterLike(Protocol):
     """The interactive-terminal intake seam HandleMessage delegates to (BOB-083 .4).
 
     Realised by
-    :class:`~bob.coding.usecases.interactive_intake.InteractiveIntakeRouter`: given an
+    :class:`~bob.interactive.usecases.intake.InteractiveIntakeRouter`: given an
     owner DM message it may OPEN a live interactive claude session, FEED an owner reply to
     its stdin (steer) or STOP it, returning whether it CONSUMED the turn (so HandleMessage
     short-circuits the normal compose). 🔴 owner-only + DM-only: the seam is passed BOTH

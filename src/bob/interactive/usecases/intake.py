@@ -3,7 +3,7 @@
 # See the LICENSE file in the project root for full license information.
 
 # beadloom:domain=bob
-# beadloom:feature=coding
+# beadloom:feature=interactive
 # beadloom:layer=application
 
 """InteractiveIntakeRouter — интейк-режим живого терминала в личке (BOB-083 .4).
@@ -20,7 +20,7 @@
   owner-гейта самого менеджера): не-owner или групповое сообщение НИКОГДА не открывает
   сеанс и не течёт в stdin — ход не поглощается, идёт обычным путём.
 * **режим строго по активной сессии** — steer-гейт (форвард реплики в stdin) срабатывает
-  ТОЛЬКО пока :meth:`~bob.coding.usecases.interactive_session.InteractiveSessionManager.
+  ТОЛЬКО пока :meth:`~bob.interactive.usecases.session.InteractiveSessionManager.
   active` истинно. Нет живого сеанса → плоское сообщение НЕ поглощается (обычный Боб) →
   после ``stop`` / смерти процесса личка возвращается к обычному общению.
 * **явный вход/выход (INV-5)** — на открытии/закрытии роутер шлёт owner'у короткую
@@ -44,7 +44,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Protocol
 
-from bob.coding.interactive_intent import (
+from bob.interactive.intent import (
     is_interactive_exit,
     parse_interactive_entry,
     parse_interactive_resume,
@@ -52,7 +52,7 @@ from bob.coding.interactive_intent import (
 )
 
 if TYPE_CHECKING:
-    from bob.coding.usecases.coding_assistant import CodingOutcome
+    from bob.coding.entities import CodingOutcome
 
 __all__ = [
     "InteractiveIntakeRouter",
@@ -66,7 +66,7 @@ class InteractiveManagerLike(Protocol):
     """Узкая поверхность живого сеанса, которой правит роутер (BOB-083 .3).
 
     Структурное подмножество
-    :class:`~bob.coding.usecases.interactive_session.InteractiveSessionManager`:
+    :class:`~bob.interactive.usecases.session.InteractiveSessionManager`:
     ``active`` — синхронный запрос «есть ли живой сеанс» (гейт режима), ``open`` / ``feed``
     / ``stop`` — owner-проверенные мутаторы (каждый ре-чекает owner'а внутри). Роутер не
     тянется дальше этих четырёх методов.
@@ -82,7 +82,7 @@ class ResumeSupportLike(Protocol):
     """Узкая поверхность ВОЗОБНОВЛЕНИЯ приостановленной работы (BOB-087.D3).
 
     Структурное подмножество
-    :class:`~bob.coding.usecases.interactive_session.InteractiveSessionManager`, вынесенное
+    :class:`~bob.interactive.usecases.session.InteractiveSessionManager`, вынесенное
     в ОТДЕЛЬНЫЙ опциональный seam нарочно: при выключенном флаге ``coder.resume``
     композиция просто не передаёт его, и роутер не может выразить возобновление вообще
     (а старые фейки менеджера остаются валидны). ``open_workspace`` — ЗАВЕСТИ сеанс в

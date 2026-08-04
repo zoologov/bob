@@ -187,10 +187,46 @@ nodes:
     # Rationale: as a single node it cannot satisfy the layers rule — `ports`
     # (domain) re-exports `coding` (needs coding ≤ domain) while `coding` uses the
     # shared `router` (needs coding ≥ application); contradictory for one layer tag.
+    # BOB-087.E (bob-6u2): the LIVE INTERACTIVE TERMINAL left this node for its own
+    # bounded context (`interactive`). What stays here is the GATED coder («план →
+    # апрув → PR») plus the SHARED session surface both contexts rest on: `ports.py`,
+    # `entities.py` (CodingSession + CodingOutcome), `state.py`, `naming.py`,
+    # `sandbox_policy.py` (incl. the ClaudeRunError refusal), `push_guard.py`,
+    # `stream_json.py` + `stream_render.py`, and the git-worktree / session-store /
+    # one-shot-runner adapters. `coding` does NOT import `interactive` — the edge is
+    # one-directional (see the note block in rules.yml).
     tags: [module-vertical]
-    summary: 'Coding module («Bob writes code») — the full vertical capability in one place: `ports.py` + pure domain logic, `usecases/` orchestration, and `adapters/` (Claude Code CLI, git worktree, gh PR, session store, indicator). Domain-first slice BOB-062.1.'
+    summary: 'Coding module («Bob writes code») — the GATED vertical (plan → approve → PR) plus the shared coding-session surface: `ports.py` + pure domain logic (state/naming/sandbox+push policy/stream-json), `usecases/` orchestration, and `adapters/` (Claude Code CLI, git worktree, gh PR, session store, indicator). Domain-first slice BOB-062.1; the live terminal split out into `interactive` in BOB-087.E.'
     docs:
       - domains/coding/README.md
+
+  - ref_id: interactive
+    kind: feature
+    source: src/bob/interactive/
+    # BOB-087.E (bob-6u2): the SECOND bounded context of «Боб пишет код» — the LIVE
+    # bidirectional terminal (open / feed / stop / resume a long-lived `claude` in the
+    # owner's DM). It was born inside `coding` and grew there until that node hit the
+    # `no-monster-modules` ceiling; the fix is not a bigger budget but an honest
+    # boundary: the gated coder and the live terminal share a WORKPLACE (worktree /
+    # session row / runner transport), not a language — one speaks план/апрув/PR, the
+    # other сеанс/реплика/возобновление, and their invariants differ (one session at a
+    # time, no live-attach, direct kill vs. the cooperative break).
+    #
+    # 🔴 It is a SIBLING package (`src/bob/interactive/`), not a sub-package of
+    # `src/bob/coding/`, and that is load-bearing: `max_symbols` counts by SOURCE PREFIX
+    # (`code_symbols.file_path LIKE '<source>%'`), so a node nested under coding's source
+    # would be counted TWICE — coding's number would not drop by a single symbol and the
+    # split would be cosmetic.
+    #
+    # Same non-layer `module-vertical` tag as its siblings (spans domain+application+
+    # infra inside ONE context, so the tag-based `architecture-layers` rule skips its
+    # edges); its internal layering + outer boundary are enforced by the GENERATED
+    # path-glob `forbid_import` rules in rules.yml. The `interactive → coding` edge is
+    # deliberate and one-directional — see the note block at the end of rules.yml.
+    tags: [module-vertical]
+    summary: 'Interactive module («Боб держит живой терминал») — the live bidirectional `claude` session in the owner''s DM: pure domain (mode intent, resume policy + negotiation, argv policy, the mode''s voice, the live-session holder), `usecases/` (session manager, teardown, DM intake router, boot-time sweep of orphaned sessions), and `adapters/` (the persistent stream-json runner). Rests on coding''s shared session surface; coding never imports it. Split out of `coding` in BOB-087.E.'
+    docs:
+      - domains/interactive/README.md
 
   - ref_id: capabilities
     kind: feature
@@ -353,6 +389,9 @@ edges:
     dst: bob-domain
     kind: part_of
   - src: coding
+    dst: bob-domain
+    kind: part_of
+  - src: interactive
     dst: bob-domain
     kind: part_of
   - src: capabilities

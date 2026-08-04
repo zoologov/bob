@@ -23,6 +23,8 @@ episodes ``EpisodeReader`` replays, each stored as ``"<name>: <text>\\nbob:
 * :func:`_author_key` / :func:`_history_for_author` — attribute the now-shared thread
   to the current author by robust ``sender_id`` (BOB-058 .3).
 * :func:`_user_turns` — the owner's own turns for repeat detection (BOB-022).
+* :func:`_thread_without_work_journal` — drop Bob's distilled ``work`` journal entries: the
+  thread is conversation, his work comes back through register-aware recall (BOB-087.C8).
 
 These were lifted verbatim out of ``HandleMessage`` (BOB-062.6b Wave 0): the use-case
 orchestrates, the projection lives here in the conversation domain.
@@ -34,6 +36,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING
 
 from bob.conversation.conversation import strip_recurring_closer
+from bob.kernel.episode_types import WORK_EVENT_TYPE
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -45,6 +48,32 @@ if TYPE_CHECKING:
 def _reaction_marker(emoji: str) -> str:
     """Bob's persisted half for a REACT turn: the meaning-chosen emoji (BOB-049)."""
     return f"(реакция: {emoji})"
+
+
+def _thread_without_work_journal(
+    history: Sequence[Mapping[str, object]],
+) -> tuple[Mapping[str, object], ...]:
+    """Drop Bob's distilled ``work`` journal entries from the replayed thread (BOB-087.C8).
+
+    The recent thread is CONVERSATION — what was actually said in the room. A ``work``
+    episode (:data:`~bob.kernel.episode_types.WORK_EVENT_TYPE`) is not a turn anybody spoke:
+    it is the first-person operator journal Bob writes to himself when a coding session
+    ends, sharing the same episodic log. Replayed as history it would enter EVERY chat's
+    compose prompt with no relevance gate, no register and no provenance framing — the
+    widest of the casual-pollution doors. His work belongs in RECALL instead, where the
+    register decides whether it surfaces and the provenance directive rides with it.
+
+    Pure and order-preserving; ONLY the known work marker is dropped (a defensive default —
+    a digest / self_action / unlabeled row replays untouched), so while the work journal is
+    off there is no such row and the thread is byte-identical.
+    """
+    return tuple(item for item in history if not _is_work_journal(item))
+
+
+def _is_work_journal(item: Mapping[str, object]) -> bool:
+    """True when a replayed episode is one of Bob's distilled ``work`` journal entries."""
+    kind = item.get("event_type")
+    return isinstance(kind, str) and kind.casefold() == WORK_EVENT_TYPE
 
 
 def _render_thread(history: Sequence[Mapping[str, object]]) -> str:

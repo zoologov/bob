@@ -24,7 +24,6 @@ from bob.coding.adapters import (
     SubprocessClaudeRunner,
 )
 from bob.coding.adapters.indicator import StatusPanel, TypingKeepalive
-from bob.coding.adapters.interactive_runner import InteractiveClaudeRunner
 from bob.coding.adapters.live_stream import _DmLiveStreamer
 from bob.coding.adapters.owner_notifier import _CodingOwnerNotifier
 from bob.coding.adapters.session_store import SqliteCodingSessionStore
@@ -32,9 +31,10 @@ from bob.coding.usecases.classify_coding_intent import ClassifyCodingIntent
 from bob.coding.usecases.coding_assistant import CodingAssistant, LiveRunStreamer
 from bob.coding.usecases.coding_context import make_coding_context
 from bob.coding.usecases.coding_intent_router import CodingIntentRouter
-from bob.coding.usecases.interactive_intake import InteractiveIntakeRouter
-from bob.coding.usecases.interactive_session import InteractiveSessionManager
-from bob.coding.usecases.recover_interactive_sessions import RecoverInteractiveSessions
+from bob.interactive.adapters.runner import InteractiveClaudeRunner
+from bob.interactive.usecases.intake import InteractiveIntakeRouter
+from bob.interactive.usecases.recover_sessions import RecoverInteractiveSessions
+from bob.interactive.usecases.session import InteractiveSessionManager
 from bob.runtime.config import (
     _CODING_TYPING_INTERVAL,
     _REPO_ROOT,
@@ -137,6 +137,14 @@ def _build_coding_assistant(
     (refs, remotes, credentials), so with that flag on «main is reached only through a PR»
     rests on the owner's judgement rather than on structure. OFF (the default) keeps the
     per-action gate that actually makes it structural.
+
+    🔴 Push guard (BOB-087.E, bob-5ao): under ``allow_bypass`` the runner's spawn carries a
+    git config (``url.<stub>.pushInsteadOf``) that makes a network push from the worktree
+    die on a non-existent remote helper — see :mod:`bob.coding.push_guard`, including the
+    honest limits (it is an ACCIDENT guard, not a boundary: the process owns its own
+    environment, and a local ``update-ref`` on the shared ``.git`` bypasses push entirely).
+    Bob's own integration path is untouched — :class:`GitWorktree` / :class:`GhPullRequestOpener`
+    run in BOB's process, not in the guarded spawn.
     """
     coder = _section(config, "coder")
     if not _flag(coder, "enabled"):
@@ -271,7 +279,17 @@ def _build_interactive_session(
     that part IS structural. But a worktree is a LINKED checkout sharing the main repo's
     ``.git`` — refs, remotes, credentials — so once ``allow_bypass`` gives claude an
     unsupervised shell in it, the trunk is protected by the owner's judgement about what
-    he lets claude do, not by the absence of a code path in Bob.
+    he lets claude do, not by the absence of a code path in Bob. 🔴 BOB-087.E (bob-5ao)
+    lowers that risk WITHOUT pretending to close it: every per-session runner built here
+    inherits the same ``allow_bypass``, so its spawn carries the push guard
+    (:mod:`bob.coding.push_guard`) — a network push from the live terminal dies on a
+    non-existent remote helper. It is an accident guard, not a boundary (the process owns
+    its environment; a local ``update-ref`` on the shared ``.git`` never touches push).
+
+    🔴 Реплика о конце сеанса (bob-kv4): менеджер получает СВОЙ owner-нотификатор в личку
+    (бот Боба) — единственный канал для того, что он говорит по собственной инициативе,
+    когда ``claude`` кончился САМ. Все прочие реплики возвращаются ходу, который их
+    попросил; у смерти процесса такого хода нет, и без этого сейма Боб просто немел.
 
     🔴 Долгоживущее рабочее место + resume (BOB-087.D3, D5b): под флагом ``coder.resume``
     (default OFF) в менеджер инъектируются два узких порта: ``lookup`` (поиск сессий по
@@ -327,6 +345,12 @@ def _build_interactive_session(
         owner=authorizer,
         clock=clock,
         permission_mode=_str(coder, "permission_mode", "acceptEdits"),
+        # 🔴 Реплика «сеанс кончился сам» (bob-kv4) — единственная, которую менеджер шлёт
+        # по СОБСТВЕННОЙ инициативе: у смерти процесса нет хода-адресата, а раньше она не
+        # доходила вообще (сеанс оставался «живым», Боб в личке нем до «стоп»). Это голос
+        # САМОГО Боба, поэтому она идёт на ботe Боба в его личку — как короткие строки
+        # режима интейка, а не за GUPPI (тот везёт только механический firehose).
+        notifier=_CodingOwnerNotifier(bot=bot, chat_id=dm_chat_id, topic_id=None),
     )
 
 

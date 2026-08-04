@@ -40,11 +40,24 @@ __all__ = [
     "BASE_PERMISSION_MODES",
     "BYPASS_PERMISSION_MODE",
     "MAX_EXTRA_DIRS",
+    "ClaudeRunError",
     "allowed_modes",
     "extra_dir_argv",
     "is_allowed_mode",
     "is_safe_argv_value",
 ]
+
+class ClaudeRunError(Exception):
+    """A claude run was refused (mode outside the allowlist) before it started.
+
+    🔴 BOB-087.E (bob-6u2): the refusal belongs to the POLICY that refuses, not to one
+    of the two transports that ask it. Both the gated one-shot runner and the live
+    terminal's runner raise this same error on a mode outside :func:`allowed_modes`, and
+    they are now in different bounded contexts — an adapter may not import a foreign
+    module's adapter. ``bob.coding.adapters.claude_runner`` re-exports it, so every
+    existing import path (and every ``except``) keeps working unchanged.
+    """
+
 
 #: Базовый (всегда действующий) allowlist ``--permission-mode``.
 BASE_PERMISSION_MODES: frozenset[str] = frozenset({"plan", "acceptEdits"})
@@ -107,7 +120,7 @@ def is_safe_argv_value(candidate: str) -> bool:
 
     Используется обоими местами, где в argv попадает строка из внешнего источника:
     ``--add-dir`` (значение из конфига, :func:`extra_dir_argv`) и ``--resume`` (значение
-    из колонки БД, :func:`bob.coding.argv_policy.build_interactive_argv` — BOB-087.D5b:
+    из колонки БД, :func:`bob.interactive.argv_policy.build_interactive_argv` — BOB-087.D5b:
     у ``--resume`` этого guard'а не было, хотя слот ровно тот же).
     """
     if not candidate:
