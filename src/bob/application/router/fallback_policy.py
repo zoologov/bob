@@ -4,17 +4,39 @@
 
 # beadloom:domain=bob
 
-"""Tier-0 fallback verdict: is THIS failure a reason to leave the cloud for local?
+"""Fallback verdict: is THIS failure a reason to leave the preferred model for a weaker one?
 
-One question, one answer (BOB-087.E1, BOB-Issues #34). The cloud Tier-0 endpoint
-(Qwen/Aliyun) periodically drops off the network — BOB-084 observed 77 consecutive
-outages — and Tier 0 has no fallback of its own, so an outage takes the register
-classifier, the inner monologue and the coding gates down with it. A local Ollama
-model is the emergency understudy; :func:`should_fall_back` decides when to call it.
+One question, one answer (BOB-087.E1, BOB-Issues #34) — asked on BOTH floors of Bob's
+tiering, by the two places that may degrade a turn onto a weaker model:
+
+* the **lower** floor — :class:`~bob.infrastructure.llm.fallback_provider.FallbackLLMProvider`,
+  which leaves a failing cloud Tier-0 endpoint for the local Ollama understudy. The cloud
+  Tier-0 endpoint (Qwen/Aliyun) periodically drops off the network — BOB-084 observed 77
+  consecutive outages — and an outage there takes the register classifier, the inner
+  monologue and the coding gates down with it;
+* the **upper** floor — :class:`~bob.application.router.LLMRouter`, which leaves a failing
+  Tier 1 for Tier 0. Until bob-41o that fallback caught ANY Tier-1 exception, so the
+  asymmetry undid one floor below what the other floor was built for: a stale key or an
+  unknown model on Tier 1 was answered by the weaker tier and the broken configuration
+  lived on unnoticed. Both floors now ask THIS function, so there is one policy, not two
+  that drift apart.
+
+🔴 Placement (bob-41o). The core is pure — no I/O, no clock, no state — and lived in
+``infrastructure/llm/`` only because its first consumer did. With a consumer on each side
+of the layer line it had to move INWARD, to the application layer: ``application-no-infra``
+(severity error) forbids the router reaching outward into infrastructure, while
+infrastructure importing the application layer is the legal downward direction (as
+``infrastructure/telegram/gateway.py`` and ``multibot.py`` already do). It sits in the ROUTER
+package beside :mod:`bob.application.router.voice_integrity` — the two halves of one
+question, «this tier just failed: may anything rescue the turn, and who may answer?» —
+and NOT in ``kernel``, whose rules require stdlib/typing only, while this verdict knows
+aiohttp's exception shapes. The sibling classifier
+:func:`bob.application.runtime.retry.is_transient` (a different question: what is worth
+RETRYING) already reads those shapes from this layer.
 
 The classification is deliberately conservative, because a fallback that fires too
 eagerly does not add resilience — it **hides defects** behind a quietly degraded
-local answer:
+answer from a weaker model:
 
 **Falls back (transport / availability — the endpoint could not serve us):**
 
@@ -31,8 +53,8 @@ local answer:
 **Does NOT fall back (contract — a defect to surface, not an outage to survive):**
 
 * HTTP **4xx** other than 408/429 — a malformed request, a bad key, an unknown
-  model: our own bug or misconfiguration. Masking it with a local answer would let
-  a broken Tier-0 configuration live on undetected;
+  model: our own bug or misconfiguration. Masking it with a weaker model's answer
+  would let a broken tier configuration live on undetected;
 * a broken response shape (``ValueError`` from the body parsers,
   ``json.JSONDecodeError``) — the call succeeded, the *content* is wrong;
 * ``aiohttp.InvalidURL`` — a config defect (it is a ``ValueError``, not a network
@@ -67,11 +89,11 @@ import aiohttp
 
 
 def should_fall_back(error: BaseException) -> bool:
-    """Is ``error`` a transport/availability failure worth the local model?
+    """Is ``error`` a transport/availability failure worth degrading to a weaker model?
 
-    ``True`` only for failures of the *channel* to the cloud endpoint; ``False`` for
-    every failure of the *contract* (ours or the upstream's) and for cancellation —
-    see the module docstring for the full classification and its rationale.
+    ``True`` only for failures of the *channel* to the endpoint; ``False`` for every
+    failure of the *contract* (ours or the upstream's) and for cancellation — see the
+    module docstring for the full classification and its rationale.
     """
     if isinstance(error, aiohttp.ClientResponseError):
         return _is_availability_status(error.status)

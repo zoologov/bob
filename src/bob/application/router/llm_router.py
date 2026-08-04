@@ -21,8 +21,11 @@ GUPPI's policy layer over the provider-agnostic :class:`LLMProvider` ports
    stripped before any Tier 1 call. Redaction is a property of the *request*,
    applied whenever the destination is Tier 1, including on a Tier 1 -> Tier 0
    fallback (the redacted payload is what was built, so the fallback sees it too).
-3. **Falls back** Tier 1 -> Tier 0 if the preferred tier errors or is
-   unavailable, so a flaky Qwen API never blocks a reply.
+3. **Falls back** Tier 1 -> Tier 0 when the cloud tier is UNREACHABLE, so a flaky Qwen
+   API never blocks a reply — but only then. Which failures count is not decided here:
+   it is the same pure :func:`~bob.application.router.fallback_policy.should_fall_back` core the
+   Tier-0 understudy obeys (bob-41o), so a 4xx or a broken response shape from Tier 1
+   surfaces instead of being answered — and hidden — by the weaker tier.
 4. **Protects Bob's voice** when Tier 0 is understudy-backed (BOB-087.E-M1). Tier 0 may be
    composed with a local emergency stand-in (``llm.tier0_fallback``), which is right for a
    служебный ход and wrong for a turn published AS BOB — the composite is invisible to its
@@ -43,6 +46,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING
 
+from bob.application.router.fallback_policy import should_fall_back
 from bob.application.router.voice_integrity import OutageVoice, who_may_answer_for_bob
 from bob.kernel.ports import UnderstudyBackedProvider
 
@@ -197,7 +201,7 @@ class LLMRouter:
         )
 
     async def run(self, request: LLMRequest) -> str:
-        """Complete ``request`` on its preferred tier, falling back to Tier 0 on error.
+        """Complete ``request`` on its preferred tier, with ONE rescue attempt on failure.
 
         The payload is built once: a Tier 1-bound request carries only its
         ``shareable_context`` (private context is stripped); a local-only Tier 0
@@ -208,36 +212,94 @@ class LLMRouter:
         Tier-0 fallback runs OUTSIDE the gate so a failing Tier-1 call never holds a
         Tier-1 slot while its local fallback completes.
 
-        🔴 BOB-087.E-M1 — the fallback DIRECTION follows the kind of work. A turn that
-        ships AS BOB never touches the local stand-in (see :meth:`_provider_for`); when its
-        Tier-0 attempt dies it escalates **UP** to Tier 1 — ONE hop, carrying the very same
-        already-redacted payload, so the emergency path leaks nothing the normal Tier-1 path
-        would not. If that hop fails too, nobody answers for Bob: the error propagates and
-        the turn ends in the honest GUPPI outage notice (``EssentialRunner``). Every other
-        turn keeps the previous behaviour exactly.
+        🔴 **Who falls where** — the full matrix, after bob-41o closed the last hole in it:
+
+        ========================  =====================  ==============================
+        preferred tier            failure                what happens
+        ========================  =====================  ==============================
+        Tier 1                    transport / outage     ONE hop DOWN to Tier 0 (same
+                                  (5xx, 408, 429,        redacted payload; a turn in
+                                  timeout, disconnect,   Bob's voice gets Tier 0 without
+                                  refused, truncated)    its stand-in, see
+                                                         :meth:`_provider_for`)
+        Tier 1                    contract (4xx, broken  NOTHING answers — the error
+                                  shape, InvalidURL,     surfaces (bob-41o)
+                                  our own bug)
+        Tier 0, служебный ход     any                    no rescue here: the stand-in
+                                                         under Tier 0 already applied the
+                                                         SAME policy one floor below
+        Tier 0, Bob's own voice   any                    ONE hop UP to Tier 1 (E-M1)
+        Tier 0, voice, nothing    any                    NOBODY answers — the error
+        to escalate to                                   surfaces
+        ========================  =====================  ==============================
+
+        🔴 Why DOWN is conservative and UP is not (the deliberate asymmetry). Falling DOWN
+        is a *degradation*: a weaker model answers and the operator sees only a plausible
+        reply, so a stale Tier-1 key or an unknown model name would live on for weeks
+        behind it — exactly the masking Срез E refused one floor below, and the reason both
+        floors now share :func:`~bob.application.router.fallback_policy.should_fall_back`.
+        Escalating UP is not a degradation at all: it is the ordinary call to the QUALITY
+        tier, so a Tier-0 contract defect must not cost the interlocutor a real answer —
+        and it stays visible anyway, because every служебный Tier-0 turn surfaces it.
+
+        🔴 No merry-go-round. There is exactly ONE rescue attempt and it is made OUTSIDE the
+        ``try``, so a Tier 1 -> Tier 0 fallback can never bounce back up (nor a Tier 0 -> Tier 1
+        escalation back down): its own failure propagates. When nobody answers for Bob the
+        turn ends in the honest GUPPI outage notice (``EssentialRunner`` ->
+        :data:`~bob.infrastructure.telegram.guppi.GUPPI_OUTAGE_TEXT`, the third-person
+        "connection trouble, Bob is temporarily unavailable" system line) — the interlocutor
+        gets a live line, never a borrowed voice, a bare traceback or silence.
         """
         preferred = self._destination_tier(request)
         messages = self._build_messages(request)
         voice = self._who_may_answer(request)
         try:
             return await self._complete_gated(preferred, messages, voice)
-        except Exception:
-            if preferred != _TIER_LOCAL:
-                logger.warning(
-                    "Tier 1 completion failed for %s; falling back to Tier 0",
-                    request.task_type.value,
-                )
-            elif voice is OutageVoice.CLOUD_TIER1:
-                logger.warning(
-                    "Tier 0 outage on %s; escalating UP to Tier 1 — Bob's own voice is "
-                    "never handed to the local understudy",
-                    request.task_type.value,
-                )
-                return await self._complete_gated(_TIER_API, messages, voice)
-            else:
-                logger.exception("Tier 0 completion failed with no fallback")
+        except Exception as error:
+            rescue = self._rescue_tier(request, preferred=preferred, voice=voice, error=error)
+            if rescue is None:
                 raise
-        return await self._complete(_TIER_LOCAL, messages, voice)
+        return await self._complete_gated(rescue, messages, voice)
+
+    def _rescue_tier(
+        self,
+        request: LLMRequest,
+        *,
+        preferred: int,
+        voice: OutageVoice,
+        error: Exception,
+    ) -> int | None:
+        """Which tier — if any — may try this turn once more; ``None`` = the failure stands.
+
+        The single place the fallback matrix in :meth:`run` is decided, so the direction of
+        a rescue and the right to have one at all are read in one screen instead of being
+        spread over the ``except`` arms. Announcing the switch is part of it: a degradation
+        the owner cannot see in the log is exactly the silent one Срез E ruled out.
+        """
+        if preferred != _TIER_LOCAL:
+            if not should_fall_back(error):
+                logger.error(
+                    "Tier 1 failed on %s with a CONTRACT failure (%s: %s); surfacing it "
+                    "instead of hiding a broken Tier-1 configuration behind Tier 0",
+                    request.task_type.value,
+                    type(error).__name__,
+                    error,
+                )
+                return None
+            logger.warning(
+                "Tier 1 completion failed for %s; falling back to Tier 0",
+                request.task_type.value,
+            )
+            return _TIER_LOCAL
+        if voice is OutageVoice.CLOUD_TIER1:
+            logger.warning(
+                "Tier 0 outage on %s; escalating UP to Tier 1 — Bob's own voice is "
+                "never handed to the local understudy",
+                request.task_type.value,
+            )
+            return _TIER_API
+        logger.exception("Tier 0 completion failed with no fallback")
+        return None
 
     def _who_may_answer(self, request: LLMRequest) -> OutageVoice:
         """Ask the pure voice-integrity core who may answer if this turn's tier goes down.

@@ -40,7 +40,8 @@ LLM-роутера. Зависит от домена через порты-пр�
 - **capabilities/search_memory.py** — `make_search_memory_capability()`, агентный
   навык `search_memory`: Боб сам ищет по всему архиву через гибрид-recall (BOB-011).
 - **router/llm_router.py** — `LLMRouter`, классификация задачи, селективная
-  редакция приватности и fallback тиров; `LLMRequest` (с двумя каналами
+  редакция приватности и fallback тиров (Tier1 → Tier0 — только на аварии связи,
+  вердикт берётся из общего `fallback_policy`, bob-41o); `LLMRequest` (с двумя каналами
   контекста — `shareable_context` и `private_context`), `TaskType`. Опциональный
   Tier-1 rate-cap `tier1_max_concurrency` (BOB-072): семафор на число ОДНОВРЕМЕННЫХ
   Tier-1-вызовов; `None`/`<= 0` (по умолчанию) → без гейта, байт-в-байт.
@@ -51,6 +52,9 @@ LLM-роутера. Зависит от домена через порты-пр�
   суждения/генерации → ретрай, затем честный GUPPI-нотис, а не деградированный
   полу-ответ.
   <!-- beadloom:track=src/bob/application/reliability.py -->
+- **router/fallback_policy.py** — `should_fall_back(error)`, чистое ядро вердикта «это
+  авария канала (уходим на более слабую модель) или наш дефект (показываем)» (BOB-087.E1),
+  общее для обоих этажей тиринга (bob-41o). Подробности — в SPEC узла `router`.
 - **usecases/decide_response.py** — `DecideResponse`, тонкий use-case над швом
   семантического суждения (BOB-049): собирает `ResponseContext` из частей хода и
   делегирует решение REPLY/REACT/IGNORE инъецированному `ResponseJudge`.

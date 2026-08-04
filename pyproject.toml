@@ -656,6 +656,17 @@ ignore = [
     "RUF002",
     "RUF003",
 ]
+# The Tier-1 strictness tests (bob-41o) spell the owner's decision out in Russian comments
+# («дефект Tier-1 нельзя прятать», «нет петли») and stage Russian reply literals whose
+# Cyrillic look-alikes are intentional (→ RUF001/2/3).
+"tests/application/router/test_llm_router_tier1_strictness.py" = [
+    "S101",
+    "ARG001",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
 "tests/**/*.py" = ["S101", "ARG001", "PLR2004"]
 # The Planner + plan_goal use-case tests (BOB-015 .2) and GUPPI goal-command tests
 # assert on Russian goal/plan/command literals whose Cyrillic look-alikes are
@@ -1619,12 +1630,15 @@ source_paths = [
     # degrade malformed → paragraph) — exactly the branch logic mutation measures. Listed as
     # a single file (the surrounding aiogram-typed block/inline emission is a thin adapter).
     "src/bob/infrastructure/telegram/rich.py",
-    # BOB-087.E1: the Tier-0 fallback VERDICT (``should_fall_back``) is a pure, I/O-free
-    # classification — transport/availability failure (fall back to the local model) vs.
+    # BOB-087.E1: the fallback VERDICT (``should_fall_back``) is a pure, I/O-free
+    # classification — transport/availability failure (degrade to the weaker model) vs.
     # contract failure (surface it, never mask our own bug). Exactly the branch/threshold
     # logic mutation measures. Listed as a single file (the composite provider around it
-    # is an async adapter, out of scope).
-    "src/bob/infrastructure/llm/fallback_policy.py",
+    # is an async adapter, out of scope). 🔴 bob-41o moved the core INWARD, into the router
+    # package, when the router became its second consumer (the layer rules forbid
+    # application → infrastructure); the gate moves with it — a core that quietly slipped
+    # out of ``source_paths`` on a rename is exactly the phantom gate MUTATION.md forbids.
+    "src/bob/application/router/fallback_policy.py",
     # BOB-087.E-M1: the VOICE-INTEGRITY verdict (``who_may_answer_for_bob``) is a pure,
     # I/O-free decision — may the local understudy answer this turn, must it escalate UP to
     # the cloud tier, or may nobody speak for Bob? Exactly the branch logic mutation
@@ -1669,9 +1683,10 @@ pytest_add_cli_args_test_selection = [
     # table core's mutants (the converter is pure and side-effect free).
     "tests/infrastructure/telegram/test_rich.py",
     "tests/infrastructure/telegram/test_rich_hardening.py",
-    # BOB-087.E1: the fast, deterministic unit tests for the Tier-0 fallback verdict —
-    # selected so a per-slice ``fallback_policy`` run measures that core's mutants.
-    "tests/infrastructure/llm/test_fallback_policy.py",
+    # BOB-087.E1: the fast, deterministic unit tests for the fallback verdict — selected so
+    # a per-slice ``fallback_policy`` run measures that core's mutants (moved with the core
+    # to tests/application/ in bob-41o).
+    "tests/application/router/test_fallback_policy.py",
     # BOB-087.E-M1: the fast, deterministic unit tests for the voice-integrity verdict —
     # selected so a per-slice ``voice_integrity`` run measures that core's mutants.
     "tests/application/router/test_voice_integrity.py",

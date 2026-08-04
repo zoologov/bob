@@ -21,7 +21,7 @@ from typing import cast
 import aiohttp
 import pytest
 
-from bob.infrastructure.llm.fallback_policy import should_fall_back
+from bob.application.router.fallback_policy import should_fall_back
 
 
 def _response_error(status: int) -> aiohttp.ClientResponseError:
