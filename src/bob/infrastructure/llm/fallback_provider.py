@@ -14,7 +14,7 @@ object over as Tier 0 when a fallback is configured.
 The policy is deliberately small:
 
 * one attempt on the primary, and — only when
-  :func:`~bob.infrastructure.llm.fallback_policy.should_fall_back` says the failure
+  :func:`~bob.application.router.fallback_policy.should_fall_back` says the failure
   was the *transport* — one attempt on the local fallback. No cascade, no retry loop;
 * every switch is a ``WARNING`` naming the cause. Silent degradation is unacceptable:
   the owner must be able to learn that Bob is answering on the emergency model;
@@ -42,8 +42,8 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, TypeVar
 
+from bob.application.router.fallback_policy import should_fall_back
 from bob.capabilities.ports import ToolCallingProvider
-from bob.infrastructure.llm.fallback_policy import should_fall_back
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Awaitable, Sequence
@@ -67,7 +67,8 @@ class FallbackLLMProvider:
 
     One responsibility: surviving an outage of the primary endpoint. What counts as
     an outage is not decided here — that verdict is the pure
-    :mod:`bob.infrastructure.llm.fallback_policy` core.
+    :mod:`bob.application.router.fallback_policy` core (shared with the router's own
+    Tier1 → Tier0 fallback, bob-41o — one policy for both floors of the tiering).
     """
 
     def __init__(self, *, primary: LLMProvider, fallback: LLMProvider) -> None:
@@ -138,7 +139,7 @@ class ToolCallingFallbackLLMProvider(FallbackLLMProvider):
     """The composite for a primary that also drives the tool loop.
 
     Adds exactly one thing to :class:`FallbackLLMProvider`: ``complete_with_tools``,
-    under the SAME :func:`~bob.infrastructure.llm.fallback_policy.should_fall_back`
+    under the SAME :func:`~bob.application.router.fallback_policy.should_fall_back`
     policy as plain chat. Build it via :func:`build_fallback_provider`, which picks this
     variant only when the primary really is a
     :class:`~bob.capabilities.ports.ToolCallingProvider`.

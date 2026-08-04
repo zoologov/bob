@@ -126,6 +126,24 @@ def tier1_server_error(fallback_context: _FallbackContext) -> None:
     fallback_context.request = replace(fallback_context.request, tier1=SERVER_ERROR)
 
 
+@given("Tier-1 не отвечает вовсе")
+def tier1_hangs(fallback_context: _FallbackContext) -> None:
+    # Настоящий таймаут на верхнем тире — аварийная форма, на которой фолбэк вниз законен.
+    fallback_context.request = replace(fallback_context.request, tier1=HANGS)
+
+
+@given("Tier-1 отвечает ошибкой 400")
+def tier1_bad_request(fallback_context: _FallbackContext) -> None:
+    # Не авария, а наш дефект: кривой запрос, протухший ключ, несуществующая модель.
+    fallback_context.request = replace(fallback_context.request, tier1=BAD_REQUEST)
+
+
+@given("Tier-1 отвечает телом без choices")
+def tier1_broken_shape(fallback_context: _FallbackContext) -> None:
+    # Вызов удался, СОДЕРЖИМОЕ сломано — контрактная поломка, а не отвал связи.
+    fallback_context.request = replace(fallback_context.request, tier1=BROKEN_SHAPE)
+
+
 @given("у хода есть приватный контекст")
 def turn_carries_private_context(fallback_context: _FallbackContext) -> None:
     # Both halves of the split (Variant 2): the shareable half MAY travel to the cloud, the
@@ -188,6 +206,13 @@ def reply_is_tier1(fallback_context: _FallbackContext) -> None:
 @then("Tier-1 не получил ни одного запроса")
 def tier1_never_called(fallback_context: _FallbackContext) -> None:
     assert fallback_context.outcome.tier1_calls == 0
+
+
+@then("облачный Tier-0 не получил ни одного запроса")
+def cloud_tier0_never_called(fallback_context: _FallbackContext) -> None:
+    # 🔴 Суть строгости верхнего этажа (bob-41o): более слабый тир ЗДОРОВ и готов ответить —
+    # и именно поэтому его не спрашивают. Ответ Tier-0 здесь был бы маскировкой дефекта.
+    assert fallback_context.outcome.cloud_tier0_calls == 0
 
 
 @then("приватная строка не пересекла границу к Tier-1")
@@ -273,6 +298,16 @@ def log_names_the_cause(fallback_context: _FallbackContext) -> None:
     switch = next(message for message in warnings if "falling back to the local model" in message)
     assert "Primary LLM failed" in switch
     assert "TimeoutError" in switch
+
+
+@then("в логе оператора видно, что поломку Tier-1 не стали прятать")
+def log_reports_the_surfaced_tier1_defect(fallback_context: _FallbackContext) -> None:
+    # Никакой тихой правды: владелец узнаёт о сломанном конфиге Tier-1 из лога, а не через
+    # неделю по деградировавшим ответам. В строке названы и вид поломки, и её причина.
+    warnings = fallback_context.outcome.warnings
+    surfaced = [message for message in warnings if "CONTRACT failure" in message]
+    assert surfaced, warnings
+    assert "400" in surfaced[0], surfaced
 
 
 @then("лог оператора чист — предупреждений нет")

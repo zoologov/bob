@@ -22,10 +22,12 @@ tool-calling поверх aiohttp (backend — Ollama/Qwen). Узел `llm` (`pa
     композит с локальным дублёром (пусто — по умолчанию — ровно тот же провайдер,
     что и раньше).
   - `build_web_search_provider(...)` — построить провайдер веб-поиска.
-- **fallback_policy.py** (BOB-087.E1) — чистое ядро вердикта `should_fall_back(error)`:
-  считать ли сбой поводом уйти на локальную модель. Транспорт/доступность (таймаут,
-  обрыв соединения, 5xx, 408, 429) — да; контракт (прочие 4xx, битая форма ответа,
-  `TypeError`, отмена) — нет, иначе фолбэк маскировал бы наши собственные баги.
+- Вердикт «это авария связи или наш дефект» живёт **не здесь**: чистое ядро
+  `should_fall_back(error)` переехало в `src/bob/application/router/fallback_policy.py`
+  (bob-41o), потому что тем же вердиктом судит верхний фолбэк роутера Tier1 → Tier0, а
+  правило `application-no-infra` запрещает слою application тянуться в infrastructure.
+  Композит ниже импортит его вниз по слоям. Классификация описана в разделе «Что
+  считается поводом уйти на более слабую модель».
 - **fallback_provider.py** (BOB-087.E1, .E1b) — композит primary + локальный аварийный
   fallback, реализующий тот же порт `LLMProvider`: `FallbackLLMProvider` (только
   `complete`) и `ToolCallingFallbackLLMProvider` (плюс `complete_with_tools` под той же
@@ -69,9 +71,11 @@ primary напрямую: сбой стрима всплывает посред�
 (у маленькой модели просадка на инструментах резче, чем на разговоре). Если легла и
 локальная модель, пишется второй `WARNING`. На здоровом ходе лог молчит.
 
-### Что считается поводом уйти на локальную модель
+### Что считается поводом уйти на более слабую модель
 
-Вердикт выносит чистое ядро `should_fall_back(error)`. Граница проходит между сбоем
+Вердикт выносит чистое ядро `should_fall_back(error)` (`bob.application.router.fallback_policy`),
+общее для ОБОИХ этажей тиринга: и для этого композита (облачный Tier-0 → локальный дублёр),
+и для фолбэка роутера Tier1 → Tier0 (bob-41o). Одна политика, а не две расходящиеся. Граница проходит между сбоем
 **канала** и сбоем **контракта**, и это главное решение среза: фолбэк, срабатывающий на
 нашем собственном дефекте, устойчивости не добавляет — он прячет дефект за тихо
 деградировавшим ответом. Кривой запрос, протухший ключ, несуществующая модель обязаны
@@ -105,8 +109,10 @@ HTTP 408 (эндпоинт сам не дождался) и 429 (облако с
 - Аварийный Tier-0-фолбэк никогда не каскадит: одна попытка primary → одна попытка
   локальной модели; упали обе — наружу уходит исходная ошибка primary. Каждое
   переключение логируется `WARNING` (тихая деградация недопустима).
-- `LLMRouter` о фолбэке не знает: политика живёт целиком в композите, поэтому
-  маршрутизация тиров остаётся неизменной.
+- Композит — единственное место, где живёт МЕХАНИКА нижнего фолбэка: маршрутизация тиров
+  в `LLMRouter` от него не зависит. ПОЛИТИКУ («что считать аварией») оба этажа с bob-41o
+  берут из общего ядра `bob.application.router.fallback_policy`, поэтому строгость нижнего этажа
+  не может разойтись со строгостью верхнего.
 - Обёртка не меняет способности завёрнутого тира (BOB-087.E1b): композит объявляет
   `complete_with_tools` ровно тогда, когда его умеет primary — ни меньше (шов
   tool-loop'а проверяет через `hasattr`, потеря была бы БЕЗМОЛВНОЙ), ни больше
@@ -179,9 +185,6 @@ E3; решение по нему владелец ещё не принял, по
 - `build_tier_providers(...)` → провайдеры Tier 0 / Tier 1.
 - `build_web_search_provider(...)` → провайдер веб-поиска.
 
-Модуль `src/bob/infrastructure/llm/fallback_policy.py`:
-- `should_fall_back(error)` → вердикт «это транспортный сбой, уходим на локальную модель».
-
 Модуль `src/bob/infrastructure/llm/fallback_provider.py`:
 - `build_fallback_provider(primary=…, fallback=…)` → композит, зеркалящий способности
   primary (единственный поддерживаемый способ сборки).
@@ -200,14 +203,14 @@ E3; решение по нему владелец ещё не принял, по
 ## Тестирование
 
 Поведение фолбэка через настоящую границу: `tests/acceptance/features/tier0_fallback.feature`
-(15 сценариев) с шагами `tests/acceptance/steps/test_tier0_fallback.py` и стендом
+(24 сценария, включая S14/S22-S24 — строгость верхнего фолбэка роутера) с шагами `tests/acceptance/steps/test_tier0_fallback.py` и стендом
 `tests/acceptance/tier0_fallback_harness.py` — три реальных loopback-эндпоинта aiohttp,
 реальный `ConfigLoader`, реальная фабрика и реальный `LLMRouter`; отказы настоящие
 (таймаут, 503, обрыв TCP, закрытый порт), а не подделанные исключения.
 
 Тесты: `tests/infrastructure/llm/test_factory.py`,
-`tests/infrastructure/llm/test_fallback_policy.py` (чистое ядро под mutation),
-`tests/infrastructure/llm/test_fallback_provider.py`,
+`tests/application/router/test_fallback_policy.py` (чистое ядро под mutation — переехало вместе с
+ядром), `tests/infrastructure/llm/test_fallback_provider.py`,
 `tests/infrastructure/llm/test_ollama_embedder_hardening.py`,
 `tests/infrastructure/llm/test_ollama_reranker.py`,
 `tests/infrastructure/llm/test_web_search_qwen.py`, и суждения на Tier 0
@@ -215,5 +218,4 @@ E3; решение по нему владелец ещё не принял, по
 
 <!-- beadloom:track=src/bob/infrastructure/llm/openai_compat.py -->
 <!-- beadloom:track=src/bob/infrastructure/llm/factory.py -->
-<!-- beadloom:track=src/bob/infrastructure/llm/fallback_policy.py -->
 <!-- beadloom:track=src/bob/infrastructure/llm/fallback_provider.py -->
