@@ -58,7 +58,7 @@ llm:
   # tier0_fallback_base_url: http://localhost:11434/v1
   # tier0_fallback_model: qwen2.5:0.5b
 
-memory:
+# memory:
   # Рабочая память dev-действий + защита личного общения от её протечки (BOB-087.B+C).
   # 🔴 Включать ТОЛЬКО парой: work_journal пишет эпизоды event_type='work' (дистиллированные
   # факты работы, не сырой firehose), register_recall приглушает их в casual-регистре
