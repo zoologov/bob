@@ -1646,6 +1646,74 @@ ignore = [
     "RUF003",
     "SLF001",
 ]
+# BDD-слой эпика (BOB-090.F): харнессы живого корня и шаги трёх ``.feature`` связывают
+# русский текст сценариев, русские реплики Боба и русский seeded-архив — кириллические
+# похожие символы в них намеренны (их читают и модель, и человек). Тестам ещё нужны
+# assert-ы, фейк-боты с неиспользуемыми аргументами и «магические» id чатов/топиков, а
+# харнессам — доступ к приватному транспортному адаптеру кодера. RUF001-003 / S101 /
+# ARG / PLR2004 / SLF001 к ним не применяются.
+"tests/acceptance/live_app_harness.py" = [
+    "S101",
+    "ARG001",
+    "ARG002",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+    "SLF001",
+]
+"tests/acceptance/delivery_harness.py" = [
+    "S101",
+    "ARG001",
+    "ARG002",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+"tests/acceptance/origin_provenance_harness.py" = [
+    "S101",
+    "ARG001",
+    "ARG002",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+"tests/acceptance/guppi_canon_harness.py" = [
+    "S101",
+    "ARG001",
+    "ARG002",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+    "SLF001",
+]
+"tests/acceptance/steps/test_chat_addressing.py" = [
+    "S101",
+    "ARG001",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+"tests/acceptance/steps/test_origin_provenance.py" = [
+    "S101",
+    "ARG001",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+"tests/acceptance/steps/test_guppi_canon.py" = [
+    "S101",
+    "ARG001",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
 
 [tool.ruff.lint.isort]
 known-first-party = ["bob"]
