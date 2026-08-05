@@ -25,6 +25,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from bob.conversation.thread_places import thread_block
 from bob.personality.mood_taste import experiment_bias, modulate
 from bob.personality.taste import Verdict
 
@@ -58,6 +59,7 @@ def _assemble_shareable_context(
     history: Sequence[Mapping[str, object]],
     *,
     absence: str | None = None,
+    mark_places: bool = False,
 ) -> str:
     """Compose Bob's reply-shaping context (Variant 2: MAY reach Tier 1).
 
@@ -76,6 +78,13 @@ def _assemble_shareable_context(
     idle past the configured threshold — ONE light ``Absence:`` line is appended so the
     reply tier can acknowledge the pause naturally. It is a hint, not a directive; with
     no/short gap (or the hint disabled) ``absence`` is ``None`` and no line is added.
+
+    🔴 ``mark_places`` (BOB-090.C3, behind ``memory.origin_provenance``): the replayed
+    thread carries WHERE each turn was said (:func:`~bob.conversation.thread_places.
+    thread_block`). The DM appeared in BOB-082 and its turns share this thread with the
+    room's, so without the place Bob read сказанное наедине as сказанное при всех and
+    announced «я же только что рассказал ГРУППЕ» about a joke he had made in the DM.
+    OFF (default) → the block is byte-identical to the pre-C3 one.
     """
     stored = soul.taste.score(topic)
     effective = modulate(stored, _verdict_sign(stored), soul.mood)
@@ -87,9 +96,9 @@ def _assemble_shareable_context(
     ]
     if soul.phantom_prefs:
         lines.append("Phantom preferences: " + ", ".join(soul.phantom_prefs))
-    turns = [str(item.get("content", "")) for item in history if item.get("content")]
-    if turns:
-        lines.append("Recent conversation:\n" + "\n".join(turns))
+    thread = thread_block(history, mark_places=mark_places)
+    if thread:
+        lines.append(thread)
     if absence:
         lines.append(f"Absence: {absence}")
     memories = [str(item.get("content", "")) for item in recalled]

@@ -85,11 +85,20 @@ class RecallAssembler:
         per-person replay. Memory is unified for the closed group (BOB-051), so the shared
         read is safe — it is ordinary topic traffic, not owner-private material.
 
-        Scope hook (BOB-058 .1): a PUBLIC group reads the shared thread. A future
-        PRIVATE/DM scope would read the CURRENT interlocutor's per-person slice
-        (``recent_episodes_for(interlocutor.sender_id, …)``) instead — only the public
-        group exists today, so the per-person branch is intentionally NOT wired here. The
-        ``interlocutor`` argument is retained as the seam that a private scope would key on.
+        Scope hook (BOB-058 .1): every scope reads the SAME shared thread. The owner's DM
+        arrived in BOB-082 and Bob stayed ONE mind — memory is deliberately cross-cutting,
+        not siloed per chat — so the per-person slice (``recent_episodes_for(interlocutor.
+        sender_id, …)``) is still NOT wired; the ``interlocutor`` argument is retained as
+        the seam a per-person read would key on.
+
+        🔴 The place rides ON the thread (BOB-090.C3). Because the DM's turns
+        (``visibility='owner_private'``) share this thread with the room's (``public``),
+        a thread WITHOUT the place read as one undivided room: on 2026-08-05 Bob announced
+        «я же только что рассказал ГРУППЕ» about a joke he had made in the DM — and so he
+        never called ``send_to_chat``, the task looking already done. Each replayed turn
+        therefore carries its ``visibility`` through to the compose context, where
+        :func:`~bob.conversation.thread_places.thread_block` marks WHERE it was said. This
+        method still filters and reorders NOTHING: the place is a signal, not a silo.
 
         🔴 The thread is CONVERSATION (BOB-087.C8): Bob's distilled ``work`` journal entries
         share the episodic log but are not turns anybody spoke, so they are left out of the

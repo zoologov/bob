@@ -1,0 +1,16 @@
+{
+  "baseline": {
+    "valence": 0.55,
+    "arousal": 0.45,
+    "openness": 0.7,
+    "social": 0.55,
+    "stability": 0.65
+  },
+  "current": {
+    "valence": 0.55,
+    "arousal": 0.45,
+    "openness": 0.7,
+    "social": 0.55,
+    "stability": 0.65
+  }
+}

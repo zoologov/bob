@@ -154,6 +154,7 @@ class _ContextAssembler(Protocol):
         history: Sequence[Mapping[str, object]],
         *,
         absence: str | None = None,
+        mark_places: bool = False,
     ) -> str: ...
 
 
@@ -267,6 +268,10 @@ class VoiceComposer:
         # ON PURPOSE — the anti-repeat regeneration re-enters ``compose`` with the SAME
         # recalled set, so the provenance it sees can never drift between the first
         # composition and a retry. OFF → the directive is "" → the prompt is byte-identical.
+        # 🔴 C3 rides the SAME flag: it marks the place on the replayed THREAD (the other
+        # half of the SAME axis «где сказано» — see ``mark_places`` in :meth:`compose`).
+        # One switch, so Bob can never see the place of what he recalled while the thread
+        # he just spoke stays placeless — the very inconsistency that fed the defect.
         self._origin_provenance = origin_provenance
 
     async def compose(
@@ -309,6 +314,14 @@ class VoiceComposer:
             recalled,
             history,
             absence=self._assembler.absence_for(history, interlocutor),
+            # BOB-090.C3: the replayed thread carries WHERE each turn was said. The DM
+            # (BOB-082) shares this thread with the room, and on the SHORT horizon
+            # («только что») the thread dominates recall — so without the place Bob read
+            # сказанное наедине as сказанное при всех («я же только что рассказал ГРУППЕ»
+            # про шутку, сказанную в личке) и потому НЕ звал send_to_chat: задача
+            # казалась выполненной. Same axis, same signal and same flag as the C1
+            # directive above — the two halves of «где сказано» never disagree.
+            mark_places=self._origin_provenance,
         )
         # Being-received acknowledgment (BOB-050 .3): a RARE, per-person hint that someone
         # warmly reacted to one of Bob's messages — applies to ANY interlocutor (owner and

@@ -140,6 +140,9 @@ class _RecordingContext:
 
     def __init__(self) -> None:
         self.recalled: tuple[Recalled, ...] = ()
+        # BOB-090.C3: просили ли пометить место у реплик нити (тот же флаг, что и у
+        # директивы про припомненное — две половины одной оси «где сказано»).
+        self.mark_places = False
 
     def __call__(
         self,
@@ -149,8 +152,10 @@ class _RecordingContext:
         history: object,  # noqa: ARG002
         *,
         absence: str | None = None,  # noqa: ARG002
+        mark_places: bool = False,
     ) -> str:
         self.recalled = tuple(recalled)
+        self.mark_places = mark_places
         return ""
 
 

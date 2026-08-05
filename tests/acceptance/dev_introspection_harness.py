@@ -221,6 +221,7 @@ def _assemble_context(
     history: object,
     *,
     absence: str | None = None,
+    mark_places: bool = False,
 ) -> str:
     return ""
 

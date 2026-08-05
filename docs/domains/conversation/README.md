@@ -79,8 +79,9 @@ src/bob/conversation/
   response_choice.py  # layer=domain          — ResponseIntent/ResponseChoice/ResponseContext + порт ResponseJudge (BOB-049)
   response_judgment.py# layer=domain          — чистый Tier-0 wire-протокол судьи ответа (prompt/parser/emoji-валидатор)
   volatility_judgment.py# layer=domain        — VolatilityVerdict/Context + порт VolatilityJudge + prompt/parser (BOB-057 .1)
-  reply_context.py    # layer=domain          — _assemble_shareable_context: сборка reply-shaping контекста хода (free-функция → хелпер, BOB-062.6b)
+  reply_context.py    # layer=domain          — _assemble_shareable_context: сборка reply-shaping контекста хода (free-функция → хелпер, BOB-062.6b); блок нити строит thread_block(mark_places=…) — место реплик за флагом memory.origin_provenance (BOB-090.C3)
   thread.py           # layer=domain          — проекция персиста в сигналы хода: _render_thread/_user_turns/_history_for_author/_recent_bob_replies/_strip_recalled_closer (BOB-062.6b)
+  thread_places.py    # layer=domain          — МЕСТО реплики: thread_block — блок недавней нити с пометкой, где прозвучала каждая реплика ([в личке] / [в общем чате, при всех]) + легенда; неизвестная метка молчит; за флагом memory.origin_provenance (BOB-090.C3)
   outgoing_target.py  # layer=domain          — OutgoingTarget VO + resolve_outgoing_target: КУДА ложится ответ (цитата reply-to + адресат), BOB-066 Срез 1.1
   room_reading.py     # layer=domain          — RoomMood/ReflectiveIntent/RoomReading(+Context) VO + порт RoomReader: форма ОДНОГО рефлексивного «чтения комнаты» (BOB-066 Срез 2.2); + пачечный шов BatchAmbientMessage(+kind)/BatchRoomReadingContext/BatchRoomReading + порт BatchRoomReader (BOB-072/BOB-078 B)
   room_reading_wire.py# layer=domain          — чистый Tier-1 wire-протокол «чтения комнаты» (ROOM_READ_SYSTEM_PROMPT/build_room_prompt/parse_room_reading, бросает RoomReadingParseError); + пачечный BATCH_ROOM_READ_SYSTEM_PROMPT/build_batch_room_prompt/parse_batch_reading (garbage→all-IGNORE, толерантен, BOB-072)
