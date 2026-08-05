@@ -30,6 +30,7 @@ from bob.app import build_application
 from bob.infrastructure.llm.openai_compat import _extract_tool_call_result
 from bob.social.adapters.first_impression_store import SqliteFirstImpressionStore
 from bob.social.adapters.soul_store import SoulStore
+from bob.social.disclosure import VISIBILITY_OWNER_PRIVATE
 from bob.social.first_impression import FirstImpression
 
 if TYPE_CHECKING:
@@ -360,6 +361,24 @@ async def remember_owner(app: Application, *, username: str | None) -> None:
             display_name="Вова",
             username=username,
         )
+    )
+
+
+async def remember_private_moment(app: Application, *, content: str) -> None:
+    """Записать в ЖИВУЮ память приватный эпизод из лички (так его пишет обычный ход).
+
+    Материал, который Боб потом ДОБАВИТ от себя: recall поднимет эту запись по слову из
+    просьбы, и гейт переноса увидит приватную метку — то есть сценарий проверяет тот же
+    путь, что и прод, а не подставленное состояние инструмента.
+    """
+    await app.memory_repo.save_episode(
+        {
+            "ts": datetime.now(UTC).isoformat(),
+            "event_type": "message",
+            "content": content,
+            "sender_id": OWNER_ID,
+            "visibility": VISIBILITY_OWNER_PRIVATE,
+        }
     )
 
 

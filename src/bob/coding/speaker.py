@@ -40,7 +40,7 @@ from __future__ import annotations
 
 from enum import StrEnum
 
-__all__ = ["MessageKind", "Speaker", "is_mechanical", "speaker_for"]
+__all__ = ["MessageKind", "Speaker", "channel_for", "is_mechanical", "speaker_for"]
 
 
 class Speaker(StrEnum):
@@ -105,8 +105,27 @@ def is_mechanical(kind: MessageKind) -> bool:
 def speaker_for(kind: MessageKind) -> Speaker:
     """Назвать говорящего для ``kind``: механика → GUPPI, всё живое → Боб.
 
-    Чистая функция без побочных эффектов: она НЕ выбирает бота и не знает про флаги —
-    потребитель (use-case, композиция) переводит вердикт в канал. По умолчанию говорит
+    Чистая функция без побочных эффектов: она НЕ знает ни про ботов, ни про флаги —
+    потребитель переводит вердикт в канал через :func:`channel_for`. По умолчанию говорит
     Боб: всё, что не названо механикой явно, адресовано человеку и звучит живым голосом.
     """
     return Speaker.GUPPI if is_mechanical(kind) else Speaker.BOB
+
+
+def channel_for[Channel](kind: MessageKind, *, bob: Channel, guppi: Channel) -> Channel:
+    """Выбрать то, ЧЕМ говорят, по вердикту канона: механика → GUPPI, живое → Боб.
+
+    Единственный перевод «говорящий → канал» на весь проект: нотификатор coding-сессии
+    (:func:`~bob.coding.usecases.coding_assistant.notifier_for`) и бот запроса разрешения
+    в композиционном корне берут своё отсюда, а не решают за себя сами.
+
+    🔴 Зачем ядру этот шаг (BOB-090.B-fix): пока канал выбирался отдельной строкой,
+    совпадавшей с каноном лишь по факту, подмена канона не двигала НИ ОДНОГО канала —
+    то есть ядро ничего не решало. Теперь ветки «мимо канона» просто нет.
+
+    Параметрично по типу канала (``Channel``): ядру безразлично, бот это, нотификатор
+    или что-то ещё — оно называет лишь ЧЬЁ оно.
+    ``bob`` и ``guppi``, оказавшиеся одним объектом (OFF-путь, когда отдельного канала
+    GUPPI нет), дают тот же объект на любой вид — поведение байт-в-байт как раньше.
+    """
+    return guppi if speaker_for(kind) is Speaker.GUPPI else bob

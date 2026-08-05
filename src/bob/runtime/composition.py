@@ -64,6 +64,7 @@ from bob.application.usecases.heartbeat import (
     ReflectTick,
 )
 from bob.application.usecases.perceive_reaction import PerceiveReaction
+from bob.coding.speaker import MessageKind, channel_for
 from bob.conversation.adapters.closer_log_store import SqliteCloserLog
 from bob.conversation.adapters.conversation_floor_store import (
     SqliteConversationFloorStore,
@@ -957,7 +958,15 @@ def build_application(
         permission_flow=_build_permission_flow(
             router=router,
             repo=connection,
-            bot=resolved_bob_bot,
+            # 🔴 Бота ВЫБИРАЕТ канон (BOB-090.B-fix): просьба разрешения — социальный акт,
+            # и ядро (``speaker_for``) называет говорящим Боба. Раньше здесь стояла строка
+            # «бот Боба», случайно совпадавшая по итогу: сам вердикт канона тогда ничем не
+            # исполнялся, и подмена канона не двигала ни один канал.
+            bot=channel_for(
+                MessageKind.PERMISSION_REQUEST,
+                bob=resolved_bob_bot,
+                guppi=resolved_guppi_bot,
+            ),
             chat_id=_int(telegram_section, "chat_id", 0),
             topic_id=_int(_section(telegram_section, "bob"), "topic_id", 0),
             owner_id=_int(telegram_section, "owner_id", 0),

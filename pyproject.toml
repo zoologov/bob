@@ -1856,6 +1856,11 @@ pytest_add_cli_args_test_selection = [
     # deterministic core in capabilities/usecases/tool_loop.py; its fast unit test lives in
     # tests/application, so it is selected here to measure that predicate's mutants.
     "tests/application/test_tool_loop_narration_backstop.py",
+    # BOB-090.B-fix: the autonomous-boundary verdict (``SafeCapabilityDispatcher.allows``:
+    # allow-listed AND self-declared safe) is a pure, deterministic policy in
+    # capabilities/usecases/registry.py — which IS scanned, so without its fast unit test
+    # here every mutant of it would survive and the gate would be phantom (§0.3 п.7).
+    "tests/application/test_capability_registry.py",
     # BOB-087.C2: the register-recall verdict parser (``parse_work_talk_verdict``) is a pure,
     # deterministic core in memory/usecases/classify_work_talk.py; its fast unit test lives in
     # tests/application, so it is selected here to measure that parser's mutants.

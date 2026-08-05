@@ -106,9 +106,9 @@ class _ConsentGate(Protocol):
     """Существующий шов согласия owner'а (BOB-082 .4) — структурно, без импорта."""
 
     async def owner_consents(
-        self, *, text: str, is_group: bool, is_owner: bool, recent_thread: str = ""
+        self, *, text: str, to_room: bool, is_owner: bool, recent_thread: str = ""
     ) -> bool:
-        """Разрешил ли owner ЭТИМ ходом вынести приватное в комнату."""
+        """Разрешил ли owner ЭТИМ ходом вынести приватное людям в комнате."""
         ...
 
 
@@ -144,7 +144,10 @@ class _SendToChatCapability:
 
     @property
     def permission(self) -> Permission:
-        # Не «safe»: это действие видно посторонним людям и необратимо.
+        # Не «safe»: это действие видно посторонним людям и необратимо, а значит его
+        # должен санкционировать человек. Заявление РАБОТАЮЩЕЕ (BOB-090.B-fix): его
+        # читает автономная граница (``SafeCapabilityDispatcher``) и на самодвижущемся
+        # тике отказывает — даже если имя внесли в ``goals.safe_capabilities``.
         return "confirm"
 
     async def execute(self, args: Mapping[str, object]) -> object:
@@ -177,16 +180,18 @@ class _SendToChatCapability:
     ) -> bool:
         """Можно ли нести материал ЭТОГО хода по этому адресу (BOB-090.B4).
 
-        Перенос считается по МАТЕРИАЛУ: приватен сам разговор или приватно припомненное —
-        в публичную комнату это едет только с явным согласием owner'а на ЭТОТ ход. Согласие
-        берёт существующий контур BOB-082.4 (второго не заводим); ``is_group=True`` здесь
+        Перенос считается по МАТЕРИАЛУ, который Боб ДОБАВЛЯЕТ от себя: приватное в
+        припомненном едет в публичную комнату только с явным согласием owner'а на ЭТОТ
+        ход. 🔴 Прямое распоряжение owner'а гейт не зажигает вовсе (BOB-090.B-fix):
+        согласие содержится в самой команде, и Tier-0 на неё не горит.
+
+        Согласие берёт существующий контур BOB-082.4 (второго не заводим); ``to_room``
         — про АУДИТОРИЮ адресата, а не про канал текущего хода: спрашивают ровно о том,
         выносить ли приватное людям в комнате. Контур не подключён → согласия взять
         неоткуда → перенос не делаем (безопасное умолчание, а не «пропускаем»).
         """
         if not transfer_needs_consent(
             scope.recalled,
-            turn_visibility=scope.turn_visibility,
             destination_public=address.kind is DestinationKind.GROUP,
         ):
             return True
@@ -194,7 +199,7 @@ class _SendToChatCapability:
             return False
         return await self._consent.owner_consents(
             text=scope.request_text,
-            is_group=True,
+            to_room=True,
             is_owner=scope.from_owner,
             recent_thread=scope.recent_thread,
         )

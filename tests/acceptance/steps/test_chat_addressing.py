@@ -42,6 +42,11 @@ scenarios("../features/chat_addressing.feature")
 _ASK_TO_TELL_NORMAN = "Боб, напиши Норману в группу, что я закончил обзор"
 _MESSAGE_FOR_THE_ROOM = "@Норман, Вова закончил обзор — можно смотреть."
 
+# Сказанное наедине, которое УЖЕ лежит в памяти Боба: именно его поднимет живой recall на
+# просьбу «расскажи, о чём мы говорили» — то есть материал, который Боб добавляет от себя.
+_PRIVATE_MOMENT = "Вова: я вымотался и не тяну этот спринт, нужна передышка"
+_ASK_TO_TRANSFER = "Боб, расскажи Норману в группе, о чём мы говорили про спринт"
+
 # Приватный материал в двух формах. По решению owner'а перенос считается ПО МАТЕРИАЛУ, так
 # что форма не должна менять ничего: и цитата, и пересказ — один и тот же вынос.
 _TRANSFER_FORMS: Mapping[str, str] = {
@@ -65,6 +70,7 @@ class _AddressingContext:
     request: str = _ASK_TO_TELL_NORMAN
     tool_call: Mapping[str, object] | None = None
     from_peer: bool = False
+    private_memory: str | None = None
     outcome: DeliveryOutcome = field(
         default_factory=lambda: DeliveryOutcome(
             bob=RecordingBot("bob"), guppi=RecordingBot("guppi")
@@ -121,11 +127,19 @@ def a_peer_asks_to_write_to_the_owner(addressing_context: _AddressingContext) ->
     }
 
 
+@given("Боб помнит сказанное владельцем наедине")
+def bob_remembers_a_private_moment(addressing_context: _AddressingContext) -> None:
+    # 🔴 Материал кладётся в ЖИВУЮ память, а не подставляется инструменту: гейт должен
+    # зажечься от того, что Боб добавляет ОТ СЕБЯ (recall поднял приватный эпизод), а не
+    # от места разговора — иначе он срабатывал бы и на прямом распоряжении владельца.
+    addressing_context.private_memory = _PRIVATE_MOMENT
+
+
 @given(parsers.parse("владелец из лички просит {form} сказанное наедине"))
 def owner_asks_to_transfer_private_matter(
     addressing_context: _AddressingContext, form: str
 ) -> None:
-    addressing_context.request = "Боб, расскажи Норману в группе, о чём мы говорили"
+    addressing_context.request = _ASK_TO_TRANSFER
     addressing_context.tool_call = {"place": "group", "text": _TRANSFER_FORMS[form]}
 
 
@@ -184,6 +198,7 @@ async def _run(context: _AddressingContext) -> DeliveryOutcome:
         consent=context.consent,
         norman_username=context.norman_username,
         delivery=context.delivery_enabled,
+        private_memory=context.private_memory,
     )
 
 
@@ -264,6 +279,24 @@ def bob_is_told_only_the_owner_may_order_it(
 ) -> None:
     said = addressing_context.outcome.tool_said
     assert "только по просьбе Вовы" in said, said
+
+
+@then("согласия на прямое распоряжение у владельца не спрашивали")
+def no_consent_was_ever_asked(addressing_context: _AddressingContext) -> None:
+    # 🔴 Ровно дефект B-fix: раньше переносом считался ЛЮБОЙ ход из лички, поэтому
+    # прямое распоряжение уходило к консервативному судье согласия и получало отказ.
+    # Согласие содержится в самой команде — спрашивать не о чем, и Tier-0 не горит.
+    assert addressing_context.outcome.consent_calls == 0, (
+        "у владельца спросили согласие на его же прямое распоряжение"
+    )
+
+
+@then("согласие у владельца спросили")
+def consent_was_asked(addressing_context: _AddressingContext) -> None:
+    # Обратная сторона: приватное из памяти без вопроса не уезжает даже с «да» в кармане.
+    assert addressing_context.outcome.consent_calls > 0, (
+        "приватное из памяти поехало в комнату, ни о чём не спросив"
+    )
 
 
 @then("Бобу сказано спросить согласие владельца")

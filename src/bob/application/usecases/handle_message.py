@@ -100,6 +100,7 @@ from bob.conversation.thread import (
     _history_for_author,  # noqa: F401  # re-exported for tests (used by RecallAssembler)
     _last_seen_at,  # noqa: F401  # re-exported for tests (used by RecallAssembler)
     _recent_bob_replies,  # noqa: F401  # re-exported for tests (used by AntiRepeatGuard)
+    _render_thread,
     _user_turns,
 )
 from bob.conversation.usecases.addressivity_perceiver import AddressivityPerceiver
@@ -1698,7 +1699,7 @@ class HandleMessage:
         # ничего (урок BOB-076). Армирование снимается на выходе, в том числе при сбое.
         try:
             with armed_delivery_scope(
-                self._delivery_scope_for(event, interlocutor, recalled)
+                self._delivery_scope_for(event, interlocutor, recalled, history)
             ):
                 reply = await self._run_generation(
                     _generate, chat_id=event.chat_id, demand=demand, interest=interest
@@ -1802,14 +1803,20 @@ class HandleMessage:
         event: MessageReceived,
         interlocutor: Interlocutor | None,
         recalled: Sequence[Recalled],
+        history: Sequence[Mapping[str, object]],
     ) -> DeliveryScope:
         """Собрать обстоятельства ЭТОГО хода для инструмента отправки (BOB-090.B1).
 
         ``from_owner`` — вправе ли просящий вообще адресовать сообщение в другой чат
         (только owner, BOB-076); ``here_chat_id`` — чтобы «отправка» в тот же чат
-        распозналась структурно, а не по формулировке. Материал берётся ДВУМЯ частями,
-        потому что перенос приватного считается по материалу, а не по форме: видимость
-        самого разговора (личка приватна целиком) и то, что подняла память.
+        распозналась структурно, а не по формулировке. Материал — то, что Боб ДОБАВЛЯЕТ
+        от себя, то есть припомненное: по нему и считается перенос приватного. Нить
+        (``history``) едет с ходом, чтобы гейт согласия судил просьбу В СИТУАЦИИ, а не в
+        вакууме (BOB-090.B-fix: поле существовало, но не заполнялось никогда).
+
+        🔴 Видимость самого разговора сюда НЕ кладётся: ход в личке помечен приватным
+        целиком, поэтому как признак переноса она зажигала гейт на каждой отправке и Боб
+        отказывал owner'у в его же прямом распоряжении.
 
         Всегда собирается и ничем не гейтится: обстоятельства сами по себе безвредны, а
         читать их некому, пока инструмент не зарегистрирован (флаг ``social.delivery``).
@@ -1821,8 +1828,8 @@ class HandleMessage:
             ),
             here_chat_id=event.chat_id,
             request_text=event.text,
-            turn_visibility=self._turn_visibility(is_group=event.is_group),
             recalled=tuple(recalled),
+            recent_thread=_render_thread(history),
         )
 
     def _resolve_outgoing_target(
@@ -2279,7 +2286,7 @@ class HandleMessage:
             interlocutor is not None and interlocutor.kind is InterlocutorKind.OWNER
         )
         owner_consented = await self._disclosure_consent.owner_consents(
-            text=event.text, is_group=True, is_owner=is_owner
+            text=event.text, to_room=True, is_owner=is_owner
         )
         return Trust.GUEST, owner_consented
 

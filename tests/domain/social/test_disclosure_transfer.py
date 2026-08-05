@@ -2,15 +2,18 @@
 # SPDX-License-Identifier: BUSL-1.1
 # See the LICENSE file in the project root for full license information.
 
-"""Тесты гейта переноса приватного в публичный чат (BOB-090.B4).
+"""Тесты гейта переноса приватного в публичный чат (BOB-090.B4, исправлен в B-fix).
 
 🔴 Решение owner'а: перенос считается **ПО МАТЕРИАЛУ, а не по форме**. Если в материал
 ответа попал приватный эпизод, а адресат публичный — нужно согласие; пересказ своими
 словами такой же перенос, как цитата. Иначе просьба «расскажи Норману, о чём мы говорили»
 обходила бы гейт простой переформулировкой.
 
-Материал хода — это ДВА источника: припомненное (recall) и сам разговор, в котором Боб
-сейчас находится (личка owner'а приватна целиком). Оба учитываются.
+🔴 Материал — это то, что Боб ДОБАВЛЯЕТ ОТ СЕБЯ (приватное из памяти), а НЕ место, где
+идёт разговор. Пока переносом считался любой ход из лички, гейт срабатывал всегда: ход в
+личке целиком помечен ``owner_private``, поэтому Боб отказывал owner'у в его же прямом
+распоряжении («напиши в группу, что я закончил обзор»). Просьба owner'а — волеизъявление,
+согласие содержится в самой команде.
 """
 
 from __future__ import annotations
@@ -57,68 +60,37 @@ def test_a_missing_visibility_key_reads_as_not_private() -> None:
 
 
 def test_private_material_into_a_public_room_needs_consent() -> None:
-    assert (
-        transfer_needs_consent(
-            (_PRIVATE,), turn_visibility=VISIBILITY_PUBLIC, destination_public=True
-        )
-        is True
-    )
+    assert transfer_needs_consent((_PRIVATE,), destination_public=True) is True
 
 
-def test_a_private_conversation_needs_consent_even_with_public_recall() -> None:
-    # 🔴 Материал — это и сам разговор: личка приватна целиком, пересказ её содержимого
-    # в комнату остаётся переносом, даже если recall ничего приватного не поднял.
-    assert (
-        transfer_needs_consent(
-            (_PUBLIC,),
-            turn_visibility=VISIBILITY_OWNER_PRIVATE,
-            destination_public=True,
-        )
-        is True
-    )
+def test_a_direct_order_of_the_owner_needs_no_consent() -> None:
+    # 🔴 Тот самый дефект: ход в личке помечен owner_private ЦЕЛИКОМ, и пока переносом
+    # считалось само место разговора, Боб отказывал owner'у в прямом распоряжении
+    # («напиши в группу, что я закончил обзор»). Согласие содержится в самой команде —
+    # гейт нужен там, где Боб добавляет приватное ОТ СЕБЯ, а не там, где owner диктует.
+    assert transfer_needs_consent((_PUBLIC,), destination_public=True) is False
 
 
 def test_public_material_into_a_public_room_needs_no_consent() -> None:
-    assert (
-        transfer_needs_consent(
-            (_PUBLIC, _LEGACY),
-            turn_visibility=VISIBILITY_PUBLIC,
-            destination_public=True,
-        )
-        is False
-    )
+    assert transfer_needs_consent((_PUBLIC, _LEGACY), destination_public=True) is False
 
 
 def test_a_private_destination_never_needs_consent() -> None:
     # Отправка в личку самому owner'у — не перенос: аудитория не изменилась.
-    assert (
-        transfer_needs_consent(
-            (_PRIVATE,),
-            turn_visibility=VISIBILITY_OWNER_PRIVATE,
-            destination_public=False,
-        )
-        is False
-    )
+    assert transfer_needs_consent((_PRIVATE,), destination_public=False) is False
 
 
 def test_nothing_at_all_needs_no_consent() -> None:
-    assert (
-        transfer_needs_consent((), turn_visibility=None, destination_public=True)
-        is False
-    )
+    assert transfer_needs_consent((), destination_public=True) is False
 
 
 @pytest.mark.parametrize("destination_public", [True, False])
 def test_the_verdict_is_deterministic(destination_public: bool) -> None:
     first = transfer_needs_consent(
-        (_PRIVATE, _PUBLIC),
-        turn_visibility=VISIBILITY_OWNER_PRIVATE,
-        destination_public=destination_public,
+        (_PRIVATE, _PUBLIC), destination_public=destination_public
     )
     second = transfer_needs_consent(
-        (_PRIVATE, _PUBLIC),
-        turn_visibility=VISIBILITY_OWNER_PRIVATE,
-        destination_public=destination_public,
+        (_PRIVATE, _PUBLIC), destination_public=destination_public
     )
     assert first == second == destination_public
 
@@ -127,12 +99,10 @@ def test_a_reworded_retelling_is_the_same_transfer_as_a_quote() -> None:
     # Гейт смотрит на МЕТКУ материала, а не на текст: переформулировка его не обходит.
     quote = transfer_needs_consent(
         ({"content": "дословно: …", "visibility": VISIBILITY_OWNER_PRIVATE},),
-        turn_visibility=VISIBILITY_PUBLIC,
         destination_public=True,
     )
     retelling = transfer_needs_consent(
         ({"content": "если коротко, суть в том…", "visibility": VISIBILITY_OWNER_PRIVATE},),
-        turn_visibility=VISIBILITY_PUBLIC,
         destination_public=True,
     )
     assert quote is retelling is True

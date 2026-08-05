@@ -131,32 +131,33 @@ def carries_owner_private(material: Sequence[Mapping[str, object]]) -> bool:
 
 
 def transfer_needs_consent(
-    recalled: Sequence[Mapping[str, object]],
-    *,
-    turn_visibility: str | None,
-    destination_public: bool,
+    recalled: Sequence[Mapping[str, object]], *, destination_public: bool
 ) -> bool:
-    """Whether carrying THIS turn's material to ``destination`` needs owner consent — pure.
+    """Whether carrying material Bob ADDS to a public destination needs consent — pure.
 
     🔴 Решение owner'а (BOB-090.B4): перенос считается **ПО МАТЕРИАЛУ, а не по форме**.
-    A reply whose material includes an ``owner_private`` item is a transfer whether it
+    A message whose material includes an ``owner_private`` item is a transfer whether it
     quotes or retells in Bob's own words — otherwise «расскажи Норману, о чём мы говорили»
-    would walk around the gate by simple rewording.
+    would walk around the gate by simple rewording. The gate reads the LABEL of the
+    material, never the wording, so the two forms are indistinguishable to it.
 
-    The material of a turn has TWO sources and both count: what recall surfaced
-    (``recalled``) and the conversation Bob is standing in (``turn_visibility`` — the
-    owner's DM is private in its entirety, so retelling it into a room is a transfer even
-    when recall raised nothing private).
+    🔴 Материал — это то, что Боб ДОБАВЛЯЕТ ОТ СЕБЯ: приватные эпизоды, поднятые памятью
+    (``recalled``). Место, где идёт разговор, триггером НЕ является (BOB-090.B-fix): пока
+    им считалась личка — приватная целиком, — гейт срабатывал на КАЖДОЙ отправке из лички
+    независимо от материала, и Боб отказывал owner'у в его же прямом распоряжении
+    («напиши в группу, что я закончил обзор»). Просьба owner'а — это волеизъявление, а не
+    утечка: согласие содержится в самой команде. Спрашивать надо там, где содержание
+    приходит из ПАМЯТИ Боба, а не изо рта owner'а.
+
+    🔴 ОСОЗНАННЫЙ ОСТАТОЧНЫЙ РИСК (решение owner'а, чинить не надо): если owner прямо
+    велит переслать в комнату сказанное им же в личке, а память ничего приватного не
+    подняла, отправка уйдёт без вопроса. Это его данные и его решение — Боб исполняет.
+    Гейт остаётся ровно там, где Боб выносит приватное ПО СВОЕЙ инициативе.
 
     Consent is only ever a question when the AUDIENCE changes: a ``destination_public``
     of ``False`` (writing back to the owner himself) is never a transfer. Deterministic.
     """
-    if not destination_public:
-        return False
-    return (
-        not may_surface(turn_visibility, Trust.GUEST)
-        or carries_owner_private(recalled)
-    )
+    return destination_public and carries_owner_private(recalled)
 
 
 def _visibility_of(item: Mapping[str, object]) -> str | None:

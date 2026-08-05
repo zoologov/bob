@@ -19,6 +19,8 @@ contract):
   the execution side: **GUPPI executes** the skill the model asked for.
 * :meth:`describe` — a short prose listing for Bob's system prompt, so he *knows*
   what GUPPI can do (referenced in his persona).
+* :meth:`permission_of` — what a capability declares about needing a human's go-ahead;
+  read by :class:`SafeCapabilityDispatcher`, the autonomous boundary.
 
 This is pure application policy: it holds the capability objects (whose concrete
 side-effects live behind their own ports) and never touches transport.
@@ -31,7 +33,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
-    from bob.capabilities.ports import Capability, ToolDefinition
+    from bob.capabilities.ports import Capability, Permission, ToolDefinition
 
 
 class UnknownCapabilityError(LookupError):
@@ -78,6 +80,15 @@ class CapabilityRegistry:
         ]
         return "\n".join(lines)
 
+    def permission_of(self, name: str) -> Permission | None:
+        """The named capability's declared permission, or ``None`` if unregistered.
+
+        The read side of the ``permission`` seam: an unknown name has no declaration at
+        all, and the caller must treat that as «не разрешено», never as «safe».
+        """
+        capability = self._capabilities.get(name)
+        return None if capability is None else capability.permission
+
 
 class SafeCapabilityDispatcher:
     """An allowlist-restricted view over a registry — the autonomous safe boundary.
@@ -90,6 +101,15 @@ class SafeCapabilityDispatcher:
     external-agency or arbitrary capability can NEVER be executed on the autonomous
     path by construction, no matter what the registry holds. An empty allowlist
     means nothing is runnable autonomously (the conservative default).
+
+    🔴 The SECOND condition is the capability's own ``permission`` (BOB-090.B-fix): a
+    ``"confirm"`` capability declares that a human must clear it before it runs, and on
+    the self-directed tick there IS no human to ask — so it is refused even when someone
+    put it on the allowlist. This is what makes the declaration load-bearing: it was read
+    by nobody, and a decorative gate is worse than an absent one, because it reads as
+    protection (``send_to_chat`` — visible to other people and irreversible — is the
+    capability that actually stands behind it). The declaration lives WITH the capability,
+    so a new skill is gated by what it says about itself, not by remembering a list.
     """
 
     def __init__(self, registry: CapabilityRegistry, *, allowlist: tuple[str, ...]) -> None:
@@ -97,8 +117,11 @@ class SafeCapabilityDispatcher:
         self._allowlist = frozenset(allowlist)
 
     def allows(self, name: str) -> bool:
-        """Whether ``name`` is on the safe-allowlist (runnable autonomously)."""
-        return name in self._allowlist
+        """Whether ``name`` is allow-listed AND declares itself safe to run unattended.
+
+        An unregistered name (no declaration at all) is never allowed: doubt refuses.
+        """
+        return name in self._allowlist and self._registry.permission_of(name) == "safe"
 
     async def dispatch(self, name: str, args: Mapping[str, object]) -> object:
         """Run the named capability ONLY if allow-listed; raise otherwise."""

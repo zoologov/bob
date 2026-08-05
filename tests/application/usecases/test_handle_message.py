@@ -9928,7 +9928,7 @@ class _ScopeProbeCapability:
 
 
 class _ProbeToolProvider:
-    """Requests the probe tool once, then answers."""
+    """Requests the probe tool once per turn, then answers (tool → answer, tool → answer)."""
 
     def __init__(self) -> None:
         self._call = 0
@@ -9941,9 +9941,9 @@ class _ProbeToolProvider:
     ) -> ToolCallResult:
         del messages, tools
         self._call += 1
-        if self._call == 1:
+        if self._call % 2 == 1:
             return ToolCallResult(
-                text="", tool_calls=(ToolCall(id="c1", name="scope_probe"),)
+                text="", tool_calls=(ToolCall(id=f"c{self._call}", name="scope_probe"),)
             )
         return ToolCallResult(text="готово", tool_calls=())
 
@@ -9995,9 +9995,10 @@ async def test_a_non_owner_turn_is_armed_as_not_owner() -> None:
     assert scope.from_owner is False
 
 
-async def test_the_armed_material_is_the_turn_and_its_recall() -> None:
-    # 🔴 Перенос приватного считается ПО МАТЕРИАЛУ: ход несёт и видимость разговора,
-    # и то, что подняла память, — иначе гейт согласия нечем кормить.
+async def test_the_armed_material_is_what_memory_raised() -> None:
+    # 🔴 Перенос приватного считается ПО МАТЕРИАЛУ, который Боб ДОБАВЛЯЕТ от себя: ход
+    # несёт припомненное — иначе гейт согласия нечем кормить. Видимости самого разговора
+    # в снимке нет намеренно (BOB-090.B-fix): она зажигала гейт на каждой отправке.
     registry, probe = _probe_registry()
     handler, _bot, _repo, _tier1 = _build(
         reply="unused",
@@ -10012,10 +10013,28 @@ async def test_the_armed_material_is_the_turn_and_its_recall() -> None:
 
     scope = probe.seen[0]
     assert scope is not None
-    assert scope.turn_visibility == "public"  # групповой ход по умолчанию
     assert any(
         item.get("visibility") == "owner_private" for item in scope.recalled
     )
+    assert not hasattr(scope, "turn_visibility")
+
+
+async def test_the_armed_turn_carries_the_recent_thread() -> None:
+    # Нить хода доезжает до гейта согласия: он судит просьбу В СИТУАЦИИ, а пустая строка
+    # означала бы «контекста нет» — поле годами оставалось незаполненным.
+    registry, probe = _probe_registry()
+    handler, _bot, _repo, _tier1 = _build(
+        reply="unused",
+        registry=registry,
+        tool_provider=_ProbeToolProvider(),
+        history=_PRIOR_IGNORED_TURN,
+    )
+
+    await handler.handle(_message("расскажи подробно про кофе"))
+
+    scope = probe.seen[0]
+    assert scope is not None
+    assert "новый план" in scope.recent_thread
 
 
 async def test_the_scope_is_disarmed_once_the_turn_is_over() -> None:

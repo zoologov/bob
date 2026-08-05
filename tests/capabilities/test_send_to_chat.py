@@ -80,12 +80,12 @@ class _FakeConsent:
         self.calls: list[Mapping[str, object]] = []
 
     async def owner_consents(
-        self, *, text: str, is_group: bool, is_owner: bool, recent_thread: str = ""
+        self, *, text: str, to_room: bool, is_owner: bool, recent_thread: str = ""
     ) -> bool:
         self.calls.append(
             {
                 "text": text,
-                "is_group": is_group,
+                "to_room": to_room,
                 "is_owner": is_owner,
                 "recent_thread": recent_thread,
             }
@@ -107,18 +107,18 @@ def _scope(
     *,
     from_owner: bool = True,
     material_private: bool = False,
-    turn_visibility: str | None = VISIBILITY_PUBLIC,
+    recent_thread: str = "",
 ) -> DeliveryScope:
     return DeliveryScope(
         from_owner=from_owner,
         here_chat_id=_DM_CHAT,
         request_text="расскажи Норману в нашей группе про релиз",
-        turn_visibility=turn_visibility,
         recalled=(
             ({"content": "личное", "visibility": VISIBILITY_OWNER_PRIVATE},)
             if material_private
             else ({"content": "публичное", "visibility": VISIBILITY_PUBLIC},)
         ),
+        recent_thread=recent_thread,
     )
 
 
@@ -272,23 +272,39 @@ async def test_explicit_owner_consent_lets_the_transfer_through() -> None:
     assert len(messenger.sent) == 1
     # Согласие спрашивается про ЭТОТ ход и про эту аудиторию.
     assert consent.calls[0]["text"] == "расскажи Норману в нашей группе про релиз"
-    assert consent.calls[0]["is_group"] is True
+    assert consent.calls[0]["to_room"] is True
     assert consent.calls[0]["is_owner"] is True
 
 
-async def test_a_private_conversation_alone_already_triggers_the_gate() -> None:
-    # Материал — это и сам разговор: пересказ лички в комнату остаётся переносом.
+async def test_the_consent_question_carries_the_recent_thread() -> None:
+    # Судья согласия смотрит на просьбу В СИТУАЦИИ: нить хода доезжает до него, а не
+    # теряется по дороге (пустая строка означала бы «контекста нет», а он есть).
     messenger = _FakeMessenger()
+    consent = _FakeConsent(verdict=True)
     capability = _capability(
         messenger=messenger,
-        scope=_scope(turn_visibility=VISIBILITY_OWNER_PRIVATE),
-        consent=_FakeConsent(verdict=False),
+        scope=_scope(material_private=True, recent_thread="bob: рассказать им про X?"),
+        consent=consent,
     )
 
-    result = await _execute(capability, place="group", text="мы тут решили…")
+    await _execute(capability, place="group", text="Вова говорил, что…")
 
-    assert messenger.sent == []
-    assert result["sent"] is False
+    assert consent.calls[0]["recent_thread"] == "bob: рассказать им про X?"
+
+
+async def test_a_direct_order_of_the_owner_is_sent_without_asking_consent() -> None:
+    # 🔴 Ход owner'а в личке приватен ЦЕЛИКОМ, и пока это считалось переносом, Боб
+    # отказывал owner'у в его же распоряжении. Согласие содержится в самой команде:
+    # без приватного материала из памяти гейт не зажигается и Tier-0 не горит.
+    messenger = _FakeMessenger()
+    consent = _FakeConsent(verdict=False)
+    capability = _capability(messenger=messenger, scope=_scope(), consent=consent)
+
+    result = await _execute(capability, place="group", text="Вова закончил обзор.")
+
+    assert result["sent"] is True
+    assert messenger.sent == [(_GROUP.chat_id, 32, "Вова закончил обзор.")]
+    assert consent.calls == [], "у owner'а спросили согласие на его же распоряжение"
 
 
 async def test_without_a_consent_seam_private_material_never_leaves() -> None:

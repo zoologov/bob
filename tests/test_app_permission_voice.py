@@ -9,7 +9,8 @@
 ``build_application`` и проверяется, ЧЕМ он снабдил гейт привилегий:
 
 * бот — БОБА, а не GUPPI: по канону (:func:`~bob.coding.speaker.speaker_for`) просьба о
-  разрешении это социальный акт, и говорит её Боб;
+  разрешении это социальный акт, и говорит её Боб — причём бот именно ВЫБИРАЕТСЯ
+  вердиктом ядра (:func:`~bob.coding.speaker.channel_for`), а не совпадает с ним;
 * ростер — живой стор первых впечатлений: иначе упоминание owner'а заземлять нечем и
   Боб навсегда остался бы без настоящего ``@ника``.
 """
@@ -19,6 +20,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from bob.app import build_application
+from bob.coding import speaker
 from bob.coding.speaker import MessageKind, Speaker, speaker_for
 from bob.runtime import composition
 from bob.runtime.wiring.permission import _build_permission_flow
@@ -143,6 +145,23 @@ def test_the_permission_notice_is_wired_to_bobs_bot_not_guppis(
     # … а композиция даёт ровно его бота.
     assert captured["bot"] is bob_bot
     assert captured["bot"] is not guppi_bot
+
+
+def test_the_permission_bot_is_chosen_by_the_canon_not_merely_equal_to_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """🔴 Канон обязан ВЫБИРАТЬ канал, а не совпадать с ним (BOB-090.B-fix).
+
+    Пока бот прописывался отдельной строкой, саботаж :func:`speaker_for` не двигал
+    ничего: ядро «решало» вердикт, который никто не исполнял. Здесь канон переназначен
+    на GUPPI — и композиция обязана взять бота GUPPI, иначе связь держится на удаче.
+    """
+    monkeypatch.setattr(speaker, "speaker_for", lambda kind: Speaker.GUPPI)  # noqa: ARG005
+
+    captured, bob_bot, guppi_bot = _permission_wiring(tmp_path, monkeypatch)
+
+    assert captured["bot"] is guppi_bot
+    assert captured["bot"] is not bob_bot
 
 
 def test_the_permission_flow_gets_the_live_roster_for_the_owner_mention(

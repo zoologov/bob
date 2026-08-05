@@ -62,7 +62,7 @@ from bob.coding.entities import CodingOutcome, CodingSession
 from bob.coding.naming import worktree_branch
 from bob.coding.narrate import narrate
 from bob.coding.ports import LiveRunStreamer, OwnerCheck, OwnerNotifier
-from bob.coding.speaker import MessageKind, Speaker, speaker_for
+from bob.coding.speaker import MessageKind, channel_for
 from bob.coding.state import CodingSessionState, can_approve_plan, is_terminal
 from bob.coding.work_facts import WorkFactsAccumulator, WorkOutcome
 from bob.memory.self_action import SelfAction, SelfActionKind
@@ -120,16 +120,16 @@ def notifier_for(
 ) -> OwnerNotifier:
     """Выбрать канал по ВИДУ сообщения: вердикт ядра называет говорящего (BOB-090.D2).
 
-    Единственное место, где канон «механику озвучивает GUPPI, живое — Боб»
-    (:func:`~bob.coding.speaker.speaker_for`) превращается в канал. Раньше расклад был
-    размазан по местам отправки, и каждая новая реплика решала за себя сама; теперь
-    ветки «мимо канона» просто нет.
+    Именование канала coding-сессии поверх ОДНОГО перевода «говорящий → канал»
+    (:func:`~bob.coding.speaker.channel_for`): раньше расклад был размазан по местам
+    отправки, и каждая новая реплика решала за себя сама; теперь ветки «мимо канона»
+    просто нет — ни здесь, ни у бота запроса разрешения в композиции.
 
     🔴 OFF-путь: когда композиция не дала отдельного канала GUPPI (флаг
     ``coder.stream_via_guppi`` выключен), ``bob`` и ``guppi`` — ОДИН и тот же
     нотификатор, и любой вердикт приводит в него же — поведение байт-в-байт как раньше.
     """
-    return guppi if speaker_for(kind) is Speaker.GUPPI else bob
+    return channel_for(kind, bob=bob, guppi=guppi)
 
 
 class TypingKeepalive(Protocol):

@@ -19,7 +19,13 @@ from __future__ import annotations
 
 import pytest
 
-from bob.coding.speaker import MessageKind, Speaker, is_mechanical, speaker_for
+from bob.coding.speaker import (
+    MessageKind,
+    Speaker,
+    channel_for,
+    is_mechanical,
+    speaker_for,
+)
 
 # Полная таблица истинности канона: КАЖДЫЙ вид сообщения назван явно, чтобы новый вид
 # нельзя было завести молча — тест ниже требует, чтобы таблица покрывала весь enum.
@@ -95,3 +101,27 @@ def test_is_mechanical_agrees_with_the_verdict() -> None:
 def test_speakers_are_two_distinct_voices() -> None:
     # Ровно два голоса, и оба названы: третьего «служебного» лица в каноне нет.
     assert {speaker.value for speaker in Speaker} == {"bob", "guppi"}
+
+
+# --- channel_for: вердикт ядра → то, чем говорят (BOB-090.B-fix) --------------------
+# Канон обязан ВЫБИРАТЬ канал, а не совпадать с ним: пока выбор бота стоял отдельной
+# строкой в композиции, саботаж канона не ронял ни одного поведенческого сценария.
+
+
+@pytest.mark.parametrize("kind", list(MessageKind))
+def test_channel_of_every_kind_follows_the_verdict(kind: MessageKind) -> None:
+    assert channel_for(kind, bob="бот Боба", guppi="бот GUPPI") == (
+        "бот GUPPI" if speaker_for(kind) is Speaker.GUPPI else "бот Боба"
+    )
+
+
+def test_the_permission_request_channel_is_bobs() -> None:
+    assert channel_for(
+        MessageKind.PERMISSION_REQUEST, bob="бот Боба", guppi="бот GUPPI"
+    ) == "бот Боба"
+
+
+def test_one_channel_for_both_voices_collapses_to_it() -> None:
+    # OFF-путь: отдельного канала GUPPI нет — любой вид приводит в единственный канал.
+    only = object()
+    assert all(channel_for(kind, bob=only, guppi=only) is only for kind in MessageKind)

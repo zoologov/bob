@@ -306,6 +306,33 @@ async def test_safe_dispatcher_default_allowlist_refuses_introspection_caps(
             await dispatcher.dispatch(name, {"ref": "bob", "query": "bob"})
 
 
+async def test_the_live_send_to_chat_is_refused_autonomously_even_if_allowlisted(
+    tmp_path: Path,
+) -> None:
+    # 🔴 BOB-090.B-fix: ``permission='confirm'`` перестал быть декоративным. Отправка в
+    # ДРУГОЙ чат видна посторонним людям и необратима, поэтому на самодвижущемся тике —
+    # где подтвердить некому — она не исполняется даже при ошибке в конфиге, которая
+    # внесла её в ``goals.safe_capabilities`` (урок BOB-076: мощное действие только по
+    # явной просьбе владельца).
+    config = _config(tmp_path)
+    config["telegram"] = {**config["telegram"], "chat_id": -100, "owner_id": 7}  # type: ignore[dict-item]
+    config["social"] = {"delivery": True}
+    app = build_application(
+        config=config,
+        providers=_providers(),
+        bob_bot=_Bot(),
+        guppi_bot=_Bot(),
+    )
+
+    # Инструмент модели доступен (разговорный путь)…
+    assert "send_to_chat" in _registered_names(app)
+    # …но автономный диспетчер отказывает, хотя имя внесено в allowlist.
+    dispatcher = SafeCapabilityDispatcher(app.registry, allowlist=("send_to_chat",))
+    assert dispatcher.allows("send_to_chat") is False
+    with pytest.raises(CapabilityNotAllowedError):
+        await dispatcher.dispatch("send_to_chat", {"place": "group", "text": "привет"})
+
+
 # --- BOB-067: the repo-navigation skills ride the same seam --------------------
 
 

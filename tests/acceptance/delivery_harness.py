@@ -39,6 +39,7 @@ from tests.acceptance.live_app_harness import (
     build_live_app,
     offers_tool,
     remember_norman,
+    remember_private_moment,
 )
 
 if TYPE_CHECKING:
@@ -116,13 +117,16 @@ async def run_owner_dm_request(
     consent: bool = True,
     norman_username: str | None = NORMAN_USERNAME,
     delivery: bool = True,
+    private_memory: str | None = None,
 ) -> DeliveryOutcome:
     """Прогнать ход owner'а ИЗ ЛИЧКИ через живой граф и вернуть наблюдаемое.
 
     ``tool_call`` — аргументы, с которыми модель зовёт ``send_to_chat`` (``None`` — не
     зовёт вовсе); ``consent`` — что ответит Tier-0 на вопрос «owner разрешает вынести это
     в комнату?»; ``norman_username`` — ник Нормана в ЖИВОМ ростере (``None`` = ника нет,
-    нормальное состояние в Telegram); ``delivery`` — флаг ``social.delivery``.
+    нормальное состояние в Telegram); ``delivery`` — флаг ``social.delivery``;
+    ``private_memory`` — сказанное наедине, которое УЖЕ лежит в живой памяти (его поднимет
+    настоящий recall, и именно он — материал, который Боб добавляет от себя).
     """
     bob_bot, guppi_bot = RecordingBot("bob"), RecordingBot("guppi")
     tier0 = Tier0Provider(consent=consent)
@@ -138,6 +142,8 @@ async def run_owner_dm_request(
     await app.startup()
     try:
         await remember_norman(app, username=norman_username)
+        if private_memory is not None:
+            await remember_private_moment(app, content=private_memory)
         await app.event_bus.publish(
             MessageReceived(
                 update_id=1,
