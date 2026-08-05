@@ -93,6 +93,10 @@ first_dialogue.txt
 # workspace LIVES here between sessions, so it must be ignored in the repo itself — not
 # only via the machine-local .git/info/exclude, which a fresh clone does not carry.
 .worktrees/
+# Рабочие места Боба как отдельные КЛОНЫ (coder.clone_root, default; BOB-089 срез A).
+# 🔴 Обязательно игнорировать: клон весит ~142 МБ и содержит СВОЙ .git — попадание такого
+# каталога в индекс основного репозитория было бы и мусором, и путаницей вложенных репо.
+.clones/
 # Live-test dialogue dumps (local only, BOB-063)
 dialog.txt
 test.txt

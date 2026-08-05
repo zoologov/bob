@@ -803,6 +803,35 @@ ignore = [
     "RUF002",
     "RUF003",
 ]
+# Рабочее место как отдельный КЛОН (BOB-089, срез A): чистое ядро плана клона, адаптер и
+# их тесты несут русские докстроки/комментарии, объясняющие ЗАЧЕМ клон вместо worktree и
+# какова цена (Cyrillic look-alikes intentional → RUF001-003). Real-git acceptance гоняет
+# git фиксированной формой в ОДНОРАЗОВОМ временном репозитории (→ S603/S607) и содержит
+# ФИКТИВНЫЙ токен в URL, чтобы доказать отказ без эха секрета (→ S105). Тесты равенства
+# сборки читают приватные поля собранных адаптеров — в этом и смысл проверки «тип и
+# аргументы», а не «похожесть» (→ SLF001).
+"src/bob/coding/clone_plan.py" = ["RUF001", "RUF002", "RUF003"]
+"src/bob/coding/adapters/git_clone.py" = ["RUF001", "RUF002", "RUF003"]
+"src/bob/coding/adapters/_paths.py" = ["RUF001", "RUF002", "RUF003"]
+"src/bob/coding/adapters/_integrate.py" = ["RUF001", "RUF002", "RUF003"]
+"tests/domain/coding/test_clone_plan.py" = ["RUF001", "RUF002", "RUF003"]
+"tests/infrastructure/coding/test_git_clone_real_git.py" = [
+    "S101",
+    "S105",
+    "S603",
+    "S607",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+"tests/runtime/wiring/test_workspace_wiring.py" = [
+    "S101",
+    "SLF001",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+"tests/test_coder_config.py" = ["RUF001", "RUF002", "RUF003"]
 "tests/infrastructure/coding/test_claude_spawn_env.py" = [
     "S101",
     "SLF001",

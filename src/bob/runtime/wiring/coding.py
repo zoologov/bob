@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, cast
 from bob.capabilities.introspection.privacy_guard import PrivacyGuard
 from bob.coding.adapters import (
     GhPullRequestOpener,
+    GitClone,
     GitWorktree,
     SubprocessClaudeRunner,
 )
@@ -85,6 +86,35 @@ def _build_coding_router(
         coder=coder,
         classifier=ClassifyCodingIntent(router=router),
         nl_autostart=_flag(_section(config, "coder"), "nl_autostart"),
+    )
+
+
+def _build_workspace(coder: Mapping[str, object]) -> GitWorktree | GitClone:
+    """Собрать рабочее место Боба: linked worktree (default) или отдельный КЛОН (BOB-089.A).
+
+    ОДНО место, где читается флаг ``coder.isolated_clone`` (default OFF). Оба адаптера
+    реализуют одни и те же порты (:class:`~bob.coding.ports.Worktree` +
+    :class:`~bob.coding.ports.PersistentWorkspace`), поэтому ни гейтед-ассистент, ни
+    менеджер интерактива не знают, во что они приземляются.
+
+    OFF → ровно прежний :class:`GitWorktree` с прежним аргументом
+    (``coder.worktree_root``, default ``.worktrees``): сборка байт-в-байт как до среза, и
+    это проверяется РАВЕНСТВОМ типа и аргументов, а не «похожестью».
+
+    ON → :class:`GitClone`: клон в ``coder.clone_root`` (default ``.clones``) из
+    локального пути репозитория, единственный remote — ``coder.fork_url`` (пусто → у
+    клона remote'а нет вовсе; апстрим не прописывается ни при каком значении). 🔴 Смысл
+    включения: у клона свой ``.git``, поэтому ``git update-ref refs/heads/main`` внутри
+    него до main owner'а не достаёт — в linked worktree достаёт, без сети и без кредов.
+    🔴 Честно: изоляции КРЕДОВ этот флаг не даёт (это срез C), поэтому включать его в
+    одиночку — половина гарантии.
+    """
+    if not _flag(coder, "isolated_clone"):
+        return GitWorktree(_str(coder, "worktree_root", ".worktrees"))
+    return GitClone(
+        _str(coder, "clone_root", ".clones"),
+        source=_REPO_ROOT,
+        fork_url=_str(coder, "fork_url", ""),
     )
 
 
@@ -178,7 +208,9 @@ def _build_coding_assistant(
             allow_bypass=_flag(coder, "allow_bypass"),
             extra_dirs=_str_list(coder, "extra_dirs"),
         ),
-        worktree=GitWorktree(_str(coder, "worktree_root", ".worktrees")),
+        # Рабочее место: linked worktree (default) или отдельный клон под
+        # ``coder.isolated_clone`` (BOB-089.A) — см. :func:`_build_workspace`.
+        worktree=_build_workspace(coder),
         store=SqliteCodingSessionStore(repo),
         pr_opener=GhPullRequestOpener(gh_bin=_str(coder, "gh_bin", "gh")),
         notifier=_CodingOwnerNotifier(
@@ -320,7 +352,11 @@ def _build_interactive_session(
     allow_bypass = _flag(coder, "allow_bypass")
     extra_dirs = _str_list(coder, "extra_dirs")
     firehose_bot = stream_bot if _flag(coder, "stream_via_guppi") else bot
-    worktree = GitWorktree(_str(coder, "worktree_root", ".worktrees"))
+    # Рабочее место: linked worktree (default) или отдельный клон под
+    # ``coder.isolated_clone`` (BOB-089.A) — см. :func:`_build_workspace`. Один объект
+    # обслуживает ОБА шва (эфемерный ``worktree`` + персистентный ``workspace``), как и
+    # раньше: подмена происходит здесь, а не в менеджере.
+    worktree = _build_workspace(coder)
     store = SqliteCodingSessionStore(repo)
     # 🔴 Resume seams (BOB-087.D3) — wired ONLY under ``coder.resume``. The same two
     # adapters, seen through their narrow read/ensure ports; OFF → ``None`` → the whole

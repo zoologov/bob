@@ -62,6 +62,17 @@ def test_coder_resume_defaults_off() -> None:
     assert section["resume"] is False
 
 
+def test_isolated_clone_ships_off_with_an_unconfigured_fork() -> None:
+    # Рабочее место как отдельный КЛОН (BOB-089, срез A) ships INERT: OFF → прежний linked
+    # worktree, а форк не настроен вовсе, поэтому даже при включении клон остаётся без
+    # remote'а (нечего пушить) — включение адреса форка отдельное, сознательное действие.
+    section = _config()["coder"]
+    assert isinstance(section, dict)
+    assert section["isolated_clone"] is False
+    assert section["clone_root"] == ".clones"
+    assert section["fork_url"] == ""
+
+
 def test_coding_capability_is_never_on_the_autonomous_safe_allowlist() -> None:
     # The gated coding session is owner-driven, never autonomous: it must NOT leak into
     # ``goals.safe_capabilities`` (the self-directed tick's allowlist).

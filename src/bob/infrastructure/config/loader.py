@@ -420,6 +420,24 @@ DEFAULT_CONFIG: Config = {
         # Оговорка та же, что и для ``allow_bypass`` выше: структурной эта гарантия
         # остаётся, пока сам claude работает под пер-действенным гейтом.
         "resume": False,
+        # 🔴 THE WORKPLACE AS A SEPARATE CLONE (BOB-089, slice A), ships OFF. A linked
+        # worktree SHARES the main repo's ``.git`` — the same objects, the same REFS, the
+        # same remotes and credentials — so ``git update-ref refs/heads/main <sha>`` moves
+        # the owner's trunk with no network and no credentials, bypassing every push guard
+        # (verified on real git, bob-5ao). ON → Bob works in a clone with its OWN ``.git``
+        # and that road does not exist at all; privacy is unchanged (a clone carries only
+        # TRACKED files — proven on real git, not assumed). ``clone_root`` is where the
+        # clones live (relative to the repo root, gitignored); ``fork_url`` is the clone's
+        # ONLY remote (Bob's fork) — empty means the clone has no remote whatsoever, and
+        # the upstream is never configured under any value.
+        # 🔴 Honestly: this flag does NOT isolate CREDENTIALS (a separate slice), so on its
+        # own it is half of the guarantee. And 🔴 a token is NEVER embedded in ``fork_url``
+        # (``https://x-access-token:<token>@host/…``): argv is visible in ``ps``, so such a
+        # configuration is refused at startup. Measured price on this repository: 3.8 s and
+        # 142 MB per workplace.
+        "isolated_clone": False,
+        "clone_root": ".clones",
+        "fork_url": "",
     },
     # Web search — «Боб ищет в интернете» (BOB-053). The ``web_search`` skill (behind
     # the capability seam) makes ONE Qwen-native call over the MaaS **Responses API**

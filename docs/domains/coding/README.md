@@ -37,6 +37,7 @@ src/bob/coding/
   naming.py           # layer=domain   — worktree_branch: эфемерная bob/<slug> + workspace_branch: долгоживущая bob/epic-<slug> (кириллица транслитерируется, BOB-087.D1/D5b)
   sandbox_policy.py   # layer=domain   — allowed_modes/is_allowed_mode/extra_dir_argv/is_safe_argv_value: политика owner-ослаблений изоляции + ClaudeRunError (BOB-087.D2/E)
   push_guard.py       # layer=domain   — guarded_spawn_env: барьер сетевого push в окружении спавна при owner-ослаблениях (BOB-087.E, bob-5ao)
+  clone_plan.py       # layer=domain   — clone_argv/checkout_argv/origin_argv/workspace_verdict/is_credential_free_url: план рабочего места-КЛОНА (файловый транспорт вместо хардлинков, вердикт переиспользования, запрет кредов в argv; BOB-089.A)
   stream_json.py      # layer=domain   — parse_event / STREAM_LIMIT: как читается ОДНА строка NDJSON-потока claude (общий примитив обоих транспортов, BOB-087.E)
   narrate.py          # layer=domain   — stream-json событие Claude Code → нарратив-строка / None (сжато, для группы)
   stream_render.py    # layer=domain   — render_stream_event(verbose): событие→строка; verbose=интерактив (полный текст+rich+chunk_for_telegram) vs груп (краткий кэп). BOB-082/085
@@ -54,12 +55,15 @@ src/bob/coding/
   adapters/           # layer=infrastructure
     claude_runner.py    — SubprocessClaudeRunner (headless claude через subprocess, без shell; one-shot)
     git_worktree.py     — GitWorktree (изолированный worktree только на трекнутых файлах; ensure — идемпотентный долгоживущий workspace, BOB-087.D1)
+    git_clone.py        — GitClone (то же рабочее место как ОТДЕЛЬНЫЙ КЛОН со своим .git; под теми же портами, подмена в композиции по флагу coder.isolated_clone, BOB-089.A)
     gh_pr.py            — GhPullRequestOpener (gh pr create; НИКОГДА merge)
     session_store.py    — SqliteCodingSessionStore (персист сессий через рестарт; by_branch — чтение всех сессий ветки, BOB-087.D3)
     indicator.py        — TypingKeepalive + StatusPanel (индикаторы работы в топике Боба)
     owner_notifier.py   — _CodingOwnerNotifier (нотификатор owner'а; переехал из app.py, BOB-062.7a)
     live_stream.py      — _DmLiveStreamer (полный лайв-стрим сырых событий в личку owner'а, BOB-082; firehose ботом GUPPI при coder.stream_via_guppi, BOB-087.A)
     _branch.py, _exec.py — внутренние shell-free хелперы адаптеров
+    _integrate.py       — commit_and_push_branch: ЕДИНСТВЕННОЕ место, где строится push ветки Боба (общее для worktree и клона, BOB-089.A)
+    _paths.py           — is_strict_child: проверка вложенности пути перед разрушающей операцией (общая для обоих рабочих мест)
 ```
 
 Живой терминал (`InteractiveSessionManager`, `InteractiveIntakeRouter`,
@@ -258,6 +262,34 @@ owner-флагом `coder.allow_bypass` (BOB-087.D2). Строку NDJSON-пот
 деревьев — ни живое дерево, ни ветку, ни main), парсер отбрасывает `prunable`-станзы, а реюз
 дополнительно требует, чтобы путь реально лежал на диске. Иначе owner получал бы мёртвый cwd
 и лечил бы это только шеллом — которого у него с телефона нет.
+
+🔴 **Рабочее место как ОТДЕЛЬНЫЙ КЛОН (BOB-089, срез A; флаг `coder.isolated_clone`, default
+OFF).** У linked worktree есть предел, который никакой конфиг не сдвинет: он делит `.git` с
+основным репозиторием — те же объекты, те же **refs**, те же remotes и те же credentials.
+Проверено на настоящем git (bob-5ao): `git update-ref refs/heads/main <sha>` из такого дерева
+двигает main owner'а без сети, без кредов и мимо любого push-барьера. `GitClone` — тот же
+контракт под теми же портами (`create` / `ensure` / `commit_and_push` / `remove`), но рабочее
+место становится КЛОНОМ со своим `.git`; подмена происходит в композиции
+(`_build_workspace`), поэтому use-case'ы не знают, во что приземляются, а OFF-путь остаётся
+прежним и доказывается РАВЕНСТВОМ сборки (тип адаптера и его аргументы), а не «похожестью».
+Решения вынесены в чистое ядро `clone_plan`: клонирование идёт через `file://` (голый
+локальный путь заставил бы git ХАРДЛИНКОВАТЬ файлы объектов — то есть склад объектов остался
+бы общим с репозиторием owner'а); `origin` переписывается на `coder.fork_url`, а при пустом
+значении remote удаляется ЦЕЛИКОМ (рабочая копия owner'а не остаётся адресом для push,
+апстрим не прописан ни при каком значении); долгоживущее место переиспользуется по вердикту
+`workspace_verdict`, а посторонний непустой каталог получает громкий отказ; URL со
+встроенными кредами (`https://x-access-token:<токен>@host/…`) отвергается на сборке, потому
+что argv виден в `ps`. Приватность клона ДОКАЗАНА на настоящем git, а не предположена (у
+`git clone` иные правила, чем у `worktree add`): тест перечисляет содержимое клона целиком и
+сверяет его с трекнутыми файлами, отдельно проверяя отсутствие хардлинков/alternates и то,
+что `update-ref refs/heads/main` внутри клона main owner'а не двигает
+(`tests/infrastructure/coding/test_git_clone_real_git.py`). Цена (замер на этом
+репозитории, `.git` 602 МБ): 3.8 с и 142 МБ на рабочее место; `--depth 1` (1.3 с, 63 МБ)
+отвергнут — без истории Боб теряет `git log`/`blame`, а `--shared`/`--reference` ставят клон
+в зависимость от объектов owner'а. 🔴 ЧЕСТНАЯ РАМКА: клон закрывает общий `.git`, но НЕ
+изолирует credentials — пока окружение спавна наследует credential helper owner'а, сеть
+остаётся открытой дорогой; это отдельный срез, и до него флаг даёт половину гарантии.
+
 `GhPullRequestOpener` строит единственную форму
 `gh pr create --base main --head <branch>` (discrete argv, без shell) — merge-метода в
 порте нет. `SqliteCodingSessionStore` round-trip'ит `CodingSession` (двойной гейт
@@ -287,6 +319,11 @@ owner-флагом `coder.allow_bypass` (BOB-087.D2). Строку NDJSON-пот
 - **Worktree-изоляция:** приватные gitignored-данные отсутствуют в свежем worktree —
   Claude Code их не видит; `remove` проверяет containment (symlink-resolved потомок
   `worktree_root`).
+- **Изоляция клона (BOB-089.A, под флагом):** та же приватность (только трекнутые файлы,
+  доказано перечислением на настоящем git) плюс СВОЙ `.git` — общих refs с основным
+  репозиторием нет, поэтому локальный `update-ref refs/heads/main` до main owner'а не
+  достаёт; единственный remote — форк (или ни одного); `remove` требует и containment, и
+  того, чтобы каталог был клоном. 🔴 Креды этим НЕ изолируются — отдельный срез.
 - **Sender-is-bob / owner-гейт (defense-in-depth):** тройная owner-проверка —
   `_maybe_route_coding` пускает только `InterlocutorKind.OWNER`, роутер перепроверяет
   `is_owner`, use-case проверяет `OwnerCheck.is_owner` на каждом методе. Отправитель
@@ -394,6 +431,10 @@ ClaudeCodeRunner`; транзитный ports-шим `bob.domain.ports` удал
   (`{plan, acceptEdits}`), `BYPASS_PERMISSION_MODE`, `MAX_EXTRA_DIRS = 8`.
 - `push_guard.py`: `guarded_spawn_env(env, *, active)` → окружение спавна с барьером сетевого
   push (BOB-087.E, bob-5ao).
+- `clone_plan.py`: `clone_argv(git_bin, *, source, dest)`, `checkout_argv(git_bin, *, dest,
+  branch, on_origin)`, `origin_argv(git_bin, *, dest, fork_url)` → `list[str]`;
+  `workspace_verdict(*, dest_exists, is_repo)` → `WorkspaceVerdict` (`CLONE`/`REUSE`/`REFUSE`);
+  `is_credential_free_url(url)` → `bool` (BOB-089.A).
 - `stream_json.py`: `parse_event(line)` → `Mapping[str, object] | None`; константа
   `STREAM_LIMIT` = 16 МиБ — общий примитив чтения потока для обоих транспортов (BOB-087.E).
 - `narrate.py`: `narrate(event)` → `str | None`.

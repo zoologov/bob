@@ -15,6 +15,10 @@ dynamic slot validated):
 * :class:`GitWorktree` (:class:`~bob.coding.ports.Worktree`) — an isolated git
   worktree on a ``bob/<slug>`` branch; only tracked files are present, so Bob's
   gitignored private data never reaches Claude Code.
+* :class:`GitClone` (the same ports, BOB-089.A) — the same workplace as a SEPARATE
+  CLONE with its own ``.git``, so the main repo's refs/remotes are not shared and
+  ``git update-ref refs/heads/main`` cannot reach the owner's trunk. Substituted for
+  :class:`GitWorktree` in the composition root under ``coder.isolated_clone``.
 * :class:`SubprocessClaudeRunner` (:class:`~bob.coding.ports.ClaudeCodeRunner`) — runs
   the local ``claude`` CLI headless with ``--output-format stream-json`` and a fixed
   ``--permission-mode`` allowlist, streaming NDJSON events.
@@ -27,11 +31,14 @@ from bob.coding.adapters.claude_runner import (
     SubprocessClaudeRunner,
 )
 from bob.coding.adapters.gh_pr import GhPullRequestOpener, PullRequestError
+from bob.coding.adapters.git_clone import CloneError, GitClone
 from bob.coding.adapters.git_worktree import GitWorktree, WorktreeError
 
 __all__ = [
     "ClaudeRunError",
+    "CloneError",
     "GhPullRequestOpener",
+    "GitClone",
     "GitWorktree",
     "PullRequestError",
     "SubprocessClaudeRunner",

@@ -27,7 +27,6 @@ and never spawn real git.
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 from bob.coding.adapters._branch import is_safe_branch
@@ -36,6 +35,8 @@ from bob.coding.adapters._exec import (
     CommandRunner,
     ExecRunner,
 )
+from bob.coding.adapters._integrate import commit_and_push_branch
+from bob.coding.adapters._paths import is_strict_child
 
 __all__ = ["GitWorktree", "WorktreeError"]
 
@@ -212,22 +213,14 @@ class GitWorktree:
             raise WorktreeError(
                 f"refusing to push branch {branch!r}: not a safe bob/<slug> branch"
             )
-        await self._runner(
-            [self._git_bin, "-C", path, "add", "-A"], timeout=self._timeout
-        )
-        status = await self._runner(
-            [self._git_bin, "-C", path, "status", "--porcelain"], timeout=self._timeout
-        )
-        if not status.strip():
-            return False  # claude applied no changes — fail honestly, no empty commit
-        await self._runner(
-            [self._git_bin, "-C", path, "commit", "-m", message], timeout=self._timeout
-        )
-        await self._runner(
-            [self._git_bin, "-C", path, "push", "-u", "origin", branch],
+        return await commit_and_push_branch(
+            self._runner,
+            git_bin=self._git_bin,
+            path=path,
+            branch=branch,
+            message=message,
             timeout=self._timeout,
         )
-        return True
 
     async def remove(self, path: str) -> None:
         """Remove the worktree at ``path`` (refused unless it is under the root)."""
@@ -243,12 +236,9 @@ class GitWorktree:
     def _is_under_root(self, path: str) -> bool:
         """Whether ``path`` resolves to a STRICT child of the worktree root.
 
-        Containment is computed on symlink-resolved real paths so neither the root
-        itself nor a path escaping it (``/etc/passwd``, a ``..`` traversal, a symlink
-        out of the root) is ever handed to ``git worktree remove``.
+        Containment is computed on symlink-resolved real paths (the shared
+        :func:`bob.coding.adapters._paths.is_strict_child`) so neither the root itself
+        nor a path escaping it (``/etc/passwd``, a ``..`` traversal, a symlink out of
+        the root) is ever handed to ``git worktree remove``.
         """
-        if not path:
-            return False
-        real_target = Path(os.path.realpath(path))
-        real_root = Path(os.path.realpath(self._worktree_root))
-        return real_root in real_target.parents
+        return is_strict_child(path, self._worktree_root)
