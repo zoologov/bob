@@ -188,3 +188,32 @@ class FakeRepoIntrospector:
             raise self._health_error_type(self._health_error)
         self.health_calls.append((check, since))
         return ProjectHealth(check=check, report=self._health_report)
+
+
+# The PNG magic prefix, so a fake render is recognisable as image bytes.
+FAKE_PNG = b"\x89PNG\r\n\x1a\nfake-bytes"
+
+
+class FakeDiagramRenderer:
+    """A scripted :class:`~bob.capabilities.ports.DiagramRenderer` (no ``mmdc``).
+
+    Records every source it was asked to render and returns canned PNG bytes, or raises
+    the given error to drive the honest "картинки не будет" path. Shared by the
+    ``draw_architecture`` / ``render_diagram`` tests and the acceptance harness so all
+    three exercise ONE fake contract. 🔴 A fake proves the fake's contract only, so the
+    render seam is ALSO covered on the real ``mmdc``
+    (``tests/infrastructure/diagrams/test_real_architecture_render.py``).
+    """
+
+    def __init__(
+        self, *, png: bytes = FAKE_PNG, raises: BaseException | None = None
+    ) -> None:
+        self.sources: list[str] = []
+        self._png = png
+        self._raises = raises
+
+    async def render(self, mermaid_source: str) -> bytes:
+        self.sources.append(mermaid_source)
+        if self._raises is not None:
+            raise self._raises
+        return self._png

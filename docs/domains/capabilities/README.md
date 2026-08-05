@@ -87,12 +87,13 @@ src/bob/capabilities/
     list_tasks.py     #                        — bd list по статусу (BOB-081, read-only)
     show_task.py      #                        — bd show <id> детали (BOB-081, read-only)
     task_comments.py  #                        — bd comments <id> (BOB-081, read-only)
-    draw_architecture.py —                     — mermaid-ИСТОЧНИК схемы архитектуры (beadloom graph: обзор / узел с --depth / C4-компоненты в --scope); Боб объясняет словами И отдаёт тот же источник в render_diagram (BOB-091.1, за флагом architecture_tools)
+    draw_architecture.py —                     — схема архитектуры: mermaid-ИСТОЧНИК модели для слов + САМ ставит отрендеренную картинку в общий DiagramSink (beadloom graph: обзор / узел с --depth / C4-компоненты в --scope) (BOB-091.1/.6, за флагом architecture_tools)
     architecture_impact.py —                   — «что сломается, если тронуть X» (beadloom why, сжато) (BOB-091.1, за флагом architecture_tools)
     project_health.py #                        — «как дела у проекта»: ОДИН инструмент над закрытым перечнем шести read-only отчётов beadloom (BOB-091.2, за тем же флагом architecture_tools)
     web_search.py     #                        — заземлённый веб-поиск (BOB-053)
     read_url.py       #                        — чтение одной ссылки за SSRF-щитом (BOB-054)
     render_diagram.py #                        — mermaid→PNG в чат + CollectingDiagramSink (BOB-035)
+    diagram_attachment.py —                    — DiagramAttachment: ОДИН шов «отрендерить и поставить картинку в очередь хода» (общий для render_diagram и draw_architecture; дедуп по источнику) (BOB-091.6)
     diagram_sender.py #                        — DiagramSender: авто-рендер inline-mermaid + drain sink → отправка (коллаборатор handle_message, BOB-062.6b)
     send_to_chat.py   #                        — отправка в УКАЗАННЫЙ чат/топик по просьбе owner'а: адрес (destination) + гейт переноса приватного (disclosure) + заземление упоминаний (mention); за флагом social.delivery, default OFF (BOB-090.B1)
     delivery_scope.py #                        — DeliveryScope + armed_delivery_scope/current_delivery_scope: обстоятельства ХОДА (кто просит, откуда, из какого материала) через ContextVar — нет хода, нет отправки (BOB-090.B1)
@@ -228,10 +229,27 @@ allowlist = автономно ничего не запускается (кон�
   тронуть memory». Два навыка над тем же `RepoIntrospector`: `draw_architecture`
   (`architecture_diagram` → `ArchitectureDiagram(mermaid, form, requested)`) и
   `architecture_impact` (`impact` → сжатый `beadloom why`). 🔴 **Решение owner'а:**
-  `draw_architecture` отдаёт модели **mermaid-ИСТОЧНИК**, а не картинку — тогда Боб
-  объясняет схему словами И передаёт тот же источник в уже работающий `render_diagram`
-  (mermaid→PNG→фото), а не выдаёт PNG молча; связка прямо описана в описании инструмента,
-  потому что соединяет два вызова именно модель. Формы argv — ФИКСИРОВАННЫЕ (как
+  `draw_architecture` отдаёт модели **mermaid-ИСТОЧНИК** (Боб объясняет схему словами) и
+  **сам** ставит отрендеренную картинку в тот же per-turn `DiagramSink`, что и
+  `render_diagram` — то есть owner получает и объяснение, и изображение, а молчаливый PNG
+  по-прежнему невыразим (текст ответа всегда пишет модель).
+  🔴 **BOB-091.6 — почему связка стала СТРУКТУРНОЙ.** Сначала связка «объясни словами И
+  вызови `render_diagram`» жила ТОЛЬКО в описании инструмента, то есть в уговоре с
+  моделью, — и живой смоук показал ровно её отказ: Боб вызвал `draw_architecture`, получил
+  5 КБ настоящего mermaid, грамотно разобрал схему словами и картинки не прислал (второго
+  вызова не сделал). Ни результат вызова, ни цикл инструментов к рендеру не толкали.
+  Теперь рендер — часть рисования: общий
+  [`DiagramAttachment`](../../../src/bob/capabilities/usecases/diagram_attachment.py)
+  (тот же локальный рендерер + тот же синк) рендерит ОДИН раз, дедуплицирует по источнику
+  (два инструмента на одну схему = одна фотография) и НЕ бросает наружу — сбой рендера
+  возвращается как честная строка `picture`, а не как исключение хода. Слова гарантированы,
+  картинка — best-effort. Пустой граф и отказанный ref не рендерятся вовсе.
+  🔴 **Урок про тесты (§0.3 п.4/п.10):** прежние юниты и BDD доказывали, что в ОПИСАНИИ
+  инструмента есть слово `render_diagram`, — ассерт про текст обещания, а не про поведение.
+  Связка закрыта тестом ЧЕРЕЗ ГРАНИЦУ (вызов → картинка в синке И mermaid модели) плюс
+  сквозным прогоном на НАСТОЯЩЕМ `mmdc` и НАСТОЯЩЕМ `beadloom graph` этого репозитория,
+  в том числе через боевую сборку `_build_registry`
+  (`tests/infrastructure/diagrams/test_real_architecture_render.py`). Формы argv — ФИКСИРОВАННЫЕ (как
   `_BD_LIST_ARG_FORMS`): обзор (без аргументов), `<ref> [--depth <N>]` (N клампится в
   [1,5]), и C4-внутренности одного контейнера
   (`--format c4 --level component --scope <ref>`); membership-check выполняется ДО запуска,
@@ -577,6 +595,8 @@ ports-шим `bob.domain.ports` удалён (BOB-062.8), все импортё�
   флагом `introspection.architecture_tools`,
   `web_search.make_web_search_capability`, `read_url.make_read_url_capability`,
   `render_diagram.make_render_diagram_capability` (+ `CollectingDiagramSink`),
+  `diagram_attachment.DiagramAttachment` (общий шов «рендер → очередь картинок хода»:
+  `render_diagram` строит его внутри, `draw_architecture` принимает готовый, BOB-091.6),
   `send_to_chat.make_send_to_chat_capability` (BOB-090.B1, регистрируется только за
   флагом `social.delivery`).
 - Обстоятельства и материал хода: `usecases.delivery_scope` (`DeliveryScope`,
@@ -595,6 +615,10 @@ ports-шим `bob.domain.ports` удалён (BOB-062.8), все импортё�
   `introspection.graph_form` (`GraphForm`, `plan_graph_form`, `validate_graph_ref`,
   `clamp_graph_depth`, `diagram_carries_nodes`, `MAX_GRAPH_DEPTH`),
   `introspection.impact_digest` (`digest_impact`, `MAX_IMPACT_ITEMS`, `MAX_SUBJECT_CHARS`),
+  `introspection.drawing_reply` (`drawn_reply`, `not_found_reply`, `refused_reply`,
+  `PictureStatus`, `NOT_FOUND`, `FALLBACK_NOTE`, `REFUSED_REF`, `PICTURE_SENT`,
+  `PICTURE_UNAVAILABLE` — чистое ядро ответа про рисование: что модели сказано про
+  ИСТОЧНИК, про вид схемы и про КАРТИНКУ, BOB-091.6),
   `introspection.health_form` (`HealthForm`, `plan_health_form`, `normalize_check`,
   `validate_git_ref`, `is_git_ref`, `HEALTH_CHECKS`, `DEFAULT_DIFF_REF` + типизированные
   отказы `HealthRequestError` / `UnknownCheckError` / `InvalidGitRefError` — капабилити
@@ -622,8 +646,10 @@ ports-шим `bob.domain.ports` удалён (BOB-062.8), все импортё�
   `test_find_file.py`, `test_list_work.py`, `test_code_rationale.py`,
   `test_code_rationale_acceptance.py`, `test_draw_architecture.py`,
   `test_architecture_impact.py`, `test_project_health.py`); BDD —
-  `tests/acceptance/features/architecture_drawing.feature` (BOB-091.1: схема источником +
-  картинка через render_diagram, влияние сжато, гейт флага) и
+  `tests/acceptance/features/architecture_drawing.feature` (BOB-091.1: схема источником,
+  влияние сжато, гейт флага; BOB-091.6 заменил ассерт про ОПИСАНИЕ на S1b/S1c — картинка
+  реально встала в очередь отправки хода, а при сбое рендера очередь пуста и модели ушла
+  честная строка «не удалось») и
   `tests/acceptance/features/project_health.feature` (BOB-091.2: 585 строк пар счётом,
   устаревшие доки и нарушение границ как ОТВЕТ, а не сбой, `--no-reindex` в argv, отказ на
   write-отчёт, гейт флага; BOB-091.4 добавил S3b — нарушения уровня УЗЛА и ЦИКЛ в счёте, ни
@@ -633,7 +659,11 @@ ports-шим `bob.domain.ports` удалён (BOB-062.8), все импортё�
   `tests/test_app_web_search.py`, `test_app_read_url.py`,
   `tests/test_integration_web_search_streaming.py`, `tests/test_read_url_config.py`.
 - Диаграммы: `tests/application/capabilities/test_render_diagram.py`,
-  `tests/test_app_diagrams.py`.
+  `tests/test_app_diagrams.py`; 🔴 `tests/infrastructure/diagrams/test_real_architecture_render.py`
+  — сквозной прогон на НАСТОЯЩИХ инструментах (настоящий `beadloom graph` этого репозитория →
+  настоящий `mmdc` → PNG в синке), в том числе через БОЕВУЮ сборку `_build_registry`; фейковый
+  рендерер доказывает контракт фейка, а дефект BOB-091.6 был именно неработающей сквозной
+  фичей при зелёных юнитах.
 - Чистый домен: `tests/domain/diagrams/test_mermaid_blocks.py`,
   `tests/domain/introspection/test_code_history.py`, `test_privacy_guard.py`,
   `test_graph_form.py`, `test_impact_digest.py` (оба — mutation-ядра BOB-091.1),

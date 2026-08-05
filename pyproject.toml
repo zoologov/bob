@@ -1778,6 +1778,28 @@ ignore = [
 # метки ответа («Зависит от» / «Влияет на» / «Глубже по цепочке»).
 "src/bob/capabilities/introspection/graph_form.py" = ["RUF001", "RUF002", "RUF003"]
 "src/bob/capabilities/introspection/impact_digest.py" = ["RUF001", "RUF002", "RUF003"]
+# BOB-091.6: чистое ядро ответа про рисование несёт все русские model-facing строки этого
+# инструмента — честное «не нашёл», оговорку про внутренности, объяснение про ref и две
+# строки про картинку («уже уйдёт в чат» / «приложить не удалось»).
+"src/bob/capabilities/introspection/drawing_reply.py" = ["RUF001", "RUF002", "RUF003"]
+"tests/domain/introspection/test_drawing_reply.py" = [
+    "S101",
+    "ARG001",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+# Тот же срез: сквозной тест на НАСТОЯЩЕМ mmdc и НАСТОЯЩЕМ beadloom graph — русские
+# сообщения ассертов про картинку, которая не доехала до owner'а.
+"tests/infrastructure/diagrams/test_real_architecture_render.py" = [
+    "S101",
+    "ARG001",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
 "tests/domain/introspection/test_graph_form.py" = [
     "S101",
     "ARG001",
@@ -2070,6 +2092,13 @@ pytest_add_cli_args_test_selection = [
     # deterministic core the transfer gate now reads.
     "tests/capabilities/test_send_to_chat.py",
     "tests/capabilities/test_turn_material.py",
+    # BOB-091.6: ``draw_architecture`` + ``diagram_attachment`` живут в
+    # ``src/bob/capabilities`` (пакет СКАНИРУЕТСЯ), но их тесты не были выбраны — значит
+    # все мутанты решения «рендерить или нет / что сказать модели про картинку» приходили
+    # как «no tests», то есть гейта у ровно того места, где ДЕФЕКТ и жил, не было (§0.3
+    # п.7 — фантомный гейт). Тесты быстрые и детерминированные (фейковый порт + фейковый
+    # рендерер, без подпроцесса), поэтому per-slice прогон остаётся дешёвым.
+    "tests/application/capabilities/test_draw_architecture.py",
 ]
 # The kernel (ports/protocols the domain tests import) is NOT mutated but IS imported by
 # tests/domain — copy it + the package root verbatim into the mutants sandbox so the

@@ -23,6 +23,12 @@ and the gateway) drains the sink and sends each diagram as a photo. This keeps t
 chat_id strictly per-turn and the send a transport concern — DDD layering intact (the
 domain port renders, infra does the I/O, the gateway sends).
 
+The render + push itself lives in the shared
+:class:`~bob.capabilities.usecases.diagram_attachment.DiagramAttachment` (BOB-091.6), so
+``draw_architecture`` can attach its OWN picture down the very same path instead of asking
+the model for a follow-up call here — and a diagram already queued this turn is never
+rendered (or posted) twice.
+
 It is ``permission="safe"`` (local, read-nothing) and renders ONLY its INPUT — it
 reads no personal data (memory / soul / config), so it can never leak Bob's private
 world. Construct it with :func:`make_render_diagram_capability`. On a render failure
@@ -32,17 +38,20 @@ unavailable" text and never crashes the turn.
 
 from __future__ import annotations
 
-import logging
 from typing import TYPE_CHECKING
 
-from bob.capabilities.ports import DiagramRenderError, DiagramResult
+from bob.capabilities.usecases.diagram_attachment import DiagramAttachment
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
-    from bob.capabilities.ports import Capability, DiagramRenderer, DiagramSink, Permission
-
-logger = logging.getLogger(__name__)
+    from bob.capabilities.ports import (
+        Capability,
+        DiagramRenderer,
+        DiagramResult,
+        DiagramSink,
+        Permission,
+    )
 
 # JSON-Schema advertised to the model so it knows the single ``mermaid`` argument.
 _INPUT_SCHEMA: Mapping[str, object] = {
@@ -111,8 +120,10 @@ class _RenderDiagramCapability:
     """Capability rendering mermaid to a PNG and queuing it for a photo send."""
 
     def __init__(self, renderer: DiagramRenderer, sink: DiagramSink) -> None:
-        self._renderer = renderer
-        self._sink = sink
+        # The shared render+queue seam (BOB-091.6): the same collaborator
+        # ``draw_architecture`` attaches its own picture with, so BOTH tools travel one
+        # proven path and a diagram already queued this turn is never rendered twice.
+        self._attachment = DiagramAttachment(renderer, sink)
 
     @property
     def name(self) -> str:
@@ -135,13 +146,9 @@ class _RenderDiagramCapability:
         mermaid = args.get("mermaid")
         if not isinstance(mermaid, str):
             raise ValueError("render_diagram requires a string 'mermaid' argument")
-        try:
-            png = await self._renderer.render(mermaid)
-        except DiagramRenderError as exc:
-            logger.info("diagram render failed (graceful): %s", exc)
-            return {"error": _RENDERER_UNAVAILABLE}
-        self._sink.push(DiagramResult(png=png, caption=_CAPTION, source=mermaid))
-        return {"status": _CONFIRMATION}
+        if await self._attachment.attach(mermaid, caption=_CAPTION):
+            return {"status": _CONFIRMATION}
+        return {"error": _RENDERER_UNAVAILABLE}
 
 
 def make_render_diagram_capability(

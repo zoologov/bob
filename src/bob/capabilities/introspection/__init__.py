@@ -41,6 +41,16 @@ from bob.capabilities.introspection.dev_query import (
     sanitize_search_term,
     validate_bead_id,
 )
+from bob.capabilities.introspection.drawing_reply import (
+    FALLBACK_NOTE,
+    NOT_FOUND,
+    PICTURE_SENT,
+    PICTURE_UNAVAILABLE,
+    REFUSED_REF,
+    drawn_reply,
+    not_found_reply,
+    refused_reply,
+)
 from bob.capabilities.introspection.graph_form import (
     GraphForm,
     clamp_graph_depth,
@@ -68,7 +78,12 @@ from bob.capabilities.introspection.tracker_intent import (
 )
 
 __all__ = [
+    "FALLBACK_NOTE",
     "HEALTH_CHECKS",
+    "NOT_FOUND",
+    "PICTURE_SENT",
+    "PICTURE_UNAVAILABLE",
+    "REFUSED_REF",
     "GraphForm",
     "HealthForm",
     "PrivacyGuard",
@@ -79,6 +94,7 @@ __all__ = [
     "digest_health",
     "digest_impact",
     "digest_search_results",
+    "drawn_reply",
     "feature_doc_dir",
     "find_bead_key",
     "is_bead_id",
@@ -86,10 +102,12 @@ __all__ = [
     "is_graph_ref",
     "normalize_check",
     "normalize_status",
+    "not_found_reply",
     "parse_bead_refs",
     "plan_graph_form",
     "plan_health_form",
     "plan_tracker_query",
+    "refused_reply",
     "sanitize_search_term",
     "validate_bead_id",
     "validate_git_ref",

@@ -18,15 +18,24 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 import pytest
 from pytest_bdd import given, parsers, scenarios, then, when
 
+from bob.capabilities.adapters.diagrams.mmdc_renderer import DiagramRenderError
 from tests.acceptance.architecture_drawing_harness import (
+    draw_with_the_picture_seam,
     offered_tool_names,
     run_architecture_tool,
 )
-from tests.application.capabilities.fakes import FakeRepoIntrospector
+from tests.application.capabilities.fakes import (
+    FakeDiagramRenderer,
+    FakeRepoIntrospector,
+)
+
+if TYPE_CHECKING:
+    from bob.capabilities.ports import DiagramResult
 
 scenarios("../features/architecture_drawing.feature")
 
@@ -41,6 +50,9 @@ class _Ctx:
     result: str = ""
     description: str = ""
     offered_tools: list[str] = field(default_factory=list)
+    # BOB-091.6: the render seam + what actually landed in the turn's send queue.
+    renderer: FakeDiagramRenderer | None = None
+    queued_pictures: tuple[DiagramResult, ...] = ()
 
 
 @pytest.fixture
@@ -80,6 +92,19 @@ def impact_is_empty(ctx: _Ctx) -> None:
     ctx.introspector = FakeRepoIntrospector(impact_text="")
 
 
+@given("локальный рендерер работает")
+def the_local_renderer_works(ctx: _Ctx) -> None:
+    ctx.renderer = FakeDiagramRenderer()
+
+
+@given("локальный рендерер недоступен")
+def the_local_renderer_is_unavailable(ctx: _Ctx) -> None:
+    # The shape of a machine without mermaid-cli (or a timeout / broken source).
+    ctx.renderer = FakeDiagramRenderer(
+        raises=DiagramRenderError("mmdc is not installed")
+    )
+
+
 @given("ход в разговоре")
 def a_turn(ctx: _Ctx) -> None:
     assert ctx.result == ""
@@ -90,6 +115,11 @@ def a_turn(ctx: _Ctx) -> None:
 
 @when("Боб просит нарисовать архитектуру целиком")
 def bob_asks_for_the_overview(ctx: _Ctx) -> None:
+    if ctx.renderer is not None:
+        ctx.result, ctx.queued_pictures = asyncio.run(
+            draw_with_the_picture_seam(ctx.introspector, renderer=ctx.renderer)
+        )
+        return
     ctx.result, ctx.description = asyncio.run(
         run_architecture_tool(
             ctx.introspector, tool="draw_architecture", arguments={}
@@ -148,12 +178,29 @@ def tool_result_carries(ctx: _Ctx, fragment: str) -> None:
     )
 
 
-@then("инструмент рисования обещает модели связку с render_diagram")
-def description_pairs_with_render_diagram(ctx: _Ctx) -> None:
-    # 🔴 Решение owner'а: не молчаливый PNG — Боб объясняет схему словами И присылает
-    # картинку через уже работающий render_diagram. Модель узнаёт об этом из описания.
-    assert "render_diagram" in ctx.description
-    assert "mermaid" in ctx.description.lower()
+@then("картинка встала в очередь отправки этого хода")
+def a_picture_is_queued_for_this_turn(ctx: _Ctx) -> None:
+    # 🔴 Наблюдаемый факт вместо обещания: в per-turn синке, который путь ответа сливает
+    # в чат фотографией, лежит настоящий отрендеренный PNG.
+    assert len(ctx.queued_pictures) == 1, (
+        f"owner не получит картинку: в очереди {len(ctx.queued_pictures)}"
+    )
+    assert ctx.queued_pictures[0].png
+    assert ctx.queued_pictures[0].caption
+
+
+@then("в очереди отправки картинки нет")
+def no_picture_is_queued(ctx: _Ctx) -> None:
+    assert ctx.queued_pictures == ()
+
+
+@then("результат инструмента, ушедший модели, честно предупреждает, что картинки не будет")
+def result_admits_the_picture_is_missing(ctx: _Ctx) -> None:
+    lowered = ctx.result.lower()
+    assert "не удалось" in lowered, (
+        f"Боб должен сказать, что картинки не будет: {ctx.result!r}"
+    )
+    assert "уже отрисована" not in lowered, "нельзя делать вид, что картинка ушла"
 
 
 @then(parsers.parse('в граф ушёл запрос узла "{ref}" с глубиной {depth:d}'))

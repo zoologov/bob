@@ -6,39 +6,58 @@
 # beadloom:feature=capabilities
 # beadloom:layer=application
 
-"""``draw_architecture`` — Bob draws his OWN architecture (BOB-091.1).
+"""``draw_architecture`` — Bob draws his OWN architecture (BOB-091.1, .6).
 
 The skill that answers "нарисуй, как ты устроен". It asks the read-only
-:meth:`~bob.capabilities.ports.RepoIntrospector.architecture_diagram` for the graph and
-returns the **mermaid SOURCE** — deliberately not a picture.
+:meth:`~bob.capabilities.ports.RepoIntrospector.architecture_diagram` for the graph, and
+gives the owner BOTH halves of what he asked for: the **mermaid SOURCE** goes back to the
+model so Bob explains the diagram in his own words, and the rendered **picture** is queued
+for this turn's chat send by the capability itself.
 
-**Why source and not an image** (the owner's decision): with the source in hand Bob can
-say IN WORDS what the diagram shows *and* hand the very same source to the existing
-``render_diagram`` skill, which renders it locally and posts the image. Returning a PNG
-here would mean Bob silently dropping a picture with nothing to say about it — and would
-duplicate a render seam that already works. The tool description therefore names that
-pairing explicitly, because the model is what connects the two calls.
+🔴 **Why the capability attaches the picture** (BOB-091.6, a live-smoke defect). Until this
+fix the source was ALL it returned, and the pairing "explain in words AND call
+``render_diagram`` with this mermaid" lived only in the tool DESCRIPTION — an agreement with
+the model. The live run: Bob called the tool, received 5 KB of real mermaid, retold it in
+words accurately… and no image ever reached the owner; nothing in the RESULT pushed towards
+a render and nothing structurally stopped him at words. Now the render is part of drawing:
+the capability hands the source to a shared :class:`DiagramAttachment` (the same renderer +
+per-turn sink ``render_diagram`` uses, so the photo travels the one proven path) and tells
+the model what became of the picture. A silent PNG is still impossible — the text reply is
+always the model's own words — and a second identical photo is impossible too, because the
+shared sink dedups by source.
+
+**When the render fails** (no ``mmdc``, a timeout, malformed source) the turn survives and
+stays honest: the source still comes back and the answer carries an explicit "картинки не
+будет" line, so Bob says so out loud instead of going quiet or implying he sent one. No
+renderer wired at all (``diagrams.enabled`` off) reads the same way.
 
 Three shapes, all read-only and all planned by the pure form planner behind the port:
 no arguments — the whole-system overview; ``ref`` (+ optional ``depth``) — one node's
 neighbourhood; ``internals_of`` — the C4 components inside one container. The port
 reports which form it actually DREW, so when a detailed view had nothing to show (a
 container-less node) this capability passes that correction on instead of letting Bob
-present links as internals. An empty graph is an honest "не нашёл", never a blank
-picture; a refused ref (a flag, a path, a metacharacter) comes back as a readable error
-so the turn survives.
+present links as internals. An empty graph is an honest "не нашёл" and is never rendered
+(a header-only diagram is a picture of nothing); a refused ref (a flag, a path, a
+metacharacter) comes back as a readable error, also without a render, so the turn survives.
 """
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from bob.capabilities.introspection.drawing_reply import (
+    drawn_reply,
+    not_found_reply,
+    refused_reply,
+)
 from bob.capabilities.introspection.graph_form import diagram_carries_nodes
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
+    from bob.capabilities.introspection.drawing_reply import PictureStatus
     from bob.capabilities.ports import Capability, Permission, RepoIntrospector
+    from bob.capabilities.usecases.diagram_attachment import DiagramAttachment
 
 # JSON-Schema advertised to the model. NOTHING is required: the argument-free call is the
 # whole-system overview, which is what "нарисуй архитектуру" usually means.
@@ -52,35 +71,19 @@ _INPUT_SCHEMA: Mapping[str, object] = {
 }
 
 _DESCRIPTION = (
-    "Get the Mermaid SOURCE of Bob's own architecture graph (read-only). Call with no "
-    "arguments for the whole-system overview; pass 'ref' (a graph node id such as "
-    "'memory' or 'bob-domain', optionally with 'depth' 1-5) for that node's "
-    "neighbourhood; pass 'internals_of' for the C4 component view INSIDE one container. "
-    "It returns diagram SOURCE, not an image — so do BOTH: explain in your own words "
-    "what the diagram shows, and call render_diagram with this exact mermaid string to "
-    "send the picture to the chat."
+    "Draw Bob's own architecture graph (read-only). Call with no arguments for the "
+    "whole-system overview; pass 'ref' (a graph node id such as 'memory' or "
+    "'bob-domain', optionally with 'depth' 1-5) for that node's neighbourhood; pass "
+    "'internals_of' for the C4 component view INSIDE one container. It returns the "
+    "Mermaid SOURCE and renders the picture into the chat ITSELF — so just explain in "
+    "your own words what the diagram shows; the 'picture' field of the result says "
+    "whether the image is on its way, and you do NOT call render_diagram for this "
+    "source (that would post the same diagram twice)."
 )
 
-# Honest empty-result line: an unresolved ref yields a header-only diagram, i.e. a
-# picture of nothing. Bob says so instead of rendering a blank image.
-_NOT_FOUND = (
-    "Не нашёл такого узла в графе архитектуры — скажи об этом честно и предложи "
-    "общую схему (вызов без аргументов)."
-)
-
-# Fed back when the DETAILED view had nothing to draw and the port degraded to the
-# node's links, so the model never passes one view off as the other.
-_FALLBACK_NOTE = (
-    "У этого узла в графе нет внутренностей (он не контейнер) — это схема его связей. "
-    "Скажи об этом честно."
-)
-
-# Fed back when a slot was refused before any read (a flag / path / metacharacter, or a
-# non-string value): the model gets the reason and can retry with a real ref-id.
-_BAD_REF = (
-    "Так нельзя: 'ref'/'internals_of' — это id узла графа (например 'memory' или "
-    "'bob-domain'), а не флаг или путь. Попроси схему заново с настоящим id."
-)
+# The caption sent alongside the rendered architecture PNG: Bob's own short line, in the
+# project's Russian persona voice — never a system message.
+_CAPTION = "Вот схема архитектуры."
 
 
 def _as_depth(raw: object) -> int | None:
@@ -107,10 +110,17 @@ def _as_ref(raw: object) -> str | None:
 
 
 class _DrawArchitectureCapability:
-    """Capability returning the mermaid source of Bob's architecture (read-only)."""
+    """Capability returning the mermaid source AND queuing the rendered picture."""
 
-    def __init__(self, introspector: RepoIntrospector) -> None:
+    def __init__(
+        self,
+        introspector: RepoIntrospector,
+        attachment: DiagramAttachment | None = None,
+    ) -> None:
         self._introspector = introspector
+        # None = no local renderer wired (``diagrams.enabled`` off): the source still
+        # reaches the model, and the answer says honestly that no picture is coming.
+        self._attachment = attachment
 
     @property
     def name(self) -> str:
@@ -129,9 +139,9 @@ class _DrawArchitectureCapability:
         return "safe"
 
     async def execute(self, args: Mapping[str, object]) -> object:
-        """Return the mermaid source (plus which form it is), or an honest refusal."""
+        """Queue the rendered picture and return the source, or an honest refusal."""
         if _has_a_non_string_ref(args):
-            return {"error": _BAD_REF}
+            return refused_reply()
         try:
             diagram = await self._introspector.architecture_diagram(
                 _as_ref(args.get("ref")),
@@ -139,16 +149,30 @@ class _DrawArchitectureCapability:
                 internals_of=_as_ref(args.get("internals_of")),
             )
         except ValueError:
-            return {"error": _BAD_REF}
+            return refused_reply()
         if not diagram_carries_nodes(diagram.mermaid):
-            return {"error": _NOT_FOUND}
-        result: dict[str, object] = {
-            "mermaid": diagram.mermaid,
-            "form": diagram.form,
-        }
-        if diagram.form != diagram.requested:
-            result["note"] = _FALLBACK_NOTE
-        return result
+            # Nothing was drawn — so nothing is rendered either (no blank image, no
+            # subprocess burned on a header-only diagram).
+            return not_found_reply()
+        return drawn_reply(
+            mermaid=diagram.mermaid,
+            drawn=diagram.form,
+            requested=diagram.requested,
+            picture=await self._attach_picture(diagram.mermaid),
+        )
+
+    async def _attach_picture(self, mermaid: str) -> PictureStatus:
+        """Render + queue the picture for this turn; report what became of it.
+
+        One render, bounded by the renderer's own ``diagrams.timeout`` (no retry), and any
+        render failure comes back as ``unavailable`` rather than as an exception — so the
+        picture is best-effort while the words are guaranteed.
+        """
+        if self._attachment is None:
+            return "unavailable"
+        if await self._attachment.attach(mermaid, caption=_CAPTION):
+            return "sent"
+        return "unavailable"
 
 
 def _has_a_non_string_ref(args: Mapping[str, object]) -> bool:
@@ -164,6 +188,16 @@ def _has_a_non_string_ref(args: Mapping[str, object]) -> bool:
     )
 
 
-def make_draw_architecture_capability(introspector: RepoIntrospector) -> Capability:
-    """Build the ``draw_architecture`` capability over the read-only introspector."""
-    return _DrawArchitectureCapability(introspector)
+def make_draw_architecture_capability(
+    introspector: RepoIntrospector,
+    *,
+    attachment: DiagramAttachment | None = None,
+) -> Capability:
+    """Build the ``draw_architecture`` capability over the read-only introspector.
+
+    ``attachment`` is the shared render+queue seam (the same LOCAL renderer and per-turn
+    sink ``render_diagram`` pushes into), so the picture reaches the chat by the one proven
+    path. Omit it — or pass ``None`` when ``diagrams.enabled`` is off — and Bob still gets
+    the source, with the answer honestly saying no image is coming.
+    """
+    return _DrawArchitectureCapability(introspector, attachment)

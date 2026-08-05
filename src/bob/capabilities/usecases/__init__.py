@@ -16,6 +16,7 @@ from bob.capabilities.usecases.architecture_impact import (
 from bob.capabilities.usecases.code_rationale import (
     make_code_rationale_capability,
 )
+from bob.capabilities.usecases.diagram_attachment import DiagramAttachment
 from bob.capabilities.usecases.draw_architecture import (
     make_draw_architecture_capability,
 )
@@ -51,6 +52,7 @@ __all__ = [
     "CapabilityNotAllowedError",
     "CapabilityRegistry",
     "CollectingDiagramSink",
+    "DiagramAttachment",
     "SafeCapabilityDispatcher",
     "ToolLoop",
     "UnknownCapabilityError",

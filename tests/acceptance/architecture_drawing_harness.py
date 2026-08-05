@@ -27,24 +27,33 @@ from bob.capabilities.ports import ToolCall, ToolCallResult
 from bob.capabilities.usecases.architecture_impact import (
     make_architecture_impact_capability,
 )
+from bob.capabilities.usecases.diagram_attachment import DiagramAttachment
 from bob.capabilities.usecases.draw_architecture import (
     make_draw_architecture_capability,
 )
 from bob.capabilities.usecases.registry import CapabilityRegistry
+from bob.capabilities.usecases.render_diagram import CollectingDiagramSink
 from bob.capabilities.usecases.tool_loop import ToolLoop
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
-    from bob.capabilities.ports import ToolDefinition
+    from bob.capabilities.ports import DiagramResult, ToolDefinition
     from bob.kernel.ports import ToolLoopMessage
-    from tests.application.capabilities.fakes import FakeRepoIntrospector
+    from tests.application.capabilities.fakes import (
+        FakeDiagramRenderer,
+        FakeRepoIntrospector,
+    )
 
 
-def _registry_over(introspector: FakeRepoIntrospector) -> CapabilityRegistry:
+def _registry_over(
+    introspector: FakeRepoIntrospector, attachment: DiagramAttachment | None = None
+) -> CapabilityRegistry:
     """Register the two real architecture tools over the given scripted port."""
     registry = CapabilityRegistry()
-    registry.register(make_draw_architecture_capability(introspector))
+    registry.register(
+        make_draw_architecture_capability(introspector, attachment=attachment)
+    )
     registry.register(make_architecture_impact_capability(introspector))
     return registry
 
@@ -115,8 +124,10 @@ async def run_architecture_tool(
     The loop renders the capability's dict result into the ``tool`` message as JSON (the
     real wire shape); we decode it back into its concatenated string values — the exact
     text a JSON-parsing model reconstructs — so the scenario asserts on grounded content.
-    The tool's advertised description comes back too, because the owner's decision
-    ("explain in words AND render") lives in that description.
+    The advertised description comes back too, for the scenarios that check what Bob is
+    OFFERED. 🔴 It is not evidence about the picture: that the description PROMISES an
+    image says nothing about one arriving (BOB-091.6) — see
+    :func:`draw_with_the_picture_seam` for the boundary that observes the picture itself.
     """
     registry = _registry_over(introspector)
     provider = _ToolProbeProvider(tool, arguments)
@@ -128,6 +139,34 @@ async def run_architecture_tool(
         else ""
     )
     return fed_back, provider.offered_descriptions.get(tool, "")
+
+
+async def draw_with_the_picture_seam(
+    introspector: FakeRepoIntrospector,
+    *,
+    renderer: FakeDiagramRenderer,
+    arguments: Mapping[str, object] | None = None,
+) -> tuple[str, tuple[DiagramResult, ...]]:
+    """Drive the REAL loop and return ``(result fed to the model, queued pictures)``.
+
+    🔴 The boundary this bead exists for. The picture is wired the way production wires
+    it — the REAL :class:`DiagramAttachment` over the per-turn
+    :class:`CollectingDiagramSink` the reply path drains to post the photo — so "owner
+    получил картинку" is observed as a rendered PNG waiting in that sink, and "owner
+    получил объяснение" as the mermaid source that went BACK to the model. Asserting the
+    tool DESCRIPTION (the old S1b) proved neither: it only proved the text of a promise.
+    """
+    sink = CollectingDiagramSink()
+    registry = _registry_over(introspector, DiagramAttachment(renderer, sink))
+    provider = _ToolProbeProvider("draw_architecture", arguments or {})
+    loop = ToolLoop(provider=provider, registry=registry)
+    await loop.run([{"role": "user", "content": "нарисуй архитектуру"}])
+    fed_back = (
+        _decode_tool_content(provider.fed_back_tool_results[0])
+        if provider.fed_back_tool_results
+        else ""
+    )
+    return fed_back, sink.drain()
 
 
 def _decode_tool_content(content: str) -> str:
