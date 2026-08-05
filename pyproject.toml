@@ -595,6 +595,16 @@ ignore = [
     "RUF002",
     "RUF003",
 ]
+# The episode-origin persistence tests (BOB-090.C2) document the NULL = «источник
+# неизвестен» rule in Russian prose and carry Russian episode content literals whose
+# Cyrillic look-alikes are intentional (→ RUF001/RUF002/RUF003).
+"tests/infrastructure/persistence/test_episode_origin.py" = [
+    "S101",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
 # The FTS-recall tests (BOB-066 2.6 added a Russian owner_private episode) carry Russian
 # content literals whose Cyrillic look-alikes are intentional (→ RUF001/RUF002/RUF003).
 "tests/infrastructure/persistence/test_fts_recall.py" = [

@@ -223,3 +223,41 @@ def test_origin_axis_is_orthogonal_to_the_work_register_axis() -> None:
 
     assert recalled_work_directive() in prompt
     assert recalled_origin_directive([work_in_dm]) in prompt
+
+
+# --- BOB-090.C2: точный адрес — метаданные хранения, а НЕ материал промпта ----
+# У записи адреса (origin_chat_id / origin_topic_id) флага нет, поэтому «байт-в-байт»
+# доказывается равенством и здесь, на границе: припомненное с адресом даёт ровно тот же
+# системный промпт, что и без адреса. Точный чат/топик — сигнал для будущей АДРЕСАЦИИ
+# (срез B), Боб им не говорит.
+
+_IN_ROOM_ADDRESSED = {
+    "content": "Норман спросил про доступ",
+    "visibility": "public",
+    "origin_chat_id": -1004372947307,
+    "origin_topic_id": 32,
+}
+
+
+def test_exact_address_never_changes_the_prompt() -> None:
+    with_address = asyncio.run(
+        composed_prompt(Verbosity.NORMAL, recalled=[_IN_ROOM_ADDRESSED])
+    )
+    without_address = asyncio.run(composed_prompt(Verbosity.NORMAL, recalled=[_IN_ROOM]))
+
+    assert with_address == without_address
+
+
+def test_exact_address_never_changes_the_prompt_with_provenance_on() -> None:
+    # И с включённым провенансом тоже: грубая пометка «где» строится по visibility,
+    # точный адрес в текст не подмешивается ни одним символом.
+    with_address = asyncio.run(
+        composed_prompt(
+            Verbosity.NORMAL, recalled=[_IN_ROOM_ADDRESSED], origin_provenance=True
+        )
+    )
+    without_address = asyncio.run(
+        composed_prompt(Verbosity.NORMAL, recalled=[_IN_ROOM], origin_provenance=True)
+    )
+
+    assert with_address == without_address

@@ -985,6 +985,73 @@ async def test_persisted_episode_records_outgoing_bob_message_id() -> None:
     assert repo.episodes[0]["bob_message_id"] == 777
 
 
+# --- Точный адрес эпизода (BOB-090.C2) ----------------------------------------
+# Грубого «личка или группа» мало: чтобы позже написать «туда же, где это обсуждали»,
+# эпизод должен помнить КОНКРЕТНЫЙ чат и топик. Адрес пишется из события, без флага —
+# это метаданные хранения, в промпт он не попадает.
+
+
+async def test_persisted_episode_carries_the_exact_origin() -> None:
+    handler, _bot, repo, _tier1 = _build(reply="ok")
+
+    await handler.handle(
+        MessageReceived(
+            update_id=1,
+            chat_id=-100500,
+            message_id=10,
+            text="расскажи подробно про кофе",
+            sender_id=99,
+            sender_name="Ada",
+            topic_id=77,
+        )
+    )
+
+    assert repo.episodes[0]["origin_chat_id"] == -100500
+    assert repo.episodes[0]["origin_topic_id"] == 77
+
+
+async def test_persisted_dm_episode_knows_its_chat_and_has_no_topic() -> None:
+    # В личке форум-топиков не бывает: чат известен, топика нет. Это знание, а не
+    # «источник неизвестен» — и уж точно не повод подставить какой-нибудь чат.
+    handler, _bot, repo, _tier1 = _build(reply="ok")
+
+    await handler.handle(
+        MessageReceived(
+            update_id=1,
+            chat_id=4242,
+            message_id=10,
+            text="расскажи подробно про кофе",
+            sender_id=99,
+            sender_name="Ada",
+            is_group=False,
+        )
+    )
+
+    assert repo.episodes[0]["origin_chat_id"] == 4242
+    assert repo.episodes[0]["origin_topic_id"] is None
+
+
+async def test_episode_address_does_not_replace_the_visibility_axis() -> None:
+    # 🔴 Ось «где сказано» (адрес) живёт РЯДОМ с осью такта разглашения (visibility),
+    # а не вместо неё: у одной строки есть и то, и другое.
+    handler, _bot, repo, _tier1 = _build(reply="ok")
+
+    await handler.handle(
+        MessageReceived(
+            update_id=1,
+            chat_id=4242,
+            message_id=10,
+            text="расскажи подробно про кофе",
+            sender_id=99,
+            sender_name="Ada",
+            is_group=False,
+        )
+    )
+
+    assert repo.episodes[0]["visibility"] == "owner_private"
+    assert repo.episodes[0]["origin_chat_id"] == 4242
+
+
 async def test_reply_uses_tier1_provider() -> None:
     # Arrange
     handler, _bot, _repo, tier1 = _build(reply="hi")
@@ -7867,6 +7934,33 @@ async def test_judge_ignore_stays_silent_and_persists_promolchal() -> None:
     assert reactor.calls == []  # no reaction
     assert len(repo.episodes) == 1
     assert _bob_half(repo.episodes[0]["content"]) == "(промолчал)"
+
+
+async def test_silent_turn_also_records_the_exact_origin() -> None:
+    # BOB-090.C2: адрес пишется в ОБЩЕМ шве персиста, поэтому его получает не только
+    # ответ, но и молчаливый ход — иначе половина ambient-жизни комнаты осталась бы
+    # без места, и «туда же, где это обсуждали» опиралось бы на дыру.
+    decide, _fake = _judge(ResponseIntent.IGNORE)
+    handler, _bot, repo, _tier1 = _build(
+        reply="не должно отправиться",
+        perceive_sender=_owner_with_id(99),
+        decide_response=decide,
+    )
+
+    await handler.handle(
+        MessageReceived(
+            update_id=1,
+            chat_id=-100500,
+            message_id=10,
+            text="болтают между собой",
+            sender_id=99,
+            sender_name="Ada",
+            topic_id=77,
+        )
+    )
+
+    assert repo.episodes[0]["origin_chat_id"] == -100500
+    assert repo.episodes[0]["origin_topic_id"] == 77
 
 
 async def test_judge_react_without_a_reactor_still_persists_the_reaction_turn() -> None:

@@ -96,6 +96,7 @@ class SqliteMemoryRepo:
         await self._migrate_episodic_sender_id()
         await self._migrate_episodic_bob_message_id()
         await self._migrate_episodic_visibility()
+        await self._migrate_episodic_origin()
         await self._migrate_semantic_superseded_by()
         await self._migrate_semantic_visibility()
         await self._backfill_episodic_fts()
@@ -172,6 +173,34 @@ class SqliteMemoryRepo:
         """
         if "visibility" not in await self._episodic_columns():
             await self._db().execute("ALTER TABLE episodic_log ADD COLUMN visibility TEXT")
+
+    async def _migrate_episodic_origin(self) -> None:
+        """Add the episode's EXACT address to a pre-existing DB (BOB-090.C2).
+
+        ``origin_chat_id`` + ``origin_topic_id``: the Telegram chat and forum topic a turn
+        was said at. ``CREATE TABLE IF NOT EXISTS`` never alters an already-present table,
+        so a DB written before these columns existed would lack them. This guarded ``ALTER``
+        adds each only when missing — additive and non-destructive: every existing row keeps
+        its content and takes ``NULL``. A clean no-op once present, so re-running
+        ``initialize()`` is idempotent.
+
+        🔴 ``NULL`` here means «источник неизвестен», NOT «публично». This is the deliberate
+        difference from :meth:`_migrate_episodic_visibility`, whose NULL fails OPEN to public
+        for BOB-051 unified memory: a visibility label is a permission, an address is a
+        FACTUAL CLAIM about a place. There is therefore no backfill and no default — the
+        legacy rows of the live archive stay address-less, and the honest reading of that is
+        «не знаю где», which is exactly what episode 3092 (Bob announcing he had explained
+        something «в группе» when he had explained it in the DM) shows must never be guessed.
+        """
+        columns = await self._episodic_columns()
+        if "origin_chat_id" not in columns:
+            await self._db().execute(
+                "ALTER TABLE episodic_log ADD COLUMN origin_chat_id INTEGER"
+            )
+        if "origin_topic_id" not in columns:
+            await self._db().execute(
+                "ALTER TABLE episodic_log ADD COLUMN origin_topic_id INTEGER"
+            )
 
     async def _migrate_semantic_visibility(self) -> None:
         """Add ``semantic_memory.visibility`` to a pre-existing DB (idempotent, BOB-066 2.6).
@@ -270,12 +299,17 @@ class SqliteMemoryRepo:
         ``'public'`` / ``'owner_private'``, or omitted → NULL (= public), so a caller that
         does not classify scope (ticks/digests/tests) writes surfaceable memory exactly as
         before.
+
+        The optional ``origin_chat_id`` / ``origin_topic_id`` keys carry the EXACT address
+        the turn was said at (BOB-090.C2). Omitted → NULL, which reads as «источник
+        неизвестен» — a caller with no incoming message (a tick, a digest) states no place
+        rather than a wrong one.
         """
         cursor = await self._db().execute(
             "INSERT INTO episodic_log "
             "(ts, event_type, content, mood_snapshot, tags, sender_id, bob_message_id, "
-            "visibility) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            "visibility, origin_chat_id, origin_topic_id) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 episode["ts"],
                 episode["event_type"],
@@ -285,6 +319,8 @@ class SqliteMemoryRepo:
                 episode.get("sender_id"),
                 episode.get("bob_message_id"),
                 episode.get("visibility"),
+                episode.get("origin_chat_id"),
+                episode.get("origin_topic_id"),
             ),
         )
         await self._db().commit()
@@ -302,6 +338,8 @@ class SqliteMemoryRepo:
                 "sender_id": event.sender_id,
                 "bob_message_id": event.bob_message_id,
                 "visibility": event.visibility,
+                "origin_chat_id": event.origin_chat_id,
+                "origin_topic_id": event.origin_topic_id,
             }
         )
 
@@ -327,9 +365,17 @@ class SqliteMemoryRepo:
         return dict(row) if row is not None else None
 
     async def load_episodes(self, *, limit: int) -> Sequence[Mapping[str, object]]:
-        """Return up to ``limit`` most-recent episodes (newest first)."""
+        """Return up to ``limit`` most-recent episodes (newest first).
+
+        Carries each episode's EXACT address (BOB-090.C2) — ``origin_chat_id`` /
+        ``origin_topic_id``, ``None`` when the source is unknown — so the place a turn was
+        said at is READABLE back through the same door it was written through. Deliberately
+        NOT on the recall path: recall feeds the reply prompt, and the address is storage
+        metadata, never material Bob speaks from.
+        """
         async with self._db().execute(
-            "SELECT ts, event_type, content, mood_snapshot, tags "
+            "SELECT ts, event_type, content, mood_snapshot, tags, "
+            "origin_chat_id, origin_topic_id "
             "FROM episodic_log ORDER BY ts DESC, id DESC LIMIT ?",
             (limit,),
         ) as cursor:

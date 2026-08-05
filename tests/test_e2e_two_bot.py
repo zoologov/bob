@@ -520,3 +520,32 @@ async def test_message_in_general_or_other_topic_is_ignored_by_bob(
     # published onto Bob's pipeline.
     assert published == 0
     assert bob_bot.sends == []
+
+
+@pytest.mark.asyncio
+async def test_turn_lands_in_sqlite_with_its_exact_origin(tmp_path: Path) -> None:
+    # BOB-090.C2 через целый граф: настоящий апдейт (несёт ``message_thread_id``) →
+    # мультибот-роутер → гейтвей → событие → HandleMessage → живой SQLite. Юнит на
+    # фейковом репозитории доказал бы контракт фейка; здесь адрес обязан долететь до
+    # реальной таблицы, иначе фича мертва в проде при зелёном suite (урок BOB-087.D).
+    _seed_soul(tmp_path)
+    bob_bot, guppi_bot = _FakeBot(), _FakeBot()
+    bob_bot.updates_batches = [
+        [_update(21, text="расскажи подробно про зонды, Bob", user_id=_OWNER_ID)]
+    ]
+    app = _build(tmp_path, bob_bot=bob_bot, guppi_bot=guppi_bot)
+    await app.startup()
+
+    try:
+        published = await app.multibot.poll_once()
+        await app.intake_dispatcher.wait_for_idle()
+        episodes = await app.memory_repo.load_episodes(limit=10)
+    finally:
+        await app.shutdown()
+
+    assert published == 1
+    turns = [e for e in episodes if "зонды" in str(e["content"])]
+    assert turns, f"ход не осел в episodic_log: {episodes}"
+    turn = turns[0]
+    assert turn["origin_chat_id"] == _CHAT_ID
+    assert turn["origin_topic_id"] == _BOB_TOPIC_ID

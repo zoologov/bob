@@ -2266,6 +2266,14 @@ class HandleMessage:
         message (a silent/degraded turn). ``visibility`` (BOB-066 2.6) is the turn's
         scope-provenance; ``None`` writes NULL (= public), so a caller that does not
         classify scope persists surfaceable memory exactly as before.
+
+        🔴 The EXACT address (BOB-090.C2) is taken from the EVENT here, in the one seam
+        every turn-persisting path goes through (reply, «промолчал», a like-only turn, the
+        outage marker), so Bob never has to guess later where something was said. It is
+        stored, not spoken: no flag gates it because the address never reaches the prompt —
+        recall selects its own columns and carries no address (proved by equality). The
+        AXIS is orthogonal to ``visibility``: «где сказано» (a place) next to «кому это
+        можно» (a permission), never one instead of the other.
         """
         now = self._clock.now()
         episode = EpisodicEvent(
@@ -2277,6 +2285,8 @@ class HandleMessage:
             sender_id=event.sender_id,
             bob_message_id=bob_message_id,
             visibility=visibility,
+            origin_chat_id=event.chat_id,
+            origin_topic_id=event.topic_id,
         )
         await self._repo.save_episode(
             {
@@ -2288,6 +2298,8 @@ class HandleMessage:
                 "sender_id": episode.sender_id,
                 "bob_message_id": episode.bob_message_id,
                 "visibility": episode.visibility,
+                "origin_chat_id": episode.origin_chat_id,
+                "origin_topic_id": episode.origin_topic_id,
             }
         )
         await self._repo.set_mood(_mood_state(soul), at=now)

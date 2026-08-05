@@ -34,7 +34,21 @@ CREATE TABLE IF NOT EXISTS episodic_log (
     -- 🔴 NULL reads as PUBLIC so BOB-051 unified memory + every legacy row stay intact
     -- and owner recall is byte-identical (INV-7). Additive for fresh DBs; a guarded ALTER
     -- in initialize() migrates pre-existing DBs (defaults to NULL = public).
-    visibility    TEXT
+    visibility    TEXT,
+    -- BOB-090.C2 точный адрес: WHERE this was said — the exact Telegram chat and, when
+    -- the room has forum topics, the exact topic (message_thread_id). Together with the
+    -- coarse `visibility` label this is what later lets Bob write back into the place
+    -- something was actually discussed instead of inventing one (episode 3092).
+    -- 🔴 NULL here means «источник неизвестен» — NOT «публично» and NOT any particular
+    -- chat. Unlike `visibility` (which deliberately fails OPEN to public so BOB-051
+    -- unified memory stays intact), an address is a factual claim about a place: rows
+    -- written before this column existed, ticks, digests and reflections simply have no
+    -- address, and nothing may substitute one. A NULL `origin_topic_id` under a KNOWN
+    -- `origin_chat_id` means «топика нет» (a 1:1 DM, or a group without forum topics) —
+    -- knowledge, not the absence of it. Additive for fresh DBs; a guarded ALTER in
+    -- SqliteMemoryRepo.initialize() migrates pre-existing DBs (NULL = unknown).
+    origin_chat_id  INTEGER,
+    origin_topic_id INTEGER
 );
 
 CREATE INDEX IF NOT EXISTS idx_episodic_ts ON episodic_log (ts DESC);
