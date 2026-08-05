@@ -51,6 +51,7 @@ from bob.personality.voice import (
     engagement_directive,
     formatting_directive,
     guppi_canon,
+    guppi_no_roleplay_directive,
     improvement_directive,
     operator_stance,
     profanity_stance,
@@ -100,6 +101,10 @@ _SYSTEM_PROMPT = (
     # step firehose is GUPPI's channel now). Strengthens the BOB-074 anti-narration
     # guard into a positive stance.
     f"{operator_stance()}\n"
+    # BOB-090.D3: and he does NOT role-play GUPPI — no voicing him, no lending him
+    # opinions / feelings / lines, no retelling an order instead of acting. The canon
+    # ban stands on top of the stance and carries the positive replacement.
+    f"{guppi_no_roleplay_directive()}\n"
     f"{anti_bait_directive()}\n"
     f"{variable_form_directive()}\n"
     f"{profanity_stance()}"

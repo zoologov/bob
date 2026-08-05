@@ -42,6 +42,7 @@ src/bob/coding/
   stream_render.py    # layer=domain   — render_stream_event(verbose): событие→строка; verbose=интерактив (полный текст+rich+chunk_for_telegram) vs груп (краткий кэп). BOB-082/085
   intent.py           # layer=domain   — is_approval / is_stop (чистые предикаты NL-команд)
   session_voice.py    # layer=domain   — детерминированные шаблоны реплик гейтед-сессии в персоне Боба-оператора (взялся/готово-PR/провал/стоп, BOB-087.B2; реплики живого терминала — в bob/interactive/voice.py)
+  speaker.py          # layer=domain   — speaker_for(MessageKind) → Speaker: КТО озвучивает сообщение (механика — GUPPI, живое и адресованное людям — Боб; запрос разрешения — Боб). Канон Денниса Тейлора, BOB-090.D
   work_facts.py       # layer=domain   — WorkFactsAccumulator/SessionKeyFacts/WorkOutcome: сворачивает поток stream-json в ОГРАНИЧЕННЫЙ снимок ключевых фактов (BOB-087.B1)
   usecases/           # layer=application
     coding_assistant.py       — CodingAssistant (оркестратор гейтед-сессии)
@@ -142,12 +143,32 @@ default OFF).** Оба решения принимает чистое ядро `
 именно этот гейт реально защищает ствол. Формулировка синхронизирована с секцией `coder` в
 `infrastructure/config/loader.py` и докстрингами `runtime/wiring/coding.py`; смягчать её не следует.
 
-🔴 **GUPPI-канал: firehose исполнителя (BOB-087.A, флаг `coder.stream_via_guppi`).** По канону GUPPI —
-детерминированный **исполнитель**, Боб — разум. При флаге ON механический **firehose** (per-event narrate +
-`_DmLiveStreamer` live-stream) уходит **ботом GUPPI**, а голос Боба (гейты `session_voice` «берусь/готово/
-провал», `dev_pointer`, `narration_capped`, typing/панель) — **всегда ботом Боба** (`stream_notifier`-порт в
-`CodingAssistant`). OFF (default) → всё ботом Боба, байт-в-байт. Отделяет механический поток от голоса Боба
-(канон + анти-recall-яд: firehose вне истории бота Боба).
+🔴 **GUPPI-канал: firehose исполнителя (BOB-087.A, флаг `coder.stream_via_guppi`, ВКЛЮЧЁН в
+BOB-090.D).** По канону Денниса Тейлора GUPPI — **несознательный интерфейс**: исполняет буквально,
+без личности, мнения и инициативы. При флаге ON механический **firehose** (per-event narrate +
+`_DmLiveStreamer` live-stream + технический итог прогона) уходит **ботом GUPPI**, а голос Боба (гейты
+`session_voice` «берусь/готово/провал», `dev_pointer`, `narration_capped`, typing/панель) — **всегда
+ботом Боба** (`stream_notifier`-порт в `CodingAssistant`). OFF (default в загрузчике) → всё ботом Боба,
+байт-в-байт. Отделяет механический поток от голоса Боба (канон + анти-recall-яд: firehose вне истории
+бота Боба).
+
+🔴 **Кто говорит — чистое ядро (BOB-090.D1/D2).** Раньше расклад «эта строка — Бобу, та — GUPPI» был
+размазан по местам отправки, и каждая новая реплика решала за себя. Теперь он ОДИН и лежит в
+`speaker.py`: `speaker_for(MessageKind)` делит сообщения по их **виду** — механика (сырой вывод
+инструмента, пошаговый нарратив прогона, технический статус/итог, «не найдено», техническое
+подтверждение) → `Speaker.GUPPI`; живое (реплики гейтов сессии, вход/выход режима, реакции, маркер
+присутствия, всё адресованное людям) → `Speaker.BOB`. 🔴 **Запрос разрешения — это Боб**, а не GUPPI:
+это социальный акт (Боб защищает приватность owner'а и просит решения у человека), а не механика.
+Оркестратор шлёт ВСЁ через одну дверь `CodingAssistant._say(kind, text)` → `notifier_for(kind, …)`, так
+что ветки «мимо канона» не остаётся; при выключенном флаге оба канала — один нотификатор, и поведение
+байт-в-байт прежнее.
+
+🔴 **Реплики GUPPI не попадают в память как голос Боба.** Голос Боба воспроизводится по recall
+(BOB-022/074/078), поэтому машинные строки исполнителя обязаны остаться транспортом. В память с
+coding-сессии осаждаются только его СОБСТВЕННЫЕ следы: поступок от первого лица (`self_action`,
+BOB-079) и операторская вспоминка (`work`, BOB-087.B1). Доказано тестом на настоящей SQLite
+(`tests/application/usecases/test_coding_guppi_not_in_memory.py`): ни одна отправленная каналом GUPPI
+строка не встречается ни в одном эпизоде.
 
 **UX терминала: курированный полный вывод + rich (BOB-085).** `render_stream_event(event, verbose=)`
 двухрежимный: **интерактив-DM** (`verbose=True`, `_DmLiveStreamer(verbose=True)`) — ответы claude
@@ -366,6 +387,11 @@ ClaudeCodeRunner`; транзитный ports-шим `bob.domain.ports` удал
   `narration_capped`/`dev_pointer`, панель-строки, `busy`/`cannot_approve`/`no_session`/`status_*`).
   Две из них — `stopped()` и `no_session()` — общие: их ре-экспортирует голос живого терминала
   (`bob.interactive.voice`), потому что они про управление сессией, а не про режим.
+- `speaker.py`: `speaker_for(kind)` → `Speaker` (`BOB` / `GUPPI`), `is_mechanical(kind)` → `bool`;
+  перечисление `MessageKind` (`TOOL_OUTPUT`/`RUN_EVENT`/`RUN_STATUS`/`NOTHING_FOUND`/`TECHNICAL_ACK`
+  — механика; `SESSION_GATE`/`MODE_NOTICE`/`REACTION`/`PRESENCE_MARK`/`PERMISSION_REQUEST`/
+  `ADDRESSED_TO_PERSON` — живое). Чисто, без транспорта: канал по вердикту выбирает
+  `usecases/coding_assistant.notifier_for`.
 - `usecases/coding_assistant.py`: `CodingAssistant` — `start`/`approve_plan`/`stop`/`status`.
 - `usecases/coding_intent_router.py`: `CodingIntentRouter.route(text, sender, is_owner)`.
 - `usecases/classify_coding_intent.py`: `ClassifyCodingIntent.is_coding_request(text)`.

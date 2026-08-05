@@ -58,12 +58,20 @@ class FirstImpression:
     roster can NAME people who are not the current writer. It is nullable: a legacy row
     written before the column existed carries ``None``, and the name is then parsed
     back out of the ``"{name} — …"`` note as a fallback.
+
+    ``username`` (BOB-090.B3) is the person's Telegram ``@ник`` — WITHOUT the «собака»,
+    as Telegram hands it over. 🔴 ``None`` is a normal state, not missing data: in
+    Telegram a username is optional, and «ника нет» must lead to addressing the person by
+    NAME, never to a composed tag (эпизод 3088: «@Норман» вместо ``@NormanGri``). Unlike
+    the note and the first-seen instant — formed once — the handle may legitimately CHANGE
+    over a person's life, so the store refreshes this one field and only this one.
     """
 
     sender_id: int
     first_seen_at: datetime
     note: str
     display_name: str | None = None
+    username: str | None = None
 
     def __post_init__(self) -> None:
         if not self.note.strip():

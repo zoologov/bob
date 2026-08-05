@@ -1556,6 +1556,54 @@ ignore = [
 "src/bob/runtime/wiring/self_action.py" = ["RUF001", "RUF002", "RUF003"]
 "tests/domain/memory/test_self_action.py" = ["S101", "ARG001", "PLR2004", "RUF001", "RUF002", "RUF003"]
 "tests/domain/memory/test_self_action_recorder.py" = ["S101", "ARG001", "PLR2004", "RUF001", "RUF002", "RUF003"]
+# Адресация и упоминания (BOB-090.B) несут русские подсказки Бобу («Не отправляй…»,
+# «Переспроси, в какой именно чат…»), русские persona/policy-докстринги и русские имена
+# в тестах ростера — кириллические похожие символы намеренны (модель читает их нативно),
+# поэтому RUF001/RUF002/RUF003 к этим литералам не применяются.
+"src/bob/social/destination.py" = ["RUF001", "RUF002", "RUF003"]
+"src/bob/social/mention.py" = ["RUF001", "RUF002", "RUF003"]
+"src/bob/capabilities/usecases/send_to_chat.py" = ["RUF001", "RUF002", "RUF003"]
+"src/bob/capabilities/usecases/delivery_scope.py" = ["RUF001", "RUF002", "RUF003"]
+"src/bob/capabilities/ports.py" = ["RUF001", "RUF002", "RUF003"]
+"src/bob/social/adapters/first_impression_store.py" = ["RUF001", "RUF002", "RUF003"]
+"src/bob/infrastructure/telegram/outbound_messenger.py" = ["RUF001", "RUF002", "RUF003"]
+"src/bob/runtime/wiring/delivery.py" = ["RUF001", "RUF002", "RUF003"]
+"tests/domain/social/test_destination.py" = ["S101", "ARG001", "PLR2004", "RUF001", "RUF002", "RUF003"]
+"tests/domain/social/test_mention.py" = ["S101", "ARG001", "PLR2004", "RUF001", "RUF002", "RUF003"]
+"tests/domain/social/test_disclosure_transfer.py" = ["S101", "ARG001", "PLR2004", "RUF001", "RUF002", "RUF003"]
+"tests/capabilities/test_send_to_chat.py" = ["S101", "ARG001", "PLR2004", "RUF001", "RUF002", "RUF003"]
+"tests/test_permission_ack_topic.py" = ["S101", "ARG001", "PLR2004", "RUF001", "RUF002", "RUF003"]
+"tests/infrastructure/persistence/test_first_impression_username.py" = ["S101", "ARG001", "PLR2004", "RUF001", "RUF002", "RUF003"]
+"tests/application/usecases/test_first_impression_username.py" = ["S101", "ARG001", "PLR2004", "RUF001", "RUF002", "RUF003"]
+"tests/runtime/wiring/test_delivery.py" = ["S101", "ARG001", "PLR2004", "RUF001", "RUF002", "RUF003"]
+"tests/test_app_delivery.py" = ["S101", "ARG001", "PLR2004", "RUF001", "RUF002", "RUF003"]
+# HandleMessage несёт русские policy-комментарии среза B (армирование хода) — кириллические
+# похожие символы намеренны; RUF001/RUF002/RUF003 к ним не применяются.
+"src/bob/application/usecases/handle_message.py" = ["RUF001", "RUF002", "RUF003"]
+# Канон GUPPI (BOB-090.D): ядро «кто говорит» и его тесты несут русские докстринги и
+# литералы канона («правлю», «готово», реплики отыгрыша), а тестовые фейк-порты — не
+# используемые аргументы; RUF001-003 / ARG к ним не применяются.
+"src/bob/coding/speaker.py" = ["RUF001", "RUF002", "RUF003"]
+"tests/domain/coding/test_speaker.py" = ["S101", "ARG001", "PLR2004", "RUF001", "RUF002", "RUF003"]
+"tests/domain/personality/test_voice_guppi_no_roleplay.py" = ["S101", "ARG001", "PLR2004", "RUF001", "RUF002", "RUF003"]
+"tests/application/usecases/test_coding_speaker_routing.py" = [
+    "S101",
+    "ARG001",
+    "ARG002",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+"tests/application/usecases/test_coding_guppi_not_in_memory.py" = [
+    "S101",
+    "ARG001",
+    "ARG002",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
 
 [tool.ruff.lint.isort]
 known-first-party = ["bob"]

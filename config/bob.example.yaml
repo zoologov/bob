@@ -79,6 +79,27 @@ llm:
   # место хуже отсутствующего. Выключено по умолчанию; OFF → промпт байт-в-байт.
   # origin_provenance: true
 
+# 🔴 Секция закомментирована ЦЕЛИКОМ намеренно: пустая секция в YAML читается как null и
+# валит загрузчик (наступали на это в BOB-087). Раскомментируйте вместе с ключом.
+# social:
+  # Инструмент отправки в указанный чат/топик (BOB-090.B1). Без него исходящего адреса
+  # не существует как понятия: ответ всегда уходит туда, откуда пришёл ход, поэтому
+  # просьба из лички «расскажи Норману в нашей группе» невыполнима — Боб отвечает в личку.
+  # ON → Боб может написать в известный чат ПО ПРОСЬБЕ owner'а: инструмент виден модели,
+  # а решают чистые ядра — адрес (при неоднозначности переспросить, не угадывать), гейт
+  # переноса приватного (по МАТЕРИАЛУ: приватное в публичный чат только с явным согласием
+  # owner'а на этот ход) и заземление упоминаний на ростер (@ник настоящий или обращение
+  # по имени — выдуманный тег хуже отсутствующего).
+  # 🔴 Никакой автономии (урок BOB-076): вне хода и на ходе НЕ-owner'а инструмент не
+  # отправляет ничего. Предлагать Боб может, отправлять без «да» — нет.
+  # Адреса берутся из секции telegram (чат + топик Боба, личка owner'а); если не настроен
+  # ни один — инструмент не регистрируется вовсе. Выключено по умолчанию; OFF → манифест
+  # без него, то есть ход байт-в-байт прежний.
+  # delivery: true
+  #
+  # Ростер комнаты (BOB-080): Боб припоминает, кто в комнате появлялся недавно.
+  # roster: true
+
 embeddings:
   # Local semantic-memory embeddings (BOB-011). Runs against a LOCAL Ollama server
   # so memory content never leaves the machine (privacy). Provider-agnostic:
@@ -170,6 +191,17 @@ coder:
   # entirely unavailable (no entry, the gate never fires).
   # The DM target reuses dev_dm_chat_id (default telegram.owner_id).
   # interactive: false
+  # 🔴 GUPPI CANON (BOB-087.A1 wiring, BOB-090.D core): who SPEAKS the mechanics. By canon
+  # (Dennis E. Taylor) GUPPI is a non-sentient interface — no personality, no opinion, no
+  # initiative — so the machine-sounding part is his to say, dryly, on HIS bot: the
+  # per-event run narration, the technical run status and the raw claude stream. Bob's own
+  # voice (берусь / план / готово-PR / провал / «продолжаю» / the DM pointer) always stays
+  # on Bob's bot; a permission request is Bob's too — it is a social act, not mechanics.
+  # WHICH message is which is decided by the pure core `bob.coding.speaker.speaker_for`,
+  # not by the send site. Default OFF → everything stays on Bob's bot exactly as before
+  # (byte-identical). ON needs telegram.guppi.token (env GUPPI_TELEGRAM__TOKEN) AND the
+  # owner to have started GUPPI's bot, otherwise the DM firehose has nowhere to land.
+  # stream_via_guppi: false
   # Where the isolated git worktrees are created (relative to the repo root). A fresh
   # worktree holds only TRACKED files, so Bob's private data (data/soul/, bob.db*, .env*,
   # config/*) never reaches Claude Code — that absence IS the isolation.

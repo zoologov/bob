@@ -75,6 +75,11 @@ class Interlocutor:
     self-presentation (BOB-078 A) — never from their name. It defaults to
     :attr:`Gender.UNKNOWN` (neutral: Bob forces no grammatical gender) so an
     unperceived or newly-met sender is unchanged.
+
+    ``username`` is their Telegram ``@ник`` without the «собака» (BOB-090.B3) — how they
+    can be ADDRESSED in a room, as opposed to ``display_name``, which is how they are
+    CALLED. ``None`` (the default) means «ника нет / не знаю», a normal state in Telegram;
+    it must lead to addressing them by name, never to a tag composed out of one.
     """
 
     sender_id: int | None
@@ -82,6 +87,7 @@ class Interlocutor:
     kind: InterlocutorKind
     trust: Trust
     gender: Gender = Gender.UNKNOWN
+    username: str | None = None
 
 
 def classify(
@@ -92,6 +98,7 @@ def classify(
     is_authorized: bool,
     is_bot: bool = False,
     gender: Gender = Gender.UNKNOWN,
+    username: str | None = None,
 ) -> Interlocutor:
     """Derive the :class:`Interlocutor` from the turn's authz facts (pure).
 
@@ -100,6 +107,10 @@ def classify(
     GUEST/GUEST. A bot is its own KIND (BOT) regardless of authorization, while
     its TRUST still follows authorization (an allowlisted peer bot is TRUSTED, a
     random bot is GUEST) — ready for a future BobNet peer with no transport here.
+
+    ``username`` (BOB-090.B3) is carried through UNTOUCHED — it is a fact about the
+    person, not a classification: no ``@`` is added, nothing is derived from the name, and
+    ``None`` stays ``None``. It changes no kind and no trust.
     """
     trust = Trust.TRUSTED if (is_owner or is_authorized) else Trust.GUEST
     if is_bot:
@@ -116,4 +127,5 @@ def classify(
         kind=kind,
         trust=trust,
         gender=gender,
+        username=username,
     )

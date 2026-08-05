@@ -263,6 +263,26 @@ class UrlReader(Protocol):
 
 
 @runtime_checkable
+class OutboundMessenger(Protocol):
+    """Send one message to an EXPLICIT address — chat plus forum topic (BOB-090.B1).
+
+    The seam the ``send_to_chat`` skill delegates to, so the skill never touches a bot.
+    The address is passed per call, and both halves matter: in a forum group a
+    ``topic_id`` of ``None`` is not «the chat», it is the General topic, so the exact
+    address is what makes «напиши в нашу группу» land where people actually talk.
+
+    ``topic_id`` is passed through as-is and never invented (``None`` = «топика нет»: a
+    DM, or a group without forum topics). The first realisation rides the existing rich
+    markdown send (no new transport in this epic). An implementation may raise on a
+    transport failure — the caller decides what to tell Bob.
+    """
+
+    async def send(self, *, chat_id: int, topic_id: int | None, markdown: str) -> None:
+        """Post ``markdown`` into ``chat_id`` / ``topic_id`` (raises on failure)."""
+        ...
+
+
+@runtime_checkable
 class RepoIntrospector(Protocol):
     """Read-only self-introspection over Bob's own repo + tracker (BOB-017 Phase A).
 

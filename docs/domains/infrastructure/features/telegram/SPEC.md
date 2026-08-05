@@ -43,6 +43,10 @@ draft-стриминг и Rich Messages, пиннинг ответа в topic-th
   `RichMessageSerializer` — обратный рендер дерева в rich-message markdown (`to_markdown`).
 - **outage_notifier.py** — `_GuppiOutageNotifier`, честная системная строка «Bob
   unavailable» в топик Боба при outage'е (`notify_outage`, BOB-049 .3).
+- **outbound_messenger.py** — `TelegramOutboundMessenger`, отправка по ЯВНОМУ адресу
+  (`send(chat_id, topic_id, markdown)`, BOB-090.B1) поверх того же `RichMarkdownSender`:
+  новый транспорт не заводился — недоставало понятия «исходящий адрес». `topic_id`
+  передаётся как есть и не выдумывается: в форум-группе `None` — это General, а не «чат».
 
 ## Инварианты
 
@@ -53,6 +57,8 @@ draft-стриминг и Rich Messages, пиннинг ответа в topic-th
 - Транспорт не принимает бизнес-решений: authz — через `AuthorizerLike`, компоновка
   ответа — выше по стеку.
 - `RichMarkdownSender` деградирует к plain-тексту при rich-ошибке — ответ доходит всегда.
+- Тред не выдумывается: `message_thread_id` передаётся сквозь (`None` = «топика нет»).
+  Обратное и было дефектом ack'а разрешения — он падал в General (BOB-090.B5).
 
 ## API
 
@@ -81,4 +87,5 @@ draft-стриминг и Rich Messages, пиннинг ответа в topic-th
 <!-- beadloom:track=src/bob/infrastructure/telegram/multibot.py -->
 <!-- beadloom:track=src/bob/infrastructure/telegram/guppi.py -->
 <!-- beadloom:track=src/bob/infrastructure/telegram/rich.py -->
+<!-- beadloom:track=src/bob/infrastructure/telegram/outbound_messenger.py -->
 <!-- beadloom:track=src/bob/infrastructure/telegram/outage_notifier.py -->

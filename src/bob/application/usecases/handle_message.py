@@ -56,6 +56,10 @@ from bob.application.usecases.precompose_gate import (
     PreComposeGate,
 )
 from bob.application.usecases.reply_rhythm import reply_delay_inputs
+from bob.capabilities.usecases.delivery_scope import (
+    DeliveryScope,
+    armed_delivery_scope,
+)
 from bob.capabilities.usecases.diagram_sender import (
     _DEFAULT_DIAGRAM_SEND_AS,
     DiagramSender,
@@ -1687,10 +1691,18 @@ class HandleMessage:
         # Run the generation under the typing keepalive (+ the natural-delay floor when wired).
         # 🔴 BOB-049 .3: a still-failing ESSENTIAL generation ends the turn with the honest GUPPI
         # outage notice instead of a degraded half-answer.
+        # 🔴 Адресация (BOB-090.B1): на время генерации ход АРМИРУЕТ обстоятельства, в
+        # которых оценивается отправка вовне — кто просит, откуда, о чём и из какого
+        # материала. Реестр capability общий и живёт всё время процесса, поэтому сам
+        # инструмент этих фактов знать не может; без армированного хода он не отправляет
+        # ничего (урок BOB-076). Армирование снимается на выходе, в том числе при сбое.
         try:
-            reply = await self._run_generation(
-                _generate, chat_id=event.chat_id, demand=demand, interest=interest
-            )
+            with armed_delivery_scope(
+                self._delivery_scope_for(event, interlocutor, recalled)
+            ):
+                reply = await self._run_generation(
+                    _generate, chat_id=event.chat_id, demand=demand, interest=interest
+                )
         except _EssentialStepError as exc:
             await self._essential.handle_failure(event, soul, exc)
             return
@@ -1783,6 +1795,34 @@ class HandleMessage:
             user_message=event.text,
             reply=reply,
             visibility=self._turn_visibility(is_group=event.is_group),
+        )
+
+    def _delivery_scope_for(
+        self,
+        event: MessageReceived,
+        interlocutor: Interlocutor | None,
+        recalled: Sequence[Recalled],
+    ) -> DeliveryScope:
+        """Собрать обстоятельства ЭТОГО хода для инструмента отправки (BOB-090.B1).
+
+        ``from_owner`` — вправе ли просящий вообще адресовать сообщение в другой чат
+        (только owner, BOB-076); ``here_chat_id`` — чтобы «отправка» в тот же чат
+        распозналась структурно, а не по формулировке. Материал берётся ДВУМЯ частями,
+        потому что перенос приватного считается по материалу, а не по форме: видимость
+        самого разговора (личка приватна целиком) и то, что подняла память.
+
+        Всегда собирается и ничем не гейтится: обстоятельства сами по себе безвредны, а
+        читать их некому, пока инструмент не зарегистрирован (флаг ``social.delivery``).
+        """
+        return DeliveryScope(
+            from_owner=(
+                interlocutor is not None
+                and interlocutor.kind is InterlocutorKind.OWNER
+            ),
+            here_chat_id=event.chat_id,
+            request_text=event.text,
+            turn_visibility=self._turn_visibility(is_group=event.is_group),
+            recalled=tuple(recalled),
         )
 
     def _resolve_outgoing_target(

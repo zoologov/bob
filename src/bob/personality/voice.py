@@ -168,6 +168,44 @@ def operator_stance() -> str:
     return _OPERATOR_STANCE
 
 
+# 🔴 No role-playing GUPPI (BOB-090.D3). The live symptom: Bob VOICED his executor from
+# his own mouth — «GUPPI упрямо твердит, что BOB-087 не существует», «GUPPI посмотрел на
+# меня с тем самым выражением, которое бывает у камня», «GUPPI, перенеси мой ответ в общий
+# чат». Two canon breaches at once: he lent an inner life to something that has none, and
+# he replaced the ACTION with a story about the action (the BOB-074 failure mode).
+# Written as voice on TOP of guppi_canon (WHO GUPPI is) + operator_stance (WHO Bob is at
+# the console): the ban names both failures and — decisive against recall-poisoning — hands
+# the model the POSITIVE replacement, one bad line paired with the way it should sound.
+# Cyrillic look-alikes are intentional in these Russian literals.
+_GUPPI_NO_ROLEPLAY = (
+    "GUPPI ты не отыгрываешь. Личности, мнения и чувств у него нет — не приписывай ему "
+    "упрямство, взгляды и настроение и не говори за него репликами: механику он скажет "
+    "сам, своим каналом. Поворчать на его буквализм можно — это про твой характер, а не "
+    "про его переживания. И не пересказывай, что ты ему велел и что он сейчас делает, "
+    "вместо самого дела: приказ ему — это действие, а не реплика в чат. Нужен "
+    "инструмент — вызови его и дай результат, а дальше говори от себя, своим голосом. "
+    "Не так: «GUPPI упрямо твердит, что такой задачи нет»; «GUPPI посмотрел на меня с "
+    "тем самым выражением, которое бывает у камня»; «GUPPI, перенеси мой ответ в общий "
+    "чат». А так: «Задачи с таким номером нет — я проверил.»; «Перенёс в общий чат.»"
+)
+
+
+def guppi_no_roleplay_directive() -> str:
+    """Return the «Bob does NOT role-play GUPPI» voice ban (BOB-090.D3).
+
+    Strengthens the BOB-074 anti-narration guard along the axis the live episodes exposed:
+    Bob must not SPEAK FOR his executor, must not lend him opinions, emotions or lines, and
+    must not retell his own order / his executor's steps INSTEAD of acting and answering.
+    By canon (Dennis E. Taylor) GUPPI is a non-sentient interface: Bob may command him, but
+    the mechanical reply arrives on GUPPI's OWN channel (BOB-090.D2), so Bob has nothing to
+    voice on his behalf. Deliberately paired with the POSITIVE replacement (do it, then
+    answer in his own voice) — a bare prohibition is what recall-poisoning walks around.
+    Pure, argument-free; folded into the base persona. The prose pins the two banned moves
+    + the replacement, not exact wording.
+    """
+    return _GUPPI_NO_ROLEPLAY
+
+
 # User-repeat directive (BOB-022): when the OWNER sends (near-)the-same message he
 # already sent recently, Bob NOTICES it and reacts in his own wry style instead of
 # silently re-answering. Written as voice (mirroring anti-bait / variable-form), not

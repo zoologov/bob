@@ -78,11 +78,13 @@ src/bob/social/
   __init__.py         # layer=domain          — фасад модуля
   interlocutor.py     # layer=domain          — Interlocutor (+ gender) + classify (owner/known/guest/bot + trust), BOB-019/BOB-078 A
   gender.py           # layer=domain          — Gender/GenderRead + detect_self_gender: грамматический род по САМО-презентации (не по имени), накопление ≥2 сигналов, BOB-078 A
-  first_impression.py # layer=domain          — FirstImpression (+ display_name) + impression_note_for (лёгкая заметка на нового), BOB-019/BOB-080
+  first_impression.py # layer=domain          — FirstImpression (+ display_name, + username) + impression_note_for (лёгкая заметка на нового), BOB-019/BOB-080/BOB-090.B3
   roster.py           # layer=domain          — RosterMember/is_newcomer/build_roster: ростер комнаты, новизна по времени (припоминание состава), BOB-080
   relationship.py     # layer=domain          — Relationship (4 оси) + apply_interaction (шаг за ход), BOB-014
   sulk.py             # layer=domain          — SulkState + observe_relationship/recover (обида на person, person-agnostic, анти-Exodus), BOB-014.2b/BOB-066.2.5
-  disclosure.py       # layer=domain          — такт разглашения: may_surface/visibility_for_scope/filter_surfaceable (initiative-surfacing фильтр provenance), BOB-066.2.6
+  disclosure.py       # layer=domain          — такт разглашения: may_surface/visibility_for_scope/filter_surfaceable (initiative-surfacing фильтр provenance) + carries_owner_private/transfer_needs_consent (перенос приватного в публичный чат — ПО МАТЕРИАЛУ), BOB-066.2.6/BOB-090.B4
+  destination.py      # layer=domain          — KnownDestination/resolve_destination: куда именно писать — точный адрес (чат+топик), «переспроси» при неоднозначности, отказ не-owner'у и на тот же чат, BOB-090.B2
+  mention.py          # layer=domain          — PersonHandle/handles_from/mention_for/ground_mentions: обращение по НАСТОЯЩЕМУ @нику или по имени; неподтверждённый тег теряет «собаку» (выдуманный хуже отсутствующего), BOB-090.B3
   endorsement.py      # layer=domain          — кредит доверия: detected_endorsement/owner_endorsed_sender (owner ручается за новичка), BOB-066.2.6
   permission/         # layer=domain
     entities.py       #                        — PermissionRequest (immutable pending-запрос), BOB-052.1
@@ -104,13 +106,13 @@ src/bob/social/
   adapters/           # layer=infrastructure
     allowlist_store.py     —                   — KvAllowlistStore (allowlist в kv-таблице)
     soul_store.py          —                   — SoulStore (файловый reader/writer data/soul/)
-    first_impression_store.py —                — SqliteFirstImpressionStore (INSERT … ON CONFLICT DO NOTHING; recent(limit) recency-запрос + display_name, BOB-080)
+    first_impression_store.py —                — SqliteFirstImpressionStore (впечатление формируется однажды; ОБНОВЛЯЕТСЯ только username — ник меняется и у всех знакомых его ещё нет; recent(limit) recency-запрос + display_name), BOB-080/BOB-090.B3
     relationship_store.py  —                   — SqliteRelationshipStore (UPSERT в person_relationship)
     sulk_store.py          —                   — SqliteSulkStore (legacy per-persona sulk_state — источник owner-backfill)
     person_sulk_store.py   —                   — SqlitePersonSulkStore (per-(persona,sender) UPSERT в person_sulk + backfill_owner), BOB-066.2.5
     permission_request_store.py —              — SqlitePermissionRequestStore (pending-запросы)
     privilege_judge.py     —                   — LlmPrivilegeJudge (Tier-0 реализация PrivilegeJudge)
-    permission_channels.py —                   — транспортные края гейта привилегий (BOB-052): _PermissionRequesterChannel / _PermissionNotifier + _SafeDefaultPrivilegeJudge (safe-default обёртка судьи)
+    permission_channels.py —                   — транспортные края гейта привилегий (BOB-052): _PermissionRequesterChannel / _PermissionNotifier (оба канала нотиса — в ТОПИК Боба, BOB-090.B5) + _SafeDefaultPrivilegeJudge (safe-default обёртка судьи)
     soul_loader.py         —                   — _load_soul/_default_soul: сборка in-memory SOUL из персиста data/soul/ (переехало из app.py, BOB-062.7a)
 ```
 

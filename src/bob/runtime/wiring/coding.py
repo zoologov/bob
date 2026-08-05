@@ -128,6 +128,12 @@ def _build_coding_assistant(
     (Bob's bot). OFF → the firehose falls back to Bob's bot exactly as before (byte-identical:
     ``stream_notifier`` is ``None`` and the live-streamer targets ``notifier_bot``).
 
+    🔴 WHO says WHAT is not decided here (BOB-090.D). The wiring only answers «does GUPPI
+    have a channel of his own this boot» (the flag); the canon line — mechanics is GUPPI's
+    voice, everything live and addressed to people is Bob's, and a permission request is
+    Bob's too — lives in the pure :mod:`bob.coding.speaker`, and the use-case routes every
+    single message through it. Change the canon there, never at a send site or here.
+
     🔴 Owner-only sandbox relaxations (BOB-087.D2): ``coder.allow_bypass`` (default OFF)
     admits ``bypassPermissions`` into the runner's ``--permission-mode`` allowlist, and
     ``coder.extra_dirs`` (default empty) passes ``--add-dir`` paths OUTSIDE the worktree.
@@ -269,7 +275,10 @@ def _build_interactive_session(
     firehose, so under ``coder.stream_via_guppi`` (default OFF) it is rendered AS GUPPI —
     the per-session streamer is built over ``stream_bot`` (GUPPI's bot). OFF → ``bot`` (Bob's
     bot) exactly as before (byte-identical). The short Bob mode lines (open/stop) live in the
-    intake router (`_build_interactive_intake`) and stay on Bob's bot regardless.
+    intake router (`_build_interactive_intake`) and stay on Bob's bot regardless. In the
+    canon vocabulary (:mod:`bob.coding.speaker`, BOB-090.D) the split here is structural, so
+    it needs no per-message verdict: the raw stream is ``TOOL_OUTPUT`` (GUPPI's), while every
+    line the manager and the router speak is a ``MODE_NOTICE`` — Bob talking to a person.
 
     🔴 Owner-only sandbox relaxations (BOB-087.D2): ``coder.allow_bypass`` (default OFF)
     and ``coder.extra_dirs`` (default empty) are read once and baked into every

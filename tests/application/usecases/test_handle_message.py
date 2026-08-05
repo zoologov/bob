@@ -39,6 +39,7 @@ from bob.application.usecases.handle_message import (
 )
 from bob.capabilities.adapters.diagrams.mmdc_renderer import DiagramRenderError
 from bob.capabilities.ports import ToolCall, ToolCallResult, WebSearchResult
+from bob.capabilities.usecases.delivery_scope import current_delivery_scope
 from bob.capabilities.usecases.registry import CapabilityRegistry
 from bob.capabilities.usecases.render_diagram import (
     CollectingDiagramSink,
@@ -128,6 +129,7 @@ if TYPE_CHECKING:
         PermissionFlowLike,
     )
     from bob.capabilities.ports import DiagramSink, Permission, ToolCallingProvider, ToolDefinition
+    from bob.capabilities.usecases.delivery_scope import DeliveryScope
     from bob.capabilities.usecases.diagram_sender import DiagramSendMode
     from bob.conversation.ports import ZoneClassifier
     from bob.infrastructure.telegram.gateway import UpdateLike
@@ -9889,3 +9891,141 @@ async def test_callback_without_addon_recall_keeps_the_primary_port() -> None:
     await handler.handle(_message("расскажи подробно про Bobiverse и космос"))
 
     assert _WORK_MOMENT in tier1.all_text
+
+
+# --- Адресация: обстоятельства хода для отправки вовне (BOB-090.B1) ------------
+# Реестр capability общий и живёт всё время процесса, а «кто просит и из какого
+# материала» — свойство ХОДА. Ход армирует эти обстоятельства на время генерации;
+# без них инструмент отправки структурно не может выстрелить (урок BOB-076).
+
+
+class _ScopeProbeCapability:
+    """Fake tool that records the delivery scope visible at dispatch time."""
+
+    def __init__(self) -> None:
+        self.seen: list[DeliveryScope | None] = []
+
+    @property
+    def name(self) -> str:
+        return "scope_probe"
+
+    @property
+    def description(self) -> str:
+        return "probe"
+
+    @property
+    def input_schema(self) -> Mapping[str, object]:
+        return {"type": "object", "properties": {}}
+
+    @property
+    def permission(self) -> str:
+        return "safe"
+
+    async def execute(self, args: Mapping[str, object]) -> object:
+        del args
+        self.seen.append(current_delivery_scope())
+        return "ok"
+
+
+class _ProbeToolProvider:
+    """Requests the probe tool once, then answers."""
+
+    def __init__(self) -> None:
+        self._call = 0
+
+    async def complete_with_tools(
+        self,
+        messages: Sequence[ToolLoopMessage],
+        *,
+        tools: Sequence[ToolDefinition],
+    ) -> ToolCallResult:
+        del messages, tools
+        self._call += 1
+        if self._call == 1:
+            return ToolCallResult(
+                text="", tool_calls=(ToolCall(id="c1", name="scope_probe"),)
+            )
+        return ToolCallResult(text="готово", tool_calls=())
+
+
+def _probe_registry() -> tuple[CapabilityRegistry, _ScopeProbeCapability]:
+    registry = CapabilityRegistry()
+    probe = _ScopeProbeCapability()
+    registry.register(probe)  # type: ignore[arg-type]
+    return registry, probe
+
+
+async def test_the_turn_arms_who_asks_and_from_where() -> None:
+    registry, probe = _probe_registry()
+    resolver = _FakeInterlocutorResolver(
+        _interlocutor(name="Vova", kind=InterlocutorKind.OWNER)
+    )
+    handler, _bot, _repo, _tier1 = _build(
+        reply="unused",
+        registry=registry,
+        tool_provider=_ProbeToolProvider(),
+        perceive_sender=resolver,
+    )
+
+    await handler.handle(_message("расскажи Норману в нашей группе про релиз"))
+
+    scope = probe.seen[0]
+    assert scope is not None
+    assert scope.from_owner is True
+    assert scope.here_chat_id == 555
+    assert scope.request_text == "расскажи Норману в нашей группе про релиз"
+
+
+async def test_a_non_owner_turn_is_armed_as_not_owner() -> None:
+    registry, probe = _probe_registry()
+    resolver = _FakeInterlocutorResolver(
+        _interlocutor(name="Ada", kind=InterlocutorKind.KNOWN)
+    )
+    handler, _bot, _repo, _tier1 = _build(
+        reply="unused",
+        registry=registry,
+        tool_provider=_ProbeToolProvider(),
+        perceive_sender=resolver,
+    )
+
+    await handler.handle(_message("напиши в группу, что я приду"))
+
+    scope = probe.seen[0]
+    assert scope is not None
+    assert scope.from_owner is False
+
+
+async def test_the_armed_material_is_the_turn_and_its_recall() -> None:
+    # 🔴 Перенос приватного считается ПО МАТЕРИАЛУ: ход несёт и видимость разговора,
+    # и то, что подняла память, — иначе гейт согласия нечем кормить.
+    registry, probe = _probe_registry()
+    handler, _bot, _repo, _tier1 = _build(
+        reply="unused",
+        registry=registry,
+        tool_provider=_ProbeToolProvider(),
+        recall=FakeRecall(
+            hits=[{"content": "то, что было в личке", "visibility": "owner_private"}]
+        ),
+    )
+
+    await handler.handle(_message("расскажи подробно про кофе"))
+
+    scope = probe.seen[0]
+    assert scope is not None
+    assert scope.turn_visibility == "public"  # групповой ход по умолчанию
+    assert any(
+        item.get("visibility") == "owner_private" for item in scope.recalled
+    )
+
+
+async def test_the_scope_is_disarmed_once_the_turn_is_over() -> None:
+    # Иначе инструмент остался бы заряжен обстоятельствами ЧУЖОГО хода.
+    registry, probe = _probe_registry()
+    handler, _bot, _repo, _tier1 = _build(
+        reply="unused", registry=registry, tool_provider=_ProbeToolProvider()
+    )
+
+    await handler.handle(_message("расскажи подробно про кофе"))
+
+    assert probe.seen[0] is not None
+    assert current_delivery_scope() is None

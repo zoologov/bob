@@ -518,6 +518,55 @@ def test_topic_id_defaults_to_absent_on_the_event() -> None:
     assert event.topic_id is None
 
 
+# --- @username (BOB-090.B3): from_user.username → sender_username --------------
+# Ник не хранился нигде, поэтому Боб написал «@Норман» вместо @NormanGri. Единственный
+# источник — входящий апдейт: гейтвей знал ник всегда, но дальше по конвейеру не отдавал.
+
+
+@pytest.mark.asyncio
+async def test_intake_carries_the_senders_telegram_handle() -> None:
+    bus = AsyncEventBus()
+    received: list[MessageReceived] = []
+
+    async def handler(event: ports.DomainEvent) -> None:
+        assert isinstance(event, MessageReceived)
+        received.append(event)
+
+    bus.subscribe(MESSAGE_RECEIVED, handler)
+    gateway = _make_gateway(_FakeBot(), bus=bus)
+
+    await gateway.intake(
+        _update(10, user=_FakeUser(id=99, full_name="Норман", username="NormanGri"))
+    )
+
+    assert received[0].sender_username == "NormanGri"
+    assert received[0].sender_name == "Норман"  # имя и ник — разные вещи
+
+
+@pytest.mark.asyncio
+async def test_a_sender_without_a_handle_carries_none_not_a_guess() -> None:
+    # 🔴 Ник в телеграме необязателен: «ника нет» — это пусто, и никак иначе.
+    bus = AsyncEventBus()
+    received: list[MessageReceived] = []
+
+    async def handler(event: ports.DomainEvent) -> None:
+        assert isinstance(event, MessageReceived)
+        received.append(event)
+
+    bus.subscribe(MESSAGE_RECEIVED, handler)
+    gateway = _make_gateway(_FakeBot(), bus=bus)
+
+    await gateway.intake(_update(10, user=_FakeUser(id=99, full_name="Лиля")))
+
+    assert received[0].sender_username is None
+
+
+def test_sender_username_defaults_to_absent_on_the_event() -> None:
+    event = MessageReceived(update_id=1, chat_id=42, message_id=1, text="привет")
+
+    assert event.sender_username is None
+
+
 # --- Addressivity signals (BOB-023) -------------------------------------------
 
 _BOB_ID = 4242

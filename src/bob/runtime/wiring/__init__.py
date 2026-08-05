@@ -30,6 +30,7 @@ from bob.runtime.wiring.coding import (
     _build_interactive_recovery,
     _build_interactive_session,
 )
+from bob.runtime.wiring.delivery import build_send_to_chat, known_destinations
 from bob.runtime.wiring.disclosure import (
     build_disclosure_consent_gate,
     build_disclosure_guard,
@@ -161,7 +162,9 @@ __all__ = [
     "build_roster_config",
     "build_secondary_recall",
     "build_self_action_recorder",
+    "build_send_to_chat",
     "build_staleness_reassessor",
     "build_work_journal_recorder",
+    "known_destinations",
     "staleness_enabled",
 ]

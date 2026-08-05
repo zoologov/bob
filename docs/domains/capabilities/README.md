@@ -84,6 +84,8 @@ src/bob/capabilities/
     read_url.py       #                        — чтение одной ссылки за SSRF-щитом (BOB-054)
     render_diagram.py #                        — mermaid→PNG в чат + CollectingDiagramSink (BOB-035)
     diagram_sender.py #                        — DiagramSender: авто-рендер inline-mermaid + drain sink → отправка (коллаборатор handle_message, BOB-062.6b)
+    send_to_chat.py   #                        — отправка в УКАЗАННЫЙ чат/топик по просьбе owner'а: адрес (destination) + гейт переноса приватного (disclosure) + заземление упоминаний (mention); за флагом social.delivery, default OFF (BOB-090.B1)
+    delivery_scope.py #                        — DeliveryScope + armed_delivery_scope/current_delivery_scope: обстоятельства ХОДА (кто просит, откуда, из какого материала) через ContextVar — нет хода, нет отправки (BOB-090.B1)
   adapters/           # layer=infrastructure
     web/
       http_url_reader.py — HttpUrlReader: aiohttp GET за 🔴 SSRF-щитом + html.parser-извлечение

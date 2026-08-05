@@ -55,8 +55,8 @@ def _build_permission_flow(
     Pairs the Tier-0 :class:`LlmPrivilegeJudge` (wrapped in a safe-default guard so a
     flaky judgment never breaks a live turn — it refuses, i.e. falls through to a normal
     reply) with the durable :class:`SqlitePermissionRequestStore` and the two-channel
-    :class:`_PermissionNotifier` (owner notice into Bob's topic, requester ack into the
-    chat).
+    :class:`_PermissionNotifier` (owner notice AND requester ack both into Bob's topic —
+    BOB-090.B5).
 
     The EXECUTION (.3) is wired here: a :class:`PermissionExecutor` over the
     :class:`PrivilegedRequestFulfiller` (a one-shot elevated tool-loop / router run of the

@@ -40,8 +40,10 @@ if TYPE_CHECKING:
 __all__ = [
     "VISIBILITY_OWNER_PRIVATE",
     "VISIBILITY_PUBLIC",
+    "carries_owner_private",
     "filter_surfaceable",
     "may_surface",
+    "transfer_needs_consent",
     "visibility_for_scope",
 ]
 
@@ -112,6 +114,48 @@ def filter_surfaceable(
         item
         for item in recalled
         if may_surface(_visibility_of(item), trust, owner_consented=owner_consented)
+    )
+
+
+def carries_owner_private(material: Sequence[Mapping[str, object]]) -> bool:
+    """Whether ``material`` holds anything owner-private — pure (BOB-090.B4).
+
+    The read side of такт разглашения over a whole BODY of material: an item counts as
+    private exactly when :func:`may_surface` would withhold it from a GUEST, so there is
+    ONE definition of «приватное» in the codebase and not a second, drifting one. A legacy
+    ``NULL`` (or an unrecognised tag) reads as public, exactly as everywhere else.
+    """
+    return any(
+        not may_surface(_visibility_of(item), Trust.GUEST) for item in material
+    )
+
+
+def transfer_needs_consent(
+    recalled: Sequence[Mapping[str, object]],
+    *,
+    turn_visibility: str | None,
+    destination_public: bool,
+) -> bool:
+    """Whether carrying THIS turn's material to ``destination`` needs owner consent — pure.
+
+    🔴 Решение owner'а (BOB-090.B4): перенос считается **ПО МАТЕРИАЛУ, а не по форме**.
+    A reply whose material includes an ``owner_private`` item is a transfer whether it
+    quotes or retells in Bob's own words — otherwise «расскажи Норману, о чём мы говорили»
+    would walk around the gate by simple rewording.
+
+    The material of a turn has TWO sources and both count: what recall surfaced
+    (``recalled``) and the conversation Bob is standing in (``turn_visibility`` — the
+    owner's DM is private in its entirety, so retelling it into a room is a transfer even
+    when recall raised nothing private).
+
+    Consent is only ever a question when the AUDIENCE changes: a ``destination_public``
+    of ``False`` (writing back to the owner himself) is never a transfer. Deterministic.
+    """
+    if not destination_public:
+        return False
+    return (
+        not may_surface(turn_visibility, Trust.GUEST)
+        or carries_owner_private(recalled)
     )
 
 

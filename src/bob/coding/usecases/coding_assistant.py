@@ -62,6 +62,7 @@ from bob.coding.entities import CodingOutcome, CodingSession
 from bob.coding.naming import worktree_branch
 from bob.coding.narrate import narrate
 from bob.coding.ports import LiveRunStreamer, OwnerCheck, OwnerNotifier
+from bob.coding.speaker import MessageKind, Speaker, speaker_for
 from bob.coding.state import CodingSessionState, can_approve_plan, is_terminal
 from bob.coding.work_facts import WorkFactsAccumulator, WorkOutcome
 from bob.memory.self_action import SelfAction, SelfActionKind
@@ -86,6 +87,7 @@ __all__ = [
     "OwnerNotifier",
     "StatusPanel",
     "TypingKeepalive",
+    "notifier_for",
 ]
 
 # The execute-mode passed to the runner when the plan is approved (apply edits inside
@@ -111,6 +113,23 @@ _NO_CHANGES_DETAIL = "изменений не было"
 # per-event narrative is GUPPI-attributed by :func:`~bob.coding.narrate.narrate` —
 # both deterministic, template-based (no LLM). This use-case only orchestrates; the wording
 # is the domain's.
+
+
+def notifier_for(
+    kind: MessageKind, *, bob: OwnerNotifier, guppi: OwnerNotifier
+) -> OwnerNotifier:
+    """Выбрать канал по ВИДУ сообщения: вердикт ядра называет говорящего (BOB-090.D2).
+
+    Единственное место, где канон «механику озвучивает GUPPI, живое — Боб»
+    (:func:`~bob.coding.speaker.speaker_for`) превращается в канал. Раньше расклад был
+    размазан по местам отправки, и каждая новая реплика решала за себя сама; теперь
+    ветки «мимо канона» просто нет.
+
+    🔴 OFF-путь: когда композиция не дала отдельного канала GUPPI (флаг
+    ``coder.stream_via_guppi`` выключен), ``bob`` и ``guppi`` — ОДИН и тот же
+    нотификатор, и любой вердикт приводит в него же — поведение байт-в-байт как раньше.
+    """
+    return guppi if speaker_for(kind) is Speaker.GUPPI else bob
 
 
 class TypingKeepalive(Protocol):
@@ -213,12 +232,13 @@ class CodingAssistant:
         self._store = store
         self._pr_opener = pr_opener
         self._notifier = notifier
-        # Firehose channel (BOB-087.A1): the mechanical per-event ``narrate`` stream is
-        # GUPPI's work (the dry executor), so the composition may route it through GUPPI'S
-        # bot (flag ``coder.stream_via_guppi`` ON) via a SEPARATE ``stream_notifier``, while
-        # Bob's voice (gate lines + the capped notice) stays on ``notifier`` (Bob's bot).
-        # Unwired (the default, flag OFF) → the firehose falls back to the SAME ``notifier``,
-        # so a single-channel session is byte-identical to before (zero regression).
+        # Two voices, two channels (BOB-087.A1 + canon core BOB-090.D): ``notifier`` is
+        # Bob's bot, ``stream_notifier`` — GUPPI's (wired by the composition when
+        # ``coder.stream_via_guppi`` is ON). WHICH message goes where is not decided here
+        # and not at the send sites: every send passes through :meth:`_say`, where the pure
+        # :func:`~bob.coding.speaker.speaker_for` names the speaker by the KIND of message.
+        # Unwired (flag OFF) → GUPPI's channel IS ``notifier``, so a single-channel session
+        # is byte-identical to before (zero regression).
         self._stream_notifier: OwnerNotifier = stream_notifier or notifier
         self._owner = owner
         self._clock = clock
@@ -265,7 +285,7 @@ class CodingAssistant:
             return await self._reply(False, session_voice.busy(), session=None)
         # Bob's voice: he takes the task on (first person) and directs GUPPI — sent
         # before planning so the owner sees Bob accept immediately (BOB-041 .3).
-        await self._notifier.send(session_voice.accepted())
+        await self._say(MessageKind.SESSION_GATE, session_voice.accepted())
         # Work indicator (BOB-046 .2): one editable status panel opened up front, so the
         # owner sees "⏳ Прикидываю план…" during the silent claude wait instead of a minute
         # of nothing. It is EDITED (never re-sent) through the phases below.
@@ -485,7 +505,9 @@ class CodingAssistant:
         concurrent ``stop`` is honoured through the ``is_cancelled`` predicate the streamer
         polls (it breaks → the runner is closed → the ``claude`` process is killed).
         """
-        await self._notifier.send(session_voice.dev_pointer())
+        # The pointer is Bob telling a PERSON where to look — addressed speech, not
+        # mechanics — so the canon core keeps it on his channel (BOB-090.D).
+        await self._say(MessageKind.ADDRESSED_TO_PERSON, session_voice.dev_pointer())
         assert self._live_streamer is not None  # narrowed by the caller
         await self._live_streamer.stream(
             stream, is_cancelled=lambda: session.id in self._cancelled
@@ -505,11 +527,12 @@ class CodingAssistant:
         error must reach the owner), so the cap only throttles the per-file flood, never
         the result. A plain counter — it does not touch the stop/cancel break.
 
-        🔴 Channel split (BOB-087.A1): the per-event ``narrate`` firehose (interim progress
-        + the final result narration) is GUPPI's mechanical work → it goes to the
-        ``_stream_notifier`` (GUPPI's bot when ``coder.stream_via_guppi`` is ON, else the
-        same Bob channel — byte-identical). The "продолжаю" cap notice is Bob's OWN voice →
-        it stays on ``_notifier`` (Bob's bot) regardless of the flag.
+        🔴 Channel split (BOB-087.A1, canon core BOB-090.D): the per-event ``narrate``
+        firehose is mechanics (``RUN_EVENT``) and the final run outcome is a technical
+        status (``RUN_STATUS``) — both GUPPI's work, so the core routes them to GUPPI's
+        channel (his bot when ``coder.stream_via_guppi`` is ON, else the same single
+        channel — byte-identical). The "продолжаю" notice is Bob's own live REACTION → his
+        channel regardless of the flag.
         """
         progress = 0
         capped = False
@@ -520,12 +543,12 @@ class CodingAssistant:
             if line is None:
                 continue
             if _is_result_event(event):  # the final outcome ALWAYS reaches the owner
-                await self._stream_notifier.send(line)
+                await self._say(MessageKind.RUN_STATUS, line)
                 continue
             if capped:  # past the cap: swallow interim progress until the result
                 continue
             if progress >= _MAX_NARRATION:  # cap hit: one notice, then go quiet
-                await self._notifier.send(session_voice.narration_capped())
+                await self._say(MessageKind.REACTION, session_voice.narration_capped())
                 # Autobiographical trace of the flood (BOB-076): recorded EXACTLY ONCE
                 # per run — right here where the cap trips, not per narration line.
                 await self._record(
@@ -533,7 +556,7 @@ class CodingAssistant:
                 )
                 capped = True
                 continue
-            await self._stream_notifier.send(line)
+            await self._say(MessageKind.RUN_EVENT, line)
             progress += 1
 
     async def _preamble(self, task: str) -> str:
@@ -627,9 +650,26 @@ class CodingAssistant:
     async def _reply(
         self, ok: bool, message: str, *, session: CodingSession | None
     ) -> CodingOutcome:
-        """Send ``message`` to the owner and wrap the outcome."""
-        await self._notifier.send(message)
+        """Send ``message`` to the owner and wrap the outcome.
+
+        Every line that reaches here is a SESSION GATE in Bob's own voice (берусь / план /
+        готово-PR / провал / нет-правок / остановил / статус) — his decisions and promises
+        to a person, not a machine report — so the canon core routes it to Bob's channel.
+        """
+        await self._say(MessageKind.SESSION_GATE, message)
         return CodingOutcome(ok=ok, message=message, session=session)
+
+    async def _say(self, kind: MessageKind, message: str) -> None:
+        """Отправить ``message`` тем каналом, чей голос назвало ядро канона (BOB-090.D2).
+
+        Единственная дверь наружу у оркестратора: вид сообщения → вердикт
+        (:func:`~bob.coding.speaker.speaker_for`) → канал (:func:`notifier_for`). Механика
+        уходит ботом GUPPI, живое — ботом Боба; при выключенном флаге оба канала — один
+        нотификатор, и расклад байт-в-байт прежний.
+        """
+        await notifier_for(kind, bob=self._notifier, guppi=self._stream_notifier).send(
+            message
+        )
 
 
 class _Clock(Protocol):

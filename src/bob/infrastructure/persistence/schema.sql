@@ -214,7 +214,14 @@ CREATE TABLE IF NOT EXISTS first_impression (
     sender_id     INTEGER PRIMARY KEY,
     first_seen_at TEXT NOT NULL,  -- ISO-8601, timezone-aware (when Bob first met them)
     note          TEXT NOT NULL,  -- a short, grounded one-line impression
-    display_name  TEXT            -- the person's name (nullable; legacy rows parse note)
+    display_name  TEXT,           -- the person's name (nullable; legacy rows parse note)
+    -- The person's Telegram @handle WITHOUT the '@' (BOB-090.B3). NULL = «ника не знаю»,
+    -- a normal state (a username is optional in Telegram) that must lead to addressing
+    -- them by NAME — never to a composed tag (эпизод 3088: «@Норман» вместо @NormanGri).
+    -- 🔴 The ONLY field of this formed-once row that a later save refreshes: a handle
+    -- legitimately changes over a person's life, while the note and the first-seen
+    -- instant are what let Bob recognise them.
+    username      TEXT
 );
 
 -- Per-sender relationship quality (BOB-014): how Bob STANDS with each person, on

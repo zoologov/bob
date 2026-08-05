@@ -181,6 +181,7 @@ from bob.runtime.wiring import (
     build_roster_config,
     build_secondary_recall,
     build_self_action_recorder,
+    build_send_to_chat,
     build_staleness_reassessor,
     build_work_journal_recorder,
     staleness_enabled,
@@ -752,6 +753,19 @@ def build_application(
     # can, by explicit consent in a group, authorise voicing previously-private content into
     # the room for that one turn (privacy by default, not a prison).
     disclosure_consent = build_disclosure_consent_gate(merged, router=router)
+    # Адресация (BOB-090.B1): инструмент «написать в указанный чат/топик», за флагом
+    # ``social.delivery`` (default OFF → capability не зарегистрирована → её нет в
+    # манифесте → ход байт-в-байт прежний). Регистрация идёт ЗДЕСЬ, не при сборке
+    # реестра: ему нужны бот Боба, ростер (настоящие @ник) и контур согласия — всё это
+    # появляется позже. Реестр читается манифестом на каждом ходу, так что поздняя
+    # регистрация ничего не ломает.
+    build_send_to_chat(
+        merged,
+        registry=registry,
+        bot=resolved_bob_bot,
+        directory=first_impression_store,
+        consent=disclosure_consent,
+    )
 
     handle_message = HandleMessage(
         router=router,
