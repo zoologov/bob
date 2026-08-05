@@ -152,3 +152,37 @@ async def test_supersede_facts_empty_is_a_noop(repo: SqliteMemoryRepo) -> None:
     # Act / Assert: superseding nothing must not raise.
     await repo.supersede_facts({})
     await repo.close()
+
+
+async def test_a_merge_never_relabels_either_fact(repo: SqliteMemoryRepo) -> None:
+    """🔴 bob-g7t (соседний путь свёртки): дедуп НЕ трогает ось приватности.
+
+    Консолидация отмывала метку, потому что СОЗДАВАЛА новую запись без неё. Дедуп ничего
+    не создаёт: обе строки остаются на месте со своими метками, канониклом становится
+    одна из них, а вторая просто перестаёт всплывать. Поэтому слияние приватного факта с
+    публичным не может ни раскрыть приватное (содержимое никуда не копируется), ни
+    засекретить публичное. Тест держит это свойство: сегодня оно выполняется
+    «по построению» — ``select_active_facts`` даже не отдаёт метку, — и должно упасть,
+    если кто-нибудь научит слияние писать ``visibility``.
+    """
+    # Arrange: a private fact and a public near-duplicate.
+    await repo.save_fact(
+        SemanticFact(ts=_ts(), category="user", content="лечит спину", visibility="owner_private")
+    )
+    await repo.save_fact(
+        SemanticFact(ts=_ts(), category="user", content="лечит спину у врача", visibility="public")
+    )
+    rows = await repo.select_active_facts()
+    ids = {str(r["content"]): int(str(r["id"])) for r in rows}
+
+    # Act: merge the private one INTO the public canonical.
+    await repo.supersede_facts({ids["лечит спину"]: ids["лечит спину у врача"]})
+
+    # Assert: both rows keep exactly the label they were written with.
+    conn = repo.connection
+    async with conn.execute(
+        "SELECT content, visibility FROM semantic_memory ORDER BY id"
+    ) as cursor:
+        stored = {str(row["content"]): row["visibility"] for row in await cursor.fetchall()}
+    assert stored == {"лечит спину": "owner_private", "лечит спину у врача": "public"}
+    await repo.close()

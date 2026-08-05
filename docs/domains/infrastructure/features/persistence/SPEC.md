@@ -18,6 +18,11 @@ durable-стора по инъецированному сейму `connection`. 
   открытие БД с WAL-журналом и `foreign_keys`, загрузка расширения sqlite-vec, применение
   `schema.sql`, key-value-хранилище (`kv_set` / `kv_get`) и корректное закрытие. Методы:
   `db_path`, `initialize`, `close`, `journal_mode`, `kv_set`, `kv_get`, `connection`.
+  Здесь же живут guarded-ALTER миграции таблиц общих модулей: `CREATE TABLE IF NOT EXISTS`
+  не трогает уже существующую таблицу, поэтому недостающая колонка добавляется отдельным
+  `ALTER` — аддитивно, идемпотентно и без бэкфилла (`_migrate_person_relationship_gender`,
+  `_migrate_first_impression_display_name`, `_migrate_first_impression_username` —
+  Telegram-ник участника, BOB-090.B3).
 - **__init__.py** — фасад пакета (разделяемое SQLite connection/schema-ядро).
 
 ## Инварианты

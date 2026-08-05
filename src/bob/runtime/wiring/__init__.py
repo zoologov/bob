@@ -30,6 +30,7 @@ from bob.runtime.wiring.coding import (
     _build_interactive_recovery,
     _build_interactive_session,
 )
+from bob.runtime.wiring.delivery import build_send_to_chat, known_destinations
 from bob.runtime.wiring.disclosure import (
     build_disclosure_consent_gate,
     build_disclosure_guard,
@@ -58,6 +59,7 @@ from bob.runtime.wiring.parameters import (
     _build_length_guard_max_chars,
     _build_max_tasks_per_window,
     _build_offday_thresholds,
+    _build_origin_provenance,
     _build_pursuit_enabled,
     _build_pursuit_tick_seconds,
     _build_recent_turns,
@@ -130,6 +132,7 @@ __all__ = [
     "_build_max_tasks_per_window",
     "_build_multibot",
     "_build_offday_thresholds",
+    "_build_origin_provenance",
     "_build_permission_flow",
     "_build_proactivity_engine",
     "_build_pursue_goals_tick",
@@ -159,7 +162,9 @@ __all__ = [
     "build_roster_config",
     "build_secondary_recall",
     "build_self_action_recorder",
+    "build_send_to_chat",
     "build_staleness_reassessor",
     "build_work_journal_recorder",
+    "known_destinations",
     "staleness_enabled",
 ]

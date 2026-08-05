@@ -40,9 +40,12 @@ if TYPE_CHECKING:
 __all__ = [
     "VISIBILITY_OWNER_PRIVATE",
     "VISIBILITY_PUBLIC",
+    "carries_owner_private",
     "filter_surfaceable",
     "may_surface",
+    "transfer_needs_consent",
     "visibility_for_scope",
+    "visibility_of",
 ]
 
 # The two provenance tags a memory may carry. Persisted as a nullable column whose
@@ -111,11 +114,61 @@ def filter_surfaceable(
     return tuple(
         item
         for item in recalled
-        if may_surface(_visibility_of(item), trust, owner_consented=owner_consented)
+        if may_surface(visibility_of(item), trust, owner_consented=owner_consented)
     )
 
 
-def _visibility_of(item: Mapping[str, object]) -> str | None:
-    """Read a recalled memory's ``visibility`` tag as a string, or ``None`` (= public)."""
+def carries_owner_private(material: Sequence[Mapping[str, object]]) -> bool:
+    """Whether ``material`` holds anything owner-private — pure (BOB-090.B4).
+
+    The read side of такт разглашения over a whole BODY of material: an item counts as
+    private exactly when :func:`may_surface` would withhold it from a GUEST, so there is
+    ONE definition of «приватное» in the codebase and not a second, drifting one. A legacy
+    ``NULL`` (or an unrecognised tag) reads as public, exactly as everywhere else.
+    """
+    return any(
+        not may_surface(visibility_of(item), Trust.GUEST) for item in material
+    )
+
+
+def transfer_needs_consent(
+    recalled: Sequence[Mapping[str, object]], *, destination_public: bool
+) -> bool:
+    """Whether carrying material Bob ADDS to a public destination needs consent — pure.
+
+    🔴 Решение owner'а (BOB-090.B4): перенос считается **ПО МАТЕРИАЛУ, а не по форме**.
+    A message whose material includes an ``owner_private`` item is a transfer whether it
+    quotes or retells in Bob's own words — otherwise «расскажи Норману, о чём мы говорили»
+    would walk around the gate by simple rewording. The gate reads the LABEL of the
+    material, never the wording, so the two forms are indistinguishable to it.
+
+    🔴 Материал — это то, что Боб ДОБАВЛЯЕТ ОТ СЕБЯ: приватные эпизоды, поднятые памятью
+    (``recalled``). Место, где идёт разговор, триггером НЕ является (BOB-090.B-fix): пока
+    им считалась личка — приватная целиком, — гейт срабатывал на КАЖДОЙ отправке из лички
+    независимо от материала, и Боб отказывал owner'у в его же прямом распоряжении
+    («напиши в группу, что я закончил обзор»). Просьба owner'а — это волеизъявление, а не
+    утечка: согласие содержится в самой команде. Спрашивать надо там, где содержание
+    приходит из ПАМЯТИ Боба, а не изо рта owner'а.
+
+    🔴 ОСОЗНАННЫЙ ОСТАТОЧНЫЙ РИСК (решение owner'а, чинить не надо): если owner прямо
+    велит переслать в комнату сказанное им же в личке, а память ничего приватного не
+    подняла, отправка уйдёт без вопроса. Это его данные и его решение — Боб исполняет.
+    Гейт остаётся ровно там, где Боб выносит приватное ПО СВОЕЙ инициативе.
+
+    Consent is only ever a question when the AUDIENCE changes: a ``destination_public``
+    of ``False`` (writing back to the owner himself) is never a transfer. Deterministic.
+    """
+    return destination_public and carries_owner_private(recalled)
+
+
+def visibility_of(item: Mapping[str, object]) -> str | None:
+    """Read a memory's ``visibility`` tag as a string, or ``None`` (= public) — pure.
+
+    The ONE accessor of the tag (BOB-090.B-fix2): the turn-material trail
+    (:mod:`~bob.capabilities.usecases.turn_material`) labels every piece of material that
+    enters a turn's context with it, so «приватное» keeps a single definition here instead
+    of a second, drifting reader. A missing or non-string tag reads as ``None`` = public,
+    exactly as the legacy ``NULL`` column does (BOB-051).
+    """
     value = item.get("visibility")
     return value if isinstance(value, str) else None

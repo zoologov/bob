@@ -32,7 +32,9 @@ import logging
 from typing import TYPE_CHECKING
 
 from bob.infrastructure.persistence.connection import SqliteConnection
+from bob.kernel.visibility import strictest_visibility
 from bob.memory.adapters.vector_store import MemoryVectorStore
+from bob.memory.digest_provenance import parse_provenance_window
 from bob.memory.work_journal import WORK_EVENT_TYPE
 
 if TYPE_CHECKING:
@@ -96,10 +98,12 @@ class SqliteMemoryRepo:
         await self._migrate_episodic_sender_id()
         await self._migrate_episodic_bob_message_id()
         await self._migrate_episodic_visibility()
+        await self._migrate_episodic_origin()
         await self._migrate_semantic_superseded_by()
         await self._migrate_semantic_visibility()
         await self._backfill_episodic_fts()
         await self._backfill_episodic_sender_id()
+        await self._repair_digest_visibility()
         await self._db().commit()
         await self._vector_store().backfill()
         logger.info("SqliteMemoryRepo initialised at %s", self._connection.db_path)
@@ -173,6 +177,34 @@ class SqliteMemoryRepo:
         if "visibility" not in await self._episodic_columns():
             await self._db().execute("ALTER TABLE episodic_log ADD COLUMN visibility TEXT")
 
+    async def _migrate_episodic_origin(self) -> None:
+        """Add the episode's EXACT address to a pre-existing DB (BOB-090.C2).
+
+        ``origin_chat_id`` + ``origin_topic_id``: the Telegram chat and forum topic a turn
+        was said at. ``CREATE TABLE IF NOT EXISTS`` never alters an already-present table,
+        so a DB written before these columns existed would lack them. This guarded ``ALTER``
+        adds each only when missing — additive and non-destructive: every existing row keeps
+        its content and takes ``NULL``. A clean no-op once present, so re-running
+        ``initialize()`` is idempotent.
+
+        🔴 ``NULL`` here means «источник неизвестен», NOT «публично». This is the deliberate
+        difference from :meth:`_migrate_episodic_visibility`, whose NULL fails OPEN to public
+        for BOB-051 unified memory: a visibility label is a permission, an address is a
+        FACTUAL CLAIM about a place. There is therefore no backfill and no default — the
+        legacy rows of the live archive stay address-less, and the honest reading of that is
+        «не знаю где», which is exactly what episode 3092 (Bob announcing he had explained
+        something «в группе» when he had explained it in the DM) shows must never be guessed.
+        """
+        columns = await self._episodic_columns()
+        if "origin_chat_id" not in columns:
+            await self._db().execute(
+                "ALTER TABLE episodic_log ADD COLUMN origin_chat_id INTEGER"
+            )
+        if "origin_topic_id" not in columns:
+            await self._db().execute(
+                "ALTER TABLE episodic_log ADD COLUMN origin_topic_id INTEGER"
+            )
+
     async def _migrate_semantic_visibility(self) -> None:
         """Add ``semantic_memory.visibility`` to a pre-existing DB (idempotent, BOB-066 2.6).
 
@@ -213,6 +245,70 @@ class SqliteMemoryRepo:
         await self._db().executemany(
             "UPDATE episodic_log SET sender_id = ? WHERE id = ?", updates
         )
+
+    async def _repair_digest_visibility(self) -> None:
+        """Дозаполнить метку приватности у дайджестов, свёрнутых ДО фикса (bob-g7t).
+
+        До этого фикса свёртка писала дайджест вообще без ``visibility``, а отсутствие
+        метки читается как ПУБЛИЧНО, — значит каждый такой дайджест утверждает о себе
+        «меня можно показать гостю и вынести в общий чат», ничем это не подкрепив. Живая
+        база несла 21 такую строку.
+
+        🔴 Решение: метку ВОССТАНАВЛИВАЕМ ПО ИСТОЧНИКАМ, а не «оставляем как есть» и не
+        «метим всё приватным». Это данные owner'а, и честный ответ про них есть в самой
+        базе: дайджест хранит провенанс — ts-окно своих источников, — а источники хранят
+        свои метки. «Оставить как есть» означало бы сознательно оставить утверждение,
+        которое никто не проверял; «пометить всё приватным» отняло бы у Боба общую
+        память комнаты (публичные дайджесты перестали бы всплывать при гостях), то есть
+        починка приватности сломала бы соседнюю ось. Пересчёт не делает ни того, ни
+        другого: строгая метка появляется ровно там, где приватный источник действительно
+        был.
+
+        Разрешается тем же правилом, что и путь записи (:func:`~bob.kernel.visibility.
+        strictest_visibility`) — одно правило на обе дороги. Провенанс, который не
+        разбирается, или окно, в котором не нашлось ни одного свёрнутого источника, дают
+        ПУСТОЙ набор меток, а он по тому же правилу строгий: сомнение придерживает
+        (INV-8).
+
+        Идемпотентно и не разрушающе: трогает только строки БЕЗ метки, поэтому уже
+        помеченный дайджест никогда не переоценивается, а после фикса новые дайджесты
+        всегда приходят с меткой — и починка вырождается в пустой SELECT.
+        """
+        async with self._db().execute(
+            "SELECT id, mood_snapshot FROM episodic_log "
+            "WHERE event_type = 'digest' AND visibility IS NULL"
+        ) as cursor:
+            rows = await cursor.fetchall()
+        if not rows:
+            return
+        updates = [
+            (strictest_visibility(await self._digest_source_labels(row[1])), int(row[0]))
+            for row in rows
+        ]
+        await self._db().executemany(
+            "UPDATE episodic_log SET visibility = ? WHERE id = ?", updates
+        )
+        logger.info("repaired the privacy label of %d pre-fix digest(s)", len(updates))
+
+    async def _digest_source_labels(self, provenance: object) -> list[str | None]:
+        """Метки видимости эпизодов, свёрнутых в дайджест с этим провенансом (bob-g7t).
+
+        Источник — свёрнутый (``consolidated = 1``) обычный эпизод внутри ts-окна: ровно
+        то, что :meth:`select_consolidatable_episodes` когда-то отдало этому дайджесту,
+        поэтому исключения по ``event_type`` те же. Пустой список означает «источников не
+        предъявить» и трактуется вызывающим строго.
+        """
+        window = parse_provenance_window(provenance if isinstance(provenance, str) else None)
+        if window is None:
+            return []
+        async with self._db().execute(
+            "SELECT visibility FROM episodic_log "
+            "WHERE consolidated = 1 AND event_type NOT IN ('digest', ?) "
+            "AND ts >= ? AND ts <= ?",
+            (WORK_EVENT_TYPE, window[0], window[1]),
+        ) as cursor:
+            rows = await cursor.fetchall()
+        return [row[0] if isinstance(row[0], str) else None for row in rows]
 
     async def _episodic_columns(self) -> set[str]:
         """Names of the columns currently on ``episodic_log``."""
@@ -270,12 +366,17 @@ class SqliteMemoryRepo:
         ``'public'`` / ``'owner_private'``, or omitted → NULL (= public), so a caller that
         does not classify scope (ticks/digests/tests) writes surfaceable memory exactly as
         before.
+
+        The optional ``origin_chat_id`` / ``origin_topic_id`` keys carry the EXACT address
+        the turn was said at (BOB-090.C2). Omitted → NULL, which reads as «источник
+        неизвестен» — a caller with no incoming message (a tick, a digest) states no place
+        rather than a wrong one.
         """
         cursor = await self._db().execute(
             "INSERT INTO episodic_log "
             "(ts, event_type, content, mood_snapshot, tags, sender_id, bob_message_id, "
-            "visibility) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            "visibility, origin_chat_id, origin_topic_id) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 episode["ts"],
                 episode["event_type"],
@@ -285,6 +386,8 @@ class SqliteMemoryRepo:
                 episode.get("sender_id"),
                 episode.get("bob_message_id"),
                 episode.get("visibility"),
+                episode.get("origin_chat_id"),
+                episode.get("origin_topic_id"),
             ),
         )
         await self._db().commit()
@@ -302,6 +405,8 @@ class SqliteMemoryRepo:
                 "sender_id": event.sender_id,
                 "bob_message_id": event.bob_message_id,
                 "visibility": event.visibility,
+                "origin_chat_id": event.origin_chat_id,
+                "origin_topic_id": event.origin_topic_id,
             }
         )
 
@@ -327,9 +432,17 @@ class SqliteMemoryRepo:
         return dict(row) if row is not None else None
 
     async def load_episodes(self, *, limit: int) -> Sequence[Mapping[str, object]]:
-        """Return up to ``limit`` most-recent episodes (newest first)."""
+        """Return up to ``limit`` most-recent episodes (newest first).
+
+        Carries each episode's EXACT address (BOB-090.C2) — ``origin_chat_id`` /
+        ``origin_topic_id``, ``None`` when the source is unknown — so the place a turn was
+        said at is READABLE back through the same door it was written through. Deliberately
+        NOT on the recall path: recall feeds the reply prompt, and the address is storage
+        metadata, never material Bob speaks from.
+        """
         async with self._db().execute(
-            "SELECT ts, event_type, content, mood_snapshot, tags "
+            "SELECT ts, event_type, content, mood_snapshot, tags, "
+            "origin_chat_id, origin_topic_id "
             "FROM episodic_log ORDER BY ts DESC, id DESC LIMIT ?",
             (limit,),
         ) as cursor:
@@ -396,11 +509,16 @@ class SqliteMemoryRepo:
         provenance the register-aware recall keys on would be laundered away, and the muted
         dev memory would resurface in casual recall forever after. While the work journal is
         off no such row exists, so eligibility is unchanged.
+
+        🔴 Each row carries its ``visibility`` (bob-g7t) — the fold step can only inherit a
+        label the projection actually hands it, and a fold that sees no labels stamps every
+        digest public. The one place this predicate and the repair below must agree on is
+        WHAT COUNTS AS A SOURCE, so both use the same ``event_type`` exclusion.
         """
         if limit <= 0:
             return []
         async with self._db().execute(
-            "SELECT id, ts, event_type, content, mood_snapshot, tags "
+            "SELECT id, ts, event_type, content, mood_snapshot, tags, visibility "
             "FROM episodic_log "
             "WHERE consolidated = 0 AND event_type NOT IN ('digest', ?) AND ts < ? "
             "ORDER BY ts ASC, id ASC LIMIT ?",
@@ -416,6 +534,11 @@ class SqliteMemoryRepo:
         other and the on-write embedding path (BOB-011) applies unchanged. The
         ``consolidated`` flag defaults to 0 but the select predicate excludes
         digests by ``event_type``, so it is never itself re-consolidated.
+
+        🔴 The digest's ``visibility`` (bob-g7t) is written through like any episode's: the
+        fold step computes it as the STRICTEST label among the sources, and dropping it
+        here would put the row back to NULL — which reads as public, i.e. exactly the
+        laundering this fix closes.
         """
         await self.save_episode(
             {
@@ -424,6 +547,7 @@ class SqliteMemoryRepo:
                 "content": digest["content"],
                 "mood_snapshot": digest.get("mood_snapshot"),
                 "tags": digest.get("tags", ""),
+                "visibility": digest.get("visibility"),
             }
         )
 

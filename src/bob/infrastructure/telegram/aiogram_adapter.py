@@ -74,6 +74,8 @@ class _UserView:
 
     id: int
     full_name: str
+    # The Telegram @handle without the '@' (BOB-090.B3); ``None`` when they have none.
+    username: str | None = None
 
 
 @dataclass(frozen=True)
@@ -234,7 +236,13 @@ def _to_update_view(update: object) -> _UpdateView:
             _ChatView(id=chat.id, type=chat.type) if chat is not None else None
         ),
         effective_user=(
-            _UserView(id=user.id, full_name=user.full_name) if user is not None else None
+            _UserView(
+                id=user.id,
+                full_name=user.full_name,
+                username=getattr(user, "username", None),
+            )
+            if user is not None
+            else None
         ),
         message_reaction=getattr(update, "message_reaction", None),
         message_reaction_count=getattr(update, "message_reaction_count", None),

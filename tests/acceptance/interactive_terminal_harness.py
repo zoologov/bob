@@ -422,6 +422,7 @@ class _FakeMessage:
 class _FakeUser:
     id: int
     full_name: str = "Owner"
+    username: str | None = None
 
 
 @dataclass

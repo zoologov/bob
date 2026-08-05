@@ -29,6 +29,7 @@ from typing import TYPE_CHECKING
 from bob.app import build_application
 from bob.application.runtime.events import MessageReceived
 from bob.capabilities.ports import ToolCall, ToolCallResult
+from bob.capabilities.usecases.turn_material import MaterialTrailRecall
 from bob.memory.adapters import HybridMemoryRecall
 from bob.memory.entities import SemanticFact
 from bob.social.adapters.soul_store import SoulStore
@@ -314,8 +315,11 @@ async def test_build_application_wires_hybrid_recall(tmp_path: Path) -> None:
         embedder=FakeEmbedder(),
     )
 
-    # Assert: the live recall is the hybrid, not the keyword-only Fts5MemoryRecall.
-    assert isinstance(app.handle_message._recall, HybridMemoryRecall)
+    # Assert: the live recall is the hybrid, not the keyword-only Fts5MemoryRecall —
+    # reached through the turn-material trail decorator the root wraps it in
+    # (BOB-090.B-fix2: every recall door is recorded by construction).
+    assert isinstance(app.handle_message._recall, MaterialTrailRecall)
+    assert isinstance(app.handle_message._recall._inner, HybridMemoryRecall)
 
 
 async def test_registry_advertises_search_memory(tmp_path: Path) -> None:
@@ -442,7 +446,8 @@ async def test_build_application_starts_without_embedder_config(tmp_path: Path) 
         await app.shutdown()
 
     # Assert: the app booted (hybrid recall, embedder None) and keyword recall works.
-    assert isinstance(app.handle_message._recall, HybridMemoryRecall)
+    assert isinstance(app.handle_message._recall, MaterialTrailRecall)
+    assert isinstance(app.handle_message._recall._inner, HybridMemoryRecall)
     assert any("зонды" in str(hit["content"]) for hit in hits)
 
 

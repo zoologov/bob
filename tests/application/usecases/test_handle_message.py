@@ -39,10 +39,15 @@ from bob.application.usecases.handle_message import (
 )
 from bob.capabilities.adapters.diagrams.mmdc_renderer import DiagramRenderError
 from bob.capabilities.ports import ToolCall, ToolCallResult, WebSearchResult
+from bob.capabilities.usecases.delivery_scope import current_delivery_scope
 from bob.capabilities.usecases.registry import CapabilityRegistry
 from bob.capabilities.usecases.render_diagram import (
     CollectingDiagramSink,
     make_render_diagram_capability,
+)
+from bob.capabilities.usecases.turn_material import (
+    MaterialOrigin,
+    MaterialTrailRecall,
 )
 from bob.conversation.addressivity import AddressivityThresholds
 from bob.conversation.conversation import RepeatThresholds
@@ -128,6 +133,7 @@ if TYPE_CHECKING:
         PermissionFlowLike,
     )
     from bob.capabilities.ports import DiagramSink, Permission, ToolCallingProvider, ToolDefinition
+    from bob.capabilities.usecases.delivery_scope import DeliveryScope
     from bob.capabilities.usecases.diagram_sender import DiagramSendMode
     from bob.conversation.ports import ZoneClassifier
     from bob.infrastructure.telegram.gateway import UpdateLike
@@ -641,7 +647,7 @@ def _build(
     rng: Random | None = None,
     expression_freqs: ExpressionFreqs | None = None,
     reactor: _RecordingReactor | None = None,
-    recall: FakeRecall | None = None,
+    recall: MemoryRecall | None = None,
     reflection: _FakeReflectionReader | None = None,
     fascination: _FakeFascinationReader | None = None,
     surface_old_freq: float | None = None,
@@ -983,6 +989,73 @@ async def test_persisted_episode_records_outgoing_bob_message_id() -> None:
 
     assert len(repo.episodes) == 1
     assert repo.episodes[0]["bob_message_id"] == 777
+
+
+# --- Точный адрес эпизода (BOB-090.C2) ----------------------------------------
+# Грубого «личка или группа» мало: чтобы позже написать «туда же, где это обсуждали»,
+# эпизод должен помнить КОНКРЕТНЫЙ чат и топик. Адрес пишется из события, без флага —
+# это метаданные хранения, в промпт он не попадает.
+
+
+async def test_persisted_episode_carries_the_exact_origin() -> None:
+    handler, _bot, repo, _tier1 = _build(reply="ok")
+
+    await handler.handle(
+        MessageReceived(
+            update_id=1,
+            chat_id=-100500,
+            message_id=10,
+            text="расскажи подробно про кофе",
+            sender_id=99,
+            sender_name="Ada",
+            topic_id=77,
+        )
+    )
+
+    assert repo.episodes[0]["origin_chat_id"] == -100500
+    assert repo.episodes[0]["origin_topic_id"] == 77
+
+
+async def test_persisted_dm_episode_knows_its_chat_and_has_no_topic() -> None:
+    # В личке форум-топиков не бывает: чат известен, топика нет. Это знание, а не
+    # «источник неизвестен» — и уж точно не повод подставить какой-нибудь чат.
+    handler, _bot, repo, _tier1 = _build(reply="ok")
+
+    await handler.handle(
+        MessageReceived(
+            update_id=1,
+            chat_id=4242,
+            message_id=10,
+            text="расскажи подробно про кофе",
+            sender_id=99,
+            sender_name="Ada",
+            is_group=False,
+        )
+    )
+
+    assert repo.episodes[0]["origin_chat_id"] == 4242
+    assert repo.episodes[0]["origin_topic_id"] is None
+
+
+async def test_episode_address_does_not_replace_the_visibility_axis() -> None:
+    # 🔴 Ось «где сказано» (адрес) живёт РЯДОМ с осью такта разглашения (visibility),
+    # а не вместо неё: у одной строки есть и то, и другое.
+    handler, _bot, repo, _tier1 = _build(reply="ok")
+
+    await handler.handle(
+        MessageReceived(
+            update_id=1,
+            chat_id=4242,
+            message_id=10,
+            text="расскажи подробно про кофе",
+            sender_id=99,
+            sender_name="Ada",
+            is_group=False,
+        )
+    )
+
+    assert repo.episodes[0]["visibility"] == "owner_private"
+    assert repo.episodes[0]["origin_chat_id"] == 4242
 
 
 async def test_reply_uses_tier1_provider() -> None:
@@ -7869,6 +7942,33 @@ async def test_judge_ignore_stays_silent_and_persists_promolchal() -> None:
     assert _bob_half(repo.episodes[0]["content"]) == "(промолчал)"
 
 
+async def test_silent_turn_also_records_the_exact_origin() -> None:
+    # BOB-090.C2: адрес пишется в ОБЩЕМ шве персиста, поэтому его получает не только
+    # ответ, но и молчаливый ход — иначе половина ambient-жизни комнаты осталась бы
+    # без места, и «туда же, где это обсуждали» опиралось бы на дыру.
+    decide, _fake = _judge(ResponseIntent.IGNORE)
+    handler, _bot, repo, _tier1 = _build(
+        reply="не должно отправиться",
+        perceive_sender=_owner_with_id(99),
+        decide_response=decide,
+    )
+
+    await handler.handle(
+        MessageReceived(
+            update_id=1,
+            chat_id=-100500,
+            message_id=10,
+            text="болтают между собой",
+            sender_id=99,
+            sender_name="Ada",
+            topic_id=77,
+        )
+    )
+
+    assert repo.episodes[0]["origin_chat_id"] == -100500
+    assert repo.episodes[0]["origin_topic_id"] == 77
+
+
 async def test_judge_react_without_a_reactor_still_persists_the_reaction_turn() -> None:
     # With no reactor wired, a REACT decision still stands (the turn persists as a
     # reaction) — the native reaction is simply not sent (a clean no-op, no crash).
@@ -9795,3 +9895,225 @@ async def test_callback_without_addon_recall_keeps_the_primary_port() -> None:
     await handler.handle(_message("расскажи подробно про Bobiverse и космос"))
 
     assert _WORK_MOMENT in tier1.all_text
+
+
+# --- Адресация: обстоятельства хода для отправки вовне (BOB-090.B1) ------------
+# Реестр capability общий и живёт всё время процесса, а «кто просит и из какого
+# материала» — свойство ХОДА. Ход армирует эти обстоятельства на время генерации;
+# без них инструмент отправки структурно не может выстрелить (урок BOB-076).
+
+
+class _ScopeProbeCapability:
+    """Fake tool that records the delivery scope visible at dispatch time.
+
+    ``on_seen`` (BOB-090.B-fix2) lets a scenario ACT from inside the tool-loop — the one
+    place a real second door (a memory tool) would fire — so the trail can be checked for
+    material raised AFTER the turn's snapshot was taken.
+    """
+
+    def __init__(self) -> None:
+        self.seen: list[DeliveryScope | None] = []
+        self.on_seen: Callable[[DeliveryScope | None], Awaitable[None]] | None = None
+
+    @property
+    def name(self) -> str:
+        return "scope_probe"
+
+    @property
+    def description(self) -> str:
+        return "probe"
+
+    @property
+    def input_schema(self) -> Mapping[str, object]:
+        return {"type": "object", "properties": {}}
+
+    @property
+    def permission(self) -> str:
+        return "safe"
+
+    async def execute(self, args: Mapping[str, object]) -> object:
+        del args
+        scope = current_delivery_scope()
+        self.seen.append(scope)
+        if self.on_seen is not None:
+            await self.on_seen(scope)
+        return "ok"
+
+
+class _ProbeToolProvider:
+    """Requests the probe tool once per turn, then answers (tool → answer, tool → answer)."""
+
+    def __init__(self) -> None:
+        self._call = 0
+
+    async def complete_with_tools(
+        self,
+        messages: Sequence[ToolLoopMessage],
+        *,
+        tools: Sequence[ToolDefinition],
+    ) -> ToolCallResult:
+        del messages, tools
+        self._call += 1
+        if self._call % 2 == 1:
+            return ToolCallResult(
+                text="", tool_calls=(ToolCall(id=f"c{self._call}", name="scope_probe"),)
+            )
+        return ToolCallResult(text="готово", tool_calls=())
+
+
+def _probe_registry() -> tuple[CapabilityRegistry, _ScopeProbeCapability]:
+    registry = CapabilityRegistry()
+    probe = _ScopeProbeCapability()
+    registry.register(probe)  # type: ignore[arg-type]
+    return registry, probe
+
+
+async def test_the_turn_arms_who_asks_and_from_where() -> None:
+    registry, probe = _probe_registry()
+    resolver = _FakeInterlocutorResolver(
+        _interlocutor(name="Vova", kind=InterlocutorKind.OWNER)
+    )
+    handler, _bot, _repo, _tier1 = _build(
+        reply="unused",
+        registry=registry,
+        tool_provider=_ProbeToolProvider(),
+        perceive_sender=resolver,
+    )
+
+    await handler.handle(_message("расскажи Норману в нашей группе про релиз"))
+
+    scope = probe.seen[0]
+    assert scope is not None
+    assert scope.from_owner is True
+    assert scope.here_chat_id == 555
+    assert scope.request_text == "расскажи Норману в нашей группе про релиз"
+
+
+async def test_a_non_owner_turn_is_armed_as_not_owner() -> None:
+    registry, probe = _probe_registry()
+    resolver = _FakeInterlocutorResolver(
+        _interlocutor(name="Ada", kind=InterlocutorKind.KNOWN)
+    )
+    handler, _bot, _repo, _tier1 = _build(
+        reply="unused",
+        registry=registry,
+        tool_provider=_ProbeToolProvider(),
+        perceive_sender=resolver,
+    )
+
+    await handler.handle(_message("напиши в группу, что я приду"))
+
+    scope = probe.seen[0]
+    assert scope is not None
+    assert scope.from_owner is False
+
+
+async def test_the_armed_material_is_what_memory_raised() -> None:
+    # 🔴 Перенос приватного считается ПО МАТЕРИАЛУ, который Боб ДОБАВЛЯЕТ от себя: ход
+    # несёт СЛЕД материала — иначе гейт согласия нечем кормить. Видимости самого разговора
+    # отдельным полем в снимке нет намеренно (BOB-090.B-fix): она зажигала гейт на каждой
+    # отправке; в следе нить есть отдельной дверью, но переносом не считается.
+    registry, probe = _probe_registry()
+    handler, _bot, _repo, _tier1 = _build(
+        reply="unused",
+        registry=registry,
+        tool_provider=_ProbeToolProvider(),
+        recall=MaterialTrailRecall(
+            FakeRecall(
+                hits=[{"content": "то, что было в личке", "visibility": "owner_private"}]
+            )
+        ),
+    )
+
+    await handler.handle(_message("расскажи подробно про кофе"))
+
+    scope = probe.seen[0]
+    assert scope is not None
+    assert any(
+        item.get("visibility") == "owner_private"
+        for item in scope.material.transferable()
+    )
+    assert not hasattr(scope, "turn_visibility")
+
+
+async def test_the_live_thread_is_in_the_trail_but_is_never_a_transfer() -> None:
+    # 🔴 Ход в личке приватен ЦЕЛИКОМ. Нить попадает в след отдельной дверью (исключение
+    # названо, а не забыто), но переносом не считается — иначе Боб снова отказывал бы
+    # владельцу в его же прямом распоряжении (B-fix).
+    registry, probe = _probe_registry()
+    handler, _bot, _repo, _tier1 = _build(
+        reply="unused",
+        registry=registry,
+        tool_provider=_ProbeToolProvider(),
+        recall=MaterialTrailRecall(FakeRecall(hits=[])),
+    )
+
+    await handler.handle(_message("напиши в группу, что я закончил обзор"))
+
+    scope = probe.seen[0]
+    assert scope is not None
+    assert MaterialOrigin.LIVE_THREAD in scope.material.origins
+    assert scope.material.transferable() == ()
+
+
+async def test_memory_raised_by_a_tool_mid_turn_reaches_the_same_trail() -> None:
+    # 🔴 BLOCKER-1: модель может поднять приватное УЖЕ ПОСЛЕ того, как снимок хода собран
+    # (search_memory / recall_memory в том же tool-loop). След — один объект на весь ход,
+    # поэтому такая дверь доезжает до гейта, а не теряется между снимком и вызовом.
+    registry, probe = _probe_registry()
+    door = MaterialTrailRecall(
+        FakeRecall(hits=[{"content": "личное", "visibility": "owner_private"}])
+    )
+    handler, _bot, _repo, _tier1 = _build(
+        reply="unused",
+        registry=registry,
+        tool_provider=_ProbeToolProvider(),
+        recall=MaterialTrailRecall(FakeRecall(hits=[])),
+    )
+
+    async def _raise_memory_mid_turn(scope: DeliveryScope | None) -> None:
+        assert scope is not None
+        assert scope.material.transferable() == ()  # авто-recall ничего не поднял
+        await door.recall("что там было в личке", k=5)
+
+    probe.on_seen = _raise_memory_mid_turn
+
+    await handler.handle(_message("расскажи подробно про кофе"))
+
+    scope = probe.seen[0]
+    assert scope is not None
+    assert any(
+        item.get("visibility") == "owner_private"
+        for item in scope.material.transferable()
+    )
+
+
+async def test_the_armed_turn_carries_the_recent_thread() -> None:
+    # Нить хода доезжает до гейта согласия: он судит просьбу В СИТУАЦИИ, а пустая строка
+    # означала бы «контекста нет» — поле годами оставалось незаполненным.
+    registry, probe = _probe_registry()
+    handler, _bot, _repo, _tier1 = _build(
+        reply="unused",
+        registry=registry,
+        tool_provider=_ProbeToolProvider(),
+        history=_PRIOR_IGNORED_TURN,
+    )
+
+    await handler.handle(_message("расскажи подробно про кофе"))
+
+    scope = probe.seen[0]
+    assert scope is not None
+    assert "новый план" in scope.recent_thread
+
+
+async def test_the_scope_is_disarmed_once_the_turn_is_over() -> None:
+    # Иначе инструмент остался бы заряжен обстоятельствами ЧУЖОГО хода.
+    registry, probe = _probe_registry()
+    handler, _bot, _repo, _tier1 = _build(
+        reply="unused", registry=registry, tool_provider=_ProbeToolProvider()
+    )
+
+    await handler.handle(_message("расскажи подробно про кофе"))
+
+    assert probe.seen[0] is not None
+    assert current_delivery_scope() is None

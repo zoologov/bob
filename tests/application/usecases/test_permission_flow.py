@@ -194,7 +194,10 @@ async def test_non_authorized_privileged_request_pends_notifies_and_consumes() -
     notice = notifier.owner_notices[0]
     assert "Вова" in notice
     assert "Норман" in notice
-    assert "показать задачи" in notice
+    # 🔴 BOB-090.E: реплика собрана голосом Боба из слов просителя; пометка судьи
+    # (``what``) остаётся в записи запроса и наружу не выходит.
+    assert "«покажи задачи проекта»" in notice
+    assert _PRIVILEGED.what not in notice
     assert len(notifier.requester_acks) == 1
 
 

@@ -48,6 +48,15 @@ class EpisodicEvent:
     turn's scope-provenance (BOB-066 2.6 такт разглашения): ``'public'`` /
     ``'owner_private'``, or ``None`` (= public, so legacy rows and unclassified turns
     stay surfaceable to anyone and owner recall is byte-identical, INV-7).
+
+    ``origin_chat_id`` / ``origin_topic_id`` are the EXACT address this was said at
+    (BOB-090.C2): the Telegram chat and, in a forum room, the topic — the precise
+    counterpart of the coarse ``visibility`` label. 🔴 ``origin_chat_id is None`` means
+    «источник неизвестен» — NOT «public» and not some default chat: an address is a
+    claim about a place, and a turn with no incoming message (a tick, a digest, a row
+    written before the column existed) has none. A ``None`` ``origin_topic_id`` under a
+    KNOWN chat means the message had no topic (a 1:1 DM, or a group without forum
+    topics) — that is knowledge, not its absence.
     """
 
     ts: datetime
@@ -58,6 +67,8 @@ class EpisodicEvent:
     sender_id: int | None = None
     bob_message_id: int | None = None
     visibility: str | None = None
+    origin_chat_id: int | None = None
+    origin_topic_id: int | None = None
 
     def __post_init__(self) -> None:
         _require_aware(self.ts)

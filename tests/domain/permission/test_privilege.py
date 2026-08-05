@@ -13,6 +13,8 @@
 
 from __future__ import annotations
 
+import re
+
 import pytest
 
 from bob.social.permission.privilege import (
@@ -23,6 +25,18 @@ from bob.social.permission.privilege import (
     build_privilege_user_prompt,
     parse_privilege_need,
 )
+
+# Машинный словарь размеченного ответа: единственная латиница, которой в промпте место.
+# Это метки контракта, а не слова на языке — модель их не «читает», а копирует.
+_MACHINE_TOKENS = ("needs_permission", "owner_data", "internal", "tool", "kind", "what")
+
+
+def _english_outside_the_labelled_contract(prompt: str) -> list[str]:
+    """Латинские слова промпта, не являющиеся метками машинного контракта."""
+    stripped = prompt
+    for token in _MACHINE_TOKENS:
+        stripped = stripped.replace(token, " ")
+    return re.findall(r"[A-Za-z]+", stripped)
 
 
 def _context() -> PrivilegeContext:
@@ -117,6 +131,29 @@ def test_system_prompt_states_the_conservative_contract() -> None:
     assert "tool" in lowered
     assert "internal" in lowered
     assert "owner_data" in lowered
+    assert "консервативен" in lowered
+
+
+def test_system_prompt_speaks_the_project_language() -> None:
+    # 🔴 BOB-090.E: промпт судьи — на языке проекта. Английский промпт заставлял модель
+    # отвечать по-английски, и её фраза дословно попадала в русскую реплику owner'у.
+    # Латиница остаётся ТОЛЬКО в машинных метках размеченного ответа.
+    assert _english_outside_the_labelled_contract(PRIVILEGE_JUDGE_SYSTEM_PROMPT) == []
+
+
+def test_system_prompt_says_the_verdict_is_internal() -> None:
+    # Модель должна знать, что её ответ — решение для машины, а не реплика человеку:
+    # иначе она снова начнёт сочинять «человекочитаемую» строку для owner'а.
+    assert "внутренн" in PRIVILEGE_JUDGE_SYSTEM_PROMPT.lower()
+
+
+def test_user_prompt_scaffolding_is_in_the_project_language_too() -> None:
+    # Обвязка user-промпта (подписи блоков) — тоже по-русски: смешанный язык сдвигает
+    # язык ответа модели, а вместе с ним и язык пометки в записи запроса.
+    prompt = build_privilege_user_prompt(
+        PrivilegeContext(request_text="как дела?", capability_hints=(), recent_thread="")
+    )
+    assert re.search(r"[A-Za-z]", prompt) is None
 
 
 def test_need_is_frozen() -> None:

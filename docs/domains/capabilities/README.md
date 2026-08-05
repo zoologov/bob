@@ -8,7 +8,8 @@
 сеймы) в `ports.py`, чистые value-object'ы `diagrams` / `introspection`, половина
 `usecases/` (шов `CapabilityRegistry` + `ToolLoop` и сами навыки — recall/search
 памяти, read code/url, навигация по репозиторию (list_dir / find_file), web-поиск,
-render diagram, inspect architecture, list work, code rationale, progress announcer) и половина `adapters/` (aiohttp url-reader за
+render diagram, inspect architecture, list work, code rationale, progress announcer,
+отправка в указанный чат) и половина `adapters/` (aiohttp url-reader за
 SSRF-щитом, локальный mermaid-рендерер, beadloom/bd/git-интроспектор, Qwen web-search
 транспорт). GUPPI — исполнитель шва: модель просит инструмент, GUPPI его запускает.
 
@@ -56,14 +57,16 @@ SSRF-щитом, локальный mermaid-рендерер, beadloom/bd/git-и
 
 ```
 src/bob/capabilities/
-  ports.py            # layer=domain          — 18 портов-протоколов + value-object'ы шва
+  ports.py            # layer=domain          — 19 портов-протоколов + value-object'ы шва
   __init__.py         # layer=domain          — фасад (re-export стабильных портов)
   diagrams/           # layer=domain            (чистый разбор inline-mermaid, BOB-037)
     mermaid_blocks.py #                        — extract / strip / normalize fenced ```mermaid
   introspection/      # layer=domain            (чистые инварианты самоинтроспекции)
     privacy_guard.py  #                        — PrivacyGuard: приват-инвариант полного-репо доступа (BOB-017→BOB-067); чистое ядро _allows_path/_sanitize/_resolve вынесено на уровень модуля (mutation-testable)
     code_history.py   #                        — чистые парсеры git↔беады↔фича-доки (BOB-038)
-    dev_query.py      #                        — чистая валидация dev-интроспекции: clamp_commit_count/validate_bead_id(инъекция-гард)/normalize_status (BOB-081, mutation-ядро)
+    dev_query.py      #                        — чистая валидация dev-интроспекции: clamp_commit_count/validate_bead_id(инъекция-гард)/normalize_status/is_bead_id/sanitize_search_term (BOB-081, BOB-090.A, mutation-ядро)
+    tracker_intent.py #                        — TrackerPlan/plan_tracker_query/find_bead_key: какой read по трекеру отвечает на вопрос (ready/list/show/search), BOB-090.A
+    tracker_digest.py #                        — digest_search_results/MAX_DIGEST_ITEMS: длинная выдача bd search → сводка + важное + «Скрыто: N», BOB-090.A
   usecases/           # layer=application
     registry.py       #                        — CapabilityRegistry + SafeCapabilityDispatcher
     tool_loop.py      #                        — ToolLoop: model↔tools раунд-трип до финала
@@ -74,7 +77,7 @@ src/bob/capabilities/
     list_dir.py       #                        — перечень записей директории репо (BOB-067, read-only, не рекурсивно)
     find_file.py      #                        — поиск файлов по имени/glob по всему дереву (BOB-067, .git-skip, кап)
     inspect_architecture.py — граф-контекст через RepoIntrospector (beadloom ctx/graph/why)
-    list_work.py      #                        — свой трекер через RepoIntrospector (bd ready/show)
+    list_work.py      #                        — свой трекер через RepoIntrospector (bd ready/show/list/search; план чтения — tracker_intent, BOB-090.A)
     code_rationale.py #                        — код↔«почему»: git↔беады↔фича-доки↔граф (BOB-038)
     recent_commits.py #                        — git log -n N repo-wide (BOB-081, read-only, за флагом dev_tools)
     list_tasks.py     #                        — bd list по статусу (BOB-081, read-only)
@@ -84,6 +87,9 @@ src/bob/capabilities/
     read_url.py       #                        — чтение одной ссылки за SSRF-щитом (BOB-054)
     render_diagram.py #                        — mermaid→PNG в чат + CollectingDiagramSink (BOB-035)
     diagram_sender.py #                        — DiagramSender: авто-рендер inline-mermaid + drain sink → отправка (коллаборатор handle_message, BOB-062.6b)
+    send_to_chat.py   #                        — отправка в УКАЗАННЫЙ чат/топик по просьбе owner'а: адрес (destination) + гейт переноса приватного (disclosure) + заземление упоминаний (mention); за флагом social.delivery, default OFF (BOB-090.B1)
+    delivery_scope.py #                        — DeliveryScope + armed_delivery_scope/current_delivery_scope: обстоятельства ХОДА (кто просит, откуда, из какого материала) через ContextVar — нет хода, нет отправки (BOB-090.B1)
+    turn_material.py  #                        — TurnMaterial/MaterialOrigin/MaterialTrailRecall: единый СЛЕД материала хода (метки «дверь + видимость», без содержимого), по которому считается перенос приватного (BOB-090.B-fix2)
   adapters/           # layer=infrastructure
     web/
       http_url_reader.py — HttpUrlReader: aiohttp GET за 🔴 SSRF-щитом + html.parser-извлечение
@@ -99,9 +105,13 @@ src/bob/capabilities/
 
 `Capability` (`ports.py`) — единственное, что GUPPI умеет делать для Боба:
 объект называет себя (`name`), описывает себя (`description`), объявляет JSON-Schema
-аргументов (`input_schema`), декларирует `permission` (`"safe"` идёт насквозь;
-`"confirm"` — сейм под будущий approval-гейт) и `execute`'ится над декодированными
-аргументами. Новые навыки регистрируются под этим контрактом; потребители не меняются.
+аргументов (`input_schema`), декларирует `permission` и `execute`'ится над декодированными
+аргументами. 🔴 `permission` — РАБОТАЮЩЕЕ заявление (BOB-090.B-fix), а не задел на будущее:
+`"safe"` значит «можно исполнять без человека», `"confirm"` — «действие видно людям или
+необратимо, санкционировать должен человек», и автономная граница
+(`SafeCapabilityDispatcher`) второе не исполняет. Раньше поле было декоративным, поэтому
+ошибка в `goals.safe_capabilities` делала автономной даже необратимую отправку.
+Новые навыки регистрируются под этим контрактом; потребители не меняются.
 Это именно **шов**, не плагин-машинерия (sandboxing / discovery / self-creation —
 позже за тем же контрактом).
 
@@ -109,12 +119,15 @@ src/bob/capabilities/
 того, что GUPPI может рекламировать и запускать: `register` (уникальное имя),
 `manifest` (рендер зарегистрированных навыков как OpenAI `tools`-определений для
 модели), `dispatch` (запуск навыка по имени — **исполняет GUPPI**), `describe`
-(короткий prose-манифест для системного промпта Боба). Чистая application-политика:
-держит capability-объекты, транспорта не касается. `SafeCapabilityDispatcher` —
-allowlist-ограниченный вид над реестром: жёсткая граница автономного тика
-(BOB-015), пропускает ТОЛЬКО пересечение реестра и явного safe-allowlist
-(`goals.safe_capabilities`); навык вне allowlist недостижим по конструкции. Пустой
-allowlist = автономно ничего не запускается (консервативный дефолт).
+(короткий prose-манифест для системного промпта Боба) и `permission_of` (что навык
+заявляет о необходимости человеческой санкции; незарегистрированное имя не заявляет
+ничего — `None`). Чистая application-политика: держит capability-объекты, транспорта не
+касается. `SafeCapabilityDispatcher` — allowlist-ограниченный вид над реестром: жёсткая
+граница автономного тика (BOB-015), пропускает ТОЛЬКО то, что и внесено в явный
+safe-allowlist (`goals.safe_capabilities`), И само объявляет себя `"safe"`; навык вне
+allowlist недостижим по конструкции, навык с `permission="confirm"` — тоже. Пустой
+allowlist = автономно ничего не запускается (консервативный дефолт); неизвестное имя не
+допускается никогда (сомнение отказывает).
 
 `ToolLoop` (`usecases/tool_loop.py`) — акт-сторона шва: гонит раунд-трип
 `модель ↔ инструменты` до финального текста. Просит `ToolCallingProvider` завершить
@@ -189,14 +202,33 @@ allowlist = автономно ничего не запускается (кон�
   свободный запрос/ready-очередь), `show_task` (`bd show <id>` — детали), `task_comments`
   (`bd comments <id>` — комментарии/чекпоинты, новая read-подкоманда). 🔴 **Строго read-only:**
   git-allowlist остаётся `{log}` (fixed-forms; `show`/`diff`/`commit`/`push` невыразимы),
-  bd-allowlist `{ready,show,list,comments}` — все мутирующие подкоманды (`bd create/update/
+  bd-allowlist — `{ready,show,list,comments,search}` (`search` добавлен в BOB-090.A); все
+  мутирующие подкоманды (`bd create/update/
   close`, singular `bd comment`, `git commit/push/checkout`) отклоняются. Валидация значений —
   чистое ядро `capabilities/introspection/dev_query.py` (`clamp_commit_count` [1,50];
   `validate_bead_id` — только форма bead-key, инъекция-гард против `--flag`/`;`/`../`;
-  `normalize_status` — allowlist + RU-синонимы). subprocess — `exec` (не shell); санитайз
+  `normalize_status` — allowlist + RU-синонимы; `sanitize_search_term` — свободное слово
+  поиска: управляющие символы становятся разделителями, флагоподобные токены
+  выбрасываются, длина капается `MAX_SEARCH_TERM_CHARS`, а от строки, состоящей из одних
+  флагов, остаётся `None` — «поиск не запускать», а не угаданный запрос; `is_bead_id` —
+  предикат формы ключа). subprocess — `exec` (не shell); санитайз
   секретов наследуется от `_run` (INV-3); авторизация — существующий `is_guest`-гейт (гость
   инструментов не получает). За под-флагом `introspection.dev_tools` (default OFF → навыки не
   регистрируются). Пусто/битый id → честный ответ, не выдумка/не краш.
+- **Трекер отвечает вместо «пусто» (BOB-090.A).** На «расскажи про BOB-087» и «какие
+  задачи открыты» Боб честно отвечал «такой задачи не существует» / «пусто»: `bd show`
+  понимает только точный id, а ключ эпика живёт в ЗАГОЛОВКАХ задач. Теперь `list_work`
+  сперва планирует чтение чистым ядром `tracker_intent.plan_tracker_query(query)` →
+  `TrackerPlan` (`ready` / `list` / `show` / `search`), `find_bead_key` вынимает ключ из
+  фразы («расскажи про нашу задачу BOB-087» → `BOB-087`). Деградации честные: id, который
+  `bd show` не резолвит, повторяется поиском по заголовку, а поиск без совпадений сходит к
+  обычному листингу, а не к молчанию. Поиск идёт фиксированной формой
+  `bd search <term> --status all` — без `--status all` закрытый эпик не нашёлся бы вовсе, а
+  никакой другой флаг поиска невыразим. Длинная выдача сжимается чистым
+  `tracker_digest.digest_search_results` — сводка по статусам, сам эпик и незакрытые
+  задачи, затем честная строка «Скрыто: N», — вместо простыни на 39 строк. Описания
+  навыков, которые видит модель, переписаны на язык проекта и прямо говорят, что ключ
+  эпика подойдёт и что можно спросить «какие открыты».
 - **Web (BOB-053/054).** `web_search` — заземлённый веб-поиск над `WebSearchProvider`:
   проецирует `answer` + `sources` компактно в tool-loop, Боб синтезирует финал своим
   голосом со ссылками. `read_url` — близнец: открывает ОДНУ конкретную ссылку через
@@ -221,6 +253,60 @@ allowlist = автономно ничего не запускается (кон�
   шов `DiagramGateway` в `chat_id` хода, перед текстом. 🔴 Общий инстанс `diagram_sink`
   инъектируется И в `DiagramSender`, И в registry-навык `render_diagram` — push/drain на одном
   объекте.
+
+### Отправка в другой чат (`send_to_chat`, BOB-090.B1, флаг `social.delivery`, default OFF)
+
+Недостающая половина адресации: до этого среза исходящего адреса не существовало как
+понятия — ответ всегда уходил в `chat_id` текущего хода, поэтому просьба из лички
+«расскажи Норману в нашей группе» была невыполнима. Заведён именно ИНСТРУМЕНТ, а не
+перенаправление готового ответа: реплика, сочинённая для owner'а в личке, комнате не
+адресована, поэтому аргументом `text` модель пишет то, что должно появиться ИМЕННО ТАМ.
+
+Своей политики у навыка нет — он собирает чужие чистые ядра в фиксированном порядке:
+`resolve_destination` (адрес или «переспроси»), `transfer_needs_consent` (нужно ли
+согласие owner'а на вынос приватного) и `ground_mentions` (заземление упоминаний на
+ростер) — все три из `social`. Вердикты «переспроси» / «нужно согласие» возвращаются
+МОДЕЛИ подсказкой, и Боб переспрашивает своими словами: ни одной скриптованной реплики.
+Транспорт — порт `OutboundMessenger` (реализация `TelegramOutboundMessenger` поверх
+существующего rich-шва, нового транспорта эпик не заводил).
+
+🔴 **Никакой автономии (урок BOB-076).** Обстоятельства хода приходят из `DeliveryScope`
+через `ContextVar`, а не из общего мутабельного холдера: реестр capability общий и живёт
+весь процесс, ходы живут в разных задачах, и общий атрибут означал бы, что признак «просит
+owner» одного хода достанется другому. Нет армированного хода — нет отправки. Навык
+объявляет `permission="confirm"`, поэтому автономная граница его не исполняет даже при
+ошибочной записи в `goals.safe_capabilities`.
+
+🔴 **След материала хода — `TurnMaterial` (B-fix2).** Гейт переноса обещает считать перенос
+«по материалу», но читал ОДНУ дверь — авто-recall, снятый до генерации. Материал приходит
+ещё как минимум тремя: выдачей `search_memory` / `recall_memory` в том же tool-loop,
+grounded-addon callback'ом и реплеем нити, — и живой вызов показал, что приватное уезжало в
+комнату без вопроса. Лечение — не четвёртая проверка, а ОДИН след: набор меток «дверь +
+видимость» **без содержимого** (в `ContextVar` не оседает переписка), армируемый на ВЕСЬ
+ход в `HandleMessage.handle`.
+
+Три механизма против «тихой двери»:
+
+1. **Дверь к памяти ровно одна.** Порт `MemoryRecall` собирается в единственном месте
+   (композиционный корень) и обёрнут декоратором `MaterialTrailRecall`, поэтому все
+   нынешние и будущие потребители попадают в след по построению, без строчки учёта у себя.
+   Архитектурный тест держит, что источник порта конструируется только там.
+2. **Дверь НЕ к памяти обязана назвать себя** новым значением `MaterialOrigin`, а политика
+   перечисляет ИСКЛЮЧЕНИЯ (`_NOT_A_TRANSFER`) — незнакомая дверь считается переносимым
+   материалом по умолчанию (fail-closed).
+3. **Отсутствие следа спрашивает согласие.** Неармированный ход даёт `TurnMaterial.unknown()`
+   — «материал мог быть приватным», — а не молчаливый пропуск.
+
+🔴 **Карве-аут назван, а не забыт.** Живая нить помечается дверью `LIVE_THREAD` с видимостью
+самого разговора и переносом НЕ считается: иначе гейт горел бы на каждой отправке из лички
+и Боб снова отказывал бы owner'у в прямом распоряжении. Остаточный риск (в нити есть
+собственные прошлые реплики Боба, а в них — сказанное третьим человеком) записан прямо в
+`_NOT_A_TRANSFER`. Гейт этого не удержит, и по решению owner'а удерживать не нужно.
+
+Честно о силе: след — НАДМНОЖЕСТВО того, что доехало до промпта (порт отмечается тем, что
+подняла память, ещё до фильтрации под аудиторию и подреза по `k`), поэтому гейт может
+спросить лишний раз. Сторона ошибки выбрана осознанно: лишний вопрос владелец видит, тихий
+пропуск — нет.
 
 ### Адаптеры (infrastructure)
 
@@ -307,8 +393,20 @@ read-only подкоманд (не shell); `read_file` спрашивает `Pri
   (отказоустойчивость на стороне вызывателя, Боб не конфабулирует); пустой `sources`
   на успехе валиден.
 - **safe-allowlist автономии.** `SafeCapabilityDispatcher` пропускает ТОЛЬКО навыки
-  из `goals.safe_capabilities`; introspection/web-навыки туда НЕ добавлены — только
-  разговор, автономный тик их не запустит. Пустой allowlist = автономно ничего.
+  из `goals.safe_capabilities`, И только те, что сами объявляют `permission="safe"`
+  (BOB-090.B-fix); introspection/web-навыки в allowlist НЕ добавлены — только разговор,
+  автономный тик их не запустит. Пустой allowlist = автономно ничего.
+- **🔴 Отправка вовне — только по просьбе owner'а, только в известный адрес
+  (BOB-090.B1).** `send_to_chat` не существует, пока `social.delivery` выключен (не
+  зарегистрирована → её нет в манифесте → модель не может её вызвать), и не регистрируется
+  вовсе, если ни один адрес не настроен. При включённом флаге отправка требует
+  армированного хода (`DeliveryScope`), а внутри хода — owner'а: отказ не-owner'у стоит
+  первой проверкой ядра адреса. Адреса — закрытый список из конфига; `chat_id` модель
+  передать не может.
+- **🔴 След материала fail-closed (BOB-090.B-fix2).** Перенос считается по единому следу
+  хода: неизвестная дверь считается переносимым материалом, отсутствие следа означает
+  «материал мог быть приватным» и спрашивает согласие. Единственное исключение — живая
+  нить разговора, и оно перечислено явным списком, а не подразумевается.
 
 ### Границы модуля (AaC) + 🔴 генератор правил
 
@@ -344,7 +442,7 @@ legalized), `coding.usecases → capabilities` (`PrivacyGuard`, TC, перено
 
 <!-- beadloom:track=src/bob/capabilities/ports.py -->
 
-Модуль `src/bob/capabilities/ports.py` (порты-протоколы + value-object'ы шва, 18
+Модуль `src/bob/capabilities/ports.py` (порты-протоколы + value-object'ы шва, 19
 публичных символов):
 - `Capability` (Protocol) — стабильный контракт навыка: `name`, `description`,
   `input_schema`, `permission`, `async execute(args)`.
@@ -359,12 +457,17 @@ legalized), `coding.usecases → capabilities` (`PrivacyGuard`, TC, перено
 - `RepoIntrospector` (Protocol) — read-only самоинтроспекция и навигация:
   `architecture_context`, `search_code`, `read_file(path, *, max_lines)`,
   `list_dir(path)` (записи одной директории, не рекурсивно), `find_file(pattern)`
-  (пути по glob по всему дереву, `.git`-skip + кап), `list_tasks`, `code_history`.
+  (пути по glob по всему дереву, `.git`-skip + кап), `list_tasks(query)` (состояние
+  трекера: ready-очередь / листинг по статусу / одна задача / поиск по заголовку,
+  включающий закрытые, — длинная выдача возвращается сжатой), `code_history`.
   Реализация — `SubprocessRepoIntrospector`.
 - `DiagramRenderer` (Protocol) — `async render(mermaid_source)` → `bytes`
   (`DiagramRenderError` на сбое). Реализация — `SubprocessMmdcRenderer`.
 - `DiagramSink` (Protocol) — `push` / `pending` / `drain`. Реализация —
   `CollectingDiagramSink` (🔴 один инстанс на процесс).
+- `OutboundMessenger` (Protocol, BOB-090.B1) — `async send(*, chat_id, topic_id, markdown)`:
+  отправка по ЯВНОМУ адресу. Реализация —
+  `infrastructure.telegram.outbound_messenger.TelegramOutboundMessenger`.
 - Value-object'ы: `ToolCall`, `ToolCallResult`, `WebSource`, `WebSearchResult`,
   `WebPage`, `DiagramResult` (все frozen); исключения `UrlReadError`,
   `SsrfBlockedError` (подтип), `DiagramRenderError`; type-алиасы `ToolDefinition`,
@@ -387,12 +490,22 @@ ports-шим `bob.domain.ports` удалён (BOB-062.8), все импортё�
   `list_work.make_list_work_capability`,
   `code_rationale.make_code_rationale_capability`,
   `web_search.make_web_search_capability`, `read_url.make_read_url_capability`,
-  `render_diagram.make_render_diagram_capability` (+ `CollectingDiagramSink`).
+  `render_diagram.make_render_diagram_capability` (+ `CollectingDiagramSink`),
+  `send_to_chat.make_send_to_chat_capability` (BOB-090.B1, регистрируется только за
+  флагом `social.delivery`).
+- Обстоятельства и материал хода: `usecases.delivery_scope` (`DeliveryScope`,
+  `armed_delivery_scope`, `current_delivery_scope`), `usecases.turn_material`
+  (`TurnMaterial`, `MaterialOrigin`, `MaterialTrailRecall`, `armed_turn_material`,
+  `current_turn_material`).
 - Чистый домен: `diagrams.mermaid_blocks` (`extract_mermaid_blocks`,
   `strip_mermaid_blocks`, `normalize_mermaid`), `introspection.privacy_guard`
   (`PrivacyGuard` + module-level `_allows_path` / `_sanitize` / `_resolve`,
   `ALLOWED_ROOTS`), `introspection.code_history`
-  (`parse_bead_refs`, `commits_mentioning`, `feature_doc_dir`).
+  (`parse_bead_refs`, `commits_mentioning`, `feature_doc_dir`),
+  `introspection.dev_query` (`clamp_commit_count`, `validate_bead_id`, `is_bead_id`,
+  `normalize_status`, `sanitize_search_term`, `MAX_SEARCH_TERM_CHARS`),
+  `introspection.tracker_intent` (`TrackerPlan`, `plan_tracker_query`, `find_bead_key`),
+  `introspection.tracker_digest` (`digest_search_results`, `MAX_DIGEST_ITEMS`).
 - Адаптеры: `adapters.web` (`HttpUrlReader`, `build_url_reader`),
   `adapters.diagrams.mmdc_renderer.SubprocessMmdcRenderer`,
   `adapters.introspection.subprocess_introspector.SubprocessRepoIntrospector`,
@@ -426,6 +539,11 @@ ports-шим `bob.domain.ports` удалён (BOB-062.8), все импортё�
   `tests/infrastructure/introspection/` (`test_subprocess_introspector.py`,
   `test_subprocess_introspector_integration.py`, `test_git_history.py`),
   `tests/infrastructure/llm/` (`test_web_search_qwen.py`, `test_web_search_factory.py`).
+- Отправка в другой чат и след материала (BOB-090.B): `tests/capabilities/test_send_to_chat.py`
+  (последовательность гейтов: нет хода → пусто → адрес → согласие → заземление → отправка),
+  `tests/capabilities/test_turn_material.py` (fail-closed на незнакомой двери и на
+  неармированном ходе + архитектурный гард «порт памяти собирается в одном месте и
+  обёрнут следом»); BDD — `tests/acceptance/features/chat_addressing.feature`.
 - Конфиг: `tests/test_introspection_config.py`.
 - Layer-guard модуля: `tests/capabilities/test_layering.py` (usecases не тянут
   adapters, домен не тянет usecases; 🔴 c/c-изоляция coding↔capabilities реально ловится).

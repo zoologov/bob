@@ -71,6 +71,7 @@ class SqliteConnection:
         await self._migrate_conversation_floor_participants()
         await self._migrate_person_relationship_gender()
         await self._migrate_first_impression_display_name()
+        await self._migrate_first_impression_username()
         await self._migrate_coding_session_claude_session_id()
         await self._conn.commit()
         logger.info("SqliteConnection initialised at %s", self._db_path)
@@ -189,6 +190,24 @@ class SqliteConnection:
         await self._db().execute(
             "ALTER TABLE first_impression ADD COLUMN display_name TEXT"
         )
+
+    async def _migrate_first_impression_username(self) -> None:
+        """Add ``first_impression.username`` to a pre-existing DB (BOB-090.B3).
+
+        The person's Telegram ``@ник`` — the thing that was stored NOWHERE, which is why
+        Bob wrote «@Норман» instead of ``@NormanGri`` (эпизод 3088). ``CREATE TABLE IF NOT
+        EXISTS`` never alters an already-present table, so a DB written before this column
+        existed would lack it. This guarded ``ALTER`` adds it only when missing — additive
+        and non-destructive: every existing row keeps its content and takes ``NULL``. A
+        clean no-op once present, so re-running ``initialize()`` is idempotent.
+
+        🔴 ``NULL`` means «ника не знаю» and there is NO backfill: a handle cannot be
+        derived from a name, and deriving it is exactly the defect being fixed. The store
+        fills it in on the person's next turn.
+        """
+        if "username" in await self._first_impression_columns():
+            return
+        await self._db().execute("ALTER TABLE first_impression ADD COLUMN username TEXT")
 
     async def _first_impression_columns(self) -> set[str]:
         """Names of the columns currently on ``first_impression`` (BOB-080)."""

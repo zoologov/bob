@@ -13,8 +13,10 @@ owner-данные, Боб заводит pending permission-request и спра
 чистое ядро (без I/O): permission-request (:class:`PermissionRequest`) как immutable
 value-object + его состояния (:class:`PermissionState`); семантический privilege-шов
 (:class:`PrivilegeNeed` / :class:`PrivilegeContext` / порт :class:`PrivilegeJudge` +
-чистый промпт/парсер); и NL-предикаты owner-решения (:func:`is_grant` /
-:func:`is_deny` / :func:`is_authorize`, консервативные, как BOB-042).
+чистый промпт/парсер); NL-предикаты owner-решения (:func:`is_grant` /
+:func:`is_deny` / :func:`is_authorize`, консервативные, как BOB-042); и ГОЛОС самой
+просьбы (:func:`owner_permission_notice` / :func:`requester_ack`, BOB-090.E) — вердикт
+судьи остаётся внутри, наружу идут слова Боба.
 
 Персист — за адаптером ``SqlitePermissionRequestStore``; Tier-0 ``LlmPrivilegeJudge`` и
 провязка флоу (.2) / исполнение (.3) строятся поверх.
@@ -34,6 +36,7 @@ from bob.social.permission.privilege import (
     build_privilege_user_prompt,
     parse_privilege_need,
 )
+from bob.social.permission.request_voice import owner_permission_notice, requester_ack
 from bob.social.permission.state import PermissionState
 
 __all__ = [
@@ -49,5 +52,7 @@ __all__ = [
     "is_authorize",
     "is_deny",
     "is_grant",
+    "owner_permission_notice",
     "parse_privilege_need",
+    "requester_ack",
 ]

@@ -49,17 +49,25 @@ class DisclosureConsentGate:
         self._judge = judge
 
     async def owner_consents(
-        self, *, text: str, is_group: bool, is_owner: bool, recent_thread: str = ""
+        self, *, text: str, to_room: bool, is_owner: bool, recent_thread: str = ""
     ) -> bool:
         """Whether the owner authorised disclosing private content into the room this turn.
 
-        Returns ``False`` at once — with no LLM call — unless the turn is the OWNER speaking
-        in a GROUP (only then is disclosure to an audience even a question). For such a turn
-        the injected judge assesses ``text`` semantically. 🔴 Best-effort safe default: any
-        judge / parse failure is swallowed and yields ``False`` (never an accidental
-        disclosure, never a broken turn). Deterministic given a deterministic judge.
+        Returns ``False`` at once — with no LLM call — unless it is the OWNER and the
+        material would reach a ROOM (only then is disclosure to an audience even a
+        question). For such a turn the injected judge assesses ``text`` semantically.
+
+        🔴 ``to_room`` names the AUDIENCE, not the channel (BOB-090.B-fix): the group turn
+        of BOB-082.4 («ответ услышит вся комната») and the room-bound delivery of
+        BOB-090.B («это сообщение уедет в комнату») are the same question asked from two
+        places. Called ``is_group`` before, it made the delivery path pass a DM turn as
+        «в группе» — a lie in the parameter name and in the judge's prompt.
+
+        🔴 Best-effort safe default: any judge / parse failure is swallowed and yields
+        ``False`` (never an accidental disclosure, never a broken turn). Deterministic
+        given a deterministic judge.
         """
-        if not (is_group and is_owner):
+        if not (to_room and is_owner):
             return False
         try:
             return await self._judge.assess(

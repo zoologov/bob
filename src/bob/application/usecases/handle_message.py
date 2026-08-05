@@ -56,6 +56,10 @@ from bob.application.usecases.precompose_gate import (
     PreComposeGate,
 )
 from bob.application.usecases.reply_rhythm import reply_delay_inputs
+from bob.capabilities.usecases.delivery_scope import (
+    DeliveryScope,
+    armed_delivery_scope,
+)
 from bob.capabilities.usecases.diagram_sender import (
     _DEFAULT_DIAGRAM_SEND_AS,
     DiagramSender,
@@ -64,6 +68,11 @@ from bob.capabilities.usecases.diagram_sender import (
 from bob.capabilities.usecases.progress_announcer import GatewayProgressAnnouncer
 from bob.capabilities.usecases.registry import CapabilityRegistry
 from bob.capabilities.usecases.tool_loop import ToolLoop
+from bob.capabilities.usecases.turn_material import (
+    MaterialOrigin,
+    armed_turn_material,
+    current_turn_material,
+)
 from bob.conversation.addressivity import (
     Addressivity,
     AddressivityThresholds,
@@ -96,6 +105,7 @@ from bob.conversation.thread import (
     _history_for_author,  # noqa: F401  # re-exported for tests (used by RecallAssembler)
     _last_seen_at,  # noqa: F401  # re-exported for tests (used by RecallAssembler)
     _recent_bob_replies,  # noqa: F401  # re-exported for tests (used by AntiRepeatGuard)
+    _render_thread,
     _user_turns,
 )
 from bob.conversation.usecases.addressivity_perceiver import AddressivityPerceiver
@@ -676,6 +686,7 @@ class HandleMessage:
         self_action_recorder: SelfActionRecorder | None = None,
         register_resolver: RegisterResolver | None = None,
         addon_recall: MemoryRecall | None = None,
+        origin_provenance: bool = False,
     ) -> None:
         self._router = router
         self._gateway = gateway
@@ -921,6 +932,12 @@ class HandleMessage:
         # to DEV). Unwired (the default) it draws from the SAME port as the reply — the
         # callback is byte-identical to before C8.
         self._addon_recall = addon_recall if addon_recall is not None else recall
+        # Провенанс «где это было» (BOB-090.C1, ``memory.origin_provenance``): whether the
+        # VoiceComposer folds WHERE the recalled material was said into Bob's prompt. It is
+        # the SECOND provenance axis beside the register one above — «где сказано», not «про
+        # что» — and neither replaces the other. OFF (the default) → the composed prompt is
+        # byte-identical; recall itself is untouched either way (nothing is filtered).
+        self._origin_provenance = origin_provenance
         # The conversation-floor seam (BOB-025): over the per-message addressivity
         # (BOB-023) lives a tracker of who currently holds the "talking turn" in a
         # thread. When wired AND enabled, an AMBIENT message in a thread where Bob holds
@@ -981,8 +998,8 @@ class HandleMessage:
         # revealing Bob's inner life, disclosing owner data — is OWNER-GATED even though
         # memory is public in the closed group (BOB-051). On the OWNER's turn an active
         # pending decision (grant / deny / authorize) is recorded; on a NON-authorized
-        # member's turn a privileged request opens a pending + asks the owner («Вова, <кто>
-        # просит <что> — разрешить?») and the member is told «спрошу Вову». 🔴 Owner-only
+        # member's turn a privileged request opens a pending + asks the owner in Bob's own
+        # words (BOB-090.E) and the member is told «спрошу Вову». 🔴 Owner-only
         # decision + the non-authorized-only request gate live inside the flow; an
         # AUTHORIZED member never enters it. Either consumes the turn (the normal compose
         # is skipped). Unwired (the default) the seam is inert and the turn is unchanged.
@@ -1254,6 +1271,7 @@ class HandleMessage:
             plain_reply=self._plain_reply,
             announcer_factory=self._make_verify_announcer,
             tool_loop_factory=self._make_tool_loop,
+            origin_provenance=self._origin_provenance,
         )
         # AntiRepeatGuard (conversation): recompose a repeat / phrase-tic reply + manage the
         # cross-session closer ring. 🔴 It takes ``compose`` = VoiceComposer.compose as a
@@ -1358,7 +1376,23 @@ class HandleMessage:
             rules, max_magnitude=self._self_improvement_max_magnitude
         )
 
-    async def handle(  # noqa: PLR0915, PLR0911 — a flat per-turn orchestration: one statement per social/compose seam (BOB-080 added the roster recall; BOB-083 .4 added the interactive-intake consume-gate), each a short-circuit return, no branching to extract.
+    async def handle(self, event: MessageReceived, scope: TurnScope | None = None) -> None:
+        """Process one received message end to end, under the turn's MATERIAL TRAIL.
+
+        🔴 BOB-090.B-fix2: the trail
+        (:func:`~bob.capabilities.usecases.turn_material.armed_turn_material`) is armed for
+        the WHOLE turn — deliberately wider than the delivery scope, which is armed only
+        around the generation. The turn's auto-recall runs BEFORE that, so a trail armed
+        with the scope would have missed the very first door and the transfer gate would be
+        back to reading one door out of four. Everything memory raises anywhere inside this
+        call — auto-recall, the ``recall_memory`` / ``search_memory`` tool hops, the
+        grounded-addon callback — lands in it through the ONE recall port, and the gate
+        reads it. The arming is released on the way out, exceptions included.
+        """
+        with armed_turn_material():
+            await self._handle_turn(event, scope)
+
+    async def _handle_turn(  # noqa: PLR0915, PLR0911 — a flat per-turn orchestration: one statement per social/compose seam (BOB-080 added the roster recall; BOB-083 .4 added the interactive-intake consume-gate), each a short-circuit return, no branching to extract.
         self, event: MessageReceived, scope: TurnScope | None = None
     ) -> None:
         """Process one received message end to end (the intake worker's per-turn call).
@@ -1679,10 +1713,18 @@ class HandleMessage:
         # Run the generation under the typing keepalive (+ the natural-delay floor when wired).
         # 🔴 BOB-049 .3: a still-failing ESSENTIAL generation ends the turn with the honest GUPPI
         # outage notice instead of a degraded half-answer.
+        # 🔴 Адресация (BOB-090.B1): на время генерации ход АРМИРУЕТ обстоятельства, в
+        # которых оценивается отправка вовне — кто просит, откуда, о чём и из какого
+        # материала. Реестр capability общий и живёт всё время процесса, поэтому сам
+        # инструмент этих фактов знать не может; без армированного хода он не отправляет
+        # ничего (урок BOB-076). Армирование снимается на выходе, в том числе при сбое.
         try:
-            reply = await self._run_generation(
-                _generate, chat_id=event.chat_id, demand=demand, interest=interest
-            )
+            with armed_delivery_scope(
+                self._delivery_scope_for(event, interlocutor, history)
+            ):
+                reply = await self._run_generation(
+                    _generate, chat_id=event.chat_id, demand=demand, interest=interest
+                )
         except _EssentialStepError as exc:
             await self._essential.handle_failure(event, soul, exc)
             return
@@ -1775,6 +1817,52 @@ class HandleMessage:
             user_message=event.text,
             reply=reply,
             visibility=self._turn_visibility(is_group=event.is_group),
+        )
+
+    def _delivery_scope_for(
+        self,
+        event: MessageReceived,
+        interlocutor: Interlocutor | None,
+        history: Sequence[Mapping[str, object]],
+    ) -> DeliveryScope:
+        """Собрать обстоятельства ЭТОГО хода для инструмента отправки (BOB-090.B1).
+
+        ``from_owner`` — вправе ли просящий вообще адресовать сообщение в другой чат
+        (только owner, BOB-076); ``here_chat_id`` — чтобы «отправка» в тот же чат
+        распозналась структурно, а не по формулировке. Нить (``history``) едет с ходом,
+        чтобы гейт согласия судил просьбу В СИТУАЦИИ, а не в вакууме (BOB-090.B-fix: поле
+        существовало, но не заполнялось никогда).
+
+        🔴 Материал берётся из СЛЕДА хода, а не собирается здесь (BOB-090.B-fix2). Раньше
+        сюда клался снимок ``recalled`` — авто-recall, снятый ДО генерации, — и это была
+        ОДНА дверь из четырёх: приватное, поднятое памятью уже в ходе (memory-инструмент в
+        tool-loop, grounded-addon callback), в гейт не попадало вовсе. След наполняется на
+        месте сборки порта памяти и живёт весь ход, поэтому дверь, сработавшая ПОСЛЕ этого
+        снимка, всё равно доедет до гейта.
+
+        Живая нить отмечается здесь отдельной дверью, с видимостью САМОГО разговора: ход в
+        личке приватен целиком. Переносом она не считается (см.
+        :data:`~bob.capabilities.usecases.turn_material._NOT_A_TRANSFER`) — прямое
+        распоряжение владельца это волеизъявление, — но в следе она ЕСТЬ, то есть
+        исключение названо, а не забыто.
+
+        Всегда собирается и ничем не гейтится: обстоятельства сами по себе безвредны, а
+        читать их некому, пока инструмент не зарегистрирован (флаг ``social.delivery``).
+        """
+        material = current_turn_material()
+        material.note_visibility(
+            self._turn_visibility(is_group=event.is_group),
+            origin=MaterialOrigin.LIVE_THREAD,
+        )
+        return DeliveryScope(
+            from_owner=(
+                interlocutor is not None
+                and interlocutor.kind is InterlocutorKind.OWNER
+            ),
+            here_chat_id=event.chat_id,
+            request_text=event.text,
+            material=material,
+            recent_thread=_render_thread(history),
         )
 
     def _resolve_outgoing_target(
@@ -2231,7 +2319,7 @@ class HandleMessage:
             interlocutor is not None and interlocutor.kind is InterlocutorKind.OWNER
         )
         owner_consented = await self._disclosure_consent.owner_consents(
-            text=event.text, is_group=True, is_owner=is_owner
+            text=event.text, to_room=True, is_owner=is_owner
         )
         return Trust.GUEST, owner_consented
 
@@ -2258,6 +2346,14 @@ class HandleMessage:
         message (a silent/degraded turn). ``visibility`` (BOB-066 2.6) is the turn's
         scope-provenance; ``None`` writes NULL (= public), so a caller that does not
         classify scope persists surfaceable memory exactly as before.
+
+        🔴 The EXACT address (BOB-090.C2) is taken from the EVENT here, in the one seam
+        every turn-persisting path goes through (reply, «промолчал», a like-only turn, the
+        outage marker), so Bob never has to guess later where something was said. It is
+        stored, not spoken: no flag gates it because the address never reaches the prompt —
+        recall selects its own columns and carries no address (proved by equality). The
+        AXIS is orthogonal to ``visibility``: «где сказано» (a place) next to «кому это
+        можно» (a permission), never one instead of the other.
         """
         now = self._clock.now()
         episode = EpisodicEvent(
@@ -2269,6 +2365,8 @@ class HandleMessage:
             sender_id=event.sender_id,
             bob_message_id=bob_message_id,
             visibility=visibility,
+            origin_chat_id=event.chat_id,
+            origin_topic_id=event.topic_id,
         )
         await self._repo.save_episode(
             {
@@ -2280,6 +2378,8 @@ class HandleMessage:
                 "sender_id": episode.sender_id,
                 "bob_message_id": episode.bob_message_id,
                 "visibility": episode.visibility,
+                "origin_chat_id": episode.origin_chat_id,
+                "origin_topic_id": episode.origin_topic_id,
             }
         )
         await self._repo.set_mood(_mood_state(soul), at=now)

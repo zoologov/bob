@@ -64,6 +64,8 @@ from bob.application.usecases.heartbeat import (
     ReflectTick,
 )
 from bob.application.usecases.perceive_reaction import PerceiveReaction
+from bob.capabilities.usecases.turn_material import MaterialTrailRecall
+from bob.coding.speaker import MessageKind, channel_for
 from bob.conversation.adapters.closer_log_store import SqliteCloserLog
 from bob.conversation.adapters.conversation_floor_store import (
     SqliteConversationFloorStore,
@@ -155,6 +157,7 @@ from bob.runtime.wiring import (
     _build_length_guard_max_chars,
     _build_multibot,
     _build_offday_thresholds,
+    _build_origin_provenance,
     _build_permission_flow,
     _build_proactivity_engine,
     _build_pursue_goals_tick,
@@ -180,6 +183,7 @@ from bob.runtime.wiring import (
     build_roster_config,
     build_secondary_recall,
     build_self_action_recorder,
+    build_send_to_chat,
     build_staleness_reassessor,
     build_work_journal_recorder,
     staleness_enabled,
@@ -400,7 +404,17 @@ def build_application(
         embedder=resolved_embedder,
         name_to_sender_id=_backfill_name_map(merged),
     )
-    recall = HybridMemoryRecall(memory_repo, resolved_embedder, reranker=resolved_reranker)
+    # 🔴 TURN-MATERIAL TRAIL (BOB-090.B-fix2): this is the ONLY place a memory-recall port
+    # is ever built — and it is wrapped. Every door downstream draws from this object (the
+    # turn's auto-recall, the ``secondary_recall`` decorator over it, the registry's memory
+    # capabilities, the grounded-addon callback, the proactive seed), so each one lands in
+    # the trail BY CONSTRUCTION, with no bookkeeping of its own, and the ``send_to_chat``
+    # transfer gate reads that trail instead of one door out of four. A door added tomorrow
+    # takes its port from here too; a port built OUTSIDE the root is caught by the
+    # architecture guard in tests/capabilities/test_turn_material.py.
+    recall = MaterialTrailRecall(
+        HybridMemoryRecall(memory_repo, resolved_embedder, reranker=resolved_reranker)
+    )
 
     # Autobiography recorder (BOB-079): behind ``memory.autobiography`` (OFF by default →
     # NoOp → zero writes, byte-identical behaviour). Constructed here over the shared
@@ -751,6 +765,19 @@ def build_application(
     # can, by explicit consent in a group, authorise voicing previously-private content into
     # the room for that one turn (privacy by default, not a prison).
     disclosure_consent = build_disclosure_consent_gate(merged, router=router)
+    # Адресация (BOB-090.B1): инструмент «написать в указанный чат/топик», за флагом
+    # ``social.delivery`` (default OFF → capability не зарегистрирована → её нет в
+    # манифесте → ход байт-в-байт прежний). Регистрация идёт ЗДЕСЬ, не при сборке
+    # реестра: ему нужны бот Боба, ростер (настоящие @ник) и контур согласия — всё это
+    # появляется позже. Реестр читается манифестом на каждом ходу, так что поздняя
+    # регистрация ничего не ломает.
+    build_send_to_chat(
+        merged,
+        registry=registry,
+        bot=resolved_bob_bot,
+        directory=first_impression_store,
+        consent=disclosure_consent,
+    )
 
     handle_message = HandleMessage(
         router=router,
@@ -932,8 +959,9 @@ def build_application(
         # Privilege gating (BOB-052 .2): a privilege — running a tool, revealing Bob's
         # inner life, disclosing owner data — is OWNER-GATED even though memory is public
         # in the closed group (BOB-051). When a NON-authorized member asks for something
-        # privileged the flow opens a pending request and asks the owner («Вова, <кто>
-        # просит <что> — разрешить?»); on the OWNER's turn it records the verdict on an
+        # privileged the flow opens a pending request and asks the owner IN BOB'S OWN
+        # WORDS (BOB-090.E — the judge's verdict stays internal, the owner-mention is
+        # grounded on the roster); on the OWNER's turn it records the verdict on an
         # active pending (grant / deny / authorize, or /allow //deny //authorize). 🔴
         # Owner-only decision + the non-authorized-only request gate live inside the flow;
         # an AUTHORIZED member is never gated. Execution-on-approve is .3. Off (no permission
@@ -941,7 +969,15 @@ def build_application(
         permission_flow=_build_permission_flow(
             router=router,
             repo=connection,
-            bot=resolved_bob_bot,
+            # 🔴 Бота ВЫБИРАЕТ канон (BOB-090.B-fix): просьба разрешения — социальный акт,
+            # и ядро (``speaker_for``) называет говорящим Боба. Раньше здесь стояла строка
+            # «бот Боба», случайно совпадавшая по итогу: сам вердикт канона тогда ничем не
+            # исполнялся, и подмена канона не двигала ни один канал.
+            bot=channel_for(
+                MessageKind.PERMISSION_REQUEST,
+                bob=resolved_bob_bot,
+                guppi=resolved_guppi_bot,
+            ),
             chat_id=_int(telegram_section, "chat_id", 0),
             topic_id=_int(_section(telegram_section, "bob"), "topic_id", 0),
             owner_id=_int(telegram_section, "owner_id", 0),
@@ -949,6 +985,7 @@ def build_application(
             authorizer=authorizer,
             registry=registry,
             tool_provider=tool_provider,
+            directory=first_impression_store,
         ),
         # Semantic response judgment (BOB-049): on every inbound Bob UNDERSTANDS the
         # message in context and chooses — as a person — REPLY / REACT / IGNORE, replacing
@@ -1011,6 +1048,12 @@ def build_application(
         # The grounded-addon callback's OWN recall door (BOB-087.C8): the CASUAL-floor port
         # when register-recall is on, the same plain ``recall`` when it is off (INV-5).
         addon_recall=secondary_recall,
+        # Провенанс «где это было» (BOB-090.C1): behind ``memory.origin_provenance`` (OFF by
+        # default → the composed prompt byte-identical). ON → the recalled material's
+        # ``visibility`` — already stamped from the channel — reaches Bob's voice, so he can
+        # say «это мы обсуждали в личке» instead of inventing the place (эпизод 3092).
+        # 🔴 A signal for judgment, NOT a recall filter: nothing is withheld (BOB-082).
+        origin_provenance=_build_origin_provenance(merged),
     )
     # Intake-развязка (BOB-066 Срез 2.1): the MESSAGE_RECEIVED subscriber is now the fast,
     # non-blocking ChatDispatcher.submit (normalise → buffer → return), so the Telegram

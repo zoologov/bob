@@ -400,6 +400,20 @@ ignore = [
     "RUF001",
     "RUF003",
 ]
+# The origin-provenance tests (BOB-090.C1) assert on the Russian «где это было» voice line
+# and document the live defect in Russian prose — Cyrillic look-alikes are intentional.
+"tests/domain/personality/test_voice_origin_provenance.py" = [
+    "S101",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+"tests/runtime/wiring/test_origin_provenance.py" = [
+    "S101",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
 # The room-tone tests (BOB-066 Пласт 4) assert on Russian persona voice lines whose
 # Cyrillic look-alikes are intentional (→ RUF001/RUF003).
 "tests/domain/personality/test_room_tone.py" = [
@@ -576,6 +590,16 @@ ignore = [
 "tests/infrastructure/persistence/test_visibility_provenance.py" = [
     "S101",
     "ARG001",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+# The episode-origin persistence tests (BOB-090.C2) document the NULL = «источник
+# неизвестен» rule in Russian prose and carry Russian episode content literals whose
+# Cyrillic look-alikes are intentional (→ RUF001/RUF002/RUF003).
+"tests/infrastructure/persistence/test_episode_origin.py" = [
+    "S101",
     "PLR2004",
     "RUF001",
     "RUF002",
@@ -1532,6 +1556,203 @@ ignore = [
 "src/bob/runtime/wiring/self_action.py" = ["RUF001", "RUF002", "RUF003"]
 "tests/domain/memory/test_self_action.py" = ["S101", "ARG001", "PLR2004", "RUF001", "RUF002", "RUF003"]
 "tests/domain/memory/test_self_action_recorder.py" = ["S101", "ARG001", "PLR2004", "RUF001", "RUF002", "RUF003"]
+# Адресация и упоминания (BOB-090.B) несут русские подсказки Бобу («Не отправляй…»,
+# «Переспроси, в какой именно чат…»), русские persona/policy-докстринги и русские имена
+# в тестах ростера — кириллические похожие символы намеренны (модель читает их нативно),
+# поэтому RUF001/RUF002/RUF003 к этим литералам не применяются.
+"src/bob/social/destination.py" = ["RUF001", "RUF002", "RUF003"]
+"src/bob/social/mention.py" = ["RUF001", "RUF002", "RUF003"]
+"src/bob/capabilities/usecases/send_to_chat.py" = ["RUF001", "RUF002", "RUF003"]
+"src/bob/capabilities/usecases/delivery_scope.py" = ["RUF001", "RUF002", "RUF003"]
+"src/bob/capabilities/ports.py" = ["RUF001", "RUF002", "RUF003"]
+"src/bob/social/adapters/first_impression_store.py" = ["RUF001", "RUF002", "RUF003"]
+"src/bob/infrastructure/telegram/outbound_messenger.py" = ["RUF001", "RUF002", "RUF003"]
+"src/bob/runtime/wiring/delivery.py" = ["RUF001", "RUF002", "RUF003"]
+"tests/domain/social/test_destination.py" = ["S101", "ARG001", "PLR2004", "RUF001", "RUF002", "RUF003"]
+"tests/domain/social/test_mention.py" = ["S101", "ARG001", "PLR2004", "RUF001", "RUF002", "RUF003"]
+"tests/domain/social/test_disclosure_transfer.py" = ["S101", "ARG001", "PLR2004", "RUF001", "RUF002", "RUF003"]
+"tests/capabilities/test_send_to_chat.py" = ["S101", "ARG001", "PLR2004", "RUF001", "RUF002", "RUF003"]
+# След материала хода (BOB-090.B-fix2) — русские policy-докстринги про двери материала и
+# карве-аут живой нити; кириллические похожие символы намеренны.
+"src/bob/capabilities/usecases/turn_material.py" = ["RUF001", "RUF002", "RUF003"]
+"tests/capabilities/test_turn_material.py" = ["S101", "ARG001", "PLR2004", "RUF001", "RUF002", "RUF003"]
+"tests/test_permission_ack_topic.py" = ["S101", "ARG001", "PLR2004", "RUF001", "RUF002", "RUF003"]
+"tests/infrastructure/persistence/test_first_impression_username.py" = ["S101", "ARG001", "PLR2004", "RUF001", "RUF002", "RUF003"]
+"tests/application/usecases/test_first_impression_username.py" = ["S101", "ARG001", "PLR2004", "RUF001", "RUF002", "RUF003"]
+"tests/runtime/wiring/test_delivery.py" = ["S101", "ARG001", "PLR2004", "RUF001", "RUF002", "RUF003"]
+"tests/test_app_delivery.py" = ["S101", "ARG001", "PLR2004", "RUF001", "RUF002", "RUF003"]
+# HandleMessage несёт русские policy-комментарии среза B (армирование хода) — кириллические
+# похожие символы намеренны; RUF001/RUF002/RUF003 к ним не применяются.
+"src/bob/application/usecases/handle_message.py" = ["RUF001", "RUF002", "RUF003"]
+# Канон GUPPI (BOB-090.D): ядро «кто говорит» и его тесты несут русские докстринги и
+# литералы канона («правлю», «готово», реплики отыгрыша), а тестовые фейк-порты — не
+# используемые аргументы; RUF001-003 / ARG к ним не применяются.
+"src/bob/coding/speaker.py" = ["RUF001", "RUF002", "RUF003"]
+"tests/domain/coding/test_speaker.py" = ["S101", "ARG001", "PLR2004", "RUF001", "RUF002", "RUF003"]
+"tests/domain/personality/test_voice_guppi_no_roleplay.py" = ["S101", "ARG001", "PLR2004", "RUF001", "RUF002", "RUF003"]
+"tests/application/usecases/test_coding_speaker_routing.py" = [
+    "S101",
+    "ARG001",
+    "ARG002",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+"tests/application/usecases/test_coding_guppi_not_in_memory.py" = [
+    "S101",
+    "ARG001",
+    "ARG002",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+# Голос разрешений (BOB-090.E): реплика Боба owner'у, русский промпт судьи и их тесты
+# несут русские литералы/докстринги, кириллические похожие символы в которых намеренны
+# (модель и человек читают их нативно); тестам ещё нужны assert-ы, фейк-порты с
+# неиспользуемыми аргументами и «магические» id чатов. RUF001-003 / S101 / ARG / PLR2004
+# к ним не применяются.
+"src/bob/social/permission/request_voice.py" = ["RUF001", "RUF002", "RUF003"]
+"tests/domain/permission/test_request_voice.py" = [
+    "S101",
+    "ARG001",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+"tests/application/usecases/test_permission_notice_voice.py" = [
+    "S101",
+    "ARG001",
+    "ARG002",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+"tests/runtime/wiring/test_permission_voice.py" = [
+    "S101",
+    "ARG001",
+    "ARG002",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+"tests/test_app_permission_voice.py" = [
+    "S101",
+    "ARG001",
+    "ARG002",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+    "SLF001",
+]
+# BDD-слой эпика (BOB-090.F): харнессы живого корня и шаги трёх ``.feature`` связывают
+# русский текст сценариев, русские реплики Боба и русский seeded-архив — кириллические
+# похожие символы в них намеренны (их читают и модель, и человек). Тестам ещё нужны
+# assert-ы, фейк-боты с неиспользуемыми аргументами и «магические» id чатов/топиков, а
+# харнессам — доступ к приватному транспортному адаптеру кодера. RUF001-003 / S101 /
+# ARG / PLR2004 / SLF001 к ним не применяются.
+"tests/acceptance/live_app_harness.py" = [
+    "S101",
+    "ARG001",
+    "ARG002",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+    "SLF001",
+]
+"tests/acceptance/delivery_harness.py" = [
+    "S101",
+    "ARG001",
+    "ARG002",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+"tests/acceptance/origin_provenance_harness.py" = [
+    "S101",
+    "ARG001",
+    "ARG002",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+"tests/acceptance/guppi_canon_harness.py" = [
+    "S101",
+    "ARG001",
+    "ARG002",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+    "SLF001",
+]
+"tests/acceptance/steps/test_chat_addressing.py" = [
+    "S101",
+    "ARG001",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+"tests/acceptance/steps/test_origin_provenance.py" = [
+    "S101",
+    "ARG001",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+"tests/acceptance/steps/test_guppi_canon.py" = [
+    "S101",
+    "ARG001",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+# Наследование метки приватности производной записью (bob-g7t): общий словарь оси
+# приватности в ядре, формат провенанса дайджеста, починка старых дайджестов в
+# repo-адаптере и их тесты несут русские докстринги/комментарии (обоснование правила
+# «самая строгая» и решения по 21 существующему дайджесту) + русские литералы эпизодов;
+# кириллические похожие символы в них намеренны, поэтому RUF001/RUF002/RUF003 не
+# применяются. Тестам ещё нужны assert-ы и «магические» числа.
+"src/bob/kernel/visibility.py" = ["RUF001", "RUF002", "RUF003"]
+"src/bob/memory/digest_provenance.py" = ["RUF001", "RUF002", "RUF003"]
+"src/bob/memory/adapters/sqlite_memory_repo.py" = ["RUF001", "RUF002", "RUF003"]
+"tests/domain/kernel/test_visibility.py" = ["S101", "RUF001", "RUF002", "RUF003"]
+"tests/domain/memory/test_digest_provenance.py" = ["S101", "RUF001", "RUF002", "RUF003"]
+"tests/application/usecases/test_consolidate_memory.py" = [
+    "S101",
+    "ARG001",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+"tests/infrastructure/persistence/test_consolidation_repo.py" = [
+    "S101",
+    "ARG001",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+"tests/infrastructure/persistence/test_dedup_repo.py" = [
+    "S101",
+    "ARG001",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
 
 [tool.ruff.lint.isort]
 known-first-party = ["bob"]
@@ -1647,6 +1868,14 @@ source_paths = [
     # the reverse import closes a node cycle), and is listed here file-by-file so the gate
     # is real; the orchestration around it (``llm_router``) stays out of scope.
     "src/bob/application/router/voice_integrity.py",
+    # bob-g7t: правило наследования метки приватности производной записью
+    # (``strictest_visibility``) — чистый, детерминированный вердикт «какое разрешение
+    # несёт дайджест, собранный из этих источников». Живёт в ядре, потому что нужно
+    # ``memory``, а прямой импорт ``memory → social`` замыкает цикл узлов; ядро целиком в
+    # source_paths не заводим (там порты и общий словарь — мутировать нечего), поэтому
+    # файл перечислен точечно. Иначе гейт был бы фантомным (§0.3 п.7): объявленная цель
+    # вне scope = 0 мутантов.
+    "src/bob/kernel/visibility.py",
 ]
 # Deny the impure sub-trees inside those packages: adapters (I/O), ports (protocols),
 # and package __init__ re-exports carry no deterministic verdict logic to mutate.
@@ -1674,6 +1903,21 @@ pytest_add_cli_args_test_selection = [
     # deterministic core in capabilities/usecases/tool_loop.py; its fast unit test lives in
     # tests/application, so it is selected here to measure that predicate's mutants.
     "tests/application/test_tool_loop_narration_backstop.py",
+    # BOB-090.B-fix: the autonomous-boundary verdict (``SafeCapabilityDispatcher.allows``:
+    # allow-listed AND self-declared safe) is a pure, deterministic policy in
+    # capabilities/usecases/registry.py — which IS scanned, so without its fast unit test
+    # here every mutant of it would survive and the gate would be phantom (§0.3 п.7).
+    "tests/application/test_capability_registry.py",
+    # bob-g7t: the digest's PRIVACY decision (``_digest_row`` inherits the strictest label of
+    # its sources; ``_visibility_labels`` reads them) lives in memory/usecases — which IS
+    # scanned, so without its fast unit test here every mutant of that decision would be «no
+    # tests» and the gate would be phantom (§0.3 п.7). 🔴 ЧЕСТНАЯ РАМКА: измеряемая часть —
+    # это чистая сборка строки дайджеста (``_digest_row`` / ``_visibility_labels`` /
+    # ``_episode_ids``, 100% на bob-g7t). Остаток модуля (async ``run``, сборка Tier-0
+    # промпта, тексты logger.debug) по конвенции MUTATION.md вне scope мутации, поэтому
+    # число по ФАЙЛУ целиком (76/100) читать как вердикт нельзя — добивать его пришлось бы
+    # ассертами на текст логов, то есть padding'ом, который конвенция запрещает.
+    "tests/application/usecases/test_consolidate_memory.py",
     # BOB-087.C2: the register-recall verdict parser (``parse_work_talk_verdict``) is a pure,
     # deterministic core in memory/usecases/classify_work_talk.py; its fast unit test lives in
     # tests/application, so it is selected here to measure that parser's mutants.
@@ -1690,6 +1934,15 @@ pytest_add_cli_args_test_selection = [
     # BOB-087.E-M1: the fast, deterministic unit tests for the voice-integrity verdict —
     # selected so a per-slice ``voice_integrity`` run measures that core's mutants.
     "tests/application/router/test_voice_integrity.py",
+    # BOB-090.B-fix2 (MINOR-1): ``send_to_chat`` lives in ``src/bob/capabilities`` — which IS
+    # scanned — but its test was never selected, so all 104 of its mutants came back «no
+    # tests»: the ONE place the delivery gate sequence (нет хода → пусто → адрес → согласие →
+    # заземление → отправка) and the conservative «consent is None → False» exist had NO
+    # mutation gate at all (§0.3 п.7 — a phantom gate). Same for the turn-material trail
+    # (:mod:`bob.capabilities.usecases.turn_material`), whose carve-out policy is the new
+    # deterministic core the transfer gate now reads.
+    "tests/capabilities/test_send_to_chat.py",
+    "tests/capabilities/test_turn_material.py",
 ]
 # The kernel (ports/protocols the domain tests import) is NOT mutated but IS imported by
 # tests/domain — copy it + the package root verbatim into the mutants sandbox so the

@@ -238,9 +238,10 @@ class _Chat:
 
 
 class _User:
-    def __init__(self, user_id: int) -> None:
+    def __init__(self, user_id: int, username: str | None = None) -> None:
         self.id = user_id
         self.full_name = "U"
+        self.username = username
 
 
 class _Update:

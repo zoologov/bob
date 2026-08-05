@@ -14,7 +14,12 @@
 половину:
 
 * :class:`PrivilegeNeed` — immutable исход: ``needs_permission`` + ``kind``
-  (tool | internal | owner_data) + ``what`` (человекочитаемо, что просят).
+  (tool | internal | owner_data) + ``what`` (короткая пометка, о чём просят).
+  🔴 BOB-090.E: весь исход — ВНУТРЕННЕЕ машинное решение. ``kind`` выбирает, какими
+  словами Боб объяснит owner'у причину, ``what`` остаётся в записи запроса как след
+  суждения, и НИ ОДНО из этих полей не произносится: реплику owner'у собирает
+  :mod:`~bob.social.permission.request_voice` голосом Боба. Раньше ``what`` подставлялся
+  в шаблон дословно — и owner читал английскую строку классификатора.
 * :class:`PrivilegeContext` — immutable ВХОД: текст запроса + подсказки доступных
   capability + лёгкий контекст (recent thread). Подсказки — сигналы, не правила.
 * :class:`PrivilegeJudge` — инжектируемый порт: ``assess(ctx) -> PrivilegeNeed``.
@@ -68,19 +73,22 @@ _NO_TOKENS: frozenset[str] = frozenset({"no", "false", "n", "нет"})
 _WORD_TRIM = " \t\n.!?,:;'\"*-"
 
 PRIVILEGE_JUDGE_SYSTEM_PROMPT = (
-    "You are Bob deciding whether ONE message from a NOT-yet-authorised person asks "
-    "for something privileged that you must check with your owner first. Privileged "
-    "means it needs one of:\n"
-    "- tool: running a capability/tool on the person's behalf;\n"
-    "- internal: revealing your private inner life / internal notes;\n"
-    "- owner_data: disclosing the owner's private data.\n"
-    "Be CONSERVATIVE: ordinary conversation, small talk, and general knowledge are "
-    "NOT privileged (your shared memory is public) — answer no. Only a request that "
-    "genuinely needs a tool, internal info, or owner data is privileged.\n"
-    "Reply in exactly this labelled format, nothing else:\n"
-    "needs_permission: <yes|no>\n"
-    "kind: <tool|internal|owner_data, only when needs_permission is yes>\n"
-    "what: <a short human-readable phrase of what is being asked, when yes>"
+    "Ты Боб. Реши, просит ли ОДНО сообщение от ещё не авторизованного человека "
+    "что-то привилегированное — то, на что сначала нужно добро владельца. "
+    "Привилегированно, если нужно одно из:\n"
+    "- tool: выполнить для него инструмент/действие;\n"
+    "- internal: раскрыть твою внутреннюю жизнь или личные заметки;\n"
+    "- owner_data: выдать личные данные владельца.\n"
+    "Будь КОНСЕРВАТИВЕН: обычный разговор, болтовня и общеизвестное — НЕ "
+    "привилегированны (общая память открыта), отвечай «нет». Привилегированна только "
+    "просьба, которой действительно нужен инструмент, внутренняя информация или "
+    "личное владельца.\n"
+    "🔴 Это ВНУТРЕННЕЕ решение, а не ответ человеку: его никто не прочитает. Отвечай "
+    "строго в этом размеченном формате и ничем больше:\n"
+    "needs_permission: <да|нет>\n"
+    "kind: <tool|internal|owner_data — только когда needs_permission: да>\n"
+    "what: <короткая пометка по-русски, о чём просят — для записи запроса, "
+    "когда да>"
 )
 
 
@@ -99,8 +107,11 @@ class PrivilegeNeed:
 
     ``needs_permission`` is the gate: when ``False`` the flow does nothing and Bob
     answers normally. When ``True``, ``kind`` is one of :data:`PRIVILEGE_KINDS` and
-    ``what`` is a short human-readable phrase used in the owner notice
-    («показать задачи проекта»).
+    ``what`` is a short note of what was asked («показать задачи проекта»).
+
+    🔴 Both are INTERNAL (BOB-090.E): ``kind`` picks the wording Bob uses to explain
+    himself, ``what`` is kept with the stored request as the trace of the judgment —
+    neither is ever spoken to the owner.
     """
 
     needs_permission: bool
@@ -142,15 +153,15 @@ def build_privilege_user_prompt(ctx: PrivilegeContext) -> str:
     Includes the request text, the available-capability hints (signals only) and the
     recent per-person thread for light context.
     """
-    hints = ", ".join(ctx.capability_hints) if ctx.capability_hints else "(none)"
+    hints = ", ".join(ctx.capability_hints) if ctx.capability_hints else "(нет)"
     lines = [
-        "Available capabilities (hints, NOT a map you are bound to):",
+        "Доступные инструменты (подсказка, а НЕ список, которым ты связан):",
         f"  {hints}",
         "",
-        "Recent thread with this person:",
-        ctx.recent_thread or "  (none)",
+        "Недавний разговор с этим человеком:",
+        ctx.recent_thread or "  (нет)",
         "",
-        "Incoming request:",
+        "Входящая просьба:",
         ctx.request_text,
     ]
     return "\n".join(lines)

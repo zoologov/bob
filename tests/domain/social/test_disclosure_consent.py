@@ -107,8 +107,17 @@ def test_user_prompt_is_stable_without_a_thread() -> None:
     assert "(none)" in prompt
 
 
-def test_system_prompt_frames_the_conservative_owner_group_question() -> None:
+def test_system_prompt_frames_the_conservative_owner_question() -> None:
     # The prompt must ask for the labelled contract and bias to no on doubt.
     assert "consent:" in DISCLOSURE_CONSENT_SYSTEM_PROMPT
     assert "yes" in DISCLOSURE_CONSENT_SYSTEM_PROMPT
     assert "no" in DISCLOSURE_CONSENT_SYSTEM_PROMPT
+    assert "CONSERVATIVE" in DISCLOSURE_CONSENT_SYSTEM_PROMPT
+
+
+def test_system_prompt_does_not_assume_the_owner_writes_from_the_group() -> None:
+    # 🔴 BOB-090.B-fix: тот же вопрос задаётся и с хода в ЛИЧКЕ (отправка в комнату), а
+    # промпт утверждал, что сообщение owner'а пришло «in a GROUP chat» — судья получал
+    # ложную картину. Спрашивать надо про АУДИТОРИЮ раскрытия, а не про канал хода.
+    assert "in a GROUP chat" not in DISCLOSURE_CONSENT_SYSTEM_PROMPT
+    assert "other people" in DISCLOSURE_CONSENT_SYSTEM_PROMPT

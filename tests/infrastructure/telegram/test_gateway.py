@@ -93,12 +93,14 @@ def _update(
     user: _FakeUser | None = None,
     reply_to_message: _FakeMessage | None = None,
     entities: list[_FakeEntity] | None = None,
+    message_thread_id: int | None = None,
 ) -> _FakeUpdate:
     return _FakeUpdate(
         update_id=update_id,
         message=_FakeMessage(
             message_id=message_id,
             text=text,
+            message_thread_id=message_thread_id,
             from_user=user,
             reply_to_message=reply_to_message,
             entities=entities,
@@ -464,6 +466,105 @@ async def test_intake_marks_a_private_dm_as_not_is_group() -> None:
     await gateway.intake(_update(10, chat_type="private"))
 
     assert received[0].is_group is False
+
+
+# --- Точный адрес (BOB-090.C2): message_thread_id → topic_id -------------------
+# Грубого «личка или группа» мало: чтобы позже написать «туда же, где это обсуждали»,
+# нужен КОНКРЕТНЫЙ топик. Гейтвей знает ``message_thread_id`` давно (ответы Боба
+# пинуются в топик), но в событие этот сигнал не доезжал.
+
+
+@pytest.mark.asyncio
+async def test_intake_carries_the_forum_topic_id() -> None:
+    bus = AsyncEventBus()
+    received: list[MessageReceived] = []
+
+    async def handler(event: ports.DomainEvent) -> None:
+        assert isinstance(event, MessageReceived)
+        received.append(event)
+
+    bus.subscribe(MESSAGE_RECEIVED, handler)
+    gateway = _make_gateway(_FakeBot(), bus=bus)
+
+    await gateway.intake(_update(10, chat_type="supergroup", message_thread_id=77))
+
+    assert received[0].topic_id == 77
+
+
+@pytest.mark.asyncio
+async def test_intake_without_a_topic_carries_none_not_a_guess() -> None:
+    # Личка и группа без форум-топиков приходят без ``message_thread_id``. Это «топика
+    # нет», и гейтвей ничего не выдумывает: None остаётся None.
+    bus = AsyncEventBus()
+    received: list[MessageReceived] = []
+
+    async def handler(event: ports.DomainEvent) -> None:
+        assert isinstance(event, MessageReceived)
+        received.append(event)
+
+    bus.subscribe(MESSAGE_RECEIVED, handler)
+    gateway = _make_gateway(_FakeBot(), bus=bus)
+
+    await gateway.intake(_update(10, chat_type="private"))
+
+    assert received[0].topic_id is None
+
+
+def test_topic_id_defaults_to_absent_on_the_event() -> None:
+    # Событие обратно совместимо: конструкция без топика (тесты, синтетические
+    # события, внутренний гейтвей GUPPI) остаётся валидной и означает «топика нет».
+    event = MessageReceived(update_id=1, chat_id=42, message_id=1, text="привет")
+
+    assert event.topic_id is None
+
+
+# --- @username (BOB-090.B3): from_user.username → sender_username --------------
+# Ник не хранился нигде, поэтому Боб написал «@Норман» вместо @NormanGri. Единственный
+# источник — входящий апдейт: гейтвей знал ник всегда, но дальше по конвейеру не отдавал.
+
+
+@pytest.mark.asyncio
+async def test_intake_carries_the_senders_telegram_handle() -> None:
+    bus = AsyncEventBus()
+    received: list[MessageReceived] = []
+
+    async def handler(event: ports.DomainEvent) -> None:
+        assert isinstance(event, MessageReceived)
+        received.append(event)
+
+    bus.subscribe(MESSAGE_RECEIVED, handler)
+    gateway = _make_gateway(_FakeBot(), bus=bus)
+
+    await gateway.intake(
+        _update(10, user=_FakeUser(id=99, full_name="Норман", username="NormanGri"))
+    )
+
+    assert received[0].sender_username == "NormanGri"
+    assert received[0].sender_name == "Норман"  # имя и ник — разные вещи
+
+
+@pytest.mark.asyncio
+async def test_a_sender_without_a_handle_carries_none_not_a_guess() -> None:
+    # 🔴 Ник в телеграме необязателен: «ника нет» — это пусто, и никак иначе.
+    bus = AsyncEventBus()
+    received: list[MessageReceived] = []
+
+    async def handler(event: ports.DomainEvent) -> None:
+        assert isinstance(event, MessageReceived)
+        received.append(event)
+
+    bus.subscribe(MESSAGE_RECEIVED, handler)
+    gateway = _make_gateway(_FakeBot(), bus=bus)
+
+    await gateway.intake(_update(10, user=_FakeUser(id=99, full_name="Лиля")))
+
+    assert received[0].sender_username is None
+
+
+def test_sender_username_defaults_to_absent_on_the_event() -> None:
+    event = MessageReceived(update_id=1, chat_id=42, message_id=1, text="привет")
+
+    assert event.sender_username is None
 
 
 # --- Addressivity signals (BOB-023) -------------------------------------------

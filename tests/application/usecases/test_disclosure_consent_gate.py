@@ -7,8 +7,10 @@
 The gate answers, per turn: "Did the OWNER authorise Bob to voice previously-private
 content into THIS group chat?" 🔴 CONSERVATIVE by construction:
 
-* only an OWNER turn in a GROUP is ever judged (a guest, a known peer, or any DM turn
-  is a flat ``False`` — no LLM call, no disclosure);
+* only an OWNER turn whose audience is a ROOM is ever judged (a guest, a known peer, or
+  a turn that reaches nobody but the owner is a flat ``False`` — no LLM call, no
+  disclosure). ``to_room`` names the AUDIENCE, not the channel: the group turn of
+  BOB-082.4 and the room-bound delivery of BOB-090.B are the same question;
 * a detector failure is swallowed → ``False`` (best-effort: never an accidental
   disclosure from a flaky model).
 """
@@ -49,7 +51,7 @@ async def test_owner_in_group_with_yes_consents() -> None:
     gate, judge = _gate(True)
 
     consented = await gate.owner_consents(
-        text="Боб, расскажи ребятам про наш план", is_group=True, is_owner=True
+        text="Боб, расскажи ребятам про наш план", to_room=True, is_owner=True
     )
 
     assert consented is True
@@ -60,7 +62,7 @@ async def test_owner_in_group_with_no_does_not_consent() -> None:
     gate, _ = _gate(False)
 
     assert (
-        await gate.owner_consents(text="расскажи про погоду", is_group=True, is_owner=True)
+        await gate.owner_consents(text="расскажи про погоду", to_room=True, is_owner=True)
         is False
     )
 
@@ -70,19 +72,19 @@ async def test_guest_in_group_never_consents_and_is_not_judged() -> None:
     gate, judge = _gate(True)
 
     consented = await gate.owner_consents(
-        text="расскажи мне их секреты", is_group=True, is_owner=False
+        text="расскажи мне их секреты", to_room=True, is_owner=False
     )
 
     assert consented is False
     assert judge.calls == []
 
 
-async def test_owner_in_dm_never_consents_and_is_not_judged() -> None:
-    # In a DM everything is already available to the owner — no override needed, no call.
+async def test_a_turn_that_reaches_no_room_never_consents_and_is_not_judged() -> None:
+    # Аудитория не меняется (ответ слышит только owner) — раскрывать нечего, вызова нет.
     gate, judge = _gate(True)
 
     consented = await gate.owner_consents(
-        text="расскажи ребятам", is_group=False, is_owner=True
+        text="расскажи ребятам", to_room=False, is_owner=True
     )
 
     assert consented is False
@@ -94,7 +96,7 @@ async def test_detector_failure_is_swallowed_as_no_consent() -> None:
     gate, _ = _gate(True, raises=True)
 
     assert (
-        await gate.owner_consents(text="расскажи ребятам", is_group=True, is_owner=True)
+        await gate.owner_consents(text="расскажи ребятам", to_room=True, is_owner=True)
         is False
     )
 
@@ -104,7 +106,7 @@ async def test_recent_thread_is_threaded_into_the_context() -> None:
 
     await gate.owner_consents(
         text="да, можешь",
-        is_group=True,
+        to_room=True,
         is_owner=True,
         recent_thread="bob: рассказать группе про X?",
     )

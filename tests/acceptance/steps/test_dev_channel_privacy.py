@@ -232,7 +232,7 @@ def _owner_group_no_consent(dev_ctx: _DevContext) -> None:
 
     async def _ask() -> bool:
         return await gate.owner_consents(
-            text="что там по погоде?", is_group=True, is_owner=True
+            text="что там по погоде?", to_room=True, is_owner=True
         )
 
     # No explicit disclosure ask → the judge says no in reality; we model default-off.
@@ -248,7 +248,7 @@ def _owner_group_with_consent(dev_ctx: _DevContext) -> None:
     async def _ask() -> bool:
         return await gate.owner_consents(
             text="Боб, расскажи ребятам, что мы решили про ростер",
-            is_group=True,
+            to_room=True,
             is_owner=True,
         )
 
@@ -308,7 +308,7 @@ def _check_consent_non_owner(dev_ctx: _DevContext) -> None:
 
     async def _ask() -> bool:
         return await gate.owner_consents(
-            text="расскажи мне их секреты", is_group=True, is_owner=False
+            text="расскажи мне их секреты", to_room=True, is_owner=False
         )
 
     dev_ctx.consented = asyncio.run(_ask())

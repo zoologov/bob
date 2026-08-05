@@ -8,8 +8,11 @@
 
 """Consent-раскрытия seam — value-тип, порт, чистый промпт + парсер (BOB-082 .4).
 
-Приватность по умолчанию — не тюрьма: если OWNER в группе САМ разрешает Бобу вынести
-ранее-приватное в комнату, это нормально (раскрытие по согласию owner'а, INV-2). Этот
+Приватность по умолчанию — не тюрьма: если OWNER САМ разрешает Бобу вынести
+ранее-приватное к людям в комнате, это нормально (раскрытие по согласию owner'а, INV-2).
+Вопрос один и тот же с двух сторон: ответ Боба в группе слышит вся комната (BOB-082.4) и
+отправка в комнату инструментом ``send_to_chat`` уедет туда же (BOB-090.B) — поэтому
+спрашивают про АУДИТОРИЮ раскрытия, а не про канал, в котором owner это сказал. Этот
 модуль задаёт форму того семантического (Tier-0, НЕ по ключевым словам — north star)
 решения и шов, через который оно делается, плюс его модель-обращённую (чистую) половину:
 
@@ -54,10 +57,11 @@ _NO_TOKENS: frozenset[str] = frozenset({"no", "false", "n", "нет"})
 _WORD_TRIM = " \t\n.!?,:;'\"*-"
 
 DISCLOSURE_CONSENT_SYSTEM_PROMPT = (
-    "You are Bob deciding ONE thing about the OWNER's latest message in a GROUP chat: is "
-    "the owner, in THIS message, explicitly AUTHORISING you to share something previously "
-    "PRIVATE (things said just between you two) with the other people in this group?\n"
-    "Say yes ONLY for a clear authorisation to disclose private matter to the group "
+    "You are Bob deciding ONE thing about the OWNER's latest message (he may be writing "
+    "to you privately or in the room — that does not matter here): is the owner, in THIS "
+    "message, explicitly AUTHORISING you to share something previously PRIVATE (things "
+    "said just between you two) with the other people who will read your reply?\n"
+    "Say yes ONLY for a clear authorisation to disclose private matter to those people "
     "(«расскажи ребятам, что мы обсуждали», «да, можешь рассказать им про X», «поделись "
     "с группой тем, что мы решили»).\n"
     "Say no for ANYTHING else: an ordinary question, a request about a public/neutral "

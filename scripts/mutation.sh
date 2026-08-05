@@ -35,3 +35,9 @@ echo
 echo "Survivors (each must be KILLED with a tighter assertion, or triaged as a"
 echo "genuinely-equivalent mutant in the bead comment — never padded):"
 uv run mutmut results
+
+# 🔴 BOB-090.C1: mutmut оставляет в src/**/__pycache__ байткод из своей песочницы
+# (unchecked-hash .pyc), и следующий прогон тестов может молча исполнить СТАРЫЙ код —
+# то есть верификация после мутации способна показать зелёное, ничего не проверив.
+# Чистим сами: цена — доли секунды, цена ошибки — ложное доверие к гейту.
+find src tests -name __pycache__ -prune -exec rm -rf {} + 2>/dev/null || true

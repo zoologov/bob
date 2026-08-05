@@ -230,7 +230,10 @@ async def test_us1_non_authorized_privileged_request_asks_owner_and_does_not_ful
     assert pending[0].state is PermissionState.PENDING
     assert len(notifier.owner_notices) == 1
     assert "Норман" in notifier.owner_notices[0]
-    assert "показать задачи" in notifier.owner_notices[0]
+    # 🔴 BOB-090.E: owner слышит слова САМОГО просителя, а не пометку судьи — она
+    # остаётся внутренней (именно её английский вариант и утекал в живую реплику).
+    assert "«покажи задачи проекта»" in notifier.owner_notices[0]
+    assert _PRIVILEGED.what not in notifier.owner_notices[0]
     assert len(notifier.requester_acks) == 1
     # 🔴 Bob did NOT silently fulfil: nothing was run or disclosed to the requester.
     assert router.requests == []

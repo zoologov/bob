@@ -89,12 +89,20 @@ class FakeConsolidationStore:
         self.flagged.extend(episode_ids)
 
 
-def _ep(eid: int, *, day: int, content: str, event_type: str = "message") -> dict[str, object]:
+def _ep(
+    eid: int,
+    *,
+    day: int,
+    content: str,
+    event_type: str = "message",
+    visibility: str | None = None,
+) -> dict[str, object]:
     return {
         "id": eid,
         "ts": datetime(2026, 6, day, 9, 0, tzinfo=UTC).isoformat(),
         "event_type": event_type,
         "content": content,
+        "visibility": visibility,
     }
 
 
@@ -244,6 +252,89 @@ async def test_empty_summary_is_a_safe_noop() -> None:
     # Assert: no digest written and sources NOT flagged (so a later run can retry).
     assert store.digests == []
     assert store.flagged == []
+
+
+async def test_the_digest_states_the_ts_window_of_its_sources() -> None:
+    """🔴 bob-g7t: провенанс дайджеста стал НЕСУЩИМ, а не справочным.
+
+    Починка метки у дайджестов, записанных до фикса, находит их источники ровно по этому
+    окну, поэтому и ключ (``mood_snapshot``), и формат (``первый..последний``) обязаны
+    быть теми, которые читает :func:`~bob.memory.digest_provenance.parse_provenance_window`;
+    потерянный провенанс превращает дайджест в неразрешимый — то есть приватный навсегда.
+    """
+    # Arrange: three old episodes spanning a window.
+    episodes = [
+        _ep(1, day=1, content="A"),
+        _ep(2, day=2, content="B"),
+        _ep(3, day=3, content="C"),
+    ]
+    store = FakeConsolidationStore(list(episodes))
+    router = FakeRouter()
+
+    # Act
+    await _consolidate(store, router).run()
+
+    # Assert: the window is the FIRST..LAST source ts, under the key the repair reads,
+    # and the digest is tagged as a consolidation product.
+    digest = store.digests[0]
+    assert digest["mood_snapshot"] == f"{episodes[0]['ts']}..{episodes[2]['ts']}"
+    assert digest["tags"] == "consolidation"
+
+
+async def test_digest_inherits_the_strictest_visibility_of_its_sources() -> None:
+    """🔴 bob-g7t: свёртка НЕ отмывает приватность — один приватный источник решает.
+
+    Приватный эпизод стоит ПЕРВЫМ и в меньшинстве: правило «самая строгая», а не
+    «большинство» и не «последняя», поэтому дайджест уезжает приватным.
+    """
+    # Arrange: one owner-private source among two public ones.
+    store = FakeConsolidationStore(
+        [
+            _ep(1, day=1, content="личное", visibility="owner_private"),
+            _ep(2, day=2, content="общее A", visibility="public"),
+            _ep(3, day=3, content="общее B", visibility="public"),
+        ]
+    )
+    router = FakeRouter()
+
+    # Act
+    await _consolidate(store, router).run()
+
+    # Assert: the digest carries the private label — NOT NULL, which reads as public.
+    assert store.digests[0]["visibility"] == "owner_private"
+
+
+async def test_a_digest_of_public_sources_stays_public() -> None:
+    # Arrange: nothing private went in.
+    store = FakeConsolidationStore(
+        [
+            _ep(1, day=1, content="общее A", visibility="public"),
+            _ep(2, day=2, content="общее B", visibility="public"),
+        ]
+    )
+    router = FakeRouter()
+
+    # Act
+    await _consolidate(store, router).run()
+
+    # Assert: no over-labelling — public memory keeps surfacing to everyone.
+    assert store.digests[0]["visibility"] == "public"
+
+
+async def test_a_digest_of_legacy_unlabelled_sources_stays_public() -> None:
+    """Legacy ``NULL`` sources read as public (BOB-051 unified memory intact)."""
+    # Arrange: pre-BOB-066 rows carry no label at all.
+    store = FakeConsolidationStore(
+        [_ep(1, day=1, content="старое A"), _ep(2, day=2, content="старое B")]
+    )
+    router = FakeRouter()
+
+    # Act
+    await _consolidate(store, router).run()
+
+    # Assert: the digest states «public» explicitly rather than leaving NULL — after
+    # this fix a digest without a label is an impossible state, which is the invariant.
+    assert store.digests[0]["visibility"] == "public"
 
 
 async def test_empty_archive_is_a_noop() -> None:

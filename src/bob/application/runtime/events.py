@@ -60,6 +60,23 @@ class MessageReceived:
     is the shared companion group — the DM path sets it to ``False`` explicitly — and
     because in production the gateway always sets it from the real ``chat.type``, so
     the default only ever affects synthetic (group) events, never a live turn.
+
+    ``topic_id`` is the **exact-address signal** (BOB-090.C2): the forum topic
+    (Telegram's ``message_thread_id``) this message was said in, next to ``chat_id``.
+    ``is_group`` alone answers only "DM or a room"; to later write back into the place
+    something was actually discussed — the right chat AND the right topic — the precise
+    address has to reach the application, and the gateway has known it all along (it
+    already pins Bob's own replies to a thread). ``None`` means the message has NO
+    topic: a 1:1 DM (private chats have no forum topics) or a group without them. It is
+    NOT a guess and never a substitute for an unknown chat.
+
+    ``sender_username`` is the sender's Telegram ``@ник`` WITHOUT the «собака»
+    (BOB-090.B3), next to their human ``sender_name``. The two are different things and
+    only the handle can address a person in a room; it was carried by every update and
+    dropped at this boundary, which is why it existed NOWHERE and Bob wrote «@Норман»
+    instead of ``@NormanGri`` (эпизод 3088). ``None`` means the person has no handle —
+    a perfectly normal state in Telegram, and one that must lead to addressing them BY
+    NAME rather than to a composed tag.
     """
 
     update_id: int
@@ -71,6 +88,8 @@ class MessageReceived:
     reply_to_sender_id: int | None = None
     mentions_bob: bool = False
     is_group: bool = True
+    topic_id: int | None = None
+    sender_username: str | None = None
 
     @property
     def name(self) -> str:

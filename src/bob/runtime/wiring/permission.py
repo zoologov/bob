@@ -35,6 +35,7 @@ if TYPE_CHECKING:
     from bob.infrastructure.telegram.gateway import BotLike
     from bob.kernel.ports import Clock
     from bob.social.usecases import Authorizer
+    from bob.social.usecases.permission_flow import PersonDirectoryLike
 
 
 def _build_permission_flow(
@@ -49,14 +50,21 @@ def _build_permission_flow(
     authorizer: Authorizer,
     registry: CapabilityRegistry,
     tool_provider: ToolCallingProvider | None,
+    directory: PersonDirectoryLike | None = None,
 ) -> PermissionFlow:
     """Assemble the privilege-gating flow + its execution (BOB-052 .2/.3).
 
     Pairs the Tier-0 :class:`LlmPrivilegeJudge` (wrapped in a safe-default guard so a
     flaky judgment never breaks a live turn — it refuses, i.e. falls through to a normal
     reply) with the durable :class:`SqlitePermissionRequestStore` and the two-channel
-    :class:`_PermissionNotifier` (owner notice into Bob's topic, requester ack into the
-    chat).
+    :class:`_PermissionNotifier` (owner notice AND requester ack both into Bob's topic —
+    BOB-090.B5).
+
+    🔴 The notice goes out on BOB'S bot (``bot`` is Bob's, never GUPPI's): asking for
+    permission is a SOCIAL act, and the canon core
+    (:func:`~bob.coding.speaker.speaker_for`) names Bob the speaker for it (BOB-090.D/E).
+    ``directory`` is the roster the notice's owner-mention is grounded on (BOB-090.E) —
+    unwired, the owner is simply addressed by name (a tag is never invented).
 
     The EXECUTION (.3) is wired here: a :class:`PermissionExecutor` over the
     :class:`PrivilegedRequestFulfiller` (a one-shot elevated tool-loop / router run of the
@@ -66,15 +74,20 @@ def _build_permission_flow(
     state); the durable grant happens ONLY on an explicit authorize; and the whole
     execution is decorative (safe-default refuse inside the executor). The flow itself
     enforces owner-only decision + the non-authorized-only request gate; HandleMessage
-    only passes the perceived authz facts. ``owner_id`` is unused (the owner is decided by
-    HandleMessage's perceived interlocutor) but kept for symmetry with the other builders.
+    only passes the perceived authz facts.
+
+    🔴 ``owner_id`` does NOT decide privilege (that stays HandleMessage's perceived
+    interlocutor) — it decides WHO THE OWNER IS IN THE ROSTER, so the notice's mention is
+    grounded on the владельца's identity and not on a display name a stranger can help
+    himself to (BOB-090.B-fix2, MAJOR-2). ``0`` (unconfigured) marks nobody.
     """
-    del owner_id  # the owner is decided by HandleMessage's perceived interlocutor
     return PermissionFlow(
         judge=_SafeDefaultPrivilegeJudge(LlmPrivilegeJudge(router=router)),
         store=SqlitePermissionRequestStore(repo),
         notifier=_PermissionNotifier(bot=bot, chat_id=chat_id, topic_id=topic_id),
         clock=clock,
+        directory=directory,
+        owner_id=owner_id or None,
         executor=PermissionExecutor(
             fulfiller=PrivilegedRequestFulfiller(
                 router=router, registry=registry, tool_provider=tool_provider

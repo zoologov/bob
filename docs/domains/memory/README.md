@@ -53,6 +53,7 @@ src/bob/memory/
   work_journal.py # layer=domain          — WorkEpisode + work_episode_event: дистиллированный dev-эпизод, event_type='work' (BOB-087.B1)
   register.py     # layer=domain          — Register (DEV/CASUAL) + may_recall_in_register/filter_by_register: чистый down-weight work-эпизодов в CASUAL (BOB-087.C1)
   register_pipeline.py # layer=domain     — register_ranked/pool_has_work: over-fetch → attenuate → re-sort → truncate («зубы» down-weight'а) + economy-gate (BOB-087.C2)
+  digest_provenance.py # layer=domain     — provenance_window/parse_provenance_window: формат «<первый ts>..<последний ts>» окна источников дайджеста (bob-g7t)
   usecases/       # layer=application
     extract_facts.py       — ExtractFacts (Tier 0 «запомнить»: реплика → факты)
     consolidate_memory.py  — ConsolidateMemory (редкий дайджест старых эпизодов, BOB-021)
@@ -85,7 +86,8 @@ src/bob/memory/
 для тика/дайджеста/legacy-строки), `bob_message_id` (Telegram message_id
 собственного ответа Боба, BOB-050, чтобы позднюю реакцию связать со сказанным) и
 `visibility` (scope-провенанс хода — BOB-066 2.6 такт разглашения: `'public'` /
-`'owner_private'`, либо `None` = public). `SemanticFact` — дистиллированный
+`'owner_private'`, либо `None` = public) и `origin_chat_id` / `origin_topic_id` —
+ТОЧНЫЙ адрес места, где это было сказано (BOB-090.C2). `SemanticFact` — дистиллированный
 долговечный факт: `ts`, `category`, `content`, `confidence` в `[0, 1]` и такой же
 `visibility` (провенанс исходного хода). Оба — `frozen, slots` value-object'ы без
 I/O; инварианты (timezone-aware `ts`, `confidence ∈ [0, 1]`) проверяются в
@@ -96,6 +98,26 @@ I/O; инварианты (timezone-aware `ts`, `confidence ∈ [0, 1]`) про�
 `memory` его лишь пишет и протаскивает через recall. `None` = public держит
 BOB-051 единую память и все legacy-строки нетронутыми, а owner recall остаётся
 байт-в-байт (INV-7).
+
+**Точный адрес источника (BOB-090.C2).** `origin_chat_id` / `origin_topic_id` — вторая,
+ортогональная ось: `visibility` отвечает «кому это можно», адрес — «где это было сказано».
+Записывается в общем шве `HandleMessage._persist`, поэтому его получают ВСЕ пути хода:
+ответ, «промолчал», лайк-ход, аутейдж-маркер.
+
+- 🔴 **`NULL` адреса = «источник неизвестен», а НЕ «публично».** Асимметрия с `visibility`
+  (где `NULL` сознательно читается как public) намеренна: адрес — утверждение о МЕСТЕ, а
+  выдуманное место и есть чинимый дефект (эпизод 3092: Боб «вспомнил», что писал в группу,
+  хотя писал в личку). Дефолта и бэкфилла нет. `NULL` в `origin_topic_id` при известном
+  `origin_chat_id` означает «топика нет» — личка либо группа без форум-топиков.
+- **Флага у записи адреса нет** (единственный механизм эпика без флага): она безвредна,
+  потому что адрес не выбирается на recall-пути и в промпт не попадает. Байт-в-байт
+  доказан равенством: строки recall для эпизода с адресом и без совпадают как словари, а
+  системный промпт композера посимвольно одинаков — и с выключенным, и с включённым
+  провенансом C1.
+- 🔴 **Читателя в проде у адреса пока нет.** Он пишется на каждом ходу, но ни один
+  production-путь его не читает: адрес доставки берётся из конфига известных адресов, а не
+  из памяти. Это фундамент под мультигруппы, и говорить о нём надо именно так — «Боб
+  хранит место», а не «Боб знает точный адрес».
 
 **Автобиография — самодействия от первого лица (BOB-079).** До BOB-079 лента
 несла *слова* Боба (`event_type='message'`) и *чувства* (`'reflection'`), но не
@@ -226,9 +248,14 @@ near-дубликатов фактов (BOB-021). Отбирает ACTIVE фак
 не открывает — читает kernel через `.connection`-шов; memory-специфичные миграции
 (`_migrate_episodic_*`, `_migrate_semantic_superseded_by`, guarded-additive
 `_migrate_episodic_visibility` / `_migrate_semantic_visibility` — nullable-колонка
-`visibility` с `NULL`-дефолтом, идемпотентно, не трогает существующую базу) и
+`visibility` с `NULL`-дефолтом, идемпотентно, не трогает существующую базу;
+`_migrate_episodic_origin` — тем же приёмом добавляет `origin_chat_id` /
+`origin_topic_id` (BOB-090.C2), аддитивно и без бэкфилла; `_repair_digest_visibility` —
+идемпотентное дозаполнение метки у дайджестов, записанных до фикса, bob-g7t) и
 FTS5-бэкфилл живут в его `initialize()`. `save_episode`/`save_fact` персистят
-`visibility` параметризованно (`?`), а recall-SELECT'ы несут его дальше (см. ниже).
+`visibility` параметризованно (`?`), понимают необязательные ключи `origin_chat_id` /
+`origin_topic_id`, а recall-SELECT'ы несут `visibility` дальше (см. ниже);
+`load_episodes` отдаёт и адрес.
 С опциональным `embedder` владеет `MemoryVectorStore`.
 
 `MemoryVectorStore` (`adapters/vector_store.py`) — sqlite-vec сторона памяти:
@@ -297,6 +324,21 @@ OpenAI-совместимой `/v1/chat/completions`, сортирует по у
 - **Недеструктивная консолидация:** источники дайджеста лишь помечаются
   `consolidated=1`, оригиналы сохраняются; дайджест никогда не переваривается
   повторно (идемпотентно).
+- **Свёртка не отмывает приватность (bob-g7t):** дайджест наследует САМУЮ СТРОГУЮ
+  метку своих источников (`kernel.visibility.strictest_visibility`) — хоть один
+  `owner_private` среди свёрнутых эпизодов, и весь дайджест приватен. До фикса строка
+  дайджеста писалась вообще без `visibility`, а отсутствие метки читается как публично,
+  поэтому свёртка превращала приватное в общедоступное навсегда. Метку дайджестов,
+  записанных ДО фикса, идемпотентно дозаполняет `_repair_digest_visibility`: она
+  восстанавливает её ПО ИСТОЧНИКАМ (ts-окно провенанса, `digest_provenance.py`), а не
+  «оставить как есть» и не «пометить всё приватным» — публичная память комнаты остаётся
+  публичной. Неразрешимый провенанс трактуется строго (INV-8: сомнение придерживает).
+  Тот же класс дыры для оси РЕГИСТРА закрыт раньше, в BOB-087.C8.
+- **Адрес источника: `NULL` = «не знаю» (BOB-090.C2).** `origin_chat_id` /
+  `origin_topic_id` пишутся на всех путях хода, миграция аддитивна и без бэкфилла, поэтому
+  все старые записи остаются с `NULL`. Читать `NULL` как «публично» нельзя: у этой оси
+  умолчания нет, отсутствие адреса означает именно неизвестность. На recall-строку адрес не
+  выбирается — дверь откроется вместе со своим потребителем.
 - **Sender-атрибуция:** `EpisodicEvent.sender_id` привязывает реплику к
   собеседнику (per-person память BOB-045); `None` — для тика/дайджеста/legacy.
 - **Visibility-провенанс (`NULL` = public, BOB-066 2.6):** `visibility` — nullable
@@ -391,6 +433,9 @@ ports-шим `bob.domain.ports` удалён (BOB-062.8), ~15 потребите
   work-эпизодов в CASUAL (BOB-087.C1).
 - `register_pipeline.py` (чистый домен): `register_ranked(pool, register, *, display_k)`,
   `pool_has_work(pool)` — rank-пайплайн («зубы») + economy-gate (BOB-087.C2).
+- `digest_provenance.py` (чистый домен): `provenance_window(first_ts, last_ts)`,
+  `parse_provenance_window(value)` — формат окна источников дайджеста; читается починкой
+  метки приватности, поэтому писатель и читатель знают одно определение (bob-g7t).
 - `usecases/resolve_register.py`: `RegisterResolver.resolve(event, *, pool_has_work)` —
   per-turn DEV/CASUAL (детерминированный dev-DM сигнал + Tier-0 судья); `WorkTalkClassifier`
   — Protocol-шов классификатора (BOB-087.C2).
@@ -420,6 +465,8 @@ ports-шим `bob.domain.ports` удалён (BOB-062.8), ~15 потребите
   `test_visibility_provenance.py` (запись+миграция `NULL`=public) и
   `test_visibility_recall_seam.py` (реальный sqlite-vec KNN несёт `visibility`:
   owner_private роняется гостю, byte-identical для TRUSTED, `NULL`=public);
+  адрес источника (BOB-090.C2) — `test_episode_origin.py` (guarded ALTER идемпотентен,
+  старые строки остаются с `NULL`, строка recall не меняется);
   connection-kernel — `test_connection.py`;
   `tests/infrastructure/llm/test_ollama_embedder.py`,
   `test_embedder_factory.py`, `test_ollama_reranker.py`,

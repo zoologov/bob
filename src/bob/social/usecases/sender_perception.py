@@ -84,6 +84,9 @@ class SenderPerception:
             is_owner=is_owner,
             is_authorized=is_authorized,
             gender=gender,
+            # BOB-090.B3: their @handle rides along with the identity so the roster can
+            # store it and Bob can address them for real instead of composing «@Норман».
+            username=event.sender_username,
         )
 
     async def perceive_kind(self, event: MessageReceived) -> InterlocutorKind:

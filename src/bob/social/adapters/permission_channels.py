@@ -77,11 +77,14 @@ class _PermissionNotifier:
     """Two-channel notice adapter for the permission flow through BOB'S bot (BOB-052 .2).
 
     Realises the flow's ``PermissionNotifier`` (structurally). ``notify_owner`` posts Bob's
-    «Вова, <кто> просит <что> — разрешить?» into Bob's TOPIC (``message_thread_id ==
-    telegram.bob.topic_id``) — where the owner converses with Bob and decides — through the
+    request for permission — his own words, built by
+    :mod:`~bob.social.permission.request_voice` (BOB-090.E) — into Bob's TOPIC
+    (``message_thread_id == telegram.bob.topic_id``), where the owner converses with Bob
+    and decides, through the
     shared :class:`RichMarkdownSender` (rich, plain fallback). ``tell_requester`` sends the
-    light «спрошу Вову» acknowledgement into the same group chat (no topic thread) so the
-    requester sees Bob took the ask to the owner. Transport only — the flow owns the wording.
+    light «спрошу Вову» acknowledgement into that SAME topic (BOB-090.B5 — un-threaded, it
+    fell into General while the requester was writing to Bob in his topic) so the requester
+    sees Bob took the ask to the owner. Transport only — the flow owns the wording.
     """
 
     def __init__(
@@ -98,5 +101,15 @@ class _PermissionNotifier:
         )
 
     async def tell_requester(self, text: str) -> None:
-        """Post the requester's light «спрошу Вову» ack into the group chat."""
-        await self._sender.send(chat_id=self._chat_id, markdown=text)
+        """Post the requester's light «спрошу Вову» ack into Bob's topic (BOB-090.B5).
+
+        🔴 Threaded like :meth:`notify_owner`, not un-threaded as before: in a FORUM group
+        a ``message_thread_id`` of ``None`` is not «the chat», it is the General topic — so
+        the ack landed in «main» while the requester was talking to Bob in his topic, and
+        the answer to a visible ask appeared somewhere else. Both channels are one
+        conversation, so both pin to the same thread. ``None`` (a DM, or a group without
+        forum topics) still sends un-threaded — the thread is passed through, never invented.
+        """
+        await self._sender.send(
+            chat_id=self._chat_id, markdown=text, message_thread_id=self._topic_id
+        )

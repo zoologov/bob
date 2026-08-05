@@ -31,7 +31,10 @@ if TYPE_CHECKING:
 type ToolDefinition = Mapping[str, object]
 
 # A capability's permission seam: "safe" runs straight through; "confirm" marks a
-# capability that a future approval gate must clear before GUPPI executes it.
+# capability a HUMAN must clear before GUPPI executes it. Read by the autonomous
+# boundary (:class:`~bob.capabilities.usecases.registry.SafeCapabilityDispatcher`),
+# which refuses a "confirm" capability on the self-directed tick — there is nobody
+# there to ask (BOB-090.B-fix: the declaration used to be read by no one at all).
 type Permission = Literal["safe", "confirm"]
 
 
@@ -171,9 +174,10 @@ class Capability(Protocol):
 
     This is the contract, NOT the plugin machinery: a capability names itself,
     describes itself, advertises a JSON-Schema for its arguments, declares a
-    ``permission`` (``"safe"`` runs straight through; ``"confirm"`` is the seam a
-    future approval gate will read), and ``execute``s against decoded arguments.
-    New skills register an object against this contract; consumers never change.
+    ``permission`` (``"safe"`` runs straight through; ``"confirm"`` says a human must
+    clear it, so the autonomous boundary refuses it), and ``execute``s against decoded
+    arguments. New skills register an object against this contract; consumers never
+    change — and a new skill is gated by what it declares about ITSELF.
     """
 
     @property
@@ -193,7 +197,7 @@ class Capability(Protocol):
 
     @property
     def permission(self) -> Permission:
-        """Approval seam: ``"safe"`` or ``"confirm"`` (future gate)."""
+        """Approval seam: ``"safe"`` runs unattended; ``"confirm"`` needs a human."""
         ...
 
     async def execute(self, args: Mapping[str, object]) -> object:
@@ -259,6 +263,26 @@ class UrlReader(Protocol):
 
     async def read(self, url: str) -> WebPage:
         """Fetch ``url`` and return its extracted content (raises on failure/block)."""
+        ...
+
+
+@runtime_checkable
+class OutboundMessenger(Protocol):
+    """Send one message to an EXPLICIT address — chat plus forum topic (BOB-090.B1).
+
+    The seam the ``send_to_chat`` skill delegates to, so the skill never touches a bot.
+    The address is passed per call, and both halves matter: in a forum group a
+    ``topic_id`` of ``None`` is not «the chat», it is the General topic, so the exact
+    address is what makes «напиши в нашу группу» land where people actually talk.
+
+    ``topic_id`` is passed through as-is and never invented (``None`` = «топика нет»: a
+    DM, or a group without forum topics). The first realisation rides the existing rich
+    markdown send (no new transport in this epic). An implementation may raise on a
+    transport failure — the caller decides what to tell Bob.
+    """
+
+    async def send(self, *, chat_id: int, topic_id: int | None, markdown: str) -> None:
+        """Post ``markdown`` into ``chat_id`` / ``topic_id`` (raises on failure)."""
         ...
 
 

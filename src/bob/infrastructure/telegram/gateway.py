@@ -126,6 +126,10 @@ class _UserLike(Protocol):
     def id(self) -> int: ...
     @property
     def full_name(self) -> str: ...
+    # The Telegram @handle without the '@' (BOB-090.B3), ``None`` when the person has
+    # none — optional in Telegram, so absence is a normal state, not missing data.
+    @property
+    def username(self) -> str | None: ...
 
 
 class BotUserLike(Protocol):
@@ -628,6 +632,15 @@ class TelegramGateway:
             reply_to_sender_id=_reply_to_sender_id(message),
             mentions_bob=self._mentions_bob(message),
             is_group=_chat_type_is_group(chat.type),
+            # BOB-090.C2 точный адрес: the forum topic this was said in, straight from
+            # the update. ``None`` when the message has no thread (a 1:1 DM, or a group
+            # without forum topics) — passed through as-is, never guessed.
+            topic_id=message.message_thread_id,
+            # BOB-090.B3 упоминания: the sender's @handle, straight from the update — the
+            # ONLY place it exists. ``None`` when they have none (optional in Telegram):
+            # passed through as-is so the roster stores «ника не знаю» instead of a tag
+            # composed out of a name (эпизод 3088: «@Норман» вместо @NormanGri).
+            sender_username=user.username if user is not None else None,
         )
 
     def _mentions_bob(self, message: MessageLike) -> bool:

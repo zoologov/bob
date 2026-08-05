@@ -51,6 +51,7 @@ class _FakeMessage:
 class _FakeUser:
     id: int
     full_name: str
+    username: str | None = None
 
 
 @dataclass
