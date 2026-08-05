@@ -12,6 +12,17 @@ disk, so the capability tests are deterministic and never touch the real repo.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
+from bob.capabilities.introspection.health_form import (
+    HealthRequestError,
+    UnknownCheckError,
+)
+from bob.capabilities.ports import ArchitectureDiagram, ProjectHealth
+
+if TYPE_CHECKING:
+    from bob.capabilities.introspection.graph_form import GraphFormKind
+
 
 class FakeRepoIntrospector:
     """A scripted :class:`RepoIntrospector`: records calls, returns canned text."""
@@ -30,6 +41,15 @@ class FakeRepoIntrospector:
         comments: str = "",
         task_detail: str = "",
         tasks_by_status_text: str = "",
+        diagram: str = "",
+        diagram_form: GraphFormKind = "overview",
+        impact_text: str = "",
+        health_report: str = "",
+        raise_on_diagram: bool = False,
+        raise_on_impact: bool = False,
+        raise_on_health: bool = False,
+        health_error: str = "not a read-only project-health check: simulated",
+        health_error_type: type[HealthRequestError] = UnknownCheckError,
         files_by_path: dict[str, str] | None = None,
         tasks_by_query: dict[str, str] | None = None,
         raise_on_read: bool = False,
@@ -46,6 +66,24 @@ class FakeRepoIntrospector:
         self._comments = comments
         self._task_detail = task_detail
         self._tasks_by_status_text = tasks_by_status_text
+        # BOB-091.1: the architecture-diagram + impact reads. ``diagram_form`` scripts
+        # which form the port says it DREW (the honest fallback report), and the
+        # ``raise_on_*`` flags model a refused (non-ref) slot without a subprocess.
+        self._diagram = diagram
+        self._diagram_form = diagram_form
+        self._impact_text = impact_text
+        self._raise_on_diagram = raise_on_diagram
+        self._raise_on_impact = raise_on_impact
+        # BOB-091.2: the project-health read. ``raise_on_health`` models a slot refused
+        # BEFORE any subprocess, and ``health_error_type`` picks WHICH refusal — the real
+        # port raises the planner's own ``UnknownCheckError`` / ``InvalidGitRefError``, and
+        # the capability must feed the matching hint back to the model. 🔴 The TYPE decides,
+        # not the message: before BOB-091.4 the capability sniffed the prose (Minor-7), so
+        # the fake now models the types the real planner actually raises.
+        self._health_report = health_report
+        self._raise_on_health = raise_on_health
+        self._health_error = health_error
+        self._health_error_type = health_error_type
         # Per-path / per-query scripting for the code_rationale tests: a path absent
         # from ``files_by_path`` returns "" (a missing doc → skipped), so the fake can
         # model "PRD present, RFC/BRIEF absent" without disk.
@@ -64,6 +102,9 @@ class FakeRepoIntrospector:
         self.task_comments_calls: list[str] = []
         self.show_task_calls: list[str] = []
         self.tasks_by_status_calls: list[str | None] = []
+        self.diagram_calls: list[tuple[str | None, int | None, str | None]] = []
+        self.impact_calls: list[str] = []
+        self.health_calls: list[tuple[str, str | None]] = []
 
     async def architecture_context(self, ref: str) -> str:
         self.architecture_calls.append(ref)
@@ -116,3 +157,63 @@ class FakeRepoIntrospector:
     async def tasks_by_status(self, status: str | None) -> str:
         self.tasks_by_status_calls.append(status)
         return self._tasks_by_status_text
+
+    async def architecture_diagram(
+        self,
+        ref: str | None = None,
+        *,
+        depth: int | None = None,
+        internals_of: str | None = None,
+    ) -> ArchitectureDiagram:
+        self.diagram_calls.append((ref, depth, internals_of))
+        if self._raise_on_diagram:
+            raise ValueError("not a valid graph ref: simulated")
+        requested: GraphFormKind = (
+            "components" if internals_of else ("node" if ref else "overview")
+        )
+        return ArchitectureDiagram(
+            mermaid=self._diagram, form=self._diagram_form, requested=requested
+        )
+
+    async def impact(self, ref: str) -> str:
+        self.impact_calls.append(ref)
+        if self._raise_on_impact:
+            raise ValueError("not a valid graph ref: simulated")
+        return self._impact_text
+
+    async def project_health(
+        self, check: str, *, since: str | None = None
+    ) -> ProjectHealth:
+        if self._raise_on_health:
+            raise self._health_error_type(self._health_error)
+        self.health_calls.append((check, since))
+        return ProjectHealth(check=check, report=self._health_report)
+
+
+# The PNG magic prefix, so a fake render is recognisable as image bytes.
+FAKE_PNG = b"\x89PNG\r\n\x1a\nfake-bytes"
+
+
+class FakeDiagramRenderer:
+    """A scripted :class:`~bob.capabilities.ports.DiagramRenderer` (no ``mmdc``).
+
+    Records every source it was asked to render and returns canned PNG bytes, or raises
+    the given error to drive the honest "картинки не будет" path. Shared by the
+    ``draw_architecture`` / ``render_diagram`` tests and the acceptance harness so all
+    three exercise ONE fake contract. 🔴 A fake proves the fake's contract only, so the
+    render seam is ALSO covered on the real ``mmdc``
+    (``tests/infrastructure/diagrams/test_real_architecture_render.py``).
+    """
+
+    def __init__(
+        self, *, png: bytes = FAKE_PNG, raises: BaseException | None = None
+    ) -> None:
+        self.sources: list[str] = []
+        self._png = png
+        self._raises = raises
+
+    async def render(self, mermaid_source: str) -> bytes:
+        self.sources.append(mermaid_source)
+        if self._raises is not None:
+            raise self._raises
+        return self._png

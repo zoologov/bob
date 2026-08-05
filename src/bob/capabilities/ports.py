@@ -24,6 +24,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Literal, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
+    from bob.capabilities.introspection.graph_form import GraphFormKind
     from bob.kernel.ports import ToolLoopMessage
 
 # An OpenAI-shaped tool definition (``{"type": "function", "function": {...}}``),
@@ -166,6 +167,48 @@ class DiagramResult:
     png: bytes
     caption: str
     source: str = ""
+
+
+@dataclass(frozen=True)
+class ArchitectureDiagram:
+    """A diagram of Bob's own architecture: the mermaid SOURCE plus which form it is.
+
+    What the read-only ``beadloom graph`` read returns (BOB-091.1). ``mermaid`` is the
+    diagram SOURCE, deliberately not a picture: Bob explains what the diagram shows in
+    his own words AND hands the same source to ``render_diagram`` for the image, instead
+    of silently dropping a PNG on the owner.
+
+    ``requested`` is the form that was ASKED for and ``form`` the one actually drawn —
+    they differ when the detailed view had nothing to show (a ``--scope`` on a graph LEAF
+    prints an empty diagram, so the node's links are drawn instead). Carrying both is
+    what keeps the answer honest: Bob can say "внутренностей там нет, вот связи" rather
+    than passing one view off as the other. Both are typed as the pure planner's own
+    :data:`~bob.capabilities.introspection.graph_form.GraphFormKind` (``overview`` /
+    ``node`` / ``components``) rather than as bare ``str``: the port then cannot LOSE a
+    type the core already has, and a fourth form cannot be invented at the boundary
+    (BOB-091.4, review Nit-1).
+    """
+
+    mermaid: str
+    form: GraphFormKind
+    requested: GraphFormKind
+
+
+@dataclass(frozen=True)
+class ProjectHealth:
+    """One read-only project-health report: WHICH report it is, and its digest.
+
+    What the read-only beadloom health reads return (BOB-091.2). ``check`` is the
+    canonical report name (``status`` / ``prime`` / ``doctor`` / ``sync-check`` / ``lint``
+    / ``diff``) — carried so Bob can say WHICH command he actually ran instead of
+    presenting one report's verdict as another's, which matters most where a paraphrase
+    was resolved ("как с доками?" → ``sync-check``). ``report`` is the already-condensed
+    answer: the terminal decoration, the 585 fresh doc↔code pairs and the 224-line rule
+    list never reach a chat message.
+    """
+
+    check: str
+    report: str
 
 
 @runtime_checkable
@@ -316,6 +359,63 @@ class RepoIntrospector(Protocol):
 
     async def search_code(self, query: str) -> str:
         """Return a compact result of searching the repo/graph for ``query``."""
+        ...
+
+    async def architecture_diagram(
+        self,
+        ref: str | None = None,
+        *,
+        depth: int | None = None,
+        internals_of: str | None = None,
+    ) -> ArchitectureDiagram:
+        """Return the mermaid SOURCE of Bob's architecture graph (read-only, BOB-091).
+
+        Three shapes, most specific first: ``internals_of`` — the C4 components inside
+        one container; ``ref`` — that node's neighbourhood, optionally limited by
+        ``depth``; neither — the whole-system overview. The implementation runs
+        ``beadloom graph`` as a FIXED set of argv forms with each slot validated (a
+        ref-shaped token, a clamped depth), so no flag — another project, another
+        format, a write subcommand — is expressible; a non-ref value is refused
+        (:class:`ValueError`) and never executed. When the detailed form draws NOTHING
+        (a ``--scope`` on a graph leaf) the implementation falls back to the simpler
+        form and reports it in :attr:`ArchitectureDiagram.form`, so the caller can stay
+        honest about which view it got. The source is returned, not an image: rendering
+        is the diagram port's job.
+        """
+        ...
+
+    async def impact(self, ref: str) -> str:
+        """Return what ``ref`` depends on and what depends on it (``beadloom why``).
+
+        The answer to "что сломается, если тронуть X". ``ref`` is validated to a graph
+        ref-id before exec (a flag / path / metacharacter is refused with
+        :class:`ValueError`, never executed), and the CLI's Rich panel + ASCII tree are
+        CONDENSED to the subject, its direct dependencies, its direct dependents and an
+        honest count of what lies deeper — a chat answer, not a terminal screenshot. An
+        unknown ref yields an empty string (the caller answers honestly), never a guess.
+        """
+        ...
+
+    async def project_health(
+        self, check: str, *, since: str | None = None
+    ) -> ProjectHealth:
+        """Return one read-only project-health report, condensed (BOB-091.2).
+
+        ``check`` names the report from a CLOSED list — ``status`` (index statistics),
+        ``prime`` (compact project context), ``doctor`` (graph integrity), ``sync-check``
+        (doc↔code freshness), ``lint`` (architecture boundaries), ``diff`` (graph changes
+        since a git ref) — and a paraphrase resolves to one of them; anything else is
+        refused (:class:`ValueError`) rather than forwarded, because the SAME CLI holds the
+        write subcommands. ``since`` applies to ``diff`` alone and is validated to a strict
+        git-ref shape before exec.
+
+        🔴 A non-zero exit code on this path is a RESULT, not a failure: ``lint`` exits 1
+        on a violation, ``sync-check`` 2 on a stale pair, ``diff`` 1 on a change. The
+        implementation must answer with the verdict ("доки отстали") and never with "не
+        смог посмотреть". The reports are CONDENSED — the human ones lose their terminal
+        frames, the 585 fresh doc↔code pairs become a count, and the machine-porcelain
+        lint tuples become readable lines.
+        """
         ...
 
     async def read_file(self, path: str, *, max_lines: int) -> str:

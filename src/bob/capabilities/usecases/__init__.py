@@ -10,8 +10,15 @@
 
 from __future__ import annotations
 
+from bob.capabilities.usecases.architecture_impact import (
+    make_architecture_impact_capability,
+)
 from bob.capabilities.usecases.code_rationale import (
     make_code_rationale_capability,
+)
+from bob.capabilities.usecases.diagram_attachment import DiagramAttachment
+from bob.capabilities.usecases.draw_architecture import (
+    make_draw_architecture_capability,
 )
 from bob.capabilities.usecases.find_file import make_find_file_capability
 from bob.capabilities.usecases.inspect_architecture import (
@@ -20,6 +27,7 @@ from bob.capabilities.usecases.inspect_architecture import (
 from bob.capabilities.usecases.list_dir import make_list_dir_capability
 from bob.capabilities.usecases.list_tasks import make_list_tasks_capability
 from bob.capabilities.usecases.list_work import make_list_work_capability
+from bob.capabilities.usecases.project_health import make_project_health_capability
 from bob.capabilities.usecases.read_code import make_read_code_capability
 from bob.capabilities.usecases.read_url import make_read_url_capability
 from bob.capabilities.usecases.recall_memory import make_recall_memory_capability
@@ -44,15 +52,19 @@ __all__ = [
     "CapabilityNotAllowedError",
     "CapabilityRegistry",
     "CollectingDiagramSink",
+    "DiagramAttachment",
     "SafeCapabilityDispatcher",
     "ToolLoop",
     "UnknownCapabilityError",
+    "make_architecture_impact_capability",
     "make_code_rationale_capability",
+    "make_draw_architecture_capability",
     "make_find_file_capability",
     "make_inspect_architecture_capability",
     "make_list_dir_capability",
     "make_list_tasks_capability",
     "make_list_work_capability",
+    "make_project_health_capability",
     "make_read_code_capability",
     "make_read_url_capability",
     "make_recall_memory_capability",

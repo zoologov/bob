@@ -27,12 +27,16 @@ from bob.capabilities.introspection.privacy_guard import PrivacyGuard
 from bob.capabilities.usecases import (
     CapabilityRegistry,
     CollectingDiagramSink,
+    DiagramAttachment,
+    make_architecture_impact_capability,
     make_code_rationale_capability,
+    make_draw_architecture_capability,
     make_find_file_capability,
     make_inspect_architecture_capability,
     make_list_dir_capability,
     make_list_tasks_capability,
     make_list_work_capability,
+    make_project_health_capability,
     make_read_code_capability,
     make_read_url_capability,
     make_recall_memory_capability,
@@ -57,6 +61,7 @@ from bob.runtime.config import (
     _str,
 )
 from bob.runtime.wiring.parameters import (
+    _build_architecture_tools_enabled,
     _build_dev_tools_enabled,
     _build_introspection_enabled,
 )
@@ -83,7 +88,12 @@ def _build_registry(
     ``list_work`` / ``code_rationale`` — the last linking code↔decisions per BOB-038,
     ``list_dir`` + ``find_file`` letting Bob navigate the WHOLE repo per BOB-067) are
     ALSO registered, over a :class:`SubprocessRepoIntrospector` guarded by the pure
-    :class:`PrivacyGuard` — so Bob can answer about his own world. When
+    :class:`PrivacyGuard` — so Bob can answer about his own world. Two SUB-flags gate
+    further reads over that SAME introspector, both default OFF:
+    ``introspection.dev_tools`` (BOB-081 — git history + tracker) and
+    ``introspection.architecture_tools`` (BOB-091 — ``draw_architecture`` /
+    ``architecture_impact`` / ``project_health``: the graph diagram source, the impact
+    digest and the rest of the READ-ONLY beadloom as one closed-list report tool). When
     ``diagrams.enabled`` (BOB-035, default on — safe + local) the ``render_diagram``
     skill is registered over a LOCAL :class:`SubprocessMmdcRenderer`, sharing the
     returned :class:`CollectingDiagramSink` with the use-case so a rendered PNG flows
@@ -97,6 +107,16 @@ def _build_registry(
     """
     registry = CapabilityRegistry()
     diagram_sink = CollectingDiagramSink()
+    # 🔴 BOB-091.6: the LOCAL renderer is built BEFORE the skills that draw, because
+    # ``draw_architecture`` now attaches its own rendered picture through the SAME
+    # renderer + sink ``render_diagram`` uses (the live smoke showed that leaving the
+    # render to a second, model-initiated call means no picture reaches the owner).
+    # Registration ORDER is unchanged — only the construction moved up.
+    diagram_renderer: SubprocessMmdcRenderer | None = None
+    diagram_attachment: DiagramAttachment | None = None
+    if _flag(_section(config, "diagrams"), "enabled"):
+        diagram_renderer = _build_diagram_renderer(config)
+        diagram_attachment = DiagramAttachment(diagram_renderer, diagram_sink)
     registry.register(make_recall_memory_capability(recall))
     registry.register(make_search_memory_capability(recall))
     if _build_introspection_enabled(config):
@@ -122,9 +142,25 @@ def _build_registry(
             registry.register(make_list_tasks_capability(introspector))
             registry.register(make_show_task_capability(introspector))
             registry.register(make_task_comments_capability(introspector))
-    diagram_renderer: SubprocessMmdcRenderer | None = None
-    if _flag(_section(config, "diagrams"), "enabled"):
-        diagram_renderer = _build_diagram_renderer(config)
+        # BOB-091: the architecture READS (graph diagram + impact) ride the same
+        # introspector behind their own SUB-flag, default OFF — off, Bob never sees
+        # them and the registry is byte-identical. ``draw_architecture`` returns the
+        # mermaid SOURCE *and* queues the rendered picture itself (BOB-091.6) via the
+        # shared attachment, so the owner gets both the words and the image; a silent
+        # PNG stays impossible because the text reply is always the model's own.
+        if _build_architecture_tools_enabled(config):
+            registry.register(
+                make_draw_architecture_capability(
+                    introspector, attachment=diagram_attachment
+                )
+            )
+            registry.register(make_architecture_impact_capability(introspector))
+            # BOB-091.2: the REST of the read-only beadloom (status / prime / doctor /
+            # sync-check / lint / diff) as ONE tool over a closed list of reports — six
+            # near-identical tools would only worsen the model's choice. Same flag as .1:
+            # the whole read-only beadloom is one shippable piece, one switch.
+            registry.register(make_project_health_capability(introspector))
+    if diagram_renderer is not None:
         registry.register(
             make_render_diagram_capability(diagram_renderer, diagram_sink)
         )

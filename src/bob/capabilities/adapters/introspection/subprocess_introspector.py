@@ -23,7 +23,31 @@ Realises :class:`bob.capabilities.ports.RepoIntrospector` (BOB-017 Phase A). Two
   Free-text questions ground via ``beadloom search`` (``ctx`` needs an exact ref, with
   a ``ctx``→``search`` fallback on empty); trailing tooling-noise lines (status legend
   / Tip / ``--limit`` hint) are stripped. Output is bounded by a char cap and run
-  through the privacy sanitiser; each run has a hard timeout.
+  through the privacy sanitiser; each run has a hard timeout. 🔴 A read that CONDENSES its
+  output does so BEFORE that cap (:meth:`_run`'s ``condense``) — otherwise the digest
+  counts only what fitted and states a wrong number confidently (BOB-091.2).
+* **Architecture graph reads (BOB-091.1)** — ``graph`` and ``why`` were allowlisted from
+  the start but DEAD (no port method reached them), so Bob could neither draw his
+  architecture nor answer "что сломается, если тронуть memory". :meth:`architecture_diagram`
+  runs one of the THREE fixed ``graph`` forms planned by the pure
+  :func:`~bob.capabilities.introspection.graph_form.plan_graph_form` — the bare overview,
+  ``<ref> [--depth <N>]``, or the C4-components view of one ``--scope`` — re-checked here
+  before exec, so ``--project`` (another repo), ``--json``, another format or a write
+  subcommand stay INEXPRESSIBLE; a form that drew nothing degrades to its fallback and
+  says so. :meth:`impact` runs ``why <ref>`` and condenses the Rich panel + ASCII tree
+  through :func:`~bob.capabilities.introspection.impact_digest.digest_impact`.
+* **Project-health reads (BOB-091.2)** — the REST of the read-only beadloom behind ONE
+  port method: :meth:`project_health` runs the fixed form the pure
+  :func:`~bob.capabilities.introspection.health_form.plan_health_form` picked for a report
+  from a CLOSED list (``status`` / ``prime`` / ``doctor`` / ``sync-check`` / ``lint`` /
+  ``diff --since <git-ref>``) and condenses it with
+  :func:`~bob.capabilities.introspection.health_digest.digest_health`. 🔴 ``lint`` carries
+  ``--no-reindex`` because a plain ``beadloom lint`` REINDEXES, i.e. WRITES the index, and
+  ``--strict`` because otherwise its exit code means nothing; the empty forms are what make
+  ``prime --update`` (it rewrites ``AGENTS.md``) inexpressible. 🔴 A non-zero exit status on
+  this path is a RESULT (``lint`` 1 = violation, ``sync-check`` 2 = stale, ``diff`` 1 =
+  changed): the runner never inspects ``returncode``, so Bob answers "доки отстали" instead
+  of "не смог посмотреть".
 * **Tracker reads (BOB-090.A)** — a tracker question is PLANNED by the pure
   :func:`~bob.capabilities.introspection.tracker_intent.plan_tracker_query` and only
   executed here. An id that ``bd show`` cannot resolve retries as a title SEARCH
@@ -49,6 +73,7 @@ import asyncio
 import contextlib
 import os
 import re
+from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
 
@@ -58,12 +83,26 @@ from bob.capabilities.introspection.dev_query import (
     sanitize_search_term,
     validate_bead_id,
 )
+from bob.capabilities.introspection.graph_form import (
+    MAX_GRAPH_DEPTH,
+    diagram_carries_nodes,
+    is_graph_ref,
+    plan_graph_form,
+    validate_graph_ref,
+)
+from bob.capabilities.introspection.health_digest import digest_health
+from bob.capabilities.introspection.health_form import (
+    is_git_ref,
+    plan_health_form,
+)
+from bob.capabilities.introspection.impact_digest import digest_impact
 from bob.capabilities.introspection.privacy_guard import ALLOWED_ROOTS
 from bob.capabilities.introspection.tracker_digest import digest_search_results
 from bob.capabilities.introspection.tracker_intent import plan_tracker_query
+from bob.capabilities.ports import ArchitectureDiagram, ProjectHealth
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Callable, Iterator
 
     from bob.capabilities.introspection.privacy_guard import PrivacyGuard
 
@@ -75,7 +114,21 @@ _GIT_DIR = ".git"
 _FIND_FILE_MAX_RESULTS = 200
 
 # Fixed allowlist of read-only subcommands, keyed by binary. NOTHING else runs.
-_BEADLOOM_SUBCOMMANDS: frozenset[str] = frozenset({"ctx", "graph", "why", "search"})
+_BEADLOOM_SUBCOMMANDS: frozenset[str] = frozenset(
+    {
+        "ctx",
+        "graph",
+        "why",
+        "search",
+        # BOB-091.2 — the rest of the READ-ONLY beadloom, each behind one fixed form.
+        "status",
+        "prime",
+        "doctor",
+        "sync-check",
+        "lint",
+        "diff",
+    }
+)
 _BD_SUBCOMMANDS: frozenset[str] = frozenset(
     {"ready", "show", "list", "comments", "search"}
 )
@@ -105,6 +158,57 @@ _BD_LIST_ARG_FORMS: frozenset[tuple[str, ...]] = frozenset(
 _BD_SEARCH_TAIL_FORM: tuple[str, ...] = ("--status", "all")
 # Exact argv length of the only permitted search shape: ``<term> --status all``.
 _BD_SEARCH_FORM_LEN = 3
+
+# --- beadloom graph / why fixed forms (BOB-091.1) -----------------------------
+# ``graph`` and ``why`` were allowlisted in BOB-017 but DEAD (no port method reached
+# them). Giving them a caller means giving the model argv — and ``beadloom graph``
+# accepts ``--project`` (another repo!), ``--json`` and other formats, while the CLI as
+# a whole has WRITE subcommands. So, exactly like ``_BD_LIST_ARG_FORMS``, only a small
+# set of FIXED SHAPES passes, each dynamic slot validated: the bare overview, one
+# ref (optionally with a bounded ``--depth``), and the C4-components view of one scope.
+# The shapes are planned by the pure
+# :func:`~bob.capabilities.introspection.graph_form.plan_graph_form` and RE-CHECKED here
+# before exec, so a caller that skipped the planner cannot widen them.
+_GRAPH_C4_FORM_PREFIX: tuple[str, ...] = (
+    "--format",
+    "c4",
+    "--level",
+    "component",
+    "--scope",
+)
+# Exact argv lengths of the permitted ``graph`` forms (after the subcommand): the bare
+# overview (0), one ref (1), ``<ref> --depth <N>`` (3), and the C4 form (6).
+_GRAPH_OVERVIEW_FORM_LEN = 0
+_GRAPH_NODE_FORM_LEN = 1
+_GRAPH_DEPTH_FORM_LEN = 3
+_GRAPH_C4_FORM_LEN = 6
+# ``why`` takes exactly ONE ref — no flag, no second token.
+_WHY_FORM_LEN = 1
+
+# --- beadloom health fixed forms (BOB-091.2) ----------------------------------
+# The rest of the read-only beadloom, one FIXED arg tuple per subcommand — re-declared
+# here (not imported from the planner) so the exec gate is an INDEPENDENT re-check: a
+# caller that skips the planner still cannot widen a form.
+#
+# 🔴 ``lint`` carries ``--no-reindex`` because a plain ``beadloom lint`` REINDEXES first,
+# i.e. WRITES the index (measured on this repo: the db's content hash changes). Bob is
+# read-only, so the flag is part of the invariant; ``--strict`` is what makes the exit
+# code mean "error-level violations" (plain ``lint`` exits 0 even when a rule is broken).
+# 🔴 The empty tuples are what makes ``prime --update`` — which REWRITES ``AGENTS.md`` —
+# and ``--project <another repo>`` / ``--json`` structurally inexpressible.
+_BEADLOOM_HEALTH_FORMS: dict[str, tuple[str, ...]] = {
+    "status": (),
+    "prime": (),
+    "doctor": (),
+    "sync-check": (),
+    "lint": ("--no-reindex", "--strict"),
+}
+# ``diff`` is the only health form with a slot: ``--since <git-ref>``.
+_DIFF_SINCE_FLAG = "--since"
+_DIFF_FORM_LEN = 2
+# The health subcommands whose args go through the form gate above (``diff`` included:
+# its shape is checked separately because it carries the ref slot).
+_HEALTH_SUBCOMMANDS: frozenset[str] = frozenset({*_BEADLOOM_HEALTH_FORMS, "diff"})
 
 # --- git fixed-form allowlist (BOB-038) ---------------------------------------
 # git needs flags (``--oneline`` / ``--grep=``), which the generic flag-reject would
@@ -175,6 +279,54 @@ def _is_allowed_bd_search_form(args: tuple[str, ...]) -> bool:
     if args[1:] != _BD_SEARCH_TAIL_FORM:
         return False
     return sanitize_search_term(term) == term
+
+
+def _is_valid_graph_depth(depth: str) -> bool:
+    """Whether ``depth`` is a positive integer inside the planner's bounded window."""
+    return depth.isdigit() and 0 < int(depth) <= MAX_GRAPH_DEPTH
+
+
+def _is_allowed_graph_form(args: tuple[str, ...]) -> bool:
+    """Whether ``args`` is one of the three permitted ``beadloom graph`` shapes.
+
+    The overview (no args), one ref, ``<ref> --depth <N>`` with the count inside the
+    bounded window, or the C4-components form whose FIXED prefix is compared against the
+    stored tuple and whose scope slot must be a graph ref. Every other shape — another
+    flag, another format/level, a second ref, an out-of-range depth, a non-ref token — is
+    refused before exec.
+    """
+    if len(args) == _GRAPH_OVERVIEW_FORM_LEN:
+        return True
+    if len(args) == _GRAPH_NODE_FORM_LEN:
+        return is_graph_ref(args[0])
+    if len(args) == _GRAPH_DEPTH_FORM_LEN:
+        ref, flag, depth = args
+        return is_graph_ref(ref) and flag == "--depth" and _is_valid_graph_depth(depth)
+    if len(args) == _GRAPH_C4_FORM_LEN:
+        return args[:-1] == _GRAPH_C4_FORM_PREFIX and is_graph_ref(args[-1])
+    return False
+
+
+def _is_allowed_why_form(args: tuple[str, ...]) -> bool:
+    """Whether ``args`` is the ``beadloom why <ref>`` fixed form (one validated ref)."""
+    return len(args) == _WHY_FORM_LEN and is_graph_ref(args[0])
+
+
+def _is_allowed_health_form(subcommand: str, args: tuple[str, ...]) -> bool:
+    """Whether ``args`` is the fixed read-only form of health ``subcommand``.
+
+    ``diff`` is compared shape-wise (the literal ``--since`` plus a validated git ref);
+    every other health read is compared against its EXACT stored tuple, so an extra flag,
+    another output format, another project, or the reindexing ``lint`` shape is refused
+    before exec.
+    """
+    if subcommand == "diff":
+        return (
+            len(args) == _DIFF_FORM_LEN
+            and args[0] == _DIFF_SINCE_FLAG
+            and is_git_ref(args[1])
+        )
+    return args == _BEADLOOM_HEALTH_FORMS.get(subcommand)
 
 
 def _strip_noise_tail(text: str) -> str:
@@ -349,6 +501,72 @@ class SubprocessRepoIntrospector:
     async def search_code(self, query: str) -> str:
         """Run ``beadloom search <query>`` (read-only FTS over nodes/docs)."""
         return await self._run("beadloom", "search", query)
+
+    async def architecture_diagram(
+        self,
+        ref: str | None = None,
+        *,
+        depth: int | None = None,
+        internals_of: str | None = None,
+    ) -> ArchitectureDiagram:
+        """Return the mermaid source of the architecture graph (BOB-091.1).
+
+        The DECISION — which of the three allowed forms answers the ask — belongs to the
+        pure :func:`plan_graph_form`; this method only executes it and applies the one
+        honest degradation: a form that drew NOTHING (the live ``C4Container``-only output
+        of a ``--scope`` on a graph leaf) is re-asked as its simpler fallback, and the
+        result reports which form was actually drawn so the caller never presents links
+        as internals. A non-ref value raises :class:`ValueError` before any exec.
+        """
+        form = plan_graph_form(ref, depth=depth, internals_of=internals_of)
+        source = await self._run("beadloom", "graph", *form.args)
+        fallback = form.fallback
+        if fallback is None or diagram_carries_nodes(source):
+            return ArchitectureDiagram(
+                mermaid=source, form=form.kind, requested=form.kind
+            )
+        simpler = await self._run("beadloom", "graph", *fallback.args)
+        return ArchitectureDiagram(
+            mermaid=simpler, form=fallback.kind, requested=form.kind
+        )
+
+    async def impact(self, ref: str) -> str:
+        """Return the CONDENSED ``beadloom why <ref>`` impact analysis (BOB-091.1).
+
+        ``ref`` goes through :func:`validate_graph_ref` first, so a flag / path /
+        metacharacter raises :class:`ValueError` and never reaches the subprocess. The
+        CLI's Rich panel + ASCII tree (197 lines for ``memory``) are condensed by the
+        pure :func:`digest_impact` into a chat-sized answer; an unknown ref (whose error
+        goes to stderr) yields an empty string rather than a guess.
+        """
+        return await self._run(
+            "beadloom", "why", validate_graph_ref(ref), condense=digest_impact
+        )
+
+    async def project_health(
+        self, check: str, *, since: str | None = None
+    ) -> ProjectHealth:
+        """Return the CONDENSED read-only beadloom report ``check`` (BOB-091.2).
+
+        The DECISION — which report was asked for and its exact argv — belongs to the pure
+        :func:`plan_health_form`; this method only executes it and condenses the output
+        through :func:`digest_health`. An unrecognised check or a hostile ``since`` raises
+        :class:`ValueError` before any exec (the same CLI holds the write subcommands).
+
+        🔴 A non-zero exit status is NOT an error here, and that is structural rather than
+        conditional: the runner returns stdout and never inspects ``returncode``, so
+        ``lint``'s exit 1 (a violation), ``sync-check``'s exit 2 (a stale pair) and
+        ``diff``'s exit 1 (a change) all arrive as what they are — verdicts. Bob answers
+        "доки отстали", never "не смог посмотреть".
+        """
+        form = plan_health_form(check, since=since)
+        report = await self._run(
+            "beadloom",
+            form.subcommand,
+            *form.args,
+            condense=partial(digest_health, form.check),
+        )
+        return ProjectHealth(check=form.check, report=report)
 
     async def list_tasks(self, query: str) -> str:
         """Execute the read-only ``bd`` form the pure planner picked for ``query``.
@@ -604,11 +822,25 @@ class SubprocessRepoIntrospector:
         raw = await self._run("bd", "search", term, *_BD_SEARCH_TAIL_FORM)
         return digest_search_results(raw)
 
-    async def _run(self, binary: str, subcommand: str, *args: str) -> str:
+    async def _run(
+        self,
+        binary: str,
+        subcommand: str,
+        *args: str,
+        condense: Callable[[str], str] | None = None,
+    ) -> str:
         """Validate against the allowlist, then exec ``binary subcommand args``.
 
         Refuses (without executing) any unknown binary, off-allowlist subcommand, or
-        flag-looking argument. On success the stdout is truncated + sanitised.
+        flag-looking argument. On success the stdout is denoised, optionally CONDENSED,
+        then truncated + sanitised.
+
+        🔴 ``condense`` runs BEFORE the char cap, and that order is the point (BOB-091.2,
+        found by running the live CLI through this path). ``beadloom sync-check`` prints
+        48 KB in this repo while the cap is 20 000 chars, so a digest applied AFTER the
+        cap counted only the pairs that FITTED and answered "274 пары" for 585 — a wrong
+        number stated confidently, which is worse than a dump. Condensing first also makes
+        the cap what it should be: a last-resort bound on an already-short answer.
         """
         entry = self._allow.get(binary)
         if entry is None:
@@ -622,23 +854,31 @@ class SubprocessRepoIntrospector:
 
         argv = [bin_path, subcommand, *args]
         stdout = await self._runner(argv, timeout=self._timeout)
-        return self._guard.sanitize(self._truncate(_strip_noise_tail(stdout)))
+        text = _strip_noise_tail(stdout)
+        if condense is not None:
+            text = condense(text)
+        return self._guard.sanitize(self._truncate(text))
 
     def _validate_args(
         self, binary: str, subcommand: str, args: tuple[str, ...]
     ) -> None:
         """Refuse any arg outside the read-only allowlist (no arbitrary args/flags).
 
-        Three controlled flag-bearing exceptions exist: the ``bd list --status <enum>``
-        form (the literal ``--status`` flag paired with one stored-status enum value
-        from a FIXED allowlist), the ``bd search <term> --status all`` form (fixed
-        tail, sanitiser-validated term), and the ``git log`` fixed forms (a bounded
-        ``--oneline -n <N> -- <path>`` or ``--grep=<bead-key> --oneline``, each
-        dynamic slot validated). Every other flag-looking arg — a status outside the
-        enum, an extra git flag, an out-of-form git shape — is refused before exec.
+        The per-binary form gates live in their own methods (:meth:`_validate_git_args`,
+        :meth:`_validate_beadloom_args`); what remains HERE is the routing plus the
+        default rule that closes everything else: no flag-looking argument is forwarded.
+        The controlled flag-bearing exceptions are the ``bd list --status <enum>`` form
+        (the literal ``--status`` flag paired with one stored-status enum value from a
+        FIXED allowlist) and the ``bd search <term> --status all`` form (fixed tail,
+        sanitiser-validated term). Every other flag-looking arg — a status outside the
+        enum, an extra git flag, an out-of-form git shape, another beadloom flag such as
+        ``--project`` or ``--json`` — is refused before exec.
         """
         if binary == "git":
             self._validate_git_args(subcommand, args)
+            return
+        if binary == "beadloom":
+            self._validate_beadloom_args(subcommand, args)
             return
         if binary == "bd" and subcommand == "search":
             if _is_allowed_bd_search_form(args):
@@ -652,6 +892,42 @@ class SubprocessRepoIntrospector:
             raise DisallowedCommandError(
                 f"bd list arguments {args!r} are not an allowlisted read-only form"
             )
+        self._refuse_flag_like(args)
+
+    def _validate_beadloom_args(self, subcommand: str, args: tuple[str, ...]) -> None:
+        """Refuse any beadloom invocation outside the fixed read-only forms.
+
+        Three families, each an exact-shape gate: the ``graph`` forms (overview /
+        ``<ref> [--depth <N>]`` / the C4 ``--scope`` view), ``why <ref>`` (exactly one
+        validated ref), and the health reports (``status`` / ``prime`` / ``doctor`` /
+        ``sync-check`` take NO argument, ``lint`` takes exactly ``--no-reindex --strict``,
+        ``diff`` exactly ``--since <git-ref>``). The remaining read subcommands (``ctx`` /
+        ``search``) take a plain value, so they fall back to the default rule — no
+        flag-looking argument at all.
+        """
+        if subcommand == "graph":
+            if _is_allowed_graph_form(args):
+                return
+            raise DisallowedCommandError(
+                f"beadloom graph arguments {args!r} are not an allowlisted read-only form"
+            )
+        if subcommand == "why":
+            if _is_allowed_why_form(args):
+                return
+            raise DisallowedCommandError(
+                f"beadloom why arguments {args!r} are not an allowlisted read-only form"
+            )
+        if subcommand in _HEALTH_SUBCOMMANDS:
+            if _is_allowed_health_form(subcommand, args):
+                return
+            raise DisallowedCommandError(
+                f"beadloom {subcommand} arguments {args!r} are not an allowlisted "
+                "read-only form"
+            )
+        self._refuse_flag_like(args)
+
+    def _refuse_flag_like(self, args: tuple[str, ...]) -> None:
+        """The default rule: no flag-looking argument is ever forwarded."""
         for arg in args:
             if _looks_like_flag(arg):
                 raise DisallowedCommandError(

@@ -67,6 +67,10 @@ src/bob/capabilities/
     dev_query.py      #                        — чистая валидация dev-интроспекции: clamp_commit_count/validate_bead_id(инъекция-гард)/normalize_status/is_bead_id/sanitize_search_term (BOB-081, BOB-090.A, mutation-ядро)
     tracker_intent.py #                        — TrackerPlan/plan_tracker_query/find_bead_key: какой read по трекеру отвечает на вопрос (ready/list/show/search), BOB-090.A
     tracker_digest.py #                        — digest_search_results/MAX_DIGEST_ITEMS: длинная выдача bd search → сводка + важное + «Скрыто: N», BOB-090.A
+    graph_form.py     #                        — GraphForm/plan_graph_form/validate_graph_ref/clamp_graph_depth/diagram_carries_nodes: какая из ТРЁХ разрешённых форм `beadloom graph` отвечает на просьбу нарисовать + валидация слотов argv (BOB-091.1, mutation-ядро)
+    impact_digest.py  #                        — digest_impact/MAX_IMPACT_ITEMS/MAX_SUBJECT_CHARS: `beadloom why` (197 строк Rich-рамок и ASCII-дерева) → узел + «Зависит от» + «Влияет на» + честный счёт транзитивных (BOB-091.1, mutation-ядро)
+    health_form.py    #                        — HealthForm/plan_health_form/normalize_check/validate_git_ref: КАКОЙ из шести read-only отчётов beadloom (status/prime/doctor/sync-check/lint/diff) просят + его фиксированный argv; 🔴 `lint` планируется как `--no-reindex --strict` (плоский lint ПЕРЕиндексирует, то есть пишет) (BOB-091.2, mutation-ядро)
+    health_digest.py  #                        — digest_health/MAX_LISTED_ITEMS/MAX_REPORT_LINES/MAX_DOMAIN_CHARS: сжатие отчёта по его виду (585 строк пар → счёт + только stale; porcelain-кортежи lint → читаемые строки, включая ОБЕ реальные формы — с файлом и с ПУСТЫМИ файлом/строкой у правил про узел и ребро, BOB-091.4; 39 КБ prime → шапка + домены + счёт правил; diff хранит последнюю строку сводки) (BOB-091.2, mutation-ядро)
   usecases/           # layer=application
     registry.py       #                        — CapabilityRegistry + SafeCapabilityDispatcher
     tool_loop.py      #                        — ToolLoop: model↔tools раунд-трип до финала
@@ -83,9 +87,13 @@ src/bob/capabilities/
     list_tasks.py     #                        — bd list по статусу (BOB-081, read-only)
     show_task.py      #                        — bd show <id> детали (BOB-081, read-only)
     task_comments.py  #                        — bd comments <id> (BOB-081, read-only)
+    draw_architecture.py —                     — схема архитектуры: mermaid-ИСТОЧНИК модели для слов + САМ ставит отрендеренную картинку в общий DiagramSink (beadloom graph: обзор / узел с --depth / C4-компоненты в --scope) (BOB-091.1/.6, за флагом architecture_tools)
+    architecture_impact.py —                   — «что сломается, если тронуть X» (beadloom why, сжато) (BOB-091.1, за флагом architecture_tools)
+    project_health.py #                        — «как дела у проекта»: ОДИН инструмент над закрытым перечнем шести read-only отчётов beadloom (BOB-091.2, за тем же флагом architecture_tools)
     web_search.py     #                        — заземлённый веб-поиск (BOB-053)
     read_url.py       #                        — чтение одной ссылки за SSRF-щитом (BOB-054)
     render_diagram.py #                        — mermaid→PNG в чат + CollectingDiagramSink (BOB-035)
+    diagram_attachment.py —                    — DiagramAttachment: ОДИН шов «отрендерить и поставить картинку в очередь хода» (общий для render_diagram и draw_architecture; дедуп по источнику) (BOB-091.6)
     diagram_sender.py #                        — DiagramSender: авто-рендер inline-mermaid + drain sink → отправка (коллаборатор handle_message, BOB-062.6b)
     send_to_chat.py   #                        — отправка в УКАЗАННЫЙ чат/топик по просьбе owner'а: адрес (destination) + гейт переноса приватного (disclosure) + заземление упоминаний (mention); за флагом social.delivery, default OFF (BOB-090.B1)
     delivery_scope.py #                        — DeliveryScope + armed_delivery_scope/current_delivery_scope: обстоятельства ХОДА (кто просит, откуда, из какого материала) через ContextVar — нет хода, нет отправки (BOB-090.B1)
@@ -215,6 +223,98 @@ allowlist = автономно ничего не запускается (кон�
   секретов наследуется от `_run` (INV-3); авторизация — существующий `is_guest`-гейт (гость
   инструментов не получает). За под-флагом `introspection.dev_tools` (default OFF → навыки не
   регистрируются). Пусто/битый id → честный ответ, не выдумка/не краш.
+- **Схема архитектуры и влияние (BOB-091.1, read-only).** `graph` и `why` лежали в
+  allowlist адаптера с самого начала, но были МЁРТВЫМИ записями — до них не доходил ни один
+  метод порта, поэтому Боб не мог ни нарисовать схему, ни ответить «что сломается, если
+  тронуть memory». Два навыка над тем же `RepoIntrospector`: `draw_architecture`
+  (`architecture_diagram` → `ArchitectureDiagram(mermaid, form, requested)`) и
+  `architecture_impact` (`impact` → сжатый `beadloom why`). 🔴 **Решение owner'а:**
+  `draw_architecture` отдаёт модели **mermaid-ИСТОЧНИК** (Боб объясняет схему словами) и
+  **сам** ставит отрендеренную картинку в тот же per-turn `DiagramSink`, что и
+  `render_diagram` — то есть owner получает и объяснение, и изображение, а молчаливый PNG
+  по-прежнему невыразим (текст ответа всегда пишет модель).
+  🔴 **BOB-091.6 — почему связка стала СТРУКТУРНОЙ.** Сначала связка «объясни словами И
+  вызови `render_diagram`» жила ТОЛЬКО в описании инструмента, то есть в уговоре с
+  моделью, — и живой смоук показал ровно её отказ: Боб вызвал `draw_architecture`, получил
+  5 КБ настоящего mermaid, грамотно разобрал схему словами и картинки не прислал (второго
+  вызова не сделал). Ни результат вызова, ни цикл инструментов к рендеру не толкали.
+  Теперь рендер — часть рисования: общий
+  [`DiagramAttachment`](../../../src/bob/capabilities/usecases/diagram_attachment.py)
+  (тот же локальный рендерер + тот же синк) рендерит ОДИН раз, дедуплицирует по источнику
+  (два инструмента на одну схему = одна фотография) и НЕ бросает наружу — сбой рендера
+  возвращается как честная строка `picture`, а не как исключение хода. Слова гарантированы,
+  картинка — best-effort. Пустой граф и отказанный ref не рендерятся вовсе.
+  🔴 **Урок про тесты (§0.3 п.4/п.10):** прежние юниты и BDD доказывали, что в ОПИСАНИИ
+  инструмента есть слово `render_diagram`, — ассерт про текст обещания, а не про поведение.
+  Связка закрыта тестом ЧЕРЕЗ ГРАНИЦУ (вызов → картинка в синке И mermaid модели) плюс
+  сквозным прогоном на НАСТОЯЩЕМ `mmdc` и НАСТОЯЩЕМ `beadloom graph` этого репозитория,
+  в том числе через боевую сборку `_build_registry`
+  (`tests/infrastructure/diagrams/test_real_architecture_render.py`). Формы argv — ФИКСИРОВАННЫЕ (как
+  `_BD_LIST_ARG_FORMS`): обзор (без аргументов), `<ref> [--depth <N>]` (N клампится в
+  [1,5]), и C4-внутренности одного контейнера
+  (`--format c4 --level component --scope <ref>`); membership-check выполняется ДО запуска,
+  поэтому `--project` (ЧУЖОЙ репозиторий!), `--json`, другой формат и любая write-подкоманда
+  (`reindex`/`docs`/`link`/`setup-*`/`active-sync`/`sync-update`) невыразимы никаким
+  аргументом. `beadloom why` принимает РОВНО один валидированный ref. Честные деградации:
+  `--scope` на ЛИСТЕ графа печатает один заголовок `C4Container` (живой факт), поэтому форма
+  сходит к схеме связей узла и `form != requested` — модель получает поправку «внутренностей
+  нет, это связи», а не подмену вида; пустой граф → честное «не нашёл», а не пустая
+  картинка. За под-флагом `introspection.architecture_tools` (default OFF → навыки не
+  регистрируются).
+- **Состояние проекта (BOB-091.2, read-only).** Остальной READ-ONLY beadloom одним
+  навыком `project_health` (`project_health` → `ProjectHealth(check, report)`): `status`
+  (числа индекса), `prime` (компактный контекст), `doctor` (целостность графа),
+  `sync-check` (свежесть доков), `lint` (границы), `diff --since <git-ref>` (что изменилось
+  в графе). 🔴 **Один инструмент, а не шесть:** манифест и без того большой, и шесть
+  почти-одинаковых инструментов ухудшили бы выбор модели; аргумент — значение из ЗАКРЫТОГО
+  перечня, и это же его форма безопасности — модель не называет подкоманду beadloom, поэтому
+  write-команды того же CLI невыразимы даже опечаткой (отказ при этом ПЕРЕЧИСЛЯЕТ допустимые
+  отчёты, иначе модель повторит ту же ошибку). Формы argv фиксированные, membership-check ДО
+  запуска: `status`/`prime`/`doctor`/`sync-check` — БЕЗ аргументов (поэтому `prime --update`,
+  который ПЕРЕПИСЫВАЕТ `AGENTS.md`, и `--project <чужой репозиторий>` невыразимы),
+  `lint --no-reindex --strict`, `diff --since <git-ref>` со строгой валидацией слота (флаг,
+  путь, диапазон `a..b`, reflog-синтаксис, метасимвол — отказ ДО запуска).
+  🔴 **Две находки живого прогона, которых фейк не дал бы.** (1) ПЛОСКИЙ `beadloom lint`
+  сам делает reindex, то есть ПИШЕТ в индекс (замерено по sha256 `.beadloom/beadloom.db`),
+  поэтому `--no-reindex` — часть read-only инварианта, а не вкусовщина; цена названа честно:
+  вердикт читается по СОХРАНЁННОМУ индексу, и дайджест это говорит вслух (по стоячему
+  правилу §0.3 п.1 lint на несвежем индексе врёт). А `--strict` обязателен потому, что
+  плоский `lint` отдаёт rc=0 даже при error-нарушении. (2) При нарушении lint печатает в пайп
+  МАШИННЫЙ porcelain (`rule:kind:severity:file:line:from:to`) и строки «0 violations» в этом
+  случае НЕТ вовсе — дайджест переводит кортежи в человеческие строки.
+  🔴 **И у этого porcelain ДВЕ реальные формы, а не одна (BOB-091.4, Critical-1).** Правило
+  про ФАЙЛ заполняет `file`+`line`; правило про УЗЕЛ или РЕБРО (бюджет символов, цикл,
+  `require`, слой) оставляет оба поля ПУСТЫМИ и заполняет `from`/`to`. Срез 2 снял фикстуру с
+  одного живого образца (`forbid_import` — единственный вид, у которого файл есть), поэтому
+  вердикт НЕ ВИДЕЛ узловых нарушений: на смешанном входе он говорил «Нарушений: 1», ЦИКЛ
+  исчезал молча (ровно тот класс дефекта, из-за которого написано правило §0.3 п.1), а
+  собеседник получал сырую машинную строку вместо ответа. Теперь разбор позиционный и
+  терпимый к пустым слотам, локация печатается той, какая есть (`файл:строка` / узел /
+  `from → to`), а **любая** машинная строка, которую дайджест не смог прочитать, ВСЁ РАВНО
+  попадает в счёт и называется вслух как неразобранная — сырой porcelain не выходит наружу ни
+  в одной ветке. Оговорки `lint` и `sync-check` приклеивает сам ДИСПЕТЧЕР дайджеста (после
+  капа), поэтому «всегда» из докстринга — структура, а не обещание: ветка честной деградации
+  их потерять не может.
+  🔴 **Ненулевой код возврата — РЕЗУЛЬТАТ, а не сбой:** `lint` отдаёт 1 при нарушении,
+  `sync-check` — 2 при устаревшей паре, `diff` — 1 при изменениях. Это структурно безопасно:
+  раннер возвращает stdout и НИКОГДА не смотрит `returncode`, поэтому Боб отвечает «доки
+  отстали», а не «не смог посмотреть»; проверено на РЕАЛЬНОМ beadloom (живой `diff` с rc=1) и
+  на настоящем подпроцессе с `exit(2)`. Отдельно проверено, что `sync-check` (он трогает файл
+  индекса) НЕ прячет staleness при повторном прогоне — сигнал для человеческого гейта не
+  стирается. Сжатие честное: 48 КБ / 585 строк пар → счёт + только устаревшие пары (+ оговорка,
+  что пары строятся не для всех узлов, §0.3 п.2), 39 КБ `prime` → шапка + домены + СЧЁТ правил
+  (agent-instruction секции выброшены — это инструкции тулчейну, не факты о проекте).
+  🔴 **Сжатие идёт ДО капа вывода** (`_run(..., condense=...)`) — и это тоже находка живого
+  прогона, а не вкус: интроспектор режет сырой вывод на 20 000 символах, поэтому дайджест,
+  применённый ПОСЛЕ капа, считал только влезшее и уверенно отвечал «274 пары» вместо 585, а у
+  `prime` кап съедал самое ценное — секции про домены, устаревшие доки и нарушения (они в конце
+  отчёта, после списка правил). Неверное число, сказанное уверенно, хуже дампа. `beadloom why`
+  (срез 1) переведён на тот же порядок — 14 КБ живого вывода в одном графе от капа.
+  Вне scope сознательно (BRIEF): `tui`/`ui`/`watch`/`mcp-serve` (интерактивные),
+  `export`/`snapshot compare`/`config-check` (инертные для Боба) — их невыразимость
+  ассертится тестом, а не документируется. За тем же под-флагом
+  `introspection.architecture_tools` (default OFF): весь read-only beadloom — одна
+  отгружаемая часть, один переключатель.
 - **Трекер отвечает вместо «пусто» (BOB-090.A).** На «расскажи про BOB-087» и «какие
   задачи открыты» Боб честно отвечал «такой задачи не существует» / «пусто»: `bd show`
   понимает только точный id, а ключ эпика живёт в ЗАГОЛОВКАХ задач. Теперь `list_work`
@@ -489,8 +589,14 @@ ports-шим `bob.domain.ports` удалён (BOB-062.8), все импортё�
   `inspect_architecture.make_inspect_architecture_capability`,
   `list_work.make_list_work_capability`,
   `code_rationale.make_code_rationale_capability`,
+  `draw_architecture.make_draw_architecture_capability`,
+  `architecture_impact.make_architecture_impact_capability` (BOB-091.1),
+  `project_health.make_project_health_capability` (BOB-091.2) — три последних только за
+  флагом `introspection.architecture_tools`,
   `web_search.make_web_search_capability`, `read_url.make_read_url_capability`,
   `render_diagram.make_render_diagram_capability` (+ `CollectingDiagramSink`),
+  `diagram_attachment.DiagramAttachment` (общий шов «рендер → очередь картинок хода»:
+  `render_diagram` строит его внутри, `draw_architecture` принимает готовый, BOB-091.6),
   `send_to_chat.make_send_to_chat_capability` (BOB-090.B1, регистрируется только за
   флагом `social.delivery`).
 - Обстоятельства и материал хода: `usecases.delivery_scope` (`DeliveryScope`,
@@ -505,7 +611,20 @@ ports-шим `bob.domain.ports` удалён (BOB-062.8), все импортё�
   `introspection.dev_query` (`clamp_commit_count`, `validate_bead_id`, `is_bead_id`,
   `normalize_status`, `sanitize_search_term`, `MAX_SEARCH_TERM_CHARS`),
   `introspection.tracker_intent` (`TrackerPlan`, `plan_tracker_query`, `find_bead_key`),
-  `introspection.tracker_digest` (`digest_search_results`, `MAX_DIGEST_ITEMS`).
+  `introspection.tracker_digest` (`digest_search_results`, `MAX_DIGEST_ITEMS`),
+  `introspection.graph_form` (`GraphForm`, `plan_graph_form`, `validate_graph_ref`,
+  `clamp_graph_depth`, `diagram_carries_nodes`, `MAX_GRAPH_DEPTH`),
+  `introspection.impact_digest` (`digest_impact`, `MAX_IMPACT_ITEMS`, `MAX_SUBJECT_CHARS`),
+  `introspection.drawing_reply` (`drawn_reply`, `not_found_reply`, `refused_reply`,
+  `PictureStatus`, `NOT_FOUND`, `FALLBACK_NOTE`, `REFUSED_REF`, `PICTURE_SENT`,
+  `PICTURE_UNAVAILABLE` — чистое ядро ответа про рисование: что модели сказано про
+  ИСТОЧНИК, про вид схемы и про КАРТИНКУ, BOB-091.6),
+  `introspection.health_form` (`HealthForm`, `plan_health_form`, `normalize_check`,
+  `validate_git_ref`, `is_git_ref`, `HEALTH_CHECKS`, `DEFAULT_DIFF_REF` + типизированные
+  отказы `HealthRequestError` / `UnknownCheckError` / `InvalidGitRefError` — капабилити
+  выбирает подсказку модели по ТИПУ, а не по тексту сообщения, BOB-091.4),
+  `introspection.health_digest` (`digest_health`, `MAX_LISTED_ITEMS`, `MAX_REPORT_LINES`,
+  `MAX_DOMAIN_CHARS`).
 - Адаптеры: `adapters.web` (`HttpUrlReader`, `build_url_reader`),
   `adapters.diagrams.mmdc_renderer.SubprocessMmdcRenderer`,
   `adapters.introspection.subprocess_introspector.SubprocessRepoIntrospector`,
@@ -525,19 +644,46 @@ ports-шим `bob.domain.ports` удалён (BOB-062.8), все импортё�
 - Самоинтроспекция и навигация: `tests/application/capabilities/`
   (`test_inspect_architecture.py`, `test_read_code.py`, `test_list_dir.py`,
   `test_find_file.py`, `test_list_work.py`, `test_code_rationale.py`,
-  `test_code_rationale_acceptance.py`).
+  `test_code_rationale_acceptance.py`, `test_draw_architecture.py`,
+  `test_architecture_impact.py`, `test_project_health.py`); BDD —
+  `tests/acceptance/features/architecture_drawing.feature` (BOB-091.1: схема источником,
+  влияние сжато, гейт флага; BOB-091.6 заменил ассерт про ОПИСАНИЕ на S1b/S1c — картинка
+  реально встала в очередь отправки хода, а при сбое рендера очередь пуста и модели ушла
+  честная строка «не удалось») и
+  `tests/acceptance/features/project_health.feature` (BOB-091.2: 585 строк пар счётом,
+  устаревшие доки и нарушение границ как ОТВЕТ, а не сбой, `--no-reindex` в argv, отказ на
+  write-отчёт, гейт флага; BOB-091.4 добавил S3b — нарушения уровня УЗЛА и ЦИКЛ в счёте, ни
+  одной сырой машинной строки в ответе) — второй сценарный набор идёт через НАСТОЯЩИЙ адаптер, у которого
+  сценирован только подпроцесс, потому что сжимается именно сырой вывод beadloom.
 - Web: `tests/application/capabilities/test_web_search.py`, `test_read_url.py`;
   `tests/test_app_web_search.py`, `test_app_read_url.py`,
   `tests/test_integration_web_search_streaming.py`, `tests/test_read_url_config.py`.
 - Диаграммы: `tests/application/capabilities/test_render_diagram.py`,
-  `tests/test_app_diagrams.py`.
+  `tests/test_app_diagrams.py`; 🔴 `tests/infrastructure/diagrams/test_real_architecture_render.py`
+  — сквозной прогон на НАСТОЯЩИХ инструментах (настоящий `beadloom graph` этого репозитория →
+  настоящий `mmdc` → PNG в синке), в том числе через БОЕВУЮ сборку `_build_registry`; фейковый
+  рендерер доказывает контракт фейка, а дефект BOB-091.6 был именно неработающей сквозной
+  фичей при зелёных юнитах.
 - Чистый домен: `tests/domain/diagrams/test_mermaid_blocks.py`,
-  `tests/domain/introspection/test_code_history.py`, `test_privacy_guard.py`.
+  `tests/domain/introspection/test_code_history.py`, `test_privacy_guard.py`,
+  `test_graph_form.py`, `test_impact_digest.py` (оба — mutation-ядра BOB-091.1),
+  `test_health_form.py`, `test_health_digest.py` (оба — mutation-ядра BOB-091.2; фикстуры —
+  ДОСЛОВНЫЙ вывод живого beadloom, включая ОБЕ формы машинного porcelain `lint`: с файлом и
+  строкой — и с ПУСТЫМИ файлом/строкой у правил про узел и ребро, BOB-091.4). 🔴 Там же —
+  юниты на ЗНАЧЕНИЯ модульных констант (закрытый перечень отчётов, кортежи форм argv, таблица
+  алиасов, оба ref-регекса, границы капов): mutmut мутирует только тела функций, поэтому
+  100%-ный score про эти строки не говорит ничего — а именно в такой константе и жил
+  Critical-1 (ревью Major-1).
 - Адаптеры: `tests/infrastructure/web/` (`test_http_url_reader.py`,
   `test_url_reader_factory.py`), `tests/infrastructure/diagrams/`
   (`test_mmdc_renderer.py`, `test_mmdc_exec_runner.py`),
   `tests/infrastructure/introspection/` (`test_subprocess_introspector.py`,
-  `test_subprocess_introspector_integration.py`, `test_git_history.py`),
+  `test_subprocess_introspector_integration.py` — в т.ч. РЕАЛЬНЫЙ `beadloom graph`/`why`
+  этого репозитория и все шесть read-only отчётов на живом CLI: сжатие многокилобайтного `sync-check`,
+  `diff` с НЕнулевым кодом возврата, неизменность sha256 индекса после `lint`, стабильность
+  вердикта `sync-check` между прогонами; `test_git_history.py`,
+  `test_architecture_reads.py` — в т.ч. невыразимость write- и вне-scope-подкоманд,
+  `test_health_reads.py`),
   `tests/infrastructure/llm/` (`test_web_search_qwen.py`, `test_web_search_factory.py`).
 - Отправка в другой чат и след материала (BOB-090.B): `tests/capabilities/test_send_to_chat.py`
   (последовательность гейтов: нет хода → пусто → адрес → согласие → заземление → отправка),

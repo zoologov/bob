@@ -1769,6 +1769,139 @@ ignore = [
 # Тот же срез: чтение нити из репозитория проверяется на настоящем SQLite, и его тест
 # несёт русские комментарии про метку места.
 "tests/infrastructure/persistence/test_sqlite_repo.py" = ["RUF001", "RUF002", "RUF003"]
+# Инструменты архитектуры (BOB-091.1) несут русские model-facing строки — честное «не
+# нашёл», предупреждение «это не внутренности» и объяснение, почему ref — это id узла;
+# кириллические похожие символы намеренны (Qwen читает их нативно).
+"src/bob/capabilities/usecases/draw_architecture.py" = ["RUF001", "RUF002", "RUF003"]
+"src/bob/capabilities/usecases/architecture_impact.py" = ["RUF001", "RUF002", "RUF003"]
+# Чистые ядра того же среза: русские policy-докстринги (формы argv, сжатие why) + русские
+# метки ответа («Зависит от» / «Влияет на» / «Глубже по цепочке»).
+"src/bob/capabilities/introspection/graph_form.py" = ["RUF001", "RUF002", "RUF003"]
+"src/bob/capabilities/introspection/impact_digest.py" = ["RUF001", "RUF002", "RUF003"]
+# BOB-091.6: чистое ядро ответа про рисование несёт все русские model-facing строки этого
+# инструмента — честное «не нашёл», оговорку про внутренности, объяснение про ref и две
+# строки про картинку («уже уйдёт в чат» / «приложить не удалось»).
+"src/bob/capabilities/introspection/drawing_reply.py" = ["RUF001", "RUF002", "RUF003"]
+"tests/domain/introspection/test_drawing_reply.py" = [
+    "S101",
+    "ARG001",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+# Тот же срез: сквозной тест на НАСТОЯЩЕМ mmdc и НАСТОЯЩЕМ beadloom graph — русские
+# сообщения ассертов про картинку, которая не доехала до owner'а.
+"tests/infrastructure/diagrams/test_real_architecture_render.py" = [
+    "S101",
+    "ARG001",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+"tests/domain/introspection/test_graph_form.py" = [
+    "S101",
+    "ARG001",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+"tests/domain/introspection/test_impact_digest.py" = [
+    "S101",
+    "ARG001",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+"tests/infrastructure/introspection/test_architecture_reads.py" = [
+    "S101",
+    "ARG001",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+    "SLF001",
+]
+"tests/application/capabilities/test_draw_architecture.py" = [
+    "S101",
+    "ARG001",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+"tests/application/capabilities/test_architecture_impact.py" = [
+    "S101",
+    "ARG001",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+# BDD-шаги того же среза биндят русский .feature-текст и русские сообщения ассертов.
+"tests/acceptance/steps/test_architecture_drawing.py" = [
+    "S101",
+    "ARG001",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+# Срез 2 того же эпика (BOB-091.2): остальной read-only beadloom. Чистые ядра несут
+# русские метки ответа («Пар док↔код», «Нарушений», «Проверок графа пройдено») и честные
+# оговорки про сохранённый индекс и неполноту пар; капабилити — русское model-facing
+# описание отчётов. Кириллические похожие символы намеренны (Qwen читает их нативно).
+"src/bob/capabilities/introspection/health_form.py" = ["RUF001", "RUF002", "RUF003"]
+"src/bob/capabilities/introspection/health_digest.py" = ["RUF001", "RUF002", "RUF003"]
+"src/bob/capabilities/usecases/project_health.py" = ["RUF001", "RUF002", "RUF003"]
+"tests/domain/introspection/test_health_form.py" = [
+    "S101",
+    "ARG001",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+"tests/domain/introspection/test_health_digest.py" = [
+    "S101",
+    "ARG001",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+"tests/infrastructure/introspection/test_health_reads.py" = [
+    "S101",
+    "ARG001",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+    "SLF001",
+]
+"tests/application/capabilities/test_project_health.py" = [
+    "S101",
+    "ARG001",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+"tests/acceptance/architecture_drawing_harness.py" = ["S101", "ARG001", "RUF001", "RUF003"]
+# Тот же срез, часть 2 (BOB-091.2): харнесс состояния проекта и его BDD-шаги биндят русский
+# .feature-текст, русские сообщения ассертов и русскую реплику пользователя.
+"tests/acceptance/project_health_harness.py" = ["S101", "ARG001", "RUF001", "RUF003"]
+"tests/acceptance/steps/test_project_health.py" = [
+    "S101",
+    "ARG001",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
 
 [tool.ruff.lint.isort]
 known-first-party = ["bob"]
@@ -1959,6 +2092,13 @@ pytest_add_cli_args_test_selection = [
     # deterministic core the transfer gate now reads.
     "tests/capabilities/test_send_to_chat.py",
     "tests/capabilities/test_turn_material.py",
+    # BOB-091.6: ``draw_architecture`` + ``diagram_attachment`` живут в
+    # ``src/bob/capabilities`` (пакет СКАНИРУЕТСЯ), но их тесты не были выбраны — значит
+    # все мутанты решения «рендерить или нет / что сказать модели про картинку» приходили
+    # как «no tests», то есть гейта у ровно того места, где ДЕФЕКТ и жил, не было (§0.3
+    # п.7 — фантомный гейт). Тесты быстрые и детерминированные (фейковый порт + фейковый
+    # рендерер, без подпроцесса), поэтому per-slice прогон остаётся дешёвым.
+    "tests/application/capabilities/test_draw_architecture.py",
 ]
 # The kernel (ports/protocols the domain tests import) is NOT mutated but IS imported by
 # tests/domain — copy it + the package root verbatim into the mutants sandbox so the

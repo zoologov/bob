@@ -490,6 +490,19 @@ def _build_dev_tools_enabled(config: Mapping[str, object]) -> bool:
     return _flag(_section(config, "introspection"), "dev_tools")
 
 
+def _build_architecture_tools_enabled(config: Mapping[str, object]) -> bool:
+    """Whether the architecture tools are wired (``introspection.architecture_tools``).
+
+    Default OFF (BOB-091 — the diagram + impact reads ship as one gated piece, switched
+    on after the live smoke): off → ``draw_architecture`` / ``architecture_impact`` are
+    NOT registered (Bob never sees them, zero behaviour change); on → they are advertised
+    alongside the other introspection skills. A SUB-flag under the (default-ON)
+    ``introspection.enabled`` master, independent of ``dev_tools``. Tolerates an
+    env-string boolean.
+    """
+    return _flag(_section(config, "introspection"), "architecture_tools")
+
+
 def _diagram_send_as(config: Mapping[str, object]) -> DiagramSendMode:
     """Resolve the diagram send mode from ``diagrams.send_as`` (BOB-037 C).
 

@@ -13,7 +13,10 @@ the whole knob set so the composition root reads it without re-introducing keys.
 from __future__ import annotations
 
 from bob.infrastructure.config.loader import ConfigLoader
-from bob.runtime.wiring.parameters import _build_dev_tools_enabled
+from bob.runtime.wiring.parameters import (
+    _build_architecture_tools_enabled,
+    _build_dev_tools_enabled,
+)
 
 
 def _config() -> dict[str, object]:
@@ -54,3 +57,40 @@ def test_dev_tools_gate_off_by_default_and_on_config() -> None:
     assert _build_dev_tools_enabled({"introspection": {}}) is False
     assert _build_dev_tools_enabled({"introspection": {"dev_tools": False}}) is False
     assert _build_dev_tools_enabled({"introspection": {"dev_tools": True}}) is True
+
+
+# --- BOB-091.1: the architecture tools ride their own sub-flag ------------------
+
+
+def test_architecture_tools_sub_flag_defaults_off() -> None:
+    # The diagram + impact skills ship as one gated piece, OFF until the live smoke.
+    section = _config()["introspection"]
+    assert isinstance(section, dict)
+    assert section["architecture_tools"] is False
+
+
+def test_architecture_tools_gate_off_by_default_and_on_config() -> None:
+    # The exact predicate the wiring uses: OFF for a missing section, an empty section,
+    # or an explicit false; ON only for true — a stray flag never exposes the tools.
+    assert _build_architecture_tools_enabled({}) is False
+    assert _build_architecture_tools_enabled({"introspection": {}}) is False
+    assert (
+        _build_architecture_tools_enabled(
+            {"introspection": {"architecture_tools": False}}
+        )
+        is False
+    )
+    assert (
+        _build_architecture_tools_enabled(
+            {"introspection": {"architecture_tools": True}}
+        )
+        is True
+    )
+
+
+def test_architecture_tools_is_independent_of_dev_tools() -> None:
+    # Two separate sub-flags: switching the tracker/git tools on must not advertise the
+    # architecture ones (and vice versa).
+    config = {"introspection": {"dev_tools": True}}
+    assert _build_dev_tools_enabled(config) is True
+    assert _build_architecture_tools_enabled(config) is False

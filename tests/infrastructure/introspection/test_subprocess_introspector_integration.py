@@ -19,14 +19,18 @@ present and initialised, so the tests actually run and must PASS.
 
 from __future__ import annotations
 
+import hashlib
+import re
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
 
 from bob.capabilities.adapters.introspection.subprocess_introspector import (
     SubprocessRepoIntrospector,
+    _ExecRunner,
 )
 from bob.capabilities.introspection.privacy_guard import PrivacyGuard
 
@@ -258,3 +262,532 @@ async def test_real_run_is_sanitised_and_bounded() -> None:
 
     # Cap (200) + the short truncation marker, nothing unbounded.
     assert len(out) <= 200 + 64
+
+
+# --- 🔴 BOB-091.1: the architecture reads against the REAL beadloom -------------
+# A fake runner proves the FAKE's contract (CLAUDE.md §0.3 п.4). These run the LIVE
+# ``beadloom graph`` / ``why`` in this repo, so the two facts a fake cannot know are
+# actually asserted: a ``--scope`` on a graph LEAF really does print an empty diagram
+# (the fallback fires), and the real 197-line ``why`` panel really does condense.
+
+
+@pytest.mark.asyncio
+async def test_overview_diagram_is_real_mermaid_of_this_repo() -> None:
+    if not _binary_ready("beadloom", "graph"):
+        pytest.skip("beadloom not on PATH or repo not indexed for it")
+    intro = _real_introspector()
+
+    diagram = await intro.architecture_diagram()
+
+    assert diagram.form == "overview"
+    assert diagram.mermaid.startswith("graph")
+    # Real nodes of THIS repo's graph, not a template.
+    assert "memory" in diagram.mermaid
+    assert "capabilities" in diagram.mermaid
+
+
+@pytest.mark.asyncio
+async def test_node_diagram_with_depth_is_real_and_bounded() -> None:
+    if not _binary_ready("beadloom", "graph", "memory", "--depth", "1"):
+        pytest.skip("beadloom graph --depth unavailable")
+    intro = _real_introspector()
+
+    diagram = await intro.architecture_diagram("memory", depth=1)
+
+    assert diagram.form == "node"
+    assert "memory" in diagram.mermaid
+    # A one-node neighbourhood is smaller than the whole map.
+    overview = await intro.architecture_diagram()
+    assert len(diagram.mermaid) < len(overview.mermaid)
+
+
+@pytest.mark.asyncio
+async def test_components_diagram_of_a_container_is_real_c4() -> None:
+    if not _binary_ready(
+        "beadloom", "graph", "--format", "c4", "--level", "component", "--scope",
+        "bob-domain",
+    ):
+        pytest.skip("beadloom c4 component view unavailable")
+    intro = _real_introspector()
+
+    diagram = await intro.architecture_diagram(internals_of="bob-domain")
+
+    assert diagram.form == "components"
+    assert "C4" in diagram.mermaid
+    assert "Component(" in diagram.mermaid
+
+
+@pytest.mark.asyncio
+async def test_components_of_a_leaf_really_falls_back_on_the_live_cli() -> None:
+    """🔴 The fact only the REAL CLI reveals: a leaf has no internals to draw.
+
+    ``graph --format c4 --level component --scope memory`` prints a lone
+    ``C4Container`` header — an empty picture. A fake runner would happily return a
+    populated diagram and this fallback would look dead while the owner got nothing.
+    """
+    if not _binary_ready("beadloom", "graph", "memory"):
+        pytest.skip("beadloom not on PATH or repo not indexed for it")
+    intro = _real_introspector()
+
+    diagram = await intro.architecture_diagram(internals_of="memory")
+
+    assert diagram.requested == "components"
+    assert diagram.form == "node", "a leaf scope must degrade to that node's links"
+    assert "memory" in diagram.mermaid
+
+
+@pytest.mark.asyncio
+async def test_impact_of_a_real_node_is_condensed_not_a_screenshot() -> None:
+    if not _binary_ready("beadloom", "why", "memory"):
+        pytest.skip("beadloom why unavailable")
+    intro = _real_introspector()
+
+    out = await intro.impact("memory")
+
+    assert out.startswith("memory (feature)")
+    assert "Зависит от:" in out
+    assert "Влияет на:" in out
+    # The live panel is ~197 lines / 14 KB; the answer is a handful of lines.
+    assert len(out.splitlines()) <= 5
+    for glyph in ("╭", "│", "├", "└"):
+        assert glyph not in out
+
+
+@pytest.mark.asyncio
+async def test_impact_of_an_unknown_ref_stays_empty_on_the_live_cli() -> None:
+    if not _binary_ready("beadloom", "graph"):
+        pytest.skip("beadloom not on PATH or repo not indexed for it")
+    intro = _real_introspector()
+
+    assert await intro.impact("nosuchnode") == ""
+
+
+# --- 🔴 BOB-091.2: the project-health reads against the REAL beadloom -----------
+# The exit-code trap of this slice is invisible to a fake: ``lint`` exits 1 on a
+# violation, ``sync-check`` 2 on a stale pair, ``diff`` 1 on a change — a runner that
+# treated a non-zero status as failure would make Bob say "не смог посмотреть" instead of
+# "доки отстали". The other live-only fact is the SIZE: ``sync-check`` prints 48 KB / 585
+# pair lines in this repo and ``prime`` 39 KB, so only a real run proves the digest works.
+
+# A commit of this repo whose graph YAML differs from its parent (the ``interactive`` node
+# was added there), used to reach the exit-1 branch of ``diff`` without touching anything.
+_GRAPH_CHANGING_COMMIT = "66aa620"
+
+
+def _report_ready(*argv: str) -> bool:
+    """Whether the live ``beadloom`` produces this report — regardless of exit status.
+
+    🔴 :func:`_binary_ready` requires ``rc == 0``, which is WRONG for the verdict
+    commands: ``lint --strict`` exits 1 on a violation and ``sync-check`` exits 2 on a
+    stale pair. Using it here made three of these tests skip silently on their very first
+    run (this repo had a stale doc pair at that moment) — a readiness probe that falls into
+    the exact trap the tests exist to catch. Readiness is therefore "it printed a report".
+    """
+    if shutil.which("beadloom") is None:
+        return False
+    try:
+        proc = subprocess.run(  # noqa: S603 — fixed read-only argv, no shell
+            ["beadloom", *argv],  # noqa: S607 — resolved via PATH by design
+            cwd=_REPO_ROOT,
+            capture_output=True,
+            text=True,
+            timeout=120,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return bool(proc.stdout.strip())
+
+
+def _git_has(ref: str) -> bool:
+    """Whether ``ref`` resolves in this checkout (a shallow clone may not have it)."""
+    try:
+        proc = subprocess.run(  # noqa: S603 — fixed read-only argv, no shell
+            ["git", "rev-parse", "--verify", "--quiet", ref],  # noqa: S607
+            cwd=_REPO_ROOT,
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return proc.returncode == 0
+
+
+@pytest.mark.asyncio
+async def test_status_of_this_repo_is_real_numbers_without_the_rich_frames() -> None:
+    if not _report_ready("status"):
+        pytest.skip("beadloom status unavailable")
+    intro = _real_introspector()
+
+    health = await intro.project_health("status")
+
+    assert health.check == "status"
+    assert "Nodes:" in health.report
+    assert "Last reindex:" in health.report
+    for glyph in ("╭", "│", "╰", "─"):
+        assert glyph not in health.report
+
+
+@pytest.mark.asyncio
+async def test_prime_of_this_repo_collapses_the_224_rule_list() -> None:
+    """🔴 Live ``prime`` is ~39 KB, of which ~224 lines are the rule list."""
+    if not _report_ready("prime"):
+        pytest.skip("beadloom prime unavailable")
+    intro = _real_introspector()
+
+    health = await intro.project_health("prime")
+
+    assert "Architecture:" in health.report
+    assert re.search(r"Правил архитектуры: \d{2,}", health.report), health.report[:400]
+    # The rules are a COUNT now: not one of them is named.
+    assert "domain-needs-parent" not in health.report
+    # ...and the agent-instruction chrome never reaches Bob's context.
+    assert "Agent Instructions" not in health.report
+    assert len(health.report) < 6000, "39 KB must not reach a chat message"
+
+
+@pytest.mark.asyncio
+async def test_doctor_of_this_repo_counts_its_checks() -> None:
+    if not _report_ready("doctor"):
+        pytest.skip("beadloom doctor unavailable")
+    intro = _real_introspector()
+
+    health = await intro.project_health("doctor")
+
+    assert re.search(r"Проверок графа пройдено: \d+ из \d+\.", health.report)
+    assert "[ok]" not in health.report
+
+
+@pytest.mark.asyncio
+async def test_sync_check_of_this_repo_condenses_585_pair_lines() -> None:
+    """🔴 Live ``sync-check`` prints 48 KB / 585 pair lines; the answer is a few lines."""
+    if not _report_ready("sync-check"):
+        pytest.skip("beadloom sync-check unavailable")
+    intro = _real_introspector()
+
+    health = await intro.project_health("sync-check")
+
+    assert re.search(r"Пар док↔код: \d{2,}", health.report), health.report[:400]
+    assert "не для всех узлов" in health.report, "the pairing caveat must survive"
+    assert len(health.report.splitlines()) <= 55
+
+
+@pytest.mark.asyncio
+async def test_sync_check_counts_every_pair_the_live_cli_printed() -> None:
+    """🔴 The count must be the TRUE count — the defect only a live run exposed.
+
+    The introspector caps raw output at 20 000 chars while the live ``sync-check`` prints
+    ~48 KB, so a digest applied AFTER the cap counted only the pairs that FITTED and
+    answered "274 пары" for 585. Here the expected number is taken from the CLI itself
+    rather than hardcoded, so the test keeps biting as the repo grows.
+    """
+    if shutil.which("beadloom") is None:
+        pytest.skip("beadloom not on PATH")
+    proc = subprocess.run(
+        ["beadloom", "sync-check"],  # noqa: S607 — resolved via PATH by design
+        cwd=_REPO_ROOT,
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+    expected = sum(
+        1
+        for line in proc.stdout.splitlines()
+        if line.strip().startswith(("[ok]", "[stale]"))
+    )
+    if not expected:
+        pytest.skip("live sync-check printed no pairs")
+    intro = _real_introspector()
+
+    health = await intro.project_health("sync-check")
+
+    assert f"Пар док↔код: {expected}" in health.report
+
+
+@pytest.mark.asyncio
+async def test_prime_keeps_its_tail_sections_on_the_live_cli() -> None:
+    """🔴 The same cap silently ate ``prime``'s MOST useful part.
+
+    ``prime`` prints ~39 KB with the rule list FIRST and the domains / stale-docs / lint
+    sections LAST, so a 20 000-char cap applied before the digest threw away exactly what
+    a person asks for. Condensing before the cap keeps the tail.
+    """
+    if not _report_ready("prime"):
+        pytest.skip("beadloom prime unavailable")
+    intro = _real_introspector()
+
+    health = await intro.project_health("prime")
+
+    assert "Domains:" in health.report
+    assert "bob-domain" in health.report
+    assert "Lint Violations:" in health.report
+
+
+@pytest.mark.asyncio
+async def test_sync_check_verdict_is_stable_across_two_live_runs() -> None:
+    """🔴 The read must not ERASE the signal a human gate later depends on.
+
+    ``sync-check`` does touch the index file, so the question is whether a second run
+    still reports the same staleness — if it re-baselined, Bob looking at the docs would
+    quietly hide drift from the pre-commit hook. Measured here on the live CLI: the
+    verdict is identical across runs.
+    """
+    if not _report_ready("sync-check"):
+        pytest.skip("beadloom sync-check unavailable")
+    intro = _real_introspector()
+
+    first = await intro.project_health("sync-check")
+    second = await intro.project_health("sync-check")
+
+    assert first.report.splitlines()[0] == second.report.splitlines()[0]
+
+
+@pytest.mark.asyncio
+async def test_lint_of_this_repo_answers_with_a_verdict_and_the_caveat() -> None:
+    if not _report_ready("lint", "--no-reindex", "--strict"):
+        pytest.skip("beadloom lint unavailable")
+    intro = _real_introspector()
+
+    health = await intro.project_health("lint")
+
+    # Either shape of the live CLI is a verdict: the clean summary or the digested
+    # porcelain tuples. What must never happen is an empty answer.
+    assert "violations" in health.report or "Нарушений:" in health.report
+    assert "сохранённому индексу" in health.report
+
+
+@pytest.mark.asyncio
+async def test_lint_read_does_not_write_the_index_on_the_live_cli() -> None:
+    """🔴 The find of this slice: a PLAIN ``beadloom lint`` reindexes, i.e. WRITES.
+
+    Bob's form carries ``--no-reindex`` for exactly that reason, and this test measures
+    the invariant on the real binary instead of trusting the flag: the index file's
+    content is byte-identical after the read.
+    """
+    index = _REPO_ROOT / ".beadloom" / "beadloom.db"
+    if not index.exists() or not _report_ready("lint", "--no-reindex"):
+        pytest.skip("beadloom index unavailable")
+    before = hashlib.sha256(index.read_bytes()).hexdigest()
+    intro = _real_introspector()
+
+    await intro.project_health("lint")
+
+    assert hashlib.sha256(index.read_bytes()).hexdigest() == before
+
+
+# 🔴 The read-only invariant is measured on EVERY form, not just ``lint`` (review Minor-5):
+# if a future beadloom made ``status`` or ``doctor`` write, only a per-form measurement
+# would notice. ``sync-check`` is the ONE documented exception: its bytes change on every
+# run (SQLite page/header churn from opening the index read-write), while the DATA does
+# not — measured table by table, all 22 table digests are identical around the call, and
+# the verdict itself is stable across runs (asserted separately just above). So the
+# exception is about bytes, not about content, and it is nailed down here rather than left
+# as a silent hole.
+_INDEX_WRITING_FORMS = frozenset({"sync-check"})
+
+
+@pytest.mark.parametrize(
+    "check", ["status", "prime", "doctor", "lint", "diff", "sync-check"]
+)
+@pytest.mark.asyncio
+async def test_no_read_form_but_sync_check_touches_the_index_bytes(check: str) -> None:
+    index = _REPO_ROOT / ".beadloom" / "beadloom.db"
+    if not index.exists() or shutil.which("beadloom") is None:
+        pytest.skip("beadloom index unavailable")
+    intro = _real_introspector()
+    # A first call absorbs the one-off churn a "warm" index shows after other commands,
+    # so the measurement is about THIS form, not about whatever ran before it.
+    await intro.project_health(check)
+    before = hashlib.sha256(index.read_bytes()).hexdigest()
+
+    await intro.project_health(check)
+
+    changed = hashlib.sha256(index.read_bytes()).hexdigest() != before
+    assert changed == (check in _INDEX_WRITING_FORMS), (
+        f"{check}: изменение байтов индекса = {changed}, "
+        f"ожидалось {check in _INDEX_WRITING_FORMS}"
+    )
+
+
+# --- 🔴 BOB-091.4: a PLANTED graph-level violation, on the live CLI --------------
+#
+# Critical-1's root cause was not a typo, it was the fixture: slice 2 captured ONE live
+# violation (a ``forbid_import``, the only kind that carries a file and a line) and the
+# verdict was built to that sample, so every rule about a NODE or an EDGE — cardinality,
+# cycle, require, layer, which print EMPTY file/line slots — was invisible and the raw
+# machine tuple went out to the person instead. §0.3 п.4 in its sharpest form. The fix is
+# therefore gated on a REAL beadloom run over a throw-away project that breaks all three
+# shapes at once, with the expected count taken from the CLI itself.
+
+_PROBE_GRAPH = """nodes:
+  - ref_id: probe
+    kind: service
+    source: src/
+    tags: [layer-runtime]
+    summary: 'Probe service root.'
+  - ref_id: alpha
+    kind: feature
+    source: src/alpha/
+    tags: [module-vertical]
+    summary: 'Alpha module.'
+  - ref_id: beta
+    kind: feature
+    source: src/beta/
+    tags: [module-vertical]
+    summary: 'Beta module.'
+edges:
+  - {src: probe, dst: probe, kind: part_of}
+  - {src: alpha, dst: probe, kind: part_of}
+  - {src: beta, dst: probe, kind: part_of}
+"""
+
+_PROBE_RULES = """version: 3
+rules:
+  - name: alpha-no-beta-internals
+    description: "a FILE rule: fills file + line"
+    severity: error
+    forbid_import: {from: "src/alpha/*", to: "beta/internals*"}
+  - name: no-dependency-cycles
+    description: "an EDGE rule: fills from + to, no file"
+    severity: error
+    forbid_cycles: {edge_kind: depends_on}
+  - name: no-monster-modules
+    description: "a NODE rule: fills from only, no file"
+    severity: warn
+    check:
+      for: {kind: feature}
+      max_symbols: 1
+"""
+
+_PROBE_ALPHA = """from beta.internals import beta_thing
+
+
+def alpha_one() -> int:
+    return beta_thing()
+
+
+def alpha_two() -> int:
+    return 2
+"""
+
+_PROBE_BETA = """from alpha.mod import alpha_two
+
+
+def beta_thing() -> int:
+    return alpha_two()
+
+
+def beta_other() -> int:
+    return 3
+"""
+
+
+def _write_probe_project(root: Path) -> Path:
+    """Write (and index) a throw-away beadloom project that breaks all three rule shapes."""
+    graph = root / ".beadloom" / "_graph"
+    graph.mkdir(parents=True)
+    (graph / "graph.yml").write_text(_PROBE_GRAPH, encoding="utf-8")
+    (graph / "rules.yml").write_text(_PROBE_RULES, encoding="utf-8")
+    (root / "src" / "alpha").mkdir(parents=True)
+    (root / "src" / "beta").mkdir(parents=True)
+    (root / "src" / "alpha" / "mod.py").write_text(_PROBE_ALPHA, encoding="utf-8")
+    (root / "src" / "beta" / "internals.py").write_text(_PROBE_BETA, encoding="utf-8")
+    # Fixed argv, no shell; writes only inside tmp_path.
+    subprocess.run(
+        ["beadloom", "reindex"],  # noqa: S607 — resolved via PATH by design
+        cwd=root,
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+    return root
+
+
+@pytest.mark.asyncio
+async def test_a_planted_node_and_edge_violation_reaches_the_verdict(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """🔴 Critical-1: the count is the CLI's count, and no machine tuple is echoed."""
+    if shutil.which("beadloom") is None:
+        pytest.skip("beadloom not on PATH")
+    project = _write_probe_project(tmp_path / "probe")
+    raw = subprocess.run(  # fixed read-only argv, no shell
+        ["beadloom", "lint", "--no-reindex", "--strict"],  # noqa: S607 — via PATH
+        cwd=project,
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+    printed = [line for line in raw.stdout.splitlines() if line.strip()]
+    if not printed:
+        pytest.skip("beadloom lint printed nothing for the probe project")
+    # The fixture itself is asserted: the LIVE tool really does print empty file/line
+    # slots — the shape the pre-fix pattern could not see.
+    assert any(line.split(":")[3] == "" for line in printed), raw.stdout
+    monkeypatch.chdir(project)
+    intro = SubprocessRepoIntrospector(PrivacyGuard(project))
+
+    health = await intro.project_health("lint")
+
+    # Taken from the CLI, never hardcoded: the number Bob says IS the number of lines the
+    # linter printed, whatever the shapes among them.
+    assert f"Нарушений: {len(printed)}." in health.report, health.report
+    # The cycle names BOTH ends — "alpha" alone would not be the fact that matters.
+    assert "alpha → beta" in health.report
+    assert "сохранённому индексу" in health.report
+    for line in printed:
+        assert line not in health.report, "сырой porcelain не выходит наружу"
+
+
+@pytest.mark.asyncio
+async def test_diff_without_graph_changes_answers_honestly() -> None:
+    if not _report_ready("diff", "--since", "HEAD"):
+        pytest.skip("beadloom diff unavailable")
+    intro = _real_introspector()
+
+    health = await intro.project_health("diff")
+
+    assert health.check == "diff"
+    assert health.report.strip(), "diff must always say something"
+
+
+@pytest.mark.asyncio
+async def test_a_graph_changing_diff_exits_nonzero_and_still_answers() -> None:
+    """🔴 The exit-code trap, proven on the REAL CLI: ``diff`` exits 1 on a change.
+
+    A fake runner cannot show this — it has no exit status. Here the live binary really
+    does return 1 (verified by hand: ``rc=1`` with the change listing on stdout), and the
+    answer carries the CHANGES, not "не смог посмотреть".
+    """
+    ref = f"{_GRAPH_CHANGING_COMMIT}~1"
+    if not _git_has(ref) or shutil.which("beadloom") is None:
+        pytest.skip(f"{ref} not in this checkout")
+    intro = _real_introspector()
+
+    health = await intro.project_health("diff", since=ref)
+
+    assert "Graph diff" in health.report
+    assert "interactive" in health.report
+    # The counts line is the payload and it lives at the END of the report.
+    assert "added" in health.report.splitlines()[-1]
+
+
+@pytest.mark.asyncio
+async def test_the_real_runner_returns_stdout_of_a_nonzero_exit() -> None:
+    """🔴 The structural half of the exit-code contract, on a REAL subprocess.
+
+    The verdict-bearing commands exit 1/2 by design, so the transport must hand back
+    their stdout regardless of status. Asserted against a real process (not a fake) so
+    the guarantee is about the transport actually in use.
+    """
+    out = await _ExecRunner()(
+        [sys.executable, "-c", "import sys; print('verdict'); sys.exit(2)"],
+        timeout=30,
+    )
+
+    assert out.strip() == "verdict"

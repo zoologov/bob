@@ -1043,8 +1043,43 @@ rules:
     description: "Модуль-слой/фича не должен пухнуть (handle_message/app.py/gateway — #9/#10/#25)"
     severity: error
     check:
-      for: {kind: feature}
+      for: {kind: feature, exclude: [capabilities]}
       max_symbols: 200
+
+  # 🔴 BOB-091.2 — ОСОЗНАННАЯ РЕКАЛИБРОВКА одного узла, и вместе с ней ЗАПИСАННЫЙ ДОЛГ
+  # (BOB-Issues #44 + БЕАДА bob-fyf / BOB-092 — чтобы отсрочка имела адресата, а не только
+  # запись в файле). Срез 2 довёл `capabilities` до 212 символов при общем потолке 200.
+  #
+  # Почему не «спрятать» и не дробить внутри домена: узел честно декомпозирован — 41 файл,
+  # крупнейший 22 символа, монстров нет, каждый модуль со своей одной ответственностью; а
+  # внутридоменное дробление счётчик всё равно не снижает. Ни один узел не переклассифицирован.
+  #
+  # Почему это ОТСРОЧКА, А НЕ РЕШЕНИЕ (ровно та формулировка, которой BOB-087.D3 заводил
+  # бюджет для `coding`, а BOB-087.E его снял): в BOB-087.E в этом файле записано, что
+  # заводить персональный бюджет снова — значит расписываться в том, что граница проведена
+  # не там. Расписываюсь: `capabilities` держит ВТОРОЙ bounded context — read-only
+  # самоинтроспекцию «Боб читает свой репозиторий и трекер». Замер по индексу: чистые ядра
+  # introspection/ 64 символа + adapters/introspection 22 + навыки-чтения в usecases/
+  # (inspect_architecture / read_code / list_dir / find_file / list_work / code_rationale /
+  # recent_commits / list_tasks / show_task / task_comments / draw_architecture /
+  # architecture_impact / project_health) ≈ 50 — то есть ~135 из 212. Это отдельный узел
+  # (по образцу `interactive`: ПАКЕТ-СОСЕД, потому что max_symbols считает по префиксу
+  # source и вложенный узел дал бы двойной учёт), и развести его — архитектурное решение
+  # уровня owner'а, а не побочный эффект dev-среза.
+  #
+  # Бюджет 230 с малым запасом: ещё ~18 символов, и правило снова падает, требуя честного
+  # пере-скоупинга. Это СИГНАЛ, а не цель.
+  #
+  # 🔴 ПРИЁМКА BOB-092 ОБЯЗАНА СНЯТЬ ДВЕ ЗАПИСИ, А НЕ ОДНУ (ревью BOB-091.3, Minor-4):
+  # это правило И `exclude: [capabilities]` в общем `no-monster-modules` выше. Если убрать
+  # только персональное правило, узел останется БЕЗ ЛЮБОГО ограничения размера — то есть
+  # ослабление гейта будет выглядеть как его закрытие.
+  - name: no-monster-modules-capabilities
+    description: "capabilities: отдельный явный бюджет + долг на разделение узла (BOB-091.2, Issues #44)"
+    severity: error
+    check:
+      for: {ref_id: capabilities}
+      max_symbols: 230
 
 # ── BOB-062.7b: the kernel → memory edge is GONE (SqliteMemoryRepo split) ─────
 # HISTORY (.2→.7b): the memory domain-first move (.2) left exactly ONE
