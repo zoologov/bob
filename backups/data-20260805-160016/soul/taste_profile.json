@@ -1,0 +1,28 @@
+{
+  "axes": [
+    {
+      "name": "science_fiction",
+      "value": 0.85,
+      "conviction": 0.92,
+      "experience_count": 147
+    },
+    {
+      "name": "rust",
+      "value": 0.6,
+      "conviction": 0.78,
+      "experience_count": 83
+    },
+    {
+      "name": "pineapple_pizza",
+      "value": -0.9,
+      "conviction": 0.65,
+      "experience_count": 4
+    },
+    {
+      "name": "early_mornings",
+      "value": -0.2,
+      "conviction": 0.55,
+      "experience_count": 11
+    }
+  ]
+}

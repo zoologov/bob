@@ -38,11 +38,15 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 __all__ = [
+    "MARK_IN_ROOM",
+    "MARK_PRIVATELY",
     "Memory",
     "OriginOutcome",
+    "marked_thread_lines",
     "origin_lines",
     "run_origin_pair",
     "run_origin_turn",
+    "without_places",
 ]
 
 # Куски провенанс-директив, по которым сценарий узнаёт, ЧТО Боб сказал себе о месте.
@@ -50,6 +54,15 @@ __all__ = [
 SAID_PRIVATELY = "сказано наедине"
 SAID_IN_ROOM = "сказано в общем чате"
 MIXED_ORIGINS = "пришло из разных мест"
+
+# Пометки места у реплик недавней НИТИ (BOB-090.C3). Литералы намеренно написаны здесь
+# заново, а не импортированы из ``bob.conversation.thread_places``: сценарий утверждает
+# то, что Боб реально показал модели, и не должен зеленеть оттого, что обе стороны
+# поменялись вместе.
+MARK_PRIVATELY = "[в личке]"
+MARK_IN_ROOM = "[в общем чате, при всех]"
+# Первые слова легенды, объясняющей эти скобки, — по ним она узнаётся в промпте.
+PLACES_LEGEND_OPENING = "(в квадратных скобках"
 
 
 @dataclass(frozen=True, slots=True)
@@ -160,6 +173,40 @@ def origin_lines(prompt: str) -> tuple[str, ...]:
             phrase in line for phrase in (SAID_PRIVATELY, SAID_IN_ROOM, MIXED_ORIGINS)
         )
     )
+
+
+def marked_thread_lines(prompt: str) -> tuple[str, ...]:
+    """Реплики недавней нити, несущие пометку места (BOB-090.C3)."""
+    return tuple(
+        line
+        for line in prompt.splitlines()
+        if line.startswith((MARK_PRIVATELY, MARK_IN_ROOM))
+    )
+
+
+def without_places(prompt: str) -> str:
+    """Тот же промпт, с которого снято ВСЁ, что говорит о месте.
+
+    Доказательство выключенного пути равенством (S6/S11): провенанс добавляет ровно две
+    вещи — строки-утверждения о месте припомненного (директива C1 и легенда нити) и
+    пометку места в начале реплики нити (C3). Снимаем обе — и остаток обязан совпасть с
+    ходом при выключенном флаге СТРОКА В СТРОКУ; расхождение значит, что провенанс
+    поменял что-то ещё.
+    """
+    kept = []
+    for line in prompt.splitlines():
+        if line in origin_lines(prompt) or line.startswith(PLACES_LEGEND_OPENING):
+            continue
+        kept.append(_without_mark(line))
+    return "\n".join(kept)
+
+
+def _without_mark(line: str) -> str:
+    """Реплика нити без пометки места (строка без пометки — как есть)."""
+    for mark in (MARK_PRIVATELY, MARK_IN_ROOM):
+        if line.startswith(f"{mark} "):
+            return line[len(mark) + 1 :]
+    return line
 
 
 async def _seed(app: object, archive: Sequence[Memory]) -> None:

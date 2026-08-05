@@ -455,11 +455,18 @@ class SqliteMemoryRepo:
         Selects the ``k`` newest rows, then reverses them so the result reads
         oldest-first — the natural order for replaying conversation history into a
         reply prompt. A non-positive ``k`` yields an empty sequence.
+
+        🔴 Each row carries its ``visibility`` — the PLACE it was said in (BOB-090.C3).
+        This read IS the replayed thread that lands in every compose prompt, and the
+        owner's DM (BOB-082) shares it with the room; without the label сказанное наедине
+        arrived there indistinguishable from сказанное при всех, and Bob announced «я же
+        только что рассказал ГРУППЕ» about a joke he had made in the DM. A pre-migration
+        row keeps ``None`` — «место неизвестно», never «сказано при всех».
         """
         if k <= 0:
             return []
         async with self._db().execute(
-            "SELECT ts, event_type, content, mood_snapshot, tags, sender_id "
+            "SELECT ts, event_type, content, mood_snapshot, tags, sender_id, visibility "
             "FROM episodic_log ORDER BY ts DESC, id DESC LIMIT ?",
             (k,),
         ) as cursor:

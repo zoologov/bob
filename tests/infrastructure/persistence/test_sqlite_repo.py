@@ -106,6 +106,39 @@ async def test_recent_episodes_returns_last_k_in_chronological_order(
     await repo.close()
 
 
+async def test_recent_episodes_carry_the_place_they_were_said_in(
+    repo: SqliteMemoryRepo,
+) -> None:
+    # 🔴 BOB-090.C3: реплей нити читается в промпт, и без метки места сказанное наедине
+    # приезжало туда неотличимо от сказанного при всех. Метка едет из ЭТОГО чтения —
+    # у настоящего SQLite, а не у фейка репозитория.
+    for hour, text, visibility in (
+        (9, "в комнате", "public"),
+        (10, "в личке", "owner_private"),
+    ):
+        await repo.save_episode(
+            {
+                "ts": _ts(hour).isoformat(),
+                "event_type": "message",
+                "content": text,
+                "visibility": visibility,
+            }
+        )
+    # Легаси-строка, записанная до появления метки: «место неизвестно», а не «публично».
+    await repo.save_episode(
+        {"ts": _ts(11).isoformat(), "event_type": "message", "content": "давно"}
+    )
+
+    episodes = await repo.recent_episodes(3)
+
+    assert [(e["content"], e["visibility"]) for e in episodes] == [
+        ("в комнате", "public"),
+        ("в личке", "owner_private"),
+        ("давно", None),
+    ]
+    await repo.close()
+
+
 async def test_recent_episodes_zero_returns_empty(repo: SqliteMemoryRepo) -> None:
     # Arrange
     await repo.save_episode(

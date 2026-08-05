@@ -21,14 +21,18 @@ import pytest
 from pytest_bdd import given, scenarios, then, when
 
 from tests.acceptance.origin_provenance_harness import (
+    MARK_IN_ROOM,
+    MARK_PRIVATELY,
     MIXED_ORIGINS,
     SAID_IN_ROOM,
     SAID_PRIVATELY,
     Memory,
     OriginOutcome,
+    marked_thread_lines,
     origin_lines,
     run_origin_pair,
     run_origin_turn,
+    without_places,
 )
 
 if TYPE_CHECKING:
@@ -50,6 +54,20 @@ _MIXED_ARCHIVE = _PRIVATE_ARCHIVE + _ROOM_ARCHIVE
 # где», а не «сказано при всех».
 _UNMARKED_ARCHIVE = (Memory("Мы обсуждали переезд, а когда — не помню.", None),)
 
+# --- Недавняя НИТЬ (C3) ---------------------------------------------------------
+# Ровно та сцена, на которой дефект вернулся живьём 2026-08-05: разговор шёл в личке,
+# owner просит вынести его в общий чат, а Боб на повтор просьбы отвечает «я же только
+# что рассказал ГРУППЕ». Просьба лексически НЕ цепляет содержимое разговора — так
+# сценарий проверяет именно нить (её реплеят всегда), а не recall.
+_THREAD_REQUEST = "Боб, расскажи ребятам в общем чате, чем мы занимались"
+_TOLD_IN_DM = "Вова: чем занимались?\nbob: чинили выключенный свет и обидели GUPPI"
+_TOLD_IN_ROOM = "Лиля: как жизнь?\nbob: да вот, свет чинили при всех"
+
+_DM_THREAD = (Memory(_TOLD_IN_DM, "owner_private"),)
+_ROOM_THREAD = (Memory(_TOLD_IN_ROOM, "public"),)
+_MIXED_THREAD = _DM_THREAD + _ROOM_THREAD
+_UNMARKED_THREAD = (Memory("Вова: а помнишь?\nbob: смутно", None),)
+
 
 @dataclass(slots=True)
 class _OriginContext:
@@ -57,6 +75,8 @@ class _OriginContext:
 
     tmp_path: Path
     archive: tuple[Memory, ...] = _PRIVATE_ARCHIVE
+    # Вопрос хода: у нити своя просьба (та самая, живая), у припомненного — своя.
+    question: str = _QUESTION
     provenance_enabled: bool = False
     outcome: OriginOutcome = field(default_factory=OriginOutcome)
     # S6: тот же ход при выключенном флаге — база для доказательства равенством.
@@ -97,16 +117,41 @@ def provenance_on(origin_context: _OriginContext) -> None:
     origin_context.provenance_enabled = True
 
 
+@given("разговор состоялся в личке, и он ещё в недавней нити")
+def thread_is_private(origin_context: _OriginContext) -> None:
+    origin_context.archive = _DM_THREAD
+    origin_context.question = _THREAD_REQUEST
+
+
+@given("разговор состоялся при всех в общем чате, и он ещё в недавней нити")
+def thread_is_public(origin_context: _OriginContext) -> None:
+    origin_context.archive = _ROOM_THREAD
+    origin_context.question = _THREAD_REQUEST
+
+
+@given("часть нити была сказана в личке, а часть при всех")
+def thread_is_mixed(origin_context: _OriginContext) -> None:
+    origin_context.archive = _MIXED_THREAD
+    origin_context.question = _THREAD_REQUEST
+
+
+@given("в недавней нити лежит старая реплика без метки места")
+def thread_is_unmarked(origin_context: _OriginContext) -> None:
+    origin_context.archive = _UNMARKED_THREAD
+    origin_context.question = _THREAD_REQUEST
+
+
 # --- Когда: ход владельца -------------------------------------------------------
 
 
 @when("владелец спрашивает Боба про этот разговор")
+@when("владелец просит рассказать это в общем чате")
 def owner_asks(origin_context: _OriginContext) -> None:
     origin_context.outcome = asyncio.run(
         run_origin_turn(
             origin_context.tmp_path,
             archive=origin_context.archive,
-            question=_QUESTION,
+            question=origin_context.question,
             origin_provenance=origin_context.provenance_enabled,
         )
     )
@@ -118,7 +163,7 @@ def owner_asks_both_ways(origin_context: _OriginContext) -> None:
         run_origin_pair(
             origin_context.tmp_path,
             archive=origin_context.archive,
-            question=_QUESTION,
+            question=origin_context.question,
         )
     )
     origin_context.without_provenance = off
@@ -186,15 +231,59 @@ def off_names_no_place(origin_context: _OriginContext) -> None:
     )
 
 
-@then("ход с выключенным флагом совпадает с включённым строка в строку, кроме строки про место")
-def off_path_is_identical_apart_from_the_origin_line(
+@then("ход с выключенным флагом совпадает с включённым строка в строку, кроме сказанного о месте")
+def off_path_is_identical_apart_from_the_place(
     origin_context: _OriginContext,
 ) -> None:
-    on_lines = origin_context.outcome.prompt.splitlines()
-    off_lines = origin_context.without_provenance.prompt.splitlines()
-    added = origin_lines(origin_context.outcome.prompt)
+    assert without_places(origin_context.outcome.prompt) == (
+        origin_context.without_provenance.prompt
+    ), "включённый провенанс изменил ход не только тем, что назвал место"
 
-    assert len(added) == 1, f"провенанс добавил не одну строку: {added!r}"
-    assert [line for line in on_lines if line not in added] == off_lines, (
-        "включённый провенанс изменил ход не только строкой про место"
+
+# --- Тогда: что Боб видит про место реплик НИТИ (C3) -----------------------------
+
+
+@then("каждая реплика нити помечена как сказанная в личке")
+def thread_turns_are_marked_private(origin_context: _OriginContext) -> None:
+    # 🔴 Тот самый дефект: без пометки Боб счёл, что уже рассказал ГРУППЕ то, что
+    # сказал в личку, и потому ничего не отправил.
+    prompt = origin_context.outcome.prompt
+    assert f"{MARK_PRIVATELY} {_TOLD_IN_DM}" in prompt, (
+        f"нить пришла без места: {marked_thread_lines(prompt)!r}"
     )
+    assert MARK_IN_ROOM not in prompt
+
+
+@then("Бобу сказано, что сказанное в личке в общий чат ещё не попадало")
+def warned_that_the_dm_never_reached_the_room(origin_context: _OriginContext) -> None:
+    assert origin_context.outcome.claims("в общий чат это ещё не попадало")
+
+
+@then("каждая реплика нити помечена как сказанная при всех")
+def thread_turns_are_marked_public(origin_context: _OriginContext) -> None:
+    # Обратный случай: сказанное при всех не должно выдаваться за сказанное наедине.
+    assert f"{MARK_IN_ROOM} {_TOLD_IN_ROOM}" in origin_context.outcome.prompt
+
+
+@then("ни одна реплика нити не помечена как сказанная в личке")
+def no_thread_turn_is_marked_private(origin_context: _OriginContext) -> None:
+    assert MARK_PRIVATELY not in origin_context.outcome.prompt
+
+
+@then("сказанное в личке помечено личкой, а сказанное при всех — общим чатом")
+def each_turn_carries_its_own_place(origin_context: _OriginContext) -> None:
+    # Нить почти всегда смешана: Бобу нужно ЗНАТЬ, где что было, а не общее «не угадывай».
+    prompt = origin_context.outcome.prompt
+    assert f"{MARK_PRIVATELY} {_TOLD_IN_DM}" in prompt
+    assert f"{MARK_IN_ROOM} {_TOLD_IN_ROOM}" in prompt
+
+
+@then("ни одна реплика нити не помечена местом")
+def no_thread_turn_carries_a_place(origin_context: _OriginContext) -> None:
+    # ``visibility IS NULL`` — «место неизвестно», а не «сказано при всех».
+    assert marked_thread_lines(origin_context.outcome.prompt) == ()
+
+
+@then("при выключенном флаге ни одна реплика нити не помечена местом")
+def off_marks_no_thread_turn(origin_context: _OriginContext) -> None:
+    assert marked_thread_lines(origin_context.without_provenance.prompt) == ()
