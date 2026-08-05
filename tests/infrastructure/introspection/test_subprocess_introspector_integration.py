@@ -161,6 +161,86 @@ async def test_list_tasks_empty_runs_real_bd_ready_with_noise_stripped() -> None
     assert out.strip(), "bd ready output must retain real content after denoise"
 
 
+# --- 🔴 BOB-090.A: the tracker ANSWERS on the live repo -------------------------
+# These run against the REAL ``bd`` of this repository, because the whole defect was
+# invisible to fake-runner tests: the routing was "correct" while ``bd search`` was
+# off the allowlist, excluded closed issues by default, and the epic key was never
+# cut out of the sentence. A fake proves the fake's contract (the BOB-084 lesson);
+# only the live binary proves Bob stops saying "не существует".
+
+_LIVE_EPIC_KEY = "BOB-087"  # a real, fully CLOSED epic of this repo
+_LIVE_EPIC_ID = "bob-abk"  # ...whose bd identifier looks nothing like its key
+
+
+def _tracker_has(*probe: str) -> bool:
+    """Whether the live ``bd`` answers this read-only probe with real content."""
+    if shutil.which("bd") is None:
+        return False
+    try:
+        proc = subprocess.run(  # noqa: S603 — fixed read-only argv, no shell
+            ["bd", *probe],  # noqa: S607 — bd is resolved via PATH by design
+            cwd=_REPO_ROOT,
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return "bob-" in proc.stdout
+
+
+@pytest.mark.asyncio
+async def test_show_task_epic_key_grounds_via_real_search() -> None:
+    """🔴 The live symptom: «GUPPI твердит, что BOB-087 не существует».
+
+    ``bd show BOB-087`` really does print nothing (in bd the identifier is
+    ``bob-abk``; the key lives in the TITLE), so the tool was not lying — it had no
+    way to look. Now the empty ``show`` retries as a title search that includes
+    closed issues, and the epic is found.
+    """
+    if not _tracker_has("search", _LIVE_EPIC_KEY, "--status", "all"):
+        pytest.skip(f"live tracker has no {_LIVE_EPIC_KEY} tasks")
+    intro = _real_introspector()
+
+    out = await intro.show_task(_LIVE_EPIC_KEY)
+
+    assert out.strip(), "an epic key must not answer 'не существует'"
+    assert _LIVE_EPIC_ID in out
+
+
+@pytest.mark.asyncio
+async def test_list_tasks_epic_key_in_a_phrase_grounds_and_stays_short() -> None:
+    """«расскажи про нашу задачу BOB-087» finds the epic AND fits in a chat message.
+
+    bd matches a title SUBSTRING, so the phrase itself matches nothing — the key has
+    to be cut out. The key then matches dozens of tasks, so the live answer must come
+    back digested, not as a forty-line dump (BOB-086).
+    """
+    if not _tracker_has("search", _LIVE_EPIC_KEY, "--status", "all"):
+        pytest.skip(f"live tracker has no {_LIVE_EPIC_KEY} tasks")
+    intro = _real_introspector()
+
+    out = await intro.list_tasks(f"расскажи про нашу задачу {_LIVE_EPIC_KEY}")
+
+    assert _LIVE_EPIC_ID in out
+    assert "Найдено:" in out  # the digest summary, not the raw listing
+    assert len(out.splitlines()) <= 12
+
+
+@pytest.mark.asyncio
+async def test_list_tasks_open_lists_real_open_beads() -> None:
+    """🔴 The live symptom: «какие открыты?» -> «Пусто, GUPPI выдал чистый лист»."""
+    if not _tracker_has("list", "--status", "open"):
+        pytest.skip("live tracker has no open beads")
+    intro = _real_introspector()
+
+    out = await intro.list_tasks("какие открыты?")
+
+    assert out.strip(), "an open-task question must not answer 'пусто'"
+    assert "bob-" in out
+
+
 @pytest.mark.asyncio
 async def test_real_run_is_sanitised_and_bounded() -> None:
     """A live run still passes through the privacy sanitiser + char cap (cheap probe).
