@@ -632,3 +632,30 @@ def test_secondary_doors_take_the_casual_floor_when_the_flag_is_on(tmp_path: Pat
     # 🔴 The PRIMARY reply-recall is NOT floored: it resolves a real register per turn (a
     # dev turn lifts work to full weight) — the floor is only for the doors that cannot.
     assert not isinstance(plain, CasualFloorRecall)
+
+
+# --- BOB-090.C1: провенанс «где это было» доезжает от конфига до голоса ----------------
+# Флаг ``memory.origin_provenance`` читается в ОДНОМ месте и должен доехать по всей цепочке
+# конфиг → композиция → HandleMessage → VoiceComposer. Без этого сквозного теста флаг мог бы
+# честно парситься и никуда не приезжать (класс дефекта D-волны BOB-087: зелёный suite при
+# мёртвой в проде фиче).
+
+
+def test_origin_provenance_is_off_in_the_composed_voice_by_default(tmp_path: Path) -> None:
+    app = _app(tmp_path)
+
+    assert app.handle_message._voice._origin_provenance is False
+
+
+def test_origin_provenance_reaches_the_composed_voice_when_on(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    config["memory"] = {"origin_provenance": True}
+
+    app = build_application(
+        config=config,
+        providers=_providers(),
+        bob_bot=_Bot(),
+        guppi_bot=_Bot(),
+    )
+
+    assert app.handle_message._voice._origin_provenance is True

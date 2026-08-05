@@ -352,6 +352,18 @@ def _build_length_guard_enabled(config: Mapping[str, object]) -> bool:
     return _flag(section, "enabled")
 
 
+def _build_origin_provenance(config: Mapping[str, object]) -> bool:
+    """Whether Bob SEES where recalled material was said (``memory.origin_provenance``).
+
+    OFF by default (BOB-090.C1): the composed system prompt stays byte-identical, and Bob
+    keeps guessing the place as before. ON → the «где это было» line is folded in, built
+    from the ``visibility`` the write side already stamps from the channel, so he can say
+    «это мы обсуждали в личке» instead of inventing a room. A missing/empty section and an
+    explicit falsy value are all OFF; tolerates an env-string boolean.
+    """
+    return _flag(_section(config, "memory"), "origin_provenance")
+
+
 def _build_length_guard_max_chars(config: Mapping[str, object]) -> int:
     """The BOB-024 length-guard char ceiling (``brevity.length_guard.max_chars``).
 

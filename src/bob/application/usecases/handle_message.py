@@ -676,6 +676,7 @@ class HandleMessage:
         self_action_recorder: SelfActionRecorder | None = None,
         register_resolver: RegisterResolver | None = None,
         addon_recall: MemoryRecall | None = None,
+        origin_provenance: bool = False,
     ) -> None:
         self._router = router
         self._gateway = gateway
@@ -921,6 +922,12 @@ class HandleMessage:
         # to DEV). Unwired (the default) it draws from the SAME port as the reply — the
         # callback is byte-identical to before C8.
         self._addon_recall = addon_recall if addon_recall is not None else recall
+        # Провенанс «где это было» (BOB-090.C1, ``memory.origin_provenance``): whether the
+        # VoiceComposer folds WHERE the recalled material was said into Bob's prompt. It is
+        # the SECOND provenance axis beside the register one above — «где сказано», not «про
+        # что» — and neither replaces the other. OFF (the default) → the composed prompt is
+        # byte-identical; recall itself is untouched either way (nothing is filtered).
+        self._origin_provenance = origin_provenance
         # The conversation-floor seam (BOB-025): over the per-message addressivity
         # (BOB-023) lives a tracker of who currently holds the "talking turn" in a
         # thread. When wired AND enabled, an AMBIENT message in a thread where Bob holds
@@ -1254,6 +1261,7 @@ class HandleMessage:
             plain_reply=self._plain_reply,
             announcer_factory=self._make_verify_announcer,
             tool_loop_factory=self._make_tool_loop,
+            origin_provenance=self._origin_provenance,
         )
         # AntiRepeatGuard (conversation): recompose a repeat / phrase-tic reply + manage the
         # cross-session closer ring. 🔴 It takes ``compose`` = VoiceComposer.compose as a

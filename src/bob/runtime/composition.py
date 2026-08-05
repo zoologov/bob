@@ -155,6 +155,7 @@ from bob.runtime.wiring import (
     _build_length_guard_max_chars,
     _build_multibot,
     _build_offday_thresholds,
+    _build_origin_provenance,
     _build_permission_flow,
     _build_proactivity_engine,
     _build_pursue_goals_tick,
@@ -1011,6 +1012,12 @@ def build_application(
         # The grounded-addon callback's OWN recall door (BOB-087.C8): the CASUAL-floor port
         # when register-recall is on, the same plain ``recall`` when it is off (INV-5).
         addon_recall=secondary_recall,
+        # Провенанс «где это было» (BOB-090.C1): behind ``memory.origin_provenance`` (OFF by
+        # default → the composed prompt byte-identical). ON → the recalled material's
+        # ``visibility`` — already stamped from the channel — reaches Bob's voice, so he can
+        # say «это мы обсуждали в личке» instead of inventing the place (эпизод 3092).
+        # 🔴 A signal for judgment, NOT a recall filter: nothing is withheld (BOB-082).
+        origin_provenance=_build_origin_provenance(merged),
     )
     # Intake-развязка (BOB-066 Срез 2.1): the MESSAGE_RECEIVED subscriber is now the fast,
     # non-blocking ChatDispatcher.submit (normalise → buffer → return), so the Telegram

@@ -400,6 +400,20 @@ ignore = [
     "RUF001",
     "RUF003",
 ]
+# The origin-provenance tests (BOB-090.C1) assert on the Russian «где это было» voice line
+# and document the live defect in Russian prose — Cyrillic look-alikes are intentional.
+"tests/domain/personality/test_voice_origin_provenance.py" = [
+    "S101",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+"tests/runtime/wiring/test_origin_provenance.py" = [
+    "S101",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
 # The room-tone tests (BOB-066 Пласт 4) assert on Russian persona voice lines whose
 # Cyrillic look-alikes are intentional (→ RUF001/RUF003).
 "tests/domain/personality/test_room_tone.py" = [

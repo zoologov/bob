@@ -22,6 +22,7 @@ Drives the two boundaries the PRD cares about, without the real LLM:
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from bob.personality.expression import ExpressionMode, ExpressionPlan, FormHint, Verbosity
@@ -129,15 +130,28 @@ class _EmptyRegistry:
         return ""
 
 
-def _assemble_context(
-    soul: object,
-    topic: str,
-    recalled: object,
-    history: object,
-    *,
-    absence: str | None = None,
-) -> str:
-    return ""
+class _RecordingContext:
+    """The conversation context assembler — records the recalled set it is handed.
+
+    The second observable boundary: whatever reaches the assembler is exactly the material
+    that grounds the reply. Scenarios use it to prove что провенанс НИЧЕГО не вырезает —
+    сквозная память (BOB-082) остаётся сквозной (BOB-090.C1).
+    """
+
+    def __init__(self) -> None:
+        self.recalled: tuple[Recalled, ...] = ()
+
+    def __call__(
+        self,
+        soul: object,  # noqa: ARG002
+        topic: str,  # noqa: ARG002
+        recalled: Sequence[Recalled],
+        history: object,  # noqa: ARG002
+        *,
+        absence: str | None = None,  # noqa: ARG002
+    ) -> str:
+        self.recalled = tuple(recalled)
+        return ""
 
 
 def _soul() -> SOUL:
@@ -159,31 +173,49 @@ _PLAN = ExpressionPlan(
 )
 
 
-async def composed_prompt(
-    verbosity: Verbosity, *, recalled: Sequence[Recalled] = ()
-) -> str:
-    """Compose ONE turn at ``verbosity`` and return the system prompt the model sees.
+@dataclass(frozen=True, slots=True)
+class ComposedTurn:
+    """What ONE composed turn let us observe at the two boundaries.
+
+    ``system_prompt`` — the exact prompt the model would receive; ``context_recalled`` —
+    the recalled material that actually reached the context assembler (the grounding set).
+    """
+
+    system_prompt: str
+    context_recalled: tuple[Recalled, ...]
+
+
+async def compose_turn(
+    verbosity: Verbosity,
+    *,
+    recalled: Sequence[Recalled] = (),
+    origin_provenance: bool = False,
+) -> ComposedTurn:
+    """Compose ONE turn at ``verbosity`` and return what both boundaries observed.
 
     Routes through the plain-reply tier (``tool_provider=None``) so the captured
     ``system_prompt`` is exactly the prompt production would hand the LLM — the
     formatting gate (``verbosity is not TERSE``) is the real code under test. An
     optional ``recalled`` set feeds the recall-conditioned directives (e.g. the
-    work-provenance line) through the REAL composer.
+    work-provenance line) through the REAL composer; ``origin_provenance`` is the
+    production flag for the BOB-090.C1 «где это было» line (default OFF).
     """
     capturing = _CapturingPlainReply()
+    context = _RecordingContext()
     composer = VoiceComposer(
         registry=_EmptyRegistry(),
         tool_provider=None,
         offday_thresholds=OffDayThresholds(),
         addons=_Addons(),  # type: ignore[arg-type]
         essential=_Essential(),
-        assemble_context=_assemble_context,
+        assemble_context=context,
         assembler=_Assembler(),
         verify=_Verify(),
         social=_Social(),
         plain_reply=capturing,
         announcer_factory=lambda *, chat_id, sender_name: None,  # type: ignore[arg-type]  # noqa: ARG005
         tool_loop_factory=lambda provider, announcer: None,  # type: ignore[arg-type]  # noqa: ARG005
+        origin_provenance=origin_provenance,
     )
     await composer.compose(
         "дай список багов из bob-issues с приоритетами",
@@ -194,4 +226,19 @@ async def composed_prompt(
         verbosity=verbosity,
         chat_id=None,
     )
-    return capturing.system_prompt
+    return ComposedTurn(
+        system_prompt=capturing.system_prompt, context_recalled=context.recalled
+    )
+
+
+async def composed_prompt(
+    verbosity: Verbosity,
+    *,
+    recalled: Sequence[Recalled] = (),
+    origin_provenance: bool = False,
+) -> str:
+    """The system prompt of ONE composed turn — the boundary most scenarios assert on."""
+    turn = await compose_turn(
+        verbosity, recalled=recalled, origin_provenance=origin_provenance
+    )
+    return turn.system_prompt

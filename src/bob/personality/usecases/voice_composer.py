@@ -57,6 +57,7 @@ from bob.personality.voice import (
     recall_has_self_action,
     recall_has_work,
     recalled_impression_directive,
+    recalled_origin_directive,
     recalled_self_action_directive,
     recalled_work_directive,
     roster_directive,
@@ -242,6 +243,7 @@ class VoiceComposer:
         plain_reply: _PlainReply,
         announcer_factory: _AnnouncerFactory,
         tool_loop_factory: _ToolLoopFactory,
+        origin_provenance: bool = False,
     ) -> None:
         self._registry = registry
         self._tool_provider = tool_provider
@@ -255,6 +257,12 @@ class VoiceComposer:
         self._plain_reply = plain_reply
         self._announcer_factory = announcer_factory
         self._tool_loop_factory = tool_loop_factory
+        # BOB-090.C1 (``memory.origin_provenance``, default OFF): whether the «где это
+        # было» line is folded in. A composer-level flag rather than a turn-local argument
+        # ON PURPOSE — the anti-repeat regeneration re-enters ``compose`` with the SAME
+        # recalled set, so the provenance it sees can never drift between the first
+        # composition and a retry. OFF → the directive is "" → the prompt is byte-identical.
+        self._origin_provenance = origin_provenance
 
     async def compose(
         self,
@@ -364,6 +372,16 @@ class VoiceComposer:
             # detail). Independent of ``recalled_self_action``: a work episode carries
             # event_type ``work``, not ``self_action``, so both signals may be true.
             recalled_work=recall_has_work(recalled),
+            # BOB-090.C1: WHERE the recalled material was said («в личке» / «в общем чате»
+            # / и там, и там), read off the ``visibility`` the write side already stamps
+            # from the channel. Without it Bob cannot name the place and DOMYSLIVAET it
+            # (эпизод 3092: «я объяснил Норману в группе», а объяснял в личке). Behind
+            # ``memory.origin_provenance``: OFF (default) → "" → the prompt is byte-
+            # identical. 🔴 A SIGNAL, not a filter — the recalled set below is untouched
+            # (сквозная память, BOB-082), and the axis is orthogonal to the register one.
+            origin_directive=(
+                recalled_origin_directive(recalled) if self._origin_provenance else ""
+            ),
         )
         provider = self._tool_provider
         # ESSENTIAL step (BOB-049 .3): the reply generation is retry-wrapped — a flaky
@@ -414,6 +432,7 @@ class VoiceComposer:
         withhold_directive: str = "",
         recalled_self_action: bool = False,
         recalled_work: bool = False,
+        origin_directive: str = "",
     ) -> str:
         """Augment the base prompt with the mood tone, stance, and brevity directives.
 
@@ -495,6 +514,13 @@ class VoiceComposer:
             # болтовня). Independent of the self_action line above (distinct event_type);
             # no work recalled → no line (the default path is byte-identical).
             recalled_work_directive() if recalled_work else "",
+            # BOB-090.C1: the SECOND provenance axis beside the register one above — WHERE
+            # the recalled material was said. Computed in :meth:`compose` (behind
+            # ``memory.origin_provenance``) and passed in as a turn-local string so Bob can
+            # honestly say «это мы обсуждали в личке» — and, above all, stop claiming the
+            # opposite. ``""`` (the flag off, or an unknown origin) adds nothing, so the
+            # default path is byte-identical.
+            origin_directive,
             # BOB-028 .3: Bob's OWNER-APPROVED TONE/HUMOR self-improvement rules fold
             # into ONE soft voice tilt on TOP of mood/relationship tone — a reminder he
             # gives himself, never a command or a reset (наклон, не перехват). No such

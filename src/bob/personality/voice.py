@@ -562,6 +562,96 @@ def recalled_work_directive() -> str:
     return _RECALLED_WORK_DIRECTIVE
 
 
+# Recalled-ORIGIN provenance directive (BOB-090.C1): the SECOND provenance axis, next to
+# the register one above — not «про что» the recalled material is (работа / болтовня) but
+# WHERE it was said. The live defect it closes (episode 3092): Bob announced «я объяснил
+# Норману в группе», having explained it in the DM. He did not lie — the place never
+# reached his prompt, so he made it up.
+#
+# The signal is the ``visibility`` already stamped on every episode from the CHANNEL
+# (``_turn_is_shared_scope`` → ``visibility_for_scope``, BOB-082 .1): a group turn is
+# ``public``, the owner's 1:1 DM is ``owner_private``. The two literals are a documented
+# MIRROR of ``bob.social.disclosure`` (exactly as ``_SELF_ACTION_CATEGORY`` mirrors
+# ``bob.memory.self_action``), kept here so this pure personality helper imports nothing
+# from the social domain; a drift-guard test pins the mirror to its source of truth.
+#
+# 🔴 Provenance is a SIGNAL FOR JUDGMENT, never a filter: the function reads the recalled
+# set and returns a line — it drops, reorders and rewrites nothing. Cross-cutting memory
+# (BOB-082 — Bob is ONE mind) stays exactly as it is; the disclosure gate
+# (``filter_surfaceable``) remains the only thing that ever withholds a memory.
+#
+# 🔴 An UNKNOWN origin says nothing at all. The disclosure gate reads a legacy ``NULL`` as
+# «public» (fail-open for BOB-051 unified memory), but «I don't know where» is NOT «it was
+# said in the room» — turning silence into a claim about a place is the very defect this
+# directive exists to kill. So a recall with no known origin renders ``""``.
+# Cyrillic look-alikes are intentional in these Russian literals.
+_VISIBILITY_OWNER_PRIVATE = "owner_private"
+_VISIBILITY_PUBLIC = "public"
+
+_ORIGIN_PRIVATE_DIRECTIVE = (
+    # Cyrillic look-alikes intentional in these Russian literals.
+    "Всё, что ты сейчас припомнил, было сказано наедине — в личной переписке, а не при "
+    "всех в общем чате. Зайдёт речь о том, где это было, — так и говори: «это мы с тобой "
+    "обсуждали в личке». И не приписывай эти слова общему чату: там они не звучали."
+)
+_ORIGIN_ROOM_DIRECTIVE = (
+    # Cyrillic look-alikes intentional in these Russian literals.
+    "Всё, что ты сейчас припомнил, было сказано в общем чате, при всех, — это общая "
+    "память комнаты, а не разговор с глазу на глаз."
+)
+_ORIGIN_MIXED_DIRECTIVE = (
+    # Cyrillic look-alikes intentional in these Russian literals.
+    "Припомненное пришло из разных мест: часть сказана наедине в личке, часть — при всех "
+    "в общем чате. Не путай одно с другим и не ссылайся на сообщение, которого в этой "
+    "комнате не было. А не помнишь точно, где что прозвучало, — честнее не называть "
+    "место совсем, чем назвать его наугад."
+)
+
+
+def recalled_origin_directive(recalled: Sequence[Mapping[str, object]]) -> str:
+    """Return the «where this was said» line for the recalled material (BOB-090.C1) — pure.
+
+    Reads each recalled memory's ``visibility`` provenance and renders ONE live voice line:
+    everything came from the 1:1 DM (говори «это мы обсуждали в личке», и не приписывай это
+    комнате), everything came from the shared room, or the set is MIXED — then the line
+    warns him not to confuse the two and not to name a place at random (the direct antidote
+    to episode 3092). A set whose origin is unknown — empty recall, legacy rows with no
+    ``visibility``, an unrecognised value — renders ``""``: silence about the place is
+    honest, an invented place is the defect.
+
+    🔴 Nothing is filtered: the recalled set is read, never narrowed (сквозная память,
+    BOB-082). This axis is ORTHOGONAL to the register axis (:func:`recalled_work_directive`
+    — «про что»), so both may fire on the same turn. Deterministic: same recall → same line.
+    """
+    said_privately = any(_was_said_privately(item) for item in recalled)
+    said_in_room = any(_was_said_in_room(item) for item in recalled)
+    if said_privately and said_in_room:
+        return _ORIGIN_MIXED_DIRECTIVE
+    if said_privately:
+        return _ORIGIN_PRIVATE_DIRECTIVE
+    if said_in_room:
+        return _ORIGIN_ROOM_DIRECTIVE
+    return ""
+
+
+def _was_said_privately(item: Mapping[str, object]) -> bool:
+    """True when a recalled memory was said in the owner's private (1:1 DM) world."""
+    return _origin_of(item) == _VISIBILITY_OWNER_PRIVATE
+
+
+def _was_said_in_room(item: Mapping[str, object]) -> bool:
+    """True when a recalled memory was said in the SHARED room (a group channel)."""
+    return _origin_of(item) == _VISIBILITY_PUBLIC
+
+
+def _origin_of(item: Mapping[str, object]) -> str:
+    """The memory's normalised ``visibility`` provenance, or ``""`` when unknown."""
+    value = item.get("visibility")
+    if not isinstance(value, str):
+        return ""
+    return value.strip().casefold()
+
+
 # Relationship-tone bands (BOB-014). On TOP of the mood-conditioned tone, Bob's
 # WARMTH toward the specific person colours how he sounds to THEM: someone he is
 # close to gets a warmer, more familiar voice; someone he is cool toward gets a more
