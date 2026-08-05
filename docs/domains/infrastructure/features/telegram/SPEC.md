@@ -21,6 +21,11 @@ draft-стриминг и Rich Messages, пиннинг ответа в topic-th
   `MessageLike`, `MessageEntityLike`, реакционные `*Like`, `AuthorizerLike`,
   `BotIdentitySignals`) — держат тесты без сети. `RichMarkdownSender` шлёт markdown
   нативным rich-сообщением, деградируя к plain-тексту при rich-ошибке; `is_reaction_update`.
+  🔴 Нормализация входящего (`_to_message_received`) доводит до приложения два сигнала,
+  которые апдейт нёс и раньше, а граница теряла (BOB-090): `message_thread_id` →
+  `MessageReceived.topic_id` (точный адрес рядом с `chat_id`) и `from_user.username` →
+  `MessageReceived.sender_username` (ник без «собаки», без него обращение в комнате
+  невозможно). Ни то ни другое не достраивается: нет — значит `None`.
 - **aiogram_adapter.py** — `_AiogramBotAdapter`, конкретный край Telegram за портом
   `BotLike`: адаптирует async-`Bot` aiogram (`get_me`, `get_updates`, `send_message`,
   `send_chat_action`, `send_rich_message`, `edit_message_text`, `set_message_reaction`,

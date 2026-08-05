@@ -185,7 +185,22 @@ recall поднял ОДИН из СОБСТВЕННЫХ `work` dev-эпизод
 — документированное зеркало `memory.work_journal`, чтобы чистый personality-домен ничего не
 импортил из memory). Ортогональна self_action-строке: work-эпизод несёт event_type `work`,
 не `self_action`, поэтому обе могут сработать на одном ходу; нет work → строки нет,
-дефолтный путь байт-в-байт). `language.py` — `language_directive`
+дефолтный путь байт-в-байт). `recalled_origin_directive`
+(BOB-090.C1 — провенанс «ГДЕ это было сказано», третий член того же семейства. Живой баг:
+Боб уверенно заявлял «я объяснил Норману в группе пару сообщений назад», хотя писал в
+личку (эпизод 3092) — метка `visibility` в памяти была, но в промпт не попадала, и место
+он домысливал. Чистая функция читает `visibility` припомненного и строит ОДНУ живую
+строку: всё сказано наедине, всё сказано при всех, либо и то и другое — и тогда строка
+предупреждает не путать одно с другим. 🔴 Неизвестный источник — пустой recall, старые
+строки без метки, незнакомое значение — не называется ВОВСЕ: молчание о месте честно,
+выдуманное место и есть чинимый дефект. Ничего не фильтрует: выборка recall читается
+целиком, сквозная память BOB-082 не тронута. Ось «где сказано» ортогональна оси регистра
+«про что» (`recalled_work_directive`), поэтому приватный work-эпизод поднимает обе строки.
+Метки видимости здесь — документированное ЗЕРКАЛО `bob.social.disclosure` под
+drift-guard-тестом, чтобы `personality` не импортировал `social`. За флагом
+`memory.origin_provenance`, ВЫКЛЮЧЕННЫМ по умолчанию. Флаг стоит на `VoiceComposer`, а не
+на ходе, чтобы регенерация анти-повтора видела тот же провенанс; OFF → системный промпт
+байт-в-байт). `language.py` — `language_directive`
 (персона говорит на своём языке). `reflection.py` — `build_reflection_prompt`: вплетает
 свежий контекст (недавние эпизоды + текущий тон) в промпт заземлённого монолога, лечит
 «застрявшую пластинку»; без свежего контекста возвращает generic-промпт дословно.
@@ -360,6 +375,7 @@ kv-таблице (`record`/`latest`/`clear` — hint всплывает не б
   (+ `Verbosity`/`EngagementLevel`/`ExpressionMode`/`FormHint`), `voice.tone_directive`/
   `brevity_directive`/`engagement_directive`/`tactful_withhold_directive`/
   `recall_has_work`/`recalled_work_directive` (BOB-087.C3),
+  `recalled_origin_directive` (BOB-090.C1), `guppi_no_roleplay_directive` (BOB-090.D3),
   `reaction_meaning.ReactionMeaning`,
   `reaction_effect.apply_reaction_to_mood`, `reflection.build_reflection_prompt`, `soul.SOUL`,
   `room_tone.room_tone_directive`/`room_engagement_bias` (+ `RoomToneThresholds`).
@@ -385,6 +401,13 @@ use-case в `application/usecases/`, вне вертикали. Долговеч
 - BDD-приёмка второго слоя: `tests/acceptance/features/room_tone.feature` +
   `tests/acceptance/steps/test_room_tone.py` (тяжёлая/поляризованная комната гасит игривость,
   личный mood не тронут).
+- Провенанс источника (BOB-090.C1): `tests/domain/personality/test_voice_origin_provenance.py`
+  (личка / комната / смесь / неизвестный источник → пустая строка) +
+  `tests/domain/personality/test_voice_composer_work_provenance.py` (ортогональность оси
+  регистра); BDD — `tests/acceptance/features/origin_provenance.feature` +
+  `tests/acceptance/steps/test_origin_provenance.py`.
+- Канон GUPPI в голосе (BOB-090.D3): `tests/domain/personality/test_voice_guppi_no_roleplay.py`;
+  BDD — `tests/acceptance/features/guppi_canon.feature`.
 - Use-case'ы: `tests/application/usecases/test_update_mood_from_text.py`,
   `test_apply_reflection.py`, `test_reappraise_reflection.py`, `test_reflection_parser.py`,
   `test_evolve_fascination.py`, `test_evolve_phantoms.py`, `test_fascination_sources.py`.

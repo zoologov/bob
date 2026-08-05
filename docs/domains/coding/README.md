@@ -42,7 +42,7 @@ src/bob/coding/
   stream_render.py    # layer=domain   — render_stream_event(verbose): событие→строка; verbose=интерактив (полный текст+rich+chunk_for_telegram) vs груп (краткий кэп). BOB-082/085
   intent.py           # layer=domain   — is_approval / is_stop (чистые предикаты NL-команд)
   session_voice.py    # layer=domain   — детерминированные шаблоны реплик гейтед-сессии в персоне Боба-оператора (взялся/готово-PR/провал/стоп, BOB-087.B2; реплики живого терминала — в bob/interactive/voice.py)
-  speaker.py          # layer=domain   — speaker_for(MessageKind) → Speaker: КТО озвучивает сообщение (механика — GUPPI, живое и адресованное людям — Боб; запрос разрешения — Боб). Канон Денниса Тейлора, BOB-090.D
+  speaker.py          # layer=domain   — speaker_for(MessageKind) → Speaker: КТО озвучивает сообщение (механика — GUPPI, живое и адресованное людям — Боб; запрос разрешения — Боб) + channel_for: единственный перевод «говорящий → канал». Канон Денниса Тейлора, BOB-090.D/B-fix
   work_facts.py       # layer=domain   — WorkFactsAccumulator/SessionKeyFacts/WorkOutcome: сворачивает поток stream-json в ОГРАНИЧЕННЫЙ снимок ключевых фактов (BOB-087.B1)
   usecases/           # layer=application
     coding_assistant.py       — CodingAssistant (оркестратор гейтед-сессии)
@@ -143,8 +143,10 @@ default OFF).** Оба решения принимает чистое ядро `
 именно этот гейт реально защищает ствол. Формулировка синхронизирована с секцией `coder` в
 `infrastructure/config/loader.py` и докстрингами `runtime/wiring/coding.py`; смягчать её не следует.
 
-🔴 **GUPPI-канал: firehose исполнителя (BOB-087.A, флаг `coder.stream_via_guppi`, ВКЛЮЧЁН в
-BOB-090.D).** По канону Денниса Тейлора GUPPI — **несознательный интерфейс**: исполняет буквально,
+🔴 **GUPPI-канал: firehose исполнителя (BOB-087.A, флаг `coder.stream_via_guppi`).** В
+загрузчике флаг по-прежнему `false`, и OFF-путь остаётся байт-в-байт; BOB-090.D включил его в
+ЖИВОМ `config/bob.yaml` (файл git-ignored, поэтому в репозитории его состояние не видно).
+По канону Денниса Тейлора GUPPI — **несознательный интерфейс**: исполняет буквально,
 без личности, мнения и инициативы. При флаге ON механический **firehose** (per-event narrate +
 `_DmLiveStreamer` live-stream + технический итог прогона) уходит **ботом GUPPI**, а голос Боба (гейты
 `session_voice` «берусь/готово/провал», `dev_pointer`, `narration_capped`, typing/панель) — **всегда
@@ -162,6 +164,19 @@ BOB-090.D).** По канону Денниса Тейлора GUPPI — **нес
 Оркестратор шлёт ВСЁ через одну дверь `CodingAssistant._say(kind, text)` → `notifier_for(kind, …)`, так
 что ветки «мимо канона» не остаётся; при выключенном флаге оба канала — один нотификатор, и поведение
 байт-в-байт прежнее.
+
+🔴 **Канон и канал связаны, а не совпадают (BOB-090.B-fix).** Пока канал выбирался отдельной
+строкой, которая лишь СОВПАДАЛА с вердиктом ядра, подмена канона не двигала ни одного канала —
+то есть ядро ничего не решало. Теперь перевод «говорящий → канал» ровно один:
+`channel_for[Channel](kind, *, bob, guppi)` рядом со `speaker_for`. `notifier_for` делегирует
+ему, а композиционный корень выбирает им бота для запроса разрешения. Ядро параметрично по типу
+канала — ему безразлично, бот это или нотификатор, — а `bob` и `guppi`, оказавшиеся одним
+объектом (OFF-путь), дают тот же объект на любой вид. Привязка проверяется тестом, который
+подменяет канон и требует, чтобы бот ПЕРЕЕХАЛ.
+
+🔴 **Один шов остался вне канона — интерактивный терминал.** В `runtime/wiring/coding.py`
+сырой поток строится над `stream_bot` структурно, по флагу, а не через `channel_for`.
+Ограничение названо прямо: подмена канона этот канал не сдвинет.
 
 🔴 **Реплики GUPPI не попадают в память как голос Боба.** Голос Боба воспроизводится по recall
 (BOB-022/074/078), поэтому машинные строки исполнителя обязаны остаться транспортом. В память с
@@ -390,8 +405,10 @@ ClaudeCodeRunner`; транзитный ports-шим `bob.domain.ports` удал
 - `speaker.py`: `speaker_for(kind)` → `Speaker` (`BOB` / `GUPPI`), `is_mechanical(kind)` → `bool`;
   перечисление `MessageKind` (`TOOL_OUTPUT`/`RUN_EVENT`/`RUN_STATUS`/`NOTHING_FOUND`/`TECHNICAL_ACK`
   — механика; `SESSION_GATE`/`MODE_NOTICE`/`REACTION`/`PRESENCE_MARK`/`PERMISSION_REQUEST`/
-  `ADDRESSED_TO_PERSON` — живое). Чисто, без транспорта: канал по вердикту выбирает
-  `usecases/coding_assistant.notifier_for`.
+  `ADDRESSED_TO_PERSON` — живое); `channel_for[Channel](kind, *, bob, guppi)` → `Channel` —
+  единственный перевод вердикта в канал. Чисто, без транспорта:
+  `usecases/coding_assistant.notifier_for` и бот запроса разрешения в композиционном корне
+  берут канал отсюда.
 - `usecases/coding_assistant.py`: `CodingAssistant` — `start`/`approve_plan`/`stop`/`status`.
 - `usecases/coding_intent_router.py`: `CodingIntentRouter.route(text, sender, is_owner)`.
 - `usecases/classify_coding_intent.py`: `ClassifyCodingIntent.is_coding_request(text)`.
