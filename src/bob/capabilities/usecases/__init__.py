@@ -10,8 +10,14 @@
 
 from __future__ import annotations
 
+from bob.capabilities.usecases.architecture_impact import (
+    make_architecture_impact_capability,
+)
 from bob.capabilities.usecases.code_rationale import (
     make_code_rationale_capability,
+)
+from bob.capabilities.usecases.draw_architecture import (
+    make_draw_architecture_capability,
 )
 from bob.capabilities.usecases.find_file import make_find_file_capability
 from bob.capabilities.usecases.inspect_architecture import (
@@ -47,7 +53,9 @@ __all__ = [
     "SafeCapabilityDispatcher",
     "ToolLoop",
     "UnknownCapabilityError",
+    "make_architecture_impact_capability",
     "make_code_rationale_capability",
+    "make_draw_architecture_capability",
     "make_find_file_capability",
     "make_inspect_architecture_capability",
     "make_list_dir_capability",

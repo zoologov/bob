@@ -172,6 +172,13 @@ introspection:
   # Bob never sees them (zero behaviour change). Flip to true after review + a negative
   # smoke (no secrets in git/bd output; no write-form is expressible).
   dev_tools: false
+  # 🔴 BOB-091 SUB-flag, default OFF. The read-only ARCHITECTURE tools —
+  # draw_architecture (the mermaid SOURCE of ``beadloom graph``: Боб объясняет схему
+  # словами И отдаёт тот же источник в render_diagram, чтобы прислать картинку) и
+  # architecture_impact («что сломается, если тронуть memory», ``beadloom why``, сжато).
+  # Формы argv фиксированные, write-команды beadloom невыразимы. OFF → Bob never sees
+  # them. Flip to true after review + живой смоук (схема реально пришла картинкой).
+  architecture_tools: false
 
 # «Bob runs Claude Code» (BOB-039) — the gated coding assistant. Owner-only, the
 # UNBYPASSABLE plan gate + kill-switch; Bob works in an ISOLATED git worktree and NEVER

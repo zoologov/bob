@@ -1769,6 +1769,66 @@ ignore = [
 # Тот же срез: чтение нити из репозитория проверяется на настоящем SQLite, и его тест
 # несёт русские комментарии про метку места.
 "tests/infrastructure/persistence/test_sqlite_repo.py" = ["RUF001", "RUF002", "RUF003"]
+# Инструменты архитектуры (BOB-091.1) несут русские model-facing строки — честное «не
+# нашёл», предупреждение «это не внутренности» и объяснение, почему ref — это id узла;
+# кириллические похожие символы намеренны (Qwen читает их нативно).
+"src/bob/capabilities/usecases/draw_architecture.py" = ["RUF001", "RUF002", "RUF003"]
+"src/bob/capabilities/usecases/architecture_impact.py" = ["RUF001", "RUF002", "RUF003"]
+# Чистые ядра того же среза: русские policy-докстринги (формы argv, сжатие why) + русские
+# метки ответа («Зависит от» / «Влияет на» / «Глубже по цепочке»).
+"src/bob/capabilities/introspection/graph_form.py" = ["RUF001", "RUF002", "RUF003"]
+"src/bob/capabilities/introspection/impact_digest.py" = ["RUF001", "RUF002", "RUF003"]
+"tests/domain/introspection/test_graph_form.py" = [
+    "S101",
+    "ARG001",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+"tests/domain/introspection/test_impact_digest.py" = [
+    "S101",
+    "ARG001",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+"tests/infrastructure/introspection/test_architecture_reads.py" = [
+    "S101",
+    "ARG001",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+    "SLF001",
+]
+"tests/application/capabilities/test_draw_architecture.py" = [
+    "S101",
+    "ARG001",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+"tests/application/capabilities/test_architecture_impact.py" = [
+    "S101",
+    "ARG001",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+# BDD-шаги того же среза биндят русский .feature-текст и русские сообщения ассертов.
+"tests/acceptance/steps/test_architecture_drawing.py" = [
+    "S101",
+    "ARG001",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+"tests/acceptance/architecture_drawing_harness.py" = ["S101", "ARG001", "RUF001", "RUF003"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["bob"]

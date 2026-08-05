@@ -258,3 +258,101 @@ async def test_real_run_is_sanitised_and_bounded() -> None:
 
     # Cap (200) + the short truncation marker, nothing unbounded.
     assert len(out) <= 200 + 64
+
+
+# --- 🔴 BOB-091.1: the architecture reads against the REAL beadloom -------------
+# A fake runner proves the FAKE's contract (CLAUDE.md §0.3 п.4). These run the LIVE
+# ``beadloom graph`` / ``why`` in this repo, so the two facts a fake cannot know are
+# actually asserted: a ``--scope`` on a graph LEAF really does print an empty diagram
+# (the fallback fires), and the real 197-line ``why`` panel really does condense.
+
+
+@pytest.mark.asyncio
+async def test_overview_diagram_is_real_mermaid_of_this_repo() -> None:
+    if not _binary_ready("beadloom", "graph"):
+        pytest.skip("beadloom not on PATH or repo not indexed for it")
+    intro = _real_introspector()
+
+    diagram = await intro.architecture_diagram()
+
+    assert diagram.form == "overview"
+    assert diagram.mermaid.startswith("graph")
+    # Real nodes of THIS repo's graph, not a template.
+    assert "memory" in diagram.mermaid
+    assert "capabilities" in diagram.mermaid
+
+
+@pytest.mark.asyncio
+async def test_node_diagram_with_depth_is_real_and_bounded() -> None:
+    if not _binary_ready("beadloom", "graph", "memory", "--depth", "1"):
+        pytest.skip("beadloom graph --depth unavailable")
+    intro = _real_introspector()
+
+    diagram = await intro.architecture_diagram("memory", depth=1)
+
+    assert diagram.form == "node"
+    assert "memory" in diagram.mermaid
+    # A one-node neighbourhood is smaller than the whole map.
+    overview = await intro.architecture_diagram()
+    assert len(diagram.mermaid) < len(overview.mermaid)
+
+
+@pytest.mark.asyncio
+async def test_components_diagram_of_a_container_is_real_c4() -> None:
+    if not _binary_ready(
+        "beadloom", "graph", "--format", "c4", "--level", "component", "--scope",
+        "bob-domain",
+    ):
+        pytest.skip("beadloom c4 component view unavailable")
+    intro = _real_introspector()
+
+    diagram = await intro.architecture_diagram(internals_of="bob-domain")
+
+    assert diagram.form == "components"
+    assert "C4" in diagram.mermaid
+    assert "Component(" in diagram.mermaid
+
+
+@pytest.mark.asyncio
+async def test_components_of_a_leaf_really_falls_back_on_the_live_cli() -> None:
+    """🔴 The fact only the REAL CLI reveals: a leaf has no internals to draw.
+
+    ``graph --format c4 --level component --scope memory`` prints a lone
+    ``C4Container`` header — an empty picture. A fake runner would happily return a
+    populated diagram and this fallback would look dead while the owner got nothing.
+    """
+    if not _binary_ready("beadloom", "graph", "memory"):
+        pytest.skip("beadloom not on PATH or repo not indexed for it")
+    intro = _real_introspector()
+
+    diagram = await intro.architecture_diagram(internals_of="memory")
+
+    assert diagram.requested == "components"
+    assert diagram.form == "node", "a leaf scope must degrade to that node's links"
+    assert "memory" in diagram.mermaid
+
+
+@pytest.mark.asyncio
+async def test_impact_of_a_real_node_is_condensed_not_a_screenshot() -> None:
+    if not _binary_ready("beadloom", "why", "memory"):
+        pytest.skip("beadloom why unavailable")
+    intro = _real_introspector()
+
+    out = await intro.impact("memory")
+
+    assert out.startswith("memory (feature)")
+    assert "Зависит от:" in out
+    assert "Влияет на:" in out
+    # The live panel is ~197 lines / 14 KB; the answer is a handful of lines.
+    assert len(out.splitlines()) <= 5
+    for glyph in ("╭", "│", "├", "└"):
+        assert glyph not in out
+
+
+@pytest.mark.asyncio
+async def test_impact_of_an_unknown_ref_stays_empty_on_the_live_cli() -> None:
+    if not _binary_ready("beadloom", "graph"):
+        pytest.skip("beadloom not on PATH or repo not indexed for it")
+    intro = _real_introspector()
+
+    assert await intro.impact("nosuchnode") == ""

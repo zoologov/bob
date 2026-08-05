@@ -24,6 +24,16 @@ Realises :class:`bob.capabilities.ports.RepoIntrospector` (BOB-017 Phase A). Two
   a ``ctx``→``search`` fallback on empty); trailing tooling-noise lines (status legend
   / Tip / ``--limit`` hint) are stripped. Output is bounded by a char cap and run
   through the privacy sanitiser; each run has a hard timeout.
+* **Architecture graph reads (BOB-091.1)** — ``graph`` and ``why`` were allowlisted from
+  the start but DEAD (no port method reached them), so Bob could neither draw his
+  architecture nor answer "что сломается, если тронуть memory". :meth:`architecture_diagram`
+  runs one of the THREE fixed ``graph`` forms planned by the pure
+  :func:`~bob.capabilities.introspection.graph_form.plan_graph_form` — the bare overview,
+  ``<ref> [--depth <N>]``, or the C4-components view of one ``--scope`` — re-checked here
+  before exec, so ``--project`` (another repo), ``--json``, another format or a write
+  subcommand stay INEXPRESSIBLE; a form that drew nothing degrades to its fallback and
+  says so. :meth:`impact` runs ``why <ref>`` and condenses the Rich panel + ASCII tree
+  through :func:`~bob.capabilities.introspection.impact_digest.digest_impact`.
 * **Tracker reads (BOB-090.A)** — a tracker question is PLANNED by the pure
   :func:`~bob.capabilities.introspection.tracker_intent.plan_tracker_query` and only
   executed here. An id that ``bd show`` cannot resolve retries as a title SEARCH
@@ -58,9 +68,18 @@ from bob.capabilities.introspection.dev_query import (
     sanitize_search_term,
     validate_bead_id,
 )
+from bob.capabilities.introspection.graph_form import (
+    MAX_GRAPH_DEPTH,
+    diagram_carries_nodes,
+    is_graph_ref,
+    plan_graph_form,
+    validate_graph_ref,
+)
+from bob.capabilities.introspection.impact_digest import digest_impact
 from bob.capabilities.introspection.privacy_guard import ALLOWED_ROOTS
 from bob.capabilities.introspection.tracker_digest import digest_search_results
 from bob.capabilities.introspection.tracker_intent import plan_tracker_query
+from bob.capabilities.ports import ArchitectureDiagram
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -105,6 +124,32 @@ _BD_LIST_ARG_FORMS: frozenset[tuple[str, ...]] = frozenset(
 _BD_SEARCH_TAIL_FORM: tuple[str, ...] = ("--status", "all")
 # Exact argv length of the only permitted search shape: ``<term> --status all``.
 _BD_SEARCH_FORM_LEN = 3
+
+# --- beadloom graph / why fixed forms (BOB-091.1) -----------------------------
+# ``graph`` and ``why`` were allowlisted in BOB-017 but DEAD (no port method reached
+# them). Giving them a caller means giving the model argv — and ``beadloom graph``
+# accepts ``--project`` (another repo!), ``--json`` and other formats, while the CLI as
+# a whole has WRITE subcommands. So, exactly like ``_BD_LIST_ARG_FORMS``, only a small
+# set of FIXED SHAPES passes, each dynamic slot validated: the bare overview, one
+# ref (optionally with a bounded ``--depth``), and the C4-components view of one scope.
+# The shapes are planned by the pure
+# :func:`~bob.capabilities.introspection.graph_form.plan_graph_form` and RE-CHECKED here
+# before exec, so a caller that skipped the planner cannot widen them.
+_GRAPH_C4_FORM_PREFIX: tuple[str, ...] = (
+    "--format",
+    "c4",
+    "--level",
+    "component",
+    "--scope",
+)
+# Exact argv lengths of the permitted ``graph`` forms (after the subcommand): the bare
+# overview (0), one ref (1), ``<ref> --depth <N>`` (3), and the C4 form (6).
+_GRAPH_OVERVIEW_FORM_LEN = 0
+_GRAPH_NODE_FORM_LEN = 1
+_GRAPH_DEPTH_FORM_LEN = 3
+_GRAPH_C4_FORM_LEN = 6
+# ``why`` takes exactly ONE ref — no flag, no second token.
+_WHY_FORM_LEN = 1
 
 # --- git fixed-form allowlist (BOB-038) ---------------------------------------
 # git needs flags (``--oneline`` / ``--grep=``), which the generic flag-reject would
@@ -175,6 +220,37 @@ def _is_allowed_bd_search_form(args: tuple[str, ...]) -> bool:
     if args[1:] != _BD_SEARCH_TAIL_FORM:
         return False
     return sanitize_search_term(term) == term
+
+
+def _is_valid_graph_depth(depth: str) -> bool:
+    """Whether ``depth`` is a positive integer inside the planner's bounded window."""
+    return depth.isdigit() and 0 < int(depth) <= MAX_GRAPH_DEPTH
+
+
+def _is_allowed_graph_form(args: tuple[str, ...]) -> bool:
+    """Whether ``args`` is one of the three permitted ``beadloom graph`` shapes.
+
+    The overview (no args), one ref, ``<ref> --depth <N>`` with the count inside the
+    bounded window, or the C4-components form whose FIXED prefix is compared against the
+    stored tuple and whose scope slot must be a graph ref. Every other shape — another
+    flag, another format/level, a second ref, an out-of-range depth, a non-ref token — is
+    refused before exec.
+    """
+    if len(args) == _GRAPH_OVERVIEW_FORM_LEN:
+        return True
+    if len(args) == _GRAPH_NODE_FORM_LEN:
+        return is_graph_ref(args[0])
+    if len(args) == _GRAPH_DEPTH_FORM_LEN:
+        ref, flag, depth = args
+        return is_graph_ref(ref) and flag == "--depth" and _is_valid_graph_depth(depth)
+    if len(args) == _GRAPH_C4_FORM_LEN:
+        return args[:-1] == _GRAPH_C4_FORM_PREFIX and is_graph_ref(args[-1])
+    return False
+
+
+def _is_allowed_why_form(args: tuple[str, ...]) -> bool:
+    """Whether ``args`` is the ``beadloom why <ref>`` fixed form (one validated ref)."""
+    return len(args) == _WHY_FORM_LEN and is_graph_ref(args[0])
 
 
 def _strip_noise_tail(text: str) -> str:
@@ -349,6 +425,46 @@ class SubprocessRepoIntrospector:
     async def search_code(self, query: str) -> str:
         """Run ``beadloom search <query>`` (read-only FTS over nodes/docs)."""
         return await self._run("beadloom", "search", query)
+
+    async def architecture_diagram(
+        self,
+        ref: str | None = None,
+        *,
+        depth: int | None = None,
+        internals_of: str | None = None,
+    ) -> ArchitectureDiagram:
+        """Return the mermaid source of the architecture graph (BOB-091.1).
+
+        The DECISION — which of the three allowed forms answers the ask — belongs to the
+        pure :func:`plan_graph_form`; this method only executes it and applies the one
+        honest degradation: a form that drew NOTHING (the live ``C4Container``-only output
+        of a ``--scope`` on a graph leaf) is re-asked as its simpler fallback, and the
+        result reports which form was actually drawn so the caller never presents links
+        as internals. A non-ref value raises :class:`ValueError` before any exec.
+        """
+        form = plan_graph_form(ref, depth=depth, internals_of=internals_of)
+        source = await self._run("beadloom", "graph", *form.args)
+        fallback = form.fallback
+        if fallback is None or diagram_carries_nodes(source):
+            return ArchitectureDiagram(
+                mermaid=source, form=form.kind, requested=form.kind
+            )
+        simpler = await self._run("beadloom", "graph", *fallback.args)
+        return ArchitectureDiagram(
+            mermaid=simpler, form=fallback.kind, requested=form.kind
+        )
+
+    async def impact(self, ref: str) -> str:
+        """Return the CONDENSED ``beadloom why <ref>`` impact analysis (BOB-091.1).
+
+        ``ref`` goes through :func:`validate_graph_ref` first, so a flag / path /
+        metacharacter raises :class:`ValueError` and never reaches the subprocess. The
+        CLI's Rich panel + ASCII tree (197 lines for ``memory``) are condensed by the
+        pure :func:`digest_impact` into a chat-sized answer; an unknown ref (whose error
+        goes to stderr) yields an empty string rather than a guess.
+        """
+        raw = await self._run("beadloom", "why", validate_graph_ref(ref))
+        return digest_impact(raw)
 
     async def list_tasks(self, query: str) -> str:
         """Execute the read-only ``bd`` form the pure planner picked for ``query``.
@@ -629,17 +745,32 @@ class SubprocessRepoIntrospector:
     ) -> None:
         """Refuse any arg outside the read-only allowlist (no arbitrary args/flags).
 
-        Three controlled flag-bearing exceptions exist: the ``bd list --status <enum>``
+        Four controlled flag-bearing exceptions exist: the ``bd list --status <enum>``
         form (the literal ``--status`` flag paired with one stored-status enum value
         from a FIXED allowlist), the ``bd search <term> --status all`` form (fixed
-        tail, sanitiser-validated term), and the ``git log`` fixed forms (a bounded
+        tail, sanitiser-validated term), the ``git log`` fixed forms (a bounded
         ``--oneline -n <N> -- <path>`` or ``--grep=<bead-key> --oneline``, each
-        dynamic slot validated). Every other flag-looking arg — a status outside the
-        enum, an extra git flag, an out-of-form git shape — is refused before exec.
+        dynamic slot validated), and the ``beadloom graph`` forms (overview /
+        ``<ref> [--depth <N>]`` / the C4 ``--scope`` view; ``beadloom why`` takes
+        exactly one validated ref). Every other flag-looking arg — a status outside the
+        enum, an extra git flag, an out-of-form git shape, another beadloom flag such as
+        ``--project`` or ``--json`` — is refused before exec.
         """
         if binary == "git":
             self._validate_git_args(subcommand, args)
             return
+        if binary == "beadloom" and subcommand == "graph":
+            if _is_allowed_graph_form(args):
+                return
+            raise DisallowedCommandError(
+                f"beadloom graph arguments {args!r} are not an allowlisted read-only form"
+            )
+        if binary == "beadloom" and subcommand == "why":
+            if _is_allowed_why_form(args):
+                return
+            raise DisallowedCommandError(
+                f"beadloom why arguments {args!r} are not an allowlisted read-only form"
+            )
         if binary == "bd" and subcommand == "search":
             if _is_allowed_bd_search_form(args):
                 return

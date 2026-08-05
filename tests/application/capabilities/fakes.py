@@ -12,6 +12,13 @@ disk, so the capability tests are deterministic and never touch the real repo.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
+from bob.capabilities.ports import ArchitectureDiagram
+
+if TYPE_CHECKING:
+    from bob.capabilities.introspection.graph_form import GraphFormKind
+
 
 class FakeRepoIntrospector:
     """A scripted :class:`RepoIntrospector`: records calls, returns canned text."""
@@ -30,6 +37,11 @@ class FakeRepoIntrospector:
         comments: str = "",
         task_detail: str = "",
         tasks_by_status_text: str = "",
+        diagram: str = "",
+        diagram_form: GraphFormKind = "overview",
+        impact_text: str = "",
+        raise_on_diagram: bool = False,
+        raise_on_impact: bool = False,
         files_by_path: dict[str, str] | None = None,
         tasks_by_query: dict[str, str] | None = None,
         raise_on_read: bool = False,
@@ -46,6 +58,14 @@ class FakeRepoIntrospector:
         self._comments = comments
         self._task_detail = task_detail
         self._tasks_by_status_text = tasks_by_status_text
+        # BOB-091.1: the architecture-diagram + impact reads. ``diagram_form`` scripts
+        # which form the port says it DREW (the honest fallback report), and the
+        # ``raise_on_*`` flags model a refused (non-ref) slot without a subprocess.
+        self._diagram = diagram
+        self._diagram_form = diagram_form
+        self._impact_text = impact_text
+        self._raise_on_diagram = raise_on_diagram
+        self._raise_on_impact = raise_on_impact
         # Per-path / per-query scripting for the code_rationale tests: a path absent
         # from ``files_by_path`` returns "" (a missing doc → skipped), so the fake can
         # model "PRD present, RFC/BRIEF absent" without disk.
@@ -64,6 +84,8 @@ class FakeRepoIntrospector:
         self.task_comments_calls: list[str] = []
         self.show_task_calls: list[str] = []
         self.tasks_by_status_calls: list[str | None] = []
+        self.diagram_calls: list[tuple[str | None, int | None, str | None]] = []
+        self.impact_calls: list[str] = []
 
     async def architecture_context(self, ref: str) -> str:
         self.architecture_calls.append(ref)
@@ -116,3 +138,24 @@ class FakeRepoIntrospector:
     async def tasks_by_status(self, status: str | None) -> str:
         self.tasks_by_status_calls.append(status)
         return self._tasks_by_status_text
+
+    async def architecture_diagram(
+        self,
+        ref: str | None = None,
+        *,
+        depth: int | None = None,
+        internals_of: str | None = None,
+    ) -> ArchitectureDiagram:
+        self.diagram_calls.append((ref, depth, internals_of))
+        if self._raise_on_diagram:
+            raise ValueError("not a valid graph ref: simulated")
+        requested = "components" if internals_of else ("node" if ref else "overview")
+        return ArchitectureDiagram(
+            mermaid=self._diagram, form=self._diagram_form, requested=requested
+        )
+
+    async def impact(self, ref: str) -> str:
+        self.impact_calls.append(ref)
+        if self._raise_on_impact:
+            raise ValueError("not a valid graph ref: simulated")
+        return self._impact_text

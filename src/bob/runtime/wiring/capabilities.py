@@ -27,7 +27,9 @@ from bob.capabilities.introspection.privacy_guard import PrivacyGuard
 from bob.capabilities.usecases import (
     CapabilityRegistry,
     CollectingDiagramSink,
+    make_architecture_impact_capability,
     make_code_rationale_capability,
+    make_draw_architecture_capability,
     make_find_file_capability,
     make_inspect_architecture_capability,
     make_list_dir_capability,
@@ -57,6 +59,7 @@ from bob.runtime.config import (
     _str,
 )
 from bob.runtime.wiring.parameters import (
+    _build_architecture_tools_enabled,
     _build_dev_tools_enabled,
     _build_introspection_enabled,
 )
@@ -83,7 +86,11 @@ def _build_registry(
     ``list_work`` / ``code_rationale`` — the last linking code↔decisions per BOB-038,
     ``list_dir`` + ``find_file`` letting Bob navigate the WHOLE repo per BOB-067) are
     ALSO registered, over a :class:`SubprocessRepoIntrospector` guarded by the pure
-    :class:`PrivacyGuard` — so Bob can answer about his own world. When
+    :class:`PrivacyGuard` — so Bob can answer about his own world. Two SUB-flags gate
+    further reads over that SAME introspector, both default OFF:
+    ``introspection.dev_tools`` (BOB-081 — git history + tracker) and
+    ``introspection.architecture_tools`` (BOB-091 — ``draw_architecture`` /
+    ``architecture_impact``, the graph diagram source + impact digest). When
     ``diagrams.enabled`` (BOB-035, default on — safe + local) the ``render_diagram``
     skill is registered over a LOCAL :class:`SubprocessMmdcRenderer`, sharing the
     returned :class:`CollectingDiagramSink` with the use-case so a rendered PNG flows
@@ -122,6 +129,14 @@ def _build_registry(
             registry.register(make_list_tasks_capability(introspector))
             registry.register(make_show_task_capability(introspector))
             registry.register(make_task_comments_capability(introspector))
+        # BOB-091: the architecture READS (graph diagram + impact) ride the same
+        # introspector behind their own SUB-flag, default OFF — off, Bob never sees
+        # them and the registry is byte-identical. ``draw_architecture`` returns the
+        # mermaid SOURCE, so the picture reaches the chat only through the existing
+        # ``render_diagram`` — a silent PNG is not expressible.
+        if _build_architecture_tools_enabled(config):
+            registry.register(make_draw_architecture_capability(introspector))
+            registry.register(make_architecture_impact_capability(introspector))
     diagram_renderer: SubprocessMmdcRenderer | None = None
     if _flag(_section(config, "diagrams"), "enabled"):
         diagram_renderer = _build_diagram_renderer(config)

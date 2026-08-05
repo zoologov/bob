@@ -67,6 +67,8 @@ src/bob/capabilities/
     dev_query.py      #                        — чистая валидация dev-интроспекции: clamp_commit_count/validate_bead_id(инъекция-гард)/normalize_status/is_bead_id/sanitize_search_term (BOB-081, BOB-090.A, mutation-ядро)
     tracker_intent.py #                        — TrackerPlan/plan_tracker_query/find_bead_key: какой read по трекеру отвечает на вопрос (ready/list/show/search), BOB-090.A
     tracker_digest.py #                        — digest_search_results/MAX_DIGEST_ITEMS: длинная выдача bd search → сводка + важное + «Скрыто: N», BOB-090.A
+    graph_form.py     #                        — GraphForm/plan_graph_form/validate_graph_ref/clamp_graph_depth/diagram_carries_nodes: какая из ТРЁХ разрешённых форм `beadloom graph` отвечает на просьбу нарисовать + валидация слотов argv (BOB-091.1, mutation-ядро)
+    impact_digest.py  #                        — digest_impact/MAX_IMPACT_ITEMS/MAX_SUBJECT_CHARS: `beadloom why` (197 строк Rich-рамок и ASCII-дерева) → узел + «Зависит от» + «Влияет на» + честный счёт транзитивных (BOB-091.1, mutation-ядро)
   usecases/           # layer=application
     registry.py       #                        — CapabilityRegistry + SafeCapabilityDispatcher
     tool_loop.py      #                        — ToolLoop: model↔tools раунд-трип до финала
@@ -83,6 +85,8 @@ src/bob/capabilities/
     list_tasks.py     #                        — bd list по статусу (BOB-081, read-only)
     show_task.py      #                        — bd show <id> детали (BOB-081, read-only)
     task_comments.py  #                        — bd comments <id> (BOB-081, read-only)
+    draw_architecture.py —                     — mermaid-ИСТОЧНИК схемы архитектуры (beadloom graph: обзор / узел с --depth / C4-компоненты в --scope); Боб объясняет словами И отдаёт тот же источник в render_diagram (BOB-091.1, за флагом architecture_tools)
+    architecture_impact.py —                   — «что сломается, если тронуть X» (beadloom why, сжато) (BOB-091.1, за флагом architecture_tools)
     web_search.py     #                        — заземлённый веб-поиск (BOB-053)
     read_url.py       #                        — чтение одной ссылки за SSRF-щитом (BOB-054)
     render_diagram.py #                        — mermaid→PNG в чат + CollectingDiagramSink (BOB-035)
@@ -215,6 +219,27 @@ allowlist = автономно ничего не запускается (кон�
   секретов наследуется от `_run` (INV-3); авторизация — существующий `is_guest`-гейт (гость
   инструментов не получает). За под-флагом `introspection.dev_tools` (default OFF → навыки не
   регистрируются). Пусто/битый id → честный ответ, не выдумка/не краш.
+- **Схема архитектуры и влияние (BOB-091.1, read-only).** `graph` и `why` лежали в
+  allowlist адаптера с самого начала, но были МЁРТВЫМИ записями — до них не доходил ни один
+  метод порта, поэтому Боб не мог ни нарисовать схему, ни ответить «что сломается, если
+  тронуть memory». Два навыка над тем же `RepoIntrospector`: `draw_architecture`
+  (`architecture_diagram` → `ArchitectureDiagram(mermaid, form, requested)`) и
+  `architecture_impact` (`impact` → сжатый `beadloom why`). 🔴 **Решение owner'а:**
+  `draw_architecture` отдаёт модели **mermaid-ИСТОЧНИК**, а не картинку — тогда Боб
+  объясняет схему словами И передаёт тот же источник в уже работающий `render_diagram`
+  (mermaid→PNG→фото), а не выдаёт PNG молча; связка прямо описана в описании инструмента,
+  потому что соединяет два вызова именно модель. Формы argv — ФИКСИРОВАННЫЕ (как
+  `_BD_LIST_ARG_FORMS`): обзор (без аргументов), `<ref> [--depth <N>]` (N клампится в
+  [1,5]), и C4-внутренности одного контейнера
+  (`--format c4 --level component --scope <ref>`); membership-check выполняется ДО запуска,
+  поэтому `--project` (ЧУЖОЙ репозиторий!), `--json`, другой формат и любая write-подкоманда
+  (`reindex`/`docs`/`link`/`setup-*`/`active-sync`/`sync-update`) невыразимы никаким
+  аргументом. `beadloom why` принимает РОВНО один валидированный ref. Честные деградации:
+  `--scope` на ЛИСТЕ графа печатает один заголовок `C4Container` (живой факт), поэтому форма
+  сходит к схеме связей узла и `form != requested` — модель получает поправку «внутренностей
+  нет, это связи», а не подмену вида; пустой граф → честное «не нашёл», а не пустая
+  картинка. За под-флагом `introspection.architecture_tools` (default OFF → навыки не
+  регистрируются).
 - **Трекер отвечает вместо «пусто» (BOB-090.A).** На «расскажи про BOB-087» и «какие
   задачи открыты» Боб честно отвечал «такой задачи не существует» / «пусто»: `bd show`
   понимает только точный id, а ключ эпика живёт в ЗАГОЛОВКАХ задач. Теперь `list_work`
@@ -489,6 +514,9 @@ ports-шим `bob.domain.ports` удалён (BOB-062.8), все импортё�
   `inspect_architecture.make_inspect_architecture_capability`,
   `list_work.make_list_work_capability`,
   `code_rationale.make_code_rationale_capability`,
+  `draw_architecture.make_draw_architecture_capability`,
+  `architecture_impact.make_architecture_impact_capability` (BOB-091.1, только за флагом
+  `introspection.architecture_tools`),
   `web_search.make_web_search_capability`, `read_url.make_read_url_capability`,
   `render_diagram.make_render_diagram_capability` (+ `CollectingDiagramSink`),
   `send_to_chat.make_send_to_chat_capability` (BOB-090.B1, регистрируется только за
@@ -525,19 +553,24 @@ ports-шим `bob.domain.ports` удалён (BOB-062.8), все импортё�
 - Самоинтроспекция и навигация: `tests/application/capabilities/`
   (`test_inspect_architecture.py`, `test_read_code.py`, `test_list_dir.py`,
   `test_find_file.py`, `test_list_work.py`, `test_code_rationale.py`,
-  `test_code_rationale_acceptance.py`).
+  `test_code_rationale_acceptance.py`, `test_draw_architecture.py`,
+  `test_architecture_impact.py`); BDD —
+  `tests/acceptance/features/architecture_drawing.feature` (BOB-091.1: схема источником +
+  картинка через render_diagram, влияние сжато, гейт флага).
 - Web: `tests/application/capabilities/test_web_search.py`, `test_read_url.py`;
   `tests/test_app_web_search.py`, `test_app_read_url.py`,
   `tests/test_integration_web_search_streaming.py`, `tests/test_read_url_config.py`.
 - Диаграммы: `tests/application/capabilities/test_render_diagram.py`,
   `tests/test_app_diagrams.py`.
 - Чистый домен: `tests/domain/diagrams/test_mermaid_blocks.py`,
-  `tests/domain/introspection/test_code_history.py`, `test_privacy_guard.py`.
+  `tests/domain/introspection/test_code_history.py`, `test_privacy_guard.py`,
+  `test_graph_form.py`, `test_impact_digest.py` (оба — mutation-ядра BOB-091.1).
 - Адаптеры: `tests/infrastructure/web/` (`test_http_url_reader.py`,
   `test_url_reader_factory.py`), `tests/infrastructure/diagrams/`
   (`test_mmdc_renderer.py`, `test_mmdc_exec_runner.py`),
   `tests/infrastructure/introspection/` (`test_subprocess_introspector.py`,
-  `test_subprocess_introspector_integration.py`, `test_git_history.py`),
+  `test_subprocess_introspector_integration.py` — в т.ч. РЕАЛЬНЫЙ `beadloom graph`/`why`
+  этого репозитория, `test_git_history.py`, `test_architecture_reads.py`),
   `tests/infrastructure/llm/` (`test_web_search_qwen.py`, `test_web_search_factory.py`).
 - Отправка в другой чат и след материала (BOB-090.B): `tests/capabilities/test_send_to_chat.py`
   (последовательность гейтов: нет хода → пусто → адрес → согласие → заземление → отправка),

@@ -323,9 +323,14 @@ DEFAULT_CONFIG: Config = {
     # is a SUB-flag, default FALSE: the read-only dev-introspection tools (``recent_commits``
     # git history + ``list_tasks`` / ``show_task`` / ``task_comments`` tracker reads) are
     # registered ONLY when it is on — off → Bob never sees them (zero behaviour change).
+    # ``architecture_tools`` (BOB-091) is the second SUB-flag, also default FALSE: the
+    # read-only ARCHITECTURE tools (``draw_architecture`` — the mermaid source of the
+    # graph, paired with ``render_diagram`` for the picture — and ``architecture_impact``,
+    # «что сломается, если тронуть X») register only when it is on.
     "introspection": {
         "enabled": True,
         "dev_tools": False,
+        "architecture_tools": False,
         "max_output_chars": 20000,
         "read_max_lines": 200,
         "beadloom_bin": "beadloom",

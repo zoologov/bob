@@ -168,6 +168,28 @@ class DiagramResult:
     source: str = ""
 
 
+@dataclass(frozen=True)
+class ArchitectureDiagram:
+    """A diagram of Bob's own architecture: the mermaid SOURCE plus which form it is.
+
+    What the read-only ``beadloom graph`` read returns (BOB-091.1). ``mermaid`` is the
+    diagram SOURCE, deliberately not a picture: Bob explains what the diagram shows in
+    his own words AND hands the same source to ``render_diagram`` for the image, instead
+    of silently dropping a PNG on the owner.
+
+    ``requested`` is the form that was ASKED for and ``form`` the one actually drawn —
+    they differ when the detailed view had nothing to show (a ``--scope`` on a graph LEAF
+    prints an empty diagram, so the node's links are drawn instead). Carrying both is
+    what keeps the answer honest: Bob can say "внутренностей там нет, вот связи" rather
+    than passing one view off as the other. Values are the pure planner's form kinds
+    (``overview`` / ``node`` / ``components``).
+    """
+
+    mermaid: str
+    form: str
+    requested: str
+
+
 @runtime_checkable
 class Capability(Protocol):
     """A single thing GUPPI can do for Bob — the stable capability seam.
@@ -316,6 +338,41 @@ class RepoIntrospector(Protocol):
 
     async def search_code(self, query: str) -> str:
         """Return a compact result of searching the repo/graph for ``query``."""
+        ...
+
+    async def architecture_diagram(
+        self,
+        ref: str | None = None,
+        *,
+        depth: int | None = None,
+        internals_of: str | None = None,
+    ) -> ArchitectureDiagram:
+        """Return the mermaid SOURCE of Bob's architecture graph (read-only, BOB-091).
+
+        Three shapes, most specific first: ``internals_of`` — the C4 components inside
+        one container; ``ref`` — that node's neighbourhood, optionally limited by
+        ``depth``; neither — the whole-system overview. The implementation runs
+        ``beadloom graph`` as a FIXED set of argv forms with each slot validated (a
+        ref-shaped token, a clamped depth), so no flag — another project, another
+        format, a write subcommand — is expressible; a non-ref value is refused
+        (:class:`ValueError`) and never executed. When the detailed form draws NOTHING
+        (a ``--scope`` on a graph leaf) the implementation falls back to the simpler
+        form and reports it in :attr:`ArchitectureDiagram.form`, so the caller can stay
+        honest about which view it got. The source is returned, not an image: rendering
+        is the diagram port's job.
+        """
+        ...
+
+    async def impact(self, ref: str) -> str:
+        """Return what ``ref`` depends on and what depends on it (``beadloom why``).
+
+        The answer to "что сломается, если тронуть X". ``ref`` is validated to a graph
+        ref-id before exec (a flag / path / metacharacter is refused with
+        :class:`ValueError`, never executed), and the CLI's Rich panel + ASCII tree are
+        CONDENSED to the subject, its direct dependencies, its direct dependents and an
+        honest count of what lies deeper — a chat answer, not a terminal screenshot. An
+        unknown ref yields an empty string (the caller answers honestly), never a guess.
+        """
         ...
 
     async def read_file(self, path: str, *, max_lines: int) -> str:
