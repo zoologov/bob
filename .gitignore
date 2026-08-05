@@ -49,6 +49,9 @@ data/
 # Secrets / env
 .env
 .env.*
+
+# Приватные ключи GitHub App Боба (BOB-089) — никогда не в git
+.secrets/
 *.pem
 *.key
 

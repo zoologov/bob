@@ -9,9 +9,10 @@
 """``list_work`` — the self-introspection capability over Bob's tracker.
 
 The thin skill that lets Bob look at his OWN backlog: it delegates a ``query`` to
-:meth:`RepoIntrospector.list_tasks` (``bd show <id>`` for a specific task, else
-``bd ready`` for the ready queue, behind the .1 port) and renders it compactly. It
-is read-only (``permission="safe"``) and conversation-only — never on the
+:meth:`RepoIntrospector.list_tasks` (which plans it into ``bd show`` for an id,
+``bd list [--status …]`` for a listing question, ``bd search`` for an epic key or a
+word, or ``bd ready`` for the queue — behind the .1 port) and renders it compactly.
+It is read-only (``permission="safe"``) and conversation-only — never on the
 autonomous safe-allowlist. This application policy only validates input,
 delegates, and gives an honest "ничего не нашёл" (US-5) on empty output.
 
@@ -36,9 +37,10 @@ _INPUT_SCHEMA: Mapping[str, object] = {
 }
 
 _DESCRIPTION = (
-    "List Bob's own work from his tracker: pass a task id to show that task, or an "
-    "empty query for the ready queue. Use this to answer what Bob is working on or "
-    "what is up next."
+    "Задачи Боба из трекера по СВОБОДНОМУ запросу. Передай id задачи (bob-alr.1) — "
+    "вернутся её детали; ключ эпика (BOB-087) или слово из названия — найдётся по "
+    "заголовку, включая закрытые; «какие открыты» / «что в работе» / «закрытые» — "
+    "нужный список; пустой запрос — очередь готового. НЕ выдумывай."  # noqa: RUF001
 )
 
 # Honest empty-result message (US-5): Bob never invents a task that is not there.

@@ -10,8 +10,10 @@
 
 The thin skill that lets Bob look at the details of ONE of his OWN tracker tasks: it
 delegates the required ``id`` to :meth:`RepoIntrospector.show_task` (``bd show
-<id>``, the id validated to a strict bead-key + sanitised behind the .1 port) and
-gives an honest message on empty output. An id-shape :class:`ValueError` from the
+<id>``, the id validated to a strict bead-key + sanitised behind the .1 port,
+retried as a title search when the key is an epic key that ``bd`` does not know as an
+identifier — BOB-090.A) and gives an honest message on empty output. An id-shape
+:class:`ValueError` from the
 port (a flag / injection-shaped value the validator refuses) is turned into a short
 honest message rather than crashing the turn — the model simply learns the id was
 invalid.
@@ -39,7 +41,8 @@ _INPUT_SCHEMA: Mapping[str, object] = {
 
 _DESCRIPTION = (
     "Верни РЕАЛЬНЫЕ детали одной задачи из трекера (beads) по её id "
-    "(например, BOB-076 или bob-0gj). НЕ выдумывай."  # noqa: RUF001
+    "(например, BOB-076 или bob-0gj). Ключ эпика (BOB-087) тоже подойдёт: если такого "
+    "id нет, задача найдётся по заголовку, включая закрытые. НЕ выдумывай."  # noqa: RUF001
 )
 
 # Honest empty-result message (INV-5): Bob never invents a task that is not there.

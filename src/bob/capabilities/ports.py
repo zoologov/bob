@@ -326,11 +326,13 @@ class RepoIntrospector(Protocol):
         ...
 
     async def list_tasks(self, query: str) -> str:
-        """Return tracker state for ``query`` (``bd`` ready/show/list, read-only).
+        """Return tracker state for ``query`` (``bd`` ready/show/list/search, read-only).
 
-        Routes a task id to ``bd show``, a closed/recent/in-progress/all listing
-        request to the matching ``bd list``, and an empty/"ready" query to the ready
-        queue. Tooling-noise tail lines are stripped before return.
+        Routes a task id to ``bd show``, a listing request (open / in-progress /
+        closed / all) to the matching ``bd list``, an epic key or a word to a title
+        ``bd search`` that INCLUDES closed tasks (an epic key lives in titles, not in
+        ids), and an empty/"ready" query to the ready queue. A long search result
+        comes back digested, and tooling-noise tail lines are stripped.
         """
         ...
 
@@ -370,7 +372,9 @@ class RepoIntrospector(Protocol):
         """Return the details of ``bead_id`` (``bd show <id>``, read-only).
 
         The id is validated to a strict bead-key shape before exec, so a
-        flag/injection value is refused (never executed).
+        flag/injection value is refused (never executed). A key the tracker does not
+        know as an IDENTIFIER (an epic key such as ``BOB-087`` lives only in titles)
+        is retried as a read-only title search instead of answering "no such task".
         """
         ...
 

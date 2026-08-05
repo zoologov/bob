@@ -231,17 +231,173 @@ async def test_list_tasks_all_keyword_runs_bd_list_unfiltered(tmp_path: Path) ->
 
 
 @pytest.mark.asyncio
-async def test_list_tasks_free_text_no_id_falls_back_to_unfiltered_list(
+async def test_list_tasks_open_keyword_runs_bd_list_open(tmp_path: Path) -> None:
+    # 🔴 BOB-090.A live symptom: «какие открыты?» -> «Пусто». The question never
+    # reached a listing at all; now it is the ``open`` listing.
+    for query in ("какие открыты?", "открытые задачи", "what is open"):
+        runner = _FakeRunner("open-beads")
+        intro = _make(tmp_path, runner)
+
+        await intro.list_tasks(query)
+
+        assert runner.calls == [["bd", "list", "--status", "open"]]
+
+
+@pytest.mark.asyncio
+async def test_list_tasks_busy_question_runs_bd_list_in_progress(
     tmp_path: Path,
 ) -> None:
-    # A free-text tracker query with no id and no listing keyword falls back to the
-    # unfiltered ``bd list`` rather than a doomed ``bd show`` on prose (line 236).
-    runner = _FakeRunner("all-beads")
+    # "чем ты занят" is a question about the in-progress list — it used to fall
+    # through to the unfiltered dump.
+    runner = _FakeRunner("wip-beads")
     intro = _make(tmp_path, runner)
 
     await intro.list_tasks("покажи чем ты занят сегодня")
 
-    assert runner.calls == [["bd", "list"]]
+    assert runner.calls == [["bd", "list", "--status", "in_progress"]]
+
+
+@pytest.mark.asyncio
+async def test_list_tasks_epic_key_in_a_phrase_searches_including_closed(
+    tmp_path: Path,
+) -> None:
+    # 🔴 The live symptom: «расскажи про нашу задачу BOB-087» -> «не существует».
+    # In bd the identifier is bob-abk; BOB-087 lives only in the TITLE, and the epic
+    # is CLOSED — which bd search excludes by default. Hence key + ``--status all``.
+    runner = _FakeRunner("bob-abk [P1] [epic] closed - BOB-087 эпик")
+    intro = _make(tmp_path, runner)
+
+    await intro.list_tasks("расскажи про нашу задачу BOB-087")
+
+    assert runner.calls == [["bd", "search", "BOB-087", "--status", "all"]]
+
+
+@pytest.mark.asyncio
+async def test_list_tasks_prose_without_key_searches_the_sanitised_text(
+    tmp_path: Path,
+) -> None:
+    runner = _FakeRunner("bob-1 [P1] [task] open - рефакторинг памяти")
+    intro = _make(tmp_path, runner)
+
+    await intro.list_tasks("рефакторинг памяти")
+
+    assert runner.calls == [["bd", "search", "рефакторинг памяти", "--status", "all"]]
+
+
+@pytest.mark.asyncio
+async def test_list_tasks_unknown_id_falls_back_from_show_to_search(
+    tmp_path: Path,
+) -> None:
+    # An id-shaped query bd cannot resolve (the key lives in a title) still answers.
+    runner = _SeqRunner({"show": "", "search": "found-by-title"})
+    intro = _make(tmp_path, runner)
+
+    out = await intro.list_tasks("BOB-087")
+
+    assert out == "found-by-title"
+    assert runner.calls == [
+        ["bd", "show", "BOB-087"],
+        ["bd", "search", "BOB-087", "--status", "all"],
+    ]
+
+
+@pytest.mark.asyncio
+async def test_list_tasks_empty_search_falls_back_to_unfiltered_list(
+    tmp_path: Path,
+) -> None:
+    # Prose that matches no title degrades to the plain list, never to silence.
+    runner = _SeqRunner({"search": "", "list": "all-beads"})
+    intro = _make(tmp_path, runner)
+
+    out = await intro.list_tasks("совсем неизвестная тема")
+
+    assert out == "all-beads"
+    assert runner.calls == [
+        ["bd", "search", "совсем неизвестная тема", "--status", "all"],
+        ["bd", "list"],
+    ]
+
+
+@pytest.mark.asyncio
+async def test_list_tasks_long_search_result_is_digested(tmp_path: Path) -> None:
+    # 39 raw lines would be the wall of text BOB-086 fought; the adapter returns the
+    # digest (summary + epic + honest tail) instead.
+    lines = [f"bob-abk.{i} [P1] [task] closed - BOB-087.{i} часть" for i in range(38)]
+    lines.append("bob-abk [P1] [epic] closed - BOB-087 эпик")
+    runner = _FakeRunner("\n".join(["Found 39 issues matching 'BOB-087':", *lines]))
+    intro = _make(tmp_path, runner)
+
+    out = await intro.list_tasks("BOB-087 расскажи")
+
+    assert "Найдено: 39" in out
+    assert "BOB-087 эпик" in out
+    assert len(out.splitlines()) < 10
+
+
+@pytest.mark.asyncio
+async def test_show_task_falls_back_to_search_when_bd_show_is_empty(
+    tmp_path: Path,
+) -> None:
+    # 🔴 The exact live wording: «GUPPI упрямо твердит, что BOB-087 не существует» —
+    # ``bd show BOB-087`` prints nothing, because the key is a TITLE, not an id.
+    runner = _SeqRunner({"show": "", "search": "bob-abk [P1] [epic] closed - BOB-087"})
+    intro = _make(tmp_path, runner)
+
+    out = await intro.show_task("BOB-087")
+
+    assert "bob-abk" in out
+    assert runner.calls == [
+        ["bd", "show", "BOB-087"],
+        ["bd", "search", "BOB-087", "--status", "all"],
+    ]
+
+
+@pytest.mark.asyncio
+async def test_show_task_does_not_search_when_bd_show_answered(
+    tmp_path: Path,
+) -> None:
+    runner = _SeqRunner({"show": "bead-detail"})
+    intro = _make(tmp_path, runner)
+
+    out = await intro.show_task("bob-alr.1")
+
+    assert out == "bead-detail"
+    assert runner.calls == [["bd", "show", "bob-alr.1"]]
+
+
+@pytest.mark.asyncio
+async def test_bd_search_off_form_arguments_are_refused(tmp_path: Path) -> None:
+    # ``bd search`` is allowlisted ONLY as ``<term> --status all`` — no other flag,
+    # no other shape, no raw passthrough (the BOB-081 read-only invariant).
+    runner = _FakeRunner()
+    intro = _make(tmp_path, runner)
+
+    off_forms: list[tuple[str, ...]] = [
+        ("память", "--status", "open"),
+        ("память", "--limit", "0"),
+        ("память",),
+        ("память", "--status", "all", "--desc-contains", "секрет"),
+        ("--status", "all"),
+    ]
+    for args in off_forms:
+        with pytest.raises(DisallowedCommandError):
+            await intro._run("bd", "search", *args)
+
+    assert runner.calls == []
+
+
+@pytest.mark.asyncio
+async def test_bd_search_flag_shaped_term_is_refused(tmp_path: Path) -> None:
+    # 🔴 BOB-087.D2: a term that starts with a dash would be read as a FLAG. Even if
+    # a caller skipped the sanitiser, the argv guard refuses it before exec.
+    runner = _FakeRunner()
+    intro = _make(tmp_path, runner)
+
+    for term in ("--desc-contains", "-n", "", "  ", "a\x00b"):
+        with pytest.raises(DisallowedCommandError):
+            await intro._run("bd", "search", term, "--status", "all")
+
+    assert runner.calls == []
 
 
 @pytest.mark.asyncio

@@ -21,6 +21,11 @@ read-only invariant (INV-1) impossible to talk around:
 * :func:`normalize_status` maps a free-text status (English enum or a Russian
   synonym) to the tracker allowlist, returning ``None`` for anything unknown
   (meaning "no status filter") — a status outside the enum never reaches the CLI.
+* :func:`sanitize_search_term` shapes the ONE genuinely free-text value that reaches
+  argv (the ``bd search`` term): flag-shaped tokens are dropped, control characters
+  become separators, the length is bounded, and an unusable term yields ``None`` (no
+  search is run). 🔴 The BOB-087.D2 lesson: a value starting with a dash is read by
+  the option parser as a FLAG, so free text can never be forwarded verbatim.
 
 Pure functions: no subprocess, no disk, no LLM — so they cannot be bypassed by
 anything the model says. This is the mutation-tested core; the subprocess reads
@@ -57,6 +62,15 @@ _MIN_COMMITS = 1
 _MAX_COMMITS = 50
 _DEFAULT_COMMITS = 10
 
+# The leading character that turns an argv value into an OPTION for the parser. A
+# token starting with it is never forwarded (BOB-087.D2).
+_FLAG_PREFIX = "-"
+
+# Upper bound on a free-text search term. A tracker title is short, so a longer query
+# carries no extra signal — it only widens the argv surface. Public: the adapter's
+# tests and the caller assert the bound.
+MAX_SEARCH_TERM_CHARS = 80
+
 
 def clamp_commit_count(n: int | None) -> int:
     """Return a bounded ``git log`` commit count in ``[1, 50]``.
@@ -79,9 +93,19 @@ def validate_bead_id(raw: str) -> str:
     :class:`ValueError` — this is the injection guard for ids passed to a subprocess.
     """
     token = raw.strip()
-    if not _BEAD_ID_RE.match(token):
+    if not is_bead_id(token):
         raise ValueError(f"not a valid bead id: {raw!r}")
     return token
+
+
+def is_bead_id(raw: str) -> bool:
+    """Whether ``raw`` (trimmed) is a strict bead-key — the non-raising predicate.
+
+    The same shape :func:`validate_bead_id` enforces, exposed as a question so a
+    caller can ROUTE on it (is this question a bare id, or free text?) without using
+    an exception for control flow.
+    """
+    return bool(_BEAD_ID_RE.match(raw.strip()))
 
 
 def normalize_status(raw: str | None) -> str | None:
@@ -98,3 +122,29 @@ def normalize_status(raw: str | None) -> str | None:
     if token in _TRACKER_STATUSES:
         return token
     return _STATUS_SYNONYMS.get(token)
+
+
+def sanitize_search_term(raw: str) -> str | None:
+    """Return ``raw`` reduced to a value safe to pass as a ``bd search`` argument.
+
+    Three hazards are removed, in this order:
+
+    * **control characters** (NUL, newline, tab) become separators — a NUL would
+      truncate the argv value, a newline would forge a line — and neighbouring words
+      therefore stay separate words rather than being glued together;
+    * **flag-shaped tokens** (anything starting with ``-``) are DROPPED, because the
+      option parser on the other side would read them as flags, not as a query
+      (🔴 the BOB-087.D2 lesson);
+    * **length** is capped at :data:`MAX_SEARCH_TERM_CHARS`.
+
+    Returns ``None`` when nothing usable survives (empty input, or a query made only
+    of flags) — meaning "do not run a search at all", never a guessed term. The result
+    is idempotent: sanitising it again returns it unchanged, which is what lets the
+    adapter re-validate an argv value by re-running this function.
+    """
+    separated = "".join(char if char.isprintable() else " " for char in raw)
+    words = [
+        word for word in separated.split() if not word.startswith(_FLAG_PREFIX)
+    ]
+    term = " ".join(words)[:MAX_SEARCH_TERM_CHARS].strip()
+    return term or None

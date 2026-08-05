@@ -11,18 +11,27 @@
 Realises :class:`bob.capabilities.ports.RepoIntrospector` (BOB-017 Phase A). Two seams:
 
 * **CLI introspection** — ``beadloom`` (``ctx`` / ``graph`` / ``why`` / ``search``)
-  and ``bd`` (``ready`` / ``show`` / ``list``) run via
+  and ``bd`` (``ready`` / ``show`` / ``list`` / ``comments`` / ``search``) run via
   ``asyncio.create_subprocess_exec`` (NEVER a shell, so no metacharacter injection)
   against a FIXED allowlist of read-only subcommands. Anything off the allowlist — a
   write subcommand, an unknown binary, a flag-looking argument that could smuggle
   behaviour — is refused with :class:`DisallowedCommandError` and never executed. The
-  sole flag-bearing exception is the controlled ``bd list --status <enum>`` form
-  (``--status`` paired with one stored-status enum value from a fixed set); a status
-  outside the enum, or any other flag, is still refused. Free-text questions ground
-  via ``beadloom search`` (``ctx`` needs an exact ref, with a ``ctx``→``search``
-  fallback on empty); trailing tooling-noise lines (status legend / Tip / ``--limit``
-  hint) are stripped. Output is bounded by a char cap and run through the privacy
-  sanitiser; each run has a hard timeout.
+  flag-bearing exceptions are controlled FIXED FORMS, never raw passthrough: ``bd list
+  --status <enum>`` (one stored-status enum value from a fixed set) and ``bd search
+  <term> --status all`` (the term must be exactly what the pure sanitiser produces);
+  a status outside the enum, another flag, or a flag-shaped term is still refused.
+  Free-text questions ground via ``beadloom search`` (``ctx`` needs an exact ref, with
+  a ``ctx``→``search`` fallback on empty); trailing tooling-noise lines (status legend
+  / Tip / ``--limit`` hint) are stripped. Output is bounded by a char cap and run
+  through the privacy sanitiser; each run has a hard timeout.
+* **Tracker reads (BOB-090.A)** — a tracker question is PLANNED by the pure
+  :func:`~bob.capabilities.introspection.tracker_intent.plan_tracker_query` and only
+  executed here. An id that ``bd show`` cannot resolve retries as a title SEARCH
+  (in ``bd`` the identifier is ``bob-abk`` while the epic key ``BOB-087`` lives only
+  in the TITLE — and, being closed, is excluded from ``bd search`` unless
+  ``--status all`` is passed); a long search result is condensed by
+  :func:`~bob.capabilities.introspection.tracker_digest.digest_search_results` instead
+  of dumping forty lines into a chat.
 * **File reads** — :meth:`read_file` consults the pure
   :class:`~bob.capabilities.introspection.privacy_guard.PrivacyGuard` BEFORE opening any
   file: a denied path (SOUL / ``bob.db`` / ``.env`` / ``config``) raises
@@ -46,9 +55,12 @@ from typing import TYPE_CHECKING, Protocol
 from bob.capabilities.introspection.dev_query import (
     clamp_commit_count,
     normalize_status,
+    sanitize_search_term,
     validate_bead_id,
 )
 from bob.capabilities.introspection.privacy_guard import ALLOWED_ROOTS
+from bob.capabilities.introspection.tracker_digest import digest_search_results
+from bob.capabilities.introspection.tracker_intent import plan_tracker_query
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -64,7 +76,9 @@ _FIND_FILE_MAX_RESULTS = 200
 
 # Fixed allowlist of read-only subcommands, keyed by binary. NOTHING else runs.
 _BEADLOOM_SUBCOMMANDS: frozenset[str] = frozenset({"ctx", "graph", "why", "search"})
-_BD_SUBCOMMANDS: frozenset[str] = frozenset({"ready", "show", "list", "comments"})
+_BD_SUBCOMMANDS: frozenset[str] = frozenset(
+    {"ready", "show", "list", "comments", "search"}
+)
 # git is allowed ONLY as ``git log`` in the fixed forms validated below — never
 # ``show`` / ``diff`` / ``blame`` / ``cat-file`` / a write subcommand.
 _GIT_SUBCOMMANDS: frozenset[str] = frozenset({"log"})
@@ -82,6 +96,15 @@ _BD_LIST_STATUSES: frozenset[str] = frozenset(
 _BD_LIST_ARG_FORMS: frozenset[tuple[str, ...]] = frozenset(
     ("--status", status) for status in _BD_LIST_STATUSES
 )
+
+# --- bd search fixed form (BOB-090.A) -----------------------------------------
+# ``bd search`` excludes CLOSED issues by default, so a question about a finished epic
+# ("расскажи про BOB-087") finds NOTHING without this tail — the exact reason Bob told
+# the owner the epic did not exist. It is modelled the same way as ``bd list``: a
+# FIXED tail, not a flag the caller may choose, so no other search flag is expressible.
+_BD_SEARCH_TAIL_FORM: tuple[str, ...] = ("--status", "all")
+# Exact argv length of the only permitted search shape: ``<term> --status all``.
+_BD_SEARCH_FORM_LEN = 3
 
 # --- git fixed-form allowlist (BOB-038) ---------------------------------------
 # git needs flags (``--oneline`` / ``--grep=``), which the generic flag-reject would
@@ -137,44 +160,21 @@ def _is_ref_id(query: str) -> bool:
     return bool(_REF_ID_RE.match(token))
 
 
-# Intent keywords (RU + EN) mapping a free-text tracker query to a ``bd list`` form.
-# Order matters: the FIRST matching status wins, with "all" as the unfiltered list.
-_READY_KEYWORDS: tuple[str, ...] = ("ready", "готов")
-_CLOSED_KEYWORDS: tuple[str, ...] = (
-    "закрыт", "недавн", "истори", "recent", "closed", "history",
-)
-_IN_PROGRESS_RE = re.compile(r"в работе|in[\s-]?progress")
-_ALL_KEYWORDS: tuple[str, ...] = ("все", "весь", "all", "list", "список")
+def _is_allowed_bd_search_form(args: tuple[str, ...]) -> bool:
+    """Whether ``args`` is the ``<term> --status all`` fixed form for ``bd search``.
 
-
-def _wants_ready(token: str) -> bool:
-    """Whether a free-text tracker query asks for the ready queue."""
-    low = token.lower()
-    return any(kw in low for kw in _READY_KEYWORDS)
-
-
-def _list_status_for(token: str) -> str | None:
-    """Map a listing query to a ``bd list`` status enum (``None`` for an "all" listing).
-
-    Only call when :func:`_is_listing_query` is true. Returns ``closed`` /
-    ``in_progress`` for a filtered listing, ``None`` for an explicit unfiltered list.
+    The tail is compared against the fixed tuple (no other flag is expressible), and
+    the term slot must be EXACTLY what :func:`sanitize_search_term` produces — the
+    sanitiser is idempotent, so re-running it here is a cheap re-assertion that the
+    value cannot be read as a flag (🔴 BOB-087.D2), carries no control character, and
+    is length-bounded. Anything else is refused before exec.
     """
-    low = token.lower()
-    if any(kw in low for kw in _CLOSED_KEYWORDS):
-        return "closed"
-    if _IN_PROGRESS_RE.search(low):
-        return "in_progress"
-    return None
-
-
-def _is_listing_query(token: str) -> bool:
-    """Whether a free-text tracker query asks for a listing (vs. a single id)."""
-    low = token.lower()
-    if _IN_PROGRESS_RE.search(low):
-        return True
-    return any(
-        kw in low for kw in (*_CLOSED_KEYWORDS, *_ALL_KEYWORDS)
-    )
+    if len(args) != _BD_SEARCH_FORM_LEN:
+        return False
+    term = args[0]
+    if args[1:] != _BD_SEARCH_TAIL_FORM:
+        return False
+    return sanitize_search_term(term) == term
 
 
 def _strip_noise_tail(text: str) -> str:
@@ -351,24 +351,24 @@ class SubprocessRepoIntrospector:
         return await self._run("beadloom", "search", query)
 
     async def list_tasks(self, query: str) -> str:
-        """Route a tracker query to the right read-only ``bd`` form.
+        """Execute the read-only ``bd`` form the pure planner picked for ``query``.
 
-        A task id → ``bd show <id>``; a request for closed/recent/history,
-        in-progress, or all tasks → the matching ``bd list [--status <enum>]``; an
-        empty or "ready" query → ``bd ready``.
+        The DECISION (ready queue / listing by status / one task / title search) is
+        :func:`plan_tracker_query`; this method only runs it and applies the two
+        honest degradations: an id ``bd show`` cannot resolve retries as a search,
+        and a search that matches nothing degrades to the plain listing rather than
+        to silence.
         """
-        token = query.strip()
-        if not token or _wants_ready(token):
+        plan = plan_tracker_query(query)
+        argument = plan.argument
+        if plan.kind == "ready":
             return await self._run("bd", "ready")
-        if _is_listing_query(token):
-            status = _list_status_for(token)
-            if status is None:
-                return await self._run("bd", "list")
-            return await self._run("bd", "list", "--status", status)
-        if _is_ref_id(token):
-            return await self._run("bd", "show", token)
-        # No id, no listing keyword: fall back to the unfiltered list rather than a
-        # doomed ``bd show`` on free text.
+        if plan.kind == "show" and argument is not None:
+            return await self._show_or_search(argument)
+        if plan.kind == "search" and argument is not None:
+            return await self._search_or_list(argument)
+        if plan.kind == "list" and argument is not None:
+            return await self._run("bd", "list", "--status", argument)
         return await self._run("bd", "list")
 
     async def code_history(self, path: str) -> str:
@@ -417,8 +417,12 @@ class SubprocessRepoIntrospector:
 
         ``bead_id`` is validated by :func:`validate_bead_id` before exec (an id-shaped
         token only), so a flag/injection value is refused with :class:`ValueError`.
+        🔴 When ``bd show`` finds nothing the key is retried as a title SEARCH: an
+        epic key like ``BOB-087`` is NOT a bd identifier (that is ``bob-abk``) — it
+        lives in the title — so answering "не существует" there was a tool defect,
+        not a fact about the tracker.
         """
-        return await self._run("bd", "show", validate_bead_id(bead_id))
+        return await self._show_or_search(validate_bead_id(bead_id))
 
     async def tasks_by_status(self, status: str | None) -> str:
         """List tracker tasks, optionally filtered by ``status`` (``bd list``).
@@ -570,6 +574,36 @@ class SubprocessRepoIntrospector:
 
     # --- internals ------------------------------------------------------------
 
+    async def _show_or_search(self, ident: str) -> str:
+        """``bd show <ident>``, retried as a title search when it resolves nothing.
+
+        Symmetric with the ``ctx``→``search`` fallback on the architecture side: an
+        id-shaped token that the tracker cannot resolve is still probably a REAL key
+        (an epic key lives in titles), so the question is answered instead of denied.
+        """
+        detail = await self._run("bd", "show", ident)
+        if detail.strip():
+            return detail
+        return await self._search_tracker(ident)
+
+    async def _search_or_list(self, term: str) -> str:
+        """Search the tracker for ``term``, degrading to the plain listing if empty."""
+        found = await self._search_tracker(term)
+        if found.strip():
+            return found
+        return await self._run("bd", "list")
+
+    async def _search_tracker(self, term: str) -> str:
+        """Run the fixed ``bd search <term> --status all`` form and digest the result.
+
+        ``--status all`` is part of the FORM, not a choice: without it a finished epic
+        is invisible. The output is condensed by the pure digest so a key matching
+        dozens of tasks answers with the epic + what is alive + the counts, never a
+        forty-line dump (BOB-086).
+        """
+        raw = await self._run("bd", "search", term, *_BD_SEARCH_TAIL_FORM)
+        return digest_search_results(raw)
+
     async def _run(self, binary: str, subcommand: str, *args: str) -> str:
         """Validate against the allowlist, then exec ``binary subcommand args``.
 
@@ -595,9 +629,10 @@ class SubprocessRepoIntrospector:
     ) -> None:
         """Refuse any arg outside the read-only allowlist (no arbitrary args/flags).
 
-        Two controlled flag-bearing exceptions exist: the ``bd list --status <enum>``
+        Three controlled flag-bearing exceptions exist: the ``bd list --status <enum>``
         form (the literal ``--status`` flag paired with one stored-status enum value
-        from a FIXED allowlist), and the ``git log`` fixed forms (a bounded
+        from a FIXED allowlist), the ``bd search <term> --status all`` form (fixed
+        tail, sanitiser-validated term), and the ``git log`` fixed forms (a bounded
         ``--oneline -n <N> -- <path>`` or ``--grep=<bead-key> --oneline``, each
         dynamic slot validated). Every other flag-looking arg — a status outside the
         enum, an extra git flag, an out-of-form git shape — is refused before exec.
@@ -605,6 +640,12 @@ class SubprocessRepoIntrospector:
         if binary == "git":
             self._validate_git_args(subcommand, args)
             return
+        if binary == "bd" and subcommand == "search":
+            if _is_allowed_bd_search_form(args):
+                return
+            raise DisallowedCommandError(
+                f"bd search arguments {args!r} are not an allowlisted read-only form"
+            )
         if binary == "bd" and subcommand == "list" and args:
             if args in _BD_LIST_ARG_FORMS:
                 return

@@ -16,8 +16,11 @@ from __future__ import annotations
 import pytest
 
 from bob.capabilities.introspection.dev_query import (
+    MAX_SEARCH_TERM_CHARS,
     clamp_commit_count,
+    is_bead_id,
     normalize_status,
+    sanitize_search_term,
     validate_bead_id,
 )
 
@@ -101,6 +104,19 @@ def test_validate_bead_id_rejects_injections(raw: str) -> None:
         validate_bead_id(raw)
 
 
+# --- is_bead_id ---------------------------------------------------------------
+
+
+@pytest.mark.parametrize("raw", ["BOB-076", "bob-0gj", "bob-0gj.1", "  BOB-076  "])
+def test_is_bead_id_accepts_bead_keys(raw: str) -> None:
+    assert is_bead_id(raw) is True
+
+
+@pytest.mark.parametrize("raw", ["", "какие открыты", "--flag", "bob-", "BOB-076.foo"])
+def test_is_bead_id_rejects_non_keys(raw: str) -> None:
+    assert is_bead_id(raw) is False
+
+
 # --- normalize_status ---------------------------------------------------------
 
 
@@ -179,3 +195,77 @@ def test_normalize_status_synonym_is_not_an_enum_passthrough() -> None:
     # the raw token instead of the mapped enum would give "закрытые", not "closed".
     assert normalize_status("закрытые") == "closed"
     assert normalize_status("закрытые") != "закрытые"
+
+
+# --- sanitize_search_term (BOB-090.A) -----------------------------------------
+# 🔴 The free-text search term is the FIRST user-authored string to reach argv, so it
+# is the BOB-087.D2 lesson in miniature: a value that starts with a dash is read by the
+# option parser as a FLAG. These tests pin the guard.
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("BOB-087", "BOB-087"),
+        ("bob-alr.1", "bob-alr.1"),
+        ("память", "память"),
+        ("  память  ", "память"),  # trimmed
+        ("трекер   отвечает", "трекер отвечает"),  # inner runs collapse
+        ("что там по памяти?", "что там по памяти?"),  # punctuation is harmless (no shell)
+    ],
+)
+def test_sanitize_search_term_keeps_plain_text(raw: str, expected: str) -> None:
+    assert sanitize_search_term(raw) == expected
+
+
+@pytest.mark.parametrize(
+    "raw",
+    ["--status", "-n", "-", "--", "--status --limit", "---"],
+)
+def test_sanitize_search_term_drops_pure_flag_input(raw: str) -> None:
+    # Every token is flag-shaped -> nothing safe is left -> None (no search is run).
+    assert sanitize_search_term(raw) is None
+
+
+def test_sanitize_search_term_drops_flag_token_but_keeps_words() -> None:
+    # A flag hidden inside prose is dropped; the harmless words survive as the query.
+    assert sanitize_search_term("память --desc-contains пароль") == "память пароль"
+    assert sanitize_search_term("-n 50") == "50"
+    assert sanitize_search_term("--status all") == "all"
+
+
+def test_sanitize_search_term_never_returns_a_flag_shaped_value() -> None:
+    # The invariant the adapter relies on: whatever comes back can never be read as a
+    # flag by the option parser.
+    for raw in ("--status all", "-x", "-- BOB-087", "  --limit 0 память"):
+        term = sanitize_search_term(raw)
+        assert term is None or not term.startswith("-")
+
+
+@pytest.mark.parametrize("raw", ["", "   ", "\n\t", "\x00"])
+def test_sanitize_search_term_empty_is_none(raw: str) -> None:
+    assert sanitize_search_term(raw) is None
+
+
+def test_sanitize_search_term_strips_control_chars_without_gluing_words() -> None:
+    # A NUL terminates a C string mid-argv; a newline splits a line. Both become a
+    # separator, so neighbouring words stay separate words (never "abc" from "a\x00bc").
+    assert sanitize_search_term("a\x00bc") == "a bc"
+    assert sanitize_search_term("BOB-087\nBOB-090") == "BOB-087 BOB-090"
+    assert sanitize_search_term("a\tb") == "a b"
+
+
+def test_sanitize_search_term_is_length_bounded() -> None:
+    long_raw = "x" * (MAX_SEARCH_TERM_CHARS * 3)
+    term = sanitize_search_term(long_raw)
+    assert term is not None
+    assert len(term) == MAX_SEARCH_TERM_CHARS
+
+
+def test_sanitize_search_term_is_idempotent() -> None:
+    # The adapter re-validates argv by re-running the sanitiser, so a sanitised value
+    # MUST sanitise to itself — otherwise a legitimate search would be refused.
+    for raw in ("BOB-087", "память секрет", "50", "x" * 500, "  два слова  "):
+        once = sanitize_search_term(raw)
+        assert once is not None
+        assert sanitize_search_term(once) == once
