@@ -165,8 +165,10 @@ def test_both_adapters_satisfy_the_two_workplace_ports() -> None:
 # --------------------------------------------------------------------------- #
 
 
-def test_the_gated_assistant_lands_in_the_clone_when_the_flag_is_on() -> None:
-    config = {"coder": {"enabled": True, "isolated_clone": True}}
+def test_the_gated_assistant_lands_in_the_clone_when_the_flag_is_on(tmp_path: Path) -> None:
+    # ``clone_root`` — в одноразовый каталог: с включённым флагом сборка материализует
+    # окружение изоляции спавна (BOB-089.C), и писать его в рабочее дерево незачем.
+    config = {"coder": {"enabled": True, "isolated_clone": True, "clone_root": str(tmp_path)}}
     assistant = _build_coding_assistant(config, **_coder_deps())  # type: ignore[arg-type]
 
     assert assistant is not None
@@ -181,8 +183,17 @@ def test_the_gated_assistant_keeps_the_worktree_when_the_flag_is_off() -> None:
     assert type(_workspace_of(assistant)) is GitWorktree
 
 
-def test_the_interactive_manager_lands_in_the_clone_when_the_flag_is_on() -> None:
-    config = {"coder": {"interactive": True, "isolated_clone": True, "resume": True}}
+def test_the_interactive_manager_lands_in_the_clone_when_the_flag_is_on(
+    tmp_path: Path,
+) -> None:
+    config = {
+        "coder": {
+            "interactive": True,
+            "isolated_clone": True,
+            "resume": True,
+            "clone_root": str(tmp_path),
+        }
+    }
     manager = _build_interactive_session(config, **_interactive_deps())  # type: ignore[arg-type]
 
     assert manager is not None

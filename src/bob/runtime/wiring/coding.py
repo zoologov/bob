@@ -15,6 +15,7 @@ UNBYPASSABLE plan gate) and the natural-language :class:`CodingIntentRouter`. Of
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 from bob.capabilities.introspection.privacy_guard import PrivacyGuard
@@ -25,6 +26,7 @@ from bob.coding.adapters import (
     GitWorktree,
     SubprocessClaudeRunner,
 )
+from bob.coding.adapters.gh_pr import PullRequestError
 from bob.coding.adapters.indicator import StatusPanel, TypingKeepalive
 from bob.coding.adapters.live_stream import _DmLiveStreamer
 from bob.coding.adapters.owner_notifier import _CodingOwnerNotifier
@@ -34,6 +36,7 @@ from bob.coding.usecases.classify_coding_intent import ClassifyCodingIntent
 from bob.coding.usecases.coding_assistant import CodingAssistant, LiveRunStreamer
 from bob.coding.usecases.coding_context import make_coding_context
 from bob.coding.usecases.coding_intent_router import CodingIntentRouter
+from bob.identity.adapters.spawn_isolation_files import SpawnIsolationFiles
 from bob.interactive.adapters.runner import InteractiveClaudeRunner
 from bob.interactive.usecases.intake import InteractiveIntakeRouter
 from bob.interactive.usecases.recover_sessions import RecoverInteractiveSessions
@@ -55,11 +58,17 @@ if TYPE_CHECKING:
     from bob.application.router import LLMRouter
     from bob.coding.adapters.indicator import EditableStatusBot, TypingActionBot
     from bob.coding.usecases.coding_assistant import WorkJournalRecorder
+    from bob.identity.spawn_isolation import SpawnIsolation
     from bob.infrastructure.persistence import SqliteConnection
     from bob.infrastructure.telegram.gateway import BotLike
     from bob.kernel.ports import Clock
     from bob.memory.ports import SelfActionRecorder
     from bob.social.usecases import Authorizer
+
+#: Каталог контролируемого окружения спавна — СОСЕД клонов внутри ``coder.clone_root``.
+#: Имя с точки: рабочее место зовётся по слагу ветки ``bob/<slug>``, а точка в слаге
+#: невыразима, поэтому столкнуться этим именам не с чем.
+_SPAWN_ENV_DIR = ".spawn-env"
 
 
 def _build_coding_router(
@@ -123,8 +132,33 @@ def _build_workspace(coder: Mapping[str, object]) -> GitWorktree | GitClone:
     )
 
 
+def _build_spawn_isolation(coder: Mapping[str, object]) -> SpawnIsolation | None:
+    """Собрать изоляцию окружения спавна от кредов owner'а, или ``None`` при OFF (BOB-089.C).
+
+    Читается ТОТ ЖЕ флаг, что выбирает рабочее место (``coder.isolated_clone``), и
+    отдельного у изоляции нет сознательно: клон и изоляция — две половины ОДНОЙ гарантии.
+    Клон закрывает локальную дорогу к ``main`` (свой ``.git``), изоляция — сетевую (нет
+    кредов owner'а); включить одну без другой значит получить половину, а звучать это
+    будет как целое (срез A так и записал: «клон в одиночку — половина гарантии»).
+
+    OFF → ``None``: спавн вообще без ``env=`` (байт-в-байт прежний) и НИ ОДНОГО файла на
+    диске. ON → файлы контролируемого окружения в ``<clone_root>/.spawn-env`` (0700):
+    подменный global-конфиг, пустой каталог конфигурации ``gh``, askpass в никуда.
+
+    🔴 Кредов спавну не выдаётся (стор не создаётся): ветку в форк пушит процесс САМОГО
+    Боба (``GitClone.commit_and_push``), а не ``claude`` внутри клона. Механизм выдачи
+    токена существует и проверен (:func:`bob.identity.spawn_isolation.credential_store_line`),
+    но вызывающего в проде у него пока НЕТ — и это записано честно, а не выдано за фичу.
+    """
+    if not _flag(coder, "isolated_clone"):
+        return None
+    root = Path(_str(coder, "clone_root", ".clones")) / _SPAWN_ENV_DIR
+    return SpawnIsolationFiles(root).materialize()
+
+
 def _build_pr_integration(
     coder: Mapping[str, object],
+    github: Mapping[str, object],
 ) -> tuple[GhPullRequestOpener | ForkCompareLink, bool]:
     """Собрать путь «работа доехала до owner'а» + честен ли он как «PR открыт» (BOB-089.D).
 
@@ -139,16 +173,50 @@ def _build_pr_integration(
     Ссылочный путь (:class:`ForkCompareLink`, ``opens_pr`` ``False``) заводится ТОЛЬКО когда
     он осмыслен целиком: рабочее место — клон (``coder.isolated_clone``), у клона настроен
     форк на GitHub (``coder.fork_url`` → слаг ``owner/repo`` берётся из ТОГО ЖЕ адреса, куда
-    уходит push, чтобы ссылка не разошлась с местом работы) и известен апстрим
-    (``coder.upstream_repo``). 🔴 Почему вообще ссылка: cross-repo PR из ПРИВАТНОГО форка
-    installation-токену недоступен (проверено три способа, не-цель PRD), поэтому owner
-    жмёт «Create pull request» сам.
+    уходит push, чтобы ссылка не разошлась с местом работы) и известен апстрим. 🔴 Почему
+    вообще ссылка: cross-repo PR из ПРИВАТНОГО форка installation-токену недоступен
+    (проверено три способа, не-цель PRD), поэтому owner жмёт «Create pull request» сам.
+
+    🔴 ОДИН ФАКТ — ОДИН КЛЮЧ (bob-a6b.9). Апстрим — это ``github.propose_repo``, и другого
+    источника у него нет: та же секция, которой принципал ``propose`` находит свою
+    установку, называет и цель ссылки. Прежний ``coder.upstream_repo`` УБРАН, а не оставлен
+    «на всякий случай»: два ключа на один факт однажды разъезжаются, и тогда Боб отдаёт
+    ссылку на один репозиторий, а права на чтение имеет к другому.
     """
     fork = repo_slug(_str(coder, "fork_url", ""))
-    upstream = _str(coder, "upstream_repo", "")
+    upstream = _str(github, "propose_repo", "").strip()
     if not (_flag(coder, "isolated_clone") and fork and upstream):
         return GhPullRequestOpener(gh_bin=_str(coder, "gh_bin", "gh")), True
+    _refuse_a_fork_the_credentials_do_not_cover(fork, _str(github, "work_repo", ""))
     return ForkCompareLink(upstream=upstream, fork=fork), False
+
+
+def _refuse_a_fork_the_credentials_do_not_cover(fork: str, work_repo: str) -> None:
+    """Сверить два УГЛА одного факта — репозитория, куда Боб пушит (bob-a6b.9).
+
+    ``coder.fork_url`` — транспортный адрес (может быть ssh, может быть ``file://``), а
+    ``github.work_repo`` — слаг ``owner/repo``, по которому находится УСТАНОВКА принципала
+    ``work``. Дублем они не являются (из слага не собрать ssh-адрес, а из адреса не всегда
+    добыть слаг — см. :func:`~bob.coding.pr_link.repo_slug`), поэтому ключи остаются два.
+    Но факт за ними ОДИН, и разъехаться им нельзя: тогда ветка уезжает в один репозиторий,
+    ссылка обещает owner'у второй, а права у Боба к третьему.
+
+    🔴 Отказ громкий и на СБОРКЕ, а не тихий уход на gh-путь: молчаливый фолбэк спрятал бы
+    дефект конфига и Боб пошёл бы пушить в апстрим кредами owner'а (урок BOB-087 — верхний
+    фолбэк не маскирует наши дефекты). В тексте отказа — ИМЕНА обоих ключей.
+
+    Пустой ``work_repo`` расхождением НЕ считается: пока принципалы не настроены (а это
+    дефолт), сверять не с чем, и падать на этом значило бы ронять сборку у owner'а с пустой
+    секцией ``github``. Сравнение регистронезависимо — имена репозиториев на GitHub такие же.
+    """
+    expected = work_repo.strip()
+    if not expected or fork.casefold() == expected.casefold():
+        return
+    raise PullRequestError(
+        f"coder.fork_url points at {fork!r}, but github.work_repo says Bob's credentials "
+        f"cover {expected!r}; these are two angles of ONE repository and must agree — "
+        "refusing to hand the owner a link to a fork Bob has no rights to"
+    )
 
 
 def _build_coding_assistant(
@@ -225,7 +293,7 @@ def _build_coding_assistant(
     firehose_bot = stream_bot if stream_via_guppi else notifier_bot
     # Интеграционный путь + честность терминальной реплики — ОДНО решение (BOB-089.D),
     # см. :func:`_build_pr_integration`.
-    pr_opener, opens_pr = _build_pr_integration(coder)
+    pr_opener, opens_pr = _build_pr_integration(coder, _section(config, "github"))
     return CodingAssistant(
         recorder=recorder,
         # Distilled work memory (BOB-087.B1): flag-gated (``memory.work_journal``, OFF → NoOp)
@@ -243,6 +311,9 @@ def _build_coding_assistant(
             # ``extra_dirs`` appends no ``--add-dir`` — the argv stays byte-identical.
             allow_bypass=_flag(coder, "allow_bypass"),
             extra_dirs=_str_list(coder, "extra_dirs"),
+            # 🔴 Изоляция от кредов owner'а (BOB-089.C) под ``coder.isolated_clone``:
+            # OFF → ``None``, спавн байт-в-байт прежний. См. :func:`_build_spawn_isolation`.
+            isolation=_build_spawn_isolation(coder),
         ),
         # Рабочее место: linked worktree (default) или отдельный клон под
         # ``coder.isolated_clone`` (BOB-089.A) — см. :func:`_build_workspace`.
@@ -390,6 +461,10 @@ def _build_interactive_session(
     # ``--add-dir``), so an unconfigured interactive spawn is byte-identical to BOB-083.
     allow_bypass = _flag(coder, "allow_bypass")
     extra_dirs = _str_list(coder, "extra_dirs")
+    # 🔴 Изоляция окружения спавна (BOB-089.C) — читается ОДИН раз и запекается в каждый
+    # посессионный рантайм, как и ослабления песочницы. OFF → ``None``: спавн живого
+    # терминала байт-в-байт прежний. См. :func:`_build_spawn_isolation`.
+    isolation = _build_spawn_isolation(coder)
     firehose_bot = stream_bot if _flag(coder, "stream_via_guppi") else bot
     # Рабочее место: linked worktree (default) или отдельный клон под
     # ``coder.isolated_clone`` (BOB-089.A) — см. :func:`_build_workspace`. Один объект
@@ -406,6 +481,7 @@ def _build_interactive_session(
             claude_bin=claude_bin,
             allow_bypass=allow_bypass,
             extra_dirs=extra_dirs,
+            isolation=isolation,
         ),
         worktree=worktree,
         store=store,

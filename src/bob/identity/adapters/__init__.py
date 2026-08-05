@@ -6,7 +6,7 @@
 # beadloom:feature=identity
 # beadloom:layer=infrastructure
 
-"""Адаптеры identity: подпись App-JWT, транспорт GitHub App API, минт токенов."""
+"""Адаптеры identity: подпись App-JWT, транспорт GitHub App API, минт токенов, окружение спавна."""
 
 from bob.identity.adapters.github_api import AiohttpGitHubAppApi
 from bob.identity.adapters.installation_token import (
@@ -14,10 +14,12 @@ from bob.identity.adapters.installation_token import (
     build_installation_tokens,
 )
 from bob.identity.adapters.openssl_signer import OpensslRs256Signer
+from bob.identity.adapters.spawn_isolation_files import SpawnIsolationFiles
 
 __all__ = [
     "AiohttpGitHubAppApi",
     "GitHubInstallationTokens",
     "OpensslRs256Signer",
+    "SpawnIsolationFiles",
     "build_installation_tokens",
 ]

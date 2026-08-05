@@ -17,6 +17,7 @@ from bob.memory.self_action import (
     RenderedSelfAction,
     SelfAction,
     SelfActionKind,
+    coding_terminal_kind,
     describe_self_action,
 )
 
@@ -87,6 +88,54 @@ def test_coding_finished_with_target() -> None:
     )
     assert rendered.content == "я доделал «BOB-079», открыл PR"
     assert rendered.tags == ("self", "coding")
+
+
+# --- Финал сессии: Боб присваивает себе ровно то, что сделал (BOB-089, bob-a6b.8) ----
+# Форк-путь: PR открывает owner по ссылке, поэтому «открыл PR» было бы ложным
+# самовоспоминанием — тем самым, из которого потом растёт конфабуляция с провенансом
+# «я сам так сделал».
+
+
+def test_coding_handed_off_with_target() -> None:
+    rendered = describe_self_action(
+        SelfAction(kind=SelfActionKind.CODING_HANDED_OFF, target="BOB-089")
+    )
+    assert rendered.content == (
+        "я довёл «BOB-089» до ветки в своём форке и отдал ссылку — PR не открывал"
+    )
+    assert rendered.tags == ("self", "coding")
+    assert rendered.is_anomaly is False
+
+
+def test_coding_handed_off_without_target() -> None:
+    rendered = describe_self_action(SelfAction(kind=SelfActionKind.CODING_HANDED_OFF))
+    assert rendered.content == (
+        "я довёл работу до ветки в своём форке и отдал ссылку — PR не открывал"
+    )
+
+
+@pytest.mark.parametrize("target", ["BOB-089", None])
+def test_handed_off_never_claims_an_opened_pr(target: str | None) -> None:
+    # 🔴 Не косметика: этот эпизод — источник будущих ответов Боба о себе. Заявление о
+    # совершённом действии здесь = конфабуляция «я это помню, я сам так сделал».
+    content = describe_self_action(
+        SelfAction(kind=SelfActionKind.CODING_HANDED_OFF, target=target)
+    ).content
+    assert "открыл PR" not in content
+    assert "PR открыт" not in content
+
+
+def test_finished_kind_still_claims_the_pr_it_really_opened() -> None:
+    # Парность: на gh-пути PR действительно открывает Боб, и присвоить его он ОБЯЗАН.
+    content = describe_self_action(
+        SelfAction(kind=SelfActionKind.CODING_FINISHED, target="BOB-089")
+    ).content
+    assert "открыл PR" in content
+
+
+def test_terminal_kind_follows_whether_a_pr_was_really_opened() -> None:
+    assert coding_terminal_kind(opened_pr=True) is SelfActionKind.CODING_FINISHED
+    assert coding_terminal_kind(opened_pr=False) is SelfActionKind.CODING_HANDED_OFF
 
 
 def test_coding_aborted_with_target() -> None:
@@ -240,6 +289,7 @@ def test_coding_kinds_carry_coding_area_tag() -> None:
     coding_kinds = [
         SelfActionKind.CODING_STARTED,
         SelfActionKind.CODING_FINISHED,
+        SelfActionKind.CODING_HANDED_OFF,
         SelfActionKind.CODING_ABORTED,
         SelfActionKind.CODING_FAILED,
         SelfActionKind.CODING_RUNAWAY,

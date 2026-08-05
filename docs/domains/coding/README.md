@@ -41,7 +41,7 @@ src/bob/coding/
   entities.py         # layer=domain   — CodingSession (immutable value-object; claude_session_id для --resume, BOB-087.D1)
   naming.py           # layer=domain   — worktree_branch: эфемерная bob/<slug> + workspace_branch: долгоживущая bob/epic-<slug> (кириллица транслитерируется, BOB-087.D1/D5b)
   sandbox_policy.py   # layer=domain   — allowed_modes/is_allowed_mode/extra_dir_argv/is_safe_argv_value: политика owner-ослаблений изоляции + ClaudeRunError (BOB-087.D2/E)
-  push_guard.py       # layer=domain   — guarded_spawn_env: барьер сетевого push в окружении спавна при owner-ослаблениях (BOB-087.E, bob-5ao)
+  push_guard.py       # layer=domain   — guarded_spawn_env: ЕДИНСТВЕННЫЙ шов окружения спавна — барьер сетевого push (BOB-087.E, bob-5ao) + изоляция от кредов owner'а (BOB-089.C, решения в bob.identity.spawn_isolation)
   clone_plan.py       # layer=domain   — clone_argv/checkout_argv/origin_argv/identity_argv/workspace_verdict/is_credential_free_url: план рабочего места-КЛОНА (файловый транспорт вместо хардлинков, подпись bob[ai] ЛОКАЛЬНО в клоне, вердикт переиспользования, запрет кредов в argv; BOB-089.A/D)
   pr_link.py          # layer=domain   — repo_slug/compare_url: «ветка в форке Боба → предзаполненная форма создания PR» (PR открывает owner: cross-repo PR из приватного форка installation-токену недоступен, BOB-089.D)
   stream_json.py      # layer=domain   — parse_event / STREAM_LIMIT: как читается ОДНА строка NDJSON-потока claude (общий примитив обоих транспортов, BOB-087.E)
@@ -290,12 +290,31 @@ OFF).** У linked worktree есть предел, который никакой 
 `git clone` иные правила, чем у `worktree add`): тест перечисляет содержимое клона целиком и
 сверяет его с трекнутыми файлами, отдельно проверяя отсутствие хардлинков/alternates и то,
 что `update-ref refs/heads/main` внутри клона main owner'а не двигает
-(`tests/infrastructure/coding/test_git_clone_real_git.py`). Цена (замер на этом
+(`tests/infrastructure/coding/test_git_clone_real_git.py`); на НАСТОЯЩЕМ репозитории owner'а
+то же самое проверяет opt-in смоук сравнением sha `refs/heads/main` до и после
+(`test_upstream_refusal_live_smoke.py`). Цена (замер на этом
 репозитории, `.git` 602 МБ): 3.8 с и 142 МБ на рабочее место; `--depth 1` (1.3 с, 63 МБ)
 отвергнут — без истории Боб теряет `git log`/`blame`, а `--shared`/`--reference` ставят клон
-в зависимость от объектов owner'а. 🔴 ЧЕСТНАЯ РАМКА: клон закрывает общий `.git`, но НЕ
-изолирует credentials — пока окружение спавна наследует credential helper owner'а, сеть
-остаётся открытой дорогой; это отдельный срез, и до него флаг даёт половину гарантии.
+в зависимость от объектов owner'а.
+
+🔴 **Вторая половина того же флага — изоляция от кредов owner'а (BOB-089, срез C).** Клон
+закрывает ЛОКАЛЬНУЮ дорогу к стволу (свой `.git`), но сам по себе оставляет сетевую: пока
+окружение спавна наследует credential helper owner'а, `git push` в апстрим уходит его
+кредами. Поэтому тот же `coder.isolated_clone` включает и изоляцию окружения: `claude`
+спавнится с подменным global-конфигом git, отключённым системным, СБРОШЕННЫМ списком
+credential-хелперов, `GIT_TERMINAL_PROMPT=0`, askpass'ом в никуда, собственным пустым
+`GH_CONFIG_DIR` и без амбиентных `GH_TOKEN`/`GITHUB_TOKEN`/`SSH_AUTH_SOCK`. Механизм —
+РАСШИРЕННЫЙ `push_guard.guarded_spawn_env` (второго механизма нет: обе меры выражаются одним
+блоком `GIT_CONFIG_*`), решения — в чистом ядре
+[`bob.identity.spawn_isolation`](../identity/README.md), файлы — в его адаптере. Барьер
+`pushInsteadOf` остаётся вторым слоем: сам он снимается изнутри, но без кредов обход
+бессмыслен. 🔴 ЧЕСТНАЯ РАМКА, проверенная вживую против настоящего GitHub: отказ теперь
+приходит ПО ПРАВАМ (`Repository not found` рабочему принципалу, `Write access to repository
+not granted` + 403 предлагающему), а легитимный пуш ветки в форк тем же токеном проходит.
+Структурны ровно два свойства — отдельный `.git` и отсутствие права записи у токена; само
+окружение границей НЕ является (тот же UID владеет своим окружением), но его обход даёт лишь
+процесс БЕЗ кредов. И внутри клона модель по-прежнему делает с рабочим деревом что угодно —
+правами это не закрывается вообще.
 
 **Подпись работы Боба (BOB-089.D, вместе с клоном).** В клоне выставляются
 `user.name = bob[ai]` и ботовский адрес
@@ -315,9 +334,16 @@ OFF).** У linked worktree есть предел, который никакой 
 merge-метода в порте нет. `ForkCompareLink` (BOB-089.D) реализует ТОТ ЖЕ порт, но не
 исполняет ничего вовсе (в модуле нет даже командного шва — это инвариант под тестом): он
 возвращает предзаполненную форму
-`https://github.com/<coder.upstream_repo>/compare/main...<форк>:<ветка>?expand=1`, собранную
+`https://github.com/<github.propose_repo>/compare/main...<форк>:<ветка>?expand=1`, собранную
 чистым `pr_link.compare_url`, а слаг форка берётся из ТОГО ЖЕ `coder.fork_url`, куда уходит
-push (иначе ссылка однажды указала бы не туда, где лежит работа). 🔴 Почему так: cross-repo
+push (иначе ссылка однажды указала бы не туда, где лежит работа). 🔴 ОДИН факт — ОДИН ключ
+(bob-a6b.9): апстрим читается только из `github.propose_repo` — секции, которая одна держит
+репозиторную идентичность (прежний дубль `coder.upstream_repo` убран: два ключа на один факт
+однажды разъезжаются, и Боб отдал бы ссылку на один репозиторий, а читал бы другой). По той
+же причине `coder.fork_url` (транспортный адрес) сверяется на сборке ссылки с
+`github.work_repo` (слаг той же установки): расхождение — громкий отказ с именами обоих
+ключей, а не тихий уход на gh-путь; пустой `work_repo` расхождением не считается (сверять не
+с чем, пока принципалы не настроены). 🔴 Почему так: cross-repo
 PR из ПРИВАТНОГО форка installation-токену недоступен — токен скоупится на одну установку
 (проверены три способа, обход — не-цель PRD), поэтому «Create pull request» жмёт owner.
 Развилка ПАРНАЯ: `_build_pr_integration` отдаёт адаптер и флаг `opens_pr` одним решением, и
@@ -469,8 +495,9 @@ ClaudeCodeRunner`; транзитный ports-шим `bob.domain.ports` удал
   старта процесса — живёт у политики, которая отказывает; ре-экспортируется адаптером
   `adapters/claude_runner.py`, BOB-087.E). Константы `BASE_PERMISSION_MODES`
   (`{plan, acceptEdits}`), `BYPASS_PERMISSION_MODE`, `MAX_EXTRA_DIRS = 8`.
-- `push_guard.py`: `guarded_spawn_env(env, *, active)` → окружение спавна с барьером сетевого
-  push (BOB-087.E, bob-5ao).
+- `push_guard.py`: `guarded_spawn_env(env, *, active, isolation=None)` → окружение спавна:
+  барьер сетевого push (BOB-087.E, bob-5ao) и/или изоляция от кредов owner'а (BOB-089.C,
+  решения — в `bob.identity.spawn_isolation`). Обе выключены → `None`, спавн без `env=`.
 - `clone_plan.py`: `clone_argv(git_bin, *, source, dest)`, `checkout_argv(git_bin, *, dest,
   branch, on_origin)`, `origin_argv(git_bin, *, dest, fork_url)` → `list[str]`;
   `identity_argv(git_bin, *, dest, app_user_id)` → `list[list[str]]` (две `config --local`-формы
@@ -533,6 +560,11 @@ worktree-изоляция и containment, allowlist режимов раннер�
 `test_narrate.py`, `test_session_voice.py`, `test_stream_render*.py`, `test_work_facts.py`.
 Персистентное дерево проверяется на РЕАЛЬНОМ git
 (`tests/infrastructure/coding/test_git_worktree_persistent_real_git.py` — фейк этот контракт не
-воспроизводил), а спавн-окружение — `test_claude_spawn_env.py` / `test_push_guard_real_git.py`.
+воспроизводил), а спавн-окружение — `test_claude_spawn_env.py` / `test_push_guard_real_git.py` /
+`test_spawn_isolation_real_git.py` (изоляция от кредов owner'а: каждая дорога проверяется
+парой «контроль → изоляция» вердиктом самого git) / `test_upstream_refusal_live_smoke.py`
+(🔴 opt-in негативный смоук против НАСТОЯЩЕГО GitHub: отказ по правам с проверкой текста,
+легитимный пуш в форк работает) и `tests/runtime/wiring/test_coding_spawn_isolation.py`
+(доезжает ли изоляция до границы процесса в ОБОИХ рантаймах; OFF → `None` и ни одного файла).
 Тесты живого терминала (юниты, адаптер на реальном процессе и приёмочный BDD) переехали вместе
 с модулем — см. раздел «Тесты» README [`interactive`](../interactive/README.md).

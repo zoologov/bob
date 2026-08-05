@@ -47,10 +47,12 @@ src/bob/identity/
   credentials.py         # layer=domain          — AppCredentials + разбор секции конфига github с проверкой формы
   app_jwt.py             # layer=domain          — claims App-JWT (RS256), байты для подписи, сборка токена
   token_lifetime.py      # layer=domain          — InstallationToken (repr без секрета) + вердикт «годен / пора обновить»
+  spawn_isolation.py     # layer=domain          — чем аутентифицируется процесс СПАВНА и каких кредов owner'а в нём нет
   adapters/              # layer=infrastructure
     openssl_signer.py    — OpensslRs256Signer: подпись настоящим `openssl dgst -sha256 -sign` (ключ ПУТЁМ, данные в stdin)
     github_api.py        — AiohttpGitHubAppApi: две ручки GitHub App API (секрет только в заголовке)
     installation_token.py — GitHubInstallationTokens: кэш токена на принципала + обновление ЗАРАНЕЕ
+    spawn_isolation_files.py — SpawnIsolationFiles: материализация контролируемого окружения (0700/0600, уборка стора)
 ```
 
 ### Два принципала — потому что права App неделимы
@@ -130,6 +132,44 @@ git-операции): лишний минт стоит одного запро�
 - **`repr`.** У `InstallationToken` своё представление: срок виден, значение — `<redacted>`.
   `repr` уезжает в traceback и в отладочный лог, где секрет осел бы навсегда.
 
+### 🔴 Изоляция окружения спавна — «чем аутентифицируется процесс, которому дали шелл»
+
+Второй вопрос модуля (BOB-089, срез C): у процесса `claude`, работающего в клоне Боба, не
+должно быть кредов owner'а. Решения — в чистом ядре `spawn_isolation.py`, файлы — в
+адаптере `spawn_isolation_files.py`, а склеивает их с окружением **существующий** шов
+`bob.coding.push_guard.guarded_spawn_env` (второго механизма нет: обе меры выражаются одним
+блоком `GIT_CONFIG_*` и разошлись бы по нумерации пар).
+
+🔴 **Что выяснилось на настоящем git 2.49 — и почему RFC описывал изоляцию неверно.**
+
+1. **`GIT_CONFIG_GLOBAL` сам по себе кредов owner'а НЕ убирает.** На машине owner'а
+   `credential.helper = osxkeychain` приезжает из **системного** конфига
+   (`/opt/homebrew/etc/gitconfig`), а `GIT_CONFIG_GLOBAL` замещает только `~/.gitconfig` и
+   XDG. Подмена одного глобального файла оставила бы дорогу к логин-keychain открытой.
+2. **Работает сброс всего СПИСКА хелперов**: пустое значение `credential.helper` очищает
+   список, накопленный из системного, глобального и локального конфигов, а env-конфиг
+   читается git'ом **последним** — значит сброс из окружения гасит их все. Проверено:
+   после сброса `git credential fill` для `https://…` отвечает
+   `could not read Username … terminal prompts disabled` вместо пароля owner'а.
+3. **И только ПОСЛЕ сброса** подставляется стор Боба (`store --file=<путь>`): пара
+   «сброс, затем свой helper» отдаёт уже токен Боба. Порядок пар — это и есть механизм;
+   поменяй его, и helper owner'а снова первый в списке.
+
+Что попадает в окружение спавна: подменный `GIT_CONFIG_GLOBAL` (файл несёт тот же сброс —
+второй слой, живой даже если блок `GIT_CONFIG_*` снимут изнутри), `GIT_CONFIG_NOSYSTEM=1`,
+`GIT_TERMINAL_PROMPT=0`, `GIT_ASKPASS`/`SSH_ASKPASS` в **несуществующий** путь, отдельный
+пустой `GH_CONFIG_DIR` (иначе `gh` взял бы токен owner'а из `~/.config/gh/hosts.yml` и
+дотянулся бы до ствола мимо git вовсе), и **вычищаются** `GITHUB_TOKEN` / `GH_TOKEN` /
+`GITHUB_ENTERPRISE_TOKEN` / `GH_ENTERPRISE_TOKEN` / `SSH_AUTH_SOCK`.
+
+🔴 **Честно о силе меры.** Окружение — **не** граница: процесс работает под тем же UID и
+владеет своим окружением, поэтому `GIT_CONFIG_COUNT=0` или `env -u` снимают меры изнутри, а
+`~/.ssh` и логин-keychain остаются читаемыми для того же пользователя. Меняется другое:
+**обход перестаёт что-либо давать.** Дотянуться можно только до кредов, у которых нет права
+записи в апстрим (два принципала выше), локальный `update-ref` до `main` owner'а не достаёт
+(у клона свой `.git`, срез A), а сам обход через `GIT_CONFIG_COUNT=0` вдобавок лишает
+процесс стора самого Боба — проверено вживую. Структурны ровно эти два свойства, не конфиг.
+
 ### Конфигурация (секция `github`, всё пусто по умолчанию)
 
 | Ключ | Что это |
@@ -137,6 +177,7 @@ git-операции): лишний минт стоит одного запро�
 | `work_app_id` / `propose_app_id` | числовой `app_id` GitHub App (claim `iss`) |
 | `work_app_key` / `propose_app_key` | 🔴 **путь** к приватному ключу, никогда его содержимое |
 | `work_repo` / `propose_repo` | `owner/repo`, по которому находится установка принципала |
+| | 🔴 эта секция — **единственный** источник репозиторной идентичности (bob-a6b.9): `propose_repo` (апстрим) заодно цель ссылки на создание PR, а `work_repo` (форк) сверяется на сборке с транспортным `coder.fork_url` |
 | `token_margin_seconds` | запас обновления заранее (300) |
 | `jwt_lifetime_seconds` | время жизни App-JWT (480, внутри предела GitHub) |
 | `api_base_url` / `openssl_bin` / `timeout_seconds` | шов транспорта и подписи |
@@ -160,18 +201,27 @@ git-операции): лишний минт стоит одного запро�
   `token_freshness(*, expires_at, now, margin_seconds)`, `parse_expiry(raw)`.
 - `ports.py`: `Rs256Signer`, `GitHubAppApi`, `InstallationTokenSource`; отказы
   `IdentityError` → `IdentityConfigError` / `SigningError` / `TokenMintError`.
+- `spawn_isolation.py`: `SpawnIsolation(config_global, askpass, gh_config_dir="",
+  credential_store="")`, `isolation_env(isolation)`, `isolation_config_pairs(isolation)`,
+  `credential_store_line(*, fork_url, token)`, `OWNER_CREDENTIAL_VARS`.
 - `adapters/`: `OpensslRs256Signer(openssl_bin=…, timeout_seconds=…)`,
   `AiohttpGitHubAppApi(base_url=…, timeout_seconds=…, request=None)`,
   `GitHubInstallationTokens(section, *, signer, api, clock, renew_margin_seconds,
-  jwt_lifetime_seconds)`, `build_installation_tokens(section, *, clock)`.
+  jwt_lifetime_seconds)`, `build_installation_tokens(section, *, clock)`,
+  `SpawnIsolationFiles(root).materialize(*, fork_url="", token="")`.
 
-## Честная рамка среза B
+## Честная рамка срезов B + C
 
-- Модуль **выдаёт** токены; изоляции окружения спавна (credential helper Боба вместо
-  helper'а owner'а) в нём нет — это срез C, и до него токен ни одним прод-путём не
-  запрашивается. То есть сейчас это фундамент с доказанным поведением, а не включённая
-  фича: провайдер собирается, но вызывающего в проде у него пока нет (правило §0.3 п.10 —
-  «разрешение без вызывающего не возможность» — здесь соблюдено сознательно и записано).
+- Модуль **выдаёт** токены и **изолирует** окружение спавна. Но выданный токен ни одним
+  прод-путём пока **не запрашивается**: изоляция включается без стора кредов (ветку в форк
+  пушит процесс самого Боба, `GitClone.commit_and_push`, а не `claude` в клоне). То есть
+  механизм выдачи проверен — юнитами, настоящим git и живым смоуком против GitHub — но
+  вызывающего в проде у него нет, и это записано, а не выдано за фичу (§0.3 п.10:
+  «разрешение без вызывающего — не возможность»).
+- Процесс **самого Боба** по-прежнему пушит в форк амбиентными кредами owner'а: изоляция
+  касается СПАВНА. Структурно там держит другое — у Боба в коде нет пути запушить что-либо,
+  кроме ветки `bob/<slug>` в `origin` (проверяется `is_safe_branch` до запуска git). Перевод
+  собственного push'а Боба на его installation-токен — отдельная работа, не срез C.
 - Боб **не может** сам открыть PR из приватного форка: installation-токен скоупится на одну
   установку, а cross-repo PR требует читаемости обеих сторон одним токеном (проверено три
   способа, см. комментарии беады BOB-089). Вариант A: Боб доводит работу до ветки в форке и
@@ -180,9 +230,12 @@ git-операции): лишний минт стоит одного запро�
 ## Тесты
 
 - **Чистые ядра** — `tests/domain/identity/test_principals.py`, `test_credentials.py`,
-  `test_app_jwt.py`, `test_token_lifetime.py`. Это mutation-цели
+  `test_app_jwt.py`, `test_token_lifetime.py`, `test_spawn_isolation.py`. Это mutation-цели
   (`./scripts/mutation.sh identity.app_jwt` и так далее); пакет внесён в
   `[tool.mutmut].source_paths`, иначе гейт этих ядер был бы фантомным (§0.3 п.7).
+  🔴 Модульные константы (`OWNER_CREDENTIAL_VARS`, регекс `https`-адреса, имя пользователя
+  стора) mutmut не мутирует вовсе, поэтому у каждой — свой юнит на **значение**: что она
+  принимает и что отвергает (`http://` отвергается — токен уехал бы открытым текстом).
 - 🔴 **Настоящий openssl** — `tests/infrastructure/identity/test_openssl_signer_real_openssl.py`:
   тест генерирует настоящую RSA-пару в одноразовом каталоге (не в `.secrets/`), подписывает
   реальным `openssl dgst -sha256 -sign` и **проверяет подпись обратным**
@@ -204,5 +257,24 @@ git-операции): лишний минт стоит одного запро�
   подтверждает, что подпись верна математически; принимает ли её САМ GitHub — вопрос его
   верификатора. Прогон вживую в срезе B: приняты оба принципала, установки разные (`work` —
   на форке, `propose` — на апстриме).
+- **Материализация окружения** — `tests/infrastructure/identity/test_spawn_isolation_files.py`
+  на НАСТОЯЩЕЙ файловой системе: права 0700/0600 (и файл затягивается ДО того, как в него
+  попадёт токен), стор прошлой сессии удаляется, подложенный askpass-хелпер удаляется,
+  токена нет ни в одном файле кроме стора и нет в `repr`.
+- 🔴 **Настоящий git** — `tests/infrastructure/coding/test_spawn_isolation_real_git.py`
+  (11 тестов): каждая из четырёх дорог к кредам owner'а (системный конфиг, глобальный,
+  окружение, локальный конфиг репозитория) проверяется **парой** «контроль: дорога реально
+  есть → изоляция: не отвечает». Вердикт даёт `git credential fill` — тот самый механизм,
+  которым пользуется `git push`. Хост заведомо несуществующий (`.invalid`), чтобы тест не
+  дёрнул настоящий keychain owner'а.
+- 🔴 **Живой негативный смоук** —
+  `tests/infrastructure/coding/test_upstream_refusal_live_smoke.py` (**opt-in**,
+  `BOB_LIVE_GITHUB_SMOKE=1`): из окружения Боба живым токеном — push ветки в апстрим,
+  force-push ствола, `remote set-url` + push. Каждый отказ проверяется **текстом**
+  (`Repository not found` для `work`, `Write access to repository not granted` + 403 для
+  `propose`) и вдобавок утверждается, что это НЕ наша заглушка `pushInsteadOf` и НЕ
+  «кредов не нашлось»: иначе тест был бы зелёным и там, где Боб просто не
+  аутентифицировался. Легитимный путь (ветка в форк) тем же токеном и окружением —
+  проходит, ветка убирается за собой.
 - **Конфиг** — `tests/test_github_identity_config.py`: секция ship'ится пустой, ключи
   из `.env` доезжают, в дефолтах нет ничего похожего на секрет.

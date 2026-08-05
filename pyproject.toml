@@ -370,6 +370,11 @@ ignore = [
 # to the port shape (→ ARG002).
 "tests/application/usecases/test_distill_work_journal.py" = ["RUF001", "RUF003"]
 "tests/application/usecases/test_coding_assistant_work_journal.py" = ["ARG002"]
+# Автобиография coding-сессии (BOB-079.2 + BOB-089 bob-a6b.8): тест утверждает на РУССКИХ
+# литералах поступка Боба от первого лица («открыл PR» против «в своём форке») и несёт
+# русские пояснения, зачем эта развилка честна — Cyrillic look-alikes здесь намеренные
+# (→ RUF001/RUF003).
+"tests/application/usecases/test_coding_assistant_self_action.py" = ["RUF001", "RUF003"]
 # Security-review fixes of the interactive slice (BOB-087.D5b): the orphan-sweep tests and
 # the real-git persistent-workspace tests carry Russian rationale docstrings/comments whose
 # Cyrillic look-alikes are intentional (→ RUF001/RUF002/RUF003). The worktree unit tests
@@ -926,6 +931,50 @@ ignore = [
     "RUF003",
 ]
 "tests/test_github_identity_config.py" = ["S105", "RUF001", "RUF002", "RUF003"]
+# Изоляция окружения спавна (BOB-089, срез C): чистое ядро + адаптер и их тесты объясняют
+# по-русски, ПОЧЕМУ ``GIT_CONFIG_GLOBAL`` недостаточно и почему порядок пар конфига и есть
+# механизм (Cyrillic look-alikes intentional → RUF001-003). Тесты изоляции держат ФИКТИВНЫЕ
+# «пароль owner'а» и «токен Боба» — без них нельзя доказать, что чужие креды не отвечают, а
+# свои отвечают (→ S105/S106), и гоняют НАСТОЯЩИЙ ``git`` фиксированной формой без шелла
+# (→ S603/S607: тест на фейке доказал бы контракт фейка). Фейковые порты в тестах проводки
+# держат аргументы, которых фейк не читает (→ ARG002), сборка читается через приватные поля
+# (→ SLF001: у окружения спавна нет публичного геттера — и не должно быть).
+"src/bob/identity/spawn_isolation.py" = ["RUF001", "RUF002", "RUF003"]
+"src/bob/identity/adapters/spawn_isolation_files.py" = ["RUF001", "RUF002", "RUF003"]
+"tests/domain/identity/test_spawn_isolation.py" = [
+    "S106",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+"tests/infrastructure/identity/test_spawn_isolation_files.py" = [
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+"tests/infrastructure/coding/test_spawn_isolation_real_git.py" = [
+    "S603",
+    "S607",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+"tests/infrastructure/coding/test_upstream_refusal_live_smoke.py" = [
+    "S105",
+    "S603",
+    "S607",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+"tests/runtime/wiring/test_coding_spawn_isolation.py" = [
+    "S101",
+    "ARG002",
+    "SLF001",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
 "tests/infrastructure/coding/test_claude_spawn_env.py" = [
     "S101",
     "SLF001",

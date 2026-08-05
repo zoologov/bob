@@ -70,6 +70,14 @@ def bob_recorded_a_tool_use(autobio_context: _AutobioContext) -> None:
     )
 
 
+@given("Боб записал своё действие: он довёл работу до ветки в форке и отдал ссылку на PR")
+def bob_recorded_a_fork_handoff(autobio_context: _AutobioContext) -> None:
+    # Форк-путь BOB-089: PR открывает владелец по ссылке, поэтому поступок Боба — ДРУГОЙ.
+    autobio_context.to_record.append(
+        SelfAction(kind=SelfActionKind.CODING_HANDED_OFF, target="BOB-089")
+    )
+
+
 @given("Боб НЕ записывал никакого своего действия")
 def bob_recorded_nothing(autobio_context: _AutobioContext) -> None:
     assert autobio_context.to_record == []
@@ -86,6 +94,11 @@ def owner_asks_about_the_incident(autobio_context: _AutobioContext) -> None:
 @when("владелец спрашивает, какими инструментами Боб сегодня пользовался")
 def owner_asks_about_tools(autobio_context: _AutobioContext) -> None:
     _drive(autobio_context, "какими инструментами ты сегодня пользовался?")
+
+
+@when("владелец спрашивает «ты открыл PR по BOB-089?»")
+def owner_asks_whether_bob_opened_the_pr(autobio_context: _AutobioContext) -> None:
+    _drive(autobio_context, "ты открыл PR по BOB-089?")
 
 
 def _drive(context: _AutobioContext, question: str) -> None:
@@ -113,6 +126,26 @@ def tool_use_deed_surfaces_first_person(autobio_context: _AutobioContext) -> Non
         f"своё действие не всплыло от первого лица; всплыло: {surfaced!r}"
     )
     assert "read_code" in surfaced
+
+
+@then('всплывает поступок Боба от первого лица «я довёл … до ветки в своём форке»')
+def fork_handoff_deed_surfaces_first_person(autobio_context: _AutobioContext) -> None:
+    surfaced = " | ".join(autobio_context.outcome.surfaced)
+    assert "я довёл" in surfaced, (
+        f"передача работы не всплыла от первого лица; всплыло: {surfaced!r}"
+    )
+    assert "в своём форке" in surfaced
+
+
+@then("во всплывшем поступке нет заявления об открытом PR")
+def surfaced_deed_claims_no_opened_pr(autobio_context: _AutobioContext) -> None:
+    surfaced = " | ".join(autobio_context.outcome.surfaced)
+    # 🔴 Именно этот текст ложится в основу ответа Боба о себе: заявление о чужом нажатии
+    # здесь и есть конфабуляция «я это помню, я сам так сделал».
+    assert "открыл PR" not in surfaced, (
+        f"Боб присвоил себе открытие PR, которого не открывал: {surfaced!r}"
+    )
+    assert "PR открыт" not in surfaced
 
 
 @then(

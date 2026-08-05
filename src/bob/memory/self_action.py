@@ -12,9 +12,19 @@
 формулировку ОТ ПЕРВОГО ЛИЦА (:class:`RenderedSelfAction`) — теги + флаг аномалии.
 I/O-free и детерминированное (mutation-цель): БД, время и sender живут в адаптере.
 
-Инвариант ядра: контент всегда открывается «я …» (INV-1 первое лицо); сбой и
+Инварианты ядра: контент всегда открывается «я …» (INV-1 первое лицо); сбой и
 runaway помечаются ``is_anomaly`` и тегом ``anomaly`` — Боб честно признаёт промах,
 а не приписывает его внешним силам (INV-4 разделение акторства).
+
+🔴 Боб присваивает себе РОВНО то, что сделал (BOB-089, bob-a6b.8). У успешного финала
+coding-сессии два разных поступка, и путать их нельзя: на gh-пути Боб открыл PR
+(:attr:`SelfActionKind.CODING_FINISHED`), на форк-пути он довёл работу до ветки в своём
+форке и отдал ссылку, а «Create pull request» жмёт owner
+(:attr:`SelfActionKind.CODING_HANDED_OFF`). Эпизод автобиографии — источник будущих
+ответов Боба о себе, поэтому заявление о несовершённом действии здесь становится
+конфабуляцией с провенансом «я это помню, я сам так сделал» — ровно тем классом, против
+которого BOB-090.C строил анти-конфабуляционный провенанс. Выбор поступка по факту делает
+:func:`coding_terminal_kind`.
 """
 
 from __future__ import annotations
@@ -26,6 +36,7 @@ __all__ = [
     "RenderedSelfAction",
     "SelfAction",
     "SelfActionKind",
+    "coding_terminal_kind",
     "describe_self_action",
 ]
 
@@ -40,12 +51,17 @@ class SelfActionKind(StrEnum):
     """Класс самодействия Боба (значение = голая строка в ``episodic_log``).
 
     Прецедент строкового enum — :class:`bob.coding.state.CodingSessionState`. Coding
-    покрывает жизненный цикл сессии (старт/финиш/прерывание/провал/runaway-флуд);
-    tool — коалесцированный итог tool-loop за ход и падение инструмента.
+    покрывает жизненный цикл сессии (старт, два разных успешных финала, прерывание,
+    провал, runaway-флуд); tool — коалесцированный итог tool-loop за ход и падение
+    инструмента.
     """
 
     CODING_STARTED = "coding_started"
     CODING_FINISHED = "coding_finished"
+    # 🔴 Второй успешный финал (BOB-089): работа доехала до ветки в форке Боба, ссылка
+    # отдана owner'у, PR Боб НЕ открывал. Отдельный вид, а не оттенок формулировки:
+    # это другой поступок, и присваивать себе чужое нажатие Боб не должен.
+    CODING_HANDED_OFF = "coding_handed_off"
     CODING_ABORTED = "coding_aborted"
     CODING_FAILED = "coding_failed"
     CODING_RUNAWAY = "coding_runaway"
@@ -80,6 +96,7 @@ _CODING_KINDS = frozenset(
     {
         SelfActionKind.CODING_STARTED,
         SelfActionKind.CODING_FINISHED,
+        SelfActionKind.CODING_HANDED_OFF,
         SelfActionKind.CODING_ABORTED,
         SelfActionKind.CODING_FAILED,
         SelfActionKind.CODING_RUNAWAY,
@@ -120,6 +137,9 @@ def _content_for(action: SelfAction) -> str:
             content = (
                 f"я доделал «{target}», открыл PR" if target else "я доделал работу, открыл PR"
             )
+        case SelfActionKind.CODING_HANDED_OFF:
+            head = f"я довёл «{target}»" if target else "я довёл работу"
+            content = f"{head} до ветки в своём форке и отдал ссылку — PR не открывал"
         case SelfActionKind.CODING_ABORTED:
             content = (
                 f"я прервал сессию по «{target}» — меня остановили"
@@ -146,6 +166,22 @@ def _content_for(action: SelfAction) -> str:
             )
             content = f"{head} — не вышло{_detail_suffix(detail)}"
     return content
+
+
+def coding_terminal_kind(*, opened_pr: bool) -> SelfActionKind:
+    """Какой поступок Боб записывает на успешном финале сессии — по ФАКТУ, а не по надежде.
+
+    ``opened_pr`` — тот же самый признак пути, которым композиция уже развела адаптер
+    интеграции и терминальную реплику одним решением
+    (``_build_pr_integration`` → ``CodingAssistant(opens_pr=…)``, BOB-089.D). Отдельного
+    флага здесь нет сознательно: два источника «открыт ли PR» рано или поздно разойдутся, и
+    расхождение проявится именно как ложное воспоминание Боба о себе.
+
+    ``True`` → :attr:`SelfActionKind.CODING_FINISHED` («открыл PR» — так и было, gh-путь);
+    ``False`` → :attr:`SelfActionKind.CODING_HANDED_OFF` (работа доведена до ветки в форке,
+    ссылка отдана, нажимает owner).
+    """
+    return SelfActionKind.CODING_FINISHED if opened_pr else SelfActionKind.CODING_HANDED_OFF
 
 
 def describe_self_action(action: SelfAction) -> RenderedSelfAction:

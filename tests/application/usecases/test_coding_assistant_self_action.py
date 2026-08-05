@@ -8,7 +8,9 @@
 :class:`~bob.memory.ports.SelfActionRecorder` на каждом lifecycle-переходе:
 
 * ``start`` → ``CODING_STARTED``; ``stop`` → ``CODING_ABORTED``;
-* успех (PR открыт) → ``CODING_FINISHED``; провал/нет-изменений → ``CODING_FAILED``;
+* успех (PR открыт) → ``CODING_FINISHED``; успех на ФОРК-пути (PR открывает owner по
+  ссылке, ``opens_pr=False``) → ``CODING_HANDED_OFF`` (BOB-089, bob-a6b.8);
+  провал/нет-изменений → ``CODING_FAILED``;
 * runaway (кап нарратива BOB-076 сработал) → ``CODING_RUNAWAY`` ровно один раз за прогон;
 * 🔴 best-effort: бросающий recorder не роняет coding-путь (урок Part D BOB-078).
 
@@ -25,7 +27,7 @@ import pytest
 
 from bob.coding.state import CodingSessionState, is_terminal
 from bob.coding.usecases.coding_assistant import _MAX_NARRATION, CodingAssistant
-from bob.memory.self_action import SelfAction, SelfActionKind
+from bob.memory.self_action import SelfAction, SelfActionKind, describe_self_action
 from bob.social.disclosure import VISIBILITY_OWNER_PRIVATE
 
 if TYPE_CHECKING:
@@ -202,6 +204,7 @@ def _build(
     recorder: _SpyRecorder | None = None,
     runner: _FakeRunner | None = None,
     worktree: _FakeWorktree | None = None,
+    opens_pr: bool = True,
 ) -> _Rig:
     recorder = recorder or _SpyRecorder()
     runner = runner or _FakeRunner(events=_plan_events())
@@ -218,6 +221,9 @@ def _build(
         clock=_FakeClock(),
         id_factory=_ids(),
         recorder=recorder,
+        # Форк-путь (BOB-089): PR открывает owner по ссылке — Боб пишет о себе ДРУГОЙ
+        # поступок. Флаг приезжает из композиции В ПАРЕ с адаптером интеграции.
+        opens_pr=opens_pr,
     )
     return _Rig(assistant, recorder, worktree, store, runner, notifier)
 
@@ -267,6 +273,32 @@ async def test_execute_success_records_coding_finished() -> None:
     )
     assert finished.action.target == _TASK
     assert finished.sender_id == _OWNER_ID
+
+
+@pytest.mark.asyncio
+async def test_on_the_fork_path_bob_records_a_handoff_not_an_opened_pr() -> None:
+    # 🔴 bob-a6b.8: на форк-пути «Create pull request» жмёт owner, поэтому эпизод «открыл
+    # PR» был бы ложным САМОвоспоминанием — а автобиография это то, из чего Боб потом
+    # припоминает свои поступки, отвечая о себе (класс конфабуляции из BOB-090.C).
+    runner = _FakeRunner(events={**_plan_events(), "acceptEdits": _execute_events()})
+    rig = _build(runner=runner, opens_pr=False)
+    await _to_plan_ready(rig)
+
+    await rig.assistant.approve_plan(_OWNER_ID)
+
+    kinds = rig.recorder.kinds()
+    assert SelfActionKind.CODING_HANDED_OFF in kinds
+    assert SelfActionKind.CODING_FINISHED not in kinds
+    handed = next(
+        c for c in rig.recorder.calls if c.action.kind is SelfActionKind.CODING_HANDED_OFF
+    )
+    assert handed.action.target == _TASK
+    assert handed.sender_id == _OWNER_ID
+    assert handed.visibility == VISIBILITY_OWNER_PRIVATE
+    # То, что реально осядет в ленте — текст эпизода; он не присваивает открытие PR.
+    content = describe_self_action(handed.action).content
+    assert "открыл PR" not in content
+    assert "форк" in content
 
 
 @pytest.mark.asyncio

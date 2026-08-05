@@ -73,6 +73,24 @@ def test_isolated_clone_ships_off_with_an_unconfigured_fork() -> None:
     assert section["fork_url"] == ""
 
 
+def test_the_upstream_slug_lives_only_in_the_github_section() -> None:
+    # 🔴 bob-a6b.9: ОДИН факт — ОДИН ключ. Репозиторную идентичность держит секция
+    # ``github`` (там же, где принципалы находят свои установки), поэтому слаг апстрима
+    # существует ровно в одном месте — ``github.propose_repo``. Дубль ``coder.upstream_repo``
+    # (срез D) убран: два ключа на один факт однажды разъезжаются, и тогда Боб отдаёт ссылку
+    # на один репозиторий, а читает другой.
+    config = _config()
+    coder, github = config["coder"], config["github"]
+    assert isinstance(coder, dict)
+    assert isinstance(github, dict)
+    assert "upstream_repo" not in coder
+    assert github["propose_repo"] == ""  # пусто по умолчанию → прежний путь `gh pr create`
+    # Транспортный адрес форка дублем не является и остаётся в ``coder``: из слага ssh-адрес
+    # не собрать. Согласованность этих двух углов проверяется на СБОРКЕ ссылки.
+    assert coder["fork_url"] == ""
+    assert github["work_repo"] == ""
+
+
 def test_coding_capability_is_never_on_the_autonomous_safe_allowlist() -> None:
     # The gated coding session is owner-driven, never autonomous: it must NOT leak into
     # ``goals.safe_capabilities`` (the self-directed tick's allowlist).

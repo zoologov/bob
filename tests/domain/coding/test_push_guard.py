@@ -20,6 +20,22 @@ from bob.coding.push_guard import (
     PUSH_GUARD_URL_PREFIXES,
     guarded_spawn_env,
 )
+from bob.identity.spawn_isolation import OWNER_CREDENTIAL_VARS, SpawnIsolation
+
+#: Фиктивный «gh-токен owner'а»: в окружении спавна его быть не должно.
+_OWNER_GH_TOKEN = "owner-gh-token"  # noqa: S105 — фиктивное значение для проверки вычистки
+
+_ISOLATION = SpawnIsolation(
+    config_global="/w/gitconfig", askpass="/w/askpass-disabled", gh_config_dir="/w/gh"
+)
+
+
+def _pairs(env: dict[str, str]) -> list[tuple[str, str]]:
+    """Пары git-конфига окружения В ПОРЯДКЕ индексов (порядок здесь — часть смысла)."""
+    return [
+        (env[f"GIT_CONFIG_KEY_{i}"], env[f"GIT_CONFIG_VALUE_{i}"])
+        for i in range(int(env["GIT_CONFIG_COUNT"]))
+    ]
 
 # --------------------------------------------------------------------------- #
 # OFF-путь: барьер неактивен → спавн байт-в-байт прежний
@@ -160,3 +176,108 @@ def test_fetch_transports_are_left_alone() -> None:
     keys = [v for k, v in env.items() if k.startswith("GIT_CONFIG_KEY_")]
     assert keys
     assert all(key.endswith(".pushInsteadOf") for key in keys)
+
+
+# --------------------------------------------------------------------------- #
+# Изоляция кредов (BOB-089, срез C): ВТОРОГО механизма нет — тот же шов
+# --------------------------------------------------------------------------- #
+
+
+def test_without_the_barrier_and_without_isolation_nothing_is_overridden() -> None:
+    # Оба выключены → ``None``, то есть спавн вообще без ``env=``: байт-в-байт прежний.
+    assert guarded_spawn_env({"PATH": "/usr/bin"}, active=False, isolation=None) is None
+
+
+def test_isolation_alone_already_overrides_the_environment() -> None:
+    # Изоляция не требует ослабленной песочницы: клон-режим включается своим флагом.
+    env = guarded_spawn_env({"PATH": "/usr/bin"}, active=False, isolation=_ISOLATION)
+    assert env is not None
+    assert env["PATH"] == "/usr/bin"
+    assert env["GIT_CONFIG_GLOBAL"] == "/w/gitconfig"
+    assert env["GIT_CONFIG_NOSYSTEM"] == "1"
+    assert env["GIT_TERMINAL_PROMPT"] == "0"
+
+
+def test_isolation_alone_resets_the_helper_list_and_adds_no_push_barrier() -> None:
+    env = guarded_spawn_env({}, active=False, isolation=_ISOLATION)
+    assert env is not None
+    assert _pairs(env) == [("credential.helper", "")]
+
+
+def test_the_barrier_and_the_isolation_compose_in_one_config_block() -> None:
+    env = guarded_spawn_env({}, active=True, isolation=_ISOLATION)
+    assert env is not None
+    pairs = _pairs(env)
+    assert len(pairs) == len(PUSH_GUARD_URL_PREFIXES) + 1
+    assert pairs[-1] == ("credential.helper", "")
+    assert all(key.endswith(".pushInsteadOf") for key, _ in pairs[:-1])
+
+
+def test_the_owners_own_config_pairs_stay_ahead_of_the_helper_reset() -> None:
+    # 🔴 Сброс хелперов обязан стоять ПОСЛЕ пар owner'а: иначе его helper, объявленный
+    # в окружении, снова окажется в списке — то есть его креды снова отвечают git'у.
+    base = {
+        "GIT_CONFIG_COUNT": "1",
+        "GIT_CONFIG_KEY_0": "credential.helper",
+        "GIT_CONFIG_VALUE_0": "osxkeychain",
+    }
+    env = guarded_spawn_env(base, active=False, isolation=_ISOLATION)
+    assert env is not None
+    assert _pairs(env) == [
+        ("credential.helper", "osxkeychain"),
+        ("credential.helper", ""),
+    ]
+
+
+def test_bobs_credential_store_arrives_as_the_last_helper() -> None:
+    env = guarded_spawn_env(
+        {},
+        active=True,
+        isolation=SpawnIsolation(
+            config_global="/w/c", askpass="/w/a", credential_store="/w/creds"
+        ),
+    )
+    assert env is not None
+    pairs = _pairs(env)
+    assert pairs[-2:] == [
+        ("credential.helper", ""),
+        ("credential.helper", "store --file=/w/creds"),
+    ]
+
+
+def test_the_owners_ambient_credentials_are_dropped_from_the_spawn() -> None:
+    base = {
+        "PATH": "/usr/bin",
+        "GH_TOKEN": _OWNER_GH_TOKEN,
+        "GITHUB_TOKEN": "owner-github-token",
+        "SSH_AUTH_SOCK": "/tmp/agent.sock",  # noqa: S108 — фиктивный путь, не создаётся
+    }
+    env = guarded_spawn_env(base, active=False, isolation=_ISOLATION)
+    assert env is not None
+    assert env["PATH"] == "/usr/bin"
+    for var in OWNER_CREDENTIAL_VARS:
+        assert var not in env
+    # И ни одно значение не переехало под другим именем.
+    assert _OWNER_GH_TOKEN not in env.values()
+
+
+def test_an_inherited_askpass_of_the_owner_is_replaced_not_kept() -> None:
+    env = guarded_spawn_env(
+        {"GIT_ASKPASS": "/opt/owner/askpass"}, active=False, isolation=_ISOLATION
+    )
+    assert env is not None
+    assert env["GIT_ASKPASS"] == "/w/askpass-disabled"
+
+
+def test_isolation_does_not_mutate_the_base_environment() -> None:
+    base = {"GH_TOKEN": _OWNER_GH_TOKEN}
+    guarded_spawn_env(base, active=True, isolation=_ISOLATION)
+    assert base == {"GH_TOKEN": _OWNER_GH_TOKEN}
+
+
+def test_the_push_barrier_alone_still_leaves_the_owners_credentials_in_place() -> None:
+    # 🔴 Честная граница срезов: барьер bob-5ao кредов НЕ убирает (это и было дырой).
+    env = guarded_spawn_env({"GH_TOKEN": _OWNER_GH_TOKEN}, active=True)
+    assert env is not None
+    assert env["GH_TOKEN"] == _OWNER_GH_TOKEN
+    assert "GIT_CONFIG_GLOBAL" not in env

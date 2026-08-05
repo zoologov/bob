@@ -40,7 +40,7 @@ import contextlib
 import logging
 import os
 from collections.abc import AsyncGenerator, AsyncIterator, Mapping, Sequence
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
 from bob.coding.push_guard import guarded_spawn_env
 from bob.coding.sandbox_policy import (
@@ -49,6 +49,9 @@ from bob.coding.sandbox_policy import (
     is_allowed_mode,
 )
 from bob.coding.stream_json import STREAM_LIMIT, parse_event
+
+if TYPE_CHECKING:
+    from bob.identity.spawn_isolation import SpawnIsolation
 
 __all__ = ["ClaudeRunError", "SubprocessClaudeRunner"]
 
@@ -88,13 +91,18 @@ class SubprocessClaudeRunner:
         max_bytes: int = _DEFAULT_MAX_BYTES,
         allow_bypass: bool = False,
         extra_dirs: Sequence[str] = (),
+        isolation: SpawnIsolation | None = None,
     ) -> None:
         # 🔴 Push guard (BOB-087.E): when the owner relaxes the sandbox the DEFAULT
         # spawner carries a git config in its environment that makes every network push
         # from the tree die on a non-existent remote helper. Only the default (real
         # process) boundary is guarded — an injected fake spawns nothing.
+        # 🔴 Credential isolation (BOB-089.C): under ``coder.isolated_clone`` the same
+        # spawn ALSO stops seeing the owner's credential helper (substituted global git
+        # config, disabled system config, reset helper list, no ambient gh token / ssh
+        # agent) — see :mod:`bob.identity.spawn_isolation`. ``None`` → unchanged spawn.
         self._runner: StreamLineRunner = runner or _ExecStreamRunner(
-            guard_push=allow_bypass
+            guard_push=allow_bypass, isolation=isolation
         )
         self._claude_bin = claude_bin
         self._timeout = timeout
@@ -151,12 +159,15 @@ class SubprocessClaudeRunner:
 class _ExecStreamRunner:
     """Default runner: ``create_subprocess_exec``, read stdout line-by-line, no shell."""
 
-    def __init__(self, *, guard_push: bool = False) -> None:
+    def __init__(
+        self, *, guard_push: bool = False, isolation: SpawnIsolation | None = None
+    ) -> None:
         # ``None`` (the default) means «spawn without ``env=``» — the inherited
         # environment, byte-identical to the pre-guard spawn. Under ``guard_push`` it is
-        # the inherited environment PLUS the push-blocking git config (see
-        # :mod:`bob.coding.push_guard`, incl. what that barrier honestly does NOT cover).
-        self._env = guarded_spawn_env(os.environ, active=guard_push)
+        # the inherited environment PLUS the push-blocking git config, and under
+        # ``isolation`` MINUS the owner's credentials (see :mod:`bob.coding.push_guard`,
+        # incl. what those measures honestly do NOT cover).
+        self._env = guarded_spawn_env(os.environ, active=guard_push, isolation=isolation)
 
     async def __call__(
         self, argv: list[str], *, cwd: str, timeout: float

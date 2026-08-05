@@ -435,26 +435,31 @@ DEFAULT_CONFIG: Config = {
         # (``https://x-access-token:<token>@host/…``): argv is visible in ``ps``, so such a
         # configuration is refused at startup. Measured price on this repository: 3.8 s and
         # 142 MB per workplace.
+        # 🔴 ``fork_url`` (transport) and ``github.work_repo`` (the API slug of the same fork)
+        # are two ANGLES of ONE repository, not a duplicate — an ssh address cannot be derived
+        # from a slug. They MUST agree, and that is CHECKED when the handover link is
+        # assembled (a mismatch is refused loudly, naming both keys), rather than left as the
+        # owner's discipline: divergence would push the branch to one repository, promise the
+        # owner a second and hold rights to a third.
         "isolated_clone": False,
         "clone_root": ".clones",
         "fork_url": "",
-        # 🔴 BOB'S OWN IDENTITY IN THE HISTORY + THE PR HANDOFF (BOB-089, slice D), both
-        # blank by default so nothing changes until the clone workplace is switched on.
-        # ``app_user_id`` is the NUMERIC GitHub App user id that prefixes the bot's noreply
-        # address in Bob's commits (``<id>+bob-ai-work[bot]@users.noreply.github.com``);
-        # blank → the address carries no prefix, while the NAME (``bob[ai]``) is set either
-        # way, because not signing at all would have git fall back to the OWNER's identity —
-        # exactly the confusion this slice removes. The signature is written ``--local``, in
-        # Bob's clone only: a global setting would re-sign the owner's own commits.
-        # This id is public information, unlike a token — it may live in argv.
-        # ``upstream_repo`` (``owner/repo``) is the upstream side of the compare link Bob
-        # hands over when his work is ready. 🔴 He does NOT open the PR: a cross-repo PR
-        # from a PRIVATE fork is not expressible for an installation token (three ways
-        # verified — a non-goal, no workaround is sought), so Bob says the work is in his
-        # fork and gives a prefilled form where the OWNER presses «Create pull request».
-        # Blank (or no fork / no clone) → the previous ``gh pr create`` path, byte-identical.
+        # 🔴 BOB'S OWN IDENTITY IN THE HISTORY (BOB-089, slice D), blank by default so
+        # nothing changes until the clone workplace is switched on. ``app_user_id`` is the
+        # NUMERIC GitHub App user id that prefixes the bot's noreply address in Bob's commits
+        # (``<id>+bob-ai-work[bot]@users.noreply.github.com``); blank → the address carries no
+        # prefix, while the NAME (``bob[ai]``) is set either way, because not signing at all
+        # would have git fall back to the OWNER's identity — exactly the confusion this slice
+        # removes. The signature is written ``--local``, in Bob's clone only: a global setting
+        # would re-sign the owner's own commits. This id is public information, unlike a
+        # token — it may live in argv.
+        # 🔴 THE UPSTREAM OF THE COMPARE LINK IS **NOT** HERE (bob-a6b.9). It is
+        # ``github.propose_repo`` — the ONE section that owns repository identity, and the
+        # same slug the ``propose`` principal reads the upstream with. An earlier
+        # ``coder.upstream_repo`` said the same thing a second time; two keys for one fact
+        # eventually diverge, and then Bob hands over a link to one repository while holding
+        # read rights to another.
         "app_user_id": "",
-        "upstream_repo": "",
     },
     # 🔴 BOB'S GITHUB IDENTITY (BOB-089, slice B) — «who he presents himself as, and what he
     # authenticates with». Everything ships EMPTY: with no credentials the ``bob.identity``
@@ -475,6 +480,13 @@ DEFAULT_CONFIG: Config = {
     # ``_repo`` — the ``owner/repo`` whose INSTALLATION this principal uses (an installation
     # token is scoped to ONE installation). Values come from ``.env``
     # (``BOB_GITHUB__WORK_APP_ID`` …), never from the repository.
+    #
+    # 🔴 THIS SECTION IS THE SINGLE SOURCE OF REPOSITORY IDENTITY (bob-a6b.9). ``work_repo``
+    # is Bob's private fork, ``propose_repo`` is the owner's upstream — and ``propose_repo``
+    # is therefore ALSO the target of the compare link Bob hands over when his work is ready
+    # (he does NOT open the PR: a cross-repo PR from a PRIVATE fork is not expressible for an
+    # installation token — three ways verified, a non-goal). Blank (or no fork / no clone) →
+    # the previous ``gh pr create`` path, byte-identical.
     #
     # ``token_margin_seconds`` — 🔴 renew AHEAD of time, not on a 401: an installation token
     # lives one hour, a coder session can run longer, and breaking mid-work would cost far

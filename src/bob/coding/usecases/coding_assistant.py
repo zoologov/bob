@@ -65,7 +65,7 @@ from bob.coding.ports import LiveRunStreamer, OwnerCheck, OwnerNotifier
 from bob.coding.speaker import MessageKind, channel_for
 from bob.coding.state import CodingSessionState, can_approve_plan, is_terminal
 from bob.coding.work_facts import WorkFactsAccumulator, WorkOutcome
-from bob.memory.self_action import SelfAction, SelfActionKind
+from bob.memory.self_action import SelfAction, SelfActionKind, coding_terminal_kind
 from bob.social.disclosure import VISIBILITY_OWNER_PRIVATE
 
 if TYPE_CHECKING:
@@ -411,7 +411,9 @@ class CodingAssistant:
         cross-repo PR is not expressible for an installation token, so the integration
         path returns a prefilled COMPARE FORM instead and the owner presses «Create pull
         request». ``opens_pr`` (from the composition, default True) is what decides which
-        of the two honest terminal lines the owner hears; the state stays ``PR_OPEN`` —
+        of the two honest terminal lines the owner hears — and, since bob-a6b.8, which deed
+        Bob writes into his OWN autobiography (:func:`coding_terminal_kind`: an opened PR is
+        his, a handed-over link is not); the state stays ``PR_OPEN`` —
         the successful terminal of the gated lifecycle — and ``pr_url`` carries whichever
         address was produced.
         """
@@ -450,7 +452,12 @@ class CodingAssistant:
             CodingSessionState.PR_OPEN, at=self._clock.now()
         )
         await self._store.save(session)
-        await self._record(SelfAction(SelfActionKind.CODING_FINISHED, target=session.task), sender)
+        # Автобиография идёт ЗА фактом так же, как голос (BOB-089, bob-a6b.8): на форк-пути
+        # Боб PR не открывал, и присваивать себе чужое нажатие в собственной памяти нельзя.
+        await self._record(
+            SelfAction(coding_terminal_kind(opened_pr=self._opens_pr), target=session.task),
+            sender,
+        )
         await self._journal(session.task, facts, WorkOutcome.FINISHED, sender)
         # Голос идёт ЗА фактом (BOB-089.D): PR открыт — «вот PR»; работа лишь доведена до
         # ветки в форке Боба — честная реплика со ссылкой на форму, где создаёт PR owner.
