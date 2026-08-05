@@ -219,6 +219,7 @@ class CodingAssistant:
         clock: _Clock,
         id_factory: Callable[[], str] = lambda: uuid.uuid4().hex,
         execute_mode: str = _DEFAULT_EXECUTE_MODE,
+        opens_pr: bool = True,
         typing_keepalive: TypingKeepalive | None = None,
         status_panel: StatusPanel | None = None,
         context: CodingContext | None = None,
@@ -244,6 +245,13 @@ class CodingAssistant:
         self._clock = clock
         self._id_factory = id_factory
         self._execute_mode = execute_mode
+        # 🔴 Открывает ли завязанный интеграционный путь PR САМ (BOB-089.D). Знает это
+        # композиция — она же и выбирает адаптер: ``gh pr create`` в репозитории owner'а
+        # (True, прежнее поведение) или форма сравнения из ПРИВАТНОГО форка Боба, где
+        # cross-repo PR installation-токену недоступен вовсе (False). Голос идёт ЗА фактом:
+        # заявить открытый PR там, где отдана лишь ссылка, — неправда, которую owner
+        # проверит первым же нажатием. Default True → OFF-путь байт-в-байт прежний.
+        self._opens_pr = opens_pr
         # Autobiography (BOB-079.2): first-person self-action episodes recorded at each
         # lifecycle transition through the narrow ``SelfActionRecorder``. Unwired → a local
         # null recorder (zero writes), so the gated flow is byte-identical when off, and the
@@ -397,6 +405,15 @@ class CodingAssistant:
         ``bob/<slug>`` branch himself (validated inside the adapter — never ``main``)
         BEFORE opening the PR. If ``claude`` changed nothing, the push reports nothing to
         commit and the session FAILS honestly with no PR.
+
+        🔴 The terminal reached here is «Bob's work is DONE», not necessarily «a PR
+        exists» (BOB-089.D). When the workplace is a clone of Bob's PRIVATE fork, a
+        cross-repo PR is not expressible for an installation token, so the integration
+        path returns a prefilled COMPARE FORM instead and the owner presses «Create pull
+        request». ``opens_pr`` (from the composition, default True) is what decides which
+        of the two honest terminal lines the owner hears; the state stays ``PR_OPEN`` —
+        the successful terminal of the gated lifecycle — and ``pr_url`` carries whichever
+        address was produced.
         """
         # Work-journal accumulator (BOB-087.B1): a fresh bounded per-run collector fed the raw
         # stream events by ``_narrate_run`` — the DISTILLED substance of the session (files /
@@ -435,8 +452,13 @@ class CodingAssistant:
         await self._store.save(session)
         await self._record(SelfAction(SelfActionKind.CODING_FINISHED, target=session.task), sender)
         await self._journal(session.task, facts, WorkOutcome.FINISHED, sender)
-        await self._panel.update(session_voice.panel_pr())
-        return await self._reply(True, session_voice.pr(pr_url), session=session)
+        # Голос идёт ЗА фактом (BOB-089.D): PR открыт — «вот PR»; работа лишь доведена до
+        # ветки в форке Боба — честная реплика со ссылкой на форму, где создаёт PR owner.
+        if self._opens_pr:
+            await self._panel.update(session_voice.panel_pr())
+            return await self._reply(True, session_voice.pr(pr_url), session=session)
+        await self._panel.update(session_voice.panel_ready_for_pr())
+        return await self._reply(True, session_voice.ready_for_pr(pr_url), session=session)
 
     async def _run_plan(self, session: CodingSession, path: str) -> str:
         """Run plan-mode, collecting the plan text (a plan with NO edits — the gate).

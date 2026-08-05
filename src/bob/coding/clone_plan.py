@@ -6,14 +6,15 @@
 # beadloom:feature=coding
 # beadloom:layer=domain
 
-"""План рабочего места-КЛОНА — чистое ядро (BOB-089, срез A).
+"""План рабочего места-КЛОНА — чистое ядро (BOB-089, срезы A + D).
 
 ОДНА ответственность: решить, КАК заводится и переиспользуется рабочее место Боба, когда
-оно перестаёт быть linked worktree и становится отдельным клоном. Три решения, ни одного
+оно перестаёт быть linked worktree и становится отдельным клоном. Решения, ни одного
 побочного эффекта:
 
 * :func:`clone_argv` / :func:`checkout_argv` / :func:`origin_argv` — фиксированные,
   shell-free формы git-команд заведения клона;
+* :func:`identity_argv` — чем подписана работа в этом клоне (``bob[ai]``, 🔴 ЛОКАЛЬНО);
 * :func:`workspace_verdict` — клонировать / переиспользовать / отказать для
   долгоживущего места;
 * :func:`is_credential_free_url` — какой URL вообще допустим в argv.
@@ -51,6 +52,7 @@ __all__ = [
     "WorkspaceVerdict",
     "checkout_argv",
     "clone_argv",
+    "identity_argv",
     "is_credential_free_url",
     "origin_argv",
     "workspace_verdict",
@@ -58,6 +60,16 @@ __all__ = [
 
 #: Имя remote, который git создаёт при клонировании (и которое мы переписываем на форк).
 _ORIGIN = "origin"
+
+#: Подпись Боба в истории — ровно она отличает его работу от работы owner'а (US-2).
+_COMMIT_NAME = "bob[ai]"
+#: Ботовский адрес GitHub App: ``<app-user-id>+<login>@users.noreply.github.com``.
+#: Суффикс ``[bot]`` в логине неизменяем (решение owner'а №5), поэтому он здесь дословно.
+_BOT_LOGIN = "bob-ai-work[bot]"
+_NOREPLY_HOST = "users.noreply.github.com"
+#: id пользователя приложения — ЧИСЛО. Мусор в конфиге не превращается в правдоподобный
+#: адрес (``isdigit`` тут не годится: он принимает и не-ascii цифры).
+_APP_USER_ID = re.compile(r"[0-9]+")
 
 #: URL со схемой: ``<scheme>://<authority>[/…]``. Секрет может жить только в authority
 #: (``user:token@host``), поэтому дальше первого слэша разбор не нужен.
@@ -112,6 +124,31 @@ def origin_argv(git_bin: str, *, dest: str, fork_url: str) -> list[str]:
     if not fork_url:
         return [git_bin, "-C", dest, "remote", "remove", _ORIGIN]
     return [git_bin, "-C", dest, "remote", "set-url", _ORIGIN, fork_url]
+
+
+def identity_argv(git_bin: str, *, dest: str, app_user_id: str) -> list[list[str]]:
+    """Собрать ЛОКАЛЬНУЮ подпись работы Боба в клоне: имя и e-mail двумя командами.
+
+    🔴 ``--local`` и ``-C <dest>`` стоят в форме ЯВНО, и это главное свойство среза D.
+    Глобальная настройка переподписала бы коммиты owner'а в его собственном
+    репозитории как ``bob[ai]`` — ровно та путаница идентичностей, от которой уходим;
+    ни ``--global``, ни ``--system`` эта форма выразить не может.
+
+    Имя — всегда :data:`_COMMIT_NAME`: не подписать вовсе было бы ХУЖЕ, чем подписать
+    без числового префикса, потому что тогда git взял бы имя из конфигурации owner'а и
+    работа Боба стала бы неотличима от его собственной (то самое, против чего US-2).
+    ``app_user_id`` (числовой id пользователя приложения) — опциональный префикс
+    ботовского noreply-адреса: с ним GitHub сшивает коммит с ботом, без него остаётся
+    честный адрес без привязки. Не-числовое значение игнорируется, а не вклеивается в
+    адрес.
+    """
+    email = f"{_BOT_LOGIN}@{_NOREPLY_HOST}"
+    if _APP_USER_ID.fullmatch(app_user_id):
+        email = f"{app_user_id}+{email}"
+    return [
+        [git_bin, "-C", dest, "config", "--local", "user.name", _COMMIT_NAME],
+        [git_bin, "-C", dest, "config", "--local", "user.email", email],
+    ]
 
 
 def workspace_verdict(*, dest_exists: bool, is_repo: bool) -> WorkspaceVerdict:

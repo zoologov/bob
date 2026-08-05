@@ -51,6 +51,12 @@ _BOB039_SOURCE = (
     "src/bob/coding/adapters/git_clone.py",
     "src/bob/coding/adapters/_integrate.py",
     "src/bob/coding/adapters/_paths.py",
+    # BOB-089.D: the integration path became substitutable too (open a PR via ``gh`` OR
+    # hand the owner a compare link from Bob's fork), so the second path and its pure core
+    # are inside the invariant — otherwise the guard would cover only one of the two ways
+    # a session can end.
+    "src/bob/coding/pr_link.py",
+    "src/bob/coding/adapters/fork_link.py",
 )
 
 # The two interchangeable workplace adapters (BOB-089.A). Both realise the same ports,

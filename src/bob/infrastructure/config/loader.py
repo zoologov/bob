@@ -438,6 +438,60 @@ DEFAULT_CONFIG: Config = {
         "isolated_clone": False,
         "clone_root": ".clones",
         "fork_url": "",
+        # 🔴 BOB'S OWN IDENTITY IN THE HISTORY + THE PR HANDOFF (BOB-089, slice D), both
+        # blank by default so nothing changes until the clone workplace is switched on.
+        # ``app_user_id`` is the NUMERIC GitHub App user id that prefixes the bot's noreply
+        # address in Bob's commits (``<id>+bob-ai-work[bot]@users.noreply.github.com``);
+        # blank → the address carries no prefix, while the NAME (``bob[ai]``) is set either
+        # way, because not signing at all would have git fall back to the OWNER's identity —
+        # exactly the confusion this slice removes. The signature is written ``--local``, in
+        # Bob's clone only: a global setting would re-sign the owner's own commits.
+        # This id is public information, unlike a token — it may live in argv.
+        # ``upstream_repo`` (``owner/repo``) is the upstream side of the compare link Bob
+        # hands over when his work is ready. 🔴 He does NOT open the PR: a cross-repo PR
+        # from a PRIVATE fork is not expressible for an installation token (three ways
+        # verified — a non-goal, no workaround is sought), so Bob says the work is in his
+        # fork and gives a prefilled form where the OWNER presses «Create pull request».
+        # Blank (or no fork / no clone) → the previous ``gh pr create`` path, byte-identical.
+        "app_user_id": "",
+        "upstream_repo": "",
+    },
+    # 🔴 BOB'S GITHUB IDENTITY (BOB-089, slice B) — «who he presents himself as, and what he
+    # authenticates with». Everything ships EMPTY: with no credentials the ``bob.identity``
+    # module is inert, and the refusal names the MISSING CONFIG KEY at the moment a token is
+    # actually needed (building the provider on an unconfigured Bob never fails).
+    #
+    # There are TWO principals because a GitHub App's permissions are identical for ALL of
+    # its installations — they cannot be narrowed «for this one repository». ``work``
+    # («Bob AI Work», contents write, installed ONLY on the organisation holding the private
+    # fork) pushes Bob's branch and cannot write a single byte to the owner's upstream;
+    # ``propose`` («Bob AI Propose», contents READ + pull_requests write) reads the upstream
+    # (owner's negative smoke: create a branch / force-push main / write a file upstream —
+    # all three 403 «Resource not accessible by integration»).
+    #
+    # Three keys per principal: ``_app_id`` (numeric; travels in the App JWT ``iss`` claim),
+    # ``_app_key`` — 🔴 the PATH to the private key (``.secrets/*.pem``, 0600), NEVER the key
+    # material itself: that would land in openssl's argv, and argv is visible in ``ps``; and
+    # ``_repo`` — the ``owner/repo`` whose INSTALLATION this principal uses (an installation
+    # token is scoped to ONE installation). Values come from ``.env``
+    # (``BOB_GITHUB__WORK_APP_ID`` …), never from the repository.
+    #
+    # ``token_margin_seconds`` — 🔴 renew AHEAD of time, not on a 401: an installation token
+    # lives one hour, a coder session can run longer, and breaking mid-work would cost far
+    # more than one extra mint. ``jwt_lifetime_seconds`` — the App JWT lifetime, comfortably
+    # inside GitHub's ten-minute ceiling.
+    "github": {
+        "work_app_id": "",
+        "work_app_key": "",
+        "work_repo": "",
+        "propose_app_id": "",
+        "propose_app_key": "",
+        "propose_repo": "",
+        "token_margin_seconds": 300,
+        "jwt_lifetime_seconds": 480,
+        "api_base_url": "https://api.github.com",
+        "openssl_bin": "openssl",
+        "timeout_seconds": 30,
     },
     # Web search — «Боб ищет в интернете» (BOB-053). The ``web_search`` skill (behind
     # the capability seam) makes ONE Qwen-native call over the MaaS **Responses API**

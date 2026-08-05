@@ -128,8 +128,29 @@ def owner_repo(tmp_path: Path) -> tuple[Path, Path]:
     return work, fork
 
 
-def _adapter(tmp_path: Path, work: Path, *, fork_url: str = "") -> GitClone:
-    return GitClone(tmp_path / "clones", source=work, fork_url=fork_url, runner=ExecRunner())
+def _adapter(
+    tmp_path: Path, work: Path, *, fork_url: str = "", app_user_id: str = ""
+) -> GitClone:
+    return GitClone(
+        tmp_path / "clones",
+        source=work,
+        fork_url=fork_url,
+        app_user_id=app_user_id,
+        runner=ExecRunner(),
+    )
+
+
+def _config_of(scope: str, cwd: Path) -> list[str | None]:
+    """Прочитать имя и e-mail в области ``scope`` (``--global`` / ``--local``).
+
+    ``None`` — «ключ не задан»: отличать «не задан» от «задан пустым» тут обязательно,
+    иначе сравнение «до/после» прошло бы и в случае, когда настройка ПОЯВИЛАСЬ.
+    """
+    values: list[str | None] = []
+    for key in ("user.name", "user.email"):
+        result = _git_try(cwd, "config", scope, "--get", key)
+        values.append(result.stdout.strip() if result.returncode == 0 else None)
+    return values
 
 
 # --------------------------------------------------------------------------- #
@@ -224,8 +245,6 @@ async def test_moving_main_inside_the_clone_leaves_the_owners_main_untouched(
     trunk_before = _git(work, "rev-parse", "main").strip()
     path = await _adapter(tmp_path, work).create("bob/task")
     (Path(path) / "feature.py").write_text("print('claude edit')\n", encoding="utf-8")
-    _git(Path(path), "config", "user.email", "bob@example.com")
-    _git(Path(path), "config", "user.name", "bob[ai]")
     _git(Path(path), "add", ".")
     _git(Path(path), "commit", "-m", "claude work")
     head = _git(Path(path), "rev-parse", "HEAD").strip()
@@ -294,6 +313,95 @@ async def test_a_fork_url_carrying_a_token_is_refused_without_echoing_the_secret
 
 
 # --------------------------------------------------------------------------- #
+# 🔴 Идентичность (срез D): подпись bob[ai] стоит ЛОКАЛЬНО и только в клоне
+# --------------------------------------------------------------------------- #
+
+
+async def test_a_commit_made_in_the_clone_is_authored_by_bob_ai(
+    owner_repo: tuple[Path, Path], tmp_path: Path
+) -> None:
+    # US-2: в ``git log`` работа Боба отличима от работы owner'а. Коммит делается обычным
+    # git, без ``-c user.name`` и без переменных окружения: подпись берётся ровно оттуда,
+    # куда её положил адаптер.
+    work, _fork = owner_repo
+
+    path = await _adapter(tmp_path, work, app_user_id="424242").create("bob/task")
+    (Path(path) / "feature.py").write_text("print('claude edit')\n", encoding="utf-8")
+    _git(Path(path), "add", ".")
+    _git(Path(path), "commit", "-m", "claude work")
+
+    assert _git(Path(path), "log", "-1", "--format=%an").strip() == "bob[ai]"
+    assert _git(Path(path), "log", "-1", "--format=%ae").strip() == (
+        "424242+bob-ai-work[bot]@users.noreply.github.com"
+    )
+
+
+async def test_the_clone_commits_as_bob_even_without_an_app_user_id(
+    owner_repo: tuple[Path, Path], tmp_path: Path
+) -> None:
+    # Без числового id адрес просто не сшивается GitHub'ом с ботом — но ИМЯ стоит, потому
+    # что иначе git подписал бы работу Боба конфигурацией owner'а (та самая
+    # неразличимость, против которой US-2).
+    work, _fork = owner_repo
+
+    path = await _adapter(tmp_path, work).create("bob/task")
+    (Path(path) / "feature.py").write_text("print('claude edit')\n", encoding="utf-8")
+    _git(Path(path), "add", ".")
+    _git(Path(path), "commit", "-m", "claude work")
+
+    assert _git(Path(path), "log", "-1", "--format=%an").strip() == "bob[ai]"
+    assert _git(Path(path), "log", "-1", "--format=%ae").strip() == (
+        "bob-ai-work[bot]@users.noreply.github.com"
+    )
+
+
+async def test_setting_bobs_identity_does_not_touch_the_owners_configuration(
+    owner_repo: tuple[Path, Path], tmp_path: Path
+) -> None:
+    # 🔴 ГЛАВНЫЙ ТЕСТ СРЕЗА D. Глобальная настройка переподписала бы коммиты owner'а в его
+    # собственном репозитории как ``bob[ai]`` — ровно та путаница идентичностей, от которой
+    # уходим. Сравниваются ФАКТИЧЕСКИЕ значения до и после, и в двух областях сразу:
+    # глобальной (на этом хосте) и локальной в репозитории owner'а.
+    work, _fork = owner_repo
+    global_before = _config_of("--global", work)
+    local_before = _config_of("--local", work)
+
+    await _adapter(tmp_path, work, app_user_id="424242").create("bob/task")
+
+    assert _config_of("--global", work) == global_before
+    assert _config_of("--local", work) == local_before
+    assert local_before == ["Owner", "owner@example.com"]  # контроль: было что менять
+
+
+async def test_the_owner_keeps_signing_his_own_commits_after_bob_gets_a_workplace(
+    owner_repo: tuple[Path, Path], tmp_path: Path
+) -> None:
+    # То же свойство, но через ПОВЕДЕНИЕ, а не через чтение конфигурации: owner делает
+    # коммит у себя ПОСЛЕ того, как у Боба появилось рабочее место, и коммит по-прежнему
+    # его. Именно это owner увидит в ``git log``.
+    work, _fork = owner_repo
+
+    await _adapter(tmp_path, work, app_user_id="424242").create("bob/task")
+    _write(work, "owner-note.md", "правка owner'а\n")
+    _git(work, "add", "owner-note.md")
+    _git(work, "commit", "-m", "owner work")
+
+    assert _git(work, "log", "-1", "--format=%an").strip() == "Owner"
+    assert _git(work, "log", "-1", "--format=%ae").strip() == "owner@example.com"
+
+
+async def test_the_signature_lives_in_the_clones_own_config_file_only(
+    owner_repo: tuple[Path, Path], tmp_path: Path
+) -> None:
+    work, _fork = owner_repo
+
+    path = await _adapter(tmp_path, work, app_user_id="424242").create("bob/task")
+
+    assert "bob[ai]" in (Path(path) / ".git" / "config").read_text(encoding="utf-8")
+    assert "bob[ai]" not in (work / ".git" / "config").read_text(encoding="utf-8")
+
+
+# --------------------------------------------------------------------------- #
 # Штатный путь: ensure переиспользует место, commit_and_push доводит ветку до форка
 # --------------------------------------------------------------------------- #
 
@@ -350,9 +458,8 @@ async def test_commit_and_push_lands_the_branch_in_the_fork(
     work, fork = owner_repo
     adapter = _adapter(tmp_path, work, fork_url=f"file://{fork}")
     path = await adapter.create("bob/task")
-    # Идентичность ставится в срезе D; здесь она задаётся руками, чтобы commit прошёл.
-    _git(Path(path), "config", "user.email", "bob@example.com")
-    _git(Path(path), "config", "user.name", "bob[ai]")
+    # Идентичность в клон ставит сам адаптер (срез D) — руками её здесь больше не задают,
+    # поэтому прохождение коммита ЗАВИСИТ от того, что подпись реально проставлена.
     (Path(path) / "feature.py").write_text("print('claude edit')\n", encoding="utf-8")
 
     committed = await adapter.commit_and_push(path, "bob/task", "[bob] work")

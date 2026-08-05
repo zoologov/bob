@@ -832,6 +832,100 @@ ignore = [
     "RUF003",
 ]
 "tests/test_coder_config.py" = ["RUF001", "RUF002", "RUF003"]
+# Идентичность bob[ai] + ссылка на создание PR (BOB-089, срез D): чистое ядро ссылки, путь
+# «Боб PR не открывает» и их тесты несут русские докстроки/комментарии, объясняющие, почему
+# подпись ставится ЛОКАЛЬНО и почему cross-repo PR из приватного форка невозможен (Cyrillic
+# look-alikes intentional → RUF001-003). Тесты развилки читают приватные поля собранных
+# адаптеров — в этом и смысл проверки «тип и аргументы» (→ SLF001), а фейки интеграционного
+# пути держат портовые аргументы, которых фейк не читает (→ ARG002).
+"src/bob/coding/pr_link.py" = ["RUF001", "RUF002", "RUF003"]
+"src/bob/coding/adapters/fork_link.py" = ["RUF001", "RUF002", "RUF003"]
+"tests/domain/coding/test_pr_link.py" = ["RUF001", "RUF002", "RUF003"]
+"tests/infrastructure/coding/test_fork_link.py" = [
+    "S101",
+    "SLF001",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+"tests/runtime/wiring/test_pr_integration_wiring.py" = [
+    "S101",
+    "SLF001",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+"tests/application/usecases/test_coding_fork_handoff.py" = [
+    "S101",
+    "ARG002",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+# GitHub-идентичность Боба (BOB-089, срез B): чистые ядра identity, адаптеры и их тесты
+# несут русские докстроки/комментарии, объясняющие, ПОЧЕМУ принципалов два, почему токен
+# обновляется заранее и где секрет не бывает (Cyrillic look-alikes intentional →
+# RUF001-003). Подпись RS256 идёт фиксированной формой ФИКСИРОВАННОГО ``openssl`` без шелла
+# (→ S603/S607; путь берётся из конфига и проверяется до запуска). Real-openssl acceptance
+# генерирует одноразовую RSA-пару и проверяет подпись обратным вызовом (→ S603/S607), а его
+# фикстуры несут ФИКТИВНЫЙ «ключевой материал», чтобы доказать отсутствие эха секрета
+# (→ S105/S106). Фейковые порты в тестах провайдера держат аргументы, которых фейк не читает
+# (→ ARG002), а живой read-only смоук читает реквизиты из окружения (→ S105).
+"src/bob/identity/__init__.py" = ["RUF001", "RUF002", "RUF003"]
+"src/bob/identity/ports.py" = ["RUF001", "RUF002", "RUF003"]
+"src/bob/identity/principals.py" = ["RUF001", "RUF002", "RUF003"]
+"src/bob/identity/credentials.py" = ["RUF001", "RUF002", "RUF003"]
+"src/bob/identity/app_jwt.py" = ["RUF001", "RUF002", "RUF003"]
+"src/bob/identity/token_lifetime.py" = ["RUF001", "RUF002", "RUF003"]
+"src/bob/identity/adapters/__init__.py" = ["RUF001", "RUF002", "RUF003"]
+"src/bob/identity/adapters/openssl_signer.py" = ["S603", "S607", "RUF001", "RUF002", "RUF003"]
+"src/bob/identity/adapters/github_api.py" = ["RUF001", "RUF002", "RUF003"]
+"src/bob/identity/adapters/installation_token.py" = ["RUF001", "RUF002", "RUF003"]
+"tests/domain/identity/test_principals.py" = ["RUF001", "RUF002", "RUF003"]
+"tests/domain/identity/test_credentials.py" = ["S105", "RUF001", "RUF002", "RUF003"]
+"tests/domain/identity/test_app_jwt.py" = ["RUF001", "RUF002", "RUF003"]
+"tests/domain/identity/test_token_lifetime.py" = ["S105", "RUF001", "RUF002", "RUF003"]
+"tests/infrastructure/identity/test_openssl_signer_real_openssl.py" = [
+    "S101",
+    "S105",
+    "S106",
+    "S603",
+    "S607",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+"tests/infrastructure/identity/test_github_api.py" = [
+    "S101",
+    "S105",
+    "ARG002",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+"tests/infrastructure/identity/test_installation_token.py" = [
+    "S101",
+    "S105",
+    "ARG002",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+"tests/infrastructure/identity/test_build_installation_tokens.py" = [
+    "S101",
+    "SLF001",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+"tests/infrastructure/identity/test_github_live_smoke.py" = [
+    "S101",
+    "S105",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+"tests/test_github_identity_config.py" = ["S105", "RUF001", "RUF002", "RUF003"]
 "tests/infrastructure/coding/test_claude_spawn_env.py" = [
     "S101",
     "SLF001",
@@ -2009,6 +2103,14 @@ source_paths = [
     # пакет обязан остаться под мутацией, иначе гейт этих ядер молча исчез бы вместе с
     # переездом (ровно тот фиктивный гейт, против которого написан MUTATION.md).
     "src/bob/interactive",
+    # BOB-089 срез B (bob-a6b.2): github-идентичность Боба — свой bounded context, и его
+    # чистые ядра (principals / credentials / app_jwt / token_lifetime) — ровно тот
+    # детерминированный вердикт, который мутация и измеряет: какой принципал берётся под
+    # это назначение, годна ли форма реквизитов, что подписывается App-JWT и когда токен
+    # пора обновлять ЗАРАНЕЕ. Пакет обязан быть здесь, иначе гейт этих ядер — фантомный
+    # (§0.3 п.7: объявленная mutation-цель вне scope = 0 мутантов). Адаптеры (openssl /
+    # aiohttp / кэш токенов) исключены конвенцией `*/adapters/*`.
+    "src/bob/identity",
     "src/bob/capabilities",
     # BOB-066 Срез 2.3: the presence ритм-слой is pure domain — its policies
     # (share_of_voice / natural_delay / reaction_budget) are exactly the deterministic

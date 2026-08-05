@@ -18,6 +18,7 @@ from bob.coding.clone_plan import (
     WorkspaceVerdict,
     checkout_argv,
     clone_argv,
+    identity_argv,
     is_credential_free_url,
     origin_argv,
     workspace_verdict,
@@ -173,3 +174,75 @@ def test_an_at_sign_in_the_path_is_not_mistaken_for_credentials() -> None:
 def test_an_empty_url_is_accepted_as_credential_free() -> None:
     # Пустой URL — «форк не настроен»; отказ по кредам тут был бы ложным диагнозом.
     assert is_credential_free_url("") is True
+
+
+# --------------------------------------------------------------------------- #
+# identity_argv — чем подписана работа Боба (BOB-089, срез D)
+# --------------------------------------------------------------------------- #
+
+
+def test_the_work_is_signed_bob_ai_locally_in_the_clone() -> None:
+    # 🔴 ГЛАВНОЕ среза D: ``--local``. Глобальная настройка переподписала бы коммиты
+    # owner'а в его собственном репозитории как ``bob[ai]`` — ровно та путаница
+    # идентичностей, от которой уходим. Форма это ЗАПРЕЩАЕТ: и ``-C <клон>``, и
+    # ``--local`` стоят в argv явно.
+    assert identity_argv("git", dest="/clone", app_user_id="424242") == [
+        ["git", "-C", "/clone", "config", "--local", "user.name", "bob[ai]"],
+        [
+            "git",
+            "-C",
+            "/clone",
+            "config",
+            "--local",
+            "user.email",
+            "424242+bob-ai-work[bot]@users.noreply.github.com",
+        ],
+    ]
+
+
+def test_neither_identity_command_can_write_the_global_config() -> None:
+    for argv in identity_argv("git", dest="/clone", app_user_id="424242"):
+        assert "--local" in argv
+        assert "--global" not in argv
+        assert "--system" not in argv
+        assert argv[1:3] == ["-C", "/clone"]  # адресат — клон, не репозиторий owner'а
+
+
+def test_without_an_app_user_id_the_name_is_still_set_with_an_id_less_email() -> None:
+    # 🔴 Не ставить подпись вовсе было бы ХУЖЕ: git взял бы имя из конфигурации owner'а,
+    # и работа Боба выглядела бы работой owner'а (та самая неразличимость в ``git log``,
+    # против которой US-2). Поэтому имя ставится всегда, а числовой префикс — опционален
+    # (без него адрес просто не сшивается GitHub'ом с ботом).
+    assert identity_argv("git", dest="/clone", app_user_id="") == [
+        ["git", "-C", "/clone", "config", "--local", "user.name", "bob[ai]"],
+        [
+            "git",
+            "-C",
+            "/clone",
+            "config",
+            "--local",
+            "user.email",
+            "bob-ai-work[bot]@users.noreply.github.com",
+        ],
+    ]
+
+
+def test_a_non_numeric_app_user_id_is_ignored_rather_than_pasted_into_the_address() -> None:
+    # id приложения — число. Мусор в конфиге не превращается в правдоподобный адрес.
+    assert identity_argv("git", dest="/clone", app_user_id="not-an-id")[1][-1] == (
+        "bob-ai-work[bot]@users.noreply.github.com"
+    )
+
+
+def test_identity_runs_the_injected_git_binary() -> None:
+    for argv in identity_argv("my-git", dest="/clone", app_user_id="1"):
+        assert argv[0] == "my-git"
+
+
+def test_the_email_stays_one_fixed_argv_slot() -> None:
+    # Форма фиксированная и shell-free: адрес целиком — ОДИН элемент argv.
+    name_argv, email_argv = identity_argv("git", dest="/a b/clone", app_user_id="7")
+
+    assert name_argv[-1] == "bob[ai]"
+    assert email_argv[-1] == "7+bob-ai-work[bot]@users.noreply.github.com"
+    assert len(email_argv) == 7

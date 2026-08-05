@@ -8,6 +8,11 @@
 изолированном worktree и открывает PR. Мержа в машине нет — Боб останавливается на
 открытом PR, интеграцию в `main` делает owner вручную вне Боба.
 
+🔴 С BOB-089 у последнего шага есть ВТОРАЯ форма (под флагом): когда рабочее место — клон
+ПРИВАТНОГО форка Боба, открыть PR он не может вовсе (installation-токен скоупится на одну
+установку), поэтому он честно говорит, что работа лежит в его форке, и отдаёт ссылку на
+создание PR — жмёт owner. Ни в одной из форм Боб не мержит.
+
 🔴 **Второй путь — живой интерактивный терминал — с BOB-087.E живёт в собственном модуле**
 [`interactive`](../interactive/README.md) («Боб держит живой терминал»): долгоживущий
 сеанс `claude` с открытым stdin в личке owner'а, долгоживущее рабочее место, возобновление.
@@ -37,12 +42,13 @@ src/bob/coding/
   naming.py           # layer=domain   — worktree_branch: эфемерная bob/<slug> + workspace_branch: долгоживущая bob/epic-<slug> (кириллица транслитерируется, BOB-087.D1/D5b)
   sandbox_policy.py   # layer=domain   — allowed_modes/is_allowed_mode/extra_dir_argv/is_safe_argv_value: политика owner-ослаблений изоляции + ClaudeRunError (BOB-087.D2/E)
   push_guard.py       # layer=domain   — guarded_spawn_env: барьер сетевого push в окружении спавна при owner-ослаблениях (BOB-087.E, bob-5ao)
-  clone_plan.py       # layer=domain   — clone_argv/checkout_argv/origin_argv/workspace_verdict/is_credential_free_url: план рабочего места-КЛОНА (файловый транспорт вместо хардлинков, вердикт переиспользования, запрет кредов в argv; BOB-089.A)
+  clone_plan.py       # layer=domain   — clone_argv/checkout_argv/origin_argv/identity_argv/workspace_verdict/is_credential_free_url: план рабочего места-КЛОНА (файловый транспорт вместо хардлинков, подпись bob[ai] ЛОКАЛЬНО в клоне, вердикт переиспользования, запрет кредов в argv; BOB-089.A/D)
+  pr_link.py          # layer=domain   — repo_slug/compare_url: «ветка в форке Боба → предзаполненная форма создания PR» (PR открывает owner: cross-repo PR из приватного форка installation-токену недоступен, BOB-089.D)
   stream_json.py      # layer=domain   — parse_event / STREAM_LIMIT: как читается ОДНА строка NDJSON-потока claude (общий примитив обоих транспортов, BOB-087.E)
   narrate.py          # layer=domain   — stream-json событие Claude Code → нарратив-строка / None (сжато, для группы)
   stream_render.py    # layer=domain   — render_stream_event(verbose): событие→строка; verbose=интерактив (полный текст+rich+chunk_for_telegram) vs груп (краткий кэп). BOB-082/085
   intent.py           # layer=domain   — is_approval / is_stop (чистые предикаты NL-команд)
-  session_voice.py    # layer=domain   — детерминированные шаблоны реплик гейтед-сессии в персоне Боба-оператора (взялся/готово-PR/провал/стоп, BOB-087.B2; реплики живого терминала — в bob/interactive/voice.py)
+  session_voice.py    # layer=domain   — детерминированные шаблоны реплик гейтед-сессии в персоне Боба-оператора (взялся/готово-PR/готово-но-PR-за-owner'ом/провал/стоп, BOB-087.B2 + BOB-089.D; реплики живого терминала — в bob/interactive/voice.py)
   speaker.py          # layer=domain   — speaker_for(MessageKind) → Speaker: КТО озвучивает сообщение (механика — GUPPI, живое и адресованное людям — Боб; запрос разрешения — Боб) + channel_for: единственный перевод «говорящий → канал». Канон Денниса Тейлора, BOB-090.D/B-fix
   work_facts.py       # layer=domain   — WorkFactsAccumulator/SessionKeyFacts/WorkOutcome: сворачивает поток stream-json в ОГРАНИЧЕННЫЙ снимок ключевых фактов (BOB-087.B1)
   usecases/           # layer=application
@@ -57,6 +63,7 @@ src/bob/coding/
     git_worktree.py     — GitWorktree (изолированный worktree только на трекнутых файлах; ensure — идемпотентный долгоживущий workspace, BOB-087.D1)
     git_clone.py        — GitClone (то же рабочее место как ОТДЕЛЬНЫЙ КЛОН со своим .git; под теми же портами, подмена в композиции по флагу coder.isolated_clone, BOB-089.A)
     gh_pr.py            — GhPullRequestOpener (gh pr create; НИКОГДА merge)
+    fork_link.py        — ForkCompareLink (тот же порт, но НИЧЕГО не исполняет: отдаёт owner'у форму создания PR из форка Боба; подмена в композиции, BOB-089.D)
     session_store.py    — SqliteCodingSessionStore (персист сессий через рестарт; by_branch — чтение всех сессий ветки, BOB-087.D3)
     indicator.py        — TypingKeepalive + StatusPanel (индикаторы работы в топике Боба)
     owner_notifier.py   — _CodingOwnerNotifier (нотификатор owner'а; переехал из app.py, BOB-062.7a)
@@ -290,9 +297,34 @@ OFF).** У linked worktree есть предел, который никакой 
 изолирует credentials — пока окружение спавна наследует credential helper owner'а, сеть
 остаётся открытой дорогой; это отдельный срез, и до него флаг даёт половину гарантии.
 
-`GhPullRequestOpener` строит единственную форму
-`gh pr create --base main --head <branch>` (discrete argv, без shell) — merge-метода в
-порте нет. `SqliteCodingSessionStore` round-trip'ит `CodingSession` (двойной гейт
+**Подпись работы Боба (BOB-089.D, вместе с клоном).** В клоне выставляются
+`user.name = bob[ai]` и ботовский адрес
+`<coder.app_user_id>+bob-ai-work[bot]@users.noreply.github.com` — форма
+`identity_argv` из того же чистого ядра, и она несёт `--local` и `-C <клон>` ЯВНО:
+🔴 глобальная настройка переподписала бы коммиты owner'а в его собственном репозитории как
+`bob[ai]` — ровно та путаница идентичностей, от которой уходит эпик. Имя ставится всегда, а
+числовой `app_user_id` (публичная величина, не секрет) — лишь префикс адреса: не подписать
+вовсе было бы ХУЖЕ, потому что тогда git взял бы идентичность owner'а и работа Боба стала бы
+неотличима от его собственной. Локальность доказана на настоящем git: значения `--global` и
+`--local` в репозитории owner'а сверяются до и после, и его собственный коммит после
+появления рабочего места Боба по-прежнему подписан им
+(`tests/infrastructure/coding/test_git_clone_real_git.py`).
+
+**Как работа доезжает до owner'а — две развилки одного порта.** `GhPullRequestOpener` строит
+единственную форму `gh pr create --base main --head <branch>` (discrete argv, без shell) —
+merge-метода в порте нет. `ForkCompareLink` (BOB-089.D) реализует ТОТ ЖЕ порт, но не
+исполняет ничего вовсе (в модуле нет даже командного шва — это инвариант под тестом): он
+возвращает предзаполненную форму
+`https://github.com/<coder.upstream_repo>/compare/main...<форк>:<ветка>?expand=1`, собранную
+чистым `pr_link.compare_url`, а слаг форка берётся из ТОГО ЖЕ `coder.fork_url`, куда уходит
+push (иначе ссылка однажды указала бы не туда, где лежит работа). 🔴 Почему так: cross-repo
+PR из ПРИВАТНОГО форка installation-токену недоступен — токен скоупится на одну установку
+(проверены три способа, обход — не-цель PRD), поэтому «Create pull request» жмёт owner.
+Развилка ПАРНАЯ: `_build_pr_integration` отдаёт адаптер и флаг `opens_pr` одним решением, и
+голос идёт за фактом — `session_voice.pr` («вот PR») против `session_voice.ready_for_pr`
+(«работа в моём форке, открыть PR сам не могу, вот форма»). Заявить открытый PR там, где
+отдана лишь ссылка, — неправда, которую owner проверит первым же нажатием. Неполный набор
+(нет клона / нет форка на GitHub / неизвестен апстрим) → прежний gh-путь, байт-в-байт. `SqliteCodingSessionStore` round-trip'ит `CodingSession` (двойной гейт
 честен и через границу процесса), включая колонку `claude_session_id`, и отдаёт `by_branch(branch)`
 — все записанные сессии ветки, в любом состоянии (какую из них можно поднять, решает чистая
 политика, поэтому стор не может разойтись с правилом «только остановленную»). Саму колонку
@@ -324,6 +356,14 @@ OFF).** У linked worktree есть предел, который никакой 
   репозиторием нет, поэтому локальный `update-ref refs/heads/main` до main owner'а не
   достаёт; единственный remote — форк (или ни одного); `remove` требует и containment, и
   того, чтобы каталог был клоном. 🔴 Креды этим НЕ изолируются — отдельный срез.
+- **Идентичность ЛОКАЛЬНА (BOB-089.D):** подпись `bob[ai]` живёт в конфиге клона; формы
+  `identity_argv` несут `--local` и `-C <клон>` явно, и глобальная область ими невыразима —
+  коммиты owner'а в его репозитории не переподписываются (доказано сравнением значений
+  `--global`/`--local` до и после + его собственным коммитом после создания клона).
+- **Боб не притворяется, что открыл PR (BOB-089.D):** на форк-пути у него нет даже
+  поверхности, чтобы что-то сделать в апстриме (`ForkCompareLink` не имеет командного шва), и
+  реплика идёт ЗА фактом — «работа в моём форке, вот форма», а не «вот PR». Адаптер и флаг
+  `opens_pr` приезжают из ОДНОГО решения композиции, поэтому разойтись не могут.
 - **Sender-is-bob / owner-гейт (defense-in-depth):** тройная owner-проверка —
   `_maybe_route_coding` пускает только `InterlocutorKind.OWNER`, роутер перепроверяет
   `is_owner`, use-case проверяет `OwnerCheck.is_owner` на каждом методе. Отправитель
@@ -433,14 +473,20 @@ ClaudeCodeRunner`; транзитный ports-шим `bob.domain.ports` удал
   push (BOB-087.E, bob-5ao).
 - `clone_plan.py`: `clone_argv(git_bin, *, source, dest)`, `checkout_argv(git_bin, *, dest,
   branch, on_origin)`, `origin_argv(git_bin, *, dest, fork_url)` → `list[str]`;
+  `identity_argv(git_bin, *, dest, app_user_id)` → `list[list[str]]` (две `config --local`-формы
+  подписи `bob[ai]`, BOB-089.D);
   `workspace_verdict(*, dest_exists, is_repo)` → `WorkspaceVerdict` (`CLONE`/`REUSE`/`REFUSE`);
   `is_credential_free_url(url)` → `bool` (BOB-089.A).
+- `pr_link.py`: `repo_slug(url)` → `str` (`owner/repo` форка или `""`),
+  `compare_url(*, upstream, fork, branch, base)` → `str` — предзаполненная форма создания PR,
+  которую отдаёт Боб вместо открытия PR (BOB-089.D).
 - `stream_json.py`: `parse_event(line)` → `Mapping[str, object] | None`; константа
   `STREAM_LIMIT` = 16 МиБ — общий примитив чтения потока для обоих транспортов (BOB-087.E).
 - `narrate.py`: `narrate(event)` → `str | None`.
 - `intent.py`: `is_approval(text)`, `is_stop(text)` → `bool`.
-- `session_voice.py`: гейт-реплики сессии (`accepted`/`plan`/`pr`/`no_changes`/`failed`/`stopped`/
-  `narration_capped`/`dev_pointer`, панель-строки, `busy`/`cannot_approve`/`no_session`/`status_*`).
+- `session_voice.py`: гейт-реплики сессии (`accepted`/`plan`/`pr`/`ready_for_pr`/`no_changes`/
+  `failed`/`stopped`/`narration_capped`/`dev_pointer`, панель-строки — включая
+  `panel_ready_for_pr`, `busy`/`cannot_approve`/`no_session`/`status_*`).
   Две из них — `stopped()` и `no_session()` — общие: их ре-экспортирует голос живого терминала
   (`bob.interactive.voice`), потому что они про управление сессией, а не про режим.
 - `speaker.py`: `speaker_for(kind)` → `Speaker` (`BOB` / `GUPPI`), `is_mechanical(kind)` → `bool`;
@@ -458,7 +504,9 @@ ClaudeCodeRunner`; транзитный ports-шим `bob.domain.ports` удал
   `.claude/development/docs`) НЕ пускает personal-data доки (SOUL/`bob.db`/`.env`/`config`) во
   внешнюю coder-преамбулу, хотя расширенный full-repo `PrivacyGuard` (BOB-067) в чате их читает.
 - `adapters/`: `SubprocessClaudeRunner`, `GitWorktree`
-  (`create`/`ensure`/`commit_and_push`/`remove`), `GhPullRequestOpener`,
+  (`create`/`ensure`/`commit_and_push`/`remove`), `GitClone` (те же порты + `app_user_id` —
+  подпись `bob[ai]` локально в клоне), `GhPullRequestOpener`, `ForkCompareLink`
+  (`upstream`/`fork` → форма создания PR; PR не открывает),
   `SqliteCodingSessionStore` (`save`/`get`/`active`/`by_branch`), `TypingKeepalive`, `StatusPanel`.
 
 Owner-команды гейтед-сессии — `/code`, `/code approve`, `/code stop`, `/code status` (команды

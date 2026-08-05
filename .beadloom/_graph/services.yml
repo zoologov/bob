@@ -228,6 +228,36 @@ nodes:
     docs:
       - domains/interactive/README.md
 
+  - ref_id: identity
+    kind: feature
+    source: src/bob/identity/
+    # BOB-089 срез B (bob-a6b.2): «кто такой Боб для GitHub и чем он аутентифицируется» —
+    # назначение операции → принципал → его реквизиты → короткоживущий installation-токен,
+    # обновляемый ЗАРАНЕЕ. Это НЕ то же, что «как Боб пишет код»: у идентичности свой
+    # словарь (принципал, установка, App-JWT, срок жизни токена), свои инварианты (секрет
+    # не попадает ни в argv, ни в лог, ни в текст ошибки; права принципала выбираются
+    # назначением операции) и свой источник правды — выданные GitHub'ом права, а не
+    # состояние сессии кодера.
+    #
+    # 🔴 ПАКЕТ-СОСЕД (`src/bob/identity/`), а не подпакет `src/bob/coding/`, и это несущее
+    # решение — ровно тот же довод, что и у `interactive` в BOB-087.E: `max_symbols`
+    # считает символы по ПРЕФИКСУ `source` (`code_symbols.file_path LIKE '<source>%'`),
+    # поэтому вложенный узел учитывался бы ДВАЖДЫ, и `coding` (188 из 200 на входе в срез
+    # B) не потерял бы ни одного символа — разделение было бы косметическим. Решение
+    # координатора при выдаче среза: бюджет НЕ поднимаем и узел не переклассифицируем.
+    #
+    # Тег тот же non-layer `module-vertical`, что у соседей (модуль спанит
+    # domain+application+infra внутри ОДНОГО контекста, поэтому tag-based правило
+    # `architecture-layers` его рёбра пропускает); внутренняя слоистость и внешняя граница
+    # держатся ГЕНЕРИРУЕМЫМИ path-glob правилами `forbid_import` в rules.yml
+    # (scripts/gen_boundary_rules.py). 🔴 Циклов с `coding` быть не должно: `identity`
+    # НИЧЕГО не импортит из `coding` (только stdlib, aiohttp и `bob.kernel`), а потребитель
+    # токена (изоляция окружения спавна, срез C) получает провайдер на композиции.
+    tags: [module-vertical]
+    summary: 'Identity module («кем Боб представляется GitHub''у») — github-идентичность как отдельный bounded context: чистые ядра (Purpose→Principal — work пушит только в форк, propose лишь читает апстрим; реквизиты принципала из конфига с проверкой формы; claims App-JWT RS256 с поправкой на расхождение часов и предел GitHub; вердикт «токен годен / пора обновить» с обновлением ЗАРАНЕЕ, а не по факту 401) и `adapters/` (подпись настоящим `openssl dgst -sha256 -sign` — без новых зависимостей; транспорт двух ручек GitHub App API на aiohttp — секрет только в заголовке, никогда в argv; кэш installation-токенов на принципала). Заведён в BOB-089 срез B; `coding` его не импортит, провайдер приходит на композиции.'
+    docs:
+      - domains/identity/README.md
+
   - ref_id: capabilities
     kind: feature
     source: src/bob/capabilities/
@@ -392,6 +422,9 @@ edges:
     dst: bob-domain
     kind: part_of
   - src: interactive
+    dst: bob-domain
+    kind: part_of
+  - src: identity
     dst: bob-domain
     kind: part_of
   - src: capabilities

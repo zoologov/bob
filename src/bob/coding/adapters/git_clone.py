@@ -59,6 +59,7 @@ from bob.coding.clone_plan import (
     WorkspaceVerdict,
     checkout_argv,
     clone_argv,
+    identity_argv,
     is_credential_free_url,
     origin_argv,
     workspace_verdict,
@@ -80,6 +81,7 @@ class GitClone:
         *,
         source: Path | str,
         fork_url: str = "",
+        app_user_id: str = "",
         runner: CommandRunner | None = None,
         git_bin: str = "git",
         timeout: float = DEFAULT_TIMEOUT_S,
@@ -90,6 +92,12 @@ class GitClone:
         ``https://x-access-token:<токен>@host/...`` попал бы в argv, а argv виден в ``ps``
         любому процессу пользователя. Такую конфигурацию правильно ронять громко и до
         старта; секрет в текст ошибки не попадает (диагностика по факту, не по значению).
+
+        ``app_user_id`` (``coder.app_user_id``, BOB-089.D) — числовой id пользователя
+        GitHub App, который становится префиксом ботовского noreply-адреса в подписи
+        коммитов. Пусто/не число → подпись ставится без префикса; имя ``bob[ai]``
+        проставляется всегда (см. :func:`bob.coding.clone_plan.identity_argv`). Это НЕ
+        секрет: id публичен, в отличие от токена, и в argv ему быть можно.
         """
         if not is_credential_free_url(fork_url):
             raise CloneError(
@@ -100,6 +108,7 @@ class GitClone:
         self._clone_root = Path(clone_root)
         self._source = Path(source).resolve()
         self._fork_url = fork_url
+        self._app_user_id = app_user_id
         self._runner: CommandRunner = runner or ExecRunner()
         self._git_bin = git_bin
         self._timeout = timeout
@@ -184,7 +193,14 @@ class GitClone:
         return self._clone_root / branch.split("/", 1)[1]
 
     async def _clone(self, dest: Path, branch: str, *, reuse_accumulated: bool) -> None:
-        """Клонировать источник в ``dest``, встать на ``branch`` и переадресовать remote."""
+        """Клонировать в ``dest``, встать на ``branch``, переадресовать remote и подписаться.
+
+        Последний шаг — подпись работы (BOB-089.D): в клоне ``user.name = bob[ai]`` и
+        ботовский noreply-адрес, 🔴 **локально** (``git -C <клон> config --local``).
+        Глобальная настройка переподписала бы коммиты owner'а в его собственном
+        репозитории — ровно та путаница идентичностей, от которой уходим; форма из
+        :func:`~bob.coding.clone_plan.identity_argv` глобальной области выразить не может.
+        """
         dest.parent.mkdir(parents=True, exist_ok=True)
         await self._run(clone_argv(self._git_bin, source=str(self._source), dest=str(dest)))
         on_origin = reuse_accumulated and await self._known_to_origin(dest, branch)
@@ -192,6 +208,10 @@ class GitClone:
             checkout_argv(self._git_bin, dest=str(dest), branch=branch, on_origin=on_origin)
         )
         await self._run(origin_argv(self._git_bin, dest=str(dest), fork_url=self._fork_url))
+        for argv in identity_argv(
+            self._git_bin, dest=str(dest), app_user_id=self._app_user_id
+        ):
+            await self._run(argv)
 
     async def _known_to_origin(self, dest: Path, branch: str) -> bool:
         """Есть ли у клона remote-ветка ``origin/<branch>`` (накопленная ранее работа).

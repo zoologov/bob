@@ -24,12 +24,18 @@ dynamic slot validated):
   ``--permission-mode`` allowlist, streaming NDJSON events.
 * :class:`GhPullRequestOpener` (:class:`~bob.coding.ports.PullRequestOpener`) — opens a
   PR via ``gh pr create`` only; there is no integrate-to-trunk path (the owner lands it).
+* :class:`ForkCompareLink` (the same port, BOB-089.D) — Bob's work is in HIS private fork,
+  from which a cross-repo PR is not expressible for an installation token, so this path
+  opens nothing at all: it hands the owner a prefilled compare form and he presses «Create
+  pull request». Substituted for :class:`GhPullRequestOpener` in the composition root when
+  the workplace is a fork-backed clone.
 """
 
 from bob.coding.adapters.claude_runner import (
     ClaudeRunError,
     SubprocessClaudeRunner,
 )
+from bob.coding.adapters.fork_link import ForkCompareLink
 from bob.coding.adapters.gh_pr import GhPullRequestOpener, PullRequestError
 from bob.coding.adapters.git_clone import CloneError, GitClone
 from bob.coding.adapters.git_worktree import GitWorktree, WorktreeError
@@ -37,6 +43,7 @@ from bob.coding.adapters.git_worktree import GitWorktree, WorktreeError
 __all__ = [
     "ClaudeRunError",
     "CloneError",
+    "ForkCompareLink",
     "GhPullRequestOpener",
     "GitClone",
     "GitWorktree",

@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING, cast
 
 from bob.capabilities.introspection.privacy_guard import PrivacyGuard
 from bob.coding.adapters import (
+    ForkCompareLink,
     GhPullRequestOpener,
     GitClone,
     GitWorktree,
@@ -28,6 +29,7 @@ from bob.coding.adapters.indicator import StatusPanel, TypingKeepalive
 from bob.coding.adapters.live_stream import _DmLiveStreamer
 from bob.coding.adapters.owner_notifier import _CodingOwnerNotifier
 from bob.coding.adapters.session_store import SqliteCodingSessionStore
+from bob.coding.pr_link import repo_slug
 from bob.coding.usecases.classify_coding_intent import ClassifyCodingIntent
 from bob.coding.usecases.coding_assistant import CodingAssistant, LiveRunStreamer
 from bob.coding.usecases.coding_context import make_coding_context
@@ -115,7 +117,38 @@ def _build_workspace(coder: Mapping[str, object]) -> GitWorktree | GitClone:
         _str(coder, "clone_root", ".clones"),
         source=_REPO_ROOT,
         fork_url=_str(coder, "fork_url", ""),
+        # Подпись работы в клоне (BOB-089.D): ``bob[ai]`` + ботовский noreply-адрес,
+        # ЛОКАЛЬНО в клоне. Пустой id → адрес без числового префикса; имя стоит всегда.
+        app_user_id=_str(coder, "app_user_id", ""),
     )
+
+
+def _build_pr_integration(
+    coder: Mapping[str, object],
+) -> tuple[GhPullRequestOpener | ForkCompareLink, bool]:
+    """Собрать путь «работа доехала до owner'а» + честен ли он как «PR открыт» (BOB-089.D).
+
+    ОДНО место, где решается, чем заканчивается сессия, и решение ПАРНОЕ: адаптер и флаг
+    ``opens_pr`` для use-case'а приезжают отсюда вместе. Разведи их — и Боб скажет «вот PR»
+    там, где PR не открыт; это ровно тот класс неправды, который owner проверит первым же
+    нажатием.
+
+    Default (и любой неполный набор) → прежний :class:`GhPullRequestOpener` с ``opens_pr``
+    ``True``: сборка байт-в-байт как до среза.
+
+    Ссылочный путь (:class:`ForkCompareLink`, ``opens_pr`` ``False``) заводится ТОЛЬКО когда
+    он осмыслен целиком: рабочее место — клон (``coder.isolated_clone``), у клона настроен
+    форк на GitHub (``coder.fork_url`` → слаг ``owner/repo`` берётся из ТОГО ЖЕ адреса, куда
+    уходит push, чтобы ссылка не разошлась с местом работы) и известен апстрим
+    (``coder.upstream_repo``). 🔴 Почему вообще ссылка: cross-repo PR из ПРИВАТНОГО форка
+    installation-токену недоступен (проверено три способа, не-цель PRD), поэтому owner
+    жмёт «Create pull request» сам.
+    """
+    fork = repo_slug(_str(coder, "fork_url", ""))
+    upstream = _str(coder, "upstream_repo", "")
+    if not (_flag(coder, "isolated_clone") and fork and upstream):
+        return GhPullRequestOpener(gh_bin=_str(coder, "gh_bin", "gh")), True
+    return ForkCompareLink(upstream=upstream, fork=fork), False
 
 
 def _build_coding_assistant(
@@ -190,6 +223,9 @@ def _build_coding_assistant(
     # (so the OFF path is byte-identical — the same single channel as today).
     stream_via_guppi = _flag(coder, "stream_via_guppi")
     firehose_bot = stream_bot if stream_via_guppi else notifier_bot
+    # Интеграционный путь + честность терминальной реплики — ОДНО решение (BOB-089.D),
+    # см. :func:`_build_pr_integration`.
+    pr_opener, opens_pr = _build_pr_integration(coder)
     return CodingAssistant(
         recorder=recorder,
         # Distilled work memory (BOB-087.B1): flag-gated (``memory.work_journal``, OFF → NoOp)
@@ -212,7 +248,10 @@ def _build_coding_assistant(
         # ``coder.isolated_clone`` (BOB-089.A) — см. :func:`_build_workspace`.
         worktree=_build_workspace(coder),
         store=SqliteCodingSessionStore(repo),
-        pr_opener=GhPullRequestOpener(gh_bin=_str(coder, "gh_bin", "gh")),
+        pr_opener=pr_opener,
+        # 🔴 Идёт В ПАРЕ с выбранным адаптером: True → «вот PR», False → «работа в форке,
+        # PR за тобой» со ссылкой. Расхождение этой пары было бы ложью owner'у.
+        opens_pr=opens_pr,
         notifier=_CodingOwnerNotifier(
             bot=notifier_bot, chat_id=chat_id, topic_id=topic_id
         ),
