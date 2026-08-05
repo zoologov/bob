@@ -2,12 +2,15 @@
 # SPDX-License-Identifier: BUSL-1.1
 # See the LICENSE file in the project root for full license information.
 
-"""The ``introspection.architecture_tools`` registration gate (BOB-091.1).
+"""The ``introspection.architecture_tools`` registration gate (BOB-091.1 + .2).
 
-``_build_registry`` advertises ``draw_architecture`` + ``architecture_impact`` ONLY when
-the sub-flag is on. The gate is the whole safety story of the slice's rollout: OFF (the
-default) the registry is byte-for-byte what it was before this bead, so Bob cannot even
-see the new tools; ON they join the other read-only introspection skills. The master
+``_build_registry`` advertises ``draw_architecture`` + ``architecture_impact`` +
+``project_health`` ONLY when the sub-flag is on. The whole read-only beadloom ships as ONE
+gated piece — the graph reads (.1) and the health reports (.2) share the flag, because
+splitting them would give the owner two switches for one decision. The gate is the whole
+safety story of the rollout: OFF (the default) the registry is byte-for-byte what it was
+before this bead, so Bob cannot even see the new tools; ON they join the other read-only
+introspection skills. The master
 ``introspection.enabled`` still dominates — an architecture flag under a disabled master
 advertises nothing.
 
@@ -24,7 +27,7 @@ from bob.app import _build_registry
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
-_NEW_TOOLS = ("draw_architecture", "architecture_impact")
+_NEW_TOOLS = ("draw_architecture", "architecture_impact", "project_health")
 
 
 class _FakeRecall:
@@ -72,8 +75,8 @@ def test_master_introspection_flag_still_dominates() -> None:
         assert tool not in names
 
 
-def test_flag_only_adds_the_two_architecture_tools() -> None:
-    # The gate is surgical: turning it on changes the manifest by exactly two entries.
+def test_flag_only_adds_the_architecture_tools() -> None:
+    # The gate is surgical: turning it on changes the manifest by exactly these entries.
     off = _tool_names({"introspection": {"enabled": True}})
     on = _tool_names({"introspection": {"enabled": True, "architecture_tools": True}})
 

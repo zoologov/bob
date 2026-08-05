@@ -190,6 +190,23 @@ class ArchitectureDiagram:
     requested: str
 
 
+@dataclass(frozen=True)
+class ProjectHealth:
+    """One read-only project-health report: WHICH report it is, and its digest.
+
+    What the read-only beadloom health reads return (BOB-091.2). ``check`` is the
+    canonical report name (``status`` / ``prime`` / ``doctor`` / ``sync-check`` / ``lint``
+    / ``diff``) — carried so Bob can say WHICH command he actually ran instead of
+    presenting one report's verdict as another's, which matters most where a paraphrase
+    was resolved ("как с доками?" → ``sync-check``). ``report`` is the already-condensed
+    answer: the terminal decoration, the 585 fresh doc↔code pairs and the 224-line rule
+    list never reach a chat message.
+    """
+
+    check: str
+    report: str
+
+
 @runtime_checkable
 class Capability(Protocol):
     """A single thing GUPPI can do for Bob — the stable capability seam.
@@ -372,6 +389,28 @@ class RepoIntrospector(Protocol):
         CONDENSED to the subject, its direct dependencies, its direct dependents and an
         honest count of what lies deeper — a chat answer, not a terminal screenshot. An
         unknown ref yields an empty string (the caller answers honestly), never a guess.
+        """
+        ...
+
+    async def project_health(
+        self, check: str, *, since: str | None = None
+    ) -> ProjectHealth:
+        """Return one read-only project-health report, condensed (BOB-091.2).
+
+        ``check`` names the report from a CLOSED list — ``status`` (index statistics),
+        ``prime`` (compact project context), ``doctor`` (graph integrity), ``sync-check``
+        (doc↔code freshness), ``lint`` (architecture boundaries), ``diff`` (graph changes
+        since a git ref) — and a paraphrase resolves to one of them; anything else is
+        refused (:class:`ValueError`) rather than forwarded, because the SAME CLI holds the
+        write subcommands. ``since`` applies to ``diff`` alone and is validated to a strict
+        git-ref shape before exec.
+
+        🔴 A non-zero exit code on this path is a RESULT, not a failure: ``lint`` exits 1
+        on a violation, ``sync-check`` 2 on a stale pair, ``diff`` 1 on a change. The
+        implementation must answer with the verdict ("доки отстали") and never with "не
+        смог посмотреть". The reports are CONDENSED — the human ones lose their terminal
+        frames, the 585 fresh doc↔code pairs become a count, and the machine-porcelain
+        lint tuples become readable lines.
         """
         ...
 

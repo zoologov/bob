@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from bob.capabilities.ports import ArchitectureDiagram
+from bob.capabilities.ports import ArchitectureDiagram, ProjectHealth
 
 if TYPE_CHECKING:
     from bob.capabilities.introspection.graph_form import GraphFormKind
@@ -40,8 +40,11 @@ class FakeRepoIntrospector:
         diagram: str = "",
         diagram_form: GraphFormKind = "overview",
         impact_text: str = "",
+        health_report: str = "",
         raise_on_diagram: bool = False,
         raise_on_impact: bool = False,
+        raise_on_health: bool = False,
+        health_error: str = "not a read-only project-health check: simulated",
         files_by_path: dict[str, str] | None = None,
         tasks_by_query: dict[str, str] | None = None,
         raise_on_read: bool = False,
@@ -66,6 +69,13 @@ class FakeRepoIntrospector:
         self._impact_text = impact_text
         self._raise_on_diagram = raise_on_diagram
         self._raise_on_impact = raise_on_impact
+        # BOB-091.2: the project-health read. ``raise_on_health`` models a slot refused
+        # BEFORE any subprocess, and ``health_error`` picks WHICH refusal — the real port
+        # distinguishes "not a check" from "not a git ref" by the message, and the
+        # capability must feed the matching hint back to the model.
+        self._health_report = health_report
+        self._raise_on_health = raise_on_health
+        self._health_error = health_error
         # Per-path / per-query scripting for the code_rationale tests: a path absent
         # from ``files_by_path`` returns "" (a missing doc → skipped), so the fake can
         # model "PRD present, RFC/BRIEF absent" without disk.
@@ -86,6 +96,7 @@ class FakeRepoIntrospector:
         self.tasks_by_status_calls: list[str | None] = []
         self.diagram_calls: list[tuple[str | None, int | None, str | None]] = []
         self.impact_calls: list[str] = []
+        self.health_calls: list[tuple[str, str | None]] = []
 
     async def architecture_context(self, ref: str) -> str:
         self.architecture_calls.append(ref)
@@ -159,3 +170,11 @@ class FakeRepoIntrospector:
         if self._raise_on_impact:
             raise ValueError("not a valid graph ref: simulated")
         return self._impact_text
+
+    async def project_health(
+        self, check: str, *, since: str | None = None
+    ) -> ProjectHealth:
+        if self._raise_on_health:
+            raise ValueError(self._health_error)
+        self.health_calls.append((check, since))
+        return ProjectHealth(check=check, report=self._health_report)

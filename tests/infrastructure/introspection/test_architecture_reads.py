@@ -15,8 +15,12 @@ recording-fake subprocess boundary (nothing spawns) and asserts:
 * the ``why`` output comes back digested (no Rich frames);
 * 🔴 the read-only invariant is not weakened: every WRITE beadloom subcommand
   (``reindex`` / ``docs`` / ``snapshot`` / ``link`` / ``init`` / ``install-hooks`` /
-  ``setup-*`` / ``active-sync`` / ``sync-update``) is refused BEFORE exec, and no
-  argument of the new forms can smuggle one — proven by ``runner.calls == []``.
+  ``setup-*`` / ``federate`` / ``active-sync`` / ``sync-update`` / ``ci``) is refused
+  BEFORE exec, and no argument of the new forms can smuggle one — proven by
+  ``runner.calls == []`` and by the allowlist SET itself. The deliberately out-of-scope
+  commands (``tui`` / ``ui`` / ``watch`` / ``mcp-serve`` / ``export`` / ``config-check``)
+  are asserted too, so the BRIEF's scope decision is enforced rather than documented.
+  This list grew in BOB-091.2, when the READ allowlist gained six more subcommands.
 """
 
 from __future__ import annotations
@@ -26,6 +30,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from bob.capabilities.adapters.introspection.subprocess_introspector import (
+    _BEADLOOM_SUBCOMMANDS,
     DisallowedCommandError,
     SubprocessRepoIntrospector,
 )
@@ -248,9 +253,27 @@ _WRITE_SUBCOMMANDS = [
     "setup-mcp",
     "setup-agentic-flow",
     "setup-branch-protection",
+    # BOB-091.2: the remaining write commands of the live CLI (``beadloom --help`` lists
+    # 31). Enumerated so that growing the READ allowlist in .2 provably did not let one of
+    # them in — ``sync-update`` in particular reads a lot like the allowed ``sync-check``.
+    "setup-ai-techwriter",
+    "federate",
     "active-sync",
     "sync-update",
     "ci",
+]
+
+# Deliberately OUT OF SCOPE rather than write commands (see the BRIEF): the interactive /
+# server ones are meaningless in a chat, and ``export`` + ``snapshot compare`` are inert
+# for Bob (federation is not this product; ``compare`` needs a ``snapshot save``, i.e. a
+# write). They must be as inexpressible as the writes — a decision, not an oversight.
+_OUT_OF_SCOPE_SUBCOMMANDS = [
+    "tui",
+    "ui",
+    "watch",
+    "mcp-serve",
+    "export",
+    "config-check",
 ]
 
 
@@ -268,6 +291,31 @@ async def test_no_beadloom_write_subcommand_is_expressible(
         await intro._run("beadloom", write_sub)
 
     assert runner.calls == []
+
+
+@pytest.mark.parametrize("out_of_scope", _OUT_OF_SCOPE_SUBCOMMANDS)
+@pytest.mark.asyncio
+async def test_no_out_of_scope_beadloom_subcommand_is_expressible(
+    tmp_path: Path, out_of_scope: str
+) -> None:
+    # The scope decision is enforced, not just documented: an interactive/server command
+    # or an inert artifact command is refused before exec, like a write.
+    runner = _ScriptedRunner(_MERMAID)
+    intro = _make(tmp_path, runner)
+
+    with pytest.raises(DisallowedCommandError):
+        await intro._run("beadloom", out_of_scope)
+
+    assert runner.calls == []
+
+
+@pytest.mark.parametrize(
+    "write_sub", [*_WRITE_SUBCOMMANDS, *_OUT_OF_SCOPE_SUBCOMMANDS]
+)
+def test_no_write_subcommand_is_in_the_allowlist_at_all(write_sub: str) -> None:
+    # The structural half: the allowlist SET itself never names a write command, so the
+    # refusal above cannot be an artefact of one code path.
+    assert write_sub not in _BEADLOOM_SUBCOMMANDS
 
 
 _OFF_FORM_GRAPH_ARGS: list[tuple[str, ...]] = [

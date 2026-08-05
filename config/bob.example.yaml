@@ -175,8 +175,11 @@ introspection:
   # 🔴 BOB-091 SUB-flag, default OFF. The read-only ARCHITECTURE tools —
   # draw_architecture (the mermaid SOURCE of ``beadloom graph``: Боб объясняет схему
   # словами И отдаёт тот же источник в render_diagram, чтобы прислать картинку) и
-  # architecture_impact («что сломается, если тронуть memory», ``beadloom why``, сжато).
-  # Формы argv фиксированные, write-команды beadloom невыразимы. OFF → Bob never sees
+  # architecture_impact («что сломается, если тронуть memory», ``beadloom why``, сжато) и
+  # project_health (BOB-091.2 — ВЕСЬ остальной read-only beadloom одним инструментом над
+  # закрытым перечнем отчётов: status / prime / doctor / sync-check / lint / diff).
+  # Формы argv фиксированные, write-команды beadloom невыразимы (в т.ч. `prime --update`,
+  # который перепишет AGENTS.md, и переиндексирующий плоский `lint`). OFF → Bob never sees
   # them. Flip to true after review + живой смоук (схема реально пришла картинкой).
   architecture_tools: false
 

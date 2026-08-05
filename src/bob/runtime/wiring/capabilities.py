@@ -35,6 +35,7 @@ from bob.capabilities.usecases import (
     make_list_dir_capability,
     make_list_tasks_capability,
     make_list_work_capability,
+    make_project_health_capability,
     make_read_code_capability,
     make_read_url_capability,
     make_recall_memory_capability,
@@ -90,7 +91,8 @@ def _build_registry(
     further reads over that SAME introspector, both default OFF:
     ``introspection.dev_tools`` (BOB-081 — git history + tracker) and
     ``introspection.architecture_tools`` (BOB-091 — ``draw_architecture`` /
-    ``architecture_impact``, the graph diagram source + impact digest). When
+    ``architecture_impact`` / ``project_health``: the graph diagram source, the impact
+    digest and the rest of the READ-ONLY beadloom as one closed-list report tool). When
     ``diagrams.enabled`` (BOB-035, default on — safe + local) the ``render_diagram``
     skill is registered over a LOCAL :class:`SubprocessMmdcRenderer`, sharing the
     returned :class:`CollectingDiagramSink` with the use-case so a rendered PNG flows
@@ -137,6 +139,11 @@ def _build_registry(
         if _build_architecture_tools_enabled(config):
             registry.register(make_draw_architecture_capability(introspector))
             registry.register(make_architecture_impact_capability(introspector))
+            # BOB-091.2: the REST of the read-only beadloom (status / prime / doctor /
+            # sync-check / lint / diff) as ONE tool over a closed list of reports — six
+            # near-identical tools would only worsen the model's choice. Same flag as .1:
+            # the whole read-only beadloom is one shippable piece, one switch.
+            registry.register(make_project_health_capability(introspector))
     diagram_renderer: SubprocessMmdcRenderer | None = None
     if _flag(_section(config, "diagrams"), "enabled"):
         diagram_renderer = _build_diagram_renderer(config)

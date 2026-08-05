@@ -26,6 +26,7 @@ from bob.capabilities.usecases.inspect_architecture import (
 from bob.capabilities.usecases.list_dir import make_list_dir_capability
 from bob.capabilities.usecases.list_tasks import make_list_tasks_capability
 from bob.capabilities.usecases.list_work import make_list_work_capability
+from bob.capabilities.usecases.project_health import make_project_health_capability
 from bob.capabilities.usecases.read_code import make_read_code_capability
 from bob.capabilities.usecases.read_url import make_read_url_capability
 from bob.capabilities.usecases.recall_memory import make_recall_memory_capability
@@ -61,6 +62,7 @@ __all__ = [
     "make_list_dir_capability",
     "make_list_tasks_capability",
     "make_list_work_capability",
+    "make_project_health_capability",
     "make_read_code_capability",
     "make_read_url_capability",
     "make_recall_memory_capability",
