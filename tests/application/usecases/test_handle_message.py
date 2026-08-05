@@ -45,6 +45,10 @@ from bob.capabilities.usecases.render_diagram import (
     CollectingDiagramSink,
     make_render_diagram_capability,
 )
+from bob.capabilities.usecases.turn_material import (
+    MaterialOrigin,
+    MaterialTrailRecall,
+)
 from bob.conversation.addressivity import AddressivityThresholds
 from bob.conversation.conversation import RepeatThresholds
 from bob.conversation.conversation_floor import (
@@ -643,7 +647,7 @@ def _build(
     rng: Random | None = None,
     expression_freqs: ExpressionFreqs | None = None,
     reactor: _RecordingReactor | None = None,
-    recall: FakeRecall | None = None,
+    recall: MemoryRecall | None = None,
     reflection: _FakeReflectionReader | None = None,
     fascination: _FakeFascinationReader | None = None,
     surface_old_freq: float | None = None,
@@ -9900,10 +9904,16 @@ async def test_callback_without_addon_recall_keeps_the_primary_port() -> None:
 
 
 class _ScopeProbeCapability:
-    """Fake tool that records the delivery scope visible at dispatch time."""
+    """Fake tool that records the delivery scope visible at dispatch time.
+
+    ``on_seen`` (BOB-090.B-fix2) lets a scenario ACT from inside the tool-loop — the one
+    place a real second door (a memory tool) would fire — so the trail can be checked for
+    material raised AFTER the turn's snapshot was taken.
+    """
 
     def __init__(self) -> None:
         self.seen: list[DeliveryScope | None] = []
+        self.on_seen: Callable[[DeliveryScope | None], Awaitable[None]] | None = None
 
     @property
     def name(self) -> str:
@@ -9923,7 +9933,10 @@ class _ScopeProbeCapability:
 
     async def execute(self, args: Mapping[str, object]) -> object:
         del args
-        self.seen.append(current_delivery_scope())
+        scope = current_delivery_scope()
+        self.seen.append(scope)
+        if self.on_seen is not None:
+            await self.on_seen(scope)
         return "ok"
 
 
@@ -9997,15 +10010,18 @@ async def test_a_non_owner_turn_is_armed_as_not_owner() -> None:
 
 async def test_the_armed_material_is_what_memory_raised() -> None:
     # 🔴 Перенос приватного считается ПО МАТЕРИАЛУ, который Боб ДОБАВЛЯЕТ от себя: ход
-    # несёт припомненное — иначе гейт согласия нечем кормить. Видимости самого разговора
-    # в снимке нет намеренно (BOB-090.B-fix): она зажигала гейт на каждой отправке.
+    # несёт СЛЕД материала — иначе гейт согласия нечем кормить. Видимости самого разговора
+    # отдельным полем в снимке нет намеренно (BOB-090.B-fix): она зажигала гейт на каждой
+    # отправке; в следе нить есть отдельной дверью, но переносом не считается.
     registry, probe = _probe_registry()
     handler, _bot, _repo, _tier1 = _build(
         reply="unused",
         registry=registry,
         tool_provider=_ProbeToolProvider(),
-        recall=FakeRecall(
-            hits=[{"content": "то, что было в личке", "visibility": "owner_private"}]
+        recall=MaterialTrailRecall(
+            FakeRecall(
+                hits=[{"content": "то, что было в личке", "visibility": "owner_private"}]
+            )
         ),
     )
 
@@ -10014,9 +10030,62 @@ async def test_the_armed_material_is_what_memory_raised() -> None:
     scope = probe.seen[0]
     assert scope is not None
     assert any(
-        item.get("visibility") == "owner_private" for item in scope.recalled
+        item.get("visibility") == "owner_private"
+        for item in scope.material.transferable()
     )
     assert not hasattr(scope, "turn_visibility")
+
+
+async def test_the_live_thread_is_in_the_trail_but_is_never_a_transfer() -> None:
+    # 🔴 Ход в личке приватен ЦЕЛИКОМ. Нить попадает в след отдельной дверью (исключение
+    # названо, а не забыто), но переносом не считается — иначе Боб снова отказывал бы
+    # владельцу в его же прямом распоряжении (B-fix).
+    registry, probe = _probe_registry()
+    handler, _bot, _repo, _tier1 = _build(
+        reply="unused",
+        registry=registry,
+        tool_provider=_ProbeToolProvider(),
+        recall=MaterialTrailRecall(FakeRecall(hits=[])),
+    )
+
+    await handler.handle(_message("напиши в группу, что я закончил обзор"))
+
+    scope = probe.seen[0]
+    assert scope is not None
+    assert MaterialOrigin.LIVE_THREAD in scope.material.origins
+    assert scope.material.transferable() == ()
+
+
+async def test_memory_raised_by_a_tool_mid_turn_reaches_the_same_trail() -> None:
+    # 🔴 BLOCKER-1: модель может поднять приватное УЖЕ ПОСЛЕ того, как снимок хода собран
+    # (search_memory / recall_memory в том же tool-loop). След — один объект на весь ход,
+    # поэтому такая дверь доезжает до гейта, а не теряется между снимком и вызовом.
+    registry, probe = _probe_registry()
+    door = MaterialTrailRecall(
+        FakeRecall(hits=[{"content": "личное", "visibility": "owner_private"}])
+    )
+    handler, _bot, _repo, _tier1 = _build(
+        reply="unused",
+        registry=registry,
+        tool_provider=_ProbeToolProvider(),
+        recall=MaterialTrailRecall(FakeRecall(hits=[])),
+    )
+
+    async def _raise_memory_mid_turn(scope: DeliveryScope | None) -> None:
+        assert scope is not None
+        assert scope.material.transferable() == ()  # авто-recall ничего не поднял
+        await door.recall("что там было в личке", k=5)
+
+    probe.on_seen = _raise_memory_mid_turn
+
+    await handler.handle(_message("расскажи подробно про кофе"))
+
+    scope = probe.seen[0]
+    assert scope is not None
+    assert any(
+        item.get("visibility") == "owner_private"
+        for item in scope.material.transferable()
+    )
 
 
 async def test_the_armed_turn_carries_the_recent_thread() -> None:

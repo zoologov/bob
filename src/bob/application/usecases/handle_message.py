@@ -68,6 +68,11 @@ from bob.capabilities.usecases.diagram_sender import (
 from bob.capabilities.usecases.progress_announcer import GatewayProgressAnnouncer
 from bob.capabilities.usecases.registry import CapabilityRegistry
 from bob.capabilities.usecases.tool_loop import ToolLoop
+from bob.capabilities.usecases.turn_material import (
+    MaterialOrigin,
+    armed_turn_material,
+    current_turn_material,
+)
 from bob.conversation.addressivity import (
     Addressivity,
     AddressivityThresholds,
@@ -1371,7 +1376,23 @@ class HandleMessage:
             rules, max_magnitude=self._self_improvement_max_magnitude
         )
 
-    async def handle(  # noqa: PLR0915, PLR0911 — a flat per-turn orchestration: one statement per social/compose seam (BOB-080 added the roster recall; BOB-083 .4 added the interactive-intake consume-gate), each a short-circuit return, no branching to extract.
+    async def handle(self, event: MessageReceived, scope: TurnScope | None = None) -> None:
+        """Process one received message end to end, under the turn's MATERIAL TRAIL.
+
+        🔴 BOB-090.B-fix2: the trail
+        (:func:`~bob.capabilities.usecases.turn_material.armed_turn_material`) is armed for
+        the WHOLE turn — deliberately wider than the delivery scope, which is armed only
+        around the generation. The turn's auto-recall runs BEFORE that, so a trail armed
+        with the scope would have missed the very first door and the transfer gate would be
+        back to reading one door out of four. Everything memory raises anywhere inside this
+        call — auto-recall, the ``recall_memory`` / ``search_memory`` tool hops, the
+        grounded-addon callback — lands in it through the ONE recall port, and the gate
+        reads it. The arming is released on the way out, exceptions included.
+        """
+        with armed_turn_material():
+            await self._handle_turn(event, scope)
+
+    async def _handle_turn(  # noqa: PLR0915, PLR0911 — a flat per-turn orchestration: one statement per social/compose seam (BOB-080 added the roster recall; BOB-083 .4 added the interactive-intake consume-gate), each a short-circuit return, no branching to extract.
         self, event: MessageReceived, scope: TurnScope | None = None
     ) -> None:
         """Process one received message end to end (the intake worker's per-turn call).
@@ -1699,7 +1720,7 @@ class HandleMessage:
         # ничего (урок BOB-076). Армирование снимается на выходе, в том числе при сбое.
         try:
             with armed_delivery_scope(
-                self._delivery_scope_for(event, interlocutor, recalled, history)
+                self._delivery_scope_for(event, interlocutor, history)
             ):
                 reply = await self._run_generation(
                     _generate, chat_id=event.chat_id, demand=demand, interest=interest
@@ -1802,25 +1823,37 @@ class HandleMessage:
         self,
         event: MessageReceived,
         interlocutor: Interlocutor | None,
-        recalled: Sequence[Recalled],
         history: Sequence[Mapping[str, object]],
     ) -> DeliveryScope:
         """Собрать обстоятельства ЭТОГО хода для инструмента отправки (BOB-090.B1).
 
         ``from_owner`` — вправе ли просящий вообще адресовать сообщение в другой чат
         (только owner, BOB-076); ``here_chat_id`` — чтобы «отправка» в тот же чат
-        распозналась структурно, а не по формулировке. Материал — то, что Боб ДОБАВЛЯЕТ
-        от себя, то есть припомненное: по нему и считается перенос приватного. Нить
-        (``history``) едет с ходом, чтобы гейт согласия судил просьбу В СИТУАЦИИ, а не в
-        вакууме (BOB-090.B-fix: поле существовало, но не заполнялось никогда).
+        распозналась структурно, а не по формулировке. Нить (``history``) едет с ходом,
+        чтобы гейт согласия судил просьбу В СИТУАЦИИ, а не в вакууме (BOB-090.B-fix: поле
+        существовало, но не заполнялось никогда).
 
-        🔴 Видимость самого разговора сюда НЕ кладётся: ход в личке помечен приватным
-        целиком, поэтому как признак переноса она зажигала гейт на каждой отправке и Боб
-        отказывал owner'у в его же прямом распоряжении.
+        🔴 Материал берётся из СЛЕДА хода, а не собирается здесь (BOB-090.B-fix2). Раньше
+        сюда клался снимок ``recalled`` — авто-recall, снятый ДО генерации, — и это была
+        ОДНА дверь из четырёх: приватное, поднятое памятью уже в ходе (memory-инструмент в
+        tool-loop, grounded-addon callback), в гейт не попадало вовсе. След наполняется на
+        месте сборки порта памяти и живёт весь ход, поэтому дверь, сработавшая ПОСЛЕ этого
+        снимка, всё равно доедет до гейта.
+
+        Живая нить отмечается здесь отдельной дверью, с видимостью САМОГО разговора: ход в
+        личке приватен целиком. Переносом она не считается (см.
+        :data:`~bob.capabilities.usecases.turn_material._NOT_A_TRANSFER`) — прямое
+        распоряжение владельца это волеизъявление, — но в следе она ЕСТЬ, то есть
+        исключение названо, а не забыто.
 
         Всегда собирается и ничем не гейтится: обстоятельства сами по себе безвредны, а
         читать их некому, пока инструмент не зарегистрирован (флаг ``social.delivery``).
         """
+        material = current_turn_material()
+        material.note_visibility(
+            self._turn_visibility(is_group=event.is_group),
+            origin=MaterialOrigin.LIVE_THREAD,
+        )
         return DeliveryScope(
             from_owner=(
                 interlocutor is not None
@@ -1828,7 +1861,7 @@ class HandleMessage:
             ),
             here_chat_id=event.chat_id,
             request_text=event.text,
-            recalled=tuple(recalled),
+            material=material,
             recent_thread=_render_thread(history),
         )
 

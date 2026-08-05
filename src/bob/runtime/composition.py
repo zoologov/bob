@@ -64,6 +64,7 @@ from bob.application.usecases.heartbeat import (
     ReflectTick,
 )
 from bob.application.usecases.perceive_reaction import PerceiveReaction
+from bob.capabilities.usecases.turn_material import MaterialTrailRecall
 from bob.coding.speaker import MessageKind, channel_for
 from bob.conversation.adapters.closer_log_store import SqliteCloserLog
 from bob.conversation.adapters.conversation_floor_store import (
@@ -403,7 +404,17 @@ def build_application(
         embedder=resolved_embedder,
         name_to_sender_id=_backfill_name_map(merged),
     )
-    recall = HybridMemoryRecall(memory_repo, resolved_embedder, reranker=resolved_reranker)
+    # 🔴 TURN-MATERIAL TRAIL (BOB-090.B-fix2): this is the ONLY place a memory-recall port
+    # is ever built — and it is wrapped. Every door downstream draws from this object (the
+    # turn's auto-recall, the ``secondary_recall`` decorator over it, the registry's memory
+    # capabilities, the grounded-addon callback, the proactive seed), so each one lands in
+    # the trail BY CONSTRUCTION, with no bookkeeping of its own, and the ``send_to_chat``
+    # transfer gate reads that trail instead of one door out of four. A door added tomorrow
+    # takes its port from here too; a port built OUTSIDE the root is caught by the
+    # architecture guard in tests/capabilities/test_turn_material.py.
+    recall = MaterialTrailRecall(
+        HybridMemoryRecall(memory_repo, resolved_embedder, reranker=resolved_reranker)
+    )
 
     # Autobiography recorder (BOB-079): behind ``memory.autobiography`` (OFF by default →
     # NoOp → zero writes, byte-identical behaviour). Constructed here over the shared

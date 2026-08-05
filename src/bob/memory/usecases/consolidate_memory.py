@@ -37,6 +37,8 @@ from datetime import timedelta
 from typing import TYPE_CHECKING, Protocol
 
 from bob.application.router.llm_router import LLMRequest, TaskType
+from bob.kernel.visibility import strictest_visibility
+from bob.memory.digest_provenance import provenance_window
 from bob.personality.language import DEFAULT_LANGUAGE, language_directive
 
 if TYPE_CHECKING:
@@ -157,14 +159,24 @@ class ConsolidateMemory:
     def _digest_row(
         summary: str, episodes: Sequence[Mapping[str, object]]
     ) -> dict[str, object]:
-        """Build the digest episode row, stamping the source ts-range as provenance."""
+        """Build the digest episode row: the summary, its ts-range, and its PRIVACY label.
+
+        🔴 bob-g7t. The digest holds the CONTENT of every source, so it inherits the
+        STRICTEST visibility among them (:func:`~bob.kernel.visibility.
+        strictest_visibility`) — one ``owner_private`` source and the whole digest is
+        private. Without this the row went in with no label at all, and a missing label
+        reads as PUBLIC (the deliberate fail-open of a permission tag), so folding
+        laundered the owner's private episodes into memory a guest could be told and,
+        after BOB-090.B, into material that could ride out to a public chat.
+        """
         timestamps = sorted(str(e["ts"]) for e in episodes)
-        provenance = f"{timestamps[0]}..{timestamps[-1]}"
+        provenance = provenance_window(timestamps[0], timestamps[-1])
         return {
             "ts": timestamps[-1],
             "content": summary.strip(),
             "tags": "consolidation",
             "mood_snapshot": provenance,
+            "visibility": strictest_visibility(_visibility_labels(episodes)),
         }
 
     def _localised(self, prompt: str) -> str:
@@ -175,3 +187,14 @@ class ConsolidateMemory:
 def _episode_ids(episodes: Sequence[Mapping[str, object]]) -> list[int]:
     """Extract the integer ids of the source episodes for flagging."""
     return [int(str(e["id"])) for e in episodes]
+
+
+def _visibility_labels(episodes: Sequence[Mapping[str, object]]) -> list[str | None]:
+    """Read each source's privacy label; a missing / non-text value is ``None`` (public).
+
+    Never coerces with ``str()``: an absent key must read as «нет метки» (= public), not
+    as the string ``"None"``, which no reader would recognise as a permission.
+    """
+    return [
+        value if isinstance(value := e.get("visibility"), str) else None for e in episodes
+    ]

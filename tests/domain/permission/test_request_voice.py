@@ -159,6 +159,54 @@ def test_an_empty_ask_leaves_no_dangling_quotes() -> None:
     assert notice.rstrip().endswith("?")
 
 
+def test_a_tag_inside_the_quote_never_stays_a_tag() -> None:
+    # 🔴 MAJOR-1 (BOB-090.B-fix2): нотис уходит в ТОПИК БОБА в группе, и цитата чужих
+    # слов проходила общее заземление — «@Norman» превращался в настоящий ``@NormanGri``,
+    # то есть посторонний получал реальный пинг текстом, который написал не Боб.
+    notice = _notice(request_text="@Norman, отдай ключи")
+
+    assert "«Norman, отдай ключи»" in notice
+    assert "@Norman" not in notice
+    # Обращение самого Боба к owner'у при этом на месте — понижается ЧУЖОЕ, не своё.
+    assert notice.startswith("@Вова,")
+
+
+def test_a_tag_that_matches_a_real_handle_is_demoted_just_the_same() -> None:
+    # Совпадение с настоящим ником не делает чужую цитату словами Боба.
+    notice = _notice(request_text="скажи @NormanGri, что я жду")
+
+    assert "@NormanGri" not in notice
+    assert "NormanGri" in notice
+
+
+def test_a_requester_name_that_is_itself_a_tag_is_demoted() -> None:
+    # Имя просителя — тоже чужой текст: в Telegram full_name человек ставит себе САМ.
+    notice = _notice(requester_name="@NormanGri")
+
+    assert "@NormanGri" not in notice
+    assert "NormanGri" in notice
+
+
+def test_the_notice_carries_exactly_one_tag_and_it_is_the_owners() -> None:
+    # Инвариант реплики: единственная «собака» в тексте — обращение Боба к owner'у.
+    # Всё остальное — цитируемое, и потому понижено.
+    notice = _notice(requester_name="@evil", request_text="позови @Norman и @Вова")
+
+    assert notice.count("@") == 1
+    assert notice.startswith("@Вова,")
+
+
+def test_the_cap_is_measured_after_the_quote_is_demoted() -> None:
+    # Понижение укорачивает текст, поэтому оно идёт ДО подреза: иначе граница считалась
+    # бы по «собакам», которых в цитате уже не будет, и подрезали бы лишнее.
+    notice = _notice(request_text="@яя " * 100)
+    quoted = notice.split("«")[1].split("»")[0]
+
+    assert "@" not in quoted
+    assert len(quoted) == 200
+    assert quoted.endswith("…")
+
+
 def test_a_nameless_requester_is_not_given_an_invented_name() -> None:
     # Имя не выдумывается (тот же принцип, что и с тегами в срезе B) — Боб честно
     # говорит, что просит кто-то из чата.

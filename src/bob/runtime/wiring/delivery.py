@@ -114,6 +114,7 @@ def build_send_to_chat(
             directory=directory,
             consent=consent,
             scope_source=current_delivery_scope,
+            owner_id=_int(_section(config, "telegram"), "owner_id", 0) or None,
         )
     )
     return True

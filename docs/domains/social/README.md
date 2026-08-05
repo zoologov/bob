@@ -82,9 +82,9 @@ src/bob/social/
   roster.py           # layer=domain          — RosterMember/is_newcomer/build_roster: ростер комнаты, новизна по времени (припоминание состава), BOB-080
   relationship.py     # layer=domain          — Relationship (4 оси) + apply_interaction (шаг за ход), BOB-014
   sulk.py             # layer=domain          — SulkState + observe_relationship/recover (обида на person, person-agnostic, анти-Exodus), BOB-014.2b/BOB-066.2.5
-  disclosure.py       # layer=domain          — такт разглашения: may_surface/visibility_for_scope/filter_surfaceable (initiative-surfacing фильтр provenance) + carries_owner_private/transfer_needs_consent (перенос приватного в публичный чат — ПО МАТЕРИАЛУ), BOB-066.2.6/BOB-090.B4
+  disclosure.py       # layer=domain          — такт разглашения: may_surface/visibility_of/visibility_for_scope/filter_surfaceable (initiative-surfacing фильтр provenance) + carries_owner_private/transfer_needs_consent (перенос приватного в публичный чат — ПО МАТЕРИАЛУ; материал берётся из СЛЕДА хода capabilities.usecases.turn_material, а не из одной двери recall), BOB-066.2.6/BOB-090.B4/B-fix2
   destination.py      # layer=domain          — KnownDestination/resolve_destination: куда именно писать — точный адрес (чат+топик), «переспроси» при неоднозначности, отказ не-owner'у и на тот же чат, BOB-090.B2
-  mention.py          # layer=domain          — PersonHandle/handles_from/mention_for/ground_mentions: обращение по НАСТОЯЩЕМУ @нику или по имени; неподтверждённый тег теряет «собаку» (выдуманный хуже отсутствующего), BOB-090.B3
+  mention.py          # layer=domain          — PersonHandle/handles_from/mention_for/ground_mentions/demote_mentions: обращение по НАСТОЯЩЕМУ @нику или по имени; неподтверждённый тег теряет «собаку» (выдуманный хуже отсутствующего), спорное имя тега не получает вовсе, owner опознаётся по sender_id, а ЧУЖАЯ цитата только понижается, BOB-090.B3/B-fix2
   endorsement.py      # layer=domain          — кредит доверия: detected_endorsement/owner_endorsed_sender (owner ручается за новичка), BOB-066.2.6
   permission/         # layer=domain
     entities.py       #                        — PermissionRequest (immutable pending-запрос), BOB-052.1
@@ -328,6 +328,13 @@ conversations with another user — разрешить?»).
 без LLM-вызова на реплику. Упоминание owner'а пишется НЕподтверждённым тегом и
 заземляется на ростер через `mention.ground_mentions` уже во флоу: есть ник — настоящий
 `@ник`, нет — имя; из имени тег не собирается никогда.
+
+🔴 Заземляется ТОЛЬКО обращение самого Боба (BOB-090.B-fix2). Имя просителя и цитата его
+слов проходят `mention.demote_mentions` прямо в `owner_permission_notice`, где текст и
+собирается: заземление не только снимает «собаку», но и ПОВЫШАЕТ имя до настоящего ника, а
+нотис уходит в топик Боба в ГРУППЕ — то есть цитата «@Norman, отдай ключи» дёргала бы
+постороннего текстом, которого Боб не писал. Инвариант готовой реплики: «собака» в ней
+ровно одна — обращение к owner'у.
 
 ### Use-case'ы (application)
 

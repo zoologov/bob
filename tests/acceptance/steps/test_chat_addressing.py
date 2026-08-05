@@ -33,7 +33,7 @@ from tests.acceptance.live_app_harness import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Mapping, Sequence
     from pathlib import Path
 
 scenarios("../features/chat_addressing.feature")
@@ -46,6 +46,15 @@ _MESSAGE_FOR_THE_ROOM = "@Норман, Вова закончил обзор —
 # просьбу «расскажи, о чём мы говорили» — то есть материал, который Боб добавляет от себя.
 _PRIVATE_MOMENT = "Вова: я вымотался и не тяну этот спринт, нужна передышка"
 _ASK_TO_TRANSFER = "Боб, расскажи Норману в группе, о чём мы говорили про спринт"
+
+# 🔴 BOB-090.B-fix2. Сказанное наедине, которого НЕ поднимет авто-recall на нейтральную
+# просьбу (общих слов с ней нет), но которое поднимет memory-инструмент по своему запросу —
+# ровно вторая дверь материала. Пара S8/S9 держится на этом: разница между сценариями
+# только в обращении к памяти, значит она и есть причина разного исхода.
+_PRIVATE_HEALTH = "Диагноз подтвердился; лечение начнётся осенью"
+_ASK_ABOUT_WEATHER = "Боб, напиши группе пару слов про погоду"
+_WEATHER_LINE = "Ребят, сегодня наконец распогодилось."
+_MEMORY_LOOKUP = "диагноз"
 
 # Приватный материал в двух формах. По решению owner'а перенос считается ПО МАТЕРИАЛУ, так
 # что форма не должна менять ничего: и цитата, и пересказ — один и тот же вынос.
@@ -69,6 +78,7 @@ class _AddressingContext:
     delivery_enabled: bool = True
     request: str = _ASK_TO_TELL_NORMAN
     tool_call: Mapping[str, object] | None = None
+    tool_calls: Sequence[Mapping[str, object]] = ()
     from_peer: bool = False
     private_memory: str | None = None
     outcome: DeliveryOutcome = field(
@@ -143,6 +153,21 @@ def owner_asks_to_transfer_private_matter(
     addressing_context.tool_call = {"place": "group", "text": _TRANSFER_FORMS[form]}
 
 
+@given("Боб помнит сказанное владельцем наедине про здоровье")
+def bob_remembers_a_private_health_matter(
+    addressing_context: _AddressingContext,
+) -> None:
+    addressing_context.private_memory = _PRIVATE_HEALTH
+
+
+@given("владелец из лички просит написать в группу про погоду")
+def owner_asks_for_a_neutral_line(addressing_context: _AddressingContext) -> None:
+    # Просьба нейтральна и приватного материала в себе не несёт: всё, что попадёт в
+    # контекст сверх неё, Боб добавит ОТ СЕБЯ.
+    addressing_context.request = _ASK_ABOUT_WEATHER
+    addressing_context.tool_call = {"place": "group", "text": _WEATHER_LINE}
+
+
 @given("владелец согласия на этот вынос не давал")
 def owner_withholds_consent(addressing_context: _AddressingContext) -> None:
     addressing_context.consent = False
@@ -163,6 +188,18 @@ def delivery_flag_off(addressing_context: _AddressingContext) -> None:
 
 @when("Боб выполняет просьбу")
 def bob_acts_on_the_request(addressing_context: _AddressingContext) -> None:
+    addressing_context.outcome = asyncio.run(_run(addressing_context))
+
+
+@when("Боб посреди хода поднимает это памятью и отправляет")
+def bob_searches_memory_then_sends(addressing_context: _AddressingContext) -> None:
+    # Живой путь модели: сначала search_memory (сырые ``content``, без disclosure-фильтра),
+    # потом send_to_chat — оба в ОДНОМ tool-loop. До фикса гейт этой двери не видел.
+    addressing_context.tool_calls = (
+        {"name": "search_memory", "arguments": {"query": _MEMORY_LOOKUP}},
+        {"name": "send_to_chat", "arguments": addressing_context.tool_call or {}},
+    )
+    addressing_context.tool_call = None
     addressing_context.outcome = asyncio.run(_run(addressing_context))
 
 
@@ -195,6 +232,7 @@ async def _run(context: _AddressingContext) -> DeliveryOutcome:
         context.tmp_path / "turn",
         request=context.request,
         tool_call=context.tool_call,
+        tool_calls=context.tool_calls,
         consent=context.consent,
         norman_username=context.norman_username,
         delivery=context.delivery_enabled,

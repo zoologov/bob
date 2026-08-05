@@ -177,21 +177,35 @@ def _privilege_reply(privilege: Mapping[str, str] | None) -> str:
 
 
 class Tier1Provider:
-    """Tier-1: сочиняет реплику и, если попросили, ЗОВЁТ инструмент — проводом.
+    """Tier-1: сочиняет реплику и, если попросили, ЗОВЁТ инструменты — проводом.
 
     ``prompts`` — системные промпты, которые Боб реально отдал модели (граница «что Боб
-    сказал модели о себе»); ``tool_results`` — что инструмент вернул модели, её
+    сказал модели о себе»); ``tool_results`` — что инструменты вернули модели, её
     единственный источник правды об отправке.
+
+    ``tool_calls`` (BOB-090.B-fix2) — ПОСЛЕДОВАТЕЛЬНОСТЬ вызовов, по одному на ход
+    tool-loop: живая модель может сначала поднять память (``search_memory``), а потом
+    отправить (``send_to_chat``), и именно этот путь обходил гейт переноса. ``tool_call``
+    — прежняя короткая форма для одного ``send_to_chat``.
     """
 
     def __init__(
-        self, *, reply: str, tool_call: Mapping[str, object] | None = None
+        self,
+        *,
+        reply: str,
+        tool_call: Mapping[str, object] | None = None,
+        tool_calls: Sequence[Mapping[str, object]] = (),
     ) -> None:
         self._reply = reply
-        self._tool_call = tool_call
+        self._calls: list[tuple[str, Mapping[str, object]]] = [
+            ("send_to_chat", call) for call in (tool_call,) if call is not None
+        ]
+        self._calls.extend(
+            (str(call["name"]), _arguments_of(call)) for call in tool_calls
+        )
         self.prompts: list[str] = []
         self.tool_results: list[str] = []
-        self._called = False
+        self._next = 0
 
     async def complete(
         self, messages: Sequence[Mapping[str, str]], *, stream: bool = False
@@ -209,10 +223,11 @@ class Tier1Provider:
         del tools
         self._remember_prompt(messages)
         self._remember_tool_results(messages)
-        if self._tool_call is None or self._called:
+        if self._next >= len(self._calls):
             return _extract_tool_call_result(_text_body(self._reply))
-        self._called = True
-        return _extract_tool_call_result(_call_body(self._tool_call))
+        name, arguments = self._calls[self._next]
+        self._next += 1
+        return _extract_tool_call_result(_call_body(name, arguments))
 
     def _remember_prompt(self, messages: Sequence[Mapping[str, object]]) -> None:
         for message in messages:
@@ -227,8 +242,14 @@ class Tier1Provider:
                     self.tool_results.append(content)
 
 
-def _call_body(arguments: Mapping[str, object]) -> dict[str, object]:
-    """Тело ответа, в котором модель нативно просит ``send_to_chat``."""
+def _arguments_of(call: Mapping[str, object]) -> Mapping[str, object]:
+    """Аргументы одного запрошенного вызова (сценарий задаёт их картой)."""
+    arguments = call.get("arguments", {})
+    return arguments if isinstance(arguments, dict) else {}
+
+
+def _call_body(name: str, arguments: Mapping[str, object]) -> dict[str, object]:
+    """Тело ответа, в котором модель нативно просит инструмент ``name``."""
     return {
         "choices": [
             {
@@ -236,10 +257,10 @@ def _call_body(arguments: Mapping[str, object]) -> dict[str, object]:
                     "content": None,
                     "tool_calls": [
                         {
-                            "id": "call_1",
+                            "id": f"call_{name}",
                             "type": "function",
                             "function": {
-                                "name": "send_to_chat",
+                                "name": name,
                                 "arguments": json.dumps(arguments, ensure_ascii=False),
                             },
                         }

@@ -163,6 +163,7 @@ class PermissionFlow:
         on_authorize: Callable[[int], Awaitable[None]] | None = None,
         executor: PermissionExecutorLike | None = None,
         directory: PersonDirectoryLike | None = None,
+        owner_id: int | None = None,
     ) -> None:
         self._judge = judge
         self._store = store
@@ -187,6 +188,10 @@ class PermissionFlow:
         # Ростер (BOB-090.E): нужен ровно для того, чтобы обратиться к owner'у настоящим
         # ``@ником``. Не подключён → упоминание заземляется в имя (тег не выдумывается).
         self._directory = directory
+        # 🔴 Кто такой owner — по ID, а не по имени (BOB-090.B-fix2): ``display_name`` в
+        # ростере это Telegram full_name, свободный текст, который человек ставит себе САМ.
+        # Без этого посторонний, назвавшийся «Вова», перехватывал обращение к владельцу.
+        self._owner_id = owner_id
 
     async def maybe_request(
         self,
@@ -301,9 +306,12 @@ class PermissionFlow:
         передаёт словами самого просителя.
 
         Готовый текст проходит :func:`~bob.social.mention.ground_mentions` — тем же
-        контуром, что и любое исходящее упоминание (срез B): обращение к owner'у
-        превращается в настоящий ``@ник`` либо остаётся именем, а тег, выдуманный
-        просителем в цитируемой просьбе, теряет «собаку» и никого не дёргает.
+        контуром, что и любое исходящее упоминание (срез B), — и заземлению достаётся
+        РОВНО ОДНА «собака»: обращение Боба к owner'у. Всё чужое (имя просителя и цитата
+        его слов) понижено там, где текст собирается
+        (:func:`~bob.social.permission.request_voice.owner_permission_notice`), поэтому
+        нотис, уходящий в топик Боба в ГРУППЕ, физически не может понести чужой тег —
+        ни выдуманный, ни совпавший с настоящим ником (BOB-090.B-fix2, MAJOR-1).
         """
         notice = owner_permission_notice(
             owner_name=self._owner_name,
@@ -321,11 +329,18 @@ class PermissionFlow:
         а НЕ к неподтверждённому тегу. Свой ``try`` здесь обязателен: общий обработчик
         :meth:`maybe_request` роняет весь привилегированный путь в обычный чат, и падение
         справочника имён тогда молча снимало бы гейт привилегий.
+
+        ``owner_id`` из конфига помечает owner'а в ростере по ЛИЧНОСТИ: обращение к нему в
+        самом security-чувствительном сообщении Боба не должно уезжать на постороннего,
+        который назвался его именем (BOB-090.B-fix2, MAJOR-2).
         """
         if self._directory is None:
             return ()
         try:
-            return handles_from(await self._directory.recent(limit=_DIRECTORY_LIMIT))
+            return handles_from(
+                await self._directory.recent(limit=_DIRECTORY_LIMIT),
+                owner_id=self._owner_id,
+            )
         except Exception:
             logger.exception("reading the roster for the owner notice failed (name used)")
             return ()

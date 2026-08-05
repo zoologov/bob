@@ -43,7 +43,7 @@ from tests.acceptance.live_app_harness import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Mapping, Sequence
     from pathlib import Path
 
 __all__ = [
@@ -113,6 +113,7 @@ async def run_owner_dm_request(
     *,
     request: str,
     tool_call: Mapping[str, object] | None,
+    tool_calls: Sequence[Mapping[str, object]] = (),
     reply: str = "Готово.",
     consent: bool = True,
     norman_username: str | None = NORMAN_USERNAME,
@@ -122,15 +123,18 @@ async def run_owner_dm_request(
     """Прогнать ход owner'а ИЗ ЛИЧКИ через живой граф и вернуть наблюдаемое.
 
     ``tool_call`` — аргументы, с которыми модель зовёт ``send_to_chat`` (``None`` — не
-    зовёт вовсе); ``consent`` — что ответит Tier-0 на вопрос «owner разрешает вынести это
-    в комнату?»; ``norman_username`` — ник Нормана в ЖИВОМ ростере (``None`` = ника нет,
-    нормальное состояние в Telegram); ``delivery`` — флаг ``social.delivery``;
-    ``private_memory`` — сказанное наедине, которое УЖЕ лежит в живой памяти (его поднимет
-    настоящий recall, и именно он — материал, который Боб добавляет от себя).
+    зовёт вовсе); ``tool_calls`` — ПОСЛЕДОВАТЕЛЬНОСТЬ вызовов ``{"name", "arguments"}``,
+    когда сценарию нужен не только он (например ``search_memory`` перед отправкой —
+    вторая дверь материала, BOB-090.B-fix2); ``consent`` — что ответит Tier-0 на вопрос
+    «owner разрешает вынести это в комнату?»; ``norman_username`` — ник Нормана в ЖИВОМ
+    ростере (``None`` = ника нет, нормальное состояние в Telegram); ``delivery`` — флаг
+    ``social.delivery``; ``private_memory`` — сказанное наедине, которое УЖЕ лежит в живой
+    памяти (его поднимет настоящий recall — авто-recall хода или memory-инструмент, и
+    именно он материал, который Боб добавляет от себя).
     """
     bob_bot, guppi_bot = RecordingBot("bob"), RecordingBot("guppi")
     tier0 = Tier0Provider(consent=consent)
-    tier1 = Tier1Provider(reply=reply, tool_call=tool_call)
+    tier1 = Tier1Provider(reply=reply, tool_call=tool_call, tool_calls=tool_calls)
     app = build_live_app(
         tmp_path,
         tier0=tier0,

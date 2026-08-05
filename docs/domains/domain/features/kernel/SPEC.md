@@ -45,6 +45,19 @@ BOB-062.8 эти контракты лежали в снятом слое-first 
     в `memory`, `conversation` вынужден был импортировать соседний домен, и это замыкало
     цикл `conversation → memory → runtime-app → conversation` (bob-abk.32).
     `bob.memory.work_journal` ре-экспортирует термин ради совместимости импортов.
+- **visibility.py** — общий словарь оси ПРИВАТНОСТИ и правило наследования метки
+  производной записью (bob-g7t).
+  - `VISIBILITY_PUBLIC` (`"public"`) / `VISIBILITY_OWNER_PRIVATE` (`"owner_private"`) —
+    два разрешения, которые несёт воспоминание; хранятся в nullable-колонке, и `NULL`
+    читается как публично (осознанный fail-open метки-разрешения, BOB-066 2.6).
+  - `is_owner_private(visibility)` — единственное определение «приватного»: ровно
+    `owner_private` без учёта регистра и пробелов; `None` и любое неизвестное слово —
+    публично (незнакомому слову не позволено молча прятать публичную память).
+  - `strictest_visibility(labels)` — метка ПРОИЗВОДНОЙ записи (сегодня — дайджест
+    консолидации): самая строгая среди меток источников. Хоть один `owner_private` —
+    вся производная приватна; пустой набор источников тоже приватен (публичность нечем
+    подкрепить). Правило живёт в ядре, потому что нужно `memory`, а прямой импорт
+    `memory → social` замыкает цикл узлов — тот же случай, что и с `WORK_EVENT_TYPE`.
 - **__init__.py** — фасад пакета, реэкспортирующий контракты как shared kernel.
 
 ## Инварианты
@@ -69,6 +82,12 @@ BOB-062.8 эти контракты лежали в снятом слое-first 
 Модуль `src/bob/kernel/episode_types.py`:
 - `WORK_EVENT_TYPE` → `str` — `event_type` дистиллированного рабочего эпизода (`"work"`).
 
+Модуль `src/bob/kernel/visibility.py`:
+- `VISIBILITY_PUBLIC` / `VISIBILITY_OWNER_PRIVATE` → `str` — две метки оси приватности.
+- `is_owner_private(visibility: str | None)` → `bool` — приватна ли запись с такой меткой.
+- `strictest_visibility(labels: Iterable[str | None])` → `str` — самая строгая метка среди
+  источников (метка производной записи).
+
 ## Тестирование
 
 Контракты покрываются косвенно — через тесты реализаций сеймов (например
@@ -76,6 +95,9 @@ BOB-062.8 эти контракты лежали в снятом слое-first 
 для `LLMProvider`) и structural-проверки инъекции в use-case-тестах. Общий словарь
 покрыт напрямую: `tests/domain/kernel/test_episode_types.py` (стабильность термина `work`
 и его отличие от `self_action`) плюс проверка ре-экспорта в
-`tests/domain/memory/test_work_journal.py`.
+`tests/domain/memory/test_work_journal.py`. Правило наследования метки приватности —
+`tests/domain/kernel/test_visibility.py` (строгость против «большинства» и «последней»,
+пустой набор, неизвестный тег, drift-guard против копий литералов в `social.disclosure`);
+оно под мутационным гейтом (`scripts/mutation.sh kernel.visibility`).
 
 <!-- beadloom:track=src/bob/kernel/ports.py -->

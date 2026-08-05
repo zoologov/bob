@@ -16,7 +16,7 @@
 Этот модуль — шов между тем и другим:
 
 * :class:`DeliveryScope` — неизменяемый снимок хода: owner ли просит, из какого чата,
-  чего именно просил, что подняла память и в какой нити это сказано.
+  чего именно просил, ЧЕМ наполнен контекст генерации и в какой нити это сказано.
 * :func:`armed_delivery_scope` — контекстный менеджер, которым ход «армируется»;
 * :func:`current_delivery_scope` — то, что читает инструмент. ``None`` = хода нет.
 
@@ -32,11 +32,13 @@ from __future__ import annotations
 
 import contextlib
 from contextvars import ContextVar
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
+from bob.capabilities.usecases.turn_material import TurnMaterial
+
 if TYPE_CHECKING:
-    from collections.abc import Iterator, Mapping
+    from collections.abc import Iterator
 
 __all__ = ["DeliveryScope", "armed_delivery_scope", "current_delivery_scope"]
 
@@ -48,20 +50,27 @@ class DeliveryScope:
     ``from_owner`` — просит ли owner (только он вправе, BOB-076); ``here_chat_id`` — где
     идёт разговор (чтобы «отправить» в тот же чат распозналось структурно, а не по
     словам); ``request_text`` — сама просьба (её же оценивает гейт согласия);
-    ``recalled`` — то, что подняла память: материал, который Боб ДОБАВЛЯЕТ от себя, и
-    по нему считается перенос приватного (BOB-090.B4). ``recent_thread`` — лёгкий снимок
-    нити, в которой прозвучала просьба: гейт согласия судит её В СИТУАЦИИ.
+    ``recent_thread`` — лёгкий снимок нити, в которой прозвучала просьба: гейт согласия
+    судит её В СИТУАЦИИ.
+
+    ``material`` — :class:`~bob.capabilities.usecases.turn_material.TurnMaterial`, единый
+    СЛЕД материала хода, по которому и считается перенос приватного (BOB-090.B-fix2).
+    🔴 Раньше здесь лежало ``recalled`` — ОДНА дверь (авто-recall, снятый до генерации), —
+    и весь остальной материал (выдача memory-инструментов в том же tool-loop, addon-callback,
+    нить) в гейт не попадал вовсе: центральное обещание «перенос считается ПО МАТЕРИАЛУ»
+    было неверным. След — мутабельный объект НА ВЕСЬ ход, поэтому дверь, сработавшая уже
+    после сборки снимка, всё равно доезжает до гейта.
 
     🔴 Видимости самого хода здесь нет намеренно (BOB-090.B-fix): ход в личке помечен
     ``owner_private`` целиком, поэтому «место разговора» как признак переноса зажигало
-    гейт на каждой отправке и Боб отказывал owner'у в прямом распоряжении. Поле было
-    ровно этим триггером и уехало вместе с ним — мёртвого признака в снимке не осталось.
+    гейт на каждой отправке и Боб отказывал owner'у в прямом распоряжении. В следе нить
+    ЕСТЬ — отдельной дверью, названным исключением, — но переносом она не считается.
     """
 
     from_owner: bool
     here_chat_id: int
     request_text: str
-    recalled: tuple[Mapping[str, object], ...] = ()
+    material: TurnMaterial = field(default_factory=TurnMaterial.unknown)
     recent_thread: str = ""
 
 

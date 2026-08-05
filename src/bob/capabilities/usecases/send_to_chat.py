@@ -22,7 +22,9 @@
 * :func:`~bob.social.destination.resolve_destination` — адрес или «переспроси»
   (при неоднозначности не угадывает; не-owner отказ; тот же чат — отказ);
 * :func:`~bob.social.disclosure.transfer_needs_consent` — нужен ли перенос согласия
-  (ПО МАТЕРИАЛУ, а не по форме) — и тогда его даёт существующий consent-контур BOB-082.4;
+  (ПО МАТЕРИАЛУ, а не по форме — и по ВСЕМУ материалу хода, из единого следа
+  :class:`~bob.capabilities.usecases.turn_material.TurnMaterial`) — и тогда его даёт
+  существующий consent-контур BOB-082.4;
 * :func:`~bob.social.mention.ground_mentions` — заземление упоминаний на ростер, чтобы
   «@Норман» стал ``@NormanGri``, а неподтверждённый тег потерял «собаку».
 
@@ -123,12 +125,14 @@ class _SendToChatCapability:
         directory: _PersonDirectory,
         consent: _ConsentGate | None,
         scope_source: Callable[[], DeliveryScope | None],
+        owner_id: int | None = None,
     ) -> None:
         self._messenger = messenger
         self._known = tuple(known)
         self._directory = directory
         self._consent = consent
         self._scope_source = scope_source
+        self._owner_id = owner_id
 
     @property
     def name(self) -> str:
@@ -178,11 +182,19 @@ class _SendToChatCapability:
     async def _transfer_allowed(
         self, scope: DeliveryScope, address: KnownDestination
     ) -> bool:
-        """Можно ли нести материал ЭТОГО хода по этому адресу (BOB-090.B4).
+        """Можно ли нести материал ЭТОГО хода по этому адресу (BOB-090.B4/B-fix2).
 
-        Перенос считается по МАТЕРИАЛУ, который Боб ДОБАВЛЯЕТ от себя: приватное в
-        припомненном едет в публичную комнату только с явным согласием owner'а на ЭТОТ
-        ход. 🔴 Прямое распоряжение owner'а гейт не зажигает вовсе (BOB-090.B-fix):
+        Перенос считается по МАТЕРИАЛУ, который Боб ДОБАВЛЯЕТ от себя, и материал берётся
+        из ЕДИНОГО следа хода
+        (:class:`~bob.capabilities.usecases.turn_material.TurnMaterial`), а не из одной
+        двери. 🔴 Это и есть фикс BLOCKER-1: гейт читал только авто-recall, снятый ДО
+        генерации, поэтому приватное, поднятое памятью уже в ходе (``search_memory`` /
+        ``recall_memory`` в том же tool-loop, grounded-addon callback), уезжало в комнату
+        без вопроса. След пополняется на месте сборки порта памяти, значит любая дверь
+        доезжает до гейта — включая ту, которой ещё нет.
+
+        🔴 Прямое распоряжение owner'а гейт по-прежнему не зажигает (BOB-090.B-fix):
+        живая нить разговора — названное исключение внутри следа, а не пробел в нём;
         согласие содержится в самой команде, и Tier-0 на неё не горит.
 
         Согласие берёт существующий контур BOB-082.4 (второго не заводим); ``to_room``
@@ -191,7 +203,7 @@ class _SendToChatCapability:
         неоткуда → перенос не делаем (безопасное умолчание, а не «пропускаем»).
         """
         if not transfer_needs_consent(
-            scope.recalled,
+            scope.material.transferable(),
             destination_public=address.kind is DestinationKind.GROUP,
         ):
             return True
@@ -210,9 +222,16 @@ class _SendToChatCapability:
         🔴 Пустой ростер — консервативная сторона: :func:`ground_mentions` тогда снимает
         «собаку» со ВСЕХ тегов, то есть недоступность ростера приводит к обращению по
         имени, а не к неподтверждённому тегу. Ход при этом не ломается.
+
+        ``owner_id`` из конфига опознаёт владельца в ростере ПО ЛИЧНОСТИ: имя там —
+        Telegram full_name, которое человек ставит себе сам, поэтому обращение к owner'у
+        среди тёзок не должно решаться строкой (BOB-090.B-fix2, MAJOR-2).
         """
         try:
-            return handles_from(await self._directory.recent(limit=_DIRECTORY_LIMIT))
+            return handles_from(
+                await self._directory.recent(limit=_DIRECTORY_LIMIT),
+                owner_id=self._owner_id,
+            )
         except Exception:
             logger.exception("reading the roster for mentions failed (tags demoted)")
             return ()
@@ -239,6 +258,7 @@ def make_send_to_chat_capability(
     directory: _PersonDirectory,
     consent: _ConsentGate | None,
     scope_source: Callable[[], DeliveryScope | None],
+    owner_id: int | None = None,
 ) -> Capability:
     """Собрать capability ``send_to_chat`` над транспортом, ростером и гейтом согласия."""
     return _SendToChatCapability(
@@ -247,4 +267,5 @@ def make_send_to_chat_capability(
         directory=directory,
         consent=consent,
         scope_source=scope_source,
+        owner_id=owner_id,
     )

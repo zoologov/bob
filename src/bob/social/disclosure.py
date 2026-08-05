@@ -45,6 +45,7 @@ __all__ = [
     "may_surface",
     "transfer_needs_consent",
     "visibility_for_scope",
+    "visibility_of",
 ]
 
 # The two provenance tags a memory may carry. Persisted as a nullable column whose
@@ -113,7 +114,7 @@ def filter_surfaceable(
     return tuple(
         item
         for item in recalled
-        if may_surface(_visibility_of(item), trust, owner_consented=owner_consented)
+        if may_surface(visibility_of(item), trust, owner_consented=owner_consented)
     )
 
 
@@ -126,7 +127,7 @@ def carries_owner_private(material: Sequence[Mapping[str, object]]) -> bool:
     ``NULL`` (or an unrecognised tag) reads as public, exactly as everywhere else.
     """
     return any(
-        not may_surface(_visibility_of(item), Trust.GUEST) for item in material
+        not may_surface(visibility_of(item), Trust.GUEST) for item in material
     )
 
 
@@ -160,7 +161,14 @@ def transfer_needs_consent(
     return destination_public and carries_owner_private(recalled)
 
 
-def _visibility_of(item: Mapping[str, object]) -> str | None:
-    """Read a recalled memory's ``visibility`` tag as a string, or ``None`` (= public)."""
+def visibility_of(item: Mapping[str, object]) -> str | None:
+    """Read a memory's ``visibility`` tag as a string, or ``None`` (= public) — pure.
+
+    The ONE accessor of the tag (BOB-090.B-fix2): the turn-material trail
+    (:mod:`~bob.capabilities.usecases.turn_material`) labels every piece of material that
+    enters a turn's context with it, so «приватное» keeps a single definition here instead
+    of a second, drifting reader. A missing or non-string tag reads as ``None`` = public,
+    exactly as the legacy ``NULL`` column does (BOB-051).
+    """
     value = item.get("visibility")
     return value if isinstance(value, str) else None

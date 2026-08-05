@@ -28,6 +28,7 @@ import pytest
 
 from bob.capabilities.usecases.delivery_scope import DeliveryScope
 from bob.capabilities.usecases.send_to_chat import make_send_to_chat_capability
+from bob.capabilities.usecases.turn_material import MaterialOrigin, TurnMaterial
 from bob.social.destination import DestinationKind, KnownDestination
 from bob.social.disclosure import VISIBILITY_OWNER_PRIVATE, VISIBILITY_PUBLIC
 from bob.social.first_impression import FirstImpression
@@ -38,6 +39,7 @@ if TYPE_CHECKING:
     from bob.capabilities.ports import Capability
 
 _DM_CHAT = 555
+_OWNER_ID = 27468732
 _GROUP = KnownDestination(
     chat_id=-1004372947307,
     topic_id=32,
@@ -63,8 +65,10 @@ class _FakeMessenger:
 class _FakeDirectory:
     def __init__(self, people: Sequence[FirstImpression] = ()) -> None:
         self._people = list(people)
+        self.limits: list[int] = []
 
     async def recent(self, *, limit: int) -> list[FirstImpression]:
+        self.limits.append(limit)
         return self._people[:limit]
 
 
@@ -93,31 +97,51 @@ class _FakeConsent:
         return self.verdict
 
 
-def _norman(username: str | None = "NormanGri") -> FirstImpression:
+def _person(*, sender_id: int, name: str, username: str | None) -> FirstImpression:
     return FirstImpression(
-        sender_id=7,
+        sender_id=sender_id,
         first_seen_at=datetime(2026, 8, 1, tzinfo=UTC),
-        note="Норман — знакомый",
-        display_name="Норман",
+        note=f"{name} — знакомый",
+        display_name=name,
         username=username,
     )
+
+
+def _norman(username: str | None = "NormanGri") -> FirstImpression:
+    return _person(sender_id=7, name="Норман", username=username)
+
+
+def _material(
+    *, private: bool, origin: MaterialOrigin = MaterialOrigin.MEMORY
+) -> TurnMaterial:
+    """След материала хода: что попало в контекст генерации и какой дверью."""
+    trail = TurnMaterial()
+    # Живая нить приватного разговора отмечается на КАЖДОМ ходу из лички — ровно как в
+    # проде: ход в личке приватен целиком, и переносом он от этого не становится.
+    trail.note_visibility(VISIBILITY_OWNER_PRIVATE, origin=MaterialOrigin.LIVE_THREAD)
+    trail.note(
+        (
+            {"content": "личное", "visibility": VISIBILITY_OWNER_PRIVATE}
+            if private
+            else {"content": "публичное", "visibility": VISIBILITY_PUBLIC},
+        ),
+        origin=origin,
+    )
+    return trail
 
 
 def _scope(
     *,
     from_owner: bool = True,
     material_private: bool = False,
+    material_origin: MaterialOrigin = MaterialOrigin.MEMORY,
     recent_thread: str = "",
 ) -> DeliveryScope:
     return DeliveryScope(
         from_owner=from_owner,
         here_chat_id=_DM_CHAT,
         request_text="расскажи Норману в нашей группе про релиз",
-        recalled=(
-            ({"content": "личное", "visibility": VISIBILITY_OWNER_PRIVATE},)
-            if material_private
-            else ({"content": "публичное", "visibility": VISIBILITY_PUBLIC},)
-        ),
+        material=_material(private=material_private, origin=material_origin),
         recent_thread=recent_thread,
     )
 
@@ -129,6 +153,7 @@ def _capability(
     known: tuple[KnownDestination, ...] = (_GROUP, _OWNER_DM),
     directory: Any = None,
     consent: Any = None,
+    owner_id: int | None = None,
 ) -> Capability:
     return make_send_to_chat_capability(
         messenger=messenger,
@@ -136,6 +161,7 @@ def _capability(
         directory=directory if directory is not None else _FakeDirectory((_norman(),)),
         consent=consent,
         scope_source=lambda: scope,
+        owner_id=owner_id,
     )
 
 
@@ -175,6 +201,8 @@ async def test_an_empty_text_sends_nothing() -> None:
 
     assert messenger.sent == []
     assert result["sent"] is False
+    # Модель узнаёт, ЧТО не так: без подсказки она додумает, будто отправила.
+    assert "пуст" in str(result["note"])
 
 
 @pytest.mark.parametrize(
@@ -213,6 +241,7 @@ async def test_without_an_armed_turn_nothing_is_ever_sent() -> None:
 
     assert messenger.sent == []
     assert result["sent"] is False
+    assert "нет хода" in str(result["note"])
 
 
 # --- Неоднозначность: переспросить --------------------------------------------
@@ -307,6 +336,58 @@ async def test_a_direct_order_of_the_owner_is_sent_without_asking_consent() -> N
     assert consent.calls == [], "у owner'а спросили согласие на его же распоряжение"
 
 
+async def test_private_raised_by_a_memory_tool_mid_turn_is_gated_the_same() -> None:
+    # 🔴 BLOCKER-1: до фикса гейт читал ТОЛЬКО авто-recall, снятый до генерации. Модель
+    # же может поднять приватное УЖЕ В ХОДЕ — вызвав search_memory / recall_memory в том
+    # же tool-loop, — и такой материал уезжал в комнату без вопроса. След материала не
+    # различает, какой дверью память подняли: важна метка, а не момент.
+    messenger = _FakeMessenger()
+    consent = _FakeConsent(verdict=False)
+    trail = TurnMaterial()
+    trail.note_visibility(VISIBILITY_OWNER_PRIVATE, origin=MaterialOrigin.LIVE_THREAD)
+    scope = DeliveryScope(
+        from_owner=True,
+        here_chat_id=_DM_CHAT,
+        request_text="расскажи Норману в нашей группе",
+        material=trail,
+    )
+    capability = _capability(messenger=messenger, scope=scope, consent=consent)
+
+    # Ход начался с ЧИСТЫМ следом — авто-recall ничего приватного не поднял.
+    before = await _execute(capability, place="group", text="привет")
+    assert before["sent"] is True
+
+    # …а теперь память подняла приватное прямо посреди хода, инструментом.
+    trail.note(
+        ({"content": "личное", "visibility": VISIBILITY_OWNER_PRIVATE},),
+        origin=MaterialOrigin.MEMORY,
+    )
+    after = await _execute(capability, place="group", text="а ещё Вова говорил…")
+
+    assert after["sent"] is False
+    assert "соглас" in str(after["note"]).lower()
+    assert len(messenger.sent) == 1
+
+
+async def test_a_turn_with_no_trail_at_all_asks_before_it_carries_anything() -> None:
+    # Ход, у которого следа нет (никто не армировал), — это «материал неизвестен».
+    # Сомнение удерживает: спрашиваем согласие, а не пропускаем молча.
+    messenger = _FakeMessenger()
+    consent = _FakeConsent(verdict=False)
+    scope = DeliveryScope(
+        from_owner=True,
+        here_chat_id=_DM_CHAT,
+        request_text="напиши в группу",
+        material=TurnMaterial.unknown(),
+    )
+    capability = _capability(messenger=messenger, scope=scope, consent=consent)
+
+    result = await _execute(capability, place="group", text="привет")
+
+    assert result["sent"] is False
+    assert messenger.sent == []
+
+
 async def test_without_a_consent_seam_private_material_never_leaves() -> None:
     # Гейт не подключён → согласия взять неоткуда → перенос не делаем (не «пропускаем»).
     messenger = _FakeMessenger()
@@ -355,6 +436,60 @@ async def test_a_person_without_a_handle_is_addressed_by_name() -> None:
     await _execute(capability, place="group", text="@Норман, глянь")
 
     assert messenger.sent[0][2] == "Норман, глянь"
+
+
+async def test_an_impostor_named_like_the_owner_never_takes_his_tag() -> None:
+    # 🔴 BOB-090.B-fix2 (MAJOR-2): ``display_name`` — Telegram full_name, которое человек
+    # ставит себе САМ. Владелец опознаётся по ID, поэтому обращение к нему в сообщении,
+    # уходящем в КОМНАТУ, не может уехать на постороннего, назвавшегося его именем.
+    messenger = _FakeMessenger()
+    capability = _capability(
+        messenger=messenger,
+        scope=_scope(),
+        directory=_FakeDirectory(
+            (
+                _person(sender_id=999, name="Вова", username="evil_guy"),
+                _person(sender_id=_OWNER_ID, name="Вова Зоологов", username="vova_real"),
+            )
+        ),
+        owner_id=_OWNER_ID,
+    )
+
+    await _execute(capability, place="group", text="@Вова закончил обзор")
+
+    assert messenger.sent[0][2] == "@vova_real закончил обзор"
+
+
+async def test_without_a_known_owner_id_a_contested_name_gets_no_tag() -> None:
+    # Владелец в конфиге не назван — угадывать между тёзками нельзя: обращение по имени.
+    messenger = _FakeMessenger()
+    capability = _capability(
+        messenger=messenger,
+        scope=_scope(),
+        directory=_FakeDirectory(
+            (
+                _person(sender_id=999, name="Вова", username="evil_guy"),
+                _person(sender_id=_OWNER_ID, name="Вова Зоологов", username="vova_real"),
+            )
+        ),
+    )
+
+    await _execute(capability, place="group", text="@Вова закончил обзор")
+
+    assert messenger.sent[0][2] == "Вова закончил обзор"
+
+
+async def test_only_the_recent_faces_are_consulted_for_mentions() -> None:
+    # Ростер «в голове» ограничен свежими лицами (тот же порядок, что у BOB-080): без
+    # капа проверка упоминаний тянула бы всю историю знакомств на каждой отправке.
+    directory = _FakeDirectory((_norman(),))
+    capability = _capability(
+        messenger=_FakeMessenger(), scope=_scope(), directory=directory
+    )
+
+    await _execute(capability, place="group", text="@Норман, глянь")
+
+    assert directory.limits == [30]
 
 
 async def test_a_broken_roster_still_never_lets_an_unverified_tag_out() -> None:

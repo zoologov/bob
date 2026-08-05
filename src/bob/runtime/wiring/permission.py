@@ -74,16 +74,20 @@ def _build_permission_flow(
     state); the durable grant happens ONLY on an explicit authorize; and the whole
     execution is decorative (safe-default refuse inside the executor). The flow itself
     enforces owner-only decision + the non-authorized-only request gate; HandleMessage
-    only passes the perceived authz facts. ``owner_id`` is unused (the owner is decided by
-    HandleMessage's perceived interlocutor) but kept for symmetry with the other builders.
+    only passes the perceived authz facts.
+
+    🔴 ``owner_id`` does NOT decide privilege (that stays HandleMessage's perceived
+    interlocutor) — it decides WHO THE OWNER IS IN THE ROSTER, so the notice's mention is
+    grounded on the владельца's identity and not on a display name a stranger can help
+    himself to (BOB-090.B-fix2, MAJOR-2). ``0`` (unconfigured) marks nobody.
     """
-    del owner_id  # the owner is decided by HandleMessage's perceived interlocutor
     return PermissionFlow(
         judge=_SafeDefaultPrivilegeJudge(LlmPrivilegeJudge(router=router)),
         store=SqlitePermissionRequestStore(repo),
         notifier=_PermissionNotifier(bot=bot, chat_id=chat_id, topic_id=topic_id),
         clock=clock,
         directory=directory,
+        owner_id=owner_id or None,
         executor=PermissionExecutor(
             fulfiller=PrivilegedRequestFulfiller(
                 router=router, registry=registry, tool_provider=tool_provider

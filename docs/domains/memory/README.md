@@ -53,6 +53,7 @@ src/bob/memory/
   work_journal.py # layer=domain          — WorkEpisode + work_episode_event: дистиллированный dev-эпизод, event_type='work' (BOB-087.B1)
   register.py     # layer=domain          — Register (DEV/CASUAL) + may_recall_in_register/filter_by_register: чистый down-weight work-эпизодов в CASUAL (BOB-087.C1)
   register_pipeline.py # layer=domain     — register_ranked/pool_has_work: over-fetch → attenuate → re-sort → truncate («зубы» down-weight'а) + economy-gate (BOB-087.C2)
+  digest_provenance.py # layer=domain     — provenance_window/parse_provenance_window: формат «<первый ts>..<последний ts>» окна источников дайджеста (bob-g7t)
   usecases/       # layer=application
     extract_facts.py       — ExtractFacts (Tier 0 «запомнить»: реплика → факты)
     consolidate_memory.py  — ConsolidateMemory (редкий дайджест старых эпизодов, BOB-021)
@@ -297,6 +298,16 @@ OpenAI-совместимой `/v1/chat/completions`, сортирует по у
 - **Недеструктивная консолидация:** источники дайджеста лишь помечаются
   `consolidated=1`, оригиналы сохраняются; дайджест никогда не переваривается
   повторно (идемпотентно).
+- **Свёртка не отмывает приватность (bob-g7t):** дайджест наследует САМУЮ СТРОГУЮ
+  метку своих источников (`kernel.visibility.strictest_visibility`) — хоть один
+  `owner_private` среди свёрнутых эпизодов, и весь дайджест приватен. До фикса строка
+  дайджеста писалась вообще без `visibility`, а отсутствие метки читается как публично,
+  поэтому свёртка превращала приватное в общедоступное навсегда. Метку дайджестов,
+  записанных ДО фикса, идемпотентно дозаполняет `_repair_digest_visibility`: она
+  восстанавливает её ПО ИСТОЧНИКАМ (ts-окно провенанса, `digest_provenance.py`), а не
+  «оставить как есть» и не «пометить всё приватным» — публичная память комнаты остаётся
+  публичной. Неразрешимый провенанс трактуется строго (INV-8: сомнение придерживает).
+  Тот же класс дыры для оси РЕГИСТРА закрыт раньше, в BOB-087.C8.
 - **Sender-атрибуция:** `EpisodicEvent.sender_id` привязывает реплику к
   собеседнику (per-person память BOB-045); `None` — для тика/дайджеста/legacy.
 - **Visibility-провенанс (`NULL` = public, BOB-066 2.6):** `visibility` — nullable
@@ -391,6 +402,9 @@ ports-шим `bob.domain.ports` удалён (BOB-062.8), ~15 потребите
   work-эпизодов в CASUAL (BOB-087.C1).
 - `register_pipeline.py` (чистый домен): `register_ranked(pool, register, *, display_k)`,
   `pool_has_work(pool)` — rank-пайплайн («зубы») + economy-gate (BOB-087.C2).
+- `digest_provenance.py` (чистый домен): `provenance_window(first_ts, last_ts)`,
+  `parse_provenance_window(value)` — формат окна источников дайджеста; читается починкой
+  метки приватности, поэтому писатель и читатель знают одно определение (bob-g7t).
 - `usecases/resolve_register.py`: `RegisterResolver.resolve(event, *, pool_has_work)` —
   per-turn DEV/CASUAL (детерминированный dev-DM сигнал + Tier-0 судья); `WorkTalkClassifier`
   — Protocol-шов классификатора (BOB-087.C2).

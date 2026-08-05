@@ -15,6 +15,9 @@ conversations with another user** — разрешить?» — английск
   слов САМОГО просителя;
 * упоминание owner'а заземляется ростером (:func:`~bob.social.mention.ground_mentions`,
   срез B): есть ник — настоящий ``@ник``, нет ника — имя, тег не выдумывается;
+* 🔴 заземляется ТОЛЬКО обращение самого Боба (BOB-090.B-fix2): цитата чужих слов и имя
+  просителя понижаются, а owner среди тёзок опознаётся по ID, а не по имени, которое
+  человек ставит себе сам;
 * ростер недоступен — Боб всё равно спрашивает (обращаясь по имени), а не молчит:
   сбой справочника не должен снимать гейт привилегий.
 """
@@ -106,9 +109,11 @@ class _BrokenRoster:
         raise RuntimeError("roster is down")
 
 
-def _person(name: str, username: str | None) -> FirstImpression:
+def _person(
+    name: str, username: str | None, *, sender_id: int | None = None
+) -> FirstImpression:
     return FirstImpression(
-        sender_id=abs(hash(name)) % 1000,
+        sender_id=sender_id if sender_id is not None else abs(hash(name)) % 1000,
         first_seen_at=_AT,
         note=f"{name} — знакомый.",
         display_name=name,
@@ -121,6 +126,7 @@ def _flow(
     notifier: _FakeNotifier,
     store: _FakeStore | None = None,
     directory: _FakeRoster | _BrokenRoster | None = None,
+    owner_id: int | None = None,
 ) -> PermissionFlow:
     return PermissionFlow(
         judge=_FakeJudge(need=_PRIVILEGED),
@@ -130,6 +136,7 @@ def _flow(
         owner_name="Вова",
         id_factory=lambda: "req-1",
         directory=directory,
+        owner_id=owner_id,
     )
 
 
@@ -200,16 +207,57 @@ async def test_without_a_handle_the_owner_is_addressed_by_name_not_a_made_up_tag
 
 
 @pytest.mark.asyncio
-async def test_a_tag_inside_the_quoted_ask_is_grounded_too() -> None:
-    # Слова просителя цитируются, и выдуманный им тег не должен звать в чат постороннего.
+async def test_a_tag_inside_the_quoted_ask_never_becomes_a_real_ping() -> None:
+    # 🔴 Регресс BOB-090.B-fix2 (MAJOR-1). Раньше цитата чужих слов шла через общее
+    # заземление, и оно не снимало «собаку», а ПОВЫШАЛО имя до настоящего ника: нотис
+    # уходил в топик Боба в ГРУППЕ, и посторонний получал реальный пинг текстом, который
+    # написал не Боб. Цитату можно только понижать.
     notifier = _FakeNotifier()
     roster = _FakeRoster(_person("Вова", "vzoologov"), _person("Норман", "NormanGri"))
 
     await _ask(_flow(notifier=notifier, directory=roster), text="спроси @Норман сам")
 
     notice = notifier.owner_notices[0]
-    assert "@NormanGri" in notice
+    assert "@NormanGri" not in notice
     assert "@Норман" not in notice
+    assert "спроси Норман сам" in notice
+    # Обращение самого Боба к owner'у заземляется как прежде — понижается ЧУЖОЕ.
+    assert notice.startswith("@vzoologov,")
+
+
+@pytest.mark.asyncio
+async def test_an_impostor_named_like_the_owner_never_steals_the_notice() -> None:
+    # 🔴 Регресс BOB-090.B-fix2 (MAJOR-2). ``display_name`` — это Telegram full_name,
+    # которое человек ставит себе САМ: посторонний назвался «Вова» — и обращение к
+    # владельцу в САМОМ security-чувствительном сообщении Боба уезжало на него.
+    notifier = _FakeNotifier()
+    roster = _FakeRoster(
+        _person("Вова", "evil_guy", sender_id=999),
+        _person("Вова Зоологов", "vzoologov", sender_id=27468732),
+    )
+
+    await _ask(_flow(notifier=notifier, directory=roster, owner_id=27468732))
+
+    notice = notifier.owner_notices[0]
+    assert notice.startswith("@vzoologov,")
+    assert "evil_guy" not in notice
+
+
+@pytest.mark.asyncio
+async def test_two_namesakes_and_no_known_owner_leave_the_notice_tagless() -> None:
+    # Owner'а по id не опознать (в конфиге его нет) — угадывать между тёзками нельзя:
+    # обращение по имени, а не пинг наугад.
+    notifier = _FakeNotifier()
+    roster = _FakeRoster(
+        _person("Вова", "evil_guy", sender_id=999),
+        _person("Вова Петров", "vova_p", sender_id=1000),
+    )
+
+    await _ask(_flow(notifier=notifier, directory=roster))
+
+    notice = notifier.owner_notices[0]
+    assert notice.startswith("Вова,")
+    assert "@" not in notice
 
 
 @pytest.mark.asyncio
