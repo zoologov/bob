@@ -24,6 +24,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Literal, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
+    from bob.capabilities.introspection.graph_form import GraphFormKind
     from bob.kernel.ports import ToolLoopMessage
 
 # An OpenAI-shaped tool definition (``{"type": "function", "function": {...}}``),
@@ -181,13 +182,16 @@ class ArchitectureDiagram:
     they differ when the detailed view had nothing to show (a ``--scope`` on a graph LEAF
     prints an empty diagram, so the node's links are drawn instead). Carrying both is
     what keeps the answer honest: Bob can say "внутренностей там нет, вот связи" rather
-    than passing one view off as the other. Values are the pure planner's form kinds
-    (``overview`` / ``node`` / ``components``).
+    than passing one view off as the other. Both are typed as the pure planner's own
+    :data:`~bob.capabilities.introspection.graph_form.GraphFormKind` (``overview`` /
+    ``node`` / ``components``) rather than as bare ``str``: the port then cannot LOSE a
+    type the core already has, and a fourth form cannot be invented at the boundary
+    (BOB-091.4, review Nit-1).
     """
 
     mermaid: str
-    form: str
-    requested: str
+    form: GraphFormKind
+    requested: GraphFormKind
 
 
 @dataclass(frozen=True)

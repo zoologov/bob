@@ -578,6 +578,172 @@ async def test_lint_read_does_not_write_the_index_on_the_live_cli() -> None:
     assert hashlib.sha256(index.read_bytes()).hexdigest() == before
 
 
+# 🔴 The read-only invariant is measured on EVERY form, not just ``lint`` (review Minor-5):
+# if a future beadloom made ``status`` or ``doctor`` write, only a per-form measurement
+# would notice. ``sync-check`` is the ONE documented exception: its bytes change on every
+# run (SQLite page/header churn from opening the index read-write), while the DATA does
+# not — measured table by table, all 22 table digests are identical around the call, and
+# the verdict itself is stable across runs (asserted separately just above). So the
+# exception is about bytes, not about content, and it is nailed down here rather than left
+# as a silent hole.
+_INDEX_WRITING_FORMS = frozenset({"sync-check"})
+
+
+@pytest.mark.parametrize(
+    "check", ["status", "prime", "doctor", "lint", "diff", "sync-check"]
+)
+@pytest.mark.asyncio
+async def test_no_read_form_but_sync_check_touches_the_index_bytes(check: str) -> None:
+    index = _REPO_ROOT / ".beadloom" / "beadloom.db"
+    if not index.exists() or shutil.which("beadloom") is None:
+        pytest.skip("beadloom index unavailable")
+    intro = _real_introspector()
+    # A first call absorbs the one-off churn a "warm" index shows after other commands,
+    # so the measurement is about THIS form, not about whatever ran before it.
+    await intro.project_health(check)
+    before = hashlib.sha256(index.read_bytes()).hexdigest()
+
+    await intro.project_health(check)
+
+    changed = hashlib.sha256(index.read_bytes()).hexdigest() != before
+    assert changed == (check in _INDEX_WRITING_FORMS), (
+        f"{check}: изменение байтов индекса = {changed}, "
+        f"ожидалось {check in _INDEX_WRITING_FORMS}"
+    )
+
+
+# --- 🔴 BOB-091.4: a PLANTED graph-level violation, on the live CLI --------------
+#
+# Critical-1's root cause was not a typo, it was the fixture: slice 2 captured ONE live
+# violation (a ``forbid_import``, the only kind that carries a file and a line) and the
+# verdict was built to that sample, so every rule about a NODE or an EDGE — cardinality,
+# cycle, require, layer, which print EMPTY file/line slots — was invisible and the raw
+# machine tuple went out to the person instead. §0.3 п.4 in its sharpest form. The fix is
+# therefore gated on a REAL beadloom run over a throw-away project that breaks all three
+# shapes at once, with the expected count taken from the CLI itself.
+
+_PROBE_GRAPH = """nodes:
+  - ref_id: probe
+    kind: service
+    source: src/
+    tags: [layer-runtime]
+    summary: 'Probe service root.'
+  - ref_id: alpha
+    kind: feature
+    source: src/alpha/
+    tags: [module-vertical]
+    summary: 'Alpha module.'
+  - ref_id: beta
+    kind: feature
+    source: src/beta/
+    tags: [module-vertical]
+    summary: 'Beta module.'
+edges:
+  - {src: probe, dst: probe, kind: part_of}
+  - {src: alpha, dst: probe, kind: part_of}
+  - {src: beta, dst: probe, kind: part_of}
+"""
+
+_PROBE_RULES = """version: 3
+rules:
+  - name: alpha-no-beta-internals
+    description: "a FILE rule: fills file + line"
+    severity: error
+    forbid_import: {from: "src/alpha/*", to: "beta/internals*"}
+  - name: no-dependency-cycles
+    description: "an EDGE rule: fills from + to, no file"
+    severity: error
+    forbid_cycles: {edge_kind: depends_on}
+  - name: no-monster-modules
+    description: "a NODE rule: fills from only, no file"
+    severity: warn
+    check:
+      for: {kind: feature}
+      max_symbols: 1
+"""
+
+_PROBE_ALPHA = """from beta.internals import beta_thing
+
+
+def alpha_one() -> int:
+    return beta_thing()
+
+
+def alpha_two() -> int:
+    return 2
+"""
+
+_PROBE_BETA = """from alpha.mod import alpha_two
+
+
+def beta_thing() -> int:
+    return alpha_two()
+
+
+def beta_other() -> int:
+    return 3
+"""
+
+
+def _write_probe_project(root: Path) -> Path:
+    """Write (and index) a throw-away beadloom project that breaks all three rule shapes."""
+    graph = root / ".beadloom" / "_graph"
+    graph.mkdir(parents=True)
+    (graph / "graph.yml").write_text(_PROBE_GRAPH, encoding="utf-8")
+    (graph / "rules.yml").write_text(_PROBE_RULES, encoding="utf-8")
+    (root / "src" / "alpha").mkdir(parents=True)
+    (root / "src" / "beta").mkdir(parents=True)
+    (root / "src" / "alpha" / "mod.py").write_text(_PROBE_ALPHA, encoding="utf-8")
+    (root / "src" / "beta" / "internals.py").write_text(_PROBE_BETA, encoding="utf-8")
+    # Fixed argv, no shell; writes only inside tmp_path.
+    subprocess.run(
+        ["beadloom", "reindex"],  # noqa: S607 — resolved via PATH by design
+        cwd=root,
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+    return root
+
+
+@pytest.mark.asyncio
+async def test_a_planted_node_and_edge_violation_reaches_the_verdict(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """🔴 Critical-1: the count is the CLI's count, and no machine tuple is echoed."""
+    if shutil.which("beadloom") is None:
+        pytest.skip("beadloom not on PATH")
+    project = _write_probe_project(tmp_path / "probe")
+    raw = subprocess.run(  # fixed read-only argv, no shell
+        ["beadloom", "lint", "--no-reindex", "--strict"],  # noqa: S607 — via PATH
+        cwd=project,
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+    printed = [line for line in raw.stdout.splitlines() if line.strip()]
+    if not printed:
+        pytest.skip("beadloom lint printed nothing for the probe project")
+    # The fixture itself is asserted: the LIVE tool really does print empty file/line
+    # slots — the shape the pre-fix pattern could not see.
+    assert any(line.split(":")[3] == "" for line in printed), raw.stdout
+    monkeypatch.chdir(project)
+    intro = SubprocessRepoIntrospector(PrivacyGuard(project))
+
+    health = await intro.project_health("lint")
+
+    # Taken from the CLI, never hardcoded: the number Bob says IS the number of lines the
+    # linter printed, whatever the shapes among them.
+    assert f"Нарушений: {len(printed)}." in health.report, health.report
+    # The cycle names BOTH ends — "alpha" alone would not be the fact that matters.
+    assert "alpha → beta" in health.report
+    assert "сохранённому индексу" in health.report
+    for line in printed:
+        assert line not in health.report, "сырой porcelain не выходит наружу"
+
+
 @pytest.mark.asyncio
 async def test_diff_without_graph_changes_answers_honestly() -> None:
     if not _report_ready("diff", "--since", "HEAD"):

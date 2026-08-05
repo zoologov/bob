@@ -324,9 +324,11 @@ DEFAULT_CONFIG: Config = {
     # git history + ``list_tasks`` / ``show_task`` / ``task_comments`` tracker reads) are
     # registered ONLY when it is on — off → Bob never sees them (zero behaviour change).
     # ``architecture_tools`` (BOB-091) is the second SUB-flag, also default FALSE: the
-    # read-only ARCHITECTURE tools (``draw_architecture`` — the mermaid source of the
-    # graph, paired with ``render_diagram`` for the picture — and ``architecture_impact``,
-    # «что сломается, если тронуть X») register only when it is on.
+    # read-only ARCHITECTURE tools register only when it is on — ``draw_architecture``
+    # (the mermaid source of the graph, paired with ``render_diagram`` for the picture),
+    # ``architecture_impact`` («что сломается, если тронуть X») and ``project_health``
+    # (BOB-091.2: one of six read-only project-state reports — status / prime / doctor /
+    # sync-check / lint / diff).
     "introspection": {
         "enabled": True,
         "dev_tools": False,

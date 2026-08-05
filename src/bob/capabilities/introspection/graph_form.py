@@ -45,7 +45,12 @@ from typing import Literal
 # ``bob-domain``, ``runtime-app``, ``bob-cjz.1``). Anchored and separator-strict, so a
 # flag (``--json``), a path (``../etc``), a shell metacharacter (``;``), whitespace or a
 # second word never matches — this regex IS the injection guard for the ref slot.
-_GRAPH_REF_RE = re.compile(r"^[a-z][a-z0-9]*(?:[-.][a-z0-9]+)*$")
+#
+# 🔴 ``\Z``, not ``$``: ``$`` also matches BEFORE a trailing newline, so ``memory\n`` would
+# satisfy the pattern and the guard would be resting on the caller remembering to strip
+# (found in BOB-091.4 in the sibling ``health_form`` regex — same class of hole, and mutmut
+# never mutates a module-level constant, so no score could have shown it).
+_GRAPH_REF_RE = re.compile(r"^[a-z][a-z0-9]*(?:[-.][a-z0-9]+)*\Z")
 
 # Upper bound on a ref's length: real ref-ids are short, and a longer value carries no
 # extra signal — only a wider argv surface.

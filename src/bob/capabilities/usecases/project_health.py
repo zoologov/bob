@@ -33,7 +33,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from bob.capabilities.introspection.health_form import HEALTH_CHECKS
+from bob.capabilities.introspection.health_form import (
+    HEALTH_CHECKS,
+    InvalidGitRefError,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -121,8 +124,15 @@ class _ProjectHealthCapability:
             health = await self._introspector.project_health(
                 check, since=_as_ref(since)
             )
-        except ValueError as exc:
-            return {"error": _BAD_REF if "git ref" in str(exc) else _BAD_CHECK}
+        except InvalidGitRefError:
+            return {"error": _BAD_REF}
+        except ValueError:
+            # Everything else the planner refuses is a check it does not know — including
+            # a write subcommand of the same CLI, which is the whole point of the closed
+            # list. 🔴 Chosen BY TYPE: this branch used to sniff the exception's English
+            # prose ('git ref' in str(exc)), so rewording a message would have shown the
+            # model the wrong lesson (BOB-091.4, review Minor-7).
+            return {"error": _BAD_CHECK}
         if not health.report.strip():
             return {"error": _EMPTY}
         return {"check": health.check, "report": health.report}

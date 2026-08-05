@@ -43,6 +43,16 @@ _SYNC_STALE = (
     "  [stale] bob: architecture.md <-> src/bob/capabilities/ports.py (hash_changed)\n"
 )
 _LINT_PORCELAIN = "some-rule:forbid_import:error:src/bob/two.py:2::\n"
+# 🔴 The SECOND real shape of the same output (BOB-091.4): a rule about a NODE or an EDGE
+# leaves the file and line slots EMPTY. Captured from the live CLI (a lowered symbol budget
+# in .beadloom/_graph/rules.yml; a throw-away project with two packages importing each
+# other), then written in this repo's own vocabulary.
+_LINT_PORCELAIN_GRAPH = (
+    "capabilities-internals-no-adapters:forbid_import:error:"
+    "src/bob/capabilities/x.py:2::\n"
+    "no-monster-modules-capabilities:cardinality:error:::capabilities:\n"
+    "no-dependency-cycles:cycle:error:::memory:conversation\n"
+)
 _LINT_CLEAN = "0 violations, 224 rules evaluated\n"
 _DIFF = (
     "Graph diff (since main):\n\nNodes:\n  + interactive (feature)\n\n"
@@ -92,6 +102,11 @@ def sync_check_is_stale(ctx: _Ctx) -> None:
 @given("beadloom печатает нарушение границ машинным форматом")
 def lint_reports_a_violation(ctx: _Ctx) -> None:
     ctx.stdout = _LINT_PORCELAIN
+
+
+@given("beadloom печатает нарушения уровня узла, цикла и файла машинным форматом")
+def lint_reports_graph_level_violations(ctx: _Ctx) -> None:
+    ctx.stdout = _LINT_PORCELAIN_GRAPH
 
 
 @given("beadloom печатает чистый вердикт по границам")
@@ -180,6 +195,16 @@ def tool_result_is_not_a_refusal(ctx: _Ctx) -> None:
 def tool_result_has_no_machine_separators(ctx: _Ctx) -> None:
     assert "::" not in ctx.result
     assert "forbid_import:error" not in ctx.result
+
+
+@then("в результате инструмента нет ни одной сырой строки вердикта")
+def tool_result_has_no_raw_verdict_line(ctx: _Ctx) -> None:
+    # 🔴 Сравнение с ТЕМ САМЫМ выводом, который напечатал инструмент: ни одна машинная
+    # строка не доходит до собеседника (BOB-091.4 — именно её он и получал вместо ответа).
+    for line in ctx.stdout.splitlines():
+        assert line.strip() not in ctx.result, (
+            f"сырая строка вердикта дошла до модели: {line!r}"
+        )
 
 
 @then(parsers.parse('в подпроцесс ушёл argv "{argv}"'))

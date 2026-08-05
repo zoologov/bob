@@ -14,6 +14,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from bob.capabilities.introspection.health_form import (
+    HealthRequestError,
+    UnknownCheckError,
+)
 from bob.capabilities.ports import ArchitectureDiagram, ProjectHealth
 
 if TYPE_CHECKING:
@@ -45,6 +49,7 @@ class FakeRepoIntrospector:
         raise_on_impact: bool = False,
         raise_on_health: bool = False,
         health_error: str = "not a read-only project-health check: simulated",
+        health_error_type: type[HealthRequestError] = UnknownCheckError,
         files_by_path: dict[str, str] | None = None,
         tasks_by_query: dict[str, str] | None = None,
         raise_on_read: bool = False,
@@ -70,12 +75,15 @@ class FakeRepoIntrospector:
         self._raise_on_diagram = raise_on_diagram
         self._raise_on_impact = raise_on_impact
         # BOB-091.2: the project-health read. ``raise_on_health`` models a slot refused
-        # BEFORE any subprocess, and ``health_error`` picks WHICH refusal — the real port
-        # distinguishes "not a check" from "not a git ref" by the message, and the
-        # capability must feed the matching hint back to the model.
+        # BEFORE any subprocess, and ``health_error_type`` picks WHICH refusal — the real
+        # port raises the planner's own ``UnknownCheckError`` / ``InvalidGitRefError``, and
+        # the capability must feed the matching hint back to the model. 🔴 The TYPE decides,
+        # not the message: before BOB-091.4 the capability sniffed the prose (Minor-7), so
+        # the fake now models the types the real planner actually raises.
         self._health_report = health_report
         self._raise_on_health = raise_on_health
         self._health_error = health_error
+        self._health_error_type = health_error_type
         # Per-path / per-query scripting for the code_rationale tests: a path absent
         # from ``files_by_path`` returns "" (a missing doc → skipped), so the fake can
         # model "PRD present, RFC/BRIEF absent" without disk.
@@ -160,7 +168,9 @@ class FakeRepoIntrospector:
         self.diagram_calls.append((ref, depth, internals_of))
         if self._raise_on_diagram:
             raise ValueError("not a valid graph ref: simulated")
-        requested = "components" if internals_of else ("node" if ref else "overview")
+        requested: GraphFormKind = (
+            "components" if internals_of else ("node" if ref else "overview")
+        )
         return ArchitectureDiagram(
             mermaid=self._diagram, form=self._diagram_form, requested=requested
         )
@@ -175,6 +185,6 @@ class FakeRepoIntrospector:
         self, check: str, *, since: str | None = None
     ) -> ProjectHealth:
         if self._raise_on_health:
-            raise ValueError(self._health_error)
+            raise self._health_error_type(self._health_error)
         self.health_calls.append((check, since))
         return ProjectHealth(check=check, report=self._health_report)

@@ -23,6 +23,13 @@ from __future__ import annotations
 import pytest
 
 from bob.capabilities.introspection.health_form import (
+    _ALIASES,
+    _FIXED_FORMS,
+    _GIT_REF_RE,
+    _MAX_REF_CHARS,
+    _REF_FORBIDDEN_SUBSTRINGS,
+    _REF_FORBIDDEN_SUFFIXES,
+    _SINCE_FLAG,
     DEFAULT_DIFF_REF,
     HEALTH_CHECKS,
     is_git_ref,
@@ -289,3 +296,142 @@ def test_a_validated_ref_is_returned_verbatim_not_case_folded() -> None:
 def test_a_ref_is_trimmed_before_validation() -> None:
     assert validate_git_ref("  main  ") == "main"
     assert plan_health_form("diff", since=" main ").args == ("--since", "main")
+
+
+# --- 🔴 the module-level VALUES (BOB-091.4, review Major-1) ----------------------
+#
+# Measured, not assumed: `scripts/mutation.sh` copies this module into its sandbox and
+# mutates FUNCTION BODIES only — HEALTH_CHECKS, _FIXED_FORMS (including the
+# ``('--no-reindex', '--strict')`` tuple), _ALIASES, both regexes and _MAX_REF_CHARS came
+# through byte-for-byte, with zero mutants. So the whole argv guard of this seam is
+# constant data that the mutation score says NOTHING about — and BOB-091.4's Critical-1
+# lived in exactly such a constant. These tests are the gate on the VALUES.
+
+
+def test_the_advertised_checks_are_unique_and_ordered_as_the_tool_lists_them() -> None:
+    assert HEALTH_CHECKS == ("status", "prime", "doctor", "sync-check", "lint", "diff")
+    assert len(set(HEALTH_CHECKS)) == len(HEALTH_CHECKS)
+
+
+@pytest.mark.parametrize(
+    "write_command",
+    [
+        "reindex",
+        "docs",
+        "snapshot",
+        "link",
+        "init",
+        "install-hooks",
+        "setup-rules",
+        "setup-mcp",
+        "setup-agentic-flow",
+        "setup-branch-protection",
+        "setup-ai-techwriter",
+        "active-sync",
+        "sync-update",
+        "ci",
+        "federate",
+        "export",
+    ],
+)
+def test_no_write_command_of_the_same_cli_is_an_advertised_check(
+    write_command: str,
+) -> None:
+    # 🔴 The closed list IS the guard: a write command sitting in it would be a write Bob
+    # could ask for by name.
+    assert write_command not in HEALTH_CHECKS
+    assert write_command not in _ALIASES
+
+
+def test_every_fixed_form_belongs_to_an_advertised_check() -> None:
+    # A form for a check nobody can ask for is dead surface; a check without a form would
+    # be an advertised argument the tool refuses. ``diff`` is the one deliberate absence —
+    # its form carries a slot and is built, not stored.
+    assert set(_FIXED_FORMS) == set(HEALTH_CHECKS) - {"diff"}
+
+
+def test_the_lint_form_is_exactly_the_two_flags_that_make_the_read_honest() -> None:
+    # 🔴 --no-reindex: a plain ``beadloom lint`` WRITES the index (measured live).
+    # --strict: without it the CLI exits 0 even on an error-level violation.
+    assert _FIXED_FORMS["lint"] == ("--no-reindex", "--strict")
+
+
+def test_no_fixed_form_carries_a_flag_that_widens_the_read() -> None:
+    # The forms are the reason ``--project <other repo>``, ``--json`` and the AGENTS.md
+    # rewriting ``prime --update`` are INEXPRESSIBLE. A single extra flag in this table
+    # would open all of it — and no mutant would ever have told us.
+    forbidden = ("--project", "--json", "--update", "--format", "--report", "--fail-if")
+    for check, args in _FIXED_FORMS.items():
+        assert all(flag not in args for flag in forbidden), check
+    assert _FIXED_FORMS["status"] == ()
+    assert _FIXED_FORMS["prime"] == ()
+    assert _FIXED_FORMS["doctor"] == ()
+    assert _FIXED_FORMS["sync-check"] == ()
+
+
+def test_every_alias_resolves_onto_an_advertised_check() -> None:
+    # An alias pointing at anything else would be a new expressible value smuggled in
+    # through the paraphrase table.
+    for alias, canonical in _ALIASES.items():
+        assert canonical in HEALTH_CHECKS, alias
+
+
+def test_every_alias_key_is_already_normalised() -> None:
+    # Lookup happens AFTER strip().lower(), so a key with capitals or spaces would be
+    # dead: the paraphrase would silently stop being answered.
+    for alias in _ALIASES:
+        assert alias == alias.strip().lower()
+
+
+def test_no_alias_shadows_a_canonical_name() -> None:
+    assert not set(_ALIASES) & set(HEALTH_CHECKS)
+
+
+def test_the_ref_length_bound_fits_a_full_sha_and_nothing_absurd() -> None:
+    # The value has to sit above the longest REAL ref (a 40-char sha) and well below the
+    # length at which a "ref" is just argv surface.
+    assert _MAX_REF_CHARS >= 40
+    assert _MAX_REF_CHARS == 64
+
+
+def test_the_ref_pattern_is_anchored_at_both_ends() -> None:
+    # 🔴 An unanchored pattern would match a hostile value's harmless PREFIX — the classic
+    # way an injection guard passes its own tests and still lets the value through. And the
+    # end anchor is ``\Z``, not ``$``: ``$`` tolerates a trailing newline, which would make
+    # this guard depend on the caller stripping (found here, BOB-091.4).
+    assert _GIT_REF_RE.pattern.startswith("^")
+    assert _GIT_REF_RE.pattern.endswith(r"\Z")
+    assert _GIT_REF_RE.match("main\n") is None
+
+
+@pytest.mark.parametrize(
+    "char",
+    [
+        ";", "|", "&", "$", "`", ">", "<", "(", ")", "{", "}", "[", "]", "!", "*",
+        "?", "'", '"', "\\", " ", "\t", "\n", "\r", "\x00", ",", "=", "@", "#", "%",
+        "+", ":",
+    ],
+)
+def test_the_ref_pattern_admits_no_shell_or_glob_character(char: str) -> None:
+    # Asserted on the PATTERN itself, per character, because this class is the injection
+    # guard of the only model-chosen value that reaches argv on this path.
+    assert _GIT_REF_RE.match(f"main{char}") is None
+    assert _GIT_REF_RE.match(f"{char}main") is None
+
+
+@pytest.mark.parametrize("first", ["-", ".", "/", "~", "^"])
+def test_the_ref_pattern_refuses_a_leading_separator(first: str) -> None:
+    # A leading ``-`` would be a FLAG; a leading ``/`` or ``.`` is a path, not a ref.
+    assert _GIT_REF_RE.match(f"{first}main") is None
+
+
+def test_the_refused_ref_shapes_mirror_gits_own_refname_rules() -> None:
+    # These are the shapes that PASS the character class and are still illegal: a range is
+    # two refs, a trailing separator is malformed, ``.lock`` is reserved.
+    assert ".." in _REF_FORBIDDEN_SUBSTRINGS
+    assert set(_REF_FORBIDDEN_SUFFIXES) == {"/", ".", ".lock"}
+
+
+def test_the_diff_slot_is_the_since_flag_and_its_default_is_a_valid_ref() -> None:
+    assert _SINCE_FLAG == "--since"
+    assert is_git_ref(DEFAULT_DIFF_REF) is True

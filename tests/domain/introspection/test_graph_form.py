@@ -18,6 +18,7 @@ from __future__ import annotations
 import pytest
 
 from bob.capabilities.introspection.graph_form import (
+    _GRAPH_REF_RE,
     MAX_GRAPH_DEPTH,
     diagram_carries_nodes,
     plan_graph_form,
@@ -163,6 +164,15 @@ def test_real_graph_refs_are_accepted(ref: str) -> None:
 
 def test_validate_graph_ref_trims_and_lowers() -> None:
     assert validate_graph_ref("  Bob-Domain \n") == "bob-domain"
+
+
+def test_the_graph_ref_pattern_is_anchored_without_the_newline_loophole() -> None:
+    # 🔴 BOB-091.4 (review Major-1 in practice): mutmut copies this constant into its
+    # sandbox unmutated, so only a value test bites. ``$`` would tolerate a TRAILING
+    # NEWLINE, leaving the injection guard dependent on the caller stripping first.
+    assert _GRAPH_REF_RE.pattern.startswith("^")
+    assert _GRAPH_REF_RE.pattern.endswith(r"\Z")
+    assert _GRAPH_REF_RE.match("memory\n") is None
 
 
 def test_ref_length_bound_is_inclusive_at_the_limit() -> None:

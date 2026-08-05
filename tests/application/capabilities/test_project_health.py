@@ -16,7 +16,11 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
-from bob.capabilities.introspection.health_form import HEALTH_CHECKS
+from bob.capabilities.introspection.health_form import (
+    HEALTH_CHECKS,
+    InvalidGitRefError,
+    UnknownCheckError,
+)
 from bob.capabilities.usecases.project_health import make_project_health_capability
 
 from .fakes import FakeRepoIntrospector
@@ -129,7 +133,9 @@ async def test_a_hostile_diff_ref_becomes_a_readable_error_about_the_ref() -> No
     # 🔴 The two refusals must not be confused: telling the model "выбери другой отчёт"
     # when the REF was wrong sends it fixing the wrong argument.
     introspector = FakeRepoIntrospector(
-        raise_on_health=True, health_error="not a valid git ref: 'main; rm -rf /'"
+        raise_on_health=True,
+        health_error_type=InvalidGitRefError,
+        health_error="not a valid git ref: 'main; rm -rf /'",
     )
     cap = make_project_health_capability(introspector)
 
@@ -139,3 +145,39 @@ async def test_a_hostile_diff_ref_becomes_a_readable_error_about_the_ref() -> No
     message = str(result["error"])
     assert "git-ref" in message
     assert "sync-check" not in message
+
+
+async def test_the_refusal_is_chosen_by_the_error_type_not_by_its_wording() -> None:
+    # 🔴 BOB-091.4 (review Minor-7): the branch used to read the exception's English prose
+    # ('git ref' in str(exc)). Here an UNKNOWN-CHECK refusal whose message happens to
+    # mention a git ref must STILL teach the model about the report list — otherwise a
+    # reworded message quietly sends the model fixing the wrong argument.
+    introspector = FakeRepoIntrospector(
+        raise_on_health=True,
+        health_error_type=UnknownCheckError,
+        health_error="'git ref' is not a read-only project-health check",
+    )
+    cap = make_project_health_capability(introspector)
+
+    result = await cap.execute({"check": "git ref"})
+
+    assert isinstance(result, Mapping)
+    message = str(result["error"])
+    assert "sync-check" in message
+    assert "git-ref" not in message
+
+
+async def test_a_ref_refusal_survives_a_message_that_names_no_ref() -> None:
+    # The mirror image: the TYPE says "ref", so the hint is about the ref even though the
+    # message says nothing recognisable.
+    introspector = FakeRepoIntrospector(
+        raise_on_health=True,
+        health_error_type=InvalidGitRefError,
+        health_error="совершенно другая формулировка",
+    )
+    cap = make_project_health_capability(introspector)
+
+    result = await cap.execute({"check": "diff", "since": "что-то"})
+
+    assert isinstance(result, Mapping)
+    assert "git-ref" in str(result["error"])

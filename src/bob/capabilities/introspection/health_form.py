@@ -110,7 +110,12 @@ _ALIASES: dict[str, str] = {
 # (branch paths) and the ``~`` / ``^`` navigation suffixes. A leading ``-`` (a flag), a
 # leading ``/`` or ``.``, whitespace, a shell metacharacter, a quote, ``@{`` (reflog) or
 # a glob character therefore cannot match.
-_GIT_REF_RE = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_./~^-]*$")
+#
+# 🔴 ``\Z``, not ``$``: ``$`` also matches BEFORE a trailing newline, so ``main\n`` would
+# satisfy the pattern and the guard would be resting on the caller remembering to strip
+# (found in BOB-091.4 while writing the value tests review Major-1 asked for — the exact
+# class of hole a mutation score cannot see, because mutmut never mutates this line).
+_GIT_REF_RE = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_./~^-]*\Z")
 
 # Ref shapes that MATCH the character class above but are still refused, mirroring git's
 # own refname rules: a range (``a..b``) is two refs, a trailing ``/`` or ``.`` is
@@ -120,6 +125,26 @@ _REF_FORBIDDEN_SUFFIXES = ("/", ".", ".lock")
 
 # Upper bound on a ref's length: a 40-char sha is the longest real value by far.
 _MAX_REF_CHARS = 64
+
+
+class HealthRequestError(ValueError):
+    """A health request that cannot be shaped into an allowed form.
+
+    Subclasses ``ValueError`` because that is what this planner has always raised (and
+    what every caller catches), while the two subclasses below let the caller pick the
+    right refusal BY TYPE. 🔴 Before BOB-091.4 the use-case chose between "не тот отчёт"
+    and "не тот ref" by sniffing the exception's English prose (``'git ref' in str(exc)``),
+    so rewording a message would silently have shown the model the wrong lesson (review
+    Minor-7).
+    """
+
+
+class UnknownCheckError(HealthRequestError):
+    """The requested report is not one of the six read-only checks."""
+
+
+class InvalidGitRefError(HealthRequestError):
+    """The ``diff`` slot was not a strict, safe git ref."""
 
 
 @dataclass(frozen=True)
@@ -153,7 +178,7 @@ def is_git_ref(raw: str) -> bool:
 
 
 def validate_git_ref(raw: str) -> str:
-    """Return ``raw`` trimmed as a git ref, or raise :class:`ValueError`.
+    """Return ``raw`` trimmed as a git ref, or raise :class:`InvalidGitRefError`.
 
     Case is preserved: git refs are case-SENSITIVE, so folding it would answer about a
     different branch. A flag, a path, a range, a shell metacharacter, embedded
@@ -162,12 +187,12 @@ def validate_git_ref(raw: str) -> str:
     """
     token = raw.strip()
     if not is_git_ref(token):
-        raise ValueError(f"not a valid git ref: {raw!r}")
+        raise InvalidGitRefError(f"not a valid git ref: {raw!r}")
     return token
 
 
 def normalize_check(raw: str) -> str:
-    """Return the canonical check name for ``raw``, or raise :class:`ValueError`.
+    """Return the canonical check name for ``raw``, or raise :class:`UnknownCheckError`.
 
     Trims, case-folds and resolves a paraphrase. 🔴 An unrecognised value RAISES: the
     write subcommands of this CLI (``reindex`` / ``docs`` / ``link`` / ``setup-*``) are
@@ -177,7 +202,7 @@ def normalize_check(raw: str) -> str:
     token = raw.strip().lower()
     canonical = _ALIASES.get(token, token)
     if canonical not in HEALTH_CHECKS:
-        raise ValueError(f"{raw!r} is not a read-only project-health check")
+        raise UnknownCheckError(f"{raw!r} is not a read-only project-health check")
     return canonical
 
 
@@ -194,8 +219,10 @@ def plan_health_form(check: str, *, since: str | None = None) -> HealthForm:
     ``check`` is resolved against the closed list (:func:`normalize_check`); ``since``
     applies to ``diff`` alone and is IGNORED elsewhere, so it cannot widen another
     check's fixed form. A blank ``since`` means "not asked" and yields the CLI's own
-    default ref; a non-blank value that is not a git ref raises :class:`ValueError`
-    before any form exists.
+    default ref; a non-blank value that is not a git ref raises
+    :class:`InvalidGitRefError` before any form exists (and an unknown check raises
+    :class:`UnknownCheckError`) — the caller distinguishes the two refusals by TYPE, not by
+    reading the message.
     """
     canonical = normalize_check(check)
     if canonical == "diff":

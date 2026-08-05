@@ -18,21 +18,32 @@ per-report policy and not a generic truncation:
 * ``sync-check`` — 585 pair lines / 48 KB in this repo: the fresh pairs become a number
   and only the ``[stale]`` ones are named.
 * ``lint`` — a VERDICT: piped, the live CLI prints machine porcelain
-  (``rule:kind:severity:file:line::``) and, when something IS broken, no summary line at
-  all; the digest turns those tuples into readable lines.
+  (``rule:kind:severity:file:line:from:to``) and, when something IS broken, no summary
+  line at all; the digest turns those tuples into readable lines. 🔴 There are TWO real
+  porcelain shapes, not one: a rule about a FILE fills file+line, and a rule about a NODE
+  or an EDGE (cardinality / cycle / require / layer) leaves both EMPTY. Reading only the
+  first shape was BOB-091.4's Critical-1 — the count said "1" while three rules were
+  broken, and the raw tuple went out to the person as the answer.
 * ``diff`` — the payload (``N added, M changed…``) is the LAST line, so a cap that only
   keeps the head would throw away the most useful sentence.
 * ``prime`` — 39 KB, of which 224 lines are the rule list: the rules become a count and
   the agent-instruction sections are dropped (they are instructions for a tooling agent,
   not facts about the project).
 
-Two honesty rules are structural, not decoration:
+Three honesty rules are structural, not decoration — each of them enforced where NO
+branch can walk around it (BOB-091.4: the first two were promised by this docstring while
+one of the two real ``lint`` shapes never reached them):
 
 * 🔴 ``lint`` always carries the stored-index caveat. Bob reads the verdict WITHOUT
   reindexing (a reindex writes), and this project's own standing rule is that lint on an
   unrefreshed index LIES — so the answer says which index it was read off.
 * 🔴 ``sync-check`` always carries the pairing caveat: the CLI builds pairs only for some
   node kinds, so "всё свежо" is not "все доки свежие".
+  Both are appended by the DISPATCHER (:data:`_CAVEATS` in :func:`_digest`), not by a
+  branch of one digest — that is what makes "always" a structure rather than a promise.
+* 🔴 No machine tuple ever reaches the person. A porcelain line this module cannot read is
+  COUNTED (so the verdict is never understated) and said out loud as unread — it is not
+  dumped raw, because the raw dump is exactly what the digest exists to replace.
 
 Nothing is invented and nothing is silently dropped: a capped list states how many it
 hid, and a report whose shape this module does not recognise comes back de-framed rather
@@ -75,13 +86,27 @@ _PASSING_VERDICT = "ok"
 _PAIR_RE = re.compile(r"^\[(?P<verdict>ok|stale)\]\s+(?P<text>.+)$")
 _STALE_VERDICT = "stale"
 
-# ``lint`` piped: ``<rule>:<kind>:<severity>:<file>:<line>::`` — five fields and a
-# trailing empty pair. Parsed positionally, since the human summary line is ABSENT in
-# exactly the case that matters (something is broken).
-_VIOLATION_RE = re.compile(
-    r"^(?P<rule>[\w-]+):(?P<kind>[\w-]+):(?P<severity>\w+):"
-    r"(?P<file>[^:]+):(?P<line>\d+):"
-)
+# ``lint`` piped prints one machine line per violation and NOTHING else (no summary line
+# in exactly the case that matters — something is broken), so the tuple is read
+# positionally: ``<rule>:<kind>:<severity>:<file>:<line>:<from>:<to>`` — SEVEN fields, of
+# which only the first three are always filled.
+#
+# 🔴 file and line are EMPTY for every rule about a NODE or an EDGE — cardinality, cycle,
+# require, layer (measured on the real CLI: a lowered symbol budget printed
+# ``no-monster-modules-capabilities:cardinality:error:::capabilities:``, and a throw-away
+# project printed ``no-dependency-cycles:cycle:error:::alpha:beta``). A pattern that
+# demanded a file therefore did not SEE such a violation: the count said "1" while three
+# rules were broken and the cycle vanished — the very defect class this project's §0.3
+# rule 1 exists for. The location is whatever the line carries, and it may carry none.
+_VIOLATION_FIELDS = 7
+_FIELD_RE = re.compile(r"^[\w-]+$")
+
+# A line that was NOT read as a violation but carries the machine field separator this
+# thickly is porcelain of a shape this module does not know. It is COUNTED and owned up to,
+# never echoed: handing a person a raw tuple is what the digest exists to prevent, and
+# dropping it would understate the verdict. The threshold sits between the two real shapes
+# of this command — porcelain has six colons, the human summary line has none.
+_MACHINE_MIN_COLONS = 4
 
 # ``prime`` is markdown: ``## <Section>``. The rule list is replaced by its count; the
 # agent-facing sections are dropped entirely.
@@ -103,6 +128,17 @@ _SYNC_CAVEAT = (
     "Учти: пары док↔код строятся не для всех узлов графа, поэтому «свежо» здесь — "
     "не гарантия для узлов без пары."
 )
+
+# 🔴 The two reports whose verdict OVERSTATES what the tool measured, and their caveats.
+# Applied by the dispatcher (:func:`_digest`) rather than inside a digest, so no branch —
+# not even the honest-degradation one for a shape this module fails to recognise — can
+# walk around it. That was Critical-1's second half: the caveat existed in the code and the
+# docstring promised it "always", while one of the two REAL output shapes never reached it.
+_CAVEATS: dict[str, str] = {"lint": _LINT_CAVEAT, "sync-check": _SYNC_CAVEAT}
+
+# What the verdict digest says instead of a machine dump when it cannot read the shape.
+_UNREADABLE_LINES = "Ещё {count} строк(и) вердикта я не разобрал — формат вывода изменился."
+_UNREADABLE_VERDICT = "Вердикт я получил, но не разобрал его формат."
 
 
 def _deframe(raw: str) -> list[str]:
@@ -157,28 +193,75 @@ def _digest_sync_check(lines: list[str]) -> list[str] | None:
     stale = [p["text"] for p in pairs if p["verdict"] == _STALE_VERDICT]
     fresh = len(pairs) - len(stale)
     if stale:
-        body = [
+        return [
             f"Пар док↔код: {len(pairs)} — свежих {fresh}, устаревших {len(stale)}.",
             *_listed(stale),
         ]
-    else:
-        body = [f"Пар док↔код: {len(pairs)} — все свежие."]
-    body.append(_SYNC_CAVEAT)
-    return body
+    return [f"Пар док↔код: {len(pairs)} — все свежие."]
 
 
-def _digest_lint(lines: list[str]) -> list[str] | None:
-    """``lint``: the clean summary, or the porcelain tuples made readable."""
-    violations = _matched(lines, _VIOLATION_RE)
-    if violations:
-        named = [
-            f"{v['rule']} ({v['severity']}): {v['file']}:{v['line']}"
-            for v in violations
-        ]
-        return [f"Нарушений: {len(violations)}.", *_listed(named), _LINT_CAVEAT]
-    if any("violation" in line for line in lines):
-        return [*lines, _LINT_CAVEAT]
-    return None
+def _location(file_path: str, line_no: str, from_ref: str, to_ref: str) -> str:
+    """The most specific place a violation's slots point at, or ``""`` if none do.
+
+    A file rule fills file (+ usually line); a node rule fills only ``from``; an edge rule
+    (a cycle, a layer violation) fills BOTH ends — and naming both is the whole point:
+    "memory" alone is not the fact, "memory → conversation" is.
+    """
+    if file_path:
+        return f"{file_path}:{line_no}" if line_no else file_path
+    if from_ref and to_ref:
+        return f"{from_ref} → {to_ref}"
+    return from_ref or to_ref
+
+
+def _readable_violation(line: str) -> str | None:
+    """Render ONE porcelain violation as a line a person reads, or ``None`` if it is not one.
+
+    Positional by necessity (see :data:`_VIOLATION_FIELDS`) and tolerant of empty slots:
+    only rule, kind and severity are always filled, and a rule about a node or an edge
+    carries no file at all.
+    """
+    fields = line.split(":")
+    if len(fields) != _VIOLATION_FIELDS:
+        return None
+    rule, kind, severity, file_path, line_no, from_ref, to_ref = fields
+    if not all(_FIELD_RE.match(field) for field in (rule, kind, severity)):
+        return None
+    where = _location(file_path, line_no, from_ref, to_ref)
+    named = f"{rule} ({severity})"
+    return f"{named}: {where}" if where else named
+
+
+def _digest_lint(lines: list[str]) -> list[str]:
+    """``lint``: the verdict — every violation named, and never a machine tuple.
+
+    🔴 Total on purpose (it never declines): declining handed the RAW porcelain to the
+    person and lost the stored-index caveat on the way. So a line is either read as a
+    violation, or — if it still looks like machine output — counted and owned up to, or
+    passed through as the human text it is.
+    """
+    named: list[str] = []
+    unreadable = 0
+    human: list[str] = []
+    for line in lines:
+        readable = _readable_violation(line)
+        if readable is not None:
+            named.append(readable)
+        elif _is_machine(line):
+            unreadable += 1
+        else:
+            human.append(line)
+    if not named and not unreadable:
+        return human or [_UNREADABLE_VERDICT]
+    body = [f"Нарушений: {len(named) + unreadable}.", *_listed(named)]
+    if unreadable:
+        body.append(_UNREADABLE_LINES.format(count=unreadable))
+    return [*body, *human]
+
+
+def _is_machine(line: str) -> bool:
+    """Whether ``line`` is machine output — too many field separators to be a sentence."""
+    return line.count(":") >= _MACHINE_MIN_COLONS
 
 
 def _digest_diff(lines: list[str]) -> list[str]:
@@ -259,9 +342,15 @@ def _digest(check: str, lines: list[str]) -> list[str]:
     ``diff`` caps ITSELF, because its payload is the last line and a head-cap would eat
     it; everything else is capped uniformly here. ``status`` and an unrecognised check
     share the same answer — the de-framed report — which is why neither has an entry.
+
+    🔴 The caveat of a report that OVERSTATES (:data:`_CAVEATS`) is appended HERE, after
+    the cap: that is what makes "always" true for every branch, including the degradation
+    path, and keeps the caveat from being the line the cap throws away.
     """
     if check == "diff":
         return _digest_diff(lines)
     parse = _PARSING_DIGESTS.get(check)
     body = lines if parse is None else (parse(lines) or lines)
-    return _cap(body)
+    caveat = _CAVEATS.get(check)
+    capped = _cap(body)
+    return capped if caveat is None else [*capped, caveat]

@@ -21,8 +21,13 @@ into a chat-sized answer. The architecture pair does the same for the graph
 (BOB-091.1): :mod:`~bob.capabilities.introspection.graph_form` plans which of the THREE
 allowed ``beadloom graph`` forms answers a diagram request (and validates every argv
 slot), and :mod:`~bob.capabilities.introspection.impact_digest` condenses ``beadloom
-why`` from a Rich panel + ASCII tree into a two-list answer. All of it has no I/O; the
-infrastructure adapter enforces it at the boundary before any read.
+why`` from a Rich panel + ASCII tree into a two-list answer. The health pair completes
+the read-only beadloom (BOB-091.2): :mod:`~bob.capabilities.introspection.health_form`
+plans which of the SIX allowed project-state reports was asked for (and validates the
+git-ref slot of ``diff``), and :mod:`~bob.capabilities.introspection.health_digest`
+condenses one such report — up to 39 KB of it — into a chat answer that carries the
+honest caveat of the command it read. All of it has no I/O; the infrastructure adapter
+enforces it at the boundary before any read.
 """
 
 from bob.capabilities.introspection.code_history import (
@@ -44,6 +49,15 @@ from bob.capabilities.introspection.graph_form import (
     plan_graph_form,
     validate_graph_ref,
 )
+from bob.capabilities.introspection.health_digest import digest_health
+from bob.capabilities.introspection.health_form import (
+    HEALTH_CHECKS,
+    HealthForm,
+    is_git_ref,
+    normalize_check,
+    plan_health_form,
+    validate_git_ref,
+)
 from bob.capabilities.introspection.impact_digest import digest_impact
 from bob.capabilities.introspection.privacy_guard import PrivacyGuard
 from bob.capabilities.introspection.tracker_digest import digest_search_results
@@ -54,23 +68,30 @@ from bob.capabilities.introspection.tracker_intent import (
 )
 
 __all__ = [
+    "HEALTH_CHECKS",
     "GraphForm",
+    "HealthForm",
     "PrivacyGuard",
     "TrackerPlan",
     "clamp_commit_count",
     "clamp_graph_depth",
     "diagram_carries_nodes",
+    "digest_health",
     "digest_impact",
     "digest_search_results",
     "feature_doc_dir",
     "find_bead_key",
     "is_bead_id",
+    "is_git_ref",
     "is_graph_ref",
+    "normalize_check",
     "normalize_status",
     "parse_bead_refs",
     "plan_graph_form",
+    "plan_health_form",
     "plan_tracker_query",
     "sanitize_search_term",
     "validate_bead_id",
+    "validate_git_ref",
     "validate_graph_ref",
 ]
