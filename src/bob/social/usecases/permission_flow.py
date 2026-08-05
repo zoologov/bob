@@ -19,9 +19,11 @@ privilege is executed (that is .3):
   injected :class:`~bob.social.permission.privilege.PrivilegeJudge` whether the message
   is privileged. If so, create + save a PENDING
   :class:`~bob.social.permission.entities.PermissionRequest`, 🔴 NOTIFY THE OWNER in
-  Bob's voice («Вова, <кто> просит <что> — разрешить?»), tell the requester a light
-  «спрошу Вову», and CONSUME the turn. A non-privileged need leaves the turn untouched
-  (normal chat). One active pending per requester — a new request supersedes the old
+  Bob's OWN words (:mod:`~bob.social.permission.request_voice` — who asks, what he asked
+  in his own words, why Bob is asking; the judge's verdict never leaves the record),
+  tell the requester a light «спрошу Вову», and CONSUME the turn. A non-privileged need
+  leaves the turn untouched (normal chat). One active pending per requester — a new
+  request supersedes the old
   (EXPIRED). 🔴 An OWNER or an AUTHORIZED member never enters this path.
 * :meth:`maybe_decide` — 🔴 ONLY when ``is_owner`` and an active pending exists: read
   the owner's reply with the pure NL predicates (:func:`is_grant` / :func:`is_deny` /
@@ -43,9 +45,11 @@ from enum import Enum
 from typing import TYPE_CHECKING, Protocol
 from uuid import uuid4
 
+from bob.social.mention import ground_mentions, handles_from
 from bob.social.permission.entities import PermissionRequest
 from bob.social.permission.intent import is_authorize, is_deny, is_grant
 from bob.social.permission.privilege import PrivilegeContext
+from bob.social.permission.request_voice import owner_permission_notice, requester_ack
 from bob.social.permission.state import PermissionState
 from bob.social.usecases.permission_execution import PermissionDecision
 
@@ -53,6 +57,8 @@ if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Sequence
 
     from bob.kernel.ports import Clock
+    from bob.social.first_impression import FirstImpression
+    from bob.social.mention import PersonHandle
     from bob.social.permission.privilege import PrivilegeJudge
 
 logger = logging.getLogger(__name__)
@@ -62,7 +68,12 @@ __all__ = [
     "PermissionFlow",
     "PermissionNotifier",
     "PermissionRequestStoreLike",
+    "PersonDirectoryLike",
 ]
+
+# Сколько знакомых Боб держит «в голове», проверяя упоминания — тот же порядок, что у
+# ростера (BOB-080) и у инструмента отправки (BOB-090.B1): свежие лица, а не вся история.
+_DIRECTORY_LIMIT = 30
 
 # Owner-only decision commands (BOB-052 .2). Explicit, unambiguous companions to the
 # NL predicates: ``/allow`` approves the active pending, ``/deny`` refuses it,
@@ -94,14 +105,29 @@ class PermissionRequestStoreLike(Protocol):
 class PermissionNotifier(Protocol):
     """The two-channel notice seam the flow drives (BOB-052 .2).
 
-    ``notify_owner`` posts Bob's «Вова, <кто> просит <что> — разрешить?» into Bob's
-    topic (the owner decides there); ``tell_requester`` sends the requester the light
+    ``notify_owner`` posts Bob's request-for-permission (his own words — BOB-090.E) into
+    Bob's topic (the owner decides there); ``tell_requester`` sends the requester the light
     «спрошу Вову» acknowledgement in the chat they wrote in. The concrete adapter knows
-    the transport (chat_id / topic); the flow only knows these two methods.
+    the transport (chat_id / topic); the flow only knows these two methods. 🔴 Both go out
+    on BOB's bot: asking for permission is a SOCIAL act, not mechanics, so by the canon core
+    (:func:`~bob.coding.speaker.speaker_for`) the speaker is Bob, never GUPPI.
     """
 
     async def notify_owner(self, text: str) -> None: ...
     async def tell_requester(self, text: str) -> None: ...
+
+
+class PersonDirectoryLike(Protocol):
+    """Узкий срез ростера, нужный, чтобы обратиться к owner'у по-человечески (BOB-090.E).
+
+    Реализуется ``SqliteFirstImpressionStore``; тот же шов, что у инструмента отправки
+    (BOB-090.B1). Нужен ровно для одного: узнать НАСТОЯЩИЙ ``@ник`` — из имени тег не
+    собирается никогда. Не подключён → упоминание останется именем.
+    """
+
+    async def recent(self, *, limit: int) -> list[FirstImpression]:
+        """Вернуть ``limit`` самых свежих знакомств, новые первыми."""
+        ...
 
 
 class PermissionExecutorLike(Protocol):
@@ -121,16 +147,6 @@ class PermissionExecutorLike(Protocol):
     ) -> None: ...
 
 
-# Owner notice + requester ack templates (Russian persona voice; Cyrillic look-alikes
-# intentional — silenced via per-file-ignores). The owner notice names WHO asks WHAT so
-# the owner can decide with «да»/«нет»/«авторизуй» or /allow //deny //authorize.
-def _owner_notice(*, owner_name: str, requester_name: str, what: str) -> str:
-    return f"{owner_name}, {requester_name} просит {what} — разрешить?"
-
-
-_REQUESTER_ACK = "Секунду, спрошу Вову."
-
-
 class PermissionFlow:
     """Detect a privileged non-member request, ask the owner, record the decision."""
 
@@ -146,6 +162,7 @@ class PermissionFlow:
         capability_hints: Sequence[str] = (),
         on_authorize: Callable[[int], Awaitable[None]] | None = None,
         executor: PermissionExecutorLike | None = None,
+        directory: PersonDirectoryLike | None = None,
     ) -> None:
         self._judge = judge
         self._store = store
@@ -167,6 +184,9 @@ class PermissionFlow:
         # sends a gentle decline on a DENY — decorative (safe-default refuse). Unwired (the
         # .2 default) the legacy ``on_authorize`` hook fires instead and no execution runs.
         self._executor = executor
+        # Ростер (BOB-090.E): нужен ровно для того, чтобы обратиться к owner'у настоящим
+        # ``@ником``. Не подключён → упоминание заземляется в имя (тег не выдумывается).
+        self._directory = directory
 
     async def maybe_request(
         self,
@@ -215,13 +235,11 @@ class PermissionFlow:
             )
             await self._store.save(request)
             await self._notifier.notify_owner(
-                _owner_notice(
-                    owner_name=self._owner_name,
-                    requester_name=requester_name,
-                    what=need.what,
+                await self._owner_notice(
+                    requester_name=requester_name, kind=need.kind, request_text=text
                 )
             )
-            await self._notifier.tell_requester(_REQUESTER_ACK)
+            await self._notifier.tell_requester(requester_ack())
             return True
         except Exception:
             logger.exception("permission request flow failed; dropping to normal chat")
@@ -271,6 +289,46 @@ class PermissionFlow:
         if self._executor is None:
             return
         await self._executor.execute(request, _DECISION_TO_EXECUTION[decision])
+
+    async def _owner_notice(
+        self, *, requester_name: str, kind: str, request_text: str
+    ) -> str:
+        """Собрать реплику owner'у: голос Боба + заземлённые упоминания (BOB-090.E).
+
+        🔴 Судья сюда отдаёт ТОЛЬКО ``kind`` — внутренний вид привилегии, который
+        выбирает объяснение. Его человекочитаемый ``what`` не произносится вовсе: ровно
+        он и просочился наружу английской строкой в живом инциденте. «Чего именно» Боб
+        передаёт словами самого просителя.
+
+        Готовый текст проходит :func:`~bob.social.mention.ground_mentions` — тем же
+        контуром, что и любое исходящее упоминание (срез B): обращение к owner'у
+        превращается в настоящий ``@ник`` либо остаётся именем, а тег, выдуманный
+        просителем в цитируемой просьбе, теряет «собаку» и никого не дёргает.
+        """
+        notice = owner_permission_notice(
+            owner_name=self._owner_name,
+            requester_name=requester_name,
+            kind=kind,
+            request_text=request_text,
+        )
+        return ground_mentions(notice, await self._people())
+
+    async def _people(self) -> tuple[PersonHandle, ...]:
+        """Знакомые, по которым заземляются упоминания (нет ростера / сбой → пусто).
+
+        🔴 Пустой список — консервативная сторона: :func:`ground_mentions` тогда снимает
+        «собаку» со ВСЕХ тегов, то есть недоступный ростер приводит к обращению по имени,
+        а НЕ к неподтверждённому тегу. Свой ``try`` здесь обязателен: общий обработчик
+        :meth:`maybe_request` роняет весь привилегированный путь в обычный чат, и падение
+        справочника имён тогда молча снимало бы гейт привилегий.
+        """
+        if self._directory is None:
+            return ()
+        try:
+            return handles_from(await self._directory.recent(limit=_DIRECTORY_LIMIT))
+        except Exception:
+            logger.exception("reading the roster for the owner notice failed (name used)")
+            return ()
 
     async def _supersede_active(self, requester_id: int) -> None:
         """Expire any still-PENDING request of ``requester_id`` (one active per person)."""

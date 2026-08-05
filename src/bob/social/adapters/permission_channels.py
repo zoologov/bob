@@ -77,8 +77,10 @@ class _PermissionNotifier:
     """Two-channel notice adapter for the permission flow through BOB'S bot (BOB-052 .2).
 
     Realises the flow's ``PermissionNotifier`` (structurally). ``notify_owner`` posts Bob's
-    «Вова, <кто> просит <что> — разрешить?» into Bob's TOPIC (``message_thread_id ==
-    telegram.bob.topic_id``) — where the owner converses with Bob and decides — through the
+    request for permission — his own words, built by
+    :mod:`~bob.social.permission.request_voice` (BOB-090.E) — into Bob's TOPIC
+    (``message_thread_id == telegram.bob.topic_id``), where the owner converses with Bob
+    and decides, through the
     shared :class:`RichMarkdownSender` (rich, plain fallback). ``tell_requester`` sends the
     light «спрошу Вову» acknowledgement into that SAME topic (BOB-090.B5 — un-threaded, it
     fell into General while the requester was writing to Bob in his topic) so the requester

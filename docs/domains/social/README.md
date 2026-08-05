@@ -89,7 +89,8 @@ src/bob/social/
   permission/         # layer=domain
     entities.py       #                        — PermissionRequest (immutable pending-запрос), BOB-052.1
     intent.py         #                        — is_deny/is_grant/is_authorize (NL-предикаты решения owner'а)
-    privilege.py      #                        — PrivilegeNeed/PrivilegeContext/PrivilegeJudge (шов оценки привилегии)
+    privilege.py      #                        — PrivilegeNeed/PrivilegeContext/PrivilegeJudge (шов оценки привилегии; промпт судьи на языке проекта, вердикт ВНУТРЕННИЙ), BOB-052.1/BOB-090.E
+    request_voice.py  #                        — owner_permission_notice/requester_ack: реплика Боба «кто просит, чего именно (его словами) и почему я спрашиваю»; вердикт судьи не произносится, BOB-090.E
     state.py          #                        — PermissionState StrEnum (PENDING/APPROVED/DENIED/EXPIRED)
   usecases/           # layer=application
     authorizer.py     #                        — Authorizer: is_authorized/authorize/deauthorize (allowlist + chat-scope)
@@ -312,6 +313,22 @@ owner'а (`is_deny` проверяется ПЕРВЫМ как безопасн�
 `needs_permission` + `kind` tool/internal/owner_data + `what`), `PrivilegeContext` (вход:
 текст + capability-подсказки + лёгкий контекст) и порт `PrivilegeJudge.assess`.
 
+🔴 **Вердикт судьи — внутренний (BOB-090.E).** Промпт судьи (system + user) написан на
+языке проекта и прямо говорит модели, что её ответ — решение для машины, а не реплика
+человеку. Ни `kind`, ни `what` наружу не произносятся: `what` остаётся в записи запроса
+как след суждения (аудит гейта), `kind` только ВЫБИРАЕТ, какими словами Боб объяснит
+причину. Раньше `what` подставлялся в шаблон дословно — и owner читал английскую строку
+классификатора внутри русской фразы («Norman просит Requesting details of private
+conversations with another user — разрешить?»).
+
+`request_voice.py` — голос самой просьбы: `owner_permission_notice` собирает реплику
+Боба (кто просит + слова САМОГО просителя, свёрнутые в строку и подрезанные + почему он
+не решает сам, по-разному для tool/internal/owner_data), `requester_ack` — лёгкое
+«спрошу Вову» просителю. Чистый и детерминированный (образец — `coding/session_voice`),
+без LLM-вызова на реплику. Упоминание owner'а пишется НЕподтверждённым тегом и
+заземляется на ростер через `mention.ground_mentions` уже во флоу: есть ник — настоящий
+`@ник`, нет — имя; из имени тег не собирается никогда.
+
 ### Use-case'ы (application)
 
 `Authorizer` (`usecases/authorizer.py`) — чистая политика доступа на единственном шлюзе:
@@ -335,7 +352,11 @@ owner допущен только внутри разрешённого чата
 `PermissionFlow` (`usecases/permission_flow.py`) — политика .2 над .1-доменом: владеет
 КОГДА, не КАК. `maybe_request` для хода не-авторизованного участника спрашивает
 `PrivilegeJudge`, привилегирован ли запрос; если да — заводит PENDING `PermissionRequest`,
-НОТИФИЦИРУЕТ owner'а голосом Боба и мягко отвечает просителю. `maybe_decide` записывает
+НОТИФИЦИРУЕТ owner'а голосом Боба (`permission/request_voice.py`, упоминание заземлено
+ростером через опциональный `directory`; сбой ростера → обращение по имени, гейт при этом
+не снимается) и мягко отвечает просителю. Оба канала уходят ботом БОБА: просьба о
+разрешении — социальный акт, и канон (`coding/speaker.speaker_for`) закрепляет его за
+Бобом, а не за GUPPI. `maybe_decide` записывает
 вердикт owner'а. `PermissionExecutor` (`usecases/permission_execution.py`) — половина
 ИСПОЛНЕНИЯ (КАК): **GRANT** — перезапустить сохранённый `request_text` через
 `PrivilegedFulfiller` как если бы проситель был авторизован, но ТОЛЬКО для этого одного

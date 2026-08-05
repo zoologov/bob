@@ -1604,6 +1604,48 @@ ignore = [
     "RUF002",
     "RUF003",
 ]
+# Голос разрешений (BOB-090.E): реплика Боба owner'у, русский промпт судьи и их тесты
+# несут русские литералы/докстринги, кириллические похожие символы в которых намеренны
+# (модель и человек читают их нативно); тестам ещё нужны assert-ы, фейк-порты с
+# неиспользуемыми аргументами и «магические» id чатов. RUF001-003 / S101 / ARG / PLR2004
+# к ним не применяются.
+"src/bob/social/permission/request_voice.py" = ["RUF001", "RUF002", "RUF003"]
+"tests/domain/permission/test_request_voice.py" = [
+    "S101",
+    "ARG001",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+"tests/application/usecases/test_permission_notice_voice.py" = [
+    "S101",
+    "ARG001",
+    "ARG002",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+"tests/runtime/wiring/test_permission_voice.py" = [
+    "S101",
+    "ARG001",
+    "ARG002",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+"tests/test_app_permission_voice.py" = [
+    "S101",
+    "ARG001",
+    "ARG002",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+    "SLF001",
+]
 
 [tool.ruff.lint.isort]
 known-first-party = ["bob"]

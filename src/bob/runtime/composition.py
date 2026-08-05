@@ -947,8 +947,9 @@ def build_application(
         # Privilege gating (BOB-052 .2): a privilege — running a tool, revealing Bob's
         # inner life, disclosing owner data — is OWNER-GATED even though memory is public
         # in the closed group (BOB-051). When a NON-authorized member asks for something
-        # privileged the flow opens a pending request and asks the owner («Вова, <кто>
-        # просит <что> — разрешить?»); on the OWNER's turn it records the verdict on an
+        # privileged the flow opens a pending request and asks the owner IN BOB'S OWN
+        # WORDS (BOB-090.E — the judge's verdict stays internal, the owner-mention is
+        # grounded on the roster); on the OWNER's turn it records the verdict on an
         # active pending (grant / deny / authorize, or /allow //deny //authorize). 🔴
         # Owner-only decision + the non-authorized-only request gate live inside the flow;
         # an AUTHORIZED member is never gated. Execution-on-approve is .3. Off (no permission
@@ -964,6 +965,7 @@ def build_application(
             authorizer=authorizer,
             registry=registry,
             tool_provider=tool_provider,
+            directory=first_impression_store,
         ),
         # Semantic response judgment (BOB-049): on every inbound Bob UNDERSTANDS the
         # message in context and chooses — as a person — REPLY / REACT / IGNORE, replacing

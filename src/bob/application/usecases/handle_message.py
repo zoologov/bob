@@ -992,8 +992,8 @@ class HandleMessage:
         # revealing Bob's inner life, disclosing owner data — is OWNER-GATED even though
         # memory is public in the closed group (BOB-051). On the OWNER's turn an active
         # pending decision (grant / deny / authorize) is recorded; on a NON-authorized
-        # member's turn a privileged request opens a pending + asks the owner («Вова, <кто>
-        # просит <что> — разрешить?») and the member is told «спрошу Вову». 🔴 Owner-only
+        # member's turn a privileged request opens a pending + asks the owner in Bob's own
+        # words (BOB-090.E) and the member is told «спрошу Вову». 🔴 Owner-only
         # decision + the non-authorized-only request gate live inside the flow; an
         # AUTHORIZED member never enters it. Either consumes the turn (the normal compose
         # is skipped). Unwired (the default) the seam is inert and the turn is unchanged.

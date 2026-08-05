@@ -35,6 +35,7 @@ if TYPE_CHECKING:
     from bob.infrastructure.telegram.gateway import BotLike
     from bob.kernel.ports import Clock
     from bob.social.usecases import Authorizer
+    from bob.social.usecases.permission_flow import PersonDirectoryLike
 
 
 def _build_permission_flow(
@@ -49,6 +50,7 @@ def _build_permission_flow(
     authorizer: Authorizer,
     registry: CapabilityRegistry,
     tool_provider: ToolCallingProvider | None,
+    directory: PersonDirectoryLike | None = None,
 ) -> PermissionFlow:
     """Assemble the privilege-gating flow + its execution (BOB-052 .2/.3).
 
@@ -57,6 +59,12 @@ def _build_permission_flow(
     reply) with the durable :class:`SqlitePermissionRequestStore` and the two-channel
     :class:`_PermissionNotifier` (owner notice AND requester ack both into Bob's topic —
     BOB-090.B5).
+
+    🔴 The notice goes out on BOB'S bot (``bot`` is Bob's, never GUPPI's): asking for
+    permission is a SOCIAL act, and the canon core
+    (:func:`~bob.coding.speaker.speaker_for`) names Bob the speaker for it (BOB-090.D/E).
+    ``directory`` is the roster the notice's owner-mention is grounded on (BOB-090.E) —
+    unwired, the owner is simply addressed by name (a tag is never invented).
 
     The EXECUTION (.3) is wired here: a :class:`PermissionExecutor` over the
     :class:`PrivilegedRequestFulfiller` (a one-shot elevated tool-loop / router run of the
@@ -75,6 +83,7 @@ def _build_permission_flow(
         store=SqlitePermissionRequestStore(repo),
         notifier=_PermissionNotifier(bot=bot, chat_id=chat_id, topic_id=topic_id),
         clock=clock,
+        directory=directory,
         executor=PermissionExecutor(
             fulfiller=PrivilegedRequestFulfiller(
                 router=router, registry=registry, tool_provider=tool_provider
