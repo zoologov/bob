@@ -70,7 +70,7 @@ src/bob/capabilities/
     graph_form.py     #                        — GraphForm/plan_graph_form/validate_graph_ref/clamp_graph_depth/diagram_carries_nodes: какая из ТРЁХ разрешённых форм `beadloom graph` отвечает на просьбу нарисовать + валидация слотов argv (BOB-091.1, mutation-ядро)
     impact_digest.py  #                        — digest_impact/MAX_IMPACT_ITEMS/MAX_SUBJECT_CHARS: `beadloom why` (197 строк Rich-рамок и ASCII-дерева) → узел + «Зависит от» + «Влияет на» + честный счёт транзитивных (BOB-091.1, mutation-ядро)
     health_form.py    #                        — HealthForm/plan_health_form/normalize_check/validate_git_ref: КАКОЙ из шести read-only отчётов beadloom (status/prime/doctor/sync-check/lint/diff) просят + его фиксированный argv; 🔴 `lint` планируется как `--no-reindex --strict` (плоский lint ПЕРЕиндексирует, то есть пишет) (BOB-091.2, mutation-ядро)
-    health_digest.py  #                        — digest_health/MAX_LISTED_ITEMS/MAX_REPORT_LINES/MAX_DOMAIN_CHARS: сжатие отчёта по его виду (585 строк пар → счёт + только stale; porcelain-кортежи lint → читаемые строки; 39 КБ prime → шапка + домены + счёт правил; diff хранит последнюю строку сводки) (BOB-091.2, mutation-ядро)
+    health_digest.py  #                        — digest_health/MAX_LISTED_ITEMS/MAX_REPORT_LINES/MAX_DOMAIN_CHARS: сжатие отчёта по его виду (585 строк пар → счёт + только stale; porcelain-кортежи lint → читаемые строки, включая ОБЕ реальные формы — с файлом и с ПУСТЫМИ файлом/строкой у правил про узел и ребро, BOB-091.4; 39 КБ prime → шапка + домены + счёт правил; diff хранит последнюю строку сводки) (BOB-091.2, mutation-ядро)
   usecases/           # layer=application
     registry.py       #                        — CapabilityRegistry + SafeCapabilityDispatcher
     tool_loop.py      #                        — ToolLoop: model↔tools раунд-трип до финала
@@ -262,8 +262,21 @@ allowlist = автономно ничего не запускается (кон�
   вердикт читается по СОХРАНЁННОМУ индексу, и дайджест это говорит вслух (по стоячему
   правилу §0.3 п.1 lint на несвежем индексе врёт). А `--strict` обязателен потому, что
   плоский `lint` отдаёт rc=0 даже при error-нарушении. (2) При нарушении lint печатает в пайп
-  МАШИННЫЙ porcelain (`rule:kind:severity:file:line::`) и строки «0 violations» в этом случае
-  НЕТ вовсе — дайджест переводит кортежи в человеческие строки.
+  МАШИННЫЙ porcelain (`rule:kind:severity:file:line:from:to`) и строки «0 violations» в этом
+  случае НЕТ вовсе — дайджест переводит кортежи в человеческие строки.
+  🔴 **И у этого porcelain ДВЕ реальные формы, а не одна (BOB-091.4, Critical-1).** Правило
+  про ФАЙЛ заполняет `file`+`line`; правило про УЗЕЛ или РЕБРО (бюджет символов, цикл,
+  `require`, слой) оставляет оба поля ПУСТЫМИ и заполняет `from`/`to`. Срез 2 снял фикстуру с
+  одного живого образца (`forbid_import` — единственный вид, у которого файл есть), поэтому
+  вердикт НЕ ВИДЕЛ узловых нарушений: на смешанном входе он говорил «Нарушений: 1», ЦИКЛ
+  исчезал молча (ровно тот класс дефекта, из-за которого написано правило §0.3 п.1), а
+  собеседник получал сырую машинную строку вместо ответа. Теперь разбор позиционный и
+  терпимый к пустым слотам, локация печатается той, какая есть (`файл:строка` / узел /
+  `from → to`), а **любая** машинная строка, которую дайджест не смог прочитать, ВСЁ РАВНО
+  попадает в счёт и называется вслух как неразобранная — сырой porcelain не выходит наружу ни
+  в одной ветке. Оговорки `lint` и `sync-check` приклеивает сам ДИСПЕТЧЕР дайджеста (после
+  капа), поэтому «всегда» из докстринга — структура, а не обещание: ветка честной деградации
+  их потерять не может.
   🔴 **Ненулевой код возврата — РЕЗУЛЬТАТ, а не сбой:** `lint` отдаёт 1 при нарушении,
   `sync-check` — 2 при устаревшей паре, `diff` — 1 при изменениях. Это структурно безопасно:
   раннер возвращает stdout и НИКОГДА не смотрит `returncode`, поэтому Боб отвечает «доки
@@ -583,7 +596,9 @@ ports-шим `bob.domain.ports` удалён (BOB-062.8), все импортё�
   `clamp_graph_depth`, `diagram_carries_nodes`, `MAX_GRAPH_DEPTH`),
   `introspection.impact_digest` (`digest_impact`, `MAX_IMPACT_ITEMS`, `MAX_SUBJECT_CHARS`),
   `introspection.health_form` (`HealthForm`, `plan_health_form`, `normalize_check`,
-  `validate_git_ref`, `is_git_ref`, `HEALTH_CHECKS`, `DEFAULT_DIFF_REF`),
+  `validate_git_ref`, `is_git_ref`, `HEALTH_CHECKS`, `DEFAULT_DIFF_REF` + типизированные
+  отказы `HealthRequestError` / `UnknownCheckError` / `InvalidGitRefError` — капабилити
+  выбирает подсказку модели по ТИПУ, а не по тексту сообщения, BOB-091.4),
   `introspection.health_digest` (`digest_health`, `MAX_LISTED_ITEMS`, `MAX_REPORT_LINES`,
   `MAX_DOMAIN_CHARS`).
 - Адаптеры: `adapters.web` (`HttpUrlReader`, `build_url_reader`),
@@ -611,7 +626,8 @@ ports-шим `bob.domain.ports` удалён (BOB-062.8), все импортё�
   картинка через render_diagram, влияние сжато, гейт флага) и
   `tests/acceptance/features/project_health.feature` (BOB-091.2: 585 строк пар счётом,
   устаревшие доки и нарушение границ как ОТВЕТ, а не сбой, `--no-reindex` в argv, отказ на
-  write-отчёт, гейт флага) — второй сценарный набор идёт через НАСТОЯЩИЙ адаптер, у которого
+  write-отчёт, гейт флага; BOB-091.4 добавил S3b — нарушения уровня УЗЛА и ЦИКЛ в счёте, ни
+  одной сырой машинной строки в ответе) — второй сценарный набор идёт через НАСТОЯЩИЙ адаптер, у которого
   сценирован только подпроцесс, потому что сжимается именно сырой вывод beadloom.
 - Web: `tests/application/capabilities/test_web_search.py`, `test_read_url.py`;
   `tests/test_app_web_search.py`, `test_app_read_url.py`,
@@ -622,13 +638,18 @@ ports-шим `bob.domain.ports` удалён (BOB-062.8), все импортё�
   `tests/domain/introspection/test_code_history.py`, `test_privacy_guard.py`,
   `test_graph_form.py`, `test_impact_digest.py` (оба — mutation-ядра BOB-091.1),
   `test_health_form.py`, `test_health_digest.py` (оба — mutation-ядра BOB-091.2; фикстуры —
-  ДОСЛОВНЫЙ вывод живого beadloom, включая машинный porcelain `lint`).
+  ДОСЛОВНЫЙ вывод живого beadloom, включая ОБЕ формы машинного porcelain `lint`: с файлом и
+  строкой — и с ПУСТЫМИ файлом/строкой у правил про узел и ребро, BOB-091.4). 🔴 Там же —
+  юниты на ЗНАЧЕНИЯ модульных констант (закрытый перечень отчётов, кортежи форм argv, таблица
+  алиасов, оба ref-регекса, границы капов): mutmut мутирует только тела функций, поэтому
+  100%-ный score про эти строки не говорит ничего — а именно в такой константе и жил
+  Critical-1 (ревью Major-1).
 - Адаптеры: `tests/infrastructure/web/` (`test_http_url_reader.py`,
   `test_url_reader_factory.py`), `tests/infrastructure/diagrams/`
   (`test_mmdc_renderer.py`, `test_mmdc_exec_runner.py`),
   `tests/infrastructure/introspection/` (`test_subprocess_introspector.py`,
   `test_subprocess_introspector_integration.py` — в т.ч. РЕАЛЬНЫЙ `beadloom graph`/`why`
-  этого репозитория и все шесть read-only отчётов на живом CLI: сжатие 48 КБ `sync-check`,
+  этого репозитория и все шесть read-only отчётов на живом CLI: сжатие многокилобайтного `sync-check`,
   `diff` с НЕнулевым кодом возврата, неизменность sha256 индекса после `lint`, стабильность
   вердикта `sync-check` между прогонами; `test_git_history.py`,
   `test_architecture_reads.py` — в т.ч. невыразимость write- и вне-scope-подкоманд,

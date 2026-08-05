@@ -273,6 +273,7 @@
 - **no-domain-depends-on-outer** (deny): Домен-слой не зависит от сервисов (runtime/bob), кроме part_of
 - **module-coverage** (unknown): Каждый src/bob модуль — трекнутый узел (feature/component/source) или exempt
 - **no-monster-modules** (cardinality): Модуль-слой/фича не должен пухнуть (handle_message/app.py/gateway — #9/#10/#25)
+- **no-monster-modules-capabilities** (cardinality): capabilities: отдельный явный бюджет + долг на разделение узла (BOB-091.2, Issues #44)
 
 ## Custom
 
