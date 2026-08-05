@@ -1,6 +1,6 @@
 # CONTEXT: BOB-089 — Боб работает под своей идентичностью, main недостижим по правам
 
-> **Status:** Draft
+> **Status:** Approved
 > **Created:** 2026-08-05
 > **Last updated:** 2026-08-05
 
