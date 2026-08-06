@@ -20,6 +20,7 @@ from bob.coding.clone_plan import (
     clone_argv,
     fetch_argv,
     identity_argv,
+    identity_pins,
     is_credential_free_url,
     origin_argv,
     workspace_verdict,
@@ -263,6 +264,34 @@ def test_a_non_numeric_app_user_id_is_ignored_rather_than_pasted_into_the_addres
     assert identity_argv("git", dest="/clone", app_user_id="not-an-id")[1][-1] == (
         "bob-ai-work[bot]@users.noreply.github.com"
     )
+
+
+def test_the_signature_is_available_as_argv_pins_for_the_commit_itself() -> None:
+    # 🔴 MAJOR-8: локальную запись модель переписывает (``git config --local user.name
+    # <владелец>``), и коммит в форке уезжал подписанным ВЛАДЕЛЬЦЕМ. Поэтому та же подпись
+    # выдаётся ПАРАМИ — их прикалывает в argv шаг интеграции, а argv сильнее конфига.
+    assert identity_pins("424242") == (
+        ("user.name", "bob[ai]"),
+        ("user.email", "424242+bob-ai-work[bot]@users.noreply.github.com"),
+    )
+
+
+def test_the_pins_and_the_local_record_always_say_the_same_thing() -> None:
+    # Два слоя одной подписи не имеют права разойтись: локальная запись — то, что видит
+    # человек, открывший клон (и чем подписан любой другой коммит в нём), пары — то, чем
+    # подписан коммит НАШЕГО шага интеграции.
+    for (key, value), argv in zip(
+        identity_pins("7"), identity_argv("git", dest="/clone", app_user_id="7"), strict=True
+    ):
+        assert argv[-2:] == [key, value]
+
+
+def test_the_pins_carry_the_id_less_address_when_no_app_user_id_is_configured() -> None:
+    assert identity_pins("") == (
+        ("user.name", "bob[ai]"),
+        ("user.email", "bob-ai-work[bot]@users.noreply.github.com"),
+    )
+    assert identity_pins("not-an-id")[1][1] == "bob-ai-work[bot]@users.noreply.github.com"
 
 
 def test_identity_runs_the_injected_git_binary() -> None:

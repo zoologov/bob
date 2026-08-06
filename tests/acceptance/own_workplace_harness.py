@@ -39,7 +39,7 @@ from typing import TYPE_CHECKING
 
 from bob.coding.adapters._exec import ExecRunner
 from bob.coding.adapters.fork_link import ForkCompareLink
-from bob.coding.adapters.git_clone import GitClone
+from bob.coding.adapters.git_clone import CloneError, GitClone
 from bob.coding.push_guard import guarded_spawn_env
 from bob.coding.usecases.coding_assistant import CodingAssistant
 from bob.identity.adapters.spawn_isolation_files import SpawnIsolationFiles
@@ -120,16 +120,66 @@ def owner_world(tmp_path: Path) -> OwnerWorld:
     return OwnerWorld(work=work, fork=fork)
 
 
-def raise_workplace(world: OwnerWorld, root: Path, *, branch: str = "bob/task") -> Path:
-    """Завести рабочее место Боба ПРОДАКШН-адаптером над настоящим git и вернуть путь."""
-    adapter = GitClone(
+def _workplace_adapter(world: OwnerWorld, root: Path) -> GitClone:
+    """Продакшн-адаптер рабочего места над настоящим git (одни и те же аргументы у всех шагов)."""
+    return GitClone(
         root,
         source=world.work,
         fork_url=f"file://{world.fork}",
         app_user_id="424242",
         runner=ExecRunner(),
     )
-    return Path(asyncio.run(adapter.create(branch)))
+
+
+def raise_workplace(world: OwnerWorld, root: Path, *, branch: str = "bob/task") -> Path:
+    """Завести рабочее место Боба ПРОДАКШН-адаптером над настоящим git и вернуть путь."""
+    return Path(asyncio.run(_workplace_adapter(world, root).create(branch)))
+
+
+@dataclass(frozen=True, slots=True)
+class Integration:
+    """Итог шага интеграции Боба: работа уехала — или отказ, и что именно он сказал."""
+
+    committed: bool = False
+    refusal: str = ""
+
+
+def integrate_the_work(
+    world: OwnerWorld, root: Path, *, branch: str = "bob/task"
+) -> Integration:
+    """Довести работу до ветки форка ПРОДАКШН-шагом Боба (``GitClone.commit_and_push``).
+
+    🔴 Именно продовым путём, а не обычным ``git commit``: подпись коммита и отказ по
+    подложенному ключу — свойства ЭТОГО шага (bob-a6b.16), и проверять их надо через ту же
+    границу, через которую работает Боб. Отказ возвращается текстом, а не исключением:
+    сценарий утверждает, ЧТО он сказал.
+    """
+    adapter = _workplace_adapter(world, root)
+    try:
+        return Integration(committed=asyncio.run(adapter.commit_and_push(
+            str(root / branch.split("/", 1)[1]), branch, "[bob] работа"
+        )))
+    except CloneError as refusal:
+        return Integration(refusal=str(refusal))
+
+
+def plant_in_the_workplace_config(place: Path, key: str, value: str) -> None:
+    """«Модель» дописывает ключ в ЛОКАЛЬНЫЙ конфиг рабочего места — обычным ``git config``.
+
+    Каталог целиком в её распоряжении, включая ``<место>/.git``, поэтому это ровно то, что
+    ей доступно (и что ревьюер проделал на настоящем git).
+    """
+    _git(place, "config", "--local", key, value)
+
+
+def author_of_the_fork_branch(world: OwnerWorld, branch: str) -> str:
+    """``имя <адрес>`` автора верхнего коммита ветки В ФОРКЕ — то, что видит владелец."""
+    return _git(world.fork, "log", "-1", "--format=%an <%ae>", branch).strip()
+
+
+def bobs_branches_in_the_fork(world: OwnerWorld) -> list[str]:
+    """Все ветки Боба, доехавшие до форка (перечисление, а не проверка известного имени)."""
+    return _git(world.fork, "branch", "--list", "bob/*", "--format=%(refname:short)").split()
 
 
 def files_here(root: Path) -> set[str]:

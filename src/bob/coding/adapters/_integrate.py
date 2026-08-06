@@ -35,6 +35,32 @@ hardened_git_argv`), и это содержание bob-a6b.14. Шаг выпо�
 то есть по-настоящему этот класс закрывает переход на клон (флаг ``coder.isolated_clone``),
 а не форма push'а.
 
+🔴 ПОДПИСЬ ПРИКОЛОЧЕНА В ARGV, а не взята из конфига (``identity``; ревью bob-a6b.6,
+MAJOR-8 — воспроизведено через настоящий ``GitClone.commit_and_push``): модель прописала в
+клоне ``git config --local user.name <владелец>``, и коммит в форке уехал подписанным
+ВЛАДЕЛЬЦЕМ — прямое попадание в US-2. Клон передаёт
+:func:`bob.coding.clone_plan.identity_pins`; linked worktree передаёт ПУСТОЙ набор
+сознательно: там репозиторий принадлежит владельцу и его подпись в нём законна.
+
+🔴 ЧЕСТНО ОБ OFF-ПУТИ — ЗДЕСЬ ОНО И ВВОДИТСЯ (ревью bob-a6b.6, MAJOR-9). Шаг общий для
+обоих адаптеров, поэтому закалка работает и при ``coder.isolated_clone=false``, и
+обещание PRD «при OFF поведение байт-в-байт прежнее» с этой волны НЕВЕРНО в двух
+местах — оба отклонения названы, чтобы их не искали:
+
+* ХУКИ РЕПОЗИТОРИЯ НА КОММИТАХ БОБА НЕ ИСПОЛНЯЮТСЯ. В этом репозитории это значит, что
+  ``beadloom install-hooks`` (pre-commit: lint + sync-check + ACTIVE/tracker coherence;
+  pre-push: полный ``beadloom ci``) на них не срабатывает — прежняя форма argv исполняла
+  все три. Обмен ОСОЗНАННЫЙ (решение координатора): в ОБЩЕМ ``.git/hooks`` linked
+  worktree хук владельца от хука модели не отличить, поэтому worktree-режим без закалки
+  был бы настоящей дырой. Потерянный быстрый гейт заменяется тем, что гейты
+  перепроверяет координатор, а ``beadloom ci`` идёт на push из основного репозитория и
+  на PR — обратная связь уезжает на минуты, но не исчезает;
+* UPSTREAM У ВЕТКИ БОЛЬШЕ НЕ ПОЯВЛЯЕТСЯ: ``push -u origin <branch>`` заменён явным
+  полностью квалифицированным refspec'ом (это же и закрывает подмену тегом/одноимённым
+  ref'ом). Оба факта закреплены тестами на настоящем git —
+  ``tests/infrastructure/coding/test_off_path_real_git.py`` и
+  ``…/test_untrusted_repo_real_git.py``.
+
 🔴 ``branch`` обязан быть УЖЕ провалидированным (:func:`bob.coding.adapters._branch.
 is_safe_branch`) — вызывающий адаптер отказывает своей ошибкой ДО обращения сюда, так что
 пути, способного запушить ``main``, физически нет. Refspec фиксирован и полностью
@@ -64,15 +90,19 @@ async def commit_and_push_branch(
     message: str,
     timeout: float,
     push_target: str,
+    identity: tuple[tuple[str, str], ...],
 ) -> bool:
     """Закоммитить и запушить изменения рабочего места в ``branch``; ``False`` — нечего.
 
     ``push_target`` — куда именно уезжает ветка: URL форка (клон) или имя remote'а
-    (linked worktree). Возвращает ``True``, когда настоящий коммит уехал, и ``False``,
-    когда коммитить было нечего. Настоящий сбой git приходит наружу как ``CommandError``
-    раннера.
+    (linked worktree). ``identity`` — подпись, приколоченная парами в argv
+    (:func:`bob.coding.clone_plan.identity_pins` для клона, пустой набор для linked
+    worktree); параметр обязательный намеренно, чтобы каждый адаптер НАЗЫВАЛ свой выбор, а
+    не забывал подпись молча. Возвращает ``True``, когда настоящий коммит уехал, и
+    ``False``, когда коммитить было нечего. Настоящий сбой git приходит наружу как
+    ``CommandError`` раннера.
     """
-    git = hardened_git_argv(git_bin, path=path)
+    git = hardened_git_argv(git_bin, path=path, identity=identity)
     await runner([*git, "add", "-A"], timeout=timeout)
     status = await runner([*git, "status", "--porcelain"], timeout=timeout)
     if not status.strip():

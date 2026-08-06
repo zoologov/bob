@@ -187,6 +187,7 @@ async def test_a_hooks_directory_named_by_the_model_is_overridden_too(
         message="[bob] работа",
         timeout=60.0,
         push_target=f"file://{fork}",
+        identity=(),
     )
 
     assert committed is True
@@ -229,6 +230,7 @@ async def test_a_local_push_url_sends_the_branch_upstream_by_name_but_not_by_val
         message="[bob] работа",
         timeout=60.0,
         push_target=f"file://{fork}",
+        identity=(),
     )
 
     assert committed is True
@@ -306,6 +308,7 @@ async def test_a_filesystem_monitor_command_runs_without_the_pin_and_not_with_it
         message="[bob] работа",
         timeout=60.0,
         push_target=f"file://{fork}",
+        identity=(),
     )
 
     assert committed is True
@@ -345,6 +348,7 @@ async def test_a_signing_program_runs_without_the_pin_and_not_with_it(
         message="[bob] работа",
         timeout=60.0,
         push_target=f"file://{fork}",
+        identity=(),
     )
 
     assert committed is True
@@ -377,6 +381,7 @@ async def test_a_content_filter_runs_even_with_every_pin_so_the_adapter_refuses(
         message="[bob] control",
         timeout=60.0,
         push_target=f"file://{fork}",
+        identity=(),
     )
 
     assert "FILTER" in _traces(markers)
@@ -422,6 +427,7 @@ async def test_a_push_url_rewrite_survives_pushing_by_value_so_the_adapter_refus
         message="[bob] control",
         timeout=60.0,
         push_target=f"file://{fork}",
+        identity=(),
     )
 
     assert _has_branch(upstream, "bob/control")
@@ -499,7 +505,100 @@ async def test_the_untouched_clone_of_a_real_session_passes_the_check(
 
 
 # --------------------------------------------------------------------------- #
-# 5. Прежнее рабочее место (linked worktree) — тот же процесс Боба, те же хуки
+# 5. Обход через СОСТАВ ALLOW-списка: путь к дереву и подпись (ревью MAJOR-8)
+# --------------------------------------------------------------------------- #
+
+
+async def test_a_working_tree_pointed_at_the_owners_repository_stops_the_integration(
+    hosting: tuple[Path, Path, Path, Path], tmp_path: Path
+) -> None:
+    # 🔴 ФАКТ ревьюера, воспроизведённый здесь ПОПЫТКОЙ: ``core.worktree`` чистый ``git
+    # clone`` не пишет вовсе, поэтому в конфиге клона он бывает только от модели. Указав им
+    # дерево ВЛАДЕЛЬЦА, модель добивается того, что ``add -A`` собирает ЕГО дерево: работа
+    # Боба в ветку не попадает, а незакоммиченный черновик владельца уезжает в форк кредами
+    # самого Боба. Это дорога утечки чужой работы, а не путаница каталогов.
+    work, fork, _upstream, _markers = hosting
+    adapter = _clone_adapter(tmp_path, work, fork)
+
+    # --- КОНТРОЛЬ: ключ разрешён (как было) → уезжает дерево ВЛАДЕЛЬЦА.
+    control = Path(await adapter.create("bob/control"))
+    (control / "bob_work.py").write_text("print('работа Боба')\n", encoding="utf-8")
+    (work / "secret_notes.md").write_text("черновик владельца\n", encoding="utf-8")
+    _git(control, "config", "--local", "core.worktree", str(work))
+    await commit_and_push_branch(
+        ExecRunner(),
+        git_bin="git",
+        path=str(control),
+        branch="bob/control",
+        message="[bob] control",
+        timeout=60.0,
+        push_target=f"file://{fork}",
+        identity=(),
+    )
+
+    leaked = _git(fork, "ls-tree", "--name-only", "-r", "bob/control").split()
+    assert "secret_notes.md" in leaked  # черновик владельца уехал в форк
+    assert "bob_work.py" not in leaked  # а работа Боба в ветку не попала
+
+    # --- ЗАЩИТА: продовый адаптер отказывает ДО ``add``, называя виновный ключ.
+    guarded = Path(await adapter.create("bob/task"))
+    (guarded / "bob_work.py").write_text("print('работа Боба')\n", encoding="utf-8")
+    _git(guarded, "config", "--local", "core.worktree", str(work))
+
+    with pytest.raises(CloneError, match=re.escape("core.worktree")):
+        await adapter.commit_and_push(str(guarded), "bob/task", "[bob] работа")
+
+    assert not _has_branch(fork, "bob/task")
+    assert _git(work, "status", "--porcelain").strip()  # черновик остался у владельца
+
+
+async def test_an_identity_planted_by_the_model_cannot_re_sign_the_work_of_bob(
+    hosting: tuple[Path, Path, Path, Path], tmp_path: Path
+) -> None:
+    # 🔴 ФАКТ ревьюера, воспроизведённый попыткой: ``user.name``/``user.email`` в локальном
+    # конфиге клона переподписывают коммит в форке ВЛАДЕЛЬЦЕМ — прямое попадание в US-2
+    # («в истории видно, кто что сделал»). Ключи из ALLOW-списка не выкинуть (их пишем мы
+    # сами), поэтому решает не конфиг, а ПАРЫ В ARGV.
+    work, fork, _upstream, _markers = hosting
+    adapter = _clone_adapter(tmp_path, work, fork)
+    planted = ("Vladimir Zoologov", "owner@example.com")
+
+    # --- КОНТРОЛЬ: прежняя форма (без пар подписи) — автор в форке становится ВЛАДЕЛЬЦЕМ.
+    control = Path(await adapter.create("bob/control"))
+    _git(control, "config", "--local", "user.name", planted[0])
+    _git(control, "config", "--local", "user.email", planted[1])
+    await _model_edits(control)
+    await commit_and_push_branch(
+        ExecRunner(),
+        git_bin="git",
+        path=str(control),
+        branch="bob/control",
+        message="[bob] control",
+        timeout=60.0,
+        push_target=f"file://{fork}",
+        identity=(),
+    )
+
+    assert _git(fork, "log", "-1", "--format=%an <%ae>", "bob/control").strip() == (
+        f"{planted[0]} <{planted[1]}>"
+    )
+
+    # --- ЗАЩИТА: продовый путь с тем же подложенным конфигом — подпись всё равно Боба.
+    guarded = Path(await adapter.create("bob/task"))
+    _git(guarded, "config", "--local", "user.name", planted[0])
+    _git(guarded, "config", "--local", "user.email", planted[1])
+    await _model_edits(guarded)
+
+    committed = await adapter.commit_and_push(str(guarded), "bob/task", "[bob] работа")
+
+    assert committed is True
+    assert _git(fork, "log", "-1", "--format=%an <%ae>", "bob/task").strip() == (
+        "bob[ai] <424242+bob-ai-work[bot]@users.noreply.github.com>"
+    )
+
+
+# --------------------------------------------------------------------------- #
+# 6. Прежнее рабочее место (linked worktree) — тот же процесс Боба, те же хуки
 # --------------------------------------------------------------------------- #
 
 

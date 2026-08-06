@@ -42,8 +42,8 @@ src/bob/coding/
   naming.py           # layer=domain   — worktree_branch: эфемерная bob/<slug> + workspace_branch: долгоживущая bob/epic-<slug> (кириллица транслитерируется, BOB-087.D1/D5b)
   sandbox_policy.py   # layer=domain   — allowed_modes/is_allowed_mode/extra_dir_argv/is_safe_argv_value: политика owner-ослаблений изоляции + ClaudeRunError (BOB-087.D2/E)
   push_guard.py       # layer=domain   — guarded_spawn_env: ЕДИНСТВЕННЫЙ шов окружения спавна — барьер сетевого push (BOB-087.E, bob-5ao) + изоляция от кредов owner'а (BOB-089.C, решения в bob.identity.spawn_isolation)
-  clone_plan.py       # layer=domain   — clone_argv/checkout_argv/origin_argv/identity_argv/workspace_verdict/is_credential_free_url: план рабочего места-КЛОНА (файловый транспорт вместо хардлинков, подпись bob[ai] ЛОКАЛЬНО в клоне, вердикт переиспользования, запрет кредов в argv; BOB-089.A/D)
-  untrusted_repo.py   # layer=domain   — hardened_git_argv/unsafe_local_config/LOCAL_CONFIG_QUERY: как Боб зовёт git в каталоге, за содержимое которого отвечает МОДЕЛЬ (хуки/fsmonitor/подпись коммита не исполняются в его процессе, незнакомый ключ локального конфига останавливает интеграцию; bob-a6b.14)
+  clone_plan.py       # layer=domain   — clone_argv/checkout_argv/origin_argv/identity_pins/identity_argv/workspace_verdict/is_credential_free_url: план рабочего места-КЛОНА (файловый транспорт вместо хардлинков, подпись bob[ai] ЛОКАЛЬНО в клоне, вердикт переиспользования, запрет кредов в argv; BOB-089.A/D)
+  untrusted_repo.py   # layer=domain   — hardened_git_argv/unsafe_local_config/LOCAL_CONFIG_QUERY: как Боб зовёт git в каталоге, за содержимое которого отвечает МОДЕЛЬ (хуки/fsmonitor/подпись коммита не исполняются в его процессе, подпись bob[ai] приколочена парой в argv, незнакомый ключ локального конфига останавливает интеграцию; bob-a6b.14 + .16)
   pr_link.py          # layer=domain   — repo_slug/compare_url: «ветка в форке Боба → предзаполненная форма создания PR» (PR открывает owner: cross-repo PR из приватного форка installation-токену недоступен, BOB-089.D)
   stream_json.py      # layer=domain   — parse_event / STREAM_LIMIT: как читается ОДНА строка NDJSON-потока claude (общий примитив обоих транспортов, BOB-087.E)
   narrate.py          # layer=domain   — stream-json событие Claude Code → нарратив-строка / None (сжато, для группы)
@@ -280,6 +280,14 @@ OFF).** У linked worktree есть предел, который никакой 
 место становится КЛОНОМ со своим `.git`; подмена происходит в композиции
 (`_build_workspace`), поэтому use-case'ы не знают, во что приземляются, а OFF-путь остаётся
 прежним и доказывается РАВЕНСТВОМ сборки (тип адаптера и его аргументы), а не «похожестью».
+🔴 **Но не «байт-в-байт», и это названо, а не умолчано (bob-a6b.16, ревью MAJOR-9):** закалка
+формы git-вызовов (`hardened_git_argv`, ниже) применяется в ОБОИХ адаптерах, поэтому на коммитах
+Боба **хуки репозитория не исполняются** — в этом репозитории это `beadloom install-hooks`
+(pre-commit: lint + sync-check + coherence; pre-push: полный `beadloom ci`) — и **upstream у его
+ветки не появляется** (`push -u origin <ветка>` заменён явным полностью квалифицированным
+refspec'ом). Обмен осознанный: в ОБЩЕМ `.git/hooks` linked worktree хук владельца от хука модели
+не отличить, то есть worktree-режим без закалки был бы настоящей дырой. Потерянный быстрый гейт
+заменяют перепроверка координатором и `beadloom ci` на push из основного репозитория и на PR.
 Решения вынесены в чистое ядро `clone_plan`: клонирование идёт через `file://` (голый
 локальный путь заставил бы git ХАРДЛИНКОВАТЬ файлы объектов — то есть склад объектов остался
 бы общим с репозиторием owner'а); `origin` переписывается на `coder.fork_url`, а при пустом
@@ -334,7 +342,11 @@ authenticated`, `git ls-remote` апстрима по ssh → `rc=0`. Изоля
 конфига переведён на **https**, чтобы штатная настройка не вела по транспорту, на котором
 изоляции нет.
 
-**Подпись работы Боба (BOB-089.D, вместе с клоном).** В клоне выставляются
+**Подпись работы Боба (BOB-089.D, вместе с клоном).** 🔴 Решает её ПАРА В ARGV коммита
+(`identity_pins` → `hardened_git_argv(..., identity=…)`, bob-a6b.16): ревьюер прописал в клоне
+`git config --local user.name <владелец>`, и коммит в форке уехал подписанным ВЛАДЕЛЬЦЕМ —
+локальный конфиг в распоряжении модели, argv нет. Локальная запись остаётся вторым слоем (её
+видит человек, открывший клон, и ею подписан любой другой коммит в каталоге). В клоне выставляются
 `user.name = bob[ai]` и ботовский адрес
 `<coder.app_user_id>+bob-ai-work[bot]@users.noreply.github.com` — форма
 `identity_argv` из того же чистого ядра, и она несёт `--local` и `-C <клон>` ЯВНО:
@@ -518,20 +530,29 @@ ClaudeCodeRunner`; транзитный ports-шим `bob.domain.ports` удал
   решения — в `bob.identity.spawn_isolation`). Обе выключены → `None`, спавн без `env=`.
 - `clone_plan.py`: `clone_argv(git_bin, *, source, dest)`, `checkout_argv(git_bin, *, dest,
   branch, on_origin)`, `origin_argv(git_bin, *, dest, fork_url)` → `list[str]`;
-  `identity_argv(git_bin, *, dest, app_user_id)` → `list[list[str]]` (две `config --local`-формы
-  подписи `bob[ai]`, BOB-089.D);
+  `identity_pins(app_user_id)` → `tuple[tuple[str, str], ...]` (подпись ключ-значением — ею
+  подпись прикалывается в argv коммита) и `identity_argv(git_bin, *, dest, app_user_id)` →
+  `list[list[str]]` (те же значения двумя `config --local`-формами, BOB-089.D + bob-a6b.16);
   `workspace_verdict(*, dest_exists, is_repo)` → `WorkspaceVerdict` (`CLONE`/`REUSE`/`REFUSE`);
   `is_credential_free_url(url)` → `bool` (BOB-089.A).
-- `untrusted_repo.py`: `hardened_git_argv(git_bin, *, path=None)` → `list[str]` — префикс
-  каждого git-вызова Боба в каталоге, которым распоряжается модель (`-c core.hooksPath=/dev/null`,
-  `-c core.fsmonitor=false`, `-c commit.gpgSign=false`, затем `-C <path>`);
+- `untrusted_repo.py`: `hardened_git_argv(git_bin, *, path=None, identity=())` → `list[str]` —
+  префикс каждого git-вызова Боба в каталоге, которым распоряжается модель
+  (`-c core.hooksPath=/dev/null`, `-c core.fsmonitor=false`, `-c commit.gpgSign=false`, затем пары
+  ПОДПИСИ, если они даны, затем `-C <path>`);
   `unsafe_local_config(listing)` → `tuple[str, ...]` — ALLOW-список: имена ключей локального
   конфига клона, которых наша последовательность заведения там не оставляла (пусто → идти можно);
   `LOCAL_CONFIG_QUERY` — форма опроса (`config --local --list -z`). 🔴 Состав выбран ПОПЫТКАМИ на
   настоящем git: без пар в процессе Боба исполнялись подложенные моделью `pre-commit`/
   `post-commit`/`pre-push`, `core.fsmonitor` и `gpg.program`; ALLOW-список (а не перечень опасных
   ключей) — потому что `include.path` и `extensions.worktreeConfig` ПРЯЧУТ свои ключи от
-  `--local`. Границы меры — в докстроке модуля (bob-a6b.14, ревью MAJOR-7).
+  `--local`. 🔴 Состав списка пересмотрен в bob-a6b.16 (ревью MAJOR-8, оба факта воспроизведены
+  через настоящий `commit_and_push`): `core.worktree` УБРАН — чистый clone его не пишет вовсе, а
+  модель, наведя им рабочее дерево на репозиторий владельца, увезла в форк его незакоммиченный
+  черновик, тогда как работа Боба в ветку не попала; `user.name`/`user.email` остались (их пишем мы
+  сами), но подпись теперь РЕШАЕТ пара в argv — прописав их локально, модель подписывала коммит в
+  форке ВЛАДЕЛЬЦЕМ. `remote.origin.url` оставлен как НАЗВАННАЯ граница: сегодня он инертен, потому
+  что push идёт по значению `fork_url`. Границы меры — в докстроке модуля (bob-a6b.14 + .16, ревью
+  MAJOR-7/MAJOR-8).
 - `pr_link.py`: `repo_slug(url)` → `str` (`owner/repo` форка или `""`),
   `compare_url(*, upstream, fork, branch, base)` → `str` — предзаполненная форма создания PR,
   которую отдаёт Боб вместо открытия PR (BOB-089.D).
@@ -590,8 +611,10 @@ worktree-изоляция и containment, allowlist режимов раннер�
 доказано на РЕАЛЬНОМ git парами «контроль → защита»:
 `tests/infrastructure/coding/test_untrusted_repo_real_git.py` (хуки всех трёх видов,
 `core.hooksPath` из конфига модели, `fsmonitor`, `gpg.program`, `remote.origin.pushurl`,
-`url.*.pushInsteadOf`, `filter.*.clean`, `include.path`, `extensions.worktreeConfig` — и то, что
-легитимная работа всё равно доезжает до форка).
+`url.*.pushInsteadOf`, `filter.*.clean`, `include.path`, `extensions.worktreeConfig`,
+`core.worktree` на дерево владельца и подложенная моделью подпись — и то, что
+легитимная работа всё равно доезжает до форка). Те же две последние дороги описаны сценариями
+`S3a`/`S3b` в `tests/acceptance/features/own_workplace.feature`.
 Персистентное дерево проверяется на РЕАЛЬНОМ git
 (`tests/infrastructure/coding/test_git_worktree_persistent_real_git.py` — фейк этот контракт не
 воспроизводил), а спавн-окружение — `test_claude_spawn_env.py` / `test_push_guard_real_git.py` /

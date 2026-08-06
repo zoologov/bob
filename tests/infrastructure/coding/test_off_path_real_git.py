@@ -95,6 +95,42 @@ async def test_the_off_path_leaves_no_trace_of_bobs_identity_anywhere(
     assert _git(owner_repo, "config", "--local", "--get", "user.name").strip() == "Owner"
 
 
+async def test_the_off_path_no_longer_gives_bobs_branch_an_upstream(
+    owner_repo: Path, tmp_path: Path
+) -> None:
+    # 🔴 ЗДЕСЬ OFF-ПУТЬ УЖЕ НЕ «БАЙТ-В-БАЙТ ПРЕЖНИЙ», и тест назван так, чтобы это отклонение
+    # не пришлось искать (ревью bob-a6b.6, MAJOR-9). Прежняя форма пушила ``push -u origin
+    # <ветка>`` и ставила ветке upstream; закалённая форма (bob-a6b.14) пушит полностью
+    # квалифицированным refspec'ом без ``-u`` — ветка uptream'а не получает. Вторая половина
+    # того же отклонения — хуки репозитория ВЛАДЕЛЬЦА больше не исполняются на коммитах Боба
+    # (доказано парой контроль/защита в ``test_untrusted_repo_real_git.py``:
+    # ``test_hooks_of_the_shared_git_dir_do_not_run_for_the_worktree_adapter``), то есть
+    # ``beadloom install-hooks`` (pre-commit lint+sync-check, pre-push ``beadloom ci``) на них
+    # не срабатывает. Обмен осознанный: в ОБЩЕМ ``.git/hooks`` хук владельца от хука модели не
+    # отличить, а гейты перепроверяет координатор, и ``beadloom ci`` идёт на push из основного
+    # репозитория и на PR.
+    bare = tmp_path / "remote.git"
+    bare.mkdir()
+    _git(bare, "init", "--bare", "-b", "main")
+    _git(owner_repo, "remote", "add", "origin", str(bare))
+    adapter = GitWorktree(_RELATIVE_ROOT, runner=ExecRunner())
+    path = Path(await adapter.create(_BRANCH))
+    (path / "feature.py").write_text("print('claude edit')\n", encoding="utf-8")
+
+    assert await adapter.commit_and_push(str(path), _BRANCH, "[BOB] работа") is True
+
+    tracking = subprocess.run(
+        ["git", "config", "--local", "--get", f"branch.{_BRANCH}.remote"],
+        cwd=path,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert tracking.returncode == 1  # ключа нет: ``-u`` больше не ставится
+    assert tracking.stdout.strip() == ""
+    assert _git(bare, "branch", "--list", _BRANCH).strip()  # но работа доехала
+
+
 async def test_the_off_path_workplace_still_shares_the_repositorys_git(
     owner_repo: Path,
 ) -> None:

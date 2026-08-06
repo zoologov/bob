@@ -223,6 +223,18 @@ class GitWorktree:
         SHARED ``.git/hooks`` no longer run inside Bob's process. The address class is
         closed by moving the workspace to a clone (``coder.isolated_clone``), which is
         exactly why that flag exists.
+
+        🔴 ``identity=()`` is a NAMED choice, not a forgotten argument (bob-a6b.16,
+        MAJOR-8): the clone pins ``bob[ai]`` in argv because the model owns that config,
+        but a linked worktree lives in the OWNER's repository, where his own signature is
+        legitimate — and the OFF path is asserted to keep it
+        (``tests/infrastructure/coding/test_off_path_real_git.py``).
+
+        🔴 And the honest half of that OFF path: because the hardening applies here too,
+        the owner's hooks (``beadloom install-hooks``) no longer run on Bob's commits and
+        the branch no longer gets an upstream. That deviation — deliberate, and what
+        replaces the lost fast gate — is named in
+        :mod:`bob.coding.adapters._integrate`.
         """
         if not is_safe_branch(branch):
             raise WorktreeError(
@@ -236,6 +248,7 @@ class GitWorktree:
             message=message,
             timeout=self._timeout,
             push_target="origin",
+            identity=(),  # the owner's repository keeps the owner's signature — see above
         )
 
     async def remove(self, path: str) -> None:

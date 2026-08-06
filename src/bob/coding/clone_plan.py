@@ -14,7 +14,8 @@
 
 * :func:`clone_argv` / :func:`checkout_argv` / :func:`origin_argv` — фиксированные,
   shell-free формы git-команд заведения клона;
-* :func:`identity_argv` — чем подписана работа в этом клоне (``bob[ai]``, 🔴 ЛОКАЛЬНО);
+* :func:`identity_pins` / :func:`identity_argv` — чем подписана работа в этом клоне
+  (``bob[ai]``): парами в argv коммита и 🔴 ЛОКАЛЬНОЙ записью в конфиге;
 * :func:`workspace_verdict` — клонировать / переиспользовать / отказать для
   долгоживущего места;
 * :func:`is_credential_free_url` — какой URL вообще допустим в argv.
@@ -60,6 +61,7 @@ __all__ = [
     "clone_argv",
     "fetch_argv",
     "identity_argv",
+    "identity_pins",
     "is_credential_free_url",
     "origin_argv",
     "workspace_verdict",
@@ -167,13 +169,21 @@ def fetch_argv(git_bin: str, *, dest: str) -> list[str]:
     return [*hardened_git_argv(git_bin, path=dest), "fetch", "--prune", _ORIGIN]
 
 
-def identity_argv(git_bin: str, *, dest: str, app_user_id: str) -> list[list[str]]:
-    """Собрать ЛОКАЛЬНУЮ подпись работы Боба в клоне: имя и e-mail двумя командами.
+def identity_pins(app_user_id: str) -> tuple[tuple[str, str], ...]:
+    """Назвать подпись работы Боба ключ-значением: ``user.name`` и ``user.email``.
 
-    🔴 ``--local`` и ``-C <dest>`` стоят в форме ЯВНО, и это главное свойство среза D.
-    Глобальная настройка переподписала бы коммиты owner'а в его собственном
-    репозитории как ``bob[ai]`` — ровно та путаница идентичностей, от которой уходим;
-    ни ``--global``, ни ``--system`` эта форма выразить не может.
+    Одно решение, два применения: этими парами подпись ПРИКАЛЫВАЕТСЯ В ARGV коммита
+    (:func:`bob.coding.untrusted_repo.hardened_git_argv`), и ими же она пишется в
+    локальный конфиг клона (:func:`identity_argv`). Разойтись слоям нельзя, поэтому
+    источник значений один.
+
+    🔴 ЗАЧЕМ ARGV, А НЕ ТОЛЬКО ЗАПИСЬ В КОНФИГЕ (ревью bob-a6b.6, MAJOR-8 — воспроизведено
+    на настоящем git через прод-путь ``GitClone.commit_and_push``): модель прописала в
+    клоне ``git config --local user.name <владелец>``, и коммит в форке уехал подписанным
+    ВЛАДЕЛЬЦЕМ. Выкинуть эти ключи из ALLOW-списка нельзя — их пишем мы сами, — поэтому
+    подпись решает argv, который локальный конфиг перебить не может. Локальная запись
+    остаётся вторым слоем: её видит человек, открывший клон, и ею подписан ЛЮБОЙ другой
+    коммит в этом каталоге, а не только наш шаг интеграции.
 
     Имя — всегда :data:`_COMMIT_NAME`: не подписать вовсе было бы ХУЖЕ, чем подписать
     без числового префикса, потому что тогда git взял бы имя из конфигурации owner'а и
@@ -186,10 +196,24 @@ def identity_argv(git_bin: str, *, dest: str, app_user_id: str) -> list[list[str
     email = f"{_BOT_LOGIN}@{_NOREPLY_HOST}"
     if _APP_USER_ID.fullmatch(app_user_id):
         email = f"{app_user_id}+{email}"
+    return (("user.name", _COMMIT_NAME), ("user.email", email))
+
+
+def identity_argv(git_bin: str, *, dest: str, app_user_id: str) -> list[list[str]]:
+    """Собрать ЛОКАЛЬНУЮ подпись работы Боба в клоне: имя и e-mail двумя командами.
+
+    🔴 ``--local`` и ``-C <dest>`` стоят в форме ЯВНО, и это главное свойство среза D.
+    Глобальная настройка переподписала бы коммиты owner'а в его собственном
+    репозитории как ``bob[ai]`` — ровно та путаница идентичностей, от которой уходим;
+    ни ``--global``, ни ``--system`` эта форма выразить не может.
+
+    Значения берутся из :func:`identity_pins` — того же решения, которым подпись
+    прикалывается в argv нашего коммита (MAJOR-8): локальную запись модель переписать
+    может, argv — нет, и расходиться этим двум слоям нельзя.
+    """
     git = hardened_git_argv(git_bin, path=dest)
     return [
-        [*git, "config", "--local", "user.name", _COMMIT_NAME],
-        [*git, "config", "--local", "user.email", email],
+        [*git, "config", "--local", key, value] for key, value in identity_pins(app_user_id)
     ]
 
 

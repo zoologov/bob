@@ -61,6 +61,36 @@ def test_every_pin_is_passed_as_its_own_c_pair_before_the_subcommand() -> None:
     assert all("=" in pin for pin in pins[1::2])
 
 
+def test_the_signature_is_pinned_in_argv_so_the_local_config_cannot_re_sign_the_commit() -> None:
+    # 🔴 ФАКТ (ревью bob-a6b.6, MAJOR-8, воспроизведён на настоящем git через прод-путь
+    # ``GitClone.commit_and_push``): ``user.name``/``user.email`` в локальном конфиге клона
+    # переподписали коммит в форке ВЛАДЕЛЬЦЕМ — прямое попадание в US-2. Ключи в
+    # ALLOW-списке остаются (их пишем мы сами), поэтому решать должна argv, а не конфиг.
+    argv = hardened_git_argv(
+        "git",
+        path="/clone",
+        identity=(("user.name", "bob[ai]"), ("user.email", "42+bot@users.noreply.github.com")),
+    )
+
+    assert "user.name=bob[ai]" in argv
+    assert "user.email=42+bot@users.noreply.github.com" in argv
+    # Пары подписи едут тем же способом, что и остальные: отдельные ``-c`` и ``key=value``,
+    # ДО подкоманды и до ``-C`` — иначе git читал бы их как аргументы подкоманды.
+    assert argv[argv.index("user.name=bob[ai]") - 1] == "-c"
+    assert argv.index("user.email=42+bot@users.noreply.github.com") < argv.index("-C")
+
+
+def test_without_an_identity_the_form_is_exactly_the_three_hardening_pins() -> None:
+    # 🔴 Подпись — ОСОЗНАННО опциональная половина формы: в режиме linked worktree
+    # репозиторий принадлежит ВЛАДЕЛЬЦУ, и его подпись там законна (это закреплено в
+    # ``tests/infrastructure/coding/test_off_path_real_git.py``). Поэтому «без подписи»
+    # обязано давать РОВНО прежнюю форму, а не «почти прежнюю».
+    assert hardened_git_argv("git", path="/clone") == hardened_git_argv(
+        "git", path="/clone", identity=()
+    )
+    assert not [pin for pin in hardened_git_argv("git", path="/clone") if "user." in pin]
+
+
 def test_the_repository_is_addressed_by_minus_c_when_a_path_is_given() -> None:
     # ``-C <путь>`` стоит ПОСЛЕ пар: путь — динамический слот, пары — фиксированные.
     argv = hardened_git_argv("git", path="/clone dir")
@@ -174,6 +204,26 @@ def test_the_per_worktree_config_extension_is_reported_for_the_same_reason() -> 
     listing = _listing(("extensions.worktreeconfig", "true"))
 
     assert unsafe_local_config(listing) == ("extensions.worktreeconfig",)
+
+
+def test_a_working_tree_pointed_elsewhere_is_reported() -> None:
+    # 🔴 ФАКТ (ревью bob-a6b.6, MAJOR-8 — воспроизведён и мной через настоящий
+    # ``GitClone.commit_and_push``): чистый ``git clone`` ``core.worktree`` НЕ ПИШЕТ ВОВСЕ,
+    # то есть в конфиге клона он может появиться только от модели. Указав им дерево
+    # ВЛАДЕЛЬЦА, модель добилась того, что ``add -A`` собрал ЕГО дерево: в ветку форка уехал
+    # незакоммиченный черновик владельца (``secret_notes.md``), а работа Боба туда не попала.
+    # Это дорога утечки чужой работы, поэтому ключ из ALLOW-списка убран.
+    assert unsafe_local_config(_listing(("core.worktree", "/Users/owner/bob"))) == (
+        "core.worktree",
+    )
+
+
+def test_the_signature_keys_stay_allowed_because_the_signature_is_decided_in_argv() -> None:
+    # Их пишет НАША последовательность заведения (``config --local user.name/user.email``),
+    # поэтому по ИМЕНИ они законны. Значение модель переписать может — и именно поэтому
+    # подпись приколочена парами в argv: конфиг клона её больше не решает.
+    assert unsafe_local_config(_listing(("user.name", "Vladimir Zoologov"))) == ()
+    assert unsafe_local_config(_listing(("user.email", "owner@example.com"))) == ()
 
 
 def test_the_object_format_extension_stays_allowed() -> None:

@@ -61,6 +61,7 @@ from bob.coding.clone_plan import (
     clone_argv,
     fetch_argv,
     identity_argv,
+    identity_pins,
     is_credential_free_url,
     origin_argv,
     workspace_verdict,
@@ -170,6 +171,12 @@ class GitClone:
         заведении клона удалён, пушить некуда, и это отказ по КОНФИГУРАЦИИ, а не загадочная
         ошибка git.
 
+        🔴 Подпись коммита приколочена ПАРАМИ В ARGV
+        (:func:`bob.coding.clone_plan.identity_pins`), а не взята из конфига клона (ревью
+        bob-a6b.6, MAJOR-8): модель прописала там ``user.name``/``user.email``, и коммит в
+        форке уехал подписанным ВЛАДЕЛЬЦЕМ — прямое попадание в US-2. Локальная запись
+        остаётся вторым слоем (её видит человек, открывший клон), но решает argv.
+
         И перед первой же командой в каталоге спрашивается его локальный конфиг: ключ,
         которого наша последовательность заведения там не оставляла, останавливает
         интеграцию ГРОМКО (:func:`bob.coding.untrusted_repo.unsafe_local_config`) — так
@@ -193,6 +200,7 @@ class GitClone:
             message=message,
             timeout=self._timeout,
             push_target=self._fork_url,
+            identity=identity_pins(self._app_user_id),
         )
 
     async def remove(self, path: str) -> None:

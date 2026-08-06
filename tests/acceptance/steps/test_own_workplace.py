@@ -34,14 +34,19 @@ from tests.acceptance.own_workplace_harness import (
     GH_PULL_URL,
     OWNER_SECRET,
     Handover,
+    Integration,
     OwnerWorld,
     author_of_last_commit,
+    author_of_the_fork_branch,
+    bobs_branches_in_the_fork,
     commit_here,
     credentials_offered_here,
     files_here,
     hand_over_the_work,
+    integrate_the_work,
     move_ref_here,
     owner_world,
+    plant_in_the_workplace_config,
     raise_workplace,
     remotes_here,
     sha_of,
@@ -73,6 +78,7 @@ class _WorkplaceContext:
     unisolated: subprocess.CompletedProcess[str] | None = None
     isolated: subprocess.CompletedProcess[str] | None = None
     handover: Handover = field(default_factory=Handover)
+    integration: Integration = field(default_factory=Integration)
 
     @property
     def owner_repo(self) -> Path:
@@ -142,6 +148,34 @@ def the_work_reached_a_branch_in_bobs_fork(workplace_context: _WorkplaceContext)
     )
 
 
+@when("модель переписывает подпись в конфиге рабочего места на подпись владельца")
+def the_model_re_signs_the_workplace(workplace_context: _WorkplaceContext) -> None:
+    plant_in_the_workplace_config(workplace_context.place, "user.name", "Vladimir Zoologov")
+    plant_in_the_workplace_config(workplace_context.place, "user.email", "owner@example.com")
+
+
+@when("модель наводит рабочее дерево места на репозиторий владельца")
+def the_model_points_the_working_tree_at_the_owner(
+    workplace_context: _WorkplaceContext,
+) -> None:
+    # Черновик владельца — то, что уехало бы в форк: незакоммиченный файл в его дереве.
+    (workplace_context.owner_repo / "черновик.md").write_text(
+        "незакоммиченный черновик владельца\n", encoding="utf-8"
+    )
+    plant_in_the_workplace_config(
+        workplace_context.place, "core.worktree", str(workplace_context.owner_repo)
+    )
+
+
+@when("Боб доводит работу до ветки в форке")
+def bob_integrates_the_work(workplace_context: _WorkplaceContext) -> None:
+    assert workplace_context.world is not None
+    (workplace_context.place / "feature.py").write_text("print('работа')\n", encoding="utf-8")
+    workplace_context.integration = integrate_the_work(
+        workplace_context.world, workplace_context.tmp_path / "clones"
+    )
+
+
 @when("флаг отдельного рабочего места выключен")
 def the_isolated_workplace_flag_is_off(workplace_context: _WorkplaceContext) -> None:
     # OFF-путь берётся из НАСТОЯЩЕЙ композиции с пустым конфигом — то есть ровно тем, что
@@ -185,6 +219,32 @@ def the_commit_is_signed_by_bob(workplace_context: _WorkplaceContext) -> None:
     name, email = author_of_last_commit(workplace_context.place)
     assert name == "bob[ai]", f"работа Боба подписана не его именем: {name!r}"
     assert email == "424242+bob-ai-work[bot]@users.noreply.github.com"
+
+
+@then("коммит в форке подписан «bob[ai]» с ботовским адресом")
+def the_fork_commit_is_signed_by_bob(workplace_context: _WorkplaceContext) -> None:
+    # 🔴 Читается ФОРК, а не рабочее место: подпись, которую увидит владелец, — та, что
+    # уехала. Подложенный моделью ``user.name`` её больше не решает (bob-a6b.16, MAJOR-8).
+    assert workplace_context.world is not None
+    assert workplace_context.integration.committed is True
+    assert author_of_the_fork_branch(workplace_context.world, "bob/task") == (
+        "bob[ai] <424242+bob-ai-work[bot]@users.noreply.github.com>"
+    )
+
+
+@then("интеграция отказывает, называя виновный ключ")
+def the_integration_refuses_naming_the_key(workplace_context: _WorkplaceContext) -> None:
+    refusal = workplace_context.integration.refusal
+    assert "core.worktree" in refusal, f"отказ не назвал виновный ключ: {refusal!r}"
+    assert workplace_context.integration.committed is False
+
+
+@then("в форке нет ни одной ветки Боба, а черновик владельца остался у него")
+def nothing_of_the_owners_work_left_for_the_fork(workplace_context: _WorkplaceContext) -> None:
+    assert workplace_context.world is not None
+    # Перечисление ВСЕХ ветвей форка, а не проверка известного имени.
+    assert bobs_branches_in_the_fork(workplace_context.world) == []
+    assert (workplace_context.owner_repo / "черновик.md").exists()
 
 
 @then("коммит владельца по-прежнему подписан владельцем")
