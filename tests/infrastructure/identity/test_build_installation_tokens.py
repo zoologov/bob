@@ -67,3 +67,24 @@ def test_a_numeric_knob_given_as_an_env_string_is_honoured() -> None:
     section = {**_github_section(), "token_margin_seconds": "90"}
     provider = build_installation_tokens(section, clock=_StubClock())
     assert provider._margin == 90
+
+
+@pytest.mark.parametrize("junk", [True, False, None, []])
+def test_a_knob_of_the_wrong_type_never_becomes_a_zero_margin(junk: object) -> None:
+    # 🔴 Опечатка в конфиге не имеет права ТИХО превратиться в нулевой запас: это означало
+    # бы обновление токена по факту 401, то есть отказ посреди работы вместо обновления
+    # заранее. ``True`` разобрано отдельно, потому что в Python это ещё и ``int`` — самая
+    # правдоподобная дорога к «запасу 1 секунда».
+    section = {**_github_section(), "token_margin_seconds": junk}
+    provider = build_installation_tokens(section, clock=_StubClock())
+    assert provider._margin == DEFAULT_RENEW_MARGIN_SECONDS
+
+
+@pytest.mark.parametrize("blank", ["", "   ", None, 7])
+def test_a_blank_textual_knob_falls_back_to_the_shipped_default(blank: object) -> None:
+    # Строковые параметры (бинарь, база API) читаются той же дорогой: пустое значение из
+    # ``.env`` — это «не задано», а не «задано пустым», иначе спавн звал бы бинарь с пустым
+    # именем.
+    section = {**_github_section(), "openssl_bin": blank}
+    provider = build_installation_tokens(section, clock=_StubClock())
+    assert provider is not None

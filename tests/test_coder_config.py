@@ -73,6 +73,16 @@ def test_isolated_clone_ships_off_with_an_unconfigured_fork() -> None:
     assert section["fork_url"] == ""
 
 
+def test_the_bot_user_id_of_the_signature_ships_empty() -> None:
+    # ``coder.app_user_id`` (BOB-089, срез D) — числовой id пользователя приложения, префикс
+    # ботовского noreply-адреса. Пусто по умолчанию: адрес собирается без префикса, а ИМЯ
+    # ``bob[ai]`` ставится всегда — иначе git подписал бы работу Боба конфигурацией
+    # владельца, то есть ровно той неразличимостью, против которой US-2.
+    section = _config()["coder"]
+    assert isinstance(section, dict)
+    assert section["app_user_id"] == ""
+
+
 def test_the_upstream_slug_lives_only_in_the_github_section() -> None:
     # 🔴 bob-a6b.9: ОДИН факт — ОДИН ключ. Репозиторную идентичность держит секция
     # ``github`` (там же, где принципалы находят свои установки), поэтому слаг апстрима

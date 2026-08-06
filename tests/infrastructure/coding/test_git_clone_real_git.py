@@ -9,7 +9,7 @@
 add``, поэтому приватность клона доказывается, а не предполагается: содержимое каталога
 перечисляется целиком и сверяется с трекнутыми файлами.
 
-Проверяется четыре вещи, каждая — на настоящем git в одноразовом репозитории, который
+Проверяется пять вещей, каждая — на настоящем git в одноразовом репозитории, который
 повторяет гитигнор Боба (``data/``, ``bob.db*``, ``.env*``, ``config/bob.yaml``,
 ``.secrets/``):
 
@@ -20,7 +20,11 @@ add``, поэтому приватность клона доказывается
 * адресация: origin переписан на форк (или удалён вовсе), рабочая копия owner'а не
   остаётся адресом для push, апстрим не прописан;
 * штатный путь: ``ensure`` переиспользует место (работа накапливается), а
-  ``commit_and_push`` доводит ветку до форка.
+  ``commit_and_push`` доводит ветку до форка;
+* 🔴 честная рамка (bob-a6b.5): что клон НЕ закрывает — путь к репозиторию владельца
+  остаётся читаемым в reflog клона, а процесс под тем же UID доводит намеренную дорогу до
+  ствола в три шага. Мера описана вместе с её границей, иначе доки обещают больше прав, чем
+  есть.
 
 Skips with a clear reason when ``git`` is unavailable.
 """
@@ -552,6 +556,79 @@ async def test_remove_refuses_a_directory_that_is_not_a_clone(
         await _adapter(tmp_path, work).remove(str(stray))
 
     assert (stray / "notes.md").exists()
+
+
+# --------------------------------------------------------------------------- #
+# 🔴 ЧЕСТНАЯ РАМКА: что клон НЕ закрывает (bob-a6b.5)
+# --------------------------------------------------------------------------- #
+# Пара к тестам выше — того же рода, что ``test_the_push_barrier_alone_leaves_that_road_open``
+# в срезе C: мера описывается вместе с её границей, иначе доки начинают обещать больше, чем
+# держат права. Клон убирает дорогу, которая открывалась САМА (общий ``.git``: обычный
+# ``update-ref`` в рабочем месте двигал ствол владельца). Дороги НАМЕРЕННОЙ он не убирает:
+# процесс живёт под тем же UID, и путь к репозиторию владельца из рабочего места узнаётся.
+# Это не дефект адаптера, а рамка гарантии — но записана она должна быть исполняемо.
+
+
+async def test_the_clones_reflog_still_names_the_repository_it_came_from(
+    owner_repo: tuple[Path, Path], tmp_path: Path
+) -> None:
+    # ``git clone`` пишет источник в собственный reflog (``clone: from file://…``), и
+    # переадресация remote'а его оттуда не убирает: путь к репозиторию владельца остаётся
+    # ЧИТАЕМЫМ изнутри рабочего места.
+    work, _fork = owner_repo
+
+    path = await _adapter(tmp_path, work).create("bob/task")
+
+    reflog = (Path(path) / ".git" / "logs" / "HEAD").read_text(encoding="utf-8")
+    assert str(work) in reflog
+    # При этом адресом для push источник не является — это разные вещи (см. тест выше).
+    assert str(work) not in _git(Path(path), "remote", "-v")
+
+
+async def test_a_deliberate_local_push_plus_update_ref_still_reaches_the_owners_trunk(
+    owner_repo: tuple[Path, Path], tmp_path: Path
+) -> None:
+    # 🔴 Ровно то, что осталось «на доверии», а не стало невозможным СТРУКТУРНО — и оно
+    # СЛОЖНЕЕ, чем в linked worktree, но не невозможно. Три шага, каждый доступен процессу
+    # под тем же UID:
+    #   1. ``update-ref`` с явным ``--git-dir`` в чужом репозитории ОТКАЗЫВАЕТ — у клона свой
+    #      склад объектов, и нужного объекта у владельца просто нет (вот это клон и дал);
+    #   2. локальный транспорт по пути из reflog кладёт объекты в репозиторий владельца:
+    #      прямо в ``main`` git не пустит (``branch is currently checked out`` — это ЗАЩИТА
+    #      GIT, не наша), а в боковую ветку пустит, кредов локальному пути не нужно;
+    #   3. после этого объект у владельца ЕСТЬ, и ``--git-dir update-ref`` двигает его ствол.
+    # Правами этот класс не закрывается вовсе (файлы, не сеть) — только раздельным UID. Пока
+    # UID общий, «до main владельца локальные трюки не достают» — про случайность, не про
+    # намерение; отчёт в комментарии bob-a6b.5.
+    work, fork = owner_repo
+    trunk_before = _git(work, "rev-parse", "main").strip()
+    path = Path(await _adapter(tmp_path, work, fork_url=f"file://{fork}").create("bob/task"))
+    (path / "feature.py").write_text("print('claude edit')\n", encoding="utf-8")
+    _git(path, "add", ".")
+    _git(path, "commit", "-m", "claude work")
+    head = _git(path, "rev-parse", "HEAD").strip()
+    assert head != trunk_before  # контроль: двигать ствол есть куда
+
+    # (1) свой склад объектов — сам по себе барьер: сдвинуть ref на объект, которого у
+    # владельца нет, не получается.
+    blind = _git_try(path, "--git-dir", str(work / ".git"), "update-ref", "refs/heads/main", head)
+    assert blind.returncode != 0
+    assert _git(work, "rev-parse", "main").strip() == trunk_before
+
+    # (2) путь к репозиторию владельца берётся из reflog клона, объекты уезжают боковой ветвью.
+    denied = _git_try(path, "push", f"file://{work}", f"{head}:refs/heads/main")
+    assert denied.returncode != 0
+    assert "checked out" in denied.stderr  # отказ ДАЁТ GIT, а не наша схема прав
+    assert _git_try(path, "push", f"file://{work}", f"{head}:refs/heads/side").returncode == 0
+
+    # (3) объект у владельца появился — и ствол сдвигается.
+    assert (
+        _git_try(
+            path, "--git-dir", str(work / ".git"), "update-ref", "refs/heads/main", head
+        ).returncode
+        == 0
+    )
+    assert _git(work, "rev-parse", "main").strip() == head
 
 
 # --------------------------------------------------------------------------- #

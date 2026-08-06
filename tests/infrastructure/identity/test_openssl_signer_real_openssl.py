@@ -179,3 +179,57 @@ async def test_an_unreadable_key_fails_by_type_without_echoing_the_file(
 async def test_a_missing_key_file_fails_as_a_signing_error(tmp_path: Path) -> None:
     with pytest.raises(SigningError):
         await OpensslRs256Signer().sign(b"payload", private_key_path=str(tmp_path / "nope.pem"))
+
+
+# --------------------------------------------------------------------------- #
+# 🔴 Сбои ПОДПРОЦЕССА: отказ по типу, а не крах и не пустая «подпись»
+# --------------------------------------------------------------------------- #
+# Подписыватель стоит на пути минта installation-токена: любой его сбой обязан приезжать
+# ОДНИМ понятным типом (:class:`SigningError`), иначе выше по стеку он читается как
+# «что-то с сетью». Инструмент здесь настоящий (подставной исполняемый файл / реальный
+# запуск), а не фейк подпроцесса, — ровно потому, что фейк доказал бы контракт фейка.
+
+
+async def test_a_missing_openssl_binary_fails_by_type_not_by_oserror(tmp_path: Path) -> None:
+    # Владелец переопределил ``github.openssl_bin`` опечаткой: наружу должен идти
+    # SigningError с ИМЕНЕМ инструмента, а не голый OSError из недр asyncio.
+    absent = str(tmp_path / "no-such-openssl")
+
+    with pytest.raises(SigningError) as excinfo:
+        await OpensslRs256Signer(openssl_bin=absent).sign(b"payload", private_key_path="k.pem")
+
+    assert absent in str(excinfo.value)
+
+
+async def test_an_empty_signature_is_never_passed_off_as_a_signature(
+    tmp_path: Path,
+) -> None:
+    # 🔴 Инструмент вышел с кодом 0 и не отдал НИЧЕГО. Пустые байты, уехавшие в JWT, дали бы
+    # отказ GitHub'а «invalid signature» в совсем другом месте — здесь это ловится сразу.
+    silent = tmp_path / "silent-openssl"
+    silent.write_text("#!/bin/sh\ncat > /dev/null\nexit 0\n", encoding="utf-8")
+    silent.chmod(0o700)
+
+    with pytest.raises(SigningError) as excinfo:
+        await OpensslRs256Signer(openssl_bin=str(silent)).sign(
+            b"payload", private_key_path="key.pem"
+        )
+
+    assert "empty signature" in str(excinfo.value)
+
+
+async def test_a_hanging_signer_is_killed_and_reported_as_a_timeout(
+    tmp_path: Path,
+) -> None:
+    # Подпись — операция на доли секунды: зависший инструмент не имеет права держать
+    # coding-сессию. Процесс убивается и дожимается (без зомби), наружу — SigningError.
+    hanging = tmp_path / "hanging-openssl"
+    hanging.write_text("#!/bin/sh\nsleep 30\n", encoding="utf-8")
+    hanging.chmod(0o700)
+
+    with pytest.raises(SigningError) as excinfo:
+        await OpensslRs256Signer(openssl_bin=str(hanging), timeout_seconds=0.2).sign(
+            b"payload", private_key_path="key.pem"
+        )
+
+    assert "timed out" in str(excinfo.value)
