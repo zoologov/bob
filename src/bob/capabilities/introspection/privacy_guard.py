@@ -31,11 +31,16 @@ who works across the WHOLE repo, not a narrow whitelist):
   allowance had: a GitHub-App key living in ``.secrets/*.pem`` was returned verbatim
   and would have shipped to the external LLM. Key material is not "code Bob may read":
   there is no engineering question a private key answers.
+* **DENY** *git's own service files* — the ``.git`` subtree and any ``gitconfig`` —
+  because they carry credentials BY CONSTRUCTION (bob-a6b.13): ``.git/config`` holds the
+  remote URL, and a https remote's URL is where a token lives. This is the SAME hole as
+  above for a second file family, found by the reviewer on a live read.
 
 Full-repo *read* access is not full *leak*: :meth:`sanitize` remains the
 defence-in-depth backstop that redacts secret-shaped values (PEM private-key blocks,
-GitHub tokens, JWTs, ``sk-`` tokens, ``KEY=value`` env assignments, api-key literals)
-from any returned text, so a literal secret string never leaves the machine (INV-N4).
+credentials carried in a URL's userinfo, GitHub tokens, JWTs, ``sk-`` tokens,
+``KEY=value`` env assignments, api-key literals) from any returned text, so a literal
+secret string never leaves the machine (INV-N4).
 Paths are resolved (``..`` collapsed, no disk access) against the repo root before
 both checks, so neither an escaping nor a laundered path slips through.
 
@@ -73,8 +78,37 @@ _SECRET_STORE_NAMES: frozenset[str] = frozenset(
         ".gnupg",
         ".netrc",  # plaintext machine/login/password
         ".git-credentials",  # git's plaintext credential store
+        "credentials",  # the same store under its other spelling (the spawn-env's 0600
+        # token file, and what ``credential.helper=store --file`` is usually pointed at)
     }
 )
+
+# Git's OWN service files, matched the same way (exact segment, case-insensitive, subtree
+# included). They are not "secret stores" — they carry credentials BY CONSTRUCTION
+# (bob-a6b.13 / MAJOR-6): ``.git/config`` holds the remote URL, which is exactly where a
+# https token lands (``url = https://bob:<token>@github.com/o/r.git``); ``FETCH_HEAD`` and
+# the reflogs echo that same URL; a substitute global ``gitconfig`` names the credential
+# helper. 🔴 This became MORE likely inside this very epic: the example config moved from
+# ssh to https, i.e. we ourselves raised the chance a token sits in a workplace's
+# ``.git/config`` — including Bob's long-lived clones (``.clones/**/.git/config``).
+#
+# Denying the WHOLE ``.git`` subtree rather than a list of file names is deliberate: it is
+# one nameable rule ("git's bookkeeping is not source"), it needs no upkeep as git invents
+# new files, and it hides ZERO tracked files — ``git ls-files`` can never name a path inside
+# ``.git``. Bob's git questions are answered by the read-only ``git log`` forms, not by
+# reading the object store. Exact match keeps the near-misses readable: ``.gitignore``,
+# ``.gitmodules``, ``.github/`` and the repo's own ``config/`` are ordinary files.
+_GIT_SERVICE_NAMES: frozenset[str] = frozenset(
+    {
+        ".git",  # the metadata dir (and the gitdir-pointer FILE of a worktree/submodule)
+        ".gitconfig",  # a user-level git config planted inside the tree
+        "gitconfig",  # git's system/substitute spelling (the spawn-env's global config)
+    }
+)
+
+# The single vocabulary :func:`_is_secret_shaped` matches path SEGMENTS against: a secret
+# store or a git service file. Both families deny the name AND everything under it.
+_DENIED_SEGMENT_NAMES: frozenset[str] = _SECRET_STORE_NAMES | _GIT_SERVICE_NAMES
 
 # Suffixes that carry key material by convention (PEM keys, PKCS#12 bundles). A suffix is
 # enough on its own: there is no in-repo engineering reason to read a ``.pem``/``.key``.
@@ -94,6 +128,32 @@ _SECRET_NAME_PREFIXES: tuple[str, ...] = ("id_rsa", "id_ed25519", "id_ecdsa", "i
 _PEM_PRIVATE_KEY = re.compile(
     r"(?s)-----BEGIN[A-Z ]*PRIVATE KEY-----.*?(?:-----END[A-Z ]*PRIVATE KEY-----|\Z)"
 )
+
+# A credential carried INSIDE a URL — the form git writes into ``.git/config`` for a https
+# remote and into every credential store (bob-a6b.13 / MAJOR-6):
+#     url = https://bob:hunter2SUPERSECRET@github.com/owner/repo.git
+# 🔴 Neither name-based nor value-based rules could ever catch this: the KEY is called
+# ``url`` (not token/password), and the PASSWORD may be any string (no vendor prefix to
+# recognise). So the rule is about the URL GRAMMAR — whatever sits between the userinfo's
+# ``:`` and the ``@`` that ends the userinfo IS a password, whatever surrounds it. This is
+# the layer that holds even when the PATH is allowed (a config pasted into a note, a ``git
+# remote -v`` in a paste), which is why it matters more than the path denial.
+#
+# The scheme and username are KEPT (``https://bob:[REDACTED]@github.com/o/r.git``) so the
+# output still says where the remote points and as whom — Bob can still do his job.
+# The password run excludes whitespace and ``/`` so a match can never leave one URL's
+# authority and reach a later ``@``; it is GREEDY up to the LAST ``@`` before the path,
+# because RFC 3986 (and git/curl) end the userinfo at the last ``@`` — otherwise
+# ``https://bob:tok@enSecret@host`` would leave ``enSecret`` in the clear.
+_URL_USERINFO_PASSWORD = re.compile(r"([a-zA-Z][a-zA-Z0-9+.-]*://[^\s/:@]*:)[^\s/]+(?=@)")
+
+# The SAME credential without a username: ``https://<token>@github.com/o/r.git`` is a real
+# remote form (GitHub accepts a token as the username), and there is no ``:`` to anchor on.
+# The anchor is LENGTH: a userinfo of 20+ URL-safe characters is a credential, not a login.
+# The floor keeps every login name this repo actually writes readable — ``git`` (3),
+# ``bob`` (3), ``x-access-token`` (14) — so ``ssh://git@github.com/...`` in a docstring is
+# NOT blinded (over-redaction here would make Bob unable to read his own code, BOB-067).
+_URL_USERINFO_BARE = re.compile(r"([a-zA-Z][a-zA-Z0-9+.-]*://)[^\s/:@]{20,}(?=@)")
 
 # GitHub credentials BY SUBSTANCE (not by an accidental neighbouring word): the prefix is
 # GitHub's own token scheme — ``ghs_`` installation, ``ghp_`` classic PAT, ``gho_``/``ghu_``
@@ -134,9 +194,16 @@ _JWT = re.compile(r"\beyJ[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}
 #
 # bob-zmp prepends the KEY-MATERIAL rules and they run FIRST, deliberately: a whole PEM
 # block collapses into ONE marker before the line-oriented rules can shred its body into
-# a dozen half-redacted base64 lines.
+# a dozen half-redacted base64 lines. bob-a6b.13 puts the URL-userinfo rules next to it,
+# ahead of the line-oriented rules, so the URL grammar is judged on the RAW text and the
+# redaction stays PRECISE: ``url = https://bob:[REDACTED]@github.com/o/r.git`` keeps its
+# host, while a secret-NAMED key (``token_url = …``) is still blanked wholesale by rule 1
+# afterwards. 🔴 Honest framing: for the plain ``url`` key the ORDER is not what saves us
+# (no line rule matches that key at all) — order buys precision here, not the invariant.
 _SECRET_SUBSTITUTIONS: tuple[tuple[re.Pattern[str], str], ...] = (
     (_PEM_PRIVATE_KEY, _REDACTION),
+    (_URL_USERINFO_PASSWORD, r"\1" + _REDACTION),
+    (_URL_USERINFO_BARE, r"\1" + _REDACTION),
     (_GITHUB_TOKEN, _REDACTION),
     (_JWT, _REDACTION),
     (
@@ -187,14 +254,15 @@ def _resolve(path: Path) -> Path:
 
 
 def _is_secret_shaped(relative: Path) -> bool:
-    """Whether ``relative`` names private-key / credential-store material (bob-zmp).
+    """Whether ``relative`` names credential material by shape (bob-zmp, bob-a6b.13).
 
     Judged on the path RELATIVE to the repo root, segment by segment, so the verdict is
     about what Bob is reaching for and never about where the checkout happens to live (a
     repo cloned under ``~/.secrets/`` must not deny its own whole tree). A segment that IS
-    a secret store (:data:`_SECRET_STORE_NAMES`) denies the store and everything beneath
-    it; a key SUFFIX (:data:`_SECRET_FILE_SUFFIXES`) or an ssh-key NAME PREFIX
-    (:data:`_SECRET_NAME_PREFIXES`) denies that file wherever in the tree it sits.
+    a secret store or one of git's service files (:data:`_DENIED_SEGMENT_NAMES`) denies
+    that name and everything beneath it; a key SUFFIX (:data:`_SECRET_FILE_SUFFIXES`) or
+    an ssh-key NAME PREFIX (:data:`_SECRET_NAME_PREFIXES`) denies that file wherever in
+    the tree it sits.
 
     Matching is case-insensitive (``server.KEY`` is the same file to the filesystem Bob
     reads on) and, for the store names, EXACT — the denial is a pointed hole in the
@@ -202,7 +270,7 @@ def _is_secret_shaped(relative: Path) -> bool:
     """
     for part in relative.parts:
         name = part.lower()
-        if name in _SECRET_STORE_NAMES:
+        if name in _DENIED_SEGMENT_NAMES:
             return True
         if name.endswith(_SECRET_FILE_SUFFIXES):
             return True

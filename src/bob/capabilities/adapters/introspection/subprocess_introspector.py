@@ -106,10 +106,12 @@ if TYPE_CHECKING:
 
     from bob.capabilities.introspection.privacy_guard import PrivacyGuard
 
-# Repo-navigation bounds (BOB-067). ``.git`` is skipped when walking the tree —
-# pure practicality (a huge binary store that would flood a match list), not a
-# privacy concern. ``find_file`` caps its result list so a broad glob never floods
-# the model, with an honest truncation note appended.
+# Repo-navigation bounds (BOB-067). ``.git`` is skipped when walking the tree: first for
+# practicality (a huge binary store that would flood a match list), and since bob-a6b.13
+# also for privacy — git's own config carries the credentialed remote URL, so the pure
+# guard refuses that subtree too and this walk would only be throwing away paths the
+# guard rejects one line later. ``find_file`` caps its result list so a broad glob never
+# floods the model, with an honest truncation note appended.
 _GIT_DIR = ".git"
 _FIND_FILE_MAX_RESULTS = 200
 

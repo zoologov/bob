@@ -238,6 +238,83 @@ def test_secret_shape_denial_does_not_break_full_repo_navigation(
     assert guard.allows_path(REPO_ROOT / rel) is True
 
 
+# --- DENY: git's own service files, which carry credentials by construction ----
+# 🔴 MAJOR-6 (bob-a6b.13): the FULL-REPO allowance let ``read_code('.git/config')`` return
+#     [remote "origin"]
+#         url = https://bob:hunter2SUPERSECRET@github.com/owner/repo.git
+# verbatim — the store denials knew ``.git-credentials`` and ``.netrc`` but not ``.git``
+# itself. And it became MORE likely in this very epic: bob-a6b.10 moved the example config
+# from ssh to https, i.e. WE raised the chance a token lands in a workplace's ``.git/config``.
+
+
+@pytest.mark.parametrize(
+    "rel",
+    [
+        ".git/config",  # the reproduced read: the remote URL carries the token
+        ".git",  # …and the directory itself, so listing it is refused too
+        ".git/credentials",  # a store git can be told to write inside its own dir
+        ".git/FETCH_HEAD",  # echoes the credentialed URL of the last fetch
+        ".git/logs/HEAD",  # the reflog names where the clone came from
+        ".clones/epic-bob-089/.git/config",  # 🔴 Bob's own long-lived workplace clone
+        ".clones/epic-bob-089/.git",
+        ".git/worktrees/epic/config.worktree",  # the per-worktree config
+        ".gitconfig",  # a user-level git config planted inside the tree
+        "gitconfig",  # the spawn-env's substitute global config (credential.helper)
+        ".clones/.spawn-env/gitconfig",
+        ".clones/.spawn-env/credentials",  # the 0600 token store the spawn env writes
+    ],
+)
+def test_denies_git_service_files_that_carry_credentials(
+    guard: PrivacyGuard, rel: str
+) -> None:
+    # The path is INSIDE the repo (BOB-067 would allow it) — refused on SHAPE, because
+    # these files hold a credentialed remote URL / credential-helper setting BY
+    # CONSTRUCTION, and none of them is source with an engineering question to answer.
+    assert guard.allows_path(REPO_ROOT / rel) is False
+
+
+@pytest.mark.parametrize(
+    "rel",
+    [
+        ".gitignore",  # a lookalike name — exact segment match only
+        ".gitmodules",
+        ".gitattributes",
+        ".github/workflows/ci.yml",  # CI config, not git's metadata dir
+        ".github",
+        "config/bob.example.yaml",  # ORDINARY config (values scrubbed by sanitize)
+        "config",
+        "src/bob/infrastructure/config/loader.py",
+        "src/bob/infrastructure/config/__init__.py",
+        "src/bob/coding/adapters/git_clone.py",  # code ABOUT git, not git's own store
+        "docs/domains/identity/README.md",
+        "git/notes.md",  # a plain ``git`` dir is not ``.git``
+        "src/gitconfig_writer.py",  # ``gitconfig`` as a name PART, not the whole name
+    ],
+)
+def test_git_service_denial_does_not_hide_ordinary_repo_files(
+    guard: PrivacyGuard, rel: str
+) -> None:
+    # 🔴 The property the reviewer confirmed after bob-zmp and that must NOT be lost: the
+    # shape denial hides ZERO tracked files. ``.gitignore``/``.github``/``config/`` are the
+    # near-misses that would break BOB-067 navigation if the rule were sloppy.
+    assert guard.allows_path(REPO_ROOT / rel) is True
+
+
+def test_denies_a_git_config_reached_through_dotdot(guard: PrivacyGuard) -> None:
+    # The verdict is on the RESOLVED path, so a detour cannot launder the git dir.
+    assert guard.allows_path(REPO_ROOT / "src" / ".." / ".git" / "config") is False
+
+
+def test_denies_the_owners_home_git_config_as_an_escape(guard: PrivacyGuard) -> None:
+    # A ``~/.gitconfig``-like file (the owner's global git config, which may hold a
+    # credential helper) is unreachable on TWO independent grounds: it is outside the repo
+    # (containment), and its name is a git config (shape) if a repo ever roots at $HOME.
+    assert guard.allows_path(Path("/home/bob/.gitconfig")) is False
+    home_repo = PrivacyGuard(Path("/home/bob"))
+    assert home_repo.allows_path(Path(".gitconfig")) is False
+    assert home_repo.allows_path(Path("projects/bob/src/app.py")) is True
+
+
 def test_secret_shape_denial_ignores_the_repo_roots_own_name(guard: PrivacyGuard) -> None:
     # A repo that HAPPENS to live under a path segment like ``.secrets`` (or a user dir
     # named ``id_rsa_backup``) must not deny its own whole tree: the shape is checked on
@@ -534,6 +611,113 @@ def test_sanitize_does_not_over_redact_key_and_token_lookalikes(
     # Precision: dotted identifiers, versions, ``gho``/``github_pat`` lookalikes and a
     # PUBLIC certificate block are NOT credential material and stay readable — otherwise
     # the backstop would quietly blind Bob to his own repo (BOB-067).
+    assert guard.sanitize(ordinary) == ordinary
+
+
+# --- sanitize: credentials carried INSIDE a URL (bob-a6b.13, MAJOR-6) ----------
+# 🔴 The second half of MAJOR-6, and the half that works even when the PATH is allowed: the
+# key in ``.git/config`` is called ``url``, so no name-based rule fires, and the password can
+# be ANY string, so no token-prefix rule fires either. The rule below is about the URL
+# GRAMMAR — whatever sits between ``:`` and the ``@`` ending the userinfo is a password.
+# Fixtures are real-SHAPE but synthetic.
+
+# The exact reviewer fixture, as git writes it into ``.git/config``.
+_GIT_CONFIG_URL_SECRET = "hunter2SUPERSECRET"  # noqa: S105 — synthetic fixture
+_GIT_CONFIG_BLOCK = (
+    '[remote "origin"]\n'
+    f"\turl = https://bob:{_GIT_CONFIG_URL_SECRET}@github.com/owner/repo.git\n"
+    "\tfetch = +refs/heads/*:refs/remotes/origin/*\n"
+)
+
+
+def test_sanitize_redacts_the_password_in_a_git_config_remote_url(
+    guard: PrivacyGuard,
+) -> None:
+    # 🔴 The reproduced text, verbatim. The KEY is ``url`` — the redaction must come from
+    # the URL shape, not from the key's name.
+    out = guard.sanitize(_GIT_CONFIG_BLOCK)
+
+    assert _GIT_CONFIG_URL_SECRET not in out
+    assert _REDACTION_MARK in out
+    # The rest of the file stays readable — Bob can still say WHERE the remote points and
+    # AS WHOM: exactly the password slot is gone, the URL is still a readable URL.
+    assert f"url = https://bob:{_REDACTION_MARK}@github.com/owner/repo.git" in out
+    assert '[remote "origin"]' in out
+    assert "+refs/heads/*:refs/remotes/origin/*" in out
+
+
+@pytest.mark.parametrize(
+    ("text", "sensitive"),
+    [
+        # 1. the git-config form, no key name to help us.
+        ("url = https://bob:hunter2SUPERSECRET@github.com/o/r.git", "hunter2SUPERSECRET"),
+        # 2. bare URL in prose, no assignment at all.
+        ("clone https://bob:hunter2SUPERSECRET@github.com/o/r.git now", "hunter2SUPERSECRET"),
+        # 3. a non-github host and a non-token-shaped password.
+        ("https://deploy:p4ssw0rd@git.example.invalid/o/r.git", "p4ssw0rd"),
+        # 4. an explicit port after the host.
+        ("https://bob:s3cr3tvalue@gh.example.com:8443/o/r", "s3cr3tvalue"),
+        # 5. http, not https.
+        ("http://bob:s3cr3tvalue@internal.invalid/repo", "s3cr3tvalue"),
+        # 6. another transport: ssh:// with a password.
+        ("ssh://user:pwSuperSecret@example.com/org/bob.git", "pwSuperSecret"),
+        # 7. git's own dual-transport spelling.
+        ("git+https://bob:pwSuperSecret@github.com/o/r", "pwSuperSecret"),
+        # 8. NO username at all — the password still follows the ``:``.
+        ("https://:pwSuperSecret@github.com/o/r", "pwSuperSecret"),
+        # 9. 🔴 an ``@`` INSIDE the password (the MAJOR-4 fuzz form): the userinfo ends at
+        #    the LAST ``@``, so nothing may be left behind after the redaction.
+        ("https://bob:tok@enSecret@github.com/o/r", "enSecret"),
+        # 10. JSON / log line, quoted.
+        ('{"remote": "https://bob:pwSuperSecret@github.com/o/r.git"}', "pwSuperSecret"),
+        # 11. the credential-store line with the real username (was scrubbed only by the
+        #     ACCIDENTAL "token" substring before — now by grammar).
+        (
+            "https://x-access-token:pwSuperSecret@github.com/o/r",
+            "pwSuperSecret",
+        ),
+        # 12. a username that mentions nothing sensitive AND a plain-word password.
+        ("https://bobby:opensesame@github.com/o/r", "opensesame"),
+    ],
+)
+def test_sanitize_redacts_url_userinfo_whatever_the_key_or_shape(
+    guard: PrivacyGuard, text: str, sensitive: str
+) -> None:
+    out = guard.sanitize(text)
+
+    assert sensitive not in out
+    assert _REDACTION_MARK in out
+
+
+def test_sanitize_redacts_a_token_used_as_the_whole_userinfo(guard: PrivacyGuard) -> None:
+    # ``https://<token>@github.com/o/r.git`` is a REAL remote form (GitHub accepts a token
+    # as the username), and there is no ``:`` to anchor on — a userinfo long enough to be a
+    # credential is redacted on its own, even when the token has no vendor prefix.
+    opaque = "abcdefghijklmnopqrstuvwxyz012345"
+    out = guard.sanitize(f"url = https://{opaque}@git.example.invalid/o/r.git")
+
+    assert opaque not in out
+    assert _REDACTION_MARK in out
+
+
+@pytest.mark.parametrize(
+    "ordinary",
+    [
+        "ssh://git@github.com/bobiverse-dev/bob.git",  # a LOGIN name, not a secret
+        "ssh://git@host/owner/repo.git",
+        "https://github.com/zoologov/bob.git",  # no userinfo at all
+        "http://localhost:8080/health",  # a port is not a password
+        "see https://zoologov.github.io/bob/ for the landing page",
+        "mail the owner at owner@example.com about it",  # no scheme -> not a URL rule
+        "git@github.com:owner/repo.git",  # scp-syntax: no ``://`` either
+        "https://example.com/path?a=1#frag",
+    ],
+)
+def test_sanitize_does_not_over_redact_urls_without_credentials(
+    guard: PrivacyGuard, ordinary: str
+) -> None:
+    # 🔴 BOB-067 must survive here too: ``ssh://git@…`` appears in this repo's own
+    # docstrings, so blinding a plain login name would make Bob unable to read his own code.
     assert guard.sanitize(ordinary) == ordinary
 
 

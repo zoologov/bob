@@ -959,6 +959,18 @@ ignore = [
     "RUF002",
     "RUF003",
 ]
+# Семья переадресующих git-переменных (bob-a6b.12, ревью MAJOR-5): каждая проверяется
+# ПОПЫТКОЙ на НАСТОЯЩЕМ git фиксированной формой без шелла (→ S603/S607), потому что всё
+# содержание этих тестов — поведение самого git, а фейк доказал бы контракт фейка (§0.3 п.4).
+# Русские пояснения того, ЧТО именно переадресует каждая переменная и чем это доказано
+# (Cyrillic look-alikes intentional → RUF001-003).
+"tests/infrastructure/coding/test_spawn_redirect_vars_real_git.py" = [
+    "S603",
+    "S607",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
 "tests/infrastructure/coding/test_upstream_refusal_live_smoke.py" = [
     "S105",
     "S603",

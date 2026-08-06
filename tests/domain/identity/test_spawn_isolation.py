@@ -22,6 +22,8 @@ import pytest
 from bob.identity.ports import IdentityConfigError
 from bob.identity.spawn_isolation import (
     OWNER_CREDENTIAL_VARS,
+    PURGED_SPAWN_VARS,
+    REDIRECTING_GIT_VARS,
     SpawnIsolation,
     controlled_ssh_command,
     credential_store_line,
@@ -230,7 +232,67 @@ def test_the_inherited_git_config_parameters_block_is_named_for_removal() -> Non
 
 def test_removal_list_never_names_a_variable_the_isolation_itself_sets() -> None:
     # Иначе изоляция сняла бы свою же настройку — и это молча.
-    assert not set(OWNER_CREDENTIAL_VARS) & set(isolation_env(_ISOLATION))
+    assert not set(PURGED_SPAWN_VARS) & set(isolation_env(_ISOLATION))
+
+
+# --------------------------------------------------------------------------- #
+# 🔴 Семья переадресующих переменных (ревью bob-a6b.6, MAJOR-5)
+#
+# Состав — это и есть содержание фикса, поэтому он закреплён СПИСКОМ: добавление
+# переменной в семью обязано быть осознанным, а пропажа — красным тестом. Что каждая из
+# них РЕАЛЬНО делает на настоящем git (и что перестаёт делать в изоляции), доказано парами
+# в ``tests/infrastructure/coding/test_spawn_redirect_vars_real_git.py`` — здесь только
+# форма вердикта.
+# --------------------------------------------------------------------------- #
+
+
+def test_the_variables_that_repoint_a_git_operation_at_another_repository_are_named() -> None:
+    # Указатели на ЧАСТИ чужого репозитория: каталог, рабочее дерево, общий каталог,
+    # индекс, склад объектов (запись и чтение) и партиция refs.
+    assert set(REDIRECTING_GIT_VARS) == {
+        "GIT_DIR",
+        "GIT_WORK_TREE",
+        "GIT_COMMON_DIR",
+        "GIT_INDEX_FILE",
+        "GIT_OBJECT_DIRECTORY",
+        "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+        "GIT_NAMESPACE",
+        "GIT_CEILING_DIRECTORIES",
+        "GIT_CONFIG",
+    }
+
+
+def test_the_main_vector_of_the_family_is_named_first() -> None:
+    # 🔴 ``GIT_DIR`` — та самая переменная, которой ревьюер сдвинул ствол владельца ОДНОЙ
+    # командой из клона Боба (rc=0, коммит потерян).
+    assert "GIT_DIR" in REDIRECTING_GIT_VARS
+
+
+def test_the_spawn_purges_credentials_and_pointers_as_one_list() -> None:
+    # Один шов вычистки: и креды, и указатели. Иначе вторая половина семьи молча осталась
+    # бы в окружении (ровно то, чем MAJOR-5 и оказался рядом с закрытым MAJOR-1).
+    both_halves = (*OWNER_CREDENTIAL_VARS, *REDIRECTING_GIT_VARS)
+    assert both_halves == PURGED_SPAWN_VARS
+
+
+def test_the_two_halves_of_the_purge_list_do_not_overlap() -> None:
+    # Пересечение означало бы, что одна из двух причин вычистки — фикция.
+    assert not set(OWNER_CREDENTIAL_VARS) & set(REDIRECTING_GIT_VARS)
+
+
+def test_the_env_config_block_of_the_owner_is_left_alone_on_purpose() -> None:
+    # 🔴 Ревью проверило, что унаследованные ``GIT_CONFIG_KEY_i`` и ``XDG_CONFIG_HOME``
+    # изоляцию НЕ пробивают: наши пары встают ПОСЛЕ пар owner'а (и потому его helper
+    # сбрасывается), а XDG перекрыт ``GIT_CONFIG_GLOBAL``. Вычистка этих переменных
+    # сломала бы документированный контракт ``guarded_spawn_env`` про продолжение
+    # нумерации — поэтому их отсутствие в списке НАМЕРЕННО.
+    assert not {
+        "GIT_CONFIG_COUNT",
+        "GIT_CONFIG_KEY_0",
+        "GIT_CONFIG_VALUE_0",
+        "GIT_CONFIG_GLOBAL",
+        "XDG_CONFIG_HOME",
+    } & set(PURGED_SPAWN_VARS)
 
 
 # --------------------------------------------------------------------------- #

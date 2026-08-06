@@ -74,7 +74,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from bob.identity.spawn_isolation import (
-    OWNER_CREDENTIAL_VARS,
+    PURGED_SPAWN_VARS,
     isolation_config_pairs,
     isolation_env,
 )
@@ -130,8 +130,10 @@ def guarded_spawn_env(
     * ``isolation`` (BOB-089, срез C; ``coder.isolated_clone``) — изоляция от кредов
       owner'а: подменный global-конфиг, отключённый системный, сброшенный список
       credential-хелперов, ``GIT_TERMINAL_PROMPT=0``, ``GIT_ASKPASS`` в никуда, и из
-      окружения ВЫЧИЩАЮТСЯ :data:`~bob.identity.spawn_isolation.OWNER_CREDENTIAL_VARS`
-      (``gh``-токен, сокет ssh-агента). Решения — в чистом ядре
+      окружения ВЫЧИЩАЮТСЯ :data:`~bob.identity.spawn_isolation.PURGED_SPAWN_VARS` —
+      и креды owner'а (``gh``-токен, сокет ssh-агента), и 🔴 указатели на ЧУЖОЙ
+      репозиторий (``GIT_DIR`` и родня: унаследованной переменной ствол владельца
+      откатывался ОДНОЙ командой, ревью bob-a6b.6 MAJOR-5). Решения — в чистом ядре
       :mod:`bob.identity.spawn_isolation`; здесь только склейка с окружением.
 
     Обе выключены → ``None``, что вызывающий передаёт как «без ``env=``»: спавн
@@ -157,7 +159,7 @@ def guarded_spawn_env(
             for prefix in PUSH_GUARD_URL_PREFIXES
         ]
     if isolation is not None:
-        for var in OWNER_CREDENTIAL_VARS:
+        for var in PURGED_SPAWN_VARS:
             env.pop(var, None)
         env.update(isolation_env(isolation))
         pairs += list(isolation_config_pairs(isolation))
