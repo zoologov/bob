@@ -34,7 +34,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from bob.identity.spawn_isolation import SpawnIsolation, credential_store_line
+from bob.identity.spawn_isolation import (
+    SpawnIsolation,
+    controlled_ssh_command,
+    credential_store_line,
+)
 
 __all__ = ["SpawnIsolationFiles"]
 
@@ -43,8 +47,8 @@ __all__ = ["SpawnIsolationFiles"]
 _DIR_MODE = 0o700
 _FILE_MODE = 0o600
 
-#: Содержимое подменного global-конфига: сброс списка хелперов + записка человеку,
-#: который однажды найдёт этот файл и захочет понять, откуда он взялся.
+#: Шаблон подменного global-конфига: сброс списка хелперов, контролируемый ssh + записка
+#: человеку, который однажды найдёт этот файл и захочет понять, откуда он взялся.
 _GLOBAL_CONFIG = """\
 # Подменный global-конфиг git для спавна claude (bob, BOB-089).
 # Создаётся автоматически; правки будут перезаписаны.
@@ -52,7 +56,23 @@ _GLOBAL_CONFIG = """\
 # системного и глобального конфигов, — у спавна не остаётся кредов owner'а.
 [credential]
 \thelper =
+# И ssh — не ключом owner'а из ~/.ssh: у команды ниже явно назван IdentityFile,
+# которого нет. Тот же слой, что переменная GIT_SSH_COMMAND, но ФАЙЛОМ — он живой,
+# даже если переменную снимут изнутри (проверено: core.sshCommand сильнее GIT_SSH).
+[core]
+\tsshCommand = {ssh_command}
 """
+
+
+def _config_value(raw: str) -> str:
+    """Обернуть значение в кавычки для git-конфига (в них ``#`` и ``;`` — не комментарий).
+
+    Значение приезжает из ``coder.clone_root``, то есть из конфига owner'а: путь с решёткой
+    без кавычек обрезал бы строку комментарием, и в конфиге осталась бы команда ssh БЕЗ
+    ``IdentityFile`` — то есть дефолтные ключи owner'а, молча и в виде исправного файла.
+    """
+    escaped = raw.replace("\\", "\\\\").replace('"', '\\"')
+    return f'"{escaped}"'
 
 
 class SpawnIsolationFiles:
@@ -75,8 +95,15 @@ class SpawnIsolationFiles:
         line = credential_store_line(fork_url=fork_url, token=token) if token else ""
         self._root.mkdir(parents=True, exist_ok=True)
         self._root.chmod(_DIR_MODE)
+        # Ключа у спавна нет — и путь, которым он «назван», обязан остаться пустым местом:
+        # настоящий ключ, оказавшийся здесь, ssh взял бы в дело.
+        ssh_identity = self._root / "ssh-identity-disabled"
+        ssh_identity.unlink(missing_ok=True)
+        ssh_command = controlled_ssh_command(identity=str(ssh_identity))
         config_global = self._root / "gitconfig"
-        config_global.write_text(_GLOBAL_CONFIG, encoding="utf-8")
+        config_global.write_text(
+            _GLOBAL_CONFIG.format(ssh_command=_config_value(ssh_command)), encoding="utf-8"
+        )
         gh_config_dir = self._root / "gh"
         gh_config_dir.mkdir(exist_ok=True)
         gh_config_dir.chmod(_DIR_MODE)
@@ -89,6 +116,7 @@ class SpawnIsolationFiles:
             return SpawnIsolation(
                 config_global=str(config_global),
                 askpass=str(askpass),
+                ssh_identity=str(ssh_identity),
                 gh_config_dir=str(gh_config_dir),
             )
         # 🔴 Права СНАЧАЛА, содержимое потом: иначе между записью и ``chmod`` существует
@@ -101,6 +129,7 @@ class SpawnIsolationFiles:
         return SpawnIsolation(
             config_global=str(config_global),
             askpass=str(askpass),
+            ssh_identity=str(ssh_identity),
             gh_config_dir=str(gh_config_dir),
             credential_store=str(store),
         )

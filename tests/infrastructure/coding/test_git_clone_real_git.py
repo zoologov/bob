@@ -424,21 +424,74 @@ async def test_ensure_reuses_the_clone_so_work_accumulates(
     assert (Path(second) / "accumulated.py").exists()  # место НЕ пересоздано
 
 
-async def test_ensure_starts_from_a_branch_the_source_already_accumulated(
-    owner_repo: tuple[Path, Path], tmp_path: Path
-) -> None:
-    # 🔴 Урок BOB-087.D5b: существующая ветка ЧЕКАУТИТСЯ, а не пересоздаётся поверх HEAD,
-    # иначе накопленная в ней работа молча исчезает.
-    work, _fork = owner_repo
-    _git(work, "switch", "-c", "bob/epic-old")
-    _write(work, "earlier.py", "print('earlier session')\n")
+def _accumulate_in_the_fork(work: Path, fork: Path, branch: str, filename: str) -> None:
+    """Довести работу прошлого сеанса до ветки ``branch`` В ФОРКЕ и убрать её у владельца.
+
+    🔴 Это ПРОД-дорога (ревью bob-a6b.6, MAJOR-2): работа Боба копится там, куда её
+    отправляет ``commit_and_push`` — в форке. У владельца этой ветки нет вовсе, и снятие
+    локальной ветки здесь — не декорация, а контроль: без него тест снова мерил бы
+    репозиторий владельца.
+    """
+    _git(work, "switch", "-c", branch)
+    _write(work, filename, "print('earlier session')\n")
     _git(work, "add", ".")
     _git(work, "commit", "-m", "work from an earlier session")
+    _git(work, "push", f"file://{fork}", branch)
     _git(work, "switch", "main")
+    _git(work, "branch", "-D", branch)
 
-    path = await _adapter(tmp_path, work).ensure("bob/epic-old")
+
+async def test_ensure_starts_from_a_branch_the_fork_already_accumulated(
+    owner_repo: tuple[Path, Path], tmp_path: Path
+) -> None:
+    # 🔴 Урок BOB-087.D5b, реализованный ПРОТИВ того репозитория, где копится работа
+    # (ревью bob-a6b.6, MAJOR-2). Существующая ветка ЧЕКАУТИТСЯ, а не пересоздаётся поверх
+    # HEAD, иначе накопленная в ней работа молча исчезает — а спрашивать про неё надо у
+    # ФОРКА: у владельца её нет и быть не должно.
+    work, fork = owner_repo
+    _accumulate_in_the_fork(work, fork, "bob/epic-old", "earlier.py")
+    # Контроль: у владельца ветки НЕТ — то есть тест мерит именно дорогу к форку.
+    assert "bob/epic-old" not in _git(work, "branch", "--list")
+
+    path = await _adapter(tmp_path, work, fork_url=f"file://{fork}").ensure("bob/epic-old")
 
     assert (Path(path) / "earlier.py").exists()
+
+
+async def test_ensure_does_not_pick_up_a_branch_that_lives_only_in_the_owners_repository(
+    owner_repo: tuple[Path, Path], tmp_path: Path
+) -> None:
+    # Обратная половина того же Major: ветка с таким именем есть у ВЛАДЕЛЬЦА, но не в
+    # форке. Накопленной работы Боба в ней нет — значит переиспользовать её состояние
+    # нельзя, это чужая работа. Ветка заводится с HEAD, а push'ом уедет в форк.
+    work, fork = owner_repo
+    _git(work, "switch", "-c", "bob/epic-old")
+    _write(work, "owners-own-work.py", "print('the owner worked here')\n")
+    _git(work, "add", ".")
+    _git(work, "commit", "-m", "the owner's own work on a same-named branch")
+    _git(work, "switch", "main")
+
+    path = await _adapter(tmp_path, work, fork_url=f"file://{fork}").ensure("bob/epic-old")
+
+    assert not (Path(path) / "owners-own-work.py").exists()
+
+
+async def test_the_clones_view_of_the_fork_holds_no_stale_branch_of_the_owner(
+    owner_repo: tuple[Path, Path], tmp_path: Path
+) -> None:
+    # Почему ``--prune``: сразу после клонирования refs ``origin/*`` описывают ветки
+    # ВЛАДЕЛЬЦА, и после переадресации remote'а они остались бы лежать как есть — то есть
+    # «форк» отвечал бы за владельца.
+    work, fork = owner_repo
+    _git(work, "switch", "-c", "bob/epic-old")
+    _write(work, "owners-own-work.py", "print('the owner worked here')\n")
+    _git(work, "add", ".")
+    _git(work, "commit", "-m", "the owner's own work")
+    _git(work, "switch", "main")
+
+    path = await _adapter(tmp_path, work, fork_url=f"file://{fork}").ensure("bob/epic-other")
+
+    assert "origin/bob/epic-old" not in _git(Path(path), "branch", "--remotes")
 
 
 async def test_ensure_refuses_a_foreign_directory_without_touching_it(

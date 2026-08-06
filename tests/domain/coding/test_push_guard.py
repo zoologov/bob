@@ -26,7 +26,10 @@ from bob.identity.spawn_isolation import OWNER_CREDENTIAL_VARS, SpawnIsolation
 _OWNER_GH_TOKEN = "owner-gh-token"  # noqa: S105 — фиктивное значение для проверки вычистки
 
 _ISOLATION = SpawnIsolation(
-    config_global="/w/gitconfig", askpass="/w/askpass-disabled", gh_config_dir="/w/gh"
+    config_global="/w/gitconfig",
+    askpass="/w/askpass-disabled",
+    ssh_identity="/w/ssh-identity-disabled",
+    gh_config_dir="/w/gh",
 )
 
 
@@ -234,7 +237,10 @@ def test_bobs_credential_store_arrives_as_the_last_helper() -> None:
         {},
         active=True,
         isolation=SpawnIsolation(
-            config_global="/w/c", askpass="/w/a", credential_store="/w/creds"
+            config_global="/w/c",
+            askpass="/w/a",
+            ssh_identity="/w/i",
+            credential_store="/w/creds",
         ),
     )
     assert env is not None

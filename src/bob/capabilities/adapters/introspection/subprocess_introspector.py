@@ -768,6 +768,12 @@ class SubprocessRepoIntrospector:
                 continue
             if _GIT_DIR in rel.parts:
                 continue
+            # 🔴 bob-zmp: the guard is asked here too, not only in read_file/list_dir —
+            # otherwise the refusal to LIST a secret store is one glob away from being
+            # bypassed (``find_file('.secrets/*')`` would enumerate the keys the guard
+            # just refused to show). Containment alone (below) cannot see key shapes.
+            if not self._guard.allows_path(candidate):
+                continue
             if not self._real_path_is_allowed(candidate):
                 continue
             yield rel

@@ -18,6 +18,7 @@ import pytest
 
 from bob.identity.adapters.spawn_isolation_files import SpawnIsolationFiles
 from bob.identity.ports import IdentityConfigError
+from bob.identity.spawn_isolation import controlled_ssh_command
 
 _FORK = "https://github.com/bobiverse-dev/bob.git"
 _TOKEN = "ghs_fake_installation_token"  # noqa: S105 — фиктивный «токен» для проверки утечек
@@ -139,6 +140,58 @@ def test_a_planted_askpass_helper_is_removed(tmp_path: Path) -> None:
 
     assert not planted.exists()
     assert isolation.askpass == str(planted)
+
+
+def test_the_ssh_identity_target_deliberately_does_not_exist(tmp_path: Path) -> None:
+    # 🔴 bob-a6b.10: ЯВНО названный ``IdentityFile`` — единственное, что отменяет дефолтные
+    # ключи owner'а из ``~/.ssh``; а раз ключа у спавна нет, файла быть и не должно.
+    isolation = SpawnIsolationFiles(tmp_path).materialize()
+
+    assert isolation.ssh_identity == str(tmp_path / "ssh-identity-disabled")
+    assert not Path(isolation.ssh_identity).exists()
+
+
+def test_a_planted_ssh_key_is_removed(tmp_path: Path) -> None:
+    # Настоящий ключ по этому пути превратил бы «изоляцию» в выдачу ключа: ssh взял бы его.
+    planted = tmp_path / "ssh-identity-disabled"
+    planted.write_text("-----BEGIN OPENSSH PRIVATE KEY-----\n", encoding="utf-8")
+
+    isolation = SpawnIsolationFiles(tmp_path).materialize()
+
+    assert not planted.exists()
+    assert isolation.ssh_identity == str(planted)
+
+
+def test_the_controlled_global_config_carries_the_same_ssh_command(tmp_path: Path) -> None:
+    # Второй слой ssh-дороги, независимый от блока ``GIT_CONFIG_*`` и от переменной
+    # ``GIT_SSH_COMMAND``: снимут их изнутри — останется ``core.sshCommand`` в файле.
+    isolation = SpawnIsolationFiles(tmp_path).materialize()
+
+    content = (tmp_path / "gitconfig").read_text(encoding="utf-8")
+    assert "[core]" in content
+    assert controlled_ssh_command(identity=isolation.ssh_identity) in content
+
+
+def test_the_ssh_command_in_the_config_is_quoted_so_a_hash_cannot_comment_it_out(
+    tmp_path: Path,
+) -> None:
+    # 🔴 ``coder.clone_root`` — значение из конфига owner'а, а в git-конфиге ``#`` и ``;``
+    # начинают КОММЕНТАРИЙ: без кавычек путь с решёткой обрезал бы строку, и второй слой
+    # молча превратился бы в «sshCommand = ssh -F none …» без ключа, то есть в дефолтные
+    # ключи owner'а. Что настоящий git читает значение целиком — проверено на нём же.
+    root = tmp_path / "clones#1" / ".spawn-env"
+
+    SpawnIsolationFiles(root).materialize()
+
+    line = next(
+        text
+        for text in (root / "gitconfig").read_text(encoding="utf-8").splitlines()
+        if "sshCommand =" in text
+    )
+    value = line.split("=", 1)[1].strip()
+    assert value.startswith('"')
+    assert value.endswith('"')
+    assert "clones#1" in value
 
 
 def test_materialising_twice_is_idempotent(tmp_path: Path) -> None:

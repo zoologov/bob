@@ -59,6 +59,7 @@ from bob.coding.clone_plan import (
     WorkspaceVerdict,
     checkout_argv,
     clone_argv,
+    fetch_argv,
     identity_argv,
     is_credential_free_url,
     origin_argv,
@@ -132,9 +133,10 @@ class GitClone:
         пересоздаётся), отсутствующий — заводится, а посторонний непустой каталог даёт
         громкий отказ (клонировать поверх git не даст, а удалять чужое молча нельзя).
 
-        Если ветка уже известна источнику, клон стартует с ``origin/<branch>``, а не с
-        HEAD: пересоздание такой ветки молча потеряло бы накопленную в ней работу
-        (урок BOB-087.D5b).
+        Если ветка уже есть В ФОРКЕ, клон стартует с ``origin/<branch>``, а не с HEAD:
+        пересоздание такой ветки молча потеряло бы накопленную в ней работу (урок
+        BOB-087.D5b). 🔴 Спрашивается именно форк — там, где работа копится, а не
+        репозиторий владельца (ревью bob-a6b.6, MAJOR-2).
         """
         dest = self._destination(branch)
         verdict = workspace_verdict(dest_exists=dest.exists(), is_repo=(dest / ".git").is_dir())
@@ -203,24 +205,44 @@ class GitClone:
         """
         dest.parent.mkdir(parents=True, exist_ok=True)
         await self._run(clone_argv(self._git_bin, source=str(self._source), dest=str(dest)))
-        on_origin = reuse_accumulated and await self._known_to_origin(dest, branch)
+        # 🔴 ПОРЯДОК: remote переадресуется на форк ДО вопроса о ветке (ревью bob-a6b.6,
+        # MAJOR-2). Пока origin указывает на репозиторий ВЛАДЕЛЬЦА, вопрос «есть ли такая
+        # ветка» задаётся не тому: работа Боба копится в ФОРКЕ, туда её отправляет
+        # ``commit_and_push``.
+        await self._run(origin_argv(self._git_bin, dest=str(dest), fork_url=self._fork_url))
+        on_origin = reuse_accumulated and await self._known_to_the_fork(dest, branch)
         await self._run(
             checkout_argv(self._git_bin, dest=str(dest), branch=branch, on_origin=on_origin)
         )
-        await self._run(origin_argv(self._git_bin, dest=str(dest), fork_url=self._fork_url))
         for argv in identity_argv(
             self._git_bin, dest=str(dest), app_user_id=self._app_user_id
         ):
             await self._run(argv)
 
-    async def _known_to_origin(self, dest: Path, branch: str) -> bool:
-        """Есть ли у клона remote-ветка ``origin/<branch>`` (накопленная ранее работа).
+    async def _known_to_the_fork(self, dest: Path, branch: str) -> bool:
+        """Есть ли ветка ``branch`` В ФОРКЕ (то есть накопленная ранее работа Боба).
+
+        🔴 Спрашивается именно ФОРК, а не репозиторий владельца (ревью bob-a6b.6,
+        MAJOR-2): работа долгоживущего места копится там, куда её отправляет
+        ``commit_and_push``. Вопрос владельцу давал молчаливую поломку восстановления —
+        ветки у него нет, клон встаёт на HEAD ``main``, а первый ``push -u`` без ``force``
+        падает non-fast-forward, и так каждый следующий раз.
+
+        Порядок из двух шагов: ``fetch --prune`` приводит локальный взгляд на ``origin``
+        (уже переадресованный на форк) к состоянию форка — иначе refs, привезённые из
+        репозитория владельца, отвечали бы за форк. Форк не настроен вовсе (remote'а нет)
+        → накопленной работе негде быть, и сети не касаемся.
 
         ``git branch --list --remotes`` выбран сознательно (как в ``GitWorktree``): он
         выходит с кодом 0 и при отсутствии ветки (пустой stdout), поэтому «ветки нет»
         никогда не приезжает как ``CommandError``, который пришлось бы глотать — а
-        проглоченная ошибка ровно так и читается как «ветки нет».
+        проглоченная ошибка ровно так и читается как «ветки нет». Недоступный форк,
+        наоборот, отказывает ГРОМКО (на ``fetch``), и это правильный обмен: молчаливое
+        «начнём с нуля» стоит дороже.
         """
+        if not self._fork_url:
+            return False
+        await self._run(fetch_argv(self._git_bin, dest=str(dest)))
         listed = await self._run(
             [self._git_bin, "-C", str(dest), "branch", "--list", "--remotes", f"origin/{branch}"]
         )

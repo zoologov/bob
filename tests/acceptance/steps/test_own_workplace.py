@@ -159,8 +159,14 @@ def the_owners_trunk_did_not_move(workplace_context: _WorkplaceContext) -> None:
     )
 
 
-@then("у рабочего места нет ни одного адреса, ведущего в репозиторий владельца")
-def no_remote_leads_back_to_the_owner(workplace_context: _WorkplaceContext) -> None:
+@then("у рабочего места нет ни одного настроенного remote'а, ведущего в репозиторий владельца")
+def no_configured_remote_leads_back_to_the_owner(workplace_context: _WorkplaceContext) -> None:
+    # 🔴 Утверждается РОВНО то, что проверяется: настроенных remote'ов на репозиторий
+    # владельца нет (`git remote -v`). Прежняя формулировка обещала «ни одного АДРЕСА» —
+    # и была неверна: путь к репозиторию владельца остаётся в reflog клона, а под общим UID
+    # намеренная дорога до ствола существует (доказано в том же дереве,
+    # `test_git_clone_real_git.py`). Живой .feature — документ для владельца; обещать в нём
+    # отозванную гарантию нельзя (ревью bob-a6b.6, MAJOR-3).
     remotes = remotes_here(workplace_context.place)
     assert str(workplace_context.owner_repo) not in remotes, (
         f"обратная дорога к репозиторию владельца осталась: {remotes!r}"

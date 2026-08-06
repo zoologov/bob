@@ -88,6 +88,28 @@ push обходится локальным `git update-ref refs/heads/main` — 
   НЕ возвращает — их гасит подменный global-конфиг файлом — а снимает стор самого Боба, то
   есть обход ведёт не к доступу, а к его потере.
 
+🔴 **Дописано по факту второй раз (волна 5, `bob-a6b.10`) — и это опять НЕ переписывание
+задним числом.** Всё выше — про credential-хелперы, то есть про **https**. Дороги по **ssh**
+раздел не покрывал вовсе, а она была открыта: из прод-окружения спавна `ssh -T git@github.com`
+отвечал `Hi <owner>! You've successfully authenticated`, `git ls-remote` апстрима по ssh —
+`rc=0`. Вычистки `SSH_AUTH_SOCK` мало: ключ owner'а читается **прямо с диска**, агент не нужен.
+
+- **`GIT_SSH_COMMAND`** (и тем же значением `core.sshCommand` в подменном global-конфиге —
+  второй слой, живой после `env -u GIT_SSH_COMMAND`; на настоящем git `core.sshCommand`
+  оказался сильнее унаследованного `GIT_SSH`):
+  `ssh -F none -o IdentitiesOnly=yes -o IdentityAgent=none -o BatchMode=yes -o IdentityFile=<путь, которого нет>`.
+- 🔴 **Что здесь легко сделать неправильно:** `IdentitiesOnly=yes` САМ ПО СЕБЕ не отключает
+  ключи owner'а («configured identity» включает дефолтные `~/.ssh/id_*`) — закрывает только
+  **явно названный** `IdentityFile`. А `-F none` нужен потому, что `IdentityFile` —
+  **многозначная** опция: ключ из `~/.ssh/config` **добавился бы** к нашему (тот же класс
+  ловушки, что `remote.origin.pushurl` в bob-5ao).
+- **Не закрывается и закрыто быть не может окружением:** прямой `ssh`/`scp` из спавна. `~`
+  OpenSSH раскрывает по записи в **passwd**, а не по `HOME` (проверено), поэтому «домашний
+  каталог ssh» подменить нечем. Это аргумент к **BOB-093** (раздельный UID) — тот же вывод,
+  что у локального файлового пути.
+- Следствие для конфигурации: `coder.fork_url` в примере переведён на **https** — по ssh спавн
+  теперь не ходит никуда, а installation-токен работает только по https.
+
 ### 4. Идентичность
 
 `user.name = bob[ai]`, `user.email = <app-user-id>+bob-ai-work[bot]@users.noreply.github.com`

@@ -197,6 +197,34 @@ def test_a_helper_declared_in_the_owners_environment_is_reset(
     assert _OWNER_SECRET not in _fill(repo, env).stdout
 
 
+def test_an_inherited_git_config_parameters_block_does_not_survive_the_reset(
+    repo: Path, owner_env: dict[str, str], tmp_path: Path
+) -> None:
+    # 🔴 Пятая дорога, найденная ревью (bob-a6b.6, MAJOR-1). ``GIT_CONFIG_PARAMETERS`` git
+    # читает ПОСЛЕ пар ``GIT_CONFIG_KEY_i``, поэтому унаследованная переменная перебивает
+    # наш сброс хелперов. Переменную не «снимают изнутри» — её НАСЛЕДУЮТ: git экспортирует
+    # её дочерним процессам, когда сам запущен как ``git -c …``, алиас или хук, и она
+    # доезжает до спавна.
+    inherited = dict(owner_env)
+    inherited["GIT_CONFIG_SYSTEM"] = str(tmp_path / "absent-system")
+    inherited["GIT_CONFIG_GLOBAL"] = str(tmp_path / "absent-global")
+    # Форма самого git: пары ``'ключ'='значение'``, как их экспортирует ``git -c …``.
+    helper_value = _OWNER_HELPER.strip('"')
+    inherited["GIT_CONFIG_PARAMETERS"] = f"'credential.helper'='{helper_value}'"
+
+    # Контроль: дорога РЕАЛЬНО есть, и она единственная в этом окружении.
+    assert f"password={_OWNER_SECRET}" in _fill(repo, inherited).stdout
+
+    env = guarded_spawn_env(inherited, active=False, isolation=_isolation(tmp_path))
+    assert env is not None
+    assert "GIT_CONFIG_PARAMETERS" not in env
+
+    result = _fill(repo, env)
+
+    assert _OWNER_SECRET not in result.stdout
+    assert "password=" not in result.stdout
+
+
 def test_a_helper_in_the_repositorys_own_config_is_reset(
     repo: Path, owner_env: dict[str, str], tmp_path: Path
 ) -> None:
@@ -328,3 +356,98 @@ def test_the_push_barrier_still_bites_under_isolation(
     # Барьер отработал ДО сети: имя схемы-заглушки само объясняет отказ.
     stub_scheme = PUSH_GUARD_STUB_URL.split("://")[0]
     assert stub_scheme in result.stderr
+
+
+# --------------------------------------------------------------------------- #
+# 🔴 ssh-дорога: чем git ходит по ``git@host:`` (bob-a6b.10)
+#
+# Ревьюер нашёл её ОТКРЫТОЙ: изоляция среза C ssh не касалась вовсе. Здесь проверяется
+# git-половина закрытия (что настоящий ssh с нашими опциями не аутентифицируется — в
+# ``tests/infrastructure/identity/test_ssh_isolation_real_ssh.py``, а отказ настоящего
+# GitHub — в opt-in ``test_ssh_road_live_smoke.py``). Сеть не трогается: хост ``.invalid``
+# не резолвится, а нам и нужно лишь узнать, КАКУЮ команду ssh запустил git.
+# --------------------------------------------------------------------------- #
+
+#: Маркер «git пошёл АМБИЕНТНОЙ ssh-дорогой owner'а»: если он в выводе — мера не сработала.
+_OWNER_SSH_MARKER = "OWNER-SSH-WAS-USED"
+
+
+def _owner_ssh(tmp_path: Path) -> Path:
+    """Подставной ssh owner'а: печатает маркер, чтобы дорогу было видно в выводе."""
+    script = tmp_path / "owner-ssh.sh"
+    script.write_text(f"#!/bin/sh\necho {_OWNER_SSH_MARKER} >&2\nexit 42\n", encoding="utf-8")
+    script.chmod(0o700)
+    return script
+
+
+def _ls_remote(repo: Path, env: dict[str, str]) -> subprocess.CompletedProcess[str]:
+    """Дёрнуть удалённый репозиторий по ssh-адресу — тем же путём, каким пошёл бы push."""
+    return subprocess.run(
+        ["git", "ls-remote", f"git@{_PROBE_HOST}:zoologov/bob.git"],
+        cwd=repo,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=60,
+    )
+
+
+def test_an_inherited_git_ssh_of_the_owner_does_not_win_over_the_controlled_command(
+    repo: Path, owner_env: dict[str, str], tmp_path: Path
+) -> None:
+    # ``GIT_SSH`` — вторая (устаревшая, но живая) переменная, которой задают транспорт, и
+    # она НАСЛЕДУЕТСЯ. Контроль: дорога реально есть — git запускает ssh owner'а.
+    with_owner_ssh = {**owner_env, "GIT_SSH": str(_owner_ssh(tmp_path))}
+    assert _OWNER_SSH_MARKER in _ls_remote(repo, with_owner_ssh).stderr
+
+    env = guarded_spawn_env(with_owner_ssh, active=False, isolation=_isolation(tmp_path))
+    assert env is not None
+
+    result = _ls_remote(repo, env)
+
+    assert _OWNER_SSH_MARKER not in result.stderr
+    assert result.returncode != 0
+
+
+def test_the_controlled_ssh_command_survives_stripping_it_from_the_environment(
+    repo: Path, owner_env: dict[str, str], tmp_path: Path
+) -> None:
+    # 🔴 Второй слой, как у сброса хелперов: ``env -u GIT_SSH_COMMAND`` снимает переменную,
+    # но подменный global-конфиг несёт ту же команду ФАЙЛОМ (``core.sshCommand``), и на
+    # настоящем git 2.49 он сильнее унаследованного ``GIT_SSH``. Без файла в этот момент
+    # снова заработал бы ssh owner'а.
+    with_owner_ssh = {**owner_env, "GIT_SSH": str(_owner_ssh(tmp_path))}
+    env = guarded_spawn_env(with_owner_ssh, active=False, isolation=_isolation(tmp_path))
+    assert env is not None
+    stripped = {key: value for key, value in env.items() if key != "GIT_SSH_COMMAND"}
+
+    result = _ls_remote(repo, stripped)
+
+    assert _OWNER_SSH_MARKER not in result.stderr
+
+
+def test_real_git_reads_the_whole_ssh_command_even_from_an_awkward_path(
+    repo: Path, owner_env: dict[str, str], tmp_path: Path
+) -> None:
+    # 🔴 ``coder.clone_root`` приезжает из конфига owner'а, а в git-конфиге ``#`` начинает
+    # КОММЕНТАРИЙ: без кавычек значение обрезалось бы на решётке, и в файле осталась бы
+    # команда ssh БЕЗ ``IdentityFile`` — то есть дефолтные ключи owner'а, и выглядело бы
+    # это как исправная настройка. Читает — сам git.
+    isolation = SpawnIsolationFiles(tmp_path / "clones#1" / "spawn-env").materialize()
+    env = guarded_spawn_env(owner_env, active=False, isolation=isolation)
+    assert env is not None
+
+    result = subprocess.run(
+        ["git", "config", "--get", "core.sshCommand"],
+        cwd=repo,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=30,
+    )
+
+    assert result.returncode == 0
+    assert result.stdout.strip() == env["GIT_SSH_COMMAND"]
+    assert isolation.ssh_identity in result.stdout

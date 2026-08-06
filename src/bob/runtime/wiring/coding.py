@@ -71,6 +71,19 @@ if TYPE_CHECKING:
 _SPAWN_ENV_DIR = ".spawn-env"
 
 
+def _under_repo_root(value: str) -> Path:
+    """Привязать относительный путь к КОРНЮ РЕПОЗИТОРИЯ, а не к текущему каталогу.
+
+    🔴 Урок BOB-087.D5b, он же ревью bob-a6b.6 (M4): ``source`` клона абсолютен
+    (:data:`~bob.runtime.config._REPO_ROOT`), а ``coder.clone_root`` по умолчанию
+    относителен — при ``cwd ≠ корень репозитория`` рабочие места и файлы окружения спавна
+    уехали бы в чужой каталог, и заметил бы это не тест, а прод. Абсолютное значение
+    владельца уважается как есть.
+    """
+    path = Path(value)
+    return path if path.is_absolute() else _REPO_ROOT / path
+
+
 def _build_coding_router(
     config: Mapping[str, object],
     *,
@@ -123,7 +136,7 @@ def _build_workspace(coder: Mapping[str, object]) -> GitWorktree | GitClone:
     if not _flag(coder, "isolated_clone"):
         return GitWorktree(_str(coder, "worktree_root", ".worktrees"))
     return GitClone(
-        _str(coder, "clone_root", ".clones"),
+        _under_repo_root(_str(coder, "clone_root", ".clones")),
         source=_REPO_ROOT,
         fork_url=_str(coder, "fork_url", ""),
         # Подпись работы в клоне (BOB-089.D): ``bob[ai]`` + ботовский noreply-адрес,
@@ -143,7 +156,9 @@ def _build_spawn_isolation(coder: Mapping[str, object]) -> SpawnIsolation | None
 
     OFF → ``None``: спавн вообще без ``env=`` (байт-в-байт прежний) и НИ ОДНОГО файла на
     диске. ON → файлы контролируемого окружения в ``<clone_root>/.spawn-env`` (0700):
-    подменный global-конфиг, пустой каталог конфигурации ``gh``, askpass в никуда.
+    подменный global-конфиг, пустой каталог конфигурации ``gh``, askpass в никуда и
+    «ключ» ssh в никуда (bob-a6b.10 — без него git ходил по ``git@host:`` ключом owner'а
+    из ``~/.ssh``, и сетевая дорога к апстриму по ssh была ОТКРЫТА).
 
     🔴 Кредов спавну не выдаётся (стор не создаётся): ветку в форк пушит процесс САМОГО
     Боба (``GitClone.commit_and_push``), а не ``claude`` внутри клона. Механизм выдачи
@@ -152,7 +167,7 @@ def _build_spawn_isolation(coder: Mapping[str, object]) -> SpawnIsolation | None
     """
     if not _flag(coder, "isolated_clone"):
         return None
-    root = Path(_str(coder, "clone_root", ".clones")) / _SPAWN_ENV_DIR
+    root = _under_repo_root(_str(coder, "clone_root", ".clones")) / _SPAWN_ENV_DIR
     return SpawnIsolationFiles(root).materialize()
 
 

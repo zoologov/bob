@@ -23,14 +23,18 @@ from bob.coding.adapters.git_clone import GitClone
 from bob.coding.adapters.git_worktree import GitWorktree
 from bob.coding.ports import PersistentWorkspace, Worktree
 from bob.runtime.config import _REPO_ROOT
+from bob.runtime.wiring import coding as coding_wiring
 from bob.runtime.wiring.coding import (
     _build_coding_assistant,
     _build_interactive_session,
+    _build_spawn_isolation,
     _build_workspace,
 )
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
+
+    import pytest
 
     from bob.coding.usecases.coding_assistant import WorkJournalRecorder
     from bob.infrastructure.persistence import SqliteConnection
@@ -130,12 +134,43 @@ def test_flag_off_still_honours_the_configured_worktree_root() -> None:
 
 
 def test_flag_on_builds_the_clone_adapter_rooted_at_the_repository() -> None:
+    # 🔴 Относительный ``clone_root`` привязан к КОРНЮ РЕПОЗИТОРИЯ, а не к текущему
+    # каталогу (ревью bob-a6b.6, M4): ``source`` абсолютен, поэтому при ``cwd ≠ корень``
+    # клоны уезжали бы не туда, а первым это заметил бы не тест, а прод — ровно урок
+    # BOB-087.D5b, который и был про относительный путь.
     workspace = _build_workspace({"isolated_clone": True})
 
     assert type(workspace) is GitClone
-    assert workspace._clone_root == Path(".clones")
+    assert workspace._clone_root == _REPO_ROOT / ".clones"
     assert workspace._source == _REPO_ROOT.resolve()
     assert workspace._fork_url == ""  # форк не настроен → у клона нет remote'а вовсе
+
+
+def test_a_relative_clone_root_does_not_follow_the_current_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    workspace = _build_workspace({"isolated_clone": True, "clone_root": "work/clones"})
+
+    assert type(workspace) is GitClone
+    assert workspace._clone_root == _REPO_ROOT / "work/clones"
+
+
+def test_the_spawn_environment_is_rooted_at_the_repository_too(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Тот же вопрос для файлов изоляции: ``<clone_root>/.spawn-env`` — сосед клонов, и
+    # уехать в чужой каталог по воле ``cwd`` он не должен. Корень репозитория подменён на
+    # одноразовый, чтобы тест не писал файлы в рабочее дерево.
+    monkeypatch.setattr(coding_wiring, "_REPO_ROOT", tmp_path / "repo")
+    monkeypatch.chdir(tmp_path)
+
+    isolation = _build_spawn_isolation({"isolated_clone": True, "clone_root": ".clones"})
+
+    assert isolation is not None
+    assert isolation.config_global.startswith(str(tmp_path / "repo" / ".clones" / ".spawn-env"))
+    assert not (tmp_path / ".clones").exists()  # ничего не легло рядом с cwd
 
 
 def test_flag_on_points_the_clone_at_the_configured_fork() -> None:

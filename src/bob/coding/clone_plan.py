@@ -52,6 +52,7 @@ __all__ = [
     "WorkspaceVerdict",
     "checkout_argv",
     "clone_argv",
+    "fetch_argv",
     "identity_argv",
     "is_credential_free_url",
     "origin_argv",
@@ -102,7 +103,8 @@ def checkout_argv(git_bin: str, *, dest: str, branch: str, on_origin: bool) -> l
 
     ``on_origin=False`` — ветка новая, создаётся на HEAD клона (тот же базовый коммит,
     что дал бы ``git worktree add -b``: паритет с прежним поведением).
-    ``on_origin=True`` — ветка уже известна источнику, и стартовой точкой берётся
+    ``on_origin=True`` — ветка уже есть в ФОРКЕ (``origin`` к этому моменту переадресован
+    на него, см. :func:`origin_argv` и :func:`fetch_argv`), и стартовой точкой берётся
     ``origin/<branch>``. 🔴 Урок BOB-087.D5b: пересоздать такую ветку поверх HEAD значит
     молча потерять НАКОПЛЕННУЮ в ней работу долгоживущего места.
     """
@@ -124,6 +126,23 @@ def origin_argv(git_bin: str, *, dest: str, fork_url: str) -> list[str]:
     if not fork_url:
         return [git_bin, "-C", dest, "remote", "remove", _ORIGIN]
     return [git_bin, "-C", dest, "remote", "set-url", _ORIGIN, fork_url]
+
+
+def fetch_argv(git_bin: str, *, dest: str) -> list[str]:
+    """Собрать ``git fetch --prune origin`` — привести взгляд клона на ФОРК к истине.
+
+    🔴 ЗАЧЕМ ЭТО ОТДЕЛЬНЫЙ ШАГ (ревью bob-a6b.6, MAJOR-2). Сразу после клонирования refs
+    ``refs/remotes/origin/*`` описывают ветки РЕПОЗИТОРИЯ ВЛАДЕЛЬЦА, а после
+    :func:`origin_argv` remote указывает уже на форк — и refs остаются лежать как есть.
+    Спросить в этот момент «есть ли ``origin/<branch>``» значит спросить ВЛАДЕЛЬЦА про
+    ветку, которая копится в ФОРКЕ. ``--prune`` и есть ответ: ветки, которых в форке нет,
+    из локального взгляда исчезают, поэтому дальше вопрос задаётся именно форку.
+
+    Недоступный форк даёт громкий отказ (``fetch`` выходит ненулевым кодом), и это верно:
+    молча начать с нуля значит потерять связь с накопленной работой, а узнать об этом
+    только на первом ``push`` (non-fast-forward).
+    """
+    return [git_bin, "-C", dest, "fetch", "--prune", _ORIGIN]
 
 
 def identity_argv(git_bin: str, *, dest: str, app_user_id: str) -> list[list[str]]:

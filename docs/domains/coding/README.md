@@ -303,7 +303,8 @@ OFF).** У linked worktree есть предел, который никакой 
 кредами. Поэтому тот же `coder.isolated_clone` включает и изоляцию окружения: `claude`
 спавнится с подменным global-конфигом git, отключённым системным, СБРОШЕННЫМ списком
 credential-хелперов, `GIT_TERMINAL_PROMPT=0`, askpass'ом в никуда, собственным пустым
-`GH_CONFIG_DIR` и без амбиентных `GH_TOKEN`/`GITHUB_TOKEN`/`SSH_AUTH_SOCK`. Механизм —
+`GH_CONFIG_DIR`, контролируемым `GIT_SSH_COMMAND` (bob-a6b.10 — см. ниже) и без амбиентных
+`GH_TOKEN`/`GITHUB_TOKEN`/`SSH_AUTH_SOCK`/`GIT_CONFIG_PARAMETERS`. Механизм —
 РАСШИРЕННЫЙ `push_guard.guarded_spawn_env` (второго механизма нет: обе меры выражаются одним
 блоком `GIT_CONFIG_*`), решения — в чистом ядре
 [`bob.identity.spawn_isolation`](../identity/README.md), файлы — в его адаптере. Барьер
@@ -315,6 +316,22 @@ not granted` + 403 предлагающему), а легитимный пуш �
 окружение границей НЕ является (тот же UID владеет своим окружением), но его обход даёт лишь
 процесс БЕЗ кредов. И внутри клона модель по-прежнему делает с рабочим деревом что угодно —
 правами это не закрывается вообще.
+
+🔴 **Поправка по факту (bob-a6b.10): «отказ по правам» относился только к https.** Абзац
+выше в первой редакции читался как «сетевая дорога к апстриму закрыта». Ревьюер проверил из
+ровно прод-окружения спавна: `ssh -T git@github.com` → `Hi <owner>! You've successfully
+authenticated`, `git ls-remote` апстрима по ssh → `rc=0`. Изоляция **не касалась ssh
+вовсе**, а по ssh Боб предъявлял не свой токен, а ключ owner'а — то есть «нет права записи»
+к этой дороге не относилось. Теперь git по ssh ходит контролируемой командой
+(`GIT_SSH_COMMAND` + `core.sshCommand` в подменном конфиге; каждая опция проверена на
+настоящем ssh — детали и почему `IdentitiesOnly` в одиночку не работает, в
+[доке `identity`](../identity/README.md)), и апстрим по ssh отвечает
+`Permission denied (publickey)`. **Не закрыт прямой вызов `ssh`** из спавна: ключ owner'а
+на диске под тем же UID, а `~` OpenSSH раскрывает по записи в passwd, не по `HOME` —
+окружением это не закрывается, только раздельным UID (BOB-093). Ограничение зафиксировано
+исполняемо (честная рамка в `test_ssh_road_live_smoke.py`), а `coder.fork_url` в примере
+конфига переведён на **https**, чтобы штатная настройка не вела по транспорту, на котором
+изоляции нет.
 
 **Подпись работы Боба (BOB-089.D, вместе с клоном).** В клоне выставляются
 `user.name = bob[ai]` и ботовский адрес
@@ -561,10 +578,14 @@ worktree-изоляция и containment, allowlist режимов раннер�
 Персистентное дерево проверяется на РЕАЛЬНОМ git
 (`tests/infrastructure/coding/test_git_worktree_persistent_real_git.py` — фейк этот контракт не
 воспроизводил), а спавн-окружение — `test_claude_spawn_env.py` / `test_push_guard_real_git.py` /
-`test_spawn_isolation_real_git.py` (изоляция от кредов owner'а: каждая дорога проверяется
-парой «контроль → изоляция» вердиктом самого git) / `test_upstream_refusal_live_smoke.py`
+`test_spawn_isolation_real_git.py` (изоляция от кредов owner'а И ssh-дорога: каждая дорога
+проверяется парой «контроль → изоляция» вердиктом самого git) /
+`test_upstream_refusal_live_smoke.py`
 (🔴 opt-in негативный смоук против НАСТОЯЩЕГО GitHub: отказ по правам с проверкой текста,
-легитимный пуш в форк работает) и `tests/runtime/wiring/test_coding_spawn_isolation.py`
+легитимный пуш в форк работает). ssh-половина живёт в узле `identity`:
+`tests/infrastructure/identity/test_ssh_isolation_real_ssh.py` (разбор конфигурации САМИМ
+ssh, без сети) и `test_ssh_road_live_smoke.py` (🔴 opt-in: отказ настоящего GitHub по ключу
++ честная рамка про прямой `ssh`). Плюс `tests/runtime/wiring/test_coding_spawn_isolation.py`
 (доезжает ли изоляция до границы процесса в ОБОИХ рантаймах; OFF → `None` и ни одного файла).
 Тесты живого терминала (юниты, адаптер на реальном процессе и приёмочный BDD) переехали вместе
 с модулем — см. раздел «Тесты» README [`interactive`](../interactive/README.md).

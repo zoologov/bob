@@ -23,6 +23,7 @@ from bob.identity.ports import IdentityConfigError
 from bob.identity.spawn_isolation import (
     OWNER_CREDENTIAL_VARS,
     SpawnIsolation,
+    controlled_ssh_command,
     credential_store_line,
     isolation_config_pairs,
     isolation_env,
@@ -31,6 +32,7 @@ from bob.identity.spawn_isolation import (
 _ISOLATION = SpawnIsolation(
     config_global="/w/gitconfig",
     askpass="/w/askpass-disabled",
+    ssh_identity="/w/ssh-identity-disabled",
     gh_config_dir="/w/gh",
 )
 
@@ -68,19 +70,95 @@ def test_gh_gets_its_own_empty_config_dir() -> None:
 
 
 def test_an_unset_gh_config_dir_is_not_invented() -> None:
-    env = isolation_env(SpawnIsolation(config_global="/w/c", askpass="/w/a"))
+    env = isolation_env(SpawnIsolation(config_global="/w/c", askpass="/w/a", ssh_identity="/w/i"))
     assert "GH_CONFIG_DIR" not in env
 
 
 def test_isolation_without_a_controlled_global_config_is_refused() -> None:
     # «Изоляция» без подменного global-конфига — это не изоляция, а её видимость.
     with pytest.raises(IdentityConfigError):
-        isolation_env(SpawnIsolation(config_global="", askpass="/w/a"))
+        isolation_env(SpawnIsolation(config_global="", askpass="/w/a", ssh_identity="/w/i"))
 
 
 def test_isolation_without_an_askpass_target_is_refused() -> None:
     with pytest.raises(IdentityConfigError):
-        isolation_env(SpawnIsolation(config_global="/w/c", askpass=""))
+        isolation_env(SpawnIsolation(config_global="/w/c", askpass="", ssh_identity="/w/i"))
+
+
+# --------------------------------------------------------------------------- #
+# 🔴 ssh-дорога: чем git ходит по ``git@host:`` (bob-a6b.10)
+#
+# До этой беады изоляция ssh не касалась ВОВСЕ, и это был не пробел в тексте, а открытая
+# дорога: ``ssh -T git@github.com`` из ровно прод-окружения спавна отвечал «Hi <owner>!»,
+# а ``git ls-remote`` апстрима по ssh проходил. Здесь — форма вердикта; то, что настоящий
+# ssh с этими опциями действительно не аутентифицируется, проверяется на настоящем
+# инструменте (``tests/infrastructure/identity/test_ssh_isolation_real_ssh.py``) и вживую
+# против настоящего GitHub (``tests/infrastructure/identity/test_ssh_road_live_smoke.py``).
+# --------------------------------------------------------------------------- #
+
+
+def test_git_is_given_a_controlled_ssh_command() -> None:
+    assert isolation_env(_ISOLATION)["GIT_SSH_COMMAND"] == controlled_ssh_command(
+        identity="/w/ssh-identity-disabled"
+    )
+
+
+def test_the_controlled_command_names_an_identity_file_explicitly() -> None:
+    # 🔴 ГЛАВНЫЙ факт, найденный на настоящем ssh 10.2: ``IdentitiesOnly=yes`` САМ ПО СЕБЕ
+    # ключи owner'а НЕ отключает — «configured identity» включает ДЕФОЛТНЫЕ файлы
+    # ``~/.ssh/id_*``, и с одним этим флагом ssh по-прежнему здоровался как owner. Дорогу
+    # закрывает только ЯВНО названный IdentityFile, которого нет.
+    assert "-o IdentityFile=/w/ssh-identity-disabled" in controlled_ssh_command(
+        identity="/w/ssh-identity-disabled"
+    )
+
+
+def test_the_controlled_command_reads_no_ssh_config_of_the_owner() -> None:
+    # ``~/.ssh/config`` owner'а вернул бы и IdentityFile, и IdentityAgent, и ProxyCommand.
+    assert "-F none" in controlled_ssh_command(identity="/w/i")
+
+
+def test_the_controlled_command_refuses_identities_offered_by_an_agent() -> None:
+    # Проверено вживую: с агентом, в который добавлен настоящий ключ owner'а, БЕЗ этих
+    # опций ssh здоровается как owner, а с каждой из них — «Permission denied (publickey)».
+    command = controlled_ssh_command(identity="/w/i")
+    assert "-o IdentitiesOnly=yes" in command
+    assert "-o IdentityAgent=none" in command
+
+
+def test_the_controlled_command_never_waits_for_a_prompt() -> None:
+    # Тот же смысл, что у ``GIT_TERMINAL_PROMPT=0``: неинтерактивный спавн обязан упасть.
+    assert "-o BatchMode=yes" in controlled_ssh_command(identity="/w/i")
+
+
+def test_the_controlled_command_starts_with_ssh_itself() -> None:
+    assert controlled_ssh_command(identity="/w/i").split()[0] == "ssh"
+
+
+def test_an_identity_path_with_a_space_is_quoted_for_the_shell() -> None:
+    # 🔴 git исполняет ``GIT_SSH_COMMAND`` ЧЕРЕЗ ШЕЛЛ, а ``coder.clone_root`` — значение из
+    # конфига owner'а. Без кавычек путь с пробелом разъехался бы на два аргумента, ssh взял
+    # бы IdentityFile до пробела — и, не найдя его, всё равно упал бы, но по НЕ ТОЙ
+    # причине; а «-o IdentityFile=…» с обрезанным путём легко читается как исправное.
+    command = controlled_ssh_command(identity="/w/my clones/ssh-identity-disabled")
+    assert "'IdentityFile=/w/my clones/ssh-identity-disabled'" in command
+
+
+def test_the_identity_path_is_written_stripped_of_surrounding_whitespace() -> None:
+    # Пустоту функция мерит по ``strip()`` — писать она обязана то же, что проверила.
+    assert controlled_ssh_command(identity="  /w/i  ") == controlled_ssh_command(identity="/w/i")
+
+
+def test_a_controlled_command_without_an_identity_target_is_refused() -> None:
+    # Пустой путь дал бы ``-o IdentityFile=`` — а это для ssh «опции нет», то есть
+    # ДЕФОЛТНЫЕ ключи owner'а. Тихо отдать половину меры хуже, чем упасть на сборке.
+    with pytest.raises(IdentityConfigError):
+        controlled_ssh_command(identity="   ")
+
+
+def test_isolation_without_an_ssh_identity_target_is_refused() -> None:
+    with pytest.raises(IdentityConfigError):
+        isolation_env(SpawnIsolation(config_global="/w/c", askpass="/w/a", ssh_identity=""))
 
 
 # --------------------------------------------------------------------------- #
@@ -101,7 +179,12 @@ def test_with_no_store_the_spawn_gets_no_credentials_at_all() -> None:
 
 def test_bobs_store_is_added_after_the_reset_never_before() -> None:
     pairs = isolation_config_pairs(
-        SpawnIsolation(config_global="/w/c", askpass="/w/a", credential_store="/w/creds")
+        SpawnIsolation(
+            config_global="/w/c",
+            askpass="/w/a",
+            ssh_identity="/w/i",
+            credential_store="/w/creds",
+        )
     )
     assert pairs == (
         ("credential.helper", ""),
@@ -111,7 +194,12 @@ def test_bobs_store_is_added_after_the_reset_never_before() -> None:
 
 def test_every_pair_configures_only_the_credential_helper() -> None:
     pairs = isolation_config_pairs(
-        SpawnIsolation(config_global="/w/c", askpass="/w/a", credential_store="/w/creds")
+        SpawnIsolation(
+            config_global="/w/c",
+            askpass="/w/a",
+            ssh_identity="/w/i",
+            credential_store="/w/creds",
+        )
     )
     assert {key for key, _ in pairs} == {"credential.helper"}
 
@@ -129,6 +217,15 @@ def test_ambient_github_tokens_are_named_for_removal() -> None:
 def test_the_ssh_agent_socket_is_named_for_removal() -> None:
     # Ключ owner'а в агенте пушит по ``git@github.com:`` без всякого хелпера.
     assert "SSH_AUTH_SOCK" in OWNER_CREDENTIAL_VARS
+
+
+def test_the_inherited_git_config_parameters_block_is_named_for_removal() -> None:
+    # 🔴 Найдено ревью (bob-a6b.6, MAJOR-1) и подтверждено на git 2.49: git читает
+    # ``GIT_CONFIG_PARAMETERS`` ПОСЛЕ пар ``GIT_CONFIG_KEY_i``, поэтому унаследованная
+    # переменная встаёт ПОСЛЕ нашего сброса и возвращает credential.helper owner'а. Она
+    # не «снимается изнутри», а НАСЛЕДУЕТСЯ (Боб запущен из-под ``git -c …`` / алиаса /
+    # хука) — то есть ровно тот класс, от которого мера и заведена.
+    assert "GIT_CONFIG_PARAMETERS" in OWNER_CREDENTIAL_VARS
 
 
 def test_removal_list_never_names_a_variable_the_isolation_itself_sets() -> None:
@@ -170,6 +267,80 @@ def test_a_token_with_a_bare_carriage_return_is_refused_too() -> None:
         credential_store_line(fork_url="https://github.com/o/r", token="T\rhttps://evil")
 
 
+def test_a_fork_url_with_a_line_break_is_refused_just_like_a_token_with_one() -> None:
+    # 🔴 Найдено ревью (bob-a6b.6, MAJOR-4): запрет стоял ТОЛЬКО на токене, а адрес
+    # проверку не проходил — и класс ``[^/]`` в разборе authority перевод строки МАТЧИТ.
+    # Ревьюер получил в сторе ДВЕ строки: 'https://x-access-token:<TOK>@github.com\n
+    # https:\n'. Запрет — на любой перевод строки в ЛЮБОМ поле, из которого собирается
+    # строка стора, иначе несущий инвариант функции держится только на одном её аргументе.
+    with pytest.raises(IdentityConfigError, match="fork URL"):
+        credential_store_line(fork_url="https://github.com\nhttps://evil.invalid/o/r", token="T")
+
+
+def test_a_fork_url_with_a_bare_carriage_return_is_refused_too() -> None:
+    with pytest.raises(IdentityConfigError, match="line break or control character"):
+        credential_store_line(fork_url="https://github.com\rhttps://evil.invalid/o/r", token="T")
+
+
+def test_a_fork_url_with_a_control_character_is_refused() -> None:
+    # Управляющие символы в поле строки стора не имеют смысла ни в одной форме: git читает
+    # файл построчно, а терминал, в котором владелец его посмотрит, ими управляется.
+    with pytest.raises(IdentityConfigError, match="control character"):
+        credential_store_line(fork_url="https://git\thub.com/o/r", token="T")
+
+
+def test_a_token_with_a_control_character_is_refused() -> None:
+    with pytest.raises(IdentityConfigError, match="installation token containing a line break"):
+        credential_store_line(fork_url="https://github.com/o/r", token="T\tT")
+
+
+def test_the_assembled_line_is_always_exactly_one_line() -> None:
+    # Контракт целиком, а не по полям: что бы ни пришло на вход, в стор уезжает ОДНА
+    # запись. Тест ловит и будущее поле, о котором проверка забудет.
+    line = credential_store_line(fork_url="https://gh.example.com:8443/o/r", token="T-o_k.en")
+    assert line.count("\n") == 1
+    assert line.endswith("\n")
+
+
+def test_a_token_containing_an_at_sign_is_refused_rather_than_silently_truncated() -> None:
+    # 🔴 Ревьюер показал форму отказа молча: 'https://x-access-token:tok@en@github.com' —
+    # git берёт ПЕРВЫЙ '@', то есть паролем становится 'tok', а хостом 'en@github.com'.
+    # Токен обрезан и записан НЕ ТОМУ хосту; отказ честнее.
+    with pytest.raises(IdentityConfigError, match="'@'"):
+        credential_store_line(fork_url="https://github.com/o/r", token="tok@en")
+
+
+def test_a_refusal_about_an_at_sign_in_the_token_never_echoes_it() -> None:
+    secret = "ghs_secret@evil.invalid"  # noqa: S105 — фиктивный «токен» для проверки утечки
+    with pytest.raises(IdentityConfigError) as failure:
+        credential_store_line(fork_url="https://github.com/o/r", token=secret)
+    assert "ghs_secret" not in str(failure.value)
+
+
+def test_surrounding_whitespace_is_stripped_from_the_token_that_gets_written() -> None:
+    # Пустоту функция мерит по ``strip()``, а писала — сырое значение: несовпадение
+    # проверки и записи. Пишется то, что проверено.
+    assert credential_store_line(fork_url="https://github.com/o/r", token="  T  ") == (
+        "https://x-access-token:T@github.com\n"
+    )
+
+
+def test_a_token_of_exactly_the_permitted_length_is_still_accepted() -> None:
+    # Граница предела ВКЛЮЧИТЕЛЬНАЯ, и это проверяется: мутация ``>`` → ``>=`` иначе
+    # выживает, то есть отказ уезжал бы на один символ раньше объявленного.
+    token = "t" * 4096
+    assert credential_store_line(fork_url="https://github.com/o/r", token=token) == (
+        f"https://x-access-token:{token}@github.com\n"
+    )
+
+
+def test_an_absurdly_long_token_is_refused_instead_of_being_written() -> None:
+    # Installation-токен GitHub — десятки байт. 100 КБ в этом поле означают, что на вход
+    # приехало не токен, а что-то другое; писать это в стор кредов незачем.
+    with pytest.raises(IdentityConfigError, match="longer than"):
+        credential_store_line(fork_url="https://github.com/o/r", token="t" * 100_000)
+
+
 def test_a_plain_http_fork_url_is_refused_because_the_token_would_travel_in_clear() -> None:
     # Значение константы-регекса, а не её вид: ``http://`` отправил бы токен открытым
     # текстом. Mutation про модульные константы не говорит ничего — поэтому юнит.
@@ -178,7 +349,7 @@ def test_a_plain_http_fork_url_is_refused_because_the_token_would_travel_in_clea
 
 
 def test_an_empty_token_is_refused_rather_than_written_as_empty_password() -> None:
-    with pytest.raises(IdentityConfigError):
+    with pytest.raises(IdentityConfigError, match="empty installation token"):
         credential_store_line(fork_url="https://github.com/o/r", token="   ")
 
 

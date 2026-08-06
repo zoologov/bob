@@ -18,6 +18,7 @@ from bob.coding.clone_plan import (
     WorkspaceVerdict,
     checkout_argv,
     clone_argv,
+    fetch_argv,
     identity_argv,
     is_credential_free_url,
     origin_argv,
@@ -112,6 +113,35 @@ def test_without_a_fork_the_remote_is_removed_entirely() -> None:
         "remove",
         "origin",
     ]
+
+
+# --------------------------------------------------------------------------- #
+# fetch_argv — у КОГО спрашивают про накопленную ветку (ревью bob-a6b.6, MAJOR-2)
+# --------------------------------------------------------------------------- #
+
+
+def test_the_fork_is_asked_about_its_branches_by_a_pruning_fetch() -> None:
+    # 🔴 ``--prune`` — не украшение. Сразу после клонирования refs ``origin/*`` описывают
+    # ветки РЕПОЗИТОРИЯ ВЛАДЕЛЬЦА; после переадресации remote'а на форк они остаются
+    # лежать как есть. Без прунинга ветка, которая есть ТОЛЬКО у владельца, читалась бы
+    # как «накопленная работа в форке», и клон встал бы на чужое состояние.
+    assert fetch_argv("git", dest="/clone") == [
+        "git",
+        "-C",
+        "/clone",
+        "fetch",
+        "--prune",
+        "origin",
+    ]
+
+
+def test_fetch_runs_the_injected_git_binary() -> None:
+    assert fetch_argv("my-git", dest="/clone")[0] == "my-git"
+
+
+def test_fetch_never_names_a_remote_other_than_origin() -> None:
+    # У клона remote РОВНО один и он — форк (или его нет вовсе): спрашивать больше некого.
+    assert fetch_argv("git", dest="/clone")[-1] == "origin"
 
 
 # --------------------------------------------------------------------------- #

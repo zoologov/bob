@@ -172,6 +172,81 @@ def test_allows_sibling_and_data_dirs_under_repo(
     assert guard.allows_path(REPO_ROOT / rel) is True
 
 
+# --- DENY: private-key / secret-store SHAPES anywhere in the tree (bob-zmp) ---
+# 🔴 The reproduced CRITICAL: under the BOB-067 "whole repo is readable" invariant a
+# GitHub-App private key that happened to live in the tree (``.secrets/*.pem``) was
+# returned VERBATIM to the external LLM. Full-repo navigation stays, but private-key
+# material is a HOLE in it: the shape denial below overrides the allowance wherever the
+# secret sits — the class, not the two files the owner is moving out by hand.
+
+
+@pytest.mark.parametrize(
+    "rel",
+    [
+        ".secrets",  # the directory itself — the reproduced ``list_dir('.secrets')``
+        ".secrets/bob-ai-work.private-key.pem",  # the reproduced ``read_code`` leak
+        ".secrets/notes.txt",  # anything under it, whatever the suffix
+        "tools/.secrets/dump.sql",  # nested secret store, not only at the root
+        "keys/service-account.pem",  # a .pem anywhere in the tree
+        "certs/server.KEY",  # suffix match is case-insensitive
+        "bundle.p12",
+        "bundle.pfx",
+        ".ssh/id_rsa",  # an ssh key dir planted inside the tree (worktree isolation)
+        "deploy/id_ed25519",  # an ssh key with NO suffix at all
+        "backup/id_rsa.pub",  # the sibling of a private key — denied by name prefix
+        ".gnupg/secring.gpg",
+        ".netrc",
+        ".git-credentials",  # a plaintext token store git writes
+    ],
+)
+def test_denies_private_key_and_secret_store_shapes(guard: PrivacyGuard, rel: str) -> None:
+    # The path is INSIDE the repo (so BOB-067 would allow it) — it is refused on SHAPE.
+    assert guard.allows_path(REPO_ROOT / rel) is False
+
+
+def test_denies_secret_shape_via_relative_path_too(guard: PrivacyGuard) -> None:
+    # A repo-relative spelling (exactly what a model passes to read_code) is denied too.
+    assert guard.allows_path(Path(".secrets/bob-ai-work.private-key.pem")) is False
+    assert guard.allows_path(Path(".secrets")) is False
+
+
+def test_denies_secret_shape_reached_through_dotdot(guard: PrivacyGuard) -> None:
+    # The shape is checked on the RESOLVED path, so a detour cannot launder it.
+    sneaky = REPO_ROOT / "src" / ".." / ".secrets" / "bob-ai-work.private-key.pem"
+    assert guard.allows_path(sneaky) is False
+
+
+@pytest.mark.parametrize(
+    "rel",
+    [
+        "src/bob/capabilities/introspection/privacy_guard.py",
+        "src/bob/identity/credentials.py",  # a module ABOUT credentials, not a key
+        "config/secrets/keys.yaml",  # ordinary config (values scrubbed by sanitize)
+        "docs/keys.md",
+        "src/bob/keychain.py",
+        "secrets_notes.txt",  # a lookalike FILE name, not the .secrets dir
+        ".secretsfoo/x.py",  # a lookalike DIR name — exact match only
+        "data/pem.py",  # ``pem`` as a name, not a ``.pem`` suffix
+        "sshconfig/notes.md",  # ``.ssh`` is exact, ``sshconfig`` is ordinary
+    ],
+)
+def test_secret_shape_denial_does_not_break_full_repo_navigation(
+    guard: PrivacyGuard, rel: str
+) -> None:
+    # 🔴 BOB-067 must survive: the denial is POINTED at private-key/secret-store shapes,
+    # not at everything whose name mentions a key. Lookalikes stay readable.
+    assert guard.allows_path(REPO_ROOT / rel) is True
+
+
+def test_secret_shape_denial_ignores_the_repo_roots_own_name(guard: PrivacyGuard) -> None:
+    # A repo that HAPPENS to live under a path segment like ``.secrets`` (or a user dir
+    # named ``id_rsa_backup``) must not deny its own whole tree: the shape is checked on
+    # the path RELATIVE to the root, never on the root's own spelling.
+    nested = PrivacyGuard(Path("/home/bob/.secrets/checkout"))
+    assert nested.allows_path(Path("src/bob/app.py")) is True
+    assert nested.allows_path(Path("keys/service.pem")) is False
+
+
 # --- sanitize -----------------------------------------------------------------
 
 
@@ -297,6 +372,169 @@ def test_sanitize_scrubs_full_env_dump_no_secret_survives(guard: PrivacyGuard) -
     assert "1234567890:AAFakeFakeFakeFakeFakeFakeFakeFakeFak" not in out
     assert "sk-zz.AAAA.bbbb.CcccDdddEeeeFfffGgggHhhhIiiiJjjj" not in out
     assert _REDACTION_MARK in out
+
+
+# --- sanitize: the BACKSTOP for private-key + github-token material (bob-zmp) --
+# 🔴 The second root of the reproduced CRITICAL: sanitize is the layer that must save us
+# WHEN THE GUARD MISSES, and it knew nothing about PEM blocks, installation tokens or
+# App-JWTs — the credential-store line was only scrubbed BY ACCIDENT (the substring
+# "token" inside the ``x-access-token`` username). These fixtures are REAL-SHAPE but
+# SYNTHETIC — never a real credential.
+
+# A real-shape private key, truncated the way ``read_code(max_lines=5)`` truncated the
+# live one: the ``-----END-----`` marker NEVER ARRIVES. This is the exact form that
+# leaked, so a pattern that needs the closing marker would still leak it.
+_PEM_BODY_LINE_1 = "MIIEpAIBAAKCAQEAnT0fakefakefakefakefakefakefakefakefakefakefake"
+_PEM_BODY_LINE_2 = "Zm9vYmFyYmF6cXV1eGZha2VmYWtlZmFrZWZha2VmYWtlZmFrZWZha2U="
+_PEM_TRUNCATED = (
+    "-----BEGIN RSA PRIVATE KEY-----\n" f"{_PEM_BODY_LINE_1}\n{_PEM_BODY_LINE_2}\n"
+)
+_PEM_COMPLETE = _PEM_TRUNCATED + "-----END RSA PRIVATE KEY-----\n"
+
+
+def test_sanitize_redacts_a_complete_pem_private_key_block(guard: PrivacyGuard) -> None:
+    out = guard.sanitize(f"contents of key.pem:\n{_PEM_COMPLETE}done")
+
+    assert _PEM_BODY_LINE_1 not in out
+    assert _PEM_BODY_LINE_2 not in out
+    assert "PRIVATE KEY" not in out
+    assert _REDACTION_MARK in out
+    # The surrounding text survives — only the key material is gone.
+    assert "contents of key.pem:" in out
+    assert "done" in out
+
+
+def test_sanitize_redacts_a_truncated_pem_block_with_no_end_marker(
+    guard: PrivacyGuard,
+) -> None:
+    # 🔴 The reproduced shape: only the first lines of the key were returned, so there is
+    # no closing marker to anchor on — redaction must run to the end of the text.
+    out = guard.sanitize(f"5 lines of the key:\n{_PEM_TRUNCATED}")
+
+    assert _PEM_BODY_LINE_1 not in out
+    assert _PEM_BODY_LINE_2 not in out
+    assert "PRIVATE KEY" not in out
+    assert _REDACTION_MARK in out
+
+
+@pytest.mark.parametrize(
+    "marker",
+    [
+        "-----BEGIN PRIVATE KEY-----",
+        "-----BEGIN RSA PRIVATE KEY-----",
+        "-----BEGIN EC PRIVATE KEY-----",
+        "-----BEGIN OPENSSH PRIVATE KEY-----",
+        "-----BEGIN ENCRYPTED PRIVATE KEY-----",
+    ],
+)
+def test_sanitize_redacts_every_pem_private_key_flavour(
+    guard: PrivacyGuard, marker: str
+) -> None:
+    # openssl / ssh-keygen / PKCS#8 all label the block differently — every flavour of
+    # PRIVATE KEY block is scrubbed, so the rule is about the CLASS, not one file.
+    out = guard.sanitize(f"{marker}\n{_PEM_BODY_LINE_1}\n")
+
+    assert _PEM_BODY_LINE_1 not in out
+    assert "PRIVATE KEY" not in out
+    assert _REDACTION_MARK in out
+
+
+def test_sanitize_redacts_several_pem_blocks_in_one_text(guard: PrivacyGuard) -> None:
+    # Two keys in one dump (the reproduced ``.secrets/`` holds two) — both are scrubbed.
+    out = guard.sanitize(f"{_PEM_COMPLETE}\nmiddle\n{_PEM_COMPLETE}")
+
+    assert _PEM_BODY_LINE_1 not in out
+    assert "middle" in out
+    assert out.count(_REDACTION_MARK) == 2
+
+
+@pytest.mark.parametrize(
+    "token",
+    [
+        "ghs_16CharsAndMoreFakeInstallationTok",  # installation token (App)
+        "ghp_16CharsAndMoreFakePersonalTokenXX",  # classic PAT
+        "github_pat_11ABCDEFG0FakeFakeFake_FakeFakeFakeFakeFakeFakeFake",  # fine-grained
+        "gho_16CharsAndMoreFakeOauthTokenXXXXX",  # oauth
+        "ghu_16CharsAndMoreFakeUserToServerXXX",  # user-to-server
+        "ghr_16CharsAndMoreFakeRefreshTokenXXX",  # refresh
+    ],
+)
+def test_sanitize_redacts_github_token_shapes_by_substance(
+    guard: PrivacyGuard, token: str
+) -> None:
+    # 🔴 BY SUBSTANCE, not by an accidental "token" substring next to it: the bare value
+    # in prose, with no key label anywhere, is scrubbed.
+    out = guard.sanitize(f"pushing with {token} now")
+
+    assert token not in out
+    assert _REDACTION_MARK in out
+    assert "pushing with" in out
+
+
+def test_sanitize_redacts_a_github_token_inside_a_credential_store_url(
+    guard: PrivacyGuard,
+) -> None:
+    # The git credential-store line. Before bob-zmp it was scrubbed only ACCIDENTALLY,
+    # via the substring "token" in the ``x-access-token`` username — so a store line with
+    # ANY other username (or a token in a plain URL) went through untouched. Now the VALUE
+    # shape itself is what triggers the redaction, whatever surrounds it.
+    stored = "ghs_16CharsAndMoreFakeInstallationTok"
+
+    without_accident = guard.sanitize(f"https://bob-ai:{stored}@github.com/o/r\n")
+    real_form = guard.sanitize(f"https://x-access-token:{stored}@github.com/o/r\n")
+
+    assert stored not in without_accident
+    assert _REDACTION_MARK in without_accident
+    assert stored not in real_form
+
+
+def test_sanitize_redacts_a_three_segment_jwt(guard: PrivacyGuard) -> None:
+    # The GitHub-App JWT Bob signs to mint installation tokens: header.payload.signature.
+    jwt = (
+        "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9"
+        ".eyJpYXQiOjE3MDAwMDAwMDAsImlzcyI6IjEyMyJ9"
+        ".ZmFrZXNpZ25hdHVyZWZha2VzaWduYXR1cmVmYWtlc2lnbmF0dXJl"
+    )
+    out = guard.sanitize(f"Authorization: Bearer {jwt}")
+
+    assert jwt not in out
+    # Neither may a SEGMENT of it survive — a partial JWT is still credential material.
+    assert "eyJpYXQiOjE3MDAwMDAwMDAsImlzcyI6IjEyMyJ9" not in out
+    assert _REDACTION_MARK in out
+
+
+def test_sanitize_scrubs_a_whole_secret_dump_no_material_survives(
+    guard: PrivacyGuard,
+) -> None:
+    # The worst case: a dump mixing a key, a token and a JWT — nothing survives.
+    jwt = "eyJhbGciOiJSUzI1NiJ9.eyJpc3MiOiIxMjMifQ.ZmFrZXNpZ25hdHVyZWZha2U"
+    dump = f"{_PEM_TRUNCATED}\nghs_16CharsAndMoreFakeInstallationTok\n{jwt}\n"
+
+    out = guard.sanitize(dump)
+
+    assert _PEM_BODY_LINE_1 not in out
+    assert "ghs_16CharsAndMoreFakeInstallationTok" not in out
+    assert jwt not in out
+    assert "PRIVATE KEY" not in out
+
+
+@pytest.mark.parametrize(
+    "ordinary",
+    [
+        "see bob.capabilities.introspection.privacy_guard for the verdict",
+        "bumped to version 1.2.3 today",
+        "the ghost_writer module renders the draft",  # ``gho`` lookalike prefix
+        "github_pattern = compile(r'...')",  # ``github_pat`` lookalike identifier
+        "-----BEGIN CERTIFICATE-----\nMIICertificateBodyIsPublic\n-----END CERTIFICATE-----",
+    ],
+)
+def test_sanitize_does_not_over_redact_key_and_token_lookalikes(
+    guard: PrivacyGuard, ordinary: str
+) -> None:
+    # Precision: dotted identifiers, versions, ``gho``/``github_pat`` lookalikes and a
+    # PUBLIC certificate block are NOT credential material and stay readable — otherwise
+    # the backstop would quietly blind Bob to his own repo (BOB-067).
+    assert guard.sanitize(ordinary) == ordinary
 
 
 # --- sanitize: over-redaction guard (ordinary code/prose must survive) --------
