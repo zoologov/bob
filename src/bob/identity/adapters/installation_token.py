@@ -51,6 +51,7 @@ from bob.identity.token_lifetime import (
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
+    from pathlib import Path
 
     from bob.identity.ports import GitHubAppApi, Rs256Signer
     from bob.kernel.ports import Clock
@@ -77,10 +78,12 @@ class GitHubInstallationTokens:
         signer: Rs256Signer,
         api: GitHubAppApi,
         clock: Clock,
+        root: Path,
         renew_margin_seconds: int = DEFAULT_RENEW_MARGIN_SECONDS,
         jwt_lifetime_seconds: int = DEFAULT_JWT_LIFETIME_SECONDS,
     ) -> None:
         self._section = section
+        self._root = root
         self._signer = signer
         self._api = api
         self._clock = clock
@@ -169,7 +172,7 @@ class GitHubInstallationTokens:
         known = self._credentials.get(principal)
         if known is not None:
             return known
-        credentials = credentials_for(self._section, principal)
+        credentials = credentials_for(self._section, principal, root=self._root)
         self._credentials[principal] = credentials
         return credentials
 
@@ -179,16 +182,21 @@ class GitHubInstallationTokens:
 
 
 def build_installation_tokens(
-    section: Mapping[str, object], *, clock: Clock
+    section: Mapping[str, object], *, clock: Clock, root: Path
 ) -> GitHubInstallationTokens:
     """Собрать провайдер токенов из секции конфига ``github`` (настоящие openssl + aiohttp).
 
     Реквизиты принципалов НЕ разбираются здесь: сборка провайдера должна быть возможна и на
     ненастроенном Бобе (флаг выключен, ключей нет) — отказ придёт тогда, когда токен реально
     понадобится, и назовёт недостающий ключ конфига.
+
+    ``root`` — корень проекта, от которого читается ОТНОСИТЕЛЬНЫЙ путь к ключу принципала
+    (абсолютный и домашний уважаются как есть). Он едет сюда с композиции, чтобы путь не
+    зависел от того, из какого каталога запущен процесс (bob-a6b.15).
     """
     return GitHubInstallationTokens(
         section,
+        root=root,
         signer=OpensslRs256Signer(
             openssl_bin=_text(section, "openssl_bin", "openssl"),
             timeout_seconds=_number(section, "timeout_seconds", 30.0),

@@ -37,6 +37,7 @@ from bob.coding.adapters._exec import (
 )
 from bob.coding.adapters._integrate import commit_and_push_branch
 from bob.coding.adapters._paths import is_strict_child
+from bob.coding.untrusted_repo import hardened_git_argv
 
 __all__ = ["GitWorktree", "WorktreeError"]
 
@@ -105,7 +106,7 @@ class GitWorktree:
         slug = branch.split("/", 1)[1]
         path = self._worktree_root / slug
         await self._runner(
-            [self._git_bin, "worktree", "add", str(path), "-b", branch],
+            [*hardened_git_argv(self._git_bin), "worktree", "add", str(path), "-b", branch],
             timeout=self._timeout,
         )
         return str(path)
@@ -159,15 +160,15 @@ class GitWorktree:
         slug = branch.split("/", 1)[1]
         path = (self._worktree_root / slug).resolve()
         await self._runner(
-            [self._git_bin, "worktree", "prune"], timeout=self._timeout
+            [*hardened_git_argv(self._git_bin), "worktree", "prune"], timeout=self._timeout
         )
         listing = await self._runner(
-            [self._git_bin, "worktree", "list", "--porcelain"],
+            [*hardened_git_argv(self._git_bin), "worktree", "list", "--porcelain"],
             timeout=self._timeout,
         )
         if path in _registered_worktrees(listing) and path.is_dir():
             return str(path)
-        add_argv = [self._git_bin, "worktree", "add", str(path)]
+        add_argv = [*hardened_git_argv(self._git_bin), "worktree", "add", str(path)]
         if await self._branch_exists(branch):
             add_argv.append(branch)  # check the accumulated branch out — never ``-b``
         else:
@@ -184,7 +185,8 @@ class GitWorktree:
         swallowed error is exactly how a real git failure would get misread as «absent».
         """
         listed = await self._runner(
-            [self._git_bin, "branch", "--list", branch], timeout=self._timeout
+            [*hardened_git_argv(self._git_bin), "branch", "--list", branch],
+            timeout=self._timeout,
         )
         return bool(listed.strip())
 
@@ -201,13 +203,26 @@ class GitWorktree:
           changes: return ``False`` (the honest "nothing to commit" signal) WITHOUT
           committing — never an empty commit.
         * ``git -C <path> commit -m <message>`` then
-          ``git -C <path> push -u origin <branch>`` — only on a real change.
+          ``git -C <path> push origin refs/heads/<branch>:refs/heads/<branch>`` — only on
+          a real change.
 
         🔴 ``branch`` MUST be the validated ``bob/<slug>`` feature branch
         (:func:`is_safe_branch`); any other branch is refused BEFORE git runs, so there
         is physically no code path that can push ``main``. Returns ``True`` when a real
         commit was pushed, ``False`` when there was nothing to commit; a genuine git
         failure surfaces as the runner's :class:`CommandError`.
+
+        🔴 The push target is the remote NAME here, and that is a NAMED limitation, not an
+        oversight (bob-a6b.14): a linked worktree shares ``.git`` — and therefore the
+        config and the remotes — with the owner's own repository, so there is no separate
+        fork URL to push by VALUE, and a ``remote.origin.pushurl`` planted by the model
+        would be indistinguishable from the owner's own setting. What IS closed here is
+        code execution: every git call of this adapter, and every call of the shared
+        integration step, carries the hardening pins
+        (:func:`bob.coding.untrusted_repo.hardened_git_argv`), so hooks living in the
+        SHARED ``.git/hooks`` no longer run inside Bob's process. The address class is
+        closed by moving the workspace to a clone (``coder.isolated_clone``), which is
+        exactly why that flag exists.
         """
         if not is_safe_branch(branch):
             raise WorktreeError(
@@ -220,6 +235,7 @@ class GitWorktree:
             branch=branch,
             message=message,
             timeout=self._timeout,
+            push_target="origin",
         )
 
     async def remove(self, path: str) -> None:
@@ -229,7 +245,7 @@ class GitWorktree:
                 f"worktree path {path!r} is not under the configured worktree root"
             )
         await self._runner(
-            [self._git_bin, "worktree", "remove", "--force", path],
+            [*hardened_git_argv(self._git_bin), "worktree", "remove", "--force", path],
             timeout=self._timeout,
         )
 

@@ -116,18 +116,24 @@ def test_the_only_push_form_pushes_the_branch_variable_from_one_place() -> None:
     # (``_integrate.py``, shared by both workplace adapters) and pushes the validated
     # ``bob/<slug>`` branch VARIABLE — never a literal trunk token. One place is part of
     # the invariant: a second copy is a second thing to keep honest.
-    text = (_repo_root() / "src/bob/coding/adapters/_integrate.py").read_text(
-        encoding="utf-8"
-    )
-    assert '"origin", branch' in text
+    integrate = _repo_root() / "src/bob/coding/adapters/_integrate.py"
+    text = integrate.read_text(encoding="utf-8")
+    # 🔴 bob-a6b.14: the push TARGET became a parameter (the fork URL by VALUE for the
+    # clone, the remote name for the worktree) because a ``remote.origin.pushurl`` planted
+    # by the model in the local config sent the branch UPSTREAM. What stays asserted here:
+    # exactly the branch VARIABLE travels, through a fully-qualified refspec on both ends,
+    # so neither a tag nor a same-named ref can substitute what is pushed.
+    assert 'ref = f"refs/heads/{branch}"' in text
+    assert '"push", "--no-verify", push_target, f"{ref}:{ref}"' in text
     assert '"main"' not in text  # no literal main argv token
     assert "'main'" not in text
-    others = [
-        rel
-        for rel in _BOB039_SOURCE
-        if rel != "src/bob/coding/adapters/_integrate.py"
-        and '"push"' in (_repo_root() / rel).read_text(encoding="utf-8")
-    ]
+    # No second push form ANYWHERE in the domain — the whole package is walked, not a
+    # hand-kept list, so a new module growing its own push cannot slip past the invariant.
+    others = sorted(
+        str(path.relative_to(_repo_root()))
+        for path in (_repo_root() / "src/bob/coding").rglob("*.py")
+        if path != integrate and '"push"' in path.read_text(encoding="utf-8")
+    )
     assert others == [], f"a second push argv appeared in {others}"
 
 

@@ -15,7 +15,6 @@ UNBYPASSABLE plan gate) and the natural-language :class:`CodingIntentRouter`. Of
 from __future__ import annotations
 
 import asyncio
-from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 from bob.capabilities.introspection.privacy_guard import PrivacyGuard
@@ -41,6 +40,7 @@ from bob.interactive.adapters.runner import InteractiveClaudeRunner
 from bob.interactive.usecases.intake import InteractiveIntakeRouter
 from bob.interactive.usecases.recover_sessions import RecoverInteractiveSessions
 from bob.interactive.usecases.session import InteractiveSessionManager
+from bob.kernel.config_paths import under_root
 from bob.runtime.config import (
     _CODING_TYPING_INTERVAL,
     _REPO_ROOT,
@@ -54,6 +54,7 @@ from bob.runtime.wiring.capabilities import _build_introspector
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
+    from pathlib import Path
 
     from bob.application.router import LLMRouter
     from bob.coding.adapters.indicator import EditableStatusBot, TypingActionBot
@@ -79,9 +80,12 @@ def _under_repo_root(value: str) -> Path:
     относителен — при ``cwd ≠ корень репозитория`` рабочие места и файлы окружения спавна
     уехали бы в чужой каталог, и заметил бы это не тест, а прод. Абсолютное значение
     владельца уважается как есть.
+
+    Само правило живёт в ядре (:func:`bob.kernel.config_paths.under_root`) — его же читает
+    домен, разбирая путь к приватному ключу принципала (bob-a6b.15). Здесь остался только
+    ОДИН вопрос композиции: какой корень подставить.
     """
-    path = Path(value)
-    return path if path.is_absolute() else _REPO_ROOT / path
+    return under_root(value, root=_REPO_ROOT)
 
 
 def _build_coding_router(

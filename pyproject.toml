@@ -837,6 +837,22 @@ ignore = [
     "RUF003",
 ]
 "tests/test_coder_config.py" = ["RUF001", "RUF002", "RUF003"]
+# Репозиторий, которым распоряжается МОДЕЛЬ (BOB-089, bob-a6b.14 / ревью MAJOR-7): чистое
+# ядро закалённой формы git + отказа по незнакомому ключу локального конфига несёт русские
+# докстроки/комментарии, в которых записано, ЧТО именно исполнялось в процессе Боба и чем
+# это проверено (Cyrillic look-alikes intentional → RUF001-003). Real-git acceptance гоняет
+# git фиксированной формой в ОДНОРАЗОВЫХ временных репозиториях (→ S603/S607) и подкладывает
+# скрипты-маркеры, чтобы доказать исполнение попыткой, а не чтением кода.
+"src/bob/coding/untrusted_repo.py" = ["RUF001", "RUF002", "RUF003"]
+"tests/domain/coding/test_untrusted_repo.py" = ["RUF001", "RUF002", "RUF003"]
+"tests/infrastructure/coding/test_untrusted_repo_real_git.py" = [
+    "S101",
+    "S603",
+    "S607",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
 # Идентичность bob[ai] + ссылка на создание PR (BOB-089, срез D): чистое ядро ссылки, путь
 # «Боб PR не открывает» и их тесты несут русские докстроки/комментарии, объясняющие, почему
 # подпись ставится ЛОКАЛЬНО и почему cross-repo PR из приватного форка невозможен (Cyrillic
@@ -992,6 +1008,18 @@ ignore = [
     "RUF003",
 ]
 "tests/infrastructure/identity/test_ssh_road_live_smoke.py" = [
+    "S603",
+    "S607",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+# bob-a6b.15: ФОРМА пути к приватному ключу (абсолютный вне репозитория / ``~`` / относительный)
+# проверяется через стык «разбор конфига → НАСТОЯЩИЙ openssl» — фейк доказал бы контракт фейка
+# (§0.3 п.4), а дефект дожил до живого прогона именно потому, что стык не проверял никто. Отсюда
+# ``openssl genrsa``/``dgst -verify`` фиксированной формой без шелла (→ S603/S607) и русские
+# пояснения, ЧТО утверждается и почему (Cyrillic look-alikes intentional → RUF001-003).
+"tests/infrastructure/identity/test_key_path_forms_real_openssl.py" = [
     "S603",
     "S607",
     "RUF001",
@@ -1960,6 +1988,12 @@ ignore = [
 # кириллические похожие символы в них намеренны, поэтому RUF001/RUF002/RUF003 не
 # применяются. Тестам ещё нужны assert-ы и «магические» числа.
 "src/bob/kernel/visibility.py" = ["RUF001", "RUF002", "RUF003"]
+# bob-a6b.15: общее правило «как понимать путь из конфига» и его тесты объясняют по-русски,
+# почему каждая из трёх ветвей именно такая (абсолютный путь к ключу, склеенный с корнем
+# репозитория, сделал единственную безопасную конфигурацию невыразимой); кириллические
+# похожие символы намеренны → RUF001/RUF002/RUF003 не применяются.
+"src/bob/kernel/config_paths.py" = ["RUF001", "RUF002", "RUF003"]
+"tests/domain/kernel/test_config_paths.py" = ["RUF001", "RUF002", "RUF003"]
 "src/bob/memory/digest_provenance.py" = ["RUF001", "RUF002", "RUF003"]
 "src/bob/memory/adapters/sqlite_memory_repo.py" = ["RUF001", "RUF002", "RUF003"]
 "tests/domain/kernel/test_visibility.py" = ["S101", "RUF001", "RUF002", "RUF003"]
@@ -2268,6 +2302,14 @@ source_paths = [
     # файл перечислен точечно. Иначе гейт был бы фантомным (§0.3 п.7): объявленная цель
     # вне scope = 0 мутантов.
     "src/bob/kernel/visibility.py",
+    # bob-a6b.15: правило «как понимать путь из конфига» (``under_root``) — чистая, детер-
+    # минированная развилка «абсолютный / домашний / относительный», и ровно на этой развилке
+    # горел P0 (корень репозитория, приклеенный к абсолютному пути приватного ключа). Живёт в
+    # ядре, потому что нужно и домену (``identity.credentials``), и композиции
+    # (``runtime.wiring.coding``); ядро целиком в source_paths не заводим, поэтому файл
+    # перечислен точечно — иначе объявленная цель была бы вне scope, то есть гейт фантомный
+    # (§0.3 п.7).
+    "src/bob/kernel/config_paths.py",
 ]
 # Deny the impure sub-trees inside those packages: adapters (I/O), ports (protocols),
 # and package __init__ re-exports carry no deterministic verdict logic to mutate.

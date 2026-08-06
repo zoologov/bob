@@ -25,6 +25,26 @@ from bob.coding.clone_plan import (
     workspace_verdict,
 )
 
+#: 🔴 Закалённые пары (bob-a6b.14) выписаны здесь ДОСЛОВНО, а не взяты из продового
+#: :func:`bob.coding.untrusted_repo.hardened_git_argv`: иначе тест утверждал бы сам себя, а
+#: снятие пары в проде осталось бы зелёным. Что каждая закрывает и чем это доказано — в
+#: докстроке того модуля и в паре контроль/защита на настоящем git
+#: (``tests/infrastructure/coding/test_untrusted_repo_real_git.py``).
+_PINS = [
+    "-c",
+    "core.hooksPath=/dev/null",
+    "-c",
+    "core.fsmonitor=false",
+    "-c",
+    "commit.gpgSign=false",
+]
+
+
+def _hardened(git_bin: str, *rest: str) -> list[str]:
+    """Ожидаемая форма: бинарь, пары, потом всё остальное (включая ``-C <путь>``)."""
+    return [git_bin, *_PINS, *rest]
+
+
 # --------------------------------------------------------------------------- #
 # clone_argv — как именно заводится клон
 # --------------------------------------------------------------------------- #
@@ -34,12 +54,9 @@ def test_clone_goes_through_the_file_transport_of_an_absolute_source() -> None:
     # 🔴 ``file://`` намеренно: локальная оптимизация git (hardlink объектов основного
     # репозитория) отменяется, и у клона появляется СВОЙ объектный склад. Иначе файлы
     # объектов остались бы общими inode'ами с репозиторием owner'а.
-    assert clone_argv("git", source="/Users/o/bob", dest="/Users/o/bob/.clones/task") == [
-        "git",
-        "clone",
-        "file:///Users/o/bob",
-        "/Users/o/bob/.clones/task",
-    ]
+    assert clone_argv("git", source="/Users/o/bob", dest="/Users/o/bob/.clones/task") == (
+        _hardened("git", "clone", "file:///Users/o/bob", "/Users/o/bob/.clones/task")
+    )
 
 
 def test_clone_runs_the_injected_git_binary() -> None:
@@ -60,28 +77,25 @@ def test_clone_argv_keeps_source_and_dest_as_separate_fixed_slots() -> None:
 
 
 def test_a_new_branch_is_created_at_the_cloned_head() -> None:
-    assert checkout_argv("git", dest="/clone", branch="bob/task", on_origin=False) == [
-        "git",
-        "-C",
-        "/clone",
-        "switch",
-        "-c",
-        "bob/task",
-    ]
+    assert checkout_argv("git", dest="/clone", branch="bob/task", on_origin=False) == (
+        _hardened("git", "-C", "/clone", "switch", "-c", "bob/task")
+    )
 
 
 def test_a_branch_known_to_origin_starts_from_it_instead_of_being_recreated() -> None:
     # 🔴 Урок BOB-087.D5b: пересоздание ветки поверх HEAD теряет НАКОПЛЕННУЮ работу
     # долгоживущего места. Если ветка уже есть у источника — стартуем с неё.
-    assert checkout_argv("git", dest="/clone", branch="bob/epic-bob-089", on_origin=True) == [
-        "git",
-        "-C",
-        "/clone",
-        "switch",
-        "-c",
-        "bob/epic-bob-089",
-        "origin/bob/epic-bob-089",
-    ]
+    assert checkout_argv("git", dest="/clone", branch="bob/epic-bob-089", on_origin=True) == (
+        _hardened(
+            "git",
+            "-C",
+            "/clone",
+            "switch",
+            "-c",
+            "bob/epic-bob-089",
+            "origin/bob/epic-bob-089",
+        )
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -90,29 +104,20 @@ def test_a_branch_known_to_origin_starts_from_it_instead_of_being_recreated() ->
 
 
 def test_origin_is_repointed_to_the_fork() -> None:
-    assert origin_argv("git", dest="/clone", fork_url="git@github.com:org/bob.git") == [
-        "git",
-        "-C",
-        "/clone",
-        "remote",
-        "set-url",
-        "origin",
-        "git@github.com:org/bob.git",
-    ]
+    assert origin_argv("git", dest="/clone", fork_url="git@github.com:org/bob.git") == (
+        _hardened(
+            "git", "-C", "/clone", "remote", "set-url", "origin", "git@github.com:org/bob.git"
+        )
+    )
 
 
 def test_without_a_fork_the_remote_is_removed_entirely() -> None:
     # 🔴 Ключевое: после клонирования ``origin`` указывает на рабочую копию OWNER'А.
     # Если форк не настроен, remote'а не остаётся ВООБЩЕ — нечего пушить и нечего
     # перепутать; оставить путь owner'а как origin было бы худшим из вариантов.
-    assert origin_argv("git", dest="/clone", fork_url="") == [
-        "git",
-        "-C",
-        "/clone",
-        "remote",
-        "remove",
-        "origin",
-    ]
+    assert origin_argv("git", dest="/clone", fork_url="") == (
+        _hardened("git", "-C", "/clone", "remote", "remove", "origin")
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -125,14 +130,9 @@ def test_the_fork_is_asked_about_its_branches_by_a_pruning_fetch() -> None:
     # ветки РЕПОЗИТОРИЯ ВЛАДЕЛЬЦА; после переадресации remote'а на форк они остаются
     # лежать как есть. Без прунинга ветка, которая есть ТОЛЬКО у владельца, читалась бы
     # как «накопленная работа в форке», и клон встал бы на чужое состояние.
-    assert fetch_argv("git", dest="/clone") == [
-        "git",
-        "-C",
-        "/clone",
-        "fetch",
-        "--prune",
-        "origin",
-    ]
+    assert fetch_argv("git", dest="/clone") == (
+        _hardened("git", "-C", "/clone", "fetch", "--prune", "origin")
+    )
 
 
 def test_fetch_runs_the_injected_git_binary() -> None:
@@ -217,8 +217,8 @@ def test_the_work_is_signed_bob_ai_locally_in_the_clone() -> None:
     # идентичностей, от которой уходим. Форма это ЗАПРЕЩАЕТ: и ``-C <клон>``, и
     # ``--local`` стоят в argv явно.
     assert identity_argv("git", dest="/clone", app_user_id="424242") == [
-        ["git", "-C", "/clone", "config", "--local", "user.name", "bob[ai]"],
-        [
+        _hardened("git", "-C", "/clone", "config", "--local", "user.name", "bob[ai]"),
+        _hardened(
             "git",
             "-C",
             "/clone",
@@ -226,7 +226,7 @@ def test_the_work_is_signed_bob_ai_locally_in_the_clone() -> None:
             "--local",
             "user.email",
             "424242+bob-ai-work[bot]@users.noreply.github.com",
-        ],
+        ),
     ]
 
 
@@ -235,7 +235,8 @@ def test_neither_identity_command_can_write_the_global_config() -> None:
         assert "--local" in argv
         assert "--global" not in argv
         assert "--system" not in argv
-        assert argv[1:3] == ["-C", "/clone"]  # адресат — клон, не репозиторий owner'а
+        # адресат — клон, не репозиторий owner'а (``-C`` стоит сразу после закалённых пар)
+        assert argv[len(_PINS) + 1 : len(_PINS) + 3] == ["-C", "/clone"]
 
 
 def test_without_an_app_user_id_the_name_is_still_set_with_an_id_less_email() -> None:
@@ -244,8 +245,8 @@ def test_without_an_app_user_id_the_name_is_still_set_with_an_id_less_email() ->
     # против которой US-2). Поэтому имя ставится всегда, а числовой префикс — опционален
     # (без него адрес просто не сшивается GitHub'ом с ботом).
     assert identity_argv("git", dest="/clone", app_user_id="") == [
-        ["git", "-C", "/clone", "config", "--local", "user.name", "bob[ai]"],
-        [
+        _hardened("git", "-C", "/clone", "config", "--local", "user.name", "bob[ai]"),
+        _hardened(
             "git",
             "-C",
             "/clone",
@@ -253,7 +254,7 @@ def test_without_an_app_user_id_the_name_is_still_set_with_an_id_less_email() ->
             "--local",
             "user.email",
             "bob-ai-work[bot]@users.noreply.github.com",
-        ],
+        ),
     ]
 
 
@@ -275,4 +276,27 @@ def test_the_email_stays_one_fixed_argv_slot() -> None:
 
     assert name_argv[-1] == "bob[ai]"
     assert email_argv[-1] == "7+bob-ai-work[bot]@users.noreply.github.com"
-    assert len(email_argv) == 7
+    assert len(email_argv) == 7 + len(_PINS)
+
+
+# --------------------------------------------------------------------------- #
+# 🔴 Ни одна форма не остаётся «голой» (bob-a6b.14)
+# --------------------------------------------------------------------------- #
+
+
+def test_every_form_of_the_clone_plan_carries_the_hardening_pins() -> None:
+    # Клон заводится и обслуживается из процесса САМОГО Боба, а с первого ``switch`` в его
+    # каталоге лежит содержимое, за которое отвечает модель. Форма, забывшая пары, — это
+    # исполнение её кода на нашей стороне; поэтому проверяется НАБОР форм, а не отдельная.
+    forms = [
+        clone_argv("git", source="/src", dest="/dst"),
+        checkout_argv("git", dest="/dst", branch="bob/task", on_origin=False),
+        checkout_argv("git", dest="/dst", branch="bob/task", on_origin=True),
+        origin_argv("git", dest="/dst", fork_url="https://github.com/org/bob.git"),
+        origin_argv("git", dest="/dst", fork_url=""),
+        fetch_argv("git", dest="/dst"),
+        *identity_argv("git", dest="/dst", app_user_id="42"),
+    ]
+
+    for argv in forms:
+        assert argv[: len(_PINS) + 1] == ["git", *_PINS], argv

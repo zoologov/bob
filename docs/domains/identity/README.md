@@ -224,7 +224,7 @@ ssh-адрес — штатная настройка вела по неизол�
 | Ключ | Что это |
 |---|---|
 | `work_app_id` / `propose_app_id` | числовой `app_id` GitHub App (claim `iss`) |
-| `work_app_key` / `propose_app_key` | 🔴 **путь** к приватному ключу, никогда его содержимое |
+| `work_app_key` / `propose_app_key` | 🔴 **путь** к приватному ключу, никогда его содержимое. Абсолютный путь и путь с `~` берутся **как есть**, относительный читается **от корня проекта** (bob-a6b.15, общее правило `bob.kernel.config_paths.under_root`). Правильное место ключа — **вне дерева репозитория** (`~/.config/bob/secrets/`, 0700/0600: внутри репозитория его достаёт и `read_code`, и `git` — bob-zmp), поэтому абсолютная форма штатная, а приклеенный к ней корень репозитория делал единственную безопасную конфигурацию невыразимой |
 | `work_repo` / `propose_repo` | `owner/repo`, по которому находится установка принципала |
 | | 🔴 эта секция — **единственный** источник репозиторной идентичности (bob-a6b.9): `propose_repo` (апстрим) заодно цель ссылки на создание PR, а `work_repo` (форк) сверяется на сборке с транспортным `coder.fork_url` |
 | `token_margin_seconds` | запас обновления заранее (300) |
@@ -242,7 +242,9 @@ ssh-адрес — штатная настройка вела по неизол�
 - `principals.py`: `Purpose{PUSH_TO_FORK, READ_UPSTREAM}`, `Principal{WORK, PROPOSE}`,
   `principal_for(purpose)`.
 - `credentials.py`: `AppCredentials(app_id, private_key_path, repository)`,
-  `credentials_for(section, principal)`.
+  `credentials_for(section, principal, root=<корень проекта>)` — `root` приходит с композиции: домен
+  не имеет права знать про `bob.runtime`, а разрешение относительного пути от текущего каталога
+  процесса — тот же дефект, что убил реюз worktree в BOB-087.D5b.
 - `app_jwt.py`: `jwt_claims(*, app_id, now, lifetime_seconds)`, `signing_input(claims)`,
   `assemble_jwt(payload, signature)`, `b64url(raw)`, `CLOCK_DRIFT_SECONDS`,
   `MAX_JWT_SPAN_SECONDS`.
@@ -255,8 +257,8 @@ ssh-адрес — штатная настройка вела по неизол�
   `credential_store_line(*, fork_url, token)`, `OWNER_CREDENTIAL_VARS`.
 - `adapters/`: `OpensslRs256Signer(openssl_bin=…, timeout_seconds=…)`,
   `AiohttpGitHubAppApi(base_url=…, timeout_seconds=…, request=None)`,
-  `GitHubInstallationTokens(section, *, signer, api, clock, renew_margin_seconds,
-  jwt_lifetime_seconds)`, `build_installation_tokens(section, *, clock)`,
+  `GitHubInstallationTokens(section, *, signer, api, clock, root, renew_margin_seconds,
+  jwt_lifetime_seconds)`, `build_installation_tokens(section, *, clock, root)`,
   `SpawnIsolationFiles(root).materialize(*, fork_url="", token="")`.
 
 ## Честная рамка срезов B + C

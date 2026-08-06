@@ -40,13 +40,19 @@
 сломать.
 
 Формы фиксированные: ни одна строка не собирается интерполяцией в шелл, все динамические
-слоты (путь, ветка, URL) едут отдельными элементами argv.
+слоты (путь, ветка, URL) едут отдельными элементами argv. 🔴 И каждая — ЗАКАЛЁННАЯ
+(:func:`bob.coding.untrusted_repo.hardened_git_argv`): клон заводится и обслуживается из
+процесса самого Боба, а с первого же ``switch`` в его каталоге лежит содержимое, за которое
+отвечает модель, — код из этого каталога не имеет права исполниться на нашей стороне
+(bob-a6b.14; состав пар и его границы — в докстроке того модуля).
 """
 
 from __future__ import annotations
 
 import re
 from enum import Enum
+
+from bob.coding.untrusted_repo import hardened_git_argv
 
 __all__ = [
     "WorkspaceVerdict",
@@ -94,8 +100,11 @@ def clone_argv(git_bin: str, *, source: str, dest: str) -> list[str]:
     ``source`` — абсолютный путь основного репозитория (клонируем локально, без сети);
     ``file://`` отключает hardlink-оптимизацию git, поэтому объекты у клона свои, а не
     общие inode'ы с репозиторием owner'а (см. модульную докстроку — там замеры цены).
+
+    ``-C`` тут нет и быть не может (каталога ещё не существует), а пары уже нужны: клон
+    исполняет ``post-checkout``, и шаблон хуков берётся из конфигурации.
     """
-    return [git_bin, "clone", f"file://{source}", dest]
+    return [*hardened_git_argv(git_bin), "clone", f"file://{source}", dest]
 
 
 def checkout_argv(git_bin: str, *, dest: str, branch: str, on_origin: bool) -> list[str]:
@@ -108,7 +117,7 @@ def checkout_argv(git_bin: str, *, dest: str, branch: str, on_origin: bool) -> l
     ``origin/<branch>``. 🔴 Урок BOB-087.D5b: пересоздать такую ветку поверх HEAD значит
     молча потерять НАКОПЛЕННУЮ в ней работу долгоживущего места.
     """
-    argv = [git_bin, "-C", dest, "switch", "-c", branch]
+    argv = [*hardened_git_argv(git_bin, path=dest), "switch", "-c", branch]
     if on_origin:
         argv.append(f"{_ORIGIN}/{branch}")
     return argv
@@ -120,12 +129,25 @@ def origin_argv(git_bin: str, *, dest: str, fork_url: str) -> list[str]:
     🔴 Сразу после клонирования ``origin`` указывает на рабочую копию OWNER'А, и оставить
     его так нельзя: это обратная дорога к репозиторию, от которого мы отделялись. Есть
     URL форка — remote переписывается на него; URL пустой (форк не настроен) — remote
-    удаляется ЦЕЛИКОМ, и у клона не остаётся ни одного адреса для push. Апстрим не
-    прописывается никогда и ни при каком значении.
+    удаляется ЦЕЛИКОМ, и у клона не остаётся ни одного адреса для push.
+
+    🔴 ИСПРАВЛЕНО ПО ФАКТУ (ревью bob-a6b.6, MAJOR-7; ошибка оставлена ВИДИМОЙ, а не
+    переписана задним числом — пятое обещание документа больше, чем схема держит, Issues
+    #49). Здесь стояло: «Апстрим не прописывается НИКОГДА И НИ ПРИ КАКОМ ЗНАЧЕНИИ». Это
+    неверно. Утверждение описывало момент ЗАВЕДЕНИЯ клона, а проверять его надо в момент
+    PUSH'А: ревьюер прописал в клоне ``git config --local remote.origin.pushurl
+    file://<апстрим>``, и ветка уехала В АПСТРИМ — локальный конфиг перебил наш argv,
+    потому что push шёл по ИМЕНИ remote'а. Правда, которую эта форма действительно даёт:
+    ПРИ ЗАВЕДЕНИИ клона апстрим не прописывается ни при каком значении ``fork_url``. Что
+    будет с remote'ами дальше, решает не она — каталог в распоряжении модели. Поэтому имя
+    remote'а перестало быть тем, чему доверяют: ветка уезжает по ЗНАЧЕНИЮ ``fork_url``
+    (:mod:`bob.coding.adapters._integrate`), а незнакомый ключ в локальном конфиге клона
+    останавливает интеграцию (:func:`bob.coding.untrusted_repo.unsafe_local_config`).
     """
+    git = hardened_git_argv(git_bin, path=dest)
     if not fork_url:
-        return [git_bin, "-C", dest, "remote", "remove", _ORIGIN]
-    return [git_bin, "-C", dest, "remote", "set-url", _ORIGIN, fork_url]
+        return [*git, "remote", "remove", _ORIGIN]
+    return [*git, "remote", "set-url", _ORIGIN, fork_url]
 
 
 def fetch_argv(git_bin: str, *, dest: str) -> list[str]:
@@ -142,7 +164,7 @@ def fetch_argv(git_bin: str, *, dest: str) -> list[str]:
     молча начать с нуля значит потерять связь с накопленной работой, а узнать об этом
     только на первом ``push`` (non-fast-forward).
     """
-    return [git_bin, "-C", dest, "fetch", "--prune", _ORIGIN]
+    return [*hardened_git_argv(git_bin, path=dest), "fetch", "--prune", _ORIGIN]
 
 
 def identity_argv(git_bin: str, *, dest: str, app_user_id: str) -> list[list[str]]:
@@ -164,9 +186,10 @@ def identity_argv(git_bin: str, *, dest: str, app_user_id: str) -> list[list[str
     email = f"{_BOT_LOGIN}@{_NOREPLY_HOST}"
     if _APP_USER_ID.fullmatch(app_user_id):
         email = f"{app_user_id}+{email}"
+    git = hardened_git_argv(git_bin, path=dest)
     return [
-        [git_bin, "-C", dest, "config", "--local", "user.name", _COMMIT_NAME],
-        [git_bin, "-C", dest, "config", "--local", "user.email", email],
+        [*git, "config", "--local", "user.name", _COMMIT_NAME],
+        [*git, "config", "--local", "user.email", email],
     ]
 
 

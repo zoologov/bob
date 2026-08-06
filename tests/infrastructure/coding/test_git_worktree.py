@@ -24,6 +24,28 @@ import pytest
 from bob.coding.adapters.git_worktree import GitWorktree, WorktreeError
 from bob.coding.ports import Worktree
 
+#: 🔴 The hardening pins (bob-a6b.14) are spelled out VERBATIM here rather than taken from
+#: production :func:`bob.coding.untrusted_repo.hardened_git_argv` — otherwise the test would
+#: assert itself and dropping a pin in production would stay green. A linked worktree shares
+#: ``.git`` with the OWNER's repository, so hooks the model plants from inside it live in the
+#: shared hooks directory and DID run inside Bob's process (proven on real git in
+#: ``test_untrusted_repo_real_git.py``).
+_PINS = [
+    "-c",
+    "core.hooksPath=/dev/null",
+    "-c",
+    "core.fsmonitor=false",
+    "-c",
+    "commit.gpgSign=false",
+]
+
+#: The offset the pins add to the subcommand position: ``[git, *pins, worktree, <verb>, …]``.
+_VERB = len(_PINS) + 2
+
+
+def _hardened(git_bin: str, *rest: str) -> list[str]:
+    return [git_bin, *_PINS, *rest]
+
 
 class _FakeCommand:
     """A scripted command runner: records argv + timeout, returns canned stdout."""
@@ -98,14 +120,7 @@ async def test_create_builds_the_fixed_worktree_add_argv(tmp_path: Path) -> None
     path = await wt.create("bob/fix-typo")
 
     argv = runner.calls[0]
-    assert argv == [
-        "my-git",
-        "worktree",
-        "add",
-        path,
-        "-b",
-        "bob/fix-typo",
-    ]
+    assert argv == _hardened("my-git", "worktree", "add", path, "-b", "bob/fix-typo")
     # The worktree path lives under the configured root.
     assert Path(path).parent == tmp_path
 
@@ -152,7 +167,7 @@ async def test_remove_builds_the_fixed_force_remove_argv(tmp_path: Path) -> None
 
     await wt.remove(target)
 
-    assert runner.calls[0] == ["my-git", "worktree", "remove", "--force", target]
+    assert runner.calls[0] == _hardened("my-git", "worktree", "remove", "--force", target)
 
 
 async def test_remove_rejects_a_path_outside_the_worktree_root(tmp_path: Path) -> None:
@@ -183,9 +198,9 @@ async def test_create_then_remove_round_trips_under_root(tmp_path: Path) -> None
     await wt.remove(path)
 
     # Only ever the two fixed worktree forms — never another git subcommand.
-    assert [call[1] for call in runner.calls] == ["worktree", "worktree"]
-    assert runner.calls[0][2] == "add"
-    assert runner.calls[1][2] == "remove"
+    assert [call[len(_PINS) + 1] for call in runner.calls] == ["worktree", "worktree"]
+    assert runner.calls[0][_VERB] == "add"
+    assert runner.calls[1][_VERB] == "remove"
 
 
 def test_git_worktree_satisfies_the_worktree_port(tmp_path: Path) -> None:
@@ -205,10 +220,10 @@ async def test_ensure_creates_the_worktree_when_not_yet_registered(
 
     assert Path(path).parent == tmp_path
     # It prunes dead registrations, lists, checks the branch, then adds it fresh.
-    assert runner.calls[0] == ["my-git", "worktree", "prune"]
-    assert runner.calls[1] == ["my-git", "worktree", "list", "--porcelain"]
-    assert runner.calls[2] == ["my-git", "branch", "--list", "bob/epic-x"]
-    assert runner.calls[3] == ["my-git", "worktree", "add", path, "-b", "bob/epic-x"]
+    assert runner.calls[0] == _hardened("my-git", "worktree", "prune")
+    assert runner.calls[1] == _hardened("my-git", "worktree", "list", "--porcelain")
+    assert runner.calls[2] == _hardened("my-git", "branch", "--list", "bob/epic-x")
+    assert runner.calls[3] == _hardened("my-git", "worktree", "add", path, "-b", "bob/epic-x")
 
 
 async def test_ensure_prunes_dead_registrations_before_reading_the_listing(
@@ -224,8 +239,8 @@ async def test_ensure_prunes_dead_registrations_before_reading_the_listing(
 
     await wt.ensure("bob/epic-x")
 
-    assert runner.calls[0] == ["my-git", "worktree", "prune"]  # BEFORE the listing
-    assert runner.calls[1][2] == "list"
+    assert runner.calls[0] == _hardened("my-git", "worktree", "prune")  # BEFORE the listing
+    assert runner.calls[1][_VERB] == "list"
 
 
 async def test_ensure_ignores_a_registration_marked_prunable(tmp_path: Path) -> None:
@@ -244,7 +259,7 @@ async def test_ensure_ignores_a_registration_marked_prunable(tmp_path: Path) -> 
 
     await wt.ensure("bob/epic-x")
 
-    assert runner.calls[-1][2] == "add"  # NOT reused: git is asked to re-create the tree
+    assert runner.calls[-1][_VERB] == "add"  # NOT reused: git re-creates the tree
 
 
 async def test_ensure_does_not_reuse_a_registration_whose_directory_is_gone(
@@ -260,7 +275,7 @@ async def test_ensure_does_not_reuse_a_registration_whose_directory_is_gone(
 
     await wt.ensure("bob/epic-x")
 
-    assert runner.calls[-1][2] == "add"
+    assert runner.calls[-1][_VERB] == "add"
 
 
 async def test_ensure_reuses_an_already_registered_worktree_without_adding(
@@ -277,7 +292,7 @@ async def test_ensure_reuses_an_already_registered_worktree_without_adding(
     # Persistence: an existing long-lived worktree is REUSED — never re-added, never
     # removed — so work accumulates across sessions.
     assert returned == path
-    verbs = [argv[2] for argv in runner.calls]  # argv = [git, worktree, <verb>, ...]
+    verbs = [argv[_VERB] for argv in runner.calls]  # [git, *pins, worktree, <verb>, …]
     assert verbs == ["prune", "list"]  # only pruned + listed; NO add, NO remove
 
 
@@ -298,7 +313,7 @@ async def test_ensure_reuses_a_registered_worktree_with_a_RELATIVE_root(
     returned = await wt.ensure("bob/epic-x")
 
     assert returned == absolute
-    verbs = [argv[2] for argv in runner.calls]
+    verbs = [argv[_VERB] for argv in runner.calls]
     assert verbs == ["prune", "list"]  # REUSED: no add (and never a remove)
 
 
@@ -317,7 +332,7 @@ async def test_ensure_reuses_a_worktree_listed_through_a_symlinked_root(
 
     await wt.ensure("bob/epic-x")
 
-    assert [argv[2] for argv in runner.calls] == ["prune", "list"]
+    assert [argv[_VERB] for argv in runner.calls] == ["prune", "list"]
 
 
 async def test_ensure_checks_out_an_EXISTING_branch_instead_of_recreating_it(
@@ -331,7 +346,7 @@ async def test_ensure_checks_out_an_EXISTING_branch_instead_of_recreating_it(
 
     path = await wt.ensure("bob/epic-x")
 
-    assert runner.calls[-1] == ["my-git", "worktree", "add", path, "bob/epic-x"]
+    assert runner.calls[-1] == _hardened("my-git", "worktree", "add", path, "bob/epic-x")
     assert "-b" not in runner.calls[-1]
 
 
@@ -341,7 +356,7 @@ async def test_ensure_creates_a_fresh_branch_when_none_exists(tmp_path: Path) ->
 
     path = await wt.ensure("bob/epic-x")
 
-    assert runner.calls[-1] == ["my-git", "worktree", "add", path, "-b", "bob/epic-x"]
+    assert runner.calls[-1] == _hardened("my-git", "worktree", "add", path, "-b", "bob/epic-x")
 
 
 @pytest.mark.parametrize(
@@ -371,11 +386,23 @@ async def test_commit_and_push_builds_add_commit_push_argv(tmp_path: Path) -> No
     committed = await wt.commit_and_push(target, "bob/fix", "[BOB] do the thing")
 
     assert committed is True
+    # 🔴 bob-a6b.14: every command is hardened, ``--no-verify`` is the second layer on
+    # commit and push, and the refspec is fully qualified on both ends. The target is the
+    # remote NAME — a NAMED limitation of worktree mode: there is no separate fork URL here
+    # (the clone pushes by VALUE).
     assert runner.calls == [
-        ["my-git", "-C", target, "add", "-A"],
-        ["my-git", "-C", target, "status", "--porcelain"],
-        ["my-git", "-C", target, "commit", "-m", "[BOB] do the thing"],
-        ["my-git", "-C", target, "push", "-u", "origin", "bob/fix"],
+        _hardened("my-git", "-C", target, "add", "-A"),
+        _hardened("my-git", "-C", target, "status", "--porcelain"),
+        _hardened("my-git", "-C", target, "commit", "--no-verify", "-m", "[BOB] do the thing"),
+        _hardened(
+            "my-git",
+            "-C",
+            target,
+            "push",
+            "--no-verify",
+            "origin",
+            "refs/heads/bob/fix:refs/heads/bob/fix",
+        ),
     ]
 
 
@@ -399,7 +426,7 @@ async def test_commit_and_push_nothing_to_commit_returns_false_and_never_commits
     committed = await wt.commit_and_push(str(tmp_path / "bob-x"), "bob/x", "msg")
 
     assert committed is False
-    verbs = [argv[3] for argv in runner.calls]  # argv = [git, -C, path, <verb>, ...]
+    verbs = [argv[_VERB + 1] for argv in runner.calls]  # [git, *pins, -C, path, <verb>, …]
     # add + status ran, but NEVER commit and NEVER push (no empty commit, no push).
     assert verbs == ["add", "status"]
 

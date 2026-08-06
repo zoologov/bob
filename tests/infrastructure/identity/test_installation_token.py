@@ -25,6 +25,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
@@ -35,6 +36,10 @@ from bob.identity.principals import Purpose
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
+
+#: Корень проекта, от которого читается ОТНОСИТЕЛЬНЫЙ путь к ключу; пути в ``_SECTION``
+#: абсолютны, поэтому в реквизитах они обязаны остаться теми же (bob-a6b.15).
+_ROOT = Path("/repo")
 
 _SECTION = {
     "work_app_id": "4491954",
@@ -119,6 +124,7 @@ def _provider(
         signer=signer or _FakeSigner(),
         api=api,
         clock=clock,
+        root=_ROOT,
         renew_margin_seconds=renew_margin_seconds,
     )
 

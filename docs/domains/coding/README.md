@@ -43,6 +43,7 @@ src/bob/coding/
   sandbox_policy.py   # layer=domain   — allowed_modes/is_allowed_mode/extra_dir_argv/is_safe_argv_value: политика owner-ослаблений изоляции + ClaudeRunError (BOB-087.D2/E)
   push_guard.py       # layer=domain   — guarded_spawn_env: ЕДИНСТВЕННЫЙ шов окружения спавна — барьер сетевого push (BOB-087.E, bob-5ao) + изоляция от кредов owner'а (BOB-089.C, решения в bob.identity.spawn_isolation)
   clone_plan.py       # layer=domain   — clone_argv/checkout_argv/origin_argv/identity_argv/workspace_verdict/is_credential_free_url: план рабочего места-КЛОНА (файловый транспорт вместо хардлинков, подпись bob[ai] ЛОКАЛЬНО в клоне, вердикт переиспользования, запрет кредов в argv; BOB-089.A/D)
+  untrusted_repo.py   # layer=domain   — hardened_git_argv/unsafe_local_config/LOCAL_CONFIG_QUERY: как Боб зовёт git в каталоге, за содержимое которого отвечает МОДЕЛЬ (хуки/fsmonitor/подпись коммита не исполняются в его процессе, незнакомый ключ локального конфига останавливает интеграцию; bob-a6b.14)
   pr_link.py          # layer=domain   — repo_slug/compare_url: «ветка в форке Боба → предзаполненная форма создания PR» (PR открывает owner: cross-repo PR из приватного форка installation-токену недоступен, BOB-089.D)
   stream_json.py      # layer=domain   — parse_event / STREAM_LIMIT: как читается ОДНА строка NDJSON-потока claude (общий примитив обоих транспортов, BOB-087.E)
   narrate.py          # layer=domain   — stream-json событие Claude Code → нарратив-строка / None (сжато, для группы)
@@ -69,7 +70,7 @@ src/bob/coding/
     owner_notifier.py   — _CodingOwnerNotifier (нотификатор owner'а; переехал из app.py, BOB-062.7a)
     live_stream.py      — _DmLiveStreamer (полный лайв-стрим сырых событий в личку owner'а, BOB-082; firehose ботом GUPPI при coder.stream_via_guppi, BOB-087.A)
     _branch.py, _exec.py — внутренние shell-free хелперы адаптеров
-    _integrate.py       — commit_and_push_branch: ЕДИНСТВЕННОЕ место, где строится push ветки Боба (общее для worktree и клона, BOB-089.A)
+    _integrate.py       — commit_and_push_branch: ЕДИНСТВЕННОЕ место, где строится push ветки Боба (общее для worktree и клона, BOB-089.A; закалённая форма + push ПО ЗНАЧЕНИЮ адреса, bob-a6b.14)
     _paths.py           — is_strict_child: проверка вложенности пути перед разрушающей операцией (общая для обоих рабочих мест)
 ```
 
@@ -521,6 +522,16 @@ ClaudeCodeRunner`; транзитный ports-шим `bob.domain.ports` удал
   подписи `bob[ai]`, BOB-089.D);
   `workspace_verdict(*, dest_exists, is_repo)` → `WorkspaceVerdict` (`CLONE`/`REUSE`/`REFUSE`);
   `is_credential_free_url(url)` → `bool` (BOB-089.A).
+- `untrusted_repo.py`: `hardened_git_argv(git_bin, *, path=None)` → `list[str]` — префикс
+  каждого git-вызова Боба в каталоге, которым распоряжается модель (`-c core.hooksPath=/dev/null`,
+  `-c core.fsmonitor=false`, `-c commit.gpgSign=false`, затем `-C <path>`);
+  `unsafe_local_config(listing)` → `tuple[str, ...]` — ALLOW-список: имена ключей локального
+  конфига клона, которых наша последовательность заведения там не оставляла (пусто → идти можно);
+  `LOCAL_CONFIG_QUERY` — форма опроса (`config --local --list -z`). 🔴 Состав выбран ПОПЫТКАМИ на
+  настоящем git: без пар в процессе Боба исполнялись подложенные моделью `pre-commit`/
+  `post-commit`/`pre-push`, `core.fsmonitor` и `gpg.program`; ALLOW-список (а не перечень опасных
+  ключей) — потому что `include.path` и `extensions.worktreeConfig` ПРЯЧУТ свои ключи от
+  `--local`. Границы меры — в докстроке модуля (bob-a6b.14, ревью MAJOR-7).
 - `pr_link.py`: `repo_slug(url)` → `str` (`owner/repo` форка или `""`),
   `compare_url(*, upstream, fork, branch, base)` → `str` — предзаполненная форма создания PR,
   которую отдаёт Боб вместо открытия PR (BOB-089.D).
@@ -574,7 +585,13 @@ worktree-изоляция и containment, allowlist режимов раннер�
 
 Чистые ядра общей поверхности — `tests/domain/coding/test_state.py`, `test_entities.py`,
 `test_naming.py`, `test_sandbox_policy.py`, `test_push_guard.py`, `test_intent.py`,
-`test_narrate.py`, `test_session_voice.py`, `test_stream_render*.py`, `test_work_facts.py`.
+`test_narrate.py`, `test_session_voice.py`, `test_stream_render*.py`, `test_work_facts.py`,
+`test_untrusted_repo.py`. То, что подложенный моделью код НЕ исполняется в процессе Боба,
+доказано на РЕАЛЬНОМ git парами «контроль → защита»:
+`tests/infrastructure/coding/test_untrusted_repo_real_git.py` (хуки всех трёх видов,
+`core.hooksPath` из конфига модели, `fsmonitor`, `gpg.program`, `remote.origin.pushurl`,
+`url.*.pushInsteadOf`, `filter.*.clean`, `include.path`, `extensions.worktreeConfig` — и то, что
+легитимная работа всё равно доезжает до форка).
 Персистентное дерево проверяется на РЕАЛЬНОМ git
 (`tests/infrastructure/coding/test_git_worktree_persistent_real_git.py` — фейк этот контракт не
 воспроизводил), а спавн-окружение — `test_claude_spawn_env.py` / `test_push_guard_real_git.py` /

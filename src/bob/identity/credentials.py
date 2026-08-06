@@ -15,10 +15,16 @@
 Три поля на принципала (``<принципал>_app_id`` / ``_app_key`` / ``_repo``):
 
 * ``app_id`` — числовой идентификатор GitHub App, уезжает в claim ``iss`` App-JWT;
-* ``app_key`` — ПУТЬ к приватному ключу (``.secrets/*.pem``, 0600). 🔴 Именно путь:
-  содержимое ключа в argv было бы видно в ``ps`` любому процессу пользователя, поэтому
-  PEM, случайно вставленный в конфиг вместо пути, отвергается — а секрет при этом не
-  попадает в текст отказа;
+* ``app_key`` — ПУТЬ к приватному ключу (0600). 🔴 Именно путь: содержимое ключа в argv
+  было бы видно в ``ps`` любому процессу пользователя, поэтому PEM, случайно вставленный в
+  конфиг вместо пути, отвергается — а секрет при этом не попадает в текст отказа.
+  🔴 Форму пути решает ОДНО общее правило (:func:`bob.kernel.config_paths.under_root`):
+  абсолютное значение и значение с ``~`` — как есть, относительное — от корня проекта.
+  Правильное место ключей — ВНЕ дерева репозитория (``~/.config/bob/secrets/``, 0700/0600:
+  туда не достаёт ни ``read_code``, ни git — bob-zmp), значит абсолютная форма это не
+  экзотика, а штатная. Приклеенный к ней корень репозитория (bob-a6b.15) делал единственную
+  безопасную конфигурацию невыразимой: подпись умирала на
+  ``/Users/o/bob//Users/o/.config/bob/secrets/bob-ai-work.private-key.pem``;
 * ``repo`` — ``owner/repo``, по которому находится УСТАНОВКА этого принципала
   (``GET /repos/{repo}/installation``). Токен GitHub скоупится на одну установку, поэтому
   «какой репозиторий обслуживает принципал» — часть его реквизитов, а не деталь
@@ -32,9 +38,11 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from bob.identity.ports import IdentityConfigError
+from bob.kernel.config_paths import under_root
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
+    from pathlib import Path
 
     from bob.identity.principals import Principal
 
@@ -59,12 +67,20 @@ class AppCredentials:
     repository: str
 
 
-def credentials_for(section: Mapping[str, object], principal: Principal) -> AppCredentials:
+def credentials_for(
+    section: Mapping[str, object], principal: Principal, *, root: Path
+) -> AppCredentials:
     """Собрать реквизиты ``principal`` из секции конфига ``github``.
 
     Отказ приходит ДО любой сети и до любого чтения ключа: неполный или кривой конфиг —
     это состояние, в котором Боб не должен даже пытаться выступать своей идентичностью.
     В тексте отказа — ИМЯ ключа конфига, а не его значение.
+
+    ``root`` — корень проекта, к которому привязывается ОТНОСИТЕЛЬНЫЙ путь ключа. 🔴 Он
+    приходит аргументом, а не берётся из композиции: домен не имеет права знать про
+    ``bob.runtime``, а разрешать относительный путь от текущего каталога процесса — ровно
+    тот дефект, что убил реюз worktree в BOB-087.D5b. Аргумент ОБЯЗАТЕЛЬНЫЙ: значение по
+    умолчанию вернуло бы тихое разрешение «от чего попало» первой же забывчивостью.
     """
     prefix = principal.value
     app_id = _required(section, f"{prefix}_app_id")
@@ -83,7 +99,11 @@ def credentials_for(section: Mapping[str, object], principal: Principal) -> AppC
         raise IdentityConfigError(
             f"config github.{prefix}_repo must be an owner/repo slug"
         )
-    return AppCredentials(app_id=app_id, private_key_path=key_path, repository=repository)
+    return AppCredentials(
+        app_id=app_id,
+        private_key_path=str(under_root(key_path, root=root)),
+        repository=repository,
+    )
 
 
 def _required(section: Mapping[str, object], key: str) -> str:

@@ -65,6 +65,11 @@ from bob.coding.clone_plan import (
     origin_argv,
     workspace_verdict,
 )
+from bob.coding.untrusted_repo import (
+    LOCAL_CONFIG_QUERY,
+    hardened_git_argv,
+    unsafe_local_config,
+)
 
 __all__ = ["CloneError", "GitClone"]
 
@@ -157,11 +162,29 @@ class GitClone:
         числе ``main``) отклоняется ДО запуска git, поэтому пути, способного запушить
         ствол, физически нет. Сама последовательность — общий шаг интеграции
         (:func:`bob.coding.adapters._integrate.commit_and_push_branch`): ``True``, когда
-        настоящий коммит уехал в ``origin`` (то есть в форк Боба), ``False``, когда
-        коммитить было нечего.
+        настоящий коммит уехал в форк Боба, ``False``, когда коммитить было нечего.
+
+        🔴 Ветка уезжает по ЗНАЧЕНИЮ ``coder.fork_url``, а не по имени remote'а
+        (bob-a6b.14): прописанный моделью локально ``remote.origin.pushurl`` увёл ветку в
+        АПСТРИМ — проверено на настоящем git. Форк не настроен вовсе → remote при
+        заведении клона удалён, пушить некуда, и это отказ по КОНФИГУРАЦИИ, а не загадочная
+        ошибка git.
+
+        И перед первой же командой в каталоге спрашивается его локальный конфиг: ключ,
+        которого наша последовательность заведения там не оставляла, останавливает
+        интеграцию ГРОМКО (:func:`bob.coding.untrusted_repo.unsafe_local_config`) — так
+        закрыто то, чего форма argv закрыть не может вовсе: ``filter.<d>.clean``
+        исполняется на ``add`` при любых парах, а ``url.*.pushInsteadOf`` перезаписывает
+        адрес уже после разбора argv.
         """
         if not is_safe_branch(branch):
             raise CloneError(f"refusing to push branch {branch!r}: not a safe bob/<slug> branch")
+        if not self._fork_url:
+            raise CloneError(
+                "refusing to push: coder.fork_url is not configured, so the clone has no "
+                "remote at all — there is nowhere for Bob's branch to go"
+            )
+        await self._refuse_a_tampered_clone(path)
         return await commit_and_push_branch(
             self._runner,
             git_bin=self._git_bin,
@@ -169,6 +192,7 @@ class GitClone:
             branch=branch,
             message=message,
             timeout=self._timeout,
+            push_target=self._fork_url,
         )
 
     async def remove(self, path: str) -> None:
@@ -244,9 +268,41 @@ class GitClone:
             return False
         await self._run(fetch_argv(self._git_bin, dest=str(dest)))
         listed = await self._run(
-            [self._git_bin, "-C", str(dest), "branch", "--list", "--remotes", f"origin/{branch}"]
+            [
+                *hardened_git_argv(self._git_bin, path=str(dest)),
+                "branch",
+                "--list",
+                "--remotes",
+                f"origin/{branch}",
+            ]
         )
         return bool(listed.strip())
+
+    async def _refuse_a_tampered_clone(self, path: str) -> None:
+        """Отказать, если в локальном конфиге клона есть ключ, которого мы там не заводили.
+
+        🔴 ЧЕСТНО О СИЛЕ МЕРЫ. Она закрывает ровно то, чего форма argv не закрывает:
+        ``filter.<d>.clean`` исполнился на ``add -A`` при полном наборе пар, а
+        ``url.<апстрим>.pushInsteadOf`` увёз ветку в апстрим даже при push'е по значению
+        (оба факта воспроизведены на git 2.49). Но это проверка НА МОМЕНТ, а не пара в
+        argv: живой сеанс ``claude`` вправе дописать ключ между опросом и ``add``. И она
+        применима только к КЛОНУ, где конфиг завели мы сами; у linked worktree локальный
+        конфиг — конфиг ВЛАДЕЛЬЦА, где законно живёт хоть ``merge.<d>.driver``, и отличить
+        его правку от правки модели нечем. Полностью класс закрывает раздельный UID
+        (BOB-093) — см. докстроку :mod:`bob.coding.untrusted_repo`.
+
+        В сообщение уезжают только ИМЕНА ключей: значение вправе оказаться секретом.
+        """
+        listing = await self._run(
+            [*hardened_git_argv(self._git_bin, path=path), *LOCAL_CONFIG_QUERY]
+        )
+        offending = unsafe_local_config(listing)
+        if offending:
+            raise CloneError(
+                "refusing to integrate: the clone's local config carries keys Bob's setup "
+                f"never writes ({', '.join(offending)}) — a repository that names commands "
+                "or a second push address is not a workspace we run git in"
+            )
 
     async def _run(self, argv: list[str]) -> str:
         return await self._runner(argv, timeout=self._timeout)

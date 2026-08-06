@@ -54,6 +54,7 @@ from bob.coding.push_guard import PUSH_GUARD_STUB_URL, guarded_spawn_env
 from bob.identity.adapters.installation_token import build_installation_tokens
 from bob.identity.adapters.spawn_isolation_files import SpawnIsolationFiles
 from bob.identity.principals import Purpose
+from bob.runtime.config import _REPO_ROOT
 
 pytestmark = pytest.mark.skipif(
     shutil.which("git") is None, reason="real git is not available on this host"
@@ -148,7 +149,7 @@ async def bobs_env(tmp_path: Path) -> dict[str, str]:
     бы вообще не увидели — то есть проверяли бы свою вежливость вместо прав.
     """
     section = _section()
-    tokens = build_installation_tokens(section, clock=_Clock())
+    tokens = build_installation_tokens(section, clock=_Clock(), root=_REPO_ROOT)
     token = await tokens.token(Purpose.PUSH_TO_FORK)
     isolation = SpawnIsolationFiles(tmp_path / "spawn-env").materialize(
         fork_url=_url_of(section, "work_repo"), token=token
@@ -162,7 +163,7 @@ async def bobs_env(tmp_path: Path) -> dict[str, str]:
 async def proposing_env(tmp_path: Path) -> dict[str, str]:
     """То же окружение, но с токеном принципала ``propose`` (он на апстриме УСТАНОВЛЕН)."""
     section = _section()
-    tokens = build_installation_tokens(section, clock=_Clock())
+    tokens = build_installation_tokens(section, clock=_Clock(), root=_REPO_ROOT)
     token = await tokens.token(Purpose.READ_UPSTREAM)
     isolation = SpawnIsolationFiles(tmp_path / "spawn-env-propose").materialize(
         fork_url=_url_of(section, "propose_repo"), token=token
@@ -286,7 +287,6 @@ async def test_moving_main_inside_bobs_clone_leaves_the_owners_real_main_untouch
         pytest.skip(f"смоук на настоящем репозитории выключен: не задан {_OPT_IN}=1")
     from bob.coding.adapters._exec import ExecRunner  # noqa: PLC0415 — только для смоука
     from bob.coding.adapters.git_clone import GitClone  # noqa: PLC0415
-    from bob.runtime.config import _REPO_ROOT  # noqa: PLC0415
 
     trunk_before = _git(_REPO_ROOT, "rev-parse", "refs/heads/main").stdout.strip()
     head_before = _git(_REPO_ROOT, "rev-parse", "HEAD").stdout.strip()

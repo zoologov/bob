@@ -14,12 +14,17 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from bob.identity.credentials import credentials_for
 from bob.identity.ports import IdentityConfigError
 from bob.identity.principals import Principal
 from bob.infrastructure.config.loader import ConfigLoader
+
+#: Корень проекта, от которого читается относительный путь к ключу (bob-a6b.15).
+_ROOT = Path("/Users/o/bob")
 
 
 def _github_section(env: dict[str, str] | None = None) -> dict[str, object]:
@@ -44,7 +49,7 @@ def test_both_principals_ship_unconfigured() -> None:
 def test_an_unconfigured_bob_is_refused_by_key_name_not_silently() -> None:
     # Пустая секция — не повод «как-нибудь» пойти в сеть: отказ приходит с именем ключа.
     with pytest.raises(IdentityConfigError, match="work_app_id"):
-        credentials_for(_github_section(), Principal.WORK)
+        credentials_for(_github_section(), Principal.WORK, root=_ROOT)
 
 
 def test_the_lifetime_knobs_have_conservative_defaults() -> None:
@@ -81,7 +86,7 @@ def test_a_fully_configured_principal_parses_end_to_end() -> None:
             "BOB_GITHUB__WORK_REPO": "bobiverse-dev/bob",
         }
     )
-    credentials = credentials_for(section, Principal.WORK)
+    credentials = credentials_for(section, Principal.WORK, root=_ROOT)
     assert credentials.app_id == "4491954"
     assert credentials.repository == "bobiverse-dev/bob"
 
