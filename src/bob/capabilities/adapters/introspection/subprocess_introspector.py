@@ -58,9 +58,14 @@ Realises :class:`bob.capabilities.ports.RepoIntrospector` (BOB-017 Phase A). Two
   of dumping forty lines into a chat.
 * **File reads** — :meth:`read_file` consults the pure
   :class:`~bob.capabilities.introspection.privacy_guard.PrivacyGuard` BEFORE opening any
-  file: a denied path (SOUL / ``bob.db`` / ``.env`` / ``config``) raises
-  :class:`DeniedPathError` without a disk touch. Allowed content is line-capped and
-  sanitised before return.
+  file: a denied path raises :class:`DeniedPathError` without a disk touch. Allowed
+  content is line-capped and sanitised before return. 🔴 CORRECTED TO FACT (bob-a6b.17;
+  the error is left VISIBLE, not rewritten after the fact — Issues #49): this line
+  spelled the denied set as «SOUL / ``bob.db`` / ``.env`` / ``config``», the invariant
+  from BEFORE BOB-067. Those paths are readable now; what is refused is an escape past
+  the repo root, key material anywhere in the tree and the ``.git`` subtree — and the
+  ONE place that enumerates it is the guard's own docstring, deliberately not repeated
+  here (that repetition is how the stale list survived).
 
 The subprocess boundary is injected as a ``runner`` callable so tests substitute a
 deterministic fake and never spawn a process. The default runner uses

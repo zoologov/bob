@@ -314,9 +314,18 @@ DEFAULT_CONFIG: Config = {
     # capabilities (``inspect_architecture`` / ``read_code`` / ``list_work``) let Bob
     # answer about his OWN code/architecture/backlog with real beadloom/code/Beads. They
     # are conversation-only (never on the autonomous safe-allowlist) and privacy-guarded
-    # by construction — only ``src``/``tests``/``docs`` are visible, SOUL/``bob.db``/
-    # ``.env``/``config`` are DENIED on the infra boundary before any read. ``enabled``
-    # defaults TRUE (read-only, owner-only chat): on → the three skills are advertised.
+    # on the infra boundary before any read.
+    # 🔴 CORRECTED TO FACT (bob-a6b.17; the error is left VISIBLE rather than rewritten
+    # after the fact — Issues #49). This said «only ``src``/``tests``/``docs`` are
+    # visible, SOUL/``bob.db``/``.env``/``config`` are DENIED» — the invariant from
+    # BEFORE BOB-067, which deliberately widened reading to the WHOLE repo (the owner's
+    # call: Bob is an equal engineer, not a whitelist tourist). Today ``config/`` and
+    # ``data/`` ARE readable; what the guard refuses is an escape past the repo root,
+    # key material anywhere in the tree and the ``.git`` subtree, and every returned
+    # byte is sanitised of secret-shaped VALUES. The enumeration lives in ONE place —
+    # :mod:`bob.capabilities.introspection.privacy_guard` — and is not copied here.
+    # ``enabled`` defaults TRUE (read-only, owner-only chat): on → the three skills are
+    # advertised.
     # ``max_output_chars`` caps each tool's output, ``read_max_lines`` caps a file read,
     # and ``beadloom_bin`` / ``bd_bin`` name the local read-only CLIs the subprocess
     # adapter runs against its fixed allowlist (never a shell). ``dev_tools`` (BOB-081)
@@ -428,10 +437,28 @@ DEFAULT_CONFIG: Config = {
         # and that road does not exist at all; privacy is unchanged (a clone carries only
         # TRACKED files — proven on real git, not assumed). ``clone_root`` is where the
         # clones live (relative to the repo root, gitignored); ``fork_url`` is the clone's
-        # ONLY remote (Bob's fork) — empty means the clone has no remote whatsoever, and
-        # the upstream is never configured under any value.
-        # 🔴 Honestly: this flag does NOT isolate CREDENTIALS (a separate slice), so on its
-        # own it is half of the guarantee. And 🔴 a token is NEVER embedded in ``fork_url``
+        # ONLY remote (Bob's fork) — empty means the clone has no remote whatsoever.
+        # 🔴 CORRECTED TO FACT (TWICE) (bob-a6b.17; both errors left VISIBLE rather than
+        # rewritten after the fact — Issues #49). This comment said two things that are no
+        # longer true, and both had already been settled elsewhere in this very epic:
+        #   1. «the upstream is never configured under any value» — the SIXTH survival of a
+        #      claim the reviewer disproved on real git (bob-a6b.6, MAJOR-7/8): the model
+        #      writes ``remote.origin.pushurl`` into the clone's LOCAL config on top of our
+        #      argv, and ``url.<upstream>.pushInsteadOf`` carries the branch upstream even
+        #      when we push BY VALUE. True in the narrow form only: AT CLONE SETUP the
+        #      upstream is configured under no value of ``fork_url``. What the directory
+        #      looks like afterwards is the model's business, which is why the branch goes
+        #      out by VALUE and an unknown local-config key stops integration
+        #      (:func:`bob.coding.untrusted_repo.unsafe_local_config`).
+        #   2. «this flag does NOT isolate CREDENTIALS (a separate slice)» — stale in the
+        #      OPPOSITE direction: slice C shipped that isolation under THIS SAME flag
+        #      (:func:`bob.runtime.wiring.coding._build_spawn_isolation`). Clone + spawn
+        #      isolation are two halves of one guarantee — the clone closes the LOCAL road
+        #      to the trunk (its own ``.git``), the isolation the AMBIENT network one — so
+        #      there is deliberately one flag. What is still on trust (same UID: a direct
+        #      ``ssh``, a filesystem path to the owner's repo) is named in
+        #      ``docs/domains/identity/README.md``, not hidden — bead BOB-093.
+        # 🔴 And a token is NEVER embedded in ``fork_url``
         # (``https://x-access-token:<token>@host/…``): argv is visible in ``ps``, so such a
         # configuration is refused at startup. Measured price on this repository: 3.8 s and
         # 142 MB per workplace.

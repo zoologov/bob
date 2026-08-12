@@ -163,8 +163,18 @@ genesis:
   templates_dir: bob-soul      # personality "genome" templates (repo-root default)
 
 # Self-introspection — «Боб знает свой мир» (BOB-017 / BOB-067 / BOB-081). Read-only,
-# privacy-guarded (only src/tests/docs visible; SOUL/bob.db/.env/config DENIED) and
-# conversation-only (never on the autonomous allowlist). ``enabled`` defaults TRUE.
+# privacy-guarded и conversation-only (never on the autonomous allowlist). ``enabled``
+# defaults TRUE.
+# 🔴 ИСПРАВЛЕНО ПО ФАКТУ (bob-a6b.17; правка видимая, а не переписанная задним числом).
+# Здесь стояло «only src/tests/docs visible; SOUL/bob.db/.env/config DENIED» — инвариант
+# ДО BOB-067, который сознательно (решение owner'а) открыл Бобу ВЕСЬ репозиторий: он
+# инженер, а не турист по белому списку. Что на самом деле: `config/` и `data/` ЧИТАЮТСЯ;
+# отказ — на выход за корень репозитория, на ключевой материал где угодно в дереве
+# (`.secrets/`, `*.pem`/`*.key`/`*.p12`/`*.pfx`, `id_rsa`/`id_ed25519`) и на служебное
+# `.git/**`; всё, что вернулось, проходит через гашение секрето-подобных ЗНАЧЕНИЙ
+# (PEM, `ghs_`/`ghp_`/`github_pat_`, JWT, пароль в URL, `KEY=value`). То есть `.env`
+# прочитается, но секрет из него наружу не уедет. Перечень живёт в ОДНОМ месте —
+# `src/bob/capabilities/introspection/privacy_guard.py`.
 introspection:
   enabled: true
   # 🔴 BOB-081 SUB-flag, default OFF. The read-only DEV tools — recent_commits (git
@@ -264,7 +274,16 @@ coder:
   # clone_root: .clones
   # Единственный remote клона — форк Боба, ПО HTTPS
   # (`https://github.com/bobiverse-dev/bob.git`).
-  # Пусто → у клона нет remote'а ВООБЩЕ (нечего пушить); апстрим не прописывается никогда.
+  # Пусто → у клона нет remote'а ВООБЩЕ (нечего пушить).
+  # 🔴 ИСПРАВЛЕНО ПО ФАКТУ (bob-a6b.17; правка видимая, а не переписанная задним числом).
+  # Здесь стояло «апстрим не прописывается никогда». Ревьюер опроверг это на настоящем git
+  # (bob-a6b.6, MAJOR-7/8): МОДЕЛЬ дописывает в клоне `remote.origin.pushurl` локальным
+  # конфигом поверх нашего argv, а `url.<апстрим>.pushInsteadOf` уводит ветку в апстрим даже
+  # при push'е по значению. Верна узкая форма: ПРИ ЗАВЕДЕНИИ клона апстрим не прописывается
+  # ни при каком значении этого ключа. Дальше за каталог отвечает модель — поэтому push идёт
+  # по ЗНАЧЕНИЮ этого ключа, а незнакомый ключ в локальном конфиге клона останавливает
+  # интеграцию. От тебя это не требует ничего: просто не читай строку выше как «в апстрим
+  # уехать нельзя».
   # 🔴 ИМЕННО https, а НЕ `git@github.com:…` — до bob-a6b.10 здесь стоял ssh-адрес, и это
   # вела штатная настройка по НЕИЗОЛИРОВАННОМУ транспорту: installation-токен Боба работает
   # только по https, а по ssh предъявляется КЛЮЧ OWNER'А из `~/.ssh` — чужая идентичность,

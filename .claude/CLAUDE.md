@@ -111,14 +111,17 @@ bd close <bead-id> --suggest-next
 - **Tests:** pytest + pytest-cov
 - **Linter/formatter:** ruff (lint + format)
 - **Type checking:** mypy --strict
-- **Architecture:** DDD packages -- `application/`, `capabilities/`, `coding/`, `conversation/`, `infrastructure/`, `interactive/`, `kernel/`, `memory/`, `personality/`, `presence/`, `proactivity/`, `runtime/`, `social/`
+- **Architecture:** DDD packages -- `application/`, `capabilities/`, `coding/`, `conversation/`, `identity/`, `infrastructure/`, `interactive/`, `kernel/`, `memory/`, `personality/`, `presence/`, `proactivity/`, `runtime/`, `social/`
 - **Current version:** 2.1.0
 <!-- beadloom:auto-end -->
 
 > **Authoritative project facts** (the auto-region above is beadloom-generated and coarse — it does
 > not reflect the real stack, and "Current version: 2.1.0" is *beadloom's* version, not Bob's; a known
 > beadloom quirk):
-> **Bob v0.1.0** · Python 3.12+ (asyncio) · Telegram — `python-telegram-bot` · Ollama (Qwen 2.5 7B/0.5B)
+> **Bob v0.1.0** · Python 3.12+ (asyncio) · Telegram — `python-telegram-bot` · Tier-1 Qwen (облако),
+> аварийный дублёр — локальный Ollama `qwen3:8b` (2026-08-12: выбран замером через шов Боба;
+> `qwen2.5:7b` отвергнут — выплёвывал синтаксис вызова инструмента ТЕКСТОМ в реплику, `0.5b`
+> галлюцинировал), эмбеддер `bge-m3`
 > · SQLite + FTS5 (no RAG/embeddings in P0) · pytest · ruff · mypy --strict.
 > Full stack & product direction: **`.claude/dev-docs/VISION.md`** + `ROADMAP.md`.
 

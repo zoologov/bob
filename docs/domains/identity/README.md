@@ -159,9 +159,42 @@ git-операции): лишний минт стоит одного запро�
 второй слой, живой даже если блок `GIT_CONFIG_*` снимут изнутри), `GIT_CONFIG_NOSYSTEM=1`,
 `GIT_TERMINAL_PROMPT=0`, `GIT_ASKPASS`/`SSH_ASKPASS` в **несуществующий** путь, отдельный
 пустой `GH_CONFIG_DIR` (иначе `gh` взял бы токен owner'а из `~/.config/gh/hosts.yml` и
-дотянулся бы до ствола мимо git вовсе), `GIT_SSH_COMMAND` (см. ниже), и **вычищаются**
-`GITHUB_TOKEN` / `GH_TOKEN` / `GITHUB_ENTERPRISE_TOKEN` / `GH_ENTERPRISE_TOKEN` /
-`SSH_AUTH_SOCK` / `GIT_CONFIG_PARAMETERS`.
+дотянулся бы до ствола мимо git вовсе), `GIT_SSH_COMMAND` (см. ниже), и **вычищается**
+`PURGED_SPAWN_VARS` — 15 переменных owner'а двумя семьями.
+
+**Семья первая — креды (`OWNER_CREDENTIAL_VARS`, 6):** `GITHUB_TOKEN`, `GH_TOKEN`,
+`GITHUB_ENTERPRISE_TOKEN`, `GH_ENTERPRISE_TOKEN`, `SSH_AUTH_SOCK`, `GIT_CONFIG_PARAMETERS`.
+🔴 Последняя здесь не для симметрии: git читает её ПОСЛЕ пар `GIT_CONFIG_KEY_i`, поэтому
+унаследованная переменная встаёт после нашего сброса хелперов и ВОЗВРАЩАЕТ credential-хелпер
+owner'а (проверено на git 2.49 — `git credential fill` снова отдавал его пароль). Её не
+«снимают изнутри», её НАСЛЕДУЮТ: git экспортирует её дочерним процессам, когда сам запущен
+как `git -c …`, алиас или хук.
+
+**Семья вторая — переадресация (`REDIRECTING_GIT_VARS`, 9; bob-a6b.12, ревью MAJOR-5):**
+`GIT_DIR`, `GIT_WORK_TREE`, `GIT_COMMON_DIR`, `GIT_INDEX_FILE`, `GIT_OBJECT_DIRECTORY`,
+`GIT_ALTERNATE_OBJECT_DIRECTORIES`, `GIT_NAMESPACE`, `GIT_CEILING_DIRECTORIES`, `GIT_CONFIG`.
+Креды тут ни при чём: это прямые указатели на части ЧУЖОГО репозитория, то есть удар в
+структурное свойство среза A. С унаследованным `GIT_DIR` `git update-ref refs/heads/main
+<старый sha>` из клона Боба сдвинул ствол владельца НАЗАД (rc=0, коммит потерян) — без сети,
+без кредов и без push'а. Состав снят не с документации, а ПОПЫТКАМИ на настоящем git 2.49:
+каждая переменная — воспроизведённое последствие (запись в рабочее дерево владельца, объект
+Боба в его складе, перезаписанный индекс, push в скрытую партицию refs, «not a git
+repository» из подкаталога собственного клона, дозапись в его глобальный конфиг).
+
+🔴 **Что в семьи НЕ вошло — и это граница по принципу, а не по вкусу.** `GIT_CONFIG_COUNT` /
+`GIT_CONFIG_KEY_i` / `GIT_CONFIG_VALUE_i` и `XDG_CONFIG_HOME` ДЕРЖАТ (наши пары встают после
+пар owner'а, а XDG перекрыт `GIT_CONFIG_GLOBAL`), и вычистка сломала бы документированный
+контракт `guarded_spawn_env` о продолжении нумерации пар. `GIT_CONFIG_SYSTEM` обезврежен
+`GIT_CONFIG_NOSYSTEM=1`, а `GIT_CONFIG_GLOBAL` / `GIT_SSH` / `GIT_ASKPASS` перекрываются
+НАШИМ значением. `GIT_TEMPLATE_DIR` копирует чужой шаблон в новый репозиторий (проверено), но
+ни на что чужое не указывает: он несёт КОД, а не адрес. 🔴 Обоснование здесь уточнено против
+докстроки модуля, которая всё ещё сводит его к «тому же UID» (долг из bob-a6b.14, замечание
+ревьюера): переменная стоит в окружении СПАВНА, значит шаблон попадает в репозитории, которые
+заводит сам спавн, — а рабочее место Боба заводит процесс Боба, и его git-вызовы хуков не
+исполняют вовсе (`hardened_git_argv`). Остаётся ровно то, что спавн под тем же UID и так
+исполняет сам.
+`GIT_DISCOVERY_ACROSS_FILESYSTEM` не вычищается потому, что эффекта воспроизвести не удалось:
+заявлять непроверенное — не наш жанр.
 
 ### 🔴 ssh-дорога: что здесь было обещано неверно и как это выглядит по факту (bob-a6b.10)
 
@@ -252,9 +285,13 @@ ssh-адрес — штатная настройка вела по неизол�
   `token_freshness(*, expires_at, now, margin_seconds)`, `parse_expiry(raw)`.
 - `ports.py`: `Rs256Signer`, `GitHubAppApi`, `InstallationTokenSource`; отказы
   `IdentityError` → `IdentityConfigError` / `SigningError` / `TokenMintError`.
-- `spawn_isolation.py`: `SpawnIsolation(config_global, askpass, gh_config_dir="",
-  credential_store="")`, `isolation_env(isolation)`, `isolation_config_pairs(isolation)`,
-  `credential_store_line(*, fork_url, token)`, `OWNER_CREDENTIAL_VARS`.
+- `spawn_isolation.py`: `SpawnIsolation(config_global, askpass, ssh_identity,
+  gh_config_dir="", credential_store="")` — 🔴 `ssh_identity` **без значения по умолчанию
+  СОЗНАТЕЛЬНО** (bob-a6b.10): с дефолтом собиралась бы «изоляция» с открытой ssh-дорогой,
+  ровно то состояние, которое эта беада и лечит; `isolation_env(isolation)`,
+  `controlled_ssh_command(*, identity)`, `isolation_config_pairs(isolation)`,
+  `credential_store_line(*, fork_url, token)`, `OWNER_CREDENTIAL_VARS` /
+  `REDIRECTING_GIT_VARS` / `PURGED_SPAWN_VARS`.
 - `adapters/`: `OpensslRs256Signer(openssl_bin=…, timeout_seconds=…)`,
   `AiohttpGitHubAppApi(base_url=…, timeout_seconds=…, request=None)`,
   `GitHubInstallationTokens(section, *, signer, api, clock, root, renew_margin_seconds,
@@ -270,9 +307,15 @@ ssh-адрес — штатная настройка вела по неизол�
   вызывающего в проде у него нет, и это записано, а не выдано за фичу (§0.3 п.10:
   «разрешение без вызывающего — не возможность»).
 - Процесс **самого Боба** по-прежнему пушит в форк амбиентными кредами owner'а: изоляция
-  касается СПАВНА. Структурно там держит другое — у Боба в коде нет пути запушить что-либо,
-  кроме ветки `bob/<slug>` в `origin` (проверяется `is_safe_branch` до запуска git). Перевод
-  собственного push'а Боба на его installation-токен — отдельная работа, не срез C.
+  касается СПАВНА. Держит там другое — у Боба в коде нет пути запушить что-либо, кроме ветки
+  `bob/<slug>` (проверяется `is_safe_branch` до запуска git) полностью квалифицированным
+  refspec'ом по ЗНАЧЕНИЮ `coder.fork_url`, а не по имени remote'а, которое модель вправе
+  переписать (bob-a6b.14). Перевод собственного push'а Боба на его installation-токен —
+  отдельная работа, не срез C.
+- 🔴 Шаг интеграции идёт в процессе Боба **намеренно вне изоляции** — с кредами и ssh-ключом
+  владельца, — но в каталоге, которым распоряжается модель. Поэтому он закалён формой вызова
+  (`bob.coding.untrusted_repo`), а не окружением: это мера ФОРМЫ ВЫЗОВА, парная к мерам
+  ОКРУЖЕНИЯ, описанным выше.
 - Боб **не может** сам открыть PR из приватного форка: installation-токен скоупится на одну
   установку, а cross-repo PR требует читаемости обеих сторон одним токеном (проверено три
   способа, см. комментарии беады BOB-089). Вариант A: Боб доводит работу до ветки в форке и
@@ -310,14 +353,24 @@ ssh-адрес — штатная настройка вела по неизол�
   на форке, `propose` — на апстриме).
 - **Материализация окружения** — `tests/infrastructure/identity/test_spawn_isolation_files.py`
   на НАСТОЯЩЕЙ файловой системе: права 0700/0600 (и файл затягивается ДО того, как в него
-  попадёт токен), стор прошлой сессии удаляется, подложенный askpass-хелпер удаляется,
-  токена нет ни в одном файле кроме стора и нет в `repr`.
+  попадёт токен), стор прошлой сессии удаляется, подложенные askpass-хелпер и
+  `ssh-identity-disabled` удаляются (настоящий ключ, оказавшийся на месте «пути в никуда»,
+  ssh взял бы в дело), токена нет ни в одном файле кроме стора и нет в `repr`. Подменный
+  global-конфиг несёт и `[core] sshCommand` — тот же ssh-слой ФАЙЛОМ, живой после
+  `env -u GIT_SSH_COMMAND`; значение записано в кавычках, иначе `#` в пути обрезал бы
+  команду комментарием.
 - 🔴 **Настоящий git** — `tests/infrastructure/coding/test_spawn_isolation_real_git.py`
   (11 тестов): каждая из четырёх дорог к кредам owner'а (системный конфиг, глобальный,
   окружение, локальный конфиг репозитория) проверяется **парой** «контроль: дорога реально
   есть → изоляция: не отвечает». Вердикт даёт `git credential fill` — тот самый механизм,
   которым пользуется `git push`. Хост заведомо несуществующий (`.invalid`), чтобы тест не
   дёрнул настоящий keychain owner'а.
+- 🔴 **Настоящий git, семья переадресующих переменных** —
+  `tests/infrastructure/coding/test_spawn_redirect_vars_real_git.py`: девять пар
+  «контроль → изоляция» поштучно (в контроле каждая переменная РЕАЛЬНО уводит операцию к
+  чужому репозиторию — сдвинутый ствол, перезаписанный индекс, объект в чужом складе) плюс
+  общий шов `PURGED_SPAWN_VARS`. Сам фикс — модульные константы, которых mutmut не касается,
+  поэтому гейт здесь дают именно эти пары, а не mutation-score (§0.3 п.6).
 - 🔴 **Живой негативный смоук** —
   `tests/infrastructure/coding/test_upstream_refusal_live_smoke.py` (**opt-in**,
   `BOB_LIVE_GITHUB_SMOKE=1`): из окружения Боба живым токеном — push ветки в апстрим,
