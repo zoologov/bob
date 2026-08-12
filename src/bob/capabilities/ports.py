@@ -341,8 +341,20 @@ class RepoIntrospector(Protocol):
     the network. The privacy invariant is enforced INSIDE the implementation, not by
     the caller: :meth:`read_file` consults the
     :class:`~bob.capabilities.introspection.privacy_guard.PrivacyGuard` before opening a
-    file and sanitises output, so a denied path (SOUL / DB / ``.env`` / ``config``)
-    can never be read. The contract is deliberately abstract — the live realisation
+    file and sanitises output.
+
+    🔴 CORRECTED TO FACT (bob-a6b.17; the error is left VISIBLE rather than rewritten
+    after the fact — Issues #49). The line above named the denied set as «SOUL / DB /
+    ``.env`` / ``config``», the invariant BEFORE BOB-067 widened reading to the WHOLE
+    repo. Today those paths ARE readable and what the guard refuses is an ESCAPE past
+    the repo root, key material anywhere in the tree (``.secrets/``, ``*.pem`` /
+    ``*.key`` / ``*.p12`` / ``*.pfx``, ``id_rsa`` / ``id_ed25519``) and the ``.git``
+    subtree (bob-zmp, bob-a6b.13); everything returned is sanitised of secret-shaped
+    VALUES. The one place that owns this vocabulary is the guard's own docstring — this
+    port only promises that SOME such invariant runs inside the implementation, never
+    which paths it names, so the two cannot drift again.
+
+    The contract is deliberately abstract — the live realisation
     is the subprocess adapter in ``bob.capabilities.adapters.introspection``; a deterministic
     fake substitutes in tests with no subprocess and no disk.
     """

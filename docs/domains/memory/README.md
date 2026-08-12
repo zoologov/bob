@@ -49,7 +49,7 @@ src/bob/memory/
   ports.py        # layer=domain          — порты-протоколы способности
   __init__.py     # layer=domain          — фасад (re-export EpisodicEvent, SemanticFact)
   entities.py     # layer=domain          — EpisodicEvent, SemanticFact (immutable value-objects)
-  self_action.py  # layer=domain          — SelfActionKind, SelfAction, describe_self_action (автобиография, BOB-079)
+  self_action.py  # layer=domain          — SelfActionKind, SelfAction, describe_self_action + coding_terminal_kind (автобиография, BOB-079; два финала сессии — BOB-089)
   work_journal.py # layer=domain          — WorkEpisode + work_episode_event: дистиллированный dev-эпизод, event_type='work' (BOB-087.B1)
   register.py     # layer=domain          — Register (DEV/CASUAL) + may_recall_in_register/filter_by_register: чистый down-weight work-эпизодов в CASUAL (BOB-087.C1)
   register_pipeline.py # layer=domain     — register_ranked/pool_has_work: over-fetch → attenuate → re-sort → truncate («зубы» down-weight'а) + economy-gate (BOB-087.C2)
@@ -123,7 +123,7 @@ BOB-051 единую память и все legacy-строки нетронут
 несла *слова* Боба (`event_type='message'`) и *чувства* (`'reflection'`), но не
 *поступки*: у Боба не было следа собственных действий, поэтому свой же runaway-
 инцидент он присвоить не мог. `self_action.py` (чистый домен, I/O-free) вводит
-`SelfActionKind` (`StrEnum`: `coding_started/finished/aborted/failed/runaway`,
+`SelfActionKind` (`StrEnum`: `coding_started/finished/handed_off/aborted/failed/runaway`,
 `tool_use`, `tool_failure`), value-object `SelfAction` (`kind`, опц. `target`/
 `detail`) и детерминированный рендер `describe_self_action → RenderedSelfAction`
 (`content` **всегда от первого лица** — «я …», `tags`, флаг `is_anomaly` для
@@ -132,6 +132,18 @@ failed/runaway/tool_failure). Рендер — mutation-ядро (100%). Дей�
 работают без спец-путей (это делимая автобиография, а не приватная рефлексия — из
 recall не вырезается). Запись включает флаг `memory.autobiography` (default OFF →
 no-op recorder, нулевое изменение поведения).
+
+🔴 **Боб присваивает себе ровно то, что сделал (BOB-089, bob-a6b.8).** У успешного финала
+coding-сессии ДВА разных поступка, и у каждого свой вид: на gh-пути Боб действительно открыл
+PR (`coding_finished` → «я доделал «X», открыл PR»), а на форк-пути «Create pull request»
+жмёт owner, и Боб лишь довёл работу до ветки в своём форке (`coding_handed_off` → «я довёл
+«X» до ветки в своём форке и отдал ссылку — PR не открывал»). Выбор делает чистый
+`coding_terminal_kind(opened_pr=…)` по ТОМУ ЖЕ признаку `opens_pr`, которым композиция
+(`_build_pr_integration`) уже развела адаптер интеграции и терминальную реплику, — второго
+источника правды о том, открыт ли PR, нет сознательно. Почему это не косметика: эпизод
+автобиографии — источник будущих ответов Боба о себе, поэтому запись о несовершённом
+действии стала бы конфабуляцией с провенансом «я это помню, я сам так сделал» — ровно тем
+классом, против которого BOB-090.C строил анти-конфабуляционный провенанс.
 
 **Рабочий журнал — дистиллированный dev-эпизод (BOB-087.B1).** `work_journal.py`
 (чистый домен, I/O-free) вводит `WorkEpisode` — детальную первого-лица «операторскую»

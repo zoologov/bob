@@ -111,14 +111,17 @@ bd close <bead-id> --suggest-next
 - **Tests:** pytest + pytest-cov
 - **Linter/formatter:** ruff (lint + format)
 - **Type checking:** mypy --strict
-- **Architecture:** DDD packages -- `application/`, `capabilities/`, `coding/`, `conversation/`, `infrastructure/`, `interactive/`, `kernel/`, `memory/`, `personality/`, `presence/`, `proactivity/`, `runtime/`, `social/`
+- **Architecture:** DDD packages -- `application/`, `capabilities/`, `coding/`, `conversation/`, `identity/`, `infrastructure/`, `interactive/`, `kernel/`, `memory/`, `personality/`, `presence/`, `proactivity/`, `runtime/`, `social/`
 - **Current version:** 2.1.0
 <!-- beadloom:auto-end -->
 
 > **Authoritative project facts** (the auto-region above is beadloom-generated and coarse — it does
 > not reflect the real stack, and "Current version: 2.1.0" is *beadloom's* version, not Bob's; a known
 > beadloom quirk):
-> **Bob v0.1.0** · Python 3.12+ (asyncio) · Telegram — `python-telegram-bot` · Ollama (Qwen 2.5 7B/0.5B)
+> **Bob v0.1.0** · Python 3.12+ (asyncio) · Telegram — `python-telegram-bot` · Tier-1 Qwen (облако),
+> аварийный дублёр — локальный Ollama `qwen3:8b` (2026-08-12: выбран замером через шов Боба;
+> `qwen2.5:7b` отвергнут — выплёвывал синтаксис вызова инструмента ТЕКСТОМ в реплику, `0.5b`
+> галлюцинировал), эмбеддер `bge-m3`
 > · SQLite + FTS5 (no RAG/embeddings in P0) · pytest · ruff · mypy --strict.
 > Full stack & product direction: **`.claude/dev-docs/VISION.md`** + `ROADMAP.md`.
 
@@ -196,6 +199,12 @@ find src tests -name __pycache__ -prune -exec rm -rf {} +
 Написал фикс — саботируй его и убедись, что тест краснеет. Зелёный тест, который не падает
 на сломанном коде, не тест. Это дёшево (`git stash` / точечная правка / восстановление) и
 ловит вакуумные ассерты.
+🔴 **И проверь сам харнесс кусачести.** «Не зелёное» ≠ «покраснело»: кривой вызов pytest даёт
+`ERROR`/`no tests ran`, и это неотличимо от саботажа, если смотреть только на цвет. В BOB-089
+ревьюер так выдал три прохода вакуумных «10/10» — путь-параметр не расщепился в zsh, pytest не
+нашёл файлы (Issues #52). Поэтому: до саботажа убедись, что тесты **собраны и зелёные**
+(сравнивай ЧИСЛА собранных/пройденных, а не цвет), отличай `ERROR` от `FAILED`, и в отчёте
+называй **имена** покрасневших тестов — их из сломанного вызова не получить.
 
 **6. Смотри на ЧИСЛО мутантов, а не только на score.**
 100% на четырёх мутантах — фикция. Слепые зоны mutmut и как писать ядро, чтобы гейт был
@@ -214,14 +223,24 @@ mutation-целью и оставить её в адаптере — значи�
 Волна субагента ещё не закоммичена, поэтому `git checkout -- <файл>` откатывает файл к HEAD
 и стирает РАБОТУ, а не саботаж. Поймано на BOB-091.1: восстановление саботажа снесло
 регистрацию инструментов, дефект вскрылся только следующим прогоном (Issues #47). Снимай
-точечной обратной правкой или из копии, снятой ДО саботажа; `checkout` допустим лишь когда
-волна закоммичена.
+точечной обратной правкой; `checkout` допустим лишь когда волна закоммичена.
+🔴 **В параллельной волне — ТОЛЬКО точечной правкой.** Восстановление файла целиком (из копии,
+из бэкапа, перезаписью) для соседнего агента равно стиранию: в BOB-089 два агента делили
+`spawn_isolation.py`, и восстановление целым файлом дало окно 21 с рядом с активной работой
+соседа (Issues #51). Лучше вообще не делить файл между параллельными агентами.
 
 **10. Разрешение без вызывающего — не возможность.**
 Запись в allowlist читается как «фича есть», хотя означает лишь «разрешено». В BOB-091
 выяснилось, что `beadloom graph` и `why` лежали в allowlist интроспекции несколько эпиков,
 но ни один путь до них не доходил: Боб «умел» рисовать схему только на бумаге. Проверяя
 доступность, ищи ВЫЗОВ, а не запись (Issues #45).
+
+**11. Не ставь обратные кавычки в текст, который уходит через shell.**
+Внутри двойных кавычек `` `…` `` — это подстановка команды: shell ИСПОЛНИТ содержимое.
+В этой сессии так трижды: в комментарии беады выполнились `git update-ref` и `git branch -f`
+(main выжил случайно), в сообщении коммита — `add -A` и `git config --list`. Длинный текст
+всегда через файл: `bd comments add <id> "$(cat file)"`, `git commit -F file`. В самом файле
+обратные кавычки безопасны.
 
 ## 1. Skills — Dynamic Loading
 
@@ -406,7 +425,19 @@ Roles are defined canonically in `.claude/agents/{dev,test,review,tech-writer}.m
 
 ## 6. Git — Trunk-based development
 
-`main` is **branch-protected** (no direct push). All work integrates via a PR.
+`main` integrates via a PR — **по дисциплине, а не по правам.**
+
+🔴 **Исправлено по факту (ревью BOB-089, MAJOR-10 — раздел описывал желаемое как
+действующее).** Branch protection на этом плане **недоступна**: API отвечает `403 Upgrade to
+GitHub Pro or make this repository public`. `beadloom ci` **по PR не запускается** — в
+`.github/workflows` лежит только `deploy-site.yml`, и `gh run list` за всю историю показывает
+исключительно «Deploy VitePress site». Прямой push в `main` технически проходит.
+
+Что реально держит `main`: дисциплина ветки на эпик, перепроверка гейтов координатором на
+финальном состоянии дерева (каждую волну) и pre-push хук **в основном репозитории** — он
+работает, когда пушит человек или координатор, но 🔴 НЕ работает на ветке Боба: её пушит
+процесс Боба, а он с BOB-089 хуков не исполняет (иначе хук модели был бы неотличим от хука
+владельца). На настоящий CI по PR заведена отдельная беада.
 
 ```
 Trunk-based flow:
@@ -414,9 +445,11 @@ Trunk-based flow:
 2. Commit per wave    onto features/{ISSUE-KEY} (dev → test → review → tech-writer)
 3. ONE PR to main     per epic/feature (or shippable slice) — not one PR per commit
 4. The PR triggers     the AI tech-writer (commits its doc refresh INTO the PR branch)
-                       + CI (`beadloom ci` is a REQUIRED status check)
-5. Merge when green    human merges once CI is green + the doc refresh has landed
-                       (no auto-merge; no direct push to main → main stays always-green)
+                       🔴 CI по PR НЕТ (`beadloom ci` не настроен) — гейты гоняет
+                       координатор руками, до открытия PR
+5. Merge when green    мёржит человек/координатор — после того, как гейты перепроверены
+                       НА ФИНАЛЬНОМ дереве и доки обновлены. «Зелёный CI» здесь не
+                       гарантия, а описание того, чего пока нет
 ```
 
 ```
@@ -429,10 +462,10 @@ Example:
 [MCP-001] feat: add health endpoint
 ```
 
-One-time per repo: `beadloom setup-branch-protection` configures `main` protection
-(PR required, `beadloom ci` a required check, `enforce_admins: true` — strict
-trunk-based, even the owner integrates via a PR — and 0 required reviews → the
-owner still self-merges). Safe to re-run.
+🔴 `beadloom setup-branch-protection` на этом плане **не работает** — `403 Upgrade to Pro`.
+Команда описана в апстрим-доке beadloom и годится для публичного репозитория или платного
+плана; здесь она молча ничего не настраивает. Пока защита недоступна, называем вещи своими
+именами: `main` держится дисциплиной и перепроверкой, а не правами.
 
 ---
 

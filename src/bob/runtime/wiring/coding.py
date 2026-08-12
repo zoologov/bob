@@ -19,22 +19,28 @@ from typing import TYPE_CHECKING, cast
 
 from bob.capabilities.introspection.privacy_guard import PrivacyGuard
 from bob.coding.adapters import (
+    ForkCompareLink,
     GhPullRequestOpener,
+    GitClone,
     GitWorktree,
     SubprocessClaudeRunner,
 )
+from bob.coding.adapters.gh_pr import PullRequestError
 from bob.coding.adapters.indicator import StatusPanel, TypingKeepalive
 from bob.coding.adapters.live_stream import _DmLiveStreamer
 from bob.coding.adapters.owner_notifier import _CodingOwnerNotifier
 from bob.coding.adapters.session_store import SqliteCodingSessionStore
+from bob.coding.pr_link import repo_slug
 from bob.coding.usecases.classify_coding_intent import ClassifyCodingIntent
 from bob.coding.usecases.coding_assistant import CodingAssistant, LiveRunStreamer
 from bob.coding.usecases.coding_context import make_coding_context
 from bob.coding.usecases.coding_intent_router import CodingIntentRouter
+from bob.identity.adapters.spawn_isolation_files import SpawnIsolationFiles
 from bob.interactive.adapters.runner import InteractiveClaudeRunner
 from bob.interactive.usecases.intake import InteractiveIntakeRouter
 from bob.interactive.usecases.recover_sessions import RecoverInteractiveSessions
 from bob.interactive.usecases.session import InteractiveSessionManager
+from bob.kernel.config_paths import under_root
 from bob.runtime.config import (
     _CODING_TYPING_INTERVAL,
     _REPO_ROOT,
@@ -48,15 +54,38 @@ from bob.runtime.wiring.capabilities import _build_introspector
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
+    from pathlib import Path
 
     from bob.application.router import LLMRouter
     from bob.coding.adapters.indicator import EditableStatusBot, TypingActionBot
     from bob.coding.usecases.coding_assistant import WorkJournalRecorder
+    from bob.identity.spawn_isolation import SpawnIsolation
     from bob.infrastructure.persistence import SqliteConnection
     from bob.infrastructure.telegram.gateway import BotLike
     from bob.kernel.ports import Clock
     from bob.memory.ports import SelfActionRecorder
     from bob.social.usecases import Authorizer
+
+#: Каталог контролируемого окружения спавна — СОСЕД клонов внутри ``coder.clone_root``.
+#: Имя с точки: рабочее место зовётся по слагу ветки ``bob/<slug>``, а точка в слаге
+#: невыразима, поэтому столкнуться этим именам не с чем.
+_SPAWN_ENV_DIR = ".spawn-env"
+
+
+def _under_repo_root(value: str) -> Path:
+    """Привязать относительный путь к КОРНЮ РЕПОЗИТОРИЯ, а не к текущему каталогу.
+
+    🔴 Урок BOB-087.D5b, он же ревью bob-a6b.6 (M4): ``source`` клона абсолютен
+    (:data:`~bob.runtime.config._REPO_ROOT`), а ``coder.clone_root`` по умолчанию
+    относителен — при ``cwd ≠ корень репозитория`` рабочие места и файлы окружения спавна
+    уехали бы в чужой каталог, и заметил бы это не тест, а прод. Абсолютное значение
+    владельца уважается как есть.
+
+    Само правило живёт в ядре (:func:`bob.kernel.config_paths.under_root`) — его же читает
+    домен, разбирая путь к приватному ключу принципала (bob-a6b.15). Здесь остался только
+    ОДИН вопрос композиции: какой корень подставить.
+    """
+    return under_root(value, root=_REPO_ROOT)
 
 
 def _build_coding_router(
@@ -85,6 +114,141 @@ def _build_coding_router(
         coder=coder,
         classifier=ClassifyCodingIntent(router=router),
         nl_autostart=_flag(_section(config, "coder"), "nl_autostart"),
+    )
+
+
+def _build_workspace(coder: Mapping[str, object]) -> GitWorktree | GitClone:
+    """Собрать рабочее место Боба: linked worktree (default) или отдельный КЛОН (BOB-089.A).
+
+    ОДНО место, где читается флаг ``coder.isolated_clone`` (default OFF). Оба адаптера
+    реализуют одни и те же порты (:class:`~bob.coding.ports.Worktree` +
+    :class:`~bob.coding.ports.PersistentWorkspace`), поэтому ни гейтед-ассистент, ни
+    менеджер интерактива не знают, во что они приземляются.
+
+    OFF → ровно прежний :class:`GitWorktree` с прежним аргументом
+    (``coder.worktree_root``, default ``.worktrees``): сборка байт-в-байт как до среза, и
+    это проверяется РАВЕНСТВОМ типа и аргументов, а не «похожестью».
+
+    ON → :class:`GitClone`: клон в ``coder.clone_root`` (default ``.clones``) из
+    локального пути репозитория, единственный remote — ``coder.fork_url`` (пусто → у
+    клона remote'а нет вовсе). 🔴 Смысл включения: у клона свой ``.git``, поэтому
+    ``git update-ref refs/heads/main`` внутри него до main owner'а не достаёт — в linked
+    worktree достаёт, без сети и без кредов.
+
+    🔴 ИСПРАВЛЕНО ПО ФАКТУ ×2 (bob-a6b.17; обе ошибки оставлены ВИДИМЫМИ, а не переписаны
+    задним числом — Issues #49). Докстрока утверждала два уже опровергнутых в этом же
+    эпике факта:
+
+    * «апстрим не прописывается ни при каком значении» — СЕДЬМОЙ повтор формы, которую
+      ревьюер снял на настоящем git (bob-a6b.6, MAJOR-7/8): модель дописывает
+      ``remote.origin.pushurl`` локальным конфигом поверх нашего argv, а
+      ``url.<апстрим>.pushInsteadOf`` уводит ветку даже при push'е по значению. Верно
+      только узко — ПРИ ЗАВЕДЕНИИ клона (:func:`bob.coding.clone_plan.origin_argv`);
+    * «изоляции КРЕДОВ этот флаг не даёт (это срез C)» — ровно наоборот, и опровергается
+      функцией :func:`_build_spawn_isolation` ПЯТНАДЦАТЬЮ строками ниже: она читает ТОТ ЖЕ
+      ``coder.isolated_clone``. Срез C приехал под этим же флагом сознательно — клон и
+      изоляция две половины одной гарантии, поэтому флаг один.
+    """
+    if not _flag(coder, "isolated_clone"):
+        return GitWorktree(_str(coder, "worktree_root", ".worktrees"))
+    return GitClone(
+        _under_repo_root(_str(coder, "clone_root", ".clones")),
+        source=_REPO_ROOT,
+        fork_url=_str(coder, "fork_url", ""),
+        # Подпись работы в клоне (BOB-089.D): ``bob[ai]`` + ботовский noreply-адрес,
+        # ЛОКАЛЬНО в клоне. Пустой id → адрес без числового префикса; имя стоит всегда.
+        app_user_id=_str(coder, "app_user_id", ""),
+    )
+
+
+def _build_spawn_isolation(coder: Mapping[str, object]) -> SpawnIsolation | None:
+    """Собрать изоляцию окружения спавна от кредов owner'а, или ``None`` при OFF (BOB-089.C).
+
+    Читается ТОТ ЖЕ флаг, что выбирает рабочее место (``coder.isolated_clone``), и
+    отдельного у изоляции нет сознательно: клон и изоляция — две половины ОДНОЙ гарантии.
+    Клон закрывает локальную дорогу к ``main`` (свой ``.git``), изоляция — сетевую (нет
+    кредов owner'а); включить одну без другой значит получить половину, а звучать это
+    будет как целое (срез A так и записал: «клон в одиночку — половина гарантии» — эта
+    фраза верна про СРЕЗ A во времени, но не про ФЛАГ сегодня, и ровно так её прочитала
+    докстрока :func:`_build_workspace`, пока bob-a6b.17 её не поправил).
+
+    OFF → ``None``: спавн вообще без ``env=`` (байт-в-байт прежний) и НИ ОДНОГО файла на
+    диске. ON → файлы контролируемого окружения в ``<clone_root>/.spawn-env`` (0700):
+    подменный global-конфиг, пустой каталог конфигурации ``gh``, askpass в никуда и
+    «ключ» ssh в никуда (bob-a6b.10 — без него git ходил по ``git@host:`` ключом owner'а
+    из ``~/.ssh``, и сетевая дорога к апстриму по ssh была ОТКРЫТА).
+
+    🔴 Кредов спавну не выдаётся (стор не создаётся): ветку в форк пушит процесс САМОГО
+    Боба (``GitClone.commit_and_push``), а не ``claude`` внутри клона. Механизм выдачи
+    токена существует и проверен (:func:`bob.identity.spawn_isolation.credential_store_line`),
+    но вызывающего в проде у него пока НЕТ — и это записано честно, а не выдано за фичу.
+    """
+    if not _flag(coder, "isolated_clone"):
+        return None
+    root = _under_repo_root(_str(coder, "clone_root", ".clones")) / _SPAWN_ENV_DIR
+    return SpawnIsolationFiles(root).materialize()
+
+
+def _build_pr_integration(
+    coder: Mapping[str, object],
+    github: Mapping[str, object],
+) -> tuple[GhPullRequestOpener | ForkCompareLink, bool]:
+    """Собрать путь «работа доехала до owner'а» + честен ли он как «PR открыт» (BOB-089.D).
+
+    ОДНО место, где решается, чем заканчивается сессия, и решение ПАРНОЕ: адаптер и флаг
+    ``opens_pr`` для use-case'а приезжают отсюда вместе. Разведи их — и Боб скажет «вот PR»
+    там, где PR не открыт; это ровно тот класс неправды, который owner проверит первым же
+    нажатием.
+
+    Default (и любой неполный набор) → прежний :class:`GhPullRequestOpener` с ``opens_pr``
+    ``True``: сборка байт-в-байт как до среза.
+
+    Ссылочный путь (:class:`ForkCompareLink`, ``opens_pr`` ``False``) заводится ТОЛЬКО когда
+    он осмыслен целиком: рабочее место — клон (``coder.isolated_clone``), у клона настроен
+    форк на GitHub (``coder.fork_url`` → слаг ``owner/repo`` берётся из ТОГО ЖЕ адреса, куда
+    уходит push, чтобы ссылка не разошлась с местом работы) и известен апстрим. 🔴 Почему
+    вообще ссылка: cross-repo PR из ПРИВАТНОГО форка installation-токену недоступен
+    (проверено три способа, не-цель PRD), поэтому owner жмёт «Create pull request» сам.
+
+    🔴 ОДИН ФАКТ — ОДИН КЛЮЧ (bob-a6b.9). Апстрим — это ``github.propose_repo``, и другого
+    источника у него нет: та же секция, которой принципал ``propose`` находит свою
+    установку, называет и цель ссылки. Прежний ``coder.upstream_repo`` УБРАН, а не оставлен
+    «на всякий случай»: два ключа на один факт однажды разъезжаются, и тогда Боб отдаёт
+    ссылку на один репозиторий, а права на чтение имеет к другому.
+    """
+    fork = repo_slug(_str(coder, "fork_url", ""))
+    upstream = _str(github, "propose_repo", "").strip()
+    if not (_flag(coder, "isolated_clone") and fork and upstream):
+        return GhPullRequestOpener(gh_bin=_str(coder, "gh_bin", "gh")), True
+    _refuse_a_fork_the_credentials_do_not_cover(fork, _str(github, "work_repo", ""))
+    return ForkCompareLink(upstream=upstream, fork=fork), False
+
+
+def _refuse_a_fork_the_credentials_do_not_cover(fork: str, work_repo: str) -> None:
+    """Сверить два УГЛА одного факта — репозитория, куда Боб пушит (bob-a6b.9).
+
+    ``coder.fork_url`` — транспортный адрес (может быть ssh, может быть ``file://``), а
+    ``github.work_repo`` — слаг ``owner/repo``, по которому находится УСТАНОВКА принципала
+    ``work``. Дублем они не являются (из слага не собрать ssh-адрес, а из адреса не всегда
+    добыть слаг — см. :func:`~bob.coding.pr_link.repo_slug`), поэтому ключи остаются два.
+    Но факт за ними ОДИН, и разъехаться им нельзя: тогда ветка уезжает в один репозиторий,
+    ссылка обещает owner'у второй, а права у Боба к третьему.
+
+    🔴 Отказ громкий и на СБОРКЕ, а не тихий уход на gh-путь: молчаливый фолбэк спрятал бы
+    дефект конфига и Боб пошёл бы пушить в апстрим кредами owner'а (урок BOB-087 — верхний
+    фолбэк не маскирует наши дефекты). В тексте отказа — ИМЕНА обоих ключей.
+
+    Пустой ``work_repo`` расхождением НЕ считается: пока принципалы не настроены (а это
+    дефолт), сверять не с чем, и падать на этом значило бы ронять сборку у owner'а с пустой
+    секцией ``github``. Сравнение регистронезависимо — имена репозиториев на GitHub такие же.
+    """
+    expected = work_repo.strip()
+    if not expected or fork.casefold() == expected.casefold():
+        return
+    raise PullRequestError(
+        f"coder.fork_url points at {fork!r}, but github.work_repo says Bob's credentials "
+        f"cover {expected!r}; these are two angles of ONE repository and must agree — "
+        "refusing to hand the owner a link to a fork Bob has no rights to"
     )
 
 
@@ -160,6 +324,9 @@ def _build_coding_assistant(
     # (so the OFF path is byte-identical — the same single channel as today).
     stream_via_guppi = _flag(coder, "stream_via_guppi")
     firehose_bot = stream_bot if stream_via_guppi else notifier_bot
+    # Интеграционный путь + честность терминальной реплики — ОДНО решение (BOB-089.D),
+    # см. :func:`_build_pr_integration`.
+    pr_opener, opens_pr = _build_pr_integration(coder, _section(config, "github"))
     return CodingAssistant(
         recorder=recorder,
         # Distilled work memory (BOB-087.B1): flag-gated (``memory.work_journal``, OFF → NoOp)
@@ -177,10 +344,18 @@ def _build_coding_assistant(
             # ``extra_dirs`` appends no ``--add-dir`` — the argv stays byte-identical.
             allow_bypass=_flag(coder, "allow_bypass"),
             extra_dirs=_str_list(coder, "extra_dirs"),
+            # 🔴 Изоляция от кредов owner'а (BOB-089.C) под ``coder.isolated_clone``:
+            # OFF → ``None``, спавн байт-в-байт прежний. См. :func:`_build_spawn_isolation`.
+            isolation=_build_spawn_isolation(coder),
         ),
-        worktree=GitWorktree(_str(coder, "worktree_root", ".worktrees")),
+        # Рабочее место: linked worktree (default) или отдельный клон под
+        # ``coder.isolated_clone`` (BOB-089.A) — см. :func:`_build_workspace`.
+        worktree=_build_workspace(coder),
         store=SqliteCodingSessionStore(repo),
-        pr_opener=GhPullRequestOpener(gh_bin=_str(coder, "gh_bin", "gh")),
+        pr_opener=pr_opener,
+        # 🔴 Идёт В ПАРЕ с выбранным адаптером: True → «вот PR», False → «работа в форке,
+        # PR за тобой» со ссылкой. Расхождение этой пары было бы ложью owner'у.
+        opens_pr=opens_pr,
         notifier=_CodingOwnerNotifier(
             bot=notifier_bot, chat_id=chat_id, topic_id=topic_id
         ),
@@ -319,8 +494,16 @@ def _build_interactive_session(
     # ``--add-dir``), so an unconfigured interactive spawn is byte-identical to BOB-083.
     allow_bypass = _flag(coder, "allow_bypass")
     extra_dirs = _str_list(coder, "extra_dirs")
+    # 🔴 Изоляция окружения спавна (BOB-089.C) — читается ОДИН раз и запекается в каждый
+    # посессионный рантайм, как и ослабления песочницы. OFF → ``None``: спавн живого
+    # терминала байт-в-байт прежний. См. :func:`_build_spawn_isolation`.
+    isolation = _build_spawn_isolation(coder)
     firehose_bot = stream_bot if _flag(coder, "stream_via_guppi") else bot
-    worktree = GitWorktree(_str(coder, "worktree_root", ".worktrees"))
+    # Рабочее место: linked worktree (default) или отдельный клон под
+    # ``coder.isolated_clone`` (BOB-089.A) — см. :func:`_build_workspace`. Один объект
+    # обслуживает ОБА шва (эфемерный ``worktree`` + персистентный ``workspace``), как и
+    # раньше: подмена происходит здесь, а не в менеджере.
+    worktree = _build_workspace(coder)
     store = SqliteCodingSessionStore(repo)
     # 🔴 Resume seams (BOB-087.D3) — wired ONLY under ``coder.resume``. The same two
     # adapters, seen through their narrow read/ensure ports; OFF → ``None`` → the whole
@@ -331,6 +514,7 @@ def _build_interactive_session(
             claude_bin=claude_bin,
             allow_bypass=allow_bypass,
             extra_dirs=extra_dirs,
+            isolation=isolation,
         ),
         worktree=worktree,
         store=store,

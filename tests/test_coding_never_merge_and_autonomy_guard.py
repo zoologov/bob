@@ -43,6 +43,28 @@ _BOB039_SOURCE = (
     "src/bob/coding/adapters/_exec.py",
     "src/bob/coding/adapters/_branch.py",
     "src/bob/coding/usecases/coding_assistant.py",
+    # BOB-089.A: the workplace became substitutable (linked worktree OR a separate
+    # clone), so the second adapter and the shared integration step are inside the
+    # invariant too — otherwise the guard would cover only half of the ways Bob can
+    # reach a remote.
+    "src/bob/coding/clone_plan.py",
+    "src/bob/coding/adapters/git_clone.py",
+    "src/bob/coding/adapters/_integrate.py",
+    "src/bob/coding/adapters/_paths.py",
+    # BOB-089.D: the integration path became substitutable too (open a PR via ``gh`` OR
+    # hand the owner a compare link from Bob's fork), so the second path and its pure core
+    # are inside the invariant — otherwise the guard would cover only one of the two ways
+    # a session can end.
+    "src/bob/coding/pr_link.py",
+    "src/bob/coding/adapters/fork_link.py",
+)
+
+# The two interchangeable workplace adapters (BOB-089.A). Both realise the same ports,
+# so the never-push-main invariant has to hold for BOTH — a new workplace that forgot
+# the branch validation would be a hole exactly the size of the feature.
+_WORKPLACE_ADAPTERS = (
+    "src/bob/coding/adapters/git_worktree.py",
+    "src/bob/coding/adapters/git_clone.py",
 )
 
 # argv fragments that would constitute a merge path. Bob must never build any of these
@@ -89,19 +111,40 @@ def test_no_source_file_builds_a_merge_or_push_main_argv(rel: str) -> None:
         assert fragment not in text, f"{rel} contains a forbidden argv fragment {fragment!r}"
 
 
-def test_commit_push_targets_the_validated_branch_never_literal_main() -> None:
-    # 🔴 BOB-040: the deterministic commit+push lives in git_worktree.py and pushes the
-    # validated ``bob/<slug>`` branch variable — there is physically no path that pushes
-    # the trunk. The push target is never the literal ``main``, and the branch is
-    # validated (``is_safe_branch``) before any git runs.
-    text = (_repo_root() / "src/bob/coding/adapters/git_worktree.py").read_text(
-        encoding="utf-8"
-    )
-    assert "is_safe_branch" in text  # the branch is re-validated before the push
+def test_the_only_push_form_pushes_the_branch_variable_from_one_place() -> None:
+    # 🔴 BOB-040 + BOB-089.A: the deterministic commit+push lives in EXACTLY ONE module
+    # (``_integrate.py``, shared by both workplace adapters) and pushes the validated
+    # ``bob/<slug>`` branch VARIABLE — never a literal trunk token. One place is part of
+    # the invariant: a second copy is a second thing to keep honest.
+    integrate = _repo_root() / "src/bob/coding/adapters/_integrate.py"
+    text = integrate.read_text(encoding="utf-8")
+    # 🔴 bob-a6b.14: the push TARGET became a parameter (the fork URL by VALUE for the
+    # clone, the remote name for the worktree) because a ``remote.origin.pushurl`` planted
+    # by the model in the local config sent the branch UPSTREAM. What stays asserted here:
+    # exactly the branch VARIABLE travels, through a fully-qualified refspec on both ends,
+    # so neither a tag nor a same-named ref can substitute what is pushed.
+    assert 'ref = f"refs/heads/{branch}"' in text
+    assert '"push", "--no-verify", push_target, f"{ref}:{ref}"' in text
     assert '"main"' not in text  # no literal main argv token
     assert "'main'" not in text
-    # The only push form is ``push -u origin <branch>`` with the validated branch var.
-    assert '"origin", branch' in text or "origin', branch" in text or "origin\", branch" in text
+    # No second push form ANYWHERE in the domain — the whole package is walked, not a
+    # hand-kept list, so a new module growing its own push cannot slip past the invariant.
+    others = sorted(
+        str(path.relative_to(_repo_root()))
+        for path in (_repo_root() / "src/bob/coding").rglob("*.py")
+        if path != integrate and '"push"' in path.read_text(encoding="utf-8")
+    )
+    assert others == [], f"a second push argv appeared in {others}"
+
+
+@pytest.mark.parametrize("rel", _WORKPLACE_ADAPTERS)
+def test_every_workplace_adapter_validates_the_branch_before_pushing(rel: str) -> None:
+    # Both adapters re-validate the branch (``is_safe_branch``) before any git runs, so
+    # there is physically no path that pushes the trunk from either workplace.
+    text = (_repo_root() / rel).read_text(encoding="utf-8")
+    assert "is_safe_branch" in text
+    assert '"main"' not in text  # no literal main argv token
+    assert "'main'" not in text
 
 
 def test_pr_command_is_create_only_with_main_as_base_not_a_push() -> None:

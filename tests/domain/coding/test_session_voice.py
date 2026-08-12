@@ -52,6 +52,35 @@ def test_pr_message_is_bob_voiced_done_with_url_and_never_merge() -> None:
     assert "main" in message.casefold()
 
 
+def test_ready_for_pr_hands_over_the_link_without_claiming_a_pr_was_opened() -> None:
+    # 🔴 BOB-089, срез D: Боб НЕ притворяется, что открыл PR (он и не может —
+    # cross-repo PR из приватного форка невозможен). Он говорит, что работа готова и
+    # лежит в его форке, и отдаёт форму. Это ГРАНИЦА ЧЕСТНОСТИ реплики, а не стиль.
+    url = "https://github.com/zoologov/bob/compare/main...bobiverse-dev:bob:bob/task?expand=1"
+    message = session_voice.ready_for_pr(url)
+
+    assert url in message
+    assert "форк" in message.casefold()  # где именно лежит работа
+    assert "открыл PR" not in message  # ни одной формулировки о совершённом действии
+    assert "PR открыт" not in message
+    assert "не могу" in message.casefold()  # честно: PR за него откроет owner
+
+
+def test_ready_for_pr_tells_the_owner_what_to_press() -> None:
+    message = session_voice.ready_for_pr("https://example.invalid/compare?expand=1")
+
+    assert "Create pull request" in message
+
+
+def test_the_ready_for_pr_panel_line_does_not_announce_an_opened_pr() -> None:
+    # Панель — owner-facing строка, и врать она обязана не больше самой реплики.
+    line = session_voice.panel_ready_for_pr()
+
+    assert line
+    assert "PR открыт" not in line
+    assert line != session_voice.panel_pr()
+
+
 def test_no_changes_message_is_honest_and_mentions_no_edits() -> None:
     message = session_voice.no_changes()
     assert message

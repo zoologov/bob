@@ -370,6 +370,11 @@ ignore = [
 # to the port shape (→ ARG002).
 "tests/application/usecases/test_distill_work_journal.py" = ["RUF001", "RUF003"]
 "tests/application/usecases/test_coding_assistant_work_journal.py" = ["ARG002"]
+# Автобиография coding-сессии (BOB-079.2 + BOB-089 bob-a6b.8): тест утверждает на РУССКИХ
+# литералах поступка Боба от первого лица («открыл PR» против «в своём форке») и несёт
+# русские пояснения, зачем эта развилка честна — Cyrillic look-alikes здесь намеренные
+# (→ RUF001/RUF003).
+"tests/application/usecases/test_coding_assistant_self_action.py" = ["RUF001", "RUF003"]
 # Security-review fixes of the interactive slice (BOB-087.D5b): the orphan-sweep tests and
 # the real-git persistent-workspace tests carry Russian rationale docstrings/comments whose
 # Cyrillic look-alikes are intentional (→ RUF001/RUF002/RUF003). The worktree unit tests
@@ -798,6 +803,264 @@ ignore = [
     "S101",
     "S603",
     "S607",
+    "SLF001",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+# Рабочее место как отдельный КЛОН (BOB-089, срез A): чистое ядро плана клона, адаптер и
+# их тесты несут русские докстроки/комментарии, объясняющие ЗАЧЕМ клон вместо worktree и
+# какова цена (Cyrillic look-alikes intentional → RUF001-003). Real-git acceptance гоняет
+# git фиксированной формой в ОДНОРАЗОВОМ временном репозитории (→ S603/S607) и содержит
+# ФИКТИВНЫЙ токен в URL, чтобы доказать отказ без эха секрета (→ S105). Тесты равенства
+# сборки читают приватные поля собранных адаптеров — в этом и смысл проверки «тип и
+# аргументы», а не «похожесть» (→ SLF001).
+"src/bob/coding/clone_plan.py" = ["RUF001", "RUF002", "RUF003"]
+"src/bob/coding/adapters/git_clone.py" = ["RUF001", "RUF002", "RUF003"]
+"src/bob/coding/adapters/_paths.py" = ["RUF001", "RUF002", "RUF003"]
+"src/bob/coding/adapters/_integrate.py" = ["RUF001", "RUF002", "RUF003"]
+"tests/domain/coding/test_clone_plan.py" = ["RUF001", "RUF002", "RUF003"]
+"tests/infrastructure/coding/test_git_clone_real_git.py" = [
+    "S101",
+    "S105",
+    "S603",
+    "S607",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+"tests/runtime/wiring/test_workspace_wiring.py" = [
+    "S101",
+    "SLF001",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+"tests/test_coder_config.py" = ["RUF001", "RUF002", "RUF003"]
+# Репозиторий, которым распоряжается МОДЕЛЬ (BOB-089, bob-a6b.14 / ревью MAJOR-7): чистое
+# ядро закалённой формы git + отказа по незнакомому ключу локального конфига несёт русские
+# докстроки/комментарии, в которых записано, ЧТО именно исполнялось в процессе Боба и чем
+# это проверено (Cyrillic look-alikes intentional → RUF001-003). Real-git acceptance гоняет
+# git фиксированной формой в ОДНОРАЗОВЫХ временных репозиториях (→ S603/S607) и подкладывает
+# скрипты-маркеры, чтобы доказать исполнение попыткой, а не чтением кода.
+"src/bob/coding/untrusted_repo.py" = ["RUF001", "RUF002", "RUF003"]
+"tests/domain/coding/test_untrusted_repo.py" = ["RUF001", "RUF002", "RUF003"]
+"tests/infrastructure/coding/test_untrusted_repo_real_git.py" = [
+    "S101",
+    "S603",
+    "S607",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+# Идентичность bob[ai] + ссылка на создание PR (BOB-089, срез D): чистое ядро ссылки, путь
+# «Боб PR не открывает» и их тесты несут русские докстроки/комментарии, объясняющие, почему
+# подпись ставится ЛОКАЛЬНО и почему cross-repo PR из приватного форка невозможен (Cyrillic
+# look-alikes intentional → RUF001-003). Тесты развилки читают приватные поля собранных
+# адаптеров — в этом и смысл проверки «тип и аргументы» (→ SLF001), а фейки интеграционного
+# пути держат портовые аргументы, которых фейк не читает (→ ARG002).
+"src/bob/coding/pr_link.py" = ["RUF001", "RUF002", "RUF003"]
+"src/bob/coding/adapters/fork_link.py" = ["RUF001", "RUF002", "RUF003"]
+"tests/domain/coding/test_pr_link.py" = ["RUF001", "RUF002", "RUF003"]
+"tests/infrastructure/coding/test_fork_link.py" = [
+    "S101",
+    "SLF001",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+"tests/runtime/wiring/test_pr_integration_wiring.py" = [
+    "S101",
+    "SLF001",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+"tests/application/usecases/test_coding_fork_handoff.py" = [
+    "S101",
+    "ARG002",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+# GitHub-идентичность Боба (BOB-089, срез B): чистые ядра identity, адаптеры и их тесты
+# несут русские докстроки/комментарии, объясняющие, ПОЧЕМУ принципалов два, почему токен
+# обновляется заранее и где секрет не бывает (Cyrillic look-alikes intentional →
+# RUF001-003). Подпись RS256 идёт фиксированной формой ФИКСИРОВАННОГО ``openssl`` без шелла
+# (→ S603/S607; путь берётся из конфига и проверяется до запуска). Real-openssl acceptance
+# генерирует одноразовую RSA-пару и проверяет подпись обратным вызовом (→ S603/S607), а его
+# фикстуры несут ФИКТИВНЫЙ «ключевой материал», чтобы доказать отсутствие эха секрета
+# (→ S105/S106). Фейковые порты в тестах провайдера держат аргументы, которых фейк не читает
+# (→ ARG002), а живой read-only смоук читает реквизиты из окружения (→ S105).
+"src/bob/identity/__init__.py" = ["RUF001", "RUF002", "RUF003"]
+"src/bob/identity/ports.py" = ["RUF001", "RUF002", "RUF003"]
+"src/bob/identity/principals.py" = ["RUF001", "RUF002", "RUF003"]
+"src/bob/identity/credentials.py" = ["RUF001", "RUF002", "RUF003"]
+"src/bob/identity/app_jwt.py" = ["RUF001", "RUF002", "RUF003"]
+"src/bob/identity/token_lifetime.py" = ["RUF001", "RUF002", "RUF003"]
+"src/bob/identity/adapters/__init__.py" = ["RUF001", "RUF002", "RUF003"]
+"src/bob/identity/adapters/openssl_signer.py" = ["S603", "S607", "RUF001", "RUF002", "RUF003"]
+"src/bob/identity/adapters/github_api.py" = ["RUF001", "RUF002", "RUF003"]
+"src/bob/identity/adapters/installation_token.py" = ["RUF001", "RUF002", "RUF003"]
+"tests/domain/identity/test_principals.py" = ["RUF001", "RUF002", "RUF003"]
+"tests/domain/identity/test_credentials.py" = ["S105", "RUF001", "RUF002", "RUF003"]
+"tests/domain/identity/test_app_jwt.py" = ["RUF001", "RUF002", "RUF003"]
+"tests/domain/identity/test_token_lifetime.py" = ["S105", "RUF001", "RUF002", "RUF003"]
+"tests/infrastructure/identity/test_openssl_signer_real_openssl.py" = [
+    "S101",
+    "S105",
+    "S106",
+    "S603",
+    "S607",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+"tests/infrastructure/identity/test_github_api.py" = [
+    "S101",
+    "S105",
+    "ARG002",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+"tests/infrastructure/identity/test_installation_token.py" = [
+    "S101",
+    "S105",
+    "ARG002",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+"tests/infrastructure/identity/test_build_installation_tokens.py" = [
+    "S101",
+    "SLF001",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+"tests/infrastructure/identity/test_github_live_smoke.py" = [
+    "S101",
+    "S105",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+"tests/test_github_identity_config.py" = ["S105", "RUF001", "RUF002", "RUF003"]
+# Изоляция окружения спавна (BOB-089, срез C): чистое ядро + адаптер и их тесты объясняют
+# по-русски, ПОЧЕМУ ``GIT_CONFIG_GLOBAL`` недостаточно и почему порядок пар конфига и есть
+# механизм (Cyrillic look-alikes intentional → RUF001-003). Тесты изоляции держат ФИКТИВНЫЕ
+# «пароль owner'а» и «токен Боба» — без них нельзя доказать, что чужие креды не отвечают, а
+# свои отвечают (→ S105/S106), и гоняют НАСТОЯЩИЙ ``git`` фиксированной формой без шелла
+# (→ S603/S607: тест на фейке доказал бы контракт фейка). Фейковые порты в тестах проводки
+# держат аргументы, которых фейк не читает (→ ARG002), сборка читается через приватные поля
+# (→ SLF001: у окружения спавна нет публичного геттера — и не должно быть).
+"src/bob/identity/spawn_isolation.py" = ["RUF001", "RUF002", "RUF003"]
+"src/bob/identity/adapters/spawn_isolation_files.py" = ["RUF001", "RUF002", "RUF003"]
+"tests/domain/identity/test_spawn_isolation.py" = [
+    "S106",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+"tests/infrastructure/identity/test_spawn_isolation_files.py" = [
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+"tests/infrastructure/coding/test_spawn_isolation_real_git.py" = [
+    "S603",
+    "S607",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+# Семья переадресующих git-переменных (bob-a6b.12, ревью MAJOR-5): каждая проверяется
+# ПОПЫТКОЙ на НАСТОЯЩЕМ git фиксированной формой без шелла (→ S603/S607), потому что всё
+# содержание этих тестов — поведение самого git, а фейк доказал бы контракт фейка (§0.3 п.4).
+# Русские пояснения того, ЧТО именно переадресует каждая переменная и чем это доказано
+# (Cyrillic look-alikes intentional → RUF001-003).
+"tests/infrastructure/coding/test_spawn_redirect_vars_real_git.py" = [
+    "S603",
+    "S607",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+"tests/infrastructure/coding/test_upstream_refusal_live_smoke.py" = [
+    "S105",
+    "S603",
+    "S607",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+# ssh-дорога изоляции (bob-a6b.10): проверяется НАСТОЯЩИМ ssh — его собственным разбором
+# конфигурации (``ssh -G``, без сети) и живым хендшейком с GitHub. Фейк доказал бы контракт
+# фейка (§0.3 п.4), а именно на ssh изоляция и прогорела. Отсюда: настоящий ``ssh``/``git``
+# фиксированной формой без шелла (→ S603/S607), русские пояснения того, ЧТО именно
+# утверждается и почему каждая опция несущая (Cyrillic look-alikes intentional → RUF001-003).
+"tests/infrastructure/identity/test_ssh_isolation_real_ssh.py" = [
+    "S603",
+    "S607",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+"tests/infrastructure/identity/test_ssh_road_live_smoke.py" = [
+    "S603",
+    "S607",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+# bob-a6b.15: ФОРМА пути к приватному ключу (абсолютный вне репозитория / ``~`` / относительный)
+# проверяется через стык «разбор конфига → НАСТОЯЩИЙ openssl» — фейк доказал бы контракт фейка
+# (§0.3 п.4), а дефект дожил до живого прогона именно потому, что стык не проверял никто. Отсюда
+# ``openssl genrsa``/``dgst -verify`` фиксированной формой без шелла (→ S603/S607) и русские
+# пояснения, ЧТО утверждается и почему (Cyrillic look-alikes intentional → RUF001-003).
+"tests/infrastructure/identity/test_key_path_forms_real_openssl.py" = [
+    "S603",
+    "S607",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+# Тестовая волна BOB-089 (bob-a6b.5): BDD-сценарии эпика + OFF-путь равенством ПОВЕДЕНИЯ.
+# Сценарии и харнесс объясняют по-русски, что именно утверждается через границу (Cyrillic
+# look-alikes intentional → RUF001-003), гоняют НАСТОЯЩИЙ ``git`` фиксированной формой в
+# ОДНОРАЗОВОМ репозитории — тест на фейке доказал бы контракт фейка (→ S603/S607), держат
+# ФИКТИВНЫЙ «пароль владельца» для контрольной дороги к кредам (→ S105), читают приватные
+# поля собранных адаптеров там, где смысл проверки — РАВЕНСТВО сборки, а не «похожесть»
+# (→ SLF001), и держат портовые аргументы, которых двойники не читают (→ ARG002).
+"tests/acceptance/own_workplace_harness.py" = [
+    "S101",
+    "S105",
+    "S603",
+    "S607",
+    "ARG002",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+"tests/acceptance/steps/test_own_workplace.py" = [
+    "S101",
+    "SLF001",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+"tests/infrastructure/coding/test_off_path_real_git.py" = [
+    "S101",
+    "S603",
+    "S607",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+"tests/runtime/wiring/test_coding_spawn_isolation.py" = [
+    "S101",
+    "ARG002",
     "SLF001",
     "RUF001",
     "RUF002",
@@ -1725,6 +1988,12 @@ ignore = [
 # кириллические похожие символы в них намеренны, поэтому RUF001/RUF002/RUF003 не
 # применяются. Тестам ещё нужны assert-ы и «магические» числа.
 "src/bob/kernel/visibility.py" = ["RUF001", "RUF002", "RUF003"]
+# bob-a6b.15: общее правило «как понимать путь из конфига» и его тесты объясняют по-русски,
+# почему каждая из трёх ветвей именно такая (абсолютный путь к ключу, склеенный с корнем
+# репозитория, сделал единственную безопасную конфигурацию невыразимой); кириллические
+# похожие символы намеренны → RUF001/RUF002/RUF003 не применяются.
+"src/bob/kernel/config_paths.py" = ["RUF001", "RUF002", "RUF003"]
+"tests/domain/kernel/test_config_paths.py" = ["RUF001", "RUF002", "RUF003"]
 "src/bob/memory/digest_provenance.py" = ["RUF001", "RUF002", "RUF003"]
 "src/bob/memory/adapters/sqlite_memory_repo.py" = ["RUF001", "RUF002", "RUF003"]
 "tests/domain/kernel/test_visibility.py" = ["S101", "RUF001", "RUF002", "RUF003"]
@@ -1980,6 +2249,14 @@ source_paths = [
     # пакет обязан остаться под мутацией, иначе гейт этих ядер молча исчез бы вместе с
     # переездом (ровно тот фиктивный гейт, против которого написан MUTATION.md).
     "src/bob/interactive",
+    # BOB-089 срез B (bob-a6b.2): github-идентичность Боба — свой bounded context, и его
+    # чистые ядра (principals / credentials / app_jwt / token_lifetime) — ровно тот
+    # детерминированный вердикт, который мутация и измеряет: какой принципал берётся под
+    # это назначение, годна ли форма реквизитов, что подписывается App-JWT и когда токен
+    # пора обновлять ЗАРАНЕЕ. Пакет обязан быть здесь, иначе гейт этих ядер — фантомный
+    # (§0.3 п.7: объявленная mutation-цель вне scope = 0 мутантов). Адаптеры (openssl /
+    # aiohttp / кэш токенов) исключены конвенцией `*/adapters/*`.
+    "src/bob/identity",
     "src/bob/capabilities",
     # BOB-066 Срез 2.3: the presence ритм-слой is pure domain — its policies
     # (share_of_voice / natural_delay / reaction_budget) are exactly the deterministic
@@ -2025,6 +2302,14 @@ source_paths = [
     # файл перечислен точечно. Иначе гейт был бы фантомным (§0.3 п.7): объявленная цель
     # вне scope = 0 мутантов.
     "src/bob/kernel/visibility.py",
+    # bob-a6b.15: правило «как понимать путь из конфига» (``under_root``) — чистая, детер-
+    # минированная развилка «абсолютный / домашний / относительный», и ровно на этой развилке
+    # горел P0 (корень репозитория, приклеенный к абсолютному пути приватного ключа). Живёт в
+    # ядре, потому что нужно и домену (``identity.credentials``), и композиции
+    # (``runtime.wiring.coding``); ядро целиком в source_paths не заводим, поэтому файл
+    # перечислен точечно — иначе объявленная цель была бы вне scope, то есть гейт фантомный
+    # (§0.3 п.7).
+    "src/bob/kernel/config_paths.py",
 ]
 # Deny the impure sub-trees inside those packages: adapters (I/O), ports (protocols),
 # and package __init__ re-exports carry no deterministic verdict logic to mutate.

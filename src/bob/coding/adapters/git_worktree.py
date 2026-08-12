@@ -27,7 +27,6 @@ and never spawn real git.
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 from bob.coding.adapters._branch import is_safe_branch
@@ -36,6 +35,9 @@ from bob.coding.adapters._exec import (
     CommandRunner,
     ExecRunner,
 )
+from bob.coding.adapters._integrate import commit_and_push_branch
+from bob.coding.adapters._paths import is_strict_child
+from bob.coding.untrusted_repo import hardened_git_argv
 
 __all__ = ["GitWorktree", "WorktreeError"]
 
@@ -104,7 +106,7 @@ class GitWorktree:
         slug = branch.split("/", 1)[1]
         path = self._worktree_root / slug
         await self._runner(
-            [self._git_bin, "worktree", "add", str(path), "-b", branch],
+            [*hardened_git_argv(self._git_bin), "worktree", "add", str(path), "-b", branch],
             timeout=self._timeout,
         )
         return str(path)
@@ -158,15 +160,15 @@ class GitWorktree:
         slug = branch.split("/", 1)[1]
         path = (self._worktree_root / slug).resolve()
         await self._runner(
-            [self._git_bin, "worktree", "prune"], timeout=self._timeout
+            [*hardened_git_argv(self._git_bin), "worktree", "prune"], timeout=self._timeout
         )
         listing = await self._runner(
-            [self._git_bin, "worktree", "list", "--porcelain"],
+            [*hardened_git_argv(self._git_bin), "worktree", "list", "--porcelain"],
             timeout=self._timeout,
         )
         if path in _registered_worktrees(listing) and path.is_dir():
             return str(path)
-        add_argv = [self._git_bin, "worktree", "add", str(path)]
+        add_argv = [*hardened_git_argv(self._git_bin), "worktree", "add", str(path)]
         if await self._branch_exists(branch):
             add_argv.append(branch)  # check the accumulated branch out — never ``-b``
         else:
@@ -183,7 +185,8 @@ class GitWorktree:
         swallowed error is exactly how a real git failure would get misread as «absent».
         """
         listed = await self._runner(
-            [self._git_bin, "branch", "--list", branch], timeout=self._timeout
+            [*hardened_git_argv(self._git_bin), "branch", "--list", branch],
+            timeout=self._timeout,
         )
         return bool(listed.strip())
 
@@ -200,34 +203,53 @@ class GitWorktree:
           changes: return ``False`` (the honest "nothing to commit" signal) WITHOUT
           committing — never an empty commit.
         * ``git -C <path> commit -m <message>`` then
-          ``git -C <path> push -u origin <branch>`` — only on a real change.
+          ``git -C <path> push origin refs/heads/<branch>:refs/heads/<branch>`` — only on
+          a real change.
 
         🔴 ``branch`` MUST be the validated ``bob/<slug>`` feature branch
         (:func:`is_safe_branch`); any other branch is refused BEFORE git runs, so there
         is physically no code path that can push ``main``. Returns ``True`` when a real
         commit was pushed, ``False`` when there was nothing to commit; a genuine git
         failure surfaces as the runner's :class:`CommandError`.
+
+        🔴 The push target is the remote NAME here, and that is a NAMED limitation, not an
+        oversight (bob-a6b.14): a linked worktree shares ``.git`` — and therefore the
+        config and the remotes — with the owner's own repository, so there is no separate
+        fork URL to push by VALUE, and a ``remote.origin.pushurl`` planted by the model
+        would be indistinguishable from the owner's own setting. What IS closed here is
+        code execution: every git call of this adapter, and every call of the shared
+        integration step, carries the hardening pins
+        (:func:`bob.coding.untrusted_repo.hardened_git_argv`), so hooks living in the
+        SHARED ``.git/hooks`` no longer run inside Bob's process. The address class is
+        closed by moving the workspace to a clone (``coder.isolated_clone``), which is
+        exactly why that flag exists.
+
+        🔴 ``identity=()`` is a NAMED choice, not a forgotten argument (bob-a6b.16,
+        MAJOR-8): the clone pins ``bob[ai]`` in argv because the model owns that config,
+        but a linked worktree lives in the OWNER's repository, where his own signature is
+        legitimate — and the OFF path is asserted to keep it
+        (``tests/infrastructure/coding/test_off_path_real_git.py``).
+
+        🔴 And the honest half of that OFF path: because the hardening applies here too,
+        the owner's hooks (``beadloom install-hooks``) no longer run on Bob's commits and
+        the branch no longer gets an upstream. That deviation — deliberate, and what
+        replaces the lost fast gate — is named in
+        :mod:`bob.coding.adapters._integrate`.
         """
         if not is_safe_branch(branch):
             raise WorktreeError(
                 f"refusing to push branch {branch!r}: not a safe bob/<slug> branch"
             )
-        await self._runner(
-            [self._git_bin, "-C", path, "add", "-A"], timeout=self._timeout
-        )
-        status = await self._runner(
-            [self._git_bin, "-C", path, "status", "--porcelain"], timeout=self._timeout
-        )
-        if not status.strip():
-            return False  # claude applied no changes — fail honestly, no empty commit
-        await self._runner(
-            [self._git_bin, "-C", path, "commit", "-m", message], timeout=self._timeout
-        )
-        await self._runner(
-            [self._git_bin, "-C", path, "push", "-u", "origin", branch],
+        return await commit_and_push_branch(
+            self._runner,
+            git_bin=self._git_bin,
+            path=path,
+            branch=branch,
+            message=message,
             timeout=self._timeout,
+            push_target="origin",
+            identity=(),  # the owner's repository keeps the owner's signature — see above
         )
-        return True
 
     async def remove(self, path: str) -> None:
         """Remove the worktree at ``path`` (refused unless it is under the root)."""
@@ -236,19 +258,16 @@ class GitWorktree:
                 f"worktree path {path!r} is not under the configured worktree root"
             )
         await self._runner(
-            [self._git_bin, "worktree", "remove", "--force", path],
+            [*hardened_git_argv(self._git_bin), "worktree", "remove", "--force", path],
             timeout=self._timeout,
         )
 
     def _is_under_root(self, path: str) -> bool:
         """Whether ``path`` resolves to a STRICT child of the worktree root.
 
-        Containment is computed on symlink-resolved real paths so neither the root
-        itself nor a path escaping it (``/etc/passwd``, a ``..`` traversal, a symlink
-        out of the root) is ever handed to ``git worktree remove``.
+        Containment is computed on symlink-resolved real paths (the shared
+        :func:`bob.coding.adapters._paths.is_strict_child`) so neither the root itself
+        nor a path escaping it (``/etc/passwd``, a ``..`` traversal, a symlink out of
+        the root) is ever handed to ``git worktree remove``.
         """
-        if not path:
-            return False
-        real_target = Path(os.path.realpath(path))
-        real_root = Path(os.path.realpath(self._worktree_root))
-        return real_root in real_target.parents
+        return is_strict_child(path, self._worktree_root)

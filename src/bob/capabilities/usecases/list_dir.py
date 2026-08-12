@@ -12,7 +12,9 @@ The thin skill that lets Bob SEE what is really in a folder of his own repo. A
 single ``path`` argument (repo-relative, e.g. ``.beadloom`` or ``src/bob``) is
 routed to :meth:`RepoIntrospector.list_dir`, which returns the real, sorted entries
 (name + kind + size) — never recursive. It is read-only; the privacy invariant
-(full-repo containment: any in-repo path allowed, an escape past the repo refused)
+(full-repo containment, MINUS key material and the ``.git`` subtree — the guard's
+docstring is the one place that enumerates it; bob-a6b.17 removed the copy here,
+which still read «any in-repo path allowed» and had gone stale on bob-zmp)
 is enforced INSIDE the .1 port, so this application policy only validates input,
 delegates, and gives an honest empty/not-found message. It is ``permission="safe"``
 and conversation-only (never on the autonomous allowlist).

@@ -314,9 +314,18 @@ DEFAULT_CONFIG: Config = {
     # capabilities (``inspect_architecture`` / ``read_code`` / ``list_work``) let Bob
     # answer about his OWN code/architecture/backlog with real beadloom/code/Beads. They
     # are conversation-only (never on the autonomous safe-allowlist) and privacy-guarded
-    # by construction — only ``src``/``tests``/``docs`` are visible, SOUL/``bob.db``/
-    # ``.env``/``config`` are DENIED on the infra boundary before any read. ``enabled``
-    # defaults TRUE (read-only, owner-only chat): on → the three skills are advertised.
+    # on the infra boundary before any read.
+    # 🔴 CORRECTED TO FACT (bob-a6b.17; the error is left VISIBLE rather than rewritten
+    # after the fact — Issues #49). This said «only ``src``/``tests``/``docs`` are
+    # visible, SOUL/``bob.db``/``.env``/``config`` are DENIED» — the invariant from
+    # BEFORE BOB-067, which deliberately widened reading to the WHOLE repo (the owner's
+    # call: Bob is an equal engineer, not a whitelist tourist). Today ``config/`` and
+    # ``data/`` ARE readable; what the guard refuses is an escape past the repo root,
+    # key material anywhere in the tree and the ``.git`` subtree, and every returned
+    # byte is sanitised of secret-shaped VALUES. The enumeration lives in ONE place —
+    # :mod:`bob.capabilities.introspection.privacy_guard` — and is not copied here.
+    # ``enabled`` defaults TRUE (read-only, owner-only chat): on → the three skills are
+    # advertised.
     # ``max_output_chars`` caps each tool's output, ``read_max_lines`` caps a file read,
     # and ``beadloom_bin`` / ``bd_bin`` name the local read-only CLIs the subprocess
     # adapter runs against its fixed allowlist (never a shell). ``dev_tools`` (BOB-081)
@@ -420,6 +429,108 @@ DEFAULT_CONFIG: Config = {
         # Оговорка та же, что и для ``allow_bypass`` выше: структурной эта гарантия
         # остаётся, пока сам claude работает под пер-действенным гейтом.
         "resume": False,
+        # 🔴 THE WORKPLACE AS A SEPARATE CLONE (BOB-089, slice A), ships OFF. A linked
+        # worktree SHARES the main repo's ``.git`` — the same objects, the same REFS, the
+        # same remotes and credentials — so ``git update-ref refs/heads/main <sha>`` moves
+        # the owner's trunk with no network and no credentials, bypassing every push guard
+        # (verified on real git, bob-5ao). ON → Bob works in a clone with its OWN ``.git``
+        # and that road does not exist at all; privacy is unchanged (a clone carries only
+        # TRACKED files — proven on real git, not assumed). ``clone_root`` is where the
+        # clones live (relative to the repo root, gitignored); ``fork_url`` is the clone's
+        # ONLY remote (Bob's fork) — empty means the clone has no remote whatsoever.
+        # 🔴 CORRECTED TO FACT (TWICE) (bob-a6b.17; both errors left VISIBLE rather than
+        # rewritten after the fact — Issues #49). This comment said two things that are no
+        # longer true, and both had already been settled elsewhere in this very epic:
+        #   1. «the upstream is never configured under any value» — the SIXTH survival of a
+        #      claim the reviewer disproved on real git (bob-a6b.6, MAJOR-7/8): the model
+        #      writes ``remote.origin.pushurl`` into the clone's LOCAL config on top of our
+        #      argv, and ``url.<upstream>.pushInsteadOf`` carries the branch upstream even
+        #      when we push BY VALUE. True in the narrow form only: AT CLONE SETUP the
+        #      upstream is configured under no value of ``fork_url``. What the directory
+        #      looks like afterwards is the model's business, which is why the branch goes
+        #      out by VALUE and an unknown local-config key stops integration
+        #      (:func:`bob.coding.untrusted_repo.unsafe_local_config`).
+        #   2. «this flag does NOT isolate CREDENTIALS (a separate slice)» — stale in the
+        #      OPPOSITE direction: slice C shipped that isolation under THIS SAME flag
+        #      (:func:`bob.runtime.wiring.coding._build_spawn_isolation`). Clone + spawn
+        #      isolation are two halves of one guarantee — the clone closes the LOCAL road
+        #      to the trunk (its own ``.git``), the isolation the AMBIENT network one — so
+        #      there is deliberately one flag. What is still on trust (same UID: a direct
+        #      ``ssh``, a filesystem path to the owner's repo) is named in
+        #      ``docs/domains/identity/README.md``, not hidden — bead BOB-093.
+        # 🔴 And a token is NEVER embedded in ``fork_url``
+        # (``https://x-access-token:<token>@host/…``): argv is visible in ``ps``, so such a
+        # configuration is refused at startup. Measured price on this repository: 3.8 s and
+        # 142 MB per workplace.
+        # 🔴 ``fork_url`` (transport) and ``github.work_repo`` (the API slug of the same fork)
+        # are two ANGLES of ONE repository, not a duplicate — an ssh address cannot be derived
+        # from a slug. They MUST agree, and that is CHECKED when the handover link is
+        # assembled (a mismatch is refused loudly, naming both keys), rather than left as the
+        # owner's discipline: divergence would push the branch to one repository, promise the
+        # owner a second and hold rights to a third.
+        "isolated_clone": False,
+        "clone_root": ".clones",
+        "fork_url": "",
+        # 🔴 BOB'S OWN IDENTITY IN THE HISTORY (BOB-089, slice D), blank by default so
+        # nothing changes until the clone workplace is switched on. ``app_user_id`` is the
+        # NUMERIC GitHub App user id that prefixes the bot's noreply address in Bob's commits
+        # (``<id>+bob-ai-work[bot]@users.noreply.github.com``); blank → the address carries no
+        # prefix, while the NAME (``bob[ai]``) is set either way, because not signing at all
+        # would have git fall back to the OWNER's identity — exactly the confusion this slice
+        # removes. The signature is written ``--local``, in Bob's clone only: a global setting
+        # would re-sign the owner's own commits. This id is public information, unlike a
+        # token — it may live in argv.
+        # 🔴 THE UPSTREAM OF THE COMPARE LINK IS **NOT** HERE (bob-a6b.9). It is
+        # ``github.propose_repo`` — the ONE section that owns repository identity, and the
+        # same slug the ``propose`` principal reads the upstream with. An earlier
+        # ``coder.upstream_repo`` said the same thing a second time; two keys for one fact
+        # eventually diverge, and then Bob hands over a link to one repository while holding
+        # read rights to another.
+        "app_user_id": "",
+    },
+    # 🔴 BOB'S GITHUB IDENTITY (BOB-089, slice B) — «who he presents himself as, and what he
+    # authenticates with». Everything ships EMPTY: with no credentials the ``bob.identity``
+    # module is inert, and the refusal names the MISSING CONFIG KEY at the moment a token is
+    # actually needed (building the provider on an unconfigured Bob never fails).
+    #
+    # There are TWO principals because a GitHub App's permissions are identical for ALL of
+    # its installations — they cannot be narrowed «for this one repository». ``work``
+    # («Bob AI Work», contents write, installed ONLY on the organisation holding the private
+    # fork) pushes Bob's branch and cannot write a single byte to the owner's upstream;
+    # ``propose`` («Bob AI Propose», contents READ + pull_requests write) reads the upstream
+    # (owner's negative smoke: create a branch / force-push main / write a file upstream —
+    # all three 403 «Resource not accessible by integration»).
+    #
+    # Three keys per principal: ``_app_id`` (numeric; travels in the App JWT ``iss`` claim),
+    # ``_app_key`` — 🔴 the PATH to the private key (``.secrets/*.pem``, 0600), NEVER the key
+    # material itself: that would land in openssl's argv, and argv is visible in ``ps``; and
+    # ``_repo`` — the ``owner/repo`` whose INSTALLATION this principal uses (an installation
+    # token is scoped to ONE installation). Values come from ``.env``
+    # (``BOB_GITHUB__WORK_APP_ID`` …), never from the repository.
+    #
+    # 🔴 THIS SECTION IS THE SINGLE SOURCE OF REPOSITORY IDENTITY (bob-a6b.9). ``work_repo``
+    # is Bob's private fork, ``propose_repo`` is the owner's upstream — and ``propose_repo``
+    # is therefore ALSO the target of the compare link Bob hands over when his work is ready
+    # (he does NOT open the PR: a cross-repo PR from a PRIVATE fork is not expressible for an
+    # installation token — three ways verified, a non-goal). Blank (or no fork / no clone) →
+    # the previous ``gh pr create`` path, byte-identical.
+    #
+    # ``token_margin_seconds`` — 🔴 renew AHEAD of time, not on a 401: an installation token
+    # lives one hour, a coder session can run longer, and breaking mid-work would cost far
+    # more than one extra mint. ``jwt_lifetime_seconds`` — the App JWT lifetime, comfortably
+    # inside GitHub's ten-minute ceiling.
+    "github": {
+        "work_app_id": "",
+        "work_app_key": "",
+        "work_repo": "",
+        "propose_app_id": "",
+        "propose_app_key": "",
+        "propose_repo": "",
+        "token_margin_seconds": 300,
+        "jwt_lifetime_seconds": 480,
+        "api_base_url": "https://api.github.com",
+        "openssl_bin": "openssl",
+        "timeout_seconds": 30,
     },
     # Web search — «Боб ищет в интернете» (BOB-053). The ``web_search`` skill (behind
     # the capability seam) makes ONE Qwen-native call over the MaaS **Responses API**

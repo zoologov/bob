@@ -56,6 +56,8 @@ from bob.interactive.argv_policy import build_interactive_argv, extract_session_
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Awaitable, Mapping, Sequence
 
+    from bob.identity.spawn_isolation import SpawnIsolation
+
 __all__ = [
     "InteractiveClaudeRunner",
     "InteractiveRunError",
@@ -144,13 +146,17 @@ class InteractiveClaudeRunner:
         terminate_grace: float = _DEFAULT_TERMINATE_GRACE_S,
         allow_bypass: bool = False,
         extra_dirs: Sequence[str] = (),
+        isolation: SpawnIsolation | None = None,
     ) -> None:
         # 🔴 Push guard (BOB-087.E): under the owner's ``allow_bypass`` the DEFAULT
         # spawner carries a git config in its environment that makes every network push
         # from the live terminal die on a non-existent remote helper. Only the default
         # (real process) boundary is guarded — an injected fake spawns nothing.
+        # 🔴 Credential isolation (BOB-089.C): under ``coder.isolated_clone`` the live
+        # terminal ALSO loses sight of the owner's credential helper — the same single
+        # seam (:func:`bob.coding.push_guard.guarded_spawn_env`), never a second one.
         self._spawner: InteractiveProcessSpawner = spawner or _ExecInteractiveSpawner(
-            guard_push=allow_bypass
+            guard_push=allow_bypass, isolation=isolation
         )
         self._claude_bin = claude_bin
         self._terminate_grace = terminate_grace
@@ -297,12 +303,15 @@ class _ExecInteractiveProcess:
 class _ExecInteractiveSpawner:
     """Default spawner: ``create_subprocess_exec`` with piped stdio, no shell."""
 
-    def __init__(self, *, guard_push: bool = False) -> None:
+    def __init__(
+        self, *, guard_push: bool = False, isolation: SpawnIsolation | None = None
+    ) -> None:
         # ``None`` (the default) means «spawn without ``env=``» — the inherited
         # environment, byte-identical to the pre-guard spawn. Under ``guard_push`` it is
-        # the inherited environment PLUS the push-blocking git config (see
-        # :mod:`bob.coding.push_guard`, incl. what that barrier honestly does NOT cover).
-        self._env = guarded_spawn_env(os.environ, active=guard_push)
+        # the inherited environment PLUS the push-blocking git config, and under
+        # ``isolation`` MINUS the owner's credentials (see :mod:`bob.coding.push_guard`,
+        # incl. what those measures honestly do NOT cover).
+        self._env = guarded_spawn_env(os.environ, active=guard_push, isolation=isolation)
 
     async def __call__(self, argv: list[str], *, cwd: str) -> InteractiveProcess:
         proc = await asyncio.create_subprocess_exec(

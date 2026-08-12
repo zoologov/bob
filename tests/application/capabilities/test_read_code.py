@@ -51,6 +51,29 @@ def test_capability_advertises_the_read_code_contract() -> None:
     assert schema["required"] == ["query"]
 
 
+def test_description_states_the_privacy_invariant_that_actually_holds() -> None:
+    """The MODEL-FACING text must name the invariant in force, not a retired one.
+
+    🔴 bob-a6b.17. ``_DESCRIPTION`` is read by the model itself, so it shapes what Bob
+    believes he may look at and what he tells the owner about privacy. It described the
+    pre-BOB-067 world ("personal data and secrets (memory DB, soul, .env, config,
+    settings) are not [visible]") — both halves wrong today: those paths ARE readable,
+    and what is actually refused is key material + ``.git``, with secret VALUES redacted
+    on the way out. This test asserts the description names the real invariant so the
+    retired one cannot creep back in.
+    """
+    low = make_read_code_capability(FakeRepoIntrospector()).description.lower()
+
+    # What is REFUSED by path (bob-zmp + bob-a6b.13), named so Bob does not guess.
+    assert ".secrets" in low
+    assert ".pem" in low
+    assert ".git" in low
+    # What happens to everything else: values are redacted, files are not hidden.
+    assert "redacted" in low
+    # The retired promise must not survive alongside the correction.
+    assert "are not." not in low
+
+
 async def test_execute_searches_when_query_is_not_a_path() -> None:
     introspector = FakeRepoIntrospector(search="src/bob/app.py: build_application")
     cap = make_read_code_capability(introspector)
