@@ -422,7 +422,19 @@ Roles are defined canonically in `.claude/agents/{dev,test,review,tech-writer}.m
 
 ## 6. Git — Trunk-based development
 
-`main` is **branch-protected** (no direct push). All work integrates via a PR.
+`main` integrates via a PR — **по дисциплине, а не по правам.**
+
+🔴 **Исправлено по факту (ревью BOB-089, MAJOR-10 — раздел описывал желаемое как
+действующее).** Branch protection на этом плане **недоступна**: API отвечает `403 Upgrade to
+GitHub Pro or make this repository public`. `beadloom ci` **по PR не запускается** — в
+`.github/workflows` лежит только `deploy-site.yml`, и `gh run list` за всю историю показывает
+исключительно «Deploy VitePress site». Прямой push в `main` технически проходит.
+
+Что реально держит `main`: дисциплина ветки на эпик, перепроверка гейтов координатором на
+финальном состоянии дерева (каждую волну) и pre-push хук **в основном репозитории** — он
+работает, когда пушит человек или координатор, но 🔴 НЕ работает на ветке Боба: её пушит
+процесс Боба, а он с BOB-089 хуков не исполняет (иначе хук модели был бы неотличим от хука
+владельца). На настоящий CI по PR заведена отдельная беада.
 
 ```
 Trunk-based flow:
@@ -430,9 +442,11 @@ Trunk-based flow:
 2. Commit per wave    onto features/{ISSUE-KEY} (dev → test → review → tech-writer)
 3. ONE PR to main     per epic/feature (or shippable slice) — not one PR per commit
 4. The PR triggers     the AI tech-writer (commits its doc refresh INTO the PR branch)
-                       + CI (`beadloom ci` is a REQUIRED status check)
-5. Merge when green    human merges once CI is green + the doc refresh has landed
-                       (no auto-merge; no direct push to main → main stays always-green)
+                       🔴 CI по PR НЕТ (`beadloom ci` не настроен) — гейты гоняет
+                       координатор руками, до открытия PR
+5. Merge when green    мёржит человек/координатор — после того, как гейты перепроверены
+                       НА ФИНАЛЬНОМ дереве и доки обновлены. «Зелёный CI» здесь не
+                       гарантия, а описание того, чего пока нет
 ```
 
 ```
@@ -445,10 +459,10 @@ Example:
 [MCP-001] feat: add health endpoint
 ```
 
-One-time per repo: `beadloom setup-branch-protection` configures `main` protection
-(PR required, `beadloom ci` a required check, `enforce_admins: true` — strict
-trunk-based, even the owner integrates via a PR — and 0 required reviews → the
-owner still self-merges). Safe to re-run.
+🔴 `beadloom setup-branch-protection` на этом плане **не работает** — `403 Upgrade to Pro`.
+Команда описана в апстрим-доке beadloom и годится для публичного репозитория или платного
+плана; здесь она молча ничего не настраивает. Пока защита недоступна, называем вещи своими
+именами: `main` держится дисциплиной и перепроверкой, а не правами.
 
 ---
 
