@@ -2260,6 +2260,44 @@ ignore = [
     "RUF002",
     "RUF003",
 ]
+# Приёмочные сценарии BOB-096 (предложение поправить себя + голос, который остаётся):
+# харнессы и шаги биндят русский .feature-текст, ставят русские реплики модели и
+# ассертят через границу (S101), в фейках сети/шлюза есть неиспользуемые параметры
+# протокола (ARG001/ARG002), а числа в утверждениях — сам предмет проверки (PLR2004).
+"tests/acceptance/rule_proposal_harness.py" = [
+    "S101",
+    "ARG001",
+    "ARG002",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+"tests/acceptance/steps/test_rule_proposal.py" = [
+    "S101",
+    "ARG001",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+"tests/acceptance/voice_that_stays_harness.py" = [
+    "S101",
+    "ARG001",
+    "ARG002",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+"tests/acceptance/steps/test_voice_that_stays.py" = [
+    "S101",
+    "ARG001",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
 
 [tool.ruff.lint.isort]
 known-first-party = ["bob"]
