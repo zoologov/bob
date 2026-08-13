@@ -733,6 +733,17 @@ ignore = [
     "RUF002",
     "RUF003",
 ]
+# Поведенческий тест вердикта о голосе (BOB-096 срез 4) воспроизводит ночь 6 августа:
+# по-русски документирует дефект и ЦИТИРУЕТ вывод дублёра, где кириллица с латиницей
+# перемешаны в одном слове — это и есть предмет проверки (→ RUF001/RUF002/RUF003).
+"tests/test_the_understudy_never_speaks_for_bob.py" = [
+    "S101",
+    "ARG001",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
 # The Tier-1 strictness tests (bob-41o) spell the owner's decision out in Russian comments
 # («дефект Tier-1 нельзя прятать», «нет петли») and stage Russian reply literals whose
 # Cyrillic look-alikes are intentional (→ RUF001/2/3).

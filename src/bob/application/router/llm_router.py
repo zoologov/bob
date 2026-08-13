@@ -31,8 +31,9 @@ GUPPI's policy layer over the provider-agnostic :class:`LLMProvider` ports
    служебный ход and wrong for a turn published AS BOB — the composite is invisible to its
    caller, so a 0.5b answer would ship in his voice and settle into memory. Only the router
    knows the task type, so the direction of the fallback is decided HERE, by the pure
-   :mod:`bob.application.router.voice_integrity` core: a user reply keeps the stand-in out
-   and escalates **UP** to Tier 1 (one hop, same redaction), or fails honestly.
+   :mod:`bob.application.router.voice_integrity` core: a turn that is «the voice that
+   STAYS» (BOB-096.4 — the door both speaks AS BOB and is kept) keeps the stand-in out and
+   escalates **UP** to Tier 1 (one hop, same redaction), or fails honestly.
 5. **Carries the VOICE canon to every door** (BOB-096.3). The ban on role-playing GUPPI
    stood on ONE door out of sixteen — the conversational turn — while the reflection,
    its reappraisal, the consolidation digest, the proactive line, the work journal and
@@ -311,13 +312,25 @@ class LLMRouter:
         :meth:`_build_messages` redacts by — one source of truth, so an escalation can never
         carry context the normal Tier-1 call would have stripped).
 
-        Only ``REPLY_TO_USER`` counts as Bob's voice: it is the one task whose text is
-        published to a human as Bob and persisted as his turn. The Tier-0 one-liners
-        (``INTERIM_LINE`` …) are decorative, unpersisted and drop silently on failure, so
-        the owner's decision deliberately leaves them on the служебный side.
+        🔴 What counts as Bob's voice is read from the DOOR, not from the task's name
+        (BOB-096.4). Until this slice the question was asked as ``task_type is
+        REPLY_TO_USER``, which put the protection on three doors out of nineteen: on the
+        night of 2026-08-06 Tier 1 dropped, the understudy composed a rule proposal
+        through ``DETECT_PATTERNS`` and it shipped to the owner, while the reflections of
+        those hours went into ``episodic_log`` in a borrowed voice and came back as
+        few-shot. The concept that replaces it is «the voice that STAYS» —
+        :attr:`~bob.application.router.generation_door.GenerationDoor.speaks_as_bob` AND
+        :attr:`~bob.application.router.generation_door.GenerationDoor.output_is_kept`:
+        the turn is published/written AS BOB *and* it survives the turn. Both halves are
+        load-bearing. ``INTERIM_LINE`` speaks as Bob but is never persisted and drops
+        silently on failure, so the owner's decision (BOB-087.E-M1) that the stand-in may
+        voice it survives with no special case in the code; ``EXTRACT_FACTS`` is kept but
+        is machine-format material, not his voice, so an outage does not cost Bob his
+        facts. An unclassified door is fail-closed (a voice that stays) one module over.
         """
+        door = door_for(request.task_type)
         return who_may_answer_for_bob(
-            speaks_in_bobs_voice=request.task_type is TaskType.REPLY_TO_USER,
+            speaks_in_bobs_voice=door.speaks_as_bob and door.output_is_kept,
             understudy_wired=self._tier0_has_understudy,
             cloud_tier_wired=_TIER_API in self._providers,
             payload_redacted_for_cloud=self._redacts_private_context(request),

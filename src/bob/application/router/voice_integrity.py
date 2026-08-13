@@ -75,8 +75,12 @@ def who_may_answer_for_bob(
 ) -> OutageVoice:
     """Decide who may answer this turn once its tier is out.
 
-    ``speaks_in_bobs_voice`` — is this a reply that ships to a human AS BOB (rather than a
-    classifier/gate/monologue the user never sees)? ``understudy_wired`` — is a local
+    ``speaks_in_bobs_voice`` — is this «the voice that STAYS»: does the turn ship AS BOB
+    (to a human, or into a lasting record) *and* survive the turn, so a borrowed voice
+    would keep shaping him through recall? The caller derives it from the door's own
+    properties (``speaks_as_bob and output_is_kept``, BOB-096.4) — a classifier, a gate or
+    the inner monologue is neither, and the unpersisted interim one-liner is only the
+    first half, so both stay on the служебный side. ``understudy_wired`` — is a local
     stand-in composed under the tier at all (the ``llm.tier0_fallback`` flag: off → nothing
     can impersonate him → nothing to intervene in, the pre-flag behaviour stands)?
     ``cloud_tier_wired`` — is there a quality tier to escalate to? ``payload_redacted_for_cloud``
