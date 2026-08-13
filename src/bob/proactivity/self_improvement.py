@@ -58,6 +58,7 @@ __all__ = [
     "build_modulators",
     "can_transition",
     "clamp_magnitude",
+    "is_actionable_proposal",
     "is_duplicate_rule",
     "rules_for_lever",
 ]
@@ -133,6 +134,14 @@ class ImprovementRule:
     :class:`RuleState`. ``origin`` — :class:`RuleOrigin`. ``evidence`` — какие
     паттерны сработали (для прозрачности перед owner). ``frozen, slots``: без I/O,
     детерминированно, переиспользуемо стором и use-case'ами.
+
+    ДОСТАВКА отдельно от РЕШЕНИЯ owner'а (BOB-096 срез 1): ``announced`` — Боб
+    проговорил это предложение owner'у, ``announce_attempts`` — сколько раз он
+    пробовал. Это НЕ состояние правила: пока owner не ответил, правило остаётся
+    ``PROPOSED`` независимо от того, дошла ли реплика (потому доставка — два своих
+    поля, а не член :class:`RuleState`). Дефолты — «ещё не говорил, попыток не
+    было», так что строка, записанная до BOB-096, читается без миграции данных.
+    Вердикты над этими полями живут в :mod:`bob.proactivity.rule_announcement`.
     """
 
     id: str
@@ -144,6 +153,8 @@ class ImprovementRule:
     origin: RuleOrigin
     created_at: datetime
     evidence: str
+    announced: bool = False
+    announce_attempts: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -260,6 +271,42 @@ def is_duplicate_rule(
         if ratio >= threshold:
             return True
     return False
+
+
+# Наклон обязан быть строго положительным: правило величиной 0 не меняет ничего,
+# поэтому вопрос owner'у «включить?» на него бессмысленен по построению.
+_NO_TILT = 0.0
+
+
+def is_actionable_proposal(rule: ImprovementRule, *, max_magnitude: float) -> bool:
+    """Есть ли в предложении что одобрять — чистый вердикт (BOB-096).
+
+    Живой прецедент: правило с наблюдением-тавтологией, ПУСТОЙ поправкой и величиной
+    ``0.0`` доехало до owner'а вопросом «включить?», на который нельзя ответить
+    осмысленно (одобрение активировало бы правило, ничего не меняющее). Такой
+    кандидат — не ошибка, требующая внимания, а мусорный вывод модели, и он не
+    должен становиться правилом.
+
+    Одобрять есть что, когда выполнено ВСЁ:
+
+    * ``observation`` непуст — Боб назвал, что именно заметил за собой;
+    * ``adjustment`` непуст — он назвал, какую поправку предлагает (иначе «Предлагаю: .»);
+    * ``magnitude`` строго больше нуля — наклон вообще есть;
+    * ``magnitude`` не выше ``max_magnitude`` (потолок из конфига) — предложение
+      исполнимо КАК ПОКАЗАНО. Величину выше потолка применение всё равно урежет
+      (:func:`clamp_magnitude`), то есть owner одобрял бы не то число, которое видит;
+      честнее не предлагать вовсе. Потолок сообщается и самой модели (детектор просит
+      величину в допустимом диапазоне), поэтому это отбраковка выхода за границу, а не
+      молчаливый выключатель самоулучшения.
+
+    Граница ``magnitude == max_magnitude`` — исполнимая (включительна). Потолок ``0``
+    («наклоны запрещены») закономерно не оставляет исполнимых предложений.
+    """
+    if not rule.observation.strip():
+        return False
+    if not rule.adjustment.strip():
+        return False
+    return _NO_TILT < rule.magnitude <= max_magnitude
 
 
 def clamp_magnitude(value: float, *, cap: float) -> float:

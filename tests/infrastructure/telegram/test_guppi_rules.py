@@ -13,7 +13,9 @@ Owner-only, в General-чате, по образцу /goals:
 * ``/rule remove <id>`` (APPROVED/PAUSED→REMOVED);
 * недопустимый переход → отказ (через can_transition), не форс;
 * не-owner / чужой чат / не-команда — игнор и тишина (authz-инвариант BOB-019);
-* правило НЕ даёт никаких прав/инструментов — только флип RuleState.
+* правило НЕ даёт никаких прав/инструментов — только флип RuleState;
+* BOB-096 срез 1: предложение, попытки доставки которого исчерпаны, помечено в списке —
+  Боб о нём молчит, поэтому ``/rules`` — единственное место, где владелец его видит.
 """
 
 from __future__ import annotations
@@ -23,6 +25,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from bob.infrastructure.telegram.guppi import GuppiHandler
+from bob.proactivity.rule_announcement import MAX_ANNOUNCE_ATTEMPTS
 from bob.proactivity.self_improvement import (
     ImprovementRule,
     Lever,
@@ -177,6 +180,8 @@ def _rule(
     *,
     lever: Lever = Lever.TONE,
     state: RuleState = RuleState.PROPOSED,
+    announced: bool = False,
+    announce_attempts: int = 0,
 ) -> ImprovementRule:
     return ImprovementRule(
         id=rid,
@@ -188,6 +193,8 @@ def _rule(
         origin=RuleOrigin.BOB_PROPOSED,
         created_at=_NOW,
         evidence="",
+        announced=announced,
+        announce_attempts=announce_attempts,
     )
 
 
@@ -237,6 +244,61 @@ async def test_rules_empty_when_no_rules() -> None:
 
     assert consumed
     assert "пока нет" in bot.sends[-1].text
+
+
+async def test_rules_marks_an_undelivered_proposal() -> None:
+    # BOB-096 срез 1: исчерпав попытки, Боб об этом правиле молчит — и именно поэтому
+    # владелец обязан увидеть его тут, иначе предложение теряется молча.
+    handler, bot, _store = _build(
+        rules={
+            "stuck": _rule("stuck", announce_attempts=MAX_ANNOUNCE_ATTEMPTS),
+        }
+    )
+
+    consumed = await _send(handler, "/rules")
+
+    assert consumed
+    assert "не доставлено" in bot.sends[-1].text
+
+
+async def test_rules_does_not_mark_a_delivered_proposal() -> None:
+    handler, bot, _store = _build(
+        rules={
+            "heard": _rule(
+                "heard", announced=True, announce_attempts=MAX_ANNOUNCE_ATTEMPTS
+            ),
+        }
+    )
+
+    await _send(handler, "/rules")
+
+    assert "не доставлено" not in bot.sends[-1].text
+
+
+async def test_rules_does_not_mark_a_proposal_still_being_tried() -> None:
+    handler, bot, _store = _build(
+        rules={"fresh": _rule("fresh", announce_attempts=MAX_ANNOUNCE_ATTEMPTS - 1)}
+    )
+
+    await _send(handler, "/rules")
+
+    assert "не доставлено" not in bot.sends[-1].text
+
+
+async def test_rules_does_not_mark_a_rule_the_owner_decided() -> None:
+    handler, bot, _store = _build(
+        rules={
+            "done": _rule(
+                "done",
+                state=RuleState.REJECTED,
+                announce_attempts=MAX_ANNOUNCE_ATTEMPTS,
+            ),
+        }
+    )
+
+    await _send(handler, "/rules")
+
+    assert "не доставлено" not in bot.sends[-1].text
 
 
 async def test_rule_approve_moves_proposed_to_approved() -> None:

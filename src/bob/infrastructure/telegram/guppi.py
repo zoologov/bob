@@ -36,6 +36,7 @@ from datetime import timedelta
 from typing import TYPE_CHECKING, Protocol
 
 from bob.proactivity.goals.state import GoalState, can_transition
+from bob.proactivity.rule_announcement import is_undelivered_proposal
 from bob.proactivity.self_improvement import RuleState
 from bob.proactivity.self_improvement import (
     can_transition as rule_can_transition,
@@ -145,6 +146,11 @@ _RULE_STATE_ACTIONS: dict[str, RuleState] = {
 
 _USAGE_RULE = "Использование: /rule <approve|reject|pause|resume|remove> <id> или /rules"
 _RULES_EMPTY_TEXT = "Правил самоулучшения пока нет."
+# Метка предложения, которое Боб пробовал проговорить и не смог (BOB-096 срез 1). После
+# исчерпания попыток он о нём МОЛЧИТ — значит этот список остаётся единственным местом,
+# где владелец о нём узнаёт; без метки предложение потерялось бы молча. Механика, а не
+# речь Боба: её сообщает GUPPI своим списком.
+_RULE_UNDELIVERED_MARK = " · не доставлено"
 _RULE_REJECT_TEXT = "Не могу — для правила «{rule_id}» этот переход недопустим (сейчас {state})."
 _RULE_NOT_FOUND_TEXT = "Правило «{rule_id}» не найдено."
 
@@ -525,15 +531,22 @@ class GuppiHandler:
         return False
 
     async def _render_rules(self) -> str:
-        """Render the owner-facing ``/rules`` list (rule id + state + lever + observation)."""
+        """Render the owner-facing ``/rules`` list (rule id + state + lever + observation).
+
+        A proposal whose delivery attempts ran out carries the «не доставлено» mark
+        (BOB-096 срез 1): Bob has stopped voicing it, so this list is where the owner
+        learns it is still waiting for him. The verdict itself is the domain's
+        (:func:`is_undelivered_proposal`) — GUPPI only puts it into words.
+        """
         store = self._require_rule_store()
         rules = await store.load(self._persona_id)
         if not rules:
             return _RULES_EMPTY_TEXT
         lines = ["Правила самоулучшения Боба:"]
         for rule in rules:
+            mark = _RULE_UNDELIVERED_MARK if is_undelivered_proposal(rule) else ""
             lines.append(
-                f"• [{rule.id}] {rule.state.value} · {rule.lever.value} — "
+                f"• [{rule.id}] {rule.state.value} · {rule.lever.value}{mark} — "
                 f"{rule.observation}"
             )
         return "\n".join(lines)

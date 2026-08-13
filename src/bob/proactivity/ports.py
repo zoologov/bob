@@ -157,6 +157,12 @@ class SelfImprovementStore(Protocol):
     state move the manage-rules use-case (.3) drives — keeping authz-before-autonomy
     honest (only owner approval moves PROPOSED -> APPROVED). The concrete SQLite-backed
     adapter lives in ``bob.infrastructure.persistence``.
+
+    It also round-trips the DELIVERY of a proposal (BOB-096 срез 1) —
+    ``record_announce_attempt`` / ``mark_announced`` — so «Bob already said this» outlives
+    the process instead of living in its memory. Delivery is deliberately NOT part of
+    ``RuleState``: a proposal stays PROPOSED until the owner decides, whether or not the
+    line reached him.
     """
 
     async def load(self, persona_id: str) -> tuple[ImprovementRule, ...]:
@@ -171,4 +177,12 @@ class SelfImprovementStore(Protocol):
         self, persona_id: str, rule_id: str, state: RuleState
     ) -> None:
         """Atomically set ``rule_id``'s state (owner approval / pause / removal)."""
+        ...
+
+    async def record_announce_attempt(self, persona_id: str, rule_id: str) -> None:
+        """Count one attempt to voice ``rule_id``'s proposal (before it is sent)."""
+        ...
+
+    async def mark_announced(self, persona_id: str, rule_id: str) -> None:
+        """Record that the owner heard ``rule_id``'s proposal (survives a restart)."""
         ...

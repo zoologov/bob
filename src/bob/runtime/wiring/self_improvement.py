@@ -23,6 +23,7 @@ from bob.proactivity.usecases.detect_patterns import DetectPatterns, LlmPatternD
 from bob.proactivity.usecases.self_improvement_sources import ActiveRulesReader
 from bob.runtime.config import (
     _BOB_PERSONA,
+    _DEFAULT_SI_DETECTOR_TIER,
     _DEFAULT_SI_MAX_ACTIVE_RULES,
     _DEFAULT_SI_MAX_MAGNITUDE,
     _float_or,
@@ -68,12 +69,20 @@ def _build_self_improvement(
 
     Built ONLY when the master switch is on AND the rule store is wired: the
     :class:`ActiveRulesReader` (APPROVED-only soft tilts into HandleMessage), the
-    :class:`DetectPatterns` reflect-tick seam (Tier-``detector_tier`` LLM detector →
-    candidate PROPOSED rules, capped by ``max_active_rules``; it runs on empty signals
-    for now — a signal-collection adapter is a later step), and the
+    :class:`DetectPatterns` reflect-tick seam (an LLM detector on the configured
+    ``detector_tier`` → candidate PROPOSED rules, capped by ``max_active_rules``; it runs
+    on empty signals for now — a signal-collection adapter is a later step), and the
     :class:`AnnounceProposedRules` reflect-tick seam (Bob tactfully voices ONE fresh
     proposal into his topic). Off / no store → every piece is None and the magnitude is
     the config ceiling, so the runtime behaves exactly as before BOB-028.
+
+    🔴 BOB-096 — THIS is where ``detector_tier`` became real. Until then the key sat in
+    ``config/bob.yaml`` + the loader defaults while the detector was built with no tier at
+    all, so the «declared tier» existed only in a docstring: a config key with no reader
+    reads as a promise (§0.3 п.10). It is now passed to the detector as the request's tier,
+    and ``max_magnitude`` goes to BOTH consumers from this single read — the detector (the
+    ceiling it asks the model to stay within) and the use-case (the verdict that refuses a
+    proposal the owner could not answer meaningfully).
     """
     section = _section(config, "self_improvement")
     max_magnitude = _float_or(section, "max_magnitude", _DEFAULT_SI_MAX_MAGNITUDE)
@@ -84,12 +93,18 @@ def _build_self_improvement(
             announce_rules=None,
             max_magnitude=max_magnitude,
         )
-    detector = LlmPatternDetector(router=router, clock=clock)
+    detector = LlmPatternDetector(
+        router=router,
+        clock=clock,
+        tier=_int(section, "detector_tier", _DEFAULT_SI_DETECTOR_TIER),
+        max_magnitude=max_magnitude,
+    )
     detect_patterns = DetectPatterns(
         detector=detector,
         store=rule_store,
         persona_id=_BOB_PERSONA,
         max_active_rules=_int(section, "max_active_rules", _DEFAULT_SI_MAX_ACTIVE_RULES),
+        max_magnitude=max_magnitude,
     )
     announce_rules = AnnounceProposedRules(
         store=rule_store,

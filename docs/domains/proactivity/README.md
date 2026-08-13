@@ -69,6 +69,7 @@ src/bob/proactivity/
   decision.py         # layer=domain          — ProactiveDecider: urge → p → seeded-семпл → вето
   state.py            # layer=domain          — ProactivityState (персист-снимок между тиками)
   self_improvement.py # layer=domain          — 🔴 из personality: модель правил + модуляторы
+  rule_announcement.py # layer=domain         — доставка предложения: статус + кап попыток
   goals/              # layer=domain            (когезивная подобласть Goal Engine)
     entities.py       #                        — Goal, Task, GoalOrigin (immutable value-objects)
     state.py          #                        — GoalState / TaskState + предикаты переходов
@@ -171,6 +172,27 @@ authz, гость-инварианта, ядра SOUL или safety-инвари
 `build_modulators` сводит активные правила в нейтральный по умолчанию
 `RuleModulators`, который применяет `handle_message`.
 
+### Доставка предложения (чистый домен, `rule_announcement.py`)
+
+Отдельная от `RuleState` ось (BOB-096 срез 1): «про это правило ещё говорить — и
+услышал ли его owner?». Правило остаётся `PROPOSED`, пока owner не ответил, вне
+зависимости от того, дошла ли реплика, поэтому доставка живёт в двух полях
+`ImprovementRule` (`announced` / `announce_attempts`) и в вердиктах над ними —
+`AnnounceStatus` (`PENDING` / `DELIVERED` / `UNDELIVERED`), `announce_status`,
+`next_to_announce` (какое ОДНО правило проговаривается сейчас: самое старое `PROPOSED`
+в статусе `PENDING`, тай-брейк по `id`) и `is_undelivered_proposal` (то, что `/rules`
+помечает словами «не доставлено»). Кап — `MAX_ANNOUNCE_ATTEMPTS = 3`: reflect-тик идёт
+раз в 5 минут, значит это первая попытка плюс два повтора в пределах ~четверти часа;
+моргнувшая сеть укладывается, оглохший транспорт — нет, и Боб замолкает вместо
+бесконечного повтора.
+
+🔴 **Что этим исправлено (наблюдалось вживую шесть дней, 6–12 августа 2026).** Пометка
+«проговорено» была `set` в памяти процесса и ставилась ПОСЛЕ успешной отправки, а сбой
+уходил в `return` до неё. При битой сети предложение уходило owner'у на КАЖДОМ
+reflect-тике, а каждый перезапуск проговаривал заново ВСЕ `PROPOSED`-правила. Теперь
+пометка живёт в строке правила (миграция — guarded ALTER, идемпотентна, без бэкфилла:
+правило, записанное до фикса, проговаривается ОДИН раз и умолкает).
+
 ### Use-case'ы (application)
 
 `ProactivityEngine` (`usecases/engine.py`) — оркестратор, превращающий drive-модель
@@ -220,8 +242,12 @@ APPROVED-цель на атомарные `Task` (строгий JSON, усто�
 
 `AnnounceProposedRules` (`usecases/announce_rules.py`) — Боб тактично проговаривает
 owner'у ОДНО свежее `PROPOSED`-правило за раз («Заметил за собой… Предлагаю…
-Включить?»), помечает его announced (in-memory, на процесс) и не повторяет.
-Best-effort: сбой гейтвея не валит тик; unwired — no-op.
+Включить?»), выбирая кандидата доменным `next_to_announce` и помечая его в ХРАНИЛИЩЕ
+(`record_announce_attempt` до отправки, `mark_announced` после успеха), поэтому
+проговорённое не повторяется ни на следующем тике, ни после перезапуска процесса.
+Best-effort: сбой гейтвея не валит тик и НЕ превращается в вечный повтор — попытки
+капятся, после исчерпания правило видно владельцу в `/rules` как недоставленное;
+unwired — no-op.
 
 `ActiveRulesReader` (`usecases/self_improvement_sources.py`) — application-адаптер
 чтения (реализует `SelfImprovementReader`, read-сейм `HandleMessage`): грузит
@@ -323,6 +349,8 @@ count** (сколько проактивных эпизодов в анти-сп
   (`GoalGraph`, `ready_tasks`, `next_safe_task`, `blocked_reason`).
 - Самоулучшение: `self_improvement` (`ImprovementRule`, `Lever`, `RuleState`,
   `active_rules`, `build_modulators`, `RuleModulators`).
+- Доставка предложения: `rule_announcement` (`AnnounceStatus`, `announce_status`,
+  `next_to_announce`, `is_undelivered_proposal`, `MAX_ANNOUNCE_ATTEMPTS`).
 - Use-case'ы: `usecases.engine.ProactivityEngine`, `usecases.tick.ProactiveTick`,
   `usecases.record_owner_activity.RecordOwnerActivity`, `usecases.plan_goal`
   (`LlmPlanner`, `PlanGoal`), `usecases.pursue_goals.PursueGoalsTick`,
@@ -348,6 +376,11 @@ heartbeat) — в композиционном корне `app.py`. Долгов
 - Самоулучшение: `tests/domain/personality/test_self_improvement.py`,
   `test_self_improvement_modulators.py` (переехали вместе с модулем; смена тега
   `feature=personality → proactivity`); `tests/test_self_improvement_config.py`.
+- Доставка предложения: `tests/domain/proactivity/test_rule_announcement.py` (статусы,
+  граница капа, выбор кандидата) и `tests/infrastructure/persistence/
+  test_announce_rules_durability.py` — те же две проверки на НАСТОЯЩЕМ SQLite
+  («перезапуск» = закрыть и открыть базу), потому что тест на фейке доказывает контракт
+  фейка.
 - Use-case'ы: `tests/application/proactivity/` (`test_engine.py`, `test_tick.py`,
   `test_record_owner_activity.py`) и `tests/application/usecases/`
   (`test_plan_goal.py`, `test_pursue_goals.py`, `test_detect_patterns.py`,

@@ -49,6 +49,12 @@ _BOB_PERSONA = "bob"
 _DEFAULT_SI_MAX_MAGNITUDE = 0.3
 _DEFAULT_SI_MAX_ACTIVE_RULES = 5
 
+# The tier the pattern detector reasons on (``self_improvement.detector_tier``). 1 =
+# the reasoning tier, which is ALSO the ``DETECT_PATTERNS`` task default — so the
+# shipped config pins exactly what the router would pick anyway (BOB-096: the key was
+# dead until then, and honouring it must not silently move the detector elsewhere).
+_DEFAULT_SI_DETECTOR_TIER = 1
+
 # Default vividness of a freshly-grounded fascination (BOB-020); it then decays with
 # age. Overridable via ``emotion.fascination.initial_intensity``.
 _DEFAULT_FASCINATION_INTENSITY = 0.85

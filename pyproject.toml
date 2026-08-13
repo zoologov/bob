@@ -252,6 +252,10 @@ ignore = [
     "RUF002",
     "RUF003",
 ]
+# The rule-announcement delivery core (BOB-096 срез 1) carries Russian policy docstrings +
+# comments (the six-day «долбёжка» defect it fixes) whose Cyrillic look-alikes are
+# intentional — RUF001/RUF002/RUF003 do not apply to these.
+"src/bob/proactivity/rule_announcement.py" = ["RUF001", "RUF002", "RUF003"]
 # The Planner + plan_goal use-case (BOB-015 .2) carries Russian planner prompts +
 # owner-facing plan/status literals whose Cyrillic look-alikes are intentional —
 # RUF001/RUF002/RUF003 do not apply to these.
@@ -697,6 +701,25 @@ ignore = [
     "RUF003",
 ]
 "tests/**/*.py" = ["S101", "ARG001", "PLR2004"]
+# The rule-delivery tests (BOB-096 срез 1) document the six-day «долбёжка» defect in
+# Russian comments/docstrings and use Russian rule literals — their Cyrillic look-alikes
+# are intentional (→ RUF001/RUF002/RUF003).
+"tests/domain/proactivity/test_rule_announcement.py" = [
+    "S101",
+    "ARG001",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+"tests/infrastructure/persistence/test_announce_rules_durability.py" = [
+    "S101",
+    "ARG001",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
 # The Planner + plan_goal use-case tests (BOB-015 .2) and GUPPI goal-command tests
 # assert on Russian goal/plan/command literals whose Cyrillic look-alikes are
 # intentional (→ RUF001/RUF002/RUF003).

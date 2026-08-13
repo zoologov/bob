@@ -73,6 +73,7 @@ class SqliteConnection:
         await self._migrate_first_impression_display_name()
         await self._migrate_first_impression_username()
         await self._migrate_coding_session_claude_session_id()
+        await self._migrate_improvement_rule_announce()
         await self._conn.commit()
         logger.info("SqliteConnection initialised at %s", self._db_path)
 
@@ -237,6 +238,45 @@ class SqliteConnection:
         """Names of the columns currently on ``coding_session`` (BOB-087.D1)."""
         async with self._db().execute(
             "PRAGMA table_info(coding_session)"
+        ) as cursor:
+            rows = await cursor.fetchall()
+        return {str(row[1]) for row in rows}
+
+    async def _migrate_improvement_rule_announce(self) -> None:
+        """Add the ``improvement_rule`` delivery columns to a pre-existing DB (BOB-096).
+
+        ``announced`` / ``announce_attempts``: did the owner hear this proposal, and how
+        many attempts were spent on it. ``CREATE TABLE IF NOT EXISTS`` never alters an
+        already-present table, so a DB written before these columns existed would lack
+        them. Each guarded ``ALTER`` adds its column only when missing — additive and
+        non-destructive: every existing row keeps its content and takes the column
+        default. A clean no-op once present, so re-running ``initialize()`` is
+        idempotent. Kept in the kernel (the schema/migration owner) beside the other
+        guarded ALTERs.
+
+        🔴 NO BACKFILL, deliberately. The defaults read as «not announced yet», so a
+        rule that predates the fix is voiced ONCE more and then goes quiet forever —
+        instead of every reflect tick, which is what the owner lived with for six days.
+        Guessing the opposite (marking every pre-existing PROPOSED rule as already
+        announced) would silence a proposal that genuinely never reached him; the
+        migration does not assert history it cannot know.
+        """
+        columns = await self._improvement_rule_columns()
+        if "announced" not in columns:
+            await self._db().execute(
+                "ALTER TABLE improvement_rule "
+                "ADD COLUMN announced INTEGER NOT NULL DEFAULT 0"
+            )
+        if "announce_attempts" not in columns:
+            await self._db().execute(
+                "ALTER TABLE improvement_rule "
+                "ADD COLUMN announce_attempts INTEGER NOT NULL DEFAULT 0"
+            )
+
+    async def _improvement_rule_columns(self) -> set[str]:
+        """Names of the columns currently on ``improvement_rule`` (BOB-096)."""
+        async with self._db().execute(
+            "PRAGMA table_info(improvement_rule)"
         ) as cursor:
             rows = await cursor.fetchall()
         return {str(row[1]) for row in rows}
