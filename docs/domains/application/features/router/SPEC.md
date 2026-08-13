@@ -49,6 +49,27 @@ source `src/bob/application/router/`) — единственная точка, �
     часов и состояния. Взята под mutation отдельным файлом в `mutmut.source_paths`.
   Ядро живёт в пакете роутера (именно роутер знает тип задачи); в доменный вертикал его
   вынести нельзя — каждый домен уже импортирует роутер, и обратный импорт замкнул бы цикл.
+- **generation_door.py** (BOB-096.3) — чистое ядро «какие бывают двери генерации и чем
+  является вывод каждой». Здесь живёт `TaskType` (переэкспортируется из `llm_router` —
+  все прежние импорты работают): вид работы и природа её вывода суть одно понятие, и
+  разводить их значит снова получить дверь, о которой известен только тир.
+  - `GenerationDoor` — три независимых ФАКТА о выводе: `speaks_as_bob` (уходит к человеку
+    или в запись КАК СЛОВА БОБА), `output_is_kept` (переживает ход — ложится в память или
+    в другую долгую запись, то есть завтра вернётся как few-shot),
+    `answers_in_machine_format` (ответ разбирает код, а не читает человек).
+  - `needs_voice_canon` — `speaks_as_bob or output_is_kept`: кому обязан доехать запрет о
+    голосе. 🔴 «Голос, который ОСТАЁТСЯ» (`speaks_as_bob and output_is_kept`) — та самая
+    пара, которой выражается вердикт о дублёре без `task_type is REPLY_TO_USER`.
+  - `door_for(task_type)` — незнакомая дверь fail-closed считается голосом, который
+    остаётся (`UNCLASSIFIED_DOOR`); полноту таблицы стережёт архитектурный тест.
+  Взято под mutation отдельным файлом в `mutmut.source_paths`.
+- **voice_canon.py** (BOB-096.3) — чистое ядро ШВА: канон о голосе дотягивается до каждой
+  двери. `fold_voice_canon(messages, door, canon)` вплетает запрет ПЕРВЫМ системным
+  сообщением — не служебной двери, не дважды (разговорный ход несёт его дословно в базовой
+  персоне), не пустым текстом и не при неподключённом шве. Сам ТЕКСТ приходит инъекцией
+  через порт `VoiceCanon` (реализация — `bob.personality.voice.guppi_voice_canon`): канон
+  принадлежит персоне, а `personality` уже зависит от роутера, поэтому связь между ними
+  живёт в композиционном корне. Взято под mutation отдельным файлом.
 
 ### Кто куда падает (матрица спасательной попытки)
 
@@ -95,6 +116,14 @@ source `src/bob/application/router/`) — единственная точка, �
   и там пусто — наружу уходит честный отвал, а не чужой голос.
 - Эскалация вверх несёт ТОТ ЖЕ уже отредактированный payload: аварийный путь не проносит
   в облако ничего, чего не пронёс бы штатный Tier-1-вызов (payload строится один раз).
+- 🔴 Запрет отыгрывать GUPPI доезжает до КАЖДОЙ двери, чей вывод — голос Боба или
+  переживает ход (BOB-096.3): рефлексия, переоценка, дайджест консолидации, проактивная
+  реплика, work_journal, выжимка фактов, правила-поправки, пробуждение. Не копипастой по
+  дверям, а швом в роутере, поэтому новая дверь получает канон по построению: она не может
+  родиться без роутера, а `door_for` не имеет варианта «не знаю». Служебный ход не получает
+  ни байта лишнего; payload строится один раз, поэтому запрет уезжает и со спасательной
+  попыткой. Роутер собирается ровно в одном месте (композиционный корень) и там же
+  снабжается каноном — это стережёт архитектурный тест.
 
 ## API
 
@@ -113,6 +142,16 @@ source `src/bob/application/router/`) — единственная точка, �
 - `who_may_answer_for_bob(...)` — вердикт `OutageVoice` по фактам хода.
 - `OutageVoice` — `LOCAL_UNDERSTUDY` / `CLOUD_TIER1` / `NOBODY`.
 
+Модуль `src/bob/application/router/generation_door.py`:
+- `TaskType` — перечисление видов работы (переэкспортируется из `llm_router`).
+- `GenerationDoor` — `speaks_as_bob` / `output_is_kept` / `answers_in_machine_format`
+  + `needs_voice_canon`.
+- `door_for(task_type)` — чем является вывод двери; незнакомая — `UNCLASSIFIED_DOOR`.
+
+Модуль `src/bob/application/router/voice_canon.py`:
+- `VoiceCanon` — порт текста канона (`prose_answer: bool` → формулировка).
+- `fold_voice_canon(messages, door, canon)` — идемпотентное вплетение запрета в payload.
+
 ## Тестирование
 
 Тесты: `tests/application/router/test_llm_router.py`,
@@ -128,7 +167,18 @@ BDD-сценарии целостности голоса и приватност
 `tests/acceptance/features/tier0_fallback.feature` (S15–S21), строгости верхнего фолбэка —
 там же (S14, S22–S24).
 
+Досягаемость канона (BOB-096.3): `tests/application/router/test_generation_door.py`
+(понятие двери + полнота таблицы + fail-closed),
+`tests/application/router/test_voice_canon.py` (чистое ядро шва),
+`tests/application/router/test_llm_router_voice_canon.py` (роутер × записывающий провайдер:
+что реально уехало модели, включая спасательную попытку),
+`tests/test_canon_reaches_every_door.py` (каждая дверь НАСТОЯЩИМ use-case'ом + архитектурный
+гард: роутер собирается в одном месте, снабжён каноном, никто не ходит к провайдеру мимо
+него, текст запрета не размножен по дереву).
+
 <!-- beadloom:track=src/bob/application/router/llm_router.py -->
 <!-- beadloom:track=src/bob/application/router/fallback_policy.py -->
 <!-- beadloom:track=src/bob/application/router/reply_tier_selector.py -->
 <!-- beadloom:track=src/bob/application/router/voice_integrity.py -->
+<!-- beadloom:track=src/bob/application/router/generation_door.py -->
+<!-- beadloom:track=src/bob/application/router/voice_canon.py -->

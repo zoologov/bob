@@ -5,14 +5,16 @@
 """Тесты AnnounceProposedRules — Боб проговаривает свежее правило owner'у (BOB-028 .3).
 
 При случае (драйвится медленным reflect-кадэнсом) Боб тактично проговаривает ОДНО
-свежее PROPOSED-правило: «Заметил за собой: …. Предлагаю: …. Включить? /rule approve
-<id>». Покрывают:
+свежее PROPOSED-правило СВОИМИ словами (текст собирает доменный ``rule_voice``, BOB-096
+срез 5; его собственные тесты — tests/domain/proactivity/test_rule_voice.py). Покрывают:
 
 * одно за раз (не спам): при нескольких PROPOSED шлётся ровно одно;
 * помечается «announced» В ХРАНИЛИЩЕ — повторный прогон молчит, и НОВЫЙ экземпляр над
   тем же хранилищем (то есть перезапуск процесса) тоже молчит (BOB-096 срез 1);
 * шлёт ТОЛЬКО PROPOSED (APPROVED/PAUSED/REJECTED/REMOVED не проговариваются —
   одобренное уже применяется, отклонённое owner закрыл);
+* отправляется РОВНО голос Боба, а сырой вывод детектора до owner'а не доезжает — тот
+  самый живой дефект «Заметил за собой: Боб замечает…»;
 * в тексте есть id и /rule approve (owner знает, как включить);
 * нет PROPOSED → тишина; нет гейтвея/стора → no-op (поведение как до BOB-028);
 * best-effort: сбой гейтвея не валит тик — и не превращается в вечный повтор: попытки
@@ -29,6 +31,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
 from bob.proactivity.rule_announcement import MAX_ANNOUNCE_ATTEMPTS
+from bob.proactivity.rule_voice import proposal_message
 from bob.proactivity.self_improvement import (
     ImprovementRule,
     Lever,
@@ -154,10 +157,28 @@ async def test_announces_one_proposed_rule() -> None:
     assert len(gw.posts) == 1
     chat_id, text = gw.posts[0]
     assert chat_id == _CHAT_ID
-    assert "Отвечаю слишком сухо" in text
-    assert "Добавить теплоты в тон" in text
+    # Текст — ровно голос Боба (BOB-096 срез 5); use-case ничего к нему не дописывает.
+    assert text == proposal_message(lever=Lever.TONE, magnitude=0.3, rule_id="r1")
+    # Владелец знает, чем включить: идентификатор и команда на месте — сноской.
     assert "r1" in text
     assert "/rule approve" in text
+
+
+async def test_the_detector_text_never_reaches_the_owner() -> None:
+    # 🔴 Регресс на живую жалобу: сырой вывод детектора подставлялся в шаблон дословно,
+    # и owner получал «Заметил за собой: Боб замечает…» — Боба о себе в третьем лице.
+    rule = _rule(
+        "r1",
+        observation="Боб замечает, что его поведение часто повторяется",
+        adjustment="",
+    )
+    use_case, gw = _build((rule,))
+
+    await use_case.run()
+
+    _chat_id, text = gw.posts[0]
+    assert "Боб замечает" not in text
+    assert ".." not in text
 
 
 async def test_announces_only_one_at_a_time() -> None:

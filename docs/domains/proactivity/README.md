@@ -70,6 +70,7 @@ src/bob/proactivity/
   state.py            # layer=domain          — ProactivityState (персист-снимок между тиками)
   self_improvement.py # layer=domain          — 🔴 из personality: модель правил + модуляторы
   rule_announcement.py # layer=domain         — доставка предложения: статус + кап попыток
+  rule_voice.py       # layer=domain          — голос Боба на предложении поправить себя
   goals/              # layer=domain            (когезивная подобласть Goal Engine)
     entities.py       #                        — Goal, Task, GoalOrigin (immutable value-objects)
     state.py          #                        — GoalState / TaskState + предикаты переходов
@@ -193,6 +194,32 @@ reflect-тике, а каждый перезапуск проговаривал 
 пометка живёт в строке правила (миграция — guarded ALTER, идемпотентна, без бэкфилла:
 правило, записанное до фикса, проговаривается ОДИН раз и умолкает).
 
+### Голос предложения (чистый домен, `rule_voice.py`)
+
+Как это ЗВУЧИТ, когда Боб предлагает поправить самого себя (BOB-096 срез 5). Жалоба
+owner'а была про конструкцию, а не про формулировку: реплика собиралась шаблоном с тремя
+слотами, куда ДОСЛОВНО подставлялся вывод детектора, — «Заметил за собой: Боб замечает,
+что его поведение часто повторяется**..** Предлагаю: **.** Включить? (/rule approve
+rule-…)». Отсюда все швы разом: третье лицо о себе (так его назвала модель), двойная
+точка от пустого слота, идентификатор внутри фразы.
+
+Лечение — то же разделение ролей, что в `social/permission/request_voice.py`: вердикт
+детектора остаётся ВНУТРИ и лишь ВЫБИРАЕТ готовые слова Боба. `proposal_speech(lever,
+magnitude)` — что Боб говорит (наблюдение от первого лица + намерение + вопрос):
+`Lever` выбирает формулировку, `magnitude` — полосу величины («чуть» < 0.15 ≤ «заметно»
+< 0.5 ≤ «сильно»). Сырой текст детектора (`observation` / `adjustment` / `evidence`)
+билдер НЕ ПРИНИМАЕТ, поэтому попасть в реплику не может; пустых слотов и двойной
+пунктуации нет по конструкции — фраза склеена из непустых констант.
+`proposal_message(…, rule_id)` добавляет служебную сноску отдельной строкой.
+
+🔴 **Граница канона внутри одного сообщения** (BOB-090.D, `coding/speaker.py`).
+Предложение изменить себя — голос Боба; команда `/rule approve <id>` — механика, и она
+уже принадлежит GUPPI (`/rule` и `/rules` обрабатывает `GuppiHandler` своим ботом).
+Разводить одно предложение на двух ботов владельцу хуже (два сообщения пришлось бы
+сопоставлять глазами) и потребовало бы второго канала в доставке, поэтому сообщение
+ОДНО, боту Боба, но идентификатор не произносится: он вынесен голой командой отдельной
+строкой. Пустой идентификатор сноской не становится вовсе.
+
 ### Use-case'ы (application)
 
 `ProactivityEngine` (`usecases/engine.py`) — оркестратор, превращающий drive-модель
@@ -241,8 +268,9 @@ APPROVED-цель на атомарные `Task` (строгий JSON, усто�
 новых в `PROPOSED` — только предлагает, никогда не применяет.
 
 `AnnounceProposedRules` (`usecases/announce_rules.py`) — Боб тактично проговаривает
-owner'у ОДНО свежее `PROPOSED`-правило за раз («Заметил за собой… Предлагаю…
-Включить?»), выбирая кандидата доменным `next_to_announce` и помечая его в ХРАНИЛИЩЕ
+owner'у ОДНО свежее `PROPOSED`-правило за раз СВОИМИ словами (текст целиком принадлежит
+доменному `rule_voice`, см. ниже), выбирая кандидата доменным `next_to_announce` и
+помечая его в ХРАНИЛИЩЕ
 (`record_announce_attempt` до отправки, `mark_announced` после успеха), поэтому
 проговорённое не повторяется ни на следующем тике, ни после перезапуска процесса.
 Best-effort: сбой гейтвея не валит тик и НЕ превращается в вечный повтор — попытки
@@ -351,6 +379,7 @@ count** (сколько проактивных эпизодов в анти-сп
   `active_rules`, `build_modulators`, `RuleModulators`).
 - Доставка предложения: `rule_announcement` (`AnnounceStatus`, `announce_status`,
   `next_to_announce`, `is_undelivered_proposal`, `MAX_ANNOUNCE_ATTEMPTS`).
+- Голос предложения: `rule_voice` (`proposal_speech`, `proposal_message`).
 - Use-case'ы: `usecases.engine.ProactivityEngine`, `usecases.tick.ProactiveTick`,
   `usecases.record_owner_activity.RecordOwnerActivity`, `usecases.plan_goal`
   (`LlmPlanner`, `PlanGoal`), `usecases.pursue_goals.PursueGoalsTick`,
@@ -381,6 +410,9 @@ heartbeat) — в композиционном корне `app.py`. Долгов
   test_announce_rules_durability.py` — те же две проверки на НАСТОЯЩЕМ SQLite
   («перезапуск» = закрыть и открыть базу), потому что тест на фейке доказывает контракт
   фейка.
+- Голос предложения: `tests/domain/proactivity/test_rule_voice.py` (первое лицо, свои
+  слова на каждый рычаг, полосы величины, невозможность пустого слота, сноска отдельно
+  от речи).
 - Use-case'ы: `tests/application/proactivity/` (`test_engine.py`, `test_tick.py`,
   `test_record_owner_activity.py`) и `tests/application/usecases/`
   (`test_plan_goal.py`, `test_pursue_goals.py`, `test_detect_patterns.py`,

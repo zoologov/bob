@@ -22,7 +22,12 @@ from __future__ import annotations
 import asyncio
 
 from bob.personality.expression import Verbosity
-from bob.personality.voice import guppi_canon, guppi_no_roleplay_directive, operator_stance
+from bob.personality.voice import (
+    guppi_canon,
+    guppi_no_roleplay_directive,
+    guppi_voice_canon,
+    operator_stance,
+)
 from tests.acceptance.formatting_harness import composed_prompt
 
 
@@ -58,3 +63,34 @@ def test_ban_does_not_kill_the_allowed_wry_canon() -> None:
     canon = guppi_canon().casefold()
     assert "буквал" in canon
     assert "ирони" in canon or "шутк" in canon
+
+
+# --- Досягаемость канона: та же суть в форме, пригодной для двери (BOB-096.3) ---------
+
+
+def test_the_prose_form_is_the_shipped_directive_itself() -> None:
+    # Досягаемость — не новый запрет: прозаической двери достаётся ТОТ ЖЕ текст, который
+    # уже стоит в базовой персоне. Иначе у Боба завелось бы два разных канона.
+    assert guppi_voice_canon(prose_answer=True) == guppi_no_roleplay_directive()
+
+
+def test_the_machine_form_bans_the_same_three_moves() -> None:
+    lowered = guppi_voice_canon(prose_answer=False).casefold()
+
+    # Речь, мнение и поступки за GUPPI — те же три запрещённых движения.
+    assert "guppi" in lowered
+    assert "мнени" in lowered
+    assert "речи" in lowered or "слов" in lowered
+    assert "поступк" in lowered or "действи" in lowered
+
+
+def test_the_machine_form_does_not_drag_prose_instructions_into_a_json_door() -> None:
+    # 🔴 У двери, отвечающей JSON'ом (выжимка фактов, правила-поправки), прозаические
+    # указания «вызови инструмент… говори от себя, своим голосом» ломали бы контракт
+    # ответа — молчаливая цена «канона везде», если не различать форму двери.
+    machine = guppi_voice_canon(prose_answer=False).casefold()
+
+    assert "вызови" not in machine
+    assert "своим голосом" not in machine
+    # И она заметно короче полной: это клауза для записи, а не наставление о речи.
+    assert len(machine) < len(guppi_no_roleplay_directive()) / 2

@@ -106,6 +106,7 @@ from bob.personality.usecases.fascination_sources import (
 from bob.personality.usecases.reappraise_reflection import ReappraiseReflection
 from bob.personality.usecases.reflection_parser import HeuristicReflectionParser
 from bob.personality.usecases.update_mood_from_text import UpdateMoodFromText
+from bob.personality.voice import guppi_voice_canon
 from bob.proactivity.adapters import (
     RepoProactivitySources,
     SqliteProactivityStore,
@@ -374,9 +375,16 @@ def build_application(
     # Tier-1 rate-cap (BOB-072): a ceiling on concurrent Tier-1 (Qwen API) calls, invisible
     # insurance against 429/degradation under bursts across chats. ``llm.tier1_max_concurrency``
     # absent / 0 → no cap → byte-identical; a positive value serializes Tier-1 to that ceiling.
+    # 🔴 The VOICE canon is handed to the router HERE and only here (BOB-096.3). The router
+    # is the one place every generation door passes through, and the canon TEXT belongs to
+    # the persona (a `router -> personality` import would close a node cycle), so the tie
+    # between them lives in the composition root. The line is not decorative: without it the
+    # seam is unwired and the ban on role-playing GUPPI reaches the conversational turn
+    # alone — defect bob-alr.12 exactly. An architectural test guards it.
     router = LLMRouter(
         providers=tier_providers,
         tier1_max_concurrency=_int(_section(merged, "llm"), "tier1_max_concurrency", 0),
+        voice_canon=guppi_voice_canon,
     )
 
     # Hybrid memory (BOB-011): the embedder + optional reranker are injectable

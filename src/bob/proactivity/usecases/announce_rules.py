@@ -9,10 +9,10 @@
 """AnnounceProposedRules — Боб проговаривает свежее правило owner'у (BOB-028 .3).
 
 После того как детектор (.2) сложил кандидата-правило в ``PROPOSED``, Боб при случае
-тактично проговаривает его owner'у — «Заметил за собой: …. Предлагаю: …. Включить?
-(/rule approve <id>)» — и owner решает (apply читает только ``active_rules``, то есть
-лишь APPROVED). Этот use-case драйвится медленным reflect-кадэнсом (как детектор) и
-держит границы «не спамить»:
+тактично проговаривает его owner'у СВОИМИ словами (:mod:`bob.proactivity.rule_voice`) —
+и owner решает (apply читает только ``active_rules``, то есть лишь APPROVED). Этот
+use-case драйвится медленным reflect-кадэнсом (как детектор) и держит границы «не
+спамить»:
 
 * ОДНО за раз — при нескольких PROPOSED проговаривается ровно одно (самое старое
   непроговорённое), чтобы не заваливать owner'а;
@@ -31,7 +31,13 @@ BOB-028. Никакого ПРИМЕНЕНИЯ здесь — Боб лишь п
 была ``set`` в памяти процесса и ставилась ПОСЛЕ успешной отправки, а сбой уходил в
 ``return`` до неё. При битой сети правило уходило на КАЖДОМ reflect-тике (раз в 5 минут),
 а каждый перезапуск проговаривал владельцу заново ВСЕ предложения. Здесь исправлен
-именно этот путь доставки; ФОРМУЛИРОВКА реплики — отдельная работа (срез 5).
+именно этот путь доставки.
+
+🔴 А ЧТО ЛОМАЛОСЬ В САМОЙ РЕПЛИКЕ (срез 5): она собиралась шаблоном со слотами, куда
+дословно подставлялся вывод детектора, — «Заметил за собой: Боб замечает, что его
+поведение часто повторяется**..** Предлагаю: **.** Включить? (/rule approve rule-…)».
+Теперь текст целиком принадлежит :mod:`bob.proactivity.rule_voice`, а сюда возвращается
+готовым: use-case решает КОГДА и КОМУ говорить, но не подбирает слова.
 """
 
 from __future__ import annotations
@@ -40,6 +46,7 @@ import logging
 from typing import TYPE_CHECKING, Protocol
 
 from bob.proactivity.rule_announcement import MAX_ANNOUNCE_ATTEMPTS, next_to_announce
+from bob.proactivity.rule_voice import proposal_message
 
 if TYPE_CHECKING:
     from bob.proactivity.self_improvement import ImprovementRule
@@ -83,14 +90,6 @@ class RuleAnnounceGateway(Protocol):
     ) -> int | None: ...
 
 
-# Шаблон тактичного предложения (рус, голос Боба). Грундирован в реальном правиле:
-# наблюдение + поправка + как включить. Cyrillic look-alikes intentional.
-_PROPOSAL_TEMPLATE = (
-    "Заметил за собой: {observation}. Предлагаю: {adjustment}. "
-    "Включить? (/rule approve {rule_id})"
-)
-
-
 class AnnounceProposedRules:
     """Проговорить owner'у ОДНО свежее PROPOSED-правило за прогон (BOB-028 .3)."""
 
@@ -125,9 +124,7 @@ class AnnounceProposedRules:
             return
         await self._store.record_announce_attempt(self._persona_id, target.id)
         try:
-            await self._gateway.reply(
-                chat_id=self._chat_id, markdown=_render(target)
-            )
+            await self._gateway.reply(chat_id=self._chat_id, markdown=_voiced(target))
         except Exception:
             logger.exception(
                 "Announcing a proposed rule failed (best-effort): rule=%s attempt=%d/%d",
@@ -139,10 +136,11 @@ class AnnounceProposedRules:
         await self._store.mark_announced(self._persona_id, target.id)
 
 
-def _render(rule: ImprovementRule) -> str:
-    """Render Bob's tactful one-rule proposal (observation + adjustment + how to enable)."""
-    return _PROPOSAL_TEMPLATE.format(
-        observation=rule.observation,
-        adjustment=rule.adjustment,
-        rule_id=rule.id,
-    )
+def _voiced(rule: ImprovementRule) -> str:
+    """Дать правилу голос Боба — речь плюс служебная сноска (BOB-096 срез 5).
+
+    Голосу передаётся только ВЕРДИКТ (рычаг + величина) и идентификатор для сноски:
+    ``observation`` / ``adjustment`` / ``evidence`` сюда не идут вовсе, поэтому сырой
+    текст детектора не может оказаться в реплике (:mod:`bob.proactivity.rule_voice`).
+    """
+    return proposal_message(lever=rule.lever, magnitude=rule.magnitude, rule_id=rule.id)

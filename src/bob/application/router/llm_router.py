@@ -33,6 +33,15 @@ GUPPI's policy layer over the provider-agnostic :class:`LLMProvider` ports
    knows the task type, so the direction of the fallback is decided HERE, by the pure
    :mod:`bob.application.router.voice_integrity` core: a user reply keeps the stand-in out
    and escalates **UP** to Tier 1 (one hop, same redaction), or fails honestly.
+5. **Carries the VOICE canon to every door** (BOB-096.3). The ban on role-playing GUPPI
+   stood on ONE door out of sixteen — the conversational turn — while the reflection,
+   its reappraisal, the consolidation digest, the proactive line, the work journal and
+   ``extract_facts`` all walked past it and wrote canon-breaking few-shot INTO memory,
+   which recall then feeds back into Bob's behaviour (BOB-074). The router is the one
+   place EVERY door passes through, so the seam lives here: what a door's output IS comes
+   from :mod:`bob.application.router.generation_door`, the folding from
+   :mod:`bob.application.router.voice_canon`, and the text itself is injected from the
+   persona (the router imports no domain vertical).
 
 This module is pure application policy: it holds no transport/HTTP knowledge —
 that lives behind the injected :class:`LLMProvider` adapters.
@@ -43,16 +52,18 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass, field
-from enum import Enum
 from typing import TYPE_CHECKING
 
 from bob.application.router.fallback_policy import should_fall_back
+from bob.application.router.generation_door import TaskType, door_for
+from bob.application.router.voice_canon import fold_voice_canon
 from bob.application.router.voice_integrity import OutageVoice, who_may_answer_for_bob
 from bob.kernel.ports import UnderstudyBackedProvider
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
+    from bob.application.router.voice_canon import VoiceCanon
     from bob.kernel.ports import LLMMessage, LLMProvider
 
 logger = logging.getLogger(__name__)
@@ -61,29 +72,12 @@ _TIER_LOCAL = 0
 _TIER_API = 1
 
 
-class TaskType(Enum):
-    """Kinds of LLM work, each mapped to a preferred tier by the router."""
-
-    REPLY_TO_USER = "reply_to_user"
-    GENESIS = "genesis"
-    SENTIMENT = "sentiment"
-    INNER_MONOLOGUE = "inner_monologue"
-    REFLECT = "reflect"
-    EXTRACT_FACTS = "extract_facts"
-    PLAN_GOAL = "plan_goal"
-    DETECT_PATTERNS = "detect_patterns"
-    CODING_INTENT = "coding_intent"
-    RESPONSE_JUDGE = "response_judge"
-    REACTION_JUDGE = "reaction_judge"
-    PRIVILEGE_JUDGE = "privilege_judge"
-    VOLATILITY_JUDGE = "volatility_judge"
-    INTERIM_LINE = "interim_line"
-    ROOM_READ = "room_read"
-    STALENESS_JUDGE = "staleness_judge"
-    DISCLOSURE_CONSENT = "disclosure_consent"
-    WORK_JOURNAL = "work_journal"
-    WORK_TALK = "work_talk"
-
+# 🔴 ``TaskType`` now lives in :mod:`bob.application.router.generation_door`, next to the
+# answer to «what IS this door's output» (BOB-096.3): the kind of work and the nature of
+# its output are one concept, and splitting them across modules is how a door ends up
+# known by its TIER alone — the shape the canon leak grew in. The name is re-exported
+# here, so every existing ``from …llm_router import TaskType`` keeps working.
+__all__ = ["LLMRequest", "LLMRouter", "TaskType"]
 
 # Task -> preferred tier. Quality-critical, user-facing work goes to Tier 1
 # (with redaction); cheap or privacy-sensitive work stays local on Tier 0.
@@ -178,10 +172,17 @@ class LLMRouter:
         *,
         providers: Mapping[int, LLMProvider],
         tier1_max_concurrency: int | None = None,
+        voice_canon: VoiceCanon | None = None,
     ) -> None:
         if _TIER_LOCAL not in providers:
             raise ValueError("LLMRouter requires a Tier 0 (local) provider")
         self._providers = dict(providers)
+        # 🔴 The VOICE canon that reaches every door (BOB-096.3). The TEXT belongs to the
+        # persona and arrives INJECTED — ``personality`` already depends on the router, so
+        # the reverse import would close a node cycle. The composition root supplies the
+        # implementation (an architectural test guards that line); an unwired seam leaves
+        # the payload byte-for-byte, which is what every hand-built test router gets.
+        self._voice_canon = voice_canon
         # 🔴 Tier-1 rate-cap (BOB-072): a ceiling on CONCURRENT Tier-1 (Qwen API) completions —
         # invisible insurance against 429/degradation when bursts across chats (incl. batch
         # ROOM_READ) hit Tier 1 at once. It only SERIALIZES calls; it never touches the routing
@@ -358,8 +359,7 @@ class LLMRouter:
         """
         return _PREFERRED_TIER[request.task_type] != _TIER_LOCAL
 
-    @classmethod
-    def _build_messages(cls, request: LLMRequest) -> list[LLMMessage]:
+    def _build_messages(self, request: LLMRequest) -> list[LLMMessage]:
         """Build the payload with selective redaction by destination tier.
 
         A local-only (Tier 0) request gets BOTH ``shareable_context`` and
@@ -367,16 +367,24 @@ class LLMRouter:
         ``shareable_context`` — ``private_context`` is never attached, so
         genuinely-internal material cannot reach Tier 1 (nor a Tier 1 -> Tier 0
         fallback, nor a Tier 0 -> Tier 1 escalation, since the payload is built once).
+
+        🔴 And this is exactly where the VOICE canon reaches the door (BOB-096.3): the
+        payload is built ONCE per request, so the ban rides the rescue attempt too, while
+        a служебный door gets not one extra byte. WHICH door needs it, and in which shape,
+        is decided by :func:`~bob.application.router.voice_canon.fold_voice_canon` from the
+        door's properties; the text itself is injected from the persona.
         """
         parts = [request.shareable_context]
-        if not cls._redacts_private_context(request):
+        if not self._redacts_private_context(request):
             parts.append(request.private_context)
         context = "\n".join(part for part in parts if part)
         messages: list[LLMMessage] = list(request.messages)
         if context:
             context_message: LLMMessage = {"role": "system", "content": context}
-            return [context_message, *messages]
-        return messages
+            messages = [context_message, *messages]
+        return fold_voice_canon(
+            messages, door=door_for(request.task_type), canon=self._voice_canon
+        )
 
     def _provider_for(self, tier: int, voice: OutageVoice) -> LLMProvider:
         """The provider to call — with the local stand-in taken OUT for Bob's own voice.
