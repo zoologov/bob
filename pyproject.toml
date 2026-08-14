@@ -409,6 +409,15 @@ ignore = [
     "RUF003",
 ]
 "tests/infrastructure/coding/test_git_worktree.py" = ["N802", "RUF001", "RUF002", "RUF003"]
+# Поведенческий гард шва канона (BOB-096.10, review MAJOR-5): тест несёт РУССКОЕ
+# объяснение, почему текстовый гард пропустил ``voice_canon=None``, и утверждает на
+# русском тексте канона персоны — Cyrillic look-alikes здесь намеренные
+# (→ RUF001/RUF002/RUF003).
+"tests/runtime/test_composed_wiring_carries_the_canon.py" = [
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
 # The voice tests (BOB-016/BOB-020) assert on multi-line Russian persona/tone
 # literals whose Cyrillic look-alikes are intentional (→ RUF001/RUF003).
 "tests/domain/personality/test_voice.py" = [

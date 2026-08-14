@@ -23,8 +23,15 @@ model can recover, mirroring how a real tool failure would surface. This is pure
 application policy; the capabilities' side effects live behind their own ports.
 
 🔴 **The VOICE canon passes through here too (BOB-096.8).** The tool-loop is the SECOND —
-and only other — point at which a payload leaves for a provider: the router builds one
-kind of turn, this loop the other. The seam of BOB-096.3 stood only in the router, so the
+and only other — point at which a payload leaves THROUGH THE PROVIDER PORT: the router
+builds one kind of turn, this loop the other. (🔴 **Correction, BOB-096.10:** this used to
+read «the only other point at which a payload leaves for a provider», which claimed more
+than the tree holds — :mod:`bob.memory.adapters.ollama_reranker` and
+:mod:`bob.capabilities.adapters.web_search_qwen` compose their own payloads and POST them
+to a generative model themselves. Neither needs the canon by the epic's own rule — a score
+spent within the turn, and search material that is not Bob's voice — so the BEHAVIOUR is
+right; the word «only» was not. The count is about the paths that SPEAK AS BOB, and those
+are the two that go through the port.) The seam of BOB-096.3 stood only in the router, so the
 loop's OWN caller — the one-shot privileged fulfilment
 (:class:`~bob.application.usecases.privileged_fulfiller.PrivilegedRequestFulfiller`),
 whose prompt says «You are Bob… Answer them directly, in character» — reached the model
