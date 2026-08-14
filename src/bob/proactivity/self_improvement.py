@@ -47,10 +47,17 @@ if TYPE_CHECKING:
 # два разных по сути наблюдения по одному рычагу.
 _DEFAULT_DEDUP_THRESHOLD = 0.85
 
+#: Верх единичного диапазона величины наклона (``magnitude`` правила живёт в ``[0, 1]``).
+#: Как ДЕФОЛТ потолка читается «конфигурного потолка не сообщили»: вердикт
+#: :func:`is_actionable_proposal` тогда ловит пустое и нулевое, но не «сверх лимита».
+MAGNITUDE_RANGE_TOP = 1.0
+
 __all__ = [
+    "MAGNITUDE_RANGE_TOP",
     "ImprovementRule",
     "ImprovementSignals",
     "Lever",
+    "ProposalDefect",
     "RuleModulators",
     "RuleOrigin",
     "RuleState",
@@ -60,6 +67,7 @@ __all__ = [
     "clamp_magnitude",
     "is_actionable_proposal",
     "is_duplicate_rule",
+    "proposal_defect",
     "rules_for_lever",
 ]
 
@@ -278,6 +286,56 @@ def is_duplicate_rule(
 _NO_TILT = 0.0
 
 
+class ProposalDefect(StrEnum):
+    """Почему предложение нельзя вынести owner'у — и это РАЗНЫЕ вещи (BOB-096).
+
+    ``NOTHING_TO_APPROVE`` — одобрять нечего в принципе: Боб не назвал, что заметил,
+    или не назвал поправку, или наклон нулевой. Мусорный вывод модели; ни одна
+    настройка его не спасёт. ``ABOVE_CEILING`` — одобрять ЕСТЬ ЧТО, но запрошенная
+    величина выше ``max_magnitude`` из конфига, поэтому предложение неисполнимо КАК
+    ПОКАЗАНО.
+
+    🔴 Зачем различать. В живой базе владельца из четырёх отклонённых предложений
+    мусор — ровно одно; у трёх остальных поправка осмысленная (47–74 символа), и
+    отсеяны они только за величину. Сказать про них «нечего одобрять» — соврать: он
+    решит, что модель опять выдала пустоту, и пройдёт мимо, тогда как настоящее его
+    решение другое и действенное — поднять потолок или согласиться на урезанную
+    величину. Отказ верен в обоих случаях, но названы они должны быть по-разному.
+    """
+
+    NOTHING_TO_APPROVE = "nothing_to_approve"
+    ABOVE_CEILING = "above_ceiling"
+
+
+def proposal_defect(
+    rule: ImprovementRule, *, max_magnitude: float
+) -> ProposalDefect | None:
+    """Что мешает вынести ``rule`` owner'у (``None`` — ничего, предложение годно).
+
+    Чистая функция и ЕДИНСТВЕННЫЙ источник истины про пригодность: вердикт
+    :func:`is_actionable_proposal` выведен из неё, поэтому «годно» и «почему не годно»
+    не могут разойтись.
+
+    Пустота сильнее потолка: предложение без наблюдения / без поправки / с нулевым
+    наклоном — ``NOTHING_TO_APPROVE``, даже если его величина заодно выше потолка
+    (поднятие потолка такое предложение не спасёт, и звать владельца к этому решению
+    незачем). Всё остальное сверх ``max_magnitude`` — ``ABOVE_CEILING``: применение
+    урезало бы величину (:func:`clamp_magnitude`), то есть owner одобрял бы не то
+    число, которое видит. Граница ``magnitude == max_magnitude`` — исполнимая
+    (включительна); потолок ``0`` («наклоны запрещены») закономерно не оставляет
+    исполнимых предложений.
+    """
+    if not rule.observation.strip():
+        return ProposalDefect.NOTHING_TO_APPROVE
+    if not rule.adjustment.strip():
+        return ProposalDefect.NOTHING_TO_APPROVE
+    if rule.magnitude <= _NO_TILT:
+        return ProposalDefect.NOTHING_TO_APPROVE
+    if rule.magnitude > max_magnitude:
+        return ProposalDefect.ABOVE_CEILING
+    return None
+
+
 def is_actionable_proposal(rule: ImprovementRule, *, max_magnitude: float) -> bool:
     """Есть ли в предложении что одобрять — чистый вердикт (BOB-096).
 
@@ -287,26 +345,17 @@ def is_actionable_proposal(rule: ImprovementRule, *, max_magnitude: float) -> bo
     кандидат — не ошибка, требующая внимания, а мусорный вывод модели, и он не
     должен становиться правилом.
 
-    Одобрять есть что, когда выполнено ВСЁ:
+    Одобрять есть что, когда выполнено ВСЁ: непустое ``observation``, непустая
+    ``adjustment``, ``magnitude`` строго больше нуля и не выше ``max_magnitude``
+    (потолок из конфига). Потолок сообщается и самой модели (детектор просит величину
+    в допустимом диапазоне), поэтому отбраковка за границу — не молчаливый
+    выключатель самоулучшения.
 
-    * ``observation`` непуст — Боб назвал, что именно заметил за собой;
-    * ``adjustment`` непуст — он назвал, какую поправку предлагает (иначе «Предлагаю: .»);
-    * ``magnitude`` строго больше нуля — наклон вообще есть;
-    * ``magnitude`` не выше ``max_magnitude`` (потолок из конфига) — предложение
-      исполнимо КАК ПОКАЗАНО. Величину выше потолка применение всё равно урежет
-      (:func:`clamp_magnitude`), то есть owner одобрял бы не то число, которое видит;
-      честнее не предлагать вовсе. Потолок сообщается и самой модели (детектор просит
-      величину в допустимом диапазоне), поэтому это отбраковка выхода за границу, а не
-      молчаливый выключатель самоулучшения.
-
-    Граница ``magnitude == max_magnitude`` — исполнимая (включительна). Потолок ``0``
-    («наклоны запрещены») закономерно не оставляет исполнимых предложений.
+    Ровно «нет изъяна» из :func:`proposal_defect` — вердикт и его причина живут одной
+    функцией, чтобы «годно» и «почему не годно» не разъехались; какой именно изъян,
+    важно тому, кто ОБЪЯСНЯЕТ отказ владельцу.
     """
-    if not rule.observation.strip():
-        return False
-    if not rule.adjustment.strip():
-        return False
-    return _NO_TILT < rule.magnitude <= max_magnitude
+    return proposal_defect(rule, max_magnitude=max_magnitude) is None
 
 
 def clamp_magnitude(value: float, *, cap: float) -> float:

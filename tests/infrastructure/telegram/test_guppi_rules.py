@@ -15,7 +15,12 @@ Owner-only, в General-чате, по образцу /goals:
 * не-owner / чужой чат / не-команда — игнор и тишина (authz-инвариант BOB-019);
 * правило НЕ даёт никаких прав/инструментов — только флип RuleState;
 * BOB-096 срез 1: предложение, попытки доставки которого исчерпаны, помечено в списке —
-  Боб о нём молчит, поэтому ``/rules`` — единственное место, где владелец его видит.
+  Боб о нём молчит, поэтому ``/rules`` — единственное место, где владелец его видит;
+* BOB-096 фикс ревью: предложение, о котором Боб молчит по СОДЕРЖАНИЮ, помечено
+  отдельно от недоставленного — и причина названа своя у каждого случая: «нечего
+  одобрять» (пусто / нулевой наклон) против «просит N при потолке M» (содержание есть,
+  величина выше разрешённой). Одна метка на оба случая назвала бы осмысленное
+  предложение мусором и отняла бы у владельца настоящее решение.
 """
 
 from __future__ import annotations
@@ -46,6 +51,8 @@ _STRANGER_ID = 555
 _FOREIGN_CHAT_ID = -100999
 _PERSONA = "bob"
 _NOW = datetime(2026, 6, 24, 12, 0, tzinfo=UTC)
+#: Потолок величины из живого ``config/bob.yaml`` — с ним GUPPI и собирают.
+_CEILING = 0.3
 
 
 @dataclass
@@ -182,13 +189,15 @@ def _rule(
     state: RuleState = RuleState.PROPOSED,
     announced: bool = False,
     announce_attempts: int = 0,
+    adjustment: str = "Добавить теплоты",
+    magnitude: float = _CEILING,
 ) -> ImprovementRule:
     return ImprovementRule(
         id=rid,
         observation="Отвечаю слишком сухо",
-        adjustment="Добавить теплоты",
+        adjustment=adjustment,
         lever=lever,
-        magnitude=0.3,
+        magnitude=magnitude,
         state=state,
         origin=RuleOrigin.BOB_PROPOSED,
         created_at=_NOW,
@@ -199,7 +208,9 @@ def _rule(
 
 
 def _build(
-    *, rules: dict[str, ImprovementRule] | None = None
+    *,
+    rules: dict[str, ImprovementRule] | None = None,
+    max_magnitude: float = _CEILING,
 ) -> tuple[GuppiHandler, _FakeBot, _FakeRuleStore]:
     bot = _FakeBot()
     rule_store = _FakeRuleStore(rules=rules or {})
@@ -208,6 +219,7 @@ def _build(
         authorizer=_FakeAuthorizer(),
         general_chat_id=_CHAT_ID,
         rule_store=rule_store,
+        rule_max_magnitude=max_magnitude,
         persona_id=_PERSONA,
     )
     return handler, bot, rule_store
@@ -439,3 +451,120 @@ async def test_no_rule_store_means_commands_not_consumed() -> None:
     )
 
     assert not consumed
+
+
+# --- BOB-096 фикс ревью: «нечего одобрять» — вторая метка списка ---------------
+
+
+async def test_rules_marks_a_proposal_with_nothing_to_approve() -> None:
+    # 🔴 Живое rule-20260806060649-0: пустая поправка, нулевой наклон. Боб о нём
+    # молчит — значит владелец обязан увидеть его ЗДЕСЬ, названным честно.
+    handler, bot, _store = _build(rules={"empty": _rule("empty", adjustment="", magnitude=0.0)})
+
+    consumed = await _send(handler, "/rules")
+
+    assert consumed
+    assert "нечего одобрять" in bot.sends[-1].text
+
+
+async def test_an_over_ceiling_proposal_is_not_called_garbage() -> None:
+    # 🔴 Живые rule-20260806083754-1 / rule-20260813135602-*: поправка осмысленная
+    # (47–74 символа), величина выше потолка. Назвать это «нечего одобрять» — соврать:
+    # владелец решил бы, что модель опять выдала пустоту, и прошёл бы мимо.
+    handler, bot, _store = _build(rules={"bold": _rule("bold", magnitude=0.7)})
+
+    await _send(handler, "/rules")
+
+    text = bot.sends[-1].text
+    assert "нечего одобрять" not in text
+    assert "просит" in text
+
+
+async def test_an_over_ceiling_proposal_shows_both_numbers() -> None:
+    # Владельцу нужна ровно та информация, из которой он примет решение: поднять
+    # потолок или отклонить осознанно. Значит — и запрошенная величина, и потолок.
+    handler, bot, _store = _build(rules={"bold": _rule("bold", magnitude=0.7)})
+
+    await _send(handler, "/rules")
+
+    assert "просит 0.7 при потолке 0.3" in bot.sends[-1].text
+
+
+async def test_the_ceiling_guppi_was_wired_with_is_the_one_it_judges_by() -> None:
+    # Потолок, с которым собрали GUPPI, и есть потолок метки: то же правило непригодно
+    # при 0.3 и нормально при 0.9. Иначе список судил бы по чужому потолку.
+    strict, strict_bot, _s = _build(
+        rules={"r1": _rule("r1", magnitude=0.5)}, max_magnitude=_CEILING
+    )
+    loose, loose_bot, _l = _build(rules={"r1": _rule("r1", magnitude=0.5)}, max_magnitude=0.9)
+
+    await _send(strict, "/rules")
+    await _send(loose, "/rules")
+
+    assert "просит 0.5 при потолке 0.3" in strict_bot.sends[-1].text
+    assert "просит" not in loose_bot.sends[-1].text
+
+
+async def test_an_actionable_proposal_is_not_marked() -> None:
+    handler, bot, _store = _build(rules={"r1": _rule("r1")})
+
+    await _send(handler, "/rules")
+
+    text = bot.sends[-1].text
+    assert "нечего одобрять" not in text
+    assert "просит" not in text
+
+
+async def test_a_degenerate_proposal_is_never_called_undelivered() -> None:
+    # 🔴 Две разные вещи: «пробовали и не дошло» и «говорить не о чем». Владельцу
+    # нельзя показывать вторую под именем первой — он ждал бы повторной доставки.
+    handler, bot, _store = _build(
+        rules={
+            "empty": _rule(
+                "empty",
+                adjustment="",
+                magnitude=0.0,
+                announce_attempts=MAX_ANNOUNCE_ATTEMPTS,
+            )
+        }
+    )
+
+    await _send(handler, "/rules")
+
+    text = bot.sends[-1].text
+    assert "нечего одобрять" in text
+    assert "не доставлено" not in text
+
+
+async def test_a_degenerate_rule_the_owner_decided_is_not_marked() -> None:
+    handler, bot, _store = _build(
+        rules={"done": _rule("done", state=RuleState.REJECTED, adjustment="", magnitude=0.0)}
+    )
+
+    await _send(handler, "/rules")
+
+    assert "нечего одобрять" not in bot.sends[-1].text
+
+
+async def test_the_owner_still_sees_every_rule_he_has() -> None:
+    # Молчание Боба — не удаление: все пять правил живой базы остаются в списке, и
+    # причина молчания у каждого своя — один мусор и три «просит больше разрешённого».
+    handler, bot, _store = _build(
+        rules={
+            "empty": _rule("empty", adjustment="", magnitude=0.0),
+            "bold": _rule("bold", magnitude=0.4),
+            "bolder": _rule("bolder", magnitude=0.5),
+            "boldest": _rule("boldest", magnitude=0.7),
+            "real": _rule("real", magnitude=0.2),
+        }
+    )
+
+    await _send(handler, "/rules")
+
+    text = bot.sends[-1].text
+    for rule_id in ("empty", "bold", "bolder", "boldest", "real"):
+        assert rule_id in text
+    assert text.count("нечего одобрять") == 1
+    assert text.count("просит") == 3
+    assert "просит 0.4 при потолке 0.3" in text
+    assert "просит 0.7 при потолке 0.3" in text

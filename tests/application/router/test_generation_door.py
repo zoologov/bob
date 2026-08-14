@@ -38,6 +38,12 @@ _MEMORY_WRITING = (
     TaskType.REPLY_TO_USER,  # разговорный ход + проактивная реплика
     TaskType.WORK_JOURNAL,
     TaskType.EXTRACT_FACTS,
+    # 🔴 Обе двери добавлены сверкой разметки с ФАКТИЧЕСКИМ вызывающим (BOB-096.8):
+    # тема очарования ложится в ``fascination_store`` и потом вплетается в реплики, а
+    # прочтение реакции ложится в эпизод «X отреагировал … — <прочтение>» и в стор
+    # заметных реакций. Обе раньше числились служебными «по предположению».
+    TaskType.FASCINATION_PICK,
+    TaskType.REACTION_JUDGE,
 )
 
 # Служебные двери: вердикт/метка/классификация, расходуемые в этом же ходе.
@@ -45,7 +51,6 @@ _SERVICE = (
     TaskType.SENTIMENT,
     TaskType.INNER_MONOLOGUE,
     TaskType.RESPONSE_JUDGE,
-    TaskType.REACTION_JUDGE,
     TaskType.PRIVILEGE_JUDGE,
     TaskType.VOLATILITY_JUDGE,
     TaskType.STALENESS_JUDGE,
@@ -117,6 +122,46 @@ def test_the_voice_that_stays_is_expressible_for_the_understudy_verdict() -> Non
     assert voice_that_stays(TaskType.INTERIM_LINE) is False
     assert voice_that_stays(TaskType.EXTRACT_FACTS) is False
     assert voice_that_stays(TaskType.RESPONSE_JUDGE) is False
+
+
+def test_the_fascination_pick_is_a_voice_that_stays() -> None:
+    """🔴 Ревью BOB-096 (MAJOR-2): дверь была размечена по НЕВЕРНОМУ факту.
+
+    Выбор увлечения ходил дверью «внутренний монолог», у которой в реестре написано
+    «нигде не публикуется и не сохраняется». Его уже сохраняли: ответ модели становится
+    ``Fascination.topic``, ложится в SQLite и неделями вплетается в контекст ответа — то
+    есть Боб ГОВОРИТ им о себе. Дверь разведена и размечена по факту.
+    """
+    door = door_for(TaskType.FASCINATION_PICK)
+
+    assert door.speaks_as_bob is True
+    assert door.output_is_kept is True
+    # Ответ разбирает код (короткая именная фраза, первая строка), а не читает человек:
+    # полная проза о речи сбила бы 0.5b-модель с формата.
+    assert door.answers_in_machine_format is True
+
+
+def test_the_inner_monologue_is_service_only_now_that_the_pick_moved_out() -> None:
+    # У оставшихся двух вызывающих (шаг настроения и гейт проактивности) вывод правда
+    # расходуется в этом же ходе: мысль превращается в дельту настроения, а вердикт
+    # гейта — в решение «заговаривать ли», и ни то ни другое никуда не ложится.
+    door = door_for(TaskType.INNER_MONOLOGUE)
+
+    assert door.speaks_as_bob is False
+    assert door.output_is_kept is False
+
+
+def test_the_reaction_reading_is_kept_because_it_lands_in_memory() -> None:
+    # Второй случай той же сверки: прочтение реакции («он одобрил») попадает в эпизод
+    # «Лиля отреагировала 👍 на моё «…» — <прочтение>» и в стор заметных реакций, откуда
+    # возвращается припоминанием. Голосом Боба дверь не говорит (её ответ разбирает код),
+    # но одного «вывод остаётся» достаточно — как у выжимки фактов.
+    door = door_for(TaskType.REACTION_JUDGE)
+
+    assert door.speaks_as_bob is False
+    assert door.output_is_kept is True
+    assert door.needs_voice_canon is True
+    assert door.answers_in_machine_format is True
 
 
 def test_a_machine_format_door_is_marked_as_such() -> None:

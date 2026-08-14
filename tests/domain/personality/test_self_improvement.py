@@ -21,6 +21,7 @@ import pytest
 from bob.proactivity.self_improvement import (
     ImprovementRule,
     Lever,
+    ProposalDefect,
     RuleOrigin,
     RuleState,
     active_rules,
@@ -28,6 +29,7 @@ from bob.proactivity.self_improvement import (
     clamp_magnitude,
     is_actionable_proposal,
     is_duplicate_rule,
+    proposal_defect,
     rules_for_lever,
 )
 
@@ -359,3 +361,85 @@ def test_the_smallest_positive_magnitude_is_actionable() -> None:
 def test_zero_ceiling_leaves_nothing_actionable() -> None:
     # Потолок 0 = «наклоны запрещены»: исполнимого предложения не существует.
     assert is_actionable_proposal(_proposal(), max_magnitude=0.0) is False
+
+
+# --- proposal_defect: ПОЧЕМУ предложение не годится (BOB-096, фикс ревью) -----
+#
+# 🔴 Вердикт был прав, а ярлык врал. В живой базе владельца из четырёх отклонённых
+# правил МУСОР ровно одно (пустая поправка, величина 0.0); у трёх остальных поправка
+# осмысленная (47–74 символа), и отсеяны они только за превышение потолка 0.3. Одна
+# метка «нечего одобрять» на все четыре сказала бы владельцу неправду: одобрять там
+# есть что, и решение у него другое и действенное — поднять потолок или согласиться
+# на урезанную величину. Причина отказа поэтому — часть самого вердикта, а не
+# отдельная догадка вызывающего: is_actionable_proposal выведен ИЗ неё.
+
+
+def test_a_substantive_proposal_has_no_defect() -> None:
+    assert proposal_defect(_proposal(), max_magnitude=_CEILING) is None
+
+
+@pytest.mark.parametrize("observation", ["", "   ", "\n\t "])
+def test_an_empty_observation_is_nothing_to_approve(observation: str) -> None:
+    rule = _proposal(observation=observation)
+
+    assert (
+        proposal_defect(rule, max_magnitude=_CEILING)
+        is ProposalDefect.NOTHING_TO_APPROVE
+    )
+
+
+@pytest.mark.parametrize("adjustment", ["", "   ", "\n\t "])
+def test_an_empty_adjustment_is_nothing_to_approve(adjustment: str) -> None:
+    rule = _proposal(adjustment=adjustment)
+
+    assert (
+        proposal_defect(rule, max_magnitude=_CEILING)
+        is ProposalDefect.NOTHING_TO_APPROVE
+    )
+
+
+@pytest.mark.parametrize("magnitude", [0.0, -0.0, -0.1, -1.0])
+def test_a_non_positive_tilt_is_nothing_to_approve(magnitude: float) -> None:
+    rule = _proposal(magnitude=magnitude)
+
+    assert (
+        proposal_defect(rule, max_magnitude=_CEILING)
+        is ProposalDefect.NOTHING_TO_APPROVE
+    )
+
+
+def test_a_magnitude_above_the_ceiling_is_a_separate_defect() -> None:
+    # 🔴 Сердце правки: содержание есть, не хватает только разрешения на величину.
+    rule = _proposal(magnitude=_CEILING + 0.4)
+
+    assert proposal_defect(rule, max_magnitude=_CEILING) is ProposalDefect.ABOVE_CEILING
+
+
+def test_the_ceiling_itself_is_not_a_defect() -> None:
+    assert proposal_defect(_proposal(magnitude=_CEILING), max_magnitude=_CEILING) is None
+
+
+def test_emptiness_outranks_the_ceiling() -> None:
+    # У пустого предложения сверх потолка нечего одобрять В ЛЮБОМ случае: поднятие
+    # потолка его не спасёт, поэтому владельцу называется именно пустота.
+    rule = _proposal(adjustment="", magnitude=_CEILING + 0.4)
+
+    assert (
+        proposal_defect(rule, max_magnitude=_CEILING)
+        is ProposalDefect.NOTHING_TO_APPROVE
+    )
+
+
+def test_the_verdict_is_exactly_the_absence_of_a_defect() -> None:
+    # Одна истина на двоих: вердикт выведен из причины, поэтому разойтись они не могут.
+    for rule in (
+        _proposal(),
+        _proposal(adjustment=""),
+        _proposal(magnitude=0.0),
+        _proposal(magnitude=_CEILING + 0.4),
+        _proposal(magnitude=_CEILING),
+    ):
+        defect = proposal_defect(rule, max_magnitude=_CEILING)
+        actionable = is_actionable_proposal(rule, max_magnitude=_CEILING)
+
+        assert actionable is (defect is None)

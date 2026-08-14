@@ -43,6 +43,8 @@ from bob.proactivity.usecases.announce_rules import AnnounceProposedRules
 _NOW = datetime(2026, 6, 24, 12, 0, tzinfo=UTC)
 _CHAT_ID = -100123
 _PERSONA = "bob"
+#: Потолок величины из живого ``config/bob.yaml`` — с ним анонсёра и собирают.
+_CEILING = 0.3
 
 
 @dataclass
@@ -119,13 +121,14 @@ def _rule(
     observation: str = "Отвечаю слишком сухо",
     adjustment: str = "Добавить теплоты в тон",
     created_at: datetime = _NOW,
+    magnitude: float = _CEILING,
 ) -> ImprovementRule:
     return ImprovementRule(
         id=rid,
         observation=observation,
         adjustment=adjustment,
         lever=Lever.TONE,
-        magnitude=0.3,
+        magnitude=magnitude,
         state=state,
         origin=RuleOrigin.BOB_PROPOSED,
         created_at=created_at,
@@ -138,6 +141,7 @@ def _build(
     *,
     gateway: _FakeGateway | None = None,
     store: _FakeRuleStore | None = None,
+    max_magnitude: float = _CEILING,
 ) -> tuple[AnnounceProposedRules, _FakeGateway]:
     gw = gateway if gateway is not None else _FakeGateway()
     use_case = AnnounceProposedRules(
@@ -145,6 +149,7 @@ def _build(
         gateway=gw,
         chat_id=_CHAT_ID,
         persona_id=_PERSONA,
+        max_magnitude=max_magnitude,
     )
     return use_case, gw
 
@@ -167,10 +172,13 @@ async def test_announces_one_proposed_rule() -> None:
 async def test_the_detector_text_never_reaches_the_owner() -> None:
     # 🔴 Регресс на живую жалобу: сырой вывод детектора подставлялся в шаблон дословно,
     # и owner получал «Заметил за собой: Боб замечает…» — Боба о себе в третьем лице.
+    # Поправка здесь НЕПУСТАЯ: предложение с пустой поправкой владельцу теперь не
+    # проговаривается вовсе (ниже, «наследство») — а эта проверка про другое: даже у
+    # годного предложения сырой текст детектора в реплику не попадает.
     rule = _rule(
         "r1",
         observation="Боб замечает, что его поведение часто повторяется",
-        adjustment="",
+        adjustment="Реже повторять одно и то же",
     )
     use_case, gw = _build((rule,))
 
@@ -338,6 +346,7 @@ async def test_the_use_case_honours_a_non_default_cap() -> None:
             gateway=gw,
             chat_id=_CHAT_ID,
             persona_id=_PERSONA,
+            max_magnitude=_CEILING,
             max_attempts=1,
         )
         await use_case.run()
@@ -357,3 +366,82 @@ async def test_a_recovered_gateway_delivers_within_the_cap() -> None:
 
     assert len(gw.posts) == 1
     assert store.rules[0].announced is True
+
+
+# --- BOB-096 фикс ревью: вердикт «есть что одобрять» и на ВЫХОДЕ --------------
+#
+# 🔴 Отбраковка вырожденных предложений стояла только на РОЖДЕНИИ правила, а пять
+# правил живой базы владельца родились раньше неё — и уезжали к нему прежним путём.
+# Живой голос среза 5 берёт из правила только рычаг и величину, поэтому пустая
+# поправка звучала как нормальное предложение: «Хочу чуть поправить тон. Попробуем?».
+# Одобрив его, владелец включил бы правило, которое не меняет ничего.
+
+
+async def test_a_degenerate_proposal_already_in_the_store_is_not_announced() -> None:
+    # Ровно живое rule-20260806060649-0: величина 0.0, поправка пустая.
+    store = _FakeRuleStore(rules=(_rule("legacy", adjustment="", magnitude=0.0),))
+    use_case, gw = _build((), store=store)
+
+    await use_case.run()
+
+    assert gw.posts == []
+
+
+async def test_a_degenerate_proposal_is_neither_silenced_nor_spent() -> None:
+    # 🔴 Молчание — не удаление и не «уже сказали»: правило остаётся ждать решения
+    # владельца в /rules, и попытка на него не тратится.
+    store = _FakeRuleStore(rules=(_rule("legacy", adjustment="", magnitude=0.0),))
+    use_case, _gw = _build((), store=store)
+
+    await use_case.run()
+
+    assert store.rules[0].state is RuleState.PROPOSED
+    assert store.rules[0].announced is False
+    assert store.rules[0].announce_attempts == 0
+
+
+async def test_a_proposal_above_the_configured_ceiling_is_not_announced() -> None:
+    # «Хочу сильно осмелеть» при потолке 0.3 применилось бы как 0.3 — владелец
+    # одобрял бы не то число, которое ему показали.
+    store = _FakeRuleStore(rules=(_rule("bold", magnitude=0.7),))
+    use_case, gw = _build((), store=store)
+
+    await use_case.run()
+
+    assert gw.posts == []
+
+
+async def test_the_only_actionable_proposal_is_the_one_owner_hears() -> None:
+    # Расклад живой базы: четыре вырожденных правила старше одного годного.
+    older = datetime(2026, 8, 6, 6, 6, tzinfo=UTC)
+    store = _FakeRuleStore(
+        rules=(
+            _rule("empty", adjustment="", magnitude=0.0, created_at=older),
+            _rule("bold", magnitude=0.4, created_at=older),
+            _rule("bolder", magnitude=0.5, created_at=older),
+            _rule("boldest", magnitude=0.7, created_at=older),
+            _rule("real", magnitude=0.2, created_at=_NOW),
+        )
+    )
+    use_case, gw = _build((), store=store)
+
+    # Тиков больше, чем правил: если бы вырожденные проговаривались, они бы уехали.
+    for _ in range(5):
+        await use_case.run()
+
+    assert len(gw.posts) == 1
+    assert "real" in gw.posts[0][1]
+
+
+async def test_the_ceiling_the_announcer_was_wired_with_is_the_one_it_uses() -> None:
+    # 🔴 Потолок, с которым собрали анонсёра, и есть потолок отбора: одно и то же
+    # правило молчит при 0.3 и проговаривается при 0.9. Без этой пары проброс
+    # max_magnitude можно выбросить, и вердикт молча жил бы на чужом потолке.
+    strict, strict_gw = _build((_rule("r1", magnitude=0.5),), max_magnitude=_CEILING)
+    loose, loose_gw = _build((_rule("r1", magnitude=0.5),), max_magnitude=0.9)
+
+    await strict.run()
+    await loose.run()
+
+    assert strict_gw.posts == []
+    assert len(loose_gw.posts) == 1

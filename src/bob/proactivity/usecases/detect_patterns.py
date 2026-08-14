@@ -43,6 +43,7 @@ from typing import TYPE_CHECKING, Protocol
 
 from bob.application.router.llm_router import LLMRequest, TaskType
 from bob.proactivity.self_improvement import (
+    MAGNITUDE_RANGE_TOP,
     ImprovementRule,
     ImprovementSignals,
     Lever,
@@ -68,10 +69,6 @@ __all__ = [
     "LlmPatternDetector",
     "SignalSource",
 ]
-
-# Потолок величины наклона на стороне детектора. Домен/применение (.3) клампят к
-# конфиг-потолку ``max_magnitude`` ещё раз; здесь — ровно единичный диапазон правила.
-_MAGNITUDE_CAP = 1.0
 
 # Консервативный дефолт предела числа «живых» правил (PROPOSED+APPROVED+PAUSED),
 # чтобы детектор не заваливал owner'а кандидатами. Перекрывается из конфига (.3).
@@ -153,7 +150,7 @@ class LlmPatternDetector:
         router: LLMRouter | _DetectorRouter,
         clock: Clock,
         tier: int | None = None,
-        max_magnitude: float = _MAGNITUDE_CAP,
+        max_magnitude: float = MAGNITUDE_RANGE_TOP,
     ) -> None:
         self._router = router
         self._clock = clock
@@ -204,7 +201,7 @@ class LlmPatternDetector:
                     observation=observation,
                     adjustment=adjustment,
                     lever=lever,
-                    magnitude=clamp_magnitude(magnitude, cap=_MAGNITUDE_CAP),
+                    magnitude=clamp_magnitude(magnitude, cap=MAGNITUDE_RANGE_TOP),
                     state=RuleState.PROPOSED,
                     origin=RuleOrigin.BOB_PROPOSED,
                     created_at=now,
@@ -233,7 +230,7 @@ class DetectPatterns:
         persona_id: str,
         signal_source: SignalSource | None = None,
         max_active_rules: int = _DEFAULT_MAX_ACTIVE_RULES,
-        max_magnitude: float = _MAGNITUDE_CAP,
+        max_magnitude: float = MAGNITUDE_RANGE_TOP,
     ) -> None:
         self._detector = detector
         self._store = store

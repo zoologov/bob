@@ -270,6 +270,15 @@ intake-воркер за `presence.series_budget.enabled` (см. `conversation`/
 на reflect-тике (идемпотентны в периоде). `RepoFascinationGrounding` / `StoreFascinationReader`
 (`fascination_sources.py`) — live-швы заземления и чтения.
 
+🔴 **Выбор увлечения ходит своей дверью `FASCINATION_PICK` (BOB-096.8).** Раньше он шёл
+`INNER_MONOLOGUE`, то есть числился служебным ходом, — а ответ модели ложится в
+`fascination_state` (SQLite) и неделями вплетается в контекст ответа как «меня сейчас
+занимает…». То есть дверь производит долгоживущий материал речи Боба: ей нужен канон о
+голосе (иначе тема вида «упрямство GUPPI» месяц звучала бы его увлечением и возвращалась
+припоминанием — механизм BOB-074), и аварийный дублёр выбирать её не вправе. При отвале
+шаг не теряется: тему даёт детерминированная опора на тот же реальный материал
+(последняя мысль + сильные вкусы), которая ничего не выдумывает.
+
 **Коллабораторы хода (BOB-062.6b, #9).** Декомпозиция `handle_message` вынесла «кто есть Боб»
 — его голос — в method-object'ы personality, собираемые в `HandleMessage.__init__`. Seeded-draw
 методы принимают опциональный турновый `rng`: при прямом unit-вызове без него — откат на
@@ -300,7 +309,11 @@ intake-воркер за `presence.series_budget.enabled` (см. `conversation`/
 ### Адаптеры (infrastructure)
 
 `LlmReactionJudge` (`adapters/reaction_judge.py`) — Tier-0 реализация `ReactionJudge`:
-чистый билдер промпта + router-вызов + чистый парсер → `ReactionMeaning`.
+чистый билдер промпта + router-вызов + чистый парсер → `ReactionMeaning`. 🔴 Его дверь
+`REACTION_JUDGE` числилась служебной, но `interpretation` вплетается в эпизод «X
+отреагировал 👍 на моё «…» — <прочтение>» и в стор заметных реакций, откуда возвращается
+припоминанием: с BOB-096.8 у неё `output_is_kept`, то есть канон о голосе ей досылается
+(в машинной форме — ответ разбирает код).
 `SqliteFascinationStore` (`adapters/fascination_store.py`) — per-persona увлечённость через
 `SqliteMemoryRepo.connection()`-шов. `KvNotableReactionStore`
 (`adapters/notable_reaction_store.py`) — единственная последняя запись «меня заметили» в

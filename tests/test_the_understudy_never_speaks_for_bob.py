@@ -57,6 +57,7 @@ from bob.personality.disposition import Disposition
 from bob.personality.mood import Mood
 from bob.personality.soul import SOUL
 from bob.personality.taste import TasteEngine
+from bob.personality.usecases.evolve_fascination import EvolveFascination
 from bob.personality.usecases.reappraise_reflection import ReappraiseReflection
 from bob.personality.voice import guppi_voice_canon
 from bob.proactivity.usecases.detect_patterns import DetectPatterns, LlmPatternDetector
@@ -65,6 +66,7 @@ if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Mapping, Sequence
 
     from bob.kernel.ports import LLMProvider
+    from bob.personality.fascination import Fascination
     from bob.proactivity.self_improvement import ImprovementRule
 
 _MOMENT = datetime(2026, 8, 6, 3, 0, tzinfo=UTC)
@@ -81,6 +83,11 @@ _THE_VOICE_THAT_STAYS = frozenset(
         TaskType.REFLECT,
         TaskType.WORK_JOURNAL,
         TaskType.DETECT_PATTERNS,
+        # 🔴 BOB-096.8: выбор увлечения разведён из «внутреннего монолога» в свою дверь —
+        # тема ложится в SQLite и неделями звучит в репликах как «меня сейчас занимает…»,
+        # то есть это голос Боба, который остаётся. При отвале её выбирает не дублёр, а
+        # детерминированная опора на реальный материал (см. ``EvolveFascination``).
+        TaskType.FASCINATION_PICK,
     }
 )
 
@@ -147,6 +154,31 @@ class _FakeFacts:
 
     async def save_fact(self, fact: object) -> None:
         self.saved.append(fact)
+
+
+class _FakeFascinationStore:
+    """Стор увлечений: пуст на входе, пишет то, что Боб выбрал темой."""
+
+    def __init__(self) -> None:
+        self.saved: list[Fascination] = []
+
+    async def load(self, persona_id: str) -> Fascination | None:
+        del persona_id
+        return None
+
+    async def save(self, persona_id: str, fascination: Fascination) -> None:
+        del persona_id
+        self.saved.append(fascination)
+
+
+class _FakeGrounding:
+    """Настоящий материал выбора: последняя мысль Боба и его сильные вкусы."""
+
+    async def latest_reflection_text(self) -> str | None:
+        return "думал об орбитах"
+
+    def strong_taste_topics(self) -> tuple[str, ...]:
+        return ("звёзды",)
 
 
 class _FakeRuleStore:
@@ -460,6 +492,35 @@ async def test_every_door_decides_the_understudy_by_what_its_output_is(
         assert understudy.calls == [], f"{task_type.value}: дублёр заговорил голосом Боба"
     else:
         assert len(understudy.calls) == 1, f"{task_type.value}: служебный ход лишился страховки"
+
+
+async def test_the_understudy_never_picks_what_bob_is_into_but_the_step_survives() -> None:
+    """🔴 BOB-096.8 (ревью MAJOR-2): тему увлечения при отвале выбирает НЕ дублёр.
+
+    Тема живёт в SQLite неделями и вплетается в реплики, поэтому «упрямство GUPPI»,
+    сочинённое 0.5b-моделью в час отвала, месяц звучало бы как увлечение Боба. И
+    обратная сторона той же границы: шаг не теряется — тема рождается детерминированной
+    опорой на тот же реальный материал (последняя мысль + сильные вкусы).
+    """
+    understudy = RecordingProvider(reply="упрямство GUPPI")
+    store = _FakeFascinationStore()
+    evolve = EvolveFascination(
+        persona_id="bob",
+        store=store,
+        router=_router_with_understudy(
+            tier0_primary=RecordingProvider(fail=True),
+            understudy=understudy,
+            tier1=RecordingProvider(fail=True),
+        ),
+        grounding=_FakeGrounding(),
+        clock=_FakeClock(),
+    )
+
+    await evolve.run()
+
+    assert understudy.calls == [], "увлечение Бобу выбрал дублёр"
+    assert len(store.saved) == 1, "шаг увлечений потерялся вместе с облаком"
+    assert store.saved[0].topic == "думал об орбитах"
 
 
 async def test_the_reappraisal_of_a_reflection_is_not_handed_to_the_understudy() -> None:

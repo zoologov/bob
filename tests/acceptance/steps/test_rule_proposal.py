@@ -34,6 +34,7 @@ from tests.acceptance.rule_proposal_harness import (
     another_detector_says,
     detector_says,
     run_self_observation,
+    stored_rule,
 )
 
 if TYPE_CHECKING:
@@ -46,6 +47,8 @@ _THIRD_PERSON = re.compile(r"\bБоб\w*", re.IGNORECASE)
 # Первое лицо: он говорит про себя, а не про какого-то Боба.
 _FIRST_PERSON = re.compile(r"\b(я|меня|мне|себя|себе)\b", re.IGNORECASE)
 _UNDELIVERED_MARK = "не доставлено"
+_UNACTIONABLE_MARK = "нечего одобрять"
+_OVER_CEILING_MARK = "просит"
 _APPROVE_COMMAND = "/rule approve"
 
 
@@ -133,6 +136,33 @@ def transport_is_down(proposal_context: _ProposalContext) -> None:
     proposal_context.run = replace(proposal_context.run, broken_attempts=99)
 
 
+@given("в базе лежит вырожденное предложение с прошлого раза")
+def a_degenerate_rule_from_before(proposal_context: _ProposalContext) -> None:
+    # Ровно живое rule-20260806060649-0 владельца: пустая поправка, величина 0.0. Такое
+    # правило сегодня не РОДИЛОСЬ бы — но оно уже лежит в базе с 6 августа.
+    proposal_context.run = replace(
+        proposal_context.run,
+        preexisting_rules=(stored_rule("rule-20260806060649-0", adjustment="", magnitude=0.0),),
+    )
+
+
+@given("в базе лежат четыре отклонённых предложения и одно годное")
+def the_owners_five_rules(proposal_context: _ProposalContext) -> None:
+    # Расклад живой базы владельца на 13 августа: ОДИН мусор (пустая поправка) и ТРИ
+    # содержательных предложения сверх потолка 0.3 (0.4 / 0.5 / 0.7), плюс одно, которое
+    # он действительно может осмысленно одобрить.
+    proposal_context.run = replace(
+        proposal_context.run,
+        preexisting_rules=(
+            stored_rule("empty", adjustment="", magnitude=0.0, minutes_old=50),
+            stored_rule("bold", magnitude=CONFIGURED_CEILING + 0.1, minutes_old=40),
+            stored_rule("bolder", magnitude=CONFIGURED_CEILING + 0.2, minutes_old=30),
+            stored_rule("boldest", magnitude=CONFIGURED_CEILING + 0.4, minutes_old=20),
+            stored_rule("actionable", magnitude=CONFIGURED_CEILING, minutes_old=10),
+        ),
+    )
+
+
 @given("первая отправка владельцу срывается")
 def transport_fails_once(proposal_context: _ProposalContext) -> None:
     proposal_context.run = replace(proposal_context.run, broken_attempts=1)
@@ -154,6 +184,12 @@ def one_tick(proposal_context: _ProposalContext) -> None:
 @when("Боб проводит три тика самонаблюдения подряд")
 def three_ticks(proposal_context: _ProposalContext) -> None:
     _drive(proposal_context, ticks=3)
+
+
+@when("Боб проводит пять тиков самонаблюдения подряд")
+def five_ticks(proposal_context: _ProposalContext) -> None:
+    # Тиков больше, чем правил в базе: если бы вырожденные проговаривались, они бы уехали.
+    _drive(proposal_context, ticks=5)
 
 
 @when("Боб проводит тик самонаблюдения и перезапускается")
@@ -324,3 +360,53 @@ def the_owner_sees_it_as_undelivered(proposal_context: _ProposalContext) -> None
 def nothing_is_marked_undelivered(proposal_context: _ProposalContext) -> None:
     listing = proposal_context.outcome.rules_listing
     assert _UNDELIVERED_MARK not in listing, listing
+
+
+@then("правило видно владельцу в /rules как непригодное")
+def the_owner_sees_it_as_unactionable(proposal_context: _ProposalContext) -> None:
+    # Боб о нём молчит — но молчание не должно выглядеть как исчезновение. Владелец
+    # видит правило и НАЗВАННУЮ причину молчания: одобрять в нём нечего.
+    listing = proposal_context.outcome.rules_listing
+    assert _UNACTIONABLE_MARK in listing, listing
+
+
+@then("попыток доставки не было вовсе")
+def no_delivery_attempt_was_spent(proposal_context: _ProposalContext) -> None:
+    # Вырожденное правило не тратит попытки: «нечего одобрять» — не сбой доставки, и
+    # кап попыток к нему не применяется.
+    assert proposal_context.outcome.send_attempts == 0
+    assert [rule.announce_attempts for rule in proposal_context.outcome.stored] == [0]
+    assert [rule.announced for rule in proposal_context.outcome.stored] == [False]
+
+
+@then("это то самое годное предложение")
+def the_actionable_one_is_what_he_heard(proposal_context: _ProposalContext) -> None:
+    assert "actionable" in _only_message(proposal_context)
+
+
+@then("владелец видит в /rules все пять своих правил")
+def all_five_rules_are_listed(proposal_context: _ProposalContext) -> None:
+    listing = proposal_context.outcome.rules_listing
+    for rule_id in ("empty", "bold", "bolder", "boldest", "actionable"):
+        assert rule_id in listing, listing
+
+
+@then("ровно одно правило помечено как «нечего одобрять»")
+def exactly_one_is_called_garbage(proposal_context: _ProposalContext) -> None:
+    # Мусор в базе владельца ровно один — и только он назван мусором.
+    listing = proposal_context.outcome.rules_listing
+    assert listing.count(_UNACTIONABLE_MARK) == 1, listing
+
+
+@then("три правила помечены превышением потолка")
+def three_are_marked_over_the_ceiling(proposal_context: _ProposalContext) -> None:
+    listing = proposal_context.outcome.rules_listing
+    assert listing.count(_OVER_CEILING_MARK) == 3, listing
+
+
+@then("владелец видит в пометке и запрошенную величину, и потолок")
+def the_owner_sees_both_numbers(proposal_context: _ProposalContext) -> None:
+    # Ровно та информация, из которой он решает: поднять потолок или отклонить.
+    listing = proposal_context.outcome.rules_listing
+    assert f"просит 0.7 при потолке {CONFIGURED_CEILING:g}" in listing, listing
+    assert f"просит 0.4 при потолке {CONFIGURED_CEILING:g}" in listing, listing

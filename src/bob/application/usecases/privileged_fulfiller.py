@@ -22,6 +22,15 @@ one-shot elevated context built fresh per call):
 durable state and is invoked once per approved request, so the privilege can never carry
 to the requester's other/future messages. The durable path is the explicit AUTHORIZE,
 which is the :class:`~bob.social.usecases.Authorizer` grant — a different seam.
+
+🔴 Both paths carry the VOICE canon (BOB-096.8). The plain path is the router's, so the
+ban on role-playing GUPPI arrives with the payload; the tool path used to build its OWN
+prompt and drive the loop with the router nowhere in sight, so the one turn that literally
+instructs the model «You are Bob… Answer them directly, in character» — and can walk
+capabilities — was the single door with no ban at all (review MAJOR-1). The canon is now
+handed to the loop, which folds it the way the router does; it is a REQUIRED constructor
+argument here, so a future caller has to decide about Bob's voice instead of inheriting
+silence.
 """
 
 from __future__ import annotations
@@ -32,6 +41,7 @@ from bob.application.router.llm_router import LLMRequest, TaskType
 from bob.capabilities.usecases.tool_loop import ToolLoop
 
 if TYPE_CHECKING:
+    from bob.application.router.voice_canon import VoiceCanon
     from bob.capabilities.ports import ToolCallingProvider
     from bob.capabilities.usecases.registry import CapabilityRegistry
     from bob.kernel.ports import LLMMessage
@@ -65,10 +75,15 @@ class PrivilegedRequestFulfiller:
         router: _Router,
         registry: CapabilityRegistry,
         tool_provider: ToolCallingProvider | None,
+        voice_canon: VoiceCanon | None,
     ) -> None:
         self._router = router
         self._registry = registry
         self._tool_provider = tool_provider
+        # No default ON PURPOSE (BOB-096.8): the tool path bypasses the router, so whoever
+        # builds this fulfiller must say what happens to Bob's voice on it. ``None`` is a
+        # visible choice (the hand-built fulfillers in tests), never an oversight.
+        self._voice_canon = voice_canon
 
     async def fulfil(
         self, request_text: str, *, requester_id: int, requester_name: str
@@ -104,5 +119,7 @@ class PrivilegedRequestFulfiller:
             {"role": "system", "content": f"{system_prompt}\n{manifest}"},
             {"role": "user", "content": request_text},
         ]
-        loop = ToolLoop(provider=provider, registry=self._registry)
+        loop = ToolLoop(
+            provider=provider, registry=self._registry, voice_canon=self._voice_canon
+        )
         return await loop.run(messages)

@@ -40,7 +40,16 @@ from bob.infrastructure.telegram.guppi import GuppiHandler
 from bob.memory.adapters.sqlite_memory_repo import SqliteMemoryRepo
 from bob.personality.voice import guppi_voice_canon
 from bob.proactivity.adapters.self_improvement_store import SqliteSelfImprovementStore
-from bob.runtime.wiring.self_improvement import _build_self_improvement
+from bob.proactivity.self_improvement import (
+    ImprovementRule,
+    Lever,
+    RuleOrigin,
+    RuleState,
+)
+from bob.runtime.wiring.self_improvement import (
+    _build_self_improvement,
+    _self_improvement_max_magnitude,
+)
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Mapping, Sequence
@@ -55,7 +64,6 @@ if TYPE_CHECKING:
 
     from bob.application.usecases.handle_message import ReplyGateway
     from bob.infrastructure.telegram.gateway import UpdateLike
-    from bob.proactivity.self_improvement import ImprovementRule
 
 # Живые адреса: личка владельца (её chat_id равен его user id) и General, где GUPPI
 # отвечает на команды.
@@ -128,6 +136,31 @@ def another_detector_says() -> str:
 
 #: Сырой текст детектора, который в живом дефекте попадал владельцу дословно.
 DETECTOR_TEXT: tuple[str, ...] = (_OBSERVATION, _ADJUSTMENT)
+
+def stored_rule(
+    rid: str,
+    *,
+    adjustment: str = _ADJUSTMENT,
+    magnitude: float = 0.2,
+    minutes_old: int = 0,
+) -> ImprovementRule:
+    """Правило, лежащее в базе владельца ДО прогона (наследство, а не рождение).
+
+    Такое правило родилось раньше отбраковки вырожденных кандидатов, поэтому оно
+    существует в базе в любом виде — включая тот, который сегодня не родился бы.
+    """
+    return ImprovementRule(
+        id=rid,
+        observation=_OBSERVATION,
+        adjustment=adjustment,
+        lever=Lever.LENGTH,
+        magnitude=magnitude,
+        state=RuleState.PROPOSED,
+        origin=RuleOrigin.BOB_PROPOSED,
+        created_at=_MOMENT - timedelta(minutes=minutes_old),
+        evidence="",
+    )
+
 
 #: Слово из СОБСТВЕННОЙ формулировки Боба про рычаг «длина» — по нему видно, что он
 #: говорит именно о той черте, а не общей запасной фразой «заметил кое-что».
@@ -305,6 +338,9 @@ class ProposalRun:
     broken_attempts: int = 0
     #: ``self_improvement.detector_tier`` из конфига этого прогона.
     detector_tier: int = LIVE_DETECTOR_TIER
+    #: Правила, УЖЕ лежащие в базе до первого тика — наследство владельца: они родились
+    #: раньше, чем появилась отбраковка вырожденных предложений, и живут в его базе.
+    preexisting_rules: tuple[ImprovementRule, ...] = ()
 
 
 @dataclass(slots=True)
@@ -379,6 +415,11 @@ class _Process:
             authorizer=_OwnerOnly(),
             general_chat_id=GENERAL_CHAT_ID,
             rule_store=self.store,
+            # Тот же потолок из того же конфига, что и у анонсёра (так его раздаёт
+            # настоящая провязка): список обязан судить о правиле так же, как Боб.
+            rule_max_magnitude=_self_improvement_max_magnitude(
+                self_improvement_config(detector_tier=self._detector_tier)
+            ),
             persona_id=PERSONA,
         )
         consumed = await handler.handle_general_command(
@@ -405,6 +446,9 @@ async def run_self_observation(run: ProposalRun, *, db_root: Path) -> ProposalOu
             detector_reply=reply,
             detector_tier=run.detector_tier,
         ) as process:
+            if start == 0:
+                for legacy in run.preexisting_rules:
+                    await process.store.save_rule(PERSONA, legacy)
             for _tick in range(run.ticks_per_start):
                 await process.self_observation_tick()
             outcome.rules_listing = await process.rules_command()

@@ -40,25 +40,32 @@ from aiohttp import web
 from bob.application.router.llm_router import LLMRequest, LLMRouter, TaskType
 from bob.application.usecases.handle_message import PersonalityState
 from bob.application.usecases.heartbeat import ReflectTick
+from bob.application.usecases.privileged_fulfiller import PrivilegedRequestFulfiller
+from bob.capabilities.usecases.registry import CapabilityRegistry
 from bob.coding.usecases.distill_work_journal import Tier0WorkJournalDistiller
 from bob.coding.work_facts import SessionKeyFacts, WorkOutcome
 from bob.infrastructure.llm.factory import build_tier_providers
 from bob.memory.adapters.sqlite_memory_repo import SqliteMemoryRepo
 from bob.memory.usecases.consolidate_memory import ConsolidateMemory
 from bob.memory.usecases.extract_facts import ExtractFacts
+from bob.personality.adapters.fascination_store import SqliteFascinationStore
 from bob.personality.disposition import Disposition
 from bob.personality.mood import Mood
 from bob.personality.soul import SOUL
 from bob.personality.taste import TasteEngine
+from bob.personality.usecases.evolve_fascination import EvolveFascination
 from bob.personality.voice import guppi_voice_canon
 from bob.proactivity.adapters.self_improvement_store import SqliteSelfImprovementStore
+from bob.runtime.wiring.access import _as_tool_provider
 from bob.runtime.wiring.self_improvement import _build_self_improvement
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable
+    from collections.abc import Awaitable, Callable, Mapping
     from pathlib import Path
 
     from bob.application.usecases.handle_message import ReplyGateway
+    from bob.capabilities.ports import Permission
+    from bob.kernel.ports import LLMProvider
 
 _CHAT_PATH = "/v1/chat/completions"
 #: Мёртвый loopback-порт: соединение отвергается сразу — настоящий отвал облака.
@@ -77,6 +84,10 @@ RULE_PROPOSAL: Final = "предложение правила"
 SENTIMENT: Final = "оценка настроения"
 CODING_INTENT: Final = "распознавание запроса на код"
 ROOM_READ: Final = "чтение комнаты"
+# Двери, найденные ревью BOB-096 (bob-q3k.7): первая уходила к модели мимо роутера, вторая
+# была размечена служебной, хотя её вывод ложится в SQLite и звучит в репликах неделями.
+PRIVILEGED_FULFILMENT: Final = "исполнение по разрешению владельца"
+FASCINATION: Final = "тема увлечения"
 
 # Что модель отвечает на каждой двери, если её вообще спросили. Все реплики намеренно
 # «правильной формы»: сцена не про мусор на выходе, а про то, КОМУ дали говорить.
@@ -99,6 +110,8 @@ _REPLIES: Final[dict[str, str]] = {
     SENTIMENT: "positive",
     CODING_INTENT: "chat",
     ROOM_READ: "спокойно",
+    PRIVILEGED_FULFILMENT: "вот задачи проекта: A, B, C",
+    FASCINATION: "орбитальная механика",
 }
 
 # Служебные двери гоняются прямым ходом роутера — им нужен только вид работы.
@@ -226,11 +239,16 @@ def _llm_config(*, cloud: _Endpoint | None, understudy: _Endpoint) -> dict[str, 
 
 @dataclass(slots=True)
 class _Stage:
-    """Всё, что нужно двери: роутер, память Боба и чат владельца."""
+    """Всё, что нужно двери: роутер, память Боба, чат владельца и сами тиры.
+
+    Тиры лежат здесь потому, что не всякая дверь ходит роутером: привилегированное
+    исполнение берёт провайдер инструментов прямо с тира — ровно как композиционный корень.
+    """
 
     router: LLMRouter
     repo: SqliteMemoryRepo
     chat: _RecordingChat
+    providers: Mapping[int, LLMProvider]
 
 
 type _Door = Callable[[_Stage], Awaitable[tuple[str, ...]]]
@@ -294,12 +312,75 @@ async def _rule_proposal(stage: _Stage) -> tuple[str, ...]:
     return tuple(stage.chat.posts)
 
 
+async def _privileged_fulfilment(stage: _Stage) -> tuple[str, ...]:
+    """Исполнение одобренной владельцем просьбы — тем же тул-лупом, что и живой ход.
+
+    🔴 Дверь ревью MAJOR-1: она НЕ ходит роутером, поэтому «канон приезжает через роутер»
+    её не покрывало. Провайдер инструментов берётся ровно так же, как в композиционном
+    корне (``_as_tool_provider`` над тирами живой фабрики), а способность в реестре нужна
+    настоящая — с пустым реестром путь тул-лупа не выбирается вовсе.
+    """
+    tool_provider = _as_tool_provider(stage.providers)
+    assert tool_provider is not None, "тул-провайдер не собрался — дверь не та"
+    registry = CapabilityRegistry()
+    registry.register(_Diagram())
+    fulfiller = PrivilegedRequestFulfiller(
+        router=stage.router,
+        registry=registry,
+        tool_provider=tool_provider,
+        voice_canon=guppi_voice_canon,
+    )
+    answer = await fulfiller.fulfil(
+        "покажи задачи проекта", requester_id=77, requester_name="Лиля"
+    )
+    return (answer,) if answer else ()
+
+
+async def _fascination(stage: _Stage) -> tuple[str, ...]:
+    """Выбор темы увлечения — на НАСТОЯЩЕЙ SQLite, откуда тема потом попадает в реплики."""
+    store = SqliteFascinationStore(stage.repo)
+    await EvolveFascination(
+        persona_id=_PERSONA,
+        store=store,
+        router=stage.router,
+        grounding=_Grounding(),
+        clock=_FixedClock(),
+    ).run()
+    saved = await store.load(_PERSONA)
+    return () if saved is None else (saved.topic,)
+
+
+class _Grounding:
+    """Настоящий материал выбора: последняя мысль Боба и его сильные вкусы."""
+
+    async def latest_reflection_text(self) -> str | None:
+        return "думал об орбитах"
+
+    def strong_taste_topics(self) -> tuple[str, ...]:
+        return ("звёзды",)
+
+
+class _Diagram:
+    """Минимальная способность реестра: без непустого реестра тул-луп не поедет."""
+
+    name = "render_diagram"
+    description = "render a mermaid diagram"
+    input_schema: Mapping[str, object] = {}
+    permission: Permission = "safe"
+
+    async def execute(self, args: Mapping[str, object]) -> object:
+        del args
+        return "ok"
+
+
 _DOORS: Final[dict[str, _Door]] = {
     REFLECTION: _reflection,
     DIGEST: _digest,
     WORK_JOURNAL: _work_journal,
     FACTS: _facts,
     RULE_PROPOSAL: _rule_proposal,
+    PRIVILEGED_FULFILMENT: _privileged_fulfilment,
+    FASCINATION: _fascination,
 }
 
 
@@ -325,6 +406,7 @@ async def run_door(door: str, *, cloud_is_up: bool, db_root: Path) -> DoorOutcom
             router=LLMRouter(providers=providers, voice_canon=guppi_voice_canon),
             repo=repo,
             chat=_RecordingChat(),
+            providers=providers,
         )
         try:
             if door in _SERVICE_DOORS:

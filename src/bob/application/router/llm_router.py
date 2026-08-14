@@ -38,11 +38,15 @@ GUPPI's policy layer over the provider-agnostic :class:`LLMProvider` ports
    stood on ONE door out of sixteen — the conversational turn — while the reflection,
    its reappraisal, the consolidation digest, the proactive line, the work journal and
    ``extract_facts`` all walked past it and wrote canon-breaking few-shot INTO memory,
-   which recall then feeds back into Bob's behaviour (BOB-074). The router is the one
-   place EVERY door passes through, so the seam lives here: what a door's output IS comes
-   from :mod:`bob.application.router.generation_door`, the folding from
+   which recall then feeds back into Bob's behaviour (BOB-074). The router is the place
+   EVERY ordinary door passes through, so the seam lives here: what a door's output IS
+   comes from :mod:`bob.application.router.generation_door`, the folding from
    :mod:`bob.application.router.voice_canon`, and the text itself is injected from the
-   persona (the router imports no domain vertical).
+   persona (the router imports no domain vertical). 🔴 It is not the ONLY point a payload
+   leaves for a provider, and BOB-096.3 read as if it were: the tool-driven turn goes out
+   through :class:`~bob.capabilities.usecases.tool_loop.ToolLoop`, which the privileged
+   fulfilment drove with the router nowhere in sight — so it carried no canon at all until
+   BOB-096.8 put the SAME seam at that second door too.
 
 This module is pure application policy: it holds no transport/HTTP knowledge —
 that lives behind the injected :class:`LLMProvider` adapters.
@@ -87,6 +91,10 @@ _PREFERRED_TIER: dict[TaskType, int] = {
     TaskType.GENESIS: _TIER_API,
     TaskType.SENTIMENT: _TIER_LOCAL,
     TaskType.INNER_MONOLOGUE: _TIER_LOCAL,
+    # Fascination pick (BOB-020, split off INNER_MONOLOGUE in BOB-096.8): a cheap
+    # noun-phrase choice grounded in Bob's own reflection + tastes — Tier 0, exactly where
+    # it ran before the split, so the routing is byte-identical.
+    TaskType.FASCINATION_PICK: _TIER_LOCAL,
     TaskType.REFLECT: _TIER_LOCAL,
     TaskType.EXTRACT_FACTS: _TIER_LOCAL,
     # Goal decomposition (BOB-015) is reasoning-heavy: Tier 1 by default for a

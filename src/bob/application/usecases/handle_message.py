@@ -163,6 +163,7 @@ if TYPE_CHECKING:
 
     from bob.application.reliability import Sleep
     from bob.application.router.llm_router import LLMRouter
+    from bob.application.router.voice_canon import VoiceCanon
     from bob.application.runtime.events import MessageReceived
     from bob.application.runtime.intake.scope import TurnScope
     from bob.application.runtime.staleness_reassessor import StalenessReassessor
@@ -687,6 +688,7 @@ class HandleMessage:
         register_resolver: RegisterResolver | None = None,
         addon_recall: MemoryRecall | None = None,
         origin_provenance: bool = False,
+        voice_canon: VoiceCanon | None = None,
     ) -> None:
         self._router = router
         self._gateway = gateway
@@ -918,6 +920,12 @@ class HandleMessage:
         # ``_make_tool_loop`` so Bob records that HE used tools (coalesced, first-person).
         # Unwired / the OFF-flag NoOp → zero writes, byte-identical behaviour.
         self._self_action_recorder = self_action_recorder
+        # The VOICE canon for the per-turn tool-loop (BOB-096.8). This turn's payload
+        # already carries the ban verbatim (it comes from the base persona), and the seam is
+        # idempotent, so the folded payload is byte-identical — the wiring is here so that
+        # NO construction site of the loop depends on someone else having remembered the
+        # canon, which is exactly how the privileged fulfilment lost it.
+        self._voice_canon = voice_canon
         # Register-recall seam (BOB-087.C2): when wired, recall is register-aware — a CASUAL
         # turn mutes Bob's own ``work`` dev episodes (over-fetch → C1 attenuate → re-sort →
         # truncate, so muted work really drops out of the final slots), while a DEV turn (the
@@ -1344,6 +1352,7 @@ class HandleMessage:
             registry=self._registry,
             announcer=announcer,
             recorder=self._self_action_recorder,
+            voice_canon=self._voice_canon,
         )
 
     def _make_verify_announcer(

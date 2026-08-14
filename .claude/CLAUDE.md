@@ -519,6 +519,10 @@ Example:
 
 ### Shell
 - Using `cp`, `mv`, `rm` without `-f` flag (may hang on interactive prompts)
+- 🔴 **`uv run ruff format` на этом дереве** — репозиторий НЕ format-clean, и команда
+  переписывает посторонние файлы (замечено в BOB-096: 12 файлов вне зоны работы). Форматирование
+  проверяет и требует только `ruff check`; массовый `format` — отдельное решение отдельной
+  работой, а не побочный эффект чужой волны.
 
 ### Code
 - Using `Any` / `# type: ignore` without reason

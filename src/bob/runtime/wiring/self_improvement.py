@@ -56,6 +56,22 @@ class _SelfImprovement:
     max_magnitude: float
 
 
+def _self_improvement_max_magnitude(config: Mapping[str, object]) -> float:
+    """The soft-tilt ceiling (``self_improvement.max_magnitude``) — ONE read for all.
+
+    Four consumers now judge a rule by this number: the detector (the ceiling it asks
+    the model to stay within), :class:`DetectPatterns` (the verdict at a rule's BIRTH),
+    :class:`AnnounceProposedRules` (the same verdict at DELIVERY, BOB-096 фикс ревью)
+    and GUPPI's ``/rules`` list (how the owner is told WHY Bob is silent about a rule,
+    wired through :func:`~bob.runtime.wiring.telegram._build_multibot`). They must agree
+    — a list that judges by one ceiling while Bob speaks by another shows the owner one
+    thing and does another — so the key is read HERE and only here.
+    """
+    return _float_or(
+        _section(config, "self_improvement"), "max_magnitude", _DEFAULT_SI_MAX_MAGNITUDE
+    )
+
+
 def _build_self_improvement(
     config: Mapping[str, object],
     *,
@@ -80,12 +96,14 @@ def _build_self_improvement(
     ``config/bob.yaml`` + the loader defaults while the detector was built with no tier at
     all, so the «declared tier» existed only in a docstring: a config key with no reader
     reads as a promise (§0.3 п.10). It is now passed to the detector as the request's tier,
-    and ``max_magnitude`` goes to BOTH consumers from this single read — the detector (the
-    ceiling it asks the model to stay within) and the use-case (the verdict that refuses a
-    proposal the owner could not answer meaningfully).
+    and ``max_magnitude`` goes to EVERY consumer from this single read — the detector (the
+    ceiling it asks the model to stay within), :class:`DetectPatterns` (the verdict that
+    refuses to CREATE a proposal the owner could not answer meaningfully) and
+    :class:`AnnounceProposedRules` (the same verdict at DELIVERY, so a degenerate rule that
+    is ALREADY in the store is not voiced either — BOB-096 фикс ревью).
     """
     section = _section(config, "self_improvement")
-    max_magnitude = _float_or(section, "max_magnitude", _DEFAULT_SI_MAX_MAGNITUDE)
+    max_magnitude = _self_improvement_max_magnitude(config)
     if rule_store is None:
         return _SelfImprovement(
             reader=None,
@@ -111,6 +129,7 @@ def _build_self_improvement(
         gateway=gateway,
         chat_id=chat_id,
         persona_id=_BOB_PERSONA,
+        max_magnitude=max_magnitude,
     )
     reader = ActiveRulesReader(store=rule_store, persona_id=_BOB_PERSONA)
     return _SelfImprovement(

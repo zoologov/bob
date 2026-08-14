@@ -177,7 +177,10 @@ def _stack(
     used_channel = channel if channel is not None else _FakeChannel()
     used_authorizer = authorizer if authorizer is not None else _FakeAuthorizer()
     fulfiller = PrivilegedRequestFulfiller(
-        router=used_router, registry=CapabilityRegistry(), tool_provider=None
+        router=used_router,
+        registry=CapabilityRegistry(),
+        tool_provider=None,
+        voice_canon=None,
     )
     executor = PermissionExecutor(
         fulfiller=fulfiller, channel=used_channel, authorizer=used_authorizer
@@ -431,7 +434,10 @@ async def test_us6_fulfiller_failure_refuses_silently_and_discloses_nothing() ->
     store = _FakeStore()
     channel = _FakeChannel()
     fulfiller = PrivilegedRequestFulfiller(
-        router=_BoomRouter(), registry=CapabilityRegistry(), tool_provider=None
+        router=_BoomRouter(),
+        registry=CapabilityRegistry(),
+        tool_provider=None,
+        voice_canon=None,
     )
     executor = PermissionExecutor(
         fulfiller=fulfiller, channel=channel, authorizer=_FakeAuthorizer()

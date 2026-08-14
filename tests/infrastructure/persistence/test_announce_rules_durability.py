@@ -44,6 +44,8 @@ if TYPE_CHECKING:
 _PERSONA = "bob"
 _CHAT_ID = -100123
 _NOW = datetime(2026, 8, 6, 8, 37, 54, tzinfo=UTC)
+#: Потолок величины из живого ``config/bob.yaml`` — с ним анонсёра и собирают.
+_CEILING = 0.3
 
 
 @dataclass
@@ -92,6 +94,7 @@ class _Process:
             gateway=self._gateway,
             chat_id=_CHAT_ID,
             persona_id=_PERSONA,
+            max_magnitude=_CEILING,
         )
         return self
 
@@ -117,7 +120,7 @@ async def test_a_real_restart_does_not_re_announce(tmp_path: Path) -> None:
 
     assert len(gateway.posts) == 1
     assert rules[0].announced is True
-    assert announce_status(rules[0]) is AnnounceStatus.DELIVERED
+    assert announce_status(rules[0], max_magnitude=_CEILING) is AnnounceStatus.DELIVERED
 
 
 async def test_a_real_restart_still_announces_the_unsaid_one(tmp_path: Path) -> None:
@@ -162,4 +165,4 @@ async def test_a_broken_gateway_stops_after_the_cap_across_restarts(
     assert rules[0].announce_attempts == MAX_ANNOUNCE_ATTEMPTS
     # Не потерялось молча: правило живо, ждёт владельца и помечено недоставленным.
     assert rules[0].state is RuleState.PROPOSED
-    assert is_undelivered_proposal(rules[0]) is True
+    assert is_undelivered_proposal(rules[0], max_magnitude=_CEILING) is True

@@ -45,6 +45,8 @@ if TYPE_CHECKING:
 _PERSONA = "bob"
 _OTHER_PERSONA = "bender"
 _NOW = datetime(2026, 6, 24, 12, 0, tzinfo=UTC)
+#: Потолок величины из живого ``config/bob.yaml`` — с ним статус доставки и спрашивают.
+_CEILING = 0.3
 
 # Схема ``improvement_rule`` ДО BOB-096 — ровно так выглядит база owner'а, в которой
 # лежат три его PROPOSED-правила. Пре-создаём таблицу этой формой, чтобы
@@ -219,7 +221,7 @@ async def test_mark_announced_sets_the_flag(repo: SqliteMemoryRepo) -> None:
 
     assert loaded[0].announced is True
     assert loaded[0].announce_attempts == 1
-    assert announce_status(loaded[0]) is AnnounceStatus.DELIVERED
+    assert announce_status(loaded[0], max_magnitude=_CEILING) is AnnounceStatus.DELIVERED
 
 
 async def test_announce_bookkeeping_is_per_rule(repo: SqliteMemoryRepo) -> None:
@@ -344,7 +346,7 @@ async def test_legacy_db_gains_announce_columns(tmp_path: Path) -> None:
     assert loaded[0].id == "rule-20260806083754-0"
     assert loaded[0].announced is False
     assert loaded[0].announce_attempts == 0
-    assert announce_status(loaded[0]) is AnnounceStatus.PENDING
+    assert announce_status(loaded[0], max_magnitude=_CEILING) is AnnounceStatus.PENDING
 
 
 async def test_migration_is_idempotent(tmp_path: Path) -> None:
@@ -379,4 +381,4 @@ async def test_legacy_row_is_announceable_then_capped(tmp_path: Path) -> None:
     loaded = await store.load(_PERSONA)
     await repo.close()
 
-    assert announce_status(loaded[0]) is AnnounceStatus.UNDELIVERED
+    assert announce_status(loaded[0], max_magnitude=_CEILING) is AnnounceStatus.UNDELIVERED
