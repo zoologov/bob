@@ -205,6 +205,21 @@ drift-guard-тестом, чтобы `personality` не импортировал
 свежий контекст (недавние эпизоды + текущий тон) в промпт заземлённого монолога, лечит
 «застрявшую пластинку»; без свежего контекста возвращает generic-промпт дословно.
 
+🔴 **`guppi_voice_canon(*, prose_answer)` — досягаемость канона, а не второй канон
+(BOB-096.3).** До этого среза запрет отыгрывать GUPPI стоял в базовой персоне, то есть
+доезжал ровно до одной двери — разговорного хода. Рефлексия, переоценка, дайджест,
+проактивная реплика, дневник работы и выжимка фактов его не видели, а их вывод ложится в
+память и возвращается к модели её собственным few-shot (механизм BOB-074). Теперь текст
+канона отдаётся наружу одной функцией в двух формах: прозаической двери — ДОСЛОВНО
+`guppi_no_roleplay_directive()` (второго канона у Боба не завелось, это пинается тестом),
+машинной (`prose_answer=False`: JSON фактов, JSON правил, профиль пробуждения) — та же
+суть клаузой о записи, без прозаических указаний. Различать обязательно: в полной
+директиве есть «вызови инструмент… говори от себя, своим голосом», и канон без различения
+формы молча сломал бы JSON-контракт извлечения фактов. Функция чистая и о роутере ничего
+не знает: роутер получает её инъекцией и сообщает единственный факт о двери — читает ли
+ответ человек. Само вплетение живёт в `application/router` и в петле инструментов
+(`capabilities`), поэтому `personality` по-прежнему не импортирует ни того ни другого.
+
 ### Семейство реакций (BOB-050)
 
 `ReactionMeaning` / `ReactionContext` / `ReactionJudge` (`reaction_meaning.py`) — семантика
@@ -334,7 +349,10 @@ kv-таблице (`record`/`latest`/`clear` — hint всплывает не б
   `BOB_PERSONAL`/`SHARED` твёрдая позиция эскалирует от согласия к `PROPOSE_ALTERNATIVE`.
 - **Fascination заземлён и распадается.** Топик всегда из реальной внутренней жизни (не
   случаен), интенсивность гаснет по полураспаду в `[MIN, MAX]`, сдвиг — только когда страсть
-  выдохлась; фантом-эволюция ≤1 изменение за шаг, идемпотентна.
+  выдохлась; фантом-эволюция ≤1 изменение за шаг, идемпотентна. С BOB-096.8 тему не
+  выбирает и аварийный дублёр: дверь `FASCINATION_PICK` — «голос, который остаётся», а при
+  отвале облака шаг берёт детерминированную опору (последняя мысль + сильные вкусы), то
+  есть тема рождается без модели, а не теряется.
 - **Реакция → bounded MoodDelta от СМЫСЛА.** Знак и величина `mood_delta` идут от значения
   реакции, не от emoji; каждый сдвиг внутри BOB-030-полосы (нудж, не свинг); `NotableReaction`
   пишется только при `worth_acknowledging`.
@@ -389,7 +407,8 @@ kv-таблице (`record`/`latest`/`clear` — hint всплывает не б
   `brevity_directive`/`engagement_directive`/`tactful_withhold_directive`/
   `recall_has_work`/`recalled_work_directive` (BOB-087.C3),
   `recalled_origin_directive` (BOB-090.C1), `guppi_no_roleplay_directive` (BOB-090.D3),
-  `reaction_meaning.ReactionMeaning`,
+  `guppi_voice_canon` (BOB-096.3 — тот же запрет в двух формах, реализация порта
+  `VoiceCanon` роутера), `reaction_meaning.ReactionMeaning`,
   `reaction_effect.apply_reaction_to_mood`, `reflection.build_reflection_prompt`, `soul.SOUL`,
   `room_tone.room_tone_directive`/`room_engagement_bias` (+ `RoomToneThresholds`).
 - Use-case'ы: `usecases.UpdateMoodFromText`, `ApplyReflection`, `ReappraiseReflection`,
@@ -419,8 +438,14 @@ use-case в `application/usecases/`, вне вертикали. Долговеч
   `tests/domain/personality/test_voice_composer_work_provenance.py` (ортогональность оси
   регистра); BDD — `tests/acceptance/features/origin_provenance.feature` +
   `tests/acceptance/steps/test_origin_provenance.py`.
-- Канон GUPPI в голосе (BOB-090.D3): `tests/domain/personality/test_voice_guppi_no_roleplay.py`;
-  BDD — `tests/acceptance/features/guppi_canon.feature`.
+- Канон GUPPI в голосе (BOB-090.D3): `tests/domain/personality/test_voice_guppi_no_roleplay.py`
+  (там же обе формы `guppi_voice_canon` и то, что прозаическая совпадает с базовой
+  директивой ДОСЛОВНО); BDD — `tests/acceptance/features/guppi_canon.feature`.
+- Досягаемость канона до дверей personality (BOB-096): `tests/test_canon_reaches_every_door.py`
+  (тема увлечения настоящим `EvolveFascination`, прочтение реакции настоящим
+  `LlmReactionJudge`) и `tests/test_the_understudy_never_speaks_for_bob.py` (дублёр не
+  выбирает увлечение, но шаг переживает отвал); BDD —
+  `tests/acceptance/features/voice_that_stays.feature`.
 - Use-case'ы: `tests/application/usecases/test_update_mood_from_text.py`,
   `test_apply_reflection.py`, `test_reappraise_reflection.py`, `test_reflection_parser.py`,
   `test_evolve_fascination.py`, `test_evolve_phantoms.py`, `test_fascination_sources.py`.

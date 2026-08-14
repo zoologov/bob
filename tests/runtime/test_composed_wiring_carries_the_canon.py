@@ -23,7 +23,11 @@
 собирает прод (:func:`~bob.app.build_application` на конфиге формы живого, фейк ровно
 один — сеть), через собранную проводку прогоняется настоящий ход, а провайдер записывает
 payload, который РЕАЛЬНО до него доехал. Утверждается дословное присутствие канона в этом
-payload'е — то есть ``None`` в любой из двух точек провязки красит эти тесты.
+payload'е — то есть ``None`` в любой из ТРЁХ точек провязки красит эти тесты: роутер
+(``runtime/composition.py``), привилегированное исполнение (``runtime/wiring/permission.py``)
+и петля потурового хода (``runtime/composition.py``, ремень
+``HandleMessage`` — добавлен по ревью MINOR-10, третьим проходом; см. тест ниже о том,
+почему его payload собирается без персоны).
 
 Образец конструкции — ``test_the_live_wiring_actually_composes_the_verdicts_precondition``
 (эпик BOB-096): проверять фактическую сборку, а не её написание.
@@ -34,7 +38,7 @@ payload'е — то есть ``None`` в любой из двух точек п�
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 import pytest
 
@@ -51,6 +55,7 @@ if TYPE_CHECKING:
     from pathlib import Path
     from types import ModuleType
 
+    from bob.application.usecases.handle_message import HandleMessage
     from bob.application.usecases.privileged_fulfiller import PrivilegedRequestFulfiller
     from bob.capabilities.ports import ToolDefinition
     from bob.kernel.ports import LLMMessage, ToolLoopMessage
@@ -172,12 +177,20 @@ def _capture_built(
     return built
 
 
-def _compose(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> tuple[_RecordingProvider, LLMRouter, PrivilegedRequestFulfiller]:
-    """Собрать граф как прод и отдать провайдер + две двери, стоящие на точках прохода."""
+class _Composed(NamedTuple):
+    """Собранный прод-граф: провайдер-свидетель и объекты трёх точек провязки канона."""
+
+    provider: _RecordingProvider
+    router: LLMRouter
+    fulfiller: PrivilegedRequestFulfiller
+    handle: HandleMessage
+
+
+def _compose(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> _Composed:
+    """Собрать граф как прод и отдать провайдер + двери, стоящие на точках прохода."""
     routers = _capture_built(monkeypatch, composition, "LLMRouter")
     fulfillers = _capture_built(monkeypatch, permission_wiring, "PrivilegedRequestFulfiller")
+    handlers = _capture_built(monkeypatch, composition, "HandleMessage")
     _seed_soul(tmp_path)
     provider = _RecordingProvider()
 
@@ -193,7 +206,8 @@ def _compose(
     # Анти-вакуум: ловим ровно те объекты, которые собрал прод, и ровно по одному.
     assert len(routers) == 1, "композиция собрала не один роутер — тест ловит не то"
     assert len(fulfillers) == 1, "композиция собрала не один фулфиллер — тест ловит не то"
-    return provider, routers[0], fulfillers[0]
+    assert len(handlers) == 1, "композиция собрала не один потуровый ход — тест ловит не то"
+    return _Composed(provider, routers[0], fulfillers[0], handlers[0])
 
 
 async def test_the_composed_router_sends_the_canon_to_the_model(
@@ -205,7 +219,7 @@ async def test_the_composed_router_sends_the_canon_to_the_model(
     сама, поэтому разговорный ход остался бы зелёным и с выключенным швом — то есть
     ничего не доказывал бы. Рефлексия получает канон ТОЛЬКО от роутера.
     """
-    provider, router, _ = _compose(tmp_path, monkeypatch)
+    provider, router, _, _ = _compose(tmp_path, monkeypatch)
 
     answer = await router.run(
         LLMRequest(
@@ -229,7 +243,7 @@ async def test_the_composed_privileged_fulfilment_sends_the_canon_to_the_model(
     directly, in character», уходит к провайдеру тул-лупом мимо роутера и умеет ходить
     инструментами. Канон приходит ей только из ``runtime/wiring/permission.py``.
     """
-    provider, _, fulfiller = _compose(tmp_path, monkeypatch)
+    provider, _, fulfiller, _ = _compose(tmp_path, monkeypatch)
 
     answer = await fulfiller.fulfil(_ASK, requester_id=555, requester_name=_REQUESTER)
 
@@ -251,7 +265,7 @@ async def test_the_privileged_prompt_that_earned_this_test_is_still_the_one_bein
     исполнения переписали или потеряли, — а именно его формулировка («ты Боб, отвечай
     в характере», плюс инструменты) и делает эту дверь опасной.
     """
-    provider, _, fulfiller = _compose(tmp_path, monkeypatch)
+    provider, _, fulfiller, _ = _compose(tmp_path, monkeypatch)
 
     await fulfiller.fulfil(_ASK, requester_id=555, requester_name=_REQUESTER)
 
@@ -259,6 +273,45 @@ async def test_the_privileged_prompt_that_earned_this_test_is_still_the_one_bein
     assert "You are Bob" in sent
     assert _REQUESTER in sent
     assert _ASK in sent
+
+
+async def test_the_composed_per_turn_tool_loop_sends_the_canon_to_the_model(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Третья точка провязки: петля ПОТУРОВОГО хода увозит запрет модели дословно.
+
+    🔴 Почему payload здесь СОБИРАЕТСЯ БЕЗ ПЕРСОНЫ, а не берётся из живого хода. Разговорный
+    ход всегда приходит в петлю с персоной, персона несёт запрет дословно, а шов
+    идемпотентен — значит на таком payload'е ``voice_canon=None`` в композиционном корне не
+    наблюдаем ничем (ревью MINOR-10 проверило попыткой: 7591 passed). Тест на живом ходе был
+    бы зелёным при выключенной провязке, то есть доказывал бы не то. А ремень здесь стоит
+    ровно затем, чтобы НИ ОДНА сборка петли не зависела от чужой памяти о каноне, — поэтому
+    проверяется именно тот случай, ради которого он существует: петля, собранная прод-фабрикой
+    потурового хода, получает payload без запрета и обязана дослать его сама.
+
+    Фабрика берётся не абы какая: утверждается, что композиция отдала VoiceComposer'у ровно
+    её (иначе гард стерёг бы мёртвый путь).
+    """
+    composed = _compose(tmp_path, monkeypatch)
+    canon = guppi_voice_canon(prose_answer=True)
+    # Анти-вакуум: тест зовёт ТУ фабрику, которой прод строит петлю разговорного хода.
+    assert composed.handle._voice._tool_loop_factory == composed.handle._make_tool_loop, (
+        "прод строит петлю другой фабрикой — гард стережёт мёртвый путь"
+    )
+    payload: list[ToolLoopMessage] = [
+        {"role": "system", "content": "Ты Боб."},
+        {"role": "user", "content": "посмотри, что там в репозитории"},
+    ]
+    # Анти-вакуум: запрета во ВХОДЕ нет, иначе утверждение было бы про свой же payload.
+    assert all(canon not in str(message["content"]) for message in payload)
+
+    loop = composed.handle._make_tool_loop(composed.provider, None)
+    answer = await loop.run(payload)
+
+    assert answer == "ладно, посмотрел"
+    assert len(composed.provider.with_tools) == 1, "петля до провайдера не доехала"
+    sent = [str(message["content"]) for message in composed.provider.with_tools[0]]
+    assert canon in sent
 
 
 @pytest.mark.parametrize("prose_answer", [True, False])

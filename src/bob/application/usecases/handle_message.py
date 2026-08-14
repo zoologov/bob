@@ -925,6 +925,11 @@ class HandleMessage:
         # idempotent, so the folded payload is byte-identical — the wiring is here so that
         # NO construction site of the loop depends on someone else having remembered the
         # canon, which is exactly how the privileged fulfilment lost it.
+        # 🔴 That justification is now CHECKED, not merely stated (BOB-096.11, review
+        # MINOR-10): ``tests/runtime/test_composed_wiring_carries_the_canon.py`` runs the
+        # loop this use-case builds over a payload that does NOT carry the ban, so the belt
+        # is what has to deliver it. A live turn could not prove this — its persona would
+        # keep the test green with the seam unwired.
         self._voice_canon = voice_canon
         # Register-recall seam (BOB-087.C2): when wired, recall is register-aware — a CASUAL
         # turn mutes Bob's own ``work`` dev episodes (over-fetch → C1 attenuate → re-sort →

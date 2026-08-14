@@ -412,11 +412,14 @@ ignore = [
 # Поведенческий гард шва канона (BOB-096.10, review MAJOR-5): тест несёт РУССКОЕ
 # объяснение, почему текстовый гард пропустил ``voice_canon=None``, и утверждает на
 # русском тексте канона персоны — Cyrillic look-alikes здесь намеренные
-# (→ RUF001/RUF002/RUF003).
+# (→ RUF001/RUF002/RUF003). Третья точка провязки (BOB-096.11) проверяется через ту же
+# фабрику петли, которой строит прод, — а публичного имени у неё нет и не должно быть:
+# это внутренняя фабрика потурового хода (→ SLF001).
 "tests/runtime/test_composed_wiring_carries_the_canon.py" = [
     "RUF001",
     "RUF002",
     "RUF003",
+    "SLF001",
 ]
 # The voice tests (BOB-016/BOB-020) assert on multi-line Russian persona/tone
 # literals whose Cyrillic look-alikes are intentional (→ RUF001/RUF003).

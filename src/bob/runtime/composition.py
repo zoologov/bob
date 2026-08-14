@@ -1052,6 +1052,12 @@ def build_application(
         # The VOICE canon on the per-turn tool-loop (BOB-096.8): the loop is the other
         # point a payload leaves for a provider, so the ban reaches it the same way it
         # reaches the router — injected from the persona, folded idempotently.
+        # 🔴 BOB-096.11 (review MINOR-10): this line USED to be the one wiring point no
+        # test could see — today's turn carries the ban in the persona already, so ``None``
+        # here changed nothing observable (7591 passed). Now it is guarded by BEHAVIOUR:
+        # ``tests/runtime/test_composed_wiring_carries_the_canon.py`` builds the loop with
+        # THIS factory and hands it a payload WITHOUT the persona — the very case the belt
+        # exists for — so dropping the canon here goes red.
         voice_canon=guppi_voice_canon,
         # Register-aware recall (BOB-087.C): behind ``memory.register_recall`` (OFF by
         # default → None → recall byte-identical, over-fetch off, INV-5). ON → the per-turn

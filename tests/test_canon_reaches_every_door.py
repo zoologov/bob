@@ -514,6 +514,10 @@ def test_that_single_build_site_hands_the_router_the_canon() -> None:
     """
     source = (_SRC_ROOT / _COMPOSITION).read_text(encoding="utf-8")
 
+    # Без этой строки обход (сборка под другим именем — саботаж D третьего прохода) падал бы
+    # ``IndexError`` из ``split``, и легитимный промах гарда читался бы как поломка теста.
+    # §0.3 п.5 требует отличать ERROR от FAILED — здесь это стоит одной строки.
+    assert "LLMRouter(" in source, f"сборка роутера в {_COMPOSITION} не найдена — гард слеп"
     build_site = source.split("LLMRouter(", 1)[1][:_BUILD_SITE_WINDOW]
 
     assert "voice_canon=" in build_site
