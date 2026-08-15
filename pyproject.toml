@@ -2324,6 +2324,13 @@ ignore = [
     "RUF002",
     "RUF003",
 ]
+# BOB-098 (гейт против дрейфа процесса): вердикты о согласованности трекера, дерева спек и
+# карты РАЗГОВАРИВАЮТ с человеком по-русски — сообщение обязано объяснять, что делать, а не
+# просто краснеть, — и цитируют русские заголовки беад и строку «сверено с main». Кириллические
+# похожие символы здесь намеренны (→ RUF001/RUF002/RUF003).
+"tests/support/process_coherence.py" = ["RUF001", "RUF002", "RUF003"]
+"tests/support/test_process_coherence.py" = ["RUF001", "RUF002", "RUF003"]
+"tests/test_process_drift_gate.py" = ["RUF001", "RUF002", "RUF003"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["bob"]
