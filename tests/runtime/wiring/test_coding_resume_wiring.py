@@ -24,10 +24,15 @@ from typing import TYPE_CHECKING, cast
 from bob.coding.usecases.coding_assistant import CodingOutcome
 from bob.runtime.wiring.coding import (
     _build_interactive_intake,
-    _build_interactive_session,
 )
+from bob.runtime.wiring.coding import (
+    _build_interactive_session as _wire_build_interactive_session,
+)
+from tests.support.wiring_clone_root import with_a_throwaway_clone_root
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     from bob.infrastructure.persistence import SqliteConnection
     from bob.infrastructure.telegram.gateway import BotLike
     from bob.interactive.usecases.session import InteractiveSessionManager
@@ -123,7 +128,7 @@ def _session_deps() -> dict[str, object]:
 
 
 def _manager(config: dict[str, object]) -> InteractiveSessionManager:
-    manager = _build_interactive_session(config, **_session_deps())  # type: ignore[arg-type]
+    manager = _build_interactive_session(config, **_session_deps())
     assert manager is not None
     return manager
 
@@ -137,6 +142,22 @@ def _intake(config: dict[str, object], manager: _RecordingManager) -> object:
     )
     assert router is not None
     return router
+
+
+# 🔴 Файлы окружения спавна — в ОДНОРАЗОВЫЙ каталог, а не в рабочее дерево (bob-c3r.1).
+# С безопасной дорогой по умолчанию сборка материализует их на КАЖДОМ вызове, а предмет
+# этого файла — другой; поэтому строители здесь затенены обёрткой, подставляющей
+# ``coder.clone_root``. Значение, заданное самим тестом, уважается как есть.
+
+
+def _build_interactive_session(
+    config: Mapping[str, object], **deps: object
+) -> InteractiveSessionManager | None:
+    """Как продакшн-строитель, но с одноразовым ``clone_root`` (см. комментарий выше)."""
+    return _wire_build_interactive_session(
+        with_a_throwaway_clone_root(config),
+        **deps,  # type: ignore[arg-type]
+    )
 
 
 # --------------------------------------------------------------------------- #

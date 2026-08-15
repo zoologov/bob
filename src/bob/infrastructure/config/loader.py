@@ -468,7 +468,18 @@ DEFAULT_CONFIG: Config = {
         # assembled (a mismatch is refused loudly, naming both keys), rather than left as the
         # owner's discipline: divergence would push the branch to one repository, promise the
         # owner a second and hold rights to a third.
-        "isolated_clone": False,
+        # 🔴 CORRECTED TO FACT AGAIN, 2026-08-15 (bob-c3r.1, P0 bob-l3t; the change is left
+        # VISIBLE). This line used to read ``"isolated_clone": False`` — the clone was
+        # OPT-IN, and switching it on lived in ``config/bob.yaml``, which is GITIGNORED. So
+        # on a fresh clone, on any other machine, and for anyone reading the repository the
+        # protection was OFF, while a live claude terminal ran inside the OWNER's linked
+        # worktree. A guarantee held by an untracked file is not a guarantee.
+        # The key is now DELIBERATELY ABSENT from these defaults so there is exactly ONE
+        # place that answers it — :func:`bob.runtime.wiring.coding._uses_isolated_clone`,
+        # which defaults to the isolated clone (ON) and refuses a value that is neither an
+        # explicit yes nor an explicit no. Two defaults for one safety fact would one day
+        # diverge, and the honest-looking one would be the stale one. The owner opts OUT
+        # explicitly: ``coder.isolated_clone: false``.
         "clone_root": ".clones",
         "fork_url": "",
         # 🔴 BOB'S OWN IDENTITY IN THE HISTORY (BOB-089, slice D), blank by default so

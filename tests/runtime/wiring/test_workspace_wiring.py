@@ -4,9 +4,15 @@
 
 """Tests for ``_build_workspace`` — переключатель «worktree или КЛОН» (BOB-089, срез A).
 
-Это ЕДИНСТВЕННОЕ место, где читается ``coder.isolated_clone`` (default OFF). OFF-путь
-доказывается РАВЕНСТВОМ сборки — тип адаптера и его аргументы, — а не «похожестью»: если
-бы флаг ушёл в OFF-путь хоть одним аргументом, эти тесты покраснели бы.
+Решение читает ОДНА функция — ``_uses_isolated_clone``, и клон в ней ДЕФОЛТ (bob-c3r.1).
+OFF-путь (ЯВНЫЙ отказ владельца) доказывается РАВЕНСТВОМ сборки — тип адаптера и его
+аргументы, — а не «похожестью»: если бы флаг ушёл в OFF-путь хоть одним аргументом, эти
+тесты покраснели бы.
+
+🔴 ИСПРАВЛЕНО ПО ФАКТУ 2026-08-15 (bob-c3r.1; правка видимая). Здесь стояло «(default
+OFF)», и четыре теста ниже закрепляли ИМЕННО ЭТО: конфиг без ключа отдавал linked worktree
+владельца. Дефолтом стала безопасная дорога, поэтому «выключено» отныне пишется ЯВНО — и
+тесты спрашивают именно про явный отказ.
 
 Оба адаптера подставляются под одни и те же порты, поэтому use-case'ы (гейтед-ассистент и
 менеджер интерактива) не знают, во что приземляются; здесь же проверено, что оба
@@ -108,21 +114,20 @@ def _workspace_of(assembled: object) -> object:
 
 
 def test_flag_off_builds_the_previous_worktree_adapter() -> None:
-    workspace = _build_workspace({})
-
-    assert type(workspace) is GitWorktree
-    assert workspace._worktree_root == Path(".worktrees")
-
-
-def test_flag_off_explicit_false_is_the_same_assembly() -> None:
     workspace = _build_workspace({"isolated_clone": False})
 
     assert type(workspace) is GitWorktree
     assert workspace._worktree_root == Path(".worktrees")
 
 
+def test_a_config_without_the_key_takes_the_safe_road_instead() -> None:
+    # 🔴 Парный к тесту выше: отсутствие ключа больше НЕ означает «прежнее место». Раньше
+    # тут проверялось обратное (``{}`` → GitWorktree), и это было содержанием P0 bob-l3t.
+    assert type(_build_workspace({})) is GitClone
+
+
 def test_flag_off_still_honours_the_configured_worktree_root() -> None:
-    workspace = _build_workspace({"worktree_root": "/srv/trees"})
+    workspace = _build_workspace({"isolated_clone": False, "worktree_root": "/srv/trees"})
 
     assert type(workspace) is GitWorktree
     assert workspace._worktree_root == Path("/srv/trees")
@@ -211,7 +216,7 @@ def test_the_gated_assistant_lands_in_the_clone_when_the_flag_is_on(tmp_path: Pa
 
 
 def test_the_gated_assistant_keeps_the_worktree_when_the_flag_is_off() -> None:
-    config = {"coder": {"enabled": True}}
+    config = {"coder": {"enabled": True, "isolated_clone": False}}
     assistant = _build_coding_assistant(config, **_coder_deps())  # type: ignore[arg-type]
 
     assert assistant is not None
@@ -238,7 +243,7 @@ def test_the_interactive_manager_lands_in_the_clone_when_the_flag_is_on(
 
 
 def test_the_interactive_manager_keeps_the_worktree_when_the_flag_is_off() -> None:
-    config = {"coder": {"interactive": True, "resume": True}}
+    config = {"coder": {"interactive": True, "resume": True, "isolated_clone": False}}
     manager = _build_interactive_session(config, **_interactive_deps())  # type: ignore[arg-type]
 
     assert manager is not None

@@ -28,6 +28,7 @@ from typing import TYPE_CHECKING
 import pytest
 from pytest_bdd import given, scenarios, then, when
 
+from bob.coding.adapters.git_clone import GitClone
 from bob.coding.adapters.git_worktree import GitWorktree
 from bob.runtime.wiring.coding import _build_spawn_isolation, _build_workspace
 from tests.acceptance.own_workplace_harness import (
@@ -54,6 +55,7 @@ from tests.acceptance.own_workplace_harness import (
 
 if TYPE_CHECKING:
     import subprocess
+    from collections.abc import Mapping
     from pathlib import Path
 
 pytestmark = pytest.mark.skipif(
@@ -65,6 +67,12 @@ scenarios("../features/own_workplace.feature")
 #: Опубликованные (трекнутые) файлы одноразового репозитория — ровно они и составляют
 #: рабочее место Боба.
 _PUBLISHED_FILES = frozenset({".gitignore", "README.md", "src/app.py"})
+
+#: Владелец не настраивал рабочее место вовсе: ключа ``isolated_clone`` нет. С bob-c3r.1
+#: это ВКЛЮЧЁННАЯ безопасная дорога — раньше означало обратное, и в этом был P0 bob-l3t.
+_NOTHING_CONFIGURED: Mapping[str, object] = {}
+#: ЯВНЫЙ отказ владельца от неё — единственный способ вернуть прежнее рабочее место.
+_EXPLICIT_REFUSAL: Mapping[str, object] = {"isolated_clone": False}
 
 
 @dataclass(slots=True)
@@ -79,6 +87,9 @@ class _WorkplaceContext:
     isolated: subprocess.CompletedProcess[str] | None = None
     handover: Handover = field(default_factory=Handover)
     integration: Integration = field(default_factory=Integration)
+    #: Секция ``coder``, которой владелец настроил рабочее место. Пустая — «не настраивал
+    #: вовсе»; именно этот случай с bob-c3r.1 означает ВКЛЮЧЁННУЮ безопасную дорогу.
+    coder: Mapping[str, object] = field(default_factory=dict)
 
     @property
     def owner_repo(self) -> Path:
@@ -178,9 +189,25 @@ def bob_integrates_the_work(workplace_context: _WorkplaceContext) -> None:
 
 @when("флаг отдельного рабочего места выключен")
 def the_isolated_workplace_flag_is_off(workplace_context: _WorkplaceContext) -> None:
-    # OFF-путь берётся из НАСТОЯЩЕЙ композиции с пустым конфигом — то есть ровно тем, что
-    # получает владелец, не настроивший ничего.
-    workplace_context.handover = hand_over_the_work(coder={}, github={})
+    # OFF-путь берётся из НАСТОЯЩЕЙ композиции по ЯВНОМУ отказу владельца.
+    # 🔴 ИСПРАВЛЕНО ПО ФАКТУ 2026-08-15 (bob-c3r.1; правка видимая): здесь стоял ПУСТОЙ
+    # конфиг с пояснением «ровно то, что получает владелец, не настроивший ничего» — и это
+    # было содержанием P0 bob-l3t: не настроивший ничего владелец получал рабочее место в
+    # СВОЁМ репозитории. Теперь «ничего не настроил» — отдельный сценарий S8, и означает он
+    # обратное.
+    workplace_context.coder = _EXPLICIT_REFUSAL
+    workplace_context.handover = hand_over_the_work(coder=_EXPLICIT_REFUSAL, github={})
+
+
+@when("владелец не настраивал рабочее место вовсе")
+def the_owner_configured_nothing(workplace_context: _WorkplaceContext) -> None:
+    # Единственный заданный ключ — КУДА класть клоны: сценарию нужен одноразовый каталог,
+    # иначе сборка изоляции написала бы файлы окружения в рабочее дерево. Ключ, который
+    # решает БЕЗОПАСНОСТЬ, отсутствует — в этом весь сценарий.
+    workplace_context.coder = {
+        **_NOTHING_CONFIGURED,
+        "clone_root": str(workplace_context.tmp_path / "clones"),
+    }
 
 
 # --- Тогда: наблюдаемое поведение -----------------------------------------------
@@ -313,17 +340,30 @@ def bob_names_the_reason(workplace_context: _WorkplaceContext) -> None:
 
 
 @then("рабочее место — прежний linked worktree в прежнем каталоге")
-def the_workplace_is_the_previous_worktree() -> None:
+def the_workplace_is_the_previous_worktree(workplace_context: _WorkplaceContext) -> None:
     # РАВЕНСТВО сборки, а не «похожесть»: тип адаптера и его аргумент. Уйди флаг в OFF-путь
     # хоть одним аргументом — этот шаг покраснел бы.
-    workspace = _build_workspace({})
+    workspace = _build_workspace(workplace_context.coder)
     assert type(workspace) is GitWorktree
     assert workspace._worktree_root == GitWorktree(".worktrees")._worktree_root
 
 
 @then("окружение спавна не подменяется вовсе")
-def the_spawn_environment_is_untouched() -> None:
-    assert _build_spawn_isolation({}) is None
+def the_spawn_environment_is_untouched(workplace_context: _WorkplaceContext) -> None:
+    assert _build_spawn_isolation(workplace_context.coder) is None
+
+
+@then("рабочее место — отдельный клон, а не дерево владельца")
+def the_workplace_is_a_clone(workplace_context: _WorkplaceContext) -> None:
+    assert type(_build_workspace(workplace_context.coder)) is GitClone
+
+
+@then("окружение спавна собрано без кредов владельца")
+def the_spawn_environment_is_isolated(workplace_context: _WorkplaceContext) -> None:
+    # Что эта изоляция ДЕЙСТВИТЕЛЬНО не отдаёт пароль владельца, доказывает S5 настоящим
+    # ``git credential fill``; здесь утверждается, что на неНАСТРОЕННОМ конфиге она вообще
+    # собирается — раньше на нём не собиралось ничего.
+    assert _build_spawn_isolation(workplace_context.coder) is not None
 
 
 @then("владельцу говорится прежняя реплика об открытом PR")

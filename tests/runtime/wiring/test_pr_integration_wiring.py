@@ -31,17 +31,35 @@ import pytest
 
 from bob.coding.adapters.fork_link import ForkCompareLink
 from bob.coding.adapters.gh_pr import GhPullRequestOpener, PullRequestError
-from bob.runtime.wiring.coding import _build_coding_assistant, _build_pr_integration
+from bob.runtime.wiring.coding import _build_coding_assistant as _wire_build_coding_assistant
+from bob.runtime.wiring.coding import _build_pr_integration
+from tests.support.wiring_clone_root import with_a_throwaway_clone_root
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
-    from bob.coding.usecases.coding_assistant import WorkJournalRecorder
+    from bob.coding.usecases.coding_assistant import CodingAssistant, WorkJournalRecorder
     from bob.infrastructure.persistence import SqliteConnection
     from bob.infrastructure.telegram.gateway import BotLike
     from bob.kernel.ports import Clock
     from bob.memory.ports import SelfActionRecorder
     from bob.social.usecases import Authorizer
+
+# 🔴 Файлы окружения спавна — в ОДНОРАЗОВЫЙ каталог, а не в рабочее дерево (bob-c3r.1).
+# С безопасной дорогой по умолчанию (клон + изоляция) сборка материализует их на КАЖДОМ
+# вызове, а предмет этого файла другой; поэтому продакшн-строители здесь затенены обёрткой,
+# подставляющей ``coder.clone_root``. Значение, заданное самим тестом, уважается как есть.
+
+
+def _build_coding_assistant(
+    config: Mapping[str, object], **deps: object
+) -> CodingAssistant | None:
+    """Как продакшн-строитель, но с одноразовым ``clone_root`` (см. комментарий выше)."""
+    return _wire_build_coding_assistant(
+        with_a_throwaway_clone_root(config),
+        **deps,  # type: ignore[arg-type]
+    )
+
 
 _OWNER_ID = 27468732
 _FORK_URL = "git@github.com:bobiverse-dev/bob.git"
@@ -143,8 +161,10 @@ def test_a_fork_on_a_foreign_host_keeps_the_gh_opener() -> None:
 def test_a_configured_fork_without_the_clone_flag_keeps_the_gh_opener() -> None:
     # Пока рабочее место — linked worktree, ветка уезжает в репозиторий owner'а, и PR
     # открывается как раньше. Ссылочный путь принадлежит клону.
+    # 🔴 Отказ от клона теперь пишется ЯВНО (bob-c3r.1): раньше тот же случай выражался
+    # ОТСУТСТВИЕМ ключа, потому что клон был opt-in. Дефолт сменился, смысл теста — нет.
     opener, opens_pr = _integration(
-        {"fork_url": _FORK_URL}, {"propose_repo": _UPSTREAM}
+        {"isolated_clone": False, "fork_url": _FORK_URL}, {"propose_repo": _UPSTREAM}
     )
 
     assert type(opener) is GhPullRequestOpener
@@ -249,7 +269,7 @@ def test_the_assistant_speaks_the_link_line_when_it_cannot_open_a_pr() -> None:
         "coder": {"enabled": True, "isolated_clone": True, "fork_url": _FORK_URL},
         "github": {"propose_repo": _UPSTREAM, "work_repo": _FORK_SLUG},
     }
-    assistant = _build_coding_assistant(config, **_coder_deps())  # type: ignore[arg-type]
+    assistant = _build_coding_assistant(config, **_coder_deps())
 
     assert assistant is not None
     assert type(assistant._pr_opener) is ForkCompareLink
@@ -258,7 +278,7 @@ def test_the_assistant_speaks_the_link_line_when_it_cannot_open_a_pr() -> None:
 
 def test_the_assistant_keeps_the_pr_line_on_the_default_path() -> None:
     config = {"coder": {"enabled": True}}
-    assistant = _build_coding_assistant(config, **_coder_deps())  # type: ignore[arg-type]
+    assistant = _build_coding_assistant(config, **_coder_deps())
 
     assert assistant is not None
     assert type(assistant._pr_opener) is GhPullRequestOpener

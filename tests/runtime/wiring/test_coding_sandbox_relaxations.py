@@ -18,9 +18,18 @@ unsupervised shell inside a LINKED worktree, and a linked worktree shares the ma
 ``.git`` — the same refs, remotes and credentials — so ``git push --force origin
 HEAD:main``, ``git branch -f main …`` and ``gh pr merge`` are all expressible from there.
 With ``allow_bypass: true`` «main is untouchable» stops being a STRUCTURAL guarantee and
-becomes the owner's judgement; with it OFF — the default asserted here — every write claude
-makes still passes a per-action gate. Same wording as the ``coder`` section of
-``infrastructure/config/loader.py`` and ``docs/domains/coding/README.md``; do not soften it.
+becomes the owner's judgement.
+
+🔴 ИСПРАВЛЕНО ПО ФАКТУ 2026-08-15 (bob-c3r.1, находка ``bob-l3t``; правка видимая, а не
+переписанная задним числом). Дальше здесь стояло: «with it OFF — the default asserted
+here — every write claude makes still passes a per-action gate». Живая проба настоящим
+CLI точной формой спавна Боба показала, что пер-действенного гейта в headless-режиме НЕТ:
+пишущая команда вне allowlist'а выполняется молча, события запроса разрешения не
+приходит. То есть эта фраза (и её близнецы в ``infrastructure/config/loader.py`` и
+``docs/domains/coding/README.md``, которые ещё ждут своей правки) обещала гарантию,
+которой никогда не было. Границу держит СТРУКТУРА — клон со своим ``.git`` и окружение
+без кредов owner'а (``coder.isolated_clone``) плюс безусловный push-барьер, — а не режим
+песочницы.
 """
 
 from __future__ import annotations
@@ -40,18 +49,49 @@ from bob.interactive.adapters.runner import (
     InteractiveClaudeRunner,
     _ExecInteractiveSpawner,
 )
-from bob.runtime.wiring.coding import _build_coding_assistant, _build_interactive_session
+from bob.runtime.wiring.coding import _build_coding_assistant as _wire_build_coding_assistant
+from bob.runtime.wiring.coding import (
+    _build_interactive_session as _wire_build_interactive_session,
+)
+from tests.support.wiring_clone_root import with_a_throwaway_clone_root
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Mapping
 
-    from bob.coding.usecases.coding_assistant import WorkJournalRecorder
+    from bob.coding.usecases.coding_assistant import CodingAssistant, WorkJournalRecorder
     from bob.infrastructure.persistence import SqliteConnection
     from bob.infrastructure.telegram.gateway import BotLike
+    from bob.interactive.usecases.session import InteractiveSessionManager
     from bob.kernel.ports import Clock
     from bob.memory.ports import SelfActionRecorder
     from bob.memory.self_action import SelfAction
     from bob.social.usecases import Authorizer
+
+# 🔴 Файлы окружения спавна — в ОДНОРАЗОВЫЙ каталог, а не в рабочее дерево (bob-c3r.1).
+# С безопасной дорогой по умолчанию (клон + изоляция) сборка материализует их на КАЖДОМ
+# вызове, а предмет этого файла другой; поэтому продакшн-строители здесь затенены обёрткой,
+# подставляющей ``coder.clone_root``. Значение, заданное самим тестом, уважается как есть.
+
+
+def _build_coding_assistant(
+    config: Mapping[str, object], **deps: object
+) -> CodingAssistant | None:
+    """Как продакшн-строитель, но с одноразовым ``clone_root`` (см. комментарий выше)."""
+    return _wire_build_coding_assistant(
+        with_a_throwaway_clone_root(config),
+        **deps,  # type: ignore[arg-type]
+    )
+
+
+def _build_interactive_session(
+    config: Mapping[str, object], **deps: object
+) -> InteractiveSessionManager | None:
+    """Как продакшн-строитель, но с одноразовым ``clone_root`` (см. комментарий выше)."""
+    return _wire_build_interactive_session(
+        with_a_throwaway_clone_root(config),
+        **deps,  # type: ignore[arg-type]
+    )
+
 
 _OWNER_ID = 27468732
 _CHAT_ID = -100123
@@ -129,7 +169,7 @@ def _session_deps() -> dict[str, object]:
 
 
 def _one_shot_runner(config: Mapping[str, object]) -> SubprocessClaudeRunner:
-    assistant = _build_coding_assistant(config, **_assistant_deps())  # type: ignore[arg-type]
+    assistant = _build_coding_assistant(config, **_assistant_deps())
     assert assistant is not None
     runner = assistant._runner
     assert isinstance(runner, SubprocessClaudeRunner)
@@ -137,7 +177,7 @@ def _one_shot_runner(config: Mapping[str, object]) -> SubprocessClaudeRunner:
 
 
 def _interactive_runner(config: Mapping[str, object]) -> InteractiveClaudeRunner:
-    manager = _build_interactive_session(config, **_session_deps())  # type: ignore[arg-type]
+    manager = _build_interactive_session(config, **_session_deps())
     assert manager is not None
     runner = manager._runner_factory()
     assert isinstance(runner, InteractiveClaudeRunner)
@@ -261,13 +301,18 @@ def _spawn_envs(config: Mapping[str, object]) -> list[dict[str, str] | None]:
     return [one_shot._env, interactive._env]
 
 
-def test_default_wiring_spawns_claude_without_any_env_override() -> None:
-    # OFF-путь: барьера нет вовсе → спавн без ``env=``, байт-в-байт как до BOB-087.E.
-    assert _spawn_envs({"coder": {"enabled": True, "interactive": True}}) == [None, None]
+def test_default_wiring_already_puts_the_push_guard_into_both_spawns() -> None:
+    # 🔴 ИСПРАВЛЕНО ПО ФАКТУ 2026-08-15 (bob-c3r.1; правка видимая). Здесь стояло
+    # «OFF-путь: барьера нет вовсе → спавн без ``env=``» — то есть тест ЗАКРЕПЛЯЛ то, что
+    # в живом конфиге страховки от нечаянного push не существует (P0 ``bob-l3t``).
+    # Барьер развязан с ослаблением и стоит всегда.
+    for env in _spawn_envs({"coder": {"enabled": True, "interactive": True}}):
+        assert env is not None
+        assert PUSH_GUARD_STUB_URL in env["GIT_CONFIG_KEY_0"]
 
 
-def test_allow_bypass_puts_the_push_guard_into_both_spawns() -> None:
-    # ON-путь: то же самое ослабление, что впускает bypassPermissions, ставит и барьер.
+def test_the_owner_relaxation_does_not_remove_the_push_guard() -> None:
+    # Развязка двусторонняя: ослабление, впускающее bypassPermissions, барьер не снимает.
     config = {"coder": {"enabled": True, "interactive": True, "allow_bypass": True}}
 
     for env in _spawn_envs(config):

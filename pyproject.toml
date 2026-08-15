@@ -2331,6 +2331,43 @@ ignore = [
 "tests/support/process_coherence.py" = ["RUF001", "RUF002", "RUF003"]
 "tests/support/test_process_coherence.py" = ["RUF001", "RUF002", "RUF003"]
 "tests/test_process_drift_gate.py" = ["RUF001", "RUF002", "RUF003"]
+# bob-c3r.1 (барьер push стоит ВСЕГДА, лечение P0 bob-l3t): адаптер и тесты несут русские
+# пояснения, ПОЧЕМУ прежняя привязка барьера к owner-ослаблению была катастрофой и что
+# держит границу вместо несуществующего пер-действенного гейта (Cyrillic look-alikes
+# намеренны → RUF001-003). Real-git гард гоняет git фиксированной формой без шелла в
+# ОДНОРАЗОВОМ временном репозитории (→ S603/S607), а общий доступ к границе процесса
+# читает приватное поле собранного раннера (→ SLF001) — иначе он проверял бы не ту
+# проводку, что уходит в прод. Стабы проводки принимают параметры портов, которые им не
+# нужны (→ ARG002).
+"src/bob/coding/adapters/claude_runner.py" = ["RUF001", "RUF002", "RUF003"]
+"tests/support/wired_spawn_env.py" = ["ARG002", "RUF001", "RUF002", "RUF003", "SLF001"]
+"tests/infrastructure/coding/test_push_barrier_always_real_git.py" = [
+    "S603",
+    "S607",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+# bob-c3r.1, задача 1 (безопасная дорога — ДЕФОЛТ): гард на конфиге БЕЗ ключа и его
+# real-git половина. Русские пояснения того, почему «ключа нет» отныне значит «включено», а
+# значение «на вид настроенное» отвергается громко (Cyrillic look-alikes намеренны →
+# RUF001-003); фальшивый токен владельца в окружении — предмет проверки, а не секрет
+# (→ S105); настоящий git гоняется фиксированной формой без шелла (→ S603/S607).
+"tests/runtime/wiring/test_isolated_clone_is_the_default.py" = [
+    "S105",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+"tests/infrastructure/coding/test_default_workplace_real_git.py" = [
+    "S105",
+    "S603",
+    "S607",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+"tests/support/wiring_clone_root.py" = ["RUF001", "RUF002", "RUF003"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["bob"]
