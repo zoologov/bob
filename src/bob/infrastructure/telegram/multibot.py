@@ -73,6 +73,7 @@ from bob.infrastructure.telegram.gateway import (
     is_reaction_update,
 )
 from bob.infrastructure.telegram.guppi import GuppiHandler
+from bob.proactivity.self_improvement import MAGNITUDE_RANGE_TOP
 
 if TYPE_CHECKING:
     from contextlib import AbstractAsyncContextManager
@@ -243,6 +244,7 @@ class MultiBotGateway:
         plan_goal: PlanGoal | None = None,
         pursuit_store: PursuitStoreLike | None = None,
         rule_store: RuleStoreLike | None = None,
+        rule_max_magnitude: float = MAGNITUDE_RANGE_TOP,
         coding_assistant: CodingAssistantLike | None = None,
         reply_typing_interval: float = _DEFAULT_TYPING_INTERVAL,
         reply_clock: MonotonicClock = _LIVE_CLOCK,
@@ -276,6 +278,9 @@ class MultiBotGateway:
         self._plan_goal = plan_goal
         self._pursuit_store = pursuit_store
         self._rule_store = rule_store
+        # The soft-tilt ceiling GUPPI's ``/rules`` list judges a proposal by (BOB-096) —
+        # the same config value the announcer speaks by; passed straight through.
+        self._rule_max_magnitude = rule_max_magnitude
         self._coding_assistant = coding_assistant
         self._poll_timeout = poll_timeout
         # One inner TelegramGateway per bot does the per-bot intake/normalisation
@@ -367,6 +372,7 @@ class MultiBotGateway:
             plan_goal=self._plan_goal,
             pursuit_store=self._pursuit_store,
             rule_store=self._rule_store,
+            rule_max_magnitude=self._rule_max_magnitude,
             coding_assistant=self._coding_assistant,
             coding_configured=True,
         )

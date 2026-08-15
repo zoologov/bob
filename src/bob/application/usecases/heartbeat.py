@@ -86,6 +86,7 @@ def _bounded_valence_delta(*, current: float, baseline: float, step: float) -> f
         return max(raw, floor) - current
     return 0.0
 
+
 _POSITIVE_LABELS = frozenset({"positive", "pos", "good"})
 _NEGATIVE_LABELS = frozenset({"negative", "neg", "bad"})
 
@@ -251,10 +252,11 @@ class RuleAnnouncerStep(Protocol):
     Realised by
     :class:`~bob.proactivity.usecases.announce_rules.AnnounceProposedRules`: a rare,
     tactful step where Bob speaks ONE fresh ``PROPOSED`` self-improvement rule to the
-    owner ("Заметил за собой… Предлагаю… Включить?") and marks it announced so he does
-    not repeat it. Driven AFTER pattern detection on the same slow cadence (a freshly
-    proposed rule can be voiced next tick). It only PROPOSES — owner approval (the apply
-    gate) happens via the ``/rule approve`` command, never here. Best-effort and
+    owner IN HIS OWN WORDS (:mod:`bob.proactivity.rule_voice`, BOB-096 срез 5) and marks
+    it announced so he does not repeat it. Driven AFTER pattern detection on the same
+    slow cadence (a freshly proposed rule can be voiced next tick). It only PROPOSES —
+    owner approval (the apply gate) happens via the ``/rule approve`` command, never
+    here. Best-effort and
     optional: unwired, the reflect tick behaves exactly as before.
     """
 
@@ -601,9 +603,7 @@ def _taste_profile(taste: TasteEngine) -> dict[str, object]:
     }
 
 
-def _grounding_contents(
-    episodes: Sequence[Mapping[str, object]], limit: int
-) -> tuple[str, ...]:
+def _grounding_contents(episodes: Sequence[Mapping[str, object]], limit: int) -> tuple[str, ...]:
     """The ``content`` of the ``limit`` most-recent NON-reflection episodes (BOB-047 .1).
 
     Grounds a reflection in what is actually happening now — REAL moments (messages,
@@ -617,16 +617,12 @@ def _grounding_contents(
     if limit <= 0:
         return ()
     grounding = [
-        str(row.get("content", ""))
-        for row in episodes
-        if row.get("event_type") != "reflection"
+        str(row.get("content", "")) for row in episodes if row.get("event_type") != "reflection"
     ]
     return tuple(grounding[-limit:])
 
 
-def _reflection_contents(
-    episodes: Sequence[Mapping[str, object]], window: int
-) -> tuple[str, ...]:
+def _reflection_contents(episodes: Sequence[Mapping[str, object]], window: int) -> tuple[str, ...]:
     """The ``content`` of the recent REFLECTION episodes within ``window`` (BOB-026 .2).
 
     Dedup compares a fresh thought only against Bob's own recent REFLECTIONS, never
@@ -637,9 +633,7 @@ def _reflection_contents(
     if window <= 0:
         return ()
     reflections = [
-        str(row.get("content", ""))
-        for row in episodes
-        if row.get("event_type") == "reflection"
+        str(row.get("content", "")) for row in episodes if row.get("event_type") == "reflection"
     ]
     return tuple(reflections[-window:])
 

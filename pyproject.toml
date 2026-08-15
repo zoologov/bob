@@ -252,6 +252,19 @@ ignore = [
     "RUF002",
     "RUF003",
 ]
+# The rule-announcement delivery core (BOB-096 срез 1) carries Russian policy docstrings +
+# comments (the six-day «долбёжка» defect it fixes) whose Cyrillic look-alikes are
+# intentional — RUF001/RUF002/RUF003 do not apply to these.
+"src/bob/proactivity/rule_announcement.py" = ["RUF001", "RUF002", "RUF003"]
+# Двери генерации и шов канона (BOB-096 срез 3) описывают по-русски, чем является вывод
+# каждой двери и почему запрет о голосе обязан доехать до всех — кириллические похожие
+# символы в этих докстрингах и комментариях намеренны (→ RUF001/RUF002/RUF003).
+"src/bob/application/router/generation_door.py" = ["RUF001", "RUF002", "RUF003"]
+"src/bob/application/router/voice_canon.py" = ["RUF001", "RUF002", "RUF003"]
+# Голос предложения (BOB-096 срез 5) — это САМ русский текст, который Боб произносит
+# owner'у, плюс докстринги про живую жалобу «выглядит очень скриптовано»: кириллические
+# похожие символы в этих литералах намеренны — RUF001/RUF002/RUF003 к ним не применяются.
+"src/bob/proactivity/rule_voice.py" = ["RUF001", "RUF002", "RUF003"]
 # The Planner + plan_goal use-case (BOB-015 .2) carries Russian planner prompts +
 # owner-facing plan/status literals whose Cyrillic look-alikes are intentional —
 # RUF001/RUF002/RUF003 do not apply to these.
@@ -396,6 +409,18 @@ ignore = [
     "RUF003",
 ]
 "tests/infrastructure/coding/test_git_worktree.py" = ["N802", "RUF001", "RUF002", "RUF003"]
+# Поведенческий гард шва канона (BOB-096.10, review MAJOR-5): тест несёт РУССКОЕ
+# объяснение, почему текстовый гард пропустил ``voice_canon=None``, и утверждает на
+# русском тексте канона персоны — Cyrillic look-alikes здесь намеренные
+# (→ RUF001/RUF002/RUF003). Третья точка провязки (BOB-096.11) проверяется через ту же
+# фабрику петли, которой строит прод, — а публичного имени у неё нет и не должно быть:
+# это внутренняя фабрика потурового хода (→ SLF001).
+"tests/runtime/test_composed_wiring_carries_the_canon.py" = [
+    "RUF001",
+    "RUF002",
+    "RUF003",
+    "SLF001",
+]
 # The voice tests (BOB-016/BOB-020) assert on multi-line Russian persona/tone
 # literals whose Cyrillic look-alikes are intentional (→ RUF001/RUF003).
 "tests/domain/personality/test_voice.py" = [
@@ -685,6 +710,52 @@ ignore = [
     "RUF002",
     "RUF003",
 ]
+# Тесты досягаемости канона (BOB-096 срез 3) документируют дефект «директива приклеена к
+# одной двери» по-русски и ассертят на самом русском тексте запрета о голосе —
+# кириллические похожие символы в них намеренны (→ RUF001/RUF002/RUF003).
+"tests/application/router/test_generation_door.py" = [
+    "S101",
+    "ARG001",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+"tests/application/router/test_voice_canon.py" = [
+    "S101",
+    "ARG001",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+"tests/application/router/test_llm_router_voice_canon.py" = [
+    "S101",
+    "ARG001",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+"tests/test_canon_reaches_every_door.py" = [
+    "S101",
+    "ARG001",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+# Поведенческий тест вердикта о голосе (BOB-096 срез 4) воспроизводит ночь 6 августа:
+# по-русски документирует дефект и ЦИТИРУЕТ вывод дублёра, где кириллица с латиницей
+# перемешаны в одном слове — это и есть предмет проверки (→ RUF001/RUF002/RUF003).
+"tests/test_the_understudy_never_speaks_for_bob.py" = [
+    "S101",
+    "ARG001",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
 # The Tier-1 strictness tests (bob-41o) spell the owner's decision out in Russian comments
 # («дефект Tier-1 нельзя прятать», «нет петли») and stage Russian reply literals whose
 # Cyrillic look-alikes are intentional (→ RUF001/2/3).
@@ -697,6 +768,36 @@ ignore = [
     "RUF003",
 ]
 "tests/**/*.py" = ["S101", "ARG001", "PLR2004"]
+# The rule-delivery tests (BOB-096 срез 1) document the six-day «долбёжка» defect in
+# Russian comments/docstrings and use Russian rule literals — their Cyrillic look-alikes
+# are intentional (→ RUF001/RUF002/RUF003).
+"tests/domain/proactivity/test_rule_announcement.py" = [
+    "S101",
+    "ARG001",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+"tests/infrastructure/persistence/test_announce_rules_durability.py" = [
+    "S101",
+    "ARG001",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+# Тесты голоса предложения (BOB-096 срез 5) ассертят на РУССКИХ словах самого Боба
+# («чуть» / «заметно» / «сильно») и цитируют живую жалобу owner'а — кириллические
+# похожие символы там намеренны (→ RUF001/RUF002/RUF003).
+"tests/domain/proactivity/test_rule_voice.py" = [
+    "S101",
+    "ARG001",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
 # The Planner + plan_goal use-case tests (BOB-015 .2) and GUPPI goal-command tests
 # assert on Russian goal/plan/command literals whose Cyrillic look-alikes are
 # intentional (→ RUF001/RUF002/RUF003).
@@ -2171,6 +2272,58 @@ ignore = [
     "RUF002",
     "RUF003",
 ]
+# Приёмочные сценарии BOB-096 (предложение поправить себя + голос, который остаётся):
+# харнессы и шаги биндят русский .feature-текст, ставят русские реплики модели и
+# ассертят через границу (S101), в фейках сети/шлюза есть неиспользуемые параметры
+# протокола (ARG001/ARG002), а числа в утверждениях — сам предмет проверки (PLR2004).
+"tests/acceptance/rule_proposal_harness.py" = [
+    "S101",
+    "ARG001",
+    "ARG002",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+"tests/acceptance/steps/test_rule_proposal.py" = [
+    "S101",
+    "ARG001",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+"tests/acceptance/voice_that_stays_harness.py" = [
+    "S101",
+    "ARG001",
+    "ARG002",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+"tests/acceptance/steps/test_voice_that_stays.py" = [
+    "S101",
+    "ARG001",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+# BOB-096 (фикс ревью): провязка потолка величины до обоих владельческих концов —
+# комментарий провязки и тест на ней написаны по-русски, кириллические похожие символы
+# намеренны. Тесту дополнительно нужны assert-ы, фейк-боты с неиспользуемыми
+# аргументами и «магические» числа потолков/id чатов.
+"src/bob/runtime/wiring/telegram.py" = ["RUF001", "RUF002", "RUF003"]
+"tests/runtime/wiring/test_self_improvement_ceiling.py" = [
+    "S101",
+    "ARG001",
+    "ARG002",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
 
 [tool.ruff.lint.isort]
 known-first-party = ["bob"]
@@ -2294,6 +2447,16 @@ source_paths = [
     # the reverse import closes a node cycle), and is listed here file-by-file so the gate
     # is real; the orchestration around it (``llm_router``) stays out of scope.
     "src/bob/application/router/voice_integrity.py",
+    # BOB-096.3: досягаемость канона о голосе — два чистых ядра шва. ``generation_door``
+    # отвечает «чем является вывод этой двери» (голос Боба / вывод остаётся / машинный
+    # формат) и fail-closed для незнакомой двери; ``voice_canon`` — идемпотентное
+    # вплетение запрета в payload (не служебной двери, не дважды, не пустым текстом). Обе
+    # развилки детерминированы и ровно те, что мутация умеет мерить; орхестрация вокруг
+    # (``llm_router``) остаётся вне scope. Перечислены пофайлово — иначе гейт был бы
+    # фантомным (§0.3 п.7). 🔴 Реестр дверей — словарь МОДУЛЬНОГО УРОВНЯ, и его мутация не
+    # трогает: полноту таблицы стережёт архитектурный тест, а не этот счётчик.
+    "src/bob/application/router/generation_door.py",
+    "src/bob/application/router/voice_canon.py",
     # bob-g7t: правило наследования метки приватности производной записью
     # (``strictest_visibility``) — чистый, детерминированный вердикт «какое разрешение
     # несёт дайджест, собранный из этих источников». Живёт в ядре, потому что нужно
@@ -2368,6 +2531,11 @@ pytest_add_cli_args_test_selection = [
     # BOB-087.E-M1: the fast, deterministic unit tests for the voice-integrity verdict —
     # selected so a per-slice ``voice_integrity`` run measures that core's mutants.
     "tests/application/router/test_voice_integrity.py",
+    # BOB-096.3: тесты двух ядер шва канона. Без них мутанты ``generation_door`` /
+    # ``voice_canon`` пришли бы как «no tests» — то есть гейт объявлен, а прогоняется ноль
+    # (§0.3 п.7, фантомный гейт). Тесты чистые и быстрые: ни I/O, ни подпроцесса.
+    "tests/application/router/test_generation_door.py",
+    "tests/application/router/test_voice_canon.py",
     # BOB-090.B-fix2 (MINOR-1): ``send_to_chat`` lives in ``src/bob/capabilities`` — which IS
     # scanned — but its test was never selected, so all 104 of its mutants came back «no
     # tests»: the ONE place the delivery gate sequence (нет хода → пусто → адрес → согласие →

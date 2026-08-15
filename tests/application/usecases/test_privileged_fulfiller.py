@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING
 from bob.application.usecases.privileged_fulfiller import PrivilegedRequestFulfiller
 from bob.capabilities.ports import ToolCallResult
 from bob.capabilities.usecases.registry import CapabilityRegistry
+from bob.personality.voice import guppi_voice_canon
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -75,7 +76,10 @@ def _registry_with_capability() -> CapabilityRegistry:
 async def test_plain_router_fulfilment_when_no_tools_wired() -> None:
     router = _FakeRouter()
     fulfiller = PrivilegedRequestFulfiller(
-        router=router, registry=CapabilityRegistry(), tool_provider=None
+        router=router,
+        registry=CapabilityRegistry(),
+        tool_provider=None,
+        voice_canon=guppi_voice_canon,
     )
 
     reply = await fulfiller.fulfil(
@@ -94,6 +98,7 @@ async def test_tool_loop_fulfilment_when_provider_and_registry_wired() -> None:
         router=_FakeRouter(),
         registry=_registry_with_capability(),
         tool_provider=provider,
+        voice_canon=guppi_voice_canon,
     )
 
     reply = await fulfiller.fulfil(

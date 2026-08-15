@@ -38,9 +38,22 @@ draft-стриминг и Rich Messages, пиннинг ответа в topic-th
   `BotScope` (чат, опционально пиннутый к topic-thread'у), `BotRegistration`.
 - **guppi.py** — `GuppiHandler`, gatekeeper/admin-идентичность GUPPI (BOB-003):
   видимый reject неавторизованного, объявление обиды и owner-команды `/quiet`, `/wake`,
-  `/goals`, `/code`, … (`reject`, `announce_sulk`, `handle_general_command`) поверх
-  узких store-портов (`ProactivityStoreLike`, `GoalStoreLike`, `PursuitStoreLike`,
-  `CodingAssistantLike`, `RuleStoreLike`).
+  `/goals`, `/code`, `/rules`, `/rule <действие> <id>` (`reject`, `announce_sulk`,
+  `handle_general_command`) поверх узких store-портов (`ProactivityStoreLike`,
+  `GoalStoreLike`, `PursuitStoreLike`, `CodingAssistantLike`, `RuleStoreLike`).
+  🔴 `/rules` перечисляет ВСЕ правила Боба и объясняет, почему он о каком-то молчит
+  (BOB-096): `· не доставлено` — попытки отправки исчерпаны; `· нечего одобрять` —
+  предложение вырожденное; `· просит 0.7 при потолке 0.3` — содержание есть, величина
+  выше конфигурного потолка. Причину считает домен (`unactionable_reason` /
+  `is_undelivered_proposal`), GUPPI лишь кладёт её в слова, а потолок берёт тот же, с
+  которым провязан анонсёр (`rule_max_magnitude`, проброс через `MultiBotGateway`), —
+  иначе список судил бы по одному числу, а молчание Боба по другому. Числа в третьей
+  метке показываются намеренно: из них владелец и решает, поднять потолок или отклонить.
+  Совпадение чисел держится провязкой, а не типом: у анонсёра `max_magnitude` обязателен
+  без умолчания, а здесь и у `MultiBotGateway` умолчание есть (`MAGNITUDE_RANGE_TOP`,
+  то есть «потолка не сообщили»), поэтому непровязанный `GuppiHandler` покажет мусор, но
+  промолчит о превышении. Живая сборка передаёт настоящее число — это проверяется тестом
+  через `_build_multibot` и настоящую команду владельца, а не через конструктор.
 - **rich.py** — `MarkdownToRichMessage`, чистая конвертация markdown → дерево aiogram
   `RichMessage` (`convert`): заголовки/списки/цитаты/код/inline (bold/italic/`code`/spoiler)
   **+ GFM-таблицы `| … |` → нативный `RichBlockTable`** (header `is_header`, выравнивание из

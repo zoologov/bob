@@ -346,17 +346,23 @@ CREATE INDEX IF NOT EXISTS idx_task_goal ON task (persona_id, goal_id);
 -- the bounded soft-tilt amount; `state` is the RuleState (proposed/approved/paused/
 -- rejected/removed); `origin` is the RuleOrigin (bob_proposed). All enums persist as
 -- TEXT. The detector only ever writes `proposed`; only owner approval moves it onward.
+-- `announced`/`announce_attempts` (BOB-096) are DELIVERY bookkeeping, not lifecycle
+-- state: did Bob manage to voice this proposal to the owner, and how many times did he
+-- try. They live here (not in a process-memory set) so a restart never re-announces an
+-- already-voiced rule, and the attempt cap survives with it.
 CREATE TABLE IF NOT EXISTS improvement_rule (
-    persona_id  TEXT NOT NULL,
-    id          TEXT NOT NULL,
-    observation TEXT NOT NULL,              -- human-readable, what Bob noticed (ru)
-    adjustment  TEXT NOT NULL,              -- the correction Bob proposes
-    lever       TEXT NOT NULL,              -- Lever value (allowlist)
-    magnitude   REAL NOT NULL,              -- bounded soft-tilt amount
-    state       TEXT NOT NULL,              -- RuleState value
-    origin      TEXT NOT NULL,              -- RuleOrigin value (bob_proposed)
-    created_at  TEXT NOT NULL,              -- ISO-8601, timezone-aware
-    evidence    TEXT NOT NULL,              -- which patterns fired
+    persona_id        TEXT NOT NULL,
+    id                TEXT NOT NULL,
+    observation       TEXT NOT NULL,              -- human-readable, what Bob noticed (ru)
+    adjustment        TEXT NOT NULL,              -- the correction Bob proposes
+    lever             TEXT NOT NULL,              -- Lever value (allowlist)
+    magnitude         REAL NOT NULL,              -- bounded soft-tilt amount
+    state             TEXT NOT NULL,              -- RuleState value
+    origin            TEXT NOT NULL,              -- RuleOrigin value (bob_proposed)
+    created_at        TEXT NOT NULL,              -- ISO-8601, timezone-aware
+    evidence          TEXT NOT NULL,              -- which patterns fired
+    announced         INTEGER NOT NULL DEFAULT 0, -- 0/1 the owner heard this proposal
+    announce_attempts INTEGER NOT NULL DEFAULT 0, -- delivery attempts spent (capped)
     PRIMARY KEY (persona_id, id)
 );
 

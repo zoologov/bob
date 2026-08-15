@@ -2,12 +2,13 @@
 # SPDX-License-Identifier: BUSL-1.1
 # See the LICENSE file in the project root for full license information.
 
-"""Тесты чистого домена self-improvement (BOB-028 .1).
+"""Тесты чистого домена self-improvement (BOB-028 .1, BOB-096).
 
 Покрывают: жёсткий allowlist рычагов (Lever — и ТОЛЬКО разрешённые члены, без
 authz/гостя/SOUL/safety по конструкции), машину состояний правила (все ветки
 переходов: валидные/невалидные/терминальные, ключевой PROPOSED->APPROVED),
-выбор активных правил (только APPROVED) и кламп величины наклона (границы/края).
+выбор активных правил (только APPROVED), кламп величины наклона (границы/края) и
+вердикт «есть ли в предложении что одобрять» (BOB-096).
 Всё детерминированно, без I/O и рандома.
 """
 
@@ -20,12 +21,15 @@ import pytest
 from bob.proactivity.self_improvement import (
     ImprovementRule,
     Lever,
+    ProposalDefect,
     RuleOrigin,
     RuleState,
     active_rules,
     can_transition,
     clamp_magnitude,
+    is_actionable_proposal,
     is_duplicate_rule,
+    proposal_defect,
     rules_for_lever,
 )
 
@@ -280,3 +284,162 @@ def test_distinct_observations_same_lever_are_not_dups() -> None:
     candidate = _obs_rule("Слишком часто шучу не к месту")
     existing = _obs_rule("Отвечаю слишком сухо и формально без эмпатии")
     assert is_duplicate_rule(candidate, [existing]) is False
+
+
+# --- is_actionable_proposal (вырожденное предложение не рождается, BOB-096) ---
+#
+# Живой прецедент: rule-20260806060649-0 — наблюдение-тавтология, adjustment ПУСТО,
+# magnitude 0.0. Owner получил вопрос «включить?», на который нельзя ответить
+# осмысленно. Вердикт ниже — ровно про это: есть ли в предложении что одобрять.
+
+_CEILING = 0.3
+
+
+def _proposal(
+    *,
+    observation: str = "Отвечаю owner'у резче, когда устал",
+    adjustment: str = "Добавить теплоты, когда разговор долгий",
+    magnitude: float = 0.2,
+) -> ImprovementRule:
+    """ImprovementRule с заданными наблюдением/поправкой/величиной (для вердикта)."""
+    return ImprovementRule(
+        id="p1",
+        observation=observation,
+        adjustment=adjustment,
+        lever=Lever.TONE,
+        magnitude=magnitude,
+        state=RuleState.PROPOSED,
+        origin=RuleOrigin.BOB_PROPOSED,
+        created_at=_NOW,
+        evidence="",
+    )
+
+
+def test_substantive_proposal_is_actionable() -> None:
+    assert is_actionable_proposal(_proposal(), max_magnitude=_CEILING) is True
+
+
+@pytest.mark.parametrize("observation", ["", "   ", "\n\t "])
+def test_empty_observation_is_not_actionable(observation: str) -> None:
+    # Нечего одобрять: Боб не назвал, что именно он за собой заметил.
+    rule = _proposal(observation=observation)
+    assert is_actionable_proposal(rule, max_magnitude=_CEILING) is False
+
+
+@pytest.mark.parametrize("adjustment", ["", "   ", "\n\t "])
+def test_empty_adjustment_is_not_actionable(adjustment: str) -> None:
+    # Ровно живой дефект: «Предлагаю: .» — поправки нет, одобрять нечего.
+    rule = _proposal(adjustment=adjustment)
+    assert is_actionable_proposal(rule, max_magnitude=_CEILING) is False
+
+
+@pytest.mark.parametrize("magnitude", [0.0, -0.0, -0.1, -1.0])
+def test_non_positive_magnitude_is_not_actionable(magnitude: float) -> None:
+    # Нулевой наклон ничего не меняет: одобрение было бы пустой формальностью.
+    rule = _proposal(magnitude=magnitude)
+    assert is_actionable_proposal(rule, max_magnitude=_CEILING) is False
+
+
+def test_magnitude_above_the_configured_ceiling_is_not_actionable() -> None:
+    # Величина вне max_magnitude: применение всё равно урежет её до потолка, то есть
+    # owner одобрял бы не то, что ему показали.
+    rule = _proposal(magnitude=_CEILING + 0.01)
+    assert is_actionable_proposal(rule, max_magnitude=_CEILING) is False
+
+
+def test_magnitude_exactly_at_the_ceiling_is_actionable() -> None:
+    # Граница включительна: ровно потолок исполним как предложено.
+    rule = _proposal(magnitude=_CEILING)
+    assert is_actionable_proposal(rule, max_magnitude=_CEILING) is True
+
+
+def test_the_smallest_positive_magnitude_is_actionable() -> None:
+    rule = _proposal(magnitude=0.01)
+    assert is_actionable_proposal(rule, max_magnitude=_CEILING) is True
+
+
+def test_zero_ceiling_leaves_nothing_actionable() -> None:
+    # Потолок 0 = «наклоны запрещены»: исполнимого предложения не существует.
+    assert is_actionable_proposal(_proposal(), max_magnitude=0.0) is False
+
+
+# --- proposal_defect: ПОЧЕМУ предложение не годится (BOB-096, фикс ревью) -----
+#
+# 🔴 Вердикт был прав, а ярлык врал. В живой базе владельца из четырёх отклонённых
+# правил МУСОР ровно одно (пустая поправка, величина 0.0); у трёх остальных поправка
+# осмысленная (47–74 символа), и отсеяны они только за превышение потолка 0.3. Одна
+# метка «нечего одобрять» на все четыре сказала бы владельцу неправду: одобрять там
+# есть что, и решение у него другое и действенное — поднять потолок или согласиться
+# на урезанную величину. Причина отказа поэтому — часть самого вердикта, а не
+# отдельная догадка вызывающего: is_actionable_proposal выведен ИЗ неё.
+
+
+def test_a_substantive_proposal_has_no_defect() -> None:
+    assert proposal_defect(_proposal(), max_magnitude=_CEILING) is None
+
+
+@pytest.mark.parametrize("observation", ["", "   ", "\n\t "])
+def test_an_empty_observation_is_nothing_to_approve(observation: str) -> None:
+    rule = _proposal(observation=observation)
+
+    assert (
+        proposal_defect(rule, max_magnitude=_CEILING)
+        is ProposalDefect.NOTHING_TO_APPROVE
+    )
+
+
+@pytest.mark.parametrize("adjustment", ["", "   ", "\n\t "])
+def test_an_empty_adjustment_is_nothing_to_approve(adjustment: str) -> None:
+    rule = _proposal(adjustment=adjustment)
+
+    assert (
+        proposal_defect(rule, max_magnitude=_CEILING)
+        is ProposalDefect.NOTHING_TO_APPROVE
+    )
+
+
+@pytest.mark.parametrize("magnitude", [0.0, -0.0, -0.1, -1.0])
+def test_a_non_positive_tilt_is_nothing_to_approve(magnitude: float) -> None:
+    rule = _proposal(magnitude=magnitude)
+
+    assert (
+        proposal_defect(rule, max_magnitude=_CEILING)
+        is ProposalDefect.NOTHING_TO_APPROVE
+    )
+
+
+def test_a_magnitude_above_the_ceiling_is_a_separate_defect() -> None:
+    # 🔴 Сердце правки: содержание есть, не хватает только разрешения на величину.
+    rule = _proposal(magnitude=_CEILING + 0.4)
+
+    assert proposal_defect(rule, max_magnitude=_CEILING) is ProposalDefect.ABOVE_CEILING
+
+
+def test_the_ceiling_itself_is_not_a_defect() -> None:
+    assert proposal_defect(_proposal(magnitude=_CEILING), max_magnitude=_CEILING) is None
+
+
+def test_emptiness_outranks_the_ceiling() -> None:
+    # У пустого предложения сверх потолка нечего одобрять В ЛЮБОМ случае: поднятие
+    # потолка его не спасёт, поэтому владельцу называется именно пустота.
+    rule = _proposal(adjustment="", magnitude=_CEILING + 0.4)
+
+    assert (
+        proposal_defect(rule, max_magnitude=_CEILING)
+        is ProposalDefect.NOTHING_TO_APPROVE
+    )
+
+
+def test_the_verdict_is_exactly_the_absence_of_a_defect() -> None:
+    # Одна истина на двоих: вердикт выведен из причины, поэтому разойтись они не могут.
+    for rule in (
+        _proposal(),
+        _proposal(adjustment=""),
+        _proposal(magnitude=0.0),
+        _proposal(magnitude=_CEILING + 0.4),
+        _proposal(magnitude=_CEILING),
+    ):
+        defect = proposal_defect(rule, max_magnitude=_CEILING)
+        actionable = is_actionable_proposal(rule, max_magnitude=_CEILING)
+
+        assert actionable is (defect is None)

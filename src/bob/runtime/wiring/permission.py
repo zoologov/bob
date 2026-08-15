@@ -17,6 +17,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from bob.application.usecases.privileged_fulfiller import PrivilegedRequestFulfiller
+from bob.personality.voice import guppi_voice_canon
 from bob.social.adapters.permission_channels import (
     _PermissionNotifier,
     _PermissionRequesterChannel,
@@ -90,7 +91,14 @@ def _build_permission_flow(
         owner_id=owner_id or None,
         executor=PermissionExecutor(
             fulfiller=PrivilegedRequestFulfiller(
-                router=router, registry=registry, tool_provider=tool_provider
+                router=router,
+                registry=registry,
+                tool_provider=tool_provider,
+                # 🔴 BOB-096.8: the tool path of the fulfilment does not go through the
+                # router, so the ban on role-playing GUPPI is handed to it HERE — the one
+                # door that told the model «You are Bob… answer in character» and carried
+                # no canon at all (review MAJOR-1).
+                voice_canon=guppi_voice_canon,
             ),
             channel=_PermissionRequesterChannel(bot=bot, chat_id=chat_id),
             authorizer=authorizer,

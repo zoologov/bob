@@ -21,6 +21,24 @@ conversation and the registry manifest, it:
 An unknown tool is not fatal: the error is fed back as the tool result so the
 model can recover, mirroring how a real tool failure would surface. This is pure
 application policy; the capabilities' side effects live behind their own ports.
+
+🔴 **The VOICE canon passes through here too (BOB-096.8).** The tool-loop is the SECOND —
+and only other — point at which a payload leaves THROUGH THE PROVIDER PORT: the router
+builds one kind of turn, this loop the other. (🔴 **Correction, BOB-096.10:** this used to
+read «the only other point at which a payload leaves for a provider», which claimed more
+than the tree holds — :mod:`bob.memory.adapters.ollama_reranker` and
+:mod:`bob.capabilities.adapters.web_search_qwen` compose their own payloads and POST them
+to a generative model themselves. Neither needs the canon by the epic's own rule — a score
+spent within the turn, and search material that is not Bob's voice — so the BEHAVIOUR is
+right; the word «only» was not. The count is about the paths that SPEAK AS BOB, and those
+are the two that go through the port.) The seam of BOB-096.3 stood only in the router, so the
+loop's OWN caller — the one-shot privileged fulfilment
+(:class:`~bob.application.usecases.privileged_fulfiller.PrivilegedRequestFulfiller`),
+whose prompt says «You are Bob… Answer them directly, in character» — reached the model
+with no ban on role-playing GUPPI at all (review MAJOR-1). So the same
+:func:`~bob.application.router.voice_canon.fold_voice_canon` stands at THIS door too, and
+every caller of the loop gets the canon by construction. It is idempotent, so the
+conversational turn (whose persona already carries the ban verbatim) is byte-identical.
 """
 
 from __future__ import annotations
@@ -29,12 +47,15 @@ import json
 import logging
 from typing import TYPE_CHECKING
 
+from bob.application.router.generation_door import TaskType, door_for
+from bob.application.router.voice_canon import fold_voice_canon
 from bob.capabilities.usecases.registry import UnknownCapabilityError
 from bob.memory.self_action import SelfAction, SelfActionKind
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
+    from bob.application.router.voice_canon import VoiceCanon
     from bob.capabilities.ports import ToolCall, ToolCallingProvider
     from bob.capabilities.usecases.progress_announcer import ProgressAnnouncer
     from bob.capabilities.usecases.registry import CapabilityRegistry
@@ -111,6 +132,7 @@ class ToolLoop:
         recorder: SelfActionRecorder | None = None,
         sender_id: int | None = None,
         visibility: str | None = None,
+        voice_canon: VoiceCanon | None = None,
     ) -> None:
         if max_turns <= 0:
             raise ValueError("max_turns must be positive")
@@ -118,6 +140,12 @@ class ToolLoop:
         self._registry = registry
         self._max_turns = max_turns
         self._announcer = announcer
+        # 🔴 The VOICE canon for the turns that leave THROUGH THIS LOOP (BOB-096.8). Same
+        # shape as the router's seam: the TEXT belongs to the persona and arrives injected,
+        # an unwired seam leaves the payload byte-for-byte (every hand-built test loop), and
+        # the composition root supplies the implementation at each construction site — which
+        # an architectural test guards by PROPERTY, not by module name.
+        self._voice_canon = voice_canon
         # Autobiography seam (BOB-079.3): Bob records that HE used tools, first-person.
         # ``None`` (the default, and the OFF-flag NoOp) → zero writes, behaviour as before.
         self._recorder = recorder
@@ -133,9 +161,17 @@ class ToolLoop:
         Bob's autobiography never floods (lesson BOB-076). A tool that FAILS records its own
         ``TOOL_FAILURE`` and is excluded from that summary; a run with no tool calls writes
         nothing at all.
+
+        🔴 The voice canon is folded ONCE, here at the entry: every re-ask of the loop
+        (tool round-trip, narration backstop) re-sends this same conversation, so the ban
+        rides all of them — exactly as the router's single payload build carries it into the
+        rescue attempt. The turn is the conversational door: whatever this loop answers is
+        published to a human as Bob's words and settles into his memory.
         """
         tools = self._registry.manifest()
-        conversation: list[ToolLoopMessage] = list(messages)
+        conversation: list[ToolLoopMessage] = fold_voice_canon(
+            list(messages), door=door_for(TaskType.REPLY_TO_USER), canon=self._voice_canon
+        )
         used_tools: list[str] = []
         retried = False
         for turn_index in range(self._max_turns):

@@ -19,15 +19,19 @@
   из :class:`Lever`-allowlist (элемент с рычагом вне allowlist отбрасывается —
   граница безопасности по конструкции), ``magnitude`` клампится в ``[0, 1]``. Не-JSON
   / ошибка провайдера / мусор → ПУСТОЙ список (best-effort, без падения). Детектор
-  НИЧЕГО не применяет — только предлагает (применение — .3).
+  НИЧЕГО не применяет — только предлагает (применение — .3). Тир, на котором он
+  рассуждает, задаёт ``self_improvement.detector_tier`` (BOB-096) — ключ конфига,
+  который до BOB-096 никто не читал.
 
 * :class:`DetectPatterns` — use-case, который ReflectTick-seam драйвит на редком
   кадэнсе: собрать сигналы (опц. :class:`SignalSource`; unwired → пустые сигналы) →
-  :meth:`PatternDetector.detect` → ДЕДУП против существующих правил (рычаг + близость
-  наблюдения, реюз идеи анти-повтора BOB-026) → сохранить НОВЫХ кандидатов в
-  ``PROPOSED`` через ``save_rule``. Лимит ``max_active_rules`` не даёт плодить
-  правила (учитываются уже «живые», включая PROPOSED). НИКАКОГО применения и НИКАКИХ
-  owner-команд здесь — только предложение кандидатов.
+  :meth:`PatternDetector.detect` → ОТБРАКОВКА вырожденных кандидатов
+  (:func:`is_actionable_proposal`: owner не должен получать вопрос «включить?», на
+  который нельзя ответить осмысленно — BOB-096) → ДЕДУП против существующих правил
+  (рычаг + близость наблюдения, реюз идеи анти-повтора BOB-026) → сохранить НОВЫХ
+  кандидатов в ``PROPOSED`` через ``save_rule``. Лимит ``max_active_rules`` не даёт
+  плодить правила (учитываются уже «живые», включая PROPOSED). НИКАКОГО применения и
+  НИКАКИХ owner-команд здесь — только предложение кандидатов.
 """
 
 from __future__ import annotations
@@ -39,12 +43,14 @@ from typing import TYPE_CHECKING, Protocol
 
 from bob.application.router.llm_router import LLMRequest, TaskType
 from bob.proactivity.self_improvement import (
+    MAGNITUDE_RANGE_TOP,
     ImprovementRule,
     ImprovementSignals,
     Lever,
     RuleOrigin,
     RuleState,
     clamp_magnitude,
+    is_actionable_proposal,
     is_duplicate_rule,
 )
 
@@ -64,10 +70,6 @@ __all__ = [
     "SignalSource",
 ]
 
-# Потолок величины наклона на стороне детектора. Домен/применение (.3) клампят к
-# конфиг-потолку ``max_magnitude`` ещё раз; здесь — ровно единичный диапазон правила.
-_MAGNITUDE_CAP = 1.0
-
 # Консервативный дефолт предела числа «живых» правил (PROPOSED+APPROVED+PAUSED),
 # чтобы детектор не заваливал owner'а кандидатами. Перекрывается из конфига (.3).
 _DEFAULT_MAX_ACTIVE_RULES = 5
@@ -79,18 +81,29 @@ _LEVERS_BY_VALUE: dict[str, Lever] = {lever.value: lever for lever in Lever}
 
 _LEVER_LIST = ", ".join(lever.value for lever in Lever)
 
-_SYSTEM_PROMPT = (
-    "Ты помогаешь Бобу замечать поведенческие паттерны за собой и формулировать "
-    "человечные правила-поправки. По переданным сигналам о себе предложи правила. "
-    "Ответь ТОЛЬКО JSON-массивом объектов, каждый вида "
-    '{"observation": "<что Боб заметил за собой, по-русски>", '
-    '"adjustment": "<какую мягкую поправку он предлагает>", '
-    f'"lever": "<рычаг ТОЛЬКО из набора: {_LEVER_LIST}>", '
-    '"magnitude": <число от 0 до 1 — насколько сильно наклонить>, '
-    '"evidence": "<какие сигналы сработали>"}. '
-    "Рычаг ОБЯЗАТЕЛЬНО из этого набора и НИКАКОЙ другой. magnitude — мягкий наклон, "
-    "не перехват. Если внятных паттернов нет — ответь []."
-)
+
+def _system_prompt(max_magnitude: float) -> str:
+    """Системный промпт детектора — с РЕАЛЬНЫМ потолком величины наклона (BOB-096).
+
+    Потолок сообщается модели, потому что кандидат с величиной выше него отбраковывается
+    как неисполнимый (:func:`is_actionable_proposal`). Не сказать модели диапазон —
+    значит тихо превратить эту отбраковку в выключатель самоулучшения: при потолке
+    ``0.3`` модель просила бы привычные ``0.5`` и её предложения гибли бы все до одного.
+    """
+    return (
+        "Ты помогаешь Бобу замечать поведенческие паттерны за собой и формулировать "
+        "человечные правила-поправки. По переданным сигналам о себе предложи правила. "
+        "Ответь ТОЛЬКО JSON-массивом объектов, каждый вида "
+        '{"observation": "<что Боб заметил за собой, по-русски>", '
+        '"adjustment": "<какую мягкую поправку он предлагает>", '
+        f'"lever": "<рычаг ТОЛЬКО из набора: {_LEVER_LIST}>", '
+        f'"magnitude": <число строго больше 0 и не больше {max_magnitude:g} — '
+        "насколько сильно наклонить>, "
+        '"evidence": "<какие сигналы сработали>"}. '
+        "Рычаг ОБЯЗАТЕЛЬНО из этого набора и НИКАКОЙ другой. magnitude — мягкий наклон, "
+        "не перехват. observation и adjustment ОБЯЗАНЫ быть непустыми: правило без "
+        "поправки нечего одобрять. Если внятных паттернов нет — ответь []."
+    )
 
 
 class _DetectorRouter(Protocol):
@@ -122,11 +135,27 @@ class _SelfImprovementStoreLike(Protocol):
 
 
 class LlmPatternDetector:
-    """Детектор паттернов через LLM (порт :class:`PatternDetector`)."""
+    """Детектор паттернов через LLM (порт :class:`PatternDetector`).
 
-    def __init__(self, *, router: LLMRouter | _DetectorRouter, clock: Clock) -> None:
+    ``tier`` — тир, на котором детектор рассуждает (``self_improvement.detector_tier``
+    из конфига, BOB-096). ``None`` → дефолт задачи ``DETECT_PATTERNS``. ``max_magnitude``
+    — потолок величины наклона из конфига; он попадает в промпт, чтобы модель просила
+    величину внутри допустимого диапазона (см. :func:`_system_prompt`). Дефолт —
+    единичный диапазон правила: «конфигурного потолка не сообщили».
+    """
+
+    def __init__(
+        self,
+        *,
+        router: LLMRouter | _DetectorRouter,
+        clock: Clock,
+        tier: int | None = None,
+        max_magnitude: float = MAGNITUDE_RANGE_TOP,
+    ) -> None:
         self._router = router
         self._clock = clock
+        self._tier = tier
+        self._max_magnitude = max_magnitude
 
     async def detect(self, signals: ImprovementSignals) -> Sequence[ImprovementRule]:
         """Вернуть правила-кандидаты в ``PROPOSED`` (пусто, если паттернов нет).
@@ -145,9 +174,10 @@ class LlmPatternDetector:
         request = LLMRequest(
             task_type=TaskType.DETECT_PATTERNS,
             messages=[
-                {"role": "system", "content": _SYSTEM_PROMPT},
+                {"role": "system", "content": _system_prompt(self._max_magnitude)},
                 {"role": "user", "content": _render_signals(signals)},
             ],
+            tier_override=self._tier,
         )
         return await self._router.run(request)
 
@@ -171,7 +201,7 @@ class LlmPatternDetector:
                     observation=observation,
                     adjustment=adjustment,
                     lever=lever,
-                    magnitude=clamp_magnitude(magnitude, cap=_MAGNITUDE_CAP),
+                    magnitude=clamp_magnitude(magnitude, cap=MAGNITUDE_RANGE_TOP),
                     state=RuleState.PROPOSED,
                     origin=RuleOrigin.BOB_PROPOSED,
                     created_at=now,
@@ -182,10 +212,14 @@ class LlmPatternDetector:
 
 
 class DetectPatterns:
-    """Собрать сигналы → детектор → дедуп → сохранить кандидатов в PROPOSED.
+    """Собрать сигналы → детектор → отбраковка вырожденных → дедуп → PROPOSED.
 
     НИЧЕГО не применяет и не трогает owner-команды (это .3): use-case только
     предлагает правила, оставляя их в ``PROPOSED`` до owner-апрува.
+
+    Это ЕДИНСТВЕННАЯ дверь, через которую кандидат становится сохранённым правилом,
+    поэтому вердикт «есть ли что одобрять» стоит здесь — он накрывает ЛЮБУЮ реализацию
+    порта :class:`PatternDetector`, а не только парсер LLM-выхода (BOB-096).
     """
 
     def __init__(
@@ -196,15 +230,24 @@ class DetectPatterns:
         persona_id: str,
         signal_source: SignalSource | None = None,
         max_active_rules: int = _DEFAULT_MAX_ACTIVE_RULES,
+        max_magnitude: float = MAGNITUDE_RANGE_TOP,
     ) -> None:
         self._detector = detector
         self._store = store
         self._persona_id = persona_id
         self._signal_source = signal_source
         self._max_active_rules = max_active_rules
+        self._max_magnitude = max_magnitude
 
     async def run(self) -> None:
-        """Один проход детектора: сигналы → кандидаты → дедуп → персист (PROPOSED).
+        """Один проход детектора: сигналы → кандидаты → отбраковка → дедуп → персист.
+
+        Вырожденный кандидат (пустое наблюдение, пустая поправка, величина ``<= 0`` или
+        выше ``max_magnitude``) НЕ становится правилом: owner не должен получать вопрос
+        «включить?», на который нельзя ответить осмысленно (BOB-096). Отбраковка идёт
+        ПЕРВОЙ, поэтому мусор не съедает ни лимит живых правил, ни место в пачке, и она
+        МОЛЧАЛИВА (``debug``-запись): это нормальная фильтрация вывода модели, а не
+        сбой, требующий чьего-то внимания.
 
         Уже «живых» правил (PROPOSED/APPROVED/PAUSED) не больше лимита — иначе ничего
         не добавляем (не плодим). Каждый сохранённый кандидат уникален по (рычаг +
@@ -217,6 +260,12 @@ class DetectPatterns:
         live = [rule for rule in existing if rule.state in _LIVE_STATES]
         kept: list[ImprovementRule] = []
         for candidate in candidates:
+            if not is_actionable_proposal(candidate, max_magnitude=self._max_magnitude):
+                logger.debug(
+                    "Dropping a degenerate rule proposal (nothing to approve): lever=%s",
+                    candidate.lever.value,
+                )
+                continue
             if len(live) + len(kept) >= self._max_active_rules:
                 break
             if is_duplicate_rule(candidate, (*existing, *kept)):

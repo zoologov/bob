@@ -77,6 +77,15 @@ def _router(*, reply: str = "", raises: bool = False) -> tuple[LLMRouter, Script
     return router, provider
 
 
+def _two_tier_router(
+    *, reply: str = "[]"
+) -> tuple[LLMRouter, ScriptedProvider, ScriptedProvider]:
+    """Роутер с РАЗЛИЧИМЫМИ провайдерами тиров (кто именно получил запрос)."""
+    tier0 = ScriptedProvider(reply=reply)
+    tier1 = ScriptedProvider(reply=reply)
+    return LLMRouter(providers={0: tier0, 1: tier1}), tier0, tier1
+
+
 def _detector(*, reply: str = "", raises: bool = False) -> LlmPatternDetector:
     router, _ = _router(reply=reply, raises=raises)
     return LlmPatternDetector(router=router, clock=FixedClock(_NOW))
@@ -397,6 +406,209 @@ class _StaticSignalSource:
 
     async def collect(self) -> ImprovementSignals:
         return self._signals
+
+
+# --- Вырожденное предложение не рождается (BOB-096) ---------------------------
+#
+# Живой дефект: rule-20260806060649-0 — наблюдение-тавтология, adjustment ПУСТО,
+# magnitude 0.0, state proposed. Owner получил «Предлагаю: . Включить?» — вопрос,
+# на который нельзя ответить осмысленно. Тесты ниже гоняют ВЕСЬ путь: сырой выход
+# модели -> LlmPatternDetector -> DetectPatterns -> хранилище, и проверяют, что
+# мусорный кандидат в хранилище НЕ появляется (а значит и анонсу нечего брать —
+# он читает только хранилище).
+
+_CEILING = 0.3
+
+
+async def _run_detection_over(reply: str, *, max_magnitude: float = _CEILING) -> FakeStore:
+    """Прогнать сырой выход модели через настоящий детектор и use-case; вернуть стор."""
+    store = FakeStore()
+    use_case = DetectPatterns(
+        detector=_detector(reply=reply),
+        store=store,
+        persona_id="bob",
+        max_magnitude=max_magnitude,
+    )
+    await use_case.run()
+    return store
+
+
+async def test_substantive_llm_proposal_reaches_the_store() -> None:
+    # КОНТРОЛЬ харнесса: осмысленный кандидат в допустимом диапазоне доезжает до
+    # хранилища. Без него тесты ниже были бы вакуумными («никогда ничего не пишем»).
+    reply = (
+        '[{"observation": "Отвечаю резче, когда разговор долгий.", '
+        '"adjustment": "Добавить теплоты к концу разговора.", "lever": "tone", '
+        '"magnitude": 0.2, "evidence": "relationship_deltas"}]'
+    )
+    store = await _run_detection_over(reply)
+    assert [rule.magnitude for rule in store.saved] == [0.2]
+
+
+async def test_llm_proposal_without_an_adjustment_never_reaches_the_store() -> None:
+    # Ровно живой дефект: поправки нет -> одобрять нечего -> правило не рождается.
+    reply = (
+        '[{"observation": "Отвечаю резче, когда разговор долгий.", '
+        '"adjustment": "", "lever": "tone", "magnitude": 0.2}]'
+    )
+    store = await _run_detection_over(reply)
+    assert store.saved == []
+
+
+async def test_llm_proposal_with_a_missing_adjustment_key_never_reaches_the_store() -> None:
+    # Ключа adjustment нет вовсе (парсер подставляет "") -> тот же вердикт.
+    reply = (
+        '[{"observation": "Отвечаю резче, когда разговор долгий.", '
+        '"lever": "tone", "magnitude": 0.2}]'
+    )
+    store = await _run_detection_over(reply)
+    assert store.saved == []
+
+
+async def test_llm_proposal_with_zero_magnitude_never_reaches_the_store() -> None:
+    # Нулевой наклон ничего не меняет: одобрение было бы пустой формальностью.
+    reply = (
+        '[{"observation": "Отвечаю резче, когда разговор долгий.", '
+        '"adjustment": "Добавить теплоты.", "lever": "tone", "magnitude": 0.0}]'
+    )
+    store = await _run_detection_over(reply)
+    assert store.saved == []
+
+
+async def test_llm_proposal_with_unparseable_magnitude_never_reaches_the_store() -> None:
+    # Нечисловая величина -> 0.0 на парсинге -> дальше вердикт её отбраковывает.
+    reply = (
+        '[{"observation": "Отвечаю резче, когда разговор долгий.", '
+        '"adjustment": "Добавить теплоты.", "lever": "tone", "magnitude": "много"}]'
+    )
+    store = await _run_detection_over(reply)
+    assert store.saved == []
+
+
+async def test_llm_proposal_with_a_blank_observation_never_reaches_the_store() -> None:
+    # Пустое наблюдение отбраковывается уже на парсинге (и вердиктом тоже) —
+    # проверяем НАБЛЮДАЕМЫЙ итог всего пути, а не то, кто именно отбросил.
+    reply = (
+        '[{"observation": "   ", "adjustment": "Добавить теплоты.", '
+        '"lever": "tone", "magnitude": 0.2}]'
+    )
+    store = await _run_detection_over(reply)
+    assert store.saved == []
+
+
+async def test_llm_proposal_above_the_configured_ceiling_never_reaches_the_store() -> None:
+    # Величина вне max_magnitude: применение всё равно урезало бы её до потолка,
+    # то есть owner одобрял бы не то число, которое ему показали.
+    reply = (
+        '[{"observation": "Отвечаю резче, когда разговор долгий.", '
+        '"adjustment": "Добавить теплоты.", "lever": "tone", "magnitude": 0.9}]'
+    )
+    store = await _run_detection_over(reply)
+    assert store.saved == []
+
+
+async def test_the_live_defect_proposal_would_not_be_born() -> None:
+    # Дословная репродукция rule-20260806060649-0 (сочинил дублёр 0.5b).
+    reply = (
+        '[{"observation": "Боб замечает, что его поведение часто повторяется", '
+        '"adjustment": "", "lever": "tone", "magnitude": 0.0, "evidence": ""}]'
+    )
+    store = await _run_detection_over(reply)
+    assert store.saved == []
+
+
+async def test_degenerate_candidate_from_any_detector_is_dropped() -> None:
+    # Вердикт стоит на входе в ХРАНИЛИЩЕ, а не внутри LLM-детектора: кандидат от
+    # ЛЮБОЙ реализации порта PatternDetector (не только парсера) не проходит.
+    degenerate = ImprovementRule(
+        id="c9",
+        observation="Я часто повторяюсь.",
+        adjustment="   ",
+        lever=Lever.TONE,
+        magnitude=0.2,
+        state=RuleState.PROPOSED,
+        origin=RuleOrigin.BOB_PROPOSED,
+        created_at=_NOW,
+        evidence="",
+    )
+    store = FakeStore()
+    use_case = DetectPatterns(
+        detector=FixedDetector((degenerate,)),
+        store=store,
+        persona_id="bob",
+        max_magnitude=_CEILING,
+    )
+
+    await use_case.run()
+
+    assert store.saved == []
+
+
+async def test_a_degenerate_candidate_does_not_consume_the_active_rules_budget() -> None:
+    # Мусор не «съедает» лимит: осмысленный кандидат за ним всё равно сохраняется.
+    degenerate = ImprovementRule(
+        id="junk",
+        observation="Я часто повторяюсь.",
+        adjustment="",
+        lever=Lever.TONE,
+        magnitude=0.0,
+        state=RuleState.PROPOSED,
+        origin=RuleOrigin.BOB_PROPOSED,
+        created_at=_NOW,
+        evidence="",
+    )
+    good = _candidate(rid="good", observation="Я слишком многословен.", lever=Lever.LENGTH)
+    store = FakeStore()
+    use_case = DetectPatterns(
+        detector=FixedDetector((degenerate, good)),
+        store=store,
+        persona_id="bob",
+        max_active_rules=1,
+        max_magnitude=_CEILING,
+    )
+
+    await use_case.run()
+
+    assert [rule.id for rule in store.saved] == ["good"]
+
+
+# --- detector_tier: ключ конфига РЕАЛЬНО задаёт тир детектора (BOB-096) -------
+
+
+async def test_detector_pins_the_configured_tier_on_the_request() -> None:
+    # Проверка ПОПЫТКОЙ: тир 0 -> запрос ушёл локальному провайдеру, облачный молчит.
+    router, tier0, tier1 = _two_tier_router()
+    detector = LlmPatternDetector(router=router, clock=FixedClock(_NOW), tier=0)
+
+    await detector.detect(ImprovementSignals())
+
+    assert len(tier0.payloads) == 1
+    assert tier1.payloads == []
+
+
+async def test_detector_without_a_configured_tier_uses_the_task_default() -> None:
+    # Тир не задан -> дефолт задачи DETECT_PATTERNS (Tier 1, reasoning).
+    router, tier0, tier1 = _two_tier_router()
+    detector = LlmPatternDetector(router=router, clock=FixedClock(_NOW))
+
+    await detector.detect(ImprovementSignals())
+
+    assert len(tier1.payloads) == 1
+    assert tier0.payloads == []
+
+
+async def test_detector_asks_the_model_for_a_magnitude_within_the_ceiling() -> None:
+    # Потолок сообщается МОДЕЛИ, иначе отбраковка «вне max_magnitude» тихо
+    # превратилась бы в выключатель самоулучшения (модель просила бы 0.5 при потолке 0.3).
+    router, provider = _router(reply="[]")
+    detector = LlmPatternDetector(
+        router=router, clock=FixedClock(_NOW), max_magnitude=_CEILING
+    )
+
+    await detector.detect(ImprovementSignals())
+
+    system = provider.payloads[0][0]["content"]
+    assert "0.3" in system
 
 
 _TASK = TaskType.DETECT_PATTERNS  # импорт-якорь: убеждаемся, что тип задачи существует

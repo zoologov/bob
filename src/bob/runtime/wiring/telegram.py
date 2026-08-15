@@ -24,6 +24,7 @@ from bob.infrastructure.telegram.multibot import (
     MultiBotGateway,
 )
 from bob.runtime.config import _DEFAULT_POLL_TIMEOUT, _int, _section
+from bob.runtime.wiring.self_improvement import _self_improvement_max_magnitude
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -101,6 +102,10 @@ def _build_multibot(
         plan_goal=plan_goal,
         pursuit_store=pursuit_store,
         rule_store=rule_store,
+        # Тот же потолок величины, по которому Боб решает, о каком предложении говорить
+        # (BOB-096): список ``/rules`` объясняет владельцу его молчание, поэтому судить
+        # они обязаны по ОДНОМУ числу — иначе список и поведение расходятся.
+        rule_max_magnitude=_self_improvement_max_magnitude(config),
         coding_assistant=coding_assistant,
         bob_reaction_filter=bob_reaction_filter,
     )

@@ -21,9 +21,10 @@ fascination *evolve over time* — never randomly. Each run:
 3. **Ground the pick.** On a shift, a cheap Tier-0 call picks the new topic from
    Bob's REAL inner life — his most recent reflection and his strongest taste
    topics — so the passion is grounded, not invented. If Tier 0 yields nothing
-   usable, a deterministic **heuristic fallback** derives the topic straight from
-   the same grounding material. With NO grounding material at all, the step is a
-   clean no-op (Bob simply has no fascination yet).
+   usable — no answer, or no model willing to answer for Bob at all (see
+   :meth:`EvolveFascination._tier0_pick`) — a deterministic **heuristic fallback**
+   derives the topic straight from the same grounding material. With NO grounding
+   material at all, the step is a clean no-op (Bob simply has no fascination yet).
 4. **Persist** the fresh fascination (full initial intensity, ``created_at`` = now)
    via the :class:`~bob.personality.ports.FascinationStore`.
 
@@ -159,14 +160,33 @@ class EvolveFascination:
         return self._heuristic_pick(material)
 
     async def _tier0_pick(self, material: list[str]) -> str:
-        """Ask Tier 0 for the one topic Bob is most into, grounded in ``material``."""
-        verdict = await self._router.run(
-            LLMRequest(
-                task_type=TaskType.INNER_MONOLOGUE,
-                messages=[{"role": "system", "content": self._localised(_PICK_PROMPT)}],
-                shareable_context="Real material:\n- " + "\n- ".join(material),
+        """Ask Tier 0 for the one topic Bob is most into, grounded in ``material``.
+
+        🔴 The pick goes through its OWN door (BOB-096.8). It used to travel as an
+        ``INNER_MONOLOGUE`` — a door the registry called служебной, «nowhere published,
+        nowhere saved» — while this very method persists the model's answer: it becomes
+        :class:`~bob.personality.fascination.Fascination.topic` in SQLite and is woven into
+        Bob's replies for weeks («меня сейчас занимает…»). So the work is its own door,
+        ``FASCINATION_PICK``, and it is «the voice that stays»: the ban on role-playing
+        GUPPI reaches it, and a local stand-in never chooses what Bob is into.
+
+        An outage therefore yields NOTHING here rather than a 0.5b answer — and the step
+        does not lose its tick over it: the caller falls to the deterministic heuristic
+        pick, grounded in the very same real material, which invents nothing.
+        """
+        try:
+            verdict = await self._router.run(
+                LLMRequest(
+                    task_type=TaskType.FASCINATION_PICK,
+                    messages=[{"role": "system", "content": self._localised(_PICK_PROMPT)}],
+                    shareable_context="Real material:\n- " + "\n- ".join(material),
+                )
             )
-        )
+        except Exception:
+            logger.warning(
+                "fascination pick got no model answer; grounding it heuristically instead"
+            )
+            return ""
         return _first_line(verdict)
 
     @staticmethod

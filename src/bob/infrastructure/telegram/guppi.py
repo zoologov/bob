@@ -36,7 +36,15 @@ from datetime import timedelta
 from typing import TYPE_CHECKING, Protocol
 
 from bob.proactivity.goals.state import GoalState, can_transition
-from bob.proactivity.self_improvement import RuleState
+from bob.proactivity.rule_announcement import (
+    is_undelivered_proposal,
+    unactionable_reason,
+)
+from bob.proactivity.self_improvement import (
+    MAGNITUDE_RANGE_TOP,
+    ProposalDefect,
+    RuleState,
+)
 from bob.proactivity.self_improvement import (
     can_transition as rule_can_transition,
 )
@@ -145,6 +153,21 @@ _RULE_STATE_ACTIONS: dict[str, RuleState] = {
 
 _USAGE_RULE = "Использование: /rule <approve|reject|pause|resume|remove> <id> или /rules"
 _RULES_EMPTY_TEXT = "Правил самоулучшения пока нет."
+# Метка предложения, которое Боб пробовал проговорить и не смог (BOB-096 срез 1). После
+# исчерпания попыток он о нём МОЛЧИТ — значит этот список остаётся единственным местом,
+# где владелец о нём узнаёт; без метки предложение потерялось бы молча. Механика, а не
+# речь Боба: её сообщает GUPPI своим списком.
+_RULE_UNDELIVERED_MARK = " · не доставлено"
+# Две метки предложения, о котором Боб молчит ПО СОДЕРЖАНИЮ (BOB-096, фикс ревью) — и
+# они говорят РАЗНОЕ. «Нечего одобрять» — мусор: пустая поправка или нулевой наклон,
+# никакая настройка его не спасёт. «Просит N при потолке M» — содержание есть, не хватает
+# разрешения на величину, и владельцу тут есть что решать: поднять потолок или отклонить
+# осознанно. 🔴 Одной меткой на оба случая мы назвали бы осмысленное предложение мусором
+# (в живой базе таких три из четырёх) и отняли бы у владельца это решение. И ни та, ни
+# другая — не «не доставлено»: доставка здесь ни при чём, иначе он ждал бы повторной
+# попытки. Числа показываются намеренно: это ровно та информация, из которой он решает.
+_RULE_UNACTIONABLE_MARK = " · нечего одобрять"
+_RULE_ABOVE_CEILING_MARK = " · просит {magnitude:g} при потолке {ceiling:g}"
 _RULE_REJECT_TEXT = "Не могу — для правила «{rule_id}» этот переход недопустим (сейчас {state})."
 _RULE_NOT_FOUND_TEXT = "Правило «{rule_id}» не найдено."
 
@@ -255,6 +278,7 @@ class GuppiHandler:
         plan_goal: PlanGoal | None = None,
         pursuit_store: PursuitStoreLike | None = None,
         rule_store: RuleStoreLike | None = None,
+        rule_max_magnitude: float = MAGNITUDE_RANGE_TOP,
         coding_assistant: CodingAssistantLike | None = None,
         coding_configured: bool = False,
     ) -> None:
@@ -268,6 +292,12 @@ class GuppiHandler:
         self._plan_goal = plan_goal
         self._pursuit_store = pursuit_store
         self._rule_store = rule_store
+        # The soft-tilt ceiling (``self_improvement.max_magnitude``) the ``/rules`` list
+        # judges a proposal by — the SAME config value the announcer uses, so the list
+        # and Bob's silence never disagree. The default is the whole unit range («no
+        # configured ceiling was told»): then only an empty / zero-tilt proposal is
+        # called unactionable, never an over-the-ceiling one.
+        self._rule_max_magnitude = rule_max_magnitude
         # The gated coding assistant (BOB-039 .3). ``None`` when ``coder.enabled`` is
         # false (the conservative default); ``coding_configured`` says the feature
         # section exists at all, so an owner ``/code`` gets a clear "disabled" reply
@@ -525,7 +555,17 @@ class GuppiHandler:
         return False
 
     async def _render_rules(self) -> str:
-        """Render the owner-facing ``/rules`` list (rule id + state + lever + observation)."""
+        """Render the owner-facing ``/rules`` list (rule id + state + lever + observation).
+
+        EVERY rule Bob has is listed — the list is the owner's full view, and Bob's
+        silence about a rule must never look like the rule is gone. Two marks say WHY
+        he is silent, and they say different things: «не доставлено» — the delivery
+        attempts ran out (BOB-096 срез 1), «нечего одобрять» — the proposal is
+        degenerate or over the configured ceiling, so there is nothing to answer
+        (BOB-096, фикс ревью). Both verdicts are the domain's
+        (:func:`is_undelivered_proposal` / :func:`is_unactionable_proposal`) — GUPPI
+        only puts them into words.
+        """
         store = self._require_rule_store()
         rules = await store.load(self._persona_id)
         if not rules:
@@ -533,10 +573,32 @@ class GuppiHandler:
         lines = ["Правила самоулучшения Боба:"]
         for rule in rules:
             lines.append(
-                f"• [{rule.id}] {rule.state.value} · {rule.lever.value} — "
-                f"{rule.observation}"
+                f"• [{rule.id}] {rule.state.value} · {rule.lever.value}"
+                f"{self._rule_mark(rule)} — {rule.observation}"
             )
         return "\n".join(lines)
+
+    def _rule_mark(self, rule: ImprovementRule) -> str:
+        """Why Bob is silent about ``rule``, in the owner's words (or "" — he is not).
+
+        The reason comes from the domain (:func:`unactionable_reason`); GUPPI only puts
+        it into the owner's words, and an over-the-ceiling proposal gets BOTH numbers —
+        what it asks for and what is allowed — because that is exactly what he decides
+        from. Content beats delivery bookkeeping by construction (the domain ranks it
+        that way), so a rule silenced by its content is never also called «не
+        доставлено». The ceiling is the one this GUPPI was wired with — the same config
+        value the announcer judges by, so the list and Bob's silence never disagree.
+        """
+        reason = unactionable_reason(rule, max_magnitude=self._rule_max_magnitude)
+        if reason is ProposalDefect.NOTHING_TO_APPROVE:
+            return _RULE_UNACTIONABLE_MARK
+        if reason is ProposalDefect.ABOVE_CEILING:
+            return _RULE_ABOVE_CEILING_MARK.format(
+                magnitude=rule.magnitude, ceiling=self._rule_max_magnitude
+            )
+        if is_undelivered_proposal(rule, max_magnitude=self._rule_max_magnitude):
+            return _RULE_UNDELIVERED_MARK
+        return ""
 
     async def _rule_action(self, chat_id: int, argument: str) -> bool:
         """Run a ``/rule <action> <id>`` command; ``False`` for an unknown action."""
