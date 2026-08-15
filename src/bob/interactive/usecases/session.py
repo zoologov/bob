@@ -97,6 +97,7 @@ from bob.coding.state import CodingSessionState
 from bob.interactive import voice
 from bob.interactive.argv_policy import extract_session_id
 from bob.interactive.entities import LiveSession
+from bob.interactive.pipeline_prompt import pipeline_first_frame
 from bob.interactive.resume_negotiation import ResumeConfirmed, ResumeNegotiation
 from bob.interactive.resume_policy import select_resumable
 from bob.interactive.usecases.teardown import SessionTeardown
@@ -159,6 +160,7 @@ class InteractiveSessionManager:
         lookup: ResumableSessionLookup | None = None,
         workspace: PersistentWorkspace | None = None,
         notifier: OwnerNotifier | None = None,
+        pipeline_prompt: bool = False,
     ) -> None:
         self._runner_factory = runner_factory
         self._worktree = worktree
@@ -178,6 +180,11 @@ class InteractiveSessionManager:
         # the turn that asked for it; this one has no turn to answer, so it needs its own
         # way out. Optional: unwired → the session still ends honestly, just silently.
         self._notifier = notifier
+        # 🔴 Ставится ли задача ПЕРВЫМ кадром (``coder.pipeline_prompt``, BOB-088 срез 2).
+        # OFF (дефолт) → сессия открывается ровно как до среза: пустой контекст, ожидание
+        # owner'а. Текст постановки решает НЕ этот класс, а домен
+        # (:func:`bob.interactive.pipeline_prompt.pipeline_first_frame`) — здесь только «когда».
+        self._pipeline_prompt = pipeline_prompt
         # The single pending «поднимаю?» question — its own collaborator (BOB-087.E):
         # owner-scoped, TTL-bounded, never sticky.
         self._negotiation = ResumeNegotiation(clock=clock)
@@ -219,7 +226,7 @@ class InteractiveSessionManager:
                 ok=False, message=voice.interactive_setup_failed(), session=None
             )
         try:
-            runner = await self._spawn(path)
+            runner = await self._spawn(path, task)
         except asyncio.CancelledError:  # 🔴 отмена: дерево тоже не остаётся сиротой
             await self._teardown.cleanup(path)
             raise
@@ -283,7 +290,7 @@ class InteractiveSessionManager:
         branch = workspace_branch(name)
         try:
             path = await self._require_workspace().ensure(branch)
-            runner = await self._spawn(path)
+            runner = await self._spawn(path, task)
         except Exception:  # 🔴 workspace/spawn fault: answer honestly, never go mute
             logger.exception("coding: opening the persistent workspace failed")
             return CodingOutcome(
@@ -393,7 +400,7 @@ class InteractiveSessionManager:
         try:
             path = await self._require_workspace().ensure(branch)
             runner = await self._spawn(
-                path, resume_session_id=candidate.claude_session_id
+                path, candidate.task, resume_session_id=candidate.claude_session_id
             )
         except Exception:  # workspace/spawn fault: 🔴 the workspace itself is left intact
             logger.exception("coding: interactive resume failed for workspace")
@@ -484,18 +491,24 @@ class InteractiveSessionManager:
         return True
 
     async def _spawn(
-        self, path: str, *, resume_session_id: str | None = None
+        self, path: str, task: str, *, resume_session_id: str | None = None
     ) -> InteractiveRunner:
         """Спавнить живой раннер в ``path`` так, чтобы НЕДОСПАВНЕННЫЙ не остался сиротой.
 
         Единственная точка спавна на все три входа (:meth:`open`, :meth:`open_workspace`,
-        :meth:`resume`). 🔴 bob-1qc (защита в глубину): свёртка живёт в ``finally``, а не
+        :meth:`resume`) — и, с BOB-088 (срез 2), единственная точка ПОСТАНОВКИ задачи
+        (:meth:`_put_the_task`). Обе двери свежей сессии проходят здесь, поэтому «одну
+        научили, вторую забыли» невыразимо: раньше именно так и было бы, ведь эпик
+        открывается ``open_workspace``, а не ``open``.
+
+        🔴 bob-1qc (защита в глубину): свёртка живёт в ``finally``, а не
         в ``except Exception``, потому что :class:`asyncio.CancelledError` — ``BaseException``
         и мимо ``except Exception`` пролетает. Отмена хода прямо внутри ``runner.open``
         (шатдаун, таймаут внешней задачи) раскручивала стек мимо всякой очистки, а
         запущенный процесс оставался БЕЗ живой сессии — неостановимый сирота, которого
         ``stop`` не видит. Теперь и сбой, и отмена закрывают раннер одним и тем же путём;
-        отмена после этого летит дальше нетронутой.
+        отмена после этого летит дальше нетронутой. Постановка стоит ВНУТРИ той же защиты:
+        сессия, которой не удалось отдать задачу, не остаётся жить пустой и незакрытой.
         """
         runner = self._runner_factory()
         spawned = False
@@ -503,11 +516,37 @@ class InteractiveSessionManager:
             await runner.open(
                 path, mode=self._permission_mode, resume_session_id=resume_session_id
             )
+            if resume_session_id is None:
+                await self._put_the_task(runner, task)
             spawned = True
         finally:
             if not spawned:
                 await self._teardown.close_runner(runner)
         return runner
+
+    async def _put_the_task(self, runner: InteractiveRunner, task: str) -> None:
+        """Отдать свежей сессии ПЕРВЫЙ кадр — задачу и указание идти по процессу.
+
+        🔴 До BOB-088 (срез 2) сюда не уходило ничего: ``claude`` стартовал с пустым
+        контекстом и ждал, пока owner напишет сам, а задача работала лишь меткой сессии и
+        именем ветки. Живая проба подтвердила обратное: первый кадр в открытый stdin
+        принимается и ЗАПУСКАЕТ ход.
+
+        Инертно без owner-флага ``coder.pipeline_prompt`` (дефолт OFF → спавн байт-в-байт
+        прежний) и при пустой задаче (:func:`~bob.interactive.pipeline_prompt.
+        pipeline_first_frame` возвращает ``None``: додуманная моделью задача, которую
+        поведёт конвейер, хуже отсутствия постановки).
+
+        🔴 ТОЛЬКО СВЕЖАЯ сессия (вызывается при ``resume_session_id is None``): у поднятой
+        задача уже в её контексте, и повторная постановка велела бы начать эпик заново —
+        поверх работы, ради которой сессию и поднимали.
+        """
+        if not self._pipeline_prompt:
+            return
+        frame = pipeline_first_frame(task)
+        if frame is None:
+            return
+        await runner.feed(frame)
 
     def _claim(self, session_id: str | None = None) -> LiveSession | None:
         """🔴 СИНХРОННО забрать живой сеанс — единственная точка выхода из ``_live``.

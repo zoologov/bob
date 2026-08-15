@@ -80,6 +80,7 @@ from bob.coding.clone_plan import (
     identity_pins,
     is_credential_free_url,
     origin_argv,
+    tracker_argv,
     workspace_verdict,
 )
 from bob.coding.untrusted_repo import (
@@ -243,13 +244,19 @@ class GitClone:
         return self._clone_root / branch.split("/", 1)[1]
 
     async def _clone(self, dest: Path, branch: str, *, reuse_accumulated: bool) -> None:
-        """Клонировать в ``dest``, встать на ``branch``, переадресовать remote и подписаться.
+        """Клонировать в ``dest``, встать на ``branch``, переадресовать remote и обустроить.
 
-        Последний шаг — подпись работы (BOB-089.D): в клоне ``user.name = bob[ai]`` и
+        Предпоследний шаг — подпись работы (BOB-089.D): в клоне ``user.name = bob[ai]`` и
         ботовский noreply-адрес, 🔴 **локально** (``git -C <клон> config --local``).
         Глобальная настройка переподписала бы коммиты owner'а в его собственном
         репозитории — ровно та путаница идентичностей, от которой уходим; форма из
         :func:`~bob.coding.clone_plan.identity_argv` глобальной области выразить не может.
+
+        Последний — провизионирование под ТРЕКЕР (BOB-088, срез 2,
+        :func:`~bob.coding.clone_plan.tracker_argv`): без ``beads.role`` ``bd`` предупреждает
+        на каждый вызов, а конвейер зовёт его десятками раз за волну. Сам доступ к базе даёт
+        не эта запись, а ``BEADS_DIR`` в окружении спавна — названная дыра в изоляции,
+        разобранная в :data:`bob.identity.spawn_isolation.PURGED_SPAWN_VARS`.
         """
         dest.parent.mkdir(parents=True, exist_ok=True)
         await self._run(clone_argv(self._git_bin, source=str(self._source), dest=str(dest)))
@@ -266,6 +273,7 @@ class GitClone:
             self._git_bin, dest=str(dest), app_user_id=self._app_user_id
         ):
             await self._run(argv)
+        await self._run(tracker_argv(self._git_bin, dest=str(dest)))
 
     async def _known_to_the_fork(self, dest: Path, branch: str) -> bool:
         """Есть ли ветка ``branch`` В ФОРКЕ (то есть накопленная ранее работа Боба).

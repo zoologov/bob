@@ -71,6 +71,12 @@ if TYPE_CHECKING:
 #: невыразима, поэтому столкнуться этим именам не с чем.
 _SPAWN_ENV_DIR = ".spawn-env"
 
+#: Каталог трекера beads в репозитории ВЛАДЕЛЬЦА — тот самый, который спавн получает через
+#: ``BEADS_DIR`` (BOB-088, срез 2). Имя фиксировано самим ``bd``, ключа в конфиге у него
+#: сознательно нет: это не настройка, а факт устройства репозитория, и второй источник
+#: правды тут однажды разъехался бы с первым.
+_TRACKER_DIR = ".beads"
+
 #: 🔴 Безопасная дорога — ДЕФОЛТ (bob-c3r.1, лечение P0 ``bob-l3t``). Раньше дефолтом было
 #: OFF, а включение жило в ``config/bob.yaml``, который GITIGNORED: на чистом клоне и на
 #: любой другой машине Боб снова работал в linked worktree владельца. Защита, которую
@@ -239,11 +245,20 @@ def _build_spawn_isolation(coder: Mapping[str, object]) -> SpawnIsolation | None
     Боба (``GitClone.commit_and_push``), а не ``claude`` внутри клона. Механизм выдачи
     токена существует и проверен (:func:`bob.identity.spawn_isolation.credential_store_line`),
     но вызывающего в проде у него пока НЕТ — и это записано честно, а не выдано за фичу.
+
+    🔴 А ВОТ ОДНА ДОРОГА ЗДЕСЬ ОТКРЫВАЕТСЯ, И НАЗЫВАЕТСЯ ВСЛУХ (BOB-088, срез 2): спавн
+    получает :data:`_TRACKER_DIR` владельца (``BEADS_DIR``), то есть ЗАПИСЬ в его трекер
+    beads. Причина — тем же срезом 1 рабочее место стало клоном, а из клона ``bd`` не
+    находит базу вовсе; конвейер без ``bd`` не работает. Что именно этим открыто, чем
+    оплачено и почему приемлемо — в докстроке
+    :data:`bob.identity.spawn_isolation.PURGED_SPAWN_VARS`. Каталог берётся от КОРНЯ
+    РЕПОЗИТОРИЯ, а не от ``cwd``: иначе спавн, поднятый из другого каталога, уехал бы в
+    чужой (или несуществующий) трекер — урок bob-a6b.6 M4 про ``clone_root``.
     """
     if not _uses_isolated_clone(coder):
         return None
     root = _under_repo_root(_str(coder, "clone_root", ".clones")) / _SPAWN_ENV_DIR
-    return SpawnIsolationFiles(root).materialize()
+    return SpawnIsolationFiles(root).materialize(beads_dir=str(_REPO_ROOT / _TRACKER_DIR))
 
 
 def _build_pr_integration(
@@ -564,6 +579,15 @@ def _build_interactive_session(
     когда ``claude`` кончился САМ. Все прочие реплики возвращаются ходу, который их
     попросил; у смерти процесса такого хода нет, и без этого сейма Боб просто немел.
 
+    🔴 Стартовый промпт конвейера (BOB-088, срез 2): под флагом ``coder.pipeline_prompt``
+    (default OFF) свежая сессия получает ПЕРВЫМ КАДРОМ постановку — задачу owner'а плюс
+    указание вести работу по ``CLAUDE.md`` (эпик — через ``/coordinator``, роли
+    субагентами). До этого среза ``runner.open(...)`` вызывался и в сессию не уходило
+    НИЧЕГО: ``claude`` стартовал с пустым контекстом и ждал, пока owner напишет сам.
+    OFF → спавн байт-в-байт прежний. 🔴 Текст решает домен
+    (:func:`bob.interactive.pipeline_prompt.pipeline_first_frame`), здесь только флаг: строка в
+    композиции была бы поведением конвейера вне mutation-гейта (§0.3 п.7).
+
     🔴 Долгоживущее рабочее место + resume (BOB-087.D3, D5b): под флагом ``coder.resume``
     (default OFF) в менеджер инъектируются два узких порта: ``lookup`` (поиск сессий по
     ветке, структурно тот же :class:`SqliteCodingSessionStore`) и ``workspace``
@@ -633,6 +657,14 @@ def _build_interactive_session(
         # САМОГО Боба, поэтому она идёт на ботe Боба в его личку — как короткие строки
         # режима интейка, а не за GUPPI (тот везёт только механический firehose).
         notifier=_CodingOwnerNotifier(bot=bot, chat_id=dm_chat_id, topic_id=None),
+        # 🔴 Стартовый промпт конвейера (BOB-088, срез 2) — ЕДИНСТВЕННОЕ место, где
+        # читается ``coder.pipeline_prompt``. OFF (дефолт) → в открытый stdin не уходит
+        # ничего и сессия ждёт owner'а, ровно как до среза. ON → свежая сессия (обе
+        # двери: ``open`` и ``open_workspace``) получает первым кадром задачу и указание
+        # идти по ``CLAUDE.md``; сам текст решает домен
+        # (:func:`bob.interactive.pipeline_prompt.pipeline_first_frame`), а не композиция —
+        # иначе поведение конвейера жило бы в строке проводки, вне mutation-гейта.
+        pipeline_prompt=_flag(coder, "pipeline_prompt"),
     )
 
 

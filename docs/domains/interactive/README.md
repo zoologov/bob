@@ -44,6 +44,7 @@ src/bob/interactive/
   resume_policy.py      # layer=domain   — select_resumable / is_confirmation_fresh: можно ли поднять приостановленную работу и какую (BOB-087.D3)
   resume_negotiation.py # layer=domain   — ResumeNegotiation: висящий вопрос «поднимаю?» (взвести / разрешить / снять) + исходы ResumeConfirmed/ResumeRejected (BOB-087.E)
   argv_policy.py        # layer=domain   — build_interactive_argv / extract_session_id: чем параметризуется живой claude и что берётся из init-кадра (BOB-087.D1/D4b)
+  pipeline_prompt.py    # layer=domain   — pipeline_first_frame: ТЕКСТ первого кадра сессии (задача + идти по CLAUDE.md, эпик через /coordinator, роли субагентами) — BOB-088 срез 2
   voice.py              # layer=domain   — детерминированные реплики режима (вход/выход, «сеанс кончился сам», цикл возобновления) + ре-экспорт двух общих строк управления сессией
   usecases/             # layer=application
     session.py          — InteractiveSessionManager: жизненный цикл ОДНОГО живого сеанса (open/feed/stop/active + open_workspace/propose_resume/resolve_pending_resume/resume)
@@ -275,6 +276,13 @@ stream-json, `ClaudeRunError`) переехали на общую доменну
 - `argv_policy.py`: `build_interactive_argv(claude_bin, *, mode, resume_session_id=None,
   continue_session=False, extra_dirs=())` → `list[str]`; `extract_session_id(event)` →
   `str | None` (только настоящий `init`-кадр с непустым строковым `session_id`).
+- `pipeline_prompt.py`: `pipeline_first_frame(task)` → `str | None` — постановка, которой
+  начинается СВЕЖАЯ сессия (`None` на пустой задаче: додуманная моделью задача, которую
+  поведёт конвейер, хуже отсутствия постановки). Живёт в домене, а не строкой в адаптере,
+  ровно по доводу `argv_policy`: текст определяет поведение конвейера, значит обязан быть
+  под тестом и mutation-гейтом (§0.3 п.7). Скармливает его менеджер сразу после
+  `runner.open(...)` под флагом `coder.pipeline_prompt` (default OFF) — и только свежей
+  сессии: у возобновлённой задача уже в контексте.
 - `voice.py`: `interactive_opened()`, `interactive_busy()`, `interactive_failed()`,
   `interactive_setup_failed()`, `interactive_ended()`, `interactive_ended_persistent()`,
   `workspace_opened(workspace)`, `stopped_persistent()`, `resume_confirm(*, workspace,
@@ -305,7 +313,7 @@ stream-json, `ClaudeRunError`) переехали на общую доменну
 ## Тесты
 
 - **Чистые ядра** — `tests/domain/interactive/test_argv_policy.py`, `test_intent.py`,
-  `test_resume_policy.py`, `test_voice.py` (+ общая политика песочницы —
+  `test_resume_policy.py`, `test_voice.py`, `test_pipeline_prompt.py` (+ общая политика песочницы —
   `tests/domain/coding/test_sandbox_policy.py`). Первые модули — mutation-цели
   (`./scripts/mutation.sh interactive.argv_policy` и так далее). Ради постоянного гейта
   `build_interactive_argv` и `extract_session_id` и живут в домене, а не в адаптере:

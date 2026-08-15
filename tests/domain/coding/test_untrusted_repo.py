@@ -143,6 +143,9 @@ _A_CLEAN_CLONE = (
     ("branch.bob/task.merge", "refs/heads/bob/task"),
     ("user.name", "bob[ai]"),
     ("user.email", "424242+bob-ai-work[bot]@users.noreply.github.com"),
+    # Провизионирование под трекер (BOB-088, срез 2): без роли ``bd`` предупреждает
+    # на каждый вызов, а конвейер зовёт его десятками раз за волну.
+    ("beads.role", "maintainer"),
 )
 
 
@@ -224,6 +227,15 @@ def test_the_signature_keys_stay_allowed_because_the_signature_is_decided_in_arg
     # подпись приколочена парами в argv: конфиг клона её больше не решает.
     assert unsafe_local_config(_listing(("user.name", "Vladimir Zoologov"))) == ()
     assert unsafe_local_config(_listing(("user.email", "owner@example.com"))) == ()
+
+
+def test_the_tracker_role_stays_allowed_because_our_own_setup_writes_it() -> None:
+    # 🔴 ВТОРОЙ ВХОД провизионирования (BOB-088, срез 2). Дописать ключ в клон мало: этот
+    # ALLOW-список судит имена, и незнакомый ключ ОСТАНАВЛИВАЕТ интеграцию — то есть
+    # конвейер доехал бы до конца волны и умер на пути к PR. Значением ключ безопасен: его
+    # читает ``bd``, а не git, и назвать им нельзя ни команду, ни второй адрес push'а.
+    assert unsafe_local_config(_listing(("beads.role", "maintainer"))) == ()
+    assert unsafe_local_config(_listing(("beads.role", "contributor"))) == ()
 
 
 def test_the_object_format_extension_stays_allowed() -> None:
