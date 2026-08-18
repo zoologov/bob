@@ -19,17 +19,20 @@ import random
 from typing import TYPE_CHECKING
 
 from bob.application.runtime import periodic
+from bob.infrastructure.telegram.restart_notifier import _RestartNotifier
 from bob.personality.language import DEFAULT_LANGUAGE
-from bob.proactivity.adapters import RepoProactivitySources
+from bob.proactivity.adapters import KvRestartMarkerStore, RepoProactivitySources
 from bob.proactivity.decision import ProactiveDecider
 from bob.proactivity.governance import Governance
 from bob.proactivity.usecases import ProactivityEngine
+from bob.proactivity.usecases.announce_restart import AnnounceRestart
 from bob.runtime.config import (
     _BOB_PERSONA,
     _DEFAULT_HEARTBEAT_SECONDS,
     _MOOD_DRIFT_SECONDS,
     _PROACTIVE_TICK_MULTIPLIER,
     _TICK_RETRY_POLICY,
+    _flag,
     _int,
     _section,
 )
@@ -48,11 +51,13 @@ if TYPE_CHECKING:
     )
     from bob.conversation.conversation import RepeatThresholds
     from bob.infrastructure.telegram.multibot import MultiBotGateway
+    from bob.infrastructure.telegram.restart_notifier import _PlainNotifyBot
     from bob.kernel.ports import Clock
     from bob.memory.adapters import SqliteMemoryRepo
     from bob.memory.ports import MemoryRecall
     from bob.personality.usecases.fascination_sources import StoreFascinationReader
     from bob.proactivity.adapters import SqliteProactivityStore
+    from bob.proactivity.adapters.restart_marker_store import _KvStore
     from bob.proactivity.usecases import ProactiveTick
     from bob.proactivity.usecases.engine import ShareCeiling
     from bob.proactivity.usecases.pursue_goals import PursueGoalsTick
@@ -116,6 +121,32 @@ def _build_proactivity_engine(
         # hogged the room. None (``presence.rhythm`` off) → no throttle, byte-identical.
         share_ceiling=share_ceiling,
     )
+
+
+def _build_restart_announcer(
+    config: Mapping[str, object],
+    *,
+    bot: _PlainNotifyBot,
+    kv: _KvStore,
+) -> AnnounceRestart | None:
+    """Собрать объявление рестарта — голос Боба «ухожу обновиться» / «вернулся» (BOB-094).
+
+    За флагом ``runtime.restart_notice`` (default OFF → ``None`` → shutdown/startup-хуки
+    не вызывают ничего → поведение lifecycle байт-в-байт прежнее). ON → notifier над
+    ботом Боба (личка owner'а + топик Боба в группе) поверх маркера апдейт-остановки в
+    ``kv``. Реплику подбирает чистое ядро :mod:`bob.proactivity.restart_voice`; таймаут и
+    best-effort (чтобы shutdown не подвис) живут в use-case.
+    """
+    if not _flag(_section(config, "runtime"), "restart_notice"):
+        return None
+    telegram = _section(config, "telegram")
+    notifier = _RestartNotifier(
+        bot=bot,
+        owner_id=_int(telegram, "owner_id", 0),
+        chat_id=_int(telegram, "chat_id", 0),
+        topic_id=_int(_section(telegram, "bob"), "topic_id", 0),
+    )
+    return AnnounceRestart(notifier=notifier, marker_store=KvRestartMarkerStore(kv))
 
 
 def _background_tasks(

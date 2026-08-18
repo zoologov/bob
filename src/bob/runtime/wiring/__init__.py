@@ -77,6 +77,7 @@ from bob.runtime.wiring.permission import _build_permission_flow
 from bob.runtime.wiring.proactivity import (
     _background_tasks,
     _build_proactivity_engine,
+    _build_restart_announcer,
 )
 from bob.runtime.wiring.register_recall import (
     build_register_resolver,
@@ -143,6 +144,7 @@ __all__ = [
     "_build_repeat_thresholds",
     "_build_require_plan_approval",
     "_build_reranker",
+    "_build_restart_announcer",
     "_build_safe_capabilities",
     "_build_self_improvement",
     "_build_self_improvement_enabled",

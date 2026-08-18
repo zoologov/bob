@@ -61,6 +61,10 @@ draft-стриминг и Rich Messages, пиннинг ответа в topic-th
   `RichMessageSerializer` — обратный рендер дерева в rich-message markdown (`to_markdown`).
 - **outage_notifier.py** — `_GuppiOutageNotifier`, честная системная строка «Bob
   unavailable» в топик Боба при outage'е (`notify_outage`, BOB-049 .3).
+- **restart_notifier.py** — `_RestartNotifier`, объявление рестарта голосом Боба
+  (`notify_owner` в личку owner'а + `notify_group` в топик Боба, BOB-094 срез 1) поверх
+  того же узкого plain-`send_message`, что и outage-нотис. Транспорт только: таймаут и
+  best-effort живут в use-case `proactivity.usecases.announce_restart`.
 - **outbound_messenger.py** — `TelegramOutboundMessenger`, отправка по ЯВНОМУ адресу
   (`send(chat_id, topic_id, markdown)`, BOB-090.B1) поверх того же `RichMarkdownSender`:
   новый транспорт не заводился — недоставало понятия «исходящий адрес». `topic_id`
@@ -107,3 +111,4 @@ draft-стриминг и Rich Messages, пиннинг ответа в topic-th
 <!-- beadloom:track=src/bob/infrastructure/telegram/rich.py -->
 <!-- beadloom:track=src/bob/infrastructure/telegram/outbound_messenger.py -->
 <!-- beadloom:track=src/bob/infrastructure/telegram/outage_notifier.py -->
+<!-- beadloom:track=src/bob/infrastructure/telegram/restart_notifier.py -->

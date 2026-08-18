@@ -26,9 +26,11 @@ in ``bob.infrastructure.persistence``):
 from bob.proactivity.adapters.goal_store import SqliteGoalStore
 from bob.proactivity.adapters.proactivity_sources import RepoProactivitySources
 from bob.proactivity.adapters.proactivity_store import SqliteProactivityStore
+from bob.proactivity.adapters.restart_marker_store import KvRestartMarkerStore
 from bob.proactivity.adapters.self_improvement_store import SqliteSelfImprovementStore
 
 __all__ = [
+    "KvRestartMarkerStore",
     "RepoProactivitySources",
     "SqliteGoalStore",
     "SqliteProactivityStore",

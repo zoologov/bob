@@ -71,6 +71,7 @@ src/bob/proactivity/
   self_improvement.py # layer=domain          — 🔴 из personality: модель правил + модуляторы
   rule_announcement.py # layer=domain         — стоит ли говорить: вердикт + кап попыток
   rule_voice.py       # layer=domain          — голос Боба на предложении поправить себя
+  restart_voice.py    # layer=domain          — голос Боба на рестарте: «ухожу обновиться» / «вернулся»
   goals/              # layer=domain            (когезивная подобласть Goal Engine)
     entities.py       #                        — Goal, Task, GoalOrigin (immutable value-objects)
     state.py          #                        — GoalState / TaskState + предикаты переходов
@@ -83,11 +84,13 @@ src/bob/proactivity/
     pursue_goals.py   #                        — PursueGoalsTick (Боб сам продвигает свои цели)
     detect_patterns.py       — LlmPatternDetector + DetectPatterns (метакогнитивный детектор)
     announce_rules.py #                        — AnnounceProposedRules (Боб проговаривает правило)
+    announce_restart.py #                      — AnnounceRestart (уход на обновление / возвращение, с таймаутом)
     self_improvement_sources.py — ActiveRulesReader (read-сейм APPROVED-правил для применения)
   adapters/           # layer=infrastructure
     proactivity_store.py     — SqliteProactivityStore (per-persona proactivity_state)
     goal_store.py            — SqliteGoalStore (per-persona goal/task граф)
     self_improvement_store.py — SqliteSelfImprovementStore (per-persona improvement_rule)
+    restart_marker_store.py  — KvRestartMarkerStore (маркер апдейт-остановки + epoch в kv)
     proactivity_sources.py   — RepoProactivitySources (live read-сеймы salience/window-count)
 ```
 
@@ -285,6 +288,33 @@ magnitude)` — что Боб говорит (наблюдение от перв
 ОДНО, боту Боба, но идентификатор не произносится: он вынесен голой командой отдельной
 строкой. Пустой идентификатор сноской не становится вовсе.
 
+### Голос рестарта (чистый домен, `restart_voice.py`)
+
+Как это ЗВУЧИТ, когда Боба перезапускают по деплою (BOB-094 срез 1). Канон BOB-090.D:
+рестарт — это ГОЛОС Боба (его бот по-человечески предупреждает, что обновляется, и
+говорит, что вернулся), а НЕ строка деплой-скрипта и не системный нотис GUPPI. По образцу
+`rule_voice`: не шаблон со слотами, а веер готовых человеческих реплик от первого лица, из
+которого выбор лишь ВЫБИРАЕТ. `restart_voice(moment, marker)` — `RestartMoment.LEAVING`
+(«ухожу обновиться, скоро вернусь») / `RestartMoment.RETURNED` («вернулся, обновился»);
+`marker` детерминированно выбирает одну реплику из веера по устойчивому хешу SHA-256
+(`random`/время в этом окружении запрещены и всё равно сделали бы реплику
+невоспроизводимой). Тотально: любой маркер, включая пустой, даёт валидную непустую
+реплику.
+
+**Оркестрация** — `usecases/announce_restart.py::AnnounceRestart` (application): решает
+КОГДА и КУДА говорить, но не подбирает слова. `announce_leaving()` зовётся в
+graceful-shutdown ДО закрытия транспорта — предупреждает owner'а И группу (решение
+owner'а) и кладёт маркер апдейт-остановки в `kv`. 🔴 Отправка ограничена ТАЙМАУТОМ
+(`asyncio.wait_for`): сеть легла → реплика молча не уходит, но завершение НЕ блокируется
+(`systemctl restart` шлёт SIGTERM, окно короткое). Маркер ставится ДАЖЕ при неудачной
+отправке. `announce_returned()` зовётся на старте: говорит «вернулся» ТОЛЬКО когда маркер
+есть, и КОНСУМИТ его (одно возвращение на один апдейт); упал сам (маркера нет) → молчит,
+притворяться апдейтом нельзя. Порты `RestartNotifier` (owner-DM + группа) и
+`RestartMarkerStore` (маркер + растущий epoch) — за инфраструктурой:
+`infrastructure/telegram/restart_notifier.py` (бот Боба) и `adapters/restart_marker_store.py`
+(kv). За флагом `runtime.restart_notice` (default OFF → хуки не собираются → lifecycle
+байт-в-байт).
+
 ### Use-case'ы (application)
 
 `ProactivityEngine` (`usecases/engine.py`) — оркестратор, превращающий drive-модель
@@ -470,14 +500,17 @@ count** (сколько проактивных эпизодов в анти-сп
   `next_to_announce`, `is_undelivered_proposal`, `unactionable_reason`,
   `MAX_ANNOUNCE_ATTEMPTS`).
 - Голос предложения: `rule_voice` (`proposal_speech`, `proposal_message`).
+- Голос рестарта: `restart_voice` (`restart_voice`, `RestartMoment`).
 - Use-case'ы: `usecases.engine.ProactivityEngine`, `usecases.tick.ProactiveTick`,
   `usecases.record_owner_activity.RecordOwnerActivity`, `usecases.plan_goal`
   (`LlmPlanner`, `PlanGoal`), `usecases.pursue_goals.PursueGoalsTick`,
   `usecases.detect_patterns` (`LlmPatternDetector`, `DetectPatterns`),
   `usecases.announce_rules.AnnounceProposedRules`,
+  `usecases.announce_restart.AnnounceRestart` (порты `RestartNotifier`,
+  `RestartMarkerStore`),
   `usecases.self_improvement_sources.ActiveRulesReader`.
 - Адаптеры: `SqliteProactivityStore`, `SqliteGoalStore`,
-  `SqliteSelfImprovementStore`, `RepoProactivitySources`.
+  `SqliteSelfImprovementStore`, `KvRestartMarkerStore`, `RepoProactivitySources`.
 
 Композиция (сборка движка, планировщика, детектора и навешивание тиков на
 heartbeat) — в композиционном корне `app.py`. Долговечная запись в SQLite идёт

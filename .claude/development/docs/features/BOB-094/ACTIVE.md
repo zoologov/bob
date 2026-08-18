@@ -7,6 +7,18 @@
 проставлен. Первая волна: срез 3 (ops-артефакты, `deploy/`) ∥ срез 2 (наблюдаемость «оглох», `src/`)
 — непересекающиеся файлы.
 
+### bob-jgm.1 (dev, объявление рестарта) — В РАБОТЕ
+Человечное объявление рестарта голосом Боба (BOB-090.D):
+- Чистое ядро `proactivity/restart_voice.py::restart_voice(kind, *, marker) -> str` — несколько
+  живых вариантов на каждый `kind` (LEAVING/RETURNED), детерминированный выбор по хешу marker
+  (без random/времени). mutation-цель, source_paths (proactivity уже в списке).
+- Маркер апдейт-остановки в `kv` (`restart.pending_update`): shutdown-хук ставит, startup читает и
+  консумит. Нет маркера (упал сам) → НЕ говорит «вернулся-после-обновления».
+- shutdown-хук в `app.shutdown` ДО закрытия транспорта: одна отправка owner+группа С ТАЙМАУТОМ,
+  сеть легла → молча выходим, shutdown не виснет.
+- startup-хук в `app.startup`: маркер есть → реплика «вернулся, обновился», консумит маркер.
+- Флаг `restart_notice` (default OFF → байт-в-байт прежнее поведение).
+
 ### bob-jgm.2 (dev, наблюдаемость «оглох») — В РАБОТЕ
 Поверх счётчика BOB-103 `_poll_failures[identity]`:
 - Чистое ядро `kernel/poll_outage.py::outage_state(consecutive_failures, threshold) -> bool`

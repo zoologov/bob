@@ -21,6 +21,13 @@ runtime:
   log_file: logs/bob.log
   log_max_bytes: 33554432      # 32 MiB на файл до ротации
   log_backup_count: 5          # хранить 5 ротированных файлов (~160 MiB потолок)
+  # BOB-094: человечное объявление рестарта голосом Боба. ON → перед остановкой
+  # (graceful-shutdown при systemctl restart) Боб предупреждает owner'а И группу
+  # «ухожу обновиться», а после старта, если прошлый выход был апдейт-остановкой
+  # (маркер в kv), говорит «вернулся, обновился». Отправка с таймаутом, не блокирует
+  # завершение (сеть легла → молча выходим). Упал сам (нет маркера) → не притворяется
+  # апдейтом. Default OFF → поведение lifecycle байт-в-байт прежнее. На VPS — ON.
+  restart_notice: false
 
 llm:
   # Tier 0 — local mlx-lm server (no API key): cheap, privacy-sensitive work.
