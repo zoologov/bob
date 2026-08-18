@@ -69,6 +69,7 @@ class _FakeInteractiveRunner:
         mode: str,
         resume_session_id: str | None = None,
         continue_session: bool = False,
+        allow_once: str = "",
     ) -> None:
         assert continue_session is False  # D3 resumes BY ID, never «the latest»
         self.opened.append((workdir, mode, resume_session_id))
@@ -97,6 +98,7 @@ class _ExplodingRunner(_FakeInteractiveRunner):
         mode: str,
         resume_session_id: str | None = None,
         continue_session: bool = False,
+        allow_once: str = "",
     ) -> None:
         raise RuntimeError("claude failed to spawn")
 

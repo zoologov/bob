@@ -44,10 +44,14 @@ src/bob/interactive/
   resume_policy.py      # layer=domain   — select_resumable / is_confirmation_fresh: можно ли поднять приостановленную работу и какую (BOB-087.D3)
   resume_negotiation.py # layer=domain   — ResumeNegotiation: висящий вопрос «поднимаю?» (взвести / разрешить / снять) + исходы ResumeConfirmed/ResumeRejected (BOB-087.E)
   argv_policy.py        # layer=domain   — build_interactive_argv / extract_session_id: чем параметризуется живой claude и что берётся из init-кадра (BOB-087.D1/D4b)
-  pipeline_prompt.py    # layer=domain   — pipeline_first_frame: ТЕКСТ первого кадра сессии (задача + идти по CLAUDE.md, эпик через /coordinator, роли субагентами) — BOB-088 срез 2
+  pipeline_prompt.py    # layer=domain   — кадры, которыми Боб правит сессией: pipeline_first_frame (постановка задачи, BOB-088 срез 2) и permission_retry_frame (возвращение после «да» владельца, срез 3)
+  tool_permissions.py   # layer=domain   — tool_permission_argv: узкий ЗАПРЕТ необратимого (всегда), разрешение рутины конвейера (флаг) и ОДНОРАЗОВОЕ точечное доразрешение — BOB-088 срез 3
+  permission_denial.py  # layer=domain   — DenialWatch: прочитать в потоке system/permission_denied и назвать, ЧЕГО Боб не смог (команда берётся из связанного tool_use, не из message CLI)
+  permission_negotiation.py # layer=domain — PermissionNegotiation: висящий вопрос «упёрся в запрет, разрешаешь?» + исходы PermissionGranted/PermissionRefused (окно PERMISSION_TTL = 30 минут)
+  denial_voice.py       # layer=domain   — голос Боба на отказ: вопрос живой речью (без кнопок и слешей), «делаю», «не трогаю», «возвращаться некуда»
   voice.py              # layer=domain   — детерминированные реплики режима (вход/выход, «сеанс кончился сам», цикл возобновления) + ре-экспорт двух общих строк управления сессией
   usecases/             # layer=application
-    session.py          — InteractiveSessionManager: жизненный цикл ОДНОГО живого сеанса (open/feed/stop/active + open_workspace/propose_resume/resolve_pending_resume/resume)
+    session.py          — InteractiveSessionManager: жизненный цикл ОДНОГО живого сеанса (open/feed/stop/active + open_workspace/propose_resume/resolve_pending_resume/resume + resolve_pending_permission)
     teardown.py         — SessionTeardown: терминальное завершение забранного сеанса (kill раннера, судьба дерева, терминальная строка)
     intake.py           — InteractiveIntakeRouter: вход / steer→stdin / выход в личке (owner+DM)
     recover_sessions.py — RecoverInteractiveSessions: свип осиротевших INTERACTIVE-строк на старте процесса (BOB-087.D5b)
@@ -274,9 +278,38 @@ stream-json, `ClaudeRunError`) переехали на общую доменну
   `is_pending()` → `bool`, `settle(text, sender)` → `ResumeConfirmed(workspace) |
   ResumeRejected() | None`.
 - `argv_policy.py`: `build_interactive_argv(claude_bin, *, mode, resume_session_id=None,
-  continue_session=False, extra_dirs=())` → `list[str]`; `extract_session_id(event)` →
-  `str | None` (только настоящий `init`-кадр с непустым строковым `session_id`).
-- `pipeline_prompt.py`: `pipeline_first_frame(task)` → `str | None` — постановка, которой
+  continue_session=False, extra_dirs=(), permissions=())` → `list[str]`;
+  `extract_session_id(event)` → `str | None` (только настоящий `init`-кадр с непустым
+  строковым `session_id`). `permissions` — готовый хвост прав инструментов, приписывается
+  последним; сама политика живёт в `tool_permissions`.
+- `tool_permissions.py`: `tool_permission_argv(*, routine=False, allow_once="")` →
+  `list[str]`. Запрет необратимого (`git push`, `git remote`, `git reset --hard`, `rm`,
+  `gh pr merge`, `curl`, `wget`) едет в КАЖДЫЙ спавн и ключа не имеет; `routine`
+  (owner-флаг `coder.pipeline_tools`, default OFF) добавляет разрешение рутины конвейера;
+  `allow_once` — команда, одобренная владельцем словами: она разрешается ТОЧНЫМ текстом, а
+  накрывающие её шаблоны запрета отходят на ОДИН заход. 🔴 Каждый пункт списка измерен
+  живым прогоном настоящего `claude` (версия CLI записана в протоколе), включая находку «узкий `rm -rf` не ловит
+  `rm -fr`» (протокол — в комментарии беады `bob-c3r.3`). Это СТРАХОВКА от нечаянного, а
+  не граница: границу держит структура (клон без кредов).
+- `permission_denial.py`: `DenialWatch(remember=64)` — `see(event)` →
+  `PermissionDenial(tool_name, tool_use_id, command) | None`. Команда берётся из вызова,
+  связанного по `tool_use_id`: поле `message` события несёт её ДАЛЕКО не всегда (у
+  встроенного отказа CLI там английское «This command requires approval»), и произносить
+  служебную строку внутри русской реплики Боба нельзя.
+- `permission_negotiation.py`: `PermissionNegotiation(clock=…)` — `ask(*, command, sender,
+  session_id)`, `is_pending()`, `settle(text, sender)` → `PermissionGranted(command,
+  session_id) | PermissionRefused() | None`; `PERMISSION_TTL` = 30 минут (дольше
+  пятиминутного `CONFIRMATION_TTL`: этот вопрос застаёт владельца врасплох, а работа
+  стоит).
+- `denial_voice.py`: `permission_question(denial)`, `permission_stuck(denial)`,
+  `permission_lifted(command)`, `permission_declined()`, `permission_unreachable()` →
+  `str`. Голос БОБА (канон BOB-090.D), без кнопок и слешей: разные запреты звучат разными
+  словами, служебный текст CLI в реплику попасть не может по конструкции (в
+  `PermissionDenial` его просто нет).
+- `pipeline_prompt.py`: `permission_retry_frame(command)` → `str | None` — кадр
+  возвращения после «да» владельца (`None` на пустой команде): поднятая по `--resume`
+  нить сама по себе ничего не повторяет, это проверено живым прогоном.
+  `pipeline_first_frame(task)` → `str | None` — постановка, которой
   начинается СВЕЖАЯ сессия (`None` на пустой задаче: додуманная моделью задача, которую
   поведёт конвейер, хуже отсутствия постановки). Живёт в домене, а не строкой в адаптере,
   ровно по доводу `argv_policy`: текст определяет поведение конвейера, значит обязан быть
@@ -293,9 +326,14 @@ stream-json, `ClaudeRunError`) переехали на общую доменну
   `stop(sender)`, `active()` плюс путь долгоживущего рабочего места
   `open_workspace(name, task, sender)`, `propose_resume(name, sender)`,
   `resolve_pending_resume(text, sender)` → `CodingOutcome | None` (`None` = ход резюме не
-  касается) и `resume(name, sender)`.
+  касается) и `resume(name, sender)`. 🔴 Плюс `resolve_pending_permission(text, sender)` →
+  `CodingOutcome | None` (BOB-088 срез 3): «да» владельца на вопрос о запрете закрывает
+  текущий процесс и поднимает ТУ ЖЕ нить `claude` (`--resume`) с точечным разрешением
+  одной команды и кадром возвращения. Роутер обязан спрашивать этот метод ДО `feed`,
+  иначе «да» уедет в stdin `claude`.
 - `usecases/teardown.py`: `SessionTeardown` — `finalize(live)` → `CodingSession`,
-  `close_runner(runner)`, `cleanup(path)`.
+  `hand_over(live)` → `CodingSession` (закрыть строку сеанса, НЕ трогая дерево: в него
+  сейчас же возвращаются повторным заходом), `close_runner(runner)`, `cleanup(path)`.
 - `usecases/intake.py`: `InteractiveIntakeRouter.route(*, text, sender, is_owner,
   is_group)` → `bool` (был ли ход поглощён).
 - `usecases/recover_sessions.py`: `RecoverInteractiveSessions.run()` → `int` (сколько
@@ -313,7 +351,9 @@ stream-json, `ClaudeRunError`) переехали на общую доменну
 ## Тесты
 
 - **Чистые ядра** — `tests/domain/interactive/test_argv_policy.py`, `test_intent.py`,
-  `test_resume_policy.py`, `test_voice.py`, `test_pipeline_prompt.py` (+ общая политика песочницы —
+  `test_resume_policy.py`, `test_voice.py`, `test_pipeline_prompt.py`,
+  `test_tool_permissions.py`, `test_permission_denial.py`, `test_permission_negotiation.py`,
+  `test_denial_voice.py` (+ общая политика песочницы —
   `tests/domain/coding/test_sandbox_policy.py`). Первые модули — mutation-цели
   (`./scripts/mutation.sh interactive.argv_policy` и так далее). Ради постоянного гейта
   `build_interactive_argv` и `extract_session_id` и живут в домене, а не в адаптере:

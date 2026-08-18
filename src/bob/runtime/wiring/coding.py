@@ -622,12 +622,24 @@ def _build_interactive_session(
     # adapters, seen through their narrow read/ensure ports; OFF → ``None`` → the whole
     # resume path is structurally unavailable.
     resume_on = _flag(coder, "resume")
+    # 🔴 Права инструментов (BOB-088, срез 3), и они РАЗНОЙ природы — поэтому читаются
+    # по-разному. Запрет необратимого (push / remotes / reset --hard / rm / gh pr merge /
+    # curl / wget) флага НЕ имеет вовсе: он приезжает в каждый спавн из домена
+    # (:func:`bob.interactive.tool_permissions.tool_permission_argv`), и выключить его
+    # нечем — ровно урок среза 1, где страховка, выражаемая одним ключом, в проде
+    # оказалась выключенной. А ЯВНОЕ разрешение рутины конвейера — ослабление, поэтому
+    # оно за owner-флагом ``coder.pipeline_tools`` (default OFF), как ``allow_bypass`` и
+    # ``extra_dirs``. 🔴 Без него, по живому замеру, встроенный гейт CLI отказывает даже
+    # ``git add`` и ``git commit``: конвейер встанет на первом же коммите, и включать
+    # флаг придётся вместе с ``coder.pipeline_prompt``.
+    routine_tools = _flag(coder, "pipeline_tools")
     return InteractiveSessionManager(
         runner_factory=lambda: InteractiveClaudeRunner(
             claude_bin=claude_bin,
             allow_bypass=allow_bypass,
             extra_dirs=extra_dirs,
             isolation=isolation,
+            routine_tools=routine_tools,
         ),
         worktree=worktree,
         store=store,

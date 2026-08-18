@@ -27,8 +27,10 @@
   строку режима (``CodingOutcome.message`` из ``session_voice``), чтобы owner всегда знал,
   в каком режиме находится.
 
-Порядок разбора одного хода: сначала ответ на висящий вопрос ВОЗОБНОВЛЕНИЯ (если resume
-вообще собран); затем команда ВХОДА (открыть можно и без активного сеанса); затем команда
+Порядок разбора одного хода: сначала ответ на висящий вопрос О РАЗРЕШЕНИИ (BOB-088, срез
+3 — иначе «да» владельца уехало бы в stdin ``claude``); затем ответ на висящий вопрос
+ВОЗОБНОВЛЕНИЯ (если resume вообще собран); затем команда ВХОДА (открыть можно и без
+активного сеанса); затем команда
 ВОЗОБНОВЛЕНИЯ; затем — если сеанс НЕ активен — ход инертен (обычный Боб); при активном
 сеансе сначала команда ВЫХОДА (проверяется ДО feed), иначе плоский текст форвардится в
 stdin. Всё инъектируется, поэтому роутинг детерминирован в тестах (нет ни живого claude,
@@ -69,13 +71,22 @@ class InteractiveManagerLike(Protocol):
     :class:`~bob.interactive.usecases.session.InteractiveSessionManager`:
     ``active`` — синхронный запрос «есть ли живой сеанс» (гейт режима), ``open`` / ``feed``
     / ``stop`` — owner-проверенные мутаторы (каждый ре-чекает owner'а внутри). Роутер не
-    тянется дальше этих четырёх методов.
+    тянется дальше этих методов.
+
+    🔴 ``resolve_pending_permission`` (BOB-088, срез 3) стоит здесь, в ОБЯЗАТЕЛЬНОЙ части
+    поверхности, а не отдельным опциональным seam'ом, как возобновление. Причина прямая:
+    возобновление — способность за флагом, а вопрос «упёрся в запрет, разрешаешь?»
+    рождается в ЛЮБОМ живом сеансе, и менеджер, который его не разрешает, оставил бы
+    владельца с висящим вопросом, чьё «да» уехало бы в stdin ``claude``.
     """
 
     def active(self) -> bool: ...
     async def open(self, task: str, sender: int | None) -> CodingOutcome: ...
     async def feed(self, text: str) -> None: ...
     async def stop(self, sender: int | None) -> CodingOutcome: ...
+    async def resolve_pending_permission(
+        self, text: str, sender: int | None
+    ) -> CodingOutcome | None: ...
 
 
 class ResumeSupportLike(Protocol):
@@ -143,7 +154,9 @@ class InteractiveIntakeRouter:
         """
         if not is_owner or is_group:
             return False
-        if await self._route_resume(text, sender):
+        if await self._route_permission(text, sender) or await self._route_resume(
+            text, sender
+        ):
             return True
         task = parse_interactive_entry(text)
         if task is not None:
@@ -155,6 +168,25 @@ class InteractiveIntakeRouter:
             await self._emit(await self._manager.stop(sender))
             return True
         await self._manager.feed(text)
+        return True
+
+    async def _route_permission(self, text: str, sender: int | None) -> bool:
+        """Отдать ход висящему вопросу «разрешаешь?»; вернуть, был ли он ПОГЛОЩЁН.
+
+        🔴 ПЕРВЫМ, и это главное в срезе 3: при живом сеансе любой плоский текст
+        владельца уходит в stdin ``claude``, поэтому его «да» без этой проверки прочитал
+        бы claude, а Боб остался бы с висящим вопросом навсегда. Ответ перехватывается ДО
+        :meth:`~bob.interactive.usecases.session.InteractiveSessionManager.feed`.
+
+        Поглощается ТОЛЬКО явный ответ (менеджер отдал исход); всё прочее возвращает
+        ``None`` — вопрос при этом снимается, а реплика идёт обычным путём, как steer.
+        Команды входа/выхода это не задевает: они разбираются дальше по цепочке, а «стоп»
+        ответом на вопрос не является.
+        """
+        settled = await self._manager.resolve_pending_permission(text, sender)
+        if settled is None:
+            return False
+        await self._emit(settled)
         return True
 
     async def _route_resume(self, text: str, sender: int | None) -> bool:

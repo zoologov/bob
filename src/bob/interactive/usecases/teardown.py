@@ -74,6 +74,21 @@ class SessionTeardown:
         """
         if not live.persistent:  # 🔴 a persistent workspace keeps its accumulated work
             await self.cleanup(live.session.worktree_path)
+        return await self.hand_over(live)
+
+    async def hand_over(self, live: LiveSession) -> CodingSession:
+        """Закрыть СТРОКУ забранного сеанса, НЕ трогая рабочее дерево.
+
+        🔴 Отличие от :meth:`finalize` ровно одно и оно про судьбу дерева: сюда приходят,
+        когда в то же самое место сейчас же ВЕРНУТСЯ — повторным заходом ``--resume``
+        после того, как владелец разрешил словами упершийся шаг (BOB-088, срез 3). Убрать
+        дерево здесь значило бы стереть работу той самой сессии, которую поднимаем: путь
+        у нового процесса тот же, а эфемерность к разрешению отношения не имеет.
+
+        Строка при этом закрывается по-настоящему (терминальное состояние + сохранённый
+        ``claude_session_id``): у нового захода будет СВОЯ строка, как и у ``resume``, —
+        цепочка «сессия за сессией» остаётся видимой, а нетерминальных сирот не остаётся.
+        """
         now = self._clock.now()
         ended = live.session
         claude_session_id = live.runner.session_id

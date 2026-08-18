@@ -65,6 +65,7 @@ class _FakeRunner:
         mode: str,
         resume_session_id: str | None = None,
         continue_session: bool = False,
+        allow_once: str = "",
     ) -> None:
         self.opened.append((workdir, resume_session_id))
 

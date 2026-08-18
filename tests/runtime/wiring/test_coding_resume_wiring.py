@@ -98,6 +98,12 @@ class _RecordingManager:
     async def feed(self, text: str) -> None:
         self.fed.append(text)
 
+    async def resolve_pending_permission(
+        self, text: str, sender: int | None
+    ) -> CodingOutcome | None:
+        # Срез 3: у этого дублёра вопросов о разрешении не бывает — ход идёт дальше.
+        return None
+
     async def stop(self, sender: int | None) -> CodingOutcome:
         return CodingOutcome(ok=True, message="", session=None)
 

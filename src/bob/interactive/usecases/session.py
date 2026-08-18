@@ -94,10 +94,15 @@ from typing import TYPE_CHECKING
 from bob.coding.entities import CodingOutcome, CodingSession
 from bob.coding.naming import workspace_branch, worktree_branch
 from bob.coding.state import CodingSessionState
-from bob.interactive import voice
+from bob.interactive import denial_voice, voice
 from bob.interactive.argv_policy import extract_session_id
 from bob.interactive.entities import LiveSession
-from bob.interactive.pipeline_prompt import pipeline_first_frame
+from bob.interactive.permission_denial import DenialWatch
+from bob.interactive.permission_negotiation import (
+    PermissionGranted,
+    PermissionNegotiation,
+)
+from bob.interactive.pipeline_prompt import permission_retry_frame, pipeline_first_frame
 from bob.interactive.resume_negotiation import ResumeConfirmed, ResumeNegotiation
 from bob.interactive.resume_policy import select_resumable
 from bob.interactive.usecases.teardown import SessionTeardown
@@ -117,6 +122,7 @@ if TYPE_CHECKING:
         ResumableSessionLookup,
         Worktree,
     )
+    from bob.interactive.permission_denial import PermissionDenial
 
     class _Clock(Protocol):
         """Часы, которые нужны менеджеру (инъектируются для детерминизма тестов)."""
@@ -188,6 +194,10 @@ class InteractiveSessionManager:
         # The single pending «поднимаю?» question — its own collaborator (BOB-087.E):
         # owner-scoped, TTL-bounded, never sticky.
         self._negotiation = ResumeNegotiation(clock=clock)
+        # 🔴 И ВТОРОЙ висящий вопрос — «упёрся в запрет, разрешаешь?» (BOB-088, срез 3).
+        # Отдельная машина с теми же тремя правилами и своим, более длинным окном: этот
+        # вопрос застаёт владельца врасплох, посреди волны, и работа всё это время стоит.
+        self._permission = PermissionNegotiation(clock=clock)
         # The CONSEQUENCES of an ending (kill the runner, the tree's fate, the terminal
         # row) — one path for BOTH ends of a session: the explicit ``stop`` and the
         # process dying on its own.
@@ -245,7 +255,7 @@ class InteractiveSessionManager:
             updated_at=now,
             worktree_path=path,
         )
-        if not await self._go_live(session, runner, persistent=False):
+        if not await self._go_live(session, runner, persistent=False, owner=sender):
             return CodingOutcome(
                 ok=False, message=voice.interactive_failed(), session=None
             )
@@ -305,7 +315,7 @@ class InteractiveSessionManager:
             updated_at=now,
             worktree_path=path,
         )
-        if not await self._go_live(session, runner, persistent=True):
+        if not await self._go_live(session, runner, persistent=True, owner=sender):
             return CodingOutcome(
                 ok=False, message=voice.resume_failed(), session=None
             )
@@ -365,6 +375,111 @@ class InteractiveSessionManager:
             return await self.resume(answer.workspace, sender)
         return CodingOutcome(ok=True, message=voice.resume_cancelled(), session=None)
 
+    async def resolve_pending_permission(
+        self, text: str, sender: int | None
+    ) -> CodingOutcome | None:
+        """Разрешить висящий вопрос «упёрся в запрет, разрешаешь?» (BOB-088, срез 3).
+
+        Устроено как :meth:`resolve_pending_resume`, и намеренно: ``None`` означает «ход
+        не про это — веди его обычным путём» (вопроса нет, отвечает не владелец, ответ
+        опоздал или это не явное «да»/«нет»), а вопрос при этом снимается и не залипает.
+
+        «Да» → :meth:`_return_with_permission` (повторный заход в ТУ ЖЕ нить с точечным
+        разрешением ровно одной команды); «нет» → короткая честная реплика, и работа идёт
+        дальше без этого шага.
+
+        🔴 Этот метод обязан вызываться ДО того, как реплика владельца уйдёт в stdin
+        сессии (:meth:`feed`), иначе его «да» прочитает ``claude``, а не Боб, и вопрос
+        останется висеть навсегда. Порядок держит интейк-роутер
+        (:class:`~bob.interactive.usecases.intake.InteractiveIntakeRouter`) — там же, где
+        он уже держит его для вопроса «поднимаю?».
+        """
+        if not self._permission.is_pending() or not self._owner.is_owner(sender):
+            return None
+        answer = self._permission.settle(text, sender)
+        if answer is None:
+            return None
+        if isinstance(answer, PermissionGranted):
+            return await self._return_with_permission(answer)
+        return CodingOutcome(
+            ok=True, message=denial_voice.permission_declined(), session=None
+        )
+
+    async def _return_with_permission(
+        self, granted: PermissionGranted
+    ) -> CodingOutcome:
+        """Вернуться в ту же нить ``claude``, разрешив ровно одну команду (срез 3).
+
+        🔴 ПОЧЕМУ ПОВТОРНЫМ ЗАХОДОМ, А НЕ «ДОРАЗРЕШЕНИЕМ НА МЕСТЕ». Отказ по конкретному
+        ``tool_use`` необратим, и способа выдать разрешение живому процессу у CLI нет:
+        права инструментов задаются АРГУМЕНТАМИ спавна. Значит единственный честный путь
+        — закрыть текущий процесс и подняться заново по ``--resume`` с тем же
+        ``claude_session_id`` (нить разговора сохраняется), передав точечное разрешение.
+        Проверено живым прогоном: модель повторяет ровно ту команду и идёт дальше.
+        ``bypassPermissions`` при этом НЕ берётся: он снял бы гейт целиком, а владелец
+        разрешил один шаг.
+
+        🔴 Рабочее дерево НЕ убирается (:meth:`~bob.interactive.usecases.teardown.
+        SessionTeardown.hand_over`): в него сейчас же возвращаемся, и там работа этой же
+        сессии. Строка старого сеанса закрывается терминально — сирот не остаётся.
+
+        Возвращаться некуда (сеанс уже кончился, сменился или нить claude неизвестна) —
+        Боб говорит об этом честно, а не изображает исполнение.
+        """
+        live = self._claim(granted.session_id)
+        if live is None:
+            return _unreachable()
+        claude_session_id = live.session.claude_session_id
+        if not claude_session_id:
+            # Нить неизвестна (init-кадр не дошёл) — подниматься не во что. Сеанс уже
+            # забран, поэтому закрываем его честно, а не бросаем полуживым.
+            await self._end_claimed(live)
+            return _unreachable()
+        self._cancelled.add(live.session.id)
+        await self._teardown.close_runner(live.runner)
+        await self._await_pump()
+        ended = await self._teardown.hand_over(live)
+        self._cancelled.discard(ended.id)
+        self._task = None
+        return await self._reopen(live, ended, granted.command, claude_session_id)
+
+    async def _reopen(
+        self,
+        live: LiveSession,
+        ended: CodingSession,
+        command: str,
+        claude_session_id: str,
+    ) -> CodingOutcome:
+        """Поднять новый процесс в том же месте и сделать его живым сеансом."""
+        now = self._clock.now()
+        try:
+            runner = await self._spawn(
+                ended.worktree_path or "",
+                ended.task,
+                resume_session_id=claude_session_id,
+                allow_once=command,
+            )
+        except Exception:  # спавн сорвался: дерево цело, отвечаем честно
+            logger.exception("coding: re-entering with the granted permission failed")
+            return CodingOutcome(ok=False, message=voice.resume_failed(), session=None)
+        session = CodingSession(
+            id=self._id_factory(),
+            task=ended.task,
+            state=CodingSessionState.INTERACTIVE,
+            branch=ended.branch,
+            created_at=now,
+            updated_at=now,
+            worktree_path=ended.worktree_path,
+            claude_session_id=claude_session_id,
+        )
+        if not await self._go_live(
+            session, runner, persistent=live.persistent, owner=live.owner
+        ):
+            return CodingOutcome(ok=False, message=voice.resume_failed(), session=None)
+        return CodingOutcome(
+            ok=True, message=denial_voice.permission_lifted(command), session=session
+        )
+
     async def resume(self, name: str, sender: int | None) -> CodingOutcome:
         """Owner-only: поднять приостановленную сессию workspace ``name`` (BOB-087.D3).
 
@@ -417,7 +532,7 @@ class InteractiveSessionManager:
             worktree_path=path,
             claude_session_id=candidate.claude_session_id,
         )
-        if not await self._go_live(session, runner, persistent=True):
+        if not await self._go_live(session, runner, persistent=True, owner=sender):
             return CodingOutcome(
                 ok=False, message=voice.resume_failed(), session=None
             )
@@ -463,7 +578,12 @@ class InteractiveSessionManager:
     # --- Internal orchestration ----------------------------------------------
 
     async def _go_live(
-        self, session: CodingSession, runner: InteractiveRunner, *, persistent: bool
+        self,
+        session: CodingSession,
+        runner: InteractiveRunner,
+        *,
+        persistent: bool,
+        owner: int | None = None,
     ) -> bool:
         """Персистнуть сессию, сделать её живой и завести перекачку вывода в личку.
 
@@ -486,12 +606,19 @@ class InteractiveSessionManager:
             if not persistent:
                 await self._teardown.cleanup(session.worktree_path)
             return False
-        self._live = LiveSession(session=session, runner=runner, persistent=persistent)
+        self._live = LiveSession(
+            session=session, runner=runner, persistent=persistent, owner=owner
+        )
         self._task = asyncio.create_task(self._pump(session.id, runner))
         return True
 
     async def _spawn(
-        self, path: str, task: str, *, resume_session_id: str | None = None
+        self,
+        path: str,
+        task: str,
+        *,
+        resume_session_id: str | None = None,
+        allow_once: str = "",
     ) -> InteractiveRunner:
         """Спавнить живой раннер в ``path`` так, чтобы НЕДОСПАВНЕННЫЙ не остался сиротой.
 
@@ -514,9 +641,16 @@ class InteractiveSessionManager:
         spawned = False
         try:
             await runner.open(
-                path, mode=self._permission_mode, resume_session_id=resume_session_id
+                path,
+                mode=self._permission_mode,
+                resume_session_id=resume_session_id,
+                allow_once=allow_once,
             )
-            if resume_session_id is None:
+            if allow_once:
+                # 🔴 Повторный заход после «да» владельца (срез 3): нить поднята, но
+                # сама по себе она ничего не повторяет — замерено живым прогоном.
+                await self._put_the_retry(runner, allow_once)
+            elif resume_session_id is None:
                 await self._put_the_task(runner, task)
             spawned = True
         finally:
@@ -545,6 +679,19 @@ class InteractiveSessionManager:
             return
         frame = pipeline_first_frame(task)
         if frame is None:
+            return
+        await runner.feed(frame)
+
+    async def _put_the_retry(self, runner: InteractiveRunner, command: str) -> None:
+        """Вернуть поднятую сессию к разрешённому шагу — кадром, а не надеждой.
+
+        🔴 НЕ под флагом ``coder.pipeline_prompt``, и это не оплошность: постановка задачи
+        — способность конвейера (её владелец включает), а возвращение после СВОЕГО
+        «да» — обязательство того же разговора. Разрешить и не вернуться было бы хуже
+        молчания: владелец сказал «делай», а не сделано ничего.
+        """
+        frame = permission_retry_frame(command)
+        if frame is None:  # pragma: no cover — пустая команда не доходит до спавна
             return
         await runner.feed(frame)
 
@@ -585,6 +732,16 @@ class InteractiveSessionManager:
         live = self._claim(session_id)
         if live is None:
             return
+        await self._end_claimed(live)
+
+    async def _end_claimed(self, live: LiveSession) -> None:
+        """Закончить УЖЕ ЗАБРАННЫЙ сеанс и честно сказать об этом owner'у.
+
+        Вынесено из :meth:`_end_on_its_own` ради второго вызывающего (BOB-088, срез 3):
+        повторный заход забирает сеанс САМ и, обнаружив, что подниматься не во что,
+        обязан закончить его тем же путём — иначе процесс остался бы неостановимым
+        сиротой ровно в том месте, где мы собирались его переоткрыть.
+        """
         # пожать мёртвого ребёнка, без зомби
         await self._teardown.close_runner(live.runner)
         session = await self._teardown.finalize(live)
@@ -686,7 +843,7 @@ class InteractiveSessionManager:
         streamer = self._streamer_factory()
         try:
             await streamer.stream(
-                self._capture_id(session_id, runner.events()),
+                self._watch_denials(session_id, self._capture_id(session_id, runner.events())),
                 is_cancelled=lambda: session_id in self._cancelled,
             )
         except Exception:  # an output-stream fault must never crash the manager
@@ -714,6 +871,51 @@ class InteractiveSessionManager:
                     captured = True
                     await self._persist_claude_id(session_id, claude_session_id)
             yield event
+
+    async def _watch_denials(
+        self, session_id: str, events: AsyncIterator[Mapping[str, object]]
+    ) -> AsyncIterator[Mapping[str, object]]:
+        """Пропустить поток насквозь, СПРОСИВ владельца о каждом новом отказе (срез 3).
+
+        🔴 До этого среза отказ в разрешении не значил РОВНО НИЧЕГО: рендер отдаёт
+        ``None`` на ``system``-событие, поэтому в личку не уходило даже строчки, модель
+        получала ошибку в ``tool_result`` и тихо шла дальше или сдавалась. Конвейер при
+        этом останавливался молча — а по замеру (беада ``bob-c3r.3``) отказ в этой версии
+        CLI получает даже ``git add``.
+
+        Проходной трансформер, а не второй потребитель потока: событие уходит в стример
+        НЕИЗМЕНЁННЫМ, поэтому рендер в личку байт-в-байт прежний.
+        """
+        watch = DenialWatch()
+        async for event in events:
+            denial = watch.see(event)
+            if denial is not None:
+                await self._on_denial(session_id, denial)
+            yield event
+
+    async def _on_denial(self, session_id: str, denial: PermissionDenial) -> None:
+        """Сказать владельцу про отказ — вопросом, если Боб может его снять.
+
+        🔴 Один вопрос за раз: пока висит незакрытый, второй не задаётся. Модель, упёршись,
+        пробует варианты пачкой, и переспрашивать на каждый — это уже не человек, а
+        скрипт (и тот самый флуд в личку, от которого владелец бежал).
+
+        Отказ БЕЗ команды (инструмент целиком, или кадр вызова не дошёл) снять точечно
+        нельзя: спрашивать «разрешаешь?» было бы вопросом, на который «да» ничего не
+        изменит, поэтому Боб говорит об этом честно и не взводит вопрос.
+        """
+        live = self._live
+        if live is None or live.session.id != session_id:
+            return  # сеанс уже сменился — вопрос был бы не про эту работу
+        if not denial.command:
+            await self._say(denial_voice.permission_stuck(denial))
+            return
+        if self._permission.is_pending():
+            return
+        self._permission.ask(
+            command=denial.command, sender=live.owner, session_id=session_id
+        )
+        await self._say(denial_voice.permission_question(denial))
 
     async def _persist_claude_id(self, session_id: str, claude_session_id: str) -> None:
         """Записать id claude-сессии в живую строку (best-effort — поток не рушим)."""
@@ -746,3 +948,10 @@ class _NotWiredError(RuntimeError):
 def _refused() -> CodingOutcome:
     """Тихий отказ не-owner'у — ни сессии, ни worktree, ни спавна, ни сообщения."""
     return CodingOutcome(ok=False, message="", session=None)
+
+
+def _unreachable() -> CodingOutcome:
+    """«Да» пришло, а возвращаться уже некуда — честная реплика вместо тишины."""
+    return CodingOutcome(
+        ok=False, message=denial_voice.permission_unreachable(), session=None
+    )

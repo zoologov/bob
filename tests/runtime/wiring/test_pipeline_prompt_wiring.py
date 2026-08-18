@@ -77,6 +77,7 @@ class _RecordingRunner:
         mode: str,
         resume_session_id: str | None = None,
         continue_session: bool = False,
+        allow_once: str = "",
     ) -> None:
         return None
 

@@ -24,7 +24,10 @@ from __future__ import annotations
 
 import pytest
 
-from bob.interactive.pipeline_prompt import pipeline_first_frame
+from bob.interactive.pipeline_prompt import (
+    permission_retry_frame,
+    pipeline_first_frame,
+)
 
 _TASK = "BOB-088: довести конвейер до PR"
 
@@ -116,4 +119,49 @@ def test_the_frame_reads_exactly_like_this() -> None:
         "Трекер bd доступен из этого рабочего места: беаду возьми или заведи и веди её "
         "состояние там, а не в голове.\n"
         "Это постановка, а не разминка: начинай сам, отдельной команды не будет."
+    )
+
+
+# --------------------------------------------------------------------------- #
+# Кадр возвращения после разрешения владельца (BOB-088, срез 3)
+# --------------------------------------------------------------------------- #
+#
+# 🔴 Тесты этого кадра стоят ЗДЕСЬ, в доменных, а не только в тестах менеджера, и это не
+# дублирование: mutation-гейт считает покрытие по ``tests/domain`` (конфиг mutmut), и
+# кадр, проверенный только выше по стеку, дал бы «no tests» — то есть объявленную
+# mutation-цель БЕЗ гейта (§0.3 п.7).
+
+
+def _retry(command: str = "git push origin bob/x") -> str:
+    frame = permission_retry_frame(command)
+    assert frame is not None
+    return frame
+
+
+def test_the_retry_frame_names_the_command_the_owner_approved() -> None:
+    # Без дословной команды поднятая нить не знает, что именно повторять: расплывчатое
+    # «продолжай» модель истолкует как угодно (замерено живым прогоном — см. беаду).
+    assert "git push origin bob/x" in _retry()
+
+
+def test_the_retry_frame_says_the_permission_was_for_one_time() -> None:
+    # 🔴 Модель, прочитавшая «тебе разрешили push», может решить, что теперь можно
+    # всегда. Одноразовость держится не только argv, но и словами.
+    assert "разовое" in _retry()
+
+
+def test_a_retry_of_nothing_is_no_frame_at_all() -> None:
+    assert permission_retry_frame("") is None
+    assert permission_retry_frame("   \n") is None
+
+
+def test_the_retry_frame_is_worded_exactly_like_this() -> None:
+    # Дословный контракт с моделью — как и у первого кадра (см. верх файла).
+    assert _retry() == (
+        "Owner разрешил вот это, словами в личке: git push origin bob/x\n"
+        "\n"
+        "Повтори ровно эту команду с того места, где упёрся в запрет, и продолжай "
+        "работу дальше по процессу.\n"
+        "Разрешение разовое: следующий такой шаг снова упрётся в запрет, и я снова "
+        "пойду спрашивать."
     )

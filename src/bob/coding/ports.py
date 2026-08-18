@@ -86,6 +86,7 @@ class InteractiveRunner(Protocol):
         mode: str,
         resume_session_id: str | None = None,
         continue_session: bool = False,
+        allow_once: str = "",
     ) -> None:
         """Spawn the persistent ``claude`` process in ``workdir`` under ``mode``.
 
@@ -95,6 +96,13 @@ class InteractiveRunner(Protocol):
         only on the adapter) since BOB-087.D3, because the interactive-session manager —
         an application use-case that only ever sees this port — is what resumes a
         long-lived workspace by the persisted claude session id.
+
+        🔴 ``allow_once`` (BOB-088, срез 3) — единственная команда, которую владелец
+        разрешил СЛОВАМИ в ответ на «упёрся в запрет, разрешаешь?». Она тоже живёт на
+        порту, и по той же причине: доразрешить живому процессу нельзя (права —
+        аргументы спавна), поэтому решение «вернуться и сделать» принимает менеджер, а
+        видит он только этот порт. Пустая строка (дефолт) — обычный спавн под полным
+        запретом необратимого.
         """
         ...
 

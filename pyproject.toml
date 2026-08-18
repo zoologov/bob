@@ -817,6 +817,10 @@ ignore = [
     "ARG001",
     "ARG002",
     "PLR2004",
+    # bob-c3r.3: пояснение про неснимаемый запрет необратимого — по-русски (→ RUF003).
+    "RUF001",
+    "RUF002",
+    "RUF003",
 ]
 "tests/infrastructure/telegram/test_multibot_poll_resilience.py" = [
     "S101",
@@ -2389,6 +2393,44 @@ ignore = [
     "SLF001",
 ]
 "tests/runtime/wiring/test_tracker_reaches_the_spawn.py" = ["RUF001", "RUF002", "RUF003"]
+# bob-c3r.3 (BOB-088, срез 3): denylist необратимого + вопрос владельцу живой речью на
+# отказ + одноразовое доразрешение. Реплики Боба и разборы решений — русский текст, где
+# кириллические двойники намеренны (→ RUF001-003); живой смоук зовёт настоящий ``claude``
+# фиксированной формой без шелла (→ S603/S607).
+"src/bob/interactive/tool_permissions.py" = ["RUF001", "RUF002", "RUF003"]
+"src/bob/interactive/permission_denial.py" = ["RUF001", "RUF002", "RUF003"]
+"src/bob/interactive/permission_negotiation.py" = ["RUF001", "RUF002", "RUF003"]
+"src/bob/interactive/denial_voice.py" = ["RUF001", "RUF002", "RUF003"]
+"tests/domain/interactive/test_tool_permissions.py" = ["RUF001", "RUF002", "RUF003"]
+"tests/domain/interactive/test_permission_denial.py" = ["RUF001", "RUF002", "RUF003"]
+"tests/domain/interactive/test_permission_negotiation.py" = ["RUF001", "RUF002", "RUF003"]
+"tests/domain/interactive/test_denial_voice.py" = ["RUF001", "RUF002", "RUF003"]
+"tests/application/usecases/test_permission_ask.py" = [
+    "ARG002",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+"tests/runtime/wiring/test_permission_guard_wiring.py" = [
+    "ARG002",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+    "SLF001",
+]
+"tests/infrastructure/coding/test_denylist_real_claude_live_smoke.py" = [
+    "S603",
+    "S607",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+"tests/infrastructure/coding/test_interactive_runner_permissions.py" = [
+    "ARG002",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
 "tests/infrastructure/coding/test_clone_provisioning_real_git.py" = [
     "S603",
     "S607",

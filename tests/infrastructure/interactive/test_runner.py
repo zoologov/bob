@@ -40,6 +40,7 @@ from bob.interactive.adapters.runner import (
     _ExecInteractiveSpawner,
     encode_user_message,
 )
+from bob.interactive.tool_permissions import tool_permission_argv
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Mapping
@@ -114,8 +115,12 @@ def test_encode_user_message_handles_empty_text() -> None:
 # InteractiveClaudeRunner — over a FAKE bidirectional process
 # --------------------------------------------------------------------------- #
 
-#: 🔴 The BOB-083 spawn argv, byte-for-byte: with every relaxation off the runner must
-#: hand the spawner EXACTLY this token list (the policy's verdict, carried unchanged).
+#: 🔴 The BOB-083 spawn HEAD, byte-for-byte: with every relaxation off the runner must
+#: hand the spawner exactly these tokens first (the policy's verdict, carried unchanged).
+#: 🔴 BOB-088 срез 3: за головой ВСЕГДА идёт запрет необратимого
+#: (:func:`~bob.interactive.tool_permissions.tool_permission_argv`), и это не ослабление
+#: и не флаг — его нечем выключить. Поэтому «базлайн» здесь теперь голова, а хвост прав
+#: проверяется отдельно (``_PERMISSION_TAIL``).
 _BASELINE_ARGV = [
     "claude",
     "-p",
@@ -127,6 +132,9 @@ _BASELINE_ARGV = [
     "--permission-mode",
     "acceptEdits",
 ]
+
+#: Хвост прав инструментов, который несёт КАЖДЫЙ спавн (см. выше).
+_PERMISSION_TAIL = tool_permission_argv()
 
 
 class _FakeProcess:
@@ -204,6 +212,8 @@ async def test_open_spawns_with_the_interactive_argv() -> None:
         "--verbose",
         "--permission-mode",
         "acceptEdits",
+        # 🔴 BOB-088 срез 3: запрет необратимого едет в КАЖДОМ спавне и флага не имеет.
+        *_PERMISSION_TAIL,
     ]
     assert spawner.seen_cwd == "/work/dir"
 
@@ -226,7 +236,10 @@ async def test_open_resume_by_id_spawns_with_the_resume_argv() -> None:
 
     await runner.open("/w", mode="acceptEdits", resume_session_id="sess-7")
 
-    assert spawner.calls[0][-2:] == ["--resume", "sess-7"]
+    assert spawner.calls[0][-2 - len(_PERMISSION_TAIL) : -len(_PERMISSION_TAIL)] == [
+        "--resume",
+        "sess-7",
+    ]
 
 
 async def test_open_continue_spawns_with_the_continue_argv() -> None:
@@ -235,7 +248,7 @@ async def test_open_continue_spawns_with_the_continue_argv() -> None:
 
     await runner.open("/w", mode="acceptEdits", continue_session=True)
 
-    assert spawner.calls[0][-1] == "--continue"
+    assert spawner.calls[0][-1 - len(_PERMISSION_TAIL)] == "--continue"
 
 
 @pytest.mark.parametrize("mode", ["bypassPermissions", "plan; rm -rf /", "", "PLAN"])
@@ -398,7 +411,10 @@ async def test_allow_bypass_lets_the_bypass_mode_through() -> None:
 
     await runner.open("/w", mode="bypassPermissions")
 
-    assert spawner.calls[0][-2:] == ["--permission-mode", "bypassPermissions"]
+    assert spawner.calls[0][-2 - len(_PERMISSION_TAIL) : -len(_PERMISSION_TAIL)] == [
+        "--permission-mode",
+        "bypassPermissions",
+    ]
 
 
 @pytest.mark.parametrize("mode", ["plan; rm -rf /", "", "PLAN", "yolo"])
@@ -419,7 +435,10 @@ async def test_open_spawns_with_the_configured_extra_dirs() -> None:
 
     await runner.open("/w", mode="acceptEdits")
 
-    assert spawner.calls[0][-2:] == ["--add-dir", "/srv/docs"]
+    assert spawner.calls[0][-2 - len(_PERMISSION_TAIL) : -len(_PERMISSION_TAIL)] == [
+        "--add-dir",
+        "/srv/docs",
+    ]
 
 
 async def test_open_sanitises_a_flag_shaped_extra_dir() -> None:
@@ -441,7 +460,7 @@ async def test_default_open_argv_is_byte_identical_to_the_pre_d2_baseline() -> N
 
     await runner.open("/w", mode="acceptEdits")
 
-    assert spawner.calls[0] == _BASELINE_ARGV
+    assert spawner.calls[0] == [*_BASELINE_ARGV, *_PERMISSION_TAIL]
 
 
 # --------------------------------------------------------------------------- #
