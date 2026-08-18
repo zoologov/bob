@@ -27,7 +27,9 @@ jobs:
       - name: Install uv
         run: curl -LsSf https://astral.sh/uv/install.sh | sh
       - name: Sync deps
-        run: uv sync
+        # 🔴 --extra dev: ruff/mypy/pytest живут в [project.optional-dependencies].dev,
+        # дефолтный `uv sync` их НЕ ставит (только [dependency-groups].dev) — гейт падал.
+        run: uv sync --extra dev
       - name: Ruff
         run: uv run ruff check src/ tests/
       - name: Mypy
