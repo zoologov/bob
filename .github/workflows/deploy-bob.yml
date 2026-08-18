@@ -1,0 +1,68 @@
+name: Deploy Bob to VPS
+
+# BOB-094: выкатка Боба на VPS по ТЕГУ (не на каждый мёрж — рестарт живого Боба
+# идёт осознанным релизом). Доступ по SSH-КЛЮЧУ (пароль на VPS отключён). Секреты —
+# в GitHub Environment `bob-vps`, в лог не печатаются (маскируются GitHub'ом).
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Тег/ref для выкатки (по умолчанию — текущий)"
+        required: false
+
+concurrency:
+  # одна выкатка за раз — не рестартовать Боба параллельно
+  group: deploy-bob
+  cancel-in-progress: false
+
+jobs:
+  gate:
+    # 🔴 Быстрый гейт ДО выкатки, чтобы «задеплоил сломанное» не стало новым классом.
+    # Полный CI по PR — отдельно (BOB-095).
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install uv
+        run: curl -LsSf https://astral.sh/uv/install.sh | sh
+      - name: Sync deps
+        run: uv sync
+      - name: Ruff
+        run: uv run ruff check src/ tests/
+      - name: Mypy
+        run: uv run mypy src/
+
+  deploy:
+    needs: gate
+    runs-on: ubuntu-latest
+    environment: bob-vps
+    steps:
+      - name: Set up SSH (key + known_hosts из секретов)
+        run: |
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          printf '%s\n' "${{ secrets.VPS_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          printf '%s\n' "${{ secrets.VPS_KNOWN_HOSTS }}" > ~/.ssh/known_hosts
+      - name: Deploy & restart on VPS
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+          DEPLOY_REF: ${{ github.event.inputs.ref || github.ref_name }}
+        run: |
+          set -euo pipefail
+          # git/uv — от пользователя bob (владелец /opt/bob); restart — от root.
+          # .env на VPS живёт постоянно (gitignored, переживает git checkout) — не переписываем.
+          ssh -i ~/.ssh/deploy_key -o UserKnownHostsFile=~/.ssh/known_hosts \
+              -o IdentitiesOnly=yes "${VPS_USER}@${VPS_HOST}" \
+              "set -e; \
+               sudo -u bob git -C /opt/bob fetch --tags --prune; \
+               sudo -u bob git -C /opt/bob checkout '${DEPLOY_REF}'; \
+               sudo -u bob bash -lc 'cd /opt/bob && /usr/local/bin/uv sync'; \
+               systemctl restart bob; \
+               sleep 5; \
+               systemctl is-active bob"
+      - name: Note
+        run: echo "Выкачен ${DEPLOY_REF:-tag} на VPS. Полный старт Боба ~1 мин (прогрев эмбеддера); при restart_notice=true Боб сам скажет в личку и группу, что обновился."
+        env:
+          DEPLOY_REF: ${{ github.event.inputs.ref || github.ref_name }}
