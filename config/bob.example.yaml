@@ -14,6 +14,13 @@
 runtime:
   log_level: INFO
   heartbeat_seconds: 30        # cadence of the inner-monologue / reflect heartbeat
+  # BOB-103: приложение САМО владеет рабочим логом (RotatingFileHandler), а не
+  # shell-редирект лаунчера — иначе лог рос без предела (замерено 2.7 ГБ). Задай
+  # log_file, чтобы включить ротацию по размеру; ./bob указывает logs/bob.log.
+  # Без log_file — вывод в stderr (тест/ad-hoc), без ротации.
+  log_file: logs/bob.log
+  log_max_bytes: 33554432      # 32 MiB на файл до ротации
+  log_backup_count: 5          # хранить 5 ротированных файлов (~160 MiB потолок)
 
 llm:
   # Tier 0 — local mlx-lm server (no API key): cheap, privacy-sensitive work.

@@ -13,7 +13,13 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$ROOT"
 
 PY=".venv/bin/python"
+# BOB-103: приложение САМО владеет рабочим логом (RotatingFileHandler по
+# runtime.log_*), поэтому лаунчер БОЛЬШЕ НЕ редиректит stdout/stderr в тот же
+# файл — иначе двойная запись и гонка с ротацией. Рабочий лог здесь только
+# ЧИТАЕМ (маркер старта), а вывод самого процесса до настройки логгера (трейсбек
+# импорта, ранний краш) уходит в отдельный маленький bootstrap-лог.
 LOG="logs/bob.log"
+BOOTSTRAP_LOG="logs/bootstrap.log"
 PATTERN="from bob.app import main"
 # Один и тот же вход, что и в app.py (main(config_path=config/bob.yaml)).
 LAUNCH='from pathlib import Path; from bob.app import main; main(config_path=Path("config/bob.yaml"))'
@@ -37,8 +43,11 @@ start() {
   local before; before=$([ -f "$LOG" ] && wc -l < "$LOG" || echo 0)
 
   # Подхватываем ключи из .env (app.py сам .env НЕ грузит) и стартуем в фоне.
+  # 🔴 BOB-103: вывод процесса ДО настройки логгера (ранний трейсбек импорта /
+  # краш) уходит в отдельный bootstrap-лог, НЕ в рабочий $LOG — рабочим логом
+  # владеет приложение (ротация), и дублировать в него нельзя.
   set -a; . ./.env; set +a
-  nohup "$PY" -c "$LAUNCH" >> "$LOG" 2>&1 < /dev/null &
+  nohup "$PY" -c "$LAUNCH" >> "$BOOTSTRAP_LOG" 2>&1 < /dev/null &
   disown
 
   echo "Запускаю Боба… (лог: $LOG)"
@@ -52,8 +61,9 @@ start() {
       return 0
     fi
     if [ -z "$(pid)" ]; then
-      echo "❌ Процесс упал на старте. Последние строки лога:"
-      tail -n 15 "$LOG"
+      echo "❌ Процесс упал на старте. Ранний вывод (bootstrap) + рабочий лог:"
+      tail -n 15 "$BOOTSTRAP_LOG" 2>/dev/null || true
+      tail -n 15 "$LOG" 2>/dev/null || true
       exit 1
     fi
   done
