@@ -45,8 +45,8 @@ jobs:
         # 🔴 -rs: печатает ПРИЧИНУ пропусков. Процессный гейт test_process_drift_gate на
         # раннере (нет bd/базы трекера — Dolt gitignored) даёт SKIP с причиной, не ERROR и
         # не молчаливое зелёное (BOB-098). Так CI не читается как «согласованность проверена».
-        # -p no:randomly: детерминированный порядок (воспроизводимость CI + диагностика BOB-107).
-        run: uv run pytest -v -rs -p no:randomly
+        # -p no:randomly: детерминированный порядок (воспроизводимость CI).
+        run: uv run pytest -q -rs -p no:randomly
 
       - name: Install beadloom
         run: uv tool install beadloom
