@@ -130,6 +130,12 @@ telegram:
   # Two bots in one process (BOB-003): Bob lives in his topic; GUPPI is the
   # gatekeeper/admin in General. Tokens are env-only (see header) — never here.
   poll_timeout: 10
+  # BOB-094: how many CONSECUTIVE poll failures we diagnose as «оглох» (a WARNING in
+  # the log + a ./bob-status signal — NOT a Telegram alert: a deaf Bob cannot message
+  # himself, that needs an external channel, done separately). > 1 so a routine
+  # long-poll blip never raises a false alarm; the diagnosis + its recovery each log
+  # exactly once (not per failure).
+  outage_threshold: 5
   chat_id: 0                   # group chat id, e.g. -1004372947307
   bob:
     # token: env BOB_TELEGRAM__TOKEN (not here)

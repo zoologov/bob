@@ -23,7 +23,12 @@ from bob.infrastructure.telegram.multibot import (
     BotScope,
     MultiBotGateway,
 )
-from bob.runtime.config import _DEFAULT_POLL_TIMEOUT, _int, _section
+from bob.runtime.config import (
+    _DEFAULT_OUTAGE_THRESHOLD,
+    _DEFAULT_POLL_TIMEOUT,
+    _int,
+    _section,
+)
 from bob.runtime.wiring.self_improvement import _self_improvement_max_magnitude
 
 if TYPE_CHECKING:
@@ -94,6 +99,12 @@ def _build_multibot(
         registry=registry,
         bus=bus,
         poll_timeout=_int(telegram, "poll_timeout", _DEFAULT_POLL_TIMEOUT),
+        # BOB-094: how many CONSECUTIVE poll failures we diagnose as «оглох» (a
+        # WARNING in the log / a ./bob-status signal, NOT a Telegram alert). > 1 by
+        # design so a routine long-poll blip never raises the alarm.
+        outage_threshold=_int(
+            telegram, "outage_threshold", _DEFAULT_OUTAGE_THRESHOLD
+        ),
         authorizer=authorizer,
         owner_dm_chat_id=owner_dm_chat_id,
         proactivity_store=proactivity_store,

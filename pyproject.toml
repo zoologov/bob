@@ -2153,6 +2153,12 @@ ignore = [
 # болезни); кириллические похожие символы намеренны → RUF001/RUF002/RUF003 не применяются.
 "src/bob/kernel/poll_backoff.py" = ["RUF001", "RUF002", "RUF003"]
 "tests/domain/kernel/test_poll_backoff.py" = ["RUF001", "RUF002", "RUF003"]
+# BOB-094 срез 2: докстроки/комментарии ядра «оглох» и его тестов объясняют по-русски,
+# почему порог > 1 и почему это диагноз, а не Telegram-алерт; кириллические похожие
+# символы намеренны → RUF001/RUF002/RUF003 не применяются.
+"src/bob/kernel/poll_outage.py" = ["RUF001", "RUF002", "RUF003"]
+"tests/domain/kernel/test_poll_outage.py" = ["RUF001", "RUF002", "RUF003"]
+"tests/infrastructure/telegram/test_multibot_poll_outage.py" = ["RUF001", "RUF002", "RUF003"]
 "src/bob/memory/digest_provenance.py" = ["RUF001", "RUF002", "RUF003"]
 "src/bob/memory/adapters/sqlite_memory_repo.py" = ["RUF001", "RUF002", "RUF003"]
 "tests/domain/kernel/test_visibility.py" = ["S101", "RUF001", "RUF002", "RUF003"]
@@ -2666,6 +2672,15 @@ source_paths = [
     # ``multibot``, — а infrastructure не заводим целиком в source_paths); перечислен
     # точечно, иначе объявленная цель была бы вне scope, то есть гейт фантомный (§0.3 п.7).
     "src/bob/kernel/poll_backoff.py",
+    # BOB-094 срез 2 (bob-jgm.2): правило СИГНАЛА «оглох» (``outage_state``) — чистая,
+    # детерминированная развилка «сбоев ≥ порога». Ровно та логика границы, ради
+    # которой мутация существует: подмени ≥ на > — и «ровно порог» перестанет быть
+    # оглохом (диагноз опоздает); сотри проверку «порог > 1» — и единичный блип
+    # объявит Боба глухим (ложная тревога, против которой ядро и написано). Живёт в
+    # ядре (спрашивает infrastructure — ``multibot``, — а infrastructure не заводим
+    # целиком в source_paths); перечислен точечно, иначе объявленная цель была бы вне
+    # scope, то есть гейт фантомный (§0.3 п.7).
+    "src/bob/kernel/poll_outage.py",
 ]
 # Deny the impure sub-trees inside those packages: adapters (I/O), ports (protocols),
 # and package __init__ re-exports carry no deterministic verdict logic to mutate.
