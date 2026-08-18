@@ -24,6 +24,10 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+# BOB-107: per-task cap when stopping. See stop() — a task stuck cancelling on an aiosqlite
+# worker-thread deadlock must not hang the whole shutdown.
+_TASK_STOP_TIMEOUT_SECONDS = 5.0
+
 # A supervised background coroutine factory (e.g. a heartbeat tick loop).
 type BackgroundTask = Callable[[], Coroutine[Any, Any, None]]
 
@@ -77,7 +81,18 @@ class AgentRuntime:
             task.cancel()
         for task in self._tasks:
             with contextlib.suppress(asyncio.CancelledError):
-                await task
+                # BOB-107: bound the await. A task cancelled mid-aiosqlite-operation can
+                # deadlock with the driver's worker thread on constrained hosts (2-core CI
+                # runner) — a hung stop() would block Bob's shutdown and systemctl restart.
+                # If it does not finish cancelling in time, abandon it (daemon worker dies
+                # with the process) rather than hang forever.
+                try:
+                    await asyncio.wait_for(task, timeout=_TASK_STOP_TIMEOUT_SECONDS)
+                except TimeoutError:
+                    logger.warning(
+                        "task did not finish cancelling in %.0fs — abandoning (BOB-107)",
+                        _TASK_STOP_TIMEOUT_SECONDS,
+                    )
         self._tasks = []
         self._state = RuntimeState.STOPPED
         self._stopped.set()

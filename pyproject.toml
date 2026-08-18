@@ -400,6 +400,8 @@ ignore = [
 # русские пояснения (анти-скриптованность, «не виснет», «упал сам ≠ апдейт»); кириллические
 # похожие символы намеренны → RUF001/RUF002/RUF003 не применяются.
 "tests/domain/proactivity/test_restart_voice.py" = ["RUF001", "RUF002", "RUF003"]
+"tests/domain/test_ports.py" = ["RUF001", "RUF002", "RUF003"]
+"tests/test_app_hardening.py" = ["RUF001", "RUF002", "RUF003"]
 "tests/application/usecases/test_announce_restart.py" = ["RUF001", "RUF002", "RUF003"]
 "tests/infrastructure/persistence/test_restart_marker_store.py" = ["RUF001", "RUF002", "RUF003"]
 "tests/infrastructure/telegram/test_restart_notifier.py" = ["RUF001", "RUF002", "RUF003"]

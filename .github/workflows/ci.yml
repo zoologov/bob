@@ -1,0 +1,65 @@
+name: CI
+
+# BOB-095: настоящий гейт по PR. На ветке Боба pre-push хук не исполняется (BOB-089),
+# поэтому быстрый гейт на его коммитах исчез — CI по PR возвращает автоматику.
+# 🔴 ЧЕСТНО: branch protection на бесплатном плане недоступна (403 Upgrade to Pro),
+# поэтому эта проверка ИНФОРМАТИВНАЯ (красный виден в PR), а НЕ required/blocking.
+# См. CLAUDE.md §6.
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv (with cache)
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Sync deps
+        # 🔴 --extra dev: ruff/mypy/pytest живут в [project.optional-dependencies].dev,
+        # дефолтный `uv sync` их не ставит (урок деплоя v1.0.0, Issues #57).
+        run: uv sync --extra dev
+
+      - name: Ruff
+        run: uv run ruff check src/ tests/
+
+      - name: Mypy (src)
+        run: uv run mypy src/
+
+      - name: Mypy (tests)
+        run: uv run mypy tests/
+
+      - name: Pytest
+        # 🔴 -rs: печатает ПРИЧИНУ пропусков. Процессный гейт test_process_drift_gate на
+        # раннере (нет bd/базы трекера — Dolt gitignored) даёт SKIP с причиной, не ERROR и
+        # не молчаливое зелёное (BOB-098). Так CI не читается как «согласованность проверена».
+        # -p no:randomly: детерминированный порядок (воспроизводимость CI).
+        run: uv run pytest -q -rs -p no:randomly
+
+      - name: Install beadloom
+        run: uv tool install beadloom
+
+      - name: Beadloom CI (clean index)
+        # 🔴 best-effort на раннере: beadloom (нативный sqlite-vec/dolt) сегфолтит здесь
+        # (exit 139) — окруженческая проблема, не логическая. Настоящий beadloom-гейт гоняет
+        # координатор на чистом индексе + pre-push хук в основном репо. CI и так информативный
+        # (branch protection недоступна), поэтому этот шаг не валит весь прогон. BOB-107-adjacent.
+        continue-on-error: true
+        # 🔴 ЧИСТЫЙ индекс: инкрементальный reindex врёт (§0.3 п.1). Сносим БД индекса,
+        # пересобираем с нуля, затем полный ci (reindex/lint/sync-check/docs-audit/config-check/doctor).
+        run: |
+          rm -f .beadloom/beadloom.db
+          beadloom reindex
+          beadloom ci

@@ -23,12 +23,20 @@ runtime composition root merely *creates* it and injects it into every store).
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from importlib import resources
 from typing import TYPE_CHECKING
 
 import aiosqlite
 import sqlite_vec
+
+# BOB-107: cap on awaiting aiosqlite ``close()``. aiosqlite runs the connection in a
+# worker thread; on constrained hosts (a 2-core CI runner) its ``close()`` occasionally
+# DEADLOCKS (worker thread and event loop desync on signalling). A hung close would block
+# Bob's graceful shutdown — and therefore ``systemctl restart`` on deploy. Wait bounded;
+# if it does not finish, abandon it (the daemon worker thread dies with the process).
+_CLOSE_TIMEOUT_SECONDS = 5.0
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -282,10 +290,26 @@ class SqliteConnection:
         return {str(row[1]) for row in rows}
 
     async def close(self) -> None:
-        """Close the underlying connection (idempotent)."""
+        """Close the underlying connection (idempotent), under a timeout.
+
+        BOB-107: aiosqlite ``close()`` occasionally deadlocks on constrained hosts
+        (worker thread vs event loop). A hung close would block Bob's shutdown and
+        ``systemctl restart`` on deploy, so we await it for :data:`_CLOSE_TIMEOUT_SECONDS`
+        and, if it does not finish, abandon the connection (the daemon thread dies with
+        the process) rather than hang forever. Close is best-effort at shutdown.
+        """
         if self._conn is not None:
-            await self._conn.close()
+            conn = self._conn
             self._conn = None
+            try:
+                await asyncio.wait_for(conn.close(), timeout=_CLOSE_TIMEOUT_SECONDS)
+            except TimeoutError:
+                logger.warning(
+                    "aiosqlite close() did not finish in %.0fs — abandoning it (BOB-107)",
+                    _CLOSE_TIMEOUT_SECONDS,
+                )
+            except Exception:  # close at shutdown must not crash the lifecycle
+                logger.warning("aiosqlite close() raised — ignoring at shutdown", exc_info=True)
 
     async def journal_mode(self) -> str:
         """Return the active SQLite journal mode (expected ``wal``)."""
