@@ -481,26 +481,35 @@ Roles are defined canonically in `.claude/agents/{dev,test,review,tech-writer}.m
 
 `main` integrates via a PR — **по дисциплине, а не по правам.**
 
-🔴 **Исправлено по факту (ревью BOB-089, MAJOR-10 — раздел описывал желаемое как
-действующее).** Branch protection на этом плане **недоступна**: API отвечает `403 Upgrade to
-GitHub Pro or make this repository public`. `beadloom ci` **по PR не запускается** — в
-`.github/workflows` лежит только `deploy-site.yml`, и `gh run list` за всю историю показывает
-исключительно «Deploy VitePress site». Прямой push в `main` технически проходит.
+🔴 **Branch protection на этом плане недоступна**: API отвечает `403 Upgrade to GitHub Pro or make
+this repository public`. Прямой push в `main` технически проходит.
+
+🔴 **CI по PR ЕСТЬ (BOB-095, отгружено 2026-08-18) — но ИНФОРМАТИВНЫЙ, не required.**
+_Исправлено по факту: до BOB-095 в `.github/workflows` лежал только `deploy-site.yml` (+ с BOB-094
+`deploy-bob.yml`), и `beadloom ci` по PR не запускался — это было верно тогда._ Теперь на
+`pull_request → main` работает `ci.yml`: `uv sync --extra dev` → `ruff` + `mypy(src,tests)` →
+`pytest -rs` → `beadloom ci` на **чистом** индексе. Красный виден в PR. 🔴 Но branch protection
+недоступна → CI **не может БЛОКИРОВАТЬ мёрж**: это видимая проверка, а не required status check.
+Называть его «required»/«blocking» — то же желаемое-за-действующее, что мы правили в BOB-089.
+🔴 На раннере нет `bd`/базы трекера → процессный гейт `test_process_drift_gate` даёт **SKIP с
+причиной** (флаг `-rs` её печатает), не ERROR и не молчаливое зелёное — CI не читается как
+«согласованность проверена».
 
 Что реально держит `main`: дисциплина ветки на эпик, перепроверка гейтов координатором на
-финальном состоянии дерева (каждую волну) и pre-push хук **в основном репозитории** — он
-работает, когда пушит человек или координатор, но 🔴 НЕ работает на ветке Боба: её пушит
-процесс Боба, а он с BOB-089 хуков не исполняет (иначе хук модели был бы неотличим от хука
-владельца). На настоящий CI по PR заведена отдельная беада.
+финальном состоянии дерева (каждую волну), **видимый CI по PR** (BOB-095) и pre-push хук
+**в основном репозитории** — он работает, когда пушит человек или координатор, но 🔴 НЕ работает на
+ветке Боба: её пушит процесс Боба, а он с BOB-089 хуков не исполняет (иначе хук модели был бы
+неотличим от хука владельца).
 
 ```
 Trunk-based flow:
 1. Branch off main:   git switch -c features/{ISSUE-KEY}
 2. Commit per wave    onto features/{ISSUE-KEY} (dev → test → review → tech-writer)
 3. ONE PR to main     per epic/feature (or shippable slice) — not one PR per commit
-4. The PR triggers     the AI tech-writer (commits its doc refresh INTO the PR branch)
-                       🔴 CI по PR НЕТ (`beadloom ci` не настроен) — гейты гоняет
-                       координатор руками, до открытия PR
+4. The PR triggers     the AI tech-writer (commits its doc refresh INTO the PR branch) +
+                       CI по PR (BOB-095): ruff/mypy/pytest -rs/beadloom ci на чистом индексе.
+                       🔴 CI ИНФОРМАТИВНЫЙ, не required (branch protection недоступна) —
+                       координатор всё равно перепроверяет гейты на финальном дереве
 5. Merge when green    мёржит человек/координатор — после того, как гейты перепроверены
                        НА ФИНАЛЬНОМ дереве и доки обновлены. «Зелёный CI» здесь не
                        гарантия, а описание того, чего пока нет
