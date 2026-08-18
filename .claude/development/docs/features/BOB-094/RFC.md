@@ -48,25 +48,34 @@ git, curl); установить `uv` и `bd`; `uv sync` в `/opt/bob`; созд
 каждый мёрж — значит выкатка/рестарт живого Боба идёт осознанным релизом, а рутинные мёржи в `main`
 Боба не трогают. Кто ставит тег: owner или координатор, когда батч работы готов к выкатке.
 
-🔴 **GitHub Environment `bob-vps`** (owner завёл 2026-08-18, значения через меня не проходят). Три
-секрета: **`VPS_HOST`**, **`VPS_USER`**, **`VPS_PASSWORD`** — доступ по **ПАРОЛЮ** (не ключу). Job
-объявляет `environment: bob-vps`, чтобы видеть их; в лог не печатаются (маскируются GitHub'ом).
+🔴 **GitHub Environment `bob-vps`** (значения через меня не проходят). Job объявляет
+`environment: bob-vps`, секреты в лог не печатаются (маскируются GitHub'ом). Секреты:
+`VPS_HOST`, `VPS_USER` (= **root**), **`VPS_SSH_KEY`** (приватный CI deploy-ключ),
+**`VPS_KNOWN_HOSTS`** (host-ключ VPS для верификации); плюс app-секреты
+(`BOB_LLM__TIER0/TIER1_API_KEY`, `BOB_TELEGRAM__TOKEN`, `GUPPI_TELEGRAM__TOKEN`) и переменные
+(`BOB_GITHUB__*_APP_ID/_REPO`).
 
-Шаги job: `apt-get install -y sshpass` на раннере → `sshpass -p "$VPS_PASSWORD" ssh -o
-StrictHostKeyChecking=accept-new "$VPS_USER@$VPS_HOST"` выполнить на VPS: `cd /opt/bob && git fetch
---tags && git checkout <tag> && uv sync && sudo systemctl restart bob`. 🔴 До рестарта — быстрый гейт
-(`ruff`/`mypy`/узкий `pytest`), чтобы «задеплоил сломанное» не стало новым классом (CI по PR —
-BOB-095, отдельно).
+> 🔴 **ИСПРАВЛЕНО ПО ФАКТУ 2026-08-18 (шипнутый код, правка видимая).** Здесь стояло «доступ по
+> ПАРОЛЮ через `sshpass`, `accept-new`, секрет `VPS_PASSWORD`». По ходу установки координатор
+> **отключил на VPS вход по паролю** (root только по ключу), поэтому шипнут доступ по **SSH-КЛЮЧУ**:
+> `VPS_PASSWORD` удалён, заведены `VPS_SSH_KEY` + `VPS_KNOWN_HOSTS`. Код безопаснее прежней спеки.
 
-🔴 **Открытые пункты, решаются с owner'ом (не выдумывать):**
-- **Пароль-SSH < ключа по безопасности.** Работает через `sshpass`, но SSH deploy-key надёжнее;
-  предложить как опцию, не навязывать (owner уже завёл пароль).
-- **`sudo systemctl restart bob`** требует прав. Если `VPS_USER` = root — прямо; если обычный —
-  нужен NOPASSWD-sudoers на `systemctl restart bob` (в RUNBOOK). Уточнить, кто `VPS_USER`.
-- **App-секреты** (Tier-1/Tier-0-ключи, токены ботов) в environment ПОКА НЕТ — только доступ к VPS.
-  Два пути: (а) owner кладёт `/opt/bob/.env` на VPS ОДИН раз, он переживает `git pull` (gitignored) —
-  проще, токены в CI не попадают; (б) добавить их в `bob-vps` и материализовать `.env` каждый деплой.
-  Дефолт — **(а)**, пока owner не решит иначе.
+Шаги job: записать `VPS_SSH_KEY` в файл 600 и `VPS_KNOWN_HOSTS` в `~/.ssh/known_hosts` (`printf`,
+без `echo`/`set -x`) → `ssh -i <key> -o UserKnownHostsFile=… -o IdentitiesOnly=yes
+"$VPS_USER@$VPS_HOST"` выполнить на VPS: `sudo -u bob git -C /opt/bob fetch --tags && sudo -u bob git
+-C /opt/bob checkout <tag> && sudo -u bob … /usr/local/bin/uv sync && systemctl restart bob`
+(git/uv — от `bob`, restart — от root). 🔴 До деплоя — job `gate` (`ruff`/`mypy`), чтобы «задеплоил
+сломанное» не стало новым классом (полный CI по PR — BOB-095, отдельно). `concurrency: deploy-bob` —
+не два рестарта разом.
+
+🔴 **`.env` НЕ материализуется из секретов** — он лежит на VPS постоянно (`/opt/bob/.env`, 600
+`bob:bob`, gitignored, переживает `git checkout`). App-секреты в `bob-vps` — запись/бэкап, а не
+источник для рантайма. (Прежний текст обещал материализацию каждый деплой — снято, workflow этого
+не делает.)
+
+🔴 **Осознанный tradeoff (Minor, TODO-ужесточение):** CI deploy-ключ авторизован для **root** на
+VPS — мощно. Приемлемо на старте (owner-setup под root), но будущее ужесточение — отдельный
+`deploy`-пользователь с `NOPASSWD`-sudoers только на `systemctl restart bob` и git в `/opt/bob`.
 
 ### `deploy/RUNBOOK.md` — ПЕРВИЧНАЯ установка (один раз, руками owner'а)
 

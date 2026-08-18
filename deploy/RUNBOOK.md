@@ -150,9 +150,10 @@ sudo systemctl stop bob
 ## 8. Что дальше (автоматизация)
 
 После успешного cutover рутинных ручных шагов больше нет: выкатка идёт **по тегу `v*`**
-через `.github/workflows/deploy-bob.yml` (срез 4) — SSH на VPS, `git checkout <tag>`,
-`uv sync`, материализация `.env` из GitHub Secrets, быстрый гейт, `systemctl restart bob`.
-Боб при рестарте объявляет обновление голосом (срез .1).
+через `.github/workflows/deploy-bob.yml` (срез 4) — гейт `ruff`/`mypy`, затем по **SSH-ключу**
+(`VPS_SSH_KEY` + `VPS_KNOWN_HOSTS`, вход по паролю на VPS отключён): `git checkout <tag>` и
+`uv sync` от `bob`, `systemctl restart bob` от root. 🔴 `.env` **не** пересобирается — он на VPS
+постоянно (gitignored, переживает checkout). Боб при рестарте объявляет обновление голосом (срез 1).
 
 🔴 «Workflow есть» ≠ «деплой поехал»: критерий приёмки — **реальная** выкатка на VPS,
 а не наличие yml (урок BOB-088).

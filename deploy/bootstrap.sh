@@ -67,13 +67,15 @@ ensure_repo() {
   chown -R "$BOB_USER:$BOB_USER" "$BOB_HOME"
 }
 
-# 4. uv (менеджер venv/зависимостей) — ставим пользователю bob (idempotent).
+# 4. uv (менеджер venv/зависимостей) — СИСТЕМНО в /usr/local/bin (idempotent).
+# 🔴 Ровно тот путь, что зовёт CD-workflow (deploy-bob.yml) и что стоит на живом VPS.
+# Раньше ставился в $BOB_HOME/.local/bin — рассинхрон с workflow ронял бы деплой (ревью Major-1).
 ensure_uv() {
-  if sudo -u "$BOB_USER" test -x "$BOB_HOME/.local/bin/uv"; then
-    skip "uv уже установлен у $BOB_USER"
+  if [ -x /usr/local/bin/uv ]; then
+    skip "uv уже установлен (/usr/local/bin/uv)"
   else
-    log "устанавливаю uv для $BOB_USER"
-    sudo -u "$BOB_USER" bash -c 'curl -LsSf https://astral.sh/uv/install.sh | sh'
+    log "устанавливаю uv системно в /usr/local/bin"
+    curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR=/usr/local/bin sh
   fi
 }
 
@@ -91,7 +93,7 @@ ensure_bd() {
 # 6. uv sync — материализуем .venv в /opt/bob (idempotent: uv sync — no-op при свежем lock).
 ensure_venv() {
   log "uv sync в $BOB_HOME (от имени $BOB_USER)"
-  sudo -u "$BOB_USER" bash -lc "cd '$BOB_HOME' && '$BOB_HOME/.local/bin/uv' sync"
+  sudo -u "$BOB_USER" bash -lc "cd '$BOB_HOME' && /usr/local/bin/uv sync"
 }
 
 # 7. Рабочие каталоги data/ logs/ backups/ (idempotent: mkdir -p).
