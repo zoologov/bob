@@ -46,15 +46,27 @@ git, curl); установить `uv` и `bd`; `uv sync` в `/opt/bob`; созд
 
 Триггер (решение owner'а): **push тега `v*` / GitHub Release** (+ `workflow_dispatch` руками). НЕ на
 каждый мёрж — значит выкатка/рестарт живого Боба идёт осознанным релизом, а рутинные мёржи в `main`
-Боба не трогают. Шаги: SSH на VPS ключом из секрета → `git fetch && git checkout <tag>` в `/opt/bob`
-→ `uv sync` → материализовать `/opt/bob/.env` из GitHub Secrets (права 600) → `systemctl restart bob`.
-🔴 До рестарта — быстрый гейт (`ruff`/`mypy`/узкий `pytest`), чтобы «задеплоил сломанное» не стало
-новым классом (CI по PR — BOB-095, отдельно). Секреты из `secrets.*`, в лог НЕ печатаются (маскируются
-GitHub'ом). Кто ставит тег: owner или координатор, когда батч работы готов к выкатке.
+Боба не трогают. Кто ставит тег: owner или координатор, когда батч работы готов к выкатке.
 
-**GitHub Secrets** (owner заводит, значения через меня не проходят): `BOB_VPS_HOST`, `BOB_VPS_USER`,
-`BOB_VPS_SSH_KEY` (для деплоя), `BOB_LLM__TIER1_API_KEY`, `BOB_LLM__TIER0_API_KEY`,
-`BOB_TELEGRAM__TOKEN`, `GUPPI_TELEGRAM__TOKEN`. Workflow собирает из них `.env` на VPS.
+🔴 **GitHub Environment `bob-vps`** (owner завёл 2026-08-18, значения через меня не проходят). Три
+секрета: **`VPS_HOST`**, **`VPS_USER`**, **`VPS_PASSWORD`** — доступ по **ПАРОЛЮ** (не ключу). Job
+объявляет `environment: bob-vps`, чтобы видеть их; в лог не печатаются (маскируются GitHub'ом).
+
+Шаги job: `apt-get install -y sshpass` на раннере → `sshpass -p "$VPS_PASSWORD" ssh -o
+StrictHostKeyChecking=accept-new "$VPS_USER@$VPS_HOST"` выполнить на VPS: `cd /opt/bob && git fetch
+--tags && git checkout <tag> && uv sync && sudo systemctl restart bob`. 🔴 До рестарта — быстрый гейт
+(`ruff`/`mypy`/узкий `pytest`), чтобы «задеплоил сломанное» не стало новым классом (CI по PR —
+BOB-095, отдельно).
+
+🔴 **Открытые пункты, решаются с owner'ом (не выдумывать):**
+- **Пароль-SSH < ключа по безопасности.** Работает через `sshpass`, но SSH deploy-key надёжнее;
+  предложить как опцию, не навязывать (owner уже завёл пароль).
+- **`sudo systemctl restart bob`** требует прав. Если `VPS_USER` = root — прямо; если обычный —
+  нужен NOPASSWD-sudoers на `systemctl restart bob` (в RUNBOOK). Уточнить, кто `VPS_USER`.
+- **App-секреты** (Tier-1/Tier-0-ключи, токены ботов) в environment ПОКА НЕТ — только доступ к VPS.
+  Два пути: (а) owner кладёт `/opt/bob/.env` на VPS ОДИН раз, он переживает `git pull` (gitignored) —
+  проще, токены в CI не попадают; (б) добавить их в `bob-vps` и материализовать `.env` каждый деплой.
+  Дефолт — **(а)**, пока owner не решит иначе.
 
 ### `deploy/RUNBOOK.md` — ПЕРВИЧНАЯ установка (один раз, руками owner'а)
 
