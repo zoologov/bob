@@ -1229,3 +1229,4 @@
 {"id":"int-527dd78e","kind":"field_change","created_at":"2026-08-18T18:44:35.968698Z","actor":"v.zoologov","issue_id":"bob-j3x","extra":{"field":"status","new_value":"closed","old_value":"in_progress","reason":"Closed"}}
 {"id":"int-2d378ca6","kind":"field_change","created_at":"2026-08-18T18:52:56.548828Z","actor":"v.zoologov","issue_id":"bob-8r2","extra":{"field":"priority","new_value":"1","old_value":"2"}}
 {"id":"int-b7165207","kind":"field_change","created_at":"2026-08-18T18:52:58.358745Z","actor":"v.zoologov","issue_id":"bob-8r2","extra":{"field":"status","new_value":"in_progress","old_value":"open"}}
+{"id":"int-fc32688a","kind":"field_change","created_at":"2026-08-18T20:06:18.243339Z","actor":"v.zoologov","issue_id":"bob-8r2","extra":{"field":"status","new_value":"closed","old_value":"in_progress","reason":"Closed"}}
