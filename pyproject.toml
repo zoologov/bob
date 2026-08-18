@@ -265,6 +265,13 @@ ignore = [
 # owner'у, плюс докстринги про живую жалобу «выглядит очень скриптовано»: кириллические
 # похожие символы в этих литералах намеренны — RUF001/RUF002/RUF003 к ним не применяются.
 "src/bob/proactivity/rule_voice.py" = ["RUF001", "RUF002", "RUF003"]
+# Голос рестарта (BOB-094 срез 1) — САМ русский текст, который Боб произносит, уходя на
+# обновление и возвращаясь, плюс русские докстринги/комментарии по всему шву: кириллические
+# похожие символы намеренны — RUF001/RUF002/RUF003 к ним не применяются.
+"src/bob/proactivity/restart_voice.py" = ["RUF001", "RUF002", "RUF003"]
+"src/bob/proactivity/usecases/announce_restart.py" = ["RUF001", "RUF002", "RUF003"]
+"src/bob/proactivity/adapters/restart_marker_store.py" = ["RUF001", "RUF002", "RUF003"]
+"src/bob/infrastructure/telegram/restart_notifier.py" = ["RUF001", "RUF002", "RUF003"]
 # The Planner + plan_goal use-case (BOB-015 .2) carries Russian planner prompts +
 # owner-facing plan/status literals whose Cyrillic look-alikes are intentional —
 # RUF001/RUF002/RUF003 do not apply to these.
@@ -374,7 +381,10 @@ ignore = [
 # one place by design (a single readable assembly), so the per-function statement
 # ceiling does not apply to it — splitting it would only scatter the wiring. It lives
 # in bob.runtime.composition since BOB-062.7a (bob.app is now a thin re-export shim).
-"src/bob/runtime/composition.py" = ["PLR0915"]
+"src/bob/runtime/composition.py" = ["PLR0915", "RUF001", "RUF002", "RUF003"]
+# Провязка объявления рестарта (BOB-094) несёт русские докстринги/комментарии, чьи
+# кириллические похожие символы намеренны — RUF001/RUF002/RUF003 к ним не применяются.
+"src/bob/runtime/wiring/proactivity.py" = ["RUF001", "RUF002", "RUF003"]
 # GUPPI's owner commands (BOB-003 + BOB-015 .2) carry Russian command usage/reply
 # literals whose Cyrillic look-alikes are intentional — RUF001/RUF002/RUF003 here.
 "src/bob/infrastructure/telegram/guppi.py" = ["RUF001", "RUF002", "RUF003"]
@@ -386,6 +396,15 @@ ignore = [
 # обрыве сети, «лечение не хуже болезни», схлопывание лога); кириллические похожие символы
 # намеренны → RUF001/RUF002/RUF003 не применяются.
 "tests/infrastructure/telegram/test_multibot_poll_backoff.py" = ["RUF001", "RUF002", "RUF003"]
+# BOB-094 срез 1: тесты голоса рестарта утверждают на РУССКИХ репликах Боба и несут
+# русские пояснения (анти-скриптованность, «не виснет», «упал сам ≠ апдейт»); кириллические
+# похожие символы намеренны → RUF001/RUF002/RUF003 не применяются.
+"tests/domain/proactivity/test_restart_voice.py" = ["RUF001", "RUF002", "RUF003"]
+"tests/application/usecases/test_announce_restart.py" = ["RUF001", "RUF002", "RUF003"]
+"tests/infrastructure/persistence/test_restart_marker_store.py" = ["RUF001", "RUF002", "RUF003"]
+"tests/infrastructure/telegram/test_restart_notifier.py" = ["RUF001", "RUF002", "RUF003"]
+"tests/runtime/wiring/test_restart_announcer_wiring.py" = ["RUF001", "RUF002", "RUF003"]
+"tests/runtime/test_restart_lifecycle_hooks.py" = ["RUF001", "RUF002", "RUF003"]
 # Distilled work-memory tests (BOB-087.B1): the distiller test asserts on Russian
 # operator-episode literals (Cyrillic look-alikes intentional → RUF001/RUF003); the
 # CodingAssistant + wiring tests use fake ports whose unused signature args are inherent
@@ -2153,6 +2172,12 @@ ignore = [
 # болезни); кириллические похожие символы намеренны → RUF001/RUF002/RUF003 не применяются.
 "src/bob/kernel/poll_backoff.py" = ["RUF001", "RUF002", "RUF003"]
 "tests/domain/kernel/test_poll_backoff.py" = ["RUF001", "RUF002", "RUF003"]
+# BOB-094 срез 2: докстроки/комментарии ядра «оглох» и его тестов объясняют по-русски,
+# почему порог > 1 и почему это диагноз, а не Telegram-алерт; кириллические похожие
+# символы намеренны → RUF001/RUF002/RUF003 не применяются.
+"src/bob/kernel/poll_outage.py" = ["RUF001", "RUF002", "RUF003"]
+"tests/domain/kernel/test_poll_outage.py" = ["RUF001", "RUF002", "RUF003"]
+"tests/infrastructure/telegram/test_multibot_poll_outage.py" = ["RUF001", "RUF002", "RUF003"]
 "src/bob/memory/digest_provenance.py" = ["RUF001", "RUF002", "RUF003"]
 "src/bob/memory/adapters/sqlite_memory_repo.py" = ["RUF001", "RUF002", "RUF003"]
 "tests/domain/kernel/test_visibility.py" = ["S101", "RUF001", "RUF002", "RUF003"]
@@ -2666,6 +2691,15 @@ source_paths = [
     # ``multibot``, — а infrastructure не заводим целиком в source_paths); перечислен
     # точечно, иначе объявленная цель была бы вне scope, то есть гейт фантомный (§0.3 п.7).
     "src/bob/kernel/poll_backoff.py",
+    # BOB-094 срез 2 (bob-jgm.2): правило СИГНАЛА «оглох» (``outage_state``) — чистая,
+    # детерминированная развилка «сбоев ≥ порога». Ровно та логика границы, ради
+    # которой мутация существует: подмени ≥ на > — и «ровно порог» перестанет быть
+    # оглохом (диагноз опоздает); сотри проверку «порог > 1» — и единичный блип
+    # объявит Боба глухим (ложная тревога, против которой ядро и написано). Живёт в
+    # ядре (спрашивает infrastructure — ``multibot``, — а infrastructure не заводим
+    # целиком в source_paths); перечислен точечно, иначе объявленная цель была бы вне
+    # scope, то есть гейт фантомный (§0.3 п.7).
+    "src/bob/kernel/poll_outage.py",
 ]
 # Deny the impure sub-trees inside those packages: adapters (I/O), ports (protocols),
 # and package __init__ re-exports carry no deterministic verdict logic to mutate.

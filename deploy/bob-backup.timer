@@ -1,0 +1,13 @@
+[Unit]
+Description=Bob — суточный бэкап БД (BOB-094)
+
+[Timer]
+# Раз в сутки; Persistent — если VPS был выключен в момент срабатывания,
+# бэкап догонится при следующем старте.
+OnCalendar=daily
+Persistent=true
+# Небольшой разброс, чтобы не бить точно в полночь.
+RandomizedDelaySec=300
+
+[Install]
+WantedBy=timers.target

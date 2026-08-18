@@ -74,6 +74,7 @@ from bob.infrastructure.telegram.gateway import (
 )
 from bob.infrastructure.telegram.guppi import GuppiHandler
 from bob.kernel.poll_backoff import next_backoff
+from bob.kernel.poll_outage import outage_state
 from bob.proactivity.self_improvement import MAGNITUDE_RANGE_TOP
 
 if TYPE_CHECKING:
@@ -113,6 +114,11 @@ _DEFAULT_IDENTITY_RETRY_BACKOFF_SECONDS = 1.0
 # update ≥ the offset, so a non-advanced offset means a redelivery) and is then
 # skipped LOUDLY so a single wedged update cannot stall intake forever.
 _MAX_ROUTE_ATTEMPTS = 3
+
+# How many CONSECUTIVE poll failures make Bob "оглох" — a diagnosable outage, not a
+# routine long-poll blip (BOB-094). 🔴 > 1 by design: a single ServerDisconnected
+# must never raise the alarm. Overridable via ``telegram.outage_threshold``.
+_DEFAULT_OUTAGE_THRESHOLD = 5
 
 # Telegram's ``chat.type`` for a 1:1 direct message (BOB-083.1). The owner-DM route
 # fires only for a ``private`` chat, so a shared room at the same id can never be
@@ -257,6 +263,7 @@ class MultiBotGateway:
         ),
         identity_retry_sleep: Sleep = _LIVE_SLEEP,
         poll_sleep: Sleep = _LIVE_SLEEP,
+        outage_threshold: int = _DEFAULT_OUTAGE_THRESHOLD,
     ) -> None:
         self._registry = registry
         # BOB-103: the failure-path pause seam. On a network poll failure the loop
@@ -340,6 +347,19 @@ class MultiBotGateway:
         # is reset to 0 by the FIRST successful poll — so after the network returns
         # delivery does not wait the accumulated pause (лечение не хуже болезни).
         self._poll_failures: dict[BotIdentity, int] = dict.fromkeys(self._inner, 0)
+        # BOB-094: how many CONSECUTIVE poll failures we call "оглох" (a diagnosable
+        # outage). The verdict itself is the pure ``outage_state`` core (kernel);
+        # here we only hold the threshold + the per-bot latch below.
+        self._outage_threshold = outage_threshold
+        # BOB-094: per-bot latch — are we CURRENTLY diagnosed as "оглох"? It flips on
+        # the FIRST failure that crosses the threshold (WARNING-diagnosis logged
+        # exactly once, not per-failure) and back on the FIRST success after (the
+        # recovery notice logged exactly once). Without it the diagnosis/recovery
+        # would repeat on every subsequent failure/success — the very spam BOB-103
+        # already muted for the backoff line.
+        self._outage_declared: dict[BotIdentity, bool] = dict.fromkeys(
+            self._inner, False
+        )
         # GUPPI's gatekeeper identity (the visible reject + owner commands). Built
         # only when GUPPI is registered AND an authorizer is wired; otherwise the
         # GUPPI hooks fall back to silent drops (backward-compatible).
@@ -549,7 +569,35 @@ class MultiBotGateway:
                 "bot %s poll still failing (attempt %d, backing off): %s",
                 identity.value, failures, exc,
             )
+        self._maybe_declare_outage(identity, failures)
         await self._poll_sleep(next_backoff(failures))
+
+    def _maybe_declare_outage(
+        self, identity: BotIdentity, failures: int
+    ) -> None:
+        """Diagnose «оглох» on the transition past the threshold — exactly once.
+
+        The verdict is the pure :func:`~bob.kernel.poll_outage.outage_state` core
+        (сбоев ≥ порога). 🔴 We log the WARNING-diagnosis only when the latch flips
+        from «слышу» to «оглох» — NOT on every failure past the threshold (BOB-103
+        already muted the per-attempt line to DEBUG). A single blip below the
+        threshold never trips it: that is the anti-false-alarm guarantee.
+
+        🔴 Ограничение, названное честно: этот диагноз — вход для НАБЛЮДАТЕЛЯ (лог +
+        ``./bob status``), не Telegram-алерт. Оглохший Боб сам о себе в Telegram не
+        напишет — его канал и есть то, что легло. Полноценный алерт требует
+        ВНЕШНЕГО канала и делается отдельной работой (RFC BOB-094 «Что НЕ делаем»).
+        """
+        if self._outage_declared[identity]:
+            return
+        if outage_state(failures, threshold=self._outage_threshold):
+            self._outage_declared[identity] = True
+            logger.warning(
+                "bot %s went deaf: %d consecutive poll failures (≥ threshold %d) — "
+                "diagnosis for the observer (log / ./bob status), NOT a Telegram "
+                "alert: a deaf Bob cannot message himself",
+                identity.value, failures, self._outage_threshold,
+            )
 
     def _note_poll_success(self, identity: BotIdentity) -> None:
         """Mark a successful poll: reset the backoff so recovery is fast (BOB-103).
@@ -565,6 +613,16 @@ class MultiBotGateway:
                 identity.value, self._poll_failures[identity],
             )
             self._poll_failures[identity] = 0
+        # BOB-094: lift a declared «оглох» on the FIRST success after — exactly once
+        # (the latch guards against re-logging the recovery on every later success).
+        # Only fires if we had actually crossed the threshold; a sub-threshold blip
+        # never set the latch, so its recovery stays silent.
+        if self._outage_declared[identity]:
+            self._outage_declared[identity] = False
+            logger.info(
+                "bot %s hearing restored: poll recovered from a diagnosed outage",
+                identity.value,
+            )
 
     # --- Central router -------------------------------------------------------
 

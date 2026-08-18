@@ -1,0 +1,44 @@
+[Unit]
+Description=Bob — живой Telegram-компаньон (BOB-094: переезд на VPS)
+# Боб держит только исходящие соединения (Telegram long-poll + Qwen MaaS),
+# поэтому ждём именно поднятую сеть, а не просто network.target.
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+
+# 🔴 Структурная граница BOB-093: процесс идёт под ОТДЕЛЬНЫМ системным
+# пользователем bob, НЕ под owner'ом. Тем самым ssh-дорога owner'а (его ~ по
+# passwd) и локальный файловый путь к его репозиторию физически недостижимы —
+# их просто нет у пользователя bob. Раздельный UID — это граница, а не флаг.
+User=bob
+Group=bob
+
+# ДОМ Боба на VPS — НЕ репозиторий owner'а. Сюда bootstrap кладёт клон, venv,
+# data/, logs/, backups/ и .env.
+WorkingDirectory=/opt/bob
+
+# Секреты (BOB_LLM__*, BOB_TELEGRAM__TOKEN, GUPPI_TELEGRAM__TOKEN, …). Файл
+# кладёт owner отдельно (см. RUNBOOK), права 600 bob:bob. Ни bootstrap, ни этот
+# юнит секретов не касаются.
+EnvironmentFile=/opt/bob/.env
+
+# Тот же вход, что и в лаунчере ./bob (LAUNCH):
+#   main(config_path=Path("config/bob.yaml"))
+# Пути внутри конфига (data/bob.db, logs/…) относительные — их разрешает
+# WorkingDirectory=/opt/bob.
+ExecStart=/opt/bob/.venv/bin/python -c "from pathlib import Path; from bob.app import main; main(config_path=Path('config/bob.yaml'))"
+
+# systemctl restart шлёт SIGTERM — приложение ловит его в graceful-shutdown
+# (человечное объявление рестарта живёт в коде, срез .1), поэтому даём время.
+KillSignal=SIGTERM
+TimeoutStopSec=30
+
+# Упал сам (не штатная остановка) — поднимаем.
+Restart=on-failure
+RestartSec=5
+
+[Install]
+# Автозапуск при перезагрузке VPS.
+WantedBy=multi-user.target

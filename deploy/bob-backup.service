@@ -1,0 +1,12 @@
+[Unit]
+Description=Bob — консистентный бэкап SQLite-БД (BOB-094)
+# Разовая задача, запускается таймером bob-backup.timer.
+
+[Service]
+Type=oneshot
+# Под тем же пользователем, что и Боб — иначе не прочитает data/bob.db.
+User=bob
+Group=bob
+WorkingDirectory=/opt/bob
+# Клон несёт скрипт в deploy/backup.sh; bootstrap кладёт репозиторий в /opt/bob.
+ExecStart=/opt/bob/deploy/backup.sh

@@ -28,6 +28,9 @@ from bob.personality.taste_evolution import BETA as _EVOLUTION_BETA
 # Default heartbeat cadence and gateway streaming knobs.
 _DEFAULT_HEARTBEAT_SECONDS = 30
 _DEFAULT_POLL_TIMEOUT = 10
+# BOB-094: consecutive poll failures we diagnose as «оглох» (an observable WARNING,
+# not a Telegram alert). > 1 so a routine long-poll blip never raises the alarm.
+_DEFAULT_OUTAGE_THRESHOLD = 5
 _BATCH_TOKENS = 4
 _THROTTLE_INTERVAL = 0.5
 _MOOD_DRIFT_SECONDS = 60.0

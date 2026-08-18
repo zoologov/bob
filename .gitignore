@@ -46,6 +46,9 @@ htmlcov/
 # Data directory (separate git repo for state)
 data/
 
+# VPS backups (BOB-094: deploy/backup.sh пишет сюда на VPS — state, не в git)
+backups/
+
 # Secrets / env
 .env
 .env.*

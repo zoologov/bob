@@ -166,6 +166,7 @@ from bob.runtime.wiring import (
     _build_registry,
     _build_repeat_thresholds,
     _build_reranker,
+    _build_restart_announcer,
     _build_self_improvement,
     _build_self_improvement_enabled,
     _build_surface_old_freq,
@@ -219,6 +220,7 @@ if TYPE_CHECKING:
     from bob.kernel.ports import Clock, DomainEvent, EventHandler, LLMProvider
     from bob.memory.ports import Embedder, Reranker
     from bob.proactivity.usecases import ProactivityEngine
+    from bob.proactivity.usecases.announce_restart import AnnounceRestart
     from bob.proactivity.usecases.pursue_goals import PursueGoalsTick
     from bob.social.usecases import Authorizer
     from bob.social.usecases.run_genesis import GenesisResult
@@ -280,6 +282,11 @@ class Application:
     # at startup belongs to a process that no longer exists, so it is closed. ``None`` only
     # in hand-assembled test fixtures; ``startup`` then simply skips it.
     interactive_recovery: RecoverInteractiveSessions | None = None
+    # Human restart announcement (BOB-094 срез 1): behind ``runtime.restart_notice``
+    # (default off → ``None`` → the shutdown/startup hooks are no-ops, lifecycle
+    # byte-identical). On → Bob announces «ухожу обновиться» before a graceful stop and
+    # «вернулся, обновился» after a boot that followed an update-stop (marker in ``kv``).
+    restart_announcer: AnnounceRestart | None = None
 
     async def startup(self) -> GenesisResult:
         """Initialise persistence, awaken Bob on first boot, load his soul.
@@ -309,6 +316,13 @@ class Application:
         if self.interactive_recovery is not None:
             await self.interactive_recovery.run()
         result = await self.genesis.run()
+        # Human restart return (BOB-094 срез 1): if the previous exit was an
+        # update-stop (a marker left in ``kv`` by the shutdown hook), Bob says «вернулся,
+        # обновился» and consumes the marker; a self-crash (no marker) stays silent — he
+        # never pretends a crash was an update. Best-effort + timed inside the use-case,
+        # so a down network never blocks the boot. ``None`` (flag off) → no-op.
+        if self.restart_announcer is not None:
+            await self.restart_announcer.announce_returned()
         self.personality.soul = _load_soul(self.soul_store)
         # Resolve Bob's own bot identity (id + @username) so the addressivity scan
         # (BOB-023) can tell a mention of Bob from a mention of someone else.
@@ -321,7 +335,16 @@ class Application:
         The intake dispatcher is drained BEFORE the connection closes: any message still
         buffered / in flight is handled to completion (its reply delivered) so a graceful
         stop never drops an in-progress turn or writes through a closed connection.
+
+        🔴 Restart announcement (BOB-094 срез 1) goes out FIRST — before the runtime stops
+        and the connection closes — so it uses a live bot and can still write the
+        update-stop marker to ``kv``. It is timed + best-effort inside the use-case, so a
+        down network never blocks the shutdown (``systemctl restart`` sends SIGTERM; the
+        window is short). ``None`` (``runtime.restart_notice`` off) → no-op, lifecycle
+        byte-identical.
         """
+        if self.restart_announcer is not None:
+            await self.restart_announcer.announce_leaving()
         await self.runtime.stop()
         await self.intake_dispatcher.aclose()
         await self.connection.close()
@@ -1344,6 +1367,14 @@ def build_application(
         )
     )
 
+    # Human restart announcement (BOB-094 срез 1): behind ``runtime.restart_notice``
+    # (default off → None → the shutdown/startup hooks are no-ops, lifecycle unchanged).
+    # On → Bob's own bot announces «ухожу обновиться» / «вернулся, обновился» to the owner
+    # DM + his group topic, over the update-stop marker in ``kv`` (via ``memory_repo``).
+    restart_announcer = _build_restart_announcer(
+        merged, bot=resolved_bob_bot, kv=memory_repo
+    )
+
     return Application(
         config=merged,
         runtime=runtime,
@@ -1369,6 +1400,7 @@ def build_application(
         coding_assistant=coding_assistant,
         interactive_session=interactive_session,
         interactive_recovery=interactive_recovery,
+        restart_announcer=restart_announcer,
     )
 
 
