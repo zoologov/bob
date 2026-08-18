@@ -107,7 +107,7 @@ Current direction: [`.claude/dev-docs/ROADMAP.md`](.claude/dev-docs/ROADMAP.md).
 
 An **experimental personal project** for exploring AI tooling, agent
 architectures, and the boundaries of digital personality. Early development —
-version 0.1.0, frequent redesigns, the occasional existential crisis (Bob's).
+version 1.0.0, frequent redesigns, the occasional existential crisis (Bob's).
 
 ## Development tools
 

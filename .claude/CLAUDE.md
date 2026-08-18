@@ -118,7 +118,9 @@ bd close <bead-id> --suggest-next
 > **Authoritative project facts** (the auto-region above is beadloom-generated and coarse — it does
 > not reflect the real stack, and "Current version: 2.1.0" is *beadloom's* version, not Bob's; a known
 > beadloom quirk):
-> **Bob v0.1.0** · Python 3.12+ (asyncio) · Telegram — `python-telegram-bot` · Tier-1 Qwen (облако),
+> **Bob v1.0.0** (2026-08-18 — первый мажорный релиз: живой компаньон на VPS, память+EQ+самомодель,
+> групповое присутствие, dev-конвейер из Telegram, CD по тегу) · Python 3.12+ (asyncio) · Telegram —
+> `python-telegram-bot` · Tier-1 Qwen (облако),
 > аварийный дублёр — локальный Ollama `qwen3:8b` (2026-08-12: выбран замером через шов Боба;
 > `qwen2.5:7b` отвергнут — выплёвывал синтаксис вызова инструмента ТЕКСТОМ в реплику, `0.5b`
 > галлюцинировал), эмбеддер `bge-m3`
