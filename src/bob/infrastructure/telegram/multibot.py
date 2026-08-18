@@ -73,6 +73,7 @@ from bob.infrastructure.telegram.gateway import (
     is_reaction_update,
 )
 from bob.infrastructure.telegram.guppi import GuppiHandler
+from bob.kernel.poll_backoff import next_backoff
 from bob.proactivity.self_improvement import MAGNITUDE_RANGE_TOP
 
 if TYPE_CHECKING:
@@ -255,8 +256,14 @@ class MultiBotGateway:
             _DEFAULT_IDENTITY_RETRY_BACKOFF_SECONDS
         ),
         identity_retry_sleep: Sleep = _LIVE_SLEEP,
+        poll_sleep: Sleep = _LIVE_SLEEP,
     ) -> None:
         self._registry = registry
+        # BOB-103: the failure-path pause seam. On a network poll failure the loop
+        # sleeps a growing backoff (``next_backoff``) instead of hot-looping under
+        # the interval-0 poll schedule; a live poll never touches it. Injected so
+        # tests assert the backoff schedule with no real waiting.
+        self._poll_sleep = poll_sleep
         self._bus = bus
         self._authorizer = authorizer
         # The owner's 1:1 DM chat id (BOB-083.1), if configured. When set, an
@@ -328,6 +335,11 @@ class MultiBotGateway:
         self._route_failures: dict[BotIdentity, dict[int, int]] = {
             identity: {} for identity in self._inner
         }
+        # BOB-103: per-bot count of CONSECUTIVE network poll failures. It grows on a
+        # failed ``get_updates`` (driving the backoff pause + the log-collapse) and
+        # is reset to 0 by the FIRST successful poll — so after the network returns
+        # delivery does not wait the accumulated pause (лечение не хуже болезни).
+        self._poll_failures: dict[BotIdentity, int] = dict.fromkeys(self._inner, 0)
         # GUPPI's gatekeeper identity (the visible reject + owner commands). Built
         # only when GUPPI is registered AND an authorizer is wired; otherwise the
         # GUPPI hooks fall back to silent drops (backward-compatible).
@@ -464,8 +476,12 @@ class MultiBotGateway:
                 offset=self._offsets[identity], timeout=self._poll_timeout
             )
         except (OSError, RuntimeError, TimeoutError, TelegramNetworkError) as exc:
-            logger.warning("bot %s poll failed (isolated): %s", identity.value, exc)
+            await self._back_off_after_poll_failure(identity, exc)
             return 0
+        # Успех (в т.ч. «0 обновлений»): отличаем от сбоя (BOB-103). После серии
+        # сбоев ГРОМКО отмечаем восстановление и сбрасываем счётчик — следующий
+        # сбой снова начнётся с базовой паузы, а не с накопленной.
+        self._note_poll_success(identity)
         published = 0
         failures = self._route_failures[identity]
         for update in updates:
@@ -505,6 +521,50 @@ class MultiBotGateway:
             if routed:
                 published += 1
         return published
+
+    async def _back_off_after_poll_failure(
+        self, identity: BotIdentity, exc: BaseException
+    ) -> None:
+        """Pause a growing backoff after a network poll failure (BOB-103).
+
+        Корень: под ``periodic(poll, interval_seconds=0.0)`` сетевой сбой
+        ``get_updates`` приходит МГНОВЕННО, и без паузы внешний цикл бил снова
+        сразу — хот-луп (~30 тыс. строк «poll failed» в сутки на бота). Здесь:
+
+        * счётчик подряд идущих сбоев растёт, а пауза с ним — :func:`next_backoff`
+          (экспонента с потолком). offset не тронут: приём переприслать ничего не
+          теряет (INV-c/d BOB-070 сохранены — меняется только ПАУЗА);
+        * лог схлопывается: ПЕРВЫЙ сбой эпизода — WARNING, повторные одинаковые —
+          DEBUG (не строка на попытку). Успех «перевзводит» WARNING следующего
+          эпизода через :meth:`_note_poll_success`.
+        """
+        self._poll_failures[identity] += 1
+        failures = self._poll_failures[identity]
+        if failures == 1:
+            logger.warning(
+                "bot %s poll failed (isolated): %s", identity.value, exc
+            )
+        else:
+            logger.debug(
+                "bot %s poll still failing (attempt %d, backing off): %s",
+                identity.value, failures, exc,
+            )
+        await self._poll_sleep(next_backoff(failures))
+
+    def _note_poll_success(self, identity: BotIdentity) -> None:
+        """Mark a successful poll: reset the backoff so recovery is fast (BOB-103).
+
+        🔴 Лечение не хуже болезни: первый УСПЕШНЫЙ опрос после возврата сети
+        сбрасывает счётчик подряд идущих сбоев в 0 — значит доставка НЕ ждёт
+        накопленную (потолочную) паузу, а следующий сбой снова стартует с базовой.
+        Логируем восстановление РОВНО раз (только если был хотя бы один сбой).
+        """
+        if self._poll_failures[identity] > 0:
+            logger.info(
+                "bot %s poll recovered after %d failed attempt(s)",
+                identity.value, self._poll_failures[identity],
+            )
+            self._poll_failures[identity] = 0
 
     # --- Central router -------------------------------------------------------
 

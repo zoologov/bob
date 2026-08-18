@@ -299,6 +299,11 @@ ignore = [
 # seams (resume + the «сеанс кончился сам» notifier, bob-kv4) whose Cyrillic look-alikes
 # are intentional — RUF001/RUF002/RUF003 do not apply.
 "src/bob/runtime/wiring/coding.py" = ["RUF001", "RUF002", "RUF003"]
+# BOB-103 (bob-3rk): entrypoint берёт владение логом (RotatingFileHandler) — докстринг по-
+# русски объясняет, почему shell-редирект лаунчера в тот же файл убран; его тест ротации
+# тоже русский. Кириллические похожие символы намеренны → RUF001/RUF002/RUF003 не применяются.
+"src/bob/runtime/main.py" = ["RUF001", "RUF002", "RUF003"]
+"tests/runtime/test_logging_rotation.py" = ["RUF001", "RUF002", "RUF003"]
 # The boot-time sweep of orphaned live sessions (BOB-087.D5b) carries Russian policy
 # docstrings whose Cyrillic look-alikes are intentional — RUF001/RUF002/RUF003 do not apply.
 "src/bob/interactive/usecases/recover_sessions.py" = [
@@ -377,6 +382,10 @@ ignore = [
 # comments (offset-после-обработки / poison-cap / изоляция сети) whose Cyrillic
 # look-alikes are intentional — RUF001/RUF002/RUF003 do not apply to these.
 "src/bob/infrastructure/telegram/multibot.py" = ["RUF001", "RUF002", "RUF003"]
+# BOB-103 (bob-3rk): тест бэкоффа опроса несёт русские докстринги/комментарии (хот-луп на
+# обрыве сети, «лечение не хуже болезни», схлопывание лога); кириллические похожие символы
+# намеренны → RUF001/RUF002/RUF003 не применяются.
+"tests/infrastructure/telegram/test_multibot_poll_backoff.py" = ["RUF001", "RUF002", "RUF003"]
 # Distilled work-memory tests (BOB-087.B1): the distiller test asserts on Russian
 # operator-episode literals (Cyrillic look-alikes intentional → RUF001/RUF003); the
 # CodingAssistant + wiring tests use fake ports whose unused signature args are inherent
@@ -2139,6 +2148,11 @@ ignore = [
 # похожие символы намеренны → RUF001/RUF002/RUF003 не применяются.
 "src/bob/kernel/config_paths.py" = ["RUF001", "RUF002", "RUF003"]
 "tests/domain/kernel/test_config_paths.py" = ["RUF001", "RUF002", "RUF003"]
+# BOB-103 (bob-3rk): правило ПАУЗЫ между сбойными опросами (``next_backoff``) и его тест
+# объясняют по-русски, почему «0 сбоев → 0.0» и почему потолок скромный (лечение не хуже
+# болезни); кириллические похожие символы намеренны → RUF001/RUF002/RUF003 не применяются.
+"src/bob/kernel/poll_backoff.py" = ["RUF001", "RUF002", "RUF003"]
+"tests/domain/kernel/test_poll_backoff.py" = ["RUF001", "RUF002", "RUF003"]
 "src/bob/memory/digest_provenance.py" = ["RUF001", "RUF002", "RUF003"]
 "src/bob/memory/adapters/sqlite_memory_repo.py" = ["RUF001", "RUF002", "RUF003"]
 "tests/domain/kernel/test_visibility.py" = ["S101", "RUF001", "RUF002", "RUF003"]
@@ -2644,6 +2658,14 @@ source_paths = [
     # перечислен точечно — иначе объявленная цель была бы вне scope, то есть гейт фантомный
     # (§0.3 п.7).
     "src/bob/kernel/config_paths.py",
+    # BOB-103 (bob-3rk): правило ПАУЗЫ между сбойными опросами (``next_backoff``) — чистая,
+    # детерминированная развилка «0 сбоев → 0.0, иначе экспонента с потолком». Ровно та
+    # логика порога/ветвления, ради которой мутация существует: сотри «== 0 → 0.0» — и
+    # успешный опрос начнёт паузить (лечение хуже болезни); подмени шаг экспоненты или
+    # потолок — и хот-луп/восстановление поедут. Живёт в ядре (спрашивает infrastructure —
+    # ``multibot``, — а infrastructure не заводим целиком в source_paths); перечислен
+    # точечно, иначе объявленная цель была бы вне scope, то есть гейт фантомный (§0.3 п.7).
+    "src/bob/kernel/poll_backoff.py",
 ]
 # Deny the impure sub-trees inside those packages: adapters (I/O), ports (protocols),
 # and package __init__ re-exports carry no deterministic verdict logic to mutate.
