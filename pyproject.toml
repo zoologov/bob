@@ -1210,6 +1210,46 @@ ignore = [
     "RUF002",
     "RUF003",
 ]
+# BOB-088 BDD: постановка эпика первым кадром (С-1) + запрет/вопрос/доразрешение (С-3/С-4) +
+# регресс «bd виден в рабочем месте» — русские .feature-шаги, чьи кириллические look-alike
+# намеренны (Qwen читает их нативно) — RUF001/002/003 do not apply; шаги pytest-bdd несут
+# fixture-аргументы (ARG001/ARG002) и голые числа (PLR2004), assert — их суть (S101).
+"tests/acceptance/pipeline_conveyor_harness.py" = [
+    "S101",
+    "ARG001",
+    "ARG002",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+"tests/acceptance/steps/test_pipeline_first_frame.py" = [
+    "S101",
+    "ARG001",
+    "ARG002",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+"tests/acceptance/steps/test_pipeline_permission.py" = [
+    "S101",
+    "ARG001",
+    "ARG002",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+"tests/acceptance/steps/test_bd_in_the_workplace.py" = [
+    "S101",
+    "ARG001",
+    "ARG002",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
 # Firehose-via-GUPPI wiring tests (BOB-087.A1): assert which bot each notifier/streamer is
 # built over via private wiring attrs + Russian literals; S101/ARG/SLF/RUF001-003 do not apply.
 "tests/runtime/wiring/test_coding_stream_via_guppi.py" = [
