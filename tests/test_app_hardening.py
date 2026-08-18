@@ -14,7 +14,7 @@ no Telegram, no real aiogram ``Bot``.
 from __future__ import annotations
 
 import asyncio
-import os
+import time
 from dataclasses import dataclass
 from random import Random
 from typing import TYPE_CHECKING
@@ -359,13 +359,47 @@ async def test_poll_background_task_polls_the_gateway(tmp_path: Path) -> None:
     assert bot.polls >= 1
 
 
-async def _spin_until(predicate: Callable[[], bool], *, limit: int = 1000) -> None:
-    for _ in range(limit):
+# BOB-107: a REAL sleep interval, not ``sleep(0)``. Small enough to keep the tests
+# quick, large enough to actually release the GIL so worker threads (aiosqlite runs the
+# connection in one) get scheduled instead of being starved by the poller.
+_SPIN_INTERVAL_SECONDS = 0.005
+
+# BOB-107: an outer bound on the whole lifecycle, so a real hang fails with a message
+# instead of being killed by pytest-timeout with nothing pointing at the cause.
+_LIFECYCLE_TIMEOUT_SECONDS = 60.0
+
+
+async def _spin_until(
+    predicate: Callable[[], bool], *, timeout_seconds: float = 20.0
+) -> None:
+    """Wait until ``predicate()`` holds, bounded by WALL-CLOCK time.
+
+    🔴 BOB-107. This used to budget in **event-loop turns** (``limit=1000`` with
+    ``await asyncio.sleep(0)``) — two defects in one line, and together they hung the
+    whole lifecycle test on any host with few cores:
+
+    1. ``sleep(0)`` does not sleep, it only yields. A thousand yields elapse in ~10 ms,
+       so "1000 tries" was never a meaningful budget for startup work that takes
+       hundreds of milliseconds of real I/O.
+    2. Worse, the hot spin **starves the very system it polls**: it holds the GIL and
+       never yields the CPU, while ``aiosqlite`` needs its worker THREAD scheduled to
+       answer each round-trip. With a free core the worker replies within a few turns
+       (measured: 921 turns of the 1000 budget on a many-core host — a 7.9% margin);
+       under a 2-core quota it is starved, the budget burns out in 0.01 s, and the
+       waiter dies before the runtime ever reports itself running.
+
+    Sleeping a real interval fixes both: the budget is measured in seconds (meaningful
+    on any host) and the GIL is actually released, so worker threads make progress
+    instead of being crowded out by the poller.
+    """
+    deadline = time.monotonic() + timeout_seconds
+    while True:
         if predicate():
             return
-        await asyncio.sleep(0)
-    msg = "condition not reached"
-    raise AssertionError(msg)
+        if time.monotonic() >= deadline:
+            msg = f"condition not reached within {timeout_seconds:.0f}s"
+            raise AssertionError(msg)
+        await asyncio.sleep(_SPIN_INTERVAL_SECONDS)
 
 
 # --- Lifecycle entrypoint (_run via main) -------------------------------------
@@ -403,28 +437,34 @@ def test_main_builds_and_runs_until_stopped(
     assert ran["coro"] == "coroutine"
 
 
-@pytest.mark.skipif(
-    os.environ.get("CI") == "true",
-    reason=(
-        "BOB-107: на 2-ядерном CI-раннере полный lifecycle с РЕАЛЬНЫМ aiosqlite заклинивает "
-        "event loop на shutdown (loop ждёт сигнал воркера, воркер ждёт команду — дедлок уровня "
-        "loop, asyncio-таймауты не срабатывают). Локально проходит; полный цикл валидируется "
-        "живым рестартом Боба на VPS (4 ядра). Skip ВИДИМЫЙ и с причиной, не молчаливый."
-    ),
-)
 async def test_run_executes_full_lifecycle(tmp_path: Path) -> None:
+    """The real lifecycle runs and comes back to a stopped state.
+
+    🔴 BOB-107: this test used to be skipped on CI, blamed on «an aiosqlite event-loop
+    deadlock». There was no deadlock. ``_spin_until`` budgeted in loop turns, so on a
+    2-core host the stopper gave up ~10 ms in, died with an ``AssertionError`` **nobody
+    ever retrieved** (the test only reaches ``await stopper`` *after* ``_run`` returns),
+    and ``run_until_stopped()`` then waited on an event no one would ever set. The
+    runtime itself was fine — it was simply never asked to stop.
+
+    Two structural fixes keep that failure mode from ever being silent again:
+    ``gather`` runs the lifecycle and the stopper together, so a stopper failure
+    SURFACES as that error instead of hanging; and the whole thing is bounded, so a
+    genuine hang fails with a message rather than being killed by ``pytest-timeout``
+    with no attribution.
+    """
     # Arrange: a pre-seeded soul; stop the runtime promptly so _run returns.
     SoulStore(tmp_path / "soul").write_soul("# SOUL\n\nBob.\n")
     app = _app(tmp_path)
 
-    # Act: run the lifecycle, scheduling a stop so run_until_stopped resolves.
     async def stop_soon() -> None:
         await _spin_until(lambda: app.runtime.is_running)
         await app.runtime.stop()
 
-    stopper = asyncio.create_task(stop_soon())
-    await main_module._run(app)
-    await stopper
+    # Act: 🔴 gather, NOT create_task + await-after. If stop_soon raises, gather
+    # propagates it here immediately instead of leaving _run to wait forever.
+    async with asyncio.timeout(_LIFECYCLE_TIMEOUT_SECONDS):
+        await asyncio.gather(main_module._run(app), stop_soon())
 
     # Assert: the runtime came back to a stopped state and the db closed.
     assert app.runtime.state is RuntimeState.STOPPED

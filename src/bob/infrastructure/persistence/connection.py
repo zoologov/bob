@@ -31,11 +31,23 @@ from typing import TYPE_CHECKING
 import aiosqlite
 import sqlite_vec
 
-# BOB-107: cap on awaiting aiosqlite ``close()``. aiosqlite runs the connection in a
-# worker thread; on constrained hosts (a 2-core CI runner) its ``close()`` occasionally
-# DEADLOCKS (worker thread and event loop desync on signalling). A hung close would block
-# Bob's graceful shutdown — and therefore ``systemctl restart`` on deploy. Wait bounded;
-# if it does not finish, abandon it (the daemon worker thread dies with the process).
+# BOB-107: cap on awaiting aiosqlite ``close()`` — shutdown hygiene, NOT a deadlock cure.
+#
+# 🔴 The original rationale here was WRONG on both halves, and both were corrected by
+# measurement, not opinion:
+#   * «close() DEADLOCKS on a 2-core runner» — it does not. The hang blamed on it was a
+#     TEST defect (a poller that budgeted in event-loop turns and starved the driver's
+#     worker thread); the driver was never stuck. See the BOB-107 BRIEF.
+#   * «abandon it, the daemon worker thread dies with the process» — measured on
+#     aiosqlite 0.22.1: ``Thread(target=_connection_worker_thread)`` is created with
+#     **daemon = False**, and the worker blocks in ``tx.get()`` with NO timeout. So an
+#     abandoned worker does not die with the process — the interpreter JOINS it at exit
+#     (``threading._shutdown``). Abandoning silently would trade a 5-second stall for a
+#     permanent hang at exit: the exact failure this cap was meant to prevent.
+#
+# The cap is kept because bounding shutdown is genuinely worth having for a daemon Bob
+# restarts with systemctl — but the give-up path now makes itself true (see ``close``):
+# it tells the worker to stop, so the non-daemon thread can actually exit.
 _CLOSE_TIMEOUT_SECONDS = 5.0
 
 if TYPE_CHECKING:
@@ -290,13 +302,18 @@ class SqliteConnection:
         return {str(row[1]) for row in rows}
 
     async def close(self) -> None:
-        """Close the underlying connection (idempotent), under a timeout.
+        """Close the underlying connection (idempotent), under a bounded wait.
 
-        BOB-107: aiosqlite ``close()`` occasionally deadlocks on constrained hosts
-        (worker thread vs event loop). A hung close would block Bob's shutdown and
-        ``systemctl restart`` on deploy, so we await it for :data:`_CLOSE_TIMEOUT_SECONDS`
-        and, if it does not finish, abandon the connection (the daemon thread dies with
-        the process) rather than hang forever. Close is best-effort at shutdown.
+        Close is best-effort at shutdown: a slow or failing close must never crash the
+        lifecycle, and must never hang it either.
+
+        🔴 BOB-107 — the give-up path has to be TRUE, not merely reassuring. aiosqlite
+        runs the connection on a worker thread that is **not** a daemon and blocks in
+        ``tx.get()`` without a timeout, so simply walking away from a close leaves that
+        thread parked forever and the interpreter joins it at exit — turning a bounded
+        stall into a permanent hang. On timeout we therefore ask the driver to stop
+        (``Connection.stop()`` enqueues its sentinel), which is what actually lets the
+        worker thread finish and the process exit.
         """
         if self._conn is not None:
             conn = self._conn
@@ -305,11 +322,28 @@ class SqliteConnection:
                 await asyncio.wait_for(conn.close(), timeout=_CLOSE_TIMEOUT_SECONDS)
             except TimeoutError:
                 logger.warning(
-                    "aiosqlite close() did not finish in %.0fs — abandoning it (BOB-107)",
+                    "aiosqlite close() did not finish in %.0fs — stopping its worker "
+                    "thread so the process can still exit (BOB-107)",
                     _CLOSE_TIMEOUT_SECONDS,
                 )
+                self._stop_driver_thread(conn)
             except Exception:  # close at shutdown must not crash the lifecycle
                 logger.warning("aiosqlite close() raised — ignoring at shutdown", exc_info=True)
+                self._stop_driver_thread(conn)
+
+    @staticmethod
+    def _stop_driver_thread(conn: aiosqlite.Connection) -> None:
+        """Tell the aiosqlite worker thread to finish (BOB-107).
+
+        The worker is a NON-daemon thread parked in a blocking queue read, so it only
+        ever exits on the driver's stop sentinel. Without this, a close we gave up on
+        keeps the interpreter alive at shutdown. Best-effort by construction: this runs
+        on a path that is already degraded, so it must not raise.
+        """
+        try:
+            conn.stop()
+        except Exception:
+            logger.warning("could not stop the aiosqlite worker thread", exc_info=True)
 
     async def journal_mode(self) -> str:
         """Return the active SQLite journal mode (expected ``wal``)."""
