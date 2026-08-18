@@ -58,6 +58,7 @@ def build_interactive_argv(
     resume_session_id: str | None = None,
     continue_session: bool = False,
     extra_dirs: Sequence[str] = (),
+    permissions: Sequence[str] = (),
 ) -> list[str]:
     """Собрать argv интерактивного ``claude`` — чистая детерминированная функция.
 
@@ -69,8 +70,16 @@ def build_interactive_argv(
     * иначе — ФРЕШ-базлайн, байт-в-байт равный до-D1 инлайновому argv.
 
     ``extra_dirs`` (BOB-087.D2, owner-флаг ``coder.extra_dirs``) приписывает санитайзнутые
-    пары ``--add-dir`` ПОСЛЕДНИМИ — после флага возобновления, — поэтому каждое ослабление
-    остаётся чистым суффиксом, а порядок стабилен при любой стратегии.
+    пары ``--add-dir`` после флага возобновления, поэтому каждое ослабление остаётся
+    чистым суффиксом, а порядок стабилен при любой стратегии.
+
+    ``permissions`` (BOB-088, срез 3) — готовый хвост прав инструментов
+    (:func:`~bob.interactive.tool_permissions.tool_permission_argv`), приписывается
+    ПОСЛЕДНИМ. Здесь он именно ХВОСТ, а не решение: что запрещено и что разрешено, решает
+    отдельное ядро, а эта функция по-прежнему отвечает лишь за СБОРКУ. 🔴 Пустой хвост
+    оставляет argv байт-в-байт прежним — но в проде он пуст не бывает: раннер зовёт
+    политику САМ и параметра «без запрета» не имеет (урок среза 1 про страховку,
+    выключаемую одним ключом).
 
     Дефолт (без resume, без continue, без доп-директорий) — путь OFF: не приписывается
     ничего, живое поведение BOB-083 не меняется, пока D3/флаги не включены.
@@ -89,7 +98,7 @@ def build_interactive_argv(
         argv += ["--resume", resume_id]
     elif continue_session:
         argv += ["--continue"]
-    return argv + extra_dir_argv(extra_dirs)
+    return argv + extra_dir_argv(extra_dirs) + list(permissions)
 
 
 def extract_session_id(event: Mapping[str, object]) -> str | None:

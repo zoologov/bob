@@ -23,6 +23,7 @@ from bob.coding.clone_plan import (
     identity_pins,
     is_credential_free_url,
     origin_argv,
+    tracker_argv,
     workspace_verdict,
 )
 
@@ -329,3 +330,27 @@ def test_every_form_of_the_clone_plan_carries_the_hardening_pins() -> None:
 
     for argv in forms:
         assert argv[: len(_PINS) + 1] == ["git", *_PINS], argv
+
+
+# --------------------------------------------------------------------------- #
+# tracker_argv — клон провизионируется под трекер (BOB-088, срез 2)
+# --------------------------------------------------------------------------- #
+
+
+def test_the_clone_is_provisioned_with_the_maintainer_role_for_bd() -> None:
+    # ``bd`` 1.0.4 предупреждает на КАЖДЫЙ вызов, пока роль не названа (GH#2950), а
+    # конвейер зовёт его десятками раз за волну. Роль именно ``maintainer``: Боб заводит,
+    # ведёт и ЗАКРЫВАЕТ беады, а не предлагает правки со стороны.
+    assert tracker_argv("git", dest="/clone") == _hardened(
+        "git", "-C", "/clone", "config", "--local", "beads.role", "maintainer"
+    )
+
+
+def test_the_tracker_role_can_never_be_written_outside_the_clone() -> None:
+    # 🔴 Та же форма, что у подписи (срез D): ``--local`` и ``-C <клон>`` стоят явно.
+    # Глобальная запись переназначила бы роль ВЛАДЕЛЬЦУ в его собственном репозитории.
+    argv = tracker_argv("git", dest="/clone")
+    assert "--local" in argv
+    assert "--global" not in argv
+    assert "--system" not in argv
+    assert argv[len(_PINS) + 1 : len(_PINS) + 3] == ["-C", "/clone"]

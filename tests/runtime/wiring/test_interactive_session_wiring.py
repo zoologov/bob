@@ -19,13 +19,34 @@ from typing import TYPE_CHECKING, cast
 from bob.coding.adapters.live_stream import _DmLiveStreamer
 from bob.coding.adapters.owner_notifier import _CodingOwnerNotifier
 from bob.interactive.usecases.session import InteractiveSessionManager
-from bob.runtime.wiring.coding import _build_interactive_session
+from bob.runtime.wiring.coding import (
+    _build_interactive_session as _wire_build_interactive_session,
+)
+from tests.support.wiring_clone_root import with_a_throwaway_clone_root
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
     from bob.infrastructure.persistence import SqliteConnection
     from bob.infrastructure.telegram.gateway import BotLike
     from bob.kernel.ports import Clock
     from bob.social.usecases import Authorizer
+
+# 🔴 Файлы окружения спавна — в ОДНОРАЗОВЫЙ каталог, а не в рабочее дерево (bob-c3r.1).
+# С безопасной дорогой по умолчанию (клон + изоляция) сборка материализует их на КАЖДОМ
+# вызове, а предмет этого файла другой; поэтому продакшн-строители здесь затенены обёрткой,
+# подставляющей ``coder.clone_root``. Значение, заданное самим тестом, уважается как есть.
+
+
+def _build_interactive_session(
+    config: Mapping[str, object], **deps: object
+) -> InteractiveSessionManager | None:
+    """Как продакшн-строитель, но с одноразовым ``clone_root`` (см. комментарий выше)."""
+    return _wire_build_interactive_session(
+        with_a_throwaway_clone_root(config),
+        **deps,  # type: ignore[arg-type]
+    )
+
 
 _OWNER_ID = 27468732
 
@@ -64,17 +85,17 @@ def _deps() -> dict[str, object]:
 
 
 def test_flag_off_yields_no_manager() -> None:
-    assert _build_interactive_session({}, **_deps()) is None  # type: ignore[arg-type]
+    assert _build_interactive_session({}, **_deps()) is None
 
 
 def test_flag_off_explicit_false_yields_no_manager() -> None:
     config = {"coder": {"interactive": False}}
-    assert _build_interactive_session(config, **_deps()) is None  # type: ignore[arg-type]
+    assert _build_interactive_session(config, **_deps()) is None
 
 
 def test_flag_on_builds_the_manager() -> None:
     config = {"coder": {"interactive": True}}
-    manager = _build_interactive_session(config, **_deps())  # type: ignore[arg-type]
+    manager = _build_interactive_session(config, **_deps())
     assert isinstance(manager, InteractiveSessionManager)
     # Built idle: no live session until an owner opens one (the ``.4`` intake mode drives it).
     assert manager.active() is False
@@ -84,7 +105,7 @@ def test_interactive_streamer_factory_builds_a_verbose_streamer() -> None:
     # BOB-085.2: the interactive DM output renders VERBOSE (full text + rich + chunked),
     # unlike the concise group one-way path — the factory bakes verbose=True in.
     config = {"coder": {"interactive": True}}
-    manager = _build_interactive_session(config, **_deps())  # type: ignore[arg-type]
+    manager = _build_interactive_session(config, **_deps())
     assert isinstance(manager, InteractiveSessionManager)
     streamer = manager._streamer_factory()
     assert isinstance(streamer, _DmLiveStreamer)
@@ -96,7 +117,7 @@ def test_the_manager_can_tell_the_owner_the_session_ended_by_itself() -> None:
     # СОБСТВЕННОЙ инициативе (у неё нет хода-адресата). Без завязанного нотификатора
     # сеанс завершался бы честно, но МОЛЧА — а именно немоту эта беада и закрывает.
     config = {"coder": {"interactive": True}}
-    manager = _build_interactive_session(config, **_deps())  # type: ignore[arg-type]
+    manager = _build_interactive_session(config, **_deps())
     assert isinstance(manager, InteractiveSessionManager)
     assert isinstance(manager._notifier, _CodingOwnerNotifier)
     # Личка owner'а: 1:1 чат, никакого группового топика (INV-5 — группа не флудится).
@@ -111,7 +132,7 @@ def test_the_ended_notice_stays_on_bobs_bot_even_when_the_firehose_is_guppis() -
     deps = _deps()
     bob_bot, guppi_bot = _bot(), _bot()
     deps["bot"], deps["stream_bot"] = bob_bot, guppi_bot
-    manager = _build_interactive_session(config, **deps)  # type: ignore[arg-type]
+    manager = _build_interactive_session(config, **deps)
     assert isinstance(manager, InteractiveSessionManager)
     assert isinstance(manager._notifier, _CodingOwnerNotifier)
     assert manager._notifier._sender._bot is bob_bot

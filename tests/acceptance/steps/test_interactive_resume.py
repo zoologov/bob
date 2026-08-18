@@ -35,6 +35,7 @@ from pytest_bdd import given, scenarios, then, when
 
 from bob.coding.state import CodingSessionState
 from bob.interactive.resume_policy import CONFIRMATION_TTL
+from bob.interactive.tool_permissions import tool_permission_argv
 from tests.acceptance.interactive_resume_harness import (
     BASELINE_ARGV,
     GUEST_ID,
@@ -525,8 +526,15 @@ def opening_line_warns_the_tree_is_long_lived(rtx: _Ctx) -> None:
     )
 
 
-@then("argv свежей сессии байт-в-байт равен базлайну BOB-083")
+@then("argv свежей сессии равен базлайну BOB-083 плюс неснимаемый запрет необратимого")
 def fresh_argv_matches_the_baseline(rtx: _Ctx) -> None:
-    assert _first_argv(rtx) == list(BASELINE_ARGV), (
-        f"argv свежей сессии разошёлся с базлайном BOB-083: {_first_argv(rtx)}"
+    # 🔴 BOB-088 срез 3 ИЗМЕНИЛ этот сценарий, и правка видимая, а не подогнанная: раньше
+    # он утверждал «байт-в-байт базлайн BOB-083», и это перестало быть правдой намеренно —
+    # запрет необратимого едет в КАЖДОМ спавне и флага, которым его выключить, нет вовсе
+    # (урок среза 1). Всё, что было ослаблением (resume / --add-dir / рутина конвейера),
+    # по-прежнему отсутствует при выключенных флагах — это и проверяется.
+    argv = _first_argv(rtx)
+    assert argv == [*BASELINE_ARGV, *tool_permission_argv()], (
+        f"argv свежей сессии разошёлся с ожидаемым: {argv}"
     )
+    assert "--allowedTools" not in argv, "рутина конвейера приехала без флага владельца"

@@ -93,17 +93,20 @@ class SubprocessClaudeRunner:
         extra_dirs: Sequence[str] = (),
         isolation: SpawnIsolation | None = None,
     ) -> None:
-        # 🔴 Push guard (BOB-087.E): when the owner relaxes the sandbox the DEFAULT
-        # spawner carries a git config in its environment that makes every network push
-        # from the tree die on a non-existent remote helper. Only the default (real
-        # process) boundary is guarded — an injected fake spawns nothing.
+        # 🔴 Push guard (BOB-087.E, развязан в bob-c3r.1): the DEFAULT spawner ALWAYS
+        # carries a git config in its environment that makes every network push from the
+        # tree die on a non-existent remote helper. Only the default (real process)
+        # boundary is guarded — an injected fake spawns nothing.
+        # 🔴 ИСПРАВЛЕНО ПО ФАКТУ 2026-08-15 (правка видимая, а не переписанная задним
+        # числом): здесь стояло ``guard_push=allow_bypass`` — страховка от нечаянного
+        # push включалась ТОЛЬКО ВМЕСТЕ С ОСЛАБЛЕНИЕМ, которое её же обесценивает, то
+        # есть в живом конфиге барьера не было вовсе (P0 ``bob-l3t``). Теперь барьер
+        # безусловен, а ``allow_bypass`` влияет РОВНО на allowlist режимов.
         # 🔴 Credential isolation (BOB-089.C): under ``coder.isolated_clone`` the same
         # spawn ALSO stops seeing the owner's credential helper (substituted global git
         # config, disabled system config, reset helper list, no ambient gh token / ssh
-        # agent) — see :mod:`bob.identity.spawn_isolation`. ``None`` → unchanged spawn.
-        self._runner: StreamLineRunner = runner or _ExecStreamRunner(
-            guard_push=allow_bypass, isolation=isolation
-        )
+        # agent) — see :mod:`bob.identity.spawn_isolation`.
+        self._runner: StreamLineRunner = runner or _ExecStreamRunner(isolation=isolation)
         self._claude_bin = claude_bin
         self._timeout = timeout
         self._max_events = max_events
@@ -159,15 +162,14 @@ class SubprocessClaudeRunner:
 class _ExecStreamRunner:
     """Default runner: ``create_subprocess_exec``, read stdout line-by-line, no shell."""
 
-    def __init__(
-        self, *, guard_push: bool = False, isolation: SpawnIsolation | None = None
-    ) -> None:
-        # ``None`` (the default) means «spawn without ``env=``» — the inherited
-        # environment, byte-identical to the pre-guard spawn. Under ``guard_push`` it is
-        # the inherited environment PLUS the push-blocking git config, and under
-        # ``isolation`` MINUS the owner's credentials (see :mod:`bob.coding.push_guard`,
-        # incl. what those measures honestly do NOT cover).
-        self._env = guarded_spawn_env(os.environ, active=guard_push, isolation=isolation)
+    def __init__(self, *, isolation: SpawnIsolation | None = None) -> None:
+        # Окружение прогона — унаследованное ПЛЮС барьер push'а, и ПОД ``isolation``
+        # минус креды owner'а (см. :mod:`bob.coding.push_guard`, включая то, чего эти
+        # меры честно НЕ закрывают).
+        # 🔴 Барьер здесь БЕЗУСЛОВЕН, и параметра, которым его можно выключить, нет
+        # (bob-c3r.1): прежняя форма ``guard_push=<флаг>`` делала «спавн claude без
+        # барьера» выразимым одним ключевым словом — ровно это и стояло в проде.
+        self._env = guarded_spawn_env(os.environ, active=True, isolation=isolation)
 
     async def __call__(
         self, argv: list[str], *, cwd: str, timeout: float

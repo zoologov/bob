@@ -81,7 +81,9 @@ class SpawnIsolationFiles:
     def __init__(self, root: Path | str) -> None:
         self._root = Path(root)
 
-    def materialize(self, *, fork_url: str = "", token: str = "") -> SpawnIsolation:
+    def materialize(
+        self, *, fork_url: str = "", token: str = "", beads_dir: str = ""
+    ) -> SpawnIsolation:
         """Разложить файлы окружения и вернуть описание изоляции (идемпотентно).
 
         Токен передаётся ЗНАЧЕНИЕМ и уезжает ровно в один файл (0600); в возвращаемом
@@ -91,6 +93,13 @@ class SpawnIsolationFiles:
         Форма строки стора проверяется чистым ядром, и его отказ НЕ глотается: токен без
         адреса — это конфигурационная ошибка, на которой правильно падать громко, а не
         писать секрет по неизвестному адресу.
+
+        ``beads_dir`` (BOB-088, срез 2) НИЧЕГО не материализует — это каталог трекера
+        ВЛАДЕЛЬЦА, который уже существует; он лишь доезжает до описания изоляции, а оттуда
+        в ``BEADS_DIR`` окружения спавна. 🔴 Это единственное поле, которое спавну дорогу
+        ДАЁТ, а не отнимает: названная дыра, разобранная в докстроке
+        :data:`bob.identity.spawn_isolation.PURGED_SPAWN_VARS`. Пусто (дефолт) → спавн о
+        трекере не знает, и поведение прежнее.
         """
         line = credential_store_line(fork_url=fork_url, token=token) if token else ""
         self._root.mkdir(parents=True, exist_ok=True)
@@ -118,6 +127,7 @@ class SpawnIsolationFiles:
                 askpass=str(askpass),
                 ssh_identity=str(ssh_identity),
                 gh_config_dir=str(gh_config_dir),
+                beads_dir=beads_dir,
             )
         # 🔴 Права СНАЧАЛА, содержимое потом: иначе между записью и ``chmod`` существует
         # окно, в котором токен лежит в файле с правами по умолчанию (0644 при обычном
@@ -132,4 +142,5 @@ class SpawnIsolationFiles:
             ssh_identity=str(ssh_identity),
             gh_config_dir=str(gh_config_dir),
             credential_store=str(store),
+            beads_dir=beads_dir,
         )

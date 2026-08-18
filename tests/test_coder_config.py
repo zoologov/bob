@@ -62,14 +62,22 @@ def test_coder_resume_defaults_off() -> None:
     assert section["resume"] is False
 
 
-def test_isolated_clone_ships_off_with_an_unconfigured_fork() -> None:
-    # Рабочее место как отдельный КЛОН (BOB-089, срез A) ships INERT: OFF → прежний linked
-    # worktree, а форк не настроен вовсе, поэтому даже при включении клон остаётся без
-    # remote'а (нечего пушить) — включение адреса форка отдельное, сознательное действие.
+def test_the_isolated_clone_has_no_default_here_because_it_has_exactly_one(
+) -> None:
+    # 🔴 ИСПРАВЛЕНО ПО ФАКТУ 2026-08-15 (bob-c3r.1; правка видимая). Тест звался
+    # ``test_isolated_clone_ships_off_with_an_unconfigured_fork`` и утверждал
+    # ``section["isolated_clone"] is False`` — то есть закреплял, что рабочее место по
+    # умолчанию linked worktree ВЛАДЕЛЬЦА, а включение живёт в gitignored ``config/bob.yaml``
+    # (P0 bob-l3t). Теперь дефолт один и живёт в композиции
+    # (:func:`bob.runtime.wiring.coding._uses_isolated_clone`, ON), поэтому в каталоге
+    # дефолтов ключа НЕТ ВОВСЕ: два дефолта на один факт безопасности однажды разъедутся.
     section = _config()["coder"]
     assert isinstance(section, dict)
-    assert section["isolated_clone"] is False
+    assert "isolated_clone" not in section
+    # Соседние ключи клона остаются здесь: у них дефолт обычный, не про безопасность.
     assert section["clone_root"] == ".clones"
+    # Форк не настроен вовсе → у клона нет remote'а (пушить некуда); адрес форка — отдельное
+    # сознательное действие владельца.
     assert section["fork_url"] == ""
 
 

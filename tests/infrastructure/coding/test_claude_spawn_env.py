@@ -6,11 +6,20 @@
 
 Чистое ядро (:mod:`bob.coding.push_guard`) решает, каким быть окружению; здесь
 проверяется, что дефолтные спавнеры обоих раннеров это окружение действительно кладут в
-``create_subprocess_exec`` — и что при выключенном ``allow_bypass`` (дефолт) спавн
-остаётся байт-в-байт прежним, то есть ``env`` в вызов вообще не передаётся.
+``create_subprocess_exec``.
 
-Настоящий git тут не участвует — эффект барьера на git проверяет
-``test_push_guard_real_git.py``; это тест ПРОВОДКИ.
+🔴 ИСПРАВЛЕНО ПО ФАКТУ 2026-08-15 (bob-c3r.1; правка видимая, а не переписанная задним
+числом). Этот файл утверждал обратное: «при выключенном ``allow_bypass`` (дефолт) спавн
+остаётся байт-в-байт прежним, то есть ``env`` в вызов вообще не передаётся» — и это было
+верно как ОПИСАНИЕ кода и катастрофично как ГАРАНТИЯ: страховка от нечаянного push
+включалась только вместе с owner-ослаблением, которое её же обесценивает, а в живом
+конфиге ослабления нет (P0 ``bob-l3t``). Теперь барьер безусловен, и «байт-в-байт
+прежний спавн» больше не инвариант — им был отсутствующий барьер.
+
+Настоящий git тут не участвует — эффект барьера на git проверяют
+``test_push_guard_real_git.py`` (под ослаблением) и
+``test_push_barrier_always_real_git.py`` (без него, через продакшн-проводку); это тест
+ПРОВОДКИ.
 """
 
 from __future__ import annotations
@@ -64,11 +73,11 @@ def _guard_pairs(env: dict[str, str]) -> set[tuple[str, str]]:
 
 
 # --------------------------------------------------------------------------- #
-# OFF (дефолт): ни одного изменения в спавне
+# Дефолт: барьер уже в спавне, без единого owner-флага
 # --------------------------------------------------------------------------- #
 
 
-async def test_oneshot_spawn_passes_no_env_without_the_owner_flag(
+async def test_oneshot_spawn_carries_the_barrier_without_any_owner_flag(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     seen = _record_spawn(monkeypatch)
@@ -76,31 +85,39 @@ async def test_oneshot_spawn_passes_no_env_without_the_owner_flag(
     async for _ in _ExecStreamRunner()(["claude"], cwd="/w", timeout=1.0):
         break
 
-    assert seen[0].get("env") is None
+    assert _guard_pairs(seen[0]["env"]) == {
+        (f"url.{PUSH_GUARD_STUB_URL}.pushInsteadOf", prefix)
+        for prefix in PUSH_GUARD_URL_PREFIXES
+    }
 
 
-async def test_interactive_spawn_passes_no_env_without_the_owner_flag(
+async def test_interactive_spawn_carries_the_barrier_without_any_owner_flag(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     seen = _record_spawn(monkeypatch)
 
     await _ExecInteractiveSpawner()(["claude"], cwd="/w")
 
-    assert seen[0].get("env") is None
+    assert _guard_pairs(seen[0]["env"]) == {
+        (f"url.{PUSH_GUARD_STUB_URL}.pushInsteadOf", prefix)
+        for prefix in PUSH_GUARD_URL_PREFIXES
+    }
 
 
-def test_default_runners_are_unguarded() -> None:
-    # Дефолтная сборка раннеров (allow_bypass не передан) не заводит барьер вовсе.
+def test_default_runners_are_guarded() -> None:
+    # Дефолтная сборка раннеров (никаких owner-флагов) уже несёт барьер: выключить его
+    # ключевым словом больше нельзя — параметра нет.
     one_shot = SubprocessClaudeRunner()._runner
     interactive = InteractiveClaudeRunner()._spawner
     assert isinstance(one_shot, _ExecStreamRunner)
     assert isinstance(interactive, _ExecInteractiveSpawner)
-    assert one_shot._env is None
-    assert interactive._env is None
+    assert one_shot._env is not None
+    assert interactive._env is not None
+    assert _guard_pairs(one_shot._env) == _guard_pairs(interactive._env)
 
 
 # --------------------------------------------------------------------------- #
-# ON: барьер в окружении обоих спавнов
+# Под owner-ослаблением барьер тоже стоит (развязка двусторонняя)
 # --------------------------------------------------------------------------- #
 
 
@@ -139,11 +156,11 @@ async def test_interactive_spawn_carries_the_guard_under_allow_bypass(
     }
 
 
-async def test_the_guard_follows_the_flag_not_the_mode(
+async def test_the_guard_follows_neither_the_flag_nor_the_mode(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # Барьер решается ФЛАГОМ владельца на сборке раннера: под allow_bypass он стоит и
-    # на обычном acceptEdits-прогоне (в той же сессии claude может сменить режим).
+    # Барьер не зависит ни от режима прогона (в одной сессии claude может его сменить),
+    # ни от owner-флага (bob-c3r.1): он просто стоит.
     seen = _record_spawn(monkeypatch)
     runner = SubprocessClaudeRunner(allow_bypass=True)
 

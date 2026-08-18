@@ -10,7 +10,9 @@
 клона свой ``.git``, и изоляция кредов — вторая половина той же гарантии, поэтому отдельного
 флага у неё нет.
 
-🔴 OFF-путь: ``None``, то есть спавн вообще без ``env=`` и без единого файла на диске.
+🔴 OFF-путь: ни ключей изоляции в окружении, ни единого файла на диске. (Само окружение
+при этом НЕ пустое: с bob-c3r.1 спавн всегда несёт push-барьер — это отдельная мера, и
+раньше её отсутствие пряталось ровно за этой проверкой, см. пометку у OFF-раздела.)
 
 🔴 Кредов спавну НЕ выдаётся даже при включённом флаге: ветку в форк пушит процесс САМОГО
 Боба (``GitClone.commit_and_push``), а не ``claude`` внутри клона. Стор кредов появляется
@@ -20,113 +22,23 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 
-from bob.coding.adapters.claude_runner import SubprocessClaudeRunner, _ExecStreamRunner
 from bob.coding.push_guard import PUSH_GUARD_STUB_URL
-from bob.interactive.adapters.runner import (
-    InteractiveClaudeRunner,
-    _ExecInteractiveSpawner,
-)
-from bob.runtime.wiring.coding import _build_coding_assistant, _build_interactive_session
+from tests.support.wired_spawn_env import wired_spawn_envs
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
     from pathlib import Path
 
-    from bob.coding.usecases.coding_assistant import WorkJournalRecorder
-    from bob.infrastructure.persistence import SqliteConnection
-    from bob.infrastructure.telegram.gateway import BotLike
-    from bob.kernel.ports import Clock
-    from bob.memory.ports import SelfActionRecorder
-    from bob.memory.self_action import SelfAction
-    from bob.social.usecases import Authorizer
-
-_OWNER_ID = 27468732
-_CHAT_ID = -100123
-
-
-class _StubBot:
-    """Заглушка бота — собирается в нотификаторы, но на проводке не отправляет ничего."""
-
-
-class _StubAuthorizer:
-    def is_owner(self, user_id: int | None) -> bool:
-        return user_id == _OWNER_ID
-
-
-class _StubClock:
-    def now(self) -> datetime:
-        return datetime(2026, 8, 6, tzinfo=UTC)
-
-
-class _StubConnection:
-    """Заглушка соединения — стор её держит, но на проводке не трогает."""
-
-
-class _StubRecorder:
-    async def record(
-        self,
-        action: SelfAction,
-        *,
-        sender_id: int | None = None,
-        visibility: str | None = None,
-    ) -> None:
-        return None
-
-
-class _StubWorkJournal:
-    async def record_session(
-        self,
-        task: str,
-        facts: object,
-        outcome: object,
-        *,
-        sender_id: int | None = None,
-    ) -> None:
-        return None
-
-
-def _bot() -> BotLike:
-    return cast("BotLike", _StubBot())
-
 
 def _spawn_envs(config: Mapping[str, object]) -> list[dict[str, str] | None]:
-    """Окружение, которое каждый из двух рантаймов передаст спавну ``claude``."""
-    assistant = _build_coding_assistant(
-        config,
-        repo=cast("SqliteConnection", _StubConnection()),
-        authorizer=cast("Authorizer", _StubAuthorizer()),
-        notifier_bot=_bot(),
-        stream_bot=_bot(),
-        chat_id=_CHAT_ID,
-        topic_id=None,
-        owner_id=_OWNER_ID,
-        clock=cast("Clock", _StubClock()),
-        recorder=cast("SelfActionRecorder", _StubRecorder()),
-        work_journal=cast("WorkJournalRecorder", _StubWorkJournal()),
-    )
-    manager = _build_interactive_session(
-        config,
-        repo=cast("SqliteConnection", _StubConnection()),
-        authorizer=cast("Authorizer", _StubAuthorizer()),
-        bot=_bot(),
-        stream_bot=_bot(),
-        owner_id=_OWNER_ID,
-        clock=cast("Clock", _StubClock()),
-    )
-    assert assistant is not None
-    assert manager is not None
-    one_shot = assistant._runner
-    assert isinstance(one_shot, SubprocessClaudeRunner)
-    boundary = one_shot._runner
-    assert isinstance(boundary, _ExecStreamRunner)
-    live = manager._runner_factory()
-    assert isinstance(live, InteractiveClaudeRunner)
-    spawner = live._spawner
-    assert isinstance(spawner, _ExecInteractiveSpawner)
-    return [boundary._env, spawner._env]
+    """Окружение, которое каждый из двух рантаймов передаст спавну ``claude``.
+
+    Сборка живёт в :mod:`tests.support.wired_spawn_env` — тем же доступом пользуется
+    real-git тест барьера, и второй копии у него быть не должно.
+    """
+    return wired_spawn_envs(config)
 
 
 def _config(tmp_path: Path, **coder: object) -> dict[str, object]:
@@ -141,19 +53,42 @@ def _config(tmp_path: Path, **coder: object) -> dict[str, object]:
 
 
 # --------------------------------------------------------------------------- #
-# OFF-путь: ни окружения, ни файлов
+# OFF-путь (ЯВНЫЙ отказ owner'а): изоляции нет и файлов нет — но барьер push стоит
 # --------------------------------------------------------------------------- #
+#
+# 🔴 ИСПРАВЛЕНО ПО ФАКТУ 2026-08-15, ДВАЖДЫ (bob-c3r.1; обе правки видимые).
+# 1. Раздел утверждал «OFF-путь: ни окружения, ни файлов» и сверял окружение с
+#    ``[None, None]``. Файлов по-прежнему нет, а вот пустое окружение означало, что вместе
+#    с изоляцией отсутствовал и push-барьер: он был привязан к ``allow_bypass``, то есть
+#    включался только вместе с ослаблением, которое его же обесценивает (P0 ``bob-l3t``).
+#    Барьер теперь безусловен, поэтому OFF проверяется по ОТСУТСТВИЮ ИЗОЛЯЦИИ.
+# 2. OFF-путём считался конфиг БЕЗ ключа. Это и была дыра: защита включалась только там,
+#    где кто-то дописал ключ в gitignored ``config/bob.yaml``. Теперь дефолт — клон с
+#    изоляцией, а OFF пишется ЯВНО; «ключа нет» проверяется в
+#    ``test_isolated_clone_is_the_default.py`` — там оно означает ВКЛЮЧЕНО.
 
 
-def test_the_default_wiring_overrides_no_environment_and_writes_nothing(
-    tmp_path: Path,
-) -> None:
-    assert _spawn_envs(_config(tmp_path)) == [None, None]
+def _isolation_markers(env: dict[str, str] | None) -> list[str]:
+    """Ключи изоляции кредов в окружении спавна (пусто → изоляции нет)."""
+    assert env is not None
+    return [key for key in ("GIT_CONFIG_GLOBAL", "GH_CONFIG_DIR") if key in env]
+
+
+def test_an_explicit_off_flag_isolates_nothing_and_writes_nothing(tmp_path: Path) -> None:
+    envs = _spawn_envs(_config(tmp_path, isolated_clone=False))
+
+    assert [_isolation_markers(env) for env in envs] == [[], []]
     assert not (tmp_path / "clones").exists()
 
 
-def test_an_explicit_off_flag_stays_inert(tmp_path: Path) -> None:
-    assert _spawn_envs(_config(tmp_path, isolated_clone=False)) == [None, None]
+def test_the_push_barrier_stands_even_with_the_isolation_off(tmp_path: Path) -> None:
+    # Барьер и изоляция — РАЗНЫЕ меры: выключенная изоляция не снимает страховку от
+    # нечаянного push. Что барьер при этом настоящий (а не «ключ на месте»), доказывает
+    # прогон настоящего git — ``test_push_barrier_always_real_git.py``.
+    for env in _spawn_envs(_config(tmp_path, isolated_clone=False)):
+        assert env is not None
+        values = [env[f"GIT_CONFIG_KEY_{i}"] for i in range(int(env["GIT_CONFIG_COUNT"]))]
+        assert any(PUSH_GUARD_STUB_URL in value for value in values)
 
 
 # --------------------------------------------------------------------------- #
@@ -226,6 +161,10 @@ def test_the_isolation_lives_beside_the_clones_never_inside_one(tmp_path: Path) 
 def test_the_push_barrier_and_the_isolation_reach_the_spawn_together(
     tmp_path: Path,
 ) -> None:
+    # Пары обеих мер живут в ОДНОМ блоке ``GIT_CONFIG_*`` и нумеруются подряд, поэтому
+    # «одна затёрла другую» проверяется, а не предполагается. ``allow_bypass`` здесь
+    # больше не про барьер (он безусловен, bob-c3r.1) — это самая сильная комбинация
+    # флагов, на которой обе меры обязаны доехать целыми.
     envs = _spawn_envs(_config(tmp_path, isolated_clone=True, allow_bypass=True))
 
     for env in envs:

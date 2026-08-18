@@ -76,6 +76,34 @@ def test_an_unset_gh_config_dir_is_not_invented() -> None:
     assert "GH_CONFIG_DIR" not in env
 
 
+# --------------------------------------------------------------------------- #
+# 🔴 НАЗВАННАЯ ДЫРА: трекер owner'а виден спавну (BOB-088, срез 2)
+# --------------------------------------------------------------------------- #
+
+
+def test_the_spawn_is_told_where_the_owners_tracker_lives() -> None:
+    # 🔴 Это сознательная дыра, а не удобство: из КЛОНА ``bd`` не находит базу вовсе
+    # (Dolt-каталог gitignored), а конвейер обязан вести беады. Разбор — в докстроке
+    # :data:`PURGED_SPAWN_VARS`.
+    isolation = SpawnIsolation(
+        config_global="/w/c", askpass="/w/a", ssh_identity="/w/i", beads_dir="/repo/.beads"
+    )
+    assert isolation_env(isolation)["BEADS_DIR"] == "/repo/.beads"
+
+
+def test_an_unset_tracker_directory_is_not_invented() -> None:
+    # Дыра открывается ТОЛЬКО когда композиция назвала каталог: по умолчанию её нет.
+    env = isolation_env(SpawnIsolation(config_global="/w/c", askpass="/w/a", ssh_identity="/w/i"))
+    assert "BEADS_DIR" not in env
+
+
+def test_the_tracker_pointer_is_not_in_the_purge_list() -> None:
+    # Половина утверждения; ВТОРАЯ, и главная, — прогон всей склейки окружения
+    # (``tests/domain/coding/test_push_guard.py``): там видно, что переменная реально
+    # доезжает до спавна, а не уезжает и тут же вычищается.
+    assert "BEADS_DIR" not in PURGED_SPAWN_VARS
+
+
 def test_isolation_without_a_controlled_global_config_is_refused() -> None:
     # «Изоляция» без подменного global-конфига — это не изоляция, а её видимость.
     with pytest.raises(IdentityConfigError):

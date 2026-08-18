@@ -16,6 +16,7 @@
   shell-free формы git-команд заведения клона;
 * :func:`identity_pins` / :func:`identity_argv` — чем подписана работа в этом клоне
   (``bob[ai]``): парами в argv коммита и 🔴 ЛОКАЛЬНОЙ записью в конфиге;
+* :func:`tracker_argv` — чем клон провизионируется под трекер beads (``beads.role``);
 * :func:`workspace_verdict` — клонировать / переиспользовать / отказать для
   долгоживущего места;
 * :func:`is_credential_free_url` — какой URL вообще допустим в argv.
@@ -64,6 +65,7 @@ __all__ = [
     "identity_pins",
     "is_credential_free_url",
     "origin_argv",
+    "tracker_argv",
     "workspace_verdict",
 ]
 
@@ -214,6 +216,36 @@ def identity_argv(git_bin: str, *, dest: str, app_user_id: str) -> list[list[str
     git = hardened_git_argv(git_bin, path=dest)
     return [
         [*git, "config", "--local", key, value] for key, value in identity_pins(app_user_id)
+    ]
+
+
+def tracker_argv(git_bin: str, *, dest: str) -> list[str]:
+    """Собрать провизионирование клона под трекер: ``beads.role`` ЛОКАЛЬНО в клоне.
+
+    🔴 ЗАЧЕМ (BOB-088, срез 2; замерено на настоящем ``bd`` 1.0.4). Пока роль не названа,
+    ``bd`` печатает предупреждение GH#2950 на КАЖДЫЙ вызов — а конвейер зовёт его десятками
+    раз за волну, и модель читает этот шум как признак поломки. Роль читается из конфига
+    того репозитория, где ``bd`` запущен (проверено: ключ в КЛОНЕ гасит предупреждение,
+    снятие ключа возвращает его дословно), поэтому провизионируется именно клон.
+
+    ``maintainer``, а не ``contributor``: Боб в своей работе беады заводит, ведёт и
+    ЗАКРЫВАЕТ, а не предлагает правки со стороны (``CLAUDE.md`` §0 Setup).
+
+    🔴 ``--local`` и ``-C <dest>`` — по тому же доводу, что у :func:`identity_argv`:
+    глобальная запись назначила бы роль ВЛАДЕЛЬЦУ в его собственном репозитории.
+
+    🔴 И ВТОРАЯ ПОЛОВИНА этого же решения живёт в
+    :data:`bob.coding.untrusted_repo._ALLOWED_KEYS`: конфиг клона проверяется ALLOW-списком
+    перед интеграцией, поэтому ключ, который мы САМИ дописали, обязан быть в нём назван —
+    иначе конвейер доехал бы до конца волны и умер на пути к PR («local config carries keys
+    Bob's setup never writes»). Одно решение, две точки, и разъехаться им нельзя.
+    """
+    return [
+        *hardened_git_argv(git_bin, path=dest),
+        "config",
+        "--local",
+        "beads.role",
+        "maintainer",
     ]
 
 

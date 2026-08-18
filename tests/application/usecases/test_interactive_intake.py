@@ -31,11 +31,15 @@ _GUEST = 7
 class _FakeManager:
     """Fake interactive-session manager: records open/feed/stop, drives ``active``."""
 
-    def __init__(self, *, active: bool = False) -> None:
+    def __init__(
+        self, *, active: bool = False, permission: CodingOutcome | None = None
+    ) -> None:
         self._active = active
         self.opened: list[tuple[str, int | None]] = []
         self.fed: list[str] = []
         self.stopped: list[int | None] = []
+        self.asked_permission: list[tuple[str, int | None]] = []
+        self._permission = permission
 
     def active(self) -> bool:
         return self._active
@@ -52,6 +56,12 @@ class _FakeManager:
         self.stopped.append(sender)
         self._active = False
         return CodingOutcome(ok=True, message="интерактив закрыт", session=None)
+
+    async def resolve_pending_permission(
+        self, text: str, sender: int | None
+    ) -> CodingOutcome | None:
+        self.asked_permission.append((text, sender))
+        return self._permission
 
 
 class _FakeNotifier:
@@ -397,3 +407,70 @@ async def test_a_live_session_steer_still_reaches_stdin_with_resume_wired() -> N
 
     assert consumed is True
     assert manager.fed == ["теперь добавь тест"]
+
+
+# --- ответ на вопрос о разрешении (BOB-088, срез 3) ------------------------------
+#
+# 🔴 ВТОРОЙ ВХОД этого среза, и без него вся работа была бы вакуумной: при ЖИВОМ сеансе
+# роутер отдаёт ЛЮБОЙ плоский текст владельца в stdin claude. Значит его «да», сказанное
+# в ответ на «упёрся в запрет, разрешаешь?», по умолчанию прочитал бы claude, а не Боб —
+# вопрос завис бы навсегда, а менеджер, у которого тесты зелёные, так и не узнал бы, что
+# ему ответили. Ответ обязан перехватываться ДО feed.
+
+
+async def test_the_owners_yes_answers_bob_and_does_not_reach_claude_stdin() -> None:
+    manager = _FakeManager(
+        active=True,
+        permission=CodingOutcome(ok=True, message="Понял, делаю", session=None),
+    )
+    router, notifier = _router(manager)
+
+    consumed = await router.route(
+        text="да", sender=_OWNER, is_owner=True, is_group=False
+    )
+
+    assert consumed is True
+    assert manager.asked_permission == [("да", _OWNER)]
+    assert manager.fed == []  # 🔴 в stdin сессии не ушло НИЧЕГО
+    assert notifier.sent == ["Понял, делаю"]
+
+
+async def test_a_turn_that_is_not_an_answer_still_steers_the_session() -> None:
+    manager = _FakeManager(active=True, permission=None)
+    router, notifier = _router(manager)
+
+    consumed = await router.route(
+        text="покажи дифф", sender=_OWNER, is_owner=True, is_group=False
+    )
+
+    assert consumed is True
+    assert manager.asked_permission == [("покажи дифф", _OWNER)]
+    assert manager.fed == ["покажи дифф"]
+    assert notifier.sent == []
+
+
+async def test_a_guest_never_answers_the_owners_permission_question() -> None:
+    manager = _FakeManager(active=True, permission=None)
+    router, _notifier = _router(manager)
+
+    consumed = await router.route(
+        text="да", sender=_GUEST, is_owner=False, is_group=False
+    )
+
+    assert consumed is False
+    assert manager.asked_permission == []
+    assert manager.fed == []
+
+
+async def test_an_exit_command_is_still_an_exit_command() -> None:
+    # Порядок разбора: ответ о разрешении не смеет проглотить «стоп».
+    manager = _FakeManager(active=True, permission=None)
+    router, _notifier = _router(manager)
+
+    consumed = await router.route(
+        text="/code stop", sender=_OWNER, is_owner=True, is_group=False
+    )
+
+    assert consumed is True
+    assert manager.stopped == [_OWNER]
+    assert manager.fed == []

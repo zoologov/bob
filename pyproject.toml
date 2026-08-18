@@ -817,6 +817,10 @@ ignore = [
     "ARG001",
     "ARG002",
     "PLR2004",
+    # bob-c3r.3: пояснение про неснимаемый запрет необратимого — по-русски (→ RUF003).
+    "RUF001",
+    "RUF002",
+    "RUF003",
 ]
 "tests/infrastructure/telegram/test_multibot_poll_resilience.py" = [
     "S101",
@@ -1198,6 +1202,46 @@ ignore = [
     "RUF003",
 ]
 "tests/acceptance/steps/test_interactive_resume.py" = [
+    "S101",
+    "ARG001",
+    "ARG002",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+# BOB-088 BDD: постановка эпика первым кадром (С-1) + запрет/вопрос/доразрешение (С-3/С-4) +
+# регресс «bd виден в рабочем месте» — русские .feature-шаги, чьи кириллические look-alike
+# намеренны (Qwen читает их нативно) — RUF001/002/003 do not apply; шаги pytest-bdd несут
+# fixture-аргументы (ARG001/ARG002) и голые числа (PLR2004), assert — их суть (S101).
+"tests/acceptance/pipeline_conveyor_harness.py" = [
+    "S101",
+    "ARG001",
+    "ARG002",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+"tests/acceptance/steps/test_pipeline_first_frame.py" = [
+    "S101",
+    "ARG001",
+    "ARG002",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+"tests/acceptance/steps/test_pipeline_permission.py" = [
+    "S101",
+    "ARG001",
+    "ARG002",
+    "PLR2004",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+"tests/acceptance/steps/test_bd_in_the_workplace.py" = [
     "S101",
     "ARG001",
     "ARG002",
@@ -2331,6 +2375,123 @@ ignore = [
 "tests/support/process_coherence.py" = ["RUF001", "RUF002", "RUF003"]
 "tests/support/test_process_coherence.py" = ["RUF001", "RUF002", "RUF003"]
 "tests/test_process_drift_gate.py" = ["RUF001", "RUF002", "RUF003"]
+# bob-c3r.1 (барьер push стоит ВСЕГДА, лечение P0 bob-l3t): адаптер и тесты несут русские
+# пояснения, ПОЧЕМУ прежняя привязка барьера к owner-ослаблению была катастрофой и что
+# держит границу вместо несуществующего пер-действенного гейта (Cyrillic look-alikes
+# намеренны → RUF001-003). Real-git гард гоняет git фиксированной формой без шелла в
+# ОДНОРАЗОВОМ временном репозитории (→ S603/S607), а общий доступ к границе процесса
+# читает приватное поле собранного раннера (→ SLF001) — иначе он проверял бы не ту
+# проводку, что уходит в прод. Стабы проводки принимают параметры портов, которые им не
+# нужны (→ ARG002).
+"src/bob/coding/adapters/claude_runner.py" = ["RUF001", "RUF002", "RUF003"]
+"tests/support/wired_spawn_env.py" = ["ARG002", "RUF001", "RUF002", "RUF003", "SLF001"]
+"tests/infrastructure/coding/test_push_barrier_always_real_git.py" = [
+    "S603",
+    "S607",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+# bob-c3r.1, задача 1 (безопасная дорога — ДЕФОЛТ): гард на конфиге БЕЗ ключа и его
+# real-git половина. Русские пояснения того, почему «ключа нет» отныне значит «включено», а
+# значение «на вид настроенное» отвергается громко (Cyrillic look-alikes намеренны →
+# RUF001-003); фальшивый токен владельца в окружении — предмет проверки, а не секрет
+# (→ S105); настоящий git гоняется фиксированной формой без шелла (→ S603/S607).
+"tests/runtime/wiring/test_isolated_clone_is_the_default.py" = [
+    "S105",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+"tests/infrastructure/coding/test_default_workplace_real_git.py" = [
+    "S105",
+    "S603",
+    "S607",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+"tests/support/wiring_clone_root.py" = ["RUF001", "RUF002", "RUF003"]
+# bob-c3r.2 (BOB-088, срез 2): стартовый промпт конвейера + провизионирование клона под
+# трекер. Сам ПРОМПТ — русский текст, который читает модель, и кириллические двойники в нём
+# намеренны (→ RUF001-003); тем же русским написаны его тесты, гард проводки и пояснения к
+# названной дыре ``BEADS_DIR``. Живой смоук зовёт настоящие ``git``/``bd`` фиксированной
+# формой без шелла (→ S603/S607).
+"src/bob/interactive/pipeline_prompt.py" = ["RUF001", "RUF002", "RUF003"]
+"tests/domain/interactive/test_pipeline_prompt.py" = ["RUF001", "RUF002", "RUF003"]
+"tests/application/usecases/test_pipeline_first_frame.py" = [
+    "ARG002",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+"tests/runtime/wiring/test_pipeline_prompt_wiring.py" = [
+    "ARG002",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+    "SLF001",
+]
+"tests/runtime/wiring/test_tracker_reaches_the_spawn.py" = ["RUF001", "RUF002", "RUF003"]
+# bob-c3r.3 (BOB-088, срез 3): denylist необратимого + вопрос владельцу живой речью на
+# отказ + одноразовое доразрешение. Реплики Боба и разборы решений — русский текст, где
+# кириллические двойники намеренны (→ RUF001-003); живой смоук зовёт настоящий ``claude``
+# фиксированной формой без шелла (→ S603/S607).
+"src/bob/interactive/tool_permissions.py" = ["RUF001", "RUF002", "RUF003"]
+"src/bob/interactive/permission_denial.py" = ["RUF001", "RUF002", "RUF003"]
+"src/bob/interactive/permission_negotiation.py" = ["RUF001", "RUF002", "RUF003"]
+"src/bob/interactive/denial_voice.py" = ["RUF001", "RUF002", "RUF003"]
+"tests/domain/interactive/test_tool_permissions.py" = ["RUF001", "RUF002", "RUF003"]
+"tests/domain/interactive/test_permission_denial.py" = ["RUF001", "RUF002", "RUF003"]
+"tests/domain/interactive/test_permission_negotiation.py" = ["RUF001", "RUF002", "RUF003"]
+"tests/domain/interactive/test_denial_voice.py" = ["RUF001", "RUF002", "RUF003"]
+"tests/application/usecases/test_permission_ask.py" = [
+    "ARG002",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+"tests/runtime/wiring/test_permission_guard_wiring.py" = [
+    "ARG002",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+    "SLF001",
+]
+"tests/infrastructure/coding/test_denylist_real_claude_live_smoke.py" = [
+    "S603",
+    "S607",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+"tests/infrastructure/coding/test_interactive_runner_permissions.py" = [
+    "ARG002",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+"tests/infrastructure/coding/test_clone_provisioning_real_git.py" = [
+    "S603",
+    "S607",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+"tests/infrastructure/coding/test_bd_in_the_workplace_live_smoke.py" = [
+    "S603",
+    "S607",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
+"tests/infrastructure/coding/test_subagents_start_live_smoke.py" = [
+    "S603",
+    "S607",
+    "RUF001",
+    "RUF002",
+    "RUF003",
+]
 
 [tool.ruff.lint.isort]
 known-first-party = ["bob"]
@@ -2408,6 +2569,9 @@ source_paths = [
     # (argv_policy / intent / resume_policy / resume_negotiation) уехали вместе с ним —
     # пакет обязан остаться под мутацией, иначе гейт этих ядер молча исчез бы вместе с
     # переездом (ровно тот фиктивный гейт, против которого написан MUTATION.md).
+    # 🔴 BOB-088 срез 2 (bob-c3r.2) добавил сюда пятое ядро — ``pipeline_prompt``, ТЕКСТ
+    # первого кадра живой сессии: он определяет, пойдёт ли работа по процессу или claude
+    # начнёт импровизировать, то есть это поведение, а не оформление (§0.3 п.7).
     "src/bob/interactive",
     # BOB-089 срез B (bob-a6b.2): github-идентичность Боба — свой bounded context, и его
     # чистые ядра (principals / credentials / app_jwt / token_lifetime) — ровно тот

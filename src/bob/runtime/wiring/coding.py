@@ -71,6 +71,63 @@ if TYPE_CHECKING:
 #: невыразима, поэтому столкнуться этим именам не с чем.
 _SPAWN_ENV_DIR = ".spawn-env"
 
+#: Каталог трекера beads в репозитории ВЛАДЕЛЬЦА — тот самый, который спавн получает через
+#: ``BEADS_DIR`` (BOB-088, срез 2). Имя фиксировано самим ``bd``, ключа в конфиге у него
+#: сознательно нет: это не настройка, а факт устройства репозитория, и второй источник
+#: правды тут однажды разъехался бы с первым.
+_TRACKER_DIR = ".beads"
+
+#: 🔴 Безопасная дорога — ДЕФОЛТ (bob-c3r.1, лечение P0 ``bob-l3t``). Раньше дефолтом было
+#: OFF, а включение жило в ``config/bob.yaml``, который GITIGNORED: на чистом клоне и на
+#: любой другой машине Боб снова работал в linked worktree владельца. Защита, которую
+#: держит untracked-файл, — не защита; owner отказывается от неё ЯВНО.
+_ISOLATED_CLONE_DEFAULT = True
+
+#: Формы, которыми пишут «да» и «нет» (yaml даёт bool, окружение — строку). Всё, что не
+#: входит ни в одно множество, — НЕ отказ и НЕ согласие, а неразобранное значение.
+_EXPLICIT_YES = frozenset({"1", "true", "yes", "on"})
+_EXPLICIT_NO = frozenset({"0", "false", "no", "off"})
+
+
+def _uses_isolated_clone(coder: Mapping[str, object]) -> bool:
+    """ОДНО решение: рабочее место — отдельный КЛОН, а спавн — без кредов owner'а.
+
+    🔴 ЕДИНСТВЕННОЕ место, где читается ``coder.isolated_clone``. Раньше его читали ТРИ
+    функции подряд (:func:`_build_workspace`, :func:`_build_spawn_isolation`,
+    :func:`_build_pr_integration`), при том что докстрока первой обещала «ОДНО место»;
+    разъехавшись, три чтения дали бы ПОЛУ-включённое состояние — клон есть, кредов не
+    убрали, — и звучало бы оно как включённое. Клон и изоляция — две половины ОДНОЙ
+    гарантии, поэтому и решение одно.
+
+    Дефолт — :data:`_ISOLATED_CLONE_DEFAULT` (ON): безопасная дорога не должна зависеть от
+    того, дописал ли кто-то ключ в untracked-конфиг. Явный отказ owner'а уважается в любой
+    форме, которой его пишут (``false`` / ``"no"`` / ``0`` / ``off``).
+
+    🔴 А значение, которое ЧИТАЕТСЯ как настройка, но ни «да», ни «нет» (пустая строка,
+    опечатка, ``"да"``, список), отвергается ГРОМКО и на СБОРКЕ — не молча в OFF, как
+    делал прежний :func:`~bob.runtime.config._flag`. Тихий OFF здесь и есть класс этого
+    эпика: ключ в конфиге стоит, выглядит включённым, а защиты нет. Отказ на сборке —
+    та же конвенция, что у :func:`_refuse_a_fork_the_credentials_do_not_cover` и у
+    :class:`GitClone` с кредами в URL: дефект конфигурации ронять до старта, назвав ключ.
+    """
+    value = coder.get("isolated_clone")
+    if value is None:
+        return _ISOLATED_CLONE_DEFAULT
+    if isinstance(value, bool):
+        return value
+    written = str(value).strip().lower() if isinstance(value, (str, int)) else ""
+    if written in _EXPLICIT_YES:
+        return True
+    if written in _EXPLICIT_NO:
+        return False
+    raise ValueError(
+        f"coder.isolated_clone={value!r} is neither an explicit yes nor an explicit no — "
+        "and this key decides whether Bob works in an isolated clone without the owner's "
+        "credentials, so a value that merely LOOKS configured must not silently answer it. "
+        f"Write one of {sorted(_EXPLICIT_YES)} / {sorted(_EXPLICIT_NO)}, or drop the key: "
+        "the isolated clone is the default."
+    )
+
 
 def _under_repo_root(value: str) -> Path:
     """Привязать относительный путь к КОРНЮ РЕПОЗИТОРИЯ, а не к текущему каталогу.
@@ -118,18 +175,24 @@ def _build_coding_router(
 
 
 def _build_workspace(coder: Mapping[str, object]) -> GitWorktree | GitClone:
-    """Собрать рабочее место Боба: linked worktree (default) или отдельный КЛОН (BOB-089.A).
+    """Собрать рабочее место Боба: отдельный КЛОН (default) или linked worktree (BOB-089.A).
 
-    ОДНО место, где читается флаг ``coder.isolated_clone`` (default OFF). Оба адаптера
-    реализуют одни и те же порты (:class:`~bob.coding.ports.Worktree` +
-    :class:`~bob.coding.ports.PersistentWorkspace`), поэтому ни гейтед-ассистент, ни
-    менеджер интерактива не знают, во что они приземляются.
+    Решение читается у :func:`_uses_isolated_clone` — ОДНОГО места, где живёт флаг
+    ``coder.isolated_clone`` и его дефолт. Оба адаптера реализуют одни и те же порты
+    (:class:`~bob.coding.ports.Worktree` + :class:`~bob.coding.ports.PersistentWorkspace`),
+    поэтому ни гейтед-ассистент, ни менеджер интерактива не знают, во что они приземляются.
 
-    OFF → ровно прежний :class:`GitWorktree` с прежним аргументом
+    🔴 ИСПРАВЛЕНО ПО ФАКТУ 2026-08-15 (bob-c3r.1; правка видимая). Здесь стояло «ОДНО
+    место, где читается флаг ``coder.isolated_clone`` (default OFF)», и оба утверждения
+    были неверны: читали флаг ТРИ функции этого модуля, а дефолт OFF означал, что живая
+    сессия claude работает в репозитории владельца, если только кто-то не дописал ключ в
+    gitignored ``config/bob.yaml``. Теперь место действительно одно, а дефолт — ON.
+
+    OFF (ЯВНЫЙ отказ owner'а) → ровно прежний :class:`GitWorktree` с прежним аргументом
     (``coder.worktree_root``, default ``.worktrees``): сборка байт-в-байт как до среза, и
     это проверяется РАВЕНСТВОМ типа и аргументов, а не «похожестью».
 
-    ON → :class:`GitClone`: клон в ``coder.clone_root`` (default ``.clones``) из
+    ON (дефолт) → :class:`GitClone`: клон в ``coder.clone_root`` (default ``.clones``) из
     локального пути репозитория, единственный remote — ``coder.fork_url`` (пусто → у
     клона remote'а нет вовсе). 🔴 Смысл включения: у клона свой ``.git``, поэтому
     ``git update-ref refs/heads/main`` внутри него до main owner'а не достаёт — в linked
@@ -149,7 +212,7 @@ def _build_workspace(coder: Mapping[str, object]) -> GitWorktree | GitClone:
       ``coder.isolated_clone``. Срез C приехал под этим же флагом сознательно — клон и
       изоляция две половины одной гарантии, поэтому флаг один.
     """
-    if not _flag(coder, "isolated_clone"):
+    if not _uses_isolated_clone(coder):
         return GitWorktree(_str(coder, "worktree_root", ".worktrees"))
     return GitClone(
         _under_repo_root(_str(coder, "clone_root", ".clones")),
@@ -182,11 +245,20 @@ def _build_spawn_isolation(coder: Mapping[str, object]) -> SpawnIsolation | None
     Боба (``GitClone.commit_and_push``), а не ``claude`` внутри клона. Механизм выдачи
     токена существует и проверен (:func:`bob.identity.spawn_isolation.credential_store_line`),
     но вызывающего в проде у него пока НЕТ — и это записано честно, а не выдано за фичу.
+
+    🔴 А ВОТ ОДНА ДОРОГА ЗДЕСЬ ОТКРЫВАЕТСЯ, И НАЗЫВАЕТСЯ ВСЛУХ (BOB-088, срез 2): спавн
+    получает :data:`_TRACKER_DIR` владельца (``BEADS_DIR``), то есть ЗАПИСЬ в его трекер
+    beads. Причина — тем же срезом 1 рабочее место стало клоном, а из клона ``bd`` не
+    находит базу вовсе; конвейер без ``bd`` не работает. Что именно этим открыто, чем
+    оплачено и почему приемлемо — в докстроке
+    :data:`bob.identity.spawn_isolation.PURGED_SPAWN_VARS`. Каталог берётся от КОРНЯ
+    РЕПОЗИТОРИЯ, а не от ``cwd``: иначе спавн, поднятый из другого каталога, уехал бы в
+    чужой (или несуществующий) трекер — урок bob-a6b.6 M4 про ``clone_root``.
     """
-    if not _flag(coder, "isolated_clone"):
+    if not _uses_isolated_clone(coder):
         return None
     root = _under_repo_root(_str(coder, "clone_root", ".clones")) / _SPAWN_ENV_DIR
-    return SpawnIsolationFiles(root).materialize()
+    return SpawnIsolationFiles(root).materialize(beads_dir=str(_REPO_ROOT / _TRACKER_DIR))
 
 
 def _build_pr_integration(
@@ -218,7 +290,7 @@ def _build_pr_integration(
     """
     fork = repo_slug(_str(coder, "fork_url", ""))
     upstream = _str(github, "propose_repo", "").strip()
-    if not (_flag(coder, "isolated_clone") and fork and upstream):
+    if not (_uses_isolated_clone(coder) and fork and upstream):
         return GhPullRequestOpener(gh_bin=_str(coder, "gh_bin", "gh")), True
     _refuse_a_fork_the_credentials_do_not_cover(fork, _str(github, "work_repo", ""))
     return ForkCompareLink(upstream=upstream, fork=fork), False
@@ -305,16 +377,38 @@ def _build_coding_assistant(
     (BOB-087.D5b): Bob's OWN code still has no push/merge path, but ``bypassPermissions``
     hands claude an unsupervised shell in a worktree that SHARES the main repo's ``.git``
     (refs, remotes, credentials), so with that flag on «main is reached only through a PR»
-    rests on the owner's judgement rather than on structure. OFF (the default) keeps the
-    per-action gate that actually makes it structural.
+    rests on the owner's judgement rather than on structure.
 
-    🔴 Push guard (BOB-087.E, bob-5ao): under ``allow_bypass`` the runner's spawn carries a
-    git config (``url.<stub>.pushInsteadOf``) that makes a network push from the worktree
-    die on a non-existent remote helper — see :mod:`bob.coding.push_guard`, including the
-    honest limits (it is an ACCIDENT guard, not a boundary: the process owns its own
-    environment, and a local ``update-ref`` on the shared ``.git`` bypasses push entirely).
-    Bob's own integration path is untouched — :class:`GitWorktree` / :class:`GhPullRequestOpener`
-    run in BOB's process, not in the guarded spawn.
+    🔴 ИСПРАВЛЕНО ПО ФАКТУ 2026-08-15 (bob-c3r.1, находка ``bob-l3t``; правка ВИДИМАЯ, а не
+    переписанная задним числом). Здесь стояло: «OFF (the default) keeps the per-action gate
+    that actually makes it structural». Живая проба настоящим CLI ТОЧНОЙ формой спавна Боба
+    (``-p --input-format stream-json --output-format stream-json --verbose
+    --permission-mode acceptEdits``) показала, что пер-действенного гейта в headless-режиме
+    НЕТ: пишущая команда вне ``--allowedTools`` выполнилась молча, события запроса
+    разрешения не пришло, зависания тоже не было. Фраза обещала гарантию, которой никогда
+    не существовало, и ровно на неё опиралось «main достижим только через PR».
+
+    🔴 ЧТО ДЕРЖИТ ГРАНИЦУ НА САМОМ ДЕЛЕ (после этого среза, по убыванию силы):
+    ``coder.isolated_clone`` — рабочее место как отдельный КЛОН со своим ``.git``, поэтому
+    локальный ``update-ref`` до ствола owner'а не достаёт, плюс окружение спавна без кредов
+    owner'а (:func:`_build_spawn_isolation`), поэтому у амбиентной сетевой дороги нет права
+    записи; и БЕЗУСЛОВНЫЙ push-барьер (см. ниже) — страховка от нечаянного, не граница. В
+    самом Бобе пути push/merge по-прежнему нет. Пер-действенного гейта в этом списке нет и
+    не будет: имитировать его поверх CLI значило бы завести третью иллюзию защиты в одном
+    месте (решение RFC BOB-088).
+
+    🔴 Push guard (BOB-087.E, bob-5ao; развязан с ослаблением в bob-c3r.1): спавн раннера
+    ВСЕГДА несёт git-конфиг (``url.<stub>.pushInsteadOf``), от которого сетевой push из
+    рабочего места умирает на несуществующем remote-хелпере — см.
+    :mod:`bob.coding.push_guard`, включая честные пределы (это страховка от НЕЧАЯННОГО
+    push, а не граница: процесс владеет своим окружением). Раньше барьер стоял РОВНО при
+    ``allow_bypass``, то есть включался только вместе с ослаблением, которое его же
+    обесценивает, — в живом конфиге барьера не было вовсе. Собственный интеграционный путь
+    Боба барьер не трогает, и это ИЗМЕРЕНО настоящим git, а не заявлено:
+    :class:`GitWorktree` / :class:`GitClone` / :class:`GhPullRequestOpener` спавнят git
+    через ``ExecRunner`` в процессе САМОГО Боба, без ``env=``, тогда как окружение с
+    барьером собирается только в дефолтных спавнерах ``claude``
+    (``tests/infrastructure/coding/test_push_barrier_always_real_git.py``).
     """
     coder = _section(config, "coder")
     if not _flag(coder, "enabled"):
@@ -464,16 +558,35 @@ def _build_interactive_session(
     ``.git`` — refs, remotes, credentials — so once ``allow_bypass`` gives claude an
     unsupervised shell in it, the trunk is protected by the owner's judgement about what
     he lets claude do, not by the absence of a code path in Bob. 🔴 BOB-087.E (bob-5ao)
-    lowers that risk WITHOUT pretending to close it: every per-session runner built here
-    inherits the same ``allow_bypass``, so its spawn carries the push guard
-    (:mod:`bob.coding.push_guard`) — a network push from the live terminal dies on a
-    non-existent remote helper. It is an accident guard, not a boundary (the process owns
-    its environment; a local ``update-ref`` on the shared ``.git`` never touches push).
+    lowers that risk WITHOUT pretending to close it: the spawn of every per-session runner
+    built here carries the push guard (:mod:`bob.coding.push_guard`) — a network push from
+    the live terminal dies on a non-existent remote helper. It is an accident guard, not a
+    boundary (the process owns its environment; a local ``update-ref`` on the shared
+    ``.git`` never touches push).
+
+    🔴 ИСПРАВЛЕНО ПО ФАКТУ 2026-08-15 (bob-c3r.1, находка ``bob-l3t``; правка видимая, а не
+    переписанная задним числом). Абзац выше говорил: «every per-session runner inherits the
+    same ``allow_bypass``, so its spawn carries the push guard» — то есть барьер приезжал
+    ТОЛЬКО ВМЕСТЕ С ОСЛАБЛЕНИЕМ, которое его же обесценивает; в живом конфиге ослабления
+    нет, значит не было и барьера. Теперь барьер безусловен, а ``allow_bypass`` влияет
+    ровно на allowlist режимов. И то же самое про слово «структурная» рядом с песочницей:
+    живая проба настоящим CLI показала, что пер-действенного гейта в headless-режиме НЕТ
+    ни при каком флаге. Границу держит структура — клон со своим ``.git`` и окружение без
+    кредов owner'а (:func:`_build_workspace`, :func:`_build_spawn_isolation`).
 
     🔴 Реплика о конце сеанса (bob-kv4): менеджер получает СВОЙ owner-нотификатор в личку
     (бот Боба) — единственный канал для того, что он говорит по собственной инициативе,
     когда ``claude`` кончился САМ. Все прочие реплики возвращаются ходу, который их
     попросил; у смерти процесса такого хода нет, и без этого сейма Боб просто немел.
+
+    🔴 Стартовый промпт конвейера (BOB-088, срез 2): под флагом ``coder.pipeline_prompt``
+    (default OFF) свежая сессия получает ПЕРВЫМ КАДРОМ постановку — задачу owner'а плюс
+    указание вести работу по ``CLAUDE.md`` (эпик — через ``/coordinator``, роли
+    субагентами). До этого среза ``runner.open(...)`` вызывался и в сессию не уходило
+    НИЧЕГО: ``claude`` стартовал с пустым контекстом и ждал, пока owner напишет сам.
+    OFF → спавн байт-в-байт прежний. 🔴 Текст решает домен
+    (:func:`bob.interactive.pipeline_prompt.pipeline_first_frame`), здесь только флаг: строка в
+    композиции была бы поведением конвейера вне mutation-гейта (§0.3 п.7).
 
     🔴 Долгоживущее рабочее место + resume (BOB-087.D3, D5b): под флагом ``coder.resume``
     (default OFF) в менеджер инъектируются два узких порта: ``lookup`` (поиск сессий по
@@ -509,12 +622,24 @@ def _build_interactive_session(
     # adapters, seen through their narrow read/ensure ports; OFF → ``None`` → the whole
     # resume path is structurally unavailable.
     resume_on = _flag(coder, "resume")
+    # 🔴 Права инструментов (BOB-088, срез 3), и они РАЗНОЙ природы — поэтому читаются
+    # по-разному. Запрет необратимого (push / remotes / reset --hard / rm / gh pr merge /
+    # curl / wget) флага НЕ имеет вовсе: он приезжает в каждый спавн из домена
+    # (:func:`bob.interactive.tool_permissions.tool_permission_argv`), и выключить его
+    # нечем — ровно урок среза 1, где страховка, выражаемая одним ключом, в проде
+    # оказалась выключенной. А ЯВНОЕ разрешение рутины конвейера — ослабление, поэтому
+    # оно за owner-флагом ``coder.pipeline_tools`` (default OFF), как ``allow_bypass`` и
+    # ``extra_dirs``. 🔴 Без него, по живому замеру, встроенный гейт CLI отказывает даже
+    # ``git add`` и ``git commit``: конвейер встанет на первом же коммите, и включать
+    # флаг придётся вместе с ``coder.pipeline_prompt``.
+    routine_tools = _flag(coder, "pipeline_tools")
     return InteractiveSessionManager(
         runner_factory=lambda: InteractiveClaudeRunner(
             claude_bin=claude_bin,
             allow_bypass=allow_bypass,
             extra_dirs=extra_dirs,
             isolation=isolation,
+            routine_tools=routine_tools,
         ),
         worktree=worktree,
         store=store,
@@ -544,6 +669,14 @@ def _build_interactive_session(
         # САМОГО Боба, поэтому она идёт на ботe Боба в его личку — как короткие строки
         # режима интейка, а не за GUPPI (тот везёт только механический firehose).
         notifier=_CodingOwnerNotifier(bot=bot, chat_id=dm_chat_id, topic_id=None),
+        # 🔴 Стартовый промпт конвейера (BOB-088, срез 2) — ЕДИНСТВЕННОЕ место, где
+        # читается ``coder.pipeline_prompt``. OFF (дефолт) → в открытый stdin не уходит
+        # ничего и сессия ждёт owner'а, ровно как до среза. ON → свежая сессия (обе
+        # двери: ``open`` и ``open_workspace``) получает первым кадром задачу и указание
+        # идти по ``CLAUDE.md``; сам текст решает домен
+        # (:func:`bob.interactive.pipeline_prompt.pipeline_first_frame`), а не композиция —
+        # иначе поведение конвейера жило бы в строке проводки, вне mutation-гейта.
+        pipeline_prompt=_flag(coder, "pipeline_prompt"),
     )
 
 

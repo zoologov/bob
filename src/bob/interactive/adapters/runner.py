@@ -52,6 +52,7 @@ from bob.coding.push_guard import guarded_spawn_env
 from bob.coding.sandbox_policy import ClaudeRunError, is_allowed_mode
 from bob.coding.stream_json import STREAM_LIMIT, parse_event
 from bob.interactive.argv_policy import build_interactive_argv, extract_session_id
+from bob.interactive.tool_permissions import tool_permission_argv
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Awaitable, Mapping, Sequence
@@ -147,16 +148,23 @@ class InteractiveClaudeRunner:
         allow_bypass: bool = False,
         extra_dirs: Sequence[str] = (),
         isolation: SpawnIsolation | None = None,
+        routine_tools: bool = False,
     ) -> None:
-        # 🔴 Push guard (BOB-087.E): under the owner's ``allow_bypass`` the DEFAULT
-        # spawner carries a git config in its environment that makes every network push
-        # from the live terminal die on a non-existent remote helper. Only the default
-        # (real process) boundary is guarded — an injected fake spawns nothing.
+        # 🔴 Push guard (BOB-087.E, развязан в bob-c3r.1): the DEFAULT spawner ALWAYS
+        # carries a git config in its environment that makes every network push from the
+        # live terminal die on a non-existent remote helper. Only the default (real
+        # process) boundary is guarded — an injected fake spawns nothing.
+        # 🔴 ИСПРАВЛЕНО ПО ФАКТУ 2026-08-15 (правка видимая, а не переписанная задним
+        # числом): здесь стояло ``guard_push=allow_bypass``, то есть страховка от
+        # нечаянного push включалась ТОЛЬКО ВМЕСТЕ С ОСЛАБЛЕНИЕМ, которое её же и
+        # обесценивает, — а в живом конфиге ослабления нет, значит не было и барьера
+        # (P0 ``bob-l3t``). Барьер стоит всегда; ``allow_bypass`` влияет РОВНО на
+        # allowlist режимов (:mod:`bob.coding.sandbox_policy`) и ни на что больше.
         # 🔴 Credential isolation (BOB-089.C): under ``coder.isolated_clone`` the live
         # terminal ALSO loses sight of the owner's credential helper — the same single
         # seam (:func:`bob.coding.push_guard.guarded_spawn_env`), never a second one.
         self._spawner: InteractiveProcessSpawner = spawner or _ExecInteractiveSpawner(
-            guard_push=allow_bypass, isolation=isolation
+            isolation=isolation
         )
         self._claude_bin = claude_bin
         self._terminate_grace = terminate_grace
@@ -165,6 +173,13 @@ class InteractiveClaudeRunner:
         # ``extra_dirs`` appends no ``--add-dir`` — the spawn stays the BOB-083 argv.
         self._allow_bypass = allow_bypass
         self._extra_dirs = tuple(extra_dirs)
+        # 🔴 Права инструментов (BOB-088, срез 3). Запрет необратимого приезжает в КАЖДЫЙ
+        # спавн, и выключить его нечем — параметра нет, ровно как у push-барьера выше
+        # (bob-c3r.1: «страховка, выражаемая одним ключевым словом», в проде оказалась
+        # выключенной). Owner-флагом (``coder.pipeline_tools``) включается только ВТОРАЯ
+        # половина — явное разрешение рутины конвейера, без которого, по замеру, ``git
+        # add`` и ``git commit`` упираются во встроенный гейт CLI.
+        self._routine_tools = routine_tools
         self._proc: InteractiveProcess | None = None
         # The claude-assigned session id, captured off the init event as it streams
         # (BOB-087.D1). ``None`` until the init frame is seen; the manager persists it
@@ -183,14 +198,21 @@ class InteractiveClaudeRunner:
         mode: str,
         resume_session_id: str | None = None,
         continue_session: bool = False,
+        allow_once: str = "",
     ) -> None:
         """Spawn the persistent ``claude`` process in ``workdir`` under ``mode``.
 
         ``resume_session_id`` / ``continue_session`` (BOB-087.D1) opt into resuming a
-        prior session; both default OFF, so the spawn is byte-identical to BOB-083 (a
-        fresh session) unless a caller explicitly resumes. ``mode`` is checked against the
-        pure allowlist policy — ``bypassPermissions`` passes ONLY under the constructor's
-        owner flag ``allow_bypass`` (BOB-087.D2).
+        prior session; both default OFF, so a caller that does not resume starts a fresh
+        session. ``mode`` is checked against the pure allowlist policy —
+        ``bypassPermissions`` passes ONLY under the constructor's owner flag
+        ``allow_bypass`` (BOB-087.D2).
+
+        🔴 ``allow_once`` (BOB-088, срез 3) — команда, которую владелец только что
+        разрешил СЛОВАМИ. Она едет точечным разрешением ровно этого спавна, и вместе с
+        ней отходят в сторону накрывающие её шаблоны запрета (иначе запрет победил бы
+        разрешение — замерено). ОДНОРАЗОВОСТЬ структурна: это аргумент вызова, состояния
+        под него нет, поэтому следующий ``open`` того же раннера снова полон запретов.
         """
         if not is_allowed_mode(mode, allow_bypass=self._allow_bypass):
             raise ClaudeRunError(
@@ -204,6 +226,9 @@ class InteractiveClaudeRunner:
             resume_session_id=resume_session_id,
             continue_session=continue_session,
             extra_dirs=self._extra_dirs,
+            permissions=tool_permission_argv(
+                routine=self._routine_tools, allow_once=allow_once
+            ),
         )
         self._proc = await self._spawner(argv, cwd=workdir)
 
@@ -303,15 +328,14 @@ class _ExecInteractiveProcess:
 class _ExecInteractiveSpawner:
     """Default spawner: ``create_subprocess_exec`` with piped stdio, no shell."""
 
-    def __init__(
-        self, *, guard_push: bool = False, isolation: SpawnIsolation | None = None
-    ) -> None:
-        # ``None`` (the default) means «spawn without ``env=``» — the inherited
-        # environment, byte-identical to the pre-guard spawn. Under ``guard_push`` it is
-        # the inherited environment PLUS the push-blocking git config, and under
-        # ``isolation`` MINUS the owner's credentials (see :mod:`bob.coding.push_guard`,
-        # incl. what those measures honestly do NOT cover).
-        self._env = guarded_spawn_env(os.environ, active=guard_push, isolation=isolation)
+    def __init__(self, *, isolation: SpawnIsolation | None = None) -> None:
+        # Окружение живого терминала — унаследованное ПЛЮС барьер push'а, и ПОД
+        # ``isolation`` минус креды owner'а (см. :mod:`bob.coding.push_guard`, включая
+        # то, чего эти меры честно НЕ закрывают).
+        # 🔴 Барьер здесь БЕЗУСЛОВЕН, и параметра, которым его можно выключить, нет
+        # (bob-c3r.1): предыдущая форма ``guard_push=<флаг>`` позволяла выразить «спавн
+        # claude без барьера» одним ключевым словом — ровно это и было в проде.
+        self._env = guarded_spawn_env(os.environ, active=True, isolation=isolation)
 
     async def __call__(self, argv: list[str], *, cwd: str) -> InteractiveProcess:
         proc = await asyncio.create_subprocess_exec(

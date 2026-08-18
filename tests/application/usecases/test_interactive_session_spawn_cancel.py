@@ -63,6 +63,7 @@ class _HangingRunner:
         mode: str,
         resume_session_id: str | None = None,
         continue_session: bool = False,
+        allow_once: str = "",
     ) -> None:
         assert continue_session is False
         self.entered.set()
@@ -90,6 +91,7 @@ class _ExplodingRunner(_HangingRunner):
         mode: str,
         resume_session_id: str | None = None,
         continue_session: bool = False,
+        allow_once: str = "",
     ) -> None:
         self.entered.set()
         raise RuntimeError("claude failed to spawn")

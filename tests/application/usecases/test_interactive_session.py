@@ -62,6 +62,7 @@ class _FakeInteractiveRunner:
         mode: str,
         resume_session_id: str | None = None,
         continue_session: bool = False,
+        allow_once: str = "",  # noqa: ARG002
     ) -> None:
         # BOB-087.D3: the port carries the optional resume knobs; the FRESH ``open``
         # path must never use them (asserted here — the default spawn is unchanged).
@@ -455,6 +456,7 @@ class _ExplodingRunner(_FakeInteractiveRunner):
         mode: str,  # noqa: ARG002
         resume_session_id: str | None = None,  # noqa: ARG002
         continue_session: bool = False,  # noqa: ARG002
+        allow_once: str = "",  # noqa: ARG002
     ) -> None:
         raise RuntimeError("claude failed to spawn")
 

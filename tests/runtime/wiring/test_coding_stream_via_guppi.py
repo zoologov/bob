@@ -20,16 +20,49 @@ from typing import TYPE_CHECKING, cast
 
 from bob.coding.adapters.live_stream import _DmLiveStreamer
 from bob.coding.adapters.owner_notifier import _CodingOwnerNotifier
-from bob.runtime.wiring.coding import _build_coding_assistant, _build_interactive_session
+from bob.runtime.wiring.coding import _build_coding_assistant as _wire_build_coding_assistant
+from bob.runtime.wiring.coding import (
+    _build_interactive_session as _wire_build_interactive_session,
+)
+from tests.support.wiring_clone_root import with_a_throwaway_clone_root
 
 if TYPE_CHECKING:
-    from bob.coding.usecases.coding_assistant import WorkJournalRecorder
+    from collections.abc import Mapping
+
+    from bob.coding.usecases.coding_assistant import CodingAssistant, WorkJournalRecorder
     from bob.infrastructure.persistence import SqliteConnection
     from bob.infrastructure.telegram.gateway import BotLike
+    from bob.interactive.usecases.session import InteractiveSessionManager
     from bob.kernel.ports import Clock
     from bob.memory.ports import SelfActionRecorder
     from bob.memory.self_action import SelfAction
     from bob.social.usecases import Authorizer
+
+# 🔴 Файлы окружения спавна — в ОДНОРАЗОВЫЙ каталог, а не в рабочее дерево (bob-c3r.1).
+# С безопасной дорогой по умолчанию (клон + изоляция) сборка материализует их на КАЖДОМ
+# вызове, а предмет этого файла другой; поэтому продакшн-строители здесь затенены обёрткой,
+# подставляющей ``coder.clone_root``. Значение, заданное самим тестом, уважается как есть.
+
+
+def _build_coding_assistant(
+    config: Mapping[str, object], **deps: object
+) -> CodingAssistant | None:
+    """Как продакшн-строитель, но с одноразовым ``clone_root`` (см. комментарий выше)."""
+    return _wire_build_coding_assistant(
+        with_a_throwaway_clone_root(config),
+        **deps,  # type: ignore[arg-type]
+    )
+
+
+def _build_interactive_session(
+    config: Mapping[str, object], **deps: object
+) -> InteractiveSessionManager | None:
+    """Как продакшн-строитель, но с одноразовым ``clone_root`` (см. комментарий выше)."""
+    return _wire_build_interactive_session(
+        with_a_throwaway_clone_root(config),
+        **deps,  # type: ignore[arg-type]
+    )
+
 
 _OWNER_ID = 27468732
 _CHAT_ID = -100123
@@ -112,7 +145,7 @@ def _notifier_bot(notifier: object) -> object:
 def test_flag_off_firehose_stays_on_bob_bot() -> None:
     config = {"coder": {"enabled": True}}
     bob, guppi = _bob(), _guppi()
-    assistant = _build_coding_assistant(config, **_assistant_deps(bob, guppi))  # type: ignore[arg-type]
+    assistant = _build_coding_assistant(config, **_assistant_deps(bob, guppi))
     assert assistant is not None
     # Bob's gate-line notifier is Bob's bot; the firehose falls back to the SAME channel.
     assert _notifier_bot(assistant._notifier) is bob
@@ -122,7 +155,7 @@ def test_flag_off_firehose_stays_on_bob_bot() -> None:
 def test_flag_on_firehose_goes_to_guppi_voice_stays_bob() -> None:
     config = {"coder": {"enabled": True, "stream_via_guppi": True}}
     bob, guppi = _bob(), _guppi()
-    assistant = _build_coding_assistant(config, **_assistant_deps(bob, guppi))  # type: ignore[arg-type]
+    assistant = _build_coding_assistant(config, **_assistant_deps(bob, guppi))
     assert assistant is not None
     # Bob's voice (gate lines) still through Bob's bot…
     assert _notifier_bot(assistant._notifier) is bob
@@ -134,7 +167,7 @@ def test_flag_on_firehose_goes_to_guppi_voice_stays_bob() -> None:
 def test_flag_on_dm_live_streamer_targets_guppi_bot() -> None:
     config = {"coder": {"enabled": True, "stream_via_guppi": True, "dev_dm": True}}
     bob, guppi = _bob(), _guppi()
-    assistant = _build_coding_assistant(config, **_assistant_deps(bob, guppi))  # type: ignore[arg-type]
+    assistant = _build_coding_assistant(config, **_assistant_deps(bob, guppi))
     assert assistant is not None
     streamer = assistant._live_streamer
     assert isinstance(streamer, _DmLiveStreamer)
@@ -144,7 +177,7 @@ def test_flag_on_dm_live_streamer_targets_guppi_bot() -> None:
 def test_flag_off_dm_live_streamer_stays_on_bob_bot() -> None:
     config = {"coder": {"enabled": True, "dev_dm": True}}
     bob, guppi = _bob(), _guppi()
-    assistant = _build_coding_assistant(config, **_assistant_deps(bob, guppi))  # type: ignore[arg-type]
+    assistant = _build_coding_assistant(config, **_assistant_deps(bob, guppi))
     assert assistant is not None
     streamer = assistant._live_streamer
     assert isinstance(streamer, _DmLiveStreamer)
@@ -167,8 +200,8 @@ def test_interactive_streamer_firehose_follows_the_flag() -> None:
     off = {"coder": {"interactive": True}}
     bob, guppi = _bob(), _guppi()
 
-    manager_on = _build_interactive_session(on, **_session_deps(bob, guppi))  # type: ignore[arg-type]
-    manager_off = _build_interactive_session(off, **_session_deps(bob, guppi))  # type: ignore[arg-type]
+    manager_on = _build_interactive_session(on, **_session_deps(bob, guppi))
+    manager_off = _build_interactive_session(off, **_session_deps(bob, guppi))
     assert manager_on is not None
     assert manager_off is not None
     streamer_on = manager_on._streamer_factory()

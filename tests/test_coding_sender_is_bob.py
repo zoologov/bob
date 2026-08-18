@@ -156,7 +156,10 @@ def _config(tmp_path: Path) -> dict[str, object]:
         },
         # The gated coding capability is ON so the assistant (and its owner-notifier)
         # is actually wired; the runner/PR adapters are built but never invoked here.
-        "coder": {"enabled": True},
+        # 🔴 ``clone_root`` — в одноразовый каталог (bob-c3r.1): рабочее место по умолчанию
+        # КЛОН, и сборка материализует файлы окружения спавна на диске. Без этого ключа
+        # сборка приложения писала бы их в рабочее дерево репозитория.
+        "coder": {"enabled": True, "clone_root": str(tmp_path / "clones")},
         "persistence": {
             "db_path": str(tmp_path / "bob.db"),
             "soul_dir": str(tmp_path / "soul"),

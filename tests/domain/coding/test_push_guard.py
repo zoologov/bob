@@ -287,3 +287,42 @@ def test_the_push_barrier_alone_still_leaves_the_owners_credentials_in_place() -
     assert env is not None
     assert env["GH_TOKEN"] == _OWNER_GH_TOKEN
     assert "GIT_CONFIG_GLOBAL" not in env
+
+
+# --------------------------------------------------------------------------- #
+# 🔴 Названная дыра: указатель на трекер owner'а ДОЕЗЖАЕТ до спавна (BOB-088, срез 2)
+# --------------------------------------------------------------------------- #
+
+
+def test_the_tracker_pointer_survives_the_purge_and_reaches_the_spawn() -> None:
+    # 🔴 Прогоном, а не чтением списка вычищаемых: переменная, которую изоляция выдаёт и
+    # тут же вычищает, была бы дырой ТОЛЬКО на бумаге — а конвейер молча остался бы без
+    # ``bd``. Здесь та же склейка, что уедет в ``create_subprocess_exec``.
+    env = guarded_spawn_env(
+        {"PATH": "/usr/bin"},
+        active=True,
+        isolation=SpawnIsolation(
+            config_global="/w/c",
+            askpass="/w/a",
+            ssh_identity="/w/i",
+            beads_dir="/repo/.beads",
+        ),
+    )
+    assert env is not None
+    assert env["BEADS_DIR"] == "/repo/.beads"
+
+
+def test_an_inherited_tracker_pointer_of_the_owner_is_replaced_by_ours() -> None:
+    # Унаследованное значение решало бы, в КАКОЙ трекер пишет конвейер. Решает изоляция.
+    env = guarded_spawn_env(
+        {"BEADS_DIR": "/somewhere/else/.beads"},
+        active=True,
+        isolation=SpawnIsolation(
+            config_global="/w/c",
+            askpass="/w/a",
+            ssh_identity="/w/i",
+            beads_dir="/repo/.beads",
+        ),
+    )
+    assert env is not None
+    assert env["BEADS_DIR"] == "/repo/.beads"

@@ -77,6 +77,7 @@ class _DyingRunner:
         mode: str,
         resume_session_id: str | None = None,
         continue_session: bool = False,
+        allow_once: str = "",
     ) -> None:
         assert continue_session is False
         self.opened.append((workdir, mode, resume_session_id))
