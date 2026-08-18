@@ -148,6 +148,13 @@ def test_web_search_value_objects_are_frozen() -> None:
         result.answer = "tampered"  # type: ignore[misc]
 
 
+# 🔴 CPython-квирк на Python < 3.13: у ``@dataclass(frozen=True, slots=True)`` присвоение
+# НЕОБЪЯВЛЕННОГО атрибута бросает ``TypeError`` (сломанный ``super()`` во frozen-``__setattr__``,
+# починено в 3.13), а не ``AttributeError``. ИНТЕНТ теста держится на обеих версиях — молча
+# расширить объект нельзя (бросает то или другое); поэтому принимаем ОБА. Боб и CI — на 3.12.
+_REJECTS_AD_HOC = (AttributeError, TypeError)
+
+
 def test_web_search_value_objects_use_slots_and_reject_new_attributes() -> None:
     # slots=True: the value objects carry no __dict__ and reject ad-hoc attributes,
     # so a recalled source/result cannot be silently extended downstream.
@@ -155,9 +162,9 @@ def test_web_search_value_objects_use_slots_and_reject_new_attributes() -> None:
     result = capabilities_ports.WebSearchResult(answer="a")
     assert not hasattr(source, "__dict__")
     assert not hasattr(result, "__dict__")
-    with pytest.raises(AttributeError):
+    with pytest.raises(_REJECTS_AD_HOC):
         source.extra = "x"  # type: ignore[attr-defined]
-    with pytest.raises(AttributeError):
+    with pytest.raises(_REJECTS_AD_HOC):
         result.extra = "x"  # type: ignore[attr-defined]
 
 
@@ -183,9 +190,9 @@ def test_web_page_value_object_is_frozen_and_slotted() -> None:
     assert page.text == "body"
     assert not hasattr(page, "__dict__")
     with pytest.raises(AttributeError):
-        page.text = "tampered"  # type: ignore[misc]
-    with pytest.raises(AttributeError):
-        page.extra = "x"  # type: ignore[attr-defined]
+        page.text = "tampered"  # type: ignore[misc]  # объявленное поле — FrozenInstanceError на обеих
+    with pytest.raises(_REJECTS_AD_HOC):
+        page.extra = "x"  # type: ignore[attr-defined]  # необъявленное — TypeError на <3.13 (см. выше)
 
 
 def test_url_reader_is_exported_runtime_checkable_protocol() -> None:
