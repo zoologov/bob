@@ -1,5 +1,18 @@
 name: Deploy Bob to VPS
 
+# 🔴 BOB-110: выкатка ставит и BEADLOOM — read-only интроспекция Боба (BOB-091) шеллит
+# внешний бинарь, которого в проде НЕ БЫЛО: на «покажи архитектуру» он пять раз подряд
+# получил ENOENT. Три условия, и все три проверяются от лица СЕРВИСНОГО пользователя, а не
+# root (на каждом из них инцидент мог бы повториться):
+#   1. бинарь стоит — но в общесистемный UV_TOOL_DIR, а НЕ в /root/.local/share: симлинк из
+#      /usr/local/bin туда пользователь bob не разыменует (домашний каталог root закрыт),
+#      и `which beadloom` у него молча не находит ничего;
+#   2. `tree-sitter<0.26` — иначе нативный сегфолт вместо работы (BOB-108), то есть ENOENT
+#      сменился бы на падение без вывода;
+#   3. `beadloom reindex` — индекс `.beadloom/beadloom.db` в gitignore и НЕ приезжает с кодом,
+#      без него `graph` отвечает «database not found». Гоняется ПОСЛЕ checkout, чтобы индекс
+#      соответствовал выкаченному коду, и от имени bob, чтобы файл принадлежал ему.
+#
 # BOB-094: выкатка Боба на VPS по ТЕГУ (не на каждый мёрж — рестарт живого Боба
 # идёт осознанным релизом). Доступ по SSH-КЛЮЧУ (пароль на VPS отключён). Секреты —
 # в GitHub Environment `bob-vps`, в лог не печатаются (маскируются GitHub'ом).
@@ -61,6 +74,10 @@ jobs:
                sudo -u bob git -C /opt/bob fetch --tags --prune; \
                sudo -u bob git -C /opt/bob checkout '${DEPLOY_REF}'; \
                sudo -u bob bash -lc 'cd /opt/bob && /usr/local/bin/uv sync'; \
+               UV_TOOL_DIR=/usr/local/share/uv-tools UV_TOOL_BIN_DIR=/usr/local/bin \
+                 /usr/local/bin/uv tool install --force beadloom --with 'tree-sitter<0.26'; \
+               chmod -R a+rX /usr/local/share/uv-tools; \
+               sudo -u bob bash -lc 'cd /opt/bob && beadloom reindex'; \
                systemctl restart bob; \
                sleep 5; \
                systemctl is-active bob"

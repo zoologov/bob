@@ -113,6 +113,70 @@ ensure_units() {
   systemctl enable --now bob-backup.timer || true
 }
 
+# 5b. beadloom — ВНЕШНИЙ бинарь, без которого немеет вся read-only интроспекция
+# (BOB-091: схема архитектуры, влияние, состояние проекта). BOB-110: его на VPS не было,
+# и на «покажи архитектуру» Боб пять раз подряд получил ENOENT.
+#
+# 🔴 Три условия, и каждое проверяется ОТ ЛИЦА bob, а не root — под root все три давали бы
+# ложное «готово»:
+#   * UV_TOOL_DIR общесистемный: установка по умолчанию кладёт симлинк в /root/.local/share,
+#     куда пользователю bob не пройти — `which beadloom` у него молча пуст;
+#   * `tree-sitter<0.26`: грамматики собраны под ABI 0.25, со свежим ядром beadloom падает
+#     НАТИВНО и без вывода (BOB-108) — то есть ENOENT сменился бы на сегфолт;
+#   * индекс `.beadloom/beadloom.db` в .gitignore и с кодом НЕ приезжает — без reindex
+#     `beadloom graph` отвечает «database not found».
+ensure_beadloom() {
+  if [ -x /usr/local/bin/beadloom ] && sudo -u "$BOB_USER" test -r /usr/local/bin/beadloom; then
+    skip "beadloom уже доступен пользователю $BOB_USER"
+  else
+    log "ставлю beadloom системно (пин tree-sitter<0.26)"
+    UV_TOOL_DIR=/usr/local/share/uv-tools UV_TOOL_BIN_DIR=/usr/local/bin \
+      /usr/local/bin/uv tool install --force beadloom --with 'tree-sitter<0.26'
+    chmod -R a+rX /usr/local/share/uv-tools
+  fi
+  log "собираю индекс beadloom от имени $BOB_USER"
+  sudo -u "$BOB_USER" bash -lc "cd '$BOB_HOME' && beadloom reindex" || \
+    log "ВНИМАНИЕ: reindex не прошёл — интроспекция ответит «database not found»"
+}
+
+# 5c. Рендерер диаграмм: mermaid-cli + браузер для puppeteer.
+# BOB-110: в проде mmdc_bin указывал на путь С МАКБУКА владельца
+# (/Users/…/.nvm/…/mmdc) — конфиг ноутбука уехал на сервер, потому что config/bob.yaml
+# не трекается git. Боб схему ВИДЕЛ, а картинку сделать не мог.
+#
+# 🔴 Браузер берём .deb от Google, а НЕ snap: snap-сборка отказывается стартовать из
+# сервисного контекста («is not a snap cgroup for tag snap.chromium.chromium») — проверено
+# на этом же хосте. Node ставим 22.x: puppeteer-CLI не работает на node 18 из Ubuntu
+# («Invalid regular expression flags»). Скачивание chrome-headless-shell самим puppeteer
+# на этом VPS не проходит («all providers failed»), поэтому системный Chrome — не роскошь,
+# а единственный работающий путь.
+ensure_renderer() {
+  if ! command -v node >/dev/null 2>&1 || [ "$(node --version | cut -c2-3)" -lt 20 ] 2>/dev/null; then
+    log "ставлю Node.js 22.x (для mermaid-cli и puppeteer)"
+    curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
+    DEBIAN_FRONTEND=noninteractive apt-get install -y nodejs
+  else
+    skip "node $(node --version) уже подходит"
+  fi
+  if command -v mmdc >/dev/null 2>&1; then
+    skip "mermaid-cli (mmdc) уже установлен"
+  else
+    log "ставлю mermaid-cli"
+    npm install -g @mermaid-js/mermaid-cli
+  fi
+  if [ -x /usr/bin/google-chrome ]; then
+    skip "google-chrome уже установлен"
+  else
+    log "ставлю google-chrome (.deb, не snap)"
+    curl -sSL -o /tmp/chrome.deb \
+      https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
+    DEBIAN_FRONTEND=noninteractive apt-get install -y /tmp/chrome.deb
+    rm -f /tmp/chrome.deb
+  fi
+  log "🔴 owner: в config/bob.yaml задать mmdc_bin: /usr/local/bin/mmdc (НЕ путь ноутбука),"
+  log "   и в .env — PUPPETEER_EXECUTABLE_PATH=/usr/bin/google-chrome (см. RUNBOOK.md)"
+}
+
 main() {
   require_root
   ensure_user
@@ -120,6 +184,8 @@ main() {
   ensure_repo
   ensure_uv
   ensure_bd
+  ensure_beadloom
+  ensure_renderer
   ensure_venv
   ensure_dirs
   ensure_units
