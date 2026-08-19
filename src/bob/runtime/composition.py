@@ -190,6 +190,7 @@ from bob.runtime.wiring import (
     build_work_journal_recorder,
     staleness_enabled,
 )
+from bob.runtime.wiring.tool_health import report_tool_health
 from bob.social.adapters.first_impression_store import SqliteFirstImpressionStore
 from bob.social.adapters.person_sulk_store import SqlitePersonSulkStore
 from bob.social.adapters.relationship_store import SqliteRelationshipStore
@@ -299,6 +300,12 @@ class Application:
         (opening the WAL connection every store reads through), THEN the memory
         adapter runs its migrations + vector backfill over it.
         """
+        # 🔴 BOB-111 / Issues #62: FIRST, say out loud which capabilities are mute here.
+        # Several of them are only as alive as a binary on the host, and until this line
+        # existed nothing noticed when one went missing — Bob learned he was mute at the
+        # moment he was ASKED. Reports, never refuses: a missing renderer must not stop
+        # him from living, it only stops him from drawing.
+        report_tool_health(self.config)
         await self.connection.initialize()
         await self.memory_repo.initialize()
         # Per-person обида backfill (BOB-066 2.5): copy the owner's legacy per-persona

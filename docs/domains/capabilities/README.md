@@ -59,6 +59,7 @@ SSRF-щитом, локальный mermaid-рендерер, beadloom/bd/git-и
 src/bob/capabilities/
   ports.py            # layer=domain          — 19 портов-протоколов + value-object'ы шва
   __init__.py         # layer=domain          — фасад (re-export стабильных портов)
+  tool_availability.py # layer=domain         — ToolRequirement/ToolVerdict/assess_tools/unavailable/describe_unavailable: какие способности НЕМЫ здесь, потому что их внешнего бинаря нет на хосте (BOB-111, Issues #62, mutation-ядро). Вердикт судит ДОСТИЖИМОСТЬ, а не форму строки: разрешение инжектится, поэтому путь с чужой машины (`/Users/…/mmdc`, синтаксически безупречный) распознаётся как недоступный. Пустой список требований НЕ читается как «всё доступно» — «не проверено» и «не сломано» остаются различимы
   diagrams/           # layer=domain            (чистый разбор inline-mermaid, BOB-037)
     mermaid_blocks.py #                        — extract / strip / normalize fenced ```mermaid
   introspection/      # layer=domain            (чистые инварианты самоинтроспекции)
@@ -106,6 +107,7 @@ src/bob/capabilities/
       mmdc_renderer.py — SubprocessMmdcRenderer: mermaid→PNG локально через mmdc (не shell)
     introspection/
       subprocess_introspector.py — SubprocessRepoIntrospector: read-only beadloom/bd/git log
+    tool_resolver.py  #                        — resolve_tool: единственная точка контакта с ФС за tool_availability. `shutil.which` для обеих форм — голое имя ищется по тому же PATH, что уйдёт в create_subprocess_exec, а абсолютный путь возвращается только если существует И исполняем (так ловится путь с чужой машины, Issues #62)
     web_search_qwen.py — QwenWebSearchProvider: web_search через Qwen Responses API (streamed)
 ```
 
