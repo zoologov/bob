@@ -114,19 +114,19 @@ rules:
   - name: capabilities-usecases-no-adapters
     description: "capabilities: usecases не импортят adapters (порты; adapters — на композиции)"
     severity: error
-    forbid_import: {from: "src/bob/capabilities/usecases/*", to: "bob/capabilities/adapters/*"}
+    forbid_import: {from: "src/bob/capabilities/usecases/*", to: "bob/capabilities/adapters*"}
   - name: capabilities-internals-no-usecases
     description: "capabilities: доменная логика/адаптеры не импортят usecases (usecases — на композиции)"
     severity: error
-    forbid_import: {from: "src/bob/capabilities/[!u]*", to: "bob/capabilities/usecases/*"}
+    forbid_import: {from: "src/bob/capabilities/[!u]*", to: "bob/capabilities/usecases*"}
   - name: capabilities-internals-no-adapters
     description: "capabilities: доменная логика не импортит adapters (adapters — на композиции)"
     severity: error
-    forbid_import: {from: "src/bob/capabilities/[!au]*", to: "bob/capabilities/adapters/*"}
+    forbid_import: {from: "src/bob/capabilities/[!au]*", to: "bob/capabilities/adapters*"}
   - name: capabilities-usecases-no-infra
     description: "capabilities: usecases не импортят чужой infrastructure (только через порты)"
     severity: error
-    forbid_import: {from: "src/bob/capabilities/usecases/*", to: "bob/infrastructure/*"}
+    forbid_import: {from: "src/bob/capabilities/usecases/*", to: "bob/infrastructure*"}
   - name: capabilities-no-composition-root
     description: "capabilities: модуль не импортит композиционный корень (src/bob/app.py)"
     severity: error
@@ -138,93 +138,101 @@ rules:
   - name: capabilities-boundary-no-coding-usecases
     description: "capabilities: coding не импортит usecases напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/coding/*", to: "bob/capabilities/usecases/*"}
+    forbid_import: {from: "src/bob/coding/*", to: "bob/capabilities/usecases*"}
   - name: capabilities-boundary-no-coding-adapters
     description: "capabilities: coding не импортит adapters напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/coding/*", to: "bob/capabilities/adapters/*"}
+    forbid_import: {from: "src/bob/coding/*", to: "bob/capabilities/adapters*"}
   - name: capabilities-boundary-no-conversation-usecases
     description: "capabilities: conversation не импортит usecases напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/conversation/*", to: "bob/capabilities/usecases/*"}
+    forbid_import: {from: "src/bob/conversation/*", to: "bob/capabilities/usecases*"}
   - name: capabilities-boundary-no-conversation-adapters
     description: "capabilities: conversation не импортит adapters напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/conversation/*", to: "bob/capabilities/adapters/*"}
+    forbid_import: {from: "src/bob/conversation/*", to: "bob/capabilities/adapters*"}
   - name: capabilities-boundary-no-identity-usecases
     description: "capabilities: identity не импортит usecases напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/identity/*", to: "bob/capabilities/usecases/*"}
+    forbid_import: {from: "src/bob/identity/*", to: "bob/capabilities/usecases*"}
   - name: capabilities-boundary-no-identity-adapters
     description: "capabilities: identity не импортит adapters напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/identity/*", to: "bob/capabilities/adapters/*"}
+    forbid_import: {from: "src/bob/identity/*", to: "bob/capabilities/adapters*"}
   - name: capabilities-boundary-no-interactive-usecases
     description: "capabilities: interactive не импортит usecases напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/interactive/*", to: "bob/capabilities/usecases/*"}
+    forbid_import: {from: "src/bob/interactive/*", to: "bob/capabilities/usecases*"}
   - name: capabilities-boundary-no-interactive-adapters
     description: "capabilities: interactive не импортит adapters напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/interactive/*", to: "bob/capabilities/adapters/*"}
+    forbid_import: {from: "src/bob/interactive/*", to: "bob/capabilities/adapters*"}
   - name: capabilities-boundary-no-memory-usecases
     description: "capabilities: memory не импортит usecases напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/memory/*", to: "bob/capabilities/usecases/*"}
+    forbid_import: {from: "src/bob/memory/*", to: "bob/capabilities/usecases*"}
   - name: capabilities-boundary-no-memory-adapters
     description: "capabilities: memory не импортит adapters напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/memory/*", to: "bob/capabilities/adapters/*"}
+    forbid_import: {from: "src/bob/memory/*", to: "bob/capabilities/adapters*"}
   - name: capabilities-boundary-no-personality-usecases
     description: "capabilities: personality не импортит usecases напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/personality/*", to: "bob/capabilities/usecases/*"}
+    forbid_import: {from: "src/bob/personality/*", to: "bob/capabilities/usecases*"}
   - name: capabilities-boundary-no-personality-adapters
     description: "capabilities: personality не импортит adapters напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/personality/*", to: "bob/capabilities/adapters/*"}
+    forbid_import: {from: "src/bob/personality/*", to: "bob/capabilities/adapters*"}
   - name: capabilities-boundary-no-presence-usecases
     description: "capabilities: presence не импортит usecases напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/presence/*", to: "bob/capabilities/usecases/*"}
+    forbid_import: {from: "src/bob/presence/*", to: "bob/capabilities/usecases*"}
   - name: capabilities-boundary-no-presence-adapters
     description: "capabilities: presence не импортит adapters напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/presence/*", to: "bob/capabilities/adapters/*"}
+    forbid_import: {from: "src/bob/presence/*", to: "bob/capabilities/adapters*"}
   - name: capabilities-boundary-no-proactivity-usecases
     description: "capabilities: proactivity не импортит usecases напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/proactivity/*", to: "bob/capabilities/usecases/*"}
+    forbid_import: {from: "src/bob/proactivity/*", to: "bob/capabilities/usecases*"}
   - name: capabilities-boundary-no-proactivity-adapters
     description: "capabilities: proactivity не импортит adapters напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/proactivity/*", to: "bob/capabilities/adapters/*"}
+    forbid_import: {from: "src/bob/proactivity/*", to: "bob/capabilities/adapters*"}
   - name: capabilities-boundary-no-social-usecases
     description: "capabilities: social не импортит usecases напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/social/*", to: "bob/capabilities/usecases/*"}
+    forbid_import: {from: "src/bob/social/*", to: "bob/capabilities/usecases*"}
   - name: capabilities-boundary-no-social-adapters
     description: "capabilities: social не импортит adapters напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/social/*", to: "bob/capabilities/adapters/*"}
+    forbid_import: {from: "src/bob/social/*", to: "bob/capabilities/adapters*"}
 
   # ── coding VERTICAL module (generated) ──
   - name: coding-usecases-no-adapters
     description: "coding: usecases не импортят adapters (порты; adapters — на композиции)"
     severity: error
-    forbid_import: {from: "src/bob/coding/usecases/*", to: "bob/coding/adapters/*"}
+    forbid_import: {from: "src/bob/coding/usecases/*", to: "bob/coding/adapters*"}
   - name: coding-internals-no-usecases
     description: "coding: доменная логика/адаптеры не импортят usecases (usecases — на композиции)"
     severity: error
-    forbid_import: {from: "src/bob/coding/[!u]*", to: "bob/coding/usecases/*"}
+    forbid_import: {from: "src/bob/coding/[!u]*", to: "bob/coding/usecases*"}
+  - name: coding-internals-no-usecases-untrusted_repo
+    description: "coding: root-файл untrusted_repo не импортит usecases (a/u-hole patch)"
+    severity: error
+    forbid_import: {from: "src/bob/coding/untrusted_repo.py", to: "bob/coding/usecases*"}
   - name: coding-internals-no-adapters
     description: "coding: доменная логика не импортит adapters (adapters — на композиции)"
     severity: error
-    forbid_import: {from: "src/bob/coding/[!au]*", to: "bob/coding/adapters/*"}
+    forbid_import: {from: "src/bob/coding/[!au]*", to: "bob/coding/adapters*"}
+  - name: coding-internals-no-adapters-untrusted_repo
+    description: "coding: root-файл untrusted_repo не импортит adapters (a/u-hole patch)"
+    severity: error
+    forbid_import: {from: "src/bob/coding/untrusted_repo.py", to: "bob/coding/adapters*"}
   - name: coding-usecases-no-infra
     description: "coding: usecases не импортят чужой infrastructure (только через порты)"
     severity: error
-    forbid_import: {from: "src/bob/coding/usecases/*", to: "bob/infrastructure/*"}
+    forbid_import: {from: "src/bob/coding/usecases/*", to: "bob/infrastructure*"}
   - name: coding-no-composition-root
     description: "coding: модуль не импортит композиционный корень (src/bob/app.py)"
     severity: error
@@ -236,97 +244,97 @@ rules:
   - name: coding-boundary-no-capabilities-usecases
     description: "coding: capabilities не импортит usecases напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/capabilities/*", to: "bob/coding/usecases/*"}
+    forbid_import: {from: "src/bob/capabilities/*", to: "bob/coding/usecases*"}
   - name: coding-boundary-no-capabilities-adapters
     description: "coding: capabilities не импортит adapters напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/capabilities/*", to: "bob/coding/adapters/*"}
+    forbid_import: {from: "src/bob/capabilities/*", to: "bob/coding/adapters*"}
   - name: coding-boundary-no-conversation-usecases
     description: "coding: conversation не импортит usecases напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/conversation/*", to: "bob/coding/usecases/*"}
+    forbid_import: {from: "src/bob/conversation/*", to: "bob/coding/usecases*"}
   - name: coding-boundary-no-conversation-adapters
     description: "coding: conversation не импортит adapters напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/conversation/*", to: "bob/coding/adapters/*"}
+    forbid_import: {from: "src/bob/conversation/*", to: "bob/coding/adapters*"}
   - name: coding-boundary-no-identity-usecases
     description: "coding: identity не импортит usecases напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/identity/*", to: "bob/coding/usecases/*"}
+    forbid_import: {from: "src/bob/identity/*", to: "bob/coding/usecases*"}
   - name: coding-boundary-no-identity-adapters
     description: "coding: identity не импортит adapters напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/identity/*", to: "bob/coding/adapters/*"}
+    forbid_import: {from: "src/bob/identity/*", to: "bob/coding/adapters*"}
   - name: coding-boundary-no-interactive-usecases
     description: "coding: interactive не импортит usecases напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/interactive/*", to: "bob/coding/usecases/*"}
+    forbid_import: {from: "src/bob/interactive/*", to: "bob/coding/usecases*"}
   - name: coding-boundary-no-interactive-adapters
     description: "coding: interactive не импортит adapters напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/interactive/*", to: "bob/coding/adapters/*"}
+    forbid_import: {from: "src/bob/interactive/*", to: "bob/coding/adapters*"}
   - name: coding-boundary-no-memory-usecases
     description: "coding: memory не импортит usecases напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/memory/*", to: "bob/coding/usecases/*"}
+    forbid_import: {from: "src/bob/memory/*", to: "bob/coding/usecases*"}
   - name: coding-boundary-no-memory-adapters
     description: "coding: memory не импортит adapters напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/memory/*", to: "bob/coding/adapters/*"}
+    forbid_import: {from: "src/bob/memory/*", to: "bob/coding/adapters*"}
   - name: coding-boundary-no-personality-usecases
     description: "coding: personality не импортит usecases напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/personality/*", to: "bob/coding/usecases/*"}
+    forbid_import: {from: "src/bob/personality/*", to: "bob/coding/usecases*"}
   - name: coding-boundary-no-personality-adapters
     description: "coding: personality не импортит adapters напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/personality/*", to: "bob/coding/adapters/*"}
+    forbid_import: {from: "src/bob/personality/*", to: "bob/coding/adapters*"}
   - name: coding-boundary-no-presence-usecases
     description: "coding: presence не импортит usecases напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/presence/*", to: "bob/coding/usecases/*"}
+    forbid_import: {from: "src/bob/presence/*", to: "bob/coding/usecases*"}
   - name: coding-boundary-no-presence-adapters
     description: "coding: presence не импортит adapters напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/presence/*", to: "bob/coding/adapters/*"}
+    forbid_import: {from: "src/bob/presence/*", to: "bob/coding/adapters*"}
   - name: coding-boundary-no-proactivity-usecases
     description: "coding: proactivity не импортит usecases напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/proactivity/*", to: "bob/coding/usecases/*"}
+    forbid_import: {from: "src/bob/proactivity/*", to: "bob/coding/usecases*"}
   - name: coding-boundary-no-proactivity-adapters
     description: "coding: proactivity не импортит adapters напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/proactivity/*", to: "bob/coding/adapters/*"}
+    forbid_import: {from: "src/bob/proactivity/*", to: "bob/coding/adapters*"}
   - name: coding-boundary-no-social-usecases
     description: "coding: social не импортит usecases напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/social/*", to: "bob/coding/usecases/*"}
+    forbid_import: {from: "src/bob/social/*", to: "bob/coding/usecases*"}
   - name: coding-boundary-no-social-adapters
     description: "coding: social не импортит adapters напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/social/*", to: "bob/coding/adapters/*"}
+    forbid_import: {from: "src/bob/social/*", to: "bob/coding/adapters*"}
 
   # ── conversation VERTICAL module (generated) ──
   - name: conversation-usecases-no-adapters
     description: "conversation: usecases не импортят adapters (порты; adapters — на композиции)"
     severity: error
-    forbid_import: {from: "src/bob/conversation/usecases/*", to: "bob/conversation/adapters/*"}
+    forbid_import: {from: "src/bob/conversation/usecases/*", to: "bob/conversation/adapters*"}
   - name: conversation-internals-no-usecases
     description: "conversation: доменная логика/адаптеры не импортят usecases (usecases — на композиции)"
     severity: error
-    forbid_import: {from: "src/bob/conversation/[!u]*", to: "bob/conversation/usecases/*"}
+    forbid_import: {from: "src/bob/conversation/[!u]*", to: "bob/conversation/usecases*"}
   - name: conversation-internals-no-adapters
     description: "conversation: доменная логика не импортит adapters (adapters — на композиции)"
     severity: error
-    forbid_import: {from: "src/bob/conversation/[!au]*", to: "bob/conversation/adapters/*"}
+    forbid_import: {from: "src/bob/conversation/[!au]*", to: "bob/conversation/adapters*"}
   - name: conversation-internals-no-adapters-addressivity
     description: "conversation: root-файл addressivity не импортит adapters (a/u-hole patch)"
     severity: error
-    forbid_import: {from: "src/bob/conversation/addressivity.py", to: "bob/conversation/adapters/*"}
+    forbid_import: {from: "src/bob/conversation/addressivity.py", to: "bob/conversation/adapters*"}
   - name: conversation-usecases-no-infra
     description: "conversation: usecases не импортят чужой infrastructure (только через порты)"
     severity: error
-    forbid_import: {from: "src/bob/conversation/usecases/*", to: "bob/infrastructure/*"}
+    forbid_import: {from: "src/bob/conversation/usecases/*", to: "bob/infrastructure*"}
   - name: conversation-no-composition-root
     description: "conversation: модуль не импортит композиционный корень (src/bob/app.py)"
     severity: error
@@ -338,97 +346,97 @@ rules:
   - name: conversation-boundary-no-capabilities-usecases
     description: "conversation: capabilities не импортит usecases напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/capabilities/*", to: "bob/conversation/usecases/*"}
+    forbid_import: {from: "src/bob/capabilities/*", to: "bob/conversation/usecases*"}
   - name: conversation-boundary-no-capabilities-adapters
     description: "conversation: capabilities не импортит adapters напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/capabilities/*", to: "bob/conversation/adapters/*"}
+    forbid_import: {from: "src/bob/capabilities/*", to: "bob/conversation/adapters*"}
   - name: conversation-boundary-no-coding-usecases
     description: "conversation: coding не импортит usecases напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/coding/*", to: "bob/conversation/usecases/*"}
+    forbid_import: {from: "src/bob/coding/*", to: "bob/conversation/usecases*"}
   - name: conversation-boundary-no-coding-adapters
     description: "conversation: coding не импортит adapters напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/coding/*", to: "bob/conversation/adapters/*"}
+    forbid_import: {from: "src/bob/coding/*", to: "bob/conversation/adapters*"}
   - name: conversation-boundary-no-identity-usecases
     description: "conversation: identity не импортит usecases напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/identity/*", to: "bob/conversation/usecases/*"}
+    forbid_import: {from: "src/bob/identity/*", to: "bob/conversation/usecases*"}
   - name: conversation-boundary-no-identity-adapters
     description: "conversation: identity не импортит adapters напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/identity/*", to: "bob/conversation/adapters/*"}
+    forbid_import: {from: "src/bob/identity/*", to: "bob/conversation/adapters*"}
   - name: conversation-boundary-no-interactive-usecases
     description: "conversation: interactive не импортит usecases напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/interactive/*", to: "bob/conversation/usecases/*"}
+    forbid_import: {from: "src/bob/interactive/*", to: "bob/conversation/usecases*"}
   - name: conversation-boundary-no-interactive-adapters
     description: "conversation: interactive не импортит adapters напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/interactive/*", to: "bob/conversation/adapters/*"}
+    forbid_import: {from: "src/bob/interactive/*", to: "bob/conversation/adapters*"}
   - name: conversation-boundary-no-memory-usecases
     description: "conversation: memory не импортит usecases напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/memory/*", to: "bob/conversation/usecases/*"}
+    forbid_import: {from: "src/bob/memory/*", to: "bob/conversation/usecases*"}
   - name: conversation-boundary-no-memory-adapters
     description: "conversation: memory не импортит adapters напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/memory/*", to: "bob/conversation/adapters/*"}
+    forbid_import: {from: "src/bob/memory/*", to: "bob/conversation/adapters*"}
   - name: conversation-boundary-no-personality-usecases
     description: "conversation: personality не импортит usecases напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/personality/*", to: "bob/conversation/usecases/*"}
+    forbid_import: {from: "src/bob/personality/*", to: "bob/conversation/usecases*"}
   - name: conversation-boundary-no-personality-adapters
     description: "conversation: personality не импортит adapters напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/personality/*", to: "bob/conversation/adapters/*"}
+    forbid_import: {from: "src/bob/personality/*", to: "bob/conversation/adapters*"}
   - name: conversation-boundary-no-presence-usecases
     description: "conversation: presence не импортит usecases напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/presence/*", to: "bob/conversation/usecases/*"}
+    forbid_import: {from: "src/bob/presence/*", to: "bob/conversation/usecases*"}
   - name: conversation-boundary-no-presence-adapters
     description: "conversation: presence не импортит adapters напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/presence/*", to: "bob/conversation/adapters/*"}
+    forbid_import: {from: "src/bob/presence/*", to: "bob/conversation/adapters*"}
   - name: conversation-boundary-no-proactivity-usecases
     description: "conversation: proactivity не импортит usecases напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/proactivity/*", to: "bob/conversation/usecases/*"}
+    forbid_import: {from: "src/bob/proactivity/*", to: "bob/conversation/usecases*"}
   - name: conversation-boundary-no-proactivity-adapters
     description: "conversation: proactivity не импортит adapters напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/proactivity/*", to: "bob/conversation/adapters/*"}
+    forbid_import: {from: "src/bob/proactivity/*", to: "bob/conversation/adapters*"}
   - name: conversation-boundary-no-social-usecases
     description: "conversation: social не импортит usecases напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/social/*", to: "bob/conversation/usecases/*"}
+    forbid_import: {from: "src/bob/social/*", to: "bob/conversation/usecases*"}
   - name: conversation-boundary-no-social-adapters
     description: "conversation: social не импортит adapters напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/social/*", to: "bob/conversation/adapters/*"}
+    forbid_import: {from: "src/bob/social/*", to: "bob/conversation/adapters*"}
 
   # ── identity VERTICAL module (generated) ──
   - name: identity-usecases-no-adapters
     description: "identity: usecases не импортят adapters (порты; adapters — на композиции)"
     severity: error
-    forbid_import: {from: "src/bob/identity/usecases/*", to: "bob/identity/adapters/*"}
+    forbid_import: {from: "src/bob/identity/usecases/*", to: "bob/identity/adapters*"}
   - name: identity-internals-no-usecases
     description: "identity: доменная логика/адаптеры не импортят usecases (usecases — на композиции)"
     severity: error
-    forbid_import: {from: "src/bob/identity/[!u]*", to: "bob/identity/usecases/*"}
+    forbid_import: {from: "src/bob/identity/[!u]*", to: "bob/identity/usecases*"}
   - name: identity-internals-no-adapters
     description: "identity: доменная логика не импортит adapters (adapters — на композиции)"
     severity: error
-    forbid_import: {from: "src/bob/identity/[!au]*", to: "bob/identity/adapters/*"}
+    forbid_import: {from: "src/bob/identity/[!au]*", to: "bob/identity/adapters*"}
   - name: identity-internals-no-adapters-app_jwt
     description: "identity: root-файл app_jwt не импортит adapters (a/u-hole patch)"
     severity: error
-    forbid_import: {from: "src/bob/identity/app_jwt.py", to: "bob/identity/adapters/*"}
+    forbid_import: {from: "src/bob/identity/app_jwt.py", to: "bob/identity/adapters*"}
   - name: identity-usecases-no-infra
     description: "identity: usecases не импортят чужой infrastructure (только через порты)"
     severity: error
-    forbid_import: {from: "src/bob/identity/usecases/*", to: "bob/infrastructure/*"}
+    forbid_import: {from: "src/bob/identity/usecases/*", to: "bob/infrastructure*"}
   - name: identity-no-composition-root
     description: "identity: модуль не импортит композиционный корень (src/bob/app.py)"
     severity: error
@@ -440,97 +448,97 @@ rules:
   - name: identity-boundary-no-capabilities-usecases
     description: "identity: capabilities не импортит usecases напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/capabilities/*", to: "bob/identity/usecases/*"}
+    forbid_import: {from: "src/bob/capabilities/*", to: "bob/identity/usecases*"}
   - name: identity-boundary-no-capabilities-adapters
     description: "identity: capabilities не импортит adapters напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/capabilities/*", to: "bob/identity/adapters/*"}
+    forbid_import: {from: "src/bob/capabilities/*", to: "bob/identity/adapters*"}
   - name: identity-boundary-no-coding-usecases
     description: "identity: coding не импортит usecases напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/coding/*", to: "bob/identity/usecases/*"}
+    forbid_import: {from: "src/bob/coding/*", to: "bob/identity/usecases*"}
   - name: identity-boundary-no-coding-adapters
     description: "identity: coding не импортит adapters напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/coding/*", to: "bob/identity/adapters/*"}
+    forbid_import: {from: "src/bob/coding/*", to: "bob/identity/adapters*"}
   - name: identity-boundary-no-conversation-usecases
     description: "identity: conversation не импортит usecases напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/conversation/*", to: "bob/identity/usecases/*"}
+    forbid_import: {from: "src/bob/conversation/*", to: "bob/identity/usecases*"}
   - name: identity-boundary-no-conversation-adapters
     description: "identity: conversation не импортит adapters напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/conversation/*", to: "bob/identity/adapters/*"}
+    forbid_import: {from: "src/bob/conversation/*", to: "bob/identity/adapters*"}
   - name: identity-boundary-no-interactive-usecases
     description: "identity: interactive не импортит usecases напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/interactive/*", to: "bob/identity/usecases/*"}
+    forbid_import: {from: "src/bob/interactive/*", to: "bob/identity/usecases*"}
   - name: identity-boundary-no-interactive-adapters
     description: "identity: interactive не импортит adapters напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/interactive/*", to: "bob/identity/adapters/*"}
+    forbid_import: {from: "src/bob/interactive/*", to: "bob/identity/adapters*"}
   - name: identity-boundary-no-memory-usecases
     description: "identity: memory не импортит usecases напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/memory/*", to: "bob/identity/usecases/*"}
+    forbid_import: {from: "src/bob/memory/*", to: "bob/identity/usecases*"}
   - name: identity-boundary-no-memory-adapters
     description: "identity: memory не импортит adapters напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/memory/*", to: "bob/identity/adapters/*"}
+    forbid_import: {from: "src/bob/memory/*", to: "bob/identity/adapters*"}
   - name: identity-boundary-no-personality-usecases
     description: "identity: personality не импортит usecases напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/personality/*", to: "bob/identity/usecases/*"}
+    forbid_import: {from: "src/bob/personality/*", to: "bob/identity/usecases*"}
   - name: identity-boundary-no-personality-adapters
     description: "identity: personality не импортит adapters напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/personality/*", to: "bob/identity/adapters/*"}
+    forbid_import: {from: "src/bob/personality/*", to: "bob/identity/adapters*"}
   - name: identity-boundary-no-presence-usecases
     description: "identity: presence не импортит usecases напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/presence/*", to: "bob/identity/usecases/*"}
+    forbid_import: {from: "src/bob/presence/*", to: "bob/identity/usecases*"}
   - name: identity-boundary-no-presence-adapters
     description: "identity: presence не импортит adapters напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/presence/*", to: "bob/identity/adapters/*"}
+    forbid_import: {from: "src/bob/presence/*", to: "bob/identity/adapters*"}
   - name: identity-boundary-no-proactivity-usecases
     description: "identity: proactivity не импортит usecases напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/proactivity/*", to: "bob/identity/usecases/*"}
+    forbid_import: {from: "src/bob/proactivity/*", to: "bob/identity/usecases*"}
   - name: identity-boundary-no-proactivity-adapters
     description: "identity: proactivity не импортит adapters напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/proactivity/*", to: "bob/identity/adapters/*"}
+    forbid_import: {from: "src/bob/proactivity/*", to: "bob/identity/adapters*"}
   - name: identity-boundary-no-social-usecases
     description: "identity: social не импортит usecases напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/social/*", to: "bob/identity/usecases/*"}
+    forbid_import: {from: "src/bob/social/*", to: "bob/identity/usecases*"}
   - name: identity-boundary-no-social-adapters
     description: "identity: social не импортит adapters напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/social/*", to: "bob/identity/adapters/*"}
+    forbid_import: {from: "src/bob/social/*", to: "bob/identity/adapters*"}
 
   # ── interactive VERTICAL module (generated) ──
   - name: interactive-usecases-no-adapters
     description: "interactive: usecases не импортят adapters (порты; adapters — на композиции)"
     severity: error
-    forbid_import: {from: "src/bob/interactive/usecases/*", to: "bob/interactive/adapters/*"}
+    forbid_import: {from: "src/bob/interactive/usecases/*", to: "bob/interactive/adapters*"}
   - name: interactive-internals-no-usecases
     description: "interactive: доменная логика/адаптеры не импортят usecases (usecases — на композиции)"
     severity: error
-    forbid_import: {from: "src/bob/interactive/[!u]*", to: "bob/interactive/usecases/*"}
+    forbid_import: {from: "src/bob/interactive/[!u]*", to: "bob/interactive/usecases*"}
   - name: interactive-internals-no-adapters
     description: "interactive: доменная логика не импортит adapters (adapters — на композиции)"
     severity: error
-    forbid_import: {from: "src/bob/interactive/[!au]*", to: "bob/interactive/adapters/*"}
+    forbid_import: {from: "src/bob/interactive/[!au]*", to: "bob/interactive/adapters*"}
   - name: interactive-internals-no-adapters-argv_policy
     description: "interactive: root-файл argv_policy не импортит adapters (a/u-hole patch)"
     severity: error
-    forbid_import: {from: "src/bob/interactive/argv_policy.py", to: "bob/interactive/adapters/*"}
+    forbid_import: {from: "src/bob/interactive/argv_policy.py", to: "bob/interactive/adapters*"}
   - name: interactive-usecases-no-infra
     description: "interactive: usecases не импортят чужой infrastructure (только через порты)"
     severity: error
-    forbid_import: {from: "src/bob/interactive/usecases/*", to: "bob/infrastructure/*"}
+    forbid_import: {from: "src/bob/interactive/usecases/*", to: "bob/infrastructure*"}
   - name: interactive-no-composition-root
     description: "interactive: модуль не импортит композиционный корень (src/bob/app.py)"
     severity: error
@@ -542,93 +550,93 @@ rules:
   - name: interactive-boundary-no-capabilities-usecases
     description: "interactive: capabilities не импортит usecases напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/capabilities/*", to: "bob/interactive/usecases/*"}
+    forbid_import: {from: "src/bob/capabilities/*", to: "bob/interactive/usecases*"}
   - name: interactive-boundary-no-capabilities-adapters
     description: "interactive: capabilities не импортит adapters напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/capabilities/*", to: "bob/interactive/adapters/*"}
+    forbid_import: {from: "src/bob/capabilities/*", to: "bob/interactive/adapters*"}
   - name: interactive-boundary-no-coding-usecases
     description: "interactive: coding не импортит usecases напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/coding/*", to: "bob/interactive/usecases/*"}
+    forbid_import: {from: "src/bob/coding/*", to: "bob/interactive/usecases*"}
   - name: interactive-boundary-no-coding-adapters
     description: "interactive: coding не импортит adapters напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/coding/*", to: "bob/interactive/adapters/*"}
+    forbid_import: {from: "src/bob/coding/*", to: "bob/interactive/adapters*"}
   - name: interactive-boundary-no-conversation-usecases
     description: "interactive: conversation не импортит usecases напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/conversation/*", to: "bob/interactive/usecases/*"}
+    forbid_import: {from: "src/bob/conversation/*", to: "bob/interactive/usecases*"}
   - name: interactive-boundary-no-conversation-adapters
     description: "interactive: conversation не импортит adapters напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/conversation/*", to: "bob/interactive/adapters/*"}
+    forbid_import: {from: "src/bob/conversation/*", to: "bob/interactive/adapters*"}
   - name: interactive-boundary-no-identity-usecases
     description: "interactive: identity не импортит usecases напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/identity/*", to: "bob/interactive/usecases/*"}
+    forbid_import: {from: "src/bob/identity/*", to: "bob/interactive/usecases*"}
   - name: interactive-boundary-no-identity-adapters
     description: "interactive: identity не импортит adapters напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/identity/*", to: "bob/interactive/adapters/*"}
+    forbid_import: {from: "src/bob/identity/*", to: "bob/interactive/adapters*"}
   - name: interactive-boundary-no-memory-usecases
     description: "interactive: memory не импортит usecases напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/memory/*", to: "bob/interactive/usecases/*"}
+    forbid_import: {from: "src/bob/memory/*", to: "bob/interactive/usecases*"}
   - name: interactive-boundary-no-memory-adapters
     description: "interactive: memory не импортит adapters напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/memory/*", to: "bob/interactive/adapters/*"}
+    forbid_import: {from: "src/bob/memory/*", to: "bob/interactive/adapters*"}
   - name: interactive-boundary-no-personality-usecases
     description: "interactive: personality не импортит usecases напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/personality/*", to: "bob/interactive/usecases/*"}
+    forbid_import: {from: "src/bob/personality/*", to: "bob/interactive/usecases*"}
   - name: interactive-boundary-no-personality-adapters
     description: "interactive: personality не импортит adapters напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/personality/*", to: "bob/interactive/adapters/*"}
+    forbid_import: {from: "src/bob/personality/*", to: "bob/interactive/adapters*"}
   - name: interactive-boundary-no-presence-usecases
     description: "interactive: presence не импортит usecases напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/presence/*", to: "bob/interactive/usecases/*"}
+    forbid_import: {from: "src/bob/presence/*", to: "bob/interactive/usecases*"}
   - name: interactive-boundary-no-presence-adapters
     description: "interactive: presence не импортит adapters напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/presence/*", to: "bob/interactive/adapters/*"}
+    forbid_import: {from: "src/bob/presence/*", to: "bob/interactive/adapters*"}
   - name: interactive-boundary-no-proactivity-usecases
     description: "interactive: proactivity не импортит usecases напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/proactivity/*", to: "bob/interactive/usecases/*"}
+    forbid_import: {from: "src/bob/proactivity/*", to: "bob/interactive/usecases*"}
   - name: interactive-boundary-no-proactivity-adapters
     description: "interactive: proactivity не импортит adapters напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/proactivity/*", to: "bob/interactive/adapters/*"}
+    forbid_import: {from: "src/bob/proactivity/*", to: "bob/interactive/adapters*"}
   - name: interactive-boundary-no-social-usecases
     description: "interactive: social не импортит usecases напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/social/*", to: "bob/interactive/usecases/*"}
+    forbid_import: {from: "src/bob/social/*", to: "bob/interactive/usecases*"}
   - name: interactive-boundary-no-social-adapters
     description: "interactive: social не импортит adapters напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/social/*", to: "bob/interactive/adapters/*"}
+    forbid_import: {from: "src/bob/social/*", to: "bob/interactive/adapters*"}
 
   # ── memory VERTICAL module (generated) ──
   - name: memory-usecases-no-adapters
     description: "memory: usecases не импортят adapters (порты; adapters — на композиции)"
     severity: error
-    forbid_import: {from: "src/bob/memory/usecases/*", to: "bob/memory/adapters/*"}
+    forbid_import: {from: "src/bob/memory/usecases/*", to: "bob/memory/adapters*"}
   - name: memory-internals-no-usecases
     description: "memory: доменная логика/адаптеры не импортят usecases (usecases — на композиции)"
     severity: error
-    forbid_import: {from: "src/bob/memory/[!u]*", to: "bob/memory/usecases/*"}
+    forbid_import: {from: "src/bob/memory/[!u]*", to: "bob/memory/usecases*"}
   - name: memory-internals-no-adapters
     description: "memory: доменная логика не импортит adapters (adapters — на композиции)"
     severity: error
-    forbid_import: {from: "src/bob/memory/[!au]*", to: "bob/memory/adapters/*"}
+    forbid_import: {from: "src/bob/memory/[!au]*", to: "bob/memory/adapters*"}
   - name: memory-usecases-no-infra
     description: "memory: usecases не импортят чужой infrastructure (только через порты)"
     severity: error
-    forbid_import: {from: "src/bob/memory/usecases/*", to: "bob/infrastructure/*"}
+    forbid_import: {from: "src/bob/memory/usecases/*", to: "bob/infrastructure*"}
   - name: memory-no-composition-root
     description: "memory: модуль не импортит композиционный корень (src/bob/app.py)"
     severity: error
@@ -640,97 +648,97 @@ rules:
   - name: memory-boundary-no-capabilities-usecases
     description: "memory: capabilities не импортит usecases напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/capabilities/*", to: "bob/memory/usecases/*"}
+    forbid_import: {from: "src/bob/capabilities/*", to: "bob/memory/usecases*"}
   - name: memory-boundary-no-capabilities-adapters
     description: "memory: capabilities не импортит adapters напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/capabilities/*", to: "bob/memory/adapters/*"}
+    forbid_import: {from: "src/bob/capabilities/*", to: "bob/memory/adapters*"}
   - name: memory-boundary-no-coding-usecases
     description: "memory: coding не импортит usecases напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/coding/*", to: "bob/memory/usecases/*"}
+    forbid_import: {from: "src/bob/coding/*", to: "bob/memory/usecases*"}
   - name: memory-boundary-no-coding-adapters
     description: "memory: coding не импортит adapters напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/coding/*", to: "bob/memory/adapters/*"}
+    forbid_import: {from: "src/bob/coding/*", to: "bob/memory/adapters*"}
   - name: memory-boundary-no-conversation-usecases
     description: "memory: conversation не импортит usecases напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/conversation/*", to: "bob/memory/usecases/*"}
+    forbid_import: {from: "src/bob/conversation/*", to: "bob/memory/usecases*"}
   - name: memory-boundary-no-conversation-adapters
     description: "memory: conversation не импортит adapters напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/conversation/*", to: "bob/memory/adapters/*"}
+    forbid_import: {from: "src/bob/conversation/*", to: "bob/memory/adapters*"}
   - name: memory-boundary-no-identity-usecases
     description: "memory: identity не импортит usecases напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/identity/*", to: "bob/memory/usecases/*"}
+    forbid_import: {from: "src/bob/identity/*", to: "bob/memory/usecases*"}
   - name: memory-boundary-no-identity-adapters
     description: "memory: identity не импортит adapters напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/identity/*", to: "bob/memory/adapters/*"}
+    forbid_import: {from: "src/bob/identity/*", to: "bob/memory/adapters*"}
   - name: memory-boundary-no-interactive-usecases
     description: "memory: interactive не импортит usecases напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/interactive/*", to: "bob/memory/usecases/*"}
+    forbid_import: {from: "src/bob/interactive/*", to: "bob/memory/usecases*"}
   - name: memory-boundary-no-interactive-adapters
     description: "memory: interactive не импортит adapters напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/interactive/*", to: "bob/memory/adapters/*"}
+    forbid_import: {from: "src/bob/interactive/*", to: "bob/memory/adapters*"}
   - name: memory-boundary-no-personality-usecases
     description: "memory: personality не импортит usecases напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/personality/*", to: "bob/memory/usecases/*"}
+    forbid_import: {from: "src/bob/personality/*", to: "bob/memory/usecases*"}
   - name: memory-boundary-no-personality-adapters
     description: "memory: personality не импортит adapters напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/personality/*", to: "bob/memory/adapters/*"}
+    forbid_import: {from: "src/bob/personality/*", to: "bob/memory/adapters*"}
   - name: memory-boundary-no-presence-usecases
     description: "memory: presence не импортит usecases напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/presence/*", to: "bob/memory/usecases/*"}
+    forbid_import: {from: "src/bob/presence/*", to: "bob/memory/usecases*"}
   - name: memory-boundary-no-presence-adapters
     description: "memory: presence не импортит adapters напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/presence/*", to: "bob/memory/adapters/*"}
+    forbid_import: {from: "src/bob/presence/*", to: "bob/memory/adapters*"}
   - name: memory-boundary-no-proactivity-usecases
     description: "memory: proactivity не импортит usecases напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/proactivity/*", to: "bob/memory/usecases/*"}
+    forbid_import: {from: "src/bob/proactivity/*", to: "bob/memory/usecases*"}
   - name: memory-boundary-no-proactivity-adapters
     description: "memory: proactivity не импортит adapters напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/proactivity/*", to: "bob/memory/adapters/*"}
+    forbid_import: {from: "src/bob/proactivity/*", to: "bob/memory/adapters*"}
   - name: memory-boundary-no-social-usecases
     description: "memory: social не импортит usecases напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/social/*", to: "bob/memory/usecases/*"}
+    forbid_import: {from: "src/bob/social/*", to: "bob/memory/usecases*"}
   - name: memory-boundary-no-social-adapters
     description: "memory: social не импортит adapters напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/social/*", to: "bob/memory/adapters/*"}
+    forbid_import: {from: "src/bob/social/*", to: "bob/memory/adapters*"}
 
   # ── personality VERTICAL module (generated) ──
   - name: personality-usecases-no-adapters
     description: "personality: usecases не импортят adapters (порты; adapters — на композиции)"
     severity: error
-    forbid_import: {from: "src/bob/personality/usecases/*", to: "bob/personality/adapters/*"}
+    forbid_import: {from: "src/bob/personality/usecases/*", to: "bob/personality/adapters*"}
   - name: personality-internals-no-usecases
     description: "personality: доменная логика/адаптеры не импортят usecases (usecases — на композиции)"
     severity: error
-    forbid_import: {from: "src/bob/personality/[!u]*", to: "bob/personality/usecases/*"}
+    forbid_import: {from: "src/bob/personality/[!u]*", to: "bob/personality/usecases*"}
   - name: personality-internals-no-adapters
     description: "personality: доменная логика не импортит adapters (adapters — на композиции)"
     severity: error
-    forbid_import: {from: "src/bob/personality/[!au]*", to: "bob/personality/adapters/*"}
+    forbid_import: {from: "src/bob/personality/[!au]*", to: "bob/personality/adapters*"}
   - name: personality-internals-no-adapters-absence
     description: "personality: root-файл absence не импортит adapters (a/u-hole patch)"
     severity: error
-    forbid_import: {from: "src/bob/personality/absence.py", to: "bob/personality/adapters/*"}
+    forbid_import: {from: "src/bob/personality/absence.py", to: "bob/personality/adapters*"}
   - name: personality-usecases-no-infra
     description: "personality: usecases не импортят чужой infrastructure (только через порты)"
     severity: error
-    forbid_import: {from: "src/bob/personality/usecases/*", to: "bob/infrastructure/*"}
+    forbid_import: {from: "src/bob/personality/usecases/*", to: "bob/infrastructure*"}
   - name: personality-no-composition-root
     description: "personality: модуль не импортит композиционный корень (src/bob/app.py)"
     severity: error
@@ -742,93 +750,93 @@ rules:
   - name: personality-boundary-no-capabilities-usecases
     description: "personality: capabilities не импортит usecases напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/capabilities/*", to: "bob/personality/usecases/*"}
+    forbid_import: {from: "src/bob/capabilities/*", to: "bob/personality/usecases*"}
   - name: personality-boundary-no-capabilities-adapters
     description: "personality: capabilities не импортит adapters напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/capabilities/*", to: "bob/personality/adapters/*"}
+    forbid_import: {from: "src/bob/capabilities/*", to: "bob/personality/adapters*"}
   - name: personality-boundary-no-coding-usecases
     description: "personality: coding не импортит usecases напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/coding/*", to: "bob/personality/usecases/*"}
+    forbid_import: {from: "src/bob/coding/*", to: "bob/personality/usecases*"}
   - name: personality-boundary-no-coding-adapters
     description: "personality: coding не импортит adapters напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/coding/*", to: "bob/personality/adapters/*"}
+    forbid_import: {from: "src/bob/coding/*", to: "bob/personality/adapters*"}
   - name: personality-boundary-no-conversation-usecases
     description: "personality: conversation не импортит usecases напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/conversation/*", to: "bob/personality/usecases/*"}
+    forbid_import: {from: "src/bob/conversation/*", to: "bob/personality/usecases*"}
   - name: personality-boundary-no-conversation-adapters
     description: "personality: conversation не импортит adapters напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/conversation/*", to: "bob/personality/adapters/*"}
+    forbid_import: {from: "src/bob/conversation/*", to: "bob/personality/adapters*"}
   - name: personality-boundary-no-identity-usecases
     description: "personality: identity не импортит usecases напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/identity/*", to: "bob/personality/usecases/*"}
+    forbid_import: {from: "src/bob/identity/*", to: "bob/personality/usecases*"}
   - name: personality-boundary-no-identity-adapters
     description: "personality: identity не импортит adapters напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/identity/*", to: "bob/personality/adapters/*"}
+    forbid_import: {from: "src/bob/identity/*", to: "bob/personality/adapters*"}
   - name: personality-boundary-no-interactive-usecases
     description: "personality: interactive не импортит usecases напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/interactive/*", to: "bob/personality/usecases/*"}
+    forbid_import: {from: "src/bob/interactive/*", to: "bob/personality/usecases*"}
   - name: personality-boundary-no-interactive-adapters
     description: "personality: interactive не импортит adapters напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/interactive/*", to: "bob/personality/adapters/*"}
+    forbid_import: {from: "src/bob/interactive/*", to: "bob/personality/adapters*"}
   - name: personality-boundary-no-memory-usecases
     description: "personality: memory не импортит usecases напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/memory/*", to: "bob/personality/usecases/*"}
+    forbid_import: {from: "src/bob/memory/*", to: "bob/personality/usecases*"}
   - name: personality-boundary-no-memory-adapters
     description: "personality: memory не импортит adapters напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/memory/*", to: "bob/personality/adapters/*"}
+    forbid_import: {from: "src/bob/memory/*", to: "bob/personality/adapters*"}
   - name: personality-boundary-no-presence-usecases
     description: "personality: presence не импортит usecases напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/presence/*", to: "bob/personality/usecases/*"}
+    forbid_import: {from: "src/bob/presence/*", to: "bob/personality/usecases*"}
   - name: personality-boundary-no-presence-adapters
     description: "personality: presence не импортит adapters напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/presence/*", to: "bob/personality/adapters/*"}
+    forbid_import: {from: "src/bob/presence/*", to: "bob/personality/adapters*"}
   - name: personality-boundary-no-proactivity-usecases
     description: "personality: proactivity не импортит usecases напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/proactivity/*", to: "bob/personality/usecases/*"}
+    forbid_import: {from: "src/bob/proactivity/*", to: "bob/personality/usecases*"}
   - name: personality-boundary-no-proactivity-adapters
     description: "personality: proactivity не импортит adapters напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/proactivity/*", to: "bob/personality/adapters/*"}
+    forbid_import: {from: "src/bob/proactivity/*", to: "bob/personality/adapters*"}
   - name: personality-boundary-no-social-usecases
     description: "personality: social не импортит usecases напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/social/*", to: "bob/personality/usecases/*"}
+    forbid_import: {from: "src/bob/social/*", to: "bob/personality/usecases*"}
   - name: personality-boundary-no-social-adapters
     description: "personality: social не импортит adapters напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/social/*", to: "bob/personality/adapters/*"}
+    forbid_import: {from: "src/bob/social/*", to: "bob/personality/adapters*"}
 
   # ── presence VERTICAL module (generated) ──
   - name: presence-usecases-no-adapters
     description: "presence: usecases не импортят adapters (порты; adapters — на композиции)"
     severity: error
-    forbid_import: {from: "src/bob/presence/usecases/*", to: "bob/presence/adapters/*"}
+    forbid_import: {from: "src/bob/presence/usecases/*", to: "bob/presence/adapters*"}
   - name: presence-internals-no-usecases
     description: "presence: доменная логика/адаптеры не импортят usecases (usecases — на композиции)"
     severity: error
-    forbid_import: {from: "src/bob/presence/[!u]*", to: "bob/presence/usecases/*"}
+    forbid_import: {from: "src/bob/presence/[!u]*", to: "bob/presence/usecases*"}
   - name: presence-internals-no-adapters
     description: "presence: доменная логика не импортит adapters (adapters — на композиции)"
     severity: error
-    forbid_import: {from: "src/bob/presence/[!au]*", to: "bob/presence/adapters/*"}
+    forbid_import: {from: "src/bob/presence/[!au]*", to: "bob/presence/adapters*"}
   - name: presence-usecases-no-infra
     description: "presence: usecases не импортят чужой infrastructure (только через порты)"
     severity: error
-    forbid_import: {from: "src/bob/presence/usecases/*", to: "bob/infrastructure/*"}
+    forbid_import: {from: "src/bob/presence/usecases/*", to: "bob/infrastructure*"}
   - name: presence-no-composition-root
     description: "presence: модуль не импортит композиционный корень (src/bob/app.py)"
     severity: error
@@ -840,101 +848,101 @@ rules:
   - name: presence-boundary-no-capabilities-usecases
     description: "presence: capabilities не импортит usecases напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/capabilities/*", to: "bob/presence/usecases/*"}
+    forbid_import: {from: "src/bob/capabilities/*", to: "bob/presence/usecases*"}
   - name: presence-boundary-no-capabilities-adapters
     description: "presence: capabilities не импортит adapters напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/capabilities/*", to: "bob/presence/adapters/*"}
+    forbid_import: {from: "src/bob/capabilities/*", to: "bob/presence/adapters*"}
   - name: presence-boundary-no-coding-usecases
     description: "presence: coding не импортит usecases напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/coding/*", to: "bob/presence/usecases/*"}
+    forbid_import: {from: "src/bob/coding/*", to: "bob/presence/usecases*"}
   - name: presence-boundary-no-coding-adapters
     description: "presence: coding не импортит adapters напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/coding/*", to: "bob/presence/adapters/*"}
+    forbid_import: {from: "src/bob/coding/*", to: "bob/presence/adapters*"}
   - name: presence-boundary-no-conversation-usecases
     description: "presence: conversation не импортит usecases напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/conversation/*", to: "bob/presence/usecases/*"}
+    forbid_import: {from: "src/bob/conversation/*", to: "bob/presence/usecases*"}
   - name: presence-boundary-no-conversation-adapters
     description: "presence: conversation не импортит adapters напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/conversation/*", to: "bob/presence/adapters/*"}
+    forbid_import: {from: "src/bob/conversation/*", to: "bob/presence/adapters*"}
   - name: presence-boundary-no-identity-usecases
     description: "presence: identity не импортит usecases напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/identity/*", to: "bob/presence/usecases/*"}
+    forbid_import: {from: "src/bob/identity/*", to: "bob/presence/usecases*"}
   - name: presence-boundary-no-identity-adapters
     description: "presence: identity не импортит adapters напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/identity/*", to: "bob/presence/adapters/*"}
+    forbid_import: {from: "src/bob/identity/*", to: "bob/presence/adapters*"}
   - name: presence-boundary-no-interactive-usecases
     description: "presence: interactive не импортит usecases напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/interactive/*", to: "bob/presence/usecases/*"}
+    forbid_import: {from: "src/bob/interactive/*", to: "bob/presence/usecases*"}
   - name: presence-boundary-no-interactive-adapters
     description: "presence: interactive не импортит adapters напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/interactive/*", to: "bob/presence/adapters/*"}
+    forbid_import: {from: "src/bob/interactive/*", to: "bob/presence/adapters*"}
   - name: presence-boundary-no-memory-usecases
     description: "presence: memory не импортит usecases напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/memory/*", to: "bob/presence/usecases/*"}
+    forbid_import: {from: "src/bob/memory/*", to: "bob/presence/usecases*"}
   - name: presence-boundary-no-memory-adapters
     description: "presence: memory не импортит adapters напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/memory/*", to: "bob/presence/adapters/*"}
+    forbid_import: {from: "src/bob/memory/*", to: "bob/presence/adapters*"}
   - name: presence-boundary-no-personality-usecases
     description: "presence: personality не импортит usecases напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/personality/*", to: "bob/presence/usecases/*"}
+    forbid_import: {from: "src/bob/personality/*", to: "bob/presence/usecases*"}
   - name: presence-boundary-no-personality-adapters
     description: "presence: personality не импортит adapters напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/personality/*", to: "bob/presence/adapters/*"}
+    forbid_import: {from: "src/bob/personality/*", to: "bob/presence/adapters*"}
   - name: presence-boundary-no-proactivity-usecases
     description: "presence: proactivity не импортит usecases напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/proactivity/*", to: "bob/presence/usecases/*"}
+    forbid_import: {from: "src/bob/proactivity/*", to: "bob/presence/usecases*"}
   - name: presence-boundary-no-proactivity-adapters
     description: "presence: proactivity не импортит adapters напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/proactivity/*", to: "bob/presence/adapters/*"}
+    forbid_import: {from: "src/bob/proactivity/*", to: "bob/presence/adapters*"}
   - name: presence-boundary-no-social-usecases
     description: "presence: social не импортит usecases напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/social/*", to: "bob/presence/usecases/*"}
+    forbid_import: {from: "src/bob/social/*", to: "bob/presence/usecases*"}
   - name: presence-boundary-no-social-adapters
     description: "presence: social не импортит adapters напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/social/*", to: "bob/presence/adapters/*"}
+    forbid_import: {from: "src/bob/social/*", to: "bob/presence/adapters*"}
 
   # ── proactivity VERTICAL module (generated) ──
   - name: proactivity-usecases-no-adapters
     description: "proactivity: usecases не импортят adapters (порты; adapters — на композиции)"
     severity: error
-    forbid_import: {from: "src/bob/proactivity/usecases/*", to: "bob/proactivity/adapters/*"}
+    forbid_import: {from: "src/bob/proactivity/usecases/*", to: "bob/proactivity/adapters*"}
   - name: proactivity-internals-no-usecases
     description: "proactivity: доменная логика/адаптеры не импортят usecases (usecases — на композиции)"
     severity: error
-    forbid_import: {from: "src/bob/proactivity/[!u]*", to: "bob/proactivity/usecases/*"}
+    forbid_import: {from: "src/bob/proactivity/[!u]*", to: "bob/proactivity/usecases*"}
   - name: proactivity-internals-no-usecases-urge
     description: "proactivity: root-файл urge не импортит usecases (a/u-hole patch)"
     severity: error
-    forbid_import: {from: "src/bob/proactivity/urge.py", to: "bob/proactivity/usecases/*"}
+    forbid_import: {from: "src/bob/proactivity/urge.py", to: "bob/proactivity/usecases*"}
   - name: proactivity-internals-no-adapters
     description: "proactivity: доменная логика не импортит adapters (adapters — на композиции)"
     severity: error
-    forbid_import: {from: "src/bob/proactivity/[!au]*", to: "bob/proactivity/adapters/*"}
+    forbid_import: {from: "src/bob/proactivity/[!au]*", to: "bob/proactivity/adapters*"}
   - name: proactivity-internals-no-adapters-urge
     description: "proactivity: root-файл urge не импортит adapters (a/u-hole patch)"
     severity: error
-    forbid_import: {from: "src/bob/proactivity/urge.py", to: "bob/proactivity/adapters/*"}
+    forbid_import: {from: "src/bob/proactivity/urge.py", to: "bob/proactivity/adapters*"}
   - name: proactivity-usecases-no-infra
     description: "proactivity: usecases не импортят чужой infrastructure (только через порты)"
     severity: error
-    forbid_import: {from: "src/bob/proactivity/usecases/*", to: "bob/infrastructure/*"}
+    forbid_import: {from: "src/bob/proactivity/usecases/*", to: "bob/infrastructure*"}
   - name: proactivity-no-composition-root
     description: "proactivity: модуль не импортит композиционный корень (src/bob/app.py)"
     severity: error
@@ -946,93 +954,93 @@ rules:
   - name: proactivity-boundary-no-capabilities-usecases
     description: "proactivity: capabilities не импортит usecases напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/capabilities/*", to: "bob/proactivity/usecases/*"}
+    forbid_import: {from: "src/bob/capabilities/*", to: "bob/proactivity/usecases*"}
   - name: proactivity-boundary-no-capabilities-adapters
     description: "proactivity: capabilities не импортит adapters напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/capabilities/*", to: "bob/proactivity/adapters/*"}
+    forbid_import: {from: "src/bob/capabilities/*", to: "bob/proactivity/adapters*"}
   - name: proactivity-boundary-no-coding-usecases
     description: "proactivity: coding не импортит usecases напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/coding/*", to: "bob/proactivity/usecases/*"}
+    forbid_import: {from: "src/bob/coding/*", to: "bob/proactivity/usecases*"}
   - name: proactivity-boundary-no-coding-adapters
     description: "proactivity: coding не импортит adapters напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/coding/*", to: "bob/proactivity/adapters/*"}
+    forbid_import: {from: "src/bob/coding/*", to: "bob/proactivity/adapters*"}
   - name: proactivity-boundary-no-conversation-usecases
     description: "proactivity: conversation не импортит usecases напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/conversation/*", to: "bob/proactivity/usecases/*"}
+    forbid_import: {from: "src/bob/conversation/*", to: "bob/proactivity/usecases*"}
   - name: proactivity-boundary-no-conversation-adapters
     description: "proactivity: conversation не импортит adapters напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/conversation/*", to: "bob/proactivity/adapters/*"}
+    forbid_import: {from: "src/bob/conversation/*", to: "bob/proactivity/adapters*"}
   - name: proactivity-boundary-no-identity-usecases
     description: "proactivity: identity не импортит usecases напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/identity/*", to: "bob/proactivity/usecases/*"}
+    forbid_import: {from: "src/bob/identity/*", to: "bob/proactivity/usecases*"}
   - name: proactivity-boundary-no-identity-adapters
     description: "proactivity: identity не импортит adapters напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/identity/*", to: "bob/proactivity/adapters/*"}
+    forbid_import: {from: "src/bob/identity/*", to: "bob/proactivity/adapters*"}
   - name: proactivity-boundary-no-interactive-usecases
     description: "proactivity: interactive не импортит usecases напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/interactive/*", to: "bob/proactivity/usecases/*"}
+    forbid_import: {from: "src/bob/interactive/*", to: "bob/proactivity/usecases*"}
   - name: proactivity-boundary-no-interactive-adapters
     description: "proactivity: interactive не импортит adapters напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/interactive/*", to: "bob/proactivity/adapters/*"}
+    forbid_import: {from: "src/bob/interactive/*", to: "bob/proactivity/adapters*"}
   - name: proactivity-boundary-no-memory-usecases
     description: "proactivity: memory не импортит usecases напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/memory/*", to: "bob/proactivity/usecases/*"}
+    forbid_import: {from: "src/bob/memory/*", to: "bob/proactivity/usecases*"}
   - name: proactivity-boundary-no-memory-adapters
     description: "proactivity: memory не импортит adapters напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/memory/*", to: "bob/proactivity/adapters/*"}
+    forbid_import: {from: "src/bob/memory/*", to: "bob/proactivity/adapters*"}
   - name: proactivity-boundary-no-personality-usecases
     description: "proactivity: personality не импортит usecases напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/personality/*", to: "bob/proactivity/usecases/*"}
+    forbid_import: {from: "src/bob/personality/*", to: "bob/proactivity/usecases*"}
   - name: proactivity-boundary-no-personality-adapters
     description: "proactivity: personality не импортит adapters напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/personality/*", to: "bob/proactivity/adapters/*"}
+    forbid_import: {from: "src/bob/personality/*", to: "bob/proactivity/adapters*"}
   - name: proactivity-boundary-no-presence-usecases
     description: "proactivity: presence не импортит usecases напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/presence/*", to: "bob/proactivity/usecases/*"}
+    forbid_import: {from: "src/bob/presence/*", to: "bob/proactivity/usecases*"}
   - name: proactivity-boundary-no-presence-adapters
     description: "proactivity: presence не импортит adapters напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/presence/*", to: "bob/proactivity/adapters/*"}
+    forbid_import: {from: "src/bob/presence/*", to: "bob/proactivity/adapters*"}
   - name: proactivity-boundary-no-social-usecases
     description: "proactivity: social не импортит usecases напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/social/*", to: "bob/proactivity/usecases/*"}
+    forbid_import: {from: "src/bob/social/*", to: "bob/proactivity/usecases*"}
   - name: proactivity-boundary-no-social-adapters
     description: "proactivity: social не импортит adapters напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/social/*", to: "bob/proactivity/adapters/*"}
+    forbid_import: {from: "src/bob/social/*", to: "bob/proactivity/adapters*"}
 
   # ── social VERTICAL module (generated) ──
   - name: social-usecases-no-adapters
     description: "social: usecases не импортят adapters (порты; adapters — на композиции)"
     severity: error
-    forbid_import: {from: "src/bob/social/usecases/*", to: "bob/social/adapters/*"}
+    forbid_import: {from: "src/bob/social/usecases/*", to: "bob/social/adapters*"}
   - name: social-internals-no-usecases
     description: "social: доменная логика/адаптеры не импортят usecases (usecases — на композиции)"
     severity: error
-    forbid_import: {from: "src/bob/social/[!u]*", to: "bob/social/usecases/*"}
+    forbid_import: {from: "src/bob/social/[!u]*", to: "bob/social/usecases*"}
   - name: social-internals-no-adapters
     description: "social: доменная логика не импортит adapters (adapters — на композиции)"
     severity: error
-    forbid_import: {from: "src/bob/social/[!au]*", to: "bob/social/adapters/*"}
+    forbid_import: {from: "src/bob/social/[!au]*", to: "bob/social/adapters*"}
   - name: social-usecases-no-infra
     description: "social: usecases не импортят чужой infrastructure (только через порты)"
     severity: error
-    forbid_import: {from: "src/bob/social/usecases/*", to: "bob/infrastructure/*"}
+    forbid_import: {from: "src/bob/social/usecases/*", to: "bob/infrastructure*"}
   - name: social-no-composition-root
     description: "social: модуль не импортит композиционный корень (src/bob/app.py)"
     severity: error
@@ -1044,129 +1052,129 @@ rules:
   - name: social-boundary-no-capabilities-usecases
     description: "social: capabilities не импортит usecases напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/capabilities/*", to: "bob/social/usecases/*"}
+    forbid_import: {from: "src/bob/capabilities/*", to: "bob/social/usecases*"}
   - name: social-boundary-no-capabilities-adapters
     description: "social: capabilities не импортит adapters напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/capabilities/*", to: "bob/social/adapters/*"}
+    forbid_import: {from: "src/bob/capabilities/*", to: "bob/social/adapters*"}
   - name: social-boundary-no-coding-usecases
     description: "social: coding не импортит usecases напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/coding/*", to: "bob/social/usecases/*"}
+    forbid_import: {from: "src/bob/coding/*", to: "bob/social/usecases*"}
   - name: social-boundary-no-coding-adapters
     description: "social: coding не импортит adapters напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/coding/*", to: "bob/social/adapters/*"}
+    forbid_import: {from: "src/bob/coding/*", to: "bob/social/adapters*"}
   - name: social-boundary-no-conversation-usecases
     description: "social: conversation не импортит usecases напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/conversation/*", to: "bob/social/usecases/*"}
+    forbid_import: {from: "src/bob/conversation/*", to: "bob/social/usecases*"}
   - name: social-boundary-no-conversation-adapters
     description: "social: conversation не импортит adapters напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/conversation/*", to: "bob/social/adapters/*"}
+    forbid_import: {from: "src/bob/conversation/*", to: "bob/social/adapters*"}
   - name: social-boundary-no-identity-usecases
     description: "social: identity не импортит usecases напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/identity/*", to: "bob/social/usecases/*"}
+    forbid_import: {from: "src/bob/identity/*", to: "bob/social/usecases*"}
   - name: social-boundary-no-identity-adapters
     description: "social: identity не импортит adapters напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/identity/*", to: "bob/social/adapters/*"}
+    forbid_import: {from: "src/bob/identity/*", to: "bob/social/adapters*"}
   - name: social-boundary-no-interactive-usecases
     description: "social: interactive не импортит usecases напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/interactive/*", to: "bob/social/usecases/*"}
+    forbid_import: {from: "src/bob/interactive/*", to: "bob/social/usecases*"}
   - name: social-boundary-no-interactive-adapters
     description: "social: interactive не импортит adapters напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/interactive/*", to: "bob/social/adapters/*"}
+    forbid_import: {from: "src/bob/interactive/*", to: "bob/social/adapters*"}
   - name: social-boundary-no-memory-usecases
     description: "social: memory не импортит usecases напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/memory/*", to: "bob/social/usecases/*"}
+    forbid_import: {from: "src/bob/memory/*", to: "bob/social/usecases*"}
   - name: social-boundary-no-memory-adapters
     description: "social: memory не импортит adapters напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/memory/*", to: "bob/social/adapters/*"}
+    forbid_import: {from: "src/bob/memory/*", to: "bob/social/adapters*"}
   - name: social-boundary-no-personality-usecases
     description: "social: personality не импортит usecases напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/personality/*", to: "bob/social/usecases/*"}
+    forbid_import: {from: "src/bob/personality/*", to: "bob/social/usecases*"}
   - name: social-boundary-no-personality-adapters
     description: "social: personality не импортит adapters напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/personality/*", to: "bob/social/adapters/*"}
+    forbid_import: {from: "src/bob/personality/*", to: "bob/social/adapters*"}
   - name: social-boundary-no-presence-usecases
     description: "social: presence не импортит usecases напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/presence/*", to: "bob/social/usecases/*"}
+    forbid_import: {from: "src/bob/presence/*", to: "bob/social/usecases*"}
   - name: social-boundary-no-presence-adapters
     description: "social: presence не импортит adapters напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/presence/*", to: "bob/social/adapters/*"}
+    forbid_import: {from: "src/bob/presence/*", to: "bob/social/adapters*"}
   - name: social-boundary-no-proactivity-usecases
     description: "social: proactivity не импортит usecases напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/proactivity/*", to: "bob/social/usecases/*"}
+    forbid_import: {from: "src/bob/proactivity/*", to: "bob/social/usecases*"}
   - name: social-boundary-no-proactivity-adapters
     description: "social: proactivity не импортит adapters напрямую (только через фасад/порты)"
     severity: error
-    forbid_import: {from: "src/bob/proactivity/*", to: "bob/social/adapters/*"}
+    forbid_import: {from: "src/bob/proactivity/*", to: "bob/social/adapters*"}
 
   # ── kernel SHARED KERNEL (generated) — pure inward-safe leaf ──
   - name: kernel-no-application
     description: "kernel — чистый leaf: не импортит application (только stdlib/typing)"
     severity: error
-    forbid_import: {from: "src/bob/kernel/*", to: "bob/application/*"}
+    forbid_import: {from: "src/bob/kernel/*", to: "bob/application*"}
   - name: kernel-no-capabilities
     description: "kernel — чистый leaf: не импортит capabilities (только stdlib/typing)"
     severity: error
-    forbid_import: {from: "src/bob/kernel/*", to: "bob/capabilities/*"}
+    forbid_import: {from: "src/bob/kernel/*", to: "bob/capabilities*"}
   - name: kernel-no-coding
     description: "kernel — чистый leaf: не импортит coding (только stdlib/typing)"
     severity: error
-    forbid_import: {from: "src/bob/kernel/*", to: "bob/coding/*"}
+    forbid_import: {from: "src/bob/kernel/*", to: "bob/coding*"}
   - name: kernel-no-conversation
     description: "kernel — чистый leaf: не импортит conversation (только stdlib/typing)"
     severity: error
-    forbid_import: {from: "src/bob/kernel/*", to: "bob/conversation/*"}
+    forbid_import: {from: "src/bob/kernel/*", to: "bob/conversation*"}
   - name: kernel-no-identity
     description: "kernel — чистый leaf: не импортит identity (только stdlib/typing)"
     severity: error
-    forbid_import: {from: "src/bob/kernel/*", to: "bob/identity/*"}
+    forbid_import: {from: "src/bob/kernel/*", to: "bob/identity*"}
   - name: kernel-no-infrastructure
     description: "kernel — чистый leaf: не импортит infrastructure (только stdlib/typing)"
     severity: error
-    forbid_import: {from: "src/bob/kernel/*", to: "bob/infrastructure/*"}
+    forbid_import: {from: "src/bob/kernel/*", to: "bob/infrastructure*"}
   - name: kernel-no-interactive
     description: "kernel — чистый leaf: не импортит interactive (только stdlib/typing)"
     severity: error
-    forbid_import: {from: "src/bob/kernel/*", to: "bob/interactive/*"}
+    forbid_import: {from: "src/bob/kernel/*", to: "bob/interactive*"}
   - name: kernel-no-memory
     description: "kernel — чистый leaf: не импортит memory (только stdlib/typing)"
     severity: error
-    forbid_import: {from: "src/bob/kernel/*", to: "bob/memory/*"}
+    forbid_import: {from: "src/bob/kernel/*", to: "bob/memory*"}
   - name: kernel-no-personality
     description: "kernel — чистый leaf: не импортит personality (только stdlib/typing)"
     severity: error
-    forbid_import: {from: "src/bob/kernel/*", to: "bob/personality/*"}
+    forbid_import: {from: "src/bob/kernel/*", to: "bob/personality*"}
   - name: kernel-no-presence
     description: "kernel — чистый leaf: не импортит presence (только stdlib/typing)"
     severity: error
-    forbid_import: {from: "src/bob/kernel/*", to: "bob/presence/*"}
+    forbid_import: {from: "src/bob/kernel/*", to: "bob/presence*"}
   - name: kernel-no-proactivity
     description: "kernel — чистый leaf: не импортит proactivity (только stdlib/typing)"
     severity: error
-    forbid_import: {from: "src/bob/kernel/*", to: "bob/proactivity/*"}
+    forbid_import: {from: "src/bob/kernel/*", to: "bob/proactivity*"}
   - name: kernel-no-runtime
     description: "kernel — чистый leaf: не импортит runtime (только stdlib/typing)"
     severity: error
-    forbid_import: {from: "src/bob/kernel/*", to: "bob/runtime/*"}
+    forbid_import: {from: "src/bob/kernel/*", to: "bob/runtime*"}
   - name: kernel-no-social
     description: "kernel — чистый leaf: не импортит social (только stdlib/typing)"
     severity: error
-    forbid_import: {from: "src/bob/kernel/*", to: "bob/social/*"}
+    forbid_import: {from: "src/bob/kernel/*", to: "bob/social*"}
   # END generated boundary rules
 
   # ── Graph-edge backstop: domain layer must not depend on a service ──────────

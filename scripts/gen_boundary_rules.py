@@ -155,8 +155,64 @@ def _assert_internals_covered(
             )
 
 
+def _real_import_paths() -> frozenset[str]:
+    """Every import path that really exists under ``src/bob`` (packages + modules).
+
+    Built as Beadloom builds an import edge: dotted path with dots turned into
+    slashes, no suffix (``evaluate_import_boundary_rules`` matches
+    ``import_path.replace(".", "/")`` against the rule's ``to`` glob). Reading the
+    TREE — not the rule text — is what lets the assertion below judge REACHABILITY
+    instead of the shape of a string.
+    """
+    src = REPO_ROOT / "src"
+    paths: set[str] = set()
+    for path in (src / "bob").rglob("*"):
+        if "__pycache__" in path.parts:
+            continue
+        if path.is_dir() and (path / "__init__.py").is_file():
+            paths.add(path.relative_to(src).as_posix())
+        elif path.suffix == ".py" and path.name != "__init__.py":
+            paths.add(path.relative_to(src).with_suffix("").as_posix())
+    return frozenset(paths)
+
+
+def _assert_target_is_precise(rule_name: str, to_glob: str, intended: str) -> None:
+    """Fail the build if ``to_glob`` reaches beyond ``intended`` and its subtree.
+
+    🔴 BOB-109 / Issues #60. The targets are ``…/adapters*`` rather than
+    ``…/adapters/*`` so that the PACKAGE form of an import (``from bob.m.adapters
+    import x`` → edge ``bob/m/adapters``) is caught alongside the submodule form.
+    A star without the slash is wider, though: on paper it could also swallow a
+    sibling such as ``adapters_legacy``, or — for whole-module targets — a module
+    whose name is a prefix of another.
+
+    None exist today. But «none exist today» is precisely the assumption the
+    char-class rules in this very file died on twice: the ``coding``/``capabilities``
+    first-letter collision, and the a/u hole that silently dropped root files. So the
+    width is not defended by a comment — it is CHECKED, every run, against the paths
+    that actually exist. Add such a sibling and the generator stops loudly instead of
+    quietly permitting more than it says.
+    """
+    matched = {p for p in _real_import_paths() if fnmatch.fnmatch(p, to_glob)}
+    allowed = {p for p in matched if p == intended or p.startswith(f"{intended}/")}
+    stray = matched - allowed
+    if stray:
+        msg = (
+            f"rule {rule_name!r}: target {to_glob!r} also reaches "
+            f"{sorted(stray)} — beyond {intended!r} and its subtree. Narrow the "
+            f"glob (or split the rule) rather than permitting more than intended."
+        )
+        raise SystemExit(msg)
+
+
 def _rule(name: str, description: str, from_glob: str, to_glob: str) -> list[str]:
-    """Render one ``forbid_import`` rule as YAML list-item lines."""
+    """Render one ``forbid_import`` rule as YAML list-item lines.
+
+    Every emitted target passes :func:`_assert_target_is_precise`, so a widened glob
+    can never quietly out-reach its intent (BOB-109).
+    """
+    if to_glob.endswith("*") and not to_glob.endswith("/*"):
+        _assert_target_is_precise(name, to_glob, to_glob[:-1])
     return [
         f"  - name: {name}",
         f'    description: "{description}"',
@@ -177,7 +233,7 @@ def render(modules: list[tuple[str, str]]) -> str:
             f"{ref}-usecases-no-adapters",
             f"{ref}: usecases не импортят adapters (порты; adapters — на композиции)",
             f"src/bob/{ref}/usecases/*",
-            f"bob/{ref}/adapters/*",
+            f"bob/{ref}/adapters*",
         )
         # ``internals-no-usecases`` guards the module's DOMAIN + ADAPTERS (its non-
         # usecases internals) against reaching INTO usecases — the dependency
@@ -194,14 +250,14 @@ def render(modules: list[tuple[str, str]]) -> str:
             f"{ref}-internals-no-usecases",
             f"{ref}: доменная логика/адаптеры не импортят usecases (usecases — на композиции)",
             nou_base,
-            f"bob/{ref}/usecases/*",
+            f"bob/{ref}/usecases*",
         )
         for suffix, patch in nou_patches:
             lines += _rule(
                 f"{ref}-internals-no-usecases-{suffix}",
                 f"{ref}: root-файл {suffix} не импортит usecases (a/u-hole patch)",
                 patch,
-                f"bob/{ref}/usecases/*",
+                f"bob/{ref}/usecases*",
             )
         _assert_internals_covered(
             ref, source, frozenset({"usecases"}), [nou_base, *(p for _, p in nou_patches)]
@@ -220,14 +276,14 @@ def render(modules: list[tuple[str, str]]) -> str:
             f"{ref}-internals-no-adapters",
             f"{ref}: доменная логика не импортит adapters (adapters — на композиции)",
             noa_base,
-            f"bob/{ref}/adapters/*",
+            f"bob/{ref}/adapters*",
         )
         for suffix, patch in noa_patches:
             lines += _rule(
                 f"{ref}-internals-no-adapters-{suffix}",
                 f"{ref}: root-файл {suffix} не импортит adapters (a/u-hole patch)",
                 patch,
-                f"bob/{ref}/adapters/*",
+                f"bob/{ref}/adapters*",
             )
         _assert_internals_covered(
             ref,
@@ -239,7 +295,7 @@ def render(modules: list[tuple[str, str]]) -> str:
             f"{ref}-usecases-no-infra",
             f"{ref}: usecases не импортят чужой infrastructure (только через порты)",
             f"src/bob/{ref}/usecases/*",
-            "bob/infrastructure/*",
+            "bob/infrastructure*",
         )
         lines += _rule(
             f"{ref}-no-composition-root",
@@ -272,13 +328,13 @@ def render(modules: list[tuple[str, str]]) -> str:
                 f"{ref}-boundary-no-{src}-usecases",
                 f"{ref}: {src} не импортит usecases напрямую (только через фасад/порты)",
                 f"src/bob/{src}/*",
-                f"bob/{ref}/usecases/*",
+                f"bob/{ref}/usecases*",
             )
             lines += _rule(
                 f"{ref}-boundary-no-{src}-adapters",
                 f"{ref}: {src} не импортит adapters напрямую (только через фасад/порты)",
                 f"src/bob/{src}/*",
-                f"bob/{ref}/adapters/*",
+                f"bob/{ref}/adapters*",
             )
     lines += _render_kernel_rules(modules)
     lines.append("")
@@ -299,7 +355,7 @@ def _render_kernel_rules(modules: list[tuple[str, str]]) -> list[str]:
             f"{KERNEL_REF}-no-{target}",
             f"kernel — чистый leaf: не импортит {target} (только stdlib/typing)",
             f"src/bob/{KERNEL_REF}/*",
-            f"bob/{target}/*",
+            f"bob/{target}*",
         )
     return lines
 
