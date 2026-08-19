@@ -202,7 +202,11 @@ class ToolLoop:
                     used_tools.append(call.name)
         await self._record_tool_use(used_tools)
         logger.warning("Tool loop hit the turn cap (%d) without a final answer", self._max_turns)
-        return ""
+        # 🔴 BOB-110: never answer with silence. This used to `return ""`, and the owner
+        # got a blank message — after five failing tool calls he was left with nothing at
+        # all, which reads as Bob ignoring him. Running out of turns is a real outcome and
+        # it has an honest wording; saying nothing does not.
+        return NO_ANSWER_REPLY
 
     async def _run_tool(self, call: ToolCall) -> tuple[ToolLoopMessage, bool]:
         """Dispatch one tool call (GUPPI executes); return its ``tool`` message + success.
@@ -229,8 +233,18 @@ class ToolLoop:
             await self._record_failure(call.name, "неизвестный инструмент")
         except Exception as exc:  # a tool failure must not crash the turn
             logger.exception("Capability %s failed during dispatch", call.name)
-            content = f"error: capability '{call.name}' failed"
-            await self._record_failure(call.name, _short_detail(exc))
+            # 🔴 BOB-110: the REASON goes back to the model, not only into the diary.
+            # It used to read just "capability X failed": the detail was recorded as a
+            # TOOL_FAILURE self-action and dropped from the tool result. Asked to show the
+            # architecture on a host where the `beadloom` binary was missing, Bob was told
+            # only that something broke — and, having no cause to report, INVENTED one
+            # ("GUPPI decided «show» was too abstract and froze"), which also broke the
+            # GUPPI canon (BOB-096). He did not lie about a known cause; he filled a vacuum
+            # this seam created. A tool that fails must say WHY, so the honest answer is
+            # available to him at all.
+            detail = _short_detail(exc)
+            content = f"error: capability '{call.name}' failed — {detail}"
+            await self._record_failure(call.name, detail)
         else:
             content = _render_result(result)
             succeeded = True
@@ -301,6 +315,14 @@ def _assistant_turn(tool_calls: Sequence[ToolCall]) -> ToolLoopMessage:
             for call in tool_calls
         ],
     }
+
+
+#: What Bob says when the tool loop ends without a final answer (BOB-110). Short, in his
+#: voice, and honest about the shape of the failure without inventing a cause for it.
+NO_ANSWER_REPLY = (
+    "Не смог довести это до ответа — инструменты не дались. "
+    "Скажи, если попробовать иначе."
+)
 
 
 def _short_detail(exc: Exception) -> str:
