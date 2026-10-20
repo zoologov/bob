@@ -18,9 +18,8 @@ import aiohttp
 import pytest
 from aiohttp import web
 
-from bob.capabilities.ports import ToolCallingProvider
 from bob.infrastructure.llm.openai_compat import OpenAICompatProvider
-from bob.kernel.ports import LLMProvider
+from bob.kernel.ports import LLMProvider, ToolCallingProvider
 
 _CHAT_PATH = "/v1/chat/completions"
 

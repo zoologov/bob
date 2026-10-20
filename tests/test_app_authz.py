@@ -18,8 +18,8 @@ from typing import TYPE_CHECKING
 import pytest
 
 from bob.app import build_application
-from bob.application.runtime.events import MESSAGE_RECEIVED, MessageReceived
 from bob.infrastructure.telegram.multibot import BotIdentity
+from bob.kernel.events import MESSAGE_RECEIVED, MessageReceived
 from bob.memory.adapters import SqliteMemoryRepo
 from bob.social.adapters.allowlist_store import KvAllowlistStore
 from bob.social.adapters.soul_store import SoulStore

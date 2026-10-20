@@ -27,10 +27,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from bob.application.runtime.events import MessageReceived
 from bob.application.runtime.intake import ChatDispatcher, make_focus_predicate
 from bob.conversation.room_reading import ReflectiveIntent, RoomMood, RoomReading
 from bob.conversation.room_verdict import VerdictKind, decide_from_reading
+from bob.kernel.events import MessageReceived
 
 if TYPE_CHECKING:
     from collections.abc import Sequence

@@ -7,7 +7,7 @@
 
 """HandleMessage — the full message→reply→persist flow (GUPPI's act loop).
 
-Subscribed to :class:`~bob.application.runtime.events.MessageReceived`, this
+Subscribed to :class:`~bob.kernel.events.MessageReceived`, this
 use-case runs Bob's perceive→decide→act turn (RFC §"Поток обработки"):
 
 1. **Perceive** — :class:`UpdateMoodFromText` (Tier 0 sentiment + signals) updates
@@ -123,6 +123,7 @@ from bob.conversation.usecases.verify_step import (
     VerifyStep,
 )
 from bob.conversation.zone_classifier import TasteZoneClassifier
+from bob.kernel.modulators import RuleModulators
 from bob.memory.entities import EpisodicEvent
 from bob.memory.register_pipeline import pool_has_work, register_ranked
 from bob.personality.expression import (
@@ -146,37 +147,26 @@ from bob.personality.voice import (
     RelationshipToneThresholds,
 )
 from bob.presence.staleness import StalenessOutcome
-from bob.proactivity.self_improvement import (
-    RuleModulators,
-    _validated_magnitude,
-    build_modulators,
-)
+from bob.proactivity.self_improvement import _validated_magnitude, build_modulators
 from bob.social.disclosure import filter_surfaceable, visibility_for_scope
 from bob.social.interlocutor import InterlocutorKind, Trust
 from bob.social.usecases.social_context import SocialContext
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Mapping, Sequence
-    from contextlib import AbstractAsyncContextManager
     from datetime import datetime
     from random import Random
 
     from bob.application.reliability import Sleep
     from bob.application.router.llm_router import LLMRouter
     from bob.application.router.voice_canon import VoiceCanon
-    from bob.application.runtime.events import MessageReceived
     from bob.application.runtime.intake.scope import TurnScope
     from bob.application.runtime.staleness_reassessor import StalenessReassessor
     from bob.application.usecases.disclosure_consent_gate import DisclosureConsentGate
     from bob.application.usecases.disclosure_guard import DisclosureGuard
     from bob.application.usecases.endorsement_seeder import EndorsementSeeder
     from bob.application.usecases.room_mood_modulator import RoomMoodModulator
-    from bob.capabilities.ports import (
-        DiagramRenderer,
-        DiagramSink,
-        ToolCallingProvider,
-        WebSearchProvider,
-    )
+    from bob.capabilities.ports import DiagramRenderer, DiagramSink, WebSearchProvider
     from bob.capabilities.usecases.progress_announcer import (
         InterimLineGenerator,
         ProgressAnnouncer,
@@ -187,8 +177,17 @@ if TYPE_CHECKING:
     from bob.conversation.usecases.decide_response import DecideResponse
     from bob.conversation.usecases.read_the_room import ReadTheRoom
     from bob.conversation.volatility_judgment import VolatilityJudge
-    from bob.kernel.ports import Clock
-    from bob.memory.ports import MemoryRecall, Recalled, SelfActionRecorder
+    from bob.kernel.episode_types import Recalled
+    from bob.kernel.events import MessageReceived
+    from bob.kernel.ports import (
+        BobUserIdSource,
+        Clock,
+        EpisodeReader,
+        MemoryRecall,
+        ReplyGateway,
+        ToolCallingProvider,
+    )
+    from bob.memory.ports import SelfActionRecorder
     from bob.memory.usecases.extract_facts import ExtractFacts
     from bob.memory.usecases.resolve_register import RegisterResolver
     from bob.personality.fascination import Fascination
@@ -302,54 +301,12 @@ _DEFAULT_MAX_MAGNITUDE = 0.3
 # folded into the prompt by VoiceComposer.
 
 
-class ReplyGateway(Protocol):
-    """The Telegram seam HandleMessage needs (BOB-009).
-
-    ``typing_indicator`` wraps the slow generation so "Bob is typing…" stays
-    visible for the whole wait; ``reply`` commits the finished answer once (rich,
-    plain fallback). No token streaming — Bob can't stream in a group topic.
-    """
-
-    def typing_indicator(
-        self, *, chat_id: int
-    ) -> AbstractAsyncContextManager[None]: ...
-
-    async def reply(
-        self,
-        *,
-        chat_id: int,
-        markdown: str,
-        thinking: str | None = None,
-        reply_to_message_id: int | None = None,
-    ) -> int | None: ...
-
-    async def send_photo(
-        self, *, chat_id: int, photo: bytes, caption: str | None = None
-    ) -> None: ...
-
-    async def send_document(
-        self, *, chat_id: int, document: bytes, caption: str | None = None
-    ) -> None: ...
-
-
 class EpisodeWriter(Protocol):
     """The persistence seam HandleMessage needs: save an episode + the mood."""
 
     async def save_episode(self, episode: Mapping[str, object]) -> None: ...
 
     async def set_mood(self, state: Mapping[str, object], *, at: datetime) -> None: ...
-
-
-class EpisodeReader(Protocol):
-    """The read seam HandleMessage needs: replay recent conversation history."""
-
-    async def recent_episodes(self, k: int) -> Sequence[Mapping[str, object]]: ...
-
-    async def recent_episodes_for(
-        self, sender_id: int, k: int
-    ) -> Sequence[Mapping[str, object]]:
-        """Replay the last ``k`` turns WITH one sender (per-person thread, BOB-045)."""
-        ...
 
 
 class CurrentFascinationReader(Protocol):
@@ -495,7 +452,7 @@ class SelfImprovementReader(Protocol):
     The compose path uses this to APPLY Bob's owner-approved self-improvement rules as
     soft, bounded tilts — a TONE/HUMOR rule colours the voice, a LENGTH rule nudges the
     verbosity one step shorter, a PROACTIVITY/ADDRESSIVITY_BIAS rule biases their points
-    (built into :class:`~bob.proactivity.self_improvement.RuleModulators` by
+    (built into :class:`~bob.kernel.modulators.RuleModulators` by
     :func:`~bob.proactivity.self_improvement.build_modulators`). Safety: it
     returns rules the use-case then filters to APPROVED-only via ``active_rules`` (no
     PROPOSED/PAUSED rule ever applies — authz-before-autonomy), and only the
@@ -519,21 +476,6 @@ class OwnerActivityRecorder(Protocol):
     """
 
     async def run(self) -> None: ...
-
-
-class BobUserIdSource(Protocol):
-    """Read seam: Bob's own bot ``user_id``, resolved at startup (BOB-023).
-
-    The addressivity detector needs Bob's numeric Telegram id to tell a reply that
-    targets *Bob* from a reply that targets someone else. The id is resolved
-    asynchronously at startup (``get_me`` → ``BotIdentitySignals.user_id``) — long
-    after this synchronous use-case is constructed — so it is read lazily through
-    this seam, which yields ``None`` until identity is resolved (or for the GUPPI
-    gateway, which has none). A ``None`` degrades gracefully: reply-to-Bob simply
-    cannot fire, while @mention-of-Bob addressivity still works.
-    """
-
-    def __call__(self) -> int | None: ...
 
 
 # ``NaturalCodingRouter`` / ``PermissionFlowLike`` (the pre-compose consumption seams)

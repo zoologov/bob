@@ -16,7 +16,7 @@
 
 🔴 Свойство, которое здесь пинается: новая дверь не может добавиться МОЛЧА.
 
-* дверь к ПАМЯТИ у Боба ровно одна — порт :class:`~bob.memory.ports.MemoryRecall`, и
+* дверь к ПАМЯТИ у Боба ровно одна — порт :class:`~bob.kernel.ports.MemoryRecall`, и
   :class:`MaterialTrailRecall` оборачивает его в ЕДИНСТВЕННОМ месте сборки, поэтому любой
   будущий потребитель порта попадает в след сам собой (и это стережёт архитектурный тест
   ниже);
@@ -47,7 +47,7 @@ from bob.social.disclosure import (
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
-    from bob.memory.ports import Recalled
+    from bob.kernel.episode_types import Recalled
 
 _PRIVATE = {"content": "личное", "visibility": VISIBILITY_OWNER_PRIVATE}
 _PUBLIC = {"content": "общее", "visibility": VISIBILITY_PUBLIC}

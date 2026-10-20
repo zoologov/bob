@@ -100,7 +100,7 @@ nodes:
     kind: feature
     source: src/bob/kernel/
     tags: [layer-domain]
-    summary: 'Shared kernel — the infra-neutral contracts every vertical module rests on: the runtime seams (Clock, EventBus, EventHandler, DomainEvent, LLMProvider) and the shared value objects (LLMMessage, JsonValue). Pure Protocol/type definitions; no I/O. Every module may import from here; the kernel imports from no module.'
+    summary: 'Shared kernel — the infra-neutral contracts every vertical module rests on: the runtime seams (Clock, EventBus, EventHandler, DomainEvent, LLMProvider), the shared value objects (LLMMessage, JsonValue), the intake events (MessageReceived, BobMessageReaction), the memory/reply ports (EpisodeReader, MemoryRecall, Recalled, ReplyGateway, BobUserIdSource), the LLM tool-calling vocabulary (ToolDefinition, ToolCall, ToolCallResult, ToolCallingProvider, ToolLoopMessage) and the self-improvement RuleModulators (BOB-113). Pure Protocol/type definitions; no I/O. Every module may import from here; the kernel imports from no module.'
     docs:
       - domains/domain/features/kernel/SPEC.md
 
@@ -358,7 +358,7 @@ nodes:
     kind: feature
     source: src/bob/application/runtime/
     tags: [layer-application]
-    summary: 'Application runtime — AgentRuntime, AsyncEventBus, events, and resilient heartbeat ticks (retry/backoff). Distinct from the `runtime` composition root.'
+    summary: 'Application runtime — AgentRuntime, AsyncEventBus, and resilient heartbeat ticks (retry/backoff); the intake events it carries live in the shared kernel. Distinct from the `runtime` composition root.'
     docs:
       - domains/application/features/runtime-app/SPEC.md
 

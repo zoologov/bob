@@ -57,7 +57,7 @@ SSRF-щитом, локальный mermaid-рендерер, beadloom/bd/git-и
 
 ```
 src/bob/capabilities/
-  ports.py            # layer=domain          — 19 портов-протоколов + value-object'ы шва
+  ports.py            # layer=domain          — 17 портов-протоколов + value-object'ы шва
   __init__.py         # layer=domain          — фасад (re-export стабильных портов)
   tool_availability.py # layer=domain         — ToolRequirement/ToolVerdict/assess_tools/unavailable/describe_unavailable: какие способности НЕМЫ здесь, потому что их внешнего бинаря нет на хосте (BOB-111, Issues #62, mutation-ядро). Вердикт судит ДОСТИЖИМОСТЬ, а не форму строки: разрешение инжектится, поэтому путь с чужой машины (`/Users/…/mmdc`, синтаксически безупречный) распознаётся как недоступный. Пустой список требований НЕ читается как «всё доступно» — «не проверено» и «не сломано» остаются различимы
   diagrams/           # layer=domain            (чистый разбор inline-mermaid, BOB-037)
@@ -651,11 +651,12 @@ legalized), `coding.usecases → capabilities` (`PrivacyGuard`, TC, перено
 
 <!-- beadloom:track=src/bob/capabilities/ports.py -->
 
-Модуль `src/bob/capabilities/ports.py` (порты-протоколы + value-object'ы шва, 19
-публичных символов):
+Модуль `src/bob/capabilities/ports.py` (порты-протоколы + value-object'ы шва, 17
+публичных символов; словарь tool-calling'а — `ToolCallingProvider`, `ToolCall`,
+`ToolCallResult`, `ToolDefinition` — в `src/bob/kernel/ports.py`, BOB-113):
 - `Capability` (Protocol) — стабильный контракт навыка: `name`, `description`,
   `input_schema`, `permission`, `async execute(args)`.
-- `ToolCallingProvider` (Protocol) — `async complete_with_tools(messages, *, tools)`
+- `ToolCallingProvider` (Protocol, `kernel/ports.py`) — `async complete_with_tools(messages, *, tools)`
   → `ToolCallResult`; `messages` — `Sequence[ToolLoopMessage]` (BOB-069: реплика может нести
   структурный `tool_calls`-массив ассистента, см. `kernel/ports.py`). Реализация — инфра
   OpenAI-совместимый провайдер.
@@ -677,9 +678,9 @@ legalized), `coding.usecases → capabilities` (`PrivacyGuard`, TC, перено
 - `OutboundMessenger` (Protocol, BOB-090.B1) — `async send(*, chat_id, topic_id, markdown)`:
   отправка по ЯВНОМУ адресу. Реализация —
   `infrastructure.telegram.outbound_messenger.TelegramOutboundMessenger`.
-- Value-object'ы: `ToolCall`, `ToolCallResult`, `WebSource`, `WebSearchResult`,
-  `WebPage`, `DiagramResult` (все frozen); исключения `UrlReadError`,
-  `SsrfBlockedError` (подтип), `DiagramRenderError`; type-алиасы `ToolDefinition`,
+- Value-object'ы: `WebSource`, `WebSearchResult`,
+  `WebPage`, `DiagramResult` (все frozen; `ToolCall`/`ToolCallResult` — в `kernel/ports.py`);
+  исключения `UrlReadError`, `SsrfBlockedError` (подтип), `DiagramRenderError`; type-алиас
   `Permission` (`Literal["safe", "confirm"]`).
 
 Фасад `src/bob/capabilities/__init__.py` re-export'ит стабильные порты + value-объекты.

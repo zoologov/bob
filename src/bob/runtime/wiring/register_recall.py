@@ -44,7 +44,7 @@ if TYPE_CHECKING:
     from collections.abc import Mapping
 
     from bob.application.router.llm_router import LLMRouter
-    from bob.memory.ports import MemoryRecall
+    from bob.kernel.ports import MemoryRecall
 
 __all__ = ["build_register_resolver", "build_secondary_recall"]
 

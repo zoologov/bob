@@ -14,7 +14,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, cast
 
-from bob.application.runtime.events import MessageReceived
+from bob.kernel.events import MessageReceived
 from bob.social.interlocutor import Interlocutor, InterlocutorKind, Trust, classify
 from bob.social.usecases.first_impression_sources import FirstImpressionTracker
 from bob.social.usecases.sender_perception import SenderPerception

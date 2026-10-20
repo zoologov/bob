@@ -8,11 +8,10 @@ from __future__ import annotations
 
 import pytest
 
-from bob.capabilities.ports import ToolCallingProvider
 from bob.infrastructure.llm.factory import build_tier_providers
 from bob.infrastructure.llm.fallback_provider import FallbackLLMProvider
 from bob.infrastructure.llm.openai_compat import OpenAICompatProvider
-from bob.kernel.ports import LLMProvider
+from bob.kernel.ports import LLMProvider, ToolCallingProvider
 
 
 def test_builds_both_tiers_from_config() -> None:

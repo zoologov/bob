@@ -41,11 +41,11 @@ from bob.conversation.addressivity import (
 if TYPE_CHECKING:
     from random import Random
 
-    from bob.application.runtime.events import MessageReceived
-    from bob.application.usecases.handle_message import BobUserIdSource, EpisodeReader
     from bob.conversation.addressivity import AddressivityThresholds
     from bob.conversation.conversation_floor import FloorHolder
     from bob.conversation.usecases.floor_manager import FloorManager
+    from bob.kernel.events import MessageReceived
+    from bob.kernel.ports import BobUserIdSource, EpisodeReader
 
 logger = logging.getLogger(__name__)
 

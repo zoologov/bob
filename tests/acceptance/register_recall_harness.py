@@ -38,7 +38,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from bob.application.router.llm_router import LLMRouter
-from bob.application.runtime.events import MessageReceived
+from bob.kernel.events import MessageReceived
 from bob.memory.adapters.fts_recall import Fts5MemoryRecall
 from bob.memory.adapters.sqlite_memory_repo import SqliteMemoryRepo
 from bob.memory.register_pipeline import pool_has_work, register_ranked

@@ -16,9 +16,9 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from bob.application.runtime.events import BobMessageReaction
 from bob.application.usecases.handle_message import PersonalityState
 from bob.application.usecases.perceive_reaction import PerceiveReaction
+from bob.kernel.events import BobMessageReaction
 from bob.personality.disposition import DEFAULT_DISPOSITION
 from bob.personality.mood import Mood, MoodDelta
 from bob.personality.reaction_meaning import ReactionMeaning

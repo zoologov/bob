@@ -29,9 +29,9 @@ from bob.memory import ports as memory_ports
         (kernel_ports, "EventBus"),
         (kernel_ports, "LLMProvider"),
         (memory_ports, "MemoryRepo"),
-        (memory_ports, "MemoryRecall"),
+        (kernel_ports, "MemoryRecall"),
         (capabilities_ports, "Capability"),
-        (capabilities_ports, "ToolCallingProvider"),
+        (kernel_ports, "ToolCallingProvider"),
         (memory_ports, "Embedder"),
     ],
 )
@@ -77,7 +77,7 @@ def test_memory_repo_declares_persistence_methods() -> None:
 
 
 def test_memory_recall_declares_recall() -> None:
-    assert hasattr(memory_ports.MemoryRecall, "recall")
+    assert hasattr(kernel_ports.MemoryRecall, "recall")
 
 
 def test_embedder_is_exported_protocol_declaring_embed() -> None:
@@ -121,17 +121,17 @@ def test_capability_is_structurally_satisfiable() -> None:
 
 def test_tool_call_and_result_value_objects_exist() -> None:
     # Assert the tool-calling value objects carry the expected fields.
-    call = capabilities_ports.ToolCall(id="c1", name="recall_memory", arguments={"query": "x"})
+    call = kernel_ports.ToolCall(id="c1", name="recall_memory", arguments={"query": "x"})
     assert call.id == "c1"
     assert call.name == "recall_memory"
     assert call.arguments == {"query": "x"}
-    result = capabilities_ports.ToolCallResult(text="", tool_calls=(call,))
+    result = kernel_ports.ToolCallResult(text="", tool_calls=(call,))
     assert result.text == ""
     assert result.tool_calls == (call,)
 
 
 def test_tool_calling_provider_declares_complete_with_tools() -> None:
-    assert hasattr(capabilities_ports.ToolCallingProvider, "complete_with_tools")
+    assert hasattr(kernel_ports.ToolCallingProvider, "complete_with_tools")
 
 
 def test_web_search_value_objects_are_frozen() -> None:

@@ -23,7 +23,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from bob.application.runtime.events import MessageReceived
+from bob.kernel.events import MessageReceived
 from tests.acceptance.live_app_harness import (
     OWNER_DM_CHAT_ID,
     OWNER_ID,

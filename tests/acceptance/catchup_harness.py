@@ -19,8 +19,8 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
-from bob.application.runtime.events import MessageReceived
 from bob.application.usecases.catch_up import CatchUp, to_backlog_message
+from bob.kernel.events import MessageReceived
 
 if TYPE_CHECKING:
     from bob.presence.catchup import BacklogMessage

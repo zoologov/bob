@@ -6,7 +6,7 @@
 
 from __future__ import annotations
 
-from bob.application.runtime.events import (
+from bob.kernel.events import (
     BOB_MESSAGE_REACTION,
     BobMessageReaction,
 )

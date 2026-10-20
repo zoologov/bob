@@ -23,7 +23,6 @@ import json
 from typing import TYPE_CHECKING
 
 from bob.app import _build_registry
-from bob.capabilities.ports import ToolCall, ToolCallResult
 from bob.capabilities.usecases.architecture_impact import (
     make_architecture_impact_capability,
 )
@@ -34,12 +33,13 @@ from bob.capabilities.usecases.draw_architecture import (
 from bob.capabilities.usecases.registry import CapabilityRegistry
 from bob.capabilities.usecases.render_diagram import CollectingDiagramSink
 from bob.capabilities.usecases.tool_loop import ToolLoop
+from bob.kernel.ports import ToolCall, ToolCallResult
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
-    from bob.capabilities.ports import DiagramResult, ToolDefinition
-    from bob.kernel.ports import ToolLoopMessage
+    from bob.capabilities.ports import DiagramResult
+    from bob.kernel.ports import ToolDefinition, ToolLoopMessage
     from tests.application.capabilities.fakes import (
         FakeDiagramRenderer,
         FakeRepoIntrospector,

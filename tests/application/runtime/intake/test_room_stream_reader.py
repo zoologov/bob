@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import pytest
 
-from bob.application.runtime.events import MessageReceived
 from bob.application.runtime.intake.room_stream_reader import RoomStreamReader
 from bob.conversation.room_reading import (
     BatchAmbientMessage,
@@ -26,6 +25,7 @@ from bob.conversation.room_reading import (
     RoomMood,
     RoomReading,
 )
+from bob.kernel.events import MessageReceived
 from bob.social.interlocutor import InterlocutorKind
 
 

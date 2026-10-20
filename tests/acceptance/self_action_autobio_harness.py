@@ -45,7 +45,7 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
     from pathlib import Path
 
-    from bob.memory.ports import Recalled
+    from bob.kernel.episode_types import Recalled
     from bob.memory.self_action import SelfAction
 
 _OWNER_ID = 27468732

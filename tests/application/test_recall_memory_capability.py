@@ -4,7 +4,7 @@
 
 """Tests for the ``recall_memory`` capability — the first real GUPPI skill.
 
-A thin wrapper over the :class:`~bob.domain.ports.MemoryRecall` port: it exposes
+A thin wrapper over the :class:`~bob.kernel.ports.MemoryRecall` port: it exposes
 the stable :class:`~bob.domain.ports.Capability` contract, delegates a query to
 ``recall`` and renders the recalled items as a compact result. The e2e test then
 drives the whole tool-loop on fakes: a provider asks for ``recall_memory``, the
@@ -19,17 +19,16 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from bob.capabilities.ports import ToolCall, ToolCallResult
 from bob.capabilities.usecases.recall_memory import make_recall_memory_capability
 from bob.capabilities.usecases.registry import CapabilityRegistry
 from bob.capabilities.usecases.tool_loop import ToolLoop
+from bob.kernel.ports import ToolCall, ToolCallResult
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from bob.capabilities.ports import ToolDefinition
-    from bob.kernel.ports import ToolLoopMessage
-    from bob.memory.ports import Recalled
+    from bob.kernel.episode_types import Recalled
+    from bob.kernel.ports import ToolDefinition, ToolLoopMessage
 
 
 class FakeRecall:

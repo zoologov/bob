@@ -63,9 +63,8 @@ if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Mapping
     from pathlib import Path
 
-    from bob.application.usecases.handle_message import ReplyGateway
     from bob.capabilities.ports import Permission
-    from bob.kernel.ports import LLMProvider
+    from bob.kernel.ports import LLMProvider, ReplyGateway
 
 _CHAT_PATH = "/v1/chat/completions"
 #: Мёртвый loopback-порт: соединение отвергается сразу — настоящий отвал облака.

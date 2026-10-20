@@ -30,7 +30,7 @@ if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
     from bob.application.reliability import Sleep
-    from bob.application.runtime.events import MessageReceived
+    from bob.kernel.events import MessageReceived
     from bob.personality.soul import SOUL
 
 logger = logging.getLogger(__name__)

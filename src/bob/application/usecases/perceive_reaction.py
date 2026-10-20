@@ -9,7 +9,7 @@
 """PerceiveReaction — Bob feels a reaction on one of his own messages (BOB-050).
 
 The application heart of the feature: it subscribes to the
-:class:`~bob.application.runtime.events.BobMessageReaction` event, looks up what Bob
+:class:`~bob.kernel.events.BobMessageReaction` event, looks up what Bob
 SAID (by ``bob_message_id``), asks the injected
 :class:`~bob.personality.reaction_meaning.ReactionJudge` what the reaction
 MEANS on that message from that person, and lets the meaning change him — bounded,
@@ -49,8 +49,8 @@ from bob.social.relationship import Relationship
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
-    from bob.application.runtime.events import BobMessageReaction
     from bob.application.usecases.handle_message import PersonalityState
+    from bob.kernel.events import BobMessageReaction
     from bob.kernel.ports import Clock
     from bob.personality.disposition import Disposition
     from bob.personality.ports import NotableReactionStore

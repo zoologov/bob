@@ -33,7 +33,7 @@ from bob.runtime.wiring.register_recall import (
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Mapping, Sequence
 
-    from bob.memory.ports import Recalled
+    from bob.kernel.episode_types import Recalled
 
 
 class _StubProvider:

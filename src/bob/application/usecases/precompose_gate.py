@@ -34,7 +34,7 @@ from typing import TYPE_CHECKING, Protocol
 from bob.social.interlocutor import InterlocutorKind, Trust
 
 if TYPE_CHECKING:
-    from bob.application.runtime.events import MessageReceived
+    from bob.kernel.events import MessageReceived
     from bob.social.interlocutor import Interlocutor
 
 logger = logging.getLogger(__name__)

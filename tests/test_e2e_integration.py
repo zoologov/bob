@@ -29,10 +29,10 @@ from typing import TYPE_CHECKING
 import aiohttp
 
 from bob.app import build_application
-from bob.application.runtime.events import MessageReceived
-from bob.capabilities.ports import ToolCall, ToolCallResult
 from bob.infrastructure.telegram.guppi import GUPPI_REJECT_TEXT
 from bob.infrastructure.telegram.multibot import BotIdentity
+from bob.kernel.events import MessageReceived
+from bob.kernel.ports import ToolCall, ToolCallResult
 from bob.memory.entities import SemanticFact
 from bob.social.adapters.soul_store import SoulStore
 from tests.support.judge_stub import JUDGE_REPLY, is_judge_request
@@ -41,9 +41,8 @@ if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Callable, Sequence
     from pathlib import Path
 
-    from bob.capabilities.ports import ToolDefinition
     from bob.infrastructure.telegram.gateway import UpdateLike
-    from bob.kernel.ports import LLMProvider
+    from bob.kernel.ports import LLMProvider, ToolDefinition
 
 _OWNER = 1
 _CHAT = 100

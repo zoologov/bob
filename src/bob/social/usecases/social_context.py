@@ -35,7 +35,6 @@ from bob.personality.voice import relationship_tone_directive
 from bob.social.relationship import compromise_bias
 
 if TYPE_CHECKING:
-    from bob.application.runtime.events import MessageReceived
     from bob.application.usecases.handle_message import (
         FirstImpressionReader,
         InterlocutorResolver,
@@ -44,6 +43,7 @@ if TYPE_CHECKING:
         SulkReader,
     )
     from bob.conversation.ports import ZoneClassifier
+    from bob.kernel.events import MessageReceived
     from bob.kernel.ports import Clock
     from bob.personality.negotiation import Negotiation, NegotiationZone, Stance
     from bob.personality.soul import SOUL

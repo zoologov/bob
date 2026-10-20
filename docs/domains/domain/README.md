@@ -34,6 +34,23 @@
 - `Clock` — `now()` → `datetime` (инъекция времени; запрет `datetime.now()` в домене).
 - `EventBus` — `publish(event)`, `subscribe(event_name, handler)`; `EventHandler`.
 - `DomainEvent` — маркер с `name` для маршрутизации на шине.
+- Порты, которые читают модули НИЖЕ их прежнего владельца (переехали в BOB-113, сигнатуры
+  не менялись): `EpisodeReader` и `MemoryRecall` (чтение памяти), `ReplyGateway`
+  (исходящий канал), `BobUserIdSource` (собственный id Боба) и словарь tool-calling'а
+  `ToolDefinition` / `ToolCall` / `ToolCallResult` / `ToolCallingProvider` (рядом с
+  `ToolLoopMessage`).
+
+#### События интейка — `events.py`
+
+`MessageReceived` и `BobMessageReaction` (+ константы имён) — события, которые гейтвей
+публикует на шину. Переехали из `application/runtime/` (BOB-113): их читают
+`conversation` и `personality`, стоящие ниже рантайма.
+
+#### Модуляторы самоулучшения — `modulators.py`
+
+`RuleModulators` — замороженный набор мягких наклонов из одобренных правил BOB-028.
+Собирает `proactivity` (`build_modulators`), применяют `conversation` и `personality`
+(ниже `proactivity`) → значение в ядре (BOB-113).
 
 #### Общий словарь — `episode_types.py`
 
@@ -45,6 +62,8 @@
   `personality` озвучивает её провенанс. Слово общее → живёт в ядре;
   `bob.memory.work_journal` ре-экспортирует его ради совместимости импортов.
   Значения ПЕРСИСТЯТСЯ в эпизодическом логе — менять их значит переписывать историю.
+- `Recalled` (`Mapping[str, object]`) — один recalled-элемент памяти; читают `conversation`
+  и `personality`, поэтому тип в ядре (BOB-113, был в `memory/ports.py`).
 
 #### Ось приватности — `visibility.py`
 
@@ -129,11 +148,11 @@ kernel — чистый inward-safe leaf: только stdlib/typing, любой
 | Модуль | Чистое ядро (примеры) | SPEC |
 |---|---|---|
 | **personality** | `Mood`, `MoodDelta`, `TasteEngine`/`Verdict`, `Negotiation`/`Stance`, `SOUL`, `voice`, семейство `reaction` | [`../personality/README.md`](../personality/README.md) |
-| **memory** | `EpisodicEvent`, `SemanticFact`; порты `MemoryRepo`/`MemoryRecall`/`Embedder`/`Reranker` | [`../memory/README.md`](../memory/README.md) |
+| **memory** | `EpisodicEvent`, `SemanticFact`; порты `MemoryRepo`/`Embedder`/`Reranker` (`MemoryRecall` — в kernel, BOB-113) | [`../memory/README.md`](../memory/README.md) |
 | **conversation** | адресность, conversational floor, brevity, engagement, судьи отклика; порты `ConversationFloorStore`/`CloserLog`/`ZoneClassifier` | [`../conversation/README.md`](../conversation/README.md) |
 | **social** | идентичность собеседника, первое впечатление, отношения, permission; порты `AllowlistStore`/`SoulStore`/… | [`../social/README.md`](../social/README.md) |
 | **proactivity** | `UrgeModel`, `SocialEnergy`, `Governance`, `ProactiveDecider`, `ProactivityState` | [`../proactivity/README.md`](../proactivity/README.md) |
-| **capabilities** | `Capability`-контракт + value-объекты вызова инструментов (`ToolCall`/`ToolCallResult`/`ToolDefinition`), чистые diagrams/introspection | [`../capabilities/README.md`](../capabilities/README.md) |
+| **capabilities** | `Capability`-контракт (словарь вызова инструментов `ToolCall`/`ToolCallResult`/`ToolDefinition` — в kernel, BOB-113), чистые diagrams/introspection | [`../capabilities/README.md`](../capabilities/README.md) |
 | **coding** | доменное состояние сессии кодинга, переходы, narrate; порты `ClaudeCodeRunner`/`Worktree`/… | [`../coding/README.md`](../coding/README.md) |
 
 ## Инварианты (общие для domain-слоя)

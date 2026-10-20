@@ -37,8 +37,7 @@ if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
     from pathlib import Path
 
-    from bob.capabilities.ports import ToolCallResult, ToolDefinition
-    from bob.kernel.ports import ToolLoopMessage
+    from bob.kernel.ports import ToolCallResult, ToolDefinition, ToolLoopMessage
     from bob.runtime.composition import Application
 
 # Живые адреса сценариев: комната с форум-топиком Боба и личка owner'а (её chat_id в

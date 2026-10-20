@@ -14,7 +14,7 @@ tool-loop: he decides to search his own long-term archive with a real query,
 runs the hybrid semantic+keyword recall over everything he remembers, and uses
 the result. This is the first substantive agentic capability on the seam.
 
-It holds only the injected :class:`~bob.memory.ports.MemoryRecall` port (the
+It holds only the injected :class:`~bob.kernel.ports.MemoryRecall` port (the
 hybrid recall) — no I/O of its own — and renders its hits as a compact,
 model-friendly result. The model may tune how many memories to pull back via an
 optional ``k``; nonsense values clamp to a safe default so a sloppy model cannot
@@ -31,7 +31,7 @@ if TYPE_CHECKING:
     from collections.abc import Mapping
 
     from bob.capabilities.ports import Capability, Permission
-    from bob.memory.ports import MemoryRecall
+    from bob.kernel.ports import MemoryRecall
 
 # Default number of memories to pull back per agentic search — a touch wider than
 # auto-recall, since an explicit search is meant to dig, without flooding context.

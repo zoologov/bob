@@ -25,13 +25,13 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING
 
-from bob.capabilities.ports import ToolCall, ToolCallResult
 from bob.capabilities.usecases.list_tasks import make_list_tasks_capability
 from bob.capabilities.usecases.recent_commits import make_recent_commits_capability
 from bob.capabilities.usecases.registry import CapabilityRegistry
 from bob.capabilities.usecases.show_task import make_show_task_capability
 from bob.capabilities.usecases.task_comments import make_task_comments_capability
 from bob.capabilities.usecases.tool_loop import ToolLoop
+from bob.kernel.ports import ToolCall, ToolCallResult
 from bob.personality.expression import ExpressionMode, ExpressionPlan, FormHint
 from bob.personality.mood import Mood
 from bob.personality.negotiation import NegotiationZone, Stance
@@ -44,9 +44,9 @@ from tests.application.capabilities.fakes import FakeRepoIntrospector
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Mapping, Sequence
 
-    from bob.capabilities.ports import Capability, ToolCallingProvider, ToolDefinition
-    from bob.kernel.ports import LLMMessage, ToolLoopMessage
-    from bob.memory.ports import Recalled
+    from bob.capabilities.ports import Capability
+    from bob.kernel.episode_types import Recalled
+    from bob.kernel.ports import LLMMessage, ToolCallingProvider, ToolDefinition, ToolLoopMessage
     from bob.personality.negotiation import NegotiationZone as _Zone
 
 # --- the four real dev-introspection capabilities over one fake port -----------

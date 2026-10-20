@@ -8,7 +8,7 @@ Where ``recall_memory`` is the thin auto-recall, ``search_memory`` is the skill
 Bob *chooses* to call: he decides to search his own long-term memory with a real
 query over the full archive (the hybrid semantic+keyword recall) and uses the
 result. The contract tests pin name/schema/permission and that ``execute``
-delegates to the :class:`~bob.domain.ports.MemoryRecall` port with the right
+delegates to the :class:`~bob.kernel.ports.MemoryRecall` port with the right
 query and ``k``; the e2e test drives the whole tool-loop on fakes: a reasoning
 provider emits a ``search_memory`` tool_call, the registry dispatches it against
 a fake recall, and the model finalises an answer that uses the recalled memory.
@@ -21,17 +21,16 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from bob.capabilities.ports import ToolCall, ToolCallResult
 from bob.capabilities.usecases.registry import CapabilityRegistry
 from bob.capabilities.usecases.search_memory import make_search_memory_capability
 from bob.capabilities.usecases.tool_loop import ToolLoop
+from bob.kernel.ports import ToolCall, ToolCallResult
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from bob.capabilities.ports import ToolDefinition
-    from bob.kernel.ports import ToolLoopMessage
-    from bob.memory.ports import Recalled
+    from bob.kernel.episode_types import Recalled
+    from bob.kernel.ports import ToolDefinition, ToolLoopMessage
 
 
 class FakeRecall:

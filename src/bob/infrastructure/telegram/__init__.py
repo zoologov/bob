@@ -17,7 +17,6 @@ publishes :class:`MessageReceived` onto the EventBus, and delivers a reply given
 token async-iterator (consumed to assemble the full text, then sent once).
 """
 
-from bob.application.runtime.events import MESSAGE_RECEIVED, MessageReceived
 from bob.infrastructure.telegram.gateway import (
     PLAIN_TEXT_LIMIT,
     BotLike,
@@ -36,6 +35,7 @@ from bob.infrastructure.telegram.rich import (
     MarkdownToRichMessage,
     RichMessageSerializer,
 )
+from bob.kernel.events import MESSAGE_RECEIVED, MessageReceived
 
 __all__ = [
     "GUPPI_REJECT_TEXT",

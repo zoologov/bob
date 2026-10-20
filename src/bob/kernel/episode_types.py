@@ -23,11 +23,20 @@ in ``memory`` forced ``conversation`` into a peer domain→domain import and clo
 cycle ``conversation → memory → runtime-app → conversation`` (bob-abk.32). The kernel is
 the neutral surface every module may import, so the shared word costs no edge. Values
 are PERSISTED in the episodic log — changing one rewrites history, so they are stable.
+
+* :data:`Recalled` — the shape of one recalled memory item. ``memory`` returns it from
+  recall, ``conversation`` and ``personality`` read it — both BELOW ``memory`` in the
+  runtime order, so the type lives here rather than in ``memory`` (BOB-113).
 """
 
 from __future__ import annotations
 
-__all__ = ["WORK_EVENT_TYPE"]
+from collections.abc import Mapping
+
+__all__ = ["WORK_EVENT_TYPE", "Recalled"]
+
+# A single recalled memory item (content + relevance score), returned by recall.
+type Recalled = Mapping[str, object]
 
 # The episodic ``event_type`` of a distilled work episode — DISTINCT from ``self_action``
 # so the existing self-action voice/recall stays byte-identical and register-aware recall

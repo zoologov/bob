@@ -43,7 +43,7 @@ from bob.presence.catchup import BacklogMessage, CatchUpPlan, select_catchup
 if TYPE_CHECKING:
     from datetime import datetime
 
-    from bob.application.runtime.events import MessageReceived
+    from bob.kernel.events import MessageReceived
 
 
 def to_backlog_message(

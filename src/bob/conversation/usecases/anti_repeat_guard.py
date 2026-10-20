@@ -54,13 +54,13 @@ if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
     from random import Random
 
-    from bob.application.usecases.handle_message import EpisodeReader
     from bob.conversation.conversation import RepeatThresholds
     from bob.conversation.ports import CloserLog
-    from bob.memory.ports import Recalled
+    from bob.kernel.episode_types import Recalled
+    from bob.kernel.modulators import RuleModulators
+    from bob.kernel.ports import EpisodeReader
     from bob.personality.expression import ExpressionPlan
     from bob.personality.soul import SOUL
-    from bob.proactivity.self_improvement import RuleModulators
     from bob.social.interlocutor import Interlocutor
     from bob.social.relationship import Relationship
     from bob.social.roster import RosterMember

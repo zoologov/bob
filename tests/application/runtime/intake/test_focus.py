@@ -6,8 +6,8 @@
 
 from __future__ import annotations
 
-from bob.application.runtime.events import MessageReceived
 from bob.application.runtime.intake.focus import make_focus_predicate, message_is_focused
+from bob.kernel.events import MessageReceived
 
 _BOB_ID = 500
 

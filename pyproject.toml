@@ -245,6 +245,9 @@ ignore = [
 # observation/adjustment literals whose Cyrillic look-alikes are intentional —
 # RUF001/RUF002/RUF003 do not apply to these.
 "src/bob/proactivity/self_improvement.py" = ["RUF001", "RUF002", "RUF003"]
+# The self-improvement modulators value (BOB-028 .3, moved to the kernel in BOB-113) keeps
+# its Russian docstrings whose Cyrillic look-alikes are intentional — RUF002/RUF003 do not apply.
+"src/bob/kernel/modulators.py" = ["RUF002", "RUF003"]
 # The SqliteSelfImprovementStore (BOB-028 .1) carries Russian docstrings whose Cyrillic
 # look-alikes are intentional — RUF001/RUF002/RUF003 do not apply to these.
 "src/bob/proactivity/adapters/self_improvement_store.py" = [

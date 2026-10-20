@@ -40,14 +40,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from bob.application.router import LLMRouter
-from bob.application.runtime import (
-    BOB_MESSAGE_REACTION,
-    MESSAGE_RECEIVED,
-    AgentRuntime,
-    AsyncEventBus,
-    BobMessageReaction,
-    MessageReceived,
-)
+from bob.application.runtime import AgentRuntime, AsyncEventBus
 from bob.application.runtime.intake import (
     ChatDispatcher,
     RoomStreamReader,
@@ -89,6 +82,12 @@ from bob.infrastructure.telegram.aiogram_adapter import (
 )
 from bob.infrastructure.telegram.multibot import BotIdentity
 from bob.infrastructure.telegram.outage_notifier import _GuppiOutageNotifier
+from bob.kernel.events import (
+    BOB_MESSAGE_REACTION,
+    MESSAGE_RECEIVED,
+    BobMessageReaction,
+    MessageReceived,
+)
 from bob.memory.adapters import HybridMemoryRecall, SqliteMemoryRepo
 from bob.memory.usecases.extract_facts import ExtractFacts
 from bob.personality.adapters.fascination_store import SqliteFascinationStore

@@ -19,17 +19,16 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from bob.capabilities.ports import ToolCall, ToolCallResult
 from bob.capabilities.usecases.registry import CapabilityRegistry
 from bob.capabilities.usecases.tool_loop import ToolLoop
+from bob.kernel.ports import ToolCall, ToolCallResult
 from tests.acceptance.repo_nav_harness import GUARD_REL_PATH, build_navigator, build_repo
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
     from pathlib import Path
 
-    from bob.capabilities.ports import ToolDefinition
-    from bob.kernel.ports import ToolLoopMessage
+    from bob.kernel.ports import ToolDefinition, ToolLoopMessage
 
 # A real fact that lives in the file the scenario reads — its presence in the final reply
 # proves the tool result actually flowed back (backstop drove a real call, not narration).

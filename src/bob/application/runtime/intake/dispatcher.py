@@ -43,10 +43,10 @@ if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Sequence
 
     from bob.application.runtime.catch_up_reentry import CatchUpReentry
-    from bob.application.runtime.events import MessageReceived
     from bob.application.runtime.intake.room_stream_reader import AmbientBatchReader
     from bob.application.runtime.intake.scope import TurnScope
     from bob.conversation.room_reading import RoomReading
+    from bob.kernel.events import MessageReceived
 
     type _Handle = Callable[[MessageReceived, TurnScope], Awaitable[None]]
     type _Sleep = Callable[[float], Awaitable[None]]

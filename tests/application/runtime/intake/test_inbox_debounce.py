@@ -14,8 +14,8 @@ from __future__ import annotations
 
 import pytest
 
-from bob.application.runtime.events import MessageReceived
 from bob.application.runtime.intake.inbox import ChatInbox
+from bob.kernel.events import MessageReceived
 
 _CHAT = 42
 

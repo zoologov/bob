@@ -25,8 +25,8 @@ from bob.conversation.addressivity import Addressivity, classify_addressivity
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from bob.application.runtime.events import MessageReceived
-    from bob.application.usecases.handle_message import BobUserIdSource
+    from bob.kernel.events import MessageReceived
+    from bob.kernel.ports import BobUserIdSource
 
 
 def message_is_focused(message: MessageReceived, *, bob_user_id: int | None) -> bool:

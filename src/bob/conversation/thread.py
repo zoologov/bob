@@ -41,7 +41,7 @@ from bob.kernel.episode_types import WORK_EVENT_TYPE
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
-    from bob.memory.ports import Recalled
+    from bob.kernel.episode_types import Recalled
     from bob.social.interlocutor import Interlocutor
 
 

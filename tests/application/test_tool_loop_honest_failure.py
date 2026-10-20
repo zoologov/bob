@@ -25,15 +25,15 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from bob.capabilities.ports import ToolCall, ToolCallResult
 from bob.capabilities.usecases.registry import CapabilityRegistry
 from bob.capabilities.usecases.tool_loop import NO_ANSWER_REPLY, ToolLoop
+from bob.kernel.ports import ToolCall, ToolCallResult
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
-    from bob.capabilities.ports import Permission, ToolDefinition
-    from bob.kernel.ports import ToolLoopMessage
+    from bob.capabilities.ports import Permission
+    from bob.kernel.ports import ToolDefinition, ToolLoopMessage
 
 _MISSING_BINARY = "[Errno 2] No such file or directory: 'beadloom'"
 

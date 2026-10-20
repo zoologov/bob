@@ -46,7 +46,7 @@ from bob.memory.register import (
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from bob.memory.ports import Recalled
+    from bob.kernel.episode_types import Recalled
 
 __all__ = ["pool_has_work", "register_ranked"]
 

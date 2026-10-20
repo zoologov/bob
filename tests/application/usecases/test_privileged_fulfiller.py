@@ -15,16 +15,16 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from bob.application.usecases.privileged_fulfiller import PrivilegedRequestFulfiller
-from bob.capabilities.ports import ToolCallResult
 from bob.capabilities.usecases.registry import CapabilityRegistry
+from bob.kernel.ports import ToolCallResult
 from bob.personality.voice import guppi_voice_canon
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
     from bob.application.router.llm_router import LLMRequest
-    from bob.capabilities.ports import Permission, ToolDefinition
-    from bob.kernel.ports import ToolLoopMessage
+    from bob.capabilities.ports import Permission
+    from bob.kernel.ports import ToolDefinition, ToolLoopMessage
 
 
 class _FakeRouter:

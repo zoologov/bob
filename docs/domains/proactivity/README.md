@@ -174,7 +174,8 @@ authz, гость-инварианта, ядра SOUL или safety-инвари
 правило НЕ способно их представить *по конструкции*. `active_rules` берёт лишь
 `APPROVED` (`RuleState`), так что неодобренное правило не влияет на поведение;
 `build_modulators` сводит активные правила в нейтральный по умолчанию
-`RuleModulators`, который применяет `handle_message`.
+`RuleModulators` (значение живёт в `src/bob/kernel/modulators.py`, BOB-113), который
+применяет `handle_message`.
 
 `proposal_defect(rule, *, max_magnitude)` → `ProposalDefect | None` (BOB-096) — чистая
 ПРИЧИНА, по которой предложение нельзя вынести владельцу, и единственный источник истины

@@ -38,10 +38,10 @@ if TYPE_CHECKING:
     from collections.abc import Mapping
 
     from bob.application.router import LLMRouter
-    from bob.application.usecases.handle_message import PersonalityState, ReplyGateway
+    from bob.application.usecases.handle_message import PersonalityState
     from bob.capabilities.usecases import CapabilityRegistry
     from bob.infrastructure.persistence import SqliteConnection
-    from bob.kernel.ports import Clock
+    from bob.kernel.ports import Clock, ReplyGateway
     from bob.memory.adapters import SqliteMemoryRepo
     from bob.proactivity.adapters import SqliteProactivityStore
 

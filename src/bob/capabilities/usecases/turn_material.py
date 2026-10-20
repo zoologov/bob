@@ -25,7 +25,7 @@ grounded-addon callback'ом и реплеем нити. Живой вызов �
 🔴 Почему новая дверь не сможет добавиться МОЛЧА — два независимых механизма:
 
 1. **Дверь к памяти ровно одна.** Стоячая память Боба выходит наружу единственным портом
-   :class:`~bob.memory.ports.MemoryRecall`, и :class:`MaterialTrailRecall` оборачивает его
+   :class:`~bob.kernel.ports.MemoryRecall`, и :class:`MaterialTrailRecall` оборачивает его
    в ЕДИНСТВЕННОМ месте сборки (композиционный корень). Любой будущий потребитель порта —
    ещё один инструмент, ещё один addon, проактивный шов — попадает в след сам собой, без
    строчки учёта у себя. Архитектурный тест стережёт, что источник порта конструируется
@@ -59,7 +59,8 @@ from bob.social.disclosure import VISIBILITY_OWNER_PRIVATE, visibility_of
 if TYPE_CHECKING:
     from collections.abc import Iterator, Mapping, Sequence
 
-    from bob.memory.ports import MemoryRecall, Recalled
+    from bob.kernel.episode_types import Recalled
+    from bob.kernel.ports import MemoryRecall
 
 __all__ = [
     "MaterialOrigin",

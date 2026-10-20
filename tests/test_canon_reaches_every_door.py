@@ -60,11 +60,11 @@ from bob.application.router.llm_router import LLMRequest, LLMRouter, TaskType
 from bob.application.usecases.handle_message import PersonalityState
 from bob.application.usecases.heartbeat import ReflectTick
 from bob.application.usecases.privileged_fulfiller import PrivilegedRequestFulfiller
-from bob.capabilities.ports import ToolCallResult
 from bob.capabilities.usecases.registry import CapabilityRegistry
 from bob.capabilities.usecases.tool_loop import ToolLoop
 from bob.coding.usecases.distill_work_journal import Tier0WorkJournalDistiller
 from bob.coding.work_facts import SessionKeyFacts, WorkOutcome
+from bob.kernel.ports import ToolCallResult
 from bob.memory.self_action import SelfAction, SelfActionKind, describe_self_action
 from bob.memory.usecases.consolidate_memory import ConsolidateMemory
 from bob.memory.usecases.extract_facts import ExtractFacts
@@ -84,8 +84,8 @@ from bob.social.interlocutor import Interlocutor, InterlocutorKind, Trust
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Mapping, Sequence
 
-    from bob.capabilities.ports import Permission, ToolDefinition
-    from bob.kernel.ports import ToolLoopMessage
+    from bob.capabilities.ports import Permission
+    from bob.kernel.ports import ToolDefinition, ToolLoopMessage
     from bob.personality.fascination import Fascination
 
 _PROSE_CANON = guppi_voice_canon(prose_answer=True)
