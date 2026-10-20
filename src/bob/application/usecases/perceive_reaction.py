@@ -37,6 +37,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Protocol
 
+from bob.kernel.relationship import Relationship
 from bob.personality.mood import MoodDelta
 from bob.personality.reaction_effect import (
     NotableReaction,
@@ -44,18 +45,17 @@ from bob.personality.reaction_effect import (
     nudge_relationship_warmth,
 )
 from bob.personality.reaction_meaning import ReactionContext
-from bob.social.relationship import Relationship
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
     from bob.kernel.events import BobMessageReaction
+    from bob.kernel.interlocutor import Interlocutor
     from bob.kernel.ports import Clock
     from bob.personality.disposition import Disposition
     from bob.personality.ports import NotableReactionStore
     from bob.personality.reaction_meaning import ReactionJudge, ReactionMeaning
     from bob.personality.state import PersonalityState
-    from bob.social.interlocutor import Interlocutor
     from bob.social.ports import RelationshipStore
 
 logger = logging.getLogger(__name__)

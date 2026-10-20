@@ -123,6 +123,7 @@ from bob.conversation.usecases.verify_step import (
     VerifyStep,
 )
 from bob.conversation.zone_classifier import TasteZoneClassifier
+from bob.kernel.interlocutor import InterlocutorKind, Trust
 from bob.kernel.modulators import RuleModulators
 from bob.memory.entities import EpisodicEvent
 from bob.memory.register_pipeline import pool_has_work, register_ranked
@@ -148,7 +149,6 @@ from bob.personality.voice import (
 from bob.presence.staleness import StalenessOutcome
 from bob.proactivity.self_improvement import _validated_magnitude, build_modulators
 from bob.social.disclosure import filter_surfaceable, visibility_for_scope
-from bob.social.interlocutor import InterlocutorKind, Trust
 from bob.social.usecases.social_context import SocialContext
 
 if TYPE_CHECKING:
@@ -178,6 +178,7 @@ if TYPE_CHECKING:
     from bob.conversation.volatility_judgment import VolatilityJudge
     from bob.kernel.episode_types import Recalled
     from bob.kernel.events import MessageReceived
+    from bob.kernel.interlocutor import Interlocutor
     from bob.kernel.ports import (
         BobUserIdSource,
         Clock,
@@ -186,6 +187,9 @@ if TYPE_CHECKING:
         ReplyGateway,
         ToolCallingProvider,
     )
+    from bob.kernel.relationship import Relationship
+    from bob.kernel.roster import RosterMember
+    from bob.kernel.sulk import SulkState
     from bob.memory.ports import SelfActionRecorder
     from bob.memory.usecases.extract_facts import ExtractFacts
     from bob.memory.usecases.resolve_register import RegisterResolver
@@ -199,7 +203,6 @@ if TYPE_CHECKING:
     from bob.personality.state import PersonalityState
     from bob.personality.usecases.update_mood_from_text import UpdateMoodFromText
     from bob.proactivity.self_improvement import ImprovementRule
-    from bob.social.interlocutor import Interlocutor
     from bob.social.ports import (
         FirstImpressionReader,
         InterlocutorResolver,
@@ -207,9 +210,6 @@ if TYPE_CHECKING:
         RosterRecaller,
         SulkReader,
     )
-    from bob.social.relationship import Relationship
-    from bob.social.roster import RosterMember
-    from bob.social.sulk import SulkState
 
 logger = logging.getLogger(__name__)
 

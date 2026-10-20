@@ -38,9 +38,9 @@ from bob.personality.expression import EngagementLevel, Verbosity
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
+    from bob.kernel.interlocutor import Interlocutor
+    from bob.kernel.roster import RosterMember
     from bob.personality.mood import Mood
-    from bob.social.interlocutor import Interlocutor
-    from bob.social.roster import RosterMember
 
 # Written as Bob's voice, not a checklist: how he lands a message. The few-shot
 # lines (in « ») end on substance — no trailing question, no ☕ — because the
@@ -946,7 +946,7 @@ def sulk_directive(*, intensity: float) -> str:
     personality reset (он всё ещё он, anti-Exodus) and NEVER gratuitously rude. The
     application appends it on TOP of the mood/relationship tone only while обида is
     active. Pure and argument-shaped (the intensity is the live signal the caller
-    passes from :class:`~bob.social.sulk.SulkState`); the prose pins the
+    passes from :class:`~bob.kernel.sulk.SulkState`); the prose pins the
     cold, reserved, not-rude, not-a-reset character, not exact wording.
     """
     _ = intensity  # the live signal that gates this line; the cold tone is uniform.

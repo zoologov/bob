@@ -15,8 +15,7 @@ SQL, no transport.
 from __future__ import annotations
 
 from bob.kernel.events import MessageReceived
-from bob.social.gender import Gender
-from bob.social.interlocutor import InterlocutorKind, Trust
+from bob.kernel.interlocutor import Gender, InterlocutorKind, Trust
 from bob.social.usecases import Authorizer, SenderPerception
 
 _OWNER = 1

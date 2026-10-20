@@ -15,7 +15,8 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, cast
 
 from bob.kernel.events import MessageReceived
-from bob.social.interlocutor import Interlocutor, InterlocutorKind, Trust, classify
+from bob.kernel.interlocutor import Interlocutor, InterlocutorKind, Trust
+from bob.social.interlocutor import classify
 from bob.social.usecases.first_impression_sources import FirstImpressionTracker
 from bob.social.usecases.sender_perception import SenderPerception
 

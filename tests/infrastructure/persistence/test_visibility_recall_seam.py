@@ -20,10 +20,10 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
+from bob.kernel.interlocutor import Trust
 from bob.memory.adapters.sqlite_memory_repo import SqliteMemoryRepo
 from bob.memory.entities import SemanticFact
 from bob.social.disclosure import filter_surfaceable, may_surface
-from bob.social.interlocutor import Trust
 from tests.support.fake_embedder import FakeEmbedder
 
 if TYPE_CHECKING:

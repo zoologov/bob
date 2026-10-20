@@ -11,13 +11,13 @@ contagion path), a cold one only dips, and every move stays inside the band.
 
 from __future__ import annotations
 
+from bob.kernel.relationship import Relationship
 from bob.personality.mood import Mood, MoodDelta
 from bob.personality.reaction_effect import (
     apply_reaction_to_mood,
     nudge_relationship_warmth,
 )
 from bob.personality.reaction_meaning import ReactionMeaning
-from bob.social.relationship import Relationship
 
 
 def _meaning(*, valence: float, warmth_nudge: float) -> ReactionMeaning:

@@ -60,11 +60,11 @@ if TYPE_CHECKING:
     from bob.conversation.usecases.read_the_room import ReadTheRoom
     from bob.conversation.usecases.recall_assembler import RecallAssembler
     from bob.kernel.events import MessageReceived
+    from bob.kernel.interlocutor import Interlocutor
     from bob.kernel.modulators import RuleModulators
     from bob.personality.expression import ExpressionPlan
     from bob.personality.ports import MessageReactor
     from bob.personality.soul import SOUL
-    from bob.social.interlocutor import Interlocutor
 
 logger = logging.getLogger(__name__)
 

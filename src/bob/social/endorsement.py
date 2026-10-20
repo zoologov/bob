@@ -37,7 +37,7 @@ from bob.social.relationship import endorsed_seed
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from bob.social.relationship import Relationship
+    from bob.kernel.relationship import Relationship
 
 __all__ = ["detected_endorsement", "endorsement_seed", "owner_endorsed_sender"]
 

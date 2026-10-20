@@ -8,7 +8,7 @@
 imports NO module back: the moment a kernel file reaches into ``bob.memory`` /
 ``bob.social`` / … the "inward-safe, no cycles" promise is gone, and the contracts
 that moved here (intake events, memory/reply/tool-calling ports, rule modulators,
-``Recalled``) would drag their old owners along with them.
+``Recalled``, the social vocabulary) would drag their old owners along with them.
 
 The check is the BEHAVIOUR of the assembled package, not the form of its source: every
 kernel module is imported in a fresh, isolated interpreter (``-I``, so neither the
@@ -62,4 +62,8 @@ def test_the_contracts_moved_by_bob_113_are_kernel_modules() -> None:
         "bob.kernel.ports",
         "bob.kernel.modulators",
         "bob.kernel.episode_types",
+        "bob.kernel.interlocutor",
+        "bob.kernel.relationship",
+        "bob.kernel.roster",
+        "bob.kernel.sulk",
     } <= loaded

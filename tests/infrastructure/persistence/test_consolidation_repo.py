@@ -18,13 +18,13 @@ from typing import TYPE_CHECKING
 import aiosqlite
 import pytest
 
+from bob.kernel.interlocutor import Trust
 from bob.kernel.visibility import VISIBILITY_OWNER_PRIVATE
 from bob.memory.adapters.hybrid_recall import HybridMemoryRecall
 from bob.memory.adapters.sqlite_memory_repo import SqliteMemoryRepo
 from bob.memory.usecases.consolidate_memory import ConsolidateMemory
 from bob.memory.work_journal import WORK_EVENT_TYPE
 from bob.social.disclosure import filter_surfaceable, transfer_needs_consent
-from bob.social.interlocutor import Trust
 from tests.support.fake_embedder import FakeEmbedder
 
 if TYPE_CHECKING:

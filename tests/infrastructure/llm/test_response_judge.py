@@ -21,11 +21,7 @@ from bob.conversation.adapters.response_judge import LlmResponseJudge
 from bob.conversation.addressivity import Addressivity
 from bob.conversation.response_choice import ResponseContext, ResponseIntent
 from bob.conversation.response_judgment import ResponseJudgeParseError
-from bob.social.interlocutor import (
-    Interlocutor,
-    InterlocutorKind,
-    Trust,
-)
+from bob.kernel.interlocutor import Interlocutor, InterlocutorKind, Trust
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Mapping, Sequence

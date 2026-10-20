@@ -57,14 +57,14 @@ if TYPE_CHECKING:
     from bob.conversation.conversation import RepeatThresholds
     from bob.conversation.ports import CloserLog
     from bob.kernel.episode_types import Recalled
+    from bob.kernel.interlocutor import Interlocutor
     from bob.kernel.modulators import RuleModulators
     from bob.kernel.ports import EpisodeReader
+    from bob.kernel.relationship import Relationship
+    from bob.kernel.roster import RosterMember
+    from bob.kernel.sulk import SulkState
     from bob.personality.expression import ExpressionPlan
     from bob.personality.soul import SOUL
-    from bob.social.interlocutor import Interlocutor
-    from bob.social.relationship import Relationship
-    from bob.social.roster import RosterMember
-    from bob.social.sulk import SulkState
 
 logger = logging.getLogger(__name__)
 

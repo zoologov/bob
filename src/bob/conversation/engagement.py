@@ -43,9 +43,9 @@ if TYPE_CHECKING:
     from datetime import datetime
     from random import Random
 
+    from bob.kernel.relationship import Relationship
     from bob.personality.mood import Mood
     from bob.personality.taste import Verdict
-    from bob.social.relationship import Relationship
 
 __all__ = [
     "ConversationalFatigue",

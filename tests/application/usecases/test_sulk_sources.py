@@ -17,7 +17,8 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
-from bob.social.sulk import SulkConfig, SulkState
+from bob.kernel.sulk import SulkState
+from bob.social.sulk import SulkConfig
 from bob.social.usecases.sulk_sources import (
     GroupSilentAnnouncer,
     SulkRecoveryStep,

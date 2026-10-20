@@ -12,7 +12,7 @@ The wiring seam that lets Bob *perceive* WHO is writing: it composes the unchang
 access policy (:class:`~bob.social.usecases.authorizer.Authorizer`) with the pure
 domain :func:`~bob.social.interlocutor.classify` so a received
 :class:`~bob.kernel.events.MessageReceived` becomes an
-:class:`~bob.social.interlocutor.Interlocutor` (owner / known / guest /
+:class:`~bob.kernel.interlocutor.Interlocutor` (owner / known / guest /
 bot + trust). :class:`~bob.application.usecases.handle_message.HandleMessage` folds
 that identity into Bob's voice.
 
@@ -28,12 +28,12 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Protocol
 
-from bob.social.gender import Gender
-from bob.social.interlocutor import Interlocutor, classify
+from bob.kernel.interlocutor import Gender, Interlocutor
+from bob.social.interlocutor import classify
 
 if TYPE_CHECKING:
     from bob.kernel.events import MessageReceived
-    from bob.social.interlocutor import InterlocutorKind
+    from bob.kernel.interlocutor import InterlocutorKind
     from bob.social.usecases.authorizer import Authorizer
 
 

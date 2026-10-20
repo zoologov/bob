@@ -20,7 +20,7 @@ runtime-порядку вертикалей; `no-dependency-cycles` возвра
 | старт (bd7e877) | 98 | 30 | 904 | 15 | exit 1 |
 | W1 `.1` | 89 (83 произв.) | 18 | 192 | 13 | exit 1 (только cycles; `no-monster-modules-capabilities` ушёл) |
 | W2 `.2` ‖ `.3` | не замерялось | не замерялось | **14** (`.2`+`.3` вместе; изолированно от W1: `.2` 192 → 23, `.3` 192 → 144) | **6** (`memory:proactivity`, `memory:telegram`, `personality:conversation`, `personality:proactivity`, `personality:social`, `social:conversation`; `.2` снял 6 пар `*:usecases`/`usecases:*`, `.3` — `capabilities:conversation`) | exit 1 (только cycles, 0 не-cycle) |
-| W3 `.4` | | | | | **0 / exit 0** (цель) |
+| W3 `.4` | 81 (75 произв.) | 9 (все вниз или в kernel/слой: `capabilities→bob-domain`, `coding→bob-domain`, `coding→capabilities`, `interactive→identity`, `personality→bob-domain`, `runtime-app→bob-domain`, `social→conversation`, `telegram→memory`, `usecases→runtime-app`) | **0** | **0** | **exit 0** — 0 `:error:`-строк (38 строк вывода: 36 `rule_liveness` warn + 1 `layer_population` warn + заголовок). Кусачесть: TYPE_CHECKING-импорт `bob.social.roster` в `personality/voice.py` → exit 1, 5 cycle-пар вернулись; снят точечной правкой |
 
 > W1 замер тем же способом на `HEAD` (2804199, src = bd7e877) и после `.1`, релизный 9.0.0, чистый
 > индекс: depends_on 99 → 89 (производных 93 → 83); type-only (все импорт-строки ребра под
@@ -29,11 +29,16 @@ runtime-порядку вертикалей; `no-dependency-cycles` возвра
 > `capabilities/ports.py`); пар циклов 15 → 13. Строка «старт» выше (98/30) — замер BOB-112 .2
 > другим способом; расхождение на 1/1 не разбиралось.
 
+> W3 замер: релизный 9.0.0, чистый индекс, после `.4`. depends_on — `count(*) from edges where
+> kind='depends_on'` (81; из них с `derived` в `extra` — 75). type-only — ребро из `depends_on`,
+> все импорт-строки которого (`code_imports`, файл → узел по самому длинному `source`-префиксу)
+> лежат под `if TYPE_CHECKING:` (ast) — 9; ни одно не идёт вверх по runtime-порядку вертикалей.
+
 ## Прогресс
 
 - [x] W1 `.1` dev — RFC C (kernel) — 7988 passed / 16 skipped, ruff/mypy src+tests чисто
 - [ ] W2 `.2` dev — RFC A+B (владельцам) ‖ `.3` dev — RFC E (ISP)
-- [ ] W3 `.4` dev — RFC D (социальный словарь в kernel)
+- [x] W3 `.4` dev — RFC D (социальный словарь в kernel) — 7990 passed / 16 skipped, ruff/mypy src+tests чисто, lint --strict exit 0
 - [ ] W4 `.5` test → `.6` review → `.7` tech-writer
 - [ ] PR `features/BOB-113 → features/BOB-112`, закрытие BOB-112 `.2`
 
@@ -54,7 +59,7 @@ runtime-порядку вертикалей; `no-dependency-cycles` возвра
 | 11 | `InterlocutorResolver`, `FirstImpressionReader`, `RelationshipReader`, `RosterRecaller`, `SulkReader` | `handle_message.py` | `social/ports.py` | .2 | ✓ |
 | 12 | `CurrentFascinationReader` | `handle_message.py` | `personality/ports.py` | .2 | ✓ |
 | 13 | `WebSearchProvider` в `verify_step` | `capabilities/ports.py` | `VerifySearch`/`HasAnswer` в `conversation/ports.py` (`answer` — read-only property: frozen `WebSearchResult` не проходит settable-атрибут, замер mypy) | .3 | ✓ |
-| 14 | `Interlocutor`, `InterlocutorKind`, `Trust`, `Gender`(Enum) | `social/interlocutor.py`, `social/gender.py` | `kernel/interlocutor.py` | .4 | |
-| 15 | `Relationship` | `social/relationship.py` | `kernel/relationship.py` | .4 | |
-| 16 | `RosterMember` | `social/roster.py` | `kernel/roster.py` | .4 | |
-| 17 | `SulkState` | `social/sulk.py` | `kernel/sulk.py` | .4 | |
+| 14 | `Interlocutor`, `InterlocutorKind`, `Trust`, `Gender`(Enum) | `social/interlocutor.py`, `social/gender.py` | `kernel/interlocutor.py` | .4 | ✓ |
+| 15 | `Relationship` | `social/relationship.py` | `kernel/relationship.py` | .4 | ✓ |
+| 16 | `RosterMember` | `social/roster.py` | `kernel/roster.py` | .4 | ✓ |
+| 17 | `SulkState` | `social/sulk.py` | `kernel/sulk.py` | .4 | ✓ |

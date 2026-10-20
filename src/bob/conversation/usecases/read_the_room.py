@@ -29,7 +29,7 @@ from bob.conversation.room_reading import RoomReadingContext
 if TYPE_CHECKING:
     from bob.conversation.addressivity import Addressivity
     from bob.conversation.room_reading import RoomReader, RoomReading
-    from bob.social.interlocutor import Interlocutor
+    from bob.kernel.interlocutor import Interlocutor
 
 __all__ = ["ReadTheRoom"]
 

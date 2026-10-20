@@ -32,9 +32,9 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from datetime import datetime
 
+    from bob.kernel.relationship import Relationship
     from bob.personality.mood import Mood
     from bob.personality.reaction_meaning import ReactionMeaning
-    from bob.social.relationship import Relationship
 
 __all__ = [
     "NotableReaction",

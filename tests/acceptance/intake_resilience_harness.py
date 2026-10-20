@@ -31,8 +31,8 @@ from bob.coding.adapters.session_store import SqliteCodingSessionStore
 from bob.coding.entities import CodingSession
 from bob.coding.state import CodingSessionState
 from bob.kernel.events import MessageReceived
+from bob.kernel.interlocutor import Interlocutor, InterlocutorKind, Trust
 from bob.memory.adapters.sqlite_memory_repo import SqliteMemoryRepo
-from bob.social.interlocutor import Interlocutor, InterlocutorKind, Trust
 
 if TYPE_CHECKING:
     from pathlib import Path

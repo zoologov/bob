@@ -26,7 +26,7 @@ from bob.conversation.room_reading_wire import (
     build_batch_room_prompt,
     parse_batch_reading,
 )
-from bob.social.interlocutor import InterlocutorKind
+from bob.kernel.interlocutor import InterlocutorKind
 
 
 def _msg(

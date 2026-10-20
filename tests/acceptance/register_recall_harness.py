@@ -39,6 +39,7 @@ from typing import TYPE_CHECKING
 
 from bob.application.router.llm_router import LLMRouter
 from bob.kernel.events import MessageReceived
+from bob.kernel.interlocutor import Trust
 from bob.memory.adapters.fts_recall import Fts5MemoryRecall
 from bob.memory.adapters.sqlite_memory_repo import SqliteMemoryRepo
 from bob.memory.register_pipeline import pool_has_work, register_ranked
@@ -47,7 +48,6 @@ from bob.memory.usecases.resolve_register import RegisterResolver
 from bob.memory.work_journal import WORK_EVENT_TYPE
 from bob.personality.voice import recall_has_work, recalled_work_directive
 from bob.social.disclosure import filter_surfaceable
-from bob.social.interlocutor import Trust
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Mapping, Sequence

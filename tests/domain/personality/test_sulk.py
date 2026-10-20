@@ -18,12 +18,8 @@ from datetime import UTC, datetime
 
 import pytest
 
-from bob.social.sulk import (
-    SulkConfig,
-    SulkState,
-    observe_relationship,
-    recover,
-)
+from bob.kernel.sulk import SulkState
+from bob.social.sulk import SulkConfig, observe_relationship, recover
 
 _NOW = datetime(2026, 6, 20, 14, 0, tzinfo=UTC)
 # A warmth comfortably below the default critical threshold.

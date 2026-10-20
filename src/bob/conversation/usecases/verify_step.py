@@ -41,7 +41,7 @@ if TYPE_CHECKING:
 
     from bob.conversation.ports import VerifySearch
     from bob.conversation.volatility_judgment import VolatilityJudge
-    from bob.social.interlocutor import Interlocutor
+    from bob.kernel.interlocutor import Interlocutor
 
 logger = logging.getLogger(__name__)
 

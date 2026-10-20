@@ -26,7 +26,7 @@ from bob.conversation.room_reading import (
     RoomReading,
 )
 from bob.kernel.events import MessageReceived
-from bob.social.interlocutor import InterlocutorKind
+from bob.kernel.interlocutor import InterlocutorKind
 
 
 def _msg(

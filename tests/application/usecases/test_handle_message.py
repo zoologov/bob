@@ -83,7 +83,11 @@ from bob.conversation.volatility_judgment import (
 from bob.infrastructure.llm.fallback_provider import build_fallback_provider
 from bob.infrastructure.telegram.gateway import TelegramGateway
 from bob.kernel.events import MessageReceived
+from bob.kernel.interlocutor import Interlocutor, InterlocutorKind, Trust
 from bob.kernel.ports import ToolCall, ToolCallResult
+from bob.kernel.relationship import Relationship
+from bob.kernel.roster import RosterMember
+from bob.kernel.sulk import SulkState
 from bob.memory.adapters.casual_floor_recall import CasualFloorRecall
 from bob.memory.usecases.extract_facts import ExtractFacts
 from bob.memory.usecases.resolve_register import RegisterResolver
@@ -107,15 +111,7 @@ from bob.proactivity.self_improvement import (
     RuleOrigin,
     RuleState,
 )
-from bob.social.interlocutor import (
-    Interlocutor,
-    InterlocutorKind,
-    Trust,
-)
 from bob.social.permission.privilege import PrivilegeContext, PrivilegeNeed
-from bob.social.relationship import Relationship
-from bob.social.roster import RosterMember
-from bob.social.sulk import SulkState
 
 if TYPE_CHECKING:
     from collections.abc import (

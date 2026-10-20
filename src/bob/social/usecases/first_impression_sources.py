@@ -12,7 +12,7 @@ A thin application adapter that keeps :class:`HandleMessage` pure of store/clock
 plumbing for Bob's LIGHT per-person first impression:
 
 * :meth:`FirstImpressionTracker.prior_impression` reads any PRIOR impression note
-  for the perceived :class:`~bob.social.interlocutor.Interlocutor` (a
+  for the perceived :class:`~bob.kernel.interlocutor.Interlocutor` (a
   returning sender → his stored note; a new one → ``None``), so the compose path
   can fold "этого человека ты уже видел; впечатление было такое-то" into the prompt.
 * :meth:`FirstImpressionTracker.note_first_contact` records a fresh, grounded note
@@ -37,8 +37,8 @@ from bob.social.first_impression import (
 )
 
 if TYPE_CHECKING:
+    from bob.kernel.interlocutor import Interlocutor
     from bob.kernel.ports import Clock
-    from bob.social.interlocutor import Interlocutor
     from bob.social.ports import FirstImpressionStore
 
 

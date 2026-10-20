@@ -19,10 +19,10 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from bob.kernel.sulk import SulkState
 from bob.memory.adapters.sqlite_memory_repo import SqliteMemoryRepo
 from bob.social.adapters.person_sulk_store import SqlitePersonSulkStore
 from bob.social.adapters.sulk_store import SqliteSulkStore
-from bob.social.sulk import SulkState
 
 if TYPE_CHECKING:
     from pathlib import Path

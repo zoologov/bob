@@ -52,6 +52,16 @@
 Собирает `proactivity` (`build_modulators`), применяют `conversation` и `personality`
 (ниже `proactivity`) → значение в ядре (BOB-113).
 
+#### Социальный словарь — `interlocutor.py`, `relationship.py`, `roster.py`, `sulk.py`
+
+Значения «кто говорит с Бобом и как он к нему относится» (BOB-113, RFC D):
+`Interlocutor` + `InterlocutorKind` + `Trust` + `Gender` (Enum) — в `interlocutor.py`,
+`Relationship` (4 оси, `MIN_AXIS`/`MAX_AXIS`) — в `relationship.py`, `RosterMember` — в
+`roster.py`, `SulkState` (`MIN_INTENSITY`/`MAX_INTENSITY`) — в `sulk.py`. Их читают
+`conversation`, `personality`, `memory` — ниже `social`, поэтому значения в ядре; поведение
+(`classify`, `detect_self_gender`, `apply_interaction`, `build_roster`,
+`observe_relationship`/`recover`) осталось в `social`.
+
 #### Общий словарь — `episode_types.py`
 
 Термины эпизодического лога (`event_type`), о которых договорились НЕСКОЛЬКО контекстов:
@@ -150,7 +160,7 @@ kernel — чистый inward-safe leaf: только stdlib/typing, любой
 | **personality** | `Mood`, `MoodDelta`, `TasteEngine`/`Verdict`, `Negotiation`/`Stance`, `SOUL`, `voice`, семейство `reaction` | [`../personality/README.md`](../personality/README.md) |
 | **memory** | `EpisodicEvent`, `SemanticFact`; порты `MemoryRepo`/`Embedder`/`Reranker` (`MemoryRecall` — в kernel, BOB-113) | [`../memory/README.md`](../memory/README.md) |
 | **conversation** | адресность, conversational floor, brevity, engagement, судьи отклика; порты `ConversationFloorStore`/`CloserLog`/`ZoneClassifier` | [`../conversation/README.md`](../conversation/README.md) |
-| **social** | идентичность собеседника, первое впечатление, отношения, permission; порты `AllowlistStore`/`SoulStore`/… | [`../social/README.md`](../social/README.md) |
+| **social** | поведение над социальным словарём ядра (`classify`, род по само-презентации, накопление отношений, ростер, обида), первое впечатление, permission; порты `AllowlistStore`/`SoulStore`/… | [`../social/README.md`](../social/README.md) |
 | **proactivity** | `UrgeModel`, `SocialEnergy`, `Governance`, `ProactiveDecider`, `ProactivityState` | [`../proactivity/README.md`](../proactivity/README.md) |
 | **capabilities** | `Capability`-контракт (словарь вызова инструментов `ToolCall`/`ToolCallResult`/`ToolDefinition` — в kernel, BOB-113), чистые diagrams/introspection | [`../capabilities/README.md`](../capabilities/README.md) |
 | **coding** | доменное состояние сессии кодинга, переходы, narrate; порты `ClaudeCodeRunner`/`Worktree`/… | [`../coding/README.md`](../coding/README.md) |

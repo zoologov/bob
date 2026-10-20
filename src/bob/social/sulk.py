@@ -29,6 +29,9 @@ exit). Crucially, обида touches NO memory and NO soul — Bob "отходи
   обида ends and the one-shot ``announced`` flag is cleared so a future entry announces
   afresh.
 
+The state value — :class:`~bob.kernel.sulk.SulkState` — lives in the shared kernel
+(BOB-113, RFC D: modules below ``social`` read it); this module owns its dynamics.
+
 No I/O, no clock — elapsed time and signals are passed in (the clock lives in the
 application layer), so every transition is deterministic and unit-testable.
 """
@@ -38,19 +41,16 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING
 
+from bob.kernel.sulk import MAX_INTENSITY, MIN_INTENSITY, SulkState
+
 if TYPE_CHECKING:
     from datetime import datetime
 
 __all__ = [
     "SulkConfig",
-    "SulkState",
     "observe_relationship",
     "recover",
 ]
-
-# Intensity is a bounded scalar in the closed unit interval [0, 1].
-_MIN_INTENSITY = 0.0
-_MAX_INTENSITY = 1.0
 
 # Default critical warmth: the OWNER relationship warmth at/below which a turn counts
 # as a "low" observation toward обида. Negative, so only a genuinely cold relationship
@@ -79,7 +79,7 @@ _DEFAULT_WARMTH_DECAY_BONUS = 0.3
 
 def _clamp_intensity(value: float) -> float:
     """Saturate ``value`` into the [0, 1] intensity bounds rather than overflowing."""
-    return max(_MIN_INTENSITY, min(_MAX_INTENSITY, value))
+    return max(MIN_INTENSITY, min(MAX_INTENSITY, value))
 
 
 @dataclass(frozen=True, slots=True)
@@ -102,26 +102,6 @@ class SulkConfig:
     exit_intensity: float = _DEFAULT_EXIT_INTENSITY
     decay_per_second: float = _DEFAULT_DECAY_PER_SECOND
     warmth_decay_bonus: float = _DEFAULT_WARMTH_DECAY_BONUS
-
-
-@dataclass(frozen=True, slots=True)
-class SulkState:
-    """Bob's обида state — active flag, bounded intensity, entry stamp, and flags.
-
-    ``active`` — whether Bob is обижен right now; ``intensity`` — how hurt (0..1),
-    decaying toward exit; ``low_streak`` — the running count of consecutive low/hostile
-    observations (resets on a healthy turn), the "sustaining" half of the entry
-    threshold; ``since`` — when this обида was entered (``None`` when not sulking);
-    ``announced`` — the one-shot flag so GUPPI announces обида exactly once per entry.
-    This carries NO memory and NO soul — an обида never touches Bob's identity (anti-
-    Exodus).
-    """
-
-    active: bool = False
-    intensity: float = _MIN_INTENSITY
-    low_streak: int = 0
-    since: datetime | None = None
-    announced: bool = False
 
 
 def observe_relationship(

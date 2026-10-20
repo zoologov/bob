@@ -29,14 +29,14 @@ if TYPE_CHECKING:
     from datetime import datetime
 
     from bob.kernel.events import MessageReceived
+    from bob.kernel.interlocutor import Interlocutor
     from bob.kernel.ports import JsonValue
+    from bob.kernel.relationship import Relationship
+    from bob.kernel.roster import RosterMember
+    from bob.kernel.sulk import SulkState
     from bob.personality.mood import Mood
     from bob.personality.negotiation import Stance
     from bob.social.first_impression import FirstImpression
-    from bob.social.interlocutor import Interlocutor
-    from bob.social.relationship import Relationship
-    from bob.social.roster import RosterMember
-    from bob.social.sulk import SulkState
 
 __all__ = [
     "AllowlistStore",
@@ -141,7 +141,7 @@ class FirstImpressionStore(Protocol):
 class RelationshipStore(Protocol):
     """Durable per-sender store for Bob's relationship quality (BOB-014).
 
-    Round-trips the :class:`bob.social.relationship.Relationship` Bob has
+    Round-trips the :class:`bob.kernel.relationship.Relationship` Bob has
     with each person — the four bounded axes (trust / respect / warmth /
     compatibility) — so a relationship accrued over many turns survives a restart and
     keeps shaping his tone + willingness to compromise. Keyed by ``sender_id`` it
@@ -166,7 +166,7 @@ class RelationshipStore(Protocol):
 class SulkStore(Protocol):
     """Durable per-persona store for Bob's обида state (BOB-014 .2b).
 
-    Round-trips the :class:`bob.social.sulk.SulkState` Bob carries — the
+    Round-trips the :class:`bob.kernel.sulk.SulkState` Bob carries — the
     active flag, the decaying intensity, the low/hostile streak, the entry stamp, and
     the one-shot ``announced`` flag — so an обида (and its recovery progress) survives
     a restart. State is per ``persona_id`` so Bobiverse replicas each keep their own.
@@ -191,7 +191,7 @@ class PersonSulkStore(Protocol):
 
     Generalises :class:`SulkStore` by ``sender_id`` so Bob can cool toward a single
     participant of a multi-party thread without touching his tone toward anyone else —
-    a per-``(persona_id, sender_id)`` :class:`~bob.social.sulk.SulkState` carrying the
+    a per-``(persona_id, sender_id)`` :class:`~bob.kernel.sulk.SulkState` carrying the
     same active flag / decaying intensity / low-hostile streak / entry stamp / one-shot
     ``announced`` flag. Keyed by ``sender_id`` it is participant-agnostic (ready for a
     future Bob-to-Bob thread). ``load`` returns the fresh, not-sulking default for an
@@ -219,7 +219,7 @@ class InterlocutorResolver(Protocol):
     """Perception seam: WHO is writing this turn (BOB-019).
 
     Resolves the inbound :class:`MessageReceived` into an
-    :class:`~bob.social.interlocutor.Interlocutor` — the sender's
+    :class:`~bob.kernel.interlocutor.Interlocutor` — the sender's
     social identity (owner / known / guest / bot + trust) — so the compose path can
     fold WHO is on the other side into Bob's voice. The concrete adapter derives it
     from the :class:`~bob.social.usecases.Authorizer` (``is_owner`` +
@@ -279,7 +279,7 @@ class RelationshipReader(Protocol):
 
     The compose path uses this to let Bob's accrued relationship with WHO is writing
     shape THIS turn: :meth:`current` returns the stored
-    :class:`~bob.social.relationship.Relationship` (an unknown sender →
+    :class:`~bob.kernel.relationship.Relationship` (an unknown sender →
     ``None``) so the prompt can warm/cool his tone (by ``warmth``) and the negotiation
     can nudge his willingness to compromise (by ``warmth`` + ``compatibility``);
     :meth:`record_interaction` updates + persists the relationship AFTER the turn from
@@ -310,7 +310,7 @@ class SulkReader(Protocol):
 
     The compose path uses this to go COLD while Bob is hurt at the CURRENT interlocutor
     and to let обида take hold or warm up over the live message path: :meth:`current_for`
-    returns the persisted :class:`~bob.social.sulk.SulkState` for ONE ``sender_id`` so the
+    returns the persisted :class:`~bob.kernel.sulk.SulkState` for ONE ``sender_id`` so the
     prompt appends the cold :func:`~bob.personality.voice.sulk_directive` while ``active``
     — an обида toward another participant never chills THIS reply (addressed cooling);
     :meth:`observe` folds ONE person's turn signals (their relationship ``person_warmth``,

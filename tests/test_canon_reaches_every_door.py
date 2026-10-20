@@ -63,6 +63,7 @@ from bob.capabilities.usecases.registry import CapabilityRegistry
 from bob.capabilities.usecases.tool_loop import ToolLoop
 from bob.coding.usecases.distill_work_journal import Tier0WorkJournalDistiller
 from bob.coding.work_facts import SessionKeyFacts, WorkOutcome
+from bob.kernel.interlocutor import Interlocutor, InterlocutorKind, Trust
 from bob.kernel.ports import ToolCallResult
 from bob.memory.self_action import SelfAction, SelfActionKind, describe_self_action
 from bob.memory.usecases.consolidate_memory import ConsolidateMemory
@@ -79,7 +80,6 @@ from bob.personality.usecases.reappraise_reflection import ReappraiseReflection
 from bob.personality.usecases.voice_composer import _SYSTEM_PROMPT as _PERSONA_SYSTEM_PROMPT
 from bob.personality.voice import guppi_no_roleplay_directive, guppi_voice_canon
 from bob.proactivity.usecases.engine import _COMPOSE_SYSTEM
-from bob.social.interlocutor import Interlocutor, InterlocutorKind, Trust
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Mapping, Sequence

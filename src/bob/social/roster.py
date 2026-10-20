@@ -12,8 +12,10 @@ Bob keeps recent acquaintances "in his head" the way a person does — able to N
 lately turned up in the room, telling newcomers (by time) from old-timers. This module
 is the deterministic, I/O-free heart of that:
 
-* :class:`RosterMember` — one named person on the roster: who (``sender_id``), their
-  ``name``, WHEN Bob first met them, and whether they are a ``is_newcomer`` (fresh).
+* :class:`~bob.kernel.roster.RosterMember` — one named person on the roster: who
+  (``sender_id``), their ``name``, WHEN Bob first met them, and whether they are a
+  ``is_newcomer`` (fresh). The value lives in the shared kernel (BOB-113, RFC D);
+  the behaviour that builds a roster stays here.
 * :func:`is_newcomer` — strictly time-based (INV-3): someone is "new" purely because
   Bob met them within ``newcomer_days`` — never by authz-kind. Tolerant of a legacy
   naive stamp (read as UTC) so it never raises on the subtraction.
@@ -25,30 +27,21 @@ is the deterministic, I/O-free heart of that:
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
+
+from bob.kernel.roster import RosterMember
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from bob.social.first_impression import FirstImpression
 
-__all__ = ["RosterMember", "build_roster", "is_newcomer", "member_name"]
+__all__ = ["build_roster", "is_newcomer", "member_name"]
 
 # The note is written as ``"{name} — …"`` (impression_note_for), so a legacy row with
 # no display_name yields the name as the head of the note before this separator.
 _NAME_SEPARATOR = " — "
-
-
-@dataclass(frozen=True, slots=True)
-class RosterMember:
-    """One named person Bob recalls on the roster: who, name, when-met, newcomer?"""
-
-    sender_id: int
-    name: str
-    first_seen_at: datetime
-    is_newcomer: bool
 
 
 def _as_aware(moment: datetime) -> datetime:

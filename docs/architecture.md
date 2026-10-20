@@ -39,7 +39,10 @@ domain`. Домен не импортирует ничего наружу; пр�
 src/bob/
   kernel/            # 🔴 SHARED KERNEL (BOB-062.8): инфра-нейтральные кросс-модульные
                      #   контракты — Clock, DomainEvent, EventBus, EventHandler,
-                     #   JsonValue, LLMMessage, LLMProvider. Чистый inward-safe leaf
+                     #   JsonValue, LLMMessage, LLMProvider; с BOB-113 ещё события
+                     #   интейка, порты памяти/ответа/tool-calling, RuleModulators и
+                     #   социальный словарь (Interlocutor/Trust/Gender, Relationship,
+                     #   RosterMember, SulkState; поведение — в social). Чистый inward-safe leaf
                      #   (только stdlib/typing); любой модуль может импортить,
                      #   kernel НЕ импортит модули (правила kernel-no-*).
   <module>/          # 8 ВЕРТИКАЛЬНЫХ бизнес-модулей (domain-first, BOB-062): coding,

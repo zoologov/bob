@@ -14,7 +14,7 @@ can cool toward ONE participant of a multi-party thread without touching his ton
 anyone else:
 
 * :meth:`SulkTracker.current_for` LOADS the persisted
-  :class:`~bob.social.sulk.SulkState` for ONE ``sender_id`` so the compose path can go
+  :class:`~bob.kernel.sulk.SulkState` for ONE ``sender_id`` so the compose path can go
   cold for the CURRENT interlocutor (an обида on Лёша never chills a reply to Владимир).
 * :meth:`SulkTracker.current_active` reads the OWNER's обида — the proactivity sulk veto
   (Bob does not write first while обижен at his person).
@@ -46,8 +46,9 @@ if TYPE_CHECKING:
     from datetime import datetime
 
     from bob.kernel.ports import Clock
+    from bob.kernel.sulk import SulkState
     from bob.social.ports import PersonSulkStore
-    from bob.social.sulk import SulkConfig, SulkState
+    from bob.social.sulk import SulkConfig
 
 logger = logging.getLogger(__name__)
 
@@ -65,7 +66,7 @@ class SulkAnnouncer(Protocol):
     On a FRESH entry into обида GUPPI posts a single system line ("Боб обижен и сейчас
     не хочет разговаривать") into the chat the owner sees — the внеличностный systemic
     voice, NOT Bob himself. It fires exactly once per entry (the one-shot ``announced``
-    flag on :class:`~bob.social.sulk.SulkState` guards repeats). Best-effort
+    flag on :class:`~bob.kernel.sulk.SulkState` guards repeats). Best-effort
     and optional: with no announcer wired the entry is silent and обида still takes hold.
     """
 

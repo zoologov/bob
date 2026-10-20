@@ -35,16 +35,16 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Protocol
 
-from bob.social.interlocutor import InterlocutorKind
+from bob.kernel.interlocutor import InterlocutorKind
 from bob.social.roster import build_roster
 
 if TYPE_CHECKING:
     from collections.abc import Callable
     from datetime import datetime
 
+    from bob.kernel.interlocutor import Interlocutor
+    from bob.kernel.roster import RosterMember
     from bob.social.first_impression import FirstImpression
-    from bob.social.interlocutor import Interlocutor
-    from bob.social.roster import RosterMember
 
 logger = logging.getLogger(__name__)
 

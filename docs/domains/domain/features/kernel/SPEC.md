@@ -10,7 +10,9 @@
 (`MessageReceived`, `BobMessageReaction`), порты, которые читают модули ниже их прежнего
 владельца (`EpisodeReader`, `MemoryRecall`, `ReplyGateway`, `BobUserIdSource`, словарь
 tool-calling'а `ToolDefinition`/`ToolCall`/`ToolCallResult`/`ToolCallingProvider`), и
-модуляторы самоулучшения (`RuleModulators`) — последние четыре группы переехали сюда в
+модуляторы самоулучшения (`RuleModulators`) и социальный словарь — кто говорит с Бобом и
+как он к нему относится (`Interlocutor`, `InterlocutorKind`, `Trust`, `Gender`,
+`Relationship`, `RosterMember`, `SulkState`) — последние пять групп переехали сюда в
 BOB-113, чтобы сигнатуры модулей не тянули рёбер вверх по runtime-порядку. Это *только контракты и слова* —
 структурные `typing.Protocol` и константы, без реализаций. Классический DDD shared
 kernel: любой модуль (`capabilities` / `social` / `memory` / …) импортирует **отсюда**,
@@ -89,6 +91,15 @@ BOB-062.8 эти контракты лежали в снятом слое-first 
   `proactivity/self_improvement.py` в BOB-113): замороженный набор мягких наклонов
   (`voice_adjustments`, `length_step`, `proactivity_bias`, `addressivity_bias`, `has_any()`).
   Собирает его `proactivity` (`build_modulators`), применяют `conversation` и `personality`.
+- **interlocutor.py / relationship.py / roster.py / sulk.py** — социальный словарь
+  (BOB-113, RFC D; переехал из одноимённых модулей `social/`): `Interlocutor` +
+  `InterlocutorKind` + `Trust` + `Gender` (Enum), `Relationship` (4 оси в
+  `[MIN_AXIS, MAX_AXIS]`, валидация в `__post_init__`), `RosterMember`, `SulkState`
+  (`intensity` в `[MIN_INTENSITY, MAX_INTENSITY]`). Это только ЗНАЧЕНИЯ: их читают
+  `conversation`, `personality`, `memory` — ниже `social` по runtime-порядку. Поведение
+  (`classify`, `detect_self_gender`/`GenderRead`, `apply_interaction`, `build_roster`,
+  `observe_relationship`/`recover`) остаётся в `social` и импортирует значения отсюда;
+  ре-экспортов по старым путям нет.
 - **visibility.py** — общий словарь оси ПРИВАТНОСТИ и правило наследования метки
   производной записью (bob-g7t).
   - `VISIBILITY_PUBLIC` (`"public"`) / `VISIBILITY_OWNER_PRIVATE` (`"owner_private"`) —
@@ -170,6 +181,21 @@ BOB-062.8 эти контракты лежали в снятом слое-first 
 Модуль `src/bob/kernel/modulators.py`:
 - `RuleModulators` (frozen dataclass) — `has_any()` → `bool`.
 
+Модуль `src/bob/kernel/interlocutor.py`:
+- `Interlocutor` (frozen dataclass: `sender_id`, `display_name`, `kind`, `trust`,
+  `gender=Gender.UNKNOWN`, `username=None`); Enum'ы `InterlocutorKind`, `Trust`, `Gender`.
+
+Модуль `src/bob/kernel/relationship.py`:
+- `Relationship` (frozen dataclass: `sender_id`, `trust`/`respect`/`warmth`/`compatibility`,
+  каждая ось в `[MIN_AXIS, MAX_AXIS]`, иначе `ValueError`); константы `MIN_AXIS`, `MAX_AXIS`.
+
+Модуль `src/bob/kernel/roster.py`:
+- `RosterMember` (frozen dataclass: `sender_id`, `name`, `first_seen_at`, `is_newcomer`).
+
+Модуль `src/bob/kernel/sulk.py`:
+- `SulkState` (frozen dataclass: `active`, `intensity`, `low_streak`, `since`, `announced`);
+  константы `MIN_INTENSITY`, `MAX_INTENSITY`.
+
 Модуль `src/bob/kernel/episode_types.py`:
 - `WORK_EVENT_TYPE` → `str` — `event_type` дистиллированного рабочего эпизода (`"work"`).
 - `Recalled` — type-алиас `Mapping[str, object]`.
@@ -223,3 +249,7 @@ poll-циклом — `tests/infrastructure/telegram/test_multibot_poll_backoff.
 <!-- beadloom:track=src/bob/kernel/ports.py -->
 <!-- beadloom:track=src/bob/kernel/events.py -->
 <!-- beadloom:track=src/bob/kernel/modulators.py -->
+<!-- beadloom:track=src/bob/kernel/interlocutor.py -->
+<!-- beadloom:track=src/bob/kernel/relationship.py -->
+<!-- beadloom:track=src/bob/kernel/roster.py -->
+<!-- beadloom:track=src/bob/kernel/sulk.py -->
