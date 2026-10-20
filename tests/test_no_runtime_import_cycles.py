@@ -148,3 +148,142 @@ def test_type_checking_imports_are_not_runtime_edges() -> None:
         "    return Z\n"
     )
     assert _runtime_imports(tree) == ["bob.social.ports", "bob.coding.ports"]
+
+
+# --- BOB-113: no TYPE_CHECKING-only import points UPWARD ------------------------------------
+#
+# The order of the verticals, top (depends on the rest) to bottom (depended upon). DERIVED
+# from the runtime edges (module- and function-level imports), measured 2026-10-21 after
+# BOB-113 W3: every runtime edge between two of these nodes points from an earlier entry to
+# a later one (``test_runtime_edges_follow_the_declared_vertical_order`` holds that). The
+# class of defect BOB-113 removed was a type-only import pointing the OTHER way — dead at
+# runtime, yet it closed the nine-module cycle beadloom reports. ``kernel`` sits below
+# everything (anyone may reference it, it references no one); nodes absent from the list
+# (``coding``, ``interactive``, ``identity``, ``presence``, ``infrastructure.llm``,
+# ``infrastructure.persistence``, …) are outside this guard and are skipped, not failed.
+# Graph ref_ids: ``usecases`` = application.usecases, ``telegram`` = infrastructure.telegram,
+# ``runtime-app`` = application.runtime.
+_VERTICAL_ORDER: tuple[str, ...] = (
+    "application.usecases",
+    "capabilities",
+    "social",
+    "infrastructure.telegram",
+    "proactivity",
+    "memory",
+    "application.runtime",
+    "conversation",
+    "personality",
+)
+_KERNEL = "kernel"
+
+
+def _type_checking_imports(tree: ast.Module) -> list[tuple[str, int]]:
+    """Every ``bob.…`` module imported INSIDE an ``if TYPE_CHECKING:`` block, with its line."""
+    found: list[tuple[str, int]] = []
+
+    def collect(nodes: Iterable[ast.AST]) -> None:
+        for node in nodes:
+            for sub in ast.walk(node):
+                if isinstance(sub, ast.Import):
+                    found.extend(
+                        (a.name, sub.lineno) for a in sub.names if a.name.startswith("bob.")
+                    )
+                elif isinstance(sub, ast.ImportFrom) and _is_first_party(sub):
+                    found.append((sub.module or "", sub.lineno))
+
+    def walk(nodes: Iterable[ast.AST]) -> None:
+        for node in nodes:
+            if isinstance(node, ast.If) and _is_type_checking(node.test):
+                collect(node.body)  # the type-only branch is what this guard reads
+                walk(node.orelse)  # the live branch may nest another TYPE_CHECKING block
+                continue
+            walk(ast.iter_child_nodes(node))
+
+    walk(tree.body)
+    return found
+
+
+def _type_only_edges() -> list[tuple[str, str, str]]:
+    """(src node, dst node, ``file:line``) for every cross-node TYPE_CHECKING-only import."""
+    edges: list[tuple[str, str, str]] = []
+    for path in sorted(_SRC_ROOT.rglob("*.py")):
+        rel = path.relative_to(_SRC_ROOT).with_suffix("").parts
+        src = _node_of(tuple(p for p in rel if p != "__init__"))
+        if src is None:
+            continue
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for module, line in _type_checking_imports(tree):
+            dst = _node_of(tuple(module.split(".")[1:]))
+            if dst is not None and dst != src:
+                where = f"{path.relative_to(_SRC_ROOT.parent)}:{line}"
+                edges.append((src, dst, where))
+    return edges
+
+
+def _points_upward(src: str, dst: str) -> bool | None:
+    """True if ``src → dst`` goes up the declared order, False if down, None if out of scope."""
+    if src == _KERNEL:
+        return True  # the kernel is below every module: any edge out of it goes up
+    if dst == _KERNEL:
+        return False
+    if src not in _VERTICAL_ORDER or dst not in _VERTICAL_ORDER:
+        return None
+    return _VERTICAL_ORDER.index(dst) <= _VERTICAL_ORDER.index(src)
+
+
+def test_no_type_checking_import_points_upward_against_the_vertical_order() -> None:
+    edges = _type_only_edges()
+    in_scope = [e for e in edges if _points_upward(e[0], e[1]) is not None]
+    assert len(in_scope) >= 5, (
+        f"only {len(in_scope)} type-only imports between ordered modules were scanned — "
+        "the TYPE_CHECKING collector or the node map broke; an empty scan proves nothing"
+    )
+    upward = [f"{s} → {d} ({where})" for s, d, where in in_scope if _points_upward(s, d)]
+    assert upward == [], (
+        "TYPE_CHECKING-only import(s) point UPWARD against the vertical order "
+        f"{' → '.join(_VERTICAL_ORDER)} (kernel below all): {upward}"
+    )
+
+
+def test_runtime_edges_follow_the_declared_vertical_order() -> None:
+    """The order constant is honest: no RUNTIME edge between ordered modules goes up either.
+
+    If this fails, the runtime graph moved and ``_VERTICAL_ORDER`` must be re-derived — the
+    message names the edge that broke it.
+    """
+    edges = _runtime_edges()
+    upward = sorted(
+        f"{src} → {dst}" for src, dsts in edges.items() for dst in dsts if _points_upward(src, dst)
+    )
+    assert upward == [], f"runtime edge(s) contradict _VERTICAL_ORDER, re-derive it: {upward}"
+
+
+def test_type_checking_collector_reads_only_the_type_only_branch() -> None:
+    tree = ast.parse(
+        "from typing import TYPE_CHECKING\n"
+        "import typing\n"
+        "if TYPE_CHECKING:\n"
+        "    from bob.memory.ports import X\n"
+        "    import bob.social.roster\n"
+        "else:\n"
+        "    from bob.coding.ports import Y\n"
+        "from bob.kernel.events import Z\n"
+        "def f():\n"
+        "    if typing.TYPE_CHECKING:\n"
+        "        from bob.personality.voice import V\n"
+    )
+    assert _type_checking_imports(tree) == [
+        ("bob.memory.ports", 4),
+        ("bob.social.roster", 5),
+        ("bob.personality.voice", 11),
+    ]
+
+
+def test_vertical_order_direction_and_scope() -> None:
+    assert _points_upward("personality", "social") is True
+    assert _points_upward("social", "personality") is False
+    assert _points_upward("kernel", "personality") is True
+    assert _points_upward("kernel", "coding") is True
+    assert _points_upward("personality", "kernel") is False
+    assert _points_upward("coding", "memory") is None
+    assert _points_upward("memory", "infrastructure.llm") is None

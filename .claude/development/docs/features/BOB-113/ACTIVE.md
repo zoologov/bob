@@ -40,6 +40,7 @@ runtime-порядку вертикалей; `no-dependency-cycles` возвра
 - [ ] W2 `.2` dev — RFC A+B (владельцам) ‖ `.3` dev — RFC E (ISP)
 - [x] W3 `.4` dev — RFC D (социальный словарь в kernel) — 7990 passed / 16 skipped, ruff/mypy src+tests чисто, lint --strict exit 0
 - [ ] W4 `.5` test → `.6` review → `.7` tech-writer
+  - [x] `.5` test — гард «type-only импорт не вверх» + сверка порядка с runtime-рёбрами; изоляция kernel уже покрыта W1 (8 модулей, discovery); саботаж обоих — красные поимённо (беада); diff тестов W1–W3: ни одного ослабленного ассерта — 7994 passed / 16 skipped
 - [ ] PR `features/BOB-113 → features/BOB-112`, закрытие BOB-112 `.2`
 
 ## Таблица «имя → новый дом → сделано» (заполняется по волнам)
