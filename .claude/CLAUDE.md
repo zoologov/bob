@@ -107,20 +107,20 @@ bd close <bead-id> --suggest-next
 ## 0.1 Project: bob
 
 <!-- beadloom:auto-start project-info -->
-- **Stack:** Python 3.10+, SQLite, Rich
+- **Stack:** Python (>=3.12) — aiogram, s
 - **Tests:** pytest + pytest-cov
 - **Linter/formatter:** ruff (lint + format)
 - **Type checking:** mypy --strict
 - **Architecture:** DDD packages -- `application/`, `capabilities/`, `coding/`, `conversation/`, `identity/`, `infrastructure/`, `interactive/`, `kernel/`, `memory/`, `personality/`, `presence/`, `proactivity/`, `runtime/`, `social/`
-- **Current version:** 2.1.0
+- **Current version:** 1.0.0
 <!-- beadloom:auto-end -->
 
-> **Authoritative project facts** (the auto-region above is beadloom-generated and coarse — it does
-> not reflect the real stack, and "Current version: 2.1.0" is *beadloom's* version, not Bob's; a known
-> beadloom quirk):
+> **Authoritative project facts** (the auto-region above is beadloom-generated and coarse — since
+> BOB-112 it carries Bob's own version; the `Stack:` line it writes is truncated, a beadloom
+> formatter bug reported to BDL-UX):
 > **Bob v1.0.0** (2026-08-18 — первый мажорный релиз: живой компаньон на VPS, память+EQ+самомодель,
 > групповое присутствие, dev-конвейер из Telegram, CD по тегу) · Python 3.12+ (asyncio) · Telegram —
-> `python-telegram-bot` · Tier-1 Qwen (облако),
+> `aiogram` 3.x (Bot API 10.1: rich/stream) · Tier-1 Qwen (облако),
 > аварийный дублёр — локальный Ollama `qwen3:8b` (2026-08-12: выбран замером через шов Боба;
 > `qwen2.5:7b` отвергнут — выплёвывал синтаксис вызова инструмента ТЕКСТОМ в реплику, `0.5b`
 > галлюцинировал), эмбеддер `bge-m3`
@@ -525,6 +525,17 @@ exit 1. Поэтому `--fix` здесь **разрушителен** — он 
 нести в сам beadloom, а не держать оверлеем у себя).
 🔴 **Практический вывод для всех ролей:** локальный `beadloom` и CI-шный — **разные сборки**.
 «У меня зелено» про beadloom-гейт ничего не доказывает про CI, и наоборот.
+✅ **Закрыто в BOB-112 (2026-10-21).** Условие окончания наступило: релиз **9.0.0** несёт
+шаблоны BDL-059, `config-check` вернулся в блокирующий гейт, обходной шаг удалён. Отсюда
+дисциплина версий: `ci.yml` и `deploy-bob.yml` пинят **`beadloom==9.0.0`** (бамп — осознанный
+коммит с замером на чистом индексе), а все артефакты beadloom в этом репозитории (роли,
+манифест, auto-блоки, сайт) пишутся **той же сборкой**: `uvx --from beadloom==9.0.0 beadloom …`.
+Editable из `~/beadloom` — для разработки beadloom, не для артефактов Боба. Рукописная
+методология (§0.2, §0.3, русский язык документов) живёт в проектном слое `.beadloom/flow/`
+(тот самый оверлей, которого не было — BDL-UX #152 закрыт апстримом в 3.0.0), а не в самих
+`.claude/agents/*.md` — иначе `config-check` снова читает нас как дрейф.
+Замер перехода 2.1.0 → 9.0.0 на нетронутом графе (lint 0 → 36 находок, sync 0 → 2) и его
+разбор: `.claude/development/docs/features/BOB-112/BRIEF.md`.
 🔴 **Урок в копилку §0.3:** дыра в гейте была **задокументирована** — и потому выглядела
 решением, а не долгом. Комментарий «best-effort, окруженческая проблема, не логическая» читался
 как разбор, хотя корень не искали. Честная запись про отключённую проверку не перестаёт быть

@@ -37,9 +37,6 @@ htmlcov/
 # Ruff
 .ruff_cache/
 
-# Beadloom (DB is generated, not tracked)
-.beadloom/beadloom.db
-
 # MCP config (contains absolute local paths)
 .mcp.json
 
@@ -114,3 +111,30 @@ mutants/
 site/.vitepress/dist/
 site/.vitepress/cache/
 site/node_modules/
+
+# Beadloom: generated working set under .beadloom/
+# Written once by Beadloom and never rewritten, so an edit here is permanent: delete a line
+# you disagree with and it will not come back. Only derived state is listed - the graph
+# (.beadloom/_graph/) and flow.yml are source and belong in git.
+
+# The index. Rebuilt from the graph and the code by `beadloom reindex`, so it is derived
+# state: committing it means a binary merge conflict that carries no information.
+.beadloom/**/*.db
+
+# SQLite's write-ahead log for that index, live only while it is open.
+.beadloom/**/*.db-wal
+
+# SQLite's shared-memory sidecar for the same, and equally short-lived.
+.beadloom/**/*.db-shm
+
+# The guard firing record and its rotated generation. Evidence that a gate ran, appended on
+# every guarded edit; ignored by default because it is machine-local and append-only -
+# committing it makes every edit a working-tree change and every branch a conflict on the same
+# last line. A team that wants the audit trail deletes this line, once - and what it then
+# commits is one line per guarded edit carrying the verdict, the file an edit named, and for a
+# shell edit the program that ran and the files it was seen to write. Not the command line:
+# that would put your agents' shell history, and whatever their arguments carried, into git.
+# The size is bounded since BDL-061.56: the active record rolls over at 2000 firings into
+# `guard-firings.1.jsonl`, so both files together are bounded and `beadloom guard --liveness`
+# parses only the active one.
+.beadloom/guard-firings*.jsonl

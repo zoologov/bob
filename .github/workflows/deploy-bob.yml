@@ -7,8 +7,10 @@ name: Deploy Bob to VPS
 #   1. бинарь стоит — но в общесистемный UV_TOOL_DIR, а НЕ в /root/.local/share: симлинк из
 #      /usr/local/bin туда пользователь bob не разыменует (домашний каталог root закрыт),
 #      и `which beadloom` у него молча не находит ничего;
-#   2. `tree-sitter<0.26` — иначе нативный сегфолт вместо работы (BOB-108), то есть ENOENT
-#      сменился бы на падение без вывода;
+#   2. версия пинится ТОЧНО (`beadloom==9.0.0`, BOB-112) — та же сборка, что в ci.yml: гейт
+#      и интроспекция Боба меняются коммитом, а не датой установки. Прежний пин
+#      `tree-sitter<0.26` (BOB-108: нативный сегфолт без вывода) снят — с 2.2.0 beadloom
+#      требует `tree-sitter>=0.25,<0.26` сам;
 #   3. `beadloom reindex` — индекс `.beadloom/beadloom.db` в gitignore и НЕ приезжает с кодом,
 #      без него `graph` отвечает «database not found». Гоняется ПОСЛЕ checkout, чтобы индекс
 #      соответствовал выкаченному коду, и от имени bob, чтобы файл принадлежал ему.
@@ -75,7 +77,7 @@ jobs:
                sudo -u bob git -C /opt/bob checkout '${DEPLOY_REF}'; \
                sudo -u bob bash -lc 'cd /opt/bob && /usr/local/bin/uv sync'; \
                UV_TOOL_DIR=/usr/local/share/uv-tools UV_TOOL_BIN_DIR=/usr/local/bin \
-                 /usr/local/bin/uv tool install --force beadloom --with 'tree-sitter<0.26'; \
+                 /usr/local/bin/uv tool install --force beadloom==9.0.0; \
                chmod -R a+rX /usr/local/share/uv-tools; \
                sudo -u bob bash -lc 'cd /opt/bob && beadloom reindex'; \
                systemctl restart bob; \

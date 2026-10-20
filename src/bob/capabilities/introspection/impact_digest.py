@@ -28,10 +28,15 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-# One tree entry: ``<ref> (<kind>) ---- <description>`` after its tree glyphs. The
-# ``----`` separator is what distinguishes an entry from a WRAPPED continuation line of
-# the previous description (which carries no ref).
-_ENTRY_RE = re.compile(r"^(?P<ref>[a-z][\w.-]*)\s+\((?P<kind>[a-z][a-z-]*)\)\s+----")
+# One tree entry: ``<ref> (<kind>) <separator> <description>`` after its tree glyphs. The
+# separator is what distinguishes an entry from a WRAPPED continuation line of the
+# previous description (which carries no ref). beadloom ≤ 8 printed ``----``; 9.0.0 names
+# the edge kind inside it — ``--[depends_on]--`` / ``--[part_of]--`` (BOB-112). Both are
+# read: the edge kind carries no meaning for the owner's question, and the tree's nesting
+# (not the kind) is what says direct vs transitive.
+_ENTRY_RE = re.compile(
+    r"^(?P<ref>[a-z][\w.-]*)\s+\((?P<kind>[a-z][a-z-]*)\)\s+(?:----|--\[[a-z_]+\]--)"
+)
 
 # The subject line inside the Rich panel: a bare ``<ref> (<kind>)`` with no description.
 _SUBJECT_RE = re.compile(r"^(?P<ref>[a-z][\w.-]*)\s+\((?P<kind>[a-z][a-z-]*)\)$")

@@ -368,3 +368,69 @@ def test_a_second_subject_line_ends_the_description() -> None:
     )
 
     assert digest_impact(raw).splitlines()[0] == "memory (feature)"
+
+
+# --- beadloom 9.0.0 shape (BOB-112) ---------------------------------------------------
+#
+# 9.0.0 names the EDGE KIND inside the separator (``--[depends_on]--`` / ``--[part_of]--``
+# instead of ``----``) and closes the panel with an ``Impact Summary`` box. Captured from
+# the released CLI on this repository (2026-10-21): the digest must read it, not de-frame
+# it — a de-framed answer is the 200-line wall BOB-091.1 removed, coming back quietly.
+_REAL_WHY_9 = """\
+╭────────────────────────────── Impact Analysis ───────────────────────────────╮
+│ memory (feature)                                                             │
+│ Memory module («Bob remembers») — the full vertical capability in one place: │
+│ `ports.py` + pure `entities`, `usecases/` (extract facts, consolidate,       │
+│ dedup), and `adapters/` (FTS5/hybrid recall + local Ollama                   │
+│ embedder/reranker). Domain-first slice BOB-062.2.                            │
+╰──────────────────────────────────────────────────────────────────────────────╯
+Upstream (dependencies)
+├── bob-domain (domain) --[depends_on]-- Domain layer umbrella: the seven
+│   module-vertical bounded contexts (personality, conversation, memory,
+│   proactivity, coding, capabilities, social) plus the shared `kernel`.
+│   └── bob (service) --[part_of]-- Bob — Telegram-native companion agent: GUPPI
+│       process, LLM Tier 0/1 router with privacy redaction, SQLite+FTS5 memory.
+├── persistence (component) --[depends_on]-- Persistence kernel — the shared
+│   `SqliteConnection` that the memory adapter reads through.
+│   └── bob-infrastructure (domain) --[part_of]-- Port adapters: aiogram gateway.
+└── personality (feature) --[depends_on]-- Personality module («who Bob is»).
+
+Downstream (dependents)
+├── usecases (feature) --[depends_on]-- Use-cases — HandleMessage, RunGenesis.
+│   └── runtime-app (feature) --[depends_on]-- Application runtime — AgentRuntime.
+├── coding (feature) --[depends_on]-- Coding module («Bob writes code»).
+└── capabilities (feature) --[depends_on]-- Capabilities module («Bob's tools»).
+
+╭─────────────────────────────── Impact Summary ───────────────────────────────╮
+│ Direct dependents:     3                                                     │
+│ Transitive dependents: 1                                                     │
+│ Doc coverage:          100%                                                  │
+│ Stale pairs:           0                                                     │
+╰──────────────────────────────────────────────────────────────────────────────╯
+"""
+
+
+def test_9_0_edge_kind_separator_is_parsed_not_deframed() -> None:
+    digest = digest_impact(_REAL_WHY_9)
+
+    assert digest.startswith("memory (feature) — Memory module («Bob remembers»)")
+    upstream = "Зависит от: bob-domain (domain), persistence (component), personality (feature)."
+    assert upstream in digest
+    assert "Влияет на: usecases (feature), coding (feature), capabilities (feature)." in digest
+    assert len(digest.splitlines()) <= 4
+
+
+def test_9_0_part_of_entries_stay_transitive() -> None:
+    digest = digest_impact(_REAL_WHY_9)
+
+    assert "Глубже по цепочке: ещё 3 — bob, bob-infrastructure, runtime-app." in digest
+    assert "bob (service)" not in digest
+
+
+def test_9_0_summary_panel_and_edge_kinds_are_not_in_the_answer() -> None:
+    digest = digest_impact(_REAL_WHY_9)
+
+    for noise in ("Impact Analysis", "Impact Summary", "Direct dependents", "--[", "]--"):
+        assert noise not in digest
+    for glyph in ("╭", "│", "├", "└"):
+        assert glyph not in digest
