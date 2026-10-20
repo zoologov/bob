@@ -52,7 +52,7 @@ module), сгенерированные `scripts/gen_boundary_rules.py`.
    домен. Модуль лишь предоставляет чистое ядро (`reaction_effect`, `reaction_meaning`) и
    Tier-0 адаптер `LlmReactionJudge`; сам сшивающий use-case держится вне вертикали.
 5. **Порты живут в `personality/ports.py`** (`MessageReactor` / `ReflectionReader` /
-   `FascinationStore` / `NotableReactionStore`); канонический импорт —
+   `FascinationStore` / `NotableReactionStore` / `CurrentFascinationReader`); канонический импорт —
    `from bob.personality.ports import MessageReactor` (транзитный ports-шим
    `bob.domain.ports` удалён, BOB-062.8).
 
@@ -62,7 +62,8 @@ module), сгенерированные `scripts/gen_boundary_rules.py`.
 
 ```
 src/bob/personality/
-  ports.py            # layer=domain          — personality-порты (MessageReactor/ReflectionReader/Fascination/NotableReaction)
+  ports.py            # layer=domain          — personality-порты (MessageReactor/ReflectionReader/Fascination/NotableReaction/CurrentFascinationReader)
+  state.py            # layer=domain          — PersonalityState: живой per-boot снимок SOUL, общий для хода/тиков/проактивности (BOB-113)
   __init__.py         # layer=domain          — фасад модуля
   mood.py             # layer=domain          — Mood (5 осей [-1,1]) + MoodDelta, update/drift/lift, tone()
   disposition.py      # layer=domain          — Disposition (optimism/resilience) — черта-аттрактор (BOB-033)
@@ -394,6 +395,8 @@ kv-таблице (`record`/`latest`/`clear` — hint всплывает не б
   `SqliteFascinationStore`.
 - `NotableReactionStore` — лёгкий стор последней «меня получили»-реакции. Реализация —
   `KvNotableReactionStore`.
+- `CurrentFascinationReader` — шов чтения ТЕКУЩЕЙ живой увлечённости (состаренной, не
+  угасшей; `None` = нет, упоминание no-op). Переехал сюда из `handle_message.py` (BOB-113).
 
 Фасад `src/bob/personality/__init__.py` — вход в модуль. Канонический импорт портов —
 `from bob.personality.ports import MessageReactor` (транзитный ports-шим

@@ -44,16 +44,13 @@ from bob.personality.mood import MoodDelta
 if TYPE_CHECKING:
     from random import Random
 
-    from bob.application.usecases.handle_message import (
-        CurrentFascinationReader,
-        EngagementState,
-        PersonalityState,
-    )
     from bob.conversation.brevity import BrevityThresholds
-    from bob.conversation.engagement import EngagementThresholds, FatigueRates
+    from bob.conversation.engagement import EngagementState, EngagementThresholds, FatigueRates
     from bob.kernel.ports import Clock
     from bob.personality.expression import EngagementLevel, ExpressionPlan, Verbosity
+    from bob.personality.ports import CurrentFascinationReader
     from bob.personality.soul import SOUL
+    from bob.personality.state import PersonalityState
     from bob.social.relationship import Relationship
 
 logger = logging.getLogger(__name__)

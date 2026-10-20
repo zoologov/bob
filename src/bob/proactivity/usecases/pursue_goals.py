@@ -61,8 +61,8 @@ if TYPE_CHECKING:
     from datetime import datetime
     from random import Random
 
-    from bob.application.usecases.handle_message import PersonalityState
     from bob.kernel.ports import Clock, ReplyGateway
+    from bob.personality.state import PersonalityState
     from bob.proactivity.goals.entities import Goal, Task
     from bob.proactivity.goals.graph import GoalGraph
     from bob.proactivity.governance import Governance

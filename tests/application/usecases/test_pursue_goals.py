@@ -27,13 +27,13 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from bob.application.usecases.handle_message import PersonalityState
 from bob.capabilities.usecases.registry import (
     CapabilityRegistry,
     SafeCapabilityDispatcher,
 )
 from bob.personality.mood import Mood
 from bob.personality.soul import SOUL
+from bob.personality.state import PersonalityState
 from bob.personality.taste import TasteEngine
 from bob.proactivity.goals.entities import Goal, GoalOrigin, Task
 from bob.proactivity.goals.graph import GoalGraph

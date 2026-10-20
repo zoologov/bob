@@ -11,7 +11,10 @@
 The per-thread conversation-floor store (:class:`ConversationFloorStore`, BOB-025),
 the cross-session closer ring (:class:`CloserLog`, BOB-061), and the negotiation-zone
 classifier (:class:`ZoneClassifier`, a turn decision — it owns *which* territory the
-topic falls in). These are *interfaces only*: structural :class:`typing.Protocol`
+topic falls in), and the pre-answer verify search (:class:`VerifySearch` returning a
+:class:`HasAnswer`, BOB-113 — the narrow consumer-side view of a web search: the verify
+step reads one field, so it owns the one-field contract instead of importing the
+capabilities port, ISP). These are *interfaces only*: structural :class:`typing.Protocol`
 definitions with no implementations; the SQLite-backed adapters live in
 ``bob.conversation.adapters``.
 """
@@ -101,4 +104,36 @@ class ZoneClassifier(Protocol):
         conviction: float,
     ) -> NegotiationZone:
         """Return the negotiation zone that owns ``topic``."""
+        ...
+
+
+class HasAnswer(Protocol):
+    """The one field the pre-answer verify reads from a search result (BOB-113 E).
+
+    A structural, read-only view: anything exposing a ``str`` ``answer`` satisfies it —
+    the capabilities ``WebSearchResult`` (a frozen dataclass, so ``answer`` is read-only;
+    hence a property here, not a settable attribute) fits as-is, and so does a minimal
+    test double that knows nothing of ``sources``.
+    """
+
+    @property
+    def answer(self) -> str:
+        """The grounded answer text (may be blank — the caller treats blank as «empty»)."""
+        ...
+
+
+class VerifySearch(Protocol):
+    """The ONE direct web search the pre-answer verify makes (BOB-057 .2, BOB-113 E).
+
+    The consumer-side port of
+    :class:`~bob.conversation.usecases.verify_step.VerifyStep`: «query in, something with
+    an ``answer`` out». It mirrors the method shape of the capabilities web-search port
+    on purpose, so the existing adapter is wired in unchanged and satisfies it
+    structurally; the conversation vertical never imports ``bob.capabilities`` for it.
+    An implementation RAISES on failure — the verify step turns any failure, timeout or
+    blank answer into an honest hedge.
+    """
+
+    async def search(self, query: str) -> HasAnswer:
+        """Return a result whose ``answer`` grounds the turn (raises on failure)."""
         ...

@@ -86,6 +86,22 @@ class FascinationStore(Protocol):
         ...
 
 
+class CurrentFascinationReader(Protocol):
+    """Read seam: Bob's CURRENT fascination, aged and still-alive (BOB-020 wave 2).
+
+    On a :data:`~bob.personality.expression.ExpressionPlan.mention_fascination`
+    turn the compose path folds the topic in so Bob can drop it à propos — but only a
+    REAL, persisted passion that has not yet faded. ``None`` means Bob has no current
+    fascination, so the mention no-ops (never a fabricated interest). The concrete
+    adapter loads the :class:`~bob.personality.ports.FascinationStore`, ages the stored
+    passion against the clock, and drops a faded one.
+    """
+
+    async def current_fascination(self) -> Fascination | None:
+        """Return Bob's current, non-faded fascination, or ``None`` if there is none."""
+        ...
+
+
 @runtime_checkable
 class NotableReactionStore(Protocol):
     """Light durable store for the most recent "being-received" reaction (BOB-050).

@@ -463,6 +463,9 @@ count** (сколько проактивных эпизодов в анти-сп
   `/quiet` / `/wake` над доменным состоянием);
 - `guppi` и `multibot → proactivity.usecases.plan_goal.PlanGoal` (тип);
 - `proactivity → memory.entities` (движок читает `episodic_log`);
+- `proactivity.usecases → personality.state` / `personality.ports` (типы `PersonalityState` и
+  `CurrentFascinationReader` для движка и `PursueGoals`; до BOB-113 тянулись вверх из
+  `application/usecases/handle_message`);
 - kernel → proactivity ребра НЕТ (проверено).
 
 ## API

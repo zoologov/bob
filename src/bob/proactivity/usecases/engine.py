@@ -70,10 +70,11 @@ if TYPE_CHECKING:
     from random import Random
 
     from bob.application.router.llm_router import LLMRouter
-    from bob.application.usecases.handle_message import CurrentFascinationReader, PersonalityState
     from bob.kernel.episode_types import Recalled
     from bob.kernel.ports import Clock, MemoryRecall, ReplyGateway
     from bob.personality.mood import Mood
+    from bob.personality.ports import CurrentFascinationReader
+    from bob.personality.state import PersonalityState
     from bob.proactivity.decision import ProactiveDecider
     from bob.proactivity.social_energy import SocialEnergy
 

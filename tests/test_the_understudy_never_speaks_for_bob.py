@@ -44,7 +44,6 @@ from aiohttp import web
 
 from bob.application.router.generation_door import TaskType
 from bob.application.router.llm_router import LLMRequest, LLMRouter
-from bob.application.usecases.handle_message import PersonalityState
 from bob.application.usecases.heartbeat import ReflectTick
 from bob.coding.usecases.distill_work_journal import Tier0WorkJournalDistiller
 from bob.coding.work_facts import SessionKeyFacts, WorkOutcome
@@ -56,6 +55,7 @@ from bob.memory.usecases.extract_facts import ExtractFacts
 from bob.personality.disposition import Disposition
 from bob.personality.mood import Mood
 from bob.personality.soul import SOUL
+from bob.personality.state import PersonalityState
 from bob.personality.taste import TasteEngine
 from bob.personality.usecases.evolve_fascination import EvolveFascination
 from bob.personality.usecases.reappraise_reflection import ReappraiseReflection

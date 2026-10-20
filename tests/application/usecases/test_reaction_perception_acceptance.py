@@ -27,13 +27,13 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from bob.application.usecases.handle_message import PersonalityState
 from bob.application.usecases.perceive_reaction import PerceiveReaction
 from bob.kernel.events import BobMessageReaction
 from bob.personality.disposition import DEFAULT_DISPOSITION
 from bob.personality.mood import Mood, MoodDelta
 from bob.personality.reaction_meaning import ReactionMeaning
 from bob.personality.soul import SOUL
+from bob.personality.state import PersonalityState
 from bob.personality.taste import TasteEngine
 from bob.social.interlocutor import Interlocutor, InterlocutorKind, Trust
 from bob.social.relationship import Relationship

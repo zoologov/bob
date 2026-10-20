@@ -29,10 +29,8 @@ from bob.application.usecases.disclosure_consent_gate import DisclosureConsentGa
 from bob.application.usecases.disclosure_guard import DisclosureGuard
 from bob.application.usecases.endorsement_seeder import EndorsementSeeder
 from bob.application.usecases.handle_message import (
-    EngagementState,
     HandleMessage,
     OwnerActivityRecorder,
-    PersonalityState,
     _recalled_bob_replies,
     _recalled_without_copied_exemplars,
 )
@@ -58,6 +56,7 @@ from bob.conversation.conversation_floor import (
 )
 from bob.conversation.engagement import (
     ConversationalFatigue,
+    EngagementState,
     EngagementThresholds,
     FatigueRates,
 )
@@ -98,6 +97,7 @@ from bob.personality.reaction import (
 )
 from bob.personality.reaction_effect import NotableReaction
 from bob.personality.soul import SOUL
+from bob.personality.state import PersonalityState
 from bob.personality.taste import TasteAxis, TasteEngine, Verdict
 from bob.personality.usecases.update_mood_from_text import UpdateMoodFromText
 from bob.presence.staleness import StalenessContext, StalenessGate, StalenessReading

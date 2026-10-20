@@ -31,10 +31,10 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from bob.application.usecases.handle_message import PersonalityState
     from bob.kernel.ports import Clock
     from bob.personality.fascination import Fascination
     from bob.personality.ports import FascinationStore, ReflectionReader
+    from bob.personality.state import PersonalityState
 
 # A taste axis counts as a "strong opinion" — eligible grounding for a fascination —
 # only when Bob both likes/dislikes it enough AND holds it with real conviction.

@@ -54,7 +54,8 @@ relationship,sulk}` + `application/authz/` + `application/usecases/{permission_*
    С расщеплением kernel'а в BOB-062.7b долг варианта C закрыт (connection-kernel ↔
    memory-репозиторий разведены; сторы читают чистый `.connection`-шов).
 5. **Порты живут в `social/ports.py`** (Allowlist / Soul / First / Relationship / Sulk /
-   PrivilegeJudge); канонический импорт — `from bob.social.ports import AllowlistStore`
+   PrivilegeJudge + читатели хода Interlocutor / FirstImpression / Relationship / Roster /
+   Sulk); канонический импорт — `from bob.social.ports import AllowlistStore`
    (транзитный ports-шим `bob.domain.ports` удалён, BOB-062.8).
 
 ## 🔴 Мультиперсональность: cross-sender контекст здоров
@@ -671,6 +672,10 @@ owner id), так что обиженный на середине owner пере
   обобщение `SulkStore` по `sender_id` (BOB-066.2.5). Реализация — `SqlitePersonSulkStore`.
 - `PrivilegeJudge` — семантический шов оценки привилегии (re-export из
   `permission/privilege.py`).
+- `InterlocutorResolver` / `FirstImpressionReader` / `RosterRecaller` / `RelationshipReader` /
+  `SulkReader` — социальные читатели хода (кто пишет, первое впечатление, ростер комнаты,
+  отношение, обида), которые потребляют `SocialContext` и `HandleMessage`. Переехали сюда из
+  `handle_message.py` (BOB-113) — рядом со сторами, которые их реализации читают.
 
 Фасад `src/bob/social/__init__.py` — вход в модуль. Канонический импорт портов —
 `from bob.social.ports import AllowlistStore` (транзитный ports-шим `bob.domain.ports`

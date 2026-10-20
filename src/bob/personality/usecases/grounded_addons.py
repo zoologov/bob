@@ -35,10 +35,9 @@ if TYPE_CHECKING:
     from collections.abc import Awaitable
     from random import Random
 
-    from bob.application.usecases.handle_message import CurrentFascinationReader
     from bob.kernel.ports import MemoryRecall
     from bob.personality.expression import ExpressionPlan
-    from bob.personality.ports import ReflectionReader
+    from bob.personality.ports import CurrentFascinationReader, ReflectionReader
 
 logger = logging.getLogger(__name__)
 

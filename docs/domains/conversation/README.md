@@ -67,12 +67,12 @@ per-person атрибуция сосуществует с цельным тре�
 
 ```
 src/bob/conversation/
-  ports.py            # layer=domain          — conversation-порты (ConversationFloorStore/CloserLog/ZoneClassifier)
+  ports.py            # layer=domain          — conversation-порты (ConversationFloorStore/CloserLog/ZoneClassifier/VerifySearch+HasAnswer)
   __init__.py         # layer=domain          — фасад модуля
   addressivity.py     # layer=domain          — Addressivity + classify_addressivity/others_present + decide_response (if/else-лестница, BOB-023); вокатив «Боб» в любой позиции реплики (BOB-069) + вокатив-с-точкой при запятой-обращении слева (BOB-071) + прямое «ты» к Бобу → DIRECTED_TO_BOB, guard кросс-тока (BOB-078 B)
   conversation_floor.py# layer=domain         — FloorHolder/ConversationFloor(+participants)/FloorConfig, advance_floor, resolve_addressivity, is_floor_participant (BOB-025/066 .1)
   brevity.py          # layer=domain          — AnswerDemand + BrevityThresholds + decide_verbosity → personality Verbosity, clamp_reply (BOB-024)
-  engagement.py       # layer=domain          — decide_engagement → personality EngagementLevel + ConversationalFatigue (затухающий резервуар, BOB-014)
+  engagement.py       # layer=domain          — decide_engagement → personality EngagementLevel + ConversationalFatigue (затухающий резервуар, BOB-014) + EngagementState (держатель, BOB-113)
   zone_classifier.py  # layer=domain          — TasteZoneClassifier: дефолт ZoneClassifier (taste/логистика-эвристика)
   conversation.py     # layer=domain          — анти-тик предикаты: is_user_repeat/is_bob_repeat/is_phrase_tic/recurring-closer (BOB-022/026/061) + is_content_self_dup (дословный само-дубль по широкому окну, gated dup_min_words, BOB-078 C)
   interim_line.py     # layer=domain          — чистый prompt+cleaner живой interim-строки (BOB-057 .3)
@@ -183,6 +183,9 @@ AMBIENT→DIRECTED_TO_BOB, пока floor=БОБ жив **И говорящий 
 `ConversationalFatigue` — ограниченный затухающий резервуар (растёт на бесцельных ходах,
 восстанавливается со временем — никогда не перманентный lock-out); `topic_interest` выводит
 `[0, 1]`-интерес из вкуса + совпадения с увлечённостью; `engagement_mood_lift` — лифт mood.
+`EngagementState` — мутабельный per-boot держатель усталости (`fatigue` + `last_turn_at` от
+инъектированных часов), который ход загружает, состаривает по прошедшему времени и обновляет;
+переехал сюда из `handle_message.py` (BOB-113), рядом с `ConversationalFatigue`.
 🔴 *Определения* `Verbosity`/`EngagementLevel` живут в `personality/expression.py` — здесь
 только вычисляющая логика, возвращающая эти VO.
 
@@ -438,7 +441,8 @@ per-turn `TurnScope` (BOB-066 Срез 2.1, INV-4).** Под intake-развяз
 - `VerifyStep` (`verify_step.py`) — предответная эпистемическая проверка (`note`), возвращает
   turn-local заметку; per-turn интерим-анонсер строится из `chat_id` хода через инъектированную
   фабрику. `note(..., *, forced=False)`: `forced=True` (рефлексивный `wants_web`, C11) пропускает
-  судью волатильности и гонит ОДИН поиск по тому же verify/web-шву.
+  судью волатильности и гонит ОДИН поиск по тому же verify/web-шву. Поиск — через узкий порт
+  `conversation.ports.VerifySearch` (BOB-113 E), не через порт capabilities.
 - `ReadTheRoom` (`read_the_room.py`) — тонкий application-use-case над портом `RoomReader`
   (BOB-066 Срез 2.2): собирает периферийный контекст (сообщение + отправитель + общий тред + mood-тон
   + структурные/floor-хинты + interest) в `RoomReadingContext` и делегирует одно богатое чтение;
@@ -589,6 +593,11 @@ floor (UPSERT — floor продвигается каждый ход); `SqliteCl
 - `ZoneClassifier` — классификатор зоны переговоров топика (решение хода; дефолт —
   `TasteZoneClassifier`, позже Tier-0 LLM без изменения потребителей). Возвращает
   personality-`NegotiationZone` — ребро `conversation → personality`.
+- `VerifySearch` / `HasAnswer` — узкий порт предответной проверки у потребителя (BOB-113 E,
+  ISP): `async search(query) -> HasAnswer`, где `HasAnswer` — read-only `answer: str`
+  (свойство, а не атрибут: frozen-датакласс `WebSearchResult` иначе не подходит). `VerifyStep`
+  читает из результата одно поле, поэтому ничего не импортирует из `capabilities`; адаптер
+  веб-поиска capabilities удовлетворяет порту структурно, проводка не меняется.
 
 Фасад `src/bob/conversation/__init__.py` — вход в модуль. Канонический импорт портов —
 `from bob.conversation.ports import ConversationFloorStore` (транзитный ports-шим
@@ -636,7 +645,8 @@ floor (UPSERT — floor продвигается каждый ход); `SqliteCl
 - Use-case: `tests/application/usecases/test_decide_response.py`;
   `tests/conversation/usecases/test_read_the_room.py`, `test_turn_gate_reflective.py`,
   `test_turn_gate_inv1_matrix.py` (INV-1 матрица: прямое обращение всегда отвечено), `test_turn_gate_clamp.py`,
-  `test_verify_step_forced.py`, `test_verify_step_forced_hedge.py` (C11 `forced=`).
+  `test_verify_step_forced.py`, `test_verify_step_forced_hedge.py` (C11 `forced=`),
+  `test_verify_step_narrow_port.py` (узкий порт `VerifySearch`: фейк только с `answer`, BOB-113 E).
 - Адаптер рефлексивного чтения: `tests/infrastructure/llm/test_room_reader.py`.
 - Приёмочный BDD «чтение комнаты»: `tests/acceptance/features/read_the_room.feature` +
   `tests/acceptance/steps/test_read_the_room.py` (INV-1 фокус всегда отвечен даже когда судья

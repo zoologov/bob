@@ -18,12 +18,14 @@ Use-case'ы приложения: оркестрация доменной лог
   сообщение → ответ → персист → запоминание (GUPPI act-loop): `handle(event, scope=None)`
   проводит фазы perceive → who → gate → compose+guard → post-effects, делегируя ~14
   когезивным коллабораторам-швам. Здесь же объявлены нужные ему порты-протоколы
-  (`EpisodeWriter`, `InterlocutorResolver`,
-  `FirstImpressionReader`, `RelationshipReader`, `SulkReader`, `CurrentFascinationReader`,
-  `SelfImprovementReader`, `OwnerActivityRecorder`, `BargeCeiling`, `ReplyDelay` …) и
-  in-memory-держатели `PersonalityState` / `EngagementState`; `ReplyGateway`,
-  `EpisodeReader`, `BobUserIdSource` и `MemoryRecall` — порты shared kernel
-  (`src/bob/kernel/ports.py`, BOB-113). 🔴 Register-aware recall
+  (`EpisodeWriter`, `SelfImprovementReader`, `OwnerActivityRecorder`, `BargeCeiling`,
+  `ReplyDelay` …); `ReplyGateway`, `EpisodeReader`, `BobUserIdSource` и `MemoryRecall` —
+  порты shared kernel (`src/bob/kernel/ports.py`, BOB-113). Чужие понятия живут у
+  владельцев (BOB-113): социальные читатели `InterlocutorResolver`, `FirstImpressionReader`,
+  `RelationshipReader`, `RosterRecaller`, `SulkReader` — в `src/bob/social/ports.py`,
+  `CurrentFascinationReader` — в `src/bob/personality/ports.py`, in-memory-держатели
+  `PersonalityState` — в `src/bob/personality/state.py`, `EngagementState` — в
+  `src/bob/conversation/engagement.py`. 🔴 Register-aware recall
   (BOB-087.C2): `_recall_surfaceable` собирает recall в ТРИ слоя — (1) гибридный recall,
   (2) фильтр такта разглашения (`filter_surfaceable`), (3) `_register_filtered` —
   register-aware down-weight поверх over-fetched пула. Третий слой активен, только когда

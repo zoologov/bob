@@ -174,7 +174,11 @@ graph TD
 `HandleMessage.handle(event, scope=None)` проводит ход по фазам **perceive → who → gate →
 compose+guard → post-effects**, делегируя каждую ~14 когезивным коллабораторам,
 разложенным по чистым модулям. `HandleMessage.__init__` остаётся композиционным
-корнем (собирает коллабораторов из инъектированных швов). Карта
+корнем (собирает коллабораторов из инъектированных швов). Контракты этих швов живут у
+владельцев, а не в оркестраторе (BOB-113): социальные читатели — `social/ports.py`,
+`CurrentFascinationReader` — `personality/ports.py`, держатели `PersonalityState` —
+`personality/state.py` и `EngagementState` — `conversation/engagement.py`; общие порты
+(`ReplyGateway`, `EpisodeReader`, `MemoryRecall` …) — в `kernel/ports.py`. Карта
 коллаборатор → модуль:
 
 | Коллаборатор | Модуль | Роль |

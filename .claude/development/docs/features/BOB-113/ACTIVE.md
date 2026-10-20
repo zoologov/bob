@@ -19,7 +19,7 @@ runtime-порядку вертикалей; `no-dependency-cycles` возвра
 |---|---|---|---|---|---|
 | старт (bd7e877) | 98 | 30 | 904 | 15 | exit 1 |
 | W1 `.1` | 89 (83 произв.) | 18 | 192 | 13 | exit 1 (только cycles; `no-monster-modules-capabilities` ушёл) |
-| W2 `.2` ‖ `.3` | | | | | |
+| W2 `.2` ‖ `.3` | не замерялось | не замерялось | **14** (`.2`+`.3` вместе; изолированно от W1: `.2` 192 → 23, `.3` 192 → 144) | **6** (`memory:proactivity`, `memory:telegram`, `personality:conversation`, `personality:proactivity`, `personality:social`, `social:conversation`; `.2` снял 6 пар `*:usecases`/`usecases:*`, `.3` — `capabilities:conversation`) | exit 1 (только cycles, 0 не-cycle) |
 | W3 `.4` | | | | | **0 / exit 0** (цель) |
 
 > W1 замер тем же способом на `HEAD` (2804199, src = bd7e877) и после `.1`, релизный 9.0.0, чистый
@@ -49,11 +49,11 @@ runtime-порядку вертикалей; `no-dependency-cycles` возвра
 | 6 | `BobUserIdSource` | `handle_message.py` | `kernel/ports.py` | .1 | ✓ |
 | 7 | `ToolDefinition`, `ToolCall`, `ToolCallResult`, `ToolCallingProvider` | `capabilities/ports.py` | `kernel/ports.py` | .1 | ✓ |
 | 8 | `RuleModulators` | `proactivity/self_improvement.py` | `kernel/modulators.py` | .1 | ✓ |
-| 9 | `PersonalityState` | `handle_message.py` | `personality/state.py` | .2 | |
-| 10 | `EngagementState` | `handle_message.py` | `conversation/engagement.py` | .2 | |
-| 11 | `InterlocutorResolver`, `FirstImpressionReader`, `RelationshipReader`, `RosterRecaller`, `SulkReader` | `handle_message.py` | `social/ports.py` | .2 | |
-| 12 | `CurrentFascinationReader` | `handle_message.py` | `personality/ports.py` | .2 | |
-| 13 | `WebSearchProvider` в `verify_step` | `capabilities/ports.py` | `VerifySearch`/`HasAnswer` в `conversation/ports.py` | .3 | |
+| 9 | `PersonalityState` | `handle_message.py` | `personality/state.py` | .2 | ✓ |
+| 10 | `EngagementState` | `handle_message.py` | `conversation/engagement.py` | .2 | ✓ |
+| 11 | `InterlocutorResolver`, `FirstImpressionReader`, `RelationshipReader`, `RosterRecaller`, `SulkReader` | `handle_message.py` | `social/ports.py` | .2 | ✓ |
+| 12 | `CurrentFascinationReader` | `handle_message.py` | `personality/ports.py` | .2 | ✓ |
+| 13 | `WebSearchProvider` в `verify_step` | `capabilities/ports.py` | `VerifySearch`/`HasAnswer` в `conversation/ports.py` (`answer` — read-only property: frozen `WebSearchResult` не проходит settable-атрибут, замер mypy) | .3 | ✓ |
 | 14 | `Interlocutor`, `InterlocutorKind`, `Trust`, `Gender`(Enum) | `social/interlocutor.py`, `social/gender.py` | `kernel/interlocutor.py` | .4 | |
 | 15 | `Relationship` | `social/relationship.py` | `kernel/relationship.py` | .4 | |
 | 16 | `RosterMember` | `social/roster.py` | `kernel/roster.py` | .4 | |

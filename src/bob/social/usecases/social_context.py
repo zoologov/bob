@@ -35,13 +35,6 @@ from bob.personality.voice import relationship_tone_directive
 from bob.social.relationship import compromise_bias
 
 if TYPE_CHECKING:
-    from bob.application.usecases.handle_message import (
-        FirstImpressionReader,
-        InterlocutorResolver,
-        RelationshipReader,
-        RosterRecaller,
-        SulkReader,
-    )
     from bob.conversation.ports import ZoneClassifier
     from bob.kernel.events import MessageReceived
     from bob.kernel.ports import Clock
@@ -50,6 +43,13 @@ if TYPE_CHECKING:
     from bob.personality.taste import Verdict
     from bob.personality.voice import RelationshipToneThresholds
     from bob.social.interlocutor import Interlocutor
+    from bob.social.ports import (
+        FirstImpressionReader,
+        InterlocutorResolver,
+        RelationshipReader,
+        RosterRecaller,
+        SulkReader,
+    )
     from bob.social.relationship import Relationship
     from bob.social.roster import RosterMember
     from bob.social.sulk import SulkState

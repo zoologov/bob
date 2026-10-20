@@ -34,10 +34,10 @@ from bob.personality.usecases.update_mood_from_text import TextSignals
 if TYPE_CHECKING:
     from random import Random
 
-    from bob.application.usecases.handle_message import PersonalityState
     from bob.kernel.events import MessageReceived
     from bob.personality.expression import ExpressionFreqs, ExpressionPlan
     from bob.personality.soul import SOUL
+    from bob.personality.state import PersonalityState
     from bob.personality.usecases.update_mood_from_text import UpdateMoodFromText
 
 # Each turn perceives one message; a present sender is engaged.

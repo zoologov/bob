@@ -48,8 +48,8 @@ from bob.personality.phantom_evolution import (
 if TYPE_CHECKING:
     from random import Random
 
-    from bob.application.usecases.handle_message import PersonalityState
     from bob.kernel.ports import JsonValue
+    from bob.personality.state import PersonalityState
     from bob.personality.usecases.evolve_fascination import FascinationGrounding
 
 logger = logging.getLogger(__name__)

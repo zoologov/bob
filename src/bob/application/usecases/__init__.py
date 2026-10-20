@@ -13,7 +13,7 @@ delegate all rules to the pure domain.
 
 from __future__ import annotations
 
-from bob.application.usecases.handle_message import HandleMessage, PersonalityState
+from bob.application.usecases.handle_message import HandleMessage
 from bob.application.usecases.heartbeat import (
     InnerMonologueTick,
     MoodDriftTick,
@@ -37,7 +37,6 @@ __all__ = [
     "HeuristicReflectionParser",
     "InnerMonologueTick",
     "MoodDriftTick",
-    "PersonalityState",
     "ReflectTick",
     "ReflectionOutcome",
     "ReflectionParser",

@@ -49,12 +49,12 @@ from bob.social.relationship import Relationship
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
-    from bob.application.usecases.handle_message import PersonalityState
     from bob.kernel.events import BobMessageReaction
     from bob.kernel.ports import Clock
     from bob.personality.disposition import Disposition
     from bob.personality.ports import NotableReactionStore
     from bob.personality.reaction_meaning import ReactionJudge, ReactionMeaning
+    from bob.personality.state import PersonalityState
     from bob.social.interlocutor import Interlocutor
     from bob.social.ports import RelationshipStore
 

@@ -11,7 +11,8 @@ Subscribed to :class:`~bob.kernel.events.MessageReceived`, this
 use-case runs Bob's perceive→decide→act turn (RFC §"Поток обработки"):
 
 1. **Perceive** — :class:`UpdateMoodFromText` (Tier 0 sentiment + signals) updates
-   the in-memory mood; the new mood is held on :class:`PersonalityState`.
+   the in-memory mood; the new mood is held on
+   :class:`~bob.personality.state.PersonalityState`.
 2. **Decide** — replay recent conversation history (:class:`EpisodeReader`),
    recall relevant memory (:class:`MemoryRecall`, FTS5) and assemble the context.
    Following Variant 2 (selective redaction), the reply-shaping material
@@ -39,7 +40,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Protocol
 
 from bob.application.router.llm_router import LLMRequest, TaskType
@@ -94,7 +94,7 @@ from bob.conversation.conversation import (
 )
 from bob.conversation.conversation_floor import FloorConfig
 from bob.conversation.engagement import (
-    ConversationalFatigue,
+    EngagementState,
     EngagementThresholds,
     FatigueRates,
 )
@@ -135,7 +135,6 @@ from bob.personality.expression import (
 )
 from bob.personality.negotiation import (
     Negotiation,
-    Stance,
 )
 from bob.personality.reaction import reaction_emoji_for
 from bob.personality.soul import _mood_state
@@ -190,13 +189,24 @@ if TYPE_CHECKING:
     from bob.memory.ports import SelfActionRecorder
     from bob.memory.usecases.extract_facts import ExtractFacts
     from bob.memory.usecases.resolve_register import RegisterResolver
-    from bob.personality.fascination import Fascination
-    from bob.personality.mood import Mood
-    from bob.personality.ports import MessageReactor, NotableReactionStore, ReflectionReader
+    from bob.personality.ports import (
+        CurrentFascinationReader,
+        MessageReactor,
+        NotableReactionStore,
+        ReflectionReader,
+    )
     from bob.personality.soul import SOUL
+    from bob.personality.state import PersonalityState
     from bob.personality.usecases.update_mood_from_text import UpdateMoodFromText
     from bob.proactivity.self_improvement import ImprovementRule
     from bob.social.interlocutor import Interlocutor
+    from bob.social.ports import (
+        FirstImpressionReader,
+        InterlocutorResolver,
+        RelationshipReader,
+        RosterRecaller,
+        SulkReader,
+    )
     from bob.social.relationship import Relationship
     from bob.social.roster import RosterMember
     from bob.social.sulk import SulkState
@@ -309,143 +319,6 @@ class EpisodeWriter(Protocol):
     async def set_mood(self, state: Mapping[str, object], *, at: datetime) -> None: ...
 
 
-class CurrentFascinationReader(Protocol):
-    """Read seam: Bob's CURRENT fascination, aged and still-alive (BOB-020 wave 2).
-
-    On a :data:`~bob.personality.expression.ExpressionPlan.mention_fascination`
-    turn the compose path folds the topic in so Bob can drop it à propos — but only a
-    REAL, persisted passion that has not yet faded. ``None`` means Bob has no current
-    fascination, so the mention no-ops (never a fabricated interest). The concrete
-    adapter loads the :class:`~bob.personality.ports.FascinationStore`, ages the stored
-    passion against the clock, and drops a faded one.
-    """
-
-    async def current_fascination(self) -> Fascination | None:
-        """Return Bob's current, non-faded fascination, or ``None`` if there is none."""
-        ...
-
-
-class InterlocutorResolver(Protocol):
-    """Perception seam: WHO is writing this turn (BOB-019).
-
-    Resolves the inbound :class:`MessageReceived` into an
-    :class:`~bob.social.interlocutor.Interlocutor` — the sender's
-    social identity (owner / known / guest / bot + trust) — so the compose path can
-    fold WHO is on the other side into Bob's voice. The concrete adapter derives it
-    from the :class:`~bob.social.usecases.Authorizer` (``is_owner`` +
-    ``is_authorized``) already known for the turn. Optional and additive: unwired
-    (the default) the perception line is simply absent and the turn behaves exactly
-    as before — it never changes which pipeline runs (the guest-restricted path is
-    a later bead).
-    """
-
-    async def resolve(self, event: MessageReceived) -> Interlocutor: ...
-
-
-class FirstImpressionReader(Protocol):
-    """First-impression seam: recall + record Bob's LIGHT per-person read (BOB-019).
-
-    The compose path uses this to give Bob a light memory of WHO he has met before:
-    :meth:`prior_impression` returns the stored impression note for a returning
-    sender (a new one → ``None``), so the prompt can fold in "этого человека ты уже
-    видел; впечатление было такое-то"; :meth:`note_first_contact` records a fresh,
-    grounded note on FIRST contact (formed once — a known sender is left untouched).
-    The concrete adapter
-    (:class:`~bob.social.usecases.first_impression_sources.FirstImpressionTracker`)
-    keys on ``sender_id`` and stamps the clock. Optional and additive: unwired (the
-    default) Bob simply never recalls a first impression and the turn is unchanged.
-
-    Crucially this is per-PERSON data (about THEM), NOT owner-private memory, so it
-    is safe even on a guest turn — a guest's own first-impression is about the guest,
-    and surfacing it never leaks the owner's private world.
-    """
-
-    async def prior_impression(self, interlocutor: Interlocutor) -> str | None: ...
-
-    async def note_first_contact(self, interlocutor: Interlocutor) -> None: ...
-
-
-class RosterRecaller(Protocol):
-    """Roster seam: recall who lately turned up in the room (BOB-080).
-
-    The compose path uses this to let Bob NAME the room's recent joiners himself when
-    the talk turns to who is around: :meth:`recent_roster` reads the recency of the
-    accumulated first impressions and returns the roster of recent members — but ONLY
-    while a fresh newcomer is present (the ambient window, INV-4) and ONLY to an
-    OWNER / KNOWN ``viewer`` (privacy; a guest gets no rundown). The concrete adapter
-    (:class:`~bob.social.usecases.roster_recall.RosterRecall`) is best-effort — a flaky
-    read yields an empty roster and never breaks the turn. Optional and additive: unwired
-    (the default / the ``social.roster`` flag off) Bob simply recalls no roster and the
-    turn is byte-identical.
-    """
-
-    async def recent_roster(
-        self, now: datetime, *, viewer: Interlocutor | None
-    ) -> tuple[RosterMember, ...]: ...
-
-
-class RelationshipReader(Protocol):
-    """Relationship seam: load + evolve Bob's per-person relationship quality (BOB-014).
-
-    The compose path uses this to let Bob's accrued relationship with WHO is writing
-    shape THIS turn: :meth:`current` returns the stored
-    :class:`~bob.social.relationship.Relationship` (an unknown sender →
-    ``None``) so the prompt can warm/cool his tone (by ``warmth``) and the negotiation
-    can nudge his willingness to compromise (by ``warmth`` + ``compatibility``);
-    :meth:`record_interaction` updates + persists the relationship AFTER the turn from
-    the negotiation ``stance``, Bob's ``mood``, and a ``sentiment`` scalar (the pure
-    :func:`~bob.social.relationship.apply_interaction`). The concrete
-    adapter (:class:`~bob.social.usecases.relationship_sources.RelationshipTracker`)
-    keys on ``sender_id``. Optional and additive: unwired (the default) the tone/
-    willingness are unchanged and no relationship is recorded.
-
-    Crucially this is per-PERSON data (about THEM), NOT owner-private memory, so it is
-    safe even on a guest turn — a guest's own relationship is about the guest.
-    """
-
-    async def current(self, interlocutor: Interlocutor) -> Relationship | None: ...
-
-    async def record_interaction(
-        self,
-        interlocutor: Interlocutor,
-        *,
-        stance: Stance,
-        mood: Mood,
-        sentiment: float,
-    ) -> None: ...
-
-
-class SulkReader(Protocol):
-    """Sulk seam: load Bob's per-person обида + fold a turn into it (BOB-066 2.5).
-
-    The compose path uses this to go COLD while Bob is hurt at the CURRENT interlocutor
-    and to let обида take hold or warm up over the live message path: :meth:`current_for`
-    returns the persisted :class:`~bob.social.sulk.SulkState` for ONE ``sender_id`` so the
-    prompt appends the cold :func:`~bob.personality.voice.sulk_directive` while ``active``
-    — an обида toward another participant never chills THIS reply (addressed cooling);
-    :meth:`observe` folds ONE person's turn signals (their relationship ``person_warmth``,
-    a ``hostile`` directed-hostility flag, and a ``warmth_delta``) into their обида AFTER
-    the turn — a sustained critical warmth-drop OR sustained directed hostility enters
-    обида (announced once via GUPPI in an owner-DM, silent in a group), while a warm turn
-    accelerates recovery if already hurt. The concrete adapter
-    (:class:`~bob.social.usecases.sulk_sources.SulkTracker`) is per-``(persona, sender)``
-    and persists. Optional and additive: unwired (the default) Bob never sulks and the turn
-    behaves exactly as before. обида carries NO memory and NO soul (anti-Exodus).
-    """
-
-    async def current_for(self, sender_id: int) -> SulkState: ...
-
-    async def observe(
-        self,
-        *,
-        sender_id: int,
-        person_warmth: float,
-        hostile: bool,
-        warmth_delta: float,
-        now: datetime,
-    ) -> SulkState: ...
-
-
 class SelfImprovementReader(Protocol):
     """Read seam: Bob's APPROVED self-improvement rules for this turn (BOB-028 .3).
 
@@ -515,34 +388,6 @@ class ReplyDelay(Protocol):
         complexity: float,
         urgency: float,
     ) -> str: ...
-
-
-@dataclass
-class PersonalityState:
-    """Mutable in-memory holder for Bob's current soul snapshot across turns.
-
-    The soul (identity, taste, phantoms) is constant for a boot; only the mood
-    evolves, so each turn replaces the snapshot via :meth:`SOUL.with_mood`.
-    """
-
-    soul: SOUL
-
-
-@dataclass
-class EngagementState:
-    """Mutable in-memory holder for Bob's conversational fatigue across turns (BOB-014).
-
-    The lightest correct home for the small, decaying fatigue counter: a per-boot
-    holder (mirroring :class:`PersonalityState` for mood) that the turn loads, decays by
-    the elapsed wall-clock since the last turn, reads for the appetite decision, then
-    updates (an aimless turn tires Bob, an interesting one eases him). It is bounded and
-    always decays with time, so appetite is guaranteed to recover — the owner is never
-    permanently locked out, even across a long aimless run. ``last_turn_at`` is stamped
-    from the injected clock so decay is real elapsed time, not a turn count.
-    """
-
-    fatigue: ConversationalFatigue = field(default_factory=ConversationalFatigue)
-    last_turn_at: datetime | None = None
 
 
 # The per-turn response-gate value objects (``_JudgedTurn`` / ``_ReplyGate``) + the
