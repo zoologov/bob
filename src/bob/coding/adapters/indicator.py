@@ -9,8 +9,8 @@
 """Telegram-адаптеры индикатора работы coding-сессии (BOB-046 .2).
 
 Два дополняющих индикатора для coding-сессии, реализующих сеймы use-case
-(:class:`~bob.coding.usecases.coding_assistant.TypingKeepalive` /
-:class:`~bob.coding.usecases.coding_assistant.StatusPanel`) поверх бота Боба:
+(:class:`~bob.coding.ports.TypingKeepalive` /
+:class:`~bob.coding.ports.StatusPanel`) поверх бота Боба:
 
 * :class:`TypingKeepalive` — «Боб печатает…» на время немых claude-пауз. Реюз идиомы
   BOB-009 ``typing_indicator``: на вход — один ``sendChatAction("typing")`` в топик Боба,

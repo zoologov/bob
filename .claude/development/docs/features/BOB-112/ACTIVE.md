@@ -30,7 +30,7 @@
       `----`) и добавил панель Impact Summary → `impact_digest` деградировал в де-фрейм; поймал
       тест на РЕАЛЬНОМ бинаре (§0.3 п.4). Починено TDD: 3 новых теста на фикстуре 9.0.0,
       саботаж регэкспа валит ровно их; mutation **59/59 убито**.
-- [ ] `.2` триаж lint/sync (36 находок → вердикты ниже)
+- [~] `.2` триаж lint/sync — 21 из 36 закрыты структурно (см. таблицу); 15 циклов → **BOB-113** (блокирует закрытие .2 и PR)
 - [ ] `.3` рукописное → `.beadloom/flow/`, `--force`
 - [ ] `.4` сайт
 - [ ] `.5` review + гейты на финальном дереве
@@ -40,9 +40,11 @@
 | Находка | Пар | Вердикт | Действие |
 |---|---|---|---|
 | `architecture-layers` layer:error | 20 | **структура графа**: вертикали — `part_of bob-domain` (tag `layer-domain`) → по 6.0.0 наследуют слой domain, хотя сами слоем не являются (так и написано в services.yml). Корень `bob` тоже слоевой (`layer-runtime`), поэтому просто снять тег с зонтика мало — цепочка дойдёт до корня | снять `layer-domain` с `bob-domain` и `layer-runtime` с `bob`; `kernel`/`runtime` держат свои теги сами; `app.py` → `# beadloom:feature=runtime` (замерено: рёбра переезжают на `runtime`). Вертикали — вне слоёв, как задумано в BOB-062.6a; их границы держат forbid_import-правила |
-| `no-dependency-cycles` | 15 | **type-only**: 98 производных рёбер, 30 — только под `TYPE_CHECKING`; с ними одна SCC из 9 узлов, без них циклов **ноль**. В 9.0.0 у `forbid_cycles` нет `exempt`, а резолвер не отличает type-only импорт | решение владельца (см. отчёт): warn + собственный ast-тест Боба на runtime-циклы до релиза beadloom с type-only рёбрами |
+| `no-dependency-cycles` | 15 | **type-only**: 98 производных рёбер, 30 — только под `TYPE_CHECKING`; с ними одна SCC из 9 узлов, без них циклов **ноль**. В 9.0.0 у `forbid_cycles` нет `exempt`, резолвер type-only не отличает. Точный перебор: разомкнуть можно только убрав **16 из 20** type-only рёбер = **50 импорт-строк** (social-сущности 24, `handle_message` 12, чужие `ports` 8, events/self_improvement 6) | **Решение владельца: без полумер.** Контракты → `kernel`/`ports.py` — **BOB-113** (ветка от BOB-112, PR в неё). Никакого `warn`; BOB-112 ждёт BOB-113. ast-гард `test_no_runtime_import_cycles.py` остаётся вторым зубом |
 | `coding-internals-no-usecases` live_stream.py:42 | 1 | **реальная** по букве правила, type-only по сути: адаптер берёт Protocol `StatusPanel` из usecases — порт лежит не в `ports.py` | перенести `StatusPanel`/`TypingKeepalive` Protocol в `coding/ports.py`, usecases ре-экспортирует |
-| `sync-check` runtime ↔ wiring/* | 22 файла | 8.0.0: пара на каждый файл узла с частично аннотированными исходниками | — (уточняется) |
+| `sync-check` runtime ↔ wiring/* | 22 файла | 8.0.0: «untracked» = файлы узла БЕЗ `# beadloom:feature=` при том, что `tool_health.py` её несёт — частично аннотированный узел | все `wiring/*.py` + `app.py` получили `feature=runtime` / `layer=runtime` |
+
+**Сделано в `.2` (кроме циклов):** слоевые ошибки 20 → **0** (`layer_population`: judged 17/99, skipped 82 — это вертикали, по замыслу), forbid_import 1 → **0** (`StatusPanel`/`TypingKeepalive` → `coding/ports.py`), runtime untracked → **0**. Попутно второй сдвиг формата 9.0.0: `beadloom diff` у изменённого узла перепечатывает старое+новое описание, добавленные узлы вылетали за кап `health_digest` — поймал живой тест на реальном бинаре после правки графа. Скелет diff + маркер «описание изменено (N строк скрыто)»; 5 новых тестов, саботаж валит ровно их. Новый гард `tests/test_no_runtime_import_cycles.py`: ast-обход, импорты под `TYPE_CHECKING` не считаются; на саботаже называет SCC из 10 узлов.
 
 ## Числа гейтов (релизный 9.0.0, чистый индекс)
 

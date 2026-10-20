@@ -34,6 +34,7 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Callable, Mapping
+    from contextlib import AbstractAsyncContextManager
 
     from bob.coding.entities import CodingSession
 
@@ -298,4 +299,43 @@ class LiveRunStreamer(Protocol):
         is_cancelled: Callable[[], bool],
     ) -> None:
         """Пролить сырые события прогона в dev-канал (пока ``is_cancelled()`` ложно)."""
+        ...
+
+
+class TypingKeepalive(Protocol):
+    """Сейм индикатора «Боб печатает…» на время долгих немых прогонов claude (BOB-046 .2).
+
+    Ноль-арг фабрика async-контекст-менеджера: на вход — typing-action в топик Боба, на
+    выход — он гаснет. Реализуется в композиции адаптером над ботом Боба (реюз идиомы
+    BOB-009 ``typing_indicator`` с keepalive-рефрешем, чтобы 5-секундный typing не
+    истекал в минутной паузе). Use-case ОБОРАЧИВАЕТ им plan- и execute-прогоны; незавязан
+    (``None``) → no-op (индикатор просто отсутствует, без падения).
+
+    BOB-112: переехал сюда из ``usecases/coding_assistant.py`` вместе со ``StatusPanel`` —
+    порт, который реализует адаптер, живёт в ``ports.py``; адаптер, импортирующий
+    use-case ради Protocol, нарушал ``coding-internals-no-usecases`` (видно с beadloom
+    2.2.0, который читает импорты под ``TYPE_CHECKING``).
+    """
+
+    def __call__(self) -> AbstractAsyncContextManager[None]:
+        """Открыть keepalive на время прогона (закрытие гасит индикатор)."""
+        ...
+
+
+class StatusPanel(Protocol):
+    """Сейм одного editable сообщения-статуса по фазам сессии (BOB-046 .2).
+
+    «Живая панель»: ОДНО сообщение, отправленное на старте (``open``) и РЕДАКТИРУЕМОЕ по
+    фазам (``update``: план → выполняю → PR/провал/стоп) — не спам новых сообщений.
+    Реализуется адаптером над ботом Боба (``editMessageText``); если редактировать нечем
+    (нет id / не поддержано) — деградирует в no-op (current behavior: без статус-строки).
+    Незавязан (``None``) → no-op. Дополняет, а НЕ заменяет гейт/нарратив-сообщения.
+    """
+
+    async def open(self, text: str) -> None:
+        """Послать стартовое сообщение-статус (best-effort, транспорт за адаптером)."""
+        ...
+
+    async def update(self, text: str) -> None:
+        """Отредактировать то же сообщение под новую фазу (no-op, если нечего править)."""
         ...

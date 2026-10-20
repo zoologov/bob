@@ -744,3 +744,96 @@ def test_the_dropped_prime_sections_are_the_ones_the_live_prime_prints() -> None
     for title in (*_DROPPED_SECTIONS, _RULES_SECTION):
         assert f"## {title}" in REAL_PRIME
     assert _RULES_SECTION not in _DROPPED_SECTIONS
+
+
+# --- diff: the ADDED/REMOVED entries outrank a changed node's description (BOB-112) -----
+#
+# beadloom prints a changed node's whole old and new summary (a paragraph each, wrapped to
+# 80 columns). Two such nodes already push every `+`/`-` entry past the line budget, and
+# the owner asking "что изменилось в графе" would get two re-printed paragraphs and an
+# "…ещё 8 строк" where the ADDED node was. Caught live on the real CLI after BOB-112's own
+# graph edit (tags on `bob` and `bob-domain`).
+
+
+def _long_changed_diff() -> str:
+    paragraph = ["This is one wrapped line of a node summary that beadloom reprints."] * 20
+    lines = ["Graph diff (since 66aa620~1):", "", "Nodes:"]
+    wrapped = [f"    {p}" if i == 0 else p for i, p in enumerate(paragraph)]
+    for name in ("bob", "bob-domain", "capabilities"):
+        lines += [f"  ~ {name} (feature)", *wrapped, *wrapped]  # old summary, new summary
+        lines.append("    tags: ['layer-runtime'] → []")
+    lines += ["  + identity (feature)", "  + interactive (feature)", "", "Edges:"]
+    lines += ["  + identity --[part_of]--> bob-domain"]
+    lines += ["  + interactive --[part_of]--> bob-domain", ""]
+    lines.append("2 added, 3 changed, 0 removed nodes; 2 added, 0 removed edges")
+    return "\n".join(lines) + "\n"
+
+
+def test_an_over_budget_diff_still_names_every_added_node_and_edge() -> None:
+    out = digest_health("diff", _long_changed_diff())
+
+    for entry in (
+        "+ identity (feature)",
+        "+ interactive (feature)",
+        "+ identity --[part_of]--> bob-domain",
+        "+ interactive --[part_of]--> bob-domain",
+        "~ bob (feature)",
+        "tags: ['layer-runtime'] → []",
+        "2 added, 3 changed, 0 removed nodes; 2 added, 0 removed edges",
+    ):
+        assert entry in out, entry
+    assert len(out.splitlines()) <= MAX_REPORT_LINES
+
+
+def test_an_over_budget_diff_owns_up_to_the_descriptions_it_dropped() -> None:
+    out = digest_health("diff", _long_changed_diff())
+
+    assert "This is one wrapped line" not in out, "a reprinted paragraph is noise, not a change"
+    assert out.count("описание изменено (40 строк(и) скрыто)") == 3, (
+        "one honest marker per changed node, carrying the lines it folded, not silence"
+    )
+
+
+def test_a_description_at_the_very_end_of_an_over_budget_diff_is_still_owned_up_to() -> None:
+    # The last changed node has no entry after it: its folded description must still be
+    # marked before the counts line, not swallowed because the loop ran out of entries.
+    body = [f"+ node{index} (feature)" for index in range(20)]
+    body += ["~ last (feature)", *["    a reprinted summary line"] * 40]
+    body.append("20 added, 1 changed, 0 removed nodes")
+    assert len(body) > MAX_REPORT_LINES
+
+    out = digest_health("diff", "\n".join(f"  {line}" for line in body)).splitlines()
+
+    assert out[-1] == body[-1]
+    assert out[-2] == "описание изменено (40 строк(и) скрыто)"
+    assert len(out) == 23
+
+
+def test_a_diff_at_exactly_the_budget_keeps_its_descriptions_verbatim() -> None:
+    # Within budget nothing is folded — a description line is returned as it came, even
+    # though it would be folded one line later.
+    body = [f"+ node{index} (feature)" for index in range(MAX_REPORT_LINES - 3)]
+    body += ["~ x (feature)", "    a description line"]
+    body.append("47 added, 1 changed, 0 removed nodes")
+    assert len(body) == MAX_REPORT_LINES
+
+    out = digest_health("diff", "\n".join(f"  {line}" for line in body)).splitlines()
+
+    assert out == [line.strip() for line in body]  # de-framed, nothing folded
+    assert not any("скрыто" in line for line in out)
+
+
+def test_a_skeleton_that_exactly_fits_the_budget_is_not_capped() -> None:
+    # Over budget raw, exactly on budget once folded: the skeleton is the answer whole —
+    # no "…ещё" tail eating two real entries to make room for itself.
+    body = [f"+ node{index} (feature)" for index in range(MAX_REPORT_LINES - 3)]
+    body += ["~ x (feature)", *["    a description line"] * 10]
+    body.append("47 added, 1 changed, 0 removed nodes")
+    assert len(body) > MAX_REPORT_LINES
+
+    out = digest_health("diff", "\n".join(f"  {line}" for line in body)).splitlines()
+
+    assert len(out) == MAX_REPORT_LINES
+    assert out[-2] == "описание изменено (10 строк(и) скрыто)"
+    assert out[-1] == body[-1]
+    assert not any("ещё" in line for line in out)

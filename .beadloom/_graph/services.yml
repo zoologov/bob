@@ -15,10 +15,15 @@
 
 nodes:
   # ── Root service ────────────────────────────────────────────────────────────
+  # BOB-112: NO layer tag on the root. beadloom ≥ 6.0.0 gives every untagged node the
+  # layer of its nearest tagged `part_of` container, so a `layer-runtime` here would make
+  # the seven module-vertical bounded contexts "runtime" (their chain is vertical →
+  # bob-domain → bob) and silently legalise every edge they have. The runtime LAYER is
+  # carried by the `runtime` node (src/bob/runtime/) — `app.py` is annotated
+  # `# beadloom:feature=runtime` so its shim imports are judged there, not unjudged here.
   - ref_id: bob
     kind: service
     source: src/bob/
-    tags: [layer-runtime]
     summary: 'Bob — Telegram-native companion agent: GUPPI process, LLM Tier 0/1 router with privacy redaction, SQLite+FTS5 memory, Higher Mind, Genesis, heartbeat. Two admin bots in one process (BOB-003): a MultiBotGateway (BotRegistry) polls both Bob and GUPPI, dedups cross-bot by (chat_id, message_id), and a central router dispatches by identity+scope — Bob lives in his forum topic, GUPPI is the gatekeeper in General with a visible unauthorized reject + owner commands. aiogram transport (native draft streaming + Rich Messages), owner/allowlist/chat-scope authz, resilient ticks, and a capability seam (registry + tool-loop) executed by GUPPI.'
     docs:
       - architecture.md
@@ -43,17 +48,25 @@ nodes:
 
   # ── Layer: Domain ───────────────────────────────────────────────────────────
   # BOB-062.8: the layer-first `src/bob/domain/` folder was removed (its only
-  # remaining content, the ports re-export shim, was deleted). This node stays the
-  # domain-LAYER umbrella (expressed by the `layer-domain` tag); its part_of
-  # children are the seven module-vertical bounded contexts plus the shared
-  # `kernel`. Its `source:` now anchors on `src/bob/kernel/` (the shared kernel);
+  # remaining content, the ports re-export shim, was deleted). This node is the
+  # umbrella of the seven module-vertical bounded contexts plus the shared
+  # `kernel`. Its `source:` anchors on `src/bob/kernel/` (the shared kernel);
   # kernel files resolve to the deeper `kernel` feature node via their
   # `# beadloom:feature=kernel` annotation.
+  # BOB-112: the umbrella carries NO layer tag any more. Until beadloom 6.0.0 the
+  # `layer-domain` tag here was inert for the verticals (they are tagged
+  # `module-vertical`, a non-layer tag, and the rule skipped them); from 6.0.0 an
+  # untagged node inherits the layer of its nearest tagged `part_of` container, so
+  # the tag turned every vertical into a "domain" node and reported 20 of their
+  # legitimate edges (to router / usecases / runtime-app / telegram / persistence)
+  # as upward violations. A vertical spans domain+usecases+adapters INSIDE one
+  # bounded context and sits in no horizontal layer — its outer boundary and inner
+  # layering are enforced by the generated forbid_import rules. The domain LAYER
+  # proper is the `kernel` node, which carries `layer-domain` itself.
   - ref_id: bob-domain
     kind: domain
     source: src/bob/kernel/
-    tags: [layer-domain]
-    summary: 'Domain layer umbrella: the seven module-vertical bounded contexts (personality, conversation, memory, proactivity, coding, capabilities, social) plus the shared `kernel` (infra-neutral cross-module contracts). Pure logic + Protocol definitions; no I/O, no LLM, no transport.'
+    summary: 'Umbrella of the seven module-vertical bounded contexts (personality, conversation, memory, proactivity, coding, capabilities, social) plus the shared `kernel` (infra-neutral cross-module contracts — the domain LAYER proper). Each vertical spans domain+usecases+adapters inside its own boundary; the kernel is pure logic + Protocol definitions: no I/O, no LLM, no transport.'
     docs:
       - domains/domain/README.md
 

@@ -48,6 +48,16 @@ rules:
   # derived from REAL imports (tree-sitter) + declared layer edges, so this bites
   # actual code. allow_skip: true — infra→domain (port impls) and runtime→domain
   # are legal downward skips.
+  # 🔴 BOB-112 (beadloom ≥ 6.0.0): a node with no layer tag of its own takes the
+  # layer of its nearest tagged `part_of` container. The seven module-vertical
+  # bounded contexts are deliberately in NO layer (they span domain+usecases+
+  # adapters inside one boundary), so neither their umbrella `bob-domain` nor the
+  # root `bob` may carry a layer tag — otherwise every vertical silently becomes
+  # "domain" (20 false upward edges) or "runtime" (every edge legal). The layer
+  # nodes proper are `runtime`, the infra components, `bob-application` + its
+  # three features, and `kernel`. An edge with a vertical at either end is
+  # SKIPPED by this rule (`skipped_untagged` in the lint summary is that count,
+  # not a defect); the verticals' boundaries are the forbid_import rules below.
   - name: architecture-layers
     description: "runtime → infrastructure → application → domain; не обратно"
     severity: error

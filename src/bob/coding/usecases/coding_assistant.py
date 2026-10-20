@@ -61,7 +61,13 @@ from bob.coding import session_voice
 from bob.coding.entities import CodingOutcome, CodingSession
 from bob.coding.naming import worktree_branch
 from bob.coding.narrate import narrate
-from bob.coding.ports import LiveRunStreamer, OwnerCheck, OwnerNotifier
+from bob.coding.ports import (
+    LiveRunStreamer,
+    OwnerCheck,
+    OwnerNotifier,
+    StatusPanel,
+    TypingKeepalive,
+)
 from bob.coding.speaker import MessageKind, channel_for
 from bob.coding.state import CodingSessionState, can_approve_plan, is_terminal
 from bob.coding.work_facts import WorkFactsAccumulator, WorkOutcome
@@ -69,7 +75,6 @@ from bob.memory.self_action import SelfAction, SelfActionKind, coding_terminal_k
 from bob.social.disclosure import VISIBILITY_OWNER_PRIVATE
 
 if TYPE_CHECKING:
-    from contextlib import AbstractAsyncContextManager
     from datetime import datetime
 
     from bob.coding.ports import ClaudeCodeRunner, CodingSessionStore, PullRequestOpener, Worktree
@@ -130,40 +135,6 @@ def notifier_for(
     нотификатор, и любой вердикт приводит в него же — поведение байт-в-байт как раньше.
     """
     return channel_for(kind, bob=bob, guppi=guppi)
-
-
-class TypingKeepalive(Protocol):
-    """Сейм индикатора «Боб печатает…» на время долгих немых прогонов claude (BOB-046 .2).
-
-    Ноль-арг фабрика async-контекст-менеджера: на вход — typing-action в топик Боба, на
-    выход — он гаснет. Реализуется в композиции адаптером над ботом Боба (реюз идиомы
-    BOB-009 ``typing_indicator`` с keepalive-рефрешем, чтобы 5-секундный typing не
-    истекал в минутной паузе). Use-case ОБОРАЧИВАЕТ им plan- и execute-прогоны; незавязан
-    (``None``) → no-op (индикатор просто отсутствует, без падения).
-    """
-
-    def __call__(self) -> AbstractAsyncContextManager[None]:
-        """Открыть keepalive на время прогона (закрытие гасит индикатор)."""
-        ...
-
-
-class StatusPanel(Protocol):
-    """Сейм одного editable сообщения-статуса по фазам сессии (BOB-046 .2).
-
-    «Живая панель»: ОДНО сообщение, отправленное на старте (``open``) и РЕДАКТИРУЕМОЕ по
-    фазам (``update``: план → выполняю → PR/провал/стоп) — не спам новых сообщений.
-    Реализуется адаптером над ботом Боба (``editMessageText``); если редактировать нечем
-    (нет id / не поддержано) — деградирует в no-op (current behavior: без статус-строки).
-    Незавязан (``None``) → no-op. Дополняет, а НЕ заменяет гейт/нарратив-сообщения.
-    """
-
-    async def open(self, text: str) -> None:
-        """Послать стартовое сообщение-статус (best-effort, транспорт за адаптером)."""
-        ...
-
-    async def update(self, text: str) -> None:
-        """Отредактировать то же сообщение под новую фазу (no-op, если нечего править)."""
-        ...
 
 
 class CodingContext(Protocol):
