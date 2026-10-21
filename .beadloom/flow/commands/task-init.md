@@ -5,8 +5,9 @@
 
 - **Язык документов — русский**, без исключений: `language: ru` в `.beadloom/flow.yml`
   (решение проекта 2026-06-18). Строки ядра выше «MUST be in English» / «(in English)» здесь не
-  действуют — расхождение объявлено в `overlays.suppress` (уведомление в конце файла) и заведено
-  апстриму; статусы остаются `Draft` / `Approved` / `Done` как в ядре.
+  действуют — расхождение объявлено в `overlays.suppress` (уведомление в конце файла; беада на
+  снятие `bob-yjv`), запись для апстрима подготовлена в `features/BOB-112/BDL-UX-draft.md`;
+  статусы остаются `Draft` / `Approved` / `Done` как в ядре.
 - **Шаблоны `/templates` — generic.** Подставляй факты Bob (`CLAUDE.md` П.0.1): Python 3.12+ (не
   «3.10+»), слоение DDD-вертикали + shared kernel (не «CLI → Core → Storage»), стек Telegram/
   aiogram · Qwen/Ollama · SQLite+FTS5; плейсхолдеры шаблона дословно не копировать.

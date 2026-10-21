@@ -37,6 +37,11 @@ concurrency:
 jobs:
   ci:
     runs-on: ubuntu-latest
+    env:
+      # Единственный источник пина beadloom для этого workflow: из него ставится бинарь, и с
+      # ним сверяется гард tests/test_ci_runs_real_tool_tests.py — тот проверяет, что тесты на
+      # реальном бинаре во время pytest видят ИМЕННО эту сборку (BOB-112.6).
+      BEADLOOM_VERSION: "9.0.0"
     steps:
       - uses: actions/checkout@v4
 
@@ -49,6 +54,26 @@ jobs:
         # 🔴 --extra dev: ruff/mypy/pytest живут в [project.optional-dependencies].dev,
         # дефолтный `uv sync` их не ставит (урок деплоя v1.0.0, Issues #57).
         run: uv sync --extra dev
+
+      - name: Install beadloom (пин версии — BOB-112)
+        # Та же сборка, что на VPS (deploy-bob.yml) и локально для артефактов
+        # (`uvx --from beadloom==9.0.0`). Прежний ручной пин `tree-sitter<0.26` (BOB-108,
+        # BDL-UX #150) снят: метаданные beadloom 9.0.0 сами требуют `tree-sitter>=0.25,<0.26`
+        # (проверено по importlib.metadata для 9.0.0; другие версии не проверялись, и бамп
+        # BEADLOOM_VERSION должен перепроверить это заново).
+        # 🔴 Стоит ДО Pytest (BOB-112.6): около тридцати тестов интроспекции/диаграмм/здоровья
+        # инструментов гоняют НАСТОЯЩИЙ бинарь и без него на PATH дают SKIP. Когда установка
+        # шла после Pytest, все они на раннере молча пропускались (замер ревью: 331 passed /
+        # 37 skipped против 368/368 с 9.0.0 на PATH), и формат `why`/`diff` закреплённой
+        # сборки CI не проверял вовсе.
+        run: uv tool install "beadloom==${BEADLOOM_VERSION}"
+
+      - name: Beadloom index (чистый) для тестов на реальном бинаре
+        # Индекс в gitignore и с кодом не приезжает; без него те же тесты пропускаются как
+        # «repo not indexed». Чистый — по той же причине, что в гейте ниже (§0.3 п.1).
+        run: |
+          rm -f .beadloom/beadloom.db
+          beadloom reindex
 
       - name: Ruff
         run: uv run ruff check src/ tests/
@@ -63,32 +88,34 @@ jobs:
         # 🔴 -rs: печатает ПРИЧИНУ пропусков. Процессный гейт test_process_drift_gate на
         # раннере (нет bd/базы трекера — Dolt gitignored) даёт SKIP с причиной, не ERROR и
         # не молчаливое зелёное (BOB-098). Так CI не читается как «согласованность проверена».
+        # Тесты на реальном beadloom здесь ИСПОЛНЯЮТСЯ: бинарь и индекс поставлены выше, а
+        # гард test_ci_runs_real_tool_tests краснеет, если на этом шаге нет бинаря, индекса
+        # или бинарь не той версии, что BEADLOOM_VERSION.
         # -p no:randomly: детерминированный порядок (воспроизводимость CI).
         run: uv run pytest -q -rs -p no:randomly
 
-      - name: Install beadloom (пин версии — BOB-112)
-        # Та же сборка, что на VPS (deploy-bob.yml) и локально для артефактов
-        # (`uvx --from beadloom==9.0.0`): «у меня зелено» и «в CI зелено» — про одно.
-        # Прежний ручной пин `tree-sitter<0.26` (BOB-108, BDL-UX #150) снят: с 2.2.0 beadloom
-        # сам требует `tree-sitter>=0.25,<0.26`.
-        run: uv tool install beadloom==9.0.0
-
-      - name: Beadloom Gate (чистый индекс) — БЛОКИРУЮЩИЙ
+      - name: Beadloom Gate (beadloom ci, чистый индекс) — БЛОКИРУЮЩИЙ
         # 🔴 ЧИСТЫЙ индекс: инкрементальный reindex НЕ обновляет рёбра импортов и врёт
-        # (§0.3 п.1, BDL-UX #142). Сносим БД индекса и пересобираем с нуля.
-        # Это `beadloom ci` по шагам, чтобы красное называло себя само.
-        # Прежде весь шаг стоял под continue-on-error из-за сегфолта выше, то есть
+        # (§0.3 п.1, BDL-UX #142). Сносим БД индекса, `beadloom ci` пересобирает её с нуля
+        # первым шагом (а заодно отбрасывает всё, что мог оставить в индексе pytest).
+        # 🔴 BOB-112.6: гейт — ОДНА команда `beadloom ci`, та же, что pre-push хук и что
+        # координатор гоняет руками на финальном дереве. Прежде здесь стояли шесть подкоманд
+        # по отдельности, и проверки, которые `beadloom ci` добавляет сверх них, в CI не шли:
+        # «в CI тот же гейт, что локально» было неправдой. Видимость по подкомандам не
+        # теряется — `--format github` (явно, а не по угадыванию TTY): каждый шаг называет
+        # свой PASS/WARN/FAIL/SKIP строкой ::notice, находки становятся аннотациями.
+        # Что добавилось к вердикту, замерено на 9.0.0: docs-quality, doc-spaces и scope-check
+        # проходят безусловно (поставлены как warn), issue-log и readme-pair здесь SKIP (не
+        # объявлены), поэтому блокирует то же, что блокировали шесть подкоманд, — на дереве
+        # BOB-112 оба варианта дали exit 0. scope-check на pull_request даёт SKIP с причиной:
+        # checkout PR — detached merge-коммит, ветки, называющей работу, у него нет.
+        # Прежде весь шаг стоял под continue-on-error из-за сегфолта reindex, то есть
         # арх-границы и свежесть доков в CI не проверялись ВООБЩЕ, а прогон читался зелёным
         # (класс §0.3). Снято в BOB-108; кусачесть доказана саботажем границы — правило
         # `capabilities-usecases-no-adapters` назвалось с файлом и строкой, exit 1.
-        # config-check вернулся сюда в BOB-112: релиз 9.0.0 несёт шаблоны BDL-059, рукописная
-        # методология живёт в проектном слое `.beadloom/flow/`, манифест в git — дрейф теперь
-        # означает дрейф, а не отставание PyPI.
+        # config-check (часть `beadloom ci`) в гейте с BOB-112: релиз 9.0.0 несёт шаблоны
+        # BDL-059, рукописная методология живёт в проектном слое `.beadloom/flow/`, манифест
+        # в git — дрейф теперь означает дрейф, а не отставание PyPI.
         run: |
           rm -f .beadloom/beadloom.db
-          beadloom reindex
-          beadloom lint --strict
-          beadloom sync-check
-          beadloom config-check
-          beadloom docs audit
-          beadloom doctor
+          beadloom ci --format github

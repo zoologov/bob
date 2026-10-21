@@ -67,21 +67,78 @@
       свои пункты nav (есть только в hero/features домашней); оверлеить `config.mjs` ради неё —
       значит снова владеть файлом скаффолда → BDL-UX-предложение «site.nav extras».
       `deploy-site.yml` без изменений (коммитим контент, CI только `npm ci` + build на node 22).
-- [ ] `.5` review + гейты на финальном дереве.
-      🔴 Долг на `.5` (найден при пуше `.3`): pre-push хук 9.0.0 вызывает `beadloom` с PATH, а это
-      **editable-сборка** (`uv tool list`: beadloom v7.0.0 из `~/beadloom`, ветка BDL-083), чья
-      `config-check` считает 8 композированных файлов «stale vs CORE» — шаблоны другой версии.
-      Хук per-clone и без пина → его вердикт не про CI (П.0.1). Решение владельца: `uv tool
-      install beadloom==9.0.0 --force` (dev beadloom — через `uv run` в `~/beadloom`) или иной
-      способ пина; до него пуши ветки идут `--no-verify` с записанной причиной, а гейт релизной
-      сборкой гоняется координатором руками (как и сделано для `.3`/`.4`).
-      🔴 Долг на `.5`, замечен в `.3` и был в том же составе уже в первом замере 9.0.0: lint
-      печатает **36 `rule_liveness: warn`** — правила, которые не могут сработать: 24 про
-      `bob/identity/usecases*` и `bob/presence/usecases*` (таких пакетов нет), 10 про glob
-      `bob/app` (не матчит ни один из 419 import-путей — composition-root-правила проверяют
-      ничего), 2 про `src/bob/coding/untrusted_repo.py` (файла нет). Это не «сдвиг вердикта»,
-      а мёртвые правила = отключённая проверка без срока; чинить структурно (glob или снятие
-      правила с записью), не гасить.
+- [x] `.5` review (2026-10-21, субагент review, bob-7fo.5): **ISSUES — 0 Critical, 6 Major, 4 Minor,
+      3 Nit** при чистых гейтах на f201585 (ci exit 0, lint 0, sync 726 fresh, config-check 0,
+      pytest 8074). Полный отчёт — `bd comments bob-7fo.5`. Fix-волна: `.6` (CI: pytest после
+      установки beadloom, гейт = `beadloom ci`), `.7` (гард и `import a.b as c`), `.8` (доки),
+      `.9` (повторное ревью). Две находки ревью исправляют **этот же файл**:
+      ✅ **Хук и сборка на PATH — решено владельцем 2026-10-21:** `uv tool install
+      beadloom==9.0.0 --force` выполнен (`uv tool list`: beadloom v9.0.0; откат для разработки
+      beadloom — `uv tool install -e ~/beadloom --force`, а внутри `~/beadloom` — `uv run`).
+      Предыстория: хук 9.0.0 вызывает `beadloom` с PATH, там стояла editable-сборка из
+      `~/beadloom` (BDL-083), чья `config-check` считала 8 композированных файлов «stale vs CORE»
+      (шаблоны другой версии) — пуши `.3`/`.4` шли `--no-verify` после ручного `uvx --from
+      beadloom==9.0.0 beadloom ci` exit 0. Ловушка в копилку П.0.1: `beadloom --version` у
+      editable печатал «9.0.0» — версия не отличает сборку, смотри `uv tool list`.
+      ❌ **«36 мёртвых правил» — ОПРОВЕРГНУТО ревью (Major-1), запись выше была ошибкой
+      координатора.** Саботаж в копии HEAD: `import bob.app` в `coding/naming.py`,
+      `from bob.coding.usecases import …` в `untrusted_repo.py`, созданный
+      `identity/usecases/probe.py` с импортом infrastructure — `lint` exit 1, три правила назвали
+      файл и строку (`coding-no-composition-root` naming.py:87,
+      `coding-internals-no-usecases-untrusted_repo` untrusted_repo.py:247,
+      `identity-usecases-no-infra` probe.py:2); все 10 composition-root-предупреждений исчезли
+      от одного импорта `bob.app`. `untrusted_repo.py` существует — у него нет импортов, потому
+      его нет среди «385 indexed source files». Ноль совпадений glob = соблюдённый инвариант
+      или упреждающий гард, не битое правило. Это известный ложный сигнал beadloom
+      **BDL-UX #328** «rule_liveness calls a live forbid_import rule dead» (закрыт апстримом в
+      BDL-083 S3, в релиз 9.0.0 не вошёл) — **сдвиг вердикта инструмента**, правила не трогать;
+      уйдёт со следующим бампом beadloom, где #328 в релизе. Урок П.0.3: предупреждение
+      инструмента — тоже «отчёт агента», его надо перемерять саботажем, а не пересказывать.
+- [x] `.6` (2026-10-21, dev): `ci.yml` — пин один раз (`env BEADLOOM_VERSION: "9.0.0"`), установка
+      beadloom и `reindex` на чистом индексе **до** ruff/mypy/pytest; гейт — одна команда
+      `beadloom ci --format github` без continue-on-error (замер: шесть подкоманд и `ci` дают
+      одинаковый код на этом дереве; docs-quality/doc-spaces/scope-check в 9.0.0 проходят всегда,
+      issue-log/readme-pair — SKIP, не объявлены). Новый гард
+      `tests/test_ci_runs_real_tool_tests.py`: на раннере краснеет без бинаря/индекса/при версии ≠
+      пину, вне Actions — SKIP с причиной. Эмуляция шагов ci.yml на macOS (worktree, PATH без
+      `~/.local/bin`, beadloom из PyPI): прицельная выборка 359 passed / 11 skipped (ни один skip
+      из-за beadloom); саботаж «pytest до установки» — гард красный (331/38), без гарда тот же
+      порядок зелёный (двойной прогон); «pytest до reindex» — гард + 2 теста prime красные;
+      обман `BEADLOOM_VERSION=8.9.9` и пустое — красный. Не проверено: сам раннер ubuntu
+      (setup-uv, PATH бинаря) — покажет первый CI по PR; если бинаря не будет, гард покраснеет.
+- [x] `.7` (2026-10-21, dev): предпосылка Major-5 **не подтвердилась для гарда** — коллектор ast
+      алиас-импорт видел и до правки; ревью получило 58/58 зелёных потому, что `coding` не в
+      порядке вертикалей, а гард Боба ~270 `forbid_import`-правил не проверяет — дыра в beadloom.
+      Сделано структурно: новый паритетный тест `tests/test_beadloom_sees_every_import.py` —
+      пересобирает чистый индекс бинарём с PATH (~1,4 с) и требует, чтобы каждый из 1329
+      импортов, прочитанных ast, был в `code_imports` (без beadloom на PATH — SKIP «NOT
+      CHECKED»). Двойной прогон на релизном 9.0.0: алиас через границу — паритетный тест
+      красный, lint rc 0 (без `as` — lint rc 1); runtime-алиас вверх по порядку / из kernel —
+      красные `test_runtime_imports_form_no_cycle_between_modules`,
+      `test_runtime_edges_follow_the_declared_vertical_order` + паритетный; алиас под
+      `TYPE_CHECKING` вверх — `test_no_type_checking_import_points_upward…` + паритетный;
+      `from bob.memory import adapters`, `from bob import memory`, относительный — паритетный.
+      Кусачесть коллектора: саботаж `_resolve` (отбросить алиас) — 8 failed / 54 passed, по 4
+      алиас-формы в двух новых тестах резолва. Попутный дефект гарда: на macOS `Authorizer`
+      резолвился в несуществующий модуль (ФС без регистра) — красный тест, затем сверка имени
+      точно по списку файлов. `docs/architecture.md`: четыре проверки, полный список форм с
+      замером. pytest 8093 passed / 17 skipped (dev), ruff/mypy чисто.
+      🔴 **Непроверенная зона, решение координатора:** `from P import <подмодуль>` внутри своего
+      узла (`from bob.coding import usecases` в `untrusted_repo.py` → lint rc 0, хотя
+      `coding-internals-no-usecases-untrusted_repo` должно сработать; в src таких два:
+      `coding/usecases/coding_assistant.py:60`, `interactive/usecases/session.py:97`). Закрыть на
+      стороне Боба можно только переписав ~45 мест вызова под форму, которую инструмент читает,
+      — это подгонка кода под дефект резолвера; структурный фикс — в самом beadloom (владелец
+      — тот же). Решение: Bob не переписывать; запись HIGH в BDL-UX-draft дополнена замером;
+      после фикса апстрима и бампа пина паритетный тест ужесточается автоматически.
+- [x] `.8` (2026-10-21, координатор): ACTIVE (опровержение «мёртвых правил»), ROADMAP (BOB-113
+      смержен; BOB-112 .1–.5), слой `CLAUDE.md` (П.0.1 хуки и `--version`; П.0.2 беады на снятие
+      suppress `bob-933`/`bob-yjv`; П.0.3 дополнение; П.3 и `task-init` — «черновик», не
+      «заведено»; П.6 — новый порядок CI), шапка `rules.yml` (не снимать `rule_liveness`-правила,
+      #328), BRIEF (приёмка; `getting-started.md` — руководство вне графа, `doctor` 9.0.0 объявить
+      это не умеет), BDL-UX-draft (дубль #328 снят; добавлены алиас HIGH, `--version` editable,
+      «документ вне графа», уточнена запись про формы импорта). `metrics_history.json` — коммитится
+      (beadloom свой тоже отслеживает). Перекомпозиция релизом: config-check 0.
 
 ## Триаж lint 9.0.0 (заполняется в `.2`)
 
@@ -99,4 +156,4 @@
 | Момент | рёбер | lint errors | sync stale | config-check | exempt |
 |---|---|---|---|---|---|
 | до (2026-10-20) | 2255 | 925 строк / 36 находок | 1 | 2 drift + 8 unverified | 0 |
-| после `.3` (2026-10-21, `beadloom ci` exit 0) | 121 (узлов 23, derived) | **0** (warn 37: 36 `rule_liveness` + 1 `architecture-layers` reach 15/81) | **0** | **0** (1 info-warn «project layer in effect», 2 declared suppressions) | 0 |
+| после `.3`/`.4` (2026-10-21, `beadloom ci` exit 0) | 121 derived (`status`), 29 рёбер графа / 2280 импортов (`reindex`), узлов 23 | **0** (warn 37: 36 `rule_liveness` — ложный сигнал #328, правила живые; 1 `architecture-layers` reach 15/81) | **0** (726 пар) | **0** (1 info-warn «project layer in effect», 2 declared suppressions) | 0 |

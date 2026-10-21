@@ -70,7 +70,11 @@ editable из `~/beadloom` (ветка `features/BDL-083`) остаётся дл
 - структура графа (6.0.0: вертикаль ≠ слой domain) → теги/`part_of` в `services.yml`.
   🔴 Не «35 exempt оптом»: каждый с причиной, иначе гейт снова показывает зелёное, не проверив.
 - `services/runtime.md` называет `wiring/*`; `getting-started.md` получает ref_id или
-  объявляется вне графа.
+  объявляется вне графа. _Решение (.8, 2026-10-21, по Minor-2 ревью): `getting-started.md` —
+  руководство по развёртыванию, не документ узла; ref_id ему не присваивается (пара с кодом
+  корня `bob` была бы ложной и вечно stale). У `doctor` 9.0.0 нет способа объявить документ вне
+  графа (в конфиге нет ключа, проверено по `application/doctor.py`), поэтому 1 `[warn]` остаётся
+  и записан в BDL-UX-draft (запись про популяцию «документы вне графа»); это не графовый warn._
 
 **`.3` Рукописное — в проектный слой.** Содержимое `agents/{dev,test,review,tech-writer}.md`,
 `commands/{coordinator,task-init,checkpoint,templates}.md`, `CLAUDE.md` сверяется с композицией
@@ -109,11 +113,11 @@ type-only не отличает. Предложенная временная м�
 
 ## Acceptance
 
-- [ ] `ci.yml` и `deploy-bob.yml` пинят `beadloom==9.0.0`; `config-check` в блокирующем гейте
-- [ ] На чистом индексе релизным 9.0.0: `lint --strict` 0, `sync-check` 0, `config-check` 0
+- [x] `ci.yml` и `deploy-bob.yml` пинят `beadloom==9.0.0`; `config-check` в блокирующем гейте (.1; ревью .5 подтвердило)
+- [x] На чистом индексе релизным 9.0.0: `lint --strict` 0, `sync-check` 0, `config-check` 0
       без `unverified`, `docs audit` 0, `doctor` без `[warn]` по графу
-- [ ] Каждый `exempt` несёт `reason` + `until`; их число и список — в ACTIVE.md
-- [ ] `flow-manifest.json` в git; рукописное — в `.beadloom/flow/`; `explore.md` и guard-хук на месте
-- [ ] Сайт перегенерирован 9.0.0, закоммичен
+- [x] Каждый `exempt` несёт `reason` + `until`; их число и список — в ACTIVE.md (exempt: 0; declared suppress: 2, беады bob-933/bob-yjv)
+- [x] `flow-manifest.json` в git; рукописное — в `.beadloom/flow/`; `explore.md` и guard-хук на месте (.3)
+- [x] Сайт перегенерирован 9.0.0, закоммичен (.4; перегенерация на запушенном HEAD перед PR — Minor-1 ревью)
 - [ ] CI по PR зелёный **с** блокирующим config-check; аннотация-обход BOB-108 удалена
-- [ ] BDL-UX: заведён баг на обрезанную строку `Stack: … aiogram, s` в auto-блоке
+- [ ] BDL-UX: заведён баг на обрезанную строку `Stack: … aiogram, s` в auto-блоке — **не выполнено**: 12 записей подготовлены в `BDL-UX-draft.md`, в лог beadloom переносятся после BDL-083 S4 (решение владельца 2026-10-21); до переноса пункт открыт

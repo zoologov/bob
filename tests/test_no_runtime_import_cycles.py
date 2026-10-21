@@ -11,8 +11,10 @@ modules, while the runtime edges alone close none. beadloom 9.0.0 can neither te
 apart nor exempt a cycle, so this test is the gate that judges what the rule cannot: the
 imports Python actually executes. Module-level and function-level imports count; an import
 under ``if TYPE_CHECKING:`` does not — at runtime it is a dead branch. Every import FORM is
-read (bob-etb.8): ``import bob.x``, ``from bob.x import y``, ``from bob import x``, ``from
-bob.application import usecases`` and relative imports all resolve to the module they bind.
+read (bob-etb.8, bob-7fo.7): ``import bob.x``, ``import bob.x.y as z``, ``from bob.x import
+y``, ``from bob import x``, ``from bob.application import usecases`` and relative imports all
+resolve to the module they bind. Whether beadloom INDEXES each form — what its
+``forbid_import`` rules judge — is held by ``tests/test_beadloom_sees_every_import.py``.
 
 The nodes are the graph's: every top-level package under ``bob`` is one module, except
 ``application`` and ``infrastructure``, whose sub-packages are the nodes (``usecases``,
@@ -59,9 +61,19 @@ def _is_first_party(dotted: str) -> bool:
 
 
 def _is_source_module(dotted: str) -> bool:
-    """True if ``dotted`` is a module or a package on disk (``x.py`` or ``x/__init__.py``)."""
+    """True if ``dotted`` is a module or a package on disk (``x.py`` or ``x/__init__.py``).
+
+    The name is matched EXACTLY against the directory listing: on a case-insensitive file
+    system ``Authorizer.py`` "is a file" because ``authorizer.py`` is, and a symbol would
+    then resolve to a module that does not exist (bob-7fo.7).
+    """
     base = _SRC_ROOT.parent.joinpath(*dotted.split("."))
-    return base.with_suffix(".py").is_file() or (base / "__init__.py").is_file()
+    if not base.parent.is_dir():
+        return False
+    entries = {entry.name for entry in base.parent.iterdir()}
+    if f"{base.name}.py" in entries:
+        return True
+    return base.name in entries and (base / "__init__.py").is_file()
 
 
 def _resolve_from(node: ast.ImportFrom, package: str) -> list[str]:
@@ -362,6 +374,11 @@ _PERSONALITY = "bob.personality"
 _IMPORT_FORMS: tuple[tuple[str, list[str]], ...] = (
     ("import bob.social.roster", ["bob.social.roster"]),
     ("import bob.social.roster as r, os", ["bob.social.roster"]),
+    # bob-7fo.7 (review .5 Major-5): the alias form beadloom 9.0.0 does not index at all —
+    # ``as`` renames the binding, the edge is still to the full dotted module.
+    ("import bob.memory.adapters.fts_recall as _f", ["bob.memory.adapters.fts_recall"]),
+    ("import bob.social.roster, bob.memory.ports as p", ["bob.social.roster", "bob.memory.ports"]),
+    ("import os, bob.memory.ports as p", ["bob.memory.ports"]),
     ("from bob.social.roster import build_roster", ["bob.social.roster"]),
     ("from bob import social", ["bob.social"]),
     ("from bob import social as s, memory", ["bob.social", "bob.memory"]),
@@ -371,6 +388,9 @@ _IMPORT_FORMS: tuple[tuple[str, list[str]], ...] = (
     ("from bob.infrastructure import telegram", ["bob.infrastructure.telegram"]),
     ("from bob.application import reliability", ["bob.application.reliability"]),
     ("from bob.application import NOT_A_MODULE", ["bob.application"]),
+    # bob-7fo.7: on a case-insensitive file system (macOS) ``Authorizer.py`` "exists" because
+    # ``authorizer.py`` does; a symbol must not resolve to a module that differs only in case.
+    ("from bob.social.usecases import Authorizer", ["bob.social.usecases"]),
     ("from . import mood", ["bob.personality.mood"]),
     ("from .voice import improvement_directive", ["bob.personality.voice"]),
     ("from .. import social", ["bob.social"]),
