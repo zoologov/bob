@@ -32,6 +32,11 @@
 ``await`` — к моменту, когда исключение доходит до вызывающего, ``snapshot()`` уже видит
 этот отказ, даже если сообщение владельцу ещё в пути.
 
+Дублёр, включённый в конфигурации, но не готовый при старте, сборка снимает до перезапуска
+(:meth:`ProviderHealthMonitor.stand_down_understudy`, BOB-116 D11): с этой минуты монитор
+считает, что дублёра нет, — облако легло, значит думать нечем, — а снимок несёт причину,
+чтобы ``/status`` сказал «выключен при старте: …», а не «нет».
+
 Ядро считает в секундах ``float``; часы (:class:`~bob.kernel.ports.Clock`) дают
 ``datetime`` — монитор переводит туда и обратно в поясе часов.
 """
@@ -123,6 +128,19 @@ class ProviderHealthMonitor:
         if has_understudy:
             wired = (TIER0_PRIMARY, TIER0_UNDERSTUDY, TIER1)
         self._health: dict[str, ProviderHealth] = {pid: ProviderHealth() for pid in wired}
+        # Снятые при старте провайдеры и почему (сейчас — только дублёр). Вызовов к ним нет
+        # до перезапуска, поэтому в ядре состояния их нет: это факт сборки, не исход вызова.
+        self._stood_down: dict[str, str] = {}
+
+    def stand_down_understudy(self, reason: str) -> None:
+        """Дублёр снят при старте: дальше Tier-0 — одно облако, до перезапуска процесса.
+
+        Сборка зовёт это в тот же момент, когда роутер переходит на «голое» облако, — и до
+        первого вызова провайдера. ``reason`` — человеческая причина из проверки при старте.
+        """
+        self._has_understudy = False
+        self._health.pop(TIER0_UNDERSTUDY, None)
+        self._stood_down[TIER0_UNDERSTUDY] = reason
 
     # --- HealthObserver ------------------------------------------------------------
 
@@ -160,14 +178,24 @@ class ProviderHealthMonitor:
     def snapshot(self) -> Mapping[str, HealthView]:
         """Здоровье каждого известного провайдера по его id."""
         tz = self._clock.now().tzinfo
-        return {pid: self._view(h, tz) for pid, h in self._health.items()}
+        views = {pid: self._view(h, tz) for pid, h in self._health.items()}
+        for pid, reason in self._stood_down.items():
+            views[pid] = HealthView(state=HealthState.DEGRADED, stood_down_reason=reason)
+        return views
 
     def is_degraded(self, provider_id: str) -> bool:
-        """Признан ли провайдер неработающим; незнакомый — здоров."""
+        """Признан ли провайдер неработающим (снятый при старте — тоже); незнакомый — здоров."""
+        if provider_id in self._stood_down:
+            return True
         return self._get(provider_id).state is HealthState.DEGRADED
 
     def probe_due(self, provider_id: str) -> bool:
-        """Можно ли идти к провайдеру сейчас: здоровому — всегда, лежащему — по расписанию."""
+        """Можно ли идти к провайдеру сейчас: здоровому — всегда, лежащему — по расписанию.
+
+        Снятому при старте — никогда: он вернётся только с перезапуском.
+        """
+        if provider_id in self._stood_down:
+            return False
         return probe_due(
             self._get(provider_id), now=self._clock.now().timestamp(), policy=self._policy
         )

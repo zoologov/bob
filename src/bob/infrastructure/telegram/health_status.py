@@ -11,7 +11,7 @@
 словаря кодов::
 
     LLM:
-    tier0 облако — деградирован с 2026-10-01 06:10 (не пускало по ключу/квоте, 5 подряд)
+    tier0 облако — деградирован с 2026-10-01 06:10 +03:00 (не пускало по ключу/квоте, 5 подряд)
     дублёр — нет
     tier1 — ок
 
@@ -22,14 +22,16 @@
 * id из списка, которого нет в снимке, — «нет данных», а отсутствующий дублёр — «нет»
   (дублёр не настроен — монитор о нём не знает);
 * класс отказа говорится фразой (:data:`_FAILURE_PHRASES`); незнакомый класс — как есть;
-* ``HEALTHY`` с допороговыми отказами не прячется за «ок»: «ок, сбоев подряд: N (…)».
+* ``HEALTHY`` с допороговыми отказами не прячется за «ок»: «ок, сбоев подряд: N (…)»;
+* провайдер, снятый при старте (``stood_down_reason``: дублёр включён, но не готов), —
+  «выключен при старте: <причина> (до перезапуска)»: сам он не вернётся.
 
 🔴 Часовой пояс. Время начала отказа (``failing_since``, у монитора — aware) печатается
-как ``YYYY-MM-DD HH:MM`` в поясе ``tz``; по умолчанию (``tz=None``) — в **локальном поясе
-процесса** (``datetime.astimezone()``), то есть в том, что настроен на машине Боба: у
-владельца на VPS это пояс сервера. Наивное время печатается как есть — пересчитывать его
-не из чего. Пояс в строку не пишется: строка короткая, а владелец читает её на той же
-машине, чьё время показано.
+как ``YYYY-MM-DD HH:MM +03:00`` в поясе ``tz``; по умолчанию (``tz=None``) — в **поясе
+процесса**, то есть в том, что настроен на машине Боба: у владельца на VPS это пояс сервера.
+Смещение пишется явно — тот же пояс и та же подпись, что в сообщениях владельцу и в эпизоде
+«я молчал» (:mod:`bob.kernel.local_time`, решение координатора bob-i83.15). Наивное время
+печатается как есть и без смещения — пересчитывать его не из чего.
 
 Чистая функция: ни сети, ни часов, ни монитора — только снимок на входе и текст на выходе.
 """
@@ -38,6 +40,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from bob.kernel.local_time import in_local_zone, utc_offset_label
 from bob.kernel.provider_health import HealthState
 
 if TYPE_CHECKING:
@@ -60,6 +63,7 @@ _PROVIDER_LABELS: tuple[tuple[str, str], ...] = (
 )
 
 _NO_DATA = "нет данных"
+_STOOD_DOWN = "выключен при старте: {reason} (до перезапуска)"
 _UNDERSTUDY_ABSENT = "нет"
 _OK = "ок"
 
@@ -97,6 +101,8 @@ def _describe(provider_id: str, view: HealthView | None, tz: tzinfo | None) -> s
     """Состояние одного провайдера словами."""
     if view is None:
         return _UNDERSTUDY_ABSENT if provider_id == _UNDERSTUDY_ID else _NO_DATA
+    if view.stood_down_reason is not None:
+        return _STOOD_DOWN.format(reason=view.stood_down_reason)
     if view.state is HealthState.DEGRADED:
         return _describe_degraded(view, tz)
     if view.consecutive_failures > 0:
@@ -131,7 +137,8 @@ def _phrase(failure_class: str) -> str:
 
 
 def _format_time(moment: datetime, tz: tzinfo | None) -> str:
-    """``YYYY-MM-DD HH:MM``: aware — в поясе ``tz`` (``None`` — локальный), наивное — как есть."""
-    if moment.tzinfo is None:
-        return moment.strftime(_TIME_FORMAT)
-    return moment.astimezone(tz).strftime(_TIME_FORMAT)
+    """``YYYY-MM-DD HH:MM +03:00`` в поясе ``tz`` (``None`` — процесса); наивное — без смещения."""
+    local = in_local_zone(moment, tz)
+    offset = utc_offset_label(local)
+    text = local.strftime(_TIME_FORMAT)
+    return f"{text} {offset}" if offset else text

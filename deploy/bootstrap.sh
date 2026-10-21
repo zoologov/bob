@@ -96,6 +96,58 @@ ensure_venv() {
   sudo -u "$BOB_USER" bash -lc "cd '$BOB_HOME' && /usr/local/bin/uv sync"
 }
 
+# 6a. Конфиг прода (BOB-116): config/bob.yaml = трекаемый config/bob.vps.yaml, байт в байт,
+# ровно как делает выкатка (deploy-bob.yml, шаг 3/4). Идентификаторов и секретов в нём нет —
+# они в .env (RUNBOOK §9); проверку сборки с настоящим .env owner запускает перед стартом
+# (RUNBOOK §4), потому что на этом шаге .env может ещё не быть.
+ensure_config() {
+  local tracked="$BOB_HOME/config/bob.vps.yaml" live="$BOB_HOME/config/bob.yaml"
+  log "ставлю конфиг прода: config/bob.vps.yaml -> config/bob.yaml"
+  install -o "$BOB_USER" -g "$BOB_USER" -m 0640 "$tracked" "$live"
+  sha256sum "$tracked" "$live"
+  [ "$(sha256sum < "$tracked")" = "$(sha256sum < "$live")" ] || {
+    echo "❌ sha256 config/bob.yaml не равен config/bob.vps.yaml" >&2
+    exit 1
+  }
+}
+
+# 6b. Модель дублёра Tier-0 (BOB-116) — по той же конфигурации и тем же решением, что
+# выкатка (deploy-bob.yml, шаг 4/4): deploy/check_config.py спрашивает действующую
+# конфигурацию (config/bob.vps.yaml + .env, если он уже лежит) через understudy_endpoint
+# фабрики провайдеров. Дублёр выключен -> модель не тянем. Включён -> нужен Ollama и модель
+# в `ollama list`; иначе bootstrap падает, а не оставляет Боба с дублёром без модели.
+understudy_model_present() {
+  ollama list | awk -v m="$1" \
+    'NR > 1 && ($1 == m || $1 == m ":latest") { found = 1 } END { exit !found }'
+}
+
+ensure_understudy_model() {
+  local env_args=()
+  if [ -f "$BOB_HOME/.env" ]; then env_args=(--env-file "$BOB_HOME/.env"); fi
+  local model
+  model="$(sudo -u "$BOB_USER" "$BOB_HOME/.venv/bin/python" "$BOB_HOME/deploy/check_config.py" \
+    understudy-model --config "$BOB_HOME/config/bob.vps.yaml" ${env_args[@]+"${env_args[@]}"})"
+  if [ -z "$model" ]; then
+    skip "дублёр выключен в конфиге — модель не тянем"
+    return
+  fi
+  if ! command -v ollama >/dev/null 2>&1; then
+    echo "❌ дублёр включён в config/bob.vps.yaml, а ollama не установлен:" >&2
+    echo "   curl -fsSL https://ollama.com/install.sh | sh — и повтори bootstrap" >&2
+    exit 1
+  fi
+  if understudy_model_present "$model"; then
+    skip "модель дублёра $model уже в ollama list"
+    return
+  fi
+  log "тяну модель дублёра $model"
+  ollama pull "$model"
+  understudy_model_present "$model" || {
+    echo "❌ модели $model нет в ollama list после pull" >&2
+    exit 1
+  }
+}
+
 # 7. Рабочие каталоги data/ logs/ backups/ (idempotent: mkdir -p).
 ensure_dirs() {
   log "создаю data/ logs/ backups/ в $BOB_HOME"
@@ -121,17 +173,18 @@ ensure_units() {
 # ложное «готово»:
 #   * UV_TOOL_DIR общесистемный: установка по умолчанию кладёт симлинк в /root/.local/share,
 #     куда пользователю bob не пройти — `which beadloom` у него молча пуст;
-#   * `tree-sitter<0.26`: грамматики собраны под ABI 0.25, со свежим ядром beadloom падает
-#     НАТИВНО и без вывода (BOB-108) — то есть ENOENT сменился бы на сегфолт;
+#   * версия пинится ТОЧНО, той же сборкой, что ставит выкатка (deploy-bob.yml) и CI:
+#     метаданные beadloom 9.0.0 сами требуют tree-sitter>=0.25,<0.26 (BOB-108 — нативный
+#     сегфолт без вывода на ядре 0.26; прежний ручной пин `tree-sitter<0.26` снят в BOB-112);
 #   * индекс `.beadloom/beadloom.db` в .gitignore и с кодом НЕ приезжает — без reindex
 #     `beadloom graph` отвечает «database not found».
 ensure_beadloom() {
   if [ -x /usr/local/bin/beadloom ] && sudo -u "$BOB_USER" test -r /usr/local/bin/beadloom; then
     skip "beadloom уже доступен пользователю $BOB_USER"
   else
-    log "ставлю beadloom системно (пин tree-sitter<0.26)"
+    log "ставлю beadloom==9.0.0 системно (та же сборка, что в deploy-bob.yml)"
     UV_TOOL_DIR=/usr/local/share/uv-tools UV_TOOL_BIN_DIR=/usr/local/bin \
-      /usr/local/bin/uv tool install --force beadloom --with 'tree-sitter<0.26'
+      /usr/local/bin/uv tool install --force beadloom==9.0.0
     chmod -R a+rX /usr/local/share/uv-tools
   fi
   log "собираю индекс beadloom от имени $BOB_USER"
@@ -173,8 +226,11 @@ ensure_renderer() {
     DEBIAN_FRONTEND=noninteractive apt-get install -y /tmp/chrome.deb
     rm -f /tmp/chrome.deb
   fi
-  log "🔴 owner: в config/bob.yaml задать mmdc_bin: /usr/local/bin/mmdc (НЕ путь ноутбука),"
-  log "   и в .env — PUPPETEER_EXECUTABLE_PATH=/usr/bin/google-chrome (см. RUNBOOK.md)"
+  # config/bob.yaml на сервере с BOB-116 перезаписывает выкатка из config/bob.vps.yaml:
+  # mmdc_bin по умолчанию "mmdc" и находится по PATH сервиса; путь, если он нужен, — коммитом
+  # в config/bob.vps.yaml, а не правкой на сервере.
+  log "🔴 owner: в .env — PUPPETEER_EXECUTABLE_PATH=/usr/bin/google-chrome (см. RUNBOOK.md);"
+  log "   mmdc_bin, если mmdc не на PATH сервиса, — коммитом в config/bob.vps.yaml"
 }
 
 main() {
@@ -187,10 +243,16 @@ main() {
   ensure_beadloom
   ensure_renderer
   ensure_venv
+  ensure_config
+  ensure_understudy_model
   ensure_dirs
   ensure_units
-  log "готово. Дальше — по RUNBOOK.md: owner кладёт .env (600) и data/bob.db,"
-  log "затем: systemctl enable --now bob"
+  log "готово. Дальше — по RUNBOOK.md: owner кладёт .env (600, переменные — §2 и §9)"
+  log "и data/bob.db, проверяет конфиг (§4), затем: systemctl enable --now bob"
 }
 
-main "$@"
+# Источник без запуска (`source deploy/bootstrap.sh`) — только для тестов функций шагов
+# (tests/deploy/test_bootstrap.py); `bash deploy/bootstrap.sh` идёт в main как прежде.
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then
+  main "$@"
+fi

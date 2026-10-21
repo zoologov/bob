@@ -226,6 +226,21 @@ class LLMRouter:
         self._health: HealthObserver = health if health is not None else NoopHealthObserver()
         self._health_reader = health if isinstance(health, HealthReader) else None
 
+    def stand_down_tier0_understudy(self) -> None:
+        """Take the Tier-0 stand-in out for the rest of the process (BOB-116 D11).
+
+        The composition root calls this at startup when the understudy is enabled in the
+        config but not ready (no Ollama, no model): Tier 0 then goes on as the bare primary,
+        exactly as if the understudy had never been composed — its calls are reported here
+        under ``tier0-primary`` and the voice policy no longer counts on a stand-in. There is
+        no way back short of a restart: a model pulled later is not picked up. A plain Tier-0
+        provider is left untouched.
+        """
+        provider = self._providers[_TIER_LOCAL]
+        if isinstance(provider, UnderstudyBackedProvider):
+            self._providers[_TIER_LOCAL] = provider.without_understudy()
+        self._tier0_has_understudy = False
+
     async def run(self, request: LLMRequest) -> str:
         """Complete ``request`` on its preferred tier, with ONE rescue attempt on failure.
 

@@ -86,7 +86,8 @@ def test_degraded_primary_names_start_time_reason_and_count() -> None:
     lines = render_health_status(snapshot, tz=UTC).splitlines()
 
     assert lines[1] == (
-        "tier0 облако — деградирован с 2026-10-01 06:10 (не пускало по ключу/квоте, 5 подряд)"
+        "tier0 облако — деградирован с 2026-10-01 06:10 +00:00 "
+        "(не пускало по ключу/квоте, 5 подряд)"
     )
 
 
@@ -96,9 +97,9 @@ def test_degraded_primary_names_start_time_reason_and_count() -> None:
 @pytest.mark.parametrize(
     ("tz", "expected"),
     [
-        (UTC, "2026-10-01 06:10"),
-        (timezone(timedelta(hours=5, minutes=45)), "2026-10-01 11:55"),
-        (timezone(-timedelta(hours=9, minutes=30)), "2026-09-30 20:40"),
+        (UTC, "2026-10-01 06:10 +00:00"),
+        (timezone(timedelta(hours=5, minutes=45)), "2026-10-01 11:55 +05:45"),
+        (timezone(-timedelta(hours=9, minutes=30)), "2026-09-30 20:40 -09:30"),
     ],
 )
 def test_start_time_is_rendered_in_the_requested_timezone(tz: tzinfo, expected: str) -> None:
@@ -109,16 +110,19 @@ def test_start_time_is_rendered_in_the_requested_timezone(tz: tzinfo, expected: 
 
 def test_default_timezone_is_the_process_local_one() -> None:
     snapshot = {"tier0-primary": _degraded()}
-    local = _SINCE_UTC.astimezone().strftime("%Y-%m-%d %H:%M")
+    local = _SINCE_UTC.astimezone()
+    zone = local.strftime("%z")  # «+0300» — пояс процесса, посчитанный мимо модуля
 
-    assert f"деградирован с {local} " in render_health_status(snapshot)
+    assert f"деградирован с {local:%Y-%m-%d %H:%M} {zone[:3]}:{zone[3:]} " in (
+        render_health_status(snapshot)
+    )
 
 
 def test_naive_start_time_is_rendered_as_is() -> None:
     naive = datetime(2026, 10, 2, 23, 5)  # noqa: DTZ001 - наивное время — сам предмет теста
     snapshot = {"tier0-primary": _degraded(since=naive)}
 
-    assert "деградирован с 2026-10-02 23:05 " in render_health_status(snapshot, tz=_MSK)
+    assert "деградирован с 2026-10-02 23:05 (" in render_health_status(snapshot, tz=_MSK)
 
 
 @pytest.mark.parametrize(
@@ -136,7 +140,7 @@ def test_naive_start_time_is_rendered_as_is() -> None:
 def test_failure_class_is_said_in_words(failure_class: str, phrase: str) -> None:
     snapshot = {"tier1": _degraded(failure_class=failure_class, failures=3)}
 
-    assert f"tier1 — деградирован с 2026-10-01 06:10 ({phrase}, 3 подряд)" in (
+    assert f"tier1 — деградирован с 2026-10-01 06:10 +00:00 ({phrase}, 3 подряд)" in (
         render_health_status(snapshot, tz=UTC)
     )
 
@@ -169,6 +173,23 @@ def test_sub_threshold_failures_are_not_hidden_behind_ok() -> None:
 def test_absent_understudy_reads_as_none_and_other_absent_ids_as_no_data() -> None:
     assert render_health_status({}, tz=UTC) == (
         "LLM:\ntier0 облако — нет данных\nдублёр — нет\ntier1 — нет данных"
+    )
+
+
+def test_understudy_stood_down_at_startup_names_the_reason_and_the_restart() -> None:
+    # bob-i83.15: дублёр включён в конфигурации, но при старте не готов — сборка его сняла,
+    # и /status говорит это, а не «нет» (нет — это «не настроен»).
+    stood_down = HealthView(
+        state=HealthState.DEGRADED,
+        stood_down_reason="модели qwen3:8b нет на http://127.0.0.1:11434/v1",
+    )
+    lines = render_health_status(
+        {"tier0-primary": _healthy(), "tier0-understudy": stood_down}, tz=UTC
+    ).splitlines()
+
+    assert lines[2] == (
+        "дублёр — выключен при старте: модели qwen3:8b нет на http://127.0.0.1:11434/v1 "
+        "(до перезапуска)"
     )
 
 
@@ -324,7 +345,9 @@ async def test_status_with_degraded_reader_shows_since_when_and_why() -> None:
 
     (text,) = bot.texts
     assert text.startswith(_PREVIOUS_STATUS + "\n\nLLM:\n")
-    since = _SINCE_UTC.astimezone().strftime("%Y-%m-%d %H:%M")
+    local = _SINCE_UTC.astimezone()
+    zone = local.strftime("%z")
+    since = f"{local:%Y-%m-%d %H:%M} {zone[:3]}:{zone[3:]}"
     assert (
         f"tier0 облако — деградирован с {since} (не пускало по ключу/квоте, 5 подряд)"
         in text

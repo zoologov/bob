@@ -11,7 +11,7 @@ Russian renderer. Every content string opens with «я …» (INV-1); anomalies
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone, tzinfo
 
 import pytest
 
@@ -337,7 +337,7 @@ def test_outage_recovered_full_first_person_story() -> None:
     rendered = describe_self_action(_outage())
     assert rendered == RenderedSelfAction(
         content=(
-            "я молчал с 1 октября 06:10 по 10 октября 05:42 (8 дней 23 часа): "
+            "я молчал с 1 октября 06:10 по 10 октября 05:42 +03:00 (8 дней 23 часа): "
             "облако не пускало меня по ключу, думать было нечем. Теперь снова могу."
         ),
         tags=("self", "outage"),
@@ -361,7 +361,7 @@ def test_outage_recovered_full_first_person_story() -> None:
 def test_outage_cause_is_told_in_human_words(failure_class: str | None, phrase: str) -> None:
     content = describe_self_action(_outage(failure_class=failure_class)).content
     assert content == (
-        "я молчал с 1 октября 06:10 по 10 октября 05:42 (8 дней 23 часа): "
+        "я молчал с 1 октября 06:10 по 10 октября 05:42 +03:00 (8 дней 23 часа): "
         f"{phrase}, думать было нечем. Теперь снова могу."
     )
 
@@ -409,7 +409,7 @@ def test_outage_within_one_day_names_the_day_once() -> None:
             until=datetime(2026, 10, 1, 6, 42, tzinfo=_MSK),
         )
     ).content
-    assert content.startswith("я молчал 1 октября с 06:10 по 06:42 (32 минуты): ")
+    assert content.startswith("я молчал 1 октября с 06:10 по 06:42 +03:00 (32 минуты): ")
 
 
 def test_outage_across_new_year_names_both_years() -> None:
@@ -420,8 +420,39 @@ def test_outage_across_new_year_names_both_years() -> None:
         )
     ).content
     assert content.startswith(
-        "я молчал с 31 декабря 2026 23:50 по 1 января 2027 00:05 (15 минут): "
+        "я молчал с 31 декабря 2026 23:50 по 1 января 2027 00:05 +03:00 (15 минут): "
     )
+
+
+# Пояс эпизода — тот, в котором его несёт datetime (переводит адаптер сборки), и он назван
+# смещением — как в сообщении владельцу и в /status (bob-i83.15). Два пояса, ни один не
+# совпадает с другим: рендер, который подписал бы чужой пояс или «UTC», краснеет на любой машине.
+@pytest.mark.parametrize(
+    ("tz", "period"),
+    [
+        (timezone(timedelta(hours=5, minutes=45)), "1 октября с 06:10 по 06:42 +05:45"),
+        (timezone(-timedelta(hours=9, minutes=30)), "1 октября с 06:10 по 06:42 -09:30"),
+    ],
+)
+def test_outage_period_names_the_offset_of_its_zone(tz: tzinfo, period: str) -> None:
+    content = describe_self_action(
+        _outage(
+            since=datetime(2026, 10, 1, 6, 10, tzinfo=tz),
+            until=datetime(2026, 10, 1, 6, 42, tzinfo=tz),
+        )
+    ).content
+    assert content.startswith(f"я молчал {period} (32 минуты): ")
+    assert "UTC" not in content
+
+
+def test_outage_with_naive_times_carries_no_offset() -> None:
+    content = describe_self_action(
+        _outage(
+            since=datetime(2026, 10, 1, 6, 10),  # noqa: DTZ001 - наивное время — предмет теста
+            until=datetime(2026, 10, 1, 6, 42),  # noqa: DTZ001
+        )
+    ).content
+    assert content.startswith("я молчал 1 октября с 06:10 по 06:42 (32 минуты): ")
 
 
 @pytest.mark.parametrize(
@@ -448,7 +479,7 @@ def test_outage_month_is_in_russian_genitive(month: int, genitive: str) -> None:
             until=datetime(2026, month, 3, 9, 5, tzinfo=_MSK),
         )
     ).content
-    assert content.startswith(f"я молчал со 2 {genitive} 09:05 по 3 {genitive} 09:05 (")
+    assert content.startswith(f"я молчал со 2 {genitive} 09:05 по 3 {genitive} 09:05 +03:00 (")
 
 
 @pytest.mark.parametrize(

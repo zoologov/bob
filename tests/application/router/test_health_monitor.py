@@ -137,6 +137,43 @@ def test_snapshot_without_understudy_does_not_invent_one() -> None:
     assert set(monitor.snapshot()) == {TIER0_PRIMARY, TIER1}
 
 
+# --- дублёр снят при старте (BOB-116 D11, bob-i83.15) --------------------------------
+# Дублёр включён в конфигурации, но при старте не готов: сборка снимает его до перезапуска.
+# Монитор с этой минуты считает, что дублёра нет (облако легло → думать нечем), а /status
+# видит причину в снимке — не «нет» (это «не настроен»), а «выключен при старте: …».
+
+_STOOD_DOWN_REASON = "модели qwen3:8b нет на http://127.0.0.1:11434/v1"
+
+
+def test_stood_down_understudy_is_in_the_snapshot_with_its_reason() -> None:
+    monitor, *_ = _monitor(has_understudy=True)
+    monitor.stand_down_understudy(_STOOD_DOWN_REASON)
+    snapshot = monitor.snapshot()
+    assert set(snapshot) == {TIER0_PRIMARY, TIER0_UNDERSTUDY, TIER1}
+    assert snapshot[TIER0_UNDERSTUDY] == HealthView(
+        state=HealthState.DEGRADED, stood_down_reason=_STOOD_DOWN_REASON
+    )
+    assert monitor.is_degraded(TIER0_UNDERSTUDY)
+    assert not monitor.probe_due(TIER0_UNDERSTUDY)
+
+
+async def test_cloud_down_after_the_stand_down_is_muteness_not_the_understudy_holding() -> None:
+    monitor, clock, sink, recovered = _monitor(has_understudy=True)
+    monitor.stand_down_understudy(_STOOD_DOWN_REASON)
+    await _fail(monitor, clock, TIER0_PRIMARY, 5)
+    assert sink.texts[0].startswith("Я не могу думать")
+    assert "Дублёра на этой машине нет" in sink.texts[0]
+    assert "держусь на дублёре" not in sink.texts[0]
+    await monitor.record_success(TIER0_PRIMARY)
+    assert [call[0] for call in recovered.calls] == [TIER0_PRIMARY]
+
+
+def test_monitor_without_a_stand_down_has_no_reason_in_its_snapshot() -> None:
+    monitor, *_ = _monitor(has_understudy=True)
+    assert monitor.snapshot()[TIER0_UNDERSTUDY].stood_down_reason is None
+    assert not monitor.is_degraded(TIER0_UNDERSTUDY)
+
+
 async def test_failures_below_the_threshold_show_in_the_snapshot_without_a_signal(
     caplog: pytest.LogCaptureFixture,
 ) -> None:

@@ -277,12 +277,17 @@ class HealthView:
     while nothing has failed); ``failure_class`` is the latest failure class the caller
     reported (``auth`` / ``rate`` / ``server`` / ``timeout`` / ``connection`` /
     ``shape`` / ``contract``).
+
+    ``stood_down_reason`` — why the provider was taken out of service at startup (BOB-116
+    D11: the understudy enabled in the config but not ready); such a provider gets no calls
+    until the process restarts. ``None`` for every provider in service.
     """
 
     state: HealthState
     consecutive_failures: int = 0
     failure_class: str | None = None
     failing_since: datetime | None = None
+    stood_down_reason: str | None = None
 
 
 @runtime_checkable

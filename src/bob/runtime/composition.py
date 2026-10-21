@@ -176,6 +176,7 @@ from bob.runtime.wiring import (
     build_disclosure_consent_gate,
     build_disclosure_guard,
     build_endorsement_seeder,
+    build_llm_health,
     build_register_resolver,
     build_rhythm_wiring,
     build_room_mood_modulator,
@@ -184,10 +185,11 @@ from bob.runtime.wiring import (
     build_self_action_recorder,
     build_send_to_chat,
     build_staleness_reassessor,
+    build_understudy_stand_down,
     build_work_journal_recorder,
     staleness_enabled,
 )
-from bob.runtime.wiring.tool_health import report_tool_health
+from bob.runtime.wiring.tool_health import report_tool_health, report_understudy
 from bob.social.adapters.first_impression_store import SqliteFirstImpressionStore
 from bob.social.adapters.person_sulk_store import SqlitePersonSulkStore
 from bob.social.adapters.relationship_store import SqliteRelationshipStore
@@ -207,6 +209,7 @@ from bob.social.usecases.sulk_sources import SulkRecoveryStep, SulkTracker
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from bob.application.router.health_monitor import ProviderHealthMonitor
     from bob.capabilities.usecases import CapabilityRegistry
     from bob.coding.usecases.coding_assistant import CodingAssistant
     from bob.infrastructure.telegram.gateway import BotLike
@@ -215,11 +218,18 @@ if TYPE_CHECKING:
         RecoverInteractiveSessions,
     )
     from bob.interactive.usecases.session import InteractiveSessionManager
-    from bob.kernel.ports import Clock, DomainEvent, EventHandler, LLMProvider
+    from bob.kernel.ports import (
+        Clock,
+        DomainEvent,
+        EventHandler,
+        LLMProvider,
+        OwnerAlertSink,
+    )
     from bob.memory.ports import Embedder, Reranker
     from bob.proactivity.usecases import ProactivityEngine
     from bob.proactivity.usecases.announce_restart import AnnounceRestart
     from bob.proactivity.usecases.pursue_goals import PursueGoalsTick
+    from bob.runtime.wiring.health import UnderstudyStandDown
     from bob.social.usecases import Authorizer
     from bob.social.usecases.run_genesis import GenesisResult
 
@@ -285,6 +295,16 @@ class Application:
     # byte-identical). On → Bob announces «ухожу обновиться» before a graceful stop and
     # «вернулся, обновился» after a boot that followed an update-stop (marker in ``kv``).
     restart_announcer: AnnounceRestart | None = None
+    # LLM health (BOB-116): the provider-health monitor (observer + reader) and the owner
+    # signal channel it speaks through. ``startup`` uses the channel to tell the owner, once,
+    # that an enabled Tier-0 understudy cannot stand in. ``None`` only in hand-assembled test
+    # fixtures; the understudy line is then still logged, with no message.
+    health: ProviderHealthMonitor | None = None
+    owner_alert: OwnerAlertSink | None = None
+    # Understudy stand-down (BOB-116 D11): enabled in the config but not ready at startup →
+    # ``startup`` takes it out of the router and tells the monitor there is none, before any
+    # provider is called. Until the next restart. ``None`` only in hand-assembled fixtures.
+    understudy_stand_down: UnderstudyStandDown | None = None
 
     async def startup(self) -> GenesisResult:
         """Initialise persistence, awaken Bob on first boot, load his soul.
@@ -303,6 +323,15 @@ class Application:
         # moment he was ASKED. Reports, never refuses: a missing renderer must not stop
         # him from living, it only stops him from drawing.
         report_tool_health(self.config)
+        # BOB-116: the Tier-0 understudy enabled in the config but unable to stand in is said
+        # NOW — one log line, one message to the owner — not discovered when the cloud has
+        # already failed. Reports, never refuses: Bob starts either way — and WITHOUT the
+        # understudy (D11): it is stood down here, before Genesis or any other call reaches a
+        # provider, and stays down until the next restart. Here and not in
+        # ``build_application``: the check is async HTTP and the build is sync.
+        await report_understudy(
+            self.config, sink=self.owner_alert, stand_down=self.understudy_stand_down
+        )
         await self.connection.initialize()
         await self.memory_repo.initialize()
         # Per-person обида backfill (BOB-066 2.5): copy the owner's legacy per-persona
@@ -398,21 +427,6 @@ def build_application(
     resolved_clock: Clock = clock if clock is not None else SystemClock()
     del clock  # use resolved_clock everywhere below (narrowed, never None)
     event_bus = AsyncEventBus()
-    tier_providers = providers if providers is not None else build_tier_providers(merged)
-    # Tier-1 rate-cap (BOB-072): a ceiling on concurrent Tier-1 (Qwen API) calls, invisible
-    # insurance against 429/degradation under bursts across chats. ``llm.tier1_max_concurrency``
-    # absent / 0 → no cap → byte-identical; a positive value serializes Tier-1 to that ceiling.
-    # 🔴 The VOICE canon is handed to the router HERE and only here (BOB-096.3). The router
-    # is the one place every generation door passes through, and the canon TEXT belongs to
-    # the persona (a `router -> personality` import would close a node cycle), so the tie
-    # between them lives in the composition root. The line is not decorative: without it the
-    # seam is unwired and the ban on role-playing GUPPI reaches the conversational turn
-    # alone — defect bob-alr.12 exactly. An architectural test guards it.
-    router = LLMRouter(
-        providers=tier_providers,
-        tier1_max_concurrency=_int(_section(merged, "llm"), "tier1_max_concurrency", 0),
-        voice_canon=guppi_voice_canon,
-    )
 
     # Hybrid memory (BOB-011): the embedder + optional reranker are injectable
     # seams; when omitted they are built from config. Building them never touches
@@ -457,6 +471,54 @@ def build_application(
     # the tool-loop (.3) record first-person ``self_action`` episodes through it.
     self_action_recorder = build_self_action_recorder(
         merged, store=memory_repo, clock=resolved_clock
+    )
+
+    # Resolve BOTH admin bots once so the multibot registry AND the coding-session
+    # owner-notifier share the SAME instances. GUPPI is the silent under-the-hood
+    # executor; BOB is the speaker — so the gated coding assistant talks (plan /
+    # narration / PR) through BOB'S bot (BOB-046 .1): the owner converses with Bob, so
+    # Bob is the one replying. The per-event narrative stays GUPPI-attributed in TEXT
+    # («GUPPI: …», canon) — only the SENDER is Bob.
+    telegram_section = _section(merged, "telegram")
+    resolved_bob_bot = (
+        bob_bot
+        if bob_bot is not None
+        else _build_real_bot(_section(telegram_section, "bob"), "bob")
+    )
+    resolved_guppi_bot = (
+        guppi_bot
+        if guppi_bot is not None
+        else _build_real_bot(_section(telegram_section, "guppi"), "guppi")
+    )
+
+    # LLM health (BOB-116): the monitor is built BEFORE the providers and the router — both
+    # report every call's outcome to it — and AFTER the autobiography recorder, into which it
+    # writes «я молчал» on a recovery from real muteness. Its owner signal goes through BOB'S
+    # bot to the owner's DM (a template, no LLM — the path must not depend on what broke);
+    # ``llm.health.owner_alert: false`` keeps the log line and drops the message. The same
+    # monitor is the reader behind the heartbeat lane gate and GUPPI ``/status``.
+    llm_health = build_llm_health(
+        merged, clock=resolved_clock, bot=resolved_bob_bot, recorder=self_action_recorder
+    )
+    tier_providers = (
+        providers
+        if providers is not None
+        else build_tier_providers(merged, health=llm_health.monitor)
+    )
+    # Tier-1 rate-cap (BOB-072): a ceiling on concurrent Tier-1 (Qwen API) calls, invisible
+    # insurance against 429/degradation under bursts across chats. ``llm.tier1_max_concurrency``
+    # absent / 0 → no cap → byte-identical; a positive value serializes Tier-1 to that ceiling.
+    # 🔴 The VOICE canon is handed to the router HERE and only here (BOB-096.3). The router
+    # is the one place every generation door passes through, and the canon TEXT belongs to
+    # the persona (a `router -> personality` import would close a node cycle), so the tie
+    # between them lives in the composition root. The line is not decorative: without it the
+    # seam is unwired and the ban on role-playing GUPPI reaches the conversational turn
+    # alone — defect bob-alr.12 exactly. An architectural test guards it.
+    router = LLMRouter(
+        providers=tier_providers,
+        tier1_max_concurrency=_int(_section(merged, "llm"), "tier1_max_concurrency", 0),
+        voice_canon=guppi_voice_canon,
+        health=llm_health.monitor,
     )
 
     # Distilled work memory (BOB-087.B1): behind ``memory.work_journal`` (OFF by default →
@@ -578,24 +640,6 @@ def build_application(
     si_enabled = _build_self_improvement_enabled(merged)
     rule_store = SqliteSelfImprovementStore(connection) if si_enabled else None
 
-    # Resolve BOTH admin bots once so the multibot registry AND the coding-session
-    # owner-notifier share the SAME instances. GUPPI is the silent under-the-hood
-    # executor; BOB is the speaker — so the gated coding assistant talks (plan /
-    # narration / PR) through BOB'S bot (BOB-046 .1): the owner converses with Bob, so
-    # Bob is the one replying. The per-event narrative stays GUPPI-attributed in TEXT
-    # («GUPPI: …», canon) — only the SENDER is Bob.
-    telegram_section = _section(merged, "telegram")
-    resolved_bob_bot = (
-        bob_bot
-        if bob_bot is not None
-        else _build_real_bot(_section(telegram_section, "bob"), "bob")
-    )
-    resolved_guppi_bot = (
-        guppi_bot
-        if guppi_bot is not None
-        else _build_real_bot(_section(telegram_section, "guppi"), "guppi")
-    )
-
     # Gated coding sessions — «Bob runs Claude Code» (BOB-039 .3). Built ONLY when
     # ``coder.enabled`` is on (conservative default off): the assistant orchestrates the
     # UNBYPASSABLE plan gate, narrates each run to the owner through BOB'S bot and opens
@@ -673,6 +717,8 @@ def build_application(
         pursuit_store=proactivity_store,
         coding_assistant=coding_assistant,
         bob_reaction_filter=_BobReactionFilter(memory_repo),
+        # GUPPI ``/status`` shows the LLM health snapshot (BOB-116 D6) off the same monitor.
+        health=llm_health.monitor,
     )
     # обида seam (BOB-066 2.5): GUPPI announces a fresh owner-DM sulk entry once ("Боб
     # обижен …") — the внеличностный systemic voice (a group entry is silent). The tracker
@@ -1368,6 +1414,9 @@ def build_application(
             reflect_tick=reflect_tick,
             proactive_tick=proactive_tick,
             pursue_goals_tick=pursue_goals_tick,
+            # LLM-health lane gate (BOB-116): inner_monologue probes a degraded Tier 0,
+            # reflect / proactive / pursue_goals wait for it; poll and mood_drift run as ever.
+            health=llm_health.monitor,
         )
     )
 
@@ -1405,6 +1454,11 @@ def build_application(
         interactive_session=interactive_session,
         interactive_recovery=interactive_recovery,
         restart_announcer=restart_announcer,
+        health=llm_health.monitor,
+        owner_alert=llm_health.sink,
+        understudy_stand_down=build_understudy_stand_down(
+            router=router, monitor=llm_health.monitor
+        ),
     )
 
 

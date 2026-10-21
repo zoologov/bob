@@ -19,11 +19,13 @@
 («уже минуту», «через час», «молчал 9 дней 23 часа»): все места, где они звучат,
 требуют именно его.
 
-Время выводится в том поясе, в котором его несёт ``datetime``, с подписью пояса
-(«06:10 UTC»): часы Боба идут в UTC, и подпись честнее молчаливого сдвига. Свой
+Время владельцу — в **поясе процесса** с явным смещением («с 06:10 по 06:42 +03:00»),
+как в GUPPI ``/status`` и в эпизоде «я молчал» (решение координатора, bob-i83.15; один пояс
+на все три места держит :mod:`bob.kernel.local_time`). Часы Боба идут в UTC, поэтому
+момент переводится, а не печатается как пришёл; ``tz`` у :func:`recovered_text` — только для
+тестов, сборка его не передаёт. Наивное время печатается как есть и без смещения. Свой
 формат длительности здесь, а не общий с автобиографией (``memory/self_action.py``):
-``application`` не импортирует ``memory`` — общий модуль в ``kernel`` был бы
-следующим шагом, если формат понадобится третьему месту.
+``application`` не импортирует ``memory``.
 """
 
 from __future__ import annotations
@@ -32,8 +34,10 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING
 
+from bob.kernel.local_time import in_local_zone, utc_offset_label
+
 if TYPE_CHECKING:
-    from datetime import datetime
+    from datetime import datetime, tzinfo
 
 __all__ = [
     "HealthNotice",
@@ -201,11 +205,14 @@ def reminder_text(notice: HealthNotice) -> str:
     return _addressed(notice.owner_name, sentence)
 
 
-def recovered_text(notice: HealthNotice) -> str:
-    """«Вернулся»: провайдер снова отвечает; «молчал» — только если думать было нечем."""
+def recovered_text(notice: HealthNotice, *, tz: tzinfo | None = None) -> str:
+    """«Вернулся»: провайдер снова отвечает; «молчал» — только если думать было нечем.
+
+    Период — в поясе ``tz``; ``None`` — пояс процесса (так зовёт монитор).
+    """
     speaker = _speaker(notice.provider_id)
     lasted = format_duration((notice.now - notice.since).total_seconds())
-    period = _period(notice.since, notice.now)
+    period = _period(in_local_zone(notice.since, tz), in_local_zone(notice.now, tz))
     match notice.situation:
         case Situation.MUTE:
             sentence = (
@@ -226,10 +233,15 @@ def recovered_text(notice: HealthNotice) -> str:
 
 
 def understudy_missing_text(reason: str, owner_name: str | None) -> str:
-    """Сигнал при старте: дублёр в конфигурации включён, но работать не сможет."""
+    """Сигнал при старте: дублёр включён, но работать не может — и до перезапуска его нет.
+
+    Честно про границу: сборка снимает дублёр на всё время процесса, поэтому модель,
+    скачанная после старта, сама не подхватится.
+    """
     sentence = (
         f"я стартовал без дублёра: в конфигурации он включён, но {reason}. "
-        f"Если облако откажет, подстраховать будет некому."
+        f"Если облако откажет, подстраховать будет некому. "
+        f"Работаю без дублёра до перезапуска: даже если модель появится, сам я его не подхвачу."
     )
     return _addressed(owner_name, sentence)
 
@@ -301,8 +313,9 @@ def _plural(count: int, forms: tuple[str, str, str]) -> str:
 
 
 def _period(since: datetime, until: datetime) -> str:
-    """«с 06:10 по 06:42 UTC» в пределах дня, иначе «с 1 октября 06:10 по 10 октября 06:42 UTC»."""
-    zone = f" {until.tzname()}" if until.tzname() else ""
+    """«с 06:10 по 06:42 +03:00» в пределах дня, иначе «с 1 октября 06:10 по 10 октября …»."""
+    offset = utc_offset_label(until)
+    zone = f" {offset}" if offset else ""
     if since.date() == until.date():
         return f"с {_clock(since)} по {_clock(until)}{zone}"
     with_year = since.year != until.year

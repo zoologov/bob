@@ -169,6 +169,39 @@ async def test_bobs_voice_on_tier0_goes_to_the_bare_primary_and_the_router_repor
     assert recorder.records == [("failure", TIER0_PRIMARY, "auth"), ("success", TIER1, None)]
 
 
+# --- дублёр снят при старте (BOB-116 D11, bob-i83.15) ---------------------------------
+# Сборка проверила дублёр при старте, и он не готов: дальше Tier-0 — «голое» облако, как если
+# бы дублёр не был собран вовсе. Служебный ход идёт мимо обёртки, и его исход докладывает
+# роутер — иначе отказ облака не увидел бы никто (обёртка больше не зовётся).
+
+
+async def test_stood_down_understudy_sends_service_turns_to_the_bare_primary() -> None:
+    recorder = _Recorder()
+    primary = _Provider(error=_http_error(403))
+    wrapper = _UnderstudyBacked(primary=primary)
+    router = LLMRouter(providers={0: wrapper, 1: _Provider()}, health=recorder)
+
+    router.stand_down_tier0_understudy()
+    with pytest.raises(aiohttp.ClientResponseError):
+        await router.run(_request())
+
+    assert wrapper.calls == 0
+    assert primary.calls == 1
+    assert recorder.records == [("failure", TIER0_PRIMARY, "auth")]
+
+
+async def test_standing_down_a_plain_tier0_changes_nothing() -> None:
+    recorder = _Recorder()
+    tier0 = _Provider(reply="t0")
+    router = LLMRouter(providers={0: tier0, 1: _Provider()}, health=recorder)
+
+    router.stand_down_tier0_understudy()
+
+    assert await router.run(_request()) == "t0"
+    assert tier0.calls == 1
+    assert recorder.records == [("success", TIER0_PRIMARY, None)]
+
+
 async def test_router_without_a_monitor_still_routes() -> None:
     router = LLMRouter(providers={0: _Provider(reply="t0"), 1: _Provider(error=_http_error(503))})
     assert await router.run(_request(TaskType.ROOM_READ)) == "t0"

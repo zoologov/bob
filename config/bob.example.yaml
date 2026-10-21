@@ -5,8 +5,9 @@
 # Precedence: built-in defaults <- this YAML <- environment (BOB_* with __ nesting,
 # e.g. BOB_LLM__TIER1_API_KEY). An env value takes the type of the built-in default at
 # its path: int, float, bool (true/false, 1/0, yes/no, on/off), a comma-separated list
-# (BOB_TELEGRAM__ALLOWED_CHAT_IDS=-100123,-100456); a value that does not fit stops the
-# start with an error naming the variable. The production config is config/bob.vps.yaml.
+# (BOB_TELEGRAM__ALLOWED_CHAT_IDS=-1001234567890,-1009876543210 — placeholders); a value
+# that does not fit stops the start with an error naming the variable. The production
+# config is config/bob.vps.yaml.
 #
 # SECRETS (the two bot tokens, llm.tier1_api_key) — prefer environment variables
 # over committing them here. Never commit a real token/key. The bot tokens are
@@ -160,7 +161,7 @@ telegram:
   # long-poll blip never raises a false alarm; the diagnosis + its recovery each log
   # exactly once (not per failure).
   outage_threshold: 5
-  chat_id: 0                   # group chat id, e.g. -1004372947307
+  chat_id: 0                   # group chat id, e.g. -1001234567890 (placeholder)
   bob:
     # token: env BOB_TELEGRAM__TOKEN (not here)
     topic_id: 0                # Bob's forum topic (message_thread_id), e.g. 32
@@ -168,7 +169,7 @@ telegram:
   # Authorization (Bob is private). Only the owner + allowlisted users, and only
   # inside allowed_chat_ids, may interact; everyone else is silently ignored.
   owner_id: 0                  # your Telegram user id (always authorized)
-  allowed_chat_ids: []         # chat ids Bob will respond in, e.g. [-1004372947307]
+  allowed_chat_ids: []         # chat ids Bob will respond in, e.g. [-1001234567890]
   #                            # env: BOB_TELEGRAM__OWNER_ID, and a CSV string for
   #                            # BOB_TELEGRAM__ALLOWED_CHAT_IDS (e.g. "111,222").
   # Runtime allowlist grows via the owner command "/authorize <user_id>" and is

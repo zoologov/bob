@@ -68,23 +68,99 @@ jobs:
           VPS_HOST: ${{ secrets.VPS_HOST }}
           VPS_USER: ${{ secrets.VPS_USER }}
           DEPLOY_REF: ${{ github.event.inputs.ref || github.ref_name }}
+        # 🔴 BOB-116 D8b: Боб перезапускается только ПОСЛЕ того, как конфигурация прода
+        # доказала, что собирается с НАСТОЯЩИМ /opt/bob/.env. Порядок на сервере:
+        #   код (fetch/checkout/uv sync)
+        #   -> 1/4 предусловие: в .env есть все обязательные переменные (иначе — миграция,
+        #      deploy/RUNBOOK.md §9)
+        #   -> 2/4 config/bob.vps.yaml собирается лоадером Боба с этим .env и полон
+        #   -> 3/4 копия в config/bob.yaml + sha256 обоих в лог и сравнение
+        #   -> 4/4 дублёр Tier-0: модель тянется, только если ДЕЙСТВУЮЩАЯ конфигурация его
+        #      включает (решает тот же understudy_endpoint, что и фабрика провайдеров)
+        #   -> beadloom (BOB-110) -> restart.
+        # Проверка идёт ДО копирования, а не после: отказ оставляет действующий
+        # config/bob.yaml нетронутым, и упавший сам по себе Боб поднимется на прежнем;
+        # равенство sha переносит вердикт проверки на скопированный файл.
+        # .env выкатка не пишет никогда. Значения из него в лог не попадают: проверки
+        # печатают имена переменных и пути настроек (deploy/check_config.py).
+        # Поведение шага держит tests/deploy/test_deploy_workflow.py — он ИСПОЛНЯЕТ этот
+        # скрипт с заглушками вместо сервера. BOB_HOME/UV_BIN/UV_TOOLS/UV_TOOL_BINS
+        # переопределяет только тест: по ssh окружение не передаётся, действуют пути прода.
         run: |
           set -euo pipefail
-          # git/uv — от пользователя bob (владелец /opt/bob); restart — от root.
-          # .env на VPS живёт постоянно (gitignored, переживает git checkout) — не переписываем.
           ssh -i ~/.ssh/deploy_key -o UserKnownHostsFile=~/.ssh/known_hosts \
               -o IdentitiesOnly=yes "${VPS_USER}@${VPS_HOST}" \
-              "set -e; \
-               sudo -u bob git -C /opt/bob fetch --tags --prune; \
-               sudo -u bob git -C /opt/bob checkout '${DEPLOY_REF}'; \
-               sudo -u bob bash -lc 'cd /opt/bob && /usr/local/bin/uv sync'; \
-               UV_TOOL_DIR=/usr/local/share/uv-tools UV_TOOL_BIN_DIR=/usr/local/bin \
-                 /usr/local/bin/uv tool install --force beadloom==9.0.0; \
-               chmod -R a+rX /usr/local/share/uv-tools; \
-               sudo -u bob bash -lc 'cd /opt/bob && beadloom reindex'; \
-               systemctl restart bob; \
-               sleep 5; \
-               systemctl is-active bob"
+              "bash -s -- $(printf '%q' "${DEPLOY_REF}")" <<'REMOTE'
+          set -euo pipefail
+          # Тело — функция, вызванная со stdin из /dev/null. Bash читает этот скрипт из stdin
+          # ssh, и команда, которая сама читает stdin, съела бы его хвост. А оборванная
+          # передача не исполнит половину выкатки: функция исполняется, только прочитанная
+          # целиком.
+          step() { printf '==> %s\n' "$*"; }
+          fail() { printf '❌ %s\n' "$*" >&2; exit 1; }
+
+          deploy() {
+            local DEPLOY_REF="$1"
+            BOB_HOME="${BOB_HOME:-/opt/bob}"
+            UV_BIN="${UV_BIN:-/usr/local/bin/uv}"
+            UV_TOOLS="${UV_TOOLS:-/usr/local/share/uv-tools}"
+            UV_TOOL_BINS="${UV_TOOL_BINS:-/usr/local/bin}"
+            PY="$BOB_HOME/.venv/bin/python"
+            CHECK="$BOB_HOME/deploy/check_config.py"
+            TRACKED="$BOB_HOME/config/bob.vps.yaml"
+            LIVE="$BOB_HOME/config/bob.yaml"
+            ENV_FILE="$BOB_HOME/.env"
+
+            # git/uv и проверки — от пользователя bob (владелец /opt/bob и .env 600);
+            # копия конфига, ollama и restart — от root.
+            step "код: ${DEPLOY_REF}"
+            sudo -u bob git -C "$BOB_HOME" fetch --tags --prune
+            sudo -u bob git -C "$BOB_HOME" checkout "$DEPLOY_REF"
+            sudo -u bob bash -lc "cd '$BOB_HOME' && '$UV_BIN' sync"
+
+            step "1/4 предусловие: в .env есть все обязательные переменные"
+            sudo -u bob "$PY" "$CHECK" require-env --env-file "$ENV_FILE" \
+              || fail "мигрируй идентификаторы в .env — deploy/RUNBOOK.md §9. Боб не перезапущен."
+
+            step "2/4 config/bob.vps.yaml собирается с настоящим .env"
+            sudo -u bob "$PY" "$CHECK" validate --config "$TRACKED" --env-file "$ENV_FILE" \
+              || fail "конфигурация не собирается: config/bob.yaml не тронут, Боб не перезапущен."
+
+            step "3/4 действующий конфиг = репозиторий"
+            install -o bob -g bob -m 0640 "$TRACKED" "$LIVE"
+            sha256sum "$TRACKED" "$LIVE"
+            [ "$(sha256sum < "$TRACKED")" = "$(sha256sum < "$LIVE")" ] \
+              || fail "sha256 config/bob.yaml не равен config/bob.vps.yaml. Боб не перезапущен."
+
+            step "4/4 дублёр Tier-0"
+            local model
+            model="$(sudo -u bob "$PY" "$CHECK" understudy-model \
+              --config "$LIVE" --env-file "$ENV_FILE")"
+            if [ -z "$model" ]; then
+              echo "дублёр выключен в конфиге — модель не тянем"
+            else
+              ollama pull "$model" || fail "ollama pull ${model} не прошёл. Боб не перезапущен."
+              # awk читает список целиком: grep -q под pipefail ронял бы конвейер SIGPIPE.
+              ollama list | awk -v m="$model" \
+                'NR > 1 && ($1 == m || $1 == m ":latest") { found = 1 } END { exit !found }' \
+                || fail "модели ${model} нет в ollama list после pull. Боб не перезапущен."
+              echo "модель дублёра на месте: ${model}"
+            fi
+
+            step "beadloom 9.0.0 для интроспекции Боба (BOB-110)"
+            UV_TOOL_DIR="$UV_TOOLS" UV_TOOL_BIN_DIR="$UV_TOOL_BINS" \
+              "$UV_BIN" tool install --force beadloom==9.0.0
+            chmod -R a+rX "$UV_TOOLS"
+            sudo -u bob bash -lc "cd '$BOB_HOME' && beadloom reindex"
+
+            step "рестарт"
+            systemctl restart bob
+            sleep 5
+            systemctl is-active bob
+          }
+
+          deploy "$@" </dev/null
+          REMOTE
       - name: Note
         run: echo "Выкачен ${DEPLOY_REF:-tag} на VPS. Полный старт Боба ~1 мин (прогрев эмбеддера); при restart_notice=true Боб сам скажет в личку и группу, что обновился."
         env:

@@ -2209,6 +2209,18 @@ ignore = [
 # похожие символы намеренны → RUF001/RUF002/RUF003 не применяются.
 "src/bob/infrastructure/telegram/health_status.py" = ["RUF001", "RUF002", "RUF003"]
 "tests/infrastructure/telegram/test_guppi_health_status.py" = ["RUF001", "RUF002", "RUF003"]
+# BOB-116 D10 (bob-i83.11): сборка здоровья LLM — русские докстринги сборки, русская
+# строка лога и сигнала при старте, русские тексты сигнала в тестах; кириллические
+# похожие символы намеренны → RUF001/RUF002/RUF003 не применяются.
+"src/bob/runtime/wiring/health.py" = ["RUF001", "RUF002", "RUF003"]
+"src/bob/runtime/wiring/tool_health.py" = ["RUF001", "RUF002", "RUF003"]
+"tests/runtime/test_llm_health_composition.py" = ["RUF001", "RUF002", "RUF003"]
+"tests/runtime/wiring/test_health_gated_lanes.py" = ["RUF001", "RUF002", "RUF003"]
+# BOB-116 D11 (bob-i83.15): один пояс для времени человеку — русские докстринги ядра и
+# его теста; кириллические похожие символы намеренны → RUF001/RUF002/RUF003 не применяются.
+"src/bob/kernel/local_time.py" = ["RUF001", "RUF002", "RUF003"]
+"tests/domain/kernel/test_local_time.py" = ["RUF001", "RUF002", "RUF003"]
+"tests/runtime/wiring/test_outage_episode_writer.py" = ["RUF001", "RUF002", "RUF003"]
 "tests/infrastructure/telegram/test_multibot_guppi.py" = ["RUF001", "RUF002", "RUF003"]
 "src/bob/memory/digest_provenance.py" = ["RUF001", "RUF002", "RUF003"]
 "src/bob/memory/adapters/sqlite_memory_repo.py" = ["RUF001", "RUF002", "RUF003"]

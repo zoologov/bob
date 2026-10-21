@@ -31,7 +31,9 @@ coding-сессии два разных поступка, и путать их �
 Факты простоя несёт типизированный :class:`OutageSpan`, а не строка ``detail``: ``detail``
 остальных видов выводится в текст как есть, а здесь нужны даты, класс отказа и провайдер,
 которые рендер раскладывает сам. Время выводится так, как его несёт ``datetime`` — пояс
-выбирает вызывающий адаптер, ядро часов не читает.
+выбирает вызывающий адаптер (сборка переводит в пояс процесса), ядро часов не читает, — и
+подписывается смещением («по 06:42 +03:00»): тот же пояс и та же подпись, что в сообщении
+владельцу и в GUPPI ``/status`` (:mod:`bob.kernel.local_time`, bob-i83.15).
 """
 
 from __future__ import annotations
@@ -39,6 +41,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import TYPE_CHECKING
+
+from bob.kernel.local_time import utc_offset_label
 
 if TYPE_CHECKING:
     from datetime import datetime, timedelta
@@ -300,14 +304,16 @@ def _cause(span: OutageSpan) -> str:
 
 
 def _period(since: datetime, until: datetime) -> str:
-    """«1 октября с 06:10 по 06:42» в пределах дня, иначе «с 1 октября 06:10 по …»."""
+    """«1 октября с 06:10 по 06:42 +03:00» в пределах дня, иначе «с 1 октября 06:10 по …»."""
+    offset = utc_offset_label(until)
+    zone = f" {offset}" if offset else ""
     if since.date() == until.date():
-        return f"{_date(since, with_year=False)} с {_clock(since)} по {_clock(until)}"
+        return f"{_date(since, with_year=False)} с {_clock(since)} по {_clock(until)}{zone}"
     with_year = since.year != until.year
     start = f"{_date(since, with_year=with_year)} {_clock(since)}"
     end = f"{_date(until, with_year=with_year)} {_clock(until)}"
     preposition = "со" if since.day == _DAY_TAKING_SO else "с"
-    return f"{preposition} {start} по {end}"
+    return f"{preposition} {start} по {end}{zone}"
 
 
 def _date(moment: datetime, *, with_year: bool) -> str:

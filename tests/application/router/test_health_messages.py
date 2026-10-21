@@ -11,7 +11,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, timedelta, timezone, tzinfo
 
 import pytest
 
@@ -214,17 +214,43 @@ def test_reminder_opening_follows_the_situation(
 
 def test_recovered_after_muteness_matches_the_approved_wording() -> None:
     text = recovered_text(
-        _notice(owner_name=None, elapsed=timedelta(days=9, hours=23, minutes=32))
+        _notice(owner_name=None, elapsed=timedelta(days=9, hours=23, minutes=32)), tz=UTC
     )
     assert text == (
         "Я вернулся: облако ответило. Молчал 9 дней 23 часа "
-        "(с 1 октября 06:10 по 11 октября 05:42 UTC)."
+        "(с 1 октября 06:10 по 11 октября 05:42 +00:00)."
     )
 
 
 def test_recovered_within_one_day_shows_only_clock_times() -> None:
+    text = recovered_text(_notice(elapsed=timedelta(minutes=32)), tz=UTC)
+    assert text.endswith("Молчал 32 минуты (с 06:10 по 06:42 +00:00).")
+
+
+# Время владельцу — в поясе процесса с явным смещением, без «UTC» (решение координатора,
+# bob-i83.15). Два пояса, ни один не UTC: реализация, которая игнорирует ``tz`` или печатает
+# пояс часов, краснеет на любой машине — с поясом машины совпадёт максимум один случай.
+@pytest.mark.parametrize(
+    ("tz", "period"),
+    [
+        (timezone(timedelta(hours=3)), "(с 09:10 по 09:42 +03:00)"),
+        (timezone(-timedelta(hours=9, minutes=30)), "(с 20:40 по 21:12 -09:30)"),
+    ],
+)
+def test_recovered_period_is_told_in_the_given_zone_with_its_offset(
+    tz: tzinfo, period: str
+) -> None:
+    text = recovered_text(_notice(elapsed=timedelta(minutes=32)), tz=tz)
+    assert text.endswith(f"Молчал 32 минуты {period}.")
+    assert "UTC" not in text
+
+
+def test_recovered_period_defaults_to_the_process_zone() -> None:
     text = recovered_text(_notice(elapsed=timedelta(minutes=32)))
-    assert text.endswith("Молчал 32 минуты (с 06:10 по 06:42 UTC).")
+    local_until = (_SINCE + timedelta(minutes=32)).astimezone()
+    zone = local_until.strftime("%z")  # «+0300» — пояс процесса, посчитанный мимо модуля
+    assert text.endswith(f"по {local_until:%H:%M} {zone[:3]}:{zone[3:]}).")
+    assert "UTC" not in text
 
 
 def test_recovered_understudy_after_muteness_names_the_understudy() -> None:
@@ -269,7 +295,9 @@ def test_period_across_years_carries_the_years() -> None:
         has_understudy=False,
         owner_name=None,
     )
-    assert "(с 31 декабря 2026 23:00 по 1 января 2027 01:00 UTC)" in recovered_text(notice)
+    assert "(с 31 декабря 2026 23:00 по 1 января 2027 01:00 +00:00)" in recovered_text(
+        notice, tz=UTC
+    )
 
 
 def test_naive_times_carry_no_zone_label() -> None:
@@ -286,7 +314,9 @@ def test_naive_times_carry_no_zone_label() -> None:
         has_understudy=False,
         owner_name=None,
     )
-    assert recovered_text(notice).endswith("(с 06:10 по 06:15).")
+    assert recovered_text(notice, tz=timezone(timedelta(hours=3))).endswith(
+        "(с 06:10 по 06:15)."
+    )
 
 
 # --- старт без дублёра ------------------------------------------------------------
@@ -296,7 +326,9 @@ def test_understudy_missing_at_startup_names_the_reason() -> None:
     text = understudy_missing_text("модели qwen3:8b нет на http://127.0.0.1:11434", "Вова")
     assert text == (
         "Вова, я стартовал без дублёра: в конфигурации он включён, но модели qwen3:8b нет "
-        "на http://127.0.0.1:11434. Если облако откажет, подстраховать будет некому."
+        "на http://127.0.0.1:11434. Если облако откажет, подстраховать будет некому. "
+        "Работаю без дублёра до перезапуска: даже если модель появится, сам я его не "
+        "подхвачу."
     )
 
 
