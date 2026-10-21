@@ -3,20 +3,35 @@
 
 # kernel — общее ядро контрактов
 
-Инфра-нейтральные контракты, на которые опирается каждый вертикальный модуль:
-рантайм-сеймы (`Clock`, `EventBus`, `EventHandler`, `DomainEvent`, `LLMProvider`),
-общие value-объекты (`LLMMessage`, `ToolLoopMessage`, `JsonValue`), общий словарь
-терминов эпизодического лога (`WORK_EVENT_TYPE`, `Recalled`), события интейка
-(`MessageReceived`, `BobMessageReaction`), порты, которые читают модули ниже их прежнего
-владельца (`EpisodeReader`, `MemoryRecall`, `ReplyGateway`, `BobUserIdSource`, словарь
-tool-calling'а `ToolDefinition`/`ToolCall`/`ToolCallResult`/`ToolCallingProvider`), и
-модуляторы самоулучшения (`RuleModulators`) и социальный словарь — кто говорит с Бобом и
-как он к нему относится (`Interlocutor`, `InterlocutorKind`, `Trust`, `Gender`,
-`Relationship`, `RosterMember`, `SulkState`) — последние пять групп переехали сюда в
-BOB-113, чтобы сигнатуры модулей не тянули рёбер вверх по runtime-порядку. Это *только контракты и слова* —
-структурные `typing.Protocol` и константы, без реализаций. Классический DDD shared
-kernel: любой модуль (`capabilities` / `social` / `memory` / …) импортирует **отсюда**,
-но сам kernel не импортирует ни один модуль, поэтому циклов не возникает.
+Shared Kernel Боба — инфра-нейтральные контракты и общий словарь, на которые опирается
+каждый вертикальный модуль. В нём лежат:
+
+- рантайм-швы: `Clock`, `EventBus`, `EventHandler`, `DomainEvent`, `LLMProvider`,
+  `UnderstudyBackedProvider`;
+- общие value-типы обмена с моделью: `LLMMessage`, `ToolLoopMessage`, `JsonValue`;
+- общий словарь эпизодического лога: `WORK_EVENT_TYPE`, `Recalled`;
+- события интейка: `MessageReceived`, `BobMessageReaction`;
+- порты памяти и ответа: `EpisodeReader`, `MemoryRecall`, `ReplyGateway`, `BobUserIdSource`;
+- словарь tool-calling'а: `ToolDefinition`, `ToolCall`, `ToolCallResult`,
+  `ToolCallingProvider`;
+- модуляторы самоулучшения: `RuleModulators`;
+- социальный словарь — кто говорит с Бобом и как он к нему относится: `Interlocutor`,
+  `InterlocutorKind`, `Trust`, `Gender`, `Relationship`, `RosterMember`, `SulkState`;
+- небольшие чистые правила, о которых спрашивают несколько модулей: `visibility`,
+  `config_paths`, `poll_backoff`, `poll_outage`.
+
+В BOB-113 сюда переехали `Recalled`, события интейка, порты памяти и ответа, словарь
+tool-calling'а, `RuleModulators` и социальный словарь. Их читают модули, стоящие ниже
+прежнего владельца по runtime-порядку вертикалей, и объявление у владельца тянуло
+сигнатуры потребителей ребром вверх (порядок и правило размещения — в
+[`docs/architecture.md`](../../../../architecture.md), раздел «Порядок вертикалей»).
+
+В ядре только значения и контракты: структурные `typing.Protocol`, frozen-датаклассы,
+Enum'ы, константы и чистые правила без I/O. Поведение остаётся у модуля-владельца. Значение
+может проверять собственный инвариант при конструировании (`Relationship`), но не несёт
+логики своего контекста. Классический DDD shared kernel: любой модуль (`capabilities` /
+`social` / `memory` / …) импортирует **отсюда**, а сам kernel не импортирует ни один модуль
+Боба, поэтому циклов через него не возникает.
 
 Узел `kernel` (`part_of` слоя `bob-domain`) физически живёт в `src/bob/kernel/`. До
 BOB-062.8 эти контракты лежали в снятом слое-first каталоге `src/bob/domain/ports/`;
@@ -96,7 +111,7 @@ BOB-062.8 эти контракты лежали в снятом слое-first 
   `InterlocutorKind` + `Trust` + `Gender` (Enum), `Relationship` (4 оси в
   `[MIN_AXIS, MAX_AXIS]`, валидация в `__post_init__`), `RosterMember`, `SulkState`
   (`intensity` в `[MIN_INTENSITY, MAX_INTENSITY]`). Это только ЗНАЧЕНИЯ: их читают
-  `conversation`, `personality`, `memory` — ниже `social` по runtime-порядку. Поведение
+  `conversation` и `personality` — ниже `social` по runtime-порядку. Поведение
   (`classify`, `detect_self_gender`/`GenderRead`, `apply_interaction`, `build_roster`,
   `observe_relationship`/`recover`) остаётся в `social` и импортирует значения отсюда;
   ре-экспортов по старым путям нет.
@@ -149,14 +164,43 @@ BOB-062.8 эти контракты лежали в снятом слое-first 
   - 🔴 Ограничение: сигнал — вход для НАБЛЮДАТЕЛЯ (лог + `./bob status`), НЕ Telegram-алерт.
     Оглохший Боб сам о себе в Telegram не напишет; полноценный алерт (внешний канал) —
     отдельная работа. Ядро не притворяется алертом.
-- **__init__.py** — фасад пакета, реэкспортирующий контракты как shared kernel.
+- **__init__.py** — докстринг-карта групп контрактов и правило «только stdlib и `typing`».
+  Пакет ничего не ре-экспортирует: каждое имя импортируется из своего модуля
+  (`from bob.kernel.events import MessageReceived`), у имени один путь.
+
+### Кто читает ядро снизу
+
+Одна строка на семейство: где имя жило до BOB-113, кто его производит и какие модули ниже
+прежнего дома его читают (именно они не дают вернуть имя владельцу). Строки сверены по
+импортам в `src/`, включая блоки `TYPE_CHECKING`.
+
+| Семейство | Модуль ядра | Прежний дом | Кто производит | Читают ниже прежнего дома |
+|---|---|---|---|---|
+| `MessageReceived`, `BobMessageReaction` | `events.py` | `runtime-app` | гейтвей `infrastructure.telegram` | `conversation`, `personality` |
+| `Recalled` | `episode_types.py` | `memory` | recall-адаптеры `memory` | `conversation`, `personality` |
+| `EpisodeReader` | `ports.py` | `application.usecases` | `SqliteMemoryRepo` (`memory`) | `conversation` |
+| `MemoryRecall` | `ports.py` | `memory` | FTS5- и гибридный recall (`memory`) | `personality` |
+| `ReplyGateway` | `ports.py` | `application.usecases` | `infrastructure.telegram` | `proactivity` |
+| `BobUserIdSource` | `ports.py` | `application.usecases` | `MultiBotGateway.bob_user_id` (`infrastructure.telegram`) | `conversation`, `runtime-app` |
+| Tool-calling | `ports.py` | `capabilities` | `infrastructure.llm` | `personality` (`VoiceComposer`) |
+| `RuleModulators` | `modulators.py` | `proactivity` | `build_modulators` (`proactivity`) | `conversation` (`TurnGate`, `AntiRepeatGuard`), `personality` (`VoiceComposer`) |
+| Социальный словарь | `interlocutor.py`, `relationship.py`, `roster.py`, `sulk.py` | `social` | поведение `social` (`classify`, `apply_interaction`, `build_roster`, `observe_relationship`) | `conversation`, `personality` |
 
 ## Инварианты
 
-- Kernel не импортирует ни один вертикальный модуль (никаких циклов; граница-проверка
-  в `.beadloom/_graph/rules.yml`; поведенческая проверка —
-  `tests/domain/kernel/test_kernel_isolation.py`: импорт каждого модуля ядра в изолированном
-  интерпретаторе не загружает ни одного `bob.*` вне `bob.kernel`).
+- Kernel импортирует только стандартную библиотеку и `typing`. Единственный импорт `bob.*`
+  внутри пакета — `bob.kernel.episode_types` из `kernel/ports.py` под `TYPE_CHECKING`, то
+  есть внутри самого ядра.
+- Kernel не импортирует ни один модуль Боба. Это держат три независимые проверки:
+  правила `kernel-no-*` в `.beadloom/_graph/rules.yml` (13 штук, `severity: error`);
+  `tests/domain/kernel/test_kernel_isolation.py`, где импорт каждого модуля ядра в
+  изолированном интерпретаторе не загружает ни одного `bob.*` вне `bob.kernel`;
+  `tests/test_no_runtime_import_cycles.py`, для которого любое ребро ИЗ ядра направлено
+  вверх. 🔴 Правило `no-dependency-cycles` beadloom это направление не видит: узлы `kernel`
+  и `bob-domain` делят `source: src/bob/kernel/`, входящие импорты резолвятся в
+  `bob-domain`, и ребро из ядра не порождает ни одного derived-ребра (наблюдение O1 ревью
+  BOB-113, доказано саботажем `kernel → memory`). Поэтому направление охраняют именно три
+  проверки выше, а не правило циклов.
 - Только Protocol/type-определения и общий словарь: ни I/O, ни LLM-вызовов, ни транспорта.
 - Термины `episode_types` ПЕРСИСТЯТСЯ в эпизодическом логе — их значения стабильны
   (смена значения = переписывание уже записанной истории).
@@ -171,8 +215,17 @@ BOB-062.8 эти контракты лежали в снятом слое-first 
   чат-хода; при `stream=True` отдаёт токены.
 - `DomainEvent.name` → `str` — стабильное имя типа события.
 - Типы-алиасы: `LLMMessage`, `ToolLoopMessage`, `ToolDefinition`, `JsonValue`, `EventHandler`.
-- `EpisodeReader`, `MemoryRecall`, `ReplyGateway`, `BobUserIdSource`, `ToolCall`,
-  `ToolCallResult`, `ToolCallingProvider` (BOB-113).
+- `UnderstudyBackedProvider.without_understudy()` → `LLMProvider` — основной провайдер без
+  аварийного дублёра (BOB-087.E).
+- `EpisodeReader.recent_episodes(k)` / `recent_episodes_for(sender_id, k)` →
+  `Sequence[Mapping[str, object]]` (BOB-113).
+- `MemoryRecall.recall(query, *, k, surface_old=False)` → `Sequence[Recalled]` (BOB-113).
+- `ReplyGateway.typing_indicator(*, chat_id)` / `reply(*, chat_id, markdown, thinking=None,
+  reply_to_message_id=None)` → `int | None` / `send_photo(...)` / `send_document(...)`
+  (BOB-113).
+- `BobUserIdSource()` → `int | None` — `None`, пока идентичность бота не разрешена (BOB-113).
+- `ToolCall` (`id`, `name`, `arguments`), `ToolCallResult` (`text`, `tool_calls`),
+  `ToolCallingProvider.complete_with_tools(messages, *, tools)` → `ToolCallResult` (BOB-113).
 
 Модуль `src/bob/kernel/events.py`:
 - `MessageReceived`, `BobMessageReaction` (frozen dataclass'ы, свойство `name`);
@@ -255,6 +308,11 @@ poll-циклом — `tests/infrastructure/telegram/test_multibot_poll_backoff.
 теле класса они давали 0 мутантов (`.claude/dev-docs/MUTATION.md` «Порог и честность»).
 Какие оси и какие рычаги входят в правило, mutmut не меряет (выпадение операнда — не его
 мутант): это держат юниты на каждую ось и каждый рычаг, кусачесть доказана саботажем.
+
+Изоляция ядра — `tests/domain/kernel/test_kernel_isolation.py`: первый тест находит все
+модули пакета через `pkgutil` и импортирует их в подпроцессе `python -I`, проверяя, что
+не загрузилось ни одного `bob.*` вне `bob.kernel`; второй требует, чтобы дома, заведённые
+в BOB-113, действительно загрузились (пустой импорт не проходит).
 
 <!-- beadloom:track=src/bob/kernel/ports.py -->
 <!-- beadloom:track=src/bob/kernel/events.py -->

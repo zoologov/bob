@@ -60,7 +60,7 @@ mutmut не мутирует, а так предикат под мутацион
 `Interlocutor` + `InterlocutorKind` + `Trust` + `Gender` (Enum) — в `interlocutor.py`,
 `Relationship` (4 оси, `MIN_AXIS`/`MAX_AXIS`) — в `relationship.py`, `RosterMember` — в
 `roster.py`, `SulkState` (`MIN_INTENSITY`/`MAX_INTENSITY`) — в `sulk.py`. Их читают
-`conversation`, `personality`, `memory` — ниже `social`, поэтому значения в ядре; поведение
+`conversation` и `personality` — ниже `social`, поэтому значения в ядре; поведение
 (`classify`, `detect_self_gender`, `apply_interaction`, `build_roster`,
 `observe_relationship`/`recover`) осталось в `social`. Инвариант значения `Relationship`
 (каждая ось в `[MIN_AXIS, MAX_AXIS]`, границы включительно) проверяют функции модульного
@@ -154,8 +154,12 @@ mutmut не мутирует, а так предикат под мутацион
 отдельной работой. Ядро сознательно не притворяется алертом.
 
 kernel — чистый inward-safe leaf: только stdlib/typing, любой модуль может его
-импортить, kernel не импортит модули (правила `kernel-no-*` в
-`.beadloom/_graph/rules.yml`).
+импортить, kernel не импортит модули. Это держат правила `kernel-no-*` в
+`.beadloom/_graph/rules.yml`, тест изоляции `tests/domain/kernel/test_kernel_isolation.py`
+и гард `tests/test_no_runtime_import_cycles.py`. Правило `no-dependency-cycles` рёбер ИЗ
+ядра не видит: узлы `kernel` и `bob-domain` делят один `source` (наблюдение O1 ревью
+BOB-113). Кто из модулей читает каждое семейство контрактов и почему оно не у владельца —
+таблица «Кто читает ядро снизу» в [`features/kernel/SPEC.md`](features/kernel/SPEC.md).
 
 ### Domain-слои вертикальных модулей
 

@@ -215,7 +215,8 @@ chain-of-thought не нужен, без него быстрее и дешевл
 структурные ошибки (нет `choices`/`message`) поднимаются, но отсутствующий, `null`
 или нестроковый `content` деградирует в пустую строку, не вызывая ложного отката.
 
-**Tool-calling** реализует порт `ToolCallingProvider`: `complete_with_tools`
+**Tool-calling** реализует порт ядра `ToolCallingProvider` (`bob.kernel.ports`; до BOB-113
+жил в `capabilities/ports.py`): `complete_with_tools`
 отправляет манифест навыков как нативные OpenAI `tools` и разбирает ответ в
 `ToolCallResult`. Предпочитается нативный массив `tool_calls`; если его нет —
 включается **prompt-fallback**: из текста ответа терпимо извлекается

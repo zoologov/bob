@@ -156,7 +156,8 @@ THE анти-runaway-гардрейл. `mood_taste.modulate` — mood време
 `who_is_writing_directive` / `stranger_directive` (читают уже-вычисленный `kind.value`
 собеседника — БЕЗ runtime-импорта `InterlocutorKind`; `who_is_writing_directive` также
 доклеивает родовую клаузу по уже-вычисленному `gender.value` — «обращайся в женском/мужском
-роде», UNKNOWN → ничего, BOB-078 A, тоже без импорта social `Gender`), `profanity_stance`,
+роде», UNKNOWN → ничего, BOB-078 A, тоже без runtime-импорта Enum'а `Gender` из
+`kernel.interlocutor`), `profanity_stance`,
 `user_repeat_directive`, `improvement_directive`, `tactful_withhold_directive`
 (BOB-066.2.6 — тёплый отказ такта разглашения: гейт привилегий по-прежнему НЕ раскрывает
 приватные данные owner'а гостю, а эта строка лишь заменяет сухую стену на человечное «это
@@ -339,10 +340,15 @@ kv-таблице (`record`/`latest`/`clear` — hint всплывает не б
 
 ## Инварианты
 
-- **personality — стабильное ядро.** 0 runtime-зависимостей на `conversation`/`social`;
+- **personality — стабильное ядро, самый нижний модуль runtime-порядка вертикалей.**
+  Ни одного импорта `conversation`/`social`, в том числе под `TYPE_CHECKING` (с BOB-113
+  чужие понятия приходят из `kernel`: `Interlocutor`, `Relationship`, `RosterMember`,
+  `SulkState`, `RuleModulators`, `Recalled`, `MemoryRecall`, `MessageReceived`,
+  `ToolCallingProvider`).
   `voice.py` не импортит ни `Verbosity`/`EngagementLevel` из conversation (они теперь
-  здесь), ни `InterlocutorKind` из social (читает `kind.value`). Цикл `voice↔brevity/
-  engagement` разорван — `no-dependency-cycles` зелёный.
+  здесь), ни Enum'ы `InterlocutorKind`/`Gender` в runtime (читает `kind.value` и
+  `gender.value`). Цикл `voice↔brevity/engagement` разорван — `no-dependency-cycles`
+  зелёный.
 - **Mood/taste ограничены и не убегают.** Оси Mood в `[-1, 1]` (клампятся); эволюция вкуса
   масштабируется на `(1 - conviction)` — устоявшееся мнение почти не движется, tone
   детерминирован (тестируем без модели). `mood_taste.modulate` окрашивает вердикт ≤1 шага и
@@ -414,7 +420,8 @@ kv-таблице (`record`/`latest`/`clear` — hint всплывает не б
   `recalled_origin_directive` (BOB-090.C1), `guppi_no_roleplay_directive` (BOB-090.D3),
   `guppi_voice_canon` (BOB-096.3 — тот же запрет в двух формах, реализация порта
   `VoiceCanon` роутера), `reaction_meaning.ReactionMeaning`,
-  `reaction_effect.apply_reaction_to_mood`, `reflection.build_reflection_prompt`, `soul.SOUL`,
+  `reaction_effect.apply_reaction_to_mood`/`nudge_relationship_warmth`,
+  `reflection.build_reflection_prompt`, `soul.SOUL`, `state.PersonalityState` (BOB-113),
   `room_tone.room_tone_directive`/`room_engagement_bias` (+ `RoomToneThresholds`).
 - Use-case'ы: `usecases.UpdateMoodFromText`, `ApplyReflection`, `ReappraiseReflection`,
   `EvolveFascination`, `EvolvePhantoms`, `HeuristicReflectionParser`.

@@ -33,7 +33,8 @@ relationship,sulk}` + `application/authz/` + `application/usecases/{permission_*
    `InterlocutorKind` — `sulk_directive`/тон читают уже-вычисленное **значение** kind
    (`interlocutor.kind.value`, keyed по строковому лейблу), а классификацию делает
    вызывающий upstream. Итог: цикл `personality↔social` разорван, social владеет
-   identity целиком.
+   identity целиком. С BOB-113 само значение `Interlocutor` (и `InterlocutorKind`) лежит в
+   shared kernel, а `social` владеет классификацией (`classify`), см. решение 6.
 2. **`social → personality` однонаправленно (`relationship → negotiation.Stance`).**
    `apply_interaction` окрашивает отношение стилем торга (уступчивый CONCEDE/AGREE
    греет иначе, чем удержание позиции `PROPOSE_ALTERNATIVE`) и настроением `Mood`.
@@ -61,7 +62,7 @@ relationship,sulk}` + `application/authz/` + `application/usecases/{permission_*
    `Interlocutor` / `InterlocutorKind` / `Trust` / `Gender` (Enum) живут в
    `bob.kernel.interlocutor`, `Relationship` — в `bob.kernel.relationship`, `RosterMember` —
    в `bob.kernel.roster`, `SulkState` — в `bob.kernel.sulk`: их читают модули НИЖЕ `social`
-   по runtime-порядку (conversation, personality, memory), и объявленные здесь значения
+   по runtime-порядку (`conversation`, `personality`), и объявленные здесь значения
    тянули их сигнатуры ребром вверх. `classify`, `detect_self_gender`/`GenderRead`,
    `apply_interaction`/`compromise_bias`/`endorsed_seed`, `build_roster`/`is_newcomer`/
    `member_name`, `SulkConfig`/`observe_relationship`/`recover` остаются в `social` и
@@ -662,7 +663,9 @@ owner id), так что обиженный на середине owner пере
 - легализованы: `social → personality` (`relationship → negotiation.Stance`/`Mood` —
   публичная domain-поверхность), `social.usecases → router` (shared app), `ports`-шим.
 - 🔴 цикл `personality↔social` РАЗОРВАН (`no-dependency-cycles` зелёный): `voice.py`
-  больше не импортит `InterlocutorKind` в runtime.
+  больше не импортит `InterlocutorKind` в runtime. С BOB-113 `personality` не импортирует
+  `social` вовсе, в том числе под `TYPE_CHECKING`: социальные значения она читает из
+  `kernel`, а ребро `social → personality` идёт вниз по runtime-порядку вертикалей.
 
 Внутренний layer-guard модуля — `tests/social/test_layering.py`.
 
@@ -694,7 +697,9 @@ owner id), так что обиженный на середине owner пере
 - Домен: `interlocutor.classify` (+ `kernel.interlocutor.Interlocutor.gender`),
   `gender.detect_self_gender`/`GenderRead.observe`/`resolve` (+ `kernel.interlocutor.Gender`),
   `first_impression.impression_note_for`,
-  `relationship.apply_interaction`/`endorsed_seed`, `sulk.observe_relationship`/`recover`,
+  `relationship.apply_interaction`/`compromise_bias`/`endorsed_seed` (+ `RelationshipDeltas`),
+  `roster.build_roster`/`is_newcomer`/`member_name`,
+  `sulk.observe_relationship`/`recover` (+ `SulkConfig`),
   `disclosure.may_surface`/`visibility_of`/`visibility_for_scope`/`filter_surfaceable`
   (+ `VISIBILITY_PUBLIC`/`VISIBILITY_OWNER_PRIVATE`) и
   `disclosure.carries_owner_private`/`transfer_needs_consent` (перенос приватного,
