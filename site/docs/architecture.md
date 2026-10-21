@@ -1,7 +1,7 @@
 <!-- beadloom:badge-start -->
 > ✅ **fresh**
 > 
-> last synced 2026-10-21T07:27:18.171078+00:00 · coverage 100% (`bob`)
+> last synced 2026-10-21T08:49:35.850635+00:00 · coverage 100% (`bob`)
 > 
 > _Validation by Beadloom `doc_sync` — same source as `sync-check`._
 <!-- beadloom:badge-end -->
@@ -222,6 +222,14 @@ usecases → capabilities → social → telegram → proactivity → memory →
     `TYPE_CHECKING`-импорт не направлен вверх, а любое ребро ИЗ `kernel` считается
     направленным вверх.
 
+  Охват гарда направления — только девять узлов `_VERTICAL_ORDER` (в их числе
+  `infrastructure.telegram`) и `kernel`. Узлы вне порядка (`coding`, `interactive`, `identity`,
+  `presence`, `router`, `runtime`/`wiring`, `llm`, `persistence`, `config`) гардом направления
+  не судятся: их границы держат
+  `forbid_import`-правила из `rules.yml` (и только те строки индекса, которые beadloom видит —
+  см. паритетный тест ниже) и правило `architecture-layers`, которое судит 15 из 81 ребра
+  `depends_on` (остальные 66 — рёбра вертикалей, вне слоёв по замыслу BOB-062.6a).
+
   Оба сборщика импортов читают все формы импорта: `import bob.x`, `import bob.x.y as z`,
   `from bob.x import y`, `from bob import x`, `from bob.application import usecases` и
   относительные импорты. Выход относительного импорта за пределы пакета — явная ошибка, а
@@ -241,13 +249,19 @@ usecases → capabilities → social → telegram → proactivity → memory →
   - `from bob.memory import adapters` — в индексе записан пакет `bob.memory`, а не
     подмодуль, поэтому glob `bob/memory/adapters*` его не находит.
 
-  Для импорта в другой узел тест требует строку с полным модулем, поэтому все четыре формы
-  на нём краснеют. Внутри своего узла тест требует только модуль, который назван в самой
-  инструкции. 🔴 Это непокрытая зона: `from bob.coding import usecases` в
-  `coding/untrusted_repo.py` обходит правило `coding-internals-no-usecases-untrusted_repo`,
-  и ни lint, ни тесты этого не замечают (замер bob-7fo.7). Сейчас в `src` таких инструкций
-  две — `coding/usecases/coding_assistant.py` и `interactive/usecases/session.py`, три
-  связывания. Решение о том, переписывать ли их и ужесточать ли тест, принимает координатор.
+  Последняя форма так же слепа внутри своего узла: `from bob.coding import usecases` в
+  `coding/naming.py` записан как `bob.coding`, и правило `coding-internals-no-usecases` не
+  видит, что доменный модуль берёт use-case своей вертикали (lint exit 0, замер ревью .9).
+  Так обходятся все правила вида `*-internals-no-usecases`, `*-internals-no-adapters` и
+  `*-usecases-no-adapters` — 38 из 262 правил `forbid_import` (замер 2026-10-21).
+
+  Тест требует строку с полным модулем для каждого связывания — и в другой узел, и внутри
+  своего, поэтому все четыре формы на нём краснеют в любом месте. Зона закрыта в bob-7fo.10:
+  две инструкции этой формы в `src` (`coding/usecases/coding_assistant.py` и
+  `interactive/usecases/session.py`, три связывания) переписаны в
+  `from bob.<узел>.<модуль> import <имя>`, и после этого lint на чистом индексе находит 0
+  ошибок. Исправление самого резолвера beadloom остаётся записью в
+  `features/BOB-112/BDL-UX-draft.md`.
 - `tests/domain/kernel/test_kernel_isolation.py` — импорт каждого модуля ядра в
   изолированном интерпретаторе не загружает ни одного `bob.*` вне `bob.kernel`.
 

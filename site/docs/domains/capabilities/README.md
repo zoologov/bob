@@ -1,7 +1,7 @@
 <!-- beadloom:badge-start -->
 > ✅ **fresh**
 > 
-> last synced 2026-10-21T07:27:18.171078+00:00 · coverage 100% (`capabilities`)
+> last synced 2026-10-21T08:49:35.850635+00:00 · coverage 100% (`capabilities`)
 > 
 > _Validation by Beadloom `doc_sync` — same source as `sync-check`._
 <!-- beadloom:badge-end -->
@@ -291,7 +291,7 @@ Qwen). Канона им по правилу эпика не нужно — вы
   5 КБ настоящего mermaid, грамотно разобрал схему словами и картинки не прислал (второго
   вызова не сделал). Ни результат вызова, ни цикл инструментов к рендеру не толкали.
   Теперь рендер — часть рисования: общий
-  [`DiagramAttachment`](https://github.com/zoologov/bob/blob/4d7c301f277f23b1a124c8e309744c4dfe3d47df/src/bob/capabilities/usecases/diagram_attachment.py)
+  [`DiagramAttachment`](https://github.com/zoologov/bob/blob/features%2FBOB-112/src/bob/capabilities/usecases/diagram_attachment.py)
   (тот же локальный рендерер + тот же синк) рендерит ОДИН раз, дедуплицирует по источнику
   (два инструмента на одну схему = одна фотография) и НЕ бросает наружу — сбой рендера
   возвращается как честная строка `picture`, а не как исключение хода. Слова гарантированы,
