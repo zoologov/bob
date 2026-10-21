@@ -15,7 +15,9 @@
 На переход монитор делает три вещи и только их:
 
 * **одна строка лога** (``LLM health tier0-primary: healthy → degraded (auth, 5 failures,
-  since 06:10:42)``) — без стека: стек отказа уже сказал всё, что мог, первый раз;
+  since 09:10:42 +03:00)``) — без стека: стек отказа уже сказал всё, что мог, первый раз;
+  время в ней — в поясе процесса с явным смещением, как в текстах человеку
+  (:mod:`bob.kernel.local_time`, BOB-116 D12), а не в поясе часов без подписи;
 * **сообщение владельцу** через :class:`~bob.kernel.ports.OwnerAlertSink` — ошибка
   доставки глотается с предупреждением, доклад исхода никогда не валит сам вызов;
 * на **восстановлении** — колбэк ``on_recovered(provider_id, since, until, failure_class)``,
@@ -54,6 +56,7 @@ from bob.application.router.health_messages import (
     recovered_text,
     reminder_text,
 )
+from bob.kernel.local_time import in_local_zone, utc_offset_label
 from bob.kernel.ports import HealthView
 from bob.kernel.provider_health import (
     HealthState,
@@ -329,7 +332,12 @@ class ProviderHealthMonitor:
 
 
 def _since_label(since: datetime, moment: datetime) -> str:
-    """«06:10:42» в тот же день, иначе с датой — строка лога не врёт про сутки назад."""
-    if since.date() == moment.date():
-        return since.strftime("%H:%M:%S")
-    return since.strftime("%Y-%m-%d %H:%M:%S")
+    """«09:10:42 +03:00» в тот же день, иначе с датой — строка лога не врёт про сутки назад.
+
+    Оба момента — в поясе процесса: «тот же день» решается там же, где читается.
+    """
+    local_since = in_local_zone(since)
+    same_day = local_since.date() == in_local_zone(moment).date()
+    clock = local_since.strftime("%H:%M:%S" if same_day else "%Y-%m-%d %H:%M:%S")
+    offset = utc_offset_label(local_since)
+    return f"{clock} {offset}" if offset else clock

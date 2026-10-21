@@ -6,7 +6,8 @@
 
 ``config/bob.example.yaml`` is tracked in a PUBLIC repository and teaches by example, so
 its id examples were once real-looking group ids. Every run of six or more digits in its
-text — comments included, ``_`` and single-space separators between digits removed, so
+text — comments included, horizontal separators between digits removed (the scan the
+tracked-VPS-config guard shares, :mod:`tests.support.id_like_numbers`), so
 ``-100 4372 9473 07`` is still one run — must be one of the placeholders
 below; the one other long number allowed is the VALUE of ``runtime.log_max_bytes``. A new
 example id that looks real is a finding, whatever key or comment it hides in.
@@ -14,30 +15,20 @@ example id that looks real is a finding, whatever key or comment it hides in.
 
 from __future__ import annotations
 
-import re
-from pathlib import Path
+from tests.support.id_like_numbers import has_log_rotation_value, id_like_digit_runs
+from tests.support.repository_root import repository_root
 
-_EXAMPLE = Path(__file__).resolve().parents[3] / "config" / "bob.example.yaml"
+_EXAMPLE = repository_root() / "config" / "bob.example.yaml"
 
 # Group ids that cannot be mistaken for real ones: the -100 prefix plus a counting run.
 PLACEHOLDER_IDS = frozenset({"1001234567890", "1009876543210"})
 
-_ID_LIKE_DIGIT_RUN = re.compile(r"\d{6,}")
-_DIGIT_SEPARATOR = re.compile(r"(?<=\d)[_ ](?=\d)")
-_LOG_MAX_BYTES_VALUE = re.compile(r"^(\s*log_max_bytes:\s*)\d+", re.MULTILINE)
-
-
-def _scanned_text() -> str:
-    text = _DIGIT_SEPARATOR.sub("", _EXAMPLE.read_text(encoding="utf-8"))
-    return _LOG_MAX_BYTES_VALUE.sub(r"\1", text)
-
 
 def test_every_long_number_in_the_example_is_a_placeholder() -> None:
     findings = [
-        f"line {number}: {run}"
-        for number, line in enumerate(_scanned_text().splitlines(), start=1)
-        for run in _ID_LIKE_DIGIT_RUN.findall(line)
-        if run not in PLACEHOLDER_IDS
+        f"line {run.line}: {run.digits}"
+        for run in id_like_digit_runs(_EXAMPLE.read_text(encoding="utf-8"))
+        if run.digits not in PLACEHOLDER_IDS
     ]
 
     assert findings == [], f"an id-like number that is not a placeholder: {findings}"
@@ -49,4 +40,4 @@ def test_the_example_still_shows_a_group_id_placeholder() -> None:
 
 
 def test_the_log_rotation_exemption_still_applies_to_its_value() -> None:
-    assert _LOG_MAX_BYTES_VALUE.search(_EXAMPLE.read_text(encoding="utf-8")) is not None
+    assert has_log_rotation_value(_EXAMPLE.read_text(encoding="utf-8"))

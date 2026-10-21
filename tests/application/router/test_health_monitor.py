@@ -12,8 +12,9 @@
 from __future__ import annotations
 
 import logging
-from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING
+from datetime import UTC, datetime, timedelta, timezone
+
+import pytest
 
 from bob.application.router.health_monitor import (
     TIER0_PRIMARY,
@@ -24,9 +25,6 @@ from bob.application.router.health_monitor import (
 )
 from bob.kernel.ports import HealthObserver, HealthReader, HealthView
 from bob.kernel.provider_health import HealthPolicy, HealthState
-
-if TYPE_CHECKING:
-    import pytest
 
 _START = datetime(2026, 10, 1, 6, 10, 42, tzinfo=UTC)
 _LOGGER = "bob.application.router.health_monitor"
@@ -104,6 +102,21 @@ async def _fail(
 
 def _health_lines(caplog: pytest.LogCaptureFixture) -> list[str]:
     return [r.getMessage() for r in caplog.records if r.name == _LOGGER]
+
+
+def _local_since(moment: datetime, *, with_date: bool = False) -> str:
+    """Ожидаемое «since …» в поясе процесса со смещением — посчитано мимо модуля, через ``%z``."""
+    local = moment.astimezone()
+    offset = local.strftime("%z")
+    clock = local.strftime("%Y-%m-%d %H:%M:%S" if with_date else "%H:%M:%S")
+    return f"since {clock} {offset[:3]}:{offset[3:]}"
+
+
+def _machine_offset_plus(delta: timedelta) -> timezone:
+    """Пояс, сдвинутый от пояса машины на ``delta``: пропуск перевода краснеет на любой машине."""
+    machine = _START.astimezone().utcoffset()
+    assert machine is not None
+    return timezone(machine + delta)
 
 
 # --- порты -------------------------------------------------------------------------
@@ -211,7 +224,7 @@ async def test_reaching_the_threshold_signals_once_and_logs_one_line(
     assert sink.texts[0].startswith("Вова, я не могу думать: облако отказывает мне в доступе")
     assert "Дублёра на этой машине нет" in sink.texts[0]
     assert _health_lines(caplog) == [
-        "LLM health tier0-primary: healthy → degraded (auth, 5 failures, since 06:10:42)"
+        f"LLM health tier0-primary: healthy → degraded (auth, 5 failures, {_local_since(_START)})"
     ]
     record = next(r for r in caplog.records if r.name == _LOGGER)
     assert record.levelno == logging.WARNING
@@ -240,7 +253,7 @@ async def test_reminder_follows_the_schedule(caplog: pytest.LogCaptureFixture) -
     assert sink.texts[1].startswith("Я всё ещё не могу думать")
     assert "Напомню через час" in sink.texts[1]
     assert _health_lines(caplog)[-1].startswith(
-        "LLM health tier0-primary: still degraded (auth, 6 failures, since 06:10:42)"
+        f"LLM health tier0-primary: still degraded (auth, 6 failures, {_local_since(_START)})"
     )
 
 
@@ -252,7 +265,48 @@ async def test_since_names_the_date_when_the_outage_crossed_midnight(
     await _fail(monitor, clock, TIER0_PRIMARY, 5)
     clock.advance(86400)
     await monitor.record_failure(TIER0_PRIMARY, "auth")
-    assert "since 2026-10-01 06:10:42)" in _health_lines(caplog)[-1]
+    assert f"{_local_since(_START, with_date=True)})" in _health_lines(caplog)[-1]
+
+
+@pytest.mark.parametrize(
+    "clock_zone",
+    [
+        pytest.param(_machine_offset_plus(timedelta(hours=5, minutes=45)), id="machine+05:45"),
+        pytest.param(_machine_offset_plus(-timedelta(hours=9, minutes=30)), id="machine-09:30"),
+    ],
+)
+async def test_log_lines_name_the_process_zone_and_its_offset_whatever_the_clock_zone(
+    caplog: pytest.LogCaptureFixture, clock_zone: timezone
+) -> None:
+    """Лог — в поясе процесса со смещением, как тексты человеку (D12), не в поясе часов."""
+    caplog.set_level(logging.DEBUG, logger=_LOGGER)
+    monitor, clock, _, _ = _monitor()
+    clock.current = _START.astimezone(clock_zone)
+    await _fail(monitor, clock, TIER0_PRIMARY, 5)
+    clock.advance(600)
+    await monitor.record_failure(TIER0_PRIMARY, "auth")
+    await monitor.record_success(TIER0_PRIMARY)
+    since = _local_since(_START)
+    assert _health_lines(caplog) == [
+        f"LLM health tier0-primary: healthy → degraded (auth, 5 failures, {since})",
+        f"LLM health tier0-primary: still degraded (auth, 6 failures, {since})",
+        f"LLM health tier0-primary: degraded → healthy (auth, down {since})",
+    ]
+
+
+async def test_same_day_is_decided_in_the_process_zone_not_in_the_clock_zone(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """В поясе часов серия перешла полночь, в поясе процесса — нет: даты в строке нет."""
+    caplog.set_level(logging.DEBUG, logger=_LOGGER)
+    monitor, clock, _, _ = _monitor()
+    clock_zone = _machine_offset_plus(timedelta(hours=5, minutes=45))
+    start = datetime(2026, 10, 1, 23, 59, 58, tzinfo=clock_zone)
+    clock.current = start
+    await _fail(monitor, clock, TIER0_PRIMARY, 5)
+    assert _health_lines(caplog) == [
+        f"LLM health tier0-primary: healthy → degraded (auth, 5 failures, {_local_since(start)})"
+    ]
 
 
 async def test_degradation_by_duration_reports_the_real_count() -> None:
@@ -293,7 +347,7 @@ async def test_recovery_from_muteness_signals_logs_and_writes_the_episode(
     assert sink.texts[-1].startswith("Я вернулся: облако ответило. Молчал час")
     assert recovered.calls == [(TIER0_PRIMARY, _START, until, "auth")]
     assert _health_lines(caplog)[-1] == (
-        "LLM health tier0-primary: degraded → healthy (auth, down since 06:10:42)"
+        f"LLM health tier0-primary: degraded → healthy (auth, down {_local_since(_START)})"
     )
     assert monitor.snapshot()[TIER0_PRIMARY] == HealthView(state=HealthState.HEALTHY)
 

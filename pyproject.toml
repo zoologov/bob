@@ -2221,6 +2221,15 @@ ignore = [
 "src/bob/kernel/local_time.py" = ["RUF001", "RUF002", "RUF003"]
 "tests/domain/kernel/test_local_time.py" = ["RUF001", "RUF002", "RUF003"]
 "tests/runtime/wiring/test_outage_episode_writer.py" = ["RUF001", "RUF002", "RUF003"]
+# BOB-116 T (bob-i83.12): сценарии здоровья LLM — русские шаги .feature, русские тексты
+# лички владельца и /status в ассертах, русские докстринги харнесса; кириллические похожие
+# символы намеренны → RUF001/RUF002/RUF003 не применяются.
+"tests/acceptance/steps/test_llm_health.py" = ["RUF001", "RUF002", "RUF003"]
+"tests/acceptance/llm_health_harness.py" = ["RUF001", "RUF002", "RUF003"]
+"tests/application/runtime/test_heartbeat_health_gated_real_monitor.py" = ["RUF001", "RUF002", "RUF003"]
+"tests/support/id_like_numbers.py" = ["RUF001", "RUF002", "RUF003"]
+"tests/support/repository_root.py" = ["RUF001", "RUF002", "RUF003"]
+"tests/support/test_id_like_numbers.py" = ["RUF001", "RUF002", "RUF003"]
 "tests/infrastructure/telegram/test_multibot_guppi.py" = ["RUF001", "RUF002", "RUF003"]
 "src/bob/memory/digest_provenance.py" = ["RUF001", "RUF002", "RUF003"]
 "src/bob/memory/adapters/sqlite_memory_repo.py" = ["RUF001", "RUF002", "RUF003"]
@@ -2763,6 +2772,12 @@ source_paths = [
     # владельца завалит напоминаниями. Логика — в функциях модульного уровня (методы
     # ``@dataclass`` mutmut не мутирует), файл перечислен точечно (§0.3 п.6-7).
     "src/bob/kernel/provider_health.py",
+    # BOB-116 D11/T (bob-i83.15, bob-i83.12): один пояс для времени человеку — чистая
+    # развилка «aware → в пояс tz (None — пояс процесса), наивное — как есть» и подпись
+    # смещения «+03:00 / -09:30». Сдвинь знак или минуты смещения — и владелец прочтёт
+    # время простоя на часы мимо; переведи наивное — и сдвиг ляжет дважды. Файл перечислен
+    # точечно: ядро целиком в source_paths не заводим (§0.3 п.6-7).
+    "src/bob/kernel/local_time.py",
 ]
 # Deny the impure sub-trees inside those packages: adapters (I/O), ports (protocols),
 # and package __init__ re-exports carry no deterministic verdict logic to mutate.

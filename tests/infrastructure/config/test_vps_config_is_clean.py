@@ -14,28 +14,31 @@ The guard reads the file three ways, because each catches what the others cannot
 
 1. **Parsed keys.** Every key whose name carries a sensitive marker has no value.
 2. **Digit runs.** No run of six or more digits anywhere in the text — comments
-   included, and with ``_`` digit separators removed first, so ``-100_123_456`` is
-   still a run. A Telegram user id has at least six digits and a group id thirteen;
-   no legitimate setting needs that many except the log rotation size, and that one
-   exemption is narrow: only the VALUE of ``runtime.log_max_bytes`` on its own line
-   is skipped, so an id in a trailing comment on that same line is still a finding.
+   included, and with horizontal separators between digits removed first (``_``,
+   spaces, a tab, a non-breaking space, any number of them), so ``-100_123_456`` and
+   ``-100 4372 9473 07`` are still one run each. A Telegram user id has at least six
+   digits and a group id thirteen; no legitimate setting needs that many except the log
+   rotation size, and that one exemption is narrow: only the VALUE of
+   ``runtime.log_max_bytes`` on its own line is skipped, so an id in a trailing comment
+   on that same line is still a finding. The scan is the same one the example-config
+   guard runs (:mod:`tests.support.id_like_numbers`): BOB-116 D8b found an id split by
+   spaces that this guard, then joining ``_`` only, let through.
 3. **The real loader.** The tracked file loaded with the ``.env`` names the header
    lists yields typed ids — the header is not prose but a working contract.
 """
 
 from __future__ import annotations
 
-import re
 from collections.abc import Iterator, Mapping
-from pathlib import Path
 from typing import Any
 
 import yaml
 
 from bob.infrastructure.config.loader import ConfigLoader
+from tests.support.id_like_numbers import has_log_rotation_value, id_like_digit_runs
+from tests.support.repository_root import repository_root
 
-_REPO_ROOT = Path(__file__).resolve().parents[3]
-_VPS_CONFIG = _REPO_ROOT / "config" / "bob.vps.yaml"
+_VPS_CONFIG = repository_root() / "config" / "bob.vps.yaml"
 
 # A key whose name contains any of these must have no value in the tracked file.
 _SENSITIVE_MARKERS = (
@@ -48,12 +51,6 @@ _SENSITIVE_MARKERS = (
     "owner_dm_chat_id",
     "owner_name",
 )
-
-# Six digits is the shortest Telegram user id; a group id has thirteen.
-_ID_LIKE_DIGIT_RUN = re.compile(r"\d{6,}")
-_DIGIT_SEPARATOR = re.compile(r"(?<=\d)_(?=\d)")
-# The one setting allowed a long number: the log rotation size, value only.
-_LOG_MAX_BYTES_VALUE = re.compile(r"^(\s*log_max_bytes:\s*)\d+", re.MULTILINE)
 
 # The names the header of the tracked file tells the owner to keep in /opt/bob/.env.
 _ID_ENV = {
@@ -108,14 +105,7 @@ def test_no_sensitive_key_carries_a_value() -> None:
 
 
 def test_no_id_like_digit_run_anywhere_in_the_text() -> None:
-    text = _DIGIT_SEPARATOR.sub("", _text())
-    scanned = _LOG_MAX_BYTES_VALUE.sub(r"\1", text)
-
-    findings = [
-        f"line {number}: {line.strip()}"
-        for number, line in enumerate(scanned.splitlines(), start=1)
-        if _ID_LIKE_DIGIT_RUN.search(line)
-    ]
+    findings = [f"line {run.line}: {run.digits}" for run in id_like_digit_runs(_text())]
 
     assert findings == [], f"an id-like number (6+ digits) in the tracked config: {findings}"
 
@@ -123,7 +113,7 @@ def test_no_id_like_digit_run_anywhere_in_the_text() -> None:
 def test_the_log_rotation_exemption_still_applies_to_its_value() -> None:
     # The exemption is part of the rule; if the key moved or vanished, say so here
     # instead of letting the digit-run test pass on a file that no longer has it.
-    assert _LOG_MAX_BYTES_VALUE.search(_text()) is not None
+    assert has_log_rotation_value(_text())
 
 
 def test_ids_from_env_load_typed_over_the_tracked_file() -> None:
