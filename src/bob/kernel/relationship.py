@@ -44,10 +44,23 @@ class Relationship:
     compatibility: float = 0.0
 
     def __post_init__(self) -> None:
-        for name in ("trust", "respect", "warmth", "compatibility"):
-            value = getattr(self, name)
-            if not MIN_AXIS <= value <= MAX_AXIS:
-                raise ValueError(
-                    f"relationship axis '{name}' must be within "
-                    f"[{MIN_AXIS}, {MAX_AXIS}], got {value}"
-                )
+        _require_axes_within_bounds(self)
+
+
+# 🔴 The invariant lives in module-level functions, not in ``__post_init__`` itself: mutmut
+# does not mutate ANY method of a decorated class (``@dataclass`` included), so a check kept
+# inside the class body would sit in ``[tool.mutmut].source_paths`` with zero mutants — a
+# phantom gate (bob-etb.8, §0.3 п.7). Out here every comparison and every axis is mutated.
+def _require_axes_within_bounds(relationship: Relationship) -> None:
+    """Raise :class:`ValueError` naming the first axis outside ``[MIN_AXIS, MAX_AXIS]``."""
+    _require_within_bounds("trust", relationship.trust)
+    _require_within_bounds("respect", relationship.respect)
+    _require_within_bounds("warmth", relationship.warmth)
+    _require_within_bounds("compatibility", relationship.compatibility)
+
+
+def _require_within_bounds(axis: str, value: float) -> None:
+    if not MIN_AXIS <= value <= MAX_AXIS:
+        raise ValueError(
+            f"relationship axis '{axis}' must be within [{MIN_AXIS}, {MAX_AXIS}], got {value}"
+        )

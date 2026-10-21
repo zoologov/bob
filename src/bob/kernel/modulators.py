@@ -52,9 +52,17 @@ class RuleModulators:
 
     def has_any(self) -> bool:
         """Есть ли хоть один ненулевой наклон (иначе применять нечего)."""
-        return bool(
-            self.voice_adjustments
-            or self.length_step
-            or self.proactivity_bias
-            or self.addressivity_bias
-        )
+        return _has_any_lever(self)
+
+
+# 🔴 Предикат вынесен из класса на уровень модуля: mutmut не мутирует НИ ОДИН метод
+# декорированного класса (``@dataclass`` в том числе), и оставленный в теле класса он
+# числился бы в ``[tool.mutmut].source_paths`` с нулём мутантов — фантомный гейт
+# (bob-etb.8, §0.3 п.7). Здесь каждый ``or`` и каждый рычаг под мутацией.
+def _has_any_lever(modulators: RuleModulators) -> bool:
+    return bool(
+        modulators.voice_adjustments
+        or modulators.length_step
+        or modulators.proactivity_bias
+        or modulators.addressivity_bias
+    )

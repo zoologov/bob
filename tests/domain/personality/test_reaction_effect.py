@@ -84,3 +84,23 @@ def test_dismissive_reaction_cools_warmth() -> None:
     rel = Relationship(sender_id=7, warmth=0.2)
     cooler = nudge_relationship_warmth(rel, _meaning(valence=-0.15, warmth_nudge=-0.08))
     assert cooler.warmth < rel.warmth
+
+
+def test_warm_reaction_lifts_more_than_its_delta_alone() -> None:
+    """The toward-baseline lift really lands — not only the per-meaning delta (bob-etb.8)."""
+    low = Mood(valence=-0.4)
+    meaning = _meaning(valence=0.2, warmth_nudge=0.1)
+
+    lifted = apply_reaction_to_mood(low, meaning, baseline=Mood(valence=0.5), lift_rate=0.3)
+
+    assert lifted.valence > low.update(meaning.mood_delta).valence
+
+
+def test_a_neutral_reaction_gets_no_baseline_lift() -> None:
+    """Only a POSITIVE valence is warm: exactly zero skips the lift (bob-etb.8)."""
+    low = Mood(valence=-0.4)
+    meaning = _meaning(valence=0.0, warmth_nudge=0.0)
+
+    unchanged = apply_reaction_to_mood(low, meaning, baseline=Mood(valence=0.5), lift_rate=0.3)
+
+    assert unchanged == low.update(meaning.mood_delta)

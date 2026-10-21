@@ -60,12 +60,14 @@ usecases → capabilities → social → telegram → proactivity → memory →
 | Имя | Сейчас | Куда | Почему не владельцу |
 |---|---|---|---|
 | `MessageReceived`, `BobMessageReaction` (весь модуль) | `application/runtime/events.py` (без первопартийных импортов) | **`kernel/events.py`** | Событие интейка читают conversation и personality — ниже runtime-app. `kernel/ports.py` уже держит `DomainEvent`; события входят в ту же ответственность. Переезжает модуль целиком (две сущности — одна ответственность «события интейка») |
-| `Recalled` (`type Recalled = Mapping[str, object]`) | `memory/entities.py` (ре-экспорт через `memory/ports.py`) | **`kernel/episode_types.py`** (там уже словарь типов эпизодов) | Читают conversation и personality — ниже memory |
+| `Recalled` (`type Recalled = Mapping[str, object]`) | `memory/entities.py` (ре-экспорт через `memory/ports.py`)¹ | **`kernel/episode_types.py`** (там уже словарь типов эпизодов) | Читают conversation и personality — ниже memory |
 | `EpisodeReader`, `MemoryRecall` | `handle_message.py:343`, `memory/ports.py:57` | **`kernel/ports.py`** | Порты чтения памяти, которыми пользуются conversation/personality (ниже memory) и proactivity (выше). Соседи — `LLMProvider`, `EventBus` |
 | `ReplyGateway` | `handle_message.py:305` | **`kernel/ports.py`** | Исходящий канал (reply / photo / document / typing) — нужен application и proactivity; транспорт-нейтральный порт |
 | `BobUserIdSource` | `handle_message.py:524` | **`kernel/ports.py`** | Источник собственного id — нужен conversation и runtime-app |
 | `ToolDefinition`, `ToolCall`, `ToolCallResult`, `ToolCallingProvider` | `capabilities/ports.py` | **`kernel/ports.py`** (рядом с `ToolLoopMessage`, который уже там, и `LLMProvider`) | Словарь tool-calling'а LLM: его используют personality (`voice_composer`, ниже capabilities), application, infrastructure/llm. `ToolLoopMessage` уже в kernel — половина словаря переехала раньше; здесь — вторая половина |
 | `RuleModulators` | `proactivity/self_improvement.py:405` | **`kernel/modulators.py`** | Результат самоулучшения, который применяют conversation (`turn_gate`, `anti_repeat_guard`) и personality (`voice_composer`) — ниже proactivity. Замороженное значение без зависимостей |
+
+¹ _Исправление по факту (W1, подтверждено ревью bob-etb.6, сноска — bob-etb.8):_ `Recalled` был объявлен в `memory/ports.py`, а не в `memory/entities.py`; ре-экспорта не было. Строка таблицы оставлена как была написана — это ошибка исходного замера, а не изменение решения: дом (`kernel/episode_types.py`) тот же.
 
 ### D. Shared Kernel социальных сущностей (7)
 

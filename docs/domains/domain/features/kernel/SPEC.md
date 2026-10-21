@@ -244,7 +244,17 @@ poll-циклом — `tests/infrastructure/telegram/test_multibot_poll_backoff.
 отказ на пороге `≤ 1` и отрицательном счётчике), под мутационным гейтом
 (`mutmut run "*outage_state*"` — 8 мутантов, 100 % убито); его стык с поллингом —
 `tests/infrastructure/telegram/test_multibot_poll_outage.py` (диагноз при переходе РОВНО
-раз, снятие при первом успехе РОВНО раз, блип молчит).
+раз, снятие при первом успехе РОВНО раз, блип молчит). Инвариант значения `Relationship`
+(каждая из четырёх осей в `[MIN_AXIS, MAX_AXIS]`, обе границы включительно, ось названа в
+ошибке) — `tests/domain/kernel/test_relationship_value.py`; предикат `RuleModulators.has_any`
+(нейтральное значение — «нечего применять», любой ОДИН рычаг — «есть») —
+`tests/domain/kernel/test_rule_modulators.py`. Оба под мутационным гейтом с BOB-113
+(`scripts/mutation.sh kernel.relationship` — 28 мутантов, `kernel.modulators` — 4, 100 %
+убито). 🔴 Проверка и предикат живут в функциях модульного уровня, а метод `@dataclass`
+лишь вызывает их: mutmut не мутирует методы декорированных классов вообще, и оставленные в
+теле класса они давали 0 мутантов (`.claude/dev-docs/MUTATION.md` «Порог и честность»).
+Какие оси и какие рычаги входят в правило, mutmut не меряет (выпадение операнда — не его
+мутант): это держат юниты на каждую ось и каждый рычаг, кусачесть доказана саботажем.
 
 <!-- beadloom:track=src/bob/kernel/ports.py -->
 <!-- beadloom:track=src/bob/kernel/events.py -->

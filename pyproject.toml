@@ -2705,6 +2705,17 @@ source_paths = [
     # целиком в source_paths); перечислен точечно, иначе объявленная цель была бы вне
     # scope, то есть гейт фантомный (§0.3 п.7).
     "src/bob/kernel/poll_outage.py",
+    # BOB-113 (bob-etb.8, ревью M1): две детерминированные проверки, переехавшие в shared
+    # kernel, — инвариант значения ``Relationship`` (каждая из четырёх осей в
+    # ``[MIN_AXIS, MAX_AXIS]``, границы включительно) и предикат ``RuleModulators.has_any``
+    # (есть ли что применять). 🔴 Замер показал, что гейта у них не было и ДО переезда:
+    # mutmut не мутирует методы декорированных (``@dataclass``) классов вообще, так что и в
+    # ``social`` / ``proactivity`` они давали 0 мутантов. Поэтому логика вынесена в функции
+    # модульного уровня (0 → 28 и 0 → 4 мутантов), а файлы перечислены точечно — ядро
+    # целиком в source_paths не заводим (порты и словарь — мутировать нечего). См.
+    # MUTATION.md «Порог и честность» — методы декорированных классов (§0.3 п.6-7).
+    "src/bob/kernel/relationship.py",
+    "src/bob/kernel/modulators.py",
 ]
 # Deny the impure sub-trees inside those packages: adapters (I/O), ports (protocols),
 # and package __init__ re-exports carry no deterministic verdict logic to mutate.

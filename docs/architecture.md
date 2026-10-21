@@ -42,7 +42,8 @@ src/bob/
                      #   JsonValue, LLMMessage, LLMProvider; с BOB-113 ещё события
                      #   интейка, порты памяти/ответа/tool-calling, RuleModulators и
                      #   социальный словарь (Interlocutor/Trust/Gender, Relationship,
-                     #   RosterMember, SulkState; поведение — в social). Чистый inward-safe leaf
+                     #   RosterMember, SulkState; поведение — в social; инварианты значений
+                     #   — в функциях модульного уровня, под мутацией). Чистый inward-safe leaf
                      #   (только stdlib/typing); любой модуль может импортить,
                      #   kernel НЕ импортит модули (правила kernel-no-*).
   <module>/          # 8 ВЕРТИКАЛЬНЫХ бизнес-модулей (domain-first, BOB-062): coding,

@@ -1565,7 +1565,8 @@ rules:
 #
 #   2. application/usecases/perceive_reaction → personality + social. RUNTIME imports
 #      of `personality.{mood.MoodDelta,reaction_effect,reaction_meaning}` +
-#      `social.relationship.Relationship` (TYPE_CHECKING: disposition, interlocutor,
+#      `kernel.relationship.Relationship` (BOB-113: value moved to the shared kernel;
+#      TYPE_CHECKING: disposition, kernel.interlocutor,
 #      reaction_judge/meaning). Being-received reaction perception is a CROSS-DOMAIN
 #      use-case over mood + relationship, so it stays in the `application` coordination
 #      layer (like `handle_message`), OUTSIDE both verticals — the inward-boundary

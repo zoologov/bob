@@ -84,7 +84,7 @@ read на каждого. При этом (аудит команды 2026-07-28)
 
 ```
 src/bob/social/
-  ports.py            # layer=domain          — social-порты (Allowlist/Soul/First/Relationship/Sulk/PrivilegeJudge)
+  ports.py            # layer=domain          — social-порты: сторы (Allowlist/Soul/FirstImpression/Relationship/Sulk/PersonSulk) + 5 читателей хода (InterlocutorResolver/FirstImpressionReader/RosterRecaller/RelationshipReader/SulkReader, BOB-113) + PrivilegeJudge (ре-экспорт из permission.privilege)
   __init__.py         # layer=domain          — фасад модуля
   interlocutor.py     # layer=domain          — classify (owner/known/guest/bot + trust) → kernel.interlocutor.Interlocutor (+ gender), BOB-019/BOB-078 A
   gender.py           # layer=domain          — GenderRead + detect_self_gender (Enum Gender — kernel.interlocutor): грамматический род по САМО-презентации (не по имени), накопление ≥2 сигналов, BOB-078 A

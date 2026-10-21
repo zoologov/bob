@@ -229,7 +229,9 @@ drift-guard-тестом, чтобы `personality` не импортировал
 `parse_reaction_meaning`, `ReactionJudgeParseError` на мусоре). `reaction_effect.py` — чистое
 ядро «реакция меняет Боба»: `apply_reaction_to_mood` (тёплая реакция сперва тянет mood к
 baseline, потом ложится bounded-дельта — тот же путь соц. контагиона, что и текст),
-`nudge_relationship_warmth`, `NotableReaction` (лёгкая запись «меня получили», только когда
+`nudge_relationship_warmth` (клампит теплоту границами `kernel.relationship.MIN_AXIS`/
+`MAX_AXIS` — единственный источник инварианта оси, своей копии нет, bob-etb.8),
+`NotableReaction` (лёгкая запись «меня получили», только когда
 `worth_acknowledging`). `reaction_aloud.acknowledgment_hint` — редкий hint упомянуть это
 вслух; `reaction.reaction_emoji_for(mood)` — picker emoji из стандартного набора.
 

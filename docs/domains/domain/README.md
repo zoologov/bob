@@ -50,7 +50,9 @@
 
 `RuleModulators` — замороженный набор мягких наклонов из одобренных правил BOB-028.
 Собирает `proactivity` (`build_modulators`), применяют `conversation` и `personality`
-(ниже `proactivity`) → значение в ядре (BOB-113).
+(ниже `proactivity`) → значение в ядре (BOB-113). Предикат `has_any()` — «есть ли что
+применять» — делегирует функции модульного уровня `_has_any_lever`: метод `@dataclass`
+mutmut не мутирует, а так предикат под мутационным гейтом (bob-etb.8).
 
 #### Социальный словарь — `interlocutor.py`, `relationship.py`, `roster.py`, `sulk.py`
 
@@ -60,7 +62,12 @@
 `roster.py`, `SulkState` (`MIN_INTENSITY`/`MAX_INTENSITY`) — в `sulk.py`. Их читают
 `conversation`, `personality`, `memory` — ниже `social`, поэтому значения в ядре; поведение
 (`classify`, `detect_self_gender`, `apply_interaction`, `build_roster`,
-`observe_relationship`/`recover`) осталось в `social`.
+`observe_relationship`/`recover`) осталось в `social`. Инвариант значения `Relationship`
+(каждая ось в `[MIN_AXIS, MAX_AXIS]`, границы включительно) проверяют функции модульного
+уровня (`_require_axes_within_bounds` → `_require_within_bounds` по одной на ось), которые
+зовёт `__post_init__` — по той же причине, что и у модуляторов. Границы `MIN_AXIS`/`MAX_AXIS`
+— единственный источник: `personality.reaction_effect` клампит теплоту ими же, своей копии
+нет (bob-etb.8).
 
 #### Общий словарь — `episode_types.py`
 

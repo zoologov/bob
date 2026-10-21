@@ -10,7 +10,9 @@ tree those type-only edges (30 of 98) close ONE strongly connected component of 
 modules, while the runtime edges alone close none. beadloom 9.0.0 can neither tell the two
 apart nor exempt a cycle, so this test is the gate that judges what the rule cannot: the
 imports Python actually executes. Module-level and function-level imports count; an import
-under ``if TYPE_CHECKING:`` does not — at runtime it is a dead branch.
+under ``if TYPE_CHECKING:`` does not — at runtime it is a dead branch. Every import FORM is
+read (bob-etb.8): ``import bob.x``, ``from bob.x import y``, ``from bob import x``, ``from
+bob.application import usecases`` and relative imports all resolve to the module they bind.
 
 The nodes are the graph's: every top-level package under ``bob`` is one module, except
 ``application`` and ``infrastructure``, whose sub-packages are the nodes (``usecases``,
@@ -25,6 +27,8 @@ import ast
 from collections import defaultdict
 from pathlib import Path
 from typing import TYPE_CHECKING
+
+import pytest
 
 import bob
 
@@ -44,8 +48,58 @@ def _node_of(parts: tuple[str, ...]) -> str | None:
     return parts[0]
 
 
-def _runtime_imports(tree: ast.Module) -> list[str]:
-    """Every ``bob.…`` module imported outside an ``if TYPE_CHECKING:`` block."""
+def _package_of(path: Path) -> str:
+    """The ``__package__`` of a source file under ``bob`` — what its relative imports resolve
+    against: the file's directory, for a plain module and for an ``__init__.py`` alike."""
+    return ".".join(("bob", *path.relative_to(_SRC_ROOT).parts[:-1]))
+
+
+def _is_first_party(dotted: str) -> bool:
+    return dotted == "bob" or dotted.startswith("bob.")
+
+
+def _is_source_module(dotted: str) -> bool:
+    """True if ``dotted`` is a module or a package on disk (``x.py`` or ``x/__init__.py``)."""
+    base = _SRC_ROOT.parent.joinpath(*dotted.split("."))
+    return base.with_suffix(".py").is_file() or (base / "__init__.py").is_file()
+
+
+def _resolve_from(node: ast.ImportFrom, package: str) -> list[str]:
+    """The ``bob`` modules a ``from … import …`` binds, in every form (bob-etb.8, review M2).
+
+    Absolute or relative (``level > 0`` resolves against ``package``, as Python does); each
+    imported name that is itself a sub-module/sub-package resolves to it — so ``from bob
+    import social`` is ``bob.social`` and ``from bob.application import usecases`` is
+    ``bob.application.usecases`` — while a symbol resolves to the module it comes from.
+    """
+    if node.level == 0:
+        base = node.module or ""
+    else:
+        anchor = package.split(".")
+        if node.level - 1 >= len(anchor):
+            raise ValueError(
+                f"relative import of level {node.level} goes beyond the top package of {package}"
+            )
+        anchor = anchor[: len(anchor) - (node.level - 1)]
+        base = ".".join([*anchor, *([node.module] if node.module else [])])
+    if not _is_first_party(base):
+        return []
+    resolved = (
+        f"{base}.{a.name}" if a.name != "*" and _is_source_module(f"{base}.{a.name}") else base
+        for a in node.names
+    )
+    return list(dict.fromkeys(resolved))  # one entry per bound module per statement
+
+
+def _resolve(node: ast.Import | ast.ImportFrom, package: str) -> list[str]:
+    """The ``bob`` modules one import statement binds (non-first-party names are dropped)."""
+    if isinstance(node, ast.Import):
+        return [a.name for a in node.names if _is_first_party(a.name)]
+    return _resolve_from(node, package)
+
+
+def _runtime_imports(tree: ast.Module, package: str) -> list[str]:
+    """Every ``bob`` module imported outside an ``if TYPE_CHECKING:`` block, in any form."""
     found: list[str] = []
 
     def walk(nodes: Iterable[ast.AST]) -> None:
@@ -53,18 +107,12 @@ def _runtime_imports(tree: ast.Module) -> list[str]:
             if isinstance(node, ast.If) and _is_type_checking(node.test):
                 walk(node.orelse)  # the dead branch is skipped, the live one is read
                 continue
-            if isinstance(node, ast.Import):
-                found.extend(a.name for a in node.names if a.name.startswith("bob."))
-            elif isinstance(node, ast.ImportFrom) and _is_first_party(node):
-                found.append(node.module or "")
+            if isinstance(node, ast.Import | ast.ImportFrom):
+                found.extend(_resolve(node, package))
             walk(ast.iter_child_nodes(node))
 
     walk(tree.body)
     return found
-
-
-def _is_first_party(node: ast.ImportFrom) -> bool:
-    return node.level == 0 and node.module is not None and node.module.startswith("bob.")
 
 
 def _is_type_checking(test: ast.expr) -> bool:
@@ -81,7 +129,7 @@ def _runtime_edges() -> dict[str, set[str]]:
         if src is None:
             continue
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-        for module in _runtime_imports(tree):
+        for module in _runtime_imports(tree, _package_of(path)):
             dst = _node_of(tuple(module.split(".")[1:]))
             if dst is not None and dst != src:
                 edges[src].add(dst)
@@ -141,13 +189,22 @@ def test_type_checking_imports_are_not_runtime_edges() -> None:
         "from typing import TYPE_CHECKING\n"
         "if TYPE_CHECKING:\n"
         "    from bob.memory.ports import X\n"
+        "    from bob import memory\n"
+        "    from ..memory import ports\n"
         "else:\n"
         "    from bob.social.ports import Y\n"
+        "    from . import mood\n"
         "def f():\n"
         "    from bob.coding.ports import Z\n"
+        "    from bob import presence\n"
         "    return Z\n"
     )
-    assert _runtime_imports(tree) == ["bob.social.ports", "bob.coding.ports"]
+    assert _runtime_imports(tree, "bob.personality") == [
+        "bob.social.ports",
+        "bob.personality.mood",
+        "bob.coding.ports",
+        "bob.presence",
+    ]
 
 
 # --- BOB-113: no TYPE_CHECKING-only import points UPWARD ------------------------------------
@@ -177,19 +234,15 @@ _VERTICAL_ORDER: tuple[str, ...] = (
 _KERNEL = "kernel"
 
 
-def _type_checking_imports(tree: ast.Module) -> list[tuple[str, int]]:
-    """Every ``bob.…`` module imported INSIDE an ``if TYPE_CHECKING:`` block, with its line."""
+def _type_checking_imports(tree: ast.Module, package: str) -> list[tuple[str, int]]:
+    """Every ``bob`` module imported INSIDE an ``if TYPE_CHECKING:`` block, with its line."""
     found: list[tuple[str, int]] = []
 
     def collect(nodes: Iterable[ast.AST]) -> None:
         for node in nodes:
             for sub in ast.walk(node):
-                if isinstance(sub, ast.Import):
-                    found.extend(
-                        (a.name, sub.lineno) for a in sub.names if a.name.startswith("bob.")
-                    )
-                elif isinstance(sub, ast.ImportFrom) and _is_first_party(sub):
-                    found.append((sub.module or "", sub.lineno))
+                if isinstance(sub, ast.Import | ast.ImportFrom):
+                    found.extend((module, sub.lineno) for module in _resolve(sub, package))
 
     def walk(nodes: Iterable[ast.AST]) -> None:
         for node in nodes:
@@ -212,7 +265,7 @@ def _type_only_edges() -> list[tuple[str, str, str]]:
         if src is None:
             continue
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-        for module, line in _type_checking_imports(tree):
+        for module, line in _type_checking_imports(tree, _package_of(path)):
             dst = _node_of(tuple(module.split(".")[1:]))
             if dst is not None and dst != src:
                 where = f"{path.relative_to(_SRC_ROOT.parent)}:{line}"
@@ -265,17 +318,25 @@ def test_type_checking_collector_reads_only_the_type_only_branch() -> None:
         "if TYPE_CHECKING:\n"
         "    from bob.memory.ports import X\n"
         "    import bob.social.roster\n"
+        "    from bob import social\n"
+        "    from ..application import usecases\n"
         "else:\n"
         "    from bob.coding.ports import Y\n"
+        "    from bob import memory\n"
         "from bob.kernel.events import Z\n"
+        "from . import mood\n"
         "def f():\n"
         "    if typing.TYPE_CHECKING:\n"
         "        from bob.personality.voice import V\n"
+        "        from .voice import W\n"
     )
-    assert _type_checking_imports(tree) == [
+    assert _type_checking_imports(tree, "bob.personality") == [
         ("bob.memory.ports", 4),
         ("bob.social.roster", 5),
-        ("bob.personality.voice", 11),
+        ("bob.social", 6),
+        ("bob.application.usecases", 7),
+        ("bob.personality.voice", 15),
+        ("bob.personality.voice", 16),
     ]
 
 
@@ -287,3 +348,89 @@ def test_vertical_order_direction_and_scope() -> None:
     assert _points_upward("personality", "kernel") is False
     assert _points_upward("coding", "memory") is None
     assert _points_upward("memory", "infrastructure.llm") is None
+
+
+# --- bob-etb.8 (review M2): the collectors read EVERY import form -------------------------
+#
+# A guard that reads only ``from bob.x.y import …`` inherits the illusion of that form
+# (§0.3 п.12): ``from bob import social`` under TYPE_CHECKING passed both this guard and
+# beadloom 9.0.0. Each form below must resolve to the dotted module it actually binds; a
+# name that is a sub-module/sub-package resolves to it, a symbol resolves to its package.
+# The file under test sits in package ``bob.personality`` (as ``bob/personality/voice.py``).
+_PERSONALITY = "bob.personality"
+
+_IMPORT_FORMS: tuple[tuple[str, list[str]], ...] = (
+    ("import bob.social.roster", ["bob.social.roster"]),
+    ("import bob.social.roster as r, os", ["bob.social.roster"]),
+    ("from bob.social.roster import build_roster", ["bob.social.roster"]),
+    ("from bob import social", ["bob.social"]),
+    ("from bob import social as s, memory", ["bob.social", "bob.memory"]),
+    ("from bob.social import roster", ["bob.social.roster"]),
+    ("from bob.social import AllowlistStore", ["bob.social"]),
+    ("from bob.application import usecases", ["bob.application.usecases"]),
+    ("from bob.infrastructure import telegram", ["bob.infrastructure.telegram"]),
+    ("from bob.application import reliability", ["bob.application.reliability"]),
+    ("from bob.application import NOT_A_MODULE", ["bob.application"]),
+    ("from . import mood", ["bob.personality.mood"]),
+    ("from .voice import improvement_directive", ["bob.personality.voice"]),
+    ("from .. import social", ["bob.social"]),
+    ("from ..social import roster", ["bob.social.roster"]),
+    ("from ..social.roster import build_roster", ["bob.social.roster"]),
+    ("from ..application import usecases", ["bob.application.usecases"]),
+    ("import os", []),
+    ("from typing import TYPE_CHECKING", []),
+    ("import bobcat", []),
+    ("from bobcat import bob", []),
+)
+
+
+@pytest.mark.parametrize(("source", "expected"), _IMPORT_FORMS, ids=[f[0] for f in _IMPORT_FORMS])
+def test_runtime_collector_resolves_every_import_form(source: str, expected: list[str]) -> None:
+    assert _runtime_imports(ast.parse(source), _PERSONALITY) == expected
+
+
+@pytest.mark.parametrize(("source", "expected"), _IMPORT_FORMS, ids=[f[0] for f in _IMPORT_FORMS])
+def test_type_checking_collector_resolves_every_import_form(
+    source: str, expected: list[str]
+) -> None:
+    tree = ast.parse("from typing import TYPE_CHECKING\nif TYPE_CHECKING:\n    " + source)
+    assert _type_checking_imports(tree, _PERSONALITY) == [(m, 3) for m in expected]
+
+
+def test_relative_import_resolves_against_the_package_of_an_init_module() -> None:
+    """In ``bob/social/__init__.py`` the package is ``bob.social`` itself, not ``bob``."""
+    assert _runtime_imports(ast.parse("from .roster import x"), "bob.social") == [
+        "bob.social.roster"
+    ]
+    assert _runtime_imports(ast.parse("from . import social"), "bob") == ["bob.social"]
+
+
+def test_relative_import_beyond_the_top_package_fails_loudly() -> None:
+    """Python rejects it at import time; the guard must not silently drop it either."""
+    with pytest.raises(ValueError, match="beyond"):
+        _runtime_imports(ast.parse("from ... import social"), _PERSONALITY)
+
+
+@pytest.mark.parametrize(
+    ("relative", "package"),
+    [
+        (("personality", "voice.py"), "bob.personality"),
+        (("personality", "__init__.py"), "bob.personality"),
+        (("application", "usecases", "handle_message.py"), "bob.application.usecases"),
+        (("app.py",), "bob"),
+        (("__init__.py",), "bob"),
+    ],
+)
+def test_package_of_a_source_file(relative: tuple[str, ...], package: str) -> None:
+    assert _package_of(_SRC_ROOT.joinpath(*relative)) == package
+
+
+def test_from_bob_import_subpackage_under_type_checking_is_judged_as_an_upward_edge() -> None:
+    """The review's deception (M2): the form resolves to a node the order judges."""
+    tree = ast.parse(
+        "from typing import TYPE_CHECKING\nif TYPE_CHECKING:\n    from bob import social\n"
+    )
+    [(module, _line)] = _type_checking_imports(tree, _PERSONALITY)
+    dst = _node_of(tuple(module.split(".")[1:]))
+    assert dst == "social"
+    assert _points_upward("personality", dst) is True

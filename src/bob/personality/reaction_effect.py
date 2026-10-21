@@ -29,6 +29,8 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING
 
+from bob.kernel.relationship import MAX_AXIS, MIN_AXIS
+
 if TYPE_CHECKING:
     from datetime import datetime
 
@@ -41,10 +43,6 @@ __all__ = [
     "apply_reaction_to_mood",
     "nudge_relationship_warmth",
 ]
-
-# Relationship warmth is bounded to [-1, 1] (mirrors the domain axis bounds).
-_MIN_AXIS = -1.0
-_MAX_AXIS = 1.0
 
 
 def apply_reaction_to_mood(
@@ -69,7 +67,7 @@ def nudge_relationship_warmth(rel: Relationship, meaning: ReactionMeaning) -> Re
     touch. Only the warmth axis moves — a single reaction nudges, it does not re-rate
     trust/respect/compatibility (those accrue through real exchanges, BOB-014).
     """
-    warmth = max(_MIN_AXIS, min(_MAX_AXIS, rel.warmth + meaning.warmth_nudge))
+    warmth = max(MIN_AXIS, min(MAX_AXIS, rel.warmth + meaning.warmth_nudge))
     return replace(rel, warmth=warmth)
 
 
