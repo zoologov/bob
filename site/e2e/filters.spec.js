@@ -1,0 +1,143 @@
+// beadloom:generated version=9.0.0 sha256=3679de3fd03496d4ac6408fc4346349fbbd3c517e1e2d8f695f0e7ec67c4c7dd; written by `beadloom docs site`, a change belongs in .beadloom/site/e2e/filters.spec.js
+// Filters keep what nests inside a hidden parent.
+//
+// In an earlier version a filter hid compound parents with `display: none`, and Cytoscape
+// hides the children of a hidden parent: `Kind = feature` showed nothing, and
+// the domain filter kept direct children only.
+//
+// A filter's case reads the filtered graph at full detail, every box open: at
+// the whole-graph fit the viewer draws a map of closed boxes, and how a filter
+// composes with it is `map.spec.js`'s. The search box opens the boxes that hold
+// what it finds by itself, so its case opens none.
+
+import { test, expect } from "@playwright/test";
+import {
+  architectureData,
+  depthOf,
+  flaggedIds,
+  openArchitecture,
+  openEveryBox,
+  parentMap,
+  subtreeOf,
+  viewer,
+  withAncestors,
+} from "./support/viewer.js";
+import { layerOfNode, layersOfData } from "./support/layers.js";
+import { LACKING, requireShape } from "./support/shape.js";
+
+const sorted = (ids) => [...ids].sort();
+
+const NO_NESTING = "no node sits inside another: the graph has no part_of edge";
+
+test("a kind filter keeps every node of that kind visible, with its containers", async ({
+  page,
+  request,
+}) => {
+  const data = await architectureData(request);
+  const parents = parentMap(data);
+  // A feature inside a container when the graph has one; otherwise the kind the
+  // most nodes inside a container are of, so the containers kept are seen.
+  const nested = (kind) => data.nodes.filter((n) => n.kind === kind && parents[n.id]).length;
+  const kind = nested("feature")
+    ? "feature"
+    : [...new Set(data.nodes.map((n) => n.kind))].sort((a, b) => nested(b) - nested(a) || a.localeCompare(b))[0];
+  requireShape(nested(kind) > 0, NO_NESTING);
+  const ofKind = data.nodes.filter((n) => n.kind === kind).map((n) => n.id);
+
+  await openArchitecture(page);
+  await openEveryBox(page);
+  await page.getByLabel("Kind", { exact: true }).selectOption(kind);
+
+  await expect.poll(() => viewer(page, "visibleIds")).toEqual(
+    sorted(withAncestors(ofKind, parents))
+  );
+});
+
+test("a domain filter keeps the domain's whole subtree", async ({ page, request }) => {
+  const data = await architectureData(request);
+  const parents = parentMap(data);
+  // How far below a domain its subtree reaches.
+  const reach = (domain) =>
+    Math.max(...[...subtreeOf(domain, parents)].map((id) => depthOf(id, parents) - depthOf(domain, parents)));
+  // The domain whose subtree reaches deepest, so the test sees more than direct children.
+  const domain = data.nodes
+    .filter((n) => n.kind === "domain")
+    .map((n) => n.id)
+    .sort((a, b) => reach(b) - reach(a) || a.localeCompare(b))[0];
+  requireShape(domain && reach(domain) >= 2, "no domain holds a node two levels below it");
+  const subtree = subtreeOf(domain, parents);
+
+  await openArchitecture(page);
+  await openEveryBox(page);
+  await page.getByLabel("Domain", { exact: true }).selectOption(domain);
+
+  await expect.poll(() => viewer(page, "visibleIds")).toEqual(
+    sorted(withAncestors(subtree, parents))
+  );
+});
+
+test("the search box keeps the matching nodes and their containers", async ({ page, request }) => {
+  const data = await architectureData(request);
+  const parents = parentMap(data);
+  // A node two levels below the top, or failing that one level, so its containers are kept.
+  const target =
+    data.nodes.find((n) => parents[n.id] && parents[parents[n.id]]) ?? data.nodes.find((n) => parents[n.id]);
+  requireShape(target, NO_NESTING);
+  const query = target.id;
+  const matches = data.nodes
+    .filter((n) => n.id.toLowerCase().includes(query.toLowerCase()))
+    .map((n) => n.id);
+
+  await openArchitecture(page);
+  await page.getByRole("searchbox", { name: "Search nodes" }).fill(query);
+
+  await expect.poll(() => viewer(page, "visibleIds")).toEqual(sorted(withAncestors(matches, parents)));
+});
+
+test("a layer filter keeps every node in that layer, inherited or its own, with its containers", async ({
+  page,
+  request,
+}) => {
+  const data = await architectureData(request);
+  const parents = parentMap(data);
+  // The layer of the layers the file declares (every rule's, where it names them,
+  // `support/layers.js`) that the most nodes are in without a tag of their own, so
+  // the case sees the inherited layer and not only the nodes that name it.
+  const layers = layersOfData(data);
+  const membersOf = (layer) => data.nodes.filter((n) => layerOfNode(n, data, layers) === layer);
+  const owns = (n, layer) => (layer.rule ? (n.tags || []).includes(layer.tag) : Boolean(n.layer));
+  const untagged = (layer) => membersOf(layer).filter((n) => !owns(n, layer)).length;
+  const declared = [...layers].sort((a, b) => untagged(b) - untagged(a))[0];
+  requireShape(declared && untagged(declared) > 0, LACKING.inheritedLayer);
+  const members = membersOf(declared).map((n) => n.id);
+
+  await openArchitecture(page);
+  await openEveryBox(page);
+  // The filter offers the declared names, not the tag tokens: with its rule's where more than one rule is drawn.
+  await page.getByLabel("Layer", { exact: true }).selectOption(declared.label);
+
+  await expect.poll(() => viewer(page, "visibleIds")).toEqual(
+    sorted(withAncestors(members, parents))
+  );
+});
+
+test("the flagged filter keeps every node with a violation or stale docs, with its containers", async ({
+  page,
+  request,
+}) => {
+  const data = await architectureData(request);
+  const parents = parentMap(data);
+  const flagged = flaggedIds(data);
+  requireShape(
+    flagged.some((id) => parents[id] && !flagged.includes(parents[id])),
+    "no flagged node (a rule violation or stale docs) sits inside a container that is not flagged"
+  );
+
+  await openArchitecture(page);
+  await openEveryBox(page);
+  await page.getByLabel("Only flagged", { exact: true }).check();
+
+  await expect.poll(() => viewer(page, "visibleIds")).toEqual(
+    sorted(withAncestors(flagged, parents))
+  );
+});

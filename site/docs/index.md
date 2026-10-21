@@ -8,7 +8,7 @@ The project's validated documentation, published as-is with a per-doc `doc_sync`
 
 ## Domains
 
-Domains documentation covers Application, Capabilities, Coding, Conversation, Domain, Infrastructure, Memory, Personality, Presence, Proactivity, Social.
+Domains documentation covers Application, Capabilities, Coding, Conversation, Domain, Identity, Infrastructure, Interactive, Memory, Personality, Presence, Proactivity, Social.
 
 ## Services
 

@@ -7,7 +7,7 @@ kind: feature
 
 **Kind:** feature
 
-Social module («Bob distinguishes people») — the full vertical capability in one place: `ports.py` + pure domain (interlocutor identity, first-impression, relationship, sulk) + `permission/` value objects, `usecases/` (authorizer/sender+reactor perception, permission flow/execution, first-impression/relationship/sulk sources, run-genesis), and `adapters/` (first-impression/relationship/sulk/allowlist/permission-request/soul stores + privilege-judge). Domain-first slice BOB-062.5.
+Social module («Bob distinguishes people») — the full vertical capability in one place: `ports.py` + pure domain behaviour over the shared-kernel social values (classify an interlocutor, self-gender inference, first-impression, relationship accrual, roster building, sulk dynamics — the values Interlocutor/Gender/Relationship/RosterMember/SulkState live in `kernel`, BOB-113) + `permission/` value objects, `usecases/` (authorizer/sender+reactor perception, permission flow/execution, first-impression/relationship/sulk sources, run-genesis), and `adapters/` (first-impression/relationship/sulk/allowlist/permission-request/soul stores + privilege-judge). Domain-first slice BOB-062.5.
 
 **Source:** `src/bob/social/`
 
@@ -15,16 +15,25 @@ Social module («Bob distinguishes people») — the full vertical capability in
 
 - `AllowlistStore`
 - `Authorizer`
+- `DestinationKind`
+- `DestinationOutcome`
+- `DestinationVerdict`
+- `DisclosureConsentContext`
+- `DisclosureConsentJudge`
 - `DurableAuthorizer`
 - `FirstImpression`
+- `FirstImpressionReader`
 - `FirstImpressionStore`
 - `FirstImpressionTracker`
+- `GenderMemory`
+- `GenderRead`
 - `GenesisError`
 - `GenesisResult`
 - `GroupSilentAnnouncer`
-- `Interlocutor`
-- `InterlocutorKind`
+- `InterlocutorResolver`
+- `KnownDestination`
 - `KvAllowlistStore`
+- `LlmDisclosureConsentJudge`
 - `LlmPrivilegeJudge`
 - `PermissionDecision`
 - `PermissionExecutor`
@@ -34,6 +43,8 @@ Social module («Bob distinguishes people») — the full vertical capability in
 - `PermissionRequest`
 - `PermissionRequestStoreLike`
 - `PermissionState`
+- `PersonDirectoryLike`
+- `PersonHandle`
 - `PersonSulkStore`
 - `PrivilegeContext`
 - `PrivilegeJudge`
@@ -41,11 +52,13 @@ Social module («Bob distinguishes people») — the full vertical capability in
 - `PrivilegeNeed`
 - `PrivilegedFulfiller`
 - `ReactorPerception`
-- `Relationship`
 - `RelationshipDeltas`
+- `RelationshipReader`
 - `RelationshipStore`
 - `RelationshipTracker`
 - `RequesterChannel`
+- `RosterRecall`
+- `RosterRecaller`
 - `RunGenesis`
 - `SenderPerception`
 - `SocialContext`
@@ -57,55 +70,58 @@ Social module («Bob distinguishes people») — the full vertical capability in
 - `SqliteSulkStore`
 - `SulkAnnouncer`
 - `SulkConfig`
+- `SulkReader`
 - `SulkRecoveryStep`
-- `SulkState`
 - `SulkStore`
 - `SulkTracker`
-- `Trust`
 - `apply_interaction`
+- `build_disclosure_consent_user_prompt`
 - `build_privilege_user_prompt`
+- `build_roster`
+- `carries_owner_private`
 - `classify`
 - `compromise_bias`
+- `demote_mentions`
+- `detect_self_gender`
 - `detected_endorsement`
 - `endorsed_seed`
 - `endorsement_seed`
 - `filter_surfaceable`
+- `ground_mentions`
+- `handles_from`
 - `impression_note_for`
 - `is_authorize`
 - `is_deny`
 - `is_grant`
+- `is_newcomer`
 - `may_surface`
+- `member_name`
+- `mention_for`
 - `observe_relationship`
 - `owner_endorsed_sender`
+- `owner_permission_notice`
+- `parse_disclosure_consent`
 - `parse_privilege_need`
 - `recover`
+- `requester_ack`
+- `resolve_destination`
+- `transfer_needs_consent`
 - `visibility_for_scope`
+- `visibility_of`
 
 ## Relationships
 
 - **part_of**: [bob-domain](../domains/bob-domain.md)
-- **depends_on**: [personality](../features/personality.md), [router](../features/router.md), [telegram](../other/telegram.md)
-- **Used by**: [bob](../services/bob.md), [runtime](../services/runtime.md), [usecases](../features/usecases.md)
+- **depends_on**: [bob-domain](../domains/bob-domain.md), [conversation](../features/conversation.md), [personality](../features/personality.md), [router](../features/router.md), [telegram](../other/telegram.md)
+- **Used by**: [capabilities](../features/capabilities.md), [coding](../features/coding.md), [runtime](../services/runtime.md), [usecases](../features/usecases.md)
 
 ## Documentation
 
 - [domains/social/README.md](/docs/domains/social/README.md)
 
-## Diagram
+## Graph
 
-```mermaid
-C4Container
-    System_Boundary(bob_boundary, "Bob") {
-        Container(bob_application, "Bob Application", "", "GUPPI orchestration: AgentRuntime + AsyncEventBus, LLMRouter (tier routing + privacy redaction), use-cases (HandleMessage, RunGenesis, UpdateMoodFromText), resilient heartbeat ticks (retry/backoff), the Authorizer access policy and the capability seam (CapabilityRegistry + ToolLoop + recall_memory). Depends on domain via ports; never imports infrastructure.")
-        Container(bob_domain, "Bob Domain", "", "Domain layer umbrella: the seven module-vertical bounded contexts (personality, conversation, memory, proactivity, coding, capabilities, social) plus the shared 'kernel' (infra-neutral cross-module contracts). Pure logic + Protocol definitions; no I/O, no LLM, no transport.")
-        Container(bob_infrastructure, "Bob Infrastructure", "", "Port adapters: aiogram Telegram gateway (long-polling + authz gate, native draft streaming, Rich Messages, markdown‹-›RichMessage, topic-thread reply pinning), MultiBotGateway (BotRegistry + cross-bot dedup + central identity/scope router) and the GuppiHandler gatekeeper (visible reject + owner commands), OpenAI-compatible LLM provider (Tier 0/1 + tool-calling), SQLite+FTS5 persistence, KvAllowlistStore and SoulStore, two-bot layered config loader.")
-        Container(runtime, "Runtime", "", "Composition root ('src/bob/runtime/' package + the thin 'app.py' shim) — the only layer allowed to wire all layers + all vertical modules at once: 'config.py' loads layered config (incl. '_REPO_ROOT'), 'wiring/*' build infrastructure adapters + compose application policy/use-cases per bounded context, 'composition.py' ('build_application' + 'Application') subscribes handlers to the EventBus and registers ticks + Telegram polling, 'clock.py' provides 'SystemClock', and 'main.py' runs Genesis once and starts the process.")
-    }
-    Rel(bob_application, bob_domain, "depends_on")
-    Rel(bob_infrastructure, bob_application, "depends_on")
-    Rel(bob_infrastructure, bob_domain, "depends_on")
-    Rel(runtime, bob_application, "depends_on")
-    Rel(runtime, bob_domain, "depends_on")
-    Rel(runtime, bob_infrastructure, "depends_on")
-```
+<ClientOnly>
+  <ArchitectureMap focus="social" :depth="1" height="60vh" />
+</ClientOnly>
 

@@ -1,10 +1,12 @@
-&lt;!-- beadloom:badge-start -->
-> 📘 **reference** — overview/guide, not tied to a code symbol
+<!-- beadloom:badge-start -->
+> ✅ **fresh**
+> 
+> last synced 2026-10-21T06:36:24.264700+00:00 · coverage 0% (`runtime`)
 > 
 > _Validation by Beadloom `doc_sync` — same source as `sync-check`._
-&lt;!-- beadloom:badge-end -->
+<!-- beadloom:badge-end -->
 
-&lt;!-- Copyright (c) 2026 Vladimir Zoologov. All Rights Reserved.
+<!-- Copyright (c) 2026 Vladimir Zoologov. All Rights Reserved.
      SPDX-License-Identifier: BUSL-1.1 -->
 
 # runtime — composition root + entrypoint
@@ -113,6 +115,22 @@ path-ридеры (`_db_path`, `_soul_dir`, `_templates_dir`, `_backfill_name_ma
   (`gateway=multibot.reply_gateway(BOB)`) → proactivity-engine → `pursue_goals` →
   `handle_message`. Комментарии «built AFTER multibot» отмечают зависимости —
   переносить блоками, порядок не тасовать.
+- **🔴 Канон о голосе подаётся здесь и только здесь (BOB-096).** Текст запрета
+  принадлежит персоне (`personality.voice.guppi_voice_canon`), а вплетают его две
+  точки выхода payload'а к модели через порт провайдера — роутер и петля
+  инструментов. Связывает их композиционный корень, в трёх местах: сборка
+  `LLMRouter`, сборка `HandleMessage` (канон уезжает в его per-turn петлю) и
+  `wiring/permission.py` (привилегированное исполнение, идущее мимо роутера).
+  Уверенность даёт не то, что аргумент написан: `voice_canon=None` — легальное
+  значение типа, и текстовые гарды на нём остаются зелёными. Факт проверяется
+  ПОВЕДЕНИЕМ собранного графа —
+  `tests/runtime/test_composed_wiring_carries_the_canon.py` строит проводку тем же
+  `build_application` и смотрит, что реально доехало до провайдера. Про третью
+  провязку сказано честно: разговорная петля получает канон и от персоны тоже
+  (`VoiceComposer` вклеивает его в системный промпт без ветвлений), поэтому в живом
+  ходе её выключение не меняет ничего — запрет всё равно приезжает персоной. Это
+  ремень, который станет несущим в ту секунду, когда персону перепишут, и доказать
+  его живым ходом нельзя: нужен payload, который канона не несёт.
 - **Shared-instance, не раздваивать.** `_build_registry` возвращает кортеж
   `(registry, diagram_sink, diagram_renderer)` — один `diagram_sink` идёт и в
   `handle_message`, и в capability. `notable_reaction_store` — один kv на
@@ -155,9 +173,9 @@ path-ридеры (`_db_path`, `_soul_dir`, `_templates_dir`, `_backfill_name_ma
 целится в новый дом entrypoint, а не в shim). Инвариант `_REPO_ROOT` закреплён
 unit-тестом `tests/test_runtime_repo_root.py`.
 
-&lt;!-- beadloom:track=src/bob/runtime/composition.py -->
-&lt;!-- beadloom:track=src/bob/runtime/main.py -->
-&lt;!-- beadloom:track=src/bob/runtime/clock.py -->
-&lt;!-- beadloom:track=src/bob/runtime/config.py -->
+<!-- beadloom:track=src/bob/runtime/composition.py -->
+<!-- beadloom:track=src/bob/runtime/main.py -->
+<!-- beadloom:track=src/bob/runtime/clock.py -->
+<!-- beadloom:track=src/bob/runtime/config.py -->
 
-&lt;!-- enrich with: beadloom docs polish -->
+<!-- enrich with: beadloom docs polish -->

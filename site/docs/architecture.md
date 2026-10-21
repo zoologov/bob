@@ -1,12 +1,12 @@
-&lt;!-- beadloom:badge-start -->
+<!-- beadloom:badge-start -->
 > ✅ **fresh**
 > 
-> last synced 2026-07-31T12:12:20.297951+00:00 · coverage 0% (`bob`)
+> last synced 2026-10-21T06:36:24.264700+00:00 · coverage 100% (`bob`)
 > 
 > _Validation by Beadloom `doc_sync` — same source as `sync-check`._
-&lt;!-- beadloom:badge-end -->
+<!-- beadloom:badge-end -->
 
-&lt;!-- Copyright (c) 2026 Vladimir Zoologov. All Rights Reserved.
+<!-- Copyright (c) 2026 Vladimir Zoologov. All Rights Reserved.
      SPDX-License-Identifier: BUSL-1.1 -->
 
 # Архитектура Боба
@@ -47,10 +47,15 @@ domain`. Домен не импортирует ничего наружу; пр�
 src/bob/
   kernel/            # 🔴 SHARED KERNEL (BOB-062.8): инфра-нейтральные кросс-модульные
                      #   контракты — Clock, DomainEvent, EventBus, EventHandler,
-                     #   JsonValue, LLMMessage, LLMProvider. Чистый inward-safe leaf
+                     #   JsonValue, LLMMessage, LLMProvider; с BOB-113 ещё события
+                     #   интейка, порты памяти/ответа/tool-calling, RuleModulators и
+                     #   социальный словарь (Interlocutor/Trust/Gender, Relationship,
+                     #   RosterMember, SulkState; поведение — в social; инварианты значений
+                     #   — в функциях модульного уровня, под мутацией). Чистый inward-safe leaf
                      #   (только stdlib/typing); любой модуль может импортить,
                      #   kernel НЕ импортит модули (правила kernel-no-*).
-  <module>/          # 7 ВЕРТИКАЛЬНЫХ бизнес-модулей (domain-first, BOB-062): coding,
+  <module>/          # 8 ВЕРТИКАЛЬНЫХ бизнес-модулей (domain-first, BOB-062): coding,
+                     #   interactive (живой терминал, отделён от coding в BOB-087.E),
                      #   memory, proactivity, capabilities, social, personality,
                      #   conversation. Каждый собирает СВОИ три слоя внутри одного
                      #   bounded-context — ports.py + логика (layer=domain), usecases/
@@ -65,7 +70,8 @@ src/bob/
                      #   intake/ — concurrency-шов между поллером и Бобом: ChatDispatcher/
                      #   ChatInbox/TurnScope, BOB-066).
   infrastructure/    # Адаптеры общих компонентов: telegram/ (MultiBotGateway + GUPPI +
-                     #   aiogram), llm/ (OpenAICompatProvider + фабрика),
+                     #   aiogram), llm/ (OpenAICompatProvider + фабрика + аварийный
+                     #   фолбэк Tier 0 на локальную модель, по умолчанию выключен),
                      #   persistence/ (connection-kernel SqliteConnection + schema.sql),
                      #   config/ (ConfigLoader).
   runtime/           # composition root + entrypoint (единственный слой, зовущий все
@@ -100,14 +106,15 @@ usecases/adapters модулей.
 
 | Модуль | Слой / вид | Что делает | SPEC |
 |---|---|---|---|
-| **coding** | вертикальный (business) | «Боб пишет код» — гейтованный автономный кодинг через `claude` CLI, план→апрув→worktree→PR | [`domains/coding/README.md`](domains/coding/README.md) |
-| **memory** | вертикальный (business) | «Боб помнит» — эпизоды + семантические факты, гибридный recall (FTS5 + sqlite-vec → RRF), scope-провенанс `visibility` (`NULL`=public, BOB-066) | [`domains/memory/README.md`](domains/memory/README.md) |
+| **coding** | вертикальный (business) | «Боб пишет код» — ГЕЙТОВАННЫЙ автономный кодинг через `claude` CLI, план→апрув→worktree→PR; лайв-стрим в личку owner'а (dev-канал, `coder.dev_dm`, BOB-082); owner-ослабления песочницы (`coder.allow_bypass` / `coder.extra_dirs`, оба OFF) + push-барьер. Здесь же ОБЩАЯ поверхность coding-сессии, на которую опирается `interactive`: порты, `CodingSession`/`CodingOutcome`, машина состояний, имена веток, политика песочницы, `push_guard`, `stream_json`; канон «кто озвучивает сообщение» — `speaker`/`channel_for` (механика — GUPPI, живое и запрос разрешения — Боб, BOB-090.D) | [`domains/coding/README.md`](domains/coding/README.md) |
+| **interactive** | вертикальный (business) | «Боб держит живой терминал» — двусторонний сеанс `claude` с открытым stdin в личке owner'а (`coder.interactive`, BOB-083); долгоживущее рабочее место `/workspace` + возобновление `/resume` с подтверждением и TTL (`coder.resume`, BOB-087.D); одна сессия за раз, никакого live-attach, PR-открывашки нет вовсе. Отделён от `coding` в BOB-087.E; ребро `interactive → coding` одностороннее | [`domains/interactive/README.md`](domains/interactive/README.md) |
+| **memory** | вертикальный (business) | «Боб помнит» — эпизоды + семантические факты, гибридный recall (FTS5 + sqlite-vec → RRF), scope-провенанс `visibility` (`NULL`=public, BOB-066), точный адрес источника `origin_chat_id`/`origin_topic_id` (`NULL`=«не знаю», BOB-090.C2), автобиография `self_action` от первого лица (BOB-079) | [`domains/memory/README.md`](domains/memory/README.md) |
 | **personality** | вертикальный (business) | «кто Боб есть» — mood/disposition/taste/negotiation/voice/reflection/soul; второй слой `room_tone` (настроение комнаты красит голос и аппетит поверх личного mood, BOB-066) | [`domains/personality/README.md`](domains/personality/README.md) |
 | **conversation** | вертикальный (business) | «как ведётся ход» — адресность, conversational floor, brevity, engagement, судьи отклика, рефлексивное «чтение комнаты» (двускоростное внимание, за флагом `presence.reflective`) | [`domains/conversation/README.md`](domains/conversation/README.md) |
-| **social** | вертикальный (business) | «Боб различает людей» — идентичность, первое впечатление, отношения, per-person обида/охлаждение (таблица `person_sulk`, адресный холод), такт разглашения (`disclosure` — гость не видит owner_private инициативно), кредит доверия (`endorsement`/`endorsed_seed` — owner ручается за новичка), авторизация, permission, genesis | [`domains/social/README.md`](domains/social/README.md) |
+| **social** | вертикальный (business) | «Боб различает людей» — идентичность, первое впечатление, отношения, per-person обида/охлаждение (таблица `person_sulk`, адресный холод), такт разглашения (`disclosure` — гость не видит owner_private инициативно; scope по МЕСТУ + раскрытие приватного по согласию owner'а, BOB-082), кредит доверия (`endorsement`/`endorsed_seed` — owner ручается за новичка), ростер комнаты (`roster` — припоминание состава по социальному поводу, BOB-080), адресация и упоминания (`destination` — куда именно писать, при неоднозначности переспросить; `mention` — настоящий `@ник` или имя, никогда выдуманный тег; перенос приватного в публичный чат по МАТЕРИАЛУ и по согласию owner'а, BOB-090.B), авторизация, permission, genesis | [`domains/social/README.md`](domains/social/README.md) |
 | **proactivity** | вертикальный (business) | «фоновая жизнь Боба» — drive-движок, свои цели (Goal Engine), само-улучшение | [`domains/proactivity/README.md`](domains/proactivity/README.md) |
 | **presence** | вертикальный (business) | «живой ритм Боба» — доля эфира (soft-ceiling с focus-bypass), естественная задержка ответа, бюджет реакций, гейт устаревания черновика (`StalenessGate`: SEND/REWRITE/DROP_TO_LIKE/MERGE, B2=B7), догоняющий проход по бэклогу (`select_catchup`: банд-скоринг direct>reply-thread>ambient, фокус небюджетно гарантирован, INV-10); потребление вшито в горячий путь через коллабораторов за флагами `presence.rhythm` / `presence.staleness` / `presence.catchup` / `presence.series_budget` (все OFF по умолчанию → продакшн байт-в-байт) | [`domains/presence/README.md`](domains/presence/README.md) |
-| **capabilities** | вертикальный (business) | «инструменты Боба» — registry + tool-loop + навыки (recall, web_search, read_url, диаграммы, интроспекция) | [`domains/capabilities/README.md`](domains/capabilities/README.md) |
+| **capabilities** | вертикальный (business) | «инструменты Боба» — registry + tool-loop + навыки (recall, web_search, read_url, диаграммы, интроспекция, dev-интроспекция git/трекер read-only BOB-081, весь read-only beadloom — схема + влияние + состояние проекта, BOB-091 за флагом `introspection.architecture_tools` OFF, отправка в указанный чат `send_to_chat` за флагом `social.delivery` OFF, BOB-090.B) | [`domains/capabilities/README.md`](domains/capabilities/README.md) |
 | **application** | координационный слой | тонкие кросс-доменные оркестраторы (HandleMessage), LLM-роутер, async-примитивы рантайма | [`domains/application/README.md`](domains/application/README.md) |
 | **infrastructure** | координационный слой | адаптеры: Telegram (aiogram + мульти-бот), LLM-провайдеры, SQLite-connection-kernel, конфигурация | [`domains/infrastructure/README.md`](domains/infrastructure/README.md) |
 | **domain (layer)** | чистое ядро | обзор чистого ядра — kernel-контракты + domain-слои вертикальных модулей | [`domains/domain/README.md`](domains/domain/README.md) |
@@ -130,11 +137,12 @@ graph TD
         presence["presence"]
         capabilities["capabilities"]
         coding["coding"]
+        interactive["interactive"]
     end
     subgraph app["application (координация)"]
         usecases["usecases"]
         router["router"]
-        runtime_app["runtime-app‹br/›(async-примитивы)"]
+        runtime_app["runtime-app<br/>(async-примитивы)"]
     end
     subgraph infra["infrastructure (адаптеры)"]
         llm["llm"]
@@ -142,28 +150,93 @@ graph TD
         persistence["persistence"]
         config["config"]
     end
-    kernel["kernel‹br/›(shared kernel)"]
-    runtime["runtime‹br/›(composition root)"]
+    kernel["kernel<br/>(shared kernel)"]
+    runtime["runtime<br/>(composition root)"]
 
-    conversation --› personality
-    social --› personality
-    proactivity --› personality
-    proactivity --› conversation
-    proactivity --› memory
-    memory --› persistence
-    coding --› router
-    coding --› telegram
-    social --› telegram
-    llm --› capabilities
-    usecases --› capabilities
-    usecases --› conversation
-    business --› router
-    business -.-›|контракты| kernel
-    app -.-›|контракты| kernel
-    runtime --› business
-    runtime --› app
-    runtime --› infra
+    conversation --> personality
+    social --> personality
+    proactivity --> personality
+    proactivity --> conversation
+    proactivity --> memory
+    memory --> persistence
+    coding --> router
+    coding --> telegram
+    interactive --> coding
+    social --> telegram
+    llm --> capabilities
+    usecases --> capabilities
+    usecases --> conversation
+    business --> router
+    business -.->|контракты| kernel
+    app -.->|контракты| kernel
+    runtime --> business
+    runtime --> app
+    runtime --> infra
 ```
+
+### Порядок вертикалей и правило размещения контракта (BOB-113)
+
+🔴 **Инвариант: runtime-порядок вертикалей.** Модули, которые раньше замыкали общий цикл,
+выстроены в одну цепочку. Стрелка означает «зависит от»: каждый модуль импортирует только
+модули правее себя и `kernel`, который лежит ниже всех.
+
+```
+usecases → capabilities → social → telegram → proactivity → memory → runtime-app → conversation → personality
+```
+
+Порядок выведен из runtime-рёбер (импортов модульного и функционального уровня), а не
+назначен. Если граф изменится, гард ниже назовёт ребро, которое порядок нарушило.
+
+**Правило размещения.** Сигнатуры модуля называют типы только модулей ниже него или
+`kernel`. Отсюда место для каждого нового имени, в порядке предпочтения:
+
+1. Собственное понятие модуля живёт у владельца. Модули выше импортируют его вниз
+   (`PersonalityState` — `personality/state.py`, `EngagementState` —
+   `conversation/engagement.py`).
+2. Порт, который описывает чтение одного контекста, живёт в `ports.py` этого контекста
+   (социальные читатели хода — `social/ports.py`, `CurrentFascinationReader` —
+   `personality/ports.py`).
+3. Значение или порт, который нужен модулю ниже владельца, уходит в shared kernel (события
+   интейка, `Recalled`, порты памяти и ответа, словарь tool-calling'а, `RuleModulators`,
+   социальный словарь). Поведение остаётся у владельца.
+4. Коллаборатору, у которого потребитель читает одно поле или метод, достаточно узкого
+   Protocol у самого потребителя (ISP): `conversation.ports.VerifySearch` / `HasAnswer`
+   вместо порта веб-поиска `capabilities`.
+
+Ре-экспортов по старым путям нет: у каждого имени один дом. До BOB-113 type-only импорты
+(под `if TYPE_CHECKING:`) замыкали один цикл из девяти модулей. После переезда контрактов
+(29 имён по 22 решениям RFC) `beadloom lint --strict` не находит ни одного цикла, а из 81
+ребра `depends_on` type-only остались 8, и все они направлены вниз или в ядро.
+
+**Кто это держит.** Три независимые проверки:
+
+- `no-dependency-cycles` в `.beadloom/_graph/rules.yml` — `severity: error`, без исключений.
+  Beadloom читает и импорты под `TYPE_CHECKING`, поэтому type-only ребро вверх по порядку
+  возвращает цикл.
+- `tests/test_no_runtime_import_cycles.py` — гард, который не зависит от beadloom:
+  - `test_runtime_imports_form_no_cycle_between_modules` — исполняемые импорты (без ветки
+    `TYPE_CHECKING`) не образуют цикла между модулями;
+  - `test_runtime_edges_follow_the_declared_vertical_order` — ни одно runtime-ребро не идёт
+    вверх по порядку (константа `_VERTICAL_ORDER` в тесте);
+  - `test_no_type_checking_import_points_upward_against_the_vertical_order` — ни один
+    `TYPE_CHECKING`-импорт не направлен вверх, а любое ребро ИЗ `kernel` считается
+    направленным вверх.
+
+  Оба сборщика импортов читают все формы импорта: `import bob.x`, `from bob.x import y`,
+  `from bob import x`, `from bob.application import usecases` и относительные импорты.
+  Выход относительного импорта за пределы пакета — явная ошибка, а не пропуск. Формы
+  `from bob import x` и относительный импорт закреплённая сборка `beadloom==9.0.0` не
+  видит, поэтому на них гард — единственная проверка.
+- `tests/domain/kernel/test_kernel_isolation.py` — импорт каждого модуля ядра в
+  изолированном интерпретаторе не загружает ни одного `bob.*` вне `bob.kernel`.
+
+🔴 **Слепая зона правила циклов (наблюдение O1 ревью BOB-113).** `no-dependency-cycles` не
+видит рёбер ИЗ ядра: узлы `kernel` и `bob-domain` делят `source: src/bob/kernel/`, импорты
+резолвятся в `bob-domain`, и ребро `kernel → <модуль>` не порождает derived-ребра. Саботаж
+`kernel → memory` правило циклов не заметило. Направление ядра держат правила `kernel-no-*`
+(beadloom), тест изоляции и `tests/test_no_runtime_import_cycles.py` — все три на этом
+саботаже покраснели. Ядро теперь держит события интейка, порты и социальный словарь, поэтому
+полагаться здесь на правило циклов нельзя.
 
 ## Сквозной поток: обработка сообщения (perceive → decide → act → persist)
 
@@ -177,7 +250,11 @@ graph TD
 `HandleMessage.handle(event, scope=None)` проводит ход по фазам **perceive → who → gate →
 compose+guard → post-effects**, делегируя каждую ~14 когезивным коллабораторам,
 разложенным по чистым модулям. `HandleMessage.__init__` остаётся композиционным
-корнем (собирает коллабораторов из инъектированных швов). Карта
+корнем (собирает коллабораторов из инъектированных швов). Контракты этих швов живут у
+владельцев, а не в оркестраторе (BOB-113): социальные читатели — `social/ports.py`,
+`CurrentFascinationReader` — `personality/ports.py`, держатели `PersonalityState` —
+`personality/state.py` и `EngagementState` — `conversation/engagement.py`; общие порты
+(`ReplyGateway`, `EpisodeReader`, `MemoryRecall` …) — в `kernel/ports.py`. Карта
 коллаборатор → модуль:
 
 | Коллаборатор | Модуль | Роль |
@@ -204,6 +281,7 @@ compose+guard → post-effects**, делегируя каждую ~14 когез
 | `EndorsementSeeder` | `application/usecases/endorsement_seeder.py` | кредит доверия (BOB-066 W.4): после реплея истории пере-биндит отношение тёплым `endorsed_seed`, если owner ручался за новичка в общем треде; врезан в `_prepare_eq_live` за флагом `presence.endorsement.enabled` (OFF → отношение без изменений) |
 | `DisclosureGuard` | `application/usecases/disclosure_guard.py` | такт разглашения (BOB-066 W.4): переиспользует порт `PrivilegeJudge`, гостю на `owner_data`-запрос выдаёт `tactful_withhold_directive` (тёплый отказ) в compose+guard; врезан в `_prepare_eq_live` за флагом `presence.tact.enabled` (OFF → `withhold_directive` пуст) |
 | `RoomMoodModulator` | `application/usecases/room_mood_modulator.py` | настроение комнаты в тоне (BOB-066 W.2): из рефлексивного `RoomReading` (surfaced на `_ReplyGate`) по значению даёт `room_tone` голосу и re-map порога аппетита; врезан в `_apply_room_mood` за флагом `presence.room_mood.enabled` (OFF → тон пуст, уровень как был) |
+| `DeliveryScope` / `TurnMaterial` | `capabilities/usecases/delivery_scope.py`, `capabilities/usecases/turn_material.py` | адресация вовне (BOB-090.B): след материала хода армируется на ВЕСЬ `handle`, снимок обстоятельств — вокруг генерации; их читает `send_to_chat` за флагом `social.delivery` (OFF → навык не зарегистрирован, снимок читать некому). Нет армированного хода — нет отправки |
 
 🔴 **Цикл compose↔guard замкнут колбэком по значению, а не импортом.**
 `AntiRepeatGuard` (conversation) принимает `VoiceComposer.compose` (personality)
@@ -266,9 +344,13 @@ compose/guard), так что конкурентные чаты никогда �
    (BOB-006): casual → быстрый **Tier 0**, сложное/длинное/с инструментами →
    качественный **Tier 1**. `shareable_context` сопровождает вызов (память Боба);
    `private_context` **редактируется** перед любым Tier 1 (привязка к политике
-   задачи, не к тиру). При сбое Tier 1 — локальный откат на Tier 0; генерация —
-   существенный шаг (ретрай → честный GUPPI-нотис при провале). → см.
-   [application](domains/application/README.md).
+   задачи, не к тиру). При сбое Tier 1 — откат на Tier 0, но ход, чей голос
+   ОСТАЁТСЯ, получает Tier-0 без аварийного локального дублёра (BOB-087.E-M1,
+   BOB-096.4). Генерация — существенный шаг (ретрай → честный GUPPI-нотис при
+   провале). Запрет отыгрывать GUPPI при этом доезжает не только сюда: он
+   вплетается в payload на обеих точках выхода к модели через порт провайдера —
+   в роутере и в петле инструментов (BOB-096), поэтому его видят и двери, пишущие
+   в память. → см. [application](domains/application/README.md).
 6. **Ответ (typing-индикатор + rich-финал, BOB-009).** Стрима нет (групповой
    топик). Медленная генерация идёт внутри `typing_indicator(chat_id)` (keepalive
    каждые `typing_interval` с), готовый ответ коммитится одним `reply()` — Rich
@@ -278,7 +360,9 @@ compose/guard), так что конкурентные чаты никогда �
    `sender_id`, BOB-045), снапшот настроения — в `mood_state`/`mood_history`.
    Персист идёт во **всех** ветках (`REPLY`/`REACT`/`IGNORE`/сбой). Новые эпизоды и
    факты штампуются scope-провенансом `visibility` (`_turn_visibility`: owner-DM →
-   `owner_private`, чужой ход → `public`, BOB-066; `NULL`=public для legacy). Извлечение
+   `owner_private`, чужой ход → `public`, BOB-066; `NULL`=public для legacy) и точным
+   адресом хода `origin_chat_id`/`origin_topic_id` (BOB-090.C2; `NULL` здесь — «источник
+   неизвестен», а не «публично»). Извлечение
    фактов (`extract_facts`) — для любого участника закрытой группы (BOB-051). → см.
    [memory](domains/memory/README.md).
 

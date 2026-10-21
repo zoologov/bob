@@ -1,0 +1,48 @@
+<!-- beadloom:generated version=9.0.0 sha256=b18b53256a14c8ad7e9052d2a53cdcb2531f4bcf4a28b0d0b7373e99664df8f4; written by `beadloom docs site`, a change belongs in .beadloom/site/.vitepress/theme/pages/architecture/ui/ArchitectureMap.vue -->
+<script setup>
+// ArchitectureMap — the architecture graph, mounted by the generated
+// `architecture.md` and by every node page.
+//
+// A thin page over the graph viewer: it shows the architecture mode and puts
+// the node card in the viewer's panel. The viewer owns the toolbar,
+// navigation, filters, the neighbourhood and impact modes, full screen and URL
+// state; the page composes the two widgets, because a widget does not import
+// another.
+//
+// The card is handed lint's reach over the whole project from the data file the
+// viewer reads, so a card's findings are said against it, and the revision the
+// source links name, so a card says when it is not the built commit.
+//
+// A node page passes `focus`, its own node, with a depth and a height: the
+// viewer opens with that node selected and its neighbourhood marked, and the
+// reader moves on from there.
+
+import { useArchitectureData } from "../../../entities/architecture-data/index.js";
+import { GraphViewer } from "../../../widgets/graph-viewer/index.js";
+import { NodeCard } from "../../../widgets/node-card/index.js";
+
+defineProps({
+  focus: { type: String, default: "" },
+  depth: { type: [Number, String], default: undefined },
+  height: { type: String, default: undefined },
+});
+
+const { data } = useArchitectureData();
+</script>
+
+<template>
+  <GraphViewer mode="architecture" :focus="focus" :depth="depth" :height="height">
+    <template #panel="{ node, edges, layers, parents, select, close }">
+      <NodeCard
+        :node="node"
+        :edges="edges"
+        :layers="layers"
+        :parents="parents"
+        :lint="data?.lint || null"
+        :source-ref="data?.source_ref || null"
+        @select="select"
+        @close="close"
+      />
+    </template>
+  </GraphViewer>
+</template>

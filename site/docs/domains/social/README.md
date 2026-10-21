@@ -1,12 +1,12 @@
-&lt;!-- beadloom:badge-start -->
+<!-- beadloom:badge-start -->
 > ✅ **fresh**
 > 
-> last synced 2026-07-31T12:12:20.297951+00:00 · coverage 100% (`social`)
+> last synced 2026-10-21T06:36:24.264700+00:00 · coverage 100% (`social`)
 > 
 > _Validation by Beadloom `doc_sync` — same source as `sync-check`._
-&lt;!-- beadloom:badge-end -->
+<!-- beadloom:badge-end -->
 
-&lt;!-- Copyright (c) 2026 Vladimir Zoologov. All Rights Reserved.
+<!-- Copyright (c) 2026 Vladimir Zoologov. All Rights Reserved.
      SPDX-License-Identifier: BUSL-1.1 -->
 
 # Модуль social — «Боб различает людей»
@@ -41,7 +41,8 @@ relationship,sulk}` + `application/authz/` + `application/usecases/{permission_*
    `InterlocutorKind` — `sulk_directive`/тон читают уже-вычисленное **значение** kind
    (`interlocutor.kind.value`, keyed по строковому лейблу), а классификацию делает
    вызывающий upstream. Итог: цикл `personality↔social` разорван, social владеет
-   identity целиком.
+   identity целиком. С BOB-113 само значение `Interlocutor` (и `InterlocutorKind`) лежит в
+   shared kernel, а `social` владеет классификацией (`classify`), см. решение 6.
 2. **`social → personality` однонаправленно (`relationship → negotiation.Stance`).**
    `apply_interaction` окрашивает отношение стилем торга (уступчивый CONCEDE/AGREE
    греет иначе, чем удержание позиции `PROPOSE_ALTERNATIVE`) и настроением `Mood`.
@@ -62,8 +63,18 @@ relationship,sulk}` + `application/authz/` + `application/usecases/{permission_*
    С расщеплением kernel'а в BOB-062.7b долг варианта C закрыт (connection-kernel ↔
    memory-репозиторий разведены; сторы читают чистый `.connection`-шов).
 5. **Порты живут в `social/ports.py`** (Allowlist / Soul / First / Relationship / Sulk /
-   PrivilegeJudge); канонический импорт — `from bob.social.ports import AllowlistStore`
+   PrivilegeJudge + читатели хода Interlocutor / FirstImpression / Relationship / Roster /
+   Sulk); канонический импорт — `from bob.social.ports import AllowlistStore`
    (транзитный ports-шим `bob.domain.ports` удалён, BOB-062.8).
+6. **Значения социального словаря — в shared kernel, поведение — здесь (BOB-113, RFC D).**
+   `Interlocutor` / `InterlocutorKind` / `Trust` / `Gender` (Enum) живут в
+   `bob.kernel.interlocutor`, `Relationship` — в `bob.kernel.relationship`, `RosterMember` —
+   в `bob.kernel.roster`, `SulkState` — в `bob.kernel.sulk`: их читают модули НИЖЕ `social`
+   по runtime-порядку (`conversation`, `personality`), и объявленные здесь значения
+   тянули их сигнатуры ребром вверх. `classify`, `detect_self_gender`/`GenderRead`,
+   `apply_interaction`/`compromise_bias`/`endorsed_seed`, `build_roster`/`is_newcomer`/
+   `member_name`, `SulkConfig`/`observe_relationship`/`recover` остаются в `social` и
+   импортируют значения из kernel. Ре-экспортов по старым путям нет — один дом у имени.
 
 ## 🔴 Мультиперсональность: cross-sender контекст здоров
 
@@ -82,18 +93,23 @@ read на каждого. При этом (аудит команды 2026-07-28)
 
 ```
 src/bob/social/
-  ports.py            # layer=domain          — social-порты (Allowlist/Soul/First/Relationship/Sulk/PrivilegeJudge)
+  ports.py            # layer=domain          — social-порты: сторы (Allowlist/Soul/FirstImpression/Relationship/Sulk/PersonSulk) + 5 читателей хода (InterlocutorResolver/FirstImpressionReader/RosterRecaller/RelationshipReader/SulkReader, BOB-113) + PrivilegeJudge (ре-экспорт из permission.privilege)
   __init__.py         # layer=domain          — фасад модуля
-  interlocutor.py     # layer=domain          — Interlocutor + classify (owner/known/guest/bot + trust), BOB-019
-  first_impression.py # layer=domain          — FirstImpression + impression_note_for (лёгкая заметка на нового), BOB-019
-  relationship.py     # layer=domain          — Relationship (4 оси) + apply_interaction (шаг за ход), BOB-014
-  sulk.py             # layer=domain          — SulkState + observe_relationship/recover (обида на person, person-agnostic, анти-Exodus), BOB-014.2b/BOB-066.2.5
-  disclosure.py       # layer=domain          — такт разглашения: may_surface/visibility_for_scope/filter_surfaceable (initiative-surfacing фильтр provenance), BOB-066.2.6
+  interlocutor.py     # layer=domain          — classify (owner/known/guest/bot + trust) → kernel.interlocutor.Interlocutor (+ gender), BOB-019/BOB-078 A
+  gender.py           # layer=domain          — GenderRead + detect_self_gender (Enum Gender — kernel.interlocutor): грамматический род по САМО-презентации (не по имени), накопление ≥2 сигналов, BOB-078 A
+  first_impression.py # layer=domain          — FirstImpression (+ display_name, + username) + impression_note_for (лёгкая заметка на нового), BOB-019/BOB-080/BOB-090.B3
+  roster.py           # layer=domain          — is_newcomer/build_roster/member_name (значение RosterMember — kernel.roster): ростер комнаты, новизна по времени (припоминание состава), BOB-080
+  relationship.py     # layer=domain          — apply_interaction (шаг за ход) / compromise_bias / endorsed_seed над kernel.relationship.Relationship (4 оси), BOB-014
+  sulk.py             # layer=domain          — SulkConfig + observe_relationship/recover над kernel.sulk.SulkState (обида на person, person-agnostic, анти-Exodus), BOB-014.2b/BOB-066.2.5
+  disclosure.py       # layer=domain          — такт разглашения: may_surface/visibility_of/visibility_for_scope/filter_surfaceable (initiative-surfacing фильтр provenance) + carries_owner_private/transfer_needs_consent (перенос приватного в публичный чат — ПО МАТЕРИАЛУ; материал берётся из СЛЕДА хода capabilities.usecases.turn_material, а не из одной двери recall), BOB-066.2.6/BOB-090.B4/B-fix2
+  destination.py      # layer=domain          — KnownDestination/resolve_destination: куда именно писать — точный адрес (чат+топик), «переспроси» при неоднозначности, отказ не-owner'у и на тот же чат, BOB-090.B2
+  mention.py          # layer=domain          — PersonHandle/handles_from/mention_for/ground_mentions/demote_mentions: обращение по НАСТОЯЩЕМУ @нику или по имени; неподтверждённый тег теряет «собаку» (выдуманный хуже отсутствующего), спорное имя тега не получает вовсе, owner опознаётся по sender_id, а ЧУЖАЯ цитата только понижается, BOB-090.B3/B-fix2
   endorsement.py      # layer=domain          — кредит доверия: detected_endorsement/owner_endorsed_sender (owner ручается за новичка), BOB-066.2.6
   permission/         # layer=domain
     entities.py       #                        — PermissionRequest (immutable pending-запрос), BOB-052.1
     intent.py         #                        — is_deny/is_grant/is_authorize (NL-предикаты решения owner'а)
-    privilege.py      #                        — PrivilegeNeed/PrivilegeContext/PrivilegeJudge (шов оценки привилегии)
+    privilege.py      #                        — PrivilegeNeed/PrivilegeContext/PrivilegeJudge (шов оценки привилегии; промпт судьи на языке проекта, вердикт ВНУТРЕННИЙ), BOB-052.1/BOB-090.E
+    request_voice.py  #                        — owner_permission_notice/requester_ack: реплика Боба «кто просит, чего именно (его словами) и почему я спрашиваю»; вердикт судьи не произносится, BOB-090.E
     state.py          #                        — PermissionState StrEnum (PENDING/APPROVED/DENIED/EXPIRED)
   usecases/           # layer=application
     authorizer.py     #                        — Authorizer: is_authorized/authorize/deauthorize (allowlist + chat-scope)
@@ -104,18 +120,19 @@ src/bob/social/
     first_impression_sources.py —              — FirstImpressionTracker: live-шов первого впечатления
     relationship_sources.py —                  — RelationshipTracker: live-шов отношения (current/record_interaction)
     sulk_sources.py       —                    — SulkTracker: per-person live-шов обиды (current_for/observe(sender_id)/active_targets/recover) + GroupSilentAnnouncer (scope-aware announce), BOB-066.2.5
-    social_context.py     —                    — SocialContext: per-person чтение хода (собеседник/впечатление/отношение/обида/стойка/тон), коллаборатор handle_message (BOB-062.6b)
+    social_context.py     —                    — SocialContext: per-person чтение хода (собеседник/впечатление/отношение/обида/стойка/тон/ростер), коллаборатор handle_message (BOB-062.6b/BOB-080)
+    roster_recall.py      —                    — RosterRecall: ambient-окно ростера (пусто без свежих новичков) + приватность OWNER/KNOWN + best-effort, BOB-080
     run_genesis.py        —                    — RunGenesis: первое пробуждение, генерация уникальной личности
   adapters/           # layer=infrastructure
     allowlist_store.py     —                   — KvAllowlistStore (allowlist в kv-таблице)
     soul_store.py          —                   — SoulStore (файловый reader/writer data/soul/)
-    first_impression_store.py —                — SqliteFirstImpressionStore (INSERT … ON CONFLICT DO NOTHING)
+    first_impression_store.py —                — SqliteFirstImpressionStore (впечатление формируется однажды; ОБНОВЛЯЕТСЯ только username — ник меняется и у всех знакомых его ещё нет; recent(limit) recency-запрос + display_name), BOB-080/BOB-090.B3
     relationship_store.py  —                   — SqliteRelationshipStore (UPSERT в person_relationship)
     sulk_store.py          —                   — SqliteSulkStore (legacy per-persona sulk_state — источник owner-backfill)
     person_sulk_store.py   —                   — SqlitePersonSulkStore (per-(persona,sender) UPSERT в person_sulk + backfill_owner), BOB-066.2.5
     permission_request_store.py —              — SqlitePermissionRequestStore (pending-запросы)
     privilege_judge.py     —                   — LlmPrivilegeJudge (Tier-0 реализация PrivilegeJudge)
-    permission_channels.py —                   — транспортные края гейта привилегий (BOB-052): _PermissionRequesterChannel / _PermissionNotifier + _SafeDefaultPrivilegeJudge (safe-default обёртка судьи)
+    permission_channels.py —                   — транспортные края гейта привилегий (BOB-052): _PermissionRequesterChannel / _PermissionNotifier (оба канала нотиса — в ТОПИК Боба, BOB-090.B5) + _SafeDefaultPrivilegeJudge (safe-default обёртка судьи)
     soul_loader.py         —                   — _load_soul/_default_soul: сборка in-memory SOUL из персиста data/soul/ (переехало из app.py, BOB-062.7a)
 ```
 
@@ -125,7 +142,16 @@ schema-таблицы (`first_impression`, `person_relationship`, `sulk_state`, 
 `permission_request`, `kv`) живут в единой `schema.sql` kernel'а. Таблица `person_sulk`
 (PK `(persona_id, sender_id)`) добавлена в BOB-066.2.5 как guarded-миграция
 (`CREATE TABLE IF NOT EXISTS` — не трогает существующую базу); legacy `sulk_state`
-остаётся источником одноразового owner-backfill.
+остаётся источником одноразового owner-backfill. Колонка `person_relationship.gender`
+(REAL, nullable, само-идентифицированный род-lean, BOB-078 A) добавлена guarded-ALTER'ом
+`SqliteConnection._migrate_person_relationship_gender` (`CREATE TABLE IF NOT EXISTS` не
+трогает уже существующую таблицу, поэтому колонку добавляет `ALTER` только когда её нет —
+аддитивно и неразрушающе; legacy-строка берёт NULL = UNKNOWN). Колонка
+`first_impression.display_name` (nullable, имя участника для ростера, BOB-080) добавлена тем
+же guarded-ALTER-приёмом; legacy-строка (NULL) берёт имя парсингом из `note`. Колонка
+`first_impression.username` (nullable, Telegram-ник БЕЗ «собаки», BOB-090.B3) добавлена
+guarded-ALTER'ом `SqliteConnection._migrate_first_impression_username` — идемпотентно,
+аддитивно, без бэкфилла.
 
 **ОСТАЁТСЯ вне social:** `privileged_fulfiller.py` (application-оркестратор, решение 3);
 `ports/personality.py` (MessageReactor / ReflectionReader / Fascination / ZoneClassifier
@@ -133,18 +159,42 @@ schema-таблицы (`first_impression`, `person_relationship`, `sulk_state`, 
 
 ### Идентичность и восприятие (чистый домен)
 
-`Interlocutor` (`interlocutor.py`) — frozen value-object: id + display-name собеседника,
-`InterlocutorKind` (OWNER / KNOWN / GUEST / BOT) и `Trust` (TRUSTED / GUEST). `classify` —
-чистая функция: выводит идентичность из уже известных за ход authz-фактов (`is_owner` /
-`is_authorized`) и Telegram-флага `is_bot`. Транспорта не касается, покрывает и людей, и
-ботов; сам по себе НЕ меняет доступ — это восприятие поверх неизменной политики.
+`Interlocutor` (`bob.kernel.interlocutor`, BOB-113) — frozen value-object: id + display-name собеседника,
+`InterlocutorKind` (OWNER / KNOWN / GUEST / BOT), `Trust` (TRUSTED / GUEST) и `gender`
+(`Gender`, по умолчанию `UNKNOWN` — нейтрально, BOB-078 A). `classify` (`social/interlocutor.py`) — чистая функция:
+выводит идентичность из уже известных за ход authz-фактов (`is_owner` / `is_authorized`) и
+Telegram-флага `is_bot`, а `gender` пробрасывает как уже-вычисленное значение. Транспорта не
+касается, покрывает и людей, и ботов; сам по себе НЕ меняет доступ — это восприятие поверх
+неизменной политики.
+
+### Грамматический род по само-идентификации (`gender.py`, BOB-078 A)
+
+Живой баг: Боб обращался к женщине в мужском роде («он»), хотя её собственная речь была
+женской («Пошл**а** учить Python»). 🔴 Принцип owner'а: **никогда не угадывать род по имени**
+(«Саша»/«Женя» ненадёжны), только по **само-презентации** — как человек грамматически
+помечает СЕБЯ в собственных словах. Чистое детерминированное ядро без I/O и без LLM (русское
+прошедшее время несёт род окончанием глагола, разбирается правилом):
+
+- `detect_self_gender(text)` → `Gender` (FEM / MASC / UNKNOWN) по ОДНОМУ сообщению.
+  Единственный сигнал — само-презентация от 1-го лица: родовой глагол прошедшего времени о
+  себе («пошла»/«сделал», в начале реплики как опущенное «я» ЛИБО сразу за «я») или явный
+  маркер «я сама»/«я сам». Глагол, отданный 2-му/3-му лицу («пошёл **он**»), противоречивая
+  пара в одном сообщении или имя — НЕ сигнал (UNKNOWN).
+- `GenderRead` — накопительная frozen-ось уверенности: знаковый `lean` в `[-1, 1]` (`> 0`
+  женский, `< 0` мужской). `observe(text)` толкает lean на один шаг по зафиксированному
+  сигналу сообщения, противоречия взаимно гасятся, а `resolve()` коммитит род ТОЛЬКО когда
+  `|lean|` перешагнул порог. Порог — **два шага** (BOB-078.8), поэтому род коммитится лишь
+  после **≥2 согласных сигналов**: один ведущий родовой глагол, чей реальный субъект — не
+  говорящий, а существительное («Была ошибка в коде»), лишь наклоняет и читается UNKNOWN —
+  один глагол НЕ переворачивает род ложно. Слабая или противоречивая история остаётся UNKNOWN
+  (Боб не навязывает рода).
 
 `FirstImpression` (`first_impression.py`) — лёгкая заметка на человека: WHO (`sender_id`),
 WHEN (`first_seen_at`), одна строка `note`. `impression_note_for` — дешёвая чистая
 эвристика от воспринятого `Interlocutor` (kind + имя); ничего не выдумывает — это *vibe*,
 не досье. Минимальный фундамент под полный `RelationshipTracker`, не сам движок.
 
-`Relationship` (`relationship.py`) — качество отношения Боба с одним человеком на четырёх
+`Relationship` (значение — `bob.kernel.relationship`, поведение — `relationship.py`) — качество отношения Боба с одним человеком на четырёх
 осях в `[-1, 1]`, стартуя с `0` (нейтрально): **trust**, **respect**, **warmth** (сильнее
 всего красит тон), **compatibility**. `apply_interaction` — единственный детерминированный
 шаг обновления от сигналов ОДНОГО хода (`stance`, `Mood`, `sentiment`) малыми bounded-
@@ -157,7 +207,7 @@ WHEN (`first_seen_at`), одна строка `note`. `impression_note_for` — 
 никогда не переписывает накопленную историю, а обычный дрейф растворяет его, если
 поведение новичка не подтвердит — head-start, не постоянная инфляция.
 
-`SulkState` (`sulk.py`) — обида/охлаждение, дно оси вовлечённости. Вход требует ПОРОГА И
+`SulkState` (значение — `bob.kernel.sulk`, динамика — `sulk.py`) — обида/охлаждение, дно оси вовлечённости. Вход требует ПОРОГА И
 поддержания: одно плохое сообщение или бытовой мат не заводят обиду — только устойчиво
 критически низкое warmth **этого человека** ИЛИ устойчивая DIRECTED-враждебность за прогон
 `sustain_count` наблюдений (`observe_relationship`); здоровый ход между сбрасывает
@@ -168,6 +218,31 @@ owner'а, и любого гостя — обида ключуется по `(pe
 память, ни soul — Боб «отходит», а не «уходит». `recover` — ГАРАНТИРОВАННЫЙ выход одним
 лишь временем (даже при нулевом warmth блокировки навсегда нет; тёплые ходы ускоряют
 выздоровление).
+
+### Ростер комнаты — припоминание состава (`roster.py`, BOB-080)
+
+Живой баг: на открытый вопрос «как тебе новые ребята в чате?» Боб молчал, пока имена не
+назвали вслух — recall у него чисто лексический (FTS по тексту хода), и «новые ребята» не
+матчило «Лиля»/«Паша», хотя оба уже лежали в `first_impression` с именем и `first_seen_at`.
+🔴 Корень: у Боба не было **ростера** — retrieval-пути «перечисли недавно встреченных» (все
+запросы к person-таблицам были точечные `WHERE sender_id=?`).
+
+`roster.py` (чистый домен, I/O-free) строит `RosterMember` (значение в `bob.kernel.roster`; `sender_id`, `name`,
+`first_seen_at`, `is_newcomer`), `is_newcomer(first_seen, now, newcomer_days)` — новизна
+**строго по времени** (не по authz-kind/трасту/имени, INV-3) — и `build_roster(...)`
+(исключает владельца/самого Боба, сортирует по `first_seen_at` DESC, кап `limit`, отмечает
+новичков; имя — из новой колонки `first_impression.display_name`, для legacy-строк парсится из
+`note`). Данные читает первый в коде **recency-запрос** `FirstImpressionStore.recent(limit)`
+(`ORDER BY first_seen_at DESC`).
+
+Surfacing — **ambient-осознание с окном**, НЕ keyword-детектор (north star: без скриптовости):
+usecase `RosterRecall.recent_roster(now, viewer)` отдаёт ростер, ТОЛЬКО пока есть хоть один
+свежий новичок (INV-4, не флуд) и ТОЛЬКО зрителю `OWNER`/`KNOWN` (гостю не выдаётся перечень
+всех), best-effort (ошибка чтения → пустой ростер, ход не падает). Мульти-персонная
+`roster_directive` (`personality/voice.py`) под рамкой «недавно зашли» называет **только**
+`is_newcomer`-участников (старожилы не мислейблятся) с указанием «называй по поводу, не
+притягивай». За флагом `social.roster` (+ `social.roster_newcomer_days`/`roster_limit`);
+OFF → ростер пуст (ноль изменений поведения).
 
 ### Такт разглашения (`disclosure.py`, BOB-066.2.6)
 
@@ -185,17 +260,151 @@ owner'а, и любого гостя — обида ключуется по `(pe
   Сверка `owner_private` регистронезависима.
 - `visibility_for_scope(is_group=)` — консервативный write-side классификатор: групповой
   ход — `public` (общая память комнаты), owner-DM ИЛИ *неопределённый* scope —
-  `owner_private` (fail-safe, INV-8: сомнение удерживает, а не течёт).
-- `filter_surfaceable(recalled, trust)` — recall-фильтр (зеркалит
+  `owner_private` (fail-safe, INV-8: сомнение удерживает, а не течёт). 🔴 **Scope по
+  МЕСТУ, не по КТО (BOB-082):** `is_group` теперь берётся из **канала** (сигнал
+  `MessageReceived.is_group`, gateway из `chat.type`), а не из `interlocutor.kind` — так
+  ход owner'а **в группе** корректно `public` (раньше ошибочно `owner_private`), а его
+  **личка** — `owner_private`.
+- `filter_surfaceable(recalled, trust, *, owner_consented=False)` — recall-фильтр (зеркалит
   `conversation.recalled_excluding_reflections`): роняет `owner_private`-хиты, читая
   поле `visibility` каждого элемента. Для TRUSTED результат байт-в-байт равен входу
   (order-preserving, INV-7); гостю удерживается только `owner_private`.
+- 🔴 **Раскрытие по согласию owner'а (BOB-082, за флагом `coder.dev_dm`).** Память
+  **сквозная** (в личке и группе — один архив, без chat_id-сило), но в **группе** приватный
+  DM-мир owner'а по умолчанию охраняется от комнаты (даже когда говорит сам owner — там
+  Лиля/Паша). Снимается **только** при явном согласии owner'а В ЭТОТ ход: `owner_consented`
+  → `may_surface`/`filter_surfaceable` пропускают `owner_private` для этого surface
+  (recall-time, **без мутации** хранимого `visibility` — раскрытие разовое, не
+  переклассификация). Согласие судит консервативный Tier-0 (`disclosure_consent.py` +
+  `application/usecases/disclosure_consent_gate.py`): только owner, неуверенность/
+  ошибка → нет согласия (biased-to-privacy). Человечно: приватность по умолчанию, но owner
+  может сказать «расскажи ребятам» — и Боб раскроет. 🔴 Вопрос гейта — про АУДИТОРИЮ, а не
+  про канал хода (BOB-090.B-fix): параметр называется `to_room`, а промпт судьи больше не
+  утверждает, что разговор идёт в группе, и спрашивает про людей, которые прочтут ответ.
+  Раньше просьба из лички подсовывалась судье как «в группе», и это ломало его суждение
+  ровно на том сценарии, ради которого гейт и нужен.
+
+🔴 **`visibility` теперь ещё и сигнал для ГОЛОСА (BOB-090.C1).** Метка перестала быть
+только гейтом разглашения: `personality.voice.recalled_origin_directive` читает её у
+припомненного и говорит Бобу, ГДЕ это было сказано («наедине» / «при всех» / «и там, и
+там»). Фильтром она от этого не стала — выборка recall не сужается ни на одну строку. За
+флагом `memory.origin_provenance`, выключенным по умолчанию.
 
 Врезано live в `handle_message._recall_surfaceable` ПОВЕРХ unified recall (обоих путей —
 FTS5 И векторного KNN, оба несут `visibility`), а write-side `_turn_visibility` штампует
 провенанс на новые эпизоды и факты. Тон отказа гейта на голосовом слое —
 `personality.voice.tactful_withhold_directive` (тёплая, не холодная стена). Фильтр латентен,
 пока гость реально не в чате: owner (TRUSTED) всегда видит всё.
+
+### Куда именно писать — адрес (`destination.py`, BOB-090.B2)
+
+Живой баг: из лички owner просил «расскажи Норману в группе, тегни его», а Боб отвечал
+в личку (эпизоды 3088 / 3091), после чего в группе уверенно сообщал, что уже всё
+объяснил (эпизод 3092). Корень — исходящего адреса не существовало как понятия: ответ
+всегда уходил в `chat_id` текущего хода. `destination.py` — чистое ядро, отвечающее на
+один вопрос «куда», отдельно от транспорта и от модели:
+
+- `KnownDestination` — один адрес, который Боб действительно знает: `chat_id`,
+  форум-топик, человеческая метка и `DestinationKind` (`GROUP` / `OWNER_DM`).
+- `resolve_destination(place, known, *, from_owner, here_chat_id)` → `DestinationVerdict`
+  с исходом `RESOLVED` / `ASK` / `REFUSED` и короткой подсказкой ДЛЯ БОБА (не готовой
+  репликой человеку) о том, почему отправка не состоялась.
+
+🔴 **Порядок проверок и есть политика:**
+
+1. Просит не owner → `REFUSED`. Проверка идёт ПЕРВОЙ, и однозначность адреса её не
+   отменяет: инициатива писать в чужие чаты принадлежит только owner'у (урок BOB-076).
+2. Род места не разобран (пусто, мусор, незнакомое слово) → `ASK`. Разбирается закрытый
+   перечень синонимов («группа», «личка», `group`, `owner_dm`, …); синоним уточняет РОД
+   места и никогда не выбирает между двумя конкретными чатами.
+3. Ровно один известный адрес такого рода → `RESOLVED` с точным адресом (чат И топик).
+   Ноль или несколько кандидатов → `ASK`; при нескольких вопрос перечисляет метки, чтобы
+   быть предметным. 🔴 Решение owner'а: **переспросить, а не угадать** — угаданный не тот
+   адресат и есть тот класс ошибки, из-за которого заведён эпик.
+4. Решённый адрес совпал с текущим чатом → `REFUSED`: отправлять себе же нечего, это
+   обычный ответ. Признак структурный (сравнение `chat_id`) — ядро не знает слова
+   «здесь» и не должно, иначе оно начнёт угадывать по формулировке.
+
+Сами адреса собирает композиционный корень (`runtime/wiring/delivery.py`) из секции
+`telegram`: комната берётся вместе с топиком Боба (без треда сообщение падает в General),
+личка owner'а — по его `owner_dm_chat_id` либо `owner_id`. Список закрытый: модель не
+может передать `chat_id`, она называет только род места.
+
+### Упоминания — настоящий `@ник` или имя (`mention.py`, BOB-090.B3)
+
+Живой баг: Боб написал «@Норман», хотя ник человека — `@NormanGri`. Выдуманный тег никого
+не дёргает и выглядит как сломанный бот, поэтому 🔴 **из имени тег не собирается никогда**.
+
+- `PersonHandle` — человек как адресуемое лицо: имя, `username` (без «собаки», `None` =
+  ника нет — нормальное состояние в Telegram) и `is_owner`.
+- `handles_from(impressions, *, owner_id=None)` — собрать адресуемых из ростера. Имя
+  берётся тем же фолбэком, что и у ростера (`display_name` или голова заметки); безымянная
+  строка отбрасывается. `owner_id` помечает владельца по ЕГО id из конфига.
+- `mention_for(name, people)` — как обратиться: настоящий `@ник` либо само имя.
+- `ground_mentions(text, people)` — заземление исходящего текста: подтверждённый ник
+  остаётся как есть, имя знакомого с ником становится настоящим `@ником`, ничем не
+  подтверждённый тег теряет «собаку» и остаётся обычным словом. Текст без упоминаний
+  возвращается тем же объектом, поэтому обычная отправка от ростера не зависит.
+- `demote_mentions(text)` (B-fix2) — безусловное понижение всех тегов, ростер не нужен.
+  Применяется к тексту, который Боб лишь ЦИТИРУЕТ. Заземление не только снимает «собаку»,
+  но и ПОВЫШАЕТ имя до реального ника, поэтому цитата «@Norman, отдай ключи» уезжала в
+  комнату настоящим пингом от имени Боба — текстом, которого Боб не писал.
+
+🔴 **Спорное имя тега не получает вовсе (B-fix2).** `display_name` — это Telegram
+full_name, которое человек ставит себе САМ, поэтому «совпало по имени» ≠ «тот самый
+человек». Совпадением считается имя целиком или его первое слово («Паша» ↔ «Паша
+Иванов»); ровно один кандидат — он; несколько — тег достаётся owner'у, опознанному по
+`sender_id` (структурно, а не строкой), а если и это не решает — тега нет. Подменённый
+тег хуже выдуманного, а выдуманный хуже отсутствующего.
+
+🔴 **Известное ограничение.** Упоминание резолвится по ИМЕНИ, как оно лежит в ростере, и
+ник поднимается только у тех, у кого он уже записан. Человек, записанный латиницей
+(«Norman»), на просьбу «тегни Норману» получит имя без «собаки», а не `@NormanGri`, — пока
+его ник не запишется на следующем его ходу. Транслитерации нет намеренно: это ровно то
+угадывание, против которого заведён эпик.
+
+### Перенос приватного в публичный чат (`disclosure.py`, BOB-090.B4 / B-fix / B-fix2)
+
+Отдельная от такта разглашения половина той же заботы: такт решает, что Боб инициативно
+выкладывает В ОТВЕТ, а этот гейт — можно ли ВЫНЕСТИ материал в другой, публичный чат.
+Заведён не второй контур, а расширение существующего:
+
+- `carries_owner_private(material)` — есть ли в теле материала хоть что-то, что
+  `may_surface` удержал бы от гостя. Одно определение «приватного» на весь код.
+- `transfer_needs_consent(recalled, *, destination_public)` — нужно ли согласие. Согласие
+  даёт существующий `DisclosureConsentGate` (BOB-082.4), и оно действует на ЭТОТ ход, а не
+  «навсегда».
+
+🔴 **Перенос считается по МАТЕРИАЛУ, а не по форме.** Гейт читает МЕТКУ материала, а не
+текст, поэтому цитата и пересказ своими словами для него неотличимы — иначе просьба
+«расскажи Норману, о чём мы говорили» обходила бы гейт простой переформулировкой.
+
+🔴 **Триггер — то, что Боб добавляет ОТ СЕБЯ.** Изначально переносом считался любой ход из
+лички (ход в личке помечен `owner_private` целиком), и Боб отказывал owner'у в его же
+прямом распоряжении: на «напиши в группу, что я закончил обзор» включался консервативный
+судья согласия и отвечал «нет». Теперь место разговора триггером не является. Гейт горит
+там, где содержание приходит из ПАМЯТИ Боба, и не горит там, где его продиктовал сам
+owner: прямая команда — волеизъявление, согласие содержится в ней самой.
+
+- Пример БЕЗ гейта: «Боб, напиши Норману в группу, что я закончил обзор» — содержание
+  продиктовал owner, память приватного не подняла, Tier-0 не спрашивается вовсе.
+- Пример С гейтом: «Боб, расскажи Норману в группе, о чём мы говорили про спринт» —
+  recall поднимает приватный эпизод из лички, и без явного «да» ничего не уходит.
+
+🔴 **Остаточные риски — названы прямо, а не спрятаны.**
+
+1. **Прямое распоряжение проходит без вопроса.** Если owner велит переслать в комнату
+   сказанное им же в личке, а память ничего приватного не подняла, отправка уйдёт молча.
+   Это его данные и его решение — так решил owner, и чинить это не планируется.
+2. **В живой нити может быть чужое.** Нить — названное исключение из переноса (иначе гейт
+   горел бы на каждой отправке из лички), но в ней есть и собственные прошлые реплики
+   Боба, а в них — то, что ему рассказал третий человек. Для гейта такая реплика
+   неотличима от слов самого владельца, поэтому он её и не удержит. Решение owner'а: в
+   комнату это выносит он сам, своей командой и под своим именем.
+
+Материал берётся из единого СЛЕДА хода
+(`capabilities.usecases.turn_material.TurnMaterial`), а не из одной двери recall — см.
+[capabilities](../capabilities/README.md).
 
 ### Кредит доверия (`endorsement.py`, BOB-066.2.6)
 
@@ -246,6 +455,29 @@ owner'а (`is_deny` проверяется ПЕРВЫМ как безопасн�
 `needs_permission` + `kind` tool/internal/owner_data + `what`), `PrivilegeContext` (вход:
 текст + capability-подсказки + лёгкий контекст) и порт `PrivilegeJudge.assess`.
 
+🔴 **Вердикт судьи — внутренний (BOB-090.E).** Промпт судьи (system + user) написан на
+языке проекта и прямо говорит модели, что её ответ — решение для машины, а не реплика
+человеку. Ни `kind`, ни `what` наружу не произносятся: `what` остаётся в записи запроса
+как след суждения (аудит гейта), `kind` только ВЫБИРАЕТ, какими словами Боб объяснит
+причину. Раньше `what` подставлялся в шаблон дословно — и owner читал английскую строку
+классификатора внутри русской фразы («Norman просит Requesting details of private
+conversations with another user — разрешить?»).
+
+`request_voice.py` — голос самой просьбы: `owner_permission_notice` собирает реплику
+Боба (кто просит + слова САМОГО просителя, свёрнутые в строку и подрезанные + почему он
+не решает сам, по-разному для tool/internal/owner_data), `requester_ack` — лёгкое
+«спрошу Вову» просителю. Чистый и детерминированный (образец — `coding/session_voice`),
+без LLM-вызова на реплику. Упоминание owner'а пишется НЕподтверждённым тегом и
+заземляется на ростер через `mention.ground_mentions` уже во флоу: есть ник — настоящий
+`@ник`, нет — имя; из имени тег не собирается никогда.
+
+🔴 Заземляется ТОЛЬКО обращение самого Боба (BOB-090.B-fix2). Имя просителя и цитата его
+слов проходят `mention.demote_mentions` прямо в `owner_permission_notice`, где текст и
+собирается: заземление не только снимает «собаку», но и ПОВЫШАЕТ имя до настоящего ника, а
+нотис уходит в топик Боба в ГРУППЕ — то есть цитата «@Norman, отдай ключи» дёргала бы
+постороннего текстом, которого Боб не писал. Инвариант готовой реплики: «собака» в ней
+ровно одна — обращение к owner'у.
+
 ### Use-case'ы (application)
 
 `Authorizer` (`usecases/authorizer.py`) — чистая политика доступа на единственном шлюзе:
@@ -257,12 +489,25 @@ owner допущен только внутри разрешённого чата
 `SenderPerception` / `ReactorPerception` (`usecases/`) — шов, где `Authorizer` компонуется
 с чистым `classify`: входящее `MessageReceived` (или реактор на сообщение Боба) становится
 `Interlocutor`, который `HandleMessage` вплетает в голос. Это восприятие, НЕ гейт: читает
-`is_owner`/`is_authorized`, но НЕ меняет решение о доступе.
+`is_owner`/`is_authorized`, но НЕ меняет решение о доступе. Когда проведён опциональный
+`gender_store` (шов `GenderMemory`, BOB-078 A), `resolve` сперва вкладывает текст хода в
+само-презентацию отправителя (`observe_gender`) и читает обратно накопленный `Gender`
+(`load_gender`) — так Боб обращается в верном грамматическом роде (UNKNOWN → нейтрально,
+никогда не по имени); без шва или без keyable `sender_id` — UNKNOWN, ход байт-идентичен.
+`perceive_kind(event)` — лёгкий брат `resolve` для холистического stream-read (BOB-078 B):
+та же authz-классификация до `InterlocutorKind`, но БЕЗ накопления рода (само-презентация уже
+свёрнута на основном handle-пути — повторное наблюдение здесь двоило бы счёт).
 
 `PermissionFlow` (`usecases/permission_flow.py`) — политика .2 над .1-доменом: владеет
 КОГДА, не КАК. `maybe_request` для хода не-авторизованного участника спрашивает
 `PrivilegeJudge`, привилегирован ли запрос; если да — заводит PENDING `PermissionRequest`,
-НОТИФИЦИРУЕТ owner'а голосом Боба и мягко отвечает просителю. `maybe_decide` записывает
+НОТИФИЦИРУЕТ owner'а голосом Боба (`permission/request_voice.py`, упоминание заземлено
+ростером через опциональный `directory` и `owner_id`, которым владелец опознаётся среди
+тёзок; сбой ростера → обращение по имени, гейт при этом не снимается — у чтения
+справочника СВОЙ `try`, иначе падение имён молча роняло бы привилегированный путь в
+обычный чат) и мягко отвечает просителю. Оба канала уходят ботом БОБА: просьба о
+разрешении — социальный акт, и канон (`coding/speaker.speaker_for`) закрепляет его за
+Бобом, а не за GUPPI. `maybe_decide` записывает
 вердикт owner'а. `PermissionExecutor` (`usecases/permission_execution.py`) — половина
 ИСПОЛНЕНИЯ (КАК): **GRANT** — перезапустить сохранённый `request_text` через
 `PrivilegedFulfiller` как если бы проситель был авторизован, но ТОЛЬКО для этого одного
@@ -309,9 +554,18 @@ personality.
 ключом в `kv`-таблице (`SqliteMemoryRepo.kv_get/kv_set`). `SoulStore`
 (`adapters/soul_store.py`) — файловый reader/writer `data/soul/` (`SOUL.md`, JSON-профили,
 append-only `genesis_log.md`; каталог создаётся по требованию). `SqliteFirstImpressionStore`
-— `INSERT … ON CONFLICT DO NOTHING` (впечатление формируется ОДИН раз).
+— `INSERT … ON CONFLICT DO UPDATE SET username = excluded.username WHERE
+excluded.username IS NOT NULL` (BOB-090.B3). Заметка, `first_seen_at` и `display_name`
+по-прежнему формируются ОДИН раз; обновляется только `username`. Так сделано потому, что
+все уже знакомые записаны ДО появления колонки, и прежнее `DO NOTHING` оставило бы их без
+ника навсегда, а ник — единственное поле, которое человек в Telegram реально меняет.
+Ход, не принёсший ника, известный ник не стирает.
 `SqliteRelationshipStore` — UPSERT в `person_relationship` (имя выбрано, чтобы не путать с
-legacy single-row `relationship` owner-blob). `SqliteSulkStore` — одна строка на
+legacy single-row `relationship` owner-blob). BOB-078 A добавил per-person грамматический
+род: `observe_gender(sender_id, text)` вкладывает само-презентацию хода через чистый
+`GenderRead` и UPSERT'ит ТОЛЬКО колонку `gender` (четыре оси отношения нетронуты —
+несформированное отношение сохраняет нейтральные дефолты), `load_gender(sender_id)` читает
+накопленный lean и резолвит его в `Gender` (NULL / неизвестный отправитель → UNKNOWN). `SqliteSulkStore` — одна строка на
 `persona_id` (legacy per-persona обида, BOB-014.2b; сохранён как источник owner-backfill).
 `SqlitePersonSulkStore` (`adapters/person_sulk_store.py`, BOB-066.2.5) — per-`(persona,
 sender)` обида в таблице `person_sulk`: `load` (unseen пара → свежий не-обиженный дефолт),
@@ -344,8 +598,11 @@ owner id), так что обиженный на середине owner пере
   owner'а везде), доступ — chat-scoped.
 - **Allowlist-авторизация.** owner допущен только в разрешённом чате; прочие — только на
   allowlist И в разрешённом чате; `/authorize` переживает рестарт (через `AllowlistStore`).
-- **Первое впечатление формируется однажды.** `save` — `INSERT … ON CONFLICT DO NOTHING`:
-  у вернувшегося отправителя исходная заметка/`first_seen_at` неизменны (BOB-019).
+- **Первое впечатление формируется однажды, ник — нет (BOB-019, BOB-090.B3).** У
+  вернувшегося отправителя заметка, `first_seen_at` и `display_name` неизменны. Колонка
+  `username` — единственное исключение: `save` перезаписывает её, когда ход принёс ник,
+  и не трогает, когда не принёс. `NULL` означает «ника не знаю», а не «ника нет
+  навсегда»: он запишется на следующем ходу этого человека.
 - **Отношение аккретится и не убегает.** `apply_interaction` применяет мягкий дрейф к
   нейтральному `0` первым, дельты bounded, оси в `[-1, 1]`; отношение без поддержки
   релаксирует к нейтральному, никогда не пиннится в экстремум (BOB-014).
@@ -370,11 +627,33 @@ owner id), так что обиженный на середине owner пере
   scope → `owner_private` (INV-8, сомнение удерживает); `NULL` = public держит BOB-051
   память нетронутой. `tactful_withhold_directive` — только ГОЛОС отказа гейта, не подмена
   гейта.
+- **Адрес — только по просьбе owner'а, при неоднозначности вопрос (BOB-090.B2).**
+  `resolve_destination` отказывает не-owner'у ПЕРВОЙ проверкой, до всякого разбора места;
+  ноль или несколько кандидатов дают `ASK`, а не выбор наугад; совпадение с текущим чатом
+  распознаётся структурно, по `chat_id`, а не по слову «здесь».
+- **Тег никогда не сочиняется (BOB-090.B3/B-fix2).** `@ник` берётся ТОЛЬКО из ростера и
+  только при однозначном совпадении имени; спорное имя тега не получает (исключение —
+  owner, опознанный по `sender_id`). Неподтверждённый тег понижается до обычного слова, а
+  цитируемый чужой текст понижается безусловно (`demote_mentions`), чтобы Боб не пинговал
+  людей текстом, которого не писал. Недоступный ростер приводит к обращению по имени.
+- **Перенос приватного — по материалу, с двумя названными пробелами (BOB-090.B4/B-fix).**
+  `transfer_needs_consent` спрашивает согласие, когда в материале хода есть
+  `owner_private`, а адресат публичен; цитата и пересказ для гейта одинаковы (читается
+  метка, не текст). Место разговора триггером НЕ является — прямое распоряжение owner'а
+  проходит без вопроса, и вместе с ним проходит сказанное им же в личке, включая чужое,
+  попавшее в нить. Оба пробела приняты решением owner'а и описаны выше.
 - **Кредит доверия — только seed на первом контакте (BOB-066.2.6).** `endorsed_seed`
   warm-start'ит ТОЛЬКО новичка (`rel is None`); сформированная связь неизменна. Seed
   скромный и растворяется обычным дрейфом-к-нейтральному, если поведение не подтвердит —
   head-start, не постоянный грант. `detected_endorsement`/`owner_endorsed_sender`
   консервативны (нужно поручительство И имя отправителя, иначе `False`).
+- **Род — только по само-идентификации, накопление ≥2, никогда по имени (BOB-078 A).**
+  `detect_self_gender` читает FEM/MASC лишь из само-презентации 1-го лица (родовой глагол о
+  себе / «я сам»/«я сама»); имя и глагол 3-го лица — не сигнал. `GenderRead.resolve` коммитит
+  род только когда `|lean|` перешагнул порог в ДВА шага, поэтому один сигнал не переворачивает
+  род — нужно ≥2 согласных наблюдения; противоречия гасятся, слабая история остаётся UNKNOWN.
+  UNKNOWN → нейтрально (Боб не навязывает рода). Род per-person (колонка `gender`), не трогает
+  четыре оси отношения; без проведённого шва каждый отправитель читается UNKNOWN.
 - **Genesis — one-shot.** Уникальная личность генерируется ровно раз на первом boot'е
   (нет `SOUL.md`), затем только читается.
 - **Мультиперсональность.** per-person атрибуция (`sender_id`/`persona_id`) сосуществует
@@ -392,13 +671,15 @@ owner id), так что обиженный на середине owner пере
 - легализованы: `social → personality` (`relationship → negotiation.Stance`/`Mood` —
   публичная domain-поверхность), `social.usecases → router` (shared app), `ports`-шим.
 - 🔴 цикл `personality↔social` РАЗОРВАН (`no-dependency-cycles` зелёный): `voice.py`
-  больше не импортит `InterlocutorKind` в runtime.
+  больше не импортит `InterlocutorKind` в runtime. С BOB-113 `personality` не импортирует
+  `social` вовсе, в том числе под `TYPE_CHECKING`: социальные значения она читает из
+  `kernel`, а ребро `social → personality` идёт вниз по runtime-порядку вертикалей.
 
 Внутренний layer-guard модуля — `tests/social/test_layering.py`.
 
 ## API
 
-&lt;!-- beadloom:track=src/bob/social/ports.py -->
+<!-- beadloom:track=src/bob/social/ports.py -->
 
 Модуль `src/bob/social/ports.py` (порты-протоколы, только интерфейсы):
 - `AllowlistStore` — долговечный стор allowlist (`load`/`add`/…). Реализация —
@@ -411,19 +692,34 @@ owner id), так что обиженный на середине owner пере
   обобщение `SulkStore` по `sender_id` (BOB-066.2.5). Реализация — `SqlitePersonSulkStore`.
 - `PrivilegeJudge` — семантический шов оценки привилегии (re-export из
   `permission/privilege.py`).
+- `InterlocutorResolver` / `FirstImpressionReader` / `RosterRecaller` / `RelationshipReader` /
+  `SulkReader` — социальные читатели хода (кто пишет, первое впечатление, ростер комнаты,
+  отношение, обида), которые потребляют `SocialContext` и `HandleMessage`. Переехали сюда из
+  `handle_message.py` (BOB-113) — рядом со сторами, которые их реализации читают.
 
 Фасад `src/bob/social/__init__.py` — вход в модуль. Канонический импорт портов —
 `from bob.social.ports import AllowlistStore` (транзитный ports-шим `bob.domain.ports`
 удалён, BOB-062.8).
 
 Ключевые точки входа:
-- Домен: `interlocutor.classify`, `first_impression.impression_note_for`,
-  `relationship.apply_interaction`/`endorsed_seed`, `sulk.observe_relationship`/`recover`,
-  `disclosure.may_surface`/`visibility_for_scope`/`filter_surfaceable`
-  (+ `VISIBILITY_PUBLIC`/`VISIBILITY_OWNER_PRIVATE`),
+- Домен: `interlocutor.classify` (+ `kernel.interlocutor.Interlocutor.gender`),
+  `gender.detect_self_gender`/`GenderRead.observe`/`resolve` (+ `kernel.interlocutor.Gender`),
+  `first_impression.impression_note_for`,
+  `relationship.apply_interaction`/`compromise_bias`/`endorsed_seed` (+ `RelationshipDeltas`),
+  `roster.build_roster`/`is_newcomer`/`member_name`,
+  `sulk.observe_relationship`/`recover` (+ `SulkConfig`),
+  `disclosure.may_surface`/`visibility_of`/`visibility_for_scope`/`filter_surfaceable`
+  (+ `VISIBILITY_PUBLIC`/`VISIBILITY_OWNER_PRIVATE`) и
+  `disclosure.carries_owner_private`/`transfer_needs_consent` (перенос приватного,
+  BOB-090.B4),
+  `destination.resolve_destination` (+ `KnownDestination`/`DestinationKind`/
+  `DestinationOutcome`/`DestinationVerdict`),
+  `mention.handles_from`/`mention_for`/`ground_mentions`/`demote_mentions`
+  (+ `PersonHandle`),
   `endorsement.detected_endorsement`/`owner_endorsed_sender`.
 - Permission: `permission.privilege.PrivilegeJudge`, `permission.entities.PermissionRequest`,
-  `permission.intent.is_deny`/`is_grant`/`is_authorize`, `permission.state.PermissionState`.
+  `permission.intent.is_deny`/`is_grant`/`is_authorize`, `permission.state.PermissionState`,
+  `permission.request_voice.owner_permission_notice`/`requester_ack` (BOB-090.E).
 - Use-case'ы: `usecases.Authorizer`, `SenderPerception`/`ReactorPerception`,
   `PermissionFlow`/`PermissionExecutor`, `FirstImpressionTracker`/`RelationshipTracker`/
   `SulkTracker`, `RunGenesis`.
@@ -442,6 +738,9 @@ recovery-тика обиды) — в композиционном корне (`r
 
 - Домен: `tests/domain/personality/test_interlocutor.py`,
   `test_first_impression.py`, `test_relationship.py`, `test_sulk.py`;
+  `test_gender.py` (BOB-078 A: `detect_self_gender` — 1-е лицо vs 3-е лицо vs имя,
+  `GenderRead` — накопление ≥2 сигналов до коммита, противоречия гасятся, порог),
+  `test_voice.py` (родовая клауза `who_is_writing_directive`: FEM/MASC/UNKNOWN);
   `tests/domain/permission/test_privilege.py`.
 - Восприятие/authz: `tests/application/authz/test_authorizer.py`,
   `test_sender_perception.py`, `test_reactor_perception.py`;
@@ -454,7 +753,9 @@ recovery-тика обиды) — в композиционном корне (`r
 - Genesis: `tests/application/usecases/test_run_genesis.py`,
   `test_run_genesis_hardening.py`.
 - Адаптеры: `tests/infrastructure/persistence/test_first_impression_store.py`,
-  `test_relationship_store.py`, `test_sulk_store.py`, `test_person_sulk_store.py`
+  `test_relationship_store.py` (в т.ч. `load_gender`/`observe_gender` — накопление,
+  изоляция от четырёх осей, legacy-NULL → UNKNOWN),
+  `test_sulk_store.py`, `test_person_sulk_store.py`
   (per-person UPSERT + owner-backfill идемпотентность/не-воскрешение),
   `test_permission_request_store.py`; `tests/infrastructure/llm/test_privilege_judge.py`.
 - Per-person обида (BOB-066.2.5): `tests/application/usecases/test_sulk_sources.py`
@@ -472,4 +773,18 @@ recovery-тика обиды) — в композиционном корне (`r
   `tests/application/usecases/test_turn_visibility.py`; BDD —
   `tests/acceptance/features/disclosure_tact.feature` +
   `tests/acceptance/steps/test_disclosure_tact.py` (7 сценариев).
+- Адресация, упоминания и перенос приватного (BOB-090.B): чистые ядра —
+  `tests/domain/social/test_destination.py` (порядок проверок: не-owner первым, ноль и
+  несколько кандидатов → вопрос, тот же чат → отказ), `test_mention.py` (настоящий ник vs
+  имя, понижение неподтверждённого и чужого тега, спорное имя, owner по `sender_id`),
+  `test_disclosure_transfer.py` (цитата и пересказ одинаковы; прямое распоряжение не
+  зажигает гейт); адаптер — `tests/infrastructure/persistence/test_first_impression_username.py`
+  (UPSERT только ника); BDD — `tests/acceptance/features/chat_addressing.feature` +
+  `tests/acceptance/steps/test_chat_addressing.py` (просьба ИЗ ЛИЧКИ → сообщение ушло в
+  группу, в топик Боба, тег заземлён по живому ростеру, приватное из памяти без согласия
+  не уходит).
+- Голос запроса разрешения (BOB-090.E): `tests/domain/permission/test_request_voice.py`,
+  `tests/application/usecases/test_permission_notice_voice.py`,
+  `tests/test_app_permission_voice.py` (реплика уходит ботом Боба, фраза классификатора
+  не произносится); BDD — `tests/acceptance/features/guppi_canon.feature`.
 - Layer-guard модуля: `tests/social/test_layering.py`.

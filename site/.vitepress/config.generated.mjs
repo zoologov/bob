@@ -31,6 +31,8 @@ export const sidebar = [
               { text: "Capabilities", link: "/features/capabilities" },
               { text: "Coding", link: "/features/coding" },
               { text: "Conversation", link: "/features/conversation" },
+              { text: "Identity", link: "/features/identity" },
+              { text: "Interactive", link: "/features/interactive" },
               { text: "Kernel", link: "/features/kernel" },
               { text: "Memory", link: "/features/memory" },
               { text: "Personality", link: "/features/personality" },
@@ -133,6 +135,13 @@ export const sidebar = [
             ],
           },
           {
+            text: "Identity",
+            collapsed: true,
+            items: [
+              { text: "README", link: "/docs/domains/identity/README" }
+            ],
+          },
+          {
             text: "Infrastructure",
             collapsed: true,
             items: [
@@ -171,6 +180,13 @@ export const sidebar = [
                   }
                 ],
               }
+            ],
+          },
+          {
+            text: "Interactive",
+            collapsed: true,
+            items: [
+              { text: "README", link: "/docs/domains/interactive/README" }
             ],
           },
           {

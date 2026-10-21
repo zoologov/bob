@@ -1,10 +1,12 @@
-&lt;!-- beadloom:badge-start -->
-> 📘 **reference** — overview/guide, not tied to a code symbol
+<!-- beadloom:badge-start -->
+> ✅ **fresh**
+> 
+> last synced 2026-10-21T06:36:24.264700+00:00 · coverage 100% (`bob-application`)
 > 
 > _Validation by Beadloom `doc_sync` — same source as `sync-check`._
-&lt;!-- beadloom:badge-end -->
+<!-- beadloom:badge-end -->
 
-&lt;!-- Copyright (c) 2026 Vladimir Zoologov. All Rights Reserved.
+<!-- Copyright (c) 2026 Vladimir Zoologov. All Rights Reserved.
      SPDX-License-Identifier: BUSL-1.1 -->
 
 # Слой application — GUPPI (рантайм, use-cases, роутер)
@@ -21,8 +23,6 @@ LLM-роутера. Зависит от домена через порты-пр�
   asyncio-цикла: start/stop и супервизия фоновых задач.
 - **runtime/event_bus.py** — `AsyncEventBus`, in-process publish/subscribe с
   конкурентным fan-out и изоляцией ошибок обработчиков.
-- **runtime/events.py** — `MessageReceived`, нормализованное событие сообщения
-  (принадлежит приложению, не транспорту), и константа имени `MESSAGE_RECEIVED`.
 - **runtime/heartbeat.py** — `periodic()`, обёртка одноразового тика в
   супервизируемый повторяющийся фоновый цикл (sleep инъецируется для
   детерминизма); `RetryPolicy` — политика backoff для ретрая транзиентных сбоев тика.
@@ -46,7 +46,8 @@ LLM-роутера. Зависит от домена через порты-пр�
 - **capabilities/search_memory.py** — `make_search_memory_capability()`, агентный
   навык `search_memory`: Боб сам ищет по всему архиву через гибрид-recall (BOB-011).
 - **router/llm_router.py** — `LLMRouter`, классификация задачи, селективная
-  редакция приватности и fallback тиров; `LLMRequest` (с двумя каналами
+  редакция приватности и fallback тиров (Tier1 → Tier0 — только на аварии связи,
+  вердикт берётся из общего `fallback_policy`, bob-41o); `LLMRequest` (с двумя каналами
   контекста — `shareable_context` и `private_context`), `TaskType`. Опциональный
   Tier-1 rate-cap `tier1_max_concurrency` (BOB-072): семафор на число ОДНОВРЕМЕННЫХ
   Tier-1-вызовов; `None`/`<= 0` (по умолчанию) → без гейта, байт-в-байт.
@@ -56,7 +57,10 @@ LLM-роутера. Зависит от домена через порты-пр�
   (тот ретраит только transient): для пользовательского хода любой сбой
   суждения/генерации → ретрай, затем честный GUPPI-нотис, а не деградированный
   полу-ответ.
-  &lt;!-- beadloom:track=src/bob/application/reliability.py -->
+  <!-- beadloom:track=src/bob/application/reliability.py -->
+- **router/fallback_policy.py** — `should_fall_back(error)`, чистое ядро вердикта «это
+  авария канала (уходим на более слабую модель) или наш дефект (показываем)» (BOB-087.E1),
+  общее для обоих этажей тиринга (bob-41o). Подробности — в SPEC узла `router`.
 - **usecases/decide_response.py** — `DecideResponse`, тонкий use-case над швом
   семантического суждения (BOB-049): собирает `ResponseContext` из частей хода и
   делегирует решение REPLY/REACT/IGNORE инъецированному `ResponseJudge`.
@@ -396,9 +400,6 @@ Tier 1); иначе ход идёт прежним plain-путём роутер
 
 Модуль `src/bob/application/runtime/event_bus.py`:
 - `AsyncEventBus` — `subscribe(event_name, handler)`, `async publish(event)`.
-
-Модуль `src/bob/application/runtime/events.py`:
-- `MessageReceived`, `MESSAGE_RECEIVED`.
 
 Модуль `src/bob/application/runtime/heartbeat.py`:
 - `periodic(tick, *, interval_seconds, sleep=None, retry=None)` → фабрика фоновой задачи.

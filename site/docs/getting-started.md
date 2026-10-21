@@ -1,10 +1,10 @@
-&lt;!-- beadloom:badge-start -->
+<!-- beadloom:badge-start -->
 > 📘 **reference** — overview/guide, not tied to a code symbol
 > 
 > _Validation by Beadloom `doc_sync` — same source as `sync-check`._
-&lt;!-- beadloom:badge-end -->
+<!-- beadloom:badge-end -->
 
-&lt;!-- Copyright (c) 2026 Vladimir Zoologov. All Rights Reserved.
+<!-- Copyright (c) 2026 Vladimir Zoologov. All Rights Reserved.
      SPDX-License-Identifier: BUSL-1.1 -->
 
 # Первый запуск Боба

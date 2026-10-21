@@ -7,7 +7,7 @@ kind: feature
 
 **Kind:** feature
 
-Application runtime — AgentRuntime, AsyncEventBus, events, and resilient heartbeat ticks (retry/backoff). Distinct from the `runtime` composition root.
+Application runtime — AgentRuntime, AsyncEventBus, and resilient heartbeat ticks (retry/backoff); the intake events it carries live in the shared kernel. Distinct from the `runtime` composition root.
 
 **Source:** `src/bob/application/runtime/`
 
@@ -16,13 +16,11 @@ Application runtime — AgentRuntime, AsyncEventBus, events, and resilient heart
 - `AgentRuntime`
 - `AmbientBatchReader`
 - `AsyncEventBus`
-- `BobMessageReaction`
 - `CatchUpReentry`
 - `CatchUpSelection`
 - `ChatDispatcher`
 - `ChatInbox`
 - `DelayedTurn`
-- `MessageReceived`
 - `RetryPolicy`
 - `RoomStreamReader`
 - `RuntimeState`
@@ -42,28 +40,16 @@ Application runtime — AgentRuntime, AsyncEventBus, events, and resilient heart
 ## Relationships
 
 - **part_of**: [bob-application](../domains/bob-application.md)
-- **depends_on**: [conversation](../features/conversation.md), [presence](../features/presence.md)
-- **Used by**: [memory](../features/memory.md), [runtime](../services/runtime.md), [telegram](../other/telegram.md)
+- **depends_on**: [bob-domain](../domains/bob-domain.md), [conversation](../features/conversation.md), [presence](../features/presence.md)
+- **Used by**: [memory](../features/memory.md), [runtime](../services/runtime.md), [usecases](../features/usecases.md)
 
 ## Documentation
 
 - [domains/application/features/runtime-app/SPEC.md](/docs/domains/application/features/runtime-app/SPEC.md)
 
-## Diagram
+## Graph
 
-```mermaid
-C4Container
-    System_Boundary(bob_boundary, "Bob") {
-        Container(bob_application, "Bob Application", "", "GUPPI orchestration: AgentRuntime + AsyncEventBus, LLMRouter (tier routing + privacy redaction), use-cases (HandleMessage, RunGenesis, UpdateMoodFromText), resilient heartbeat ticks (retry/backoff), the Authorizer access policy and the capability seam (CapabilityRegistry + ToolLoop + recall_memory). Depends on domain via ports; never imports infrastructure.")
-        Container(bob_domain, "Bob Domain", "", "Domain layer umbrella: the seven module-vertical bounded contexts (personality, conversation, memory, proactivity, coding, capabilities, social) plus the shared 'kernel' (infra-neutral cross-module contracts). Pure logic + Protocol definitions; no I/O, no LLM, no transport.")
-        Container(bob_infrastructure, "Bob Infrastructure", "", "Port adapters: aiogram Telegram gateway (long-polling + authz gate, native draft streaming, Rich Messages, markdown‹-›RichMessage, topic-thread reply pinning), MultiBotGateway (BotRegistry + cross-bot dedup + central identity/scope router) and the GuppiHandler gatekeeper (visible reject + owner commands), OpenAI-compatible LLM provider (Tier 0/1 + tool-calling), SQLite+FTS5 persistence, KvAllowlistStore and SoulStore, two-bot layered config loader.")
-        Container(runtime, "Runtime", "", "Composition root ('src/bob/runtime/' package + the thin 'app.py' shim) — the only layer allowed to wire all layers + all vertical modules at once: 'config.py' loads layered config (incl. '_REPO_ROOT'), 'wiring/*' build infrastructure adapters + compose application policy/use-cases per bounded context, 'composition.py' ('build_application' + 'Application') subscribes handlers to the EventBus and registers ticks + Telegram polling, 'clock.py' provides 'SystemClock', and 'main.py' runs Genesis once and starts the process.")
-    }
-    Rel(bob_application, bob_domain, "depends_on")
-    Rel(bob_infrastructure, bob_application, "depends_on")
-    Rel(bob_infrastructure, bob_domain, "depends_on")
-    Rel(runtime, bob_application, "depends_on")
-    Rel(runtime, bob_domain, "depends_on")
-    Rel(runtime, bob_infrastructure, "depends_on")
-```
+<ClientOnly>
+  <ArchitectureMap focus="runtime-app" :depth="1" height="60vh" />
+</ClientOnly>
 
