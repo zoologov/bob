@@ -49,7 +49,7 @@ jobs:
           # test_a_graph_changing_diff_exits_nonzero_and_still_answers гоняет `beadloom diff
           # --since 66aa620~1`, и на мелком checkout (depth 1) он молча уходил в SKIP на каждом
           # прогоне (виден в логе run 32232968676). С полной историей он помечен real_beadloom,
-          # и его SKIP на раннере — FAILED (BOB_REQUIRE_REAL_BEADLOOM=1 на шаге Pytest).
+          # и его SKIP на раннере — FAILED/ERROR (BOB_REQUIRE_REAL_BEADLOOM=1 на шаге Pytest).
           fetch-depth: 0
 
       - name: Install uv (with cache)
@@ -101,7 +101,8 @@ jobs:
         # 🔴 BOB-112.11: гард выше проверяет лишь ПРЕДУСЛОВИЯ (бинарь, индекс, версия), и
         # ревью его обмануло: 9.0.0 на PATH за обёрткой, у которой `why` выходит с rc 1, —
         # гард зелёный, тест `why` ушёл в SKIP. ИСХОД держит BOB_REQUIRE_REAL_BEADLOOM=1:
-        # SKIP любого теста с маркером real_beadloom здесь становится FAILED с исходной
+        # SKIP любого теста с маркером real_beadloom здесь становится FAILED (skip в вызове)
+        # или ERROR (skipif/фикстура — отказ фазы setup; красное остаётся красным) с исходной
         # причиной (tests/support/real_beadloom_requirement.py). Маркера не несут только
         # тесты, которым кроме beadloom нужен инструмент, которого на раннере нет (mmdc, bd).
         # Тест `diff --since 66aa620~1` маркер НЕСЁТ: полная история обеспечена checkout'ом
