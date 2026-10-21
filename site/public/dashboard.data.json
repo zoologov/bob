@@ -55,7 +55,7 @@
     "debt_score": 4.5,
     "layer_populations": [],
     "severity": "low",
-    "test_population": "not counted: 508 of 560 test file(s) are unplaced (not under tests/integration/ or tests/unit/, nor inside a node's source) and bind to no node, so a node with no bound test may still be tested; a test file is read when its path matches a pattern of go_test (*_test.go), jest (*.test.*, *.spec.*, __tests__/**/*.[jt]s, __tests__/**/*.[jt]sx), junit (*Test.java, *Tests.java, *TestCase.java, *IT.java, *ITCase.java, *Test.kt, *Tests.kt, src/test/**/*.java, src/test/**/*.kt), pytest (test_*.py, *_test.py) or xctest (*Tests.swift, *Tests/**/*.swift) under the root tests or beside a node's code",
+    "test_population": "not counted: 510 of 562 test file(s) are unplaced (not under tests/integration/ or tests/unit/, nor inside a node's source) and bind to no node, so a node with no bound test may still be tested; a test file is read when its path matches a pattern of go_test (*_test.go), jest (*.test.*, *.spec.*, __tests__/**/*.[jt]s, __tests__/**/*.[jt]sx), junit (*Test.java, *Tests.java, *TestCase.java, *IT.java, *ITCase.java, *Test.kt, *Tests.kt, src/test/**/*.java, src/test/**/*.kt), pytest (test_*.py, *_test.py) or xctest (*Tests.swift, *Tests/**/*.swift) under the root tests or beside a node's code",
     "top_offenders": [
       {
         "reasons": [
@@ -100,12 +100,12 @@
   "doctor": {
     "by_severity": {
       "ok": 12,
-      "warning": 248
+      "warning": 249
     },
     "errors": 0,
     "passed": true,
-    "total": 260,
-    "warnings": 248
+    "total": 261,
+    "warnings": 249
   },
   "federated": null,
   "lint": {
@@ -792,7 +792,7 @@
       "value": "100.0% covered"
     },
     {
-      "detail": "0 errors, 248 warnings",
+      "detail": "0 errors, 249 warnings",
       "group": "doctor",
       "label": "Doctor",
       "status": "warn",
@@ -829,6 +829,16 @@
       "symbols": 1635,
       "sync_pct": 100.0,
       "ts": "2026-10-21T06:36:33.745701+00:00"
+    },
+    {
+      "coverage_pct": 100.0,
+      "debt_score": 4.5,
+      "edges": 121,
+      "lint_violations": 37,
+      "nodes": 23,
+      "symbols": 1635,
+      "sync_pct": 100.0,
+      "ts": "2026-10-21T07:29:40.435331+00:00"
     }
   ]
 }

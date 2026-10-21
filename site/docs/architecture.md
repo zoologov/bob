@@ -1,7 +1,7 @@
 <!-- beadloom:badge-start -->
 > ✅ **fresh**
 > 
-> last synced 2026-10-21T06:36:24.264700+00:00 · coverage 100% (`bob`)
+> last synced 2026-10-21T07:27:18.171078+00:00 · coverage 100% (`bob`)
 > 
 > _Validation by Beadloom `doc_sync` — same source as `sync-check`._
 <!-- beadloom:badge-end -->
@@ -208,7 +208,7 @@ usecases → capabilities → social → telegram → proactivity → memory →
 (29 имён по 22 решениям RFC) `beadloom lint --strict` не находит ни одного цикла, а из 81
 ребра `depends_on` type-only остались 8, и все они направлены вниз или в ядро.
 
-**Кто это держит.** Три независимые проверки:
+**Кто это держит.** Четыре независимые проверки:
 
 - `no-dependency-cycles` в `.beadloom/_graph/rules.yml` — `severity: error`, без исключений.
   Beadloom читает и импорты под `TYPE_CHECKING`, поэтому type-only ребро вверх по порядку
@@ -222,11 +222,32 @@ usecases → capabilities → social → telegram → proactivity → memory →
     `TYPE_CHECKING`-импорт не направлен вверх, а любое ребро ИЗ `kernel` считается
     направленным вверх.
 
-  Оба сборщика импортов читают все формы импорта: `import bob.x`, `from bob.x import y`,
-  `from bob import x`, `from bob.application import usecases` и относительные импорты.
-  Выход относительного импорта за пределы пакета — явная ошибка, а не пропуск. Формы
-  `from bob import x` и относительный импорт закреплённая сборка `beadloom==9.0.0` не
-  видит, поэтому на них гард — единственная проверка.
+  Оба сборщика импортов читают все формы импорта: `import bob.x`, `import bob.x.y as z`,
+  `from bob.x import y`, `from bob import x`, `from bob.application import usecases` и
+  относительные импорты. Выход относительного импорта за пределы пакета — явная ошибка, а
+  не пропуск. Символ, чьё имя отличается от файла модуля только регистром, остаётся символом
+  и на файловой системе без учёта регистра.
+- `tests/test_beadloom_sees_every_import.py` — сверяет импорты, которые прочитал `ast`, с
+  индексом beadloom (`code_imports`). Тест пересобирает индекс бинарём `beadloom` с PATH в
+  копии `src` и `.beadloom`. Если бинаря на PATH нет, тест даёт SKIP с причиной «НЕ
+  проверялось». Правила `forbid_import` судят только строки этого индекса, поэтому импорт без
+  строки не судит ни одно правило. Замер саботажем на `beadloom==9.0.0` (правило
+  `memory-boundary-no-coding-adapters`, файл `coding/naming.py`): закреплённая сборка не
+  видит четыре формы, и `lint --strict` на каждой из них даёт exit 0.
+  - `import bob.memory.adapters.fts_recall as _f` — строки в индексе нет. Та же строка без
+    `as` даёт exit 1.
+  - `from ..memory.adapters import fts_recall` — относительный импорт, строки нет.
+  - `from bob import memory` — в индексе записано `bob`.
+  - `from bob.memory import adapters` — в индексе записан пакет `bob.memory`, а не
+    подмодуль, поэтому glob `bob/memory/adapters*` его не находит.
+
+  Для импорта в другой узел тест требует строку с полным модулем, поэтому все четыре формы
+  на нём краснеют. Внутри своего узла тест требует только модуль, который назван в самой
+  инструкции. 🔴 Это непокрытая зона: `from bob.coding import usecases` в
+  `coding/untrusted_repo.py` обходит правило `coding-internals-no-usecases-untrusted_repo`,
+  и ни lint, ни тесты этого не замечают (замер bob-7fo.7). Сейчас в `src` таких инструкций
+  две — `coding/usecases/coding_assistant.py` и `interactive/usecases/session.py`, три
+  связывания. Решение о том, переписывать ли их и ужесточать ли тест, принимает координатор.
 - `tests/domain/kernel/test_kernel_isolation.py` — импорт каждого модуля ядра в
   изолированном интерпретаторе не загружает ни одного `bob.*` вне `bob.kernel`.
 
